@@ -146,8 +146,16 @@ fn evaluate_input_claim<F: Field>(
             let mut challenges = vec![F::zero(); max_c];
             for (i, label) in challenge_labels.iter().enumerate() {
                 challenges[i] = match label {
-                    ChallengeLabel::PreSqueeze(name) => sc.scalars[name],
-                    ChallengeLabel::External(name) => ext[name],
+                    ChallengeLabel::PreSqueeze(name) => {
+                        *sc.scalars.get(name).unwrap_or_else(|| {
+                            panic!("missing pre_squeeze label: {name:?} (available: {:?})", sc.scalars.keys().collect::<Vec<_>>())
+                        })
+                    }
+                    ChallengeLabel::External(name) => {
+                        *ext.get(name).unwrap_or_else(|| {
+                            panic!("missing external value: {name:?}")
+                        })
+                    }
                 };
             }
 
@@ -277,8 +285,9 @@ where
                     &sc,
                     external,
                 );
+                let vertex_num_vars = sv.num_vars.resolve(symbols).unwrap_or(num_vars);
                 claims.push(SumcheckClaim {
-                    num_vars,
+                    num_vars: vertex_num_vars,
                     degree: sv.degree,
                     claimed_sum,
                 });
@@ -293,6 +302,8 @@ where
             CaptureHandler::with_capacity(num_vars),
         );
         let ep: Vec<F> = captured.challenges.iter().rev().copied().collect();
+        // Set stage point BEFORE resolving claim points (claims may reference this stage).
+        cache.set_point(stage.id, ep.clone());
 
         // Collect evaluations: first from witness produced_evaluations (2D polys),
         // then compute remaining from trace on-the-fly.
@@ -304,19 +315,21 @@ where
         for &vid in &stage.vertices {
             for &cid in graph.claim_graph.vertex(vid).produced_claims() {
                 let poly_id = graph.claim_graph.claim(cid).polynomial;
+                // Resolve the claim's full evaluation point (may be multi-stage concat).
+                let claim_point = cache.resolve_point(&graph.claim_graph.claim(cid).point);
                 let eval = if let Some(&we) = witness_evals.get(&poly_id) {
                     we
                 } else if poly_id.is_committed() && poly_id != PolynomialId::SpartanWitness {
                     let table = committed_store.get(poly_id);
                     let n = table.len().trailing_zeros() as usize;
-                    let point = if ep.len() > n {
-                        &ep[ep.len() - n..]
+                    let point = if claim_point.len() > n {
+                        &claim_point[claim_point.len() - n..]
                     } else {
-                        &ep
+                        &claim_point
                     };
                     witness_builder::eval_poly(table, point)
                 } else {
-                    trace_polys.eval_at_point(poly_id, &ep)
+                    trace_polys.eval_at_point(poly_id, &claim_point)
                 };
                 cache.set(cid, eval);
                 evals.push(eval);
@@ -338,7 +351,6 @@ where
         for &e in &evals {
             e.append_to_transcript(&mut transcript);
         }
-        cache.set_point(stage.id, ep);
 
         stage_proofs.push(jolt_verifier::StageProof {
             round_polys: captured.proof,
@@ -370,9 +382,13 @@ where
             }
             let eval = cache.get(ov.consumes);
             let point = cache.resolve_point(&claim.point);
-            let table = committed_store.get(poly_id);
+            let raw_table = committed_store.get(poly_id);
+            // Zero-pad to match point dimension (1D polys in multi-dim unified point).
+            let target_size = 1usize << point.len();
+            let mut table = raw_table.to_vec();
+            table.resize(target_size, F::zero());
             pcs_claims.push(ProverClaim {
-                evaluations: table.to_vec(),
+                evaluations: table,
                 point,
                 eval,
             });
@@ -384,6 +400,10 @@ where
         eval: spartan_proof.witness_eval,
     });
 
+    // RLC reduction groups claims by point. Currently produces 2 groups:
+    // 1. All committed polys at the unified point
+    // 2. Spartan witness at r_y
+    // TODO: Dory batch opening can merge these into a single proof.
     let (reduced, ()) =
         <RlcReduction as OpeningReduction<PCS>>::reduce_prover(pcs_claims, &mut transcript);
     let opening_proofs = reduced
@@ -457,7 +477,20 @@ fn build_witness<F: Field, B: ComputeBackend, R: jolt_host::CycleRow>(
 ) -> Box<dyn jolt_sumcheck::SumcheckCompute<F>> {
     use jolt_ir::protocol::PublicPolynomial as PP;
 
-    let eq_point = cache.resolve_point(stage_point);
+    let target_vars = sv.num_vars.resolve(&cache.symbols).unwrap_or(0);
+    let eq_point = if sv.deps.is_empty() {
+        // Zero-check with no deps — use zero point (trivial weighting).
+        // The sumcheck claimed_sum is zero, so weighting doesn't affect soundness.
+        vec![F::zero(); target_vars]
+    } else {
+        let mut ep = cache.resolve_point(stage_point);
+        if ep.len() < target_vars {
+            let mut padded = vec![F::zero(); target_vars - ep.len()];
+            padded.extend(ep);
+            ep = padded;
+        }
+        ep
+    };
     let w_table: Vec<F> = match &sv.weighting {
         PP::Eq => jolt_poly::EqPolynomial::new(eq_point).evaluations(),
         PP::EqPlusOne => jolt_poly::EqPlusOnePolynomial::evals(&eq_point, None).1,
@@ -466,17 +499,22 @@ fn build_witness<F: Field, B: ComputeBackend, R: jolt_host::CycleRow>(
     };
 
     // Materialize polynomial evaluation tables: committed from store, virtual from trace.
+    // All tables must be padded to w_table.len() (= 2^num_vars for the stage).
+    let domain_size = w_table.len();
     let formula = &sv.formula;
     let mut poly_tables: Vec<Vec<F>> = Vec::new();
 
     for binding in &formula.definition.opening_bindings {
         let claim_id = formula.opening_claims[&binding.var_id];
         let poly_id = graph.claim(claim_id).polynomial;
-        if poly_id.is_committed() && poly_id != PolynomialId::SpartanWitness {
-            poly_tables.push(committed_store.get(poly_id).to_vec());
+        let mut table = if poly_id.is_committed() && poly_id != PolynomialId::SpartanWitness {
+            committed_store.get(poly_id).to_vec()
         } else {
-            poly_tables.push(trace_polys.materialize(poly_id));
-        }
+            trace_polys.materialize(poly_id)
+        };
+        // Zero-pad to domain size if the table is shorter (1D poly in multi-dim stage).
+        table.resize(domain_size, F::zero());
+        poly_tables.push(table);
     }
 
     // Resolve challenge values for compile_descriptor
@@ -506,6 +544,7 @@ fn build_witness<F: Field, B: ComputeBackend, R: jolt_host::CycleRow>(
     // Compile the formula into a kernel descriptor + materialized challenge coefficients.
     let (desc, materialized) = formula.definition.compile_descriptor::<F>(&challenges);
     let order = binding_order_for(sv);
+
 
     // Upload polynomial tables to backend buffers.
     let buffers: Vec<B::Buffer<F>> = poly_tables

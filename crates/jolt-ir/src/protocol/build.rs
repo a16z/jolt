@@ -85,9 +85,18 @@ fn r_y() -> SymbolicPoint {
 }
 
 fn unified_point() -> SymbolicPoint {
+    // (r_address from S7, r_cycle from S6)
+    // S7 produces log_K address challenges.
+    // S6 produces log_K + log_T challenges; the cycle portion is the last log_T.
     SymbolicPoint::Concat(vec![
         SymbolicPoint::Challenges(S7),
-        SymbolicPoint::Challenges(S6),
+        SymbolicPoint::Slice {
+            source: Box::new(SymbolicPoint::Challenges(S6)),
+            range: VarRange {
+                start: SymbolicExpr::symbol(Symbol::LOG_K),
+                end: SymbolicExpr::symbol(Symbol::LOG_K) + SymbolicExpr::symbol(Symbol::LOG_T),
+            },
+        },
     ])
 }
 
@@ -612,30 +621,15 @@ fn build_s2(b: &mut GraphBuilder, _config: &ProtocolConfig, s1: &StageClaims) ->
     }
 
     // V_pv: product virtual (uni-skip first round + remainder)
-    // The uni-skip is an alternative sumcheck strategy for the first round.
-    // Total rounds: 1 (uni-skip) + log_T (remainder) = 1 + log_T.
-    // Input: evaluation of the uni-skip polynomial at the verifier's challenge r₀.
-    // This value is computed by the verifier from the proof's first-round polynomial —
-    // Spartan-internal, modeled as External.
+    // Input: uni-skip polynomial evaluation at verifier's challenge r₀.
+    // Spartan-internal value — modeled as Constant(0). The prover's batched
+    // sumcheck sets the actual claimed_sum via set_claim().
     {
         let def = claims::spartan::product_virtual_remainder();
         let ordering_deps = deps_from_formula(&def, s1);
-        let input_def = {
-            let eb = ExprBuilder::new();
-            let uni_skip_eval = eb.opening(0);
-            ClaimDefinition {
-                expr: eb.build(uni_skip_eval),
-                opening_bindings: vec![],
-                num_challenges: 0,
-            }
-        };
         let (vid, claims) = add_vertex_comp(
             b, def, ordering_deps, pt.clone(),
-            InputSpec::Formula {
-                def: input_def,
-                upstream: StageClaims::new(),
-                challenge_labels: vec![],
-            },
+            InputSpec::Constant(0),
             SumcheckShape {
                 degree: 3,
                 num_vars: SymbolicExpr::concrete(1) + log_t(),

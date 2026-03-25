@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use jolt_field::Fr;
+use jolt_field::{Field, Fr};
 use jolt_ir::protocol::{build_jolt_protocol, Symbol};
 use jolt_openings::mock::MockCommitmentScheme;
 use jolt_verifier::verify::build_symbol_table;
@@ -62,7 +62,14 @@ fn graph_driven_muldiv_mock_pcs() {
     let syms = symbols(config, &proving_key.spartan_key);
 
     // 7. External values
-    let external: HashMap<&str, Fr> = HashMap::new();
+    // raf_scale = 2^{phase3_cycle_rounds} where phase3 = log_T - phase1
+    let phase1_rounds = config.rw_config.ram_rw_phase1_num_rounds as usize;
+    let log_t = config.log_trace_length();
+    let phase3_rounds = log_t.saturating_sub(phase1_rounds);
+    let raf_scale = Fr::from_u64(1u64 << phase3_rounds);
+    let mut external: HashMap<&str, Fr> = HashMap::new();
+    let _ = external.insert("raf_scale", raf_scale);
+    let _ = external.insert("neg_init", Fr::from_u64(0)); // no initial RAM state for muldiv
 
     // 8. Prove — trace provides virtual poly data on-the-fly via TracePolynomials
     let expanded_pcs: Vec<u32> = trace
