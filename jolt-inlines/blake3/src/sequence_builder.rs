@@ -15,12 +15,9 @@ use crate::{
 };
 use jolt_inlines_sdk::host::{
     instruction::{
-        ld::LD,
         lui::LUI,
         lw::LW,
-        srli::SRLI,
         virtual_xor_rotw::{VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8},
-        virtual_zero_extend_word::VirtualZeroExtendWord,
     },
     FormatInline, InlineOp, InstrAssembler, InstrAssemblerExt, Instruction,
     Value::{Imm, Reg},
@@ -55,6 +52,51 @@ where
     g(1, 6, 11, 12, msg_schedule_round[10], msg_schedule_round[11]);
     g(2, 7, 8, 13, msg_schedule_round[12], msg_schedule_round[13]);
     g(3, 4, 9, 14, msg_schedule_round[14], msg_schedule_round[15]);
+}
+
+/// BLAKE3 quarter-round G function.
+/// When `temp` is Some, uses a scratch register for the first add to avoid clobbering `va`.
+/// When `temp` is None, performs in-place adds (saves one register).
+#[allow(clippy::too_many_arguments)]
+fn blake3_g(
+    asm: &mut InstrAssembler,
+    va: u8,
+    vb: u8,
+    vc: u8,
+    vd: u8,
+    mx: u8,
+    my: u8,
+    temp: Option<u8>,
+) {
+    match temp {
+        Some(t) => {
+            asm.add(Reg(va), Reg(vb), t);
+            asm.add(Reg(t), Reg(mx), va);
+        }
+        None => {
+            asm.add(Reg(va), Reg(vb), va);
+            asm.add(Reg(va), Reg(mx), va);
+        }
+    }
+
+    asm.emit_r::<VirtualXORROTW16>(vd, vd, va);
+    asm.add(Reg(vc), Reg(vd), vc);
+    asm.emit_r::<VirtualXORROTW12>(vb, vb, vc);
+
+    match temp {
+        Some(t) => {
+            asm.add(Reg(va), Reg(vb), t);
+            asm.add(Reg(t), Reg(my), va);
+        }
+        None => {
+            asm.add(Reg(va), Reg(vb), va);
+            asm.add(Reg(va), Reg(my), va);
+        }
+    }
+
+    asm.emit_r::<VirtualXORROTW8>(vd, vd, va);
+    asm.add(Reg(vc), Reg(vd), vc);
+    asm.emit_r::<VirtualXORROTW7>(vb, vb, vc);
 }
 
 /// Virtual register layout:
@@ -182,39 +224,16 @@ impl Blake3SequenceBuilder {
     }
 
     fn g_function(&mut self, a: usize, b: usize, c: usize, d: usize, x: usize, y: usize) {
-        let va = *self.vr[a];
-        let vb = *self.vr[b];
-        let vc = *self.vr[c];
-        let vd = *self.vr[d];
-        let mx = *self.vr[MSG_BLOCK_START_VR + x];
-        let my = *self.vr[MSG_BLOCK_START_VR + y];
-        let temp1 = *self.vr[TEMP_VR];
-
-        // v[a] = v[a] + v[b] + m[x]
-        self.asm.add(Reg(va), Reg(vb), temp1);
-        self.asm.add(Reg(temp1), Reg(mx), va);
-
-        // v[d] = rotr32(v[d] ^ v[a], 16)
-        self.asm.emit_r::<VirtualXORROTW16>(vd, vd, va);
-
-        // v[c] = v[c] + v[d]
-        self.asm.add(Reg(vc), Reg(vd), vc);
-
-        // v[b] = rotr32(v[b] ^ v[c], 12)
-        self.asm.emit_r::<VirtualXORROTW12>(vb, vb, vc);
-
-        // v[a] = v[a] + v[b] + m[y]
-        self.asm.add(Reg(va), Reg(vb), temp1);
-        self.asm.add(Reg(temp1), Reg(my), va);
-
-        // v[d] = rotr32(v[d] ^ v[a], 8)
-        self.asm.emit_r::<VirtualXORROTW8>(vd, vd, va);
-
-        // v[c] = v[c] + v[d]
-        self.asm.add(Reg(vc), Reg(vd), vc);
-
-        // v[b] = rotr32(v[b] ^ v[c], 7)
-        self.asm.emit_r::<VirtualXORROTW7>(vb, vb, vc);
+        blake3_g(
+            &mut self.asm,
+            *self.vr[a],
+            *self.vr[b],
+            *self.vr[c],
+            *self.vr[d],
+            *self.vr[MSG_BLOCK_START_VR + x],
+            *self.vr[MSG_BLOCK_START_VR + y],
+            Some(*self.vr[TEMP_VR]),
+        );
     }
 
     fn finalize_state(&mut self) {
@@ -227,73 +246,34 @@ impl Blake3SequenceBuilder {
     }
 
     fn store_state(&mut self) {
-        for i in 0..CHAINING_VALUE_LEN / 2 {
-            self.asm.store_paired_u32(
-                self.operands.rs1,
-                (i * 2) as i64 * 4,
-                *self.vr[CV_START_VR + i * 2],
-                *self.vr[CV_START_VR + i * 2 + 1],
-            );
-        }
+        let regs: Vec<u8> = (CV_START_VR..CV_START_VR + CHAINING_VALUE_LEN)
+            .map(|i| *self.vr[i])
+            .collect();
+        self.asm.store_u32_range_paired(self.operands.rs1, 0, &regs);
     }
 
-    fn load_data_range_paired(
-        &mut self,
-        base_register: u8,
-        memory_offset_start: usize,
-        vr_start: usize,
-        count: usize,
-    ) {
-        debug_assert!(
-            count.is_multiple_of(2),
-            "count must be even for paired loading"
-        );
-        let temp = *self.vr[TEMP_VR];
-        for i in 0..count / 2 {
-            self.asm.load_paired_u32(
-                temp,
-                base_register,
-                (memory_offset_start + i * 2) as i64 * 4,
-                *self.vr[vr_start + i * 2],
-                *self.vr[vr_start + i * 2 + 1],
-            );
-        }
-    }
-
-    /// Load data from memory into virtual registers (non-paired, used for counter)
-    fn load_data_range(
-        &mut self,
-        base_register: u8,
-        memory_offset_start: usize,
-        vr_start: usize,
-        count: usize,
-    ) {
-        (0..count).for_each(|i| {
-            self.asm.emit_ld::<LW>(
-                *self.vr[vr_start + i],
-                base_register,
-                (memory_offset_start + i) as i64 * 4,
-            );
-        });
+    fn vr_slice(&self, start: usize, count: usize) -> Vec<u8> {
+        (start..start + count).map(|i| *self.vr[i]).collect()
     }
 
     fn load_chaining_value(&mut self) {
-        // Use paired loading for chaining value (8 u32 = 4 pairs)
-        self.load_data_range_paired(self.operands.rs1, 0, CV_START_VR, CHAINING_VALUE_LEN);
+        let temp = *self.vr[TEMP_VR];
+        let regs = self.vr_slice(CV_START_VR, CHAINING_VALUE_LEN);
+        self.asm
+            .load_u32_range_paired(temp, self.operands.rs1, 0, &regs);
     }
 
     fn load_message_blocks(&mut self) {
-        // Use paired loading for message blocks (16 u32 = 8 pairs)
-        self.load_data_range_paired(self.operands.rs2, 0, MSG_BLOCK_START_VR, MSG_BLOCK_LEN);
+        let temp = *self.vr[TEMP_VR];
+        let regs = self.vr_slice(MSG_BLOCK_START_VR, MSG_BLOCK_LEN);
+        self.asm
+            .load_u32_range_paired(temp, self.operands.rs2, 0, &regs);
     }
 
     fn load_counter(&mut self) {
-        self.load_data_range(
-            self.operands.rs2,
-            MSG_BLOCK_LEN,
-            COUNTER_START_VR,
-            COUNTER_LEN,
-        );
+        let regs = self.vr_slice(COUNTER_START_VR, COUNTER_LEN);
+        self.asm
+            .load_u32_range(self.operands.rs2, MSG_BLOCK_LEN * 4, &regs);
     }
 
     fn load_input_len_and_flags(&mut self) {
@@ -324,12 +304,12 @@ impl Blake3Keyed64SequenceBuilder {
     }
 
     fn build(mut self) -> Vec<Instruction> {
-        // Load key from rs3/rd directly into v[0..7]
-        self.load_data_range_paired(self.operands.rs3, 0, INTERNAL_STATE_VR_START, 8);
-        // Load left (32 bytes) from rs1 as message[0..7]
-        self.load_data_range_paired(self.operands.rs1, 0, MSG_BLOCK_START_VR, 8);
-        // Load right (32 bytes) from rs2 as message[8..15]
-        self.load_data_range_paired(self.operands.rs2, 0, MSG_BLOCK_START_VR + 8, 8);
+        let key_regs = self.vr_slice(INTERNAL_STATE_VR_START, 8);
+        self.load_u32_range_paired_no_temp(self.operands.rs3, 0, &key_regs);
+        let msg_lo_regs = self.vr_slice(MSG_BLOCK_START_VR, 8);
+        self.load_u32_range_paired_no_temp(self.operands.rs1, 0, &msg_lo_regs);
+        let msg_hi_regs = self.vr_slice(MSG_BLOCK_START_VR + 8, 8);
+        self.load_u32_range_paired_no_temp(self.operands.rs2, 0, &msg_hi_regs);
 
         self.initialize_internal_state();
 
@@ -345,14 +325,9 @@ impl Blake3Keyed64SequenceBuilder {
             self.asm.xor(Reg(vi), Reg(vi8), vi);
         }
 
-        for i in 0..CHAINING_VALUE_LEN / 2 {
-            self.asm.store_paired_u32(
-                self.operands.rs3,
-                (i * 2) as i64 * 4,
-                *self.vr[INTERNAL_STATE_VR_START + i * 2],
-                *self.vr[INTERNAL_STATE_VR_START + i * 2 + 1],
-            );
-        }
+        let out_regs = self.vr_slice(INTERNAL_STATE_VR_START, CHAINING_VALUE_LEN);
+        self.asm
+            .store_u32_range_paired(self.operands.rs3, 0, &out_regs);
 
         drop(self.vr);
         self.asm.finalize_inline()
@@ -386,72 +361,35 @@ impl Blake3Keyed64SequenceBuilder {
         blake3_apply_round_schedule(round, |a, b, c, d, x, y| self.g_function(a, b, c, d, x, y));
     }
 
-    #[inline]
     fn g_function(&mut self, a: usize, b: usize, c: usize, d: usize, x: usize, y: usize) {
-        let va = *self.vr[a];
-        let vb = *self.vr[b];
-        let vc = *self.vr[c];
-        let vd = *self.vr[d];
-        let mx = *self.vr[MSG_BLOCK_START_VR + x];
-        let my = *self.vr[MSG_BLOCK_START_VR + y];
-
-        // v[a] = v[a] + v[b] + m[x]
-        self.asm.add(Reg(va), Reg(vb), va);
-        self.asm.add(Reg(va), Reg(mx), va);
-
-        // v[d] = rotr32(v[d] ^ v[a], 16)
-        self.asm.emit_r::<VirtualXORROTW16>(vd, vd, va);
-
-        // v[c] = v[c] + v[d]
-        self.asm.add(Reg(vc), Reg(vd), vc);
-
-        // v[b] = rotr32(v[b] ^ v[c], 12)
-        self.asm.emit_r::<VirtualXORROTW12>(vb, vb, vc);
-
-        // v[a] = v[a] + v[b] + m[y]
-        self.asm.add(Reg(va), Reg(vb), va);
-        self.asm.add(Reg(va), Reg(my), va);
-
-        // v[d] = rotr32(v[d] ^ v[a], 8)
-        self.asm.emit_r::<VirtualXORROTW8>(vd, vd, va);
-
-        // v[c] = v[c] + v[d]
-        self.asm.add(Reg(vc), Reg(vd), vc);
-
-        // v[b] = rotr32(v[b] ^ v[c], 7)
-        self.asm.emit_r::<VirtualXORROTW7>(vb, vb, vc);
-    }
-
-    /// Load two u32 values from an 8-byte aligned address using a single LD.
-    /// Uses `vr_hi` as the temporary 64-bit container (no extra scratch register).
-    fn load_paired_u32(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8) {
-        // Load 64 bits (2 x u32) into vr_hi temporarily.
-        self.asm.emit_ld::<LD>(vr_hi, base, offset);
-
-        // Extract low 32 bits: zero-extend word.
-        self.asm.emit_i::<VirtualZeroExtendWord>(vr_lo, vr_hi, 0);
-
-        // Extract high 32 bits: shift right by 32 (in place).
-        self.asm.emit_i::<SRLI>(vr_hi, vr_hi, 32);
-    }
-
-    fn load_data_range_paired(
-        &mut self,
-        base_register: u8,
-        memory_offset_start: usize,
-        vr_start: usize,
-        count: usize,
-    ) {
-        debug_assert!(
-            count.is_multiple_of(2),
-            "count must be even for paired loading"
+        blake3_g(
+            &mut self.asm,
+            *self.vr[a],
+            *self.vr[b],
+            *self.vr[c],
+            *self.vr[d],
+            *self.vr[MSG_BLOCK_START_VR + x],
+            *self.vr[MSG_BLOCK_START_VR + y],
+            None,
         );
-        for i in 0..count / 2 {
-            self.load_paired_u32(
-                base_register,
-                (memory_offset_start + i * 2) as i64 * 4,
-                *self.vr[vr_start + i * 2],
-                *self.vr[vr_start + i * 2 + 1],
+    }
+
+    fn vr_slice(&self, start: usize, count: usize) -> Vec<u8> {
+        (start..start + count).map(|i| *self.vr[i]).collect()
+    }
+
+    /// Load paired u32 values without requiring a separate temp register.
+    /// Uses each pair's hi register as the 64-bit load target.
+    fn load_u32_range_paired_no_temp(&mut self, base: u8, byte_offset: usize, regs: &[u8]) {
+        debug_assert!(regs.len().is_multiple_of(2));
+        for (i, pair) in regs.chunks_exact(2).enumerate() {
+            // Use vr_hi as temp: load_paired_u32(temp=hi, base, offset, lo, hi)
+            self.asm.load_paired_u32(
+                pair[1],
+                base,
+                (byte_offset + i * 8) as i64,
+                pair[0],
+                pair[1],
             );
         }
     }

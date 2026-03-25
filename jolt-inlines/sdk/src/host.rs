@@ -49,6 +49,23 @@ pub trait InstrAssemblerExt {
     fn load_paired_u32(&mut self, temp: u8, base: u8, offset: i64, vr_lo: u8, vr_hi: u8);
     fn store_paired_u32(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8);
     fn load_paired_u32_dirty(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8);
+
+    /// Load consecutive u64 words from `base + byte_offset` into `regs`.
+    fn load_u64_range(&mut self, base: u8, byte_offset: usize, regs: &[u8]);
+
+    /// Store consecutive u64 words from `regs` to `base + byte_offset`.
+    fn store_u64_range(&mut self, base: u8, byte_offset: usize, regs: &[u8]);
+
+    /// Load consecutive u32 words from `base + byte_offset` into `regs`.
+    fn load_u32_range(&mut self, base: u8, byte_offset: usize, regs: &[u8]);
+
+    /// Load consecutive pairs of u32 from `base + byte_offset` into `regs` using paired LD+split.
+    /// `regs` length must be even. Uses `temp` as scratch for the 64-bit intermediate load.
+    fn load_u32_range_paired(&mut self, temp: u8, base: u8, byte_offset: usize, regs: &[u8]);
+
+    /// Store consecutive pairs of u32 from `regs` to `base + byte_offset` using paired pack+SD.
+    /// `regs` length must be even. WARNING: clobbers register values.
+    fn store_u32_range_paired(&mut self, base: u8, byte_offset: usize, regs: &[u8]);
 }
 
 impl InstrAssemblerExt for InstrAssembler {
@@ -85,6 +102,47 @@ impl InstrAssemblerExt for InstrAssembler {
         use instruction::srli::SRLI;
         self.emit_ld::<LD>(vr_lo, base, offset);
         self.emit_i::<SRLI>(vr_hi, vr_lo, 32);
+    }
+
+    fn load_u64_range(&mut self, base: u8, byte_offset: usize, regs: &[u8]) {
+        use instruction::ld::LD;
+        for (i, &reg) in regs.iter().enumerate() {
+            self.emit_ld::<LD>(reg, base, (byte_offset + i * 8) as i64);
+        }
+    }
+
+    fn store_u64_range(&mut self, base: u8, byte_offset: usize, regs: &[u8]) {
+        use instruction::sd::SD;
+        for (i, &reg) in regs.iter().enumerate() {
+            self.emit_s::<SD>(base, reg, (byte_offset + i * 8) as i64);
+        }
+    }
+
+    fn load_u32_range(&mut self, base: u8, byte_offset: usize, regs: &[u8]) {
+        use instruction::lw::LW;
+        for (i, &reg) in regs.iter().enumerate() {
+            self.emit_ld::<LW>(reg, base, (byte_offset + i * 4) as i64);
+        }
+    }
+
+    fn load_u32_range_paired(&mut self, temp: u8, base: u8, byte_offset: usize, regs: &[u8]) {
+        debug_assert!(
+            regs.len().is_multiple_of(2),
+            "regs length must be even for paired loading"
+        );
+        for (i, pair) in regs.chunks_exact(2).enumerate() {
+            self.load_paired_u32(temp, base, (byte_offset + i * 8) as i64, pair[0], pair[1]);
+        }
+    }
+
+    fn store_u32_range_paired(&mut self, base: u8, byte_offset: usize, regs: &[u8]) {
+        debug_assert!(
+            regs.len().is_multiple_of(2),
+            "regs length must be even for paired storing"
+        );
+        for (i, pair) in regs.chunks_exact(2).enumerate() {
+            self.store_paired_u32(base, (byte_offset + i * 8) as i64, pair[0], pair[1]);
+        }
     }
 }
 

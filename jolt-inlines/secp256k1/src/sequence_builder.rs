@@ -38,8 +38,7 @@ impl GlvrAdvBuilder {
         let result = crate::glv::decompose_scalar_to_u64s(k);
         VecDeque::from(result.to_vec())
     }
-    // inline sequence function
-    fn inline_sequence(mut self) -> Vec<Instruction> {
+    fn build(mut self) -> Vec<Instruction> {
         for i in 0..6 {
             self.asm.emit_j::<VirtualAdvice>(*self.vr, 0);
             self.asm
@@ -229,8 +228,7 @@ impl MulqBuilder {
             }
         }
     }
-    // inline sequence function
-    fn inline_sequence(mut self) -> Vec<Instruction> {
+    fn build(mut self) -> Vec<Instruction> {
         // load a, b, and w
         for i in 0..4 {
             match self.op_type {
@@ -579,37 +577,131 @@ impl MulqBuilder {
     }
 }
 
-macro_rules! secp256k1_mulq_op {
-    ($name:ident, funct3: $funct3:expr, name: $op_name:expr, mul_type: $mul_type:expr, is_scalar: $is_scalar:expr) => {
-        pub struct $name;
+pub struct Secp256k1MulQ;
 
-        impl InlineOp for $name {
-            const OPCODE: u32 = crate::INLINE_OPCODE;
-            const FUNCT3: u32 = $funct3;
-            const FUNCT7: u32 = crate::SECP256K1_FUNCT7;
-            const NAME: &'static str = $op_name;
+impl InlineOp for Secp256k1MulQ {
+    const OPCODE: u32 = crate::INLINE_OPCODE;
+    const FUNCT3: u32 = crate::SECP256K1_MULQ_FUNCT3;
+    const FUNCT7: u32 = crate::SECP256K1_FUNCT7;
+    const NAME: &'static str = crate::SECP256K1_MULQ_NAME;
 
-            fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
-                MulqBuilder::new(asm, operands, $mul_type, $is_scalar).inline_sequence()
-            }
+    fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
+        MulqBuilder::new(asm, operands, MulqType::Mul, false).build()
+    }
 
-            fn build_advice(
-                asm: InstrAssembler,
-                operands: FormatInline,
-                cpu: &mut Cpu,
-            ) -> Option<VecDeque<u64>> {
-                Some(MulqBuilder::new(asm, operands, $mul_type, $is_scalar).advice(cpu))
-            }
-        }
-    };
+    fn build_advice(
+        asm: InstrAssembler,
+        operands: FormatInline,
+        cpu: &mut Cpu,
+    ) -> Option<VecDeque<u64>> {
+        Some(MulqBuilder::new(asm, operands, MulqType::Mul, false).advice(cpu))
+    }
 }
 
-secp256k1_mulq_op!(Secp256k1MulQ,     funct3: crate::SECP256K1_MULQ_FUNCT3,    name: crate::SECP256K1_MULQ_NAME,    mul_type: MulqType::Mul,    is_scalar: false);
-secp256k1_mulq_op!(Secp256k1SquareQ,  funct3: crate::SECP256K1_SQUAREQ_FUNCT3, name: crate::SECP256K1_SQUAREQ_NAME, mul_type: MulqType::Square, is_scalar: false);
-secp256k1_mulq_op!(Secp256k1DivQ,     funct3: crate::SECP256K1_DIVQ_FUNCT3,    name: crate::SECP256K1_DIVQ_NAME,    mul_type: MulqType::Div,    is_scalar: false);
-secp256k1_mulq_op!(Secp256k1MulR,     funct3: crate::SECP256K1_MULR_FUNCT3,    name: crate::SECP256K1_MULR_NAME,    mul_type: MulqType::Mul,    is_scalar: true);
-secp256k1_mulq_op!(Secp256k1SquareR,  funct3: crate::SECP256K1_SQUARER_FUNCT3, name: crate::SECP256K1_SQUARER_NAME, mul_type: MulqType::Square, is_scalar: true);
-secp256k1_mulq_op!(Secp256k1DivR,     funct3: crate::SECP256K1_DIVR_FUNCT3,    name: crate::SECP256K1_DIVR_NAME,    mul_type: MulqType::Div,    is_scalar: true);
+pub struct Secp256k1SquareQ;
+
+impl InlineOp for Secp256k1SquareQ {
+    const OPCODE: u32 = crate::INLINE_OPCODE;
+    const FUNCT3: u32 = crate::SECP256K1_SQUAREQ_FUNCT3;
+    const FUNCT7: u32 = crate::SECP256K1_FUNCT7;
+    const NAME: &'static str = crate::SECP256K1_SQUAREQ_NAME;
+
+    fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
+        MulqBuilder::new(asm, operands, MulqType::Square, false).build()
+    }
+
+    fn build_advice(
+        asm: InstrAssembler,
+        operands: FormatInline,
+        cpu: &mut Cpu,
+    ) -> Option<VecDeque<u64>> {
+        Some(MulqBuilder::new(asm, operands, MulqType::Square, false).advice(cpu))
+    }
+}
+
+pub struct Secp256k1DivQ;
+
+impl InlineOp for Secp256k1DivQ {
+    const OPCODE: u32 = crate::INLINE_OPCODE;
+    const FUNCT3: u32 = crate::SECP256K1_DIVQ_FUNCT3;
+    const FUNCT7: u32 = crate::SECP256K1_FUNCT7;
+    const NAME: &'static str = crate::SECP256K1_DIVQ_NAME;
+
+    fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
+        MulqBuilder::new(asm, operands, MulqType::Div, false).build()
+    }
+
+    fn build_advice(
+        asm: InstrAssembler,
+        operands: FormatInline,
+        cpu: &mut Cpu,
+    ) -> Option<VecDeque<u64>> {
+        Some(MulqBuilder::new(asm, operands, MulqType::Div, false).advice(cpu))
+    }
+}
+
+pub struct Secp256k1MulR;
+
+impl InlineOp for Secp256k1MulR {
+    const OPCODE: u32 = crate::INLINE_OPCODE;
+    const FUNCT3: u32 = crate::SECP256K1_MULR_FUNCT3;
+    const FUNCT7: u32 = crate::SECP256K1_FUNCT7;
+    const NAME: &'static str = crate::SECP256K1_MULR_NAME;
+
+    fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
+        MulqBuilder::new(asm, operands, MulqType::Mul, true).build()
+    }
+
+    fn build_advice(
+        asm: InstrAssembler,
+        operands: FormatInline,
+        cpu: &mut Cpu,
+    ) -> Option<VecDeque<u64>> {
+        Some(MulqBuilder::new(asm, operands, MulqType::Mul, true).advice(cpu))
+    }
+}
+
+pub struct Secp256k1SquareR;
+
+impl InlineOp for Secp256k1SquareR {
+    const OPCODE: u32 = crate::INLINE_OPCODE;
+    const FUNCT3: u32 = crate::SECP256K1_SQUARER_FUNCT3;
+    const FUNCT7: u32 = crate::SECP256K1_FUNCT7;
+    const NAME: &'static str = crate::SECP256K1_SQUARER_NAME;
+
+    fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
+        MulqBuilder::new(asm, operands, MulqType::Square, true).build()
+    }
+
+    fn build_advice(
+        asm: InstrAssembler,
+        operands: FormatInline,
+        cpu: &mut Cpu,
+    ) -> Option<VecDeque<u64>> {
+        Some(MulqBuilder::new(asm, operands, MulqType::Square, true).advice(cpu))
+    }
+}
+
+pub struct Secp256k1DivR;
+
+impl InlineOp for Secp256k1DivR {
+    const OPCODE: u32 = crate::INLINE_OPCODE;
+    const FUNCT3: u32 = crate::SECP256K1_DIVR_FUNCT3;
+    const FUNCT7: u32 = crate::SECP256K1_FUNCT7;
+    const NAME: &'static str = crate::SECP256K1_DIVR_NAME;
+
+    fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
+        MulqBuilder::new(asm, operands, MulqType::Div, true).build()
+    }
+
+    fn build_advice(
+        asm: InstrAssembler,
+        operands: FormatInline,
+        cpu: &mut Cpu,
+    ) -> Option<VecDeque<u64>> {
+        Some(MulqBuilder::new(asm, operands, MulqType::Div, true).advice(cpu))
+    }
+}
 
 pub struct Secp256k1GlvrAdv;
 
@@ -620,7 +712,7 @@ impl InlineOp for Secp256k1GlvrAdv {
     const NAME: &'static str = crate::SECP256K1_GLVR_ADV_NAME;
 
     fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
-        GlvrAdvBuilder::new(asm, operands).inline_sequence()
+        GlvrAdvBuilder::new(asm, operands).build()
     }
 
     fn build_advice(

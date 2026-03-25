@@ -1,17 +1,23 @@
 use core::marker::PhantomData;
+use core::ops::{Add, Mul, Neg, Sub};
 
 /// Shared interface for field elements used in EC point arithmetic.
-pub trait ECField: Clone + PartialEq + core::fmt::Debug + Sized {
+pub trait ECField:
+    Clone
+    + PartialEq
+    + core::fmt::Debug
+    + Sized
+    + for<'a> Add<&'a Self, Output = Self>
+    + for<'a> Sub<&'a Self, Output = Self>
+    + for<'a> Mul<&'a Self, Output = Self>
+    + Neg<Output = Self>
+{
     type Error;
 
     fn zero() -> Self;
     fn is_zero(&self) -> bool;
-    fn neg(&self) -> Self;
-    fn add(&self, other: &Self) -> Self;
-    fn sub(&self, other: &Self) -> Self;
     fn dbl(&self) -> Self;
     fn tpl(&self) -> Self;
-    fn mul(&self, other: &Self) -> Self;
     fn square(&self) -> Self;
     fn div(&self, other: &Self) -> Self;
     fn div_assume_nonzero(&self, other: &Self) -> Self;
@@ -144,7 +150,7 @@ impl<F: ECField, C: CurveParams<F>> AffinePoint<F, C> {
         if self.is_infinity() {
             Self::infinity()
         } else {
-            Self::new_unchecked(self.x.clone(), self.y.neg())
+            Self::new_unchecked(self.x.clone(), -self.y.clone())
         }
     }
 
@@ -159,8 +165,8 @@ impl<F: ECField, C: CurveParams<F>> AffinePoint<F, C> {
                 None => num,
             };
             let s = num.div_assume_nonzero(&self.y.dbl());
-            let x2 = s.square().sub(&self.x.dbl());
-            let y2 = s.mul(&self.x.sub(&x2)).sub(&self.y);
+            let x2 = s.square() - &self.x.dbl();
+            let y2 = s * &(self.x.clone() - &x2) - &self.y;
             Self::new_unchecked(x2, y2)
         }
     }
@@ -176,12 +182,9 @@ impl<F: ECField, C: CurveParams<F>> AffinePoint<F, C> {
         } else if self.x == other.x {
             Self::infinity()
         } else {
-            let s = self
-                .y
-                .sub(&other.y)
-                .div_assume_nonzero(&self.x.sub(&other.x));
-            let x2 = s.square().sub(&self.x.add(&other.x));
-            let y2 = s.mul(&self.x.sub(&x2)).sub(&self.y);
+            let s = (self.y.clone() - &other.y).div_assume_nonzero(&(self.x.clone() - &other.x));
+            let x2 = s.square() - &(self.x.clone() + &other.x);
+            let y2 = s * &(self.x.clone() - &x2) - &self.y;
             Self::new_unchecked(x2, y2)
         }
     }
@@ -198,18 +201,15 @@ impl<F: ECField, C: CurveParams<F>> AffinePoint<F, C> {
         } else if self.x == other.x && self.y != other.y {
             self.clone()
         } else {
-            let ns = self
-                .y
-                .sub(&other.y)
-                .div_assume_nonzero(&other.x.sub(&self.x));
-            let nx2 = other.x.sub(&ns.square());
-            let divisor = self.x.dbl().add(&nx2);
+            let ns = (self.y.clone() - &other.y).div_assume_nonzero(&(other.x.clone() - &self.x));
+            let nx2 = other.x.clone() - &ns.square();
+            let divisor = self.x.dbl() + &nx2;
             if C::DOUBLE_AND_ADD_DIVISOR_CHECK && divisor.is_zero() {
                 return Self::infinity();
             }
-            let t = self.y.dbl().div_assume_nonzero(&divisor).add(&ns);
-            let x3 = t.square().add(&nx2);
-            let y3 = t.mul(&self.x.sub(&x3)).sub(&self.y);
+            let t = self.y.dbl().div_assume_nonzero(&divisor) + &ns;
+            let x3 = t.square() + &nx2;
+            let y3 = t * &(self.x.clone() - &x3) - &self.y;
             Self::new_unchecked(x3, y3)
         }
     }

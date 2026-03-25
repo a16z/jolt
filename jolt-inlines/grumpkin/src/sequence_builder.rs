@@ -61,8 +61,7 @@ impl GrumpkinDivAdv {
             .to_vec(),
         )
     }
-    // inline sequence function
-    fn inline_sequence(mut self) -> Vec<Instruction> {
+    fn build(mut self) -> Vec<Instruction> {
         for i in 0..4 {
             self.asm.emit_j::<VirtualAdvice>(*self.vr, 0);
             self.asm
@@ -82,7 +81,7 @@ impl InlineOp for GrumpkinDivQAdv {
     const NAME: &'static str = crate::GRUMPKIN_DIVQ_ADV_NAME;
 
     fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
-        GrumpkinDivAdv::new(asm, operands, true).inline_sequence()
+        GrumpkinDivAdv::new(asm, operands, true).build()
     }
 
     fn build_advice(
@@ -103,7 +102,7 @@ impl InlineOp for GrumpkinDivRAdv {
     const NAME: &'static str = crate::GRUMPKIN_DIVR_ADV_NAME;
 
     fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
-        GrumpkinDivAdv::new(asm, operands, false).inline_sequence()
+        GrumpkinDivAdv::new(asm, operands, false).build()
     }
 
     fn build_advice(

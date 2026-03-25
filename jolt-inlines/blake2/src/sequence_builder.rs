@@ -14,11 +14,10 @@ use jolt_inlines_sdk::host::{
     instruction::{
         ld::LD,
         lui::LUI,
-        sd::SD,
         sub::SUB,
         virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63},
     },
-    FormatInline, InlineOp, InstrAssembler, Instruction,
+    FormatInline, InlineOp, InstrAssembler, InstrAssemblerExt, Instruction,
     Value::{Imm, Reg},
     VirtualRegisterGuard,
 };
@@ -79,21 +78,17 @@ impl Blake2SequenceBuilder {
     }
 
     fn load_hash_state(&mut self) {
-        self.load_data_range(
-            self.operands.rs1,
-            0,
-            VR_HASH_STATE_START,
-            crate::STATE_VECTOR_LEN,
-        );
+        let regs: Vec<u8> = (VR_HASH_STATE_START..VR_HASH_STATE_START + crate::STATE_VECTOR_LEN)
+            .map(|i| *self.vr[i])
+            .collect();
+        self.asm.load_u64_range(self.operands.rs1, 0, &regs);
     }
 
     fn load_message_blocks(&mut self) {
-        self.load_data_range(
-            self.operands.rs2,
-            0,
-            VR_MESSAGE_BLOCK_START,
-            crate::MSG_BLOCK_LEN,
-        );
+        let regs: Vec<u8> = (VR_MESSAGE_BLOCK_START..VR_MESSAGE_BLOCK_START + crate::MSG_BLOCK_LEN)
+            .map(|i| *self.vr[i])
+            .collect();
+        self.asm.load_u64_range(self.operands.rs2, 0, &regs);
     }
 
     fn load_counter_and_is_final(&mut self) {
@@ -224,32 +219,11 @@ impl Blake2SequenceBuilder {
         }
     }
 
-    /// Store the final hash state
     fn store_state(&mut self) {
-        for i in 0..crate::STATE_VECTOR_LEN {
-            self.asm.emit_s::<SD>(
-                self.operands.rs1,
-                *self.vr[VR_HASH_STATE_START + i],
-                (i * 8) as i64,
-            );
-        }
-    }
-
-    /// Load data from memory into virtual registers starting at a given offset
-    fn load_data_range(
-        &mut self,
-        base_register: u8,
-        memory_offset_start: usize,
-        vr_start: usize,
-        count: usize,
-    ) {
-        (0..count).for_each(|i| {
-            self.asm.emit_ld::<LD>(
-                *self.vr[vr_start + i],
-                base_register,
-                ((memory_offset_start + i) * 8) as i64,
-            );
-        });
+        let regs: Vec<u8> = (VR_HASH_STATE_START..VR_HASH_STATE_START + crate::STATE_VECTOR_LEN)
+            .map(|i| *self.vr[i])
+            .collect();
+        self.asm.store_u64_range(self.operands.rs1, 0, &regs);
     }
 }
 
