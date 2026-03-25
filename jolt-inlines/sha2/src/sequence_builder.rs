@@ -2,7 +2,7 @@ use core::array;
 
 use jolt_inlines_sdk::host::{
     instruction::{andn::ANDN, lw::LW, sw::SW},
-    Cpu, FormatInline, InlineOp, InstrAssembler, InstrAssemblerExt, Instruction,
+    FormatInline, InlineOp, InstrAssembler, InstrAssemblerExt, Instruction,
     Value::{self, Imm, Reg},
     VirtualRegisterGuard, Xlen,
 };
@@ -354,8 +354,6 @@ impl InlineOp for Sha256Compression {
     fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
         Sha256SequenceBuilder::new(asm, operands, false).build()
     }
-
-    fn build_advice(_asm: InstrAssembler, _operands: FormatInline, _cpu: &mut Cpu) {}
 }
 
 pub struct Sha256CompressionInitial;
@@ -371,6 +369,4 @@ impl InlineOp for Sha256CompressionInitial {
     fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
         Sha256SequenceBuilder::new(asm, operands, true).build()
     }
-
-    fn build_advice(_asm: InstrAssembler, _operands: FormatInline, _cpu: &mut Cpu) {}
 }

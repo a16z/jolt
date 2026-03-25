@@ -69,8 +69,11 @@ pub unsafe fn bigint256_mul_inline(_a: *const u64, _b: *const u64, _result: *mut
 /// - `result` must point to at least 64 bytes of writable memory
 #[cfg(feature = "host")]
 pub unsafe fn bigint256_mul_inline(a: *const u64, b: *const u64, result: *mut u64) {
+    use crate::multiplication::sequence_builder::BigintMul256;
+    use jolt_inlines_sdk::spec::InlineSpec;
+
     let a_array = *(a as *const [u64; INPUT_LIMBS]);
     let b_array = *(b as *const [u64; INPUT_LIMBS]);
-    let result_array = crate::multiplication::spec::bigint_mul(a_array, b_array);
+    let result_array = BigintMul256::reference(&(a_array, b_array));
     core::ptr::copy_nonoverlapping(result_array.as_ptr(), result, OUTPUT_LIMBS);
 }

@@ -2,7 +2,7 @@ use core::array;
 
 use jolt_inlines_sdk::host::{
     instruction::{add::ADD, ld::LD, mul::MUL, mulhu::MULHU, sd::SD, sltu::SLTU},
-    Cpu, FormatInline, InlineOp, InstrAssembler, Instruction, VirtualRegisterGuard,
+    FormatInline, InlineOp, InstrAssembler, Instruction, VirtualRegisterGuard,
 };
 
 use super::{INPUT_LIMBS, OUTPUT_LIMBS};
@@ -155,6 +155,4 @@ impl InlineOp for BigintMul256 {
     fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
         BigIntMulSequenceBuilder::new(asm, operands).build()
     }
-
-    fn build_advice(_asm: InstrAssembler, _operands: FormatInline, _cpu: &mut Cpu) {}
 }

@@ -1,5 +1,8 @@
+use crate::sequence_builder::{Blake3Compression, Blake3Keyed64Compression};
 use crate::{CHAINING_VALUE_LEN, FLAG_CHUNK_END, FLAG_CHUNK_START, FLAG_KEYED_HASH, FLAG_ROOT, IV};
 use jolt_inlines_sdk::host::Xlen;
+use jolt_inlines_sdk::spec::rand::rngs::StdRng;
+use jolt_inlines_sdk::spec::rand::Rng;
 use jolt_inlines_sdk::spec::{InlineMemoryLayout, InlineSpec, InlineTestHarness, INLINE};
 
 const MSG_PERMUTATION: [usize; 16] = [2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8];
@@ -36,13 +39,13 @@ fn permute(m: &mut [u32; 16]) {
 
 /// Reference BLAKE3 compression function.
 /// See https://github.com/BLAKE3-team/BLAKE3/blob/master/reference_impl/reference_impl.rs
-pub fn execute_blake3_compression(
-    chaining_value: &mut [u32; 8],
+fn compress(
+    chaining_value: &[u32; 8],
     block_words: &[u32; 16],
     counter: &[u32; 2],
     block_len: u32,
     flags: u32,
-) {
+) -> [u32; 8] {
     #[rustfmt::skip]
     let mut state = [
         chaining_value[0], chaining_value[1], chaining_value[2], chaining_value[3],
@@ -66,37 +69,29 @@ pub fn execute_blake3_compression(
     permute(&mut block);
     round(&mut state, &block); // round 7
 
+    let mut result = [0u32; 8];
     for i in 0..8 {
-        state[i] ^= state[i + 8];
+        result[i] = state[i] ^ state[i + 8];
     }
-    chaining_value.copy_from_slice(&state[..8]);
+    result
 }
 
-/// Reference BLAKE3 keyed64 compression: `blake3::keyed_hash(key, left || right)`.
-pub fn execute_blake3_keyed64_compression(left: &[u32; 8], right: &[u32; 8], key: &mut [u32; 8]) {
-    let mut message = [0u32; 16];
-    message[..8].copy_from_slice(left);
-    message[8..].copy_from_slice(right);
-
-    execute_blake3_compression(
-        key,
-        &message,
-        &[0, 0],
-        64,
-        FLAG_CHUNK_START | FLAG_CHUNK_END | FLAG_ROOT | FLAG_KEYED_HASH,
-    );
-}
-
-pub struct Blake3CompressionSpec;
-
-impl InlineSpec for Blake3CompressionSpec {
+impl InlineSpec for Blake3Compression {
     type Input = ([u32; 8], [u32; 16], [u32; 2], u32, u32);
     type Output = [u32; CHAINING_VALUE_LEN];
 
+    fn random_input(rng: &mut StdRng) -> Self::Input {
+        (
+            core::array::from_fn(|_| rng.gen()),
+            core::array::from_fn(|_| rng.gen()),
+            core::array::from_fn(|_| rng.gen()),
+            rng.gen(),
+            rng.gen(),
+        )
+    }
+
     fn reference(input: &Self::Input) -> Self::Output {
-        let mut cv = input.0;
-        execute_blake3_compression(&mut cv, &input.1, &input.2, input.3, input.4);
-        cv
+        compress(&input.0, &input.1, &input.2, input.3, input.4)
     }
 
     fn create_harness() -> InlineTestHarness {
@@ -132,16 +127,30 @@ impl InlineSpec for Blake3CompressionSpec {
     }
 }
 
-pub struct Blake3Keyed64CompressionSpec;
-
-impl InlineSpec for Blake3Keyed64CompressionSpec {
+impl InlineSpec for Blake3Keyed64Compression {
     type Input = ([u32; 8], [u32; 8], [u32; 8]);
     type Output = [u32; CHAINING_VALUE_LEN];
 
+    fn random_input(rng: &mut StdRng) -> Self::Input {
+        (
+            core::array::from_fn(|_| rng.gen()),
+            core::array::from_fn(|_| rng.gen()),
+            core::array::from_fn(|_| rng.gen()),
+        )
+    }
+
     fn reference(input: &Self::Input) -> Self::Output {
-        let mut key = input.2;
-        execute_blake3_keyed64_compression(&input.0, &input.1, &mut key);
-        key
+        let mut message = [0u32; 16];
+        message[..8].copy_from_slice(&input.0);
+        message[8..].copy_from_slice(&input.1);
+
+        compress(
+            &input.2,
+            &message,
+            &[0, 0],
+            64,
+            FLAG_CHUNK_START | FLAG_CHUNK_END | FLAG_ROOT | FLAG_KEYED_HASH,
+        )
     }
 
     fn create_harness() -> InlineTestHarness {

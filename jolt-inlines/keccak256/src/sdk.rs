@@ -344,13 +344,11 @@ pub(crate) unsafe fn keccak_f(state: *mut u64) {
 /// * Passing an invalid pointer, misaligned pointer, or insufficiently sized
 ///   memory region results in undefined behaviour.
 pub(crate) unsafe fn keccak_f(state: *mut u64) {
-    // On the host, we call our own reference implementation from the tracer crate.
-    let state_slice = core::slice::from_raw_parts_mut(state, 25);
-    crate::spec::execute_keccak_f(
-        state_slice
-            .try_into()
-            .expect("State slice was not 25 words"),
-    );
+    use crate::sequence_builder::Keccak256Permutation;
+    use jolt_inlines_sdk::spec::InlineSpec;
+    let state_ref = &*(state as *const [u64; 25]);
+    let result = Keccak256Permutation::reference(state_ref);
+    core::ptr::copy_nonoverlapping(result.as_ptr(), state, 25);
 }
 
 #[cfg(all(

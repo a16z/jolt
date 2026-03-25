@@ -17,7 +17,7 @@ use jolt_inlines_sdk::host::{
         sub::SUB,
         virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63},
     },
-    Cpu, FormatInline, InlineOp, InstrAssembler, InstrAssemblerExt, Instruction,
+    FormatInline, InlineOp, InstrAssembler, InstrAssemblerExt, Instruction,
     Value::{Imm, Reg},
     VirtualRegisterGuard,
 };
@@ -239,19 +239,14 @@ impl InlineOp for Blake2bCompression {
     fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
         Blake2SequenceBuilder::new(asm, operands).build()
     }
-
-    fn build_advice(_asm: InstrAssembler, _operands: FormatInline, _cpu: &mut Cpu) {}
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        test_utils::{create_blake2_harness, instruction, load_blake2_data, read_state},
-        IV,
-    };
+    use crate::IV;
+    use jolt_inlines_sdk::spec::InlineSpec;
 
     fn generate_default_input() -> ([u64; crate::MSG_BLOCK_LEN], u64) {
-        // Message block with "abc" in little-endian
         let mut message = [0u64; crate::MSG_BLOCK_LEN];
         message[0] = 0x0000000000636261u64;
         (message, 3)
@@ -294,13 +289,18 @@ mod tests {
         counter: u64,
         is_final: bool,
     ) -> [u64; crate::STATE_VECTOR_LEN] {
-        let mut harness = create_blake2_harness();
-        load_blake2_data(&mut harness, state, message, counter, is_final);
-        harness.execute_inline(instruction());
-        read_state(&mut harness)
+        let mut combined = [0u64; 18];
+        combined[..16].copy_from_slice(message);
+        combined[16] = counter;
+        combined[17] = is_final as u64;
+
+        let input = (*state, combined);
+        let mut harness = super::Blake2bCompression::create_harness();
+        super::Blake2bCompression::load(&mut harness, &input);
+        harness.execute_inline(super::Blake2bCompression::instruction());
+        super::Blake2bCompression::read(&mut harness)
     }
 
-    /// Helper function to test blake2b compression with given input
     fn verify_blake2b_compression(message_words: [u64; crate::MSG_BLOCK_LEN], message_len: u64) {
         let mut initial_state = IV;
         initial_state[0] ^= 0x01010000 ^ 64u64;
@@ -310,7 +310,7 @@ mod tests {
 
         assert_eq!(
             &expected_state, &trace_result,
-            "\n❌ BLAKE2b Trace Verification Failed!\n\
+            "\nBLAKE2b Trace Verification Failed!\n\
             Message: {message_words:016x?}"
         );
     }
@@ -323,7 +323,6 @@ mod tests {
 
     #[test]
     fn test_trace_result_with_random_inputs() {
-        // Test with multiple random inputs
         for _ in 0..10 {
             let input = generate_random_input();
             verify_blake2b_compression(input.0, input.1);

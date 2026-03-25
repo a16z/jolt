@@ -19,7 +19,7 @@ use jolt_inlines_sdk::host::{
         lw::LW,
         virtual_xor_rotw::{VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8},
     },
-    Cpu, FormatInline, InlineOp, InstrAssembler, InstrAssemblerExt, Instruction,
+    FormatInline, InlineOp, InstrAssembler, InstrAssemblerExt, Instruction,
     Value::{Imm, Reg},
     VirtualRegisterGuard,
 };
@@ -407,8 +407,6 @@ impl InlineOp for Blake3Compression {
     fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
         Blake3SequenceBuilder::new(asm, operands).build()
     }
-
-    fn build_advice(_asm: InstrAssembler, _operands: FormatInline, _cpu: &mut Cpu) {}
 }
 
 pub struct Blake3Keyed64Compression;
@@ -423,41 +421,29 @@ impl InlineOp for Blake3Keyed64Compression {
     fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
         Blake3Keyed64SequenceBuilder::new(asm, operands).build()
     }
-
-    fn build_advice(_asm: InstrAssembler, _operands: FormatInline, _cpu: &mut Cpu) {}
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::test_utils::{
-        create_blake3_harness, create_blake3_keyed64_harness, helpers::*, instruction,
-        keyed64_instruction, load_blake3_data, load_blake3_keyed64_data, read_output,
-        ChainingValue, MessageBlock,
-    };
+    use crate::test_utils::helpers::*;
+    use jolt_inlines_sdk::spec::InlineSpec;
 
     fn generate_trace_result(
-        chaining_value: &ChainingValue,
-        message: &MessageBlock,
+        chaining_value: &[u32; crate::CHAINING_VALUE_LEN],
+        message: &[u32; crate::MSG_BLOCK_LEN],
         counter: &[u32; 2],
         block_len: u32,
         flags: u32,
     ) -> [u8; crate::OUTPUT_SIZE_IN_BYTES] {
-        let mut harness = create_blake3_harness();
-        load_blake3_data(
-            &mut harness,
-            chaining_value,
-            message,
-            counter,
-            block_len,
-            flags,
-        );
-        harness.execute_inline(instruction());
-        let words = read_output(&mut harness);
+        let input = (*chaining_value, *message, *counter, block_len, flags);
+        let mut harness = super::Blake3Compression::create_harness();
+        super::Blake3Compression::load(&mut harness, &input);
+        harness.execute_inline(super::Blake3Compression::instruction());
+        let words = super::Blake3Compression::read(&mut harness);
 
         let mut bytes = [0u8; crate::OUTPUT_SIZE_IN_BYTES];
         for (i, w) in words.iter().enumerate() {
-            let le = w.to_le_bytes();
-            bytes[i * 4..(i + 1) * 4].copy_from_slice(&le);
+            bytes[i * 4..(i + 1) * 4].copy_from_slice(&w.to_le_bytes());
         }
         bytes
     }
@@ -466,7 +452,6 @@ mod tests {
     fn test_trace_result_equals_blake3_compress_reference() {
         for _ in 0..1000 {
             let message_bytes = generate_random_bytes(crate::MSG_BLOCK_LEN * 4);
-            // Convert bytes to message block (u32 words)
             assert_eq!(
                 message_bytes.len(),
                 crate::MSG_BLOCK_LEN * 4,
@@ -493,21 +478,17 @@ mod tests {
     #[test]
     fn test_trace_result_equals_blake3_keyed_compress_reference() {
         for _ in 0..1000 {
-            // Generate random key
             let key_bytes = generate_random_bytes(crate::CHAINING_VALUE_LEN * 4);
             let mut key = [0u32; crate::CHAINING_VALUE_LEN];
             key.copy_from_slice(&bytes_to_u32_vec(&key_bytes));
 
-            // Generate random message
             let message_bytes = generate_random_bytes(crate::MSG_BLOCK_LEN * 4);
             let words_vec = bytes_to_u32_vec(&message_bytes);
             let mut message_words = [0u32; crate::MSG_BLOCK_LEN];
             message_words.copy_from_slice(&words_vec);
 
-            // Compute expected result using keyed hash
             let expected_hash_bytes = compute_keyed_expected_result(&message_bytes, key);
 
-            // Generate trace result with keyed hash flag
             let counter = [0u32, 0u32];
             let block_len = 64u32;
             let flags = crate::FLAG_CHUNK_START
@@ -526,14 +507,12 @@ mod tests {
 
     #[test]
     fn test_trace_keyed64_matches_blake3_keyed_hash() {
-        // Test that sequence builder's Keyed64 mode matches blake3::keyed_hash for 64-byte input
         use rand::rngs::StdRng;
         use rand::{Rng, SeedableRng};
 
         let mut rng = StdRng::seed_from_u64(88888);
 
         for _ in 0..100 {
-            // Generate random left, right, and key
             let mut left = [0u32; crate::CHAINING_VALUE_LEN];
             let mut right = [0u32; crate::CHAINING_VALUE_LEN];
             let mut key = [0u32; crate::CHAINING_VALUE_LEN];
@@ -543,20 +522,17 @@ mod tests {
                 key[i] = rng.gen();
             }
 
-            // Execute sequence builder with key as IV
-            let mut harness = create_blake3_keyed64_harness();
-            load_blake3_keyed64_data(&mut harness, &left, &right, &key);
-            harness.execute_inline(keyed64_instruction());
-            let result_words = read_output(&mut harness);
+            let input = (left, right, key);
+            let mut harness = super::Blake3Keyed64Compression::create_harness();
+            super::Blake3Keyed64Compression::load(&mut harness, &input);
+            harness.execute_inline(super::Blake3Keyed64Compression::instruction());
+            let result_words = super::Blake3Keyed64Compression::read(&mut harness);
 
-            // Convert result to bytes
             let mut result_bytes = [0u8; 32];
             for (i, w) in result_words.iter().enumerate() {
-                let le = w.to_le_bytes();
-                result_bytes[i * 4..(i + 1) * 4].copy_from_slice(&le);
+                result_bytes[i * 4..(i + 1) * 4].copy_from_slice(&w.to_le_bytes());
             }
 
-            // Convert left/right/key to bytes for blake3 reference
             let mut left_bytes = [0u8; 32];
             let mut right_bytes = [0u8; 32];
             let mut key_bytes = [0u8; 32];
@@ -570,13 +546,11 @@ mod tests {
                 key_bytes[i * 4..(i + 1) * 4].copy_from_slice(&w.to_le_bytes());
             }
 
-            // Concatenate left || right as 64-byte input
-            let mut input = [0u8; 64];
-            input[..32].copy_from_slice(&left_bytes);
-            input[32..].copy_from_slice(&right_bytes);
+            let mut input_bytes = [0u8; 64];
+            input_bytes[..32].copy_from_slice(&left_bytes);
+            input_bytes[32..].copy_from_slice(&right_bytes);
 
-            // Compute expected using official blake3::keyed_hash
-            let expected = blake3::keyed_hash(&key_bytes, &input);
+            let expected = blake3::keyed_hash(&key_bytes, &input_bytes);
 
             assert_eq!(
                 result_bytes,

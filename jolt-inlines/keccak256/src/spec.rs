@@ -1,6 +1,8 @@
-use crate::sequence_builder::{ROTATION_OFFSETS, ROUND_CONSTANTS};
+use crate::sequence_builder::{Keccak256Permutation, ROTATION_OFFSETS, ROUND_CONSTANTS};
 use crate::{Keccak256State, NUM_LANES};
 use jolt_inlines_sdk::host::Xlen;
+use jolt_inlines_sdk::spec::rand::rngs::StdRng;
+use jolt_inlines_sdk::spec::rand::Rng;
 use jolt_inlines_sdk::spec::{InlineMemoryLayout, InlineSpec, InlineTestHarness, INLINE};
 
 #[cfg(all(test, feature = "host"))]
@@ -18,7 +20,7 @@ pub(crate) fn execute_keccak256(msg: &[u8]) -> [u8; 32] {
             state[i] ^= u64::from_le_bytes(lane_bytes.try_into().unwrap());
         }
 
-        execute_keccak_f(&mut state);
+        state = Keccak256Permutation::reference(&state);
         offset += RATE_IN_BYTES;
     }
 
@@ -32,7 +34,7 @@ pub(crate) fn execute_keccak256(msg: &[u8]) -> [u8; 32] {
     for (i, lane_bytes) in block.chunks_exact(8).enumerate() {
         state[i] ^= u64::from_le_bytes(lane_bytes.try_into().unwrap());
     }
-    execute_keccak_f(&mut state);
+    state = Keccak256Permutation::reference(&state);
 
     let mut hash = [0u8; 32];
     for (i, lane) in state.iter().take(4).enumerate() {
@@ -94,11 +96,13 @@ pub(crate) fn execute_iota(state: &mut Keccak256State, round_constant: u64) {
     state[0] ^= round_constant;
 }
 
-pub struct Keccak256PermutationSpec;
-
-impl InlineSpec for Keccak256PermutationSpec {
+impl InlineSpec for Keccak256Permutation {
     type Input = [u64; 25];
     type Output = [u64; 25];
+
+    fn random_input(rng: &mut StdRng) -> Self::Input {
+        core::array::from_fn(|_| rng.gen())
+    }
 
     fn reference(input: &Self::Input) -> Self::Output {
         let mut state = *input;
@@ -107,9 +111,6 @@ impl InlineSpec for Keccak256PermutationSpec {
     }
 
     fn create_harness() -> InlineTestHarness {
-        // Keccak permutation is in-place: rs1 points to the 200-byte state region
-        // which serves as both input and output. The input_size=136 is the rate
-        // (unused for the permutation itself); output_size=200 is the full state.
         let layout = InlineMemoryLayout::single_input(136, 200);
         InlineTestHarness::new(layout, Xlen::Bit64)
     }
@@ -124,7 +125,6 @@ impl InlineSpec for Keccak256PermutationSpec {
 
     fn load(harness: &mut InlineTestHarness, input: &Self::Input) {
         harness.setup_registers();
-        // In-place: state is loaded into the output region (rs1 target)
         harness.load_state64(input);
     }
 

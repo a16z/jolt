@@ -20,12 +20,11 @@ pub fn instruction_sha256init() -> tracer::instruction::inline::INLINE {
 }
 
 mod exec_functions {
-    use crate::sequence_builder::BLOCK;
-    use crate::spec::{execute_sha256_compression, execute_sha256_compression_initial};
+    use crate::sequence_builder::{Sha256Compression, Sha256CompressionInitial, BLOCK};
+    use jolt_inlines_sdk::spec::InlineSpec;
 
     #[test]
     fn test_exec_sha256_compression_function() {
-        // Test with standard test vectors
         let input = [
             0x61626380, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
             0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
@@ -34,9 +33,8 @@ mod exec_functions {
 
         let initial_state = BLOCK.map(|x| x as u32);
 
-        let result = execute_sha256_compression(initial_state, input);
+        let result = Sha256Compression::reference(&(initial_state, input));
 
-        // Expected result for SHA-256("abc")
         let expected = [
             0xba7816bf, 0x8f01cfea, 0x414140de, 0x5dae2223, 0xb00361a3, 0x96177a9c, 0xb410ff61,
             0xf20015ad,
@@ -50,16 +48,14 @@ mod exec_functions {
 
     #[test]
     fn test_exec_sha256_compression_initial_function() {
-        // Test the initial compression function
         let input = [
             0x61626380, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
             0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
             0x00000000, 0x00000018,
         ];
 
-        let result = execute_sha256_compression_initial(input);
+        let result = Sha256CompressionInitial::reference(&input);
 
-        // Expected result for SHA-256("abc")
         let expected = [
             0xba7816bf, 0x8f01cfea, 0x414140de, 0x5dae2223, 0xb00361a3, 0x96177a9c, 0xb410ff61,
             0xf20015ad,
@@ -73,26 +69,22 @@ mod exec_functions {
 
     #[test]
     fn test_exec_sha256_multi_block() {
-        // Test with a two-block message
-        // First block
         let input1 = [
             0x61626364, 0x62636465, 0x63646566, 0x64656667, 0x65666768, 0x66676869, 0x6768696a,
             0x68696a6b, 0x696a6b6c, 0x6a6b6c6d, 0x6b6c6d6e, 0x6c6d6e6f, 0x6d6e6f70, 0x6e6f7071,
             0x80000000, 0x00000000,
         ];
 
-        let state1 = execute_sha256_compression_initial(input1);
+        let state1 = Sha256CompressionInitial::reference(&input1);
 
-        // Second block with padding and length
         let input2 = [
             0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
             0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
             0x00000000, 0x000001c0,
         ];
 
-        let result = execute_sha256_compression(state1, input2);
+        let result = Sha256Compression::reference(&(state1, input2));
 
-        // Expected result for SHA-256("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq")
         let expected = [
             0x248d6a61, 0xd20638b8, 0xe5c02693, 0x0c3e6039, 0xa33ce459, 0x64ff2167, 0xf6ecedd4,
             0x19db06c1,

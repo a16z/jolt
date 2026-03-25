@@ -401,18 +401,13 @@ pub(crate) unsafe fn blake2b_compress(state: *mut u64, message: *const u64) {
 /// - `message` must point to a valid array of 18 u64 values
 #[cfg(feature = "host")]
 pub(crate) unsafe fn blake2b_compress(state: *mut u64, message: *const u64) {
-    let state_slice = core::slice::from_raw_parts_mut(state, 8);
-    let message_slice = core::slice::from_raw_parts(message, 18);
+    use crate::sequence_builder::Blake2bCompression;
+    use jolt_inlines_sdk::spec::InlineSpec;
 
-    // Convert to arrays for type safety
-    let state_array: &mut [u64; 8] = state_slice
-        .try_into()
-        .expect("State pointer must reference exactly 8 u64 values");
-    let message_array: [u64; 18] = message_slice
-        .try_into()
-        .expect("Message pointer must reference exactly 18 u64 values");
-
-    crate::spec::execute_blake2b_compression(state_array, &message_array);
+    let state_array = *(state as *const [u64; 8]);
+    let message_array = *(message as *const [u64; 18]);
+    let result = Blake2bCompression::reference(&(state_array, message_array));
+    core::ptr::copy_nonoverlapping(result.as_ptr(), state, 8);
 }
 
 #[cfg(all(

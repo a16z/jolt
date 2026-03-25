@@ -20,9 +20,6 @@ mod host;
 #[cfg(feature = "host")]
 pub use host::*;
 
-#[cfg(all(test, feature = "host"))]
-pub mod test_utils;
-
 /// Blake2b initialization vector (IV).
 pub const IV: [u64; 8] = [
     0x6a09e667f3bcc908,

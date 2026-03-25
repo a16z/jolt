@@ -17,4 +17,3 @@ jolt-inlines-sdk = { workspace = true, optional = true }
 [dev-dependencies]
 blake3.workspace = true
 rand.workspace = true
-tracer = { workspace = true, features = ["std", "test-utils"] }

@@ -364,14 +364,18 @@ pub(crate) unsafe fn blake3_compress(chaining_value: *mut u32, message: *const u
     // Extract flags (next u32 at offset 19)
     let flags = *message.add(19);
 
-    // On the host, we call our reference implementation from the exec module.
-    crate::spec::execute_blake3_compression(
-        &mut *(chaining_value as *mut [u32; 8]),
-        message_block,
-        &counter_array,
+    use crate::sequence_builder::Blake3Compression;
+    use jolt_inlines_sdk::spec::InlineSpec;
+
+    let input = (
+        *(chaining_value as *const [u32; 8]),
+        *message_block,
+        counter_array,
         block_len,
         flags,
     );
+    let result = Blake3Compression::reference(&input);
+    core::ptr::copy_nonoverlapping(result.as_ptr(), chaining_value, 8);
 }
 
 #[cfg(all(
@@ -410,11 +414,16 @@ unsafe fn blake3_keyed64_compress(left: *const u32, right: *const u32, iv: *mut 
 #[cfg(feature = "host")]
 #[inline(always)]
 unsafe fn blake3_keyed64_compress(left: *const u32, right: *const u32, key: *mut u32) {
-    crate::spec::execute_blake3_keyed64_compression(
-        &*(left as *const [u32; 8]),
-        &*(right as *const [u32; 8]),
-        &mut *(key as *mut [u32; 8]),
+    use crate::sequence_builder::Blake3Keyed64Compression;
+    use jolt_inlines_sdk::spec::InlineSpec;
+
+    let input = (
+        *(left as *const [u32; 8]),
+        *(right as *const [u32; 8]),
+        *(key as *const [u32; 8]),
     );
+    let result = Blake3Keyed64Compression::reference(&input);
+    core::ptr::copy_nonoverlapping(result.as_ptr(), key, 8);
 }
 
 #[cfg(all(

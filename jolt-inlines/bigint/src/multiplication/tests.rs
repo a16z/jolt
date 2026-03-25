@@ -4,36 +4,29 @@ use super::{INPUT_LIMBS, OUTPUT_LIMBS};
 
 mod bigint256_multiplication {
     use super::TestVectors;
-    use crate::test_utils::bigint_verify;
+    use crate::multiplication::sequence_builder::BigintMul256;
+    use jolt_inlines_sdk::spec;
 
     #[test]
     fn test_bigint256_mul_default() {
-        // Test with the default test vector
-        let (lhs, rhs, expected) = TestVectors::get_default_test();
-        bigint_verify::assert_exec_trace_equiv(&lhs, &rhs, &expected);
+        let (lhs, rhs, _expected) = TestVectors::get_default_test();
+        spec::verify::<BigintMul256>(&(lhs, rhs));
     }
 
     #[test]
     fn test_bigint256_mul_random() {
-        // Test with 100 random inputs
         for _ in 0..100 {
-            let (lhs, rhs, expected) = TestVectors::generate_random_test();
-            bigint_verify::assert_exec_trace_equiv(&lhs, &rhs, &expected);
+            let (lhs, rhs, _expected) = TestVectors::generate_random_test();
+            spec::verify::<BigintMul256>(&(lhs, rhs));
         }
     }
 
     #[test]
     fn test_bigint256_mul_edge_cases() {
-        println!("\n=== Testing BigInt256 multiplication edge cases ===");
-
         let edge_cases = TestVectors::get_edge_cases();
-
-        for (i, (lhs, rhs, expected, description)) in edge_cases.iter().enumerate() {
-            println!("\nEdge case #{}: {}", i + 1, description);
-            bigint_verify::assert_exec_trace_equiv(lhs, rhs, expected);
+        for (lhs, rhs, _expected, _description) in &edge_cases {
+            spec::verify::<BigintMul256>(&(*lhs, *rhs));
         }
-
-        println!("\n✅ All {} edge cases passed!\n", edge_cases.len());
     }
 }
 

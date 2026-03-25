@@ -42,7 +42,12 @@ pub trait InlineOp: Send + Sync {
 
     fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction>;
 
-    fn build_advice(asm: InstrAssembler, operands: FormatInline, cpu: &mut Cpu) -> Self::Advice;
+    fn build_advice(_asm: InstrAssembler, _operands: FormatInline, _cpu: &mut Cpu) -> Self::Advice
+    where
+        Self::Advice: Default,
+    {
+        Self::Advice::default()
+    }
 }
 
 /// Write the default inline trace for a single `InlineOp` to `file` with the given `mode`.

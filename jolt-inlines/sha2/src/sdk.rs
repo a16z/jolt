@@ -356,9 +356,11 @@ pub(crate) unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
 /// - The memory regions must not overlap
 #[cfg(feature = "host")]
 pub(crate) unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
+    use crate::sequence_builder::Sha256Compression;
+    use jolt_inlines_sdk::spec::InlineSpec;
     let input_array = *(input as *const [u32; 16]);
     let state_array = *(state as *const [u32; 8]);
-    let result = crate::spec::execute_sha256_compression(state_array, input_array);
+    let result = Sha256Compression::reference(&(state_array, input_array));
     std::ptr::copy_nonoverlapping(result.as_ptr(), state, 8)
 }
 
@@ -415,8 +417,10 @@ pub(crate) unsafe fn sha256_compression_initial(input: *const u32, state: *mut u
 /// - The memory regions must not overlap
 #[cfg(feature = "host")]
 pub(crate) unsafe fn sha256_compression_initial(input: *const u32, state: *mut u32) {
-    let input = *(input as *const [u32; 16]);
-    let result = crate::spec::execute_sha256_compression_initial(input);
+    use crate::sequence_builder::Sha256CompressionInitial;
+    use jolt_inlines_sdk::spec::InlineSpec;
+    let input_array = *(input as *const [u32; 16]);
+    let result = Sha256CompressionInitial::reference(&input_array);
     std::ptr::copy_nonoverlapping(result.as_ptr(), state, 8)
 }
 
