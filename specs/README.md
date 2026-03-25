@@ -14,7 +14,7 @@ Spec authors focus on **intent and evaluation**. Execution is downstream — it 
 
 ## Workflow
 
-1. **Author a spec** using the template: `./new-spec.sh my-feature-name`
+1. **Author a spec** using the template from the repo root: `./specs/new-spec.sh my-feature-name`
 2. **Open a PR** with the spec. Maintainers review it.
 3. **Merge the spec.** A GitHub Action automatically creates a tracking issue.
 4. **Implement.** The spec author or a maintainer steers the implementation (via AI or manually).

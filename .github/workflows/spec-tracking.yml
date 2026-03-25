@@ -13,7 +13,7 @@ jobs:
       issues: write
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 2
 
@@ -21,6 +21,7 @@ jobs:
         id: specs
         run: |
           # Find spec files added in this push (exclude README and TEMPLATE)
+          # Squash-and-merge is enforced, so HEAD~1 always covers the full change
           NEW_SPECS=$(git diff --name-only --diff-filter=A HEAD~1 HEAD -- 'specs/*.md' | grep -v 'README.md' | grep -v 'TEMPLATE.md' || true)
           echo "files<<EOF" >> "$GITHUB_OUTPUT"
           echo "$NEW_SPECS" >> "$GITHUB_OUTPUT"
@@ -58,7 +59,7 @@ jobs:
             echo "Created tracking issue for ${spec}: ${ISSUE_URL}"
 
             # Update the Tracking field in the spec
-            sed -i "s|| Tracking    |.*|$|| Tracking    | ${ISSUE_URL} |" "$spec"
+            sed -i "s#^|[[:space:]]*Tracking[[:space:]]*|.*|#| Tracking    | ${ISSUE_URL} |#" "$spec"
           done <<< "${{ steps.specs.outputs.files }}"
 
       - name: Commit tracking links
