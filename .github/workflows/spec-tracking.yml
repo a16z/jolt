@@ -1,0 +1,69 @@
+name: Create Spec Tracking Issue
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "specs/*.md"
+
+jobs:
+  create-issue:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Find new specs
+        id: specs
+        run: |
+          # Find spec files added in this push (exclude README and TEMPLATE)
+          NEW_SPECS=$(git diff --name-only --diff-filter=A HEAD~1 HEAD -- 'specs/*.md' | grep -v 'README.md' | grep -v 'TEMPLATE.md' || true)
+          echo "files<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$NEW_SPECS" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Create tracking issues
+        if: steps.specs.outputs.files != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          while IFS= read -r spec; do
+            [ -z "$spec" ] && continue
+
+            # Extract title from first H1
+            TITLE=$(head -5 "$spec" | grep '^# ' | head -1 | sed 's/^# Spec: //' | sed 's/^# //')
+            if [ -z "$TITLE" ]; then
+              TITLE="$(basename "$spec" .md)"
+            fi
+
+            SPEC_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/main/${spec}"
+
+            ISSUE_URL=$(gh issue create \
+              --title "Implement spec: ${TITLE}" \
+              --label "spec" \
+              --body "$(cat <<EOF
+          ## Spec
+
+          [${spec}](${SPEC_URL})
+
+          This issue tracks the implementation of the above spec. See the spec for full details.
+
+          EOF
+          )")
+
+            echo "Created tracking issue for ${spec}: ${ISSUE_URL}"
+
+            # Update the Tracking field in the spec
+            sed -i "s|| Tracking    |.*|$|| Tracking    | ${ISSUE_URL} |" "$spec"
+          done <<< "${{ steps.specs.outputs.files }}"
+
+      - name: Commit tracking links
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add specs/*.md
+          git diff --cached --quiet || (git commit -m "chore: update spec tracking links" && git push)
