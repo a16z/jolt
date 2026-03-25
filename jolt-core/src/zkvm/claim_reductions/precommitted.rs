@@ -21,7 +21,6 @@ pub enum PrecommittedPolynomial<F: JoltField> {
     },
     ProgramImage {
         words: Arc<Vec<u64>>,
-        start_index: usize,
         padded_len: usize,
     },
 }
@@ -36,12 +35,6 @@ impl<F: JoltField> PrecommittedPolynomial<F> {
             Self::ProgramImage { padded_len, .. } => *padded_len,
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Allocative)]
-pub enum PrecommittedEmbeddingMode {
-    DominantPrecommitted,
-    EmbeddedPrecommitted,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Allocative)]
@@ -62,9 +55,7 @@ pub struct PrecommittedSchedulingReference {
 #[derive(Debug, Clone, Allocative)]
 pub struct PrecommittedClaimReduction<F: JoltField> {
     pub scheduling_reference: PrecommittedSchedulingReference,
-    pub embedding_mode: PrecommittedEmbeddingMode,
     pub cycle_var_challenges: Vec<F::Challenge>,
-    dory_opening_round_permutation_be: Vec<usize>,
     poly_opening_round_permutation_be: Vec<usize>,
     cycle_phase_rounds: Vec<usize>,
     cycle_phase_total_rounds: usize,
@@ -100,14 +91,12 @@ impl<F: JoltField> PrecommittedClaimReduction<F> {
 
     #[inline]
     pub fn new(
-        poly_total_vars: usize,
         poly_row_vars: usize,
         poly_col_vars: usize,
         scheduling_reference: PrecommittedSchedulingReference,
     ) -> Self {
         let has_precommitted_dominance =
             scheduling_reference.reference_total_vars > scheduling_reference.main_total_vars;
-        let embedding_mode = Self::embedding_mode_for_poly(poly_total_vars, &scheduling_reference);
         let dory_opening_round_permutation_be = Self::reference_dory_opening_round_permutation_be(
             &scheduling_reference,
             has_precommitted_dominance,
@@ -125,33 +114,13 @@ impl<F: JoltField> PrecommittedClaimReduction<F> {
         );
         Self {
             scheduling_reference,
-            embedding_mode,
             cycle_var_challenges: vec![],
-            dory_opening_round_permutation_be,
             poly_opening_round_permutation_be,
             cycle_phase_rounds,
             cycle_phase_total_rounds: scheduling_reference.cycle_alignment_rounds,
             address_phase_rounds,
             address_phase_total_rounds: scheduling_reference.address_rounds,
         }
-    }
-
-    #[inline]
-    fn embedding_mode_for_poly(
-        poly_total_vars: usize,
-        reference: &PrecommittedSchedulingReference,
-    ) -> PrecommittedEmbeddingMode {
-        let has_precommitted_dominance = reference.reference_total_vars > reference.main_total_vars;
-        let embedding_mode =
-            if has_precommitted_dominance && poly_total_vars == reference.reference_total_vars {
-                PrecommittedEmbeddingMode::DominantPrecommitted
-            } else {
-                PrecommittedEmbeddingMode::EmbeddedPrecommitted
-            };
-        if embedding_mode == PrecommittedEmbeddingMode::DominantPrecommitted {
-            assert_eq!(poly_total_vars, reference.reference_total_vars);
-        }
-        embedding_mode
     }
 
     fn reference_dory_opening_round_permutation_be(
@@ -298,9 +267,7 @@ impl<F: JoltField> PrecommittedClaimReduction<F> {
         &self,
         is_cycle_phase: bool,
         challenges: &[F::Challenge],
-        dense_cycle_prefix_rounds: usize,
     ) -> OpeningPoint<BIG_ENDIAN, F> {
-        let _ = dense_cycle_prefix_rounds;
         if is_cycle_phase {
             let local_cycle_challenges: Vec<F::Challenge> = self
                 .cycle_phase_rounds
@@ -319,10 +286,6 @@ impl<F: JoltField> PrecommittedClaimReduction<F> {
                 .match_endianness();
         }
 
-        debug_assert_eq!(
-            self.dory_opening_round_permutation_be.len(),
-            self.scheduling_reference.reference_total_vars
-        );
         let cycle_round_limit = self.cycle_alignment_rounds();
         let opening_rounds = &self.poly_opening_round_permutation_be;
         let mut opening_point_be = Vec::with_capacity(opening_rounds.len());
@@ -398,13 +361,14 @@ where
         .collect()
 }
 
-pub fn precommitted_eq_evals_with_scaling<F>(
-    challenges_be: &[F::Challenge],
+pub fn precommitted_eq_evals_with_scaling<F, C>(
+    challenges_be: &[C],
     scaling_factor: Option<F>,
     precommitted: &PrecommittedClaimReduction<F>,
 ) -> Vec<F>
 where
-    F: JoltField + std::ops::Mul<F::Challenge, Output = F> + std::ops::SubAssign<F>,
+    C: Copy + Send + Sync + Into<F>,
+    F: JoltField + std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
 {
     let permuted_challenges = precommitted_permute_eq_challenges(
         challenges_be,

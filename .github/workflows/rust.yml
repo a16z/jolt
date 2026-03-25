@@ -141,7 +141,7 @@ jobs:
 
       - name: Install wasm-pack and wasm32 target
         run: |
-          curl https://drager.github.io/wasm-pack/installer/init.sh -sSf | bash
+          curl -sSf https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
           rustup target add wasm32-unknown-unknown
 
       - name: Generate sample project

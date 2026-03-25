@@ -29,9 +29,8 @@ pub use instruction_lookups::{
 };
 pub use precommitted::{
     permute_precommitted_polys, precommitted_eq_evals_with_scaling, precommitted_skip_round_scale,
-    PrecomittedParams, PrecomittedProver, PrecommittedClaimReduction, PrecommittedEmbeddingMode,
-    PrecommittedPhase, PrecommittedPolynomial, PrecommittedSchedulingReference,
-    TWO_PHASE_DEGREE_BOUND,
+    PrecomittedParams, PrecomittedProver, PrecommittedClaimReduction, PrecommittedPhase,
+    PrecommittedPolynomial, PrecommittedSchedulingReference, TWO_PHASE_DEGREE_BOUND,
 };
 pub use program_image::{
     ProgramImageClaimReductionParams, ProgramImageClaimReductionProver,

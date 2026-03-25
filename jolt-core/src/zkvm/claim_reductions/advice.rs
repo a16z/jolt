@@ -18,7 +18,6 @@ use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
-use crate::utils::math::Math;
 use crate::zkvm::claim_reductions::{
     permute_precommitted_polys, precommitted_eq_evals_with_scaling, precommitted_skip_round_scale,
     PrecomittedParams, PrecomittedProver, PrecommittedClaimReduction, PrecommittedPhase,
@@ -37,7 +36,6 @@ pub struct AdviceClaimReductionParams<F: JoltField> {
     pub kind: AdviceKind,
     pub phase: PrecommittedPhase,
     pub precommitted: PrecommittedClaimReduction<F>,
-    pub log_t: usize,
     pub advice_col_vars: usize,
     pub advice_row_vars: usize,
     pub r_val: OpeningPoint<BIG_ENDIAN, F>,
@@ -47,11 +45,9 @@ impl<F: JoltField> AdviceClaimReductionParams<F> {
     pub fn new(
         kind: AdviceKind,
         advice_size_bytes: usize,
-        trace_len: usize,
         scheduling_reference: PrecommittedSchedulingReference,
         accumulator: &dyn OpeningAccumulator<F>,
     ) -> Self {
-        let log_t = trace_len.log_2();
         let r_val = accumulator
             .get_advice_opening(kind, SumcheckId::RamValCheck)
             .map(|(p, _)| p)
@@ -59,13 +55,8 @@ impl<F: JoltField> AdviceClaimReductionParams<F> {
 
         let (advice_col_vars, advice_row_vars) =
             DoryGlobals::advice_sigma_nu_from_max_bytes(advice_size_bytes);
-        let total_vars = advice_row_vars + advice_col_vars;
-        let precommitted = PrecommittedClaimReduction::new(
-            total_vars,
-            advice_row_vars,
-            advice_col_vars,
-            scheduling_reference,
-        );
+        let precommitted =
+            PrecommittedClaimReduction::new(advice_row_vars, advice_col_vars, scheduling_reference);
 
         Self {
             kind,
@@ -73,7 +64,6 @@ impl<F: JoltField> AdviceClaimReductionParams<F> {
             precommitted,
             advice_col_vars,
             advice_row_vars,
-            log_t,
             r_val,
         }
     }
@@ -122,11 +112,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for AdviceClaimReductionParams<F> {
     }
 
     fn normalize_opening_point(&self, challenges: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
-        self.precommitted.normalize_opening_point(
-            self.phase == PrecommittedPhase::CycleVariables,
-            challenges,
-            self.log_t,
-        )
+        self.precommitted
+            .normalize_opening_point(self.phase == PrecommittedPhase::CycleVariables, challenges)
     }
 
     #[cfg(feature = "zk")]
@@ -334,14 +321,12 @@ impl<F: JoltField> AdviceClaimReductionVerifier<F> {
     pub fn new(
         kind: AdviceKind,
         advice_size_bytes: usize,
-        trace_len: usize,
         scheduling_reference: PrecommittedSchedulingReference,
         accumulator: &VerifierOpeningAccumulator<F>,
     ) -> Self {
         let params = AdviceClaimReductionParams::new(
             kind,
             advice_size_bytes,
-            trace_len,
             scheduling_reference,
             accumulator,
         );

@@ -12,7 +12,7 @@ use crate::utils::math::Math;
 use crate::zkvm::bytecode::{
     BytecodePreprocessing, PreprocessingError, TrustedBytecodeCommitments, TrustedBytecodeHints,
 };
-use crate::zkvm::ram::{remap_address, RAMPreprocessing};
+use crate::zkvm::ram::RAMPreprocessing;
 use common::jolt_device::MemoryLayout;
 use tracer::instruction::{Cycle, Instruction};
 
@@ -62,11 +62,6 @@ impl FullProgramPreprocessing {
         self.program_image_len_words().next_power_of_two().max(2)
     }
 
-    pub fn committed_program_image_start_index(&self, memory_layout: &MemoryLayout) -> usize {
-        self.meta()
-            .committed_program_image_start_index(memory_layout)
-    }
-
     pub fn committed_program_image_num_words(&self, memory_layout: &MemoryLayout) -> usize {
         self.meta().committed_program_image_num_words(memory_layout)
     }
@@ -88,10 +83,6 @@ impl FullProgramPreprocessing {
     #[inline(always)]
     pub fn entry_bytecode_index(&self) -> usize {
         self.bytecode.entry_bytecode_index()
-    }
-
-    pub fn as_bytecode(&self) -> BytecodePreprocessing {
-        self.bytecode.clone()
     }
 }
 
@@ -384,11 +375,6 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
         self.program_image_len_words().next_power_of_two().max(2)
     }
 
-    pub fn committed_program_image_start_index(&self, memory_layout: &MemoryLayout) -> usize {
-        self.meta()
-            .committed_program_image_start_index(memory_layout)
-    }
-
     pub fn committed_program_image_num_words(&self, memory_layout: &MemoryLayout) -> usize {
         self.meta().committed_program_image_num_words(memory_layout)
     }
@@ -414,12 +400,6 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
             .entry_bytecode_index()
     }
 
-    pub fn as_bytecode(&self) -> BytecodePreprocessing {
-        self.as_full()
-            .expect("full program preprocessing required to materialize bytecode")
-            .as_bytecode()
-    }
-
     pub fn to_verifier_program(&self) -> Self {
         match self {
             Self::Full(full) => Self::Full(full.clone()),
@@ -443,23 +423,12 @@ pub struct ProgramMetadata {
 }
 
 impl ProgramMetadata {
-    pub fn from_program<PCS: CommitmentScheme>(program: &ProgramPreprocessing<PCS>) -> Self {
-        program.meta()
-    }
-
     pub fn program_image_len_words_padded(&self) -> usize {
         self.program_image_len_words.next_power_of_two().max(2)
     }
 
-    pub fn committed_program_image_start_index(&self, memory_layout: &MemoryLayout) -> usize {
-        remap_address(self.min_bytecode_address, memory_layout).unwrap_or(0) as usize
-    }
-
-    pub fn committed_program_image_num_words(&self, memory_layout: &MemoryLayout) -> usize {
-        let start_index = self.committed_program_image_start_index(memory_layout);
-        (start_index + self.program_image_len_words.max(1))
-            .next_power_of_two()
-            .max(2)
+    pub fn committed_program_image_num_words(&self, _memory_layout: &MemoryLayout) -> usize {
+        self.program_image_len_words_padded()
     }
 }
 
@@ -488,11 +457,10 @@ impl<PCS: CommitmentScheme> TrustedProgramCommitments<PCS> {
                 program_image_num_words.log_2(),
             );
         let program_image_num_columns = 1usize << program_image_sigma;
-        let program_image_poly = build_program_image_polynomial_padded::<PCS::Field>(
+        let program_image_poly = MultilinearPolynomial::from(build_program_image_words_padded(
             program,
-            memory_layout,
             program_image_num_words,
-        );
+        ));
         let _program_image_guard = DoryGlobals::initialize_context(
             1,
             program_image_num_words,
@@ -516,43 +484,12 @@ impl<PCS: CommitmentScheme> TrustedProgramCommitments<PCS> {
 }
 
 pub(crate) fn build_program_image_words_padded(
-    program: &impl ProgramImageSource,
-    memory_layout: &MemoryLayout,
+    program: &FullProgramPreprocessing,
     padded_len: usize,
 ) -> Vec<u64> {
     debug_assert!(padded_len.is_power_of_two());
-    let start_index = program.committed_program_image_start_index(memory_layout);
-    debug_assert!(padded_len >= start_index + program.program_image_words().len().max(1));
+    debug_assert!(padded_len >= program.ram.bytecode_words.len().max(1));
     let mut coeffs = vec![0u64; padded_len];
-    for (i, &word) in program.program_image_words().iter().enumerate() {
-        coeffs[start_index + i] = word;
-    }
+    coeffs[..program.ram.bytecode_words.len()].copy_from_slice(&program.ram.bytecode_words);
     coeffs
-}
-
-pub(crate) fn build_program_image_polynomial_padded<F: crate::field::JoltField>(
-    program: &impl ProgramImageSource,
-    memory_layout: &MemoryLayout,
-    padded_len: usize,
-) -> MultilinearPolynomial<F> {
-    MultilinearPolynomial::from(build_program_image_words_padded(
-        program,
-        memory_layout,
-        padded_len,
-    ))
-}
-
-pub trait ProgramImageSource {
-    fn program_image_words(&self) -> &[u64];
-    fn committed_program_image_start_index(&self, memory_layout: &MemoryLayout) -> usize;
-}
-
-impl ProgramImageSource for FullProgramPreprocessing {
-    fn program_image_words(&self) -> &[u64] {
-        &self.ram.bytecode_words
-    }
-
-    fn committed_program_image_start_index(&self, memory_layout: &MemoryLayout) -> usize {
-        self.committed_program_image_start_index(memory_layout)
-    }
 }

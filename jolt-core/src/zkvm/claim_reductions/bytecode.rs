@@ -47,9 +47,6 @@ pub struct BytecodeClaimReductionParams<F: JoltField> {
     /// Eq weights over high bytecode address bits (one per committed chunk).
     pub chunk_rbc_weights: Vec<F>,
     pub bytecode_T: usize,
-    pub log_t: usize,
-    /// Number of initial cycle rounds that must follow IncClaimReduction ordering.
-    pub dense_cycle_prefix_vars: usize,
     pub bytecode_chunk_count: usize,
     pub bytecode_col_vars: usize,
     pub bytecode_row_vars: usize,
@@ -66,7 +63,6 @@ impl<F: JoltField> BytecodeClaimReductionParams<F> {
         accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let log_t = DoryGlobals::main_t().log_2();
         assert!(
             full_bytecode_len.is_multiple_of(bytecode_chunk_count),
             "bytecode chunk count ({bytecode_chunk_count}) must divide bytecode_len ({full_bytecode_len})"
@@ -103,7 +99,6 @@ impl<F: JoltField> BytecodeClaimReductionParams<F> {
         // In Stage 8 it is embedded as a top-left block in Joint.
         let (bytecode_col_vars, bytecode_row_vars) = DoryGlobals::balanced_sigma_nu(total_vars);
         let precommitted = PrecommittedClaimReduction::new(
-            total_vars,
             bytecode_row_vars,
             bytecode_col_vars,
             scheduling_reference,
@@ -117,8 +112,6 @@ impl<F: JoltField> BytecodeClaimReductionParams<F> {
             eta_powers,
             chunk_rbc_weights,
             bytecode_T: bytecode_t,
-            log_t,
-            dense_cycle_prefix_vars: log_t,
             bytecode_chunk_count,
             bytecode_col_vars,
             bytecode_row_vars,
@@ -200,11 +193,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeClaimReductionParams<F>
     }
 
     fn normalize_opening_point(&self, challenges: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
-        self.precommitted.normalize_opening_point(
-            self.is_cycle_phase(),
-            challenges,
-            self.dense_cycle_prefix_vars,
-        )
+        self.precommitted
+            .normalize_opening_point(self.is_cycle_phase(), challenges)
     }
 
     #[cfg(feature = "zk")]

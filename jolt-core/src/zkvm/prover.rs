@@ -1390,7 +1390,6 @@ impl<
             let trusted_advice_params = AdviceClaimReductionParams::new(
                 AdviceKind::Trusted,
                 self.program_io.memory_layout.max_trusted_advice_size as usize,
-                self.trace.len(),
                 precommitted_scheduling_reference,
                 &self.opening_accumulator,
             );
@@ -1413,7 +1412,6 @@ impl<
             let untrusted_advice_params = AdviceClaimReductionParams::new(
                 AdviceKind::Untrusted,
                 self.program_io.memory_layout.max_untrusted_advice_size as usize,
-                self.trace.len(),
                 precommitted_scheduling_reference,
                 &self.opening_accumulator,
             );
@@ -1458,7 +1456,6 @@ impl<
                 .committed_program_image_num_words(&self.program_io.memory_layout);
             let program_image_words = build_program_image_words_padded(
                 self.preprocessing.materialized_program(),
-                &self.program_io.memory_layout,
                 padded_len_words,
             );
             let program_image_reduction_params = ProgramImageClaimReductionParams::new(
@@ -2259,11 +2256,6 @@ impl<
                 .shared
                 .program
                 .committed_program_image_num_words(&self.program_io.memory_layout);
-            let start_index = self
-                .preprocessing
-                .shared
-                .program
-                .committed_program_image_start_index(&self.program_io.memory_layout);
             let (program_point, program_claim) =
                 self.opening_accumulator.get_committed_polynomial_opening(
                     CommittedPolynomial::ProgramImageInit,
@@ -2285,7 +2277,6 @@ impl<
                             .bytecode_words
                             .clone(),
                     ),
-                    start_index,
                     padded_len,
                 },
             );

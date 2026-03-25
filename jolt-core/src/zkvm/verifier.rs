@@ -1229,7 +1229,6 @@ impl<
             self.advice_reduction_verifier_trusted = Some(AdviceClaimReductionVerifier::new(
                 AdviceKind::Trusted,
                 self.program_io.memory_layout.max_trusted_advice_size as usize,
-                self.proof.trace_length,
                 precommitted_scheduling_reference,
                 &self.opening_accumulator,
             ));
@@ -1238,7 +1237,6 @@ impl<
             self.advice_reduction_verifier_untrusted = Some(AdviceClaimReductionVerifier::new(
                 AdviceKind::Untrusted,
                 self.program_io.memory_layout.max_untrusted_advice_size as usize,
-                self.proof.trace_length,
                 precommitted_scheduling_reference,
                 &self.opening_accumulator,
             ));

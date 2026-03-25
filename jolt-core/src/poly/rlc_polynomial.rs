@@ -475,7 +475,6 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
                     }
                     PrecommittedPolynomial::ProgramImage {
                         words,
-                        start_index,
                         padded_len,
                     } => {
                         let precommitted_vars = padded_len.log_2();
@@ -491,7 +490,7 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
                                     if word == 0 {
                                         return acc;
                                     }
-                                    let coeff_idx = start_index + offset;
+                                    let coeff_idx = offset;
                                     let row_idx = coeff_idx / precommitted_cols;
                                     if row_idx >= effective_rows {
                                         return acc;

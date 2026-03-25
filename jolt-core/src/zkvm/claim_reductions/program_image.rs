@@ -10,7 +10,7 @@ use std::cell::RefCell;
 use crate::field::JoltField;
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{
@@ -25,8 +25,8 @@ use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckIns
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 use crate::zkvm::claim_reductions::{
-    permute_precommitted_polys, precommitted_eq_evals_with_scaling, precommitted_skip_round_scale,
-    PrecomittedParams, PrecomittedProver, PrecommittedClaimReduction, PrecommittedPhase,
+    permute_precommitted_polys, precommitted_skip_round_scale, PrecomittedParams,
+    PrecomittedProver, PrecommittedClaimReduction, PrecommittedPhase,
     PrecommittedSchedulingReference, TWO_PHASE_DEGREE_BOUND,
 };
 use crate::zkvm::ram::remap_address;
@@ -37,7 +37,6 @@ use tracer::JoltDevice;
 pub struct ProgramImageClaimReductionParams<F: JoltField> {
     pub phase: PrecommittedPhase,
     pub precommitted: PrecommittedClaimReduction<F>,
-    pub log_t: usize,
     pub prog_col_vars: usize,
     pub prog_row_vars: usize,
     pub ram_num_vars: usize,
@@ -45,8 +44,7 @@ pub struct ProgramImageClaimReductionParams<F: JoltField> {
     pub padded_len_words: usize,
     pub m: usize,
     pub r_addr_rw: Vec<F::Challenge>,
-    pub r_addr_rw_reduced: Vec<F::Challenge>,
-    pub selector_rw: F,
+    pub shifted_eq_coeffs: Vec<F>,
 }
 
 impl<F: JoltField> ProgramImageClaimReductionParams<F> {
@@ -71,30 +69,20 @@ impl<F: JoltField> ProgramImageClaimReductionParams<F> {
         debug_assert!(padded_len_words.is_power_of_two());
         debug_assert!(padded_len_words > 0);
         let (prog_col_vars, prog_row_vars) = DoryGlobals::balanced_sigma_nu(m);
-        let log_t = DoryGlobals::main_t().log_2();
-        let total_vars = prog_row_vars + prog_col_vars;
-        let precommitted = PrecommittedClaimReduction::new(
-            total_vars,
-            prog_row_vars,
-            prog_col_vars,
-            scheduling_reference,
-        );
+        let precommitted =
+            PrecommittedClaimReduction::new(prog_row_vars, prog_col_vars, scheduling_reference);
 
         let (r_rw, _) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamVal,
             SumcheckId::RamReadWriteChecking,
         );
         let (r_addr_rw, _) = r_rw.split_at(ram_num_vars);
-        let (r_addr_rw_reduced, selector_rw) = top_left_program_image_point_and_selector::<F>(
-            &r_addr_rw.r,
-            start_index,
-            padded_len_words,
-        );
+        let shifted_eq_coeffs =
+            shifted_program_image_eq_slice::<F>(&r_addr_rw.r, start_index, padded_len_words);
 
         Self {
             phase: PrecommittedPhase::CycleVariables,
             precommitted,
-            log_t,
             prog_col_vars,
             prog_row_vars,
             ram_num_vars,
@@ -102,8 +90,7 @@ impl<F: JoltField> ProgramImageClaimReductionParams<F> {
             padded_len_words,
             m,
             r_addr_rw: r_addr_rw.r,
-            r_addr_rw_reduced,
-            selector_rw,
+            shifted_eq_coeffs,
         }
     }
 }
@@ -157,7 +144,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProgramImageClaimReductionParam
 
     fn normalize_opening_point(&self, challenges: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         self.precommitted
-            .normalize_opening_point(self.is_cycle_phase(), challenges, self.log_t)
+            .normalize_opening_point(self.is_cycle_phase(), challenges)
     }
 
     #[cfg(feature = "zk")]
@@ -206,8 +193,16 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProgramImageClaimReductionParam
             PrecommittedPhase::CycleVariables => vec![],
             PrecommittedPhase::AddressVariables => {
                 let opening_point = self.normalize_opening_point(sumcheck_challenges);
-                let eq_combined =
-                    self.selector_rw * EqPolynomial::mle(&opening_point.r, &self.r_addr_rw_reduced);
+                let eq_combined = eval_shifted_eq_poly_at_opening_point::<F>(
+                    &self.r_addr_rw,
+                    self.start_index,
+                    &opening_point.r,
+                );
+                debug_assert_eq!(
+                    eq_combined,
+                    evaluate_shifted_eq_poly::<F, _>(&self.shifted_eq_coeffs, &opening_point.r),
+                    "program_image eq_slice optimized evaluation mismatch"
+                );
                 let scale: F = precommitted_skip_round_scale(&self.precommitted);
                 vec![eq_combined * scale]
             }
@@ -246,32 +241,35 @@ pub struct ProgramImageClaimReductionProver<F: JoltField> {
     core: PrecomittedProver<F, ProgramImageClaimReductionParams<F>>,
 }
 
-fn top_left_program_image_point_and_selector<F: JoltField>(
+fn shifted_program_image_eq_slice<F>(
     r_addr: &[F::Challenge],
     start_index: usize,
     padded_len_words: usize,
-) -> (Vec<F::Challenge>, F) {
-    assert!(
-        padded_len_words.is_power_of_two() && padded_len_words > 0,
-        "padded_len_words must be a non-zero power of two"
-    );
-    let m = padded_len_words.log_2();
-    assert!(
-        m <= r_addr.len(),
-        "program-image variable count exceeds RAM address variable count"
-    );
-    assert!(
-        start_index < padded_len_words,
-        "committed program-image domain must cover the bytecode start index"
-    );
-    let prefix_len = r_addr.len() - m;
+) -> Vec<F>
+where
+    F: JoltField + std::ops::Mul<F::Challenge, Output = F> + std::ops::SubAssign<F>,
+{
+    let mut eq_slice = Vec::with_capacity(padded_len_words);
+    let mut idx = start_index;
+    let mut remaining = padded_len_words;
 
-    // The committed program-image polynomial is shifted into the RAM-relative domain
-    // before commitment, so it is always embedded at the top-left corner of RAM.
-    (
-        r_addr[prefix_len..].to_vec(),
-        EqPolynomial::zero_selector(&r_addr[..prefix_len]),
-    )
+    while remaining > 0 {
+        let (block_size, block_evals) =
+            EqPolynomial::<F>::evals_for_max_aligned_block(r_addr, idx, remaining);
+        eq_slice.extend(block_evals);
+        idx += block_size;
+        remaining -= block_size;
+    }
+
+    eq_slice
+}
+
+fn evaluate_shifted_eq_poly<F, C>(shifted_eq_coeffs: &[F], opening_point: &[C]) -> F
+where
+    C: Copy + Send + Sync + Into<F> + crate::field::ChallengeFieldOps<F>,
+    F: JoltField + crate::field::FieldChallengeOps<C>,
+{
+    MultilinearPolynomial::from(shifted_eq_coeffs.to_vec()).evaluate(opening_point)
 }
 
 impl<F: JoltField> ProgramImageClaimReductionProver<F> {
@@ -291,23 +289,23 @@ impl<F: JoltField> ProgramImageClaimReductionProver<F> {
         debug_assert_eq!(program_image_words_padded.len(), params.padded_len_words);
         debug_assert_eq!(params.padded_len_words, 1usize << params.m);
 
-        let eq_evals = precommitted_eq_evals_with_scaling(
-            &params.r_addr_rw_reduced,
-            Some(params.selector_rw),
+        let eq_slice = permute_precommitted_polys(
+            vec![params.shifted_eq_coeffs.clone()],
             &params.precommitted,
-        );
+        )
+        .into_iter()
+        .next()
+        .expect("expected one permuted shifted eq polynomial");
 
         // Permute ProgramWord and eq_slice so low-to-high binding follows the two-phase
         // schedule while preserving top-left projection semantics against the joint point.
-        let (program_word, eq_slice): (MultilinearPolynomial<F>, MultilinearPolynomial<F>) = {
+        let program_word: MultilinearPolynomial<F> = {
             let mut permuted =
                 permute_precommitted_polys(vec![program_image_words_padded], &params.precommitted)
                     .into_iter();
-            let program_word = permuted
+            permuted
                 .next()
-                .expect("expected one permuted program image polynomial");
-            let eq_slice = eq_evals.into();
-            (program_word, eq_slice)
+                .expect("expected one permuted program image polynomial")
         };
 
         Self {
@@ -417,8 +415,16 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
                         SumcheckId::ProgramImageClaimReduction,
                     )
                     .1;
-                let eq_combined = params.selector_rw
-                    * EqPolynomial::mle(&opening_point.r, &params.r_addr_rw_reduced);
+                let eq_combined = eval_shifted_eq_poly_at_opening_point::<F>(
+                    &params.r_addr_rw,
+                    params.start_index,
+                    &opening_point.r,
+                );
+                debug_assert_eq!(
+                    eq_combined,
+                    evaluate_shifted_eq_poly::<F, _>(&params.shifted_eq_coeffs, &opening_point.r),
+                    "program_image eq_slice optimized evaluation mismatch"
+                );
                 let scale: F = precommitted_skip_round_scale(&params.precommitted);
                 pw_eval * eq_combined * scale
             }
@@ -455,4 +461,89 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             );
         }
     }
+}
+
+fn eval_shifted_eq_poly_at_opening_point<F>(
+    r_addr_be: &[F::Challenge],
+    start_index: usize,
+    opening_point_be: &[F::Challenge],
+) -> F
+where
+    F: JoltField,
+{
+    let ell = r_addr_be.len();
+    let m = opening_point_be.len();
+    debug_assert!(m <= ell);
+
+    let challenge_for_old_lsb = |old_lsb: usize| -> F {
+        debug_assert!(old_lsb < m);
+        opening_point_be[m - 1 - old_lsb].into()
+    };
+
+    // Match the current verifier path exactly: `opening_point_be` is already arranged in the
+    // variable order expected by `evaluate_shifted_eq_poly`.
+    let mut dp0 = F::one();
+    let mut dp1 = F::zero();
+
+    for old_lsb in 0..ell {
+        let start_bit = ((start_index >> old_lsb) & 1) as u8;
+        let r_addr_bit: F = r_addr_be[ell - 1 - old_lsb].into();
+        let k0 = F::one() - r_addr_bit;
+        let k1 = r_addr_bit;
+        let y_var = old_lsb < m;
+        let r_y = if y_var {
+            challenge_for_old_lsb(old_lsb)
+        } else {
+            F::zero()
+        };
+
+        let mut next_dp0 = F::zero();
+        let mut next_dp1 = F::zero();
+
+        let update_state = |weight: F, carry: u8, next_dp0: &mut F, next_dp1: &mut F| {
+            if weight.is_zero() {
+                return;
+            }
+
+            if y_var {
+                let sum0 = start_bit + carry;
+                let k_bit0 = sum0 & 1;
+                let carry0 = (sum0 >> 1) & 1;
+                let addr_factor0 = if k_bit0 == 1 { k1 } else { k0 };
+                let y_factor0 = F::one() - r_y;
+                if carry0 == 0 {
+                    *next_dp0 += weight * addr_factor0 * y_factor0;
+                } else {
+                    *next_dp1 += weight * addr_factor0 * y_factor0;
+                }
+
+                let sum1 = start_bit + carry + 1;
+                let k_bit1 = sum1 & 1;
+                let carry1 = (sum1 >> 1) & 1;
+                let addr_factor1 = if k_bit1 == 1 { k1 } else { k0 };
+                if carry1 == 0 {
+                    *next_dp0 += weight * addr_factor1 * r_y;
+                } else {
+                    *next_dp1 += weight * addr_factor1 * r_y;
+                }
+            } else {
+                let sum0 = start_bit + carry;
+                let k_bit0 = sum0 & 1;
+                let carry0 = (sum0 >> 1) & 1;
+                let addr_factor0 = if k_bit0 == 1 { k1 } else { k0 };
+                if carry0 == 0 {
+                    *next_dp0 += weight * addr_factor0;
+                } else {
+                    *next_dp1 += weight * addr_factor0;
+                }
+            }
+        };
+
+        update_state(dp0, 0, &mut next_dp0, &mut next_dp1);
+        update_state(dp1, 1, &mut next_dp0, &mut next_dp1);
+        dp0 = next_dp0;
+        dp1 = next_dp1;
+    }
+
+    dp0 + dp1
 }
