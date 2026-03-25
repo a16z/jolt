@@ -18,9 +18,7 @@ pub trait JoltProgramSource {
         u64,
         u64,
     ) {
-        let elf = self
-            .get_elf_contents()
-            .expect("ELF contents not available");
+        let elf = self.get_elf_contents().expect("ELF contents not available");
         crate::guest::program::decode(&elf)
     }
 }
