@@ -8,4 +8,4 @@ paste.workspace = true
 jolt-core = { path = "../jolt-core" }
 common = { path = "../common" }
 tracer = { path = "../tracer" }
-z3 = "0.19.2"
+z3 = "0.19.14"

@@ -7,7 +7,7 @@ pub fn main() {
     let target_dir = "/tmp/jolt-guest-targets";
     let mut program = guest::compile_sha2_chain(target_dir);
 
-    let shared_preprocessing = guest::preprocess_shared_sha2_chain(&mut program);
+    let shared_preprocessing = guest::preprocess_shared_sha2_chain(&mut program).unwrap();
     let prover_preprocessing = guest::preprocess_prover_sha2_chain(shared_preprocessing.clone());
     let verifier_preprocessing = guest::preprocess_verifier_sha2_chain(
         shared_preprocessing,
