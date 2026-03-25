@@ -950,7 +950,7 @@ so ~19 committed polynomials, each in its own commitment group.
 | V_rdw | `rd_write_value` | `log_T` | R1CS witness column |
 | V_rs1 | `rs1_value` | `log_T` | R1CS witness column |
 | V_rs2 | `rs2_value` | `log_T` | R1CS witness column |
-| V_nin | `next_is_noop` | `log_T` | R1CS witness column |
+| V_nisn | `next_is_noop` | `log_T` | R1CS witness column |
 | V_irn | `is_rd_not_zero` | `log_T` | Trace flag |
 | V_wlf | `write_lookup_to_rd_flag` | `log_T` | R1CS witness column |
 | V_jmp | `jump_flag` | `log_T` | R1CS witness column |

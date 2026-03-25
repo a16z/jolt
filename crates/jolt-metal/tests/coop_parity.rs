@@ -142,7 +142,10 @@ fn coop_mul_edge_cases() {
         (-Fr::one(), -Fr::one()),
         (-Fr::one(), Fr::one()),
         // Large random pair (repeated for coverage)
-        (Fr::from_u64(0xDEAD_BEEF_CAFE_BABE), Fr::from_u64(0x1234_5678_9ABC_DEF0)),
+        (
+            Fr::from_u64(0xDEAD_BEEF_CAFE_BABE),
+            Fr::from_u64(0x1234_5678_9ABC_DEF0),
+        ),
     ];
 
     let a_cpu: Vec<Fr> = cases.iter().map(|(a, _)| *a).collect();

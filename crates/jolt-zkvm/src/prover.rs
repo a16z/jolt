@@ -148,14 +148,15 @@ fn evaluate_input_claim<F: Field>(
                 challenges[i] = match label {
                     ChallengeLabel::PreSqueeze(name) => {
                         *sc.scalars.get(name).unwrap_or_else(|| {
-                            panic!("missing pre_squeeze label: {name:?} (available: {:?})", sc.scalars.keys().collect::<Vec<_>>())
+                            panic!(
+                                "missing pre_squeeze label: {name:?} (available: {:?})",
+                                sc.scalars.keys().collect::<Vec<_>>()
+                            )
                         })
                     }
-                    ChallengeLabel::External(name) => {
-                        *ext.get(name).unwrap_or_else(|| {
-                            panic!("missing external value: {name:?}")
-                        })
-                    }
+                    ChallengeLabel::External(name) => *ext
+                        .get(name)
+                        .unwrap_or_else(|| panic!("missing external value: {name:?}")),
                 };
             }
 
@@ -544,7 +545,6 @@ fn build_witness<F: Field, B: ComputeBackend, R: jolt_host::CycleRow>(
     // Compile the formula into a kernel descriptor + materialized challenge coefficients.
     let (desc, materialized) = formula.definition.compile_descriptor::<F>(&challenges);
     let order = binding_order_for(sv);
-
 
     // Upload polynomial tables to backend buffers.
     let buffers: Vec<B::Buffer<F>> = poly_tables

@@ -34,7 +34,7 @@ impl Default for MetalDeviceConfig {
             // 128 threads = 4 simdgroups per threadgroup. Smaller groups
             // give the GPU more scheduling flexibility for register-heavy
             // kernels (D>=8). Benchmarks show +9% for BN254 D=8 vs 256.
-            reduce_group_size: 128,
+            reduce_group_size: 32,
             elementwise_group_size: 256,
             max_reduce_groups: 256,
             simd_size: 32,
@@ -55,7 +55,7 @@ impl MetalDeviceConfig {
 
         if name.contains("m4") || name.contains("m5") {
             Self {
-                reduce_group_size: 128,
+                reduce_group_size: 32,
                 elementwise_group_size: 256,
                 max_reduce_groups: 256,
                 simd_size: 32,

@@ -185,9 +185,7 @@ impl<F: jolt_field::Field> Transcript for PoseidonTranscript<F> {
 
         let mut chunks = bytes.chunks(BYTES_PER_CHUNK);
 
-        let first_f = chunks
-            .next()
-            .map_or(zero, Fr::from_le_bytes_mod_order);
+        let first_f = chunks.next().map_or(zero, Fr::from_le_bytes_mod_order);
 
         let mut current = poseidon
             .hash(&[state_f, round_f, first_f])

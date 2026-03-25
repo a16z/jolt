@@ -282,15 +282,25 @@ pub fn generate_msl(
                         let mut coop_kernels = String::new();
                         coop_kernels.push_str(
                             &crate::coop_field_gen::generate_coop_reduce_kernel_h2l(
-                                num_inputs, num_evals, &coop_body, true, false,
-                                n_limbs, device_config,
+                                num_inputs,
+                                num_evals,
+                                &coop_body,
+                                true,
+                                false,
+                                n_limbs,
+                                device_config,
                             ),
                         );
                         coop_kernels.push('\n');
                         coop_kernels.push_str(
                             &crate::coop_field_gen::generate_coop_fused_reduce_kernel(
-                                num_inputs, num_evals, &coop_body, true, false,
-                                n_limbs, device_config,
+                                num_inputs,
+                                num_evals,
+                                &coop_body,
+                                true,
+                                false,
+                                n_limbs,
+                                device_config,
                             ),
                         );
                         coop_kernels.push('\n');
@@ -1512,9 +1522,9 @@ fn emit_eval_linear_prod_2(
     );
 }
 
-/// Emit MSL for `ex2` extrapolation: `result = 2*(f1 + finf) - f0`.
-fn emit_ex2(s: &mut String, result: &str, f0: &str, f1: &str, finf: &str) {
-    let _ = writeln!(s, "        Fr {result}_sum = fr_add({f1}, {finf});");
+/// Emit MSL for `ex2` extrapolation: `result = 2*(f1 + find) - f0`.
+fn emit_ex2(s: &mut String, result: &str, f0: &str, f1: &str, find: &str) {
+    let _ = writeln!(s, "        Fr {result}_sum = fr_add({f1}, {find});");
     let _ = writeln!(
         s,
         "        Fr {result} = fr_sub(fr_add({result}_sum, {result}_sum), {f0});"
@@ -1523,12 +1533,12 @@ fn emit_ex2(s: &mut String, result: &str, f0: &str, f1: &str, finf: &str) {
 
 /// Emit MSL for `ex4_2`: returns two extrapolated values (f4, f5) from
 /// 4 consecutive evaluations `f[0..4]` and `6*f_inf`.
-fn emit_ex4_2(s: &mut String, r4: &str, r5: &str, f: [&str; 4], finf6: &str) {
-    // f4 = 2*(2*(finf6 + f[3] - f[2] + f[1]) - f[2]) - f[0]
+fn emit_ex4_2(s: &mut String, r4: &str, r5: &str, f: [&str; 4], find6: &str) {
+    // f4 = 2*(2*(find6 + f[3] - f[2] + f[1]) - f[2]) - f[0]
     let _ = writeln!(s, "        Fr {r4}_f3m2 = fr_sub({}, {});", f[3], f[2]);
     let _ = writeln!(
         s,
-        "        Fr {r4}_t = fr_add(fr_add({finf6}, {r4}_f3m2), {});",
+        "        Fr {r4}_t = fr_add(fr_add({find6}, {r4}_f3m2), {});",
         f[1]
     );
     let _ = writeln!(s, "        {r4}_t = fr_add({r4}_t, {r4}_t);");
@@ -1536,10 +1546,10 @@ fn emit_ex4_2(s: &mut String, r4: &str, r5: &str, f: [&str; 4], finf6: &str) {
     let _ = writeln!(s, "        {r4}_t = fr_add({r4}_t, {r4}_t);");
     let _ = writeln!(s, "        Fr {r4} = fr_sub({r4}_t, {});", f[0]);
 
-    // f5 = 2*(2*(f4 - f3m2 + finf6) - f[3]) - f[1]
+    // f5 = 2*(2*(f4 - f3m2 + find6) - f[3]) - f[1]
     let _ = writeln!(
         s,
-        "        Fr {r5}_t = fr_add(fr_sub({r4}, {r4}_f3m2), {finf6});"
+        "        Fr {r5}_t = fr_add(fr_sub({r4}, {r4}_f3m2), {find6});"
     );
     let _ = writeln!(s, "        {r5}_t = fr_add({r5}_t, {r5}_t);");
     let _ = writeln!(s, "        {r5}_t = fr_sub({r5}_t, {});", f[3]);
@@ -1549,11 +1559,11 @@ fn emit_ex4_2(s: &mut String, r4: &str, r5: &str, f: [&str; 4], finf6: &str) {
 
 /// Emit MSL for `ex4`: returns one extrapolated value from
 /// 4 consecutive evaluations and `6*f_inf`.
-fn emit_ex4(s: &mut String, result: &str, f0: &str, f1: &str, f2: &str, f3: &str, finf6: &str) {
-    // result = 2*(2*(finf6 + f3 - f2 + f1) - f2) - f0
+fn emit_ex4(s: &mut String, result: &str, f0: &str, f1: &str, f2: &str, f3: &str, find6: &str) {
+    // result = 2*(2*(find6 + f3 - f2 + f1) - f2) - f0
     let _ = writeln!(
         s,
-        "        Fr {result}_t = fr_add(fr_add({finf6}, fr_sub({f3}, {f2})), {f1});"
+        "        Fr {result}_t = fr_add(fr_add({find6}, fr_sub({f3}, {f2})), {f1});"
     );
     let _ = writeln!(s, "        {result}_t = fr_add({result}_t, {result}_t);");
     let _ = writeln!(s, "        {result}_t = fr_sub({result}_t, {f2});");

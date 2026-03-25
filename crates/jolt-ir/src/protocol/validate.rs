@@ -140,16 +140,16 @@ impl fmt::Display for CommitmentError {
 #[derive(Debug)]
 pub enum ChallengeSpecError {
     /// Two challenge specs in the same stage share a label.
-    DuplicateLabel {
-        stage: StageId,
-        label: &'static str,
-    },
+    DuplicateLabel { stage: StageId, label: &'static str },
 }
 
 #[derive(Debug)]
 pub enum ClaimFlowError {
     NoOpening(PolynomialId),
-    DuplicateOpening { polynomial: PolynomialId, count: usize },
+    DuplicateOpening {
+        polynomial: PolynomialId,
+        count: usize,
+    },
 }
 
 /// All Opening vertices must consume claims at the same symbolic point.
@@ -1009,10 +1009,7 @@ mod tests {
         assert_eq!(errors.len(), 1);
         assert!(matches!(
             errors[0],
-            ChallengeSpecError::DuplicateLabel {
-                label: "gamma",
-                ..
-            }
+            ChallengeSpecError::DuplicateLabel { label: "gamma", .. }
         ));
     }
 
@@ -1093,7 +1090,10 @@ mod tests {
         };
         let errors = graph.validate_claim_flow();
         assert_eq!(errors.len(), 1);
-        assert!(matches!(errors[0], ClaimFlowError::NoOpening(PolynomialId::RamInc)));
+        assert!(matches!(
+            errors[0],
+            ClaimFlowError::NoOpening(PolynomialId::RamInc)
+        ));
     }
 
     #[test]

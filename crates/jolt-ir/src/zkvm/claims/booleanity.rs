@@ -61,7 +61,10 @@ mod tests {
 
     #[test]
     fn booleanity_zero_for_boolean_inputs() {
-        let polynomials = vec![PolynomialId::InstructionRa(0), PolynomialId::InstructionRa(1)];
+        let polynomials = vec![
+            PolynomialId::InstructionRa(0),
+            PolynomialId::InstructionRa(1),
+        ];
         let claim = ra_booleanity(2, &polynomials);
 
         let eq = Fr::from_u64(7);

@@ -65,9 +65,17 @@ impl<'a, R: CycleRow> TracePolynomials<'a, R> {
     /// For "next-cycle" polynomials (NextPc, NextIsNoop, etc.), looks ahead
     /// to `trace[cycle + 1]` automatically.
     pub fn eval_at_cycle<F: Field>(&self, poly_id: PolynomialId, cycle: usize) -> F {
-        let idx = if is_next_cycle_poly(poly_id) { cycle + 1 } else { cycle };
+        let idx = if is_next_cycle_poly(poly_id) {
+            cycle + 1
+        } else {
+            cycle
+        };
         let noop = R::noop();
-        let row = if idx < self.trace.len() { &self.trace[idx] } else { &noop };
+        let row = if idx < self.trace.len() {
+            &self.trace[idx]
+        } else {
+            &noop
+        };
 
         // ExpandedPc uses pre-computed bytecode indices
         if poly_id == PolynomialId::ExpandedPc {
@@ -195,7 +203,9 @@ fn instruction_left_input<F: Field, R: CycleRow>(
     if iflags[InstructionFlags::LeftOperandIsPC as usize] {
         F::from_u64(cycle.unexpanded_pc())
     } else if iflags[InstructionFlags::LeftOperandIsRs1Value as usize] {
-        cycle.rs1_read().map_or_else(F::zero, |(_, v)| F::from_u64(v))
+        cycle
+            .rs1_read()
+            .map_or_else(F::zero, |(_, v)| F::from_u64(v))
     } else {
         F::zero()
     }
@@ -209,7 +219,9 @@ fn instruction_right_input<F: Field, R: CycleRow>(
     if iflags[InstructionFlags::RightOperandIsImm as usize] {
         F::from_i128(cycle.imm())
     } else if iflags[InstructionFlags::RightOperandIsRs2Value as usize] {
-        cycle.rs2_read().map_or_else(F::zero, |(_, v)| F::from_u64(v))
+        cycle
+            .rs2_read()
+            .map_or_else(F::zero, |(_, v)| F::from_u64(v))
     } else {
         F::zero()
     }
@@ -235,35 +247,25 @@ fn is_next_cycle_poly(poly_id: PolynomialId) -> bool {
 fn extract_value<F: Field, R: CycleRow>(poly_id: PolynomialId, cycle: &R) -> F {
     match poly_id {
         // Register values
-        PolynomialId::RdWriteValue => {
-            cycle.rd_write().map_or_else(F::zero, |(_, _, post)| F::from_u64(post))
-        }
-        PolynomialId::Rs1Value => {
-            cycle.rs1_read().map_or_else(F::zero, |(_, v)| F::from_u64(v))
-        }
-        PolynomialId::Rs2Value => {
-            cycle.rs2_read().map_or_else(F::zero, |(_, v)| F::from_u64(v))
-        }
-        PolynomialId::RegistersVal => {
-            cycle.rd_write().map_or_else(F::zero, |(_, pre, _)| F::from_u64(pre))
-        }
+        PolynomialId::RdWriteValue => cycle
+            .rd_write()
+            .map_or_else(F::zero, |(_, _, post)| F::from_u64(post)),
+        PolynomialId::Rs1Value => cycle
+            .rs1_read()
+            .map_or_else(F::zero, |(_, v)| F::from_u64(v)),
+        PolynomialId::Rs2Value => cycle
+            .rs2_read()
+            .map_or_else(F::zero, |(_, v)| F::from_u64(v)),
+        PolynomialId::RegistersVal => cycle
+            .rd_write()
+            .map_or_else(F::zero, |(_, pre, _)| F::from_u64(pre)),
 
         // RAM values
-        PolynomialId::RamAddress => {
-            cycle.ram_access_address().map_or(F::zero(), F::from_u64)
-        }
-        PolynomialId::RamReadValue => {
-            cycle.ram_read_value().map_or(F::zero(), F::from_u64)
-        }
-        PolynomialId::RamWriteValue => {
-            cycle.ram_write_value().map_or(F::zero(), F::from_u64)
-        }
-        PolynomialId::RamVal => {
-            cycle.ram_read_value().map_or(F::zero(), F::from_u64)
-        }
-        PolynomialId::RamValFinal => {
-            cycle.ram_write_value().map_or(F::zero(), F::from_u64)
-        }
+        PolynomialId::RamAddress => cycle.ram_access_address().map_or(F::zero(), F::from_u64),
+        PolynomialId::RamReadValue => cycle.ram_read_value().map_or(F::zero(), F::from_u64),
+        PolynomialId::RamWriteValue => cycle.ram_write_value().map_or(F::zero(), F::from_u64),
+        PolynomialId::RamVal => cycle.ram_read_value().map_or(F::zero(), F::from_u64),
+        PolynomialId::RamValFinal => cycle.ram_write_value().map_or(F::zero(), F::from_u64),
 
         // Program counter and immediate
         PolynomialId::UnexpandedPc => F::from_u64(cycle.unexpanded_pc()),
@@ -322,20 +324,18 @@ fn extract_value<F: Field, R: CycleRow>(poly_id: PolynomialId, cycle: &R) -> F {
         }
 
         // Register addresses
-        PolynomialId::Rs1Ra => {
-            cycle.rs1_read().map_or_else(F::zero, |(idx, _)| F::from_u64(idx as u64))
-        }
-        PolynomialId::Rs2Ra => {
-            cycle.rs2_read().map_or_else(F::zero, |(idx, _)| F::from_u64(idx as u64))
-        }
-        PolynomialId::RdWa => {
-            cycle.rd_operand().map_or_else(F::zero, |rd| F::from_u64(rd as u64))
-        }
+        PolynomialId::Rs1Ra => cycle
+            .rs1_read()
+            .map_or_else(F::zero, |(idx, _)| F::from_u64(idx as u64)),
+        PolynomialId::Rs2Ra => cycle
+            .rs2_read()
+            .map_or_else(F::zero, |(idx, _)| F::from_u64(idx as u64)),
+        PolynomialId::RdWa => cycle
+            .rd_operand()
+            .map_or_else(F::zero, |rd| F::from_u64(rd as u64)),
 
         // Circuit flags (14 total)
-        PolynomialId::JumpFlag => {
-            bool_to_field(cycle.circuit_flags()[CircuitFlags::Jump as usize])
-        }
+        PolynomialId::JumpFlag => bool_to_field(cycle.circuit_flags()[CircuitFlags::Jump as usize]),
         PolynomialId::WriteLookupToRdFlag => {
             bool_to_field(cycle.circuit_flags()[CircuitFlags::WriteLookupOutputToRD as usize])
         }
@@ -358,15 +358,15 @@ fn extract_value<F: Field, R: CycleRow>(poly_id: PolynomialId, cycle: &R) -> F {
         PolynomialId::IsRdNotZero => {
             bool_to_field(cycle.instruction_flags()[InstructionFlags::IsRdNotZero as usize])
         }
-        PolynomialId::LeftIsRs1 => {
-            bool_to_field(cycle.instruction_flags()[InstructionFlags::LeftOperandIsRs1Value as usize])
-        }
+        PolynomialId::LeftIsRs1 => bool_to_field(
+            cycle.instruction_flags()[InstructionFlags::LeftOperandIsRs1Value as usize],
+        ),
         PolynomialId::LeftIsPc => {
             bool_to_field(cycle.instruction_flags()[InstructionFlags::LeftOperandIsPC as usize])
         }
-        PolynomialId::RightIsRs2 => {
-            bool_to_field(cycle.instruction_flags()[InstructionFlags::RightOperandIsRs2Value as usize])
-        }
+        PolynomialId::RightIsRs2 => bool_to_field(
+            cycle.instruction_flags()[InstructionFlags::RightOperandIsRs2Value as usize],
+        ),
         PolynomialId::RightIsImm => {
             bool_to_field(cycle.instruction_flags()[InstructionFlags::RightOperandIsImm as usize])
         }
@@ -406,15 +406,17 @@ fn extract_value<F: Field, R: CycleRow>(poly_id: PolynomialId, cycle: &R) -> F {
         PolynomialId::BytecodeReadRafVal(_) | PolynomialId::InstructionReadRafVal(_) => F::zero(),
 
         // LookupTableFlag(i) = 1 iff this cycle uses lookup table i.
-        PolynomialId::LookupTableFlag(i) => {
-            bool_to_field(cycle.lookup_table_index() == Some(i))
-        }
+        PolynomialId::LookupTableFlag(i) => bool_to_field(cycle.lookup_table_index() == Some(i)),
     }
 }
 
 #[inline]
 fn bool_to_field<F: Field>(b: bool) -> F {
-    if b { F::one() } else { F::zero() }
+    if b {
+        F::one()
+    } else {
+        F::zero()
+    }
 }
 
 /// Sparse matrix entry for read-write checking evaluators.

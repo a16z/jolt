@@ -17,4 +17,4 @@ pub mod shaders;
 pub use buffer::MetalBuffer;
 pub use compiler::CompileMode;
 pub use device::MetalBackend;
-pub use kernel::MetalKernel;
+pub use kernel::{MetalKernel, PipelineOccupancy};

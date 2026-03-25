@@ -57,7 +57,10 @@ pub fn generate_coop_test_kernel(n: usize) -> String {
     let _ = writeln!(s, "    uint a_limb = a[elem_id].limbs[pair_lane];");
     let _ = writeln!(s, "    uint b_limb = b[elem_id].limbs[pair_lane];");
     let _ = writeln!(s);
-    let _ = writeln!(s, "    uint r_limb = coop_fr_mul(a_limb, b_limb, pair_lane, pair_base);");
+    let _ = writeln!(
+        s,
+        "    uint r_limb = coop_fr_mul(a_limb, b_limb, pair_lane, pair_base);"
+    );
     let _ = writeln!(s);
     let _ = writeln!(s, "    result[elem_id].limbs[pair_lane] = r_limb;");
     let _ = writeln!(s, "}}");
@@ -66,10 +69,16 @@ pub fn generate_coop_test_kernel(n: usize) -> String {
 }
 
 fn generate_coop_lane_helpers(s: &mut String, n: usize) {
-    let _ = writeln!(s, "// Cooperative field arithmetic: {n} threads per field element.");
+    let _ = writeln!(
+        s,
+        "// Cooperative field arithmetic: {n} threads per field element."
+    );
     let _ = writeln!(s, "// Each thread holds one u32 limb.");
     let _ = writeln!(s, "// pair_lane = simd_lane % {n} (which limb, 0 = LSB)");
-    let _ = writeln!(s, "// pair_base = simd_lane - pair_lane (first lane of this group)");
+    let _ = writeln!(
+        s,
+        "// pair_base = simd_lane - pair_lane (first lane of this group)"
+    );
     let _ = writeln!(s);
 }
 
@@ -82,11 +91,23 @@ fn generate_coop_lane_helpers(s: &mut String, n: usize) {
 fn generate_coop_carry_prefix(s: &mut String, n: usize) {
     let rounds = (n as f64).log2().ceil() as usize;
 
-    let _ = writeln!(s, "// Parallel prefix carry resolution ({rounds} rounds for {n} limbs).");
-    let _ = writeln!(s, "// g = generate (this limb produces carry regardless of input)");
+    let _ = writeln!(
+        s,
+        "// Parallel prefix carry resolution ({rounds} rounds for {n} limbs)."
+    );
+    let _ = writeln!(
+        s,
+        "// g = generate (this limb produces carry regardless of input)"
+    );
     let _ = writeln!(s, "// p = propagate (this limb forwards an incoming carry)");
-    let _ = writeln!(s, "// After: g[i] = 1 iff limb i receives a carry from the ripple chain.");
-    let _ = writeln!(s, "inline uint coop_carry_prefix(uint g, uint p, uint pair_lane, uint pair_base) {{");
+    let _ = writeln!(
+        s,
+        "// After: g[i] = 1 iff limb i receives a carry from the ripple chain."
+    );
+    let _ = writeln!(
+        s,
+        "inline uint coop_carry_prefix(uint g, uint p, uint pair_lane, uint pair_base) {{"
+    );
 
     let mut stride = 1usize;
     for _ in 0..rounds {
@@ -116,7 +137,10 @@ fn generate_coop_carry_prefix(s: &mut String, n: usize) {
 fn generate_coop_borrow_prefix(s: &mut String, n: usize) {
     let rounds = (n as f64).log2().ceil() as usize;
 
-    let _ = writeln!(s, "inline uint coop_borrow_prefix(uint g, uint p, uint pair_lane, uint pair_base) {{");
+    let _ = writeln!(
+        s,
+        "inline uint coop_borrow_prefix(uint g, uint p, uint pair_lane, uint pair_base) {{"
+    );
 
     let mut stride = 1usize;
     for _ in 0..rounds {
@@ -143,7 +167,10 @@ fn generate_coop_borrow_prefix(s: &mut String, n: usize) {
 /// Cooperative add with carry propagation: result_limb = (a + b) mod p.
 fn generate_coop_add(s: &mut String, n: usize) {
     let n_minus_1 = n - 1;
-    let _ = writeln!(s, "inline uint coop_fr_add(uint a_limb, uint b_limb, uint pair_lane, uint pair_base) {{");
+    let _ = writeln!(
+        s,
+        "inline uint coop_fr_add(uint a_limb, uint b_limb, uint pair_lane, uint pair_base) {{"
+    );
 
     // Step 1: parallel add
     let _ = writeln!(s, "    uint sum = a_limb + b_limb;");
@@ -167,14 +194,26 @@ fn generate_coop_add(s: &mut String, n: usize) {
 
     // Step 5: conditional subtraction of modulus
     let _ = writeln!(s, "    uint diff = sum - FR_MODULUS[pair_lane];");
-    let _ = writeln!(s, "    uint borrow_gen = uint(sum < FR_MODULUS[pair_lane]);");
-    let _ = writeln!(s, "    uint borrow_prop = uint(sum == FR_MODULUS[pair_lane]);");
-    let _ = writeln!(s, "    uint borrow = coop_borrow_prefix(borrow_gen, borrow_prop, pair_lane, pair_base);");
+    let _ = writeln!(
+        s,
+        "    uint borrow_gen = uint(sum < FR_MODULUS[pair_lane]);"
+    );
+    let _ = writeln!(
+        s,
+        "    uint borrow_prop = uint(sum == FR_MODULUS[pair_lane]);"
+    );
+    let _ = writeln!(
+        s,
+        "    uint borrow = coop_borrow_prefix(borrow_gen, borrow_prop, pair_lane, pair_base);"
+    );
     let _ = writeln!(s, "    uint borrow_in_r = (pair_lane > 0u) ? simd_shuffle(borrow, pair_base + pair_lane - 1u) : 0u;");
     let _ = writeln!(s, "    diff -= borrow_in_r;");
 
     // borrow[N-1] after prefix = borrow exits MSB = subtraction underflowed
-    let _ = writeln!(s, "    uint final_borrow = simd_shuffle(borrow, pair_base + {n_minus_1}u);");
+    let _ = writeln!(
+        s,
+        "    uint final_borrow = simd_shuffle(borrow, pair_base + {n_minus_1}u);"
+    );
 
     // Select: if overflow >= final_borrow, use subtracted; else use sum
     let _ = writeln!(s, "    return (overflow >= final_borrow) ? diff : sum;");
@@ -185,7 +224,10 @@ fn generate_coop_add(s: &mut String, n: usize) {
 /// Cooperative subtract with borrow propagation: result_limb = (a - b) mod p.
 fn generate_coop_sub(s: &mut String, n: usize) {
     let n_minus_1 = n - 1;
-    let _ = writeln!(s, "inline uint coop_fr_sub(uint a_limb, uint b_limb, uint pair_lane, uint pair_base) {{");
+    let _ = writeln!(
+        s,
+        "inline uint coop_fr_sub(uint a_limb, uint b_limb, uint pair_lane, uint pair_base) {{"
+    );
 
     // Step 1: parallel subtract
     let _ = writeln!(s, "    uint diff = a_limb - b_limb;");
@@ -210,7 +252,10 @@ fn generate_coop_sub(s: &mut String, n: usize) {
     let _ = writeln!(s, "    uint final_borrow = simd_shuffle(borrow, pair_base + {n_minus_1}u) | simd_shuffle(g, pair_base + {n_minus_1}u);");
 
     // Step 5: conditional addition of modulus if underflow
-    let _ = writeln!(s, "    uint addend = (final_borrow != 0u) ? FR_MODULUS[pair_lane] : 0u;");
+    let _ = writeln!(
+        s,
+        "    uint addend = (final_borrow != 0u) ? FR_MODULUS[pair_lane] : 0u;"
+    );
     let _ = writeln!(s, "    uint corr = diff + addend;");
     let _ = writeln!(s, "    uint add_carry = uint(corr < diff);");
 
@@ -220,8 +265,14 @@ fn generate_coop_sub(s: &mut String, n: usize) {
     let _ = writeln!(s, "    uint add_ripple = uint(corr == 0u && add_in != 0u);");
     let _ = writeln!(s, "    uint ag = add_ripple;");
     let _ = writeln!(s, "    uint ap = uint(corr == 0xFFFFFFFFu);");
-    let _ = writeln!(s, "    ag = coop_carry_prefix(ag, ap, pair_lane, pair_base);");
-    let _ = writeln!(s, "    uint ag_in = (pair_lane > 0u) ? simd_shuffle(ag, pair_base + pair_lane - 1u) : 0u;");
+    let _ = writeln!(
+        s,
+        "    ag = coop_carry_prefix(ag, ap, pair_lane, pair_base);"
+    );
+    let _ = writeln!(
+        s,
+        "    uint ag_in = (pair_lane > 0u) ? simd_shuffle(ag, pair_base + pair_lane - 1u) : 0u;"
+    );
     let _ = writeln!(s, "    corr += ag_in;");
 
     let _ = writeln!(s, "    return corr;");
@@ -232,18 +283,33 @@ fn generate_coop_sub(s: &mut String, n: usize) {
 /// Cooperative conditional subtraction of modulus.
 fn generate_coop_reduce(s: &mut String, n: usize) {
     let n_minus_1 = n - 1;
-    let _ = writeln!(s, "inline uint coop_fr_reduce(uint t_limb, uint pair_lane, uint pair_base) {{");
+    let _ = writeln!(
+        s,
+        "inline uint coop_fr_reduce(uint t_limb, uint pair_lane, uint pair_base) {{"
+    );
 
     // Subtract modulus
     let _ = writeln!(s, "    uint diff = t_limb - FR_MODULUS[pair_lane];");
-    let _ = writeln!(s, "    uint borrow_gen = uint(t_limb < FR_MODULUS[pair_lane]);");
-    let _ = writeln!(s, "    uint borrow_prop = uint(t_limb == FR_MODULUS[pair_lane]);");
-    let _ = writeln!(s, "    uint borrow = coop_borrow_prefix(borrow_gen, borrow_prop, pair_lane, pair_base);");
+    let _ = writeln!(
+        s,
+        "    uint borrow_gen = uint(t_limb < FR_MODULUS[pair_lane]);"
+    );
+    let _ = writeln!(
+        s,
+        "    uint borrow_prop = uint(t_limb == FR_MODULUS[pair_lane]);"
+    );
+    let _ = writeln!(
+        s,
+        "    uint borrow = coop_borrow_prefix(borrow_gen, borrow_prop, pair_lane, pair_base);"
+    );
     let _ = writeln!(s, "    uint borrow_in = (pair_lane > 0u) ? simd_shuffle(borrow, pair_base + pair_lane - 1u) : 0u;");
     let _ = writeln!(s, "    diff -= borrow_in;");
 
     // borrow[N-1] after prefix = borrow chain exits MSB = underflow
-    let _ = writeln!(s, "    uint msb_borrow = simd_shuffle(borrow, pair_base + {n_minus_1}u);");
+    let _ = writeln!(
+        s,
+        "    uint msb_borrow = simd_shuffle(borrow, pair_base + {n_minus_1}u);"
+    );
     let _ = writeln!(s, "    return (msb_borrow != 0u) ? t_limb : diff;");
     let _ = writeln!(s, "}}");
     let _ = writeln!(s);
@@ -255,7 +321,10 @@ fn generate_coop_reduce(s: &mut String, n: usize) {
 /// of the accumulator. The N CIOS rounds are executed with parallel multiply-add
 /// and inter-limb carry propagation via `simd_shuffle`.
 fn generate_coop_mul(s: &mut String, n: usize) {
-    let _ = writeln!(s, "inline uint coop_fr_mul(uint a_limb, uint b_limb, uint pair_lane, uint pair_base) {{");
+    let _ = writeln!(
+        s,
+        "inline uint coop_fr_mul(uint a_limb, uint b_limb, uint pair_lane, uint pair_base) {{"
+    );
     let _ = writeln!(s, "    uint T = 0u;");
     let _ = writeln!(s, "    uint T_extra = 0u;");
     let _ = writeln!(s);
@@ -286,7 +355,10 @@ fn generate_coop_mul(s: &mut String, n: usize) {
     // carry_in[i] = g[i-1] (carry entering position i from the chain below).
     let _ = writeln!(s, "        uint g = ripple;");
     let _ = writeln!(s, "        uint p = uint(T == 0xFFFFFFFFu);");
-    let _ = writeln!(s, "        g = coop_carry_prefix(g, p, pair_lane, pair_base);");
+    let _ = writeln!(
+        s,
+        "        g = coop_carry_prefix(g, p, pair_lane, pair_base);"
+    );
     let _ = writeln!(s, "        uint carry_in_r = (pair_lane > 0u) ? simd_shuffle(g, pair_base + pair_lane - 1u) : 0u;");
     let _ = writeln!(s, "        T += carry_in_r;");
     let _ = writeln!(s);
@@ -323,7 +395,10 @@ fn generate_coop_mul(s: &mut String, n: usize) {
     // Step 9: Ripple carry prefix for Montgomery — same shift pattern as Step 4
     let _ = writeln!(s, "        uint mg = mod_ripple;");
     let _ = writeln!(s, "        uint mp = uint(T == 0xFFFFFFFFu);");
-    let _ = writeln!(s, "        mg = coop_carry_prefix(mg, mp, pair_lane, pair_base);");
+    let _ = writeln!(
+        s,
+        "        mg = coop_carry_prefix(mg, mp, pair_lane, pair_base);"
+    );
     let _ = writeln!(s, "        uint mcarry_in = (pair_lane > 0u) ? simd_shuffle(mg, pair_base + pair_lane - 1u) : 0u;");
     let _ = writeln!(s, "        T += mcarry_in;");
     let _ = writeln!(s);
@@ -338,7 +413,10 @@ fn generate_coop_mul(s: &mut String, n: usize) {
     // Step 11: Shift right by 1 limb (T[0] is now zero from Montgomery)
     let _ = writeln!(s, "        uint shifted;");
     let _ = writeln!(s, "        if (pair_lane < {n_minus_1}u) {{");
-    let _ = writeln!(s, "            shifted = simd_shuffle(T, pair_base + pair_lane + 1u);");
+    let _ = writeln!(
+        s,
+        "            shifted = simd_shuffle(T, pair_base + pair_lane + 1u);"
+    );
     let _ = writeln!(s, "        }} else {{");
     let _ = writeln!(s, "            shifted = T_extra;");
     let _ = writeln!(s, "        }}");
@@ -485,10 +563,7 @@ pub fn generate_coop_reduce_kernel_h2l(
     let _ = writeln!(s, "    device const Fr* weights [[buffer({next_buf})]],");
     next_buf += 1;
     if has_challenges {
-        let _ = writeln!(
-            s,
-            "    device const Fr* challenges [[buffer({next_buf})]],",
-        );
+        let _ = writeln!(s, "    device const Fr* challenges [[buffer({next_buf})]],",);
         next_buf += 1;
     }
     let _ = writeln!(s, "    device Fr* partials [[buffer({next_buf})]],");
@@ -507,10 +582,7 @@ pub fn generate_coop_reduce_kernel_h2l(
     // Cooperative lane setup
     let _ = writeln!(s, "    uint pair_lane = simd_lane % {n_limbs}u;");
     let _ = writeln!(s, "    uint pair_base = simd_lane - pair_lane;");
-    let _ = writeln!(
-        s,
-        "    uint elem_in_sg = simd_lane / {n_limbs}u;"
-    );
+    let _ = writeln!(s, "    uint elem_in_sg = simd_lane / {n_limbs}u;");
     let _ = writeln!(s);
 
     // Accumulators (one limb per eval per thread)
@@ -663,10 +735,7 @@ pub fn generate_coop_fused_reduce_kernel(
     );
     next_buf += 1;
     if has_challenges {
-        let _ = writeln!(
-            s,
-            "    device const Fr* challenges [[buffer({next_buf})]],",
-        );
+        let _ = writeln!(s, "    device const Fr* challenges [[buffer({next_buf})]],",);
         next_buf += 1;
     }
     let _ = writeln!(s, "    device Fr* partials [[buffer({next_buf})]],");
@@ -680,16 +749,16 @@ pub fn generate_coop_fused_reduce_kernel(
     let _ = writeln!(s, ") {{");
 
     let _ = writeln!(s, "    uint n_fused = params[0];");
-    let _ = writeln!(s, "    uint r = interp_scalar[0].limbs[simd_lane % {n_limbs}u];");
+    let _ = writeln!(
+        s,
+        "    uint r = interp_scalar[0].limbs[simd_lane % {n_limbs}u];"
+    );
     let _ = writeln!(s);
 
     // Cooperative lane setup
     let _ = writeln!(s, "    uint pair_lane = simd_lane % {n_limbs}u;");
     let _ = writeln!(s, "    uint pair_base = simd_lane - pair_lane;");
-    let _ = writeln!(
-        s,
-        "    uint elem_in_sg = simd_lane / {n_limbs}u;"
-    );
+    let _ = writeln!(s, "    uint elem_in_sg = simd_lane / {n_limbs}u;");
     let _ = writeln!(s);
 
     // Accumulators
@@ -894,6 +963,8 @@ mod tests {
         let body = "evals[0] = fr_zero();\nevals[1] = fr_reduce(fr_mul_unreduced(a, b));";
         let result = cooperativize_body(body);
         assert!(result.contains("evals[0] = 0u;"));
-        assert!(result.contains("coop_fr_reduce(coop_fr_mul(a, b, pair_lane, pair_base), pair_lane, pair_base)"));
+        assert!(result.contains(
+            "coop_fr_reduce(coop_fr_mul(a, b, pair_lane, pair_base), pair_lane, pair_base)"
+        ));
     }
 }

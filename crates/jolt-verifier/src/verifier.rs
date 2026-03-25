@@ -43,8 +43,12 @@ where
 
     for (claim, proof) in reduced.iter().zip(opening_proofs.iter()) {
         PCS::verify(
-            &claim.commitment, &claim.point, claim.eval,
-            proof, verifier_setup, transcript,
+            &claim.commitment,
+            &claim.point,
+            claim.eval,
+            proof,
+            verifier_setup,
+            transcript,
         )
         .map_err(JoltError::Opening)?;
     }

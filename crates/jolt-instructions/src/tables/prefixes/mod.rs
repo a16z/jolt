@@ -304,7 +304,15 @@ impl Prefixes {
         C: ChallengeOps<F>,
         F: Field + FieldOps<C>,
     {
-        PrefixEval(dispatch_prefix!(self, prefix_mle, checkpoints, r_x, c, b, j))
+        PrefixEval(dispatch_prefix!(
+            self,
+            prefix_mle,
+            checkpoints,
+            r_x,
+            c,
+            b,
+            j
+        ))
     }
 
     /// Update the checkpoint for this prefix variant.
@@ -320,7 +328,15 @@ impl Prefixes {
         C: ChallengeOps<F>,
         F: Field + FieldOps<C>,
     {
-        dispatch_prefix!(self, update_prefix_checkpoint, checkpoints, r_x, r_y, j, suffix_len)
+        dispatch_prefix!(
+            self,
+            update_prefix_checkpoint,
+            checkpoints,
+            r_x,
+            r_y,
+            j,
+            suffix_len
+        )
     }
 
     /// Update all prefix checkpoints after binding two variables.

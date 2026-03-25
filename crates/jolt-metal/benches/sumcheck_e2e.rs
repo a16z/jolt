@@ -45,8 +45,7 @@ fn init_tracing() -> Option<tracing_chrome::FlushGuard> {
         .build();
     use tracing_subscriber::layer::SubscriberExt;
     let subscriber = tracing_subscriber::registry().with(layer);
-    tracing::subscriber::set_global_default(subscriber)
-        .expect("failed to set tracing subscriber");
+    tracing::subscriber::set_global_default(subscriber).expect("failed to set tracing subscriber");
     Some(guard)
 }
 

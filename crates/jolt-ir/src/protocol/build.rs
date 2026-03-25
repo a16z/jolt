@@ -291,7 +291,11 @@ fn register_all_polynomials(b: &mut GraphBuilder, config: &ProtocolConfig) {
     }
     // Per-stage instruction RAF value polys
     for s in 0..config.d_instr {
-        b.register_poly(PolynomialId::InstructionReadRafVal(s), virt.clone(), log_ra());
+        b.register_poly(
+            PolynomialId::InstructionReadRafVal(s),
+            virt.clone(),
+            log_ra(),
+        );
     }
 }
 
@@ -470,15 +474,27 @@ fn add_vertex(
 
     let (input, output_challenge_spec) = match input_spec {
         InputSpec::Constant(c) => (InputClaim::Constant(c), OutputChallengeSpec::None),
-        InputSpec::SameFormula { upstream, gamma_label } => {
+        InputSpec::SameFormula {
+            upstream,
+            gamma_label,
+        } => {
             let input_formula = bind_formula(output_def.clone(), &upstream);
             let challenge_labels = (0..output_def.num_challenges)
                 .map(|_| ChallengeLabel::PreSqueeze(gamma_label))
                 .collect();
-            (InputClaim::Formula { formula: input_formula, challenge_labels },
-             OutputChallengeSpec::WeightedGammaPowers { gamma_label })
+            (
+                InputClaim::Formula {
+                    formula: input_formula,
+                    challenge_labels,
+                },
+                OutputChallengeSpec::WeightedGammaPowers { gamma_label },
+            )
         }
-        InputSpec::Formula { def, upstream, challenge_labels } => {
+        InputSpec::Formula {
+            def,
+            upstream,
+            challenge_labels,
+        } => {
             let input_formula = bind_formula(def, &upstream);
             // For explicit formulas, the output challenge spec defaults to
             // WeightedGammaPowers using the first challenge label's pre_squeeze name.
@@ -491,7 +507,13 @@ fn add_vertex(
                     ChallengeLabel::External(_) => None,
                 })
                 .unwrap_or(OutputChallengeSpec::None);
-            (InputClaim::Formula { formula: input_formula, challenge_labels }, spec)
+            (
+                InputClaim::Formula {
+                    formula: input_formula,
+                    challenge_labels,
+                },
+                spec,
+            )
         }
     };
 
@@ -532,9 +554,11 @@ fn alloc_side_effects(
 
 /// Convenience: single cycle-phase vertex.
 fn cycle_phase() -> Vec<Phase> {
-    vec![Phase { num_vars: log_t(), variable_group: VariableGroup::Cycle }]
+    vec![Phase {
+        num_vars: log_t(),
+        variable_group: VariableGroup::Cycle,
+    }]
 }
-
 
 #[allow(clippy::too_many_arguments)]
 fn add_vertex_cr(
@@ -547,13 +571,24 @@ fn add_vertex_cr(
     weighting: PublicPolynomial,
     gamma_label: &'static str,
 ) -> (VertexId, StageClaims) {
-    let deps: Vec<ClaimId> = def.opening_bindings.iter()
+    let deps: Vec<ClaimId> = def
+        .opening_bindings
+        .iter()
         .filter_map(|b| upstream.get(&b.polynomial).copied())
         .collect();
     add_vertex(
-        b, def, deps, point,
-        InputSpec::SameFormula { upstream: upstream.clone(), gamma_label },
-        degree, num_vars, weighting, cycle_phase(),
+        b,
+        def,
+        deps,
+        point,
+        InputSpec::SameFormula {
+            upstream: upstream.clone(),
+            gamma_label,
+        },
+        degree,
+        num_vars,
+        weighting,
+        cycle_phase(),
     )
 }
 
@@ -566,8 +601,15 @@ fn add_vertex_comp(
     shape: SumcheckShape,
 ) -> (VertexId, StageClaims) {
     add_vertex(
-        b, output_def, ordering_deps, point, input_spec,
-        shape.degree, shape.num_vars, shape.weighting, shape.phases,
+        b,
+        output_def,
+        ordering_deps,
+        point,
+        input_spec,
+        shape.degree,
+        shape.num_vars,
+        shape.weighting,
+        shape.phases,
     )
 }
 
@@ -596,8 +638,14 @@ fn build_s2(b: &mut GraphBuilder, _config: &ProtocolConfig, s1: &StageClaims) ->
             ClaimDefinition {
                 expr: b2.build(rv + gamma * wv),
                 opening_bindings: vec![
-                    OpeningBinding { var_id: 0, polynomial: PolynomialId::RamReadValue },
-                    OpeningBinding { var_id: 1, polynomial: PolynomialId::RamWriteValue },
+                    OpeningBinding {
+                        var_id: 0,
+                        polynomial: PolynomialId::RamReadValue,
+                    },
+                    OpeningBinding {
+                        var_id: 1,
+                        polynomial: PolynomialId::RamWriteValue,
+                    },
                 ],
                 num_challenges: 1,
             }
@@ -605,7 +653,10 @@ fn build_s2(b: &mut GraphBuilder, _config: &ProtocolConfig, s1: &StageClaims) ->
         let input_upstream = filter_claims(s1, &input_def);
         let ordering_deps = deps_from_formula(&input_def, s1);
         let (vid, claims) = add_vertex(
-            b, output_def, ordering_deps, pt.clone(),
+            b,
+            output_def,
+            ordering_deps,
+            pt.clone(),
             InputSpec::Formula {
                 def: input_def,
                 upstream: input_upstream,
@@ -628,15 +679,24 @@ fn build_s2(b: &mut GraphBuilder, _config: &ProtocolConfig, s1: &StageClaims) ->
         let def = claims::spartan::product_virtual_remainder();
         let ordering_deps = deps_from_formula(&def, s1);
         let (vid, claims) = add_vertex_comp(
-            b, def, ordering_deps, pt.clone(),
+            b,
+            def,
+            ordering_deps,
+            pt.clone(),
             InputSpec::Constant(0),
             SumcheckShape {
                 degree: 3,
                 num_vars: SymbolicExpr::concrete(1) + log_t(),
                 weighting: PublicPolynomial::Eq,
                 phases: vec![
-                    Phase { num_vars: SymbolicExpr::concrete(1), variable_group: VariableGroup::Cycle },
-                    Phase { num_vars: log_t(), variable_group: VariableGroup::Cycle },
+                    Phase {
+                        num_vars: SymbolicExpr::concrete(1),
+                        variable_group: VariableGroup::Cycle,
+                    },
+                    Phase {
+                        num_vars: log_t(),
+                        variable_group: VariableGroup::Cycle,
+                    },
                 ],
             },
         );
@@ -657,8 +717,14 @@ fn build_s2(b: &mut GraphBuilder, _config: &ProtocolConfig, s1: &StageClaims) ->
         let def = claims::reductions::instruction_lookups_claim_reduction();
         let upstream = filter_claims(s1, &def);
         let (vid, claims) = add_vertex_cr(
-            b, def, &upstream, pt.clone(), 2, log_t(),
-            PublicPolynomial::Eq, "instr_cr_gamma",
+            b,
+            def,
+            &upstream,
+            pt.clone(),
+            2,
+            log_t(),
+            PublicPolynomial::Eq,
+            "instr_cr_gamma",
         );
         out.vertex_ids.push(vid);
         out.claims.extend(claims);
@@ -684,7 +750,10 @@ fn build_s2(b: &mut GraphBuilder, _config: &ProtocolConfig, s1: &StageClaims) ->
         let input_upstream = filter_claims(s1, &input_def);
         let ordering_deps = deps_from_formula_map(&input_upstream);
         let (vid, claims) = add_vertex_comp(
-            b, output_def, ordering_deps, pt.clone(),
+            b,
+            output_def,
+            ordering_deps,
+            pt.clone(),
             InputSpec::Formula {
                 def: input_def,
                 upstream: input_upstream,
@@ -694,7 +763,10 @@ fn build_s2(b: &mut GraphBuilder, _config: &ProtocolConfig, s1: &StageClaims) ->
                 degree: 2,
                 num_vars: SymbolicExpr::symbol(Symbol::LOG_K) + log_t(),
                 weighting: PublicPolynomial::Eq,
-                phases: vec![Phase { num_vars: log_t(), variable_group: VariableGroup::Cycle }],
+                phases: vec![Phase {
+                    num_vars: log_t(),
+                    variable_group: VariableGroup::Cycle,
+                }],
             },
         );
         out.vertex_ids.push(vid);
@@ -706,13 +778,19 @@ fn build_s2(b: &mut GraphBuilder, _config: &ProtocolConfig, s1: &StageClaims) ->
         let def = claims::ram::ram_output_check();
         let ordering_deps = deps_from_formula(&def, s1);
         let (vid, claims) = add_vertex_comp(
-            b, def, ordering_deps, pt,
+            b,
+            def,
+            ordering_deps,
+            pt,
             InputSpec::Constant(0),
             SumcheckShape {
                 degree: 2,
                 num_vars: SymbolicExpr::symbol(Symbol::LOG_K) + log_t(),
                 weighting: PublicPolynomial::Eq,
-                phases: vec![Phase { num_vars: log_t(), variable_group: VariableGroup::Cycle }],
+                phases: vec![Phase {
+                    num_vars: log_t(),
+                    variable_group: VariableGroup::Cycle,
+                }],
             },
         );
         out.vertex_ids.push(vid);
@@ -744,15 +822,30 @@ fn build_s3(b: &mut GraphBuilder, s1: &StageClaims, s2: &StageClaims) -> StageOu
             let g4 = g3 * g;
             ClaimDefinition {
                 expr: eb.build(
-                    next_unexp + g * next_pc + g2 * next_virt + g3 * next_first
-                        + g4 - g4 * next_noop,
+                    next_unexp + g * next_pc + g2 * next_virt + g3 * next_first + g4
+                        - g4 * next_noop,
                 ),
                 opening_bindings: vec![
-                    OpeningBinding { var_id: 0, polynomial: PolynomialId::NextUnexpandedPc },
-                    OpeningBinding { var_id: 1, polynomial: PolynomialId::NextPc },
-                    OpeningBinding { var_id: 2, polynomial: PolynomialId::NextIsVirtual },
-                    OpeningBinding { var_id: 3, polynomial: PolynomialId::NextIsFirstInSequence },
-                    OpeningBinding { var_id: 4, polynomial: PolynomialId::NextIsNoop },
+                    OpeningBinding {
+                        var_id: 0,
+                        polynomial: PolynomialId::NextUnexpandedPc,
+                    },
+                    OpeningBinding {
+                        var_id: 1,
+                        polynomial: PolynomialId::NextPc,
+                    },
+                    OpeningBinding {
+                        var_id: 2,
+                        polynomial: PolynomialId::NextIsVirtual,
+                    },
+                    OpeningBinding {
+                        var_id: 3,
+                        polynomial: PolynomialId::NextIsFirstInSequence,
+                    },
+                    OpeningBinding {
+                        var_id: 4,
+                        polynomial: PolynomialId::NextIsNoop,
+                    },
                 ],
                 num_challenges: 1,
             }
@@ -798,8 +891,14 @@ fn build_s3(b: &mut GraphBuilder, s1: &StageClaims, s2: &StageClaims) -> StageOu
             ClaimDefinition {
                 expr: eb.build(right + gamma * left),
                 opening_bindings: vec![
-                    OpeningBinding { var_id: 0, polynomial: PolynomialId::RightInstructionInput },
-                    OpeningBinding { var_id: 1, polynomial: PolynomialId::LeftInstructionInput },
+                    OpeningBinding {
+                        var_id: 0,
+                        polynomial: PolynomialId::RightInstructionInput,
+                    },
+                    OpeningBinding {
+                        var_id: 1,
+                        polynomial: PolynomialId::LeftInstructionInput,
+                    },
                 ],
                 num_challenges: 1,
             }
@@ -863,11 +962,8 @@ fn merge_claims(stages: &[&StageClaims]) -> StageClaims {
 }
 
 fn filter_claims(stage: &StageClaims, def: &ClaimDefinition) -> StageClaims {
-    let needed: std::collections::HashSet<PolynomialId> = def
-        .opening_bindings
-        .iter()
-        .map(|b| b.polynomial)
-        .collect();
+    let needed: std::collections::HashSet<PolynomialId> =
+        def.opening_bindings.iter().map(|b| b.polynomial).collect();
     stage
         .iter()
         .filter(|(k, _)| needed.contains(k))
@@ -899,9 +995,18 @@ fn build_s4(
             ClaimDefinition {
                 expr: eb.build(rd_wv + g * rs1 + g * g * rs2),
                 opening_bindings: vec![
-                    OpeningBinding { var_id: 0, polynomial: PolynomialId::RdWriteValue },
-                    OpeningBinding { var_id: 1, polynomial: PolynomialId::Rs1Value },
-                    OpeningBinding { var_id: 2, polynomial: PolynomialId::Rs2Value },
+                    OpeningBinding {
+                        var_id: 0,
+                        polynomial: PolynomialId::RdWriteValue,
+                    },
+                    OpeningBinding {
+                        var_id: 1,
+                        polynomial: PolynomialId::Rs1Value,
+                    },
+                    OpeningBinding {
+                        var_id: 2,
+                        polynomial: PolynomialId::Rs2Value,
+                    },
                 ],
                 num_challenges: 1,
             }
@@ -923,15 +1028,20 @@ fn build_s4(
                 num_vars: log_ra(),
                 weighting: PublicPolynomial::Eq,
                 phases: vec![
-                    Phase { num_vars: SymbolicExpr::symbol(Symbol::LOG_K), variable_group: VariableGroup::Address },
-                    Phase { num_vars: log_t(), variable_group: VariableGroup::Cycle },
+                    Phase {
+                        num_vars: SymbolicExpr::symbol(Symbol::LOG_K),
+                        variable_group: VariableGroup::Address,
+                    },
+                    Phase {
+                        num_vars: log_t(),
+                        variable_group: VariableGroup::Cycle,
+                    },
                 ],
             },
         );
         out.vertex_ids.push(vid);
         out.claims.extend(claims);
     }
-
 
     // V_ram_val_check
     {
@@ -993,8 +1103,6 @@ fn build_s4(
         out.claims.extend(produced);
     }
 
-
-
     out
 }
 
@@ -1025,9 +1133,18 @@ fn build_s5(
             ClaimDefinition {
                 expr: eb.build(rv + g * left_op + g * g * right_op),
                 opening_bindings: vec![
-                    OpeningBinding { var_id: 0, polynomial: PolynomialId::LookupOutput },
-                    OpeningBinding { var_id: 1, polynomial: PolynomialId::LeftLookupOperand },
-                    OpeningBinding { var_id: 2, polynomial: PolynomialId::RightLookupOperand },
+                    OpeningBinding {
+                        var_id: 0,
+                        polynomial: PolynomialId::LookupOutput,
+                    },
+                    OpeningBinding {
+                        var_id: 1,
+                        polynomial: PolynomialId::LeftLookupOperand,
+                    },
+                    OpeningBinding {
+                        var_id: 2,
+                        polynomial: PolynomialId::RightLookupOperand,
+                    },
                 ],
                 num_challenges: 1,
             }
@@ -1035,7 +1152,10 @@ fn build_s5(
         let input_upstream = filter_claims(s2, &input_def);
         let ordering_deps = deps_from_formula_map(&input_upstream);
         let (vid, claims) = add_vertex_comp(
-            b, output_def, ordering_deps, pt.clone(),
+            b,
+            output_def,
+            ordering_deps,
+            pt.clone(),
             InputSpec::Formula {
                 def: input_def,
                 upstream: input_upstream,
@@ -1046,8 +1166,14 @@ fn build_s5(
                 num_vars: log_ra(),
                 weighting: PublicPolynomial::Eq,
                 phases: vec![
-                    Phase { num_vars: SymbolicExpr::symbol(Symbol::LOG_K), variable_group: VariableGroup::Address },
-                    Phase { num_vars: log_t(), variable_group: VariableGroup::Cycle },
+                    Phase {
+                        num_vars: SymbolicExpr::symbol(Symbol::LOG_K),
+                        variable_group: VariableGroup::Address,
+                    },
+                    Phase {
+                        num_vars: log_t(),
+                        variable_group: VariableGroup::Cycle,
+                    },
                 ],
             },
         );
@@ -1072,8 +1198,14 @@ fn build_s5(
         let upstream = filter_claims(&available, &def);
         if !upstream.is_empty() {
             let (vid, claims) = add_vertex_cr(
-                b, def, &upstream, pt.clone(), 2, log_t(),
-                PublicPolynomial::Eq, "ram_ra_gamma",
+                b,
+                def,
+                &upstream,
+                pt.clone(),
+                2,
+                log_t(),
+                PublicPolynomial::Eq,
+                "ram_ra_gamma",
             );
             out.vertex_ids.push(vid);
             out.claims.extend(claims);
@@ -1098,14 +1230,18 @@ fn build_s5(
         let input_upstream = filter_claims(s4, &input_def);
         let ordering_deps = deps_from_formula_map(&input_upstream);
         let (vid, claims) = add_vertex_comp(
-            b, output_def, ordering_deps, pt,
+            b,
+            output_def,
+            ordering_deps,
+            pt,
             InputSpec::Formula {
                 def: input_def,
                 upstream: input_upstream,
                 challenge_labels: vec![],
             },
             SumcheckShape {
-                degree: 3, num_vars: log_t(),
+                degree: 3,
+                num_vars: log_t(),
                 weighting: PublicPolynomial::Lt,
                 phases: cycle_phase(),
             },
@@ -1123,7 +1259,7 @@ fn circuit_flag_poly(index: usize) -> PolynomialId {
     match index {
         5 => PolynomialId::JumpFlag,
         6 => PolynomialId::WriteLookupToRdFlag,
-        7 => PolynomialId::NextIsVirtual,       // VirtualInstruction = same poly
+        7 => PolynomialId::NextIsVirtual, // VirtualInstruction = same poly
         12 => PolynomialId::NextIsFirstInSequence, // IsFirstInSequence = same poly
         other => PolynomialId::OpFlag(other),
     }
@@ -1173,7 +1309,9 @@ fn build_bytecode_raf_input(
         polys: Vec<(PolynomialId, ClaimId)>,
     }
     impl TermCollector {
-        fn new() -> Self { Self { polys: Vec::new() } }
+        fn new() -> Self {
+            Self { polys: Vec::new() }
+        }
         fn add(&mut self, poly_id: PolynomialId, stage: &StageClaims) {
             if let Some(&cid) = stage.get(&poly_id) {
                 self.polys.push((poly_id, cid));
@@ -1316,8 +1454,14 @@ fn build_s6(
             num_vars: log_ra(),
             weighting: PublicPolynomial::Eq,
             phases: vec![
-                Phase { num_vars: SymbolicExpr::symbol(Symbol::LOG_K), variable_group: VariableGroup::Address },
-                Phase { num_vars: log_t(), variable_group: VariableGroup::Cycle },
+                Phase {
+                    num_vars: SymbolicExpr::symbol(Symbol::LOG_K),
+                    variable_group: VariableGroup::Address,
+                },
+                Phase {
+                    num_vars: log_t(),
+                    variable_group: VariableGroup::Cycle,
+                },
             ],
             output_challenge_spec: OutputChallengeSpec::None,
         })));
@@ -1340,8 +1484,14 @@ fn build_s6(
                 num_vars: log_ra(),
                 weighting: PublicPolynomial::Eq,
                 phases: vec![
-                    Phase { num_vars: SymbolicExpr::symbol(Symbol::LOG_K), variable_group: VariableGroup::Address },
-                    Phase { num_vars: log_t(), variable_group: VariableGroup::Cycle },
+                    Phase {
+                        num_vars: SymbolicExpr::symbol(Symbol::LOG_K),
+                        variable_group: VariableGroup::Address,
+                    },
+                    Phase {
+                        num_vars: log_t(),
+                        variable_group: VariableGroup::Cycle,
+                    },
                 ],
             },
         );
@@ -1390,7 +1540,10 @@ fn build_s6(
         let input_upstream = filter_claims(s5, &input_def);
         let ordering_deps = deps_from_formula_map(&input_upstream);
         let (vid, claims) = add_vertex_comp(
-            b, output_def, ordering_deps, pt.clone(),
+            b,
+            output_def,
+            ordering_deps,
+            pt.clone(),
             InputSpec::Formula {
                 def: input_def,
                 upstream: input_upstream,
@@ -1401,8 +1554,14 @@ fn build_s6(
                 num_vars: log_ra(),
                 weighting: PublicPolynomial::Eq,
                 phases: vec![
-                    Phase { num_vars: SymbolicExpr::symbol(Symbol::LOG_K), variable_group: VariableGroup::Address },
-                    Phase { num_vars: log_t(), variable_group: VariableGroup::Cycle },
+                    Phase {
+                        num_vars: SymbolicExpr::symbol(Symbol::LOG_K),
+                        variable_group: VariableGroup::Address,
+                    },
+                    Phase {
+                        num_vars: log_t(),
+                        variable_group: VariableGroup::Cycle,
+                    },
                 ],
             },
         );
@@ -1458,7 +1617,10 @@ fn build_s6(
         let input_upstream = filter_claims(s5, &input_def);
         let ordering_deps = deps_from_formula_map(&input_upstream);
         let (vid, claims) = add_vertex_comp(
-            b, output_def, ordering_deps, pt.clone(),
+            b,
+            output_def,
+            ordering_deps,
+            pt.clone(),
             InputSpec::Formula {
                 def: input_def,
                 upstream: input_upstream,
@@ -1473,8 +1635,14 @@ fn build_s6(
                 num_vars: log_ra(),
                 weighting: PublicPolynomial::Eq,
                 phases: vec![
-                    Phase { num_vars: SymbolicExpr::symbol(Symbol::LOG_K), variable_group: VariableGroup::Address },
-                    Phase { num_vars: log_t(), variable_group: VariableGroup::Cycle },
+                    Phase {
+                        num_vars: SymbolicExpr::symbol(Symbol::LOG_K),
+                        variable_group: VariableGroup::Address,
+                    },
+                    Phase {
+                        num_vars: log_t(),
+                        variable_group: VariableGroup::Cycle,
+                    },
                 ],
             },
         );
@@ -1557,7 +1725,11 @@ fn build_s7(
     out
 }
 
-fn build_normalization(b: &mut GraphBuilder, config: &ProtocolConfig, s6: &StageClaims) -> StageOutput {
+fn build_normalization(
+    b: &mut GraphBuilder,
+    config: &ProtocolConfig,
+    s6: &StageClaims,
+) -> StageOutput {
     let vid = b.alloc_vertex();
     let target = unified_point();
     let padding = SymbolicPoint::Challenges(S7);
@@ -1709,8 +1881,20 @@ pub fn build_jolt_protocol(config: ProtocolConfig) -> ProtocolGraph {
     let s1_out = build_spartan(&mut b, &config);
     let s2_out = build_s2(&mut b, &config, &s1_out.claims);
     let s3_out = build_s3(&mut b, &s1_out.claims, &s2_out.claims);
-    let s4_out = build_s4(&mut b, &config, &s1_out.claims, &s2_out.claims, &s3_out.claims);
-    let s5_out = build_s5(&mut b, &config, &s1_out.claims, &s2_out.claims, &s4_out.claims);
+    let s4_out = build_s4(
+        &mut b,
+        &config,
+        &s1_out.claims,
+        &s2_out.claims,
+        &s3_out.claims,
+    );
+    let s5_out = build_s5(
+        &mut b,
+        &config,
+        &s1_out.claims,
+        &s2_out.claims,
+        &s4_out.claims,
+    );
     let s6_out = build_s6(
         &mut b,
         &config,
@@ -1722,8 +1906,7 @@ pub fn build_jolt_protocol(config: ProtocolConfig) -> ProtocolGraph {
     );
     let s7_out = build_s7(&mut b, &config, &s5_out.claims, &s6_out.claims);
     let norm_out = build_normalization(&mut b, &config, &s6_out.claims);
-    let (opening_vids, _consumed) =
-        build_opening(&mut b, &s7_out.claims, &norm_out.claims);
+    let (opening_vids, _consumed) = build_opening(&mut b, &s7_out.claims, &norm_out.claims);
 
     let log_t = SymbolicExpr::symbol(Symbol::LOG_T);
     let log_k = SymbolicExpr::symbol(Symbol::LOG_K);
@@ -1732,10 +1915,19 @@ pub fn build_jolt_protocol(config: ProtocolConfig) -> ProtocolGraph {
     // Challenge squeeze specs per stage — must match stages.rs and verify.rs exactly.
     let s1_sq: Vec<ChallengeSpec> = vec![]; // Spartan: opaque internal transcript
     let s2_sq = vec![
-        ChallengeSpec::Scalar { label: "pv_tau_high" },  // PV uni-skip
-        ChallengeSpec::Scalar { label: "ram_rw_gamma" },  // RamRW
-        ChallengeSpec::Scalar { label: "instr_cr_gamma" }, // InstrLookupsCR
-        ChallengeSpec::Vector { label: "output_r_address", dim: log_k.clone() }, // OutputCheck
+        ChallengeSpec::Scalar {
+            label: "pv_tau_high",
+        }, // PV uni-skip
+        ChallengeSpec::Scalar {
+            label: "ram_rw_gamma",
+        }, // RamRW
+        ChallengeSpec::Scalar {
+            label: "instr_cr_gamma",
+        }, // InstrLookupsCR
+        ChallengeSpec::Vector {
+            label: "output_r_address",
+            dim: log_k.clone(),
+        }, // OutputCheck
     ];
     let s3_sq = vec![
         ChallengeSpec::GammaPowers {
@@ -1754,8 +1946,12 @@ pub fn build_jolt_protocol(config: ProtocolConfig) -> ProtocolGraph {
     // S5 squeeze order: InstructionReadRaf(gamma), RamRaCR(gamma).
     // RegistersValEval squeezes nothing (its point comes from S4 opening accumulator).
     let s5_sq = vec![
-        ChallengeSpec::Scalar { label: "instr_raf_gamma" },
-        ChallengeSpec::Scalar { label: "ram_ra_gamma" },
+        ChallengeSpec::Scalar {
+            label: "instr_raf_gamma",
+        },
+        ChallengeSpec::Scalar {
+            label: "ram_ra_gamma",
+        },
     ];
     // S6 squeeze order matches jolt-core params construction order.
     // BytecodeReadRaf::gen() squeezes 6 scalars (1 global + 5 per-stage gammas).
@@ -1764,14 +1960,36 @@ pub fn build_jolt_protocol(config: ProtocolConfig) -> ProtocolGraph {
     let n_stage1_terms = SymbolicExpr::concrete(2 + config.n_circuit_flags);
     let n_stage5_terms = SymbolicExpr::concrete(2 + config.n_lookup_tables);
     let s6_sq = vec![
-        ChallengeSpec::GammaPowers { label: "bc_raf_gamma", count: SymbolicExpr::concrete(8) },
-        ChallengeSpec::GammaPowers { label: "bc_raf_stage1_gamma", count: n_stage1_terms },
-        ChallengeSpec::GammaPowers { label: "bc_raf_stage2_gamma", count: SymbolicExpr::concrete(4) },
-        ChallengeSpec::GammaPowers { label: "bc_raf_stage3_gamma", count: SymbolicExpr::concrete(9) },
-        ChallengeSpec::GammaPowers { label: "bc_raf_stage4_gamma", count: SymbolicExpr::concrete(3) },
-        ChallengeSpec::GammaPowers { label: "bc_raf_stage5_gamma", count: n_stage5_terms },
-        ChallengeSpec::Scalar { label: "bool_gamma" },
-        ChallengeSpec::Scalar { label: "instr_ra_gamma" },
+        ChallengeSpec::GammaPowers {
+            label: "bc_raf_gamma",
+            count: SymbolicExpr::concrete(8),
+        },
+        ChallengeSpec::GammaPowers {
+            label: "bc_raf_stage1_gamma",
+            count: n_stage1_terms,
+        },
+        ChallengeSpec::GammaPowers {
+            label: "bc_raf_stage2_gamma",
+            count: SymbolicExpr::concrete(4),
+        },
+        ChallengeSpec::GammaPowers {
+            label: "bc_raf_stage3_gamma",
+            count: SymbolicExpr::concrete(9),
+        },
+        ChallengeSpec::GammaPowers {
+            label: "bc_raf_stage4_gamma",
+            count: SymbolicExpr::concrete(3),
+        },
+        ChallengeSpec::GammaPowers {
+            label: "bc_raf_stage5_gamma",
+            count: n_stage5_terms,
+        },
+        ChallengeSpec::Scalar {
+            label: "bool_gamma",
+        },
+        ChallengeSpec::Scalar {
+            label: "instr_ra_gamma",
+        },
         ChallengeSpec::Scalar { label: "inc_gamma" },
     ];
     let mut s7_sq = vec![ChallengeSpec::GammaPowers {
@@ -1779,7 +1997,9 @@ pub fn build_jolt_protocol(config: ProtocolConfig) -> ProtocolGraph {
         count: d_total,
     }];
     if config.n_advice > 0 {
-        s7_sq.push(ChallengeSpec::Scalar { label: "advice_gamma" });
+        s7_sq.push(ChallengeSpec::Scalar {
+            label: "advice_gamma",
+        });
     }
 
     // Stage challenge_point = max(instance num_vars) within the stage.
@@ -1980,7 +2200,10 @@ mod tests {
         assert_eq!(stages[5].pre_squeeze.len(), 9);
         assert!(matches!(
             stages[5].pre_squeeze[0],
-            ChallengeSpec::GammaPowers { label: "bc_raf_gamma", .. }
+            ChallengeSpec::GammaPowers {
+                label: "bc_raf_gamma",
+                ..
+            }
         ));
         assert!(matches!(
             stages[5].pre_squeeze[8],
@@ -2007,7 +2230,11 @@ mod tests {
         let bc_vid = s6.vertices[0];
         let bc_vertex = graph.claim_graph.vertex(bc_vid);
         if let Vertex::Sumcheck(v) = bc_vertex {
-            if let InputClaim::Formula { formula, challenge_labels } = &v.input {
+            if let InputClaim::Formula {
+                formula,
+                challenge_labels,
+            } = &v.input
+            {
                 let n_openings = formula.opening_claims.len();
                 // 16 (S1) + 4 (S2) + 9 (S3) + 3 (S4) + 43 (S5) + 2 (RAF) = 77
                 let expected_s1 = 2 + config.n_circuit_flags;
@@ -2016,16 +2243,22 @@ mod tests {
                 let expected_s4 = 3;
                 let expected_s5 = 2 + config.n_lookup_tables;
                 let expected_raf = 2;
-                let expected_total = expected_s1 + expected_s2 + expected_s3
-                    + expected_s4 + expected_s5 + expected_raf;
+                let expected_total = expected_s1
+                    + expected_s2
+                    + expected_s3
+                    + expected_s4
+                    + expected_s5
+                    + expected_raf;
                 assert_eq!(
                     n_openings, expected_total,
                     "BytecodeReadRaf input: expected {expected_total} openings, got {n_openings}"
                 );
                 assert_eq!(
-                    challenge_labels.len(), expected_total + 1,
+                    challenge_labels.len(),
+                    expected_total + 1,
                     "expected {} challenge labels (openings + entry constant), got {}",
-                    expected_total + 1, challenge_labels.len()
+                    expected_total + 1,
+                    challenge_labels.len()
                 );
             } else {
                 panic!("BytecodeReadRaf should have Formula input");

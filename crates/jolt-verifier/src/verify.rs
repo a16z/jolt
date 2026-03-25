@@ -95,9 +95,7 @@ fn squeeze_stage_challenges<F: Field, T: Transcript<Challenge = F>>(
                 let _ = scalars.insert(*label, val);
             }
             ChallengeSpec::Vector { label: _, dim } => {
-                let n = dim
-                    .resolve(symbols)
-                    .expect("unresolvable SymbolicExpr dim");
+                let n = dim.resolve(symbols).expect("unresolvable SymbolicExpr dim");
                 // Squeeze n scalars from transcript (consumed but not stored as scalar)
                 for _ in 0..n {
                     let _: F = transcript.challenge();
@@ -161,9 +159,9 @@ fn evaluate_formula<F: Field>(
                     panic!("challenge label {name:?} not found in stage pre_squeeze")
                 })
             }
-            ChallengeLabel::External(name) => *external_values.get(name).unwrap_or_else(|| {
-                panic!("external value {name:?} not provided")
-            }),
+            ChallengeLabel::External(name) => *external_values
+                .get(name)
+                .unwrap_or_else(|| panic!("external value {name:?} not provided")),
         };
     }
 
@@ -271,16 +269,15 @@ where
         }
         let stage_proof = &proof.stage_proofs[stage_proof_idx];
 
-        let (final_eval, challenges, alpha) =
-            BatchedSumcheckVerifier::verify_with_alpha(
-                &sumcheck_claims,
-                &stage_proof.round_polys,
-                &mut transcript,
-            )
-            .map_err(|e| JoltError::StageVerification {
-                stage: stage.id.0 as usize,
-                reason: e.to_string(),
-            })?;
+        let (final_eval, challenges, alpha) = BatchedSumcheckVerifier::verify_with_alpha(
+            &sumcheck_claims,
+            &stage_proof.round_polys,
+            &mut transcript,
+        )
+        .map_err(|e| JoltError::StageVerification {
+            stage: stage.id.0 as usize,
+            reason: e.to_string(),
+        })?;
 
         let eval_point: Vec<F> = challenges.iter().rev().copied().collect();
 
@@ -308,7 +305,11 @@ where
         // Output formula check: verify final_eval == Σ α^j · pad_j · g_j
         // The formula already includes the weighting (eq/lt/eq+1) as challenge values —
         // no separate weighting multiplication needed.
-        let max_num_vars = sumcheck_claims.iter().map(|c| c.num_vars).max().unwrap_or(0);
+        let max_num_vars = sumcheck_claims
+            .iter()
+            .map(|c| c.num_vars)
+            .max()
+            .unwrap_or(0);
         let mut expected_final = F::zero();
         let mut alpha_power = F::one();
 
@@ -320,7 +321,8 @@ where
                 let pad = F::one().mul_pow_2(offset);
 
                 let n_produced = sc.produces.len();
-                let vertex_evals = &stage_proof.evals[vertex_eval_offset..vertex_eval_offset + n_produced];
+                let vertex_evals =
+                    &stage_proof.evals[vertex_eval_offset..vertex_eval_offset + n_produced];
 
                 // Compute output formula challenge values: weighting × gamma powers.
                 // The formula's Derived challenges encode eq(eval_point, source_point) × gamma^i.
@@ -379,12 +381,9 @@ where
         let vertex = graph.claim_graph.vertex(vid);
         if let Vertex::Opening(ov) = vertex {
             let claim = graph.claim_graph.claim(ov.consumes);
-            let eval = cache
-                .get(ov.consumes)
-                .copied()
-                .ok_or_else(|| JoltError::InvalidProof(
-                    format!("missing eval for opening claim {:?}", ov.consumes),
-                ))?;
+            let eval = cache.get(ov.consumes).copied().ok_or_else(|| {
+                JoltError::InvalidProof(format!("missing eval for opening claim {:?}", ov.consumes))
+            })?;
             let point = resolve_point(&claim.point, &cache, symbols);
             if commitment_idx < proof.commitments.len() {
                 pcs_claims.push(VerifierClaim {
@@ -457,8 +456,13 @@ fn evaluate_output_formula_with_challenges<F: Field>(
     use jolt_ir::protocol::PublicPolynomial as PP;
 
     // Map formula opening variables to proof evaluations
-    let max_var = formula.definition.opening_bindings.iter()
-        .map(|b| b.var_id + 1).max().unwrap_or(0) as usize;
+    let max_var = formula
+        .definition
+        .opening_bindings
+        .iter()
+        .map(|b| b.var_id + 1)
+        .max()
+        .unwrap_or(0) as usize;
     let mut openings = vec![F::zero(); max_var];
     for (i, binding) in formula.definition.opening_bindings.iter().enumerate() {
         if i < evals.len() {
@@ -486,7 +490,12 @@ fn evaluate_output_formula_with_challenges<F: Field>(
     let mut challenges = vec![F::zero(); n_challenges];
 
     // Find the gamma base from any stage challenge (heuristic: first available scalar)
-    let gamma_base = stage_challenges.scalars.values().next().copied().unwrap_or(F::one());
+    let gamma_base = stage_challenges
+        .scalars
+        .values()
+        .next()
+        .copied()
+        .unwrap_or(F::one());
 
     // Fill challenges: w_eval × gamma^i for each challenge variable
     let mut gamma_power = F::one();
@@ -506,9 +515,10 @@ fn resolve_point<F: Clone>(
 ) -> Vec<F> {
     match point {
         SymbolicPoint::Challenges(sid) => cache.points.get(sid).cloned().unwrap_or_default(),
-        SymbolicPoint::Concat(parts) => {
-            parts.iter().flat_map(|p| resolve_point(p, cache, symbols)).collect()
-        }
+        SymbolicPoint::Concat(parts) => parts
+            .iter()
+            .flat_map(|p| resolve_point(p, cache, symbols))
+            .collect(),
         SymbolicPoint::Slice { source, range } => {
             let full = resolve_point(source, cache, symbols);
             let start = range.start.resolve(symbols).expect("slice start");
@@ -593,9 +603,7 @@ mod tests {
     #[test]
     fn formula_evaluation_simple() {
         use jolt_ir::protocol::ClaimFormula;
-        use jolt_ir::{
-            ClaimDefinition, ExprBuilder, OpeningBinding, PolynomialId,
-        };
+        use jolt_ir::{ClaimDefinition, ExprBuilder, OpeningBinding, PolynomialId};
 
         // Formula: gamma * opening_0 + gamma^2 * opening_1
         let b = ExprBuilder::new();
@@ -607,8 +615,14 @@ mod tests {
         let def = ClaimDefinition {
             expr,
             opening_bindings: vec![
-                OpeningBinding { var_id: 0, polynomial: PolynomialId::RamInc },
-                OpeningBinding { var_id: 1, polynomial: PolynomialId::RdInc },
+                OpeningBinding {
+                    var_id: 0,
+                    polynomial: PolynomialId::RamInc,
+                },
+                OpeningBinding {
+                    var_id: 1,
+                    polynomial: PolynomialId::RdInc,
+                },
             ],
             num_challenges: 1,
         };

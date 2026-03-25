@@ -682,9 +682,7 @@ impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, 
             let mut p_bufs: Vec<P::Buffer<Fld>> = inputs
                 .iter_mut()
                 .map(|b| match b {
-                    HybridBuffer::Primary(inner) => {
-                        std::mem::replace(inner, self.primary.alloc(0))
-                    }
+                    HybridBuffer::Primary(inner) => std::mem::replace(inner, self.primary.alloc(0)),
                     HybridBuffer::Fallback(_) => {
                         panic!("mixed buffer backends in fused_interpolate_reduce")
                     }

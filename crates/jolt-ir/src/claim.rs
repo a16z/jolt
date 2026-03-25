@@ -511,7 +511,11 @@ mod tests {
         // Σ w_i * o_i must match direct evaluation
         let openings = vec![Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(5)];
         let direct = claim.evaluate::<Fr>(&openings, &challenges);
-        let via_compile: Fr = weights.iter().zip(openings.iter()).map(|(w, o)| *w * *o).sum();
+        let via_compile: Fr = weights
+            .iter()
+            .zip(openings.iter())
+            .map(|(w, o)| *w * *o)
+            .sum();
         assert_eq!(direct, via_compile);
     }
 
@@ -530,7 +534,11 @@ mod tests {
 
         let openings = vec![Fr::from_u64(3), Fr::from_u64(7)];
         let direct = claim.evaluate::<Fr>(&openings, &challenges);
-        let via_compile: Fr = weights.iter().zip(openings.iter()).map(|(w, o)| *w * *o).sum();
+        let via_compile: Fr = weights
+            .iter()
+            .zip(openings.iter())
+            .map(|(w, o)| *w * *o)
+            .sum();
         assert_eq!(direct, via_compile);
     }
 
@@ -588,7 +596,11 @@ mod tests {
 
         let openings: Vec<Fr> = (1..=5).map(Fr::from_u64).collect();
         let direct = claim.evaluate::<Fr>(&openings, &challenges);
-        let via_compile: Fr = weights.iter().zip(openings.iter()).map(|(w, o)| *w * *o).sum();
+        let via_compile: Fr = weights
+            .iter()
+            .zip(openings.iter())
+            .map(|(w, o)| *w * *o)
+            .sum();
         assert_eq!(direct, via_compile);
     }
 
@@ -608,7 +620,11 @@ mod tests {
 
         let openings: Vec<Fr> = vec![Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(5)];
         let direct = claim.evaluate::<Fr>(&openings, &challenges);
-        let via_compile: Fr = weights.iter().zip(openings.iter()).map(|(w, o)| *w * *o).sum();
+        let via_compile: Fr = weights
+            .iter()
+            .zip(openings.iter())
+            .map(|(w, o)| *w * *o)
+            .sum();
         assert_eq!(direct, via_compile);
     }
 }

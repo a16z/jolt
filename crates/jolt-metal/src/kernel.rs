@@ -50,6 +50,13 @@ pub struct MetalKernel<F: Field> {
     pub(crate) _marker: PhantomData<F>,
 }
 
+/// Occupancy info for a single pipeline variant.
+pub struct PipelineOccupancy {
+    pub name: &'static str,
+    pub max_threads_per_threadgroup: u64,
+    pub thread_execution_width: u64,
+}
+
 impl<F: Field> MetalKernel<F> {
     #[inline]
     pub(crate) fn num_evals(&self) -> usize {
@@ -118,6 +125,62 @@ impl<F: Field> MetalKernel<F> {
     #[inline]
     pub(crate) fn pipeline_coop_fused_h2l(&self) -> Option<&metal::ComputePipelineState> {
         self.pipelines.pipeline_coop_fused_h2l.as_ref()
+    }
+
+    /// Returns occupancy info for all pipeline variants in this kernel.
+    ///
+    /// Includes optional cooperative pipelines when present.
+    pub fn occupancy(&self) -> Vec<PipelineOccupancy> {
+        let p = &self.pipelines;
+        let mut out = vec![
+            PipelineOccupancy {
+                name: "l2h",
+                max_threads_per_threadgroup: p.pipeline_l2h.max_total_threads_per_threadgroup(),
+                thread_execution_width: p.pipeline_l2h.thread_execution_width(),
+            },
+            PipelineOccupancy {
+                name: "h2l",
+                max_threads_per_threadgroup: p.pipeline_h2l.max_total_threads_per_threadgroup(),
+                thread_execution_width: p.pipeline_h2l.thread_execution_width(),
+            },
+            PipelineOccupancy {
+                name: "tensor",
+                max_threads_per_threadgroup: p.pipeline_tensor.max_total_threads_per_threadgroup(),
+                thread_execution_width: p.pipeline_tensor.thread_execution_width(),
+            },
+            PipelineOccupancy {
+                name: "l2h_unw",
+                max_threads_per_threadgroup: p.pipeline_l2h_unw.max_total_threads_per_threadgroup(),
+                thread_execution_width: p.pipeline_l2h_unw.thread_execution_width(),
+            },
+            PipelineOccupancy {
+                name: "h2l_unw",
+                max_threads_per_threadgroup: p.pipeline_h2l_unw.max_total_threads_per_threadgroup(),
+                thread_execution_width: p.pipeline_h2l_unw.thread_execution_width(),
+            },
+            PipelineOccupancy {
+                name: "fused_h2l",
+                max_threads_per_threadgroup: p
+                    .pipeline_fused_h2l
+                    .max_total_threads_per_threadgroup(),
+                thread_execution_width: p.pipeline_fused_h2l.thread_execution_width(),
+            },
+        ];
+        if let Some(ref coop) = p.pipeline_coop_h2l {
+            out.push(PipelineOccupancy {
+                name: "coop_h2l",
+                max_threads_per_threadgroup: coop.max_total_threads_per_threadgroup(),
+                thread_execution_width: coop.thread_execution_width(),
+            });
+        }
+        if let Some(ref coop) = p.pipeline_coop_fused_h2l {
+            out.push(PipelineOccupancy {
+                name: "coop_fused_h2l",
+                max_threads_per_threadgroup: coop.max_total_threads_per_threadgroup(),
+                thread_execution_width: coop.thread_execution_width(),
+            });
+        }
+        out
     }
 }
 

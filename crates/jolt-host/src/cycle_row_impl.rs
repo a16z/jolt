@@ -160,7 +160,10 @@ impl CycleRow for Cycle {
 }
 
 /// Compute the instruction operand inputs from CycleRow data.
-fn instruction_inputs(cycle: &impl CycleRow, iflags: &[bool; NUM_INSTRUCTION_FLAGS]) -> (u64, u128) {
+fn instruction_inputs(
+    cycle: &impl CycleRow,
+    iflags: &[bool; NUM_INSTRUCTION_FLAGS],
+) -> (u64, u128) {
     let left = if iflags[InstructionFlags::LeftOperandIsPC] {
         cycle.unexpanded_pc()
     } else if iflags[InstructionFlags::LeftOperandIsRs1Value] {
@@ -393,12 +396,8 @@ fn static_instruction_flags(instr: &Instruction) -> [bool; NUM_INSTRUCTION_FLAGS
         Instruction::VirtualXORROT24(_) => Flags::instruction_flags(&xor_rotate::VirtualXorRot24),
         Instruction::VirtualXORROT16(_) => Flags::instruction_flags(&xor_rotate::VirtualXorRot16),
         Instruction::VirtualXORROT63(_) => Flags::instruction_flags(&xor_rotate::VirtualXorRot63),
-        Instruction::VirtualXORROTW16(_) => {
-            Flags::instruction_flags(&xor_rotate::VirtualXorRotW16)
-        }
-        Instruction::VirtualXORROTW12(_) => {
-            Flags::instruction_flags(&xor_rotate::VirtualXorRotW12)
-        }
+        Instruction::VirtualXORROTW16(_) => Flags::instruction_flags(&xor_rotate::VirtualXorRotW16),
+        Instruction::VirtualXORROTW12(_) => Flags::instruction_flags(&xor_rotate::VirtualXorRotW12),
         Instruction::VirtualXORROTW8(_) => Flags::instruction_flags(&xor_rotate::VirtualXorRotW8),
         Instruction::VirtualXORROTW7(_) => Flags::instruction_flags(&xor_rotate::VirtualXorRotW7),
         Instruction::NoOp => {
@@ -468,12 +467,8 @@ fn lookup_table_kind_for_instruction(instr: &Instruction) -> Option<LookupTableK
         Instruction::VirtualAssertValidUnsignedRemainder(_) => {
             vassert::AssertValidUnsignedRemainder.lookup_table()
         }
-        Instruction::VirtualAssertMulUNoOverflow(_) => {
-            vassert::AssertMulUNoOverflow.lookup_table()
-        }
-        Instruction::VirtualAssertWordAlignment(_) => {
-            vassert::AssertWordAlignment.lookup_table()
-        }
+        Instruction::VirtualAssertMulUNoOverflow(_) => vassert::AssertMulUNoOverflow.lookup_table(),
+        Instruction::VirtualAssertWordAlignment(_) => vassert::AssertWordAlignment.lookup_table(),
         Instruction::VirtualAssertHalfwordAlignment(_) => {
             vassert::AssertHalfwordAlignment.lookup_table()
         }
@@ -487,9 +482,7 @@ fn lookup_table_kind_for_instruction(instr: &Instruction) -> Option<LookupTableK
         Instruction::VirtualSRLI(_) => shift::VirtualSrli.lookup_table(),
         Instruction::VirtualSRA(_) => shift::VirtualSra.lookup_table(),
         Instruction::VirtualSRAI(_) => shift::VirtualSrai.lookup_table(),
-        Instruction::VirtualShiftRightBitmask(_) => {
-            shift::VirtualShiftRightBitmask.lookup_table()
-        }
+        Instruction::VirtualShiftRightBitmask(_) => shift::VirtualShiftRightBitmask.lookup_table(),
         Instruction::VirtualShiftRightBitmaskI(_) => {
             shift::VirtualShiftRightBitmaski.lookup_table()
         }
@@ -508,7 +501,10 @@ fn lookup_table_kind_for_instruction(instr: &Instruction) -> Option<LookupTableK
     }
 }
 
-fn apply_dynamic_circuit_flags(flags: &mut [bool; NUM_CIRCUIT_FLAGS], norm: &NormalizedInstruction) {
+fn apply_dynamic_circuit_flags(
+    flags: &mut [bool; NUM_CIRCUIT_FLAGS],
+    norm: &NormalizedInstruction,
+) {
     if norm.virtual_sequence_remaining.is_some() {
         flags[CircuitFlags::VirtualInstruction as usize] = true;
     }

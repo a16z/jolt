@@ -7,12 +7,12 @@ pub mod config;
 pub mod error;
 pub mod key;
 pub mod proof;
-pub mod verify;
 pub mod verifier;
+pub mod verify;
 
 pub use config::{OneHotConfig, OneHotParams, ProverConfig, ReadWriteConfig};
 pub use error::JoltError;
 pub use key::JoltVerifyingKey;
 pub use proof::{JoltProof, StageProof};
-pub use verify::{build_symbol_table, gamma_powers, verify_from_graph};
 pub use verifier::{verify_openings, verify_spartan};
+pub use verify::{build_symbol_table, gamma_powers, verify_from_graph};
