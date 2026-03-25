@@ -1,10 +1,8 @@
-use crate::{BLAKE2_FUNCT3, BLAKE2_FUNCT7, INLINE_OPCODE};
-use tracer::emulator::cpu::Xlen;
-use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
+use crate::spec::Blake2bCompressionSpec;
+use jolt_inlines_sdk::spec::{InlineSpec, InlineTestHarness, INLINE};
 
 pub fn create_blake2_harness() -> InlineTestHarness {
-    let layout = InlineMemoryLayout::single_input(144, 64);
-    InlineTestHarness::new(layout, Xlen::Bit64)
+    Blake2bCompressionSpec::create_harness()
 }
 
 pub fn load_blake2_data(
@@ -14,28 +12,19 @@ pub fn load_blake2_data(
     counter: u64,
     is_final: bool,
 ) {
-    harness.setup_registers(); // RS1=state, RS2=message+params
-    harness.load_state64(state);
+    let mut combined_input = [0u64; 18];
+    combined_input[..16].copy_from_slice(message);
+    combined_input[16] = counter;
+    combined_input[17] = is_final as u64;
 
-    // Blake2 expects message + counter + flag contiguously at rs2
-    // Create combined input: message (16 u64s) + counter (1 u64) + flag (1 u64)
-    let mut combined_input = Vec::with_capacity(18);
-    combined_input.extend_from_slice(message);
-    combined_input.push(counter);
-    let flag_value = if is_final { 1u64 } else { 0u64 };
-    combined_input.push(flag_value);
-
-    // Load the combined input
-    harness.load_input64(&combined_input);
+    let input = (*state, combined_input);
+    Blake2bCompressionSpec::load(harness, &input);
 }
 
 pub fn read_state(harness: &mut InlineTestHarness) -> [u64; crate::STATE_VECTOR_LEN] {
-    let vec = harness.read_output64(crate::STATE_VECTOR_LEN);
-    let mut state = [0u64; crate::STATE_VECTOR_LEN];
-    state.copy_from_slice(&vec);
-    state
+    Blake2bCompressionSpec::read(harness)
 }
 
-pub fn instruction() -> tracer::instruction::inline::INLINE {
-    InlineTestHarness::create_default_instruction(INLINE_OPCODE, BLAKE2_FUNCT3, BLAKE2_FUNCT7)
+pub fn instruction() -> INLINE {
+    Blake2bCompressionSpec::instruction()
 }

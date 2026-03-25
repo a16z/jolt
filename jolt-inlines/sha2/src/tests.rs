@@ -20,8 +20,8 @@ pub fn instruction_sha256init() -> tracer::instruction::inline::INLINE {
 }
 
 mod exec_functions {
-    use crate::exec::{execute_sha256_compression, execute_sha256_compression_initial};
     use crate::sequence_builder::BLOCK;
+    use crate::spec::{execute_sha256_compression, execute_sha256_compression_initial};
 
     #[test]
     fn test_exec_sha256_compression_function() {

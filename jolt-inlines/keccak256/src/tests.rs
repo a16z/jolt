@@ -41,7 +41,7 @@ mod exec {
         ];
 
         for (input, expected_hash) in e2e_vectors {
-            let hash = crate::exec::execute_keccak256(input);
+            let hash = crate::spec::execute_keccak256(input);
             assert_eq!(&hash, expected_hash);
         }
     }
@@ -71,8 +71,8 @@ mod exec_trace_equivalence {
 }
 
 mod exec_unit {
-    use crate::exec::{execute_chi, execute_iota, execute_rho_and_pi, execute_theta};
     use crate::sequence_builder::ROUND_CONSTANTS;
+    use crate::spec::{execute_chi, execute_iota, execute_rho_and_pi, execute_theta};
     use crate::test_constants::xkcp_vectors;
     use crate::NUM_LANES;
 

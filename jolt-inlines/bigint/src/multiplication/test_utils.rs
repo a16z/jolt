@@ -1,22 +1,6 @@
-use super::{BIGINT256_MUL_FUNCT3, BIGINT256_MUL_FUNCT7, INLINE_OPCODE, INPUT_LIMBS, OUTPUT_LIMBS};
-use tracer::emulator::cpu::Xlen;
-use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
-
-pub type BigIntInput = ([u64; INPUT_LIMBS], [u64; INPUT_LIMBS]);
-pub type BigIntOutput = [u64; OUTPUT_LIMBS];
-
-pub fn create_bigint_harness() -> InlineTestHarness {
-    let layout = InlineMemoryLayout::two_inputs(32, 32, 64);
-    InlineTestHarness::new(layout, Xlen::Bit64)
-}
-
-pub fn instruction() -> tracer::instruction::inline::INLINE {
-    InlineTestHarness::create_default_instruction(
-        INLINE_OPCODE,
-        BIGINT256_MUL_FUNCT3,
-        BIGINT256_MUL_FUNCT7,
-    )
-}
+use super::{INPUT_LIMBS, OUTPUT_LIMBS};
+use crate::multiplication::spec::BigintMul256Spec;
+use jolt_inlines_sdk::spec::InlineSpec;
 
 pub mod bigint_verify {
     use super::*;
@@ -26,15 +10,11 @@ pub mod bigint_verify {
         rhs: &[u64; INPUT_LIMBS],
         expected: &[u64; OUTPUT_LIMBS],
     ) {
-        let mut harness = create_bigint_harness();
-        harness.setup_registers();
-        harness.load_input64(lhs);
-        harness.load_input2_64(rhs);
-        harness.execute_inline(instruction());
-
-        let result_vec = harness.read_output64(OUTPUT_LIMBS);
-        let mut result = [0u64; OUTPUT_LIMBS];
-        result.copy_from_slice(&result_vec);
+        let input = (*lhs, *rhs);
+        let mut harness = BigintMul256Spec::create_harness();
+        BigintMul256Spec::load(&mut harness, &input);
+        harness.execute_inline(BigintMul256Spec::instruction());
+        let result = BigintMul256Spec::read(&mut harness);
 
         assert_eq!(&result, expected, "BigInt multiplication result mismatch");
     }

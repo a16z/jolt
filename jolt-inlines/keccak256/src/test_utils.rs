@@ -1,4 +1,4 @@
-use crate::exec::execute_keccak_f;
+use crate::spec::execute_keccak_f;
 use crate::test_constants::{self, TestVectors};
 use crate::Keccak256State;
 use tracer::emulator::cpu::Xlen;

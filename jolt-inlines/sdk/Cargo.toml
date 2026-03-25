@@ -14,5 +14,5 @@ host = ["dep:tracer", "dep:inventory"]
 
 [dependencies]
 jolt-platform = { workspace = true }
-tracer = { workspace = true, optional = true, features = ["std"] }
+tracer = { workspace = true, optional = true, features = ["std", "test-utils"] }
 inventory = { workspace = true, optional = true }

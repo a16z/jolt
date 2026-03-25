@@ -412,7 +412,7 @@ pub(crate) unsafe fn blake2b_compress(state: *mut u64, message: *const u64) {
         .try_into()
         .expect("Message pointer must reference exactly 18 u64 values");
 
-    crate::exec::execute_blake2b_compression(state_array, &message_array);
+    crate::spec::execute_blake2b_compression(state_array, &message_array);
 }
 
 #[cfg(all(

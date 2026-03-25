@@ -1,6 +1,4 @@
 //! This file provides high-level API to use BLAKE3 compression, both in host and guest mode.
-#[cfg(feature = "host")]
-use crate::FLAG_KEYED_HASH;
 use crate::{
     BLOCK_INPUT_SIZE_IN_BYTES, CHAINING_VALUE_LEN, COUNTER_LEN, FLAG_CHUNK_END, FLAG_CHUNK_START,
     FLAG_ROOT, IV, MSG_BLOCK_LEN, OUTPUT_SIZE_IN_BYTES,
@@ -367,7 +365,7 @@ pub(crate) unsafe fn blake3_compress(chaining_value: *mut u32, message: *const u
     let flags = *message.add(19);
 
     // On the host, we call our reference implementation from the exec module.
-    crate::exec::execute_blake3_compression(
+    crate::spec::execute_blake3_compression(
         &mut *(chaining_value as *mut [u32; 8]),
         message_block,
         &counter_array,
@@ -412,20 +410,10 @@ unsafe fn blake3_keyed64_compress(left: *const u32, right: *const u32, iv: *mut 
 #[cfg(feature = "host")]
 #[inline(always)]
 unsafe fn blake3_keyed64_compress(left: *const u32, right: *const u32, key: *mut u32) {
-    // Concatenate left || right as message
-    let mut message = [0u32; 16];
-    core::ptr::copy_nonoverlapping(left, message.as_mut_ptr(), 8);
-    core::ptr::copy_nonoverlapping(right, message.as_mut_ptr().add(8), 8);
-
-    let key_arr = &mut *(key as *mut [u32; 8]);
-
-    // flags = CHUNK_START | CHUNK_END | ROOT | KEYED_HASH
-    crate::exec::execute_blake3_compression(
-        key_arr,
-        &message,
-        &[0, 0],
-        64,
-        FLAG_CHUNK_START | FLAG_CHUNK_END | FLAG_ROOT | FLAG_KEYED_HASH,
+    crate::spec::execute_blake3_keyed64_compression(
+        &*(left as *const [u32; 8]),
+        &*(right as *const [u32; 8]),
+        &mut *(key as *mut [u32; 8]),
     );
 }
 

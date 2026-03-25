@@ -1,20 +1,19 @@
 use crate::{IV, SIGMA};
+use jolt_inlines_sdk::host::Xlen;
+use jolt_inlines_sdk::spec::{InlineMemoryLayout, InlineSpec, InlineTestHarness, INLINE};
 
-/// Rust implementation of BLAKE2 compression on the host.
 pub fn execute_blake2b_compression(state: &mut [u64; 8], message_words: &[u64; 18]) {
     let mut v = [0u64; 16];
     v[0..8].copy_from_slice(state);
     v[8..16].copy_from_slice(&IV);
 
     v[12] ^= message_words[16];
-    // v[13] ^= counter.shr(64) as u64;  // not used for 64-bit counter
 
     if message_words[17] != 0 {
         v[14] = !v[14];
     }
 
     for s in SIGMA {
-        // Column step
         g(
             &mut v,
             0,
@@ -52,7 +51,6 @@ pub fn execute_blake2b_compression(state: &mut [u64; 8], message_words: &[u64; 1
             message_words[s[7]],
         );
 
-        // Diagonal step
         g(
             &mut v,
             0,
@@ -105,4 +103,41 @@ fn g(v: &mut [u64; 16], a: usize, b: usize, c: usize, d: usize, x: u64, y: u64) 
     v[d] = (v[d] ^ v[a]).rotate_right(16);
     v[c] = v[c].wrapping_add(v[d]);
     v[b] = (v[b] ^ v[c]).rotate_right(63);
+}
+
+pub struct Blake2bCompressionSpec;
+
+impl InlineSpec for Blake2bCompressionSpec {
+    type Input = ([u64; 8], [u64; 18]);
+    type Output = [u64; 8];
+
+    fn reference(input: &Self::Input) -> Self::Output {
+        let mut state = input.0;
+        execute_blake2b_compression(&mut state, &input.1);
+        state
+    }
+
+    fn create_harness() -> InlineTestHarness {
+        let layout = InlineMemoryLayout::single_input(144, 64);
+        InlineTestHarness::new(layout, Xlen::Bit64)
+    }
+
+    fn instruction() -> INLINE {
+        InlineTestHarness::create_default_instruction(
+            crate::INLINE_OPCODE,
+            crate::BLAKE2_FUNCT3,
+            crate::BLAKE2_FUNCT7,
+        )
+    }
+
+    fn load(harness: &mut InlineTestHarness, input: &Self::Input) {
+        harness.setup_registers();
+        harness.load_state64(&input.0);
+        harness.load_input64(&input.1);
+    }
+
+    fn read(harness: &mut InlineTestHarness) -> Self::Output {
+        let vec = harness.read_output64(8);
+        vec.try_into().unwrap()
+    }
 }
