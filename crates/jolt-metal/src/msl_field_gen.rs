@@ -373,6 +373,62 @@ fn generate_cios_macro(s: &mut String, n: usize) {
     s.push('\n');
 }
 
+/// Generate `fr_mul2`: interleaved CIOS for two independent multiplications.
+///
+/// Processes two `fr_mul_unreduced` operations with their CIOS rounds
+/// interleaved. Within each round, mul1's operations precede mul2's,
+/// giving the GPU's instruction scheduler independent work to fill
+/// pipeline bubbles from the CIOS carry dependency chain.
+///
+/// Register cost: +N+1 u32 (one extra T array). Throughput benefit
+/// depends on whether the Metal compiler already interleaves inlined
+/// `fr_mul` calls — this forces the interleaving explicitly.
+fn generate_fr_mul2(s: &mut String, n: usize) {
+    let t_len = n + 1;
+    let _ = writeln!(
+        s,
+        "FR_FUNC_ATTR void fr_mul2_unreduced(Fr a1, Fr b1, Fr a2, Fr b2, thread Fr& r1, thread Fr& r2) {{"
+    );
+
+    // Two independent T accumulators
+    let _ = write!(s, "    uint T1[{t_len}] = {{");
+    for i in 0..t_len {
+        if i > 0 { let _ = write!(s, ", "); }
+        let _ = write!(s, "0");
+    }
+    let _ = writeln!(s, "}};");
+    let _ = write!(s, "    uint T2[{t_len}] = {{");
+    for i in 0..t_len {
+        if i > 0 { let _ = write!(s, ", "); }
+        let _ = write!(s, "0");
+    }
+    let _ = writeln!(s, "}};");
+    let _ = writeln!(s, "    uint T1_{n}, T2_{n};");
+
+    // Interleave CIOS rounds: round k of mul1, then round k of mul2
+    for j in 0..n {
+        let _ = writeln!(s, "    FR_CIOS_ROUND(T1, a1, b1.limbs[{j}], T1_{n});");
+        let _ = writeln!(s, "    FR_CIOS_ROUND(T2, a2, b2.limbs[{j}], T2_{n});");
+    }
+
+    // Extract results
+    let _ = writeln!(s, "    for (int i = 0; i < {n}; i++) r1.limbs[i] = T1[i];");
+    let _ = writeln!(s, "    for (int i = 0; i < {n}; i++) r2.limbs[i] = T2[i];");
+    let _ = writeln!(s, "}}");
+    s.push('\n');
+
+    // Convenience: fr_mul2 (with reduction)
+    let _ = writeln!(
+        s,
+        "FR_FUNC_ATTR void fr_mul2(Fr a1, Fr b1, Fr a2, Fr b2, thread Fr& r1, thread Fr& r2) {{"
+    );
+    let _ = writeln!(s, "    fr_mul2_unreduced(a1, b1, a2, b2, r1, r2);");
+    let _ = writeln!(s, "    r1 = fr_reduce(r1);");
+    let _ = writeln!(s, "    r2 = fr_reduce(r2);");
+    let _ = writeln!(s, "}}");
+    s.push('\n');
+}
+
 fn generate_fr_mul(s: &mut String, n: usize) {
     // fr_mul_unreduced: N unrolled CIOS rounds
     let t_len = n + 1;
@@ -409,6 +465,8 @@ fn generate_fr_mul(s: &mut String, n: usize) {
     let _ = writeln!(s, "    return fr_mul(a, a);");
     let _ = writeln!(s, "}}");
     s.push('\n');
+
+    generate_fr_mul2(s, n);
 
     // fr_zero
     let _ = writeln!(s, "inline Fr fr_zero() {{");

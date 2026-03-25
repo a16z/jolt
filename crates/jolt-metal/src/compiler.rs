@@ -1397,10 +1397,11 @@ fn generate_toom_cook_d8_deferred(p: usize, weighted: bool, h2l: bool, tg_spill:
     emit_ex2(&mut s, "br_4", "br_2", "br_3", "br_inf");
 
     // Point-wise: a_k = ar_k * br_k for k in {1,2,3,4,inf}
-    let _ = writeln!(s, "        Fr a_1 = fr_mul(ar_1, br_1);");
-    let _ = writeln!(s, "        Fr a_2 = fr_mul(ar_2, br_2);");
-    let _ = writeln!(s, "        Fr a_3 = fr_mul(ar_3, br_3);");
-    let _ = writeln!(s, "        Fr a_4 = fr_mul(ar_4, br_4);");
+    // ILP: pair independent multiplies via interleaved CIOS
+    let _ = writeln!(s, "        Fr a_1, a_2;");
+    let _ = writeln!(s, "        fr_mul2(ar_1, br_1, ar_2, br_2, a_1, a_2);");
+    let _ = writeln!(s, "        Fr a_3, a_4;");
+    let _ = writeln!(s, "        fr_mul2(ar_3, br_3, ar_4, br_4, a_3, a_4);");
     let _ = writeln!(s, "        Fr a_inf = fr_mul(ar_inf, br_inf);");
 
     // Extrapolate a to {5, 6, 7}
@@ -1438,10 +1439,10 @@ fn generate_toom_cook_d8_deferred(p: usize, weighted: bool, h2l: bool, tg_spill:
     emit_ex2(&mut s, "dr_4", "dr_2", "dr_3", "dr_inf");
 
     // Point-wise: b_k = cr_k * dr_k for k in {1,2,3,4,inf}
-    let _ = writeln!(s, "        Fr b_1 = fr_mul(cr_1, dr_1);");
-    let _ = writeln!(s, "        Fr b_2 = fr_mul(cr_2, dr_2);");
-    let _ = writeln!(s, "        Fr b_3 = fr_mul(cr_3, dr_3);");
-    let _ = writeln!(s, "        Fr b_4 = fr_mul(cr_4, dr_4);");
+    let _ = writeln!(s, "        Fr b_1, b_2;");
+    let _ = writeln!(s, "        fr_mul2(cr_1, dr_1, cr_2, dr_2, b_1, b_2);");
+    let _ = writeln!(s, "        Fr b_3, b_4;");
+    let _ = writeln!(s, "        fr_mul2(cr_3, dr_3, cr_4, dr_4, b_3, b_4);");
     let _ = writeln!(s, "        Fr b_inf = fr_mul(cr_inf, dr_inf);");
 
     // Extrapolate b to {5, 6, 7}
@@ -1453,42 +1454,42 @@ fn generate_toom_cook_d8_deferred(p: usize, weighted: bool, h2l: bool, tg_spill:
 
     // Fused eval-accumulate: point-wise multiply → fr_reduce → fr_add
     // directly into accumulators. No evals[] array needed — saves 64 registers.
+    // Uses fr_mul2_unreduced to interleave CIOS of independent pairs.
     if tg_spill {
-        // Reload a_1..a_7 one-at-a-time from threadgroup memory.
-        // Only 8 u32 (1 Fr) of half-A live at any point during the multiply chain.
-        for (d, b) in ["b_1", "b_2", "b_3", "b_4", "b_5", "b_6", "b_7"]
-            .iter()
-            .enumerate()
-        {
+        // Reload a_1..a_7 from threadgroup memory in pairs for ILP.
+        let _ = writeln!(s, "        {{ Fr _pw0, _pw1;");
+        for (d0, d1, b0, b1) in [
+            (0, 1, "b_1", "b_2"),
+            (2, 3, "b_3", "b_4"),
+            (4, 5, "b_5", "b_6"),
+        ] {
             let _ = writeln!(
                 s,
-                "        acc_{d} = fr_add(acc_{d}, fr_reduce(fr_mul_unreduced(tg_data[lid * 7u + {d}u], {b})));"
+                "        fr_mul2_unreduced(tg_data[lid * 7u + {d0}u], {b0}, tg_data[lid * 7u + {d1}u], {b1}, _pw0, _pw1);"
             );
+            let _ = writeln!(s, "        acc_{d0} = fr_add(acc_{d0}, fr_reduce(_pw0));");
+            let _ = writeln!(s, "        acc_{d1} = fr_add(acc_{d1}, fr_reduce(_pw1));");
         }
-        // a_inf stays in register — last multiply
+        // Last pair: a_7 from tg_data + a_inf from register
         let _ = writeln!(
             s,
-            "        acc_7 = fr_add(acc_7, fr_reduce(fr_mul_unreduced(a_inf, b_inf)));"
+            "        fr_mul2_unreduced(tg_data[lid * 7u + 6u], b_7, a_inf, b_inf, _pw0, _pw1);"
         );
+        let _ = writeln!(s, "        acc_6 = fr_add(acc_6, fr_reduce(_pw0));");
+        let _ = writeln!(s, "        acc_7 = fr_add(acc_7, fr_reduce(_pw1)); }}");
     } else {
-        for (d, (a, b)) in [
-            ("a_1", "b_1"),
-            ("a_2", "b_2"),
-            ("a_3", "b_3"),
-            ("a_4", "b_4"),
-            ("a_5", "b_5"),
-            ("a_6", "b_6"),
-            ("a_7", "b_7"),
-            ("a_inf", "b_inf"),
-        ]
-        .iter()
-        .enumerate()
-        {
-            let _ = writeln!(
-                s,
-                "        acc_{d} = fr_add(acc_{d}, fr_reduce(fr_mul_unreduced({a}, {b})));"
-            );
+        let _ = writeln!(s, "        {{ Fr _pw0, _pw1;");
+        for (d0, d1, a0, b0, a1, b1) in [
+            (0, 1, "a_1", "b_1", "a_2", "b_2"),
+            (2, 3, "a_3", "b_3", "a_4", "b_4"),
+            (4, 5, "a_5", "b_5", "a_6", "b_6"),
+            (6, 7, "a_7", "b_7", "a_inf", "b_inf"),
+        ] {
+            let _ = writeln!(s, "        fr_mul2_unreduced({a0}, {b0}, {a1}, {b1}, _pw0, _pw1);");
+            let _ = writeln!(s, "        acc_{d0} = fr_add(acc_{d0}, fr_reduce(_pw0));");
+            let _ = writeln!(s, "        acc_{d1} = fr_add(acc_{d1}, fr_reduce(_pw1));");
         }
+        let _ = writeln!(s, "        }}");
     }
 
     s
@@ -1511,10 +1512,11 @@ fn emit_eval_linear_prod_2(
     let _ = writeln!(s, "        Fr {prefix}_v2_0 = fr_add({prefix}_s0, {hi0});");
     let _ = writeln!(s, "        Fr {prefix}_s1 = fr_sub({hi1}, {lo1});");
     let _ = writeln!(s, "        Fr {prefix}_v2_1 = fr_add({prefix}_s1, {hi1});");
-    let _ = writeln!(s, "        Fr {prefix}_1 = fr_mul({hi0}, {hi1});");
+    // ILP: pair first two independent fr_mul via interleaved CIOS
+    let _ = writeln!(s, "        Fr {prefix}_1, {prefix}_2;");
     let _ = writeln!(
         s,
-        "        Fr {prefix}_2 = fr_mul({prefix}_v2_0, {prefix}_v2_1);"
+        "        fr_mul2({hi0}, {hi1}, {prefix}_v2_0, {prefix}_v2_1, {prefix}_1, {prefix}_2);"
     );
     let _ = writeln!(
         s,
@@ -1615,20 +1617,19 @@ fn generate_toom_cook_d4(p: usize) -> String {
         );
         emit_ex2(&mut s, "b_3", "b_1", "b_2", "b_inf");
 
-        // Point-wise multiply
+        // Point-wise multiply — use fr_mul2 to interleave CIOS of
+        // independent pairs for better pipeline utilization.
         if p == 1 {
-            let _ = writeln!(s, "        evals[0] = fr_mul_unreduced(a_1, b_1);");
-            let _ = writeln!(s, "        evals[1] = fr_mul_unreduced(a_2, b_2);");
-            let _ = writeln!(s, "        evals[2] = fr_mul_unreduced(a_3, b_3);");
-            let _ = writeln!(s, "        evals[3] = fr_mul_unreduced(a_inf, b_inf);");
+            let _ = writeln!(s, "        fr_mul2_unreduced(a_1, b_1, a_2, b_2, evals[0], evals[1]);");
+            let _ = writeln!(s, "        fr_mul2_unreduced(a_3, b_3, a_inf, b_inf, evals[2], evals[3]);");
         } else {
-            let _ = writeln!(s, "        evals[0] = fr_add(evals[0], fr_mul(a_1, b_1));");
-            let _ = writeln!(s, "        evals[1] = fr_add(evals[1], fr_mul(a_2, b_2));");
-            let _ = writeln!(s, "        evals[2] = fr_add(evals[2], fr_mul(a_3, b_3));");
-            let _ = writeln!(
-                s,
-                "        evals[3] = fr_add(evals[3], fr_mul(a_inf, b_inf));"
-            );
+            let _ = writeln!(s, "        {{ Fr _pw0, _pw1;");
+            let _ = writeln!(s, "        fr_mul2(a_1, b_1, a_2, b_2, _pw0, _pw1);");
+            let _ = writeln!(s, "        evals[0] = fr_add(evals[0], _pw0);");
+            let _ = writeln!(s, "        evals[1] = fr_add(evals[1], _pw1);");
+            let _ = writeln!(s, "        fr_mul2(a_3, b_3, a_inf, b_inf, _pw0, _pw1);");
+            let _ = writeln!(s, "        evals[2] = fr_add(evals[2], _pw0);");
+            let _ = writeln!(s, "        evals[3] = fr_add(evals[3], _pw1); }}");
         }
         let _ = writeln!(s, "        }}");
     }
@@ -1735,28 +1736,25 @@ fn generate_toom_cook_d8(p: usize) -> String {
         emit_ex4_2(&mut s, "b_5", "b_6", ["b_1", "b_2", "b_3", "b_4"], "b_inf6");
         emit_ex4(&mut s, "b_7", "b_3", "b_4", "b_5", "b_6", "b_inf6");
 
-        // Final point-wise multiply
+        // Final point-wise multiply — use fr_mul2 for independent pairs
         if p == 1 {
-            let _ = writeln!(s, "        evals[0] = fr_mul_unreduced(a_1, b_1);");
-            let _ = writeln!(s, "        evals[1] = fr_mul_unreduced(a_2, b_2);");
-            let _ = writeln!(s, "        evals[2] = fr_mul_unreduced(a_3, b_3);");
-            let _ = writeln!(s, "        evals[3] = fr_mul_unreduced(a_4, b_4);");
-            let _ = writeln!(s, "        evals[4] = fr_mul_unreduced(a_5, b_5);");
-            let _ = writeln!(s, "        evals[5] = fr_mul_unreduced(a_6, b_6);");
-            let _ = writeln!(s, "        evals[6] = fr_mul_unreduced(a_7, b_7);");
-            let _ = writeln!(s, "        evals[7] = fr_mul_unreduced(a_inf, b_inf);");
+            let _ = writeln!(s, "        fr_mul2_unreduced(a_1, b_1, a_2, b_2, evals[0], evals[1]);");
+            let _ = writeln!(s, "        fr_mul2_unreduced(a_3, b_3, a_4, b_4, evals[2], evals[3]);");
+            let _ = writeln!(s, "        fr_mul2_unreduced(a_5, b_5, a_6, b_6, evals[4], evals[5]);");
+            let _ = writeln!(s, "        fr_mul2_unreduced(a_7, b_7, a_inf, b_inf, evals[6], evals[7]);");
         } else {
-            let _ = writeln!(s, "        evals[0] = fr_add(evals[0], fr_mul(a_1, b_1));");
-            let _ = writeln!(s, "        evals[1] = fr_add(evals[1], fr_mul(a_2, b_2));");
-            let _ = writeln!(s, "        evals[2] = fr_add(evals[2], fr_mul(a_3, b_3));");
-            let _ = writeln!(s, "        evals[3] = fr_add(evals[3], fr_mul(a_4, b_4));");
-            let _ = writeln!(s, "        evals[4] = fr_add(evals[4], fr_mul(a_5, b_5));");
-            let _ = writeln!(s, "        evals[5] = fr_add(evals[5], fr_mul(a_6, b_6));");
-            let _ = writeln!(s, "        evals[6] = fr_add(evals[6], fr_mul(a_7, b_7));");
-            let _ = writeln!(
-                s,
-                "        evals[7] = fr_add(evals[7], fr_mul(a_inf, b_inf));"
-            );
+            let _ = writeln!(s, "        {{ Fr _pw0, _pw1;");
+            for (d0, d1, a0, b0, a1, b1) in [
+                (0, 1, "a_1", "b_1", "a_2", "b_2"),
+                (2, 3, "a_3", "b_3", "a_4", "b_4"),
+                (4, 5, "a_5", "b_5", "a_6", "b_6"),
+                (6, 7, "a_7", "b_7", "a_inf", "b_inf"),
+            ] {
+                let _ = writeln!(s, "        fr_mul2({a0}, {b0}, {a1}, {b1}, _pw0, _pw1);");
+                let _ = writeln!(s, "        evals[{d0}] = fr_add(evals[{d0}], _pw0);");
+                let _ = writeln!(s, "        evals[{d1}] = fr_add(evals[{d1}], _pw1);");
+            }
+            let _ = writeln!(s, "        }}");
         }
         let _ = writeln!(s, "        }}");
     }
