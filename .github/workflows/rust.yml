@@ -147,7 +147,7 @@ jobs:
           key: wasm-pack-0.13.1
       - name: Install wasm-pack
         if: steps.cache-wasm-pack.outputs.cache-hit != 'true'
-        run: curl -sSL https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
+        run: curl -sSL https://github.com/rustwasm/wasm-pack/releases/download/v0.13.1/wasm-pack-v0.13.1-x86_64-unknown-linux-musl.tar.gz | tar -xz --strip-components=1 -C ~/.cargo/bin
       - name: Add wasm32 target
         run: rustup target add wasm32-unknown-unknown
 
