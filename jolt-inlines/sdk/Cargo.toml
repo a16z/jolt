@@ -13,5 +13,6 @@ elliptic-curve = []
 host = ["dep:tracer", "dep:inventory"]
 
 [dependencies]
+jolt-platform = { workspace = true }
 tracer = { workspace = true, optional = true, features = ["std"] }
 inventory = { workspace = true, optional = true }

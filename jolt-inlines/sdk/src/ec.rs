@@ -20,9 +20,16 @@ pub trait ECField: Clone + PartialEq + core::fmt::Debug + Sized {
     fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self;
 }
 
-/// Curve-specific constants for a short Weierstrass curve y² = x³ + b.
+/// Curve-specific constants for a short Weierstrass curve y² = x³ + ax + b.
 pub trait CurveParams<F: ECField>: Clone {
     type Error: core::fmt::Debug;
+
+    /// Returns `Some(a)` for curves with a ≠ 0 (e.g. P-256 where a = -3).
+    /// Returns `None` (default) for a = 0 curves (secp256k1, grumpkin),
+    /// which lets `double` and `is_on_curve` skip the extra multiply.
+    fn curve_a() -> Option<F> {
+        None
+    }
 
     fn curve_b() -> F;
 
@@ -33,7 +40,7 @@ pub trait CurveParams<F: ECField>: Clone {
     fn not_on_curve_error() -> Self::Error;
 }
 
-/// Affine point on a short Weierstrass curve y² = x³ + b.
+/// Affine point on a short Weierstrass curve y² = x³ + ax + b.
 /// Infinity represented as (zero, zero) since that point is not on any curve with b != 0.
 #[derive(Clone, PartialEq, Debug)]
 pub struct AffinePoint<F: ECField, C: CurveParams<F>> {
@@ -82,7 +89,15 @@ impl<F: ECField, C: CurveParams<F>> AffinePoint<F, C> {
 
     #[inline(always)]
     pub fn is_on_curve(&self) -> bool {
-        self.is_infinity() || self.y.square() == self.x.square().mul(&self.x).add(&C::curve_b())
+        if self.is_infinity() {
+            return true;
+        }
+        let rhs = self.x.square().mul(&self.x).add(&C::curve_b());
+        let rhs = match C::curve_a() {
+            Some(a) => rhs.add(&a.mul(&self.x)),
+            None => rhs,
+        };
+        self.y.square() == rhs
     }
 
     #[inline(always)]
@@ -138,7 +153,12 @@ impl<F: ECField, C: CurveParams<F>> AffinePoint<F, C> {
         if self.y.is_zero() {
             Self::infinity()
         } else {
-            let s = self.x.square().tpl().div_assume_nonzero(&self.y.dbl());
+            let num = self.x.square().tpl();
+            let num = match C::curve_a() {
+                Some(a) => num.add(&a),
+                None => num,
+            };
+            let s = num.div_assume_nonzero(&self.y.dbl());
             let x2 = s.square().sub(&self.x.dbl());
             let y2 = s.mul(&self.x.sub(&x2)).sub(&self.y);
             Self::new_unchecked(x2, y2)

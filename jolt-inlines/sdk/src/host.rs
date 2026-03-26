@@ -126,6 +126,16 @@ macro_rules! register_inlines {
 #[macro_export]
 macro_rules! __submit_inline_op {
     ($op:ty) => {
+        const _: () = {
+            assert!(
+                <$op as $crate::host::InlineOp>::OPCODE == 0x0B
+                    || <$op as $crate::host::InlineOp>::OPCODE == 0x2B,
+                "OPCODE must be 0x0B (custom-0) or 0x2B (custom-1)"
+            );
+            assert!(<$op as $crate::host::InlineOp>::FUNCT3 <= 7);
+            assert!(<$op as $crate::host::InlineOp>::FUNCT7 <= 127);
+        };
+
         $crate::host::inventory::submit! {
             $crate::host::InlineRegistration {
                 opcode: <$op as $crate::host::InlineOp>::OPCODE,

@@ -1,10 +1,6 @@
 #![cfg_attr(not(feature = "host"), no_std)]
 
-mod hcf;
-pub use hcf::hcf;
-
-mod spoil;
-pub use spoil::UnwrapOrSpoilProof;
+pub use jolt_platform::{hcf, UnwrapOrSpoilProof};
 
 #[cfg(feature = "elliptic-curve")]
 pub mod ec;

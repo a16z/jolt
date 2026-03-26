@@ -18,6 +18,12 @@ pub use cycle_tracking::*;
 pub mod advice;
 pub use advice::*;
 
+mod hcf;
+pub use hcf::hcf;
+
+mod spoil;
+pub use spoil::UnwrapOrSpoilProof;
+
 #[cfg(all(
     feature = "malloc-shim",
     any(target_arch = "riscv32", target_arch = "riscv64")
