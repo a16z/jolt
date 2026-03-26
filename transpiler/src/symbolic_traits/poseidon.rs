@@ -191,8 +191,7 @@ impl Transcript for PoseidonAstTranscript {
             // from_le_bytes_mod_order(LE serialization) = the scalar itself.
             self.hash_and_update(mle_ast);
         } else {
-            // Fallback for non-MleAst types (shouldn't happen in transpilation)
-            self.hash_and_update(MleAst::from_u64(0));
+            panic!("PoseidonAstTranscript::raw_append_scalar called but no pending MleAst found — serialize_uncompressed must store the symbolic value via set_pending_append()")
         }
     }
 

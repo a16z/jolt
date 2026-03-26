@@ -1407,8 +1407,7 @@ impl JoltField for MleAst {
         if let Some(challenge) = take_pending_challenge() {
             return challenge;
         }
-        // Fallback: create constant from bytes (for non-transpilation use)
-        MleAst::from_i128(0)
+        panic!("MleAst::from_bytes called without a pending challenge — PoseidonAstTranscript must call set_pending_challenge() before from_bytes()")
     }
 
     fn inverse(&self) -> Option<Self> {
