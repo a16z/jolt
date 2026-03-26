@@ -47,6 +47,14 @@ impl DoryOpeningProofHint {
         Self(row_commitments)
     }
 
+    pub fn empty() -> Self {
+        Self(Vec::new())
+    }
+
+    pub fn rows(&self) -> &[ArkG1] {
+        &self.0
+    }
+
     fn into_rows(self) -> Vec<ArkG1> {
         self.0
     }

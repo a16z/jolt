@@ -2487,17 +2487,24 @@ where
     C: JoltCurve<F = F>,
     PCS: CommitmentScheme<Field = F>,
 {
+    pub fn new_with_generators(
+        shared: JoltSharedPreprocessing<PCS>,
+        generators: PCS::ProverSetup,
+    ) -> Self {
+        Self {
+            generators,
+            shared,
+            _curve: std::marker::PhantomData,
+        }
+    }
+
     #[tracing::instrument(skip_all, name = "JoltProverPreprocessing::new")]
     pub fn new(shared: JoltSharedPreprocessing<PCS>) -> Self {
         let committed_mode = shared.program.is_committed();
         let (max_total_vars, _) = shared.compute_max_total_vars(committed_mode);
         let generators = PCS::setup_prover(max_total_vars);
 
-        JoltProverPreprocessing {
-            generators,
-            shared,
-            _curve: std::marker::PhantomData,
-        }
+        Self::new_with_generators(shared, generators)
     }
 
     #[cfg(feature = "zk")]
