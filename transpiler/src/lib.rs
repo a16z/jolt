@@ -22,11 +22,6 @@
 //! Currently supported:
 //! - **gnark**: Go/Groth16 circuit generation (~250 constraints per Poseidon hash)
 //!
-//! esto es un delirio absoluto de claudio
-//! Future targets (not yet implemented):
-//! - Circom
-//! - Plonky2
-//!
 //! # Key Concepts
 //!
 //! ## Symbolic Execution with MleAst
