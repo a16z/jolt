@@ -10,17 +10,18 @@
 use core::array;
 
 use crate::{IV, SIGMA};
-use tracer::instruction::format::format_inline::FormatInline;
-use tracer::instruction::ld::LD;
-use tracer::instruction::lui::LUI;
-use tracer::instruction::sd::SD;
-use tracer::instruction::sub::SUB;
-use tracer::instruction::virtual_xor_rot::{
-    VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63,
+use jolt_inlines_sdk::host::{
+    instruction::{
+        ld::LD,
+        lui::LUI,
+        sd::SD,
+        sub::SUB,
+        virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63},
+    },
+    FormatInline, InlineOp, InstrAssembler, Instruction,
+    Value::{Imm, Reg},
+    VirtualRegisterGuard,
 };
-use tracer::instruction::Instruction;
-use tracer::utils::inline_helpers::{InstrAssembler, Value::Imm, Value::Reg};
-use tracer::utils::virtual_registers::VirtualRegisterGuard;
 
 pub const NEEDED_REGISTERS: u8 = 43;
 
@@ -252,12 +253,17 @@ impl Blake2SequenceBuilder {
     }
 }
 
-pub fn blake2b_inline_sequence_builder(
-    asm: InstrAssembler,
-    operands: FormatInline,
-) -> Vec<Instruction> {
-    let builder = Blake2SequenceBuilder::new(asm, operands);
-    builder.build()
+pub struct Blake2bCompression;
+
+impl InlineOp for Blake2bCompression {
+    const OPCODE: u32 = crate::INLINE_OPCODE;
+    const FUNCT3: u32 = crate::BLAKE2_FUNCT3;
+    const FUNCT7: u32 = crate::BLAKE2_FUNCT7;
+    const NAME: &'static str = crate::BLAKE2_NAME;
+
+    fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
+        Blake2SequenceBuilder::new(asm, operands).build()
+    }
 }
 
 #[cfg(test)]

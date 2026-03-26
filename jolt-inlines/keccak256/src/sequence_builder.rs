@@ -16,16 +16,12 @@
 use core::array;
 
 use crate::NUM_LANES;
-use tracer::instruction::andn::ANDN;
-use tracer::instruction::format::format_inline::FormatInline;
-use tracer::instruction::ld::LD;
-use tracer::instruction::sd::SD;
-use tracer::instruction::Instruction;
-use tracer::utils::inline_helpers::{
-    InstrAssembler,
+use jolt_inlines_sdk::host::{
+    instruction::{andn::ANDN, ld::LD, sd::SD},
+    FormatInline, InlineOp, InstrAssembler, Instruction,
     Value::{Imm, Reg},
+    VirtualRegisterGuard,
 };
-use tracer::utils::virtual_registers::VirtualRegisterGuard;
 
 /// The 24 round constants for the Keccak-f[1600] permutation.
 /// These values are XORed into the state during the `iota` step of each round.
@@ -255,11 +251,15 @@ impl Keccak256SequenceBuilder {
     }
 }
 
-pub fn keccak256_inline_sequence_builder(
-    asm: InstrAssembler,
-    operands: FormatInline,
-) -> Vec<Instruction> {
-    // Virtual registers used as a scratch space
-    let builder = Keccak256SequenceBuilder::new(asm, operands);
-    builder.build()
+pub struct Keccak256Permutation;
+
+impl InlineOp for Keccak256Permutation {
+    const OPCODE: u32 = crate::INLINE_OPCODE;
+    const FUNCT3: u32 = crate::KECCAK256_FUNCT3;
+    const FUNCT7: u32 = crate::KECCAK256_FUNCT7;
+    const NAME: &'static str = crate::KECCAK256_NAME;
+
+    fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
+        Keccak256SequenceBuilder::new(asm, operands).build()
+    }
 }
