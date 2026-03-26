@@ -65,7 +65,7 @@ fn is_not_equal(x: &[u64; 4], y: &[u64; 4]) -> bool {
 }
 
 use jolt_inlines_sdk::ec::{AffinePoint, CurveParams, ECField};
-pub use jolt_inlines_sdk::{hcf, UnwrapOrSpoilProof};
+pub use jolt_inlines_sdk::{spoil_proof, UnwrapOrSpoilProof};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum GrumpkinError {
@@ -183,7 +183,7 @@ impl GrumpkinFq {
         let tmp = other.mul(&c);
         // Verify advice: c must be canonical and other * c == self
         if is_fq_non_canonical(&c.e.0 .0) || is_not_equal(&tmp.e.0 .0, &self.e.0 .0) {
-            hcf(); // Spoils proof - assert_eq! alone doesn't suffice
+            spoil_proof(); // Spoils proof - assert_eq! alone doesn't suffice
         }
         c
     }
@@ -194,7 +194,7 @@ impl GrumpkinFq {
     #[inline(always)]
     pub fn div(&self, other: &GrumpkinFq) -> Self {
         if other.is_zero() {
-            hcf();
+            spoil_proof();
         }
         self.div_assume_nonzero(other)
     }
@@ -376,7 +376,7 @@ impl GrumpkinFr {
         let tmp = other.mul(&c);
         // Verify advice: c must be canonical and other * c == self
         if is_fr_non_canonical(&c.e.0 .0) || is_not_equal(&tmp.e.0 .0, &self.e.0 .0) {
-            hcf(); // Spoils proof - assert_eq! alone doesn't suffice
+            spoil_proof(); // Spoils proof - assert_eq! alone doesn't suffice
         }
         c
     }
@@ -387,7 +387,7 @@ impl GrumpkinFr {
     #[inline(always)]
     pub fn div(&self, other: &GrumpkinFr) -> Self {
         if other.is_zero() {
-            hcf();
+            spoil_proof();
         }
         self.div_assume_nonzero(other)
     }

@@ -42,7 +42,7 @@ fn is_fr_non_canonical(x: &[u64; 4]) -> bool {
     x[0] >= Fr::MODULUS.0[0]
 }
 
-pub use jolt_inlines_sdk::{hcf, UnwrapOrSpoilProof};
+pub use jolt_inlines_sdk::{spoil_proof, UnwrapOrSpoilProof};
 
 /// Error types for secp256k1 operations
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -183,7 +183,7 @@ impl Secp256k1Fq {
             );
         }
         if is_fq_non_canonical(&e) {
-            hcf();
+            spoil_proof();
         }
         Secp256k1Fq::from_u64_arr_unchecked(&e[0..4].try_into().unwrap())
     }
@@ -225,7 +225,7 @@ impl Secp256k1Fq {
             );
         }
         if is_fq_non_canonical(&e) {
-            hcf();
+            spoil_proof();
         }
         Secp256k1Fq::from_u64_arr_unchecked(&e[0..4].try_into().unwrap())
     }
@@ -267,7 +267,7 @@ impl Secp256k1Fq {
             );
         }
         if is_fq_non_canonical(&e) {
-            hcf();
+            spoil_proof();
         }
         Secp256k1Fq::from_u64_arr_unchecked(&e[0..4].try_into().unwrap())
     }
@@ -282,7 +282,7 @@ impl Secp256k1Fq {
     pub fn div(&self, other: &Secp256k1Fq) -> Self {
         // spoil proof if other == 0
         if other.is_zero() {
-            hcf();
+            spoil_proof();
         }
         self.div_assume_nonzero(other)
     }
@@ -494,7 +494,7 @@ impl Secp256k1Fr {
             );
         }
         if is_fr_non_canonical(&e) {
-            hcf();
+            spoil_proof();
         }
         Secp256k1Fr::from_u64_arr_unchecked(&e[0..4].try_into().unwrap())
     }
@@ -536,7 +536,7 @@ impl Secp256k1Fr {
             );
         }
         if is_fr_non_canonical(&e) {
-            hcf();
+            spoil_proof();
         }
         Secp256k1Fr::from_u64_arr_unchecked(&e[0..4].try_into().unwrap())
     }
@@ -578,7 +578,7 @@ impl Secp256k1Fr {
             );
         }
         if is_fr_non_canonical(&e) {
-            hcf();
+            spoil_proof();
         }
         Secp256k1Fr::from_u64_arr_unchecked(&e[0..4].try_into().unwrap())
     }
@@ -593,7 +593,7 @@ impl Secp256k1Fr {
     pub fn div(&self, other: &Secp256k1Fr) -> Self {
         // spoil proof if other == 0
         if other.is_zero() {
-            hcf();
+            spoil_proof();
         }
         self.div_assume_nonzero(other)
     }
@@ -778,7 +778,7 @@ fn decompose_scalar_impl(k: &Secp256k1Fr) -> [(bool, u128); 2] {
     }
     let recomposed_k = k1.add(&k2.mul(&lambda));
     if recomposed_k != *k {
-        hcf();
+        spoil_proof();
     }
     [
         (k1_sign, (out[1] as u128) | ((out[2] as u128) << 64)),

@@ -18,11 +18,8 @@ pub use cycle_tracking::*;
 pub mod advice;
 pub use advice::*;
 
-mod hcf;
-pub use hcf::hcf;
-
 mod spoil;
-pub use spoil::UnwrapOrSpoilProof;
+pub use spoil::{spoil_proof, UnwrapOrSpoilProof};
 
 #[cfg(all(
     feature = "malloc-shim",
