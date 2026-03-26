@@ -64,8 +64,14 @@ pub fn symbolize_io_device(
     // PoseidonAstTranscript::raw_append_bytes when fiat_shamir_preamble
     // calls append_bytes(b"inputs", ...) and append_bytes(b"outputs", ...).
     //
-    // Panic is NOT pushed here — fiat_shamir_preamble sends it through
-    // append_u64, which calls raw_append_u64 (bypasses raw_append_bytes/FIFO).
+    // Panic is NOT pushed into this FIFO because fiat_shamir_preamble sends
+    // it via append_u64 → raw_append_u64 (a different code path that doesn't
+    // read from the byte-chunk FIFO). Panic IS still fully symbolic in the
+    // circuit — it enters through two paths:
+    //   1. Transcript: raw_append_u64 hashes MleAst::from_u64(panic) as a
+    //      concrete constant into the Poseidon state (correct for Fiat-Shamir).
+    //   2. RAM MLE: allocated as witness variable "io_panic_val" below, used
+    //      by eval_io_mle for panic_contribution and termination checks.
 
     let _input_chunk_vars =
         push_byte_chunk_overrides(&io_device.inputs, "io_input_chunk", var_alloc);
