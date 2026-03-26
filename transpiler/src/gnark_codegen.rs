@@ -658,6 +658,15 @@ pub fn generate_circuit_from_bundle_with_stats(
     output.push_str("}\n\n");
 
     // Circuit struct - deduplicated fields with correct types based on TargetField
+    //
+    // All inputs are marked public. Without PCS verification in the circuit
+    // (stage 8 is deferred pending PCS choice), commitments and proof data
+    // must be externally verifiable. Once the PCS is integrated, we'll
+    // determine which inputs can move to private witness. The exact public
+    // surface requires investigation: some inputs may benefit from staying
+    // public to avoid in-circuit range checks that the verifier gets for
+    // free on public inputs. The WitnessType::PublicStatement / ProofData
+    // distinction in AstBundle is already in place for this split.
     output.push_str(&format!("type {circuit_name} struct {{\n"));
     for (field_name, target_field) in &struct_fields {
         let go_type = match target_field {
