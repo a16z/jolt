@@ -12,15 +12,6 @@ import (
 	"github.com/consensys/gnark/frontend"
 )
 
-// pow2 contains precomputed powers of 2 for bit recomposition.
-var pow2 [256]*big.Int
-
-func init() {
-	for i := 0; i < 256; i++ {
-		pow2[i] = new(big.Int).Lsh(big.NewInt(1), uint(i))
-	}
-}
-
 const BN254_FULL_ROUNDS int = 8
 const BN254_PARTIAL_ROUNDS int = 56
 const BN254_SPONGE_WIDTH int = 4
