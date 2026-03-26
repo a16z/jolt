@@ -11,7 +11,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       issues: write
-      contents: write
     steps:
       - uses: actions/checkout@v6
         with:
@@ -31,6 +30,7 @@ jobs:
         if: steps.specs.outputs.files != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SPEC_FILES: ${{ steps.specs.outputs.files }}
         run: |
           while IFS= read -r spec; do
             [ -z "$spec" ] && continue
@@ -57,14 +57,4 @@ jobs:
           )")
 
             echo "Created tracking issue for ${spec}: ${ISSUE_URL}"
-
-            # Update the Tracking field in the spec
-            sed -i "s#^|[[:space:]]*Tracking[[:space:]]*|.*|#| Tracking    | ${ISSUE_URL} |#" "$spec"
-          done <<< "${{ steps.specs.outputs.files }}"
-
-      - name: Commit tracking links
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add specs/*.md
-          git diff --cached --quiet || (git commit -m "chore: update spec tracking links" && git push)
+          done <<< "$SPEC_FILES"

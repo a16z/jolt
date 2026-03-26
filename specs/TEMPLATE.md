@@ -4,7 +4,6 @@
 |-------------|--------------------------------|
 | Author(s)   |                                |
 | Created     | YYYY-MM-DD                     |
-| Tracking    |                                |
 
 ## Intent
 
