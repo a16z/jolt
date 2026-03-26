@@ -30,4 +30,4 @@ common = { path = "../common" }
 tracer = { path = "../tracer" }
 
 [dev-dependencies]
-proptest = "1.6.0"
+proptest = "1.11.0"
