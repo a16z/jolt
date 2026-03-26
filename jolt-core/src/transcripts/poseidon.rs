@@ -244,16 +244,16 @@ impl Transcript for PoseidonTranscript {
     }
 
     fn challenge_scalar<JF: JoltField>(&mut self) -> JF {
-        self.challenge_scalar_128_bits()
-    }
-
-    fn challenge_scalar_128_bits<JF: JoltField>(&mut self) -> JF {
         // Full 32-byte hash output = full Fr challenge (no truncation).
         // challenge_bytes(32) → challenge_bytes32 → one hash invocation.
         // from_le_bytes_mod_order(serialize_le(Fr)) = Fr (identity).
         let mut buf = vec![0u8; 32];
         self.challenge_bytes(&mut buf);
         JF::from_bytes(&buf)
+    }
+
+    fn challenge_scalar_128_bits<JF: JoltField>(&mut self) -> JF {
+        unimplemented!("128-bit challenges are unsupported for PoseidonTranscript");
     }
 
     fn challenge_vector<JF: JoltField>(&mut self, len: usize) -> Vec<JF> {
@@ -273,9 +273,9 @@ impl Transcript for PoseidonTranscript {
     }
 
     fn challenge_scalar_optimized<JF: JoltField>(&mut self) -> JF::Challenge {
-        // Full Fr challenge via challenge_scalar_128_bits, then wrap in Challenge type.
+        // Full Fr challenge via challenge_scalar, then wrap in Challenge type.
         // Mont254BitChallenge<F> is a newtype of F → same memory layout → transmute is safe.
-        let scalar: JF = self.challenge_scalar_128_bits();
+        let scalar: JF = self.challenge_scalar();
         unsafe { std::mem::transmute_copy::<JF, JF::Challenge>(&scalar) }
     }
 
