@@ -3,7 +3,7 @@ use crate::{CHAINING_VALUE_LEN, FLAG_CHUNK_END, FLAG_CHUNK_START, FLAG_KEYED_HAS
 use jolt_inlines_sdk::host::Xlen;
 use jolt_inlines_sdk::spec::rand::rngs::StdRng;
 use jolt_inlines_sdk::spec::rand::Rng;
-use jolt_inlines_sdk::spec::{InlineMemoryLayout, InlineSpec, InlineTestHarness, INLINE};
+use jolt_inlines_sdk::spec::{InlineMemoryLayout, InlineSpec, InlineTestHarness};
 
 const MSG_PERMUTATION: [usize; 16] = [2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8];
 
@@ -99,14 +99,6 @@ impl InlineSpec for Blake3Compression {
         InlineTestHarness::new(layout, Xlen::Bit64)
     }
 
-    fn instruction() -> INLINE {
-        InlineTestHarness::create_default_instruction(
-            crate::INLINE_OPCODE,
-            crate::BLAKE3_FUNCT3,
-            crate::BLAKE3_FUNCT7,
-        )
-    }
-
     fn load(harness: &mut InlineTestHarness, input: &Self::Input) {
         harness.setup_registers();
         harness.load_state32(&input.0);
@@ -156,14 +148,6 @@ impl InlineSpec for Blake3Keyed64Compression {
     fn create_harness() -> InlineTestHarness {
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
         InlineTestHarness::new(layout, Xlen::Bit64)
-    }
-
-    fn instruction() -> INLINE {
-        InlineTestHarness::create_default_instruction(
-            crate::INLINE_OPCODE,
-            crate::BLAKE3_KEYED64_FUNCT3,
-            crate::BLAKE3_FUNCT7,
-        )
     }
 
     fn load(harness: &mut InlineTestHarness, input: &Self::Input) {

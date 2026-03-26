@@ -22,9 +22,6 @@ mod host;
 #[cfg(feature = "host")]
 pub use host::*;
 
-#[cfg(all(test, feature = "host"))]
-pub mod test_utils;
-
 /// BLAKE3 initialization vector (IV)
 #[rustfmt::skip]
 pub const IV: [u32; 8] = [

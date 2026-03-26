@@ -2,7 +2,7 @@ use crate::sequence_builder::{Sha256Compression, Sha256CompressionInitial, BLOCK
 use jolt_inlines_sdk::host::Xlen;
 use jolt_inlines_sdk::spec::rand::rngs::StdRng;
 use jolt_inlines_sdk::spec::rand::Rng;
-use jolt_inlines_sdk::spec::{InlineMemoryLayout, InlineSpec, InlineTestHarness, INLINE};
+use jolt_inlines_sdk::spec::{InlineMemoryLayout, InlineSpec, InlineTestHarness};
 
 fn create_harness() -> InlineTestHarness {
     let layout = InlineMemoryLayout::single_input(64, 32);
@@ -85,14 +85,6 @@ impl InlineSpec for Sha256Compression {
         create_harness()
     }
 
-    fn instruction() -> INLINE {
-        InlineTestHarness::create_default_instruction(
-            crate::INLINE_OPCODE,
-            crate::SHA256_FUNCT3,
-            crate::SHA256_FUNCT7,
-        )
-    }
-
     fn load(harness: &mut InlineTestHarness, input: &Self::Input) {
         harness.setup_registers();
         harness.load_input32(&input.1);
@@ -118,14 +110,6 @@ impl InlineSpec for Sha256CompressionInitial {
 
     fn create_harness() -> InlineTestHarness {
         create_harness()
-    }
-
-    fn instruction() -> INLINE {
-        InlineTestHarness::create_default_instruction(
-            crate::INLINE_OPCODE,
-            crate::SHA256_INIT_FUNCT3,
-            crate::SHA256_INIT_FUNCT7,
-        )
     }
 
     fn load(harness: &mut InlineTestHarness, input: &Self::Input) {

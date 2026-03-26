@@ -480,7 +480,22 @@ pub const BLAKE3_IV: AlignedHash32 = AlignedHash32([
 #[cfg(feature = "host")]
 mod tests {
     use super::Blake3;
-    use crate::{test_utils::helpers::*, BLOCK_INPUT_SIZE_IN_BYTES};
+    use crate::BLOCK_INPUT_SIZE_IN_BYTES;
+
+    fn generate_random_bytes(len: usize) -> Vec<u8> {
+        use rand::rngs::StdRng;
+        use rand::{RngCore, SeedableRng};
+        let mut buf = vec![0u8; len];
+        let mut rng = StdRng::seed_from_u64(12345);
+        rng.fill_bytes(&mut buf);
+        buf
+    }
+
+    fn compute_expected_result(input: &[u8]) -> [u8; crate::OUTPUT_SIZE_IN_BYTES] {
+        blake3::hash(input).as_bytes()[0..crate::OUTPUT_SIZE_IN_BYTES]
+            .try_into()
+            .unwrap()
+    }
 
     fn random_partition(data: &[u8]) -> Vec<&[u8]> {
         use rand::rngs::StdRng;

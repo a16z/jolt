@@ -3,7 +3,7 @@ use super::{INPUT_LIMBS, OUTPUT_LIMBS};
 use jolt_inlines_sdk::host::Xlen;
 use jolt_inlines_sdk::spec::rand::rngs::StdRng;
 use jolt_inlines_sdk::spec::rand::Rng;
-use jolt_inlines_sdk::spec::{InlineMemoryLayout, InlineSpec, InlineTestHarness, INLINE};
+use jolt_inlines_sdk::spec::{InlineMemoryLayout, InlineSpec, InlineTestHarness};
 
 impl InlineSpec for BigintMul256 {
     type Input = ([u64; INPUT_LIMBS], [u64; INPUT_LIMBS]);
@@ -54,14 +54,6 @@ impl InlineSpec for BigintMul256 {
     fn create_harness() -> InlineTestHarness {
         let layout = InlineMemoryLayout::two_inputs(32, 32, 64);
         InlineTestHarness::new(layout, Xlen::Bit64)
-    }
-
-    fn instruction() -> INLINE {
-        InlineTestHarness::create_default_instruction(
-            crate::multiplication::INLINE_OPCODE,
-            crate::multiplication::BIGINT256_MUL_FUNCT3,
-            crate::multiplication::BIGINT256_MUL_FUNCT7,
-        )
     }
 
     fn load(harness: &mut InlineTestHarness, input: &Self::Input) {

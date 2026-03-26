@@ -3,7 +3,7 @@ use crate::{Keccak256State, NUM_LANES};
 use jolt_inlines_sdk::host::Xlen;
 use jolt_inlines_sdk::spec::rand::rngs::StdRng;
 use jolt_inlines_sdk::spec::rand::Rng;
-use jolt_inlines_sdk::spec::{InlineMemoryLayout, InlineSpec, InlineTestHarness, INLINE};
+use jolt_inlines_sdk::spec::{InlineMemoryLayout, InlineSpec, InlineTestHarness};
 
 #[cfg(all(test, feature = "host"))]
 pub(crate) fn execute_keccak256(msg: &[u8]) -> [u8; 32] {
@@ -113,14 +113,6 @@ impl InlineSpec for Keccak256Permutation {
     fn create_harness() -> InlineTestHarness {
         let layout = InlineMemoryLayout::single_input(136, 200);
         InlineTestHarness::new(layout, Xlen::Bit64)
-    }
-
-    fn instruction() -> INLINE {
-        InlineTestHarness::create_default_instruction(
-            crate::INLINE_OPCODE,
-            crate::KECCAK256_FUNCT3,
-            crate::KECCAK256_FUNCT7,
-        )
     }
 
     fn load(harness: &mut InlineTestHarness, input: &Self::Input) {

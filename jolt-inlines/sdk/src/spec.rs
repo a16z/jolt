@@ -22,7 +22,9 @@ pub trait InlineSpec: InlineOp {
 
     fn create_harness() -> InlineTestHarness;
 
-    fn instruction() -> INLINE;
+    fn instruction() -> INLINE {
+        InlineTestHarness::create_default_instruction(Self::OPCODE, Self::FUNCT3, Self::FUNCT7)
+    }
 
     /// Load typed input into harness memory and set up registers.
     fn load(harness: &mut InlineTestHarness, input: &Self::Input);
