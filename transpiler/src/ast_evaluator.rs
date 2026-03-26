@@ -29,7 +29,7 @@ fn eval_atom(atom: &Atom, witness: &HashMap<u16, Fr>) -> Fr {
         Atom::Scalar(limbs) => scalar_to_fr(limbs),
         Atom::Var(idx) => *witness
             .get(idx)
-            .unwrap_or_else(|| panic!("missing witness for Var({})", idx)),
+            .unwrap_or_else(|| panic!("missing witness for Var({idx})")),
         Atom::NamedVar(_) => panic!("NamedVar should not appear in serialized bundle"),
     }
 }
@@ -85,7 +85,9 @@ fn eval_node(
                     let data = eval_edge(data_edge, nodes, cache, witness);
                     let mut hasher =
                         Poseidon::<Fr>::new_circom(3).expect("failed to create Poseidon hasher");
-                    hasher.hash(&[state, rounds, data]).expect("Poseidon hash failed")
+                    hasher
+                        .hash(&[state, rounds, data])
+                        .expect("Poseidon hash failed")
                 }
                 _ => panic!("only Poseidon transcript is supported for evaluation"),
             }

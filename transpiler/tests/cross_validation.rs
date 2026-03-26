@@ -9,9 +9,9 @@
 
 use ark_bn254::Fr;
 use std::collections::HashMap;
-use std::str::FromStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::str::FromStr;
 
 use transpiler::ast_evaluator::{evaluate_assertions, fr_to_decimal};
 use transpiler::gnark_codegen::sanitize_go_name;
@@ -48,7 +48,10 @@ fn load_witness(bundle: &AstBundle, witness_path: &Path) -> HashMap<u16, Fr> {
             });
             result.insert(input.index, fr);
         } else {
-            panic!("witness missing value for input '{}' (go: '{}')", input.name, go_name);
+            panic!(
+                "witness missing value for input '{}' (go: '{}')",
+                input.name, go_name
+            );
         }
     }
     result
@@ -61,7 +64,15 @@ fn run_go_crossval() -> Vec<GoAssertionValue> {
 
     // Run go test in crossval sub-package
     let output = Command::new("go")
-        .args(["test", "-run", "TestCrossValidation", "-v", "-count=1", "-timeout", "10m"])
+        .args([
+            "test",
+            "-run",
+            "TestCrossValidation",
+            "-v",
+            "-count=1",
+            "-timeout",
+            "10m",
+        ])
         .current_dir(&crossval_dir)
         .output()
         .expect("failed to run go test");
@@ -99,7 +110,10 @@ struct GoAssertionValue {
 fn test_cross_validation_80_values() {
     // Skip if bundle doesn't exist (not generated yet)
     if !bundle_path().exists() {
-        eprintln!("Skipping: {} not found. Run transpiler first.", bundle_path().display());
+        eprintln!(
+            "Skipping: {} not found. Run transpiler first.",
+            bundle_path().display()
+        );
         return;
     }
 
@@ -134,7 +148,8 @@ fn test_cross_validation_80_values() {
         .collect();
     let rust_json_path = go_dir().join("rust_crossval_values.json");
     let rust_json_bytes = serde_json::to_string_pretty(&rust_json_values).unwrap();
-    std::fs::write(&rust_json_path, &rust_json_bytes).expect("failed to write rust_crossval_values.json");
+    std::fs::write(&rust_json_path, &rust_json_bytes)
+        .expect("failed to write rust_crossval_values.json");
     println!("  Wrote Rust values to {}", rust_json_path.display());
 
     for v in &rust_values {
@@ -217,17 +232,28 @@ fn test_cross_validation_80_values() {
         println!("  {}/{} comparisons FAIL", fail_count, total_comparisons);
     }
 
-    assert_eq!(fail_count, 0, "{} of {} comparisons mismatched!", fail_count, total_comparisons);
+    assert_eq!(
+        fail_count, 0,
+        "{} of {} comparisons mismatched!",
+        fail_count, total_comparisons
+    );
 
     // === Generate report ===
     let report_path = go_dir().join("crossval_report.txt");
     let mut report = String::new();
     report.push_str("=== Cross-Validation Report ===\n\n");
-    report.push_str(&format!("Bundle: {} nodes, {} constraints, {} inputs\n",
-        bundle.nodes.len(), bundle.constraints.len(), bundle.inputs.len()));
+    report.push_str(&format!(
+        "Bundle: {} nodes, {} constraints, {} inputs\n",
+        bundle.nodes.len(),
+        bundle.constraints.len(),
+        bundle.inputs.len()
+    ));
     report.push_str(&format!("Witness: {} values\n\n", witness.len()));
 
-    report.push_str(&format!("{:<6} {:<6} {:<80} {:<80}\n", "NAME", "SIDE", "RUST", "GO"));
+    report.push_str(&format!(
+        "{:<6} {:<6} {:<80} {:<80}\n",
+        "NAME", "SIDE", "RUST", "GO"
+    ));
     report.push_str(&format!("{}\n", "-".repeat(174)));
 
     for (rust_val, go_val) in rust_values.iter().zip(go_values.iter()) {
@@ -239,12 +265,20 @@ fn test_cross_validation_80_values() {
         let lhs_ok = if rust_lhs == *go_lhs { "==" } else { "!=" };
         let rhs_ok = if rust_rhs == *go_rhs { "==" } else { "!=" };
 
-        report.push_str(&format!("{:<6} LHS {} {:<80} {:<80}\n", rust_val.name, lhs_ok, rust_lhs, go_lhs));
-        report.push_str(&format!("{:<6} RHS {} {:<80} {:<80}\n", "", rhs_ok, rust_rhs, go_rhs));
+        report.push_str(&format!(
+            "{:<6} LHS {} {:<80} {:<80}\n",
+            rust_val.name, lhs_ok, rust_lhs, go_lhs
+        ));
+        report.push_str(&format!(
+            "{:<6} RHS {} {:<80} {:<80}\n",
+            "", rhs_ok, rust_rhs, go_rhs
+        ));
     }
 
-    report.push_str(&format!("\nResult: {}/{} PASS, {}/{} FAIL\n",
-        pass_count, total_comparisons, fail_count, total_comparisons));
+    report.push_str(&format!(
+        "\nResult: {}/{} PASS, {}/{} FAIL\n",
+        pass_count, total_comparisons, fail_count, total_comparisons
+    ));
 
     std::fs::write(&report_path, &report).expect("failed to write report");
     println!("\nReport written to {}", report_path.display());

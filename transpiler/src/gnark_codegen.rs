@@ -822,7 +822,9 @@ pub fn generate_circuit_from_bundle_with_stats(
         let needs_global_splitting = global_binding_lines.len() > MAX_GLOBAL_BINDING_LINES;
 
         if needs_global_splitting {
-            let num_parts = global_binding_lines.len().div_ceil(MAX_GLOBAL_BINDING_LINES);
+            let num_parts = global_binding_lines
+                .len()
+                .div_ceil(MAX_GLOBAL_BINDING_LINES);
             for part in 0..num_parts {
                 let start = part * MAX_GLOBAL_BINDING_LINES;
                 let end =
@@ -839,8 +841,7 @@ pub fn generate_circuit_from_bundle_with_stats(
             }
 
             output.push_str(&format!(
-                "// computeGlobalCse computes {} nodes shared across multiple constraints.\n",
-                num_global
+                "// computeGlobalCse computes {num_global} nodes shared across multiple constraints.\n"
             ));
             output.push_str(&format!(
                 "func (circuit *{circuit_name}) computeGlobalCse(api frontend.API) []frontend.Variable {{\n"
@@ -857,8 +858,7 @@ pub fn generate_circuit_from_bundle_with_stats(
             output.push_str("}\n\n");
         } else {
             output.push_str(&format!(
-                "// computeGlobalCse computes {} nodes shared across multiple constraints.\n",
-                num_global
+                "// computeGlobalCse computes {num_global} nodes shared across multiple constraints.\n"
             ));
             output.push_str(&format!(
                 "func (circuit *{circuit_name}) computeGlobalCse(api frontend.API) []frontend.Variable {{\n"
@@ -998,8 +998,12 @@ pub fn generate_circuit_from_bundle_with_stats(
                 };
                 output.push_str(&format!("\tcrossval_lhs_{idx} := {lhs_rewritten}\n"));
                 output.push_str(&format!("\tcrossval_rhs_{idx} := {rhs_rewritten}\n"));
-                output.push_str(&format!("\tapi.Println(\"a{idx}_lhs\", crossval_lhs_{idx})\n"));
-                output.push_str(&format!("\tapi.Println(\"a{idx}_rhs\", crossval_rhs_{idx})\n"));
+                output.push_str(&format!(
+                    "\tapi.Println(\"a{idx}_lhs\", crossval_lhs_{idx})\n"
+                ));
+                output.push_str(&format!(
+                    "\tapi.Println(\"a{idx}_rhs\", crossval_rhs_{idx})\n"
+                ));
             } else {
                 output.push_str(&format!("\tapi.Println(\"a{idx}_total\", {var_name})\n"));
             }

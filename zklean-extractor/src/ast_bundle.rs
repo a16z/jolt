@@ -426,8 +426,7 @@ impl AstBundle {
     /// // Now generate code. CSE bindings are pre-computed
     /// ```
     pub fn run_cse(&mut self) {
-        let global_set: HashSet<NodeId> =
-            self.global_cse.bindings.iter().copied().collect();
+        let global_set: HashSet<NodeId> = self.global_cse.bindings.iter().copied().collect();
         self.constraint_cse = self
             .constraints
             .iter()
