@@ -43,9 +43,7 @@
 //! extensibility. If Hyrax-over-Grumpkin is ever transpiled, these types could
 //! hold symbolic curve points.
 
-use ark_serialize::{
-    CanonicalDeserialize, CanonicalSerialize, Read, SerializationError, Valid, Write,
-};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_core::field::JoltField;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
@@ -67,23 +65,23 @@ use zklean_extractor::AstCommitment;
 pub struct AstCommitmentScheme;
 
 /// Verifier setup - empty for symbolic execution
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct AstVerifierSetup;
 
 /// Prover setup - empty, never used in verification
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct AstProverSetup;
 
 /// Opening proof - vector of MleAst for future PCS extensibility
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct AstProof(pub Vec<MleAst>);
 
 /// Batched opening proof - vector of MleAst for future PCS extensibility
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct AstBatchedProof(pub Vec<MleAst>);
 
 /// Opening proof hint - not used in verification
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct AstOpeningHint;
 
 // =============================================================================
@@ -161,160 +159,3 @@ impl CommitmentScheme for AstCommitmentScheme {
     }
 }
 
-// =============================================================================
-// Serialization Implementations (required by trait bounds)
-// =============================================================================
-//
-// These are boilerplate implementations required by CommitmentScheme trait bounds.
-// They perform no actual serialization since these types are only used during
-// symbolic execution, never serialized to disk.
-
-impl Valid for AstVerifierSetup {
-    fn check(&self) -> Result<(), SerializationError> {
-        Ok(())
-    }
-}
-
-impl CanonicalSerialize for AstVerifierSetup {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        _writer: W,
-        _compress: ark_serialize::Compress,
-    ) -> Result<(), SerializationError> {
-        Ok(())
-    }
-
-    fn serialized_size(&self, _compress: ark_serialize::Compress) -> usize {
-        0
-    }
-}
-
-impl CanonicalDeserialize for AstVerifierSetup {
-    fn deserialize_with_mode<R: Read>(
-        _reader: R,
-        _compress: ark_serialize::Compress,
-        _validate: ark_serialize::Validate,
-    ) -> Result<Self, SerializationError> {
-        Ok(Self)
-    }
-}
-
-impl Valid for AstProverSetup {
-    fn check(&self) -> Result<(), SerializationError> {
-        Ok(())
-    }
-}
-
-impl CanonicalSerialize for AstProverSetup {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        _writer: W,
-        _compress: ark_serialize::Compress,
-    ) -> Result<(), SerializationError> {
-        Ok(())
-    }
-
-    fn serialized_size(&self, _compress: ark_serialize::Compress) -> usize {
-        0
-    }
-}
-
-impl CanonicalDeserialize for AstProverSetup {
-    fn deserialize_with_mode<R: Read>(
-        _reader: R,
-        _compress: ark_serialize::Compress,
-        _validate: ark_serialize::Validate,
-    ) -> Result<Self, SerializationError> {
-        Ok(Self)
-    }
-}
-
-impl Valid for AstProof {
-    fn check(&self) -> Result<(), SerializationError> {
-        Ok(())
-    }
-}
-
-impl CanonicalSerialize for AstProof {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        _writer: W,
-        _compress: ark_serialize::Compress,
-    ) -> Result<(), SerializationError> {
-        Ok(())
-    }
-
-    fn serialized_size(&self, _compress: ark_serialize::Compress) -> usize {
-        0
-    }
-}
-
-impl CanonicalDeserialize for AstProof {
-    fn deserialize_with_mode<R: Read>(
-        _reader: R,
-        _compress: ark_serialize::Compress,
-        _validate: ark_serialize::Validate,
-    ) -> Result<Self, SerializationError> {
-        Ok(Self::default())
-    }
-}
-
-impl Valid for AstBatchedProof {
-    fn check(&self) -> Result<(), SerializationError> {
-        Ok(())
-    }
-}
-
-impl CanonicalSerialize for AstBatchedProof {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        _writer: W,
-        _compress: ark_serialize::Compress,
-    ) -> Result<(), SerializationError> {
-        Ok(())
-    }
-
-    fn serialized_size(&self, _compress: ark_serialize::Compress) -> usize {
-        0
-    }
-}
-
-impl CanonicalDeserialize for AstBatchedProof {
-    fn deserialize_with_mode<R: Read>(
-        _reader: R,
-        _compress: ark_serialize::Compress,
-        _validate: ark_serialize::Validate,
-    ) -> Result<Self, SerializationError> {
-        Ok(Self::default())
-    }
-}
-
-impl Valid for AstOpeningHint {
-    fn check(&self) -> Result<(), SerializationError> {
-        Ok(())
-    }
-}
-
-impl CanonicalSerialize for AstOpeningHint {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        _writer: W,
-        _compress: ark_serialize::Compress,
-    ) -> Result<(), SerializationError> {
-        Ok(())
-    }
-
-    fn serialized_size(&self, _compress: ark_serialize::Compress) -> usize {
-        0
-    }
-}
-
-impl CanonicalDeserialize for AstOpeningHint {
-    fn deserialize_with_mode<R: Read>(
-        _reader: R,
-        _compress: ark_serialize::Compress,
-        _validate: ark_serialize::Validate,
-    ) -> Result<Self, SerializationError> {
-        Ok(Self)
-    }
-}
