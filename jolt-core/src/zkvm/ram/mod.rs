@@ -55,8 +55,7 @@ use crate::{
     poly::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
-        opening_proof::{
-            OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+        opening_proof::{AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
             BIG_ENDIAN,
         },
     },
@@ -289,7 +288,7 @@ pub fn prover_accumulate_advice<F: JoltField>(
 ///
 /// After Stage 2 address-round alignment, Stage 4 uses a *single* RAM address opening point for
 /// advice commitments. We cache this opening under `SumcheckId::RamValCheck`.
-pub fn verifier_accumulate_advice<F: JoltField, A: OpeningAccumulator<F>>(
+pub fn verifier_accumulate_advice<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>(
     ram_K: usize,
     program_io: &JoltDevice,
     has_untrusted_advice_commitment: bool,

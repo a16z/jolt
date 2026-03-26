@@ -15,6 +15,7 @@ use crate::poly::multilinear_polynomial::{
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{
+    AbstractVerifierOpeningAccumulator,
     OpeningAccumulator, OpeningPoint, PolynomialId, ProverOpeningAccumulator, SumcheckId,
     BIG_ENDIAN, LITTLE_ENDIAN,
 };
@@ -376,7 +377,7 @@ pub struct ShiftSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> ShiftSumcheckVerifier<F> {
-    pub fn new<A: OpeningAccumulator<F>>(
+    pub fn new<A: AbstractVerifierOpeningAccumulator<F>>(
         n_cycle_vars: usize,
         opening_accumulator: &A,
         transcript: &mut impl Transcript,
@@ -386,7 +387,7 @@ impl<F: JoltField> ShiftSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
+impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
     for ShiftSumcheckVerifier<F>
 {
     fn input_claim(&self, accumulator: &A) -> F {

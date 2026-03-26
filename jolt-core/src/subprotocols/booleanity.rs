@@ -38,8 +38,7 @@ use crate::{
     poly::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::BindingOrder,
-        opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
+        opening_proof::{AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
         },
         shared_ra_polys::{compute_all_G_and_ra_indices, RaIndices, SharedRaPolynomials},
         split_eq_poly::GruenSplitEqPolynomial,
@@ -549,7 +548,7 @@ impl<F: JoltField> BooleanitySumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
+impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
     for BooleanitySumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {

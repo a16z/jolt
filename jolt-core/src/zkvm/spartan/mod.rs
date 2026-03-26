@@ -1,6 +1,6 @@
 use crate::curve::JoltCurve;
 use crate::field::JoltField;
-use crate::poly::opening_proof::OpeningAccumulator;
+use crate::poly::opening_proof::{AbstractVerifierOpeningAccumulator};
 use crate::subprotocols::univariate_skip::{UniSkipFirstRoundProof, UniSkipFirstRoundProofVariant};
 use crate::transcripts::Transcript;
 use crate::utils::errors::ProofVerifyError;
@@ -21,7 +21,7 @@ pub fn verify_stage1_uni_skip<
     F: JoltField,
     C: JoltCurve<F = F>,
     T: Transcript,
-    A: OpeningAccumulator<F>,
+    A: AbstractVerifierOpeningAccumulator<F>,
 >(
     proof: &UniSkipFirstRoundProofVariant<F, C, T>,
     key: &UniformSpartanKey<F>,
@@ -50,7 +50,7 @@ pub fn verify_stage2_uni_skip<
     F: JoltField,
     C: JoltCurve<F = F>,
     T: Transcript,
-    A: OpeningAccumulator<F>,
+    A: AbstractVerifierOpeningAccumulator<F>,
 >(
     proof: &UniSkipFirstRoundProofVariant<F, C, T>,
     opening_accumulator: &mut A,

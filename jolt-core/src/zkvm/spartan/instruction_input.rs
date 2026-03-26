@@ -15,8 +15,7 @@ use crate::{
     poly::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
-        opening_proof::{
-            OpeningAccumulator, OpeningPoint, PolynomialId, ProverOpeningAccumulator, SumcheckId,
+        opening_proof::{AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningPoint, PolynomialId, ProverOpeningAccumulator, SumcheckId,
             BIG_ENDIAN, LITTLE_ENDIAN,
         },
         split_eq_poly::GruenSplitEqPolynomial,
@@ -496,7 +495,7 @@ pub struct InstructionInputSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> InstructionInputSumcheckVerifier<F> {
-    pub fn new<A: OpeningAccumulator<F>>(
+    pub fn new<A: AbstractVerifierOpeningAccumulator<F>>(
         opening_accumulator: &A,
         transcript: &mut impl Transcript,
     ) -> Self {
@@ -505,7 +504,7 @@ impl<F: JoltField> InstructionInputSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
+impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
     for InstructionInputSumcheckVerifier<F>
 {
     fn input_claim(&self, accumulator: &A) -> F {

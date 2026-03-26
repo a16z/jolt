@@ -54,8 +54,7 @@ use crate::{
     poly::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
-        opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
+        opening_proof::{AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
         },
         unipoly::UniPoly,
     },
@@ -719,7 +718,7 @@ pub struct RamRaClaimReductionSumcheckVerifier<F: JoltField> {
 
 impl<F: JoltField> RamRaClaimReductionSumcheckVerifier<F> {
     /// Create a new RAM RA reduction sumcheck verifier.
-    pub fn new<A: OpeningAccumulator<F>>(
+    pub fn new<A: AbstractVerifierOpeningAccumulator<F>>(
         trace_len: usize,
         one_hot_params: &OneHotParams,
         opening_accumulator: &A,
@@ -731,7 +730,7 @@ impl<F: JoltField> RamRaClaimReductionSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
+impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
     for RamRaClaimReductionSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {

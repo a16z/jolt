@@ -87,8 +87,7 @@ use crate::poly::opening_proof::OpeningId;
 use crate::poly::{
     eq_poly::EqPolynomial,
     multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
-    opening_proof::{
-        OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
+    opening_proof::{AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
         LITTLE_ENDIAN,
     },
     shared_ra_polys::compute_all_G,
@@ -586,7 +585,7 @@ impl<F: JoltField> HammingWeightClaimReductionVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
+impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
     for HammingWeightClaimReductionVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {

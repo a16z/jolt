@@ -265,78 +265,50 @@ pub trait OpeningAccumulator<F: JoltField> {
         kind: AdviceKind,
         sumcheck: SumcheckId,
     ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)>;
+}
 
-    // === Methods for generic verifier (transpilation support) ===
-    // These use the pending_claims pattern: claims are accumulated internally,
-    // then flushed to transcript via flush_to_transcript().
-
+/// Extends `OpeningAccumulator` with mutation methods for verifier-side accumulators.
+/// Separates the read-only `get_*` interface from the write-side `append_*` / `flush` / `take`
+/// methods that only verifier accumulators need.
+pub trait AbstractVerifierOpeningAccumulator<F: JoltField>: OpeningAccumulator<F> {
     fn append_virtual(
         &mut self,
-        _polynomial: VirtualPolynomial,
-        _sumcheck: SumcheckId,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
-    ) where
-        Self: Sized,
-    {
-        unimplemented!("append_virtual only available for verifier accumulators")
-    }
+        polynomial: VirtualPolynomial,
+        sumcheck: SumcheckId,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    );
 
     fn append_untrusted_advice(
         &mut self,
-        _sumcheck_id: SumcheckId,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
-    ) where
-        Self: Sized,
-    {
-        unimplemented!("append_untrusted_advice only available for verifier accumulators")
-    }
+        sumcheck_id: SumcheckId,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    );
 
     fn append_trusted_advice(
         &mut self,
-        _sumcheck_id: SumcheckId,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
-    ) where
-        Self: Sized,
-    {
-        unimplemented!("append_trusted_advice only available for verifier accumulators")
-    }
+        sumcheck_id: SumcheckId,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    );
 
     fn append_dense(
         &mut self,
-        _polynomial: CommittedPolynomial,
-        _sumcheck: SumcheckId,
-        _opening_point: Vec<F::Challenge>,
-    ) where
-        Self: Sized,
-    {
-        unimplemented!("append_dense only available for verifier accumulators")
-    }
+        polynomial: CommittedPolynomial,
+        sumcheck: SumcheckId,
+        opening_point: Vec<F::Challenge>,
+    );
 
     fn append_sparse(
         &mut self,
-        _polynomials: Vec<CommittedPolynomial>,
-        _sumcheck: SumcheckId,
-        _opening_point: Vec<F::Challenge>,
-    ) where
-        Self: Sized,
-    {
-        unimplemented!("append_sparse only available for verifier accumulators")
-    }
+        polynomials: Vec<CommittedPolynomial>,
+        sumcheck: SumcheckId,
+        opening_point: Vec<F::Challenge>,
+    );
 
     /// Flush accumulated pending claims to the transcript.
-    fn flush_to_transcript<T: Transcript>(&mut self, _transcript: &mut T)
-    where
-        Self: Sized,
-    {
-    }
+    fn flush_to_transcript<T: Transcript>(&mut self, transcript: &mut T);
 
     /// Take pending claims (for ZK mode output commitment).
-    fn take_pending_claims(&mut self) -> Vec<F>
-    where
-        Self: Sized,
-    {
-        Vec::new()
-    }
+    fn take_pending_claims(&mut self) -> Vec<F>;
 }
 
 /// State for Dory batch opening (Stage 8).
@@ -702,7 +674,9 @@ impl<F: JoltField> OpeningAccumulator<F> for VerifierOpeningAccumulator<F> {
         let (point, claim) = self.openings.get(&key)?;
         Some((point.clone(), *claim))
     }
+}
 
+impl<F: JoltField> AbstractVerifierOpeningAccumulator<F> for VerifierOpeningAccumulator<F> {
     fn append_dense(
         &mut self,
         polynomial: CommittedPolynomial,

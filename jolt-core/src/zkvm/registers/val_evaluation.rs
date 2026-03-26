@@ -14,8 +14,7 @@ use crate::{
         eq_poly::EqPolynomial,
         lt_poly::LtPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
-        opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
+        opening_proof::{AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
             LITTLE_ENDIAN,
         },
         ra_poly::RaPolynomial,
@@ -287,13 +286,13 @@ pub struct ValEvaluationSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> ValEvaluationSumcheckVerifier<F> {
-    pub fn new<A: OpeningAccumulator<F>>(opening_accumulator: &A) -> Self {
+    pub fn new<A: AbstractVerifierOpeningAccumulator<F>>(opening_accumulator: &A) -> Self {
         let params = RegistersValEvaluationSumcheckParams::new(opening_accumulator);
         Self { params }
     }
 }
 
-impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
+impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
     for ValEvaluationSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {

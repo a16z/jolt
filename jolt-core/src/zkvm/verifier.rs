@@ -25,6 +25,8 @@ use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceParams;
 #[cfg(feature = "zk")]
 use crate::subprotocols::univariate_skip::UniSkipFirstRoundProofVariant;
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::AbstractVerifierOpeningAccumulator;
 use crate::zkvm::bytecode::{BytecodePreprocessing, PreprocessingError};
 use crate::zkvm::claim_reductions::advice::ReductionPhase;
 use crate::zkvm::claim_reductions::RegistersClaimReductionSumcheckVerifier;
@@ -155,7 +157,7 @@ impl<F: JoltField> StageVerifyResult<F> {
 }
 
 #[cfg(feature = "zk")]
-fn batch_output_constraints<F: JoltField, T: Transcript, A: OpeningAccumulator<F>>(
+fn batch_output_constraints<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>(
     instances: &[&dyn SumcheckInstanceVerifier<F, T, A>],
 ) -> Option<OutputClaimConstraint> {
     let constraints: Vec<Option<OutputClaimConstraint>> = instances
@@ -166,7 +168,7 @@ fn batch_output_constraints<F: JoltField, T: Transcript, A: OpeningAccumulator<F
 }
 
 #[cfg(feature = "zk")]
-fn batch_input_constraints<F: JoltField, T: Transcript, A: OpeningAccumulator<F>>(
+fn batch_input_constraints<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>(
     instances: &[&dyn SumcheckInstanceVerifier<F, T, A>],
 ) -> InputClaimConstraint {
     let constraints: Vec<InputClaimConstraint> = instances
@@ -177,7 +179,7 @@ fn batch_input_constraints<F: JoltField, T: Transcript, A: OpeningAccumulator<F>
 }
 
 #[cfg(feature = "zk")]
-fn scale_batching_coefficients<F: JoltField, T: Transcript, A: OpeningAccumulator<F>>(
+fn scale_batching_coefficients<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>(
     batching_coefficients: &[F],
     instances: &[&dyn SumcheckInstanceVerifier<F, T, A>],
 ) -> Vec<F> {

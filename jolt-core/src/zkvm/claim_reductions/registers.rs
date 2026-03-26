@@ -11,6 +11,7 @@ use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial};
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{
+    AbstractVerifierOpeningAccumulator,
     OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
     LITTLE_ENDIAN,
 };
@@ -480,7 +481,7 @@ pub struct RegistersClaimReductionSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> RegistersClaimReductionSumcheckVerifier<F> {
-    pub fn new<A: OpeningAccumulator<F>>(
+    pub fn new<A: AbstractVerifierOpeningAccumulator<F>>(
         trace_len: usize,
         accumulator: &A,
         transcript: &mut impl Transcript,
@@ -490,7 +491,7 @@ impl<F: JoltField> RegistersClaimReductionSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
+impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
     for RegistersClaimReductionSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {

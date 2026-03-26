@@ -52,6 +52,7 @@ use tracer::instruction::Cycle;
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{
+    AbstractVerifierOpeningAccumulator,
     OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
     LITTLE_ENDIAN,
 };
@@ -291,7 +292,7 @@ pub struct RamRaVirtualSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> RamRaVirtualSumcheckVerifier<F> {
-    pub fn new<A: OpeningAccumulator<F>>(
+    pub fn new<A: AbstractVerifierOpeningAccumulator<F>>(
         trace_len: usize,
         one_hot_params: &OneHotParams,
         opening_accumulator: &A,
@@ -302,7 +303,7 @@ impl<F: JoltField> RamRaVirtualSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
+impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
     for RamRaVirtualSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {

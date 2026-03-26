@@ -11,7 +11,9 @@ use crate::poly::commitment::pedersen::PedersenGenerators;
 use crate::poly::lagrange_poly::LagrangePolynomial;
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
-use crate::poly::opening_proof::{OpeningAccumulator, ProverOpeningAccumulator};
+use crate::poly::opening_proof::{
+    AbstractVerifierOpeningAccumulator, OpeningAccumulator, ProverOpeningAccumulator,
+};
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
@@ -233,7 +235,7 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundProof<F, T> {
     pub fn verify<
         const N: usize,
         const FIRST_ROUND_POLY_NUM_COEFFS: usize,
-        A: OpeningAccumulator<F>,
+        A: AbstractVerifierOpeningAccumulator<F>,
     >(
         proof: &Self,
         sumcheck_instance: &dyn SumcheckInstanceVerifier<F, T, A>,
@@ -297,7 +299,7 @@ impl<F: JoltField, C: JoltCurve<F = F>, T: Transcript> ZkUniSkipFirstRoundProof<
 
     /// Verify transcript consistency only.
     /// The actual polynomial verification (sum check + evaluation) is done by BlindFold.
-    pub fn verify_transcript<A: OpeningAccumulator<F>, I: SumcheckInstanceVerifier<F, T, A>>(
+    pub fn verify_transcript<A: AbstractVerifierOpeningAccumulator<F>, I: SumcheckInstanceVerifier<F, T, A>>(
         &self,
         sumcheck_instance: &I,
         opening_accumulator: &mut A,

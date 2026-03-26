@@ -83,7 +83,7 @@ use crate::zkvm::{
 };
 use crate::{
     field::JoltField,
-    poly::opening_proof::{OpeningAccumulator, VerifierOpeningAccumulator},
+    poly::opening_proof::{AbstractVerifierOpeningAccumulator, VerifierOpeningAccumulator},
     pprof_scope,
     subprotocols::{
         booleanity::{BooleanitySumcheckParams, BooleanitySumcheckVerifier},
@@ -118,7 +118,7 @@ pub struct TranspilableVerifier<
     C: JoltCurve<F = F>,
     PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
-    A: OpeningAccumulator<F> = VerifierOpeningAccumulator<F>,
+    A: AbstractVerifierOpeningAccumulator<F> = VerifierOpeningAccumulator<F>,
 > {
     pub trusted_advice_commitment: Option<PCS::Commitment>,
     pub program_io: JoltDevice,
@@ -142,7 +142,7 @@ impl<
         C: JoltCurve<F = F>,
         PCS: CommitmentScheme<Field = F>,
         ProofTranscript: Transcript,
-        A: OpeningAccumulator<F>,
+        A: AbstractVerifierOpeningAccumulator<F>,
     > TranspilableVerifier<'a, F, C, PCS, ProofTranscript, A>
 {
     /// Create a TranspilableVerifier for real verification.

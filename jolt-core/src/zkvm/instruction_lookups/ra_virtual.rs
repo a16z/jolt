@@ -11,8 +11,7 @@ use crate::{
     poly::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, PolynomialBinding},
-        opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
+        opening_proof::{AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
             LITTLE_ENDIAN,
         },
         ra_poly::RaPolynomial,
@@ -352,7 +351,7 @@ pub struct RaSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> RaSumcheckVerifier<F> {
-    pub fn new<A: OpeningAccumulator<F>>(
+    pub fn new<A: AbstractVerifierOpeningAccumulator<F>>(
         one_hot_params: &OneHotParams,
         opening_accumulator: &A,
         transcript: &mut impl Transcript,
@@ -363,7 +362,7 @@ impl<F: JoltField> RaSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
+impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
     for RaSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {

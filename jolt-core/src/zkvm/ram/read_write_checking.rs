@@ -4,7 +4,7 @@ use num_traits::Zero;
 
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
-use crate::poly::opening_proof::{OpeningAccumulator, PolynomialId};
+use crate::poly::opening_proof::{AbstractVerifierOpeningAccumulator, OpeningAccumulator, PolynomialId};
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 
 #[cfg(feature = "zk")]
@@ -717,7 +717,7 @@ impl<F: JoltField> RamReadWriteCheckingVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
+impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
     for RamReadWriteCheckingVerifier<F>
 {
     fn input_claim(&self, accumulator: &A) -> F {

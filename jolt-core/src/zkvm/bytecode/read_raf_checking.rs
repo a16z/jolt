@@ -16,8 +16,7 @@ use crate::{
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
-        opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
+        opening_proof::{AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
         },
         ra_poly::RaPolynomial,
         split_eq_poly::GruenSplitEqPolynomial,
@@ -701,7 +700,7 @@ pub struct BytecodeReadRafSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> BytecodeReadRafSumcheckVerifier<F> {
-    pub fn gen<A: OpeningAccumulator<F>>(
+    pub fn gen<A: AbstractVerifierOpeningAccumulator<F>>(
         bytecode_preprocessing: &BytecodePreprocessing,
         n_cycle_vars: usize,
         one_hot_params: &OneHotParams,
@@ -720,7 +719,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
+impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
     for BytecodeReadRafSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {

@@ -8,7 +8,7 @@ use crate::poly::commitment::pedersen::PedersenGenerators;
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{
-    OpeningAccumulator, ProverOpeningAccumulator, VerifierOpeningAccumulator,
+    AbstractVerifierOpeningAccumulator, ProverOpeningAccumulator, VerifierOpeningAccumulator,
 };
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
@@ -489,7 +489,7 @@ impl BatchedSumcheck {
 
     /// Verify a standard (non-ZK) sumcheck proof without requiring a curve type.
     /// Used by opening proof reduction which doesn't need ZK mode.
-    pub fn verify_standard<F: JoltField, ProofTranscript: Transcript, A: OpeningAccumulator<F>>(
+    pub fn verify_standard<F: JoltField, ProofTranscript: Transcript, A: AbstractVerifierOpeningAccumulator<F>>(
         proof: &ClearSumcheckProof<F, ProofTranscript>,
         sumcheck_instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript, A>>,
         opening_accumulator: &mut A,

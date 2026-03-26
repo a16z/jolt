@@ -24,8 +24,7 @@ use crate::{
     poly::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
-        opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
+        opening_proof::{AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
         },
         split_eq_poly::GruenSplitEqPolynomial,
         unipoly::UniPoly,
@@ -892,7 +891,7 @@ pub struct RegistersReadWriteCheckingVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> RegistersReadWriteCheckingVerifier<F> {
-    pub fn new<A: OpeningAccumulator<F>>(
+    pub fn new<A: AbstractVerifierOpeningAccumulator<F>>(
         trace_len: usize,
         opening_accumulator: &A,
         transcript: &mut impl Transcript,
@@ -908,7 +907,7 @@ impl<F: JoltField> RegistersReadWriteCheckingVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
+impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
     for RegistersReadWriteCheckingVerifier<F>
 {
     fn input_claim(&self, accumulator: &A) -> F {

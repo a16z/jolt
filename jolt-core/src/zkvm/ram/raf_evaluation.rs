@@ -21,8 +21,7 @@ use crate::{
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
-        opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
+        opening_proof::{AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
             LITTLE_ENDIAN,
         },
         unipoly::UniPoly,
@@ -363,7 +362,7 @@ pub struct RafEvaluationSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> RafEvaluationSumcheckVerifier<F> {
-    pub fn new<A: OpeningAccumulator<F>>(
+    pub fn new<A: AbstractVerifierOpeningAccumulator<F>>(
         memory_layout: &MemoryLayout,
         one_hot_params: &OneHotParams,
         trace_len: usize,
@@ -381,7 +380,7 @@ impl<F: JoltField> RafEvaluationSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
+impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
     for RafEvaluationSumcheckVerifier<F>
 {
     fn input_claim(&self, accumulator: &A) -> F {

@@ -13,7 +13,8 @@
 
 use ark_ff::Zero;
 use jolt_core::poly::opening_proof::{
-    OpeningAccumulator, OpeningId, OpeningPoint, PolynomialId, SumcheckId, BIG_ENDIAN,
+    AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningId, OpeningPoint, PolynomialId,
+    SumcheckId, BIG_ENDIAN,
 };
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::claim_reductions::AdviceKind;
@@ -206,7 +207,9 @@ impl OpeningAccumulator<MleAst> for AstOpeningAccumulator {
         let (point, claim) = self.openings.get(&resolved)?;
         Some((OpeningPoint::new(point.clone()), *claim))
     }
+}
 
+impl AbstractVerifierOpeningAccumulator<MleAst> for AstOpeningAccumulator {
     fn append_virtual(
         &mut self,
         polynomial: VirtualPolynomial,
