@@ -88,6 +88,174 @@ impl InstrAssemblerExt for InstrAssembler {
     }
 }
 
+/// Extension trait adding multiply-accumulate helpers to [`InstrAssembler`].
+///
+/// These emit RISC-V instruction patterns for 64-bit multiply-accumulate with
+/// carry propagation, used by modular arithmetic inlines (secp256k1, P-256, etc.).
+/// All methods take raw virtual register IDs (`u8`) and emit instructions via
+/// `self.emit_r`.
+pub trait MulAccExt {
+    // (c2, c1) = lower(a * b) + c1; clobbers aux
+    fn mac_low(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8);
+    // (c2, c1) = upper(a * b) + c1; clobbers aux
+    fn mac_high(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8);
+    // (c2, c1) += lower(a * b); clobbers aux
+    fn mac_low_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8);
+    // (c2, c1) += upper(a * b); clobbers aux
+    fn mac_high_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8);
+    // if carry_exists: mac_low_w_carry, else: mac_low
+    fn mac_low_conditional(
+        &mut self,
+        carry_exists: bool,
+        c2: u8,
+        c1: u8,
+        a: u8,
+        b: u8,
+        aux: u8,
+    );
+    // if carry_exists: mac_high_w_carry, else: mac_high
+    fn mac_high_conditional(
+        &mut self,
+        carry_exists: bool,
+        c2: u8,
+        c1: u8,
+        a: u8,
+        b: u8,
+        aux: u8,
+    );
+    // (c2, c1) = 2*lower(a * b) + c1; clobbers aux
+    fn m2ac_low(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8);
+    // (c2, c1) = 2*upper(a * b) + c1; clobbers aux
+    fn m2ac_high(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8);
+    // (c2, c1) += 2*lower(a * b); clobbers aux, aux2
+    fn m2ac_low_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8, aux2: u8);
+    // (c2, c1) += 2*upper(a * b); clobbers aux, aux2
+    fn m2ac_high_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8, aux2: u8);
+    // (c2, c1) = c1 + val; sets c2 = carry (no multiply, for p[0]=1 case)
+    fn adc(&mut self, c2: u8, c1: u8, val: u8);
+    // (c2, c1) += val with existing carry; clobbers aux
+    fn adc_w_carry(&mut self, c2: u8, c1: u8, val: u8, aux: u8);
+    // if carry_exists: adc_w_carry, else: adc
+    fn add_conditional(&mut self, carry_exists: bool, c2: u8, c1: u8, val: u8, aux: u8);
+}
+
+impl MulAccExt for InstrAssembler {
+    fn mac_low(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
+        self.emit_r::<instruction::mul::MUL>(aux, a, b);
+        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
+        self.emit_r::<instruction::sltu::SLTU>(c2, c1, aux);
+    }
+
+    fn mac_high(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
+        self.emit_r::<instruction::mulhu::MULHU>(aux, a, b);
+        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
+        self.emit_r::<instruction::sltu::SLTU>(c2, c1, aux);
+    }
+
+    fn mac_low_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
+        self.emit_r::<instruction::mul::MUL>(aux, a, b);
+        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
+        self.emit_r::<instruction::sltu::SLTU>(aux, c1, aux);
+        self.emit_r::<instruction::add::ADD>(c2, c2, aux);
+    }
+
+    fn mac_high_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
+        self.emit_r::<instruction::mulhu::MULHU>(aux, a, b);
+        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
+        self.emit_r::<instruction::sltu::SLTU>(aux, c1, aux);
+        self.emit_r::<instruction::add::ADD>(c2, c2, aux);
+    }
+
+    fn mac_low_conditional(
+        &mut self,
+        carry_exists: bool,
+        c2: u8,
+        c1: u8,
+        a: u8,
+        b: u8,
+        aux: u8,
+    ) {
+        if carry_exists {
+            self.mac_low_w_carry(c2, c1, a, b, aux);
+        } else {
+            self.mac_low(c2, c1, a, b, aux);
+        }
+    }
+
+    fn mac_high_conditional(
+        &mut self,
+        carry_exists: bool,
+        c2: u8,
+        c1: u8,
+        a: u8,
+        b: u8,
+        aux: u8,
+    ) {
+        if carry_exists {
+            self.mac_high_w_carry(c2, c1, a, b, aux);
+        } else {
+            self.mac_high(c2, c1, a, b, aux);
+        }
+    }
+
+    fn m2ac_low(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
+        self.emit_r::<instruction::mul::MUL>(aux, a, b);
+        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
+        self.emit_r::<instruction::sltu::SLTU>(c2, c1, aux);
+        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
+        self.emit_r::<instruction::sltu::SLTU>(aux, c1, aux);
+        self.emit_r::<instruction::add::ADD>(c2, c2, aux);
+    }
+
+    fn m2ac_high(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
+        self.emit_r::<instruction::mulhu::MULHU>(aux, a, b);
+        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
+        self.emit_r::<instruction::sltu::SLTU>(c2, c1, aux);
+        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
+        self.emit_r::<instruction::sltu::SLTU>(aux, c1, aux);
+        self.emit_r::<instruction::add::ADD>(c2, c2, aux);
+    }
+
+    fn m2ac_low_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8, aux2: u8) {
+        self.emit_r::<instruction::mul::MUL>(aux, a, b);
+        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
+        self.emit_r::<instruction::sltu::SLTU>(aux2, c1, aux);
+        self.emit_r::<instruction::add::ADD>(c2, c2, aux2);
+        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
+        self.emit_r::<instruction::sltu::SLTU>(aux2, c1, aux);
+        self.emit_r::<instruction::add::ADD>(c2, c2, aux2);
+    }
+
+    fn m2ac_high_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8, aux2: u8) {
+        self.emit_r::<instruction::mulhu::MULHU>(aux, a, b);
+        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
+        self.emit_r::<instruction::sltu::SLTU>(aux2, c1, aux);
+        self.emit_r::<instruction::add::ADD>(c2, c2, aux2);
+        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
+        self.emit_r::<instruction::sltu::SLTU>(aux2, c1, aux);
+        self.emit_r::<instruction::add::ADD>(c2, c2, aux2);
+    }
+
+    fn adc(&mut self, c2: u8, c1: u8, val: u8) {
+        self.emit_r::<instruction::add::ADD>(c1, c1, val);
+        self.emit_r::<instruction::sltu::SLTU>(c2, c1, val);
+    }
+
+    fn adc_w_carry(&mut self, c2: u8, c1: u8, val: u8, aux: u8) {
+        self.emit_r::<instruction::add::ADD>(c1, c1, val);
+        self.emit_r::<instruction::sltu::SLTU>(aux, c1, val);
+        self.emit_r::<instruction::add::ADD>(c2, c2, aux);
+    }
+
+    fn add_conditional(&mut self, carry_exists: bool, c2: u8, c1: u8, val: u8, aux: u8) {
+        if carry_exists {
+            self.adc_w_carry(c2, c1, val, aux);
+        } else {
+            self.adc(c2, c1, val);
+        }
+    }
+}
+
 /// Generate `store_inlines()` and submit `InlineRegistration` entries to `inventory`.
 ///
 /// Each `InlineOp` type gets an `inventory::submit!` that registers it at link time.

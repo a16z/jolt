@@ -5,11 +5,11 @@ use ark_ff::{BigInt, Field, PrimeField};
 use ark_secp256r1::{Fq, Fr};
 use jolt_inlines_sdk::host::{
     instruction::{
-        add::ADD, ld::LD, lui::LUI, mul::MUL, mulhu::MULHU, sd::SD, sltu::SLTU,
+        add::ADD, ld::LD, lui::LUI, mul::MUL, mulhu::MULHU, sd::SD,
         virtual_advice::VirtualAdvice, virtual_assert_eq::VirtualAssertEQ,
         virtual_assert_lte::VirtualAssertLTE,
     },
-    Cpu, FormatInline, InlineOp, InstrAssembler, Instruction, VirtualRegisterGuard,
+    Cpu, FormatInline, InlineOp, InstrAssembler, Instruction, MulAccExt, VirtualRegisterGuard,
 };
 use num_bigint::{BigInt as NBigInt, BigUint as NBigUint};
 use num_integer::Integer;
@@ -295,10 +295,10 @@ impl P256Mulq {
         // add w[0]*p[0] contribution to limb 0, carry into r[1]
         if self.is_scalar_field {
             // scalar field: p[0] is in p1, use MAC
-            self.mac_low(*self.r[1], *self.r[0], *self.w[0], *self.p1, *self.aux);
+            self.asm.mac_low(*self.r[1], *self.r[0], *self.w[0], *self.p1, *self.aux);
         } else {
             // base field: p[0] = 1, so w[0]*p[0] = w[0], use ADD
-            self.adc(*self.r[1], *self.r[0], *self.w[0]);
+            self.asm.adc(*self.r[1], *self.r[0], *self.w[0]);
         }
 
         // if mul or square, store the lowest limb in rs3
@@ -334,13 +334,13 @@ impl P256Mulq {
 
                 // j=0 (p1): i = k, need k < 4
                 if k < 4 {
-                    self.mac_low_conditional(!first, rk_next, rk, *self.w[k], *self.p1, *self.aux);
+                    self.asm.mac_low_conditional(!first, rk_next, rk, *self.w[k], *self.p1, *self.aux);
                     first = false;
                 }
 
                 // j=1 (p2): i = k-1, need k-1 in 0..3 => k in 1..4
                 if k >= 1 && k - 1 < 4 {
-                    self.mac_low_conditional(
+                    self.asm.mac_low_conditional(
                         !first,
                         rk_next,
                         rk,
@@ -355,7 +355,7 @@ impl P256Mulq {
 
                 // j=3 (p3): i = k-3, need k-3 in 0..3 => k in 3..6
                 if k >= 3 && k - 3 < 4 {
-                    self.mac_low_conditional(
+                    self.asm.mac_low_conditional(
                         !first,
                         rk_next,
                         rk,
@@ -370,7 +370,7 @@ impl P256Mulq {
 
                 // j=0 (p1): i = k-1, need k-1 in 0..3 => k in 1..4
                 if k >= 1 && k - 1 < 4 {
-                    self.mac_high_conditional(
+                    self.asm.mac_high_conditional(
                         !first,
                         rk_next,
                         rk,
@@ -383,7 +383,7 @@ impl P256Mulq {
 
                 // j=1 (p2): i = k-2, need k-2 in 0..3 => k in 2..5
                 if k >= 2 && k - 2 < 4 {
-                    self.mac_high_conditional(
+                    self.asm.mac_high_conditional(
                         !first,
                         rk_next,
                         rk,
@@ -398,7 +398,7 @@ impl P256Mulq {
 
                 // j=3 (p3): i = k-4, need k-4 in 0..3 => k in 4..7, capped at k<=6
                 if k >= 4 && k - 4 < 4 {
-                    self.mac_high_conditional(
+                    self.asm.mac_high_conditional(
                         !first,
                         rk_next,
                         rk,
@@ -417,13 +417,13 @@ impl P256Mulq {
                 // j=0 (p[0]=1): i = k, need k < 4
                 // low(w[k] * 1) = w[k], use ADD
                 if k < 4 {
-                    self.add_conditional(!first, rk_next, rk, *self.w[k], *self.aux);
+                    self.asm.add_conditional(!first, rk_next, rk, *self.w[k], *self.aux);
                     first = false;
                 }
 
                 // j=1 (p1): i = k-1, need k-1 in 0..3 => k in 1..4
                 if k >= 1 && k - 1 < 4 {
-                    self.mac_low_conditional(
+                    self.asm.mac_low_conditional(
                         !first,
                         rk_next,
                         rk,
@@ -436,7 +436,7 @@ impl P256Mulq {
 
                 // j=2 (p2): i = k-2, need k-2 in 0..3 => k in 2..5
                 if k >= 2 && k - 2 < 4 {
-                    self.mac_low_conditional(
+                    self.asm.mac_low_conditional(
                         !first,
                         rk_next,
                         rk,
@@ -449,7 +449,7 @@ impl P256Mulq {
 
                 // j=3 (p3): i = k-3, need k-3 in 0..3 => k in 3..6
                 if k >= 3 && k - 3 < 4 {
-                    self.mac_low_conditional(
+                    self.asm.mac_low_conditional(
                         !first,
                         rk_next,
                         rk,
@@ -467,7 +467,7 @@ impl P256Mulq {
 
                 // j=1 (p1): i = k-2, need k-2 in 0..3 => k in 2..5
                 if k >= 2 && k - 2 < 4 {
-                    self.mac_high_conditional(
+                    self.asm.mac_high_conditional(
                         !first,
                         rk_next,
                         rk,
@@ -480,7 +480,7 @@ impl P256Mulq {
 
                 // j=2 (p2): i = k-3, need k-3 in 0..3 => k in 3..6
                 if k >= 3 && k - 3 < 4 {
-                    self.mac_high_conditional(
+                    self.asm.mac_high_conditional(
                         !first,
                         rk_next,
                         rk,
@@ -493,7 +493,7 @@ impl P256Mulq {
 
                 // j=3 (p3): i = k-4, need k-4 in 0..3 => k in 4..7, capped at k<=6
                 if k >= 4 && k - 4 < 4 {
-                    self.mac_high_conditional(
+                    self.asm.mac_high_conditional(
                         !first,
                         rk_next,
                         rk,
@@ -514,13 +514,13 @@ impl P256Mulq {
                             if i > j {
                                 break;
                             } else if i == j {
-                                self.mac_low_conditional(
+                                self.asm.mac_low_conditional(
                                     !first, rk_next, rk, *self.a[i], *self.a[j], *self.aux,
                                 );
                                 first = false;
                             } else {
                                 if !first {
-                                    self.m2ac_low_w_carry(
+                                    self.asm.m2ac_low_w_carry(
                                         rk_next,
                                         rk,
                                         *self.a[i],
@@ -529,13 +529,13 @@ impl P256Mulq {
                                         **self.aux2.as_ref().unwrap(),
                                     );
                                 } else {
-                                    self.m2ac_low(rk_next, rk, *self.a[i], *self.a[j], *self.aux);
+                                    self.asm.m2ac_low(rk_next, rk, *self.a[i], *self.a[j], *self.aux);
                                 }
                                 first = false;
                             }
                         }
                         _ => {
-                            self.mac_low_conditional(
+                            self.asm.mac_low_conditional(
                                 !first,
                                 rk_next,
                                 rk,
@@ -558,13 +558,13 @@ impl P256Mulq {
                             if i > j {
                                 break;
                             } else if i == j {
-                                self.mac_high_conditional(
+                                self.asm.mac_high_conditional(
                                     !first, rk_next, rk, *self.a[i], *self.a[j], *self.aux,
                                 );
                                 first = false;
                             } else {
                                 if !first {
-                                    self.m2ac_high_w_carry(
+                                    self.asm.m2ac_high_w_carry(
                                         rk_next,
                                         rk,
                                         *self.a[i],
@@ -573,13 +573,13 @@ impl P256Mulq {
                                         **self.aux2.as_ref().unwrap(),
                                     );
                                 } else {
-                                    self.m2ac_high(rk_next, rk, *self.a[i], *self.a[j], *self.aux);
+                                    self.asm.m2ac_high(rk_next, rk, *self.a[i], *self.a[j], *self.aux);
                                 }
                                 first = false;
                             }
                         }
                         _ => {
-                            self.mac_high_conditional(
+                            self.asm.mac_high_conditional(
                                 !first,
                                 rk_next,
                                 rk,
@@ -660,128 +660,6 @@ impl P256Mulq {
         }
         drop(self.r);
         self.asm.finalize_inline()
-    }
-
-    // (c2, c1) = lower(a * b) + c1
-    // clobbers aux
-    fn mac_low(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.asm.emit_r::<MUL>(aux, a, b);
-        self.asm.emit_r::<ADD>(c1, c1, aux);
-        self.asm.emit_r::<SLTU>(c2, c1, aux);
-    }
-
-    // (c2, c1) = upper(a * b) + c1
-    // clobbers aux
-    fn mac_high(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.asm.emit_r::<MULHU>(aux, a, b);
-        self.asm.emit_r::<ADD>(c1, c1, aux);
-        self.asm.emit_r::<SLTU>(c2, c1, aux);
-    }
-
-    // (c2, c1) += lower(a * b)
-    // clobbers aux
-    fn mac_low_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.asm.emit_r::<MUL>(aux, a, b);
-        self.asm.emit_r::<ADD>(c1, c1, aux);
-        self.asm.emit_r::<SLTU>(aux, c1, aux);
-        self.asm.emit_r::<ADD>(c2, c2, aux);
-    }
-
-    // (c2, c1) += upper(a * b)
-    // clobbers aux
-    fn mac_high_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.asm.emit_r::<MULHU>(aux, a, b);
-        self.asm.emit_r::<ADD>(c1, c1, aux);
-        self.asm.emit_r::<SLTU>(aux, c1, aux);
-        self.asm.emit_r::<ADD>(c2, c2, aux);
-    }
-
-    // if carry flag is true, mac_low_w_carry, otherwise mac_low
-    fn mac_low_conditional(&mut self, carry_exists: bool, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        if carry_exists {
-            self.mac_low_w_carry(c2, c1, a, b, aux);
-        } else {
-            self.mac_low(c2, c1, a, b, aux);
-        }
-    }
-
-    // if carry flag is true, mac_high_w_carry, otherwise mac_high
-    fn mac_high_conditional(&mut self, carry_exists: bool, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        if carry_exists {
-            self.mac_high_w_carry(c2, c1, a, b, aux);
-        } else {
-            self.mac_high(c2, c1, a, b, aux);
-        }
-    }
-
-    // (c2, c1) = c1 + val (no multiply, for p[0]=1 case)
-    // sets c2 = carry
-    fn adc(&mut self, c2: u8, c1: u8, val: u8) {
-        self.asm.emit_r::<ADD>(c1, c1, val);
-        self.asm.emit_r::<SLTU>(c2, c1, val);
-    }
-
-    // (c2, c1) += val (no multiply, for p[0]=1 case, with existing carry)
-    fn adc_w_carry(&mut self, c2: u8, c1: u8, val: u8, aux: u8) {
-        self.asm.emit_r::<ADD>(c1, c1, val);
-        self.asm.emit_r::<SLTU>(aux, c1, val);
-        self.asm.emit_r::<ADD>(c2, c2, aux);
-    }
-
-    // if carry_exists, adc_w_carry, else adc
-    fn add_conditional(&mut self, carry_exists: bool, c2: u8, c1: u8, val: u8, aux: u8) {
-        if carry_exists {
-            self.adc_w_carry(c2, c1, val, aux);
-        } else {
-            self.adc(c2, c1, val);
-        }
-    }
-
-    // mac-like functions for the square case where one wants to add 2*a*b
-    // (c2, c1) = 2*lower(a * b) + c1
-    // clobbers aux
-    fn m2ac_low(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.asm.emit_r::<MUL>(aux, a, b);
-        self.asm.emit_r::<ADD>(c1, c1, aux);
-        self.asm.emit_r::<SLTU>(c2, c1, aux);
-        self.asm.emit_r::<ADD>(c1, c1, aux);
-        self.asm.emit_r::<SLTU>(aux, c1, aux);
-        self.asm.emit_r::<ADD>(c2, c2, aux);
-    }
-
-    // (c2, c1) = 2*upper(a * b) + c1
-    // clobbers aux
-    fn m2ac_high(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.asm.emit_r::<MULHU>(aux, a, b);
-        self.asm.emit_r::<ADD>(c1, c1, aux);
-        self.asm.emit_r::<SLTU>(c2, c1, aux);
-        self.asm.emit_r::<ADD>(c1, c1, aux);
-        self.asm.emit_r::<SLTU>(aux, c1, aux);
-        self.asm.emit_r::<ADD>(c2, c2, aux);
-    }
-
-    // (c2, c1) += 2*lower(a * b)
-    // clobbers aux
-    fn m2ac_low_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8, aux2: u8) {
-        self.asm.emit_r::<MUL>(aux, a, b);
-        self.asm.emit_r::<ADD>(c1, c1, aux);
-        self.asm.emit_r::<SLTU>(aux2, c1, aux);
-        self.asm.emit_r::<ADD>(c2, c2, aux2);
-        self.asm.emit_r::<ADD>(c1, c1, aux);
-        self.asm.emit_r::<SLTU>(aux2, c1, aux);
-        self.asm.emit_r::<ADD>(c2, c2, aux2);
-    }
-
-    // (c2, c1) += 2*upper(a * b)
-    // clobbers aux
-    fn m2ac_high_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8, aux2: u8) {
-        self.asm.emit_r::<MULHU>(aux, a, b);
-        self.asm.emit_r::<ADD>(c1, c1, aux);
-        self.asm.emit_r::<SLTU>(aux2, c1, aux);
-        self.asm.emit_r::<ADD>(c2, c2, aux2);
-        self.asm.emit_r::<ADD>(c1, c1, aux);
-        self.asm.emit_r::<SLTU>(aux2, c1, aux);
-        self.asm.emit_r::<ADD>(c2, c2, aux2);
     }
 }
 
