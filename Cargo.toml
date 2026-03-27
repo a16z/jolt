@@ -245,7 +245,7 @@ hex = "0.4.3"
 spinners = { version = "4.2.0", default-features = false }
 
 # Testing
-criterion = { version = "0.5.1", features = ["html_reports"] }
+criterion = { version = "0.8.2", features = ["html_reports"] }
 iai-callgrind = "0.16.1"
 serial_test = "3.4.0"
 
