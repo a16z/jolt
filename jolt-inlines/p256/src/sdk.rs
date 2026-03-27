@@ -11,72 +11,31 @@ use ark_ff::{BigInt, Field, PrimeField};
 #[cfg(feature = "host")]
 use ark_secp256r1::{Fq as ArkFq, Fr as ArkFr};
 
+use core::marker::PhantomData;
 use serde::{Deserialize, Serialize};
 
 use crate::{P256_MODULUS, P256_ORDER};
 
-/// Returns `true` iff `x >= p` (base field modulus), i.e., `x` is non-canonical.
-///
-/// P-256 modulus limbs (little-endian):
-///   [0] = 0xFFFFFFFFFFFFFFFF
-///   [1] = 0x00000000FFFFFFFF
-///   [2] = 0x0000000000000000
-///   [3] = 0xFFFFFFFF00000001
-///
-/// Because the limbs have mixed values, we need a full top-down comparison.
-#[inline(always)]
-fn is_fq_non_canonical(x: &[u64; 4]) -> bool {
-    if x[3] < P256_MODULUS[3] {
-        return false;
-    } else if x[3] > P256_MODULUS[3] {
-        return true;
-    }
-    // x[3] == P256_MODULUS[3]
-    if x[2] < P256_MODULUS[2] {
-        return false;
-    } else if x[2] > P256_MODULUS[2] {
-        return true;
-    }
-    // x[2] == P256_MODULUS[2] == 0
-    if x[1] < P256_MODULUS[1] {
-        return false;
-    } else if x[1] > P256_MODULUS[1] {
-        return true;
-    }
-    // x[1] == P256_MODULUS[1]
-    x[0] >= P256_MODULUS[0]
-}
-
-/// Returns `true` iff `x >= n` (scalar field order), i.e., `x` is non-canonical.
-///
-/// P-256 order limbs (little-endian):
-///   [0] = 0xF3B9CAC2FC632551
-///   [1] = 0xBCE6FAADA7179E84
-///   [2] = 0xFFFFFFFFFFFFFFFF
-///   [3] = 0xFFFFFFFF00000000
-///
+/// Returns `true` iff `x >= modulus`, i.e., `x` is non-canonical.
 /// Full top-down comparison since limbs have mixed values.
 #[inline(always)]
-fn is_fr_non_canonical(x: &[u64; 4]) -> bool {
-    if x[3] < P256_ORDER[3] {
+fn is_non_canonical(x: &[u64; 4], modulus: &[u64; 4]) -> bool {
+    if x[3] < modulus[3] {
         return false;
-    } else if x[3] > P256_ORDER[3] {
+    } else if x[3] > modulus[3] {
         return true;
     }
-    // x[3] == P256_ORDER[3]
-    if x[2] < P256_ORDER[2] {
+    if x[2] < modulus[2] {
         return false;
-    } else if x[2] > P256_ORDER[2] {
+    } else if x[2] > modulus[2] {
         return true;
     }
-    // x[2] == P256_ORDER[2] == 0xFFFFFFFFFFFFFFFF
-    if x[1] < P256_ORDER[1] {
+    if x[1] < modulus[1] {
         return false;
-    } else if x[1] > P256_ORDER[1] {
+    } else if x[1] > modulus[1] {
         return true;
     }
-    // x[1] == P256_ORDER[1]
-    x[0] >= P256_ORDER[0]
+    x[0] >= modulus[0]
 }
 
 /// Add with carry: a + b + carry_in -> (sum, carry_out)
@@ -213,28 +172,83 @@ fn decode_glv_sign_word(w: u64) -> Result<bool, P256Error> {
     }
 }
 
-/// P-256 base field element, `[u64; 4]` in standard (non-Montgomery) form.
-#[derive(Clone, PartialEq, Debug)]
-pub struct P256Fq {
-    e: [u64; 4],
+// ---------------------------------------------------------------------------
+// Generic field infrastructure
+// ---------------------------------------------------------------------------
+
+/// Configuration trait that captures the differences between the P-256 base
+/// field (Fq) and scalar field (Fr).  All shared arithmetic lives on the
+/// generic `P256Field<C>` impl.
+pub trait P256FieldConfig: Clone + 'static {
+    const MODULUS: [u64; 4];
+    const MUL_FUNCT3: u32;
+    const SQUARE_FUNCT3: u32;
+    const DIV_FUNCT3: u32;
+
+    fn invalid_element_error() -> P256Error;
+
+    #[cfg(feature = "host")]
+    fn host_mul(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4];
+    #[cfg(feature = "host")]
+    fn host_square(a: &[u64; 4]) -> [u64; 4];
+    #[cfg(feature = "host")]
+    fn host_div(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4];
 }
 
-impl P256Fq {
-    /// Creates a new P256Fq element from a `[u64; 4]` array.
-    /// Returns `Err(P256Error::InvalidFqElement)` if the value >= p.
+/// P-256 field element generic over a `P256FieldConfig`, storing `[u64; 4]`
+/// limbs in standard (non-Montgomery) form.
+pub struct P256Field<C: P256FieldConfig> {
+    e: [u64; 4],
+    _phantom: PhantomData<C>,
+}
+
+// Manual trait impls so that C does not need Clone/PartialEq/Debug bounds.
+
+impl<C: P256FieldConfig> Clone for P256Field<C> {
+    #[inline(always)]
+    fn clone(&self) -> Self {
+        Self {
+            e: self.e,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<C: P256FieldConfig> PartialEq for P256Field<C> {
+    #[inline(always)]
+    fn eq(&self, other: &Self) -> bool {
+        self.e == other.e
+    }
+}
+
+impl<C: P256FieldConfig> core::fmt::Debug for P256Field<C> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("P256Field").field("e", &self.e).finish()
+    }
+}
+
+impl<C: P256FieldConfig> P256Field<C> {
+    /// Creates a new element from a `[u64; 4]` array.
+    /// Returns the config-specific error if the value >= modulus.
     #[inline(always)]
     pub fn from_u64_arr(arr: &[u64; 4]) -> Result<Self, P256Error> {
-        if is_fq_non_canonical(arr) {
-            return Err(P256Error::InvalidFqElement);
+        if is_non_canonical(arr, &C::MODULUS) {
+            return Err(C::invalid_element_error());
         }
-        Ok(P256Fq { e: *arr })
+        Ok(Self {
+            e: *arr,
+            _phantom: PhantomData,
+        })
     }
 
-    /// Creates a new P256Fq element from a `[u64; 4]` array (unchecked).
-    /// The array is assumed to contain a value in the range `[0, p)`.
+    /// Creates a new element from a `[u64; 4]` array (unchecked).
+    /// The array is assumed to contain a value in the range `[0, modulus)`.
     #[inline(always)]
     pub fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self {
-        P256Fq { e: *arr }
+        Self {
+            e: *arr,
+            _phantom: PhantomData,
+        }
     }
 
     /// Returns the four u64 limbs (little-endian).
@@ -249,8 +263,8 @@ impl P256Fq {
         limbs_to_bytes(&self.e)
     }
 
-    /// Creates a P256Fq from 32 little-endian bytes.
-    /// Returns error if the value >= p.
+    /// Creates an element from 32 little-endian bytes.
+    /// Returns error if the value >= modulus.
     #[inline(always)]
     pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self, P256Error> {
         let limbs = bytes_to_limbs(bytes);
@@ -260,7 +274,10 @@ impl P256Fq {
     /// Returns the additive identity element (0).
     #[inline(always)]
     pub fn zero() -> Self {
-        P256Fq { e: [0u64; 4] }
+        Self {
+            e: [0u64; 4],
+            _phantom: PhantomData,
+        }
     }
 
     /// Returns true if the element is zero.
@@ -269,96 +286,96 @@ impl P256Fq {
         self.e == [0u64; 4]
     }
 
-    /// Returns `-self mod p`.
+    /// Returns `-self mod modulus`.
     #[inline(always)]
     pub fn neg(&self) -> Self {
-        P256Fq {
-            e: neg_mod(&self.e, &P256_MODULUS),
+        Self {
+            e: neg_mod(&self.e, &C::MODULUS),
+            _phantom: PhantomData,
         }
     }
 
-    /// Returns `self + other mod p`.
+    /// Returns `self + other mod modulus`.
     #[inline(always)]
-    pub fn add(&self, other: &P256Fq) -> Self {
-        P256Fq {
-            e: add_mod(&self.e, &other.e, &P256_MODULUS),
+    pub fn add(&self, other: &Self) -> Self {
+        Self {
+            e: add_mod(&self.e, &other.e, &C::MODULUS),
+            _phantom: PhantomData,
         }
     }
 
-    /// Returns `self - other mod p`.
+    /// Returns `self - other mod modulus`.
     #[inline(always)]
-    pub fn sub(&self, other: &P256Fq) -> Self {
-        P256Fq {
-            e: sub_mod(&self.e, &other.e, &P256_MODULUS),
+    pub fn sub(&self, other: &Self) -> Self {
+        Self {
+            e: sub_mod(&self.e, &other.e, &C::MODULUS),
+            _phantom: PhantomData,
         }
     }
 
-    /// Returns `2 * self mod p`.
+    /// Returns `2 * self mod modulus`.
     #[inline(always)]
     pub fn dbl(&self) -> Self {
         self.add(self)
     }
 
-    /// Returns `3 * self mod p`.
+    /// Returns `3 * self mod modulus`.
     #[inline(always)]
     pub fn tpl(&self) -> Self {
         self.dbl().add(self)
     }
 
-    // mul — RISC-V guest (inline instruction)
+    // -- mul ----------------------------------------------------------------
 
-    /// Returns `self * other mod p`.
+    /// Returns `self * other mod modulus`.
     /// Uses a custom RISC-V inline instruction for performance.
     #[cfg(all(
         not(feature = "host"),
         any(target_arch = "riscv32", target_arch = "riscv64")
     ))]
     #[inline(always)]
-    pub fn mul(&self, other: &P256Fq) -> Self {
+    pub fn mul(&self, other: &Self) -> Self {
         let mut e = [0u64; 4];
         // SAFETY: e is a stack-local array with a valid pointer. The custom
         // instruction is intercepted by the Jolt tracer; nostack is valid.
         unsafe {
-            use crate::{INLINE_OPCODE, P256_FUNCT7, P256_MULQ_FUNCT3};
             core::arch::asm!(
                 ".insn r {opcode}, {funct3}, {funct7}, {rd}, {rs1}, {rs2}",
-                opcode = const INLINE_OPCODE,
-                funct3 = const P256_MULQ_FUNCT3,
-                funct7 = const P256_FUNCT7,
+                opcode = const crate::INLINE_OPCODE,
+                funct3 = const C::MUL_FUNCT3,
+                funct7 = const crate::P256_FUNCT7,
                 rd = in(reg) e.as_mut_ptr(),
                 rs1 = in(reg) self.e.as_ptr(),
                 rs2 = in(reg) other.e.as_ptr(),
                 options(nostack)
             );
         }
-        if is_fq_non_canonical(&e) {
+        if is_non_canonical(&e, &C::MODULUS) {
             spoil_proof();
         }
-        P256Fq::from_u64_arr_unchecked(&e[0..4].try_into().unwrap())
+        Self::from_u64_arr_unchecked(&e[0..4].try_into().unwrap())
     }
 
-    /// Panics on non-RISC-V guest (no inline available).
     #[cfg(all(
         not(feature = "host"),
         not(any(target_arch = "riscv32", target_arch = "riscv64"))
     ))]
-    pub fn mul(&self, _other: &P256Fq) -> Self {
-        panic!("P256Fq::mul called on non-RISC-V target without host feature");
+    pub fn mul(&self, _other: &Self) -> Self {
+        panic!("P256Field::mul called on non-RISC-V target without host feature");
     }
 
     #[cfg(feature = "host")]
     #[inline(always)]
-    pub fn mul(&self, other: &P256Fq) -> Self {
-        P256Fq {
-            e: (ArkFq::new(BigInt(self.e)) * ArkFq::new(BigInt(other.e)))
-                .into_bigint()
-                .0,
+    pub fn mul(&self, other: &Self) -> Self {
+        Self {
+            e: C::host_mul(&self.e, &other.e),
+            _phantom: PhantomData,
         }
     }
 
-    // square — RISC-V guest (inline instruction)
+    // -- square -------------------------------------------------------------
 
-    /// Returns `self^2 mod p`.
+    /// Returns `self^2 mod modulus`.
     /// Uses a custom RISC-V inline instruction for performance.
     #[cfg(all(
         not(feature = "host"),
@@ -370,402 +387,213 @@ impl P256Fq {
         // SAFETY: e is a stack-local array with a valid pointer. The custom
         // instruction is intercepted by the Jolt tracer; nostack is valid.
         unsafe {
-            use crate::{INLINE_OPCODE, P256_FUNCT7, P256_SQUAREQ_FUNCT3};
             core::arch::asm!(
                 ".insn r {opcode}, {funct3}, {funct7}, {rd}, {rs1}, x0",
-                opcode = const INLINE_OPCODE,
-                funct3 = const P256_SQUAREQ_FUNCT3,
-                funct7 = const P256_FUNCT7,
+                opcode = const crate::INLINE_OPCODE,
+                funct3 = const C::SQUARE_FUNCT3,
+                funct7 = const crate::P256_FUNCT7,
                 rd = in(reg) e.as_mut_ptr(),
                 rs1 = in(reg) self.e.as_ptr(),
                 options(nostack)
             );
         }
-        if is_fq_non_canonical(&e) {
+        if is_non_canonical(&e, &C::MODULUS) {
             spoil_proof();
         }
-        P256Fq::from_u64_arr_unchecked(&e[0..4].try_into().unwrap())
+        Self::from_u64_arr_unchecked(&e[0..4].try_into().unwrap())
     }
 
-    /// Panics on non-RISC-V guest (no inline available).
     #[cfg(all(
         not(feature = "host"),
         not(any(target_arch = "riscv32", target_arch = "riscv64"))
     ))]
     pub fn square(&self) -> Self {
-        panic!("P256Fq::square called on non-RISC-V target without host feature");
+        panic!("P256Field::square called on non-RISC-V target without host feature");
     }
 
     #[cfg(feature = "host")]
     #[inline(always)]
     pub fn square(&self) -> Self {
-        P256Fq {
-            e: ArkFq::new(BigInt(self.e)).square().into_bigint().0,
+        Self {
+            e: C::host_square(&self.e),
+            _phantom: PhantomData,
         }
     }
 
-    // div / div_assume_nonzero — RISC-V guest (inline instruction)
+    // -- div / div_assume_nonzero -------------------------------------------
 
-    /// Returns `self / other mod p`.  Assumes `other != 0`.
+    /// Returns `self / other mod modulus`.  Assumes `other != 0`.
     /// Uses a custom RISC-V inline instruction for performance.
     #[cfg(all(
         not(feature = "host"),
         any(target_arch = "riscv32", target_arch = "riscv64")
     ))]
     #[inline(always)]
-    fn div_assume_nonzero(&self, other: &P256Fq) -> Self {
+    fn div_assume_nonzero(&self, other: &Self) -> Self {
         let mut e = [0u64; 4];
         // SAFETY: e is a stack-local array with a valid pointer. The custom
         // instruction is intercepted by the Jolt tracer; nostack is valid.
         unsafe {
-            use crate::{INLINE_OPCODE, P256_DIVQ_FUNCT3, P256_FUNCT7};
             core::arch::asm!(
                 ".insn r {opcode}, {funct3}, {funct7}, {rd}, {rs1}, {rs2}",
-                opcode = const INLINE_OPCODE,
-                funct3 = const P256_DIVQ_FUNCT3,
-                funct7 = const P256_FUNCT7,
+                opcode = const crate::INLINE_OPCODE,
+                funct3 = const C::DIV_FUNCT3,
+                funct7 = const crate::P256_FUNCT7,
                 rd = in(reg) e.as_mut_ptr(),
                 rs1 = in(reg) self.e.as_ptr(),
                 rs2 = in(reg) other.e.as_ptr(),
                 options(nostack)
             );
         }
-        if is_fq_non_canonical(&e) {
+        if is_non_canonical(&e, &C::MODULUS) {
             spoil_proof();
         }
-        P256Fq::from_u64_arr_unchecked(&e[0..4].try_into().unwrap())
+        Self::from_u64_arr_unchecked(&e[0..4].try_into().unwrap())
     }
 
-    /// Returns `self / other mod p`.
     /// Spoils the proof if `other == 0`.
     #[cfg(all(
         not(feature = "host"),
         any(target_arch = "riscv32", target_arch = "riscv64")
     ))]
     #[inline(always)]
-    pub fn div(&self, other: &P256Fq) -> Self {
-        // spoil proof if other == 0
+    pub fn div(&self, other: &Self) -> Self {
         if other.is_zero() {
             spoil_proof();
         }
         self.div_assume_nonzero(other)
     }
 
-    /// Panics on non-RISC-V guest (no inline available).
     #[cfg(all(
         not(feature = "host"),
         not(any(target_arch = "riscv32", target_arch = "riscv64"))
     ))]
-    pub fn div_assume_nonzero(&self, _other: &P256Fq) -> Self {
-        panic!("P256Fq::div_assume_nonzero called on non-RISC-V target without host feature");
+    pub fn div_assume_nonzero(&self, _other: &Self) -> Self {
+        panic!("P256Field::div_assume_nonzero called on non-RISC-V target without host feature");
     }
 
-    /// Panics on non-RISC-V guest (no inline available).
     #[cfg(all(
         not(feature = "host"),
         not(any(target_arch = "riscv32", target_arch = "riscv64"))
     ))]
-    pub fn div(&self, _other: &P256Fq) -> Self {
-        panic!("P256Fq::div called on non-RISC-V target without host feature");
+    pub fn div(&self, _other: &Self) -> Self {
+        panic!("P256Field::div called on non-RISC-V target without host feature");
     }
 
     #[cfg(feature = "host")]
     #[inline(always)]
-    pub fn div_assume_nonzero(&self, other: &P256Fq) -> Self {
-        P256Fq {
-            e: (ArkFq::new(BigInt(self.e)) / ArkFq::new(BigInt(other.e)))
-                .into_bigint()
-                .0,
+    pub fn div_assume_nonzero(&self, other: &Self) -> Self {
+        Self {
+            e: C::host_div(&self.e, &other.e),
+            _phantom: PhantomData,
         }
     }
 
-    /// Host implementation: checks `other != 0` then delegates.
     #[cfg(feature = "host")]
     #[inline(always)]
-    pub fn div(&self, other: &P256Fq) -> Self {
+    pub fn div(&self, other: &Self) -> Self {
         if other.is_zero() {
-            panic!("division by zero in P256Fq::div");
+            panic!("division by zero in P256Field::div");
         }
         self.div_assume_nonzero(other)
     }
 }
+
+// ---------------------------------------------------------------------------
+// FqConfig -- P-256 base field
+// ---------------------------------------------------------------------------
+
+#[derive(Clone)]
+pub struct FqConfig;
+
+impl P256FieldConfig for FqConfig {
+    const MODULUS: [u64; 4] = P256_MODULUS;
+    const MUL_FUNCT3: u32 = crate::P256_MULQ_FUNCT3;
+    const SQUARE_FUNCT3: u32 = crate::P256_SQUAREQ_FUNCT3;
+    const DIV_FUNCT3: u32 = crate::P256_DIVQ_FUNCT3;
+
+    #[inline(always)]
+    fn invalid_element_error() -> P256Error {
+        P256Error::InvalidFqElement
+    }
+
+    #[cfg(feature = "host")]
+    #[inline(always)]
+    fn host_mul(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
+        (ArkFq::new(BigInt(*a)) * ArkFq::new(BigInt(*b)))
+            .into_bigint()
+            .0
+    }
+
+    #[cfg(feature = "host")]
+    #[inline(always)]
+    fn host_square(a: &[u64; 4]) -> [u64; 4] {
+        ArkFq::new(BigInt(*a)).square().into_bigint().0
+    }
+
+    #[cfg(feature = "host")]
+    #[inline(always)]
+    fn host_div(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
+        (ArkFq::new(BigInt(*a)) / ArkFq::new(BigInt(*b)))
+            .into_bigint()
+            .0
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FrConfig -- P-256 scalar field
+// ---------------------------------------------------------------------------
+
+#[derive(Clone)]
+pub struct FrConfig;
+
+impl P256FieldConfig for FrConfig {
+    const MODULUS: [u64; 4] = P256_ORDER;
+    const MUL_FUNCT3: u32 = crate::P256_MULR_FUNCT3;
+    const SQUARE_FUNCT3: u32 = crate::P256_SQUARER_FUNCT3;
+    const DIV_FUNCT3: u32 = crate::P256_DIVR_FUNCT3;
+
+    #[inline(always)]
+    fn invalid_element_error() -> P256Error {
+        P256Error::InvalidFrElement
+    }
+
+    #[cfg(feature = "host")]
+    #[inline(always)]
+    fn host_mul(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
+        (ArkFr::new(BigInt(*a)) * ArkFr::new(BigInt(*b)))
+            .into_bigint()
+            .0
+    }
+
+    #[cfg(feature = "host")]
+    #[inline(always)]
+    fn host_square(a: &[u64; 4]) -> [u64; 4] {
+        ArkFr::new(BigInt(*a)).square().into_bigint().0
+    }
+
+    #[cfg(feature = "host")]
+    #[inline(always)]
+    fn host_div(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
+        (ArkFr::new(BigInt(*a)) / ArkFr::new(BigInt(*b)))
+            .into_bigint()
+            .0
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Type aliases
+// ---------------------------------------------------------------------------
+
+/// P-256 base field element, `[u64; 4]` in standard (non-Montgomery) form.
+pub type P256Fq = P256Field<FqConfig>;
 
 /// P-256 scalar field element, `[u64; 4]` in standard (non-Montgomery) form.
-#[derive(Clone, PartialEq, Debug)]
-pub struct P256Fr {
-    e: [u64; 4],
-}
+pub type P256Fr = P256Field<FrConfig>;
 
-impl P256Fr {
-    /// Creates a new P256Fr element from a `[u64; 4]` array.
-    /// Returns `Err(P256Error::InvalidFrElement)` if the value >= n.
-    #[inline(always)]
-    pub fn from_u64_arr(arr: &[u64; 4]) -> Result<Self, P256Error> {
-        if is_fr_non_canonical(arr) {
-            return Err(P256Error::InvalidFrElement);
-        }
-        Ok(P256Fr { e: *arr })
-    }
-
-    /// Creates a new P256Fr element from a `[u64; 4]` array (unchecked).
-    /// The array is assumed to contain a value in the range `[0, n)`.
-    #[inline(always)]
-    pub fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self {
-        P256Fr { e: *arr }
-    }
-
-    /// Returns the four u64 limbs (little-endian).
-    #[inline(always)]
-    pub fn e(&self) -> [u64; 4] {
-        self.e
-    }
-
-    /// Returns the element as 32 little-endian bytes.
-    #[inline(always)]
-    pub fn to_bytes(&self) -> [u8; 32] {
-        limbs_to_bytes(&self.e)
-    }
-
-    /// Creates a P256Fr from 32 little-endian bytes.
-    /// Returns error if the value >= n.
-    #[inline(always)]
-    pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self, P256Error> {
-        let limbs = bytes_to_limbs(bytes);
-        Self::from_u64_arr(&limbs)
-    }
-
-    /// Returns the additive identity element (0).
-    #[inline(always)]
-    pub fn zero() -> Self {
-        P256Fr { e: [0u64; 4] }
-    }
-
-    /// Returns true if the element is zero.
-    #[inline(always)]
-    pub fn is_zero(&self) -> bool {
-        self.e == [0u64; 4]
-    }
-
-    /// Returns `-self mod n`.
-    #[inline(always)]
-    pub fn neg(&self) -> Self {
-        P256Fr {
-            e: neg_mod(&self.e, &P256_ORDER),
-        }
-    }
-
-    /// Returns `self + other mod n`.
-    #[inline(always)]
-    pub fn add(&self, other: &P256Fr) -> Self {
-        P256Fr {
-            e: add_mod(&self.e, &other.e, &P256_ORDER),
-        }
-    }
-
-    /// Returns `self - other mod n`.
-    #[inline(always)]
-    pub fn sub(&self, other: &P256Fr) -> Self {
-        P256Fr {
-            e: sub_mod(&self.e, &other.e, &P256_ORDER),
-        }
-    }
-
-    /// Returns `2 * self mod n`.
-    #[inline(always)]
-    pub fn dbl(&self) -> Self {
-        self.add(self)
-    }
-
-    /// Returns `3 * self mod n`.
-    #[inline(always)]
-    pub fn tpl(&self) -> Self {
-        self.dbl().add(self)
-    }
-
-    // mul — RISC-V guest (inline instruction)
-
-    /// Returns `self * other mod n`.
-    /// Uses a custom RISC-V inline instruction for performance.
-    #[cfg(all(
-        not(feature = "host"),
-        any(target_arch = "riscv32", target_arch = "riscv64")
-    ))]
-    #[inline(always)]
-    pub fn mul(&self, other: &P256Fr) -> Self {
-        let mut e = [0u64; 4];
-        // SAFETY: e is a stack-local array with a valid pointer. The custom
-        // instruction is intercepted by the Jolt tracer; nostack is valid.
-        unsafe {
-            use crate::{INLINE_OPCODE, P256_FUNCT7, P256_MULR_FUNCT3};
-            core::arch::asm!(
-                ".insn r {opcode}, {funct3}, {funct7}, {rd}, {rs1}, {rs2}",
-                opcode = const INLINE_OPCODE,
-                funct3 = const P256_MULR_FUNCT3,
-                funct7 = const P256_FUNCT7,
-                rd = in(reg) e.as_mut_ptr(),
-                rs1 = in(reg) self.e.as_ptr(),
-                rs2 = in(reg) other.e.as_ptr(),
-                options(nostack)
-            );
-        }
-        if is_fr_non_canonical(&e) {
-            spoil_proof();
-        }
-        P256Fr::from_u64_arr_unchecked(&e[0..4].try_into().unwrap())
-    }
-
-    /// Panics on non-RISC-V guest (no inline available).
-    #[cfg(all(
-        not(feature = "host"),
-        not(any(target_arch = "riscv32", target_arch = "riscv64"))
-    ))]
-    pub fn mul(&self, _other: &P256Fr) -> Self {
-        panic!("P256Fr::mul called on non-RISC-V target without host feature");
-    }
-
-    #[cfg(feature = "host")]
-    #[inline(always)]
-    pub fn mul(&self, other: &P256Fr) -> Self {
-        P256Fr {
-            e: (ArkFr::new(BigInt(self.e)) * ArkFr::new(BigInt(other.e)))
-                .into_bigint()
-                .0,
-        }
-    }
-
-    // square — RISC-V guest (inline instruction)
-
-    /// Returns `self^2 mod n`.
-    /// Uses a custom RISC-V inline instruction for performance.
-    #[cfg(all(
-        not(feature = "host"),
-        any(target_arch = "riscv32", target_arch = "riscv64")
-    ))]
-    #[inline(always)]
-    pub fn square(&self) -> Self {
-        let mut e = [0u64; 4];
-        // SAFETY: e is a stack-local array with a valid pointer. The custom
-        // instruction is intercepted by the Jolt tracer; nostack is valid.
-        unsafe {
-            use crate::{INLINE_OPCODE, P256_FUNCT7, P256_SQUARER_FUNCT3};
-            core::arch::asm!(
-                ".insn r {opcode}, {funct3}, {funct7}, {rd}, {rs1}, x0",
-                opcode = const INLINE_OPCODE,
-                funct3 = const P256_SQUARER_FUNCT3,
-                funct7 = const P256_FUNCT7,
-                rd = in(reg) e.as_mut_ptr(),
-                rs1 = in(reg) self.e.as_ptr(),
-                options(nostack)
-            );
-        }
-        if is_fr_non_canonical(&e) {
-            spoil_proof();
-        }
-        P256Fr::from_u64_arr_unchecked(&e[0..4].try_into().unwrap())
-    }
-
-    /// Panics on non-RISC-V guest (no inline available).
-    #[cfg(all(
-        not(feature = "host"),
-        not(any(target_arch = "riscv32", target_arch = "riscv64"))
-    ))]
-    pub fn square(&self) -> Self {
-        panic!("P256Fr::square called on non-RISC-V target without host feature");
-    }
-
-    #[cfg(feature = "host")]
-    #[inline(always)]
-    pub fn square(&self) -> Self {
-        P256Fr {
-            e: ArkFr::new(BigInt(self.e)).square().into_bigint().0,
-        }
-    }
-
-    // div / div_assume_nonzero — RISC-V guest (inline instruction)
-
-    /// Returns `self / other mod n`.  Assumes `other != 0`.
-    /// Uses a custom RISC-V inline instruction for performance.
-    #[cfg(all(
-        not(feature = "host"),
-        any(target_arch = "riscv32", target_arch = "riscv64")
-    ))]
-    #[inline(always)]
-    fn div_assume_nonzero(&self, other: &P256Fr) -> Self {
-        let mut e = [0u64; 4];
-        // SAFETY: e is a stack-local array with a valid pointer. The custom
-        // instruction is intercepted by the Jolt tracer; nostack is valid.
-        unsafe {
-            use crate::{INLINE_OPCODE, P256_DIVR_FUNCT3, P256_FUNCT7};
-            core::arch::asm!(
-                ".insn r {opcode}, {funct3}, {funct7}, {rd}, {rs1}, {rs2}",
-                opcode = const INLINE_OPCODE,
-                funct3 = const P256_DIVR_FUNCT3,
-                funct7 = const P256_FUNCT7,
-                rd = in(reg) e.as_mut_ptr(),
-                rs1 = in(reg) self.e.as_ptr(),
-                rs2 = in(reg) other.e.as_ptr(),
-                options(nostack)
-            );
-        }
-        if is_fr_non_canonical(&e) {
-            spoil_proof();
-        }
-        P256Fr::from_u64_arr_unchecked(&e[0..4].try_into().unwrap())
-    }
-
-    /// Returns `self / other mod n`.
-    /// Spoils the proof if `other == 0`.
-    #[cfg(all(
-        not(feature = "host"),
-        any(target_arch = "riscv32", target_arch = "riscv64")
-    ))]
-    #[inline(always)]
-    pub fn div(&self, other: &P256Fr) -> Self {
-        // spoil proof if other == 0
-        if other.is_zero() {
-            spoil_proof();
-        }
-        self.div_assume_nonzero(other)
-    }
-
-    /// Panics on non-RISC-V guest (no inline available).
-    #[cfg(all(
-        not(feature = "host"),
-        not(any(target_arch = "riscv32", target_arch = "riscv64"))
-    ))]
-    pub fn div_assume_nonzero(&self, _other: &P256Fr) -> Self {
-        panic!("P256Fr::div_assume_nonzero called on non-RISC-V target without host feature");
-    }
-
-    /// Panics on non-RISC-V guest (no inline available).
-    #[cfg(all(
-        not(feature = "host"),
-        not(any(target_arch = "riscv32", target_arch = "riscv64"))
-    ))]
-    pub fn div(&self, _other: &P256Fr) -> Self {
-        panic!("P256Fr::div called on non-RISC-V target without host feature");
-    }
-
-    #[cfg(feature = "host")]
-    #[inline(always)]
-    pub fn div_assume_nonzero(&self, other: &P256Fr) -> Self {
-        P256Fr {
-            e: (ArkFr::new(BigInt(self.e)) / ArkFr::new(BigInt(other.e)))
-                .into_bigint()
-                .0,
-        }
-    }
-
-    /// Host implementation: checks `other != 0` then delegates.
-    #[cfg(feature = "host")]
-    #[inline(always)]
-    pub fn div(&self, other: &P256Fr) -> Self {
-        if other.is_zero() {
-            panic!("division by zero in P256Fr::div");
-        }
-        self.div_assume_nonzero(other)
-    }
-}
+// ---------------------------------------------------------------------------
+// ECField impl for P256Fq
+// ---------------------------------------------------------------------------
 
 use jolt_inlines_sdk::ec::{AffinePoint, CurveParams, ECField};
 
@@ -829,7 +657,7 @@ impl ECField for P256Fq {
     }
 }
 
-/// P-256 curve: y² = x³ + ax + b where a = p-3
+/// P-256 curve: y^2 = x^3 + ax + b where a = p-3
 #[derive(Clone)]
 pub struct P256Curve;
 
@@ -850,7 +678,7 @@ impl CurveParams<P256Fq> for P256Curve {
         P256Fq::from_u64_arr_unchecked(&crate::P256_CURVE_B)
     }
 
-    // Fake GLV Shamir verification produces infinity — needs this check.
+    // Fake GLV Shamir verification produces infinity -- needs this check.
     const DOUBLE_AND_ADD_DIVISOR_CHECK: bool = true;
 
     fn not_on_curve_error() -> Self::Error {
@@ -1010,13 +838,13 @@ fn shamir_4x128(scalars: [u128; 4], points: [P256Point; 4]) -> P256Point {
 ///
 /// The prover computes R1 = u1*G and R2 = u2*Q off-circuit via the Fake GLV
 /// advice inline, which also provides half-GCD decompositions (a1,b1) and (a2,b2)
-/// with b_i * u_i ≡ a_i (mod n) and |a_i|, |b_i| ≤ √n ≈ 2^128.
+/// with b_i * u_i = a_i (mod n) and |a_i|, |b_i| <= sqrt(n) ~ 2^128.
 ///
 /// The guest verifies:
-///   1. b1*u1 ≡ a1 (mod n) and b2*u2 ≡ a2 (mod n) — scalar field checks
-///   2. R1, R2 on curve — point validity
-///   3. a1*G - b1*R1 + a2*Q - b2*R2 = O — 4-scalar 128-bit Shamir (the main savings)
-///   4. (R1 + R2).x mod n == r — ECDSA final check
+///   1. b1*u1 = a1 (mod n) and b2*u2 = a2 (mod n) -- scalar field checks
+///   2. R1, R2 on curve -- point validity
+///   3. a1*G - b1*R1 + a2*Q - b2*R2 = O -- 4-scalar 128-bit Shamir (the main savings)
+///   4. (R1 + R2).x mod n == r -- ECDSA final check
 ///
 /// This halves the doublings: 128 instead of 256, achieving ~1.7x speedup.
 #[inline(always)]
@@ -1047,7 +875,7 @@ pub fn ecdsa_verify(z: P256Fr, r: P256Fr, s: P256Fr, q: P256Point) -> Result<(),
         spoil_proof();
     }
 
-    // Step 5: Verify decompositions: b_i * u_i ≡ a_i (mod n)
+    // Step 5: Verify decompositions: b_i * u_i = a_i (mod n)
     // Construct a_i and b_i as P256Fr elements
     let make_fr = |val: u128, sign: bool| -> P256Fr {
         let lo = val as u64;
@@ -1064,12 +892,12 @@ pub fn ecdsa_verify(z: P256Fr, r: P256Fr, s: P256Fr, q: P256Point) -> Result<(),
     let a2_fr = make_fr(a2_val, a2_sign);
     let b2_fr = make_fr(b2_val, b2_sign);
 
-    // Check b1*u1 ≡ a1 (mod n)
+    // Check b1*u1 = a1 (mod n)
     let check1 = b1_fr.mul(&u1);
     if check1.e() != a1_fr.e() {
         spoil_proof();
     }
-    // Check b2*u2 ≡ a2 (mod n)
+    // Check b2*u2 = a2 (mod n)
     let check2 = b2_fr.mul(&u2);
     if check2.e() != a2_fr.e() {
         spoil_proof();
@@ -1083,7 +911,7 @@ pub fn ecdsa_verify(z: P256Fr, r: P256Fr, s: P256Fr, q: P256Point) -> Result<(),
     let r1_adj = if b1_sign { r1.clone() } else { r1.neg() };
     let r2_adj = if b2_sign { r2.clone() } else { r2.neg() };
 
-    // Scalars for the 4-scalar Shamir: a1, a2, |b1|, |b2| (all ≤ 128 bits)
+    // Scalars for the 4-scalar Shamir: a1, a2, |b1|, |b2| (all <= 128 bits)
     let scalars = [a1_val, a2_val, b1_val, b2_val];
     let points_arr = [
         if a1_sign { g.neg() } else { g },
@@ -1092,7 +920,7 @@ pub fn ecdsa_verify(z: P256Fr, r: P256Fr, s: P256Fr, q: P256Point) -> Result<(),
         r2_adj,
     ];
 
-    // Step 7: 4-scalar 128-bit Shamir — should equal O (infinity)
+    // Step 7: 4-scalar 128-bit Shamir -- should equal O (infinity)
     let check_point = shamir_4x128(scalars, points_arr);
     if !check_point.is_infinity() {
         spoil_proof();
@@ -1105,7 +933,7 @@ pub fn ecdsa_verify(z: P256Fr, r: P256Fr, s: P256Fr, q: P256Point) -> Result<(),
     }
 
     let mut rx = r_sum.x();
-    if is_fr_non_canonical(&rx.e()) {
+    if is_non_canonical(&rx.e(), &P256_ORDER) {
         rx = rx.sub(&P256Fq::from_u64_arr_unchecked(&crate::P256_ORDER));
     }
     if rx.e() != r.e() {
