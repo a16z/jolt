@@ -1,0 +1,24 @@
+[package]
+name = "jolt-inlines-p256"
+version = "0.1.0"
+edition = "2021"
+description = "P-256 (secp256r1) inline implementations for Jolt VM"
+license = "MIT"
+homepage = "https://github.com/a16z/jolt"
+repository = "https://github.com/a16z/jolt"
+
+[features]
+default = []
+host = ["jolt-inlines-sdk/host", "dep:ark-ff", "dep:ark-ec", "dep:ark-secp256r1", "dep:num-bigint", "dep:num-integer"]
+
+[dependencies]
+jolt-inlines-sdk = { workspace = true, features = ["elliptic-curve"] }
+serde.workspace = true
+ark-ff = { workspace = true, optional = true }
+ark-ec = { workspace = true, optional = true }
+ark-secp256r1 = { workspace = true, optional = true }
+num-bigint = { workspace = true, optional = true }
+num-integer = { workspace = true, optional = true }
+
+[dev-dependencies]
+tracer = { workspace = true, features = ["std", "test-utils"] }
