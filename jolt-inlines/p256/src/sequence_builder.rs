@@ -5,9 +5,8 @@ use ark_ff::{BigInt, Field, PrimeField};
 use ark_secp256r1::{Fq, Fr};
 use jolt_inlines_sdk::host::{
     instruction::{
-        add::ADD, ld::LD, lui::LUI, mul::MUL, mulhu::MULHU, sd::SD,
-        virtual_advice::VirtualAdvice, virtual_assert_eq::VirtualAssertEQ,
-        virtual_assert_lte::VirtualAssertLTE,
+        add::ADD, ld::LD, lui::LUI, mul::MUL, mulhu::MULHU, sd::SD, virtual_advice::VirtualAdvice,
+        virtual_assert_eq::VirtualAssertEQ, virtual_assert_lte::VirtualAssertLTE,
     },
     Cpu, FormatInline, InlineOp, InstrAssembler, Instruction, MulAccExt, VirtualRegisterGuard,
 };
@@ -295,7 +294,8 @@ impl P256Mulq {
         // add w[0]*p[0] contribution to limb 0, carry into r[1]
         if self.is_scalar_field {
             // scalar field: p[0] is in p1, use MAC
-            self.asm.mac_low(*self.r[1], *self.r[0], *self.w[0], *self.p1, *self.aux);
+            self.asm
+                .mac_low(*self.r[1], *self.r[0], *self.w[0], *self.p1, *self.aux);
         } else {
             // base field: p[0] = 1, so w[0]*p[0] = w[0], use ADD
             self.asm.adc(*self.r[1], *self.r[0], *self.w[0]);
@@ -334,7 +334,8 @@ impl P256Mulq {
 
                 // j=0 (p1): i = k, need k < 4
                 if k < 4 {
-                    self.asm.mac_low_conditional(!first, rk_next, rk, *self.w[k], *self.p1, *self.aux);
+                    self.asm
+                        .mac_low_conditional(!first, rk_next, rk, *self.w[k], *self.p1, *self.aux);
                     first = false;
                 }
 
@@ -417,7 +418,8 @@ impl P256Mulq {
                 // j=0 (p[0]=1): i = k, need k < 4
                 // low(w[k] * 1) = w[k], use ADD
                 if k < 4 {
-                    self.asm.add_conditional(!first, rk_next, rk, *self.w[k], *self.aux);
+                    self.asm
+                        .add_conditional(!first, rk_next, rk, *self.w[k], *self.aux);
                     first = false;
                 }
 
@@ -529,7 +531,8 @@ impl P256Mulq {
                                         **self.aux2.as_ref().unwrap(),
                                     );
                                 } else {
-                                    self.asm.m2ac_low(rk_next, rk, *self.a[i], *self.a[j], *self.aux);
+                                    self.asm
+                                        .m2ac_low(rk_next, rk, *self.a[i], *self.a[j], *self.aux);
                                 }
                                 first = false;
                             }
@@ -573,7 +576,8 @@ impl P256Mulq {
                                         **self.aux2.as_ref().unwrap(),
                                     );
                                 } else {
-                                    self.asm.m2ac_high(rk_next, rk, *self.a[i], *self.a[j], *self.aux);
+                                    self.asm
+                                        .m2ac_high(rk_next, rk, *self.a[i], *self.a[j], *self.aux);
                                 }
                                 first = false;
                             }

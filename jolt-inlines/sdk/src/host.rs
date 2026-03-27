@@ -104,25 +104,9 @@ pub trait MulAccExt {
     // (c2, c1) += upper(a * b); clobbers aux
     fn mac_high_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8);
     // if carry_exists: mac_low_w_carry, else: mac_low
-    fn mac_low_conditional(
-        &mut self,
-        carry_exists: bool,
-        c2: u8,
-        c1: u8,
-        a: u8,
-        b: u8,
-        aux: u8,
-    );
+    fn mac_low_conditional(&mut self, carry_exists: bool, c2: u8, c1: u8, a: u8, b: u8, aux: u8);
     // if carry_exists: mac_high_w_carry, else: mac_high
-    fn mac_high_conditional(
-        &mut self,
-        carry_exists: bool,
-        c2: u8,
-        c1: u8,
-        a: u8,
-        b: u8,
-        aux: u8,
-    );
+    fn mac_high_conditional(&mut self, carry_exists: bool, c2: u8, c1: u8, a: u8, b: u8, aux: u8);
     // (c2, c1) = 2*lower(a * b) + c1; clobbers aux
     fn m2ac_low(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8);
     // (c2, c1) = 2*upper(a * b) + c1; clobbers aux
@@ -166,15 +150,7 @@ impl MulAccExt for InstrAssembler {
         self.emit_r::<instruction::add::ADD>(c2, c2, aux);
     }
 
-    fn mac_low_conditional(
-        &mut self,
-        carry_exists: bool,
-        c2: u8,
-        c1: u8,
-        a: u8,
-        b: u8,
-        aux: u8,
-    ) {
+    fn mac_low_conditional(&mut self, carry_exists: bool, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
         if carry_exists {
             self.mac_low_w_carry(c2, c1, a, b, aux);
         } else {
@@ -182,15 +158,7 @@ impl MulAccExt for InstrAssembler {
         }
     }
 
-    fn mac_high_conditional(
-        &mut self,
-        carry_exists: bool,
-        c2: u8,
-        c1: u8,
-        a: u8,
-        b: u8,
-        aux: u8,
-    ) {
+    fn mac_high_conditional(&mut self, carry_exists: bool, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
         if carry_exists {
             self.mac_high_w_carry(c2, c1, a, b, aux);
         } else {
