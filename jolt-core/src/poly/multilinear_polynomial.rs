@@ -79,6 +79,23 @@ impl<F: JoltField> Default for MultilinearPolynomial<F> {
 }
 
 impl<F: JoltField> MultilinearPolynomial<F> {
+    fn variant_name(&self) -> &'static str {
+        match self {
+            Self::LargeScalars(_) => "LargeScalars",
+            Self::BoolScalars(_) => "BoolScalars",
+            Self::U8Scalars(_) => "U8Scalars",
+            Self::U16Scalars(_) => "U16Scalars",
+            Self::U32Scalars(_) => "U32Scalars",
+            Self::U64Scalars(_) => "U64Scalars",
+            Self::U128Scalars(_) => "U128Scalars",
+            Self::I64Scalars(_) => "I64Scalars",
+            Self::I128Scalars(_) => "I128Scalars",
+            Self::S128Scalars(_) => "S128Scalars",
+            Self::RLC(_) => "RLC",
+            Self::OneHot(_) => "OneHot",
+        }
+    }
+
     /// The length of the polynomial before it was bound
     pub fn original_len(&self) -> usize {
         match self {
@@ -480,101 +497,148 @@ impl<F: JoltField> From<Vec<S128>> for MultilinearPolynomial<F> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum MultilinearPolynomialError {
+    WrongVariant {
+        expected: &'static str,
+        got: &'static str,
+    },
+}
+
+impl std::fmt::Display for MultilinearPolynomialError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::WrongVariant { expected, got } => {
+                write!(f, "expected {expected} variant, got {got}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for MultilinearPolynomialError {}
+
 impl<'a, F: JoltField> TryFrom<&'a MultilinearPolynomial<F>> for &'a DensePolynomial<F> {
-    type Error = (); // TODO(moodlezoup)
+    type Error = MultilinearPolynomialError;
 
     fn try_from(poly: &'a MultilinearPolynomial<F>) -> Result<Self, Self::Error> {
         match poly {
             MultilinearPolynomial::LargeScalars(poly) => Ok(poly),
-            _ => Err(()),
+            _ => Err(MultilinearPolynomialError::WrongVariant {
+                expected: "LargeScalars",
+                got: poly.variant_name(),
+            }),
         }
     }
 }
 
 impl<'a, F: JoltField> TryFrom<&'a MultilinearPolynomial<F>> for &'a CompactPolynomial<u8, F> {
-    type Error = (); // TODO(moodlezoup)
+    type Error = MultilinearPolynomialError;
 
     fn try_from(poly: &'a MultilinearPolynomial<F>) -> Result<Self, Self::Error> {
         match poly {
             MultilinearPolynomial::U8Scalars(poly) => Ok(poly),
-            _ => Err(()),
+            _ => Err(MultilinearPolynomialError::WrongVariant {
+                expected: "U8Scalars",
+                got: poly.variant_name(),
+            }),
         }
     }
 }
 
 impl<'a, F: JoltField> TryFrom<&'a MultilinearPolynomial<F>> for &'a CompactPolynomial<bool, F> {
-    type Error = (); // TODO(moodlezoup)
+    type Error = MultilinearPolynomialError;
 
     fn try_from(poly: &'a MultilinearPolynomial<F>) -> Result<Self, Self::Error> {
         match poly {
             MultilinearPolynomial::BoolScalars(poly) => Ok(poly),
-            _ => Err(()),
+            _ => Err(MultilinearPolynomialError::WrongVariant {
+                expected: "BoolScalars",
+                got: poly.variant_name(),
+            }),
         }
     }
 }
 
 impl<'a, F: JoltField> TryFrom<&'a MultilinearPolynomial<F>> for &'a CompactPolynomial<u16, F> {
-    type Error = (); // TODO(moodlezoup)
+    type Error = MultilinearPolynomialError;
 
     fn try_from(poly: &'a MultilinearPolynomial<F>) -> Result<Self, Self::Error> {
         match poly {
             MultilinearPolynomial::U16Scalars(poly) => Ok(poly),
-            _ => Err(()),
+            _ => Err(MultilinearPolynomialError::WrongVariant {
+                expected: "U16Scalars",
+                got: poly.variant_name(),
+            }),
         }
     }
 }
 
 impl<'a, F: JoltField> TryFrom<&'a MultilinearPolynomial<F>> for &'a CompactPolynomial<u32, F> {
-    type Error = (); // TODO(moodlezoup)
+    type Error = MultilinearPolynomialError;
 
     fn try_from(poly: &'a MultilinearPolynomial<F>) -> Result<Self, Self::Error> {
         match poly {
             MultilinearPolynomial::U32Scalars(poly) => Ok(poly),
-            _ => Err(()),
+            _ => Err(MultilinearPolynomialError::WrongVariant {
+                expected: "U32Scalars",
+                got: poly.variant_name(),
+            }),
         }
     }
 }
 
 impl<'a, F: JoltField> TryFrom<&'a MultilinearPolynomial<F>> for &'a CompactPolynomial<u64, F> {
-    type Error = (); // TODO(moodlezoup)
+    type Error = MultilinearPolynomialError;
 
     fn try_from(poly: &'a MultilinearPolynomial<F>) -> Result<Self, Self::Error> {
         match poly {
             MultilinearPolynomial::U64Scalars(poly) => Ok(poly),
-            _ => Err(()),
+            _ => Err(MultilinearPolynomialError::WrongVariant {
+                expected: "U64Scalars",
+                got: poly.variant_name(),
+            }),
         }
     }
 }
 
 impl<'a, F: JoltField> TryFrom<&'a MultilinearPolynomial<F>> for &'a CompactPolynomial<i64, F> {
-    type Error = (); // TODO(moodlezoup)
+    type Error = MultilinearPolynomialError;
 
     fn try_from(poly: &'a MultilinearPolynomial<F>) -> Result<Self, Self::Error> {
         match poly {
             MultilinearPolynomial::I64Scalars(poly) => Ok(poly),
-            _ => Err(()),
+            _ => Err(MultilinearPolynomialError::WrongVariant {
+                expected: "I64Scalars",
+                got: poly.variant_name(),
+            }),
         }
     }
 }
 
 impl<'a, F: JoltField> TryFrom<&'a MultilinearPolynomial<F>> for &'a CompactPolynomial<u128, F> {
-    type Error = (); // TODO(moodlezoup)
+    type Error = MultilinearPolynomialError;
 
     fn try_from(poly: &'a MultilinearPolynomial<F>) -> Result<Self, Self::Error> {
         match poly {
             MultilinearPolynomial::U128Scalars(poly) => Ok(poly),
-            _ => Err(()),
+            _ => Err(MultilinearPolynomialError::WrongVariant {
+                expected: "U128Scalars",
+                got: poly.variant_name(),
+            }),
         }
     }
 }
 
 impl<'a, F: JoltField> TryFrom<&'a MultilinearPolynomial<F>> for &'a CompactPolynomial<i128, F> {
-    type Error = (); // TODO(moodlezoup)
+    type Error = MultilinearPolynomialError;
 
     fn try_from(poly: &'a MultilinearPolynomial<F>) -> Result<Self, Self::Error> {
         match poly {
             MultilinearPolynomial::I128Scalars(poly) => Ok(poly),
-            _ => Err(()),
+            _ => Err(MultilinearPolynomialError::WrongVariant {
+                expected: "I128Scalars",
+                got: poly.variant_name(),
+            }),
         }
     }
 }
