@@ -39,17 +39,17 @@ pub const P256_DIVQ_FUNCT3: u32 = 0x02;
 pub const P256_DIVQ_NAME: &str = "P256_DIVQ";
 
 // scalar field (r) multiplication helper
-// that is, given a and b in Fr, compute a 256-bit c such that ab - wq = c
+// that is, given a and b in Fr, compute a 256-bit c such that ab - wn = c
 pub const P256_MULR_FUNCT3: u32 = 0x04;
 pub const P256_MULR_NAME: &str = "P256_MULR";
 
 // scalar field (r) square helper
-// that is, given a in Fr, compute a 256-bit c such that a^2 - wq = c
+// that is, given a in Fr, compute a 256-bit c such that a^2 - wn = c
 pub const P256_SQUARER_FUNCT3: u32 = 0x05;
 pub const P256_SQUARER_NAME: &str = "P256_SQUARER";
 
 // scalar field (r) division helper
-// that is, given a and b in Fr, compute a 256-bit c such that cb - wq = a
+// that is, given a and b in Fr, compute a 256-bit c such that cb - wn = a
 pub const P256_DIVR_FUNCT3: u32 = 0x06;
 pub const P256_DIVR_NAME: &str = "P256_DIVR";
 
@@ -126,6 +126,9 @@ pub const P256_CURVE_B: [u64; 4] = [
 
 pub mod sdk;
 pub use sdk::*;
+
+#[cfg(feature = "host")]
+pub(crate) mod fake_glv;
 
 #[cfg(feature = "host")]
 pub mod sequence_builder;

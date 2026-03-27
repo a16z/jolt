@@ -11,7 +11,7 @@ use jolt_inlines_sdk::host::{
     },
     Cpu, FormatInline, InlineOp, InstrAssembler, Instruction, VirtualRegisterGuard,
 };
-use num_bigint::{BigInt as NBigInt, BigUint as NBigUint, Sign};
+use num_bigint::{BigInt as NBigInt, BigUint as NBigUint};
 use num_integer::Integer;
 
 // p = 2^256 - q for base field:
@@ -877,65 +877,9 @@ impl FakeGlvAdvBuilder {
         let rx: [u64; 4] = r_result.x.into_bigint().0;
         let ry: [u64; 4] = r_result.y.into_bigint().0;
 
-        // Half-GCD decomposition: find (a, b) with b*s ≡ a (mod n), |a|,|b| ≤ √n
+        // Half-GCD decomposition via shared module
         let s_big: NBigInt = Fr::new(BigInt(s_limbs)).into_bigint().into();
-        let n_big: NBigInt = NBigInt::from_bytes_le(Sign::Plus, &{
-            let mut bytes = Vec::new();
-            for &limb in &crate::P256_ORDER {
-                bytes.extend_from_slice(&limb.to_le_bytes());
-            }
-            bytes
-        });
-
-        // Extended GCD: find u, v with v*s ≡ u (mod n), stopping when |u| < √n
-        let sqrt_n = {
-            let n_uint: NBigUint = n_big.to_biguint().unwrap();
-            n_uint.sqrt()
-        };
-        let sqrt_n_signed: NBigInt = sqrt_n.into();
-
-        let mut old_u = n_big.clone();
-        let mut u_val = s_big.clone();
-        let mut old_v = NBigInt::from(0i64);
-        let mut v_val = NBigInt::from(1i64);
-
-        while u_val.magnitude() >= sqrt_n_signed.magnitude() {
-            let q = &old_u / &u_val;
-            let new_u = &old_u - &q * &u_val;
-            let new_v = &old_v - &q * &v_val;
-            old_u = u_val;
-            u_val = new_u;
-            old_v = v_val;
-            v_val = new_v;
-        }
-
-        // u_val = a, v_val = b, with b*s ≡ a (mod n)
-        let a = u_val;
-        let b = v_val;
-
-        // Serialize: a as (a_lo, a_hi), b as (b_lo, b_hi, sign)
-        let serialize_128 = |val: &NBigInt| -> (u64, u64, u64) {
-            let sign = if val.sign() == Sign::Minus {
-                1u64
-            } else {
-                0u64
-            };
-            let abs_val = val.magnitude();
-            let bytes = abs_val.to_bytes_le();
-            let mut lo = 0u64;
-            let mut hi = 0u64;
-            for (i, &byte) in bytes.iter().enumerate() {
-                if i < 8 {
-                    lo |= (byte as u64) << (i * 8);
-                } else if i < 16 {
-                    hi |= (byte as u64) << ((i - 8) * 8);
-                }
-            }
-            (lo, hi, sign)
-        };
-
-        let (a_lo, a_hi, a_sign) = serialize_128(&a);
-        let (b_lo, b_hi, b_sign) = serialize_128(&b);
+        let [a_lo, a_hi, a_sign, b_lo, b_hi, b_sign] = crate::fake_glv::decompose_to_u64s(&s_big);
 
         // Output: [R.x(4), R.y(4), a_lo, a_hi, a_sign, b_lo, b_hi, b_sign] = 14 values
         let mut advice = Vec::with_capacity(14);

@@ -3,53 +3,17 @@
 //! Provides `P256Fq` (base field) and `P256Fr` (scalar field) types that wrap
 //! `[u64; 4]` limbs in standard (non-Montgomery) form.  Multiplication, squaring,
 //! and division are dispatched to custom RISC-V inline instructions on guest builds,
-//! and to `num_bigint::BigUint` arithmetic on host builds.  Addition, subtraction,
-//! negation, doubling, and tripling are implemented as pure integer arithmetic
-//! (no arkworks dependency, since there is no `ark-p256` crate).
+//! and to `ark_secp256r1` arithmetic on host builds.  Addition, subtraction,
+//! negation, doubling, and tripling are implemented as pure integer arithmetic.
 
 #[cfg(feature = "host")]
-use num_bigint::BigUint;
+use ark_ff::{BigInt, Field, PrimeField};
+#[cfg(feature = "host")]
+use ark_secp256r1::{Fq as ArkFq, Fr as ArkFr};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{P256_MODULUS, P256_ORDER};
-
-/// Base field modulus as little-endian bytes (for host BigUint conversions)
-pub const P256_MODULUS_BYTES: [u8; 32] = limbs_to_le_bytes(P256_MODULUS);
-
-/// Scalar field order as little-endian bytes (for host BigUint conversions)
-pub const P256_ORDER_BYTES: [u8; 32] = limbs_to_le_bytes(P256_ORDER);
-
-const fn limbs_to_le_bytes(limbs: [u64; 4]) -> [u8; 32] {
-    let mut out = [0u8; 32];
-    let mut i = 0;
-    while i < 4 {
-        let bytes = limbs[i].to_le_bytes();
-        let base = i * 8;
-        let mut j = 0;
-        while j < 8 {
-            out[base + j] = bytes[j];
-            j += 1;
-        }
-        i += 1;
-    }
-    out
-}
-
-#[cfg(feature = "host")]
-fn biguint_to_limbs(n: &BigUint) -> [u64; 4] {
-    let bytes = n.to_bytes_le();
-    let mut padded = [0u8; 32];
-    let len = bytes.len().min(32);
-    padded[..len].copy_from_slice(&bytes[..len]);
-    let mut limbs = [0u64; 4];
-    for i in 0..4 {
-        let mut buf = [0u8; 8];
-        buf.copy_from_slice(&padded[i * 8..(i + 1) * 8]);
-        limbs[i] = u64::from_le_bytes(buf);
-    }
-    limbs
-}
 
 /// Returns `true` iff `x >= p` (base field modulus), i.e., `x` is non-canonical.
 ///
@@ -293,14 +257,6 @@ impl P256Fq {
         Self::from_u64_arr(&limbs)
     }
 
-    /// Constructs from a BigUint (host only).
-    #[cfg(feature = "host")]
-    pub fn from_biguint(n: &BigUint) -> Self {
-        P256Fq {
-            e: biguint_to_limbs(n),
-        }
-    }
-
     /// Returns the additive identity element (0).
     #[inline(always)]
     pub fn zero() -> Self {
@@ -390,15 +346,14 @@ impl P256Fq {
         panic!("P256Fq::mul called on non-RISC-V target without host feature");
     }
 
-    /// Host implementation using `num_bigint::BigUint`.
     #[cfg(feature = "host")]
     #[inline(always)]
     pub fn mul(&self, other: &P256Fq) -> Self {
-        let a = BigUint::from_bytes_le(&self.to_bytes());
-        let b = BigUint::from_bytes_le(&other.to_bytes());
-        let q = BigUint::from_bytes_le(&P256_MODULUS_BYTES);
-        let result = (a * b) % q;
-        P256Fq::from_biguint(&result)
+        P256Fq {
+            e: (ArkFq::new(BigInt(self.e)) * ArkFq::new(BigInt(other.e)))
+                .into_bigint()
+                .0,
+        }
     }
 
     // square — RISC-V guest (inline instruction)
@@ -441,14 +396,12 @@ impl P256Fq {
         panic!("P256Fq::square called on non-RISC-V target without host feature");
     }
 
-    /// Host implementation using `num_bigint::BigUint`.
     #[cfg(feature = "host")]
     #[inline(always)]
     pub fn square(&self) -> Self {
-        let a = BigUint::from_bytes_le(&self.to_bytes());
-        let q = BigUint::from_bytes_le(&P256_MODULUS_BYTES);
-        let result = (&a * &a) % q;
-        P256Fq::from_biguint(&result)
+        P256Fq {
+            e: ArkFq::new(BigInt(self.e)).square().into_bigint().0,
+        }
     }
 
     // div / div_assume_nonzero — RISC-V guest (inline instruction)
@@ -516,20 +469,14 @@ impl P256Fq {
         panic!("P256Fq::div called on non-RISC-V target without host feature");
     }
 
-    /// Host implementation: assumes `other != 0`.
-    /// Computes modular inverse via `other^(p-2) mod p`, then multiplies.
     #[cfg(feature = "host")]
     #[inline(always)]
     pub fn div_assume_nonzero(&self, other: &P256Fq) -> Self {
-        let a = BigUint::from_bytes_le(&self.to_bytes());
-        let b = BigUint::from_bytes_le(&other.to_bytes());
-        let q = BigUint::from_bytes_le(&P256_MODULUS_BYTES);
-        // b^(p-2) mod p  (Fermat's little theorem)
-        let two = BigUint::from(2u32);
-        let exp = &q - &two;
-        let b_inv = b.modpow(&exp, &q);
-        let result = (a * b_inv) % &q;
-        P256Fq::from_biguint(&result)
+        P256Fq {
+            e: (ArkFq::new(BigInt(self.e)) / ArkFq::new(BigInt(other.e)))
+                .into_bigint()
+                .0,
+        }
     }
 
     /// Host implementation: checks `other != 0` then delegates.
@@ -585,14 +532,6 @@ impl P256Fr {
     pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self, P256Error> {
         let limbs = bytes_to_limbs(bytes);
         Self::from_u64_arr(&limbs)
-    }
-
-    /// Constructs from a BigUint (host only).
-    #[cfg(feature = "host")]
-    pub fn from_biguint(n: &BigUint) -> Self {
-        P256Fr {
-            e: biguint_to_limbs(n),
-        }
     }
 
     /// Returns the additive identity element (0).
@@ -684,15 +623,14 @@ impl P256Fr {
         panic!("P256Fr::mul called on non-RISC-V target without host feature");
     }
 
-    /// Host implementation using `num_bigint::BigUint`.
     #[cfg(feature = "host")]
     #[inline(always)]
     pub fn mul(&self, other: &P256Fr) -> Self {
-        let a = BigUint::from_bytes_le(&self.to_bytes());
-        let b = BigUint::from_bytes_le(&other.to_bytes());
-        let n = BigUint::from_bytes_le(&P256_ORDER_BYTES);
-        let result = (a * b) % n;
-        P256Fr::from_biguint(&result)
+        P256Fr {
+            e: (ArkFr::new(BigInt(self.e)) * ArkFr::new(BigInt(other.e)))
+                .into_bigint()
+                .0,
+        }
     }
 
     // square — RISC-V guest (inline instruction)
@@ -735,14 +673,12 @@ impl P256Fr {
         panic!("P256Fr::square called on non-RISC-V target without host feature");
     }
 
-    /// Host implementation using `num_bigint::BigUint`.
     #[cfg(feature = "host")]
     #[inline(always)]
     pub fn square(&self) -> Self {
-        let a = BigUint::from_bytes_le(&self.to_bytes());
-        let n = BigUint::from_bytes_le(&P256_ORDER_BYTES);
-        let result = (&a * &a) % n;
-        P256Fr::from_biguint(&result)
+        P256Fr {
+            e: ArkFr::new(BigInt(self.e)).square().into_bigint().0,
+        }
     }
 
     // div / div_assume_nonzero — RISC-V guest (inline instruction)
@@ -810,20 +746,14 @@ impl P256Fr {
         panic!("P256Fr::div called on non-RISC-V target without host feature");
     }
 
-    /// Host implementation: assumes `other != 0`.
-    /// Computes modular inverse via `other^(n-2) mod n`, then multiplies.
     #[cfg(feature = "host")]
     #[inline(always)]
     pub fn div_assume_nonzero(&self, other: &P256Fr) -> Self {
-        let a = BigUint::from_bytes_le(&self.to_bytes());
-        let b = BigUint::from_bytes_le(&other.to_bytes());
-        let n = BigUint::from_bytes_le(&P256_ORDER_BYTES);
-        // b^(n-2) mod n  (Fermat's little theorem)
-        let two = BigUint::from(2u32);
-        let exp = &n - &two;
-        let b_inv = b.modpow(&exp, &n);
-        let result = (a * b_inv) % &n;
-        P256Fr::from_biguint(&result)
+        P256Fr {
+            e: (ArkFr::new(BigInt(self.e)) / ArkFr::new(BigInt(other.e)))
+                .into_bigint()
+                .0,
+        }
     }
 
     /// Host implementation: checks `other != 0` then delegates.
@@ -836,10 +766,6 @@ impl P256Fr {
         self.div_assume_nonzero(other)
     }
 }
-
-// ---------------------------------------------------------------------------
-// ECField impl for P256Fq — plugs into the shared AffinePoint from jolt-inlines-sdk
-// ---------------------------------------------------------------------------
 
 use jolt_inlines_sdk::ec::{AffinePoint, CurveParams, ECField};
 
@@ -902,10 +828,6 @@ impl ECField for P256Fq {
         Self::from_u64_arr_unchecked(arr)
     }
 }
-
-// ---------------------------------------------------------------------------
-// P-256 curve parameters + point type alias
-// ---------------------------------------------------------------------------
 
 /// P-256 curve: y² = x³ + ax + b where a = p-3
 #[derive(Clone)]
@@ -1001,7 +923,6 @@ fn fake_glv_scalar_mul(s: &P256Fr, p: &P256Point) -> (P256Point, u128, bool, u12
 fn fake_glv_scalar_mul(s: &P256Fr, p: &P256Point) -> (P256Point, u128, bool, u128, bool) {
     use ark_ff::{BigInt, PrimeField};
     use num_bigint::BigInt as NBigInt;
-    use num_bigint::Sign;
 
     // Compute R = s * P using arkworks
     use ark_ec::CurveGroup;
@@ -1015,40 +936,9 @@ fn fake_glv_scalar_mul(s: &P256Fr, p: &P256Point) -> (P256Point, u128, bool, u12
         rx[0], rx[1], rx[2], rx[3], ry[0], ry[1], ry[2], ry[3],
     ]);
 
-    // Half-GCD
+    // Half-GCD decomposition via shared module
     let s_big: NBigInt = Fr::new(BigInt(s.e())).into_bigint().into();
-    let n_big = NBigInt::from_bytes_le(Sign::Plus, &P256_ORDER_BYTES);
-    let sqrt_n = n_big.to_biguint().unwrap().sqrt();
-    let sqrt_n_s: NBigInt = sqrt_n.into();
-
-    let (mut old_u, mut u_val) = (n_big.clone(), s_big);
-    let (mut old_v, mut v_val) = (NBigInt::from(0i64), NBigInt::from(1i64));
-    while u_val.magnitude() >= sqrt_n_s.magnitude() {
-        let q = &old_u / &u_val;
-        let (new_u, new_v) = (&old_u - &q * &u_val, &old_v - &q * &v_val);
-        old_u = u_val;
-        u_val = new_u;
-        old_v = v_val;
-        v_val = new_v;
-    }
-
-    let extract = |val: &NBigInt| -> (u128, bool) {
-        let sign = val.sign() == Sign::Minus;
-        let bytes = val.magnitude().to_bytes_le();
-        let mut lo = 0u64;
-        let mut hi = 0u64;
-        for (i, &b) in bytes.iter().enumerate() {
-            if i < 8 {
-                lo |= (b as u64) << (i * 8);
-            } else if i < 16 {
-                hi |= (b as u64) << ((i - 8) * 8);
-            }
-        }
-        ((lo as u128) | ((hi as u128) << 64), sign)
-    };
-
-    let (a_val, a_sign) = extract(&u_val);
-    let (b_val, b_sign) = extract(&v_val);
+    let (a_val, a_sign, b_val, b_sign) = crate::fake_glv::decompose_to_u128s(&s_big);
     (r_point, a_val, a_sign, b_val, b_sign)
 }
 
