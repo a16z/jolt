@@ -165,16 +165,8 @@ pub enum P256Error {
 ))]
 #[inline(always)]
 fn decode_glv_sign_word(w: u64) -> Result<bool, P256Error> {
-    match w {
-        0 => Ok(false),
-        1 => Ok(true),
-        _ => Err(P256Error::InvalidGlvSignWord(w)),
-    }
+    jolt_inlines_sdk::decode_sign_word(w).ok_or(P256Error::InvalidGlvSignWord(w))
 }
-
-// ---------------------------------------------------------------------------
-// Generic field infrastructure
-// ---------------------------------------------------------------------------
 
 /// Configuration trait that captures the differences between the P-256 base
 /// field (Fq) and scalar field (Fr).  All shared arithmetic lives on the
@@ -325,8 +317,6 @@ impl<C: P256FieldConfig> P256Field<C> {
         self.dbl().add(self)
     }
 
-    // -- mul ----------------------------------------------------------------
-
     /// Returns `self * other mod modulus`.
     /// Uses a custom RISC-V inline instruction for performance.
     #[cfg(all(
@@ -373,8 +363,6 @@ impl<C: P256FieldConfig> P256Field<C> {
         }
     }
 
-    // -- square -------------------------------------------------------------
-
     /// Returns `self^2 mod modulus`.
     /// Uses a custom RISC-V inline instruction for performance.
     #[cfg(all(
@@ -419,8 +407,6 @@ impl<C: P256FieldConfig> P256Field<C> {
             _phantom: PhantomData,
         }
     }
-
-    // -- div / div_assume_nonzero -------------------------------------------
 
     /// Returns `self / other mod modulus`.  Assumes `other != 0`.
     /// Uses a custom RISC-V inline instruction for performance.
@@ -499,10 +485,6 @@ impl<C: P256FieldConfig> P256Field<C> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// FqConfig -- P-256 base field
-// ---------------------------------------------------------------------------
-
 #[derive(Clone)]
 pub struct FqConfig;
 
@@ -539,10 +521,6 @@ impl P256FieldConfig for FqConfig {
             .0
     }
 }
-
-// ---------------------------------------------------------------------------
-// FrConfig -- P-256 scalar field
-// ---------------------------------------------------------------------------
 
 #[derive(Clone)]
 pub struct FrConfig;
@@ -581,19 +559,11 @@ impl P256FieldConfig for FrConfig {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Type aliases
-// ---------------------------------------------------------------------------
-
 /// P-256 base field element, `[u64; 4]` in standard (non-Montgomery) form.
 pub type P256Fq = P256Field<FqConfig>;
 
 /// P-256 scalar field element, `[u64; 4]` in standard (non-Montgomery) form.
 pub type P256Fr = P256Field<FrConfig>;
-
-// ---------------------------------------------------------------------------
-// ECField impl for P256Fq
-// ---------------------------------------------------------------------------
 
 use jolt_inlines_sdk::ec::{AffinePoint, CurveParams, ECField};
 

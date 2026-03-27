@@ -3,8 +3,8 @@ use std::collections::VecDeque;
 use ark_ff::{BigInt, Field};
 use ark_grumpkin::{Fq, Fr};
 use jolt_inlines_sdk::host::{
-    instruction::{sd::SD, virtual_advice::VirtualAdvice},
-    Cpu, FormatInline, InlineOp, InstrAssembler, Instruction, VirtualRegisterGuard,
+    Cpu, FormatInline, InlineOp, InstrAssembler, InstrAssemblerExt, Instruction,
+    VirtualRegisterGuard,
 };
 struct GrumpkinDivAdv {
     asm: InstrAssembler,
@@ -63,11 +63,7 @@ impl GrumpkinDivAdv {
     }
     // inline sequence function
     fn inline_sequence(mut self) -> Vec<Instruction> {
-        for i in 0..4 {
-            self.asm.emit_j::<VirtualAdvice>(*self.vr, 0);
-            self.asm
-                .emit_s::<SD>(self.operands.rs3, *self.vr, i as i64 * 8);
-        }
+        self.asm.emit_advice_stores(*self.vr, self.operands.rs3, 4);
         drop(self.vr);
         self.asm.finalize_inline()
     }

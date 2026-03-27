@@ -8,10 +8,10 @@ use jolt_inlines_sdk::host::{
         add::ADD, ld::LD, lui::LUI, mul::MUL, mulhu::MULHU, sd::SD, virtual_advice::VirtualAdvice,
         virtual_assert_eq::VirtualAssertEQ, virtual_assert_lte::VirtualAssertLTE,
     },
-    Cpu, FormatInline, InlineOp, InstrAssembler, Instruction, MulAccExt, VirtualRegisterGuard,
+    limbs_to_nbiguint, mulq_advice, Cpu, FormatInline, InlineOp, InstrAssembler, InstrAssemblerExt,
+    Instruction, MulAccExt, MulqType, VirtualRegisterGuard,
 };
-use num_bigint::{BigInt as NBigInt, BigUint as NBigUint};
-use num_integer::Integer;
+use num_bigint::BigInt as NBigInt;
 
 // p = 2^256 - q for base field:
 //   p[0] = 0x0000000000000001  (special: equals 1, w[i]*p[0] = w[i], use ADD)
@@ -36,34 +36,6 @@ const P256_NEG_N: [u64; 4] = [
     0x0000000000000000,
     0x00000000FFFFFFFF,
 ];
-
-// helper function to convert from vector of u64 limbs to NBigUint
-fn limbs_to_nbiguint(limbs: &[u64]) -> NBigUint {
-    let mut bytes = Vec::with_capacity(limbs.len() * 8);
-    for &limb in limbs {
-        for i in 0..8 {
-            bytes.push(((limb >> (i * 8)) & 0xFF) as u8);
-        }
-    }
-    NBigUint::from_bytes_le(&bytes)
-}
-
-// helper function to convert from NBigUint to vector of u64 limbs
-fn nbiguint_to_limbs(n: &NBigUint) -> Vec<u64> {
-    let bytes = n.to_bytes_le();
-    let mut limbs = vec![0u64; bytes.len().div_ceil(8)];
-    for (i, byte) in bytes.iter().enumerate() {
-        limbs[i / 8] |= (*byte as u64) << ((i % 8) * 8);
-    }
-    limbs
-}
-
-/// Enum for type of multiplication-style operation
-enum MulqType {
-    Mul,
-    Square,
-    Div,
-}
 
 // inline for P-256 base and scalar field multiplication/squaring/division
 // does not handle checking that the result is canonical mod q,
@@ -145,85 +117,38 @@ impl P256Mulq {
         }
     }
 
-    // Custom advice function
     fn advice(self, cpu: &mut Cpu) -> VecDeque<u64> {
-        // read memory directly to get inputs
-        let a_addr = cpu.x[self.operands.rs1 as usize] as u64;
-        let a = [
-            cpu.mmu.load_doubleword(a_addr).unwrap().0,
-            cpu.mmu.load_doubleword(a_addr + 8).unwrap().0,
-            cpu.mmu.load_doubleword(a_addr + 16).unwrap().0,
-            cpu.mmu.load_doubleword(a_addr + 24).unwrap().0,
-        ];
-        let b_addr = match self.op_type {
-            MulqType::Square => a_addr,
-            _ => cpu.x[self.operands.rs2 as usize] as u64,
-        };
-        let b = [
-            cpu.mmu.load_doubleword(b_addr).unwrap().0,
-            cpu.mmu.load_doubleword(b_addr + 8).unwrap().0,
-            cpu.mmu.load_doubleword(b_addr + 16).unwrap().0,
-            cpu.mmu.load_doubleword(b_addr + 24).unwrap().0,
-        ];
-        // convert inputs to bigints
-        let a_big: NBigUint = limbs_to_nbiguint(&a);
-        let b_big: NBigUint = limbs_to_nbiguint(&b);
-        let q_big: NBigUint = if self.is_scalar_field {
-            Fr::MODULUS.into()
-        } else {
-            Fq::MODULUS.into()
-        };
-        // compute advice based on operation type
-        match self.op_type {
-            MulqType::Div => {
-                // compute a / b in the field using arkworks: c = b^{-1} * a mod q
-                let arr_to_fq = |a: &[u64; 4]| Fq::new(BigInt(*a));
-                let arr_to_fr = |a: &[u64; 4]| Fr::new(BigInt(*a));
-                let c_big = limbs_to_nbiguint(
+        mulq_advice(
+            &self.operands,
+            cpu,
+            self.is_scalar_field,
+            &self.op_type,
+            |is_scalar| {
+                if is_scalar {
+                    Fr::MODULUS.into()
+                } else {
+                    Fq::MODULUS.into()
+                }
+            },
+            |b, a| {
+                limbs_to_nbiguint(
                     &if self.is_scalar_field {
-                        (arr_to_fr(&b)
+                        (Fr::new(BigInt(*b))
                             .inverse()
                             .expect("Attempted to invert zero in P-256 scalar field")
-                            * arr_to_fr(&a))
+                            * Fr::new(BigInt(*a)))
                         .into_bigint()
                     } else {
-                        (arr_to_fq(&b)
+                        (Fq::new(BigInt(*b))
                             .inverse()
                             .expect("Attempted to invert zero in P-256 base field")
-                            * arr_to_fq(&a))
+                            * Fq::new(BigInt(*a)))
                         .into_bigint()
                     }
                     .0,
-                );
-                let c_limbs = nbiguint_to_limbs(&c_big);
-                let quotient = (&b_big * &c_big).div_floor(&q_big);
-                // convert back to limbs
-                let quotient_limbs = nbiguint_to_limbs(&quotient);
-                // assert that limbs fits in 4 u64s
-                assert!(quotient_limbs.len() <= 4, "Result does not fit in 4 limbs");
-                // pad limbs to 4 u64s each, interleave, and return as VecDeque
-                let mut padded_limbs = vec![0u64; 8];
-                for i in 0..c_limbs.len() {
-                    padded_limbs[2 * i] = c_limbs[i];
-                }
-                for i in 0..quotient_limbs.len() {
-                    padded_limbs[2 * i + 1] = quotient_limbs[i];
-                }
-                VecDeque::from(padded_limbs)
-            }
-            _ => {
-                // compute floor(a * b / q)
-                let quotient = (a_big * b_big).div_floor(&q_big);
-                // convert back to limbs
-                let limbs = nbiguint_to_limbs(&quotient);
-                // assert that limbs fits in 4 u64s
-                assert!(limbs.len() <= 4, "Result does not fit in 4 limbs");
-                // pad limbs to 4 u64s and return as VecDeque
-                let mut padded_limbs = vec![0u64; 4];
-                padded_limbs[..limbs.len()].copy_from_slice(&limbs[..]);
-                VecDeque::from(padded_limbs)
-            }
-        }
+                )
+            },
+        )
     }
 
     // inline sequence function
@@ -320,17 +245,9 @@ impl P256Mulq {
             let rk = *self.r[k % 2];
             let rk_next = *self.r[(k + 1) % 2];
 
-            // ============================================================
-            // w*p terms: for each (i, j) where w[i]*p[j] contributes
-            // Low terms: i+j = k, i in 0..3, j in 0..3
-            // High terms: i+j = k-1, i in 0..3, j in 0..3
-            // ============================================================
-
             if self.is_scalar_field {
                 // Scalar field: p = [p1, p2, 0, p3]
                 // p[0] in p1, p[1] in p2, p[2] = 0 (skip), p[3] in p3
-
-                // --- LOW terms for w[i]*p[j] where i+j = k ---
 
                 // j=0 (p1): i = k, need k < 4
                 if k < 4 {
@@ -366,8 +283,6 @@ impl P256Mulq {
                     );
                     first = false;
                 }
-
-                // --- HIGH terms for w[i]*p[j] where i+j = k-1 ---
 
                 // j=0 (p1): i = k-1, need k-1 in 0..3 => k in 1..4
                 if k >= 1 && k - 1 < 4 {
@@ -412,8 +327,6 @@ impl P256Mulq {
             } else {
                 // Base field: p = [1, p1, p2, p3]
                 // p[0] = 1 (implicit ADD, high = 0), p[1] in p1, p[2] in p2, p[3] in p3
-
-                // --- LOW terms for w[i]*p[j] where i+j = k ---
 
                 // j=0 (p[0]=1): i = k, need k < 4
                 // low(w[k] * 1) = w[k], use ADD
@@ -461,8 +374,6 @@ impl P256Mulq {
                     );
                     first = false;
                 }
-
-                // --- HIGH terms for w[i]*p[j] where i+j = k-1 ---
 
                 // j=0 (p[0]=1): i = k-1
                 // high(w[k-1] * 1) = 0, skip entirely
@@ -667,7 +578,6 @@ impl P256Mulq {
     }
 }
 
-/// Virtual instruction builder for P-256 base field modular multiplication
 macro_rules! p256_mulq_op {
     ($name:ident, funct3: $funct3:expr, name: $op_name:expr, mul_type: $mul_type:expr, is_scalar: $is_scalar:expr) => {
         pub struct $name;
@@ -704,7 +614,6 @@ p256_mulq_op!(P256DivR,    funct3: crate::P256_DIVR_FUNCT3,    name: crate::P256
 // outputs (R.x, R.y, a_lo, a_hi, b_lo, b_hi, sign_b) via VirtualAdvice.
 // The guest SDK verifies correctness in-circuit.
 
-/// Inline constructor for Fake GLV scalar multiplication advice
 struct FakeGlvAdvBuilder {
     asm: InstrAssembler,
     vr: VirtualRegisterGuard,
@@ -777,13 +686,8 @@ impl FakeGlvAdvBuilder {
         VecDeque::from(advice)
     }
 
-    /// Inline sequence: just write 14 VirtualAdvice values to output memory
     fn inline_sequence(mut self) -> Vec<Instruction> {
-        for i in 0..14 {
-            self.asm.emit_j::<VirtualAdvice>(*self.vr, 0);
-            self.asm
-                .emit_s::<SD>(self.operands.rs3, *self.vr, i as i64 * 8);
-        }
+        self.asm.emit_advice_stores(*self.vr, self.operands.rs3, 14);
         drop(self.vr);
         self.asm.finalize_inline()
     }

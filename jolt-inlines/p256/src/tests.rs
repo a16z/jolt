@@ -563,7 +563,7 @@ mod p256_tests {
 
     // 9. test_p256_ecdsa_verify -- full ECDSA verification with known vector
     //
-    // Test vector from RFC 6979 / NIST P-256:
+    // Test vector derived from RFC 6979 private key (NIST P-256):
     //   Private key d  = 0xC9AFA9D845BA75166B5C215767B1D6934E50C3DB36E89B127B8A622B120F6721
     //   Message hash z = SHA-256("sample") with RFC 6979 deterministic nonce
     //
@@ -702,7 +702,7 @@ mod p256_tests {
     }
 
     /// Test the actual `ecdsa_verify()` function from sdk.rs (with Fake GLV).
-    /// Uses the same RFC 6979 test vector as above.
+    /// Uses the same test vector derived from the RFC 6979 private key as above.
     #[test]
     fn test_p256_ecdsa_verify_sdk() {
         use crate::sdk::{ecdsa_verify, P256Fr, P256Point};

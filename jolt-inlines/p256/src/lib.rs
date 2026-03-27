@@ -80,23 +80,6 @@ pub const P256_ORDER: [u64; 4] = [
     0xFFFF_FFFF_0000_0000,
 ];
 
-/// 2^256 - p (base field), for reduction: little-endian u64 limbs
-/// Used as the "negative modulus" for Barrett-like reductions.
-pub const P256_BASEFIELD_NEG_MODULUS: [u64; 4] = [
-    0x0000_0000_0000_0001,
-    0xFFFF_FFFF_0000_0000,
-    0xFFFF_FFFF_FFFF_FFFF,
-    0x0000_0000_FFFF_FFFE,
-];
-
-/// 2^256 - n (scalar field), for reduction: little-endian u64 limbs
-pub const P256_SCALARFIELD_NEG_ORDER: [u64; 4] = [
-    0x0C46_353D_039C_DAAF,
-    0x4319_0552_58E8_617B,
-    0x0000_0000_0000_0000,
-    0x0000_0000_FFFF_FFFF,
-];
-
 /// P-256 generator x-coordinate (little-endian u64 limbs)
 /// Gx = 0x6B17D1F2E12C4247F8BCE6E563A440F277037D812DEB33A0F4A13945D898C296
 pub const P256_GENERATOR_X: [u64; 4] = [

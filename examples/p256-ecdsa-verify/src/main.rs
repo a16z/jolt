@@ -18,7 +18,7 @@ pub fn main() {
         guest::build_prover_p256_ecdsa_verify(program, prover_preprocessing);
     let verify_p256_ecdsa_verify = guest::build_verifier_p256_ecdsa_verify(verifier_preprocessing);
 
-    // P-256 ECDSA test vector (RFC 6979, private key d = 0xC9AFA9D8...)
+    // P-256 ECDSA test vector derived from RFC 6979 private key (d = 0xC9AFA9D8...)
     // All values are little-endian u64 limbs.
 
     // message hash z = SHA-256("sample")
