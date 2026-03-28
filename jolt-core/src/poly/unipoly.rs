@@ -575,17 +575,22 @@ impl<F: JoltField> MulAssign<&F> for UniPoly<F> {
 }
 
 impl<F: JoltField> CompressedUniPoly<F> {
+    fn recover_linear_term(&self, hint: &F) -> F {
+        let constant_term = self.coeffs_except_linear_term[0];
+        let mut linear_term = *hint - constant_term - constant_term;
+        for coeff in &self.coeffs_except_linear_term[1..] {
+            linear_term -= *coeff;
+        }
+        linear_term
+    }
+
     // we require eval(0) + eval(1) = hint, so we can solve for the linear term as:
     // linear_term = hint - 2 * constant_term - deg2 term - deg3 term
     pub fn decompress(&self, hint: &F) -> UniPoly<F> {
         debug_assert!(!self.coeffs_except_linear_term.is_empty());
-        if self.coeffs_except_linear_term.len() == 1 {
+        let linear_term = self.recover_linear_term(hint);
+        if self.coeffs_except_linear_term.len() == 1 && linear_term.is_zero() {
             return UniPoly::from_coeff(vec![self.coeffs_except_linear_term[0]]);
-        }
-        let mut linear_term =
-            *hint - self.coeffs_except_linear_term[0] - self.coeffs_except_linear_term[0];
-        for i in 1..self.coeffs_except_linear_term.len() {
-            linear_term -= self.coeffs_except_linear_term[i];
         }
 
         let mut coeffs = vec![self.coeffs_except_linear_term[0], linear_term];
@@ -598,14 +603,7 @@ impl<F: JoltField> CompressedUniPoly<F> {
     // recover the linear term assuming the prover did it right, then eval the poly
     pub fn eval_from_hint(&self, hint: &F, x: &F::Challenge) -> F {
         debug_assert!(!self.coeffs_except_linear_term.is_empty());
-        if self.coeffs_except_linear_term.len() == 1 {
-            return self.coeffs_except_linear_term[0];
-        }
-        let mut linear_term =
-            *hint - self.coeffs_except_linear_term[0] - self.coeffs_except_linear_term[0];
-        for i in 1..self.coeffs_except_linear_term.len() {
-            linear_term -= self.coeffs_except_linear_term[i];
-        }
+        let linear_term = self.recover_linear_term(hint);
 
         let mut running_point: F = (*x).into();
         let mut running_sum = self.coeffs_except_linear_term[0] + *x * linear_term;
@@ -685,6 +683,20 @@ mod tests {
     fn test_from_evals_cubic() {
         test_from_evals_cubic_helper::<Fr>()
     }
+
+    #[test]
+    fn test_compressed_linear_round_trip() {
+        let poly = UniPoly::<Fr>::from_coeff(vec![Fr::from_u64(5), Fr::from_u64(7)]);
+        let hint = poly.eval_at_zero() + poly.eval_at_one();
+        let compressed_poly = poly.compress();
+        let decompressed_poly = compressed_poly.decompress(&hint);
+
+        assert_eq!(decompressed_poly.coeffs, poly.coeffs);
+
+        let x = <Fr as JoltField>::Challenge::from(9u128);
+        assert_eq!(compressed_poly.eval_from_hint(&hint, &x), poly.evaluate(&x));
+    }
+
     fn test_from_evals_cubic_helper<F: JoltField>() {
         // polynomial is x^3 + 2x^2 + 3x + 1
         let e0 = F::one();
