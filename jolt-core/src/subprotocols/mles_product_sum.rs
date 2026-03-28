@@ -344,8 +344,8 @@ pub fn eval_linear_prod_accumulate<F: JoltField>(
         3 => eval_prod_3_accumulate(pairs.try_into().unwrap(), sums),
         5 => eval_prod_5_accumulate(pairs.try_into().unwrap(), sums),
         9 => eval_prod_9_accumulate(pairs.try_into().unwrap(), sums),
-        // Implement more efficient than naive if these ever get used.
-        4 | 6 | 7 | 8 => unimplemented!("n_pairs = {}", pairs.len()),
+        // These arities are uncommon enough that the generic fallback is preferable to panicking.
+        4 | 6 | 7 | 8 => product_eval_univariate_naive_accumulate(pairs, sums),
         _ => product_eval_univariate_naive_accumulate(pairs, sums),
     }
 }
