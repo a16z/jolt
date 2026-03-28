@@ -24,12 +24,22 @@ pub enum ProofVerifyError {
     InvalidKeyLength(usize),
     #[error("Invalid opening proof -- the proof failed to verify")]
     InvalidOpeningProof,
+    #[error("Invalid trace_length: {0}")]
+    InvalidTraceLength(usize),
+    #[error("trace_length {0} exceeds preprocessing maximum {1}")]
+    TraceLengthTooLarge(usize, usize),
     #[error("Invalid read-write checking configuration: {0}")]
     InvalidReadWriteConfig(String),
     #[error("Invalid one-hot configuration: {0}")]
     InvalidOneHotConfig(String),
     #[error("Invalid ram_K: got {0}, minimum required {1}")]
     InvalidRamK(usize, usize),
+    #[error("Invalid ram_K: got {0}, maximum supported {1}")]
+    RamKTooLarge(usize, usize),
+    #[error("Malformed proof: {0}")]
+    MalformedProof(String),
+    #[error("Missing opening: {0}")]
+    MissingOpening(String),
     #[error("Dory proof verification failed: {0}")]
     DoryError(String),
     #[error("Sumcheck verification failed")]

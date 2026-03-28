@@ -629,8 +629,8 @@ impl<F: JoltField> RaReductionParams<F> {
         let (r_address_val, r_cycle_val) = r_val.split_at_r(log_K);
 
         // Verify unified address (these should hold by construction after Stage 2 alignment).
-        debug_assert_eq!(r_address_raf, r_address_rw);
-        debug_assert_eq!(r_address_raf, r_address_val);
+        assert_eq!(r_address_raf, r_address_rw);
+        assert_eq!(r_address_raf, r_address_val);
 
         // Sample γ for combining claims
         let gamma: F = transcript.challenge_scalar();

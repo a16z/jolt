@@ -11,7 +11,6 @@ use crate::{
 };
 use allocative::Allocative;
 use num_derive::FromPrimitive;
-#[cfg(test)]
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -22,6 +21,7 @@ use super::{
 use crate::{
     field::JoltField,
     transcripts::Transcript,
+    utils::errors::ProofVerifyError,
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
 
@@ -212,9 +212,7 @@ where
     opening_ids_by_poly: BTreeMap<PolynomialId, Vec<OpeningId>>,
     /// Maps an `OpeningId` that was deduplicated to its canonical representative.
     pub aliases: BTreeMap<OpeningId, OpeningId>,
-    #[cfg(test)]
     pub appended_virtual_openings: RefCell<Vec<OpeningId>>,
-    #[cfg(test)]
     pub appended_committed_openings: RefCell<Vec<OpeningId>>,
     pub log_T: usize,
     #[allocative(skip)]
@@ -245,6 +243,8 @@ where
     pub zk_mode: bool,
     pending_claims: Vec<F>,
     pending_claim_ids: Vec<OpeningId>,
+    missing_opening: RefCell<Option<OpeningId>>,
+    malformed_proof: RefCell<Option<String>>,
 }
 
 pub trait OpeningAccumulator<F: JoltField> {
@@ -343,7 +343,6 @@ impl<F: JoltField> OpeningAccumulator<F> for ProverOpeningAccumulator<F> {
             .openings
             .get(&key)
             .unwrap_or_else(|| panic!("opening for {sumcheck:?} {polynomial:?} not found"));
-        #[cfg(test)]
         {
             let mut virtual_openings = self.appended_virtual_openings.borrow_mut();
             if let Some(index) = virtual_openings.iter().position(|id| id == &key) {
@@ -364,7 +363,6 @@ impl<F: JoltField> OpeningAccumulator<F> for ProverOpeningAccumulator<F> {
             .openings
             .get(&key)
             .unwrap_or_else(|| panic!("opening for {sumcheck:?} {polynomial:?} not found"));
-        #[cfg(test)]
         {
             let mut committed_openings = self.appended_committed_openings.borrow_mut();
             if let Some(index) = committed_openings.iter().position(|id| id == &key) {
@@ -385,7 +383,6 @@ impl<F: JoltField> OpeningAccumulator<F> for ProverOpeningAccumulator<F> {
         };
         let key = self.resolve_alias(opening_id);
         let (point, claim) = self.openings.get(&key)?;
-        #[cfg(test)]
         {
             let mut committed_openings = self.appended_committed_openings.borrow_mut();
             if let Some(index) = committed_openings.iter().position(|id| id == &key) {
@@ -405,9 +402,7 @@ where
             openings: BTreeMap::new(),
             opening_ids_by_poly: BTreeMap::new(),
             aliases: BTreeMap::new(),
-            #[cfg(test)]
             appended_virtual_openings: std::cell::RefCell::new(vec![]),
-            #[cfg(test)]
             appended_committed_openings: std::cell::RefCell::new(vec![]),
             log_T,
             pending_claims: Vec::new(),
@@ -465,7 +460,6 @@ where
         point: OpeningPoint<BIG_ENDIAN, F>,
         claim: F,
     ) -> bool {
-        #[cfg(test)]
         let should_track_committed =
             matches!(underlying_polynomial_id(key), PolynomialId::Committed(_))
                 && !point.r.is_empty();
@@ -488,7 +482,6 @@ where
         self.pending_claim_ids.push(key);
         self.openings.insert(key, (point, claim));
         self.index_opening_id(key);
-        #[cfg(test)]
         if should_track_committed {
             self.appended_committed_openings.borrow_mut().push(key);
         }
@@ -538,7 +531,6 @@ where
     ) {
         let key = OpeningId::virt(polynomial, sumcheck);
         if self.insert_or_alias_opening(key, opening_point, claim) {
-            #[cfg(test)]
             self.appended_virtual_openings.borrow_mut().push(key);
         }
     }
@@ -577,6 +569,15 @@ where
     pub fn take_pending_claim_ids(&mut self) -> Vec<OpeningId> {
         std::mem::take(&mut self.pending_claim_ids)
     }
+
+    pub fn assert_all_openings_consumed(&self) {
+        let missing_virtual = self.appended_virtual_openings.borrow();
+        let missing_committed = self.appended_committed_openings.borrow();
+        assert!(
+            missing_virtual.is_empty() && missing_committed.is_empty(),
+            "Not all openings have been proven. Missing virtual: {missing_virtual:?}. Missing committed: {missing_committed:?}",
+        );
+    }
 }
 
 impl<F> Default for VerifierOpeningAccumulator<F>
@@ -596,11 +597,10 @@ impl<F: JoltField> OpeningAccumulator<F> for VerifierOpeningAccumulator<F> {
     ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
         let requested = OpeningId::Polynomial(PolynomialId::Virtual(polynomial), sumcheck);
         let key = self.resolve_alias(requested);
-        let (point, claim) = self
-            .openings
+        self.openings
             .get(&key)
-            .unwrap_or_else(|| panic!("No opening found for {sumcheck:?} {polynomial:?}"));
-        (point.clone(), *claim)
+            .map(|(point, claim)| (point.clone(), *claim))
+            .unwrap_or_else(|| self.record_missing_opening(key))
     }
 
     fn get_committed_polynomial_opening(
@@ -610,11 +610,10 @@ impl<F: JoltField> OpeningAccumulator<F> for VerifierOpeningAccumulator<F> {
     ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
         let requested = OpeningId::Polynomial(PolynomialId::Committed(polynomial), sumcheck);
         let key = self.resolve_alias(requested);
-        let (point, claim) = self
-            .openings
+        self.openings
             .get(&key)
-            .unwrap_or_else(|| panic!("No opening found for {sumcheck:?} {polynomial:?}"));
-        (point.clone(), *claim)
+            .map(|(point, claim)| (point.clone(), *claim))
+            .unwrap_or_else(|| self.record_missing_opening(key))
     }
 
     fn get_advice_opening(
@@ -647,7 +646,31 @@ where
             zk_mode,
             pending_claims: Vec::new(),
             pending_claim_ids: Vec::new(),
+            missing_opening: RefCell::new(None),
+            malformed_proof: RefCell::new(None),
         }
+    }
+
+    fn record_missing_opening(&self, key: OpeningId) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
+        let mut missing = self.missing_opening.borrow_mut();
+        if missing.is_none() {
+            *missing = Some(key);
+        }
+        let dummy_len = self.log_T.max(1) + 128;
+        (
+            OpeningPoint::new(vec![F::Challenge::default(); dummy_len]),
+            F::zero(),
+        )
+    }
+
+    pub fn take_missing_opening_error(&self) -> Result<(), ProofVerifyError> {
+        if let Some(message) = self.malformed_proof.borrow_mut().take() {
+            return Err(ProofVerifyError::MalformedProof(message));
+        }
+        if let Some(opening_id) = self.missing_opening.borrow_mut().take() {
+            return Err(ProofVerifyError::MissingOpening(format!("{opening_id:?}")));
+        }
+        Ok(())
     }
 
     fn resolve_alias(&self, mut key: OpeningId) -> OpeningId {
@@ -702,10 +725,15 @@ where
                 self.find_existing_opening_at_point(underlying_polynomial_id(key), &point)
             {
                 if existing_id != key {
-                    assert_eq!(
-                        *claim, existing_claim,
-                        "Inconsistent duplicate opening claims: {key:?} vs {existing_id:?}"
-                    );
+                    if *claim != existing_claim {
+                        let mut malformed = self.malformed_proof.borrow_mut();
+                        if malformed.is_none() {
+                            *malformed = Some(format!(
+                                "inconsistent duplicate opening claims: {key:?} vs {existing_id:?}"
+                            ));
+                        }
+                        return;
+                    }
                     self.aliases.insert(key, existing_id);
                     return;
                 }
@@ -846,4 +874,25 @@ pub fn compute_advice_lagrange_factor<F: JoltField>(
             }
         })
         .product()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ark_bn254::Fr;
+
+    #[test]
+    fn verifier_accumulator_reports_missing_opening() {
+        let accumulator = VerifierOpeningAccumulator::<Fr>::new(4, false);
+        let _ = accumulator.get_committed_polynomial_opening(
+            CommittedPolynomial::InstructionRa(0),
+            SumcheckId::HammingWeightClaimReduction,
+        );
+
+        assert!(matches!(
+            accumulator.take_missing_opening_error(),
+            Err(ProofVerifyError::MissingOpening(message))
+                if message.contains("InstructionRa(0)")
+        ));
+    }
 }

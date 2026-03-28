@@ -142,6 +142,20 @@ pub fn compute_min_ram_K(
     bytecode_end.max(io_end).next_power_of_two()
 }
 
+/// Computes the maximum valid `ram_K` from the public memory layout.
+///
+/// `ram_K` only needs to cover the address interval from the lowest mapped I/O
+/// word up to the exclusive end of the heap/stack/program region.
+pub fn compute_max_ram_K(memory_layout: &MemoryLayout) -> usize {
+    let lowest_address = memory_layout.get_lowest_address();
+    let address_words = memory_layout
+        .heap_end
+        .checked_sub(lowest_address)
+        .expect("heap_end must be above lowest mapped address")
+        .div_ceil(8) as usize;
+    address_words.max(1).next_power_of_two()
+}
+
 /// Returns Some(address) if there was read/write
 /// Returns None if there was no read/write
 #[inline(always)]

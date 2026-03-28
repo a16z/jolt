@@ -54,7 +54,8 @@ use crate::zkvm::{
     proof_serialization::JoltProof,
     r1cs::key::UniformSpartanKey,
     ram::{
-        compute_min_ram_K, hamming_booleanity::HammingBooleanitySumcheckVerifier,
+        compute_max_ram_K, compute_min_ram_K,
+        hamming_booleanity::HammingBooleanitySumcheckVerifier,
         output_check::OutputSumcheckVerifier, ra_virtual::RamRaVirtualSumcheckVerifier,
         raf_evaluation::RafEvaluationSumcheckVerifier as RamRafEvaluationSumcheckVerifier,
         read_write_checking::RamReadWriteCheckingVerifier, val_check::RamValCheckSumcheckVerifier,
@@ -262,14 +263,22 @@ impl<
         );
 
         let zk_mode = proof.stage1_sumcheck_proof.is_zk();
+        if proof.trace_length == 0 || !proof.trace_length.is_power_of_two() {
+            return Err(ProofVerifyError::InvalidTraceLength(proof.trace_length));
+        }
+        if proof.trace_length > preprocessing.shared.max_padded_trace_length {
+            return Err(ProofVerifyError::TraceLengthTooLarge(
+                proof.trace_length,
+                preprocessing.shared.max_padded_trace_length,
+            ));
+        }
+        let log_trace_length = proof.trace_length.log_2();
         #[cfg(test)]
         #[allow(unused_mut)]
-        let mut opening_accumulator =
-            VerifierOpeningAccumulator::new(proof.trace_length.log_2(), zk_mode);
+        let mut opening_accumulator = VerifierOpeningAccumulator::new(log_trace_length, zk_mode);
         #[cfg(not(test))]
         #[allow(unused_mut)]
-        let mut opening_accumulator =
-            VerifierOpeningAccumulator::new(proof.trace_length.log_2(), zk_mode);
+        let mut opening_accumulator = VerifierOpeningAccumulator::new(log_trace_length, zk_mode);
 
         #[cfg(not(feature = "zk"))]
         {
@@ -295,7 +304,7 @@ impl<
             }
         }
 
-        let spartan_key = UniformSpartanKey::new(proof.trace_length.next_power_of_two());
+        let spartan_key = UniformSpartanKey::new(proof.trace_length);
 
         // Validate configs from the proof
         proof
@@ -307,13 +316,17 @@ impl<
             &preprocessing.shared.ram,
             &preprocessing.shared.memory_layout,
         );
-        if !proof.ram_K.is_power_of_two() || proof.ram_K < min_ram_K {
+        if proof.ram_K == 0 || !proof.ram_K.is_power_of_two() || proof.ram_K < min_ram_K {
             return Err(ProofVerifyError::InvalidRamK(proof.ram_K, min_ram_K));
+        }
+        let max_ram_K = compute_max_ram_K(&preprocessing.shared.memory_layout);
+        if proof.ram_K > max_ram_K {
+            return Err(ProofVerifyError::RamKTooLarge(proof.ram_K, max_ram_K));
         }
 
         proof
             .rw_config
-            .validate(proof.trace_length.log_2(), proof.ram_K.log_2())
+            .validate(log_trace_length, proof.ram_K.log_2())
             .map_err(ProofVerifyError::InvalidReadWriteConfig)?;
 
         // Construct full params from the validated config.
@@ -339,6 +352,7 @@ impl<
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
     pub fn verify(mut self) -> Result<(), ProofVerifyError> {
         let _pprof_verify = pprof_scope!("verify");
+        let _dory_runtime_guard = DoryGlobals::acquire_runtime_guard();
         let zk_mode = self.opening_accumulator.zk_mode;
 
         fiat_shamir_preamble(
@@ -346,6 +360,9 @@ impl<
             self.proof.ram_K,
             self.proof.trace_length,
             self.preprocessing.shared.bytecode.entry_address,
+            &self.proof.rw_config,
+            &self.proof.one_hot_config,
+            self.proof.dory_layout,
             &mut self.transcript,
         );
 
@@ -368,27 +385,35 @@ impl<
         let (stage1_result, uniskip_challenge1) = self
             .verify_stage1()
             .inspect_err(|e| tracing::error!("Stage 1: {e}"))?;
+        self.opening_accumulator.take_missing_opening_error()?;
         let (stage2_result, uniskip_challenge2) = self
             .verify_stage2()
             .inspect_err(|e| tracing::error!("Stage 2: {e}"))?;
+        self.opening_accumulator.take_missing_opening_error()?;
         let stage3_result = self
             .verify_stage3()
             .inspect_err(|e| tracing::error!("Stage 3: {e}"))?;
+        self.opening_accumulator.take_missing_opening_error()?;
         let stage4_result = self
             .verify_stage4()
             .inspect_err(|e| tracing::error!("Stage 4: {e}"))?;
+        self.opening_accumulator.take_missing_opening_error()?;
         let stage5_result = self
             .verify_stage5()
             .inspect_err(|e| tracing::error!("Stage 5: {e}"))?;
+        self.opening_accumulator.take_missing_opening_error()?;
         let stage6_result = self
             .verify_stage6()
             .inspect_err(|e| tracing::error!("Stage 6: {e}"))?;
+        self.opening_accumulator.take_missing_opening_error()?;
         let stage7_result = self
             .verify_stage7()
             .inspect_err(|e| tracing::error!("Stage 7: {e}"))?;
+        self.opening_accumulator.take_missing_opening_error()?;
         let stage8_data = self
             .verify_stage8()
             .inspect_err(|e| tracing::error!("Stage 8: {e}"))?;
+        self.opening_accumulator.take_missing_opening_error()?;
 
         if zk_mode {
             #[cfg(feature = "zk")]
@@ -1365,7 +1390,7 @@ impl<
         // This ensures the verifier uses the same layout as the prover
         let _guard = DoryGlobals::initialize_context(
             1 << self.one_hot_params.log_k_chunk,
-            self.proof.trace_length.next_power_of_two(),
+            self.proof.trace_length,
             DoryContext::Main,
             Some(self.proof.dory_layout),
         );
@@ -1460,6 +1485,8 @@ impl<
             scaling_factors.push(lagrange_factor);
             include_untrusted_advice = true;
         }
+
+        self.opening_accumulator.take_missing_opening_error()?;
 
         // 2. Sample gamma and compute powers for RLC
         let claims: Vec<F> = polynomial_claims.iter().map(|(_, c)| *c).collect();

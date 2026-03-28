@@ -5,13 +5,10 @@ use allocative::Allocative;
 use dory::backends::arkworks::{init_cache, ArkG1, ArkG2};
 use std::sync::{
     atomic::{AtomicU8, Ordering},
-    RwLock,
+    Mutex, MutexGuard, OnceLock, RwLock,
 };
 #[cfg(test)]
-use std::{
-    sync::OnceLock,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Dory matrix layout for OneHot polynomials.
 ///
@@ -185,6 +182,12 @@ pub struct DoryContextGuard {
     previous_context: DoryContext,
 }
 
+pub struct DoryRuntimeGuard {
+    _guard: MutexGuard<'static, ()>,
+}
+
+static DORY_RUNTIME_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
+
 impl Drop for DoryContextGuard {
     fn drop(&mut self) {
         CURRENT_CONTEXT.store(self.previous_context as u8, Ordering::SeqCst);
@@ -195,6 +198,13 @@ impl Drop for DoryContextGuard {
 pub struct DoryGlobals;
 
 impl DoryGlobals {
+    pub fn acquire_runtime_guard() -> DoryRuntimeGuard {
+        let mutex = DORY_RUNTIME_GUARD.get_or_init(|| Mutex::new(()));
+        DoryRuntimeGuard {
+            _guard: mutex.lock().unwrap(),
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn configure_test_cache_root() {
         static TEST_CACHE_ROOT: OnceLock<()> = OnceLock::new();
