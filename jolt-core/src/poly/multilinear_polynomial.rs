@@ -8,6 +8,7 @@ use ark_ff::biginteger::S128;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
 use rayon::prelude::*;
 use strum_macros::EnumIter;
+use thiserror::Error;
 
 use super::{
     compact_polynomial::CompactPolynomial, dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial,
@@ -497,25 +498,14 @@ impl<F: JoltField> From<Vec<S128>> for MultilinearPolynomial<F> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Error, Debug, Clone, PartialEq)]
 pub enum MultilinearPolynomialError {
+    #[error("Invalid MultilinearPolynomial: expected {expected}, got {got}")]
     WrongVariant {
         expected: &'static str,
         got: &'static str,
     },
 }
-
-impl std::fmt::Display for MultilinearPolynomialError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::WrongVariant { expected, got } => {
-                write!(f, "expected {expected} variant, got {got}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for MultilinearPolynomialError {}
 
 impl<'a, F: JoltField> TryFrom<&'a MultilinearPolynomial<F>> for &'a DensePolynomial<F> {
     type Error = MultilinearPolynomialError;
