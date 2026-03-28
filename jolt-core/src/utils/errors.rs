@@ -42,4 +42,6 @@ pub enum ProofVerifyError {
     ZkFeatureRequired,
     #[error("BlindFold verification failed: {0}")]
     BlindFoldError(String),
+    #[error("Malformed proof: {0}")]
+    MalformedProof(String),
 }

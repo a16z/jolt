@@ -6,7 +6,7 @@
 //! 3. Using Spartan sumcheck to prove R1CS satisfaction without revealing the witness
 //! 4. Hyrax-style openings to verify W(ry) and E(rx) evaluations
 
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
 
 use crate::curve::{JoltCurve, JoltGroupElement};
 use crate::field::JoltField;
@@ -16,6 +16,10 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::unipoly::CompressedUniPoly;
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
+use crate::utils::serialization::{
+    deserialize_bounded_vec, serialize_vec_with_len, serialized_vec_with_len_size,
+    MAX_BLINDFOLD_VECTOR_LEN, MAX_OPENING_CLAIMS, MAX_SUMCHECK_ROUNDS,
+};
 
 use super::folding::{commit_cross_term_rows, compute_cross_term, sample_random_satisfying_pair};
 use super::r1cs::VerifierR1CS;
@@ -27,7 +31,7 @@ use super::spartan::{INNER_SUMCHECK_DEGREE_BOUND, SPARTAN_DEGREE_BOUND};
 /// The real instance is NOT included — verifier reconstructs from round_commitments,
 /// eval_commitments, public_inputs. The random instance IS included — verifier reads
 /// it from the proof and absorbs into transcript, never learning the random witness.
-#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, Debug)]
 pub struct BlindFoldProof<F: JoltField, C: JoltCurve<F = F>> {
     pub random_instance: RelaxedR1CSInstance<F, C>,
 
@@ -47,6 +51,121 @@ pub struct BlindFoldProof<F: JoltField, C: JoltCurve<F = F>> {
     pub folded_eval_outputs: Vec<F>,
     /// Folded eval blinding values (one per extra constraint / eval_commitment).
     pub folded_eval_blindings: Vec<F>,
+}
+
+impl<F: JoltField, C: JoltCurve<F = F>> CanonicalSerialize for BlindFoldProof<F, C> {
+    fn serialize_with_mode<W: std::io::Write>(
+        &self,
+        mut writer: W,
+        compress: ark_serialize::Compress,
+    ) -> Result<(), ark_serialize::SerializationError> {
+        self.random_instance
+            .serialize_with_mode(&mut writer, compress)?;
+        serialize_vec_with_len(&self.noncoeff_row_commitments, &mut writer, compress)?;
+        serialize_vec_with_len(&self.cross_term_row_commitments, &mut writer, compress)?;
+        serialize_vec_with_len(&self.spartan_proof, &mut writer, compress)?;
+        self.az_r.serialize_with_mode(&mut writer, compress)?;
+        self.bz_r.serialize_with_mode(&mut writer, compress)?;
+        self.cz_r.serialize_with_mode(&mut writer, compress)?;
+        serialize_vec_with_len(&self.inner_sumcheck_proof, &mut writer, compress)?;
+        self.w_opening.serialize_with_mode(&mut writer, compress)?;
+        self.e_opening.serialize_with_mode(&mut writer, compress)?;
+        serialize_vec_with_len(&self.folded_eval_outputs, &mut writer, compress)?;
+        serialize_vec_with_len(&self.folded_eval_blindings, writer, compress)
+    }
+
+    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
+        self.random_instance.serialized_size(compress)
+            + serialized_vec_with_len_size(&self.noncoeff_row_commitments, compress)
+            + serialized_vec_with_len_size(&self.cross_term_row_commitments, compress)
+            + serialized_vec_with_len_size(&self.spartan_proof, compress)
+            + self.az_r.serialized_size(compress)
+            + self.bz_r.serialized_size(compress)
+            + self.cz_r.serialized_size(compress)
+            + serialized_vec_with_len_size(&self.inner_sumcheck_proof, compress)
+            + self.w_opening.serialized_size(compress)
+            + self.e_opening.serialized_size(compress)
+            + serialized_vec_with_len_size(&self.folded_eval_outputs, compress)
+            + serialized_vec_with_len_size(&self.folded_eval_blindings, compress)
+    }
+}
+
+impl<F: JoltField, C: JoltCurve<F = F>> ark_serialize::Valid for BlindFoldProof<F, C> {
+    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
+        self.random_instance.check()?;
+        self.noncoeff_row_commitments.check()?;
+        self.cross_term_row_commitments.check()?;
+        self.spartan_proof.check()?;
+        self.az_r.check()?;
+        self.bz_r.check()?;
+        self.cz_r.check()?;
+        self.inner_sumcheck_proof.check()?;
+        self.w_opening.check()?;
+        self.e_opening.check()?;
+        self.folded_eval_outputs.check()?;
+        self.folded_eval_blindings.check()
+    }
+}
+
+impl<F: JoltField, C: JoltCurve<F = F>> CanonicalDeserialize for BlindFoldProof<F, C> {
+    fn deserialize_with_mode<R: std::io::Read>(
+        mut reader: R,
+        compress: ark_serialize::Compress,
+        validate: ark_serialize::Validate,
+    ) -> Result<Self, ark_serialize::SerializationError> {
+        let proof = Self {
+            random_instance: RelaxedR1CSInstance::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            noncoeff_row_commitments: deserialize_bounded_vec(
+                &mut reader,
+                compress,
+                validate,
+                MAX_BLINDFOLD_VECTOR_LEN,
+            )?,
+            cross_term_row_commitments: deserialize_bounded_vec(
+                &mut reader,
+                compress,
+                validate,
+                MAX_BLINDFOLD_VECTOR_LEN,
+            )?,
+            spartan_proof: deserialize_bounded_vec(
+                &mut reader,
+                compress,
+                validate,
+                MAX_SUMCHECK_ROUNDS,
+            )?,
+            az_r: F::deserialize_with_mode(&mut reader, compress, validate)?,
+            bz_r: F::deserialize_with_mode(&mut reader, compress, validate)?,
+            cz_r: F::deserialize_with_mode(&mut reader, compress, validate)?,
+            inner_sumcheck_proof: deserialize_bounded_vec(
+                &mut reader,
+                compress,
+                validate,
+                MAX_SUMCHECK_ROUNDS,
+            )?,
+            w_opening: HyraxOpeningProof::deserialize_with_mode(&mut reader, compress, validate)?,
+            e_opening: HyraxOpeningProof::deserialize_with_mode(&mut reader, compress, validate)?,
+            folded_eval_outputs: deserialize_bounded_vec(
+                &mut reader,
+                compress,
+                validate,
+                MAX_OPENING_CLAIMS,
+            )?,
+            folded_eval_blindings: deserialize_bounded_vec(
+                &mut reader,
+                compress,
+                validate,
+                MAX_OPENING_CLAIMS,
+            )?,
+        };
+        if validate == ark_serialize::Validate::Yes {
+            proof.check()?;
+        }
+        Ok(proof)
+    }
 }
 
 pub struct BlindFoldProver<'a, F: JoltField, C: JoltCurve<F = F>> {

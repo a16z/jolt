@@ -1,4 +1,8 @@
 use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
+use crate::utils::serialization::{
+    deserialize_bounded_vec, serialize_vec_with_len, serialized_vec_with_len_size,
+    MAX_UNIPOLY_COEFFS,
+};
 use std::cmp::Ordering;
 use std::iter::zip;
 use std::ops::{Add, AddAssign, Index, IndexMut, Mul, MulAssign, Sub};
@@ -14,21 +18,106 @@ use crate::utils::small_scalar::SmallScalar;
 
 // ax^2 + bx + c stored as vec![c,b,a]
 // ax^3 + bx^2 + cx + d stored as vec![d,c,b,a]
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone, PartialEq, Allocative)]
+#[derive(Debug, Clone, PartialEq, Allocative)]
 pub struct UniPoly<F: CanonicalSerialize + CanonicalDeserialize> {
     pub coeffs: Vec<F>,
 }
 
 // ax^2 + bx + c stored as vec![c,a]
 // ax^3 + bx^2 + cx + d stored as vec![d,b,a]
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct CompressedUniPoly<F: JoltField> {
     pub coeffs_except_linear_term: Vec<F>,
 }
 
+impl<F: CanonicalSerialize + CanonicalDeserialize> CanonicalSerialize for UniPoly<F> {
+    fn serialize_with_mode<W: std::io::Write>(
+        &self,
+        writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        serialize_vec_with_len(&self.coeffs, writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        serialized_vec_with_len_size(&self.coeffs, compress)
+    }
+}
+
+impl<F: CanonicalSerialize + CanonicalDeserialize> Valid for UniPoly<F> {
+    fn check(&self) -> Result<(), SerializationError> {
+        if self.coeffs.is_empty() {
+            return Err(SerializationError::InvalidData);
+        }
+        self.coeffs.check()
+    }
+}
+
+impl<F: CanonicalSerialize + CanonicalDeserialize> CanonicalDeserialize for UniPoly<F> {
+    fn deserialize_with_mode<R: std::io::Read>(
+        reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let coeffs = deserialize_bounded_vec(reader, compress, validate, MAX_UNIPOLY_COEFFS)?;
+        let poly = Self { coeffs };
+        if validate == Validate::Yes {
+            poly.check()?;
+        }
+        Ok(poly)
+    }
+}
+
+impl<F: JoltField> CanonicalSerialize for CompressedUniPoly<F> {
+    fn serialize_with_mode<W: std::io::Write>(
+        &self,
+        writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        serialize_vec_with_len(&self.coeffs_except_linear_term, writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        serialized_vec_with_len_size(&self.coeffs_except_linear_term, compress)
+    }
+}
+
+impl<F: JoltField> Valid for CompressedUniPoly<F> {
+    fn check(&self) -> Result<(), SerializationError> {
+        if self.coeffs_except_linear_term.is_empty() {
+            return Err(SerializationError::InvalidData);
+        }
+        self.coeffs_except_linear_term.check()
+    }
+}
+
+impl<F: JoltField> CanonicalDeserialize for CompressedUniPoly<F> {
+    fn deserialize_with_mode<R: std::io::Read>(
+        reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let coeffs_except_linear_term =
+            deserialize_bounded_vec(reader, compress, validate, MAX_UNIPOLY_COEFFS)?;
+        let poly = Self {
+            coeffs_except_linear_term,
+        };
+        if validate == Validate::Yes {
+            poly.check()?;
+        }
+        Ok(poly)
+    }
+}
+
 impl<F: JoltField> UniPoly<F> {
     pub fn from_coeff(coeffs: Vec<F>) -> Self {
-        UniPoly { coeffs }
+        if coeffs.is_empty() {
+            UniPoly {
+                coeffs: vec![F::zero()],
+            }
+        } else {
+            UniPoly { coeffs }
+        }
     }
 
     /// Interpolate a polynomial from its evaluations at the points 0, 1, 2, ..., n-1.
@@ -188,10 +277,11 @@ impl<F: JoltField> UniPoly<F> {
     }
 
     pub fn zero() -> Self {
-        Self::from_coeff(Vec::new())
+        Self::from_coeff(vec![F::zero()])
     }
 
     pub fn degree(&self) -> usize {
+        debug_assert!(!self.coeffs.is_empty());
         self.coeffs.len() - 1
     }
 
@@ -297,10 +387,14 @@ impl<F: JoltField> UniPoly<F> {
     }
 
     pub fn compress(&self) -> CompressedUniPoly<F> {
-        let mut coeffs_except_linear_term = Vec::with_capacity(self.coeffs.len() - 1);
+        debug_assert!(!self.coeffs.is_empty());
+        let mut coeffs_except_linear_term =
+            Vec::with_capacity(self.coeffs.len().saturating_sub(1).max(1));
         coeffs_except_linear_term.push(self.coeffs[0]);
-        coeffs_except_linear_term.extend_from_slice(&self.coeffs[2..]);
-        debug_assert_eq!(coeffs_except_linear_term.len() + 1, self.coeffs.len());
+        if self.coeffs.len() > 2 {
+            coeffs_except_linear_term.extend_from_slice(&self.coeffs[2..]);
+            debug_assert_eq!(coeffs_except_linear_term.len() + 1, self.coeffs.len());
+        }
         CompressedUniPoly {
             coeffs_except_linear_term,
         }
@@ -484,6 +578,10 @@ impl<F: JoltField> CompressedUniPoly<F> {
     // we require eval(0) + eval(1) = hint, so we can solve for the linear term as:
     // linear_term = hint - 2 * constant_term - deg2 term - deg3 term
     pub fn decompress(&self, hint: &F) -> UniPoly<F> {
+        debug_assert!(!self.coeffs_except_linear_term.is_empty());
+        if self.coeffs_except_linear_term.len() == 1 {
+            return UniPoly::from_coeff(vec![self.coeffs_except_linear_term[0]]);
+        }
         let mut linear_term =
             *hint - self.coeffs_except_linear_term[0] - self.coeffs_except_linear_term[0];
         for i in 1..self.coeffs_except_linear_term.len() {
@@ -499,6 +597,10 @@ impl<F: JoltField> CompressedUniPoly<F> {
     // In the verifier we do not have to check that f(0) + f(1) = hint as we can just
     // recover the linear term assuming the prover did it right, then eval the poly
     pub fn eval_from_hint(&self, hint: &F, x: &F::Challenge) -> F {
+        debug_assert!(!self.coeffs_except_linear_term.is_empty());
+        if self.coeffs_except_linear_term.len() == 1 {
+            return self.coeffs_except_linear_term[0];
+        }
         let mut linear_term =
             *hint - self.coeffs_except_linear_term[0] - self.coeffs_except_linear_term[0];
         for i in 1..self.coeffs_except_linear_term.len() {
@@ -515,7 +617,12 @@ impl<F: JoltField> CompressedUniPoly<F> {
     }
 
     pub fn degree(&self) -> usize {
-        self.coeffs_except_linear_term.len()
+        debug_assert!(!self.coeffs_except_linear_term.is_empty());
+        if self.coeffs_except_linear_term.len() == 1 {
+            0
+        } else {
+            self.coeffs_except_linear_term.len()
+        }
     }
 }
 
@@ -523,6 +630,7 @@ impl<F: JoltField> CompressedUniPoly<F> {
 mod tests {
     use super::*;
     use ark_bn254::Fr;
+    use ark_serialize::CanonicalSerialize;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
@@ -660,5 +768,19 @@ mod tests {
             hint,
         );
         assert_eq!(poly.coeffs, true_poly.coeffs);
+    }
+
+    #[test]
+    fn rejects_empty_unipoly_deserialization() {
+        let mut bytes = Vec::new();
+        0usize.serialize_compressed(&mut bytes).unwrap();
+        assert!(UniPoly::<Fr>::deserialize_compressed(&bytes[..]).is_err());
+    }
+
+    #[test]
+    fn rejects_empty_compressed_unipoly_deserialization() {
+        let mut bytes = Vec::new();
+        0usize.serialize_compressed(&mut bytes).unwrap();
+        assert!(CompressedUniPoly::<Fr>::deserialize_compressed(&bytes[..]).is_err());
     }
 }

@@ -36,6 +36,9 @@ pub struct MontU128Challenge<F: JoltField> {
 // Custom serialization: serialize as [u64; 4] for compatibility with field element format
 impl<F: JoltField> Valid for MontU128Challenge<F> {
     fn check(&self) -> Result<(), SerializationError> {
+        if (self.high >> 61) != 0 {
+            return Err(SerializationError::InvalidData);
+        }
         Ok(())
     }
 }
@@ -63,12 +66,18 @@ impl<F: JoltField> CanonicalDeserialize for MontU128Challenge<F> {
         validate: Validate,
     ) -> Result<Self, SerializationError> {
         let arr = <[u64; 4]>::deserialize_with_mode(reader, compress, validate)?;
-        // arr[0] and arr[1] should be 0, arr[2] is low, arr[3] is high
-        Ok(Self {
+        if arr[0] != 0 || arr[1] != 0 {
+            return Err(SerializationError::InvalidData);
+        }
+        let value = Self {
             low: arr[2],
             high: arr[3],
             _marker: PhantomData,
-        })
+        };
+        if validate == Validate::Yes {
+            value.check()?;
+        }
+        Ok(value)
     }
 }
 
@@ -230,11 +239,28 @@ impl OptimizedMul<TrackedFr, TrackedFr> for MontU128Challenge<TrackedFr> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ark_serialize::CanonicalSerialize;
 
     #[test]
     fn masks_high_three_bits_in_default_challenge_width() {
         let challenge = MontU128Challenge::<ark_bn254::Fr>::new(u128::MAX);
         assert_eq!(challenge.low, u64::MAX);
         assert_eq!(challenge.high, (u64::MAX >> 3));
+    }
+
+    #[test]
+    fn rejects_nonzero_lower_limbs_on_deserialize() {
+        let mut bytes = Vec::new();
+        [1u64, 0, 0, 0].serialize_compressed(&mut bytes).unwrap();
+        assert!(MontU128Challenge::<ark_bn254::Fr>::deserialize_compressed(&bytes[..]).is_err());
+    }
+
+    #[test]
+    fn rejects_high_bits_outside_challenge_width() {
+        let mut bytes = Vec::new();
+        [0u64, 0, 0, 1u64 << 61]
+            .serialize_compressed(&mut bytes)
+            .unwrap();
+        assert!(MontU128Challenge::<ark_bn254::Fr>::deserialize_compressed(&bytes[..]).is_err());
     }
 }

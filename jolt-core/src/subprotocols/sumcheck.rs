@@ -15,6 +15,10 @@ use crate::transcripts::Transcript;
 use crate::utils::errors::ProofVerifyError;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::utils::profiling::print_current_memory_usage;
+use crate::utils::serialization::{
+    deserialize_bounded_vec, serialize_vec_with_len, serialized_vec_with_len_size,
+    MAX_OPENING_CLAIMS, MAX_SUMCHECK_ROUNDS,
+};
 
 use ark_serialize::*;
 #[cfg(feature = "zk")]
@@ -547,10 +551,56 @@ impl BatchedSumcheck {
 
 /// Clear (non-ZK) sumcheck proof - coefficients visible to verifier.
 /// Used in non-ZK mode where the verifier evaluates polynomials directly.
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct ClearSumcheckProof<F: JoltField, ProofTranscript: Transcript> {
     pub compressed_polys: Vec<CompressedUniPoly<F>>,
     _marker: PhantomData<ProofTranscript>,
+}
+
+impl<F: JoltField, ProofTranscript: Transcript> CanonicalSerialize
+    for ClearSumcheckProof<F, ProofTranscript>
+{
+    fn serialize_with_mode<W: std::io::Write>(
+        &self,
+        writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        serialize_vec_with_len(&self.compressed_polys, writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        serialized_vec_with_len_size(&self.compressed_polys, compress)
+    }
+}
+
+impl<F: JoltField, ProofTranscript: Transcript> Valid for ClearSumcheckProof<F, ProofTranscript> {
+    fn check(&self) -> Result<(), SerializationError> {
+        self.compressed_polys.check()
+    }
+}
+
+impl<F: JoltField, ProofTranscript: Transcript> CanonicalDeserialize
+    for ClearSumcheckProof<F, ProofTranscript>
+{
+    fn deserialize_with_mode<R: std::io::Read>(
+        reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let proof = Self {
+            compressed_polys: deserialize_bounded_vec(
+                reader,
+                compress,
+                validate,
+                MAX_SUMCHECK_ROUNDS,
+            )?,
+            _marker: PhantomData,
+        };
+        if validate == Validate::Yes {
+            proof.check()?;
+        }
+        Ok(proof)
+    }
 }
 
 impl<F: JoltField, ProofTranscript: Transcript> ClearSumcheckProof<F, ProofTranscript> {
@@ -579,6 +629,14 @@ impl<F: JoltField, ProofTranscript: Transcript> ClearSumcheckProof<F, ProofTrans
             ));
         }
         for i in 0..self.compressed_polys.len() {
+            if self.compressed_polys[i]
+                .coeffs_except_linear_term
+                .is_empty()
+            {
+                return Err(ProofVerifyError::MalformedProof(
+                    "empty compressed sumcheck polynomial".to_string(),
+                ));
+            }
             if self.compressed_polys[i].degree() > degree_bound {
                 return Err(ProofVerifyError::InvalidInputLength(
                     degree_bound,
@@ -658,10 +716,11 @@ impl<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript> CanonicalDe
         validate: ark_serialize::Validate,
     ) -> Result<Self, ark_serialize::SerializationError> {
         let round_commitments =
-            Vec::<C::G1>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let poly_degrees = Vec::<usize>::deserialize_with_mode(&mut reader, compress, validate)?;
+            deserialize_bounded_vec(&mut reader, compress, validate, MAX_SUMCHECK_ROUNDS)?;
+        let poly_degrees =
+            deserialize_bounded_vec(&mut reader, compress, validate, MAX_SUMCHECK_ROUNDS)?;
         let output_claims_commitments =
-            Vec::<C::G1>::deserialize_with_mode(reader, compress, validate)?;
+            deserialize_bounded_vec(reader, compress, validate, MAX_OPENING_CLAIMS)?;
         Ok(Self {
             round_commitments,
             poly_degrees,

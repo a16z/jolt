@@ -12,6 +12,8 @@ use strum::EnumCount;
 use crate::poly::opening_proof::{OpeningPoint, Openings};
 #[cfg(feature = "zk")]
 use crate::subprotocols::blindfold::BlindFoldProof;
+#[cfg(not(feature = "zk"))]
+use crate::utils::serialization::MAX_OPENING_CLAIMS;
 use crate::{
     curve::JoltCurve,
     field::JoltField,
@@ -25,6 +27,10 @@ use crate::{
         sumcheck::SumcheckInstanceProof, univariate_skip::UniSkipFirstRoundProofVariant,
     },
     transcripts::Transcript,
+    utils::serialization::{
+        deserialize_bounded_vec, serialize_vec_with_len, serialized_vec_with_len_size,
+        MAX_JOLT_COMMITMENTS,
+    },
     zkvm::{
         config::{OneHotConfig, ReadWriteConfig},
         instruction::{CircuitFlags, InstructionFlags},
@@ -32,7 +38,7 @@ use crate::{
     },
 };
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone)]
 pub struct JoltProof<
     F: JoltField,
     C: JoltCurve<F = F>,
@@ -62,7 +68,218 @@ pub struct JoltProof<
     pub dory_layout: DoryLayout,
 }
 
+impl<F: JoltField, C: JoltCurve<F = F>, PCS: CommitmentScheme<Field = F>, FS: Transcript>
+    CanonicalSerialize for JoltProof<F, C, PCS, FS>
+{
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        serialize_vec_with_len(&self.commitments, &mut writer, compress)?;
+        self.stage1_uni_skip_first_round_proof
+            .serialize_with_mode(&mut writer, compress)?;
+        self.stage1_sumcheck_proof
+            .serialize_with_mode(&mut writer, compress)?;
+        self.stage2_uni_skip_first_round_proof
+            .serialize_with_mode(&mut writer, compress)?;
+        self.stage2_sumcheck_proof
+            .serialize_with_mode(&mut writer, compress)?;
+        self.stage3_sumcheck_proof
+            .serialize_with_mode(&mut writer, compress)?;
+        self.stage4_sumcheck_proof
+            .serialize_with_mode(&mut writer, compress)?;
+        self.stage5_sumcheck_proof
+            .serialize_with_mode(&mut writer, compress)?;
+        self.stage6_sumcheck_proof
+            .serialize_with_mode(&mut writer, compress)?;
+        self.stage7_sumcheck_proof
+            .serialize_with_mode(&mut writer, compress)?;
+        #[cfg(feature = "zk")]
+        self.blindfold_proof
+            .serialize_with_mode(&mut writer, compress)?;
+        self.joint_opening_proof
+            .serialize_with_mode(&mut writer, compress)?;
+        self.untrusted_advice_commitment
+            .serialize_with_mode(&mut writer, compress)?;
+        #[cfg(not(feature = "zk"))]
+        self.opening_claims
+            .serialize_with_mode(&mut writer, compress)?;
+        self.trace_length
+            .serialize_with_mode(&mut writer, compress)?;
+        self.ram_K.serialize_with_mode(&mut writer, compress)?;
+        self.rw_config.serialize_with_mode(&mut writer, compress)?;
+        self.one_hot_config
+            .serialize_with_mode(&mut writer, compress)?;
+        self.dory_layout.serialize_with_mode(writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        serialized_vec_with_len_size(&self.commitments, compress)
+            + self
+                .stage1_uni_skip_first_round_proof
+                .serialized_size(compress)
+            + self.stage1_sumcheck_proof.serialized_size(compress)
+            + self
+                .stage2_uni_skip_first_round_proof
+                .serialized_size(compress)
+            + self.stage2_sumcheck_proof.serialized_size(compress)
+            + self.stage3_sumcheck_proof.serialized_size(compress)
+            + self.stage4_sumcheck_proof.serialized_size(compress)
+            + self.stage5_sumcheck_proof.serialized_size(compress)
+            + self.stage6_sumcheck_proof.serialized_size(compress)
+            + self.stage7_sumcheck_proof.serialized_size(compress)
+            + {
+                #[cfg(feature = "zk")]
+                {
+                    self.blindfold_proof.serialized_size(compress)
+                }
+                #[cfg(not(feature = "zk"))]
+                {
+                    0
+                }
+            }
+            + self.joint_opening_proof.serialized_size(compress)
+            + self.untrusted_advice_commitment.serialized_size(compress)
+            + {
+                #[cfg(not(feature = "zk"))]
+                {
+                    self.opening_claims.serialized_size(compress)
+                }
+                #[cfg(feature = "zk")]
+                {
+                    0
+                }
+            }
+            + self.trace_length.serialized_size(compress)
+            + self.ram_K.serialized_size(compress)
+            + self.rw_config.serialized_size(compress)
+            + self.one_hot_config.serialized_size(compress)
+            + self.dory_layout.serialized_size(compress)
+    }
+}
+
+impl<F: JoltField, C: JoltCurve<F = F>, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid
+    for JoltProof<F, C, PCS, FS>
+{
+    fn check(&self) -> Result<(), SerializationError> {
+        self.commitments.check()?;
+        self.stage1_uni_skip_first_round_proof.check()?;
+        self.stage1_sumcheck_proof.check()?;
+        self.stage2_uni_skip_first_round_proof.check()?;
+        self.stage2_sumcheck_proof.check()?;
+        self.stage3_sumcheck_proof.check()?;
+        self.stage4_sumcheck_proof.check()?;
+        self.stage5_sumcheck_proof.check()?;
+        self.stage6_sumcheck_proof.check()?;
+        self.stage7_sumcheck_proof.check()?;
+        #[cfg(feature = "zk")]
+        self.blindfold_proof.check()?;
+        self.joint_opening_proof.check()?;
+        self.untrusted_advice_commitment.check()?;
+        #[cfg(not(feature = "zk"))]
+        self.opening_claims.check()?;
+        self.rw_config.check()?;
+        self.one_hot_config.check()?;
+        self.dory_layout.check()
+    }
+}
+
+impl<F: JoltField, C: JoltCurve<F = F>, PCS: CommitmentScheme<Field = F>, FS: Transcript>
+    CanonicalDeserialize for JoltProof<F, C, PCS, FS>
+{
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let proof = Self {
+            commitments: deserialize_bounded_vec(
+                &mut reader,
+                compress,
+                validate,
+                MAX_JOLT_COMMITMENTS,
+            )?,
+            stage1_uni_skip_first_round_proof:
+                UniSkipFirstRoundProofVariant::deserialize_with_mode(
+                    &mut reader,
+                    compress,
+                    validate,
+                )?,
+            stage1_sumcheck_proof: SumcheckInstanceProof::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            stage2_uni_skip_first_round_proof:
+                UniSkipFirstRoundProofVariant::deserialize_with_mode(
+                    &mut reader,
+                    compress,
+                    validate,
+                )?,
+            stage2_sumcheck_proof: SumcheckInstanceProof::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            stage3_sumcheck_proof: SumcheckInstanceProof::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            stage4_sumcheck_proof: SumcheckInstanceProof::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            stage5_sumcheck_proof: SumcheckInstanceProof::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            stage6_sumcheck_proof: SumcheckInstanceProof::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            stage7_sumcheck_proof: SumcheckInstanceProof::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            #[cfg(feature = "zk")]
+            blindfold_proof: BlindFoldProof::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            joint_opening_proof: PCS::Proof::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            untrusted_advice_commitment: Option::<PCS::Commitment>::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            #[cfg(not(feature = "zk"))]
+            opening_claims: Claims::deserialize_with_mode(&mut reader, compress, validate)?,
+            trace_length: usize::deserialize_with_mode(&mut reader, compress, validate)?,
+            ram_K: usize::deserialize_with_mode(&mut reader, compress, validate)?,
+            rw_config: ReadWriteConfig::deserialize_with_mode(&mut reader, compress, validate)?,
+            one_hot_config: OneHotConfig::deserialize_with_mode(&mut reader, compress, validate)?,
+            dory_layout: DoryLayout::deserialize_with_mode(&mut reader, compress, validate)?,
+        };
+        if validate == Validate::Yes {
+            proof.check()?;
+        }
+        Ok(proof)
+    }
+}
+
 #[cfg(not(feature = "zk"))]
+#[derive(Clone)]
 pub struct Claims<F: JoltField>(pub Openings<F>);
 
 #[cfg(not(feature = "zk"))]
@@ -93,7 +310,12 @@ impl<F: JoltField> CanonicalSerialize for Claims<F> {
 #[cfg(not(feature = "zk"))]
 impl<F: JoltField> Valid for Claims<F> {
     fn check(&self) -> Result<(), SerializationError> {
-        Ok(())
+        self.0
+            .iter()
+            .try_for_each(|(id, (_point, claim))| -> Result<(), SerializationError> {
+                id.check()?;
+                claim.check()
+            })
     }
 }
 
@@ -105,13 +327,25 @@ impl<F: JoltField> CanonicalDeserialize for Claims<F> {
         validate: Validate,
     ) -> Result<Self, SerializationError> {
         let size = usize::deserialize_with_mode(&mut reader, compress, validate)?;
+        if size > MAX_OPENING_CLAIMS {
+            return Err(SerializationError::InvalidData);
+        }
         let mut claims = BTreeMap::new();
         for _ in 0..size {
             let key = OpeningId::deserialize_with_mode(&mut reader, compress, validate)?;
             let claim = F::deserialize_with_mode(&mut reader, compress, validate)?;
-            claims.insert(key, (OpeningPoint::default(), claim));
+            if claims
+                .insert(key, (OpeningPoint::default(), claim))
+                .is_some()
+            {
+                return Err(SerializationError::InvalidData);
+            }
         }
-        Ok(Claims(claims))
+        let claims = Claims(claims);
+        if validate == Validate::Yes {
+            claims.check()?;
+        }
+        Ok(claims)
     }
 }
 
@@ -514,4 +748,35 @@ pub fn serialize_and_print_size(
     tracing::info!("{item_name} Written to {file_name}");
     tracing::info!("{item_name} size: {file_size_kb:.1} kB");
     Ok(())
+}
+
+#[cfg(all(test, not(feature = "zk")))]
+mod tests {
+    use super::*;
+    use ark_bn254::Fr;
+
+    #[test]
+    fn claims_reject_duplicate_keys() {
+        let key = OpeningId::committed(
+            CommittedPolynomial::InstructionRa(0),
+            SumcheckId::HammingWeightClaimReduction,
+        );
+        let mut bytes = Vec::new();
+        2usize.serialize_compressed(&mut bytes).unwrap();
+        key.serialize_compressed(&mut bytes).unwrap();
+        Fr::from(1u64).serialize_compressed(&mut bytes).unwrap();
+        key.serialize_compressed(&mut bytes).unwrap();
+        Fr::from(1u64).serialize_compressed(&mut bytes).unwrap();
+
+        assert!(Claims::<Fr>::deserialize_compressed(&bytes[..]).is_err());
+    }
+
+    #[test]
+    fn claims_reject_oversized_length_prefix() {
+        let mut bytes = Vec::new();
+        (MAX_OPENING_CLAIMS + 1)
+            .serialize_compressed(&mut bytes)
+            .unwrap();
+        assert!(Claims::<Fr>::deserialize_compressed(&bytes[..]).is_err());
+    }
 }

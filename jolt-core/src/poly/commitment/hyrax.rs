@@ -1,7 +1,11 @@
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
 
 use crate::field::JoltField;
 use crate::poly::eq_poly::EqPolynomial;
+use crate::utils::serialization::{
+    deserialize_bounded_vec, serialize_vec_with_len, serialized_vec_with_len_size,
+    MAX_BLINDFOLD_VECTOR_LEN,
+};
 
 /// combined[k] = Σ_i eq(ry_row, i) · flat[i*cols + k]
 pub fn combined_row<F: JoltField>(flat: &[F], cols: usize, ry_row: &[F]) -> Vec<F> {
@@ -44,10 +48,56 @@ pub fn combined_blinding<F: JoltField>(row_blindings: &[F], ry_row: &[F]) -> F {
         .sum()
 }
 
-#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, Debug)]
 pub struct HyraxOpeningProof<F: JoltField> {
     pub combined_row: Vec<F>,
     pub combined_blinding: F,
+}
+
+impl<F: JoltField> CanonicalSerialize for HyraxOpeningProof<F> {
+    fn serialize_with_mode<W: std::io::Write>(
+        &self,
+        mut writer: W,
+        compress: ark_serialize::Compress,
+    ) -> Result<(), ark_serialize::SerializationError> {
+        serialize_vec_with_len(&self.combined_row, &mut writer, compress)?;
+        self.combined_blinding
+            .serialize_with_mode(&mut writer, compress)
+    }
+
+    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
+        serialized_vec_with_len_size(&self.combined_row, compress)
+            + self.combined_blinding.serialized_size(compress)
+    }
+}
+
+impl<F: JoltField> ark_serialize::Valid for HyraxOpeningProof<F> {
+    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
+        self.combined_row.check()?;
+        self.combined_blinding.check()
+    }
+}
+
+impl<F: JoltField> CanonicalDeserialize for HyraxOpeningProof<F> {
+    fn deserialize_with_mode<R: std::io::Read>(
+        mut reader: R,
+        compress: ark_serialize::Compress,
+        validate: ark_serialize::Validate,
+    ) -> Result<Self, ark_serialize::SerializationError> {
+        let proof = Self {
+            combined_row: deserialize_bounded_vec(
+                &mut reader,
+                compress,
+                validate,
+                MAX_BLINDFOLD_VECTOR_LEN,
+            )?,
+            combined_blinding: F::deserialize_with_mode(&mut reader, compress, validate)?,
+        };
+        if validate == ark_serialize::Validate::Yes {
+            proof.check()?;
+        }
+        Ok(proof)
+    }
 }
 
 #[cfg(test)]
