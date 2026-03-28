@@ -131,7 +131,7 @@ impl VirtualRegisterAllocator {
 
     /// Allocate virtual register that can be used in the inline sequence of
     /// an instruction. Skips reserved registers (32-39) and uses registers 40-47.
-    pub(crate) fn allocate(&self) -> VirtualRegisterGuard {
+    pub fn allocate(&self) -> VirtualRegisterGuard {
         for (i, allocated) in self
             .allocated
             .lock()
