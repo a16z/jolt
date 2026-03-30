@@ -1,0 +1,11 @@
+[package]
+name = "p256-ecdsa-verify-guest"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+guest = []
+
+[dependencies]
+jolt = { package = "jolt-sdk", path = "../../../jolt-sdk" }
+jolt-inlines-p256.workspace = true

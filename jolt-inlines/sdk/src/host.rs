@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 
+pub use num_bigint::BigUint as NBigUint;
 use tracer::utils::inline_sequence_writer::{write_inline_trace, InlineDescriptor, SequenceInputs};
 
 pub use inventory;
@@ -11,6 +12,96 @@ pub use tracer::instruction::Instruction;
 pub use tracer::utils::inline_helpers::{InstrAssembler, Value};
 pub use tracer::utils::inline_sequence_writer::AppendMode;
 pub use tracer::utils::virtual_registers::VirtualRegisterGuard;
+
+/// Convert a slice of `u64` limbs (little-endian) to `NBigUint`.
+pub fn limbs_to_nbiguint(limbs: &[u64]) -> NBigUint {
+    let mut bytes = Vec::with_capacity(limbs.len() * 8);
+    for &limb in limbs {
+        for i in 0..8 {
+            bytes.push(((limb >> (i * 8)) & 0xFF) as u8);
+        }
+    }
+    NBigUint::from_bytes_le(&bytes)
+}
+
+/// Convert an `NBigUint` to a `Vec<u64>` of little-endian limbs.
+pub fn nbiguint_to_limbs(n: &NBigUint) -> Vec<u64> {
+    let bytes = n.to_bytes_le();
+    let mut limbs = vec![0u64; bytes.len().div_ceil(8)];
+    for (i, byte) in bytes.iter().enumerate() {
+        limbs[i / 8] |= (*byte as u64) << ((i % 8) * 8);
+    }
+    limbs
+}
+
+/// Type of multiplication-style modular operation (multiply, square, or divide).
+pub enum MulqType {
+    Mul,
+    Square,
+    Div,
+}
+
+/// Shared advice computation for modular multiply/square/divide inlines.
+///
+/// Reads `a` from `rs1` and `b` from `rs2` (or `rs1` for square), computes the
+/// quotient advice, and returns limbs as a `VecDeque<u64>`.
+///
+/// - `modulus`: given `is_scalar_field`, returns the field modulus as `NBigUint`
+/// - `field_inv_mul`: given `(b_limbs, a_limbs)`, returns `b^{-1} * a mod q` as `NBigUint`
+pub fn mulq_advice(
+    operands: &FormatInline,
+    cpu: &mut Cpu,
+    is_scalar_field: bool,
+    op_type: &MulqType,
+    modulus: impl Fn(bool) -> NBigUint,
+    field_inv_mul: impl Fn(&[u64; 4], &[u64; 4]) -> NBigUint,
+) -> VecDeque<u64> {
+    let a_addr = cpu.x[operands.rs1 as usize] as u64;
+    let a = [
+        cpu.mmu.load_doubleword(a_addr).unwrap().0,
+        cpu.mmu.load_doubleword(a_addr + 8).unwrap().0,
+        cpu.mmu.load_doubleword(a_addr + 16).unwrap().0,
+        cpu.mmu.load_doubleword(a_addr + 24).unwrap().0,
+    ];
+    let b_addr = match op_type {
+        MulqType::Square => a_addr,
+        _ => cpu.x[operands.rs2 as usize] as u64,
+    };
+    let b = [
+        cpu.mmu.load_doubleword(b_addr).unwrap().0,
+        cpu.mmu.load_doubleword(b_addr + 8).unwrap().0,
+        cpu.mmu.load_doubleword(b_addr + 16).unwrap().0,
+        cpu.mmu.load_doubleword(b_addr + 24).unwrap().0,
+    ];
+    let a_big: NBigUint = limbs_to_nbiguint(&a);
+    let b_big: NBigUint = limbs_to_nbiguint(&b);
+    let q_big: NBigUint = modulus(is_scalar_field);
+    match op_type {
+        MulqType::Div => {
+            let c_big = field_inv_mul(&b, &a);
+            let c_limbs = nbiguint_to_limbs(&c_big);
+            let quotient = (&b_big * &c_big) / &q_big;
+            let quotient_limbs = nbiguint_to_limbs(&quotient);
+            assert!(quotient_limbs.len() <= 4, "Result does not fit in 4 limbs");
+            let mut padded_limbs = vec![0u64; 8];
+            for i in 0..c_limbs.len() {
+                padded_limbs[2 * i] = c_limbs[i];
+            }
+            for i in 0..quotient_limbs.len() {
+                padded_limbs[2 * i + 1] = quotient_limbs[i];
+            }
+            VecDeque::from(padded_limbs)
+        }
+        _ => {
+            let quotient = (a_big * b_big) / &q_big;
+            let limbs = nbiguint_to_limbs(&quotient);
+            assert!(limbs.len() <= 4, "Result does not fit in 4 limbs");
+            let mut padded_limbs = vec![0u64; 4];
+            padded_limbs[..limbs.len()].copy_from_slice(&limbs[..]);
+            VecDeque::from(padded_limbs)
+        }
+    }
+}
 
 /// Trait for declaring an inline operation's metadata and sequence builder.
 ///
@@ -49,6 +140,10 @@ pub trait InstrAssemblerExt {
     fn load_paired_u32(&mut self, temp: u8, base: u8, offset: i64, vr_lo: u8, vr_hi: u8);
     fn store_paired_u32(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8);
     fn load_paired_u32_dirty(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8);
+    /// Emit `count` pairs of (VirtualAdvice, SD) instructions.
+    /// Each iteration loads one advice value into `vr`, then stores it to
+    /// `base_reg + i*8`.
+    fn emit_advice_stores(&mut self, vr: u8, base_reg: u8, count: usize);
 }
 
 impl InstrAssemblerExt for InstrAssembler {
@@ -85,6 +180,151 @@ impl InstrAssemblerExt for InstrAssembler {
         use instruction::srli::SRLI;
         self.emit_ld::<LD>(vr_lo, base, offset);
         self.emit_i::<SRLI>(vr_hi, vr_lo, 32);
+    }
+
+    fn emit_advice_stores(&mut self, vr: u8, base_reg: u8, count: usize) {
+        use instruction::sd::SD;
+        use instruction::virtual_advice::VirtualAdvice;
+        for i in 0..count {
+            self.emit_j::<VirtualAdvice>(vr, 0);
+            self.emit_s::<SD>(base_reg, vr, i as i64 * 8);
+        }
+    }
+}
+
+/// Extension trait adding multiply-accumulate helpers to [`InstrAssembler`].
+///
+/// These emit RISC-V instruction patterns for 64-bit multiply-accumulate with
+/// carry propagation, used by modular arithmetic inlines (secp256k1, P-256, etc.).
+/// All methods take raw virtual register IDs (`u8`) and emit instructions via
+/// `self.emit_r`.
+pub trait MulAccExt {
+    // (c2, c1) = lower(a * b) + c1; clobbers aux
+    fn mac_low(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8);
+    // (c2, c1) = upper(a * b) + c1; clobbers aux
+    fn mac_high(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8);
+    // (c2, c1) += lower(a * b); clobbers aux
+    fn mac_low_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8);
+    // (c2, c1) += upper(a * b); clobbers aux
+    fn mac_high_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8);
+    // if carry_exists: mac_low_w_carry, else: mac_low
+    fn mac_low_conditional(&mut self, carry_exists: bool, c2: u8, c1: u8, a: u8, b: u8, aux: u8);
+    // if carry_exists: mac_high_w_carry, else: mac_high
+    fn mac_high_conditional(&mut self, carry_exists: bool, c2: u8, c1: u8, a: u8, b: u8, aux: u8);
+    // (c2, c1) = 2*lower(a * b) + c1; clobbers aux
+    fn m2ac_low(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8);
+    // (c2, c1) = 2*upper(a * b) + c1; clobbers aux
+    fn m2ac_high(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8);
+    // (c2, c1) += 2*lower(a * b); clobbers aux, aux2
+    fn m2ac_low_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8, aux2: u8);
+    // (c2, c1) += 2*upper(a * b); clobbers aux, aux2
+    fn m2ac_high_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8, aux2: u8);
+    // (c2, c1) = c1 + val; sets c2 = carry (no multiply, for p[0]=1 case)
+    fn adc(&mut self, c2: u8, c1: u8, val: u8);
+    // (c2, c1) += val with existing carry; clobbers aux
+    fn adc_w_carry(&mut self, c2: u8, c1: u8, val: u8, aux: u8);
+    // if carry_exists: adc_w_carry, else: adc
+    fn add_conditional(&mut self, carry_exists: bool, c2: u8, c1: u8, val: u8, aux: u8);
+}
+
+impl MulAccExt for InstrAssembler {
+    fn mac_low(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
+        self.emit_r::<instruction::mul::MUL>(aux, a, b);
+        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
+        self.emit_r::<instruction::sltu::SLTU>(c2, c1, aux);
+    }
+
+    fn mac_high(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
+        self.emit_r::<instruction::mulhu::MULHU>(aux, a, b);
+        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
+        self.emit_r::<instruction::sltu::SLTU>(c2, c1, aux);
+    }
+
+    fn mac_low_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
+        self.emit_r::<instruction::mul::MUL>(aux, a, b);
+        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
+        self.emit_r::<instruction::sltu::SLTU>(aux, c1, aux);
+        self.emit_r::<instruction::add::ADD>(c2, c2, aux);
+    }
+
+    fn mac_high_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
+        self.emit_r::<instruction::mulhu::MULHU>(aux, a, b);
+        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
+        self.emit_r::<instruction::sltu::SLTU>(aux, c1, aux);
+        self.emit_r::<instruction::add::ADD>(c2, c2, aux);
+    }
+
+    fn mac_low_conditional(&mut self, carry_exists: bool, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
+        if carry_exists {
+            self.mac_low_w_carry(c2, c1, a, b, aux);
+        } else {
+            self.mac_low(c2, c1, a, b, aux);
+        }
+    }
+
+    fn mac_high_conditional(&mut self, carry_exists: bool, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
+        if carry_exists {
+            self.mac_high_w_carry(c2, c1, a, b, aux);
+        } else {
+            self.mac_high(c2, c1, a, b, aux);
+        }
+    }
+
+    fn m2ac_low(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
+        self.emit_r::<instruction::mul::MUL>(aux, a, b);
+        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
+        self.emit_r::<instruction::sltu::SLTU>(c2, c1, aux);
+        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
+        self.emit_r::<instruction::sltu::SLTU>(aux, c1, aux);
+        self.emit_r::<instruction::add::ADD>(c2, c2, aux);
+    }
+
+    fn m2ac_high(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
+        self.emit_r::<instruction::mulhu::MULHU>(aux, a, b);
+        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
+        self.emit_r::<instruction::sltu::SLTU>(c2, c1, aux);
+        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
+        self.emit_r::<instruction::sltu::SLTU>(aux, c1, aux);
+        self.emit_r::<instruction::add::ADD>(c2, c2, aux);
+    }
+
+    fn m2ac_low_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8, aux2: u8) {
+        self.emit_r::<instruction::mul::MUL>(aux, a, b);
+        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
+        self.emit_r::<instruction::sltu::SLTU>(aux2, c1, aux);
+        self.emit_r::<instruction::add::ADD>(c2, c2, aux2);
+        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
+        self.emit_r::<instruction::sltu::SLTU>(aux2, c1, aux);
+        self.emit_r::<instruction::add::ADD>(c2, c2, aux2);
+    }
+
+    fn m2ac_high_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8, aux2: u8) {
+        self.emit_r::<instruction::mulhu::MULHU>(aux, a, b);
+        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
+        self.emit_r::<instruction::sltu::SLTU>(aux2, c1, aux);
+        self.emit_r::<instruction::add::ADD>(c2, c2, aux2);
+        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
+        self.emit_r::<instruction::sltu::SLTU>(aux2, c1, aux);
+        self.emit_r::<instruction::add::ADD>(c2, c2, aux2);
+    }
+
+    fn adc(&mut self, c2: u8, c1: u8, val: u8) {
+        self.emit_r::<instruction::add::ADD>(c1, c1, val);
+        self.emit_r::<instruction::sltu::SLTU>(c2, c1, val);
+    }
+
+    fn adc_w_carry(&mut self, c2: u8, c1: u8, val: u8, aux: u8) {
+        self.emit_r::<instruction::add::ADD>(c1, c1, val);
+        self.emit_r::<instruction::sltu::SLTU>(aux, c1, val);
+        self.emit_r::<instruction::add::ADD>(c2, c2, aux);
+    }
+
+    fn add_conditional(&mut self, carry_exists: bool, c2: u8, c1: u8, val: u8, aux: u8) {
+        if carry_exists {
+            self.adc_w_carry(c2, c1, val, aux);
+        } else {
+            self.adc(c2, c1, val);
+        }
     }
 }
 

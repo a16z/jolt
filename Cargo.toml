@@ -38,6 +38,7 @@ members = [
     "jolt-inlines/bigint",
     "jolt-inlines/secp256k1",
     "jolt-inlines/grumpkin",
+    "jolt-inlines/p256",
     "examples/btreemap/host",
     "examples/btreemap/guest",
     "examples/collatz",
@@ -46,6 +47,8 @@ members = [
     "examples/fibonacci/guest",
     "examples/secp256k1-ecdsa-verify",
     "examples/secp256k1-ecdsa-verify/guest",
+    "examples/p256-ecdsa-verify",
+    "examples/p256-ecdsa-verify/guest",
     "examples/sha2-ex",
     "examples/sha2-ex/guest",
     "examples/sha3-ex",
@@ -160,6 +163,7 @@ ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "de
     "derive",
 ] }
 ark-secp256k1 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
+ark-secp256r1 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
 ark-serialize-derive = { version = "0.5.0", default-features = false }
 ark-std = { version = "0.5.0", default-features = false }
 sha2 = "0.10"
@@ -282,3 +286,4 @@ jolt-inlines-blake3 = { path = "./jolt-inlines/blake3", default-features = false
 jolt-inlines-bigint = { path = "./jolt-inlines/bigint", default-features = false }
 jolt-inlines-secp256k1 = { path = "./jolt-inlines/secp256k1", default-features = false }
 jolt-inlines-grumpkin = { path = "./jolt-inlines/grumpkin", default-features = false }
+jolt-inlines-p256 = { path = "./jolt-inlines/p256", default-features = false }

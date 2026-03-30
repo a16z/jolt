@@ -63,11 +63,7 @@ pub enum Secp256k1Error {
     target_arch = "riscv64"
 ))]
 pub(crate) fn decode_glv_sign_word(sign: u64) -> Result<bool, Secp256k1Error> {
-    match sign {
-        0 => Ok(false),
-        1 => Ok(true),
-        _ => Err(Secp256k1Error::InvalidGlvSignWord(sign)),
-    }
+    jolt_inlines_sdk::decode_sign_word(sign).ok_or(Secp256k1Error::InvalidGlvSignWord(sign))
 }
 
 /// secp256k1 base field element
