@@ -15,6 +15,7 @@ use core::marker::PhantomData;
 use serde::{Deserialize, Serialize};
 
 use crate::{P256_MODULUS, P256_ORDER};
+pub use jolt_inlines_sdk::{spoil_proof, UnwrapOrSpoilProof};
 
 /// Returns `true` iff `x >= modulus`, i.e., `x` is non-canonical.
 /// Full top-down comparison since limbs have mixed values.
@@ -143,8 +144,6 @@ fn bytes_to_limbs(bytes: &[u8; 32]) -> [u64; 4] {
     }
     limbs
 }
-
-pub use jolt_inlines_sdk::{spoil_proof, UnwrapOrSpoilProof};
 
 /// Error types for P-256 operations.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
