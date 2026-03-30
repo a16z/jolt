@@ -146,7 +146,7 @@ pub const fn constraint_eq_conditional_lc(condition: LC, left: LC, right: LC) ->
         condition,
         match left.checked_sub(right) {
             Some(b) => b,
-            None => LC::zero(),
+            None => panic!("constraint_eq_conditional_lc overflow"),
         },
     )
 }
@@ -351,6 +351,8 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
     // if Jump && !NextIsNoop {
     //     assert!(NextUnexpandedPC == LookupOutput)
     // }
+    // `ShouldJump` is defined as `Jump * (1 - NextIsNoop)` in the product-virtualization
+    // stage, so valid proofs cannot silently drop the `NextIsNoop` guard here.
     r1cs_eq_conditional!(
         label: R1CSConstraintLabel::NextUnexpPCEqLookupIfShouldJump,
         if { { JoltR1CSInputs::ShouldJump } }
@@ -373,7 +375,8 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
     //         assert!(NextUnexpandedPC == UnexpandedPC + 4)
     //     }
     // }
-    // Note that ShouldBranch and Jump instructions are mutually exclusive
+    // Note that `ShouldBranch` and `Jump` are mutually exclusive for valid bytecode:
+    // `ShouldBranch` includes the branch instruction flag, while `Jump` is a distinct opcode.
     // And that DoNotUpdatePC and isCompressed are mutually exclusive
     r1cs_eq_conditional!(
         label: R1CSConstraintLabel::NextUnexpPCUpdateOtherwise,
