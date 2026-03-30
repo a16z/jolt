@@ -1,4 +1,5 @@
 mod cpu_constraints;
+mod sha256;
 mod virtual_sequences;
 
 #[macro_export]

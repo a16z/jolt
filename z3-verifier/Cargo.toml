@@ -6,6 +6,7 @@ edition = "2021"
 paste.workspace = true
 
 jolt-core = { path = "../jolt-core" }
+jolt-inlines-sha2 = { path = "../jolt-inlines/sha2", features = ["host"] }
 common = { path = "../common" }
 tracer = { path = "../tracer" }
 z3 = "0.19.15"

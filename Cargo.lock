@@ -6663,6 +6663,7 @@ version = "0.0.0"
 dependencies = [
  "common",
  "jolt-core",
+ "jolt-inlines-sha2",
  "paste",
  "tracer",
  "z3",
