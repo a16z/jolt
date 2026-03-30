@@ -21,3 +21,6 @@ num-bigint = { workspace = true, optional = true }
 
 [dev-dependencies]
 tracer = { workspace = true, features = ["std", "test-utils"] }
+p256 = { version = "0.13", features = ["ecdsa"] }
+sha2 = "0.10"
+rand = "0.8"

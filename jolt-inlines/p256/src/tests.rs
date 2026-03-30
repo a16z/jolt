@@ -882,4 +882,190 @@ mod p256_tests {
         let result = ecdsa_verify(z.clone(), r.clone(), zero, g.clone());
         assert!(matches!(result, Err(P256Error::ROrSZero)));
     }
+
+    /// Verify a signature produced by the RustCrypto `p256` crate.
+    /// This is the critical interop test — ensures our inline ECDSA
+    /// verifier accepts real-world P-256 signatures.
+    #[test]
+    fn test_interop_with_p256_crate() {
+        use crate::sdk::{ecdsa_verify, P256Fr, P256Point};
+        use p256::ecdsa::{signature::Signer, Signature, SigningKey};
+
+        // Generate a key and sign a message using the p256 crate
+        let signing_key = SigningKey::from_bytes(
+            &[
+                0xC9, 0xAF, 0xA9, 0xD8, 0x45, 0xBA, 0x75, 0x16, 0x6B, 0x5C, 0x21, 0x57, 0x67, 0xB1,
+                0xD6, 0x93, 0x4E, 0x50, 0xC3, 0xDB, 0x36, 0xE8, 0x9B, 0x12, 0x7B, 0x8A, 0x62, 0x2B,
+                0x12, 0x0F, 0x67, 0x21,
+            ]
+            .into(),
+        )
+        .unwrap();
+
+        let message = b"test message for p256 interop";
+        let signature: Signature = signing_key.sign(message);
+
+        // Extract r, s as big-endian bytes
+        let r_bytes = signature.r().to_bytes();
+        let s_bytes = signature.s().to_bytes();
+
+        // Get public key as uncompressed point (0x04 || x || y)
+        use p256::ecdsa::VerifyingKey;
+        let verifying_key = VerifyingKey::from(&signing_key);
+        let pubkey_point = verifying_key.to_encoded_point(false);
+        let qx_bytes = pubkey_point.x().unwrap();
+        let qy_bytes = pubkey_point.y().unwrap();
+
+        // Hash the message with SHA-256 (what the p256 crate does internally)
+        use sha2::{Digest, Sha256};
+        let z_bytes: [u8; 32] = Sha256::digest(message).into();
+
+        // Convert from big-endian bytes to little-endian u64 limbs
+        let be_to_limbs = |bytes: &[u8]| -> [u64; 4] {
+            let mut padded = [0u8; 32];
+            let start = 32 - bytes.len().min(32);
+            padded[start..].copy_from_slice(&bytes[..bytes.len().min(32)]);
+            [
+                u64::from_be_bytes(padded[24..32].try_into().unwrap()),
+                u64::from_be_bytes(padded[16..24].try_into().unwrap()),
+                u64::from_be_bytes(padded[8..16].try_into().unwrap()),
+                u64::from_be_bytes(padded[0..8].try_into().unwrap()),
+            ]
+        };
+
+        let z = P256Fr::from_u64_arr(&be_to_limbs(&z_bytes)).unwrap();
+        let r = P256Fr::from_u64_arr(&be_to_limbs(r_bytes.as_slice())).unwrap();
+        let s = P256Fr::from_u64_arr(&be_to_limbs(s_bytes.as_slice())).unwrap();
+
+        let mut q_arr = [0u64; 8];
+        let qx_limbs = be_to_limbs(qx_bytes.as_slice());
+        let qy_limbs = be_to_limbs(qy_bytes.as_slice());
+        q_arr[..4].copy_from_slice(&qx_limbs);
+        q_arr[4..].copy_from_slice(&qy_limbs);
+        let q = P256Point::from_u64_arr(&q_arr).unwrap();
+
+        // Our inline verifier must accept a signature from the p256 crate
+        assert!(
+            ecdsa_verify(z, r, s, q).is_ok(),
+            "Failed to verify p256-crate signature"
+        );
+    }
+
+    /// Test with multiple different messages to catch any message-dependent bugs.
+    #[test]
+    fn test_interop_multiple_messages() {
+        use crate::sdk::{ecdsa_verify, P256Fr, P256Point};
+        use p256::ecdsa::{signature::Signer, Signature, SigningKey};
+        use sha2::{Digest, Sha256};
+
+        let signing_key = SigningKey::random(&mut rand::thread_rng());
+        let verifying_key = p256::ecdsa::VerifyingKey::from(&signing_key);
+        let pubkey_point = verifying_key.to_encoded_point(false);
+
+        let be_to_limbs = |bytes: &[u8]| -> [u64; 4] {
+            let mut padded = [0u8; 32];
+            let start = 32 - bytes.len().min(32);
+            padded[start..].copy_from_slice(&bytes[..bytes.len().min(32)]);
+            [
+                u64::from_be_bytes(padded[24..32].try_into().unwrap()),
+                u64::from_be_bytes(padded[16..24].try_into().unwrap()),
+                u64::from_be_bytes(padded[8..16].try_into().unwrap()),
+                u64::from_be_bytes(padded[0..8].try_into().unwrap()),
+            ]
+        };
+
+        let qx_limbs = be_to_limbs(pubkey_point.x().unwrap().as_slice());
+        let qy_limbs = be_to_limbs(pubkey_point.y().unwrap().as_slice());
+        let mut q_arr = [0u64; 8];
+        q_arr[..4].copy_from_slice(&qx_limbs);
+        q_arr[4..].copy_from_slice(&qy_limbs);
+        let q = P256Point::from_u64_arr(&q_arr).unwrap();
+
+        let messages: &[&[u8]] = &[
+            b"hello world",
+            b"",
+            b"a]",
+            &[0u8; 1000],
+            b"\xff\xff\xff\xff",
+        ];
+
+        for msg in messages {
+            let signature: Signature = signing_key.sign(msg);
+            let z_bytes: [u8; 32] = Sha256::digest(*msg).into();
+            let z = P256Fr::from_u64_arr(&be_to_limbs(&z_bytes)).unwrap();
+            let r =
+                P256Fr::from_u64_arr(&be_to_limbs(signature.r().to_bytes().as_slice())).unwrap();
+            let s =
+                P256Fr::from_u64_arr(&be_to_limbs(signature.s().to_bytes().as_slice())).unwrap();
+
+            assert!(
+                ecdsa_verify(z.clone(), r, s, q.clone()).is_ok(),
+                "Failed to verify p256-crate signature for message of len {}",
+                msg.len()
+            );
+        }
+    }
+
+    /// Test that a corrupted signature is rejected.
+    #[test]
+    fn test_interop_corrupted_signature_rejected() {
+        use crate::sdk::{ecdsa_verify, P256Fr, P256Point};
+        use p256::ecdsa::{signature::Signer, Signature, SigningKey};
+        use sha2::{Digest, Sha256};
+
+        let signing_key = SigningKey::from_bytes(
+            &[
+                0xC9, 0xAF, 0xA9, 0xD8, 0x45, 0xBA, 0x75, 0x16, 0x6B, 0x5C, 0x21, 0x57, 0x67, 0xB1,
+                0xD6, 0x93, 0x4E, 0x50, 0xC3, 0xDB, 0x36, 0xE8, 0x9B, 0x12, 0x7B, 0x8A, 0x62, 0x2B,
+                0x12, 0x0F, 0x67, 0x21,
+            ]
+            .into(),
+        )
+        .unwrap();
+
+        let message = b"test corruption";
+        let signature: Signature = signing_key.sign(message);
+        let z_bytes: [u8; 32] = Sha256::digest(message).into();
+
+        let verifying_key = p256::ecdsa::VerifyingKey::from(&signing_key);
+        let pubkey_point = verifying_key.to_encoded_point(false);
+
+        let be_to_limbs = |bytes: &[u8]| -> [u64; 4] {
+            let mut padded = [0u8; 32];
+            let start = 32 - bytes.len().min(32);
+            padded[start..].copy_from_slice(&bytes[..bytes.len().min(32)]);
+            [
+                u64::from_be_bytes(padded[24..32].try_into().unwrap()),
+                u64::from_be_bytes(padded[16..24].try_into().unwrap()),
+                u64::from_be_bytes(padded[8..16].try_into().unwrap()),
+                u64::from_be_bytes(padded[0..8].try_into().unwrap()),
+            ]
+        };
+
+        let z = P256Fr::from_u64_arr(&be_to_limbs(&z_bytes)).unwrap();
+        let r = P256Fr::from_u64_arr(&be_to_limbs(signature.r().to_bytes().as_slice())).unwrap();
+        let s = P256Fr::from_u64_arr(&be_to_limbs(signature.s().to_bytes().as_slice())).unwrap();
+
+        let qx_limbs = be_to_limbs(pubkey_point.x().unwrap().as_slice());
+        let qy_limbs = be_to_limbs(pubkey_point.y().unwrap().as_slice());
+        let mut q_arr = [0u64; 8];
+        q_arr[..4].copy_from_slice(&qx_limbs);
+        q_arr[4..].copy_from_slice(&qy_limbs);
+        let q = P256Point::from_u64_arr(&q_arr).unwrap();
+
+        // Valid signature should pass
+        assert!(ecdsa_verify(z.clone(), r.clone(), s.clone(), q.clone()).is_ok());
+
+        // Wrong message hash should fail
+        let wrong_z_bytes: [u8; 32] = Sha256::digest(b"wrong message").into();
+        let wrong_z = P256Fr::from_u64_arr(&be_to_limbs(&wrong_z_bytes)).unwrap();
+        assert!(ecdsa_verify(wrong_z, r.clone(), s.clone(), q.clone()).is_err());
+
+        // Corrupted r (flip a bit) should fail
+        let mut r_limbs = r.e();
+        r_limbs[0] ^= 1;
+        if let Ok(bad_r) = P256Fr::from_u64_arr(&r_limbs) {
+            assert!(ecdsa_verify(z.clone(), bad_r, s.clone(), q.clone()).is_err());
+        }
+    }
 }
