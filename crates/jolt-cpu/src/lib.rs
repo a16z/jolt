@@ -2,19 +2,19 @@
 //!
 //! Provides [`CpuBackend`], the reference [`ComputeBackend`](jolt_compute::ComputeBackend)
 //! implementation using `Vec<T>` buffers and Rayon parallelism. Also provides
-//! kernel compilation from [`CompositionFormula`]s into [`CpuKernel`]s.
+//! kernel compilation from [`Formula`]s into [`CpuKernel`]s.
 //!
 //! # Kernel compilation strategies
 //!
 //! - **ProductSum D∈{4,8,16,32}** — hand-optimized closures with fully unrolled
 //!   product evaluation. These cover ~80% of prover time (instruction RA
 //!   sumchecks and claim reductions). Detected via
-//!   [`CompositionFormula::as_product_sum()`].
+//!   [`Formula::as_product_sum()`].
 //!
 //! - **ProductSum generic** — loop-based fallback for other D values.
 //!
 //! - **Hamming booleanity** — hand-coded `eq · h · (h − 1)` kernel. Detected
-//!   via [`CompositionFormula::is_hamming_booleanity()`].
+//!   via [`Formula::is_hamming_booleanity()`].
 //!
 //! - **Eq product** — hand-coded `a · b` kernel for 2-input degree-2 products.
 //!
@@ -24,61 +24,23 @@ mod backend;
 mod formula;
 mod product_sum;
 mod specialized;
-pub use jolt_ir::toom_cook;
+pub mod toom_cook;
 
 pub use backend::{CpuBackend, CpuKernel};
 
-use jolt_compiler::CompositionFormula;
+use jolt_compiler::Formula;
 use jolt_field::Field;
 
-/// Convert a `jolt_ir::CompositionFormula` to `jolt_compiler::CompositionFormula`.
-///
-/// Bridge for the migration period while jolt-ir's ExprBuilder still produces
-/// its own CompositionFormula type. Both types are structurally identical.
-pub fn from_ir_formula(ir: &jolt_ir::CompositionFormula) -> CompositionFormula {
-    let terms = ir
-        .terms
-        .iter()
-        .map(|t| jolt_compiler::ProductTerm {
-            coefficient: t.coefficient,
-            factors: t
-                .factors
-                .iter()
-                .map(|f| match f {
-                    jolt_ir::Factor::Input(i) => jolt_compiler::Factor::Input(*i),
-                    jolt_ir::Factor::Challenge(i) => jolt_compiler::Factor::Challenge(*i),
-                })
-                .collect(),
-        })
-        .collect();
-    CompositionFormula::from_terms(terms)
-}
-
-/// Compile a [`CompositionFormula`] into a CPU kernel.
+/// Compile a [`Formula`] into a CPU kernel.
 ///
 /// Dispatches to specialized implementations based on the formula's structure:
 /// 1. Eq-product / Hamming booleanity → hand-coded standard-grid kernels
 /// 2. Product-sum with D∈{4,8,16,32} → Toom-Cook grid kernels
 /// 3. All other formulas → generic standard-grid evaluator
 ///
-/// For formulas with challenge factors, use [`compile_with_challenges`] instead.
-pub fn compile<F: Field>(formula: &CompositionFormula) -> CpuKernel<F> {
-    compile_with_challenges(formula, &[])
-}
-
-/// Compile a [`CompositionFormula`] into a CPU kernel with challenge values
-/// baked in.
-///
-/// Like [`compile`], but `Factor::Challenge(i)` references are resolved to
-/// `challenges[i]`. Out-of-bounds indices are baked as `F::zero()`. For pure
-/// product-sum formulas (no challenge factors), `challenges` is ignored.
-///
-/// This is the primary entry point for compiling kernels that use
-/// Fiat-Shamir-derived values (gamma, tau, batching coefficients, etc.).
-pub fn compile_with_challenges<F: Field>(
-    formula: &CompositionFormula,
-    challenges: &[F],
-) -> CpuKernel<F> {
+/// Challenge values are resolved at dispatch time via
+/// [`CpuKernel::evaluate`], not at compilation.
+pub fn compile<F: Field>(formula: &Formula) -> CpuKernel<F> {
     // Standard-grid specializations must be checked first — these patterns
     // also match as_product_sum() but require standard grid {0,2,3,...} output,
     // not the Toom-Cook grid {1,...,D-1,∞}.
@@ -99,32 +61,31 @@ pub fn compile_with_challenges<F: Field>(
     }
 
     // Generic: compile directly from the normalized formula
-    formula::compile_with_challenges::<F>(formula, challenges)
+    formula::compile::<F>(formula)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::Fr;
     use jolt_compiler::{Factor, ProductTerm};
-    use jolt_ir::ExprBuilder;
+    use jolt_field::Fr;
     use num_traits::{One, Zero};
 
     fn eval_kernel(kernel: &CpuKernel<Fr>, lo: &[Fr], hi: &[Fr], n: usize) -> Vec<Fr> {
         let mut out = vec![Fr::zero(); n];
-        kernel.evaluate(lo, hi, &mut out);
+        kernel.evaluate(lo, hi, &[], &mut out);
         out
     }
 
     /// Helper: build a pure product-sum formula with `p` groups of `d` consecutive inputs.
-    fn product_sum_formula(d: usize, p: usize) -> CompositionFormula {
+    fn product_sum_formula(d: usize, p: usize) -> Formula {
         let terms: Vec<_> = (0..p)
             .map(|g| ProductTerm {
                 coefficient: 1,
                 factors: (0..d).map(|j| Factor::Input((g * d + j) as u32)).collect(),
             })
             .collect();
-        CompositionFormula::from_terms(terms)
+        Formula::from_terms(terms)
     }
 
     #[test]
@@ -201,16 +162,15 @@ mod tests {
 
     #[test]
     fn compile_formula_simple_product() {
-        let b = ExprBuilder::new();
-        let a = b.opening(0);
-        let bv = b.opening(1);
-        let expr = b.build(a * bv);
-        let formula = from_ir_formula(&expr.to_composition_formula());
+        // Input(0) * Input(1)
+        let formula = Formula::from_terms(vec![ProductTerm {
+            coefficient: 1,
+            factors: vec![Factor::Input(0), Factor::Input(1)],
+        }]);
         let kernel: CpuKernel<Fr> = compile(&formula);
 
         let lo = vec![Fr::from_u64(3), Fr::from_u64(5)];
         let hi = vec![Fr::from_u64(7), Fr::from_u64(11)];
-        // Eq-product fast path: grid {0, 2}, 2 evals
         let result = eval_kernel(&kernel, &lo, &hi, formula.degree());
 
         assert_eq!(result[0], Fr::from_u64(15));
@@ -219,10 +179,17 @@ mod tests {
 
     #[test]
     fn compile_formula_booleanity() {
-        let b = ExprBuilder::new();
-        let h = b.opening(0);
-        let expr = b.build(h * h - h);
-        let formula = from_ir_formula(&expr.to_composition_formula());
+        // h^2 - h = [coeff:1 Input(0)*Input(0)] + [coeff:-1 Input(0)]
+        let formula = Formula::from_terms(vec![
+            ProductTerm {
+                coefficient: 1,
+                factors: vec![Factor::Input(0), Factor::Input(0)],
+            },
+            ProductTerm {
+                coefficient: -1,
+                factors: vec![Factor::Input(0)],
+            },
+        ]);
         let kernel: CpuKernel<Fr> = compile(&formula);
 
         let lo = vec![Fr::from_u64(3)];
@@ -235,49 +202,56 @@ mod tests {
 
     #[test]
     fn compile_formula_with_challenge() {
-        let b = ExprBuilder::new();
-        let a = b.opening(0);
-        let gamma = b.challenge(0);
-        let expr = b.build(gamma * a);
-        let formula = from_ir_formula(&expr.to_composition_formula());
+        // Challenge(0) * Input(0)
+        let formula = Formula::from_terms(vec![ProductTerm {
+            coefficient: 1,
+            factors: vec![Factor::Challenge(0), Factor::Input(0)],
+        }]);
 
-        let kernel_zero: CpuKernel<Fr> = compile(&formula);
+        let kernel: CpuKernel<Fr> = compile(&formula);
         let lo = vec![Fr::from_u64(5)];
         let hi = vec![Fr::from_u64(10)];
-        let result = eval_kernel(&kernel_zero, &lo, &hi, formula.degree());
+
+        // No challenges → Challenge(0) defaults to zero
+        let result = eval_kernel(&kernel, &lo, &hi, formula.degree());
         assert_eq!(result[0], Fr::zero());
 
-        let kernel: CpuKernel<Fr> = compile_with_challenges(&formula, &[Fr::from_u64(7)]);
-        let result = eval_kernel(&kernel, &lo, &hi, formula.degree());
-        assert_eq!(result[0], Fr::from_u64(35));
+        // With challenges passed at dispatch time
+        let mut out = vec![Fr::zero(); formula.degree()];
+        kernel.evaluate(&lo, &hi, &[Fr::from_u64(7)], &mut out);
+        assert_eq!(out[0], Fr::from_u64(35));
     }
 
     #[test]
     fn eq_product_detection() {
-        let b = ExprBuilder::new();
-        let a = b.opening(0);
-        let bv = b.opening(1);
-        let expr = b.build(a * bv);
-        let formula = from_ir_formula(&expr.to_composition_formula());
+        // Input(0) * Input(1) — should be detected as eq_product
+        let formula = Formula::from_terms(vec![ProductTerm {
+            coefficient: 1,
+            factors: vec![Factor::Input(0), Factor::Input(1)],
+        }]);
         assert!(formula.is_eq_product());
 
         // Three inputs — not eq_product
-        let b2 = ExprBuilder::new();
-        let a2 = b2.opening(0);
-        let bv2 = b2.opening(1);
-        let c2 = b2.opening(2);
-        let expr3 = b2.build(a2 * bv2 * c2);
-        let formula3 = from_ir_formula(&expr3.to_composition_formula());
+        let formula3 = Formula::from_terms(vec![ProductTerm {
+            coefficient: 1,
+            factors: vec![Factor::Input(0), Factor::Input(1), Factor::Input(2)],
+        }]);
         assert!(!formula3.is_eq_product());
     }
 
     #[test]
     fn hamming_booleanity_detection() {
-        let b = ExprBuilder::new();
-        let h = b.opening(0);
-        let gamma = b.challenge(0);
-        let expr = b.build(gamma * (h * h - h));
-        let formula = from_ir_formula(&expr.to_composition_formula());
+        // Challenge(0)*Input(0)*Input(0) + [-1]*Challenge(0)*Input(0)
+        let formula = Formula::from_terms(vec![
+            ProductTerm {
+                coefficient: 1,
+                factors: vec![Factor::Challenge(0), Factor::Input(0), Factor::Input(0)],
+            },
+            ProductTerm {
+                coefficient: -1,
+                factors: vec![Factor::Challenge(0), Factor::Input(0)],
+            },
+        ]);
         assert!(formula.is_hamming_booleanity());
     }
 }

@@ -136,7 +136,7 @@ impl Vertex {
 /// A SNARK protocol: DAG of vertices connected by claims.
 ///
 /// Pure mathematical specification — no scheduling information.
-/// The compiler transforms this into [`CompilerOutput`](crate::output::CompilerOutput).
+/// The compiler transforms this into a [`Module`](crate::module::Module).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Protocol {
     pub dim_names: Vec<String>,

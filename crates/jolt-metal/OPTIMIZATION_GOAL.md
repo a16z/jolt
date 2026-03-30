@@ -44,7 +44,7 @@ Anything in these crates is fair game:
   are allowed but only if they also improve the hybrid path.)
 - `jolt-zkvm/src/evaluators/` — KernelEvaluator, witness construction
 - `jolt-sumcheck` — SumcheckProver protocol loop
-- `jolt-ir` — KernelDescriptor, expressions
+- `jolt-compiler` — CompositionFormula, expressions
 
 NOT in scope (would change the problem, not solve it):
 - Changing the field (BN254 → Goldilocks)

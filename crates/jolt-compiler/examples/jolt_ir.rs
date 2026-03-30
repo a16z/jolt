@@ -6,11 +6,16 @@
 //! cargo run --example jolt_ir -p jolt-compiler -- --dot      # Graphviz DOT (protocol only)
 //! ```
 
-#![allow(non_snake_case, unused_variables, clippy::print_stderr, clippy::print_stdout)]
+#![allow(
+    non_snake_case,
+    unused_variables,
+    clippy::print_stderr,
+    clippy::print_stdout
+)]
 
 use jolt_compiler::{
-    compile, ChallengeSource, ClaimId, CompileParams, Expr, Objective, Poly, PolyKind, Protocol,
-    ProverStep, PublicPoly, SolverConfig, Vertex,
+    compile, ChallengeSource, ClaimId, CompileParams, Expr, Objective, Op, Poly, PolyKind,
+    Protocol, PublicPoly, SolverConfig, Vertex,
 };
 use PolyKind::{Committed, Public, Virtual};
 
@@ -50,16 +55,52 @@ fn main() {
     eprintln!(
         "  vertices: {} ({} sumchecks, {} uniskips, {} evals)",
         protocol.vertices.len(),
-        protocol.vertices.iter().filter(|v| matches!(v, Vertex::Sumcheck { domain_size: None, .. })).count(),
-        protocol.vertices.iter().filter(|v| matches!(v, Vertex::Sumcheck { domain_size: Some(_), .. })).count(),
-        protocol.vertices.iter().filter(|v| matches!(v, Vertex::Evaluate { .. })).count(),
+        protocol
+            .vertices
+            .iter()
+            .filter(|v| matches!(
+                v,
+                Vertex::Sumcheck {
+                    domain_size: None,
+                    ..
+                }
+            ))
+            .count(),
+        protocol
+            .vertices
+            .iter()
+            .filter(|v| matches!(
+                v,
+                Vertex::Sumcheck {
+                    domain_size: Some(_),
+                    ..
+                }
+            ))
+            .count(),
+        protocol
+            .vertices
+            .iter()
+            .filter(|v| matches!(v, Vertex::Evaluate { .. }))
+            .count(),
     );
     eprintln!(
         "  polys: {} ({} committed, {} virtual, {} public)",
         protocol.polynomials.len(),
-        protocol.polynomials.iter().filter(|p| matches!(p.kind, Committed)).count(),
-        protocol.polynomials.iter().filter(|p| matches!(p.kind, Virtual)).count(),
-        protocol.polynomials.iter().filter(|p| matches!(p.kind, Public(_))).count(),
+        protocol
+            .polynomials
+            .iter()
+            .filter(|p| matches!(p.kind, Committed))
+            .count(),
+        protocol
+            .polynomials
+            .iter()
+            .filter(|p| matches!(p.kind, Virtual))
+            .count(),
+        protocol
+            .polynomials
+            .iter()
+            .filter(|p| matches!(p.kind, Public(_)))
+            .count(),
     );
     eprintln!("  claims: {}", protocol.claims.len());
     eprintln!("  dims: {:?}", protocol.dim_names);
@@ -67,15 +108,19 @@ fn main() {
 
     let polys = &output.polys;
     let challenges = &output.challenges;
-    let sched = &output.schedule;
+    let sched = &output.prover;
 
     // Prover schedule stats
     eprintln!("\n=== Prover Schedule ===");
-    eprintln!("  steps: {}", sched.steps.len());
+    eprintln!("  ops: {}", sched.ops.len());
     eprintln!("  kernels: {}", sched.kernels.len());
     eprintln!("  polys: {}", polys.len());
     eprintln!("  challenges: {}", challenges.len());
-    eprintln!("  FS steps: {}, compute steps: {}", sched.fs_step_count(), sched.compute_step_count());
+    eprintln!(
+        "  FS ops: {}, compute ops: {}",
+        sched.fs_op_count(),
+        sched.compute_op_count()
+    );
 
     let round_challenges = challenges
         .iter()
@@ -84,53 +129,79 @@ fn main() {
     eprintln!("  round challenges: {round_challenges}");
 
     for (i, k) in sched.kernels.iter().enumerate() {
-        let input_names: Vec<&str> = k.inputs.iter().map(|&pi| polys[pi].name.as_str()).collect();
+        let input_names: Vec<&str> = k
+            .inputs
+            .iter()
+            .map(|b| polys[b.poly()].name.as_str())
+            .collect();
         eprintln!(
             "  kernel {i}: degree={}, rounds={}, {} inputs [{}]",
-            k.degree, k.num_rounds, k.inputs.len(), input_names.join(", ")
+            k.degree,
+            k.num_rounds,
+            k.inputs.len(),
+            input_names.join(", ")
         );
     }
 
-    // Verifier script stats
-    let script = &output.script;
-    eprintln!("\n=== Verifier Script ===");
-    eprintln!("  stages: {}", script.stages.len());
-    for (i, stage) in script.stages.iter().enumerate() {
+    // Verifier schedule stats
+    let vs = &output.verifier;
+    eprintln!("\n=== Verifier Schedule ===");
+    eprintln!("  stages: {}", vs.stages.len());
+    for (i, stage) in vs.stages.iter().enumerate() {
         eprintln!(
             "  stage {i}: rounds={}, degree={}, {} evals, {} post-squeeze",
-            stage.num_rounds, stage.degree, stage.evaluations.len(), stage.post_squeeze.len(),
+            stage.num_rounds,
+            stage.degree,
+            stage.evaluations.len(),
+            stage.post_squeeze.len(),
         );
     }
 
     // Dump full schedule
-    eprintln!("\n=== Steps ({}) ===", sched.steps.len());
-    for (i, step) in sched.steps.iter().enumerate() {
-        match step {
-            ProverStep::AppendCommitments { polys: committed } => {
+    eprintln!("\n=== Ops ({}) ===", sched.ops.len());
+    for (i, op) in sched.ops.iter().enumerate() {
+        match op {
+            Op::EmitCommitments { polys: committed } => {
                 let names: Vec<&str> = committed.iter().map(|&p| polys[p].name.as_str()).collect();
-                eprintln!("  [{i:>4}] FS  AppendCommitments({} polys): {}", committed.len(), names.join(", "));
+                eprintln!(
+                    "  [{i:>4}] FS  EmitCommitments({} polys): {}",
+                    committed.len(),
+                    names.join(", ")
+                );
             }
-            ProverStep::AppendRoundPoly { kernel, num_coeffs } => {
-                eprintln!("  [{i:>4}] FS  AppendRoundPoly(kernel={kernel}, {num_coeffs} coeffs)");
+            Op::EmitRoundPoly { kernel, num_coeffs } => {
+                eprintln!("  [{i:>4}] FS  EmitRoundPoly(kernel={kernel}, {num_coeffs} coeffs)");
             }
-            ProverStep::AppendScalars { evals } => {
-                eprintln!("  [{i:>4}] FS  AppendScalars({} evals)", evals.len());
+            Op::EmitScalars { evals } => {
+                eprintln!("  [{i:>4}] FS  EmitScalars({} evals)", evals.len());
             }
-            ProverStep::Squeeze { challenge } => {
+            Op::Squeeze { challenge } => {
                 let ch = &challenges[*challenge];
                 eprintln!("  [{i:>4}] FS  Squeeze({}: {})", challenge, ch.name);
             }
-            ProverStep::Materialize { poly } => {
-                eprintln!("  [{i:>4}]     Materialize({})", polys[*poly].name);
+            Op::SumcheckRound {
+                kernel,
+                round,
+                bind_challenge,
+            } => {
+                let bind = bind_challenge.map_or("none".to_string(), |c| format!("ch={c}"));
+                eprintln!("  [{i:>4}]     SumcheckRound(k{kernel}r{round}, bind={bind})");
             }
-            ProverStep::SumcheckRound { kernel, round, num_vars_remaining } => {
-                eprintln!("  [{i:>4}]     SumcheckRound(k{kernel}r{round}, vars={num_vars_remaining})");
-            }
-            ProverStep::Bind { polys: bound_polys, challenge, order } => {
-                eprintln!("  [{i:>4}]     Bind({} polys, ch={}, {:?})", bound_polys.len(), challenge, order);
-            }
-            ProverStep::Evaluate { poly } => {
+            Op::Evaluate { poly } => {
                 eprintln!("  [{i:>4}]     Evaluate({})", polys[*poly].name);
+            }
+            Op::FinalBind {
+                polys: bound,
+                challenge,
+                order,
+            } => {
+                eprintln!(
+                    "  [{i:>4}]     FinalBind({} polys, ch={challenge}, {order:?})",
+                    bound.len()
+                );
+            }
+            Op::Release { poly } => {
+                eprintln!("  [{i:>4}]     Release({})", polys[*poly].name);
             }
         }
     }
@@ -175,7 +246,11 @@ fn build_jolt_protocol() -> Protocol {
     let ram_init = p.poly("RamInit", &[log_K_ram], Public(PublicPoly::Preprocessed));
     let io_mask = p.poly("IoMask", &[log_K_ram], Public(PublicPoly::Preprocessed));
     let val_io = p.poly("ValIo", &[log_K_ram], Public(PublicPoly::Preprocessed));
-    let lookup_table = p.poly("LookupTable", &[log_K_inst], Public(PublicPoly::Preprocessed));
+    let lookup_table = p.poly(
+        "LookupTable",
+        &[log_K_inst],
+        Public(PublicPoly::Preprocessed),
+    );
     let bc_table: Vec<Poly> = (0..5)
         .map(|s| {
             p.poly(
@@ -186,7 +261,11 @@ fn build_jolt_protocol() -> Protocol {
         })
         .collect();
     let f_entry_trace = p.poly("FEntryTrace", &[log_K_bc], Public(PublicPoly::Preprocessed));
-    let f_entry_expected = p.poly("FEntryExpected", &[log_K_bc], Public(PublicPoly::Preprocessed));
+    let f_entry_expected = p.poly(
+        "FEntryExpected",
+        &[log_K_bc],
+        Public(PublicPoly::Preprocessed),
+    );
 
     // Virtual polynomials
     let az = p.poly("Az", &[log_T], Virtual);
@@ -304,7 +383,8 @@ fn build_jolt_protocol() -> Protocol {
     let left_inst_eval = p.evaluate(left_inst_input, product[0]);
     let right_inst_eval = p.evaluate(right_inst_input, product[0]);
     let _inst_input = p.sumcheck(
-        eq_T * (is_rs2 * rs2_val + is_imm_flag * imm_val
+        eq_T * (is_rs2 * rs2_val
+            + is_imm_flag * imm_val
             + gamma * (is_rs1 * rs1_val + is_pc_flag * unexpanded_pc)),
         right_inst_eval + gamma * left_inst_eval,
         &[log_T],
@@ -474,10 +554,7 @@ fn build_jolt_protocol() -> Protocol {
     }
     let _inst_ra_virt = p.sumcheck(ra_comp, ra_input, &[log_T]);
 
-    let ram_ra_evals: Vec<ClaimId> = ram_ra
-        .iter()
-        .map(|&ra| p.evaluate(ra, ram_rw[0]))
-        .collect();
+    let ram_ra_evals: Vec<ClaimId> = ram_ra.iter().map(|&ra| p.evaluate(ra, ram_rw[0])).collect();
     let ram_ra_product = ram_ra
         .iter()
         .skip(1)
@@ -531,10 +608,8 @@ fn build_jolt_protocol() -> Protocol {
         &[log_T],
         Public(PublicPoly::Eq(Some(ram_val_sc[0]))),
     );
-    let advice_trusted_cycle =
-        p.sumcheck(eq_advice_cycle * trusted, trusted_eval, &[log_T]);
-    let advice_untrusted_cycle =
-        p.sumcheck(eq_advice_cycle * untrusted, untrusted_eval, &[log_T]);
+    let advice_trusted_cycle = p.sumcheck(eq_advice_cycle * trusted, trusted_eval, &[log_T]);
+    let advice_untrusted_cycle = p.sumcheck(eq_advice_cycle * untrusted, untrusted_eval, &[log_T]);
 
     // S6: Fused HammingWeight + Address Reduction
     let eq_hw_bool = p.poly(
@@ -604,10 +679,8 @@ fn build_jolt_protocol() -> Protocol {
         } else {
             gamma.pow(b) * ram_hw_eval
         };
-        hw_input = hw_input
-            + hw_term
-            + gamma.pow(b + 1) * hw_G_bool[i]
-            + gamma.pow(b + 2) * hw_G_virt[i];
+        hw_input =
+            hw_input + hw_term + gamma.pow(b + 1) * hw_G_bool[i] + gamma.pow(b + 2) * hw_G_virt[i];
     }
 
     let _hw_cr = p.sumcheck(hw_comp, hw_input, &[log_K_chunk]);
@@ -624,8 +697,7 @@ fn build_jolt_protocol() -> Protocol {
     );
     let trusted_cycle_mid = p.evaluate(trusted, advice_trusted_cycle[0]);
     let untrusted_cycle_mid = p.evaluate(untrusted, advice_untrusted_cycle[0]);
-    let _advice_trusted_addr =
-        p.sumcheck(eq_advice_addr_t * trusted, trusted_cycle_mid, &[log_T]);
+    let _advice_trusted_addr = p.sumcheck(eq_advice_addr_t * trusted, trusted_cycle_mid, &[log_T]);
     let _advice_untrusted_addr =
         p.sumcheck(eq_advice_addr_u * untrusted, untrusted_cycle_mid, &[log_T]);
 

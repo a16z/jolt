@@ -18,10 +18,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use jolt_compiler::Formula;
 use jolt_compute::{BindingOrder, ComputeBackend, HybridBackend};
 use jolt_cpu::CpuBackend;
 use jolt_field::{Field, Fr};
-use jolt_compiler::CompositionFormula;
 use jolt_metal::MetalBackend;
 use jolt_poly::EqPolynomial;
 use jolt_sumcheck::{SumcheckClaim, SumcheckProver};
@@ -62,7 +62,7 @@ fn random_fr(rng: &mut StdRng, n: usize) -> Vec<Fr> {
 struct ToomCookData {
     polys: Vec<Vec<Fr>>,
     eq_w: Vec<Fr>,
-    formula: CompositionFormula,
+    formula: Formula,
     degree: usize,
 }
 
@@ -110,15 +110,10 @@ fn build_toom_cook_witness<B: ComputeBackend>(
 struct StandardGridData {
     eq_table: Vec<Fr>,
     polys: Vec<Vec<Fr>>,
-    formula: CompositionFormula,
-    challenges: Vec<Fr>,
+    formula: Formula,
 }
 
-fn prepare_standard_grid(
-    formula: CompositionFormula,
-    num_polys: usize,
-    challenges: Vec<Fr>,
-) -> StandardGridData {
+fn prepare_standard_grid(formula: Formula, num_polys: usize) -> StandardGridData {
     let n = 1usize << NUM_VARS;
     let mut rng = StdRng::seed_from_u64(99);
 
@@ -127,7 +122,6 @@ fn prepare_standard_grid(
         eq_table: EqPolynomial::new(r).evaluations(),
         polys: (0..num_polys).map(|_| random_fr(&mut rng, n)).collect(),
         formula,
-        challenges,
     }
 }
 
@@ -135,11 +129,7 @@ fn build_standard_grid_witness<B: ComputeBackend>(
     data: &StandardGridData,
     backend: &Arc<B>,
 ) -> (KernelEvaluator<Fr, B>, SumcheckClaim<Fr>) {
-    let kernel = if data.challenges.is_empty() {
-        backend.compile_kernel::<Fr>(&data.formula)
-    } else {
-        backend.compile_kernel_with_challenges::<Fr>(&data.formula, &data.challenges)
-    };
+    let kernel = backend.compile_kernel::<Fr>(&data.formula);
 
     let mut inputs: Vec<_> = vec![backend.upload(&data.eq_table)];
     inputs.extend(data.polys.iter().map(|p| backend.upload(p)));
@@ -204,15 +194,9 @@ fn bench_toom_cook(c: &mut Criterion, name: &str, d: usize, num_products: usize)
     group.finish();
 }
 
-fn bench_standard_grid(
-    c: &mut Criterion,
-    name: &str,
-    formula: CompositionFormula,
-    num_polys: usize,
-    challenges: Vec<Fr>,
-) {
+fn bench_standard_grid(c: &mut Criterion, name: &str, formula: Formula, num_polys: usize) {
     let mut group = c.benchmark_group(format!("e2e/{name}"));
-    let data = prepare_standard_grid(formula, num_polys, challenges);
+    let data = prepare_standard_grid(formula, num_polys);
 
     let cpu: Arc<CpuBackend> = Arc::new(CpuBackend);
     group.bench_function(BenchmarkId::new("cpu", ""), |b| {
@@ -258,11 +242,11 @@ fn bench_toom_d8_p1(c: &mut Criterion) {
 }
 
 fn bench_eq_product(c: &mut Criterion) {
-    bench_standard_grid(c, "eq_product", catalog::eq_product(), 1, vec![]);
+    bench_standard_grid(c, "eq_product", catalog::eq_product(), 1);
 }
 
 fn bench_hamming(c: &mut Criterion) {
-    bench_standard_grid(c, "hamming", catalog::hamming_booleanity(), 1, vec![]);
+    bench_standard_grid(c, "hamming", catalog::hamming_booleanity(), 1);
 }
 
 /// Single-iteration tracing run: `JOLT_TRACE=1 cargo bench -p jolt-metal --bench sumcheck_e2e -q -- --profile-time=5`

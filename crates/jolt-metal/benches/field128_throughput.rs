@@ -64,11 +64,11 @@ struct ReduceKernels {
 
 impl ReduceKernels {
     fn compile_product_sum<F: MontgomeryConstants>(device: &Device, d: usize, p: usize) -> Self {
-        use jolt_compiler::{CompositionFormula, Factor, ProductTerm};
+        use jolt_compiler::{Factor, Formula, ProductTerm};
 
         let field_config = MslFieldParams::new::<F>();
         let device_config = MetalDeviceConfig::detect(device);
-        let formula = CompositionFormula::from_terms(
+        let formula = Formula::from_terms(
             (0..p)
                 .map(|g| ProductTerm {
                     coefficient: 1,
@@ -876,8 +876,8 @@ fn bench_reduce_d8_groupsize(c: &mut Criterion) {
         };
         let field_config = MslFieldParams::new::<Fr>();
         let formula = {
-            use jolt_compiler::{CompositionFormula, Factor, ProductTerm};
-            CompositionFormula::from_terms(
+            use jolt_compiler::{Factor, Formula, ProductTerm};
+            Formula::from_terms(
                 (0..p)
                     .map(|g| ProductTerm {
                         coefficient: 1,

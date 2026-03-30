@@ -6,7 +6,7 @@ Part of the [Jolt](https://github.com/a16z/jolt) zkVM.
 
 ## Overview
 
-This crate provides symbolic execution, AST capture, and pluggable codegen backends for transpiling the Jolt verifier into external proof systems (gnark/Groth16, Spartan+HyperKZG, etc.).
+This crate provides symbolic execution, AST capture, and pluggable codegen backends for transpiling the Jolt verifier into external proof systems (gnark/Groth16, etc.).
 
 The pipeline works in four stages:
 
@@ -36,7 +36,6 @@ The pipeline works in four stages:
 
 ### Modules
 
-- **`spartan`** -- Spartan AST emitter backend for R1CS constraint generation.
 - **`transcript`** -- `PoseidonSymbolicTranscript` for symbolic Fiat-Shamir.
 - **`scalar_ops`** -- BN254 scalar field arithmetic over `[u64; 4]` limb representation.
 - **`tunneling`** -- Thread-local channel for passing symbolic values through `from_u128` boundaries.
@@ -45,7 +44,7 @@ The pipeline works in four stages:
 
 ```
 jolt-field ─┐
-jolt-ir    ─┼─> jolt-wrapper
+             ├─> jolt-wrapper
 jolt-transcript ─┘
 ```
 

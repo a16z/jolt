@@ -1,12 +1,3 @@
 [package]
 name = "z3-verifier"
 edition = "2021"
-
-[dependencies]
-paste.workspace = true
-
-jolt-instructions = { path = "../crates/jolt-instructions" }
-jolt-ir = { path = "../crates/jolt-ir", features = ["z3"] }
-common = { path = "../common" }
-tracer = { path = "../tracer" }
-z3 = "0.19.2"

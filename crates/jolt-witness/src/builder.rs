@@ -9,8 +9,8 @@
 
 use std::marker::PhantomData;
 
+use crate::PolynomialId;
 use jolt_field::Field;
-use jolt_ir::PolynomialId;
 
 use crate::config::WitnessConfig;
 use crate::cycle::CycleData;

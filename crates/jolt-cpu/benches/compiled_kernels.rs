@@ -1,10 +1,9 @@
 #![allow(unused_results)]
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use jolt_cpu::{compile, from_ir_formula};
+use jolt_compiler::{Factor, Formula, ProductTerm};
+use jolt_cpu::compile;
 use jolt_field::{Field, Fr};
-use jolt_compiler::{CompositionFormula, Factor, ProductTerm};
-use jolt_ir::ExprBuilder;
 use num_traits::Zero;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -17,14 +16,14 @@ fn random_vecs(n: usize, seed: u64) -> (Vec<Fr>, Vec<Fr>) {
 }
 
 /// Helper: build a pure product-sum formula with `p` groups of `d` consecutive inputs.
-fn product_sum_formula(d: usize, p: usize) -> CompositionFormula {
+fn product_sum_formula(d: usize, p: usize) -> Formula {
     let terms: Vec<_> = (0..p)
         .map(|g| ProductTerm {
             coefficient: 1,
             factors: (0..d).map(|j| Factor::Input((g * d + j) as u32)).collect(),
         })
         .collect();
-    CompositionFormula::from_terms(terms)
+    Formula::from_terms(terms)
 }
 
 fn bench_product_sum_kernels(c: &mut Criterion) {
@@ -48,7 +47,7 @@ fn bench_product_sum_kernels(c: &mut Criterion) {
                 |b, _| {
                     b.iter(|| {
                         let mut out = vec![Fr::zero(); num_evals];
-                        kernel.evaluate(&lo, &hi, &mut out);
+                        kernel.evaluate(&lo, &hi, &[], &mut out);
                         black_box(&out);
                     });
                 },
@@ -62,11 +61,17 @@ fn bench_product_sum_kernels(c: &mut Criterion) {
 fn bench_custom_kernel(c: &mut Criterion) {
     let mut group = c.benchmark_group("custom_kernel_eval");
 
-    // Booleanity: o0^2 - o0
-    let b = ExprBuilder::new();
-    let h = b.opening(0);
-    let expr = b.build(h * h - h);
-    let formula = from_ir_formula(&expr.to_composition_formula());
+    // Booleanity: h^2 - h = [coeff:1 Input(0)*Input(0)] + [coeff:-1 Input(0)]
+    let formula = Formula::from_terms(vec![
+        ProductTerm {
+            coefficient: 1,
+            factors: vec![Factor::Input(0), Factor::Input(0)],
+        },
+        ProductTerm {
+            coefficient: -1,
+            factors: vec![Factor::Input(0)],
+        },
+    ]);
     let kernel = compile::<Fr>(&formula);
     let (lo, hi) = random_vecs(1, 999);
 
@@ -75,19 +80,13 @@ fn bench_custom_kernel(c: &mut Criterion) {
     group.bench_function("booleanity", |bench| {
         bench.iter(|| {
             let mut out = vec![Fr::zero(); num_evals];
-            kernel.evaluate(&lo, &hi, &mut out);
+            kernel.evaluate(&lo, &hi, &[], &mut out);
             black_box(&out);
         });
     });
 
-    // Product: o0 * o1 * o2 * o3
-    let b = ExprBuilder::new();
-    let o0 = b.opening(0);
-    let o1 = b.opening(1);
-    let o2 = b.opening(2);
-    let o3 = b.opening(3);
-    let expr = b.build(o0 * o1 * o2 * o3);
-    let formula = from_ir_formula(&expr.to_composition_formula());
+    // Product: Input(0) * Input(1) * Input(2) * Input(3)
+    let formula = product_sum_formula(4, 1);
     let kernel = compile::<Fr>(&formula);
     let (lo, hi) = random_vecs(4, 1000);
 
@@ -96,7 +95,7 @@ fn bench_custom_kernel(c: &mut Criterion) {
     group.bench_function("product_4_via_custom", |bench| {
         bench.iter(|| {
             let mut out = vec![Fr::zero(); num_evals];
-            kernel.evaluate(&lo, &hi, &mut out);
+            kernel.evaluate(&lo, &hi, &[], &mut out);
             black_box(&out);
         });
     });

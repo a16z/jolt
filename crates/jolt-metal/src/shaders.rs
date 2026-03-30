@@ -2,50 +2,20 @@
 //!
 //! Provides shared infrastructure for compiling MSL source from generated
 //! field arithmetic and embedded shader files, and pre-compiled pipeline
-//! bundles for element-wise and interpolation operations.
+//! bundles for interpolation operations.
 
 use metal::{CompileOptions, ComputePipelineState, Device, Library};
 
 use crate::field_config::MslFieldParams;
 
 pub(crate) const SHADER_COMMON: &str = include_str!("shaders/common.metal");
-pub(crate) const SHADER_ELEMENTWISE: &str = include_str!("shaders/elementwise.metal");
 pub(crate) const SHADER_INTERPOLATION: &str = include_str!("shaders/interpolation.metal");
 
-/// Pre-compiled pipelines for element-wise Fr operations on Metal.
-pub(crate) struct ElementwiseKernels {
-    pub scale: ComputePipelineState,
-    pub add: ComputePipelineState,
-    pub sub: ComputePipelineState,
-    pub accumulate: ComputePipelineState,
-    pub sum: ComputePipelineState,
-    pub dot_product: ComputePipelineState,
-}
-
-impl ElementwiseKernels {
-    pub fn compile(device: &Device, field_config: &MslFieldParams) -> Self {
-        let source = build_source_with_preamble(&field_config.msl_preamble, &[SHADER_ELEMENTWISE]);
-        let options = CompileOptions::new();
-        let library = device
-            .new_library_with_source(&source, &options)
-            .expect("elementwise MSL compilation failed");
-
-        Self {
-            scale: make_pipeline(device, &library, "fr_scale_kernel"),
-            add: make_pipeline(device, &library, "fr_add_buf_kernel"),
-            sub: make_pipeline(device, &library, "fr_sub_buf_kernel"),
-            accumulate: make_pipeline(device, &library, "fr_accumulate_kernel"),
-            sum: make_pipeline(device, &library, "fr_sum_kernel"),
-            dot_product: make_pipeline(device, &library, "fr_dot_product_kernel"),
-        }
-    }
-}
-
-/// Pre-compiled pipelines for interpolation and product table operations.
+/// Pre-compiled pipelines for interpolation and eq table operations.
 pub(crate) struct InterpolationKernels {
     pub interpolate_low: ComputePipelineState,
     pub interpolate_inplace_high: ComputePipelineState,
-    pub product_table_round: ComputePipelineState,
+    pub eq_table_round: ComputePipelineState,
 }
 
 impl InterpolationKernels {
@@ -64,7 +34,7 @@ impl InterpolationKernels {
                 &library,
                 "fr_interpolate_inplace_high_kernel",
             ),
-            product_table_round: make_pipeline(device, &library, "fr_product_table_round_kernel"),
+            eq_table_round: make_pipeline(device, &library, "fr_eq_table_round_kernel"),
         }
     }
 }

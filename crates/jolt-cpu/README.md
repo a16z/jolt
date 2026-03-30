@@ -6,7 +6,7 @@ Part of the [Jolt](https://github.com/a16z/jolt) zkVM.
 
 ## Overview
 
-This crate compiles `jolt-ir` kernel descriptors into `jolt-compute` CPU kernels. It bridges the symbolic IR (field-agnostic) and the concrete CPU backend (field-specific closures).
+This crate compiles `jolt-compiler` composition formulas into `jolt-compute` CPU kernels. It bridges the symbolic formula representation (field-agnostic) and the concrete CPU backend (field-specific closures).
 
 ### Compilation Strategies
 
@@ -25,9 +25,9 @@ This crate compiles `jolt-ir` kernel descriptors into `jolt-compute` CPU kernels
 ## Dependency Position
 
 ```
-jolt-field ─┐
-jolt-ir    ─┼─► jolt-cpu
-jolt-compute ─┘
+jolt-field    ─┐
+jolt-compiler ─┼─► jolt-cpu
+jolt-compute  ─┘
 ```
 
 Used by `jolt-sumcheck` and `jolt-zkvm`.

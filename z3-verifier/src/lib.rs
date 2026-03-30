@@ -1,67 +1,7 @@
-mod cpu_constraints;
-mod virtual_sequences;
-
-#[macro_export]
-macro_rules! template_format {
-    (FormatR) => {
-        FormatR {
-            rd: 1,
-            rs1: 2,
-            rs2: 3,
-        }
-    };
-    (FormatI) => {
-        FormatI {
-            rd: 1,
-            rs1: 2,
-            imm: 1234,
-        }
-    };
-    (FormatU) => {
-        FormatU { rd: 1, imm: 1234 }
-    };
-    (FormatB) => {
-        FormatB {
-            rs1: 2,
-            rs2: 3,
-            imm: 1234,
-        }
-    };
-    (FormatJ) => {
-        FormatJ { rd: 1, imm: 1234 }
-    };
-    (FormatLoad) => {
-        FormatLoad {
-            rd: 1,
-            rs1: 2,
-            imm: 1234,
-        }
-    };
-    (FormatS) => {
-        FormatS {
-            rs1: 2,
-            rs2: 3,
-            imm: 1234,
-        }
-    };
-    (FormatAssert) => {
-        FormatAssert { rs1: 2, imm: 1234 }
-    };
-    (FormatVirtualRightShiftI) => {
-        FormatVirtualRightShiftI {
-            rd: 1,
-            rs1: 2,
-            imm: 1234,
-        }
-    };
-    (FormatVirtualRightShiftR) => {
-        FormatVirtualRightShiftR {
-            rd: 1,
-            rs1: 2,
-            rs2: 3,
-        }
-    };
-    (FormatFence) => {
-        FormatFence {}
-    };
-}
+//! Z3 SMT solver verification of Jolt R1CS constraints and virtual sequences.
+//!
+//! Uses Z3 to verify (1) R1CS/product constraints and (2) virtual sequences
+//! used by Jolt for consistency and correctness.
+//!
+//! **Status: pending rewrite against jolt-compiler IR.**
+//! See README.md for the target design and setup requirements.

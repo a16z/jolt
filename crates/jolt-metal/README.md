@@ -8,7 +8,7 @@ Targets Apple Silicon (M1+) unified memory architecture.
 ## Architecture
 
 ```
-jolt-ir::KernelDescriptor
+CompositionFormula
     ↓ compiler.rs (AOT)
 MSL source string
     ↓ MTLDevice.makeLibrary(source:)
@@ -26,7 +26,7 @@ MetalBuffer<T> (MTLBuffer + typed len)
 ```
 jolt-field ← jolt-compute ← jolt-metal
                                ↑
-                            jolt-ir (for KernelDescriptor → MSL compilation)
+                            jolt-compiler (for CompositionFormula → MSL compilation)
 ```
 
 No dependency on jolt-sumcheck, jolt-zkvm, or any protocol crate.

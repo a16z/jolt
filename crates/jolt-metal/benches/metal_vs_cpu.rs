@@ -10,10 +10,10 @@
 #![allow(unused_results)]
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use jolt_compiler::{Factor, Formula, ProductTerm};
 use jolt_compute::{BindingOrder, ComputeBackend, EqInput};
 use jolt_cpu::CpuBackend;
 use jolt_field::{Field, Fr};
-use jolt_compiler::{CompositionFormula, Factor, ProductTerm};
 use jolt_metal::MetalBackend;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -22,14 +22,14 @@ fn random_fr(rng: &mut StdRng, n: usize) -> Vec<Fr> {
     (0..n).map(|_| Fr::random(rng)).collect()
 }
 
-fn product_sum_formula(d: usize, p: usize) -> CompositionFormula {
+fn product_sum_formula(d: usize, p: usize) -> Formula {
     let terms: Vec<_> = (0..p)
         .map(|g| ProductTerm {
             coefficient: 1,
             factors: (0..d).map(|j| Factor::Input((g * d + j) as u32)).collect(),
         })
         .collect();
-    CompositionFormula::from_terms(terms)
+    Formula::from_terms(terms)
 }
 
 /// Two sizes: near-crossover and saturated.
@@ -76,6 +76,7 @@ fn bench_pairwise_reduce(c: &mut Criterion) {
                             &mtl_refs,
                             EqInput::Weighted(&mtl_w),
                             &mtl_k,
+                            &[],
                             formula.degree(),
                             BindingOrder::LowToHigh,
                         )
@@ -93,6 +94,7 @@ fn bench_pairwise_reduce(c: &mut Criterion) {
                             &cpu_refs,
                             EqInput::Weighted(&cpu_w),
                             &cpu_k,
+                            &[],
                             formula.degree(),
                             BindingOrder::LowToHigh,
                         )
@@ -133,6 +135,7 @@ fn bench_pairwise_reduce_unweighted(c: &mut Criterion) {
                             &mtl_refs,
                             EqInput::Unit,
                             &mtl_k,
+                            &[],
                             formula.degree(),
                             BindingOrder::LowToHigh,
                         )
@@ -150,6 +153,7 @@ fn bench_pairwise_reduce_unweighted(c: &mut Criterion) {
                             &cpu_refs,
                             EqInput::Unit,
                             &cpu_k,
+                            &[],
                             formula.degree(),
                             BindingOrder::LowToHigh,
                         )
@@ -193,6 +197,7 @@ fn bench_sumcheck_round(c: &mut Criterion) {
                                 &refs,
                                 EqInput::Unit,
                                 &mtl_k,
+                                &[],
                                 formula.degree(),
                                 BindingOrder::LowToHigh,
                             );
@@ -216,6 +221,7 @@ fn bench_sumcheck_round(c: &mut Criterion) {
                                 &refs,
                                 EqInput::Unit,
                                 &cpu_k,
+                                &[],
                                 formula.degree(),
                                 BindingOrder::LowToHigh,
                             );
@@ -301,6 +307,7 @@ fn bench_sumcheck_round_h2l(c: &mut Criterion) {
                                 &refs,
                                 EqInput::Unit,
                                 &mtl_k,
+                                &[],
                                 formula.degree(),
                                 BindingOrder::HighToLow,
                             );
@@ -328,6 +335,7 @@ fn bench_sumcheck_round_h2l(c: &mut Criterion) {
                                 &refs,
                                 EqInput::Unit,
                                 &cpu_k,
+                                &[],
                                 formula.degree(),
                                 BindingOrder::HighToLow,
                             );

@@ -86,7 +86,10 @@ fn check_indices(protocol: &Protocol, diags: &mut Vec<Diagnostic>) {
                     diags.push(diag!("v{vi}: poly index {} out of bounds", *poly));
                 }
                 if *at_vertex >= protocol.vertices.len() {
-                    diags.push(diag!("v{vi}: evaluate target v{} out of bounds", *at_vertex));
+                    diags.push(diag!(
+                        "v{vi}: evaluate target v{} out of bounds",
+                        *at_vertex
+                    ));
                 }
             }
         }
@@ -125,9 +128,7 @@ fn check_dimensions(protocol: &Protocol, diags: &mut Vec<Diagnostic>) {
             let poly_dims = &protocol.polynomials[poly_idx].dims;
             // A poly may have dims already bound by a prior vertex in the DAG.
             // Only flag polys with ZERO dim overlap — that's truly invalid.
-            if !poly_dims.is_empty()
-                && !poly_dims.iter().any(|d| binding_order.contains(d))
-            {
+            if !poly_dims.is_empty() && !poly_dims.iter().any(|d| binding_order.contains(d)) {
                 let missing: Vec<usize> = poly_dims
                     .iter()
                     .filter(|d| !binding_order.contains(d))
@@ -298,7 +299,9 @@ mod tests {
             domain_size: None,
         });
         let diags = validate(&p);
-        assert!(diags.iter().any(|d| d.message.contains("challenge index 42")));
+        assert!(diags
+            .iter()
+            .any(|d| d.message.contains("challenge index 42")));
     }
 
     #[test]
@@ -337,7 +340,9 @@ mod tests {
         });
         let diags = validate(&p);
         assert!(
-            !diags.iter().any(|d| d.message.contains("not covered by binding_order")),
+            !diags
+                .iter()
+                .any(|d| d.message.contains("not covered by binding_order")),
             "partial overlap should not be flagged"
         );
 
@@ -355,7 +360,9 @@ mod tests {
             domain_size: None,
         });
         let diags2 = validate(&p2);
-        assert!(diags2.iter().any(|d| d.message.contains("not covered by binding_order")));
+        assert!(diags2
+            .iter()
+            .any(|d| d.message.contains("not covered by binding_order")));
     }
 
     #[test]
@@ -371,7 +378,9 @@ mod tests {
             domain_size: None,
         });
         let diags = validate(&p);
-        assert!(diags.iter().any(|d| d.message.contains("empty composition")));
+        assert!(diags
+            .iter()
+            .any(|d| d.message.contains("empty composition")));
     }
 
     #[test]

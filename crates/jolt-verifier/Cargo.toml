@@ -15,8 +15,6 @@ jolt-crypto = { path = "../jolt-crypto" }
 jolt-poly = { path = "../jolt-poly" }
 jolt-openings = { path = "../jolt-openings" }
 jolt-sumcheck = { path = "../jolt-sumcheck" }
-jolt-spartan = { path = "../jolt-spartan" }
-jolt-ir = { path = "../jolt-ir" }
 jolt-dory = { path = "../jolt-dory" }
 serde = { workspace = true, features = ["derive"] }
 thiserror = { workspace = true }

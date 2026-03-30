@@ -2,7 +2,7 @@
 
 use jolt_field::{Field, FieldAccumulator};
 
-use jolt_compute::{BackendWitness, BindingOrder, ComputeBackend, EqInput, RoundCoeffs, Scalar};
+use jolt_compute::{BindingOrder, ComputeBackend, EqInput, Scalar};
 
 /// Parallelism threshold: buffers smaller than this use sequential loops.
 ///
@@ -11,59 +11,39 @@ const PAR_THRESHOLD: usize = 1024;
 
 /// Composition evaluation function type for [`CpuKernel`].
 ///
-/// Takes `(lo_values, hi_values, out)` and writes evaluations into `out`.
-type EvalFn<F> = dyn Fn(&[F], &[F], &mut [F]) + Send + Sync;
+/// Takes `(lo_values, hi_values, challenges, out)` and writes evaluations into `out`.
+type EvalFn<F> = dyn Fn(&[F], &[F], &[F], &mut [F]) + Send + Sync;
 
 /// Wraps a closure that evaluates a composition at grid points from paired
 /// polynomial inputs, writing results into a caller-provided output slice.
 /// The closure signature:
 ///
 /// ```text
-/// fn(lo: &[F], hi: &[F], out: &mut [F])
+/// fn(lo: &[F], hi: &[F], challenges: &[F], out: &mut [F])
 /// ```
 ///
 /// where `lo[k]` and `hi[k]` are the even/odd pair for input buffer `k`,
+/// `challenges` provides Fiat-Shamir-derived values resolved at dispatch time,
 /// and `out` has `num_evals` slots to receive the evaluations. For Toom-Cook
 /// kernels: grid `{1, ..., D-1, ∞}`, D slots. For standard-grid kernels:
 /// grid `{0, 1, ..., degree}`, `degree + 1` slots.
 ///
-/// Constructed via [`CpuBackend::compile_kernel`] or the free functions
-/// [`compile`](crate::compile) / [`compile_with_challenges`](crate::compile_with_challenges).
+/// Constructed via [`CpuBackend::compile_kernel`] or the free function
+/// [`compile`](crate::compile).
 pub struct CpuKernel<F: Field> {
     eval_fn: Box<EvalFn<F>>,
 }
 
 impl<F: Field> CpuKernel<F> {
-    pub fn new(eval_fn: impl Fn(&[F], &[F], &mut [F]) + Send + Sync + 'static) -> Self {
+    pub fn new(eval_fn: impl Fn(&[F], &[F], &[F], &mut [F]) + Send + Sync + 'static) -> Self {
         Self {
             eval_fn: Box::new(eval_fn),
         }
     }
 
     #[inline]
-    pub fn evaluate(&self, lo: &[F], hi: &[F], out: &mut [F]) {
-        (self.eval_fn)(lo, hi, out);
-    }
-}
-
-/// CPU sumcheck witness produced by [`CpuBackend::make_witness`].
-///
-/// Holds a compiled kernel, input buffers, and challenge values. The actual
-/// round-polynomial and bind logic will be implemented in Phase 2; for now
-/// all trait methods panic.
-pub struct CpuSumcheckWitness<F: Field> {
-    _kernel: CpuKernel<F>,
-    _inputs: Vec<Vec<F>>,
-    _challenges: Vec<F>,
-}
-
-impl<F: Field> BackendWitness<F> for CpuSumcheckWitness<F> {
-    fn round_polynomial(&self) -> RoundCoeffs<F> {
-        panic!("CpuSumcheckWitness::round_polynomial not yet implemented (Phase 2)")
-    }
-
-    fn bind(&mut self, _challenge: F) {
-        panic!("CpuSumcheckWitness::bind not yet implemented (Phase 2)")
+    pub fn evaluate(&self, lo: &[F], hi: &[F], challenges: &[F], out: &mut [F]) {
+        (self.eval_fn)(lo, hi, challenges, out);
     }
 }
 
@@ -78,15 +58,9 @@ pub struct CpuBackend;
 impl ComputeBackend for CpuBackend {
     type Buffer<T: Scalar> = Vec<T>;
     type CompiledKernel<F: Field> = CpuKernel<F>;
-    type SumcheckWitness<F: Field> = CpuSumcheckWitness<F>;
-    type SparseBuffer<F: Field> = Vec<(usize, Vec<F>)>;
 
-    fn compile_kernel_with_challenges<F: Field>(
-        &self,
-        formula: &jolt_compiler::CompositionFormula,
-        challenges: &[F],
-    ) -> CpuKernel<F> {
-        crate::compile_with_challenges(formula, challenges)
+    fn compile_kernel<F: Field>(&self, formula: &jolt_compiler::Formula) -> CpuKernel<F> {
+        crate::compile(formula)
     }
 
     #[inline]
@@ -281,70 +255,29 @@ impl ComputeBackend for CpuBackend {
         }
     }
 
-    fn pairwise_reduce_fixed<F: Field, const D: usize>(
-        &self,
-        inputs: &[&Vec<F>],
-        eq: EqInput<'_, Self, F>,
-        kernel: &CpuKernel<F>,
-        order: BindingOrder,
-    ) -> [F; D] {
-        match eq {
-            EqInput::Weighted(weights) => {
-                pairwise_reduce_fixed_weighted(inputs, weights, kernel, order)
-            }
-            EqInput::Tensor { outer, inner } => {
-                pairwise_reduce_fixed_tensor(inputs, outer, inner, kernel)
-            }
-            EqInput::Unit => {
-                let v = self.pairwise_reduce(inputs, EqInput::Unit, kernel, D, order);
-                core::array::from_fn(|i| v[i])
-            }
-        }
-    }
-
-    #[tracing::instrument(skip_all, name = "CpuBackend::pairwise_reduce_multi")]
-    fn pairwise_reduce_multi<F: Field>(
-        &self,
-        inputs: &[&Vec<F>],
-        eq: EqInput<'_, Self, F>,
-        kernels: &[(&CpuKernel<F>, usize)],
-        order: BindingOrder,
-    ) -> Vec<Vec<F>> {
-        match eq {
-            EqInput::Weighted(weights) => {
-                pairwise_reduce_multi_weighted(inputs, weights, kernels, order)
-            }
-            EqInput::Unit | EqInput::Tensor { .. } => kernels
-                .iter()
-                .map(|(kernel, num_evals)| {
-                    self.pairwise_reduce(inputs, eq, kernel, *num_evals, order)
-                })
-                .collect(),
-        }
-    }
-
     #[tracing::instrument(skip_all, name = "CpuBackend::pairwise_reduce")]
     fn pairwise_reduce<F: Field>(
         &self,
         inputs: &[&Vec<F>],
         eq: EqInput<'_, Self, F>,
         kernel: &Self::CompiledKernel<F>,
+        challenges: &[F],
         num_evals: usize,
         order: BindingOrder,
     ) -> Vec<F> {
         match eq {
             EqInput::Weighted(weights) => {
-                pairwise_reduce_weighted(inputs, weights, kernel, num_evals, order)
+                pairwise_reduce_weighted(inputs, weights, kernel, challenges, num_evals, order)
             }
-            EqInput::Unit => pairwise_reduce_unit(inputs, kernel, num_evals, order),
+            EqInput::Unit => pairwise_reduce_unit(inputs, kernel, challenges, num_evals, order),
             EqInput::Tensor { outer, inner } => {
-                pairwise_reduce_tensor(inputs, outer, inner, kernel, num_evals)
+                pairwise_reduce_tensor(inputs, outer, inner, kernel, challenges, num_evals)
             }
         }
     }
 
-    #[tracing::instrument(skip_all, name = "CpuBackend::product_table")]
-    fn product_table<F: Field>(&self, point: &[F]) -> Vec<F> {
+    #[tracing::instrument(skip_all, name = "CpuBackend::eq_table")]
+    fn eq_table<F: Field>(&self, point: &[F]) -> Vec<F> {
         let n = point.len();
         let size = 1usize << n;
         let mut table = Vec::with_capacity(size);
@@ -381,233 +314,57 @@ impl ComputeBackend for CpuBackend {
         table
     }
 
-    fn sum<F: Field>(&self, buf: &Vec<F>) -> F {
-        let n = buf.len();
+    fn lt_table<F: Field>(&self, point: &[F]) -> Vec<F> {
+        let n = point.len();
+        let mut evals = vec![F::zero(); 1usize << n];
+        for (i, &ri) in point.iter().rev().enumerate() {
+            let half = 1usize << i;
+            let (left, right) = evals.split_at_mut(half);
+            left.iter_mut().zip(right.iter_mut()).for_each(|(x, y)| {
+                *y = *x * ri;
+                *x += ri - *y;
+            });
+        }
+        evals
+    }
 
-        #[cfg(feature = "parallel")]
-        {
-            if n >= PAR_THRESHOLD {
-                use rayon::prelude::*;
-                let acc = buf
-                    .par_iter()
-                    .fold(F::Accumulator::default, |mut acc, &val| {
-                        acc.fmadd(val, F::one());
-                        acc
-                    })
-                    .reduce(F::Accumulator::default, |mut a, b| {
-                        a.merge(b);
-                        a
-                    });
-                return acc.reduce();
+    fn eq_plus_one_table<F: Field>(&self, point: &[F]) -> (Vec<F>, Vec<F>) {
+        let ell = point.len();
+        let size = 1usize << ell;
+        let mut eq_evals = vec![F::zero(); size];
+        eq_evals[0] = F::one();
+        let mut eq_plus_one_evals = vec![F::zero(); size];
+
+        for i in 0..ell {
+            let step = 1usize << (ell - i);
+            let half_step = step / 2;
+
+            // r_lower_product = (1 - r[i]) · Π_{j > i} r[j]
+            let mut r_lower_product = F::one();
+            for &x in point.iter().skip(i + 1) {
+                r_lower_product *= x;
+            }
+            r_lower_product *= F::one() - point[i];
+
+            // Fill eq+1 entries for bit position i
+            let mut idx = half_step;
+            while idx < size {
+                eq_plus_one_evals[idx] = eq_evals[idx - half_step] * r_lower_product;
+                idx += step;
+            }
+
+            // Extend eq table by variable r[i]
+            let eq_step = 1usize << (ell - i - 1);
+            let mut k = 0;
+            while k < size {
+                let val = eq_evals[k] * point[i];
+                eq_evals[k + eq_step] = val;
+                eq_evals[k] -= val;
+                k += eq_step * 2;
             }
         }
 
-        let mut acc = F::Accumulator::default();
-        for &val in buf {
-            acc.fmadd(val, F::one());
-        }
-        let _ = n;
-        acc.reduce()
-    }
-
-    fn dot_product<F: Field>(&self, a: &Vec<F>, b: &Vec<F>) -> F {
-        debug_assert_eq!(a.len(), b.len(), "dot_product: mismatched buffer lengths");
-        let n = a.len();
-
-        #[cfg(feature = "parallel")]
-        {
-            if n >= PAR_THRESHOLD {
-                use rayon::prelude::*;
-                let acc = a
-                    .par_iter()
-                    .zip(b.par_iter())
-                    .fold(F::Accumulator::default, |mut acc, (&ai, &bi)| {
-                        acc.fmadd(ai, bi);
-                        acc
-                    })
-                    .reduce(F::Accumulator::default, |mut a, b| {
-                        a.merge(b);
-                        a
-                    });
-                return acc.reduce();
-            }
-        }
-
-        let mut acc = F::Accumulator::default();
-        for (&ai, &bi) in a.iter().zip(b.iter()) {
-            acc.fmadd(ai, bi);
-        }
-        let _ = n;
-        acc.reduce()
-    }
-
-    fn scale<F: Field>(&self, buf: &mut Vec<F>, scalar: F) {
-        #[cfg(feature = "parallel")]
-        {
-            if buf.len() >= PAR_THRESHOLD {
-                use rayon::prelude::*;
-                buf.par_iter_mut().for_each(|v| *v *= scalar);
-                return;
-            }
-        }
-        for v in buf.iter_mut() {
-            *v *= scalar;
-        }
-    }
-
-    fn add<F: Field>(&self, a: &Vec<F>, b: &Vec<F>) -> Vec<F> {
-        debug_assert_eq!(a.len(), b.len(), "add: mismatched buffer lengths");
-
-        #[cfg(feature = "parallel")]
-        {
-            if a.len() >= PAR_THRESHOLD {
-                use rayon::prelude::*;
-                return a
-                    .par_iter()
-                    .zip(b.par_iter())
-                    .map(|(&ai, &bi)| ai + bi)
-                    .collect();
-            }
-        }
-        a.iter().zip(b.iter()).map(|(&ai, &bi)| ai + bi).collect()
-    }
-
-    fn sub<F: Field>(&self, a: &Vec<F>, b: &Vec<F>) -> Vec<F> {
-        debug_assert_eq!(a.len(), b.len(), "sub: mismatched buffer lengths");
-
-        #[cfg(feature = "parallel")]
-        {
-            if a.len() >= PAR_THRESHOLD {
-                use rayon::prelude::*;
-                return a
-                    .par_iter()
-                    .zip(b.par_iter())
-                    .map(|(&ai, &bi)| ai - bi)
-                    .collect();
-            }
-        }
-        a.iter().zip(b.iter()).map(|(&ai, &bi)| ai - bi).collect()
-    }
-
-    fn accumulate<F: Field>(&self, buf: &mut Vec<F>, scalar: F, other: &Vec<F>) {
-        debug_assert_eq!(
-            buf.len(),
-            other.len(),
-            "accumulate: mismatched buffer lengths"
-        );
-
-        #[cfg(feature = "parallel")]
-        {
-            if buf.len() >= PAR_THRESHOLD {
-                use rayon::prelude::*;
-                buf.par_iter_mut()
-                    .zip(other.par_iter())
-                    .for_each(|(v, &o)| *v += scalar * o);
-                return;
-            }
-        }
-        for (v, &o) in buf.iter_mut().zip(other.iter()) {
-            *v += scalar * o;
-        }
-    }
-
-    fn accumulate_weighted<F: Field>(&self, buf: &mut Vec<F>, scalars: &[F], inputs: &[&Vec<F>]) {
-        debug_assert_eq!(scalars.len(), inputs.len());
-        let n = buf.len();
-        for &input in inputs {
-            debug_assert_eq!(
-                input.len(),
-                n,
-                "accumulate_weighted: mismatched buffer lengths"
-            );
-        }
-
-        #[cfg(feature = "parallel")]
-        {
-            if n >= PAR_THRESHOLD {
-                use rayon::prelude::*;
-                buf.par_iter_mut().enumerate().for_each(|(i, v)| {
-                    for (&s, &input) in scalars.iter().zip(inputs.iter()) {
-                        *v += s * input[i];
-                    }
-                });
-                return;
-            }
-        }
-        for (i, v) in buf.iter_mut().enumerate() {
-            for (&s, &input) in scalars.iter().zip(inputs.iter()) {
-                *v += s * input[i];
-            }
-        }
-    }
-
-    fn scale_batch<F: Field>(&self, bufs: &mut [Vec<F>], scalar: F) {
-        #[cfg(feature = "parallel")]
-        {
-            let total: usize = bufs.iter().map(|b| b.len()).sum();
-            if total >= PAR_THRESHOLD {
-                use rayon::prelude::*;
-                bufs.par_iter_mut().for_each(|buf| {
-                    // Each buffer gets its own parallel or sequential scaling
-                    // depending on individual size.
-                    if buf.len() >= PAR_THRESHOLD {
-                        buf.par_iter_mut().for_each(|v| *v *= scalar);
-                    } else {
-                        for v in buf.iter_mut() {
-                            *v *= scalar;
-                        }
-                    }
-                });
-                return;
-            }
-        }
-        for buf in bufs.iter_mut() {
-            for v in buf.iter_mut() {
-                *v *= scalar;
-            }
-        }
-    }
-
-    fn make_witness<F: Field>(
-        &self,
-        kernel: &CpuKernel<F>,
-        inputs: Vec<Vec<F>>,
-        challenges: &[F],
-    ) -> CpuSumcheckWitness<F> {
-        // Phase 2 will set up actual bind/reduce state using the kernel.
-        let _ = kernel;
-        CpuSumcheckWitness {
-            _kernel: CpuKernel::new(|_lo, _hi, _out| {
-                panic!("CpuSumcheckWitness kernel eval not yet implemented (Phase 2)")
-            }),
-            _inputs: inputs,
-            _challenges: challenges.to_vec(),
-        }
-    }
-
-    #[inline]
-    fn upload_sparse<F: Field>(&self, entries: &[(usize, Vec<F>)]) -> Vec<(usize, Vec<F>)> {
-        entries.to_vec()
-    }
-
-    fn sparse_reduce<F: Field>(
-        &self,
-        _entries: &Vec<(usize, Vec<F>)>,
-        _eq: &Vec<F>,
-        _kernel: &CpuKernel<F>,
-        _challenges: &[F],
-        _num_evals: usize,
-    ) -> Vec<F> {
-        panic!("CpuBackend::sparse_reduce not yet implemented (Phase 2)")
-    }
-
-    fn sparse_bind<F: Field>(
-        &self,
-        _entries: &mut Vec<(usize, Vec<F>)>,
-        _challenge: F,
-        _order: BindingOrder,
-    ) {
-        panic!("CpuBackend::sparse_bind not yet implemented (Phase 2)")
+        (eq_evals, eq_plus_one_evals)
     }
 }
 
@@ -623,6 +380,7 @@ fn pairwise_reduce_weighted<F: Field>(
     inputs: &[&Vec<F>],
     weights: &[F],
     kernel: &CpuKernel<F>,
+    challenges: &[F],
     num_evals: usize,
     order: BindingOrder,
 ) -> Vec<F> {
@@ -664,7 +422,7 @@ fn pairwise_reduce_weighted<F: Field>(
                             hi[k] = h;
                         }
 
-                        kernel.evaluate(&lo, &hi, &mut evals);
+                        kernel.evaluate(&lo, &hi, challenges, &mut evals);
                         let w = weights[i];
                         for (a, e) in acc.iter_mut().zip(evals.iter()) {
                             a.fmadd(w, *e);
@@ -696,7 +454,7 @@ fn pairwise_reduce_weighted<F: Field>(
             hi[k] = h;
         }
 
-        kernel.evaluate(&lo, &hi, &mut evals);
+        kernel.evaluate(&lo, &hi, challenges, &mut evals);
         for (a, e) in accs.iter_mut().zip(evals.iter()) {
             a.fmadd(w, *e);
         }
@@ -710,6 +468,7 @@ fn pairwise_reduce_weighted<F: Field>(
 fn pairwise_reduce_unit<F: Field>(
     inputs: &[&Vec<F>],
     kernel: &CpuKernel<F>,
+    challenges: &[F],
     num_evals: usize,
     order: BindingOrder,
 ) -> Vec<F> {
@@ -752,7 +511,7 @@ fn pairwise_reduce_unit<F: Field>(
                             hi[k] = h;
                         }
 
-                        kernel.evaluate(&lo, &hi, &mut evals);
+                        kernel.evaluate(&lo, &hi, challenges, &mut evals);
                         for (a, e) in acc.iter_mut().zip(evals.iter()) {
                             a.fmadd(one, *e);
                         }
@@ -783,7 +542,7 @@ fn pairwise_reduce_unit<F: Field>(
             hi[k] = h;
         }
 
-        kernel.evaluate(&lo, &hi, &mut evals);
+        kernel.evaluate(&lo, &hi, challenges, &mut evals);
         for (a, e) in accs.iter_mut().zip(evals.iter()) {
             a.fmadd(one, *e);
         }
@@ -800,6 +559,7 @@ fn pairwise_reduce_tensor<F: Field>(
     outer_weights: &[F],
     inner_weights: &[F],
     kernel: &CpuKernel<F>,
+    challenges: &[F],
     num_evals: usize,
 ) -> Vec<F> {
     let inner_len = inner_weights.len();
@@ -822,7 +582,7 @@ fn pairwise_reduce_tensor<F: Field>(
                 lo.push(input[2 * g]);
                 hi.push(input[2 * g + 1]);
             }
-            kernel.evaluate(lo, hi, evals);
+            kernel.evaluate(lo, hi, challenges, evals);
             for (a, e) in inner_acc.iter_mut().zip(evals.iter()) {
                 a.fmadd(w_in, *e);
             }
@@ -881,284 +641,6 @@ fn pairwise_reduce_tensor<F: Field>(
         .collect()
 }
 
-/// Weighted pairwise reduce with const-generic D (stack-allocated accumulators).
-#[allow(clippy::ptr_arg)]
-fn pairwise_reduce_fixed_weighted<F: Field, const D: usize>(
-    inputs: &[&Vec<F>],
-    weights: &[F],
-    kernel: &CpuKernel<F>,
-    order: BindingOrder,
-) -> [F; D] {
-    let n = inputs[0].len();
-    debug_assert!(n.is_multiple_of(2), "buffer length must be even");
-    let half = n / 2;
-    let num_inputs = inputs.len();
-
-    let new_accs = || [F::Accumulator::default(); D];
-
-    let pair = |input: &[F], i: usize| -> (F, F) {
-        match order {
-            BindingOrder::LowToHigh => (input[2 * i], input[2 * i + 1]),
-            BindingOrder::HighToLow => (input[i], input[i + half]),
-        }
-    };
-
-    #[cfg(feature = "parallel")]
-    {
-        if half >= PAR_THRESHOLD {
-            use rayon::prelude::*;
-
-            let accs = (0..half)
-                .into_par_iter()
-                .fold(
-                    || {
-                        (
-                            new_accs(),
-                            Vec::with_capacity(num_inputs),
-                            Vec::with_capacity(num_inputs),
-                            [F::zero(); D],
-                        )
-                    },
-                    |(mut acc, mut lo, mut hi, mut evals), i| {
-                        lo.clear();
-                        hi.clear();
-                        for &input in inputs {
-                            let (l, h) = pair(input, i);
-                            lo.push(l);
-                            hi.push(h);
-                        }
-
-                        kernel.evaluate(&lo, &hi, &mut evals);
-                        let w = weights[i];
-                        for (a, e) in acc.iter_mut().zip(evals.iter()) {
-                            a.fmadd(w, *e);
-                        }
-                        (acc, lo, hi, evals)
-                    },
-                )
-                .map(|(acc, _, _, _)| acc)
-                .reduce(new_accs, |mut a, b| {
-                    for (ai, bi) in a.iter_mut().zip(b) {
-                        ai.merge(bi);
-                    }
-                    a
-                });
-
-            return accs.map(FieldAccumulator::reduce);
-        }
-    }
-
-    let mut accs = new_accs();
-    let mut lo = Vec::with_capacity(num_inputs);
-    let mut hi = Vec::with_capacity(num_inputs);
-    let mut evals = [F::zero(); D];
-
-    for (i, &w) in weights.iter().enumerate() {
-        lo.clear();
-        hi.clear();
-        for &input in inputs {
-            let (l, h) = pair(input, i);
-            lo.push(l);
-            hi.push(h);
-        }
-
-        kernel.evaluate(&lo, &hi, &mut evals);
-        for (a, e) in accs.iter_mut().zip(evals.iter()) {
-            a.fmadd(w, *e);
-        }
-    }
-
-    accs.map(FieldAccumulator::reduce)
-}
-
-/// Tensor pairwise reduce with const-generic D (stack-allocated accumulators).
-#[allow(clippy::ptr_arg)]
-fn pairwise_reduce_fixed_tensor<F: Field, const D: usize>(
-    inputs: &[&Vec<F>],
-    outer_weights: &[F],
-    inner_weights: &[F],
-    kernel: &CpuKernel<F>,
-) -> [F; D] {
-    let inner_len = inner_weights.len();
-    let num_inputs = inputs.len();
-    let total_pairs = outer_weights.len() * inner_len;
-
-    let new_accs = || [F::Accumulator::default(); D];
-
-    let inner_fold = |outer_acc: &mut [F::Accumulator; D],
-                      lo: &mut Vec<F>,
-                      hi: &mut Vec<F>,
-                      evals: &mut [F; D],
-                      x_out: usize| {
-        let mut inner_acc = new_accs();
-        for (x_in, &w_in) in inner_weights.iter().enumerate() {
-            let g = x_out * inner_len + x_in;
-            lo.clear();
-            hi.clear();
-            for &input in inputs {
-                lo.push(input[2 * g]);
-                hi.push(input[2 * g + 1]);
-            }
-            kernel.evaluate(lo, hi, evals);
-            for (a, e) in inner_acc.iter_mut().zip(evals.iter()) {
-                a.fmadd(w_in, *e);
-            }
-        }
-        let w_out = outer_weights[x_out];
-        for (oa, ia) in outer_acc.iter_mut().zip(inner_acc.iter()) {
-            oa.fmadd(w_out, ia.reduce());
-        }
-    };
-
-    #[cfg(feature = "parallel")]
-    {
-        if total_pairs >= PAR_THRESHOLD {
-            use rayon::prelude::*;
-
-            let accs = (0..outer_weights.len())
-                .into_par_iter()
-                .fold(
-                    || {
-                        (
-                            new_accs(),
-                            Vec::with_capacity(num_inputs),
-                            Vec::with_capacity(num_inputs),
-                            [F::zero(); D],
-                        )
-                    },
-                    |(mut outer_acc, mut lo, mut hi, mut evals), x_out| {
-                        inner_fold(&mut outer_acc, &mut lo, &mut hi, &mut evals, x_out);
-                        (outer_acc, lo, hi, evals)
-                    },
-                )
-                .map(|(acc, _, _, _)| acc)
-                .reduce(new_accs, |mut a, b| {
-                    for (ai, bi) in a.iter_mut().zip(b) {
-                        ai.merge(bi);
-                    }
-                    a
-                });
-
-            return accs.map(FieldAccumulator::reduce);
-        }
-    }
-
-    let mut outer_acc = new_accs();
-    let mut lo = Vec::with_capacity(num_inputs);
-    let mut hi = Vec::with_capacity(num_inputs);
-    let mut evals = [F::zero(); D];
-
-    for x_out in 0..outer_weights.len() {
-        inner_fold(&mut outer_acc, &mut lo, &mut hi, &mut evals, x_out);
-    }
-
-    outer_acc.map(FieldAccumulator::reduce)
-}
-
-/// Optimized multi-kernel weighted reduce: single-pass over data for all kernels.
-#[allow(clippy::ptr_arg)]
-fn pairwise_reduce_multi_weighted<F: Field>(
-    inputs: &[&Vec<F>],
-    weights: &[F],
-    kernels: &[(&CpuKernel<F>, usize)],
-    order: BindingOrder,
-) -> Vec<Vec<F>> {
-    let n = inputs[0].len();
-    debug_assert!(n.is_multiple_of(2), "buffer length must be even");
-    let half = n / 2;
-    let num_inputs = inputs.len();
-    let num_kernels = kernels.len();
-
-    let new_all_accs = || -> Vec<Vec<F::Accumulator>> {
-        kernels
-            .iter()
-            .map(|(_, num_evals)| vec![F::Accumulator::default(); *num_evals])
-            .collect()
-    };
-
-    let pair = |input: &[F], i: usize| -> (F, F) {
-        match order {
-            BindingOrder::LowToHigh => (input[2 * i], input[2 * i + 1]),
-            BindingOrder::HighToLow => (input[i], input[i + half]),
-        }
-    };
-
-    #[cfg(feature = "parallel")]
-    {
-        if half >= PAR_THRESHOLD {
-            use rayon::prelude::*;
-
-            let all_accs = (0..half)
-                .into_par_iter()
-                .fold(
-                    || {
-                        let accs = new_all_accs();
-                        let lo = vec![F::zero(); num_inputs];
-                        let hi = vec![F::zero(); num_inputs];
-                        let evals_bufs: Vec<Vec<F>> =
-                            kernels.iter().map(|(_, ne)| vec![F::zero(); *ne]).collect();
-                        (accs, lo, hi, evals_bufs)
-                    },
-                    |(mut accs, mut lo, mut hi, mut evals_bufs), i| {
-                        for (k, &input) in inputs.iter().enumerate() {
-                            let (l, h) = pair(input, i);
-                            lo[k] = l;
-                            hi[k] = h;
-                        }
-
-                        let w = weights[i];
-                        for k in 0..num_kernels {
-                            kernels[k].0.evaluate(&lo, &hi, &mut evals_bufs[k]);
-                            for (a, e) in accs[k].iter_mut().zip(evals_bufs[k].iter()) {
-                                a.fmadd(w, *e);
-                            }
-                        }
-                        (accs, lo, hi, evals_bufs)
-                    },
-                )
-                .map(|(accs, _, _, _)| accs)
-                .reduce(new_all_accs, |mut a, b| {
-                    for (ak, bk) in a.iter_mut().zip(b) {
-                        for (ai, bi) in ak.iter_mut().zip(bk) {
-                            ai.merge(bi);
-                        }
-                    }
-                    a
-                });
-
-            return all_accs
-                .into_iter()
-                .map(|accs| accs.into_iter().map(FieldAccumulator::reduce).collect())
-                .collect();
-        }
-    }
-
-    let mut all_accs = new_all_accs();
-    let mut lo = vec![F::zero(); num_inputs];
-    let mut hi = vec![F::zero(); num_inputs];
-    let mut evals_bufs: Vec<Vec<F>> = kernels.iter().map(|(_, ne)| vec![F::zero(); *ne]).collect();
-
-    for (i, &w) in weights.iter().enumerate() {
-        for (k, &input) in inputs.iter().enumerate() {
-            let (l, h) = pair(input, i);
-            lo[k] = l;
-            hi[k] = h;
-        }
-
-        for k in 0..num_kernels {
-            kernels[k].0.evaluate(&lo, &hi, &mut evals_bufs[k]);
-            for (a, e) in all_accs[k].iter_mut().zip(evals_bufs[k].iter()) {
-                a.fmadd(w, *e);
-            }
-        }
-    }
-
-    all_accs
-        .into_iter()
-        .map(|accs| accs.into_iter().map(FieldAccumulator::reduce).collect())
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1206,14 +688,12 @@ mod tests {
     }
 
     #[test]
-    fn len_and_is_empty() {
+    fn len() {
         let b = backend();
         let empty: Vec<Fr> = b.alloc(0);
-        assert!(b.is_empty(&empty));
         assert_eq!(b.len(&empty), 0);
 
         let nonempty = b.upload(&[Fr::one()]);
-        assert!(!b.is_empty(&nonempty));
         assert_eq!(b.len(&nonempty), 1);
     }
 
@@ -1286,20 +766,20 @@ mod tests {
     }
 
     #[test]
-    fn product_table_sum_is_one() {
+    fn eq_table_sum_is_one() {
         let b = backend();
         let mut rng = ChaCha20Rng::seed_from_u64(7);
         let n = 5;
         let point: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
 
-        let table = b.product_table(&point);
+        let table = b.eq_table(&point);
         assert_eq!(table.len(), 1 << n);
         let sum: Fr = table.iter().copied().sum();
         assert_eq!(sum, Fr::one());
     }
 
     #[test]
-    fn product_table_matches_eq_polynomial() {
+    fn eq_table_matches_eq_polynomial() {
         use jolt_poly::EqPolynomial;
 
         let b = backend();
@@ -1307,21 +787,21 @@ mod tests {
         let n = 6;
         let point: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
 
-        let table = b.product_table(&point);
+        let table = b.eq_table(&point);
         let eq_table = EqPolynomial::new(point).evaluations();
 
         assert_eq!(table, eq_table);
     }
 
     #[test]
-    fn product_table_parallel_matches_sequential() {
+    fn eq_table_parallel_matches_sequential() {
         let b = backend();
         let mut rng = ChaCha20Rng::seed_from_u64(300);
         // n=11 -> 2048 entries, above PAR_THRESHOLD
         let n = 11;
         let point: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
 
-        let table = b.product_table(&point);
+        let table = b.eq_table(&point);
         assert_eq!(table.len(), 1 << n);
         let sum: Fr = table.iter().copied().sum();
         assert_eq!(sum, Fr::one());
@@ -1331,7 +811,7 @@ mod tests {
         // Identity kernel: for a single input, evaluates the linear interpolant
         // at grid points {0, 1, ..., num_evals-1}.
         // f(t) = lo + t * (hi - lo)
-        CpuKernel::new(|lo: &[Fr], hi: &[Fr], out: &mut [Fr]| {
+        CpuKernel::new(|lo: &[Fr], hi: &[Fr], _challenges: &[Fr], out: &mut [Fr]| {
             for (t, slot) in out.iter_mut().enumerate() {
                 let t_f = Fr::from_u64(t as u64);
                 let mut sum = Fr::zero();
@@ -1358,6 +838,7 @@ mod tests {
             &[&input],
             EqInput::Weighted(&weights),
             &kernel,
+            &[],
             2,
             BindingOrder::LowToHigh,
         );
@@ -1378,6 +859,7 @@ mod tests {
             &[&input],
             EqInput::Weighted(&weights),
             &kernel,
+            &[],
             2,
             BindingOrder::LowToHigh,
         );
@@ -1402,6 +884,7 @@ mod tests {
             &[&a, &c],
             EqInput::Weighted(&weights),
             &kernel,
+            &[],
             2,
             BindingOrder::LowToHigh,
         );
@@ -1425,6 +908,7 @@ mod tests {
             &[&input],
             EqInput::Weighted(&weights),
             &kernel,
+            &[],
             3,
             BindingOrder::LowToHigh,
         );
@@ -1470,6 +954,7 @@ mod tests {
             &[&input],
             EqInput::Weighted(&weights),
             &kernel,
+            &[],
             2,
             BindingOrder::LowToHigh,
         );
@@ -1649,58 +1134,6 @@ mod tests {
     }
 
     #[test]
-    fn pairwise_reduce_fixed_matches_dynamic() {
-        let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(600);
-        let n = 128;
-        let input: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let weights: Vec<Fr> = (0..n / 2).map(|_| Fr::random(&mut rng)).collect();
-
-        let kernel = make_identity_kernel();
-        let dynamic = b.pairwise_reduce(
-            &[&input],
-            EqInput::Weighted(&weights),
-            &kernel,
-            4,
-            BindingOrder::LowToHigh,
-        );
-        let fixed: [Fr; 4] = b.pairwise_reduce_fixed(
-            &[&input],
-            EqInput::Weighted(&weights),
-            &kernel,
-            BindingOrder::LowToHigh,
-        );
-
-        assert_eq!(fixed.as_slice(), dynamic.as_slice());
-    }
-
-    #[test]
-    fn pairwise_reduce_fixed_parallel() {
-        let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(601);
-        let n = 4096;
-        let input: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let weights: Vec<Fr> = (0..n / 2).map(|_| Fr::random(&mut rng)).collect();
-
-        let kernel = make_identity_kernel();
-        let dynamic = b.pairwise_reduce(
-            &[&input],
-            EqInput::Weighted(&weights),
-            &kernel,
-            2,
-            BindingOrder::LowToHigh,
-        );
-        let fixed: [Fr; 2] = b.pairwise_reduce_fixed(
-            &[&input],
-            EqInput::Weighted(&weights),
-            &kernel,
-            BindingOrder::LowToHigh,
-        );
-
-        assert_eq!(fixed.as_slice(), dynamic.as_slice());
-    }
-
-    #[test]
     fn tensor_reduce_matches_flat_reduce() {
         let b = backend();
         let mut rng = ChaCha20Rng::seed_from_u64(700);
@@ -1714,7 +1147,6 @@ mod tests {
         let outer_w: Vec<Fr> = (0..outer_len).map(|_| Fr::random(&mut rng)).collect();
         let inner_w: Vec<Fr> = (0..inner_len).map(|_| Fr::random(&mut rng)).collect();
 
-        // Flat weights: tensor product
         let mut flat_w = Vec::with_capacity(total_pairs);
         for &o in &outer_w {
             for &i in &inner_w {
@@ -1727,6 +1159,7 @@ mod tests {
             &[&input],
             EqInput::Weighted(&flat_w),
             &kernel,
+            &[],
             2,
             BindingOrder::LowToHigh,
         );
@@ -1737,48 +1170,12 @@ mod tests {
                 inner: &inner_w,
             },
             &kernel,
+            &[],
             2,
             BindingOrder::LowToHigh,
         );
 
         assert_eq!(tensor_result, flat_result);
-    }
-
-    #[test]
-    fn tensor_reduce_fixed_matches_dynamic() {
-        let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(701);
-
-        let outer_len = 4;
-        let inner_len = 8;
-        let n = outer_len * inner_len * 2;
-
-        let input: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let outer_w: Vec<Fr> = (0..outer_len).map(|_| Fr::random(&mut rng)).collect();
-        let inner_w: Vec<Fr> = (0..inner_len).map(|_| Fr::random(&mut rng)).collect();
-
-        let kernel = make_identity_kernel();
-        let dynamic = b.pairwise_reduce(
-            &[&input],
-            EqInput::Tensor {
-                outer: &outer_w,
-                inner: &inner_w,
-            },
-            &kernel,
-            4,
-            BindingOrder::LowToHigh,
-        );
-        let fixed: [Fr; 4] = b.pairwise_reduce_fixed(
-            &[&input],
-            EqInput::Tensor {
-                outer: &outer_w,
-                inner: &inner_w,
-            },
-            &kernel,
-            BindingOrder::LowToHigh,
-        );
-
-        assert_eq!(fixed.as_slice(), dynamic.as_slice());
     }
 
     #[test]
@@ -1795,7 +1192,6 @@ mod tests {
         let outer_w: Vec<Fr> = (0..outer_len).map(|_| Fr::random(&mut rng)).collect();
         let inner_w: Vec<Fr> = (0..inner_len).map(|_| Fr::random(&mut rng)).collect();
 
-        // Flat weights
         let mut flat_w = Vec::with_capacity(outer_len * inner_len);
         for &o in &outer_w {
             for &i in &inner_w {
@@ -1808,6 +1204,7 @@ mod tests {
             &[&input_a, &input_b],
             EqInput::Weighted(&flat_w),
             &kernel,
+            &[],
             2,
             BindingOrder::LowToHigh,
         );
@@ -1818,6 +1215,7 @@ mod tests {
                 inner: &inner_w,
             },
             &kernel,
+            &[],
             2,
             BindingOrder::LowToHigh,
         );
@@ -1830,7 +1228,6 @@ mod tests {
         let b = backend();
         let mut rng = ChaCha20Rng::seed_from_u64(703);
 
-        // 32 × 64 = 2048 pairs, above PAR_THRESHOLD
         let outer_len = 32;
         let inner_len = 64;
         let n = outer_len * inner_len * 2;
@@ -1851,6 +1248,7 @@ mod tests {
             &[&input],
             EqInput::Weighted(&flat_w),
             &kernel,
+            &[],
             3,
             BindingOrder::LowToHigh,
         );
@@ -1861,6 +1259,7 @@ mod tests {
                 inner: &inner_w,
             },
             &kernel,
+            &[],
             3,
             BindingOrder::LowToHigh,
         );
@@ -1869,104 +1268,8 @@ mod tests {
     }
 
     #[test]
-    fn multi_reduce_matches_individual() {
-        let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(800);
-        let n = 64;
-        let input: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let weights: Vec<Fr> = (0..n / 2).map(|_| Fr::random(&mut rng)).collect();
-
-        let k1 = make_identity_kernel();
-        // Second kernel: product of inputs
-        let k2 = CpuKernel::new(|lo: &[Fr], hi: &[Fr], out: &mut [Fr]| {
-            for (t, slot) in out.iter_mut().enumerate() {
-                let t_f = Fr::from_u64(t as u64);
-                let mut prod = Fr::one();
-                for k in 0..lo.len() {
-                    prod *= lo[k] + t_f * (hi[k] - lo[k]);
-                }
-                *slot = prod;
-            }
-        });
-
-        let individual_1 = b.pairwise_reduce(
-            &[&input],
-            EqInput::Weighted(&weights),
-            &k1,
-            2,
-            BindingOrder::LowToHigh,
-        );
-        let individual_2 = b.pairwise_reduce(
-            &[&input],
-            EqInput::Weighted(&weights),
-            &k2,
-            3,
-            BindingOrder::LowToHigh,
-        );
-
-        let multi = b.pairwise_reduce_multi(
-            &[&input],
-            EqInput::Weighted(&weights),
-            &[(&k1, 2), (&k2, 3)],
-            BindingOrder::LowToHigh,
-        );
-
-        assert_eq!(multi.len(), 2);
-        assert_eq!(multi[0], individual_1);
-        assert_eq!(multi[1], individual_2);
-    }
-
-    #[test]
-    fn multi_reduce_parallel() {
-        let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(801);
-        let n = 4096;
-        let input: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let weights: Vec<Fr> = (0..n / 2).map(|_| Fr::random(&mut rng)).collect();
-
-        let k1 = make_identity_kernel();
-        let k2 = CpuKernel::new(|lo: &[Fr], hi: &[Fr], out: &mut [Fr]| {
-            for (t, slot) in out.iter_mut().enumerate() {
-                let t_f = Fr::from_u64(t as u64);
-                let mut prod = Fr::one();
-                for k in 0..lo.len() {
-                    prod *= lo[k] + t_f * (hi[k] - lo[k]);
-                }
-                *slot = prod;
-            }
-        });
-
-        let individual_1 = b.pairwise_reduce(
-            &[&input],
-            EqInput::Weighted(&weights),
-            &k1,
-            2,
-            BindingOrder::LowToHigh,
-        );
-        let individual_2 = b.pairwise_reduce(
-            &[&input],
-            EqInput::Weighted(&weights),
-            &k2,
-            2,
-            BindingOrder::LowToHigh,
-        );
-
-        let multi = b.pairwise_reduce_multi(
-            &[&input],
-            EqInput::Weighted(&weights),
-            &[(&k1, 2), (&k2, 2)],
-            BindingOrder::LowToHigh,
-        );
-
-        assert_eq!(multi[0], individual_1);
-        assert_eq!(multi[1], individual_2);
-    }
-
-    #[test]
     fn pairwise_reduce_high_to_low_matches_manual() {
         let b = backend();
-        // HighToLow layout: pairs are (buf[i], buf[i + half])
-        // 8 elements -> 4 pairs: (0,4), (1,5), (2,6), (3,7)
         let input: Vec<Fr> = (0..8).map(|i| Fr::from_u64(i as u64 * 10)).collect();
         let weights: Vec<Fr> = vec![Fr::one(); 4];
 
@@ -1975,6 +1278,7 @@ mod tests {
             &[&input],
             EqInput::Weighted(&weights),
             &kernel,
+            &[],
             2,
             BindingOrder::HighToLow,
         );
@@ -1995,18 +1299,15 @@ mod tests {
         let nv = 6;
         let data: Vec<Fr> = (0..(1 << nv)).map(|_| Fr::random(&mut rng)).collect();
 
-        // Polynomial uses split-half (HighToLow) layout:
-        // pairs are (data[i], data[i + n/2])
         let half = data.len() / 2;
         let weights = vec![Fr::one(); half];
 
-        // HighToLow reduce with identity kernel at t=0 and t=1:
-        // t=0: Σ data[i], t=1: Σ data[i + half]
         let kernel = make_identity_kernel();
         let result = b.pairwise_reduce(
             &[&data],
             EqInput::Weighted(&weights),
             &kernel,
+            &[],
             2,
             BindingOrder::HighToLow,
         );
@@ -2016,15 +1317,14 @@ mod tests {
         assert_eq!(result[0], sum_lo);
         assert_eq!(result[1], sum_hi);
 
-        // Now verify with an interleaved version to make sure they differ
         let result_interleaved = b.pairwise_reduce(
             &[&data],
             EqInput::Weighted(&weights),
             &kernel,
+            &[],
             2,
             BindingOrder::LowToHigh,
         );
-        // These should be different (unless the data is specially arranged)
         assert_ne!(result, result_interleaved);
     }
 
@@ -2042,11 +1342,11 @@ mod tests {
             &[&input],
             EqInput::Weighted(&weights),
             &kernel,
+            &[],
             2,
             BindingOrder::HighToLow,
         );
 
-        // Manual reference
         let mut expected = vec![Fr::zero(); 2];
         for i in 0..half {
             let lo = input[i];
@@ -2055,384 +1355,5 @@ mod tests {
             expected[1] += weights[i] * hi;
         }
         assert_eq!(result, expected);
-    }
-
-    #[test]
-    fn pairwise_reduce_fixed_high_to_low() {
-        let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(902);
-        let n = 128;
-        let input: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let weights: Vec<Fr> = (0..n / 2).map(|_| Fr::random(&mut rng)).collect();
-
-        let kernel = make_identity_kernel();
-        let dynamic = b.pairwise_reduce(
-            &[&input],
-            EqInput::Weighted(&weights),
-            &kernel,
-            4,
-            BindingOrder::HighToLow,
-        );
-        let fixed: [Fr; 4] = b.pairwise_reduce_fixed(
-            &[&input],
-            EqInput::Weighted(&weights),
-            &kernel,
-            BindingOrder::HighToLow,
-        );
-
-        assert_eq!(fixed.as_slice(), dynamic.as_slice());
-    }
-
-    #[test]
-    fn pairwise_reduce_multi_high_to_low() {
-        let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(903);
-        let n = 64;
-        let input: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let weights: Vec<Fr> = (0..n / 2).map(|_| Fr::random(&mut rng)).collect();
-
-        let k1 = make_identity_kernel();
-        let k2 = CpuKernel::new(|lo: &[Fr], hi: &[Fr], out: &mut [Fr]| {
-            for (t, slot) in out.iter_mut().enumerate() {
-                let t_f = Fr::from_u64(t as u64);
-                let mut prod = Fr::one();
-                for k in 0..lo.len() {
-                    prod *= lo[k] + t_f * (hi[k] - lo[k]);
-                }
-                *slot = prod;
-            }
-        });
-
-        let individual_1 = b.pairwise_reduce(
-            &[&input],
-            EqInput::Weighted(&weights),
-            &k1,
-            2,
-            BindingOrder::HighToLow,
-        );
-        let individual_2 = b.pairwise_reduce(
-            &[&input],
-            EqInput::Weighted(&weights),
-            &k2,
-            3,
-            BindingOrder::HighToLow,
-        );
-
-        let multi = b.pairwise_reduce_multi(
-            &[&input],
-            EqInput::Weighted(&weights),
-            &[(&k1, 2), (&k2, 3)],
-            BindingOrder::HighToLow,
-        );
-
-        assert_eq!(multi[0], individual_1);
-        assert_eq!(multi[1], individual_2);
-    }
-
-    #[test]
-    fn sum_basic() {
-        let b = backend();
-        let data: Vec<Fr> = vec![1, 2, 3, 4, 5].into_iter().map(Fr::from_u64).collect();
-        assert_eq!(b.sum(&data), Fr::from_u64(15));
-    }
-
-    #[test]
-    fn sum_empty() {
-        let b = backend();
-        let data: Vec<Fr> = vec![];
-        assert_eq!(b.sum(&data), Fr::zero());
-    }
-
-    #[test]
-    fn sum_parallel() {
-        let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(1000);
-        let n = 4096;
-        let data: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let expected: Fr = data.iter().copied().sum();
-        assert_eq!(b.sum(&data), expected);
-    }
-
-    #[test]
-    fn dot_product_basic() {
-        let b = backend();
-        let a: Vec<Fr> = vec![1, 2, 3].into_iter().map(Fr::from_u64).collect();
-        let c: Vec<Fr> = vec![4, 5, 6].into_iter().map(Fr::from_u64).collect();
-        // 1*4 + 2*5 + 3*6 = 4 + 10 + 18 = 32
-        assert_eq!(b.dot_product(&a, &c), Fr::from_u64(32));
-    }
-
-    #[test]
-    fn dot_product_parallel() {
-        let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(1001);
-        let n = 4096;
-        let a: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let c: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-
-        let expected: Fr = a.iter().zip(c.iter()).map(|(&ai, &ci)| ai * ci).sum();
-        assert_eq!(b.dot_product(&a, &c), expected);
-    }
-
-    #[test]
-    fn scale_basic() {
-        let b = backend();
-        let mut buf: Vec<Fr> = vec![1, 2, 3, 4].into_iter().map(Fr::from_u64).collect();
-        let scalar = Fr::from_u64(3);
-        b.scale(&mut buf, scalar);
-        let expected: Vec<Fr> = vec![3, 6, 9, 12].into_iter().map(Fr::from_u64).collect();
-        assert_eq!(buf, expected);
-    }
-
-    #[test]
-    fn scale_parallel() {
-        let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(1002);
-        let n = 4096;
-        let original: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let scalar = Fr::random(&mut rng);
-
-        let mut buf = original.clone();
-        b.scale(&mut buf, scalar);
-
-        let expected: Vec<Fr> = original.iter().map(|&v| v * scalar).collect();
-        assert_eq!(buf, expected);
-    }
-
-    #[test]
-    fn add_basic() {
-        let b = backend();
-        let a: Vec<Fr> = vec![1, 2, 3].into_iter().map(Fr::from_u64).collect();
-        let c: Vec<Fr> = vec![10, 20, 30].into_iter().map(Fr::from_u64).collect();
-        let result = b.add(&a, &c);
-        let expected: Vec<Fr> = vec![11, 22, 33].into_iter().map(Fr::from_u64).collect();
-        assert_eq!(result, expected);
-    }
-
-    #[test]
-    fn add_parallel() {
-        let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(1003);
-        let n = 4096;
-        let a: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let c: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-
-        let result = b.add(&a, &c);
-        let expected: Vec<Fr> = a.iter().zip(c.iter()).map(|(&ai, &ci)| ai + ci).collect();
-        assert_eq!(result, expected);
-    }
-
-    #[test]
-    fn sub_basic() {
-        let b = backend();
-        let a: Vec<Fr> = vec![10, 20, 30].into_iter().map(Fr::from_u64).collect();
-        let c: Vec<Fr> = vec![1, 2, 3].into_iter().map(Fr::from_u64).collect();
-        let result = b.sub(&a, &c);
-        let expected: Vec<Fr> = vec![9, 18, 27].into_iter().map(Fr::from_u64).collect();
-        assert_eq!(result, expected);
-    }
-
-    #[test]
-    fn sub_parallel() {
-        let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(1004);
-        let n = 4096;
-        let a: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let c: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-
-        let result = b.sub(&a, &c);
-        let expected: Vec<Fr> = a.iter().zip(c.iter()).map(|(&ai, &ci)| ai - ci).collect();
-        assert_eq!(result, expected);
-    }
-
-    #[test]
-    fn accumulate_basic() {
-        let b = backend();
-        let mut buf: Vec<Fr> = vec![1, 2, 3].into_iter().map(Fr::from_u64).collect();
-        let other: Vec<Fr> = vec![10, 20, 30].into_iter().map(Fr::from_u64).collect();
-        let scalar = Fr::from_u64(2);
-
-        b.accumulate(&mut buf, scalar, &other);
-        // [1 + 2*10, 2 + 2*20, 3 + 2*30] = [21, 42, 63]
-        let expected: Vec<Fr> = vec![21, 42, 63].into_iter().map(Fr::from_u64).collect();
-        assert_eq!(buf, expected);
-    }
-
-    #[test]
-    fn accumulate_parallel() {
-        let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(1005);
-        let n = 4096;
-        let original: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let other: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let scalar = Fr::random(&mut rng);
-
-        let mut buf = original.clone();
-        b.accumulate(&mut buf, scalar, &other);
-
-        let expected: Vec<Fr> = original
-            .iter()
-            .zip(other.iter())
-            .map(|(&v, &o)| v + scalar * o)
-            .collect();
-        assert_eq!(buf, expected);
-    }
-
-    #[test]
-    fn accumulate_weighted_basic() {
-        let b = backend();
-        let mut buf: Vec<Fr> = vec![1, 2, 3].into_iter().map(Fr::from_u64).collect();
-        let a: Vec<Fr> = vec![10, 20, 30].into_iter().map(Fr::from_u64).collect();
-        let c: Vec<Fr> = vec![100, 200, 300].into_iter().map(Fr::from_u64).collect();
-        let scalars = vec![Fr::from_u64(2), Fr::from_u64(3)];
-
-        b.accumulate_weighted(&mut buf, &scalars, &[&a, &c]);
-        // buf[0] = 1 + 2*10 + 3*100 = 1 + 20 + 300 = 321
-        // buf[1] = 2 + 2*20 + 3*200 = 2 + 40 + 600 = 642
-        // buf[2] = 3 + 2*30 + 3*300 = 3 + 60 + 900 = 963
-        let expected: Vec<Fr> = vec![321, 642, 963].into_iter().map(Fr::from_u64).collect();
-        assert_eq!(buf, expected);
-    }
-
-    #[test]
-    fn accumulate_weighted_matches_loop() {
-        let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(1100);
-        let n = 64;
-        let k = 5;
-
-        let original: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let inputs: Vec<Vec<Fr>> = (0..k)
-            .map(|_| (0..n).map(|_| Fr::random(&mut rng)).collect())
-            .collect();
-        let scalars: Vec<Fr> = (0..k).map(|_| Fr::random(&mut rng)).collect();
-
-        // Reference: loop of accumulate
-        let mut expected = original.clone();
-        for (s, input) in scalars.iter().zip(inputs.iter()) {
-            b.accumulate(&mut expected, *s, input);
-        }
-
-        // accumulate_weighted
-        let input_refs: Vec<&Vec<Fr>> = inputs.iter().collect();
-        let mut buf = original;
-        b.accumulate_weighted(&mut buf, &scalars, &input_refs);
-
-        assert_eq!(buf, expected);
-    }
-
-    #[test]
-    fn accumulate_weighted_parallel() {
-        let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(1101);
-        let n = 4096;
-        let k = 4;
-
-        let original: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let inputs: Vec<Vec<Fr>> = (0..k)
-            .map(|_| (0..n).map(|_| Fr::random(&mut rng)).collect())
-            .collect();
-        let scalars: Vec<Fr> = (0..k).map(|_| Fr::random(&mut rng)).collect();
-
-        let mut expected = original.clone();
-        for (s, input) in scalars.iter().zip(inputs.iter()) {
-            for (v, &o) in expected.iter_mut().zip(input.iter()) {
-                *v += *s * o;
-            }
-        }
-
-        let input_refs: Vec<&Vec<Fr>> = inputs.iter().collect();
-        let mut buf = original;
-        b.accumulate_weighted(&mut buf, &scalars, &input_refs);
-
-        assert_eq!(buf, expected);
-    }
-
-    #[test]
-    fn accumulate_weighted_single_input() {
-        let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(1102);
-        let n = 32;
-        let original: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let other: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let scalar = Fr::random(&mut rng);
-
-        let mut via_weighted = original.clone();
-        b.accumulate_weighted(&mut via_weighted, &[scalar], &[&other]);
-
-        let mut via_single = original;
-        b.accumulate(&mut via_single, scalar, &other);
-
-        assert_eq!(via_weighted, via_single);
-    }
-
-    #[test]
-    fn scale_batch_basic() {
-        let b = backend();
-        let scalar = Fr::from_u64(3);
-        let mut bufs: Vec<Vec<Fr>> = vec![
-            vec![1, 2, 3].into_iter().map(Fr::from_u64).collect(),
-            vec![10, 20].into_iter().map(Fr::from_u64).collect(),
-        ];
-        let expected: Vec<Vec<Fr>> = vec![
-            vec![3, 6, 9].into_iter().map(Fr::from_u64).collect(),
-            vec![30, 60].into_iter().map(Fr::from_u64).collect(),
-        ];
-
-        b.scale_batch(&mut bufs, scalar);
-        assert_eq!(bufs, expected);
-    }
-
-    #[test]
-    fn scale_batch_matches_individual() {
-        let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(1200);
-        let scalar = Fr::random(&mut rng);
-
-        let originals: Vec<Vec<Fr>> = (0..6)
-            .map(|_| (0..64).map(|_| Fr::random(&mut rng)).collect())
-            .collect();
-
-        // Individual
-        let mut individual = originals.clone();
-        for buf in &mut individual {
-            b.scale(buf, scalar);
-        }
-
-        // Batched
-        let mut batched = originals;
-        b.scale_batch(&mut batched, scalar);
-
-        assert_eq!(batched, individual);
-    }
-
-    #[test]
-    fn scale_batch_parallel() {
-        let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(1201);
-        let scalar = Fr::random(&mut rng);
-
-        // 8 buffers of 1024 each = 8192 total, above PAR_THRESHOLD
-        let originals: Vec<Vec<Fr>> = (0..8)
-            .map(|_| (0..1024).map(|_| Fr::random(&mut rng)).collect())
-            .collect();
-
-        let mut individual = originals.clone();
-        for buf in &mut individual {
-            b.scale(buf, scalar);
-        }
-
-        let mut batched = originals;
-        b.scale_batch(&mut batched, scalar);
-
-        assert_eq!(batched, individual);
-    }
-
-    #[test]
-    fn scale_batch_empty() {
-        let b = backend();
-        let mut bufs: Vec<Vec<Fr>> = vec![];
-        b.scale_batch(&mut bufs, Fr::from_u64(5));
-        assert!(bufs.is_empty());
     }
 }

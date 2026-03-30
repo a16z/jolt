@@ -12,15 +12,19 @@ workspace = true
 test-utils = []
 
 [dependencies]
+jolt-compute = { path = "../jolt-compute" }
 jolt-field = { path = "../jolt-field" }
 jolt-host = { path = "../jolt-host" }
 jolt-instructions = { path = "../jolt-instructions" }
-jolt-ir = { path = "../jolt-ir" }
 jolt-poly = { path = "../jolt-poly" }
+jolt-r1cs = { path = "../jolt-r1cs" }
+jolt-verifier = { path = "../jolt-verifier" }
+tracer = { workspace = true, features = ["std"] }
 tracing.workspace = true
 
 [dev-dependencies]
 jolt-field = { path = "../jolt-field", features = ["bn254"] }
+num-traits = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 rand_core = { workspace = true }

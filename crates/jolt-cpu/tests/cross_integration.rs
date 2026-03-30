@@ -1,13 +1,12 @@
-//! Cross-integration tests for jolt-cpu with jolt-compute and jolt-ir.
+//! Cross-integration tests for jolt-cpu with jolt-compute.
 //!
-//! Compiles composition formulas from IR, then executes them through the
+//! Compiles composition formulas, then executes them through the
 //! CpuBackend pairwise_reduce pipeline and verifies correctness.
 
+use jolt_compiler::{Factor, Formula, ProductTerm};
 use jolt_compute::{BindingOrder, ComputeBackend, EqInput};
-use jolt_cpu::{compile, compile_with_challenges, from_ir_formula, CpuBackend, CpuKernel};
+use jolt_cpu::{compile, CpuBackend, CpuKernel};
 use jolt_field::{Field, Fr};
-use jolt_compiler::{CompositionFormula, Factor, ProductTerm};
-use jolt_ir::ExprBuilder;
 use num_traits::{One, Zero};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -18,19 +17,19 @@ fn backend() -> CpuBackend {
 
 fn eval_kernel(kernel: &CpuKernel<Fr>, lo: &[Fr], hi: &[Fr], n: usize) -> Vec<Fr> {
     let mut out = vec![Fr::zero(); n];
-    kernel.evaluate(lo, hi, &mut out);
+    kernel.evaluate(lo, hi, &[], &mut out);
     out
 }
 
 /// Helper: build a pure product-sum formula with `p` groups of `d` consecutive inputs.
-fn product_sum_formula(d: usize, p: usize) -> CompositionFormula {
+fn product_sum_formula(d: usize, p: usize) -> Formula {
     let terms: Vec<_> = (0..p)
         .map(|g| ProductTerm {
             coefficient: 1,
             factors: (0..d).map(|j| Factor::Input((g * d + j) as u32)).collect(),
         })
         .collect();
-    CompositionFormula::from_terms(terms)
+    Formula::from_terms(terms)
 }
 
 /// Reference: compute Toom-Cook evaluations for a sum-of-products composition
@@ -111,6 +110,7 @@ fn product_sum_d4_via_pairwise_reduce() {
         &buf_refs,
         EqInput::Weighted(&weights),
         &kernel,
+        &[],
         formula.degree(),
         BindingOrder::LowToHigh,
     );
@@ -148,6 +148,7 @@ fn product_sum_d8_multiple_groups() {
         &buf_refs,
         EqInput::Weighted(&weights),
         &kernel,
+        &[],
         formula.degree(),
         BindingOrder::LowToHigh,
     );
@@ -184,6 +185,7 @@ fn custom_product_via_pairwise_reduce() {
         &buf_refs,
         EqInput::Weighted(&weights),
         &kernel,
+        &[],
         formula.degree(),
         BindingOrder::LowToHigh,
     );
@@ -197,13 +199,11 @@ fn custom_product_via_pairwise_reduce() {
 /// specialized kernel (not Toom-Cook).
 #[test]
 fn eq_product_via_pairwise_reduce() {
-    let _b = backend();
-    let eb = ExprBuilder::new();
-    let o0 = eb.opening(0);
-    let o1 = eb.opening(1);
-    let expr = eb.build(o0 * o1);
-
-    let formula = from_ir_formula(&expr.to_composition_formula());
+    // Input(0) * Input(1)
+    let formula = Formula::from_terms(vec![ProductTerm {
+        coefficient: 1,
+        factors: vec![Factor::Input(0), Factor::Input(1)],
+    }]);
     let kernel = compile::<Fr>(&formula);
 
     // Standard grid {0, 2}: result[0] = lo[0]*lo[1], result[1] = (lo+2δ)·(lo+2δ)
@@ -224,16 +224,14 @@ fn eq_product_via_pairwise_reduce() {
 #[test]
 fn custom_with_challenge_via_pairwise_reduce() {
     let b = backend();
-    let eb = ExprBuilder::new();
-    let o0 = eb.opening(0);
-    let o1 = eb.opening(1);
-    let c0 = eb.challenge(0);
-    let expr = eb.build(c0 * o0 * o1);
-
-    let formula = from_ir_formula(&expr.to_composition_formula());
+    // Challenge(0) * Input(0) * Input(1)
+    let formula = Formula::from_terms(vec![ProductTerm {
+        coefficient: 1,
+        factors: vec![Factor::Challenge(0), Factor::Input(0), Factor::Input(1)],
+    }]);
 
     let gamma = Fr::from_u64(42);
-    let kernel = compile_with_challenges::<Fr>(&formula, &[gamma]);
+    let kernel = compile::<Fr>(&formula);
 
     let num_pairs = 3;
     let buf_a = b.upload(
@@ -253,6 +251,7 @@ fn custom_with_challenge_via_pairwise_reduce() {
         &[&buf_a, &buf_b],
         EqInput::Weighted(&weights),
         &kernel,
+        &[gamma],
         formula.degree(),
         BindingOrder::LowToHigh,
     );

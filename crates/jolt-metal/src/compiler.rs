@@ -1,4 +1,4 @@
-//! Kernel compiler: `jolt-ir::CompositionFormula` → MSL source → `MetalKernel`.
+//! Kernel compiler: `Formula` → MSL source → `MetalKernel`.
 //!
 //! Two compilation paths:
 //!
@@ -7,7 +7,7 @@
 //!   Uses incremental interpolation (`cur += diff` per grid step) to avoid
 //!   expensive `fr_mul` for small integer grid scalars.
 //!
-//! - **Custom**: Walks the `jolt-ir::Expr` DAG via `ExprVisitor`, emitting
+//! - **Custom**: Walks the `Formula` terms, emitting
 //!   MSL assignments in SSA form. Challenge values are read from a runtime
 //!   `device const Fr* challenges` buffer — not baked as MSL constants. This
 //!   makes pipeline compilation deterministic per kernel shape, enabling AOT
@@ -31,7 +31,7 @@
 use std::fmt::Write;
 use std::sync::Arc;
 
-use jolt_compiler::{CompositionFormula, Factor, ProductTerm};
+use jolt_compiler::{Factor, Formula, ProductTerm};
 use metal::CompileOptions;
 
 use crate::field_config::MslFieldParams;
@@ -101,7 +101,7 @@ pub struct GeneratedMsl {
 /// This is the deterministic, challenge-independent MSL generation. The
 /// returned source can be hashed to produce a cache key.
 pub fn generate_msl(
-    formula: &CompositionFormula,
+    formula: &Formula,
     mode: CompileMode,
     field_config: &MslFieldParams,
     device_config: &crate::metal_device_config::MetalDeviceConfig,
@@ -1818,7 +1818,7 @@ fn emit_product_sum(s: &mut String, d: usize, p: usize, arr: &str, eval_idx: usi
     let _ = writeln!(s, "          evals[{eval_idx}] = sum; }}");
 }
 
-/// Generate MSL evaluation body from a [`CompositionFormula`].
+/// Generate MSL evaluation body from a [`Formula`].
 ///
 /// Uses incremental interpolation: maintains `cur_k` starting at `lo[k]` and
 /// adding `diff_k` for each successive grid point. Grid is `{0, 2, 3, ..., degree}`
@@ -1830,7 +1830,7 @@ fn emit_product_sum(s: &mut String, d: usize, p: usize, arr: &str, eval_idx: usi
 /// Challenge values are read from a `device const Fr* challenges` buffer at
 /// runtime rather than baked as MSL constants. This makes the kernel shape
 /// deterministic at compile time, enabling AOT pipeline caching.
-fn generate_formula_body(formula: &CompositionFormula, degree: usize) -> String {
+fn generate_formula_body(formula: &Formula, degree: usize) -> String {
     let num_inputs = formula.num_inputs;
     let num_evals = degree;
     let mut s = String::with_capacity(2048);

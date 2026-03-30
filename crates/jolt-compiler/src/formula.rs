@@ -1,6 +1,6 @@
 //! Kernel-level composition formula: normalized sum-of-products.
 //!
-//! [`CompositionFormula`] is the canonical form consumed by compute backends
+//! [`Formula`] is the canonical form consumed by compute backends
 //! for kernel compilation. Produced by the compiler from protocol-level
 //! [`Expr`](crate::ir::expr::Expr).
 
@@ -41,7 +41,7 @@ impl ProductTerm {
 /// compilation. Field-dependent methods (evaluate, weight extraction) are
 /// provided by the backends, not here.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CompositionFormula {
+pub struct Formula {
     pub terms: Vec<ProductTerm>,
     /// Number of distinct input polynomial slots.
     pub num_inputs: usize,
@@ -49,7 +49,7 @@ pub struct CompositionFormula {
     pub num_challenges: usize,
 }
 
-impl CompositionFormula {
+impl Formula {
     /// Build from terms, computing `num_inputs` and `num_challenges`.
     pub fn from_terms(terms: Vec<ProductTerm>) -> Self {
         let mut max_input: Option<u32> = None;
@@ -223,7 +223,7 @@ mod tests {
                 factors: vec![Factor::Input(1)],
             },
         ];
-        let f = CompositionFormula::from_terms(terms);
+        let f = Formula::from_terms(terms);
         assert_eq!(f.num_inputs, 3);
         assert_eq!(f.num_challenges, 2);
     }
@@ -233,18 +233,14 @@ mod tests {
         let terms = vec![
             ProductTerm {
                 coefficient: 1,
-                factors: vec![
-                    Factor::Input(0),
-                    Factor::Input(0),
-                    Factor::Challenge(0),
-                ],
+                factors: vec![Factor::Input(0), Factor::Input(0), Factor::Challenge(0)],
             },
             ProductTerm {
                 coefficient: -1,
                 factors: vec![Factor::Input(0), Factor::Challenge(0)],
             },
         ];
-        let f = CompositionFormula::from_terms(terms);
+        let f = Formula::from_terms(terms);
         assert_eq!(f.degree(), 2);
     }
 
@@ -260,7 +256,7 @@ mod tests {
                 factors: vec![Factor::Input(2), Factor::Input(3)],
             },
         ];
-        let f = CompositionFormula::from_terms(terms);
+        let f = Formula::from_terms(terms);
         assert_eq!(f.as_product_sum(), Some((2, 2)));
     }
 
@@ -270,7 +266,7 @@ mod tests {
             coefficient: 1,
             factors: vec![Factor::Input(0), Factor::Challenge(0)],
         }];
-        let f = CompositionFormula::from_terms(terms);
+        let f = Formula::from_terms(terms);
         assert_eq!(f.as_product_sum(), None);
     }
 
@@ -286,7 +282,7 @@ mod tests {
                 factors: vec![Factor::Challenge(1), Factor::Input(1)],
             },
         ];
-        let f = CompositionFormula::from_terms(terms);
+        let f = Formula::from_terms(terms);
         assert!(f.is_linear_combination());
     }
 
@@ -296,7 +292,7 @@ mod tests {
             coefficient: 1,
             factors: vec![Factor::Input(0), Factor::Input(1)],
         }];
-        let f = CompositionFormula::from_terms(terms);
+        let f = Formula::from_terms(terms);
         assert!(f.is_eq_product());
     }
 
@@ -305,24 +301,20 @@ mod tests {
         let terms = vec![
             ProductTerm {
                 coefficient: 1,
-                factors: vec![
-                    Factor::Challenge(0),
-                    Factor::Input(0),
-                    Factor::Input(0),
-                ],
+                factors: vec![Factor::Challenge(0), Factor::Input(0), Factor::Input(0)],
             },
             ProductTerm {
                 coefficient: -1,
                 factors: vec![Factor::Challenge(0), Factor::Input(0)],
             },
         ];
-        let f = CompositionFormula::from_terms(terms);
+        let f = Formula::from_terms(terms);
         assert!(f.is_hamming_booleanity());
     }
 
     #[test]
     fn empty_formula() {
-        let f = CompositionFormula::from_terms(vec![]);
+        let f = Formula::from_terms(vec![]);
         assert!(f.is_empty());
         assert_eq!(f.degree(), 0);
         assert_eq!(f.num_inputs, 0);

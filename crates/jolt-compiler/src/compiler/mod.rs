@@ -3,7 +3,7 @@
 //! - **validate**: Reject malformed protocols
 //! - **analyze**: Compute derived properties (topo order, depth, degree)
 //! - **stage**: Group vertices into batched sumcheck stages
-//! - **emit**: Produce prover schedule + verifier script
+//! - **emit**: Produce prover schedule + verifier schedule
 
 pub(crate) mod analyze;
 pub mod cost;
@@ -16,7 +16,7 @@ pub use cost::{CompileParams, Cost, Objective, SolverConfig};
 pub use validate::Diagnostic;
 
 use crate::ir::Protocol;
-use crate::output::CompilerOutput;
+use crate::module::Module;
 
 /// Validate an L0 protocol and compute derived properties.
 pub fn analyze(protocol: &Protocol) -> Result<IRInfo, Vec<Diagnostic>> {
@@ -32,7 +32,7 @@ pub fn compile(
     protocol: &Protocol,
     params: &CompileParams,
     config: &SolverConfig,
-) -> Result<CompilerOutput, CompileError> {
+) -> Result<Module, CompileError> {
     let diagnostics = validate::validate(protocol);
     if !diagnostics.is_empty() {
         return Err(CompileError::Validation(diagnostics));

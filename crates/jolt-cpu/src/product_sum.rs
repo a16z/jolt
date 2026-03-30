@@ -33,98 +33,58 @@ pub fn compile<F: Field>(d: usize, num_products: usize) -> CpuKernel<F> {
     }
 }
 
-fn compile_d4<F: Field>(num_products: usize) -> CpuKernel<F> {
-    CpuKernel::new(move |lo: &[F], hi: &[F], out: &mut [F]| {
-        for slot in out.iter_mut() {
-            *slot = F::zero();
-        }
+macro_rules! compile_specialized {
+    ($name:ident, $d:literal, $eval_fn:path) => {
+        fn $name<F: Field>(num_products: usize) -> CpuKernel<F> {
+            CpuKernel::new(
+                move |lo: &[F], hi: &[F], _challenges: &[F], out: &mut [F]| {
+                    for slot in out.iter_mut() {
+                        *slot = F::zero();
+                    }
 
-        for g in 0..num_products {
-            let base = g * 4;
-            let pairs: [(F, F); 4] = core::array::from_fn(|j| (lo[base + j], hi[base + j]));
-            let mut group = [F::zero(); 4];
-            toom_cook::eval_prod_4_assign(&pairs, &mut group);
-            for k in 0..4 {
-                out[k] += group[k];
-            }
+                    for g in 0..num_products {
+                        let base = g * $d;
+                        let pairs: [(F, F); $d] =
+                            core::array::from_fn(|j| (lo[base + j], hi[base + j]));
+                        let mut group = [F::zero(); $d];
+                        $eval_fn(&pairs, &mut group);
+                        for k in 0..$d {
+                            out[k] += group[k];
+                        }
+                    }
+                },
+            )
         }
-    })
+    };
 }
 
-fn compile_d8<F: Field>(num_products: usize) -> CpuKernel<F> {
-    CpuKernel::new(move |lo: &[F], hi: &[F], out: &mut [F]| {
-        for slot in out.iter_mut() {
-            *slot = F::zero();
-        }
-
-        for g in 0..num_products {
-            let base = g * 8;
-            let pairs: [(F, F); 8] = core::array::from_fn(|j| (lo[base + j], hi[base + j]));
-            let mut group = [F::zero(); 8];
-            toom_cook::eval_prod_8_assign(&pairs, &mut group);
-            for k in 0..8 {
-                out[k] += group[k];
-            }
-        }
-    })
-}
-
-fn compile_d16<F: Field>(num_products: usize) -> CpuKernel<F> {
-    CpuKernel::new(move |lo: &[F], hi: &[F], out: &mut [F]| {
-        for slot in out.iter_mut() {
-            *slot = F::zero();
-        }
-
-        for g in 0..num_products {
-            let base = g * 16;
-            let pairs: [(F, F); 16] = core::array::from_fn(|j| (lo[base + j], hi[base + j]));
-            let mut group = [F::zero(); 16];
-            toom_cook::eval_prod_16_assign(&pairs, &mut group);
-            for k in 0..16 {
-                out[k] += group[k];
-            }
-        }
-    })
-}
-
-fn compile_d32<F: Field>(num_products: usize) -> CpuKernel<F> {
-    CpuKernel::new(move |lo: &[F], hi: &[F], out: &mut [F]| {
-        for slot in out.iter_mut() {
-            *slot = F::zero();
-        }
-
-        for g in 0..num_products {
-            let base = g * 32;
-            let pairs: [(F, F); 32] = core::array::from_fn(|j| (lo[base + j], hi[base + j]));
-            let mut group = [F::zero(); 32];
-            toom_cook::eval_prod_32_assign(&pairs, &mut group);
-            for k in 0..32 {
-                out[k] += group[k];
-            }
-        }
-    })
-}
+compile_specialized!(compile_d4, 4, toom_cook::eval_prod_4_assign);
+compile_specialized!(compile_d8, 8, toom_cook::eval_prod_8_assign);
+compile_specialized!(compile_d16, 16, toom_cook::eval_prod_16_assign);
+compile_specialized!(compile_d32, 32, toom_cook::eval_prod_32_assign);
 
 fn compile_generic<F: Field>(d: usize, num_products: usize) -> CpuKernel<F> {
-    CpuKernel::new(move |lo: &[F], hi: &[F], out: &mut [F]| {
-        for slot in out.iter_mut() {
-            *slot = F::zero();
-        }
-
-        let mut pairs = vec![(F::zero(), F::zero()); d];
-        let mut group = vec![F::zero(); d];
-
-        for g in 0..num_products {
-            let base = g * d;
-            for j in 0..d {
-                pairs[j] = (lo[base + j], hi[base + j]);
+    CpuKernel::new(
+        move |lo: &[F], hi: &[F], _challenges: &[F], out: &mut [F]| {
+            for slot in out.iter_mut() {
+                *slot = F::zero();
             }
-            toom_cook::eval_linear_prod_assign(&pairs, &mut group);
-            for k in 0..d {
-                out[k] += group[k];
+
+            let mut pairs = vec![(F::zero(), F::zero()); d];
+            let mut group = vec![F::zero(); d];
+
+            for g in 0..num_products {
+                let base = g * d;
+                for j in 0..d {
+                    pairs[j] = (lo[base + j], hi[base + j]);
+                }
+                toom_cook::eval_linear_prod_assign(&pairs, &mut group);
+                for k in 0..d {
+                    out[k] += group[k];
+                }
             }
-        }
-    })
+        },
+    )
 }
 
 #[cfg(test)]
@@ -174,7 +134,7 @@ mod tests {
 
     fn eval_kernel(kernel: &CpuKernel<Fr>, lo: &[Fr], hi: &[Fr], d: usize) -> Vec<Fr> {
         let mut out = vec![Fr::zero(); d];
-        kernel.evaluate(lo, hi, &mut out);
+        kernel.evaluate(lo, hi, &[], &mut out);
         out
     }
 

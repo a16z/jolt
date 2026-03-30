@@ -14,10 +14,10 @@
 
 use std::time::Instant;
 
+use jolt_compiler::{Factor, Formula, ProductTerm};
 use jolt_compute::{BindingOrder, ComputeBackend, EqInput};
 use jolt_cpu::CpuBackend;
 use jolt_field::{Field, Fr};
-use jolt_compiler::{CompositionFormula, Factor, ProductTerm};
 use jolt_metal::MetalBackend;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -26,14 +26,14 @@ fn random_fr(rng: &mut StdRng, n: usize) -> Vec<Fr> {
     (0..n).map(|_| Fr::random(rng)).collect()
 }
 
-fn product_sum_formula(d: usize, p: usize) -> CompositionFormula {
+fn product_sum_formula(d: usize, p: usize) -> Formula {
     let terms: Vec<_> = (0..p)
         .map(|g| ProductTerm {
             coefficient: 1,
             factors: (0..d).map(|j| Factor::Input((g * d + j) as u32)).collect(),
         })
         .collect();
-    CompositionFormula::from_terms(terms)
+    Formula::from_terms(terms)
 }
 
 /// Warmup iterations before timing.
@@ -59,6 +59,7 @@ fn bench_reduce_latency<B: ComputeBackend>(
             &refs,
             EqInput::Weighted(&w_buf),
             kernel,
+            &[],
             num_evals,
             BindingOrder::LowToHigh,
         );
@@ -71,6 +72,7 @@ fn bench_reduce_latency<B: ComputeBackend>(
             &refs,
             EqInput::Weighted(&w_buf),
             kernel,
+            &[],
             num_evals,
             BindingOrder::LowToHigh,
         );
@@ -204,6 +206,7 @@ fn main() {
                     &refs,
                     EqInput::Unit,
                     &mtl_k,
+                    &[],
                     formula.degree(),
                     BindingOrder::LowToHigh,
                 );
@@ -221,6 +224,7 @@ fn main() {
                     &refs,
                     EqInput::Unit,
                     &mtl_k,
+                    &[],
                     formula.degree(),
                     BindingOrder::LowToHigh,
                 );
@@ -241,6 +245,7 @@ fn main() {
                     &refs,
                     EqInput::Unit,
                     &cpu_k,
+                    &[],
                     formula.degree(),
                     BindingOrder::LowToHigh,
                 );

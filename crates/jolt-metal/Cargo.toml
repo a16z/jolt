@@ -21,7 +21,6 @@ tracing.workspace = true
 jolt-field = { path = "../jolt-field", features = ["bn254"] }
 jolt-compute = { path = "../jolt-compute" }
 jolt-cpu = { path = "../jolt-cpu" }
-jolt-ir = { path = "../jolt-ir" }
 jolt-poly = { path = "../jolt-poly" }
 jolt-sumcheck = { path = "../jolt-sumcheck" }
 jolt-transcript = { path = "../jolt-transcript" }

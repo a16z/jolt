@@ -8,11 +8,17 @@
 //!   cargo run --example jolt_core_l1 -p jolt-compiler              # human-readable
 //!   cargo run --example jolt_core_l1 -p jolt-compiler -- --json    # JSON for L2
 
-#![allow(non_snake_case, unused_variables, dead_code, clippy::print_stderr, clippy::print_stdout)]
+#![allow(
+    non_snake_case,
+    unused_variables,
+    dead_code,
+    clippy::print_stderr,
+    clippy::print_stdout
+)]
 
 use jolt_compiler::{
-    compile, ChallengeSource, ClaimId, CompileParams, CompilerOutput, Expr, Objective, Poly,
-    PolyKind, Protocol, ProverStep, PublicPoly, SolverConfig, Vertex,
+    compile, ChallengeSource, ClaimId, CompileParams, Expr, Module, Objective, Op, Poly, PolyKind,
+    Protocol, PublicPoly, SolverConfig, Vertex,
 };
 use PolyKind::{Committed, Public, Virtual};
 
@@ -51,25 +57,57 @@ fn main() {
     print_human_readable(&protocol, &info, &output);
 }
 
-fn print_human_readable(
-    protocol: &Protocol,
-    info: &jolt_compiler::IRInfo,
-    output: &CompilerOutput,
-) {
+fn print_human_readable(protocol: &Protocol, info: &jolt_compiler::IRInfo, output: &Module) {
     eprintln!("=== Protocol ===");
     eprintln!(
         "  vertices: {} ({} sumchecks, {} uniskips, {} evals)",
         protocol.vertices.len(),
-        protocol.vertices.iter().filter(|v| matches!(v, Vertex::Sumcheck { domain_size: None, .. })).count(),
-        protocol.vertices.iter().filter(|v| matches!(v, Vertex::Sumcheck { domain_size: Some(_), .. })).count(),
-        protocol.vertices.iter().filter(|v| matches!(v, Vertex::Evaluate { .. })).count(),
+        protocol
+            .vertices
+            .iter()
+            .filter(|v| matches!(
+                v,
+                Vertex::Sumcheck {
+                    domain_size: None,
+                    ..
+                }
+            ))
+            .count(),
+        protocol
+            .vertices
+            .iter()
+            .filter(|v| matches!(
+                v,
+                Vertex::Sumcheck {
+                    domain_size: Some(_),
+                    ..
+                }
+            ))
+            .count(),
+        protocol
+            .vertices
+            .iter()
+            .filter(|v| matches!(v, Vertex::Evaluate { .. }))
+            .count(),
     );
     eprintln!(
         "  polys: {} ({} committed, {} virtual, {} public)",
         protocol.polynomials.len(),
-        protocol.polynomials.iter().filter(|p| matches!(p.kind, Committed)).count(),
-        protocol.polynomials.iter().filter(|p| matches!(p.kind, Virtual)).count(),
-        protocol.polynomials.iter().filter(|p| matches!(p.kind, Public(_))).count(),
+        protocol
+            .polynomials
+            .iter()
+            .filter(|p| matches!(p.kind, Committed))
+            .count(),
+        protocol
+            .polynomials
+            .iter()
+            .filter(|p| matches!(p.kind, Virtual))
+            .count(),
+        protocol
+            .polynomials
+            .iter()
+            .filter(|p| matches!(p.kind, Public(_)))
+            .count(),
     );
     eprintln!("  claims: {}", protocol.claims.len());
     eprintln!("  dims: {:?}", protocol.dim_names);
@@ -77,14 +115,18 @@ fn print_human_readable(
 
     let polys = &output.polys;
     let challenges = &output.challenges;
-    let sched = &output.schedule;
+    let sched = &output.prover;
 
     eprintln!("\n=== Prover Schedule ===");
-    eprintln!("  steps: {}", sched.steps.len());
+    eprintln!("  ops: {}", sched.ops.len());
     eprintln!("  kernels: {}", sched.kernels.len());
     eprintln!("  polys: {}", polys.len());
     eprintln!("  challenges: {}", challenges.len());
-    eprintln!("  FS steps: {}, compute steps: {}", sched.fs_step_count(), sched.compute_step_count());
+    eprintln!(
+        "  FS ops: {}, compute ops: {}",
+        sched.fs_op_count(),
+        sched.compute_op_count()
+    );
 
     let round_challenges = challenges
         .iter()
@@ -93,51 +135,77 @@ fn print_human_readable(
     eprintln!("  round challenges: {round_challenges}");
 
     for (i, k) in sched.kernels.iter().enumerate() {
-        let input_names: Vec<&str> = k.inputs.iter().map(|&pi| polys[pi].name.as_str()).collect();
+        let input_names: Vec<&str> = k
+            .inputs
+            .iter()
+            .map(|b| polys[b.poly()].name.as_str())
+            .collect();
         eprintln!(
             "  kernel {i}: degree={}, rounds={}, {} inputs [{}]",
-            k.degree, k.num_rounds, k.inputs.len(), input_names.join(", ")
+            k.degree,
+            k.num_rounds,
+            k.inputs.len(),
+            input_names.join(", ")
         );
     }
 
-    let script = &output.script;
-    eprintln!("\n=== Verifier Script ===");
-    eprintln!("  stages: {}", script.stages.len());
-    for (i, stage) in script.stages.iter().enumerate() {
+    let vs = &output.verifier;
+    eprintln!("\n=== Verifier Schedule ===");
+    eprintln!("  stages: {}", vs.stages.len());
+    for (i, stage) in vs.stages.iter().enumerate() {
         eprintln!(
             "  stage {i}: rounds={}, degree={}, {} evals, {} post-squeeze",
-            stage.num_rounds, stage.degree, stage.evaluations.len(), stage.post_squeeze.len(),
+            stage.num_rounds,
+            stage.degree,
+            stage.evaluations.len(),
+            stage.post_squeeze.len(),
         );
     }
 
-    eprintln!("\n=== Steps ({}) ===", sched.steps.len());
-    for (i, step) in sched.steps.iter().enumerate() {
-        match step {
-            ProverStep::AppendCommitments { polys: committed } => {
+    eprintln!("\n=== Ops ({}) ===", sched.ops.len());
+    for (i, op) in sched.ops.iter().enumerate() {
+        match op {
+            Op::EmitCommitments { polys: committed } => {
                 let names: Vec<&str> = committed.iter().map(|&p| polys[p].name.as_str()).collect();
-                eprintln!("  [{i:>4}] FS  AppendCommitments({} polys): {}", committed.len(), names.join(", "));
+                eprintln!(
+                    "  [{i:>4}] FS  EmitCommitments({} polys): {}",
+                    committed.len(),
+                    names.join(", ")
+                );
             }
-            ProverStep::AppendRoundPoly { kernel, num_coeffs } => {
-                eprintln!("  [{i:>4}] FS  AppendRoundPoly(kernel={kernel}, {num_coeffs} coeffs)");
+            Op::EmitRoundPoly { kernel, num_coeffs } => {
+                eprintln!("  [{i:>4}] FS  EmitRoundPoly(kernel={kernel}, {num_coeffs} coeffs)");
             }
-            ProverStep::AppendScalars { evals } => {
-                eprintln!("  [{i:>4}] FS  AppendScalars({} evals)", evals.len());
+            Op::EmitScalars { evals } => {
+                eprintln!("  [{i:>4}] FS  EmitScalars({} evals)", evals.len());
             }
-            ProverStep::Squeeze { challenge } => {
+            Op::Squeeze { challenge } => {
                 let ch = &challenges[*challenge];
                 eprintln!("  [{i:>4}] FS  Squeeze({}: {})", challenge, ch.name);
             }
-            ProverStep::Materialize { poly } => {
-                eprintln!("  [{i:>4}]     Materialize({})", polys[*poly].name);
+            Op::SumcheckRound {
+                kernel,
+                round,
+                bind_challenge,
+            } => {
+                let bind = bind_challenge.map_or("none".to_string(), |c| format!("ch={c}"));
+                eprintln!("  [{i:>4}]     SumcheckRound(k{kernel}r{round}, bind={bind})");
             }
-            ProverStep::SumcheckRound { kernel, round, num_vars_remaining } => {
-                eprintln!("  [{i:>4}]     SumcheckRound(k{kernel}r{round}, vars={num_vars_remaining})");
-            }
-            ProverStep::Bind { polys: bound, challenge, order } => {
-                eprintln!("  [{i:>4}]     Bind({} polys, ch={}, {:?})", bound.len(), challenge, order);
-            }
-            ProverStep::Evaluate { poly } => {
+            Op::Evaluate { poly } => {
                 eprintln!("  [{i:>4}]     Evaluate({})", polys[*poly].name);
+            }
+            Op::FinalBind {
+                polys: bound,
+                challenge,
+                order,
+            } => {
+                eprintln!(
+                    "  [{i:>4}]     FinalBind({} polys, ch={challenge}, {order:?})",
+                    bound.len()
+                );
+            }
+            Op::Release { poly } => {
+                eprintln!("  [{i:>4}]     Release({})", polys[*poly].name);
             }
         }
     }
@@ -276,7 +344,13 @@ fn build_protocol() -> (Protocol, Vertices) {
     let inst_raf_ra = p.poly("InstRafRa", &[log_K, log_T], Virtual);
     let bytecode_raf_ra = p.poly("BytecodeRafRa", &[log_K, log_T], Virtual);
     let bc_table: Vec<Poly> = (0..5)
-        .map(|s| p.poly(&format!("BcTable_{s}"), &[log_K], Public(PublicPoly::Preprocessed)))
+        .map(|s| {
+            p.poly(
+                &format!("BcTable_{s}"),
+                &[log_K],
+                Public(PublicPoly::Preprocessed),
+            )
+        })
         .collect();
     let bc_rv: Vec<Poly> = (0..5)
         .map(|s| p.poly(&format!("BcReadVal_{s}"), &[log_T], Virtual))
@@ -304,9 +378,20 @@ fn build_protocol() -> (Protocol, Vertices) {
 
     // All 14 OpFlags for bulk evaluation at cache_openings points
     let all_op_flags: [Poly; 14] = [
-        op_add, op_sub, op_mul, op_load, op_store, op_jump, op_write_rd,
-        is_virtual, op_assert, op_no_update_pc, op_advice, op_is_compressed,
-        is_first, op_is_last_in_seq,
+        op_add,
+        op_sub,
+        op_mul,
+        op_load,
+        op_store,
+        op_jump,
+        op_write_rd,
+        is_virtual,
+        op_assert,
+        op_no_update_pc,
+        op_advice,
+        op_is_compressed,
+        is_first,
+        op_is_last_in_seq,
     ];
 
     // Virtual — InstructionFlags (not already declared as trace polys)
@@ -416,11 +501,7 @@ fn build_protocol() -> (Protocol, Vertices) {
     );
 
     // InstructionLookupsClaimReduction: eq(r_outer) · (output + γ·left + γ²·right + γ³·left_inst + γ⁴·right_inst)
-    let eq_outer = p.poly(
-        "eq_outer",
-        &[log_T],
-        Public(PublicPoly::Eq(Some(outer[0]))),
-    );
+    let eq_outer = p.poly("eq_outer", &[log_T], Public(PublicPoly::Eq(Some(outer[0]))));
     let inst_claim_reduction_v = p.vertices.len();
     let inst_claim_reduction = p.sumcheck(
         eq_outer
@@ -447,8 +528,7 @@ fn build_protocol() -> (Protocol, Vertices) {
 
     // OutputCheck: eq · io_mask · (val_final − val_io) = 0
     let output_check_v = p.vertices.len();
-    let _output_check =
-        p.sumcheck(eq_K * io_mask * (ram_val_final - val_io), 0, &[log_K]);
+    let _output_check = p.sumcheck(eq_K * io_mask * (ram_val_final - val_io), 0, &[log_K]);
 
     // ========== Evals after product (available to Stage 3) ==========
     let mut evals_after_product = Vec::new();
@@ -499,10 +579,7 @@ fn build_protocol() -> (Protocol, Vertices) {
     let shift_v = p.vertices.len();
     let shift = p.sumcheck(
         eq1_outer
-            * (unexpanded_pc
-                + gamma * pc
-                + gamma.pow(2) * is_virtual
-                + gamma.pow(3) * is_first)
+            * (unexpanded_pc + gamma * pc + gamma.pow(2) * is_virtual + gamma.pow(3) * is_first)
             + eq1_product * (gamma.pow(4) - gamma.pow(4) * is_noop),
         next_unexpanded_pc
             + gamma * next_pc
@@ -515,10 +592,9 @@ fn build_protocol() -> (Protocol, Vertices) {
 
     let inst_input_v = p.vertices.len();
     let inst_input = p.sumcheck(
-        eq_T
-            * (is_rs2 * rs2_val
-                + is_imm_flag * imm_val
-                + gamma * (is_rs1 * rs1_val + is_pc_flag * unexpanded_pc)),
+        eq_T * (is_rs2 * rs2_val
+            + is_imm_flag * imm_val
+            + gamma * (is_rs1 * rs1_val + is_pc_flag * unexpanded_pc)),
         right_inst_eval + gamma * left_inst_eval,
         &[log_T],
     );
@@ -552,10 +628,9 @@ fn build_protocol() -> (Protocol, Vertices) {
 
     let reg_rw_v = p.vertices.len();
     let reg_rw = p.sumcheck(
-        eq_T
-            * (reg_wa * (rd_inc + reg_val)
-                + gamma * reg_ra_rs1 * reg_val
-                + gamma.pow(2) * reg_ra_rs2 * reg_val),
+        eq_T * (reg_wa * (rd_inc + reg_val)
+            + gamma * reg_ra_rs1 * reg_val
+            + gamma.pow(2) * reg_ra_rs2 * reg_val),
         rd_wv_eval + gamma * (rs1_rv_eval + gamma * rs2_rv_eval),
         &[log_K, log_T],
     );
@@ -893,15 +968,15 @@ fn build_protocol() -> (Protocol, Vertices) {
     // original committed advice. Declare address-phase polys over [log_K].
     let trusted_addr_poly = p.poly("TrustedAdviceAddr", &[log_K], Virtual);
     let untrusted_addr_poly = p.poly("UntrustedAdviceAddr", &[log_K], Virtual);
-    let eq_advice_addr = p.poly(
-        "eq_advice_addr",
-        &[log_K],
-        Public(PublicPoly::Eq(None)),
-    );
+    let eq_advice_addr = p.poly("eq_advice_addr", &[log_K], Public(PublicPoly::Eq(None)));
     let advice_trusted_addr_v = p.vertices.len();
     let _trusted_addr = p.sumcheck(eq_advice_addr * trusted_addr_poly, trusted_mid[0], &[log_K]);
     let advice_untrusted_addr_v = p.vertices.len();
-    let _untrusted_addr = p.sumcheck(eq_advice_addr * untrusted_addr_poly, untrusted_mid[0], &[log_K]);
+    let _untrusted_addr = p.sumcheck(
+        eq_advice_addr * untrusted_addr_poly,
+        untrusted_mid[0],
+        &[log_K],
+    );
 
     // ========== Return protocol + vertex map ==========
 

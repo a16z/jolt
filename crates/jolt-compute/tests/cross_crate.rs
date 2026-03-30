@@ -85,11 +85,11 @@ fn iterated_interpolation_converges_to_evaluate() {
     assert_eq!(data[0], expected);
 }
 
-// product_table ↔ EqPolynomial::evaluations
+// eq_table ↔ EqPolynomial::evaluations
 
-/// CpuBackend::product_table matches EqPolynomial::evaluations.
+/// CpuBackend::eq_table matches EqPolynomial::evaluations.
 #[test]
-fn product_table_matches_eq_polynomial() {
+fn eq_table_matches_eq_polynomial() {
     let mut rng = ChaCha20Rng::seed_from_u64(2000);
     let b = backend();
 
@@ -97,12 +97,12 @@ fn product_table_matches_eq_polynomial() {
         let point: Vec<Fr> = (0..nv).map(|_| Fr::random(&mut rng)).collect();
 
         let expected = EqPolynomial::new(point.clone()).evaluations();
-        let table_buf = b.product_table(&point);
+        let table_buf = b.eq_table(&point);
         let actual = b.download(&table_buf);
 
         assert_eq!(
             actual, expected,
-            "nv={nv}: product_table must match EqPolynomial"
+            "nv={nv}: eq_table must match EqPolynomial"
         );
     }
 }
@@ -116,12 +116,14 @@ fn pairwise_reduce_identity_kernel() {
     let b = backend();
     let num_evals = 2; // degree-1 polynomial: evals at t=0, t=1
 
-    let kernel = CpuKernel::new(move |lo: &[Fr], hi: &[Fr], out: &mut [Fr]| {
-        for (t, slot) in out.iter_mut().enumerate() {
-            let t_f = Fr::from_u64(t as u64);
-            *slot = (0..lo.len()).map(|k| lo[k] + t_f * (hi[k] - lo[k])).sum();
-        }
-    });
+    let kernel = CpuKernel::new(
+        move |lo: &[Fr], hi: &[Fr], _challenges: &[Fr], out: &mut [Fr]| {
+            for (t, slot) in out.iter_mut().enumerate() {
+                let t_f = Fr::from_u64(t as u64);
+                *slot = (0..lo.len()).map(|k| lo[k] + t_f * (hi[k] - lo[k])).sum();
+            }
+        },
+    );
 
     // Two buffers with 4 pairs each
     let buf_a = b.upload(&[
@@ -155,6 +157,7 @@ fn pairwise_reduce_identity_kernel() {
         &[&buf_a, &buf_b],
         EqInput::Weighted(&weights),
         &kernel,
+        &[],
         num_evals,
         BindingOrder::LowToHigh,
     );

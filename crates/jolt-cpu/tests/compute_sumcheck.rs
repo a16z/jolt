@@ -1,15 +1,15 @@
 //! Integration test: validates the full compute pipeline against sumcheck.
 //!
-//! Flow: CompositionFormula → compile() → product_table() → pairwise_reduce()
+//! Flow: Formula → compile() → eq_table() → pairwise_reduce()
 //! → round polynomial evaluations → UnivariatePoly → sumcheck prove + verify.
 //!
 //! Cross-checks against a hand-written SumcheckCompute reference implementation
 //! to ensure the compute layer produces identical round polynomials.
 
+use jolt_compiler::{Factor, Formula, ProductTerm};
 use jolt_compute::{BindingOrder, ComputeBackend, EqInput};
 use jolt_cpu::{compile, CpuBackend};
 use jolt_field::{Field, Fr};
-use jolt_compiler::{CompositionFormula, Factor, ProductTerm};
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::claim::SumcheckClaim;
 use jolt_sumcheck::prover::{SumcheckCompute, SumcheckProver};
@@ -165,6 +165,7 @@ impl SumcheckCompute<Fr> for ComputeWitness {
             &[&self.eq_buf, &self.f_buf, &self.g_buf],
             EqInput::Weighted(&ones),
             &self.kernel,
+            &[],
             3,
             BindingOrder::LowToHigh,
         );
@@ -209,14 +210,14 @@ impl SumcheckCompute<Fr> for ComputeWitness {
 }
 
 /// Helper: build a pure product-sum formula with `p` groups of `d` consecutive inputs.
-fn product_sum_formula(d: usize, p: usize) -> CompositionFormula {
+fn product_sum_formula(d: usize, p: usize) -> Formula {
     let terms: Vec<_> = (0..p)
         .map(|g| ProductTerm {
             coefficient: 1,
             factors: (0..d).map(|j| Factor::Input((g * d + j) as u32)).collect(),
         })
         .collect();
-    CompositionFormula::from_terms(terms)
+    Formula::from_terms(terms)
 }
 
 /// Prove and verify a sumcheck using the compute-backend witness,

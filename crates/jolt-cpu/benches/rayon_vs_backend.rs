@@ -7,10 +7,10 @@
 //! (`mles_product_sum.rs`).
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use jolt_compiler::{Factor, Formula, ProductTerm};
 use jolt_compute::{BindingOrder, ComputeBackend, EqInput};
 use jolt_cpu::{compile, toom_cook, CpuBackend};
 use jolt_field::{Field, FieldAccumulator, Fr};
-use jolt_compiler::{CompositionFormula, Factor, ProductTerm};
 use num_traits::Zero;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -21,14 +21,14 @@ fn random_field_vec(n: usize, seed: u64) -> Vec<Fr> {
 }
 
 /// Helper: build a pure product-sum formula with `p` groups of `d` consecutive inputs.
-fn product_sum_formula(d: usize, p: usize) -> CompositionFormula {
+fn product_sum_formula(d: usize, p: usize) -> Formula {
     let terms: Vec<_> = (0..p)
         .map(|g| ProductTerm {
             coefficient: 1,
             factors: (0..d).map(|j| Factor::Input((g * d + j) as u32)).collect(),
         })
         .collect();
-    CompositionFormula::from_terms(terms)
+    Formula::from_terms(terms)
 }
 
 /// Direct Rayon path: mimics the witness hot path from `mles_product_sum.rs`.
@@ -171,6 +171,7 @@ fn bench_rayon_vs_backend(c: &mut Criterion) {
                             &input_refs,
                             EqInput::Weighted(&weights),
                             &kernel,
+                            &[],
                             d,
                             BindingOrder::LowToHigh,
                         ));

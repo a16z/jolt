@@ -12,9 +12,9 @@
 //! GPU backends (CUDA, WebGPU) will follow the same pattern.
 
 mod hybrid;
+pub mod linker;
 mod traits;
 
-pub use hybrid::{
-    HybridBackend, HybridBuffer, HybridKernel, HybridSparseBuffer, HybridSumcheckWitness,
-};
-pub use traits::{BackendWitness, BindingOrder, ComputeBackend, EqInput, RoundCoeffs, Scalar};
+pub use hybrid::{HybridBackend, HybridBuffer, HybridKernel};
+pub use linker::{link, Executable};
+pub use traits::{BindingOrder, BufferProvider, ComputeBackend, EqInput, Scalar};

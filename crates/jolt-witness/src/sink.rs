@@ -12,8 +12,8 @@
 //! This decouples witness generation from PCS — `jolt-witness` never
 //! touches commitment schemes.
 
+use crate::PolynomialId;
 use jolt_field::Field;
-use jolt_ir::PolynomialId;
 
 /// Describes the representation of a polynomial's evaluation data.
 ///

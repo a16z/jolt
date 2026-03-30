@@ -30,12 +30,12 @@ kernel void fr_interpolate_inplace_high_kernel(
     buf[tid] = fr_add(lo, fr_mul(s, fr_sub(hi, lo)));
 }
 
-// Product table round (split-half): table[j+prev_len] = table[j] * r,
+// Eq table round (split-half): table[j+prev_len] = table[j] * r,
 // table[j] = table[j] - table[j+prev_len] (= table[j] * (1-r)).
 // Uses one fr_mul + one fr_sub instead of two fr_mul.
 // Safe in-place: thread j writes table[j] and table[j+prev_len].
 // params[0] = prev_len.
-kernel void fr_product_table_round_kernel(
+kernel void fr_eq_table_round_kernel(
     device Fr*         table       [[buffer(0)]],
     device const Fr*   r_val       [[buffer(1)]],
     device const uint* params      [[buffer(2)]],

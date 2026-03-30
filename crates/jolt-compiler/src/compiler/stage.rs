@@ -5,7 +5,7 @@
 //! 3. Compaction: renumber stages to remove gaps
 //!
 //! Output is a [`Staging`] — an internal representation consumed by the
-//! emit pass to produce [`ProverSchedule`] and [`VerifierScript`].
+//! emit pass to produce [`Schedule`] and [`VerifierSchedule`].
 
 use std::collections::{BTreeMap, HashSet};
 

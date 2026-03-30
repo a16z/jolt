@@ -1,12 +1,8 @@
 use jolt_openings::OpeningsError;
-use jolt_spartan::SpartanError;
 use jolt_sumcheck::SumcheckError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum JoltError {
-    #[error("spartan error: {0}")]
-    Spartan(#[from] SpartanError),
-
     #[error("sumcheck error: {0}")]
     Sumcheck(#[from] SumcheckError),
 

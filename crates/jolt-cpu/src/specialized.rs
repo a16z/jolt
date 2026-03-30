@@ -20,7 +20,7 @@ use jolt_field::Field;
 /// 2 field multiplications, zero branching.
 #[inline]
 pub fn eq_product<F: Field>() -> CpuKernel<F> {
-    CpuKernel::new(|lo: &[F], hi: &[F], out: &mut [F]| {
+    CpuKernel::new(|lo: &[F], hi: &[F], _challenges: &[F], out: &mut [F]| {
         out[0] = lo[0] * lo[1];
         let a2 = hi[0] + hi[0] - lo[0];
         let b2 = hi[1] + hi[1] - lo[1];
@@ -36,7 +36,7 @@ pub fn eq_product<F: Field>() -> CpuKernel<F> {
 /// 6 field multiplications (2 per grid point), zero branching.
 #[inline]
 pub fn hamming_booleanity<F: Field>() -> CpuKernel<F> {
-    CpuKernel::new(|lo: &[F], hi: &[F], out: &mut [F]| {
+    CpuKernel::new(|lo: &[F], hi: &[F], _challenges: &[F], out: &mut [F]| {
         let one = F::one();
         let d_eq = hi[0] - lo[0];
         let d_h = hi[1] - lo[1];
@@ -64,7 +64,7 @@ mod tests {
 
     fn eval_kernel(kernel: &CpuKernel<Fr>, lo: &[Fr], hi: &[Fr], n: usize) -> Vec<Fr> {
         let mut out = vec![Fr::zero(); n];
-        kernel.evaluate(lo, hi, &mut out);
+        kernel.evaluate(lo, hi, &[], &mut out);
         out
     }
 
@@ -84,13 +84,13 @@ mod tests {
 
     #[test]
     fn eq_product_matches_generic() {
-        use jolt_ir::ExprBuilder;
-        let b = ExprBuilder::new();
-        let eq = b.opening(0);
-        let g = b.opening(1);
-        let expr = b.build(eq * g);
-        let formula = crate::from_ir_formula(&expr.to_composition_formula());
-        let generic_kernel = crate::formula::compile_with_challenges::<Fr>(&formula, &[]);
+        use jolt_compiler::{Factor, Formula, ProductTerm};
+        // Input(0) * Input(1)
+        let formula = Formula::from_terms(vec![ProductTerm {
+            coefficient: 1,
+            factors: vec![Factor::Input(0), Factor::Input(1)],
+        }]);
+        let generic_kernel = crate::formula::compile::<Fr>(&formula);
         let specialized_kernel = eq_product::<Fr>();
 
         let lo = vec![Fr::from_u64(42), Fr::from_u64(99)];
@@ -121,13 +121,20 @@ mod tests {
 
     #[test]
     fn hamming_booleanity_matches_generic() {
-        use jolt_ir::ExprBuilder;
-        let b = ExprBuilder::new();
-        let eq = b.opening(0);
-        let h = b.opening(1);
-        let expr = b.build(eq * (h * h - h));
-        let formula = crate::from_ir_formula(&expr.to_composition_formula());
-        let generic_kernel = crate::formula::compile_with_challenges::<Fr>(&formula, &[]);
+        use jolt_compiler::{Factor, Formula, ProductTerm};
+        // eq * h * (h - 1) = eq*h*h - eq*h
+        // = [coeff:1 Input(0)*Input(1)*Input(1)] + [coeff:-1 Input(0)*Input(1)]
+        let formula = Formula::from_terms(vec![
+            ProductTerm {
+                coefficient: 1,
+                factors: vec![Factor::Input(0), Factor::Input(1), Factor::Input(1)],
+            },
+            ProductTerm {
+                coefficient: -1,
+                factors: vec![Factor::Input(0), Factor::Input(1)],
+            },
+        ]);
+        let generic_kernel = crate::formula::compile::<Fr>(&formula);
         let specialized_kernel = hamming_booleanity::<Fr>();
 
         let lo = vec![Fr::from_u64(42), Fr::from_u64(7)];

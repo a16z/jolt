@@ -7,26 +7,3 @@ description = "Verifier wrapping infrastructure for Jolt — symbolic execution,
 
 [lints]
 workspace = true
-
-[dependencies]
-jolt-ir = { path = "../jolt-ir" }
-jolt-field = { path = "../jolt-field" }
-jolt-transcript = { path = "../jolt-transcript" }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true, features = ["std"] }
-num-bigint = { workspace = true }
-num-traits = { workspace = true }
-rand_core = { workspace = true }
-
-[dev-dependencies]
-jolt-ir = { path = "../jolt-ir" }
-jolt-field = { path = "../jolt-field", features = ["bn254"] }
-jolt-transcript = { path = "../jolt-transcript" }
-jolt-spartan = { path = "../jolt-spartan" }
-jolt-openings = { path = "../jolt-openings", features = ["test-utils"] }
-num-traits = { workspace = true }
-jolt-crypto = { path = "../jolt-crypto", features = ["bn254"] }
-jolt-hyperkzg = { path = "../jolt-hyperkzg" }
-rand = { workspace = true }
-rand_core = { workspace = true }
-rand_chacha = { workspace = true }

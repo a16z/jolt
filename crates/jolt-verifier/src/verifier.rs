@@ -1,27 +1,11 @@
 //! Low-level verification primitives reused by [`verify`](crate::verify).
 
-use jolt_field::Field;
 use jolt_openings::{
     AdditivelyHomomorphic, OpeningReduction, OpeningsError, RlcReduction, VerifierClaim,
 };
-use jolt_spartan::{SpartanError, UniformSpartanKey, UniformSpartanProof, UniformSpartanVerifier};
 use jolt_transcript::Transcript;
 
 use crate::error::JoltError;
-
-/// Verifies the uniform Spartan R1CS proof (PIOP only — no PCS).
-/// Returns `(r_x, r_y)` challenge vectors.
-pub fn verify_spartan<F, T>(
-    key: &UniformSpartanKey<F>,
-    proof: &UniformSpartanProof<F>,
-    transcript: &mut T,
-) -> Result<(Vec<F>, Vec<F>), SpartanError>
-where
-    F: Field,
-    T: Transcript<Challenge = F>,
-{
-    UniformSpartanVerifier::verify_with_challenges(key, proof, transcript)
-}
 
 /// Verifies batch PCS opening proofs via RLC reduction.
 pub fn verify_openings<PCS, T>(
