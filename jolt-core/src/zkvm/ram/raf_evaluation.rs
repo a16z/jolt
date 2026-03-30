@@ -306,7 +306,17 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RafEvaluation
             )
             .map(F::reduce_product_accum);
 
-        UniPoly::from_evals_and_hint(previous_claim, &evals)
+        // When phase1_num_rounds < log_T, the input_claim is pre-scaled by
+        // 2^(phase3_cycle_rounds) to compensate for the gap-round halvings that follow.
+        // The raw polynomial evals sum to the unscaled claim, so we must scale them
+        // by the same factor to satisfy poly(0) + poly(1) == previous_claim.
+        let gap = self.params.phase3_cycle_rounds();
+        if gap > 0 {
+            let scaled: Vec<F> = evals.iter().map(|e| e.mul_pow_2(gap)).collect();
+            UniPoly::from_evals_and_hint(previous_claim, &scaled)
+        } else {
+            UniPoly::from_evals_and_hint(previous_claim, &evals)
+        }
     }
 
     #[tracing::instrument(skip_all, name = "RamRafEvaluationSumcheckProver::ingest_challenge")]
