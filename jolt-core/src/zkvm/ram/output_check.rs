@@ -308,7 +308,20 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OutputSumchec
             [c0, e]
         });
 
-        eq_r_address.gruen_poly_deg_3(q_constant, q_quadratic, previous_claim)
+        // When phase1_num_rounds < log_T, the input_claim is pre-scaled by
+        // 2^(phase3_cycle_rounds) to compensate for the gap-round halvings that follow.
+        // The raw q_constant and q_quadratic sum to the unscaled claim, so we must
+        // scale them by the same factor to satisfy poly(0) + poly(1) == previous_claim.
+        let gap = self.params.phase3_cycle_rounds();
+        if gap > 0 {
+            eq_r_address.gruen_poly_deg_3(
+                q_constant.mul_pow_2(gap),
+                q_quadratic.mul_pow_2(gap),
+                previous_claim,
+            )
+        } else {
+            eq_r_address.gruen_poly_deg_3(q_constant, q_quadratic, previous_claim)
+        }
     }
 
     #[tracing::instrument(skip_all, name = "OutputSumcheckProver::ingest_challenge")]
