@@ -487,6 +487,9 @@ impl<
         Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
     ) {
         let _pprof_prove = pprof_scope!("prove");
+        let _dory_runtime_guard = DoryGlobals::acquire_runtime_guard();
+        let dory_layout = DoryGlobals::get_layout();
+        let one_hot_config = self.one_hot_params.to_config();
 
         #[cfg(not(target_arch = "wasm32"))]
         let start = Instant::now();
@@ -495,6 +498,9 @@ impl<
             self.one_hot_params.ram_k,
             self.trace.len(),
             self.preprocessing.shared.bytecode.entry_address,
+            &self.rw_config,
+            &one_hot_config,
+            dory_layout,
             &mut self.transcript,
         );
 
@@ -537,18 +543,7 @@ impl<
         let opening_claims =
             crate::zkvm::proof_serialization::Claims(self.opening_accumulator.openings.clone());
 
-        #[cfg(test)]
-        {
-            let missing_virtual = self.opening_accumulator.appended_virtual_openings.borrow();
-            let missing_committed = self
-                .opening_accumulator
-                .appended_committed_openings
-                .borrow();
-            assert!(
-                missing_virtual.is_empty() && missing_committed.is_empty(),
-                "Not all openings have been proven. Missing virtual: {missing_virtual:?}. Missing committed: {missing_committed:?}",
-            );
-        }
+        self.opening_accumulator.assert_all_openings_consumed();
 
         #[cfg(test)]
         let debug_info = Some(ProverDebugInfo {
@@ -579,8 +574,8 @@ impl<
             trace_length: self.trace.len(),
             ram_K: self.one_hot_params.ram_k,
             rw_config: self.rw_config.clone(),
-            one_hot_config: self.one_hot_params.to_config(),
-            dory_layout: DoryGlobals::get_layout(),
+            one_hot_config,
+            dory_layout,
         };
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -706,7 +701,7 @@ impl<
         } else {
             // CycleMajor: use streaming
             let row_len = DoryGlobals::get_num_columns();
-            let num_rows = T / DoryGlobals::get_max_num_rows();
+            let num_rows = T / row_len;
 
             tracing::debug!(
                 "Generating and committing {} witness polynomials with T={}, row_len={}, num_rows={}",
@@ -2242,14 +2237,15 @@ mod tests {
         multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{OpeningAccumulator, SumcheckId},
     };
+    use crate::utils::errors::ProofVerifyError;
     use crate::zkvm::claim_reductions::AdviceKind;
     use crate::zkvm::verifier::JoltSharedPreprocessing;
     use crate::zkvm::witness::CommittedPolynomial;
     use crate::zkvm::{
         prover::JoltProverPreprocessing,
-        ram::populate_memory_states,
+        ram::{compute_max_ram_K, compute_min_ram_K, populate_memory_states},
         verifier::{JoltVerifier, JoltVerifierPreprocessing},
-        RV64IMACProver, RV64IMACVerifier,
+        RV64IMACProof, RV64IMACProver, RV64IMACVerifier,
     };
     #[cfg(feature = "zk")]
     use crate::{curve::JoltCurve, field::JoltField};
@@ -2273,6 +2269,42 @@ mod tests {
             }
         }
         (commitments, coeffs, blindings)
+    }
+
+    fn prove_fibonacci(
+        input: u8,
+    ) -> (
+        JoltVerifierPreprocessing<Fr, Bn254Curve, DoryCommitmentScheme>,
+        RV64IMACProof,
+        tracer::JoltDevice,
+    ) {
+        DoryGlobals::reset();
+        let mut program = host::Program::new("fibonacci-guest");
+        let inputs = postcard::to_stdvec(&input).unwrap();
+        let (bytecode, init_memory_state, _, e_entry) = program.decode();
+        let (lazy_trace, trace, final_memory_state, program_io) = program.trace(&inputs, &[], &[]);
+
+        let shared = JoltSharedPreprocessing::new(
+            bytecode,
+            program_io.memory_layout.clone(),
+            init_memory_state,
+            1 << 16,
+            e_entry,
+        )
+        .unwrap();
+        let prover_preprocessing = JoltProverPreprocessing::new(shared);
+        let prover = RV64IMACProver::gen_from_trace(
+            &prover_preprocessing,
+            lazy_trace,
+            trace,
+            program_io.clone(),
+            None,
+            None,
+            final_memory_state,
+        );
+        let (proof, _) = prover.prove();
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
+        (verifier_preprocessing, proof, program_io)
     }
 
     fn commit_trusted_advice_preprocessing_only(
@@ -3311,6 +3343,86 @@ mod tests {
         let verifier =
             JoltVerifier::new(&verifier_preprocessing, proof, program_io, None, None).unwrap();
         verifier.verify().unwrap();
+    }
+
+    #[test]
+    #[serial]
+    fn verifier_rejects_invalid_trace_lengths() {
+        let (verifier_preprocessing, mut zero_trace, program_io) = prove_fibonacci(9);
+        zero_trace.trace_length = 0;
+        assert!(matches!(
+            RV64IMACVerifier::new(&verifier_preprocessing, zero_trace, program_io, None, None),
+            Err(ProofVerifyError::InvalidTraceLength(0))
+        ));
+
+        let (verifier_preprocessing, mut non_power_of_two, program_io) = prove_fibonacci(9);
+        non_power_of_two.trace_length = 3;
+        assert!(matches!(
+            RV64IMACVerifier::new(
+                &verifier_preprocessing,
+                non_power_of_two,
+                program_io,
+                None,
+                None
+            ),
+            Err(ProofVerifyError::InvalidTraceLength(3))
+        ));
+
+        let (verifier_preprocessing, mut oversized, program_io) = prove_fibonacci(9);
+        oversized.trace_length = verifier_preprocessing.shared.max_padded_trace_length * 2;
+        assert!(matches!(
+            RV64IMACVerifier::new(&verifier_preprocessing, oversized, program_io, None, None),
+            Err(ProofVerifyError::TraceLengthTooLarge(_, _))
+        ));
+    }
+
+    #[test]
+    #[serial]
+    fn verifier_rejects_invalid_ram_k_bounds() {
+        let (verifier_preprocessing, mut undersized, program_io) = prove_fibonacci(9);
+        let min_ram_k = compute_min_ram_K(
+            &verifier_preprocessing.shared.ram,
+            &verifier_preprocessing.shared.memory_layout,
+        );
+        let max_ram_k = compute_max_ram_K(&verifier_preprocessing.shared.memory_layout);
+
+        undersized.ram_K = min_ram_k.checked_shr(1).unwrap_or(0);
+        assert!(matches!(
+            RV64IMACVerifier::new(&verifier_preprocessing, undersized, program_io, None, None),
+            Err(ProofVerifyError::InvalidRamK(_, _))
+        ));
+
+        let (verifier_preprocessing, mut oversized, program_io) = prove_fibonacci(9);
+        oversized.ram_K = max_ram_k * 2;
+        assert!(matches!(
+            RV64IMACVerifier::new(&verifier_preprocessing, oversized, program_io, None, None),
+            Err(ProofVerifyError::RamKTooLarge(_, _))
+        ));
+    }
+
+    #[test]
+    #[serial]
+    fn verifier_rejects_tampered_dory_layout() {
+        let (verifier_preprocessing, mut proof, program_io) = prove_fibonacci(9);
+        proof.dory_layout = match proof.dory_layout {
+            DoryLayout::CycleMajor => DoryLayout::AddressMajor,
+            DoryLayout::AddressMajor => DoryLayout::CycleMajor,
+        };
+
+        let verifier =
+            RV64IMACVerifier::new(&verifier_preprocessing, proof, program_io, None, None).unwrap();
+        assert!(verifier.verify().is_err());
+    }
+
+    #[test]
+    #[serial]
+    fn verifier_rejects_tampered_rw_config() {
+        let (verifier_preprocessing, mut proof, program_io) = prove_fibonacci(9);
+        proof.rw_config.registers_rw_phase1_num_rounds = 0;
+
+        let verifier =
+            RV64IMACVerifier::new(&verifier_preprocessing, proof, program_io, None, None).unwrap();
+        assert!(verifier.verify().is_err());
     }
 
     /// Security property: the verifier must reject a proof when the verifier's preprocessing
