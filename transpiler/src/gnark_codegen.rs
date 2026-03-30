@@ -171,6 +171,13 @@ enum ConstraintAssertion {
 /// its own expression tree with isolated CSE variables (`cse_N_*` for constraint N),
 /// making debugging easier: when a constraint fails, all `cse_N_*` variables
 /// belong to that constraint.
+/// Whether codegen is producing global CSE (gcse[i]) or per-constraint CSE (cse_K_i).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CseContext {
+    Global,
+    Constraint(usize),
+}
+
 pub(crate) struct GnarkCodeGen<'a> {
     /// Reference to the node arena (from AstBundle.nodes)
     nodes: &'a [Node],
@@ -184,8 +191,8 @@ pub(crate) struct GnarkCodeGen<'a> {
     pub(crate) cse_counter: usize,
     /// Maps variable index to input name (e.g., 0 -> "UniSkipCoeff0")
     var_names: &'a HashMap<u16, String>,
-    /// Constraint index for per-constraint CSE naming (e.g., constraint 3 uses cse_3_*)
-    constraint_idx: usize,
+    /// CSE context: global (gcse[i]) or per-constraint (cse_K_i)
+    cse_context: CseContext,
     /// Whether poseidon was used in this constraint
     uses_poseidon: bool,
 }
@@ -229,7 +236,7 @@ impl<'a> GnarkCodeGen<'a> {
             bindings: Vec::new(),
             cse_counter: 0,
             var_names,
-            constraint_idx,
+            cse_context: CseContext::Constraint(constraint_idx),
             uses_poseidon: false,
         }
     }
@@ -254,7 +261,7 @@ impl<'a> GnarkCodeGen<'a> {
             bindings: Vec::new(),
             cse_counter: 0,
             var_names,
-            constraint_idx: usize::MAX, // sentinel for global context
+            cse_context: CseContext::Global,
             uses_poseidon: false,
         }
     }
@@ -393,7 +400,7 @@ impl<'a> GnarkCodeGen<'a> {
             // extra gcse[] entries beyond the pre-allocated slice size.
             const MAX_INLINE_EXPR_LEN: usize = 1000;
             let ref_count = self.ref_counts.get(&node_id).copied().unwrap_or(1);
-            let is_global = self.constraint_idx == usize::MAX;
+            let is_global = self.cse_context == CseContext::Global;
             let should_hoist = if is_global {
                 ref_count > 1
             } else {
@@ -402,7 +409,7 @@ impl<'a> GnarkCodeGen<'a> {
             if should_hoist {
                 let var_name = self.make_cse_name();
                 self.cse_counter += 1;
-                if self.constraint_idx == usize::MAX {
+                if self.cse_context == CseContext::Global {
                     // Global CSE: slice assignment (gcse[N] = expr)
                     self.bindings.push(format!("\t{var_name} = {expr}\n"));
                 } else {
@@ -454,14 +461,15 @@ impl<'a> GnarkCodeGen<'a> {
 
     /// Generate a CSE variable name using the configured prefix
     fn make_cse_name(&self) -> String {
-        if self.constraint_idx == usize::MAX {
-            // Global CSE context
-            let cse_counter = self.cse_counter;
-            format!("gcse[{cse_counter}]")
-        } else {
-            let constraint_idx = self.constraint_idx;
-            let cse_counter = self.cse_counter;
-            format!("cse_{constraint_idx}_{cse_counter}")
+        match self.cse_context {
+            CseContext::Global => {
+                let cse_counter = self.cse_counter;
+                format!("gcse[{cse_counter}]")
+            }
+            CseContext::Constraint(idx) => {
+                let cse_counter = self.cse_counter;
+                format!("cse_{idx}_{cse_counter}")
+            }
         }
     }
 
@@ -474,10 +482,10 @@ impl<'a> GnarkCodeGen<'a> {
                 .get(&index)
                 .map(|name| format!("circuit.{}", sanitize_go_name(name)))
                 .unwrap_or_else(|| format!("circuit.X_{index}")),
-            Atom::NamedVar(index) => {
-                let constraint_idx = self.constraint_idx;
-                format!("cse_{constraint_idx}_{index}")
-            }
+            Atom::NamedVar(index) => match self.cse_context {
+                CseContext::Global => format!("gcse[{index}]"),
+                CseContext::Constraint(idx) => format!("cse_{idx}_{index}"),
+            },
         }
     }
 

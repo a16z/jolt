@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -97,42 +99,43 @@ func TestCrossValidation(t *testing.T) {
 
 	// Parse api.Println output from captured stdout
 	// Format: (test.engine) circuit.go:NNNN KEY VALUE
+	// Keys match pattern: a<N>_(lhs|rhs|total) where N is the assertion index
 	values := make(map[string]string)
+	keyPattern := regexp.MustCompile(`\b(a\d+_(?:lhs|rhs|total))\s+(\S+)`)
 	lines := strings.Split(capturedOutput, "\n")
+	maxIdx := -1
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if !strings.Contains(line, "test.engine") {
 			continue
 		}
-		// Extract key-value pairs for assertion LHS/RHS
-		for i := 0; i < 20; i++ {
-			for _, suffix := range []string{"_lhs", "_rhs", "_total"} {
-				key := fmt.Sprintf("a%d%s", i, suffix)
-				idx := strings.Index(line, key)
-				if idx < 0 {
-					continue
-				}
-				rest := strings.TrimSpace(line[idx+len(key):])
-				parts := strings.Fields(rest)
-				if len(parts) > 0 {
-					values[key] = parts[0]
-				}
+		matches := keyPattern.FindAllStringSubmatch(line, -1)
+		for _, m := range matches {
+			values[m[1]] = m[2]
+			// Track the highest assertion index seen
+			idxStr := strings.TrimPrefix(m[1], "a")
+			idxStr = idxStr[:strings.Index(idxStr, "_")]
+			if idx, err := strconv.Atoi(idxStr); err == nil && idx > maxIdx {
+				maxIdx = idx
 			}
 		}
 	}
 
+	numAssertions := maxIdx + 1
+	if numAssertions == 0 {
+		t.Fatalf("No assertion values found in circuit output")
+	}
+
 	// Build assertion list
-	assertions := make([]AssertionValue, 20)
-	for i := 0; i < 20; i++ {
+	assertions := make([]AssertionValue, numAssertions)
+	for i := 0; i < numAssertions; i++ {
 		lhs := values[fmt.Sprintf("a%d_lhs", i)]
 		rhs := values[fmt.Sprintf("a%d_rhs", i)]
 
-		// a0 is special: sum_zero, LHS = total, RHS = 0
-		if i == 0 {
-			if total, ok := values["a0_total"]; ok {
-				lhs = total
-				rhs = "0"
-			}
+		// sum_zero assertions have _total instead of _lhs/_rhs
+		if total, ok := values[fmt.Sprintf("a%d_total", i)]; ok {
+			lhs = total
+			rhs = "0"
 		}
 
 		assertions[i] = AssertionValue{
@@ -150,7 +153,7 @@ func TestCrossValidation(t *testing.T) {
 			t.Errorf("Missing LHS for a%d", i)
 			missing++
 		}
-		if a.RHS == "" && i != 0 {
+		if a.RHS == "" {
 			t.Errorf("Missing RHS for a%d", i)
 			missing++
 		}
