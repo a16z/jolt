@@ -70,6 +70,11 @@ transpiler/go/*_crossval_values.json
 transpiler/go/*_assertion_components.json
 transpiler/go/crossval/circuit.go
 
+# transpiler generated artifacts (Groth16 keys, circuit output per size class)
+transpiler/go/proving_key.bin
+transpiler/go/verifying_key.bin
+transpiler/go/class_*/
+
 # generated docs and scripts
 docs/
 scripts/ci-local.sh
