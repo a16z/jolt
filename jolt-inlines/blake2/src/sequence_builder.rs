@@ -14,11 +14,10 @@ use jolt_inlines_sdk::host::{
     instruction::{
         ld::LD,
         lui::LUI,
-        sd::SD,
         sub::SUB,
         virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63},
     },
-    FormatInline, InlineOp, InstrAssembler, Instruction,
+    FormatInline, InlineOp, InstrAssembler, InstrAssemblerExt, Instruction,
     Value::{Imm, Reg},
     VirtualRegisterGuard,
 };
@@ -79,21 +78,17 @@ impl Blake2SequenceBuilder {
     }
 
     fn load_hash_state(&mut self) {
-        self.load_data_range(
-            self.operands.rs1,
-            0,
-            VR_HASH_STATE_START,
-            crate::STATE_VECTOR_LEN,
-        );
+        let regs: Vec<u8> = (VR_HASH_STATE_START..VR_HASH_STATE_START + crate::STATE_VECTOR_LEN)
+            .map(|i| *self.vr[i])
+            .collect();
+        self.asm.load_u64_range(self.operands.rs1, 0, &regs);
     }
 
     fn load_message_blocks(&mut self) {
-        self.load_data_range(
-            self.operands.rs2,
-            0,
-            VR_MESSAGE_BLOCK_START,
-            crate::MSG_BLOCK_LEN,
-        );
+        let regs: Vec<u8> = (VR_MESSAGE_BLOCK_START..VR_MESSAGE_BLOCK_START + crate::MSG_BLOCK_LEN)
+            .map(|i| *self.vr[i])
+            .collect();
+        self.asm.load_u64_range(self.operands.rs2, 0, &regs);
     }
 
     fn load_counter_and_is_final(&mut self) {
@@ -224,32 +219,11 @@ impl Blake2SequenceBuilder {
         }
     }
 
-    /// Store the final hash state
     fn store_state(&mut self) {
-        for i in 0..crate::STATE_VECTOR_LEN {
-            self.asm.emit_s::<SD>(
-                self.operands.rs1,
-                *self.vr[VR_HASH_STATE_START + i],
-                (i * 8) as i64,
-            );
-        }
-    }
-
-    /// Load data from memory into virtual registers starting at a given offset
-    fn load_data_range(
-        &mut self,
-        base_register: u8,
-        memory_offset_start: usize,
-        vr_start: usize,
-        count: usize,
-    ) {
-        (0..count).for_each(|i| {
-            self.asm.emit_ld::<LD>(
-                *self.vr[vr_start + i],
-                base_register,
-                ((memory_offset_start + i) * 8) as i64,
-            );
-        });
+        let regs: Vec<u8> = (VR_HASH_STATE_START..VR_HASH_STATE_START + crate::STATE_VECTOR_LEN)
+            .map(|i| *self.vr[i])
+            .collect();
+        self.asm.store_u64_range(self.operands.rs1, 0, &regs);
     }
 }
 
@@ -260,6 +234,7 @@ impl InlineOp for Blake2bCompression {
     const FUNCT3: u32 = crate::BLAKE2_FUNCT3;
     const FUNCT7: u32 = crate::BLAKE2_FUNCT7;
     const NAME: &'static str = crate::BLAKE2_NAME;
+    type Advice = ();
 
     fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
         Blake2SequenceBuilder::new(asm, operands).build()
@@ -268,13 +243,10 @@ impl InlineOp for Blake2bCompression {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        test_utils::{create_blake2_harness, instruction, load_blake2_data, read_state},
-        IV,
-    };
+    use crate::IV;
+    use jolt_inlines_sdk::spec::InlineSpec;
 
     fn generate_default_input() -> ([u64; crate::MSG_BLOCK_LEN], u64) {
-        // Message block with "abc" in little-endian
         let mut message = [0u64; crate::MSG_BLOCK_LEN];
         message[0] = 0x0000000000636261u64;
         (message, 3)
@@ -317,13 +289,18 @@ mod tests {
         counter: u64,
         is_final: bool,
     ) -> [u64; crate::STATE_VECTOR_LEN] {
-        let mut harness = create_blake2_harness();
-        load_blake2_data(&mut harness, state, message, counter, is_final);
-        harness.execute_inline(instruction());
-        read_state(&mut harness)
+        let mut combined = [0u64; 18];
+        combined[..16].copy_from_slice(message);
+        combined[16] = counter;
+        combined[17] = is_final as u64;
+
+        let input = (*state, combined);
+        let mut harness = super::Blake2bCompression::create_harness();
+        super::Blake2bCompression::load(&mut harness, &input);
+        harness.execute_inline(super::Blake2bCompression::instruction());
+        super::Blake2bCompression::read(&mut harness)
     }
 
-    /// Helper function to test blake2b compression with given input
     fn verify_blake2b_compression(message_words: [u64; crate::MSG_BLOCK_LEN], message_len: u64) {
         let mut initial_state = IV;
         initial_state[0] ^= 0x01010000 ^ 64u64;
@@ -333,7 +310,7 @@ mod tests {
 
         assert_eq!(
             &expected_state, &trace_result,
-            "\n❌ BLAKE2b Trace Verification Failed!\n\
+            "\nBLAKE2b Trace Verification Failed!\n\
             Message: {message_words:016x?}"
         );
     }
@@ -346,7 +323,6 @@ mod tests {
 
     #[test]
     fn test_trace_result_with_random_inputs() {
-        // Test with multiple random inputs
         for _ in 0..10 {
             let input = generate_random_input();
             verify_blake2b_compression(input.0, input.1);

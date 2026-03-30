@@ -61,8 +61,7 @@ impl GrumpkinDivAdv {
             .to_vec(),
         )
     }
-    // inline sequence function
-    fn inline_sequence(mut self) -> Vec<Instruction> {
+    fn build(mut self) -> Vec<Instruction> {
         for i in 0..4 {
             self.asm.emit_j::<VirtualAdvice>(*self.vr, 0);
             self.asm
@@ -80,17 +79,14 @@ impl InlineOp for GrumpkinDivQAdv {
     const FUNCT3: u32 = crate::GRUMPKIN_DIVQ_ADV_FUNCT3;
     const FUNCT7: u32 = crate::GRUMPKIN_FUNCT7;
     const NAME: &'static str = crate::GRUMPKIN_DIVQ_ADV_NAME;
+    type Advice = VecDeque<u64>;
 
     fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
-        GrumpkinDivAdv::new(asm, operands, true).inline_sequence()
+        GrumpkinDivAdv::new(asm, operands, true).build()
     }
 
-    fn build_advice(
-        asm: InstrAssembler,
-        operands: FormatInline,
-        cpu: &mut Cpu,
-    ) -> Option<VecDeque<u64>> {
-        Some(GrumpkinDivAdv::new(asm, operands, true).advice(cpu))
+    fn build_advice(asm: InstrAssembler, operands: FormatInline, cpu: &mut Cpu) -> VecDeque<u64> {
+        GrumpkinDivAdv::new(asm, operands, true).advice(cpu)
     }
 }
 
@@ -101,16 +97,13 @@ impl InlineOp for GrumpkinDivRAdv {
     const FUNCT3: u32 = crate::GRUMPKIN_DIVR_ADV_FUNCT3;
     const FUNCT7: u32 = crate::GRUMPKIN_FUNCT7;
     const NAME: &'static str = crate::GRUMPKIN_DIVR_ADV_NAME;
+    type Advice = VecDeque<u64>;
 
     fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
-        GrumpkinDivAdv::new(asm, operands, false).inline_sequence()
+        GrumpkinDivAdv::new(asm, operands, false).build()
     }
 
-    fn build_advice(
-        asm: InstrAssembler,
-        operands: FormatInline,
-        cpu: &mut Cpu,
-    ) -> Option<VecDeque<u64>> {
-        Some(GrumpkinDivAdv::new(asm, operands, false).advice(cpu))
+    fn build_advice(asm: InstrAssembler, operands: FormatInline, cpu: &mut Cpu) -> VecDeque<u64> {
+        GrumpkinDivAdv::new(asm, operands, false).advice(cpu)
     }
 }

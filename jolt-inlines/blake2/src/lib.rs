@@ -11,17 +11,14 @@ pub mod sdk;
 pub use sdk::*;
 
 #[cfg(feature = "host")]
-pub mod exec;
-#[cfg(feature = "host")]
 pub mod sequence_builder;
+#[cfg(feature = "host")]
+pub mod spec;
 
 #[cfg(feature = "host")]
 mod host;
 #[cfg(feature = "host")]
 pub use host::*;
-
-#[cfg(all(test, feature = "host"))]
-pub mod test_utils;
 
 /// Blake2b initialization vector (IV).
 pub const IV: [u64; 8] = [

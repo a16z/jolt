@@ -70,30 +70,6 @@ struct Keccak256SequenceBuilder {
     operands: FormatInline,
 }
 
-/// `Keccak256SequenceBuilder` is a helper struct for constructing the virtual instruction
-/// sequence required to emulate the Keccak-256 hashing operation within the RISC-V
-/// instruction set. This builder is responsible for generating the correct sequence of
-/// `Instruction` instances that together perform the Keccak-256 permutation and
-/// hashing steps, using a set of virtual registers to hold intermediate state.
-///
-/// # Fields
-/// - `address`: The starting program counter address for the sequence.
-/// - `asm`: Builder for the vector of generated instructions representing the Keccak-256 operation.
-/// - `round`: The current round of the Keccak permutation (0..24).
-/// - `vr`: An array of virtual register indices used for state and temporary values.
-/// - `operand_rs1`: The source register index for the first operand (input state pointer).
-/// - `operand_rs2`: Unused.
-///
-/// # Usage
-/// Typically, you construct a `Keccak256SequenceBuilder` with the required register mapping
-/// and operands, then call `.build()` to obtain the full instruction sequence for the
-/// Keccak-256 operation. This is used to inline the Keccak-256 hash logic into the
-/// RISC-V instruction stream for tracing or emulation purposes.
-///
-/// # Note
-/// The actual Keccak-256 logic is implemented in the `build` method, which generates
-/// the appropriate instruction sequence. This struct is not intended for direct execution,
-/// but rather for constructing instruction traces or emulation flows.
 impl Keccak256SequenceBuilder {
     fn new(asm: InstrAssembler, operands: FormatInline) -> Self {
         let vr = array::from_fn(|_| asm.allocator.allocate_for_inline());
@@ -258,6 +234,7 @@ impl InlineOp for Keccak256Permutation {
     const FUNCT3: u32 = crate::KECCAK256_FUNCT3;
     const FUNCT7: u32 = crate::KECCAK256_FUNCT7;
     const NAME: &'static str = crate::KECCAK256_NAME;
+    type Advice = ();
 
     fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
         Keccak256SequenceBuilder::new(asm, operands).build()

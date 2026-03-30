@@ -12,6 +12,22 @@ pub use tracer::utils::inline_helpers::{InstrAssembler, Value};
 pub use tracer::utils::inline_sequence_writer::AppendMode;
 pub use tracer::utils::virtual_registers::VirtualRegisterGuard;
 
+pub trait InlineAdvice {
+    fn into_values(self) -> Option<VecDeque<u64>>;
+}
+
+impl InlineAdvice for () {
+    fn into_values(self) -> Option<VecDeque<u64>> {
+        None
+    }
+}
+
+impl InlineAdvice for VecDeque<u64> {
+    fn into_values(self) -> Option<VecDeque<u64>> {
+        Some(self)
+    }
+}
+
 /// Trait for declaring an inline operation's metadata and sequence builder.
 ///
 /// Implement this for each sub-inline (e.g. `Sha256Compression`, `Secp256k1MulQ`),
@@ -22,14 +38,15 @@ pub trait InlineOp: Send + Sync {
     const FUNCT7: u32;
     const NAME: &'static str;
 
+    type Advice: InlineAdvice;
+
     fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction>;
 
-    fn build_advice(
-        _asm: InstrAssembler,
-        _operands: FormatInline,
-        _cpu: &mut Cpu,
-    ) -> Option<VecDeque<u64>> {
-        None
+    fn build_advice(_asm: InstrAssembler, _operands: FormatInline, _cpu: &mut Cpu) -> Self::Advice
+    where
+        Self::Advice: Default,
+    {
+        Self::Advice::default()
     }
 }
 
@@ -49,6 +66,23 @@ pub trait InstrAssemblerExt {
     fn load_paired_u32(&mut self, temp: u8, base: u8, offset: i64, vr_lo: u8, vr_hi: u8);
     fn store_paired_u32(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8);
     fn load_paired_u32_dirty(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8);
+
+    /// Load consecutive u64 words from `base + byte_offset` into `regs`.
+    fn load_u64_range(&mut self, base: u8, byte_offset: usize, regs: &[u8]);
+
+    /// Store consecutive u64 words from `regs` to `base + byte_offset`.
+    fn store_u64_range(&mut self, base: u8, byte_offset: usize, regs: &[u8]);
+
+    /// Load consecutive u32 words from `base + byte_offset` into `regs`.
+    fn load_u32_range(&mut self, base: u8, byte_offset: usize, regs: &[u8]);
+
+    /// Load consecutive pairs of u32 from `base + byte_offset` into `regs` using paired LD+split.
+    /// `regs` length must be even. Uses `temp` as scratch for the 64-bit intermediate load.
+    fn load_u32_range_paired(&mut self, temp: u8, base: u8, byte_offset: usize, regs: &[u8]);
+
+    /// Store consecutive pairs of u32 from `regs` to `base + byte_offset` using paired pack+SD.
+    /// `regs` length must be even. WARNING: clobbers register values.
+    fn store_u32_range_paired(&mut self, base: u8, byte_offset: usize, regs: &[u8]);
 }
 
 impl InstrAssemblerExt for InstrAssembler {
@@ -85,6 +119,47 @@ impl InstrAssemblerExt for InstrAssembler {
         use instruction::srli::SRLI;
         self.emit_ld::<LD>(vr_lo, base, offset);
         self.emit_i::<SRLI>(vr_hi, vr_lo, 32);
+    }
+
+    fn load_u64_range(&mut self, base: u8, byte_offset: usize, regs: &[u8]) {
+        use instruction::ld::LD;
+        for (i, &reg) in regs.iter().enumerate() {
+            self.emit_ld::<LD>(reg, base, (byte_offset + i * 8) as i64);
+        }
+    }
+
+    fn store_u64_range(&mut self, base: u8, byte_offset: usize, regs: &[u8]) {
+        use instruction::sd::SD;
+        for (i, &reg) in regs.iter().enumerate() {
+            self.emit_s::<SD>(base, reg, (byte_offset + i * 8) as i64);
+        }
+    }
+
+    fn load_u32_range(&mut self, base: u8, byte_offset: usize, regs: &[u8]) {
+        use instruction::lw::LW;
+        for (i, &reg) in regs.iter().enumerate() {
+            self.emit_ld::<LW>(reg, base, (byte_offset + i * 4) as i64);
+        }
+    }
+
+    fn load_u32_range_paired(&mut self, temp: u8, base: u8, byte_offset: usize, regs: &[u8]) {
+        debug_assert!(
+            regs.len().is_multiple_of(2),
+            "regs length must be even for paired loading"
+        );
+        for (i, pair) in regs.chunks_exact(2).enumerate() {
+            self.load_paired_u32(temp, base, (byte_offset + i * 8) as i64, pair[0], pair[1]);
+        }
+    }
+
+    fn store_u32_range_paired(&mut self, base: u8, byte_offset: usize, regs: &[u8]) {
+        debug_assert!(
+            regs.len().is_multiple_of(2),
+            "regs length must be even for paired storing"
+        );
+        for (i, pair) in regs.chunks_exact(2).enumerate() {
+            self.store_paired_u32(base, (byte_offset + i * 8) as i64, pair[0], pair[1]);
+        }
     }
 }
 
@@ -143,7 +218,11 @@ macro_rules! __submit_inline_op {
                 funct7: <$op as $crate::host::InlineOp>::FUNCT7,
                 name: <$op as $crate::host::InlineOp>::NAME,
                 build_sequence: <$op as $crate::host::InlineOp>::build_sequence,
-                build_advice: <$op as $crate::host::InlineOp>::build_advice,
+                build_advice: |asm, operands, cpu| {
+                    $crate::host::InlineAdvice::into_values(
+                        <$op as $crate::host::InlineOp>::build_advice(asm, operands, cpu)
+                    )
+                },
             }
         }
     };

@@ -15,12 +15,9 @@ use crate::{
 };
 use jolt_inlines_sdk::host::{
     instruction::{
-        ld::LD,
         lui::LUI,
         lw::LW,
-        srli::SRLI,
         virtual_xor_rotw::{VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8},
-        virtual_zero_extend_word::VirtualZeroExtendWord,
     },
     FormatInline, InlineOp, InstrAssembler, InstrAssemblerExt, Instruction,
     Value::{Imm, Reg},
@@ -55,6 +52,51 @@ where
     g(1, 6, 11, 12, msg_schedule_round[10], msg_schedule_round[11]);
     g(2, 7, 8, 13, msg_schedule_round[12], msg_schedule_round[13]);
     g(3, 4, 9, 14, msg_schedule_round[14], msg_schedule_round[15]);
+}
+
+/// BLAKE3 quarter-round G function.
+/// When `temp` is Some, uses a scratch register for the first add to avoid clobbering `va`.
+/// When `temp` is None, performs in-place adds (saves one register).
+#[allow(clippy::too_many_arguments)]
+fn blake3_g(
+    asm: &mut InstrAssembler,
+    va: u8,
+    vb: u8,
+    vc: u8,
+    vd: u8,
+    mx: u8,
+    my: u8,
+    temp: Option<u8>,
+) {
+    match temp {
+        Some(t) => {
+            asm.add(Reg(va), Reg(vb), t);
+            asm.add(Reg(t), Reg(mx), va);
+        }
+        None => {
+            asm.add(Reg(va), Reg(vb), va);
+            asm.add(Reg(va), Reg(mx), va);
+        }
+    }
+
+    asm.emit_r::<VirtualXORROTW16>(vd, vd, va);
+    asm.add(Reg(vc), Reg(vd), vc);
+    asm.emit_r::<VirtualXORROTW12>(vb, vb, vc);
+
+    match temp {
+        Some(t) => {
+            asm.add(Reg(va), Reg(vb), t);
+            asm.add(Reg(t), Reg(my), va);
+        }
+        None => {
+            asm.add(Reg(va), Reg(vb), va);
+            asm.add(Reg(va), Reg(my), va);
+        }
+    }
+
+    asm.emit_r::<VirtualXORROTW8>(vd, vd, va);
+    asm.add(Reg(vc), Reg(vd), vc);
+    asm.emit_r::<VirtualXORROTW7>(vb, vb, vc);
 }
 
 /// Virtual register layout:
@@ -182,39 +224,16 @@ impl Blake3SequenceBuilder {
     }
 
     fn g_function(&mut self, a: usize, b: usize, c: usize, d: usize, x: usize, y: usize) {
-        let va = *self.vr[a];
-        let vb = *self.vr[b];
-        let vc = *self.vr[c];
-        let vd = *self.vr[d];
-        let mx = *self.vr[MSG_BLOCK_START_VR + x];
-        let my = *self.vr[MSG_BLOCK_START_VR + y];
-        let temp1 = *self.vr[TEMP_VR];
-
-        // v[a] = v[a] + v[b] + m[x]
-        self.asm.add(Reg(va), Reg(vb), temp1);
-        self.asm.add(Reg(temp1), Reg(mx), va);
-
-        // v[d] = rotr32(v[d] ^ v[a], 16)
-        self.asm.emit_r::<VirtualXORROTW16>(vd, vd, va);
-
-        // v[c] = v[c] + v[d]
-        self.asm.add(Reg(vc), Reg(vd), vc);
-
-        // v[b] = rotr32(v[b] ^ v[c], 12)
-        self.asm.emit_r::<VirtualXORROTW12>(vb, vb, vc);
-
-        // v[a] = v[a] + v[b] + m[y]
-        self.asm.add(Reg(va), Reg(vb), temp1);
-        self.asm.add(Reg(temp1), Reg(my), va);
-
-        // v[d] = rotr32(v[d] ^ v[a], 8)
-        self.asm.emit_r::<VirtualXORROTW8>(vd, vd, va);
-
-        // v[c] = v[c] + v[d]
-        self.asm.add(Reg(vc), Reg(vd), vc);
-
-        // v[b] = rotr32(v[b] ^ v[c], 7)
-        self.asm.emit_r::<VirtualXORROTW7>(vb, vb, vc);
+        blake3_g(
+            &mut self.asm,
+            *self.vr[a],
+            *self.vr[b],
+            *self.vr[c],
+            *self.vr[d],
+            *self.vr[MSG_BLOCK_START_VR + x],
+            *self.vr[MSG_BLOCK_START_VR + y],
+            Some(*self.vr[TEMP_VR]),
+        );
     }
 
     fn finalize_state(&mut self) {
@@ -227,73 +246,34 @@ impl Blake3SequenceBuilder {
     }
 
     fn store_state(&mut self) {
-        for i in 0..CHAINING_VALUE_LEN / 2 {
-            self.asm.store_paired_u32(
-                self.operands.rs1,
-                (i * 2) as i64 * 4,
-                *self.vr[CV_START_VR + i * 2],
-                *self.vr[CV_START_VR + i * 2 + 1],
-            );
-        }
+        let regs: Vec<u8> = (CV_START_VR..CV_START_VR + CHAINING_VALUE_LEN)
+            .map(|i| *self.vr[i])
+            .collect();
+        self.asm.store_u32_range_paired(self.operands.rs1, 0, &regs);
     }
 
-    fn load_data_range_paired(
-        &mut self,
-        base_register: u8,
-        memory_offset_start: usize,
-        vr_start: usize,
-        count: usize,
-    ) {
-        debug_assert!(
-            count.is_multiple_of(2),
-            "count must be even for paired loading"
-        );
-        let temp = *self.vr[TEMP_VR];
-        for i in 0..count / 2 {
-            self.asm.load_paired_u32(
-                temp,
-                base_register,
-                (memory_offset_start + i * 2) as i64 * 4,
-                *self.vr[vr_start + i * 2],
-                *self.vr[vr_start + i * 2 + 1],
-            );
-        }
-    }
-
-    /// Load data from memory into virtual registers (non-paired, used for counter)
-    fn load_data_range(
-        &mut self,
-        base_register: u8,
-        memory_offset_start: usize,
-        vr_start: usize,
-        count: usize,
-    ) {
-        (0..count).for_each(|i| {
-            self.asm.emit_ld::<LW>(
-                *self.vr[vr_start + i],
-                base_register,
-                (memory_offset_start + i) as i64 * 4,
-            );
-        });
+    fn vr_slice(&self, start: usize, count: usize) -> Vec<u8> {
+        (start..start + count).map(|i| *self.vr[i]).collect()
     }
 
     fn load_chaining_value(&mut self) {
-        // Use paired loading for chaining value (8 u32 = 4 pairs)
-        self.load_data_range_paired(self.operands.rs1, 0, CV_START_VR, CHAINING_VALUE_LEN);
+        let temp = *self.vr[TEMP_VR];
+        let regs = self.vr_slice(CV_START_VR, CHAINING_VALUE_LEN);
+        self.asm
+            .load_u32_range_paired(temp, self.operands.rs1, 0, &regs);
     }
 
     fn load_message_blocks(&mut self) {
-        // Use paired loading for message blocks (16 u32 = 8 pairs)
-        self.load_data_range_paired(self.operands.rs2, 0, MSG_BLOCK_START_VR, MSG_BLOCK_LEN);
+        let temp = *self.vr[TEMP_VR];
+        let regs = self.vr_slice(MSG_BLOCK_START_VR, MSG_BLOCK_LEN);
+        self.asm
+            .load_u32_range_paired(temp, self.operands.rs2, 0, &regs);
     }
 
     fn load_counter(&mut self) {
-        self.load_data_range(
-            self.operands.rs2,
-            MSG_BLOCK_LEN,
-            COUNTER_START_VR,
-            COUNTER_LEN,
-        );
+        let regs = self.vr_slice(COUNTER_START_VR, COUNTER_LEN);
+        self.asm
+            .load_u32_range(self.operands.rs2, MSG_BLOCK_LEN * 4, &regs);
     }
 
     fn load_input_len_and_flags(&mut self) {
@@ -324,12 +304,12 @@ impl Blake3Keyed64SequenceBuilder {
     }
 
     fn build(mut self) -> Vec<Instruction> {
-        // Load key from rs3/rd directly into v[0..7]
-        self.load_data_range_paired(self.operands.rs3, 0, INTERNAL_STATE_VR_START, 8);
-        // Load left (32 bytes) from rs1 as message[0..7]
-        self.load_data_range_paired(self.operands.rs1, 0, MSG_BLOCK_START_VR, 8);
-        // Load right (32 bytes) from rs2 as message[8..15]
-        self.load_data_range_paired(self.operands.rs2, 0, MSG_BLOCK_START_VR + 8, 8);
+        let key_regs = self.vr_slice(INTERNAL_STATE_VR_START, 8);
+        self.load_u32_range_paired_no_temp(self.operands.rs3, 0, &key_regs);
+        let msg_lo_regs = self.vr_slice(MSG_BLOCK_START_VR, 8);
+        self.load_u32_range_paired_no_temp(self.operands.rs1, 0, &msg_lo_regs);
+        let msg_hi_regs = self.vr_slice(MSG_BLOCK_START_VR + 8, 8);
+        self.load_u32_range_paired_no_temp(self.operands.rs2, 0, &msg_hi_regs);
 
         self.initialize_internal_state();
 
@@ -345,14 +325,9 @@ impl Blake3Keyed64SequenceBuilder {
             self.asm.xor(Reg(vi), Reg(vi8), vi);
         }
 
-        for i in 0..CHAINING_VALUE_LEN / 2 {
-            self.asm.store_paired_u32(
-                self.operands.rs3,
-                (i * 2) as i64 * 4,
-                *self.vr[INTERNAL_STATE_VR_START + i * 2],
-                *self.vr[INTERNAL_STATE_VR_START + i * 2 + 1],
-            );
-        }
+        let out_regs = self.vr_slice(INTERNAL_STATE_VR_START, CHAINING_VALUE_LEN);
+        self.asm
+            .store_u32_range_paired(self.operands.rs3, 0, &out_regs);
 
         drop(self.vr);
         self.asm.finalize_inline()
@@ -386,72 +361,35 @@ impl Blake3Keyed64SequenceBuilder {
         blake3_apply_round_schedule(round, |a, b, c, d, x, y| self.g_function(a, b, c, d, x, y));
     }
 
-    #[inline]
     fn g_function(&mut self, a: usize, b: usize, c: usize, d: usize, x: usize, y: usize) {
-        let va = *self.vr[a];
-        let vb = *self.vr[b];
-        let vc = *self.vr[c];
-        let vd = *self.vr[d];
-        let mx = *self.vr[MSG_BLOCK_START_VR + x];
-        let my = *self.vr[MSG_BLOCK_START_VR + y];
-
-        // v[a] = v[a] + v[b] + m[x]
-        self.asm.add(Reg(va), Reg(vb), va);
-        self.asm.add(Reg(va), Reg(mx), va);
-
-        // v[d] = rotr32(v[d] ^ v[a], 16)
-        self.asm.emit_r::<VirtualXORROTW16>(vd, vd, va);
-
-        // v[c] = v[c] + v[d]
-        self.asm.add(Reg(vc), Reg(vd), vc);
-
-        // v[b] = rotr32(v[b] ^ v[c], 12)
-        self.asm.emit_r::<VirtualXORROTW12>(vb, vb, vc);
-
-        // v[a] = v[a] + v[b] + m[y]
-        self.asm.add(Reg(va), Reg(vb), va);
-        self.asm.add(Reg(va), Reg(my), va);
-
-        // v[d] = rotr32(v[d] ^ v[a], 8)
-        self.asm.emit_r::<VirtualXORROTW8>(vd, vd, va);
-
-        // v[c] = v[c] + v[d]
-        self.asm.add(Reg(vc), Reg(vd), vc);
-
-        // v[b] = rotr32(v[b] ^ v[c], 7)
-        self.asm.emit_r::<VirtualXORROTW7>(vb, vb, vc);
-    }
-
-    /// Load two u32 values from an 8-byte aligned address using a single LD.
-    /// Uses `vr_hi` as the temporary 64-bit container (no extra scratch register).
-    fn load_paired_u32(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8) {
-        // Load 64 bits (2 x u32) into vr_hi temporarily.
-        self.asm.emit_ld::<LD>(vr_hi, base, offset);
-
-        // Extract low 32 bits: zero-extend word.
-        self.asm.emit_i::<VirtualZeroExtendWord>(vr_lo, vr_hi, 0);
-
-        // Extract high 32 bits: shift right by 32 (in place).
-        self.asm.emit_i::<SRLI>(vr_hi, vr_hi, 32);
-    }
-
-    fn load_data_range_paired(
-        &mut self,
-        base_register: u8,
-        memory_offset_start: usize,
-        vr_start: usize,
-        count: usize,
-    ) {
-        debug_assert!(
-            count.is_multiple_of(2),
-            "count must be even for paired loading"
+        blake3_g(
+            &mut self.asm,
+            *self.vr[a],
+            *self.vr[b],
+            *self.vr[c],
+            *self.vr[d],
+            *self.vr[MSG_BLOCK_START_VR + x],
+            *self.vr[MSG_BLOCK_START_VR + y],
+            None,
         );
-        for i in 0..count / 2 {
-            self.load_paired_u32(
-                base_register,
-                (memory_offset_start + i * 2) as i64 * 4,
-                *self.vr[vr_start + i * 2],
-                *self.vr[vr_start + i * 2 + 1],
+    }
+
+    fn vr_slice(&self, start: usize, count: usize) -> Vec<u8> {
+        (start..start + count).map(|i| *self.vr[i]).collect()
+    }
+
+    /// Load paired u32 values without requiring a separate temp register.
+    /// Uses each pair's hi register as the 64-bit load target.
+    fn load_u32_range_paired_no_temp(&mut self, base: u8, byte_offset: usize, regs: &[u8]) {
+        debug_assert!(regs.len().is_multiple_of(2));
+        for (i, pair) in regs.chunks_exact(2).enumerate() {
+            // Use vr_hi as temp: load_paired_u32(temp=hi, base, offset, lo, hi)
+            self.asm.load_paired_u32(
+                pair[1],
+                base,
+                (byte_offset + i * 8) as i64,
+                pair[0],
+                pair[1],
             );
         }
     }
@@ -464,6 +402,7 @@ impl InlineOp for Blake3Compression {
     const FUNCT3: u32 = crate::BLAKE3_FUNCT3;
     const FUNCT7: u32 = crate::BLAKE3_FUNCT7;
     const NAME: &'static str = crate::BLAKE3_NAME;
+    type Advice = ();
 
     fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
         Blake3SequenceBuilder::new(asm, operands).build()
@@ -477,6 +416,7 @@ impl InlineOp for Blake3Keyed64Compression {
     const FUNCT3: u32 = crate::BLAKE3_KEYED64_FUNCT3;
     const FUNCT7: u32 = crate::BLAKE3_FUNCT7;
     const NAME: &'static str = crate::BLAKE3_KEYED64_NAME;
+    type Advice = ();
 
     fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
         Blake3Keyed64SequenceBuilder::new(asm, operands).build()
@@ -485,35 +425,59 @@ impl InlineOp for Blake3Keyed64Compression {
 
 #[cfg(test)]
 mod tests {
-    use crate::test_utils::{
-        create_blake3_harness, create_blake3_keyed64_harness, helpers::*, instruction,
-        keyed64_instruction, load_blake3_data, load_blake3_keyed64_data, read_output,
-        ChainingValue, MessageBlock,
-    };
+    use jolt_inlines_sdk::spec::InlineSpec;
+    use rand::rngs::StdRng;
+    use rand::{RngCore, SeedableRng};
+
+    fn generate_random_bytes(len: usize) -> Vec<u8> {
+        let mut buf = vec![0u8; len];
+        let mut rng = StdRng::seed_from_u64(12345);
+        rng.fill_bytes(&mut buf);
+        buf
+    }
+
+    fn bytes_to_u32_vec(bytes: &[u8]) -> Vec<u32> {
+        bytes
+            .chunks_exact(4)
+            .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            .collect()
+    }
+
+    fn compute_expected_result(input: &[u8]) -> [u8; crate::OUTPUT_SIZE_IN_BYTES] {
+        blake3::hash(input).as_bytes()[0..crate::OUTPUT_SIZE_IN_BYTES]
+            .try_into()
+            .unwrap()
+    }
+
+    fn compute_keyed_expected_result(
+        input: &[u8],
+        key: [u32; crate::CHAINING_VALUE_LEN],
+    ) -> [u8; crate::OUTPUT_SIZE_IN_BYTES] {
+        let mut key_bytes = [0u8; 32];
+        for (i, word) in key.iter().enumerate() {
+            key_bytes[i * 4..(i + 1) * 4].copy_from_slice(&word.to_le_bytes());
+        }
+        blake3::keyed_hash(&key_bytes, input).as_bytes()[0..crate::OUTPUT_SIZE_IN_BYTES]
+            .try_into()
+            .unwrap()
+    }
 
     fn generate_trace_result(
-        chaining_value: &ChainingValue,
-        message: &MessageBlock,
+        chaining_value: &[u32; crate::CHAINING_VALUE_LEN],
+        message: &[u32; crate::MSG_BLOCK_LEN],
         counter: &[u32; 2],
         block_len: u32,
         flags: u32,
     ) -> [u8; crate::OUTPUT_SIZE_IN_BYTES] {
-        let mut harness = create_blake3_harness();
-        load_blake3_data(
-            &mut harness,
-            chaining_value,
-            message,
-            counter,
-            block_len,
-            flags,
-        );
-        harness.execute_inline(instruction());
-        let words = read_output(&mut harness);
+        let input = (*chaining_value, *message, *counter, block_len, flags);
+        let mut harness = super::Blake3Compression::create_harness();
+        super::Blake3Compression::load(&mut harness, &input);
+        harness.execute_inline(super::Blake3Compression::instruction());
+        let words = super::Blake3Compression::read(&mut harness);
 
         let mut bytes = [0u8; crate::OUTPUT_SIZE_IN_BYTES];
         for (i, w) in words.iter().enumerate() {
-            let le = w.to_le_bytes();
-            bytes[i * 4..(i + 1) * 4].copy_from_slice(&le);
+            bytes[i * 4..(i + 1) * 4].copy_from_slice(&w.to_le_bytes());
         }
         bytes
     }
@@ -522,7 +486,6 @@ mod tests {
     fn test_trace_result_equals_blake3_compress_reference() {
         for _ in 0..1000 {
             let message_bytes = generate_random_bytes(crate::MSG_BLOCK_LEN * 4);
-            // Convert bytes to message block (u32 words)
             assert_eq!(
                 message_bytes.len(),
                 crate::MSG_BLOCK_LEN * 4,
@@ -549,21 +512,17 @@ mod tests {
     #[test]
     fn test_trace_result_equals_blake3_keyed_compress_reference() {
         for _ in 0..1000 {
-            // Generate random key
             let key_bytes = generate_random_bytes(crate::CHAINING_VALUE_LEN * 4);
             let mut key = [0u32; crate::CHAINING_VALUE_LEN];
             key.copy_from_slice(&bytes_to_u32_vec(&key_bytes));
 
-            // Generate random message
             let message_bytes = generate_random_bytes(crate::MSG_BLOCK_LEN * 4);
             let words_vec = bytes_to_u32_vec(&message_bytes);
             let mut message_words = [0u32; crate::MSG_BLOCK_LEN];
             message_words.copy_from_slice(&words_vec);
 
-            // Compute expected result using keyed hash
             let expected_hash_bytes = compute_keyed_expected_result(&message_bytes, key);
 
-            // Generate trace result with keyed hash flag
             let counter = [0u32, 0u32];
             let block_len = 64u32;
             let flags = crate::FLAG_CHUNK_START
@@ -582,14 +541,12 @@ mod tests {
 
     #[test]
     fn test_trace_keyed64_matches_blake3_keyed_hash() {
-        // Test that sequence builder's Keyed64 mode matches blake3::keyed_hash for 64-byte input
         use rand::rngs::StdRng;
         use rand::{Rng, SeedableRng};
 
         let mut rng = StdRng::seed_from_u64(88888);
 
         for _ in 0..100 {
-            // Generate random left, right, and key
             let mut left = [0u32; crate::CHAINING_VALUE_LEN];
             let mut right = [0u32; crate::CHAINING_VALUE_LEN];
             let mut key = [0u32; crate::CHAINING_VALUE_LEN];
@@ -599,20 +556,17 @@ mod tests {
                 key[i] = rng.gen();
             }
 
-            // Execute sequence builder with key as IV
-            let mut harness = create_blake3_keyed64_harness();
-            load_blake3_keyed64_data(&mut harness, &left, &right, &key);
-            harness.execute_inline(keyed64_instruction());
-            let result_words = read_output(&mut harness);
+            let input = (left, right, key);
+            let mut harness = super::Blake3Keyed64Compression::create_harness();
+            super::Blake3Keyed64Compression::load(&mut harness, &input);
+            harness.execute_inline(super::Blake3Keyed64Compression::instruction());
+            let result_words = super::Blake3Keyed64Compression::read(&mut harness);
 
-            // Convert result to bytes
             let mut result_bytes = [0u8; 32];
             for (i, w) in result_words.iter().enumerate() {
-                let le = w.to_le_bytes();
-                result_bytes[i * 4..(i + 1) * 4].copy_from_slice(&le);
+                result_bytes[i * 4..(i + 1) * 4].copy_from_slice(&w.to_le_bytes());
             }
 
-            // Convert left/right/key to bytes for blake3 reference
             let mut left_bytes = [0u8; 32];
             let mut right_bytes = [0u8; 32];
             let mut key_bytes = [0u8; 32];
@@ -626,13 +580,11 @@ mod tests {
                 key_bytes[i * 4..(i + 1) * 4].copy_from_slice(&w.to_le_bytes());
             }
 
-            // Concatenate left || right as 64-byte input
-            let mut input = [0u8; 64];
-            input[..32].copy_from_slice(&left_bytes);
-            input[32..].copy_from_slice(&right_bytes);
+            let mut input_bytes = [0u8; 64];
+            input_bytes[..32].copy_from_slice(&left_bytes);
+            input_bytes[32..].copy_from_slice(&right_bytes);
 
-            // Compute expected using official blake3::keyed_hash
-            let expected = blake3::keyed_hash(&key_bytes, &input);
+            let expected = blake3::keyed_hash(&key_bytes, &input_bytes);
 
             assert_eq!(
                 result_bytes,

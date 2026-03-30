@@ -349,6 +349,8 @@ impl InlineOp for Sha256Compression {
     const FUNCT7: u32 = crate::SHA256_FUNCT7;
     const NAME: &'static str = crate::SHA256_NAME;
 
+    type Advice = ();
+
     fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
         Sha256SequenceBuilder::new(asm, operands, false).build()
     }
@@ -361,6 +363,8 @@ impl InlineOp for Sha256CompressionInitial {
     const FUNCT3: u32 = crate::SHA256_INIT_FUNCT3;
     const FUNCT7: u32 = crate::SHA256_INIT_FUNCT7;
     const NAME: &'static str = crate::SHA256_INIT_NAME;
+
+    type Advice = ();
 
     fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
         Sha256SequenceBuilder::new(asm, operands, true).build()

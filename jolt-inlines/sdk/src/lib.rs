@@ -7,3 +7,6 @@ pub mod ec;
 
 #[cfg(feature = "host")]
 pub mod host;
+
+#[cfg(feature = "host")]
+pub mod spec;

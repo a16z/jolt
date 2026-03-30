@@ -1,6 +1,4 @@
 //! This file provides high-level API to use BLAKE3 compression, both in host and guest mode.
-#[cfg(feature = "host")]
-use crate::FLAG_KEYED_HASH;
 use crate::{
     BLOCK_INPUT_SIZE_IN_BYTES, CHAINING_VALUE_LEN, COUNTER_LEN, FLAG_CHUNK_END, FLAG_CHUNK_START,
     FLAG_ROOT, IV, MSG_BLOCK_LEN, OUTPUT_SIZE_IN_BYTES,
@@ -366,14 +364,18 @@ pub(crate) unsafe fn blake3_compress(chaining_value: *mut u32, message: *const u
     // Extract flags (next u32 at offset 19)
     let flags = *message.add(19);
 
-    // On the host, we call our reference implementation from the exec module.
-    crate::exec::execute_blake3_compression(
-        &mut *(chaining_value as *mut [u32; 8]),
-        message_block,
-        &counter_array,
+    use crate::sequence_builder::Blake3Compression;
+    use jolt_inlines_sdk::spec::InlineSpec;
+
+    let input = (
+        *(chaining_value as *const [u32; 8]),
+        *message_block,
+        counter_array,
         block_len,
         flags,
     );
+    let result = Blake3Compression::reference(&input);
+    core::ptr::copy_nonoverlapping(result.as_ptr(), chaining_value, 8);
 }
 
 #[cfg(all(
@@ -412,21 +414,16 @@ unsafe fn blake3_keyed64_compress(left: *const u32, right: *const u32, iv: *mut 
 #[cfg(feature = "host")]
 #[inline(always)]
 unsafe fn blake3_keyed64_compress(left: *const u32, right: *const u32, key: *mut u32) {
-    // Concatenate left || right as message
-    let mut message = [0u32; 16];
-    core::ptr::copy_nonoverlapping(left, message.as_mut_ptr(), 8);
-    core::ptr::copy_nonoverlapping(right, message.as_mut_ptr().add(8), 8);
+    use crate::sequence_builder::Blake3Keyed64Compression;
+    use jolt_inlines_sdk::spec::InlineSpec;
 
-    let key_arr = &mut *(key as *mut [u32; 8]);
-
-    // flags = CHUNK_START | CHUNK_END | ROOT | KEYED_HASH
-    crate::exec::execute_blake3_compression(
-        key_arr,
-        &message,
-        &[0, 0],
-        64,
-        FLAG_CHUNK_START | FLAG_CHUNK_END | FLAG_ROOT | FLAG_KEYED_HASH,
+    let input = (
+        *(left as *const [u32; 8]),
+        *(right as *const [u32; 8]),
+        *(key as *const [u32; 8]),
     );
+    let result = Blake3Keyed64Compression::reference(&input);
+    core::ptr::copy_nonoverlapping(result.as_ptr(), key, 8);
 }
 
 #[cfg(all(
@@ -483,7 +480,22 @@ pub const BLAKE3_IV: AlignedHash32 = AlignedHash32([
 #[cfg(feature = "host")]
 mod tests {
     use super::Blake3;
-    use crate::{test_utils::helpers::*, BLOCK_INPUT_SIZE_IN_BYTES};
+    use crate::BLOCK_INPUT_SIZE_IN_BYTES;
+
+    fn generate_random_bytes(len: usize) -> Vec<u8> {
+        use rand::rngs::StdRng;
+        use rand::{RngCore, SeedableRng};
+        let mut buf = vec![0u8; len];
+        let mut rng = StdRng::seed_from_u64(12345);
+        rng.fill_bytes(&mut buf);
+        buf
+    }
+
+    fn compute_expected_result(input: &[u8]) -> [u8; crate::OUTPUT_SIZE_IN_BYTES] {
+        blake3::hash(input).as_bytes()[0..crate::OUTPUT_SIZE_IN_BYTES]
+            .try_into()
+            .unwrap()
+    }
 
     fn random_partition(data: &[u8]) -> Vec<&[u8]> {
         use rand::rngs::StdRng;

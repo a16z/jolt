@@ -1,20 +1,17 @@
 #![cfg(all(test, feature = "host"))]
 
 mod exec {
+    use crate::sequence_builder::Keccak256Permutation;
     use crate::test_utils::*;
-    use tracer::emulator::cpu::Xlen;
+    use jolt_inlines_sdk::spec::InlineSpec;
 
     #[test]
     fn test_keccak256_direct_execution() {
         for (i, test_case) in keccak_test_vectors().iter().enumerate() {
-            let mut harness = create_keccak_harness(Xlen::Bit64);
-            harness.setup_registers();
-            harness.load_state64(&test_case.input);
-            let instruction = instruction();
-            harness.execute_inline(instruction);
-            let result_vec = harness.read_output64(25);
-            let mut result = [0u64; 25];
-            result.copy_from_slice(&result_vec);
+            let mut harness = Keccak256Permutation::create_harness();
+            Keccak256Permutation::load(&mut harness, &test_case.input);
+            harness.execute_inline(Keccak256Permutation::instruction());
+            let result = Keccak256Permutation::read(&mut harness);
             assert_eq!(
                 result, test_case.expected,
                 "Keccak256 direct execution test case {} failed: {}\nInput: {:016x?}\nExpected: {:016x?}\nActual: {:016x?}",
@@ -41,29 +38,25 @@ mod exec {
         ];
 
         for (input, expected_hash) in e2e_vectors {
-            let hash = crate::exec::execute_keccak256(input);
+            let hash = crate::spec::execute_keccak256(input);
             assert_eq!(&hash, expected_hash);
         }
     }
 }
 
 mod exec_trace_equivalence {
+    use crate::sequence_builder::Keccak256Permutation;
     use crate::test_constants::*;
-    use crate::test_utils::*;
-    use tracer::emulator::cpu::Xlen;
+    use jolt_inlines_sdk::spec::InlineSpec;
 
     #[test]
     fn test_keccak_against_reference() {
         let initial_state = [0u64; 25];
         let expected_final_state = xkcp_vectors::AFTER_ONE_PERMUTATION;
-        let mut harness = create_keccak_harness(Xlen::Bit64);
-        harness.setup_registers();
-        harness.load_state64(&initial_state);
-        let instruction = instruction();
-        harness.execute_inline(instruction);
-        let trace_result_vec = harness.read_output64(25);
-        let mut trace_result = [0u64; 25];
-        trace_result.copy_from_slice(&trace_result_vec);
+        let mut harness = Keccak256Permutation::create_harness();
+        Keccak256Permutation::load(&mut harness, &initial_state);
+        harness.execute_inline(Keccak256Permutation::instruction());
+        let trace_result = Keccak256Permutation::read(&mut harness);
         for i in 0..25 {
             assert_eq!(trace_result[i], expected_final_state[i]);
         }
@@ -71,14 +64,13 @@ mod exec_trace_equivalence {
 }
 
 mod exec_unit {
-    use crate::exec::{execute_chi, execute_iota, execute_rho_and_pi, execute_theta};
     use crate::sequence_builder::ROUND_CONSTANTS;
+    use crate::spec::{execute_chi, execute_iota, execute_rho_and_pi, execute_theta};
     use crate::test_constants::xkcp_vectors;
     use crate::NUM_LANES;
 
     #[test]
     fn test_execute_theta() {
-        // Patterned state to exercise column parities; theta should change the state.
         let mut state = [0u64; NUM_LANES];
         state[0] = 1;
         state[5] = 2;
@@ -93,7 +85,6 @@ mod exec_unit {
 
     #[test]
     fn test_execute_rho_and_pi() {
-        // Rho rotates lanes and Pi permutes positions; the state must change and lane [1] should move.
         let mut state = [0u64; NUM_LANES];
         state[1] = 0xFF;
         let original_state = state;
@@ -110,7 +101,6 @@ mod exec_unit {
 
     #[test]
     fn test_execute_chi() {
-        // Chi applies non-linearity: A[x] ^= (~A[x+1] & A[x+2]). Check one row cell explicitly.
         let mut state = [0u64; NUM_LANES];
         state[0] = 0xFF;
         state[1] = 0xAA;
@@ -126,7 +116,6 @@ mod exec_unit {
 
     #[test]
     fn test_execute_iota() {
-        // Iota xors the round constant into A[0,0]; all other lanes remain unchanged.
         let mut state = [0u64; NUM_LANES];
         state[0] = 0x1234;
         execute_iota(&mut state, 0x5678);
@@ -140,7 +129,6 @@ mod exec_unit {
 
     #[test]
     fn test_step_by_step_round_1() {
-        // Round-1 step-by-step: compare post-theta/rho+pi/chi states to XKCP expected snapshots.
         let mut state = [0u64; NUM_LANES];
         state[0] = 0x0000000000000001;
         let round = 1;
@@ -155,7 +143,6 @@ mod exec_unit {
             step_fn(&mut state);
             assert_eq!(state, expected, "round 1: mismatch after {name}");
         }
-        // Iota has a different signature; apply it separately and check final snapshot.
         execute_iota(&mut state, ROUND_CONSTANTS[round]);
         assert_eq!(state, expected_states.iota, "round 1: mismatch after iota");
     }

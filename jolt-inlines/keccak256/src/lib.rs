@@ -15,9 +15,9 @@ pub mod sdk;
 pub use sdk::*;
 
 #[cfg(feature = "host")]
-pub mod exec;
-#[cfg(feature = "host")]
 pub mod sequence_builder;
+#[cfg(feature = "host")]
+pub mod spec;
 
 #[cfg(feature = "host")]
 mod host;
