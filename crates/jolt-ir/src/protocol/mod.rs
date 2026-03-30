@@ -11,11 +11,19 @@
 //! See `crates/jolt-ir/PROTOCOL_GRAPH.md` for the full design document.
 
 mod build;
+pub mod compiler;
+pub mod identity;
+pub mod protocol_def;
 mod symbolic;
 mod types;
 mod validate;
 
 pub use build::{build_jolt_protocol, ProtocolConfig};
+pub use identity::{
+    ChallengeLabel as IdentityChallengeLabel, DomainSpec, IdentityClaim, IdentityId, IdentityMeta,
+    PhaseHint, PhaseVariableGroup, PolynomialIdentity, PredecessorClaim, SchedulingHints,
+    WeightingHint,
+};
 pub use symbolic::{Symbol, SymbolicExpr};
 pub use types::*;
 pub use validate::{

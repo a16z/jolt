@@ -139,16 +139,15 @@ mod tests {
     }
 
     #[test]
-    fn sop_equivalence_registers_rw() {
+    fn composition_equivalence_registers_rw() {
         let claim = registers_read_write_checking();
         let openings: Vec<Fr> = (1..=5).map(Fr::from_u64).collect();
         let challenges: Vec<Fr> = (6..=8).map(Fr::from_u64).collect();
 
         let direct = claim.evaluate::<Fr>(&openings, &challenges);
-        let via_sop = claim
-            .expr
-            .to_sum_of_products()
+        let via_formula = claim
+            .to_composition_formula()
             .evaluate::<Fr>(&openings, &challenges);
-        assert_eq!(direct, via_sop);
+        assert_eq!(direct, via_formula);
     }
 }

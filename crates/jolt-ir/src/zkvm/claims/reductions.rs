@@ -320,21 +320,20 @@ mod tests {
     }
 
     #[test]
-    fn sop_equivalence_registers_reduction() {
+    fn composition_equivalence_registers_reduction() {
         let claim = registers_claim_reduction();
         let openings: Vec<Fr> = (1..=3).map(Fr::from_u64).collect();
         let challenges: Vec<Fr> = (5..=7).map(Fr::from_u64).collect();
 
         let direct = claim.evaluate::<Fr>(&openings, &challenges);
-        let via_sop = claim
-            .expr
-            .to_sum_of_products()
+        let via_formula = claim
+            .to_composition_formula()
             .evaluate::<Fr>(&openings, &challenges);
-        assert_eq!(direct, via_sop);
+        assert_eq!(direct, via_formula);
     }
 
     #[test]
-    fn sop_equivalence_hamming_weight_reduction() {
+    fn composition_equivalence_hamming_weight_reduction() {
         let polynomials = vec![
             PolynomialId::InstructionRa(0),
             PolynomialId::InstructionRa(1),
@@ -346,10 +345,9 @@ mod tests {
         let challenges: Vec<Fr> = (10..=13).map(Fr::from_u64).collect();
 
         let direct = claim.evaluate::<Fr>(&openings, &challenges);
-        let via_sop = claim
-            .expr
-            .to_sum_of_products()
+        let via_formula = claim
+            .to_composition_formula()
             .evaluate::<Fr>(&openings, &challenges);
-        assert_eq!(direct, via_sop);
+        assert_eq!(direct, via_formula);
     }
 }

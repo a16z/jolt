@@ -20,8 +20,8 @@ path = "fuzz_targets/expr_eval.rs"
 doc = false
 
 [[bin]]
-name = "sop_normalize"
-path = "fuzz_targets/sop_normalize.rs"
+name = "composition_normalize"
+path = "fuzz_targets/composition_normalize.rs"
 doc = false
 
 [[bin]]

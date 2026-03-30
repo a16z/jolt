@@ -1,7 +1,6 @@
 use jolt_field::Field;
 
 use crate::expr::{Expr, Var};
-use crate::normalize::{SopValue, SumOfProducts};
 use crate::visitor::ExprVisitor;
 
 /// Zero-allocation visitor that evaluates an expression tree over a field `F`.
@@ -57,32 +56,6 @@ impl Expr {
             challenges,
         };
         self.visit(&mut visitor)
-    }
-}
-
-impl SumOfProducts {
-    /// Evaluate the sum-of-products form with concrete field values.
-    ///
-    /// Each term contributes `coefficient * factor[0] * factor[1] * ...` to
-    /// the sum. This must produce the same result as `Expr::evaluate` for the
-    /// same expression — that invariant is the critical correctness property.
-    pub fn evaluate<F: Field>(&self, openings: &[F], challenges: &[F]) -> F {
-        let resolve = |val: &SopValue| -> F {
-            match val {
-                SopValue::Constant(c) => F::from_i128(*c),
-                SopValue::Opening(id) => openings[*id as usize],
-                SopValue::Challenge(id) => challenges[*id as usize],
-            }
-        };
-
-        self.terms
-            .iter()
-            .map(|term| {
-                let coeff = F::from_i128(term.coefficient);
-                let product: F = term.factors.iter().map(&resolve).product();
-                coeff * product
-            })
-            .sum()
     }
 }
 
@@ -167,16 +140,16 @@ mod tests {
     }
 
     #[test]
-    fn sop_evaluate_constant() {
+    fn formula_evaluate_constant() {
         let b = ExprBuilder::new();
         let expr = b.build(b.constant(42));
-        let sop = expr.to_sum_of_products();
-        let result: Fr = sop.evaluate(&[], &[]);
+        let formula = expr.to_composition_formula();
+        let result: Fr = formula.evaluate(&[], &[]);
         assert_eq!(result, Fr::from_u64(42));
     }
 
     #[test]
-    fn sop_evaluate_booleanity() {
+    fn formula_evaluate_booleanity() {
         // gamma * (h^2 - h) with h=3, gamma=5 → 30
         let b = ExprBuilder::new();
         let h = b.opening(0);
@@ -185,18 +158,17 @@ mod tests {
 
         let h_val = Fr::from_u64(3);
         let gamma_val = Fr::from_u64(5);
-        let sop = expr.to_sum_of_products();
-        let result: Fr = sop.evaluate(&[h_val], &[gamma_val]);
+        let formula = expr.to_composition_formula();
+        let result: Fr = formula.evaluate(&[h_val], &[gamma_val]);
         assert_eq!(result, Fr::from_u64(30));
     }
 
     /// Critical invariant: `expr.evaluate()` must equal
-    /// `expr.to_sum_of_products().evaluate()` for all inputs.
+    /// `expr.to_composition_formula().evaluate()` for all inputs.
     #[test]
-    fn property_expr_equals_sop() {
+    fn property_expr_equals_formula() {
         let mut rng = ChaCha8Rng::seed_from_u64(0xdead);
 
-        // Test several expression shapes
         let expressions = build_test_expressions();
 
         for (name, expr, n_openings, n_challenges) in &expressions {
@@ -204,29 +176,29 @@ mod tests {
             let challenges: Vec<Fr> = (0..*n_challenges).map(|_| Fr::random(&mut rng)).collect();
 
             let direct: Fr = expr.evaluate(&openings, &challenges);
-            let sop = expr.to_sum_of_products();
-            let via_sop: Fr = sop.evaluate(&openings, &challenges);
+            let formula = expr.to_composition_formula();
+            let via_formula: Fr = formula.evaluate(&openings, &challenges);
 
-            assert_eq!(direct, via_sop, "mismatch for expression: {name}");
+            assert_eq!(direct, via_formula, "mismatch for expression: {name}");
         }
     }
 
     /// Same property with many random evaluation points per expression.
     #[test]
-    fn property_expr_equals_sop_many_points() {
+    fn property_expr_equals_formula_many_points() {
         let mut rng = ChaCha8Rng::seed_from_u64(0xcafe);
         let expressions = build_test_expressions();
 
         for (name, expr, n_openings, n_challenges) in &expressions {
-            let sop = expr.to_sum_of_products();
+            let formula = expr.to_composition_formula();
             for _ in 0..50 {
                 let openings: Vec<Fr> = (0..*n_openings).map(|_| Fr::random(&mut rng)).collect();
                 let challenges: Vec<Fr> =
                     (0..*n_challenges).map(|_| Fr::random(&mut rng)).collect();
 
                 let direct: Fr = expr.evaluate(&openings, &challenges);
-                let via_sop: Fr = sop.evaluate(&openings, &challenges);
-                assert_eq!(direct, via_sop, "mismatch for expression: {name}");
+                let via_formula: Fr = formula.evaluate(&openings, &challenges);
+                assert_eq!(direct, via_formula, "mismatch for expression: {name}");
             }
         }
     }

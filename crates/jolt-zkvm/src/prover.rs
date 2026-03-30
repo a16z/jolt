@@ -337,18 +337,6 @@ where
             }
         }
 
-        // Side-effect claim evaluations
-        for &vid in &stage.vertices {
-            if let Vertex::Sumcheck(sv) = graph.claim_graph.vertex(vid) {
-                for &cid in &sv.side_effect_claims {
-                    let poly_id = graph.claim_graph.claim(cid).polynomial;
-                    let eval = trace_polys.eval_at_point(poly_id, &ep);
-                    cache.set(cid, eval);
-                    evals.push(eval);
-                }
-            }
-        }
-
         for &e in &evals {
             e.append_to_transcript(&mut transcript);
         }
@@ -518,7 +506,7 @@ fn build_witness<F: Field, B: ComputeBackend, R: jolt_host::CycleRow>(
         poly_tables.push(table);
     }
 
-    // Resolve challenge values for compile_descriptor
+    // Resolve challenge values for the composition formula
     let challenge_labels = match &sv.input {
         InputClaim::Formula {
             challenge_labels, ..
@@ -542,8 +530,7 @@ fn build_witness<F: Field, B: ComputeBackend, R: jolt_host::CycleRow>(
         }
     }
 
-    // Compile the formula into a kernel descriptor + materialized challenge coefficients.
-    let (desc, materialized) = formula.definition.compile_descriptor::<F>(&challenges);
+    let comp_formula = formula.definition.to_composition_formula();
     let order = binding_order_for(sv);
 
     // Upload polynomial tables to backend buffers.
@@ -552,76 +539,75 @@ fn build_witness<F: Field, B: ComputeBackend, R: jolt_host::CycleRow>(
         .map(|table| backend.upload(table))
         .collect();
 
-    use jolt_ir::KernelShape;
-    match &desc.shape {
-        KernelShape::EqProduct => {
-            // Pre-combine: g[i] = Σ_j materialized[j] * poly_tables[j][i]
-            let n = w_table.len();
-            let mut combined = vec![F::zero(); n];
-            for (table, &weight) in poly_tables.iter().zip(materialized.iter()) {
-                for (i, c) in combined.iter_mut().enumerate() {
-                    if i < table.len() {
-                        *c += weight * table[i];
-                    }
+    if comp_formula.is_linear_combination() {
+        // Pre-combine: g[i] = Σ_j weight[j] * poly_tables[j][i]
+        let weights = comp_formula.linear_combination_weights(&challenges);
+        let n = w_table.len();
+        let mut combined = vec![F::zero(); n];
+        for (table, &weight) in poly_tables.iter().zip(weights.iter()) {
+            for (i, c) in combined.iter_mut().enumerate() {
+                if i < table.len() {
+                    *c += weight * table[i];
                 }
             }
-            let eq_buf = backend.upload(&w_table);
-            let g_buf = backend.upload(&combined);
-            let kernel = backend.compile_kernel(&desc);
-            Box::new(
-                KernelEvaluator::from_descriptor(
-                    &desc,
-                    vec![eq_buf, g_buf],
-                    kernel,
-                    backend.clone(),
-                )
-                .with_binding_order(order),
-            )
         }
-        KernelShape::HammingBooleanity => {
-            // Scale the weighting table by the materialized eq scale factor.
-            let scale = materialized.first().copied().unwrap_or(F::one());
-            let scaled_w: Vec<F> = w_table.iter().map(|&w| w * scale).collect();
-            let w_buf = backend.upload(&scaled_w);
-            let h_buf = buffers
-                .into_iter()
-                .next()
-                .unwrap_or_else(|| backend.upload(&vec![F::zero(); scaled_w.len()]));
-            let kernel = backend.compile_kernel(&desc);
-            Box::new(
-                KernelEvaluator::from_descriptor(
-                    &desc,
-                    vec![w_buf, h_buf],
-                    kernel,
-                    backend.clone(),
-                )
-                .with_binding_order(order),
-            )
-        }
-        KernelShape::ProductSum { .. } => {
-            // Toom-Cook path: RA virtual and similar product sumchecks.
-            let kernel = backend.compile_kernel(&desc);
-            let claimed_sum = F::zero(); // Set by set_claim() before first round
-            Box::new(KernelEvaluator::from_descriptor_toom_cook(
-                &desc,
-                buffers,
+        let eq_formula = crate::evaluators::catalog::eq_product();
+        let eq_buf = backend.upload(&w_table);
+        let g_buf = backend.upload(&combined);
+        let kernel = backend.compile_kernel(&eq_formula);
+        Box::new(
+            KernelEvaluator::from_formula(
+                &eq_formula,
+                vec![eq_buf, g_buf],
                 kernel,
-                w_table,
-                claimed_sum,
-                order,
                 backend.clone(),
-            ))
-        }
-        KernelShape::Custom { .. } => {
-            // General path: compile kernel with baked-in challenge values.
-            let kernel = backend.compile_kernel(&desc);
-            let mut inputs = vec![backend.upload(&w_table)];
-            inputs.extend(buffers);
-            Box::new(
-                KernelEvaluator::from_descriptor(&desc, inputs, kernel, backend.clone())
-                    .with_binding_order(order),
             )
-        }
+            .with_binding_order(order),
+        )
+    } else if comp_formula.is_hamming_booleanity() {
+        // Scale the weighting table by the eq scale factor.
+        let scale = comp_formula.hamming_eq_scale(&challenges);
+        let scaled_w: Vec<F> = w_table.iter().map(|&w| w * scale).collect();
+        let ham_formula = crate::evaluators::catalog::hamming_booleanity();
+        let w_buf = backend.upload(&scaled_w);
+        let h_buf = buffers
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| backend.upload(&vec![F::zero(); scaled_w.len()]));
+        let kernel = backend.compile_kernel(&ham_formula);
+        Box::new(
+            KernelEvaluator::from_formula(
+                &ham_formula,
+                vec![w_buf, h_buf],
+                kernel,
+                backend.clone(),
+            )
+            .with_binding_order(order),
+        )
+    } else if comp_formula.as_product_sum().is_some() {
+        // Toom-Cook path: RA virtual and similar product sumchecks.
+        let compiler_formula = jolt_cpu::from_ir_formula(&comp_formula);
+        let kernel = backend.compile_kernel(&compiler_formula);
+        let claimed_sum = F::zero(); // Set by set_claim() before first round
+        Box::new(KernelEvaluator::from_formula_toom_cook(
+            &compiler_formula,
+            buffers,
+            kernel,
+            w_table,
+            claimed_sum,
+            order,
+            backend.clone(),
+        ))
+    } else {
+        // General path: compile kernel with baked-in challenge values.
+        let compiler_formula = jolt_cpu::from_ir_formula(&comp_formula);
+        let kernel = backend.compile_kernel_with_challenges(&compiler_formula, &challenges);
+        let mut inputs = vec![backend.upload(&w_table)];
+        inputs.extend(buffers);
+        Box::new(
+            KernelEvaluator::from_formula(&compiler_formula, inputs, kernel, backend.clone())
+                .with_binding_order(order),
+        )
     }
 }
 

@@ -239,7 +239,7 @@ impl ClaimGraph {
         // Build producer map: ClaimId → producing VertexId
         let mut producers: HashMap<ClaimId, Vec<VertexId>> = HashMap::new();
         for vertex in &self.vertices {
-            for claim_id in vertex.all_produced_claims() {
+            for &claim_id in vertex.produced_claims() {
                 producers.entry(claim_id).or_default().push(vertex.id());
             }
         }
@@ -279,7 +279,7 @@ impl ClaimGraph {
 
         // Check: no self-loops
         for vertex in &self.vertices {
-            let produced_set: HashSet<ClaimId> = vertex.all_produced_claims().into_iter().collect();
+            let produced_set: HashSet<ClaimId> = vertex.produced_claims().iter().copied().collect();
             for &dep in vertex.dep_claims() {
                 if produced_set.contains(&dep) {
                     errors.push(GraphError::SelfLoop(vertex.id()));
@@ -353,7 +353,7 @@ impl ClaimGraph {
     pub fn topological_order(&self) -> Option<Vec<VertexId>> {
         let mut producers: HashMap<ClaimId, Vec<VertexId>> = HashMap::new();
         for vertex in &self.vertices {
-            for claim_id in vertex.all_produced_claims() {
+            for &claim_id in vertex.produced_claims() {
                 producers.entry(claim_id).or_default().push(vertex.id());
             }
         }
@@ -452,7 +452,7 @@ impl ProtocolGraph {
         // Build claim → producer vertex map
         let mut claim_producer: HashMap<ClaimId, VertexId> = HashMap::new();
         for vertex in &self.claim_graph.vertices {
-            for claim_id in vertex.all_produced_claims() {
+            for &claim_id in vertex.produced_claims() {
                 let _ = claim_producer.insert(claim_id, vertex.id());
             }
         }
@@ -820,7 +820,7 @@ mod tests {
             deps: vec![],
             input: InputClaim::Constant(0),
             produces: vec![ClaimId(0)],
-            side_effect_claims: vec![],
+
             formula: dummy_formula.clone(),
             degree: 2,
             num_vars: SymbolicExpr::Concrete(10),
@@ -836,7 +836,7 @@ mod tests {
             deps: vec![],
             input: InputClaim::Constant(0),
             produces: vec![ClaimId(0)], // same claim produced by v0
-            side_effect_claims: vec![],
+
             formula: dummy_formula,
             degree: 2,
             num_vars: SymbolicExpr::Concrete(10),
@@ -889,7 +889,7 @@ mod tests {
             deps: vec![],
             input: InputClaim::Constant(0),
             produces: vec![ClaimId(0)],
-            side_effect_claims: vec![],
+
             formula: formula(),
             degree: 2,
             num_vars: SymbolicExpr::Concrete(10),
@@ -902,7 +902,7 @@ mod tests {
             deps: vec![ClaimId(0)],
             input: InputClaim::Constant(0),
             produces: vec![ClaimId(1)],
-            side_effect_claims: vec![],
+
             formula: formula(),
             degree: 2,
             num_vars: SymbolicExpr::Concrete(10),
@@ -1121,7 +1121,7 @@ mod tests {
             deps: vec![],
             input: InputClaim::Constant(0),
             produces: vec![ClaimId(0)],
-            side_effect_claims: vec![],
+
             formula: formula(),
             degree: 2,
             num_vars: SymbolicExpr::Concrete(10),
@@ -1134,7 +1134,7 @@ mod tests {
             deps: vec![ClaimId(0)],
             input: InputClaim::Constant(0),
             produces: vec![ClaimId(1)],
-            side_effect_claims: vec![],
+
             formula: formula(),
             degree: 2,
             num_vars: SymbolicExpr::Concrete(10),
@@ -1147,7 +1147,7 @@ mod tests {
             deps: vec![ClaimId(0)], // fan-out: same claim as v1
             input: InputClaim::Constant(0),
             produces: vec![ClaimId(2)],
-            side_effect_claims: vec![],
+
             formula: formula(),
             degree: 2,
             num_vars: SymbolicExpr::Concrete(10),
@@ -1294,7 +1294,7 @@ mod tests {
             deps: vec![],
             input: InputClaim::Constant(0),
             produces: vec![ClaimId(0)],
-            side_effect_claims: vec![],
+
             formula: formula(),
             degree: 2,
             num_vars: SymbolicExpr::Concrete(10),
@@ -1307,7 +1307,7 @@ mod tests {
             deps: vec![],
             input: InputClaim::Constant(0),
             produces: vec![ClaimId(0)],
-            side_effect_claims: vec![],
+
             formula: formula(),
             degree: 2,
             num_vars: SymbolicExpr::Concrete(10),

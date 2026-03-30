@@ -206,7 +206,7 @@ where
     let mut s1_eval_idx = 0;
     for &vid in &s1_stage.vertices {
         let vertex = graph.claim_graph.vertex(vid);
-        for claim_id in vertex.all_produced_claims() {
+        for &claim_id in vertex.produced_claims() {
             let eval = if s1_eval_idx < proof.spartan_evals.len() {
                 proof.spartan_evals[s1_eval_idx]
             } else {
@@ -286,11 +286,10 @@ where
             e.append_to_transcript(&mut transcript);
         }
 
-        // Unpack evals into cache (includes side-effect claims)
         let mut eval_idx = 0;
         for &vid in &stage.vertices {
             let vertex = graph.claim_graph.vertex(vid);
-            for claim_id in vertex.all_produced_claims() {
+            for &claim_id in vertex.produced_claims() {
                 if eval_idx >= stage_proof.evals.len() {
                     return Err(JoltError::InvalidProof(format!(
                         "stage {:?} has fewer evals than produced claims",

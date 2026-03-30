@@ -87,6 +87,12 @@ pub enum PolynomialId {
     BytecodeReadRafVal(usize),
     // Virtual: instruction read-RAF value polynomials
     InstructionReadRafVal(usize),
+
+    // Virtual: Spartan R1CS (produced by outer/inner sumchecks)
+    Az,
+    Bz,
+    Cz,
+    CombinedRow,
 }
 
 impl PolynomialId {

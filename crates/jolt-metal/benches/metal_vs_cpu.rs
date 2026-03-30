@@ -10,16 +10,26 @@
 #![allow(unused_results)]
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use jolt_compute::{BindingOrder, ComputeBackend};
+use jolt_compute::{BindingOrder, ComputeBackend, EqInput};
 use jolt_cpu::CpuBackend;
 use jolt_field::{Field, Fr};
-use jolt_ir::{KernelDescriptor, KernelShape};
+use jolt_compiler::{CompositionFormula, Factor, ProductTerm};
 use jolt_metal::MetalBackend;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
 fn random_fr(rng: &mut StdRng, n: usize) -> Vec<Fr> {
     (0..n).map(|_| Fr::random(rng)).collect()
+}
+
+fn product_sum_formula(d: usize, p: usize) -> CompositionFormula {
+    let terms: Vec<_> = (0..p)
+        .map(|g| ProductTerm {
+            coefficient: 1,
+            factors: (0..d).map(|j| Factor::Input((g * d + j) as u32)).collect(),
+        })
+        .collect();
+    CompositionFormula::from_terms(terms)
 }
 
 /// Two sizes: near-crossover and saturated.
@@ -39,17 +49,10 @@ fn bench_pairwise_reduce(c: &mut Criterion) {
     let mut group = c.benchmark_group("pairwise_reduce");
 
     for &d in &[4usize, 8] {
-        let desc = KernelDescriptor {
-            shape: KernelShape::ProductSum {
-                num_inputs_per_product: d,
-                num_products: 1,
-            },
-            degree: d,
-            tensor_split: None,
-        };
+        let formula = product_sum_formula(d, 1);
 
-        let cpu_k = jolt_cpu::compile::<Fr>(&desc);
-        let mtl_k = metal.compile_kernel::<Fr>(&desc);
+        let cpu_k = jolt_cpu::compile::<Fr>(&formula);
+        let mtl_k = metal.compile_kernel::<Fr>(&formula);
 
         for &n in &[SMALL, LARGE] {
             let mut rng = StdRng::seed_from_u64(100 + n as u64);
@@ -71,9 +74,9 @@ fn bench_pairwise_reduce(c: &mut Criterion) {
                     bench.iter(|| {
                         metal.pairwise_reduce(
                             &mtl_refs,
-                            &mtl_w,
+                            EqInput::Weighted(&mtl_w),
                             &mtl_k,
-                            desc.num_evals(),
+                            formula.degree(),
                             BindingOrder::LowToHigh,
                         )
                     });
@@ -88,9 +91,9 @@ fn bench_pairwise_reduce(c: &mut Criterion) {
                     bench.iter(|| {
                         cpu.pairwise_reduce(
                             &cpu_refs,
-                            &cpu_w,
+                            EqInput::Weighted(&cpu_w),
                             &cpu_k,
-                            desc.num_evals(),
+                            formula.degree(),
                             BindingOrder::LowToHigh,
                         )
                     });
@@ -107,17 +110,10 @@ fn bench_pairwise_reduce_unweighted(c: &mut Criterion) {
     let mut group = c.benchmark_group("pairwise_reduce_unw");
 
     for &d in &[4usize, 8] {
-        let desc = KernelDescriptor {
-            shape: KernelShape::ProductSum {
-                num_inputs_per_product: d,
-                num_products: 1,
-            },
-            degree: d,
-            tensor_split: None,
-        };
+        let formula = product_sum_formula(d, 1);
 
-        let cpu_k = jolt_cpu::compile::<Fr>(&desc);
-        let mtl_k = metal.compile_kernel::<Fr>(&desc);
+        let cpu_k = jolt_cpu::compile::<Fr>(&formula);
+        let mtl_k = metal.compile_kernel::<Fr>(&formula);
 
         for &n in &[SMALL, LARGE] {
             let mut rng = StdRng::seed_from_u64(600 + n as u64);
@@ -133,10 +129,11 @@ fn bench_pairwise_reduce_unweighted(c: &mut Criterion) {
                 &n,
                 |bench, _| {
                     bench.iter(|| {
-                        metal.pairwise_reduce_unweighted(
+                        metal.pairwise_reduce(
                             &mtl_refs,
+                            EqInput::Unit,
                             &mtl_k,
-                            desc.num_evals(),
+                            formula.degree(),
                             BindingOrder::LowToHigh,
                         )
                     });
@@ -149,10 +146,11 @@ fn bench_pairwise_reduce_unweighted(c: &mut Criterion) {
                 &n,
                 |bench, _| {
                     bench.iter(|| {
-                        cpu.pairwise_reduce_unweighted(
+                        cpu.pairwise_reduce(
                             &cpu_refs,
+                            EqInput::Unit,
                             &cpu_k,
-                            desc.num_evals(),
+                            formula.degree(),
                             BindingOrder::LowToHigh,
                         )
                     });
@@ -170,14 +168,7 @@ fn bench_sumcheck_round(c: &mut Criterion) {
 
     for &d in &[4usize, 8] {
         let n_inputs = d;
-        let desc = KernelDescriptor {
-            shape: KernelShape::ProductSum {
-                num_inputs_per_product: d,
-                num_products: 1,
-            },
-            degree: d,
-            tensor_split: None,
-        };
+        let formula = product_sum_formula(d, 1);
 
         for &log_n in &[14u32, 20] {
             let n = 1usize << log_n;
@@ -189,7 +180,7 @@ fn bench_sumcheck_round(c: &mut Criterion) {
             let label = format!("D{d}/2^{log_n}/{rounds}r");
             group.throughput(Throughput::Elements(n as u64));
 
-            let mtl_k = metal.compile_kernel::<Fr>(&desc);
+            let mtl_k = metal.compile_kernel::<Fr>(&formula);
             group.bench_with_input(
                 BenchmarkId::new(format!("metal/{label}"), log_n),
                 &log_n,
@@ -198,10 +189,11 @@ fn bench_sumcheck_round(c: &mut Criterion) {
                         let mut bufs: Vec<_> = data.iter().map(|v| metal.upload(v)).collect();
                         for _ in 0..rounds {
                             let refs: Vec<_> = bufs.iter().collect();
-                            let _evals = metal.pairwise_reduce_unweighted(
+                            let _evals = metal.pairwise_reduce(
                                 &refs,
+                                EqInput::Unit,
                                 &mtl_k,
-                                desc.num_evals(),
+                                formula.degree(),
                                 BindingOrder::LowToHigh,
                             );
                             bufs = metal.interpolate_pairs_batch(bufs, scalar);
@@ -211,7 +203,7 @@ fn bench_sumcheck_round(c: &mut Criterion) {
                 },
             );
 
-            let cpu_k = jolt_cpu::compile::<Fr>(&desc);
+            let cpu_k = jolt_cpu::compile::<Fr>(&formula);
             group.bench_with_input(
                 BenchmarkId::new(format!("cpu/{label}"), log_n),
                 &log_n,
@@ -220,10 +212,11 @@ fn bench_sumcheck_round(c: &mut Criterion) {
                         let mut bufs: Vec<_> = data.iter().map(|v| cpu.upload(v)).collect();
                         for _ in 0..rounds {
                             let refs: Vec<_> = bufs.iter().collect();
-                            let _evals = cpu.pairwise_reduce_unweighted(
+                            let _evals = cpu.pairwise_reduce(
                                 &refs,
+                                EqInput::Unit,
                                 &cpu_k,
-                                desc.num_evals(),
+                                formula.degree(),
                                 BindingOrder::LowToHigh,
                             );
                             bufs = cpu.interpolate_pairs_batch(bufs, scalar);
@@ -283,14 +276,7 @@ fn bench_sumcheck_round_h2l(c: &mut Criterion) {
 
     for &d in &[4usize, 8] {
         let n_inputs = d;
-        let desc = KernelDescriptor {
-            shape: KernelShape::ProductSum {
-                num_inputs_per_product: d,
-                num_products: 1,
-            },
-            degree: d,
-            tensor_split: None,
-        };
+        let formula = product_sum_formula(d, 1);
 
         for &log_n in &[14u32, 20] {
             let n = 1usize << log_n;
@@ -302,7 +288,7 @@ fn bench_sumcheck_round_h2l(c: &mut Criterion) {
             let label = format!("D{d}/2^{log_n}/{rounds}r");
             group.throughput(Throughput::Elements(n as u64));
 
-            let mtl_k = metal.compile_kernel::<Fr>(&desc);
+            let mtl_k = metal.compile_kernel::<Fr>(&formula);
             group.bench_with_input(
                 BenchmarkId::new(format!("metal/{label}"), log_n),
                 &log_n,
@@ -311,10 +297,11 @@ fn bench_sumcheck_round_h2l(c: &mut Criterion) {
                         let mut bufs: Vec<_> = data.iter().map(|v| metal.upload(v)).collect();
                         for _ in 0..rounds {
                             let refs: Vec<_> = bufs.iter().collect();
-                            let _evals = metal.pairwise_reduce_unweighted(
+                            let _evals = metal.pairwise_reduce(
                                 &refs,
+                                EqInput::Unit,
                                 &mtl_k,
-                                desc.num_evals(),
+                                formula.degree(),
                                 BindingOrder::HighToLow,
                             );
                             metal.interpolate_pairs_batch_inplace(
@@ -328,7 +315,7 @@ fn bench_sumcheck_round_h2l(c: &mut Criterion) {
                 },
             );
 
-            let cpu_k = jolt_cpu::compile::<Fr>(&desc);
+            let cpu_k = jolt_cpu::compile::<Fr>(&formula);
             group.bench_with_input(
                 BenchmarkId::new(format!("cpu/{label}"), log_n),
                 &log_n,
@@ -337,10 +324,11 @@ fn bench_sumcheck_round_h2l(c: &mut Criterion) {
                         let mut bufs: Vec<_> = data.iter().map(|v| cpu.upload(v)).collect();
                         for _ in 0..rounds {
                             let refs: Vec<_> = bufs.iter().collect();
-                            let _evals = cpu.pairwise_reduce_unweighted(
+                            let _evals = cpu.pairwise_reduce(
                                 &refs,
+                                EqInput::Unit,
                                 &cpu_k,
-                                desc.num_evals(),
+                                formula.degree(),
                                 BindingOrder::HighToLow,
                             );
                             cpu.interpolate_pairs_batch_inplace(

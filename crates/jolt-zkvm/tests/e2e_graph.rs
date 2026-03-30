@@ -34,7 +34,8 @@ fn symbols(
 }
 
 #[test]
-#[ignore] // Requires guest ELF compilation
+#[ignore = "requires guest ELF compilation"]
+#[allow(clippy::unit_arg, clippy::clone_on_copy)]
 fn graph_driven_muldiv_mock_pcs() {
     // 1. Compile and trace
     let mut program = jolt_host::Program::new("muldiv-guest");
@@ -87,13 +88,11 @@ fn graph_driven_muldiv_mock_pcs() {
         spartan_key: &proving_key.spartan_key,
         flat_witness: &flat_witness,
         pcs_setup: &proving_key.pcs_prover_setup,
-        pcs_verifier_setup: proving_key.pcs_verifier_setup.clone(),
+        pcs_verifier_setup: proving_key.pcs_verifier_setup,
         config: config.clone(),
         backend,
     };
-    eprintln!("=== prove_from_graph ===");
     let (proof, vk) = jolt_zkvm::prover::prove_from_graph(input).expect("proving should succeed");
-    eprintln!("=== proved, {} stage proofs ===", proof.stage_proofs.len());
 
     // 9. Verify
     let graph2 = build_jolt_protocol(config.to_protocol_config());

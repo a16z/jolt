@@ -3,7 +3,7 @@
 //! [`KernelEvaluator`] implements the sumcheck round-polynomial evaluation by
 //! delegating all heavy computation to a [`ComputeBackend`]. The composition
 //! formula lives in a [`CompiledKernel`](jolt_compute::ComputeBackend::CompiledKernel),
-//! compiled from a [`KernelDescriptor`](jolt_ir::KernelDescriptor) at setup
+//! compiled from a [`CompositionFormula`](jolt_ir::CompositionFormula) at setup
 //! time.
 //!
 //! This is the universal `SumcheckCompute` implementation that works on any
@@ -34,7 +34,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use jolt_compute::{BindingOrder, ComputeBackend};
+use jolt_compute::{BindingOrder, ComputeBackend, EqInput};
 use jolt_field::Field;
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::prover::SumcheckCompute;
@@ -358,32 +358,30 @@ impl<F: Field, B: ComputeBackend> KernelEvaluator<F, B> {
         }
     }
 
-    /// Creates an evaluator from a [`KernelDescriptor`] for standard-grid kernels.
+    /// Creates an evaluator from a [`CompositionFormula`] for standard-grid
+    /// kernels (non-ProductSum).
     ///
-    /// Derives `num_evals` from `desc.num_evals()`. Asserts the descriptor uses
-    /// a standard evaluation grid (EqProduct, HammingBooleanity, or Custom).
-    ///
-    /// For standard-grid kernels, the eq polynomial is always an input buffer
-    /// (typically `inputs[0]`), so weights are unit.
-    pub fn from_descriptor(
-        desc: &jolt_ir::KernelDescriptor,
+    /// The eq polynomial is an input buffer (typically `inputs[0]`), so weights
+    /// are unit.
+    pub fn from_formula(
+        formula: &jolt_compiler::CompositionFormula,
         inputs: Vec<B::Buffer<F>>,
         kernel: B::CompiledKernel<F>,
         backend: Arc<B>,
     ) -> Self {
         debug_assert!(
-            matches!(desc.eval_grid(), jolt_ir::EvalGrid::Standard { .. }),
-            "from_descriptor is for standard-grid kernels; use from_descriptor_toom_cook for ProductSum"
+            formula.as_product_sum().is_none()
+                || formula.is_eq_product()
+                || formula.is_hamming_booleanity(),
+            "from_formula is for standard-grid kernels; use from_formula_toom_cook for ProductSum"
         );
-        Self::with_unit_weights(inputs, kernel, desc.num_evals(), backend)
+        Self::with_unit_weights(inputs, kernel, formula.degree(), backend)
     }
 
-    /// Creates an evaluator from a [`KernelDescriptor`] for Toom-Cook kernels.
-    ///
-    /// Derives `num_evals` from `desc.num_evals()`. Asserts the descriptor uses
-    /// a Toom-Cook evaluation grid (ProductSum).
-    pub fn from_descriptor_toom_cook(
-        desc: &jolt_ir::KernelDescriptor,
+    /// Creates an evaluator from a [`CompositionFormula`] for Toom-Cook kernels
+    /// (ProductSum).
+    pub fn from_formula_toom_cook(
+        formula: &jolt_compiler::CompositionFormula,
         inputs: Vec<B::Buffer<F>>,
         kernel: B::CompiledKernel<F>,
         eq_w: Vec<F>,
@@ -392,13 +390,13 @@ impl<F: Field, B: ComputeBackend> KernelEvaluator<F, B> {
         backend: Arc<B>,
     ) -> Self {
         debug_assert!(
-            matches!(desc.eval_grid(), jolt_ir::EvalGrid::ToomCook { .. }),
-            "from_descriptor_toom_cook is for Toom-Cook kernels; use from_descriptor for standard grid"
+            formula.as_product_sum().is_some(),
+            "from_formula_toom_cook is for Toom-Cook kernels; use from_formula for standard grid"
         );
         Self::with_toom_cook_eq(
             inputs,
             kernel,
-            desc.num_evals(),
+            formula.degree(),
             eq_w,
             claimed_sum,
             backend,
@@ -458,21 +456,17 @@ impl<F: Field, B: ComputeBackend> KernelEvaluator<F, B> {
     /// the unweighted kernel variant which skips the per-element weight multiply.
     fn reduce_raw(&self) -> Vec<F> {
         let input_refs: Vec<&B::Buffer<F>> = self.inputs.iter().collect();
-        match &self.weights {
-            Some(w) => self.backend.pairwise_reduce(
-                &input_refs,
-                w,
-                &self.kernel,
-                self.num_evals,
-                self.binding_order,
-            ),
-            None => self.backend.pairwise_reduce_unweighted(
-                &input_refs,
-                &self.kernel,
-                self.num_evals,
-                self.binding_order,
-            ),
-        }
+        let eq = match &self.weights {
+            Some(w) => EqInput::Weighted(w),
+            None => EqInput::Unit,
+        };
+        self.backend.pairwise_reduce(
+            &input_refs,
+            eq,
+            &self.kernel,
+            self.num_evals,
+            self.binding_order,
+        )
     }
 }
 
@@ -579,7 +573,7 @@ mod tests {
     use crate::evaluators::catalog;
     use jolt_cpu::CpuBackend;
     use jolt_field::{Field, Fr};
-    use jolt_ir::{ExprBuilder, KernelDescriptor, KernelShape};
+    use jolt_ir::ExprBuilder;
     use jolt_sumcheck::{SumcheckClaim, SumcheckProver, SumcheckVerifier};
     use jolt_transcript::{Blake2bTranscript, Transcript};
     use num_traits::{One, Zero};
@@ -614,11 +608,11 @@ mod tests {
             claimed_sum,
         };
 
-        let desc = catalog::eq_product();
-        let kernel = jolt_cpu::compile::<Fr>(&desc);
+        let formula = catalog::eq_product();
+        let kernel = jolt_cpu::compile::<Fr>(&formula);
         let inputs = vec![backend.upload(&eq_table), backend.upload(&g_table)];
         let mut witness =
-            KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
+            KernelEvaluator::with_unit_weights(inputs, kernel, formula.degree(), backend);
 
         let mut pt = Blake2bTranscript::new(b"kw_eq_product");
         let proof = SumcheckProver::prove(&claim, &mut witness, &mut pt);
@@ -653,11 +647,11 @@ mod tests {
             claimed_sum,
         };
 
-        let desc = catalog::hamming_booleanity();
-        let kernel = jolt_cpu::compile::<Fr>(&desc);
+        let formula = catalog::hamming_booleanity();
+        let kernel = jolt_cpu::compile::<Fr>(&formula);
         let inputs = vec![backend.upload(&eq_table), backend.upload(&h_table)];
         let mut witness =
-            KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
+            KernelEvaluator::with_unit_weights(inputs, kernel, formula.degree(), backend);
 
         let mut pt = Blake2bTranscript::new(b"kw_hamming");
         let proof = SumcheckProver::prove(&claim, &mut witness, &mut pt);
@@ -692,11 +686,11 @@ mod tests {
             claimed_sum,
         };
 
-        let desc = catalog::hamming_booleanity();
-        let kernel = jolt_cpu::compile::<Fr>(&desc);
+        let formula = catalog::hamming_booleanity();
+        let kernel = jolt_cpu::compile::<Fr>(&formula);
         let inputs = vec![backend.upload(&eq_table), backend.upload(&h_table)];
         let mut witness =
-            KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
+            KernelEvaluator::with_unit_weights(inputs, kernel, formula.degree(), backend);
 
         let mut pt = Blake2bTranscript::new(b"kw_hamming_random");
         let proof = SumcheckProver::prove(&claim, &mut witness, &mut pt);
@@ -740,15 +734,9 @@ mod tests {
         let c1_v = eb.challenge(1);
         let expr = eb.build(eq_v * (c0_v * a_v * b_v + c1_v * a_v * c_v));
 
-        let desc = KernelDescriptor {
-            shape: KernelShape::Custom {
-                expr,
-                num_inputs: 4,
-            },
-            degree: 3,
-            tensor_split: None,
-        };
-        let kernel = jolt_cpu::compile_with_challenges::<Fr>(&desc, &[c0, c1]);
+        let ir_formula = expr.to_composition_formula();
+        let formula = jolt_cpu::from_ir_formula(&ir_formula);
+        let kernel = jolt_cpu::compile_with_challenges::<Fr>(&formula, &[c0, c1]);
 
         let inputs = vec![
             backend.upload(&eq_table),
@@ -757,7 +745,7 @@ mod tests {
             backend.upload(&c_table),
         ];
         let mut witness =
-            KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
+            KernelEvaluator::with_unit_weights(inputs, kernel, formula.degree(), backend);
 
         let claim = SumcheckClaim {
             num_vars,
@@ -784,13 +772,13 @@ mod tests {
         let eq_table = vec![Fr::one(); n];
         let g_table: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
 
-        let desc = catalog::eq_product();
-        let kernel = jolt_cpu::compile::<Fr>(&desc);
+        let formula = catalog::eq_product();
+        let kernel = jolt_cpu::compile::<Fr>(&formula);
         let inputs = vec![backend.upload(&eq_table), backend.upload(&g_table)];
         let mut kw = KernelEvaluator::with_unit_weights(
             inputs,
             kernel,
-            desc.num_evals(),
+            formula.degree(),
             Arc::clone(&backend),
         );
 
@@ -816,13 +804,13 @@ mod tests {
         let eq_table: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
         let g_table: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
 
-        let desc = catalog::eq_product();
-        let kernel = jolt_cpu::compile::<Fr>(&desc);
+        let formula = catalog::eq_product();
+        let kernel = jolt_cpu::compile::<Fr>(&formula);
         let inputs = vec![backend.upload(&eq_table), backend.upload(&g_table)];
         let mut kw = KernelEvaluator::with_unit_weights(
             inputs,
             kernel,
-            desc.num_evals(),
+            formula.degree(),
             Arc::clone(&backend),
         );
 
@@ -858,13 +846,13 @@ mod tests {
             })
             .sum();
 
-        let desc = catalog::product_sum(d, 1);
-        let kernel = jolt_cpu::compile::<Fr>(&desc);
+        let formula = catalog::product_sum(d, 1);
+        let kernel = jolt_cpu::compile::<Fr>(&formula);
         let inputs: Vec<_> = polys.iter().map(|p| backend.upload(p)).collect();
         let mut witness = KernelEvaluator::with_toom_cook_eq(
             inputs,
             kernel,
-            desc.num_evals(),
+            formula.degree(),
             eq_w,
             claimed_sum,
             Arc::clone(&backend),
@@ -937,13 +925,13 @@ mod tests {
             }
         }
 
-        let desc = catalog::product_sum(d, n_virtual);
-        let kernel = jolt_cpu::compile::<Fr>(&desc);
+        let formula = catalog::product_sum(d, n_virtual);
+        let kernel = jolt_cpu::compile::<Fr>(&formula);
         let inputs: Vec<_> = scaled_polys.iter().map(|p| backend.upload(p)).collect();
         let mut witness = KernelEvaluator::with_toom_cook_eq(
             inputs,
             kernel,
-            desc.num_evals(),
+            formula.degree(),
             eq_w,
             claimed_sum,
             Arc::clone(&backend),
@@ -989,13 +977,13 @@ mod tests {
             })
             .sum();
 
-        let desc = catalog::product_sum(d, 1);
-        let kernel = jolt_cpu::compile::<Fr>(&desc);
+        let formula = catalog::product_sum(d, 1);
+        let kernel = jolt_cpu::compile::<Fr>(&formula);
         let inputs: Vec<_> = polys.iter().map(|p| backend.upload(p)).collect();
         let mut witness = KernelEvaluator::with_toom_cook_eq(
             inputs,
             kernel,
-            desc.num_evals(),
+            formula.degree(),
             eq_w,
             claimed_sum,
             Arc::clone(&backend),
@@ -1017,7 +1005,7 @@ mod tests {
     }
 
     #[test]
-    fn from_descriptor_eq_product_prove_verify() {
+    fn from_formula_eq_product_prove_verify() {
         let backend = cpu();
         let num_vars = 5;
         let n = 1usize << num_vars;
@@ -1031,8 +1019,9 @@ mod tests {
         let c1 = Fr::random(&mut rng);
         let challenges = vec![c0, c1];
 
-        let (desc, weights) = claim_def.compile_descriptor::<Fr>(&challenges);
-        assert!(matches!(desc.shape, KernelShape::EqProduct));
+        let comp_formula = claim_def.to_composition_formula();
+        assert!(comp_formula.is_linear_combination());
+        let weights = comp_formula.linear_combination_weights(&challenges);
 
         // Pre-combine: g = w0*ram_inc + w1*rd_inc
         let g: Vec<Fr> = (0..n)
@@ -1042,12 +1031,12 @@ mod tests {
         let eq_table = EqPolynomial::new(eq_point).evaluations();
         let claimed_sum: Fr = (0..n).map(|i| eq_table[i] * g[i]).sum();
 
-        let eq_desc = catalog::eq_product();
-        let kernel = jolt_cpu::compile::<Fr>(&eq_desc);
+        let eq_formula = catalog::eq_product();
+        let kernel = jolt_cpu::compile::<Fr>(&eq_formula);
         let inputs = vec![backend.upload(&eq_table), backend.upload(&g)];
 
         let mut witness =
-            KernelEvaluator::from_descriptor(&eq_desc, inputs, kernel, Arc::clone(&backend));
+            KernelEvaluator::from_formula(&eq_formula, inputs, kernel, Arc::clone(&backend));
 
         let claim = SumcheckClaim {
             num_vars,
@@ -1064,7 +1053,7 @@ mod tests {
     }
 
     #[test]
-    fn from_descriptor_hamming_prove_verify() {
+    fn from_formula_hamming_prove_verify() {
         let backend = cpu();
         let num_vars = 5;
         let n = 1usize << num_vars;
@@ -1077,23 +1066,24 @@ mod tests {
         let eq_eval = Fr::random(&mut rng);
         let challenges = vec![eq_eval, -eq_eval];
 
-        let (desc, values) = claim_def.compile_descriptor::<Fr>(&challenges);
-        assert!(matches!(desc.shape, KernelShape::HammingBooleanity));
+        let comp_formula = claim_def.to_composition_formula();
+        assert!(comp_formula.is_hamming_booleanity());
+        let eq_scale = comp_formula.hamming_eq_scale(&challenges);
 
         // Scale eq by eq_scale
         let eq_table = EqPolynomial::new(eq_point).evaluations();
-        let scaled_eq: Vec<Fr> = eq_table.iter().map(|&e| e * values[0]).collect();
+        let scaled_eq: Vec<Fr> = eq_table.iter().map(|&e| e * eq_scale).collect();
         let claimed_sum: Fr = (0..n)
             .map(|i| scaled_eq[i] * h[i] * (h[i] - Fr::one()))
             .sum();
         assert_eq!(claimed_sum, Fr::zero());
 
-        let ham_desc = catalog::hamming_booleanity();
-        let kernel = jolt_cpu::compile::<Fr>(&ham_desc);
+        let ham_formula = catalog::hamming_booleanity();
+        let kernel = jolt_cpu::compile::<Fr>(&ham_formula);
         let inputs = vec![backend.upload(&scaled_eq), backend.upload(&h)];
 
         let mut witness =
-            KernelEvaluator::from_descriptor(&ham_desc, inputs, kernel, Arc::clone(&backend));
+            KernelEvaluator::from_formula(&ham_formula, inputs, kernel, Arc::clone(&backend));
 
         let claim = SumcheckClaim {
             num_vars,
@@ -1110,7 +1100,7 @@ mod tests {
     }
 
     #[test]
-    fn from_descriptor_toom_cook_prove_verify() {
+    fn from_formula_toom_cook_prove_verify() {
         let backend = cpu();
         let d = 4;
         let num_vars = 5;
@@ -1133,12 +1123,12 @@ mod tests {
             })
             .sum();
 
-        let desc = catalog::product_sum(d, 1);
-        let kernel = jolt_cpu::compile::<Fr>(&desc);
+        let formula = catalog::product_sum(d, 1);
+        let kernel = jolt_cpu::compile::<Fr>(&formula);
         let inputs: Vec<_> = polys.iter().map(|p| backend.upload(p)).collect();
 
-        let mut witness = KernelEvaluator::from_descriptor_toom_cook(
-            &desc,
+        let mut witness = KernelEvaluator::from_formula_toom_cook(
+            &formula,
             inputs,
             kernel,
             eq_w,

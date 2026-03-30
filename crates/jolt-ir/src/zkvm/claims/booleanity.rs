@@ -95,17 +95,16 @@ mod tests {
     }
 
     #[test]
-    fn booleanity_sop_equivalence() {
+    fn booleanity_composition_equivalence() {
         let polynomials = vec![PolynomialId::InstructionRa(0), PolynomialId::BytecodeRa(0)];
         let claim = ra_booleanity(2, &polynomials);
         let openings: Vec<Fr> = vec![Fr::from_u64(3), Fr::from_u64(5)];
         let challenges: Vec<Fr> = vec![Fr::from_u64(7), Fr::from_u64(11)];
 
         let direct = claim.evaluate::<Fr>(&openings, &challenges);
-        let via_sop = claim
-            .expr
-            .to_sum_of_products()
+        let via_formula = claim
+            .to_composition_formula()
             .evaluate::<Fr>(&openings, &challenges);
-        assert_eq!(direct, via_sop);
+        assert_eq!(direct, via_formula);
     }
 }

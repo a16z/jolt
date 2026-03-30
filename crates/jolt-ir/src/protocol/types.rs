@@ -117,6 +117,13 @@ pub enum Vertex {
     Sumcheck(Box<SumcheckVertex>),
     PointNormalization(PointNormalizationVertex),
     Opening(OpeningVertex),
+    /// Non-interactive buffer materialization between sumcheck vertices.
+    ///
+    /// No transcript interaction — the prover computes a dense polynomial from
+    /// the outer sumcheck result, and the verifier checks the inner sumcheck
+    /// against the same matrix MLE evaluation. The canonical example is
+    /// `combined_partial_evaluate` in Spartan (outer → inner sumcheck bridge).
+    EdgeTransform(EdgeTransformVertex),
 }
 
 impl Vertex {
@@ -125,6 +132,7 @@ impl Vertex {
             Self::Sumcheck(v) => v.id,
             Self::PointNormalization(v) => v.id,
             Self::Opening(v) => v.id,
+            Self::EdgeTransform(v) => v.id,
         }
     }
 
@@ -134,6 +142,7 @@ impl Vertex {
             Self::Sumcheck(v) => &v.deps,
             Self::PointNormalization(v) => &v.consumes,
             Self::Opening(v) => std::slice::from_ref(&v.consumes),
+            Self::EdgeTransform(v) => &v.consumes,
         }
     }
 
@@ -143,19 +152,7 @@ impl Vertex {
             Self::Sumcheck(v) => &v.produces,
             Self::PointNormalization(v) => &v.produces,
             Self::Opening(_) => &[],
-        }
-    }
-
-    /// All claims this vertex produces, including side-effect claims.
-    pub fn all_produced_claims(&self) -> Vec<ClaimId> {
-        match self {
-            Self::Sumcheck(v) => {
-                let mut all = v.produces.clone();
-                all.extend_from_slice(&v.side_effect_claims);
-                all
-            }
-            Self::PointNormalization(v) => v.produces.clone(),
-            Self::Opening(_) => vec![],
+            Self::EdgeTransform(v) => &v.produces,
         }
     }
 }
@@ -190,10 +187,6 @@ pub struct SumcheckVertex {
     /// Variable-binding phases (e.g., address then cycle for multi-phase sumchecks).
     /// Single-phase vertices have one entry.
     pub phases: Vec<Phase>,
-    /// Claims produced as side effects (e.g., phased evaluator state polys).
-    /// These are produced at the same point as `produces` but are not part of
-    /// the output formula — they feed downstream vertices only.
-    pub side_effect_claims: Vec<ClaimId>,
     /// How to derive output formula challenge values from the eval point
     /// and stage pre_squeeze. The verifier uses this to reconstruct the
     /// exact challenge values that the prover used during witness construction.
@@ -306,6 +299,34 @@ pub struct PointNormalizationVertex {
     pub produces: Vec<ClaimId>,
     /// The extra dimensions to zero-pad (source of r_extra values).
     pub padding_source: SymbolicPoint,
+}
+
+/// Non-interactive computation between two sumcheck vertices.
+///
+/// Materializes a dense polynomial from upstream results (no Fiat-Shamir
+/// interaction). The canonical example is Spartan's `combined_partial_evaluate`:
+/// after the outer sumcheck produces challenges `r_x` and mixing coefficients
+/// `ρ_A, ρ_B, ρ_C`, this vertex materializes the combined row polynomial
+/// `M(r_x, ·)` as input to the inner sumcheck.
+///
+/// The transform is identified by a [`TransformKind`] so the prover knows
+/// which computation to run and the verifier knows what to check.
+#[derive(Clone, Debug)]
+pub struct EdgeTransformVertex {
+    pub id: VertexId,
+    /// Claims consumed (e.g., Az(r_x), Bz(r_x), Cz(r_x) evaluations).
+    pub consumes: Vec<ClaimId>,
+    /// Claims produced (e.g., "combined_row polynomial exists" — consumed by inner sumcheck).
+    pub produces: Vec<ClaimId>,
+    /// Which transform to apply.
+    pub kind: TransformKind,
+}
+
+/// Identifies a specific non-interactive transform.
+#[derive(Clone, Debug)]
+pub enum TransformKind {
+    /// Spartan combined partial evaluation: materializes `ρ_A·A(r_x,·) + ρ_B·B(r_x,·) + ρ_C·C(r_x,·)`.
+    SpartanCombinedPartialEvaluate,
 }
 
 /// Terminal vertex: discharges a committed polynomial claim via PCS.

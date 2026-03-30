@@ -87,16 +87,15 @@ mod tests {
     }
 
     #[test]
-    fn ra_virtual_sop_equivalence() {
+    fn ra_virtual_composition_equivalence() {
         let claim = instruction_ra_virtual(2, 3);
         let openings: Vec<Fr> = (1..=6).map(Fr::from_u64).collect();
         let challenges: Vec<Fr> = (10..=11).map(Fr::from_u64).collect();
 
         let direct = claim.evaluate::<Fr>(&openings, &challenges);
-        let via_sop = claim
-            .expr
-            .to_sum_of_products()
+        let via_formula = claim
+            .to_composition_formula()
             .evaluate::<Fr>(&openings, &challenges);
-        assert_eq!(direct, via_sop);
+        assert_eq!(direct, via_formula);
     }
 }

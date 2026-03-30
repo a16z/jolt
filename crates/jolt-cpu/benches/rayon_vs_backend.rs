@@ -7,10 +7,10 @@
 //! (`mles_product_sum.rs`).
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use jolt_compute::{BindingOrder, ComputeBackend};
+use jolt_compute::{BindingOrder, ComputeBackend, EqInput};
 use jolt_cpu::{compile, toom_cook, CpuBackend};
 use jolt_field::{Field, FieldAccumulator, Fr};
-use jolt_ir::{KernelDescriptor, KernelShape};
+use jolt_compiler::{CompositionFormula, Factor, ProductTerm};
 use num_traits::Zero;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -18,6 +18,17 @@ use rand_core::SeedableRng;
 fn random_field_vec(n: usize, seed: u64) -> Vec<Fr> {
     let mut rng = ChaCha20Rng::seed_from_u64(seed);
     (0..n).map(|_| Fr::random(&mut rng)).collect()
+}
+
+/// Helper: build a pure product-sum formula with `p` groups of `d` consecutive inputs.
+fn product_sum_formula(d: usize, p: usize) -> CompositionFormula {
+    let terms: Vec<_> = (0..p)
+        .map(|g| ProductTerm {
+            coefficient: 1,
+            factors: (0..d).map(|j| Factor::Input((g * d + j) as u32)).collect(),
+        })
+        .collect();
+    CompositionFormula::from_terms(terms)
 }
 
 /// Direct Rayon path: mimics the witness hot path from `mles_product_sum.rs`.
@@ -126,15 +137,8 @@ fn bench_rayon_vs_backend(c: &mut Criterion) {
         (8, direct_rayon_reduce_d8),
         (16, direct_rayon_reduce_d16),
     ] {
-        let desc = KernelDescriptor {
-            shape: KernelShape::ProductSum {
-                num_inputs_per_product: d,
-                num_products: 1,
-            },
-            degree: d,
-            tensor_split: None,
-        };
-        let kernel = compile::<Fr>(&desc);
+        let formula = product_sum_formula(d, 1);
+        let kernel = compile::<Fr>(&formula);
 
         for log_n in [16, 18, 20] {
             let n = 1usize << log_n;
@@ -165,7 +169,7 @@ fn bench_rayon_vs_backend(c: &mut Criterion) {
                     b.iter(|| {
                         black_box(backend.pairwise_reduce(
                             &input_refs,
-                            &weights,
+                            EqInput::Weighted(&weights),
                             &kernel,
                             d,
                             BindingOrder::LowToHigh,

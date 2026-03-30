@@ -10,10 +10,10 @@
 //! stays there for the rest of the sumcheck. All buffers in a stage bind in
 //! lockstep (same scalar, same round), so they transition together.
 
+use jolt_compiler::CompositionFormula;
 use jolt_field::Field;
-use jolt_ir::KernelDescriptor;
 
-use crate::{BindingOrder, ComputeBackend, Scalar};
+use crate::{BackendWitness, BindingOrder, ComputeBackend, EqInput, RoundCoeffs, Scalar};
 
 /// Hybrid backend that delegates to a primary or fallback backend based on
 /// buffer size.
@@ -108,28 +108,127 @@ where
 {
 }
 
+/// Sparse buffer on either the primary or fallback backend.
+pub enum HybridSparseBuffer<F: Field, P: ComputeBackend, Fb: ComputeBackend> {
+    Primary(P::SparseBuffer<F>),
+    Fallback(Fb::SparseBuffer<F>),
+}
+
+// SAFETY: Delegates to inner types which are Send + Sync per ComputeBackend.
+unsafe impl<F: Field, P: ComputeBackend, Fb: ComputeBackend> Send for HybridSparseBuffer<F, P, Fb>
+where
+    P::SparseBuffer<F>: Send,
+    Fb::SparseBuffer<F>: Send,
+{
+}
+// SAFETY: Delegates to inner type which is Sync per ComputeBackend.
+unsafe impl<F: Field, P: ComputeBackend, Fb: ComputeBackend> Sync for HybridSparseBuffer<F, P, Fb>
+where
+    P::SparseBuffer<F>: Sync,
+    Fb::SparseBuffer<F>: Sync,
+{
+}
+
+/// Sumcheck witness on either the primary or fallback backend.
+pub enum HybridSumcheckWitness<F: Field, P: ComputeBackend, Fb: ComputeBackend> {
+    Primary(P::SumcheckWitness<F>),
+    Fallback(Fb::SumcheckWitness<F>),
+}
+
+// SAFETY: Delegates to inner types which are Send per BackendWitness.
+unsafe impl<F: Field, P: ComputeBackend, Fb: ComputeBackend> Send
+    for HybridSumcheckWitness<F, P, Fb>
+where
+    P::SumcheckWitness<F>: Send,
+    Fb::SumcheckWitness<F>: Send,
+{
+}
+// SAFETY: Delegates to inner types which are Sync per BackendWitness.
+unsafe impl<F: Field, P: ComputeBackend, Fb: ComputeBackend> Sync
+    for HybridSumcheckWitness<F, P, Fb>
+where
+    P::SumcheckWitness<F>: Sync,
+    Fb::SumcheckWitness<F>: Sync,
+{
+}
+
+impl<F: Field, P: ComputeBackend, Fb: ComputeBackend> BackendWitness<F>
+    for HybridSumcheckWitness<F, P, Fb>
+{
+    fn round_polynomial(&self) -> RoundCoeffs<F> {
+        match self {
+            Self::Primary(w) => w.round_polynomial(),
+            Self::Fallback(w) => w.round_polynomial(),
+        }
+    }
+
+    fn bind(&mut self, challenge: F) {
+        match self {
+            Self::Primary(w) => w.bind(challenge),
+            Self::Fallback(w) => w.bind(challenge),
+        }
+    }
+
+    fn set_claim(&mut self, claim: F) {
+        match self {
+            Self::Primary(w) => w.set_claim(claim),
+            Self::Fallback(w) => w.set_claim(claim),
+        }
+    }
+
+    fn first_round_polynomial(&self) -> Option<RoundCoeffs<F>> {
+        match self {
+            Self::Primary(w) => w.first_round_polynomial(),
+            Self::Fallback(w) => w.first_round_polynomial(),
+        }
+    }
+
+    fn produced_evaluations(&self) -> Vec<(usize, F)> {
+        match self {
+            Self::Primary(w) => w.produced_evaluations(),
+            Self::Fallback(w) => w.produced_evaluations(),
+        }
+    }
+}
+
 impl<P: ComputeBackend, Fb: ComputeBackend> HybridBackend<P, Fb> {
     fn should_migrate(&self, len: usize) -> bool {
         len <= self.threshold
     }
 }
 
+fn convert_eq<'a, Fld: Field, P: ComputeBackend, Fb: ComputeBackend, T: ComputeBackend>(
+    eq: EqInput<'a, HybridBackend<P, Fb>, Fld>,
+    extract: impl Fn(&'a HybridBuffer<Fld, P, Fb>) -> &'a T::Buffer<Fld>,
+) -> EqInput<'a, T, Fld> {
+    match eq {
+        EqInput::Unit => EqInput::Unit,
+        EqInput::Weighted(w) => EqInput::Weighted(extract(w)),
+        EqInput::Tensor { outer, inner } => EqInput::Tensor {
+            outer: extract(outer),
+            inner: extract(inner),
+        },
+    }
+}
+
 impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, Fb> {
     type Buffer<T: Scalar> = HybridBuffer<T, P, Fb>;
     type CompiledKernel<Fld: Field> = HybridKernel<Fld, P, Fb>;
+    type SumcheckWitness<Fld: Field> = HybridSumcheckWitness<Fld, P, Fb>;
+    type SparseBuffer<Fld: Field> = HybridSparseBuffer<Fld, P, Fb>;
 
     fn compile_kernel_with_challenges<Fld: Field>(
         &self,
-        desc: &KernelDescriptor,
+        formula: &CompositionFormula,
         challenges: &[Fld],
     ) -> Self::CompiledKernel<Fld> {
         HybridKernel {
             primary: self
                 .primary
-                .compile_kernel_with_challenges(desc, challenges),
+                .compile_kernel_with_challenges(formula, challenges),
             fallback: self
                 .fallback
-                .compile_kernel_with_challenges(desc, challenges),
+                .compile_kernel_with_challenges(formula, challenges),
         }
     }
 
@@ -276,7 +375,7 @@ impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, 
     fn pairwise_reduce<Fld: Field>(
         &self,
         inputs: &[&Self::Buffer<Fld>],
-        weights: &Self::Buffer<Fld>,
+        eq: EqInput<'_, Self, Fld>,
         kernel: &Self::CompiledKernel<Fld>,
         num_evals: usize,
         order: BindingOrder,
@@ -295,19 +394,14 @@ impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, 
                             }
                         })
                         .collect();
-                    let p_weights = match weights {
+                    let p_eq = convert_eq::<Fld, P, Fb, P>(eq, |buf| match buf {
                         HybridBuffer::Primary(w) => w,
                         HybridBuffer::Fallback(_) => {
-                            panic!("weight buffer backend mismatch in pairwise_reduce")
+                            panic!("eq buffer backend mismatch in pairwise_reduce")
                         }
-                    };
-                    self.primary.pairwise_reduce(
-                        &p_inputs,
-                        p_weights,
-                        &kernel.primary,
-                        num_evals,
-                        order,
-                    )
+                    });
+                    self.primary
+                        .pairwise_reduce(&p_inputs, p_eq, &kernel.primary, num_evals, order)
                 }
                 HybridBuffer::Fallback(_) => {
                     let f_inputs: Vec<&Fb::Buffer<Fld>> = inputs
@@ -319,15 +413,15 @@ impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, 
                             }
                         })
                         .collect();
-                    let f_weights = match weights {
+                    let f_eq = convert_eq::<Fld, P, Fb, Fb>(eq, |buf| match buf {
                         HybridBuffer::Fallback(w) => w,
                         HybridBuffer::Primary(_) => {
-                            panic!("weight buffer backend mismatch in pairwise_reduce")
+                            panic!("eq buffer backend mismatch in pairwise_reduce")
                         }
-                    };
+                    });
                     self.fallback.pairwise_reduce(
                         &f_inputs,
-                        f_weights,
+                        f_eq,
                         &kernel.fallback,
                         num_evals,
                         order,
@@ -342,7 +436,7 @@ impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, 
     fn pairwise_reduce_fixed<Fld: Field, const D: usize>(
         &self,
         inputs: &[&Self::Buffer<Fld>],
-        weights: &Self::Buffer<Fld>,
+        eq: EqInput<'_, Self, Fld>,
         kernel: &Self::CompiledKernel<Fld>,
         order: BindingOrder,
     ) -> [Fld; D] {
@@ -358,15 +452,15 @@ impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, 
                             }
                         })
                         .collect();
-                    let p_weights = match weights {
+                    let p_eq = convert_eq::<Fld, P, Fb, P>(eq, |buf| match buf {
                         HybridBuffer::Primary(w) => w,
                         HybridBuffer::Fallback(_) => {
-                            panic!("weight buffer backend mismatch in pairwise_reduce_fixed")
+                            panic!("eq buffer backend mismatch in pairwise_reduce_fixed")
                         }
-                    };
+                    });
                     self.primary.pairwise_reduce_fixed::<Fld, D>(
                         &p_inputs,
-                        p_weights,
+                        p_eq,
                         &kernel.primary,
                         order,
                     )
@@ -381,15 +475,15 @@ impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, 
                             }
                         })
                         .collect();
-                    let f_weights = match weights {
+                    let f_eq = convert_eq::<Fld, P, Fb, Fb>(eq, |buf| match buf {
                         HybridBuffer::Fallback(w) => w,
                         HybridBuffer::Primary(_) => {
-                            panic!("weight buffer backend mismatch in pairwise_reduce_fixed")
+                            panic!("eq buffer backend mismatch in pairwise_reduce_fixed")
                         }
-                    };
+                    });
                     self.fallback.pairwise_reduce_fixed::<Fld, D>(
                         &f_inputs,
-                        f_weights,
+                        f_eq,
                         &kernel.fallback,
                         order,
                     )
@@ -400,135 +494,10 @@ impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, 
         }
     }
 
-    fn pairwise_reduce_unweighted<Fld: Field>(
-        &self,
-        inputs: &[&Self::Buffer<Fld>],
-        kernel: &Self::CompiledKernel<Fld>,
-        num_evals: usize,
-        order: BindingOrder,
-    ) -> Vec<Fld> {
-        if let Some(first) = inputs.first() {
-            match first {
-                HybridBuffer::Primary(_) => {
-                    let p_inputs: Vec<&P::Buffer<Fld>> = inputs
-                        .iter()
-                        .map(|b| match b {
-                            HybridBuffer::Primary(inner) => inner,
-                            HybridBuffer::Fallback(_) => {
-                                panic!("mixed buffer backends in pairwise_reduce_unweighted")
-                            }
-                        })
-                        .collect();
-                    self.primary.pairwise_reduce_unweighted(
-                        &p_inputs,
-                        &kernel.primary,
-                        num_evals,
-                        order,
-                    )
-                }
-                HybridBuffer::Fallback(_) => {
-                    let f_inputs: Vec<&Fb::Buffer<Fld>> = inputs
-                        .iter()
-                        .map(|b| match b {
-                            HybridBuffer::Fallback(inner) => inner,
-                            HybridBuffer::Primary(_) => {
-                                panic!("mixed buffer backends in pairwise_reduce_unweighted")
-                            }
-                        })
-                        .collect();
-                    self.fallback.pairwise_reduce_unweighted(
-                        &f_inputs,
-                        &kernel.fallback,
-                        num_evals,
-                        order,
-                    )
-                }
-            }
-        } else {
-            vec![Fld::zero(); num_evals]
-        }
-    }
-
-    fn tensor_pairwise_reduce<Fld: Field>(
-        &self,
-        inputs: &[&Self::Buffer<Fld>],
-        outer_weights: &Self::Buffer<Fld>,
-        inner_weights: &Self::Buffer<Fld>,
-        kernel: &Self::CompiledKernel<Fld>,
-        num_evals: usize,
-    ) -> Vec<Fld> {
-        if let Some(first) = inputs.first() {
-            match first {
-                HybridBuffer::Primary(_) => {
-                    let p_inputs: Vec<&P::Buffer<Fld>> = inputs
-                        .iter()
-                        .map(|b| match b {
-                            HybridBuffer::Primary(inner) => inner,
-                            HybridBuffer::Fallback(_) => {
-                                panic!("mixed buffer backends in tensor_pairwise_reduce")
-                            }
-                        })
-                        .collect();
-                    let p_outer = match outer_weights {
-                        HybridBuffer::Primary(w) => w,
-                        HybridBuffer::Fallback(_) => {
-                            panic!("outer weight buffer backend mismatch")
-                        }
-                    };
-                    let p_inner = match inner_weights {
-                        HybridBuffer::Primary(w) => w,
-                        HybridBuffer::Fallback(_) => {
-                            panic!("inner weight buffer backend mismatch")
-                        }
-                    };
-                    self.primary.tensor_pairwise_reduce(
-                        &p_inputs,
-                        p_outer,
-                        p_inner,
-                        &kernel.primary,
-                        num_evals,
-                    )
-                }
-                HybridBuffer::Fallback(_) => {
-                    let f_inputs: Vec<&Fb::Buffer<Fld>> = inputs
-                        .iter()
-                        .map(|b| match b {
-                            HybridBuffer::Fallback(inner) => inner,
-                            HybridBuffer::Primary(_) => {
-                                panic!("mixed buffer backends in tensor_pairwise_reduce")
-                            }
-                        })
-                        .collect();
-                    let f_outer = match outer_weights {
-                        HybridBuffer::Fallback(w) => w,
-                        HybridBuffer::Primary(_) => {
-                            panic!("outer weight buffer backend mismatch")
-                        }
-                    };
-                    let f_inner = match inner_weights {
-                        HybridBuffer::Fallback(w) => w,
-                        HybridBuffer::Primary(_) => {
-                            panic!("inner weight buffer backend mismatch")
-                        }
-                    };
-                    self.fallback.tensor_pairwise_reduce(
-                        &f_inputs,
-                        f_outer,
-                        f_inner,
-                        &kernel.fallback,
-                        num_evals,
-                    )
-                }
-            }
-        } else {
-            vec![Fld::zero(); num_evals]
-        }
-    }
-
     fn pairwise_reduce_multi<Fld: Field>(
         &self,
         inputs: &[&Self::Buffer<Fld>],
-        weights: &Self::Buffer<Fld>,
+        eq: EqInput<'_, Self, Fld>,
         kernels: &[(&Self::CompiledKernel<Fld>, usize)],
         order: BindingOrder,
     ) -> Vec<Vec<Fld>> {
@@ -544,16 +513,16 @@ impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, 
                             }
                         })
                         .collect();
-                    let p_weights = match weights {
+                    let p_eq = convert_eq::<Fld, P, Fb, P>(eq, |buf| match buf {
                         HybridBuffer::Primary(w) => w,
                         HybridBuffer::Fallback(_) => {
-                            panic!("weight buffer backend mismatch in pairwise_reduce_multi")
+                            panic!("eq buffer backend mismatch in pairwise_reduce_multi")
                         }
-                    };
+                    });
                     let p_kernels: Vec<(&P::CompiledKernel<Fld>, usize)> =
                         kernels.iter().map(|(k, n)| (&k.primary, *n)).collect();
                     self.primary
-                        .pairwise_reduce_multi(&p_inputs, p_weights, &p_kernels, order)
+                        .pairwise_reduce_multi(&p_inputs, p_eq, &p_kernels, order)
                 }
                 HybridBuffer::Fallback(_) => {
                     let f_inputs: Vec<&Fb::Buffer<Fld>> = inputs
@@ -565,16 +534,16 @@ impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, 
                             }
                         })
                         .collect();
-                    let f_weights = match weights {
+                    let f_eq = convert_eq::<Fld, P, Fb, Fb>(eq, |buf| match buf {
                         HybridBuffer::Fallback(w) => w,
                         HybridBuffer::Primary(_) => {
-                            panic!("weight buffer backend mismatch in pairwise_reduce_multi")
+                            panic!("eq buffer backend mismatch in pairwise_reduce_multi")
                         }
-                    };
+                    });
                     let f_kernels: Vec<(&Fb::CompiledKernel<Fld>, usize)> =
                         kernels.iter().map(|(k, n)| (&k.fallback, *n)).collect();
                     self.fallback
-                        .pairwise_reduce_multi(&f_inputs, f_weights, &f_kernels, order)
+                        .pairwise_reduce_multi(&f_inputs, f_eq, &f_kernels, order)
                 }
             }
         } else {
@@ -755,6 +724,87 @@ impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, 
             result
         }
     }
+
+    fn make_witness<Fld: Field>(
+        &self,
+        kernel: &Self::CompiledKernel<Fld>,
+        inputs: Vec<Self::Buffer<Fld>>,
+        challenges: &[Fld],
+    ) -> Self::SumcheckWitness<Fld> {
+        // Determine backend from first input buffer. All inputs must be on
+        // the same backend (enforced by lockstep binding).
+        let is_primary = inputs
+            .first()
+            .is_some_and(|b| matches!(b, HybridBuffer::Primary(_)));
+
+        if is_primary {
+            let p_inputs: Vec<P::Buffer<Fld>> = inputs
+                .into_iter()
+                .map(|b| match b {
+                    HybridBuffer::Primary(inner) => inner,
+                    HybridBuffer::Fallback(_) => {
+                        panic!("mixed buffer backends in make_witness")
+                    }
+                })
+                .collect();
+            HybridSumcheckWitness::Primary(self.primary.make_witness(
+                &kernel.primary,
+                p_inputs,
+                challenges,
+            ))
+        } else {
+            let f_inputs: Vec<Fb::Buffer<Fld>> = inputs
+                .into_iter()
+                .map(|b| match b {
+                    HybridBuffer::Fallback(inner) => inner,
+                    HybridBuffer::Primary(_) => {
+                        panic!("mixed buffer backends in make_witness")
+                    }
+                })
+                .collect();
+            HybridSumcheckWitness::Fallback(self.fallback.make_witness(
+                &kernel.fallback,
+                f_inputs,
+                challenges,
+            ))
+        }
+    }
+
+    fn upload_sparse<Fld: Field>(&self, entries: &[(usize, Vec<Fld>)]) -> Self::SparseBuffer<Fld> {
+        // Sparse data is typically small; default to fallback.
+        HybridSparseBuffer::Fallback(self.fallback.upload_sparse(entries))
+    }
+
+    fn sparse_reduce<Fld: Field>(
+        &self,
+        entries: &Self::SparseBuffer<Fld>,
+        eq: &Self::Buffer<Fld>,
+        kernel: &Self::CompiledKernel<Fld>,
+        challenges: &[Fld],
+        num_evals: usize,
+    ) -> Vec<Fld> {
+        match (entries, eq) {
+            (HybridSparseBuffer::Primary(e), HybridBuffer::Primary(eq_buf)) => self
+                .primary
+                .sparse_reduce(e, eq_buf, &kernel.primary, challenges, num_evals),
+            (HybridSparseBuffer::Fallback(e), HybridBuffer::Fallback(eq_buf)) => self
+                .fallback
+                .sparse_reduce(e, eq_buf, &kernel.fallback, challenges, num_evals),
+            _ => panic!("mixed buffer backends in sparse_reduce"),
+        }
+    }
+
+    fn sparse_bind<Fld: Field>(
+        &self,
+        entries: &mut Self::SparseBuffer<Fld>,
+        challenge: Fld,
+        order: BindingOrder,
+    ) {
+        match entries {
+            HybridSparseBuffer::Primary(e) => self.primary.sparse_bind(e, challenge, order),
+            HybridSparseBuffer::Fallback(e) => self.fallback.sparse_bind(e, challenge, order),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -783,13 +833,28 @@ mod tests {
         _marker: std::marker::PhantomData<F>,
     }
 
+    struct MockSumcheckWitness<F: Field> {
+        _marker: std::marker::PhantomData<F>,
+    }
+
+    impl<F: Field> BackendWitness<F> for MockSumcheckWitness<F> {
+        fn round_polynomial(&self) -> RoundCoeffs<F> {
+            panic!("mock witness")
+        }
+        fn bind(&mut self, _challenge: F) {
+            panic!("mock witness")
+        }
+    }
+
     impl ComputeBackend for MockBackend {
         type Buffer<T: Scalar> = Vec<T>;
         type CompiledKernel<F: Field> = MockKernel<F>;
+        type SumcheckWitness<F: Field> = MockSumcheckWitness<F>;
+        type SparseBuffer<F: Field> = Vec<(usize, Vec<F>)>;
 
         fn compile_kernel_with_challenges<F: Field>(
             &self,
-            _desc: &KernelDescriptor,
+            _formula: &CompositionFormula,
             _challenges: &[F],
         ) -> MockKernel<F> {
             MockKernel {
@@ -860,7 +925,7 @@ mod tests {
         fn pairwise_reduce<Fld: Field>(
             &self,
             _inputs: &[&Vec<Fld>],
-            _weights: &Vec<Fld>,
+            _eq: EqInput<'_, Self, Fld>,
             _kernel: &MockKernel<Fld>,
             num_evals: usize,
             _order: BindingOrder,
@@ -871,17 +936,6 @@ mod tests {
             } else {
                 vec![Fld::from_u64(2); num_evals]
             }
-        }
-
-        fn tensor_pairwise_reduce<Fld: Field>(
-            &self,
-            _inputs: &[&Vec<Fld>],
-            _outer_weights: &Vec<Fld>,
-            _inner_weights: &Vec<Fld>,
-            _kernel: &MockKernel<Fld>,
-            num_evals: usize,
-        ) -> Vec<Fld> {
-            vec![Fld::zero(); num_evals]
         }
 
         fn product_table<Fld: Field>(&self, point: &[Fld]) -> Vec<Fld> {
@@ -917,6 +971,43 @@ mod tests {
             for (x, y) in buf.iter_mut().zip(other.iter()) {
                 *x += scalar * *y;
             }
+        }
+
+        fn make_witness<Fld: Field>(
+            &self,
+            _kernel: &MockKernel<Fld>,
+            _inputs: Vec<Vec<Fld>>,
+            _challenges: &[Fld],
+        ) -> MockSumcheckWitness<Fld> {
+            MockSumcheckWitness {
+                _marker: std::marker::PhantomData,
+            }
+        }
+
+        fn upload_sparse<Fld: Field>(
+            &self,
+            entries: &[(usize, Vec<Fld>)],
+        ) -> Vec<(usize, Vec<Fld>)> {
+            entries.to_vec()
+        }
+
+        fn sparse_reduce<Fld: Field>(
+            &self,
+            _entries: &Vec<(usize, Vec<Fld>)>,
+            _eq: &Vec<Fld>,
+            _kernel: &MockKernel<Fld>,
+            _challenges: &[Fld],
+            num_evals: usize,
+        ) -> Vec<Fld> {
+            vec![Fld::zero(); num_evals]
+        }
+
+        fn sparse_bind<Fld: Field>(
+            &self,
+            _entries: &mut Vec<(usize, Vec<Fld>)>,
+            _challenge: Fld,
+            _order: BindingOrder,
+        ) {
         }
     }
 
@@ -993,39 +1084,61 @@ mod tests {
 
     #[test]
     fn pairwise_reduce_dispatches_to_correct_backend() {
-        use jolt_ir::{KernelDescriptor, KernelShape};
+        use jolt_compiler::{CompositionFormula, Factor, ProductTerm};
 
         let hybrid = make_hybrid(4);
-        let desc = KernelDescriptor {
-            shape: KernelShape::ProductSum {
-                num_inputs_per_product: 4,
-                num_products: 1,
-            },
-            degree: 4,
-            tensor_split: None,
-        };
-        let kernel = hybrid.compile_kernel::<Fr>(&desc);
+        let formula = CompositionFormula::from_terms(vec![ProductTerm {
+            coefficient: 1,
+            factors: vec![
+                Factor::Input(0),
+                Factor::Input(1),
+                Factor::Input(2),
+                Factor::Input(3),
+            ],
+        }]);
+        let kernel = hybrid.compile_kernel::<Fr>(&formula);
 
-        // Primary inputs → dispatches to primary → returns all 1s.
+        // Primary inputs with Weighted eq → dispatches to primary → returns all 1s.
         let large: Vec<Fr> = vec![Fr::from_u64(1); 16];
         let weights_large: Vec<Fr> = vec![Fr::from_u64(1); 8];
         let buf_a = hybrid.upload(&large);
         let buf_w = hybrid.upload(&weights_large);
         assert!(is_primary(&buf_a));
 
-        let result = hybrid.pairwise_reduce(&[&buf_a], &buf_w, &kernel, 4, BindingOrder::LowToHigh);
+        let result = hybrid.pairwise_reduce(
+            &[&buf_a],
+            EqInput::Weighted(&buf_w),
+            &kernel,
+            4,
+            BindingOrder::LowToHigh,
+        );
         assert_eq!(result, vec![Fr::from_u64(1); 4]);
 
-        // Fallback inputs → dispatches to fallback → returns all 2s.
+        // Fallback inputs with Weighted eq → dispatches to fallback → returns all 2s.
         let small: Vec<Fr> = vec![Fr::from_u64(1); 4];
         let weights_small: Vec<Fr> = vec![Fr::from_u64(1); 2];
         let buf_b = hybrid.upload(&small);
         let buf_ws = hybrid.upload(&weights_small);
         assert!(!is_primary(&buf_b));
 
-        let result =
-            hybrid.pairwise_reduce(&[&buf_b], &buf_ws, &kernel, 4, BindingOrder::LowToHigh);
+        let result = hybrid.pairwise_reduce(
+            &[&buf_b],
+            EqInput::Weighted(&buf_ws),
+            &kernel,
+            4,
+            BindingOrder::LowToHigh,
+        );
         assert_eq!(result, vec![Fr::from_u64(2); 4]);
+
+        // Unit eq also dispatches correctly.
+        let result = hybrid.pairwise_reduce(
+            &[&buf_a],
+            EqInput::Unit,
+            &kernel,
+            4,
+            BindingOrder::LowToHigh,
+        );
+        assert_eq!(result, vec![Fr::from_u64(1); 4]);
     }
 
     #[test]
@@ -1150,18 +1263,14 @@ mod tests {
     #[test]
     #[should_panic(expected = "mixed buffer backends")]
     fn mixed_backends_panics() {
-        use jolt_ir::{KernelDescriptor, KernelShape};
+        use jolt_compiler::{CompositionFormula, Factor, ProductTerm};
 
         let hybrid = make_hybrid(4);
-        let desc = KernelDescriptor {
-            shape: KernelShape::ProductSum {
-                num_inputs_per_product: 2,
-                num_products: 1,
-            },
-            degree: 2,
-            tensor_split: None,
-        };
-        let kernel = hybrid.compile_kernel::<Fr>(&desc);
+        let formula = CompositionFormula::from_terms(vec![ProductTerm {
+            coefficient: 1,
+            factors: vec![Factor::Input(0), Factor::Input(1)],
+        }]);
+        let kernel = hybrid.compile_kernel::<Fr>(&formula);
 
         let large: Vec<Fr> = vec![Fr::from_u64(1); 16];
         let small: Vec<Fr> = vec![Fr::from_u64(1); 4];
@@ -1174,7 +1283,7 @@ mod tests {
 
         let _ = hybrid.pairwise_reduce(
             &[&buf_p, &buf_f],
-            &w_buf,
+            EqInput::Weighted(&w_buf),
             &kernel,
             2,
             BindingOrder::LowToHigh,

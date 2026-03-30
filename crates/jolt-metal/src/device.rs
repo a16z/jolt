@@ -3,9 +3,9 @@ use std::ffi::c_void;
 use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 
-use jolt_compute::{BindingOrder, ComputeBackend, Scalar};
+use jolt_compute::{BackendWitness, BindingOrder, ComputeBackend, EqInput, RoundCoeffs, Scalar};
 use jolt_field::Field;
-use jolt_ir::KernelDescriptor;
+use jolt_compiler::CompositionFormula;
 use metal::{Device, MTLResourceOptions, MTLSize};
 
 use crate::buffer::MetalBuffer;
@@ -14,6 +14,26 @@ use crate::field_config::MslFieldParams;
 use crate::kernel::{CachedPipelines, MetalKernel};
 use crate::metal_device_config::MetalDeviceConfig;
 use crate::shaders::{ElementwiseKernels, InterpolationKernels};
+
+/// Placeholder sumcheck witness for Metal (Phase 2).
+pub struct MetalSumcheckWitness<F: Field> {
+    _phantom: PhantomData<F>,
+}
+
+impl<F: Field> BackendWitness<F> for MetalSumcheckWitness<F> {
+    fn round_polynomial(&self) -> RoundCoeffs<F> {
+        panic!("MetalSumcheckWitness::round_polynomial not yet implemented (Phase 2)")
+    }
+
+    fn bind(&mut self, _challenge: F) {
+        panic!("MetalSumcheckWitness::bind not yet implemented (Phase 2)")
+    }
+}
+
+// SAFETY: PhantomData<F> is Send+Sync for all F.
+unsafe impl<F: Field> Send for MetalSumcheckWitness<F> {}
+// SAFETY: PhantomData<F> is Send+Sync for all F.
+unsafe impl<F: Field> Sync for MetalSumcheckWitness<F> {}
 
 /// Apple Metal compute backend for Jolt.
 ///
@@ -108,13 +128,13 @@ impl MetalBackend {
         &self.queue
     }
 
-    /// Compile a `KernelDescriptor` into a Metal compute pipeline.
+    /// Compile a [`CompositionFormula`] into a Metal compute pipeline.
     ///
-    /// Uses the pipeline cache — subsequent calls with the same descriptor
+    /// Uses the pipeline cache — subsequent calls with the same formula
     /// shape return cached pipelines without recompilation.
-    pub fn compile_kernel<F: Field>(&self, descriptor: &KernelDescriptor) -> MetalKernel<F> {
+    pub fn compile_kernel<F: Field>(&self, formula: &CompositionFormula) -> MetalKernel<F> {
         MetalKernel {
-            pipelines: self.get_or_compile(descriptor),
+            pipelines: self.get_or_compile(formula),
             challenges_buf: None,
             _marker: PhantomData,
         }
@@ -122,13 +142,13 @@ impl MetalBackend {
 
     /// Compile a kernel and upload challenge values for dispatch-time binding.
     ///
-    /// Pipelines are cached per kernel shape. For Custom kernels, challenges
-    /// are uploaded to a Metal buffer and bound at dispatch time (not baked
-    /// into the shader). Repeated calls with the same descriptor but different
-    /// challenges skip shader compilation entirely.
+    /// Pipelines are cached per formula shape. For formulas with challenge
+    /// factors, challenges are uploaded to a Metal buffer and bound at
+    /// dispatch time (not baked into the shader). Repeated calls with the
+    /// same formula but different challenges skip shader compilation entirely.
     pub fn compile_kernel_with_challenges<F: Field>(
         &self,
-        descriptor: &KernelDescriptor,
+        formula: &CompositionFormula,
         challenges: &[F],
     ) -> MetalKernel<F> {
         let challenges_buf = if challenges.is_empty() {
@@ -137,17 +157,17 @@ impl MetalBackend {
             Some(self.upload_field_buffer(challenges))
         };
         MetalKernel {
-            pipelines: self.get_or_compile(descriptor),
+            pipelines: self.get_or_compile(formula),
             challenges_buf,
             _marker: PhantomData,
         }
     }
 
     /// Get cached pipelines or compile and cache them.
-    fn get_or_compile(&self, descriptor: &KernelDescriptor) -> Arc<CachedPipelines> {
+    fn get_or_compile(&self, formula: &CompositionFormula) -> Arc<CachedPipelines> {
         use std::hash::{Hash, Hasher};
         let msl = compiler::generate_msl(
-            descriptor,
+            formula,
             self.compile_mode,
             &self.field_config,
             &self.device_config,
@@ -523,13 +543,15 @@ unsafe impl Sync for MetalBackend {}
 impl ComputeBackend for MetalBackend {
     type Buffer<T: Scalar> = MetalBuffer<T>;
     type CompiledKernel<F: Field> = MetalKernel<F>;
+    type SumcheckWitness<F: Field> = MetalSumcheckWitness<F>;
+    type SparseBuffer<F: Field> = Vec<(usize, Vec<F>)>;
 
     fn compile_kernel_with_challenges<F: Field>(
         &self,
-        desc: &KernelDescriptor,
+        formula: &CompositionFormula,
         challenges: &[F],
     ) -> MetalKernel<F> {
-        self.compile_kernel_with_challenges(desc, challenges)
+        self.compile_kernel_with_challenges(formula, challenges)
     }
 
     fn upload<T: Scalar>(&self, data: &[T]) -> Self::Buffer<T> {
@@ -737,7 +759,7 @@ impl ComputeBackend for MetalBackend {
     fn pairwise_reduce<F: Field>(
         &self,
         inputs: &[&Self::Buffer<F>],
-        weights: &Self::Buffer<F>,
+        eq: EqInput<'_, Self, F>,
         kernel: &Self::CompiledKernel<F>,
         _num_evals: usize,
         order: BindingOrder,
@@ -746,45 +768,52 @@ impl ComputeBackend for MetalBackend {
         let n = inputs[0].len();
         let n_pairs = n / 2;
 
-        let pipeline = match order {
-            BindingOrder::LowToHigh => kernel.pipeline_l2h(),
-            BindingOrder::HighToLow => kernel.pipeline_h2l(),
-        };
-        self.dispatch_reduce(
-            pipeline,
-            kernel.num_evals(),
-            inputs,
-            &[&weights.raw],
-            kernel.active_challenges_buf(),
-            &[n_pairs as u32],
-            n_pairs,
-        )
-    }
-
-    #[tracing::instrument(skip_all, name = "MetalBackend::pairwise_reduce_unweighted", fields(n = inputs[0].len()))]
-    fn pairwise_reduce_unweighted<F: Field>(
-        &self,
-        inputs: &[&Self::Buffer<F>],
-        kernel: &Self::CompiledKernel<F>,
-        _num_evals: usize,
-        order: BindingOrder,
-    ) -> Vec<F> {
-        debug_assert!(!inputs.is_empty());
-        let n = inputs[0].len();
-        let n_pairs = n / 2;
-        let pipeline = match order {
-            BindingOrder::LowToHigh => kernel.pipeline_l2h_unw(),
-            BindingOrder::HighToLow => kernel.pipeline_h2l_unw(),
-        };
-        self.dispatch_reduce(
-            pipeline,
-            kernel.num_evals(),
-            inputs,
-            &[],
-            kernel.active_challenges_buf(),
-            &[n_pairs as u32],
-            n_pairs,
-        )
+        match eq {
+            EqInput::Weighted(weights) => {
+                let pipeline = match order {
+                    BindingOrder::LowToHigh => kernel.pipeline_l2h(),
+                    BindingOrder::HighToLow => kernel.pipeline_h2l(),
+                };
+                self.dispatch_reduce(
+                    pipeline,
+                    kernel.num_evals(),
+                    inputs,
+                    &[&weights.raw],
+                    kernel.active_challenges_buf(),
+                    &[n_pairs as u32],
+                    n_pairs,
+                )
+            }
+            EqInput::Unit => {
+                let pipeline = match order {
+                    BindingOrder::LowToHigh => kernel.pipeline_l2h_unw(),
+                    BindingOrder::HighToLow => kernel.pipeline_h2l_unw(),
+                };
+                self.dispatch_reduce(
+                    pipeline,
+                    kernel.num_evals(),
+                    inputs,
+                    &[],
+                    kernel.active_challenges_buf(),
+                    &[n_pairs as u32],
+                    n_pairs,
+                )
+            }
+            EqInput::Tensor { outer, inner } => {
+                let inner_len = inner.len();
+                let inner_log = inner_len.trailing_zeros();
+                let inner_mask = (inner_len - 1) as u32;
+                self.dispatch_reduce(
+                    kernel.pipeline_tensor(),
+                    kernel.num_evals(),
+                    inputs,
+                    &[&outer.raw, &inner.raw],
+                    kernel.active_challenges_buf(),
+                    &[n_pairs as u32, inner_log, inner_mask],
+                    n_pairs,
+                )
+            }
+        }
     }
 
     #[tracing::instrument(skip_all, name = "MetalBackend::interpolate_pairs_batch", fields(n_bufs = bufs.len()))]
@@ -957,31 +986,6 @@ impl ComputeBackend for MetalBackend {
         }
     }
 
-    fn tensor_pairwise_reduce<F: Field>(
-        &self,
-        inputs: &[&Self::Buffer<F>],
-        outer_weights: &Self::Buffer<F>,
-        inner_weights: &Self::Buffer<F>,
-        kernel: &Self::CompiledKernel<F>,
-        _num_evals: usize,
-    ) -> Vec<F> {
-        debug_assert!(!inputs.is_empty());
-        let n = inputs[0].len();
-        let n_pairs = n / 2;
-        let inner_len = inner_weights.len();
-        let inner_log = inner_len.trailing_zeros();
-        let inner_mask = (inner_len - 1) as u32;
-        self.dispatch_reduce(
-            kernel.pipeline_tensor(),
-            kernel.num_evals(),
-            inputs,
-            &[&outer_weights.raw, &inner_weights.raw],
-            kernel.active_challenges_buf(),
-            &[n_pairs as u32, inner_log, inner_mask],
-            n_pairs,
-        )
-    }
-
     #[tracing::instrument(skip_all, fields(n = inputs.first().map_or(0, |b| b.len())))]
     fn fused_interpolate_reduce<F: Field>(
         &self,
@@ -1017,5 +1021,40 @@ impl ComputeBackend for MetalBackend {
         weights.len /= 2;
 
         result
+    }
+
+    fn make_witness<F: Field>(
+        &self,
+        _kernel: &Self::CompiledKernel<F>,
+        _inputs: Vec<Self::Buffer<F>>,
+        _challenges: &[F],
+    ) -> Self::SumcheckWitness<F> {
+        MetalSumcheckWitness {
+            _phantom: PhantomData,
+        }
+    }
+
+    fn upload_sparse<F: Field>(&self, entries: &[(usize, Vec<F>)]) -> Self::SparseBuffer<F> {
+        entries.to_vec()
+    }
+
+    fn sparse_reduce<F: Field>(
+        &self,
+        _entries: &Self::SparseBuffer<F>,
+        _eq: &Self::Buffer<F>,
+        _kernel: &Self::CompiledKernel<F>,
+        _challenges: &[F],
+        _num_evals: usize,
+    ) -> Vec<F> {
+        panic!("MetalBackend::sparse_reduce not yet implemented (Phase 2)")
+    }
+
+    fn sparse_bind<F: Field>(
+        &self,
+        _entries: &mut Self::SparseBuffer<F>,
+        _challenge: F,
+        _order: BindingOrder,
+    ) {
+        panic!("MetalBackend::sparse_bind not yet implemented (Phase 2)")
     }
 }

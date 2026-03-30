@@ -8,9 +8,9 @@ fn constant_only_expression() {
     let result: Fr = expr.evaluate(&[], &[]);
     assert_eq!(result, Fr::from_u64(99));
 
-    let sop = expr.to_sum_of_products();
-    assert_eq!(sop.len(), 1);
-    assert!(sop.terms[0].factors.is_empty());
+    let formula = expr.to_composition_formula();
+    assert_eq!(formula.len(), 1);
+    assert!(formula.terms[0].factors.is_empty());
 }
 
 #[test]
@@ -30,9 +30,9 @@ fn same_variable_squared() {
     let val = Fr::from_u64(7);
     assert_eq!(expr.evaluate::<Fr>(&[val], &[]), Fr::from_u64(49));
 
-    let sop = expr.to_sum_of_products();
-    assert_eq!(sop.len(), 1);
-    assert_eq!(sop.terms[0].factors.len(), 2);
+    let formula = expr.to_composition_formula();
+    assert_eq!(formula.len(), 1);
+    assert_eq!(formula.terms[0].factors.len(), 2);
 }
 
 #[test]
@@ -61,7 +61,7 @@ fn openings_only() {
 
 #[test]
 fn cse_preserves_evaluation() {
-    // (a + b) * (a + b) — shared subtree
+    // (a + b) * (a + b) -- shared subtree
     let b = ExprBuilder::new();
     let a1 = b.opening(0);
     let b1 = b.opening(1);
@@ -81,7 +81,7 @@ fn cse_preserves_evaluation() {
 
 #[test]
 fn cse_on_nested_repeats() {
-    // a*b + a*b — identical subtrees
+    // a*b + a*b -- identical subtrees
     let b = ExprBuilder::new();
     let a1 = b.opening(0);
     let b1 = b.opening(1);
@@ -122,7 +122,7 @@ fn zero_times_anything() {
 
 #[test]
 fn fold_constants_chain() {
-    // (2 + 3) * (4 - 1) → should fold to 15
+    // (2 + 3) * (4 - 1) -> should fold to 15
     let b = ExprBuilder::new();
     let two = b.constant(2);
     let three = b.constant(3);
@@ -136,7 +136,7 @@ fn fold_constants_chain() {
 
 #[test]
 fn fold_constants_preserves_variables() {
-    // (2 + 3) * a → Constant(5) * Var(Opening(0))
+    // (2 + 3) * a -> Constant(5) * Var(Opening(0))
     let b = ExprBuilder::new();
     let two = b.constant(2);
     let three = b.constant(3);

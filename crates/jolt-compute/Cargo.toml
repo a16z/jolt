@@ -10,12 +10,11 @@ workspace = true
 
 [dependencies]
 jolt-field = { path = "../jolt-field", default-features = false }
-jolt-ir = { path = "../jolt-ir" }
+jolt-compiler = { path = "../jolt-compiler" }
 
 [dev-dependencies]
 jolt-field = { path = "../jolt-field", features = ["bn254"] }
 jolt-cpu = { path = "../jolt-cpu" }
-jolt-ir = { path = "../jolt-ir" }
 jolt-poly = { path = "../jolt-poly" }
 rand = { workspace = true }
 rand_core = { workspace = true }

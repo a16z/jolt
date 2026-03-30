@@ -117,16 +117,15 @@ mod tests {
     }
 
     #[test]
-    fn bytecode_ra_virtual_sop_equivalence() {
+    fn bytecode_ra_virtual_composition_equivalence() {
         let claim = bytecode_ra_virtual(4);
         let openings: Vec<Fr> = (1..=4).map(Fr::from_u64).collect();
         let challenges = vec![Fr::from_u64(10)];
 
         let direct = claim.evaluate::<Fr>(&openings, &challenges);
-        let via_sop = claim
-            .expr
-            .to_sum_of_products()
+        let via_formula = claim
+            .to_composition_formula()
             .evaluate::<Fr>(&openings, &challenges);
-        assert_eq!(direct, via_sop);
+        assert_eq!(direct, via_formula);
     }
 }

@@ -7,10 +7,12 @@
 
 use std::sync::LazyLock;
 
-use jolt_compute::{BindingOrder, ComputeBackend};
+use jolt_compute::{BindingOrder, ComputeBackend, EqInput};
 use jolt_cpu::CpuBackend;
 use jolt_field::{Field, Fr};
-use jolt_ir::{ExprBuilder, KernelDescriptor, KernelShape};
+use jolt_compiler::{CompositionFormula, Factor, ProductTerm};
+use jolt_cpu::from_ir_formula;
+use jolt_ir::ExprBuilder;
 use jolt_metal::MetalBackend;
 use num_traits::Zero;
 use rand::rngs::StdRng;
@@ -506,16 +508,26 @@ fn product_table_large() {
     assert_eq!(cpu_table, mtl_table, "large product_table mismatch");
 }
 
+fn product_sum_formula(d: usize, p: usize) -> CompositionFormula {
+    let terms: Vec<_> = (0..p)
+        .map(|g| ProductTerm {
+            coefficient: 1,
+            factors: (0..d).map(|j| Factor::Input((g * d + j) as u32)).collect(),
+        })
+        .collect();
+    CompositionFormula::from_terms(terms)
+}
+
 fn compile_kernels(
     cpu: &CpuBackend,
     metal: &MetalBackend,
-    desc: &KernelDescriptor,
+    formula: &CompositionFormula,
 ) -> (
     <CpuBackend as ComputeBackend>::CompiledKernel<Fr>,
     <MetalBackend as ComputeBackend>::CompiledKernel<Fr>,
 ) {
-    let cpu_k = jolt_cpu::compile::<Fr>(desc);
-    let mtl_k = metal.compile_kernel::<Fr>(desc);
+    let cpu_k = jolt_cpu::compile::<Fr>(formula);
+    let mtl_k = metal.compile_kernel::<Fr>(formula);
     let _ = cpu;
     (cpu_k, mtl_k)
 }
@@ -523,14 +535,14 @@ fn compile_kernels(
 fn compile_kernels_with_challenges(
     cpu: &CpuBackend,
     metal: &MetalBackend,
-    desc: &KernelDescriptor,
+    formula: &CompositionFormula,
     challenges: &[Fr],
 ) -> (
     <CpuBackend as ComputeBackend>::CompiledKernel<Fr>,
     <MetalBackend as ComputeBackend>::CompiledKernel<Fr>,
 ) {
-    let cpu_k = jolt_cpu::compile_with_challenges::<Fr>(desc, challenges);
-    let mtl_k = metal.compile_kernel_with_challenges::<Fr>(desc, challenges);
+    let cpu_k = jolt_cpu::compile_with_challenges::<Fr>(formula, challenges);
+    let mtl_k = metal.compile_kernel_with_challenges::<Fr>(formula, challenges);
     let _ = cpu;
     (cpu_k, mtl_k)
 }
@@ -542,15 +554,8 @@ fn pairwise_reduce_product_sum_d4() {
     let cpu = CpuBackend;
     let mut rng = StdRng::seed_from_u64(0xD001);
 
-    let desc = KernelDescriptor {
-        shape: KernelShape::ProductSum {
-            num_inputs_per_product: 4,
-            num_products: 1,
-        },
-        degree: 4,
-        tensor_split: None,
-    };
-    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &desc);
+    let formula = product_sum_formula(4, 1);
+    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &formula);
 
     let n = 256;
     let inputs: Vec<Vec<Fr>> = (0..4).map(|_| random_elements(&mut rng, n)).collect();
@@ -561,9 +566,9 @@ fn pairwise_reduce_product_sum_d4() {
     let cpu_w = cpu.upload(&weights);
     let expected = cpu.pairwise_reduce(
         &cpu_refs,
-        &cpu_w,
+        EqInput::Weighted(&cpu_w),
         &cpu_k,
-        desc.num_evals(),
+        formula.degree(),
         BindingOrder::LowToHigh,
     );
 
@@ -572,9 +577,9 @@ fn pairwise_reduce_product_sum_d4() {
     let mtl_w = metal.upload(&weights);
     let got = metal.pairwise_reduce(
         &mtl_refs,
-        &mtl_w,
+        EqInput::Weighted(&mtl_w),
         &mtl_k,
-        desc.num_evals(),
+        formula.degree(),
         BindingOrder::LowToHigh,
     );
 
@@ -589,17 +594,10 @@ fn pairwise_reduce_product_sum_d3_p2() {
     let cpu = CpuBackend;
     let mut rng = StdRng::seed_from_u64(0xD002);
 
-    let desc = KernelDescriptor {
-        shape: KernelShape::ProductSum {
-            num_inputs_per_product: 3,
-            num_products: 2,
-        },
-        degree: 3,
-        tensor_split: None,
-    };
-    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &desc);
+    let formula = product_sum_formula(3, 2);
+    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &formula);
 
-    let k = desc.num_inputs();
+    let k = formula.num_inputs;
     let n = 128;
     let inputs: Vec<Vec<Fr>> = (0..k).map(|_| random_elements(&mut rng, n)).collect();
     let weights = random_elements(&mut rng, n / 2);
@@ -608,9 +606,9 @@ fn pairwise_reduce_product_sum_d3_p2() {
     let cpu_w = cpu.upload(&weights);
     let expected = cpu.pairwise_reduce(
         &cpu_refs,
-        &cpu_w,
+        EqInput::Weighted(&cpu_w),
         &cpu_k,
-        desc.num_evals(),
+        formula.degree(),
         BindingOrder::LowToHigh,
     );
 
@@ -619,9 +617,9 @@ fn pairwise_reduce_product_sum_d3_p2() {
     let mtl_w = metal.upload(&weights);
     let got = metal.pairwise_reduce(
         &mtl_refs,
-        &mtl_w,
+        EqInput::Weighted(&mtl_w),
         &mtl_k,
-        desc.num_evals(),
+        formula.degree(),
         BindingOrder::LowToHigh,
     );
 
@@ -635,15 +633,8 @@ fn pairwise_reduce_product_sum_d8_large() {
     let cpu = CpuBackend;
     let mut rng = StdRng::seed_from_u64(0xD003);
 
-    let desc = KernelDescriptor {
-        shape: KernelShape::ProductSum {
-            num_inputs_per_product: 8,
-            num_products: 1,
-        },
-        degree: 8,
-        tensor_split: None,
-    };
-    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &desc);
+    let formula = product_sum_formula(8, 1);
+    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &formula);
 
     let n = 512;
     let inputs: Vec<Vec<Fr>> = (0..8).map(|_| random_elements(&mut rng, n)).collect();
@@ -653,9 +644,9 @@ fn pairwise_reduce_product_sum_d8_large() {
     let cpu_w = cpu.upload(&weights);
     let expected = cpu.pairwise_reduce(
         &cpu_refs,
-        &cpu_w,
+        EqInput::Weighted(&cpu_w),
         &cpu_k,
-        desc.num_evals(),
+        formula.degree(),
         BindingOrder::LowToHigh,
     );
 
@@ -664,9 +655,9 @@ fn pairwise_reduce_product_sum_d8_large() {
     let mtl_w = metal.upload(&weights);
     let got = metal.pairwise_reduce(
         &mtl_refs,
-        &mtl_w,
+        EqInput::Weighted(&mtl_w),
         &mtl_k,
-        desc.num_evals(),
+        formula.degree(),
         BindingOrder::LowToHigh,
     );
 
@@ -680,15 +671,8 @@ fn pairwise_reduce_product_sum_d8_high_to_low() {
     let cpu = CpuBackend;
     let mut rng = StdRng::seed_from_u64(0xD010);
 
-    let desc = KernelDescriptor {
-        shape: KernelShape::ProductSum {
-            num_inputs_per_product: 8,
-            num_products: 1,
-        },
-        degree: 8,
-        tensor_split: None,
-    };
-    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &desc);
+    let formula = product_sum_formula(8, 1);
+    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &formula);
 
     let n = 512;
     let inputs: Vec<Vec<Fr>> = (0..8).map(|_| random_elements(&mut rng, n)).collect();
@@ -698,9 +682,9 @@ fn pairwise_reduce_product_sum_d8_high_to_low() {
     let cpu_w = cpu.upload(&weights);
     let expected = cpu.pairwise_reduce(
         &cpu_refs,
-        &cpu_w,
+        EqInput::Weighted(&cpu_w),
         &cpu_k,
-        desc.num_evals(),
+        formula.degree(),
         BindingOrder::HighToLow,
     );
 
@@ -709,9 +693,9 @@ fn pairwise_reduce_product_sum_d8_high_to_low() {
     let mtl_w = metal.upload(&weights);
     let got = metal.pairwise_reduce(
         &mtl_refs,
-        &mtl_w,
+        EqInput::Weighted(&mtl_w),
         &mtl_k,
-        desc.num_evals(),
+        formula.degree(),
         BindingOrder::HighToLow,
     );
 
@@ -724,15 +708,8 @@ fn pairwise_reduce_product_sum_d8_sizes() {
     let metal = &*METAL;
     let cpu = CpuBackend;
 
-    let desc = KernelDescriptor {
-        shape: KernelShape::ProductSum {
-            num_inputs_per_product: 8,
-            num_products: 1,
-        },
-        degree: 8,
-        tensor_split: None,
-    };
-    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &desc);
+    let formula = product_sum_formula(8, 1);
+    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &formula);
 
     for n_pairs in [32, 33, 48, 63, 64, 65, 128, 256] {
         let n = n_pairs * 2;
@@ -744,9 +721,9 @@ fn pairwise_reduce_product_sum_d8_sizes() {
         let cpu_w = cpu.upload(&weights);
         let expected = cpu.pairwise_reduce(
             &cpu_refs,
-            &cpu_w,
+            EqInput::Weighted(&cpu_w),
             &cpu_k,
-            desc.num_evals(),
+            formula.degree(),
             BindingOrder::LowToHigh,
         );
 
@@ -755,9 +732,9 @@ fn pairwise_reduce_product_sum_d8_sizes() {
         let mtl_w = metal.upload(&weights);
         let got = metal.pairwise_reduce(
             &mtl_refs,
-            &mtl_w,
+            EqInput::Weighted(&mtl_w),
             &mtl_k,
-            desc.num_evals(),
+            formula.degree(),
             BindingOrder::LowToHigh,
         );
 
@@ -772,34 +749,29 @@ fn pairwise_reduce_product_sum_d8_unweighted() {
     let cpu = CpuBackend;
     let mut rng = StdRng::seed_from_u64(0xD011);
 
-    let desc = KernelDescriptor {
-        shape: KernelShape::ProductSum {
-            num_inputs_per_product: 8,
-            num_products: 1,
-        },
-        degree: 8,
-        tensor_split: None,
-    };
-    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &desc);
+    let formula = product_sum_formula(8, 1);
+    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &formula);
 
     for n_pairs in [32, 33, 64, 256] {
         let n = n_pairs * 2;
         let inputs: Vec<Vec<Fr>> = (0..8).map(|_| random_elements(&mut rng, n)).collect();
 
         let cpu_refs: Vec<&Vec<Fr>> = inputs.iter().collect();
-        let expected = cpu.pairwise_reduce_unweighted(
+        let expected = cpu.pairwise_reduce(
             &cpu_refs,
+            EqInput::Unit,
             &cpu_k,
-            desc.num_evals(),
+            formula.degree(),
             BindingOrder::LowToHigh,
         );
 
         let mtl_bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
         let mtl_refs: Vec<_> = mtl_bufs.iter().collect();
-        let got = metal.pairwise_reduce_unweighted(
+        let got = metal.pairwise_reduce(
             &mtl_refs,
+            EqInput::Unit,
             &mtl_k,
-            desc.num_evals(),
+            formula.degree(),
             BindingOrder::LowToHigh,
         );
 
@@ -817,15 +789,8 @@ fn pairwise_reduce_high_to_low() {
     let cpu = CpuBackend;
     let mut rng = StdRng::seed_from_u64(0xD004);
 
-    let desc = KernelDescriptor {
-        shape: KernelShape::ProductSum {
-            num_inputs_per_product: 4,
-            num_products: 1,
-        },
-        degree: 4,
-        tensor_split: None,
-    };
-    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &desc);
+    let formula = product_sum_formula(4, 1);
+    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &formula);
 
     let n = 512;
     let inputs: Vec<Vec<Fr>> = (0..4).map(|_| random_elements(&mut rng, n)).collect();
@@ -835,9 +800,9 @@ fn pairwise_reduce_high_to_low() {
     let cpu_w = cpu.upload(&weights);
     let expected = cpu.pairwise_reduce(
         &cpu_refs,
-        &cpu_w,
+        EqInput::Weighted(&cpu_w),
         &cpu_k,
-        desc.num_evals(),
+        formula.degree(),
         BindingOrder::HighToLow,
     );
 
@@ -846,9 +811,9 @@ fn pairwise_reduce_high_to_low() {
     let mtl_w = metal.upload(&weights);
     let got = metal.pairwise_reduce(
         &mtl_refs,
-        &mtl_w,
+        EqInput::Weighted(&mtl_w),
         &mtl_k,
-        desc.num_evals(),
+        formula.degree(),
         BindingOrder::HighToLow,
     );
 
@@ -864,15 +829,8 @@ fn pairwise_reduce_custom_booleanity() {
 
     let b = ExprBuilder::new();
     let h = b.opening(0);
-    let desc = KernelDescriptor {
-        shape: KernelShape::Custom {
-            expr: b.build(h * h - h),
-            num_inputs: 1,
-        },
-        degree: 2,
-        tensor_split: None,
-    };
-    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &desc);
+    let formula = from_ir_formula(&b.build(h * h - h).to_composition_formula());
+    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &formula);
 
     let n = 512;
     let inputs: Vec<Vec<Fr>> = vec![random_elements(&mut rng, n)];
@@ -882,9 +840,9 @@ fn pairwise_reduce_custom_booleanity() {
     let cpu_w = cpu.upload(&weights);
     let expected = cpu.pairwise_reduce(
         &cpu_refs,
-        &cpu_w,
+        EqInput::Weighted(&cpu_w),
         &cpu_k,
-        desc.num_evals(),
+        formula.degree(),
         BindingOrder::LowToHigh,
     );
 
@@ -893,9 +851,9 @@ fn pairwise_reduce_custom_booleanity() {
     let mtl_w = metal.upload(&weights);
     let got = metal.pairwise_reduce(
         &mtl_refs,
-        &mtl_w,
+        EqInput::Weighted(&mtl_w),
         &mtl_k,
-        desc.num_evals(),
+        formula.degree(),
         BindingOrder::LowToHigh,
     );
 
@@ -913,16 +871,9 @@ fn pairwise_reduce_custom_with_challenges() {
     let a = b.opening(0);
     let bv = b.opening(1);
     let gamma = b.challenge(0);
-    let desc = KernelDescriptor {
-        shape: KernelShape::Custom {
-            expr: b.build(gamma * a * bv),
-            num_inputs: 2,
-        },
-        degree: 3,
-        tensor_split: None,
-    };
+    let formula = from_ir_formula(&b.build(gamma * a * bv).to_composition_formula());
     let challenges = vec![Fr::random(&mut rng)];
-    let (cpu_k, mtl_k) = compile_kernels_with_challenges(&cpu, metal, &desc, &challenges);
+    let (cpu_k, mtl_k) = compile_kernels_with_challenges(&cpu, metal, &formula, &challenges);
 
     let n = 256;
     let inputs: Vec<Vec<Fr>> = (0..2).map(|_| random_elements(&mut rng, n)).collect();
@@ -932,9 +883,9 @@ fn pairwise_reduce_custom_with_challenges() {
     let cpu_w = cpu.upload(&weights);
     let expected = cpu.pairwise_reduce(
         &cpu_refs,
-        &cpu_w,
+        EqInput::Weighted(&cpu_w),
         &cpu_k,
-        desc.num_evals(),
+        formula.degree(),
         BindingOrder::LowToHigh,
     );
 
@@ -943,9 +894,9 @@ fn pairwise_reduce_custom_with_challenges() {
     let mtl_w = metal.upload(&weights);
     let got = metal.pairwise_reduce(
         &mtl_refs,
-        &mtl_w,
+        EqInput::Weighted(&mtl_w),
         &mtl_k,
-        desc.num_evals(),
+        formula.degree(),
         BindingOrder::LowToHigh,
     );
 
@@ -955,22 +906,15 @@ fn pairwise_reduce_custom_with_challenges() {
     );
 }
 
-/// Tensor pairwise reduce matches CPU.
+/// Tensor eq pairwise reduce matches CPU.
 #[test]
-fn tensor_pairwise_reduce_product_sum() {
+fn pairwise_reduce_tensor_eq() {
     let metal = &*METAL;
     let cpu = CpuBackend;
     let mut rng = StdRng::seed_from_u64(0xD007);
 
-    let desc = KernelDescriptor {
-        shape: KernelShape::ProductSum {
-            num_inputs_per_product: 4,
-            num_products: 1,
-        },
-        degree: 4,
-        tensor_split: None,
-    };
-    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &desc);
+    let formula = product_sum_formula(4, 1);
+    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &formula);
 
     // outer_len * inner_len pairs = n/2
     let outer_len = 8;
@@ -984,15 +928,31 @@ fn tensor_pairwise_reduce_product_sum() {
     let cpu_refs: Vec<&Vec<Fr>> = cpu_inputs.iter().collect();
     let cpu_outer = cpu.upload(&outer_w);
     let cpu_inner = cpu.upload(&inner_w);
-    let expected =
-        cpu.tensor_pairwise_reduce(&cpu_refs, &cpu_outer, &cpu_inner, &cpu_k, desc.num_evals());
+    let expected = cpu.pairwise_reduce(
+        &cpu_refs,
+        EqInput::Tensor {
+            outer: &cpu_outer,
+            inner: &cpu_inner,
+        },
+        &cpu_k,
+        formula.degree(),
+        BindingOrder::LowToHigh,
+    );
 
     let mtl_bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
     let mtl_refs: Vec<_> = mtl_bufs.iter().collect();
     let mtl_outer = metal.upload(&outer_w);
     let mtl_inner = metal.upload(&inner_w);
-    let got =
-        metal.tensor_pairwise_reduce(&mtl_refs, &mtl_outer, &mtl_inner, &mtl_k, desc.num_evals());
+    let got = metal.pairwise_reduce(
+        &mtl_refs,
+        EqInput::Tensor {
+            outer: &mtl_outer,
+            inner: &mtl_inner,
+        },
+        &mtl_k,
+        formula.degree(),
+        BindingOrder::LowToHigh,
+    );
 
     assert_eq!(expected, got, "tensor_pairwise_reduce mismatch");
 }
@@ -1004,15 +964,8 @@ fn pairwise_reduce_product_sum_d2() {
     let cpu = CpuBackend;
     let mut rng = StdRng::seed_from_u64(0xD008);
 
-    let desc = KernelDescriptor {
-        shape: KernelShape::ProductSum {
-            num_inputs_per_product: 2,
-            num_products: 1,
-        },
-        degree: 2,
-        tensor_split: None,
-    };
-    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &desc);
+    let formula = product_sum_formula(2, 1);
+    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &formula);
 
     let n = 64;
     let inputs: Vec<Vec<Fr>> = (0..2).map(|_| random_elements(&mut rng, n)).collect();
@@ -1022,9 +975,9 @@ fn pairwise_reduce_product_sum_d2() {
     let cpu_w = cpu.upload(&weights);
     let expected = cpu.pairwise_reduce(
         &cpu_refs,
-        &cpu_w,
+        EqInput::Weighted(&cpu_w),
         &cpu_k,
-        desc.num_evals(),
+        formula.degree(),
         BindingOrder::LowToHigh,
     );
 
@@ -1033,9 +986,9 @@ fn pairwise_reduce_product_sum_d2() {
     let mtl_w = metal.upload(&weights);
     let got = metal.pairwise_reduce(
         &mtl_refs,
-        &mtl_w,
+        EqInput::Weighted(&mtl_w),
         &mtl_k,
-        desc.num_evals(),
+        formula.degree(),
         BindingOrder::LowToHigh,
     );
 
@@ -1047,15 +1000,8 @@ fn pairwise_reduce_product_sum_d2() {
 fn pairwise_reduce_product_sum_known_values() {
     let metal = &*METAL;
 
-    let desc = KernelDescriptor {
-        shape: KernelShape::ProductSum {
-            num_inputs_per_product: 4,
-            num_products: 1,
-        },
-        degree: 4,
-        tensor_split: None,
-    };
-    let mtl_k = metal.compile_kernel::<Fr>(&desc);
+    let formula = product_sum_formula(4, 1);
+    let mtl_k = metal.compile_kernel::<Fr>(&formula);
 
     // Single pair: lo = [1,2,3,4], hi = [5,6,7,8]
     // Stored interleaved for LowToHigh: input_k = [lo[k], hi[k]]
@@ -1073,9 +1019,9 @@ fn pairwise_reduce_product_sum_known_values() {
     let mtl_w = metal.upload(&weights);
     let got = metal.pairwise_reduce(
         &mtl_refs,
-        &mtl_w,
+        EqInput::Weighted(&mtl_w),
         &mtl_k,
-        desc.num_evals(),
+        formula.degree(),
         BindingOrder::LowToHigh,
     );
 

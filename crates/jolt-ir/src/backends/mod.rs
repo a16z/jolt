@@ -1,7 +1,7 @@
 //! Backend implementations that derive from the expression IR.
 //!
 //! Each backend implements [`ExprVisitor`](crate::ExprVisitor) or operates on
-//! the normalized [`SumOfProducts`](crate::SumOfProducts) form.
+//! the normalized [`CompositionFormula`](crate::CompositionFormula) form.
 
 pub mod circuit;
 pub mod evaluate;

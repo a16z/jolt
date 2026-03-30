@@ -19,9 +19,9 @@ let h = b.opening(0);
 let gamma = b.challenge(0);
 let expr = b.build(gamma * (h * h - h));
 
-// Normalize to sum-of-products for R1CS emission
-let sop = expr.to_sum_of_products();
-assert_eq!(sop.len(), 2); // gamma*H*H and -gamma*H
+// Normalize to CompositionFormula for backend dispatch
+let formula = expr.to_composition_formula();
+assert_eq!(formula.degree(), 3); // gamma * H * H term has degree 3
 ```
 
 ## Two consumer paths
@@ -30,7 +30,7 @@ assert_eq!(sop.len(), 2); // gamma*H*H and -gamma*H
 
 **Protocol consumers** (verifier, BlindFold R1CS, Lean4, circuit transpilation) consume `Expr` directly via `ExprVisitor`. They care about *what* the formula means -- symbolic structure for constraint emission, formal verification, or evaluation at a single point.
 
-**Compute backends** (CPU, Metal, CUDA) consume `KernelDescriptor`, not `Expr`. A `KernelDescriptor` wraps the symbolic formula with operational metadata needed to evaluate it efficiently over million-element buffers: polynomial degree (grid size), tensor split (thread mapping), and recognized fast-path patterns. `Expr` only reaches compute backends inside `KernelShape::Custom`; the `ProductSum`, `EqProduct`, and `HammingBooleanity` shapes bypass it entirely with hand-optimized codegen.
+**Compute backends** (CPU, Metal, CUDA) consume `CompositionFormula`, the normalized sum-of-products form. The compiler dispatches on recognized patterns — `is_eq_product()`, `is_hamming_booleanity()`, `as_product_sum()` — to emit hand-optimized codegen. Unrecognized formulas fall through to the generic formula compiler that walks the terms directly.
 
 ```
 Expr ──→ ExprVisitor(Evaluate)    → F values
@@ -38,8 +38,8 @@ Expr ──→ ExprVisitor(Evaluate)    → F values
      ──→ ExprVisitor(Circuit)     → circuit gates
      ──→ ExprVisitor(Lean)        → Lean4 terms
 
-KernelDescriptor ──→ jolt-cpu   → CpuKernel<F> (Rust closures)
-                 ──→ jolt-metal → MetalKernel   (MSL source)
+CompositionFormula ──→ jolt-cpu   → CpuKernel<F> (Rust closures)
+                   ──→ jolt-metal → MetalKernel   (MSL source)
 ```
 
 ## Architecture
@@ -56,15 +56,9 @@ Expressions are stored as flat arrays of `ExprNode` variants, referenced by `Exp
 
 The `ExprVisitor` trait provides bottom-up traversal. Each backend implements 6 methods (one per node type): Evaluate, R1CS, Circuit (`CircuitEmitter`), Lean4.
 
-### Sum-of-products normalization
+### Composition formula
 
-`to_sum_of_products()` distributes multiplication over addition, producing `SumOfProducts` -- a flat `sum(coeff * product(factors))` form mapping directly to R1CS constraints.
-
-### Kernel descriptors
-
-- **`KernelDescriptor`** -- The codegen unit for compute backends. Carries shape, degree, and optional tensor split.
-- **`KernelShape`** -- Dispatch discriminant: `ProductSum` (Toom-Cook grid), `EqProduct` (eq * g), `HammingBooleanity` (eq * h * (h-1)), `Custom` (arbitrary `Expr`). The first three are recognized patterns compiled into hand-optimized code; `Custom` is the escape hatch where the `Expr` is walked for codegen.
-- **`TensorSplit`** -- Split-eq sqrt decomposition for GPU thread hierarchy.
+`to_composition_formula()` distributes multiplication over addition, producing `CompositionFormula` — a normalized `Σᵢ coeffᵢ × ∏ⱼ factorᵢⱼ` form where each factor is `Factor::Input(u32)` or `Factor::Challenge(u32)`. Pattern detection methods (`as_product_sum()`, `is_eq_product()`, `is_hamming_booleanity()`, `is_linear_combination()`) enable compute backends to dispatch to specialized codegen.
 
 ### R1CS exports
 
@@ -80,7 +74,7 @@ The `ExprVisitor` trait provides bottom-up traversal. Each backend implements 6 
 
 ### Additional types
 
-- **`SumOfProducts`** / **`SopTerm`** / **`SopValue`** -- Normalized sum-of-products representation.
+- **`CompositionFormula`** / **`ProductTerm`** / **`Factor`** -- Normalized sum-of-products representation for backend dispatch.
 - **`ClaimDefinition`** -- Associates an expression with its opening and challenge bindings.
 - **`CircuitEmitter`** -- Visitor-based backend for circuit gate emission.
 

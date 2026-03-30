@@ -66,49 +66,49 @@ fn bench_evaluate(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_to_sum_of_products(c: &mut Criterion) {
-    let mut group = c.benchmark_group("Expr::to_sum_of_products");
+fn bench_to_composition_formula(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Expr::to_composition_formula");
 
     let (expr, _, _) = build_booleanity();
     group.bench_function("booleanity", |bench| {
-        bench.iter(|| black_box(&expr).to_sum_of_products());
+        bench.iter(|| black_box(&expr).to_composition_formula());
     });
 
     let (expr, _, _) = build_ram_style();
     group.bench_function("ram_style", |bench| {
-        bench.iter(|| black_box(&expr).to_sum_of_products());
+        bench.iter(|| black_box(&expr).to_composition_formula());
     });
 
     for n in [4, 16, 64] {
         let (expr, _, _) = build_weighted_sum(n);
         group.bench_with_input(BenchmarkId::new("weighted_sum", n), &n, |bench, _| {
-            bench.iter(|| black_box(&expr).to_sum_of_products());
+            bench.iter(|| black_box(&expr).to_composition_formula());
         });
     }
 
     group.finish();
 }
 
-fn bench_sop_evaluate(c: &mut Criterion) {
-    let mut group = c.benchmark_group("SoP::evaluate");
+fn bench_formula_evaluate(c: &mut Criterion) {
+    let mut group = c.benchmark_group("CompositionFormula::evaluate");
 
     let (expr, o, ch) = build_booleanity();
-    let sop = expr.to_sum_of_products();
+    let formula = expr.to_composition_formula();
     group.bench_function("booleanity", |bench| {
-        bench.iter(|| black_box(&sop).evaluate::<Fr>(black_box(&o), black_box(&ch)));
+        bench.iter(|| black_box(&formula).evaluate::<Fr>(black_box(&o), black_box(&ch)));
     });
 
     let (expr, o, ch) = build_ram_style();
-    let sop = expr.to_sum_of_products();
+    let formula = expr.to_composition_formula();
     group.bench_function("ram_style", |bench| {
-        bench.iter(|| black_box(&sop).evaluate::<Fr>(black_box(&o), black_box(&ch)));
+        bench.iter(|| black_box(&formula).evaluate::<Fr>(black_box(&o), black_box(&ch)));
     });
 
     for n in [4, 16, 64] {
         let (expr, o, ch) = build_weighted_sum(n);
-        let sop = expr.to_sum_of_products();
+        let formula = expr.to_composition_formula();
         group.bench_with_input(BenchmarkId::new("weighted_sum", n), &n, |bench, _| {
-            bench.iter(|| black_box(&sop).evaluate::<Fr>(black_box(&o), black_box(&ch)));
+            bench.iter(|| black_box(&formula).evaluate::<Fr>(black_box(&o), black_box(&ch)));
         });
     }
 
@@ -116,28 +116,28 @@ fn bench_sop_evaluate(c: &mut Criterion) {
 }
 
 fn bench_emit_r1cs(c: &mut Criterion) {
-    let mut group = c.benchmark_group("SoP::emit_r1cs");
+    let mut group = c.benchmark_group("CompositionFormula::emit_r1cs");
 
     let (expr, _, _) = build_booleanity();
-    let sop = expr.to_sum_of_products();
+    let formula = expr.to_composition_formula();
     let vars = [R1csVar(1)];
     let chal = [Fr::from_u64(7)];
     group.bench_function("booleanity", |bench| {
         bench.iter(|| {
             let mut next = 2u32;
-            black_box(&sop).emit_r1cs::<Fr>(black_box(&vars), black_box(&chal), &mut next)
+            black_box(&formula).emit_r1cs::<Fr>(black_box(&vars), black_box(&chal), &mut next)
         });
     });
 
     let (expr, _, _) = build_ram_style();
-    let sop = expr.to_sum_of_products();
+    let formula = expr.to_composition_formula();
     let vars: Vec<R1csVar> = (0..4).map(|i| R1csVar(i + 1)).collect();
     let mut rng = ChaCha8Rng::seed_from_u64(0xbeef);
     let chal = [Fr::random(&mut rng)];
     group.bench_function("ram_style", |bench| {
         bench.iter(|| {
             let mut next = 5u32;
-            black_box(&sop).emit_r1cs::<Fr>(black_box(&vars), black_box(&chal), &mut next)
+            black_box(&formula).emit_r1cs::<Fr>(black_box(&vars), black_box(&chal), &mut next)
         });
     });
 
@@ -155,7 +155,7 @@ fn bench_fold_constants(c: &mut Criterion) {
 }
 
 fn bench_cse(c: &mut Criterion) {
-    // (a+b)*(a+b) + (a+b)*(c+d) — shared (a+b) subtree
+    // (a+b)*(a+b) + (a+b)*(c+d) -- shared (a+b) subtree
     let b = ExprBuilder::new();
     let a1 = b.opening(0);
     let b1 = b.opening(1);
@@ -175,8 +175,8 @@ fn bench_cse(c: &mut Criterion) {
 criterion_group!(
     benches,
     bench_evaluate,
-    bench_to_sum_of_products,
-    bench_sop_evaluate,
+    bench_to_composition_formula,
+    bench_formula_evaluate,
     bench_emit_r1cs,
     bench_fold_constants,
     bench_cse

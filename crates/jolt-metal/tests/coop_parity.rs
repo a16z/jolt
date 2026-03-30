@@ -92,6 +92,8 @@ fn dispatch_coop_mul(
     cmd.commit();
     cmd.wait_until_completed();
 
+    // SAFETY: `buf_out` is a Metal buffer of `n` MFr elements allocated above;
+    // `contents()` returns a valid pointer after `wait_until_completed()`.
     unsafe {
         let ptr = buf_out.contents().cast::<MFr>();
         std::slice::from_raw_parts(ptr, n).to_vec()
@@ -155,7 +157,7 @@ fn coop_mul_edge_cases() {
     let b_mtl: Vec<MFr> = b_cpu.iter().map(|x| to_metal(*x)).collect();
 
     // Pad to a multiple of 4 (simdgroup alignment)
-    let pad_to = ((a_mtl.len() + 3) / 4) * 4;
+    let pad_to = a_mtl.len().div_ceil(4) * 4;
     let mut a_padded = a_mtl.clone();
     let mut b_padded = b_mtl.clone();
     while a_padded.len() < pad_to {

@@ -14,5 +14,7 @@
 mod hybrid;
 mod traits;
 
-pub use hybrid::{HybridBackend, HybridBuffer, HybridKernel};
-pub use traits::{BindingOrder, ComputeBackend, Scalar};
+pub use hybrid::{
+    HybridBackend, HybridBuffer, HybridKernel, HybridSparseBuffer, HybridSumcheckWitness,
+};
+pub use traits::{BackendWitness, BindingOrder, ComputeBackend, EqInput, RoundCoeffs, Scalar};

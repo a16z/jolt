@@ -9,6 +9,68 @@ use crate::builder::ExprBuilder;
 use crate::claim::{ClaimDefinition, OpeningBinding};
 use crate::PolynomialId;
 
+/// R1CS outer sumcheck: Az·Bz - Cz = 0.
+///
+/// The outer sumcheck proves R1CS satisfaction over the row dimension.
+/// Produces evaluations Az(r_x), Bz(r_x), Cz(r_x) at the challenge point.
+pub fn r1cs_outer() -> ClaimDefinition {
+    let b = ExprBuilder::new();
+    let az = b.opening(0);
+    let bz = b.opening(1);
+    let cz = b.opening(2);
+
+    ClaimDefinition {
+        expr: b.build(az * bz - cz),
+        opening_bindings: vec![
+            OpeningBinding {
+                var_id: 0,
+                polynomial: PolynomialId::Az,
+            },
+            OpeningBinding {
+                var_id: 1,
+                polynomial: PolynomialId::Bz,
+            },
+            OpeningBinding {
+                var_id: 2,
+                polynomial: PolynomialId::Cz,
+            },
+        ],
+        num_challenges: 0,
+    }
+}
+
+/// R1CS inner sumcheck: combined_row · witness.
+///
+/// After the outer sumcheck produces Az, Bz, Cz at r_x, the inner sumcheck
+/// reduces the matrix–vector product to a single witness evaluation:
+///
+/// ```text
+/// Σ_y eq(s, y) · combined_row(y) · W(y) = c_a·Az + c_b·Bz + c_c·Cz
+/// ```
+///
+/// where `combined_row(y) = c_a·A(r_x, y) + c_b·B(r_x, y) + c_c·C(r_x, y)`
+/// is materialized by the edge transform between outer and inner.
+pub fn r1cs_inner() -> ClaimDefinition {
+    let b = ExprBuilder::new();
+    let combined = b.opening(0);
+    let witness = b.opening(1);
+
+    ClaimDefinition {
+        expr: b.build(combined * witness),
+        opening_bindings: vec![
+            OpeningBinding {
+                var_id: 0,
+                polynomial: PolynomialId::CombinedRow,
+            },
+            OpeningBinding {
+                var_id: 1,
+                polynomial: PolynomialId::SpartanWitness,
+            },
+        ],
+        num_challenges: 0,
+    }
+}
+
 // Verified against jolt-core/src/zkvm/spartan/shift.rs
 // Formula: Σ EqPlusOne(r,j) · (unexpanded_pc + γ·pc + γ²·is_virtual + γ³·is_first)
 //        + γ⁴ · EqPlusOne(r_prod,j) · (1 − is_noop)
@@ -257,6 +319,25 @@ mod tests {
     use jolt_field::{Field, Fr};
 
     #[test]
+    fn r1cs_outer_formula() {
+        let claim = r1cs_outer();
+        let az = Fr::from_u64(5);
+        let bz = Fr::from_u64(7);
+        let cz = Fr::from_u64(35); // az * bz
+        let result = claim.evaluate::<Fr>(&[az, bz, cz], &[]);
+        assert_eq!(result, Fr::from_u64(0)); // 5*7 - 35 = 0
+    }
+
+    #[test]
+    fn r1cs_inner_formula() {
+        let claim = r1cs_inner();
+        let combined = Fr::from_u64(3);
+        let witness = Fr::from_u64(11);
+        let result = claim.evaluate::<Fr>(&[combined, witness], &[]);
+        assert_eq!(result, Fr::from_u64(33)); // 3 * 11
+    }
+
+    #[test]
     fn shift_formula() {
         let claim = shift();
         let openings: Vec<Fr> = (1..=5).map(Fr::from_u64).collect();
@@ -300,17 +381,16 @@ mod tests {
     }
 
     #[test]
-    fn sop_equivalence_shift() {
+    fn composition_equivalence_shift() {
         let claim = shift();
         let openings: Vec<Fr> = (1..=5).map(Fr::from_u64).collect();
         let challenges: Vec<Fr> = (10..=15).map(Fr::from_u64).collect();
 
         let direct = claim.evaluate::<Fr>(&openings, &challenges);
-        let via_sop = claim
-            .expr
-            .to_sum_of_products()
+        let via_formula = claim
+            .to_composition_formula()
             .evaluate::<Fr>(&openings, &challenges);
-        assert_eq!(direct, via_sop);
+        assert_eq!(direct, via_formula);
     }
 
     #[test]
@@ -352,7 +432,7 @@ mod tests {
     }
 
     #[test]
-    fn sop_equivalence_product_virtual() {
+    fn composition_equivalence_product_virtual() {
         let claim = product_virtual_remainder();
         let openings: Vec<Fr> = (1..=8).map(Fr::from_u64).collect();
         let gamma = Fr::from_u64(5);
@@ -366,10 +446,9 @@ mod tests {
         let challenges = vec![g[0], g[1], g[2], g[3], g[4], -g[4]];
 
         let direct = claim.evaluate::<Fr>(&openings, &challenges);
-        let via_sop = claim
-            .expr
-            .to_sum_of_products()
+        let via_formula = claim
+            .to_composition_formula()
             .evaluate::<Fr>(&openings, &challenges);
-        assert_eq!(direct, via_sop);
+        assert_eq!(direct, via_formula);
     }
 }

@@ -376,34 +376,34 @@ mod tests {
     }
 
     #[test]
-    fn ram_ra_virtual_sop_equivalence() {
+    fn ram_ra_virtual_composition_equivalence() {
         let claim = ram_ra_virtual(4);
         let openings: Vec<Fr> = (1..=4).map(Fr::from_u64).collect();
         let challenges = vec![Fr::from_u64(10)];
 
         let direct = claim.evaluate::<Fr>(&openings, &challenges);
-        let via_sop = claim
-            .expr
-            .to_sum_of_products()
+        let via_formula = claim
+            .to_composition_formula()
             .evaluate::<Fr>(&openings, &challenges);
-        assert_eq!(direct, via_sop);
+        assert_eq!(direct, via_formula);
     }
 
     #[test]
-    fn sop_equivalence_hamming() {
+    fn composition_equivalence_hamming() {
         let claim = hamming_booleanity();
         let h = Fr::from_u64(5);
         let eq = Fr::from_u64(3);
         let neg_eq = -eq;
 
         let direct = claim.evaluate::<Fr>(&[h], &[eq, neg_eq]);
-        let sop = claim.expr.to_sum_of_products();
-        let via_sop = sop.evaluate::<Fr>(&[h], &[eq, neg_eq]);
-        assert_eq!(direct, via_sop);
+        let via_formula = claim
+            .to_composition_formula()
+            .evaluate::<Fr>(&[h], &[eq, neg_eq]);
+        assert_eq!(direct, via_formula);
     }
 
     #[test]
-    fn sop_equivalence_rw_checking() {
+    fn composition_equivalence_rw_checking() {
         let claim = ram_read_write_checking();
         let ra = Fr::from_u64(2);
         let val = Fr::from_u64(7);
@@ -412,8 +412,9 @@ mod tests {
         let c1 = Fr::from_u64(17);
 
         let direct = claim.evaluate::<Fr>(&[ra, val, inc], &[c0, c1]);
-        let sop = claim.expr.to_sum_of_products();
-        let via_sop = sop.evaluate::<Fr>(&[ra, val, inc], &[c0, c1]);
-        assert_eq!(direct, via_sop);
+        let via_formula = claim
+            .to_composition_formula()
+            .evaluate::<Fr>(&[ra, val, inc], &[c0, c1]);
+        assert_eq!(direct, via_formula);
     }
 }

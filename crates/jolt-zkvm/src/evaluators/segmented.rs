@@ -167,7 +167,7 @@ mod tests {
     use jolt_compute::BindingOrder;
     use jolt_cpu::CpuBackend;
     use jolt_field::{Field, Fr};
-    use jolt_ir::{ExprBuilder, KernelDescriptor, KernelShape};
+    use jolt_ir::ExprBuilder;
     use jolt_poly::EqPolynomial;
     use jolt_sumcheck::claim::SumcheckClaim;
     use jolt_sumcheck::{SumcheckProver, SumcheckVerifier};
@@ -208,12 +208,8 @@ mod tests {
         let desc = catalog::eq_product();
         let kernel = jolt_cpu::compile::<Fr>(&desc);
         let inputs = vec![backend.upload(&eq_table), backend.upload(&g_table)];
-        let evaluator = KernelEvaluator::with_unit_weights(
-            inputs,
-            kernel,
-            desc.num_evals(),
-            Arc::clone(&backend),
-        );
+        let evaluator =
+            KernelEvaluator::with_unit_weights(inputs, kernel, desc.degree(), Arc::clone(&backend));
 
         let mut witness = SegmentedEvaluator::new(evaluator, num_vars, backend);
 
@@ -300,12 +296,8 @@ mod tests {
         let desc = catalog::eq_product();
         let kernel = jolt_cpu::compile::<Fr>(&desc);
         let inputs = vec![backend.upload(&eq_full), backend.upload(&a_evals)];
-        let evaluator = KernelEvaluator::with_unit_weights(
-            inputs,
-            kernel,
-            desc.num_evals(),
-            Arc::clone(&backend),
-        );
+        let evaluator =
+            KernelEvaluator::with_unit_weights(inputs, kernel, desc.degree(), Arc::clone(&backend));
 
         // Wrap in a SegmentedEvaluator with a trivial transition at round M.
         // The transition creates a new KernelEvaluator from the partially-bound
@@ -401,15 +393,8 @@ mod tests {
         let a_v = eb.opening(1);
         let b_v = eb.opening(2);
         let expr = eb.build(eq_v * a_v * b_v);
-        let desc = KernelDescriptor {
-            shape: KernelShape::Custom {
-                expr,
-                num_inputs: 3,
-            },
-            degree: 3,
-            tensor_split: None,
-        };
-        let kernel = jolt_cpu::compile::<Fr>(&desc);
+        let formula = jolt_cpu::from_ir_formula(&expr.to_composition_formula());
+        let kernel = jolt_cpu::compile::<Fr>(&formula);
         let inputs = vec![
             backend.upload(&eq_full),
             backend.upload(&a_evals),
@@ -418,7 +403,7 @@ mod tests {
         let evaluator = KernelEvaluator::with_unit_weights(
             inputs,
             kernel,
-            desc.num_evals(),
+            formula.degree(),
             Arc::clone(&backend),
         );
 
@@ -457,15 +442,8 @@ mod tests {
                 let a_v = eb.opening(1);
                 let b_v = eb.opening(2);
                 let expr = eb.build(eq_v * a_v * b_v);
-                let desc = KernelDescriptor {
-                    shape: KernelShape::Custom {
-                        expr,
-                        num_inputs: 3,
-                    },
-                    degree: 3,
-                    tensor_split: None,
-                };
-                let kernel = jolt_cpu::compile::<Fr>(&desc);
+                let formula = jolt_cpu::from_ir_formula(&expr.to_composition_formula());
+                let kernel = jolt_cpu::compile::<Fr>(&formula);
                 let inputs = vec![
                     backend.upload(&eq_bound),
                     backend.upload(&a_bound),
@@ -474,7 +452,7 @@ mod tests {
                 KernelEvaluator::with_unit_weights(
                     inputs,
                     kernel,
-                    desc.num_evals(),
+                    formula.degree(),
                     Arc::clone(backend),
                 )
             });
@@ -524,12 +502,8 @@ mod tests {
         let desc = catalog::eq_product();
         let kernel = jolt_cpu::compile::<Fr>(&desc);
         let inputs = vec![backend.upload(&eq_table), backend.upload(&g_table)];
-        let evaluator = KernelEvaluator::with_unit_weights(
-            inputs,
-            kernel,
-            desc.num_evals(),
-            Arc::clone(&backend),
-        );
+        let evaluator =
+            KernelEvaluator::with_unit_weights(inputs, kernel, desc.degree(), Arc::clone(&backend));
 
         let hook: RoundHook<Fr, CpuBackend> = Box::new(move |_round, _challenge, _eval| {
             let _ = hook_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -584,13 +558,9 @@ mod tests {
         let desc = catalog::eq_product();
         let kernel = jolt_cpu::compile::<Fr>(&desc);
         let inputs = vec![backend.upload(&eq_table), backend.upload(&g_table)];
-        let evaluator = KernelEvaluator::with_unit_weights(
-            inputs,
-            kernel,
-            desc.num_evals(),
-            Arc::clone(&backend),
-        )
-        .with_binding_order(BindingOrder::HighToLow);
+        let evaluator =
+            KernelEvaluator::with_unit_weights(inputs, kernel, desc.degree(), Arc::clone(&backend))
+                .with_binding_order(BindingOrder::HighToLow);
 
         // Transition: bind the original tables HighToLow at challenge points,
         // then create a new LowToHigh evaluator.
@@ -619,7 +589,7 @@ mod tests {
                 KernelEvaluator::with_unit_weights(
                     inputs,
                     kernel,
-                    desc.num_evals(),
+                    desc.degree(),
                     Arc::clone(backend),
                 )
             });
@@ -696,12 +666,8 @@ mod tests {
         let desc = catalog::eq_product();
         let kernel = jolt_cpu::compile::<Fr>(&desc);
         let inputs = vec![backend.upload(&eq_full), backend.upload(&full_table)];
-        let evaluator = KernelEvaluator::with_unit_weights(
-            inputs,
-            kernel,
-            desc.num_evals(),
-            Arc::clone(&backend),
-        );
+        let evaluator =
+            KernelEvaluator::with_unit_weights(inputs, kernel, desc.degree(), Arc::clone(&backend));
 
         // At transition: bind eq and full_table at address challenges.
         // The remaining inner sum is:
@@ -754,7 +720,7 @@ mod tests {
                 KernelEvaluator::with_toom_cook_eq(
                     input_bufs,
                     kernel,
-                    desc.num_evals(),
+                    desc.degree(),
                     r_clone[m..].to_vec(),
                     inner_claimed_sum,
                     Arc::clone(backend),

@@ -528,7 +528,7 @@ mod tests {
             let x = b.opening(0);
             let y = b.opening(1);
             let expr = b.build(x * y);
-            let sop = expr.to_sum_of_products();
+            let sop = expr.to_composition_formula();
 
             let opening_vars = [R1csVar(1), R1csVar(2)];
             let mut next_var = 3;
@@ -547,7 +547,7 @@ mod tests {
             let h = b.opening(0);
             let gamma = b.challenge(0);
             let expr = b.build(gamma * (h * h - h));
-            let sop = expr.to_sum_of_products();
+            let sop = expr.to_composition_formula();
 
             let opening_vars = [R1csVar(1)];
             let challenge_vals = [Fr::from_u64(5)];
@@ -573,7 +573,7 @@ mod tests {
             let c = b.opening(2);
             let d = b.opening(3);
             let expr = b.build((a + bv) * (c - d));
-            let sop = expr.to_sum_of_products();
+            let sop = expr.to_composition_formula();
 
             let opening_vars = [R1csVar(1), R1csVar(2), R1csVar(3), R1csVar(4)];
             let mut next_var = 5;
@@ -603,7 +603,7 @@ mod tests {
             let alpha = b.challenge(0);
             let beta = b.challenge(1);
             let expr = b.build(alpha * a + beta * bv);
-            let sop = expr.to_sum_of_products();
+            let sop = expr.to_composition_formula();
 
             let opening_vars = [R1csVar(1), R1csVar(2)];
             let challenge_vals = [Fr::from_u64(3), Fr::from_u64(7)];
@@ -626,7 +626,7 @@ mod tests {
             let x = b.opening(0);
             let y = b.opening(1);
             let expr = b.build(x * y);
-            let sop = expr.to_sum_of_products();
+            let sop = expr.to_composition_formula();
 
             let opening_vars = [R1csVar(1), R1csVar(2)];
             let mut next_var = 3;

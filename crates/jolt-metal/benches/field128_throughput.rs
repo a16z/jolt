@@ -64,19 +64,21 @@ struct ReduceKernels {
 
 impl ReduceKernels {
     fn compile_product_sum<F: MontgomeryConstants>(device: &Device, d: usize, p: usize) -> Self {
+        use jolt_compiler::{CompositionFormula, Factor, ProductTerm};
+
         let field_config = MslFieldParams::new::<F>();
         let device_config = MetalDeviceConfig::detect(device);
-        let descriptor = jolt_ir::KernelDescriptor {
-            shape: jolt_ir::KernelShape::ProductSum {
-                num_inputs_per_product: d,
-                num_products: p,
-            },
-            degree: d,
-            tensor_split: None,
-        };
+        let formula = CompositionFormula::from_terms(
+            (0..p)
+                .map(|g| ProductTerm {
+                    coefficient: 1,
+                    factors: (0..d).map(|j| Factor::Input((g * d + j) as u32)).collect(),
+                })
+                .collect(),
+        );
 
         let generated: GeneratedMsl = jolt_metal::compiler::generate_msl(
-            &descriptor,
+            &formula,
             CompileMode::FastCompile,
             &field_config,
             &device_config,
@@ -873,16 +875,19 @@ fn bench_reduce_d8_groupsize(c: &mut Criterion) {
             ..MetalDeviceConfig::detect(&device)
         };
         let field_config = MslFieldParams::new::<Fr>();
-        let descriptor = jolt_ir::KernelDescriptor {
-            shape: jolt_ir::KernelShape::ProductSum {
-                num_inputs_per_product: d,
-                num_products: p,
-            },
-            degree: d,
-            tensor_split: None,
+        let formula = {
+            use jolt_compiler::{CompositionFormula, Factor, ProductTerm};
+            CompositionFormula::from_terms(
+                (0..p)
+                    .map(|g| ProductTerm {
+                        coefficient: 1,
+                        factors: (0..d).map(|j| Factor::Input((g * d + j) as u32)).collect(),
+                    })
+                    .collect(),
+            )
         };
         let generated: GeneratedMsl = jolt_metal::compiler::generate_msl(
-            &descriptor,
+            &formula,
             CompileMode::FastCompile,
             &field_config,
             &device_config,

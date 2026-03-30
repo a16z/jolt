@@ -3,7 +3,7 @@
 //! Verifies that CpuBackend primitives agree with the canonical implementations
 //! in jolt-poly (Polynomial::bind, EqPolynomial::evaluations).
 
-use jolt_compute::{BindingOrder, ComputeBackend};
+use jolt_compute::{BindingOrder, ComputeBackend, EqInput};
 use jolt_cpu::{CpuBackend, CpuKernel};
 use jolt_field::{Field, Fr};
 use jolt_poly::{EqPolynomial, Polynomial};
@@ -153,7 +153,7 @@ fn pairwise_reduce_identity_kernel() {
 
     let result = b.pairwise_reduce(
         &[&buf_a, &buf_b],
-        &weights,
+        EqInput::Weighted(&weights),
         &kernel,
         num_evals,
         BindingOrder::LowToHigh,

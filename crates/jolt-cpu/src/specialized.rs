@@ -83,26 +83,20 @@ mod tests {
     }
 
     #[test]
-    fn eq_product_matches_custom() {
-        use jolt_ir::{ExprBuilder, KernelDescriptor, KernelShape};
+    fn eq_product_matches_generic() {
+        use jolt_ir::ExprBuilder;
         let b = ExprBuilder::new();
         let eq = b.opening(0);
         let g = b.opening(1);
-        let desc = KernelDescriptor {
-            shape: KernelShape::Custom {
-                expr: b.build(eq * g),
-                num_inputs: 2,
-            },
-            degree: 2,
-            tensor_split: None,
-        };
-        let custom_kernel = crate::compile::<Fr>(&desc);
+        let expr = b.build(eq * g);
+        let formula = crate::from_ir_formula(&expr.to_composition_formula());
+        let generic_kernel = crate::formula::compile_with_challenges::<Fr>(&formula, &[]);
         let specialized_kernel = eq_product::<Fr>();
 
         let lo = vec![Fr::from_u64(42), Fr::from_u64(99)];
         let hi = vec![Fr::from_u64(17), Fr::from_u64(53)];
         assert_eq!(
-            eval_kernel(&custom_kernel, &lo, &hi, 2),
+            eval_kernel(&generic_kernel, &lo, &hi, 2),
             eval_kernel(&specialized_kernel, &lo, &hi, 2),
         );
     }
@@ -126,26 +120,20 @@ mod tests {
     }
 
     #[test]
-    fn hamming_booleanity_matches_custom() {
-        use jolt_ir::{ExprBuilder, KernelDescriptor, KernelShape};
+    fn hamming_booleanity_matches_generic() {
+        use jolt_ir::ExprBuilder;
         let b = ExprBuilder::new();
         let eq = b.opening(0);
         let h = b.opening(1);
-        let desc = KernelDescriptor {
-            shape: KernelShape::Custom {
-                expr: b.build(eq * (h * h - h)),
-                num_inputs: 2,
-            },
-            degree: 3,
-            tensor_split: None,
-        };
-        let custom_kernel = crate::compile::<Fr>(&desc);
+        let expr = b.build(eq * (h * h - h));
+        let formula = crate::from_ir_formula(&expr.to_composition_formula());
+        let generic_kernel = crate::formula::compile_with_challenges::<Fr>(&formula, &[]);
         let specialized_kernel = hamming_booleanity::<Fr>();
 
         let lo = vec![Fr::from_u64(42), Fr::from_u64(7)];
         let hi = vec![Fr::from_u64(17), Fr::from_u64(13)];
         assert_eq!(
-            eval_kernel(&custom_kernel, &lo, &hi, 3),
+            eval_kernel(&generic_kernel, &lo, &hi, 3),
             eval_kernel(&specialized_kernel, &lo, &hi, 3),
         );
     }

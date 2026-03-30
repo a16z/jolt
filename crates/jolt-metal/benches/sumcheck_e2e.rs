@@ -21,7 +21,7 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use jolt_compute::{BindingOrder, ComputeBackend, HybridBackend};
 use jolt_cpu::CpuBackend;
 use jolt_field::{Field, Fr};
-use jolt_ir::KernelDescriptor;
+use jolt_compiler::CompositionFormula;
 use jolt_metal::MetalBackend;
 use jolt_poly::EqPolynomial;
 use jolt_sumcheck::{SumcheckClaim, SumcheckProver};
@@ -38,7 +38,6 @@ fn init_tracing() -> Option<tracing_chrome::FlushGuard> {
     }
     let trace_path = std::env::var("JOLT_TRACE_FILE")
         .unwrap_or_else(|_| "/tmp/trace-sumcheck-e2e.json".to_string());
-    eprintln!("Writing Chrome trace to {trace_path}");
     let (layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
         .file(trace_path)
         .include_args(true)
@@ -63,7 +62,7 @@ fn random_fr(rng: &mut StdRng, n: usize) -> Vec<Fr> {
 struct ToomCookData {
     polys: Vec<Vec<Fr>>,
     eq_w: Vec<Fr>,
-    desc: KernelDescriptor,
+    formula: CompositionFormula,
     degree: usize,
 }
 
@@ -75,7 +74,7 @@ fn prepare_toom_cook(d: usize, num_products: usize) -> ToomCookData {
     ToomCookData {
         polys: (0..total_inputs).map(|_| random_fr(&mut rng, n)).collect(),
         eq_w: (0..NUM_VARS).map(|_| Fr::random(&mut rng)).collect(),
-        desc: catalog::product_sum(d, num_products),
+        formula: catalog::product_sum(d, num_products),
         degree: d + 1,
     }
 }
@@ -84,7 +83,7 @@ fn build_toom_cook_witness<B: ComputeBackend>(
     data: &ToomCookData,
     backend: &Arc<B>,
 ) -> (KernelEvaluator<Fr, B>, SumcheckClaim<Fr>) {
-    let kernel = backend.compile_kernel::<Fr>(&data.desc);
+    let kernel = backend.compile_kernel::<Fr>(&data.formula);
     let inputs: Vec<_> = data.polys.iter().map(|p| backend.upload(p)).collect();
 
     let mut eq_w_h2l = data.eq_w.clone();
@@ -94,7 +93,7 @@ fn build_toom_cook_witness<B: ComputeBackend>(
     let witness = KernelEvaluator::with_toom_cook_eq(
         inputs,
         kernel,
-        data.desc.num_evals(),
+        data.formula.degree(),
         eq_w_h2l,
         claimed_sum,
         Arc::clone(backend),
@@ -111,12 +110,12 @@ fn build_toom_cook_witness<B: ComputeBackend>(
 struct StandardGridData {
     eq_table: Vec<Fr>,
     polys: Vec<Vec<Fr>>,
-    desc: KernelDescriptor,
+    formula: CompositionFormula,
     challenges: Vec<Fr>,
 }
 
 fn prepare_standard_grid(
-    desc: KernelDescriptor,
+    formula: CompositionFormula,
     num_polys: usize,
     challenges: Vec<Fr>,
 ) -> StandardGridData {
@@ -127,7 +126,7 @@ fn prepare_standard_grid(
     StandardGridData {
         eq_table: EqPolynomial::new(r).evaluations(),
         polys: (0..num_polys).map(|_| random_fr(&mut rng, n)).collect(),
-        desc,
+        formula,
         challenges,
     }
 }
@@ -137,9 +136,9 @@ fn build_standard_grid_witness<B: ComputeBackend>(
     backend: &Arc<B>,
 ) -> (KernelEvaluator<Fr, B>, SumcheckClaim<Fr>) {
     let kernel = if data.challenges.is_empty() {
-        backend.compile_kernel::<Fr>(&data.desc)
+        backend.compile_kernel::<Fr>(&data.formula)
     } else {
-        backend.compile_kernel_with_challenges::<Fr>(&data.desc, &data.challenges)
+        backend.compile_kernel_with_challenges::<Fr>(&data.formula, &data.challenges)
     };
 
     let mut inputs: Vec<_> = vec![backend.upload(&data.eq_table)];
@@ -149,12 +148,12 @@ fn build_standard_grid_witness<B: ComputeBackend>(
     let witness = KernelEvaluator::with_unit_weights(
         inputs,
         kernel,
-        data.desc.num_evals(),
+        data.formula.degree(),
         Arc::clone(backend),
     );
     let claim = SumcheckClaim {
         num_vars: NUM_VARS,
-        degree: data.desc.degree,
+        degree: data.formula.degree(),
         claimed_sum,
     };
     (witness, claim)
@@ -208,12 +207,12 @@ fn bench_toom_cook(c: &mut Criterion, name: &str, d: usize, num_products: usize)
 fn bench_standard_grid(
     c: &mut Criterion,
     name: &str,
-    desc: KernelDescriptor,
+    formula: CompositionFormula,
     num_polys: usize,
     challenges: Vec<Fr>,
 ) {
     let mut group = c.benchmark_group(format!("e2e/{name}"));
-    let data = prepare_standard_grid(desc, num_polys, challenges);
+    let data = prepare_standard_grid(formula, num_polys, challenges);
 
     let cpu: Arc<CpuBackend> = Arc::new(CpuBackend);
     group.bench_function(BenchmarkId::new("cpu", ""), |b| {

@@ -43,11 +43,9 @@ Core device abstraction with associated types:
 | `interpolate_pairs_batch` | Batched `interpolate_pairs` across multiple buffers |
 | `interpolate_pairs_inplace` | In-place pairwise interpolation with `BindingOrder` |
 | `interpolate_pairs_batch_inplace` | Batched in-place interpolation |
-| `pairwise_reduce` | Weighted kernel evaluation over pairs with `BindingOrder` → `Vec<F>` |
+| `pairwise_reduce` | Kernel evaluation over pairs with `EqInput` weighting and `BindingOrder` → `Vec<F>` |
 | `pairwise_reduce_fixed<const D>` | Const-generic reduce with stack-allocated `[F; D]` |
 | `pairwise_reduce_multi` | Single-pass multi-kernel evaluation over shared inputs |
-| `tensor_pairwise_reduce` | Split-eq factored-weight reduce (outer × inner) |
-| `tensor_pairwise_reduce_fixed<const D>` | Const-generic tensor reduce |
 | `product_table` | Multiplicative product table over Boolean hypercube (eq polynomial) |
 | `sum` | Sum all buffer elements → scalar |
 | `dot_product` | Inner product of two buffers → scalar |
@@ -119,7 +117,7 @@ Fixed-D helps most at D=4 (medium sizes) and D=16 (stack arrays replace heap).
 At D=8 the benefit is marginal — the dynamic version already amortizes Vec
 allocation across the Rayon fold.
 
-### `tensor_pairwise_reduce` — split-eq factored weights vs flat
+### `pairwise_reduce` with `EqInput::Tensor` — split-eq factored weights vs flat
 
 | Split (outer+inner) | Flat | Tensor | Tensor Fixed |
 |---------------------|------|--------|--------------|

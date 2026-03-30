@@ -9,9 +9,9 @@ description = "Apple Metal GPU compute backend for the Jolt zkVM"
 workspace = true
 
 [dependencies]
+jolt-compiler = { path = "../jolt-compiler" }
 jolt-compute = { path = "../jolt-compute", default-features = false }
 jolt-field = { path = "../jolt-field", default-features = false, features = ["bn254"] }
-jolt-ir = { path = "../jolt-ir", default-features = false }
 metal = "0.31"
 objc = "0.2"
 block = "0.1"

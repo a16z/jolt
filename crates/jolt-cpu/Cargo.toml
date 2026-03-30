@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 jolt-field = { path = "../jolt-field", default-features = false }
+jolt-compiler = { path = "../jolt-compiler" }
 jolt-ir = { path = "../jolt-ir" }
 jolt-compute = { path = "../jolt-compute" }
 tracing.workspace = true

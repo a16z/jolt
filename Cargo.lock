@@ -907,6 +907,12 @@ checksum = "4c7f02d4ea65f2c1853089ffd8d2787bdbc63de2f0d29dedbcf8ccdfa0ccd4cf"
 
 [[package]]
 name = "base64"
+version = "0.21.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567"
+
+[[package]]
+name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
@@ -2521,7 +2527,7 @@ version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "96547c2556ec9d12fb1578c4eaf448b04993e7fb79cbaad930a656880a6bdfa0"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "bytes",
  "futures-channel",
  "futures-util",
@@ -2952,13 +2958,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-compiler"
+version = "0.1.0"
+dependencies = [
+ "ron",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "jolt-compute"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "jolt-compiler",
  "jolt-cpu",
  "jolt-field",
- "jolt-ir",
  "jolt-poly",
  "num-traits",
  "rand 0.8.5",
@@ -3021,6 +3036,7 @@ name = "jolt-cpu"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "jolt-compiler",
  "jolt-compute",
  "jolt-field",
  "jolt-ir",
@@ -3240,6 +3256,7 @@ version = "0.1.0"
 dependencies = [
  "block",
  "criterion",
+ "jolt-compiler",
  "jolt-compute",
  "jolt-cpu",
  "jolt-field",
@@ -3333,6 +3350,22 @@ dependencies = [
  "tracing",
  "tracing-chrome",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "jolt-r1cs"
+version = "0.1.0"
+dependencies = [
+ "jolt-field",
+ "jolt-ir",
+ "jolt-poly",
+ "num-traits",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "serde",
+ "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
@@ -3480,6 +3513,7 @@ dependencies = [
 name = "jolt-zkvm"
 version = "0.1.0"
 dependencies = [
+ "jolt-compiler",
  "jolt-compute",
  "jolt-cpu",
  "jolt-crypto",
@@ -5003,7 +5037,7 @@ version = "0.12.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "bytes",
  "futures-channel",
  "futures-core",
@@ -5223,6 +5257,18 @@ checksum = "bb919243f34364b6bd2fc10ef797edbfa75f33c252e7998527479c6d6b47e1ec"
 dependencies = [
  "bytes",
  "rustc-hex",
+]
+
+[[package]]
+name = "ron"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b91f7eff05f748767f183df4320a63d6936e9c6107d97c9e6bdd9784f4289c94"
+dependencies = [
+ "base64 0.21.7",
+ "bitflags 2.11.0",
+ "serde",
+ "serde_derive",
 ]
 
 [[package]]
@@ -5570,7 +5616,7 @@ version = "3.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "381b283ce7bc6b476d903296fb59d0d36633652b633b27f64db4fb46dcbfc3b9"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "chrono",
  "hex",
  "indexmap 1.9.3",

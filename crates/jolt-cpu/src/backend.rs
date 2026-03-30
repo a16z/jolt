@@ -2,7 +2,7 @@
 
 use jolt_field::{Field, FieldAccumulator};
 
-use jolt_compute::{BindingOrder, ComputeBackend, Scalar};
+use jolt_compute::{BackendWitness, BindingOrder, ComputeBackend, EqInput, RoundCoeffs, Scalar};
 
 /// Parallelism threshold: buffers smaller than this use sequential loops.
 ///
@@ -46,6 +46,27 @@ impl<F: Field> CpuKernel<F> {
     }
 }
 
+/// CPU sumcheck witness produced by [`CpuBackend::make_witness`].
+///
+/// Holds a compiled kernel, input buffers, and challenge values. The actual
+/// round-polynomial and bind logic will be implemented in Phase 2; for now
+/// all trait methods panic.
+pub struct CpuSumcheckWitness<F: Field> {
+    _kernel: CpuKernel<F>,
+    _inputs: Vec<Vec<F>>,
+    _challenges: Vec<F>,
+}
+
+impl<F: Field> BackendWitness<F> for CpuSumcheckWitness<F> {
+    fn round_polynomial(&self) -> RoundCoeffs<F> {
+        panic!("CpuSumcheckWitness::round_polynomial not yet implemented (Phase 2)")
+    }
+
+    fn bind(&mut self, _challenge: F) {
+        panic!("CpuSumcheckWitness::bind not yet implemented (Phase 2)")
+    }
+}
+
 /// Implements [`ComputeBackend`] with `Buffer<T> = Vec<T>`. All operations
 /// use Rayon for parallelism (when the `parallel` feature is enabled and
 /// buffers exceed `PAR_THRESHOLD`).
@@ -57,13 +78,15 @@ pub struct CpuBackend;
 impl ComputeBackend for CpuBackend {
     type Buffer<T: Scalar> = Vec<T>;
     type CompiledKernel<F: Field> = CpuKernel<F>;
+    type SumcheckWitness<F: Field> = CpuSumcheckWitness<F>;
+    type SparseBuffer<F: Field> = Vec<(usize, Vec<F>)>;
 
     fn compile_kernel_with_challenges<F: Field>(
         &self,
-        desc: &jolt_ir::KernelDescriptor,
+        formula: &jolt_compiler::CompositionFormula,
         challenges: &[F],
     ) -> CpuKernel<F> {
-        crate::compile_with_challenges(desc, challenges)
+        crate::compile_with_challenges(formula, challenges)
     }
 
     #[inline]
@@ -261,542 +284,63 @@ impl ComputeBackend for CpuBackend {
     fn pairwise_reduce_fixed<F: Field, const D: usize>(
         &self,
         inputs: &[&Vec<F>],
-        weights: &Vec<F>,
+        eq: EqInput<'_, Self, F>,
         kernel: &CpuKernel<F>,
         order: BindingOrder,
     ) -> [F; D] {
-        let n = inputs[0].len();
-        debug_assert!(n.is_multiple_of(2), "buffer length must be even");
-        let half = n / 2;
-        let num_inputs = inputs.len();
-
-        let new_accs = || [F::Accumulator::default(); D];
-
-        let pair = |input: &[F], i: usize| -> (F, F) {
-            match order {
-                BindingOrder::LowToHigh => (input[2 * i], input[2 * i + 1]),
-                BindingOrder::HighToLow => (input[i], input[i + half]),
+        match eq {
+            EqInput::Weighted(weights) => {
+                pairwise_reduce_fixed_weighted(inputs, weights, kernel, order)
             }
-        };
-
-        #[cfg(feature = "parallel")]
-        {
-            if half >= PAR_THRESHOLD {
-                use rayon::prelude::*;
-
-                let accs = (0..half)
-                    .into_par_iter()
-                    .fold(
-                        || {
-                            (
-                                new_accs(),
-                                Vec::with_capacity(num_inputs),
-                                Vec::with_capacity(num_inputs),
-                                [F::zero(); D],
-                            )
-                        },
-                        |(mut acc, mut lo, mut hi, mut evals), i| {
-                            lo.clear();
-                            hi.clear();
-                            for &input in inputs {
-                                let (l, h) = pair(input, i);
-                                lo.push(l);
-                                hi.push(h);
-                            }
-
-                            kernel.evaluate(&lo, &hi, &mut evals);
-                            let w = weights[i];
-                            for (a, e) in acc.iter_mut().zip(evals.iter()) {
-                                a.fmadd(w, *e);
-                            }
-                            (acc, lo, hi, evals)
-                        },
-                    )
-                    .map(|(acc, _, _, _)| acc)
-                    .reduce(new_accs, |mut a, b| {
-                        for (ai, bi) in a.iter_mut().zip(b) {
-                            ai.merge(bi);
-                        }
-                        a
-                    });
-
-                return accs.map(FieldAccumulator::reduce);
+            EqInput::Tensor { outer, inner } => {
+                pairwise_reduce_fixed_tensor(inputs, outer, inner, kernel)
+            }
+            EqInput::Unit => {
+                let v = self.pairwise_reduce(inputs, EqInput::Unit, kernel, D, order);
+                core::array::from_fn(|i| v[i])
             }
         }
-
-        let mut accs = new_accs();
-        let mut lo = Vec::with_capacity(num_inputs);
-        let mut hi = Vec::with_capacity(num_inputs);
-        let mut evals = [F::zero(); D];
-
-        for (i, &w) in weights.iter().enumerate() {
-            lo.clear();
-            hi.clear();
-            for &input in inputs {
-                let (l, h) = pair(input, i);
-                lo.push(l);
-                hi.push(h);
-            }
-
-            kernel.evaluate(&lo, &hi, &mut evals);
-            for (a, e) in accs.iter_mut().zip(evals.iter()) {
-                a.fmadd(w, *e);
-            }
-        }
-
-        accs.map(FieldAccumulator::reduce)
-    }
-
-    #[tracing::instrument(skip_all, name = "CpuBackend::tensor_pairwise_reduce")]
-    fn tensor_pairwise_reduce<F: Field>(
-        &self,
-        inputs: &[&Vec<F>],
-        outer_weights: &Vec<F>,
-        inner_weights: &Vec<F>,
-        kernel: &CpuKernel<F>,
-        num_evals: usize,
-    ) -> Vec<F> {
-        let inner_len = inner_weights.len();
-        let num_inputs = inputs.len();
-        let total_pairs = outer_weights.len() * inner_len;
-
-        let new_accs = || -> Vec<F::Accumulator> { vec![F::Accumulator::default(); num_evals] };
-
-        let inner_fold = |outer_acc: &mut Vec<F::Accumulator>,
-                          lo: &mut Vec<F>,
-                          hi: &mut Vec<F>,
-                          evals: &mut Vec<F>,
-                          x_out: usize| {
-            let mut inner_acc = new_accs();
-            for (x_in, &w_in) in inner_weights.iter().enumerate() {
-                let g = x_out * inner_len + x_in;
-                lo.clear();
-                hi.clear();
-                for &input in inputs {
-                    lo.push(input[2 * g]);
-                    hi.push(input[2 * g + 1]);
-                }
-                kernel.evaluate(lo, hi, evals);
-                for (a, e) in inner_acc.iter_mut().zip(evals.iter()) {
-                    a.fmadd(w_in, *e);
-                }
-            }
-            let w_out = outer_weights[x_out];
-            for (oa, ia) in outer_acc.iter_mut().zip(inner_acc.iter()) {
-                oa.fmadd(w_out, ia.reduce());
-            }
-        };
-
-        #[cfg(feature = "parallel")]
-        {
-            if total_pairs >= PAR_THRESHOLD {
-                use rayon::prelude::*;
-
-                let accs = (0..outer_weights.len())
-                    .into_par_iter()
-                    .fold(
-                        || {
-                            (
-                                new_accs(),
-                                Vec::with_capacity(num_inputs),
-                                Vec::with_capacity(num_inputs),
-                                vec![F::zero(); num_evals],
-                            )
-                        },
-                        |(mut outer_acc, mut lo, mut hi, mut evals), x_out| {
-                            inner_fold(&mut outer_acc, &mut lo, &mut hi, &mut evals, x_out);
-                            (outer_acc, lo, hi, evals)
-                        },
-                    )
-                    .map(|(acc, _, _, _)| acc)
-                    .reduce(new_accs, |mut a, b| {
-                        for (ai, bi) in a.iter_mut().zip(b) {
-                            ai.merge(bi);
-                        }
-                        a
-                    });
-
-                return accs.into_iter().map(FieldAccumulator::reduce).collect();
-            }
-        }
-
-        let mut outer_acc = new_accs();
-        let mut lo = Vec::with_capacity(num_inputs);
-        let mut hi = Vec::with_capacity(num_inputs);
-        let mut evals = vec![F::zero(); num_evals];
-
-        for x_out in 0..outer_weights.len() {
-            inner_fold(&mut outer_acc, &mut lo, &mut hi, &mut evals, x_out);
-        }
-
-        outer_acc
-            .into_iter()
-            .map(FieldAccumulator::reduce)
-            .collect()
-    }
-
-    fn tensor_pairwise_reduce_fixed<F: Field, const D: usize>(
-        &self,
-        inputs: &[&Vec<F>],
-        outer_weights: &Vec<F>,
-        inner_weights: &Vec<F>,
-        kernel: &CpuKernel<F>,
-    ) -> [F; D] {
-        let inner_len = inner_weights.len();
-        let num_inputs = inputs.len();
-        let total_pairs = outer_weights.len() * inner_len;
-
-        let new_accs = || [F::Accumulator::default(); D];
-
-        let inner_fold = |outer_acc: &mut [F::Accumulator; D],
-                          lo: &mut Vec<F>,
-                          hi: &mut Vec<F>,
-                          evals: &mut [F; D],
-                          x_out: usize| {
-            let mut inner_acc = new_accs();
-            for (x_in, &w_in) in inner_weights.iter().enumerate() {
-                let g = x_out * inner_len + x_in;
-                lo.clear();
-                hi.clear();
-                for &input in inputs {
-                    lo.push(input[2 * g]);
-                    hi.push(input[2 * g + 1]);
-                }
-                kernel.evaluate(lo, hi, evals);
-                for (a, e) in inner_acc.iter_mut().zip(evals.iter()) {
-                    a.fmadd(w_in, *e);
-                }
-            }
-            let w_out = outer_weights[x_out];
-            for (oa, ia) in outer_acc.iter_mut().zip(inner_acc.iter()) {
-                oa.fmadd(w_out, ia.reduce());
-            }
-        };
-
-        #[cfg(feature = "parallel")]
-        {
-            if total_pairs >= PAR_THRESHOLD {
-                use rayon::prelude::*;
-
-                let accs = (0..outer_weights.len())
-                    .into_par_iter()
-                    .fold(
-                        || {
-                            (
-                                new_accs(),
-                                Vec::with_capacity(num_inputs),
-                                Vec::with_capacity(num_inputs),
-                                [F::zero(); D],
-                            )
-                        },
-                        |(mut outer_acc, mut lo, mut hi, mut evals), x_out| {
-                            inner_fold(&mut outer_acc, &mut lo, &mut hi, &mut evals, x_out);
-                            (outer_acc, lo, hi, evals)
-                        },
-                    )
-                    .map(|(acc, _, _, _)| acc)
-                    .reduce(new_accs, |mut a, b| {
-                        for (ai, bi) in a.iter_mut().zip(b) {
-                            ai.merge(bi);
-                        }
-                        a
-                    });
-
-                return accs.map(FieldAccumulator::reduce);
-            }
-        }
-
-        let mut outer_acc = new_accs();
-        let mut lo = Vec::with_capacity(num_inputs);
-        let mut hi = Vec::with_capacity(num_inputs);
-        let mut evals = [F::zero(); D];
-
-        for x_out in 0..outer_weights.len() {
-            inner_fold(&mut outer_acc, &mut lo, &mut hi, &mut evals, x_out);
-        }
-
-        outer_acc.map(FieldAccumulator::reduce)
     }
 
     #[tracing::instrument(skip_all, name = "CpuBackend::pairwise_reduce_multi")]
     fn pairwise_reduce_multi<F: Field>(
         &self,
         inputs: &[&Vec<F>],
-        weights: &Vec<F>,
+        eq: EqInput<'_, Self, F>,
         kernels: &[(&CpuKernel<F>, usize)],
         order: BindingOrder,
     ) -> Vec<Vec<F>> {
-        let n = inputs[0].len();
-        debug_assert!(n.is_multiple_of(2), "buffer length must be even");
-        let half = n / 2;
-        let num_inputs = inputs.len();
-        let num_kernels = kernels.len();
-
-        let new_all_accs = || -> Vec<Vec<F::Accumulator>> {
-            kernels
+        match eq {
+            EqInput::Weighted(weights) => {
+                pairwise_reduce_multi_weighted(inputs, weights, kernels, order)
+            }
+            EqInput::Unit | EqInput::Tensor { .. } => kernels
                 .iter()
-                .map(|(_, num_evals)| vec![F::Accumulator::default(); *num_evals])
-                .collect()
-        };
-
-        let pair = |input: &[F], i: usize| -> (F, F) {
-            match order {
-                BindingOrder::LowToHigh => (input[2 * i], input[2 * i + 1]),
-                BindingOrder::HighToLow => (input[i], input[i + half]),
-            }
-        };
-
-        #[cfg(feature = "parallel")]
-        {
-            if half >= PAR_THRESHOLD {
-                use rayon::prelude::*;
-
-                let all_accs = (0..half)
-                    .into_par_iter()
-                    .fold(
-                        || {
-                            let accs = new_all_accs();
-                            let lo = vec![F::zero(); num_inputs];
-                            let hi = vec![F::zero(); num_inputs];
-                            let evals_bufs: Vec<Vec<F>> =
-                                kernels.iter().map(|(_, ne)| vec![F::zero(); *ne]).collect();
-                            (accs, lo, hi, evals_bufs)
-                        },
-                        |(mut accs, mut lo, mut hi, mut evals_bufs), i| {
-                            for (k, &input) in inputs.iter().enumerate() {
-                                let (l, h) = pair(input, i);
-                                lo[k] = l;
-                                hi[k] = h;
-                            }
-
-                            let w = weights[i];
-                            for k in 0..num_kernels {
-                                kernels[k].0.evaluate(&lo, &hi, &mut evals_bufs[k]);
-                                for (a, e) in accs[k].iter_mut().zip(evals_bufs[k].iter()) {
-                                    a.fmadd(w, *e);
-                                }
-                            }
-                            (accs, lo, hi, evals_bufs)
-                        },
-                    )
-                    .map(|(accs, _, _, _)| accs)
-                    .reduce(new_all_accs, |mut a, b| {
-                        for (ak, bk) in a.iter_mut().zip(b) {
-                            for (ai, bi) in ak.iter_mut().zip(bk) {
-                                ai.merge(bi);
-                            }
-                        }
-                        a
-                    });
-
-                return all_accs
-                    .into_iter()
-                    .map(|accs| accs.into_iter().map(FieldAccumulator::reduce).collect())
-                    .collect();
-            }
+                .map(|(kernel, num_evals)| {
+                    self.pairwise_reduce(inputs, eq, kernel, *num_evals, order)
+                })
+                .collect(),
         }
-
-        let mut all_accs = new_all_accs();
-        let mut lo = vec![F::zero(); num_inputs];
-        let mut hi = vec![F::zero(); num_inputs];
-        let mut evals_bufs: Vec<Vec<F>> =
-            kernels.iter().map(|(_, ne)| vec![F::zero(); *ne]).collect();
-
-        for (i, &w) in weights.iter().enumerate() {
-            for (k, &input) in inputs.iter().enumerate() {
-                let (l, h) = pair(input, i);
-                lo[k] = l;
-                hi[k] = h;
-            }
-
-            for k in 0..num_kernels {
-                kernels[k].0.evaluate(&lo, &hi, &mut evals_bufs[k]);
-                for (a, e) in all_accs[k].iter_mut().zip(evals_bufs[k].iter()) {
-                    a.fmadd(w, *e);
-                }
-            }
-        }
-
-        all_accs
-            .into_iter()
-            .map(|accs| accs.into_iter().map(FieldAccumulator::reduce).collect())
-            .collect()
     }
 
     #[tracing::instrument(skip_all, name = "CpuBackend::pairwise_reduce")]
     fn pairwise_reduce<F: Field>(
         &self,
         inputs: &[&Vec<F>],
-        weights: &Vec<F>,
+        eq: EqInput<'_, Self, F>,
         kernel: &Self::CompiledKernel<F>,
         num_evals: usize,
         order: BindingOrder,
     ) -> Vec<F> {
-        let n = inputs[0].len();
-        debug_assert!(n.is_multiple_of(2), "buffer length must be even");
-        let half = n / 2;
-        let num_inputs = inputs.len();
-
-        let new_accs = || -> Vec<F::Accumulator> {
-            (0..num_evals).map(|_| F::Accumulator::default()).collect()
-        };
-
-        let pair = |input: &[F], i: usize| -> (F, F) {
-            match order {
-                BindingOrder::LowToHigh => (input[2 * i], input[2 * i + 1]),
-                BindingOrder::HighToLow => (input[i], input[i + half]),
+        match eq {
+            EqInput::Weighted(weights) => {
+                pairwise_reduce_weighted(inputs, weights, kernel, num_evals, order)
             }
-        };
-
-        #[cfg(feature = "parallel")]
-        {
-            if half >= PAR_THRESHOLD {
-                use rayon::prelude::*;
-
-                let accs = (0..half)
-                    .into_par_iter()
-                    .fold(
-                        || {
-                            (
-                                new_accs(),
-                                vec![F::zero(); num_inputs],
-                                vec![F::zero(); num_inputs],
-                                vec![F::zero(); num_evals],
-                            )
-                        },
-                        |(mut acc, mut lo, mut hi, mut evals), i| {
-                            for (k, &input) in inputs.iter().enumerate() {
-                                let (l, h) = pair(input, i);
-                                lo[k] = l;
-                                hi[k] = h;
-                            }
-
-                            kernel.evaluate(&lo, &hi, &mut evals);
-                            let w = weights[i];
-                            for (a, e) in acc.iter_mut().zip(evals.iter()) {
-                                a.fmadd(w, *e);
-                            }
-                            (acc, lo, hi, evals)
-                        },
-                    )
-                    .map(|(acc, _, _, _)| acc)
-                    .reduce(new_accs, |mut a, b| {
-                        for (ai, bi) in a.iter_mut().zip(b) {
-                            ai.merge(bi);
-                        }
-                        a
-                    });
-
-                return accs.into_iter().map(FieldAccumulator::reduce).collect();
+            EqInput::Unit => pairwise_reduce_unit(inputs, kernel, num_evals, order),
+            EqInput::Tensor { outer, inner } => {
+                pairwise_reduce_tensor(inputs, outer, inner, kernel, num_evals)
             }
         }
-
-        let mut accs = new_accs();
-        let mut lo = vec![F::zero(); num_inputs];
-        let mut hi = vec![F::zero(); num_inputs];
-        let mut evals = vec![F::zero(); num_evals];
-
-        for (i, &w) in weights.iter().enumerate() {
-            for (k, &input) in inputs.iter().enumerate() {
-                let (l, h) = pair(input, i);
-                lo[k] = l;
-                hi[k] = h;
-            }
-
-            kernel.evaluate(&lo, &hi, &mut evals);
-            for (a, e) in accs.iter_mut().zip(evals.iter()) {
-                a.fmadd(w, *e);
-            }
-        }
-
-        accs.into_iter().map(FieldAccumulator::reduce).collect()
-    }
-
-    fn pairwise_reduce_unweighted<F: Field>(
-        &self,
-        inputs: &[&Vec<F>],
-        kernel: &Self::CompiledKernel<F>,
-        num_evals: usize,
-        order: BindingOrder,
-    ) -> Vec<F> {
-        let n = inputs[0].len();
-        debug_assert!(n.is_multiple_of(2), "buffer length must be even");
-        let half = n / 2;
-        let num_inputs = inputs.len();
-        let one = F::one();
-
-        let new_accs = || -> Vec<F::Accumulator> {
-            (0..num_evals).map(|_| F::Accumulator::default()).collect()
-        };
-
-        let pair = |input: &[F], i: usize| -> (F, F) {
-            match order {
-                BindingOrder::LowToHigh => (input[2 * i], input[2 * i + 1]),
-                BindingOrder::HighToLow => (input[i], input[i + half]),
-            }
-        };
-
-        #[cfg(feature = "parallel")]
-        {
-            if half >= PAR_THRESHOLD {
-                use rayon::prelude::*;
-
-                let accs = (0..half)
-                    .into_par_iter()
-                    .fold(
-                        || {
-                            (
-                                new_accs(),
-                                vec![F::zero(); num_inputs],
-                                vec![F::zero(); num_inputs],
-                                vec![F::zero(); num_evals],
-                            )
-                        },
-                        |(mut acc, mut lo, mut hi, mut evals), i| {
-                            for (k, &input) in inputs.iter().enumerate() {
-                                let (l, h) = pair(input, i);
-                                lo[k] = l;
-                                hi[k] = h;
-                            }
-
-                            kernel.evaluate(&lo, &hi, &mut evals);
-                            for (a, e) in acc.iter_mut().zip(evals.iter()) {
-                                a.fmadd(one, *e);
-                            }
-                            (acc, lo, hi, evals)
-                        },
-                    )
-                    .map(|(acc, _, _, _)| acc)
-                    .reduce(new_accs, |mut a, b| {
-                        for (ai, bi) in a.iter_mut().zip(b) {
-                            ai.merge(bi);
-                        }
-                        a
-                    });
-
-                return accs.into_iter().map(FieldAccumulator::reduce).collect();
-            }
-        }
-
-        let mut accs = new_accs();
-        let mut lo = vec![F::zero(); num_inputs];
-        let mut hi = vec![F::zero(); num_inputs];
-        let mut evals = vec![F::zero(); num_evals];
-
-        for i in 0..half {
-            for (k, &input) in inputs.iter().enumerate() {
-                let (l, h) = pair(input, i);
-                lo[k] = l;
-                hi[k] = h;
-            }
-
-            kernel.evaluate(&lo, &hi, &mut evals);
-            for (a, e) in accs.iter_mut().zip(evals.iter()) {
-                a.fmadd(one, *e);
-            }
-        }
-
-        accs.into_iter().map(FieldAccumulator::reduce).collect()
     }
 
     #[tracing::instrument(skip_all, name = "CpuBackend::product_table")]
@@ -1023,6 +567,596 @@ impl ComputeBackend for CpuBackend {
             }
         }
     }
+
+    fn make_witness<F: Field>(
+        &self,
+        kernel: &CpuKernel<F>,
+        inputs: Vec<Vec<F>>,
+        challenges: &[F],
+    ) -> CpuSumcheckWitness<F> {
+        // Phase 2 will set up actual bind/reduce state using the kernel.
+        let _ = kernel;
+        CpuSumcheckWitness {
+            _kernel: CpuKernel::new(|_lo, _hi, _out| {
+                panic!("CpuSumcheckWitness kernel eval not yet implemented (Phase 2)")
+            }),
+            _inputs: inputs,
+            _challenges: challenges.to_vec(),
+        }
+    }
+
+    #[inline]
+    fn upload_sparse<F: Field>(&self, entries: &[(usize, Vec<F>)]) -> Vec<(usize, Vec<F>)> {
+        entries.to_vec()
+    }
+
+    fn sparse_reduce<F: Field>(
+        &self,
+        _entries: &Vec<(usize, Vec<F>)>,
+        _eq: &Vec<F>,
+        _kernel: &CpuKernel<F>,
+        _challenges: &[F],
+        _num_evals: usize,
+    ) -> Vec<F> {
+        panic!("CpuBackend::sparse_reduce not yet implemented (Phase 2)")
+    }
+
+    fn sparse_bind<F: Field>(
+        &self,
+        _entries: &mut Vec<(usize, Vec<F>)>,
+        _challenge: F,
+        _order: BindingOrder,
+    ) {
+        panic!("CpuBackend::sparse_bind not yet implemented (Phase 2)")
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Free-standing helpers: these contain the real Rayon-parallel logic for each
+// EqInput variant.  The trait methods above dispatch into these.
+// ---------------------------------------------------------------------------
+
+/// Weighted pairwise reduce (dynamic num_evals).
+#[allow(clippy::ptr_arg)]
+#[tracing::instrument(skip_all, name = "pairwise_reduce_weighted")]
+fn pairwise_reduce_weighted<F: Field>(
+    inputs: &[&Vec<F>],
+    weights: &[F],
+    kernel: &CpuKernel<F>,
+    num_evals: usize,
+    order: BindingOrder,
+) -> Vec<F> {
+    let n = inputs[0].len();
+    debug_assert!(n.is_multiple_of(2), "buffer length must be even");
+    let half = n / 2;
+    let num_inputs = inputs.len();
+
+    let new_accs =
+        || -> Vec<F::Accumulator> { (0..num_evals).map(|_| F::Accumulator::default()).collect() };
+
+    let pair = |input: &[F], i: usize| -> (F, F) {
+        match order {
+            BindingOrder::LowToHigh => (input[2 * i], input[2 * i + 1]),
+            BindingOrder::HighToLow => (input[i], input[i + half]),
+        }
+    };
+
+    #[cfg(feature = "parallel")]
+    {
+        if half >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+
+            let accs = (0..half)
+                .into_par_iter()
+                .fold(
+                    || {
+                        (
+                            new_accs(),
+                            vec![F::zero(); num_inputs],
+                            vec![F::zero(); num_inputs],
+                            vec![F::zero(); num_evals],
+                        )
+                    },
+                    |(mut acc, mut lo, mut hi, mut evals), i| {
+                        for (k, &input) in inputs.iter().enumerate() {
+                            let (l, h) = pair(input, i);
+                            lo[k] = l;
+                            hi[k] = h;
+                        }
+
+                        kernel.evaluate(&lo, &hi, &mut evals);
+                        let w = weights[i];
+                        for (a, e) in acc.iter_mut().zip(evals.iter()) {
+                            a.fmadd(w, *e);
+                        }
+                        (acc, lo, hi, evals)
+                    },
+                )
+                .map(|(acc, _, _, _)| acc)
+                .reduce(new_accs, |mut a, b| {
+                    for (ai, bi) in a.iter_mut().zip(b) {
+                        ai.merge(bi);
+                    }
+                    a
+                });
+
+            return accs.into_iter().map(FieldAccumulator::reduce).collect();
+        }
+    }
+
+    let mut accs = new_accs();
+    let mut lo = vec![F::zero(); num_inputs];
+    let mut hi = vec![F::zero(); num_inputs];
+    let mut evals = vec![F::zero(); num_evals];
+
+    for (i, &w) in weights.iter().enumerate() {
+        for (k, &input) in inputs.iter().enumerate() {
+            let (l, h) = pair(input, i);
+            lo[k] = l;
+            hi[k] = h;
+        }
+
+        kernel.evaluate(&lo, &hi, &mut evals);
+        for (a, e) in accs.iter_mut().zip(evals.iter()) {
+            a.fmadd(w, *e);
+        }
+    }
+
+    accs.into_iter().map(FieldAccumulator::reduce).collect()
+}
+
+/// Unit (unweighted) pairwise reduce.
+#[allow(clippy::ptr_arg)]
+fn pairwise_reduce_unit<F: Field>(
+    inputs: &[&Vec<F>],
+    kernel: &CpuKernel<F>,
+    num_evals: usize,
+    order: BindingOrder,
+) -> Vec<F> {
+    let n = inputs[0].len();
+    debug_assert!(n.is_multiple_of(2), "buffer length must be even");
+    let half = n / 2;
+    let num_inputs = inputs.len();
+    let one = F::one();
+
+    let new_accs =
+        || -> Vec<F::Accumulator> { (0..num_evals).map(|_| F::Accumulator::default()).collect() };
+
+    let pair = |input: &[F], i: usize| -> (F, F) {
+        match order {
+            BindingOrder::LowToHigh => (input[2 * i], input[2 * i + 1]),
+            BindingOrder::HighToLow => (input[i], input[i + half]),
+        }
+    };
+
+    #[cfg(feature = "parallel")]
+    {
+        if half >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+
+            let accs = (0..half)
+                .into_par_iter()
+                .fold(
+                    || {
+                        (
+                            new_accs(),
+                            vec![F::zero(); num_inputs],
+                            vec![F::zero(); num_inputs],
+                            vec![F::zero(); num_evals],
+                        )
+                    },
+                    |(mut acc, mut lo, mut hi, mut evals), i| {
+                        for (k, &input) in inputs.iter().enumerate() {
+                            let (l, h) = pair(input, i);
+                            lo[k] = l;
+                            hi[k] = h;
+                        }
+
+                        kernel.evaluate(&lo, &hi, &mut evals);
+                        for (a, e) in acc.iter_mut().zip(evals.iter()) {
+                            a.fmadd(one, *e);
+                        }
+                        (acc, lo, hi, evals)
+                    },
+                )
+                .map(|(acc, _, _, _)| acc)
+                .reduce(new_accs, |mut a, b| {
+                    for (ai, bi) in a.iter_mut().zip(b) {
+                        ai.merge(bi);
+                    }
+                    a
+                });
+
+            return accs.into_iter().map(FieldAccumulator::reduce).collect();
+        }
+    }
+
+    let mut accs = new_accs();
+    let mut lo = vec![F::zero(); num_inputs];
+    let mut hi = vec![F::zero(); num_inputs];
+    let mut evals = vec![F::zero(); num_evals];
+
+    for i in 0..half {
+        for (k, &input) in inputs.iter().enumerate() {
+            let (l, h) = pair(input, i);
+            lo[k] = l;
+            hi[k] = h;
+        }
+
+        kernel.evaluate(&lo, &hi, &mut evals);
+        for (a, e) in accs.iter_mut().zip(evals.iter()) {
+            a.fmadd(one, *e);
+        }
+    }
+
+    accs.into_iter().map(FieldAccumulator::reduce).collect()
+}
+
+/// Tensor (split-eq) pairwise reduce. Always uses LowToHigh binding.
+#[allow(clippy::ptr_arg)]
+#[tracing::instrument(skip_all, name = "pairwise_reduce_tensor")]
+fn pairwise_reduce_tensor<F: Field>(
+    inputs: &[&Vec<F>],
+    outer_weights: &[F],
+    inner_weights: &[F],
+    kernel: &CpuKernel<F>,
+    num_evals: usize,
+) -> Vec<F> {
+    let inner_len = inner_weights.len();
+    let num_inputs = inputs.len();
+    let total_pairs = outer_weights.len() * inner_len;
+
+    let new_accs = || -> Vec<F::Accumulator> { vec![F::Accumulator::default(); num_evals] };
+
+    let inner_fold = |outer_acc: &mut Vec<F::Accumulator>,
+                      lo: &mut Vec<F>,
+                      hi: &mut Vec<F>,
+                      evals: &mut Vec<F>,
+                      x_out: usize| {
+        let mut inner_acc = new_accs();
+        for (x_in, &w_in) in inner_weights.iter().enumerate() {
+            let g = x_out * inner_len + x_in;
+            lo.clear();
+            hi.clear();
+            for &input in inputs {
+                lo.push(input[2 * g]);
+                hi.push(input[2 * g + 1]);
+            }
+            kernel.evaluate(lo, hi, evals);
+            for (a, e) in inner_acc.iter_mut().zip(evals.iter()) {
+                a.fmadd(w_in, *e);
+            }
+        }
+        let w_out = outer_weights[x_out];
+        for (oa, ia) in outer_acc.iter_mut().zip(inner_acc.iter()) {
+            oa.fmadd(w_out, ia.reduce());
+        }
+    };
+
+    #[cfg(feature = "parallel")]
+    {
+        if total_pairs >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+
+            let accs = (0..outer_weights.len())
+                .into_par_iter()
+                .fold(
+                    || {
+                        (
+                            new_accs(),
+                            Vec::with_capacity(num_inputs),
+                            Vec::with_capacity(num_inputs),
+                            vec![F::zero(); num_evals],
+                        )
+                    },
+                    |(mut outer_acc, mut lo, mut hi, mut evals), x_out| {
+                        inner_fold(&mut outer_acc, &mut lo, &mut hi, &mut evals, x_out);
+                        (outer_acc, lo, hi, evals)
+                    },
+                )
+                .map(|(acc, _, _, _)| acc)
+                .reduce(new_accs, |mut a, b| {
+                    for (ai, bi) in a.iter_mut().zip(b) {
+                        ai.merge(bi);
+                    }
+                    a
+                });
+
+            return accs.into_iter().map(FieldAccumulator::reduce).collect();
+        }
+    }
+
+    let mut outer_acc = new_accs();
+    let mut lo = Vec::with_capacity(num_inputs);
+    let mut hi = Vec::with_capacity(num_inputs);
+    let mut evals = vec![F::zero(); num_evals];
+
+    for x_out in 0..outer_weights.len() {
+        inner_fold(&mut outer_acc, &mut lo, &mut hi, &mut evals, x_out);
+    }
+
+    outer_acc
+        .into_iter()
+        .map(FieldAccumulator::reduce)
+        .collect()
+}
+
+/// Weighted pairwise reduce with const-generic D (stack-allocated accumulators).
+#[allow(clippy::ptr_arg)]
+fn pairwise_reduce_fixed_weighted<F: Field, const D: usize>(
+    inputs: &[&Vec<F>],
+    weights: &[F],
+    kernel: &CpuKernel<F>,
+    order: BindingOrder,
+) -> [F; D] {
+    let n = inputs[0].len();
+    debug_assert!(n.is_multiple_of(2), "buffer length must be even");
+    let half = n / 2;
+    let num_inputs = inputs.len();
+
+    let new_accs = || [F::Accumulator::default(); D];
+
+    let pair = |input: &[F], i: usize| -> (F, F) {
+        match order {
+            BindingOrder::LowToHigh => (input[2 * i], input[2 * i + 1]),
+            BindingOrder::HighToLow => (input[i], input[i + half]),
+        }
+    };
+
+    #[cfg(feature = "parallel")]
+    {
+        if half >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+
+            let accs = (0..half)
+                .into_par_iter()
+                .fold(
+                    || {
+                        (
+                            new_accs(),
+                            Vec::with_capacity(num_inputs),
+                            Vec::with_capacity(num_inputs),
+                            [F::zero(); D],
+                        )
+                    },
+                    |(mut acc, mut lo, mut hi, mut evals), i| {
+                        lo.clear();
+                        hi.clear();
+                        for &input in inputs {
+                            let (l, h) = pair(input, i);
+                            lo.push(l);
+                            hi.push(h);
+                        }
+
+                        kernel.evaluate(&lo, &hi, &mut evals);
+                        let w = weights[i];
+                        for (a, e) in acc.iter_mut().zip(evals.iter()) {
+                            a.fmadd(w, *e);
+                        }
+                        (acc, lo, hi, evals)
+                    },
+                )
+                .map(|(acc, _, _, _)| acc)
+                .reduce(new_accs, |mut a, b| {
+                    for (ai, bi) in a.iter_mut().zip(b) {
+                        ai.merge(bi);
+                    }
+                    a
+                });
+
+            return accs.map(FieldAccumulator::reduce);
+        }
+    }
+
+    let mut accs = new_accs();
+    let mut lo = Vec::with_capacity(num_inputs);
+    let mut hi = Vec::with_capacity(num_inputs);
+    let mut evals = [F::zero(); D];
+
+    for (i, &w) in weights.iter().enumerate() {
+        lo.clear();
+        hi.clear();
+        for &input in inputs {
+            let (l, h) = pair(input, i);
+            lo.push(l);
+            hi.push(h);
+        }
+
+        kernel.evaluate(&lo, &hi, &mut evals);
+        for (a, e) in accs.iter_mut().zip(evals.iter()) {
+            a.fmadd(w, *e);
+        }
+    }
+
+    accs.map(FieldAccumulator::reduce)
+}
+
+/// Tensor pairwise reduce with const-generic D (stack-allocated accumulators).
+#[allow(clippy::ptr_arg)]
+fn pairwise_reduce_fixed_tensor<F: Field, const D: usize>(
+    inputs: &[&Vec<F>],
+    outer_weights: &[F],
+    inner_weights: &[F],
+    kernel: &CpuKernel<F>,
+) -> [F; D] {
+    let inner_len = inner_weights.len();
+    let num_inputs = inputs.len();
+    let total_pairs = outer_weights.len() * inner_len;
+
+    let new_accs = || [F::Accumulator::default(); D];
+
+    let inner_fold = |outer_acc: &mut [F::Accumulator; D],
+                      lo: &mut Vec<F>,
+                      hi: &mut Vec<F>,
+                      evals: &mut [F; D],
+                      x_out: usize| {
+        let mut inner_acc = new_accs();
+        for (x_in, &w_in) in inner_weights.iter().enumerate() {
+            let g = x_out * inner_len + x_in;
+            lo.clear();
+            hi.clear();
+            for &input in inputs {
+                lo.push(input[2 * g]);
+                hi.push(input[2 * g + 1]);
+            }
+            kernel.evaluate(lo, hi, evals);
+            for (a, e) in inner_acc.iter_mut().zip(evals.iter()) {
+                a.fmadd(w_in, *e);
+            }
+        }
+        let w_out = outer_weights[x_out];
+        for (oa, ia) in outer_acc.iter_mut().zip(inner_acc.iter()) {
+            oa.fmadd(w_out, ia.reduce());
+        }
+    };
+
+    #[cfg(feature = "parallel")]
+    {
+        if total_pairs >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+
+            let accs = (0..outer_weights.len())
+                .into_par_iter()
+                .fold(
+                    || {
+                        (
+                            new_accs(),
+                            Vec::with_capacity(num_inputs),
+                            Vec::with_capacity(num_inputs),
+                            [F::zero(); D],
+                        )
+                    },
+                    |(mut outer_acc, mut lo, mut hi, mut evals), x_out| {
+                        inner_fold(&mut outer_acc, &mut lo, &mut hi, &mut evals, x_out);
+                        (outer_acc, lo, hi, evals)
+                    },
+                )
+                .map(|(acc, _, _, _)| acc)
+                .reduce(new_accs, |mut a, b| {
+                    for (ai, bi) in a.iter_mut().zip(b) {
+                        ai.merge(bi);
+                    }
+                    a
+                });
+
+            return accs.map(FieldAccumulator::reduce);
+        }
+    }
+
+    let mut outer_acc = new_accs();
+    let mut lo = Vec::with_capacity(num_inputs);
+    let mut hi = Vec::with_capacity(num_inputs);
+    let mut evals = [F::zero(); D];
+
+    for x_out in 0..outer_weights.len() {
+        inner_fold(&mut outer_acc, &mut lo, &mut hi, &mut evals, x_out);
+    }
+
+    outer_acc.map(FieldAccumulator::reduce)
+}
+
+/// Optimized multi-kernel weighted reduce: single-pass over data for all kernels.
+#[allow(clippy::ptr_arg)]
+fn pairwise_reduce_multi_weighted<F: Field>(
+    inputs: &[&Vec<F>],
+    weights: &[F],
+    kernels: &[(&CpuKernel<F>, usize)],
+    order: BindingOrder,
+) -> Vec<Vec<F>> {
+    let n = inputs[0].len();
+    debug_assert!(n.is_multiple_of(2), "buffer length must be even");
+    let half = n / 2;
+    let num_inputs = inputs.len();
+    let num_kernels = kernels.len();
+
+    let new_all_accs = || -> Vec<Vec<F::Accumulator>> {
+        kernels
+            .iter()
+            .map(|(_, num_evals)| vec![F::Accumulator::default(); *num_evals])
+            .collect()
+    };
+
+    let pair = |input: &[F], i: usize| -> (F, F) {
+        match order {
+            BindingOrder::LowToHigh => (input[2 * i], input[2 * i + 1]),
+            BindingOrder::HighToLow => (input[i], input[i + half]),
+        }
+    };
+
+    #[cfg(feature = "parallel")]
+    {
+        if half >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+
+            let all_accs = (0..half)
+                .into_par_iter()
+                .fold(
+                    || {
+                        let accs = new_all_accs();
+                        let lo = vec![F::zero(); num_inputs];
+                        let hi = vec![F::zero(); num_inputs];
+                        let evals_bufs: Vec<Vec<F>> =
+                            kernels.iter().map(|(_, ne)| vec![F::zero(); *ne]).collect();
+                        (accs, lo, hi, evals_bufs)
+                    },
+                    |(mut accs, mut lo, mut hi, mut evals_bufs), i| {
+                        for (k, &input) in inputs.iter().enumerate() {
+                            let (l, h) = pair(input, i);
+                            lo[k] = l;
+                            hi[k] = h;
+                        }
+
+                        let w = weights[i];
+                        for k in 0..num_kernels {
+                            kernels[k].0.evaluate(&lo, &hi, &mut evals_bufs[k]);
+                            for (a, e) in accs[k].iter_mut().zip(evals_bufs[k].iter()) {
+                                a.fmadd(w, *e);
+                            }
+                        }
+                        (accs, lo, hi, evals_bufs)
+                    },
+                )
+                .map(|(accs, _, _, _)| accs)
+                .reduce(new_all_accs, |mut a, b| {
+                    for (ak, bk) in a.iter_mut().zip(b) {
+                        for (ai, bi) in ak.iter_mut().zip(bk) {
+                            ai.merge(bi);
+                        }
+                    }
+                    a
+                });
+
+            return all_accs
+                .into_iter()
+                .map(|accs| accs.into_iter().map(FieldAccumulator::reduce).collect())
+                .collect();
+        }
+    }
+
+    let mut all_accs = new_all_accs();
+    let mut lo = vec![F::zero(); num_inputs];
+    let mut hi = vec![F::zero(); num_inputs];
+    let mut evals_bufs: Vec<Vec<F>> = kernels.iter().map(|(_, ne)| vec![F::zero(); *ne]).collect();
+
+    for (i, &w) in weights.iter().enumerate() {
+        for (k, &input) in inputs.iter().enumerate() {
+            let (l, h) = pair(input, i);
+            lo[k] = l;
+            hi[k] = h;
+        }
+
+        for k in 0..num_kernels {
+            kernels[k].0.evaluate(&lo, &hi, &mut evals_bufs[k]);
+            for (a, e) in all_accs[k].iter_mut().zip(evals_bufs[k].iter()) {
+                a.fmadd(w, *e);
+            }
+        }
+    }
+
+    all_accs
+        .into_iter()
+        .map(|accs| accs.into_iter().map(FieldAccumulator::reduce).collect())
+        .collect()
 }
 
 #[cfg(test)]
@@ -1220,7 +1354,13 @@ mod tests {
         let weights: Vec<Fr> = vec![Fr::one(), Fr::one()];
 
         let kernel = make_identity_kernel();
-        let result = b.pairwise_reduce(&[&input], &weights, &kernel, 2, BindingOrder::LowToHigh);
+        let result = b.pairwise_reduce(
+            &[&input],
+            EqInput::Weighted(&weights),
+            &kernel,
+            2,
+            BindingOrder::LowToHigh,
+        );
 
         assert_eq!(result.len(), 2);
         assert_eq!(result[0], Fr::from_u64(4));
@@ -1234,7 +1374,13 @@ mod tests {
         let weights: Vec<Fr> = vec![Fr::from_u64(2), Fr::from_u64(3)];
 
         let kernel = make_identity_kernel();
-        let result = b.pairwise_reduce(&[&input], &weights, &kernel, 2, BindingOrder::LowToHigh);
+        let result = b.pairwise_reduce(
+            &[&input],
+            EqInput::Weighted(&weights),
+            &kernel,
+            2,
+            BindingOrder::LowToHigh,
+        );
 
         // Pair 0: lo=10, hi=20; w=2 -> [2*10, 2*20] = [20, 40]
         // Pair 1: lo=30, hi=40; w=3 -> [3*30, 3*40] = [90, 120]
@@ -1252,7 +1398,13 @@ mod tests {
 
         // Kernel sums across inputs: sum_k (lo[k] + t*(hi[k]-lo[k]))
         let kernel = make_identity_kernel();
-        let result = b.pairwise_reduce(&[&a, &c], &weights, &kernel, 2, BindingOrder::LowToHigh);
+        let result = b.pairwise_reduce(
+            &[&a, &c],
+            EqInput::Weighted(&weights),
+            &kernel,
+            2,
+            BindingOrder::LowToHigh,
+        );
 
         // Pair 0: a=(1,2), c=(10,20) -> f(0)=1+10=11, f(1)=2+20=22
         // Pair 1: a=(3,4), c=(30,40) -> f(0)=3+30=33, f(1)=4+40=44
@@ -1269,7 +1421,13 @@ mod tests {
 
         // Identity kernel with 3 evals: t=0,1,2
         let kernel = make_identity_kernel();
-        let result = b.pairwise_reduce(&[&input], &weights, &kernel, 3, BindingOrder::LowToHigh);
+        let result = b.pairwise_reduce(
+            &[&input],
+            EqInput::Weighted(&weights),
+            &kernel,
+            3,
+            BindingOrder::LowToHigh,
+        );
 
         // lo=1, hi=3
         // f(0) = 1, f(1) = 3, f(2) = 1 + 2*(3-1) = 5
@@ -1308,7 +1466,13 @@ mod tests {
         let weights: Vec<Fr> = (0..n / 2).map(|_| Fr::random(&mut rng)).collect();
 
         let kernel = make_identity_kernel();
-        let result = b.pairwise_reduce(&[&input], &weights, &kernel, 2, BindingOrder::LowToHigh);
+        let result = b.pairwise_reduce(
+            &[&input],
+            EqInput::Weighted(&weights),
+            &kernel,
+            2,
+            BindingOrder::LowToHigh,
+        );
 
         // Verify against sequential computation
         let mut expected = vec![Fr::zero(); 2];
@@ -1493,9 +1657,19 @@ mod tests {
         let weights: Vec<Fr> = (0..n / 2).map(|_| Fr::random(&mut rng)).collect();
 
         let kernel = make_identity_kernel();
-        let dynamic = b.pairwise_reduce(&[&input], &weights, &kernel, 4, BindingOrder::LowToHigh);
-        let fixed: [Fr; 4] =
-            b.pairwise_reduce_fixed(&[&input], &weights, &kernel, BindingOrder::LowToHigh);
+        let dynamic = b.pairwise_reduce(
+            &[&input],
+            EqInput::Weighted(&weights),
+            &kernel,
+            4,
+            BindingOrder::LowToHigh,
+        );
+        let fixed: [Fr; 4] = b.pairwise_reduce_fixed(
+            &[&input],
+            EqInput::Weighted(&weights),
+            &kernel,
+            BindingOrder::LowToHigh,
+        );
 
         assert_eq!(fixed.as_slice(), dynamic.as_slice());
     }
@@ -1509,9 +1683,19 @@ mod tests {
         let weights: Vec<Fr> = (0..n / 2).map(|_| Fr::random(&mut rng)).collect();
 
         let kernel = make_identity_kernel();
-        let dynamic = b.pairwise_reduce(&[&input], &weights, &kernel, 2, BindingOrder::LowToHigh);
-        let fixed: [Fr; 2] =
-            b.pairwise_reduce_fixed(&[&input], &weights, &kernel, BindingOrder::LowToHigh);
+        let dynamic = b.pairwise_reduce(
+            &[&input],
+            EqInput::Weighted(&weights),
+            &kernel,
+            2,
+            BindingOrder::LowToHigh,
+        );
+        let fixed: [Fr; 2] = b.pairwise_reduce_fixed(
+            &[&input],
+            EqInput::Weighted(&weights),
+            &kernel,
+            BindingOrder::LowToHigh,
+        );
 
         assert_eq!(fixed.as_slice(), dynamic.as_slice());
     }
@@ -1539,9 +1723,23 @@ mod tests {
         }
 
         let kernel = make_identity_kernel();
-        let flat_result =
-            b.pairwise_reduce(&[&input], &flat_w, &kernel, 2, BindingOrder::LowToHigh);
-        let tensor_result = b.tensor_pairwise_reduce(&[&input], &outer_w, &inner_w, &kernel, 2);
+        let flat_result = b.pairwise_reduce(
+            &[&input],
+            EqInput::Weighted(&flat_w),
+            &kernel,
+            2,
+            BindingOrder::LowToHigh,
+        );
+        let tensor_result = b.pairwise_reduce(
+            &[&input],
+            EqInput::Tensor {
+                outer: &outer_w,
+                inner: &inner_w,
+            },
+            &kernel,
+            2,
+            BindingOrder::LowToHigh,
+        );
 
         assert_eq!(tensor_result, flat_result);
     }
@@ -1560,8 +1758,25 @@ mod tests {
         let inner_w: Vec<Fr> = (0..inner_len).map(|_| Fr::random(&mut rng)).collect();
 
         let kernel = make_identity_kernel();
-        let dynamic = b.tensor_pairwise_reduce(&[&input], &outer_w, &inner_w, &kernel, 4);
-        let fixed: [Fr; 4] = b.tensor_pairwise_reduce_fixed(&[&input], &outer_w, &inner_w, &kernel);
+        let dynamic = b.pairwise_reduce(
+            &[&input],
+            EqInput::Tensor {
+                outer: &outer_w,
+                inner: &inner_w,
+            },
+            &kernel,
+            4,
+            BindingOrder::LowToHigh,
+        );
+        let fixed: [Fr; 4] = b.pairwise_reduce_fixed(
+            &[&input],
+            EqInput::Tensor {
+                outer: &outer_w,
+                inner: &inner_w,
+            },
+            &kernel,
+            BindingOrder::LowToHigh,
+        );
 
         assert_eq!(fixed.as_slice(), dynamic.as_slice());
     }
@@ -1591,13 +1806,21 @@ mod tests {
         let kernel = make_identity_kernel();
         let flat_result = b.pairwise_reduce(
             &[&input_a, &input_b],
-            &flat_w,
+            EqInput::Weighted(&flat_w),
             &kernel,
             2,
             BindingOrder::LowToHigh,
         );
-        let tensor_result =
-            b.tensor_pairwise_reduce(&[&input_a, &input_b], &outer_w, &inner_w, &kernel, 2);
+        let tensor_result = b.pairwise_reduce(
+            &[&input_a, &input_b],
+            EqInput::Tensor {
+                outer: &outer_w,
+                inner: &inner_w,
+            },
+            &kernel,
+            2,
+            BindingOrder::LowToHigh,
+        );
 
         assert_eq!(tensor_result, flat_result);
     }
@@ -1624,9 +1847,23 @@ mod tests {
         }
 
         let kernel = make_identity_kernel();
-        let flat_result =
-            b.pairwise_reduce(&[&input], &flat_w, &kernel, 3, BindingOrder::LowToHigh);
-        let tensor_result = b.tensor_pairwise_reduce(&[&input], &outer_w, &inner_w, &kernel, 3);
+        let flat_result = b.pairwise_reduce(
+            &[&input],
+            EqInput::Weighted(&flat_w),
+            &kernel,
+            3,
+            BindingOrder::LowToHigh,
+        );
+        let tensor_result = b.pairwise_reduce(
+            &[&input],
+            EqInput::Tensor {
+                outer: &outer_w,
+                inner: &inner_w,
+            },
+            &kernel,
+            3,
+            BindingOrder::LowToHigh,
+        );
 
         assert_eq!(tensor_result, flat_result);
     }
@@ -1652,12 +1889,24 @@ mod tests {
             }
         });
 
-        let individual_1 = b.pairwise_reduce(&[&input], &weights, &k1, 2, BindingOrder::LowToHigh);
-        let individual_2 = b.pairwise_reduce(&[&input], &weights, &k2, 3, BindingOrder::LowToHigh);
+        let individual_1 = b.pairwise_reduce(
+            &[&input],
+            EqInput::Weighted(&weights),
+            &k1,
+            2,
+            BindingOrder::LowToHigh,
+        );
+        let individual_2 = b.pairwise_reduce(
+            &[&input],
+            EqInput::Weighted(&weights),
+            &k2,
+            3,
+            BindingOrder::LowToHigh,
+        );
 
         let multi = b.pairwise_reduce_multi(
             &[&input],
-            &weights,
+            EqInput::Weighted(&weights),
             &[(&k1, 2), (&k2, 3)],
             BindingOrder::LowToHigh,
         );
@@ -1687,12 +1936,24 @@ mod tests {
             }
         });
 
-        let individual_1 = b.pairwise_reduce(&[&input], &weights, &k1, 2, BindingOrder::LowToHigh);
-        let individual_2 = b.pairwise_reduce(&[&input], &weights, &k2, 2, BindingOrder::LowToHigh);
+        let individual_1 = b.pairwise_reduce(
+            &[&input],
+            EqInput::Weighted(&weights),
+            &k1,
+            2,
+            BindingOrder::LowToHigh,
+        );
+        let individual_2 = b.pairwise_reduce(
+            &[&input],
+            EqInput::Weighted(&weights),
+            &k2,
+            2,
+            BindingOrder::LowToHigh,
+        );
 
         let multi = b.pairwise_reduce_multi(
             &[&input],
-            &weights,
+            EqInput::Weighted(&weights),
             &[(&k1, 2), (&k2, 2)],
             BindingOrder::LowToHigh,
         );
@@ -1710,7 +1971,13 @@ mod tests {
         let weights: Vec<Fr> = vec![Fr::one(); 4];
 
         let kernel = make_identity_kernel();
-        let result = b.pairwise_reduce(&[&input], &weights, &kernel, 2, BindingOrder::HighToLow);
+        let result = b.pairwise_reduce(
+            &[&input],
+            EqInput::Weighted(&weights),
+            &kernel,
+            2,
+            BindingOrder::HighToLow,
+        );
 
         // Pair 0: lo=0, hi=40 -> f(0)=0, f(1)=40
         // Pair 1: lo=10, hi=50 -> f(0)=10, f(1)=50
@@ -1736,7 +2003,13 @@ mod tests {
         // HighToLow reduce with identity kernel at t=0 and t=1:
         // t=0: Σ data[i], t=1: Σ data[i + half]
         let kernel = make_identity_kernel();
-        let result = b.pairwise_reduce(&[&data], &weights, &kernel, 2, BindingOrder::HighToLow);
+        let result = b.pairwise_reduce(
+            &[&data],
+            EqInput::Weighted(&weights),
+            &kernel,
+            2,
+            BindingOrder::HighToLow,
+        );
 
         let sum_lo: Fr = data[..half].iter().copied().sum();
         let sum_hi: Fr = data[half..].iter().copied().sum();
@@ -1744,8 +2017,13 @@ mod tests {
         assert_eq!(result[1], sum_hi);
 
         // Now verify with an interleaved version to make sure they differ
-        let result_interleaved =
-            b.pairwise_reduce(&[&data], &weights, &kernel, 2, BindingOrder::LowToHigh);
+        let result_interleaved = b.pairwise_reduce(
+            &[&data],
+            EqInput::Weighted(&weights),
+            &kernel,
+            2,
+            BindingOrder::LowToHigh,
+        );
         // These should be different (unless the data is specially arranged)
         assert_ne!(result, result_interleaved);
     }
@@ -1760,7 +2038,13 @@ mod tests {
         let half = n / 2;
 
         let kernel = make_identity_kernel();
-        let result = b.pairwise_reduce(&[&input], &weights, &kernel, 2, BindingOrder::HighToLow);
+        let result = b.pairwise_reduce(
+            &[&input],
+            EqInput::Weighted(&weights),
+            &kernel,
+            2,
+            BindingOrder::HighToLow,
+        );
 
         // Manual reference
         let mut expected = vec![Fr::zero(); 2];
@@ -1782,9 +2066,19 @@ mod tests {
         let weights: Vec<Fr> = (0..n / 2).map(|_| Fr::random(&mut rng)).collect();
 
         let kernel = make_identity_kernel();
-        let dynamic = b.pairwise_reduce(&[&input], &weights, &kernel, 4, BindingOrder::HighToLow);
-        let fixed: [Fr; 4] =
-            b.pairwise_reduce_fixed(&[&input], &weights, &kernel, BindingOrder::HighToLow);
+        let dynamic = b.pairwise_reduce(
+            &[&input],
+            EqInput::Weighted(&weights),
+            &kernel,
+            4,
+            BindingOrder::HighToLow,
+        );
+        let fixed: [Fr; 4] = b.pairwise_reduce_fixed(
+            &[&input],
+            EqInput::Weighted(&weights),
+            &kernel,
+            BindingOrder::HighToLow,
+        );
 
         assert_eq!(fixed.as_slice(), dynamic.as_slice());
     }
@@ -1809,12 +2103,24 @@ mod tests {
             }
         });
 
-        let individual_1 = b.pairwise_reduce(&[&input], &weights, &k1, 2, BindingOrder::HighToLow);
-        let individual_2 = b.pairwise_reduce(&[&input], &weights, &k2, 3, BindingOrder::HighToLow);
+        let individual_1 = b.pairwise_reduce(
+            &[&input],
+            EqInput::Weighted(&weights),
+            &k1,
+            2,
+            BindingOrder::HighToLow,
+        );
+        let individual_2 = b.pairwise_reduce(
+            &[&input],
+            EqInput::Weighted(&weights),
+            &k2,
+            3,
+            BindingOrder::HighToLow,
+        );
 
         let multi = b.pairwise_reduce_multi(
             &[&input],
-            &weights,
+            EqInput::Weighted(&weights),
             &[(&k1, 2), (&k2, 3)],
             BindingOrder::HighToLow,
         );

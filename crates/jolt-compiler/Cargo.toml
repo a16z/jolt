@@ -1,0 +1,29 @@
+[package]
+name = "jolt-compiler"
+version = "0.1.0"
+authors = ["Jolt Contributors"]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "SNARK protocol compiler for the Jolt zkVM"
+repository = "https://github.com/a16z/jolt"
+keywords = ["SNARK", "compiler", "sumcheck", "protocol"]
+categories = ["cryptography"]
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", optional = true }
+ron = { version = "0.8", optional = true }
+
+[dev-dependencies]
+serde_json = "1"
+ron = "0.8"
+
+[features]
+cli = ["dep:serde_json", "dep:ron"]
+
+[[bin]]
+name = "jolt-dot"
+required-features = ["cli"]

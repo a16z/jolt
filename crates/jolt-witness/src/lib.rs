@@ -34,12 +34,6 @@
 //!                                                   └─────────┘
 //! ```
 //!
-//! # Decoupling
-//!
-//! This crate does **not** depend on any PCS or commitment scheme. Streaming
-//! commitment integration happens via the [`WitnessSink`] callback — the
-//! caller decides what to do with each chunk (commit, store, both).
-
 mod builder;
 mod config;
 mod cycle;

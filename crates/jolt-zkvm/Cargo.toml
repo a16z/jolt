@@ -12,6 +12,7 @@ workspace = true
 parallel = ["dep:rayon", "jolt-poly/parallel", "jolt-sumcheck/parallel"]
 
 [dependencies]
+jolt-compiler = { path = "../jolt-compiler" }
 jolt-compute = { path = "../jolt-compute" }
 jolt-cpu = { path = "../jolt-cpu" }
 jolt-field = { path = "../jolt-field" }

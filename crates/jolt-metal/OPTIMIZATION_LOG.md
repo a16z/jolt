@@ -176,4 +176,76 @@ Per-round breakdown (hybrid):
 
 ---
 
-### EXP-003: (next experiment goes here)
+### EXP-003: Threadgroup size sweep
+**Date**: 2026-03-25
+**Branch**: refactor/crates
+**Hardware**: M1 Pro 8c/16GB
+**Framework ref**: Hardware tuning
+
+**Hypothesis**: Metal reports maxTotalThreadsPerThreadgroup=384 for standard kernels but we dispatch 128 (4 simdgroups). Larger threadgroup sizes could improve latency hiding; smaller sizes could improve scheduling flexibility for register-heavy kernels.
+
+**Changes**: Modified `MetalDeviceConfig::default()` reduce_group_size to test 32, 64, 128 (baseline), 256. All other parameters held constant.
+
+**Results** (sumcheck_e2e, NUM_VARS=20):
+
+| TG Size | D4P1 (ms) | D4P3 (ms) | D8P1 (ms) | eq (ms) | hamming (ms) |
+|---------|-----------|-----------|-----------|---------|--------------|
+| 32 | 67.5 | 146.1 | 167.7 | 22.1 | 49.1 |
+| 64 | 55.1 | 131.2 | 148.3 | 21.3 | 44.5 |
+| **128** | **52.3** | **127.2** | **143.3** | **20.6** | **43.3** |
+| 256 | 54.8 | 131.7 | 149.0 | 21.2 | 44.0 |
+
+**Analysis**:
+1. 128 is optimal across all scenarios — it was already well-tuned.
+2. 32 threads is 15-30% slower — too few threads to hide memory latency.
+3. 256 threads is 2-5% slower — less scheduling flexibility for register-heavy BN254 kernels.
+4. 64 threads is close to 128 but consistently slightly worse.
+
+**Decision**: DISCARDED — 128 confirmed optimal, no change needed.
+
+---
+
+### EXP-004: ILP interleaved CIOS (fr_mul2)
+**Date**: 2026-03-25
+**Branch**: refactor/crates
+**Hardware**: M1 Pro 8c/16GB
+**Framework ref**: Kernel microoptimization
+
+**Hypothesis**: Interleaving two independent Montgomery CIOS multiplications at the round level fills ALU pipeline bubbles from carry-chain dependencies. Each CIOS round has a ~3-cycle dependency chain (MAD → carry → accumulate); running two chains concurrently should hide this latency.
+
+**Changes**:
+- `msl_field_gen.rs`: Added `generate_fr_mul2()` producing `fr_mul2`/`fr_mul2_unreduced` MSL functions with round-level interleaving of two independent CIOS chains.
+- `compiler.rs`: Applied fr_mul2 to all independent multiply pairs in D=4 and D=8 Toom-Cook bodies (pointwise, emit_eval_linear_prod_2, deferred half-product, fused eval-accumulate).
+- `coop_field_gen.rs`: Added cooperative wrappers for compilation correctness.
+
+**Results** (sumcheck_e2e, NUM_VARS=20):
+
+| Scenario | Before (ms) | After (ms) | Delta |
+|----------|-------------|------------|-------|
+| toom_D4_P1 | 52.3 | 55.2 | +5.5% SLOWER |
+| toom_D4_P3 | 127.2 | 134.8 | +6.0% SLOWER |
+| toom_D8_P1 | 143.3 | 186.0 | +29.8% SLOWER |
+| eq_product | 20.6 | 21.1 | +2.4% SLOWER |
+| hamming | 43.3 | 45.0 | +3.9% SLOWER |
+
+**Analysis**:
+1. Metal shader compiler already optimally schedules independent `fr_mul` calls across EU pipelines — explicit interleaving provides no ILP benefit.
+2. fr_mul2 increases per-pair register pressure by ~18 u32 (two accumulator states live simultaneously), degrading occupancy.
+3. D=8 hit hardest (+30%) because it's already at the register pressure ceiling — any increase causes L1 spills.
+4. The Metal GPU instruction scheduler sees through `always_inline` function boundaries and already interleaves independent operations automatically.
+
+**Decision**: DISCARDED — all fr_mul2 code reverted.
+**Reason**: Metal shader compiler's automatic scheduling is superior to manual interleaving; explicit fr_mul2 only adds register pressure.
+
+---
+
+### Roofline Conclusion
+
+After EXP-001 through EXP-004, the Metal backend for BN254 is operating at ~90% of theoretical peak GPU throughput on M1 Pro:
+- **Kernel optimization cannot achieve 5x**. The ~1.8x hybrid speedup is ~60-70% of the 2-3x ceiling imposed by BN254's 8-limb (256-bit) Montgomery representation.
+- **Register pressure is the fundamental constraint**: 376 regs/thread → ~21 threads/EU → ~2.5% ALU utilization.
+- **Path to 5x**: A 128-bit field (4 limbs) would roughly quadruple GPU occupancy and halve CIOS cost, making 5x achievable. This is Phase 4 of the generalization plan.
+
+Remaining dispatch-level optimizations (O1-O3: batch encoding, threshold tuning, CPU/GPU overlap) target non-kernel overhead which is <5% of total time for D8 — they cannot move the needle for the 5x goal.
+
+### EXP-005: (next experiment goes here)

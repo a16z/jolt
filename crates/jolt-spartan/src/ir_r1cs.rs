@@ -151,7 +151,7 @@ mod tests {
         let a = b.opening(0);
         let bv = b.opening(1);
         let expr = b.build(a * bv);
-        let sop = expr.to_sum_of_products();
+        let sop = expr.to_composition_formula();
 
         let opening_vars = [R1csVar(1), R1csVar(2)];
         let mut next_var = 3;
@@ -167,7 +167,7 @@ mod tests {
         let a = b.opening(0);
         let bv = b.opening(1);
         let expr = b.build(a * bv);
-        let sop = expr.to_sum_of_products();
+        let sop = expr.to_composition_formula();
 
         let opening_vars = [R1csVar(1), R1csVar(2)];
         let mut next_var = 3;
@@ -191,7 +191,7 @@ mod tests {
         let x = b.opening(0);
         let y = b.opening(1);
         let expr = b.build(x * y + x);
-        let sop = expr.to_sum_of_products();
+        let sop = expr.to_composition_formula();
 
         let opening_vars = [R1csVar(1), R1csVar(2)];
         let opening_vals = [Fr::from_u64(5), Fr::from_u64(3)];

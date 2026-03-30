@@ -1,15 +1,15 @@
 //! Integration test: validates the full compute pipeline against sumcheck.
 //!
-//! Flow: KernelDescriptor → compile() → product_table() → pairwise_reduce()
+//! Flow: CompositionFormula → compile() → product_table() → pairwise_reduce()
 //! → round polynomial evaluations → UnivariatePoly → sumcheck prove + verify.
 //!
 //! Cross-checks against a hand-written SumcheckCompute reference implementation
 //! to ensure the compute layer produces identical round polynomials.
 
-use jolt_compute::{BindingOrder, ComputeBackend};
+use jolt_compute::{BindingOrder, ComputeBackend, EqInput};
 use jolt_cpu::{compile, CpuBackend};
 use jolt_field::{Field, Fr};
-use jolt_ir::{KernelDescriptor, KernelShape};
+use jolt_compiler::{CompositionFormula, Factor, ProductTerm};
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::claim::SumcheckClaim;
 use jolt_sumcheck::prover::{SumcheckCompute, SumcheckProver};
@@ -137,20 +137,9 @@ impl ComputeWitness {
         let eq_buf = interleave(&eq_evals);
 
         // Kernel: eq * f * g — product of 3 linear interpolants
-        // This is ProductSum with D=3, P=1, but the inputs are [eq, f, g]
-        // at each pair position.
-        //
-        // The kernel evaluates: prod_{j=0}^{2} (lo[j] + t*(hi[j]-lo[j]))
-        // where inputs are ordered [eq_buf, f_buf, g_buf]
-        let desc = KernelDescriptor {
-            shape: KernelShape::ProductSum {
-                num_inputs_per_product: 3,
-                num_products: 1,
-            },
-            degree: 3,
-            tensor_split: None,
-        };
-        let kernel = compile::<Fr>(&desc);
+        // ProductSum with D=3, P=1: inputs are [eq, f, g]
+        let formula = product_sum_formula(3, 1);
+        let kernel = compile::<Fr>(&formula);
 
         Self {
             f_buf,
@@ -174,7 +163,7 @@ impl SumcheckCompute<Fr> for ComputeWitness {
         // Toom-Cook evaluations: [P(1), P(2), P(∞)]
         let toom_evals = backend.pairwise_reduce(
             &[&self.eq_buf, &self.f_buf, &self.g_buf],
-            &ones,
+            EqInput::Weighted(&ones),
             &self.kernel,
             3,
             BindingOrder::LowToHigh,
@@ -217,6 +206,17 @@ impl SumcheckCompute<Fr> for ComputeWitness {
         self.g_buf = re_interleave(std::mem::take(&mut self.g_buf));
         self.eq_buf = re_interleave(std::mem::take(&mut self.eq_buf));
     }
+}
+
+/// Helper: build a pure product-sum formula with `p` groups of `d` consecutive inputs.
+fn product_sum_formula(d: usize, p: usize) -> CompositionFormula {
+    let terms: Vec<_> = (0..p)
+        .map(|g| ProductTerm {
+            coefficient: 1,
+            factors: (0..d).map(|j| Factor::Input((g * d + j) as u32)).collect(),
+        })
+        .collect();
+    CompositionFormula::from_terms(terms)
 }
 
 /// Prove and verify a sumcheck using the compute-backend witness,

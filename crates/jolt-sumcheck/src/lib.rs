@@ -40,6 +40,7 @@ pub mod prover;
 pub mod reduction;
 pub mod split_eq;
 pub mod streaming;
+pub mod uni_skip;
 pub mod verifier;
 
 pub use batched::{BatchedSumcheckProver, BatchedSumcheckVerifier};
@@ -58,6 +59,7 @@ pub use streaming::{
     HalfSplitSchedule, LinearOnlySchedule, LinearSumcheckStage, StreamingSchedule,
     StreamingSumcheck, StreamingSumcheckProver, StreamingSumcheckWindow,
 };
+pub use uni_skip::{uniskip_first_round, uniskip_round_poly, FirstRoundStrategy};
 pub use verifier::SumcheckVerifier;
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-//! Kernel compiler: `jolt-ir::KernelDescriptor` → MSL source → `MetalKernel`.
+//! Kernel compiler: `jolt-ir::CompositionFormula` → MSL source → `MetalKernel`.
 //!
 //! Two compilation paths:
 //!
@@ -15,7 +15,7 @@
 //!   Uses incremental interpolation for the standard grid `{0, 2, ..., degree}`
 //!   (skipping `t=1`, which is derived from the sumcheck claim).
 //!
-//! Five kernel variants are compiled from each descriptor:
+//! Five kernel variants are compiled from each formula:
 //! - **L2H**: Weighted, pairs `(buf[2i], buf[2i+1])` — interleaved
 //! - **H2L**: Weighted, pairs `(buf[i], buf[i+half])` — split-half
 //! - **Tensor**: Weighted, L2H with two-buffer weight: `outer[i>>log] * inner[i&mask]`
@@ -31,7 +31,7 @@
 use std::fmt::Write;
 use std::sync::Arc;
 
-use jolt_ir::{Expr, ExprVisitor, KernelDescriptor, KernelShape, Var};
+use jolt_compiler::{CompositionFormula, Factor, ProductTerm};
 use metal::CompileOptions;
 
 use crate::field_config::MslFieldParams;
@@ -96,36 +96,29 @@ pub struct GeneratedMsl {
     pub has_challenges: bool,
 }
 
-/// Generate the full MSL source for a kernel descriptor.
+/// Generate the full MSL source for a composition formula.
 ///
 /// This is the deterministic, challenge-independent MSL generation. The
 /// returned source can be hashed to produce a cache key.
 pub fn generate_msl(
-    descriptor: &KernelDescriptor,
+    formula: &CompositionFormula,
     mode: CompileMode,
     field_config: &MslFieldParams,
     device_config: &crate::metal_device_config::MetalDeviceConfig,
 ) -> GeneratedMsl {
-    let num_inputs = descriptor.num_inputs();
-    let num_evals = descriptor.num_evals();
+    let num_inputs = formula.num_inputs;
+    let degree = formula.degree();
+    let num_evals = degree;
 
-    let use_split_pass = matches!(
-        &descriptor.shape,
-        KernelShape::ProductSum { num_inputs_per_product, .. }
-            if *num_inputs_per_product >= device_config.split_pass_threshold
-    );
+    let use_split_pass = formula
+        .as_product_sum()
+        .is_some_and(|(d, _)| d >= device_config.split_pass_threshold);
 
     let mut msl = String::with_capacity(65536);
-    let mut has_challenges = false;
+    let mut has_challenges = formula.num_challenges > 0;
 
     if use_split_pass {
-        let (d, p) = match &descriptor.shape {
-            KernelShape::ProductSum {
-                num_inputs_per_product,
-                num_products,
-            } => (*num_inputs_per_product, *num_products),
-            _ => unreachable!(),
-        };
+        let (d, p) = formula.as_product_sum().unwrap();
 
         let acc_limbs = field_config.acc_limbs;
         for variant in [
@@ -186,73 +179,34 @@ pub fn generate_msl(
         // register pressure — half B's inputs are read after half A's
         // lo/hi values are dead.
         let (eval_body_weighted, eval_body_unweighted, weight_folded, reads_inline) =
-            match &descriptor.shape {
-                KernelShape::ProductSum {
-                    num_inputs_per_product,
-                    num_products,
-                } => {
-                    let d = *num_inputs_per_product;
-                    let p = *num_products;
-                    if d == 8 && p == 1 {
-                        // Toom-Cook D=8 with deferred reads: half B's lo/hi
-                        // are read after half A is done, saving 64 registers
-                        // at peak (lo_4..lo_7, hi_4..hi_7 not yet allocated
-                        // while half A intermediates are live).
-                        //
-                        // tg_spill disabled for BN254: spilling a_1..a_7 to
-                        // threadgroup memory (28 KB at gs=128) limits EU
-                        // occupancy to 1 threadgroup, costing ~15% throughput.
-                        // May help for 128-bit fields where spill is 14 KB.
-                        let tg_spill = false;
-                        let tg_spill_count = 0;
-                        let body_unw_l2h =
-                            generate_toom_cook_d8_deferred(p, false, false, tg_spill);
-                        let body_unw_h2l = generate_toom_cook_d8_deferred(p, false, true, tg_spill);
-                        let body_w_l2h = generate_toom_cook_d8_deferred(p, true, false, tg_spill);
-                        let body_w_h2l = generate_toom_cook_d8_deferred(p, true, true, tg_spill);
-                        // Bodies include reads — emit variant-specific kernels directly
-                        let n_limbs = field_config.n_limbs;
-                        for (variant, body_w, body_unw) in [
-                            (KernelVariant::LowToHigh, &body_w_l2h, &body_unw_l2h),
-                            (KernelVariant::HighToLow, &body_w_h2l, &body_unw_h2l),
-                        ] {
-                            msl.push_str(&generate_reduce_kernel(
-                                num_inputs,
-                                num_evals,
-                                body_w,
-                                variant,
-                                true,
-                                true,
-                                false,
-                                n_limbs,
-                                device_config,
-                                true,
-                                true,
-                                tg_spill_count,
-                            ));
-                            msl.push('\n');
-                            msl.push_str(&generate_reduce_kernel(
-                                num_inputs,
-                                num_evals,
-                                body_unw,
-                                variant,
-                                false,
-                                false,
-                                false,
-                                n_limbs,
-                                device_config,
-                                true,
-                                true,
-                                tg_spill_count,
-                            ));
-                            msl.push('\n');
-                        }
-                        // Tensor weighted (uses L2H indexing for reads)
+            if let Some((d, p)) = formula.as_product_sum() {
+                if d == 8 && p == 1 {
+                    // Toom-Cook D=8 with deferred reads: half B's lo/hi
+                    // are read after half A is done, saving 64 registers
+                    // at peak (lo_4..lo_7, hi_4..hi_7 not yet allocated
+                    // while half A intermediates are live).
+                    //
+                    // tg_spill disabled for BN254: spilling a_1..a_7 to
+                    // threadgroup memory (28 KB at gs=128) limits EU
+                    // occupancy to 1 threadgroup, costing ~15% throughput.
+                    // May help for 128-bit fields where spill is 14 KB.
+                    let tg_spill = false;
+                    let tg_spill_count = 0;
+                    let body_unw_l2h = generate_toom_cook_d8_deferred(p, false, false, tg_spill);
+                    let body_unw_h2l = generate_toom_cook_d8_deferred(p, false, true, tg_spill);
+                    let body_w_l2h = generate_toom_cook_d8_deferred(p, true, false, tg_spill);
+                    let body_w_h2l = generate_toom_cook_d8_deferred(p, true, true, tg_spill);
+                    // Bodies include reads — emit variant-specific kernels directly
+                    let n_limbs = field_config.n_limbs;
+                    for (variant, body_w, body_unw) in [
+                        (KernelVariant::LowToHigh, &body_w_l2h, &body_unw_l2h),
+                        (KernelVariant::HighToLow, &body_w_h2l, &body_unw_h2l),
+                    ] {
                         msl.push_str(&generate_reduce_kernel(
                             num_inputs,
                             num_evals,
-                            &body_w_l2h,
-                            KernelVariant::Tensor,
+                            body_w,
+                            variant,
                             true,
                             true,
                             false,
@@ -263,92 +217,112 @@ pub fn generate_msl(
                             tg_spill_count,
                         ));
                         msl.push('\n');
-                        // Fused H2L kernel uses standard (non-deferred) Toom-Cook body
-                        let fused_body = generate_toom_cook_body_weighted(8, 1);
-                        msl.push_str(&generate_fused_reduce_kernel(
+                        msl.push_str(&generate_reduce_kernel(
                             num_inputs,
                             num_evals,
-                            &fused_body,
+                            body_unw,
+                            variant,
+                            false,
+                            false,
+                            false,
+                            n_limbs,
+                            device_config,
+                            true,
+                            true,
+                            tg_spill_count,
+                        ));
+                        msl.push('\n');
+                    }
+                    // Tensor weighted (uses L2H indexing for reads)
+                    msl.push_str(&generate_reduce_kernel(
+                        num_inputs,
+                        num_evals,
+                        &body_w_l2h,
+                        KernelVariant::Tensor,
+                        true,
+                        true,
+                        false,
+                        n_limbs,
+                        device_config,
+                        true,
+                        true,
+                        tg_spill_count,
+                    ));
+                    msl.push('\n');
+                    // Fused H2L kernel uses standard (non-deferred) Toom-Cook body
+                    let fused_body = generate_toom_cook_body_weighted(8, 1);
+                    msl.push_str(&generate_fused_reduce_kernel(
+                        num_inputs,
+                        num_evals,
+                        &fused_body,
+                        true,
+                        false,
+                        n_limbs,
+                        device_config,
+                    ));
+                    msl.push('\n');
+
+                    // Cooperative kernel variants (8 threads per element)
+                    let coop_preamble = crate::coop_field_gen::generate_coop_preamble(n_limbs);
+                    let coop_body = crate::coop_field_gen::cooperativize_body(&fused_body);
+                    let mut coop_kernels = String::new();
+                    coop_kernels.push_str(&crate::coop_field_gen::generate_coop_reduce_kernel_h2l(
+                        num_inputs,
+                        num_evals,
+                        &coop_body,
+                        true,
+                        false,
+                        n_limbs,
+                        device_config,
+                    ));
+                    coop_kernels.push('\n');
+                    coop_kernels.push_str(
+                        &crate::coop_field_gen::generate_coop_fused_reduce_kernel(
+                            num_inputs,
+                            num_evals,
+                            &coop_body,
                             true,
                             false,
                             n_limbs,
                             device_config,
-                        ));
-                        msl.push('\n');
+                        ),
+                    );
+                    coop_kernels.push('\n');
 
-                        // Cooperative kernel variants (8 threads per element)
-                        let coop_preamble = crate::coop_field_gen::generate_coop_preamble(n_limbs);
-                        let coop_body = crate::coop_field_gen::cooperativize_body(&fused_body);
-                        let mut coop_kernels = String::new();
-                        coop_kernels.push_str(
-                            &crate::coop_field_gen::generate_coop_reduce_kernel_h2l(
-                                num_inputs,
-                                num_evals,
-                                &coop_body,
-                                true,
-                                false,
-                                n_limbs,
-                                device_config,
-                            ),
-                        );
-                        coop_kernels.push('\n');
-                        coop_kernels.push_str(
-                            &crate::coop_field_gen::generate_coop_fused_reduce_kernel(
-                                num_inputs,
-                                num_evals,
-                                &coop_body,
-                                true,
-                                false,
-                                n_limbs,
-                                device_config,
-                            ),
-                        );
-                        coop_kernels.push('\n');
-
-                        let source = if matches!(mode, CompileMode::FastCompile) {
-                            build_source_with_preamble_noinline(
-                                &field_config.msl_preamble,
-                                &[&coop_preamble, &msl, &coop_kernels],
-                            )
-                        } else {
-                            build_source_with_preamble(
-                                &field_config.msl_preamble,
-                                &[&coop_preamble, &msl, &coop_kernels],
-                            )
-                        };
-                        return GeneratedMsl {
-                            source,
-                            num_inputs,
-                            num_evals,
-                            has_challenges: false,
-                        };
-                    } else if d == 4 || d == 8 {
-                        // Toom-Cook D=4 (or D=8 P>1): weight-folded, generic reads
-                        let body_unw = generate_toom_cook_body(d, p);
-                        let body_w = generate_toom_cook_body_weighted(d, p);
-                        (body_w, body_unw, true, false)
+                    let source = if matches!(mode, CompileMode::FastCompile) {
+                        build_source_with_preamble_noinline(
+                            &field_config.msl_preamble,
+                            &[&coop_preamble, &msl, &coop_kernels],
+                        )
                     } else {
-                        let fold = d > 2 * p;
-                        let body = generate_product_sum_body(d, p, fold);
-                        let body_unw = if fold {
-                            generate_product_sum_body(d, p, false)
-                        } else {
-                            body.clone()
-                        };
-                        (body, body_unw, fold, false)
-                    }
+                        build_source_with_preamble(
+                            &field_config.msl_preamble,
+                            &[&coop_preamble, &msl, &coop_kernels],
+                        )
+                    };
+                    return GeneratedMsl {
+                        source,
+                        num_inputs,
+                        num_evals,
+                        has_challenges: false,
+                    };
+                } else if d == 4 || d == 8 {
+                    // Toom-Cook D=4 (or D=8 P>1): weight-folded, generic reads
+                    let body_unw = generate_toom_cook_body(d, p);
+                    let body_w = generate_toom_cook_body_weighted(d, p);
+                    (body_w, body_unw, true, false)
+                } else {
+                    let fold = d > 2 * p;
+                    let body = generate_product_sum_body(d, p, fold);
+                    let body_unw = if fold {
+                        generate_product_sum_body(d, p, false)
+                    } else {
+                        body.clone()
+                    };
+                    (body, body_unw, fold, false)
                 }
-                KernelShape::EqProduct => {
-                    let body = r"
-        evals[0] = fr_mul(lo_0, lo_1);
-        Fr a2 = fr_sub(fr_add(hi_0, hi_0), lo_0);
-        Fr b2 = fr_sub(fr_add(hi_1, hi_1), lo_1);
-        evals[1] = fr_mul(a2, b2);"
-                        .to_string();
-                    (body.clone(), body, false, false)
-                }
-                KernelShape::HammingBooleanity => {
-                    let body = r"
+            } else if formula.is_hamming_booleanity() {
+                let body = r"
         Fr d_eq = fr_sub(hi_0, lo_0);
         Fr d_h = fr_sub(hi_1, lo_1);
         evals[0] = fr_mul(fr_mul(lo_0, lo_1), fr_sub(lo_1, fr_one()));
@@ -358,17 +332,15 @@ pub fn generate_msl(
         eq_val = fr_add(eq_val, d_eq);
         h_val = fr_add(h_val, d_h);
         evals[2] = fr_mul(fr_mul(eq_val, h_val), fr_sub(h_val, fr_one()));"
-                        .to_string();
-                    (body.clone(), body, false, false)
-                }
-                KernelShape::Custom { expr, num_inputs } => {
-                    let body = generate_custom_body(expr, *num_inputs, descriptor.degree);
-                    (body.clone(), body, false, false)
-                }
+                    .to_string();
+                (body.clone(), body, false, false)
+            } else {
+                // Generic formula: generate MSL from the normalized sum-of-products
+                let body = generate_formula_body(formula, degree);
+                (body.clone(), body, false, false)
             };
 
-        // Only emit the challenges buffer parameter if the eval body references it.
-        // Custom kernels without Var::Challenge nodes don't need the buffer.
+        // Determine whether the eval body references challenge buffer slots.
         has_challenges = eval_body_weighted.contains("challenges[");
 
         let n_limbs = field_config.n_limbs;
@@ -426,22 +398,14 @@ pub fn generate_msl(
     // Generate cooperative kernel variants for ProductSum shapes.
     // These use 8 threads per field element for lower register pressure
     // and parallel CIOS carry propagation.
-    let coop_body = match &descriptor.shape {
-        KernelShape::ProductSum {
-            num_inputs_per_product,
-            num_products,
-        } => {
-            let d = *num_inputs_per_product;
-            let p = *num_products;
-            if d == 4 || d == 8 {
-                let std_body = generate_toom_cook_body_weighted(d, p);
-                Some(crate::coop_field_gen::cooperativize_body(&std_body))
-            } else {
-                None
-            }
+    let coop_body = formula.as_product_sum().and_then(|(d, p)| {
+        if d == 4 || d == 8 {
+            let std_body = generate_toom_cook_body_weighted(d, p);
+            Some(crate::coop_field_gen::cooperativize_body(&std_body))
+        } else {
+            None
         }
-        _ => None,
-    };
+    });
 
     let coop_preamble = crate::coop_field_gen::generate_coop_preamble(field_config.n_limbs);
     let mut coop_kernels = String::new();
@@ -1397,11 +1361,10 @@ fn generate_toom_cook_d8_deferred(p: usize, weighted: bool, h2l: bool, tg_spill:
     emit_ex2(&mut s, "br_4", "br_2", "br_3", "br_inf");
 
     // Point-wise: a_k = ar_k * br_k for k in {1,2,3,4,inf}
-    // ILP: pair independent multiplies via interleaved CIOS
-    let _ = writeln!(s, "        Fr a_1, a_2;");
-    let _ = writeln!(s, "        fr_mul2(ar_1, br_1, ar_2, br_2, a_1, a_2);");
-    let _ = writeln!(s, "        Fr a_3, a_4;");
-    let _ = writeln!(s, "        fr_mul2(ar_3, br_3, ar_4, br_4, a_3, a_4);");
+    let _ = writeln!(s, "        Fr a_1 = fr_mul(ar_1, br_1);");
+    let _ = writeln!(s, "        Fr a_2 = fr_mul(ar_2, br_2);");
+    let _ = writeln!(s, "        Fr a_3 = fr_mul(ar_3, br_3);");
+    let _ = writeln!(s, "        Fr a_4 = fr_mul(ar_4, br_4);");
     let _ = writeln!(s, "        Fr a_inf = fr_mul(ar_inf, br_inf);");
 
     // Extrapolate a to {5, 6, 7}
@@ -1439,10 +1402,10 @@ fn generate_toom_cook_d8_deferred(p: usize, weighted: bool, h2l: bool, tg_spill:
     emit_ex2(&mut s, "dr_4", "dr_2", "dr_3", "dr_inf");
 
     // Point-wise: b_k = cr_k * dr_k for k in {1,2,3,4,inf}
-    let _ = writeln!(s, "        Fr b_1, b_2;");
-    let _ = writeln!(s, "        fr_mul2(cr_1, dr_1, cr_2, dr_2, b_1, b_2);");
-    let _ = writeln!(s, "        Fr b_3, b_4;");
-    let _ = writeln!(s, "        fr_mul2(cr_3, dr_3, cr_4, dr_4, b_3, b_4);");
+    let _ = writeln!(s, "        Fr b_1 = fr_mul(cr_1, dr_1);");
+    let _ = writeln!(s, "        Fr b_2 = fr_mul(cr_2, dr_2);");
+    let _ = writeln!(s, "        Fr b_3 = fr_mul(cr_3, dr_3);");
+    let _ = writeln!(s, "        Fr b_4 = fr_mul(cr_4, dr_4);");
     let _ = writeln!(s, "        Fr b_inf = fr_mul(cr_inf, dr_inf);");
 
     // Extrapolate b to {5, 6, 7}
@@ -1454,42 +1417,42 @@ fn generate_toom_cook_d8_deferred(p: usize, weighted: bool, h2l: bool, tg_spill:
 
     // Fused eval-accumulate: point-wise multiply → fr_reduce → fr_add
     // directly into accumulators. No evals[] array needed — saves 64 registers.
-    // Uses fr_mul2_unreduced to interleave CIOS of independent pairs.
     if tg_spill {
-        // Reload a_1..a_7 from threadgroup memory in pairs for ILP.
-        let _ = writeln!(s, "        {{ Fr _pw0, _pw1;");
-        for (d0, d1, b0, b1) in [
-            (0, 1, "b_1", "b_2"),
-            (2, 3, "b_3", "b_4"),
-            (4, 5, "b_5", "b_6"),
+        // Reload a_1..a_7 from threadgroup memory
+        for (d, b_name) in [
+            (0, "b_1"),
+            (1, "b_2"),
+            (2, "b_3"),
+            (3, "b_4"),
+            (4, "b_5"),
+            (5, "b_6"),
+            (6, "b_7"),
         ] {
             let _ = writeln!(
                 s,
-                "        fr_mul2_unreduced(tg_data[lid * 7u + {d0}u], {b0}, tg_data[lid * 7u + {d1}u], {b1}, _pw0, _pw1);"
+                "        acc_{d} = fr_add(acc_{d}, fr_reduce(fr_mul_unreduced(tg_data[lid * 7u + {d}u], {b_name})));"
             );
-            let _ = writeln!(s, "        acc_{d0} = fr_add(acc_{d0}, fr_reduce(_pw0));");
-            let _ = writeln!(s, "        acc_{d1} = fr_add(acc_{d1}, fr_reduce(_pw1));");
         }
-        // Last pair: a_7 from tg_data + a_inf from register
         let _ = writeln!(
             s,
-            "        fr_mul2_unreduced(tg_data[lid * 7u + 6u], b_7, a_inf, b_inf, _pw0, _pw1);"
+            "        acc_7 = fr_add(acc_7, fr_reduce(fr_mul_unreduced(a_inf, b_inf)));"
         );
-        let _ = writeln!(s, "        acc_6 = fr_add(acc_6, fr_reduce(_pw0));");
-        let _ = writeln!(s, "        acc_7 = fr_add(acc_7, fr_reduce(_pw1)); }}");
     } else {
-        let _ = writeln!(s, "        {{ Fr _pw0, _pw1;");
-        for (d0, d1, a0, b0, a1, b1) in [
-            (0, 1, "a_1", "b_1", "a_2", "b_2"),
-            (2, 3, "a_3", "b_3", "a_4", "b_4"),
-            (4, 5, "a_5", "b_5", "a_6", "b_6"),
-            (6, 7, "a_7", "b_7", "a_inf", "b_inf"),
+        for (d, a_name, b_name) in [
+            (0, "a_1", "b_1"),
+            (1, "a_2", "b_2"),
+            (2, "a_3", "b_3"),
+            (3, "a_4", "b_4"),
+            (4, "a_5", "b_5"),
+            (5, "a_6", "b_6"),
+            (6, "a_7", "b_7"),
+            (7, "a_inf", "b_inf"),
         ] {
-            let _ = writeln!(s, "        fr_mul2_unreduced({a0}, {b0}, {a1}, {b1}, _pw0, _pw1);");
-            let _ = writeln!(s, "        acc_{d0} = fr_add(acc_{d0}, fr_reduce(_pw0));");
-            let _ = writeln!(s, "        acc_{d1} = fr_add(acc_{d1}, fr_reduce(_pw1));");
+            let _ = writeln!(
+                s,
+                "        acc_{d} = fr_add(acc_{d}, fr_reduce(fr_mul_unreduced({a_name}, {b_name})));"
+            );
         }
-        let _ = writeln!(s, "        }}");
     }
 
     s
@@ -1512,11 +1475,10 @@ fn emit_eval_linear_prod_2(
     let _ = writeln!(s, "        Fr {prefix}_v2_0 = fr_add({prefix}_s0, {hi0});");
     let _ = writeln!(s, "        Fr {prefix}_s1 = fr_sub({hi1}, {lo1});");
     let _ = writeln!(s, "        Fr {prefix}_v2_1 = fr_add({prefix}_s1, {hi1});");
-    // ILP: pair first two independent fr_mul via interleaved CIOS
-    let _ = writeln!(s, "        Fr {prefix}_1, {prefix}_2;");
+    let _ = writeln!(s, "        Fr {prefix}_1 = fr_mul({hi0}, {hi1});");
     let _ = writeln!(
         s,
-        "        fr_mul2({hi0}, {hi1}, {prefix}_v2_0, {prefix}_v2_1, {prefix}_1, {prefix}_2);"
+        "        Fr {prefix}_2 = fr_mul({prefix}_v2_0, {prefix}_v2_1);"
     );
     let _ = writeln!(
         s,
@@ -1617,19 +1579,20 @@ fn generate_toom_cook_d4(p: usize) -> String {
         );
         emit_ex2(&mut s, "b_3", "b_1", "b_2", "b_inf");
 
-        // Point-wise multiply — use fr_mul2 to interleave CIOS of
-        // independent pairs for better pipeline utilization.
+        // Point-wise multiply
         if p == 1 {
-            let _ = writeln!(s, "        fr_mul2_unreduced(a_1, b_1, a_2, b_2, evals[0], evals[1]);");
-            let _ = writeln!(s, "        fr_mul2_unreduced(a_3, b_3, a_inf, b_inf, evals[2], evals[3]);");
+            let _ = writeln!(s, "        evals[0] = fr_mul_unreduced(a_1, b_1);");
+            let _ = writeln!(s, "        evals[1] = fr_mul_unreduced(a_2, b_2);");
+            let _ = writeln!(s, "        evals[2] = fr_mul_unreduced(a_3, b_3);");
+            let _ = writeln!(s, "        evals[3] = fr_mul_unreduced(a_inf, b_inf);");
         } else {
-            let _ = writeln!(s, "        {{ Fr _pw0, _pw1;");
-            let _ = writeln!(s, "        fr_mul2(a_1, b_1, a_2, b_2, _pw0, _pw1);");
-            let _ = writeln!(s, "        evals[0] = fr_add(evals[0], _pw0);");
-            let _ = writeln!(s, "        evals[1] = fr_add(evals[1], _pw1);");
-            let _ = writeln!(s, "        fr_mul2(a_3, b_3, a_inf, b_inf, _pw0, _pw1);");
-            let _ = writeln!(s, "        evals[2] = fr_add(evals[2], _pw0);");
-            let _ = writeln!(s, "        evals[3] = fr_add(evals[3], _pw1); }}");
+            let _ = writeln!(s, "        evals[0] = fr_add(evals[0], fr_mul(a_1, b_1));");
+            let _ = writeln!(s, "        evals[1] = fr_add(evals[1], fr_mul(a_2, b_2));");
+            let _ = writeln!(s, "        evals[2] = fr_add(evals[2], fr_mul(a_3, b_3));");
+            let _ = writeln!(
+                s,
+                "        evals[3] = fr_add(evals[3], fr_mul(a_inf, b_inf));"
+            );
         }
         let _ = writeln!(s, "        }}");
     }
@@ -1736,25 +1699,28 @@ fn generate_toom_cook_d8(p: usize) -> String {
         emit_ex4_2(&mut s, "b_5", "b_6", ["b_1", "b_2", "b_3", "b_4"], "b_inf6");
         emit_ex4(&mut s, "b_7", "b_3", "b_4", "b_5", "b_6", "b_inf6");
 
-        // Final point-wise multiply — use fr_mul2 for independent pairs
+        // Final point-wise multiply
         if p == 1 {
-            let _ = writeln!(s, "        fr_mul2_unreduced(a_1, b_1, a_2, b_2, evals[0], evals[1]);");
-            let _ = writeln!(s, "        fr_mul2_unreduced(a_3, b_3, a_4, b_4, evals[2], evals[3]);");
-            let _ = writeln!(s, "        fr_mul2_unreduced(a_5, b_5, a_6, b_6, evals[4], evals[5]);");
-            let _ = writeln!(s, "        fr_mul2_unreduced(a_7, b_7, a_inf, b_inf, evals[6], evals[7]);");
+            let _ = writeln!(s, "        evals[0] = fr_mul_unreduced(a_1, b_1);");
+            let _ = writeln!(s, "        evals[1] = fr_mul_unreduced(a_2, b_2);");
+            let _ = writeln!(s, "        evals[2] = fr_mul_unreduced(a_3, b_3);");
+            let _ = writeln!(s, "        evals[3] = fr_mul_unreduced(a_4, b_4);");
+            let _ = writeln!(s, "        evals[4] = fr_mul_unreduced(a_5, b_5);");
+            let _ = writeln!(s, "        evals[5] = fr_mul_unreduced(a_6, b_6);");
+            let _ = writeln!(s, "        evals[6] = fr_mul_unreduced(a_7, b_7);");
+            let _ = writeln!(s, "        evals[7] = fr_mul_unreduced(a_inf, b_inf);");
         } else {
-            let _ = writeln!(s, "        {{ Fr _pw0, _pw1;");
-            for (d0, d1, a0, b0, a1, b1) in [
-                (0, 1, "a_1", "b_1", "a_2", "b_2"),
-                (2, 3, "a_3", "b_3", "a_4", "b_4"),
-                (4, 5, "a_5", "b_5", "a_6", "b_6"),
-                (6, 7, "a_7", "b_7", "a_inf", "b_inf"),
-            ] {
-                let _ = writeln!(s, "        fr_mul2({a0}, {b0}, {a1}, {b1}, _pw0, _pw1);");
-                let _ = writeln!(s, "        evals[{d0}] = fr_add(evals[{d0}], _pw0);");
-                let _ = writeln!(s, "        evals[{d1}] = fr_add(evals[{d1}], _pw1);");
-            }
-            let _ = writeln!(s, "        }}");
+            let _ = writeln!(s, "        evals[0] = fr_add(evals[0], fr_mul(a_1, b_1));");
+            let _ = writeln!(s, "        evals[1] = fr_add(evals[1], fr_mul(a_2, b_2));");
+            let _ = writeln!(s, "        evals[2] = fr_add(evals[2], fr_mul(a_3, b_3));");
+            let _ = writeln!(s, "        evals[3] = fr_add(evals[3], fr_mul(a_4, b_4));");
+            let _ = writeln!(s, "        evals[4] = fr_add(evals[4], fr_mul(a_5, b_5));");
+            let _ = writeln!(s, "        evals[5] = fr_add(evals[5], fr_mul(a_6, b_6));");
+            let _ = writeln!(s, "        evals[6] = fr_add(evals[6], fr_mul(a_7, b_7));");
+            let _ = writeln!(
+                s,
+                "        evals[7] = fr_add(evals[7], fr_mul(a_inf, b_inf));"
+            );
         }
         let _ = writeln!(s, "        }}");
     }
@@ -1852,17 +1818,20 @@ fn emit_product_sum(s: &mut String, d: usize, p: usize, arr: &str, eval_idx: usi
     let _ = writeln!(s, "          evals[{eval_idx}] = sum; }}");
 }
 
-/// Generate MSL evaluation body for Custom expression shape.
+/// Generate MSL evaluation body from a [`CompositionFormula`].
 ///
 /// Uses incremental interpolation: maintains `cur_k` starting at `lo[k]` and
 /// adding `diff_k` for each successive grid point. Grid is `{0, 2, 3, ..., degree}`
 /// (skipping `t=1`), so slot 0 maps to `t=0` and slot `k>=1` maps to `t=k+1`.
 ///
+/// At each grid point, evaluates `Σ_term coeff × Π_factor factor_val` where
+/// input factors map to `cur_k` and challenge factors to `challenges[id]`.
+///
 /// Challenge values are read from a `device const Fr* challenges` buffer at
 /// runtime rather than baked as MSL constants. This makes the kernel shape
 /// deterministic at compile time, enabling AOT pipeline caching.
-fn generate_custom_body(expr: &Expr, num_inputs: usize, degree: usize) -> String {
-    // Grid: {0, 2, 3, ..., degree} — `degree` evaluations, skipping t=1
+fn generate_formula_body(formula: &CompositionFormula, degree: usize) -> String {
+    let num_inputs = formula.num_inputs;
     let num_evals = degree;
     let mut s = String::with_capacity(2048);
 
@@ -1895,107 +1864,86 @@ fn generate_custom_body(expr: &Expr, num_inputs: usize, degree: usize) -> String
 
         let _ = writeln!(s, "        {{ // t = {t}");
 
-        // Walk expression tree — challenges read from buffer at runtime
-        let mut visitor = MslCodeGen {
-            code: String::new(),
-            next_id: 0,
-        };
-        let root_name = expr.visit(&mut visitor);
-        let _ = write!(s, "{}", visitor.code);
-        let _ = writeln!(s, "            evals[{slot}] = {root_name};");
+        // Emit sum-of-products evaluation from the formula terms
+        let mut term_names = Vec::with_capacity(formula.terms.len());
+        for (ti, term) in formula.terms.iter().enumerate() {
+            let term_name = emit_term_msl(&mut s, term, ti);
+            term_names.push(term_name);
+        }
+
+        // Sum all terms
+        if term_names.is_empty() {
+            let _ = writeln!(s, "            evals[{slot}] = fr_zero();");
+        } else {
+            let mut acc = term_names[0].clone();
+            for tn in &term_names[1..] {
+                let _ = writeln!(s, "            Fr sum_{slot}_{tn} = fr_add({acc}, {tn});");
+                acc = format!("sum_{slot}_{tn}");
+            }
+            let _ = writeln!(s, "            evals[{slot}] = {acc};");
+        }
+
         let _ = writeln!(s, "        }}");
     }
 
     s
 }
 
-/// ExprVisitor that emits MSL assignments in SSA form.
+/// Emit MSL for a single [`ProductTerm`]: `coefficient × Π factors`.
 ///
-/// Challenge variables emit `challenges[id]` (buffer reads), not baked constants.
-/// This makes generated MSL deterministic per kernel shape, enabling AOT compilation.
-struct MslCodeGen {
-    code: String,
-    next_id: usize,
-}
-
-impl MslCodeGen {
-    fn fresh_var(&mut self) -> String {
-        let name = format!("e{}", self.next_id);
-        self.next_id += 1;
-        name
-    }
-}
-
-impl ExprVisitor for MslCodeGen {
-    type Output = String;
-
-    fn visit_constant(&mut self, val: i128) -> String {
-        let name = self.fresh_var();
-        // SoP coefficients in Jolt are always in {-1, 0, 1}. We fast-path
-        // those and fall back to fr_from_u64 for small positive/negative values.
-        match val {
-            0 => {
-                let _ = writeln!(self.code, "            Fr {name} = fr_zero();");
-            }
-            1 => {
-                let _ = writeln!(self.code, "            Fr {name} = fr_one();");
-            }
-            -1 => {
-                let _ = writeln!(self.code, "            Fr {name} = fr_neg(fr_one());");
-            }
-            v if v > 0 => {
-                assert!(
-                    v <= i128::from(u64::MAX),
-                    "MSL constant {v} exceeds u64 range"
-                );
-                let _ = writeln!(
-                    self.code,
-                    "            Fr {name} = fr_from_u64((ulong){v});"
-                );
-            }
-            v => {
-                let abs = -v;
-                assert!(
-                    abs <= i128::from(u64::MAX),
-                    "MSL constant {v} exceeds u64 range"
-                );
-                let _ = writeln!(
-                    self.code,
-                    "            Fr {name} = fr_neg(fr_from_u64((ulong){abs}));"
-                );
-            }
+/// Returns the MSL variable name holding the term's value.
+fn emit_term_msl(s: &mut String, term: &ProductTerm, idx: usize) -> String {
+    // Start with coefficient
+    let coeff_name = format!("c_{idx}");
+    match term.coefficient {
+        0 => {
+            let _ = writeln!(s, "            Fr {coeff_name} = fr_zero();");
+            return coeff_name;
         }
-        name
-    }
-
-    fn visit_var(&mut self, var: Var) -> String {
-        match var {
-            Var::Opening(id) => format!("cur_{id}"),
-            Var::Challenge(id) => format!("challenges[{id}]"),
+        1 => {
+            let _ = writeln!(s, "            Fr {coeff_name} = fr_one();");
+        }
+        -1 => {
+            let _ = writeln!(s, "            Fr {coeff_name} = fr_neg(fr_one());");
+        }
+        v if v > 0 => {
+            assert!(
+                v <= i128::from(u64::MAX),
+                "MSL constant {v} exceeds u64 range"
+            );
+            let _ = writeln!(s, "            Fr {coeff_name} = fr_from_u64((ulong){v});");
+        }
+        v => {
+            let abs = -v;
+            assert!(
+                abs <= i128::from(u64::MAX),
+                "MSL constant {v} exceeds u64 range"
+            );
+            let _ = writeln!(
+                s,
+                "            Fr {coeff_name} = fr_neg(fr_from_u64((ulong){abs}));"
+            );
         }
     }
 
-    fn visit_neg(&mut self, inner: String) -> String {
-        let name = self.fresh_var();
-        let _ = writeln!(self.code, "            Fr {name} = fr_neg({inner});");
-        name
+    if term.factors.is_empty() {
+        return coeff_name;
     }
 
-    fn visit_add(&mut self, lhs: String, rhs: String) -> String {
-        let name = self.fresh_var();
-        let _ = writeln!(self.code, "            Fr {name} = fr_add({lhs}, {rhs});");
-        name
+    // Multiply coefficient by each factor
+    let mut acc = coeff_name;
+    for (fi, factor) in term.factors.iter().enumerate() {
+        let factor_ref = match factor {
+            Factor::Input(id) => format!("cur_{id}"),
+            Factor::Challenge(id) => format!("challenges[{id}]"),
+        };
+        let prod_name = format!("t_{idx}_{fi}");
+        let _ = writeln!(
+            s,
+            "            Fr {prod_name} = fr_mul({acc}, {factor_ref});"
+        );
+        acc = prod_name;
     }
 
-    fn visit_sub(&mut self, lhs: String, rhs: String) -> String {
-        let name = self.fresh_var();
-        let _ = writeln!(self.code, "            Fr {name} = fr_sub({lhs}, {rhs});");
-        name
-    }
-
-    fn visit_mul(&mut self, lhs: String, rhs: String) -> String {
-        let name = self.fresh_var();
-        let _ = writeln!(self.code, "            Fr {name} = fr_mul({lhs}, {rhs});");
-        name
-    }
+    acc
 }

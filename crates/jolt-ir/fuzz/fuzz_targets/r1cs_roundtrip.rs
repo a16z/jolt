@@ -3,8 +3,8 @@ use jolt_field::{Field, Fr};
 use jolt_ir::{ExprBuilder, R1csVar};
 use libfuzzer_sys::fuzz_target;
 
-// Builds a random expression, normalizes to SoP, emits R1CS, then checks that
-// all constraints are satisfied and the output matches direct evaluation.
+// Builds a random expression, normalizes to CompositionFormula, emits R1CS, then
+// checks that all constraints are satisfied and the output matches direct evaluation.
 fuzz_target!(|data: &[u8]| {
     if data.len() < 4 {
         return;
@@ -62,7 +62,7 @@ fuzz_target!(|data: &[u8]| {
 
     if let Some(&root) = handles.last() {
         let expr = b.build(root);
-        let sop = expr.to_sum_of_products();
+        let formula = expr.to_composition_formula();
 
         // R1CS variable 0 is always "one", openings start at 1
         let opening_vars: Vec<R1csVar> =
@@ -73,7 +73,7 @@ fuzz_target!(|data: &[u8]| {
             (0..num_challenges).map(|i| Fr::from_u64(i as u64 + 50)).collect();
 
         let mut next_var = num_openings + 1;
-        let emission = sop.emit_r1cs::<Fr>(&opening_vars, &challenge_vals, &mut next_var);
+        let emission = formula.emit_r1cs::<Fr>(&opening_vars, &challenge_vals, &mut next_var);
 
         // Build witness
         let witness_len = next_var as usize;
@@ -100,7 +100,7 @@ fuzz_target!(|data: &[u8]| {
         }
 
         // Output must match direct evaluation
-        let expected: Fr = sop.evaluate(&opening_vals, &challenge_vals);
+        let expected: Fr = formula.evaluate(&opening_vals, &challenge_vals);
         let actual = witness[emission.output_var.index()];
         assert_eq!(actual, expected, "R1CS output mismatch");
     }

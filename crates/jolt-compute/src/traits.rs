@@ -1,7 +1,65 @@
 //! Core trait definitions for compute backends.
 
+pub use jolt_compiler::BindingOrder;
+use jolt_compiler::CompositionFormula;
 use jolt_field::Field;
-use jolt_ir::KernelDescriptor;
+
+/// Round polynomial coefficients in ascending degree order.
+///
+/// Lightweight representation of a univariate polynomial $p(x) = \sum_i c_i x^i$
+/// produced by [`BackendWitness::round_polynomial`]. This avoids a dependency on
+/// `jolt-poly` in the compute layer. Conversion to/from `UnivariatePoly<F>` is
+/// a zero-cost move of the inner `Vec<F>`.
+#[derive(Clone, Debug)]
+pub struct RoundCoeffs<F: Field> {
+    /// Coefficients in ascending degree order: index `i` holds $c_i$.
+    pub coeffs: Vec<F>,
+}
+
+impl<F: Field> RoundCoeffs<F> {
+    #[inline]
+    pub fn new(coeffs: Vec<F>) -> Self {
+        Self { coeffs }
+    }
+}
+
+/// Witness trait for sumcheck, defined in the compute layer.
+///
+/// Structurally identical to `jolt_sumcheck::SumcheckCompute<F>` but avoids
+/// pulling `jolt-poly`, `jolt-openings`, and `jolt-transcript` into
+/// `jolt-compute`. Concrete witness types (e.g., `CpuSumcheckWitness`) implement
+/// both this trait and `SumcheckCompute` — the latter delegates to the former.
+///
+/// The prover engine in `jolt-sumcheck` accepts `SumcheckCompute`; the backend
+/// factory in `ComputeBackend::make_witness` produces `BackendWitness`. Bridging
+/// is a one-line blanket impl in the crate that has both traits in scope.
+pub trait BackendWitness<F: Field>: Send + Sync {
+    /// Computes the round polynomial $s_i(X)$ for the current round.
+    fn round_polynomial(&self) -> RoundCoeffs<F>;
+
+    /// Fixes the current leading variable to `challenge`, reducing the
+    /// witness by one variable.
+    fn bind(&mut self, challenge: F);
+
+    /// Provides the running sumcheck claim before each round.
+    ///
+    /// Called with the current running sum. Witnesses that derive evaluation
+    /// points from the claim (e.g., `P(1) = claim - P(0)`) should override.
+    fn set_claim(&mut self, _claim: F) {}
+
+    /// Optional first-round polynomial override (univariate skip).
+    fn first_round_polynomial(&self) -> Option<RoundCoeffs<F>> {
+        None
+    }
+
+    /// Per-polynomial evaluations at the fully-bound challenge point.
+    ///
+    /// Returns `(index, eval)` pairs where `index` identifies the polynomial
+    /// within this witness.
+    fn produced_evaluations(&self) -> Vec<(usize, F)> {
+        vec![]
+    }
+}
 
 /// Marker trait for types that can be stored in device buffers.
 ///
@@ -14,23 +72,38 @@ use jolt_ir::KernelDescriptor;
 pub trait Scalar: Copy + Send + Sync + 'static {}
 impl<T: Copy + Send + Sync + 'static> Scalar for T {}
 
-/// Variable binding order for polynomial interpolation.
+/// Eq-polynomial weighting mode for composition-reduce operations.
 ///
-/// Determines how pairs are formed from buffer elements:
+/// Controls how per-pair weights are applied during
+/// [`pairwise_reduce`](ComputeBackend::pairwise_reduce):
 ///
-/// - **LowToHigh**: Interleaved layout. Pairs `(buf[2i], buf[2i+1])`.
-///   Binds the least-significant variable first. Default for most sumcheck
-///   instances (instruction RA, claim reductions).
+/// - [`Unit`](EqInput::Unit) — implicit all-ones weights. Avoids allocating
+///   a weight buffer and skips per-pair multiply. Used when eq is an input
+///   buffer (standard-grid sumchecks).
 ///
-/// - **HighToLow**: Split-half layout. Pairs `(buf[i], buf[i + n/2])`.
-///   Binds the most-significant variable first. Used by Spartan outer
-///   sumcheck and RAM read-write checking.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub enum BindingOrder {
-    #[default]
-    LowToHigh,
-    HighToLow,
+/// - [`Weighted`](EqInput::Weighted) — explicit weight buffer. Used when eq
+///   is factored out of the kernel and applied as per-pair scaling (Toom-Cook
+///   sumchecks).
+///
+/// - [`Tensor`](EqInput::Tensor) — split-eq tensor product
+///   `w(x_out, x_in) = outer[x_out] · inner[x_in]`. Saves memory and
+///   enables cache-friendly nested iteration. Used by Spartan outer sumcheck.
+pub enum EqInput<'a, B: ComputeBackend + ?Sized, F: Field> {
+    Unit,
+    Weighted(&'a B::Buffer<F>),
+    Tensor {
+        outer: &'a B::Buffer<F>,
+        inner: &'a B::Buffer<F>,
+    },
 }
+
+impl<B: ComputeBackend + ?Sized, F: Field> Clone for EqInput<'_, B, F> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<B: ComputeBackend + ?Sized, F: Field> Copy for EqInput<'_, B, F> {}
 
 /// Abstraction over a compute device (CPU, Metal GPU, CUDA GPU, WebGPU).
 ///
@@ -45,7 +118,7 @@ pub enum BindingOrder {
 ///
 /// - [`CompiledKernel`](Self::CompiledKernel) — opaque compiled kernel for
 ///   [`pairwise_reduce`](Self::pairwise_reduce). Compiled from a
-///   [`KernelDescriptor`] via [`compile_kernel`](Self::compile_kernel).
+///   [`CompositionFormula`] via [`compile_kernel`](Self::compile_kernel).
 ///
 /// # Zero Cost for CPU
 ///
@@ -75,19 +148,32 @@ pub trait ComputeBackend: Send + Sync + 'static {
     /// closure. For Metal: `MetalKernel<F>` wrapping pipeline states.
     type CompiledKernel<F: Field>: Send + Sync;
 
-    /// Compile a [`KernelDescriptor`] into a backend-specific kernel.
-    fn compile_kernel<F: Field>(&self, desc: &KernelDescriptor) -> Self::CompiledKernel<F> {
-        self.compile_kernel_with_challenges(desc, &[])
+    /// Backend-created sumcheck witness that pairs a compiled kernel with
+    /// runtime data. The backend controls the internal representation (dense
+    /// buffers on CPU, device-side buffers on GPU) while exposing the
+    /// standard round-polynomial / bind interface.
+    type SumcheckWitness<F: Field>: BackendWitness<F>;
+
+    /// Sparse buffer for non-dense polynomial representations.
+    ///
+    /// Stores `(row_index, column_values)` pairs where each entry contributes
+    /// to a small number of hypercube positions. For CPU this is
+    /// `Vec<(usize, Vec<F>)>`; GPU backends may use CSR-style device buffers.
+    type SparseBuffer<F: Field>: Send + Sync;
+
+    /// Compile a [`CompositionFormula`] into a backend-specific kernel.
+    fn compile_kernel<F: Field>(&self, formula: &CompositionFormula) -> Self::CompiledKernel<F> {
+        self.compile_kernel_with_challenges(formula, &[])
     }
 
-    /// Compile a [`KernelDescriptor`] with baked challenge values.
+    /// Compile a [`CompositionFormula`] with baked challenge values.
     ///
-    /// For `Custom` expression kernels, `challenges[i]` is substituted for
-    /// `Var::Challenge(i)`. For `ProductSum` descriptors, challenges are
-    /// ignored.
+    /// `challenges[i]` is substituted for `Factor::Challenge(i)` in the
+    /// formula. For pure product-sum formulas (no challenge factors),
+    /// challenges are ignored.
     fn compile_kernel_with_challenges<F: Field>(
         &self,
-        desc: &KernelDescriptor,
+        formula: &CompositionFormula,
         challenges: &[F],
     ) -> Self::CompiledKernel<F>;
 
@@ -133,22 +219,23 @@ pub trait ComputeBackend: Send + Sync + 'static {
     ///    - [`HighToLow`](BindingOrder::HighToLow): `(inputs[k][i], inputs[k][i + n/2])`
     /// 2. Executes the compiled kernel on those pairs, producing
     ///    `num_evals` values
-    /// 3. Multiplies each value by `weights[i]`
+    /// 3. Multiplies each value by the eq weight for this position
+    ///    (see [`EqInput`])
     /// 4. Accumulates into `num_evals` running sums
     ///
     /// Returns `num_evals` field elements after reducing across all
     /// positions. This is the only device-to-host transfer per invocation.
     ///
     /// For Toom-Cook kernels (ProductSum), `num_evals = D` (evaluations on
-    /// the grid `{1, ..., D-1, ∞}`). For standard-grid kernels (Custom),
-    /// `num_evals = degree + 1` (evaluations on `{0, 1, ..., degree}`).
+    /// the grid `{1, ..., D-1, ∞}`). For standard-grid kernels,
+    /// `num_evals = degree` (evaluations on `{0, 2, 3, ..., degree}`).
     ///
     /// Both the kernel evaluation and the reduction use delayed modular
     /// reduction internally.
     fn pairwise_reduce<F: Field>(
         &self,
         inputs: &[&Self::Buffer<F>],
-        weights: &Self::Buffer<F>,
+        eq: EqInput<'_, Self, F>,
         kernel: &Self::CompiledKernel<F>,
         num_evals: usize,
         order: BindingOrder,
@@ -213,92 +300,31 @@ pub trait ComputeBackend: Send + Sync + 'static {
     fn pairwise_reduce_fixed<F: Field, const D: usize>(
         &self,
         inputs: &[&Self::Buffer<F>],
-        weights: &Self::Buffer<F>,
+        eq: EqInput<'_, Self, F>,
         kernel: &Self::CompiledKernel<F>,
         order: BindingOrder,
     ) -> [F; D] {
-        let v = self.pairwise_reduce(inputs, weights, kernel, D, order);
+        let v = self.pairwise_reduce(inputs, eq, kernel, D, order);
         core::array::from_fn(|i| v[i])
     }
 
-    /// Composition-reduce with implicit unit weights (all ones).
-    ///
-    /// Equivalent to [`pairwise_reduce`](Self::pairwise_reduce) with a weights
-    /// buffer of all `F::one()`, but avoids allocating the buffer and skips the
-    /// per-element weight multiply. On GPU backends this dispatches a specialized
-    /// unweighted kernel that saves one `fr_mul` per pair per evaluation slot.
-    fn pairwise_reduce_unweighted<F: Field>(
-        &self,
-        inputs: &[&Self::Buffer<F>],
-        kernel: &Self::CompiledKernel<F>,
-        num_evals: usize,
-        order: BindingOrder,
-    ) -> Vec<F> {
-        let n = self.len(inputs[0]);
-        let ones = vec![F::one(); n / 2];
-        let weights = self.upload(&ones);
-        self.pairwise_reduce(inputs, &weights, kernel, num_evals, order)
-    }
-
-    /// Split-eq tensor-product composition-reduce.
-    ///
-    /// Like [`pairwise_reduce`](Self::pairwise_reduce) but with factored
-    /// weights. Instead of a flat weight buffer, takes two tables whose
-    /// tensor product forms the weights:
-    ///
-    /// $$w(x_{\text{out}}, x_{\text{in}}) = \text{outer}_{x_{\text{out}}} \cdot \text{inner}_{x_{\text{in}}}$$
-    ///
-    /// Input buffers have `2 × |outer| × |inner|` elements. Position
-    /// $(x_{\text{out}}, x_{\text{in}})$ maps to pair index
-    /// $x_{\text{out}} \cdot |\text{inner}| + x_{\text{in}}$.
-    ///
-    /// On CPU the outer loop stays in L1 while the inner loop streams data.
-    /// On GPU the outer factor maps to thread groups, the inner to threads
-    /// with the inner weight table in shared memory.
-    fn tensor_pairwise_reduce<F: Field>(
-        &self,
-        inputs: &[&Self::Buffer<F>],
-        outer_weights: &Self::Buffer<F>,
-        inner_weights: &Self::Buffer<F>,
-        kernel: &Self::CompiledKernel<F>,
-        num_evals: usize,
-    ) -> Vec<F>;
-
-    /// Const-generic split-eq tensor-product composition-reduce.
-    ///
-    /// Combines the tensor-product weight factoring of
-    /// [`tensor_pairwise_reduce`](Self::tensor_pairwise_reduce) with the
-    /// stack-allocated scratch of [`pairwise_reduce_fixed`](Self::pairwise_reduce_fixed).
-    fn tensor_pairwise_reduce_fixed<F: Field, const D: usize>(
-        &self,
-        inputs: &[&Self::Buffer<F>],
-        outer_weights: &Self::Buffer<F>,
-        inner_weights: &Self::Buffer<F>,
-        kernel: &Self::CompiledKernel<F>,
-    ) -> [F; D] {
-        let v = self.tensor_pairwise_reduce(inputs, outer_weights, inner_weights, kernel, D);
-        core::array::from_fn(|i| v[i])
-    }
-
-    /// Evaluates multiple kernels over the same inputs and weights in a
+    /// Evaluates multiple kernels over the same inputs and eq weights in a
     /// single pass.
     ///
     /// Each `(kernel, num_evals)` pair shares the same input buffers and
-    /// weight buffer. The data is read once per position and each kernel is
+    /// eq weights. The data is read once per position and each kernel is
     /// evaluated, saving cache misses compared to calling
     /// [`pairwise_reduce`](Self::pairwise_reduce) independently per kernel.
     fn pairwise_reduce_multi<F: Field>(
         &self,
         inputs: &[&Self::Buffer<F>],
-        weights: &Self::Buffer<F>,
+        eq: EqInput<'_, Self, F>,
         kernels: &[(&Self::CompiledKernel<F>, usize)],
         order: BindingOrder,
     ) -> Vec<Vec<F>> {
         kernels
             .iter()
-            .map(|(kernel, num_evals)| {
-                self.pairwise_reduce(inputs, weights, kernel, *num_evals, order)
-            })
+            .map(|(kernel, num_evals)| self.pairwise_reduce(inputs, eq, kernel, *num_evals, order))
             .collect()
     }
 
@@ -391,6 +417,62 @@ pub trait ComputeBackend: Send + Sync + 'static {
         self.interpolate_pairs_batch_inplace(inputs, interpolation_scalar, BindingOrder::HighToLow);
         self.interpolate_pairs_inplace(weights, interpolation_scalar, BindingOrder::HighToLow);
         let refs: Vec<_> = inputs.iter().collect();
-        self.pairwise_reduce(&refs, weights, kernel, num_evals, BindingOrder::HighToLow)
+        self.pairwise_reduce(
+            &refs,
+            EqInput::Weighted(weights),
+            kernel,
+            num_evals,
+            BindingOrder::HighToLow,
+        )
     }
+
+    // -- Witness factory -------------------------------------------------
+
+    /// Creates a sumcheck witness by pairing a pre-compiled kernel with
+    /// runtime input buffers and challenge values.
+    ///
+    /// This replaces the old `build_witness()` + `KernelEvaluator` pattern:
+    /// the backend owns both the data layout and the evaluation strategy,
+    /// returning an opaque witness that implements [`BackendWitness`].
+    fn make_witness<F: Field>(
+        &self,
+        kernel: &Self::CompiledKernel<F>,
+        inputs: Vec<Self::Buffer<F>>,
+        challenges: &[F],
+    ) -> Self::SumcheckWitness<F>;
+
+    // -- Sparse buffer primitives ----------------------------------------
+
+    /// Upload sparse entries to a device-side buffer.
+    ///
+    /// Each entry is `(row_index, column_values)` where `row_index`
+    /// identifies a hypercube position and `column_values` holds the
+    /// polynomial evaluations at that position.
+    fn upload_sparse<F: Field>(&self, entries: &[(usize, Vec<F>)]) -> Self::SparseBuffer<F>;
+
+    /// Sparse sumcheck reduction: evaluates the kernel over sparse entries.
+    ///
+    /// Analogous to [`pairwise_reduce`](Self::pairwise_reduce) but only
+    /// iterates over populated positions in the sparse buffer, scaling each
+    /// by the corresponding eq weight.
+    fn sparse_reduce<F: Field>(
+        &self,
+        entries: &Self::SparseBuffer<F>,
+        eq: &Self::Buffer<F>,
+        kernel: &Self::CompiledKernel<F>,
+        challenges: &[F],
+        num_evals: usize,
+    ) -> Vec<F>;
+
+    /// Bind a sparse buffer at a challenge point, halving the index space.
+    ///
+    /// Analogous to [`interpolate_pairs_inplace`](Self::interpolate_pairs_inplace)
+    /// but operates on the sparse representation, merging entries whose indices
+    /// differ only in the bound variable.
+    fn sparse_bind<F: Field>(
+        &self,
+        entries: &mut Self::SparseBuffer<F>,
+        challenge: F,
+        order: BindingOrder,
+    );
 }

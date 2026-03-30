@@ -229,8 +229,30 @@ fn register_all_polynomials(b: &mut GraphBuilder, config: &ProtocolConfig) {
         // group_id += 1; // unused after this
     }
 
-    // Virtual polynomials (no commitment group)
+    // R1CS virtual polynomials (Spartan outer/inner)
     let virt = PolynomialKind::Virtual;
+    b.register_poly(
+        PolynomialId::Az,
+        virt.clone(),
+        SymbolicExpr::symbol(Symbol::LOG_ROWS),
+    );
+    b.register_poly(
+        PolynomialId::Bz,
+        virt.clone(),
+        SymbolicExpr::symbol(Symbol::LOG_ROWS),
+    );
+    b.register_poly(
+        PolynomialId::Cz,
+        virt.clone(),
+        SymbolicExpr::symbol(Symbol::LOG_ROWS),
+    );
+    b.register_poly(
+        PolynomialId::CombinedRow,
+        virt.clone(),
+        SymbolicExpr::symbol(Symbol::LOG_COLS),
+    );
+
+    // Virtual polynomials (no commitment group)
     let all_virtual = [
         PolynomialId::RamReadValue,
         PolynomialId::RamWriteValue,
@@ -299,7 +321,7 @@ fn register_all_polynomials(b: &mut GraphBuilder, config: &ProtocolConfig) {
     }
 }
 
-/// All virtual polynomials produced by Spartan at r_cycle.
+/// All virtual polynomials produced by the Spartan outer sumcheck at r_cycle.
 const SPARTAN_VIRTUAL_OUTPUTS: &[PolynomialId] = &[
     PolynomialId::RamReadValue,
     PolynomialId::RamWriteValue,
@@ -336,97 +358,170 @@ const SPARTAN_VIRTUAL_OUTPUTS: &[PolynomialId] = &[
     PolynomialId::NextIsNoop,
 ];
 
-/// Spartan is modeled as a single composite vertex for now.
-/// Internal decomposition (outer/product/inner) is a future refinement.
+/// Build the two Spartan R1CS vertices: outer (row) and inner (column).
+///
+/// The outer sumcheck proves Az·Bz − Cz = 0 over {0,1}^log_rows. It produces
+/// Az, Bz, Cz at r_x, plus all virtual polynomial evaluations at r_cycle.
+///
+/// The inner sumcheck proves combined_row · W = c_a·Az + c_b·Bz + c_c·Cz over
+/// {0,1}^log_cols. It produces CombinedRow and SpartanWitness at r_y.
 fn build_spartan(b: &mut GraphBuilder, config: &ProtocolConfig) -> StageOutput {
-    let vid = b.alloc_vertex();
-    let pt = r_cycle();
+    let mut out = StageOutput::new();
+    let pt_cycle = r_cycle();
 
-    let mut claims = StageClaims::new();
-    let mut produced_ids = Vec::new();
+    // --- Outer vertex: Az·Bz − Cz = 0 ---
+    let outer_vid = b.alloc_vertex();
+    let mut outer_produced_ids = Vec::new();
 
-    // Virtual polynomial evals at r_cycle
+    // Az, Bz, Cz at r_cycle (the outer challenge point restricted to LOG_T)
+    let az_cid = b.alloc_claim(PolynomialId::Az, pt_cycle.clone());
+    let bz_cid = b.alloc_claim(PolynomialId::Bz, pt_cycle.clone());
+    let cz_cid = b.alloc_claim(PolynomialId::Cz, pt_cycle.clone());
+    let _ = out.claims.insert(PolynomialId::Az, az_cid);
+    let _ = out.claims.insert(PolynomialId::Bz, bz_cid);
+    let _ = out.claims.insert(PolynomialId::Cz, cz_cid);
+    outer_produced_ids.extend_from_slice(&[az_cid, bz_cid, cz_cid]);
+
+    // Virtual polynomial evaluations at r_cycle
     for &poly_id in SPARTAN_VIRTUAL_OUTPUTS {
-        let cid = b.alloc_claim(poly_id, pt.clone());
-        let _ = claims.insert(poly_id, cid);
-        produced_ids.push(cid);
+        let cid = b.alloc_claim(poly_id, pt_cycle.clone());
+        let _ = out.claims.insert(poly_id, cid);
+        outer_produced_ids.push(cid);
     }
 
-    // Additional virtual polys needed by BytecodeReadRaf (Stage 1 contribution).
-    // OpFlags not already covered by named variants (indices 0-4, 8-11, 13).
+    // OpFlags not covered by named variants
     for i in [0, 1, 2, 3, 4, 8, 9, 10, 11, 13] {
         let poly_id = PolynomialId::OpFlag(i);
-        let cid = b.alloc_claim(poly_id, pt.clone());
-        let _ = claims.insert(poly_id, cid);
-        produced_ids.push(cid);
+        let cid = b.alloc_claim(poly_id, pt_cycle.clone());
+        let _ = out.claims.insert(poly_id, cid);
+        outer_produced_ids.push(cid);
     }
-    // Expanded PC (used by BytecodeReadRaf RAF contribution)
+
+    // ExpandedPc
     {
-        let cid = b.alloc_claim(PolynomialId::ExpandedPc, pt.clone());
-        let _ = claims.insert(PolynomialId::ExpandedPc, cid);
-        produced_ids.push(cid);
+        let cid = b.alloc_claim(PolynomialId::ExpandedPc, pt_cycle.clone());
+        let _ = out.claims.insert(PolynomialId::ExpandedPc, cid);
+        outer_produced_ids.push(cid);
     }
-    // InstructionRafFlag + LookupTableFlags (produced at S5, but also need S1-point evaluations
-    // for the InstrReadRaf stage contribution to BytecodeReadRaf)
+
+    // InstructionRafFlag + LookupTableFlags
     {
-        let cid = b.alloc_claim(PolynomialId::InstructionRafFlag, pt.clone());
-        let _ = claims.insert(PolynomialId::InstructionRafFlag, cid);
-        produced_ids.push(cid);
+        let cid = b.alloc_claim(PolynomialId::InstructionRafFlag, pt_cycle.clone());
+        let _ = out.claims.insert(PolynomialId::InstructionRafFlag, cid);
+        outer_produced_ids.push(cid);
     }
     for i in 0..config.n_lookup_tables {
         let poly_id = PolynomialId::LookupTableFlag(i);
-        let cid = b.alloc_claim(poly_id, pt.clone());
-        let _ = claims.insert(poly_id, cid);
-        produced_ids.push(cid);
+        let cid = b.alloc_claim(poly_id, pt_cycle.clone());
+        let _ = out.claims.insert(poly_id, cid);
+        outer_produced_ids.push(cid);
     }
 
-    // SpartanWitness eval at r_y (committed)
-    let wit_claim = b.alloc_claim(PolynomialId::SpartanWitness, r_y());
-    let _ = claims.insert(PolynomialId::SpartanWitness, wit_claim);
-    produced_ids.push(wit_claim);
+    let outer_formula = {
+        let outer_def = claims::spartan::r1cs_outer();
+        let mut outer_claims = StageClaims::new();
+        let _ = outer_claims.insert(PolynomialId::Az, az_cid);
+        let _ = outer_claims.insert(PolynomialId::Bz, bz_cid);
+        let _ = outer_claims.insert(PolynomialId::Cz, cz_cid);
+        bind_formula(outer_def, &outer_claims)
+    };
 
-    // Spartan vertex: no deps (root of the graph), Constant(0) input (R1CS satisfaction).
-    // Formula: identity (Spartan's internal formulas are opaque at this level).
-    let identity_formula = {
+    b.push_vertex(Vertex::Sumcheck(Box::new(SumcheckVertex {
+        id: outer_vid,
+        deps: vec![],
+        input: InputClaim::Constant(0),
+        produces: outer_produced_ids,
+        formula: outer_formula,
+        degree: 3,
+        num_vars: SymbolicExpr::symbol(Symbol::LOG_ROWS),
+        weighting: PublicPolynomial::Eq,
+        phases: vec![Phase {
+            num_vars: SymbolicExpr::symbol(Symbol::LOG_ROWS),
+            variable_group: VariableGroup::Cycle,
+        }],
+        output_challenge_spec: OutputChallengeSpec::None,
+    })));
+    out.vertex_ids.push(outer_vid);
+
+    // --- Inner vertex: combined_row · W = c_a·Az + c_b·Bz + c_c·Cz ---
+    let inner_vid = b.alloc_vertex();
+    let mut inner_produced_ids = Vec::new();
+
+    // CombinedRow at r_y
+    let combined_cid = b.alloc_claim(PolynomialId::CombinedRow, r_y());
+    let _ = out.claims.insert(PolynomialId::CombinedRow, combined_cid);
+    inner_produced_ids.push(combined_cid);
+
+    // SpartanWitness at r_y (committed)
+    let wit_cid = b.alloc_claim(PolynomialId::SpartanWitness, r_y());
+    let _ = out.claims.insert(PolynomialId::SpartanWitness, wit_cid);
+    inner_produced_ids.push(wit_cid);
+
+    let inner_formula = {
+        let inner_def = claims::spartan::r1cs_inner();
+        let mut inner_claims = StageClaims::new();
+        let _ = inner_claims.insert(PolynomialId::CombinedRow, combined_cid);
+        let _ = inner_claims.insert(PolynomialId::SpartanWitness, wit_cid);
+        bind_formula(inner_def, &inner_claims)
+    };
+
+    // Input: c_a·Az + c_b·Bz + c_c·Cz using γ-powers (c_a=1, c_b=γ, c_c=γ²)
+    let inner_input = {
         let eb = ExprBuilder::new();
-        let expr = eb.build(eb.zero());
-        ClaimFormula {
-            definition: ClaimDefinition {
-                expr,
-                opening_bindings: vec![],
-                num_challenges: 0,
-            },
-            opening_claims: HashMap::new(),
+        let az = eb.opening(0);
+        let bz = eb.opening(1);
+        let cz = eb.opening(2);
+        let gamma = eb.challenge(0);
+        let input_def = ClaimDefinition {
+            expr: eb.build(az + gamma * bz + gamma * gamma * cz),
+            opening_bindings: vec![
+                OpeningBinding {
+                    var_id: 0,
+                    polynomial: PolynomialId::Az,
+                },
+                OpeningBinding {
+                    var_id: 1,
+                    polynomial: PolynomialId::Bz,
+                },
+                OpeningBinding {
+                    var_id: 2,
+                    polynomial: PolynomialId::Cz,
+                },
+            ],
+            num_challenges: 1,
+        };
+        let upstream = {
+            let mut m = StageClaims::new();
+            let _ = m.insert(PolynomialId::Az, az_cid);
+            let _ = m.insert(PolynomialId::Bz, bz_cid);
+            let _ = m.insert(PolynomialId::Cz, cz_cid);
+            m
+        };
+        let input_formula = bind_formula(input_def, &upstream);
+        InputClaim::Formula {
+            formula: input_formula,
+            challenge_labels: vec![ChallengeLabel::PreSqueeze("spartan_rlc")],
         }
     };
 
     b.push_vertex(Vertex::Sumcheck(Box::new(SumcheckVertex {
-        id: vid,
-        deps: vec![],
-        input: InputClaim::Constant(0),
-        produces: produced_ids,
-        side_effect_claims: vec![],
-        formula: identity_formula,
+        id: inner_vid,
+        deps: vec![az_cid, bz_cid, cz_cid],
+        input: inner_input,
+        produces: inner_produced_ids,
+        formula: inner_formula,
         degree: 3,
-        num_vars: SymbolicExpr::symbol(Symbol::LOG_ROWS) + SymbolicExpr::symbol(Symbol::LOG_COLS),
+        num_vars: SymbolicExpr::symbol(Symbol::LOG_COLS),
         weighting: PublicPolynomial::Eq,
-        phases: vec![
-            Phase {
-                num_vars: SymbolicExpr::symbol(Symbol::LOG_ROWS),
-                variable_group: VariableGroup::Cycle,
-            },
-            Phase {
-                num_vars: SymbolicExpr::symbol(Symbol::LOG_COLS),
-                variable_group: VariableGroup::Address,
-            },
-        ],
+        phases: vec![Phase {
+            num_vars: SymbolicExpr::symbol(Symbol::LOG_COLS),
+            variable_group: VariableGroup::Address,
+        }],
         output_challenge_spec: OutputChallengeSpec::None,
     })));
+    out.vertex_ids.push(inner_vid);
 
-    StageOutput {
-        vertex_ids: vec![vid],
-        claims,
-    }
+    out
 }
 
 /// Input claim specification.
@@ -522,7 +617,7 @@ fn add_vertex(
         deps,
         input,
         produces: produced_ids,
-        side_effect_claims: vec![],
+
         formula: output_formula,
         degree,
         num_vars: num_vars.clone(),
@@ -534,10 +629,10 @@ fn add_vertex(
     (vid, produced)
 }
 
-/// Allocate side-effect claims for a vertex: evaluations available at the
-/// stage's challenge point but not in the output formula. Returns the
-/// claims map for downstream consumption.
-fn alloc_side_effects(
+/// Allocate additional produced claims for a vertex: evaluations available at the
+/// stage's challenge point beyond those in the output formula. Appends to the
+/// vertex's `produces` list and returns the claims map for downstream consumption.
+fn alloc_extra_produces(
     b: &mut GraphBuilder,
     point: &SymbolicPoint,
     poly_ids: &[PolynomialId],
@@ -700,11 +795,11 @@ fn build_s2(b: &mut GraphBuilder, _config: &ProtocolConfig, s1: &StageClaims) ->
                 ],
             },
         );
-        // PV side-effect: NextIsVirtual (VirtualInstruction) eval available at S2's point.
+        // NextIsVirtual (VirtualInstruction) eval available at S2's point.
         // Used by BytecodeReadRaf Stage 2 contribution.
-        let (se_ids, se_claims) = alloc_side_effects(b, &pt, &[PolynomialId::NextIsVirtual]);
+        let (extra_ids, se_claims) = alloc_extra_produces(b, &pt, &[PolynomialId::NextIsVirtual]);
         if let Vertex::Sumcheck(ref mut v) = b.vertices[vid.0 as usize] {
-            v.side_effect_claims = se_ids;
+            v.produces.extend(extra_ids);
         }
         out.vertex_ids.push(vid);
         out.claims.extend(claims);
@@ -868,11 +963,11 @@ fn build_s3(b: &mut GraphBuilder, s1: &StageClaims, s2: &StageClaims) -> StageOu
                 phases: cycle_phase(),
             },
         );
-        // Shift side-effect: ExpandedPc eval available at S3's point.
+        // ExpandedPc eval available at S3's point.
         // Used by BytecodeReadRaf RAF shift contribution.
-        let (se_ids, se_claims) = alloc_side_effects(b, &pt, &[PolynomialId::ExpandedPc]);
+        let (extra_ids, se_claims) = alloc_extra_produces(b, &pt, &[PolynomialId::ExpandedPc]);
         if let Vertex::Sumcheck(ref mut v) = b.vertices[vid.0 as usize] {
-            v.side_effect_claims = se_ids;
+            v.produces.extend(extra_ids);
         }
         out.vertex_ids.push(vid);
         out.claims.extend(claims);
@@ -1088,7 +1183,7 @@ fn build_s4(
             deps,
             input: input_formula,
             produces: produced_ids,
-            side_effect_claims: vec![],
+
             formula: output_formula,
             degree: 3,
             num_vars: log_t(),
@@ -1177,15 +1272,15 @@ fn build_s5(
                 ],
             },
         );
-        // InstrReadRaf side-effects: InstructionRafFlag + LookupTableFlag(0..N) evals.
+        // InstrReadRaf produces InstructionRafFlag + LookupTableFlag(0..N) evals.
         // Used by BytecodeReadRaf Stage 5 contribution.
-        let mut se_polys = vec![PolynomialId::InstructionRafFlag];
+        let mut extra_polys = vec![PolynomialId::InstructionRafFlag];
         for i in 0..config.n_lookup_tables {
-            se_polys.push(PolynomialId::LookupTableFlag(i));
+            extra_polys.push(PolynomialId::LookupTableFlag(i));
         }
-        let (se_ids, se_claims) = alloc_side_effects(b, &pt, &se_polys);
+        let (extra_ids, se_claims) = alloc_extra_produces(b, &pt, &extra_polys);
         if let Vertex::Sumcheck(ref mut v) = b.vertices[vid.0 as usize] {
-            v.side_effect_claims = se_ids;
+            v.produces.extend(extra_ids);
         }
         out.vertex_ids.push(vid);
         out.claims.extend(claims);
@@ -1448,7 +1543,7 @@ fn build_s6(
             deps,
             input,
             produces: produced_ids,
-            side_effect_claims: vec![],
+
             formula: output_formula,
             degree: config.d_bc + 1,
             num_vars: log_ra(),
@@ -2137,7 +2232,7 @@ mod tests {
         let graph = build_jolt_protocol(default_config());
         let mut producers: HashMap<ClaimId, VertexId> = HashMap::new();
         for v in &graph.claim_graph.vertices {
-            for cid in v.all_produced_claims() {
+            for &cid in v.produced_claims() {
                 let prev = producers.insert(cid, v.id());
                 assert!(
                     prev.is_none(),
@@ -2161,7 +2256,8 @@ mod tests {
         let graph = build_jolt_protocol(default_config());
         let stages = &graph.staging.stages;
 
-        // S1 (Spartan): opaque, no pre_squeeze
+        // S1 (Spartan outer+inner): no stage-level pre_squeeze
+        // (the spartan_rlc challenge is an inter-vertex squeeze within S1)
         assert!(
             stages[0].pre_squeeze.is_empty(),
             "S1 should have no pre_squeeze"

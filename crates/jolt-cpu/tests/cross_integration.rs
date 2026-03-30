@@ -1,12 +1,13 @@
 //! Cross-integration tests for jolt-cpu with jolt-compute and jolt-ir.
 //!
-//! Compiles kernel descriptors from IR, then executes them through the
+//! Compiles composition formulas from IR, then executes them through the
 //! CpuBackend pairwise_reduce pipeline and verifies correctness.
 
-use jolt_compute::{BindingOrder, ComputeBackend};
-use jolt_cpu::{compile, compile_with_challenges, CpuBackend, CpuKernel};
+use jolt_compute::{BindingOrder, ComputeBackend, EqInput};
+use jolt_cpu::{compile, compile_with_challenges, from_ir_formula, CpuBackend, CpuKernel};
 use jolt_field::{Field, Fr};
-use jolt_ir::{ExprBuilder, KernelDescriptor, KernelShape};
+use jolt_compiler::{CompositionFormula, Factor, ProductTerm};
+use jolt_ir::ExprBuilder;
 use num_traits::{One, Zero};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -19,6 +20,17 @@ fn eval_kernel(kernel: &CpuKernel<Fr>, lo: &[Fr], hi: &[Fr], n: usize) -> Vec<Fr
     let mut out = vec![Fr::zero(); n];
     kernel.evaluate(lo, hi, &mut out);
     out
+}
+
+/// Helper: build a pure product-sum formula with `p` groups of `d` consecutive inputs.
+fn product_sum_formula(d: usize, p: usize) -> CompositionFormula {
+    let terms: Vec<_> = (0..p)
+        .map(|g| ProductTerm {
+            coefficient: 1,
+            factors: (0..d).map(|j| Factor::Input((g * d + j) as u32)).collect(),
+        })
+        .collect();
+    CompositionFormula::from_terms(terms)
 }
 
 /// Reference: compute Toom-Cook evaluations for a sum-of-products composition
@@ -80,15 +92,8 @@ fn reference_toom_cook_reduce(
 #[test]
 fn product_sum_d4_via_pairwise_reduce() {
     let b = backend();
-    let desc = KernelDescriptor {
-        shape: KernelShape::ProductSum {
-            num_inputs_per_product: 4,
-            num_products: 1,
-        },
-        degree: 4,
-        tensor_split: None,
-    };
-    let kernel = compile::<Fr>(&desc);
+    let formula = product_sum_formula(4, 1);
+    let kernel = compile::<Fr>(&formula);
 
     let num_pairs = 4;
     let bufs: Vec<Vec<Fr>> = (0..4)
@@ -104,9 +109,9 @@ fn product_sum_d4_via_pairwise_reduce() {
     let buf_refs: Vec<&Vec<Fr>> = bufs.iter().collect();
     let result = b.pairwise_reduce(
         &buf_refs,
-        &weights,
+        EqInput::Weighted(&weights),
         &kernel,
-        desc.num_evals(),
+        formula.degree(),
         BindingOrder::LowToHigh,
     );
 
@@ -122,15 +127,8 @@ fn product_sum_d8_multiple_groups() {
     let b = backend();
     let num_products = 2;
     let d = 8;
-    let desc = KernelDescriptor {
-        shape: KernelShape::ProductSum {
-            num_inputs_per_product: d,
-            num_products,
-        },
-        degree: d,
-        tensor_split: None,
-    };
-    let kernel = compile::<Fr>(&desc);
+    let formula = product_sum_formula(d, num_products);
+    let kernel = compile::<Fr>(&formula);
 
     let num_pairs = 2;
     let total_inputs = d * num_products;
@@ -148,9 +146,9 @@ fn product_sum_d8_multiple_groups() {
     let buf_refs: Vec<&Vec<Fr>> = bufs.iter().collect();
     let result = b.pairwise_reduce(
         &buf_refs,
-        &weights,
+        EqInput::Weighted(&weights),
         &kernel,
-        desc.num_evals(),
+        formula.degree(),
         BindingOrder::LowToHigh,
     );
     assert_eq!(result.len(), d);
@@ -161,24 +159,81 @@ fn product_sum_d8_multiple_groups() {
 
 // Custom kernel through pairwise_reduce
 
-/// Custom kernel: o0 * o1 (simple product of two openings).
+/// Compile a D=3 P=1 product-sum formula via ExprBuilder and verify Toom-Cook
+/// evaluations through pairwise_reduce.
 #[test]
 fn custom_product_via_pairwise_reduce() {
     let b = backend();
+    let formula = product_sum_formula(3, 1);
+    let kernel = compile::<Fr>(&formula);
+
+    let num_pairs = 3;
+    let bufs: Vec<Vec<Fr>> = (0..3)
+        .map(|k| {
+            (0..num_pairs * 2)
+                .map(|i| Fr::from_u64((k * 10 + i + 1) as u64))
+                .collect::<Vec<_>>()
+        })
+        .map(|data| b.upload(&data))
+        .collect();
+
+    let weights = b.upload(&vec![Fr::from_u64(1); num_pairs]);
+    let buf_refs: Vec<&Vec<Fr>> = bufs.iter().collect();
+
+    let result = b.pairwise_reduce(
+        &buf_refs,
+        EqInput::Weighted(&weights),
+        &kernel,
+        formula.degree(),
+        BindingOrder::LowToHigh,
+    );
+    assert_eq!(result.len(), 3);
+
+    let expected = reference_toom_cook_reduce(&buf_refs, &vec![Fr::from_u64(1); num_pairs], 3, 1);
+    assert_eq!(result, expected, "D=3 P=1 Toom-Cook mismatch");
+}
+
+/// Compile eq_product (`o0 * o1`) — dispatches to the standard-grid
+/// specialized kernel (not Toom-Cook).
+#[test]
+fn eq_product_via_pairwise_reduce() {
+    let _b = backend();
     let eb = ExprBuilder::new();
     let o0 = eb.opening(0);
     let o1 = eb.opening(1);
     let expr = eb.build(o0 * o1);
 
-    let desc = KernelDescriptor {
-        shape: KernelShape::Custom {
-            num_inputs: 2,
-            expr,
-        },
-        degree: 2,
-        tensor_split: None,
-    };
-    let kernel = compile::<Fr>(&desc);
+    let formula = from_ir_formula(&expr.to_composition_formula());
+    let kernel = compile::<Fr>(&formula);
+
+    // Standard grid {0, 2}: result[0] = lo[0]*lo[1], result[1] = (lo+2δ)·(lo+2δ)
+    let lo = vec![Fr::from_u64(3), Fr::from_u64(5)];
+    let hi = vec![Fr::from_u64(7), Fr::from_u64(11)];
+    let result = eval_kernel(&kernel, &lo, &hi, formula.degree());
+    assert_eq!(result[0], Fr::from_u64(15)); // 3*5
+    assert_eq!(result[1], Fr::from_u64(187)); // 11*17
+}
+
+// Custom kernel with challenges
+
+/// Custom kernel: c0 * o0 * o1 — challenge-weighted product of two openings.
+///
+/// This formula contains a challenge factor, so `as_product_sum()` returns
+/// `None` and the formula goes through the generic formula compiler with the
+/// challenge baked in.
+#[test]
+fn custom_with_challenge_via_pairwise_reduce() {
+    let b = backend();
+    let eb = ExprBuilder::new();
+    let o0 = eb.opening(0);
+    let o1 = eb.opening(1);
+    let c0 = eb.challenge(0);
+    let expr = eb.build(c0 * o0 * o1);
+
+    let formula = from_ir_formula(&expr.to_composition_formula());
+
+    let gamma = Fr::from_u64(42);
+    let kernel = compile_with_challenges::<Fr>(&formula, &[gamma]);
 
     let num_pairs = 3;
     let buf_a = b.upload(
@@ -193,77 +248,24 @@ fn custom_product_via_pairwise_reduce() {
     );
     let weights = b.upload(&vec![Fr::from_u64(1); num_pairs]);
 
-    // Custom degree-2: num_evals = degree = 2, grid {0, 2}
+    // Degree 2 (challenge is a constant): standard grid {0, 2}, 2 evaluations
     let result = b.pairwise_reduce(
         &[&buf_a, &buf_b],
-        &weights,
+        EqInput::Weighted(&weights),
         &kernel,
-        desc.num_evals(),
+        formula.degree(),
         BindingOrder::LowToHigh,
     );
     assert_eq!(result.len(), 2);
 
-    // t=0: sum over pairs of (lo_a * lo_b)
+    // Verify t=0 (first eval): gamma * Σ lo_a[i] * lo_b[i]
     let mut t0 = Fr::from_u64(0);
     for i in 0..num_pairs {
         let lo_a = Fr::from_u64((i * 2 + 1) as u64);
         let lo_b = Fr::from_u64((i * 2 + 10) as u64);
         t0 += lo_a * lo_b;
     }
-    assert_eq!(result[0], t0, "t=0 mismatch");
-}
-
-// Custom kernel with challenges
-
-/// Custom kernel: c0 * (o0^2 - o0) — booleanity check weighted by challenge.
-#[test]
-fn custom_with_challenge_via_pairwise_reduce() {
-    let b = backend();
-    let eb = ExprBuilder::new();
-    let o0 = eb.opening(0);
-    let c0 = eb.challenge(0);
-    let expr = eb.build(c0 * (o0 * o0 - o0));
-
-    let desc = KernelDescriptor {
-        shape: KernelShape::Custom {
-            num_inputs: 1,
-            expr,
-        },
-        degree: 2,
-        tensor_split: None,
-    };
-
-    let gamma = Fr::from_u64(42);
-    let kernel = compile_with_challenges::<Fr>(&desc, &[gamma]);
-
-    // Boolean values: kernel evaluates to 0 at t=0 and t=1
-    let data: Vec<Fr> = vec![
-        Fr::from_u64(0),
-        Fr::from_u64(1), // pair 0
-        Fr::from_u64(1),
-        Fr::from_u64(0), // pair 1
-        Fr::from_u64(0),
-        Fr::from_u64(0), // pair 2
-    ];
-    let buf = b.upload(&data);
-    let weights = b.upload(&[Fr::from_u64(1); 3]);
-
-    // Custom degree-2: num_evals = degree = 2, grid {0, 2}
-    let result = b.pairwise_reduce(
-        &[&buf],
-        &weights,
-        &kernel,
-        desc.num_evals(),
-        BindingOrder::LowToHigh,
-    );
-    assert_eq!(result.len(), 2);
-
-    // t=0: gamma * (lo^2 - lo) for each pair, with lo in {0, 1, 0}
-    assert_eq!(
-        result[0],
-        Fr::from_u64(0),
-        "boolean inputs should give 0 at t=0"
-    );
+    assert_eq!(result[0], gamma * t0, "t=0 mismatch");
 }
 
 // Kernel evaluation matches manual polynomial evaluation
@@ -276,21 +278,14 @@ fn kernel_toom_cook_consistency() {
     let d = 4;
     let num_products = 2;
 
-    let desc = KernelDescriptor {
-        shape: KernelShape::ProductSum {
-            num_inputs_per_product: d,
-            num_products,
-        },
-        degree: d,
-        tensor_split: None,
-    };
-    let kernel = compile::<Fr>(&desc);
+    let formula = product_sum_formula(d, num_products);
+    let kernel = compile::<Fr>(&formula);
 
     let total_inputs = d * num_products;
     let lo: Vec<Fr> = (0..total_inputs).map(|_| Fr::random(&mut rng)).collect();
     let hi: Vec<Fr> = (0..total_inputs).map(|_| Fr::random(&mut rng)).collect();
 
-    let evals = eval_kernel(&kernel, &lo, &hi, desc.num_evals());
+    let evals = eval_kernel(&kernel, &lo, &hi, formula.degree());
     assert_eq!(evals.len(), d);
 
     // Verify against Toom-Cook grid: {1, 2, ..., D-1, ∞}

@@ -14,16 +14,26 @@
 
 use std::time::Instant;
 
-use jolt_compute::{BindingOrder, ComputeBackend};
+use jolt_compute::{BindingOrder, ComputeBackend, EqInput};
 use jolt_cpu::CpuBackend;
 use jolt_field::{Field, Fr};
-use jolt_ir::{KernelDescriptor, KernelShape};
+use jolt_compiler::{CompositionFormula, Factor, ProductTerm};
 use jolt_metal::MetalBackend;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
 fn random_fr(rng: &mut StdRng, n: usize) -> Vec<Fr> {
     (0..n).map(|_| Fr::random(rng)).collect()
+}
+
+fn product_sum_formula(d: usize, p: usize) -> CompositionFormula {
+    let terms: Vec<_> = (0..p)
+        .map(|g| ProductTerm {
+            coefficient: 1,
+            factors: (0..d).map(|j| Factor::Input((g * d + j) as u32)).collect(),
+        })
+        .collect();
+    CompositionFormula::from_terms(terms)
 }
 
 /// Warmup iterations before timing.
@@ -45,13 +55,25 @@ fn bench_reduce_latency<B: ComputeBackend>(
 
     // Warmup
     for _ in 0..WARMUP {
-        let _ = backend.pairwise_reduce(&refs, &w_buf, kernel, num_evals, BindingOrder::LowToHigh);
+        let _ = backend.pairwise_reduce(
+            &refs,
+            EqInput::Weighted(&w_buf),
+            kernel,
+            num_evals,
+            BindingOrder::LowToHigh,
+        );
     }
 
     let mut times = Vec::with_capacity(ITERS);
     for _ in 0..ITERS {
         let start = Instant::now();
-        let _ = backend.pairwise_reduce(&refs, &w_buf, kernel, num_evals, BindingOrder::LowToHigh);
+        let _ = backend.pairwise_reduce(
+            &refs,
+            EqInput::Weighted(&w_buf),
+            kernel,
+            num_evals,
+            BindingOrder::LowToHigh,
+        );
         times.push(start.elapsed().as_nanos() as f64);
     }
 
@@ -87,16 +109,9 @@ fn main() {
     let mut rng = StdRng::seed_from_u64(42);
 
     for &d in &[4usize, 8] {
-        let desc = KernelDescriptor {
-            shape: KernelShape::ProductSum {
-                num_inputs_per_product: d,
-                num_products: 1,
-            },
-            degree: d,
-            tensor_split: None,
-        };
-        let mtl_k = metal.compile_kernel::<Fr>(&desc);
-        let cpu_k = cpu.compile_kernel::<Fr>(&desc);
+        let formula = product_sum_formula(d, 1);
+        let mtl_k = metal.compile_kernel::<Fr>(&formula);
+        let cpu_k = cpu.compile_kernel::<Fr>(&formula);
 
         println!("\n=== pairwise_reduce D={d} ===");
         println!(
@@ -112,8 +127,8 @@ fn main() {
             let inputs: Vec<Vec<Fr>> = (0..d).map(|_| random_fr(&mut rng, n)).collect();
             let weights = random_fr(&mut rng, n / 2);
 
-            let mtl_ns = bench_reduce_latency(&metal, &mtl_k, &inputs, &weights, desc.num_evals());
-            let cpu_ns = bench_reduce_latency(&cpu, &cpu_k, &inputs, &weights, desc.num_evals());
+            let mtl_ns = bench_reduce_latency(&metal, &mtl_k, &inputs, &weights, formula.degree());
+            let cpu_ns = bench_reduce_latency(&cpu, &cpu_k, &inputs, &weights, formula.degree());
 
             let winner = if mtl_ns < cpu_ns { "METAL" } else { "CPU" };
             println!("2^{log_n:<8} {mtl_ns:>14.0} {cpu_ns:>14.0} {winner:>10}");
@@ -163,16 +178,9 @@ fn main() {
 
     {
         let d = 4usize;
-        let desc = KernelDescriptor {
-            shape: KernelShape::ProductSum {
-                num_inputs_per_product: d,
-                num_products: 1,
-            },
-            degree: d,
-            tensor_split: None,
-        };
-        let mtl_k = metal.compile_kernel::<Fr>(&desc);
-        let cpu_k = cpu.compile_kernel::<Fr>(&desc);
+        let formula = product_sum_formula(d, 1);
+        let mtl_k = metal.compile_kernel::<Fr>(&formula);
+        let cpu_k = cpu.compile_kernel::<Fr>(&formula);
 
         println!("\n=== sumcheck_round (reduce + bind) D={d} ===");
         println!(
@@ -192,10 +200,11 @@ fn main() {
             for _ in 0..WARMUP {
                 let mut bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
                 let refs: Vec<_> = bufs.iter().collect();
-                let _ = metal.pairwise_reduce_unweighted(
+                let _ = metal.pairwise_reduce(
                     &refs,
+                    EqInput::Unit,
                     &mtl_k,
-                    desc.num_evals(),
+                    formula.degree(),
                     BindingOrder::LowToHigh,
                 );
                 bufs = metal.interpolate_pairs_batch(bufs, scalar);
@@ -208,10 +217,11 @@ fn main() {
                 let mut bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
                 let start = Instant::now();
                 let refs: Vec<_> = bufs.iter().collect();
-                let _ = metal.pairwise_reduce_unweighted(
+                let _ = metal.pairwise_reduce(
                     &refs,
+                    EqInput::Unit,
                     &mtl_k,
-                    desc.num_evals(),
+                    formula.degree(),
                     BindingOrder::LowToHigh,
                 );
                 bufs = metal.interpolate_pairs_batch(bufs, scalar);
@@ -227,10 +237,11 @@ fn main() {
                 let mut bufs: Vec<_> = inputs.iter().map(|v| cpu.upload(v)).collect();
                 let start = Instant::now();
                 let refs: Vec<_> = bufs.iter().collect();
-                let _ = cpu.pairwise_reduce_unweighted(
+                let _ = cpu.pairwise_reduce(
                     &refs,
+                    EqInput::Unit,
                     &cpu_k,
-                    desc.num_evals(),
+                    formula.degree(),
                     BindingOrder::LowToHigh,
                 );
                 bufs = cpu.interpolate_pairs_batch(bufs, scalar);

@@ -2,8 +2,8 @@
 //!
 //! `jolt-ir` is the single source of truth for all claim-level expressions in
 //! the Jolt zkVM. Each sumcheck claim formula is written once as an [`Expr`] and
-//! all backends (evaluation, BlindFold R1CS, Lean4, circuit transpilation)
-//! derive from it.
+//! all backends (evaluation, BlindFold R1CS, Lean4, circuit transpilation,
+//! compute kernel compilation) derive from it.
 //!
 //! # Quick start
 //!
@@ -16,16 +16,15 @@
 //! let gamma = b.challenge(0);
 //! let expr = b.build(gamma * (h * h - h));
 //!
-//! // Normalize to sum-of-products for R1CS emission
-//! let sop = expr.to_sum_of_products();
-//! assert_eq!(sop.len(), 2); // γ·H·H and -γ·H
+//! // Normalize to composition formula for backend consumption
+//! let f = expr.to_composition_formula();
+//! assert_eq!(f.len(), 2); // γ·H·H and -γ·H
 //! ```
 mod backends;
 mod builder;
 mod claim;
+mod composition;
 mod expr;
-mod kernel;
-mod normalize;
 mod polynomial_id;
 mod visitor;
 
@@ -35,9 +34,8 @@ pub mod zkvm;
 
 pub use builder::{ExprBuilder, ExprHandle};
 pub use claim::{ClaimDefinition, OpeningBinding};
+pub use composition::{CompositionFormula, Factor, ProductTerm};
 pub use expr::{Expr, ExprArena, ExprId, ExprNode, Var};
-pub use kernel::{EqHandling, EvalGrid, KernelDescriptor, KernelShape, TensorSplit};
-pub use normalize::{SopTerm, SopValue, SumOfProducts};
 pub use polynomial_id::PolynomialId;
 pub use visitor::ExprVisitor;
 

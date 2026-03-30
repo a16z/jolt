@@ -2,60 +2,56 @@
 #![allow(clippy::print_stdout)]
 
 use jolt_field::Fr;
-use jolt_ir::{KernelDescriptor, KernelShape};
+use jolt_compiler::{CompositionFormula, Factor, ProductTerm};
 use jolt_metal::MetalBackend;
+
+fn product_sum_formula(d: usize, p: usize) -> CompositionFormula {
+    let terms: Vec<_> = (0..p)
+        .map(|g| ProductTerm {
+            coefficient: 1,
+            factors: (0..d).map(|j| Factor::Input((g * d + j) as u32)).collect(),
+        })
+        .collect();
+    CompositionFormula::from_terms(terms)
+}
+
+fn eq_product_formula() -> CompositionFormula {
+    CompositionFormula::from_terms(vec![ProductTerm {
+        coefficient: 1,
+        factors: vec![Factor::Input(0), Factor::Input(1)],
+    }])
+}
+
+fn hamming_booleanity_formula() -> CompositionFormula {
+    CompositionFormula::from_terms(vec![
+        ProductTerm {
+            coefficient: 1,
+            factors: vec![Factor::Input(0), Factor::Input(1), Factor::Input(1)],
+        },
+        ProductTerm {
+            coefficient: -1,
+            factors: vec![Factor::Input(0), Factor::Input(1)],
+        },
+    ])
+}
 
 #[test]
 fn print_kernel_occupancy() {
     let backend = MetalBackend::new();
 
-    let descriptors: Vec<(&str, KernelDescriptor)> = vec![
-        (
-            "ProductSum D=4 P=1",
-            KernelDescriptor {
-                shape: KernelShape::ProductSum {
-                    num_inputs_per_product: 4,
-                    num_products: 1,
-                },
-                degree: 4,
-                tensor_split: None,
-            },
-        ),
-        (
-            "ProductSum D=8 P=1",
-            KernelDescriptor {
-                shape: KernelShape::ProductSum {
-                    num_inputs_per_product: 8,
-                    num_products: 1,
-                },
-                degree: 8,
-                tensor_split: None,
-            },
-        ),
-        (
-            "EqProduct",
-            KernelDescriptor {
-                shape: KernelShape::EqProduct,
-                degree: 2,
-                tensor_split: None,
-            },
-        ),
-        (
-            "HammingBooleanity",
-            KernelDescriptor {
-                shape: KernelShape::HammingBooleanity,
-                degree: 3,
-                tensor_split: None,
-            },
-        ),
+    let formulas: Vec<(&str, CompositionFormula)> = vec![
+        ("ProductSum D=4 P=1", product_sum_formula(4, 1)),
+        ("ProductSum D=8 P=1", product_sum_formula(8, 1)),
+        ("EqProduct", eq_product_formula()),
+        ("HammingBooleanity", hamming_booleanity_formula()),
     ];
 
     println!();
     println!("=== Metal Kernel Occupancy Profile (CompileMode::Performance) ===");
     println!();
 
-    for (name, desc) in &descriptors {
-        let kernel = backend.compile_kernel::<Fr>(desc);
+    for (name, formula) in &formulas {
+        let kernel = backend.compile_kernel::<Fr>(formula);
         println!("--- {name} ---");
 
         for occ in kernel.occupancy() {

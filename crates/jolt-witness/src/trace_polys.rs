@@ -405,6 +405,11 @@ fn extract_value<F: Field, R: CycleRow>(poly_id: PolynomialId, cycle: &R) -> F {
         // BytecodeReadRafVal / InstructionReadRafVal: produced by sumcheck output formulas.
         PolynomialId::BytecodeReadRafVal(_) | PolynomialId::InstructionReadRafVal(_) => F::zero(),
 
+        // R1CS virtual polys: produced by Spartan outer/inner sumchecks, not trace-derived.
+        PolynomialId::Az | PolynomialId::Bz | PolynomialId::Cz | PolynomialId::CombinedRow => {
+            F::zero()
+        }
+
         // LookupTableFlag(i) = 1 iff this cycle uses lookup table i.
         PolynomialId::LookupTableFlag(i) => bool_to_field(cycle.lookup_table_index() == Some(i)),
     }
