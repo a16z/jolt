@@ -38,3 +38,7 @@ path = "bin/measure_objectives.rs"
 [[bin]]
 name = "redteam"
 path = "bin/redteam.rs"
+
+[[bin]]
+name = "fuzz"
+path = "bin/fuzz.rs"
