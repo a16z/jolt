@@ -1,5 +1,6 @@
 pub mod guest_cycles;
 pub mod inline_lengths;
+pub mod optimize;
 pub mod peak_rss;
 pub mod proof_size;
 pub mod prover_time;

@@ -3,9 +3,8 @@ use std::process::Command;
 use std::sync::Arc;
 
 use clap::Parser;
-use tracing::info;
 
-use jolt_eval::agent::{apply_diff, truncate, AgentHarness, ClaudeCodeAgent};
+use jolt_eval::agent::ClaudeCodeAgent;
 use jolt_eval::invariant::completeness_prover::ProverCompletenessInvariant;
 use jolt_eval::invariant::completeness_verifier::VerifierCompletenessInvariant;
 use jolt_eval::invariant::determinism::DeterminismInvariant;
@@ -15,12 +14,13 @@ use jolt_eval::invariant::synthesis::SynthesisRegistry;
 use jolt_eval::invariant::zk_consistency::ZkConsistencyInvariant;
 use jolt_eval::objective::guest_cycles::GuestCycleCountObjective;
 use jolt_eval::objective::inline_lengths::InlineLengthsObjective;
+use jolt_eval::objective::optimize::{auto_optimize, OptimizeConfig, OptimizeEnv};
 use jolt_eval::objective::peak_rss::PeakRssObjective;
 use jolt_eval::objective::proof_size::ProofSizeObjective;
 use jolt_eval::objective::prover_time::ProverTimeObjective;
 use jolt_eval::objective::verifier_time::VerifierTimeObjective;
 use jolt_eval::objective::wrapping_cost::WrappingCostObjective;
-use jolt_eval::objective::{measure_objectives, Objective, OptimizationAttempt};
+use jolt_eval::objective::{measure_objectives, Direction, Objective};
 use jolt_eval::TestCase;
 
 #[derive(Parser)]
@@ -28,8 +28,6 @@ use jolt_eval::TestCase;
 #[command(about = "AI-driven optimization of Jolt objectives")]
 struct Cli {
     /// Objectives to optimize (comma-separated). Default: all.
-    /// Available: peak_rss, prover_time, proof_size, verifier_time,
-    ///            guest_cycle_count, inline_lengths, wrapping_cost
     #[arg(long)]
     objectives: Option<String>,
 
@@ -56,6 +54,60 @@ struct Cli {
     /// Extra context to include in the optimization prompt
     #[arg(long)]
     hint: Option<String>,
+}
+
+/// Real environment backed by Jolt objectives, invariants, and git.
+struct RealEnv {
+    objectives: Vec<Objective>,
+    registry: SynthesisRegistry,
+    repo_dir: std::path::PathBuf,
+}
+
+impl OptimizeEnv for RealEnv {
+    fn measure(&mut self) -> HashMap<String, f64> {
+        measure_objectives(&self.objectives)
+    }
+
+    fn check_invariants(&mut self) -> bool {
+        self.registry.invariants().iter().all(|inv| {
+            let results = inv.run_checks(0);
+            results.iter().all(|r| r.is_ok())
+        })
+    }
+
+    fn directions(&self) -> HashMap<String, Direction> {
+        self.objectives
+            .iter()
+            .map(|o| (o.name().to_string(), o.direction()))
+            .collect()
+    }
+
+    fn apply_diff(&mut self, diff: &str) {
+        if let Err(e) = jolt_eval::agent::apply_diff(&self.repo_dir, diff) {
+            tracing::warn!("Failed to apply diff: {e}");
+        }
+    }
+
+    fn accept(&mut self, iteration: usize) {
+        println!("  Improvement found -- keeping changes.");
+        let _ = Command::new("git")
+            .current_dir(&self.repo_dir)
+            .args(["add", "-A"])
+            .status();
+        let msg = format!("perf(auto-optimize): iteration {iteration}");
+        let _ = Command::new("git")
+            .current_dir(&self.repo_dir)
+            .args(["commit", "-m", &msg, "--allow-empty"])
+            .status();
+    }
+
+    fn reject(&mut self) {
+        println!("  Reverting changes.");
+        let _ = Command::new("git")
+            .current_dir(&self.repo_dir)
+            .args(["checkout", "."])
+            .status();
+    }
 }
 
 fn main() -> eyre::Result<()> {
@@ -98,8 +150,7 @@ fn main() -> eyre::Result<()> {
         .collect();
 
     if objectives.is_empty() {
-        eprintln!("No matching objectives found.");
-        eprintln!("Available: peak_rss, prover_time, proof_size, verifier_time, guest_cycle_count, inline_lengths, wrapping_cost");
+        eprintln!("No matching objectives. Available: peak_rss, prover_time, proof_size, verifier_time, guest_cycle_count, inline_lengths, wrapping_cost");
         std::process::exit(1);
     }
 
@@ -107,223 +158,59 @@ fn main() -> eyre::Result<()> {
     let mut registry = SynthesisRegistry::new();
     register_invariants(&mut registry, &test_case, &default_inputs);
 
-    let baseline = measure_objectives(&objectives);
+    let repo_dir = std::env::current_dir()?;
+    let agent = ClaudeCodeAgent::new(&cli.model, cli.max_turns);
+    let config = OptimizeConfig {
+        num_iterations: cli.iterations,
+        hint: cli.hint.clone(),
+    };
+
+    let mut env = RealEnv {
+        objectives,
+        registry,
+        repo_dir,
+    };
+
     println!("=== Baseline measurements ===");
-    print_measurements(&objectives, &baseline);
+    let baseline = env.measure();
+    print_measurements(&env.directions(), &baseline);
     println!();
 
-    let agent = ClaudeCodeAgent::new(&cli.model, cli.max_turns);
-    let repo_dir = std::env::current_dir()?;
-    let mut attempts: Vec<OptimizationAttempt> = Vec::new();
-    let mut best = baseline.clone();
-
-    for iteration in 0..cli.iterations {
-        println!("=== Iteration {}/{} ===", iteration + 1, cli.iterations);
-
-        let prompt =
-            build_optimize_prompt(&objectives, &best, &attempts, cli.hint.as_deref());
-
-        let response = match agent.invoke(&repo_dir, &prompt) {
-            Ok(r) => r,
-            Err(e) => {
-                info!("Agent error: {e}");
-                break;
-            }
-        };
-
-        // Apply the agent's diff to the real repo
-        if let Some(diff) = &response.diff {
-            info!("Agent produced a diff ({} bytes), applying...", diff.len());
-            if let Err(e) = apply_diff(&repo_dir, diff) {
-                tracing::warn!("Failed to apply diff: {e}");
-            }
-        } else {
-            info!("Agent produced no code changes, stopping.");
-            break;
-        }
-
-        let new_measurements = measure_objectives(&objectives);
-        println!("  Measurements after changes:");
-        print_measurements(&objectives, &new_measurements);
-
-        let invariants_passed = registry.invariants().iter().all(|inv| {
-            let results = inv.run_checks(0);
-            results.iter().all(|r| r.is_ok())
-        });
-
-        if !invariants_passed {
-            println!("  Invariants FAILED -- reverting.");
-            revert_changes(&repo_dir);
-        }
-
-        let improved = if invariants_passed {
-            objective_names.iter().any(|name| {
-                let old = best.get(name);
-                let new = new_measurements.get(name);
-                match (old, new) {
-                    (Some(&o), Some(&n)) => {
-                        let obj = objectives.iter().find(|obj| obj.name() == name);
-                        match obj.map(|o| o.direction()) {
-                            Some(jolt_eval::Direction::Minimize) => n < o,
-                            Some(jolt_eval::Direction::Maximize) => n > o,
-                            None => false,
-                        }
-                    }
-                    _ => false,
-                }
-            })
-        } else {
-            false
-        };
-
-        let diff_text = response.diff.as_deref().unwrap_or("");
-        let attempt = OptimizationAttempt {
-            description: format!("iteration {}", iteration + 1),
-            diff: truncate(diff_text, 5000).to_string(),
-            measurements: new_measurements.clone(),
-            invariants_passed,
-        };
-        attempts.push(attempt);
-
-        if improved {
-            println!("  Improvement found -- keeping changes.");
-            best = new_measurements;
-            commit_changes(&repo_dir, iteration + 1);
-        } else if invariants_passed {
-            println!("  No improvement -- reverting.");
-            revert_changes(&repo_dir);
-        }
-
-        println!();
-    }
+    let result = auto_optimize(&agent, &mut env, &config, &std::env::current_dir()?);
 
     println!("=== Optimization summary ===");
     println!(
         "{}/{} iterations produced improvements.",
-        attempts
+        result
+            .attempts
             .iter()
             .filter(|a| a.invariants_passed
                 && a.measurements
                     .iter()
-                    .any(|(name, &val)| { baseline.get(name).is_some_and(|&b| val != b) }))
+                    .any(|(name, &val)| { result.baseline.get(name).is_some_and(|&b| val != b) }))
             .count(),
-        attempts.len()
+        result.attempts.len()
     );
     println!();
     println!("Final measurements:");
-    print_measurements(&objectives, &best);
+    print_measurements(&env.directions(), &result.best);
 
     Ok(())
 }
 
-fn build_optimize_prompt(
-    objectives: &[Objective],
-    current_best: &HashMap<String, f64>,
-    past_attempts: &[OptimizationAttempt],
-    hint: Option<&str>,
-) -> String {
-    let mut prompt = String::new();
-
-    prompt.push_str(
-        "You are an expert performance engineer optimizing a zkVM (Jolt). \
-         Your goal is to make code changes that improve the following objectives.\n\n",
-    );
-
-    prompt.push_str("## Objectives to optimize\n\n");
-    for obj in objectives {
-        let dir = match obj.direction() {
-            jolt_eval::Direction::Minimize => "lower is better",
-            jolt_eval::Direction::Maximize => "higher is better",
-        };
-        let current = current_best
-            .get(obj.name())
-            .map(|v| format!("{v:.4}"))
-            .unwrap_or_else(|| "unknown".to_string());
-        prompt.push_str(&format!(
-            "- **{}**: current = {}, direction = {}\n",
-            obj.name(),
-            current,
-            dir,
-        ));
-    }
-    prompt.push('\n');
-
-    prompt.push_str(
-        "## Instructions\n\n\
-         1. Read the relevant source code (especially `jolt-core/src/`) to understand \
-            hot paths and potential optimization opportunities.\n\
-         2. Make targeted code changes that you believe will improve the objectives.\n\
-         3. Focus on changes to `jolt-core/` -- do NOT modify `jolt-eval/`.\n\
-         4. Prefer changes that are safe, correct, and unlikely to break invariants.\n\
-         5. Run `cargo clippy -p jolt-core --features host --message-format=short -q` \
-            to verify your changes compile.\n\
-         6. Summarize what you changed and why you expect it to improve the objectives.\n\n",
-    );
-
-    if let Some(h) = hint {
-        prompt.push_str("## Hint\n\n");
-        prompt.push_str(h);
-        prompt.push_str("\n\n");
-    }
-
-    if !past_attempts.is_empty() {
-        prompt.push_str("## Previous attempts\n\n");
-        for attempt in past_attempts {
-            let status = if attempt.invariants_passed {
-                "invariants passed"
-            } else {
-                "INVARIANTS FAILED"
-            };
-            prompt.push_str(&format!("- **{}** ({}): ", attempt.description, status));
-            for (name, val) in &attempt.measurements {
-                prompt.push_str(&format!("{name}={val:.4} "));
-            }
-            prompt.push('\n');
-        }
-        prompt.push('\n');
-    }
-
-    prompt.push_str(
-        "## Output\n\n\
-         Make your code changes directly. After you're done, summarize:\n\
-         - What you changed\n\
-         - Why you expect improvement\n\
-         - Any risks or trade-offs\n",
-    );
-
-    prompt
-}
-
-fn revert_changes(repo_dir: &std::path::Path) {
-    let _ = Command::new("git")
-        .current_dir(repo_dir)
-        .args(["checkout", "."])
-        .status();
-}
-
-fn commit_changes(repo_dir: &std::path::Path, iteration: usize) {
-    let _ = Command::new("git")
-        .current_dir(repo_dir)
-        .args(["add", "-A"])
-        .status();
-    let msg = format!("perf(auto-optimize): iteration {iteration}");
-    let _ = Command::new("git")
-        .current_dir(repo_dir)
-        .args(["commit", "-m", &msg, "--allow-empty"])
-        .status();
-}
-
-fn print_measurements(objectives: &[Objective], measurements: &HashMap<String, f64>) {
-    for obj in objectives {
+fn print_measurements(directions: &HashMap<String, Direction>, measurements: &HashMap<String, f64>) {
+    let mut names: Vec<_> = directions.keys().collect();
+    names.sort();
+    for name in names {
         let val = measurements
-            .get(obj.name())
+            .get(name)
             .map(|v| format!("{v:.4}"))
             .unwrap_or_else(|| "N/A".to_string());
-        let dir = match obj.direction() {
-            jolt_eval::Direction::Minimize => "min",
-            jolt_eval::Direction::Maximize => "max",
+        let dir = match directions[name] {
+            Direction::Minimize => "min",
+            Direction::Maximize => "max",
         };
-        println!("  {:<25} {:>15} {:>6}", obj.name(), val, dir);
+        println!("  {:<25} {:>15} {:>6}", name, val, dir);
     }
 }
 
@@ -332,24 +219,12 @@ fn register_invariants(
     test_case: &Arc<TestCase>,
     default_inputs: &[u8],
 ) {
-    registry.register(Box::new(SoundnessInvariant::new(
-        Arc::clone(test_case),
-        default_inputs.to_vec(),
-    )));
-    registry.register(Box::new(VerifierCompletenessInvariant::new(Arc::clone(
-        test_case,
-    ))));
-    registry.register(Box::new(ProverCompletenessInvariant::new(Arc::clone(
-        test_case,
-    ))));
+    registry.register(Box::new(SoundnessInvariant::new(Arc::clone(test_case), default_inputs.to_vec())));
+    registry.register(Box::new(VerifierCompletenessInvariant::new(Arc::clone(test_case))));
+    registry.register(Box::new(ProverCompletenessInvariant::new(Arc::clone(test_case))));
     registry.register(Box::new(DeterminismInvariant::new(Arc::clone(test_case))));
-    registry.register(Box::new(SerializationRoundtripInvariant::new(
-        Arc::clone(test_case),
-        default_inputs.to_vec(),
-    )));
-    registry.register(Box::new(ZkConsistencyInvariant::new(Arc::clone(
-        test_case,
-    ))));
+    registry.register(Box::new(SerializationRoundtripInvariant::new(Arc::clone(test_case), default_inputs.to_vec())));
+    registry.register(Box::new(ZkConsistencyInvariant::new(Arc::clone(test_case))));
 }
 
 fn build_objectives(
@@ -359,35 +234,12 @@ fn build_objectives(
     inputs: &[u8],
 ) -> Vec<Objective> {
     vec![
-        Objective::PeakRss(PeakRssObjective::new(
-            Arc::clone(test_case),
-            Arc::clone(prover_pp),
-            inputs.to_vec(),
-        )),
-        Objective::ProverTime(ProverTimeObjective::new(
-            Arc::clone(test_case),
-            Arc::clone(prover_pp),
-            inputs.to_vec(),
-        )),
-        Objective::ProofSize(ProofSizeObjective::new(
-            Arc::clone(test_case),
-            Arc::clone(prover_pp),
-            inputs.to_vec(),
-        )),
-        Objective::VerifierTime(VerifierTimeObjective::new(
-            Arc::clone(test_case),
-            Arc::clone(prover_pp),
-            Arc::clone(verifier_pp),
-            inputs.to_vec(),
-        )),
-        Objective::GuestCycleCount(GuestCycleCountObjective::new(
-            Arc::clone(test_case),
-            inputs.to_vec(),
-        )),
+        Objective::PeakRss(PeakRssObjective::new(Arc::clone(test_case), Arc::clone(prover_pp), inputs.to_vec())),
+        Objective::ProverTime(ProverTimeObjective::new(Arc::clone(test_case), Arc::clone(prover_pp), inputs.to_vec())),
+        Objective::ProofSize(ProofSizeObjective::new(Arc::clone(test_case), Arc::clone(prover_pp), inputs.to_vec())),
+        Objective::VerifierTime(VerifierTimeObjective::new(Arc::clone(test_case), Arc::clone(prover_pp), Arc::clone(verifier_pp), inputs.to_vec())),
+        Objective::GuestCycleCount(GuestCycleCountObjective::new(Arc::clone(test_case), inputs.to_vec())),
         Objective::InlineLengths(InlineLengthsObjective::new(Arc::clone(test_case))),
-        Objective::WrappingCost(WrappingCostObjective::new(
-            Arc::clone(test_case),
-            Arc::clone(prover_pp),
-        )),
+        Objective::WrappingCost(WrappingCostObjective::new(Arc::clone(test_case), Arc::clone(prover_pp))),
     ]
 }
