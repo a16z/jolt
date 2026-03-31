@@ -23,6 +23,8 @@ pub fn compute_mles_product_sum<F: JoltField>(
     // interpolation logic centralized.
     let sum_evals: Vec<F> = match d {
         // Fully stack-allocated paths based on optimized interpolation kernels.
+        4 => compute_mles_product_sum_evals_d4(mles, eq_poly),
+        8 => compute_mles_product_sum_evals_d8(mles, eq_poly),
         16 => compute_mles_product_sum_evals_d16(mles, eq_poly),
         32 => compute_mles_product_sum_evals_d32(mles, eq_poly),
         // Generic split-eq fold for all other arities.
