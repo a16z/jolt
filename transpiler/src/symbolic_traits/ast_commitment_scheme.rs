@@ -158,4 +158,3 @@ impl CommitmentScheme for AstCommitmentScheme {
         b"AstCommitmentScheme"
     }
 }
-

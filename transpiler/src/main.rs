@@ -144,9 +144,12 @@ fn main() {
             args.preprocessing, e
         )
     });
-    let real_preprocessing: JoltVerifierPreprocessing<ark_bn254::Fr, Bn254Curve, DoryCommitmentScheme> =
-        CanonicalDeserialize::deserialize_compressed(&preprocessing_bytes[..])
-            .expect("Failed to deserialize preprocessing");
+    let real_preprocessing: JoltVerifierPreprocessing<
+        ark_bn254::Fr,
+        Bn254Curve,
+        DoryCommitmentScheme,
+    > = CanonicalDeserialize::deserialize_compressed(&preprocessing_bytes[..])
+        .expect("Failed to deserialize preprocessing");
     println!(
         "  memory_layout: {:?}",
         real_preprocessing.shared.memory_layout
