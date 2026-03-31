@@ -108,13 +108,6 @@ pub type PrivateInput<T> = UntrustedAdvice<T>;
 #[doc(hidden)]
 pub const _ZK_FEATURE_ENABLED: bool = cfg!(feature = "zk");
 
-// This is a dummy _HEAP_PTR to keep the compiler happy.
-// It should never be used when compiled as a guest or with
-// our custom allocator
-#[no_mangle]
-#[cfg(feature = "host")]
-pub static mut _HEAP_PTR: u8 = 0;
-
 /// Runtime advice support
 ///
 /// Provides mechanisms for guest programs to receive non-deterministic advice from the prover
