@@ -1,0 +1,120 @@
+pub mod guest_cycles;
+pub mod inline_lengths;
+pub mod optimize;
+pub mod peak_rss;
+pub mod proof_size;
+pub mod prover_time;
+pub mod verifier_time;
+pub mod wrapping_cost;
+
+use std::collections::HashMap;
+use std::fmt;
+
+/// Whether lower or higher values are better.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    Minimize,
+    Maximize,
+}
+
+/// Error during objective measurement.
+#[derive(Debug, Clone)]
+pub struct MeasurementError {
+    pub message: String,
+}
+
+impl fmt::Display for MeasurementError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for MeasurementError {}
+
+impl MeasurementError {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+/// Core objective trait for measurable properties.
+pub trait AbstractObjective: Send + Sync {
+    fn name(&self) -> &str;
+
+    /// Take a single measurement and return its scalar value.
+    fn collect_measurement(&self) -> Result<f64, MeasurementError>;
+
+    /// How many samples to take for statistical significance.
+    fn recommended_samples(&self) -> usize {
+        1
+    }
+
+    /// What threshold is considered a regression (e.g. 0.05 = 5% slowdown).
+    fn regression_threshold(&self) -> Option<f64> {
+        None
+    }
+
+    fn direction(&self) -> Direction;
+}
+
+/// Centralized objective enum dispatching to concrete implementations.
+pub enum Objective {
+    PeakRss(peak_rss::PeakRssObjective),
+    ProverTime(prover_time::ProverTimeObjective),
+    ProofSize(proof_size::ProofSizeObjective),
+    VerifierTime(verifier_time::VerifierTimeObjective),
+    GuestCycleCount(guest_cycles::GuestCycleCountObjective),
+    InlineLengths(inline_lengths::InlineLengthsObjective),
+    WrappingCost(wrapping_cost::WrappingCostObjective),
+}
+
+impl Objective {
+    pub fn name(&self) -> &str {
+        match self {
+            Self::PeakRss(o) => o.name(),
+            Self::ProverTime(o) => o.name(),
+            Self::ProofSize(o) => o.name(),
+            Self::VerifierTime(o) => o.name(),
+            Self::GuestCycleCount(o) => o.name(),
+            Self::InlineLengths(o) => o.name(),
+            Self::WrappingCost(o) => o.name(),
+        }
+    }
+
+    pub fn collect_measurement(&self) -> Result<f64, MeasurementError> {
+        match self {
+            Self::PeakRss(o) => o.collect_measurement(),
+            Self::ProverTime(o) => o.collect_measurement(),
+            Self::ProofSize(o) => o.collect_measurement(),
+            Self::VerifierTime(o) => o.collect_measurement(),
+            Self::GuestCycleCount(o) => o.collect_measurement(),
+            Self::InlineLengths(o) => o.collect_measurement(),
+            Self::WrappingCost(o) => o.collect_measurement(),
+        }
+    }
+
+    pub fn direction(&self) -> Direction {
+        match self {
+            Self::PeakRss(o) => o.direction(),
+            Self::ProverTime(o) => o.direction(),
+            Self::ProofSize(o) => o.direction(),
+            Self::VerifierTime(o) => o.direction(),
+            Self::GuestCycleCount(o) => o.direction(),
+            Self::InlineLengths(o) => o.direction(),
+            Self::WrappingCost(o) => o.direction(),
+        }
+    }
+}
+
+/// Measure all objectives and return a map of name -> value.
+pub fn measure_objectives(objectives: &[Objective]) -> HashMap<String, f64> {
+    objectives
+        .iter()
+        .filter_map(|obj| {
+            let name = obj.name().to_string();
+            obj.collect_measurement().ok().map(|v| (name, v))
+        })
+        .collect()
+}

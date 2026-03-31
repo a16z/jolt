@@ -1,0 +1,40 @@
+[package]
+name = "jolt-eval"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+jolt-core = { workspace = true, features = ["host"] }
+common = { workspace = true, features = ["std"] }
+tracer = { workspace = true }
+
+ark-bn254 = { workspace = true }
+ark-serialize = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+postcard = { workspace = true, features = ["use-std"] }
+thiserror = { workspace = true }
+eyre = { workspace = true }
+tracing = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+rayon = { workspace = true }
+rand = { workspace = true }
+sysinfo = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+arbitrary = { version = "1", features = ["derive"] }
+enumset = "1"
+tempfile = "3"
+
+jolt-eval-macros = { path = "macros" }
+
+[[bin]]
+name = "check-invariants"
+path = "bin/check_invariants.rs"
+
+[[bin]]
+name = "measure-objectives"
+path = "bin/measure_objectives.rs"
+
+[[bin]]
+name = "redteam"
+path = "bin/redteam.rs"

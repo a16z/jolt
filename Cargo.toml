@@ -92,6 +92,8 @@ members = [
     "examples/sig-recovery/guest",
     "zklean-extractor",
     "z3-verifier",
+    "jolt-eval",
+    "jolt-eval/macros",
 ]
 
 [features]
