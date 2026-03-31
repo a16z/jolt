@@ -1,6 +1,9 @@
 #[cfg(not(feature = "zk"))]
 use std::collections::BTreeMap;
-use std::io::{Read, Write};
+use std::{
+    any::TypeId,
+    io::{Cursor, Read, Write},
+};
 
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
@@ -15,7 +18,10 @@ use crate::{
     curve::JoltCurve,
     field::JoltField,
     poly::{
-        commitment::{commitment_scheme::CommitmentScheme, dory::DoryLayout},
+        commitment::{
+            commitment_scheme::CommitmentScheme,
+            dory::{ArkG1, ArkG2, ArkGT, DoryCommitmentScheme, DoryLayout},
+        },
         opening_proof::{OpeningId, PolynomialId, SumcheckId},
     },
 };
@@ -40,6 +46,8 @@ const PROOF_FLAG_ZK: u8 = 0x01;
 
 const MAX_PARAMS_LEN: u64 = 1024;
 const MAX_SECTION_LEN: u64 = 128 * 1024;
+#[cfg(not(feature = "zk"))]
+const MIN_OPENING_CLAIM_BYTES: u64 = 33;
 
 pub struct JoltProof<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
     pub commitments: Vec<PCS::Commitment>,
@@ -70,10 +78,31 @@ fn io_err(e: std::io::Error) -> SerializationError {
     SerializationError::IoError(e)
 }
 
+#[inline]
+fn invalid_data(message: impl Into<String>) -> SerializationError {
+    io_err(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        message.into(),
+    ))
+}
+
+fn ensure_section_len(
+    section_name: &str,
+    len: u64,
+    max_len: u64,
+) -> Result<(), SerializationError> {
+    if len > max_len {
+        return Err(invalid_data(format!(
+            "{section_name} section size {len} exceeds cap {max_len}"
+        )));
+    }
+    Ok(())
+}
+
 macro_rules! write_section {
     ($w:expr, $c:expr, $($item:expr),+ $(,)?) => {{
         let len: u64 = 0 $(+ $item.serialized_size($c) as u64)+;
-        debug_assert!(len <= MAX_SECTION_LEN, "section size {len} exceeds MAX_SECTION_LEN");
+        ensure_section_len("proof", len, MAX_SECTION_LEN)?;
         transport::write_varint_u64($w, len).map_err(io_err)?;
         $($item.serialize_with_mode($w, $c)?;)+
     }};
@@ -90,12 +119,88 @@ fn check_trailing_bytes<R: Read>(
     limited: &std::io::Take<&mut R>,
 ) -> Result<(), SerializationError> {
     if limited.limit() != 0 {
-        return Err(io_err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("{} trailing bytes not consumed", limited.limit()),
+        return Err(invalid_data(format!(
+            "{} trailing bytes not consumed",
+            limited.limit()
         )));
     }
     Ok(())
+}
+
+fn check_cursor_consumed(
+    section_name: &str,
+    cursor: &Cursor<&[u8]>,
+) -> Result<(), SerializationError> {
+    let trailing = cursor
+        .get_ref()
+        .len()
+        .saturating_sub(cursor.position() as usize);
+    if trailing != 0 {
+        return Err(invalid_data(format!(
+            "{trailing} trailing bytes not consumed in {section_name} section"
+        )));
+    }
+    Ok(())
+}
+
+fn ark_group_size<T: CanonicalSerialize + Default>(compress: Compress) -> usize {
+    T::default().serialized_size(compress)
+}
+
+fn check_dory_round_count(
+    section_bytes: &[u8],
+    compress: Compress,
+    validate: Validate,
+) -> Result<(), SerializationError> {
+    let mut cursor = Cursor::new(section_bytes);
+    ArkGT::deserialize_with_mode(&mut cursor, compress, validate)?;
+    ArkGT::deserialize_with_mode(&mut cursor, compress, validate)?;
+    ArkG1::deserialize_with_mode(&mut cursor, compress, validate)?;
+
+    let num_rounds = u32::deserialize_with_mode(&mut cursor, compress, validate)? as usize;
+
+    let first_round_bytes = 4 * ark_group_size::<ArkGT>(compress)
+        + ark_group_size::<ArkG1>(compress)
+        + ark_group_size::<ArkG2>(compress);
+    let second_round_bytes = 2 * ark_group_size::<ArkGT>(compress)
+        + 2 * ark_group_size::<ArkG1>(compress)
+        + 2 * ark_group_size::<ArkG2>(compress);
+    let min_tail_bytes = ark_group_size::<ArkG1>(compress)
+        + ark_group_size::<ArkG2>(compress)
+        + 2 * std::mem::size_of::<u32>();
+    let remaining_bytes = section_bytes
+        .len()
+        .saturating_sub(cursor.position() as usize);
+
+    if remaining_bytes < min_tail_bytes {
+        return Err(SerializationError::InvalidData);
+    }
+
+    let per_round_bytes = first_round_bytes + second_round_bytes;
+    let max_rounds = remaining_bytes.saturating_sub(min_tail_bytes) / per_round_bytes;
+    if num_rounds > max_rounds {
+        return Err(invalid_data(format!(
+            "Dory opening proof declares {num_rounds} rounds but section only has room for {max_rounds}"
+        )));
+    }
+
+    Ok(())
+}
+
+fn deserialize_joint_opening_proof_section<PCS: CommitmentScheme>(
+    reader: &mut impl Read,
+    compress: Compress,
+    validate: Validate,
+) -> Result<PCS::Proof, SerializationError> {
+    let section_bytes = transport::read_section_bytes(reader, MAX_SECTION_LEN).map_err(io_err)?;
+    if TypeId::of::<PCS>() == TypeId::of::<DoryCommitmentScheme>() {
+        check_dory_round_count(&section_bytes, compress, validate)?;
+    }
+
+    let mut cursor = Cursor::new(section_bytes.as_slice());
+    let proof = PCS::Proof::deserialize_with_mode(&mut cursor, compress, validate)?;
+    check_cursor_consumed("joint opening proof", &cursor)?;
+    Ok(proof)
 }
 
 impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript>
@@ -142,6 +247,7 @@ impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcrip
         writer.write_all(&[flags]).map_err(io_err)?;
 
         let params_len = self.params_payload_len(compress);
+        ensure_section_len("params", params_len, MAX_PARAMS_LEN)?;
         transport::write_varint_u64(&mut writer, params_len).map_err(io_err)?;
         transport::write_varint_u64(&mut writer, self.trace_length as u64).map_err(io_err)?;
         transport::write_varint_u64(&mut writer, self.ram_K as u64).map_err(io_err)?;
@@ -152,6 +258,7 @@ impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcrip
             .serialize_with_mode(&mut writer, compress)?;
 
         let commitments_len = self.commitments_payload_len(compress);
+        ensure_section_len("commitments", commitments_len, MAX_SECTION_LEN)?;
         transport::write_varint_u64(&mut writer, commitments_len).map_err(io_err)?;
         transport::write_varint_u64(&mut writer, self.commitments.len() as u64).map_err(io_err)?;
         for c in &self.commitments {
@@ -295,11 +402,20 @@ impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcrip
         check_trailing_bytes(&limited)?;
 
         // Commitments
-        let mut limited = transport::read_section(&mut reader, MAX_SECTION_LEN).map_err(io_err)?;
+        let commitments_bytes =
+            transport::read_section_bytes(&mut reader, MAX_SECTION_LEN).map_err(io_err)?;
+        let mut limited = Cursor::new(commitments_bytes.as_slice());
         let n = transport::read_varint_u64(&mut limited).map_err(io_err)?;
         let n_usize = usize::try_from(n).map_err(|_| SerializationError::InvalidData)?;
-        if n_usize > 10_000 {
-            return Err(SerializationError::InvalidData);
+        let remaining_bytes = commitments_bytes
+            .len()
+            .saturating_sub(limited.position() as usize);
+        let min_commitment_bytes = PCS::Commitment::default().serialized_size(compress).max(1);
+        let max_commitments = remaining_bytes.saturating_sub(1) / min_commitment_bytes;
+        if n_usize > max_commitments {
+            return Err(invalid_data(format!(
+                "commitments section count {n_usize} exceeds byte cap {max_commitments}"
+            )));
         }
         let mut commitments = Vec::with_capacity(n_usize);
         for _ in 0..n_usize {
@@ -319,7 +435,7 @@ impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcrip
             )?),
             _ => return Err(SerializationError::InvalidData),
         };
-        check_trailing_bytes(&limited)?;
+        check_cursor_consumed("commitments", &limited)?;
 
         macro_rules! read_single_section {
             ($reader:expr) => {{
@@ -356,7 +472,8 @@ impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcrip
         let stage5_sumcheck_proof = read_single_section!(&mut reader);
         let stage6_sumcheck_proof = read_single_section!(&mut reader);
         let stage7_sumcheck_proof = read_single_section!(&mut reader);
-        let joint_opening_proof = read_single_section!(&mut reader);
+        let joint_opening_proof =
+            deserialize_joint_opening_proof_section::<PCS>(&mut reader, compress, validate)?;
 
         #[cfg(feature = "zk")]
         let blindfold_proof = read_single_section!(&mut reader);
@@ -403,7 +520,7 @@ impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcrip
 pub struct Claims<F: JoltField>(pub Openings<F>);
 
 #[cfg(not(feature = "zk"))]
-const MAX_CLAIMS_COUNT: u64 = 10_000;
+const MAX_CLAIMS_COUNT: u64 = MAX_SECTION_LEN / MIN_OPENING_CLAIM_BYTES;
 
 #[cfg(not(feature = "zk"))]
 impl<F: JoltField> CanonicalSerialize for Claims<F> {
@@ -596,7 +713,11 @@ impl CanonicalDeserialize for OpeningId {
         let small = header & 0x3F;
 
         let sumcheck_u64 = if small == OPENING_ID_SUMCHECK_ESCAPE {
-            transport::read_varint_u64(&mut reader).map_err(io_err)?
+            let sumcheck_u64 = transport::read_varint_u64(&mut reader).map_err(io_err)?;
+            if sumcheck_u64 < OPENING_ID_SUMCHECK_ESCAPE as u64 {
+                return Err(SerializationError::InvalidData);
+            }
+            sumcheck_u64
         } else {
             small as u64
         };
@@ -996,6 +1117,16 @@ mod tests {
     }
 
     #[test]
+    fn opening_id_rejects_noncanonical_escape_encoding() {
+        let bytes = [
+            (OPENING_ID_KIND_UNTRUSTED_ADVICE << 6) | OPENING_ID_SUMCHECK_ESCAPE,
+            0,
+        ];
+        let res = OpeningId::deserialize_compressed(bytes.as_slice());
+        assert!(matches!(res, Err(SerializationError::InvalidData)));
+    }
+
+    #[test]
     fn proof_version_byte() {
         assert_eq!(PROOF_VERSION, 1);
     }
@@ -1056,5 +1187,21 @@ mod tests {
             }
             other => panic!("expected IoError with magic message, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn dory_round_count_sanity_check_rejects_oversized_count() {
+        let mut bytes = Vec::new();
+        ArkGT::default().serialize_compressed(&mut bytes).unwrap();
+        ArkGT::default().serialize_compressed(&mut bytes).unwrap();
+        ArkG1::default().serialize_compressed(&mut bytes).unwrap();
+        1_000u32.serialize_compressed(&mut bytes).unwrap();
+        ArkG1::default().serialize_compressed(&mut bytes).unwrap();
+        ArkG2::default().serialize_compressed(&mut bytes).unwrap();
+        0u32.serialize_compressed(&mut bytes).unwrap();
+        0u32.serialize_compressed(&mut bytes).unwrap();
+
+        let res = check_dory_round_count(&bytes, Compress::Yes, Validate::Yes);
+        assert!(res.is_err());
     }
 }

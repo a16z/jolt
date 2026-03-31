@@ -2229,7 +2229,7 @@ mod tests {
         prover::JoltProverPreprocessing,
         ram::populate_memory_states,
         verifier::{JoltVerifier, JoltVerifierPreprocessing},
-        RV64IMACProver, RV64IMACVerifier,
+        RV64IMACProof, RV64IMACProver, RV64IMACVerifier, Serializable,
     };
     #[cfg(feature = "zk")]
     use crate::{curve::JoltCurve, field::JoltField};
@@ -2313,6 +2313,8 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
+        let proof_bytes = jolt_proof.serialize_to_bytes().unwrap();
+        let jolt_proof = RV64IMACProof::deserialize_from_bytes(&proof_bytes).unwrap();
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
         let verifier = RV64IMACVerifier::new(
@@ -2416,6 +2418,8 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
+        let proof_bytes = jolt_proof.serialize_to_bytes().unwrap();
+        let jolt_proof = RV64IMACProof::deserialize_from_bytes(&proof_bytes).unwrap();
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
         let verifier = RV64IMACVerifier::new(
@@ -2539,6 +2543,8 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
+        let proof_bytes = jolt_proof.serialize_to_bytes().unwrap();
+        let jolt_proof = RV64IMACProof::deserialize_from_bytes(&proof_bytes).unwrap();
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
         RV64IMACVerifier::new(
@@ -2661,6 +2667,8 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
+        let proof_bytes = jolt_proof.serialize_to_bytes().unwrap();
+        let jolt_proof = RV64IMACProof::deserialize_from_bytes(&proof_bytes).unwrap();
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
         RV64IMACVerifier::new(
@@ -2900,6 +2908,8 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
+        let proof_bytes = jolt_proof.serialize_to_bytes().unwrap();
+        let jolt_proof = RV64IMACProof::deserialize_from_bytes(&proof_bytes).unwrap();
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
         let verifier = RV64IMACVerifier::new(

@@ -16,10 +16,10 @@ pub fn write_magic_version<W: Write>(w: &mut W, magic: &[u8], version: u8) -> io
 }
 
 #[inline]
-pub fn read_magic_version<R: Read>(r: &mut R, magic: &[u8]) -> io::Result<u8> {
-    let mut buf = vec![0u8; magic.len()];
+pub fn read_magic_version<R: Read>(r: &mut R, magic: &[u8; 4]) -> io::Result<u8> {
+    let mut buf = [0u8; 4];
     r.read_exact(&mut buf)?;
-    if buf != magic {
+    if buf != *magic {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "invalid proof magic",
@@ -89,6 +89,14 @@ pub fn read_section<R: Read>(r: &mut R, max_len: u64) -> io::Result<io::Take<&mu
         ));
     }
     Ok(r.take(len))
+}
+
+#[inline]
+pub fn read_section_bytes<R: Read>(r: &mut R, max_len: u64) -> io::Result<Vec<u8>> {
+    let mut limited = read_section(r, max_len)?;
+    let mut bytes = vec![0u8; limited.limit() as usize];
+    limited.read_exact(&mut bytes)?;
+    Ok(bytes)
 }
 
 #[cfg(test)]
