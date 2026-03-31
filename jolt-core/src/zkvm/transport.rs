@@ -53,7 +53,7 @@ pub fn varint_u64_len(mut x: u64) -> usize {
 pub fn read_varint_u64<R: Read>(r: &mut R) -> io::Result<u64> {
     let mut x = 0u64;
     let mut shift = 0u32;
-    for _ in 0..VARINT_U64_MAX_BYTES {
+    for i in 0..VARINT_U64_MAX_BYTES {
         let mut b = [0u8; 1];
         r.read_exact(&mut b)?;
         let byte = b[0];
@@ -66,6 +66,13 @@ pub fn read_varint_u64<R: Read>(r: &mut R) -> io::Result<u64> {
         }
         x |= payload << shift;
         if (byte & 0x80) == 0 {
+            let bytes_read = i + 1;
+            if bytes_read != varint_u64_len(x) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "non-canonical varint",
+                ));
+            }
             return Ok(x);
         }
         shift += 7;
@@ -143,6 +150,16 @@ mod tests {
         bad.push(0x02);
         let res = read_varint_u64(&mut bad.as_slice());
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn noncanonical_varint_rejected() {
+        let bad = [0x80u8, 0x00];
+        let res = read_varint_u64(&mut bad.as_slice());
+        assert!(res.is_err());
+        let err = res.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("non-canonical varint"));
     }
 
     #[test]

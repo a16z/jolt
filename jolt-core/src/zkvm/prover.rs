@@ -3534,6 +3534,8 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (proof, debug_info) = prover.prove();
+        let proof_bytes = proof.serialize_to_bytes().unwrap();
+        let proof = RV64IMACProof::deserialize_from_bytes(&proof_bytes).unwrap();
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
 
@@ -3587,6 +3589,8 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
+        let proof_bytes = jolt_proof.serialize_to_bytes().unwrap();
+        let jolt_proof = RV64IMACProof::deserialize_from_bytes(&proof_bytes).unwrap();
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
         RV64IMACVerifier::new(

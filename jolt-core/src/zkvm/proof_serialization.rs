@@ -10,12 +10,14 @@ use ark_serialize::{
 };
 use num::FromPrimitive;
 
+#[cfg(feature = "zk")]
+use crate::poly::commitment::hyrax::HyraxOpeningProof;
 #[cfg(not(feature = "zk"))]
 use crate::poly::opening_proof::{OpeningPoint, Openings};
 #[cfg(feature = "zk")]
-use crate::subprotocols::blindfold::BlindFoldProof;
+use crate::subprotocols::blindfold::{BlindFoldProof, RelaxedR1CSInstance};
 use crate::{
-    curve::JoltCurve,
+    curve::{JoltCurve, JoltGroupElement},
     field::JoltField,
     poly::{
         commitment::{
@@ -23,11 +25,15 @@ use crate::{
             dory::{ArkG1, ArkG2, ArkGT, DoryCommitmentScheme, DoryLayout},
         },
         opening_proof::{OpeningId, PolynomialId, SumcheckId},
+        unipoly::{CompressedUniPoly, UniPoly},
     },
 };
 use crate::{
     subprotocols::{
-        sumcheck::SumcheckInstanceProof, univariate_skip::UniSkipFirstRoundProofVariant,
+        sumcheck::{ClearSumcheckProof, SumcheckInstanceProof, ZkSumcheckProof},
+        univariate_skip::{
+            UniSkipFirstRoundProof, UniSkipFirstRoundProofVariant, ZkUniSkipFirstRoundProof,
+        },
     },
     transcripts::Transcript,
     zkvm::{
@@ -143,6 +149,304 @@ fn check_cursor_consumed(
     if trailing != 0 {
         return Err(invalid_data(format!(
             "{trailing} trailing bytes not consumed in {section_name} section"
+        )));
+    }
+    Ok(())
+}
+
+fn cursor_remaining_bytes(cursor: &Cursor<&[u8]>) -> usize {
+    cursor
+        .get_ref()
+        .len()
+        .saturating_sub(cursor.position() as usize)
+}
+
+fn read_ark_seq_len(
+    cursor: &mut Cursor<&[u8]>,
+    min_elem_bytes: usize,
+    compress: Compress,
+    validate: Validate,
+) -> Result<usize, SerializationError> {
+    let len_u64 = u64::deserialize_with_mode(&mut *cursor, compress, validate)?;
+    let len = usize::try_from(len_u64).map_err(|_| SerializationError::InvalidData)?;
+    let max_len = cursor_remaining_bytes(cursor) / min_elem_bytes.max(1);
+    if len > max_len {
+        return Err(invalid_data(format!(
+            "sequence length {len} exceeds remaining byte budget {max_len}"
+        )));
+    }
+    Ok(len)
+}
+
+fn read_bounded_ark_vec<T, ReadItem>(
+    cursor: &mut Cursor<&[u8]>,
+    min_elem_bytes: usize,
+    compress: Compress,
+    validate: Validate,
+    mut read_item: ReadItem,
+) -> Result<Vec<T>, SerializationError>
+where
+    ReadItem: FnMut(&mut Cursor<&[u8]>, Compress, Validate) -> Result<T, SerializationError>,
+{
+    let len = read_ark_seq_len(cursor, min_elem_bytes, compress, validate)?;
+    let mut items = Vec::with_capacity(len);
+    for _ in 0..len {
+        items.push(read_item(cursor, compress, validate)?);
+    }
+    Ok(items)
+}
+
+fn deserialize_field_vec<F: JoltField>(
+    cursor: &mut Cursor<&[u8]>,
+    compress: Compress,
+    validate: Validate,
+) -> Result<Vec<F>, SerializationError> {
+    read_bounded_ark_vec(
+        cursor,
+        F::zero().serialized_size(compress),
+        compress,
+        validate,
+        |cursor, compress, validate| F::deserialize_with_mode(cursor, compress, validate),
+    )
+}
+
+fn deserialize_g1_vec<F: JoltField, C: JoltCurve<F = F>>(
+    cursor: &mut Cursor<&[u8]>,
+    compress: Compress,
+    validate: Validate,
+) -> Result<Vec<C::G1>, SerializationError> {
+    read_bounded_ark_vec(
+        cursor,
+        C::G1::zero().serialized_size(compress),
+        compress,
+        validate,
+        |cursor, compress, validate| C::G1::deserialize_with_mode(cursor, compress, validate),
+    )
+}
+
+fn deserialize_usize_vec(
+    cursor: &mut Cursor<&[u8]>,
+    compress: Compress,
+    validate: Validate,
+) -> Result<Vec<usize>, SerializationError> {
+    read_bounded_ark_vec(
+        cursor,
+        0usize.serialized_size(compress),
+        compress,
+        validate,
+        |cursor, compress, validate| usize::deserialize_with_mode(cursor, compress, validate),
+    )
+}
+
+fn deserialize_uni_poly_from_cursor<F: JoltField>(
+    cursor: &mut Cursor<&[u8]>,
+    compress: Compress,
+    validate: Validate,
+) -> Result<UniPoly<F>, SerializationError> {
+    Ok(UniPoly::from_coeff(deserialize_field_vec(
+        cursor, compress, validate,
+    )?))
+}
+
+fn deserialize_compressed_uni_poly_from_cursor<F: JoltField>(
+    cursor: &mut Cursor<&[u8]>,
+    compress: Compress,
+    validate: Validate,
+) -> Result<CompressedUniPoly<F>, SerializationError> {
+    Ok(CompressedUniPoly {
+        coeffs_except_linear_term: deserialize_field_vec(cursor, compress, validate)?,
+    })
+}
+
+fn deserialize_clear_sumcheck_proof_from_cursor<F: JoltField, FS: Transcript>(
+    cursor: &mut Cursor<&[u8]>,
+    compress: Compress,
+    validate: Validate,
+) -> Result<ClearSumcheckProof<F, FS>, SerializationError> {
+    let compressed_polys = read_bounded_ark_vec(
+        cursor,
+        0u64.serialized_size(compress),
+        compress,
+        validate,
+        |cursor, compress, validate| {
+            deserialize_compressed_uni_poly_from_cursor::<F>(cursor, compress, validate)
+        },
+    )?;
+    Ok(ClearSumcheckProof::new(compressed_polys))
+}
+
+fn deserialize_zk_sumcheck_proof_from_cursor<F: JoltField, C: JoltCurve<F = F>, FS: Transcript>(
+    cursor: &mut Cursor<&[u8]>,
+    compress: Compress,
+    validate: Validate,
+) -> Result<ZkSumcheckProof<F, C, FS>, SerializationError> {
+    Ok(ZkSumcheckProof::new(
+        deserialize_g1_vec::<F, C>(cursor, compress, validate)?,
+        deserialize_usize_vec(cursor, compress, validate)?,
+        deserialize_g1_vec::<F, C>(cursor, compress, validate)?,
+    ))
+}
+
+fn deserialize_sumcheck_instance_proof_from_cursor<
+    F: JoltField,
+    C: JoltCurve<F = F>,
+    FS: Transcript,
+>(
+    cursor: &mut Cursor<&[u8]>,
+    compress: Compress,
+    validate: Validate,
+) -> Result<SumcheckInstanceProof<F, C, FS>, SerializationError> {
+    match u8::deserialize_with_mode(&mut *cursor, compress, validate)? {
+        0 => Ok(SumcheckInstanceProof::Clear(
+            deserialize_clear_sumcheck_proof_from_cursor::<F, FS>(cursor, compress, validate)?,
+        )),
+        1 => Ok(SumcheckInstanceProof::Zk(
+            deserialize_zk_sumcheck_proof_from_cursor::<F, C, FS>(cursor, compress, validate)?,
+        )),
+        _ => Err(SerializationError::InvalidData),
+    }
+}
+
+fn deserialize_uniskip_first_round_proof_from_cursor<F: JoltField, FS: Transcript>(
+    cursor: &mut Cursor<&[u8]>,
+    compress: Compress,
+    validate: Validate,
+) -> Result<UniSkipFirstRoundProof<F, FS>, SerializationError> {
+    Ok(UniSkipFirstRoundProof::new(
+        deserialize_uni_poly_from_cursor(cursor, compress, validate)?,
+    ))
+}
+
+fn deserialize_zk_uniskip_first_round_proof_from_cursor<
+    F: JoltField,
+    C: JoltCurve<F = F>,
+    FS: Transcript,
+>(
+    cursor: &mut Cursor<&[u8]>,
+    compress: Compress,
+    validate: Validate,
+) -> Result<ZkUniSkipFirstRoundProof<F, C, FS>, SerializationError> {
+    Ok(ZkUniSkipFirstRoundProof::new(
+        C::G1::deserialize_with_mode(&mut *cursor, compress, validate)?,
+        usize::deserialize_with_mode(&mut *cursor, compress, validate)?,
+        deserialize_g1_vec::<F, C>(cursor, compress, validate)?,
+    ))
+}
+
+fn deserialize_uniskip_first_round_proof_variant_from_cursor<
+    F: JoltField,
+    C: JoltCurve<F = F>,
+    FS: Transcript,
+>(
+    cursor: &mut Cursor<&[u8]>,
+    compress: Compress,
+    validate: Validate,
+) -> Result<UniSkipFirstRoundProofVariant<F, C, FS>, SerializationError> {
+    match u8::deserialize_with_mode(&mut *cursor, compress, validate)? {
+        0 => Ok(UniSkipFirstRoundProofVariant::Standard(
+            deserialize_uniskip_first_round_proof_from_cursor::<F, FS>(cursor, compress, validate)?,
+        )),
+        1 => Ok(UniSkipFirstRoundProofVariant::Zk(
+            deserialize_zk_uniskip_first_round_proof_from_cursor::<F, C, FS>(
+                cursor, compress, validate,
+            )?,
+        )),
+        _ => Err(SerializationError::InvalidData),
+    }
+}
+
+#[cfg(feature = "zk")]
+fn deserialize_hyrax_opening_proof_from_cursor<F: JoltField>(
+    cursor: &mut Cursor<&[u8]>,
+    compress: Compress,
+    validate: Validate,
+) -> Result<HyraxOpeningProof<F>, SerializationError> {
+    Ok(HyraxOpeningProof {
+        combined_row: deserialize_field_vec(cursor, compress, validate)?,
+        combined_blinding: F::deserialize_with_mode(cursor, compress, validate)?,
+    })
+}
+
+#[cfg(feature = "zk")]
+fn deserialize_relaxed_r1cs_instance_from_cursor<F: JoltField, C: JoltCurve<F = F>>(
+    cursor: &mut Cursor<&[u8]>,
+    compress: Compress,
+    validate: Validate,
+) -> Result<RelaxedR1CSInstance<F, C>, SerializationError> {
+    Ok(RelaxedR1CSInstance {
+        u: F::deserialize_with_mode(&mut *cursor, compress, validate)?,
+        round_commitments: deserialize_g1_vec::<F, C>(cursor, compress, validate)?,
+        output_claims_row_commitments: deserialize_g1_vec::<F, C>(cursor, compress, validate)?,
+        noncoeff_row_commitments: deserialize_g1_vec::<F, C>(cursor, compress, validate)?,
+        e_row_commitments: deserialize_g1_vec::<F, C>(cursor, compress, validate)?,
+        eval_commitments: deserialize_g1_vec::<F, C>(cursor, compress, validate)?,
+    })
+}
+
+#[cfg(feature = "zk")]
+fn deserialize_blindfold_proof_from_cursor<F: JoltField, C: JoltCurve<F = F>>(
+    cursor: &mut Cursor<&[u8]>,
+    compress: Compress,
+    validate: Validate,
+) -> Result<BlindFoldProof<F, C>, SerializationError> {
+    Ok(BlindFoldProof {
+        random_instance: deserialize_relaxed_r1cs_instance_from_cursor::<F, C>(
+            cursor, compress, validate,
+        )?,
+        noncoeff_row_commitments: deserialize_g1_vec::<F, C>(cursor, compress, validate)?,
+        cross_term_row_commitments: deserialize_g1_vec::<F, C>(cursor, compress, validate)?,
+        spartan_proof: read_bounded_ark_vec(
+            cursor,
+            0u64.serialized_size(compress),
+            compress,
+            validate,
+            |cursor, compress, validate| {
+                deserialize_compressed_uni_poly_from_cursor::<F>(cursor, compress, validate)
+            },
+        )?,
+        az_r: F::deserialize_with_mode(&mut *cursor, compress, validate)?,
+        bz_r: F::deserialize_with_mode(&mut *cursor, compress, validate)?,
+        cz_r: F::deserialize_with_mode(&mut *cursor, compress, validate)?,
+        inner_sumcheck_proof: read_bounded_ark_vec(
+            cursor,
+            0u64.serialized_size(compress),
+            compress,
+            validate,
+            |cursor, compress, validate| {
+                deserialize_compressed_uni_poly_from_cursor::<F>(cursor, compress, validate)
+            },
+        )?,
+        w_opening: deserialize_hyrax_opening_proof_from_cursor(cursor, compress, validate)?,
+        e_opening: deserialize_hyrax_opening_proof_from_cursor(cursor, compress, validate)?,
+        folded_eval_outputs: deserialize_field_vec(cursor, compress, validate)?,
+        folded_eval_blindings: deserialize_field_vec(cursor, compress, validate)?,
+    })
+}
+
+fn ensure_sumcheck_mode<F: JoltField, C: JoltCurve<F = F>, FS: Transcript>(
+    section_name: &str,
+    proof: &SumcheckInstanceProof<F, C, FS>,
+    proof_is_zk: bool,
+) -> Result<(), SerializationError> {
+    if proof.is_zk() != proof_is_zk {
+        let mode = if proof_is_zk { "ZK" } else { "standard" };
+        return Err(invalid_data(format!(
+            "{section_name} sumcheck proof mode does not match outer proof {mode} flag"
+        )));
+    }
+    Ok(())
+}
+
+fn ensure_uniskip_mode<F: JoltField, C: JoltCurve<F = F>, FS: Transcript>(
+    section_name: &str,
+    proof: &UniSkipFirstRoundProofVariant<F, C, FS>,
+    proof_is_zk: bool,
+) -> Result<(), SerializationError> {
+    let uniskip_is_zk = matches!(proof, UniSkipFirstRoundProofVariant::Zk(_));
+    if uniskip_is_zk != proof_is_zk {
+        let mode = if proof_is_zk { "ZK" } else { "standard" };
+        return Err(invalid_data(format!(
+            "{section_name} uni-skip proof mode does not match outer proof {mode} flag"
         )));
     }
     Ok(())
@@ -442,46 +746,87 @@ impl<F: JoltField, C: JoltCurve<F = F>, PCS: CommitmentScheme<Field = F>, FS: Tr
         };
         check_cursor_consumed("commitments", &limited)?;
 
-        macro_rules! read_single_section {
-            ($reader:expr) => {{
-                let mut limited =
-                    transport::read_section($reader, MAX_SECTION_LEN).map_err(io_err)?;
-                let val =
-                    CanonicalDeserialize::deserialize_with_mode(&mut limited, compress, validate)?;
-                check_trailing_bytes(&limited)?;
-                val
+        #[cfg(not(feature = "zk"))]
+        let opening_claims: Claims<F> = {
+            let mut limited =
+                transport::read_section(&mut reader, MAX_SECTION_LEN).map_err(io_err)?;
+            let claims =
+                CanonicalDeserialize::deserialize_with_mode(&mut limited, compress, validate)?;
+            check_trailing_bytes(&limited)?;
+            claims
+        };
+
+        // Stage 1
+        let stage1_bytes =
+            transport::read_section_bytes(&mut reader, MAX_SECTION_LEN).map_err(io_err)?;
+        let mut stage1_cursor = Cursor::new(stage1_bytes.as_slice());
+        let stage1_uni_skip_first_round_proof =
+            deserialize_uniskip_first_round_proof_variant_from_cursor(
+                &mut stage1_cursor,
+                compress,
+                validate,
+            )?;
+        let stage1_sumcheck_proof = deserialize_sumcheck_instance_proof_from_cursor(
+            &mut stage1_cursor,
+            compress,
+            validate,
+        )?;
+        check_cursor_consumed("stage1", &stage1_cursor)?;
+        ensure_uniskip_mode("stage1", &stage1_uni_skip_first_round_proof, proof_is_zk)?;
+        ensure_sumcheck_mode("stage1", &stage1_sumcheck_proof, proof_is_zk)?;
+
+        // Stage 2
+        let stage2_bytes =
+            transport::read_section_bytes(&mut reader, MAX_SECTION_LEN).map_err(io_err)?;
+        let mut stage2_cursor = Cursor::new(stage2_bytes.as_slice());
+        let stage2_uni_skip_first_round_proof =
+            deserialize_uniskip_first_round_proof_variant_from_cursor(
+                &mut stage2_cursor,
+                compress,
+                validate,
+            )?;
+        let stage2_sumcheck_proof = deserialize_sumcheck_instance_proof_from_cursor(
+            &mut stage2_cursor,
+            compress,
+            validate,
+        )?;
+        check_cursor_consumed("stage2", &stage2_cursor)?;
+        ensure_uniskip_mode("stage2", &stage2_uni_skip_first_round_proof, proof_is_zk)?;
+        ensure_sumcheck_mode("stage2", &stage2_sumcheck_proof, proof_is_zk)?;
+
+        macro_rules! read_sumcheck_section {
+            ($reader:expr, $section_name:literal) => {{
+                let section_bytes =
+                    transport::read_section_bytes($reader, MAX_SECTION_LEN).map_err(io_err)?;
+                let mut cursor = Cursor::new(section_bytes.as_slice());
+                let proof = deserialize_sumcheck_instance_proof_from_cursor(
+                    &mut cursor,
+                    compress,
+                    validate,
+                )?;
+                check_cursor_consumed($section_name, &cursor)?;
+                ensure_sumcheck_mode($section_name, &proof, proof_is_zk)?;
+                proof
             }};
         }
 
-        #[cfg(not(feature = "zk"))]
-        let opening_claims: Claims<F> = read_single_section!(&mut reader);
-
-        // Stage 1
-        let mut limited = transport::read_section(&mut reader, MAX_SECTION_LEN).map_err(io_err)?;
-        let stage1_uni_skip_first_round_proof =
-            CanonicalDeserialize::deserialize_with_mode(&mut limited, compress, validate)?;
-        let stage1_sumcheck_proof =
-            CanonicalDeserialize::deserialize_with_mode(&mut limited, compress, validate)?;
-        check_trailing_bytes(&limited)?;
-
-        // Stage 2
-        let mut limited = transport::read_section(&mut reader, MAX_SECTION_LEN).map_err(io_err)?;
-        let stage2_uni_skip_first_round_proof =
-            CanonicalDeserialize::deserialize_with_mode(&mut limited, compress, validate)?;
-        let stage2_sumcheck_proof =
-            CanonicalDeserialize::deserialize_with_mode(&mut limited, compress, validate)?;
-        check_trailing_bytes(&limited)?;
-
-        let stage3_sumcheck_proof = read_single_section!(&mut reader);
-        let stage4_sumcheck_proof = read_single_section!(&mut reader);
-        let stage5_sumcheck_proof = read_single_section!(&mut reader);
-        let stage6_sumcheck_proof = read_single_section!(&mut reader);
-        let stage7_sumcheck_proof = read_single_section!(&mut reader);
+        let stage3_sumcheck_proof = read_sumcheck_section!(&mut reader, "stage3");
+        let stage4_sumcheck_proof = read_sumcheck_section!(&mut reader, "stage4");
+        let stage5_sumcheck_proof = read_sumcheck_section!(&mut reader, "stage5");
+        let stage6_sumcheck_proof = read_sumcheck_section!(&mut reader, "stage6");
+        let stage7_sumcheck_proof = read_sumcheck_section!(&mut reader, "stage7");
         let joint_opening_proof =
             deserialize_joint_opening_proof_section::<PCS>(&mut reader, compress, validate)?;
 
         #[cfg(feature = "zk")]
-        let blindfold_proof = read_single_section!(&mut reader);
+        let blindfold_proof = {
+            let section_bytes =
+                transport::read_section_bytes(&mut reader, MAX_SECTION_LEN).map_err(io_err)?;
+            let mut cursor = Cursor::new(section_bytes.as_slice());
+            let proof = deserialize_blindfold_proof_from_cursor(&mut cursor, compress, validate)?;
+            check_cursor_consumed("blindfold", &cursor)?;
+            proof
+        };
 
         let mut eof_check = [0u8; 1];
         match reader.read(&mut eof_check) {
@@ -1022,6 +1367,8 @@ mod tests {
     use crate::poly::opening_proof::{OpeningId, SumcheckId};
     use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
     use crate::zkvm::RV64IMACProof;
+    use crate::{curve::Bn254Curve, transcripts::Blake2bTranscript};
+    use ark_bn254::Fr;
 
     #[test]
     fn opening_id_header_is_packed_common_case() {
@@ -1129,6 +1476,37 @@ mod tests {
         ];
         let res = OpeningId::deserialize_compressed(bytes.as_slice());
         assert!(matches!(res, Err(SerializationError::InvalidData)));
+    }
+
+    #[test]
+    fn sumcheck_section_rejects_oversized_nested_vector() {
+        let mut bytes = Vec::new();
+        0u8.serialize_compressed(&mut bytes).unwrap();
+        1u64.serialize_compressed(&mut bytes).unwrap();
+
+        let mut cursor = Cursor::new(bytes.as_slice());
+        let res = deserialize_sumcheck_instance_proof_from_cursor::<
+            Fr,
+            Bn254Curve,
+            Blake2bTranscript,
+        >(&mut cursor, Compress::Yes, Validate::Yes);
+        assert!(res.is_err());
+    }
+
+    #[cfg(feature = "zk")]
+    #[test]
+    fn blindfold_section_rejects_oversized_nested_vector() {
+        let mut bytes = Vec::new();
+        Fr::from(0u64).serialize_compressed(&mut bytes).unwrap();
+        1u64.serialize_compressed(&mut bytes).unwrap();
+
+        let mut cursor = Cursor::new(bytes.as_slice());
+        let res = deserialize_blindfold_proof_from_cursor::<Fr, Bn254Curve>(
+            &mut cursor,
+            Compress::Yes,
+            Validate::Yes,
+        );
+        assert!(res.is_err());
     }
 
     #[test]
