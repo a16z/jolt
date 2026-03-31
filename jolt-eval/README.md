@@ -109,6 +109,20 @@ cargo run --bin redteam -- --elf path/to/guest.elf \
 
 The red-team harness runs the AI agent in an isolated git worktree. The invariant is checked in the original working tree so the agent cannot cheat.
 
+### AI-driven optimization
+
+```bash
+# Optimize prover_time and proof_size over 5 iterations
+cargo run --bin optimize -- --elf path/to/guest.elf \
+    --objectives prover_time,proof_size --iterations 5
+
+# With a hint to guide the agent
+cargo run --bin optimize -- --elf path/to/guest.elf \
+    --hint "Focus on the sumcheck inner loop in jolt-core/src/subprotocols/"
+```
+
+Each iteration: the agent works in an isolated worktree, the diff is applied to the real repo, objectives are re-measured, invariants are checked, and the change is committed or reverted.
+
 ### Programmatic API
 
 ```rust
@@ -168,7 +182,7 @@ jolt-eval/
       guest_cycles.rs               # Guest cycle count via tracing
       inline_lengths.rs             # INLINE instruction count
       wrapping_cost.rs              # Constraint system size
-      optimize.rs                   # auto_optimize loop
+      (OptimizationAttempt type)     # in mod.rs
   macros/                           # #[invariant(targets = [...])] proc macro
   bin/                              # CLI binaries
   tests/                            # Framework smoke tests

@@ -1,6 +1,5 @@
 pub mod guest_cycles;
 pub mod inline_lengths;
-pub mod optimize;
 pub mod peak_rss;
 pub mod proof_size;
 pub mod prover_time;
@@ -106,6 +105,14 @@ impl Objective {
             Self::WrappingCost(o) => o.direction(),
         }
     }
+}
+
+/// Record of a single optimization attempt for post-hoc analysis.
+pub struct OptimizationAttempt {
+    pub description: String,
+    pub diff: String,
+    pub measurements: HashMap<String, f64>,
+    pub invariants_passed: bool,
 }
 
 /// Measure all objectives and return a map of name -> value.
