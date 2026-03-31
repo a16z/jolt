@@ -5,12 +5,12 @@ use std::sync::Arc;
 use clap::Parser;
 use tracing::info;
 
+use jolt_eval::agent::{apply_diff, truncate, AgentHarness, ClaudeCodeAgent};
 use jolt_eval::invariant::completeness_prover::ProverCompletenessInvariant;
 use jolt_eval::invariant::completeness_verifier::VerifierCompletenessInvariant;
 use jolt_eval::invariant::determinism::DeterminismInvariant;
 use jolt_eval::invariant::serialization_roundtrip::SerializationRoundtripInvariant;
 use jolt_eval::invariant::soundness::SoundnessInvariant;
-use jolt_eval::invariant::synthesis::redteam::{create_worktree, remove_worktree};
 use jolt_eval::invariant::synthesis::SynthesisRegistry;
 use jolt_eval::invariant::zk_consistency::ZkConsistencyInvariant;
 use jolt_eval::objective::guest_cycles::GuestCycleCountObjective;
@@ -82,12 +82,14 @@ fn main() -> eyre::Result<()> {
     let prover_pp = Arc::new(test_case.prover_preprocessing());
     let verifier_pp = Arc::new(TestCase::verifier_preprocessing(&prover_pp));
 
-    // Build objectives
     let all_objectives = build_objectives(&test_case, &prover_pp, &verifier_pp, &inputs);
     let objective_names: Vec<String> = if let Some(names) = &cli.objectives {
         names.split(',').map(|s| s.trim().to_string()).collect()
     } else {
-        all_objectives.iter().map(|o| o.name().to_string()).collect()
+        all_objectives
+            .iter()
+            .map(|o| o.name().to_string())
+            .collect()
     };
 
     let objectives: Vec<Objective> = all_objectives
@@ -101,17 +103,16 @@ fn main() -> eyre::Result<()> {
         std::process::exit(1);
     }
 
-    // Build invariants for safety checking
     let default_inputs = vec![];
     let mut registry = SynthesisRegistry::new();
     register_invariants(&mut registry, &test_case, &default_inputs);
 
-    // Measure baseline
     let baseline = measure_objectives(&objectives);
     println!("=== Baseline measurements ===");
     print_measurements(&objectives, &baseline);
     println!();
 
+    let agent = ClaudeCodeAgent::new(&cli.model, cli.max_turns);
     let repo_dir = std::env::current_dir()?;
     let mut attempts: Vec<OptimizationAttempt> = Vec::new();
     let mut best = baseline.clone();
@@ -119,29 +120,32 @@ fn main() -> eyre::Result<()> {
     for iteration in 0..cli.iterations {
         println!("=== Iteration {}/{} ===", iteration + 1, cli.iterations);
 
-        // Invoke Claude in a worktree to make optimizations
-        let diff = match invoke_optimize_agent(
-            &repo_dir,
-            &objectives,
-            &best,
-            &attempts,
-            &cli.model,
-            cli.max_turns,
-            cli.hint.as_deref(),
-        ) {
-            Some(d) => d,
-            None => {
-                info!("Agent produced no changes, stopping.");
+        let prompt =
+            build_optimize_prompt(&objectives, &best, &attempts, cli.hint.as_deref());
+
+        let response = match agent.invoke(&repo_dir, &prompt) {
+            Ok(r) => r,
+            Err(e) => {
+                info!("Agent error: {e}");
                 break;
             }
         };
 
-        // Re-measure after the agent's changes
+        // Apply the agent's diff to the real repo
+        if let Some(diff) = &response.diff {
+            info!("Agent produced a diff ({} bytes), applying...", diff.len());
+            if let Err(e) = apply_diff(&repo_dir, diff) {
+                tracing::warn!("Failed to apply diff: {e}");
+            }
+        } else {
+            info!("Agent produced no code changes, stopping.");
+            break;
+        }
+
         let new_measurements = measure_objectives(&objectives);
         println!("  Measurements after changes:");
         print_measurements(&objectives, &new_measurements);
 
-        // Check invariants
         let invariants_passed = registry.invariants().iter().all(|inv| {
             let results = inv.run_checks(0);
             results.iter().all(|r| r.is_ok())
@@ -152,7 +156,6 @@ fn main() -> eyre::Result<()> {
             revert_changes(&repo_dir);
         }
 
-        // Check if score improved (lower is better for all default objectives)
         let improved = if invariants_passed {
             objective_names.iter().any(|name| {
                 let old = best.get(name);
@@ -173,9 +176,10 @@ fn main() -> eyre::Result<()> {
             false
         };
 
+        let diff_text = response.diff.as_deref().unwrap_or("");
         let attempt = OptimizationAttempt {
             description: format!("iteration {}", iteration + 1),
-            diff: truncate(&diff, 5000).to_string(),
+            diff: truncate(diff_text, 5000).to_string(),
             measurements: new_measurements.clone(),
             invariants_passed,
         };
@@ -184,7 +188,6 @@ fn main() -> eyre::Result<()> {
         if improved {
             println!("  Improvement found -- keeping changes.");
             best = new_measurements;
-            // Commit the successful optimization
             commit_changes(&repo_dir, iteration + 1);
         } else if invariants_passed {
             println!("  No improvement -- reverting.");
@@ -194,17 +197,15 @@ fn main() -> eyre::Result<()> {
         println!();
     }
 
-    // Summary
     println!("=== Optimization summary ===");
     println!(
         "{}/{} iterations produced improvements.",
         attempts
             .iter()
             .filter(|a| a.invariants_passed
-                && a.measurements.iter().any(|(name, &val)| {
-                    let baseline_val = baseline.get(name);
-                    baseline_val.is_some_and(|&b| val != b)
-                }))
+                && a.measurements
+                    .iter()
+                    .any(|(name, &val)| { baseline.get(name).is_some_and(|&b| val != b) }))
             .count(),
         attempts.len()
     );
@@ -215,119 +216,7 @@ fn main() -> eyre::Result<()> {
     Ok(())
 }
 
-/// Invoke Claude in an isolated worktree to attempt an optimization.
-/// Returns the agent's output (approach description) or None.
-fn invoke_optimize_agent(
-    repo_dir: &std::path::Path,
-    objectives: &[Objective],
-    current_best: &HashMap<String, f64>,
-    past_attempts: &[OptimizationAttempt],
-    model: &str,
-    max_turns: usize,
-    hint: Option<&str>,
-) -> Option<String> {
-    // Create worktree
-    let worktree_dir = match create_worktree(repo_dir, "optimize") {
-        Ok(dir) => {
-            info!("Created worktree at {}", dir.display());
-            dir
-        }
-        Err(e) => {
-            tracing::error!("Failed to create worktree: {e}");
-            return None;
-        }
-    };
-
-    let prompt = build_prompt(objectives, current_best, past_attempts, hint);
-
-    info!("Invoking claude (model={model}, max_turns={max_turns})...");
-    let result = Command::new("claude")
-        .current_dir(&worktree_dir)
-        .arg("-p")
-        .arg(&prompt)
-        .arg("--model")
-        .arg(model)
-        .arg("--max-turns")
-        .arg(max_turns.to_string())
-        .arg("--verbose")
-        .output();
-
-    // Capture any diff the agent produced in the worktree
-    let diff = Command::new("git")
-        .current_dir(&worktree_dir)
-        .args(["diff", "HEAD"])
-        .output()
-        .ok()
-        .and_then(|o| {
-            let s = String::from_utf8_lossy(&o.stdout).to_string();
-            if s.trim().is_empty() {
-                None
-            } else {
-                Some(s)
-            }
-        });
-
-    // Apply the agent's changes to the real repo (if any)
-    if let Some(diff_text) = &diff {
-        info!("Agent produced a diff ({} bytes), applying to repo...", diff_text.len());
-        let mut child = Command::new("git")
-            .current_dir(repo_dir)
-            .args(["apply", "--allow-empty"])
-            .stdin(std::process::Stdio::piped())
-            .spawn()
-            .ok();
-        if let Some(ref mut c) = child {
-            use std::io::Write;
-            if let Some(stdin) = c.stdin.as_mut() {
-                let _ = stdin.write_all(diff_text.as_bytes());
-            }
-            let _ = c.wait();
-        }
-    }
-
-    // Clean up worktree
-    info!("Cleaning up worktree...");
-    remove_worktree(repo_dir, &worktree_dir);
-    let _ = std::fs::remove_dir_all(&worktree_dir);
-
-    // Parse agent output
-    match result {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-
-            if !output.status.success() {
-                tracing::warn!("claude exited with status {}", output.status);
-                if !stderr.is_empty() {
-                    tracing::warn!("stderr: {}", truncate(&stderr, 500));
-                }
-            }
-
-            let response = if stdout.trim().is_empty() {
-                truncate(&stderr, 2000).to_string()
-            } else {
-                truncate(&stdout, 2000).to_string()
-            };
-
-            if response.trim().is_empty() && diff.is_none() {
-                return None;
-            }
-
-            info!("Agent response ({} chars)", response.len());
-            Some(diff.unwrap_or(response))
-        }
-        Err(e) => {
-            tracing::error!("Failed to invoke claude: {e}");
-            tracing::error!(
-                "Make sure the `claude` CLI is installed and on your PATH. \
-                 Install via: npm install -g @anthropic-ai/claude-code"
-            );
-            None
-        }
-    }
-}
-
-fn build_prompt(
+fn build_optimize_prompt(
     objectives: &[Objective],
     current_best: &HashMap<String, f64>,
     past_attempts: &[OptimizationAttempt],
@@ -501,16 +390,4 @@ fn build_objectives(
             Arc::clone(prover_pp),
         )),
     ]
-}
-
-fn truncate(s: &str, max_len: usize) -> &str {
-    if s.len() <= max_len {
-        s
-    } else {
-        let mut end = max_len;
-        while end > 0 && !s.is_char_boundary(end) {
-            end -= 1;
-        }
-        &s[..end]
-    }
 }

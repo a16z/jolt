@@ -1,5 +1,6 @@
 #![allow(non_snake_case)]
 
+pub mod agent;
 pub mod invariant;
 pub mod objective;
 
