@@ -489,7 +489,11 @@ impl BatchedSumcheck {
 
     /// Verify a standard (non-ZK) sumcheck proof without requiring a curve type.
     /// Used by opening proof reduction which doesn't need ZK mode.
-    pub fn verify_standard<F: JoltField, ProofTranscript: Transcript, A: AbstractVerifierOpeningAccumulator<F>>(
+    pub fn verify_standard<
+        F: JoltField,
+        ProofTranscript: Transcript,
+        A: AbstractVerifierOpeningAccumulator<F>,
+    >(
         proof: &ClearSumcheckProof<F, ProofTranscript>,
         sumcheck_instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript, A>>,
         opening_accumulator: &mut A,

@@ -55,8 +55,9 @@ use crate::{
     poly::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
-        opening_proof::{AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            BIG_ENDIAN,
+        opening_proof::{
+            AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningId, OpeningPoint,
+            ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
         },
     },
     utils::{accumulation::MedAccumU, math::Math},

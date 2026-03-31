@@ -9,7 +9,6 @@ use crate::{
     poly::commitment::dory::{DoryCommitmentScheme, DoryLayout},
     poly::opening_proof::ProverOpeningAccumulator,
     poly::opening_proof::{OpeningId, SumcheckId},
-    transcripts::Blake2bTranscript,
     transcripts::Transcript,
 };
 
