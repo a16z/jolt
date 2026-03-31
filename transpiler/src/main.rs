@@ -37,6 +37,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use common::jolt_device::JoltDevice;
+use jolt_core::curve::Bn254Curve;
 use jolt_core::poly::commitment::dory::{ArkGT, DoryCommitmentScheme};
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::transpilable_verifier::TranspilableVerifier;
@@ -142,7 +143,7 @@ fn main() {
             args.preprocessing, e
         )
     });
-    let real_preprocessing: JoltVerifierPreprocessing<ark_bn254::Fr, DoryCommitmentScheme> =
+    let real_preprocessing: JoltVerifierPreprocessing<ark_bn254::Fr, Bn254Curve, DoryCommitmentScheme> =
         CanonicalDeserialize::deserialize_compressed(&preprocessing_bytes[..])
             .expect("Failed to deserialize preprocessing");
     println!(
@@ -154,10 +155,11 @@ fn main() {
     // The `shared` field (memory layout, bytecode info) is reused as-is.
     // AstCommitmentScheme satisfies the CommitmentScheme trait but performs no cryptographic
     // operations. PCS verification is skipped in stages 1-6.
-    let symbolic_preprocessing: JoltVerifierPreprocessing<MleAst, AstCommitmentScheme> =
+    let symbolic_preprocessing: JoltVerifierPreprocessing<MleAst, AstCurve, AstCommitmentScheme> =
         JoltVerifierPreprocessing {
             generators: transpiler::symbolic_traits::ast_commitment_scheme::AstVerifierSetup,
             shared: real_preprocessing.shared.clone(),
+            blindfold_setup: None,
         };
 
     // =========================================================================

@@ -12,8 +12,8 @@ use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Read, SerializationError, Valid, Write,
 };
 use jolt_core::curve::{JoltCurve, JoltGroupElement};
-use jolt_core::field::JoltField;
 use std::ops::{Add, AddAssign, Neg, Sub, SubAssign};
+use zklean_extractor::mle_ast::MleAst;
 
 /// Stub group element for symbolic execution.
 ///
@@ -99,6 +99,8 @@ impl CanonicalDeserialize for AstGroupElement {
 }
 
 impl JoltGroupElement for AstGroupElement {
+    type Scalar = MleAst;
+
     fn zero() -> Self {
         AstGroupElement
     }
@@ -111,7 +113,7 @@ impl JoltGroupElement for AstGroupElement {
         unimplemented!("AstGroupElement::double called during symbolic execution")
     }
 
-    fn scalar_mul<F: JoltField>(&self, _scalar: &F) -> Self {
+    fn scalar_mul(&self, _scalar: &Self::Scalar) -> Self {
         unimplemented!("AstGroupElement::scalar_mul called during symbolic execution")
     }
 }
@@ -178,8 +180,10 @@ impl CanonicalDeserialize for AstGTElement {
 pub struct AstCurve;
 
 impl JoltCurve for AstCurve {
+    type F = MleAst;
     type G1 = AstGroupElement;
     type G2 = AstGroupElement;
+    type G1Affine = AstGroupElement;
     type GT = AstGTElement;
 
     fn g1_generator() -> Self::G1 {
@@ -190,6 +194,10 @@ impl JoltCurve for AstCurve {
         unimplemented!("AstCurve::g2_generator called during symbolic execution")
     }
 
+    fn g1_to_affine(_point: &Self::G1) -> Self::G1Affine {
+        unimplemented!("AstCurve::g1_to_affine called during symbolic execution")
+    }
+
     fn pairing(_g1: &Self::G1, _g2: &Self::G2) -> Self::GT {
         unimplemented!("AstCurve::pairing called during symbolic execution")
     }
@@ -198,11 +206,15 @@ impl JoltCurve for AstCurve {
         unimplemented!("AstCurve::multi_pairing called during symbolic execution")
     }
 
-    fn g1_msm<F: JoltField>(_bases: &[Self::G1], _scalars: &[F]) -> Self::G1 {
+    fn g1_msm(_bases: &[Self::G1], _scalars: &[Self::F]) -> Self::G1 {
         unimplemented!("AstCurve::g1_msm called during symbolic execution")
     }
 
-    fn g2_msm<F: JoltField>(_bases: &[Self::G2], _scalars: &[F]) -> Self::G2 {
+    fn g1_affine_msm(_bases: &[Self::G1Affine], _scalars: &[Self::F]) -> Self::G1 {
+        unimplemented!("AstCurve::g1_affine_msm called during symbolic execution")
+    }
+
+    fn g2_msm(_bases: &[Self::G2], _scalars: &[Self::F]) -> Self::G2 {
         unimplemented!("AstCurve::g2_msm called during symbolic execution")
     }
 

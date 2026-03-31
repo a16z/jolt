@@ -11,7 +11,7 @@ use crate::poly::commitment::pedersen::PedersenGenerators;
 use crate::poly::lagrange_poly::LagrangePolynomial;
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
-use crate::poly::opening_proof::{OpeningAccumulator, ProverOpeningAccumulator, VerifierOpeningAccumulator};
+use crate::poly::opening_proof::{OpeningAccumulator, ProverOpeningAccumulator};
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;

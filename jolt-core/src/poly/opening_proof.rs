@@ -703,52 +703,6 @@ impl<F: JoltField> OpeningAccumulator<F> for VerifierOpeningAccumulator<F> {
         Some((point.clone(), *claim))
     }
 
-    fn append_virtual(
-        &mut self,
-        polynomial: VirtualPolynomial,
-        sumcheck: SumcheckId,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
-    ) {
-        let key = OpeningId::virt(polynomial, sumcheck);
-        let claim = self
-            .openings
-            .get(&key)
-            .map(|(_, c)| *c)
-            .unwrap_or(F::zero());
-        self.openings.insert(key, (opening_point.clone(), claim));
-        self.pending_claims.push(claim);
-    }
-
-    fn append_trusted_advice(
-        &mut self,
-        sumcheck_id: SumcheckId,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
-    ) {
-        let key = OpeningId::TrustedAdvice(sumcheck_id);
-        let claim = self
-            .openings
-            .get(&key)
-            .map(|(_, c)| *c)
-            .unwrap_or(F::zero());
-        self.openings.insert(key, (opening_point.clone(), claim));
-        self.pending_claims.push(claim);
-    }
-
-    fn append_untrusted_advice(
-        &mut self,
-        sumcheck_id: SumcheckId,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
-    ) {
-        let key = OpeningId::UntrustedAdvice(sumcheck_id);
-        let claim = self
-            .openings
-            .get(&key)
-            .map(|(_, c)| *c)
-            .unwrap_or(F::zero());
-        self.openings.insert(key, (opening_point.clone(), claim));
-        self.pending_claims.push(claim);
-    }
-
     fn append_dense(
         &mut self,
         polynomial: CommittedPolynomial,

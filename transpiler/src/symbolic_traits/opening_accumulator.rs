@@ -1,45 +1,19 @@
 //! AST Opening Accumulator for symbolic transpilation.
 //!
-//! # Overview
-//!
 //! This module provides an `OpeningAccumulator` implementation that works with `MleAst`
 //! symbolic values instead of concrete field elements. It allows the verifier to be
 //! transpiled while maintaining the exact same code structure as the real verifier.
 //!
-//! # Background: What is an Opening Accumulator?
-//!
-//! In the Jolt verifier, multiple polynomial evaluations need to be verified:
-//! - Virtual polynomials: Computed from combinations of committed polynomials
-//! - Dense polynomials: Directly committed and opened
-//!
-//! Instead of verifying each opening individually (expensive), openings are
-//! "accumulated" and verified in a single batched check at the end (PCS stage).
-//!
-//! # How the Accumulator Works
-//!
-//! **Real verifier flow:**
-//! 1. Proof contains pre-computed opening claims (evaluations at specific points)
-//! 2. Verifier loads claims into accumulator at start
-//! 3. During stages 1-7, verifier computes expected claims and checks against stored
-//! 4. Stage 8 (PCS) batch-verifies all accumulated openings
-//!
-//! **Symbolic execution flow:**
-//! 1. Claims become `MleAst::Var` inputs to the circuit
-//! 2. Points are computed symbolically from transcript challenges
-//! 3. Equality checks become `api.AssertIsEqual` constraints
-//! 4. PCS verification is skipped (handled natively in Gnark, not transpiled)
-//!
-//! # Why This Design?
-//!
-//! The `OpeningAccumulator` trait is deeply integrated into Jolt's verifier. By
-//! implementing it for `MleAst`, we can run the exact same verifier code for
-//! transpilation. No separate "circuit verifier" implementation needed.
+//! Post-rebase, the real `VerifierOpeningAccumulator` deduplicates openings: when the
+//! same polynomial is opened at the same point by two different sumcheck IDs, the second
+//! becomes an alias of the first. Aliased openings are NOT pushed to `pending_claims`
+//! and `get_*` follows the alias chain. This accumulator replicates that behavior.
 
-// Allow non_snake_case to match VerifierOpeningAccumulator naming (log_T)
 #![allow(non_snake_case)]
 
+use ark_ff::Zero;
 use jolt_core::poly::opening_proof::{
-    OpeningAccumulator, OpeningId, OpeningPoint, SumcheckId, BIG_ENDIAN,
+    OpeningAccumulator, OpeningId, OpeningPoint, PolynomialId, SumcheckId, BIG_ENDIAN,
 };
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::claim_reductions::AdviceKind;
@@ -47,97 +21,162 @@ use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use std::collections::BTreeMap;
 use zklean_extractor::mle_ast::MleAst;
 
-// =============================================================================
-// Type Definition
-// =============================================================================
+/// Replicate jolt-core's private `underlying_polynomial_id`.
+fn underlying_polynomial_id(opening_id: &OpeningId) -> PolynomialId {
+    match opening_id {
+        OpeningId::Polynomial(poly_id, _) => *poly_id,
+        OpeningId::TrustedAdvice(_) => PolynomialId::Committed(CommittedPolynomial::TrustedAdvice),
+        OpeningId::UntrustedAdvice(_) => {
+            PolynomialId::Committed(CommittedPolynomial::UntrustedAdvice)
+        }
+    }
+}
 
 /// Opening accumulator for MleAst symbolic execution.
 ///
-/// Stores polynomial opening claims as MleAst symbolic values,
-/// allowing the verifier to be transpiled to a Gnark circuit.
+/// Mirrors `VerifierOpeningAccumulator` including its aliasing/deduplication logic.
 #[derive(Clone, Debug, Default)]
 pub struct AstOpeningAccumulator {
-    /// Map from opening ID to (point, claim)
-    /// - point: Vec<MleAst> representing the evaluation point (challenges)
-    /// - claim: MleAst representing the claimed evaluation
     pub openings: BTreeMap<OpeningId, (Vec<MleAst>, MleAst)>,
-    /// Claims pending transcript flush, matching VerifierOpeningAccumulator behavior.
     pub pending_claims: Vec<MleAst>,
-    /// Log of trace length (matches VerifierOpeningAccumulator for parity).
-    /// Currently unused but stored for potential Stage 8 batch opening logic.
     pub log_T: usize,
+    /// Alias map: key -> canonical opening ID.
+    aliases: BTreeMap<OpeningId, OpeningId>,
+    /// Index of populated opening IDs by underlying polynomial.
+    opening_ids_by_poly: BTreeMap<PolynomialId, Vec<OpeningId>>,
 }
 
-// =============================================================================
-// Inherent Methods
-// =============================================================================
-
 impl AstOpeningAccumulator {
-    /// Create a new accumulator with no claims.
     pub fn new(log_T: usize) -> Self {
         Self {
             openings: BTreeMap::new(),
             pending_claims: Vec::new(),
             log_T,
+            aliases: BTreeMap::new(),
+            opening_ids_by_poly: BTreeMap::new(),
         }
     }
 
-    /// Create an accumulator pre-populated with claims from the proof.
-    ///
-    /// The claims are MleAst variables that will become circuit inputs.
-    /// Points are initialized as empty and will be populated during verification.
-    ///
-    /// # Arguments
-    /// * `claims` - Iterator of (OpeningId, MleAst) pairs representing the claims
-    /// * `log_T` - Log of trace length
     pub fn new_with_claims<I>(claims: I, log_T: usize) -> Self
     where
         I: IntoIterator<Item = (OpeningId, MleAst)>,
     {
         let mut openings = BTreeMap::new();
         for (key, claim) in claims {
-            // Point is initially empty, will be set via append_* methods
             openings.insert(key, (vec![], claim));
         }
         Self {
             openings,
             pending_claims: Vec::new(),
             log_T,
+            aliases: BTreeMap::new(),
+            opening_ids_by_poly: BTreeMap::new(),
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Private helpers
-    // -------------------------------------------------------------------------
+    /// Follow the alias chain to the canonical opening ID.
+    fn resolve_alias(&self, mut key: OpeningId) -> OpeningId {
+        while let Some(next) = self.aliases.get(&key) {
+            key = *next;
+        }
+        key
+    }
 
-    /// Get an opening by key, returning (point, claim).
+    /// Find an existing opening of the same polynomial at the same point.
+    /// Compares points element-wise by AST NodeId (root).
+    fn find_existing_opening_at_point(
+        &self,
+        poly_id: PolynomialId,
+        point: &[MleAst],
+    ) -> Option<OpeningId> {
+        self.opening_ids_by_poly.get(&poly_id).and_then(|ids| {
+            ids.iter().find_map(|existing_id| {
+                let (existing_point, _) = self
+                    .openings
+                    .get(existing_id)
+                    .expect("indexed opening missing");
+                if existing_point.is_empty() {
+                    return None;
+                }
+                if existing_point.len() == point.len()
+                    && existing_point
+                        .iter()
+                        .zip(point.iter())
+                        .all(|(a, b)| a.root() == b.root())
+                {
+                    Some(*existing_id)
+                } else {
+                    None
+                }
+            })
+        })
+    }
+
+    /// Index an opening after its point is populated.
+    fn index_opening_id(&mut self, key: OpeningId) {
+        let Some((point, _)) = self.openings.get(&key) else {
+            return;
+        };
+        if point.is_empty() {
+            return;
+        }
+        let entry = self
+            .opening_ids_by_poly
+            .entry(underlying_polynomial_id(&key))
+            .or_default();
+        if !entry.contains(&key) {
+            entry.push(key);
+        }
+    }
+
     fn get_opening(&self, key: &OpeningId) -> (OpeningPoint<BIG_ENDIAN, MleAst>, MleAst) {
+        let resolved = self.resolve_alias(*key);
         let (point, claim) = self
             .openings
-            .get(key)
-            .unwrap_or_else(|| panic!("No opening found for {key:?}"));
+            .get(&resolved)
+            .unwrap_or_else(|| panic!("No opening found for {key:?} (resolved: {resolved:?})"));
         (OpeningPoint::new(point.clone()), *claim)
     }
 
-    /// Store the opening point and push claim to pending_claims.
-    /// Claims are flushed to transcript via `flush_to_transcript`.
+    /// Store an opening point, replicating VerifierOpeningAccumulator::populate_or_alias_opening.
+    ///
+    /// Mirrors jolt-core/src/poly/opening_proof.rs:834-868 exactly:
+    /// - Case A (key in openings): alias if same poly already opened at same point,
+    ///   otherwise store normally.
+    /// - Case B (key NOT in openings): alias if same poly at same point exists,
+    ///   otherwise create with zero claim.
     fn store_opening(&mut self, key: &OpeningId, point: Vec<MleAst>) {
-        if let Some((stored_point, claim)) = self.openings.get_mut(key) {
-            self.pending_claims.push(*claim);
-            *stored_point = point;
+        if let Some((_, claim)) = self.openings.get(key) {
+            // Case A: key in openings (pre-populated from proof)
+            let claim = *claim;
+            if let Some(existing_id) =
+                self.find_existing_opening_at_point(underlying_polynomial_id(key), &point)
+            {
+                if existing_id != *key {
+                    self.aliases.insert(*key, existing_id);
+                    return;
+                }
+            }
+            self.pending_claims.push(claim);
+            self.openings.insert(*key, (point, claim));
+            self.index_opening_id(*key);
         } else {
-            panic!("No opening found for {key:?}");
+            // Case B: key NOT in openings (prover aliased it away)
+            if let Some(existing_id) =
+                self.find_existing_opening_at_point(underlying_polynomial_id(key), &point)
+            {
+                self.aliases.insert(*key, existing_id);
+                return;
+            }
+            let claim = MleAst::zero();
+            self.pending_claims.push(claim);
+            self.openings.insert(*key, (point, claim));
+            self.index_opening_id(*key);
         }
     }
 }
 
-// =============================================================================
-// Trait Implementations
-// =============================================================================
-
 impl OpeningAccumulator<MleAst> for AstOpeningAccumulator {
-    // Methods ordered to match trait definition in opening_proof.rs
-
     fn get_virtual_polynomial_opening(
         &self,
         polynomial: VirtualPolynomial,
@@ -163,7 +202,8 @@ impl OpeningAccumulator<MleAst> for AstOpeningAccumulator {
             AdviceKind::Trusted => OpeningId::TrustedAdvice(sumcheck_id),
             AdviceKind::Untrusted => OpeningId::UntrustedAdvice(sumcheck_id),
         };
-        let (point, claim) = self.openings.get(&key)?;
+        let resolved = self.resolve_alias(key);
+        let (point, claim) = self.openings.get(&resolved)?;
         Some((OpeningPoint::new(point.clone()), *claim))
     }
 
@@ -226,19 +266,12 @@ impl OpeningAccumulator<MleAst> for AstOpeningAccumulator {
     }
 }
 
-// =============================================================================
-// Tests
-// =============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use jolt_core::field::JoltField;
     use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 
-    /// Verifies new_with_claims stores all three opening ID variants (virtual,
-    /// committed, advice) with correct claims and empty points. Uses distinct
-    /// sumcheck IDs to ensure keys don't collide.
     #[test]
     fn test_new_with_claims_populates_openings() {
         let claims = vec![
@@ -258,11 +291,9 @@ mod tests {
 
         let accumulator = AstOpeningAccumulator::new_with_claims(claims.clone(), 10);
 
-        // Verify all claims were stored
         assert_eq!(accumulator.openings.len(), 3);
         assert_eq!(accumulator.log_T, 10);
 
-        // Verify each claim is stored with empty point
         for (key, expected_claim) in claims {
             let (point, claim) = accumulator.openings.get(&key).unwrap();
             assert_eq!(point.len(), 0, "Point should be empty initially");
@@ -270,8 +301,6 @@ mod tests {
         }
     }
 
-    /// Verifies append_virtual replaces the initially-empty point with the
-    /// provided OpeningPoint while preserving the original claim.
     #[test]
     fn test_append_virtual_updates_point() {
         let claims = vec![(
@@ -281,7 +310,6 @@ mod tests {
 
         let mut accumulator = AstOpeningAccumulator::new_with_claims(claims, 10);
 
-        // Append opening with a point
         let point_values = vec![MleAst::from_u64(1), MleAst::from_u64(2)];
         let opening_point = OpeningPoint::new(point_values.clone());
 
@@ -291,7 +319,6 @@ mod tests {
             opening_point,
         );
 
-        // Verify point was stored
         let key = OpeningId::virt(VirtualPolynomial::PC, SumcheckId::SpartanOuter);
         let (stored_point, _) = accumulator.openings.get(&key).unwrap();
         assert_eq!(stored_point.len(), 2);
@@ -299,8 +326,6 @@ mod tests {
         assert_eq!(stored_point[1].root(), point_values[1].root());
     }
 
-    /// Verifies get_committed_polynomial_opening retrieves the correct claim
-    /// for a committed polynomial before any point has been appended.
     #[test]
     fn test_get_committed_polynomial_opening() {
         let claim = MleAst::from_u64(12345);
@@ -314,15 +339,10 @@ mod tests {
         let (point, retrieved_claim) = accumulator
             .get_committed_polynomial_opening(CommittedPolynomial::RdInc, SumcheckId::SpartanOuter);
 
-        // Verify correct claim was retrieved
         assert_eq!(retrieved_claim.root(), claim.root());
-        // Point should be empty (not yet set)
         assert_eq!(point.r.len(), 0);
     }
 
-    /// Verifies the full round-trip for virtual polynomials:
-    /// create claims → append point → get returns both correct point and claim.
-    /// This exercises the append→get contract that the verifier relies on.
     #[test]
     fn test_virtual_polynomial_round_trip() {
         let claim = MleAst::from_u64(42);
@@ -333,13 +353,11 @@ mod tests {
 
         let mut accumulator = AstOpeningAccumulator::new_with_claims(claims, 10);
 
-        // Before append: point is empty, claim is set
         let (point, retrieved_claim) = accumulator
             .get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanOuter);
         assert_eq!(retrieved_claim.root(), claim.root());
         assert_eq!(point.r.len(), 0, "Point should be empty before append");
 
-        // After append: point is populated, claim is unchanged
         let point_values = vec![MleAst::from_u64(10), MleAst::from_u64(20)];
         accumulator.append_virtual(
             VirtualPolynomial::PC,
@@ -359,8 +377,6 @@ mod tests {
         assert_eq!(point.r[1].root(), point_values[1].root());
     }
 
-    /// Verifies get_advice_opening dispatches correctly on AdviceKind, returning
-    /// the right claim for Trusted vs Untrusted, and None for missing keys.
     #[test]
     fn test_get_advice_opening_dispatch() {
         let trusted_claim = MleAst::from_u64(111);
@@ -378,7 +394,6 @@ mod tests {
 
         let accumulator = AstOpeningAccumulator::new_with_claims(claims, 10);
 
-        // Trusted returns trusted claim (not untrusted)
         let (_, claim) = accumulator
             .get_advice_opening(AdviceKind::Trusted, SumcheckId::SpartanOuter)
             .expect("trusted advice should exist");
@@ -389,13 +404,11 @@ mod tests {
             "Must not confuse trusted and untrusted"
         );
 
-        // Untrusted returns untrusted claim
         let (_, claim) = accumulator
             .get_advice_opening(AdviceKind::Untrusted, SumcheckId::SpartanOuter)
             .expect("untrusted advice should exist");
         assert_eq!(claim.root(), untrusted_claim.root());
 
-        // Missing sumcheck ID returns None
         let result = accumulator.get_advice_opening(
             AdviceKind::Trusted,
             SumcheckId::SpartanProductVirtualization,
@@ -403,9 +416,6 @@ mod tests {
         assert!(result.is_none(), "Missing advice should return None");
     }
 
-    /// Verifies the full round-trip for dense (committed) polynomials:
-    /// append_dense stores the point, then get_committed retrieves it correctly.
-    /// Tests a different code path than append_virtual (takes Vec directly, not OpeningPoint).
     #[test]
     fn test_dense_polynomial_round_trip() {
         let claim = MleAst::from_u64(100);
@@ -423,7 +433,6 @@ mod tests {
             point_values.clone(),
         );
 
-        // Retrieve via the get_ accessor (not raw map access)
         let (point, retrieved_claim) = accumulator
             .get_committed_polynomial_opening(CommittedPolynomial::RdInc, SumcheckId::SpartanOuter);
         assert_eq!(retrieved_claim.root(), claim.root());
@@ -432,8 +441,6 @@ mod tests {
         assert_eq!(point.r[1].root(), point_values[1].root());
     }
 
-    /// Verifies the round-trip for both advice variants: append stores points,
-    /// get_advice_opening retrieves them correctly by AdviceKind dispatch.
     #[test]
     fn test_advice_round_trip() {
         let trusted_claim = MleAst::from_u64(100);
@@ -463,7 +470,6 @@ mod tests {
             OpeningPoint::new(untrusted_point.clone()),
         );
 
-        // Trusted: correct point length and values
         let (point, claim) = accumulator
             .get_advice_opening(AdviceKind::Trusted, SumcheckId::SpartanOuter)
             .unwrap();
@@ -471,7 +477,6 @@ mod tests {
         assert_eq!(point.r.len(), 2);
         assert_eq!(point.r[0].root(), trusted_point[0].root());
 
-        // Untrusted: different point length (verifies no cross-contamination)
         let (point, claim) = accumulator
             .get_advice_opening(AdviceKind::Untrusted, SumcheckId::SpartanOuter)
             .unwrap();
@@ -480,9 +485,6 @@ mod tests {
         assert_eq!(point.r[0].root(), untrusted_point[0].root());
     }
 
-    /// Verifies that each append pushes the stored claim (not the point) to pending_claims.
-    /// This is the mechanism the verifier uses to batch claims for transcript flushing.
-    /// Uses different append methods to ensure they all share the same store_opening path.
     #[test]
     fn test_append_pushes_claims_to_pending() {
         let claim_a = MleAst::from_u64(100);
@@ -503,7 +505,6 @@ mod tests {
         let mut accumulator = AstOpeningAccumulator::new_with_claims(claims, 10);
         assert!(accumulator.pending_claims.is_empty(), "Should start empty");
 
-        // Virtual append
         accumulator.append_virtual(
             VirtualPolynomial::PC,
             SumcheckId::SpartanOuter,
@@ -512,7 +513,6 @@ mod tests {
         assert_eq!(accumulator.pending_claims.len(), 1);
         assert_eq!(accumulator.pending_claims[0].root(), claim_a.root());
 
-        // Dense append
         accumulator.append_dense(
             CommittedPolynomial::RdInc,
             SumcheckId::SpartanOuter,
@@ -521,7 +521,6 @@ mod tests {
         assert_eq!(accumulator.pending_claims.len(), 2);
         assert_eq!(accumulator.pending_claims[1].root(), claim_b.root());
 
-        // Advice append
         accumulator.append_trusted_advice(
             SumcheckId::SpartanOuter,
             OpeningPoint::new(vec![MleAst::from_u64(3)]),
@@ -530,8 +529,6 @@ mod tests {
         assert_eq!(accumulator.pending_claims[2].root(), claim_c.root());
     }
 
-    /// Verifies take_pending_claims returns accumulated claims and drains the buffer.
-    /// Also verifies that claims accumulated after a take are independent of previous ones.
     #[test]
     fn test_take_pending_claims_drains_and_resets() {
         let claim_a = MleAst::from_u64(100);
@@ -549,14 +546,12 @@ mod tests {
 
         let mut accumulator = AstOpeningAccumulator::new_with_claims(claims, 10);
 
-        // Append first claim
         accumulator.append_virtual(
             VirtualPolynomial::PC,
             SumcheckId::SpartanOuter,
             OpeningPoint::new(vec![MleAst::from_u64(1)]),
         );
 
-        // Take drains the first claim
         let taken = accumulator.take_pending_claims();
         assert_eq!(taken.len(), 1);
         assert_eq!(taken[0].root(), claim_a.root());
@@ -565,25 +560,19 @@ mod tests {
             "Must be empty after take"
         );
 
-        // Append second claim after the take
         accumulator.append_dense(
             CommittedPolynomial::RdInc,
             SumcheckId::SpartanOuter,
             vec![MleAst::from_u64(2)],
         );
 
-        // Second take only returns the new claim, not the old one
         let taken2 = accumulator.take_pending_claims();
         assert_eq!(taken2.len(), 1);
         assert_eq!(taken2[0].root(), claim_b.root());
 
-        // Third take is empty
         assert!(accumulator.take_pending_claims().is_empty());
     }
 
-    /// Verifies append_sparse broadcasts the same opening point to multiple
-    /// committed polynomials in a single call. This is the batch path used for
-    /// sparse polynomial openings where all share the same evaluation point.
     #[test]
     fn test_append_sparse_multiple_polynomials() {
         let claims = vec![
@@ -616,7 +605,6 @@ mod tests {
             point_values.clone(),
         );
 
-        // Verify all polynomials have the same point stored
         for poly in polynomials {
             let key = OpeningId::committed(poly, SumcheckId::SpartanOuter);
             let (stored_point, _) = accumulator.openings.get(&key).unwrap();
@@ -624,5 +612,170 @@ mod tests {
             assert_eq!(stored_point[0].root(), point_values[0].root());
             assert_eq!(stored_point[1].root(), point_values[1].root());
         }
+    }
+
+    /// Test aliasing: when a key is not pre-populated (prover aliased it) and
+    /// the same polynomial was already opened at the same point, it should alias.
+    #[test]
+    fn test_aliasing_skips_pending_claims() {
+        let canonical_claim = MleAst::from_u64(42);
+        let claims = vec![(
+            OpeningId::virt(
+                VirtualPolynomial::LookupOutput,
+                SumcheckId::SpartanProductVirtualization,
+            ),
+            canonical_claim,
+        )];
+        let mut accumulator = AstOpeningAccumulator::new_with_claims(claims, 10);
+
+        // Append canonical opening (populates point, pushes claim)
+        let p0 = MleAst::from_u64(1);
+        let p1 = MleAst::from_u64(2);
+        accumulator.append_virtual(
+            VirtualPolynomial::LookupOutput,
+            SumcheckId::SpartanProductVirtualization,
+            OpeningPoint::new(vec![p0, p1]),
+        );
+        assert_eq!(accumulator.pending_claims.len(), 1);
+
+        // Aliased opening (NOT pre-populated) with SAME point nodes
+        accumulator.append_virtual(
+            VirtualPolynomial::LookupOutput,
+            SumcheckId::InstructionClaimReduction,
+            OpeningPoint::new(vec![p0, p1]),
+        );
+        assert_eq!(
+            accumulator.pending_claims.len(),
+            1,
+            "Aliased opening must not push to pending_claims"
+        );
+
+        let (_, claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::LookupOutput,
+            SumcheckId::InstructionClaimReduction,
+        );
+        assert_eq!(
+            claim.root(),
+            canonical_claim.root(),
+            "Aliased get should return canonical claim"
+        );
+    }
+
+    /// Test Case B with different point: NOT pre-populated, same poly but different
+    /// point -> should NOT alias, should create with zero claim.
+    #[test]
+    fn test_case_b_different_point_no_alias() {
+        let canonical_claim = MleAst::from_u64(42);
+        let claims = vec![(
+            OpeningId::virt(
+                VirtualPolynomial::LookupOutput,
+                SumcheckId::SpartanProductVirtualization,
+            ),
+            canonical_claim,
+        )];
+        let mut accumulator = AstOpeningAccumulator::new_with_claims(claims, 10);
+
+        accumulator.append_virtual(
+            VirtualPolynomial::LookupOutput,
+            SumcheckId::SpartanProductVirtualization,
+            OpeningPoint::new(vec![MleAst::from_u64(1)]),
+        );
+        assert_eq!(accumulator.pending_claims.len(), 1);
+
+        // Different point -> no alias, creates new with zero
+        accumulator.append_virtual(
+            VirtualPolynomial::LookupOutput,
+            SumcheckId::InstructionClaimReduction,
+            OpeningPoint::new(vec![MleAst::from_u64(99)]),
+        );
+        assert_eq!(
+            accumulator.pending_claims.len(),
+            2,
+            "Different point -> no alias -> push zero claim"
+        );
+    }
+
+    /// Test Case A with distinct points: both pre-populated, different points -> both store.
+    #[test]
+    fn test_case_a_distinct_points_both_store() {
+        let claim_a = MleAst::from_u64(100);
+        let claim_b = MleAst::from_u64(200);
+        let claims = vec![
+            (
+                OpeningId::virt(VirtualPolynomial::PC, SumcheckId::SpartanOuter),
+                claim_a,
+            ),
+            (
+                OpeningId::virt(VirtualPolynomial::PC, SumcheckId::SpartanShift),
+                claim_b,
+            ),
+        ];
+        let mut accumulator = AstOpeningAccumulator::new_with_claims(claims, 10);
+
+        accumulator.append_virtual(
+            VirtualPolynomial::PC,
+            SumcheckId::SpartanOuter,
+            OpeningPoint::new(vec![MleAst::from_u64(1)]),
+        );
+        assert_eq!(accumulator.pending_claims.len(), 1);
+
+        // Different point -> stores normally (no alias)
+        accumulator.append_virtual(
+            VirtualPolynomial::PC,
+            SumcheckId::SpartanShift,
+            OpeningPoint::new(vec![MleAst::from_u64(2)]),
+        );
+        assert_eq!(
+            accumulator.pending_claims.len(),
+            2,
+            "Different points -> both push"
+        );
+
+        let (_, claim) = accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanShift);
+        assert_eq!(claim.root(), claim_b.root());
+    }
+
+    /// Test Case A with same point: both pre-populated, same point -> second aliases.
+    #[test]
+    fn test_case_a_same_point_aliases() {
+        let shared_point_node = MleAst::from_u64(99);
+        let claim_a = MleAst::from_u64(100);
+        let claim_b = MleAst::from_u64(100); // same claim (jolt-core asserts equality)
+        let claims = vec![
+            (
+                OpeningId::virt(VirtualPolynomial::PC, SumcheckId::SpartanOuter),
+                claim_a,
+            ),
+            (
+                OpeningId::virt(VirtualPolynomial::PC, SumcheckId::SpartanShift),
+                claim_b,
+            ),
+        ];
+        let mut accumulator = AstOpeningAccumulator::new_with_claims(claims, 10);
+
+        accumulator.append_virtual(
+            VirtualPolynomial::PC,
+            SumcheckId::SpartanOuter,
+            OpeningPoint::new(vec![shared_point_node]),
+        );
+        assert_eq!(accumulator.pending_claims.len(), 1);
+
+        // Same point, same poly -> Case A aliases (no push)
+        accumulator.append_virtual(
+            VirtualPolynomial::PC,
+            SumcheckId::SpartanShift,
+            OpeningPoint::new(vec![shared_point_node]),
+        );
+        assert_eq!(
+            accumulator.pending_claims.len(),
+            1,
+            "Same point -> alias, no extra push"
+        );
+
+        // get resolves alias to canonical claim
+        let (_, claim) = accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanShift);
+        assert_eq!(claim.root(), claim_a.root());
     }
 }

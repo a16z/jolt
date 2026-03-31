@@ -96,7 +96,7 @@ use tracer::JoltDevice;
 
 /// Extract the Clear (non-ZK) proof from a SumcheckInstanceProof enum.
 /// TranspilableVerifier only handles non-ZK proofs; ZK mode uses the main verifier.
-fn extract_clear_proof<F: JoltField, C: JoltCurve, T: Transcript>(
+fn extract_clear_proof<F: JoltField, C: JoltCurve<F = F>, T: Transcript>(
     proof: &SumcheckInstanceProof<F, C, T>,
 ) -> &ClearSumcheckProof<F, T> {
     match proof {
@@ -115,7 +115,7 @@ fn extract_clear_proof<F: JoltField, C: JoltCurve, T: Transcript>(
 pub struct TranspilableVerifier<
     'a,
     F: JoltField,
-    C: JoltCurve,
+    C: JoltCurve<F = F>,
     PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
     A: OpeningAccumulator<F> = VerifierOpeningAccumulator<F>,
@@ -123,7 +123,7 @@ pub struct TranspilableVerifier<
     pub trusted_advice_commitment: Option<PCS::Commitment>,
     pub program_io: JoltDevice,
     pub proof: JoltProof<F, C, PCS, ProofTranscript>,
-    pub preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
+    pub preprocessing: &'a JoltVerifierPreprocessing<F, C, PCS>,
     pub transcript: ProofTranscript,
     pub opening_accumulator: A,
     pub spartan_key: UniformSpartanKey<F>,
@@ -139,7 +139,7 @@ pub struct TranspilableVerifier<
 impl<
         'a,
         F: JoltField,
-        C: JoltCurve,
+        C: JoltCurve<F = F>,
         PCS: CommitmentScheme<Field = F>,
         ProofTranscript: Transcript,
         A: OpeningAccumulator<F>,
@@ -150,7 +150,7 @@ impl<
     /// This constructor creates a new `VerifierOpeningAccumulator` and populates
     /// it with claims from the proof. Only available when `A = VerifierOpeningAccumulator<F>`.
     pub fn new(
-        preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
+        preprocessing: &'a JoltVerifierPreprocessing<F, C, PCS>,
         proof: JoltProof<F, C, PCS, ProofTranscript>,
         mut program_io: JoltDevice,
         trusted_advice_commitment: Option<PCS::Commitment>,
@@ -253,7 +253,7 @@ impl<
     /// This constructor is used for symbolic transpilation where the accumulator
     /// is already populated with MleAst claims (or similar symbolic values).
     pub fn new_with_accumulator(
-        preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
+        preprocessing: &'a JoltVerifierPreprocessing<F, C, PCS>,
         proof: JoltProof<F, C, PCS, ProofTranscript>,
         program_io: JoltDevice,
         trusted_advice_commitment: Option<PCS::Commitment>,
@@ -292,6 +292,7 @@ impl<
             &self.program_io,
             self.proof.ram_K,
             self.proof.trace_length,
+            self.preprocessing.shared.bytecode.entry_address,
             &mut self.transcript,
         );
 

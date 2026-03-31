@@ -3288,6 +3288,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "merkle-tree-save"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "jolt-inlines-sha2",
+ "jolt-sdk",
+ "merkle-tree-guest",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "mini-template"
 version = "0.1.0"
 source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
