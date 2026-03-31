@@ -28,7 +28,7 @@ use super::spartan::{INNER_SUMCHECK_DEGREE_BOUND, SPARTAN_DEGREE_BOUND};
 /// eval_commitments, public_inputs. The random instance IS included — verifier reads
 /// it from the proof and absorbs into transcript, never learning the random witness.
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct BlindFoldProof<F: JoltField, C: JoltCurve> {
+pub struct BlindFoldProof<F: JoltField, C: JoltCurve<F = F>> {
     pub random_instance: RelaxedR1CSInstance<F, C>,
 
     /// Non-coefficient W row commitments from the real instance
@@ -49,13 +49,13 @@ pub struct BlindFoldProof<F: JoltField, C: JoltCurve> {
     pub folded_eval_blindings: Vec<F>,
 }
 
-pub struct BlindFoldProver<'a, F: JoltField, C: JoltCurve> {
+pub struct BlindFoldProver<'a, F: JoltField, C: JoltCurve<F = F>> {
     gens: &'a PedersenGenerators<C>,
     r1cs: &'a VerifierR1CS<F>,
     eval_commitment_gens: Option<(C::G1, C::G1)>,
 }
 
-impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
+impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldProver<'a, F, C> {
     pub fn new(
         gens: &'a PedersenGenerators<C>,
         r1cs: &'a VerifierR1CS<F>,
@@ -276,13 +276,13 @@ pub struct BlindFoldVerifierInput<C: JoltCurve> {
     pub eval_commitments: Vec<C::G1>,
 }
 
-pub struct BlindFoldVerifier<'a, F: JoltField, C: JoltCurve> {
+pub struct BlindFoldVerifier<'a, F: JoltField, C: JoltCurve<F = F>> {
     gens: &'a PedersenGenerators<C>,
     r1cs: &'a VerifierR1CS<F>,
     eval_commitment_gens: Option<(C::G1, C::G1)>,
 }
 
-impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
+impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldVerifier<'a, F, C> {
     pub fn new(
         gens: &'a PedersenGenerators<C>,
         r1cs: &'a VerifierR1CS<F>,
@@ -455,10 +455,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
         let (rx_row, rx_col) = rx.split_at(log_R_E);
 
         let eq_rx_row: Vec<F> = EqPolynomial::evals(rx_row);
-        let mut c_combined_e = C::G1::zero();
-        for (i, com) in folded_instance.e_row_commitments.iter().enumerate() {
-            c_combined_e += com.scalar_mul(&eq_rx_row[i]);
-        }
+        let c_combined_e = C::g1_msm(&folded_instance.e_row_commitments, &eq_rx_row);
         let expected_e_com = self.gens.commit(
             &proof.e_opening.combined_row,
             &proof.e_opening.combined_blinding,
@@ -479,10 +476,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
 
         let all_w_rows = folded_instance.all_w_row_commitments(hyrax.R_coeff, hyrax.R_prime)?;
         let eq_ry_row: Vec<F> = EqPolynomial::evals(ry_row);
-        let mut c_combined_w = C::G1::zero();
-        for (i, com) in all_w_rows.iter().enumerate() {
-            c_combined_w += com.scalar_mul(&eq_ry_row[i]);
-        }
+        let c_combined_w = C::g1_msm(&all_w_rows, &eq_ry_row);
         let expected_w_com = self.gens.commit(
             &proof.w_opening.combined_row,
             &proof.w_opening.combined_blinding,
@@ -502,7 +496,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
     }
 }
 
-fn append_instance_to_transcript<F: JoltField, C: JoltCurve>(
+fn append_instance_to_transcript<F: JoltField, C: JoltCurve<F = F>>(
     instance: &RelaxedR1CSInstance<F, C>,
     transcript: &mut impl Transcript,
 ) {

@@ -51,7 +51,7 @@ use crate::utils::math::Math;
 /// needed to construct the BlindFold witness. Commitments are stored as native
 /// curve points (no serialization overhead).
 #[derive(Clone, Debug)]
-pub struct ZkStageData<F: JoltField, C: JoltCurve> {
+pub struct ZkStageData<F: JoltField, C: JoltCurve<F = F>> {
     pub initial_claim: F,
     pub round_commitments: Vec<C::G1>,
     pub poly_coeffs: Vec<Vec<F>>,
@@ -73,7 +73,7 @@ pub struct ZkStageData<F: JoltField, C: JoltCurve> {
 /// Unlike regular sumcheck, uni-skip uses the full polynomial (not compressed).
 /// Commitments are stored as native curve points.
 #[derive(Clone, Debug)]
-pub struct UniSkipStageData<F: JoltField, C: JoltCurve> {
+pub struct UniSkipStageData<F: JoltField, C: JoltCurve<F = F>> {
     pub input_claim: F,
     pub poly_coeffs: Vec<F>,
     pub blinding_factor: F,
@@ -104,13 +104,13 @@ pub struct OpeningProofData<F: JoltField> {
 /// Separates ZK concerns (Pedersen commitments, blinding factors) from the
 /// general-purpose `ProverOpeningAccumulator`.
 #[derive(Clone, Debug)]
-pub struct BlindFoldAccumulator<F: JoltField, C: JoltCurve> {
+pub struct BlindFoldAccumulator<F: JoltField, C: JoltCurve<F = F>> {
     stage_data: Vec<ZkStageData<F, C>>,
     uniskip_data: Vec<UniSkipStageData<F, C>>,
     opening_proof_data: Option<OpeningProofData<F>>,
 }
 
-impl<F: JoltField, C: JoltCurve> BlindFoldAccumulator<F, C> {
+impl<F: JoltField, C: JoltCurve<F = F>> BlindFoldAccumulator<F, C> {
     pub fn new() -> Self {
         Self {
             stage_data: Vec::new(),

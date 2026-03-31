@@ -139,10 +139,17 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked
 
-      - name: Install wasm-pack and wasm32 target
-        run: |
-          curl https://drager.github.io/wasm-pack/installer/init.sh -sSf | bash
-          rustup target add wasm32-unknown-unknown
+      - name: Cache wasm-pack
+        id: cache-wasm-pack
+        uses: actions/cache@v5
+        with:
+          path: ~/.cargo/bin/wasm-pack
+          key: wasm-pack-0.13.1
+      - name: Install wasm-pack
+        if: steps.cache-wasm-pack.outputs.cache-hit != 'true'
+        run: curl -sSL https://github.com/rustwasm/wasm-pack/releases/download/v0.13.1/wasm-pack-v0.13.1-x86_64-unknown-linux-musl.tar.gz | tar -xz --strip-components=1 -C ~/.cargo/bin
+      - name: Add wasm32 target
+        run: rustup target add wasm32-unknown-unknown
 
       - name: Generate sample project
         run: jolt new sample_project
@@ -194,7 +201,7 @@ jobs:
         run: |
           set -euo pipefail
           for pkg in ${{ steps.discover_inlines.outputs.pkgs }}; do
-            cargo nextest run --features host -p "$pkg"
+            cargo nextest run --features host -p "$pkg" --no-tests=pass
           done
 
   test-sdk-verifier:

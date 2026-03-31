@@ -49,7 +49,7 @@ agent-skills/ @moodlezoup @markosg04 @0xAndoroid
 CLAUDE.md @moodlezoup @markosg04 @0xAndoroid
 
 # Binary
-src/ @sagar-a16z
+/src/ @sagar-a16z
 
 # Cargo
 Cargo.toml @moodlezoup @markosg04 @0xAndoroid

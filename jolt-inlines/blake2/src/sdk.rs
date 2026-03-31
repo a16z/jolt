@@ -373,7 +373,10 @@ impl Default for Blake2b {
 /// - `state` must point to a valid array of 8 u64 values
 /// - `message` must point to a valid array of 18 u64 values (16 message + counter + final flag)
 /// - Both pointers must be properly aligned for u64 access
-#[cfg(not(feature = "host"))]
+#[cfg(all(
+    not(feature = "host"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
 pub(crate) unsafe fn blake2b_compress(state: *mut u64, message: *const u64) {
     use crate::{BLAKE2_FUNCT3, BLAKE2_FUNCT7, INLINE_OPCODE};
     // Memory layout for Blake2 instruction:
@@ -410,6 +413,14 @@ pub(crate) unsafe fn blake2b_compress(state: *mut u64, message: *const u64) {
         .expect("Message pointer must reference exactly 18 u64 values");
 
     crate::exec::execute_blake2b_compression(state_array, &message_array);
+}
+
+#[cfg(all(
+    not(feature = "host"),
+    not(any(target_arch = "riscv32", target_arch = "riscv64"))
+))]
+pub(crate) unsafe fn blake2b_compress(_state: *mut u64, _message: *const u64) {
+    panic!("blake2b_compress requires RISC-V target or host feature");
 }
 
 #[cfg(all(test, feature = "host"))]

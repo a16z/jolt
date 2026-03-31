@@ -25,7 +25,7 @@ use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceParams;
 #[cfg(feature = "zk")]
 use crate::subprotocols::univariate_skip::UniSkipFirstRoundProofVariant;
-use crate::zkvm::bytecode::BytecodePreprocessing;
+use crate::zkvm::bytecode::{BytecodePreprocessing, PreprocessingError};
 use crate::zkvm::claim_reductions::advice::ReductionPhase;
 use crate::zkvm::claim_reductions::RegistersClaimReductionSumcheckVerifier;
 use crate::zkvm::config::OneHotParams;
@@ -199,7 +199,7 @@ use tracer::JoltDevice;
 pub struct JoltVerifier<
     'a,
     F: JoltField,
-    C: JoltCurve,
+    C: JoltCurve<F = F>,
     PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 > {
@@ -229,7 +229,7 @@ struct Stage8VerifyData<F: JoltField> {
 impl<
         'a,
         F: JoltField,
-        C: JoltCurve,
+        C: JoltCurve<F = F>,
         PCS: CommitmentScheme<Field = F> + ZkEvalCommitment<C>,
         ProofTranscript: Transcript,
     > JoltVerifier<'a, F, C, PCS, ProofTranscript>
@@ -345,6 +345,7 @@ impl<
             &self.program_io,
             self.proof.ram_K,
             self.proof.trace_length,
+            self.preprocessing.shared.bytecode.entry_address,
             &mut self.transcript,
         );
 
@@ -1672,15 +1673,16 @@ impl JoltSharedPreprocessing {
         memory_layout: MemoryLayout,
         memory_init: Vec<(u64, u8)>,
         max_padded_trace_length: usize,
-    ) -> JoltSharedPreprocessing {
-        let bytecode = Arc::new(BytecodePreprocessing::preprocess(bytecode));
+        entry_address: u64,
+    ) -> Result<JoltSharedPreprocessing, PreprocessingError> {
+        let bytecode = Arc::new(BytecodePreprocessing::preprocess(bytecode, entry_address)?);
         let ram = RAMPreprocessing::preprocess(memory_init);
-        Self {
+        Ok(Self {
             bytecode,
             ram,
             memory_layout,
             max_padded_trace_length,
-        }
+        })
     }
 }
 
@@ -1705,7 +1707,7 @@ impl<C: JoltCurve> From<BlindfoldSetup<C>> for PedersenGenerators<C> {
 pub struct JoltVerifierPreprocessing<F, C, PCS>
 where
     F: JoltField,
-    C: JoltCurve,
+    C: JoltCurve<F = F>,
     PCS: CommitmentScheme<Field = F>,
 {
     pub generators: PCS::VerifierSetup,
@@ -1716,7 +1718,7 @@ where
 impl<F, C, PCS> Serializable for JoltVerifierPreprocessing<F, C, PCS>
 where
     F: JoltField,
-    C: JoltCurve,
+    C: JoltCurve<F = F>,
     PCS: CommitmentScheme<Field = F>,
 {
 }
@@ -1724,7 +1726,7 @@ where
 impl<F, C, PCS> JoltVerifierPreprocessing<F, C, PCS>
 where
     F: JoltField,
-    C: JoltCurve,
+    C: JoltCurve<F = F>,
     PCS: CommitmentScheme<Field = F>,
 {
     pub fn save_to_target_dir(&self, target_dir: &str) -> std::io::Result<()> {
@@ -1745,7 +1747,7 @@ where
     }
 }
 
-impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
+impl<F: JoltField, C: JoltCurve<F = F>, PCS: CommitmentScheme<Field = F>>
     JoltVerifierPreprocessing<F, C, PCS>
 {
     #[tracing::instrument(skip_all, name = "JoltVerifierPreprocessing::new")]
@@ -1781,7 +1783,7 @@ impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
 }
 
 #[cfg(feature = "prover")]
-impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F> + ZkEvalCommitment<C>>
+impl<F: JoltField, C: JoltCurve<F = F>, PCS: CommitmentScheme<Field = F> + ZkEvalCommitment<C>>
     From<&JoltProverPreprocessing<F, C, PCS>> for JoltVerifierPreprocessing<F, C, PCS>
 {
     fn from(prover_preprocessing: &JoltProverPreprocessing<F, C, PCS>) -> Self {

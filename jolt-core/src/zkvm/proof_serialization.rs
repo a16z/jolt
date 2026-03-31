@@ -49,7 +49,12 @@ const MAX_SECTION_LEN: u64 = 128 * 1024;
 #[cfg(not(feature = "zk"))]
 const MIN_OPENING_CLAIM_BYTES: u64 = 33;
 
-pub struct JoltProof<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
+pub struct JoltProof<
+    F: JoltField,
+    C: JoltCurve<F = F>,
+    PCS: CommitmentScheme<Field = F>,
+    FS: Transcript,
+> {
     pub commitments: Vec<PCS::Commitment>,
     pub stage1_uni_skip_first_round_proof: UniSkipFirstRoundProofVariant<F, C, FS>,
     pub stage1_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
@@ -203,7 +208,7 @@ fn deserialize_joint_opening_proof_section<PCS: CommitmentScheme>(
     Ok(proof)
 }
 
-impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript>
+impl<F: JoltField, C: JoltCurve<F = F>, PCS: CommitmentScheme<Field = F>, FS: Transcript>
     JoltProof<F, C, PCS, FS>
 {
     fn params_payload_len(&self, compress: Compress) -> u64 {
@@ -230,7 +235,7 @@ impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcrip
     }
 }
 
-impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript>
+impl<F: JoltField, C: JoltCurve<F = F>, PCS: CommitmentScheme<Field = F>, FS: Transcript>
     CanonicalSerialize for JoltProof<F, C, PCS, FS>
 {
     fn serialize_with_mode<W: Write>(
@@ -340,7 +345,7 @@ impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcrip
     }
 }
 
-impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid
+impl<F: JoltField, C: JoltCurve<F = F>, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid
     for JoltProof<F, C, PCS, FS>
 {
     fn check(&self) -> Result<(), SerializationError> {
@@ -348,7 +353,7 @@ impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcrip
     }
 }
 
-impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript>
+impl<F: JoltField, C: JoltCurve<F = F>, PCS: CommitmentScheme<Field = F>, FS: Transcript>
     CanonicalDeserialize for JoltProof<F, C, PCS, FS>
 {
     fn deserialize_with_mode<R: Read>(

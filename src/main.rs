@@ -17,9 +17,6 @@ use build_wasm::{build_wasm, modify_cargo_toml};
 use zeroos_build::cmds::{build::BacktraceMode, BuildArgs, StdMode};
 use zeroos_build::spec::TargetRenderOptions;
 
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
 /// Linker script template embedded at compile time.
 /// This linker script is for Jolt zkVM guests.
 static LINKER_TEMPLATE: &str = include_str!("linker.ld.template");
@@ -40,7 +37,7 @@ enum JoltCommand {
         /// Whether to generate WASM compatible files
         #[arg(short, long)]
         wasm: bool,
-        /// Generate project with zero-knowledge (PrivateInput) support
+        /// Generate project with zero-knowledge (PrivateInput + BlindFold) support
         #[arg(long)]
         zk: bool,
     },
@@ -561,7 +558,7 @@ pub fn main() {
     let target_dir = "/tmp/jolt-guest-targets";
     let mut program = guest::compile_fib(target_dir);
 
-    let shared_preprocessing = guest::preprocess_shared_fib(&mut program);
+    let shared_preprocessing = guest::preprocess_shared_fib(&mut program).unwrap();
 
     let prover_preprocessing = guest::preprocess_prover_fib(shared_preprocessing.clone());
     let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
@@ -616,7 +613,7 @@ pub fn main() {
     let target_dir = "/tmp/jolt-guest-targets";
     let mut program = guest::compile_fib(target_dir);
 
-    let shared_preprocessing = guest::preprocess_shared_fib(&mut program);
+    let shared_preprocessing = guest::preprocess_shared_fib(&mut program).unwrap();
 
     let prover_preprocessing = guest::preprocess_prover_fib(shared_preprocessing.clone());
     let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
@@ -659,7 +656,7 @@ edition = "2021"
 guest = []
 
 [dependencies]
-jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", features = ["zk"] }
+jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt" }
 "#;
 
 const GUEST_LIB: &str = r#"#![cfg_attr(feature = "guest", no_std)]

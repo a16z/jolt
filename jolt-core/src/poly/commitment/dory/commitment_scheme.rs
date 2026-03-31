@@ -59,7 +59,7 @@ pub fn bind_opening_inputs<F: JoltField, ProofTranscript: Transcript>(
 }
 
 #[cfg(feature = "zk")]
-pub fn bind_opening_inputs_zk<F: JoltField, C: JoltCurve, ProofTranscript: Transcript>(
+pub fn bind_opening_inputs_zk<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript>(
     transcript: &mut ProofTranscript,
     opening_point: &[F::Challenge],
     y_com: &C::G1,
@@ -85,6 +85,9 @@ impl CommitmentScheme for DoryCommitmentScheme {
 
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
         let _span = trace_span!("DoryCommitmentScheme::setup_prover").entered();
+        #[cfg(test)]
+        DoryGlobals::configure_test_cache_root();
+
         #[cfg(not(target_arch = "wasm32"))]
         let setup = ArkworksProverSetup::new_from_urs(max_num_vars);
         #[cfg(target_arch = "wasm32")]

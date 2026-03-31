@@ -260,7 +260,7 @@ impl Program {
         }
     }
 
-    pub fn decode(&mut self) -> (Vec<Instruction>, Vec<(u64, u8)>, u64) {
+    pub fn decode(&mut self) -> (Vec<Instruction>, Vec<(u64, u8)>, u64, u64) {
         self.build(DEFAULT_TARGET_DIR);
         let elf = self.elf.as_ref().unwrap();
         let mut elf_file =
@@ -284,7 +284,7 @@ impl Program {
             File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
         let mut elf_contents = Vec::new();
         elf_file.read_to_end(&mut elf_contents).unwrap();
-        let (_, _, program_end, _) = tracer::decode(&elf_contents);
+        let (_, _, program_end, _, _) = tracer::decode(&elf_contents);
         let program_size = program_end - RAM_START_ADDRESS;
 
         let memory_config = MemoryConfig {
@@ -323,7 +323,7 @@ impl Program {
             File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
         let mut elf_contents = Vec::new();
         elf_file.read_to_end(&mut elf_contents).unwrap();
-        let (_, _, program_end, _) = tracer::decode(&elf_contents);
+        let (_, _, program_end, _, _) = tracer::decode(&elf_contents);
         let program_size = program_end - RAM_START_ADDRESS;
         let memory_config = MemoryConfig {
             heap_size: self.heap_size,
@@ -352,7 +352,7 @@ impl Program {
         untrusted_advice: &[u8],
         trusted_advice: &[u8],
     ) -> ProgramSummary {
-        let (bytecode, init_memory_state, _) = self.decode();
+        let (bytecode, init_memory_state, _, _) = self.decode();
         let (_, trace, _, io_device) = self.trace(inputs, untrusted_advice, trusted_advice);
 
         ProgramSummary {

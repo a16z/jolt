@@ -26,7 +26,6 @@ use unsigned_less_than::UnsignedLessThanTable;
 use unsigned_less_than_equal::UnsignedLessThanEqualTable;
 use upper_word::UpperWordTable;
 use valid_div0::ValidDiv0Table;
-use valid_signed_remainder::ValidSignedRemainderTable;
 use valid_unsigned_remainder::ValidUnsignedRemainderTable;
 use virtual_change_divisor::VirtualChangeDivisorTable;
 use virtual_change_divisor_w::VirtualChangeDivisorWTable;
@@ -98,7 +97,6 @@ pub mod unsigned_less_than;
 pub mod unsigned_less_than_equal;
 pub mod upper_word;
 pub mod valid_div0;
-pub mod valid_signed_remainder;
 pub mod valid_unsigned_remainder;
 pub mod virtual_change_divisor;
 pub mod virtual_change_divisor_w;
@@ -137,7 +135,6 @@ pub enum LookupTables<const XLEN: usize> {
     Movsign(MovsignTable<XLEN>),
     UpperWord(UpperWordTable<XLEN>),
     LessThanEqual(UnsignedLessThanEqualTable<XLEN>),
-    ValidSignedRemainder(ValidSignedRemainderTable<XLEN>),
     ValidUnsignedRemainder(ValidUnsignedRemainderTable<XLEN>),
     ValidDiv0(ValidDiv0Table<XLEN>),
     HalfwordAlignment(HalfwordAlignmentTable<XLEN>),
@@ -190,7 +187,6 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::Movsign(table) => table.materialize(),
             LookupTables::UpperWord(table) => table.materialize(),
             LookupTables::LessThanEqual(table) => table.materialize(),
-            LookupTables::ValidSignedRemainder(table) => table.materialize(),
             LookupTables::ValidUnsignedRemainder(table) => table.materialize(),
             LookupTables::ValidDiv0(table) => table.materialize(),
             LookupTables::HalfwordAlignment(table) => table.materialize(),
@@ -236,7 +232,6 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::Movsign(table) => table.materialize_entry(index),
             LookupTables::UpperWord(table) => table.materialize_entry(index),
             LookupTables::LessThanEqual(table) => table.materialize_entry(index),
-            LookupTables::ValidSignedRemainder(table) => table.materialize_entry(index),
             LookupTables::ValidUnsignedRemainder(table) => table.materialize_entry(index),
             LookupTables::ValidDiv0(table) => table.materialize_entry(index),
             LookupTables::HalfwordAlignment(table) => table.materialize_entry(index),
@@ -286,7 +281,6 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::Movsign(table) => table.evaluate_mle(r),
             LookupTables::UpperWord(table) => table.evaluate_mle(r),
             LookupTables::LessThanEqual(table) => table.evaluate_mle(r),
-            LookupTables::ValidSignedRemainder(table) => table.evaluate_mle(r),
             LookupTables::ValidUnsignedRemainder(table) => table.evaluate_mle(r),
             LookupTables::ValidDiv0(table) => table.evaluate_mle(r),
             LookupTables::HalfwordAlignment(table) => table.evaluate_mle(r),
@@ -332,7 +326,6 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::Movsign(table) => table.suffixes(),
             LookupTables::UpperWord(table) => table.suffixes(),
             LookupTables::LessThanEqual(table) => table.suffixes(),
-            LookupTables::ValidSignedRemainder(table) => table.suffixes(),
             LookupTables::ValidUnsignedRemainder(table) => table.suffixes(),
             LookupTables::ValidDiv0(table) => table.suffixes(),
             LookupTables::HalfwordAlignment(table) => table.suffixes(),
@@ -382,7 +375,6 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::Movsign(table) => table.combine(prefixes, suffixes),
             LookupTables::UpperWord(table) => table.combine(prefixes, suffixes),
             LookupTables::LessThanEqual(table) => table.combine(prefixes, suffixes),
-            LookupTables::ValidSignedRemainder(table) => table.combine(prefixes, suffixes),
             LookupTables::ValidUnsignedRemainder(table) => table.combine(prefixes, suffixes),
             LookupTables::ValidDiv0(table) => table.combine(prefixes, suffixes),
             LookupTables::HalfwordAlignment(table) => table.combine(prefixes, suffixes),

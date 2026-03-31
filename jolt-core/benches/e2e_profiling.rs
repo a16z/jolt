@@ -201,7 +201,7 @@ fn prove_example(
 ) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     let mut tasks = Vec::new();
     let mut program = host::Program::new(example_name);
-    let (bytecode, init_memory_state, _) = program.decode();
+    let (bytecode, init_memory_state, _, e_entry) = program.decode();
     let (_lazy_trace, trace, _, program_io) = program.trace(&serialized_input, &[], &[]);
     let padded_trace_len = (trace.len() + 1).next_power_of_two();
     drop(trace);
@@ -212,7 +212,9 @@ fn prove_example(
             program_io.memory_layout.clone(),
             init_memory_state,
             padded_trace_len,
-        );
+            e_entry,
+        )
+        .unwrap();
         let preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
 
         let elf_contents_opt = program.get_elf_contents();
@@ -253,7 +255,7 @@ fn prove_example_with_trace(
     _scale: usize,
 ) -> (std::time::Duration, usize, usize, usize) {
     let mut program = host::Program::new(example_name);
-    let (bytecode, init_memory_state, _) = program.decode();
+    let (bytecode, init_memory_state, _, e_entry) = program.decode();
     let (_, trace, _, program_io) = program.trace(&serialized_input, &[], &[]);
 
     assert!(
@@ -266,7 +268,9 @@ fn prove_example_with_trace(
         program_io.memory_layout.clone(),
         init_memory_state,
         trace.len().next_power_of_two(),
-    );
+        e_entry,
+    )
+    .unwrap();
     let preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
 
     let elf_contents_opt = program.get_elf_contents();
