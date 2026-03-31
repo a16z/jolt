@@ -3,7 +3,6 @@ use num::Integer;
 use num_traits::Zero;
 
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::{OpeningAccumulator, PolynomialId};
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 
@@ -455,19 +454,18 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
             let evals = (0..inc.len() / 2)
                 .into_par_iter()
                 .map(|j| {
-                    let inc_evals = inc.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
-                    let eq_evals = merged_eq.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
+                    let inc_evals = inc.sumcheck_evals_array::<DEGREE>(j, BindingOrder::LowToHigh);
+                    let eq_evals =
+                        merged_eq.sumcheck_evals_array::<DEGREE>(j, BindingOrder::LowToHigh);
                     let inner = (0..K_prime)
                         .into_par_iter()
                         .map(|k| {
-                            let ra_evals = ra.sumcheck_evals(
+                            let ra_evals = ra.sumcheck_evals_array::<DEGREE>(
                                 k * T_prime / 2 + j,
-                                DEGREE,
                                 BindingOrder::LowToHigh,
                             );
-                            let val_evals = val.sumcheck_evals(
+                            let val_evals = val.sumcheck_evals_array::<DEGREE>(
                                 k * T_prime / 2 + j,
-                                DEGREE,
                                 BindingOrder::LowToHigh,
                             );
                             [
