@@ -18,6 +18,8 @@ pub struct RedTeamConfig {
     pub num_iterations: usize,
     pub model: String,
     pub working_dir: PathBuf,
+    /// Number of random fuzz inputs to run after each agent attempt.
+    pub num_fuzz_per_iteration: usize,
 }
 
 impl Default for RedTeamConfig {
@@ -27,6 +29,7 @@ impl Default for RedTeamConfig {
             num_iterations: 10,
             model: "claude-sonnet-4-20250514".to_string(),
             working_dir: PathBuf::from("."),
+            num_fuzz_per_iteration: 100,
         }
     }
 }
@@ -91,8 +94,9 @@ pub fn auto_redteam(
 
         match result {
             Some((approach, _candidate_bytes)) => {
-                // Run the invariant's checks to see if the agent found a violation
-                let check_results = invariant.run_checks(0);
+                // Run the invariant's seed corpus + random fuzz inputs to see
+                // if the agent's analysis revealed a real violation.
+                let check_results = invariant.run_checks(config.num_fuzz_per_iteration);
                 let violation = check_results.iter().find(|r| r.is_err());
 
                 if let Some(Err(e)) = violation {
