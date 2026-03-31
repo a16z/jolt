@@ -816,6 +816,11 @@ fn shamir_4x128(scalars: [u128; 4], points: [P256Point; 4]) -> P256Point {
 ///   4. (R1 + R2).x mod n == r -- ECDSA final check
 ///
 /// This halves the doublings: 128 instead of 256, achieving ~1.7x speedup.
+/// 
+/// Security: it is the responsibility of the caller to ensure
+/// 1. z, r, and s are well formed
+/// 2. q is a valid point on the curve
+/// Note that these checks are automatically performed by the from_u64_arr constructors.
 #[inline(always)]
 pub fn ecdsa_verify(z: P256Fr, r: P256Fr, s: P256Fr, q: P256Point) -> Result<(), P256Error> {
     if q.is_infinity() {
