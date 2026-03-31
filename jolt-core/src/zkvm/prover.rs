@@ -495,6 +495,9 @@ impl<
             self.one_hot_params.ram_k,
             self.trace.len(),
             self.preprocessing.shared.bytecode.entry_address,
+            &self.rw_config,
+            &self.one_hot_params.to_config(),
+            DoryGlobals::get_layout(),
             &mut self.transcript,
         );
 

@@ -356,6 +356,9 @@ impl<
             self.proof.ram_K,
             self.proof.trace_length,
             self.preprocessing.shared.bytecode.entry_address,
+            &self.proof.rw_config,
+            &self.proof.one_hot_config,
+            self.proof.dory_layout,
             &mut self.transcript,
         );
 
