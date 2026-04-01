@@ -2225,6 +2225,8 @@ mod tests {
     extern crate jolt_inlines_sha2;
 
     use std::sync::Arc;
+    #[cfg(feature = "zk")]
+    use std::thread;
 
     use ark_bn254::Fr;
     use serial_test::serial;
@@ -2303,6 +2305,26 @@ mod tests {
         (commitment, hint)
     }
 
+    fn with_roundtrip_stack<T: Send + 'static>(
+        f: impl FnOnce() -> T + Send + 'static,
+    ) -> T {
+        #[cfg(feature = "zk")]
+        {
+            return thread::Builder::new()
+                .name("proof-roundtrip".to_string())
+                .stack_size(32 * 1024 * 1024)
+                .spawn(f)
+                .unwrap()
+                .join()
+                .unwrap();
+        }
+
+        #[cfg(not(feature = "zk"))]
+        {
+            f()
+        }
+    }
+
     #[test]
     #[serial]
     fn fib_e2e_dory() {
@@ -2336,18 +2358,19 @@ mod tests {
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
         let proof_bytes = jolt_proof.serialize_to_bytes().unwrap();
-        let jolt_proof = RV64IMACProof::deserialize_from_bytes(&proof_bytes).unwrap();
-
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
-        let verifier = RV64IMACVerifier::new(
-            &verifier_preprocessing,
-            jolt_proof,
-            io_device,
-            None,
-            debug_info,
-        )
-        .expect("Failed to create verifier");
-        verifier.verify().expect("Failed to verify proof");
+        with_roundtrip_stack(move || {
+            let jolt_proof = RV64IMACProof::deserialize_from_bytes(&proof_bytes).unwrap();
+            let verifier = RV64IMACVerifier::new(
+                &verifier_preprocessing,
+                jolt_proof,
+                io_device,
+                None,
+                debug_info,
+            )
+            .expect("Failed to create verifier");
+            verifier.verify().expect("Failed to verify proof");
+        });
     }
 
     #[test]
@@ -3535,15 +3558,15 @@ mod tests {
         let io_device = prover.program_io.clone();
         let (proof, debug_info) = prover.prove();
         let proof_bytes = proof.serialize_to_bytes().unwrap();
-        let proof = RV64IMACProof::deserialize_from_bytes(&proof_bytes).unwrap();
-
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
-
-        // DoryGlobals is now initialized inside the verifier's verify_stage8
-        RV64IMACVerifier::new(&verifier_preprocessing, proof, io_device, None, debug_info)
-            .expect("verifier creation failed")
-            .verify()
-            .expect("verification failed");
+        with_roundtrip_stack(move || {
+            let proof = RV64IMACProof::deserialize_from_bytes(&proof_bytes).unwrap();
+            // DoryGlobals is now initialized inside the verifier's verify_stage8
+            RV64IMACVerifier::new(&verifier_preprocessing, proof, io_device, None, debug_info)
+                .expect("verifier creation failed")
+                .verify()
+                .expect("verification failed");
+        });
     }
 
     #[test]
@@ -3590,19 +3613,21 @@ mod tests {
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
         let proof_bytes = jolt_proof.serialize_to_bytes().unwrap();
-        let jolt_proof = RV64IMACProof::deserialize_from_bytes(&proof_bytes).unwrap();
-
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
-        RV64IMACVerifier::new(
-            &verifier_preprocessing,
-            jolt_proof,
-            io_device.clone(),
-            Some(trusted_commitment),
-            debug_info,
-        )
-        .expect("Failed to create verifier")
-        .verify()
-        .expect("Verification failed");
+        let verifier_io_device = io_device.clone();
+        with_roundtrip_stack(move || {
+            let jolt_proof = RV64IMACProof::deserialize_from_bytes(&proof_bytes).unwrap();
+            RV64IMACVerifier::new(
+                &verifier_preprocessing,
+                jolt_proof,
+                verifier_io_device,
+                Some(trusted_commitment),
+                debug_info,
+            )
+            .expect("Failed to create verifier")
+            .verify()
+            .expect("Verification failed");
+        });
 
         // Expected merkle root for leaves [5;32], [6;32], [7;32], [8;32]
         let expected_output = &[
