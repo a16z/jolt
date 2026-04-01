@@ -64,12 +64,14 @@ impl jolt_eval::Invariant for FailingInvariant {
 
 /// A trivial objective for testing the framework.
 struct ConstantObjective {
+    label: &'static str,
     value: f64,
+    direction: Direction,
 }
 
 impl AbstractObjective for ConstantObjective {
     fn name(&self) -> &str {
-        "constant"
+        self.label
     }
 
     fn collect_measurement(&self) -> Result<f64, MeasurementError> {
@@ -77,7 +79,7 @@ impl AbstractObjective for ConstantObjective {
     }
 
     fn direction(&self) -> Direction {
-        Direction::Minimize
+        self.direction
     }
 }
 
@@ -122,19 +124,35 @@ fn test_synthesis_registry() {
 
 #[test]
 fn test_constant_objective() {
-    let obj = ConstantObjective { value: 42.0 };
-    assert_eq!(obj.name(), "constant");
+    let obj = ConstantObjective {
+        label: "latency",
+        value: 42.0,
+        direction: Direction::Minimize,
+    };
+    assert_eq!(obj.name(), "latency");
     assert_eq!(obj.collect_measurement().unwrap(), 42.0);
     assert_eq!(obj.direction(), Direction::Minimize);
 }
 
 #[test]
 fn test_measure_objectives() {
-    use jolt_eval::objective::measure_objectives;
+    use jolt_eval::objective::measure_dyn;
 
-    // measure_objectives takes &[Objective], which uses the enum.
-    // For unit testing we just verify the function signature works
-    // with an empty slice.
-    let results = measure_objectives(&[]);
-    assert!(results.is_empty());
+    let objectives: Vec<Box<dyn AbstractObjective>> = vec![
+        Box::new(ConstantObjective {
+            label: "prover_time",
+            value: 3.14,
+            direction: Direction::Minimize,
+        }),
+        Box::new(ConstantObjective {
+            label: "inline_count",
+            value: 256.0,
+            direction: Direction::Maximize,
+        }),
+    ];
+
+    let results = measure_dyn(&objectives);
+    assert_eq!(results.len(), 2);
+    assert_eq!(results["prover_time"], 3.14);
+    assert_eq!(results["inline_count"], 256.0);
 }
