@@ -10,7 +10,7 @@ use jolt_eval::invariant::determinism::DeterminismInvariant;
 use jolt_eval::invariant::serialization_roundtrip::SerializationRoundtripInvariant;
 use jolt_eval::invariant::soundness::SoundnessInvariant;
 use jolt_eval::invariant::synthesis::redteam::{auto_redteam, RedTeamConfig, RedTeamResult};
-use jolt_eval::invariant::synthesis::SynthesisRegistry;
+use jolt_eval::invariant::synthesis::{SynthesisRegistry, BUILTIN_INVARIANT_NAMES};
 use jolt_eval::invariant::zk_consistency::ZkConsistencyInvariant;
 use jolt_eval::invariant::SynthesisTarget;
 use jolt_eval::TestCase;
@@ -58,12 +58,9 @@ fn main() -> eyre::Result<()> {
 
     if cli.list {
         println!("Red-teamable invariants:");
-        println!("  soundness");
-        println!("  verifier_completeness");
-        println!("  prover_completeness");
-        println!("  determinism");
-        println!("  serialization_roundtrip");
-        println!("  zk_consistency");
+        for name in BUILTIN_INVARIANT_NAMES {
+            println!("  {name}");
+        }
         return Ok(());
     }
 

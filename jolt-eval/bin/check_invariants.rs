@@ -8,7 +8,7 @@ use jolt_eval::invariant::completeness_verifier::VerifierCompletenessInvariant;
 use jolt_eval::invariant::determinism::DeterminismInvariant;
 use jolt_eval::invariant::serialization_roundtrip::SerializationRoundtripInvariant;
 use jolt_eval::invariant::soundness::SoundnessInvariant;
-use jolt_eval::invariant::synthesis::SynthesisRegistry;
+use jolt_eval::invariant::synthesis::{SynthesisRegistry, BUILTIN_INVARIANT_NAMES};
 use jolt_eval::invariant::zk_consistency::ZkConsistencyInvariant;
 use jolt_eval::invariant::{DynInvariant, InvariantReport};
 use jolt_eval::TestCase;
@@ -85,7 +85,7 @@ fn main() -> eyre::Result<()> {
     if invariants.is_empty() {
         eprintln!("No matching invariants found.");
         if let Some(name) = &cli.invariant {
-            eprintln!("Available: soundness, verifier_completeness, prover_completeness, determinism, serialization_roundtrip, zk_consistency");
+            eprintln!("Available: {}", BUILTIN_INVARIANT_NAMES.join(", "));
             eprintln!("Requested: {name}");
         }
         std::process::exit(1);

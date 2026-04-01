@@ -7,7 +7,7 @@ use jolt_eval::invariant::completeness_verifier::VerifierCompletenessInvariant;
 use jolt_eval::invariant::determinism::DeterminismInvariant;
 use jolt_eval::invariant::serialization_roundtrip::SerializationRoundtripInvariant;
 use jolt_eval::invariant::soundness::SoundnessInvariant;
-use jolt_eval::invariant::synthesis::SynthesisRegistry;
+use jolt_eval::invariant::synthesis::{SynthesisRegistry, BUILTIN_INVARIANT_NAMES};
 use jolt_eval::invariant::zk_consistency::ZkConsistencyInvariant;
 use jolt_eval::invariant::{DynInvariant, InvariantReport, SynthesisTarget};
 use jolt_eval::TestCase;
@@ -69,8 +69,10 @@ fn main() -> eyre::Result<()> {
         eprintln!("Error: --elf <path> is required. Provide a pre-compiled guest ELF.");
         std::process::exit(1);
     } else {
-        // --list doesn't need an ELF; use a dummy to populate names
-        print_available_invariants();
+        println!("Fuzzable invariants:");
+        for name in BUILTIN_INVARIANT_NAMES {
+            println!("  {name}");
+        }
         return Ok(());
     };
 
@@ -214,16 +216,6 @@ fn register_invariants(
     registry.register(Box::new(ZkConsistencyInvariant::new(Arc::clone(
         test_case,
     ))));
-}
-
-fn print_available_invariants() {
-    println!("Fuzzable invariants:");
-    println!("  soundness");
-    println!("  verifier_completeness");
-    println!("  prover_completeness");
-    println!("  determinism");
-    println!("  serialization_roundtrip");
-    println!("  zk_consistency");
 }
 
 fn print_report(report: &InvariantReport) {

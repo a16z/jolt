@@ -135,13 +135,11 @@ fn main() -> eyre::Result<()> {
     let verifier_pp = Arc::new(TestCase::verifier_preprocessing(&prover_pp));
 
     let all_objectives = build_objectives(&test_case, &prover_pp, &verifier_pp, &inputs);
+    let all_names: Vec<String> = all_objectives.iter().map(|o| o.name().to_string()).collect();
     let objective_names: Vec<String> = if let Some(names) = &cli.objectives {
         names.split(',').map(|s| s.trim().to_string()).collect()
     } else {
-        all_objectives
-            .iter()
-            .map(|o| o.name().to_string())
-            .collect()
+        all_names.clone()
     };
 
     let objectives: Vec<Objective> = all_objectives
@@ -150,7 +148,7 @@ fn main() -> eyre::Result<()> {
         .collect();
 
     if objectives.is_empty() {
-        eprintln!("No matching objectives. Available: peak_rss, prover_time, proof_size, verifier_time, guest_cycle_count, inline_lengths, wrapping_cost");
+        eprintln!("No matching objectives. Available: {}", all_names.join(", "));
         std::process::exit(1);
     }
 
