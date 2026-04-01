@@ -10,7 +10,8 @@ inventory::submit! {
     InvariantEntry {
         name: "zk_consistency",
         targets: || SynthesisTarget::Test | SynthesisTarget::Fuzz,
-        build: |tc, _inputs| Box::new(ZkConsistencyInvariant::new(tc)),
+        needs_guest: true,
+        build: |tc, _inputs| Box::new(ZkConsistencyInvariant::new(tc.unwrap())),
     }
 }
 

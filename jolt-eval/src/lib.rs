@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
 pub mod agent;
+pub mod guests;
 pub mod invariant;
 pub mod objective;
 
@@ -160,10 +161,14 @@ pub struct SharedSetup {
 
 impl SharedSetup {
     pub fn new(test_case: TestCase) -> Self {
+        Self::new_from_arc(Arc::new(test_case))
+    }
+
+    pub fn new_from_arc(test_case: Arc<TestCase>) -> Self {
         let prover_pp = test_case.prover_preprocessing();
         let verifier_pp = TestCase::verifier_preprocessing(&prover_pp);
         Self {
-            test_case: Arc::new(test_case),
+            test_case,
             prover_preprocessing: Arc::new(prover_pp),
             verifier_preprocessing: Arc::new(verifier_pp),
         }

@@ -1,12 +1,21 @@
 use clap::Parser;
 
+use jolt_eval::guests;
 use jolt_eval::objective::{build_objectives_from_inventory, registered_objectives};
-use jolt_eval::{SharedSetup, TestCase};
+use jolt_eval::SharedSetup;
 
 #[derive(Parser)]
 #[command(name = "measure-objectives")]
 #[command(about = "Measure Jolt performance objectives")]
 struct Cli {
+    /// Guest program to evaluate (e.g. muldiv, fibonacci, sha2)
+    #[arg(long)]
+    guest: Option<String>,
+
+    /// Path to a pre-compiled guest ELF (alternative to --guest)
+    #[arg(long)]
+    elf: Option<String>,
+
     /// Only measure the named objective (default: all)
     #[arg(long)]
     objective: Option<String>,
@@ -15,42 +24,23 @@ struct Cli {
     #[arg(long)]
     samples: Option<usize>,
 
-    /// Path to a pre-compiled guest ELF
+    /// Max trace length override
     #[arg(long)]
-    elf: Option<String>,
-
-    /// Max trace length for the test program
-    #[arg(long, default_value = "65536")]
-    max_trace_length: usize,
+    max_trace_length: Option<usize>,
 }
 
 fn main() -> eyre::Result<()> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
 
-    let test_case = if let Some(elf_path) = &cli.elf {
-        let elf_bytes = std::fs::read(elf_path)?;
-        let memory_config = common::jolt_device::MemoryConfig {
-            max_input_size: 4096,
-            max_output_size: 4096,
-            max_untrusted_advice_size: 0,
-            max_trusted_advice_size: 0,
-            stack_size: 65536,
-            heap_size: 32768,
-            program_size: None,
-        };
-        TestCase {
-            elf_contents: elf_bytes,
-            memory_config,
-            max_trace_length: cli.max_trace_length,
-        }
-    } else {
-        eprintln!("Error: --elf <path> is required. Provide a pre-compiled guest ELF.");
-        std::process::exit(1);
-    };
+    let (test_case, default_inputs) = guests::resolve_test_case(
+        cli.guest.as_deref(),
+        cli.elf.as_deref(),
+        cli.max_trace_length,
+    );
 
-    let setup = SharedSetup::new(test_case);
-    let objectives = build_objectives_from_inventory(&setup, vec![]);
+    let setup = SharedSetup::new_from_arc(test_case);
+    let objectives = build_objectives_from_inventory(Some(&setup), default_inputs);
 
     let filtered: Vec<_> = if let Some(name) = &cli.objective {
         objectives
@@ -63,7 +53,10 @@ fn main() -> eyre::Result<()> {
 
     if filtered.is_empty() {
         let all_names: Vec<_> = registered_objectives().map(|e| e.name).collect();
-        eprintln!("No matching objectives. Available: {}", all_names.join(", "));
+        eprintln!(
+            "No matching objectives. Available: {}",
+            all_names.join(", ")
+        );
         std::process::exit(1);
     }
 

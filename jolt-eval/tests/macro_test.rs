@@ -78,8 +78,14 @@ impl Invariant for BoundsCheckInvariant {
     fn seed_corpus(&self) -> Vec<RangeInput> {
         vec![
             RangeInput { lo: 0, hi: 0 },
-            RangeInput { lo: 0, hi: u32::MAX },
-            RangeInput { lo: u32::MAX, hi: 0 },
+            RangeInput {
+                lo: 0,
+                hi: u32::MAX,
+            },
+            RangeInput {
+                lo: u32::MAX,
+                hi: 0,
+            },
             RangeInput { lo: 100, hi: 50 },
         ]
     }

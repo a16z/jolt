@@ -7,7 +7,8 @@ inventory::submit! {
     ObjectiveEntry {
         name: "inline_lengths",
         direction: Direction::Maximize,
-        build: |setup, _inputs| Box::new(InlineLengthsObjective::new(setup.test_case.clone())),
+        needs_guest: true,
+        build: |s, _inputs| { let setup = s.unwrap(); Box::new(InlineLengthsObjective::new(setup.test_case.clone())) },
     }
 }
 

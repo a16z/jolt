@@ -62,8 +62,7 @@ pub fn auto_redteam(
             invariant.name()
         );
 
-        let prompt =
-            build_redteam_prompt(&description, input_example.as_deref(), &failed_attempts);
+        let prompt = build_redteam_prompt(&description, input_example.as_deref(), &failed_attempts);
 
         let response = match agent.invoke_structured(repo_dir, &prompt, &envelope_schema) {
             Ok(r) => r,
@@ -92,8 +91,8 @@ pub fn auto_redteam(
                         failed_attempts.push(FailedAttempt {
                             description: format!("Iteration {}", iteration + 1),
                             approach: response.text,
-                            failure_reason:
-                                "Agent response did not contain a JSON counterexample".to_string(),
+                            failure_reason: "Agent response did not contain a JSON counterexample"
+                                .to_string(),
                         });
                         continue;
                     }

@@ -39,8 +39,8 @@ pub fn fuzz_invariant(invariant_name: &str, data: &[u8]) {
     static CACHE: LazyLock<Vec<CachedInvariant>> = LazyLock::new(|| {
         let elf_path = std::env::var("JOLT_FUZZ_ELF")
             .expect("Set JOLT_FUZZ_ELF to the path of a compiled guest ELF");
-        let elf_bytes = std::fs::read(&elf_path)
-            .unwrap_or_else(|e| panic!("Failed to read {elf_path}: {e}"));
+        let elf_bytes =
+            std::fs::read(&elf_path).unwrap_or_else(|e| panic!("Failed to read {elf_path}: {e}"));
         let memory_config = common::jolt_device::MemoryConfig {
             max_input_size: 4096,
             max_output_size: 4096,
@@ -55,7 +55,7 @@ pub fn fuzz_invariant(invariant_name: &str, data: &[u8]) {
             memory_config,
             max_trace_length: 65536,
         });
-        let registry = SynthesisRegistry::from_inventory(test_case, vec![]);
+        let registry = SynthesisRegistry::from_inventory(Some(test_case), vec![]);
         registry
             .into_invariants()
             .into_iter()

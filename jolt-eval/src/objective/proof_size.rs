@@ -7,9 +7,10 @@ inventory::submit! {
     ObjectiveEntry {
         name: "proof_size",
         direction: Direction::Minimize,
-        build: |setup, inputs| Box::new(ProofSizeObjective::new(
+        needs_guest: true,
+        build: |s, inputs| { let setup = s.unwrap(); Box::new(ProofSizeObjective::new(
             setup.test_case.clone(), setup.prover_preprocessing.clone(), inputs,
-        )),
+            )) },
     }
 }
 

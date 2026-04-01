@@ -8,9 +8,10 @@ inventory::submit! {
     ObjectiveEntry {
         name: "prover_time",
         direction: Direction::Minimize,
-        build: |setup, inputs| Box::new(ProverTimeObjective::new(
+        needs_guest: true,
+        build: |s, inputs| { let setup = s.unwrap(); Box::new(ProverTimeObjective::new(
             setup.test_case.clone(), setup.prover_preprocessing.clone(), inputs,
-        )),
+            )) },
     }
 }
 

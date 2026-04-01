@@ -1,18 +1,24 @@
-use std::sync::Arc;
-
 use clap::Parser;
 use tracing::info;
 
 use jolt_eval::agent::ClaudeCodeAgent;
+use jolt_eval::guests;
 use jolt_eval::invariant::synthesis::redteam::{auto_redteam, RedTeamConfig, RedTeamResult};
 use jolt_eval::invariant::synthesis::{invariant_names, SynthesisRegistry};
 use jolt_eval::invariant::SynthesisTarget;
-use jolt_eval::TestCase;
 
 #[derive(Parser)]
 #[command(name = "redteam")]
 #[command(about = "AI-driven red team testing of Jolt invariants")]
 struct Cli {
+    /// Guest program to evaluate (e.g. muldiv, fibonacci, sha2)
+    #[arg(long)]
+    guest: Option<String>,
+
+    /// Path to a pre-compiled guest ELF (alternative to --guest)
+    #[arg(long)]
+    elf: Option<String>,
+
     /// Name of the invariant to test
     #[arg(long)]
     invariant: String,
@@ -25,17 +31,13 @@ struct Cli {
     #[arg(long, default_value = "claude-sonnet-4-20250514")]
     model: String,
 
-    /// Path to a pre-compiled guest ELF
-    #[arg(long)]
-    elf: String,
-
-    /// Max trace length for the test program
-    #[arg(long, default_value = "65536")]
-    max_trace_length: usize,
-
     /// Maximum number of Claude agentic turns per iteration
     #[arg(long, default_value = "30")]
     max_turns: usize,
+
+    /// Max trace length override
+    #[arg(long)]
+    max_trace_length: Option<usize>,
 
     /// List available red-teamable invariants and exit
     #[arg(long)]
@@ -54,23 +56,13 @@ fn main() -> eyre::Result<()> {
         return Ok(());
     }
 
-    let elf_bytes = std::fs::read(&cli.elf)?;
-    let memory_config = common::jolt_device::MemoryConfig {
-        max_input_size: 4096,
-        max_output_size: 4096,
-        max_untrusted_advice_size: 0,
-        max_trusted_advice_size: 0,
-        stack_size: 65536,
-        heap_size: 32768,
-        program_size: None,
-    };
-    let test_case = Arc::new(TestCase {
-        elf_contents: elf_bytes,
-        memory_config,
-        max_trace_length: cli.max_trace_length,
-    });
+    let (test_case, default_inputs) = guests::resolve_test_case(
+        cli.guest.as_deref(),
+        cli.elf.as_deref(),
+        cli.max_trace_length,
+    );
 
-    let registry = SynthesisRegistry::from_inventory(test_case, vec![]);
+    let registry = SynthesisRegistry::from_inventory(Some(test_case), default_inputs);
 
     let invariant = registry
         .for_target(SynthesisTarget::RedTeam)
@@ -78,7 +70,10 @@ fn main() -> eyre::Result<()> {
         .find(|inv| inv.name() == cli.invariant.as_str());
 
     let Some(invariant) = invariant else {
-        eprintln!("Invariant '{}' not found or not red-teamable.", cli.invariant);
+        eprintln!(
+            "Invariant '{}' not found or not red-teamable.",
+            cli.invariant
+        );
         eprintln!("Run with --list to see available invariants.");
         std::process::exit(1);
     };
@@ -86,7 +81,6 @@ fn main() -> eyre::Result<()> {
     let config = RedTeamConfig {
         num_iterations: cli.iterations,
     };
-
     let agent = ClaudeCodeAgent::new(&cli.model, cli.max_turns);
     let repo_dir = std::env::current_dir()?;
 
@@ -112,10 +106,7 @@ fn main() -> eyre::Result<()> {
         }
         RedTeamResult::NoViolation { attempts } => {
             println!();
-            println!(
-                "No violations found after {} iterations.",
-                attempts.len()
-            );
+            println!("No violations found after {} iterations.", attempts.len());
             for attempt in &attempts {
                 println!(
                     "  {}: {} -- {}",

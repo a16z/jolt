@@ -10,7 +10,8 @@ inventory::submit! {
     InvariantEntry {
         name: "serialization_roundtrip",
         targets: || { SynthesisTarget::Test.into() },
-        build: |tc, inputs| Box::new(SerializationRoundtripInvariant::new(tc, inputs)),
+        needs_guest: true,
+        build: |tc, inputs| Box::new(SerializationRoundtripInvariant::new(tc.unwrap(), inputs)),
     }
 }
 

@@ -7,9 +7,10 @@ inventory::submit! {
     ObjectiveEntry {
         name: "guest_cycle_count",
         direction: Direction::Minimize,
-        build: |setup, inputs| Box::new(GuestCycleCountObjective::new(
+        needs_guest: true,
+        build: |s, inputs| { let setup = s.unwrap(); Box::new(GuestCycleCountObjective::new(
             setup.test_case.clone(), inputs,
-        )),
+            )) },
     }
 }
 

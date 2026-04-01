@@ -201,9 +201,8 @@ impl AgentHarness for ClaudeCodeAgent {
         }
 
         // Parse the CLI JSON envelope and extract structured_output
-        let envelope: serde_json::Value = serde_json::from_str(&stdout).map_err(|e| {
-            AgentError::new(format!("failed to parse CLI JSON envelope: {e}"))
-        })?;
+        let envelope: serde_json::Value = serde_json::from_str(&stdout)
+            .map_err(|e| AgentError::new(format!("failed to parse CLI JSON envelope: {e}")))?;
 
         let text = if let Some(structured) = envelope.get("structured_output") {
             serde_json::to_string(structured)
@@ -308,10 +307,7 @@ impl MockAgent {
     pub fn always_ok(text: &str) -> Self {
         let text = text.to_string();
         Self {
-            responses: std::sync::Mutex::new(vec![Ok(AgentResponse {
-                text,
-                diff: None,
-            })]),
+            responses: std::sync::Mutex::new(vec![Ok(AgentResponse { text, diff: None })]),
             prompts: std::sync::Mutex::new(Vec::new()),
         }
     }

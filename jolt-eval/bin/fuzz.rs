@@ -1,16 +1,23 @@
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use clap::Parser;
 
+use jolt_eval::guests;
 use jolt_eval::invariant::synthesis::{invariant_names, SynthesisRegistry};
 use jolt_eval::invariant::{DynInvariant, InvariantReport, SynthesisTarget};
-use jolt_eval::TestCase;
 
 #[derive(Parser)]
 #[command(name = "fuzz")]
 #[command(about = "Fuzz-test Jolt invariants with random inputs")]
 struct Cli {
+    /// Guest program to evaluate (e.g. muldiv, fibonacci, sha2)
+    #[arg(long)]
+    guest: Option<String>,
+
+    /// Path to a pre-compiled guest ELF (alternative to --guest)
+    #[arg(long)]
+    elf: Option<String>,
+
     /// Only fuzz the named invariant (default: all fuzzable)
     #[arg(long)]
     invariant: Option<String>,
@@ -23,17 +30,9 @@ struct Cli {
     #[arg(long)]
     duration: Option<String>,
 
-    /// Size of random byte buffer fed to Arbitrary (bytes)
-    #[arg(long, default_value = "4096")]
-    input_size: usize,
-
-    /// Path to a pre-compiled guest ELF
+    /// Max trace length override
     #[arg(long)]
-    elf: Option<String>,
-
-    /// Max trace length for the test program
-    #[arg(long, default_value = "65536")]
-    max_trace_length: usize,
+    max_trace_length: Option<usize>,
 
     /// List available fuzzable invariants and exit
     #[arg(long)]
@@ -52,28 +51,13 @@ fn main() -> eyre::Result<()> {
         return Ok(());
     }
 
-    let test_case = if let Some(elf_path) = &cli.elf {
-        let elf_bytes = std::fs::read(elf_path)?;
-        let memory_config = common::jolt_device::MemoryConfig {
-            max_input_size: 4096,
-            max_output_size: 4096,
-            max_untrusted_advice_size: 0,
-            max_trusted_advice_size: 0,
-            stack_size: 65536,
-            heap_size: 32768,
-            program_size: None,
-        };
-        Arc::new(TestCase {
-            elf_contents: elf_bytes,
-            memory_config,
-            max_trace_length: cli.max_trace_length,
-        })
-    } else {
-        eprintln!("Error: --elf <path> is required. Provide a pre-compiled guest ELF.");
-        std::process::exit(1);
-    };
+    let (test_case, default_inputs) = guests::resolve_test_case(
+        cli.guest.as_deref(),
+        cli.elf.as_deref(),
+        cli.max_trace_length,
+    );
 
-    let registry = SynthesisRegistry::from_inventory(test_case, vec![]);
+    let registry = SynthesisRegistry::from_inventory(Some(test_case), default_inputs);
 
     let fuzzable: Vec<&dyn DynInvariant> = if let Some(name) = &cli.invariant {
         let matches: Vec<_> = registry
@@ -105,10 +89,9 @@ fn main() -> eyre::Result<()> {
     });
 
     println!(
-        "Fuzzing {} invariant(s), {} iterations, input size {} bytes",
+        "Fuzzing {} invariant(s), {} iterations",
         fuzzable.len(),
         cli.iterations,
-        cli.input_size,
     );
     if let Some(d) = &cli.duration {
         println!("Time limit: {d}");
@@ -204,9 +187,7 @@ fn parse_duration(s: &str) -> Option<Duration> {
     } else if let Some(n) = s.strip_suffix('m') {
         n.parse::<u64>().ok().map(|m| Duration::from_secs(m * 60))
     } else if let Some(n) = s.strip_suffix('h') {
-        n.parse::<u64>()
-            .ok()
-            .map(|h| Duration::from_secs(h * 3600))
+        n.parse::<u64>().ok().map(|h| Duration::from_secs(h * 3600))
     } else {
         s.parse::<u64>().ok().map(Duration::from_secs)
     }

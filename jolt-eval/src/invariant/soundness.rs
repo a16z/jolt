@@ -10,7 +10,8 @@ inventory::submit! {
     InvariantEntry {
         name: "soundness",
         targets: || SynthesisTarget::Test | SynthesisTarget::Fuzz | SynthesisTarget::RedTeam,
-        build: |tc, inputs| Box::new(SoundnessInvariant::new(tc, inputs)),
+        needs_guest: true,
+        build: |tc, inputs| Box::new(SoundnessInvariant::new(tc.unwrap(), inputs)),
     }
 }
 

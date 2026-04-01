@@ -1,21 +1,29 @@
 use std::collections::HashMap;
 use std::process::Command;
-use std::sync::Arc;
 
 use clap::Parser;
 
 use jolt_eval::agent::ClaudeCodeAgent;
+use jolt_eval::guests;
 use jolt_eval::invariant::synthesis::SynthesisRegistry;
 use jolt_eval::objective::optimize::{auto_optimize, OptimizeConfig, OptimizeEnv};
 use jolt_eval::objective::{
     build_objectives_from_inventory, measure_dyn, AbstractObjective, Direction,
 };
-use jolt_eval::{SharedSetup, TestCase};
+use jolt_eval::SharedSetup;
 
 #[derive(Parser)]
 #[command(name = "optimize")]
 #[command(about = "AI-driven optimization of Jolt objectives")]
 struct Cli {
+    /// Guest program to evaluate (e.g. muldiv, fibonacci, sha2)
+    #[arg(long)]
+    guest: Option<String>,
+
+    /// Path to a pre-compiled guest ELF (alternative to --guest)
+    #[arg(long)]
+    elf: Option<String>,
+
     /// Objectives to optimize (comma-separated). Default: all.
     #[arg(long)]
     objectives: Option<String>,
@@ -28,14 +36,6 @@ struct Cli {
     #[arg(long, default_value = "claude-sonnet-4-20250514")]
     model: String,
 
-    /// Path to a pre-compiled guest ELF
-    #[arg(long)]
-    elf: String,
-
-    /// Max trace length for the test program
-    #[arg(long, default_value = "65536")]
-    max_trace_length: usize,
-
     /// Maximum number of Claude agentic turns per iteration
     #[arg(long, default_value = "30")]
     max_turns: usize,
@@ -43,6 +43,10 @@ struct Cli {
     /// Extra context to include in the optimization prompt
     #[arg(long)]
     hint: Option<String>,
+
+    /// Max trace length override
+    #[arg(long)]
+    max_trace_length: Option<usize>,
 }
 
 struct RealEnv {
@@ -102,24 +106,14 @@ fn main() -> eyre::Result<()> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
 
-    let elf_bytes = std::fs::read(&cli.elf)?;
-    let memory_config = common::jolt_device::MemoryConfig {
-        max_input_size: 4096,
-        max_output_size: 4096,
-        max_untrusted_advice_size: 0,
-        max_trusted_advice_size: 0,
-        stack_size: 65536,
-        heap_size: 32768,
-        program_size: None,
-    };
-    let test_case = TestCase {
-        elf_contents: elf_bytes,
-        memory_config,
-        max_trace_length: cli.max_trace_length,
-    };
+    let (test_case, default_inputs) = guests::resolve_test_case(
+        cli.guest.as_deref(),
+        cli.elf.as_deref(),
+        cli.max_trace_length,
+    );
 
-    let setup = SharedSetup::new(test_case);
-    let all_objectives = build_objectives_from_inventory(&setup, vec![]);
+    let setup = SharedSetup::new_from_arc(test_case.clone());
+    let all_objectives = build_objectives_from_inventory(Some(&setup), default_inputs.clone());
     let all_names: Vec<String> = all_objectives
         .iter()
         .map(|o| o.name().to_string())
@@ -147,12 +141,7 @@ fn main() -> eyre::Result<()> {
         std::process::exit(1);
     }
 
-    let test_case2 = TestCase {
-        elf_contents: std::fs::read(&cli.elf)?,
-        memory_config,
-        max_trace_length: cli.max_trace_length,
-    };
-    let registry = SynthesisRegistry::from_inventory(Arc::new(test_case2), vec![]);
+    let registry = SynthesisRegistry::from_inventory(Some(test_case), default_inputs);
     let repo_dir = std::env::current_dir()?;
 
     let mut env = RealEnv {

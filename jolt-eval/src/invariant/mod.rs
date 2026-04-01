@@ -68,7 +68,12 @@ impl InvariantViolation {
 /// agent can produce counterexamples as JSON.
 pub trait Invariant: Send + Sync {
     type Setup: Send + Sync + 'static;
-    type Input: for<'a> Arbitrary<'a> + fmt::Debug + Clone + Serialize + DeserializeOwned + JsonSchema;
+    type Input: for<'a> Arbitrary<'a>
+        + fmt::Debug
+        + Clone
+        + Serialize
+        + DeserializeOwned
+        + JsonSchema;
 
     fn name(&self) -> &str;
 
@@ -94,10 +99,16 @@ pub trait Invariant: Send + Sync {
 /// Each built-in invariant module calls `inventory::submit!` with one of
 /// these, so all invariants are discoverable at runtime without manual
 /// registration.
+/// Factory function type for constructing an invariant from an optional
+/// test case and default inputs.
+pub type InvariantBuildFn = fn(Option<Arc<TestCase>>, Vec<u8>) -> Box<dyn DynInvariant>;
+
 pub struct InvariantEntry {
     pub name: &'static str,
     pub targets: fn() -> EnumSet<SynthesisTarget>,
-    pub build: fn(Arc<TestCase>, Vec<u8>) -> Box<dyn DynInvariant>,
+    /// Whether this invariant requires a compiled guest program.
+    pub needs_guest: bool,
+    pub build: InvariantBuildFn,
 }
 inventory::collect!(InvariantEntry);
 
@@ -141,11 +152,7 @@ pub trait DynInvariant: Send + Sync {
 
     /// Deserialize a JSON-encoded `Input` and check it against a
     /// previously-created setup (from [`dyn_setup`]).
-    fn check_json_input(
-        &self,
-        setup: &dyn Any,
-        json: &str,
-    ) -> CheckJsonResult;
+    fn check_json_input(&self, setup: &dyn Any, json: &str) -> CheckJsonResult;
 }
 
 /// Outcome of [`DynInvariant::check_json_input`].
@@ -208,11 +215,7 @@ impl<I: Invariant> DynInvariant for I {
         Box::new(Invariant::setup(self))
     }
 
-    fn check_json_input(
-        &self,
-        setup: &dyn Any,
-        json: &str,
-    ) -> CheckJsonResult {
+    fn check_json_input(&self, setup: &dyn Any, json: &str) -> CheckJsonResult {
         let setup = setup
             .downcast_ref::<I::Setup>()
             .expect("DynInvariant::check_json_input called with wrong setup type");

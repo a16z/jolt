@@ -10,7 +10,8 @@ inventory::submit! {
     InvariantEntry {
         name: "verifier_completeness",
         targets: || SynthesisTarget::Test | SynthesisTarget::Fuzz,
-        build: |tc, _inputs| Box::new(VerifierCompletenessInvariant::new(tc)),
+        needs_guest: true,
+        build: |tc, _inputs| Box::new(VerifierCompletenessInvariant::new(tc.unwrap())),
     }
 }
 

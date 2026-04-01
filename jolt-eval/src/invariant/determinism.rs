@@ -10,7 +10,8 @@ inventory::submit! {
     InvariantEntry {
         name: "determinism",
         targets: || SynthesisTarget::Test | SynthesisTarget::Fuzz,
-        build: |tc, _inputs| Box::new(DeterminismInvariant::new(tc)),
+        needs_guest: true,
+        build: |tc, _inputs| Box::new(DeterminismInvariant::new(tc.unwrap())),
     }
 }
 

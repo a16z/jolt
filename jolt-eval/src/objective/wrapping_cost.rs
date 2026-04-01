@@ -7,9 +7,10 @@ inventory::submit! {
     ObjectiveEntry {
         name: "wrapping_cost",
         direction: Direction::Minimize,
-        build: |setup, _inputs| Box::new(WrappingCostObjective::new(
+        needs_guest: true,
+        build: |s, _inputs| { let setup = s.unwrap(); Box::new(WrappingCostObjective::new(
             setup.test_case.clone(), setup.prover_preprocessing.clone(),
-        )),
+            )) },
     }
 }
 

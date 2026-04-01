@@ -9,9 +9,10 @@ inventory::submit! {
     ObjectiveEntry {
         name: "peak_rss",
         direction: Direction::Minimize,
-        build: |setup, inputs| Box::new(PeakRssObjective::new(
+        needs_guest: true,
+        build: |s, inputs| { let setup = s.unwrap(); Box::new(PeakRssObjective::new(
             setup.test_case.clone(), setup.prover_preprocessing.clone(), inputs,
-        )),
+            )) },
     }
 }
 

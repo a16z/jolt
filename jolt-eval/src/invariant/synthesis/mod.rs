@@ -20,10 +20,16 @@ impl SynthesisRegistry {
     }
 
     /// Build a registry from all `inventory`-registered invariants.
-    pub fn from_inventory(test_case: Arc<TestCase>, default_inputs: Vec<u8>) -> Self {
+    ///
+    /// Pass `None` to include only invariants that don't require a guest
+    /// program (those with `needs_guest: false`).
+    pub fn from_inventory(test_case: Option<Arc<TestCase>>, default_inputs: Vec<u8>) -> Self {
         let mut registry = Self::new();
         for entry in registered_invariants() {
-            registry.register((entry.build)(Arc::clone(&test_case), default_inputs.clone()));
+            if entry.needs_guest && test_case.is_none() {
+                continue;
+            }
+            registry.register((entry.build)(test_case.clone(), default_inputs.clone()));
         }
         registry
     }

@@ -68,7 +68,9 @@ pub trait AbstractObjective: Send + Sync {
 pub struct ObjectiveEntry {
     pub name: &'static str,
     pub direction: Direction,
-    pub build: fn(&SharedSetup, Vec<u8>) -> Box<dyn AbstractObjective>,
+    /// Whether this objective requires a compiled guest program.
+    pub needs_guest: bool,
+    pub build: fn(Option<&SharedSetup>, Vec<u8>) -> Box<dyn AbstractObjective>,
 }
 inventory::collect!(ObjectiveEntry);
 
@@ -78,11 +80,14 @@ pub fn registered_objectives() -> impl Iterator<Item = &'static ObjectiveEntry> 
 }
 
 /// Build all registered objectives from a [`SharedSetup`].
+///
+/// Pass `None` to include only objectives that don't require a guest.
 pub fn build_objectives_from_inventory(
-    setup: &SharedSetup,
+    setup: Option<&SharedSetup>,
     inputs: Vec<u8>,
 ) -> Vec<Box<dyn AbstractObjective>> {
     inventory::iter::<ObjectiveEntry>()
+        .filter(|entry| !entry.needs_guest || setup.is_some())
         .map(|entry| (entry.build)(setup, inputs.clone()))
         .collect()
 }
