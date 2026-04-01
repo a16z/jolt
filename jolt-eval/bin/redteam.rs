@@ -33,10 +33,6 @@ struct Cli {
     #[arg(long, default_value = "65536")]
     max_trace_length: usize,
 
-    /// Number of random fuzz inputs to run after each agent iteration
-    #[arg(long, default_value = "100")]
-    num_fuzz: usize,
-
     /// Maximum number of Claude agentic turns per iteration
     #[arg(long, default_value = "30")]
     max_turns: usize,
@@ -89,25 +85,29 @@ fn main() -> eyre::Result<()> {
 
     let config = RedTeamConfig {
         num_iterations: cli.iterations,
-        num_fuzz_per_iteration: cli.num_fuzz,
     };
 
     let agent = ClaudeCodeAgent::new(&cli.model, cli.max_turns);
     let repo_dir = std::env::current_dir()?;
 
     info!(
-        "Starting red team: invariant={}, iterations={}, model={}, fuzz_per_iter={}",
-        cli.invariant, cli.iterations, cli.model, cli.num_fuzz
+        "Starting red team: invariant={}, iterations={}, model={}",
+        cli.invariant, cli.iterations, cli.model
     );
 
     let result = auto_redteam(invariant, &config, &agent, &repo_dir);
 
     match result {
-        RedTeamResult::Violation { description, error } => {
+        RedTeamResult::Violation {
+            approach,
+            input_json,
+            error,
+        } => {
             println!();
             println!("==== VIOLATION FOUND ====");
-            println!("Approach: {description}");
-            println!("Error:    {error}");
+            println!("Approach:  {approach}");
+            println!("Input:     {input_json}");
+            println!("Error:     {error}");
             std::process::exit(1);
         }
         RedTeamResult::NoViolation { attempts } => {

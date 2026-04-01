@@ -120,7 +120,10 @@ fn main() -> eyre::Result<()> {
 
     let setup = SharedSetup::new(test_case);
     let all_objectives = build_objectives_from_inventory(&setup, vec![]);
-    let all_names: Vec<String> = all_objectives.iter().map(|o| o.name().to_string()).collect();
+    let all_names: Vec<String> = all_objectives
+        .iter()
+        .map(|o| o.name().to_string())
+        .collect();
 
     let filter_names: Option<Vec<String>> = cli
         .objectives
@@ -137,7 +140,10 @@ fn main() -> eyre::Result<()> {
     };
 
     if objectives.is_empty() {
-        eprintln!("No matching objectives. Available: {}", all_names.join(", "));
+        eprintln!(
+            "No matching objectives. Available: {}",
+            all_names.join(", ")
+        );
         std::process::exit(1);
     }
 
@@ -177,7 +183,7 @@ fn main() -> eyre::Result<()> {
             .filter(|a| a.invariants_passed
                 && a.measurements
                     .iter()
-                    .any(|(name, &val)| { result.baseline.get(name).is_some_and(|&b| val != b) }))
+                    .any(|(name, &val)| { result.baseline.get(name).is_some_and(|&b| val < b) }))
             .count(),
         result.attempts.len()
     );
@@ -188,7 +194,10 @@ fn main() -> eyre::Result<()> {
     Ok(())
 }
 
-fn print_measurements(directions: &HashMap<String, Direction>, measurements: &HashMap<String, f64>) {
+fn print_measurements(
+    directions: &HashMap<String, Direction>,
+    measurements: &HashMap<String, f64>,
+) {
     let mut names: Vec<_> = directions.keys().collect();
     names.sort();
     for name in names {

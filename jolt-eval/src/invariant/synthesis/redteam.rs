@@ -1,13 +1,17 @@
 use std::path::Path;
 
-use super::super::{DynInvariant, FailedAttempt, SynthesisTarget};
+use super::super::{extract_json, CheckJsonResult, DynInvariant, FailedAttempt, SynthesisTarget};
 use super::SynthesisRegistry;
 use crate::agent::{truncate, AgentHarness};
 
 /// Result of a red-team session.
 pub enum RedTeamResult {
-    /// Found a counterexample that violates the invariant.
-    Violation { description: String, error: String },
+    /// The agent produced a counterexample that violates the invariant.
+    Violation {
+        approach: String,
+        input_json: String,
+        error: String,
+    },
     /// All attempts failed to find a violation.
     NoViolation { attempts: Vec<FailedAttempt> },
 }
@@ -15,15 +19,12 @@ pub enum RedTeamResult {
 /// Configuration for an AI red-team session.
 pub struct RedTeamConfig {
     pub num_iterations: usize,
-    /// Number of random fuzz inputs to run after each agent attempt.
-    pub num_fuzz_per_iteration: usize,
 }
 
 impl Default for RedTeamConfig {
     fn default() -> Self {
         Self {
             num_iterations: 10,
-            num_fuzz_per_iteration: 100,
         }
     }
 }
@@ -31,11 +32,14 @@ impl Default for RedTeamConfig {
 /// Run an AI red-team session against a single invariant.
 ///
 /// Each iteration:
-/// 1. Builds a prompt from the invariant description + past failed attempts
-/// 2. Invokes the agent (via the [`AgentHarness`] trait) to analyze the code
-/// 3. Runs the invariant's seed corpus + random fuzz inputs
-/// 4. If a violation is found, returns immediately
-/// 5. Otherwise records the failed attempt and continues
+/// 1. Builds a prompt that includes the invariant description, a JSON
+///    example of the `Input` type, and past failed attempts.
+/// 2. Invokes the agent (via [`AgentHarness`]) to analyze the code and
+///    produce a candidate counterexample as a JSON object.
+/// 3. Extracts the JSON from the agent's response, deserializes it into
+///    the invariant's `Input` type, and runs [`Invariant::check`] on it.
+/// 4. If the check fails, the counterexample is genuine — return it.
+/// 5. Otherwise records the failed attempt and continues.
 ///
 /// The `agent` is responsible for its own isolation (e.g. worktrees).
 pub fn auto_redteam(
@@ -45,6 +49,8 @@ pub fn auto_redteam(
     repo_dir: &Path,
 ) -> RedTeamResult {
     let description = invariant.description();
+    let input_example = invariant.input_json_example();
+    let setup = invariant.dyn_setup();
     let mut failed_attempts = Vec::new();
 
     for iteration in 0..config.num_iterations {
@@ -55,40 +61,66 @@ pub fn auto_redteam(
             invariant.name()
         );
 
-        let prompt = build_redteam_prompt(&description, &failed_attempts);
+        let prompt = build_redteam_prompt(&description, input_example.as_deref(), &failed_attempts);
 
-        match agent.invoke(repo_dir, &prompt) {
-            Ok(response) => {
-                let approach = truncate(&response.text, 2000).to_string();
-                tracing::info!(
-                    "Agent response ({} chars): {}...",
-                    approach.len(),
-                    truncate(&approach, 200)
-                );
-
-                // Run the invariant's seed corpus + random fuzz inputs
-                let check_results = invariant.run_checks(config.num_fuzz_per_iteration);
-                let violation = check_results.iter().find(|r| r.is_err());
-
-                if let Some(Err(e)) = violation {
-                    return RedTeamResult::Violation {
-                        description: approach,
-                        error: e.to_string(),
-                    };
-                }
-
-                failed_attempts.push(FailedAttempt {
-                    description: format!("Iteration {}", iteration + 1),
-                    approach,
-                    failure_reason: "Invariant check passed for all inputs".to_string(),
-                });
-            }
+        let response = match agent.invoke(repo_dir, &prompt) {
+            Ok(r) => r,
             Err(e) => {
                 tracing::warn!("Agent invocation failed: {e}");
                 failed_attempts.push(FailedAttempt {
                     description: format!("Iteration {}", iteration + 1),
                     approach: "Agent invocation failed".to_string(),
                     failure_reason: e.to_string(),
+                });
+                continue;
+            }
+        };
+
+        let approach = truncate(&response.text, 2000).to_string();
+        tracing::info!(
+            "Agent response ({} chars): {}...",
+            approach.len(),
+            truncate(&approach, 200)
+        );
+
+        let Some(json) = extract_json(&response.text) else {
+            tracing::info!("No JSON found in agent response");
+            failed_attempts.push(FailedAttempt {
+                description: format!("Iteration {}", iteration + 1),
+                approach,
+                failure_reason: "Agent response did not contain a JSON counterexample".to_string(),
+            });
+            continue;
+        };
+
+        tracing::info!("Extracted JSON input: {}", truncate(&json, 200));
+
+        match invariant.check_json_input(&*setup, &json) {
+            CheckJsonResult::Violation(violation) => {
+                tracing::info!("Counterexample CONFIRMED: {violation}");
+                return RedTeamResult::Violation {
+                    approach,
+                    input_json: json,
+                    error: violation.to_string(),
+                };
+            }
+            CheckJsonResult::Pass => {
+                failed_attempts.push(FailedAttempt {
+                    description: format!("Iteration {}", iteration + 1),
+                    approach,
+                    failure_reason: format!(
+                        "Candidate input did not violate the invariant: {json}"
+                    ),
+                });
+            }
+            CheckJsonResult::BadInput(parse_err) => {
+                tracing::info!("Agent produced unparseable input: {parse_err}");
+                failed_attempts.push(FailedAttempt {
+                    description: format!("Iteration {}", iteration + 1),
+                    approach,
+                    failure_reason: format!(
+                        "Could not deserialize agent JSON into Input type: {parse_err}"
+                    ),
                 });
             }
         }
@@ -101,13 +133,14 @@ pub fn auto_redteam(
 
 fn build_redteam_prompt(
     invariant_description: &str,
+    input_example: Option<&str>,
     failed_attempts: &[FailedAttempt],
 ) -> String {
     let mut prompt = String::new();
 
     prompt.push_str(
         "You are a security researcher red-teaming a zkVM (Jolt). \
-         Your goal is to find an input or scenario that VIOLATES the following invariant.\n\n",
+         Your goal is to find a concrete input that VIOLATES the following invariant.\n\n",
     );
 
     prompt.push_str("## Invariant\n\n");
@@ -120,22 +153,30 @@ fn build_redteam_prompt(
             invariant is enforced.\n\
          2. Look for edge cases, off-by-one errors, missing checks, or assumptions \
             that could be violated.\n\
-         3. If you find a potential weakness, describe it clearly.\n\
-         4. Try to construct a concrete input or scenario that triggers the violation.\n\
-         5. Summarize your approach and findings.\n\n\
-         Focus on finding REAL bugs, not theoretical concerns. The invariant will be \
-         mechanically checked after your analysis, so only genuine violations count.\n\n",
+         3. Construct a concrete JSON input that you believe will trigger a violation.\n\
+         4. The input will be deserialized and checked mechanically — only genuine \
+            violations count.\n\n",
     );
 
-    if !failed_attempts.is_empty() {
-        prompt.push_str("## Previous Failed Attempts\n\n");
+    if let Some(example) = input_example {
+        prompt.push_str("## Input format\n\n");
         prompt.push_str(
-            "The following approaches have already been tried and did NOT find a violation. \
-             Try a fundamentally different approach.\n\n",
+            "The counterexample must be a JSON object matching this schema. \
+             Here is an example of a valid input:\n\n```json\n",
+        );
+        prompt.push_str(example);
+        prompt.push_str("\n```\n\n");
+    }
+
+    if !failed_attempts.is_empty() {
+        prompt.push_str("## Previous failed attempts\n\n");
+        prompt.push_str(
+            "The following approaches have already been tried and did NOT produce a \
+             valid counterexample. Try a fundamentally different approach.\n\n",
         );
         for attempt in failed_attempts {
             prompt.push_str(&format!(
-                "- **{}**: {}\n  Reason for failure: {}\n",
+                "- **{}**: {}\n  Failure: {}\n",
                 attempt.description, attempt.approach, attempt.failure_reason
             ));
         }
@@ -143,11 +184,12 @@ fn build_redteam_prompt(
     }
 
     prompt.push_str(
-        "## Output\n\n\
-         End your response with a clear summary of:\n\
-         - What you investigated\n\
-         - What you found (if anything)\n\
-         - Whether you believe the invariant holds or can be violated\n",
+        "## Required output\n\n\
+         End your response with a JSON code block containing your candidate \
+         counterexample. Use exactly this format:\n\n\
+         ```json\n{ ... }\n```\n\n\
+         The JSON must match the input schema above. If after thorough analysis \
+         you believe no violation exists, still provide your best-effort candidate.\n",
     );
 
     prompt

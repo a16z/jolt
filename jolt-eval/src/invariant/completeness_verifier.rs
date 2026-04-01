@@ -28,7 +28,7 @@ pub struct VerifierCompletenessSetup {
 }
 
 /// Program inputs for completeness testing.
-#[derive(Debug, Clone, Arbitrary)]
+#[derive(Debug, Clone, Arbitrary, serde::Serialize, serde::Deserialize)]
 pub struct ProgramInputs {
     pub data: Vec<u8>,
 }

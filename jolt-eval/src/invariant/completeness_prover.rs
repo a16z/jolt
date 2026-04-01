@@ -26,7 +26,7 @@ pub struct ProverCompletenessSetup {
 }
 
 /// Program inputs for prover completeness testing.
-#[derive(Debug, Clone, Arbitrary)]
+#[derive(Debug, Clone, Arbitrary, serde::Serialize, serde::Deserialize)]
 pub struct ProverInputs {
     pub data: Vec<u8>,
 }

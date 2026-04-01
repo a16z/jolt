@@ -6,12 +6,15 @@ pub mod soundness;
 pub mod synthesis;
 pub mod zk_consistency;
 
+use std::any::Any;
 use std::fmt;
 use std::sync::Arc;
 
 use arbitrary::Arbitrary;
 use enumset::{EnumSet, EnumSetType};
 use rand::RngCore;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 
 use crate::TestCase;
 
@@ -60,10 +63,11 @@ impl InvariantViolation {
 
 /// Core invariant trait. Each invariant defines a setup phase (run once)
 /// and a check phase (run per input). The `Input` type must support
-/// `Arbitrary` for fuzzing and random testing.
+/// `Arbitrary` for fuzzing, and `Serialize`/`DeserializeOwned` so an AI
+/// agent can produce counterexamples as JSON.
 pub trait Invariant: Send + Sync {
-    type Setup;
-    type Input: for<'a> Arbitrary<'a> + fmt::Debug + Clone;
+    type Setup: 'static;
+    type Input: for<'a> Arbitrary<'a> + fmt::Debug + Clone + Serialize + DeserializeOwned;
 
     fn name(&self) -> &str;
 
@@ -115,7 +119,8 @@ pub struct FailedAttempt {
     pub failure_reason: String,
 }
 
-/// Object-safe wrapper for `Invariant`, enabling heterogeneous collections.
+/// Object-safe wrapper for `Invariant`, enabling heterogeneous collections
+/// and JSON-based counterexample checking.
 pub trait DynInvariant: Send + Sync {
     fn name(&self) -> &str;
     fn description(&self) -> String;
@@ -123,6 +128,30 @@ pub trait DynInvariant: Send + Sync {
 
     /// Run seed corpus checks followed by `num_random` randomly-generated inputs.
     fn run_checks(&self, num_random: usize) -> Vec<Result<(), InvariantViolation>>;
+
+    /// Return a JSON example of the `Input` type (from the seed corpus).
+    fn input_json_example(&self) -> Option<String>;
+
+    /// Create the (type-erased) setup. Expensive — call once and reuse.
+    fn dyn_setup(&self) -> Box<dyn Any>;
+
+    /// Deserialize a JSON-encoded `Input` and check it against a
+    /// previously-created setup (from [`dyn_setup`]).
+    fn check_json_input(
+        &self,
+        setup: &dyn Any,
+        json: &str,
+    ) -> CheckJsonResult;
+}
+
+/// Outcome of [`DynInvariant::check_json_input`].
+pub enum CheckJsonResult {
+    /// The input was valid and the invariant held.
+    Pass,
+    /// The input was valid and the invariant was violated.
+    Violation(InvariantViolation),
+    /// The JSON could not be deserialized into the expected `Input` type.
+    BadInput(String),
 }
 
 impl<I: Invariant> DynInvariant for I {
@@ -158,6 +187,35 @@ impl<I: Invariant> DynInvariant for I {
 
         results
     }
+
+    fn input_json_example(&self) -> Option<String> {
+        self.seed_corpus()
+            .into_iter()
+            .next()
+            .and_then(|input| serde_json::to_string_pretty(&input).ok())
+    }
+
+    fn dyn_setup(&self) -> Box<dyn Any> {
+        Box::new(Invariant::setup(self))
+    }
+
+    fn check_json_input(
+        &self,
+        setup: &dyn Any,
+        json: &str,
+    ) -> CheckJsonResult {
+        let setup = setup
+            .downcast_ref::<I::Setup>()
+            .expect("DynInvariant::check_json_input called with wrong setup type");
+        let input: I::Input = match serde_json::from_str(json) {
+            Ok(v) => v,
+            Err(e) => return CheckJsonResult::BadInput(e.to_string()),
+        };
+        match self.check(setup, input) {
+            Ok(()) => CheckJsonResult::Pass,
+            Err(v) => CheckJsonResult::Violation(v),
+        }
+    }
 }
 
 /// Result of running an invariant check suite.
@@ -192,4 +250,51 @@ impl InvariantReport {
             violations,
         }
     }
+}
+
+/// Try to extract a JSON object from free-form text. Looks for a
+/// ````json` code block first, then falls back to the last `{…}` that
+/// parses as valid JSON.
+pub fn extract_json(text: &str) -> Option<String> {
+    // 1. ```json ... ```
+    if let Some(start) = text.find("```json") {
+        let json_start = start + "```json".len();
+        if let Some(end) = text[json_start..].find("```") {
+            let candidate = text[json_start..json_start + end].trim();
+            if serde_json::from_str::<serde_json::Value>(candidate).is_ok() {
+                return Some(candidate.to_string());
+            }
+        }
+    }
+
+    // 2. Last balanced {…} that is valid JSON
+    let bytes = text.as_bytes();
+    let mut i = bytes.len();
+    while i > 0 {
+        i -= 1;
+        if bytes[i] == b'}' {
+            let end = i;
+            let mut depth: i32 = 0;
+            let mut j = end + 1;
+            while j > 0 {
+                j -= 1;
+                match bytes[j] {
+                    b'}' => depth += 1,
+                    b'{' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            let candidate = &text[j..=end];
+                            if serde_json::from_str::<serde_json::Value>(candidate).is_ok() {
+                                return Some(candidate.to_string());
+                            }
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    None
 }

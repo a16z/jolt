@@ -201,12 +201,12 @@ fn mock_with_diff() {
 
 #[test]
 fn redteam_no_violation_when_invariant_always_passes() {
+    // Agent produces valid JSON, but the invariant always passes
     let invariant = AlwaysPassInvariant;
-    let agent = MockAgent::always_ok("I analyzed the code and found nothing.");
-    let config = RedTeamConfig {
-        num_iterations: 3,
-        num_fuzz_per_iteration: 5,
-    };
+    let agent = MockAgent::always_ok(
+        "I analyzed the code. Here is my candidate:\n```json\n42\n```",
+    );
+    let config = RedTeamConfig { num_iterations: 3 };
 
     let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
@@ -214,7 +214,7 @@ fn redteam_no_violation_when_invariant_always_passes() {
         RedTeamResult::NoViolation { attempts } => {
             assert_eq!(attempts.len(), 3);
             for a in &attempts {
-                assert_eq!(a.failure_reason, "Invariant check passed for all inputs");
+                assert!(a.failure_reason.contains("did not violate"));
             }
         }
         RedTeamResult::Violation { .. } => {
@@ -222,23 +222,25 @@ fn redteam_no_violation_when_invariant_always_passes() {
         }
     }
 
-    // Agent should have been invoked exactly 3 times
     assert_eq!(agent.recorded_prompts().len(), 3);
 }
 
 #[test]
-fn redteam_finds_violation_immediately_when_invariant_always_fails() {
+fn redteam_finds_violation_when_agent_produces_bad_input() {
+    // AlwaysFailInvariant rejects every input. Agent produces valid JSON.
     let invariant = AlwaysFailInvariant;
-    let agent = MockAgent::always_ok("Trying something.");
-    let config = RedTeamConfig {
-        num_iterations: 10,
-        num_fuzz_per_iteration: 0, // seed corpus alone triggers failure
-    };
+    let agent = MockAgent::always_ok(
+        "I found a bug!\n```json\n99\n```",
+    );
+    let config = RedTeamConfig { num_iterations: 10 };
 
     let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
     match result {
-        RedTeamResult::Violation { error, .. } => {
+        RedTeamResult::Violation {
+            input_json, error, ..
+        } => {
+            assert_eq!(input_json, "99");
             assert!(error.contains("always fails"));
         }
         RedTeamResult::NoViolation { .. } => {
@@ -246,31 +248,50 @@ fn redteam_finds_violation_immediately_when_invariant_always_fails() {
         }
     }
 
-    // Should stop after first iteration (found violation)
+    // Should stop after first iteration
     assert_eq!(agent.recorded_prompts().len(), 1);
 }
 
 #[test]
-fn redteam_finds_violation_via_fuzz_inputs() {
+fn redteam_finds_violation_with_targeted_input() {
+    // FailsOnZeroInvariant only fails for input 0.
+    // Agent produces exactly 0.
     let invariant = FailsOnZeroInvariant;
-    let agent = MockAgent::always_ok("Analyzing...");
-    let config = RedTeamConfig {
-        num_iterations: 3,
-        // High fuzz count makes it very likely a 0 byte appears
-        num_fuzz_per_iteration: 1000,
-    };
+    let agent = MockAgent::always_ok("Try zero:\n```json\n0\n```");
+    let config = RedTeamConfig { num_iterations: 5 };
 
     let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
-    // With 1000 random u8 inputs per iteration, the chance of never hitting 0
-    // across 3 iterations is (255/256)^3000 ≈ 0.  So we expect a violation.
     match result {
-        RedTeamResult::Violation { error, .. } => {
+        RedTeamResult::Violation {
+            input_json, error, ..
+        } => {
+            assert_eq!(input_json, "0");
             assert!(error.contains("zero"));
         }
         RedTeamResult::NoViolation { .. } => {
-            panic!("Expected violation for FailsOnZeroInvariant with high fuzz count");
+            panic!("Expected violation for FailsOnZeroInvariant with input 0");
         }
+    }
+}
+
+#[test]
+fn redteam_no_violation_when_agent_misses() {
+    // FailsOnZeroInvariant only fails for 0, but agent guesses 1.
+    let invariant = FailsOnZeroInvariant;
+    let agent = MockAgent::always_ok("Trying 1:\n```json\n1\n```");
+    let config = RedTeamConfig { num_iterations: 2 };
+
+    let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
+
+    match result {
+        RedTeamResult::NoViolation { attempts } => {
+            assert_eq!(attempts.len(), 2);
+            for a in &attempts {
+                assert!(a.failure_reason.contains("did not violate"));
+            }
+        }
+        _ => panic!("Expected NoViolation since agent never guesses 0"),
     }
 }
 
@@ -278,10 +299,7 @@ fn redteam_finds_violation_via_fuzz_inputs() {
 fn redteam_handles_agent_errors_gracefully() {
     let invariant = AlwaysPassInvariant;
     let agent = MockAgent::always_err("network timeout");
-    let config = RedTeamConfig {
-        num_iterations: 3,
-        num_fuzz_per_iteration: 0,
-    };
+    let config = RedTeamConfig { num_iterations: 3 };
 
     let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
@@ -300,13 +318,50 @@ fn redteam_handles_agent_errors_gracefully() {
 }
 
 #[test]
+fn redteam_handles_no_json_in_response() {
+    let invariant = AlwaysPassInvariant;
+    let agent = MockAgent::always_ok("I looked around but have no candidate to offer.");
+    let config = RedTeamConfig { num_iterations: 1 };
+
+    let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
+
+    match result {
+        RedTeamResult::NoViolation { attempts } => {
+            assert_eq!(attempts.len(), 1);
+            assert!(attempts[0].failure_reason.contains("did not contain a JSON"));
+        }
+        _ => panic!("Expected NoViolation"),
+    }
+}
+
+#[test]
+fn redteam_handles_invalid_json_schema() {
+    // Agent produces JSON, but it doesn't match the Input type (u8)
+    let invariant = AlwaysPassInvariant;
+    let agent = MockAgent::always_ok(
+        "Here:\n```json\n{\"not_a_u8\": true}\n```",
+    );
+    let config = RedTeamConfig { num_iterations: 1 };
+
+    let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
+
+    // A deserialization failure is NOT a real violation — it's a BadInput
+    match result {
+        RedTeamResult::NoViolation { attempts } => {
+            assert_eq!(attempts.len(), 1);
+            assert!(attempts[0].failure_reason.contains("Could not deserialize"));
+        }
+        RedTeamResult::Violation { .. } => {
+            panic!("Parse error should not be treated as a violation");
+        }
+    }
+}
+
+#[test]
 fn redteam_prompt_includes_invariant_description() {
     let invariant = AlwaysPassInvariant;
-    let agent = MockAgent::always_ok("ok");
-    let config = RedTeamConfig {
-        num_iterations: 1,
-        num_fuzz_per_iteration: 0,
-    };
+    let agent = MockAgent::always_ok("```json\n0\n```");
+    let config = RedTeamConfig { num_iterations: 1 };
 
     auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
@@ -317,27 +372,32 @@ fn redteam_prompt_includes_invariant_description() {
 }
 
 #[test]
+fn redteam_prompt_includes_input_example() {
+    let invariant = AlwaysPassInvariant;
+    let agent = MockAgent::always_ok("```json\n0\n```");
+    let config = RedTeamConfig { num_iterations: 1 };
+
+    auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
+
+    let prompts = agent.recorded_prompts();
+    // Prompt should include a JSON example from the seed corpus
+    assert!(prompts[0].contains("Input format"));
+    assert!(prompts[0].contains("```json"));
+}
+
+#[test]
 fn redteam_prompt_includes_failed_attempts_after_first_iteration() {
     let invariant = AlwaysPassInvariant;
-    let agent = MockAgent::always_ok("I tried X but it didn't work.");
-    let config = RedTeamConfig {
-        num_iterations: 3,
-        num_fuzz_per_iteration: 0,
-    };
+    let agent = MockAgent::always_ok("Analysis.\n```json\n42\n```");
+    let config = RedTeamConfig { num_iterations: 3 };
 
     auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
     let prompts = agent.recorded_prompts();
     assert_eq!(prompts.len(), 3);
 
-    // First prompt should NOT contain "Previous Failed Attempts"
-    assert!(!prompts[0].contains("Previous Failed Attempts"));
-
-    // Second prompt should contain the first attempt's approach
-    assert!(prompts[1].contains("Previous Failed Attempts"));
-    assert!(prompts[1].contains("I tried X but it didn't work."));
-
-    // Third prompt should contain both prior attempts
+    assert!(!prompts[0].contains("Previous failed attempts"));
+    assert!(prompts[1].contains("Previous failed attempts"));
     assert!(prompts[2].contains("Iteration 1"));
     assert!(prompts[2].contains("Iteration 2"));
 }
@@ -346,10 +406,7 @@ fn redteam_prompt_includes_failed_attempts_after_first_iteration() {
 fn redteam_zero_iterations_returns_immediately() {
     let invariant = AlwaysPassInvariant;
     let agent = MockAgent::always_ok("should not be called");
-    let config = RedTeamConfig {
-        num_iterations: 0,
-        num_fuzz_per_iteration: 0,
-    };
+    let config = RedTeamConfig { num_iterations: 0 };
 
     let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
@@ -368,19 +425,16 @@ fn redteam_mixed_agent_responses() {
     let invariant = AlwaysPassInvariant;
     let agent = MockAgent::from_responses(vec![
         Ok(AgentResponse {
-            text: "first try".into(),
+            text: "first try\n```json\n1\n```".into(),
             diff: None,
         }),
         Err(AgentError::new("transient error")),
         Ok(AgentResponse {
-            text: "third try".into(),
+            text: "third try\n```json\n3\n```".into(),
             diff: None,
         }),
     ]);
-    let config = RedTeamConfig {
-        num_iterations: 3,
-        num_fuzz_per_iteration: 0,
-    };
+    let config = RedTeamConfig { num_iterations: 3 };
 
     let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
@@ -464,14 +518,15 @@ fn custom_harness_plugs_into_auto_redteam() {
     let harness = FirstSuccessHarness {
         agents: vec![
             Box::new(MockAgent::always_err("agent 1 down")),
-            Box::new(MockAgent::always_ok("agent 2 found nothing")),
+            Box::new(MockAgent::always_ok(
+                "agent 2 found nothing\n```json\n7\n```",
+            )),
         ],
     };
 
     let invariant = AlwaysPassInvariant;
     let config = RedTeamConfig {
         num_iterations: 2,
-        num_fuzz_per_iteration: 0,
     };
 
     let result = auto_redteam(&invariant, &config, &harness, Path::new("/tmp"));
