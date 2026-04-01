@@ -141,7 +141,7 @@ jobs:
 
       - name: Cache wasm-pack
         id: cache-wasm-pack
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cargo/bin/wasm-pack
           key: wasm-pack-0.13.1
@@ -201,7 +201,7 @@ jobs:
         run: |
           set -euo pipefail
           for pkg in ${{ steps.discover_inlines.outputs.pkgs }}; do
-            cargo nextest run --features host -p "$pkg"
+            cargo nextest run --features host -p "$pkg" --no-tests=pass
           done
 
   test-sdk-verifier:

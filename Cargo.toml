@@ -30,6 +30,7 @@ members = [
     "jolt-platform",
     "jolt-sdk",
     "jolt-sdk/macros",
+    "jolt-inlines/sdk",
     "jolt-inlines/sha2",
     "jolt-inlines/keccak256",
     "jolt-inlines/blake2",
@@ -37,6 +38,7 @@ members = [
     "jolt-inlines/bigint",
     "jolt-inlines/secp256k1",
     "jolt-inlines/grumpkin",
+    "jolt-inlines/p256",
     "examples/btreemap/host",
     "examples/btreemap/guest",
     "examples/collatz",
@@ -45,6 +47,8 @@ members = [
     "examples/fibonacci/guest",
     "examples/secp256k1-ecdsa-verify",
     "examples/secp256k1-ecdsa-verify/guest",
+    "examples/p256-ecdsa-verify",
+    "examples/p256-ecdsa-verify/guest",
     "examples/sha2-ex",
     "examples/sha2-ex/guest",
     "examples/sha3-ex",
@@ -159,6 +163,7 @@ ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "de
     "derive",
 ] }
 ark-secp256k1 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
+ark-secp256r1 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
 ark-serialize-derive = { version = "0.5.0", default-features = false }
 ark-std = { version = "0.5.0", default-features = false }
 sha2 = "0.10"
@@ -239,11 +244,12 @@ getrandom_v03 = { version = "0.3.3", package = "getrandom", default-features = f
 # Build and Development
 ctor = { version = "0.6" }
 hex-literal = "0.4.1"
+inventory = "0.3"
 hex = "0.4.3"
 spinners = { version = "4.2.0", default-features = false }
 
 # Testing
-criterion = { version = "0.5.1", features = ["html_reports"] }
+criterion = { version = "0.8.2", features = ["html_reports"] }
 iai-callgrind = "0.16.1"
 serial_test = "3.4.0"
 
@@ -272,6 +278,7 @@ jolt-core = { path = "./jolt-core", default-features = false }
 jolt-platform = { path = "./jolt-platform", default-features = false }
 jolt-sdk = { path = "./jolt-sdk", default-features = false }
 jolt-sdk-macros = { path = "./jolt-sdk/macros" }
+jolt-inlines-sdk = { path = "./jolt-inlines/sdk", default-features = false }
 jolt-inlines-sha2 = { path = "./jolt-inlines/sha2", default-features = false }
 jolt-inlines-keccak256 = { path = "./jolt-inlines/keccak256", default-features = false }
 jolt-inlines-blake2 = { path = "./jolt-inlines/blake2", default-features = false }
@@ -279,3 +286,4 @@ jolt-inlines-blake3 = { path = "./jolt-inlines/blake3", default-features = false
 jolt-inlines-bigint = { path = "./jolt-inlines/bigint", default-features = false }
 jolt-inlines-secp256k1 = { path = "./jolt-inlines/secp256k1", default-features = false }
 jolt-inlines-grumpkin = { path = "./jolt-inlines/grumpkin", default-features = false }
+jolt-inlines-p256 = { path = "./jolt-inlines/p256", default-features = false }

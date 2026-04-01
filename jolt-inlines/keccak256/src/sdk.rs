@@ -315,7 +315,10 @@ fn absorb_final(state: &mut [u64; 25], input: &[u8], len: usize) {
 /// # Safety
 /// - `state` must be a valid pointer to 200 bytes of readable and writable memory.
 /// - The pointer must be properly aligned for u64 access (8-byte alignment).
-#[cfg(not(feature = "host"))]
+#[cfg(all(
+    not(feature = "host"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
 pub(crate) unsafe fn keccak_f(state: *mut u64) {
     use crate::{INLINE_OPCODE, KECCAK256_FUNCT3, KECCAK256_FUNCT7};
     core::arch::asm!(
@@ -348,6 +351,14 @@ pub(crate) unsafe fn keccak_f(state: *mut u64) {
             .try_into()
             .expect("State slice was not 25 words"),
     );
+}
+
+#[cfg(all(
+    not(feature = "host"),
+    not(any(target_arch = "riscv32", target_arch = "riscv64"))
+))]
+pub(crate) unsafe fn keccak_f(_state: *mut u64) {
+    panic!("keccak_f requires RISC-V target or host feature");
 }
 
 #[cfg(all(test, feature = "host"))]

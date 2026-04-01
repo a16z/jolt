@@ -23,6 +23,8 @@ pub fn compute_mles_product_sum<F: JoltField>(
     // interpolation logic centralized.
     let sum_evals: Vec<F> = match d {
         // Fully stack-allocated paths based on optimized interpolation kernels.
+        4 => compute_mles_product_sum_evals_d4(mles, eq_poly),
+        8 => compute_mles_product_sum_evals_d8(mles, eq_poly),
         16 => compute_mles_product_sum_evals_d16(mles, eq_poly),
         32 => compute_mles_product_sum_evals_d32(mles, eq_poly),
         // Generic split-eq fold for all other arities.
@@ -344,8 +346,7 @@ pub fn eval_linear_prod_accumulate<F: JoltField>(
         3 => eval_prod_3_accumulate(pairs.try_into().unwrap(), sums),
         5 => eval_prod_5_accumulate(pairs.try_into().unwrap(), sums),
         9 => eval_prod_9_accumulate(pairs.try_into().unwrap(), sums),
-        // Implement more efficient than naive if these ever get used.
-        4 | 6 | 7 | 8 => unimplemented!("n_pairs = {}", pairs.len()),
+        4 | 6 | 7 | 8 => product_eval_univariate_naive_accumulate(pairs, sums),
         _ => product_eval_univariate_naive_accumulate(pairs, sums),
     }
 }

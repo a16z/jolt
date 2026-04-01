@@ -377,6 +377,16 @@ impl<
             return Err(ProofVerifyError::OutputTooLarge);
         }
 
+        // Validate trace_length: must be a power of 2 and within the preprocessed bound
+        if !proof.trace_length.is_power_of_two()
+            || proof.trace_length > preprocessing.shared.max_padded_trace_length
+        {
+            return Err(ProofVerifyError::InvalidTraceLength(
+                proof.trace_length,
+                preprocessing.shared.max_padded_trace_length,
+            ));
+        }
+
         // truncate trailing zeros on device outputs
         program_io.outputs.truncate(
             program_io
@@ -474,6 +484,9 @@ impl<
             self.proof.ram_K,
             self.proof.trace_length,
             self.preprocessing.shared.program_meta.entry_address,
+            &self.proof.rw_config,
+            &self.proof.one_hot_config,
+            self.proof.dory_layout,
             &mut self.transcript,
         );
 

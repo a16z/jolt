@@ -33,7 +33,10 @@ pub fn bigint256_mul(lhs: [u64; INPUT_LIMBS], rhs: [u64; INPUT_LIMBS]) -> [u64; 
 /// - `a` and `b` must point to at least 32 bytes of readable memory
 /// - `result` must point to at least 64 bytes of writable memory
 /// - The memory regions may overlap (result can be the same as a or b)
-#[cfg(not(feature = "host"))]
+#[cfg(all(
+    not(feature = "host"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
 pub unsafe fn bigint256_mul_inline(a: *const u64, b: *const u64, result: *mut u64) {
     use super::{BIGINT256_MUL_FUNCT3, BIGINT256_MUL_FUNCT7, INLINE_OPCODE};
     core::arch::asm!(
@@ -48,12 +51,17 @@ pub unsafe fn bigint256_mul_inline(a: *const u64, b: *const u64, result: *mut u6
     );
 }
 
+/// # Safety
+/// Always panics — stub for unsupported platform.
+#[cfg(all(
+    not(feature = "host"),
+    not(any(target_arch = "riscv32", target_arch = "riscv64"))
+))]
+pub unsafe fn bigint256_mul_inline(_a: *const u64, _b: *const u64, _result: *mut u64) {
+    panic!("bigint256_mul_inline requires RISC-V target or host feature");
+}
+
 /// Low-level interface to the BigInt multiplication inline instruction (host version)
-///
-/// # Arguments
-/// * `a` - Pointer to 4 u64 words (32 bytes) for first operand
-/// * `b` - Pointer to 4 u64 words (32 bytes) for second operand
-/// * `result` - Pointer to 8 u64 words (64 bytes) where result will be written
 ///
 /// # Safety
 /// - All pointers must be valid and properly aligned for u64 access (8-byte alignment)

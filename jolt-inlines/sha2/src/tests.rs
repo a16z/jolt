@@ -3,8 +3,7 @@ use tracer::emulator::cpu::Xlen;
 use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
 pub fn create_sha256_harness(xlen: Xlen) -> InlineTestHarness {
-    // SHA256: rs1=state/output, rs2=input (same as Blake/Keccak)
-    let layout = InlineMemoryLayout::single_input(64, 32); // 64-byte block, 32-byte state
+    let layout = InlineMemoryLayout::single_input(64, 32);
     InlineTestHarness::new(layout, xlen)
 }
 

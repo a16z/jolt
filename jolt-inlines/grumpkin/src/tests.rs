@@ -1,5 +1,5 @@
 mod sequence_tests {
-    use crate::sdk::GrumpkinPoint;
+    use crate::sdk::{GrumpkinPoint, GrumpkinPointExt};
     use crate::{
         GRUMPKIN_DIVQ_ADV_FUNCT3, GRUMPKIN_DIVR_ADV_FUNCT3, GRUMPKIN_FUNCT7, INLINE_OPCODE,
     };
@@ -21,6 +21,7 @@ mod sequence_tests {
          .0;
         // rs1=input1 (32 bytes), rs2=input2 (32 bytes), rs3=output (32 bytes)
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
+
         let mut harness = InlineTestHarness::new(layout, Xlen::Bit64);
         harness.setup_registers();
         harness.load_input64(a);
@@ -68,6 +69,7 @@ mod sequence_tests {
         .0
          .0;
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
+
         let mut harness = InlineTestHarness::new(layout, Xlen::Bit64);
         harness.setup_registers();
         harness.load_input64(a);

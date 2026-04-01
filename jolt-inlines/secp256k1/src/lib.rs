@@ -57,6 +57,8 @@ pub mod sdk;
 pub use sdk::*;
 
 #[cfg(feature = "host")]
+pub mod glv;
+#[cfg(feature = "host")]
 pub mod sequence_builder;
 
 #[cfg(feature = "host")]

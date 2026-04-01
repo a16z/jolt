@@ -3,9 +3,7 @@ use tracer::emulator::cpu::Xlen;
 use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
 pub fn create_blake2_harness() -> InlineTestHarness {
-    // Blake2 needs message block (128 bytes) + counter (8 bytes) + flag (8 bytes) contiguous at rs2
-    // and state (64 bytes) at rs1
-    let layout = InlineMemoryLayout::single_input(144, 64); // 144 bytes for message+params, 64-byte state
+    let layout = InlineMemoryLayout::single_input(144, 64);
     InlineTestHarness::new(layout, Xlen::Bit64)
 }
 

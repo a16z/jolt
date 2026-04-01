@@ -13,8 +13,7 @@ pub struct KeccakTestCase {
 }
 
 pub fn create_keccak_harness(xlen: Xlen) -> InlineTestHarness {
-    // Keccak256: rs1=state/output, rs2=input
-    let layout = InlineMemoryLayout::single_input(136, 200); // 136-byte block, 200-byte state
+    let layout = InlineMemoryLayout::single_input(136, 200);
     InlineTestHarness::new(layout, xlen)
 }
 

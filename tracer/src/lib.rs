@@ -26,7 +26,7 @@ pub mod utils;
 
 pub use common::jolt_device::JoltDevice;
 pub use cpu::{advice_tape_read, advice_tape_remaining, advice_tape_write, AdviceTape};
-pub use instruction::inline::{list_registered_inlines, register_inline};
+pub use instruction::inline::{list_registered_inlines, InlineRegistration};
 
 use crate::{
     emulator::{

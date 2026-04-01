@@ -550,7 +550,7 @@ impl LagrangeHelper {
                 sums[k] += pow;
                 pow = match pow.checked_mul(t) {
                     Some(v) => v,
-                    None => 0, // saturate to 0 in const context; for our ranges this won't trigger
+                    None => panic!("power_sums overflow"),
                 };
                 k += 1;
             }

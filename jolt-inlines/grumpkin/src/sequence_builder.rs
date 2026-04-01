@@ -2,12 +2,9 @@ use std::collections::VecDeque;
 
 use ark_ff::{BigInt, Field};
 use ark_grumpkin::{Fq, Fr};
-use tracer::{
-    emulator::cpu::Cpu,
-    instruction::{
-        format::format_inline::FormatInline, sd::SD, virtual_advice::VirtualAdvice, Instruction,
-    },
-    utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterGuard},
+use jolt_inlines_sdk::host::{
+    Cpu, FormatInline, InlineOp, InstrAssembler, InstrAssemblerExt, Instruction,
+    VirtualRegisterGuard,
 };
 struct GrumpkinDivAdv {
     asm: InstrAssembler,
@@ -66,50 +63,50 @@ impl GrumpkinDivAdv {
     }
     // inline sequence function
     fn inline_sequence(mut self) -> Vec<Instruction> {
-        for i in 0..4 {
-            self.asm.emit_j::<VirtualAdvice>(*self.vr, 0);
-            self.asm
-                .emit_s::<SD>(self.operands.rs3, *self.vr, i as i64 * 8);
-        }
+        self.asm.emit_advice_stores(*self.vr, self.operands.rs3, 4);
         drop(self.vr);
         self.asm.finalize_inline()
     }
 }
 
-/// Virtual instruction builder for unchecked grumpkin base field modular division
-pub fn grumpkin_divq_adv_sequence_builder(
-    asm: InstrAssembler,
-    operands: FormatInline,
-) -> Vec<Instruction> {
-    let builder = GrumpkinDivAdv::new(asm, operands, true);
-    builder.inline_sequence()
+pub struct GrumpkinDivQAdv;
+
+impl InlineOp for GrumpkinDivQAdv {
+    const OPCODE: u32 = crate::INLINE_OPCODE;
+    const FUNCT3: u32 = crate::GRUMPKIN_DIVQ_ADV_FUNCT3;
+    const FUNCT7: u32 = crate::GRUMPKIN_FUNCT7;
+    const NAME: &'static str = crate::GRUMPKIN_DIVQ_ADV_NAME;
+
+    fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
+        GrumpkinDivAdv::new(asm, operands, true).inline_sequence()
+    }
+
+    fn build_advice(
+        asm: InstrAssembler,
+        operands: FormatInline,
+        cpu: &mut Cpu,
+    ) -> Option<VecDeque<u64>> {
+        Some(GrumpkinDivAdv::new(asm, operands, true).advice(cpu))
+    }
 }
 
-/// Custom trace function for unchecked grumpkin base field modular division
-pub fn grumpkin_divq_adv_advice(
-    asm: InstrAssembler,
-    operands: FormatInline,
-    cpu: &mut Cpu,
-) -> VecDeque<u64> {
-    let builder = GrumpkinDivAdv::new(asm, operands, true);
-    builder.advice(cpu)
-}
+pub struct GrumpkinDivRAdv;
 
-/// Virtual instruction builder for unchecked grumpkin scalar field modular division
-pub fn grumpkin_divr_adv_sequence_builder(
-    asm: InstrAssembler,
-    operands: FormatInline,
-) -> Vec<Instruction> {
-    let builder = GrumpkinDivAdv::new(asm, operands, false);
-    builder.inline_sequence()
-}
+impl InlineOp for GrumpkinDivRAdv {
+    const OPCODE: u32 = crate::INLINE_OPCODE;
+    const FUNCT3: u32 = crate::GRUMPKIN_DIVR_ADV_FUNCT3;
+    const FUNCT7: u32 = crate::GRUMPKIN_FUNCT7;
+    const NAME: &'static str = crate::GRUMPKIN_DIVR_ADV_NAME;
 
-/// Custom trace function for unchecked grumpkin scalar field modular division
-pub fn grumpkin_divr_adv_advice(
-    asm: InstrAssembler,
-    operands: FormatInline,
-    cpu: &mut Cpu,
-) -> VecDeque<u64> {
-    let builder = GrumpkinDivAdv::new(asm, operands, false);
-    builder.advice(cpu)
+    fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
+        GrumpkinDivAdv::new(asm, operands, false).inline_sequence()
+    }
+
+    fn build_advice(
+        asm: InstrAssembler,
+        operands: FormatInline,
+        cpu: &mut Cpu,
+    ) -> Option<VecDeque<u64>> {
+        Some(GrumpkinDivAdv::new(asm, operands, false).advice(cpu))
+    }
 }

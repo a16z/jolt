@@ -320,7 +320,10 @@ pub(crate) fn compress_direct(
 /// - `chaining_value` must be a valid pointer to 32 bytes of readable and writable memory.
 /// - `message` must be a valid pointer to 64 bytes of readable memory.
 /// - Both pointers must be properly aligned for u32 access (4-byte alignment).
-#[cfg(not(feature = "host"))]
+#[cfg(all(
+    not(feature = "host"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
 pub(crate) unsafe fn blake3_compress(chaining_value: *mut u32, message: *const u32) {
     use crate::{BLAKE3_FUNCT3, BLAKE3_FUNCT7, INLINE_OPCODE};
     // Memory layout for BLAKE3 instruction:
@@ -373,10 +376,21 @@ pub(crate) unsafe fn blake3_compress(chaining_value: *mut u32, message: *const u
     );
 }
 
+#[cfg(all(
+    not(feature = "host"),
+    not(any(target_arch = "riscv32", target_arch = "riscv64"))
+))]
+pub(crate) unsafe fn blake3_compress(_chaining_value: *mut u32, _message: *const u32) {
+    panic!("blake3_compress requires RISC-V target or host feature");
+}
+
 /// BLAKE3 Keyed64 - guest implementation (internal).
 /// Hash two child CVs for Merkle tree.
 /// ABI: rs1 = left, rs2 = right, rd = iv (in/out)
-#[cfg(not(feature = "host"))]
+#[cfg(all(
+    not(feature = "host"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
 #[inline(always)]
 unsafe fn blake3_keyed64_compress(left: *const u32, right: *const u32, iv: *mut u32) {
     use crate::{BLAKE3_FUNCT7, BLAKE3_KEYED64_FUNCT3, INLINE_OPCODE};
@@ -413,6 +427,14 @@ unsafe fn blake3_keyed64_compress(left: *const u32, right: *const u32, key: *mut
         64,
         FLAG_CHUNK_START | FLAG_CHUNK_END | FLAG_ROOT | FLAG_KEYED_HASH,
     );
+}
+
+#[cfg(all(
+    not(feature = "host"),
+    not(any(target_arch = "riscv32", target_arch = "riscv64"))
+))]
+unsafe fn blake3_keyed64_compress(_left: *const u32, _right: *const u32, _iv: *mut u32) {
+    panic!("blake3_keyed64_compress requires RISC-V target or host feature");
 }
 
 /// BLAKE3 keyed_hash for 64-byte input: `blake3::keyed_hash(key, left || right)`

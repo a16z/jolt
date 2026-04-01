@@ -1,0 +1,14 @@
+[package]
+name = "p256-ecdsa-verify"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+jolt-sdk = { workspace = true, features = ["host"] }
+tracing-subscriber.workspace = true
+tracing.workspace = true
+jolt-inlines-p256 = { workspace = true, features = ["host"] }
+guest = { package = "p256-ecdsa-verify-guest", path = "./guest" }
+
+[package.metadata.cargo-machete]
+ignored = ["jolt-inlines-p256"]
