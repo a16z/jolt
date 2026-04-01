@@ -89,6 +89,34 @@ cargo run --bin check-invariants -- --elf path/to/guest.elf \
     --invariant soundness --num-random 100
 ```
 
+### Fuzzing
+
+The `fuzz` binary runs randomized inputs (via the `Arbitrary` trait) against invariants that include `SynthesisTarget::Fuzz`:
+
+```bash
+# Fuzz all invariants with 1000 random inputs
+cargo run --bin fuzz -- --elf path/to/guest.elf --iterations 1000
+
+# Fuzz a specific invariant with a time limit
+cargo run --bin fuzz -- --elf path/to/guest.elf \
+    --invariant soundness --duration 5m
+
+# List available fuzzable invariants
+cargo run --bin fuzz -- --list
+```
+
+For deeper coverage, the `#[invariant]` macro generates a `_fuzz_check` function suitable for use with `cargo fuzz` / `libfuzzer_sys`:
+
+```rust
+// fuzz/fuzz_targets/soundness.rs
+#![no_main]
+use libfuzzer_sys::fuzz_target;
+
+fuzz_target!(|data: &[u8]| {
+    my_crate::my_soundness_invariant_fuzz_check(data);
+});
+```
+
 ### Measuring objectives
 
 ```bash
@@ -153,37 +181,3 @@ let seconds = obj.collect_measurement().unwrap();
 | **Security review** | Try to find a counterexample to some invariant (via red-team) | -- |
 | **Optimization** | Ensure all invariants still hold | Maximize an objective function $f(o_1, \ldots, o_n)$ |
 | **Refactor** | Ensure all invariants still hold | Special case of optimization where the objective captures code quality |
-
-## Crate structure
-
-```
-jolt-eval/
-  src/
-    lib.rs                          # Type aliases, TestCase, top-level check/measure fns
-    invariant/
-      mod.rs                        # Invariant trait, DynInvariant, InvariantReport
-      soundness.rs                  # Proof mutation fuzzing
-      completeness_verifier.rs      # Honest proof acceptance
-      completeness_prover.rs        # Prover panic detection
-      determinism.rs                # Byte-identical proof comparison
-      serialization_roundtrip.rs    # Serialize/deserialize equality
-      zk_consistency.rs             # ZK mode prove+verify
-      synthesis/
-        mod.rs                      # SynthesisRegistry
-        test.rs                     # #[test] generation
-        fuzz.rs                     # libfuzzer_sys target generation
-        redteam.rs                  # AI red-team loop with worktree isolation
-    objective/
-      mod.rs                        # AbstractObjective trait, Objective enum
-      peak_rss.rs                   # Peak RSS via sysinfo
-      prover_time.rs                # Wall-clock prover time
-      proof_size.rs                 # Serialized proof size
-      verifier_time.rs              # Wall-clock verifier time
-      guest_cycles.rs               # Guest cycle count via tracing
-      inline_lengths.rs             # INLINE instruction count
-      wrapping_cost.rs              # Constraint system size
-      (OptimizationAttempt type)     # in mod.rs
-  macros/                           # #[invariant(targets = [...])] proc macro
-  bin/                              # CLI binaries
-  tests/                            # Framework smoke tests
-```
