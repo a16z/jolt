@@ -15,7 +15,7 @@ inventory::submit! {
 }
 
 /// Mutation applied to a serialized proof to test soundness.
-#[derive(Debug, Clone, Arbitrary, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Arbitrary, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct ProofMutation {
     pub byte_index: usize,
     pub new_value: u8,

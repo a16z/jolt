@@ -25,7 +25,7 @@ pub struct DeterminismSetup {
 }
 
 /// Program inputs for determinism testing.
-#[derive(Debug, Clone, Arbitrary, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Arbitrary, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct DeterminismInputs {
     pub data: Vec<u8>,
 }

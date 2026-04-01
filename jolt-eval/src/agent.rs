@@ -47,6 +47,23 @@ impl AgentError {
 /// service without any local isolation.
 pub trait AgentHarness: Send + Sync {
     fn invoke(&self, repo_dir: &Path, prompt: &str) -> Result<AgentResponse, AgentError>;
+
+    /// Invoke the agent with a JSON Schema constraint on the response.
+    ///
+    /// Agents that support structured output (e.g. Claude Code with
+    /// `--output-format json --json-schema`) should override this to
+    /// guarantee the response conforms to `schema`.  The returned
+    /// [`AgentResponse::text`] must be the validated JSON string.
+    ///
+    /// The default falls back to [`invoke`](Self::invoke).
+    fn invoke_structured(
+        &self,
+        repo_dir: &Path,
+        prompt: &str,
+        _schema: &serde_json::Value,
+    ) -> Result<AgentResponse, AgentError> {
+        self.invoke(repo_dir, prompt)
+    }
 }
 
 /// Agent implementation that invokes the Claude Code CLI in an isolated
@@ -65,30 +82,48 @@ impl ClaudeCodeAgent {
     }
 }
 
-impl AgentHarness for ClaudeCodeAgent {
-    fn invoke(&self, repo_dir: &Path, prompt: &str) -> Result<AgentResponse, AgentError> {
-        // 1. Create worktree
-        let worktree_dir = create_worktree(repo_dir)?;
-        tracing::info!("Created worktree at {}", worktree_dir.display());
-
-        // 2. Run Claude
+impl ClaudeCodeAgent {
+    fn run_cli(
+        &self,
+        worktree_dir: &Path,
+        prompt: &str,
+        extra_args: &[&str],
+    ) -> Result<std::process::Output, AgentError> {
         tracing::info!(
             "Invoking claude (model={}, max_turns={})...",
             self.model,
             self.max_turns
         );
-        let result = Command::new("claude")
-            .current_dir(&worktree_dir)
+        let mut cmd = Command::new("claude");
+        cmd.current_dir(worktree_dir)
             .arg("-p")
             .arg(prompt)
             .arg("--model")
             .arg(&self.model)
             .arg("--max-turns")
             .arg(self.max_turns.to_string())
-            .arg("--verbose")
-            .output();
+            .arg("--verbose");
+        for arg in extra_args {
+            cmd.arg(arg);
+        }
+        cmd.output().map_err(|e| {
+            AgentError::new(format!(
+                "Failed to invoke claude: {e}. \
+                 Make sure the `claude` CLI is installed and on your PATH. \
+                 Install via: npm install -g @anthropic-ai/claude-code"
+            ))
+        })
+    }
+}
 
-        // 3. Capture diff before cleanup
+impl AgentHarness for ClaudeCodeAgent {
+    fn invoke(&self, repo_dir: &Path, prompt: &str) -> Result<AgentResponse, AgentError> {
+        let worktree_dir = create_worktree(repo_dir)?;
+        tracing::info!("Created worktree at {}", worktree_dir.display());
+
+        let result = self.run_cli(&worktree_dir, prompt, &[]);
+
+        // Capture diff before cleanup
         let diff = Command::new("git")
             .current_dir(&worktree_dir)
             .args(["diff", "HEAD"])
@@ -103,42 +138,89 @@ impl AgentHarness for ClaudeCodeAgent {
                 }
             });
 
-        // 4. Clean up worktree
         tracing::info!("Cleaning up worktree...");
         remove_worktree(repo_dir, &worktree_dir);
         let _ = std::fs::remove_dir_all(&worktree_dir);
 
-        // 5. Parse result
-        match result {
-            Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let stderr = String::from_utf8_lossy(&output.stderr);
+        let output = result?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
 
-                if !output.status.success() {
-                    tracing::warn!("claude exited with status {}", output.status);
-                    if !stderr.is_empty() {
-                        tracing::warn!("stderr: {}", truncate(&stderr, 500));
-                    }
-                }
-
-                let text = if stdout.trim().is_empty() {
-                    stderr.to_string()
-                } else {
-                    stdout.to_string()
-                };
-
-                if text.trim().is_empty() && diff.is_none() {
-                    return Err(AgentError::new("Agent produced no output"));
-                }
-
-                Ok(AgentResponse { text, diff })
+        if !output.status.success() {
+            tracing::warn!("claude exited with status {}", output.status);
+            if !stderr.is_empty() {
+                tracing::warn!("stderr: {}", truncate(&stderr, 500));
             }
-            Err(e) => Err(AgentError::new(format!(
-                "Failed to invoke claude: {e}. \
-                 Make sure the `claude` CLI is installed and on your PATH. \
-                 Install via: npm install -g @anthropic-ai/claude-code"
-            ))),
         }
+
+        let text = if stdout.trim().is_empty() {
+            stderr.to_string()
+        } else {
+            stdout.to_string()
+        };
+
+        if text.trim().is_empty() && diff.is_none() {
+            return Err(AgentError::new("Agent produced no output"));
+        }
+
+        Ok(AgentResponse { text, diff })
+    }
+
+    fn invoke_structured(
+        &self,
+        repo_dir: &Path,
+        prompt: &str,
+        schema: &serde_json::Value,
+    ) -> Result<AgentResponse, AgentError> {
+        let worktree_dir = create_worktree(repo_dir)?;
+        tracing::info!("Created worktree at {}", worktree_dir.display());
+
+        let schema_str = serde_json::to_string(schema)
+            .map_err(|e| AgentError::new(format!("schema serialization: {e}")))?;
+
+        let result = self.run_cli(
+            &worktree_dir,
+            prompt,
+            &["--output-format", "json", "--json-schema", &schema_str],
+        );
+
+        tracing::info!("Cleaning up worktree...");
+        remove_worktree(repo_dir, &worktree_dir);
+        let _ = std::fs::remove_dir_all(&worktree_dir);
+
+        let output = result?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(AgentError::new(format!(
+                "claude exited with status {}: {}",
+                output.status,
+                truncate(&stderr, 500)
+            )));
+        }
+
+        // Parse the CLI JSON envelope and extract structured_output
+        let envelope: serde_json::Value = serde_json::from_str(&stdout).map_err(|e| {
+            AgentError::new(format!("failed to parse CLI JSON envelope: {e}"))
+        })?;
+
+        let text = if let Some(structured) = envelope.get("structured_output") {
+            serde_json::to_string(structured)
+                .map_err(|e| AgentError::new(format!("re-serialize structured_output: {e}")))?
+        } else if let Some(result) = envelope.get("result") {
+            match result {
+                serde_json::Value::String(s) => s.clone(),
+                other => serde_json::to_string(other)
+                    .map_err(|e| AgentError::new(format!("re-serialize result: {e}")))?,
+            }
+        } else {
+            return Err(AgentError::new(
+                "CLI JSON envelope contained neither structured_output nor result",
+            ));
+        };
+
+        Ok(AgentResponse { text, diff: None })
     }
 }
 

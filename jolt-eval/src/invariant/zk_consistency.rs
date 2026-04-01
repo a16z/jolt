@@ -32,7 +32,7 @@ pub struct ZkConsistencySetup {
     verifier_preprocessing: VerifierPreprocessing,
 }
 
-#[derive(Debug, Clone, Arbitrary, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Arbitrary, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct ZkInputs {
     pub data: Vec<u8>,
 }

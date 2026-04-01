@@ -24,6 +24,7 @@ tracing-subscriber = { workspace = true }
 
 arbitrary = { version = "1", features = ["derive"] }
 enumset = "1"
+schemars = "0.8"
 inventory = { workspace = true }
 tempfile = "3"
 

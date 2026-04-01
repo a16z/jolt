@@ -199,13 +199,19 @@ fn mock_with_diff() {
 // auto_redteam tests with MockAgent
 // =========================================================================
 
+/// Helper: build a structured envelope response string.
+fn envelope(analysis: &str, counterexample: impl serde::Serialize) -> String {
+    serde_json::json!({
+        "analysis": analysis,
+        "counterexample": counterexample,
+    })
+    .to_string()
+}
+
 #[test]
 fn redteam_no_violation_when_invariant_always_passes() {
-    // Agent produces valid JSON, but the invariant always passes
     let invariant = AlwaysPassInvariant;
-    let agent = MockAgent::always_ok(
-        "I analyzed the code. Here is my candidate:\n```json\n42\n```",
-    );
+    let agent = MockAgent::always_ok(&envelope("I analyzed the code.", 42));
     let config = RedTeamConfig { num_iterations: 3 };
 
     let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
@@ -226,12 +232,10 @@ fn redteam_no_violation_when_invariant_always_passes() {
 }
 
 #[test]
-fn redteam_finds_violation_when_agent_produces_bad_input() {
-    // AlwaysFailInvariant rejects every input. Agent produces valid JSON.
+fn redteam_finds_violation_with_structured_response() {
+    // AlwaysFailInvariant rejects every input.
     let invariant = AlwaysFailInvariant;
-    let agent = MockAgent::always_ok(
-        "I found a bug!\n```json\n99\n```",
-    );
+    let agent = MockAgent::always_ok(&envelope("I found a bug!", 99));
     let config = RedTeamConfig { num_iterations: 10 };
 
     let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
@@ -248,16 +252,14 @@ fn redteam_finds_violation_when_agent_produces_bad_input() {
         }
     }
 
-    // Should stop after first iteration
     assert_eq!(agent.recorded_prompts().len(), 1);
 }
 
 #[test]
 fn redteam_finds_violation_with_targeted_input() {
     // FailsOnZeroInvariant only fails for input 0.
-    // Agent produces exactly 0.
     let invariant = FailsOnZeroInvariant;
-    let agent = MockAgent::always_ok("Try zero:\n```json\n0\n```");
+    let agent = MockAgent::always_ok(&envelope("Try zero", 0));
     let config = RedTeamConfig { num_iterations: 5 };
 
     let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
@@ -277,9 +279,8 @@ fn redteam_finds_violation_with_targeted_input() {
 
 #[test]
 fn redteam_no_violation_when_agent_misses() {
-    // FailsOnZeroInvariant only fails for 0, but agent guesses 1.
     let invariant = FailsOnZeroInvariant;
-    let agent = MockAgent::always_ok("Trying 1:\n```json\n1\n```");
+    let agent = MockAgent::always_ok(&envelope("Trying 1", 1));
     let config = RedTeamConfig { num_iterations: 2 };
 
     let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
@@ -319,6 +320,7 @@ fn redteam_handles_agent_errors_gracefully() {
 
 #[test]
 fn redteam_handles_no_json_in_response() {
+    // Agent returns plain text (no envelope, no code block)
     let invariant = AlwaysPassInvariant;
     let agent = MockAgent::always_ok("I looked around but have no candidate to offer.");
     let config = RedTeamConfig { num_iterations: 1 };
@@ -335,17 +337,14 @@ fn redteam_handles_no_json_in_response() {
 }
 
 #[test]
-fn redteam_handles_invalid_json_schema() {
-    // Agent produces JSON, but it doesn't match the Input type (u8)
+fn redteam_handles_invalid_counterexample_type() {
+    // Structured envelope with wrong counterexample type for Input=u8
     let invariant = AlwaysPassInvariant;
-    let agent = MockAgent::always_ok(
-        "Here:\n```json\n{\"not_a_u8\": true}\n```",
-    );
+    let agent = MockAgent::always_ok(&envelope("Here", "not_a_number"));
     let config = RedTeamConfig { num_iterations: 1 };
 
     let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
-    // A deserialization failure is NOT a real violation — it's a BadInput
     match result {
         RedTeamResult::NoViolation { attempts } => {
             assert_eq!(attempts.len(), 1);
@@ -358,9 +357,26 @@ fn redteam_handles_invalid_json_schema() {
 }
 
 #[test]
+fn redteam_fallback_extracts_json_from_freeform_text() {
+    // Agent doesn't return structured envelope, but has a code block
+    let invariant = AlwaysFailInvariant;
+    let agent = MockAgent::always_ok("Found it!\n```json\n77\n```");
+    let config = RedTeamConfig { num_iterations: 1 };
+
+    let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
+
+    match result {
+        RedTeamResult::Violation { input_json, .. } => {
+            assert_eq!(input_json, "77");
+        }
+        _ => panic!("Expected violation via extract_json fallback"),
+    }
+}
+
+#[test]
 fn redteam_prompt_includes_invariant_description() {
     let invariant = AlwaysPassInvariant;
-    let agent = MockAgent::always_ok("```json\n0\n```");
+    let agent = MockAgent::always_ok(&envelope("ok", 0));
     let config = RedTeamConfig { num_iterations: 1 };
 
     auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
@@ -374,13 +390,12 @@ fn redteam_prompt_includes_invariant_description() {
 #[test]
 fn redteam_prompt_includes_input_example() {
     let invariant = AlwaysPassInvariant;
-    let agent = MockAgent::always_ok("```json\n0\n```");
+    let agent = MockAgent::always_ok(&envelope("ok", 0));
     let config = RedTeamConfig { num_iterations: 1 };
 
     auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
     let prompts = agent.recorded_prompts();
-    // Prompt should include a JSON example from the seed corpus
     assert!(prompts[0].contains("Input format"));
     assert!(prompts[0].contains("```json"));
 }
@@ -388,7 +403,7 @@ fn redteam_prompt_includes_input_example() {
 #[test]
 fn redteam_prompt_includes_failed_attempts_after_first_iteration() {
     let invariant = AlwaysPassInvariant;
-    let agent = MockAgent::always_ok("Analysis.\n```json\n42\n```");
+    let agent = MockAgent::always_ok(&envelope("Tried something", 42));
     let config = RedTeamConfig { num_iterations: 3 };
 
     auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
@@ -425,12 +440,12 @@ fn redteam_mixed_agent_responses() {
     let invariant = AlwaysPassInvariant;
     let agent = MockAgent::from_responses(vec![
         Ok(AgentResponse {
-            text: "first try\n```json\n1\n```".into(),
+            text: envelope("first try", 1),
             diff: None,
         }),
         Err(AgentError::new("transient error")),
         Ok(AgentResponse {
-            text: "third try\n```json\n3\n```".into(),
+            text: envelope("third try", 3),
             diff: None,
         }),
     ]);
@@ -518,9 +533,7 @@ fn custom_harness_plugs_into_auto_redteam() {
     let harness = FirstSuccessHarness {
         agents: vec![
             Box::new(MockAgent::always_err("agent 1 down")),
-            Box::new(MockAgent::always_ok(
-                "agent 2 found nothing\n```json\n7\n```",
-            )),
+            Box::new(MockAgent::always_ok(&envelope("agent 2 found nothing", 7))),
         ],
     };
 

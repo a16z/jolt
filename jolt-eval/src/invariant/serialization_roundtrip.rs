@@ -27,7 +27,7 @@ pub struct SerializationRoundtripSetup {
 
 /// Unit input -- the roundtrip check has no variable input beyond the
 /// proof generated during setup.
-#[derive(Debug, Clone, Arbitrary, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Arbitrary, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct RoundtripInput {
     _dummy: u8,
 }

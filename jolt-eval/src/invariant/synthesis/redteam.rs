@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use super::super::{extract_json, CheckJsonResult, DynInvariant, FailedAttempt, SynthesisTarget};
+use super::super::{CheckJsonResult, DynInvariant, FailedAttempt, SynthesisTarget};
 use super::SynthesisRegistry;
 use crate::agent::AgentHarness;
 
@@ -30,16 +30,17 @@ impl Default for RedTeamConfig {
 /// Run an AI red-team session against a single invariant.
 ///
 /// Each iteration:
-/// 1. Builds a prompt that includes the invariant description, a JSON
-///    example of the `Input` type, and past failed attempts.
-/// 2. Invokes the agent (via [`AgentHarness`]) to analyze the code and
-///    produce a candidate counterexample as a JSON object.
-/// 3. Extracts the JSON from the agent's response, deserializes it into
-///    the invariant's `Input` type, and runs [`Invariant::check`] on it.
+/// 1. Builds a prompt with the invariant description, a JSON example of
+///    the `Input` type, and past failed attempts.
+/// 2. Derives a JSON Schema for the response envelope (an object with
+///    `analysis` and `counterexample` fields) and invokes the agent via
+///    [`AgentHarness::invoke_structured`].  Agents that support structured
+///    output (e.g. `ClaudeCodeAgent` with `--json-schema`) will guarantee
+///    the response conforms; others fall back to free-form text.
+/// 3. Parses the `counterexample` from the response, deserializes it into
+///    the invariant's `Input` type, and runs `Invariant::check`.
 /// 4. If the check fails, the counterexample is genuine — return it.
 /// 5. Otherwise records the failed attempt and continues.
-///
-/// The `agent` is responsible for its own isolation (e.g. worktrees).
 pub fn auto_redteam(
     invariant: &dyn DynInvariant,
     config: &RedTeamConfig,
@@ -48,6 +49,8 @@ pub fn auto_redteam(
 ) -> RedTeamResult {
     let description = invariant.description();
     let input_example = invariant.input_json_example();
+    let input_schema = invariant.input_json_schema();
+    let envelope_schema = build_envelope_schema(&input_schema);
     let setup = invariant.dyn_setup();
     let mut failed_attempts = Vec::new();
 
@@ -59,9 +62,10 @@ pub fn auto_redteam(
             invariant.name()
         );
 
-        let prompt = build_redteam_prompt(&description, input_example.as_deref(), &failed_attempts);
+        let prompt =
+            build_redteam_prompt(&description, input_example.as_deref(), &failed_attempts);
 
-        let response = match agent.invoke(repo_dir, &prompt) {
+        let response = match agent.invoke_structured(repo_dir, &prompt, &envelope_schema) {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!("Agent invocation failed: {e}");
@@ -74,32 +78,44 @@ pub fn auto_redteam(
             }
         };
 
-        let approach = response.text;
-        let Some(json) = extract_json(&approach) else {
-            tracing::info!("No JSON found in agent response");
-            failed_attempts.push(FailedAttempt {
-                description: format!("Iteration {}", iteration + 1),
-                approach,
-                failure_reason: "Agent response did not contain a JSON counterexample".to_string(),
-            });
-            continue;
+        // Parse the structured response envelope.
+        // Agents using --json-schema return validated JSON directly.
+        // The fallback path (default invoke_structured) returns free-form
+        // text, so we try structured parsing first, then extract_json.
+        let (analysis, counterexample_json) = match parse_envelope(&response.text) {
+            Some(pair) => pair,
+            None => {
+                // Fallback: try to find raw JSON in free-form text
+                match super::super::extract_json(&response.text) {
+                    Some(json) => (response.text.clone(), json),
+                    None => {
+                        failed_attempts.push(FailedAttempt {
+                            description: format!("Iteration {}", iteration + 1),
+                            approach: response.text,
+                            failure_reason:
+                                "Agent response did not contain a JSON counterexample".to_string(),
+                        });
+                        continue;
+                    }
+                }
+            }
         };
 
-        match invariant.check_json_input(&*setup, &json) {
+        match invariant.check_json_input(&*setup, &counterexample_json) {
             CheckJsonResult::Violation(violation) => {
                 tracing::info!("Counterexample CONFIRMED: {violation}");
                 return RedTeamResult::Violation {
-                    approach,
-                    input_json: json,
+                    approach: analysis,
+                    input_json: counterexample_json,
                     error: violation.to_string(),
                 };
             }
             CheckJsonResult::Pass => {
                 failed_attempts.push(FailedAttempt {
                     description: format!("Iteration {}", iteration + 1),
-                    approach,
+                    approach: analysis,
                     failure_reason: format!(
-                        "Candidate input did not violate the invariant: {json}"
+                        "Candidate input did not violate the invariant: {counterexample_json}"
                     ),
                 });
             }
@@ -107,7 +123,7 @@ pub fn auto_redteam(
                 tracing::info!("Agent produced unparseable input: {parse_err}");
                 failed_attempts.push(FailedAttempt {
                     description: format!("Iteration {}", iteration + 1),
-                    approach,
+                    approach: analysis,
                     failure_reason: format!(
                         "Could not deserialize agent JSON into Input type: {parse_err}"
                     ),
@@ -119,6 +135,31 @@ pub fn auto_redteam(
     RedTeamResult::NoViolation {
         attempts: failed_attempts,
     }
+}
+
+/// Build the JSON Schema for the structured response envelope.
+/// The agent's response must be `{"analysis": "<string>", "counterexample": <input>}`.
+fn build_envelope_schema(input_schema: &serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "analysis": {
+                "type": "string",
+                "description": "Your analysis of the invariant and approach to finding a violation"
+            },
+            "counterexample": input_schema
+        },
+        "required": ["analysis", "counterexample"]
+    })
+}
+
+/// Try to parse the response as a structured `{"analysis", "counterexample"}` envelope.
+/// Returns `(analysis, counterexample_json)` on success.
+fn parse_envelope(text: &str) -> Option<(String, String)> {
+    let val: serde_json::Value = serde_json::from_str(text).ok()?;
+    let analysis = val.get("analysis")?.as_str()?.to_string();
+    let counterexample = val.get("counterexample")?;
+    Some((analysis, serde_json::to_string(counterexample).ok()?))
 }
 
 fn build_redteam_prompt(
@@ -143,7 +184,8 @@ fn build_redteam_prompt(
             invariant is enforced.\n\
          2. Look for edge cases, off-by-one errors, missing checks, or assumptions \
             that could be violated.\n\
-         3. Construct a concrete JSON input that you believe will trigger a violation.\n\
+         3. Construct a concrete counterexample input that you believe will trigger \
+            a violation.\n\
          4. The input will be deserialized and checked mechanically — only genuine \
             violations count.\n\n",
     );
@@ -151,7 +193,7 @@ fn build_redteam_prompt(
     if let Some(example) = input_example {
         prompt.push_str("## Input format\n\n");
         prompt.push_str(
-            "The counterexample must be a JSON object matching this schema. \
+            "The counterexample must be a JSON value matching the schema. \
              Here is an example of a valid input:\n\n```json\n",
         );
         prompt.push_str(example);
@@ -175,11 +217,9 @@ fn build_redteam_prompt(
 
     prompt.push_str(
         "## Required output\n\n\
-         End your response with a JSON code block containing your candidate \
-         counterexample. Use exactly this format:\n\n\
-         ```json\n{ ... }\n```\n\n\
-         The JSON must match the input schema above. If after thorough analysis \
-         you believe no violation exists, still provide your best-effort candidate.\n",
+         Respond with a JSON object containing:\n\
+         - `analysis`: your reasoning and what you investigated\n\
+         - `counterexample`: the candidate input matching the schema above\n",
     );
 
     prompt

@@ -35,7 +35,9 @@ impl Invariant for AlwaysPassInvariant {
 // BoundsCheck: Test + Fuzz only, uses a struct Input type
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, jolt_eval::arbitrary::Arbitrary, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, jolt_eval::arbitrary::Arbitrary, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct RangeInput {
     pub lo: u32,
     pub hi: u32,

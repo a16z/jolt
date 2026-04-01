@@ -141,7 +141,7 @@ fn test_measure_objectives() {
     let objectives: Vec<Box<dyn AbstractObjective>> = vec![
         Box::new(ConstantObjective {
             label: "prover_time",
-            value: 3.14,
+            value: 3.125,
             direction: Direction::Minimize,
         }),
         Box::new(ConstantObjective {
@@ -153,6 +153,6 @@ fn test_measure_objectives() {
 
     let results = measure_dyn(&objectives);
     assert_eq!(results.len(), 2);
-    assert_eq!(results["prover_time"], 3.14);
+    assert_eq!(results["prover_time"], 3.125);
     assert_eq!(results["inline_count"], 256.0);
 }

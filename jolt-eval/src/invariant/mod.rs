@@ -13,6 +13,7 @@ use std::sync::Arc;
 use arbitrary::Arbitrary;
 use enumset::{EnumSet, EnumSetType};
 use rand::RngCore;
+use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
@@ -67,7 +68,7 @@ impl InvariantViolation {
 /// agent can produce counterexamples as JSON.
 pub trait Invariant: Send + Sync {
     type Setup: 'static;
-    type Input: for<'a> Arbitrary<'a> + fmt::Debug + Clone + Serialize + DeserializeOwned;
+    type Input: for<'a> Arbitrary<'a> + fmt::Debug + Clone + Serialize + DeserializeOwned + JsonSchema;
 
     fn name(&self) -> &str;
 
@@ -132,6 +133,9 @@ pub trait DynInvariant: Send + Sync {
     /// Return a JSON example of the `Input` type (from the seed corpus).
     fn input_json_example(&self) -> Option<String>;
 
+    /// Return the JSON Schema for the `Input` type.
+    fn input_json_schema(&self) -> serde_json::Value;
+
     /// Create the (type-erased) setup. Expensive — call once and reuse.
     fn dyn_setup(&self) -> Box<dyn Any>;
 
@@ -193,6 +197,11 @@ impl<I: Invariant> DynInvariant for I {
             .into_iter()
             .next()
             .and_then(|input| serde_json::to_string_pretty(&input).ok())
+    }
+
+    fn input_json_schema(&self) -> serde_json::Value {
+        let schema = schemars::schema_for!(I::Input);
+        serde_json::to_value(schema).unwrap()
     }
 
     fn dyn_setup(&self) -> Box<dyn Any> {
