@@ -1,0 +1,54 @@
+[package]
+name = "jolt-eval-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+jolt-eval = { path = ".." }
+
+[[bin]]
+name = "soundness"
+path = "fuzz_targets/soundness.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "verifier_completeness"
+path = "fuzz_targets/verifier_completeness.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "prover_completeness"
+path = "fuzz_targets/prover_completeness.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "determinism"
+path = "fuzz_targets/determinism.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "serialization_roundtrip"
+path = "fuzz_targets/serialization_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "zk_consistency"
+path = "fuzz_targets/zk_consistency.rs"
+test = false
+doc = false
+bench = false

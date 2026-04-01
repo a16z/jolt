@@ -36,6 +36,11 @@ impl SynthesisRegistry {
         &self.invariants
     }
 
+    /// Consume the registry and return the invariant list.
+    pub fn into_invariants(self) -> Vec<Box<dyn DynInvariant>> {
+        self.invariants
+    }
+
     /// Return invariants that include the given synthesis target.
     pub fn for_target(&self, target: SynthesisTarget) -> Vec<&dyn DynInvariant> {
         self.invariants

@@ -67,7 +67,7 @@ impl InvariantViolation {
 /// `Arbitrary` for fuzzing, and `Serialize`/`DeserializeOwned` so an AI
 /// agent can produce counterexamples as JSON.
 pub trait Invariant: Send + Sync {
-    type Setup: 'static;
+    type Setup: Send + Sync + 'static;
     type Input: for<'a> Arbitrary<'a> + fmt::Debug + Clone + Serialize + DeserializeOwned + JsonSchema;
 
     fn name(&self) -> &str;
@@ -137,7 +137,7 @@ pub trait DynInvariant: Send + Sync {
     fn input_json_schema(&self) -> serde_json::Value;
 
     /// Create the (type-erased) setup. Expensive — call once and reuse.
-    fn dyn_setup(&self) -> Box<dyn Any>;
+    fn dyn_setup(&self) -> Box<dyn Any + Send + Sync>;
 
     /// Deserialize a JSON-encoded `Input` and check it against a
     /// previously-created setup (from [`dyn_setup`]).
@@ -204,7 +204,7 @@ impl<I: Invariant> DynInvariant for I {
         serde_json::to_value(schema).unwrap()
     }
 
-    fn dyn_setup(&self) -> Box<dyn Any> {
+    fn dyn_setup(&self) -> Box<dyn Any + Send + Sync> {
         Box::new(Invariant::setup(self))
     }
 

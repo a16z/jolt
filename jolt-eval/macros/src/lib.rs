@@ -6,20 +6,23 @@ use syn::{parse_macro_input, DeriveInput, Ident};
 
 /// Attribute macro for invariant structs.
 ///
-/// Generates test and fuzz harness functions based on the specified targets.
+/// Generates test harness and red-team description functions based on
+/// the specified targets.
 ///
 /// # Usage
 ///
 /// ```ignore
-/// #[jolt_eval_macros::invariant(targets = [Test, Fuzz, RedTeam])]
+/// #[jolt_eval_macros::invariant(targets = [Test, RedTeam])]
 /// #[derive(Default)]
 /// pub struct MySoundnessInvariant { ... }
 /// ```
 ///
 /// Generates:
 /// - For `Test`: A `#[cfg(test)]` module with seed corpus and random tests
-/// - For `Fuzz`: A `fuzz_check` function suitable for `libfuzzer_sys`
 /// - For `RedTeam`: A `redteam_description` function returning the invariant's description
+///
+/// For `Fuzz`, use the `fuzz_invariant()` library function in a
+/// `fuzz/fuzz_targets/` binary instead — see the fuzz directory.
 ///
 /// The struct must implement `Invariant + Default`.
 #[proc_macro_attribute]
@@ -31,7 +34,6 @@ pub fn invariant(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let targets = parse_targets(attr);
     let has_test = targets.contains(&"Test".to_string());
-    let has_fuzz = targets.contains(&"Fuzz".to_string());
     let has_redteam = targets.contains(&"RedTeam".to_string());
 
     let test_block = if has_test {
@@ -84,38 +86,6 @@ pub fn invariant(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote! {}
     };
 
-    let fuzz_fn_name = Ident::new(&format!("{snake_name}_fuzz_check"), struct_name.span());
-    let fuzz_block = if has_fuzz {
-        quote! {
-            pub fn #fuzz_fn_name(data: &[u8]) {
-                use jolt_eval::Invariant;
-                use std::sync::LazyLock;
-
-                static SETUP: LazyLock<(
-                    #struct_name,
-                    <#struct_name as jolt_eval::Invariant>::Setup,
-                )> = LazyLock::new(|| {
-                    let invariant = #struct_name::default();
-                    let setup = invariant.setup();
-                    (invariant, setup)
-                });
-
-                let mut u = jolt_eval::arbitrary::Unstructured::new(data);
-                if let Ok(input) = <
-                    <#struct_name as jolt_eval::Invariant>::Input
-                    as jolt_eval::arbitrary::Arbitrary
-                >::arbitrary(&mut u) {
-                    let (invariant, setup) = &*SETUP;
-                    if let Err(e) = invariant.check(setup, input) {
-                        panic!("Invariant '{}' violated: {}", invariant.name(), e);
-                    }
-                }
-            }
-        }
-    } else {
-        quote! {}
-    };
-
     let redteam_fn_name = Ident::new(
         &format!("{snake_name}_redteam_description"),
         struct_name.span(),
@@ -136,7 +106,6 @@ pub fn invariant(attr: TokenStream, item: TokenStream) -> TokenStream {
         #input
 
         #test_block
-        #fuzz_block
         #redteam_block
     };
 

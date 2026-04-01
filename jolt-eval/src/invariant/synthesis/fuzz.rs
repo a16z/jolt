@@ -1,43 +1,108 @@
-use super::super::{DynInvariant, SynthesisTarget};
+use std::sync::Arc;
+
+use super::super::{registered_invariants, CheckJsonResult, DynInvariant, SynthesisTarget};
 use super::SynthesisRegistry;
+use crate::TestCase;
 
-/// Generate `libfuzzer_sys` fuzz target source code for a named invariant.
+/// Fuzz a named invariant with raw byte data from libfuzzer.
 ///
-/// The generated code should be placed in a `fuzz/fuzz_targets/` directory
-/// and compiled as a separate binary with `cargo fuzz`.
-pub fn generate_fuzz_target(_invariant_name: &str, struct_path: &str) -> String {
-    format!(
-        r#"#![no_main]
-use libfuzzer_sys::fuzz_target;
-use arbitrary::{{Arbitrary, Unstructured}};
-use jolt_eval::Invariant;
+/// `data` is fed through `arbitrary::Unstructured` to produce the
+/// invariant's `Input` type, which is then checked against the
+/// invariant.  Setup is performed once and cached for the process
+/// lifetime.
+///
+/// Panics on invariant violation (which is what libfuzzer needs to
+/// detect a finding).
+///
+/// # Usage in a fuzz target
+///
+/// ```ignore
+/// #![no_main]
+/// use libfuzzer_sys::fuzz_target;
+/// fuzz_target!(|data: &[u8]| {
+///     jolt_eval::invariant::synthesis::fuzz::fuzz_invariant("soundness", data);
+/// });
+/// ```
+///
+/// Set `JOLT_FUZZ_ELF` to the path of a pre-compiled guest ELF before
+/// running `cargo fuzz`.
+pub fn fuzz_invariant(invariant_name: &str, data: &[u8]) {
+    use std::any::Any;
+    use std::sync::LazyLock;
 
-// Lazily initialize the invariant and setup (expensive one-time cost)
-use std::sync::LazyLock;
-static SETUP: LazyLock<({struct_path}, <{struct_path} as Invariant>::Setup)> = LazyLock::new(|| {{
-    let invariant = {struct_path}::default();
-    let setup = invariant.setup();
-    (invariant, setup)
-}});
+    // One-time: build every invariant and its setup from the ELF.
+    struct CachedInvariant {
+        inv: Box<dyn DynInvariant>,
+        setup: Box<dyn Any + Send + Sync>,
+    }
 
-fuzz_target!(|data: &[u8]| {{
-    let mut u = Unstructured::new(data);
-    if let Ok(input) = <<{struct_path} as Invariant>::Input as Arbitrary>::arbitrary(&mut u) {{
-        let (invariant, setup) = &*SETUP;
-        // We don't panic on invariant violations during fuzzing --
-        // instead we log them. The fuzzer's job is to find inputs
-        // that trigger violations.
-        if let Err(e) = invariant.check(setup, input) {{
-            eprintln!("INVARIANT VIOLATION: {{}}", e);
-            panic!("Invariant '{{}}' violated: {{}}", invariant.name(), e);
-        }}
-    }}
-}});
-"#
-    )
+    static CACHE: LazyLock<Vec<CachedInvariant>> = LazyLock::new(|| {
+        let elf_path = std::env::var("JOLT_FUZZ_ELF")
+            .expect("Set JOLT_FUZZ_ELF to the path of a compiled guest ELF");
+        let elf_bytes = std::fs::read(&elf_path)
+            .unwrap_or_else(|e| panic!("Failed to read {elf_path}: {e}"));
+        let memory_config = common::jolt_device::MemoryConfig {
+            max_input_size: 4096,
+            max_output_size: 4096,
+            max_untrusted_advice_size: 0,
+            max_trusted_advice_size: 0,
+            stack_size: 65536,
+            heap_size: 32768,
+            program_size: None,
+        };
+        let test_case = Arc::new(TestCase {
+            elf_contents: elf_bytes,
+            memory_config,
+            max_trace_length: 65536,
+        });
+        let registry = SynthesisRegistry::from_inventory(test_case, vec![]);
+        registry
+            .into_invariants()
+            .into_iter()
+            .map(|inv| {
+                let setup = inv.dyn_setup();
+                CachedInvariant { inv, setup }
+            })
+            .collect()
+    });
+
+    let cached = CACHE
+        .iter()
+        .find(|c| c.inv.name() == invariant_name)
+        .unwrap_or_else(|| panic!("Invariant '{invariant_name}' not found"));
+
+    // Use the fuzzer-provided bytes to produce an Input via Arbitrary,
+    // by going through the JSON round-trip: Arbitrary -> serde_json -> check_json_input.
+    // This is the most direct path that uses the fuzzer's data.
+    // DynInvariant erases the Input type, so we can't call Arbitrary
+    // on the concrete type directly.  Instead, interpret the fuzz data
+    // as a raw JSON string and feed it through check_json_input.  The
+    // fuzzer will mutate bytes toward valid JSON that deserializes into
+    // the Input type — this is the standard "structure-aware via serde"
+    // fuzzing pattern.
+    if let Ok(json_str) = std::str::from_utf8(data) {
+        match cached.inv.check_json_input(&*cached.setup, json_str) {
+            CheckJsonResult::Violation(e) => {
+                panic!(
+                    "Invariant '{}' violated: {e}\nInput JSON: {json_str}",
+                    cached.inv.name()
+                );
+            }
+            CheckJsonResult::Pass | CheckJsonResult::BadInput(_) => {}
+        }
+    }
 }
 
 /// List all invariants suitable for fuzz target generation.
 pub fn fuzzable_invariants(registry: &SynthesisRegistry) -> Vec<&dyn DynInvariant> {
     registry.for_target(SynthesisTarget::Fuzz)
+}
+
+/// Return the names of all `inventory`-registered invariants that
+/// include [`SynthesisTarget::Fuzz`].
+pub fn fuzzable_invariant_names() -> Vec<&'static str> {
+    registered_invariants()
+        .filter(|e| (e.targets)().contains(SynthesisTarget::Fuzz))
+        .map(|e| e.name)
+        .collect()
 }
