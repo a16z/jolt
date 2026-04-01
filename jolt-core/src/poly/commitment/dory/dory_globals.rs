@@ -2,10 +2,13 @@
 
 use crate::utils::math::Math;
 use allocative::Allocative;
+use ark_bn254::G1Affine;
+use ark_ec::CurveGroup;
 use dory::backends::arkworks::{init_cache, ArkG1, ArkG2};
+use rayon::prelude::*;
 use std::sync::{
     atomic::{AtomicU8, Ordering},
-    RwLock,
+    RwLock, RwLockReadGuard,
 };
 #[cfg(test)]
 use std::{
@@ -161,6 +164,10 @@ static CURRENT_CONTEXT: AtomicU8 = AtomicU8::new(0);
 
 // Layout tracking: 0=CycleMajor, 1=AddressMajor
 static CURRENT_LAYOUT: AtomicU8 = AtomicU8::new(0);
+
+// Cached affine G1 generators — avoids repeated projective-to-affine conversion
+// in process_chunk/process_chunk_onehot during streaming commitment.
+static AFFINE_G1_CACHE: RwLock<Vec<G1Affine>> = RwLock::new(Vec::new());
 
 /// Dory commitment context - determines which set of global parameters to use
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -491,6 +498,9 @@ impl DoryGlobals {
         *UNTRUSTED_ADVICE_MAX_NUM_ROWS.write().unwrap() = None;
         *UNTRUSTED_ADVICE_NUM_COLUMNS.write().unwrap() = None;
 
+        // Reset affine G1 cache
+        AFFINE_G1_CACHE.write().unwrap().clear();
+
         CURRENT_CONTEXT.store(0, Ordering::SeqCst);
     }
 
@@ -510,5 +520,43 @@ impl DoryGlobals {
     /// * `g2_vec` - Vector of G2 generators from the prover setup
     pub fn init_prepared_cache(g1_vec: &[ArkG1], g2_vec: &[ArkG2]) {
         init_cache(g1_vec, g2_vec);
+    }
+
+    /// Initialize the affine G1 generator cache from the prover setup.
+    ///
+    /// Converts projective G1 generators to affine form using batch normalization
+    /// (a single field inversion via Montgomery's trick + 2n multiplications)
+    /// and caches the result. Subsequent calls to `affine_g1_bases` return
+    /// the cached slice without recomputation.
+    ///
+    /// The cache is replaced if the new set is larger than the existing one.
+    pub fn init_affine_g1_cache(g1_vec: &[ArkG1]) {
+        let needed = g1_vec.len();
+        {
+            let cache = AFFINE_G1_CACHE.read().unwrap();
+            if cache.len() >= needed {
+                return;
+            }
+        }
+        let projective: Vec<_> = g1_vec.par_iter().map(|g| g.0).collect();
+        let affine = ark_bn254::G1Projective::normalize_batch(&projective);
+        *AFFINE_G1_CACHE.write().unwrap() = affine;
+    }
+
+    /// Return a read guard over the cached affine G1 bases, initializing
+    /// from `g1_vec` on first use.
+    ///
+    /// In production, `init_affine_g1_cache` is called once during `setup_prover`
+    /// so this just returns the pre-populated cache. In tests (or if the cache
+    /// was reset), it lazily computes the affine bases on first access.
+    pub fn affine_g1_bases_or_init(g1_vec: &[ArkG1]) -> RwLockReadGuard<'static, Vec<G1Affine>> {
+        {
+            let cache = AFFINE_G1_CACHE.read().unwrap();
+            if cache.len() >= g1_vec.len() {
+                return cache;
+            }
+        }
+        Self::init_affine_g1_cache(g1_vec);
+        AFFINE_G1_CACHE.read().unwrap()
     }
 }

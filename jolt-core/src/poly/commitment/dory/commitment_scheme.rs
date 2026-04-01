@@ -16,8 +16,7 @@ use crate::{
     transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math, small_scalar::SmallScalar},
 };
-use ark_bn254::{G1Affine, G1Projective};
-use ark_ec::CurveGroup;
+use ark_bn254::G1Projective;
 use ark_ff::Zero;
 use dory::primitives::{
     arithmetic::{Field as DoryField, Group, PairingCurve},
@@ -99,6 +98,8 @@ impl CommitmentScheme for DoryCommitmentScheme {
         // We therefore disable cache initialization in `cfg(test)` builds.
         #[cfg(not(test))]
         DoryGlobals::init_prepared_cache(&setup.g1_vec, &setup.g2_vec);
+
+        DoryGlobals::init_affine_g1_cache(&setup.g1_vec);
 
         setup
     }
@@ -314,16 +315,11 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
         debug_assert_eq!(chunk.len(), DoryGlobals::get_num_columns());
 
         let row_len = DoryGlobals::get_num_columns();
-        let g1_slice =
-            unsafe { std::slice::from_raw_parts(setup.g1_vec.as_ptr(), setup.g1_vec.len()) };
+        let g1_bases = DoryGlobals::affine_g1_bases_or_init(&setup.g1_vec);
 
-        let g1_bases: Vec<G1Affine> = g1_slice[..row_len]
-            .iter()
-            .map(|g| g.0.into_affine())
-            .collect();
-
-        let row_commitment =
-            ArkG1(T::msm(&g1_bases[..chunk.len()], chunk).expect("MSM calculation failed."));
+        let row_commitment = ArkG1(
+            T::msm(&g1_bases[..row_len.min(chunk.len())], chunk).expect("MSM calculation failed."),
+        );
         vec![row_commitment]
     }
 
@@ -339,13 +335,7 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
         let K = onehot_k;
 
         let row_len = DoryGlobals::get_num_columns();
-        let g1_slice =
-            unsafe { std::slice::from_raw_parts(setup.g1_vec.as_ptr(), setup.g1_vec.len()) };
-
-        let g1_bases: Vec<G1Affine> = g1_slice[..row_len]
-            .iter()
-            .map(|g| g.0.into_affine())
-            .collect();
+        let g1_bases = DoryGlobals::affine_g1_bases_or_init(&setup.g1_vec);
 
         let mut indices_per_k: Vec<Vec<usize>> = vec![Vec::new(); K];
         for (col_index, k) in chunk.iter().enumerate() {
@@ -354,7 +344,8 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
             }
         }
 
-        let results = jolt_optimizations::batch_g1_additions_multi(&g1_bases, &indices_per_k);
+        let results =
+            jolt_optimizations::batch_g1_additions_multi(&g1_bases[..row_len], &indices_per_k);
 
         let mut row_commitments = vec![ArkG1(G1Projective::zero()); K];
         for (k, result) in results.into_iter().enumerate() {
