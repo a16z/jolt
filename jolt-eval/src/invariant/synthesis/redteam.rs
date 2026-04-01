@@ -2,7 +2,7 @@ use std::path::Path;
 
 use super::super::{extract_json, CheckJsonResult, DynInvariant, FailedAttempt, SynthesisTarget};
 use super::SynthesisRegistry;
-use crate::agent::{truncate, AgentHarness};
+use crate::agent::AgentHarness;
 
 /// Result of a red-team session.
 pub enum RedTeamResult {
@@ -23,9 +23,7 @@ pub struct RedTeamConfig {
 
 impl Default for RedTeamConfig {
     fn default() -> Self {
-        Self {
-            num_iterations: 10,
-        }
+        Self { num_iterations: 10 }
     }
 }
 
@@ -76,14 +74,8 @@ pub fn auto_redteam(
             }
         };
 
-        let approach = truncate(&response.text, 2000).to_string();
-        tracing::info!(
-            "Agent response ({} chars): {}...",
-            approach.len(),
-            truncate(&approach, 200)
-        );
-
-        let Some(json) = extract_json(&response.text) else {
+        let approach = response.text;
+        let Some(json) = extract_json(&approach) else {
             tracing::info!("No JSON found in agent response");
             failed_attempts.push(FailedAttempt {
                 description: format!("Iteration {}", iteration + 1),
@@ -92,8 +84,6 @@ pub fn auto_redteam(
             });
             continue;
         };
-
-        tracing::info!("Extracted JSON input: {}", truncate(&json, 200));
 
         match invariant.check_json_input(&*setup, &json) {
             CheckJsonResult::Violation(violation) => {
