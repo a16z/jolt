@@ -99,6 +99,10 @@ impl CommitmentScheme for DoryCommitmentScheme {
         #[cfg(not(test))]
         DoryGlobals::init_prepared_cache(&setup.g1_vec, &setup.g2_vec);
 
+        // Unlike the prepared-point cache above, the affine G1 cache is safe to
+        // initialize in tests: it uses "replace if larger" semantics, so a small
+        // setup never overwrites a larger one. All setups share the same URS, so
+        // the first N entries are identical regardless of setup size.
         DoryGlobals::init_affine_g1_cache(&setup.g1_vec);
 
         setup
@@ -317,9 +321,8 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
         let row_len = DoryGlobals::get_num_columns();
         let g1_bases = DoryGlobals::affine_g1_bases_or_init(&setup.g1_vec);
 
-        let row_commitment = ArkG1(
-            T::msm(&g1_bases[..row_len.min(chunk.len())], chunk).expect("MSM calculation failed."),
-        );
+        let row_commitment =
+            ArkG1(T::msm(&g1_bases[..row_len], chunk).expect("MSM calculation failed."));
         vec![row_commitment]
     }
 

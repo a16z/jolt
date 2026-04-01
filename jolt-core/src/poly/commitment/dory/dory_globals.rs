@@ -5,7 +5,7 @@ use allocative::Allocative;
 use ark_bn254::G1Affine;
 use ark_ec::CurveGroup;
 use dory::backends::arkworks::{init_cache, ArkG1, ArkG2};
-use rayon::prelude::*;
+
 use std::sync::{
     atomic::{AtomicU8, Ordering},
     RwLock, RwLockReadGuard,
@@ -526,8 +526,8 @@ impl DoryGlobals {
     ///
     /// Converts projective G1 generators to affine form using batch normalization
     /// (a single field inversion via Montgomery's trick + 2n multiplications)
-    /// and caches the result. Subsequent calls to `affine_g1_bases` return
-    /// the cached slice without recomputation.
+    /// and caches the result. Subsequent calls to `affine_g1_bases_or_init`
+    /// return the cached read guard without recomputation.
     ///
     /// The cache is replaced if the new set is larger than the existing one.
     pub fn init_affine_g1_cache(g1_vec: &[ArkG1]) {
@@ -538,7 +538,7 @@ impl DoryGlobals {
                 return;
             }
         }
-        let projective: Vec<_> = g1_vec.par_iter().map(|g| g.0).collect();
+        let projective: Vec<_> = g1_vec.iter().map(|g| g.0).collect();
         let affine = ark_bn254::G1Projective::normalize_batch(&projective);
         *AFFINE_G1_CACHE.write().unwrap() = affine;
     }
@@ -549,6 +549,12 @@ impl DoryGlobals {
     /// In production, `init_affine_g1_cache` is called once during `setup_prover`
     /// so this just returns the pre-populated cache. In tests (or if the cache
     /// was reset), it lazily computes the affine bases on first access.
+    ///
+    /// The read-then-write sequence has a benign TOCTOU race: two threads may
+    /// both observe an empty cache and both call `init_affine_g1_cache`. The
+    /// worst case is redundant work — correctness is unaffected because the
+    /// generators are deterministic and `init_affine_g1_cache` replaces the
+    /// cache atomically under a write lock.
     pub fn affine_g1_bases_or_init(g1_vec: &[ArkG1]) -> RwLockReadGuard<'static, Vec<G1Affine>> {
         {
             let cache = AFFINE_G1_CACHE.read().unwrap();
