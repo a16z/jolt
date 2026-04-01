@@ -1,3 +1,4 @@
+#![cfg(feature = "bn254")]
 //! Targeted tests to improve code coverage across the jolt-field crate.
 //!
 //! Covers: NaiveAccumulator, WideAccumulator, OptimizedMul blanket impl,

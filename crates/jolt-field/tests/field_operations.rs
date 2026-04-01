@@ -1,3 +1,5 @@
+#![cfg(feature = "bn254")]
+
 use ark_std::rand::Rng;
 use ark_std::{test_rng, One, Zero};
 use jolt_field::Field;
