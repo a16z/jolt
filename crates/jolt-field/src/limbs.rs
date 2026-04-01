@@ -157,7 +157,12 @@ impl<const N: usize> Limbs<N> {
     /// Use [`fmadd`](Self::fmadd) if many products will be accumulated and intermediate
     /// limbs may overflow.
     #[inline]
-    pub fn fmadd_trunc<const A: usize, const B: usize>(&mut self, a: &Limbs<A>, b: &Limbs<B>) {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn fmadd_trunc<const A: usize, const B: usize>(
+        &mut self,
+        a: &Limbs<A>,
+        b: &Limbs<B>,
+    ) {
         let i_limit = if A < N { A } else { N };
         for i in 0..i_limit {
             let mut carry = 0u64;
@@ -234,17 +239,10 @@ impl<const N: usize> From<u64> for Limbs<N> {
     }
 }
 
-impl<const N: usize> From<BigInt<N>> for Limbs<N> {
+impl<const N: usize> Limbs<N> {
     #[inline]
-    fn from(bigint: BigInt<N>) -> Self {
+    pub(crate) fn from_bigint(bigint: BigInt<N>) -> Self {
         Limbs(bigint.0)
-    }
-}
-
-impl<const N: usize> From<Limbs<N>> for BigInt<N> {
-    #[inline]
-    fn from(limbs: Limbs<N>) -> Self {
-        BigInt(limbs.0)
     }
 }
 
@@ -347,7 +345,7 @@ impl<const N: usize> ark_serialize::CanonicalDeserialize for Limbs<N> {
         compress: ark_serialize::Compress,
         validate: ark_serialize::Validate,
     ) -> Result<Self, ark_serialize::SerializationError> {
-        BigInt::<N>::deserialize_with_mode(reader, compress, validate).map(Limbs::from)
+        BigInt::<N>::deserialize_with_mode(reader, compress, validate).map(Limbs::from_bigint)
     }
 }
 
@@ -518,8 +516,8 @@ mod tests {
     #[test]
     fn bigint_roundtrip() {
         let limbs = Limbs::<4>([1, 2, 3, 4]);
-        let bigint: BigInt<4> = limbs.into();
-        let back: Limbs<4> = bigint.into();
+        let bigint = limbs.to_bigint();
+        let back = Limbs::from_bigint(bigint);
         assert_eq!(limbs, back);
     }
 

@@ -290,8 +290,8 @@ impl Fr {
     /// Converts a limb array to a field element without checking that it is
     /// less than the modulus.
     #[inline]
-    pub fn from_bigint_unchecked(limbs: Limbs<4>) -> Option<Self> {
-        Some(Fr(bn254_ops::from_bigint_unchecked(limbs.to_bigint())))
+    pub fn from_bigint_unchecked(limbs: Limbs<4>) -> Self {
+        Fr(bn254_ops::from_bigint_unchecked(limbs.to_bigint()))
     }
 
     /// Access the internal Montgomery-form limbs.
@@ -460,7 +460,7 @@ mod tests {
     fn inner_limbs_roundtrip() {
         let val = Fr::from_u64(42);
         let limbs = val.inner_limbs();
-        let recovered = Fr::from_bigint_unchecked(limbs).unwrap();
+        let recovered = Fr::from_bigint_unchecked(limbs);
         assert_eq!(val, recovered);
     }
 }

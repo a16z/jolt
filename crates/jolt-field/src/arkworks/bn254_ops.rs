@@ -89,12 +89,12 @@ const BARRETT_MU: u64 = {
     let shift = MODULUS_NUM_SPARE_BITS;
 
     // Normalize divisor: shift left by `shift` so MSB of top limb is set
-    let pn3 = if shift > 0 {
+    let p_hi = if shift > 0 {
         (MODULUS[3] << shift) | (MODULUS[2] >> (64 - shift))
     } else {
         MODULUS[3]
     };
-    let pn2 = if shift > 0 {
+    let p_lo = if shift > 0 {
         (MODULUS[2] << shift) | (MODULUS[1] >> (64 - shift))
     } else {
         MODULUS[2]
@@ -104,15 +104,15 @@ const BARRETT_MU: u64 = {
     // (original top limb 1<<(63-shift), shifted left by shift → 1<<63)
     let dn4 = 1u64 << 63;
 
-    // q_hat = floor((dn4 * 2^64) / pn3)
+    // q_hat = floor((dn4 * 2^64) / p_hi)
     let dividend_top = (dn4 as u128) << 64;
-    let mut q = dividend_top / (pn3 as u128);
+    let mut q = dividend_top / (p_hi as u128);
 
-    // Knuth refinement: while q * pn2 > remainder * 2^64, decrement q
-    let mut r = dividend_top - q * (pn3 as u128);
-    while r < (1u128 << 64) && q * (pn2 as u128) > (r << 64) {
+    // Knuth refinement: while q * p_lo > remainder * 2^64, decrement q
+    let mut r = dividend_top - q * (p_hi as u128);
+    while r < (1u128 << 64) && q * (p_lo as u128) > (r << 64) {
         q -= 1;
-        r += pn3 as u128;
+        r += p_hi as u128;
     }
 
     q as u64
@@ -272,7 +272,7 @@ fn mul_bigint5_by_u64_in_place(a: &mut BigInt<5>, b: u64) {
 ///
 /// Folds from high limb to low, applying the 5→4 kernel at each step.
 #[inline(always)]
-pub fn from_barrett_reduce<const L: usize>(unreduced: BigInt<L>) -> Fr {
+pub(crate) fn from_barrett_reduce<const L: usize>(unreduced: BigInt<L>) -> Fr {
     debug_assert!(L >= N);
     let mut acc = BigInt::<N>([0u64; N]);
     let mut i = L;
@@ -310,7 +310,7 @@ fn montgomery_reduce_in_place<const L: usize>(limbs: &mut [u64; L]) -> u64 {
 /// For L > 2N, first folds the tail (indices N..L) via Barrett, then runs
 /// the standard N-step Montgomery REDC.
 #[inline(always)]
-pub fn from_montgomery_reduce<const L: usize>(unreduced: BigInt<L>) -> Fr {
+pub(crate) fn from_montgomery_reduce<const L: usize>(unreduced: BigInt<L>) -> Fr {
     debug_assert!(L >= 2 * N, "montgomery_reduce requires L >= 2N");
     let mut buf = unreduced.0;
 
@@ -409,7 +409,7 @@ fn from_unchecked_nplus2(element: BigInt<6>) -> Fr {
 
 /// Multiply a field element by u64.
 #[inline(always)]
-pub fn mul_u64(a: Fr, b: u64) -> Fr {
+pub(crate) fn mul_u64(a: Fr, b: u64) -> Fr {
     if b == 0 || Zero::is_zero(&a) {
         return Fr::zero();
     }
@@ -422,7 +422,7 @@ pub fn mul_u64(a: Fr, b: u64) -> Fr {
 
 /// Multiply a field element by i64.
 #[inline(always)]
-pub fn mul_i64(a: Fr, b: i64) -> Fr {
+pub(crate) fn mul_i64(a: Fr, b: i64) -> Fr {
     let abs = b.unsigned_abs();
     let res = mul_u64(a, abs);
     if b < 0 {
@@ -434,7 +434,7 @@ pub fn mul_i64(a: Fr, b: i64) -> Fr {
 
 /// Multiply a field element by u128.
 #[inline(always)]
-pub fn mul_u128(a: Fr, b: u128) -> Fr {
+pub(crate) fn mul_u128(a: Fr, b: u128) -> Fr {
     if b >> 64 == 0 {
         mul_u64(a, b as u64)
     } else {
@@ -445,7 +445,7 @@ pub fn mul_u128(a: Fr, b: u128) -> Fr {
 
 /// Multiply a field element by i128.
 #[inline(always)]
-pub fn mul_i128(a: Fr, b: i128) -> Fr {
+pub(crate) fn mul_i128(a: Fr, b: i128) -> Fr {
     if b == 0 || Zero::is_zero(&a) {
         return Fr::zero();
     }
@@ -468,7 +468,7 @@ pub fn mul_i128(a: Fr, b: i128) -> Fr {
 
 /// Convert u64 → Fr using precomp table for small values, mul_u64(R, n) otherwise.
 #[inline(always)]
-pub fn from_u64(n: u64) -> Fr {
+pub(crate) fn from_u64(n: u64) -> Fr {
     if (n as usize) < PRECOMP_TABLE_SIZE {
         PRECOMP_TABLE[n as usize]
     } else {
@@ -478,7 +478,7 @@ pub fn from_u64(n: u64) -> Fr {
 
 /// Convert u128 → Fr using precomp table for small values, mul_u128(R, n) otherwise.
 #[inline(always)]
-pub fn from_u128(n: u128) -> Fr {
+pub(crate) fn from_u128(n: u128) -> Fr {
     if n < PRECOMP_TABLE_SIZE as u128 {
         PRECOMP_TABLE[n as usize]
     } else {
@@ -493,7 +493,7 @@ pub fn from_u128(n: u128) -> Fr {
 ///
 /// Interleaves multiplication with Montgomery reduction for efficiency.
 #[inline(always)]
-pub fn mul_by_hi_2limbs(a: Fr, limb_lo: u64, limb_hi: u64) -> Fr {
+pub(crate) fn mul_by_hi_2limbs(a: Fr, limb_lo: u64, limb_hi: u64) -> Fr {
     let a_limbs = a.0 .0;
     let mut r = [0u64; N];
 
@@ -538,7 +538,7 @@ pub fn mul_by_hi_2limbs(a: Fr, limb_lo: u64, limb_hi: u64) -> Fr {
 
 /// Wrap a raw BigInt<4> as Fr without any reduction (caller guarantees it's valid).
 #[inline(always)]
-pub fn from_bigint_unchecked(r: BigInt<N>) -> Fr {
+pub(crate) fn from_bigint_unchecked(r: BigInt<N>) -> Fr {
     Fp::new_unchecked(r)
 }
 
