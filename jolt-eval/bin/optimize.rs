@@ -5,23 +5,12 @@ use std::sync::Arc;
 use clap::Parser;
 
 use jolt_eval::agent::ClaudeCodeAgent;
-use jolt_eval::invariant::completeness_prover::ProverCompletenessInvariant;
-use jolt_eval::invariant::completeness_verifier::VerifierCompletenessInvariant;
-use jolt_eval::invariant::determinism::DeterminismInvariant;
-use jolt_eval::invariant::serialization_roundtrip::SerializationRoundtripInvariant;
-use jolt_eval::invariant::soundness::SoundnessInvariant;
 use jolt_eval::invariant::synthesis::SynthesisRegistry;
-use jolt_eval::invariant::zk_consistency::ZkConsistencyInvariant;
-use jolt_eval::objective::guest_cycles::GuestCycleCountObjective;
-use jolt_eval::objective::inline_lengths::InlineLengthsObjective;
 use jolt_eval::objective::optimize::{auto_optimize, OptimizeConfig, OptimizeEnv};
-use jolt_eval::objective::peak_rss::PeakRssObjective;
-use jolt_eval::objective::proof_size::ProofSizeObjective;
-use jolt_eval::objective::prover_time::ProverTimeObjective;
-use jolt_eval::objective::verifier_time::VerifierTimeObjective;
-use jolt_eval::objective::wrapping_cost::WrappingCostObjective;
-use jolt_eval::objective::{measure_objectives, Direction, Objective};
-use jolt_eval::TestCase;
+use jolt_eval::objective::{
+    build_objectives_from_inventory, measure_dyn, AbstractObjective, Direction,
+};
+use jolt_eval::{SharedSetup, TestCase};
 
 #[derive(Parser)]
 #[command(name = "optimize")]
@@ -56,16 +45,15 @@ struct Cli {
     hint: Option<String>,
 }
 
-/// Real environment backed by Jolt objectives, invariants, and git.
 struct RealEnv {
-    objectives: Vec<Objective>,
+    objectives: Vec<Box<dyn AbstractObjective>>,
     registry: SynthesisRegistry,
     repo_dir: std::path::PathBuf,
 }
 
 impl OptimizeEnv for RealEnv {
     fn measure(&mut self) -> HashMap<String, f64> {
-        measure_objectives(&self.objectives)
+        measure_dyn(&self.objectives)
     }
 
     fn check_invariants(&mut self) -> bool {
@@ -124,49 +112,47 @@ fn main() -> eyre::Result<()> {
         heap_size: 32768,
         program_size: None,
     };
-    let test_case = Arc::new(TestCase {
+    let test_case = TestCase {
         elf_contents: elf_bytes,
         memory_config,
         max_trace_length: cli.max_trace_length,
-    });
-
-    let inputs = vec![];
-    let prover_pp = Arc::new(test_case.prover_preprocessing());
-    let verifier_pp = Arc::new(TestCase::verifier_preprocessing(&prover_pp));
-
-    let all_objectives = build_objectives(&test_case, &prover_pp, &verifier_pp, &inputs);
-    let all_names: Vec<String> = all_objectives.iter().map(|o| o.name().to_string()).collect();
-    let objective_names: Vec<String> = if let Some(names) = &cli.objectives {
-        names.split(',').map(|s| s.trim().to_string()).collect()
-    } else {
-        all_names.clone()
     };
 
-    let objectives: Vec<Objective> = all_objectives
-        .into_iter()
-        .filter(|o| objective_names.contains(&o.name().to_string()))
-        .collect();
+    let setup = SharedSetup::new(test_case);
+    let all_objectives = build_objectives_from_inventory(&setup, vec![]);
+    let all_names: Vec<String> = all_objectives.iter().map(|o| o.name().to_string()).collect();
+
+    let filter_names: Option<Vec<String>> = cli
+        .objectives
+        .as_ref()
+        .map(|s| s.split(',').map(|n| n.trim().to_string()).collect());
+
+    let objectives: Vec<Box<dyn AbstractObjective>> = if let Some(names) = &filter_names {
+        all_objectives
+            .into_iter()
+            .filter(|o| names.contains(&o.name().to_string()))
+            .collect()
+    } else {
+        all_objectives
+    };
 
     if objectives.is_empty() {
         eprintln!("No matching objectives. Available: {}", all_names.join(", "));
         std::process::exit(1);
     }
 
-    let default_inputs = vec![];
-    let mut registry = SynthesisRegistry::new();
-    register_invariants(&mut registry, &test_case, &default_inputs);
-
-    let repo_dir = std::env::current_dir()?;
-    let agent = ClaudeCodeAgent::new(&cli.model, cli.max_turns);
-    let config = OptimizeConfig {
-        num_iterations: cli.iterations,
-        hint: cli.hint.clone(),
+    let test_case2 = TestCase {
+        elf_contents: std::fs::read(&cli.elf)?,
+        memory_config,
+        max_trace_length: cli.max_trace_length,
     };
+    let registry = SynthesisRegistry::from_inventory(Arc::new(test_case2), vec![]);
+    let repo_dir = std::env::current_dir()?;
 
     let mut env = RealEnv {
         objectives,
         registry,
-        repo_dir,
+        repo_dir: repo_dir.clone(),
     };
 
     println!("=== Baseline measurements ===");
@@ -174,7 +160,13 @@ fn main() -> eyre::Result<()> {
     print_measurements(&env.directions(), &baseline);
     println!();
 
-    let result = auto_optimize(&agent, &mut env, &config, &std::env::current_dir()?);
+    let agent = ClaudeCodeAgent::new(&cli.model, cli.max_turns);
+    let config = OptimizeConfig {
+        num_iterations: cli.iterations,
+        hint: cli.hint.clone(),
+    };
+
+    let result = auto_optimize(&agent, &mut env, &config, &repo_dir);
 
     println!("=== Optimization summary ===");
     println!(
@@ -210,34 +202,4 @@ fn print_measurements(directions: &HashMap<String, Direction>, measurements: &Ha
         };
         println!("  {:<25} {:>15} {:>6}", name, val, dir);
     }
-}
-
-fn register_invariants(
-    registry: &mut SynthesisRegistry,
-    test_case: &Arc<TestCase>,
-    default_inputs: &[u8],
-) {
-    registry.register(Box::new(SoundnessInvariant::new(Arc::clone(test_case), default_inputs.to_vec())));
-    registry.register(Box::new(VerifierCompletenessInvariant::new(Arc::clone(test_case))));
-    registry.register(Box::new(ProverCompletenessInvariant::new(Arc::clone(test_case))));
-    registry.register(Box::new(DeterminismInvariant::new(Arc::clone(test_case))));
-    registry.register(Box::new(SerializationRoundtripInvariant::new(Arc::clone(test_case), default_inputs.to_vec())));
-    registry.register(Box::new(ZkConsistencyInvariant::new(Arc::clone(test_case))));
-}
-
-fn build_objectives(
-    test_case: &Arc<TestCase>,
-    prover_pp: &Arc<jolt_eval::ProverPreprocessing>,
-    verifier_pp: &Arc<jolt_eval::VerifierPreprocessing>,
-    inputs: &[u8],
-) -> Vec<Objective> {
-    vec![
-        Objective::PeakRss(PeakRssObjective::new(Arc::clone(test_case), Arc::clone(prover_pp), inputs.to_vec())),
-        Objective::ProverTime(ProverTimeObjective::new(Arc::clone(test_case), Arc::clone(prover_pp), inputs.to_vec())),
-        Objective::ProofSize(ProofSizeObjective::new(Arc::clone(test_case), Arc::clone(prover_pp), inputs.to_vec())),
-        Objective::VerifierTime(VerifierTimeObjective::new(Arc::clone(test_case), Arc::clone(prover_pp), Arc::clone(verifier_pp), inputs.to_vec())),
-        Objective::GuestCycleCount(GuestCycleCountObjective::new(Arc::clone(test_case), inputs.to_vec())),
-        Objective::InlineLengths(InlineLengthsObjective::new(Arc::clone(test_case))),
-        Objective::WrappingCost(WrappingCostObjective::new(Arc::clone(test_case), Arc::clone(prover_pp))),
-    ]
 }

@@ -3,13 +3,7 @@ use std::sync::Arc;
 use clap::Parser;
 use tracing::info;
 
-use jolt_eval::invariant::completeness_prover::ProverCompletenessInvariant;
-use jolt_eval::invariant::completeness_verifier::VerifierCompletenessInvariant;
-use jolt_eval::invariant::determinism::DeterminismInvariant;
-use jolt_eval::invariant::serialization_roundtrip::SerializationRoundtripInvariant;
-use jolt_eval::invariant::soundness::SoundnessInvariant;
-use jolt_eval::invariant::synthesis::{SynthesisRegistry, BUILTIN_INVARIANT_NAMES};
-use jolt_eval::invariant::zk_consistency::ZkConsistencyInvariant;
+use jolt_eval::invariant::synthesis::{invariant_names, SynthesisRegistry};
 use jolt_eval::invariant::{DynInvariant, InvariantReport};
 use jolt_eval::TestCase;
 
@@ -56,16 +50,10 @@ fn main() -> eyre::Result<()> {
         })
     } else {
         eprintln!("Error: --elf <path> is required. Provide a pre-compiled guest ELF.");
-        eprintln!(
-            "Example: compile with `cargo build -p <guest> --release` then pass the ELF path."
-        );
         std::process::exit(1);
     };
 
-    let default_inputs = vec![];
-
-    let mut registry = SynthesisRegistry::new();
-    register_invariants(&mut registry, &test_case, &default_inputs);
+    let registry = SynthesisRegistry::from_inventory(test_case, vec![]);
 
     let invariants: Vec<&dyn DynInvariant> = if let Some(name) = &cli.invariant {
         registry
@@ -85,7 +73,7 @@ fn main() -> eyre::Result<()> {
     if invariants.is_empty() {
         eprintln!("No matching invariants found.");
         if let Some(name) = &cli.invariant {
-            eprintln!("Available: {}", BUILTIN_INVARIANT_NAMES.join(", "));
+            eprintln!("Available: {}", invariant_names().join(", "));
             eprintln!("Requested: {name}");
         }
         std::process::exit(1);
@@ -110,29 +98,6 @@ fn main() -> eyre::Result<()> {
     }
 
     Ok(())
-}
-
-fn register_invariants(
-    registry: &mut SynthesisRegistry,
-    test_case: &Arc<TestCase>,
-    default_inputs: &[u8],
-) {
-    registry.register(Box::new(SoundnessInvariant::new(
-        Arc::clone(test_case),
-        default_inputs.to_vec(),
-    )));
-    registry.register(Box::new(VerifierCompletenessInvariant::new(Arc::clone(
-        test_case,
-    ))));
-    registry.register(Box::new(ProverCompletenessInvariant::new(Arc::clone(
-        test_case,
-    ))));
-    registry.register(Box::new(DeterminismInvariant::new(Arc::clone(test_case))));
-    registry.register(Box::new(SerializationRoundtripInvariant::new(
-        Arc::clone(test_case),
-        default_inputs.to_vec(),
-    )));
-    registry.register(Box::new(ZkConsistencyInvariant::new(Arc::clone(test_case))));
 }
 
 fn print_report(report: &InvariantReport) {

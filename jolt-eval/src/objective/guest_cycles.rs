@@ -1,7 +1,17 @@
 use std::sync::Arc;
 
-use super::{AbstractObjective, Direction, MeasurementError};
+use super::{AbstractObjective, Direction, MeasurementError, ObjectiveEntry};
 use crate::TestCase;
+
+inventory::submit! {
+    ObjectiveEntry {
+        name: "guest_cycle_count",
+        direction: Direction::Minimize,
+        build: |setup, inputs| Box::new(GuestCycleCountObjective::new(
+            setup.test_case.clone(), inputs,
+        )),
+    }
+}
 
 /// Measures guest instruction cycle count via program tracing.
 pub struct GuestCycleCountObjective {

@@ -3,8 +3,16 @@ use std::sync::Arc;
 use arbitrary::Arbitrary;
 use enumset::EnumSet;
 
-use super::{Invariant, InvariantViolation, SynthesisTarget};
+use super::{Invariant, InvariantEntry, InvariantViolation, SynthesisTarget};
 use crate::{ProverPreprocessing, TestCase};
+
+inventory::submit! {
+    InvariantEntry {
+        name: "prover_completeness",
+        targets: || SynthesisTarget::Test | SynthesisTarget::Fuzz,
+        build: |tc, _inputs| Box::new(ProverCompletenessInvariant::new(tc)),
+    }
+}
 
 /// Prover completeness: for a fixed program, input, and valid size parameters,
 /// the prover should produce a proof without panicking.

@@ -3,8 +3,16 @@ use std::sync::Arc;
 use arbitrary::Arbitrary;
 use enumset::EnumSet;
 
-use super::{Invariant, InvariantViolation, SynthesisTarget};
+use super::{Invariant, InvariantEntry, InvariantViolation, SynthesisTarget};
 use crate::{ProverPreprocessing, TestCase, VerifierPreprocessing};
+
+inventory::submit! {
+    InvariantEntry {
+        name: "zk_consistency",
+        targets: || SynthesisTarget::Test | SynthesisTarget::Fuzz,
+        build: |tc, _inputs| Box::new(ZkConsistencyInvariant::new(tc)),
+    }
+}
 
 /// ZK consistency invariant: both `host` and `host,zk` compilation modes
 /// produce valid proofs that pass verification.

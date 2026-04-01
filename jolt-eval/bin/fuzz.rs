@@ -2,13 +2,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use clap::Parser;
-use jolt_eval::invariant::completeness_prover::ProverCompletenessInvariant;
-use jolt_eval::invariant::completeness_verifier::VerifierCompletenessInvariant;
-use jolt_eval::invariant::determinism::DeterminismInvariant;
-use jolt_eval::invariant::serialization_roundtrip::SerializationRoundtripInvariant;
-use jolt_eval::invariant::soundness::SoundnessInvariant;
-use jolt_eval::invariant::synthesis::{SynthesisRegistry, BUILTIN_INVARIANT_NAMES};
-use jolt_eval::invariant::zk_consistency::ZkConsistencyInvariant;
+
+use jolt_eval::invariant::synthesis::{invariant_names, SynthesisRegistry};
 use jolt_eval::invariant::{DynInvariant, InvariantReport, SynthesisTarget};
 use jolt_eval::TestCase;
 
@@ -49,6 +44,14 @@ fn main() -> eyre::Result<()> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
 
+    if cli.list {
+        println!("Fuzzable invariants:");
+        for name in invariant_names() {
+            println!("  {name}");
+        }
+        return Ok(());
+    }
+
     let test_case = if let Some(elf_path) = &cli.elf {
         let elf_bytes = std::fs::read(elf_path)?;
         let memory_config = common::jolt_device::MemoryConfig {
@@ -65,27 +68,12 @@ fn main() -> eyre::Result<()> {
             memory_config,
             max_trace_length: cli.max_trace_length,
         })
-    } else if !cli.list {
+    } else {
         eprintln!("Error: --elf <path> is required. Provide a pre-compiled guest ELF.");
         std::process::exit(1);
-    } else {
-        println!("Fuzzable invariants:");
-        for name in BUILTIN_INVARIANT_NAMES {
-            println!("  {name}");
-        }
-        return Ok(());
     };
 
-    let default_inputs = vec![];
-    let mut registry = SynthesisRegistry::new();
-    register_invariants(&mut registry, &test_case, &default_inputs);
-
-    if cli.list {
-        for inv in registry.for_target(SynthesisTarget::Fuzz) {
-            println!("  {}", inv.name());
-        }
-        return Ok(());
-    }
+    let registry = SynthesisRegistry::from_inventory(test_case, vec![]);
 
     let fuzzable: Vec<&dyn DynInvariant> = if let Some(name) = &cli.invariant {
         let matches: Vec<_> = registry
@@ -134,14 +122,10 @@ fn main() -> eyre::Result<()> {
     for inv in &fuzzable {
         println!("  {} — setting up...", inv.name());
 
-        // DynInvariant::run_checks handles setup internally, but for a fuzz
-        // loop we want to amortize setup across many iterations. Use run_checks
-        // in batches.
         let per_invariant = cli.iterations / fuzzable.len();
         let mut checks = 0usize;
         let mut violations = Vec::new();
 
-        // Run in batches so we can check the deadline between batches
         let batch_size = per_invariant.min(100);
         let mut remaining = per_invariant;
 
@@ -191,31 +175,6 @@ fn main() -> eyre::Result<()> {
     }
 
     Ok(())
-}
-
-fn register_invariants(
-    registry: &mut SynthesisRegistry,
-    test_case: &Arc<TestCase>,
-    default_inputs: &[u8],
-) {
-    registry.register(Box::new(SoundnessInvariant::new(
-        Arc::clone(test_case),
-        default_inputs.to_vec(),
-    )));
-    registry.register(Box::new(VerifierCompletenessInvariant::new(Arc::clone(
-        test_case,
-    ))));
-    registry.register(Box::new(ProverCompletenessInvariant::new(Arc::clone(
-        test_case,
-    ))));
-    registry.register(Box::new(DeterminismInvariant::new(Arc::clone(test_case))));
-    registry.register(Box::new(SerializationRoundtripInvariant::new(
-        Arc::clone(test_case),
-        default_inputs.to_vec(),
-    )));
-    registry.register(Box::new(ZkConsistencyInvariant::new(Arc::clone(
-        test_case,
-    ))));
 }
 
 fn print_report(report: &InvariantReport) {

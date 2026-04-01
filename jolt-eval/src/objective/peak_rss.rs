@@ -2,8 +2,18 @@ use std::sync::Arc;
 
 use sysinfo::{Pid, System};
 
-use super::{AbstractObjective, Direction, MeasurementError};
+use super::{AbstractObjective, Direction, MeasurementError, ObjectiveEntry};
 use crate::{ProverPreprocessing, TestCase};
+
+inventory::submit! {
+    ObjectiveEntry {
+        name: "peak_rss",
+        direction: Direction::Minimize,
+        build: |setup, inputs| Box::new(PeakRssObjective::new(
+            setup.test_case.clone(), setup.prover_preprocessing.clone(), inputs,
+        )),
+    }
+}
 
 /// Measures peak resident set size (RSS) during proving.
 ///

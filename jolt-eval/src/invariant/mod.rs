@@ -7,10 +7,13 @@ pub mod synthesis;
 pub mod zk_consistency;
 
 use std::fmt;
+use std::sync::Arc;
 
 use arbitrary::Arbitrary;
 use enumset::{EnumSet, EnumSetType};
 use rand::RngCore;
+
+use crate::TestCase;
 
 /// What to synthesize from an invariant definition.
 #[derive(Debug, EnumSetType)]
@@ -79,6 +82,23 @@ pub trait Invariant: Send + Sync {
     fn seed_corpus(&self) -> Vec<Self::Input> {
         vec![]
     }
+}
+
+/// Registration entry for the [`inventory`] crate.
+///
+/// Each built-in invariant module calls `inventory::submit!` with one of
+/// these, so all invariants are discoverable at runtime without manual
+/// registration.
+pub struct InvariantEntry {
+    pub name: &'static str,
+    pub targets: fn() -> EnumSet<SynthesisTarget>,
+    pub build: fn(Arc<TestCase>, Vec<u8>) -> Box<dyn DynInvariant>,
+}
+inventory::collect!(InvariantEntry);
+
+/// Iterate all invariant entries registered via `inventory`.
+pub fn registered_invariants() -> impl Iterator<Item = &'static InvariantEntry> {
+    inventory::iter::<InvariantEntry>()
 }
 
 /// A counterexample produced when an invariant is violated.

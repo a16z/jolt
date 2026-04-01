@@ -3,8 +3,16 @@ use std::sync::Arc;
 use arbitrary::Arbitrary;
 use enumset::EnumSet;
 
-use super::{Invariant, InvariantViolation, SynthesisTarget};
+use super::{Invariant, InvariantEntry, InvariantViolation, SynthesisTarget};
 use crate::{deserialize_proof, serialize_proof, TestCase};
+
+inventory::submit! {
+    InvariantEntry {
+        name: "serialization_roundtrip",
+        targets: || { SynthesisTarget::Test.into() },
+        build: |tc, inputs| Box::new(SerializationRoundtripInvariant::new(tc, inputs)),
+    }
+}
 
 /// Serialization roundtrip invariant: `deserialize(serialize(proof)) == proof`,
 /// verified by checking that re-serialization produces identical bytes.

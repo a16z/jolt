@@ -3,8 +3,16 @@ use std::sync::Arc;
 use arbitrary::Arbitrary;
 use enumset::EnumSet;
 
-use super::{Invariant, InvariantViolation, SynthesisTarget};
+use super::{Invariant, InvariantEntry, InvariantViolation, SynthesisTarget};
 use crate::{serialize_proof, JoltDevice, Proof, TestCase, VerifierPreprocessing};
+
+inventory::submit! {
+    InvariantEntry {
+        name: "soundness",
+        targets: || SynthesisTarget::Test | SynthesisTarget::Fuzz | SynthesisTarget::RedTeam,
+        build: |tc, inputs| Box::new(SoundnessInvariant::new(tc, inputs)),
+    }
+}
 
 /// Mutation applied to a serialized proof to test soundness.
 #[derive(Debug, Clone, Arbitrary)]

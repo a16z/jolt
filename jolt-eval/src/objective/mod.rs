@@ -10,6 +10,8 @@ pub mod wrapping_cost;
 use std::collections::HashMap;
 use std::fmt;
 
+use crate::SharedSetup;
+
 /// Whether lower or higher values are better.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
@@ -57,6 +59,43 @@ pub trait AbstractObjective: Send + Sync {
     }
 
     fn direction(&self) -> Direction;
+}
+
+/// Registration entry for the [`inventory`] crate.
+///
+/// Each built-in objective module calls `inventory::submit!` with one of
+/// these, so all objectives are discoverable at runtime.
+pub struct ObjectiveEntry {
+    pub name: &'static str,
+    pub direction: Direction,
+    pub build: fn(&SharedSetup, Vec<u8>) -> Box<dyn AbstractObjective>,
+}
+inventory::collect!(ObjectiveEntry);
+
+/// Iterate all objective entries registered via `inventory`.
+pub fn registered_objectives() -> impl Iterator<Item = &'static ObjectiveEntry> {
+    inventory::iter::<ObjectiveEntry>()
+}
+
+/// Build all registered objectives from a [`SharedSetup`].
+pub fn build_objectives_from_inventory(
+    setup: &SharedSetup,
+    inputs: Vec<u8>,
+) -> Vec<Box<dyn AbstractObjective>> {
+    inventory::iter::<ObjectiveEntry>()
+        .map(|entry| (entry.build)(setup, inputs.clone()))
+        .collect()
+}
+
+/// Measure a list of trait-object objectives.
+pub fn measure_dyn(objectives: &[Box<dyn AbstractObjective>]) -> HashMap<String, f64> {
+    objectives
+        .iter()
+        .filter_map(|obj| {
+            let name = obj.name().to_string();
+            obj.collect_measurement().ok().map(|v| (name, v))
+        })
+        .collect()
 }
 
 /// Centralized objective enum dispatching to concrete implementations.

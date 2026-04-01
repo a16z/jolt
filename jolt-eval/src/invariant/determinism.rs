@@ -3,8 +3,16 @@ use std::sync::Arc;
 use arbitrary::Arbitrary;
 use enumset::EnumSet;
 
-use super::{Invariant, InvariantViolation, SynthesisTarget};
+use super::{Invariant, InvariantEntry, InvariantViolation, SynthesisTarget};
 use crate::{serialize_proof, ProverPreprocessing, TestCase};
+
+inventory::submit! {
+    InvariantEntry {
+        name: "determinism",
+        targets: || SynthesisTarget::Test | SynthesisTarget::Fuzz,
+        build: |tc, _inputs| Box::new(DeterminismInvariant::new(tc)),
+    }
+}
 
 /// Determinism invariant: same program + input must produce byte-identical proofs.
 pub struct DeterminismInvariant {

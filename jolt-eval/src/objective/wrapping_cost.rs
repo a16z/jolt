@@ -1,7 +1,17 @@
 use std::sync::Arc;
 
-use super::{AbstractObjective, Direction, MeasurementError};
+use super::{AbstractObjective, Direction, MeasurementError, ObjectiveEntry};
 use crate::{ProverPreprocessing, TestCase};
+
+inventory::submit! {
+    ObjectiveEntry {
+        name: "wrapping_cost",
+        direction: Direction::Minimize,
+        build: |setup, _inputs| Box::new(WrappingCostObjective::new(
+            setup.test_case.clone(), setup.prover_preprocessing.clone(),
+        )),
+    }
+}
 
 /// Measures the "wrapping cost" as the total number of constraints in the R1CS.
 ///

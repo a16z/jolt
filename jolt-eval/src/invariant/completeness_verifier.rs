@@ -3,8 +3,16 @@ use std::sync::Arc;
 use arbitrary::Arbitrary;
 use enumset::EnumSet;
 
-use super::{Invariant, InvariantViolation, SynthesisTarget};
+use super::{Invariant, InvariantEntry, InvariantViolation, SynthesisTarget};
 use crate::{ProverPreprocessing, TestCase, VerifierPreprocessing};
+
+inventory::submit! {
+    InvariantEntry {
+        name: "verifier_completeness",
+        targets: || SynthesisTarget::Test | SynthesisTarget::Fuzz,
+        build: |tc, _inputs| Box::new(VerifierCompletenessInvariant::new(tc)),
+    }
+}
 
 /// Verifier completeness: for a fixed program and honest prover output/proof,
 /// the verifier accepts the honest output/proof.

@@ -1,16 +1,7 @@
-use std::sync::Arc;
-
 use clap::Parser;
 
-use jolt_eval::objective::guest_cycles::GuestCycleCountObjective;
-use jolt_eval::objective::inline_lengths::InlineLengthsObjective;
-use jolt_eval::objective::peak_rss::PeakRssObjective;
-use jolt_eval::objective::proof_size::ProofSizeObjective;
-use jolt_eval::objective::prover_time::ProverTimeObjective;
-use jolt_eval::objective::verifier_time::VerifierTimeObjective;
-use jolt_eval::objective::wrapping_cost::WrappingCostObjective;
-use jolt_eval::objective::Objective;
-use jolt_eval::TestCase;
+use jolt_eval::objective::{build_objectives_from_inventory, registered_objectives};
+use jolt_eval::{SharedSetup, TestCase};
 
 #[derive(Parser)]
 #[command(name = "measure-objectives")]
@@ -48,33 +39,31 @@ fn main() -> eyre::Result<()> {
             heap_size: 32768,
             program_size: None,
         };
-        Arc::new(TestCase {
+        TestCase {
             elf_contents: elf_bytes,
             memory_config,
             max_trace_length: cli.max_trace_length,
-        })
+        }
     } else {
         eprintln!("Error: --elf <path> is required. Provide a pre-compiled guest ELF.");
         std::process::exit(1);
     };
 
-    let inputs = vec![];
-    let prover_pp = Arc::new(test_case.prover_preprocessing());
-    let verifier_pp = Arc::new(TestCase::verifier_preprocessing(&prover_pp));
+    let setup = SharedSetup::new(test_case);
+    let objectives = build_objectives_from_inventory(&setup, vec![]);
 
-    let objectives = build_objectives(&test_case, &prover_pp, &verifier_pp, &inputs);
-
-    let filtered: Vec<&Objective> = if let Some(name) = &cli.objective {
+    let filtered: Vec<_> = if let Some(name) = &cli.objective {
         objectives
-            .iter()
+            .into_iter()
             .filter(|o| o.name() == name.as_str())
             .collect()
     } else {
-        objectives.iter().collect()
+        objectives
     };
 
     if filtered.is_empty() {
-        eprintln!("No matching objectives found.");
+        let all_names: Vec<_> = registered_objectives().map(|e| e.name).collect();
+        eprintln!("No matching objectives. Available: {}", all_names.join(", "));
         std::process::exit(1);
     }
 
@@ -106,44 +95,4 @@ fn main() -> eyre::Result<()> {
     }
 
     Ok(())
-}
-
-fn build_objectives(
-    test_case: &Arc<TestCase>,
-    prover_pp: &Arc<jolt_eval::ProverPreprocessing>,
-    verifier_pp: &Arc<jolt_eval::VerifierPreprocessing>,
-    inputs: &[u8],
-) -> Vec<Objective> {
-    vec![
-        Objective::PeakRss(PeakRssObjective::new(
-            Arc::clone(test_case),
-            Arc::clone(prover_pp),
-            inputs.to_vec(),
-        )),
-        Objective::ProverTime(ProverTimeObjective::new(
-            Arc::clone(test_case),
-            Arc::clone(prover_pp),
-            inputs.to_vec(),
-        )),
-        Objective::ProofSize(ProofSizeObjective::new(
-            Arc::clone(test_case),
-            Arc::clone(prover_pp),
-            inputs.to_vec(),
-        )),
-        Objective::VerifierTime(VerifierTimeObjective::new(
-            Arc::clone(test_case),
-            Arc::clone(prover_pp),
-            Arc::clone(verifier_pp),
-            inputs.to_vec(),
-        )),
-        Objective::GuestCycleCount(GuestCycleCountObjective::new(
-            Arc::clone(test_case),
-            inputs.to_vec(),
-        )),
-        Objective::InlineLengths(InlineLengthsObjective::new(Arc::clone(test_case))),
-        Objective::WrappingCost(WrappingCostObjective::new(
-            Arc::clone(test_case),
-            Arc::clone(prover_pp),
-        )),
-    ]
 }

@@ -23,6 +23,7 @@ tracing-subscriber = { workspace = true }
 
 arbitrary = { version = "1", features = ["derive"] }
 enumset = "1"
+inventory = { workspace = true }
 tempfile = "3"
 
 jolt-eval-macros = { path = "macros" }
