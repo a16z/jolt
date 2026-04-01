@@ -860,6 +860,7 @@ fn conditional_negate(x: Secp256k1Point, cond: bool) -> Secp256k1Point {
 /// Security: it is the responsibility of the caller to ensure
 /// 1. z, r, and s are well formed
 /// 2. q is a valid point on the curve
+///
 /// Note that these checks are automatically performed by the from_u64_arr constructors.
 #[inline(always)]
 pub fn ecdsa_verify(
