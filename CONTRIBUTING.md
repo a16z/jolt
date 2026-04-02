@@ -19,20 +19,49 @@ A single PR carries a feature from spec to implementation:
 
 1. **Create a spec** using `/new-spec <feature-name>` in Claude Code, or copy [`specs/TEMPLATE.md`](specs/TEMPLATE.md) manually.
 2. **Open a PR** with just the spec file. A GitHub Action will rename it to `<PR#>-<name>.md` and add the `spec` label.
-3. **Spec analysis**: A maintainer triggers `@claude analyze` on the PR. Claude performs a deep analysis, posting probing questions as review comments to identify ambiguities, missing invariants, and unclear evaluation criteria.
-4. **Spec review**: Maintainers review and approve the spec. The spec is approved when both humans and Claude agree it's unambiguous.
-5. **Implementation**: A maintainer triggers `@claude implement` for a one-shot implementation on the same branch, or implements manually.
+3. **Spec analysis**: A maintainer triggers `@claude analyze` on the PR. Claude performs a single-pass analysis, posting all questions at once — ambiguities, missing invariants, unclear evaluation criteria. When satisfied, Claude adds the `claude-approved` label.
+4. **Spec review**: Maintainers review and approve the spec.
+5. **Implementation**: Run `/implement-spec` in [Claude Code cloud](https://claude.ai/code) or locally. Claude generates a one-shot implementation from the approved spec.
 6. **Merge**: Maintainers review the implementation and merge.
 
 ### Writing a Good Spec
 
-A spec has three sections:
+A spec has these sections (see [`specs/TEMPLATE.md`](specs/TEMPLATE.md)):
 
-- **Intent**: What are we building and why? Define the types, invariants, abstractions, and architectural boundaries. Two engineers reading this should arrive at the same implementation.
-- **Evaluation**: How do we know it works? Concrete, testable criteria. Tests, benchmarks, assertions. These verify the invariants from Intent, not the execution details.
-- **Execution** (optional): Algorithmic direction, optimizations to consider, modules to touch. The implementer should be able to derive most of this from Intent and Evaluation.
+- **Summary**: One paragraph — what is this feature and why does it matter?
+- **Intent**: Goal (one sentence), Invariants (correctness properties), Non-Goals (explicit scope boundaries)
+- **Evaluation**: Acceptance Criteria (checkboxes), Testing Strategy (host + zk modes), Performance expectations
+- **Design**: Architecture (how it fits the existing system), Alternatives Considered (what was rejected and why)
+- **Documentation**: What changes to the Jolt book (`book/`) are required?
+- **Execution** (optional): Implementation direction, algorithmic approach
+- **References**: Papers, related specs, prior art
 
-Focus on **intent and evaluation**. Execution is downstream.
+Focus on **intent and evaluation**. Execution is downstream — the implementer should be able to derive most of it from what you want (intent) and how you'll verify it (evaluation).
+
+### Labels
+
+| Label | Meaning | Applied by |
+|-------|---------|------------|
+| `spec` | PR contains a spec file | GitHub Action (auto) |
+| `no-spec` | PR has no spec file | GitHub Action (auto) |
+| `implementation` | PR contains code alongside a spec | GitHub Action (auto) |
+| `claude-approved` | Claude's analysis found no ambiguities | Claude |
+
+### Soft Guardrails
+
+PRs exceeding 500 changed lines without a spec file get an automated warning comment. This is a suggestion, not a gate — use your judgment.
+
+## Claude Skills
+
+These Claude Code skills are available in this repo:
+
+| Skill | Description |
+|-------|-------------|
+| `/new-spec <name>` | Create a new spec file from the template |
+| `/analyze-spec` | Interactive Socratic analysis of a spec (local) |
+| `/implement-spec` | Autonomous implementation from an approved spec (local/cloud) |
+
+In CI, `@claude analyze` runs a single-pass version of the analysis.
 
 ## Development Setup
 
