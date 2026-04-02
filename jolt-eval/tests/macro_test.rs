@@ -2,10 +2,10 @@ use enumset::EnumSet;
 use jolt_eval::invariant::{Invariant, InvariantViolation, SynthesisTarget};
 
 // ---------------------------------------------------------------------------
-// AlwaysPass: exercises Test + RedTeam synthesis targets
+// AlwaysPass: trivial invariant to test macro synthesis
 // ---------------------------------------------------------------------------
 
-#[jolt_eval_macros::invariant(targets = [Test, RedTeam])]
+#[jolt_eval_macros::invariant]
 #[derive(Default)]
 pub struct AlwaysPassInvariant;
 
@@ -32,7 +32,7 @@ impl Invariant for AlwaysPassInvariant {
 }
 
 // ---------------------------------------------------------------------------
-// BoundsCheck: Test only, uses a struct Input type
+// BoundsCheck: uses a struct Input type
 // ---------------------------------------------------------------------------
 
 #[derive(
@@ -48,7 +48,7 @@ pub struct RangeInput {
     pub hi: u32,
 }
 
-#[jolt_eval_macros::invariant(targets = [Test])]
+#[jolt_eval_macros::invariant]
 #[derive(Default)]
 pub struct BoundsCheckInvariant;
 
@@ -91,68 +91,7 @@ impl Invariant for BoundsCheckInvariant {
     }
 }
 
-// ---------------------------------------------------------------------------
-// RedTeamOnly: only the RedTeam target
-// ---------------------------------------------------------------------------
-
-#[jolt_eval_macros::invariant(targets = [RedTeam])]
-#[derive(Default)]
-pub struct RedTeamOnlyInvariant;
-
-impl Invariant for RedTeamOnlyInvariant {
-    type Setup = String;
-    type Input = u16;
-
-    fn name(&self) -> &str {
-        "redteam_only"
-    }
-    fn description(&self) -> String {
-        "An invariant that only generates a red-team description.".to_string()
-    }
-    fn targets(&self) -> EnumSet<SynthesisTarget> {
-        SynthesisTarget::RedTeam.into()
-    }
-    fn setup(&self) -> String {
-        "setup_value".to_string()
-    }
-    fn check(&self, setup: &String, _input: u16) -> Result<(), InvariantViolation> {
-        if setup.is_empty() {
-            Err(InvariantViolation::new("empty setup"))
-        } else {
-            Ok(())
-        }
-    }
-    fn seed_corpus(&self) -> Vec<u16> {
-        vec![0, 1000, u16::MAX]
-    }
-}
-
 // ===========================================================================
-// Tests that verify the macro-generated functions exist and work correctly
-// ===========================================================================
-
-// --- Red-team description functions ---
-
-#[test]
-fn redteam_always_pass_description() {
-    let desc = always_pass_invariant_redteam_description();
-    assert!(
-        desc.contains("always passes"),
-        "Expected description to mention 'always passes', got: {desc}"
-    );
-}
-
-#[test]
-fn redteam_only_description() {
-    let desc = red_team_only_invariant_redteam_description();
-    assert!(
-        desc.contains("red-team description"),
-        "Expected description to mention 'red-team description', got: {desc}"
-    );
-}
-
-// --- Synthesized test modules are auto-discovered by nextest ---
 // The #[test] functions `seed_corpus` and `random_inputs` inside the
-// generated `*_synthesized` modules are run automatically. We verify
-// their presence indirectly: if `cargo nextest run` reports them, the
-// macro is working.
+// generated `*_synthesized` modules are auto-discovered by nextest.
+// ===========================================================================

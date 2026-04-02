@@ -31,10 +31,6 @@ tempfile = "3"
 jolt-eval-macros = { path = "macros" }
 
 [[bin]]
-name = "check-invariants"
-path = "bin/check_invariants.rs"
-
-[[bin]]
 name = "measure-objectives"
 path = "bin/measure_objectives.rs"
 

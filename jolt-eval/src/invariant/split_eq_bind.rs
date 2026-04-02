@@ -34,6 +34,8 @@ fn challenges_from_seed(seed: &[u8; 32], count: usize) -> Vec<Challenge> {
 
 // ── LowToHigh ────────────────────────────────────────────────────────
 
+#[jolt_eval_macros::invariant]
+#[derive(Default)]
 pub struct SplitEqBindLowHighInvariant;
 
 impl Invariant for SplitEqBindLowHighInvariant {
@@ -108,6 +110,8 @@ impl Invariant for SplitEqBindLowHighInvariant {
 
 // ── HighToLow ────────────────────────────────────────────────────────
 
+#[jolt_eval_macros::invariant]
+#[derive(Default)]
 pub struct SplitEqBindHighLowInvariant;
 
 impl Invariant for SplitEqBindHighLowInvariant {

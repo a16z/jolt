@@ -1,5 +1,8 @@
 #![allow(non_snake_case)]
 
+// Allow `jolt_eval::` paths in macro-generated code within this crate.
+extern crate self as jolt_eval;
+
 pub mod agent;
 pub mod guests;
 pub mod invariant;

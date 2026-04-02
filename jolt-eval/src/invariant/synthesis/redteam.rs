@@ -75,8 +75,7 @@ pub fn auto_redteam<I: Invariant>(
                     failed_attempts.push(FailedAttempt {
                         description: format!("Iteration {}", iteration + 1),
                         approach: response.text,
-                        failure_reason: "Agent response did not contain a JSON counterexample"
-                            .to_string(),
+                        failure_reason: "Agent response did not contain valid JSON".to_string(),
                     });
                     continue;
                 }
@@ -107,7 +106,7 @@ pub fn auto_redteam<I: Invariant>(
                     description: format!("Iteration {}", iteration + 1),
                     approach: analysis,
                     failure_reason: format!(
-                        "Could not deserialize agent JSON into Input type: {parse_err}"
+                        "Could not deserialize response JSON into Input type: {parse_err}"
                     ),
                 });
             }
@@ -197,7 +196,7 @@ fn build_redteam_prompt(
         prompt.push_str("## Previous failed attempts\n\n");
         prompt.push_str(
             "The following approaches have already been tried and did NOT produce a \
-             valid counterexample. Try a fundamentally different approach.\n\n",
+             valid counterexample.\n\n",
         );
         for attempt in failed_attempts {
             prompt.push_str(&format!(

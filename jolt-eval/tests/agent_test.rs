@@ -332,7 +332,7 @@ fn redteam_handles_no_json_in_response() {
             assert_eq!(attempts.len(), 1);
             assert!(attempts[0]
                 .failure_reason
-                .contains("did not contain a JSON"));
+                .contains("did not contain valid JSON"));
         }
         _ => panic!("Expected NoViolation"),
     }
