@@ -4,17 +4,23 @@ on:
   push:
     branches:
       - main
-    paths-ignore:
-      - "specs/**"
-      - "*.md"
-      - ".claude/**"
+    paths:
+      - "tracer/**"
+      - "Makefile"
+      - "tests/arch-tests/**"
+      - "third-party/riscv-arch-test/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
   pull_request:
     branches:
       - "**"
-    paths-ignore:
-      - "specs/**"
-      - "*.md"
-      - ".claude/**"
+    paths:
+      - "tracer/**"
+      - "Makefile"
+      - "tests/arch-tests/**"
+      - "third-party/riscv-arch-test/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
 
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
