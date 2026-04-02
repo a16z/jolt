@@ -19,7 +19,7 @@ impl SynthesisRegistry {
         }
     }
 
-    /// Build a registry from all `inventory`-registered invariants.
+    /// Build a registry from all registered invariants.
     ///
     /// Pass `None` to include only invariants that don't require a guest
     /// program (those with `needs_guest: false`).
@@ -74,7 +74,7 @@ impl Default for SynthesisRegistry {
     }
 }
 
-/// Return the names of all `inventory`-registered invariants.
+/// Return the names of all registered invariants.
 /// Does not require a `TestCase`.
 pub fn invariant_names() -> Vec<&'static str> {
     registered_invariants().map(|e| e.name).collect()

@@ -89,11 +89,6 @@ pub trait Invariant: Send + Sync {
     }
 }
 
-/// Registration entry for the [`inventory`] crate.
-///
-/// Each built-in invariant module calls `inventory::submit!` with one of
-/// these, so all invariants are discoverable at runtime without manual
-/// registration.
 /// Factory function type for constructing an invariant from an optional
 /// test case and default inputs.
 pub type InvariantBuildFn = fn(Option<Arc<TestCase>>, Vec<u8>) -> Box<dyn DynInvariant>;
@@ -105,11 +100,24 @@ pub struct InvariantEntry {
     pub needs_guest: bool,
     pub build: InvariantBuildFn,
 }
-inventory::collect!(InvariantEntry);
 
-/// Iterate all invariant entries registered via `inventory`.
-pub fn registered_invariants() -> impl Iterator<Item = &'static InvariantEntry> {
-    inventory::iter::<InvariantEntry>()
+/// All registered invariant entries.
+pub fn registered_invariants() -> impl Iterator<Item = InvariantEntry> {
+    [
+        InvariantEntry {
+            name: "split_eq_bind_low_high",
+            targets: || SynthesisTarget::Test | SynthesisTarget::Fuzz,
+            needs_guest: false,
+            build: |_tc, _inputs| Box::new(split_eq_bind::SplitEqBindLowHighInvariant),
+        },
+        InvariantEntry {
+            name: "split_eq_bind_high_low",
+            targets: || SynthesisTarget::Test | SynthesisTarget::Fuzz,
+            needs_guest: false,
+            build: |_tc, _inputs| Box::new(split_eq_bind::SplitEqBindHighLowInvariant),
+        },
+    ]
+    .into_iter()
 }
 
 /// A counterexample produced when an invariant is violated.

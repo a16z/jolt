@@ -1,20 +1,8 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use super::{AbstractObjective, Direction, MeasurementError, ObjectiveEntry};
+use super::{AbstractObjective, Direction, MeasurementError};
 use crate::{ProverPreprocessing, TestCase, VerifierPreprocessing};
-
-inventory::submit! {
-    ObjectiveEntry {
-        name: "verifier_time",
-        direction: Direction::Minimize,
-        needs_guest: true,
-        build: |s, inputs| { let setup = s.unwrap(); Box::new(VerifierTimeObjective::new(
-            setup.test_case.clone(), setup.prover_preprocessing.clone(),
-            setup.verifier_preprocessing.clone(), inputs,
-            )) },
-    }
-}
 
 /// Measures wall-clock verifier time in seconds.
 pub struct VerifierTimeObjective {

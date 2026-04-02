@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use super::super::{registered_invariants, CheckJsonResult, DynInvariant, SynthesisTarget};
+use super::super::{CheckJsonResult, DynInvariant, SynthesisTarget};
 use super::SynthesisRegistry;
 use crate::TestCase;
 
@@ -89,10 +89,10 @@ pub fn fuzzable_invariants(registry: &SynthesisRegistry) -> Vec<&dyn DynInvarian
     registry.for_target(SynthesisTarget::Fuzz)
 }
 
-/// Return the names of all `inventory`-registered invariants that
+/// Return the names of all registered invariants that
 /// include [`SynthesisTarget::Fuzz`].
 pub fn fuzzable_invariant_names() -> Vec<&'static str> {
-    registered_invariants()
+    super::super::registered_invariants()
         .filter(|e| (e.targets)().contains(SynthesisTarget::Fuzz))
         .map(|e| e.name)
         .collect()

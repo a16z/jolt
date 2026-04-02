@@ -1,16 +1,7 @@
 use std::sync::Arc;
 
-use super::{AbstractObjective, Direction, MeasurementError, ObjectiveEntry};
+use super::{AbstractObjective, Direction, MeasurementError};
 use crate::TestCase;
-
-inventory::submit! {
-    ObjectiveEntry {
-        name: "inline_lengths",
-        direction: Direction::Maximize,
-        needs_guest: true,
-        build: |s, _inputs| { let setup = s.unwrap(); Box::new(InlineLengthsObjective::new(setup.test_case.clone())) },
-    }
-}
 
 /// Measures total virtual/inline sequence length in the decoded bytecode.
 ///

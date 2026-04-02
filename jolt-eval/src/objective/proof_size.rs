@@ -1,18 +1,7 @@
 use std::sync::Arc;
 
-use super::{AbstractObjective, Direction, MeasurementError, ObjectiveEntry};
+use super::{AbstractObjective, Direction, MeasurementError};
 use crate::{serialize_proof, ProverPreprocessing, TestCase};
-
-inventory::submit! {
-    ObjectiveEntry {
-        name: "proof_size",
-        direction: Direction::Minimize,
-        needs_guest: true,
-        build: |s, inputs| { let setup = s.unwrap(); Box::new(ProofSizeObjective::new(
-            setup.test_case.clone(), setup.prover_preprocessing.clone(), inputs,
-            )) },
-    }
-}
 
 /// Measures serialized proof size in bytes.
 pub struct ProofSizeObjective {

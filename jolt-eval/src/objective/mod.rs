@@ -61,10 +61,6 @@ pub trait AbstractObjective: Send + Sync {
     fn direction(&self) -> Direction;
 }
 
-/// Registration entry for the [`inventory`] crate.
-///
-/// Each built-in objective module calls `inventory::submit!` with one of
-/// these, so all objectives are discoverable at runtime.
 pub struct ObjectiveEntry {
     pub name: &'static str,
     pub direction: Direction,
@@ -72,11 +68,100 @@ pub struct ObjectiveEntry {
     pub needs_guest: bool,
     pub build: fn(Option<&SharedSetup>, Vec<u8>) -> Box<dyn AbstractObjective>,
 }
-inventory::collect!(ObjectiveEntry);
 
-/// Iterate all objective entries registered via `inventory`.
-pub fn registered_objectives() -> impl Iterator<Item = &'static ObjectiveEntry> {
-    inventory::iter::<ObjectiveEntry>()
+/// All registered objective entries.
+pub fn registered_objectives() -> impl Iterator<Item = ObjectiveEntry> {
+    [
+        ObjectiveEntry {
+            name: "peak_rss",
+            direction: Direction::Minimize,
+            needs_guest: true,
+            build: |s, inputs| {
+                let setup = s.unwrap();
+                Box::new(peak_rss::PeakRssObjective::new(
+                    setup.test_case.clone(),
+                    setup.prover_preprocessing.clone(),
+                    inputs,
+                ))
+            },
+        },
+        ObjectiveEntry {
+            name: "prover_time",
+            direction: Direction::Minimize,
+            needs_guest: true,
+            build: |s, inputs| {
+                let setup = s.unwrap();
+                Box::new(prover_time::ProverTimeObjective::new(
+                    setup.test_case.clone(),
+                    setup.prover_preprocessing.clone(),
+                    inputs,
+                ))
+            },
+        },
+        ObjectiveEntry {
+            name: "proof_size",
+            direction: Direction::Minimize,
+            needs_guest: true,
+            build: |s, inputs| {
+                let setup = s.unwrap();
+                Box::new(proof_size::ProofSizeObjective::new(
+                    setup.test_case.clone(),
+                    setup.prover_preprocessing.clone(),
+                    inputs,
+                ))
+            },
+        },
+        ObjectiveEntry {
+            name: "verifier_time",
+            direction: Direction::Minimize,
+            needs_guest: true,
+            build: |s, inputs| {
+                let setup = s.unwrap();
+                Box::new(verifier_time::VerifierTimeObjective::new(
+                    setup.test_case.clone(),
+                    setup.prover_preprocessing.clone(),
+                    setup.verifier_preprocessing.clone(),
+                    inputs,
+                ))
+            },
+        },
+        ObjectiveEntry {
+            name: "guest_cycle_count",
+            direction: Direction::Minimize,
+            needs_guest: true,
+            build: |s, inputs| {
+                let setup = s.unwrap();
+                Box::new(guest_cycles::GuestCycleCountObjective::new(
+                    setup.test_case.clone(),
+                    inputs,
+                ))
+            },
+        },
+        ObjectiveEntry {
+            name: "inline_lengths",
+            direction: Direction::Maximize,
+            needs_guest: true,
+            build: |s, _inputs| {
+                let setup = s.unwrap();
+                Box::new(inline_lengths::InlineLengthsObjective::new(
+                    setup.test_case.clone(),
+                ))
+            },
+        },
+        ObjectiveEntry {
+            name: "wrapping_cost",
+            direction: Direction::Minimize,
+            needs_guest: true,
+            build: |s, _inputs| {
+                let setup = s.unwrap();
+                Box::new(wrapping_cost::WrappingCostObjective::new(
+                    setup.test_case.clone(),
+                    setup.prover_preprocessing.clone(),
+                ))
+            },
+        },
+    ]
+    .into_iter()
 }
 
 /// Build all registered objectives from a [`SharedSetup`].
@@ -86,7 +171,7 @@ pub fn build_objectives_from_inventory(
     setup: Option<&SharedSetup>,
     inputs: Vec<u8>,
 ) -> Vec<Box<dyn AbstractObjective>> {
-    inventory::iter::<ObjectiveEntry>()
+    registered_objectives()
         .filter(|entry| !entry.needs_guest || setup.is_some())
         .map(|entry| (entry.build)(setup, inputs.clone()))
         .collect()

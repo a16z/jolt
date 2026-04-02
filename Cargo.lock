@@ -2951,7 +2951,6 @@ dependencies = [
  "common",
  "enumset",
  "eyre",
- "inventory",
  "jolt-core",
  "jolt-eval-macros",
  "postcard",

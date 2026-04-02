@@ -10,27 +10,9 @@ use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::multilinear_polynomial::BindingOrder;
 use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;
 
-use super::{Invariant, InvariantEntry, InvariantViolation, SynthesisTarget};
+use super::{Invariant, InvariantViolation, SynthesisTarget};
 
 type Challenge = <Fr as JoltField>::Challenge;
-
-inventory::submit! {
-    InvariantEntry {
-        name: "split_eq_bind_low_high",
-        targets: || SynthesisTarget::Test | SynthesisTarget::Fuzz,
-        needs_guest: false,
-        build: |_tc, _inputs| Box::new(SplitEqBindLowHighInvariant),
-    }
-}
-
-inventory::submit! {
-    InvariantEntry {
-        name: "split_eq_bind_high_low",
-        targets: || SynthesisTarget::Test | SynthesisTarget::Fuzz,
-        needs_guest: false,
-        build: |_tc, _inputs| Box::new(SplitEqBindHighLowInvariant),
-    }
-}
 
 /// Input for the split-eq bind invariants: a number of variables and a
 /// seed from which we derive all challenge values deterministically.
