@@ -43,7 +43,7 @@ fn to_challenges(vals: &[u128]) -> Vec<Challenge> {
 
 // ── LowToHigh ────────────────────────────────────────────────────────
 
-#[jolt_eval_macros::invariant(Test, Fuzz)]
+#[jolt_eval_macros::invariant(Test, Fuzz, RedTeam)]
 #[derive(Default)]
 pub struct SplitEqBindLowHighInvariant;
 
