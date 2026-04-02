@@ -43,9 +43,5 @@ name = "redteam"
 path = "bin/redteam.rs"
 
 [[bin]]
-name = "fuzz"
-path = "bin/fuzz.rs"
-
-[[bin]]
 name = "optimize"
 path = "bin/optimize.rs"

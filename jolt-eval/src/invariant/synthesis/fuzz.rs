@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use super::super::{CheckJsonResult, DynInvariant, SynthesisTarget};
+use super::super::{CheckJsonResult, DynInvariant};
 use super::SynthesisRegistry;
 use crate::TestCase;
 
@@ -84,16 +84,3 @@ pub fn fuzz_invariant(invariant_name: &str, data: &[u8]) {
     }
 }
 
-/// List all invariants suitable for fuzz target generation.
-pub fn fuzzable_invariants(registry: &SynthesisRegistry) -> Vec<&dyn DynInvariant> {
-    registry.for_target(SynthesisTarget::Fuzz)
-}
-
-/// Return the names of all registered invariants that
-/// include [`SynthesisTarget::Fuzz`].
-pub fn fuzzable_invariant_names() -> Vec<&'static str> {
-    super::super::registered_invariants()
-        .filter(|e| (e.targets)().contains(SynthesisTarget::Fuzz))
-        .map(|e| e.name)
-        .collect()
-}
