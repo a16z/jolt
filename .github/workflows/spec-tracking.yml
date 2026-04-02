@@ -53,6 +53,15 @@ jobs:
           echo "has_code=$HAS_CODE" >> "$GITHUB_OUTPUT"
           echo "spec_file=$SPEC_FILE" >> "$GITHUB_OUTPUT"
 
+      - name: Ensure labels exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create "spec" --description "PR contains a spec" --color "0E8A16" 2>/dev/null || true
+          gh label create "no-spec" --description "PR has no spec file" --color "E4E669" 2>/dev/null || true
+          gh label create "implementation" --description "PR contains implementation of a spec" --color "1D76DB" 2>/dev/null || true
+          gh label create "claude-approved" --description "Claude analysis found no ambiguities" --color "5319E7" 2>/dev/null || true
+
       - name: Apply labels
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
