@@ -4,6 +4,8 @@
 |-------------|--------------------------------|
 | Author(s)   |                                |
 | Created     | YYYY-MM-DD                     |
+| Status      | proposed                       |
+| PR          |                                |
 
 ## Intent
 

@@ -1,24 +1,27 @@
 # Jolt Specs
 
-This directory contains design specifications for major Jolt features. Every significant new feature or architectural change must begin as a spec, reviewed and approved by maintainers, before implementation begins.
+Design specifications for major Jolt features. Significant new features or architectural changes begin as a spec, reviewed and approved before implementation.
 
 ## Philosophy
 
-Jolt follows a **spec-driven, AI-native development** workflow. The core insight: code is cheap, trust is expensive. AI can generate substantial execution code, but human verification time is the scarce resource. We optimize for that by structuring work across three planes:
+Jolt follows a **spec-driven, AI-native development** workflow. Code is cheap, trust is expensive. AI can generate substantial code, but human verification time is the scarce resource. We optimize for that by structuring work across three planes:
 
-1. **Intent** -- What are we building, why, and what properties must hold? Intent lives in the spec, but it also manifests in code: types, schemas, data structures, abstractions, and architectural boundaries should document their own purpose. Good intent makes correctness legible.
-2. **Execution** -- The bulk of the code that connects intent to evidence. Derivable, replaceable, regenerable. This is what AI is good at, steered by the spec author or a maintainer.
-3. **Evaluation** -- Tests, benchmarks, assertions, proofs. How do we know the execution is correct? Evaluation should be independent of execution details and mechanically checkable.
+1. **Intent** -- What are we building, why, and what properties must hold? Types, schemas, abstractions, and architectural boundaries should document their own purpose.
+2. **Execution** -- The bulk of the code that connects intent to evidence. Derivable, replaceable, regenerable.
+3. **Evaluation** -- Tests, benchmarks, assertions, proofs. Independent of execution details.
 
-Spec authors focus on **intent and evaluation**. Execution is downstream — it follows from what we want (intent) and how we'll know it works (evaluation). A spec may include some execution guidance (e.g. optimizations to consider, algorithmic direction), but the emphasis belongs on the other two planes.
+Spec authors focus on **intent and evaluation**. Execution is downstream.
 
 ## Workflow
 
-1. **Author a spec** using the template from the repo root: `./specs/new-spec.sh my-feature-name`
-2. **Open a PR** with the spec. Maintainers review it.
-3. **Merge the spec.** A GitHub Action automatically creates a tracking issue.
-4. **Implement.** The spec author or a maintainer steers the implementation (via AI or manually).
-5. **Verify evaluation.** All evaluation criteria from the spec must be satisfied before the implementation PR merges.
+A single PR carries a feature from spec to implementation:
+
+1. **Create a spec** using `/new-spec <feature-name>` in Claude Code (or manually from `TEMPLATE.md`).
+2. **Open a PR** with the spec. A GitHub Action auto-renames the file to `<PR#>-<name>.md` and adds the `spec` label.
+3. **Analyze the spec.** A maintainer comments `@claude analyze` — Claude performs a deep-interview-style analysis, posting probing questions until it has zero ambiguity. When satisfied, Claude adds the `claude-approved` label.
+4. **Review and approve.** Maintainers review the spec.
+5. **Implement.** A maintainer comments `@claude implement` — Claude generates a one-shot implementation on the same branch.
+6. **Review and merge.** Maintainers review the implementation. Spec status becomes `implemented`.
 
 ## Template
 
