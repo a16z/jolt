@@ -5,7 +5,7 @@
 | Author(s)   | @0xAndoroid                    |
 | Created     | 2026-04-02                     |
 | Status      | proposed                       |
-| PR          |                                |
+| PR          | #1370                          |
 
 ## Intent
 
