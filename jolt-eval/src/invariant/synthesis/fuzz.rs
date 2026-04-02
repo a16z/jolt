@@ -43,8 +43,12 @@ macro_rules! fuzz_invariant {
                 .expect("wrong setup type");
             let mut u = $crate::arbitrary::Unstructured::new(data);
             if let Ok(input) = <I::Input as $crate::arbitrary::Arbitrary>::arbitrary(&mut u) {
-                inv.check(setup, input)
-                    .unwrap_or_else(|e| panic!("Invariant violated: {e}"));
+                match inv.check(setup, input) {
+                    Ok(()) | Err($crate::CheckError::InvalidInput(_)) => {}
+                    Err($crate::CheckError::Violation(v)) => {
+                        panic!("Invariant violated: {v}");
+                    }
+                }
             }
         }
 

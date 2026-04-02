@@ -1,4 +1,4 @@
-use jolt_eval::invariant::{Invariant, InvariantTargets, InvariantViolation};
+use jolt_eval::invariant::{CheckError, Invariant, InvariantTargets, InvariantViolation};
 use jolt_eval::objective::{AbstractObjective, Direction, MeasurementError};
 
 /// A trivial invariant for testing the framework itself.
@@ -19,7 +19,7 @@ impl Invariant for TrivialInvariant {
 
     fn setup(&self) -> Self::Setup {}
 
-    fn check(&self, _setup: &Self::Setup, _input: u8) -> Result<(), InvariantViolation> {
+    fn check(&self, _setup: &Self::Setup, _input: u8) -> Result<(), CheckError> {
         Ok(())
     }
 
@@ -46,8 +46,10 @@ impl Invariant for FailingInvariant {
 
     fn setup(&self) -> Self::Setup {}
 
-    fn check(&self, _setup: &Self::Setup, input: u8) -> Result<(), InvariantViolation> {
-        Err(InvariantViolation::new(format!("failed for input {input}")))
+    fn check(&self, _setup: &Self::Setup, input: u8) -> Result<(), CheckError> {
+        Err(CheckError::Violation(InvariantViolation::new(format!(
+            "failed for input {input}"
+        ))))
     }
 
     fn seed_corpus(&self) -> Vec<u8> {

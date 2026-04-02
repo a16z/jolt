@@ -4,7 +4,9 @@ use std::path::Path;
 use enumset::EnumSet;
 use jolt_eval::agent::{AgentError, AgentHarness, AgentResponse, MockAgent};
 use jolt_eval::invariant::synthesis::redteam::{auto_redteam, RedTeamConfig, RedTeamResult};
-use jolt_eval::invariant::{Invariant, InvariantTargets, InvariantViolation, SynthesisTarget};
+use jolt_eval::invariant::{
+    CheckError, Invariant, InvariantTargets, InvariantViolation, SynthesisTarget,
+};
 use jolt_eval::objective::optimize::{auto_optimize, OptimizeConfig, OptimizeEnv};
 use jolt_eval::objective::Direction;
 
@@ -29,7 +31,7 @@ impl Invariant for AlwaysPassInvariant {
         "This invariant always passes.".into()
     }
     fn setup(&self) {}
-    fn check(&self, _: &(), _: u8) -> Result<(), InvariantViolation> {
+    fn check(&self, _: &(), _: u8) -> Result<(), CheckError> {
         Ok(())
     }
     fn seed_corpus(&self) -> Vec<u8> {
@@ -54,8 +56,10 @@ impl Invariant for AlwaysFailInvariant {
         "This invariant always fails.".into()
     }
     fn setup(&self) {}
-    fn check(&self, _: &(), input: u8) -> Result<(), InvariantViolation> {
-        Err(InvariantViolation::new(format!("always fails ({input})")))
+    fn check(&self, _: &(), input: u8) -> Result<(), CheckError> {
+        Err(CheckError::Violation(InvariantViolation::new(format!(
+            "always fails ({input})"
+        ))))
     }
     fn seed_corpus(&self) -> Vec<u8> {
         vec![42]
@@ -79,9 +83,11 @@ impl Invariant for FailsOnZeroInvariant {
         "Fails when input is 0.".into()
     }
     fn setup(&self) {}
-    fn check(&self, _: &(), input: u8) -> Result<(), InvariantViolation> {
+    fn check(&self, _: &(), input: u8) -> Result<(), CheckError> {
         if input == 0 {
-            Err(InvariantViolation::new("input was zero"))
+            Err(CheckError::Violation(InvariantViolation::new(
+                "input was zero",
+            )))
         } else {
             Ok(())
         }

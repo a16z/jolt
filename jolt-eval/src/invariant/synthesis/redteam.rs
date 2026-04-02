@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use super::super::{FailedAttempt, Invariant, InvariantViolation};
+use super::super::{CheckError, FailedAttempt, Invariant};
 use crate::agent::AgentHarness;
 
 /// Result of a red-team session.
@@ -94,7 +94,22 @@ pub fn auto_redteam<I: Invariant>(
             },
         };
 
-        match check_counterexample(invariant, &setup, &counterexample_json) {
+        let input: I::Input = match serde_json::from_str(&counterexample_json) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::info!("Agent produced unparseable input: {e}");
+                failed_attempts.push(FailedAttempt {
+                    description: format!("Iteration {}", iteration + 1),
+                    approach: analysis,
+                    failure_reason: format!(
+                        "Could not deserialize response JSON into Input type: {e}"
+                    ),
+                });
+                continue;
+            }
+        };
+
+        match invariant.check(&setup, input) {
             Ok(()) => {
                 failed_attempts.push(FailedAttempt {
                     description: format!("Iteration {}", iteration + 1),
@@ -112,14 +127,11 @@ pub fn auto_redteam<I: Invariant>(
                     error: violation.to_string(),
                 };
             }
-            Err(CheckError::BadInput(parse_err)) => {
-                tracing::info!("Agent produced unparseable input: {parse_err}");
+            Err(CheckError::InvalidInput(reason)) => {
                 failed_attempts.push(FailedAttempt {
                     description: format!("Iteration {}", iteration + 1),
                     approach: analysis,
-                    failure_reason: format!(
-                        "Could not deserialize response JSON into Input type: {parse_err}"
-                    ),
+                    failure_reason: format!("Invalid input: {reason}"),
                 });
             }
         }
@@ -128,21 +140,6 @@ pub fn auto_redteam<I: Invariant>(
     RedTeamResult::NoViolation {
         attempts: failed_attempts,
     }
-}
-
-enum CheckError {
-    Violation(InvariantViolation),
-    BadInput(String),
-}
-
-fn check_counterexample<I: Invariant>(
-    inv: &I,
-    setup: &I::Setup,
-    json: &str,
-) -> Result<(), CheckError> {
-    let input: I::Input =
-        serde_json::from_str(json).map_err(|e| CheckError::BadInput(e.to_string()))?;
-    inv.check(setup, input).map_err(CheckError::Violation)
 }
 
 fn build_envelope_schema(input_schema: &serde_json::Value) -> serde_json::Value {

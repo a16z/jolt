@@ -54,6 +54,26 @@ impl InvariantViolation {
     }
 }
 
+/// Result of checking an invariant against a single input.
+#[derive(Debug)]
+pub enum CheckError {
+    /// The invariant was violated.
+    Violation(InvariantViolation),
+    /// The input is degenerate or uninteresting and should be skipped.
+    InvalidInput(String),
+}
+
+impl fmt::Display for CheckError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Violation(v) => write!(f, "violation: {v}"),
+            Self::InvalidInput(msg) => write!(f, "invalid input: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for CheckError {}
+
 /// Core invariant trait. Each invariant defines a setup phase (run once)
 /// and a check phase (run per input). The `Input` type must support
 /// `Arbitrary` for fuzzing, and `Serialize`/`DeserializeOwned` so an AI
@@ -76,7 +96,11 @@ pub trait Invariant: Send + Sync {
     fn setup(&self) -> Self::Setup;
 
     /// Check the invariant for a single input against the pre-computed setup.
-    fn check(&self, setup: &Self::Setup, input: Self::Input) -> Result<(), InvariantViolation>;
+    ///
+    /// Returns `Ok(())` if the invariant holds, `Err(CheckError::Violation)`
+    /// if it is violated, or `Err(CheckError::InvalidInput)` if the input
+    /// is degenerate and should be skipped.
+    fn check(&self, setup: &Self::Setup, input: Self::Input) -> Result<(), CheckError>;
 
     /// Known-interesting inputs for deterministic test generation.
     fn seed_corpus(&self) -> Vec<Self::Input> {
@@ -144,8 +168,14 @@ fn run_checks_impl<I: Invariant>(
     let setup = inv.setup();
     let mut results = Vec::new();
 
+    let mut record = |r: Result<(), CheckError>| match r {
+        Ok(()) => results.push(Ok(())),
+        Err(CheckError::Violation(v)) => results.push(Err(v)),
+        Err(CheckError::InvalidInput(_)) => {}
+    };
+
     for input in inv.seed_corpus() {
-        results.push(inv.check(&setup, input));
+        record(inv.check(&setup, input));
     }
 
     let mut rng = rand::thread_rng();
@@ -154,7 +184,7 @@ fn run_checks_impl<I: Invariant>(
         rng.fill_bytes(&mut raw);
         let mut u = arbitrary::Unstructured::new(&raw);
         if let Ok(input) = I::Input::arbitrary(&mut u) {
-            results.push(inv.check(&setup, input));
+            record(inv.check(&setup, input));
         }
     }
 

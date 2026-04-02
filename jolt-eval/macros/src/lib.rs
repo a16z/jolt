@@ -63,17 +63,29 @@ pub fn invariant(attr: TokenStream, item: TokenStream) -> TokenStream {
                 use super::*;
                 use jolt_eval::Invariant;
 
+                fn assert_no_violation(
+                    name: &str,
+                    result: Result<(), jolt_eval::CheckError>,
+                    context: &str,
+                ) {
+                    match result {
+                        Ok(()) | Err(jolt_eval::CheckError::InvalidInput(_)) => {}
+                        Err(jolt_eval::CheckError::Violation(v)) => {
+                            panic!("Invariant '{name}' violated {context}: {v}");
+                        }
+                    }
+                }
+
                 #[test]
                 fn seed_corpus() {
                     let invariant = #struct_name::default();
                     let setup = invariant.setup();
                     for (i, input) in invariant.seed_corpus().into_iter().enumerate() {
-                        invariant.check(&setup, input).unwrap_or_else(|e| {
-                            panic!(
-                                "Invariant '{}' violated on seed {}: {}",
-                                invariant.name(), i, e
-                            );
-                        });
+                        assert_no_violation(
+                            invariant.name(),
+                            invariant.check(&setup, input),
+                            &format!("on seed {i}"),
+                        );
                     }
                 }
 
@@ -95,12 +107,11 @@ pub fn invariant(attr: TokenStream, item: TokenStream) -> TokenStream {
                             <#struct_name as jolt_eval::Invariant>::Input
                             as jolt_eval::arbitrary::Arbitrary
                         >::arbitrary(&mut u) {
-                            invariant.check(&setup, input).unwrap_or_else(|e| {
-                                panic!(
-                                    "Invariant '{}' violated: {}",
-                                    invariant.name(), e
-                                );
-                            });
+                            assert_no_violation(
+                                invariant.name(),
+                                invariant.check(&setup, input),
+                                "",
+                            );
                         }
                     }
                 }

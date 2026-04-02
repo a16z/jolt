@@ -9,7 +9,7 @@ use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::multilinear_polynomial::BindingOrder;
 use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;
 
-use super::{Invariant, InvariantViolation};
+use super::{CheckError, Invariant, InvariantViolation};
 
 type Challenge = <Fr as JoltField>::Challenge;
 
@@ -63,9 +63,9 @@ impl Invariant for SplitEqBindLowHighInvariant {
 
     fn setup(&self) {}
 
-    fn check(&self, _setup: &(), input: SplitEqBindInput) -> Result<(), InvariantViolation> {
+    fn check(&self, _setup: &(), input: SplitEqBindInput) -> Result<(), CheckError> {
         if input.w.len() < 2 {
-            return Ok(());
+            return Err(CheckError::InvalidInput("w.len() < 2".into()));
         }
         let w = to_challenges(&input.w);
         let rs = to_challenges(&input.rs);
@@ -76,10 +76,10 @@ impl Invariant for SplitEqBindLowHighInvariant {
 
         let merged = split_eq.merge();
         if regular_eq.Z[..regular_eq.len()] != merged.Z[..merged.len()] {
-            return Err(InvariantViolation::with_details(
+            return Err(CheckError::Violation(InvariantViolation::with_details(
                 "Initial merge mismatch (LowToHigh)",
                 format!("num_vars={num_vars}"),
-            ));
+            )));
         }
 
         for (round, r) in rs.iter().enumerate() {
@@ -88,10 +88,10 @@ impl Invariant for SplitEqBindLowHighInvariant {
 
             let merged = split_eq.merge();
             if regular_eq.Z[..regular_eq.len()] != merged.Z[..merged.len()] {
-                return Err(InvariantViolation::with_details(
+                return Err(CheckError::Violation(InvariantViolation::with_details(
                     "Bind mismatch (LowToHigh)",
                     format!("num_vars={num_vars}, round={round}"),
-                ));
+                )));
             }
         }
 
@@ -138,9 +138,9 @@ impl Invariant for SplitEqBindHighLowInvariant {
 
     fn setup(&self) {}
 
-    fn check(&self, _setup: &(), input: SplitEqBindInput) -> Result<(), InvariantViolation> {
+    fn check(&self, _setup: &(), input: SplitEqBindInput) -> Result<(), CheckError> {
         if input.w.len() < 2 {
-            return Ok(());
+            return Err(CheckError::InvalidInput("w.len() < 2".into()));
         }
         let w = to_challenges(&input.w);
         let rs = to_challenges(&input.rs);
@@ -151,10 +151,10 @@ impl Invariant for SplitEqBindHighLowInvariant {
 
         let merged = split_eq.merge();
         if regular_eq.Z[..regular_eq.len()] != merged.Z[..merged.len()] {
-            return Err(InvariantViolation::with_details(
+            return Err(CheckError::Violation(InvariantViolation::with_details(
                 "Initial merge mismatch (HighToLow)",
                 format!("num_vars={num_vars}"),
-            ));
+            )));
         }
 
         for (round, r) in rs.iter().enumerate() {
@@ -163,10 +163,10 @@ impl Invariant for SplitEqBindHighLowInvariant {
 
             let merged = split_eq.merge();
             if regular_eq.Z[..regular_eq.len()] != merged.Z[..merged.len()] {
-                return Err(InvariantViolation::with_details(
+                return Err(CheckError::Violation(InvariantViolation::with_details(
                     "Bind mismatch (HighToLow)",
                     format!("num_vars={num_vars}, round={round}"),
-                ));
+                )));
             }
         }
 

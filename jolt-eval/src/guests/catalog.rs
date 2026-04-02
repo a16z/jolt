@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use common::constants::{DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE};
 use common::jolt_device::MemoryConfig;
+use jolt_core::host::Program;
 
-use crate::TestCase;
+use super::TestCase;
 
 /// A known guest program that jolt-eval can compile and run.
 pub struct GuestSpec {
@@ -33,12 +34,8 @@ impl GuestSpec {
         }
     }
 
-    /// Compile the guest and return a `TestCase`.
-    ///
-    /// Invokes the `jolt` CLI to cross-compile the guest crate to
-    /// RISC-V, then wraps the resulting ELF bytes in a `TestCase`.
     pub fn compile(&self, target_dir: &str) -> TestCase {
-        let mut program = jolt_core::host::Program::new(self.package);
+        let mut program = Program::new(self.package);
         program.set_memory_config(self.memory_config());
         program.build(target_dir);
         let elf_bytes = program
@@ -52,11 +49,6 @@ impl GuestSpec {
     }
 }
 
-/// The fixed catalog of guest programs available for evaluation.
-///
-/// Modeled after the benchmark suite in `jolt-core/benches/e2e_profiling.rs`.
-/// Each entry carries the memory config and default inputs extracted from
-/// the `#[jolt::provable(...)]` attributes in the guest crate.
 pub static GUESTS: &[GuestSpec] = &[
     GuestSpec {
         package: "muldiv-guest",
@@ -120,21 +112,15 @@ pub static GUESTS: &[GuestSpec] = &[
     },
 ];
 
-/// Look up a guest by its short name.
 pub fn find_guest(name: &str) -> Option<&'static GuestSpec> {
     GUESTS.iter().find(|g| g.name == name)
 }
 
-/// Return the short names of all known guests.
 pub fn guest_names() -> Vec<&'static str> {
     GUESTS.iter().map(|g| g.name).collect()
 }
 
 /// Resolve a `TestCase` from either `--guest <name>` or `--elf <path>`.
-///
-/// If `guest` is `Some`, compiles the named guest. If `elf` is `Some`,
-/// reads the ELF from disk with a default memory config. Exits the
-/// process with a helpful message if neither is provided.
 pub fn resolve_test_case(
     guest: Option<&str>,
     elf: Option<&str>,

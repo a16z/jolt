@@ -1,4 +1,4 @@
-use jolt_eval::invariant::{Invariant, InvariantViolation};
+use jolt_eval::invariant::{CheckError, Invariant, InvariantViolation};
 
 // ---------------------------------------------------------------------------
 // AlwaysPass: trivial invariant to test macro synthesis
@@ -19,7 +19,7 @@ impl Invariant for AlwaysPassInvariant {
         "Trivial invariant that always passes — used to test macro synthesis.".to_string()
     }
     fn setup(&self) -> Self::Setup {}
-    fn check(&self, _: &(), _input: u8) -> Result<(), InvariantViolation> {
+    fn check(&self, _: &(), _input: u8) -> Result<(), CheckError> {
         Ok(())
     }
     fn seed_corpus(&self) -> Vec<u8> {
@@ -59,13 +59,15 @@ impl Invariant for BoundsCheckInvariant {
         "Checks that max(lo,hi) >= min(lo,hi).".to_string()
     }
     fn setup(&self) -> Self::Setup {}
-    fn check(&self, _: &(), input: RangeInput) -> Result<(), InvariantViolation> {
+    fn check(&self, _: &(), input: RangeInput) -> Result<(), CheckError> {
         let lo = input.lo.min(input.hi);
         let hi = input.lo.max(input.hi);
         if hi >= lo {
             Ok(())
         } else {
-            Err(InvariantViolation::new("max < min — impossible"))
+            Err(CheckError::Violation(InvariantViolation::new(
+                "max < min — impossible",
+            )))
         }
     }
     fn seed_corpus(&self) -> Vec<RangeInput> {

@@ -5,9 +5,80 @@ use arbitrary::{Arbitrary, Unstructured};
 
 use common::constants::{DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE};
 use common::jolt_device::MemoryConfig;
+use jolt_core::host::Program;
 
-use super::{Invariant, InvariantViolation};
+use super::{CheckError, Invariant, InvariantViolation};
 use crate::TestCase;
+
+/// Guest memory layout parameters.
+///
+/// Serializable mirror of `common::jolt_device::MemoryConfig` for use
+/// in JSON-based counterexamples.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct GuestMemoryConfig {
+    pub max_input_size: u64,
+    pub max_output_size: u64,
+    pub stack_size: u64,
+    pub heap_size: u64,
+    pub max_trace_length: usize,
+}
+
+impl Default for GuestMemoryConfig {
+    fn default() -> Self {
+        Self {
+            max_input_size: 4096,
+            max_output_size: 4096,
+            stack_size: 65536,
+            heap_size: 32768,
+            max_trace_length: 1048576,
+        }
+    }
+}
+
+/// Maximum allowed values for memory config parameters to prevent
+/// the red-team agent from requesting absurd resource usage.
+const MAX_INPUT_SIZE: u64 = 1 << 16;
+const MAX_OUTPUT_SIZE: u64 = 1 << 16;
+const MAX_STACK_SIZE: u64 = 1 << 16;
+const MAX_HEAP_SIZE: u64 = 1 << 20;
+const MAX_TRACE_LENGTH: usize = 1 << 20; // ~1M steps
+
+impl GuestMemoryConfig {
+    fn validate(&self) -> Result<(), CheckError> {
+        if self.max_input_size > MAX_INPUT_SIZE
+            || self.max_output_size > MAX_OUTPUT_SIZE
+            || self.stack_size > MAX_STACK_SIZE
+            || self.heap_size > MAX_HEAP_SIZE
+            || self.max_trace_length > MAX_TRACE_LENGTH
+        {
+            return Err(CheckError::InvalidInput(format!(
+                "memory config exceeds limits: \
+                 input={}, output={}, stack={}, heap={}, trace={}; \
+                 limits: input/output/stack/heap<={}, trace<={}",
+                self.max_input_size,
+                self.max_output_size,
+                self.stack_size,
+                self.heap_size,
+                self.max_trace_length,
+                MAX_HEAP_SIZE,
+                MAX_TRACE_LENGTH,
+            )));
+        }
+        Ok(())
+    }
+
+    fn to_memory_config(&self) -> MemoryConfig {
+        MemoryConfig {
+            max_input_size: self.max_input_size,
+            max_output_size: self.max_output_size,
+            max_untrusted_advice_size: DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE,
+            max_trusted_advice_size: DEFAULT_MAX_TRUSTED_ADVICE_SIZE,
+            stack_size: self.stack_size,
+            heap_size: self.heap_size,
+            program_size: None,
+        }
+    }
+}
 
 /// Input for the soundness invariant.
 ///
@@ -22,6 +93,9 @@ pub struct SoundnessInput {
     /// Unified diff to apply to `guest-sandbox/`.
     /// Only hunks touching files within the sandbox are applied.
     pub patch: String,
+    /// Guest memory layout. Defaults are reasonable for most programs.
+    #[serde(default)]
+    pub memory: GuestMemoryConfig,
     /// Input bytes fed to the guest program.
     pub program_input: Vec<u8>,
     /// The output the malicious prover claims.
@@ -73,42 +147,39 @@ impl Invariant for SoundnessInvariant {
         &self,
         setup: &SoundnessSetup,
         input: SoundnessInput,
-    ) -> Result<(), InvariantViolation> {
-        // 1. Apply patch to sandbox in-place, revert on exit
+    ) -> Result<(), CheckError> {
+        // 1. Validate memory config
+        input.memory.validate()?;
+        let memory_config = input.memory.to_memory_config();
+
+        // 2. Apply patch to sandbox in-place, revert on exit
         let _guard = apply_patch(&setup.sandbox_dir, &input.patch)?;
 
-        // 2. Compile the patched guest
-        let elf_bytes = compile_guest(&setup.sandbox_dir)?;
+        // 3. Compile the patched guest
+        let elf_bytes = compile_guest(&setup.sandbox_dir, &memory_config)?;
 
         // _guard drops here (or on early return), reverting the patch
 
-        // 3. Build a TestCase and prove
-        let memory_config = MemoryConfig {
-            max_input_size: 4096,
-            max_output_size: 4096,
-            max_untrusted_advice_size: DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE,
-            max_trusted_advice_size: DEFAULT_MAX_TRUSTED_ADVICE_SIZE,
-            stack_size: 65536,
-            heap_size: 32768,
-            program_size: None,
-        };
+        // 4. Build a TestCase and prove
         let test_case = TestCase {
             elf_contents: elf_bytes,
             memory_config,
-            max_trace_length: 1048576,
+            max_trace_length: input.memory.max_trace_length,
         };
         let prover_pp = test_case.prover_preprocessing();
         let verifier_pp = TestCase::verifier_preprocessing(&prover_pp);
         let (proof, honest_device) = test_case.prove(&prover_pp, &input.program_input);
 
-        // 4. Skip no-op claims (the claim matches the honest execution)
+        // 5. Skip no-op claims (the claim matches the honest execution)
         if input.claimed_output == honest_device.outputs
             && input.claimed_panic == honest_device.panic
         {
-            return Ok(());
+            return Err(CheckError::InvalidInput(
+                "claimed output/panic matches honest execution".into(),
+            ));
         }
 
-        // 5. Verify with the dishonest claim — this SHOULD fail
+        // 6. Verify with the dishonest claim — this SHOULD fail
         match TestCase::verify_with_claims(
             &verifier_pp,
             proof,
@@ -116,7 +187,7 @@ impl Invariant for SoundnessInvariant {
             &input.claimed_output,
             input.claimed_panic,
         ) {
-            Ok(()) => Err(InvariantViolation::with_details(
+            Ok(()) => Err(CheckError::Violation(InvariantViolation::with_details(
                 "Verifier accepted dishonest claim",
                 format!(
                     "honest_output={} bytes (panic={}), claimed_output={} bytes (panic={})",
@@ -125,7 +196,7 @@ impl Invariant for SoundnessInvariant {
                     input.claimed_output.len(),
                     input.claimed_panic,
                 ),
-            )),
+            ))),
             Err(_) => Ok(()),
         }
     }
@@ -133,6 +204,7 @@ impl Invariant for SoundnessInvariant {
     fn seed_corpus(&self) -> Vec<SoundnessInput> {
         vec![SoundnessInput {
             patch: String::new(),
+            memory: GuestMemoryConfig::default(),
             program_input: vec![1, 2, 3],
             claimed_output: vec![0xFF],
             claimed_panic: false,
@@ -159,7 +231,7 @@ impl Drop for PatchGuard {
 
 /// Apply a filtered patch to `sandbox_dir` in-place. Returns a guard
 /// that reverts the changes on drop (even on panic).
-fn apply_patch(sandbox_dir: &Path, patch: &str) -> Result<PatchGuard, InvariantViolation> {
+fn apply_patch(sandbox_dir: &Path, patch: &str) -> Result<PatchGuard, CheckError> {
     let guard = PatchGuard {
         dir: sandbox_dir.to_path_buf(),
         applied: false,
@@ -180,7 +252,7 @@ fn apply_patch(sandbox_dir: &Path, patch: &str) -> Result<PatchGuard, InvariantV
         .stdin(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .map_err(|e| InvariantViolation::new(format!("git apply spawn: {e}")))?;
+        .map_err(|e| CheckError::InvalidInput(format!("git apply spawn: {e}")))?;
 
     if let Some(stdin) = child.stdin.as_mut() {
         use std::io::Write;
@@ -189,14 +261,13 @@ fn apply_patch(sandbox_dir: &Path, patch: &str) -> Result<PatchGuard, InvariantV
 
     let output = child
         .wait_with_output()
-        .map_err(|e| InvariantViolation::new(format!("git apply wait: {e}")))?;
+        .map_err(|e| CheckError::InvalidInput(format!("git apply wait: {e}")))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(InvariantViolation::with_details(
-            "Patch failed to apply",
-            stderr.to_string(),
-        ));
+        return Err(CheckError::InvalidInput(format!(
+            "patch failed to apply: {stderr}"
+        )));
     }
 
     Ok(PatchGuard {
@@ -212,8 +283,7 @@ pub fn filter_patch(patch: &str) -> String {
     let mut include_hunk = true;
 
     for line in patch.lines() {
-        if line.starts_with("diff --git") || line.starts_with("--- ") || line.starts_with("+++ ")
-        {
+        if line.starts_with("diff --git") || line.starts_with("--- ") || line.starts_with("+++ ") {
             include_hunk = !line.contains("..");
         }
         if include_hunk {
@@ -225,50 +295,18 @@ pub fn filter_patch(patch: &str) -> String {
     result
 }
 
-/// Compile the guest and return the ELF bytes.
-fn compile_guest(sandbox_dir: &Path) -> Result<Vec<u8>, InvariantViolation> {
-    let jolt_cmd = std::env::var("JOLT_PATH").unwrap_or_else(|_| "jolt".to_string());
-    let target_dir = sandbox_dir.join("target");
-
-    let output = Command::new(&jolt_cmd)
-        .args([
-            "build",
-            "-p",
-            "sandbox-guest",
-            "--",
-            "--release",
-            "--target-dir",
-        ])
-        .arg(target_dir.as_os_str())
-        .arg("--features")
-        .arg("guest")
-        .current_dir(sandbox_dir)
-        .output()
-        .map_err(|e| {
-            InvariantViolation::new(format!(
-                "jolt build: {e}. Make sure `jolt` is installed (cargo install --path .)"
-            ))
-        })?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(InvariantViolation::with_details(
-            "Guest compilation failed",
-            stderr.to_string(),
-        ));
-    }
-
-    let elf_path = target_dir
-        .join("riscv64imac-unknown-none-elf")
-        .join("release")
-        .join("sandbox-guest");
-
-    std::fs::read(&elf_path).map_err(|e| {
-        InvariantViolation::with_details(
-            "ELF not found after compilation",
-            format!("{}: {e}", elf_path.display()),
-        )
-    })
+/// Compile the sandbox guest and return the ELF bytes.
+fn compile_guest(
+    sandbox_dir: &Path,
+    memory_config: &MemoryConfig,
+) -> Result<Vec<u8>, CheckError> {
+    let target_dir = sandbox_dir.join("target").to_string_lossy().to_string();
+    let mut program = Program::new("sandbox-guest");
+    program.set_memory_config(*memory_config);
+    program.build(&target_dir);
+    program
+        .get_elf_contents()
+        .ok_or_else(|| CheckError::InvalidInput("guest ELF not found after build".into()))
 }
 
 #[cfg(test)]
