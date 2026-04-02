@@ -7,22 +7,56 @@
 | Status      | proposed                       |
 | PR          |                                |
 
+## Summary
+
+One paragraph: what is this feature and why does it matter? State the problem being solved, not just the solution.
+
 ## Intent
 
-What are we building and why? What invariants must hold? Define the types, schemas, abstractions, and architectural boundaries that make the feature's purpose legible in code.
+### Goal
+
+What are we building? State the primary objective in one sentence without qualifiers. Define the key abstractions, types, and architectural boundaries this feature introduces or modifies.
+
+### Invariants
+
+What properties must hold? List the correctness, safety, or consistency invariants that the implementation must preserve. For ZK features, include prover/verifier consistency requirements.
+
+### Non-Goals
+
+What is explicitly out of scope? Listing non-goals prevents scope creep and clarifies the feature's boundaries.
 
 ## Evaluation
 
-How do we know it works? What existing and new tests, benchmarks, and assertions are needed to justify the correctness of the implementation? Evaluation should verify invariants from the Intent section, not mirror execution details.
+### Acceptance Criteria
+
+Concrete, testable criteria. Each should be verifiable by a test, benchmark, or assertion.
+
+- [ ] Criterion 1
+- [ ] Criterion 2
+- [ ] Criterion 3
+
+### Testing Strategy
+
+Which existing tests must continue passing? What new tests are needed? Specify both standard (`--features host`) and ZK (`--features host,zk`) mode requirements where applicable.
+
+### Performance
+
+What are the performance expectations? Specify benchmarks, acceptable regressions, memory budgets, or throughput targets. "No regression" is acceptable if there is a benchmark to verify against.
+
+## Design
+
+### Architecture
+
+How does this feature fit into the existing system? Describe which modules, types, and abstractions are affected. Include a diagram if the interaction is non-trivial.
+
+### Alternatives Considered
+
+What other approaches were evaluated? Why was this design chosen over them? This section prevents re-litigating decisions during implementation review.
 
 ## Execution
 
-Optional direction for the execution layer — algorithmic approach, optimizations to consider, modules to touch. Execution is downstream of intent and evidence; the implementer should be able to derive most of it from the sections above.
-
-## Open Questions
-
-Unresolved decisions. Remove this section once all questions are resolved.
+Optional implementation direction — algorithmic approach, optimizations to consider, modules to touch. The implementer should be able to derive most of this from Intent and Evaluation.
 
 ## References
 
-Links to papers, related specs, relevant issues/PRs, etc.
+Links to papers, related specs, relevant issues/PRs, prior art.

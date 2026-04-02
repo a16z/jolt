@@ -107,11 +107,6 @@ A new `CONTRIBUTING.md` documents:
 - `specs/new-spec.sh` — replaced by `/new-spec` Claude skill
 - `specs/README.md` — replaced by `CONTRIBUTING.md`
 
-## Open Questions
-
-- Should `@claude analyze` run automatically on spec PRs, or only when explicitly invoked?
-- Should the `claude-approved` label be required before maintainer approval, or advisory?
-
 ## References
 
 - Existing `claude.yml` workflow handles `@claude` commands via `anthropics/claude-code-action@v1`
