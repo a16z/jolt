@@ -191,6 +191,12 @@ cast_precision_loss = "allow"
 cast_possible_wrap = "allow"
 cast_lossless = "allow"
 
+# Pedantic overrides — noisy for generic/math code
+implicit_hasher = "allow"
+ref_option_ref = "allow"
+significant_drop_tightening = "allow"
+result_large_err = "allow"
+
 # Code quality — hard denies to catch AI-generated slop
 dbg_macro = "deny"
 todo = "deny"
@@ -198,6 +204,10 @@ unimplemented = "deny"
 print_stdout = "deny"
 print_stderr = "deny"
 undocumented_unsafe_blocks = "deny"
+allow_attributes = "deny"
+panic = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
 
 [workspace.lints.rust]
 unused_results = "warn"
@@ -217,7 +227,6 @@ sha2 = "0.10"
 sha3 = "0.10.8"
 blake2 = "0.10"
 blake3 = { version = "1.5.0" }
-light-poseidon = "0.4"
 digest = "0.10"
 jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 dory = { package = "dory-pcs", version = "0.3.0", features = ["backends", "cache", "disk-persistence"] }
