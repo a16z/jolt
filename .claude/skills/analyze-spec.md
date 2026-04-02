@@ -34,10 +34,17 @@ When in doubt, check if `gh pr view --json number` succeeds for the current bran
 
 ## Phase 1: Initialize (both modes)
 
-1. **Find the spec**: Locate the `specs/*.md` file (exclude `TEMPLATE.md`). If a path is provided in `{{ARGUMENTS}}`, use that.
-2. **Read the spec** thoroughly — understand Intent, Evaluation, and Execution sections.
+1. **Locate the spec**:
+   - If a path is provided in `{{ARGUMENTS}}`, use that directly.
+   - Otherwise, detect the PR number:
+     - Run `gh pr view --json number --jq .number` to get the current branch's PR number.
+     - If that fails, list specs: `ls specs/` and ask the user which one.
+   - Look for `specs/<PR#>-*.md` matching the PR number. This is the spec for this PR.
+   - If no match, fall back to finding any `specs/*.md` file that is NOT `TEMPLATE.md`.
+   - If multiple specs match, prefer the one matching the PR number. If still ambiguous, ask the user.
+2. **Read the spec** thoroughly — understand all sections (Summary, Intent, Evaluation, Design, Execution).
 3. **Explore the codebase**: Run `explore` agent to map codebase areas relevant to the spec's intent.
-4. **Read prior context (CI mode)**: Read all existing PR comments to identify questions already asked and answers already given. Account for these when scoring — don't re-ask answered questions.
+4. **Read prior context (CI mode)**: Read all existing PR comments via `gh pr view --json comments` to identify questions already asked and answers already given. Account for these when scoring — don't re-ask answered questions.
 
 ## Phase 2: Analyze
 
