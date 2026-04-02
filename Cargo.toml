@@ -94,6 +94,7 @@ members = [
     "z3-verifier",
     "jolt-eval",
     "jolt-eval/macros",
+    "jolt-eval/guest-sandbox",
 ]
 exclude = ["jolt-eval/fuzz"]
 

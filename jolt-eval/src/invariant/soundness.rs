@@ -44,7 +44,7 @@ const MAX_HEAP_SIZE: u64 = 1 << 20;
 const MAX_TRACE_LENGTH: usize = 1 << 20; // ~1M steps
 
 impl GuestMemoryConfig {
-    fn validate(&self) -> Result<(), CheckError> {
+    pub fn validate(&self) -> Result<(), CheckError> {
         if self.max_input_size > MAX_INPUT_SIZE
             || self.max_output_size > MAX_OUTPUT_SIZE
             || self.stack_size > MAX_STACK_SIZE
@@ -205,7 +205,7 @@ impl Invariant for SoundnessInvariant {
         vec![SoundnessInput {
             patch: String::new(),
             memory: GuestMemoryConfig::default(),
-            program_input: vec![1, 2, 3],
+            program_input: postcard::to_stdvec::<[u8]>(&[1, 2, 3]).unwrap(),
             claimed_output: vec![0xFF],
             claimed_panic: false,
         }]
@@ -296,25 +296,50 @@ pub fn filter_patch(patch: &str) -> String {
 }
 
 /// Compile the sandbox guest and return the ELF bytes.
+///
+/// `Program::build` panics on compilation failure, so we catch it.
 fn compile_guest(
     sandbox_dir: &Path,
     memory_config: &MemoryConfig,
 ) -> Result<Vec<u8>, CheckError> {
     let target_dir = sandbox_dir.join("target").to_string_lossy().to_string();
-    let mut program = Program::new("sandbox-guest");
-    program.set_memory_config(*memory_config);
-    program.build(&target_dir);
-    program
-        .get_elf_contents()
-        .ok_or_else(|| CheckError::InvalidInput("guest ELF not found after build".into()))
+    let mc = *memory_config;
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut program = Program::new("sandbox-guest");
+        program.set_memory_config(mc);
+        program.build(&target_dir);
+        program.get_elf_contents()
+    }));
+    match result {
+        Ok(Some(elf)) => Ok(elf),
+        Ok(None) => Err(CheckError::InvalidInput(
+            "guest ELF not found after build".into(),
+        )),
+        Err(_) => Err(CheckError::InvalidInput(
+            "guest compilation panicked".into(),
+        )),
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::filter_patch;
+    use super::*;
+    use crate::Invariant;
+
+    fn default_input() -> SoundnessInput {
+        SoundnessInput {
+            patch: String::new(),
+            memory: GuestMemoryConfig::default(),
+            program_input: postcard::to_stdvec::<[u8]>(&[1, 2, 3]).unwrap(),
+            claimed_output: vec![0xFF],
+            claimed_panic: false,
+        }
+    }
+
+    // ── filter_patch ────────────────────────────────────────────────
 
     #[test]
-    fn keeps_safe_hunks() {
+    fn filter_keeps_safe_hunks() {
         let patch = "\
 diff --git a/src/lib.rs b/src/lib.rs
 --- a/src/lib.rs
@@ -328,7 +353,7 @@ diff --git a/src/lib.rs b/src/lib.rs
     }
 
     #[test]
-    fn drops_hunks_with_path_traversal() {
+    fn filter_drops_path_traversal() {
         let patch = "\
 diff --git a/../../jolt-core/src/lib.rs b/../../jolt-core/src/lib.rs
 --- a/../../jolt-core/src/lib.rs
@@ -342,7 +367,7 @@ diff --git a/../../jolt-core/src/lib.rs b/../../jolt-core/src/lib.rs
     }
 
     #[test]
-    fn mixed_safe_and_unsafe_hunks() {
+    fn filter_mixed_safe_and_unsafe() {
         let patch = "\
 diff --git a/src/lib.rs b/src/lib.rs
 --- a/src/lib.rs
@@ -370,8 +395,119 @@ diff --git a/Cargo.toml b/Cargo.toml
     }
 
     #[test]
-    fn empty_patch_stays_empty() {
+    fn filter_empty_patch() {
         assert!(filter_patch("").is_empty());
         assert!(filter_patch("   \n  ").trim().is_empty());
+    }
+
+    // ── memory config validation ────────────────────────────────────
+
+    #[test]
+    fn validate_accepts_defaults() {
+        assert!(GuestMemoryConfig::default().validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_oversized_input() {
+        let c = GuestMemoryConfig { max_input_size: u64::MAX, ..Default::default() };
+        assert!(matches!(c.validate(), Err(CheckError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn validate_rejects_oversized_output() {
+        let c = GuestMemoryConfig { max_output_size: u64::MAX, ..Default::default() };
+        assert!(matches!(c.validate(), Err(CheckError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn validate_rejects_oversized_stack() {
+        let c = GuestMemoryConfig { stack_size: u64::MAX, ..Default::default() };
+        assert!(matches!(c.validate(), Err(CheckError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn validate_rejects_oversized_heap() {
+        let c = GuestMemoryConfig { heap_size: u64::MAX, ..Default::default() };
+        assert!(matches!(c.validate(), Err(CheckError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn validate_rejects_oversized_trace() {
+        let c = GuestMemoryConfig { max_trace_length: usize::MAX, ..Default::default() };
+        assert!(matches!(c.validate(), Err(CheckError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn check_rejects_oversized_memory_before_compilation() {
+        let inv = SoundnessInvariant;
+        let setup = inv.setup();
+        let input = SoundnessInput {
+            memory: GuestMemoryConfig { heap_size: u64::MAX, ..Default::default() },
+            ..default_input()
+        };
+        assert!(matches!(inv.check(&setup, input), Err(CheckError::InvalidInput(_))));
+    }
+
+    // ── patching ────────────────────────────────────────────────────
+
+    #[test]
+    fn check_garbage_patch_is_noop() {
+        let inv = SoundnessInvariant;
+        let setup = inv.setup();
+        let input = SoundnessInput {
+            patch: "this is not a valid unified diff\n+garbage".into(),
+            ..default_input()
+        };
+        // Garbage with no diff headers passes filter_patch unchanged.
+        // git apply --allow-empty treats it as a no-op (no hunks),
+        // so the unpatched sandbox compiles and the check proceeds normally.
+        assert!(inv.check(&setup, input).is_ok());
+    }
+
+    // ── compilation + prove/verify (slow) ───────────────────────────
+
+    #[test]
+    fn check_path_traversal_filtered_then_compiles() {
+        let inv = SoundnessInvariant;
+        let setup = inv.setup();
+        let input = SoundnessInput {
+            patch: "\
+diff --git a/../../etc/passwd b/../../etc/passwd
+--- a/../../etc/passwd
++++ b/../../etc/passwd
+@@ -1 +1 @@
+-root
++hacked
+"
+            .into(),
+            ..default_input()
+        };
+        // Traversal hunks are filtered out → empty patch → compiles
+        // unpatched sandbox → proves → verifier rejects dishonest claim.
+        assert!(inv.check(&setup, input).is_ok());
+    }
+
+    #[test]
+    fn check_unpatched_sandbox_rejects_dishonest_output() {
+        let inv = SoundnessInvariant;
+        let setup = inv.setup();
+        // claimed_output=[0xFF] doesn't match the identity function's
+        // honest output for input [1,2,3]. Verifier should reject.
+        assert!(inv.check(&setup, default_input()).is_ok());
+    }
+
+    #[test]
+    fn check_noop_claim_returns_invalid_input() {
+        let inv = SoundnessInvariant;
+        let setup = inv.setup();
+        // The sandbox computes h = wrapping hash of input bytes.
+        // For input [1,2,3]: h = ((0*31+1)*31+2)*31+3 = 1026
+        let honest_output = postcard::to_stdvec(&1026u32).unwrap();
+        let input = SoundnessInput {
+            claimed_output: honest_output,
+            claimed_panic: false,
+            ..default_input()
+        };
+        assert!(matches!(inv.check(&setup, input), Err(CheckError::InvalidInput(_))));
     }
 }

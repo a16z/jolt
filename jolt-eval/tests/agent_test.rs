@@ -1053,3 +1053,4 @@ fn optimize_invariant_failure_mid_sequence() {
     assert_eq!(env.rejected, 1); // iter 2 rejected (invariant failure)
     assert_eq!(result.best["time"], 7.0);
 }
+
