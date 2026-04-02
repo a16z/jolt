@@ -1,52 +1,50 @@
-use std::any::Any;
-use std::sync::LazyLock;
-
-use super::super::{CheckJsonResult, JoltInvariants};
-
-struct CachedInvariant {
-    inv: JoltInvariants,
-    setup: Box<dyn Any + Send + Sync>,
-}
-
-static CACHE: LazyLock<Vec<CachedInvariant>> = LazyLock::new(|| {
-    JoltInvariants::all()
-        .into_iter()
-        .map(|inv| {
-            let setup = inv.dyn_setup();
-            CachedInvariant { inv, setup }
-        })
-        .collect()
-});
-
-/// Fuzz a named invariant with raw byte data from libfuzzer.
+/// Macro that generates a libfuzzer fuzz target for an invariant.
 ///
-/// Panics on invariant violation (which is what libfuzzer needs to
-/// detect a finding).
+/// Takes a concrete invariant expression. Setup is performed once;
+/// each fuzz iteration produces an `Input` via `Arbitrary` and checks it.
 ///
-/// # Usage in a fuzz target
+/// # Usage
 ///
 /// ```ignore
 /// #![no_main]
-/// use libfuzzer_sys::fuzz_target;
-/// fuzz_target!(|data: &[u8]| {
-///     jolt_eval::invariant::synthesis::fuzz::fuzz_invariant("split_eq_bind_low_high", data);
-/// });
+/// use jolt_eval::invariant::split_eq_bind::SplitEqBindLowHighInvariant;
+/// jolt_eval::fuzz_invariant!(SplitEqBindLowHighInvariant::default());
 /// ```
-pub fn fuzz_invariant(invariant_name: &str, data: &[u8]) {
-    let cached = CACHE
-        .iter()
-        .find(|c| c.inv.name() == invariant_name)
-        .unwrap_or_else(|| panic!("Invariant '{invariant_name}' not found"));
+#[macro_export]
+macro_rules! fuzz_invariant {
+    ($inv:expr) => {
+        use $crate::Invariant as _;
 
-    if let Ok(json_str) = std::str::from_utf8(data) {
-        match cached.inv.check_json_input(&*cached.setup, json_str) {
-            CheckJsonResult::Violation(e) => {
-                panic!(
-                    "Invariant '{}' violated: {e}\nInput JSON: {json_str}",
-                    cached.inv.name()
-                );
-            }
-            CheckJsonResult::Pass | CheckJsonResult::BadInput(_) => {}
+        static __FUZZ_SETUP: ::std::sync::OnceLock<
+            ::std::boxed::Box<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync>,
+        > = ::std::sync::OnceLock::new();
+
+        fn __fuzz_init<I: $crate::Invariant>(inv: &I) {
+            __FUZZ_SETUP
+                .set(::std::boxed::Box::new(inv.setup()))
+                .ok();
         }
-    }
+
+        fn __fuzz_check<I: $crate::Invariant>(inv: &I, data: &[u8]) {
+            let setup = __FUZZ_SETUP
+                .get()
+                .expect("SETUP not initialized")
+                .downcast_ref::<I::Setup>()
+                .expect("wrong setup type");
+            let mut u = $crate::arbitrary::Unstructured::new(data);
+            if let Ok(input) = <I::Input as $crate::arbitrary::Arbitrary>::arbitrary(&mut u) {
+                inv.check(setup, input)
+                    .unwrap_or_else(|e| panic!("Invariant violated: {e}"));
+            }
+        }
+
+        ::libfuzzer_sys::fuzz_target!(
+            init: {
+                __fuzz_init(&$inv);
+            },
+            |data: &[u8]| {
+                __fuzz_check(&$inv, data);
+            }
+        );
+    };
 }

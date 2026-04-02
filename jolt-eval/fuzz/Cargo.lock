@@ -1021,7 +1021,6 @@ dependencies = [
  "jolt-eval-macros",
  "postcard",
  "rand",
- "rand_chacha",
  "rayon",
  "schemars",
  "serde",

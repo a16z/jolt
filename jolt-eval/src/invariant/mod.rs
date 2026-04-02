@@ -1,7 +1,6 @@
 pub mod split_eq_bind;
 pub mod synthesis;
 
-use std::any::Any;
 use std::fmt;
 
 use arbitrary::Arbitrary;
@@ -125,13 +124,6 @@ impl JoltInvariants {
         dispatch!(self, |inv| run_checks_impl(inv, num_random))
     }
 
-    pub fn dyn_setup(&self) -> Box<dyn Any + Send + Sync> {
-        dispatch!(self, |inv| dyn_setup_impl(inv))
-    }
-
-    pub fn check_json_input(&self, setup: &dyn Any, json: &str) -> CheckJsonResult {
-        dispatch!(self, |inv| check_json_input_impl(inv, setup, json))
-    }
 }
 
 fn run_checks_impl<I: Invariant>(inv: &I, num_random: usize) -> Vec<Result<(), InvariantViolation>> {
@@ -155,28 +147,6 @@ fn run_checks_impl<I: Invariant>(inv: &I, num_random: usize) -> Vec<Result<(), I
     results
 }
 
-fn dyn_setup_impl<I: Invariant>(inv: &I) -> Box<dyn Any + Send + Sync> {
-    Box::new(inv.setup())
-}
-
-fn check_json_input_impl<I: Invariant>(
-    inv: &I,
-    setup: &dyn Any,
-    json: &str,
-) -> CheckJsonResult {
-    let setup = setup
-        .downcast_ref::<I::Setup>()
-        .expect("check_json_input called with wrong setup type");
-    let input: I::Input = match serde_json::from_str(json) {
-        Ok(v) => v,
-        Err(e) => return CheckJsonResult::BadInput(e.to_string()),
-    };
-    match inv.check(setup, input) {
-        Ok(()) => CheckJsonResult::Pass,
-        Err(v) => CheckJsonResult::Violation(v),
-    }
-}
-
 /// A counterexample produced when an invariant is violated.
 pub struct InvariantCounterexample<I: Invariant> {
     pub description: String,
@@ -189,16 +159,6 @@ pub struct FailedAttempt {
     pub description: String,
     pub approach: String,
     pub failure_reason: String,
-}
-
-/// Outcome of [`JoltInvariants::check_json_input`].
-pub enum CheckJsonResult {
-    /// The input was valid and the invariant held.
-    Pass,
-    /// The input was valid and the invariant was violated.
-    Violation(InvariantViolation),
-    /// The JSON could not be deserialized into the expected `Input` type.
-    BadInput(String),
 }
 
 /// Result of running an invariant check suite.

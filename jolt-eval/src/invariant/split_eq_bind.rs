@@ -1,6 +1,6 @@
 #![allow(non_snake_case)]
 
-use arbitrary::Arbitrary;
+use arbitrary::{Arbitrary, Unstructured};
 use enumset::EnumSet;
 
 use ark_bn254::Fr;
@@ -14,22 +14,32 @@ use super::{Invariant, InvariantViolation, SynthesisTarget};
 
 type Challenge = <Fr as JoltField>::Challenge;
 
-/// Input for the split-eq bind invariants: a number of variables and a
-/// seed from which we derive all challenge values deterministically.
-#[derive(Debug, Clone, Arbitrary, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+/// Input for the split-eq bind invariants.
+///
+/// `w` are the initial eq-polynomial challenges, `rs` are the binding
+/// round challenges. Stored as `u128` for serde/Arbitrary compatibility;
+/// converted to `Challenge` via `From<u128>` in the check methods.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct SplitEqBindInput {
-    /// Number of variables (clamped to 2..=20 in check).
-    pub num_vars: u8,
-    /// Seed bytes used to derive challenge values via simple hashing.
-    pub seed: [u8; 32],
+    pub w: Vec<u128>,
+    pub rs: Vec<u128>,
 }
 
-fn challenges_from_seed(seed: &[u8; 32], count: usize) -> Vec<Challenge> {
-    use rand::SeedableRng;
-    use rand_chacha::ChaCha8Rng;
+impl<'a> Arbitrary<'a> for SplitEqBindInput {
+    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
+        let num_vars = u.int_in_range(2u8..=16)? as usize;
+        let w: Vec<u128> = (0..num_vars)
+            .map(|_| u.arbitrary())
+            .collect::<arbitrary::Result<_>>()?;
+        let rs: Vec<u128> = (0..num_vars)
+            .map(|_| u.arbitrary())
+            .collect::<arbitrary::Result<_>>()?;
+        Ok(Self { w, rs })
+    }
+}
 
-    let mut rng = ChaCha8Rng::from_seed(*seed);
-    (0..count).map(|_| Challenge::random(&mut rng)).collect()
+fn to_challenges(vals: &[u128]) -> Vec<Challenge> {
+    vals.iter().copied().map(Challenge::from).collect()
 }
 
 // ── LowToHigh ────────────────────────────────────────────────────────
@@ -59,12 +69,15 @@ impl Invariant for SplitEqBindLowHighInvariant {
     fn setup(&self) {}
 
     fn check(&self, _setup: &(), input: SplitEqBindInput) -> Result<(), InvariantViolation> {
-        let num_vars = (input.num_vars as usize).clamp(2, 20);
-        let challenges = challenges_from_seed(&input.seed, 2 * num_vars);
-        let (w, rs) = challenges.split_at(num_vars);
+        if input.w.len() < 2 {
+            return Ok(());
+        }
+        let w = to_challenges(&input.w);
+        let rs = to_challenges(&input.rs);
+        let num_vars = w.len();
 
-        let mut regular_eq = DensePolynomial::<Fr>::new(EqPolynomial::evals(w));
-        let mut split_eq = GruenSplitEqPolynomial::<Fr>::new(w, BindingOrder::LowToHigh);
+        let mut regular_eq = DensePolynomial::<Fr>::new(EqPolynomial::evals(&w));
+        let mut split_eq = GruenSplitEqPolynomial::<Fr>::new(&w, BindingOrder::LowToHigh);
 
         let merged = split_eq.merge();
         if regular_eq.Z[..regular_eq.len()] != merged.Z[..merged.len()] {
@@ -93,16 +106,16 @@ impl Invariant for SplitEqBindLowHighInvariant {
     fn seed_corpus(&self) -> Vec<SplitEqBindInput> {
         vec![
             SplitEqBindInput {
-                num_vars: 2,
-                seed: [0u8; 32],
+                w: vec![0, 1],
+                rs: vec![2, 3],
             },
             SplitEqBindInput {
-                num_vars: 10,
-                seed: [1u8; 32],
+                w: (0..10).collect(),
+                rs: (10..20).collect(),
             },
             SplitEqBindInput {
-                num_vars: 17,
-                seed: [42u8; 32],
+                w: (0..17).map(|i| u128::MAX - i).collect(),
+                rs: (0..17).map(|i| i * 1000).collect(),
             },
         ]
     }
@@ -135,12 +148,15 @@ impl Invariant for SplitEqBindHighLowInvariant {
     fn setup(&self) {}
 
     fn check(&self, _setup: &(), input: SplitEqBindInput) -> Result<(), InvariantViolation> {
-        let num_vars = (input.num_vars as usize).clamp(2, 20);
-        let challenges = challenges_from_seed(&input.seed, 2 * num_vars);
-        let (w, rs) = challenges.split_at(num_vars);
+        if input.w.len() < 2 {
+            return Ok(());
+        }
+        let w = to_challenges(&input.w);
+        let rs = to_challenges(&input.rs);
+        let num_vars = w.len();
 
-        let mut regular_eq = DensePolynomial::<Fr>::new(EqPolynomial::evals(w));
-        let mut split_eq = GruenSplitEqPolynomial::<Fr>::new(w, BindingOrder::HighToLow);
+        let mut regular_eq = DensePolynomial::<Fr>::new(EqPolynomial::evals(&w));
+        let mut split_eq = GruenSplitEqPolynomial::<Fr>::new(&w, BindingOrder::HighToLow);
 
         let merged = split_eq.merge();
         if regular_eq.Z[..regular_eq.len()] != merged.Z[..merged.len()] {
@@ -169,16 +185,16 @@ impl Invariant for SplitEqBindHighLowInvariant {
     fn seed_corpus(&self) -> Vec<SplitEqBindInput> {
         vec![
             SplitEqBindInput {
-                num_vars: 2,
-                seed: [0u8; 32],
+                w: vec![0, 1],
+                rs: vec![2, 3],
             },
             SplitEqBindInput {
-                num_vars: 10,
-                seed: [1u8; 32],
+                w: (0..10).collect(),
+                rs: (10..20).collect(),
             },
             SplitEqBindInput {
-                num_vars: 17,
-                seed: [42u8; 32],
+                w: (0..16).map(|i| u128::MAX - i).collect(),
+                rs: (0..16).map(|i| i * 1000).collect(),
             },
         ]
     }
