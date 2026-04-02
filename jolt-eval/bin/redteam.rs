@@ -25,6 +25,10 @@ struct Cli {
     #[arg(long, default_value = "30")]
     max_turns: usize,
 
+    /// Extra context or guidance for the red-team agent
+    #[arg(long)]
+    hint: Option<String>,
+
     /// List available red-teamable invariants and exit
     #[arg(long)]
     list: bool,
@@ -61,6 +65,7 @@ fn main() -> eyre::Result<()> {
 
     let config = RedTeamConfig {
         num_iterations: cli.iterations,
+        hint: cli.hint,
     };
     let agent = ClaudeCodeAgent::new(&cli.model, cli.max_turns);
     let repo_dir = std::env::current_dir()?;

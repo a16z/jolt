@@ -18,11 +18,15 @@ pub enum RedTeamResult {
 /// Configuration for an AI red-team session.
 pub struct RedTeamConfig {
     pub num_iterations: usize,
+    pub hint: Option<String>,
 }
 
 impl Default for RedTeamConfig {
     fn default() -> Self {
-        Self { num_iterations: 10 }
+        Self {
+            num_iterations: 10,
+            hint: None,
+        }
     }
 }
 
@@ -52,7 +56,12 @@ pub fn auto_redteam<I: Invariant>(
             invariant.name()
         );
 
-        let prompt = build_redteam_prompt(&description, input_example.as_deref(), &failed_attempts);
+        let prompt = build_redteam_prompt(
+            &description,
+            input_example.as_deref(),
+            config.hint.as_deref(),
+            &failed_attempts,
+        );
 
         let response = match agent.invoke_structured(repo_dir, &prompt, &envelope_schema) {
             Ok(r) => r,
@@ -70,7 +79,10 @@ pub fn auto_redteam<I: Invariant>(
         let (analysis, counterexample_json) = match parse_envelope(&response.text) {
             Some(pair) => pair,
             None => match super::super::extract_json(&response.text) {
-                Some(json) => (response.text.clone(), json),
+                Some(json) => match parse_envelope(&json) {
+                    Some(pair) => pair,
+                    None => (response.text.clone(), json),
+                },
                 None => {
                     failed_attempts.push(FailedAttempt {
                         description: format!("Iteration {}", iteration + 1),
@@ -157,6 +169,7 @@ fn parse_envelope(text: &str) -> Option<(String, String)> {
 fn build_redteam_prompt(
     invariant_description: &str,
     input_example: Option<&str>,
+    hint: Option<&str>,
     failed_attempts: &[FailedAttempt],
 ) -> String {
     let mut prompt = String::new();
@@ -190,6 +203,12 @@ fn build_redteam_prompt(
         );
         prompt.push_str(example);
         prompt.push_str("\n```\n\n");
+    }
+
+    if let Some(hint) = hint {
+        prompt.push_str("## Hint\n\n");
+        prompt.push_str(hint);
+        prompt.push_str("\n\n");
     }
 
     if !failed_attempts.is_empty() {

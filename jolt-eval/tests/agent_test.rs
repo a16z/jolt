@@ -218,7 +218,7 @@ fn envelope(analysis: &str, counterexample: impl serde::Serialize) -> String {
 fn redteam_no_violation_when_invariant_always_passes() {
     let invariant = AlwaysPassInvariant;
     let agent = MockAgent::always_ok(&envelope("I analyzed the code.", 42));
-    let config = RedTeamConfig { num_iterations: 3 };
+    let config = RedTeamConfig { num_iterations: 3, ..Default::default() };
 
     let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
@@ -242,7 +242,7 @@ fn redteam_finds_violation_with_structured_response() {
     // AlwaysFailInvariant rejects every input.
     let invariant = AlwaysFailInvariant;
     let agent = MockAgent::always_ok(&envelope("I found a bug!", 99));
-    let config = RedTeamConfig { num_iterations: 10 };
+    let config = RedTeamConfig { num_iterations: 10, ..Default::default() };
 
     let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
@@ -266,7 +266,7 @@ fn redteam_finds_violation_with_targeted_input() {
     // FailsOnZeroInvariant only fails for input 0.
     let invariant = FailsOnZeroInvariant;
     let agent = MockAgent::always_ok(&envelope("Try zero", 0));
-    let config = RedTeamConfig { num_iterations: 5 };
+    let config = RedTeamConfig { num_iterations: 5, ..Default::default() };
 
     let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
@@ -287,7 +287,7 @@ fn redteam_finds_violation_with_targeted_input() {
 fn redteam_no_violation_when_agent_misses() {
     let invariant = FailsOnZeroInvariant;
     let agent = MockAgent::always_ok(&envelope("Trying 1", 1));
-    let config = RedTeamConfig { num_iterations: 2 };
+    let config = RedTeamConfig { num_iterations: 2, ..Default::default() };
 
     let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
@@ -306,7 +306,7 @@ fn redteam_no_violation_when_agent_misses() {
 fn redteam_handles_agent_errors_gracefully() {
     let invariant = AlwaysPassInvariant;
     let agent = MockAgent::always_err("network timeout");
-    let config = RedTeamConfig { num_iterations: 3 };
+    let config = RedTeamConfig { num_iterations: 3, ..Default::default() };
 
     let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
@@ -329,7 +329,7 @@ fn redteam_handles_no_json_in_response() {
     // Agent returns plain text (no envelope, no code block)
     let invariant = AlwaysPassInvariant;
     let agent = MockAgent::always_ok("I looked around but have no candidate to offer.");
-    let config = RedTeamConfig { num_iterations: 1 };
+    let config = RedTeamConfig { num_iterations: 1, ..Default::default() };
 
     let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
@@ -349,7 +349,7 @@ fn redteam_handles_invalid_counterexample_type() {
     // Structured envelope with wrong counterexample type for Input=u8
     let invariant = AlwaysPassInvariant;
     let agent = MockAgent::always_ok(&envelope("Here", "not_a_number"));
-    let config = RedTeamConfig { num_iterations: 1 };
+    let config = RedTeamConfig { num_iterations: 1, ..Default::default() };
 
     let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
@@ -369,7 +369,7 @@ fn redteam_fallback_extracts_json_from_freeform_text() {
     // Agent doesn't return structured envelope, but has a code block
     let invariant = AlwaysFailInvariant;
     let agent = MockAgent::always_ok("Found it!\n```json\n77\n```");
-    let config = RedTeamConfig { num_iterations: 1 };
+    let config = RedTeamConfig { num_iterations: 1, ..Default::default() };
 
     let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
@@ -385,7 +385,7 @@ fn redteam_fallback_extracts_json_from_freeform_text() {
 fn redteam_prompt_includes_invariant_description() {
     let invariant = AlwaysPassInvariant;
     let agent = MockAgent::always_ok(&envelope("ok", 0));
-    let config = RedTeamConfig { num_iterations: 1 };
+    let config = RedTeamConfig { num_iterations: 1, ..Default::default() };
 
     auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
@@ -399,7 +399,7 @@ fn redteam_prompt_includes_invariant_description() {
 fn redteam_prompt_includes_input_example() {
     let invariant = AlwaysPassInvariant;
     let agent = MockAgent::always_ok(&envelope("ok", 0));
-    let config = RedTeamConfig { num_iterations: 1 };
+    let config = RedTeamConfig { num_iterations: 1, ..Default::default() };
 
     auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
@@ -412,7 +412,7 @@ fn redteam_prompt_includes_input_example() {
 fn redteam_prompt_includes_failed_attempts_after_first_iteration() {
     let invariant = AlwaysPassInvariant;
     let agent = MockAgent::always_ok(&envelope("Tried something", 42));
-    let config = RedTeamConfig { num_iterations: 3 };
+    let config = RedTeamConfig { num_iterations: 3, ..Default::default() };
 
     auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
@@ -429,7 +429,7 @@ fn redteam_prompt_includes_failed_attempts_after_first_iteration() {
 fn redteam_zero_iterations_returns_immediately() {
     let invariant = AlwaysPassInvariant;
     let agent = MockAgent::always_ok("should not be called");
-    let config = RedTeamConfig { num_iterations: 0 };
+    let config = RedTeamConfig { num_iterations: 0, ..Default::default() };
 
     let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
@@ -457,7 +457,7 @@ fn redteam_mixed_agent_responses() {
             diff: None,
         }),
     ]);
-    let config = RedTeamConfig { num_iterations: 3 };
+    let config = RedTeamConfig { num_iterations: 3, ..Default::default() };
 
     let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
@@ -546,7 +546,7 @@ fn custom_harness_plugs_into_auto_redteam() {
     };
 
     let invariant = AlwaysPassInvariant;
-    let config = RedTeamConfig { num_iterations: 2 };
+    let config = RedTeamConfig { num_iterations: 2, ..Default::default() };
 
     let result = auto_redteam(&invariant, &config, &harness, Path::new("/tmp"));
 
