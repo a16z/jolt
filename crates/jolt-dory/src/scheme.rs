@@ -87,6 +87,12 @@ impl CommitmentScheme for DoryScheme {
     type Polynomial = jolt_poly::Polynomial<Fr>;
     type OpeningHint = DoryHint;
 
+    fn setup(max_num_vars: usize) -> (DoryProverSetup, DoryVerifierSetup) {
+        let prover = Self::setup_prover(max_num_vars);
+        let verifier = DoryVerifierSetup(prover.0.to_verifier_setup());
+        (prover, verifier)
+    }
+
     #[tracing::instrument(skip_all, name = "DoryScheme::commit")]
     fn commit<P: MultilinearPoly<Fr> + ?Sized>(
         poly: &P,

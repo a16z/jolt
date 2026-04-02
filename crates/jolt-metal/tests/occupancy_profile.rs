@@ -1,7 +1,9 @@
 #![cfg(target_os = "macos")]
 #![allow(clippy::print_stdout)]
 
-use jolt_compiler::{Factor, Formula, ProductTerm};
+use jolt_compiler::kernel_spec::Iteration;
+use jolt_compiler::{BindingOrder, Factor, Formula, KernelSpec, ProductTerm};
+use jolt_compute::ComputeBackend;
 use jolt_field::Fr;
 use jolt_metal::MetalBackend;
 
@@ -50,8 +52,9 @@ fn print_kernel_occupancy() {
     println!("=== Metal Kernel Occupancy Profile (CompileMode::Performance) ===");
     println!();
 
-    for (name, formula) in &formulas {
-        let kernel = backend.compile_kernel::<Fr>(formula);
+    for (name, formula) in formulas {
+        let spec = KernelSpec::new(formula, Iteration::Dense, BindingOrder::LowToHigh);
+        let kernel = backend.compile::<Fr>(&spec);
         println!("--- {name} ---");
 
         for occ in kernel.occupancy() {

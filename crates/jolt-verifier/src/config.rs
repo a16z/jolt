@@ -3,6 +3,7 @@
 //! The prover computes them from trace parameters; the verifier validates and
 //! expands them during verification.
 
+use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{Deserialize, Serialize};
 
 /// One-hot decomposition configuration (serialized in proof).
@@ -201,6 +202,15 @@ pub struct ProverConfig {
     pub one_hot_config: OneHotConfig,
     /// Read-write checking phase configuration.
     pub rw_config: ReadWriteConfig,
+    /// Start of the program's memory region (byte address).
+    pub memory_start: u64,
+    /// End of the program's memory region (byte address, exclusive).
+    pub memory_end: u64,
+    /// Entry point address (PC).
+    pub entry_address: u64,
+    /// Hash of public inputs/outputs (binds I/O to Fiat-Shamir without
+    /// absorbing variable-length data).
+    pub io_hash: [u8; 32],
 }
 
 impl ProverConfig {
@@ -222,6 +232,12 @@ impl ProverConfig {
         if !self.ram_k.is_power_of_two() {
             return Err(format!("ram_k {} is not a power of two", self.ram_k));
         }
+        if self.memory_end < self.memory_start {
+            return Err(format!(
+                "memory_end ({}) < memory_start ({})",
+                self.memory_end, self.memory_start
+            ));
+        }
         self.one_hot_config.validate()?;
         self.rw_config
             .validate(self.log_trace_length(), self.ram_log_k())?;
@@ -237,7 +253,19 @@ impl ProverConfig {
     pub fn one_hot_params_from_config(&self) -> OneHotParams {
         OneHotParams::from_config(&self.one_hot_config, self.bytecode_k, self.ram_k)
     }
+}
 
+impl AppendToTranscript for ProverConfig {
+    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
+        transcript.append_bytes(&(self.trace_length as u64).to_le_bytes());
+        transcript.append_bytes(&(self.ram_k as u64).to_le_bytes());
+        transcript.append_bytes(&(self.bytecode_k as u64).to_le_bytes());
+        transcript.append_bytes(&[self.one_hot_config.log_k_chunk]);
+        transcript.append_bytes(&self.memory_start.to_le_bytes());
+        transcript.append_bytes(&self.memory_end.to_le_bytes());
+        transcript.append_bytes(&self.entry_address.to_le_bytes());
+        transcript.append_bytes(&self.io_hash);
+    }
 }
 
 #[cfg(test)]
@@ -287,6 +315,10 @@ mod tests {
             bytecode_k: 1 << 10,
             one_hot_config: OneHotConfig::new(20),
             rw_config: ReadWriteConfig::new(20, 16),
+            memory_start: 0x8000_0000,
+            memory_end: 0x8001_0000,
+            entry_address: 0x8000_0000,
+            io_hash: [0u8; 32],
         };
         config.validate().unwrap();
     }
@@ -299,6 +331,10 @@ mod tests {
             bytecode_k: 1 << 10,
             one_hot_config: OneHotConfig::new(20),
             rw_config: ReadWriteConfig::new(20, 16),
+            memory_start: 0x8000_0000,
+            memory_end: 0x8001_0000,
+            entry_address: 0x8000_0000,
+            io_hash: [0u8; 32],
         };
         assert!(config.validate().is_err());
     }

@@ -20,12 +20,12 @@ num-traits = { workspace = true }
 rayon = { workspace = true }
 thiserror = { workspace = true }
 rand_core = { workspace = true }
+rand_chacha = { workspace = true }
 
 [dev-dependencies]
 jolt-field = { path = "../jolt-field", features = ["bn254"] }
 criterion = { workspace = true }
 rand = { workspace = true }
-rand_chacha = { workspace = true }
 
 [[bench]]
 name = "hyperkzg"

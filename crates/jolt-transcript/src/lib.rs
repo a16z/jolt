@@ -44,10 +44,12 @@ mod blake2b;
 mod blanket;
 mod impl_transcript;
 mod keccak;
+pub mod mock;
 mod poseidon;
 mod transcript;
 
 pub use blake2b::Blake2bTranscript;
 pub use keccak::KeccakTranscript;
+pub use mock::MockTranscript;
 pub use poseidon::PoseidonTranscript;
 pub use transcript::{AppendToTranscript, Transcript};

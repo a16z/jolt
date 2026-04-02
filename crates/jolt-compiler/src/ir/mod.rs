@@ -16,6 +16,16 @@ use expr::{Challenge, Expr, Factor, Poly};
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct ClaimId(pub u32);
 
+/// Whether a sumcheck iterates over dense or sparse data.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum Density {
+    /// All entries present — dense pairwise iteration.
+    Dense,
+    /// Sparse merge-join over sorted keys. Used for read-write memory
+    /// checking where the address space is sparse.
+    Sparse,
+}
+
 /// Whether a polynomial is committed (PCS-backed), virtual (derived during
 /// proving), or public (deterministic from challenges).
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -79,6 +89,7 @@ pub enum Vertex {
         /// When `Some(d)`, the first round uses an extended evaluation
         /// domain `{0, 1, …, d−1}` instead of `{0, 1}` (uni-skip).
         domain_size: Option<usize>,
+        density: Density,
     },
     /// Evaluate polynomial at the binding point of another vertex.
     /// Produces exactly one claim.
@@ -174,13 +185,19 @@ impl Protocol {
         Poly(idx)
     }
 
-    /// Add a sumcheck vertex. `consumes` is derived from `Claim` factors
-    /// in `input_sum`. Returns one claim per non-public poly in the composition.
+    /// Add a sumcheck vertex.
+    ///
+    /// `density` controls whether the backend uses dense pairwise iteration
+    /// or sparse merge-join over sorted keys.
+    ///
+    /// `consumes` is derived from `Claim` factors in `input_sum`.
+    /// Returns one claim per non-public poly in the composition.
     pub fn sumcheck(
         &mut self,
         composition: Expr,
         input_sum: impl Into<Expr>,
         binding_order: &[usize],
+        density: Density,
     ) -> Vec<ClaimId> {
         let input_sum = input_sum.into();
         let vertex_idx = self.vertices.len();
@@ -224,6 +241,7 @@ impl Protocol {
             consumes,
             binding_order: binding_order.to_vec(),
             domain_size: None,
+            density,
         });
 
         produced
@@ -236,7 +254,7 @@ impl Protocol {
     ///
     /// ```ignore
     /// let mid = p.uniskip_round(eq * a * b, 0, &[log_T], 5);
-    /// let claims = p.sumcheck(eq * a * b, mid, &[log_T]);
+    /// let claims = p.sumcheck(eq * a * b, mid, &[log_T], Density::Dense);
     /// ```
     pub fn uniskip_round(
         &mut self,
@@ -272,6 +290,7 @@ impl Protocol {
             consumes,
             binding_order: binding_order.to_vec(),
             domain_size: Some(domain_size),
+            density: Density::Dense,
         });
 
         id
@@ -331,6 +350,7 @@ impl fmt::Display for Protocol {
                     consumes,
                     binding_order,
                     domain_size,
+                    density: _,
                 } => {
                     let dims: Vec<&str> = binding_order
                         .iter()
@@ -449,7 +469,7 @@ mod tests {
         let bz = p.poly("Bz", &[log_T], PolyKind::Virtual);
         let cz = p.poly("Cz", &[log_T], PolyKind::Virtual);
 
-        let claims = p.sumcheck(eq * (az * bz - cz), 0, &[log_T]);
+        let claims = p.sumcheck(eq * (az * bz - cz), 0, &[log_T], Density::Dense);
         assert_eq!(claims.len(), 3);
         assert!(p.claims.iter().all(|c| c.poly != 0));
     }
@@ -461,8 +481,8 @@ mod tests {
         let a = p.poly("a", &[d], PolyKind::Virtual);
         let b = p.poly("b", &[d], PolyKind::Virtual);
 
-        let c1 = p.sumcheck(a + b, 0, &[d]);
-        let c2 = p.sumcheck(a * b, 0, &[d]);
+        let c1 = p.sumcheck(a + b, 0, &[d], Density::Dense);
+        let c2 = p.sumcheck(a * b, 0, &[d], Density::Dense);
 
         assert_eq!(c1[0].0, 0);
         assert_eq!(c1[1].0, 1);
@@ -477,7 +497,7 @@ mod tests {
         let eq = p.poly("eq", &[d], PolyKind::Public(PublicPoly::Eq(None)));
         let w = p.poly("w", &[d], PolyKind::Committed);
 
-        let claims = p.sumcheck(eq * w, 0, &[d]);
+        let claims = p.sumcheck(eq * w, 0, &[d], Density::Dense);
         assert_eq!(claims.len(), 1);
         assert_eq!(p.claims[claims[0].0 as usize].poly, w.0);
     }
@@ -491,10 +511,10 @@ mod tests {
         let a = p.poly("a", &[d], PolyKind::Virtual);
         let b = p.poly("b", &[d], PolyKind::Virtual);
 
-        let upstream = p.sumcheck(eq * (a * b), 0, &[d]);
+        let upstream = p.sumcheck(eq * (a * b), 0, &[d], Density::Dense);
 
         let c = p.poly("c", &[d], PolyKind::Virtual);
-        let downstream = p.sumcheck(eq * c, rho * upstream[0] + upstream[1], &[d]);
+        let downstream = p.sumcheck(eq * c, rho * upstream[0] + upstream[1], &[d], Density::Dense);
         assert_eq!(downstream.len(), 1);
 
         let last = &p.vertices[p.vertices.len() - 1];
@@ -511,7 +531,7 @@ mod tests {
         let a = p.poly("a", &[d], PolyKind::Virtual);
         let b = p.poly("b", &[d], PolyKind::Virtual);
 
-        let upstream = p.sumcheck(eq * a, 0, &[d]);
+        let upstream = p.sumcheck(eq * a, 0, &[d], Density::Dense);
         let eval_claim = p.evaluate(b, upstream[0]);
 
         assert_eq!(p.claims[eval_claim.0 as usize].poly, b.0);
@@ -531,10 +551,10 @@ mod tests {
         let b = p.poly("b", &[d], PolyKind::Virtual);
         let c = p.poly("c", &[d], PolyKind::Virtual);
 
-        let upstream = p.sumcheck(eq * a, 0, &[d]);
+        let upstream = p.sumcheck(eq * a, 0, &[d], Density::Dense);
         let b_eval = p.evaluate(b, upstream[0]);
 
-        let downstream = p.sumcheck(eq * c, rho * b_eval, &[d]);
+        let downstream = p.sumcheck(eq * c, rho * b_eval, &[d], Density::Dense);
         assert_eq!(downstream.len(), 1);
         assert!(p.vertices.last().unwrap().consumes().contains(&b_eval));
     }
@@ -545,7 +565,7 @@ mod tests {
         let d = p.dim("d");
         let eq = p.poly("eq", &[d], PolyKind::Public(PublicPoly::Eq(None)));
         let a = p.poly("a", &[d], PolyKind::Virtual);
-        let _ = p.sumcheck(eq * a, 0, &[d]);
+        let _ = p.sumcheck(eq * a, 0, &[d], Density::Dense);
 
         let json = serde_json::to_string_pretty(&p).unwrap();
         let p2: Protocol = serde_json::from_str(&json).unwrap();
@@ -561,7 +581,7 @@ mod tests {
         let eq = p.poly("eq", &[d], PolyKind::Public(PublicPoly::Eq(None)));
         let a = p.poly("a", &[d], PolyKind::Virtual);
         let b = p.poly("b", &[d], PolyKind::Virtual);
-        let _ = p.sumcheck(eq * (a * b), 0, &[d]);
+        let _ = p.sumcheck(eq * (a * b), 0, &[d], Density::Dense);
 
         let ron_str = ron::to_string(&p).unwrap();
         let p2: Protocol = ron::from_str(&ron_str).unwrap();
@@ -577,7 +597,7 @@ mod tests {
         let az = p.poly("Az", &[d], PolyKind::Virtual);
         let bz = p.poly("Bz", &[d], PolyKind::Virtual);
         let cz = p.poly("Cz", &[d], PolyKind::Virtual);
-        let _ = p.sumcheck(eq * (az * bz - cz), 0, &[d]);
+        let _ = p.sumcheck(eq * (az * bz - cz), 0, &[d], Density::Dense);
         let s = p.to_string();
         assert!(s.contains("4 polys"));
         assert!(s.contains("sumchecks"));
@@ -592,7 +612,7 @@ mod tests {
         let eq = p.poly("eq", &[d], PolyKind::Public(PublicPoly::Eq(None)));
         let a = p.poly("a", &[d], PolyKind::Virtual);
         let b = p.poly("b", &[d], PolyKind::Virtual);
-        let upstream = p.sumcheck(eq * a, 0, &[d]);
+        let upstream = p.sumcheck(eq * a, 0, &[d], Density::Dense);
         let _ = p.evaluate(b, upstream[0]);
         let s = p.to_string();
         assert!(s.contains("sumchecks"));

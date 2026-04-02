@@ -2638,6 +2638,7 @@ version = "0.1.0"
 name = "jolt-compiler"
 version = "0.1.0"
 dependencies = [
+ "bincode 2.0.1",
  "ron",
  "serde",
  "serde_json",
@@ -2773,6 +2774,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-equivalence"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "common",
+ "jolt-compiler",
+ "jolt-compute",
+ "jolt-core",
+ "jolt-cpu",
+ "jolt-field",
+ "jolt-host",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-r1cs",
+ "jolt-transcript",
+ "jolt-verifier",
+ "jolt-witness",
+ "jolt-zkvm",
+ "postcard",
+]
+
+[[package]]
 name = "jolt-field"
 version = "0.1.0"
 dependencies = [
@@ -2796,10 +2819,23 @@ version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
  "common",
+ "jolt-field",
  "jolt-instructions",
+ "jolt-r1cs",
+ "jolt-witness",
  "serde",
  "tracer",
  "tracing",
+]
+
+[[package]]
+name = "jolt-hybrid"
+version = "0.1.0"
+dependencies = [
+ "jolt-compiler",
+ "jolt-compute",
+ "jolt-field",
+ "num-traits",
 ]
 
 [[package]]
@@ -2923,10 +2959,9 @@ dependencies = [
  "jolt-compute",
  "jolt-cpu",
  "jolt-field",
+ "jolt-hybrid",
  "jolt-poly",
- "jolt-sumcheck",
  "jolt-transcript",
- "jolt-zkvm",
  "metal",
  "num-traits",
  "objc",
@@ -3018,15 +3053,13 @@ dependencies = [
 name = "jolt-r1cs"
 version = "0.1.0"
 dependencies = [
+ "jolt-compute",
  "jolt-field",
  "jolt-poly",
  "num-traits",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
- "serde",
- "thiserror 2.0.18",
- "tracing",
 ]
 
 [[package]]
@@ -3059,16 +3092,9 @@ dependencies = [
 name = "jolt-sumcheck"
 version = "0.1.0"
 dependencies = [
- "criterion",
  "jolt-field",
- "jolt-openings",
  "jolt-poly",
  "jolt-transcript",
- "num-traits",
- "rand 0.8.5",
- "rand_chacha 0.3.1",
- "rand_core 0.6.4",
- "rayon",
  "serde",
  "thiserror 2.0.18",
  "tracing",
@@ -3094,6 +3120,7 @@ dependencies = [
 name = "jolt-verifier"
 version = "0.1.0"
 dependencies = [
+ "jolt-compiler",
  "jolt-crypto",
  "jolt-dory",
  "jolt-field",
@@ -3114,19 +3141,12 @@ dependencies = [
 name = "jolt-witness"
 version = "0.1.0"
 dependencies = [
+ "jolt-compiler",
  "jolt-compute",
  "jolt-field",
- "jolt-host",
- "jolt-instructions",
  "jolt-poly",
- "jolt-r1cs",
- "jolt-verifier",
  "num-traits",
- "rand 0.8.5",
- "rand_chacha 0.3.1",
- "rand_core 0.6.4",
- "tracer",
- "tracing",
+ "serde",
 ]
 
 [[package]]
@@ -3137,27 +3157,21 @@ version = "0.1.0"
 name = "jolt-zkvm"
 version = "0.1.0"
 dependencies = [
+ "common",
  "jolt-compiler",
  "jolt-compute",
- "jolt-crypto",
- "jolt-dory",
+ "jolt-cpu",
  "jolt-field",
  "jolt-host",
- "jolt-instructions",
- "jolt-metal",
  "jolt-openings",
  "jolt-poly",
- "jolt-profiling",
  "jolt-r1cs",
+ "jolt-sumcheck",
  "jolt-transcript",
  "jolt-verifier",
  "jolt-witness",
  "num-traits",
  "postcard",
- "rand_chacha 0.3.1",
- "rand_core 0.6.4",
- "rayon",
- "tracer",
  "tracing",
 ]
 

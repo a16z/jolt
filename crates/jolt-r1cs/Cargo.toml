@@ -3,21 +3,19 @@ name = "jolt-r1cs"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "R1CS constraint system types for the Jolt zkVM"
+description = "R1CS constraint data structures for the Jolt proving system"
 
 [lints]
 workspace = true
 
 [dependencies]
+jolt-compute = { path = "../jolt-compute" }
 jolt-field = { path = "../jolt-field" }
 jolt-poly = { path = "../jolt-poly" }
-num-traits = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
-tracing.workspace = true
-thiserror = { workspace = true }
 
 [dev-dependencies]
+jolt-field = { path = "../jolt-field", features = ["bn254"] }
+num-traits = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 rand_core = { workspace = true }
-num-traits = { workspace = true }

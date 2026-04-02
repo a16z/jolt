@@ -1,17 +1,18 @@
 #![allow(unused_results)]
 
-//! Benchmark: direct Rayon+ToomCook fold vs ComputeBackend pairwise_reduce.
+//! Benchmark: direct Rayon+ToomCook fold vs ComputeBackend reduce.
 //!
 //! Measures whether the `ComputeBackend` abstraction adds overhead compared
 //! to the hand-written Rayon fold pattern used in the witness hot path
 //! (`mles_product_sum.rs`).
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use jolt_compiler::{Factor, Formula, ProductTerm};
-use jolt_compute::{BindingOrder, ComputeBackend, EqInput};
+use jolt_compiler::kernel_spec::Iteration;
+use jolt_compiler::{BindingOrder, Factor, Formula, KernelSpec, ProductTerm};
+use jolt_compute::{Buf, ComputeBackend, DeviceBuffer};
 use jolt_cpu::{compile, toom_cook, CpuBackend};
 use jolt_field::{Field, FieldAccumulator, Fr};
-use num_traits::Zero;
+use num_traits::{One, Zero};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
@@ -35,7 +36,7 @@ fn product_sum_formula(d: usize, p: usize) -> Formula {
 ///
 /// Uses `rayon::par_iter().fold().reduce()` with `FieldAccumulator` delayed
 /// reduction, calling the hand-optimized `toom_cook::eval_prod_D_assign`.
-fn direct_rayon_reduce_d4(inputs: &[Vec<Fr>], weights: &[Fr]) -> Vec<Fr> {
+fn direct_rayon_reduce_d4(inputs: &[Vec<Fr>]) -> Vec<Fr> {
     use rayon::prelude::*;
 
     let half = inputs[0].len() / 2;
@@ -49,9 +50,8 @@ fn direct_rayon_reduce_d4(inputs: &[Vec<Fr>], weights: &[Fr]) -> Vec<Fr> {
                 core::array::from_fn(|k| (inputs[k][2 * i], inputs[k][2 * i + 1]));
             let mut endpoints = [Fr::zero(); 4];
             toom_cook::eval_prod_4_assign(&pairs, &mut endpoints);
-            let w = weights[i];
             for (a, e) in acc.iter_mut().zip(endpoints.iter()) {
-                a.fmadd(w, *e);
+                a.fmadd(Fr::one(), *e);
             }
             acc
         })
@@ -65,7 +65,7 @@ fn direct_rayon_reduce_d4(inputs: &[Vec<Fr>], weights: &[Fr]) -> Vec<Fr> {
     accs.into_iter().map(FieldAccumulator::reduce).collect()
 }
 
-fn direct_rayon_reduce_d8(inputs: &[Vec<Fr>], weights: &[Fr]) -> Vec<Fr> {
+fn direct_rayon_reduce_d8(inputs: &[Vec<Fr>]) -> Vec<Fr> {
     use rayon::prelude::*;
 
     let half = inputs[0].len() / 2;
@@ -79,9 +79,8 @@ fn direct_rayon_reduce_d8(inputs: &[Vec<Fr>], weights: &[Fr]) -> Vec<Fr> {
                 core::array::from_fn(|k| (inputs[k][2 * i], inputs[k][2 * i + 1]));
             let mut endpoints = [Fr::zero(); 8];
             toom_cook::eval_prod_8_assign(&pairs, &mut endpoints);
-            let w = weights[i];
             for (a, e) in acc.iter_mut().zip(endpoints.iter()) {
-                a.fmadd(w, *e);
+                a.fmadd(Fr::one(), *e);
             }
             acc
         })
@@ -95,7 +94,7 @@ fn direct_rayon_reduce_d8(inputs: &[Vec<Fr>], weights: &[Fr]) -> Vec<Fr> {
     accs.into_iter().map(FieldAccumulator::reduce).collect()
 }
 
-fn direct_rayon_reduce_d16(inputs: &[Vec<Fr>], weights: &[Fr]) -> Vec<Fr> {
+fn direct_rayon_reduce_d16(inputs: &[Vec<Fr>]) -> Vec<Fr> {
     use rayon::prelude::*;
 
     let half = inputs[0].len() / 2;
@@ -109,9 +108,8 @@ fn direct_rayon_reduce_d16(inputs: &[Vec<Fr>], weights: &[Fr]) -> Vec<Fr> {
                 core::array::from_fn(|k| (inputs[k][2 * i], inputs[k][2 * i + 1]));
             let mut endpoints = [Fr::zero(); 16];
             toom_cook::eval_prod_16_assign(&pairs, &mut endpoints);
-            let w = weights[i];
             for (a, e) in acc.iter_mut().zip(endpoints.iter()) {
-                a.fmadd(w, *e);
+                a.fmadd(Fr::one(), *e);
             }
             acc
         })
@@ -130,34 +128,36 @@ fn bench_rayon_vs_backend(c: &mut Criterion) {
     let mut group = c.benchmark_group("rayon_vs_backend");
 
     for (d, direct_fn) in [
-        (
-            4usize,
-            direct_rayon_reduce_d4 as fn(&[Vec<Fr>], &[Fr]) -> Vec<Fr>,
-        ),
+        (4usize, direct_rayon_reduce_d4 as fn(&[Vec<Fr>]) -> Vec<Fr>),
         (8, direct_rayon_reduce_d8),
         (16, direct_rayon_reduce_d16),
     ] {
         let formula = product_sum_formula(d, 1);
-        let kernel = compile::<Fr>(&formula);
+        let spec = KernelSpec::new(formula, Iteration::Dense, BindingOrder::LowToHigh);
+        let kernel = compile::<Fr>(&spec);
 
         for log_n in [16, 18, 20] {
             let n = 1usize << log_n;
-            let half = n / 2;
 
             let inputs: Vec<Vec<Fr>> = (0..d)
                 .map(|i| random_field_vec(n, 100 + i as u64 + d as u64 * 1000))
                 .collect();
-            let weights = random_field_vec(half, 200 + d as u64);
-            let input_refs: Vec<&Vec<Fr>> = inputs.iter().collect();
 
-            group.throughput(Throughput::Elements(half as u64));
+            // Wrap inputs in DeviceBuffer for the backend API.
+            let dev_bufs: Vec<Buf<CpuBackend, Fr>> = inputs
+                .iter()
+                .map(|v| DeviceBuffer::Field(v.clone()))
+                .collect();
+            let buf_refs: Vec<&Buf<CpuBackend, Fr>> = dev_bufs.iter().collect();
+
+            group.throughput(Throughput::Elements((n / 2) as u64));
 
             group.bench_with_input(
                 BenchmarkId::new(format!("direct_rayon/D={d}"), format!("2^{log_n}")),
                 &n,
                 |b, _| {
                     b.iter(|| {
-                        black_box(direct_fn(&inputs, &weights));
+                        black_box(direct_fn(&inputs));
                     });
                 },
             );
@@ -167,14 +167,7 @@ fn bench_rayon_vs_backend(c: &mut Criterion) {
                 &n,
                 |b, _| {
                     b.iter(|| {
-                        black_box(backend.pairwise_reduce(
-                            &input_refs,
-                            EqInput::Weighted(&weights),
-                            &kernel,
-                            &[],
-                            d,
-                            BindingOrder::LowToHigh,
-                        ));
+                        black_box(backend.reduce(&kernel, &buf_refs, &[]));
                     });
                 },
             );

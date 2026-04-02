@@ -1,107 +1,181 @@
 //! Core trait definitions for compute backends.
 
 pub use jolt_compiler::BindingOrder;
-use jolt_compiler::Formula;
+use jolt_compiler::KernelSpec;
+pub use jolt_compiler::PolyId;
 use jolt_field::Field;
 
 /// Marker trait for types that can be stored in device buffers.
-///
-/// Matches `jolt-poly`'s `Polynomial<T>` philosophy: buffers hold any
-/// scalar type, not just field elements. Compact types (`u8`, `bool`)
-/// use less device memory and are promoted to `F` inside kernels.
-///
-/// Blanket-implemented for all `Copy + Send + Sync + 'static` types,
-/// covering primitive integers, `bool`, and all [`Field`] types.
 pub trait Scalar: Copy + Send + Sync + 'static {}
 impl<T: Copy + Send + Sync + 'static> Scalar for T {}
 
-/// Eq-polynomial weighting mode for composition-reduce operations.
+/// Type-erased device buffer for heterogeneous storage in the runtime.
 ///
-/// Controls how per-pair weights are applied during
-/// [`pairwise_reduce`](ComputeBackend::pairwise_reduce):
+/// The runtime manages a flat array of `Option<DeviceBuffer<BufF, BufU64>>`,
+/// indexed by polynomial ID. Different polynomials may have different scalar
+/// types: field elements for evaluation tables, u64 for sparse keys/indices.
 ///
-/// - [`Unit`](EqInput::Unit) — implicit all-ones weights. Avoids allocating
-///   a weight buffer and skips per-pair multiply. Used when eq is an input
-///   buffer (standard-grid sumchecks).
+/// Parameterized by concrete buffer types (not the backend trait) to avoid
+/// `Self`-in-generic-position issues within trait definitions.
 ///
-/// - [`Weighted`](EqInput::Weighted) — explicit weight buffer. Used when eq
-///   is factored out of the kernel and applied as per-pair scaling (Toom-Cook
-///   sumchecks).
+/// # Type alias
 ///
-/// - [`Tensor`](EqInput::Tensor) — split-eq tensor product
-///   `w(x_out, x_in) = outer[x_out] · inner[x_in]`. Saves memory and
-///   enables cache-friendly nested iteration. Used by Spartan outer sumcheck.
-pub enum EqInput<'a, B: ComputeBackend + ?Sized, F: Field> {
-    Unit,
-    Weighted(&'a B::Buffer<F>),
-    Tensor {
-        outer: &'a B::Buffer<F>,
-        inner: &'a B::Buffer<F>,
-    },
+/// Use [`Buf<B, F>`] as shorthand: `DeviceBuffer<B::Buffer<F>, B::Buffer<u64>>`.
+pub enum DeviceBuffer<BufF, BufU64 = ()> {
+    /// Field element buffer (polynomial evaluations, eq tables, etc.).
+    Field(BufF),
+    /// 64-bit unsigned integer buffer (sparse keys, indices).
+    U64(BufU64),
 }
 
-impl<B: ComputeBackend + ?Sized, F: Field> Clone for EqInput<'_, B, F> {
-    fn clone(&self) -> Self {
-        *self
+/// Shorthand: `DeviceBuffer` specialized for a backend's buffer types.
+pub type Buf<B, F> =
+    DeviceBuffer<<B as ComputeBackend>::Buffer<F>, <B as ComputeBackend>::Buffer<u64>>;
+
+impl<BufF, BufU64> DeviceBuffer<BufF, BufU64> {
+    /// Borrow the inner field buffer. Panics if this is not `Field`.
+    #[inline]
+    pub fn as_field(&self) -> &BufF {
+        match self {
+            DeviceBuffer::Field(buf) => buf,
+            DeviceBuffer::U64(_) => panic!("expected DeviceBuffer::Field"),
+        }
+    }
+
+    /// Mutably borrow the inner field buffer. Panics if this is not `Field`.
+    #[inline]
+    pub fn as_field_mut(&mut self) -> &mut BufF {
+        match self {
+            DeviceBuffer::Field(buf) => buf,
+            DeviceBuffer::U64(_) => panic!("expected DeviceBuffer::Field"),
+        }
+    }
+
+    /// Borrow the inner u64 buffer. Panics if this is not `U64`.
+    #[inline]
+    pub fn as_u64(&self) -> &BufU64 {
+        match self {
+            DeviceBuffer::U64(buf) => buf,
+            DeviceBuffer::Field(_) => panic!("expected DeviceBuffer::U64"),
+        }
+    }
+
+    /// Mutably borrow the inner u64 buffer. Panics if this is not `U64`.
+    #[inline]
+    pub fn as_u64_mut(&mut self) -> &mut BufU64 {
+        match self {
+            DeviceBuffer::U64(buf) => buf,
+            DeviceBuffer::Field(_) => panic!("expected DeviceBuffer::U64"),
+        }
+    }
+
+    /// Returns `true` if this is a `Field` buffer.
+    #[inline]
+    pub fn is_field(&self) -> bool {
+        matches!(self, DeviceBuffer::Field(_))
     }
 }
 
-impl<B: ComputeBackend + ?Sized, F: Field> Copy for EqInput<'_, B, F> {}
-
 /// Abstraction over a compute device (CPU, Metal GPU, CUDA GPU, WebGPU).
 ///
-/// Provides typed buffer management and parallel primitives. All methods
-/// are named for what they compute, not what protocol uses them.
+/// Provides typed buffer management and kernel compilation/dispatch.
+/// The trait is intentionally thin — algorithmic decisions (iteration pattern,
+/// evaluation grid, binding order) are captured in [`KernelSpec`] at compile
+/// time and baked into the opaque [`CompiledKernel`](Self::CompiledKernel).
+///
+/// # Direction B: compiler decides algorithm, backend decides codegen
+///
+/// The compiler produces a [`KernelSpec`] describing WHAT to compute:
+/// the composition formula, iteration pattern (dense/tensor),
+/// evaluation grid, and binding order. The backend's [`compile`](Self::compile)
+/// method produces a [`CompiledKernel`](Self::CompiledKernel) that bakes in
+/// HOW to execute it: thread dispatch, memory layout, SIMD strategy, delayed
+/// reduction, etc.
+///
+/// At dispatch time ([`reduce`](Self::reduce), [`bind`](Self::bind)), only the
+/// actual buffer data and challenge values are provided. The compiled kernel
+/// knows everything else.
 ///
 /// # Associated Types
 ///
-/// - [`Buffer`](Self::Buffer) — handle to a typed, contiguous buffer on
-///   the device. For CPU this is `Vec<T>`. For GPU this wraps a device
-///   memory allocation.
+/// - [`Buffer`](Self::Buffer) — typed buffer handle on the device.
+///   For CPU: `Vec<T>`. For GPU: wraps device memory.
 ///
-/// - [`CompiledKernel`](Self::CompiledKernel) — opaque compiled kernel for
-///   [`pairwise_reduce`](Self::pairwise_reduce). Compiled from a
-///   [`Formula`] via [`compile_kernel`](Self::compile_kernel). Challenge
-///   values are passed at dispatch time, not at compilation.
+/// - [`CompiledKernel`](Self::CompiledKernel) — opaque compiled kernel.
+///   Captures the full [`KernelSpec`] in backend-native form. For CPU:
+///   an eval closure + metadata. For GPU: a compute pipeline.
 ///
 /// # Zero Cost for CPU
 ///
-/// `CpuBackend` (in the `jolt-cpu` crate) implements this trait with
-/// `Buffer<T> = Vec<T>`. After monomorphization, every trait method call
-/// compiles to a direct function call with no indirection.
-///
-/// # Delayed Reduction
-///
-/// Both CPU and GPU backends use delayed modular reduction internally:
-/// multiply-add results are accumulated as wide integers and reduced once
-/// per accumulation group. This is an implementation detail of
-/// [`pairwise_reduce`](Self::pairwise_reduce) and is not exposed in the
-/// trait interface.
+/// `CpuBackend` implements this trait with `Buffer<T> = Vec<T>`. After
+/// monomorphization, every trait method compiles to a direct function call
+/// with no vtable indirection.
 pub trait ComputeBackend: Send + Sync + 'static {
     /// Handle to a typed buffer on the device.
-    ///
-    /// For CPU: `Vec<T>`. For Metal: wraps `MTLBuffer`. For CUDA: wraps
-    /// `CUdeviceptr` with type and length metadata.
     type Buffer<T: Scalar>: Send + Sync;
 
-    /// Opaque compiled kernel for composition-reduce operations.
+    /// Opaque compiled kernel produced from a [`KernelSpec`].
     ///
-    /// Parameterized by the field type so that each kernel is compiled for
-    /// a specific field's arithmetic. Captures the formula *structure*
-    /// (which inputs, which challenge slots) but not challenge *values* —
-    /// those are passed at dispatch via [`pairwise_reduce`](Self::pairwise_reduce).
+    /// Captures formula structure, iteration pattern, evaluation grid,
+    /// and binding order — everything except actual data and challenge
+    /// values, which are provided at dispatch time.
     type CompiledKernel<F: Field>: Send + Sync;
 
-    // -- Kernel compilation ------------------------------------------------
+    // ── Kernel compilation ──────────────────────────────────────────────
 
-    /// Compile a [`Formula`] into a backend-specific kernel.
+    /// Compile a [`KernelSpec`] into backend-native code.
     ///
-    /// The compiled kernel captures the formula's structure: how many inputs,
-    /// which challenge slots are referenced, the sum-of-products shape. Actual
-    /// challenge values are provided at dispatch time via `pairwise_reduce`.
-    fn compile_kernel<F: Field>(&self, formula: &Formula) -> Self::CompiledKernel<F>;
+    /// Bakes in the formula, iteration pattern, evaluation grid, and
+    /// binding order. Challenge values are provided at dispatch time.
+    fn compile<F: Field>(&self, spec: &KernelSpec) -> Self::CompiledKernel<F>;
 
-    // -- Buffer management -------------------------------------------------
+    // ── Core dispatch ───────────────────────────────────────────────────
+
+    /// Composition-reduce: evaluate the kernel over all input positions
+    /// and return accumulated evaluation sums.
+    ///
+    /// The compiled kernel determines iteration pattern, grid size, and
+    /// binding order. Inputs follow the layout convention defined by the
+    /// kernel's [`Iteration`](jolt_compiler::Iteration) variant:
+    ///
+    /// | Positions | Contents |
+    /// |-----------|----------|
+    /// | `0 .. formula.num_inputs` | Formula value columns |
+    /// | After value columns | Extra inputs (tensor eq weights) |
+    ///
+    /// Returns `num_evals` field elements (evaluation sums on the grid).
+    fn reduce<F: Field>(
+        &self,
+        kernel: &Self::CompiledKernel<F>,
+        inputs: &[&Buf<Self, F>],
+        challenges: &[F],
+    ) -> Vec<F>;
+
+    /// Bind one variable across all kernel inputs.
+    ///
+    /// Each buffer is halved via pairwise interpolation at `scalar`.
+    /// The compiled kernel determines the binding strategy:
+    /// - Dense: standard `lo + scalar × (hi − lo)` interpolation
+    /// - Tensor: interpolate value columns AND eq buffers
+    fn bind<F: Field>(
+        &self,
+        kernel: &Self::CompiledKernel<F>,
+        inputs: &mut [Buf<Self, F>],
+        scalar: F,
+    );
+
+    /// Standalone dense interpolation for post-sumcheck variable binding.
+    ///
+    /// Halves the buffer via `lo + scalar × (hi − lo)`. Used by `Op::Bind`
+    /// for survivor polynomials that don't belong to any active kernel.
+    fn interpolate_inplace<F: Field>(
+        &self,
+        buf: &mut Self::Buffer<F>,
+        scalar: F,
+        order: BindingOrder,
+    );
+
+    // ── Buffer management ───────────────────────────────────────────────
 
     /// Upload host data to a device buffer.
     fn upload<T: Scalar>(&self, data: &[T]) -> Self::Buffer<T>;
@@ -109,165 +183,45 @@ pub trait ComputeBackend: Send + Sync + 'static {
     /// Download device buffer contents to host memory.
     fn download<T: Scalar>(&self, buf: &Self::Buffer<T>) -> Vec<T>;
 
-    /// Allocate a buffer on the device, initialized to zero bytes.
+    /// Allocate a zero-initialized buffer on the device.
     fn alloc<T: Scalar>(&self, len: usize) -> Self::Buffer<T>;
 
     /// Active element count of a buffer.
     fn len<T: Scalar>(&self, buf: &Self::Buffer<T>) -> usize;
 
-    // -- Interpolation (variable binding) ----------------------------------
+    // ── Table generation ────────────────────────────────────────────────
 
-    /// Pairwise linear interpolation, halving the buffer.
-    ///
-    /// For each `i` in `[0, n/2)`:
-    /// $$\text{out}_i = \text{buf}_{2i} + \text{scalar} \cdot (\text{buf}_{2i+1} - \text{buf}_{2i})$$
-    ///
-    /// When `T` is a compact type (e.g., `u8`), elements are promoted to `F`
-    /// via `F: From<T>`. The returned buffer has element type `F` and half
-    /// the original length.
-    fn interpolate_pairs<T, F>(&self, buf: Self::Buffer<T>, scalar: F) -> Self::Buffer<F>
-    where
-        T: Scalar,
-        F: Field + From<T>;
-
-    /// In-place pairwise linear interpolation, halving the buffer.
-    ///
-    /// For [`LowToHigh`](BindingOrder::LowToHigh) (interleaved pairs):
-    /// $$\text{buf}_i \leftarrow \text{buf}_{2i} + s \cdot (\text{buf}_{2i+1} - \text{buf}_{2i})$$
-    ///
-    /// For [`HighToLow`](BindingOrder::HighToLow) (split-half pairs):
-    /// $$\text{buf}_i \leftarrow \text{buf}_i + s \cdot (\text{buf}_{i + n/2} - \text{buf}_i)$$
-    ///
-    /// The buffer is truncated to half its original length.
-    fn interpolate_pairs_inplace<F: Field>(
-        &self,
-        buf: &mut Self::Buffer<F>,
-        scalar: F,
-        order: BindingOrder,
-    );
-
-    /// Batched pairwise interpolation (LowToHigh, type-promoting).
-    ///
-    /// Equivalent to calling [`interpolate_pairs`](Self::interpolate_pairs) on
-    /// each buffer, but enables inter-buffer parallelism.
-    fn interpolate_pairs_batch<F: Field>(
-        &self,
-        bufs: Vec<Self::Buffer<F>>,
-        scalar: F,
-    ) -> Vec<Self::Buffer<F>> {
-        bufs.into_iter()
-            .map(|buf| self.interpolate_pairs(buf, scalar))
-            .collect()
-    }
-
-    /// In-place batched pairwise interpolation.
-    ///
-    /// Equivalent to calling [`interpolate_pairs_inplace`](Self::interpolate_pairs_inplace)
-    /// on each buffer, but enables inter-buffer parallelism.
-    fn interpolate_pairs_batch_inplace<F: Field>(
-        &self,
-        bufs: &mut [Self::Buffer<F>],
-        scalar: F,
-        order: BindingOrder,
-    ) {
-        for buf in bufs.iter_mut() {
-            self.interpolate_pairs_inplace(buf, scalar, order);
-        }
-    }
-
-    // -- Composition-reduce (core dispatch) --------------------------------
-
-    /// Composition-reduce over paired inputs from multiple buffers.
-    ///
-    /// For each position `i` in `[0, n/2)`:
-    ///
-    /// 1. Reads pairs from all `k` input buffers according to `order`
-    /// 2. Executes the compiled kernel on those pairs with the given
-    ///    `challenges`, producing `num_evals` values
-    /// 3. Multiplies each value by the eq weight (see [`EqInput`])
-    /// 4. Accumulates into `num_evals` running sums
-    ///
-    /// Returns `num_evals` field elements. Challenge values are resolved
-    /// at dispatch time — the compiled kernel only knows the formula shape.
-    fn pairwise_reduce<F: Field>(
-        &self,
-        inputs: &[&Self::Buffer<F>],
-        eq: EqInput<'_, Self, F>,
-        kernel: &Self::CompiledKernel<F>,
-        challenges: &[F],
-        num_evals: usize,
-        order: BindingOrder,
-    ) -> Vec<F>;
-
-    // -- Fused operations --------------------------------------------------
-
-    /// Fused in-place interpolation + weighted composition-reduce (H2L).
-    ///
-    /// Combines [`interpolate_pairs_batch_inplace`](Self::interpolate_pairs_batch_inplace)
-    /// and [`pairwise_reduce`](Self::pairwise_reduce) into a single pass.
-    /// After completion, each input buffer and the weight buffer are halved.
-    fn fused_interpolate_reduce<F: Field>(
-        &self,
-        inputs: &mut [Self::Buffer<F>],
-        weights: &mut Self::Buffer<F>,
-        interpolation_scalar: F,
-        kernel: &Self::CompiledKernel<F>,
-        challenges: &[F],
-        num_evals: usize,
-    ) -> Vec<F> {
-        self.interpolate_pairs_batch_inplace(inputs, interpolation_scalar, BindingOrder::HighToLow);
-        self.interpolate_pairs_inplace(weights, interpolation_scalar, BindingOrder::HighToLow);
-        let refs: Vec<_> = inputs.iter().collect();
-        self.pairwise_reduce(
-            &refs,
-            EqInput::Weighted(weights),
-            kernel,
-            challenges,
-            num_evals,
-            BindingOrder::HighToLow,
-        )
-    }
-
-    // -- Table generation -----------------------------------------------------
-
-    /// Eq product table over the Boolean hypercube (big-endian).
-    ///
-    /// Computes $2^n$ evaluations where $n = \text{point.len()}$:
-    /// $$\text{out}_x = \prod_{i=0}^{n-1} \bigl(r_i \cdot x_i + (1 - r_i)(1 - x_i)\bigr)$$
+    /// Eq product table: `eq(r, x) = Π(rᵢxᵢ + (1−rᵢ)(1−xᵢ))`.
     fn eq_table<F: Field>(&self, point: &[F]) -> Self::Buffer<F>;
 
-    /// Less-than table over the Boolean hypercube (big-endian).
-    ///
-    /// Computes $2^n$ evaluations of $\text{LT}(x, r)$:
-    /// $$\text{LT}(x, r) = \sum_{i} (1 - x_i) \cdot r_i \cdot \text{eq}(x_{>i}, r_{>i})$$
-    ///
-    /// Result: `out[j] = 1` when `j < r` as integers, extended multilinearly.
+    /// Less-than table: `LT(x, r)` multilinear extension.
     fn lt_table<F: Field>(&self, point: &[F]) -> Self::Buffer<F>;
 
-    /// Eq-plus-one table over the Boolean hypercube (big-endian).
-    ///
-    /// Computes $2^n$ evaluations of $\text{eq+1}(r, x)$:
-    /// the multilinear extension of the indicator `{x : x = r + 1}`.
-    ///
-    /// Returns `(eq_evals, eq_plus_one_evals)` — both tables are useful
-    /// and computed simultaneously with shared intermediate state.
+    /// Eq-plus-one table: `(eq_evals, eq_plus_one_evals)`.
     fn eq_plus_one_table<F: Field>(&self, point: &[F]) -> (Self::Buffer<F>, Self::Buffer<F>);
 }
 
 /// Provides polynomial buffers to the runtime on demand.
 ///
 /// The prover runtime calls [`load`](BufferProvider::load) when a kernel input
-/// marked [`InputBinding::Provided`] is first needed. The provider uploads host
-/// data to the device and returns a device buffer. Implementations are free to
-/// cache, compute lazily, or stream from an external source.
+/// is first needed. The provider uploads host data to the device and returns
+/// a [`DeviceBuffer`]. Implementations are free to cache, compute lazily, or
+/// stream from an external source.
 ///
-/// The canonical implementation lives in `jolt-witness`: `Witness<F>` holds
-/// host-side tables from trace processing and uploads them on first request.
-pub trait BufferProvider<B: ComputeBackend, F: Field> {
-    /// Load polynomial data for `poly_index` onto the device.
+/// `P` is the polynomial identity type: `usize` for the raw compiler output,
+/// or a domain-specific enum (e.g. `PolynomialId`) after [`Module::remap`].
+pub trait BufferProvider<P: PolyId, B: ComputeBackend, F: Field> {
+    /// Load polynomial data for `poly_id` onto the device.
     ///
-    /// Called at most once per poly index during execution. After loading, the
-    /// runtime owns the buffer and manages its lifecycle (including
-    /// [`Op::Release`](jolt_compiler::Op::Release)).
-    fn load(&mut self, poly_index: usize, backend: &B) -> B::Buffer<F>;
+    /// Called at most once per poly during execution. After loading, the
+    /// runtime owns the buffer and manages its lifecycle.
+    fn load(&mut self, poly_id: P, backend: &B) -> Buf<B, F>;
+
+    /// Borrow the host-side evaluation table for `poly_id`.
+    ///
+    /// Used by PCS ops that need raw field elements without device upload.
+    fn as_slice(&self, poly_id: P) -> &[F];
+
+    /// Release host-side data for `poly_id`, freeing memory.
+    fn release(&mut self, _poly_id: P) {}
 }

@@ -9,6 +9,7 @@ description = "Lightweight Jolt proof verification — no prover dependencies"
 workspace = true
 
 [dependencies]
+jolt-compiler = { path = "../jolt-compiler" }
 jolt-field = { path = "../jolt-field" }
 jolt-transcript = { path = "../jolt-transcript" }
 jolt-crypto = { path = "../jolt-crypto" }

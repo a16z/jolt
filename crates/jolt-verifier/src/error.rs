@@ -17,4 +17,10 @@ pub enum JoltError {
 
     #[error("evaluation check failed at stage {stage}: {reason}")]
     EvaluationMismatch { stage: usize, reason: String },
+
+    #[error("I/O hash mismatch: proof contains {proof_hash} but verifier expects {expected_hash}")]
+    IoHashMismatch {
+        proof_hash: String,
+        expected_hash: String,
+    },
 }

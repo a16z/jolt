@@ -9,7 +9,7 @@ use metal::Device;
 /// Metal-specific tuning parameters for kernel dispatch.
 #[derive(Clone, Debug)]
 pub struct MetalDeviceConfig {
-    /// Threadgroup size for pairwise_reduce (sumcheck) kernels. Power of 2.
+    /// Threadgroup size for reduce (sumcheck) kernels. Power of 2.
     /// Set to 128 by default -- smaller groups improve GPU scheduling
     /// for register-heavy kernels (D>=8). Benchmarks show +9% for BN254 D=8.
     pub reduce_group_size: usize,

@@ -1,8 +1,8 @@
-//! Binary-search benchmark to find the GPU→CPU crossover threshold.
+//! Binary-search benchmark to find the GPU->CPU crossover threshold.
 //!
-//! For each operation (`pairwise_reduce`, `interpolate_pairs_inplace`), measures
-//! Metal vs CPU latency across buffer sizes from 2^6 to 2^22 and reports the
-//! crossover point where Metal first becomes faster.
+//! For each operation (`reduce`, `interpolate_inplace`), measures Metal vs CPU
+//! latency across buffer sizes from 2^6 to 2^22 and reports the crossover
+//! point where Metal first becomes faster.
 //!
 //! Run with:
 //! ```sh
@@ -14,8 +14,9 @@
 
 use std::time::Instant;
 
-use jolt_compiler::{Factor, Formula, ProductTerm};
-use jolt_compute::{BindingOrder, ComputeBackend, EqInput};
+use jolt_compiler::kernel_spec::Iteration;
+use jolt_compiler::{BindingOrder, Factor, Formula, KernelSpec, ProductTerm};
+use jolt_compute::{Buf, ComputeBackend, DeviceBuffer};
 use jolt_cpu::CpuBackend;
 use jolt_field::{Field, Fr};
 use jolt_metal::MetalBackend;
@@ -36,46 +37,31 @@ fn product_sum_formula(d: usize, p: usize) -> Formula {
     Formula::from_terms(terms)
 }
 
-/// Warmup iterations before timing.
+fn make_spec(formula: &Formula) -> KernelSpec {
+    KernelSpec::new(formula.clone(), Iteration::Dense, BindingOrder::LowToHigh)
+}
+
 const WARMUP: usize = 5;
-/// Timed iterations for each measurement.
 const ITERS: usize = 20;
 
-/// Measure median latency of `pairwise_reduce` for a given backend and buffer size.
+/// Measure median latency of `reduce` for a given backend and buffer size.
 fn bench_reduce_latency<B: ComputeBackend>(
     backend: &B,
     kernel: &B::CompiledKernel<Fr>,
     inputs_raw: &[Vec<Fr>],
-    weights_raw: &[Fr],
-    num_evals: usize,
 ) -> f64 {
     let bufs: Vec<B::Buffer<Fr>> = inputs_raw.iter().map(|v| backend.upload(v)).collect();
-    let w_buf = backend.upload(weights_raw);
-    let refs: Vec<&B::Buffer<Fr>> = bufs.iter().collect();
+    let dev_bufs: Vec<Buf<B, Fr>> = bufs.into_iter().map(DeviceBuffer::Field).collect();
+    let refs: Vec<&Buf<B, Fr>> = dev_bufs.iter().collect();
 
-    // Warmup
     for _ in 0..WARMUP {
-        let _ = backend.pairwise_reduce(
-            &refs,
-            EqInput::Weighted(&w_buf),
-            kernel,
-            &[],
-            num_evals,
-            BindingOrder::LowToHigh,
-        );
+        let _ = backend.reduce(kernel, &refs, &[]);
     }
 
     let mut times = Vec::with_capacity(ITERS);
     for _ in 0..ITERS {
         let start = Instant::now();
-        let _ = backend.pairwise_reduce(
-            &refs,
-            EqInput::Weighted(&w_buf),
-            kernel,
-            &[],
-            num_evals,
-            BindingOrder::LowToHigh,
-        );
+        let _ = backend.reduce(kernel, &refs, &[]);
         times.push(start.elapsed().as_nanos() as f64);
     }
 
@@ -83,19 +69,18 @@ fn bench_reduce_latency<B: ComputeBackend>(
     times[ITERS / 2]
 }
 
-/// Measure median latency of `interpolate_pairs_inplace` for a given backend.
+/// Measure median latency of `interpolate_inplace` for a given backend.
 fn bench_bind_latency<B: ComputeBackend>(backend: &B, data: &[Fr], scalar: Fr) -> f64 {
-    // Warmup
     for _ in 0..WARMUP {
         let mut buf = backend.upload(data);
-        backend.interpolate_pairs_inplace(&mut buf, scalar, BindingOrder::LowToHigh);
+        backend.interpolate_inplace(&mut buf, scalar, BindingOrder::LowToHigh);
     }
 
     let mut times = Vec::with_capacity(ITERS);
     for _ in 0..ITERS {
         let mut buf = backend.upload(data);
         let start = Instant::now();
-        backend.interpolate_pairs_inplace(&mut buf, scalar, BindingOrder::LowToHigh);
+        backend.interpolate_inplace(&mut buf, scalar, BindingOrder::LowToHigh);
         times.push(start.elapsed().as_nanos() as f64);
     }
 
@@ -112,10 +97,11 @@ fn main() {
 
     for &d in &[4usize, 8] {
         let formula = product_sum_formula(d, 1);
-        let mtl_k = metal.compile_kernel::<Fr>(&formula);
-        let cpu_k = cpu.compile_kernel::<Fr>(&formula);
+        let spec = make_spec(&formula);
+        let mtl_k = metal.compile::<Fr>(&spec);
+        let cpu_k = cpu.compile::<Fr>(&spec);
 
-        println!("\n=== pairwise_reduce D={d} ===");
+        println!("\n=== reduce D={d} ===");
         println!(
             "{:<12} {:>14} {:>14} {:>10}",
             "n", "metal_ns", "cpu_ns", "winner"
@@ -127,10 +113,9 @@ fn main() {
         for &log_n in &log_sizes {
             let n = 1usize << log_n;
             let inputs: Vec<Vec<Fr>> = (0..d).map(|_| random_fr(&mut rng, n)).collect();
-            let weights = random_fr(&mut rng, n / 2);
 
-            let mtl_ns = bench_reduce_latency(&metal, &mtl_k, &inputs, &weights, formula.degree());
-            let cpu_ns = bench_reduce_latency(&cpu, &cpu_k, &inputs, &weights, formula.degree());
+            let mtl_ns = bench_reduce_latency(&metal, &mtl_k, &inputs);
+            let cpu_ns = bench_reduce_latency(&cpu, &cpu_k, &inputs);
 
             let winner = if mtl_ns < cpu_ns { "METAL" } else { "CPU" };
             println!("2^{log_n:<8} {mtl_ns:>14.0} {cpu_ns:>14.0} {winner:>10}");
@@ -147,7 +132,7 @@ fn main() {
     }
 
     {
-        println!("\n=== interpolate_pairs_inplace ===");
+        println!("\n=== interpolate_inplace ===");
         println!(
             "{:<12} {:>14} {:>14} {:>10}",
             "n", "metal_ns", "cpu_ns", "winner"
@@ -181,8 +166,9 @@ fn main() {
     {
         let d = 4usize;
         let formula = product_sum_formula(d, 1);
-        let mtl_k = metal.compile_kernel::<Fr>(&formula);
-        let cpu_k = cpu.compile_kernel::<Fr>(&formula);
+        let spec = make_spec(&formula);
+        let mtl_k = metal.compile::<Fr>(&spec);
+        let cpu_k = cpu.compile::<Fr>(&spec);
 
         println!("\n=== sumcheck_round (reduce + bind) D={d} ===");
         println!(
@@ -200,35 +186,31 @@ fn main() {
 
             // Warmup
             for _ in 0..WARMUP {
-                let mut bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
+                let mut bufs: Vec<Buf<MetalBackend, Fr>> = inputs
+                    .iter()
+                    .map(|v| DeviceBuffer::Field(metal.upload(v)))
+                    .collect();
                 let refs: Vec<_> = bufs.iter().collect();
-                let _ = metal.pairwise_reduce(
-                    &refs,
-                    EqInput::Unit,
-                    &mtl_k,
-                    &[],
-                    formula.degree(),
-                    BindingOrder::LowToHigh,
-                );
-                bufs = metal.interpolate_pairs_batch(bufs, scalar);
+                let _ = metal.reduce(&mtl_k, &refs, &[]);
+                for buf in &mut bufs {
+                    metal.interpolate_inplace(buf.as_field_mut(), scalar, BindingOrder::LowToHigh);
+                }
                 drop(bufs);
             }
 
             // Metal
             let mut mtl_times = Vec::with_capacity(ITERS);
             for _ in 0..ITERS {
-                let mut bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
+                let mut bufs: Vec<Buf<MetalBackend, Fr>> = inputs
+                    .iter()
+                    .map(|v| DeviceBuffer::Field(metal.upload(v)))
+                    .collect();
                 let start = Instant::now();
                 let refs: Vec<_> = bufs.iter().collect();
-                let _ = metal.pairwise_reduce(
-                    &refs,
-                    EqInput::Unit,
-                    &mtl_k,
-                    &[],
-                    formula.degree(),
-                    BindingOrder::LowToHigh,
-                );
-                bufs = metal.interpolate_pairs_batch(bufs, scalar);
+                let _ = metal.reduce(&mtl_k, &refs, &[]);
+                for buf in &mut bufs {
+                    metal.interpolate_inplace(buf.as_field_mut(), scalar, BindingOrder::LowToHigh);
+                }
                 drop(bufs);
                 mtl_times.push(start.elapsed().as_nanos() as f64);
             }
@@ -238,18 +220,16 @@ fn main() {
             // CPU
             let mut cpu_times = Vec::with_capacity(ITERS);
             for _ in 0..ITERS {
-                let mut bufs: Vec<_> = inputs.iter().map(|v| cpu.upload(v)).collect();
+                let mut bufs: Vec<Buf<CpuBackend, Fr>> = inputs
+                    .iter()
+                    .map(|v| DeviceBuffer::Field(cpu.upload(v)))
+                    .collect();
                 let start = Instant::now();
                 let refs: Vec<_> = bufs.iter().collect();
-                let _ = cpu.pairwise_reduce(
-                    &refs,
-                    EqInput::Unit,
-                    &cpu_k,
-                    &[],
-                    formula.degree(),
-                    BindingOrder::LowToHigh,
-                );
-                bufs = cpu.interpolate_pairs_batch(bufs, scalar);
+                let _ = cpu.reduce(&cpu_k, &refs, &[]);
+                for buf in &mut bufs {
+                    cpu.interpolate_inplace(buf.as_field_mut(), scalar, BindingOrder::LowToHigh);
+                }
                 drop(bufs);
                 cpu_times.push(start.elapsed().as_nanos() as f64);
             }

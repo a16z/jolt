@@ -18,6 +18,12 @@ pub trait PairingGroup: Clone + Sync + Send + 'static {
     type G2: JoltGroup;
     type GT: JoltGroup;
 
+    /// Canonical G1 generator.
+    fn g1_generator() -> Self::G1;
+
+    /// Canonical G2 generator.
+    fn g2_generator() -> Self::G2;
+
     /// Computes the bilinear pairing `e(g1, g2)`.
     #[must_use]
     fn pairing(g1: &Self::G1, g2: &Self::G2) -> Self::GT;

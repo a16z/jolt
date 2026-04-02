@@ -47,9 +47,6 @@ use crate::error::OpeningsError;
 /// that are reused during `open` to avoid redundant MSM. Schemes without
 /// commit-phase hints set `OpeningHint = ()`.
 ///
-/// Setup parameters are provided externally (not created by the trait).
-/// Concrete types (e.g., `DoryScheme`) may provide inherent `setup_prover`/
-/// `setup_verifier` methods, but these are not part of the generic interface.
 pub trait CommitmentScheme: Commitment + Clone + Send + Sync + 'static {
     /// Scalar field of the polynomial.
     type Field: Field;
@@ -84,6 +81,10 @@ pub trait CommitmentScheme: Commitment + Clone + Send + Sync + 'static {
     /// For Dory: row-level Pedersen commitments (avoids redundant MSM in `open`).
     /// For schemes without commit-phase hints: `()`.
     type OpeningHint: Clone + Send + Sync + Default;
+
+    /// Generate prover and verifier setup material for polynomials
+    /// with at most `max_num_vars` variables.
+    fn setup(max_num_vars: usize) -> (Self::ProverSetup, Self::VerifierSetup);
 
     /// Commits to a multilinear polynomial.
     ///

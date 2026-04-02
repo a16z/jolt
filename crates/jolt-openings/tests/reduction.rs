@@ -19,7 +19,7 @@ use rand_core::SeedableRng;
 type MockPCS = MockCommitmentScheme<Fr>;
 
 /// Full reduce → open → verify pipeline.
-fn reduce_open_verify<T: Transcript<Challenge = u128>>(
+fn reduce_open_verify<T: Transcript<Challenge = Fr>>(
     polys: &[Polynomial<Fr>],
     points: &[Vec<Fr>],
     label: &'static [u8],

@@ -2,16 +2,18 @@
 //!
 //! For each stage, simultaneously produces:
 //! - [`KernelDef`] + [`Op`] sequence (prover schedule)
-//! - [`VerifierStage`] (verifier schedule)
+//! - [`VerifierOp`] sequence (verifier schedule)
 
 use std::collections::HashSet;
 
 use crate::formula::{BindingOrder, Factor as FormulaFactor, Formula, ProductTerm};
 use crate::ir::expr::Factor as ExprFactor;
-use crate::ir::{PolyKind, PublicPoly, Vertex};
+use crate::ir::{Density, PolyKind, PublicPoly, Vertex};
+use crate::kernel_spec::{Iteration, KernelSpec};
 use crate::module::{
     ChallengeDecl, ChallengeSource, ClaimFactor, ClaimFormula, ClaimTerm, Evaluation, InputBinding,
-    KernelDef, Module, Op, PolyDecl, Schedule, VerifierSchedule, VerifierStage,
+    KernelDef, Module, Op, PolyDecl, Schedule, SumcheckInstance, TranscriptTag, VerifierOp,
+    VerifierSchedule, VerifierStageIndex,
 };
 
 use super::cost::CompileParams;
@@ -31,9 +33,17 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams) -> Module {
         .map(|(i, _)| i)
         .collect();
     if !committed.is_empty() {
-        ctx.ops.push(Op::EmitCommitments {
+        ctx.ops.push(Op::Commit {
             polys: committed.clone(),
+            tag: TranscriptTag::Commitment,
         });
+    }
+
+    // Verifier preamble
+    ctx.verifier_ops.push(VerifierOp::Preamble);
+    for &pi in &committed {
+        ctx.verifier_ops
+            .push(VerifierOp::AbsorbCommitment { poly: pi });
     }
 
     // Per-stage Fiat-Shamir challenges allocated after each stage
@@ -59,87 +69,147 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams) -> Module {
                 name: name.clone(),
                 source: ChallengeSource::External,
             });
-            // Map protocol challenge index → output challenge index
             let _ = ctx.proto_challenge_map.insert(i, ch_idx);
             ch_idx
         })
         .collect();
 
-    // Emit each stage
-    for (si, plan) in staging.stages.iter().enumerate() {
-        let verifier_commitments = if si == 0 { committed.clone() } else { vec![] };
+    // Build vertex → staging stage mapping for resolving evaluation points.
+    let vertex_to_staging: std::collections::HashMap<usize, usize> = staging
+        .stages
+        .iter()
+        .enumerate()
+        .flat_map(|(si, plan)| plan.vertices.iter().map(move |&vi| (vi, si)))
+        .collect();
+    let mut staging_to_verifier: Vec<Option<usize>> = vec![None; staging.stages.len()];
 
-        if !plan.vertices.is_empty() {
-            emit_sumcheck_stage(&mut ctx, si, plan, &staging.stages);
+    // Deferred output checks: (instances, stage_index) emitted after all
+    // referenced evaluations are available.
+    let mut pending_output_checks: Vec<(Vec<SumcheckInstance>, usize)> = Vec::new();
+
+    // Emit each stage — verifier ops are pushed in forward order:
+    // BeginStage → VerifySumcheck → RecordEvals → AbsorbEvals → CollectOpeningClaim → Squeeze
+    for (si, plan) in staging.stages.iter().enumerate() {
+        let has_sumcheck = !plan.vertices.is_empty();
+        let has_evals = !plan.evaluations.is_empty();
+
+        if has_sumcheck || has_evals {
+            let verifier_stage_idx = ctx.verifier_stage_count;
+            ctx.ops.push(Op::BeginStage {
+                index: verifier_stage_idx,
+            });
+            ctx.verifier_ops.push(VerifierOp::BeginStage);
         }
 
-        // Evaluate vertices
-        let mut eval_ops = Vec::new();
+        // ── Sumcheck: prover round ops + verifier VerifySumcheck ──
+        if has_sumcheck {
+            let verifier_stage_idx = ctx.verifier_stage_count;
+            staging_to_verifier[si] = Some(verifier_stage_idx);
+
+            emit_sumcheck_stage(&mut ctx, si, plan, &staging.stages);
+
+            let instances = vec![SumcheckInstance {
+                input_claim: build_input_claim_formula(protocol, plan, &ctx),
+                output_check: build_output_check_formula(protocol, plan, &ctx),
+                num_rounds: ctx.last_stage_rounds,
+                degree: ctx.last_stage_degree,
+                normalize: None,
+            }];
+
+            ctx.verifier_ops.push(VerifierOp::VerifySumcheck {
+                instances: instances.clone(),
+                stage: verifier_stage_idx,
+            });
+
+            let has_output = instances.iter().any(|i| !i.output_check.terms.is_empty());
+            if has_output {
+                pending_output_checks.push((instances, verifier_stage_idx));
+            }
+
+            ctx.verifier_stage_count += 1;
+        }
+
+        // ── Evaluations ──
+        let mut eval_descs = Vec::new();
         for &vi in &plan.evaluations {
             if let Vertex::Evaluate {
                 poly, at_vertex, ..
             } = &protocol.vertices[vi]
             {
                 ctx.ops.push(Op::Evaluate { poly: *poly });
-                eval_ops.push(Evaluation {
+                let target_staging = vertex_to_staging[at_vertex];
+                let at_stage = staging_to_verifier[target_staging]
+                    .expect("evaluation target stage not yet emitted");
+                eval_descs.push(Evaluation {
                     poly: *poly,
-                    at_vertex: *at_vertex,
+                    at_stage: VerifierStageIndex(at_stage),
                 });
             }
         }
 
-        if !plan.evaluations.is_empty() {
-            let eval_indices: Vec<usize> = plan
-                .evaluations
-                .iter()
-                .map(|&vi| {
-                    if let Vertex::Evaluate { poly, .. } = &protocol.vertices[vi] {
-                        *poly
-                    } else {
-                        0
-                    }
-                })
-                .collect();
-            ctx.ops.push(Op::EmitScalars {
-                evals: eval_indices,
+        if has_evals {
+            let eval_indices: Vec<usize> = eval_descs.iter().map(|e| e.poly).collect();
+            ctx.ops.push(Op::AbsorbEvals {
+                polys: eval_indices.clone(),
+                tag: TranscriptTag::OpeningClaim,
             });
+
+            ctx.verifier_ops.push(VerifierOp::RecordEvals {
+                evals: eval_descs.clone(),
+            });
+            ctx.verifier_ops.push(VerifierOp::AbsorbEvals {
+                polys: eval_indices,
+            });
+
+            for &vi in &plan.evaluations {
+                if let Vertex::Evaluate {
+                    poly, at_vertex, ..
+                } = &protocol.vertices[vi]
+                {
+                    if matches!(protocol.polynomials[*poly].kind, PolyKind::Committed) {
+                        let target_staging = vertex_to_staging[at_vertex];
+                        let at_stage = staging_to_verifier[target_staging]
+                            .expect("evaluation target stage not yet emitted");
+                        ctx.ops.push(Op::CollectOpeningClaim {
+                            poly: *poly,
+                            at_stage: VerifierStageIndex(at_stage),
+                        });
+                        ctx.verifier_ops.push(VerifierOp::CollectOpeningClaim {
+                            poly: *poly,
+                            at_stage: VerifierStageIndex(at_stage),
+                        });
+                    }
+                }
+            }
+
+            if !has_sumcheck {
+                staging_to_verifier[si] = Some(ctx.verifier_stage_count);
+                ctx.verifier_stage_count += 1;
+            }
         }
 
         // Post-stage challenges
-        let mut post_squeeze = Vec::new();
         if si < stage_challenges.len() {
             ctx.ops.push(Op::Squeeze {
                 challenge: stage_challenges[si],
             });
-            post_squeeze.push(stage_challenges[si]);
-        }
-
-        // Build verifier stage (only for stages with sumcheck vertices)
-        if !plan.vertices.is_empty() {
-            let num_rounds = ctx.last_stage_rounds;
-            let degree = ctx.last_stage_degree;
-            ctx.verifier_stages.push(VerifierStage {
-                commitments: verifier_commitments,
-                input_claim: build_input_claim_formula(protocol, plan, &ctx),
-                num_rounds,
-                degree,
-                evaluations: eval_ops,
-                post_squeeze,
-            });
-        } else if !plan.evaluations.is_empty() {
-            ctx.verifier_stages.push(VerifierStage {
-                commitments: verifier_commitments,
-                input_claim: ClaimFormula::zero(),
-                num_rounds: 0,
-                degree: 0,
-                evaluations: eval_ops,
-                post_squeeze,
+            ctx.verifier_ops.push(VerifierOp::Squeeze {
+                challenge: stage_challenges[si],
             });
         }
     }
 
+    // Emit all output checks now that all evaluations are recorded.
+    for (instances, stage) in pending_output_checks {
+        ctx.verifier_ops
+            .push(VerifierOp::CheckOutput { instances, stage });
+    }
+
     // Emit opening stage if present
     if let Some(opening) = &staging.opening {
+        ctx.ops.push(Op::BeginStage {
+            index: ctx.verifier_stage_count,
+        });
         let ch_idx = ctx.challenges.len();
         ctx.challenges.push(ChallengeDecl {
             name: opening.challenge_name.clone(),
@@ -148,20 +218,26 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams) -> Module {
             },
         });
         ctx.ops.push(Op::Squeeze { challenge: ch_idx });
-        ctx.verifier_stages.push(VerifierStage {
-            commitments: vec![],
-            input_claim: ClaimFormula::zero(),
-            num_rounds: 0,
-            degree: 0,
-            evaluations: vec![],
-            post_squeeze: vec![ch_idx],
+
+        ctx.verifier_ops.push(VerifierOp::BeginStage);
+        ctx.verifier_ops
+            .push(VerifierOp::Squeeze { challenge: ch_idx });
+        ctx.verifier_stage_count += 1;
+    }
+
+    // PCS tail
+    ctx.ops.push(Op::ReduceOpenings);
+    ctx.ops.push(Op::Open);
+    ctx.verifier_ops.push(VerifierOp::VerifyOpenings);
+
+    if !committed.is_empty() {
+        ctx.ops.push(Op::ReleaseHost {
+            polys: committed.clone(),
         });
     }
 
-    // Insert Release ops via liveness analysis
     insert_releases(&mut ctx.ops, &ctx.kernels);
 
-    // Build poly decls
     let polys: Vec<PolyDecl> = protocol
         .polynomials
         .iter()
@@ -175,6 +251,10 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams) -> Module {
         })
         .collect();
 
+    let num_challenges = ctx.challenges.len();
+    let num_polys = polys.len();
+    let num_stages = ctx.verifier_stage_count;
+
     Module {
         polys,
         challenges: ctx.challenges,
@@ -183,7 +263,10 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams) -> Module {
             kernels: ctx.kernels,
         },
         verifier: VerifierSchedule {
-            stages: ctx.verifier_stages,
+            ops: ctx.verifier_ops,
+            num_challenges,
+            num_polys,
+            num_stages,
         },
     }
 }
@@ -198,13 +281,12 @@ struct EmitCtx<'a> {
     ops: Vec<Op>,
     kernels: Vec<KernelDef>,
     challenges: Vec<ChallengeDecl>,
-    verifier_stages: Vec<VerifierStage>,
+    verifier_ops: Vec<VerifierOp>,
+    verifier_stage_count: usize,
     /// Protocol challenge index → output challenge index
     proto_challenge_map: std::collections::HashMap<usize, usize>,
     /// Vertex index → round challenge indices for that vertex's sumcheck.
-    /// Used to resolve `PublicPoly::Eq(Some(claim_id))` → challenge indices.
     vertex_challenges: std::collections::HashMap<usize, Vec<usize>>,
-    /// Bookkeeping for verifier stage construction
     last_stage_rounds: usize,
     last_stage_degree: usize,
 }
@@ -217,7 +299,8 @@ impl<'a> EmitCtx<'a> {
             ops: Vec::new(),
             kernels: Vec::new(),
             challenges: Vec::new(),
-            verifier_stages: Vec::new(),
+            verifier_ops: Vec::new(),
+            verifier_stage_count: 0,
             proto_challenge_map: std::collections::HashMap::new(),
             vertex_challenges: std::collections::HashMap::new(),
             last_stage_rounds: 0,
@@ -274,14 +357,18 @@ fn emit_sumcheck_stage(
         .iter()
         .find_map(|&vi| protocol.vertices[vi].domain_size());
 
+    // The verifier stage index for this stage (assigned by the caller
+    // before calling emit_sumcheck_stage, via staging_to_verifier).
+    let verifier_stage = VerifierStageIndex(ctx.verifier_stage_count);
+
     // Allocate all round challenges upfront so InputBindings can reference them
     let round_challenge_indices: Vec<usize> = (0..num_rounds)
         .map(|r| {
             let ch_idx = ctx.challenges.len();
             ctx.challenges.push(ChallengeDecl {
-                name: format!("r_s{stage_idx}_r{r}"),
+                name: format!("r_s{}_r{r}", verifier_stage.0),
                 source: ChallengeSource::SumcheckRound {
-                    stage: stage_idx,
+                    stage: verifier_stage,
                     round: r,
                 },
             });
@@ -306,16 +393,34 @@ fn emit_sumcheck_stage(
     let input_bindings: Vec<InputBinding> = input_mapping
         .iter()
         .map(|&pi| {
-            poly_to_input_binding(pi, &protocol.polynomials[pi].kind, ctx, &round_challenge_indices)
+            poly_to_input_binding(
+                pi,
+                &protocol.polynomials[pi].kind,
+                ctx,
+                &round_challenge_indices,
+            )
         })
         .collect();
 
+    let is_sparse = plan.vertices.iter().any(|&vi| match &protocol.vertices[vi] {
+        Vertex::Sumcheck { density, .. } => *density == Density::Sparse,
+        Vertex::Evaluate { .. } => false,
+    });
+    let iteration = if is_sparse {
+        Iteration::Sparse
+    } else {
+        Iteration::Dense
+    };
+
     ctx.kernels.push(KernelDef {
-        formula,
+        spec: KernelSpec {
+            formula,
+            num_evals: degree + 1,
+            iteration,
+            binding_order: BindingOrder::LowToHigh,
+        },
         inputs: input_bindings,
-        binding_order: BindingOrder::LowToHigh,
         num_rounds,
-        degree,
     });
 
     // Emit round ops: round 0 has no bind, rounds 1+ fuse bind with reduce
@@ -337,9 +442,15 @@ fn emit_sumcheck_stage(
             round: r,
             bind_challenge,
         });
-        ctx.ops.push(Op::EmitRoundPoly {
+        let round_tag = if r == 0 && uniskip_domain.is_some() {
+            TranscriptTag::UniskipPoly
+        } else {
+            TranscriptTag::SumcheckPoly
+        };
+        ctx.ops.push(Op::AbsorbRoundPoly {
             kernel: kernel_idx,
             num_coeffs,
+            tag: round_tag,
         });
         ctx.ops.push(Op::Squeeze {
             challenge: round_challenge_indices[r],
@@ -356,7 +467,7 @@ fn emit_sumcheck_stage(
             .filter(|p| future_polys.contains(p))
             .collect();
         if !surviving.is_empty() {
-            ctx.ops.push(Op::FinalBind {
+            ctx.ops.push(Op::Bind {
                 polys: surviving,
                 challenge: last_ch,
                 order: BindingOrder::LowToHigh,
@@ -459,6 +570,50 @@ fn build_input_claim_formula(
                         }
                         ExprFactor::Poly(_) => {
                             // Polys don't appear in input_sum expressions
+                        }
+                    }
+                }
+                terms.push(ClaimTerm {
+                    coeff: term.coeff as i128,
+                    factors,
+                });
+            }
+        }
+    }
+
+    ClaimFormula { terms }
+}
+
+/// Build the output check formula for a sumcheck stage.
+///
+/// After sumcheck verification the verifier has `(final_eval, challenges)`. This
+/// formula, evaluated with the prover-provided polynomial evaluations and challenge
+/// values, should equal `final_eval`. It encodes the composition polynomial
+/// evaluated at the evaluation point.
+fn build_output_check_formula(
+    protocol: &crate::ir::Protocol,
+    plan: &StagePlan,
+    ctx: &EmitCtx<'_>,
+) -> ClaimFormula {
+    let mut terms = Vec::new();
+
+    for &vi in &plan.vertices {
+        if let Some(comp) = protocol.vertices[vi].composition() {
+            for term in &comp.0 {
+                let mut factors = Vec::new();
+                for f in &term.factors {
+                    match f {
+                        ExprFactor::Poly(idx) => {
+                            // Poly evaluation at the sumcheck challenge point
+                            factors.push(ClaimFactor::Eval(*idx));
+                        }
+                        ExprFactor::Challenge(idx) => {
+                            if let Some(&mapped) = ctx.proto_challenge_map.get(idx) {
+                                factors.push(ClaimFactor::Challenge(mapped));
+                            }
+                        }
+                        ExprFactor::Claim(_) => {
+                            // Claims don't appear in output compositions
                         }
                     }
                 }
@@ -643,20 +798,25 @@ fn vertex_degree(vertex: &Vertex) -> usize {
 /// Collect all poly indices referenced by an op (directly or via kernel inputs).
 fn op_poly_refs(op: &Op, kernels: &[KernelDef]) -> Vec<usize> {
     match op {
-        Op::SumcheckRound { kernel, .. } | Op::EmitRoundPoly { kernel, .. } => kernels[*kernel]
-            .inputs
-            .iter()
-            .map(|b| b.poly())
-            .collect(),
-        Op::Evaluate { poly } => vec![*poly],
-        Op::FinalBind { polys, .. } => polys.clone(),
-        Op::EmitCommitments { polys } => polys.clone(),
-        Op::EmitScalars { evals } => evals.clone(),
-        Op::Squeeze { .. } | Op::Release { .. } => vec![],
+        Op::SumcheckRound { kernel, .. } | Op::AbsorbRoundPoly { kernel, .. } => {
+            kernels[*kernel].inputs.iter().map(|b| b.poly()).collect()
+        }
+        Op::Evaluate { poly } | Op::CollectOpeningClaim { poly, .. } => vec![*poly],
+        Op::Bind { polys, .. }
+        | Op::Commit { polys, .. }
+        | Op::CommitStreaming { polys, .. }
+        | Op::AbsorbEvals { polys, .. } => polys.clone(),
+        Op::Preamble
+        | Op::BeginStage { .. }
+        | Op::Squeeze { .. }
+        | Op::ReleaseDevice { .. }
+        | Op::ReleaseHost { .. }
+        | Op::ReduceOpenings
+        | Op::Open => vec![],
     }
 }
 
-/// Insert `Op::Release` after the last use of each poly buffer.
+/// Insert `Op::ReleaseDevice` after the last use of each poly buffer.
 ///
 /// Backward scan: the first time we see a poly (scanning from the end) is
 /// its last use. We insert a Release immediately after that position.
@@ -677,6 +837,6 @@ fn insert_releases(ops: &mut Vec<Op>, kernels: &[KernelDef]) {
     // Sort by position descending so insertions don't shift earlier indices
     releases.sort_by(|a, b| b.0.cmp(&a.0));
     for (after_idx, poly) in releases {
-        ops.insert(after_idx + 1, Op::Release { poly });
+        ops.insert(after_idx + 1, Op::ReleaseDevice { poly });
     }
 }

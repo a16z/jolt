@@ -439,7 +439,6 @@ impl DoryGlobals {
     }
 
     /// Reset global state
-    #[cfg(test)]
     pub fn reset() {
         // Reset main globals
         *GLOBAL_T.write().unwrap() = None;

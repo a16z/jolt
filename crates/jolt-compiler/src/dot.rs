@@ -345,7 +345,7 @@ fn html_escape(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::{PolyKind, PublicPoly};
+    use crate::ir::{Density, PolyKind, PublicPoly};
 
     #[test]
     fn empty_protocol_produces_valid_dot() {
@@ -361,7 +361,7 @@ mod tests {
         let d = p.dim("d");
         let eq = p.poly("eq", &[d], PolyKind::Public(PublicPoly::Eq(None)));
         let a = p.poly("a", &[d], PolyKind::Virtual);
-        let _ = p.sumcheck(eq * a, 0, &[d]);
+        let _ = p.sumcheck(eq * a, 0, &[d], Density::Dense);
         let dot = protocol_to_dot(&p);
         assert!(dot.contains("v0"));
         assert!(!dot.contains("->"));
@@ -375,8 +375,8 @@ mod tests {
         let eq = p.poly("eq", &[d], PolyKind::Public(PublicPoly::Eq(None)));
         let a = p.poly("a", &[d], PolyKind::Virtual);
         let b = p.poly("b", &[d], PolyKind::Virtual);
-        let c0 = p.sumcheck(eq * a, 0, &[d]);
-        let _ = p.sumcheck(eq * b, rho * c0[0], &[d]);
+        let c0 = p.sumcheck(eq * a, 0, &[d], Density::Dense);
+        let _ = p.sumcheck(eq * b, rho * c0[0], &[d], Density::Dense);
         let dot = protocol_to_dot(&p);
         assert!(dot.contains("v0 -> v1"));
     }
@@ -389,8 +389,8 @@ mod tests {
         let eq = p.poly("eq", &[d], PolyKind::Public(PublicPoly::Eq(None)));
         let w = p.poly("w", &[d], PolyKind::Committed);
         let b = p.poly("b", &[d], PolyKind::Virtual);
-        let c0 = p.sumcheck(eq * w, 0, &[d]);
-        let _ = p.sumcheck(eq * b, rho * c0[0], &[d]);
+        let c0 = p.sumcheck(eq * w, 0, &[d], Density::Dense);
+        let _ = p.sumcheck(eq * b, rho * c0[0], &[d], Density::Dense);
         let dot = protocol_to_dot(&p);
         assert!(dot.contains(EDGE_COMMITTED));
     }
@@ -404,9 +404,9 @@ mod tests {
         let a = p.poly("a", &[d], PolyKind::Virtual);
         let b = p.poly("b", &[d], PolyKind::Virtual);
         let c = p.poly("c", &[d], PolyKind::Virtual);
-        let c0 = p.sumcheck(eq * a, 0, &[d]);
-        let c1 = p.sumcheck(eq * b, rho * c0[0], &[d]);
-        let _ = p.sumcheck(eq * c, rho * c1[0], &[d]);
+        let c0 = p.sumcheck(eq * a, 0, &[d], Density::Dense);
+        let c1 = p.sumcheck(eq * b, rho * c0[0], &[d], Density::Dense);
+        let _ = p.sumcheck(eq * c, rho * c1[0], &[d], Density::Dense);
         let dot = protocol_to_dot(&p);
         // v0 depth=0 green, v1 depth=1 blue, v2 depth=2 purple
         assert!(dot.contains(DEPTH_COLORS[0]));

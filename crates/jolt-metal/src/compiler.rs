@@ -12,12 +12,9 @@
 //!   `device const Fr* challenges` buffer — not baked as MSL constants. This
 //!   makes pipeline compilation deterministic per kernel shape, enabling AOT
 //!   caching.
-//!   Uses incremental interpolation for the standard grid `{0, 2, ..., degree}`
-//!   (skipping `t=1`, which is derived from the sumcheck claim).
+//!   Uses incremental interpolation for the contiguous grid `{0, 1, 2, ..., degree}`.
 //!
-//! Five kernel variants are compiled from each formula:
-//! - **L2H**: Weighted, pairs `(buf[2i], buf[2i+1])` — interleaved
-//! - **H2L**: Weighted, pairs `(buf[i], buf[i+half])` — split-half
+//! Three kernel variants are compiled from each formula:
 //! - **Tensor**: Weighted, L2H with two-buffer weight: `outer[i>>log] * inner[i&mask]`
 //! - **L2H_unw**: Unweighted L2H — no weight buffer, no weight multiply
 //! - **H2L_unw**: Unweighted H2L — no weight buffer, no weight multiply
@@ -51,18 +48,6 @@ pub enum CompileMode {
     FastCompile,
 }
 
-/// ProductSum D threshold for split-pass kernel generation. Kernels with
-/// `num_inputs_per_product >= SPLIT_PASS_THRESHOLD` use multi-pass streaming
-/// to reduce register pressure and improve GPU occupancy.
-///
-/// Currently disabled (set above any realistic D). Benchmarking showed the 4×
-/// bandwidth re-read cost outweighs occupancy gains — single-pass is faster.
-const SPLIT_PASS_THRESHOLD: usize = 1024;
-
-/// Grid points processed per pass in split-pass mode. Each pass only needs
-/// `chunk * 18` registers for WideAcc instead of `D * 18`.
-const SPLIT_PASS_CHUNK: usize = 2;
-
 /// Which pair-reading and weight strategy a kernel uses.
 #[derive(Clone, Copy)]
 enum KernelVariant {
@@ -75,14 +60,11 @@ enum KernelVariant {
 }
 
 impl KernelVariant {
-    fn function_name(self, weighted: bool) -> &'static str {
-        match (self, weighted) {
-            (Self::LowToHigh, true) => "reduce_kernel_l2h",
-            (Self::HighToLow, true) => "reduce_kernel_h2l",
-            (Self::Tensor, true) => "reduce_kernel_tensor",
-            (Self::LowToHigh, false) => "reduce_kernel_l2h_unw",
-            (Self::HighToLow, false) => "reduce_kernel_h2l_unw",
-            (Self::Tensor, false) => unreachable!("tensor has no unweighted variant"),
+    fn function_name(self) -> &'static str {
+        match self {
+            Self::LowToHigh => "reduce_kernel_l2h_unw",
+            Self::HighToLow => "reduce_kernel_h2l_unw",
+            Self::Tensor => "reduce_kernel_tensor",
         }
     }
 }
@@ -110,219 +92,110 @@ pub fn generate_msl(
     let degree = formula.degree();
     let num_evals = degree;
 
-    let use_split_pass = formula
-        .as_product_sum()
-        .is_some_and(|(d, _)| d >= device_config.split_pass_threshold);
-
     let mut msl = String::with_capacity(65536);
-    let mut has_challenges = formula.num_challenges > 0;
 
-    if use_split_pass {
-        let (d, p) = formula.as_product_sum().unwrap();
+    // Single-pass path for all shapes.
+    //
+    // `reads_inline`: when true, the eval body contains its own pair
+    // reads (deferred timing) and generate_reduce_kernel skips the
+    // generic read section. Used for D=8 Toom-Cook to reduce peak
+    // register pressure — half B's inputs are read after half A's
+    // lo/hi values are dead.
+    let (eval_body_weighted, eval_body_unweighted, weight_folded, reads_inline) =
+        if let Some((d, p)) = formula.as_product_sum() {
+            if d == 8 && p == 1 {
+                // Toom-Cook D=8 with deferred reads: half B's lo/hi
+                // are read after half A is done, saving 64 registers
+                // at peak (lo_4..lo_7, hi_4..hi_7 not yet allocated
+                // while half A intermediates are live).
+                //
+                // tg_spill disabled for BN254: spilling a_1..a_7 to
+                // threadgroup memory (28 KB at gs=128) limits EU
+                // occupancy to 1 threadgroup, costing ~15% throughput.
+                // May help for 128-bit fields where spill is 14 KB.
+                let tg_spill = false;
+                let tg_spill_count = 0;
+                let body_unw_l2h = generate_toom_cook_d8_deferred(p, false, false, tg_spill);
+                let body_unw_h2l = generate_toom_cook_d8_deferred(p, false, true, tg_spill);
+                let body_w_l2h = generate_toom_cook_d8_deferred(p, true, false, tg_spill);
+                let n_limbs = field_config.n_limbs;
+                // Unweighted L2H
+                msl.push_str(&generate_reduce_kernel(
+                    num_inputs,
+                    num_evals,
+                    &body_unw_l2h,
+                    KernelVariant::LowToHigh,
+                    false,
+                    false,
+                    false,
+                    n_limbs,
+                    device_config,
+                    true,
+                    true,
+                    tg_spill_count,
+                ));
+                msl.push('\n');
+                // Unweighted H2L
+                msl.push_str(&generate_reduce_kernel(
+                    num_inputs,
+                    num_evals,
+                    &body_unw_h2l,
+                    KernelVariant::HighToLow,
+                    false,
+                    false,
+                    false,
+                    n_limbs,
+                    device_config,
+                    true,
+                    true,
+                    tg_spill_count,
+                ));
+                msl.push('\n');
+                // Tensor weighted (uses L2H indexing for reads)
+                msl.push_str(&generate_reduce_kernel(
+                    num_inputs,
+                    num_evals,
+                    &body_w_l2h,
+                    KernelVariant::Tensor,
+                    true,
+                    true,
+                    false,
+                    n_limbs,
+                    device_config,
+                    true,
+                    true,
+                    tg_spill_count,
+                ));
+                msl.push('\n');
 
-        let acc_limbs = field_config.acc_limbs;
-        for variant in [
-            KernelVariant::LowToHigh,
-            KernelVariant::HighToLow,
-            KernelVariant::Tensor,
-        ] {
-            msl.push_str(&generate_split_pass_reduce_kernel(
-                num_inputs,
-                num_evals,
-                d,
-                p,
-                variant,
-                true,
-                acc_limbs,
-                device_config,
-            ));
-            msl.push('\n');
-        }
-        for variant in [KernelVariant::LowToHigh, KernelVariant::HighToLow] {
-            msl.push_str(&generate_split_pass_reduce_kernel(
-                num_inputs,
-                num_evals,
-                d,
-                p,
-                variant,
-                false,
-                acc_limbs,
-                device_config,
-            ));
-            msl.push('\n');
-        }
-        // Fused H2L kernel uses standard (non-split-pass) body
-        let n_limbs = field_config.n_limbs;
-        let fused_body = if d == 4 || d == 8 {
-            generate_toom_cook_body_weighted(d, p)
-        } else {
-            let fold = d > 2 * p;
-            generate_product_sum_body(d, p, fold)
-        };
-        let fused_folded = if d == 4 || d == 8 { true } else { d > 2 * p };
-        msl.push_str(&generate_fused_reduce_kernel(
-            num_inputs,
-            num_evals,
-            &fused_body,
-            fused_folded,
-            false,
-            n_limbs,
-            device_config,
-        ));
-        msl.push('\n');
-    } else {
-        // Single-pass path for small D and non-ProductSum shapes.
-        //
-        // `reads_inline`: when true, the eval body contains its own pair
-        // reads (deferred timing) and generate_reduce_kernel skips the
-        // generic read section. Used for D=8 Toom-Cook to reduce peak
-        // register pressure — half B's inputs are read after half A's
-        // lo/hi values are dead.
-        let (eval_body_weighted, eval_body_unweighted, weight_folded, reads_inline) =
-            if let Some((d, p)) = formula.as_product_sum() {
-                if d == 8 && p == 1 {
-                    // Toom-Cook D=8 with deferred reads: half B's lo/hi
-                    // are read after half A is done, saving 64 registers
-                    // at peak (lo_4..lo_7, hi_4..hi_7 not yet allocated
-                    // while half A intermediates are live).
-                    //
-                    // tg_spill disabled for BN254: spilling a_1..a_7 to
-                    // threadgroup memory (28 KB at gs=128) limits EU
-                    // occupancy to 1 threadgroup, costing ~15% throughput.
-                    // May help for 128-bit fields where spill is 14 KB.
-                    let tg_spill = false;
-                    let tg_spill_count = 0;
-                    let body_unw_l2h = generate_toom_cook_d8_deferred(p, false, false, tg_spill);
-                    let body_unw_h2l = generate_toom_cook_d8_deferred(p, false, true, tg_spill);
-                    let body_w_l2h = generate_toom_cook_d8_deferred(p, true, false, tg_spill);
-                    let body_w_h2l = generate_toom_cook_d8_deferred(p, true, true, tg_spill);
-                    // Bodies include reads — emit variant-specific kernels directly
-                    let n_limbs = field_config.n_limbs;
-                    for (variant, body_w, body_unw) in [
-                        (KernelVariant::LowToHigh, &body_w_l2h, &body_unw_l2h),
-                        (KernelVariant::HighToLow, &body_w_h2l, &body_unw_h2l),
-                    ] {
-                        msl.push_str(&generate_reduce_kernel(
-                            num_inputs,
-                            num_evals,
-                            body_w,
-                            variant,
-                            true,
-                            true,
-                            false,
-                            n_limbs,
-                            device_config,
-                            true,
-                            true,
-                            tg_spill_count,
-                        ));
-                        msl.push('\n');
-                        msl.push_str(&generate_reduce_kernel(
-                            num_inputs,
-                            num_evals,
-                            body_unw,
-                            variant,
-                            false,
-                            false,
-                            false,
-                            n_limbs,
-                            device_config,
-                            true,
-                            true,
-                            tg_spill_count,
-                        ));
-                        msl.push('\n');
-                    }
-                    // Tensor weighted (uses L2H indexing for reads)
-                    msl.push_str(&generate_reduce_kernel(
-                        num_inputs,
-                        num_evals,
-                        &body_w_l2h,
-                        KernelVariant::Tensor,
-                        true,
-                        true,
-                        false,
-                        n_limbs,
-                        device_config,
-                        true,
-                        true,
-                        tg_spill_count,
-                    ));
-                    msl.push('\n');
-                    // Fused H2L kernel uses standard (non-deferred) Toom-Cook body
-                    let fused_body = generate_toom_cook_body_weighted(8, 1);
-                    msl.push_str(&generate_fused_reduce_kernel(
-                        num_inputs,
-                        num_evals,
-                        &fused_body,
-                        true,
-                        false,
-                        n_limbs,
-                        device_config,
-                    ));
-                    msl.push('\n');
-
-                    // Cooperative kernel variants (8 threads per element)
-                    let coop_preamble = crate::coop_field_gen::generate_coop_preamble(n_limbs);
-                    let coop_body = crate::coop_field_gen::cooperativize_body(&fused_body);
-                    let mut coop_kernels = String::new();
-                    coop_kernels.push_str(&crate::coop_field_gen::generate_coop_reduce_kernel_h2l(
-                        num_inputs,
-                        num_evals,
-                        &coop_body,
-                        true,
-                        false,
-                        n_limbs,
-                        device_config,
-                    ));
-                    coop_kernels.push('\n');
-                    coop_kernels.push_str(
-                        &crate::coop_field_gen::generate_coop_fused_reduce_kernel(
-                            num_inputs,
-                            num_evals,
-                            &coop_body,
-                            true,
-                            false,
-                            n_limbs,
-                            device_config,
-                        ),
-                    );
-                    coop_kernels.push('\n');
-
-                    let source = if matches!(mode, CompileMode::FastCompile) {
-                        build_source_with_preamble_noinline(
-                            &field_config.msl_preamble,
-                            &[&coop_preamble, &msl, &coop_kernels],
-                        )
-                    } else {
-                        build_source_with_preamble(
-                            &field_config.msl_preamble,
-                            &[&coop_preamble, &msl, &coop_kernels],
-                        )
-                    };
-                    return GeneratedMsl {
-                        source,
-                        num_inputs,
-                        num_evals,
-                        has_challenges: false,
-                    };
-                } else if d == 4 || d == 8 {
-                    // Toom-Cook D=4 (or D=8 P>1): weight-folded, generic reads
-                    let body_unw = generate_toom_cook_body(d, p);
-                    let body_w = generate_toom_cook_body_weighted(d, p);
-                    (body_w, body_unw, true, false)
+                let source = if matches!(mode, CompileMode::FastCompile) {
+                    build_source_with_preamble_noinline(&field_config.msl_preamble, &[&msl])
                 } else {
-                    let fold = d > 2 * p;
-                    let body = generate_product_sum_body(d, p, fold);
-                    let body_unw = if fold {
-                        generate_product_sum_body(d, p, false)
-                    } else {
-                        body.clone()
-                    };
-                    (body, body_unw, fold, false)
-                }
-            } else if formula.is_hamming_booleanity() {
-                let body = r"
+                    build_source_with_preamble(&field_config.msl_preamble, &[&msl])
+                };
+                return GeneratedMsl {
+                    source,
+                    num_inputs,
+                    num_evals,
+                    has_challenges: false,
+                };
+            } else if d == 4 || d == 8 {
+                // Toom-Cook D=4 (or D=8 P>1): weight-folded, generic reads
+                let body_unw = generate_toom_cook_body(d, p);
+                let body_w = generate_toom_cook_body_weighted(d, p);
+                (body_w, body_unw, true, false)
+            } else {
+                let fold = d > 2 * p;
+                let body = generate_product_sum_body(d, p, fold);
+                let body_unw = if fold {
+                    generate_product_sum_body(d, p, false)
+                } else {
+                    body.clone()
+                };
+                (body, body_unw, fold, false)
+            }
+        } else if formula.is_hamming_booleanity() {
+            let body = r"
         Fr d_eq = fr_sub(hi_0, lo_0);
         Fr d_h = fr_sub(hi_1, lo_1);
         evals[0] = fr_mul(fr_mul(lo_0, lo_1), fr_sub(lo_1, fr_one()));
@@ -332,118 +205,57 @@ pub fn generate_msl(
         eq_val = fr_add(eq_val, d_eq);
         h_val = fr_add(h_val, d_h);
         evals[2] = fr_mul(fr_mul(eq_val, h_val), fr_sub(h_val, fr_one()));"
-                    .to_string();
-                (body.clone(), body, false, false)
-            } else {
-                // Generic formula: generate MSL from the normalized sum-of-products
-                let body = generate_formula_body(formula, degree);
-                (body.clone(), body, false, false)
-            };
+                .to_string();
+            (body.clone(), body, false, false)
+        } else {
+            // Generic formula: generate MSL from the normalized sum-of-products
+            let body = generate_formula_body(formula, degree);
+            (body.clone(), body, false, false)
+        };
 
-        // Determine whether the eval body references challenge buffer slots.
-        has_challenges = eval_body_weighted.contains("challenges[");
+    let has_challenges = eval_body_weighted.contains("challenges[");
 
-        let n_limbs = field_config.n_limbs;
-        for variant in [
-            KernelVariant::LowToHigh,
-            KernelVariant::HighToLow,
-            KernelVariant::Tensor,
-        ] {
-            msl.push_str(&generate_reduce_kernel(
-                num_inputs,
-                num_evals,
-                &eval_body_weighted,
-                variant,
-                weight_folded,
-                true,
-                has_challenges,
-                n_limbs,
-                device_config,
-                reads_inline,
-                false,
-                0,
-            ));
-            msl.push('\n');
-        }
-        for variant in [KernelVariant::LowToHigh, KernelVariant::HighToLow] {
-            msl.push_str(&generate_reduce_kernel(
-                num_inputs,
-                num_evals,
-                &eval_body_unweighted,
-                variant,
-                false,
-                false,
-                has_challenges,
-                n_limbs,
-                device_config,
-                reads_inline,
-                false,
-                0,
-            ));
-            msl.push('\n');
-        }
-        // Fused H2L kernel uses the weighted eval body (standard reads)
-        msl.push_str(&generate_fused_reduce_kernel(
+    let n_limbs = field_config.n_limbs;
+    // Tensor (weighted — uses outer*inner eq buffers)
+    msl.push_str(&generate_reduce_kernel(
+        num_inputs,
+        num_evals,
+        &eval_body_weighted,
+        KernelVariant::Tensor,
+        weight_folded,
+        true,
+        has_challenges,
+        n_limbs,
+        device_config,
+        reads_inline,
+        false,
+        0,
+    ));
+    msl.push('\n');
+    // Unweighted L2H and H2L
+    for variant in [KernelVariant::LowToHigh, KernelVariant::HighToLow] {
+        msl.push_str(&generate_reduce_kernel(
             num_inputs,
             num_evals,
-            &eval_body_weighted,
-            weight_folded,
+            &eval_body_unweighted,
+            variant,
+            false,
+            false,
             has_challenges,
             n_limbs,
             device_config,
+            reads_inline,
+            false,
+            0,
         ));
         msl.push('\n');
     }
 
-    // Generate cooperative kernel variants for ProductSum shapes.
-    // These use 8 threads per field element for lower register pressure
-    // and parallel CIOS carry propagation.
-    let coop_body = formula.as_product_sum().and_then(|(d, p)| {
-        if d == 4 || d == 8 {
-            let std_body = generate_toom_cook_body_weighted(d, p);
-            Some(crate::coop_field_gen::cooperativize_body(&std_body))
-        } else {
-            None
-        }
-    });
-
-    let coop_preamble = crate::coop_field_gen::generate_coop_preamble(field_config.n_limbs);
-    let mut coop_kernels = String::new();
-    if let Some(ref coop_body) = coop_body {
-        let n_limbs = field_config.n_limbs;
-        coop_kernels.push_str(&crate::coop_field_gen::generate_coop_reduce_kernel_h2l(
-            num_inputs,
-            num_evals,
-            coop_body,
-            true, // weight_folded (Toom-Cook always weight-folds)
-            has_challenges,
-            n_limbs,
-            device_config,
-        ));
-        coop_kernels.push('\n');
-        coop_kernels.push_str(&crate::coop_field_gen::generate_coop_fused_reduce_kernel(
-            num_inputs,
-            num_evals,
-            coop_body,
-            true, // weight_folded
-            has_challenges,
-            n_limbs,
-            device_config,
-        ));
-        coop_kernels.push('\n');
-    }
-
     let noinline = matches!(mode, CompileMode::FastCompile);
     let source = if noinline {
-        build_source_with_preamble_noinline(
-            &field_config.msl_preamble,
-            &[&coop_preamble, &msl, &coop_kernels],
-        )
+        build_source_with_preamble_noinline(&field_config.msl_preamble, &[&msl])
     } else {
-        build_source_with_preamble(
-            &field_config.msl_preamble,
-            &[&coop_preamble, &msl, &coop_kernels],
-        )
+        build_source_with_preamble(&field_config.msl_preamble, &[&msl])
     };
 
     GeneratedMsl {
@@ -455,52 +267,23 @@ pub fn generate_msl(
 }
 
 /// Compile a generated MSL source into pipeline states.
+///
+/// Creates the three pipeline states: tensor (weighted, outer×inner eq),
+/// l2h_unw (unweighted interleaved), and h2l_unw (unweighted split-half).
 pub(crate) fn compile_msl(device: &metal::Device, msl: &GeneratedMsl) -> Arc<CachedPipelines> {
     let options = CompileOptions::new();
     let library = device
         .new_library_with_source(&msl.source, &options)
         .unwrap_or_else(|e| panic!("reduce kernel MSL compilation failed: {e}"));
 
-    let coop_h2l = library
-        .get_function("reduce_kernel_coop_h2l", None)
-        .ok()
-        .map(|f| {
-            device
-                .new_compute_pipeline_state_with_function(&f)
-                .expect("coop_h2l pipeline failed")
-        });
-    let coop_fused = library
-        .get_function("reduce_kernel_coop_fused_h2l", None)
-        .ok()
-        .map(|f| {
-            device
-                .new_compute_pipeline_state_with_function(&f)
-                .expect("coop_fused_h2l pipeline failed")
-        });
-
     Arc::new(CachedPipelines {
-        pipeline_l2h: make_pipeline(device, &library, "reduce_kernel_l2h"),
-        pipeline_h2l: make_pipeline(device, &library, "reduce_kernel_h2l"),
         pipeline_tensor: make_pipeline(device, &library, "reduce_kernel_tensor"),
         pipeline_l2h_unw: make_pipeline(device, &library, "reduce_kernel_l2h_unw"),
         pipeline_h2l_unw: make_pipeline(device, &library, "reduce_kernel_h2l_unw"),
-        pipeline_fused_h2l: make_pipeline(device, &library, "reduce_kernel_fused_h2l"),
-        pipeline_coop_h2l: coop_h2l,
-        pipeline_coop_fused_h2l: coop_fused,
         num_evals: msl.num_evals,
         num_inputs: msl.num_inputs,
         has_challenges: msl.has_challenges,
     })
-}
-
-/// How the per-thread accumulation works for a given kernel configuration.
-/// Only used by the split-pass kernel (currently disabled).
-#[derive(Clone, Copy)]
-enum AccumulationStrategy {
-    /// `acc_fmadd(wide_acc, w, eval)` — weight multiply inside WideAcc.
-    WeightedFmadd,
-    /// `acc_add_fr(wide_acc, eval)` — add Fr to WideAcc without weight.
-    FrDirect,
 }
 
 /// Generate a reduce kernel for a specific pair-reading variant.
@@ -544,7 +327,7 @@ fn generate_reduce_kernel(
 ) -> String {
     let gs = device_config.reduce_group_size;
     let num_simdgroups = device_config.num_simdgroups();
-    let fname = variant.function_name(weighted);
+    let fname = variant.function_name();
     let is_tensor = matches!(variant, KernelVariant::Tensor);
 
     // All single-pass kernels use Fr accumulators (no WideAcc).
@@ -765,503 +548,6 @@ fn generate_reduce_kernel(
         let _ = writeln!(
             s,
             "        partials[gid * {num_evals}u + {d}u] = {tg_name}[{}u];",
-            d * num_simdgroups
-        );
-    }
-    let _ = writeln!(s, "    }}");
-    let _ = writeln!(s, "}}");
-
-    s
-}
-
-/// Generate a split-pass reduce kernel for high-D ProductSum (D ≥ SPLIT_PASS_THRESHOLD).
-///
-/// Instead of loading all D lo/hi arrays at once (which requires ~500 registers
-/// for D=8 and kills GPU occupancy), processes grid points in passes of
-/// `SPLIT_PASS_CHUNK`. Each pass:
-/// 1. Streams through factors one at a time (lo/hi scoped per-factor)
-/// 2. Accumulates into only `chunk` WideAcc accumulators (not D)
-/// 3. Performs simdgroup + tree reduction
-/// 4. Writes `chunk` partial results
-///
-/// Register pressure drops from ~500 to ~130 per thread, improving occupancy
-/// from ~0.5 to ~2 simdgroups per EU (4× improvement).
-///
-/// Tradeoff: each factor's lo/hi is re-loaded once per pass (D/chunk passes
-/// total). For D=8, this is 4× the bandwidth. Since D=8 is compute-bound,
-/// the occupancy improvement dominates.
-#[allow(clippy::too_many_arguments)]
-fn generate_split_pass_reduce_kernel(
-    num_inputs: usize,
-    num_evals: usize,
-    d: usize,
-    p: usize,
-    variant: KernelVariant,
-    weighted: bool,
-    acc_limbs: usize,
-    device_config: &crate::metal_device_config::MetalDeviceConfig,
-) -> String {
-    let gs = device_config.reduce_group_size;
-    let num_simdgroups = device_config.num_simdgroups();
-    let fname = variant.function_name(weighted);
-    let is_tensor = matches!(variant, KernelVariant::Tensor);
-    let chunk = SPLIT_PASS_CHUNK;
-    let num_passes = num_evals.div_ceil(chunk);
-
-    // No weight folding in split-pass mode: weighted always uses acc_fmadd.
-    let strategy = if weighted {
-        AccumulationStrategy::WeightedFmadd
-    } else {
-        AccumulationStrategy::FrDirect
-    };
-    let needs_to_mont = matches!(strategy, AccumulationStrategy::FrDirect);
-
-    let mut s = String::with_capacity(65536);
-
-    // Kernel signature (identical to single-pass)
-    let _ = writeln!(s, "kernel void {fname}(");
-    for k in 0..num_inputs {
-        let _ = writeln!(s, "    device const Fr* input_{k} [[buffer({k})]],");
-    }
-    let mut next_buf = num_inputs;
-    if weighted {
-        if is_tensor {
-            let _ = writeln!(
-                s,
-                "    device const Fr* outer_weights [[buffer({next_buf})]],",
-            );
-            next_buf += 1;
-            let _ = writeln!(
-                s,
-                "    device const Fr* inner_weights [[buffer({next_buf})]],",
-            );
-            next_buf += 1;
-        } else {
-            let _ = writeln!(s, "    device const Fr* weights [[buffer({next_buf})]],");
-            next_buf += 1;
-        }
-    }
-    let _ = writeln!(s, "    device Fr* partials [[buffer({next_buf})]],");
-    next_buf += 1;
-    let _ = writeln!(s, "    device const uint* params [[buffer({next_buf})]],");
-    let _ = writeln!(s, "    uint gid [[threadgroup_position_in_grid]],");
-    let _ = writeln!(s, "    uint lid [[thread_position_in_threadgroup]],");
-    let _ = writeln!(s, "    uint num_groups [[threadgroups_per_grid]],");
-    let _ = writeln!(s, "    uint simd_lane [[thread_index_in_simdgroup]],");
-    let _ = writeln!(s, "    uint simd_id [[simdgroup_index_in_threadgroup]]");
-    let _ = writeln!(s, ") {{");
-
-    let _ = writeln!(s, "    uint n_pairs = params[0];");
-    if is_tensor {
-        let _ = writeln!(s, "    uint inner_log = params[1];");
-        let _ = writeln!(s, "    uint inner_mask = params[2];");
-    }
-    s.push('\n');
-
-    // Shared memory reused across passes (only `chunk * num_simdgroups` slots).
-    let sh_size = chunk * num_simdgroups;
-    let _ = writeln!(s, "    threadgroup Fr sh[{sh_size}];");
-    s.push('\n');
-
-    // Per-pass codegen
-    for pass_idx in 0..num_passes {
-        let base = pass_idx * chunk;
-        let chunk_size = chunk.min(num_evals - base);
-
-        let _ = writeln!(
-            s,
-            "    {{ // Pass {pass_idx}: eval[{base}..{}]",
-            base + chunk_size - 1
-        );
-
-        // Per-pass WideAcc (scoped to this block → freed between passes)
-        for c in 0..chunk_size {
-            let _ = writeln!(s, "    WideAcc wa_{c} = acc_zero();");
-        }
-        s.push('\n');
-
-        // Grid-stride loop
-        let _ = writeln!(
-            s,
-            "    for (uint i = gid * {gs}u + lid; i < n_pairs; i += num_groups * {gs}u) {{"
-        );
-
-        // Read weight
-        if weighted {
-            if is_tensor {
-                let _ = writeln!(
-                    s,
-                    "        Fr w = fr_mul(outer_weights[i >> inner_log], inner_weights[i & inner_mask]);"
-                );
-            } else {
-                let _ = writeln!(s, "        Fr w = weights[i];");
-            }
-        }
-
-        // Sum accumulators for P > 1
-        if p > 1 {
-            for c in 0..chunk_size {
-                let _ = writeln!(s, "        Fr sum_{c} = fr_zero();");
-            }
-        }
-
-        // For each product group g
-        for g in 0..p {
-            if p > 1 {
-                let _ = writeln!(s, "        {{");
-            }
-
-            // Product accumulators (set by first factor, multiplied by rest)
-            for c in 0..chunk_size {
-                let _ = writeln!(s, "        Fr prod_{c};");
-            }
-
-            // Stream through factors — only one lo/hi/diff live at a time
-            for j in 0..d {
-                let input_idx = g * d + j;
-                let _ = writeln!(s, "        {{");
-
-                // Load pair
-                if matches!(variant, KernelVariant::HighToLow) {
-                    let _ = writeln!(s, "            Fr lo = input_{input_idx}[i];");
-                    let _ = writeln!(s, "            Fr hi = input_{input_idx}[i + n_pairs];");
-                } else {
-                    let _ = writeln!(s, "            Fr lo = input_{input_idx}[2u * i];");
-                    let _ = writeln!(s, "            Fr hi = input_{input_idx}[2u * i + 1u];");
-                }
-                let _ = writeln!(s, "            Fr diff = fr_sub(hi, lo);");
-
-                // Compute val at each grid point in this chunk
-                for c in 0..chunk_size {
-                    let eval_idx = base + c;
-                    if eval_idx == d - 1 {
-                        // t = ∞: leading coefficient
-                        let _ = writeln!(s, "            Fr val_{c} = diff;");
-                    } else if eval_idx == 0 {
-                        // t = 1: val = hi
-                        let _ = writeln!(s, "            Fr val_{c} = hi;");
-                    } else if c > 0 && (base + c - 1) < d - 1 {
-                        // Incremental: val_c = val_{c-1} + diff
-                        let _ =
-                            writeln!(s, "            Fr val_{c} = fr_add(val_{}, diff);", c - 1);
-                    } else {
-                        // From scratch: hi + eval_idx * diff
-                        let _ = writeln!(s, "            Fr val_{c} = hi;");
-                        for _ in 0..eval_idx {
-                            let _ = writeln!(s, "            val_{c} = fr_add(val_{c}, diff);");
-                        }
-                    }
-                }
-
-                // First factor: assign. Subsequent: unreduced multiply.
-                for c in 0..chunk_size {
-                    if j == 0 {
-                        let _ = writeln!(s, "            prod_{c} = val_{c};");
-                    } else {
-                        let _ = writeln!(
-                            s,
-                            "            prod_{c} = fr_mul_unreduced(prod_{c}, val_{c});"
-                        );
-                    }
-                }
-
-                let _ = writeln!(s, "        }}");
-            }
-
-            // Accumulate product into sum (P > 1) — reduce before fr_add
-            if p > 1 {
-                for c in 0..chunk_size {
-                    let _ = writeln!(s, "        sum_{c} = fr_add(sum_{c}, fr_reduce(prod_{c}));");
-                }
-                let _ = writeln!(s, "        }}");
-            }
-        }
-
-        // Accumulate into WideAcc
-        let acc_var = if p > 1 { "sum" } else { "prod" };
-        match strategy {
-            AccumulationStrategy::WeightedFmadd => {
-                for c in 0..chunk_size {
-                    let _ = writeln!(s, "        acc_fmadd(wa_{c}, w, {acc_var}_{c});");
-                }
-            }
-            AccumulationStrategy::FrDirect => {
-                for c in 0..chunk_size {
-                    let _ = writeln!(s, "        acc_add_fr(wa_{c}, {acc_var}_{c});");
-                }
-            }
-        }
-        let _ = writeln!(s, "    }}"); // close grid-stride loop
-        s.push('\n');
-
-        // Simdgroup WideAcc reduction (same as single-pass)
-        let half_simd = device_config.simd_size / 2;
-        let _ = writeln!(
-            s,
-            "    for (ushort _off = {half_simd}u; _off > 0u; _off >>= 1u) {{"
-        );
-        for c in 0..chunk_size {
-            let _ = writeln!(s, "        {{ WideAcc _o;");
-            for l in 0..acc_limbs {
-                let _ = writeln!(
-                    s,
-                    "        _o.limbs[{l}] = simd_shuffle_down(wa_{c}.limbs[{l}], _off);"
-                );
-            }
-            let _ = writeln!(s, "        acc_merge(wa_{c}, _o); }}");
-        }
-        let _ = writeln!(s, "    }}");
-        s.push('\n');
-
-        // Lane 0: acc_reduce → shared memory
-        let _ = writeln!(s, "    if (simd_lane == 0u) {{");
-        for c in 0..chunk_size {
-            let sh_base = c * num_simdgroups;
-            if needs_to_mont {
-                let _ = writeln!(
-                    s,
-                    "        sh[{sh_base}u + simd_id] = fr_to_mont(acc_reduce(wa_{c}));",
-                );
-            } else {
-                let _ = writeln!(s, "        sh[{sh_base}u + simd_id] = acc_reduce(wa_{c});",);
-            }
-        }
-        let _ = writeln!(s, "    }}");
-        let _ = writeln!(s, "    threadgroup_barrier(mem_flags::mem_threadgroup);");
-        s.push('\n');
-
-        // Tree reduction over simdgroup partials.
-        // All threads must reach each barrier — no outer `if (lid < N)` guard.
-        let mut stride = num_simdgroups / 2;
-        while stride > 0 {
-            let _ = writeln!(s, "    if (lid < {stride}u) {{");
-            for c in 0..chunk_size {
-                let sh_base = c * num_simdgroups;
-                let _ = writeln!(
-                    s,
-                    "        sh[{sh_base}u + lid] = fr_add(sh[{sh_base}u + lid], sh[{sh_base}u + lid + {stride}u]);"
-                );
-            }
-            let _ = writeln!(s, "    }}");
-            if stride > 1 {
-                let _ = writeln!(s, "    threadgroup_barrier(mem_flags::mem_threadgroup);");
-            }
-            stride /= 2;
-        }
-        s.push('\n');
-
-        // Write partials for this pass's eval indices
-        let _ = writeln!(s, "    if (lid == 0u) {{");
-        for c in 0..chunk_size {
-            let sh_base = c * num_simdgroups;
-            let eval_out = base + c;
-            let _ = writeln!(
-                s,
-                "        partials[gid * {num_evals}u + {eval_out}u] = sh[{sh_base}u];"
-            );
-        }
-        let _ = writeln!(s, "    }}");
-
-        let _ = writeln!(s, "    }}"); // close pass block
-
-        // Barrier before next pass (shared memory reuse)
-        if pass_idx < num_passes - 1 {
-            let _ = writeln!(s, "    threadgroup_barrier(mem_flags::mem_threadgroup);");
-        }
-        s.push('\n');
-    }
-
-    let _ = writeln!(s, "}}");
-
-    s
-}
-
-/// Generate fused interpolate+reduce kernel (H2L, weighted).
-///
-/// Reads 4 values per input per fused pair, interpolates in-place, then
-/// executes the eval body on the interpolated (lo, hi) pairs. Saves one
-/// full read pass over memory compared to separate interpolate + reduce.
-///
-/// Safety: writes at `[0, N/2)`, reads from `[N/2, N)` — no aliasing.
-#[allow(clippy::too_many_arguments)]
-fn generate_fused_reduce_kernel(
-    num_inputs: usize,
-    num_evals: usize,
-    eval_body: &str,
-    weight_folded: bool,
-    has_challenges: bool,
-    n_limbs: usize,
-    device_config: &crate::metal_device_config::MetalDeviceConfig,
-) -> String {
-    let gs = device_config.reduce_group_size;
-    let num_simdgroups = device_config.num_simdgroups();
-    let needs_weight_mul = !weight_folded;
-
-    let mut s = String::with_capacity(16384);
-
-    let _ = writeln!(s, "kernel void reduce_kernel_fused_h2l(");
-    for k in 0..num_inputs {
-        let _ = writeln!(s, "    device Fr* input_{k} [[buffer({k})]],");
-    }
-    let mut next_buf = num_inputs;
-    let _ = writeln!(s, "    device Fr* weights [[buffer({next_buf})]],");
-    next_buf += 1;
-    let _ = writeln!(
-        s,
-        "    device const Fr* interp_scalar [[buffer({next_buf})]],",
-    );
-    next_buf += 1;
-    if has_challenges {
-        let _ = writeln!(s, "    device const Fr* challenges [[buffer({next_buf})]],",);
-        next_buf += 1;
-    }
-    let _ = writeln!(s, "    device Fr* partials [[buffer({next_buf})]],");
-    next_buf += 1;
-    let _ = writeln!(s, "    device const uint* params [[buffer({next_buf})]],",);
-    let _ = writeln!(s, "    uint gid [[threadgroup_position_in_grid]],");
-    let _ = writeln!(s, "    uint lid [[thread_position_in_threadgroup]],");
-    let _ = writeln!(s, "    uint num_groups [[threadgroups_per_grid]],");
-    let _ = writeln!(s, "    uint simd_lane [[thread_index_in_simdgroup]],");
-    let _ = writeln!(s, "    uint simd_id [[simdgroup_index_in_threadgroup]]");
-    let _ = writeln!(s, ") {{");
-
-    let _ = writeln!(s, "    uint n_fused = params[0];");
-    let _ = writeln!(s, "    Fr r = interp_scalar[0];");
-    s.push('\n');
-
-    let sh_size = num_evals * num_simdgroups;
-    for d in 0..num_evals {
-        let _ = writeln!(s, "    Fr acc_{d} = fr_zero();");
-    }
-    s.push('\n');
-
-    let _ = writeln!(
-        s,
-        "    for (uint j = gid * {gs}u + lid; j < n_fused; j += num_groups * {gs}u) {{"
-    );
-
-    // Read 4 values per input, interpolate, write back.
-    // Temporaries (a, c) are scoped so the compiler releases registers
-    // before loading (b, d).
-    for k in 0..num_inputs {
-        let _ = writeln!(s, "        Fr lo_{k}, hi_{k};");
-        let _ = writeln!(
-            s,
-            "        {{ Fr a = input_{k}[j], c = input_{k}[j + 2u*n_fused];"
-        );
-        let _ = writeln!(
-            s,
-            "          lo_{k} = fr_add(a, fr_mul(r, fr_sub(c, a))); input_{k}[j] = lo_{k}; }}"
-        );
-        let _ = writeln!(
-            s,
-            "        {{ Fr b = input_{k}[j + n_fused], d = input_{k}[j + 3u*n_fused];"
-        );
-        let _ = writeln!(
-            s,
-            "          hi_{k} = fr_add(b, fr_mul(r, fr_sub(d, b))); input_{k}[j + n_fused] = hi_{k}; }}"
-        );
-    }
-    s.push('\n');
-
-    // Weight interpolation
-    let _ = writeln!(s, "        Fr w;");
-    let _ = writeln!(
-        s,
-        "        {{ Fr wa = weights[j], wc = weights[j + 2u*n_fused];"
-    );
-    let _ = writeln!(
-        s,
-        "          w = fr_add(wa, fr_mul(r, fr_sub(wc, wa))); weights[j] = w; }}"
-    );
-    let _ = writeln!(
-        s,
-        "        {{ Fr wb = weights[j + n_fused], wd = weights[j + 3u*n_fused];"
-    );
-    let _ = writeln!(
-        s,
-        "          Fr w_hi = fr_add(wb, fr_mul(r, fr_sub(wd, wb))); weights[j + n_fused] = w_hi; }}"
-    );
-    s.push('\n');
-
-    // Eval body with scalar decomposition
-    let mut decomposed_body = eval_body.to_string();
-    for d in 0..num_evals {
-        decomposed_body = decomposed_body.replace(&format!("evals[{d}]"), &format!("eval_{d}"));
-    }
-    for d in 0..num_evals {
-        let _ = writeln!(s, "        Fr eval_{d};");
-    }
-    let _ = write!(s, "{decomposed_body}");
-    s.push('\n');
-
-    if needs_weight_mul {
-        for d in 0..num_evals {
-            let _ = writeln!(s, "        acc_{d} = fr_add(acc_{d}, fr_mul(w, eval_{d}));");
-        }
-    } else {
-        for d in 0..num_evals {
-            let _ = writeln!(s, "        acc_{d} = fr_add(acc_{d}, fr_reduce(eval_{d}));");
-        }
-    }
-    let _ = writeln!(s, "    }}");
-    s.push('\n');
-
-    // Simdgroup reduction
-    let half_simd = device_config.simd_size / 2;
-    let _ = writeln!(
-        s,
-        "    for (ushort _off = {half_simd}u; _off > 0u; _off >>= 1u) {{"
-    );
-    for d in 0..num_evals {
-        let _ = writeln!(s, "        {{ Fr _o;");
-        for l in 0..n_limbs {
-            let _ = writeln!(
-                s,
-                "        _o.limbs[{l}] = simd_shuffle_down(acc_{d}.limbs[{l}], _off);"
-            );
-        }
-        let _ = writeln!(s, "        acc_{d} = fr_add(acc_{d}, _o); }}");
-    }
-    let _ = writeln!(s, "    }}");
-    s.push('\n');
-
-    let _ = writeln!(s, "    threadgroup Fr sh[{sh_size}];");
-    let _ = writeln!(s, "    if (simd_lane == 0u) {{");
-    for d in 0..num_evals {
-        let _ = writeln!(
-            s,
-            "        sh[{}u + simd_id] = acc_{d};",
-            d * num_simdgroups
-        );
-    }
-    let _ = writeln!(s, "    }}");
-    let _ = writeln!(s, "    threadgroup_barrier(mem_flags::mem_threadgroup);");
-    s.push('\n');
-
-    let mut stride = num_simdgroups / 2;
-    while stride > 0 {
-        let _ = writeln!(s, "    if (lid < {stride}u) {{");
-        for d in 0..num_evals {
-            let base = d * num_simdgroups;
-            let _ = writeln!(
-                s,
-                "        sh[{base}u + lid] = fr_add(sh[{base}u + lid], sh[{base}u + lid + {stride}u]);"
-            );
-        }
-        let _ = writeln!(s, "    }}");
-        if stride > 1 {
-            let _ = writeln!(s, "    threadgroup_barrier(mem_flags::mem_threadgroup);");
-        }
-        stride /= 2;
-    }
-    s.push('\n');
-
-    let _ = writeln!(s, "    if (lid == 0u) {{");
-    for d in 0..num_evals {
-        let _ = writeln!(
-            s,
-            "        partials[gid * {num_evals}u + {d}u] = sh[{}u];",
             d * num_simdgroups
         );
     }
@@ -1821,8 +1107,7 @@ fn emit_product_sum(s: &mut String, d: usize, p: usize, arr: &str, eval_idx: usi
 /// Generate MSL evaluation body from a [`Formula`].
 ///
 /// Uses incremental interpolation: maintains `cur_k` starting at `lo[k]` and
-/// adding `diff_k` for each successive grid point. Grid is `{0, 2, 3, ..., degree}`
-/// (skipping `t=1`), so slot 0 maps to `t=0` and slot `k>=1` maps to `t=k+1`.
+/// adding `diff_k` for each successive grid point. Grid is `{0, 1, 2, ..., degree}`.
 ///
 /// At each grid point, evaluates `Σ_term coeff × Π_factor factor_val` where
 /// input factors map to `cur_k` and challenge factors to `challenges[id]`.
@@ -1832,7 +1117,7 @@ fn emit_product_sum(s: &mut String, d: usize, p: usize, arr: &str, eval_idx: usi
 /// deterministic at compile time, enabling AOT pipeline caching.
 fn generate_formula_body(formula: &Formula, degree: usize) -> String {
     let num_inputs = formula.num_inputs;
-    let num_evals = degree;
+    let num_evals = degree + 1;
     let mut s = String::with_capacity(2048);
 
     // Precompute diffs
@@ -1846,10 +1131,7 @@ fn generate_formula_body(formula: &Formula, degree: usize) -> String {
     }
     s.push('\n');
 
-    // Build the grid: slot 0 → t=0, slot k≥1 → t=k+1
-    let grid: Vec<usize> = (0..num_evals)
-        .map(|slot| if slot == 0 { 0 } else { slot + 1 })
-        .collect();
+    let grid: Vec<usize> = (0..num_evals).collect();
 
     let mut prev_t = 0usize;
     for (slot, &t) in grid.iter().enumerate() {

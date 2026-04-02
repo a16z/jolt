@@ -1,43 +1,70 @@
 //! CPU compute backend using Rayon for parallelism.
 
+use jolt_compiler::kernel_spec::Iteration;
 use jolt_field::{Field, FieldAccumulator};
 
-use jolt_compute::{BindingOrder, ComputeBackend, EqInput, Scalar};
+use jolt_compute::{BindingOrder, Buf, ComputeBackend, Scalar};
 
 /// Parallelism threshold: buffers smaller than this use sequential loops.
 ///
 /// Below this size the overhead of Rayon work-stealing exceeds the benefit.
 const PAR_THRESHOLD: usize = 1024;
 
-/// Composition evaluation function type for [`CpuKernel`].
+/// Composition evaluation function signature for [`CpuKernel`].
 ///
 /// Takes `(lo_values, hi_values, challenges, out)` and writes evaluations into `out`.
-type EvalFn<F> = dyn Fn(&[F], &[F], &[F], &mut [F]) + Send + Sync;
+pub type EvalFn<F> = dyn Fn(&[F], &[F], &[F], &mut [F]) + Send + Sync;
 
-/// Wraps a closure that evaluates a composition at grid points from paired
-/// polynomial inputs, writing results into a caller-provided output slice.
-/// The closure signature:
+pub type BoxedEvalFn<F> = Box<EvalFn<F>>;
+
+/// CPU-compiled kernel: an eval closure plus metadata from the [`KernelSpec`].
 ///
+/// The eval closure signature:
 /// ```text
 /// fn(lo: &[F], hi: &[F], challenges: &[F], out: &mut [F])
 /// ```
 ///
 /// where `lo[k]` and `hi[k]` are the even/odd pair for input buffer `k`,
-/// `challenges` provides Fiat-Shamir-derived values resolved at dispatch time,
-/// and `out` has `num_evals` slots to receive the evaluations. For Toom-Cook
-/// kernels: grid `{1, ..., D-1, ∞}`, D slots. For standard-grid kernels:
-/// grid `{0, 1, ..., degree}`, `degree + 1` slots.
+/// `challenges` provides Fiat-Shamir-derived values, and `out` has
+/// `num_evals` slots. For Toom-Cook kernels: grid `{1, ..., D-1, ∞}`.
+/// For standard-grid kernels: grid `{0, 2, 3, ..., degree}`.
 ///
-/// Constructed via [`CpuBackend::compile_kernel`] or the free function
-/// [`compile`](crate::compile).
+/// The [`Iteration`], [`BindingOrder`], and `num_evals` are baked in from
+/// the [`KernelSpec`] at compile time. The `reduce`/`bind` dispatch logic
+/// uses these to select the right loop structure.
 pub struct CpuKernel<F: Field> {
     eval_fn: Box<EvalFn<F>>,
+    pub(crate) num_evals: usize,
+    pub(crate) iteration: Iteration,
+    pub(crate) binding_order: BindingOrder,
 }
 
 impl<F: Field> CpuKernel<F> {
-    pub fn new(eval_fn: impl Fn(&[F], &[F], &[F], &mut [F]) + Send + Sync + 'static) -> Self {
+    pub fn new(
+        eval_fn: impl Fn(&[F], &[F], &[F], &mut [F]) + Send + Sync + 'static,
+        num_evals: usize,
+        iteration: Iteration,
+        binding_order: BindingOrder,
+    ) -> Self {
         Self {
             eval_fn: Box::new(eval_fn),
+            num_evals,
+            iteration,
+            binding_order,
+        }
+    }
+
+    pub fn from_boxed(
+        eval_fn: BoxedEvalFn<F>,
+        num_evals: usize,
+        iteration: Iteration,
+        binding_order: BindingOrder,
+    ) -> Self {
+        Self {
+            eval_fn,
+            num_evals,
+            iteration,
+            binding_order,
         }
     }
 
@@ -59,8 +86,61 @@ impl ComputeBackend for CpuBackend {
     type Buffer<T: Scalar> = Vec<T>;
     type CompiledKernel<F: Field> = CpuKernel<F>;
 
-    fn compile_kernel<F: Field>(&self, formula: &jolt_compiler::Formula) -> CpuKernel<F> {
-        crate::compile(formula)
+    fn compile<F: Field>(&self, spec: &jolt_compiler::KernelSpec) -> CpuKernel<F> {
+        crate::compile(spec)
+    }
+
+    fn reduce<F: Field>(
+        &self,
+        kernel: &CpuKernel<F>,
+        inputs: &[&Buf<Self, F>],
+        challenges: &[F],
+    ) -> Vec<F> {
+        let num_evals = kernel.num_evals;
+        let order = kernel.binding_order;
+
+        // Composition value columns (excluding iteration-specific extras).
+        let num_value_inputs = inputs.len()
+            - match kernel.iteration {
+                Iteration::Dense => 0,
+                Iteration::DenseTensor => 2,
+                Iteration::Sparse => 1,
+            };
+        let value_refs: Vec<&Vec<F>> = inputs[..num_value_inputs]
+            .iter()
+            .map(|db| db.as_field())
+            .collect();
+
+        match &kernel.iteration {
+            Iteration::Dense => reduce_dense(&value_refs, kernel, challenges, num_evals, order),
+            Iteration::DenseTensor => {
+                let outer = inputs[num_value_inputs].as_field();
+                let inner = inputs[num_value_inputs + 1].as_field();
+                reduce_tensor(&value_refs, outer, inner, kernel, challenges, num_evals)
+            }
+            Iteration::Sparse => {
+                let keys = inputs[num_value_inputs].as_u64();
+                reduce_sparse(&value_refs, keys, kernel, challenges, num_evals)
+            }
+        }
+    }
+
+    fn bind<F: Field>(&self, kernel: &CpuKernel<F>, inputs: &mut [Buf<Self, F>], scalar: F) {
+        let order = kernel.binding_order;
+        match &kernel.iteration {
+            Iteration::Dense | Iteration::DenseTensor => {
+                for buf in inputs.iter_mut() {
+                    interpolate_vec_inplace(buf.as_field_mut(), scalar, order);
+                }
+            }
+            Iteration::Sparse => {
+                bind_sparse(inputs, scalar);
+            }
+        }
+    }
+
+    fn interpolate_inplace<F: Field>(&self, buf: &mut Vec<F>, scalar: F, order: BindingOrder) {
+        interpolate_vec_inplace(buf, scalar, order);
     }
 
     #[inline]
@@ -74,12 +154,10 @@ impl ComputeBackend for CpuBackend {
     }
 
     fn alloc<T: Scalar>(&self, len: usize) -> Vec<T> {
-        // SAFETY: T: Copy + 'static. We allocate zeroed memory which is valid
-        // for all integer, bool, and field types (all have zero as a valid
-        // bit pattern).
         let mut buf = Vec::with_capacity(len);
         // SAFETY: All Scalar types (integers, bool, field elements) have
-        // all-zeros as a valid representation.
+        // all-zeros as a valid representation. write_bytes zeroes the
+        // allocated capacity, then set_len makes those bytes visible.
         unsafe {
             std::ptr::write_bytes(buf.as_mut_ptr(), 0, len);
             buf.set_len(len);
@@ -90,190 +168,6 @@ impl ComputeBackend for CpuBackend {
     #[inline]
     fn len<T: Scalar>(&self, buf: &Vec<T>) -> usize {
         buf.len()
-    }
-
-    fn interpolate_pairs<T, F>(&self, buf: Vec<T>, scalar: F) -> Vec<F>
-    where
-        T: Scalar,
-        F: Field + From<T>,
-    {
-        let half = buf.len() / 2;
-
-        #[cfg(feature = "parallel")]
-        {
-            if half >= PAR_THRESHOLD {
-                use rayon::prelude::*;
-                return (0..half)
-                    .into_par_iter()
-                    .map(|i| {
-                        let lo: F = buf[2 * i].into();
-                        let hi: F = buf[2 * i + 1].into();
-                        lo + scalar * (hi - lo)
-                    })
-                    .collect();
-            }
-        }
-
-        let mut result = Vec::with_capacity(half);
-        for i in 0..half {
-            let lo: F = buf[2 * i].into();
-            let hi: F = buf[2 * i + 1].into();
-            result.push(lo + scalar * (hi - lo));
-        }
-        result
-    }
-
-    fn interpolate_pairs_batch<F: Field>(&self, bufs: Vec<Vec<F>>, scalar: F) -> Vec<Vec<F>> {
-        #[cfg(feature = "parallel")]
-        {
-            let total_pairs: usize = bufs.iter().map(|b| b.len() / 2).sum();
-            if total_pairs >= PAR_THRESHOLD {
-                use rayon::prelude::*;
-                return bufs
-                    .into_par_iter()
-                    .map(|buf| {
-                        let half = buf.len() / 2;
-                        (0..half)
-                            .map(|i| {
-                                let lo = buf[2 * i];
-                                let hi = buf[2 * i + 1];
-                                lo + scalar * (hi - lo)
-                            })
-                            .collect()
-                    })
-                    .collect();
-            }
-        }
-
-        bufs.into_iter()
-            .map(|buf| self.interpolate_pairs(buf, scalar))
-            .collect()
-    }
-
-    fn interpolate_pairs_inplace<F: Field>(
-        &self,
-        buf: &mut Vec<F>,
-        scalar: F,
-        order: BindingOrder,
-    ) {
-        let n = buf.len();
-        let half = n / 2;
-
-        match order {
-            BindingOrder::HighToLow => {
-                // Pairs: (buf[i], buf[i + half]). Write to buf[i], then truncate.
-                // No aliasing: reads from the second half, writes to the first half.
-                #[cfg(feature = "parallel")]
-                {
-                    if half >= PAR_THRESHOLD {
-                        use rayon::prelude::*;
-                        let (lo_half, hi_half) = buf.split_at_mut(half);
-                        lo_half
-                            .par_iter_mut()
-                            .zip(hi_half.par_iter())
-                            .for_each(|(lo, hi)| {
-                                *lo = *lo + scalar * (*hi - *lo);
-                            });
-                        buf.truncate(half);
-                        return;
-                    }
-                }
-                for i in 0..half {
-                    buf[i] = buf[i] + scalar * (buf[i + half] - buf[i]);
-                }
-                buf.truncate(half);
-            }
-            BindingOrder::LowToHigh => {
-                // Pairs: (buf[2i], buf[2i+1]). Sequential is truly in-place
-                // because i < 2i for i > 0 and i=0 reads before writing.
-                #[cfg(feature = "parallel")]
-                {
-                    if half >= PAR_THRESHOLD {
-                        use rayon::prelude::*;
-                        // Parallel interleaved bind: reads from buf[2i], buf[2i+1]
-                        // and writes to buf[i]. Since different threads may alias
-                        // (thread i writes buf[i] which thread i/2 reads as buf[2*(i/2)]),
-                        // we collect into a new vec and swap.
-                        let result: Vec<F> = (0..half)
-                            .into_par_iter()
-                            .map(|i| {
-                                let lo = buf[2 * i];
-                                let hi = buf[2 * i + 1];
-                                lo + scalar * (hi - lo)
-                            })
-                            .collect();
-                        *buf = result;
-                        return;
-                    }
-                }
-                for i in 0..half {
-                    let lo = buf[2 * i];
-                    let hi = buf[2 * i + 1];
-                    buf[i] = lo + scalar * (hi - lo);
-                }
-                buf.truncate(half);
-            }
-        }
-    }
-
-    fn interpolate_pairs_batch_inplace<F: Field>(
-        &self,
-        bufs: &mut [Vec<F>],
-        scalar: F,
-        order: BindingOrder,
-    ) {
-        #[cfg(feature = "parallel")]
-        {
-            let total_pairs: usize = bufs.iter().map(|b| b.len() / 2).sum();
-            if total_pairs >= PAR_THRESHOLD {
-                use rayon::prelude::*;
-                bufs.par_iter_mut().for_each(|buf| {
-                    // Inline bind to avoid nested Rayon dispatch for small individual buffers
-                    let half = buf.len() / 2;
-                    match order {
-                        BindingOrder::HighToLow => {
-                            for i in 0..half {
-                                buf[i] = buf[i] + scalar * (buf[i + half] - buf[i]);
-                            }
-                            buf.truncate(half);
-                        }
-                        BindingOrder::LowToHigh => {
-                            for i in 0..half {
-                                let lo = buf[2 * i];
-                                let hi = buf[2 * i + 1];
-                                buf[i] = lo + scalar * (hi - lo);
-                            }
-                            buf.truncate(half);
-                        }
-                    }
-                });
-                return;
-            }
-        }
-        for buf in bufs.iter_mut() {
-            self.interpolate_pairs_inplace(buf, scalar, order);
-        }
-    }
-
-    #[tracing::instrument(skip_all, name = "CpuBackend::pairwise_reduce")]
-    fn pairwise_reduce<F: Field>(
-        &self,
-        inputs: &[&Vec<F>],
-        eq: EqInput<'_, Self, F>,
-        kernel: &Self::CompiledKernel<F>,
-        challenges: &[F],
-        num_evals: usize,
-        order: BindingOrder,
-    ) -> Vec<F> {
-        match eq {
-            EqInput::Weighted(weights) => {
-                pairwise_reduce_weighted(inputs, weights, kernel, challenges, num_evals, order)
-            }
-            EqInput::Unit => pairwise_reduce_unit(inputs, kernel, challenges, num_evals, order),
-            EqInput::Tensor { outer, inner } => {
-                pairwise_reduce_tensor(inputs, outer, inner, kernel, challenges, num_evals)
-            }
-        }
     }
 
     #[tracing::instrument(skip_all, name = "CpuBackend::eq_table")]
@@ -339,21 +233,18 @@ impl ComputeBackend for CpuBackend {
             let step = 1usize << (ell - i);
             let half_step = step / 2;
 
-            // r_lower_product = (1 - r[i]) · Π_{j > i} r[j]
             let mut r_lower_product = F::one();
             for &x in point.iter().skip(i + 1) {
                 r_lower_product *= x;
             }
             r_lower_product *= F::one() - point[i];
 
-            // Fill eq+1 entries for bit position i
             let mut idx = half_step;
             while idx < size {
                 eq_plus_one_evals[idx] = eq_evals[idx - half_step] * r_lower_product;
                 idx += step;
             }
 
-            // Extend eq table by variable r[i]
             let eq_step = 1usize << (ell - i - 1);
             let mut k = 0;
             while k < size {
@@ -368,17 +259,69 @@ impl ComputeBackend for CpuBackend {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Free-standing helpers: these contain the real Rayon-parallel logic for each
-// EqInput variant.  The trait methods above dispatch into these.
-// ---------------------------------------------------------------------------
+#[tracing::instrument(skip_all, name = "interpolate_inplace")]
+fn interpolate_vec_inplace<F: Field>(buf: &mut Vec<F>, scalar: F, order: BindingOrder) {
+    let n = buf.len();
+    let half = n / 2;
 
-/// Weighted pairwise reduce (dynamic num_evals).
+    match order {
+        BindingOrder::HighToLow => {
+            #[cfg(feature = "parallel")]
+            {
+                if half >= PAR_THRESHOLD {
+                    use rayon::prelude::*;
+                    let (lo_half, hi_half) = buf.split_at_mut(half);
+                    lo_half
+                        .par_iter_mut()
+                        .zip(hi_half.par_iter())
+                        .for_each(|(lo, hi)| {
+                            *lo = *lo + scalar * (*hi - *lo);
+                        });
+                    buf.truncate(half);
+                    return;
+                }
+            }
+            for i in 0..half {
+                buf[i] = buf[i] + scalar * (buf[i + half] - buf[i]);
+            }
+            buf.truncate(half);
+        }
+        BindingOrder::LowToHigh => {
+            #[cfg(feature = "parallel")]
+            {
+                if half >= PAR_THRESHOLD {
+                    use rayon::prelude::*;
+                    let result: Vec<F> = (0..half)
+                        .into_par_iter()
+                        .map(|i| {
+                            let lo = buf[2 * i];
+                            let hi = buf[2 * i + 1];
+                            lo + scalar * (hi - lo)
+                        })
+                        .collect();
+                    *buf = result;
+                    return;
+                }
+            }
+            for i in 0..half {
+                let lo = buf[2 * i];
+                let hi = buf[2 * i + 1];
+                buf[i] = lo + scalar * (hi - lo);
+            }
+            buf.truncate(half);
+        }
+    }
+}
+
+/// Dense (unit-weighted) pairwise reduce.
+///
+/// Dispatches to a const-generic inner function for common (num_inputs, num_evals)
+/// pairs, using stack-allocated scratch arrays. Falls back to heap-allocated Vecs
+/// for uncommon sizes.
 #[allow(clippy::ptr_arg)]
-#[tracing::instrument(skip_all, name = "pairwise_reduce_weighted")]
-fn pairwise_reduce_weighted<F: Field>(
+#[tracing::instrument(skip_all, name = "reduce_dense")]
+fn reduce_dense<F: Field>(
     inputs: &[&Vec<F>],
-    weights: &[F],
     kernel: &CpuKernel<F>,
     challenges: &[F],
     num_evals: usize,
@@ -389,8 +332,33 @@ fn pairwise_reduce_weighted<F: Field>(
     let half = n / 2;
     let num_inputs = inputs.len();
 
-    let new_accs =
-        || -> Vec<F::Accumulator> { (0..num_evals).map(|_| F::Accumulator::default()).collect() };
+    match (num_inputs, num_evals) {
+        (2, 2) => reduce_dense_fixed::<F, 2, 2>(inputs, kernel, challenges, half, order),
+        (3, 3) => reduce_dense_fixed::<F, 3, 3>(inputs, kernel, challenges, half, order),
+        (4, 4) => reduce_dense_fixed::<F, 4, 4>(inputs, kernel, challenges, half, order),
+        (8, 4) => reduce_dense_fixed::<F, 8, 4>(inputs, kernel, challenges, half, order),
+        (8, 8) => reduce_dense_fixed::<F, 8, 8>(inputs, kernel, challenges, half, order),
+        (16, 16) => reduce_dense_fixed::<F, 16, 16>(inputs, kernel, challenges, half, order),
+        (32, 32) => reduce_dense_fixed::<F, 32, 32>(inputs, kernel, challenges, half, order),
+        _ => reduce_dense_dynamic(inputs, kernel, challenges, num_inputs, num_evals, half, order),
+    }
+}
+
+/// Const-generic dense reduce with stack-allocated scratch arrays.
+///
+/// Eliminates per-chunk heap allocation in the Rayon fold by using `[F; NI]`
+/// for lo/hi and `[F; NE]` for evals/accumulators.
+#[inline]
+fn reduce_dense_fixed<F: Field, const NI: usize, const NE: usize>(
+    inputs: &[&Vec<F>],
+    kernel: &CpuKernel<F>,
+    challenges: &[F],
+    half: usize,
+    order: BindingOrder,
+) -> Vec<F> {
+    debug_assert_eq!(inputs.len(), NI);
+    debug_assert_eq!(kernel.num_evals, NE);
+    let one = F::one();
 
     let pair = |input: &[F], i: usize| -> (F, F) {
         match order {
@@ -409,10 +377,10 @@ fn pairwise_reduce_weighted<F: Field>(
                 .fold(
                     || {
                         (
-                            new_accs(),
-                            vec![F::zero(); num_inputs],
-                            vec![F::zero(); num_inputs],
-                            vec![F::zero(); num_evals],
+                            [F::Accumulator::default(); NE],
+                            [F::zero(); NI],
+                            [F::zero(); NI],
+                            [F::zero(); NE],
                         )
                     },
                     |(mut acc, mut lo, mut hi, mut evals), i| {
@@ -421,61 +389,60 @@ fn pairwise_reduce_weighted<F: Field>(
                             lo[k] = l;
                             hi[k] = h;
                         }
-
                         kernel.evaluate(&lo, &hi, challenges, &mut evals);
-                        let w = weights[i];
                         for (a, e) in acc.iter_mut().zip(evals.iter()) {
-                            a.fmadd(w, *e);
+                            a.fmadd(one, *e);
                         }
                         (acc, lo, hi, evals)
                     },
                 )
                 .map(|(acc, _, _, _)| acc)
-                .reduce(new_accs, |mut a, b| {
-                    for (ai, bi) in a.iter_mut().zip(b) {
-                        ai.merge(bi);
-                    }
-                    a
-                });
+                .reduce(
+                    || [F::Accumulator::default(); NE],
+                    |mut a, b| {
+                        for (ai, bi) in a.iter_mut().zip(b) {
+                            ai.merge(bi);
+                        }
+                        a
+                    },
+                );
 
             return accs.into_iter().map(FieldAccumulator::reduce).collect();
         }
     }
 
-    let mut accs = new_accs();
-    let mut lo = vec![F::zero(); num_inputs];
-    let mut hi = vec![F::zero(); num_inputs];
-    let mut evals = vec![F::zero(); num_evals];
+    let mut accs = [F::Accumulator::default(); NE];
+    let mut lo = [F::zero(); NI];
+    let mut hi = [F::zero(); NI];
+    let mut evals = [F::zero(); NE];
 
-    for (i, &w) in weights.iter().enumerate() {
+    for i in 0..half {
         for (k, &input) in inputs.iter().enumerate() {
             let (l, h) = pair(input, i);
             lo[k] = l;
             hi[k] = h;
         }
-
         kernel.evaluate(&lo, &hi, challenges, &mut evals);
         for (a, e) in accs.iter_mut().zip(evals.iter()) {
-            a.fmadd(w, *e);
+            a.fmadd(one, *e);
         }
     }
 
     accs.into_iter().map(FieldAccumulator::reduce).collect()
 }
 
-/// Unit (unweighted) pairwise reduce.
+/// Dynamic dense reduce for uncommon input/eval counts. Uses heap-allocated
+/// scratch Vecs.
 #[allow(clippy::ptr_arg)]
-fn pairwise_reduce_unit<F: Field>(
+fn reduce_dense_dynamic<F: Field>(
     inputs: &[&Vec<F>],
     kernel: &CpuKernel<F>,
     challenges: &[F],
+    num_inputs: usize,
     num_evals: usize,
+    half: usize,
     order: BindingOrder,
 ) -> Vec<F> {
-    let n = inputs[0].len();
-    debug_assert!(n.is_multiple_of(2), "buffer length must be even");
-    let half = n / 2;
-    let num_inputs = inputs.len();
     let one = F::one();
 
     let new_accs =
@@ -510,7 +477,6 @@ fn pairwise_reduce_unit<F: Field>(
                             lo[k] = l;
                             hi[k] = h;
                         }
-
                         kernel.evaluate(&lo, &hi, challenges, &mut evals);
                         for (a, e) in acc.iter_mut().zip(evals.iter()) {
                             a.fmadd(one, *e);
@@ -541,7 +507,6 @@ fn pairwise_reduce_unit<F: Field>(
             lo[k] = l;
             hi[k] = h;
         }
-
         kernel.evaluate(&lo, &hi, challenges, &mut evals);
         for (a, e) in accs.iter_mut().zip(evals.iter()) {
             a.fmadd(one, *e);
@@ -553,8 +518,8 @@ fn pairwise_reduce_unit<F: Field>(
 
 /// Tensor (split-eq) pairwise reduce. Always uses LowToHigh binding.
 #[allow(clippy::ptr_arg)]
-#[tracing::instrument(skip_all, name = "pairwise_reduce_tensor")]
-fn pairwise_reduce_tensor<F: Field>(
+#[tracing::instrument(skip_all, name = "reduce_tensor")]
+fn reduce_tensor<F: Field>(
     inputs: &[&Vec<F>],
     outer_weights: &[F],
     inner_weights: &[F],
@@ -641,9 +606,172 @@ fn pairwise_reduce_tensor<F: Field>(
         .collect()
 }
 
+/// One entry in the sparse pair index.
+///
+/// `lo_idx` / `hi_idx` are indices into the value columns. `None` means
+/// the entry is absent (defaults to zero).
+struct SparsePair {
+    parent_key: u64,
+    lo_idx: Option<usize>,
+    hi_idx: Option<usize>,
+}
+
+/// Build the pair index from a sorted key column.
+///
+/// Scans `keys` linearly, merging adjacent `(2k, 2k+1)` entries into a
+/// single [`SparsePair`] with parent key `k`. Runs in O(n).
+fn build_sparse_pairs(keys: &[u64]) -> Vec<SparsePair> {
+    let n = keys.len();
+    let mut pairs = Vec::with_capacity(n);
+    let mut i = 0;
+    while i < n {
+        let key = keys[i];
+        let parent = key / 2;
+        if key.is_multiple_of(2) {
+            if i + 1 < n && keys[i + 1] == key + 1 {
+                pairs.push(SparsePair { parent_key: parent, lo_idx: Some(i), hi_idx: Some(i + 1) });
+                i += 2;
+            } else {
+                pairs.push(SparsePair { parent_key: parent, lo_idx: Some(i), hi_idx: None });
+                i += 1;
+            }
+        } else {
+            pairs.push(SparsePair { parent_key: parent, lo_idx: None, hi_idx: Some(i) });
+            i += 1;
+        }
+    }
+    pairs
+}
+
+/// Sparse merge-join reduce over sorted keys.
+#[allow(clippy::ptr_arg)]
+#[tracing::instrument(skip_all, name = "reduce_sparse")]
+fn reduce_sparse<F: Field>(
+    value_inputs: &[&Vec<F>],
+    keys: &Vec<u64>,
+    kernel: &CpuKernel<F>,
+    challenges: &[F],
+    num_evals: usize,
+) -> Vec<F> {
+    let pairs = build_sparse_pairs(keys);
+    let num_inputs = value_inputs.len();
+    let one = F::one();
+
+    let new_accs =
+        || -> Vec<F::Accumulator> { (0..num_evals).map(|_| F::Accumulator::default()).collect() };
+
+    let eval_pair =
+        |acc: &mut Vec<F::Accumulator>,
+         lo: &mut Vec<F>,
+         hi: &mut Vec<F>,
+         evals: &mut Vec<F>,
+         p: &SparsePair| {
+            for (k, input) in value_inputs.iter().enumerate() {
+                lo[k] = p.lo_idx.map_or(F::zero(), |j| input[j]);
+                hi[k] = p.hi_idx.map_or(F::zero(), |j| input[j]);
+            }
+            kernel.evaluate(lo, hi, challenges, evals);
+            for (a, e) in acc.iter_mut().zip(evals.iter()) {
+                a.fmadd(one, *e);
+            }
+        };
+
+    #[cfg(feature = "parallel")]
+    {
+        if pairs.len() >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+
+            let accs = pairs
+                .par_iter()
+                .fold(
+                    || {
+                        (
+                            new_accs(),
+                            vec![F::zero(); num_inputs],
+                            vec![F::zero(); num_inputs],
+                            vec![F::zero(); num_evals],
+                        )
+                    },
+                    |(mut acc, mut lo, mut hi, mut evals), p| {
+                        eval_pair(&mut acc, &mut lo, &mut hi, &mut evals, p);
+                        (acc, lo, hi, evals)
+                    },
+                )
+                .map(|(acc, _, _, _)| acc)
+                .reduce(new_accs, |mut a, b| {
+                    for (ai, bi) in a.iter_mut().zip(b) {
+                        ai.merge(bi);
+                    }
+                    a
+                });
+
+            return accs.into_iter().map(FieldAccumulator::reduce).collect();
+        }
+    }
+
+    let mut accs = new_accs();
+    let mut lo = vec![F::zero(); num_inputs];
+    let mut hi = vec![F::zero(); num_inputs];
+    let mut evals = vec![F::zero(); num_evals];
+
+    for p in &pairs {
+        eval_pair(&mut accs, &mut lo, &mut hi, &mut evals, p);
+    }
+
+    accs.into_iter().map(FieldAccumulator::reduce).collect()
+}
+
+/// Sparse bind: interpolate paired entries and halve the key space.
+#[tracing::instrument(skip_all, name = "bind_sparse")]
+fn bind_sparse<F: Field>(inputs: &mut [Buf<CpuBackend, F>], scalar: F) {
+    let num_value_inputs = inputs.len() - 1;
+    let keys: Vec<u64> = inputs[num_value_inputs].as_u64().clone();
+    let pairs = build_sparse_pairs(&keys);
+
+    #[cfg(feature = "parallel")]
+    {
+        if pairs.len() >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+
+            for input in &mut inputs[..num_value_inputs] {
+                let values = input.as_field();
+                let bound: Vec<F> = pairs
+                    .par_iter()
+                    .map(|p| {
+                        let lo_val = p.lo_idx.map_or(F::zero(), |j| values[j]);
+                        let hi_val = p.hi_idx.map_or(F::zero(), |j| values[j]);
+                        lo_val + scalar * (hi_val - lo_val)
+                    })
+                    .collect();
+                *input.as_field_mut() = bound;
+            }
+
+            let new_keys: Vec<u64> = pairs.iter().map(|p| p.parent_key).collect();
+            *inputs[num_value_inputs].as_u64_mut() = new_keys;
+            return;
+        }
+    }
+
+    let out_len = pairs.len();
+    for input in &mut inputs[..num_value_inputs] {
+        let values = input.as_field();
+        let mut bound = Vec::with_capacity(out_len);
+        for p in &pairs {
+            let lo_val = p.lo_idx.map_or(F::zero(), |j| values[j]);
+            let hi_val = p.hi_idx.map_or(F::zero(), |j| values[j]);
+            bound.push(lo_val + scalar * (hi_val - lo_val));
+        }
+        *input.as_field_mut() = bound;
+    }
+
+    let new_keys: Vec<u64> = pairs.iter().map(|p| p.parent_key).collect();
+    *inputs[num_value_inputs].as_u64_mut() = new_keys;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jolt_compute::DeviceBuffer;
     use jolt_field::{Field, Fr};
     use num_traits::{One, Zero};
     use rand_chacha::ChaCha20Rng;
@@ -698,71 +826,39 @@ mod tests {
     }
 
     #[test]
-    fn interpolate_pairs_field_matches_manual() {
+    fn interpolate_inplace_low_to_high() {
         let b = backend();
         let mut rng = ChaCha20Rng::seed_from_u64(1);
         let n = 8;
         let data: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
         let scalar = Fr::random(&mut rng);
 
-        let buf = b.upload(&data);
-        let result = b.interpolate_pairs::<Fr, Fr>(buf, scalar);
+        let mut buf = b.upload(&data);
+        b.interpolate_inplace(&mut buf, scalar, BindingOrder::LowToHigh);
 
-        assert_eq!(result.len(), n / 2);
+        assert_eq!(buf.len(), n / 2);
         for i in 0..n / 2 {
             let expected = data[2 * i] + scalar * (data[2 * i + 1] - data[2 * i]);
-            assert_eq!(result[i], expected);
+            assert_eq!(buf[i], expected);
         }
     }
 
     #[test]
-    fn interpolate_pairs_compact_u8() {
+    fn interpolate_inplace_high_to_low() {
         let b = backend();
-        let data: Vec<u8> = vec![0, 10, 20, 30, 40, 50, 60, 70];
-        let scalar = Fr::from_u64(2);
-
-        let buf = b.upload(&data);
-        let result = b.interpolate_pairs::<u8, Fr>(buf, scalar);
-
-        assert_eq!(result.len(), 4);
-        for i in 0..4 {
-            let lo = Fr::from(data[2 * i]);
-            let hi = Fr::from(data[2 * i + 1]);
-            let expected = lo + scalar * (hi - lo);
-            assert_eq!(result[i], expected);
-        }
-    }
-
-    #[test]
-    fn interpolate_pairs_matches_polynomial_bind() {
-        use jolt_poly::Polynomial;
-
-        let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(42);
-        let n = 6;
-        let data: Vec<Fr> = (0..(1 << n)).map(|_| Fr::random(&mut rng)).collect();
+        let mut rng = ChaCha20Rng::seed_from_u64(2);
+        let n = 8;
+        let data: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
         let scalar = Fr::random(&mut rng);
 
-        // Polynomial bind: fixes first variable
-        let poly = Polynomial::new(data.clone());
-        let bound = poly.bind_to_field(scalar);
+        let mut buf = b.upload(&data);
+        b.interpolate_inplace(&mut buf, scalar, BindingOrder::HighToLow);
 
-        // ComputeBackend interpolate_pairs: pairwise interpolation
-        // Polynomial::bind uses layout [lo_half | hi_half] while our
-        // interpolate_pairs uses interleaved [lo0, hi0, lo1, hi1, ...].
-        // So we need to interleave the polynomial data to match.
-        let half = data.len() / 2;
-        let mut interleaved = Vec::with_capacity(data.len());
-        for i in 0..half {
-            interleaved.push(data[i]);
-            interleaved.push(data[i + half]);
+        assert_eq!(buf.len(), n / 2);
+        for i in 0..n / 2 {
+            let expected = data[i] + scalar * (data[i + n / 2] - data[i]);
+            assert_eq!(buf[i], expected);
         }
-
-        let buf = b.upload(&interleaved);
-        let result = b.interpolate_pairs::<Fr, Fr>(buf, scalar);
-
-        assert_eq!(result.len(), bound.len());
-        assert_eq!(&result, bound.evaluations());
     }
 
     #[test]
@@ -796,564 +892,269 @@ mod tests {
     #[test]
     fn eq_table_parallel_matches_sequential() {
         let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(300);
-        // n=11 -> 2048 entries, above PAR_THRESHOLD
-        let n = 11;
+        let mut rng = ChaCha20Rng::seed_from_u64(42);
+        let n = 14; // 16384 entries > PAR_THRESHOLD
         let point: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
 
         let table = b.eq_table(&point);
         assert_eq!(table.len(), 1 << n);
+
         let sum: Fr = table.iter().copied().sum();
         assert_eq!(sum, Fr::one());
     }
 
-    fn make_identity_kernel() -> CpuKernel<Fr> {
-        // Identity kernel: for a single input, evaluates the linear interpolant
-        // at grid points {0, 1, ..., num_evals-1}.
-        // f(t) = lo + t * (hi - lo)
-        CpuKernel::new(|lo: &[Fr], hi: &[Fr], _challenges: &[Fr], out: &mut [Fr]| {
-            for (t, slot) in out.iter_mut().enumerate() {
-                let t_f = Fr::from_u64(t as u64);
-                let mut sum = Fr::zero();
-                for k in 0..lo.len() {
-                    sum += lo[k] + t_f * (hi[k] - lo[k]);
-                }
-                *slot = sum;
-            }
+    /// Build a sparse kernel from a simple product `o0 * o1`.
+    fn sparse_product_kernel() -> CpuKernel<Fr> {
+        use jolt_compiler::{Factor, Formula, Iteration, KernelSpec, ProductTerm};
+        let formula = Formula::from_terms(vec![ProductTerm {
+            coefficient: 1,
+            factors: vec![Factor::Input(0), Factor::Input(1)],
+        }]);
+        crate::compile(&KernelSpec {
+            num_evals: formula.degree(),
+            formula,
+            iteration: Iteration::Sparse,
+            binding_order: BindingOrder::LowToHigh,
         })
     }
 
     #[test]
-    fn pairwise_reduce_trivial() {
+    fn sparse_reduce_fully_paired() {
         let b = backend();
-        // Single input [1, 2, 3, 4], weights [1, 1], 2 evals (t=0,1)
-        // Pair 0: lo=1, hi=2 -> f(0)=1, f(1)=2; weighted by 1
-        // Pair 1: lo=3, hi=4 -> f(0)=3, f(1)=4; weighted by 1
-        // Sums: [1+3, 2+4] = [4, 6]
-        let input: Vec<Fr> = vec![1, 2, 3, 4].into_iter().map(Fr::from_u64).collect();
-        let weights: Vec<Fr> = vec![Fr::one(), Fr::one()];
+        let kernel = sparse_product_kernel();
 
-        let kernel = make_identity_kernel();
-        let result = b.pairwise_reduce(
-            &[&input],
-            EqInput::Weighted(&weights),
-            &kernel,
-            &[],
-            2,
-            BindingOrder::LowToHigh,
-        );
+        // Keys (0,1) and (4,5): two complete pairs with parent keys 0, 2.
+        let keys: Buf<CpuBackend, Fr> = DeviceBuffer::U64(b.upload(&[0u64, 1, 4, 5]));
+        let col_a: Buf<CpuBackend, Fr> =
+            DeviceBuffer::Field(b.upload(&[Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(5), Fr::from_u64(7)]));
+        let col_b: Buf<CpuBackend, Fr> =
+            DeviceBuffer::Field(b.upload(&[Fr::from_u64(11), Fr::from_u64(13), Fr::from_u64(17), Fr::from_u64(19)]));
 
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0], Fr::from_u64(4));
-        assert_eq!(result[1], Fr::from_u64(6));
+        let result = b.reduce(&kernel, &[&col_a, &col_b, &keys], &[]);
+
+        // Toom-Cook grid {1, ∞} for d=2:
+        // Pair 0: lo=(2,11), hi=(3,13) → P(1)=3*13=39, P(∞)=1*2=2
+        // Pair 1: lo=(5,17), hi=(7,19) → P(1)=7*19=133, P(∞)=2*2=4
+        // Sums: [39+133, 2+4] = [172, 6]
+        assert_eq!(result, vec![Fr::from_u64(172), Fr::from_u64(6)]);
     }
 
     #[test]
-    fn pairwise_reduce_with_weights() {
+    fn sparse_reduce_unpaired_even() {
         let b = backend();
-        let input: Vec<Fr> = vec![10, 20, 30, 40].into_iter().map(Fr::from_u64).collect();
-        let weights: Vec<Fr> = vec![Fr::from_u64(2), Fr::from_u64(3)];
+        let kernel = sparse_product_kernel();
 
-        let kernel = make_identity_kernel();
-        let result = b.pairwise_reduce(
-            &[&input],
-            EqInput::Weighted(&weights),
-            &kernel,
-            &[],
-            2,
-            BindingOrder::LowToHigh,
-        );
+        // Key 6 only (even, no odd sibling): lo=(4,8), hi=(0,0)
+        let keys: Buf<CpuBackend, Fr> = DeviceBuffer::U64(b.upload(&[6u64]));
+        let col_a: Buf<CpuBackend, Fr> = DeviceBuffer::Field(b.upload(&[Fr::from_u64(4)]));
+        let col_b: Buf<CpuBackend, Fr> = DeviceBuffer::Field(b.upload(&[Fr::from_u64(8)]));
 
-        // Pair 0: lo=10, hi=20; w=2 -> [2*10, 2*20] = [20, 40]
-        // Pair 1: lo=30, hi=40; w=3 -> [3*30, 3*40] = [90, 120]
-        // Sums: [110, 160]
-        assert_eq!(result[0], Fr::from_u64(110));
-        assert_eq!(result[1], Fr::from_u64(160));
+        let result = b.reduce(&kernel, &[&col_a, &col_b, &keys], &[]);
+
+        // P(1)=hi_a*hi_b=0*0=0, P(∞)=(0-4)*(0-8)=(-4)*(-8)=32
+        assert_eq!(result[0], Fr::zero());
+        assert_eq!(result[1], Fr::from_u64(32));
     }
 
     #[test]
-    fn pairwise_reduce_multiple_inputs() {
+    fn sparse_reduce_unpaired_odd() {
         let b = backend();
-        let a: Vec<Fr> = vec![1, 2, 3, 4].into_iter().map(Fr::from_u64).collect();
-        let c: Vec<Fr> = vec![10, 20, 30, 40].into_iter().map(Fr::from_u64).collect();
-        let weights: Vec<Fr> = vec![Fr::one(); 2];
+        let kernel = sparse_product_kernel();
 
-        // Kernel sums across inputs: sum_k (lo[k] + t*(hi[k]-lo[k]))
-        let kernel = make_identity_kernel();
-        let result = b.pairwise_reduce(
-            &[&a, &c],
-            EqInput::Weighted(&weights),
-            &kernel,
-            &[],
-            2,
-            BindingOrder::LowToHigh,
-        );
+        // Key 3 only (odd, no even sibling): lo=(0,0), hi=(5,7)
+        let keys: Buf<CpuBackend, Fr> = DeviceBuffer::U64(b.upload(&[3u64]));
+        let col_a: Buf<CpuBackend, Fr> = DeviceBuffer::Field(b.upload(&[Fr::from_u64(5)]));
+        let col_b: Buf<CpuBackend, Fr> = DeviceBuffer::Field(b.upload(&[Fr::from_u64(7)]));
 
-        // Pair 0: a=(1,2), c=(10,20) -> f(0)=1+10=11, f(1)=2+20=22
-        // Pair 1: a=(3,4), c=(30,40) -> f(0)=3+30=33, f(1)=4+40=44
-        // Sums: [44, 66]
-        assert_eq!(result[0], Fr::from_u64(44));
-        assert_eq!(result[1], Fr::from_u64(66));
+        let result = b.reduce(&kernel, &[&col_a, &col_b, &keys], &[]);
+
+        // P(1)=hi_a*hi_b=5*7=35, P(∞)=(5-0)*(7-0)=35
+        assert_eq!(result[0], Fr::from_u64(35));
+        assert_eq!(result[1], Fr::from_u64(35));
     }
 
     #[test]
-    fn pairwise_reduce_3_evals() {
+    fn sparse_reduce_mixed_pairing() {
         let b = backend();
-        let input: Vec<Fr> = vec![1, 3].into_iter().map(Fr::from_u64).collect();
-        let weights: Vec<Fr> = vec![Fr::one()];
+        let kernel = sparse_product_kernel();
 
-        // Identity kernel with 3 evals: t=0,1,2
-        let kernel = make_identity_kernel();
-        let result = b.pairwise_reduce(
-            &[&input],
-            EqInput::Weighted(&weights),
-            &kernel,
-            &[],
-            3,
-            BindingOrder::LowToHigh,
-        );
+        // Keys: 1(odd-only), 4(even-only), 6,7(paired)
+        let keys: Buf<CpuBackend, Fr> = DeviceBuffer::U64(b.upload(&[1u64, 4, 6, 7]));
+        let col_a: Buf<CpuBackend, Fr> =
+            DeviceBuffer::Field(b.upload(&[Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(5), Fr::from_u64(8)]));
+        let col_b: Buf<CpuBackend, Fr> =
+            DeviceBuffer::Field(b.upload(&[Fr::from_u64(10), Fr::from_u64(20), Fr::from_u64(30), Fr::from_u64(40)]));
 
-        // lo=1, hi=3
-        // f(0) = 1, f(1) = 3, f(2) = 1 + 2*(3-1) = 5
-        assert_eq!(result.len(), 3);
-        assert_eq!(result[0], Fr::from_u64(1));
-        assert_eq!(result[1], Fr::from_u64(3));
-        assert_eq!(result[2], Fr::from_u64(5));
+        let result = b.reduce(&kernel, &[&col_a, &col_b, &keys], &[]);
+
+        // Key 1 (odd-only): lo=(0,0), hi=(2,10) → P(1)=2*10=20, P(∞)=2*10=20
+        // Key 4 (even-only): lo=(3,20), hi=(0,0) → P(1)=0, P(∞)=(-3)*(-20)=60
+        // Keys (6,7) (paired): lo=(5,30), hi=(8,40) → P(1)=8*40=320, P(∞)=3*10=30
+        // Sums: [20+0+320, 20+60+30] = [340, 110]
+        assert_eq!(result, vec![Fr::from_u64(340), Fr::from_u64(110)]);
     }
 
     #[test]
-    fn interpolate_pairs_large_parallel() {
+    fn sparse_bind_fully_paired() {
         let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(200);
-        // 4096 elements -> 2048 pairs, above PAR_THRESHOLD
-        let n = 4096;
-        let data: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let scalar = Fr::random(&mut rng);
+        let kernel = sparse_product_kernel();
+        let scalar = Fr::from_u64(3);
 
-        let buf = b.upload(&data);
-        let result = b.interpolate_pairs::<Fr, Fr>(buf, scalar);
+        let mut inputs: Vec<Buf<CpuBackend, Fr>> = vec![
+            DeviceBuffer::Field(b.upload(&[Fr::from_u64(10), Fr::from_u64(20), Fr::from_u64(30), Fr::from_u64(40)])),
+            DeviceBuffer::Field(b.upload(&[Fr::from_u64(1), Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(4)])),
+            DeviceBuffer::U64(b.upload(&[0u64, 1, 4, 5])),
+        ];
 
-        assert_eq!(result.len(), n / 2);
-        for i in 0..n / 2 {
-            let expected = data[2 * i] + scalar * (data[2 * i + 1] - data[2 * i]);
-            assert_eq!(result[i], expected);
+        b.bind(&kernel, &mut inputs, scalar);
+
+        // Pair (0,1) parent=0: 10+3*(20-10)=40, 1+3*(2-1)=4
+        // Pair (4,5) parent=2: 30+3*(40-30)=60, 3+3*(4-3)=6
+        assert_eq!(*inputs[0].as_field(), vec![Fr::from_u64(40), Fr::from_u64(60)]);
+        assert_eq!(*inputs[1].as_field(), vec![Fr::from_u64(4), Fr::from_u64(6)]);
+        assert_eq!(*inputs[2].as_u64(), vec![0u64, 2]);
+    }
+
+    #[test]
+    fn sparse_bind_unpaired() {
+        let b = backend();
+        let kernel = sparse_product_kernel();
+        let scalar = Fr::from_u64(5);
+
+        // Key 3 (odd-only), key 8 (even-only)
+        let mut inputs: Vec<Buf<CpuBackend, Fr>> = vec![
+            DeviceBuffer::Field(b.upload(&[Fr::from_u64(7), Fr::from_u64(11)])),
+            DeviceBuffer::U64(b.upload(&[3u64, 8])),
+        ];
+
+        b.bind(&kernel, &mut inputs, scalar);
+
+        // Key 3 odd-only, parent=1: lo=0, hi=7 → 0+5*(7-0)=35
+        // Key 8 even-only, parent=4: lo=11, hi=0 → 11+5*(0-11)=-44
+        let neg_44 = Fr::zero() - Fr::from_u64(44);
+        assert_eq!(*inputs[0].as_field(), vec![Fr::from_u64(35), neg_44]);
+        assert_eq!(*inputs[1].as_u64(), vec![1u64, 4]);
+    }
+
+    #[test]
+    fn sparse_bind_preserves_sorted_keys() {
+        let b = backend();
+        let kernel = sparse_product_kernel();
+        let scalar = Fr::from_u64(2);
+
+        // Many entries across the key space
+        let mut inputs: Vec<Buf<CpuBackend, Fr>> = vec![
+            DeviceBuffer::Field(b.upload(&[Fr::one(); 6])),
+            DeviceBuffer::U64(b.upload(&[1u64, 2, 3, 10, 11, 20])),
+        ];
+
+        b.bind(&kernel, &mut inputs, scalar);
+
+        let keys = inputs[1].as_u64();
+        // Keys 1(odd), (2,3)(paired), (10,11)(paired), 20(even)
+        assert_eq!(keys, &[0, 1, 5, 10]);
+        for w in keys.windows(2) {
+            assert!(w[0] < w[1], "keys must remain sorted");
         }
     }
 
-    #[test]
-    fn pairwise_reduce_large_parallel() {
-        let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(201);
-        // 4096 elements -> 2048 pairs, above PAR_THRESHOLD
-        let n = 4096;
-        let input: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let weights: Vec<Fr> = (0..n / 2).map(|_| Fr::random(&mut rng)).collect();
-
-        let kernel = make_identity_kernel();
-        let result = b.pairwise_reduce(
-            &[&input],
-            EqInput::Weighted(&weights),
-            &kernel,
-            &[],
-            2,
-            BindingOrder::LowToHigh,
-        );
-
-        // Verify against sequential computation
-        let mut expected = vec![Fr::zero(); 2];
-        for i in 0..n / 2 {
-            let lo = input[2 * i];
-            let hi = input[2 * i + 1];
-            expected[0] += weights[i] * lo;
-            expected[1] += weights[i] * hi;
-        }
-        assert_eq!(result, expected);
-    }
-
-    #[test]
-    fn interpolate_pairs_batch_matches_individual() {
-        let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(400);
-        let scalar = Fr::random(&mut rng);
-
-        let bufs: Vec<Vec<Fr>> = (0..5)
-            .map(|_| (0..64).map(|_| Fr::random(&mut rng)).collect())
-            .collect();
-
-        // Batched
-        let batch_result = b.interpolate_pairs_batch(bufs.clone(), scalar);
-
-        // Individual
-        let individual_results: Vec<Vec<Fr>> = bufs
-            .into_iter()
-            .map(|buf| b.interpolate_pairs(buf, scalar))
-            .collect();
-
-        assert_eq!(batch_result, individual_results);
-    }
-
-    #[test]
-    fn interpolate_pairs_batch_large_parallel() {
-        let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(401);
-        let scalar = Fr::random(&mut rng);
-
-        // 10 buffers of 512 elements each = 2560 total pairs, above PAR_THRESHOLD
-        let bufs: Vec<Vec<Fr>> = (0..10)
-            .map(|_| (0..512).map(|_| Fr::random(&mut rng)).collect())
-            .collect();
-
-        let batch_result = b.interpolate_pairs_batch(bufs.clone(), scalar);
-
-        let individual_results: Vec<Vec<Fr>> = bufs
-            .into_iter()
-            .map(|buf| b.interpolate_pairs(buf, scalar))
-            .collect();
-
-        assert_eq!(batch_result, individual_results);
-    }
-
-    #[test]
-    fn inplace_low_to_high_matches_allocating() {
-        let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(500);
-        let n = 64;
-        let data: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let scalar = Fr::random(&mut rng);
-
-        let allocating = b.interpolate_pairs::<Fr, Fr>(data.clone(), scalar);
-
-        let mut inplace = data;
-        b.interpolate_pairs_inplace(&mut inplace, scalar, BindingOrder::LowToHigh);
-
-        assert_eq!(inplace, allocating);
-    }
-
-    #[test]
-    fn inplace_high_to_low_matches_polynomial_bind() {
-        use jolt_poly::Polynomial;
-
-        let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(501);
-        let nv = 6;
-        let data: Vec<Fr> = (0..(1 << nv)).map(|_| Fr::random(&mut rng)).collect();
-        let scalar = Fr::random(&mut rng);
-
-        // Polynomial::bind uses split-half layout (HighToLow)
-        let poly = Polynomial::new(data.clone());
-        let bound = poly.bind_to_field(scalar);
-
-        let mut buf = data;
-        b.interpolate_pairs_inplace(&mut buf, scalar, BindingOrder::HighToLow);
-
-        assert_eq!(buf.len(), bound.len());
-        assert_eq!(&buf, bound.evaluations());
-    }
-
-    #[test]
-    fn inplace_high_to_low_parallel() {
-        let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(502);
-        // 4096 elements = 2048 pairs, above PAR_THRESHOLD
-        let n = 4096;
-        let data: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let scalar = Fr::random(&mut rng);
-
-        // Reference: manual HighToLow
-        let half = n / 2;
-        let expected: Vec<Fr> = (0..half)
-            .map(|i| data[i] + scalar * (data[i + half] - data[i]))
-            .collect();
-
-        let mut buf = data;
-        b.interpolate_pairs_inplace(&mut buf, scalar, BindingOrder::HighToLow);
-
-        assert_eq!(buf, expected);
-    }
-
-    #[test]
-    fn inplace_low_to_high_parallel() {
-        let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(503);
-        let n = 4096;
-        let data: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let scalar = Fr::random(&mut rng);
-
-        let allocating = b.interpolate_pairs::<Fr, Fr>(data.clone(), scalar);
-
-        let mut inplace = data;
-        b.interpolate_pairs_inplace(&mut inplace, scalar, BindingOrder::LowToHigh);
-
-        assert_eq!(inplace, allocating);
-    }
-
-    #[test]
-    fn batch_inplace_matches_individual() {
-        let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(504);
-        let scalar = Fr::random(&mut rng);
-
-        let mut bufs: Vec<Vec<Fr>> = (0..5)
-            .map(|_| (0..64).map(|_| Fr::random(&mut rng)).collect())
-            .collect();
-        let bufs_copy = bufs.clone();
-
-        b.interpolate_pairs_batch_inplace(&mut bufs, scalar, BindingOrder::LowToHigh);
-
-        let individual: Vec<Vec<Fr>> = bufs_copy
-            .into_iter()
-            .map(|buf| b.interpolate_pairs(buf, scalar))
-            .collect();
-
-        assert_eq!(bufs, individual);
-    }
-
-    #[test]
-    fn batch_inplace_high_to_low() {
-        use jolt_poly::Polynomial;
-
-        let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(505);
-        let scalar = Fr::random(&mut rng);
-        let nv = 4;
-
-        let mut bufs: Vec<Vec<Fr>> = (0..3)
-            .map(|_| (0..(1 << nv)).map(|_| Fr::random(&mut rng)).collect())
-            .collect();
-        let expected: Vec<Vec<Fr>> = bufs
-            .iter()
-            .map(|data| {
-                let p = Polynomial::new(data.clone());
-                p.bind_to_field(scalar).evaluations().to_vec()
-            })
-            .collect();
-
-        b.interpolate_pairs_batch_inplace(&mut bufs, scalar, BindingOrder::HighToLow);
-
-        assert_eq!(bufs, expected);
-    }
-
-    #[test]
-    fn tensor_reduce_matches_flat_reduce() {
-        let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(700);
-
-        let outer_len = 4;
-        let inner_len = 8;
-        let total_pairs = outer_len * inner_len;
-        let n = total_pairs * 2;
-
-        let input: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let outer_w: Vec<Fr> = (0..outer_len).map(|_| Fr::random(&mut rng)).collect();
-        let inner_w: Vec<Fr> = (0..inner_len).map(|_| Fr::random(&mut rng)).collect();
-
-        let mut flat_w = Vec::with_capacity(total_pairs);
-        for &o in &outer_w {
-            for &i in &inner_w {
-                flat_w.push(o * i);
+    /// Reference: manually pairs entries and evaluates `a * b` on the
+    /// Toom-Cook grid {1, ∞}.
+    fn reference_sparse_product(col_a: &[Fr], col_b: &[Fr], keys: &[u64]) -> Vec<Fr> {
+        let n = keys.len();
+        let mut s1 = Fr::zero();
+        let mut s_inf = Fr::zero();
+        let mut i = 0;
+        while i < n {
+            let key = keys[i];
+            let (lo_a, lo_b, hi_a, hi_b);
+            if key.is_multiple_of(2) {
+                lo_a = col_a[i];
+                lo_b = col_b[i];
+                if i + 1 < n && keys[i + 1] == key + 1 {
+                    hi_a = col_a[i + 1];
+                    hi_b = col_b[i + 1];
+                    i += 2;
+                } else {
+                    hi_a = Fr::zero();
+                    hi_b = Fr::zero();
+                    i += 1;
+                }
+            } else {
+                lo_a = Fr::zero();
+                lo_b = Fr::zero();
+                hi_a = col_a[i];
+                hi_b = col_b[i];
+                i += 1;
             }
+            // Toom-Cook d=2: P(1) = hi*hi, P(∞) = delta*delta
+            s1 += hi_a * hi_b;
+            s_inf += (hi_a - lo_a) * (hi_b - lo_b);
         }
-
-        let kernel = make_identity_kernel();
-        let flat_result = b.pairwise_reduce(
-            &[&input],
-            EqInput::Weighted(&flat_w),
-            &kernel,
-            &[],
-            2,
-            BindingOrder::LowToHigh,
-        );
-        let tensor_result = b.pairwise_reduce(
-            &[&input],
-            EqInput::Tensor {
-                outer: &outer_w,
-                inner: &inner_w,
-            },
-            &kernel,
-            &[],
-            2,
-            BindingOrder::LowToHigh,
-        );
-
-        assert_eq!(tensor_result, flat_result);
+        vec![s1, s_inf]
     }
 
     #[test]
-    fn tensor_reduce_multiple_inputs() {
+    fn sparse_reduce_large_rayon() {
         let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(702);
+        let kernel = sparse_product_kernel();
+        let mut rng = ChaCha20Rng::seed_from_u64(11111);
 
-        let outer_len = 4;
-        let inner_len = 4;
-        let n = outer_len * inner_len * 2;
+        // 2200 fully-paired entries → 1100 pairs > PAR_THRESHOLD (1024).
+        let num_pairs = 1100;
+        let keys: Vec<u64> = (0..num_pairs)
+            .flat_map(|k| [k as u64 * 2, k as u64 * 2 + 1])
+            .collect();
+        let n = keys.len();
 
-        let input_a: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let input_b: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let outer_w: Vec<Fr> = (0..outer_len).map(|_| Fr::random(&mut rng)).collect();
-        let inner_w: Vec<Fr> = (0..inner_len).map(|_| Fr::random(&mut rng)).collect();
+        let col_a: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
+        let col_b: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
 
-        let mut flat_w = Vec::with_capacity(outer_len * inner_len);
-        for &o in &outer_w {
-            for &i in &inner_w {
-                flat_w.push(o * i);
-            }
+        let bufs: Vec<Buf<CpuBackend, Fr>> = vec![
+            DeviceBuffer::Field(b.upload(&col_a)),
+            DeviceBuffer::Field(b.upload(&col_b)),
+            DeviceBuffer::U64(b.upload(&keys)),
+        ];
+        let buf_refs: Vec<&Buf<CpuBackend, Fr>> = bufs.iter().collect();
+        let result = b.reduce(&kernel, &buf_refs, &[]);
+
+        let expected = reference_sparse_product(&col_a, &col_b, &keys);
+        assert_eq!(result, expected, "large sparse reduce mismatch");
+    }
+
+    #[test]
+    fn sparse_bind_large_rayon() {
+        let b = backend();
+        let kernel = sparse_product_kernel();
+        let scalar = Fr::from_u64(7);
+        let mut rng = ChaCha20Rng::seed_from_u64(22222);
+
+        // 2200 fully-paired entries → 1100 pairs > PAR_THRESHOLD.
+        let num_pairs = 1100;
+        let keys: Vec<u64> = (0..num_pairs)
+            .flat_map(|k| [k as u64 * 2, k as u64 * 2 + 1])
+            .collect();
+        let n = keys.len();
+
+        let col_a: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
+        let mut inputs: Vec<Buf<CpuBackend, Fr>> = vec![
+            DeviceBuffer::Field(b.upload(&col_a)),
+            DeviceBuffer::U64(b.upload(&keys)),
+        ];
+
+        b.bind(&kernel, &mut inputs, scalar);
+
+        let bound = inputs[0].as_field();
+        let new_keys = inputs[1].as_u64();
+        assert_eq!(bound.len(), num_pairs);
+        assert_eq!(new_keys.len(), num_pairs);
+
+        for i in 0..num_pairs {
+            let lo = col_a[2 * i];
+            let hi = col_a[2 * i + 1];
+            let expected = lo + scalar * (hi - lo);
+            assert_eq!(bound[i], expected, "bind mismatch at pair {i}");
+            assert_eq!(new_keys[i], i as u64, "key mismatch at pair {i}");
         }
-
-        let kernel = make_identity_kernel();
-        let flat_result = b.pairwise_reduce(
-            &[&input_a, &input_b],
-            EqInput::Weighted(&flat_w),
-            &kernel,
-            &[],
-            2,
-            BindingOrder::LowToHigh,
-        );
-        let tensor_result = b.pairwise_reduce(
-            &[&input_a, &input_b],
-            EqInput::Tensor {
-                outer: &outer_w,
-                inner: &inner_w,
-            },
-            &kernel,
-            &[],
-            2,
-            BindingOrder::LowToHigh,
-        );
-
-        assert_eq!(tensor_result, flat_result);
-    }
-
-    #[test]
-    fn tensor_reduce_parallel() {
-        let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(703);
-
-        let outer_len = 32;
-        let inner_len = 64;
-        let n = outer_len * inner_len * 2;
-
-        let input: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let outer_w: Vec<Fr> = (0..outer_len).map(|_| Fr::random(&mut rng)).collect();
-        let inner_w: Vec<Fr> = (0..inner_len).map(|_| Fr::random(&mut rng)).collect();
-
-        let mut flat_w = Vec::with_capacity(outer_len * inner_len);
-        for &o in &outer_w {
-            for &i in &inner_w {
-                flat_w.push(o * i);
-            }
-        }
-
-        let kernel = make_identity_kernel();
-        let flat_result = b.pairwise_reduce(
-            &[&input],
-            EqInput::Weighted(&flat_w),
-            &kernel,
-            &[],
-            3,
-            BindingOrder::LowToHigh,
-        );
-        let tensor_result = b.pairwise_reduce(
-            &[&input],
-            EqInput::Tensor {
-                outer: &outer_w,
-                inner: &inner_w,
-            },
-            &kernel,
-            &[],
-            3,
-            BindingOrder::LowToHigh,
-        );
-
-        assert_eq!(tensor_result, flat_result);
-    }
-
-    #[test]
-    fn pairwise_reduce_high_to_low_matches_manual() {
-        let b = backend();
-        let input: Vec<Fr> = (0..8).map(|i| Fr::from_u64(i as u64 * 10)).collect();
-        let weights: Vec<Fr> = vec![Fr::one(); 4];
-
-        let kernel = make_identity_kernel();
-        let result = b.pairwise_reduce(
-            &[&input],
-            EqInput::Weighted(&weights),
-            &kernel,
-            &[],
-            2,
-            BindingOrder::HighToLow,
-        );
-
-        // Pair 0: lo=0, hi=40 -> f(0)=0, f(1)=40
-        // Pair 1: lo=10, hi=50 -> f(0)=10, f(1)=50
-        // Pair 2: lo=20, hi=60 -> f(0)=20, f(1)=60
-        // Pair 3: lo=30, hi=70 -> f(0)=30, f(1)=70
-        // Sums: [0+10+20+30, 40+50+60+70] = [60, 220]
-        assert_eq!(result[0], Fr::from_u64(60));
-        assert_eq!(result[1], Fr::from_u64(220));
-    }
-
-    #[test]
-    fn pairwise_reduce_high_to_low_matches_polynomial_layout() {
-        let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(900);
-        let nv = 6;
-        let data: Vec<Fr> = (0..(1 << nv)).map(|_| Fr::random(&mut rng)).collect();
-
-        let half = data.len() / 2;
-        let weights = vec![Fr::one(); half];
-
-        let kernel = make_identity_kernel();
-        let result = b.pairwise_reduce(
-            &[&data],
-            EqInput::Weighted(&weights),
-            &kernel,
-            &[],
-            2,
-            BindingOrder::HighToLow,
-        );
-
-        let sum_lo: Fr = data[..half].iter().copied().sum();
-        let sum_hi: Fr = data[half..].iter().copied().sum();
-        assert_eq!(result[0], sum_lo);
-        assert_eq!(result[1], sum_hi);
-
-        let result_interleaved = b.pairwise_reduce(
-            &[&data],
-            EqInput::Weighted(&weights),
-            &kernel,
-            &[],
-            2,
-            BindingOrder::LowToHigh,
-        );
-        assert_ne!(result, result_interleaved);
-    }
-
-    #[test]
-    fn pairwise_reduce_high_to_low_parallel() {
-        let b = backend();
-        let mut rng = ChaCha20Rng::seed_from_u64(901);
-        let n = 4096;
-        let input: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let weights: Vec<Fr> = (0..n / 2).map(|_| Fr::random(&mut rng)).collect();
-        let half = n / 2;
-
-        let kernel = make_identity_kernel();
-        let result = b.pairwise_reduce(
-            &[&input],
-            EqInput::Weighted(&weights),
-            &kernel,
-            &[],
-            2,
-            BindingOrder::HighToLow,
-        );
-
-        let mut expected = vec![Fr::zero(); 2];
-        for i in 0..half {
-            let lo = input[i];
-            let hi = input[i + half];
-            expected[0] += weights[i] * lo;
-            expected[1] += weights[i] * hi;
-        }
-        assert_eq!(result, expected);
     }
 }

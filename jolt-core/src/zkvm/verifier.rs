@@ -91,27 +91,29 @@ use crate::{
 };
 
 #[cfg(feature = "zk")]
-struct StageVerifyResult<F: JoltField> {
-    challenges: Vec<F::Challenge>,
-    batched_output_constraint: Option<OutputClaimConstraint>,
-    output_constraint_challenge_values: Vec<F>,
-    batched_input_constraint: InputClaimConstraint,
-    input_constraint_challenge_values: Vec<F>,
-    uniskip_input_constraint: Option<InputClaimConstraint>,
-    uniskip_input_constraint_challenge_values: Vec<F>,
-    oc_block_ids: Vec<Vec<OpeningId>>,
+pub struct StageVerifyResult<F: JoltField> {
+    pub challenges: Vec<F::Challenge>,
+    pub initial_claim: F,
+    pub batched_output_constraint: Option<OutputClaimConstraint>,
+    pub output_constraint_challenge_values: Vec<F>,
+    pub batched_input_constraint: InputClaimConstraint,
+    pub input_constraint_challenge_values: Vec<F>,
+    pub uniskip_input_constraint: Option<InputClaimConstraint>,
+    pub uniskip_input_constraint_challenge_values: Vec<F>,
+    pub oc_block_ids: Vec<Vec<OpeningId>>,
 }
 
 #[cfg(not(feature = "zk"))]
-struct StageVerifyResult<F: JoltField> {
-    #[allow(dead_code)]
-    challenges: Vec<F::Challenge>,
+pub struct StageVerifyResult<F: JoltField> {
+    pub challenges: Vec<F::Challenge>,
+    pub initial_claim: F,
 }
 
 #[cfg(feature = "zk")]
 impl<F: JoltField> StageVerifyResult<F> {
     fn new(
         challenges: Vec<F::Challenge>,
+        initial_claim: F,
         batched_output_constraint: Option<OutputClaimConstraint>,
         output_constraint_challenge_values: Vec<F>,
         batched_input_constraint: InputClaimConstraint,
@@ -120,6 +122,7 @@ impl<F: JoltField> StageVerifyResult<F> {
     ) -> Self {
         Self {
             challenges,
+            initial_claim,
             batched_output_constraint,
             output_constraint_challenge_values,
             batched_input_constraint,
@@ -133,6 +136,7 @@ impl<F: JoltField> StageVerifyResult<F> {
     #[allow(clippy::too_many_arguments)]
     fn with_uniskip(
         challenges: Vec<F::Challenge>,
+        initial_claim: F,
         batched_output_constraint: Option<OutputClaimConstraint>,
         output_constraint_challenge_values: Vec<F>,
         batched_input_constraint: InputClaimConstraint,
@@ -143,6 +147,7 @@ impl<F: JoltField> StageVerifyResult<F> {
     ) -> Self {
         Self {
             challenges,
+            initial_claim,
             batched_output_constraint,
             output_constraint_challenge_values,
             batched_input_constraint,
@@ -221,9 +226,9 @@ pub struct JoltVerifier<
 
 #[derive(Clone, Debug)]
 #[cfg_attr(not(feature = "zk"), allow(dead_code))]
-struct Stage8VerifyData<F: JoltField> {
-    opening_ids: Vec<OpeningId>,
-    constraint_coeffs: Vec<F>,
+pub struct Stage8VerifyData<F: JoltField> {
+    pub opening_ids: Vec<OpeningId>,
+    pub constraint_coeffs: Vec<F>,
 }
 
 impl<
@@ -337,10 +342,9 @@ impl<
 
     #[tracing::instrument(skip_all)]
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
-    pub fn verify(mut self) -> Result<(), ProofVerifyError> {
-        let _pprof_verify = pprof_scope!("verify");
-        let zk_mode = self.opening_accumulator.zk_mode;
-
+    /// Runs the Fiat-Shamir preamble and appends commitments to the transcript.
+    /// Must be called before any `verify_stageN()` calls.
+    pub fn run_preamble(&mut self) {
         fiat_shamir_preamble(
             &self.program_io,
             self.proof.ram_K,
@@ -349,43 +353,55 @@ impl<
             &mut self.transcript,
         );
 
-        // Append commitments to transcript
         for commitment in &self.proof.commitments {
             self.transcript
                 .append_serializable(b"commitment", commitment);
         }
-        // Append untrusted advice commitment to transcript
         if let Some(ref untrusted_advice_commitment) = self.proof.untrusted_advice_commitment {
             self.transcript
                 .append_serializable(b"untrusted_advice", untrusted_advice_commitment);
         }
-        // Append trusted advice commitment to transcript
         if let Some(ref trusted_advice_commitment) = self.trusted_advice_commitment {
             self.transcript
                 .append_serializable(b"trusted_advice", trusted_advice_commitment);
         }
+    }
 
+    pub fn verify(mut self) -> Result<(), ProofVerifyError> {
+        let _pprof_verify = pprof_scope!("verify");
+        let zk_mode = self.opening_accumulator.zk_mode;
+
+        self.run_preamble();
+
+        #[allow(unused_variables)]
         let (stage1_result, uniskip_challenge1) = self
             .verify_stage1()
             .inspect_err(|e| tracing::error!("Stage 1: {e}"))?;
+        #[allow(unused_variables)]
         let (stage2_result, uniskip_challenge2) = self
             .verify_stage2()
             .inspect_err(|e| tracing::error!("Stage 2: {e}"))?;
+        #[allow(unused_variables)]
         let stage3_result = self
             .verify_stage3()
             .inspect_err(|e| tracing::error!("Stage 3: {e}"))?;
+        #[allow(unused_variables)]
         let stage4_result = self
             .verify_stage4()
             .inspect_err(|e| tracing::error!("Stage 4: {e}"))?;
+        #[allow(unused_variables)]
         let stage5_result = self
             .verify_stage5()
             .inspect_err(|e| tracing::error!("Stage 5: {e}"))?;
+        #[allow(unused_variables)]
         let stage6_result = self
             .verify_stage6()
             .inspect_err(|e| tracing::error!("Stage 6: {e}"))?;
+        #[allow(unused_variables)]
         let stage7_result = self
             .verify_stage7()
             .inspect_err(|e| tracing::error!("Stage 7: {e}"))?;
+        #[allow(unused_variables)]
         let stage8_data = self
             .verify_stage8()
             .inspect_err(|e| tracing::error!("Stage 8: {e}"))?;
@@ -480,7 +496,9 @@ impl<
     }
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
-    fn verify_stage1(&mut self) -> Result<(StageVerifyResult<F>, F::Challenge), ProofVerifyError> {
+    pub fn verify_stage1(
+        &mut self,
+    ) -> Result<(StageVerifyResult<F>, F::Challenge), ProofVerifyError> {
         let (uni_skip_params, uni_skip_challenge) = verify_stage1_uni_skip(
             &self.proof.stage1_uni_skip_first_round_proof,
             &self.spartan_key,
@@ -502,7 +520,7 @@ impl<
         let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>> =
             vec![&spartan_outer_remaining];
 
-        let (batching_coefficients, r_stage1) = BatchedSumcheck::verify(
+        let (batching_coefficients, r_stage1, initial_claim) = BatchedSumcheck::verify(
             &self.proof.stage1_sumcheck_proof,
             instances.clone(),
             &mut self.opening_accumulator,
@@ -551,6 +569,7 @@ impl<
 
             let stage_result = StageVerifyResult::with_uniskip(
                 r_stage1,
+                initial_claim,
                 batched_output_constraint,
                 output_constraint_challenge_values,
                 batched_input_constraint,
@@ -566,13 +585,16 @@ impl<
         Ok((
             StageVerifyResult {
                 challenges: r_stage1,
+                initial_claim,
             },
             uni_skip_challenge,
         ))
     }
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
-    fn verify_stage2(&mut self) -> Result<(StageVerifyResult<F>, F::Challenge), ProofVerifyError> {
+    pub fn verify_stage2(
+        &mut self,
+    ) -> Result<(StageVerifyResult<F>, F::Challenge), ProofVerifyError> {
         let (uni_skip_params, uni_skip_challenge) = verify_stage2_uni_skip(
             &self.proof.stage2_uni_skip_first_round_proof,
             &mut self.opening_accumulator,
@@ -626,7 +648,7 @@ impl<
             &ram_output_check,
         ];
 
-        let (batching_coefficients, r_stage2) = BatchedSumcheck::verify(
+        let (batching_coefficients, r_stage2, initial_claim) = BatchedSumcheck::verify(
             &self.proof.stage2_sumcheck_proof,
             instances.clone(),
             &mut self.opening_accumulator,
@@ -666,6 +688,7 @@ impl<
 
             let stage_result = StageVerifyResult::with_uniskip(
                 r_stage2,
+                initial_claim,
                 batched_output_constraint,
                 output_constraint_challenge_values,
                 batched_input_constraint,
@@ -681,13 +704,14 @@ impl<
         Ok((
             StageVerifyResult {
                 challenges: r_stage2,
+                initial_claim,
             },
             uni_skip_challenge,
         ))
     }
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
-    fn verify_stage3(&mut self) -> Result<StageVerifyResult<F>, ProofVerifyError> {
+    pub fn verify_stage3(&mut self) -> Result<StageVerifyResult<F>, ProofVerifyError> {
         let spartan_shift = ShiftSumcheckVerifier::new(
             self.proof.trace_length.log_2(),
             &self.opening_accumulator,
@@ -707,7 +731,7 @@ impl<
             &spartan_registers_claim_reduction,
         ];
 
-        let (batching_coefficients, r_stage3) = BatchedSumcheck::verify(
+        let (batching_coefficients, r_stage3, initial_claim) = BatchedSumcheck::verify(
             &self.proof.stage3_sumcheck_proof,
             instances.clone(),
             &mut self.opening_accumulator,
@@ -740,6 +764,7 @@ impl<
             }
             Ok(StageVerifyResult::new(
                 r_stage3,
+                initial_claim,
                 batched_output_constraint,
                 output_constraint_challenge_values,
                 batched_input_constraint,
@@ -750,11 +775,12 @@ impl<
         #[cfg(not(feature = "zk"))]
         Ok(StageVerifyResult {
             challenges: r_stage3,
+            initial_claim,
         })
     }
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
-    fn verify_stage4(&mut self) -> Result<StageVerifyResult<F>, ProofVerifyError> {
+    pub fn verify_stage4(&mut self) -> Result<StageVerifyResult<F>, ProofVerifyError> {
         let registers_read_write_checking = RegistersReadWriteCheckingVerifier::new(
             self.proof.trace_length,
             &self.opening_accumulator,
@@ -790,7 +816,7 @@ impl<
         let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>> =
             vec![&registers_read_write_checking, &ram_val_check];
 
-        let (batching_coefficients, r_stage4) = BatchedSumcheck::verify(
+        let (batching_coefficients, r_stage4, initial_claim) = BatchedSumcheck::verify(
             &self.proof.stage4_sumcheck_proof,
             instances.clone(),
             &mut self.opening_accumulator,
@@ -823,6 +849,7 @@ impl<
             }
             Ok(StageVerifyResult::new(
                 r_stage4,
+                initial_claim,
                 batched_output_constraint,
                 output_constraint_challenge_values,
                 batched_input_constraint,
@@ -833,11 +860,12 @@ impl<
         #[cfg(not(feature = "zk"))]
         Ok(StageVerifyResult {
             challenges: r_stage4,
+            initial_claim,
         })
     }
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
-    fn verify_stage5(&mut self) -> Result<StageVerifyResult<F>, ProofVerifyError> {
+    pub fn verify_stage5(&mut self) -> Result<StageVerifyResult<F>, ProofVerifyError> {
         let n_cycle_vars = self.proof.trace_length.log_2();
 
         let lookups_read_raf = InstructionReadRafSumcheckVerifier::new(
@@ -861,7 +889,7 @@ impl<
             &registers_val_evaluation,
         ];
 
-        let (batching_coefficients, r_stage5) = BatchedSumcheck::verify(
+        let (batching_coefficients, r_stage5, initial_claim) = BatchedSumcheck::verify(
             &self.proof.stage5_sumcheck_proof,
             instances.clone(),
             &mut self.opening_accumulator,
@@ -894,6 +922,7 @@ impl<
             }
             Ok(StageVerifyResult::new(
                 r_stage5,
+                initial_claim,
                 batched_output_constraint,
                 output_constraint_challenge_values,
                 batched_input_constraint,
@@ -904,11 +933,12 @@ impl<
         #[cfg(not(feature = "zk"))]
         Ok(StageVerifyResult {
             challenges: r_stage5,
+            initial_claim,
         })
     }
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
-    fn verify_stage6(&mut self) -> Result<StageVerifyResult<F>, ProofVerifyError> {
+    pub fn verify_stage6(&mut self) -> Result<StageVerifyResult<F>, ProofVerifyError> {
         let n_cycle_vars = self.proof.trace_length.log_2();
         let bytecode_read_raf = BytecodeReadRafSumcheckVerifier::gen(
             &self.preprocessing.shared.bytecode,
@@ -978,7 +1008,7 @@ impl<
             instances.push(advice);
         }
 
-        let (batching_coefficients, r_stage6) = BatchedSumcheck::verify(
+        let (batching_coefficients, r_stage6, initial_claim) = BatchedSumcheck::verify(
             &self.proof.stage6_sumcheck_proof,
             instances.clone(),
             &mut self.opening_accumulator,
@@ -1011,6 +1041,7 @@ impl<
             }
             Ok(StageVerifyResult::new(
                 r_stage6,
+                initial_claim,
                 batched_output_constraint,
                 output_constraint_challenge_values,
                 batched_input_constraint,
@@ -1021,6 +1052,7 @@ impl<
         #[cfg(not(feature = "zk"))]
         Ok(StageVerifyResult {
             challenges: r_stage6,
+            initial_claim,
         })
     }
 
@@ -1281,7 +1313,7 @@ impl<
     }
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
-    fn verify_stage7(&mut self) -> Result<StageVerifyResult<F>, ProofVerifyError> {
+    pub fn verify_stage7(&mut self) -> Result<StageVerifyResult<F>, ProofVerifyError> {
         // Create verifier for HammingWeightClaimReduction
         // (r_cycle and r_addr_bool are extracted from Booleanity opening internally)
         let hw_verifier = HammingWeightClaimReductionVerifier::new(
@@ -1313,7 +1345,7 @@ impl<
             }
         }
 
-        let (batching_coefficients, r_stage7) = BatchedSumcheck::verify(
+        let (batching_coefficients, r_stage7, initial_claim) = BatchedSumcheck::verify(
             &self.proof.stage7_sumcheck_proof,
             instances.clone(),
             &mut self.opening_accumulator,
@@ -1346,6 +1378,7 @@ impl<
             }
             Ok(StageVerifyResult::new(
                 r_stage7,
+                initial_claim,
                 batched_output_constraint,
                 output_constraint_challenge_values,
                 batched_input_constraint,
@@ -1356,11 +1389,12 @@ impl<
         #[cfg(not(feature = "zk"))]
         Ok(StageVerifyResult {
             challenges: r_stage7,
+            initial_claim,
         })
     }
 
     /// Stage 8: Dory batch opening verification.
-    fn verify_stage8(&mut self) -> Result<Stage8VerifyData<F>, ProofVerifyError> {
+    pub fn verify_stage8(&mut self) -> Result<Stage8VerifyData<F>, ProofVerifyError> {
         // Initialize DoryGlobals with the layout from the proof
         // This ensures the verifier uses the same layout as the prover
         let _guard = DoryGlobals::initialize_context(

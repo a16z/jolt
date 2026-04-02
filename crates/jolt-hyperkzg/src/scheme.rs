@@ -227,6 +227,18 @@ where
     type Polynomial = Polynomial<P::ScalarField>;
     type OpeningHint = ();
 
+    fn setup(max_num_vars: usize) -> (Self::ProverSetup, Self::VerifierSetup) {
+        use rand_chacha::{rand_core::SeedableRng, ChaCha20Rng};
+        let mut rng = ChaCha20Rng::seed_from_u64(0);
+        let g1 = P::g1_generator();
+        let g2 = P::g2_generator();
+        let max_degree = 1usize << max_num_vars;
+        let prover =
+            HyperKZGScheme::setup_from_secret(P::ScalarField::random(&mut rng), max_degree, g1, g2);
+        let verifier = HyperKZGScheme::verifier_setup(&prover);
+        (prover, verifier)
+    }
+
     fn commit<S: jolt_poly::MultilinearPoly<Self::Field> + ?Sized>(
         poly: &S,
         setup: &Self::ProverSetup,

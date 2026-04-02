@@ -241,7 +241,7 @@ fn check_acyclicity(protocol: &Protocol, diags: &mut Vec<Diagnostic>) {
 mod tests {
     use super::*;
     use crate::ir::expr::{Expr, Factor, Term};
-    use crate::ir::{Claim, PolyKind, PublicPoly, Vertex};
+    use crate::ir::{Claim, Density, PolyKind, PublicPoly, Vertex};
 
     fn valid_protocol() -> Protocol {
         let mut p = Protocol::new();
@@ -249,10 +249,10 @@ mod tests {
         let eq = p.poly("eq", &[d], PolyKind::Public(PublicPoly::Eq(None)));
         let a = p.poly("a", &[d], PolyKind::Virtual);
         let b = p.poly("b", &[d], PolyKind::Virtual);
-        let upstream = p.sumcheck(eq * (a * b), 0, &[d]);
+        let upstream = p.sumcheck(eq * (a * b), 0, &[d], Density::Dense);
         let c = p.poly("c", &[d], PolyKind::Virtual);
         let rho = p.challenge("rho");
-        let _ = p.sumcheck(eq * c, rho * upstream[0] + upstream[1], &[d]);
+        let _ = p.sumcheck(eq * c, rho * upstream[0] + upstream[1], &[d], Density::Dense);
         p
     }
 
@@ -277,6 +277,7 @@ mod tests {
             consumes: vec![],
             binding_order: vec![d],
             domain_size: None,
+            density: Density::Dense,
         });
         let diags = validate(&p);
         assert!(diags.iter().any(|d| d.message.contains("poly index 99")));
@@ -297,6 +298,7 @@ mod tests {
             consumes: vec![],
             binding_order: vec![d],
             domain_size: None,
+            density: Density::Dense,
         });
         let diags = validate(&p);
         assert!(diags
@@ -316,6 +318,7 @@ mod tests {
             consumes: vec![],
             binding_order: vec![77],
             domain_size: None,
+            density: Density::Dense,
         });
         let diags = validate(&p);
         assert!(diags.iter().any(|d| d.message.contains("dim index 77")));
@@ -337,6 +340,7 @@ mod tests {
             consumes: vec![],
             binding_order: vec![log_T],
             domain_size: None,
+            density: Density::Dense,
         });
         let diags = validate(&p);
         assert!(
@@ -358,6 +362,7 @@ mod tests {
             consumes: vec![],
             binding_order: vec![log_T2],
             domain_size: None,
+            density: Density::Dense,
         });
         let diags2 = validate(&p2);
         assert!(diags2
@@ -376,6 +381,7 @@ mod tests {
             consumes: vec![],
             binding_order: vec![d],
             domain_size: None,
+            density: Density::Dense,
         });
         let diags = validate(&p);
         assert!(diags
@@ -409,6 +415,7 @@ mod tests {
             consumes: vec![c1],
             binding_order: vec![d],
             domain_size: None,
+            density: Density::Dense,
         });
         p.vertices.push(Vertex::Sumcheck {
             composition: Expr::from(b),
@@ -417,6 +424,7 @@ mod tests {
             consumes: vec![c0],
             binding_order: vec![d],
             domain_size: None,
+            density: Density::Dense,
         });
 
         let diags = validate(&p);
@@ -435,6 +443,7 @@ mod tests {
             consumes: vec![ClaimId(999)],
             binding_order: vec![d],
             domain_size: None,
+            density: Density::Dense,
         });
         let diags = validate(&p);
         assert!(diags.iter().any(|d| d.message.contains("claim c999")));
@@ -451,6 +460,7 @@ mod tests {
             consumes: vec![],
             binding_order: vec![99],
             domain_size: None,
+            density: Density::Dense,
         });
         let diags = validate(&p);
         assert!(diags.len() >= 2, "expected multiple diagnostics: {diags:?}");
@@ -463,7 +473,7 @@ mod tests {
         let eq = p.poly("eq", &[d], PolyKind::Public(PublicPoly::Eq(None)));
         let a = p.poly("a", &[d], PolyKind::Virtual);
         let b = p.poly("b", &[d], PolyKind::Virtual);
-        let upstream = p.sumcheck(eq * a, 0, &[d]);
+        let upstream = p.sumcheck(eq * a, 0, &[d], Density::Dense);
         let _ = p.evaluate(b, upstream[0]);
         let diags = validate(&p);
         assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");

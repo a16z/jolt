@@ -13,7 +13,7 @@ use super::analyze::IRInfo;
 use super::cost::{self, CompileParams, Cost, Objective, SolverConfig};
 use super::CompileError;
 use crate::ir::expr::{Challenge, Expr, Factor, Poly};
-use crate::ir::{Claim, ClaimId, PolyKind, Protocol, PublicPoly, Vertex};
+use crate::ir::{Claim, ClaimId, Density, PolyKind, Protocol, PublicPoly, Vertex};
 
 /// Result of the staging pass.
 pub(crate) struct Staging {
@@ -516,6 +516,7 @@ fn synthesize_reduction(
         consumes,
         binding_order: binding_order.clone(),
         domain_size: None,
+        density: Density::Dense,
     });
 
     stages.push(StagePlan {
@@ -531,7 +532,7 @@ fn synthesize_reduction(
 mod tests {
     use super::*;
     use crate::compiler::analyze;
-    use crate::ir::{PolyKind, Protocol, PublicPoly};
+    use crate::ir::{Density, PolyKind, Protocol, PublicPoly};
 
     fn params() -> CompileParams {
         CompileParams {
@@ -557,9 +558,9 @@ mod tests {
         let a = p.poly("a", &[d], PolyKind::Virtual);
         let b = p.poly("b", &[d], PolyKind::Virtual);
         let c = p.poly("c", &[d], PolyKind::Virtual);
-        let c0 = p.sumcheck(eq * a, 0, &[d]);
-        let c1 = p.sumcheck(eq * b, rho * c0[0], &[d]);
-        let _ = p.sumcheck(eq * c, rho * c1[0], &[d]);
+        let c0 = p.sumcheck(eq * a, 0, &[d], Density::Dense);
+        let c1 = p.sumcheck(eq * b, rho * c0[0], &[d], Density::Dense);
+        let _ = p.sumcheck(eq * c, rho * c1[0], &[d], Density::Dense);
         p
     }
 
@@ -572,10 +573,10 @@ mod tests {
         let b = p.poly("b", &[d], PolyKind::Virtual);
         let c = p.poly("c", &[d], PolyKind::Virtual);
         let e = p.poly("e", &[d], PolyKind::Virtual);
-        let c0 = p.sumcheck(eq * a, 0, &[d]);
-        let c1 = p.sumcheck(eq * b, rho * c0[0], &[d]);
-        let c2 = p.sumcheck(eq * c, rho * c0[0], &[d]);
-        let _ = p.sumcheck(eq * e, rho * c1[0] + c2[0], &[d]);
+        let c0 = p.sumcheck(eq * a, 0, &[d], Density::Dense);
+        let c1 = p.sumcheck(eq * b, rho * c0[0], &[d], Density::Dense);
+        let c2 = p.sumcheck(eq * c, rho * c0[0], &[d], Density::Dense);
+        let _ = p.sumcheck(eq * e, rho * c1[0] + c2[0], &[d], Density::Dense);
         p
     }
 
@@ -588,9 +589,9 @@ mod tests {
         let a = p.poly("a", &[log_T], PolyKind::Virtual);
         let b = p.poly("b", &[log_K], PolyKind::Virtual);
         let c = p.poly("c", &[log_T, log_K], PolyKind::Virtual);
-        let _ = p.sumcheck(eq_T * a, 0, &[log_T]);
-        let _ = p.sumcheck(eq_K * b, 0, &[log_K]);
-        let _ = p.sumcheck(eq_T * c, 0, &[log_T, log_K]);
+        let _ = p.sumcheck(eq_T * a, 0, &[log_T], Density::Dense);
+        let _ = p.sumcheck(eq_K * b, 0, &[log_K], Density::Dense);
+        let _ = p.sumcheck(eq_T * c, 0, &[log_T, log_K], Density::Dense);
         p
     }
 
@@ -669,9 +670,9 @@ mod tests {
         let eq = p.poly("eq", &[d], PolyKind::Public(PublicPoly::Eq(None)));
         let a = p.poly("a", &[d], PolyKind::Virtual);
         let b = p.poly("b", &[d], PolyKind::Virtual);
-        let c0 = p.sumcheck(eq * a, 0, &[d]);
+        let c0 = p.sumcheck(eq * a, 0, &[d], Density::Dense);
         let ev = p.evaluate(b, c0[0]);
-        let _ = p.sumcheck(eq * a, rho * ev, &[d]);
+        let _ = p.sumcheck(eq * a, rho * ev, &[d], Density::Dense);
 
         let info = analyze::compute(&p);
         let s = stage(&p, &info, &params(), &minimize_proof()).unwrap();

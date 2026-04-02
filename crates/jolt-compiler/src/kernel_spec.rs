@@ -1,0 +1,100 @@
+//! Kernel specification: the compiler's output, the backend's input.
+//!
+//! [`KernelSpec`] is the boundary between protocol-aware compilation and
+//! hardware-aware codegen. The compiler decides WHAT to compute (formula,
+//! iteration pattern, evaluation grid). The backend decides HOW (codegen,
+//! parallelism, memory layout).
+
+use serde::{Deserialize, Serialize};
+
+use crate::formula::{BindingOrder, Formula};
+
+/// Full algorithmic description of a sumcheck kernel.
+///
+/// Produced by the compiler from protocol-level definitions. Consumed by
+/// [`ComputeBackend::compile`] to produce backend-native executable code.
+///
+/// The spec captures:
+/// - **Formula**: the sum-of-products composition to evaluate at each position
+/// - **Evaluation grid**: how many points, determining round polynomial degree
+/// - **Iteration pattern**: dense pairwise or tensor-factored
+/// - **Binding order**: which end of the hypercube to bind first
+///
+/// The compiled kernel bakes ALL of this in. At dispatch time, only the
+/// actual buffer data and challenge values are provided.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KernelSpec {
+    /// Sum-of-products composition formula.
+    pub formula: Formula,
+    /// Number of evaluation points on the grid.
+    ///
+    /// Standard grid: `degree + 1` points at `{0, 2, 3, ..., degree}`.
+    /// Toom-Cook grid: `D` points at `{1, ..., D-1, ∞}`.
+    pub num_evals: usize,
+    /// How to traverse input data during reduce.
+    pub iteration: Iteration,
+    /// Variable binding direction.
+    pub binding_order: BindingOrder,
+}
+
+/// Data traversal strategy for a sumcheck kernel.
+///
+/// Determines the iteration pattern used by
+/// [`ComputeBackend::reduce`] and [`ComputeBackend::bind`],
+/// and the meaning of extra inputs beyond the formula's value columns.
+///
+/// # Input layout convention
+///
+/// Inputs passed to `reduce`/`bind` follow a fixed layout:
+///
+/// | Positions | Contents |
+/// |-----------|----------|
+/// | `0 .. formula.num_inputs` | Formula value columns (`Input(i)` in the formula) |
+/// | After value columns | Extra inputs specified by the `Iteration` variant |
+///
+/// For [`Dense`](Iteration::Dense): no extra inputs.
+/// For [`DenseTensor`](Iteration::DenseTensor): two extra inputs (outer eq, inner eq).
+/// For [`Sparse`](Iteration::Sparse): one extra input (sorted u64 key column).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Iteration {
+    /// Dense pairwise: iterate over adjacent pairs in contiguous buffers.
+    ///
+    /// All inputs are formula value columns. Pair layout depends on
+    /// [`BindingOrder`]:
+    /// - `LowToHigh`: pairs at `(buf[2i], buf[2i+1])`
+    /// - `HighToLow`: pairs at `(buf[i], buf[i + n/2])`
+    Dense,
+
+    /// Dense with factored eq weights (split-eq tensor product).
+    ///
+    /// `eq(x_out, x_in) = outer[x_out] · inner[x_in]`
+    ///
+    /// Enables cache-friendly nested iteration: the outer loop accumulates
+    /// weighted inner sums, reducing intermediate results between outer
+    /// iterations. Two extra inputs follow the formula value columns:
+    /// `outer_eq` then `inner_eq`.
+    DenseTensor,
+
+    /// Sparse merge-join over sorted entries.
+    ///
+    /// Entries with adjacent keys `(2k, 2k+1)` are paired and composed.
+    /// One extra input follows the formula value columns: a sorted `u64`
+    /// key column (stored as `DeviceBuffer::U64`).
+    ///
+    /// Entries present in only one half are paired with checkpoint defaults.
+    /// Used for read-write memory checking where the address space is sparse.
+    Sparse,
+}
+
+impl KernelSpec {
+    /// Create a spec that derives `num_evals` from the formula's degree.
+    pub fn new(formula: Formula, iteration: Iteration, binding_order: BindingOrder) -> Self {
+        let num_evals = formula.degree();
+        Self {
+            formula,
+            num_evals,
+            iteration,
+            binding_order,
+        }
+    }
+}

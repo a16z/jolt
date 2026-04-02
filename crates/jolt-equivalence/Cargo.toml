@@ -1,0 +1,30 @@
+[package]
+name = "jolt-equivalence"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Cross-system equivalence testing between jolt-core and jolt-zkvm"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+# jolt-core (reference prover)
+jolt-core = { path = "../../jolt-core", features = ["host"] }
+ark-bn254.workspace = true
+postcard.workspace = true
+
+# jolt-zkvm proving pipeline
+common = { path = "../../common" }
+jolt-field = { path = "../jolt-field", features = ["bn254"] }
+jolt-transcript = { path = "../jolt-transcript" }
+jolt-compiler = { path = "../jolt-compiler" }
+jolt-compute = { path = "../jolt-compute" }
+jolt-cpu = { path = "../jolt-cpu" }
+jolt-witness = { path = "../jolt-witness" }
+jolt-host = { path = "../jolt-host" }
+jolt-r1cs = { path = "../jolt-r1cs" }
+jolt-zkvm = { path = "../jolt-zkvm" }
+jolt-verifier = { path = "../jolt-verifier" }
+jolt-openings = { path = "../jolt-openings", features = ["test-utils"] }
+jolt-poly = { path = "../jolt-poly" }

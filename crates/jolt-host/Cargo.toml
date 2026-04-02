@@ -15,7 +15,10 @@ workspace = true
 [dependencies]
 bincode.workspace = true
 common = { workspace = true }
+jolt-field = { path = "../jolt-field" }
 jolt-instructions = { path = "../jolt-instructions" }
+jolt-r1cs = { path = "../jolt-r1cs" }
+jolt-witness = { path = "../jolt-witness" }
 serde.workspace = true
 tracer = { workspace = true, features = ["std"] }
 tracing.workspace = true

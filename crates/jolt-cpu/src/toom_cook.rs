@@ -39,6 +39,16 @@ use core::{mem::MaybeUninit, ptr};
 
 use jolt_field::Field;
 
+/// Reinterpret a slice as a fixed-size array reference.
+///
+/// # Safety
+/// `slice.len()` must be at least `N`.
+#[inline(always)]
+unsafe fn as_array<T, const N: usize>(slice: &[T]) -> &[T; N] {
+    debug_assert!(slice.len() >= N);
+    &*slice.as_ptr().cast::<[T; N]>()
+}
+
 #[inline(always)]
 fn dbl<F: Field>(x: F) -> F {
     x + x
@@ -183,13 +193,11 @@ fn eval_linear_prod_8_internal<F: Field>(p: [(F, F); 8]) -> [F; 9] {
         (f4, f5, f6, f7)
     }
 
-    // SAFETY: `p[0..4]` is a valid 4-element subslice, reinterpreted as `[(F, F); 4]`.
-    let (a1, a2, a3, a4, a_inf) =
-        eval_linear_prod_4_internal(unsafe { *p[0..4].as_ptr().cast::<[(F, F); 4]>() });
+    // SAFETY: subslices have exactly 4 elements.
+    let (a_arr, b_arr) = unsafe { (*as_array(&p[0..4]), *as_array(&p[4..8])) };
+    let (a1, a2, a3, a4, a_inf) = eval_linear_prod_4_internal(a_arr);
     let (a5, a6, a7, a8) = batch_helper(a1, a2, a3, a4, a_inf);
-    // SAFETY: `p[4..8]` is a valid 4-element subslice, reinterpreted as `[(F, F); 4]`.
-    let (b1, b2, b3, b4, b_inf) =
-        eval_linear_prod_4_internal(unsafe { *p[4..8].as_ptr().cast::<[(F, F); 4]>() });
+    let (b1, b2, b3, b4, b_inf) = eval_linear_prod_4_internal(b_arr);
     let (b5, b6, b7, b8) = batch_helper(b1, b2, b3, b4, b_inf);
 
     [
@@ -240,10 +248,10 @@ fn expand8_to16<F: Field>(vals: &[F; 9]) -> ([F; 16], F) {
 /// returning `([P(1)..P(16)], P(∞))`.
 #[inline]
 fn eval_half_16_base<F: Field>(p: [(F, F); 16]) -> ([F; 16], F) {
-    // SAFETY: `p[0..8]` is a valid 8-element subslice, reinterpreted as `[(F, F); 8]`.
-    let a8 = eval_linear_prod_8_internal(unsafe { *p[0..8].as_ptr().cast::<[(F, F); 8]>() });
-    // SAFETY: `p[8..16]` is a valid 8-element subslice, reinterpreted as `[(F, F); 8]`.
-    let b8 = eval_linear_prod_8_internal(unsafe { *p[8..16].as_ptr().cast::<[(F, F); 8]>() });
+    // SAFETY: subslices have exactly 8 elements.
+    let (a_arr, b_arr) = unsafe { (*as_array(&p[0..8]), *as_array(&p[8..16])) };
+    let a8 = eval_linear_prod_8_internal(a_arr);
+    let b8 = eval_linear_prod_8_internal(b_arr);
 
     let (a16_vals, a_inf) = expand8_to16::<F>(&a8);
     let (b16_vals, b_inf) = expand8_to16::<F>(&b8);
@@ -305,64 +313,39 @@ fn expand16_to_u32<F: Field>(base16: &[F; 16], inf: F) -> [F; 32] {
 /// with a naive $O(D^2)$ fallback for other values.
 pub fn eval_linear_prod_assign<F: Field>(pairs: &[(F, F)], evals: &mut [F]) {
     debug_assert_eq!(pairs.len(), evals.len());
-    match pairs.len() {
-        2 => {
-            // SAFETY: `pairs` has length 2, layout-compatible with `[(F, F); 2]`.
-            let p = unsafe { &*pairs.as_ptr().cast::<[(F, F); 2]>() };
-            eval_prod_2_assign(p, evals);
+    // SAFETY: each arm's length is validated by the match; as_array
+    // reinterprets the slice as a fixed-size array reference.
+    unsafe {
+        match pairs.len() {
+            2 => eval_prod_2_assign(as_array(pairs), evals),
+            3 => eval_prod_3_assign(as_array(pairs), evals),
+            4 => eval_prod_4_assign(as_array(pairs), evals),
+            5 => eval_prod_5_assign(as_array(pairs), evals),
+            6 => eval_prod_6_assign(as_array(pairs), evals),
+            7 => eval_prod_7_assign(as_array(pairs), evals),
+            8 => eval_prod_8_assign(as_array(pairs), evals),
+            16 => eval_prod_16_assign(as_array(pairs), evals),
+            32 => eval_prod_32_assign(as_array(pairs), evals),
+            _ => eval_linear_prod_naive_assign(pairs, evals),
         }
-        3 => {
-            // SAFETY: `pairs` has length 3, layout-compatible with `[(F, F); 3]`.
-            let p = unsafe { &*pairs.as_ptr().cast::<[(F, F); 3]>() };
-            eval_prod_3_assign(p, evals);
-        }
-        4 => {
-            // SAFETY: `pairs` has length 4, layout-compatible with `[(F, F); 4]`.
-            let p = unsafe { &*pairs.as_ptr().cast::<[(F, F); 4]>() };
-            eval_prod_4_assign(p, evals);
-        }
-        5 => {
-            // SAFETY: `pairs` has length 5, layout-compatible with `[(F, F); 5]`.
-            let p = unsafe { &*pairs.as_ptr().cast::<[(F, F); 5]>() };
-            eval_prod_5_assign(p, evals);
-        }
-        6 => {
-            // SAFETY: `pairs` has length 6, layout-compatible with `[(F, F); 6]`.
-            let p = unsafe { &*pairs.as_ptr().cast::<[(F, F); 6]>() };
-            eval_prod_6_assign(p, evals);
-        }
-        7 => {
-            // SAFETY: `pairs` has length 7, layout-compatible with `[(F, F); 7]`.
-            let p = unsafe { &*pairs.as_ptr().cast::<[(F, F); 7]>() };
-            eval_prod_7_assign(p, evals);
-        }
-        8 => {
-            // SAFETY: `pairs` has length 8, layout-compatible with `[(F, F); 8]`.
-            let p = unsafe { &*pairs.as_ptr().cast::<[(F, F); 8]>() };
-            eval_prod_8_assign(p, evals);
-        }
-        16 => {
-            // SAFETY: `pairs` has length 16, layout-compatible with `[(F, F); 16]`.
-            let p = unsafe { &*pairs.as_ptr().cast::<[(F, F); 16]>() };
-            eval_prod_16_assign(p, evals);
-        }
-        32 => {
-            // SAFETY: `pairs` has length 32, layout-compatible with `[(F, F); 32]`.
-            let p = unsafe { &*pairs.as_ptr().cast::<[(F, F); 32]>() };
-            eval_prod_32_assign(p, evals);
-        }
-        _ => eval_linear_prod_naive_assign(pairs, evals),
     }
 }
 
-/// D=2: product of 2 linear polynomials at `{1, ∞}`.
+/// Evaluate product of 2 linear polynomials on `{1, ∞}`.
+///
+/// Output: `[P(1), P(∞)]` where `P(x) = p₀(x)·p₁(x)`.
+/// Direct evaluation: 2 field multiplications.
 #[inline(always)]
 pub fn eval_prod_2_assign<F: Field>(p: &[(F, F); 2], outputs: &mut [F]) {
     outputs[0] = p[0].1 * p[1].1;
     outputs[1] = (p[0].1 - p[0].0) * (p[1].1 - p[1].0);
 }
 
-/// D=3: product of 3 linear polynomials at `{1, 2, ∞}`.
+/// Evaluate product of 3 linear polynomials on `{1, 2, ∞}`.
+///
+/// Output: `[P(1), P(2), P(∞)]`. Uses 2+1 splitting: evaluate the first
+/// two as a degree-2 product, then multiply by the third linear factor.
+/// 4 field multiplications.
 #[inline(always)]
 pub fn eval_prod_3_assign<F: Field>(pairs: &[(F, F); 3], outputs: &mut [F]) {
     let (a1, a2, a_inf) = eval_linear_prod_2_internal(pairs[0], pairs[1]);
@@ -374,9 +357,11 @@ pub fn eval_prod_3_assign<F: Field>(pairs: &[(F, F); 3], outputs: &mut [F]) {
     outputs[2] = a_inf * b_inf;
 }
 
-/// D=4: product of 4 linear polynomials at `{1, 2, 3, ∞}`.
+/// Evaluate product of 4 linear polynomials on `{1, 2, 3, ∞}`.
 ///
-/// 2×2 Toom-Cook with `ex2` extrapolation. 8 field multiplications.
+/// Output: `[P(1), P(2), P(3), P(∞)]`. 2×2 Toom-Cook: split into two
+/// degree-2 half-products, extrapolate each to 3 points via `ex2`,
+/// then multiply pointwise. 8 field multiplications.
 pub fn eval_prod_4_assign<F: Field>(p: &[(F, F); 4], outputs: &mut [F]) {
     let (a1, a2, a_inf) = eval_linear_prod_2_internal(p[0], p[1]);
     let a3 = ex2(&[a1, a2], &a_inf);
@@ -388,9 +373,12 @@ pub fn eval_prod_4_assign<F: Field>(p: &[(F, F); 4], outputs: &mut [F]) {
     outputs[3] = a_inf * b_inf;
 }
 
-/// D=5: product of 5 linear polynomials at `{1, 2, 3, 4, ∞}`.
+/// Evaluate product of 5 linear polynomials on `{1, 2, 3, 4, ∞}`.
 ///
-/// 2+2+1 splitting: two 2-products + one linear factor.
+/// Output: `[P(1), P(2), P(3), P(4), P(∞)]`. 2+2+1 splitting: two
+/// degree-2 half-products extrapolated to 4 points via `ex2`, then
+/// multiplied pointwise with the remaining linear factor. 13 field
+/// multiplications.
 pub fn eval_prod_5_assign<F: Field>(p: &[(F, F); 5], outputs: &mut [F]) {
     let (a1, a2, a_inf) = eval_linear_prod_2_internal(p[0], p[1]);
     let a3 = ex2(&[a1, a2], &a_inf);
@@ -416,16 +404,16 @@ pub fn eval_prod_5_assign<F: Field>(p: &[(F, F); 5], outputs: &mut [F]) {
     outputs[4] = a_inf * (l_inf * r_inf);
 }
 
-/// D=6: product of 6 linear polynomials at `{1, 2, 3, 4, 5, ∞}`.
+/// Evaluate product of 6 linear polynomials on `{1, 2, 3, 4, 5, ∞}`.
 ///
-/// 4+2 balanced split: A = product of first 4 (degree 4), B = product of
-/// last 2 (degree 2). Evaluate A at `{1..5, ∞}` via `eval_linear_prod_4_internal`
-/// \+ `ex4`, B at `{1..5, ∞}` via `eval_linear_prod_2_internal` + `ex2`,
-/// then pointwise multiply. \~20 field multiplications vs 30 naive.
+/// Output: `[P(1), ..., P(5), P(∞)]`. 4+2 balanced split: A = product
+/// of first 4 (degree 4) via Toom-Cook, B = product of last 2 (degree 2).
+/// Extrapolate A to 5 points via `ex4`, B via `ex2`, then multiply
+/// pointwise. ~20 field multiplications vs 30 naive.
 pub fn eval_prod_6_assign<F: Field>(p: &[(F, F); 6], outputs: &mut [F]) {
-    // SAFETY: `p[0..4]` is a valid 4-element subslice.
+    // SAFETY: subslice has exactly 4 elements.
     let (a1, a2, a3, a4, a_inf) =
-        eval_linear_prod_4_internal(unsafe { *p[0..4].as_ptr().cast::<[(F, F); 4]>() });
+        eval_linear_prod_4_internal(*unsafe { as_array(&p[0..4]) });
     let a_inf6 = a_inf.mul_u64(6);
     let a5 = ex4(&[a1, a2, a3, a4], &a_inf6);
 
@@ -442,16 +430,16 @@ pub fn eval_prod_6_assign<F: Field>(p: &[(F, F); 6], outputs: &mut [F]) {
     outputs[5] = a_inf * b_inf;
 }
 
-/// D=7: product of 7 linear polynomials at `{1, 2, 3, 4, 5, 6, ∞}`.
+/// Evaluate product of 7 linear polynomials on `{1, 2, 3, 4, 5, 6, ∞}`.
 ///
-/// 4+3 balanced split: A = product of first 4 (degree 4), B = product of
-/// last 3 (degree 3). Evaluate A at `{1..6, ∞}` via `eval_linear_prod_4_internal`
-/// \+ `ex4_2`, B at `{1..6, ∞}` via 2+1 sub-split with `ex2` extrapolation,
-/// then pointwise multiply. \~28 field multiplications vs 42 naive.
+/// Output: `[P(1), ..., P(6), P(∞)]`. 4+3 balanced split: A = product
+/// of first 4 via Toom-Cook, B = product of last 3 via 2+1 sub-split.
+/// Extrapolate A to 6 points via `ex4_2`, B via iterated `ex2`, then
+/// multiply pointwise. ~28 field multiplications vs 42 naive.
 pub fn eval_prod_7_assign<F: Field>(p: &[(F, F); 7], outputs: &mut [F]) {
-    // SAFETY: `p[0..4]` is a valid 4-element subslice.
+    // SAFETY: subslice has exactly 4 elements.
     let (a1, a2, a3, a4, a_inf) =
-        eval_linear_prod_4_internal(unsafe { *p[0..4].as_ptr().cast::<[(F, F); 4]>() });
+        eval_linear_prod_4_internal(*unsafe { as_array(&p[0..4]) });
     let a_inf6 = a_inf.mul_u64(6);
     let (a5, a6) = ex4_2(&[a1, a2, a3, a4], &a_inf6);
 
@@ -483,9 +471,11 @@ pub fn eval_prod_7_assign<F: Field>(p: &[(F, F); 7], outputs: &mut [F]) {
     outputs[6] = r_inf * l_inf * a_inf;
 }
 
-/// D=8: product of 8 linear polynomials at `{1, 2, ..., 7, ∞}`.
+/// Evaluate product of 8 linear polynomials on `{1, 2, ..., 7, ∞}`.
 ///
-/// 4×4 Toom-Cook with `ex4_2`/`ex4` extrapolation.
+/// Output: `[P(1), ..., P(7), P(∞)]`. 4×4 Toom-Cook: split into two
+/// degree-4 half-products, extrapolate each to 7 points via `ex4_2`/`ex4`,
+/// then multiply pointwise. ~24 field multiplications vs 56 naive.
 pub fn eval_prod_8_assign<F: Field>(p: &[(F, F); 8], outputs: &mut [F]) {
     #[inline]
     fn batch_helper<F: Field>(f0: F, f1: F, f2: F, f3: F, f_inf: F) -> (F, F, F) {
@@ -495,13 +485,11 @@ pub fn eval_prod_8_assign<F: Field>(p: &[(F, F); 8], outputs: &mut [F]) {
         (f4, f5, f6)
     }
 
-    // SAFETY: `p[0..4]` is a valid 4-element subslice, reinterpreted as `[(F, F); 4]`.
-    let (a1, a2, a3, a4, a_inf) =
-        eval_linear_prod_4_internal(unsafe { *p[0..4].as_ptr().cast::<[(F, F); 4]>() });
+    // SAFETY: subslices have exactly 4 elements.
+    let (a_arr, b_arr) = unsafe { (*as_array(&p[0..4]), *as_array(&p[4..8])) };
+    let (a1, a2, a3, a4, a_inf) = eval_linear_prod_4_internal(a_arr);
     let (a5, a6, a7) = batch_helper(a1, a2, a3, a4, a_inf);
-    // SAFETY: `p[4..8]` is a valid 4-element subslice, reinterpreted as `[(F, F); 4]`.
-    let (b1, b2, b3, b4, b_inf) =
-        eval_linear_prod_4_internal(unsafe { *p[4..8].as_ptr().cast::<[(F, F); 4]>() });
+    let (b1, b2, b3, b4, b_inf) = eval_linear_prod_4_internal(b_arr);
     let (b5, b6, b7) = batch_helper(b1, b2, b3, b4, b_inf);
 
     outputs[0] = a1 * b1;
@@ -514,16 +502,19 @@ pub fn eval_prod_8_assign<F: Field>(p: &[(F, F); 8], outputs: &mut [F]) {
     outputs[7] = a_inf * b_inf;
 }
 
-/// D=16: product of 16 linear polynomials at `{1, 2, ..., 15, ∞}`.
+/// Evaluate product of 16 linear polynomials on `{1, 2, ..., 15, ∞}`.
 ///
-/// 8×8 Toom-Cook with sliding-window `ex8` extrapolation.
+/// Output: `[P(1), ..., P(15), P(∞)]`. 8×8 Toom-Cook: split into two
+/// degree-8 half-products, extrapolate each to 15 points via
+/// sliding-window `ex8`, then multiply pointwise. ~64 field
+/// multiplications vs 240 naive.
 pub fn eval_prod_16_assign<F: Field>(p: &[(F, F); 16], outputs: &mut [F]) {
     debug_assert!(outputs.len() >= 16);
 
-    // SAFETY: `p[0..8]` is a valid 8-element subslice, reinterpreted as `[(F, F); 8]`.
-    let a = eval_linear_prod_8_internal(unsafe { *p[0..8].as_ptr().cast::<[(F, F); 8]>() });
-    // SAFETY: `p[8..16]` is a valid 8-element subslice, reinterpreted as `[(F, F); 8]`.
-    let b = eval_linear_prod_8_internal(unsafe { *p[8..16].as_ptr().cast::<[(F, F); 8]>() });
+    // SAFETY: subslices have exactly 8 elements.
+    let (a_arr, b_arr) = unsafe { (*as_array(&p[0..8]), *as_array(&p[8..16])) };
+    let a = eval_linear_prod_8_internal(a_arr);
+    let b = eval_linear_prod_8_internal(b_arr);
 
     for i in 0..8 {
         outputs[i] = a[i] * b[i];
@@ -576,18 +567,19 @@ pub fn eval_prod_16_assign<F: Field>(p: &[(F, F); 16], outputs: &mut [F]) {
     outputs[15] = a[8] * b[8];
 }
 
-/// D=32: product of 32 linear polynomials at `{1, 2, ..., 31, ∞}`.
+/// Evaluate product of 32 linear polynomials on `{1, 2, ..., 31, ∞}`.
 ///
-/// 16×16 Toom-Cook with `ex16` expansion.
+/// Output: `[P(1), ..., P(31), P(∞)]`. 16×16 Toom-Cook: split into two
+/// degree-16 half-products via `eval_half_16_base`, expand each to 32
+/// points via `expand16_to_u32` with `ex16` extrapolation, then multiply
+/// pointwise. ~160 field multiplications vs 992 naive.
 pub fn eval_prod_32_assign<F: Field>(p: &[(F, F); 32], outputs: &mut [F]) {
-    // SAFETY: `p[0..16]` is a valid 16-element subslice, reinterpreted as `[(F, F); 16]`.
-    let (a16_base, a_inf) =
-        eval_half_16_base::<F>(unsafe { *p[0..16].as_ptr().cast::<[(F, F); 16]>() });
+    // SAFETY: subslices have exactly 16 elements.
+    let (a_arr, b_arr) = unsafe { (*as_array(&p[0..16]), *as_array(&p[16..32])) };
+    let (a16_base, a_inf) = eval_half_16_base::<F>(a_arr);
     let a_full = expand16_to_u32::<F>(&a16_base, a_inf);
 
-    // SAFETY: `p[16..32]` is a valid 16-element subslice, reinterpreted as `[(F, F); 16]`.
-    let (b16_base, b_inf) =
-        eval_half_16_base::<F>(unsafe { *p[16..32].as_ptr().cast::<[(F, F); 16]>() });
+    let (b16_base, b_inf) = eval_half_16_base::<F>(b_arr);
     let b_full = expand16_to_u32::<F>(&b16_base, b_inf);
 
     for i in 0..32 {
@@ -595,10 +587,13 @@ pub fn eval_prod_32_assign<F: Field>(p: &[(F, F); 32], outputs: &mut [F]) {
     }
 }
 
-/// Naive $O(D^2)$ fallback for products of $D$ linear polynomials.
+/// Naive $O(D^2)$ fallback for products of $D$ linear polynomials on
+/// `{1, 2, ..., D-1, ∞}`.
 ///
-/// Evaluates at each grid point independently. Used for $D$ values that
-/// lack specialized Toom-Cook implementations.
+/// Output: `[P(1), ..., P(D-1), P(∞)]`. Evaluates at each grid point
+/// independently by stepping `p_j(t+1) = p_j(t) + slope_j` and
+/// accumulating the product. Used for D values without a specialized
+/// Toom-Cook implementation.
 pub fn eval_linear_prod_naive_assign<F: Field>(pairs: &[(F, F)], evals: &mut [F]) {
     let d = pairs.len();
     debug_assert_eq!(evals.len(), d);

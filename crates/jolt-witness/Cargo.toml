@@ -3,28 +3,18 @@ name = "jolt-witness"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "Witness generation for the Jolt zkVM: trace → multilinear evaluation tables"
+description = "Committed polynomial buffers for the Jolt zkVM"
 
 [lints]
 workspace = true
 
-[features]
-test-utils = []
-
 [dependencies]
+jolt-compiler = { path = "../jolt-compiler" }
 jolt-compute = { path = "../jolt-compute" }
 jolt-field = { path = "../jolt-field" }
-jolt-host = { path = "../jolt-host" }
-jolt-instructions = { path = "../jolt-instructions" }
 jolt-poly = { path = "../jolt-poly" }
-jolt-r1cs = { path = "../jolt-r1cs" }
-jolt-verifier = { path = "../jolt-verifier" }
-tracer = { workspace = true, features = ["std"] }
-tracing.workspace = true
+serde = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
 jolt-field = { path = "../jolt-field", features = ["bn254"] }
 num-traits = { workspace = true }
-rand = { workspace = true }
-rand_chacha = { workspace = true }
-rand_core = { workspace = true }

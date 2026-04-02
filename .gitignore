@@ -61,3 +61,6 @@ benchmark-runs/
 /perfetto_traces/
 *.pb
 *benchmark_results.json
+
+# Golden trace fixtures (regenerated from prover)
+**/test_fixtures/*.bin

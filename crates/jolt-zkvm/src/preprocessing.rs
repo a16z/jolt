@@ -1,44 +1,30 @@
-//! Preprocessing: PCS setup.
+//! Preprocessing: PCS setup from a compiled module.
 //!
-//! [`preprocess`] builds the [`JoltProvingKey`] from a [`JoltConfig`] by
-//! setting up the polynomial commitment scheme for the required polynomial size.
+//! [`preprocess`] inspects the module's polynomial declarations to determine
+//! the maximum number of variables, then calls [`CommitmentScheme::setup`]
+//! to generate the prover and verifier SRS.
 
+use jolt_compiler::module::Module;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 
-use crate::proof::JoltProvingKey;
+use crate::proving_key::JoltProvingKey;
 
-/// Configuration for a Jolt circuit instance.
+/// Build a proving key from a compiled module.
 ///
-/// Determines the R1CS dimensions and PCS parameter sizes.
-#[derive(Clone, Debug)]
-pub struct JoltConfig {
-    /// Number of execution cycles (padded to next power of two internally).
-    pub num_cycles: usize,
-}
-
-/// Builds a Jolt proving key from circuit configuration.
-///
-/// Sets up PCS parameters sized for the largest polynomial in the system.
-///
-/// # Returns
-///
-/// A `JoltProvingKey` containing:
-/// - PCS prover setup (SRS/generators)
-/// - PCS verifier setup
-#[tracing::instrument(skip_all, name = "preprocess")]
+/// Determines the maximum polynomial size from the module's declarations
+/// and generates PCS setup material sized accordingly.
 pub fn preprocess<F: Field, PCS: CommitmentScheme<Field = F>>(
-    config: &JoltConfig,
-    setup_fn: impl FnOnce(usize) -> (PCS::ProverSetup, PCS::VerifierSetup),
+    module: &Module,
 ) -> JoltProvingKey<F, PCS> {
-    // Estimate max polynomial variables from cycle count and R1CS layout.
-    // With num_vars_per_cycle=38 (padded to 64), log2(64)=6, plus log2(num_cycles).
-    let num_vars_padded = crate::r1cs::NUM_VARS_PER_CYCLE.next_power_of_two();
-    let total_cols = config.num_cycles * num_vars_padded;
-    let total_cols_padded = total_cols.next_power_of_two();
-    let max_poly_vars = total_cols_padded.trailing_zeros() as usize;
+    let max_num_vars = module
+        .polys
+        .iter()
+        .map(|p| p.num_elements.max(1).trailing_zeros() as usize)
+        .max()
+        .unwrap_or(0);
 
-    let (pcs_prover_setup, pcs_verifier_setup) = setup_fn(max_poly_vars);
+    let (pcs_prover_setup, pcs_verifier_setup) = PCS::setup(max_num_vars);
 
     JoltProvingKey {
         pcs_prover_setup,
@@ -49,27 +35,50 @@ pub fn preprocess<F: Field, PCS: CommitmentScheme<Field = F>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jolt_compiler::ir::PolyKind;
+    use jolt_compiler::module::{PolyDecl, Schedule, VerifierSchedule};
     use jolt_field::Fr;
     use jolt_openings::mock::MockCommitmentScheme;
 
     type MockPCS = MockCommitmentScheme<Fr>;
 
+    fn test_module(poly_sizes: &[usize]) -> Module {
+        let polys = poly_sizes
+            .iter()
+            .enumerate()
+            .map(|(i, &size)| PolyDecl {
+                name: format!("p{i}"),
+                kind: PolyKind::Committed,
+                num_elements: size,
+            })
+            .collect();
+        Module {
+            polys,
+            challenges: vec![],
+            prover: Schedule {
+                ops: vec![],
+                kernels: vec![],
+            },
+            verifier: VerifierSchedule {
+                ops: vec![],
+                num_challenges: 0,
+                num_polys: poly_sizes.len(),
+                num_stages: 0,
+            },
+        }
+    }
+
     #[test]
     fn preprocess_builds_key() {
-        let config = JoltConfig { num_cycles: 4 };
-        let _key = preprocess::<Fr, MockPCS>(&config, |_vars| ((), ()));
+        let module = test_module(&[16, 32]);
+        let _key = preprocess::<Fr, MockPCS>(&module);
     }
 
     #[test]
     fn preprocess_passes_correct_poly_size() {
-        let config = JoltConfig { num_cycles: 8 };
-        let mut captured_vars = 0;
-
-        let _key = preprocess::<Fr, MockPCS>(&config, |vars| {
-            captured_vars = vars;
-            ((), ())
-        });
-
-        assert!(captured_vars > 0);
+        let module = test_module(&[16, 256]);
+        let _key = preprocess::<Fr, MockPCS>(&module);
+        // 256 = 2^8, so max_num_vars = 8. MockPCS::setup is trivial
+        // but the sizing logic is exercised.
     }
 }

@@ -44,6 +44,14 @@ pub struct MockProof<F: Field> {
     evaluations: Vec<F>,
 }
 
+impl<F: Field> AppendToTranscript for MockCommitment<F> {
+    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
+        for e in &self.evaluations {
+            e.append_to_transcript(transcript);
+        }
+    }
+}
+
 impl<F: Field> Commitment for MockCommitmentScheme<F> {
     type Output = MockCommitment<F>;
 }
@@ -55,6 +63,10 @@ impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
     type VerifierSetup = ();
     type Polynomial = Polynomial<F>;
     type OpeningHint = ();
+
+    fn setup(_max_num_vars: usize) -> ((), ()) {
+        ((), ())
+    }
 
     fn commit<P: jolt_poly::MultilinearPoly<Self::Field> + ?Sized>(
         poly: &P,

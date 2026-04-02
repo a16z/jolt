@@ -3,8 +3,9 @@ use std::ffi::c_void;
 use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 
-use jolt_compiler::Formula;
-use jolt_compute::{BindingOrder, ComputeBackend, EqInput, Scalar};
+use jolt_compiler::kernel_spec::Iteration;
+use jolt_compiler::{Formula, KernelSpec};
+use jolt_compute::{BindingOrder, Buf, ComputeBackend, Scalar};
 use jolt_field::Field;
 use metal::{Device, MTLResourceOptions, MTLSize};
 
@@ -103,19 +104,6 @@ impl MetalBackend {
     /// The command queue used for dispatches.
     pub fn queue(&self) -> &metal::CommandQueue {
         &self.queue
-    }
-
-    /// Compile a [`Formula`] into a Metal compute pipeline.
-    ///
-    /// Uses the pipeline cache — subsequent calls with the same formula
-    /// shape return cached pipelines without recompilation. Challenge
-    /// values are passed at dispatch time via `pairwise_reduce`, not
-    /// at compilation.
-    pub fn compile_kernel<F: Field>(&self, formula: &Formula) -> MetalKernel<F> {
-        MetalKernel {
-            pipelines: self.get_or_compile(formula),
-            _marker: PhantomData,
-        }
     }
 
     /// Get cached pipelines or compile and cache them.
@@ -268,158 +256,6 @@ impl MetalBackend {
         cmd.commit();
         cmd.wait_until_completed();
     }
-
-    /// Dispatch a parallel reduction and finish partial sums on CPU.
-    /// Dispatch a cooperative reduce kernel (8 threads per field element).
-    ///
-    /// Same buffer layout as `dispatch_reduce`, but uses cooperative
-    /// threadgroup sizing: each threadgroup processes `gs / n_limbs` elements
-    /// instead of `gs`, since each element needs `n_limbs` threads.
-    #[allow(clippy::too_many_arguments)]
-    fn dispatch_coop_reduce<F: Field>(
-        &self,
-        pipeline: &metal::ComputePipelineState,
-        num_evals: usize,
-        inputs: &[&MetalBuffer<F>],
-        weight_buffers: &[&metal::Buffer],
-        challenges_buf: Option<&metal::Buffer>,
-        params: &[u32],
-        n_pairs: usize,
-    ) -> Vec<F> {
-        if n_pairs == 0 {
-            return vec![F::zero(); num_evals];
-        }
-
-        let elems_per_tg = self.device_config.reduce_group_size / self.field_config.n_limbs;
-        let num_groups = n_pairs
-            .div_ceil(elems_per_tg)
-            .min(self.device_config.max_reduce_groups);
-
-        // SAFETY: `reduce_params` is a 16-byte shared buffer. No Metal commands
-        // are in flight — previous command buffer completed before this call.
-        unsafe {
-            let ptr = self.reduce_params.contents().cast::<u32>();
-            for (i, &p) in params.iter().enumerate() {
-                ptr.add(i).write(p);
-            }
-        }
-
-        let cmd = self.queue.new_command_buffer();
-        let enc = cmd.new_compute_command_encoder();
-        enc.set_compute_pipeline_state(pipeline);
-
-        for (i, buf) in inputs.iter().enumerate() {
-            enc.set_buffer(i as u64, Some(&buf.raw), 0);
-        }
-        let mut idx = inputs.len() as u64;
-        for wbuf in weight_buffers {
-            enc.set_buffer(idx, Some(wbuf), 0);
-            idx += 1;
-        }
-        if let Some(chal_buf) = challenges_buf {
-            enc.set_buffer(idx, Some(chal_buf), 0);
-            idx += 1;
-        }
-        enc.set_buffer(idx, Some(&self.reduce_partials), 0);
-        enc.set_buffer(idx + 1, Some(&self.reduce_params), 0);
-
-        enc.dispatch_thread_groups(
-            MTLSize::new(num_groups as u64, 1, 1),
-            MTLSize::new(self.device_config.reduce_group_size as u64, 1, 1),
-        );
-        enc.end_encoding();
-        cmd.commit();
-        cmd.wait_until_completed();
-
-        // SAFETY: shared memory is coherent after command buffer completion.
-        let partials: &[F] = unsafe {
-            let ptr = self.reduce_partials.contents().cast::<F>();
-            std::slice::from_raw_parts(ptr, num_groups * num_evals)
-        };
-
-        let mut result = vec![F::zero(); num_evals];
-        for g in 0..num_groups {
-            for d in 0..num_evals {
-                result[d] += partials[g * num_evals + d];
-            }
-        }
-        result
-    }
-
-    /// Dispatch a fused interpolate+reduce kernel (H2L, weighted).
-    ///
-    /// Buffer binding: `input_0..K-1` (read-write), `weights` (read-write),
-    /// `interp_scalar`, optional `challenges`, `partials`, `params`.
-    #[allow(clippy::too_many_arguments)]
-    fn dispatch_fused_reduce<F: Field>(
-        &self,
-        pipeline: &metal::ComputePipelineState,
-        num_evals: usize,
-        inputs: &[&MetalBuffer<F>],
-        weights: &MetalBuffer<F>,
-        interp_scalar_buf: &metal::Buffer,
-        challenges_buf: Option<&metal::Buffer>,
-        n_fused: usize,
-        elems_per_tg: usize,
-    ) -> Vec<F> {
-        if n_fused == 0 {
-            return vec![F::zero(); num_evals];
-        }
-
-        let num_groups = n_fused
-            .div_ceil(elems_per_tg)
-            .min(self.device_config.max_reduce_groups);
-
-        // SAFETY: No Metal commands in flight — write params before dispatch.
-        unsafe {
-            self.reduce_params
-                .contents()
-                .cast::<u32>()
-                .write(n_fused as u32);
-        }
-
-        let cmd = self.queue.new_command_buffer();
-        let enc = cmd.new_compute_command_encoder();
-        enc.set_compute_pipeline_state(pipeline);
-
-        // Inputs are bound as read-write (`device Fr*`)
-        for (i, buf) in inputs.iter().enumerate() {
-            enc.set_buffer(i as u64, Some(&buf.raw), 0);
-        }
-        let mut idx = inputs.len() as u64;
-        enc.set_buffer(idx, Some(&weights.raw), 0);
-        idx += 1;
-        enc.set_buffer(idx, Some(interp_scalar_buf), 0);
-        idx += 1;
-        if let Some(chal_buf) = challenges_buf {
-            enc.set_buffer(idx, Some(chal_buf), 0);
-            idx += 1;
-        }
-        enc.set_buffer(idx, Some(&self.reduce_partials), 0);
-        enc.set_buffer(idx + 1, Some(&self.reduce_params), 0);
-
-        enc.dispatch_thread_groups(
-            MTLSize::new(num_groups as u64, 1, 1),
-            MTLSize::new(self.device_config.reduce_group_size as u64, 1, 1),
-        );
-        enc.end_encoding();
-        cmd.commit();
-        cmd.wait_until_completed();
-
-        // SAFETY: shared memory is coherent after command buffer completion.
-        let partials: &[F] = unsafe {
-            let ptr = self.reduce_partials.contents().cast::<F>();
-            std::slice::from_raw_parts(ptr, num_groups * num_evals)
-        };
-
-        let mut result = vec![F::zero(); num_evals];
-        for g in 0..num_groups {
-            for d in 0..num_evals {
-                result[d] += partials[g * num_evals + d];
-            }
-        }
-        result
-    }
 }
 
 impl Default for MetalBackend {
@@ -440,8 +276,13 @@ impl ComputeBackend for MetalBackend {
     type Buffer<T: Scalar> = MetalBuffer<T>;
     type CompiledKernel<F: Field> = MetalKernel<F>;
 
-    fn compile_kernel<F: Field>(&self, formula: &Formula) -> MetalKernel<F> {
-        self.compile_kernel(formula)
+    fn compile<F: Field>(&self, spec: &KernelSpec) -> MetalKernel<F> {
+        MetalKernel {
+            pipelines: self.get_or_compile(&spec.formula),
+            iteration: spec.iteration,
+            binding_order: spec.binding_order,
+            _marker: PhantomData,
+        }
     }
 
     fn upload<T: Scalar>(&self, data: &[T]) -> Self::Buffer<T> {
@@ -460,42 +301,85 @@ impl ComputeBackend for MetalBackend {
         buf.len()
     }
 
-    fn interpolate_pairs<T, F>(&self, buf: Self::Buffer<T>, scalar: F) -> Self::Buffer<F>
-    where
-        T: Scalar,
-        F: Field + From<T>,
-    {
-        let n = buf.len();
-        debug_assert!(n.is_multiple_of(2) || n == 0);
-        let half = n / 2;
+    #[tracing::instrument(skip_all, name = "MetalBackend::reduce")]
+    fn reduce<F: Field>(
+        &self,
+        kernel: &MetalKernel<F>,
+        inputs: &[&Buf<Self, F>],
+        challenges: &[F],
+    ) -> Vec<F> {
+        let num_formula_inputs = inputs.len()
+            - match kernel.iteration {
+                Iteration::Dense => 0,
+                Iteration::DenseTensor => 2,
+                Iteration::Sparse => 1,
+            };
 
-        if std::mem::size_of::<T>() == std::mem::size_of::<F>()
-            && std::mem::size_of::<F>() == self.field_config.byte_size
-        {
-            // T and F are both 32-byte field elements — dispatch Metal kernel.
-            let out: MetalBuffer<F> = MetalBuffer::zeroed(&self.device, half);
-            let scalar_buf = self.upload_scalar(&scalar);
-            self.dispatch_1d(
-                &self.interpolation.interpolate_low,
-                &[&buf.raw, &scalar_buf, &out.raw],
-                half,
-            );
-            out
+        let value_refs: Vec<&MetalBuffer<F>> = inputs[..num_formula_inputs]
+            .iter()
+            .map(|db| db.as_field())
+            .collect();
+
+        debug_assert!(!value_refs.is_empty());
+        let n = value_refs[0].len();
+        let n_pairs = n / 2;
+
+        let challenges_buf = if kernel.pipelines.has_challenges && !challenges.is_empty() {
+            Some(self.upload_field_buffer(challenges))
         } else {
-            // Compact scalar type (u8, bool, etc.) — fall back to CPU conversion.
-            let data = buf.to_vec();
-            let result: Vec<F> = (0..half)
-                .map(|i| {
-                    let lo = F::from(data[2 * i]);
-                    let hi = F::from(data[2 * i + 1]);
-                    lo + scalar * (hi - lo)
-                })
-                .collect();
-            MetalBuffer::from_data(&self.device, &result)
+            None
+        };
+        let challenges_ref = challenges_buf.as_ref();
+
+        match &kernel.iteration {
+            Iteration::Dense => {
+                let pipeline = match kernel.binding_order {
+                    BindingOrder::LowToHigh => kernel.pipeline_l2h_unw(),
+                    BindingOrder::HighToLow => kernel.pipeline_h2l_unw(),
+                };
+                self.dispatch_reduce(
+                    pipeline,
+                    kernel.num_evals(),
+                    &value_refs,
+                    &[],
+                    challenges_ref,
+                    &[n_pairs as u32],
+                    n_pairs,
+                )
+            }
+            Iteration::Sparse => todo!("sparse reduce on Metal"),
+            Iteration::DenseTensor => {
+                let outer = inputs[num_formula_inputs].as_field();
+                let inner = inputs[num_formula_inputs + 1].as_field();
+                let inner_len = inner.len();
+                let inner_log = inner_len.trailing_zeros();
+                let inner_mask = (inner_len - 1) as u32;
+                self.dispatch_reduce(
+                    kernel.pipeline_tensor(),
+                    kernel.num_evals(),
+                    &value_refs,
+                    &[&outer.raw, &inner.raw],
+                    challenges_ref,
+                    &[n_pairs as u32, inner_log, inner_mask],
+                    n_pairs,
+                )
+            }
         }
     }
 
-    fn interpolate_pairs_inplace<F: Field>(
+    fn bind<F: Field>(&self, kernel: &MetalKernel<F>, inputs: &mut [Buf<Self, F>], scalar: F) {
+        let order = kernel.binding_order;
+        match &kernel.iteration {
+            Iteration::Dense | Iteration::DenseTensor => {
+                for buf in inputs.iter_mut() {
+                    self.interpolate_inplace(buf.as_field_mut(), scalar, order);
+                }
+            }
+            Iteration::Sparse => todo!("sparse bind on Metal"),
+        }
+    }
+
+    fn interpolate_inplace<F: Field>(
         &self,
         buf: &mut Self::Buffer<F>,
         scalar: F,
@@ -573,7 +457,6 @@ impl ComputeBackend for MetalBackend {
         // sequential execution with implicit memory barriers between compute
         // command encoders within one command buffer.
         if first_gpu_round < n {
-            // Pre-upload scalar/params buffers (must outlive command buffer).
             let gpu_rounds = first_gpu_round..n;
             let r_bufs: Vec<_> = gpu_rounds
                 .clone()
@@ -655,289 +538,5 @@ impl ComputeBackend for MetalBackend {
         }
 
         (self.upload(&eq_evals), self.upload(&epo_evals))
-    }
-
-    #[tracing::instrument(skip_all, name = "MetalBackend::pairwise_reduce", fields(n = inputs[0].len()))]
-    fn pairwise_reduce<F: Field>(
-        &self,
-        inputs: &[&Self::Buffer<F>],
-        eq: EqInput<'_, Self, F>,
-        kernel: &Self::CompiledKernel<F>,
-        challenges: &[F],
-        _num_evals: usize,
-        order: BindingOrder,
-    ) -> Vec<F> {
-        debug_assert!(!inputs.is_empty());
-        let n = inputs[0].len();
-        let n_pairs = n / 2;
-
-        // Upload challenge values to a device buffer if the kernel expects them.
-        let challenges_buf = if kernel.pipelines.has_challenges && !challenges.is_empty() {
-            Some(self.upload_field_buffer(challenges))
-        } else {
-            None
-        };
-        let challenges_ref = challenges_buf.as_ref();
-
-        match eq {
-            EqInput::Weighted(weights) => {
-                let pipeline = match order {
-                    BindingOrder::LowToHigh => kernel.pipeline_l2h(),
-                    BindingOrder::HighToLow => kernel.pipeline_h2l(),
-                };
-                self.dispatch_reduce(
-                    pipeline,
-                    kernel.num_evals(),
-                    inputs,
-                    &[&weights.raw],
-                    challenges_ref,
-                    &[n_pairs as u32],
-                    n_pairs,
-                )
-            }
-            EqInput::Unit => {
-                let pipeline = match order {
-                    BindingOrder::LowToHigh => kernel.pipeline_l2h_unw(),
-                    BindingOrder::HighToLow => kernel.pipeline_h2l_unw(),
-                };
-                self.dispatch_reduce(
-                    pipeline,
-                    kernel.num_evals(),
-                    inputs,
-                    &[],
-                    challenges_ref,
-                    &[n_pairs as u32],
-                    n_pairs,
-                )
-            }
-            EqInput::Tensor { outer, inner } => {
-                let inner_len = inner.len();
-                let inner_log = inner_len.trailing_zeros();
-                let inner_mask = (inner_len - 1) as u32;
-                self.dispatch_reduce(
-                    kernel.pipeline_tensor(),
-                    kernel.num_evals(),
-                    inputs,
-                    &[&outer.raw, &inner.raw],
-                    challenges_ref,
-                    &[n_pairs as u32, inner_log, inner_mask],
-                    n_pairs,
-                )
-            }
-        }
-    }
-
-    #[tracing::instrument(skip_all, name = "MetalBackend::interpolate_pairs_batch", fields(n_bufs = bufs.len()))]
-    fn interpolate_pairs_batch<F: Field>(
-        &self,
-        bufs: Vec<Self::Buffer<F>>,
-        scalar: F,
-    ) -> Vec<Self::Buffer<F>> {
-        if bufs.is_empty() {
-            return vec![];
-        }
-
-        let scalar_buf = self.upload_scalar(&scalar);
-        let cmd = self.queue.new_command_buffer();
-
-        let outputs: Vec<MetalBuffer<F>> = bufs
-            .iter()
-            .map(|buf| {
-                let n = buf.len();
-                debug_assert!(n.is_multiple_of(2) || n == 0);
-                let half = n / 2;
-                let out: MetalBuffer<F> = MetalBuffer::zeroed(&self.device, half);
-
-                let enc = cmd.new_compute_command_encoder();
-                enc.set_compute_pipeline_state(&self.interpolation.interpolate_low);
-                enc.set_buffer(0, Some(&buf.raw), 0);
-                enc.set_buffer(1, Some(&scalar_buf), 0);
-                enc.set_buffer(2, Some(&out.raw), 0);
-                let tpg = self
-                    .interpolation
-                    .interpolate_low
-                    .max_total_threads_per_threadgroup()
-                    .min(half.max(1) as u64);
-                enc.dispatch_threads(
-                    MTLSize::new(half.max(1) as u64, 1, 1),
-                    MTLSize::new(tpg, 1, 1),
-                );
-                enc.end_encoding();
-
-                out
-            })
-            .collect();
-
-        cmd.commit();
-        cmd.wait_until_completed();
-
-        outputs
-    }
-
-    #[tracing::instrument(skip_all, fields(n_bufs = bufs.len()))]
-    fn interpolate_pairs_batch_inplace<F: Field>(
-        &self,
-        bufs: &mut [Self::Buffer<F>],
-        scalar: F,
-        order: BindingOrder,
-    ) {
-        if bufs.is_empty() {
-            return;
-        }
-
-        let scalar_buf = self.upload_scalar(&scalar);
-        let cmd = self.queue.new_command_buffer();
-
-        match order {
-            BindingOrder::HighToLow => {
-                // Safe in-place: thread i reads buf[i] and buf[i+half], writes buf[i].
-                //
-                // In sumcheck batches all buffers share the same length. When
-                // uniform, reuse the pre-allocated reduce_params buffer (one
-                // CPU write, zero allocations). When mixed, fall back to
-                // per-dispatch params buffers.
-                let uniform = bufs.windows(2).all(|w| w[0].len() == w[1].len());
-
-                if uniform {
-                    let half = bufs[0].len() / 2;
-                    // SAFETY: no Metal commands are in flight — previous command
-                    // buffer completed before this call.
-                    unsafe {
-                        self.reduce_params
-                            .contents()
-                            .cast::<u32>()
-                            .write(half as u32);
-                    }
-                    for buf in bufs.iter() {
-                        let enc = cmd.new_compute_command_encoder();
-                        enc.set_compute_pipeline_state(
-                            &self.interpolation.interpolate_inplace_high,
-                        );
-                        enc.set_buffer(0, Some(&buf.raw), 0);
-                        enc.set_buffer(1, Some(&scalar_buf), 0);
-                        enc.set_buffer(2, Some(&self.reduce_params), 0);
-                        let tpg = self
-                            .interpolation
-                            .interpolate_inplace_high
-                            .max_total_threads_per_threadgroup()
-                            .min((half as u64).max(1));
-                        enc.dispatch_threads(
-                            MTLSize::new((half as u64).max(1), 1, 1),
-                            MTLSize::new(tpg, 1, 1),
-                        );
-                        enc.end_encoding();
-                    }
-                } else {
-                    let params_bufs: Vec<_> = bufs
-                        .iter()
-                        .map(|buf| self.upload_params(&[(buf.len() / 2) as u32]))
-                        .collect();
-                    for (buf, params) in bufs.iter().zip(params_bufs.iter()) {
-                        let half = buf.len() / 2;
-                        let enc = cmd.new_compute_command_encoder();
-                        enc.set_compute_pipeline_state(
-                            &self.interpolation.interpolate_inplace_high,
-                        );
-                        enc.set_buffer(0, Some(&buf.raw), 0);
-                        enc.set_buffer(1, Some(&scalar_buf), 0);
-                        enc.set_buffer(2, Some(params), 0);
-                        let tpg = self
-                            .interpolation
-                            .interpolate_inplace_high
-                            .max_total_threads_per_threadgroup()
-                            .min((half as u64).max(1));
-                        enc.dispatch_threads(
-                            MTLSize::new((half as u64).max(1), 1, 1),
-                            MTLSize::new(tpg, 1, 1),
-                        );
-                        enc.end_encoding();
-                    }
-                }
-
-                cmd.commit();
-                cmd.wait_until_completed();
-
-                for buf in bufs.iter_mut() {
-                    buf.len /= 2;
-                }
-            }
-            BindingOrder::LowToHigh => {
-                // NOT safe in-place — dispatch to separate output buffers.
-                let outputs: Vec<MetalBuffer<F>> = bufs
-                    .iter()
-                    .map(|buf| {
-                        let half = buf.len() / 2;
-                        let out: MetalBuffer<F> = MetalBuffer::zeroed(&self.device, half);
-                        let enc = cmd.new_compute_command_encoder();
-                        enc.set_compute_pipeline_state(&self.interpolation.interpolate_low);
-                        enc.set_buffer(0, Some(&buf.raw), 0);
-                        enc.set_buffer(1, Some(&scalar_buf), 0);
-                        enc.set_buffer(2, Some(&out.raw), 0);
-                        let tpg = self
-                            .interpolation
-                            .interpolate_low
-                            .max_total_threads_per_threadgroup()
-                            .min(half.max(1) as u64);
-                        enc.dispatch_threads(
-                            MTLSize::new(half.max(1) as u64, 1, 1),
-                            MTLSize::new(tpg, 1, 1),
-                        );
-                        enc.end_encoding();
-                        out
-                    })
-                    .collect();
-
-                cmd.commit();
-                cmd.wait_until_completed();
-
-                for (buf, out) in bufs.iter_mut().zip(outputs) {
-                    *buf = out;
-                }
-            }
-        }
-    }
-
-    #[tracing::instrument(skip_all, fields(n = inputs.first().map_or(0, |b| b.len())))]
-    fn fused_interpolate_reduce<F: Field>(
-        &self,
-        inputs: &mut [Self::Buffer<F>],
-        weights: &mut Self::Buffer<F>,
-        interpolation_scalar: F,
-        kernel: &Self::CompiledKernel<F>,
-        challenges: &[F],
-        _num_evals: usize,
-    ) -> Vec<F> {
-        debug_assert!(!inputs.is_empty());
-        let n = inputs[0].len();
-        debug_assert!(n >= 4 && n.is_power_of_two());
-        let n_fused = n / 4;
-
-        let interp_scalar_buf = self.upload_scalar(&interpolation_scalar);
-        let refs: Vec<&MetalBuffer<F>> = inputs.iter().collect();
-
-        let challenges_buf = if kernel.pipelines.has_challenges && !challenges.is_empty() {
-            Some(self.upload_field_buffer(challenges))
-        } else {
-            None
-        };
-
-        let result = self.dispatch_fused_reduce(
-            kernel.pipeline_fused_h2l(),
-            kernel.num_evals(),
-            &refs,
-            weights,
-            &interp_scalar_buf,
-            challenges_buf.as_ref(),
-            n_fused,
-            self.device_config.reduce_group_size,
-        );
-
-        // Update buffer lengths — the GPU wrote interpolated values to [0, N/2)
-        for buf in inputs.iter_mut() {
-            buf.len /= 2;
-        }
-        weights.len /= 2;
-
-        result
     }
 }

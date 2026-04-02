@@ -7,8 +7,9 @@
 
 use std::sync::LazyLock;
 
-use jolt_compiler::{Factor, Formula, ProductTerm};
-use jolt_compute::{BindingOrder, ComputeBackend, EqInput};
+use jolt_compiler::kernel_spec::Iteration;
+use jolt_compiler::{BindingOrder, Factor, Formula, KernelSpec, ProductTerm};
+use jolt_compute::{Buf, ComputeBackend, DeviceBuffer};
 use jolt_cpu::CpuBackend;
 use jolt_field::{Field, Fr};
 use jolt_metal::MetalBackend;
@@ -20,6 +21,28 @@ static METAL: LazyLock<MetalBackend> = LazyLock::new(MetalBackend::new_fast_comp
 
 fn random_elements(rng: &mut StdRng, n: usize) -> Vec<Fr> {
     (0..n).map(|_| Fr::random(rng)).collect()
+}
+
+fn make_spec(formula: &Formula, order: BindingOrder) -> KernelSpec {
+    KernelSpec::new(formula.clone(), Iteration::Dense, order)
+}
+
+fn make_tensor_spec(formula: &Formula) -> KernelSpec {
+    KernelSpec::new(
+        formula.clone(),
+        Iteration::DenseTensor,
+        BindingOrder::LowToHigh,
+    )
+}
+
+fn product_sum_formula(d: usize, p: usize) -> Formula {
+    let terms: Vec<_> = (0..p)
+        .map(|g| ProductTerm {
+            coefficient: 1,
+            factors: (0..d).map(|j| Factor::Input((g * d + j) as u32)).collect(),
+        })
+        .collect();
+    Formula::from_terms(terms)
 }
 
 /// Verify that Fr's in-memory layout matches the Metal shader's expectations.
@@ -37,7 +60,6 @@ fn fr_memory_layout_compatible() {
         let fr = Fr::random(&mut rng);
         let limbs = fr.inner_limbs().0;
 
-        // Check that raw bytes of Fr match the expected [u64; 4] layout.
         // SAFETY: Fr is 32 bytes (verified above) and we read exactly that many.
         let fr_bytes: &[u8] =
             unsafe { std::slice::from_raw_parts((&raw const fr).cast::<u8>(), 32) };
@@ -87,27 +109,7 @@ fn alloc_is_zeroed() {
 const INTERP_SIZES: [usize; 3] = [2, 128, 4096];
 
 #[test]
-fn interpolate_pairs_parity() {
-    let metal = &*METAL;
-    let cpu = CpuBackend;
-
-    for &n in &INTERP_SIZES {
-        let mut rng = StdRng::seed_from_u64(0xCC00 + n as u64);
-        let data = random_elements(&mut rng, n);
-        let scalar = Fr::random(&mut rng);
-
-        let cpu_buf = cpu.upload(&data);
-        let expected = cpu.download(&cpu.interpolate_pairs(cpu_buf, scalar));
-
-        let mtl_buf = metal.upload(&data);
-        let got = metal.download(&metal.interpolate_pairs(mtl_buf, scalar));
-
-        assert_eq!(expected, got, "interpolate_pairs mismatch at n={n}");
-    }
-}
-
-#[test]
-fn interpolate_pairs_inplace_high_to_low_parity() {
+fn interpolate_inplace_high_to_low_parity() {
     let metal = &*METAL;
     let cpu = CpuBackend;
 
@@ -117,11 +119,11 @@ fn interpolate_pairs_inplace_high_to_low_parity() {
         let scalar = Fr::random(&mut rng);
 
         let mut cpu_buf = cpu.upload(&data);
-        cpu.interpolate_pairs_inplace(&mut cpu_buf, scalar, BindingOrder::HighToLow);
+        cpu.interpolate_inplace(&mut cpu_buf, scalar, BindingOrder::HighToLow);
         let expected = cpu.download(&cpu_buf);
 
         let mut mtl_buf = metal.upload(&data);
-        metal.interpolate_pairs_inplace(&mut mtl_buf, scalar, BindingOrder::HighToLow);
+        metal.interpolate_inplace(&mut mtl_buf, scalar, BindingOrder::HighToLow);
         let got = metal.download(&mtl_buf);
 
         assert_eq!(expected.len(), got.len(), "length mismatch at n={n}");
@@ -130,7 +132,7 @@ fn interpolate_pairs_inplace_high_to_low_parity() {
 }
 
 #[test]
-fn interpolate_pairs_inplace_low_to_high_parity() {
+fn interpolate_inplace_low_to_high_parity() {
     let metal = &*METAL;
     let cpu = CpuBackend;
 
@@ -140,11 +142,11 @@ fn interpolate_pairs_inplace_low_to_high_parity() {
         let scalar = Fr::random(&mut rng);
 
         let mut cpu_buf = cpu.upload(&data);
-        cpu.interpolate_pairs_inplace(&mut cpu_buf, scalar, BindingOrder::LowToHigh);
+        cpu.interpolate_inplace(&mut cpu_buf, scalar, BindingOrder::LowToHigh);
         let expected = cpu.download(&cpu_buf);
 
         let mut mtl_buf = metal.upload(&data);
-        metal.interpolate_pairs_inplace(&mut mtl_buf, scalar, BindingOrder::LowToHigh);
+        metal.interpolate_inplace(&mut mtl_buf, scalar, BindingOrder::LowToHigh);
         let got = metal.download(&mtl_buf);
 
         assert_eq!(expected.len(), got.len(), "length mismatch at n={n}");
@@ -154,7 +156,7 @@ fn interpolate_pairs_inplace_low_to_high_parity() {
 
 /// Multiple rounds of inplace interpolation (simulating sumcheck binding).
 #[test]
-fn interpolate_pairs_inplace_multi_round() {
+fn interpolate_inplace_multi_round() {
     let metal = &*METAL;
     let cpu = CpuBackend;
     let mut rng = StdRng::seed_from_u64(0xFF00);
@@ -164,11 +166,10 @@ fn interpolate_pairs_inplace_multi_round() {
     let mut cpu_buf = cpu.upload(&data);
     let mut mtl_buf = metal.upload(&data);
 
-    // Bind 10 rounds (LowToHigh), halving each time: 1024 -> 512 -> ... -> 1
     for round in 0..10 {
         let scalar = Fr::random(&mut rng);
-        cpu.interpolate_pairs_inplace(&mut cpu_buf, scalar, BindingOrder::LowToHigh);
-        metal.interpolate_pairs_inplace(&mut mtl_buf, scalar, BindingOrder::LowToHigh);
+        cpu.interpolate_inplace(&mut cpu_buf, scalar, BindingOrder::LowToHigh);
+        metal.interpolate_inplace(&mut mtl_buf, scalar, BindingOrder::LowToHigh);
 
         let expected = cpu.download(&cpu_buf);
         let got = metal.download(&mtl_buf);
@@ -181,7 +182,7 @@ fn interpolate_pairs_inplace_multi_round() {
 
 /// Multiple rounds with HighToLow binding order.
 #[test]
-fn interpolate_pairs_inplace_multi_round_high_to_low() {
+fn interpolate_inplace_multi_round_high_to_low() {
     let metal = &*METAL;
     let cpu = CpuBackend;
     let mut rng = StdRng::seed_from_u64(0xFF01);
@@ -193,8 +194,8 @@ fn interpolate_pairs_inplace_multi_round_high_to_low() {
 
     for round in 0..10 {
         let scalar = Fr::random(&mut rng);
-        cpu.interpolate_pairs_inplace(&mut cpu_buf, scalar, BindingOrder::HighToLow);
-        metal.interpolate_pairs_inplace(&mut mtl_buf, scalar, BindingOrder::HighToLow);
+        cpu.interpolate_inplace(&mut cpu_buf, scalar, BindingOrder::HighToLow);
+        metal.interpolate_inplace(&mut mtl_buf, scalar, BindingOrder::HighToLow);
 
         let expected = cpu.download(&cpu_buf);
         let got = metal.download(&mtl_buf);
@@ -222,10 +223,7 @@ fn eq_table_parity() {
             mtl_table.len(),
             "table size mismatch for {n_vars} vars"
         );
-        assert_eq!(
-            cpu_table, mtl_table,
-            "eq_table mismatch for {n_vars} vars"
-        );
+        assert_eq!(cpu_table, mtl_table, "eq_table mismatch for {n_vars} vars");
     }
 }
 
@@ -255,325 +253,113 @@ fn eq_table_large() {
     assert_eq!(cpu_table, mtl_table, "large eq_table mismatch");
 }
 
-fn product_sum_formula(d: usize, p: usize) -> Formula {
-    let terms: Vec<_> = (0..p)
-        .map(|g| ProductTerm {
-            coefficient: 1,
-            factors: (0..d).map(|j| Factor::Input((g * d + j) as u32)).collect(),
-        })
-        .collect();
-    Formula::from_terms(terms)
-}
+// ── Reduce parity tests ────────────────────────────────────────────────
 
-fn compile_kernels(
-    cpu: &CpuBackend,
-    metal: &MetalBackend,
+/// Helper: run reduce on both backends and compare results.
+fn reduce_parity(
     formula: &Formula,
-) -> (
-    <CpuBackend as ComputeBackend>::CompiledKernel<Fr>,
-    <MetalBackend as ComputeBackend>::CompiledKernel<Fr>,
+    order: BindingOrder,
+    inputs: &[Vec<Fr>],
+    challenges: &[Fr],
+    label: &str,
 ) {
-    let cpu_k = jolt_cpu::compile::<Fr>(formula);
-    let mtl_k = metal.compile_kernel::<Fr>(formula);
-    let _ = cpu;
-    (cpu_k, mtl_k)
+    let metal = &*METAL;
+    let cpu = CpuBackend;
+    let spec = make_spec(formula, order);
+
+    let cpu_k = cpu.compile::<Fr>(&spec);
+    let mtl_k = metal.compile::<Fr>(&spec);
+
+    let cpu_bufs: Vec<Vec<Fr>> = inputs.to_vec();
+    let cpu_dev: Vec<DeviceBuffer<Vec<Fr>, Vec<u64>>> = cpu_bufs
+        .iter()
+        .map(|v| DeviceBuffer::Field(v.clone()))
+        .collect();
+    let cpu_refs: Vec<&Buf<CpuBackend, Fr>> = cpu_dev.iter().collect();
+    let expected = cpu.reduce(&cpu_k, &cpu_refs, challenges);
+
+    let mtl_bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
+    let mtl_dev: Vec<DeviceBuffer<_, _>> = mtl_bufs.into_iter().map(DeviceBuffer::Field).collect();
+    let mtl_refs: Vec<&Buf<MetalBackend, Fr>> = mtl_dev.iter().collect();
+    let got = metal.reduce(&mtl_k, &mtl_refs, challenges);
+
+    assert_eq!(expected.len(), got.len(), "{label}: length mismatch");
+    assert_eq!(expected, got, "{label}: value mismatch");
 }
 
 /// ProductSum D=4, single group, LowToHigh.
 #[test]
-fn pairwise_reduce_product_sum_d4() {
-    let metal = &*METAL;
-    let cpu = CpuBackend;
+fn reduce_product_sum_d4() {
     let mut rng = StdRng::seed_from_u64(0xD001);
-
     let formula = product_sum_formula(4, 1);
-    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &formula);
-
     let n = 256;
     let inputs: Vec<Vec<Fr>> = (0..4).map(|_| random_elements(&mut rng, n)).collect();
-    let weights = random_elements(&mut rng, n / 2);
-
-    let cpu_inputs: Vec<Vec<Fr>> = inputs.clone();
-    let cpu_refs: Vec<&Vec<Fr>> = cpu_inputs.iter().collect();
-    let cpu_w = cpu.upload(&weights);
-    let expected = cpu.pairwise_reduce(
-        &cpu_refs,
-        EqInput::Weighted(&cpu_w),
-        &cpu_k,
-        &[],
-        formula.degree(),
-        BindingOrder::LowToHigh,
-    );
-
-    let mtl_bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
-    let mtl_refs: Vec<_> = mtl_bufs.iter().collect();
-    let mtl_w = metal.upload(&weights);
-    let got = metal.pairwise_reduce(
-        &mtl_refs,
-        EqInput::Weighted(&mtl_w),
-        &mtl_k,
-        &[],
-        formula.degree(),
-        BindingOrder::LowToHigh,
-    );
-
-    assert_eq!(expected.len(), got.len());
-    assert_eq!(expected, got, "pairwise_reduce D=4 mismatch");
+    reduce_parity(&formula, BindingOrder::LowToHigh, &inputs, &[], "D=4 L2H");
 }
 
 /// ProductSum D=3, 2 groups.
 #[test]
-fn pairwise_reduce_product_sum_d3_p2() {
-    let metal = &*METAL;
-    let cpu = CpuBackend;
+fn reduce_product_sum_d3_p2() {
     let mut rng = StdRng::seed_from_u64(0xD002);
-
     let formula = product_sum_formula(3, 2);
-    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &formula);
-
     let k = formula.num_inputs;
     let n = 128;
     let inputs: Vec<Vec<Fr>> = (0..k).map(|_| random_elements(&mut rng, n)).collect();
-    let weights = random_elements(&mut rng, n / 2);
-
-    let cpu_refs: Vec<&Vec<Fr>> = inputs.iter().collect();
-    let cpu_w = cpu.upload(&weights);
-    let expected = cpu.pairwise_reduce(
-        &cpu_refs,
-        EqInput::Weighted(&cpu_w),
-        &cpu_k,
-        &[],
-        formula.degree(),
-        BindingOrder::LowToHigh,
-    );
-
-    let mtl_bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
-    let mtl_refs: Vec<_> = mtl_bufs.iter().collect();
-    let mtl_w = metal.upload(&weights);
-    let got = metal.pairwise_reduce(
-        &mtl_refs,
-        EqInput::Weighted(&mtl_w),
-        &mtl_k,
-        &[],
-        formula.degree(),
-        BindingOrder::LowToHigh,
-    );
-
-    assert_eq!(expected, got, "pairwise_reduce D=3 P=2 mismatch");
+    reduce_parity(&formula, BindingOrder::LowToHigh, &inputs, &[], "D=3 P=2");
 }
 
-/// ProductSum D=8, single group, large buffer to exercise multiple threadgroups.
+/// ProductSum D=8, single group, large buffer.
 #[test]
-fn pairwise_reduce_product_sum_d8_large() {
-    let metal = &*METAL;
-    let cpu = CpuBackend;
+fn reduce_product_sum_d8_large() {
     let mut rng = StdRng::seed_from_u64(0xD003);
-
     let formula = product_sum_formula(8, 1);
-    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &formula);
-
     let n = 512;
     let inputs: Vec<Vec<Fr>> = (0..8).map(|_| random_elements(&mut rng, n)).collect();
-    let weights = random_elements(&mut rng, n / 2);
-
-    let cpu_refs: Vec<&Vec<Fr>> = inputs.iter().collect();
-    let cpu_w = cpu.upload(&weights);
-    let expected = cpu.pairwise_reduce(
-        &cpu_refs,
-        EqInput::Weighted(&cpu_w),
-        &cpu_k,
-        &[],
-        formula.degree(),
-        BindingOrder::LowToHigh,
-    );
-
-    let mtl_bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
-    let mtl_refs: Vec<_> = mtl_bufs.iter().collect();
-    let mtl_w = metal.upload(&weights);
-    let got = metal.pairwise_reduce(
-        &mtl_refs,
-        EqInput::Weighted(&mtl_w),
-        &mtl_k,
-        &[],
-        formula.degree(),
-        BindingOrder::LowToHigh,
-    );
-
-    assert_eq!(expected, got, "pairwise_reduce D=8 mismatch");
+    reduce_parity(&formula, BindingOrder::LowToHigh, &inputs, &[], "D=8 large");
 }
 
-/// ProductSum D=8 with HighToLow binding (exercises split-pass H2L path).
+/// ProductSum D=8 with HighToLow binding.
 #[test]
-fn pairwise_reduce_product_sum_d8_high_to_low() {
-    let metal = &*METAL;
-    let cpu = CpuBackend;
+fn reduce_product_sum_d8_high_to_low() {
     let mut rng = StdRng::seed_from_u64(0xD010);
-
     let formula = product_sum_formula(8, 1);
-    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &formula);
-
     let n = 512;
     let inputs: Vec<Vec<Fr>> = (0..8).map(|_| random_elements(&mut rng, n)).collect();
-    let weights = random_elements(&mut rng, n / 2);
-
-    let cpu_refs: Vec<&Vec<Fr>> = inputs.iter().collect();
-    let cpu_w = cpu.upload(&weights);
-    let expected = cpu.pairwise_reduce(
-        &cpu_refs,
-        EqInput::Weighted(&cpu_w),
-        &cpu_k,
-        &[],
-        formula.degree(),
-        BindingOrder::HighToLow,
-    );
-
-    let mtl_bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
-    let mtl_refs: Vec<_> = mtl_bufs.iter().collect();
-    let mtl_w = metal.upload(&weights);
-    let got = metal.pairwise_reduce(
-        &mtl_refs,
-        EqInput::Weighted(&mtl_w),
-        &mtl_k,
-        &[],
-        formula.degree(),
-        BindingOrder::HighToLow,
-    );
-
-    assert_eq!(expected, got, "pairwise_reduce D=8 H2L mismatch");
+    reduce_parity(&formula, BindingOrder::HighToLow, &inputs, &[], "D=8 H2L");
 }
 
-/// ProductSum D=8 with varying sizes to find split-pass boundary.
+/// ProductSum D=8 with varying sizes.
 #[test]
-fn pairwise_reduce_product_sum_d8_sizes() {
-    let metal = &*METAL;
-    let cpu = CpuBackend;
-
+fn reduce_product_sum_d8_sizes() {
     let formula = product_sum_formula(8, 1);
-    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &formula);
-
     for n_pairs in [32, 33, 48, 63, 64, 65, 128, 256] {
         let n = n_pairs * 2;
         let mut rng = StdRng::seed_from_u64(0xE000 + n_pairs as u64);
         let inputs: Vec<Vec<Fr>> = (0..8).map(|_| random_elements(&mut rng, n)).collect();
-        let weights = random_elements(&mut rng, n_pairs);
-
-        let cpu_refs: Vec<&Vec<Fr>> = inputs.iter().collect();
-        let cpu_w = cpu.upload(&weights);
-        let expected = cpu.pairwise_reduce(
-            &cpu_refs,
-            EqInput::Weighted(&cpu_w),
-            &cpu_k,
-            &[],
-            formula.degree(),
+        reduce_parity(
+            &formula,
             BindingOrder::LowToHigh,
-        );
-
-        let mtl_bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
-        let mtl_refs: Vec<_> = mtl_bufs.iter().collect();
-        let mtl_w = metal.upload(&weights);
-        let got = metal.pairwise_reduce(
-            &mtl_refs,
-            EqInput::Weighted(&mtl_w),
-            &mtl_k,
+            &inputs,
             &[],
-            formula.degree(),
-            BindingOrder::LowToHigh,
-        );
-
-        assert_eq!(expected, got, "D=8 mismatch at n_pairs={n_pairs}");
-    }
-}
-
-/// ProductSum D=8 unweighted (exercises split-pass unweighted path).
-#[test]
-fn pairwise_reduce_product_sum_d8_unweighted() {
-    let metal = &*METAL;
-    let cpu = CpuBackend;
-    let mut rng = StdRng::seed_from_u64(0xD011);
-
-    let formula = product_sum_formula(8, 1);
-    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &formula);
-
-    for n_pairs in [32, 33, 64, 256] {
-        let n = n_pairs * 2;
-        let inputs: Vec<Vec<Fr>> = (0..8).map(|_| random_elements(&mut rng, n)).collect();
-
-        let cpu_refs: Vec<&Vec<Fr>> = inputs.iter().collect();
-        let expected = cpu.pairwise_reduce(
-            &cpu_refs,
-            EqInput::Unit,
-            &cpu_k,
-            &[],
-            formula.degree(),
-            BindingOrder::LowToHigh,
-        );
-
-        let mtl_bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
-        let mtl_refs: Vec<_> = mtl_bufs.iter().collect();
-        let got = metal.pairwise_reduce(
-            &mtl_refs,
-            EqInput::Unit,
-            &mtl_k,
-            &[],
-            formula.degree(),
-            BindingOrder::LowToHigh,
-        );
-
-        assert_eq!(
-            expected, got,
-            "pairwise_reduce D=8 unweighted mismatch at n_pairs={n_pairs}"
+            &format!("D=8 n_pairs={n_pairs}"),
         );
     }
 }
 
-/// HighToLow binding order.
+/// HighToLow binding order with D=4.
 #[test]
-fn pairwise_reduce_high_to_low() {
-    let metal = &*METAL;
-    let cpu = CpuBackend;
+fn reduce_high_to_low() {
     let mut rng = StdRng::seed_from_u64(0xD004);
-
     let formula = product_sum_formula(4, 1);
-    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &formula);
-
     let n = 512;
     let inputs: Vec<Vec<Fr>> = (0..4).map(|_| random_elements(&mut rng, n)).collect();
-    let weights = random_elements(&mut rng, n / 2);
-
-    let cpu_refs: Vec<&Vec<Fr>> = inputs.iter().collect();
-    let cpu_w = cpu.upload(&weights);
-    let expected = cpu.pairwise_reduce(
-        &cpu_refs,
-        EqInput::Weighted(&cpu_w),
-        &cpu_k,
-        &[],
-        formula.degree(),
-        BindingOrder::HighToLow,
-    );
-
-    let mtl_bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
-    let mtl_refs: Vec<_> = mtl_bufs.iter().collect();
-    let mtl_w = metal.upload(&weights);
-    let got = metal.pairwise_reduce(
-        &mtl_refs,
-        EqInput::Weighted(&mtl_w),
-        &mtl_k,
-        &[],
-        formula.degree(),
-        BindingOrder::HighToLow,
-    );
-
-    assert_eq!(expected, got, "pairwise_reduce H2L mismatch");
+    reduce_parity(&formula, BindingOrder::HighToLow, &inputs, &[], "D=4 H2L");
 }
 
 /// Custom expression: booleanity h^2 - h.
 #[test]
-fn pairwise_reduce_custom_booleanity() {
-    let metal = &*METAL;
-    let cpu = CpuBackend;
+fn reduce_custom_booleanity() {
     let mut rng = StdRng::seed_from_u64(0xD005);
-
-    // h^2 - h (booleanity check)
     let formula = Formula::from_terms(vec![
         ProductTerm {
             coefficient: 1,
@@ -584,98 +370,50 @@ fn pairwise_reduce_custom_booleanity() {
             factors: vec![Factor::Input(0)],
         },
     ]);
-    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &formula);
-
     let n = 512;
     let inputs: Vec<Vec<Fr>> = vec![random_elements(&mut rng, n)];
-    let weights = random_elements(&mut rng, n / 2);
-
-    let cpu_refs: Vec<&Vec<Fr>> = inputs.iter().collect();
-    let cpu_w = cpu.upload(&weights);
-    let expected = cpu.pairwise_reduce(
-        &cpu_refs,
-        EqInput::Weighted(&cpu_w),
-        &cpu_k,
-        &[],
-        formula.degree(),
+    reduce_parity(
+        &formula,
         BindingOrder::LowToHigh,
-    );
-
-    let mtl_bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
-    let mtl_refs: Vec<_> = mtl_bufs.iter().collect();
-    let mtl_w = metal.upload(&weights);
-    let got = metal.pairwise_reduce(
-        &mtl_refs,
-        EqInput::Weighted(&mtl_w),
-        &mtl_k,
+        &inputs,
         &[],
-        formula.degree(),
-        BindingOrder::LowToHigh,
+        "booleanity",
     );
-
-    assert_eq!(expected, got, "pairwise_reduce custom booleanity mismatch");
 }
 
-/// Custom expression with challenges: gamma * o0 * o1.
+/// Custom expression with challenges: gamma * a * b.
 #[test]
-fn pairwise_reduce_custom_with_challenges() {
-    let metal = &*METAL;
-    let cpu = CpuBackend;
+fn reduce_custom_with_challenges() {
     let mut rng = StdRng::seed_from_u64(0xD006);
-
-    // gamma * a * b
     let formula = Formula::from_terms(vec![ProductTerm {
         coefficient: 1,
         factors: vec![Factor::Challenge(0), Factor::Input(0), Factor::Input(1)],
     }]);
     let challenges = vec![Fr::random(&mut rng)];
-    let cpu_k = jolt_cpu::compile::<Fr>(&formula);
-    let mtl_k = metal.compile_kernel::<Fr>(&formula);
-
     let n = 256;
     let inputs: Vec<Vec<Fr>> = (0..2).map(|_| random_elements(&mut rng, n)).collect();
-    let weights = random_elements(&mut rng, n / 2);
-
-    let cpu_refs: Vec<&Vec<Fr>> = inputs.iter().collect();
-    let cpu_w = cpu.upload(&weights);
-    let expected = cpu.pairwise_reduce(
-        &cpu_refs,
-        EqInput::Weighted(&cpu_w),
-        &cpu_k,
-        &challenges,
-        formula.degree(),
+    reduce_parity(
+        &formula,
         BindingOrder::LowToHigh,
-    );
-
-    let mtl_bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
-    let mtl_refs: Vec<_> = mtl_bufs.iter().collect();
-    let mtl_w = metal.upload(&weights);
-    let got = metal.pairwise_reduce(
-        &mtl_refs,
-        EqInput::Weighted(&mtl_w),
-        &mtl_k,
+        &inputs,
         &challenges,
-        formula.degree(),
-        BindingOrder::LowToHigh,
-    );
-
-    assert_eq!(
-        expected, got,
-        "pairwise_reduce custom with challenge mismatch"
+        "challenge",
     );
 }
 
-/// Tensor eq pairwise reduce matches CPU.
+/// Tensor eq reduce matches CPU.
 #[test]
-fn pairwise_reduce_tensor_eq() {
+fn reduce_tensor_eq() {
     let metal = &*METAL;
     let cpu = CpuBackend;
     let mut rng = StdRng::seed_from_u64(0xD007);
 
     let formula = product_sum_formula(4, 1);
-    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &formula);
+    let spec = make_tensor_spec(&formula);
 
-    // outer_len * inner_len pairs = n/2
+    let cpu_k = cpu.compile::<Fr>(&spec);
+    let mtl_k = metal.compile::<Fr>(&spec);
+
     let outer_len = 8;
     let inner_len = 16;
     let n = outer_len * inner_len * 2;
@@ -683,88 +421,47 @@ fn pairwise_reduce_tensor_eq() {
     let outer_w = random_elements(&mut rng, outer_len);
     let inner_w = random_elements(&mut rng, inner_len);
 
-    let cpu_inputs: Vec<Vec<Fr>> = inputs.clone();
-    let cpu_refs: Vec<&Vec<Fr>> = cpu_inputs.iter().collect();
-    let cpu_outer = cpu.upload(&outer_w);
-    let cpu_inner = cpu.upload(&inner_w);
-    let expected = cpu.pairwise_reduce(
-        &cpu_refs,
-        EqInput::Tensor {
-            outer: &cpu_outer,
-            inner: &cpu_inner,
-        },
-        &cpu_k,
-        &[],
-        formula.degree(),
-        BindingOrder::LowToHigh,
-    );
+    // CPU: value columns + tensor outer/inner
+    let mut cpu_dev: Vec<Buf<CpuBackend, Fr>> = inputs
+        .iter()
+        .map(|v| DeviceBuffer::Field(v.clone()))
+        .collect();
+    cpu_dev.push(DeviceBuffer::Field(outer_w.clone()));
+    cpu_dev.push(DeviceBuffer::Field(inner_w.clone()));
+    let cpu_refs: Vec<&Buf<CpuBackend, Fr>> = cpu_dev.iter().collect();
+    let expected = cpu.reduce(&cpu_k, &cpu_refs, &[]);
 
-    let mtl_bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
-    let mtl_refs: Vec<_> = mtl_bufs.iter().collect();
-    let mtl_outer = metal.upload(&outer_w);
-    let mtl_inner = metal.upload(&inner_w);
-    let got = metal.pairwise_reduce(
-        &mtl_refs,
-        EqInput::Tensor {
-            outer: &mtl_outer,
-            inner: &mtl_inner,
-        },
-        &mtl_k,
-        &[],
-        formula.degree(),
-        BindingOrder::LowToHigh,
-    );
+    // Metal: same layout
+    let mut mtl_dev: Vec<Buf<MetalBackend, Fr>> = inputs
+        .iter()
+        .map(|v| DeviceBuffer::Field(metal.upload(v)))
+        .collect();
+    mtl_dev.push(DeviceBuffer::Field(metal.upload(&outer_w)));
+    mtl_dev.push(DeviceBuffer::Field(metal.upload(&inner_w)));
+    let mtl_refs: Vec<&Buf<MetalBackend, Fr>> = mtl_dev.iter().collect();
+    let got = metal.reduce(&mtl_k, &mtl_refs, &[]);
 
-    assert_eq!(expected, got, "tensor_pairwise_reduce mismatch");
+    assert_eq!(expected, got, "tensor reduce mismatch");
 }
 
 /// ProductSum D=2 (smallest nontrivial case).
 #[test]
-fn pairwise_reduce_product_sum_d2() {
-    let metal = &*METAL;
-    let cpu = CpuBackend;
+fn reduce_product_sum_d2() {
     let mut rng = StdRng::seed_from_u64(0xD008);
-
     let formula = product_sum_formula(2, 1);
-    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &formula);
-
     let n = 64;
     let inputs: Vec<Vec<Fr>> = (0..2).map(|_| random_elements(&mut rng, n)).collect();
-    let weights = random_elements(&mut rng, n / 2);
-
-    let cpu_refs: Vec<&Vec<Fr>> = inputs.iter().collect();
-    let cpu_w = cpu.upload(&weights);
-    let expected = cpu.pairwise_reduce(
-        &cpu_refs,
-        EqInput::Weighted(&cpu_w),
-        &cpu_k,
-        &[],
-        formula.degree(),
-        BindingOrder::LowToHigh,
-    );
-
-    let mtl_bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
-    let mtl_refs: Vec<_> = mtl_bufs.iter().collect();
-    let mtl_w = metal.upload(&weights);
-    let got = metal.pairwise_reduce(
-        &mtl_refs,
-        EqInput::Weighted(&mtl_w),
-        &mtl_k,
-        &[],
-        formula.degree(),
-        BindingOrder::LowToHigh,
-    );
-
-    assert_eq!(expected, got, "pairwise_reduce D=2 mismatch");
+    reduce_parity(&formula, BindingOrder::LowToHigh, &inputs, &[], "D=2");
 }
 
 /// Verify known values for ProductSum D=4 with simple inputs.
 #[test]
-fn pairwise_reduce_product_sum_known_values() {
+fn reduce_product_sum_known_values() {
     let metal = &*METAL;
 
     let formula = product_sum_formula(4, 1);
-    let mtl_k = metal.compile_kernel::<Fr>(&formula);
+    let spec = make_spec(&formula, BindingOrder::LowToHigh);
+    let mtl_k = metal.compile::<Fr>(&spec);
 
     // Single pair: lo = [1,2,3,4], hi = [5,6,7,8]
     // Stored interleaved for LowToHigh: input_k = [lo[k], hi[k]]
@@ -775,19 +472,12 @@ fn pairwise_reduce_product_sum_known_values() {
             vec![lo, hi]
         })
         .collect();
-    let weights = vec![Fr::from_u64(1)];
 
     let mtl_bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
-    let mtl_refs: Vec<_> = mtl_bufs.iter().collect();
-    let mtl_w = metal.upload(&weights);
-    let got = metal.pairwise_reduce(
-        &mtl_refs,
-        EqInput::Weighted(&mtl_w),
-        &mtl_k,
-        &[],
-        formula.degree(),
-        BindingOrder::LowToHigh,
-    );
+    let mtl_dev: Vec<Buf<MetalBackend, Fr>> =
+        mtl_bufs.into_iter().map(DeviceBuffer::Field).collect();
+    let mtl_refs: Vec<&Buf<MetalBackend, Fr>> = mtl_dev.iter().collect();
+    let got = metal.reduce(&mtl_k, &mtl_refs, &[]);
 
     // Toom-Cook grid: P(1) = hi[0]*hi[1]*hi[2]*hi[3] = 5*6*7*8 = 1680
     assert_eq!(got[0], Fr::from_u64(1680), "P(1) mismatch");

@@ -149,7 +149,7 @@ fn compute_degree(protocol: &Protocol) -> Vec<usize> {
 #[allow(non_snake_case)]
 mod tests {
     use super::*;
-    use crate::ir::{PolyKind, PublicPoly};
+    use crate::ir::{Density, PolyKind, PublicPoly};
 
     /// Linear chain: v0 -> v1 -> v2
     fn linear_chain() -> Protocol {
@@ -161,9 +161,9 @@ mod tests {
         let b = p.poly("b", &[d], PolyKind::Virtual);
         let c = p.poly("c", &[d], PolyKind::Virtual);
 
-        let c0 = p.sumcheck(eq * a, 0, &[d]);
-        let c1 = p.sumcheck(eq * b, rho * c0[0], &[d]);
-        let _ = p.sumcheck(eq * c, rho * c1[0], &[d]);
+        let c0 = p.sumcheck(eq * a, 0, &[d], Density::Dense);
+        let c1 = p.sumcheck(eq * b, rho * c0[0], &[d], Density::Dense);
+        let _ = p.sumcheck(eq * c, rho * c1[0], &[d], Density::Dense);
         p
     }
 
@@ -178,10 +178,10 @@ mod tests {
         let c = p.poly("c", &[d], PolyKind::Virtual);
         let e = p.poly("e", &[d], PolyKind::Virtual);
 
-        let c0 = p.sumcheck(eq * a, 0, &[d]);
-        let c1 = p.sumcheck(eq * b, rho * c0[0], &[d]);
-        let c2 = p.sumcheck(eq * c, rho * c0[0], &[d]);
-        let _ = p.sumcheck(eq * e, rho * c1[0] + c2[0], &[d]);
+        let c0 = p.sumcheck(eq * a, 0, &[d], Density::Dense);
+        let c1 = p.sumcheck(eq * b, rho * c0[0], &[d], Density::Dense);
+        let c2 = p.sumcheck(eq * c, rho * c0[0], &[d], Density::Dense);
+        let _ = p.sumcheck(eq * e, rho * c1[0] + c2[0], &[d], Density::Dense);
         p
     }
 
@@ -234,9 +234,9 @@ mod tests {
         let gamma = p.challenge("gamma");
 
         // eq * (a * b): degree 3 (three Poly factors)
-        let c0 = p.sumcheck(eq * (a * b), 0, &[d]);
+        let c0 = p.sumcheck(eq * (a * b), 0, &[d], Density::Dense);
         // eq * gamma * a: degree 2 (two Poly factors, gamma is Challenge)
-        let _ = p.sumcheck(eq * gamma * a, gamma * c0[0] + c0[1], &[d]);
+        let _ = p.sumcheck(eq * gamma * a, gamma * c0[0] + c0[1], &[d], Density::Dense);
 
         let info = compute(&p);
         assert_eq!(info.degree[0], 3);
@@ -251,8 +251,8 @@ mod tests {
         let a = p.poly("a", &[d], PolyKind::Virtual);
         let b = p.poly("b", &[d], PolyKind::Virtual);
 
-        let _ = p.sumcheck(eq * a, 0, &[d]);
-        let _ = p.sumcheck(eq * b, 0, &[d]);
+        let _ = p.sumcheck(eq * a, 0, &[d], Density::Dense);
+        let _ = p.sumcheck(eq * b, 0, &[d], Density::Dense);
 
         let info = compute(&p);
         assert_eq!(info.depth[0], 0);
@@ -280,9 +280,9 @@ mod tests {
         let b = p.poly("b", &[d], PolyKind::Virtual);
         let c = p.poly("c", &[d], PolyKind::Virtual);
 
-        let upstream = p.sumcheck(eq * a, 0, &[d]); // v0
+        let upstream = p.sumcheck(eq * a, 0, &[d], Density::Dense); // v0
         let b_eval = p.evaluate(b, upstream[0]); // v1 (eval @ v0)
-        let _ = p.sumcheck(eq * c, rho * b_eval, &[d]); // v2 consumes b_eval
+        let _ = p.sumcheck(eq * c, rho * b_eval, &[d], Density::Dense); // v2 consumes b_eval
 
         let info = compute(&p);
         // v0 -> v1 (eval depends on v0), v1 -> v2 (v2 consumes b_eval from v1)

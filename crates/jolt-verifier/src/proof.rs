@@ -30,6 +30,5 @@ pub struct JoltProof<F: Field, PCS: CommitmentScheme<Field = F>> {
     pub config: ProverConfig,
     pub stage_proofs: Vec<StageProof<F>>,
     pub opening_proofs: Vec<PCS::Proof>,
-    pub witness_commitment: PCS::Output,
     pub commitments: Vec<PCS::Output>,
 }

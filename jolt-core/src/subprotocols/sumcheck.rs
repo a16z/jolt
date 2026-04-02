@@ -408,7 +408,7 @@ impl BatchedSumcheck {
         sumcheck_instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
-    ) -> Result<(Vec<F>, Vec<F::Challenge>), ProofVerifyError> {
+    ) -> Result<(Vec<F>, Vec<F::Challenge>, F), ProofVerifyError> {
         let max_degree = sumcheck_instances
             .iter()
             .map(|sumcheck| sumcheck.degree())
@@ -480,7 +480,7 @@ impl BatchedSumcheck {
             return Err(ProofVerifyError::SumcheckVerificationError);
         }
 
-        Ok((batching_coeffs, r_sumcheck))
+        Ok((batching_coeffs, r_sumcheck, claim))
     }
 
     /// Verify a standard (non-ZK) sumcheck proof without requiring a curve type.
@@ -599,6 +599,28 @@ impl<F: JoltField, ProofTranscript: Transcript> ClearSumcheckProof<F, ProofTrans
         }
 
         Ok((e, r))
+    }
+
+    /// Decompress all round polynomials, recovering the omitted linear term.
+    ///
+    /// Given the batched initial claim and the per-round challenges (from verification),
+    /// replays the hint chain: hint_0 = initial_claim, hint_{i+1} = poly_i(r_i).
+    pub fn decompress_all_rounds(
+        &self,
+        initial_claim: F,
+        challenges: &[F::Challenge],
+    ) -> Vec<Vec<F>> {
+        assert_eq!(self.compressed_polys.len(), challenges.len());
+        let mut hint = initial_claim;
+        self.compressed_polys
+            .iter()
+            .zip(challenges.iter())
+            .map(|(compressed, r)| {
+                let full = compressed.decompress(&hint);
+                hint = full.evaluate(r);
+                full.coeffs
+            })
+            .collect()
     }
 }
 
