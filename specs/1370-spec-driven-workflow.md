@@ -92,6 +92,10 @@ new-spec.sh / /new-spec → open PR → [auto-rename + spec label]
 - **Claude writes implementation in CI**: Rejected for now — security concern with `contents: write`. Implementation runs locally or in Claude Code cloud instead.
 - **Persistent Claude sessions via GitHub Actions polling**: Rejected — wasteful CI minutes. Future enhancement via Claude Code Channels or webhook server.
 
+## Documentation
+
+No Jolt book changes required — this is developer workflow tooling with no user-facing API or behavior changes. The workflow is documented in `CONTRIBUTING.md`.
+
 ## Execution
 
 ### Files to create

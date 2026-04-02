@@ -53,6 +53,10 @@ How does this feature fit into the existing system? Describe which modules, type
 
 What other approaches were evaluated? Why was this design chosen over them? This section prevents re-litigating decisions during implementation review.
 
+## Documentation
+
+What changes to the Jolt book (`book/`) are required? List new pages, sections to update, or diagrams to add. If no documentation changes are needed, state why (e.g., internal refactor with no user-facing impact).
+
 ## Execution
 
 Optional implementation direction — algorithmic approach, optimizations to consider, modules to touch. The implementer should be able to derive most of this from Intent and Evaluation.
