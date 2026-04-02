@@ -81,4 +81,5 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          claude_args: '--allowed-tools "Bash(gh pr:*)" "Bash(gh issue:*)" "Bash(cargo:*)" Read Edit Write Glob Grep Agent'
+          model: 'claude-opus-4-6-20250414'
+          claude_args: '--model claude-opus-4-6-20250414 --allowed-tools "Bash(gh pr:*)" "Bash(gh issue:*)" "Bash(cargo:*)" Read Edit Write Glob Grep Agent'
