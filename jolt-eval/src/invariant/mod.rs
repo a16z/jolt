@@ -1,10 +1,5 @@
-pub mod completeness_prover;
-pub mod completeness_verifier;
-pub mod determinism;
-pub mod serialization_roundtrip;
-pub mod soundness;
+pub mod split_eq_bind;
 pub mod synthesis;
-pub mod zk_consistency;
 
 use std::any::Any;
 use std::fmt;

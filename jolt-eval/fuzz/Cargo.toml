@@ -4,6 +4,15 @@ version = "0.0.0"
 publish = false
 edition = "2021"
 
+[workspace]
+
+[patch.crates-io]
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
+
 [package.metadata]
 cargo-fuzz = true
 
@@ -12,43 +21,15 @@ libfuzzer-sys = "0.4"
 jolt-eval = { path = ".." }
 
 [[bin]]
-name = "soundness"
-path = "fuzz_targets/soundness.rs"
+name = "split_eq_bind_low_high"
+path = "fuzz_targets/split_eq_bind_low_high.rs"
 test = false
 doc = false
 bench = false
 
 [[bin]]
-name = "verifier_completeness"
-path = "fuzz_targets/verifier_completeness.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "prover_completeness"
-path = "fuzz_targets/prover_completeness.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "determinism"
-path = "fuzz_targets/determinism.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "serialization_roundtrip"
-path = "fuzz_targets/serialization_roundtrip.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "zk_consistency"
-path = "fuzz_targets/zk_consistency.rs"
+name = "split_eq_bind_high_low"
+path = "fuzz_targets/split_eq_bind_high_low.rs"
 test = false
 doc = false
 bench = false

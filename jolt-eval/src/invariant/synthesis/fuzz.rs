@@ -20,42 +20,42 @@ use crate::TestCase;
 /// #![no_main]
 /// use libfuzzer_sys::fuzz_target;
 /// fuzz_target!(|data: &[u8]| {
-///     jolt_eval::invariant::synthesis::fuzz::fuzz_invariant("soundness", data);
+///     jolt_eval::invariant::synthesis::fuzz::fuzz_invariant("split_eq_bind_low_high", data);
 /// });
 /// ```
 ///
-/// Set `JOLT_FUZZ_ELF` to the path of a pre-compiled guest ELF before
-/// running `cargo fuzz`.
+/// For invariants that require a guest ELF, set `JOLT_FUZZ_ELF` to the
+/// path of a pre-compiled guest ELF before running `cargo fuzz`.
+/// Invariants that don't need a guest work without it.
 pub fn fuzz_invariant(invariant_name: &str, data: &[u8]) {
     use std::any::Any;
     use std::sync::LazyLock;
 
-    // One-time: build every invariant and its setup from the ELF.
     struct CachedInvariant {
         inv: Box<dyn DynInvariant>,
         setup: Box<dyn Any + Send + Sync>,
     }
 
     static CACHE: LazyLock<Vec<CachedInvariant>> = LazyLock::new(|| {
-        let elf_path = std::env::var("JOLT_FUZZ_ELF")
-            .expect("Set JOLT_FUZZ_ELF to the path of a compiled guest ELF");
-        let elf_bytes =
-            std::fs::read(&elf_path).unwrap_or_else(|e| panic!("Failed to read {elf_path}: {e}"));
-        let memory_config = common::jolt_device::MemoryConfig {
-            max_input_size: 4096,
-            max_output_size: 4096,
-            max_untrusted_advice_size: 0,
-            max_trusted_advice_size: 0,
-            stack_size: 65536,
-            heap_size: 32768,
-            program_size: None,
-        };
-        let test_case = Arc::new(TestCase {
-            elf_contents: elf_bytes,
-            memory_config,
-            max_trace_length: 65536,
+        let test_case: Option<Arc<TestCase>> = std::env::var("JOLT_FUZZ_ELF").ok().map(|elf_path| {
+            let elf_bytes = std::fs::read(&elf_path)
+                .unwrap_or_else(|e| panic!("Failed to read {elf_path}: {e}"));
+            let memory_config = common::jolt_device::MemoryConfig {
+                max_input_size: 4096,
+                max_output_size: 4096,
+                max_untrusted_advice_size: common::constants::DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE,
+                max_trusted_advice_size: common::constants::DEFAULT_MAX_TRUSTED_ADVICE_SIZE,
+                stack_size: 65536,
+                heap_size: 32768,
+                program_size: None,
+            };
+            Arc::new(TestCase {
+                elf_contents: elf_bytes,
+                memory_config,
+                max_trace_length: 65536,
+            })
         });
-        let registry = SynthesisRegistry::from_inventory(Some(test_case), vec![]);
+        let registry = SynthesisRegistry::from_inventory(test_case, vec![]);
         registry
             .into_invariants()
             .into_iter()
@@ -71,15 +71,6 @@ pub fn fuzz_invariant(invariant_name: &str, data: &[u8]) {
         .find(|c| c.inv.name() == invariant_name)
         .unwrap_or_else(|| panic!("Invariant '{invariant_name}' not found"));
 
-    // Use the fuzzer-provided bytes to produce an Input via Arbitrary,
-    // by going through the JSON round-trip: Arbitrary -> serde_json -> check_json_input.
-    // This is the most direct path that uses the fuzzer's data.
-    // DynInvariant erases the Input type, so we can't call Arbitrary
-    // on the concrete type directly.  Instead, interpret the fuzz data
-    // as a raw JSON string and feed it through check_json_input.  The
-    // fuzzer will mutate bytes toward valid JSON that deserializes into
-    // the Input type — this is the standard "structure-aware via serde"
-    // fuzzing pattern.
     if let Ok(json_str) = std::str::from_utf8(data) {
         match cached.inv.check_json_input(&*cached.setup, json_str) {
             CheckJsonResult::Violation(e) => {

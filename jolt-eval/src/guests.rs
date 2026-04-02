@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use common::constants::{DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE};
 use common::jolt_device::MemoryConfig;
 
 use crate::TestCase;
@@ -24,8 +25,8 @@ impl GuestSpec {
         MemoryConfig {
             max_input_size: self.max_input_size,
             max_output_size: self.max_output_size,
-            max_untrusted_advice_size: 0,
-            max_trusted_advice_size: 0,
+            max_untrusted_advice_size: DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE,
+            max_trusted_advice_size: DEFAULT_MAX_TRUSTED_ADVICE_SIZE,
             stack_size: self.stack_size,
             heap_size: self.heap_size,
             program_size: None,
@@ -163,8 +164,8 @@ pub fn resolve_test_case(
             memory_config: MemoryConfig {
                 max_input_size: 4096,
                 max_output_size: 4096,
-                max_untrusted_advice_size: 0,
-                max_trusted_advice_size: 0,
+                max_untrusted_advice_size: DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE,
+                max_trusted_advice_size: DEFAULT_MAX_TRUSTED_ADVICE_SIZE,
                 stack_size: 65536,
                 heap_size: 32768,
                 program_size: None,

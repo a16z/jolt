@@ -19,6 +19,7 @@ tracing = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 rayon = { workspace = true }
 rand = { workspace = true }
+rand_chacha = { workspace = true }
 sysinfo = { workspace = true }
 tracing-subscriber = { workspace = true }
 

@@ -95,6 +95,7 @@ members = [
     "jolt-eval",
     "jolt-eval/macros",
 ]
+exclude = ["jolt-eval/fuzz"]
 
 [features]
 host = ["jolt-sdk/host"]
