@@ -1,18 +1,10 @@
-mod catalog;
-
-use std::sync::Arc;
-
 use ark_bn254::Fr;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_core::curve::Bn254Curve;
 use jolt_core::poly::commitment::dory::DoryCommitmentScheme;
 use jolt_core::transcripts::Blake2bTranscript;
 
-pub use catalog::{find_guest, guest_names, resolve_test_case, GuestSpec, GUESTS};
 pub use jolt_core::guest::program::Program as GuestProgram;
-pub use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 pub use jolt_core::utils::errors::ProofVerifyError;
-pub use jolt_core::zkvm::Serializable;
 pub use tracer::JoltDevice;
 
 pub type F = Fr;
@@ -35,14 +27,6 @@ pub struct TestCase {
 }
 
 impl TestCase {
-    pub fn new(program: GuestProgram, max_trace_length: usize) -> Self {
-        Self {
-            elf_contents: program.elf_contents,
-            memory_config: program.memory_config,
-            max_trace_length,
-        }
-    }
-
     pub fn make_program(&self) -> GuestProgram {
         GuestProgram::new(&self.elf_contents, &self.memory_config)
     }
@@ -116,43 +100,5 @@ impl TestCase {
         let verifier =
             JoltVerifier::<F, C, PCS, FS>::new(verifier_pp, proof, io_device, None, None)?;
         verifier.verify()
-    }
-}
-
-/// Serialize a proof to bytes.
-pub fn serialize_proof(proof: &Proof) -> Vec<u8> {
-    let mut buf = Vec::new();
-    proof
-        .serialize_compressed(&mut buf)
-        .expect("proof serialization failed");
-    buf
-}
-
-/// Deserialize a proof from bytes.
-pub fn deserialize_proof(bytes: &[u8]) -> Result<Proof, ark_serialize::SerializationError> {
-    Proof::deserialize_compressed(bytes)
-}
-
-/// Shared setup reusable across multiple invariants/objectives
-/// operating on the same program.
-pub struct SharedSetup {
-    pub test_case: Arc<TestCase>,
-    pub prover_preprocessing: Arc<ProverPreprocessing>,
-    pub verifier_preprocessing: Arc<VerifierPreprocessing>,
-}
-
-impl SharedSetup {
-    pub fn new(test_case: TestCase) -> Self {
-        Self::new_from_arc(Arc::new(test_case))
-    }
-
-    pub fn new_from_arc(test_case: Arc<TestCase>) -> Self {
-        let prover_pp = test_case.prover_preprocessing();
-        let verifier_pp = TestCase::verifier_preprocessing(&prover_pp);
-        Self {
-            test_case,
-            prover_preprocessing: Arc::new(prover_pp),
-            verifier_preprocessing: Arc::new(verifier_pp),
-        }
     }
 }

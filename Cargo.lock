@@ -2946,7 +2946,6 @@ version = "0.1.0"
 dependencies = [
  "arbitrary",
  "ark-bn254",
- "ark-serialize 0.5.0",
  "clap",
  "common",
  "enumset",
@@ -2955,13 +2954,10 @@ dependencies = [
  "jolt-eval-macros",
  "postcard",
  "rand 0.8.5",
- "rayon",
  "schemars 0.8.22",
  "serde",
  "serde_json",
- "sysinfo",
  "tempfile",
- "thiserror 2.0.18",
  "tracer",
  "tracing",
  "tracing-subscriber",
@@ -4989,6 +4985,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
 dependencies = [
  "winapi-util",
+]
+
+[[package]]
+name = "sandbox-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk",
 ]
 
 [[package]]

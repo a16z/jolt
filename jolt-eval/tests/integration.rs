@@ -107,24 +107,22 @@ fn test_constant_objective() {
 }
 
 #[test]
-fn test_measure_objectives() {
-    use jolt_eval::objective::measure_dyn;
+fn test_lloc_objective() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
+    let obj = jolt_eval::objective::lloc::LlocObjective::new(root);
+    let lloc = obj.collect_measurement().unwrap();
+    assert!(lloc > 1000.0, "LLOC should be > 1000, got {lloc}");
+}
 
-    let objectives: Vec<Box<dyn AbstractObjective>> = vec![
-        Box::new(ConstantObjective {
-            label: "prover_time",
-            value: 3.125,
-            direction: Direction::Minimize,
-        }),
-        Box::new(ConstantObjective {
-            label: "inline_count",
-            value: 256.0,
-            direction: Direction::Maximize,
-        }),
-    ];
-
-    let results = measure_dyn(&objectives);
-    assert_eq!(results.len(), 2);
-    assert_eq!(results["prover_time"], 3.125);
-    assert_eq!(results["inline_count"], 256.0);
+#[test]
+fn test_comment_density_objective() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
+    let obj = jolt_eval::objective::comment_density::CommentDensityObjective::new(root);
+    let density = obj.collect_measurement().unwrap();
+    assert!(density > 0.0, "comment density should be > 0, got {density}");
+    assert!(density < 1.0, "comment density should be < 1, got {density}");
 }
