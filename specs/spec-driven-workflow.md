@@ -15,7 +15,7 @@ Large PRs (1000+ lines) are expensive to review. Human review time is the scarce
 
 A single PR carries a feature from spec to implementation:
 
-1. Author creates `specs/<name>.md` using `new-spec.sh`, opens a PR.
+1. Author creates `specs/<name>.md` using the `/new-spec` Claude skill (or manually from template), opens a PR.
 2. A GitHub Action auto-renames the file to `specs/<PR#>-<name>.md` and adds the `spec` label.
 3. A maintainer comments `@claude analyze` — Claude performs a deep-interview-style analysis, posting probing questions as review comments until it has zero ambiguity about the implementation. When satisfied, Claude adds the `claude-approved` label and posts a summary.
 4. Maintainers review and approve the spec.
@@ -48,11 +48,17 @@ The template has three sections following the project's existing philosophy:
 
 Plus metadata: Author, Created, Status (`proposed` / `approved` / `implemented`), PR number.
 
-### Claude Commands
+### Claude Integration
+
+**CI model**: `opus[1m]` — Claude Code Action runs with Opus 1M context for full codebase awareness.
+
+**CI permissions**: `contents: write` so Claude can push implementation commits to PR branches.
 
 **`@claude analyze`** — Deep-interview-style analysis of the spec. Claude reads the spec, explores relevant codebase areas, then posts targeted questions exposing ambiguities, missing invariants, unclear evaluation criteria, and hidden assumptions. Continues asking follow-up questions on subsequent `@claude` replies until satisfied. Posts a summary comment and adds `claude-approved` when done.
 
 **`@claude implement`** — One-shot implementation from an approved spec. Claude reads the spec, generates the implementation, and pushes commits to the PR branch.
+
+**`/new-spec <name>`** — Local Claude skill that creates a new spec file from the template with author, date, and name filled in. Replaces `new-spec.sh`.
 
 ### CONTRIBUTING.md
 
@@ -78,7 +84,7 @@ A new `CONTRIBUTING.md` documents:
 - `@claude implement` triggers Claude to generate implementation commits on the PR branch.
 
 ### Spec template
-- `new-spec.sh <name>` creates a valid spec file with the correct template, author, and date.
+- `/new-spec <name>` creates a valid spec file with the correct template, author, and date.
 - Template includes Status and PR metadata fields.
 
 ### Documentation
@@ -88,18 +94,19 @@ A new `CONTRIBUTING.md` documents:
 ## Execution
 
 ### Files to create
-- `.claude/commands/analyze-spec.md` — prompt for deep-interview spec analysis
-- `.claude/commands/implement-spec.md` — prompt for one-shot implementation
+- `.claude/skills/analyze-spec.md` — deep-interview spec analysis skill
+- `.claude/skills/implement-spec.md` — one-shot implementation skill
+- `.claude/skills/new-spec.md` — create new spec from template
 - `CONTRIBUTING.md` — contribution guide
 
 ### Files to modify
 - `specs/TEMPLATE.md` — add Status and PR metadata fields
 - `specs/README.md` — update workflow (remove tracking issue step)
-- `specs/new-spec.sh` — no date prefix, just `<name>.md` (PR number added by Action)
+- `.github/workflows/claude.yml` — set model to `opus[1m]`, `contents: write`
 - `.github/workflows/spec-tracking.yml` — replace issue-creation with labeling + rename + warning logic
 
 ### Files to remove
-- Nothing removed; `spec-tracking.yml` is repurposed.
+- `specs/new-spec.sh` — replaced by `/new-spec` Claude skill
 
 ## Open Questions
 
