@@ -17,7 +17,7 @@ Large PRs are expensive to review. Code generation is cheap — human verificati
 
 A single PR carries a feature from spec to implementation:
 
-1. **Create a spec** using `/new-spec <feature-name>` in Claude Code, or copy `specs/TEMPLATE.md` manually.
+1. **Create a spec** using `/new-spec <feature-name>` in Claude Code, or copy [`specs/TEMPLATE.md`](specs/TEMPLATE.md) manually.
 2. **Open a PR** with just the spec file. A GitHub Action will rename it to `<PR#>-<name>.md` and add the `spec` label.
 3. **Spec analysis**: A maintainer triggers `@claude analyze` on the PR. Claude performs a deep analysis, posting probing questions as review comments to identify ambiguities, missing invariants, and unclear evaluation criteria.
 4. **Spec review**: Maintainers review and approve the spec. The spec is approved when both humans and Claude agree it's unambiguous.

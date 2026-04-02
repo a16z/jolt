@@ -89,7 +89,6 @@ A new `CONTRIBUTING.md` documents:
 
 ### Documentation
 - `CONTRIBUTING.md` exists at repo root and explains the spec workflow.
-- `specs/README.md` reflects the updated workflow (no tracking issues).
 
 ## Execution
 
@@ -101,12 +100,12 @@ A new `CONTRIBUTING.md` documents:
 
 ### Files to modify
 - `specs/TEMPLATE.md` — add Status and PR metadata fields
-- `specs/README.md` — update workflow (remove tracking issue step)
 - `.github/workflows/claude.yml` — set model to `opus[1m]`, `contents: write`
 - `.github/workflows/spec-tracking.yml` — replace issue-creation with labeling + rename + warning logic
 
 ### Files to remove
 - `specs/new-spec.sh` — replaced by `/new-spec` Claude skill
+- `specs/README.md` — replaced by `CONTRIBUTING.md`
 
 ## Open Questions
 
