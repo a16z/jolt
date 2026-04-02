@@ -5,89 +5,117 @@ argument-hint: "[spec file path]"
 ---
 
 <Purpose>
-Analyze a spec file using Socratic questioning with mathematical ambiguity scoring. The goal: ensure the spec is clear enough for a one-shot implementation with zero clarifying questions. Post probing questions as PR review comments until all ambiguity is resolved, then add the `claude-approved` label.
+Analyze a spec file using Socratic questioning with mathematical ambiguity scoring. The goal: ensure the spec is clear enough for a one-shot implementation with zero clarifying questions.
+
+This skill operates in two modes:
+- **Local mode** (invoked via `/analyze-spec` in Claude Code): Full interactive Socratic interview — one question at a time, iterative refinement with the spec author.
+- **CI mode** (invoked via `@claude analyze` on a GitHub PR): Single-pass analysis — all questions posted at once as a single PR comment. Reads prior PR comments as context to account for already-answered questions.
 
 Adapted from the Ouroboros-inspired deep interview methodology — specification quality is the primary bottleneck in AI-assisted development.
 </Purpose>
 
 <Execution_Policy>
-- Ask ONE question at a time — never batch multiple questions
-- Target the WEAKEST clarity dimension with each question
-- Make weakest-dimension targeting explicit every round: name the weakest dimension, state its score/gap, and explain why the next question is aimed there
 - Gather codebase facts via `explore` agent BEFORE asking about them
 - Cite repo evidence (file path, symbol, or pattern) instead of asking the spec author to rediscover it
-- Score ambiguity after every answer — display the score transparently
+- Score ambiguity transparently
 - Do not approve until ambiguity ≤ threshold (default 0.2)
 - Allow early approval with a clear warning if ambiguity is still high
-- Challenge agents activate at specific round thresholds to shift perspective
 </Execution_Policy>
+
+<Mode_Detection>
+Detect which mode to use:
+- **CI mode**: You are running inside a GitHub PR context (invoked by `@claude analyze` via the Claude Code Action). Indicators: the triggering comment mentions `@claude analyze`, or you can detect the PR number via `gh pr view`.
+- **Local mode**: You are running interactively in a terminal via `/analyze-spec`.
+
+When in doubt, check if `gh pr view --json number` succeeds for the current branch. If so and the trigger is `@claude analyze`, use CI mode. Otherwise use local mode.
+</Mode_Detection>
 
 <Steps>
 
-## Phase 1: Initialize
+## Phase 1: Initialize (both modes)
 
-1. **Find the spec**: Locate the `specs/*.md` file in this PR (exclude `TEMPLATE.md`). If a path is provided in `{{ARGUMENTS}}`, use that.
+1. **Find the spec**: Locate the `specs/*.md` file (exclude `TEMPLATE.md`). If a path is provided in `{{ARGUMENTS}}`, use that.
 2. **Read the spec** thoroughly — understand Intent, Evaluation, and Execution sections.
-3. **Explore the codebase**: Run `explore` agent to map codebase areas relevant to the spec's intent. Store as `codebase_context`.
-4. **Initial assessment**: Score each clarity dimension based on the spec alone (before any Q&A).
+3. **Explore the codebase**: Run `explore` agent to map codebase areas relevant to the spec's intent.
+4. **Read prior context (CI mode)**: Read all existing PR comments to identify questions already asked and answers already given. Account for these when scoring — don't re-ask answered questions.
 
-Announce:
+## Phase 2: Analyze
 
-> **Spec analysis started.** I'll ask targeted questions to ensure this spec is unambiguous enough for one-shot implementation. After each answer, I'll show the clarity score. Approval requires ambiguity below 20%.
->
-> **Spec:** {spec title}
-> **Current ambiguity:** {initial_score}%
+Score clarity across four dimensions (0.0–1.0 each):
 
-## Phase 2: Interview Loop
-
-Repeat until `ambiguity ≤ threshold` OR spec author signals completion:
-
-### Step 2a: Generate Next Question
-
-Identify the dimension with the LOWEST clarity score. Generate a question that specifically improves that dimension.
-
-**Question targeting strategy:**
-- Questions should expose ASSUMPTIONS, not gather feature lists
-- If the scope is conceptually fuzzy (entities keep shifting, the core noun is unstable), ask an ontology-style question about what the thing fundamentally IS
-- Always state why this dimension is the bottleneck before asking
-
-**Clarity dimensions (brownfield weights — Jolt is always brownfield):**
-
-| Dimension | Weight | Question Style |
+| Dimension | Weight | What to assess |
 |-----------|--------|---------------|
-| Goal Clarity | 0.35 | "What exactly happens when...?" / "What invariant must hold?" |
-| Constraint Clarity | 0.25 | "What are the boundaries?" / "What is explicitly out of scope?" |
-| Success Criteria | 0.25 | "How do we know it works?" / "What test would verify this?" |
-| Context Clarity | 0.15 | "How does this fit with existing {module}?" / "I found {pattern} in {file} — should this extend or diverge?" |
-
-### Step 2b: Post the Question
-
-Post as a PR review comment on the relevant line of the spec, or as a general comment if the question spans multiple sections:
-
-```
-**Round {n}** | Targeting: {weakest_dimension} | Ambiguity: {score}%
-
-{question}
-```
-
-### Step 2c: Score Ambiguity
-
-After receiving the spec author's response, score clarity across all dimensions (0.0–1.0 each):
-
-1. **Goal Clarity**: Is the primary objective unambiguous? Can you state it in one sentence? Are key entities and their relationships clear?
-2. **Constraint Clarity**: Are boundaries, limitations, and non-goals clear?
-3. **Success Criteria**: Could you write a test that verifies success? Are acceptance criteria concrete?
-4. **Context Clarity**: Do we understand the existing system well enough to modify it safely?
+| Goal Clarity | 0.35 | Is the primary objective unambiguous? Can you state it in one sentence? Are key entities and relationships clear? |
+| Constraint Clarity | 0.25 | Are boundaries, limitations, and non-goals clear? |
+| Success Criteria | 0.25 | Could you write a test that verifies success? Are acceptance criteria concrete? |
+| Context Clarity | 0.15 | Do we understand the existing system well enough to modify it safely? |
 
 **Calculate ambiguity:**
 `ambiguity = 1 - (goal × 0.35 + constraints × 0.25 + criteria × 0.25 + context × 0.15)`
 
-### Step 2d: Report Progress
+For each dimension below 0.9, generate a targeted question that would improve it:
+- Questions should expose ASSUMPTIONS, not gather feature lists
+- If the scope is conceptually fuzzy, ask an ontology-style question about what the thing fundamentally IS
+- Cite specific codebase context (files, types, patterns) when relevant
 
-Post a comment with the updated scores:
+## Phase 3: Output (mode-dependent)
+
+### CI Mode — Single-Pass
+
+Post a **single PR comment** with all findings:
 
 ```
-**Round {n} complete.**
+**Spec Analysis: {spec title}**
+
+| Dimension | Score | Gap |
+|-----------|-------|-----|
+| Goal | {s} | {gap or "Clear"} |
+| Constraints | {s} | {gap or "Clear"} |
+| Success Criteria | {s} | {gap or "Clear"} |
+| Context | {s} | {gap or "Clear"} |
+| **Ambiguity** | | **{score}%** |
+
+{If ambiguity ≤ 20%:}
+**Status: Approved** — The spec is clear enough for one-shot implementation.
+
+**Summary:**
+- {what will be built}
+- {key invariants}
+- {critical evaluation criteria}
+
+{If ambiguity > 20%:}
+**Status: Questions remain** — {n} ambiguities to resolve before implementation.
+
+**Questions:**
+
+**1. [{dimension}]** {question}
+
+**2. [{dimension}]** {question}
+
+...
+
+> After addressing these questions in the spec, run `@claude analyze` again.
+> For a full interactive Socratic analysis, run `/analyze-spec` locally in Claude Code.
+```
+
+If approved, add the label: `gh pr edit --add-label claude-approved`
+
+If NOT approved, do NOT add the label. End with the suggestion to either update the spec and re-run `@claude analyze`, or run `/analyze-spec` locally for the interactive experience.
+
+### Local Mode — Interactive Socratic Interview
+
+Full iterative loop, one question at a time:
+
+**Each round:**
+1. Identify the dimension with the LOWEST clarity score
+2. State why this dimension is the bottleneck
+3. Ask ONE targeted question
+4. Wait for the author's response
+5. Re-score all dimensions
+6. Report progress:
+
+```
+Round {n} complete.
 
 | Dimension | Score | Weight | Weighted | Gap |
 |-----------|-------|--------|----------|-----|
@@ -97,78 +125,62 @@ Post a comment with the updated scores:
 | Context | {s} | 0.15 | {s*w} | {gap or "Clear"} |
 | **Ambiguity** | | | **{score}%** | |
 
-**Next target:** {weakest_dimension} — {rationale}
+Next target: {weakest_dimension} — {rationale}
 ```
 
-### Step 2e: Check Soft Limits
+**Challenge modes** (local only — these don't apply in single-pass CI):
 
-- **Round 3+**: Allow early approval if author says "enough", "looks good", "approve it"
-- **Round 10**: Soft warning: "We're at 10 rounds. Current ambiguity: {score}%. Continue or approve with current clarity?"
-- **Round 15**: Hard cap: "Maximum rounds reached. Approving with current clarity level ({score}%)."
+- **Round 4+ — Contrarian:** Challenge the spec's core assumption. "What if this constraint doesn't exist?" Test whether the framing is correct or habitual.
+- **Round 6+ — Simplifier:** Probe whether complexity can be removed. "What's the simplest version that satisfies the invariants?"
+- **Round 8+ — Ontologist (if ambiguity > 0.3):** "What IS this, really?" — find the essence.
 
-## Phase 3: Challenge Modes
+Each mode is used ONCE.
 
-At specific round thresholds, shift perspective. Each mode is used ONCE:
+**Soft limits (local only):**
+- **Round 3+**: Allow early approval if author says "enough", "looks good"
+- **Round 10**: Soft warning about round count
+- **Round 15**: Hard cap
 
-**Round 4+ — Contrarian:** Challenge the spec's core assumption. "What if this constraint doesn't actually exist?" or "What if the opposite approach is simpler?" Test whether the framing is correct or just habitual.
-
-**Round 6+ — Simplifier:** Probe whether complexity can be removed. "What's the simplest version that satisfies the invariants?" or "Which constraints are necessary vs. assumed?"
-
-**Round 8+ — Ontologist (if ambiguity > 0.3):** The ambiguity is still high, suggesting we may be addressing symptoms. "What IS this, really?" — find the essence by examining the key entities and their relationships.
-
-## Phase 4: Approve or Summarize
-
-### When ambiguity ≤ threshold (approved):
-
-Post a summary comment:
-
-```
-**Spec analysis complete — approved.**
-
-**Final ambiguity: {score}%**
-
-| Dimension | Score |
-|-----------|-------|
-| Goal | {s} |
-| Constraints | {s} |
-| Success Criteria | {s} |
-| Context | {s} |
-
-**Summary:**
-- {what will be built — one sentence}
-- {key invariants that must hold}
-- {critical evaluation criteria}
-
-**Key entities:** {entity list with relationships}
-
-The spec is clear enough for one-shot implementation.
-```
-
-Then add the label: `gh pr edit --add-label claude-approved`
-
-### When ambiguity > threshold (not approved):
-
-Post a summary:
-
-```
-**Spec analysis: {n} ambiguities remain.**
-
-| Dimension | Score | Gap |
-|-----------|-------|-----|
-| ... | ... | ... |
-
-**Current ambiguity: {score}% (threshold: 20%)**
-
-Reply to the questions above and ask me to analyze again.
-```
-
-Do NOT add `claude-approved` until ambiguity is below threshold.
+**When approved (local):** Print the summary and offer to update the spec with any refinements discovered during the interview.
 
 </Steps>
 
 <Examples>
 <Good>
-Targeting weakest dimension:
+CI mode — single-pass with all questions:
+```
+**Spec Analysis: Streaming Commitments**
+
+| Dimension | Score | Gap |
+|-----------|-------|-----|
+| Goal | 0.85 | Clear |
+| Constraints | 0.70 | Memory budget undefined |
+| Success Criteria | 0.50 | No new tests specified |
+| Context | 0.60 | Unclear which Dory tier is streamed |
+| **Ambiguity** | | **34%** |
+
+**Status: Questions remain** — 3 ambiguities to resolve.
+
+**Questions:**
+
+**1. [Success Criteria]** The Evaluation section says "existing tests pass" but
+doesn't specify new tests. What test would verify streaming produces identical
+commitments to the non-streaming path? What's the performance target?
+
+**2. [Context]** `DoryCommitmentScheme` uses a two-tier structure (tier-1 chunks
+→ tier-2 aggregation in `poly/commitment/dory/`). Which tier is streamed?
+
+**3. [Constraints]** What's the memory budget? The current non-streaming path
+peaks at ~2GB for large traces — should streaming reduce this, and to what?
+
+> After addressing these questions in the spec, run `@claude analyze` again.
+> For a full interactive analysis, run `/analyze-spec` locally.
+```
+Why good: All questions posted at once, each tagged with the dimension it targets, clear next steps.
+</Good>
+
+<Good>
+Local mode — interactive round:
 ```
 Round 2 | Targeting: Success Criteria | Ambiguity: 38%
 
@@ -177,61 +189,37 @@ section only mentions "existing tests pass." What NEW test would verify that
 streaming produces the same commitments as the non-streaming path? And what
 is the acceptable performance threshold (e.g., memory usage, throughput)?
 ```
-Why good: Identifies weakest dimension, asks a specific question tied to the spec content, suggests what a concrete criterion looks like.
+Why good: One question, targets weakest dimension, specific to the spec content.
 </Good>
 
 <Good>
 Citing codebase context:
 ```
-Round 3 | Targeting: Context Clarity | Ambiguity: 29%
-
 I found that `DoryCommitmentScheme` in `poly/commitment/dory/` uses a two-tier
 structure (tier-1 chunks → tier-2 aggregation). The spec mentions "streaming
 commitments" but doesn't specify which tier is streamed. Is this streaming
 at tier-1 (chunk-level), tier-2 (aggregation), or both?
 ```
-Why good: Explored the codebase first, cited specific types and files, asked a precise question the spec should answer.
+Why good: Explored first, cited specific types and files.
 </Good>
-
-<Good>
-Contrarian challenge:
-```
-Round 5 | Contrarian Mode | Ambiguity: 25%
-
-The spec assumes we need a new polynomial type for this. But `CompactPolynomial`
-already handles small-scalar promotion to field elements on bind. What if we
-extended `CompactPolynomial` instead of adding a new type? What property does
-the new type have that `CompactPolynomial` can't express?
-```
-Why good: Challenges a structural assumption by pointing to an existing abstraction that might already suffice.
-</Good>
-
-<Bad>
-Batching multiple questions:
-```
-"What's the memory budget? And how does this interact with BlindFold?
-Also, should this work with HyperKZG too?"
-```
-Why bad: Three questions at once — causes shallow answers and makes scoring inaccurate.
-</Bad>
 
 <Bad>
 Asking about codebase facts:
 ```
 "What commitment scheme does Jolt use?"
 ```
-Why bad: Should have explored the codebase to find this. Never ask the spec author what the code already tells you.
+Why bad: Should have explored the codebase to find this.
 </Bad>
 </Examples>
 
 <Escalation_And_Stop_Conditions>
-- **Hard cap at 15 rounds**: Approve with whatever clarity exists, noting the risk
-- **Soft warning at 10 rounds**: Offer to continue or approve
-- **Early approval (round 3+)**: Allow with warning if ambiguity > threshold
-- **Author says "stop", "approve", "good enough"**: Respect their decision, note residual ambiguity
-- **Ambiguity stalls** (same score +-0.05 for 3 rounds): Activate Ontologist mode to reframe
-- **All dimensions at 0.9+**: Approve immediately
-- **Codebase exploration fails**: Note the limitation, continue with spec-only analysis
+- **CI mode**: Single pass — no escalation needed. Either approve or list remaining questions.
+- **Local mode**:
+  - Hard cap at 15 rounds
+  - Soft warning at 10 rounds
+  - Early approval allowed at round 3+
+  - Ambiguity stalls (same score ±0.05 for 3 rounds): Activate Ontologist mode
+  - All dimensions at 0.9+: Approve immediately
 </Escalation_And_Stop_Conditions>
 
-Task: Analyze the spec in this PR. {{ARGUMENTS}}
+Task: Analyze the spec. {{ARGUMENTS}}
