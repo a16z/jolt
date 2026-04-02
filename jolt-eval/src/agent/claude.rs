@@ -23,6 +23,7 @@ impl ClaudeCodeAgent {
         worktree_dir: &Path,
         prompt: &str,
         extra_args: &[&str],
+        verbose: bool,
     ) -> Result<std::process::Output, AgentError> {
         tracing::info!(
             "Invoking claude (model={}, max_turns={})...",
@@ -36,8 +37,10 @@ impl ClaudeCodeAgent {
             .arg("--model")
             .arg(&self.model)
             .arg("--max-turns")
-            .arg(self.max_turns.to_string())
-            .arg("--verbose");
+            .arg(self.max_turns.to_string());
+        if verbose {
+            cmd.arg("--verbose");
+        }
         for arg in extra_args {
             cmd.arg(arg);
         }
@@ -56,7 +59,7 @@ impl AgentHarness for ClaudeCodeAgent {
         let worktree_dir = create_worktree(repo_dir)?;
         tracing::info!("Created worktree at {}", worktree_dir.display());
 
-        let result = self.run_cli(&worktree_dir, prompt, &[]);
+        let result = self.run_cli(&worktree_dir, prompt, &[], true);
 
         // Capture diff before cleanup
         let diff = Command::new("git")
@@ -117,6 +120,7 @@ impl AgentHarness for ClaudeCodeAgent {
             &worktree_dir,
             prompt,
             &["--output-format", "json", "--json-schema", &schema_str],
+            false,
         );
 
         tracing::info!("Cleaning up worktree...");
@@ -126,18 +130,28 @@ impl AgentHarness for ClaudeCodeAgent {
         let output = result?;
         let stdout = String::from_utf8_lossy(&output.stdout);
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(AgentError::new(format!(
-                "claude exited with status {}: {}",
-                output.status,
-                super::truncate(&stderr, 500)
-            )));
-        }
-
-        // Parse the CLI JSON envelope and extract structured_output
-        let envelope: serde_json::Value = serde_json::from_str(&stdout)
-            .map_err(|e| AgentError::new(format!("failed to parse CLI JSON envelope: {e}")))?;
+        // Parse the JSON envelope — even on non-zero exit (e.g. max_turns
+        // reached), Claude may still have produced structured output.
+        let envelope: serde_json::Value = match serde_json::from_str(&stdout) {
+            Ok(v) => v,
+            Err(e) => {
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    let detail = if stderr.trim().is_empty() {
+                        super::truncate(&stdout, 1000)
+                    } else {
+                        super::truncate(&stderr, 1000)
+                    };
+                    return Err(AgentError::new(format!(
+                        "claude exited with status {}: {}",
+                        output.status, detail
+                    )));
+                }
+                return Err(AgentError::new(format!(
+                    "failed to parse CLI JSON envelope: {e}"
+                )));
+            }
+        };
 
         let text = if let Some(structured) = envelope.get("structured_output") {
             serde_json::to_string(structured)
@@ -148,6 +162,15 @@ impl AgentHarness for ClaudeCodeAgent {
                 other => serde_json::to_string(other)
                     .map_err(|e| AgentError::new(format!("re-serialize result: {e}")))?,
             }
+        } else if !output.status.success() {
+            let errors = envelope
+                .get("errors")
+                .and_then(|e| serde_json::to_string(e).ok())
+                .unwrap_or_default();
+            return Err(AgentError::new(format!(
+                "claude exited with status {}: {}",
+                output.status, errors
+            )));
         } else {
             return Err(AgentError::new(
                 "CLI JSON envelope contained neither structured_output nor result",
