@@ -111,6 +111,41 @@ impl TestCase {
             verifier_pp,
         )
     }
+
+    /// Verify a proof against claimed (potentially malicious) outputs and panic flag.
+    ///
+    /// Unlike [`verify`], this lets the caller override the output bytes and
+    /// panic flag independently, for testing that the verifier rejects
+    /// dishonest claims.
+    pub fn verify_with_claims(
+        verifier_pp: &VerifierPreprocessing,
+        proof: Proof,
+        inputs: &[u8],
+        claimed_outputs: &[u8],
+        claimed_panic: bool,
+    ) -> Result<(), ProofVerifyError> {
+        use common::jolt_device::MemoryConfig;
+        use jolt_core::zkvm::verifier::JoltVerifier;
+
+        let memory_layout = &verifier_pp.shared.memory_layout;
+        let memory_config = MemoryConfig {
+            max_untrusted_advice_size: memory_layout.max_untrusted_advice_size,
+            max_trusted_advice_size: memory_layout.max_trusted_advice_size,
+            max_input_size: memory_layout.max_input_size,
+            max_output_size: memory_layout.max_output_size,
+            stack_size: memory_layout.stack_size,
+            heap_size: memory_layout.heap_size,
+            program_size: Some(memory_layout.program_size),
+        };
+        let mut io_device = JoltDevice::new(&memory_config);
+        io_device.inputs = inputs.to_vec();
+        io_device.outputs = claimed_outputs.to_vec();
+        io_device.panic = claimed_panic;
+
+        let verifier =
+            JoltVerifier::<F, C, PCS, FS>::new(verifier_pp, proof, io_device, None, None)?;
+        verifier.verify()
+    }
 }
 
 /// Serialize a proof to bytes.

@@ -82,6 +82,7 @@ fn main() -> eyre::Result<()> {
         JoltInvariants::SplitEqBindHighLow(inv) => {
             auto_redteam(inv, &config, &agent, &repo_dir)
         }
+        JoltInvariants::Soundness(inv) => auto_redteam(inv, &config, &agent, &repo_dir),
     };
 
     match result {

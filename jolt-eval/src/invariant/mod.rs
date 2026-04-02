@@ -1,3 +1,4 @@
+pub mod soundness;
 pub mod split_eq_bind;
 pub mod synthesis;
 
@@ -97,6 +98,7 @@ pub trait InvariantTargets {
 pub enum JoltInvariants {
     SplitEqBindLowHigh(split_eq_bind::SplitEqBindLowHighInvariant),
     SplitEqBindHighLow(split_eq_bind::SplitEqBindHighLowInvariant),
+    Soundness(soundness::SoundnessInvariant),
 }
 
 macro_rules! dispatch {
@@ -104,6 +106,7 @@ macro_rules! dispatch {
         match $self {
             JoltInvariants::SplitEqBindLowHigh($inv) => $body,
             JoltInvariants::SplitEqBindHighLow($inv) => $body,
+            JoltInvariants::Soundness($inv) => $body,
         }
     };
 }
@@ -113,6 +116,7 @@ impl JoltInvariants {
         vec![
             Self::SplitEqBindLowHigh(split_eq_bind::SplitEqBindLowHighInvariant),
             Self::SplitEqBindHighLow(split_eq_bind::SplitEqBindHighLowInvariant),
+            Self::Soundness(soundness::SoundnessInvariant),
         ]
     }
 

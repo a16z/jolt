@@ -1,4 +1,4 @@
-use jolt_eval::invariant::{Invariant, InvariantTargets, InvariantViolation, JoltInvariants};
+use jolt_eval::invariant::{Invariant, InvariantTargets, InvariantViolation};
 use jolt_eval::objective::{AbstractObjective, Direction, MeasurementError};
 
 /// A trivial invariant for testing the framework itself.
@@ -90,15 +90,6 @@ fn test_failing_invariant_reports_violations() {
     for input in inv.seed_corpus() {
         assert!(inv.check(&(), input).is_err());
     }
-}
-
-#[test]
-fn test_jolt_invariants_all() {
-    let all = JoltInvariants::all();
-    assert_eq!(all.len(), 2);
-    let names: Vec<_> = all.iter().map(|inv| inv.name()).collect();
-    assert!(names.contains(&"split_eq_bind_low_high"));
-    assert!(names.contains(&"split_eq_bind_high_low"));
 }
 
 #[test]

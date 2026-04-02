@@ -45,7 +45,7 @@ pub fn invariant(attr: TokenStream, item: TokenStream) -> TokenStream {
     } else {
         let first = &target_exprs[0];
         let rest = &target_exprs[1..];
-        quote! { #first #(| #rest)* }
+        quote! { enumset::EnumSet::only(#first) #(| #rest)* }
     };
 
     let targets_impl = quote! {
