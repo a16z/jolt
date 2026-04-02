@@ -14,7 +14,7 @@ use jolt_core::curve::Bn254Curve;
 use jolt_core::poly::commitment::dory::DoryCommitmentScheme;
 use jolt_core::transcripts::Blake2bTranscript;
 
-pub use invariant::{DynInvariant, Invariant, InvariantViolation, SynthesisTarget};
+pub use invariant::{Invariant, InvariantViolation, JoltInvariants, SynthesisTarget};
 pub use objective::{AbstractObjective, Direction, MeasurementError, Objective};
 
 // Re-exports used by the #[invariant] proc macro generated code.
@@ -122,9 +122,9 @@ pub fn deserialize_proof(bytes: &[u8]) -> Result<Proof, ark_serialize::Serializa
     Proof::deserialize_compressed(bytes)
 }
 
-/// Run all registered invariants, returning results keyed by name.
+/// Run all provided invariants, returning results keyed by name.
 pub fn check_all_invariants(
-    invariants: &[Box<dyn DynInvariant>],
+    invariants: &[JoltInvariants],
     num_random: usize,
 ) -> HashMap<String, Vec<Result<(), InvariantViolation>>> {
     invariants

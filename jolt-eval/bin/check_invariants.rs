@@ -1,22 +1,12 @@
 use clap::Parser;
 use tracing::info;
 
-use jolt_eval::guests;
-use jolt_eval::invariant::synthesis::{invariant_names, SynthesisRegistry};
-use jolt_eval::invariant::{DynInvariant, InvariantReport};
+use jolt_eval::invariant::{InvariantReport, JoltInvariants};
 
 #[derive(Parser)]
 #[command(name = "check-invariants")]
 #[command(about = "Run Jolt invariant checks")]
 struct Cli {
-    /// Guest program to evaluate (e.g. muldiv, fibonacci, sha2)
-    #[arg(long)]
-    guest: Option<String>,
-
-    /// Path to a pre-compiled guest ELF (alternative to --guest)
-    #[arg(long)]
-    elf: Option<String>,
-
     /// Only run the named invariant (default: all)
     #[arg(long)]
     invariant: Option<String>,
@@ -24,47 +14,31 @@ struct Cli {
     /// Number of random inputs per invariant
     #[arg(long, default_value = "10")]
     num_random: usize,
-
-    /// Max trace length override
-    #[arg(long)]
-    max_trace_length: Option<usize>,
 }
 
 fn main() -> eyre::Result<()> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
 
-    let (test_case, default_inputs) = guests::resolve_test_case(
-        cli.guest.as_deref(),
-        cli.elf.as_deref(),
-        cli.max_trace_length,
-    );
-
-    let registry = SynthesisRegistry::from_inventory(Some(test_case), default_inputs);
-
-    let invariants: Vec<&dyn DynInvariant> = if let Some(name) = &cli.invariant {
-        registry
-            .invariants()
-            .iter()
-            .filter(|inv| inv.name() == name.as_str())
-            .map(|inv| inv.as_ref())
-            .collect()
-    } else {
-        registry
-            .invariants()
-            .iter()
-            .map(|inv| inv.as_ref())
-            .collect()
-    };
-
-    if invariants.is_empty() {
-        eprintln!("No matching invariants found.");
-        if let Some(name) = &cli.invariant {
-            eprintln!("Available: {}", invariant_names().join(", "));
-            eprintln!("Requested: {name}");
+    let all = JoltInvariants::all();
+    let invariants: Vec<_> = if let Some(name) = &cli.invariant {
+        let filtered: Vec<_> = all
+            .into_iter()
+            .filter(|inv| inv.name().contains(name.as_str()))
+            .collect();
+        if filtered.is_empty() {
+            let all_inv = JoltInvariants::all();
+            let names: Vec<_> = all_inv.iter().map(|i| i.name()).collect();
+            eprintln!(
+                "Invariant '{name}' not found. Available: {}",
+                names.join(", ")
+            );
+            std::process::exit(1);
         }
-        std::process::exit(1);
-    }
+        filtered
+    } else {
+        all
+    };
 
     let mut all_passed = true;
     for inv in &invariants {

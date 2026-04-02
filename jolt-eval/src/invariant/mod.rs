@@ -3,7 +3,6 @@ pub mod synthesis;
 
 use std::any::Any;
 use std::fmt;
-use std::sync::Arc;
 
 use arbitrary::Arbitrary;
 use enumset::{EnumSet, EnumSetType};
@@ -11,8 +10,6 @@ use rand::RngCore;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-
-use crate::TestCase;
 
 /// What to synthesize from an invariant definition.
 #[derive(Debug, EnumSetType)]
@@ -89,35 +86,95 @@ pub trait Invariant: Send + Sync {
     }
 }
 
-/// Factory function type for constructing an invariant from an optional
-/// test case and default inputs.
-pub type InvariantBuildFn = fn(Option<Arc<TestCase>>, Vec<u8>) -> Box<dyn DynInvariant>;
-
-pub struct InvariantEntry {
-    pub name: &'static str,
-    pub targets: fn() -> EnumSet<SynthesisTarget>,
-    /// Whether this invariant requires a compiled guest program.
-    pub needs_guest: bool,
-    pub build: InvariantBuildFn,
+/// Enum collecting all Jolt invariants. Methods dispatch via match.
+pub enum JoltInvariants {
+    SplitEqBindLowHigh(split_eq_bind::SplitEqBindLowHighInvariant),
+    SplitEqBindHighLow(split_eq_bind::SplitEqBindHighLowInvariant),
 }
 
-/// All registered invariant entries.
-pub fn registered_invariants() -> impl Iterator<Item = InvariantEntry> {
-    [
-        InvariantEntry {
-            name: "split_eq_bind_low_high",
-            targets: || SynthesisTarget::Test | SynthesisTarget::Fuzz,
-            needs_guest: false,
-            build: |_tc, _inputs| Box::new(split_eq_bind::SplitEqBindLowHighInvariant),
-        },
-        InvariantEntry {
-            name: "split_eq_bind_high_low",
-            targets: || SynthesisTarget::Test | SynthesisTarget::Fuzz,
-            needs_guest: false,
-            build: |_tc, _inputs| Box::new(split_eq_bind::SplitEqBindHighLowInvariant),
-        },
-    ]
-    .into_iter()
+macro_rules! dispatch {
+    ($self:expr, |$inv:ident| $body:expr) => {
+        match $self {
+            JoltInvariants::SplitEqBindLowHigh($inv) => $body,
+            JoltInvariants::SplitEqBindHighLow($inv) => $body,
+        }
+    };
+}
+
+impl JoltInvariants {
+    pub fn all() -> Vec<Self> {
+        vec![
+            Self::SplitEqBindLowHigh(split_eq_bind::SplitEqBindLowHighInvariant),
+            Self::SplitEqBindHighLow(split_eq_bind::SplitEqBindHighLowInvariant),
+        ]
+    }
+
+    pub fn name(&self) -> &str {
+        dispatch!(self, |inv| inv.name())
+    }
+
+    pub fn description(&self) -> String {
+        dispatch!(self, |inv| inv.description())
+    }
+
+    pub fn targets(&self) -> EnumSet<SynthesisTarget> {
+        dispatch!(self, |inv| inv.targets())
+    }
+
+    pub fn run_checks(&self, num_random: usize) -> Vec<Result<(), InvariantViolation>> {
+        dispatch!(self, |inv| run_checks_impl(inv, num_random))
+    }
+
+    pub fn dyn_setup(&self) -> Box<dyn Any + Send + Sync> {
+        dispatch!(self, |inv| dyn_setup_impl(inv))
+    }
+
+    pub fn check_json_input(&self, setup: &dyn Any, json: &str) -> CheckJsonResult {
+        dispatch!(self, |inv| check_json_input_impl(inv, setup, json))
+    }
+}
+
+fn run_checks_impl<I: Invariant>(inv: &I, num_random: usize) -> Vec<Result<(), InvariantViolation>> {
+    let setup = inv.setup();
+    let mut results = Vec::new();
+
+    for input in inv.seed_corpus() {
+        results.push(inv.check(&setup, input));
+    }
+
+    let mut rng = rand::thread_rng();
+    for _ in 0..num_random {
+        let mut raw = vec![0u8; 4096];
+        rng.fill_bytes(&mut raw);
+        let mut u = arbitrary::Unstructured::new(&raw);
+        if let Ok(input) = I::Input::arbitrary(&mut u) {
+            results.push(inv.check(&setup, input));
+        }
+    }
+
+    results
+}
+
+fn dyn_setup_impl<I: Invariant>(inv: &I) -> Box<dyn Any + Send + Sync> {
+    Box::new(inv.setup())
+}
+
+fn check_json_input_impl<I: Invariant>(
+    inv: &I,
+    setup: &dyn Any,
+    json: &str,
+) -> CheckJsonResult {
+    let setup = setup
+        .downcast_ref::<I::Setup>()
+        .expect("check_json_input called with wrong setup type");
+    let input: I::Input = match serde_json::from_str(json) {
+        Ok(v) => v,
+        Err(e) => return CheckJsonResult::BadInput(e.to_string()),
+    };
+    match inv.check(setup, input) {
+        Ok(()) => CheckJsonResult::Pass,
+        Err(v) => CheckJsonResult::Violation(v),
+    }
 }
 
 /// A counterexample produced when an invariant is violated.
@@ -134,31 +191,7 @@ pub struct FailedAttempt {
     pub failure_reason: String,
 }
 
-/// Object-safe wrapper for `Invariant`, enabling heterogeneous collections
-/// and JSON-based counterexample checking.
-pub trait DynInvariant: Send + Sync {
-    fn name(&self) -> &str;
-    fn description(&self) -> String;
-    fn targets(&self) -> EnumSet<SynthesisTarget>;
-
-    /// Run seed corpus checks followed by `num_random` randomly-generated inputs.
-    fn run_checks(&self, num_random: usize) -> Vec<Result<(), InvariantViolation>>;
-
-    /// Return a JSON example of the `Input` type (from the seed corpus).
-    fn input_json_example(&self) -> Option<String>;
-
-    /// Return the JSON Schema for the `Input` type.
-    fn input_json_schema(&self) -> serde_json::Value;
-
-    /// Create the (type-erased) setup. Expensive — call once and reuse.
-    fn dyn_setup(&self) -> Box<dyn Any + Send + Sync>;
-
-    /// Deserialize a JSON-encoded `Input` and check it against a
-    /// previously-created setup (from [`dyn_setup`]).
-    fn check_json_input(&self, setup: &dyn Any, json: &str) -> CheckJsonResult;
-}
-
-/// Outcome of [`DynInvariant::check_json_input`].
+/// Outcome of [`JoltInvariants::check_json_input`].
 pub enum CheckJsonResult {
     /// The input was valid and the invariant held.
     Pass,
@@ -166,71 +199,6 @@ pub enum CheckJsonResult {
     Violation(InvariantViolation),
     /// The JSON could not be deserialized into the expected `Input` type.
     BadInput(String),
-}
-
-impl<I: Invariant> DynInvariant for I {
-    fn name(&self) -> &str {
-        Invariant::name(self)
-    }
-
-    fn description(&self) -> String {
-        Invariant::description(self)
-    }
-
-    fn targets(&self) -> EnumSet<SynthesisTarget> {
-        Invariant::targets(self)
-    }
-
-    fn run_checks(&self, num_random: usize) -> Vec<Result<(), InvariantViolation>> {
-        let setup = self.setup();
-        let mut results = Vec::new();
-
-        for input in self.seed_corpus() {
-            results.push(self.check(&setup, input));
-        }
-
-        let mut rng = rand::thread_rng();
-        for _ in 0..num_random {
-            let mut raw = vec![0u8; 4096];
-            rng.fill_bytes(&mut raw);
-            let mut u = arbitrary::Unstructured::new(&raw);
-            if let Ok(input) = I::Input::arbitrary(&mut u) {
-                results.push(self.check(&setup, input));
-            }
-        }
-
-        results
-    }
-
-    fn input_json_example(&self) -> Option<String> {
-        self.seed_corpus()
-            .into_iter()
-            .next()
-            .and_then(|input| serde_json::to_string_pretty(&input).ok())
-    }
-
-    fn input_json_schema(&self) -> serde_json::Value {
-        let schema = schemars::schema_for!(I::Input);
-        serde_json::to_value(schema).unwrap()
-    }
-
-    fn dyn_setup(&self) -> Box<dyn Any + Send + Sync> {
-        Box::new(Invariant::setup(self))
-    }
-
-    fn check_json_input(&self, setup: &dyn Any, json: &str) -> CheckJsonResult {
-        let setup = setup
-            .downcast_ref::<I::Setup>()
-            .expect("DynInvariant::check_json_input called with wrong setup type");
-        let input: I::Input = match serde_json::from_str(json) {
-            Ok(v) => v,
-            Err(e) => return CheckJsonResult::BadInput(e.to_string()),
-        };
-        match self.check(setup, input) {
-            Ok(()) => CheckJsonResult::Pass,
-            Err(v) => CheckJsonResult::Violation(v),
-        }
-    }
 }
 
 /// Result of running an invariant check suite.

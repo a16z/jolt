@@ -1,11 +1,12 @@
-use jolt_eval::invariant::synthesis::SynthesisRegistry;
-use jolt_eval::invariant::{DynInvariant, InvariantReport, InvariantViolation, SynthesisTarget};
+use jolt_eval::invariant::{
+    Invariant, InvariantReport, InvariantViolation, JoltInvariants, SynthesisTarget,
+};
 use jolt_eval::objective::{AbstractObjective, Direction, MeasurementError};
 
 /// A trivial invariant for testing the framework itself.
 struct TrivialInvariant;
 
-impl jolt_eval::Invariant for TrivialInvariant {
+impl Invariant for TrivialInvariant {
     type Setup = ();
     type Input = u8;
 
@@ -35,7 +36,7 @@ impl jolt_eval::Invariant for TrivialInvariant {
 /// An invariant that always fails, for testing violation reporting.
 struct FailingInvariant;
 
-impl jolt_eval::Invariant for FailingInvariant {
+impl Invariant for FailingInvariant {
     type Setup = ();
     type Input = u8;
 
@@ -86,18 +87,17 @@ impl AbstractObjective for ConstantObjective {
 #[test]
 fn test_trivial_invariant_passes() {
     let inv = TrivialInvariant;
-    let results = inv.run_checks(5);
-    // 3 seed corpus + 5 random
-    assert!(results.len() >= 3);
-    assert!(results.iter().all(|r| r.is_ok()));
+    for input in inv.seed_corpus() {
+        inv.check(&(), input).unwrap();
+    }
 }
 
 #[test]
 fn test_failing_invariant_reports_violations() {
     let inv = FailingInvariant;
-    let results = inv.run_checks(0);
-    assert_eq!(results.len(), 1); // 1 seed corpus item
-    assert!(results[0].is_err());
+    for input in inv.seed_corpus() {
+        assert!(inv.check(&(), input).is_err());
+    }
 }
 
 #[test]
@@ -112,14 +112,12 @@ fn test_invariant_report() {
 }
 
 #[test]
-fn test_synthesis_registry() {
-    let mut registry = SynthesisRegistry::new();
-    registry.register(Box::new(TrivialInvariant));
-    registry.register(Box::new(FailingInvariant));
-
-    assert_eq!(registry.invariants().len(), 2);
-    assert_eq!(registry.for_target(SynthesisTarget::Test).len(), 2);
-    assert_eq!(registry.for_target(SynthesisTarget::Fuzz).len(), 0);
+fn test_jolt_invariants_all() {
+    let all = JoltInvariants::all();
+    assert_eq!(all.len(), 2);
+    let names: Vec<_> = all.iter().map(|inv| inv.name()).collect();
+    assert!(names.contains(&"split_eq_bind_low_high"));
+    assert!(names.contains(&"split_eq_bind_high_low"));
 }
 
 #[test]

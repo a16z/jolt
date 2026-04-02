@@ -2,23 +2,13 @@ use clap::Parser;
 use tracing::info;
 
 use jolt_eval::agent::ClaudeCodeAgent;
-use jolt_eval::guests;
 use jolt_eval::invariant::synthesis::redteam::{auto_redteam, RedTeamConfig, RedTeamResult};
-use jolt_eval::invariant::synthesis::{invariant_names, SynthesisRegistry};
-use jolt_eval::invariant::SynthesisTarget;
+use jolt_eval::invariant::{JoltInvariants, SynthesisTarget};
 
 #[derive(Parser)]
 #[command(name = "redteam")]
 #[command(about = "AI-driven red team testing of Jolt invariants")]
 struct Cli {
-    /// Guest program to evaluate (e.g. muldiv, fibonacci, sha2)
-    #[arg(long)]
-    guest: Option<String>,
-
-    /// Path to a pre-compiled guest ELF (alternative to --guest)
-    #[arg(long)]
-    elf: Option<String>,
-
     /// Name of the invariant to test
     #[arg(long)]
     invariant: String,
@@ -35,10 +25,6 @@ struct Cli {
     #[arg(long, default_value = "30")]
     max_turns: usize,
 
-    /// Max trace length override
-    #[arg(long)]
-    max_trace_length: Option<usize>,
-
     /// List available red-teamable invariants and exit
     #[arg(long)]
     list: bool,
@@ -50,23 +36,18 @@ fn main() -> eyre::Result<()> {
 
     if cli.list {
         println!("Red-teamable invariants:");
-        for name in invariant_names() {
-            println!("  {name}");
+        for inv in &JoltInvariants::all() {
+            if inv.targets().contains(SynthesisTarget::RedTeam) {
+                println!("  {}", inv.name());
+            }
         }
         return Ok(());
     }
 
-    let (test_case, default_inputs) = guests::resolve_test_case(
-        cli.guest.as_deref(),
-        cli.elf.as_deref(),
-        cli.max_trace_length,
-    );
-
-    let registry = SynthesisRegistry::from_inventory(Some(test_case), default_inputs);
-
-    let invariant = registry
-        .for_target(SynthesisTarget::RedTeam)
-        .into_iter()
+    let all = JoltInvariants::all();
+    let invariant = all
+        .iter()
+        .filter(|inv| inv.targets().contains(SynthesisTarget::RedTeam))
         .find(|inv| inv.name() == cli.invariant.as_str());
 
     let Some(invariant) = invariant else {
@@ -89,7 +70,14 @@ fn main() -> eyre::Result<()> {
         cli.invariant, cli.iterations, cli.model
     );
 
-    let result = auto_redteam(invariant, &config, &agent, &repo_dir);
+    let result = match invariant {
+        JoltInvariants::SplitEqBindLowHigh(inv) => {
+            auto_redteam(inv, &config, &agent, &repo_dir)
+        }
+        JoltInvariants::SplitEqBindHighLow(inv) => {
+            auto_redteam(inv, &config, &agent, &repo_dir)
+        }
+    };
 
     match result {
         RedTeamResult::Violation {

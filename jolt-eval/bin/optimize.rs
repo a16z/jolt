@@ -5,7 +5,7 @@ use clap::Parser;
 
 use jolt_eval::agent::ClaudeCodeAgent;
 use jolt_eval::guests;
-use jolt_eval::invariant::synthesis::SynthesisRegistry;
+use jolt_eval::invariant::JoltInvariants;
 use jolt_eval::objective::optimize::{auto_optimize, OptimizeConfig, OptimizeEnv};
 use jolt_eval::objective::{
     build_objectives_from_inventory, measure_dyn, AbstractObjective, Direction,
@@ -51,7 +51,7 @@ struct Cli {
 
 struct RealEnv {
     objectives: Vec<Box<dyn AbstractObjective>>,
-    registry: SynthesisRegistry,
+    invariants: Vec<JoltInvariants>,
     repo_dir: std::path::PathBuf,
 }
 
@@ -61,7 +61,7 @@ impl OptimizeEnv for RealEnv {
     }
 
     fn check_invariants(&mut self) -> bool {
-        self.registry.invariants().iter().all(|inv| {
+        self.invariants.iter().all(|inv| {
             let results = inv.run_checks(0);
             results.iter().all(|r| r.is_ok())
         })
@@ -141,12 +141,12 @@ fn main() -> eyre::Result<()> {
         std::process::exit(1);
     }
 
-    let registry = SynthesisRegistry::from_inventory(Some(test_case), default_inputs);
+    let invariants = JoltInvariants::all();
     let repo_dir = std::env::current_dir()?;
 
     let mut env = RealEnv {
         objectives,
-        registry,
+        invariants,
         repo_dir: repo_dir.clone(),
     };
 

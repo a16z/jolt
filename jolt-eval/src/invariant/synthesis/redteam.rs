@@ -1,7 +1,6 @@
 use std::path::Path;
 
-use super::super::{CheckJsonResult, DynInvariant, FailedAttempt, SynthesisTarget};
-use super::SynthesisRegistry;
+use super::super::{FailedAttempt, Invariant, InvariantViolation};
 use crate::agent::AgentHarness;
 
 /// Result of a red-team session.
@@ -28,30 +27,21 @@ impl Default for RedTeamConfig {
 }
 
 /// Run an AI red-team session against a single invariant.
-///
-/// Each iteration:
-/// 1. Builds a prompt with the invariant description, a JSON example of
-///    the `Input` type, and past failed attempts.
-/// 2. Derives a JSON Schema for the response envelope (an object with
-///    `analysis` and `counterexample` fields) and invokes the agent via
-///    [`AgentHarness::invoke_structured`].  Agents that support structured
-///    output (e.g. `ClaudeCodeAgent` with `--json-schema`) will guarantee
-///    the response conforms; others fall back to free-form text.
-/// 3. Parses the `counterexample` from the response, deserializes it into
-///    the invariant's `Input` type, and runs `Invariant::check`.
-/// 4. If the check fails, the counterexample is genuine — return it.
-/// 5. Otherwise records the failed attempt and continues.
-pub fn auto_redteam(
-    invariant: &dyn DynInvariant,
+pub fn auto_redteam<I: Invariant>(
+    invariant: &I,
     config: &RedTeamConfig,
     agent: &dyn AgentHarness,
     repo_dir: &Path,
 ) -> RedTeamResult {
     let description = invariant.description();
-    let input_example = invariant.input_json_example();
-    let input_schema = invariant.input_json_schema();
+    let input_example: Option<String> = invariant
+        .seed_corpus()
+        .into_iter()
+        .next()
+        .and_then(|input| serde_json::to_string_pretty(&input).ok());
+    let input_schema = serde_json::to_value(schemars::schema_for!(I::Input)).unwrap();
     let envelope_schema = build_envelope_schema(&input_schema);
-    let setup = invariant.dyn_setup();
+    let setup = invariant.setup();
     let mut failed_attempts = Vec::new();
 
     for iteration in 0..config.num_iterations {
@@ -77,39 +67,24 @@ pub fn auto_redteam(
             }
         };
 
-        // Parse the structured response envelope.
-        // Agents using --json-schema return validated JSON directly.
-        // The fallback path (default invoke_structured) returns free-form
-        // text, so we try structured parsing first, then extract_json.
         let (analysis, counterexample_json) = match parse_envelope(&response.text) {
             Some(pair) => pair,
-            None => {
-                // Fallback: try to find raw JSON in free-form text
-                match super::super::extract_json(&response.text) {
-                    Some(json) => (response.text.clone(), json),
-                    None => {
-                        failed_attempts.push(FailedAttempt {
-                            description: format!("Iteration {}", iteration + 1),
-                            approach: response.text,
-                            failure_reason: "Agent response did not contain a JSON counterexample"
-                                .to_string(),
-                        });
-                        continue;
-                    }
+            None => match super::super::extract_json(&response.text) {
+                Some(json) => (response.text.clone(), json),
+                None => {
+                    failed_attempts.push(FailedAttempt {
+                        description: format!("Iteration {}", iteration + 1),
+                        approach: response.text,
+                        failure_reason: "Agent response did not contain a JSON counterexample"
+                            .to_string(),
+                    });
+                    continue;
                 }
-            }
+            },
         };
 
-        match invariant.check_json_input(&*setup, &counterexample_json) {
-            CheckJsonResult::Violation(violation) => {
-                tracing::info!("Counterexample CONFIRMED: {violation}");
-                return RedTeamResult::Violation {
-                    approach: analysis,
-                    input_json: counterexample_json,
-                    error: violation.to_string(),
-                };
-            }
-            CheckJsonResult::Pass => {
+        match check_counterexample(invariant, &setup, &counterexample_json) {
+            Ok(()) => {
                 failed_attempts.push(FailedAttempt {
                     description: format!("Iteration {}", iteration + 1),
                     approach: analysis,
@@ -118,7 +93,15 @@ pub fn auto_redteam(
                     ),
                 });
             }
-            CheckJsonResult::BadInput(parse_err) => {
+            Err(CheckError::Violation(violation)) => {
+                tracing::info!("Counterexample CONFIRMED: {violation}");
+                return RedTeamResult::Violation {
+                    approach: analysis,
+                    input_json: counterexample_json,
+                    error: violation.to_string(),
+                };
+            }
+            Err(CheckError::BadInput(parse_err)) => {
                 tracing::info!("Agent produced unparseable input: {parse_err}");
                 failed_attempts.push(FailedAttempt {
                     description: format!("Iteration {}", iteration + 1),
@@ -136,8 +119,21 @@ pub fn auto_redteam(
     }
 }
 
-/// Build the JSON Schema for the structured response envelope.
-/// The agent's response must be `{"analysis": "<string>", "counterexample": <input>}`.
+enum CheckError {
+    Violation(InvariantViolation),
+    BadInput(String),
+}
+
+fn check_counterexample<I: Invariant>(
+    inv: &I,
+    setup: &I::Setup,
+    json: &str,
+) -> Result<(), CheckError> {
+    let input: I::Input =
+        serde_json::from_str(json).map_err(|e| CheckError::BadInput(e.to_string()))?;
+    inv.check(setup, input).map_err(CheckError::Violation)
+}
+
 fn build_envelope_schema(input_schema: &serde_json::Value) -> serde_json::Value {
     serde_json::json!({
         "type": "object",
@@ -152,8 +148,6 @@ fn build_envelope_schema(input_schema: &serde_json::Value) -> serde_json::Value 
     })
 }
 
-/// Try to parse the response as a structured `{"analysis", "counterexample"}` envelope.
-/// Returns `(analysis, counterexample_json)` on success.
 fn parse_envelope(text: &str) -> Option<(String, String)> {
     let val: serde_json::Value = serde_json::from_str(text).ok()?;
     let analysis = val.get("analysis")?.as_str()?.to_string();
@@ -222,9 +216,4 @@ fn build_redteam_prompt(
     );
 
     prompt
-}
-
-/// List all invariants suitable for red-team testing.
-pub fn redteamable_invariants(registry: &SynthesisRegistry) -> Vec<&dyn DynInvariant> {
-    registry.for_target(SynthesisTarget::RedTeam)
 }
