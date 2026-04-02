@@ -1,10 +1,9 @@
-use jolt_eval::invariant::{
-    Invariant, InvariantReport, InvariantViolation, JoltInvariants, SynthesisTarget,
-};
+use jolt_eval::invariant::{Invariant, InvariantTargets, InvariantViolation, JoltInvariants};
 use jolt_eval::objective::{AbstractObjective, Direction, MeasurementError};
 
 /// A trivial invariant for testing the framework itself.
 struct TrivialInvariant;
+impl InvariantTargets for TrivialInvariant {}
 
 impl Invariant for TrivialInvariant {
     type Setup = ();
@@ -16,10 +15,6 @@ impl Invariant for TrivialInvariant {
 
     fn description(&self) -> String {
         "Always passes".to_string()
-    }
-
-    fn targets(&self) -> enumset::EnumSet<SynthesisTarget> {
-        SynthesisTarget::Test.into()
     }
 
     fn setup(&self) -> Self::Setup {}
@@ -35,6 +30,7 @@ impl Invariant for TrivialInvariant {
 
 /// An invariant that always fails, for testing violation reporting.
 struct FailingInvariant;
+impl InvariantTargets for FailingInvariant {}
 
 impl Invariant for FailingInvariant {
     type Setup = ();
@@ -46,10 +42,6 @@ impl Invariant for FailingInvariant {
 
     fn description(&self) -> String {
         "Always fails".to_string()
-    }
-
-    fn targets(&self) -> enumset::EnumSet<SynthesisTarget> {
-        SynthesisTarget::Test.into()
     }
 
     fn setup(&self) -> Self::Setup {}
@@ -98,17 +90,6 @@ fn test_failing_invariant_reports_violations() {
     for input in inv.seed_corpus() {
         assert!(inv.check(&(), input).is_err());
     }
-}
-
-#[test]
-fn test_invariant_report() {
-    let results: Vec<Result<(), InvariantViolation>> =
-        vec![Ok(()), Ok(()), Err(InvariantViolation::new("bad"))];
-    let report = InvariantReport::from_results("test", &results);
-    assert_eq!(report.total, 3);
-    assert_eq!(report.passed, 2);
-    assert_eq!(report.failed, 1);
-    assert_eq!(report.violations.len(), 1);
 }
 
 #[test]

@@ -14,6 +14,16 @@
 macro_rules! fuzz_invariant {
     ($inv:expr) => {
         use $crate::Invariant as _;
+        use $crate::InvariantTargets as _;
+
+        // Assert at init time that this invariant includes the Fuzz target.
+        fn __assert_fuzz_target<I: $crate::InvariantTargets>(inv: &I) {
+            assert!(
+                inv.targets()
+                    .contains($crate::SynthesisTarget::Fuzz),
+                "Invariant does not include SynthesisTarget::Fuzz"
+            );
+        }
 
         static __FUZZ_SETUP: ::std::sync::OnceLock<
             ::std::boxed::Box<dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync>,
@@ -40,6 +50,7 @@ macro_rules! fuzz_invariant {
 
         ::libfuzzer_sys::fuzz_target!(
             init: {
+                __assert_fuzz_target(&$inv);
                 __fuzz_init(&$inv);
             },
             |data: &[u8]| {

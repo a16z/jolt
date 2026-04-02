@@ -1,11 +1,10 @@
-use enumset::EnumSet;
-use jolt_eval::invariant::{Invariant, InvariantViolation, SynthesisTarget};
+use jolt_eval::invariant::{Invariant, InvariantViolation};
 
 // ---------------------------------------------------------------------------
 // AlwaysPass: trivial invariant to test macro synthesis
 // ---------------------------------------------------------------------------
 
-#[jolt_eval_macros::invariant]
+#[jolt_eval_macros::invariant(Test, Fuzz, RedTeam)]
 #[derive(Default)]
 pub struct AlwaysPassInvariant;
 
@@ -18,9 +17,6 @@ impl Invariant for AlwaysPassInvariant {
     }
     fn description(&self) -> String {
         "Trivial invariant that always passes — used to test macro synthesis.".to_string()
-    }
-    fn targets(&self) -> EnumSet<SynthesisTarget> {
-        SynthesisTarget::Test | SynthesisTarget::Fuzz | SynthesisTarget::RedTeam
     }
     fn setup(&self) -> Self::Setup {}
     fn check(&self, _: &(), _input: u8) -> Result<(), InvariantViolation> {
@@ -48,7 +44,7 @@ pub struct RangeInput {
     pub hi: u32,
 }
 
-#[jolt_eval_macros::invariant]
+#[jolt_eval_macros::invariant(Test, Fuzz)]
 #[derive(Default)]
 pub struct BoundsCheckInvariant;
 
@@ -61,9 +57,6 @@ impl Invariant for BoundsCheckInvariant {
     }
     fn description(&self) -> String {
         "Checks that max(lo,hi) >= min(lo,hi).".to_string()
-    }
-    fn targets(&self) -> EnumSet<SynthesisTarget> {
-        SynthesisTarget::Test | SynthesisTarget::Fuzz
     }
     fn setup(&self) -> Self::Setup {}
     fn check(&self, _: &(), input: RangeInput) -> Result<(), InvariantViolation> {

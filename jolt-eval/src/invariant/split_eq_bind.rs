@@ -1,7 +1,6 @@
 #![allow(non_snake_case)]
 
 use arbitrary::{Arbitrary, Unstructured};
-use enumset::EnumSet;
 
 use ark_bn254::Fr;
 use jolt_core::field::JoltField;
@@ -10,7 +9,7 @@ use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::multilinear_polynomial::BindingOrder;
 use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;
 
-use super::{Invariant, InvariantViolation, SynthesisTarget};
+use super::{Invariant, InvariantViolation};
 
 type Challenge = <Fr as JoltField>::Challenge;
 
@@ -44,7 +43,7 @@ fn to_challenges(vals: &[u128]) -> Vec<Challenge> {
 
 // ── LowToHigh ────────────────────────────────────────────────────────
 
-#[jolt_eval_macros::invariant]
+#[jolt_eval_macros::invariant(Test, Fuzz)]
 #[derive(Default)]
 pub struct SplitEqBindLowHighInvariant;
 
@@ -60,10 +59,6 @@ impl Invariant for SplitEqBindLowHighInvariant {
         "GruenSplitEqPolynomial::bind (LowToHigh) must match \
          DensePolynomial::bound_poly_var_bot at every round."
             .to_string()
-    }
-
-    fn targets(&self) -> EnumSet<SynthesisTarget> {
-        SynthesisTarget::Test | SynthesisTarget::Fuzz
     }
 
     fn setup(&self) {}
@@ -123,7 +118,7 @@ impl Invariant for SplitEqBindLowHighInvariant {
 
 // ── HighToLow ────────────────────────────────────────────────────────
 
-#[jolt_eval_macros::invariant]
+#[jolt_eval_macros::invariant(Test, Fuzz)]
 #[derive(Default)]
 pub struct SplitEqBindHighLowInvariant;
 
@@ -139,10 +134,6 @@ impl Invariant for SplitEqBindHighLowInvariant {
         "GruenSplitEqPolynomial::bind (HighToLow) must match \
          DensePolynomial::bound_poly_var_top at every round."
             .to_string()
-    }
-
-    fn targets(&self) -> EnumSet<SynthesisTarget> {
-        SynthesisTarget::Test | SynthesisTarget::Fuzz
     }
 
     fn setup(&self) {}

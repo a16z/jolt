@@ -71,8 +71,6 @@ pub trait Invariant: Send + Sync {
     /// Human-readable description, also used as context for AI red-teaming.
     fn description(&self) -> String;
 
-    fn targets(&self) -> EnumSet<SynthesisTarget>;
-
     /// One-time setup (e.g. preprocessing, generating an honest proof).
     fn setup(&self) -> Self::Setup;
 
@@ -82,6 +80,16 @@ pub trait Invariant: Send + Sync {
     /// Known-interesting inputs for deterministic test generation.
     fn seed_corpus(&self) -> Vec<Self::Input> {
         vec![]
+    }
+}
+
+/// Declares which synthesis targets an invariant supports.
+///
+/// Defaults to an empty set. Use the `#[invariant(Test, Fuzz)]` macro
+/// attribute to generate the implementation automatically.
+pub trait InvariantTargets {
+    fn targets(&self) -> EnumSet<SynthesisTarget> {
+        EnumSet::empty()
     }
 }
 
@@ -117,16 +125,18 @@ impl JoltInvariants {
     }
 
     pub fn targets(&self) -> EnumSet<SynthesisTarget> {
-        dispatch!(self, |inv| inv.targets())
+        dispatch!(self, |inv| InvariantTargets::targets(inv))
     }
 
     pub fn run_checks(&self, num_random: usize) -> Vec<Result<(), InvariantViolation>> {
         dispatch!(self, |inv| run_checks_impl(inv, num_random))
     }
-
 }
 
-fn run_checks_impl<I: Invariant>(inv: &I, num_random: usize) -> Vec<Result<(), InvariantViolation>> {
+fn run_checks_impl<I: Invariant>(
+    inv: &I,
+    num_random: usize,
+) -> Vec<Result<(), InvariantViolation>> {
     let setup = inv.setup();
     let mut results = Vec::new();
 
@@ -147,52 +157,11 @@ fn run_checks_impl<I: Invariant>(inv: &I, num_random: usize) -> Vec<Result<(), I
     results
 }
 
-/// A counterexample produced when an invariant is violated.
-pub struct InvariantCounterexample<I: Invariant> {
-    pub description: String,
-    pub input: I::Input,
-    pub error: InvariantViolation,
-}
-
 /// Record of a red-team attempt that failed to find a violation.
 pub struct FailedAttempt {
     pub description: String,
     pub approach: String,
     pub failure_reason: String,
-}
-
-/// Result of running an invariant check suite.
-pub struct InvariantReport {
-    pub name: String,
-    pub total: usize,
-    pub passed: usize,
-    pub failed: usize,
-    pub violations: Vec<String>,
-}
-
-impl InvariantReport {
-    pub fn from_results(name: &str, results: &[Result<(), InvariantViolation>]) -> Self {
-        let total = results.len();
-        let mut passed = 0;
-        let mut failed = 0;
-        let mut violations = Vec::new();
-        for r in results {
-            match r {
-                Ok(()) => passed += 1,
-                Err(e) => {
-                    failed += 1;
-                    violations.push(e.to_string());
-                }
-            }
-        }
-        Self {
-            name: name.to_string(),
-            total,
-            passed,
-            failed,
-            violations,
-        }
-    }
 }
 
 /// Try to extract a JSON object from free-form text. Looks for a

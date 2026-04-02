@@ -17,7 +17,9 @@ use jolt_core::curve::Bn254Curve;
 use jolt_core::poly::commitment::dory::DoryCommitmentScheme;
 use jolt_core::transcripts::Blake2bTranscript;
 
-pub use invariant::{Invariant, InvariantViolation, JoltInvariants, SynthesisTarget};
+pub use invariant::{
+    Invariant, InvariantTargets, InvariantViolation, JoltInvariants, SynthesisTarget,
+};
 pub use objective::{AbstractObjective, Direction, MeasurementError, Objective};
 
 // Re-exports used by the #[invariant] proc macro generated code.

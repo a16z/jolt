@@ -4,7 +4,7 @@ use std::path::Path;
 use enumset::EnumSet;
 use jolt_eval::agent::{AgentError, AgentHarness, AgentResponse, MockAgent};
 use jolt_eval::invariant::synthesis::redteam::{auto_redteam, RedTeamConfig, RedTeamResult};
-use jolt_eval::invariant::{Invariant, InvariantViolation, SynthesisTarget};
+use jolt_eval::invariant::{Invariant, InvariantTargets, InvariantViolation, SynthesisTarget};
 use jolt_eval::objective::optimize::{auto_optimize, OptimizeConfig, OptimizeEnv};
 use jolt_eval::objective::Direction;
 
@@ -14,6 +14,11 @@ use jolt_eval::objective::Direction;
 
 /// Always passes -- the red-team loop should never find a violation.
 struct AlwaysPassInvariant;
+impl InvariantTargets for AlwaysPassInvariant {
+    fn targets(&self) -> EnumSet<SynthesisTarget> {
+        SynthesisTarget::Test | SynthesisTarget::RedTeam
+    }
+}
 impl Invariant for AlwaysPassInvariant {
     type Setup = ();
     type Input = u8;
@@ -22,9 +27,6 @@ impl Invariant for AlwaysPassInvariant {
     }
     fn description(&self) -> String {
         "This invariant always passes.".into()
-    }
-    fn targets(&self) -> EnumSet<SynthesisTarget> {
-        SynthesisTarget::Test | SynthesisTarget::RedTeam
     }
     fn setup(&self) {}
     fn check(&self, _: &(), _: u8) -> Result<(), InvariantViolation> {
@@ -37,6 +39,11 @@ impl Invariant for AlwaysPassInvariant {
 
 /// Always fails -- the red-team loop should find a violation immediately.
 struct AlwaysFailInvariant;
+impl InvariantTargets for AlwaysFailInvariant {
+    fn targets(&self) -> EnumSet<SynthesisTarget> {
+        SynthesisTarget::Test | SynthesisTarget::RedTeam
+    }
+}
 impl Invariant for AlwaysFailInvariant {
     type Setup = ();
     type Input = u8;
@@ -45,9 +52,6 @@ impl Invariant for AlwaysFailInvariant {
     }
     fn description(&self) -> String {
         "This invariant always fails.".into()
-    }
-    fn targets(&self) -> EnumSet<SynthesisTarget> {
-        SynthesisTarget::Test | SynthesisTarget::RedTeam
     }
     fn setup(&self) {}
     fn check(&self, _: &(), input: u8) -> Result<(), InvariantViolation> {
@@ -60,6 +64,11 @@ impl Invariant for AlwaysFailInvariant {
 
 /// Fails only when the input is 0 -- tests that fuzz inputs can trigger it.
 struct FailsOnZeroInvariant;
+impl InvariantTargets for FailsOnZeroInvariant {
+    fn targets(&self) -> EnumSet<SynthesisTarget> {
+        SynthesisTarget::Test | SynthesisTarget::RedTeam
+    }
+}
 impl Invariant for FailsOnZeroInvariant {
     type Setup = ();
     type Input = u8;
@@ -68,9 +77,6 @@ impl Invariant for FailsOnZeroInvariant {
     }
     fn description(&self) -> String {
         "Fails when input is 0.".into()
-    }
-    fn targets(&self) -> EnumSet<SynthesisTarget> {
-        SynthesisTarget::Test | SynthesisTarget::RedTeam
     }
     fn setup(&self) {}
     fn check(&self, _: &(), input: u8) -> Result<(), InvariantViolation> {
