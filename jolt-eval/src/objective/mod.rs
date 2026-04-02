@@ -1,4 +1,5 @@
-pub mod comment_density;
+pub mod cognitive;
+pub mod halstead_bugs;
 pub mod lloc;
 pub mod optimize;
 
@@ -44,35 +45,40 @@ pub trait AbstractObjective: Send + Sync {
 /// Centralized objective enum dispatching to concrete implementations.
 pub enum Objective {
     Lloc(lloc::LlocObjective),
-    CommentDensity(comment_density::CommentDensityObjective),
+    CognitiveComplexity(cognitive::CognitiveComplexityObjective),
+    HalsteadBugs(halstead_bugs::HalsteadBugsObjective),
 }
 
 impl Objective {
     pub fn all(root: &Path) -> Vec<Self> {
         vec![
             Self::Lloc(lloc::LlocObjective::new(root)),
-            Self::CommentDensity(comment_density::CommentDensityObjective::new(root)),
+            Self::CognitiveComplexity(cognitive::CognitiveComplexityObjective::new(root)),
+            Self::HalsteadBugs(halstead_bugs::HalsteadBugsObjective::new(root)),
         ]
     }
 
     pub fn name(&self) -> &str {
         match self {
             Self::Lloc(o) => o.name(),
-            Self::CommentDensity(o) => o.name(),
+            Self::CognitiveComplexity(o) => o.name(),
+            Self::HalsteadBugs(o) => o.name(),
         }
     }
 
     pub fn collect_measurement(&self) -> Result<f64, MeasurementError> {
         match self {
             Self::Lloc(o) => o.collect_measurement(),
-            Self::CommentDensity(o) => o.collect_measurement(),
+            Self::CognitiveComplexity(o) => o.collect_measurement(),
+            Self::HalsteadBugs(o) => o.collect_measurement(),
         }
     }
 
     pub fn direction(&self) -> Direction {
         match self {
             Self::Lloc(o) => o.direction(),
-            Self::CommentDensity(o) => o.direction(),
+            Self::CognitiveComplexity(o) => o.direction(),
+            Self::HalsteadBugs(o) => o.direction(),
         }
     }
 }

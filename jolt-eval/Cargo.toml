@@ -23,6 +23,8 @@ enumset = "1"
 schemars = "0.8"
 tempfile = "3"
 
+rust-code-analysis = "0.0.24"
+
 jolt-eval-macros = { path = "macros" }
 
 [[bin]]

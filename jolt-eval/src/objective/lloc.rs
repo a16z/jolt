@@ -1,10 +1,11 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
+
+use rust_code_analysis::{get_function_spaces, FuncSpace, LANG};
 
 use super::{AbstractObjective, Direction, MeasurementError};
 
-/// Total lines of Rust code (excluding comments and blanks) across
-/// `jolt-core/src/`, as reported by `tokei`.
+/// Total logical lines of code (LLOC) across all Rust files under
+/// `jolt-core/src/`.
 pub struct LlocObjective {
     root: PathBuf,
 }
@@ -23,8 +24,14 @@ impl AbstractObjective for LlocObjective {
     }
 
     fn collect_measurement(&self) -> Result<f64, MeasurementError> {
-        let stats = tokei_rust_stats(&self.root.join("jolt-core/src"))?;
-        Ok(stats.code as f64)
+        let src_dir = self.root.join("jolt-core/src");
+        let mut total = 0.0;
+        for path in rust_files(&src_dir)? {
+            if let Some(space) = analyze_rust_file(&path) {
+                total += space.metrics.loc.lloc();
+            }
+        }
+        Ok(total)
     }
 
     fn direction(&self) -> Direction {
@@ -32,37 +39,60 @@ impl AbstractObjective for LlocObjective {
     }
 }
 
-pub(crate) struct TokeiStats {
-    pub code: u64,
-    pub comments: u64,
+pub(crate) fn rust_files(dir: &Path) -> Result<Vec<PathBuf>, MeasurementError> {
+    let mut files = Vec::new();
+    walk_rust_files(dir, &mut files)
+        .map_err(|e| MeasurementError::new(format!("walking {}: {e}", dir.display())))?;
+    Ok(files)
 }
 
-/// Run `tokei --type Rust -o json` on a directory and parse the result.
-pub(crate) fn tokei_rust_stats(dir: &Path) -> Result<TokeiStats, MeasurementError> {
-    let output = Command::new("tokei")
-        .arg(dir)
-        .args(["--type", "Rust", "-o", "json"])
-        .output()
-        .map_err(|e| {
-            MeasurementError::new(format!(
-                "tokei: {e}. Install via: cargo install tokei"
-            ))
-        })?;
+fn walk_rust_files(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            walk_rust_files(&path, out)?;
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            out.push(path);
+        }
+    }
+    Ok(())
+}
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(MeasurementError::new(format!("tokei failed: {stderr}")));
+pub(crate) fn analyze_rust_file(path: &Path) -> Option<FuncSpace> {
+    let source = std::fs::read(path).ok()?;
+    get_function_spaces(&LANG::Rust, source, path, None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lloc_on_jolt_core() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let obj = LlocObjective::new(root);
+        let val = obj.collect_measurement().unwrap();
+        assert!(val > 1000.0, "LLOC should be > 1000, got {val}");
     }
 
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .map_err(|e| MeasurementError::new(format!("tokei JSON parse: {e}")))?;
+    #[test]
+    fn lloc_on_inline_source() {
+        let source = b"fn f() { let x = 1; let y = 2; }".to_vec();
+        let path = Path::new("test.rs");
+        let space = get_function_spaces(&LANG::Rust, source, path, None).unwrap();
+        let lloc = space.metrics.loc.lloc();
+        assert!(lloc >= 2.0, "two statements should give lloc >= 2, got {lloc}");
+    }
 
-    let rust = json
-        .get("Rust")
-        .ok_or_else(|| MeasurementError::new("no Rust section in tokei output"))?;
-
-    Ok(TokeiStats {
-        code: rust["code"].as_u64().unwrap_or(0),
-        comments: rust["comments"].as_u64().unwrap_or(0),
-    })
+    #[test]
+    fn rust_files_finds_rs_files() {
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let files = rust_files(&src).unwrap();
+        assert!(!files.is_empty());
+        assert!(files.iter().all(|f| f.extension().unwrap() == "rs"));
+    }
 }

@@ -107,22 +107,14 @@ fn test_constant_objective() {
 }
 
 #[test]
-fn test_lloc_objective() {
+fn test_objective_all() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap();
-    let obj = jolt_eval::objective::lloc::LlocObjective::new(root);
-    let lloc = obj.collect_measurement().unwrap();
-    assert!(lloc > 1000.0, "LLOC should be > 1000, got {lloc}");
-}
-
-#[test]
-fn test_comment_density_objective() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap();
-    let obj = jolt_eval::objective::comment_density::CommentDensityObjective::new(root);
-    let density = obj.collect_measurement().unwrap();
-    assert!(density > 0.0, "comment density should be > 0, got {density}");
-    assert!(density < 1.0, "comment density should be < 1, got {density}");
+    let objectives = jolt_eval::Objective::all(root);
+    assert_eq!(objectives.len(), 3);
+    for obj in &objectives {
+        let val = obj.collect_measurement().unwrap();
+        assert!(val > 0.0, "{} should be > 0, got {val}", obj.name());
+    }
 }
