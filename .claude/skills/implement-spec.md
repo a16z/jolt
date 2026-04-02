@@ -1,11 +1,13 @@
 ---
 name: implement-spec
-description: Autonomous one-shot implementation from an approved spec
+description: Autonomous one-shot implementation from an approved spec (local/cloud only)
 argument-hint: "[spec file path]"
 ---
 
 <Purpose>
 Take an approved spec and autonomously implement it: plan the work, execute in parallel where possible, run QA cycles until tests pass, and validate the result. Produces working, verified code from the spec in a single pass.
+
+This skill runs locally or in Claude Code cloud (claude.ai/code) — NOT in CI. It needs write access to the repo to create commits and push to the PR branch.
 </Purpose>
 
 <Execution_Policy>

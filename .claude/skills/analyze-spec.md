@@ -83,6 +83,10 @@ Post a **single PR comment** with all findings:
 - {key invariants}
 - {critical evaluation criteria}
 
+**Next step:** Run `/implement-spec` to implement this spec:
+- [Open in Claude Code (cloud)](https://claude.ai/code) — run `/implement-spec` on this branch
+- Or run `/implement-spec` locally in Claude Code
+
 {If ambiguity > 20%:}
 **Status: Questions remain** — {n} ambiguities to resolve before implementation.
 
