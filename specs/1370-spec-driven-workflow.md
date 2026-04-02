@@ -7,101 +7,105 @@
 | Status      | proposed                       |
 | PR          | #1370                          |
 
-## Intent
+## Summary
 
 Large PRs (1000+ lines) are expensive to review. Human review time is the scarce resource — code generation is cheap. This spec defines a workflow that front-loads review onto small, readable specs so that large implementations become mechanical follow-throughs.
 
-### Workflow
+## Intent
 
-A single PR carries a feature from spec to implementation:
+### Goal
 
-1. Author creates `specs/<name>.md` using the `/new-spec` Claude skill (or manually from template), opens a PR.
-2. A GitHub Action auto-renames the file to `specs/<PR#>-<name>.md` and adds the `spec` label.
-3. A maintainer comments `@claude analyze` — Claude performs a deep-interview-style analysis, posting probing questions as review comments until it has zero ambiguity about the implementation. When satisfied, Claude adds the `claude-approved` label and posts a summary.
-4. Maintainers review and approve the spec.
-5. A maintainer comments `@claude implement` — Claude generates a one-shot implementation on the same branch. The Action adds the `implementation` label.
-6. Maintainers review the implementation, merge the PR. Spec status becomes `implemented`.
+Introduce a spec-driven development workflow where a single PR carries a feature from spec to implementation. Claude analyzes the spec for ambiguities (CI, read-only), and implementation happens locally or in Claude Code cloud after spec approval.
 
-### Labels
+### Invariants
+
+- Every spec PR gets auto-labeled (`spec` / `no-spec` / `implementation`) based on changed files.
+- Spec files are auto-renamed to `<PR#>-<name>.md` on PR creation.
+- Claude's analysis is read-only — CI never writes to the repo.
+- The `claude-approved` label is only added when Claude's ambiguity score is below 20%.
+- Specs are frozen point-in-time documents — the code is the source of truth for current behavior.
+
+### Non-Goals
+
+- Automated implementation via CI (implementation runs locally or in Claude Code cloud).
+- Hard CI gates blocking PRs without specs (soft warning only).
+- Persistent Claude sessions across PR comments (future enhancement via Channels or webhook server).
+
+## Evaluation
+
+### Acceptance Criteria
+
+- [ ] A PR adding only a `specs/*.md` file gets the `spec` label automatically.
+- [ ] A PR with no spec file gets the `no-spec` label.
+- [ ] A PR with both spec and non-spec changes gets both `spec` and `implementation` labels.
+- [ ] A PR exceeding 500 changed lines without a spec file gets a warning comment.
+- [ ] The spec file is auto-renamed to include the PR number on PR open.
+- [ ] `@claude analyze` on a spec PR triggers Claude to post a single-pass analysis comment.
+- [ ] When Claude is satisfied, it adds `claude-approved` and posts a summary with link to Claude Code cloud.
+- [ ] `/new-spec <name>` creates a valid spec file with the correct template, author, and date.
+- [ ] `CONTRIBUTING.md` exists at repo root and explains the spec workflow.
+
+### Testing Strategy
+
+Workflow correctness is verified by observing label behavior and comment posting on actual PRs (this PR is the first test). No automated tests — these are GitHub Actions workflows.
+
+### Performance
+
+N/A — workflow tooling, not runtime code.
+
+## Design
+
+### Architecture
+
+**Workflow lifecycle:**
+
+```
+new-spec.sh / /new-spec → open PR → [auto-rename + spec label]
+→ @claude analyze (CI, read-only) → approve spec
+→ /implement-spec (local/cloud) → review code → merge
+```
+
+**GitHub Actions:**
+- `spec-tracking.yml`: Auto-label, auto-rename, large-PR warning
+- `claude.yml`: `@claude` command handler (Opus model, read-only)
+
+**Claude skills (`.claude/skills/`):**
+- `analyze-spec.md`: Dual-mode — CI single-pass or local interactive Socratic interview
+- `implement-spec.md`: Local/cloud autonomous implementation from approved spec
+- `new-spec.md`: Create spec from template, offers analyze-spec as next step
+
+**Labels:**
 
 | Label | Meaning | Applied by |
 |-------|---------|------------|
 | `spec` | PR contains a spec file | Action (auto) |
 | `no-spec` | PR has no spec file | Action (auto) |
 | `implementation` | PR contains non-spec code alongside a spec | Action (auto) |
-| `claude-approved` | Claude's analysis found no ambiguities | Claude |
+| `claude-approved` | Claude's analysis found no ambiguities | Claude (via `gh pr edit`) |
 
-Labels are additive — a PR starts as `spec`, later gains `implementation` when code lands.
+**Soft guardrails:** PRs exceeding 500 changed lines without a spec file get a warning comment linking to `CONTRIBUTING.md`.
 
-### Soft Guardrails
+### Alternatives Considered
 
-PRs exceeding 500 changed lines without a spec file get an automated warning comment linking to `CONTRIBUTING.md`. No hard CI gate — the threshold for "needs a spec" is human judgment, documented as convention for major features and architectural changes.
-
-### Spec Files
-
-Specs live in `specs/` and are named `<PR#>-<feature-name>.md`. They are frozen point-in-time design documents — the code is the source of truth for current behavior; specs record the reasoning behind it.
-
-The template has three sections following the project's existing philosophy:
-- **Intent** — what and why, invariants, types, architectural boundaries
-- **Evaluation** — tests, benchmarks, assertions that prove correctness
-- **Execution** — optional implementation direction
-
-Plus metadata: Author, Created, Status (`proposed` / `approved` / `implemented`), PR number.
-
-### Claude Integration
-
-**CI model**: `opus[1m]` — Claude Code Action runs with Opus 1M context for full codebase awareness.
-
-**CI permissions**: `contents: write` so Claude can push implementation commits to PR branches.
-
-**`@claude analyze`** — Deep-interview-style analysis of the spec. Claude reads the spec, explores relevant codebase areas, then posts targeted questions exposing ambiguities, missing invariants, unclear evaluation criteria, and hidden assumptions. Continues asking follow-up questions on subsequent `@claude` replies until satisfied. Posts a summary comment and adds `claude-approved` when done.
-
-**`@claude implement`** — One-shot implementation from an approved spec. Claude reads the spec, generates the implementation, and pushes commits to the PR branch.
-
-**`/new-spec <name>`** — Local Claude skill that creates a new spec file from the template with author, date, and name filled in. Replaces `new-spec.sh`.
-
-### CONTRIBUTING.md
-
-A new `CONTRIBUTING.md` documents:
-- The spec-driven workflow and its motivation
-- How to create and submit a spec
-- What qualifies as "needs a spec" (major features, architectural changes)
-- How Claude analysis and implementation work
-- That contributions are welcome
-
-## Evaluation
-
-### Workflow correctness
-- A PR adding only a `specs/*.md` file gets the `spec` label automatically.
-- A PR with no spec file gets the `no-spec` label.
-- A PR with both spec and non-spec changes gets both `spec` and `implementation` labels.
-- A PR exceeding 500 changed lines without a spec file gets a warning comment.
-- The spec file is auto-renamed to include the PR number on PR open.
-
-### Claude integration
-- `@claude analyze` on a spec PR triggers Claude to post review comments with probing questions about the spec.
-- When Claude is satisfied, it adds `claude-approved` and posts a summary.
-- `@claude implement` triggers Claude to generate implementation commits on the PR branch.
-
-### Spec template
-- `/new-spec <name>` creates a valid spec file with the correct template, author, and date.
-- Template includes Status and PR metadata fields.
-
-### Documentation
-- `CONTRIBUTING.md` exists at repo root and explains the spec workflow.
+- **Separate spec PR + implementation PR with tracking issue**: Rejected — adds overhead without benefit. The single-PR lifecycle keeps all discussion in one place.
+- **Hard CI gate requiring specs for large PRs**: Rejected — too restrictive. Convention enforced by culture is sufficient.
+- **Claude writes implementation in CI**: Rejected for now — security concern with `contents: write`. Implementation runs locally or in Claude Code cloud instead.
+- **Persistent Claude sessions via GitHub Actions polling**: Rejected — wasteful CI minutes. Future enhancement via Claude Code Channels or webhook server.
 
 ## Execution
 
 ### Files to create
 - `.claude/skills/analyze-spec.md` — deep-interview spec analysis skill
-- `.claude/skills/implement-spec.md` — one-shot implementation skill
+- `.claude/skills/implement-spec.md` — local/cloud implementation skill
 - `.claude/skills/new-spec.md` — create new spec from template
 - `CONTRIBUTING.md` — contribution guide
 
 ### Files to modify
-- `specs/TEMPLATE.md` — add Status and PR metadata fields
-- `.github/workflows/claude.yml` — set model to `opus[1m]`, `contents: write`
-- `.github/workflows/spec-tracking.yml` — replace issue-creation with labeling + rename + warning logic
+- `specs/TEMPLATE.md` — add Status, PR, structured sections
+- `.github/workflows/claude.yml` — Opus model, env vars, read-only
+- `.github/workflows/spec-tracking.yml` — replace issue-creation with labeling + rename + warning
+- `.github/workflows/arch-tests.yml` — paths filter for tracer-only changes
+- `.github/workflows/rust.yml` — paths-ignore for spec/docs changes
 
 ### Files to remove
 - `specs/new-spec.sh` — replaced by `/new-spec` Claude skill
@@ -109,5 +113,6 @@ A new `CONTRIBUTING.md` documents:
 
 ## References
 
-- Existing `claude.yml` workflow handles `@claude` commands via `anthropics/claude-code-action@v1`
-- Spec template: `specs/TEMPLATE.md`
+- `anthropics/claude-code-action` — handles `@claude` commands in CI
+- `specs/TEMPLATE.md` — spec template
+- Claude Code Channels (research preview) — future path for persistent sessions

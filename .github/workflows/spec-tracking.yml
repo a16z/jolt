@@ -22,9 +22,9 @@ jobs:
         id: detect
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
-          BASE=${{ github.event.pull_request.base.sha }}
-          HEAD=${{ github.event.pull_request.head.sha }}
 
           CHANGED=$(git diff --name-only "$BASE" "$HEAD")
 
@@ -118,9 +118,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
-          BASE=${{ github.event.pull_request.base.sha }}
-          HEAD=${{ github.event.pull_request.head.sha }}
 
           # Count changed lines (additions + deletions), excluding spec files
           LINES=$(git diff --numstat "$BASE" "$HEAD" -- . ':!specs/' | awk '{ added += $1; removed += $2 } END { print added + removed }')
