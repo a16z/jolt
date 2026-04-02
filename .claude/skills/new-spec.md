@@ -18,5 +18,6 @@ Create a new spec file in the `specs/` directory.
    - `Status` stays `proposed`
    - `PR` stays empty
 5. Print the path and remind the author to fill in the spec and open a PR.
+6. After the spec file is created, offer to run `/analyze-spec` on it to interactively refine the spec through Socratic questioning before opening the PR.
 
 Do NOT modify `TEMPLATE.md` itself. Do NOT add a date prefix to the filename — the PR number will be prepended by a GitHub Action after the PR is opened.
