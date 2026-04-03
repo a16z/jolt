@@ -1,18 +1,14 @@
 //! Fixed-width limb array for multi-precision arithmetic.
 //!
-//! [`Limbs<N>`] is a `#[repr(transparent)]` newtype over `[u64; N]` that
-//! decouples the public API from `ark_ff::BigInt`. All truncated arithmetic
-//! previously on `BigIntExt` lives here as inherent methods.
+//! [`Limbs<N>`] is a `#[repr(transparent)]` newtype over `[u64; N]`.
+//! All truncated arithmetic lives here as inherent methods.
 
-use ark_ff::BigInt;
 use core::cmp::Ordering;
 
 /// Fixed-width array of `N` 64-bit limbs in little-endian order.
 ///
 /// Used as the magnitude type for [`SignedBigInt`](crate::signed::SignedBigInt)
 /// and as the output of truncated multiplication in unreduced arithmetic.
-/// Provides the same multi-precision operations that `BigIntExt` offered on
-/// `ark_ff::BigInt`, without leaking arkworks types into the public API.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct Limbs<const N: usize>(pub [u64; N]);
@@ -61,11 +57,6 @@ impl<const N: usize> Limbs<N> {
             limbs[0] = val;
         }
         Self(limbs)
-    }
-
-    #[inline]
-    pub(crate) fn to_bigint(self) -> BigInt<N> {
-        BigInt(self.0)
     }
 
     /// In-place addition with carry propagation.
@@ -151,37 +142,6 @@ impl<const N: usize> Limbs<N> {
         }
     }
 
-    /// Truncated fused multiply-add: `self += a * b`, keeping `N` limbs.
-    ///
-    /// WARNING: The carry at the spill position is NOT fully propagated.
-    /// Use [`fmadd`](Self::fmadd) if many products will be accumulated and intermediate
-    /// limbs may overflow.
-    #[inline]
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn fmadd_trunc<const A: usize, const B: usize>(
-        &mut self,
-        a: &Limbs<A>,
-        b: &Limbs<B>,
-    ) {
-        let i_limit = if A < N { A } else { N };
-        for i in 0..i_limit {
-            let mut carry = 0u64;
-            let j_limit = if B < (N - i) { B } else { N - i };
-            for j in 0..j_limit {
-                let idx = i + j;
-                let prod =
-                    (a.0[i] as u128) * (b.0[j] as u128) + (self.0[idx] as u128) + (carry as u128);
-                self.0[idx] = prod as u64;
-                carry = (prod >> 64) as u64;
-            }
-            let spill = i + j_limit;
-            if spill < N {
-                let (new_val, _) = self.0[spill].overflowing_add(carry);
-                self.0[spill] = new_val;
-            }
-        }
-    }
-
     /// Fused multiply-add: `self += a * b`, keeping `N` limbs, with full carry propagation.
     ///
     /// Unlike [`fmadd_trunc`](Self::fmadd_trunc), the carry from each row's
@@ -236,13 +196,6 @@ impl<const N: usize> From<u64> for Limbs<N> {
     #[inline]
     fn from(val: u64) -> Self {
         Self::from_u64(val)
-    }
-}
-
-impl<const N: usize> Limbs<N> {
-    #[inline]
-    pub(crate) fn from_bigint(bigint: BigInt<N>) -> Self {
-        Limbs(bigint.0)
     }
 }
 
@@ -312,40 +265,6 @@ impl<const N: usize> core::fmt::Display for Limbs<N> {
 impl<const N: usize> allocative::Allocative for Limbs<N> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         visitor.visit_simple_sized::<Self>();
-    }
-}
-
-impl<const N: usize> ark_serialize::CanonicalSerialize for Limbs<N> {
-    #[inline]
-    fn serialize_with_mode<W: ark_serialize::Write>(
-        &self,
-        writer: W,
-        compress: ark_serialize::Compress,
-    ) -> Result<(), ark_serialize::SerializationError> {
-        self.to_bigint().serialize_with_mode(writer, compress)
-    }
-
-    #[inline]
-    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
-        self.to_bigint().serialized_size(compress)
-    }
-}
-
-impl<const N: usize> ark_serialize::Valid for Limbs<N> {
-    #[inline]
-    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
-        self.to_bigint().check()
-    }
-}
-
-impl<const N: usize> ark_serialize::CanonicalDeserialize for Limbs<N> {
-    #[inline]
-    fn deserialize_with_mode<R: ark_serialize::Read>(
-        reader: R,
-        compress: ark_serialize::Compress,
-        validate: ark_serialize::Validate,
-    ) -> Result<Self, ark_serialize::SerializationError> {
-        BigInt::<N>::deserialize_with_mode(reader, compress, validate).map(Limbs::from_bigint)
     }
 }
 
@@ -441,15 +360,6 @@ mod tests {
     }
 
     #[test]
-    fn fmadd_trunc_basic() {
-        let a = Limbs::<1>([3u64]);
-        let b = Limbs::<1>([4u64]);
-        let mut acc = Limbs::<2>([10, 0]);
-        acc.fmadd_trunc::<1, 1>(&a, &b);
-        assert_eq!(acc.0[0], 22); // 10 + 3*4
-    }
-
-    #[test]
     fn fmadd_basic() {
         let a = Limbs::<1>([3u64]);
         let b = Limbs::<1>([4u64]);
@@ -511,14 +421,6 @@ mod tests {
         let b = Limbs::<2>([u64::MAX, 0]);
         assert!(a > b);
         assert_eq!(a.cmp(&a), Ordering::Equal);
-    }
-
-    #[test]
-    fn bigint_roundtrip() {
-        let limbs = Limbs::<4>([1, 2, 3, 4]);
-        let bigint = limbs.to_bigint();
-        let back = Limbs::from_bigint(bigint);
-        assert_eq!(limbs, back);
     }
 
     #[test]

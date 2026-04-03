@@ -12,8 +12,8 @@ Jolt is a zkVM (zero-knowledge virtual machine) for RISC-V (RV64IMAC) that effic
 
 ```bash
 # CRITICAL: Must pass in BOTH standard and ZK modes
-cargo clippy -p jolt-core --features host --message-format=short -q --all-targets -- -D warnings
-cargo clippy -p jolt-core --features host,zk --message-format=short -q --all-targets -- -D warnings
+cargo clippy --all --features host -q --all-targets -- -D warnings
+cargo clippy --all --features host,zk -q --all-targets -- -D warnings
 cargo fmt -q
 ```
 
@@ -36,7 +36,7 @@ cargo nextest run -p jolt-core muldiv --cargo-quiet --features host,zk
 
 ```bash
 # Prefer clippy over build for validation. Only build when preparing to execute a binary.
-cargo build -p jolt-core --message-format=short -q
+cargo build -p jolt-core -q
 
 # After pulling changes, reinstall the jolt CLI or guest builds may fail.
 cargo install --path . --locked

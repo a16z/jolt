@@ -3,10 +3,6 @@
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
 
-use ark_serialize::{
-    CanonicalDeserialize, CanonicalSerialize, Compress, Read, SerializationError, Valid, Validate,
-    Write,
-};
 use core::cmp::Ordering;
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
@@ -402,53 +398,6 @@ impl<const N: usize> Ord for SignedBigIntHi32<N> {
     }
 }
 
-impl<const N: usize> CanonicalSerialize for SignedBigIntHi32<N> {
-    #[inline]
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut w: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        (self.is_positive as u8).serialize_with_mode(&mut w, compress)?;
-        self.magnitude_hi.serialize_with_mode(&mut w, compress)?;
-        for i in 0..N {
-            self.magnitude_lo[i].serialize_with_mode(&mut w, compress)?;
-        }
-        Ok(())
-    }
-
-    #[inline]
-    fn serialized_size(&self, compress: Compress) -> usize {
-        (self.is_positive as u8).serialized_size(compress)
-            + self.magnitude_hi.serialized_size(compress)
-            + (0u64).serialized_size(compress) * N
-    }
-}
-
-impl<const N: usize> CanonicalDeserialize for SignedBigIntHi32<N> {
-    #[inline]
-    fn deserialize_with_mode<R: Read>(
-        mut r: R,
-        compress: Compress,
-        validate: Validate,
-    ) -> Result<Self, SerializationError> {
-        let sign_u8 = u8::deserialize_with_mode(&mut r, compress, validate)?;
-        let hi = u32::deserialize_with_mode(&mut r, compress, validate)?;
-        let mut lo = [0u64; N];
-        for limb in &mut lo {
-            *limb = u64::deserialize_with_mode(&mut r, compress, validate)?;
-        }
-        Ok(SignedBigIntHi32::new(lo, hi, sign_u8 != 0))
-    }
-}
-
-impl<const N: usize> Valid for SignedBigIntHi32<N> {
-    #[inline]
-    fn check(&self) -> Result<(), SerializationError> {
-        Ok(())
-    }
-}
-
 impl From<i64> for S96 {
     #[inline]
     fn from(val: i64) -> Self {
@@ -628,15 +577,6 @@ mod tests {
         assert_eq!(sb.magnitude.0[0], 42);
         assert_eq!(sb.magnitude.0[1], 0);
         assert_eq!(sb.magnitude.0[2], 7);
-    }
-
-    #[test]
-    fn serialization_roundtrip() {
-        let val = S160::new([123_456_789, 987_654_321], 42, false);
-        let mut bytes = Vec::new();
-        val.serialize_compressed(&mut bytes).unwrap();
-        let restored = S160::deserialize_compressed(&bytes[..]).unwrap();
-        assert_eq!(val, restored);
     }
 
     #[test]

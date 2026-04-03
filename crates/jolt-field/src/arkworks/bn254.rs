@@ -291,7 +291,7 @@ impl Fr {
     /// less than the modulus.
     #[inline]
     pub fn from_bigint_unchecked(limbs: Limbs<4>) -> Self {
-        Fr(bn254_ops::from_bigint_unchecked(limbs.to_bigint()))
+        Fr(bn254_ops::from_bigint_unchecked(limbs.into()))
     }
 
     /// Access the internal Montgomery-form limbs.
@@ -315,12 +315,13 @@ impl Field for Fr {
 
     const NUM_BYTES: usize = 32;
 
+    #[expect(clippy::expect_used)]
     fn to_bytes(&self) -> [u8; 32] {
         use ark_serialize::CanonicalSerialize;
         let mut buf = [0u8; 32];
         self.0
             .serialize_compressed(&mut buf[..])
-            .expect("field serialization should not fail");
+            .expect("BN254 Fr always serializes to 32 bytes");
         buf
     }
 
@@ -406,6 +407,7 @@ impl Field for Fr {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::Field;

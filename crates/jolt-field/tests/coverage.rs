@@ -5,7 +5,6 @@
 //! Field default methods, SignedBigInt uncovered paths,
 //! SignedBigIntHi32 uncovered paths, and macro-generated operator variants.
 
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::test_rng;
 use jolt_field::signed::*;
 use jolt_field::{Field, FieldAccumulator, Fr, Limbs, NaiveAccumulator, OptimizedMul};
@@ -282,24 +281,6 @@ fn signed_bigint_mul_trunc_widths() {
 }
 
 #[test]
-fn signed_bigint_s256_serialization() {
-    let val = S256::new([1, 2, 3, 4], false);
-    let mut bytes = Vec::new();
-    val.serialize_compressed(&mut bytes).unwrap();
-    let restored = S256::deserialize_compressed(&bytes[..]).unwrap();
-    assert_eq!(val, restored);
-}
-
-#[test]
-fn signed_bigint_s192_serialization() {
-    let val = S192::new([u64::MAX, 0, 42], true);
-    let mut bytes = Vec::new();
-    val.serialize_compressed(&mut bytes).unwrap();
-    let restored = S192::deserialize_compressed(&bytes[..]).unwrap();
-    assert_eq!(val, restored);
-}
-
-#[test]
 fn signed_bigint_from_u64_mul_i64() {
     let r = S128::from_u64_mul_i64(100, -7);
     assert_eq!(r.to_i128(), Some(-700));
@@ -522,33 +503,6 @@ fn s160_from_u128_minus_i128_positive_i_larger() {
 }
 
 #[test]
-fn s160_serialization_roundtrip() {
-    let val = S160::new([u64::MAX, 123_456], 0xABCD, false);
-    let mut bytes = Vec::new();
-    val.serialize_compressed(&mut bytes).unwrap();
-    let restored = S160::deserialize_compressed(&bytes[..]).unwrap();
-    assert_eq!(val, restored);
-}
-
-#[test]
-fn s96_serialization_roundtrip() {
-    let val = S96::new([42], 7, true);
-    let mut bytes = Vec::new();
-    val.serialize_compressed(&mut bytes).unwrap();
-    let restored = S96::deserialize_compressed(&bytes[..]).unwrap();
-    assert_eq!(val, restored);
-}
-
-#[test]
-fn s224_serialization_roundtrip() {
-    let val = S224::new([1, 2, 3], 4, false);
-    let mut bytes = Vec::new();
-    val.serialize_compressed(&mut bytes).unwrap();
-    let restored = S224::deserialize_compressed(&bytes[..]).unwrap();
-    assert_eq!(val, restored);
-}
-
-#[test]
 fn signed_bigint_hi32_neg() {
     let a = S160::from(42u64);
     let b = -a;
@@ -605,7 +559,7 @@ fn s160_from_s128() {
 }
 
 #[test]
-#[allow(clippy::op_ref)]
+#[expect(clippy::op_ref)]
 fn signed_bigint_operator_variants() {
     let a = S64::from_i64(10);
     let b = S64::from_i64(3);
@@ -645,7 +599,7 @@ fn signed_bigint_operator_variants() {
 }
 
 #[test]
-#[allow(clippy::op_ref)]
+#[expect(clippy::op_ref)]
 fn signed_bigint_hi32_operator_variants() {
     let a = S160::from(10u64);
     let b = S160::from(3u64);
@@ -932,7 +886,7 @@ fn fr_from_small_types() {
 }
 
 #[test]
-#[allow(clippy::op_ref)]
+#[expect(clippy::op_ref)]
 fn fr_ref_arithmetic() {
     let a = Fr::from_u64(7);
     let b = Fr::from_u64(11);

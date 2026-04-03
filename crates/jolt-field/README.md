@@ -42,7 +42,6 @@ The `signed` module provides fixed-width signed big integers (`S64`, `S128`, `S1
 | Flag | Default | Description |
 |------|---------|-------------|
 | `bn254` | **Yes** | Enable BN254 scalar field implementation |
-| `dory-pcs` | No | Enable Dory PCS interop (implies `bn254`) |
 | `allocative` | No | Enable memory profiling via the `allocative` crate |
 
 ## License

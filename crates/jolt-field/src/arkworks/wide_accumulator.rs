@@ -52,7 +52,7 @@ impl FieldAccumulator for WideAccumulator {
         // The accumulator holds sum_i (a_i_mont × b_i_mont).
         // Montgomery reduction divides by R, yielding the Montgomery form
         // of sum_i (a_i × b_i).
-        let bigint = self.limbs.to_bigint();
+        let bigint = self.limbs.into();
         Fr::from_inner(bn254_ops::from_montgomery_reduce(bigint))
     }
 }

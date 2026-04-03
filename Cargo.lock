@@ -2655,7 +2655,6 @@ dependencies = [
  "ark-serialize 0.5.0",
  "ark-std 0.5.0",
  "criterion",
- "dory-pcs",
  "num-traits",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
