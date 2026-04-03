@@ -42,6 +42,9 @@ pub trait AbstractObjective: Send + Sync {
     fn name(&self) -> &str;
     fn collect_measurement(&self) -> Result<f64, MeasurementError>;
     fn direction(&self) -> Direction;
+    fn units(&self) -> Option<&str> {
+        None
+    }
 }
 
 /// A performance objective suitable for Criterion benchmarking.
@@ -59,6 +62,10 @@ pub trait PerfObjective: Default + Send + Sync {
 
     /// The hot path to benchmark. Called repeatedly by Criterion.
     fn run(&self, setup: &mut Self::Setup);
+
+    fn units(&self) -> &str {
+        "s"
+    }
 }
 
 /// Centralized enum for static-analysis objectives.
@@ -93,6 +100,14 @@ impl Objective {
             Self::Lloc(o) => o.collect_measurement(),
             Self::CognitiveComplexity(o) => o.collect_measurement(),
             Self::HalsteadBugs(o) => o.collect_measurement(),
+        }
+    }
+
+    pub fn units(&self) -> Option<&str> {
+        match self {
+            Self::Lloc(o) => o.units(),
+            Self::CognitiveComplexity(o) => o.units(),
+            Self::HalsteadBugs(o) => o.units(),
         }
     }
 

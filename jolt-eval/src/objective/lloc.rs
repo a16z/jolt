@@ -37,6 +37,10 @@ impl AbstractObjective for LlocObjective {
     fn direction(&self) -> Direction {
         Direction::Minimize
     }
+
+    fn units(&self) -> Option<&str> {
+        Some("lines")
+    }
 }
 
 pub(crate) fn rust_files(dir: &Path) -> Result<Vec<PathBuf>, MeasurementError> {

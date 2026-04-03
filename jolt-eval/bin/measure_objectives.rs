@@ -17,6 +17,18 @@ struct Cli {
     no_bench: bool,
 }
 
+fn print_header() {
+    println!(
+        "{:<35} {:>15} {:>8} {:>10}",
+        "Objective", "Value", "Units", "Direction"
+    );
+    println!("{}", "-".repeat(70));
+}
+
+fn print_row(name: &str, val: f64, units: &str, dir: &str) {
+    println!("{:<35} {:>15.6} {:>8} {:>10}", name, val, units, dir);
+}
+
 fn main() -> eyre::Result<()> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
@@ -39,11 +51,8 @@ fn main() -> eyre::Result<()> {
 
             match status {
                 Ok(s) if s.success() => {
-                    println!(
-                        "\n\n{:<35} {:>15} {:>10}",
-                        "Objective", "Value", "Direction"
-                    );
-                    println!("{}", "-".repeat(62));
+                    println!();
+                    print_header();
                     for &name in perf_names {
                         if let Some(ref filter) = cli.objective {
                             if name != filter.as_str() {
@@ -51,9 +60,7 @@ fn main() -> eyre::Result<()> {
                             }
                         }
                         match read_criterion_estimate(name) {
-                            Some(secs) => {
-                                println!("{:<35} {:>15.6} {:>10}", name, secs, "min");
-                            }
+                            Some(secs) => print_row(name, secs, "s", "min"),
                             None => {
                                 println!("{:<35} {:>15}", name, "NO DATA");
                             }
@@ -66,11 +73,8 @@ fn main() -> eyre::Result<()> {
             }
         }
     } else {
-        println!(
-            "\n\n{:<35} {:>15} {:>10}",
-            "Objective", "Value", "Direction"
-        );
-        println!("{}", "-".repeat(62));
+        println!();
+        print_header();
     }
 
     // Static-analysis objectives
@@ -87,7 +91,8 @@ fn main() -> eyre::Result<()> {
                     jolt_eval::Direction::Minimize => "min",
                     jolt_eval::Direction::Maximize => "max",
                 };
-                println!("{:<35} {:>15.6} {:>10}", obj.name(), val, dir);
+                let units = obj.units().unwrap_or("-");
+                print_row(obj.name(), val, units, dir);
             }
             Err(e) => {
                 println!("{:<35} {:>15}", obj.name(), format!("ERROR: {e}"));
