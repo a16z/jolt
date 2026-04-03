@@ -109,6 +109,16 @@ pub fn parse_attributes(attr: &Punctuated<Meta, Comma>) -> Attributes {
         .get("max_trace_length")
         .unwrap_or(&DEFAULT_MAX_TRACE_LENGTH);
 
+    validate_attributes(
+        max_trace_length,
+        stack_size,
+        heap_size,
+        max_input_size,
+        max_output_size,
+        max_trusted_advice_size,
+        max_untrusted_advice_size,
+    );
+
     Attributes {
         wasm,
         nightly,
@@ -122,5 +132,131 @@ pub fn parse_attributes(attr: &Punctuated<Meta, Comma>) -> Attributes {
         max_untrusted_advice_size,
         max_trace_length,
         backtrace,
+    }
+}
+
+fn validate_attributes(
+    max_trace_length: u64,
+    stack_size: u64,
+    heap_size: u64,
+    max_input_size: u64,
+    max_output_size: u64,
+    max_trusted_advice_size: u64,
+    max_untrusted_advice_size: u64,
+) {
+    if max_trace_length == 0 || (max_trace_length & (max_trace_length - 1)) != 0 {
+        panic!("max_trace_length must be a power of 2, got {max_trace_length}");
+    }
+
+    if stack_size == 0 {
+        panic!("stack_size must be greater than 0");
+    }
+
+    if heap_size == 0 {
+        panic!("heap_size must be greater than 0");
+    }
+
+    let size_fields: &[(&str, u64)] = &[
+        ("stack_size", stack_size),
+        ("heap_size", heap_size),
+        ("max_input_size", max_input_size),
+        ("max_output_size", max_output_size),
+        ("max_trusted_advice_size", max_trusted_advice_size),
+        ("max_untrusted_advice_size", max_untrusted_advice_size),
+    ];
+    for (name, value) in size_fields {
+        if value % 8 != 0 {
+            panic!("{name} must be a multiple of 8 (maps to u64-aligned memory), got {value}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_valid_defaults() {
+        validate_attributes(
+            DEFAULT_MAX_TRACE_LENGTH,
+            DEFAULT_STACK_SIZE,
+            DEFAULT_HEAP_SIZE,
+            DEFAULT_MAX_INPUT_SIZE,
+            DEFAULT_MAX_OUTPUT_SIZE,
+            DEFAULT_MAX_TRUSTED_ADVICE_SIZE,
+            DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE,
+        );
+    }
+
+    #[test]
+    fn accepts_valid_powers_of_two() {
+        for exp in 1..=30 {
+            validate_attributes(1 << exp, 8, 8, 0, 0, 0, 0);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "max_trace_length must be a power of 2")]
+    fn rejects_non_power_of_two_trace_length() {
+        validate_attributes(100, 4096, 4096, 4096, 4096, 4096, 4096);
+    }
+
+    #[test]
+    #[should_panic(expected = "max_trace_length must be a power of 2")]
+    fn rejects_zero_trace_length() {
+        validate_attributes(0, 4096, 4096, 4096, 4096, 4096, 4096);
+    }
+
+    #[test]
+    #[should_panic(expected = "stack_size must be greater than 0")]
+    fn rejects_zero_stack_size() {
+        validate_attributes(1 << 20, 0, 4096, 4096, 4096, 4096, 4096);
+    }
+
+    #[test]
+    #[should_panic(expected = "heap_size must be greater than 0")]
+    fn rejects_zero_heap_size() {
+        validate_attributes(1 << 20, 4096, 0, 4096, 4096, 4096, 4096);
+    }
+
+    #[test]
+    #[should_panic(expected = "stack_size must be a multiple of 8")]
+    fn rejects_unaligned_stack_size() {
+        validate_attributes(1 << 20, 7, 4096, 4096, 4096, 4096, 4096);
+    }
+
+    #[test]
+    #[should_panic(expected = "heap_size must be a multiple of 8")]
+    fn rejects_unaligned_heap_size() {
+        validate_attributes(1 << 20, 4096, 10, 4096, 4096, 4096, 4096);
+    }
+
+    #[test]
+    #[should_panic(expected = "max_input_size must be a multiple of 8")]
+    fn rejects_unaligned_input_size() {
+        validate_attributes(1 << 20, 4096, 4096, 3, 4096, 4096, 4096);
+    }
+
+    #[test]
+    #[should_panic(expected = "max_output_size must be a multiple of 8")]
+    fn rejects_unaligned_output_size() {
+        validate_attributes(1 << 20, 4096, 4096, 4096, 5, 4096, 4096);
+    }
+
+    #[test]
+    #[should_panic(expected = "max_trusted_advice_size must be a multiple of 8")]
+    fn rejects_unaligned_trusted_advice_size() {
+        validate_attributes(1 << 20, 4096, 4096, 4096, 4096, 1, 4096);
+    }
+
+    #[test]
+    #[should_panic(expected = "max_untrusted_advice_size must be a multiple of 8")]
+    fn rejects_unaligned_untrusted_advice_size() {
+        validate_attributes(1 << 20, 4096, 4096, 4096, 4096, 4096, 9);
+    }
+
+    #[test]
+    fn accepts_zero_io_and_advice_sizes() {
+        validate_attributes(1 << 20, 8, 8, 0, 0, 0, 0);
     }
 }
