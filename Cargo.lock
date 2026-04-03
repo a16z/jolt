@@ -2971,6 +2971,8 @@ dependencies = [
  "eyre",
  "jolt-core",
  "jolt-eval-macros",
+ "jolt-inlines-secp256k1",
+ "jolt-inlines-sha2",
  "postcard",
  "rand 0.8.5",
  "rust-code-analysis",

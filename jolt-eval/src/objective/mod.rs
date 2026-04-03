@@ -125,8 +125,8 @@ impl Objective {
 /// Names of all registered `PerfObjective` benchmarks.
 pub fn perf_objective_names() -> &'static [&'static str] {
     &[
-        performance::bind_bench::BindLowToHighObjective::NAME,
-        performance::bind_bench::BindHighToLowObjective::NAME,
+        performance::binding::BindLowToHighObjective::NAME,
+        performance::binding::BindHighToLowObjective::NAME,
     ]
 }
 

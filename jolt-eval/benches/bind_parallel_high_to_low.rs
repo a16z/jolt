@@ -1,2 +1,2 @@
-use jolt_eval::objective::performance::bind_bench::BindHighToLowObjective;
+use jolt_eval::objective::performance::binding::BindHighToLowObjective;
 jolt_eval::bench_objective!(BindHighToLowObjective);
