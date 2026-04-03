@@ -1,7 +1,7 @@
 /// Macro that generates a Criterion benchmark harness for a `PerfObjective`.
 ///
-/// Takes a concrete `PerfObjective` expression. Setup is performed once;
-/// Criterion calls `run()` repeatedly with statistical rigor.
+/// Uses `iter_batched` with `BatchSize::LargeInput` so that per-iteration
+/// setup (e.g. polynomial clone) is excluded from the measurement.
 ///
 /// # Usage
 ///
@@ -17,9 +17,12 @@ macro_rules! bench_objective {
 
         fn __bench(c: &mut ::criterion::Criterion) {
             let obj = <$obj_ty>::default();
-            let mut setup = obj.setup();
             c.bench_function(obj.name(), |b| {
-                b.iter(|| obj.run(&mut setup));
+                b.iter_batched(
+                    || obj.setup(),
+                    |setup| obj.run(setup),
+                    ::criterion::BatchSize::LargeInput,
+                );
             });
         }
 

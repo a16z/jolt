@@ -46,7 +46,7 @@ fn main() -> eyre::Result<()> {
         if run_bench {
             eprintln!("Running Criterion benchmarks...");
             let status = std::process::Command::new("cargo")
-                .args(["bench", "-p", "jolt-eval"])
+                .args(["bench", "-p", "jolt-eval", "--", "--quick"])
                 .status();
 
             match status {

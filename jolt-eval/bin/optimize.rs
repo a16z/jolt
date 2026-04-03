@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 use std::process::Command;
 
 use clap::Parser;
@@ -6,7 +7,7 @@ use clap::Parser;
 use jolt_eval::agent::ClaudeCodeAgent;
 use jolt_eval::invariant::JoltInvariants;
 use jolt_eval::objective::optimize::{auto_optimize, OptimizeConfig, OptimizeEnv};
-use jolt_eval::objective::{Direction, Objective};
+use jolt_eval::objective::{perf_objective_names, Direction, Objective};
 
 #[derive(Parser)]
 #[command(name = "optimize")]
@@ -37,17 +38,46 @@ struct RealEnv {
     objectives: Vec<Objective>,
     invariants: Vec<JoltInvariants>,
     repo_dir: std::path::PathBuf,
+    /// Whether to include perf benchmarks in measurements.
+    bench_perf: bool,
 }
 
 impl OptimizeEnv for RealEnv {
     fn measure(&mut self) -> HashMap<String, f64> {
-        self.objectives
+        let mut results: HashMap<String, f64> = self
+            .objectives
             .iter()
             .filter_map(|o| {
                 let name = o.name().to_string();
                 o.collect_measurement().ok().map(|v| (name, v))
             })
-            .collect()
+            .collect();
+
+        if self.bench_perf {
+            // Run Criterion with --save-baseline to enable comparison
+            let status = Command::new("cargo")
+                .current_dir(&self.repo_dir)
+                .args([
+                    "bench",
+                    "-p",
+                    "jolt-eval",
+                    "--",
+                    "--quick",
+                    "--save-baseline",
+                    "optimize",
+                ])
+                .status();
+
+            if matches!(status, Ok(s) if s.success()) {
+                for &name in perf_objective_names() {
+                    if let Some(secs) = read_criterion_estimate(name) {
+                        results.insert(name.to_string(), secs);
+                    }
+                }
+            }
+        }
+
+        results
     }
 
     fn check_invariants(&mut self) -> bool {
@@ -58,10 +88,19 @@ impl OptimizeEnv for RealEnv {
     }
 
     fn directions(&self) -> HashMap<String, Direction> {
-        self.objectives
+        let mut dirs: HashMap<String, Direction> = self
+            .objectives
             .iter()
             .map(|o| (o.name().to_string(), o.direction()))
-            .collect()
+            .collect();
+
+        if self.bench_perf {
+            for &name in perf_objective_names() {
+                dirs.insert(name.to_string(), Direction::Minimize);
+            }
+        }
+
+        dirs
     }
 
     fn apply_diff(&mut self, diff: &str) {
@@ -101,12 +140,19 @@ fn main() -> eyre::Result<()> {
     let all_names: Vec<String> = all_objectives
         .iter()
         .map(|o| o.name().to_string())
+        .chain(perf_objective_names().iter().map(|s| s.to_string()))
         .collect();
 
     let filter_names: Option<Vec<String>> = cli
         .objectives
         .as_ref()
         .map(|s| s.split(',').map(|n| n.trim().to_string()).collect());
+
+    let bench_perf = filter_names.as_ref().is_none_or(|names| {
+        perf_objective_names()
+            .iter()
+            .any(|p| names.contains(&p.to_string()))
+    });
 
     let objectives: Vec<Objective> = if let Some(names) = &filter_names {
         all_objectives
@@ -117,7 +163,7 @@ fn main() -> eyre::Result<()> {
         all_objectives
     };
 
-    if objectives.is_empty() {
+    if objectives.is_empty() && !bench_perf {
         eprintln!(
             "No matching objectives. Available: {}",
             all_names.join(", ")
@@ -131,6 +177,7 @@ fn main() -> eyre::Result<()> {
         objectives,
         invariants,
         repo_dir: repo_dir.clone(),
+        bench_perf,
     };
 
     println!("=== Baseline measurements ===");
@@ -175,12 +222,23 @@ fn print_measurements(
     for name in names {
         let val = measurements
             .get(name)
-            .map(|v| format!("{v:.4}"))
+            .map(|v| format!("{v:.6}"))
             .unwrap_or_else(|| "N/A".to_string());
         let dir = match directions[name] {
             Direction::Minimize => "min",
             Direction::Maximize => "max",
         };
-        println!("  {:<30} {:>15} {:>6}", name, val, dir);
+        println!("  {:<35} {:>15} {:>6}", name, val, dir);
     }
+}
+
+fn read_criterion_estimate(bench_name: &str) -> Option<f64> {
+    let path = Path::new("target/criterion")
+        .join(bench_name)
+        .join("optimize")
+        .join("estimates.json");
+    let data = std::fs::read_to_string(path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&data).ok()?;
+    let nanos = json.get("mean")?.get("point_estimate")?.as_f64()?;
+    Some(nanos / 1e9)
 }

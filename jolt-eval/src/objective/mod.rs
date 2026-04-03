@@ -57,11 +57,13 @@ pub trait PerfObjective: Default + Send + Sync {
 
     fn name(&self) -> &str;
 
-    /// One-time setup (e.g. allocate polynomial, generate challenges).
+    /// Per-iteration setup (e.g. clone a polynomial). Called by
+    /// `iter_batched` before each measured iteration.
     fn setup(&self) -> Self::Setup;
 
-    /// The hot path to benchmark. Called repeatedly by Criterion.
-    fn run(&self, setup: &mut Self::Setup);
+    /// The hot path to benchmark. Takes owned setup so the clone cost
+    /// is excluded from measurement via `iter_batched`.
+    fn run(&self, setup: Self::Setup);
 
     fn units(&self) -> &str {
         "s"
