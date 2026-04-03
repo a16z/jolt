@@ -1,7 +1,6 @@
 [package]
 name = "jolt-field"
 version = "0.1.0"
-authors = ["Jolt Contributors"]
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Field abstractions for the Jolt zkVM"
@@ -24,8 +23,7 @@ rand_core = { workspace = true }
 
 [features]
 default = ["bn254"]
-arkworks = ["dep:ark-ff", "dep:ark-serialize"]
-bn254 = ["dep:ark-bn254", "arkworks"]
+bn254 = ["dep:ark-ff", "dep:ark-serialize", "dep:ark-bn254"]
 allocative = ["dep:allocative"]
 
 [dev-dependencies]

@@ -34,6 +34,7 @@ jobs:
         run: >
           cargo bench
           -p jolt-field
+          --bench '*'
           -- --save-baseline main_run
 
       - name: Upload baseline
@@ -60,6 +61,7 @@ jobs:
         run: >
           cargo bench
           -p jolt-field
+          --bench '*'
           -- --save-baseline pr_run
 
       - name: Compare benchmarks
