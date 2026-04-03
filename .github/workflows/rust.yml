@@ -3,10 +3,6 @@ name: Build and Test Jolt
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - "specs/**"
-      - "*.md"
-      - ".claude/**"
   pull_request:
     branches: ["**", main]
     paths-ignore:
@@ -77,7 +73,7 @@ jobs:
           components: rust-src
           cache-directories: ~/.cache/dory
       - name: Build and install jolt CLI
-        run: cargo install --path . --locked
+        run: cargo install --path . --locked --force
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Run jolt-core tests
@@ -93,7 +89,7 @@ jobs:
           components: rust-src
           cache-directories: ~/.cache/dory
       - name: Build and install jolt CLI
-        run: cargo install --path . --locked
+        run: cargo install --path . --locked --force
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Run jolt-core tests with zk feature
@@ -116,7 +112,7 @@ jobs:
         with:
           cache-directories: ~/.cache/dory
       - name: Build and install jolt CLI
-        run: cargo install --path . --locked
+        run: cargo install --path . --locked --force
 
       - name: Use the `jolt` binary to generate code
         run: jolt new sample_project
@@ -145,7 +141,7 @@ jobs:
         with:
           node-version: '22'
       - name: Build and install jolt CLI
-        run: cargo install --path . --locked
+        run: cargo install --path . --locked --force
 
       - name: Cache wasm-pack
         id: cache-wasm-pack
@@ -221,7 +217,7 @@ jobs:
         with:
           cache-directories: ~/.cache/dory
       - name: Build and install jolt CLI
-        run: cargo install --path . --locked
+        run: cargo install --path . --locked --force
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Generate test fixtures
@@ -236,7 +232,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Build and install jolt CLI
-        run: cargo install --path . --locked
+        run: cargo install --path . --locked --force
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Run tracer tests

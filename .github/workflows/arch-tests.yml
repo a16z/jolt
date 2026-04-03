@@ -4,13 +4,6 @@ on:
   push:
     branches:
       - main
-    paths:
-      - "tracer/**"
-      - "Makefile"
-      - "tests/arch-tests/**"
-      - "third-party/riscv-arch-test/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
   pull_request:
     branches:
       - "**"
