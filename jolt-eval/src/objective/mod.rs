@@ -6,13 +6,6 @@ pub mod synthesis;
 use std::fmt;
 use std::path::Path;
 
-/// Whether lower or higher values are better.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Direction {
-    Minimize,
-    Maximize,
-}
-
 /// Error during objective measurement.
 #[derive(Debug, Clone)]
 pub struct MeasurementError {
@@ -39,7 +32,6 @@ impl MeasurementError {
 pub trait AbstractObjective: Send + Sync {
     fn name(&self) -> &str;
     fn collect_measurement(&self) -> Result<f64, MeasurementError>;
-    fn direction(&self) -> Direction;
     fn units(&self) -> Option<&str> {
         None
     }
@@ -112,14 +104,6 @@ impl Objective {
             Self::HalsteadBugs(o) => o.units(),
         }
     }
-
-    pub fn direction(&self) -> Direction {
-        match self {
-            Self::Lloc(o) => o.direction(),
-            Self::CognitiveComplexity(o) => o.direction(),
-            Self::HalsteadBugs(o) => o.direction(),
-        }
-    }
 }
 
 /// Names of all registered `PerfObjective` benchmarks.
@@ -130,13 +114,6 @@ pub fn perf_objective_names() -> &'static [&'static str] {
     ]
 }
 
-/// Record of a single optimization attempt for post-hoc analysis.
-pub struct OptimizationAttempt {
-    pub description: String,
-    pub diff: String,
-    pub measurements: std::collections::HashMap<String, f64>,
-    pub invariants_passed: bool,
-}
 
 #[cfg(test)]
 mod tests {
@@ -145,13 +122,11 @@ mod tests {
     struct ConstantObjective {
         label: &'static str,
         value: f64,
-        direction: Direction,
     }
 
     impl AbstractObjective for ConstantObjective {
         fn name(&self) -> &str { self.label }
         fn collect_measurement(&self) -> Result<f64, MeasurementError> { Ok(self.value) }
-        fn direction(&self) -> Direction { self.direction }
     }
 
     #[test]
@@ -159,11 +134,9 @@ mod tests {
         let obj = ConstantObjective {
             label: "latency",
             value: 42.0,
-            direction: Direction::Minimize,
         };
         assert_eq!(obj.name(), "latency");
         assert_eq!(obj.collect_measurement().unwrap(), 42.0);
-        assert_eq!(obj.direction(), Direction::Minimize);
     }
 
     #[test]

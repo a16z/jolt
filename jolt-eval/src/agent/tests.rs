@@ -8,8 +8,9 @@ use crate::invariant::synthesis::redteam::{auto_redteam, RedTeamConfig, RedTeamR
 use crate::invariant::{
     CheckError, Invariant, InvariantTargets, InvariantViolation, SynthesisTarget,
 };
-use crate::objective::optimize::{auto_optimize, OptimizeConfig, OptimizeEnv};
-use crate::objective::Direction;
+use crate::objective::optimize::{
+    auto_optimize, ObjectiveFunction, OptimizeConfig, OptimizeEnv, SingleObjective,
+};
 
 // =========================================================================
 // Test invariants
@@ -576,14 +577,7 @@ fn custom_harness_plugs_into_auto_redteam() {
 // Mock OptimizeEnv
 // =========================================================================
 
-/// Mock environment for testing the optimization loop.
-///
-/// - `measurements` is a queue of measurement snapshots. Each call to
-///   `measure()` pops the front.  When one entry remains it repeats.
-/// - `invariants_pass` controls whether invariants pass each iteration.
-/// - Side effects (apply/accept/reject) are recorded for assertions.
 struct MockOptimizeEnv {
-    directions: HashMap<String, Direction>,
     measurements: Vec<HashMap<String, f64>>,
     measure_index: usize,
     invariants_pass: Vec<bool>,
@@ -594,9 +588,8 @@ struct MockOptimizeEnv {
 }
 
 impl MockOptimizeEnv {
-    fn new(directions: HashMap<String, Direction>) -> Self {
+    fn new() -> Self {
         Self {
-            directions,
             measurements: vec![],
             measure_index: 0,
             invariants_pass: vec![true],
@@ -637,10 +630,6 @@ impl OptimizeEnv for MockOptimizeEnv {
         self.invariants_pass[idx]
     }
 
-    fn directions(&self) -> HashMap<String, Direction> {
-        self.directions.clone()
-    }
-
     fn apply_diff(&mut self, diff: &str) {
         self.applied_diffs.push(diff.to_string());
     }
@@ -658,8 +647,8 @@ fn m(pairs: &[(&str, f64)]) -> HashMap<String, f64> {
     pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect()
 }
 
-fn d(pairs: &[(&str, Direction)]) -> HashMap<String, Direction> {
-    pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect()
+fn time_obj() -> SingleObjective {
+    SingleObjective { name: "time".into() }
 }
 
 // =========================================================================
@@ -673,25 +662,20 @@ fn optimize_accepts_improvement() {
         diff: Some("fake diff".into()),
     })]);
 
-    let mut env =
-        MockOptimizeEnv::new(d(&[("time", Direction::Minimize)])).with_measurements(vec![
-            m(&[("time", 10.0)]), // baseline
-            m(&[("time", 8.0)]),  // improved
-        ]);
+    let mut env = MockOptimizeEnv::new().with_measurements(vec![
+        m(&[("time", 10.0)]),
+        m(&[("time", 8.0)]),
+    ]);
 
-    let config = OptimizeConfig {
-        num_iterations: 1,
-        hint: None,
-    };
-
-    let result = auto_optimize(&agent, &mut env, &config, Path::new("/tmp"));
+    let config = OptimizeConfig { num_iterations: 1, hint: None };
+    let obj = time_obj();
+    let result = auto_optimize(&agent, &mut env, &obj, &config, Path::new("/tmp"));
 
     assert_eq!(result.attempts.len(), 1);
     assert!(result.attempts[0].invariants_passed);
-    assert_eq!(result.best["time"], 8.0);
+    assert_eq!(result.best_score, 8.0);
     assert_eq!(env.accepted, vec![1]);
     assert_eq!(env.rejected, 0);
-    assert_eq!(env.applied_diffs.len(), 1);
 }
 
 #[test]
@@ -701,23 +685,17 @@ fn optimize_rejects_regression() {
         diff: Some("bad diff".into()),
     })]);
 
-    let mut env =
-        MockOptimizeEnv::new(d(&[("time", Direction::Minimize)])).with_measurements(vec![
-            m(&[("time", 10.0)]), // baseline
-            m(&[("time", 12.0)]), // regression
-        ]);
+    let mut env = MockOptimizeEnv::new().with_measurements(vec![
+        m(&[("time", 10.0)]),
+        m(&[("time", 12.0)]),
+    ]);
 
-    let config = OptimizeConfig {
-        num_iterations: 1,
-        hint: None,
-    };
-
-    let result = auto_optimize(&agent, &mut env, &config, Path::new("/tmp"));
+    let config = OptimizeConfig { num_iterations: 1, hint: None };
+    let obj = time_obj();
+    let result = auto_optimize(&agent, &mut env, &obj, &config, Path::new("/tmp"));
 
     assert_eq!(result.attempts.len(), 1);
-    assert!(result.attempts[0].invariants_passed);
-    // Best stays at baseline because regression was rejected
-    assert_eq!(result.best["time"], 10.0);
+    assert_eq!(result.best_score, 10.0);
     assert!(env.accepted.is_empty());
     assert_eq!(env.rejected, 1);
 }
@@ -729,72 +707,50 @@ fn optimize_rejects_when_invariants_fail() {
         diff: Some("breaking diff".into()),
     })]);
 
-    let mut env = MockOptimizeEnv::new(d(&[("time", Direction::Minimize)]))
+    let mut env = MockOptimizeEnv::new()
         .with_measurements(vec![
-            m(&[("time", 10.0)]), // baseline
-            m(&[("time", 5.0)]),  // looks improved but invariants fail
+            m(&[("time", 10.0)]),
+            m(&[("time", 5.0)]),
         ])
         .with_invariants(vec![false]);
 
-    let config = OptimizeConfig {
-        num_iterations: 1,
-        hint: None,
-    };
+    let config = OptimizeConfig { num_iterations: 1, hint: None };
+    let obj = time_obj();
+    let result = auto_optimize(&agent, &mut env, &obj, &config, Path::new("/tmp"));
 
-    let result = auto_optimize(&agent, &mut env, &config, Path::new("/tmp"));
-
-    assert_eq!(result.attempts.len(), 1);
     assert!(!result.attempts[0].invariants_passed);
-    assert_eq!(result.best["time"], 10.0); // rejected despite improvement
+    assert_eq!(result.best_score, 10.0);
     assert!(env.accepted.is_empty());
-    assert_eq!(env.rejected, 1); // rejected because invariants failed
+    assert_eq!(env.rejected, 1);
 }
 
 #[test]
-fn optimize_maximize_direction() {
+fn optimize_custom_objective_function() {
+    // Weighted sum: 2*time + size. Agent improves time but regresses size.
+    struct WeightedSum;
+    impl ObjectiveFunction for WeightedSum {
+        fn description(&self) -> String { "Minimize 2*time + size".into() }
+        fn evaluate(&self, m: &HashMap<String, f64>) -> f64 {
+            2.0 * m.get("time").unwrap_or(&0.0) + m.get("size").unwrap_or(&0.0)
+        }
+    }
+
     let agent = MockAgent::from_responses(vec![Ok(AgentResponse {
-        text: "more inlines".into(),
+        text: "optimized".into(),
         diff: Some("diff".into()),
     })]);
 
-    let mut env =
-        MockOptimizeEnv::new(d(&[("inlines", Direction::Maximize)])).with_measurements(vec![
-            m(&[("inlines", 100.0)]), // baseline
-            m(&[("inlines", 150.0)]), // improvement (higher is better)
-        ]);
+    let mut env = MockOptimizeEnv::new().with_measurements(vec![
+        m(&[("time", 10.0), ("size", 100.0)]), // score = 120
+        m(&[("time", 8.0), ("size", 110.0)]),  // score = 126 (regression!)
+    ]);
 
-    let config = OptimizeConfig {
-        num_iterations: 1,
-        hint: None,
-    };
+    let config = OptimizeConfig { num_iterations: 1, hint: None };
+    let obj = WeightedSum;
+    let result = auto_optimize(&agent, &mut env, &obj, &config, Path::new("/tmp"));
 
-    let result = auto_optimize(&agent, &mut env, &config, Path::new("/tmp"));
-
-    assert_eq!(result.best["inlines"], 150.0);
-    assert_eq!(env.accepted, vec![1]);
-}
-
-#[test]
-fn optimize_maximize_rejects_decrease() {
-    let agent = MockAgent::from_responses(vec![Ok(AgentResponse {
-        text: "oops".into(),
-        diff: Some("diff".into()),
-    })]);
-
-    let mut env =
-        MockOptimizeEnv::new(d(&[("inlines", Direction::Maximize)])).with_measurements(vec![
-            m(&[("inlines", 100.0)]),
-            m(&[("inlines", 80.0)]), // regression for Maximize
-        ]);
-
-    let config = OptimizeConfig {
-        num_iterations: 1,
-        hint: None,
-    };
-
-    let result = auto_optimize(&agent, &mut env, &config, Path::new("/tmp"));
-
-    assert_eq!(result.best["inlines"], 100.0);
+    // Rejected because 126 > 120
+    assert_eq!(result.best_score, 120.0);
     assert!(env.accepted.is_empty());
     assert_eq!(env.rejected, 1);
 }
@@ -802,87 +758,58 @@ fn optimize_maximize_rejects_decrease() {
 #[test]
 fn optimize_multi_iteration_progressive_improvement() {
     let agent = MockAgent::from_responses(vec![
-        Ok(AgentResponse {
-            text: "iter 1".into(),
-            diff: Some("diff1".into()),
-        }),
-        Ok(AgentResponse {
-            text: "iter 2".into(),
-            diff: Some("diff2".into()),
-        }),
-        Ok(AgentResponse {
-            text: "iter 3".into(),
-            diff: Some("diff3".into()),
-        }),
+        Ok(AgentResponse { text: "iter 1".into(), diff: Some("diff1".into()) }),
+        Ok(AgentResponse { text: "iter 2".into(), diff: Some("diff2".into()) }),
+        Ok(AgentResponse { text: "iter 3".into(), diff: Some("diff3".into()) }),
     ]);
 
-    let mut env =
-        MockOptimizeEnv::new(d(&[("time", Direction::Minimize)])).with_measurements(vec![
-            m(&[("time", 10.0)]), // baseline
-            m(&[("time", 8.0)]),  // iter 1: improvement
-            m(&[("time", 9.0)]),  // iter 2: regression from 8.0
-            m(&[("time", 6.0)]),  // iter 3: improvement from 8.0
-        ]);
+    let mut env = MockOptimizeEnv::new().with_measurements(vec![
+        m(&[("time", 10.0)]),
+        m(&[("time", 8.0)]),
+        m(&[("time", 9.0)]),
+        m(&[("time", 6.0)]),
+    ]);
 
-    let config = OptimizeConfig {
-        num_iterations: 3,
-        hint: None,
-    };
-
-    let result = auto_optimize(&agent, &mut env, &config, Path::new("/tmp"));
+    let config = OptimizeConfig { num_iterations: 3, hint: None };
+    let obj = time_obj();
+    let result = auto_optimize(&agent, &mut env, &obj, &config, Path::new("/tmp"));
 
     assert_eq!(result.attempts.len(), 3);
-    assert_eq!(result.best["time"], 6.0);
-    assert_eq!(env.accepted, vec![1, 3]); // iters 1 and 3 accepted
-    assert_eq!(env.rejected, 1); // iter 2 rejected
+    assert_eq!(result.best_score, 6.0);
+    assert_eq!(env.accepted, vec![1, 3]);
+    assert_eq!(env.rejected, 1);
 }
 
 #[test]
 fn optimize_stops_when_agent_produces_no_diff() {
     let agent = MockAgent::from_responses(vec![
-        Ok(AgentResponse {
-            text: "I made a change".into(),
-            diff: Some("diff1".into()),
-        }),
-        Ok(AgentResponse {
-            text: "I couldn't find anything else".into(),
-            diff: None, // no diff -> should stop
-        }),
+        Ok(AgentResponse { text: "changed".into(), diff: Some("diff1".into()) }),
+        Ok(AgentResponse { text: "nothing else".into(), diff: None }),
     ]);
 
-    let mut env = MockOptimizeEnv::new(d(&[("time", Direction::Minimize)]))
+    let mut env = MockOptimizeEnv::new()
         .with_measurements(vec![m(&[("time", 10.0)]), m(&[("time", 9.0)])]);
 
-    let config = OptimizeConfig {
-        num_iterations: 5,
-        hint: None,
-    };
+    let config = OptimizeConfig { num_iterations: 5, hint: None };
+    let obj = time_obj();
+    let result = auto_optimize(&agent, &mut env, &obj, &config, Path::new("/tmp"));
 
-    let result = auto_optimize(&agent, &mut env, &config, Path::new("/tmp"));
-
-    // Only 1 attempt recorded (second iteration stopped before measurement)
     assert_eq!(result.attempts.len(), 1);
 }
 
 #[test]
 fn optimize_stops_when_agent_errors() {
     let agent = MockAgent::from_responses(vec![
-        Ok(AgentResponse {
-            text: "change 1".into(),
-            diff: Some("diff".into()),
-        }),
+        Ok(AgentResponse { text: "change".into(), diff: Some("diff".into()) }),
         Err(AgentError::new("agent crashed")),
     ]);
 
-    let mut env = MockOptimizeEnv::new(d(&[("time", Direction::Minimize)]))
+    let mut env = MockOptimizeEnv::new()
         .with_measurements(vec![m(&[("time", 10.0)]), m(&[("time", 10.0)])]);
 
-    let config = OptimizeConfig {
-        num_iterations: 5,
-        hint: None,
-    };
-
-    let result = auto_optimize(&agent, &mut env, &config, Path::new("/tmp"));
+    let config = OptimizeConfig { num_iterations: 5, hint: None };
+    let obj = time_obj();
+    let result = auto_optimize(&agent, &mut env, &obj, &config, Path::new("/tmp"));
 
     assert_eq!(result.attempts.len(), 1);
 }
@@ -890,50 +817,17 @@ fn optimize_stops_when_agent_errors() {
 #[test]
 fn optimize_zero_iterations() {
     let agent = MockAgent::always_ok("should not be called");
-    let mut env = MockOptimizeEnv::new(d(&[("time", Direction::Minimize)]))
+    let mut env = MockOptimizeEnv::new()
         .with_measurements(vec![m(&[("time", 10.0)])]);
 
-    let config = OptimizeConfig {
-        num_iterations: 0,
-        hint: None,
-    };
-
-    let result = auto_optimize(&agent, &mut env, &config, Path::new("/tmp"));
+    let config = OptimizeConfig { num_iterations: 0, hint: None };
+    let obj = time_obj();
+    let result = auto_optimize(&agent, &mut env, &obj, &config, Path::new("/tmp"));
 
     assert!(result.attempts.is_empty());
-    assert_eq!(result.baseline["time"], 10.0);
-    assert_eq!(result.best["time"], 10.0);
+    assert_eq!(result.baseline_score, 10.0);
+    assert_eq!(result.best_score, 10.0);
     assert!(agent.recorded_prompts().is_empty());
-}
-
-#[test]
-fn optimize_multiple_objectives() {
-    let agent = MockAgent::from_responses(vec![Ok(AgentResponse {
-        text: "optimized".into(),
-        diff: Some("diff".into()),
-    })]);
-
-    // time improves, size regresses, but any improvement triggers accept
-    let mut env = MockOptimizeEnv::new(d(&[
-        ("time", Direction::Minimize),
-        ("size", Direction::Minimize),
-    ]))
-    .with_measurements(vec![
-        m(&[("time", 10.0), ("size", 100.0)]),
-        m(&[("time", 8.0), ("size", 110.0)]),
-    ]);
-
-    let config = OptimizeConfig {
-        num_iterations: 1,
-        hint: None,
-    };
-
-    let result = auto_optimize(&agent, &mut env, &config, Path::new("/tmp"));
-
-    // Accepted because time improved (even though size regressed)
-    assert_eq!(env.accepted, vec![1]);
-    assert_eq!(result.best["time"], 8.0);
-    assert_eq!(result.best["size"], 110.0);
 }
 
 #[test]
@@ -943,55 +837,42 @@ fn optimize_prompt_includes_measurements_and_hint() {
         diff: Some("diff".into()),
     })]);
 
-    let mut env = MockOptimizeEnv::new(d(&[("time", Direction::Minimize)]))
+    let mut env = MockOptimizeEnv::new()
         .with_measurements(vec![m(&[("time", 42.0)]), m(&[("time", 42.0)])]);
 
     let config = OptimizeConfig {
         num_iterations: 1,
         hint: Some("Focus on the inner loop".into()),
     };
-
-    auto_optimize(&agent, &mut env, &config, Path::new("/tmp"));
+    let obj = time_obj();
+    auto_optimize(&agent, &mut env, &obj, &config, Path::new("/tmp"));
 
     let prompts = agent.recorded_prompts();
     assert_eq!(prompts.len(), 1);
     assert!(prompts[0].contains("42.0"));
-    assert!(prompts[0].contains("lower is better"));
     assert!(prompts[0].contains("Focus on the inner loop"));
 }
 
 #[test]
 fn optimize_prompt_includes_past_attempts() {
     let agent = MockAgent::from_responses(vec![
-        Ok(AgentResponse {
-            text: "attempt 1".into(),
-            diff: Some("d1".into()),
-        }),
-        Ok(AgentResponse {
-            text: "attempt 2".into(),
-            diff: Some("d2".into()),
-        }),
+        Ok(AgentResponse { text: "attempt 1".into(), diff: Some("d1".into()) }),
+        Ok(AgentResponse { text: "attempt 2".into(), diff: Some("d2".into()) }),
     ]);
 
-    let mut env =
-        MockOptimizeEnv::new(d(&[("time", Direction::Minimize)])).with_measurements(vec![
-            m(&[("time", 10.0)]),
-            m(&[("time", 10.0)]), // no improvement
-            m(&[("time", 10.0)]),
-        ]);
+    let mut env = MockOptimizeEnv::new().with_measurements(vec![
+        m(&[("time", 10.0)]),
+        m(&[("time", 10.0)]),
+        m(&[("time", 10.0)]),
+    ]);
 
-    let config = OptimizeConfig {
-        num_iterations: 2,
-        hint: None,
-    };
-
-    auto_optimize(&agent, &mut env, &config, Path::new("/tmp"));
+    let config = OptimizeConfig { num_iterations: 2, hint: None };
+    let obj = time_obj();
+    auto_optimize(&agent, &mut env, &obj, &config, Path::new("/tmp"));
 
     let prompts = agent.recorded_prompts();
     assert_eq!(prompts.len(), 2);
-    // First prompt: no past attempts
     assert!(!prompts[0].contains("Previous attempts"));
-    // Second prompt: includes iteration 1's results
     assert!(prompts[1].contains("Previous attempts"));
     assert!(prompts[1].contains("iteration 1"));
 }
@@ -1003,15 +884,12 @@ fn optimize_diff_is_applied() {
         diff: Some("--- a/x\n+++ b/x\n".into()),
     })]);
 
-    let mut env = MockOptimizeEnv::new(d(&[("time", Direction::Minimize)]))
+    let mut env = MockOptimizeEnv::new()
         .with_measurements(vec![m(&[("time", 10.0)]), m(&[("time", 10.0)])]);
 
-    let config = OptimizeConfig {
-        num_iterations: 1,
-        hint: None,
-    };
-
-    auto_optimize(&agent, &mut env, &config, Path::new("/tmp"));
+    let config = OptimizeConfig { num_iterations: 1, hint: None };
+    let obj = time_obj();
+    auto_optimize(&agent, &mut env, &obj, &config, Path::new("/tmp"));
 
     assert_eq!(env.applied_diffs.len(), 1);
     assert!(env.applied_diffs[0].contains("--- a/x"));
@@ -1019,44 +897,31 @@ fn optimize_diff_is_applied() {
 
 #[test]
 fn optimize_invariant_failure_mid_sequence() {
-    // 3 iterations: improve, invariant fail, improve
     let agent = MockAgent::from_responses(vec![
-        Ok(AgentResponse {
-            text: "i1".into(),
-            diff: Some("d1".into()),
-        }),
-        Ok(AgentResponse {
-            text: "i2".into(),
-            diff: Some("d2".into()),
-        }),
-        Ok(AgentResponse {
-            text: "i3".into(),
-            diff: Some("d3".into()),
-        }),
+        Ok(AgentResponse { text: "i1".into(), diff: Some("d1".into()) }),
+        Ok(AgentResponse { text: "i2".into(), diff: Some("d2".into()) }),
+        Ok(AgentResponse { text: "i3".into(), diff: Some("d3".into()) }),
     ]);
 
-    let mut env = MockOptimizeEnv::new(d(&[("time", Direction::Minimize)]))
+    let mut env = MockOptimizeEnv::new()
         .with_measurements(vec![
-            m(&[("time", 10.0)]), // baseline
-            m(&[("time", 8.0)]),  // iter 1: improvement
-            m(&[("time", 5.0)]),  // iter 2: would be improvement but invariants fail
-            m(&[("time", 7.0)]),  // iter 3: improvement
+            m(&[("time", 10.0)]),
+            m(&[("time", 8.0)]),
+            m(&[("time", 5.0)]),
+            m(&[("time", 7.0)]),
         ])
         .with_invariants(vec![true, false, true]);
 
-    let config = OptimizeConfig {
-        num_iterations: 3,
-        hint: None,
-    };
-
-    let result = auto_optimize(&agent, &mut env, &config, Path::new("/tmp"));
+    let config = OptimizeConfig { num_iterations: 3, hint: None };
+    let obj = time_obj();
+    let result = auto_optimize(&agent, &mut env, &obj, &config, Path::new("/tmp"));
 
     assert_eq!(result.attempts.len(), 3);
     assert!(result.attempts[0].invariants_passed);
     assert!(!result.attempts[1].invariants_passed);
     assert!(result.attempts[2].invariants_passed);
     assert_eq!(env.accepted, vec![1, 3]);
-    assert_eq!(env.rejected, 1); // iter 2 rejected (invariant failure)
-    assert_eq!(result.best["time"], 7.0);
+    assert_eq!(env.rejected, 1);
+    assert_eq!(result.best_score, 7.0);
 }
 

@@ -18,7 +18,7 @@ pub use guests::{GuestConfig, GuestProgram, JoltDevice, ProofVerifyError};
 pub use invariant::{
     CheckError, Invariant, InvariantTargets, InvariantViolation, JoltInvariants, SynthesisTarget,
 };
-pub use objective::{AbstractObjective, Direction, MeasurementError, Objective, PerfObjective};
+pub use objective::{AbstractObjective, MeasurementError, Objective, PerfObjective};
 
 // Re-exports used by the #[invariant] proc macro generated code.
 pub use arbitrary;

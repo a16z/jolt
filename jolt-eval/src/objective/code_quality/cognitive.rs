@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use rust_code_analysis::FuncSpace;
 
 use super::lloc::{analyze_rust_file, rust_files};
-use crate::objective::{AbstractObjective, Direction, MeasurementError};
+use crate::objective::{AbstractObjective, MeasurementError};
 
 /// Average cognitive complexity per function across all Rust files under
 /// `jolt-core/src/`.
@@ -43,9 +43,6 @@ impl AbstractObjective for CognitiveComplexityObjective {
         Ok(total / count as f64)
     }
 
-    fn direction(&self) -> Direction {
-        Direction::Minimize
-    }
 }
 
 /// Walk the function-space tree and collect cognitive complexity from

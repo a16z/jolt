@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use rust_code_analysis::{get_function_spaces, FuncSpace, LANG};
 
-use crate::objective::{AbstractObjective, Direction, MeasurementError};
+use crate::objective::{AbstractObjective, MeasurementError};
 
 /// Total logical lines of code (LLOC) across all Rust files under
 /// `jolt-core/src/`.
@@ -32,10 +32,6 @@ impl AbstractObjective for LlocObjective {
             }
         }
         Ok(total)
-    }
-
-    fn direction(&self) -> Direction {
-        Direction::Minimize
     }
 
     fn units(&self) -> Option<&str> {

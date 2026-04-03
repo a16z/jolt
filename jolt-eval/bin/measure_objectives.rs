@@ -19,14 +19,14 @@ struct Cli {
 
 fn print_header() {
     println!(
-        "{:<35} {:>15} {:>8} {:>10}",
-        "Objective", "Value", "Units", "Direction"
+        "{:<35} {:>15} {:>8}",
+        "Objective", "Value", "Units"
     );
-    println!("{}", "-".repeat(70));
+    println!("{}", "-".repeat(60));
 }
 
-fn print_row(name: &str, val: f64, units: &str, dir: &str) {
-    println!("{:<35} {:>15.6} {:>8} {:>10}", name, val, units, dir);
+fn print_row(name: &str, val: f64, units: &str) {
+    println!("{:<35} {:>15.6} {:>8}", name, val, units);
 }
 
 fn main() -> eyre::Result<()> {
@@ -70,7 +70,7 @@ fn main() -> eyre::Result<()> {
                         }
                     }
                     match read_criterion_estimate(name) {
-                        Some(secs) => print_row(name, secs, "s", "min"),
+                        Some(secs) => print_row(name, secs, "s"),
                         None => {
                             println!("{:<35} {:>15}", name, "NO DATA");
                         }
@@ -93,12 +93,8 @@ fn main() -> eyre::Result<()> {
         }
         match obj.collect_measurement() {
             Ok(val) => {
-                let dir = match obj.direction() {
-                    jolt_eval::Direction::Minimize => "min",
-                    jolt_eval::Direction::Maximize => "max",
-                };
                 let units = obj.units().unwrap_or("-");
-                print_row(obj.name(), val, units, dir);
+                print_row(obj.name(), val, units);
             }
             Err(e) => {
                 println!("{:<35} {:>15}", obj.name(), format!("ERROR: {e}"));
@@ -110,8 +106,6 @@ fn main() -> eyre::Result<()> {
 }
 
 /// Read the point estimate (mean, in seconds) from Criterion's output.
-///
-/// Criterion writes to `target/criterion/<name>/new/estimates.json`.
 fn read_criterion_estimate(bench_name: &str) -> Option<f64> {
     let path = Path::new("target/criterion")
         .join(bench_name)
@@ -119,7 +113,6 @@ fn read_criterion_estimate(bench_name: &str) -> Option<f64> {
         .join("estimates.json");
     let data = std::fs::read_to_string(path).ok()?;
     let json: serde_json::Value = serde_json::from_str(&data).ok()?;
-    // Criterion stores times in nanoseconds
     let nanos = json.get("mean")?.get("point_estimate")?.as_f64()?;
     Some(nanos / 1e9)
 }

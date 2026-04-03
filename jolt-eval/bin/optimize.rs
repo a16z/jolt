@@ -6,16 +6,19 @@ use clap::Parser;
 
 use jolt_eval::agent::ClaudeCodeAgent;
 use jolt_eval::invariant::JoltInvariants;
-use jolt_eval::objective::optimize::{auto_optimize, OptimizeConfig, OptimizeEnv};
-use jolt_eval::objective::{perf_objective_names, Direction, Objective};
+use jolt_eval::objective::optimize::{
+    auto_optimize, ObjectiveFunction, OptimizeConfig, OptimizeEnv, SingleObjective,
+};
+use jolt_eval::objective::{perf_objective_names, Objective};
 
 #[derive(Parser)]
 #[command(name = "optimize")]
 #[command(about = "AI-driven optimization of Jolt codebase objectives")]
 struct Cli {
-    /// Objectives to optimize (comma-separated). Default: all.
+    /// Objective to minimize (e.g. "lloc", "prover_time_fibonacci_100").
+    /// Default: all measurements are taken but you must specify which to optimize.
     #[arg(long)]
-    objectives: Option<String>,
+    objective: String,
 
     /// Number of optimization iterations
     #[arg(long, default_value = "5")]
@@ -38,7 +41,6 @@ struct RealEnv {
     objectives: Vec<Objective>,
     invariants: Vec<JoltInvariants>,
     repo_dir: std::path::PathBuf,
-    /// Whether to include perf benchmarks in measurements.
     bench_perf: bool,
 }
 
@@ -88,22 +90,6 @@ impl OptimizeEnv for RealEnv {
         })
     }
 
-    fn directions(&self) -> HashMap<String, Direction> {
-        let mut dirs: HashMap<String, Direction> = self
-            .objectives
-            .iter()
-            .map(|o| (o.name().to_string(), o.direction()))
-            .collect();
-
-        if self.bench_perf {
-            for &name in perf_objective_names() {
-                dirs.insert(name.to_string(), Direction::Minimize);
-            }
-        }
-
-        dirs
-    }
-
     fn apply_diff(&mut self, diff: &str) {
         if let Err(e) = jolt_eval::agent::apply_diff(&self.repo_dir, diff) {
             tracing::warn!("Failed to apply diff: {e}");
@@ -137,42 +123,15 @@ fn main() -> eyre::Result<()> {
     let cli = Cli::parse();
 
     let repo_dir = std::env::current_dir()?;
-    let all_objectives = Objective::all(&repo_dir);
-    let all_names: Vec<String> = all_objectives
-        .iter()
-        .map(|o| o.name().to_string())
-        .chain(perf_objective_names().iter().map(|s| s.to_string()))
-        .collect();
+    let objectives = Objective::all(&repo_dir);
 
-    let filter_names: Option<Vec<String>> = cli
-        .objectives
-        .as_ref()
-        .map(|s| s.split(',').map(|n| n.trim().to_string()).collect());
-
-    let bench_perf = filter_names.as_ref().is_none_or(|names| {
-        perf_objective_names()
-            .iter()
-            .any(|p| names.contains(&p.to_string()))
-    });
-
-    let objectives: Vec<Objective> = if let Some(names) = &filter_names {
-        all_objectives
-            .into_iter()
-            .filter(|o| names.contains(&o.name().to_string()))
-            .collect()
-    } else {
-        all_objectives
-    };
-
-    if objectives.is_empty() && !bench_perf {
-        eprintln!(
-            "No matching objectives. Available: {}",
-            all_names.join(", ")
-        );
-        std::process::exit(1);
-    }
+    let bench_perf = perf_objective_names().contains(&cli.objective.as_str());
 
     let invariants = JoltInvariants::all();
+
+    let objective_fn = SingleObjective {
+        name: cli.objective.clone(),
+    };
 
     let mut env = RealEnv {
         objectives,
@@ -181,10 +140,11 @@ fn main() -> eyre::Result<()> {
         bench_perf,
     };
 
-    println!("=== Baseline measurements ===");
+    println!("=== Baseline ===");
     let baseline = env.measure();
-    print_measurements(&env.directions(), &baseline);
-    println!();
+    let baseline_score = objective_fn.evaluate(&baseline);
+    print_measurements(&baseline);
+    println!("Objective: {} = {:.6}\n", cli.objective, baseline_score);
 
     let agent = ClaudeCodeAgent::new(&cli.model, cli.max_turns);
     let config = OptimizeConfig {
@@ -192,44 +152,33 @@ fn main() -> eyre::Result<()> {
         hint: cli.hint.clone(),
     };
 
-    let result = auto_optimize(&agent, &mut env, &config, &repo_dir);
+    let result = auto_optimize(&agent, &mut env, &objective_fn, &config, &repo_dir);
 
-    println!("=== Optimization summary ===");
+    println!("=== Summary ===");
     println!(
-        "{}/{} iterations produced improvements.",
+        "{}/{} iterations improved the objective.",
         result
             .attempts
             .iter()
-            .filter(|a| a.invariants_passed
-                && a.measurements
-                    .iter()
-                    .any(|(name, &val)| { result.baseline.get(name).is_some_and(|&b| val < b) }))
+            .filter(|a| a.invariants_passed && a.score < result.baseline_score)
             .count(),
         result.attempts.len()
     );
-    println!();
-    println!("Final measurements:");
-    print_measurements(&env.directions(), &result.best);
+    println!(
+        "Score: {:.6} -> {:.6}",
+        result.baseline_score, result.best_score
+    );
+    println!("\nFinal measurements:");
+    print_measurements(&result.best_measurements);
 
     Ok(())
 }
 
-fn print_measurements(
-    directions: &HashMap<String, Direction>,
-    measurements: &HashMap<String, f64>,
-) {
-    let mut names: Vec<_> = directions.keys().collect();
+fn print_measurements(measurements: &HashMap<String, f64>) {
+    let mut names: Vec<_> = measurements.keys().collect();
     names.sort();
     for name in names {
-        let val = measurements
-            .get(name)
-            .map(|v| format!("{v:.6}"))
-            .unwrap_or_else(|| "N/A".to_string());
-        let dir = match directions[name] {
-            Direction::Minimize => "min",
-            Direction::Maximize => "max",
-        };
-        println!("  {:<35} {:>15} {:>6}", name, val, dir);
+        println!("  {:<35} {:>15.6}", name, measurements[name]);
     }
 }
 

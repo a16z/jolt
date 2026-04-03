@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use rust_code_analysis::FuncSpace;
 
 use super::lloc::{analyze_rust_file, rust_files};
-use crate::objective::{AbstractObjective, Direction, MeasurementError};
+use crate::objective::{AbstractObjective, MeasurementError};
 
 /// Estimated number of delivered bugs across all Rust files under
 /// `jolt-core/src/`, based on Halstead's bug prediction formula
@@ -38,9 +38,6 @@ impl AbstractObjective for HalsteadBugsObjective {
         Ok(total)
     }
 
-    fn direction(&self) -> Direction {
-        Direction::Minimize
-    }
 }
 
 /// Sum Halstead bugs across all function spaces in the tree,
