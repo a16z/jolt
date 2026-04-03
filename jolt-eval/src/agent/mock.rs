@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use super::{AgentError, AgentHarness, AgentResponse};
+use super::{AgentError, AgentHarness, AgentResponse, DiffScope};
 
 /// A mock agent for testing. Returns pre-configured responses and records
 /// every prompt it receives.
@@ -64,7 +64,12 @@ impl MockAgent {
 }
 
 impl AgentHarness for MockAgent {
-    fn invoke(&self, _repo_dir: &Path, prompt: &str) -> Result<AgentResponse, AgentError> {
+    fn invoke(
+        &self,
+        _repo_dir: &Path,
+        prompt: &str,
+        _diff_scope: &DiffScope,
+    ) -> Result<AgentResponse, AgentError> {
         self.prompts.lock().unwrap().push(prompt.to_string());
 
         let mut responses = self.responses.lock().unwrap();

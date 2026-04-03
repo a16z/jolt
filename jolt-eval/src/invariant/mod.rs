@@ -106,6 +106,15 @@ pub trait Invariant: Send + Sync {
     fn seed_corpus(&self) -> Vec<Self::Input> {
         vec![]
     }
+
+    /// Post-process a deserialized input with context from the agent run.
+    ///
+    /// Called by the red-team harness after deserializing the agent's JSON
+    /// counterexample. The `diff` is the unified diff captured from the
+    /// agent's worktree (if any files were modified). The default is a no-op.
+    fn enrich_input(&self, input: Self::Input, _diff: Option<&str>) -> Self::Input {
+        input
+    }
 }
 
 /// Declares which synthesis targets an invariant supports.

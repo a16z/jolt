@@ -125,20 +125,21 @@ impl Invariant for SoundnessInvariant {
              A counterexample is a guest patch + input + dishonest (output, panic) \
              claim that the verifier incorrectly accepts. \
              For full context, read the invariant file: jolt-eval/src/invariant/soundness.rs \n\n\
-             ### Guest sandbox\n\n\
+             ## Guest sandbox\n\n\
              The guest template is at `jolt-eval/guest-sandbox/`. It contains:\n\
              - `Cargo.toml` — depends on `jolt-sdk`\n\
              - `src/lib.rs` — the `#[jolt::provable]` function (main patch target)\n\
              - `src/main.rs` — no_main entry point (rarely needs patching)\n\n\
-             ### Producing a patch\n\n\
-             To produce the `patch` field, modify files inside `jolt-eval/guest-sandbox/` \
-             and run `git diff` **from the `jolt-eval/guest-sandbox/` directory**:\n\
-             ```\n\
-             cd jolt-eval/guest-sandbox && git diff\n\
-             ```\n\
-             The patch is applied with `git apply` from the same directory. \
-             Hunks referencing paths with `..` are filtered out.\n\n\
-             ### Limits\n\n\
+             ## Producing a patch\n\n\
+             Simply edit the files inside `jolt-eval/guest-sandbox/` directly. \
+             The harness automatically captures your changes as a `git diff` \
+             from the worktree before cleanup and uses it as the patch. \
+             You do NOT need to put the patch in the JSON counterexample — \
+             leave the `patch` field empty and the harness fills it in.\n\n\
+             Alternatively, you can provide a patch explicitly in the JSON \
+             `patch` field. If non-empty, it takes precedence over the \
+             worktree diff. Hunks referencing paths with `..` are filtered out.\n\n\
+             ## Limits\n\n\
              Memory config: max_input_size <= {MAX_INPUT_SIZE}, \
              max_output_size <= {MAX_OUTPUT_SIZE}, \
              stack_size <= {MAX_STACK_SIZE}, heap_size <= {MAX_HEAP_SIZE}. \
@@ -226,6 +227,17 @@ impl Invariant for SoundnessInvariant {
             claimed_output: vec![0xFF],
             claimed_panic: false,
         }]
+    }
+
+    /// If the agent modified `guest-sandbox/` in its worktree, use that
+    /// diff as the patch (unless the agent already provided one in JSON).
+    fn enrich_input(&self, mut input: SoundnessInput, diff: Option<&str>) -> SoundnessInput {
+        if input.patch.trim().is_empty() {
+            if let Some(diff) = diff {
+                input.patch = diff.to_string();
+            }
+        }
+        input
     }
 }
 

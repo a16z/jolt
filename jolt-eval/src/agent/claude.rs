@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::{AgentError, AgentHarness, AgentResponse};
+use super::{AgentError, AgentHarness, AgentResponse, DiffScope};
 
 /// Agent implementation that invokes the Claude Code CLI in an isolated
 /// git worktree.
@@ -55,26 +55,18 @@ impl ClaudeCodeAgent {
 }
 
 impl AgentHarness for ClaudeCodeAgent {
-    fn invoke(&self, repo_dir: &Path, prompt: &str) -> Result<AgentResponse, AgentError> {
+    fn invoke(
+        &self,
+        repo_dir: &Path,
+        prompt: &str,
+        diff_scope: &DiffScope,
+    ) -> Result<AgentResponse, AgentError> {
         let worktree_dir = create_worktree(repo_dir)?;
         tracing::info!("Created worktree at {}", worktree_dir.display());
 
         let result = self.run_cli(&worktree_dir, prompt, &[], true);
 
-        // Capture diff before cleanup
-        let diff = Command::new("git")
-            .current_dir(&worktree_dir)
-            .args(["diff", "HEAD"])
-            .output()
-            .ok()
-            .and_then(|o| {
-                let s = String::from_utf8_lossy(&o.stdout).to_string();
-                if s.trim().is_empty() {
-                    None
-                } else {
-                    Some(s)
-                }
-            });
+        let diff = capture_diff(&worktree_dir, diff_scope);
 
         tracing::info!("Cleaning up worktree...");
         remove_worktree(repo_dir, &worktree_dir);
@@ -109,6 +101,7 @@ impl AgentHarness for ClaudeCodeAgent {
         repo_dir: &Path,
         prompt: &str,
         schema: &serde_json::Value,
+        diff_scope: &DiffScope,
     ) -> Result<AgentResponse, AgentError> {
         let worktree_dir = create_worktree(repo_dir)?;
         tracing::info!("Created worktree at {}", worktree_dir.display());
@@ -122,6 +115,8 @@ impl AgentHarness for ClaudeCodeAgent {
             &["--output-format", "json", "--json-schema", &schema_str],
             false,
         );
+
+        let diff = capture_diff(&worktree_dir, diff_scope);
 
         tracing::info!("Cleaning up worktree...");
         remove_worktree(repo_dir, &worktree_dir);
@@ -177,8 +172,37 @@ impl AgentHarness for ClaudeCodeAgent {
             ));
         };
 
-        Ok(AgentResponse { text, diff: None })
+        Ok(AgentResponse { text, diff })
     }
+}
+
+/// Capture a unified diff of changes in a worktree relative to HEAD,
+/// filtered by the given [`DiffScope`].
+fn capture_diff(worktree_dir: &Path, scope: &DiffScope) -> Option<String> {
+    let mut cmd = Command::new("git");
+    cmd.current_dir(worktree_dir)
+        .args(["diff", "HEAD", "--"]);
+    match scope {
+        DiffScope::All => {}
+        DiffScope::Include(paths) => {
+            for p in paths {
+                cmd.arg(p);
+            }
+        }
+        DiffScope::Exclude(paths) => {
+            for p in paths {
+                cmd.arg(format!(":!{p}"));
+            }
+        }
+    }
+    cmd.output().ok().and_then(|o| {
+        let s = String::from_utf8_lossy(&o.stdout).to_string();
+        if s.trim().is_empty() {
+            None
+        } else {
+            Some(s)
+        }
+    })
 }
 
 /// Create an isolated detached git worktree from `repo_dir`.

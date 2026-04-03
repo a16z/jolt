@@ -38,19 +38,32 @@ impl AgentError {
     }
 }
 
+/// Git pathspec filter for controlling which files appear in the
+/// captured diff after an agent run.
+pub enum DiffScope {
+    /// Capture all changes.
+    All,
+    /// Only include changes under these paths.
+    Include(Vec<String>),
+    /// Include everything except changes under these paths.
+    Exclude(Vec<String>),
+}
+
 /// A coding agent that can analyze or modify a repository given a prompt.
 ///
-/// Implementors are responsible for their own isolation strategy (worktrees,
-/// containers, API calls, etc.). The `repo_dir` parameter indicates the
-/// repository root so the agent can set up whatever sandbox it needs.
+/// The `diff_scope` parameter controls which file changes are captured
+/// in `AgentResponse::diff` after the agent finishes.
 pub trait AgentHarness: Send + Sync {
-    fn invoke(&self, repo_dir: &Path, prompt: &str) -> Result<AgentResponse, AgentError>;
+    /// Invoke the agent with a prompt. The agent can read and modify
+    /// files in its worktree; changes matching `diff_scope` are captured.
+    fn invoke(
+        &self,
+        repo_dir: &Path,
+        prompt: &str,
+        diff_scope: &DiffScope,
+    ) -> Result<AgentResponse, AgentError>;
 
     /// Invoke the agent with a JSON Schema constraint on the response.
-    ///
-    /// Agents that support structured output (e.g. Claude Code with
-    /// `--output-format json --json-schema`) should override this to
-    /// guarantee the response conforms to `schema`.
     ///
     /// The default falls back to [`invoke`](Self::invoke).
     fn invoke_structured(
@@ -58,8 +71,9 @@ pub trait AgentHarness: Send + Sync {
         repo_dir: &Path,
         prompt: &str,
         _schema: &serde_json::Value,
+        diff_scope: &DiffScope,
     ) -> Result<AgentResponse, AgentError> {
-        self.invoke(repo_dir, prompt)
+        self.invoke(repo_dir, prompt, diff_scope)
     }
 }
 

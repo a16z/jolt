@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use enumset::EnumSet;
-use jolt_eval::agent::{AgentError, AgentHarness, AgentResponse, MockAgent};
+use jolt_eval::agent::{AgentError, AgentHarness, AgentResponse, DiffScope, MockAgent};
 use jolt_eval::invariant::synthesis::redteam::{auto_redteam, RedTeamConfig, RedTeamResult};
 use jolt_eval::invariant::{
     CheckError, Invariant, InvariantTargets, InvariantViolation, SynthesisTarget,
@@ -104,7 +104,7 @@ impl Invariant for FailsOnZeroInvariant {
 #[test]
 fn mock_always_ok_returns_text() {
     let agent = MockAgent::always_ok("hello world");
-    let resp = agent.invoke(Path::new("/tmp"), "test prompt").unwrap();
+    let resp = agent.invoke(Path::new("/tmp"), "test prompt", &DiffScope::All).unwrap();
     assert_eq!(resp.text, "hello world");
     assert!(resp.diff.is_none());
 }
@@ -112,16 +112,16 @@ fn mock_always_ok_returns_text() {
 #[test]
 fn mock_always_err_returns_error() {
     let agent = MockAgent::always_err("boom");
-    let err = agent.invoke(Path::new("/tmp"), "test").unwrap_err();
+    let err = agent.invoke(Path::new("/tmp"), "test", &DiffScope::All).unwrap_err();
     assert_eq!(err.message, "boom");
 }
 
 #[test]
 fn mock_records_prompts() {
     let agent = MockAgent::always_ok("ok");
-    agent.invoke(Path::new("/tmp"), "prompt 1").unwrap();
-    agent.invoke(Path::new("/tmp"), "prompt 2").unwrap();
-    agent.invoke(Path::new("/tmp"), "prompt 3").unwrap();
+    agent.invoke(Path::new("/tmp"), "prompt 1", &DiffScope::All).unwrap();
+    agent.invoke(Path::new("/tmp"), "prompt 2", &DiffScope::All).unwrap();
+    agent.invoke(Path::new("/tmp"), "prompt 3", &DiffScope::All).unwrap();
 
     let prompts = agent.recorded_prompts();
     assert_eq!(prompts.len(), 3);
@@ -134,7 +134,7 @@ fn mock_records_prompts() {
 fn mock_always_ok_repeats_indefinitely() {
     let agent = MockAgent::always_ok("same");
     for _ in 0..100 {
-        let resp = agent.invoke(Path::new("/tmp"), "x").unwrap();
+        let resp = agent.invoke(Path::new("/tmp"), "x", &DiffScope::All).unwrap();
         assert_eq!(resp.text, "same");
     }
 }
@@ -143,7 +143,7 @@ fn mock_always_ok_repeats_indefinitely() {
 fn mock_always_err_repeats_indefinitely() {
     let agent = MockAgent::always_err("fail");
     for _ in 0..100 {
-        let err = agent.invoke(Path::new("/tmp"), "x").unwrap_err();
+        let err = agent.invoke(Path::new("/tmp"), "x", &DiffScope::All).unwrap_err();
         assert_eq!(err.message, "fail");
     }
 }
@@ -162,15 +162,15 @@ fn mock_from_responses_returns_in_order() {
         Err(AgentError::new("third fails")),
     ]);
 
-    let r1 = agent.invoke(Path::new("/tmp"), "a").unwrap();
+    let r1 = agent.invoke(Path::new("/tmp"), "a", &DiffScope::All).unwrap();
     assert_eq!(r1.text, "first");
     assert!(r1.diff.is_none());
 
-    let r2 = agent.invoke(Path::new("/tmp"), "b").unwrap();
+    let r2 = agent.invoke(Path::new("/tmp"), "b", &DiffScope::All).unwrap();
     assert_eq!(r2.text, "second");
     assert_eq!(r2.diff.as_deref(), Some("diff"));
 
-    let r3 = agent.invoke(Path::new("/tmp"), "c").unwrap_err();
+    let r3 = agent.invoke(Path::new("/tmp"), "c", &DiffScope::All).unwrap_err();
     assert_eq!(r3.message, "third fails");
 }
 
@@ -187,11 +187,11 @@ fn mock_from_responses_last_entry_repeats() {
         }),
     ]);
 
-    agent.invoke(Path::new("/tmp"), "a").unwrap();
-    let r2 = agent.invoke(Path::new("/tmp"), "b").unwrap();
+    agent.invoke(Path::new("/tmp"), "a", &DiffScope::All).unwrap();
+    let r2 = agent.invoke(Path::new("/tmp"), "b", &DiffScope::All).unwrap();
     assert_eq!(r2.text, "last");
     // After exhausting queue, last response repeats
-    let r3 = agent.invoke(Path::new("/tmp"), "c").unwrap();
+    let r3 = agent.invoke(Path::new("/tmp"), "c", &DiffScope::All).unwrap();
     assert_eq!(r3.text, "last");
 }
 
@@ -202,7 +202,7 @@ fn mock_with_diff() {
         diff: Some("--- a/foo\n+++ b/foo\n@@ ...\n-old\n+new".into()),
     })]);
 
-    let resp = agent.invoke(Path::new("/tmp"), "optimize").unwrap();
+    let resp = agent.invoke(Path::new("/tmp"), "optimize", &DiffScope::All).unwrap();
     assert!(resp.diff.is_some());
     assert!(resp.diff.unwrap().contains("+new"));
 }
@@ -486,7 +486,7 @@ fn redteam_mixed_agent_responses() {
 fn agent_harness_is_object_safe() {
     // Verify we can use AgentHarness as a trait object
     let agent: Box<dyn AgentHarness> = Box::new(MockAgent::always_ok("hi"));
-    let resp = agent.invoke(Path::new("/tmp"), "hello").unwrap();
+    let resp = agent.invoke(Path::new("/tmp"), "hello", &DiffScope::All).unwrap();
     assert_eq!(resp.text, "hi");
 }
 
@@ -494,7 +494,7 @@ fn agent_harness_is_object_safe() {
 fn agent_harness_works_with_arc() {
     use std::sync::Arc;
     let agent: Arc<dyn AgentHarness> = Arc::new(MockAgent::always_ok("shared"));
-    let resp = agent.invoke(Path::new("/tmp"), "test").unwrap();
+    let resp = agent.invoke(Path::new("/tmp"), "test", &DiffScope::All).unwrap();
     assert_eq!(resp.text, "shared");
 }
 
@@ -505,9 +505,14 @@ struct FirstSuccessHarness {
 }
 
 impl AgentHarness for FirstSuccessHarness {
-    fn invoke(&self, repo_dir: &Path, prompt: &str) -> Result<AgentResponse, AgentError> {
+    fn invoke(
+        &self,
+        repo_dir: &Path,
+        prompt: &str,
+        diff_scope: &DiffScope,
+    ) -> Result<AgentResponse, AgentError> {
         for agent in &self.agents {
-            if let Ok(resp) = agent.invoke(repo_dir, prompt) {
+            if let Ok(resp) = agent.invoke(repo_dir, prompt, diff_scope) {
                 return Ok(resp);
             }
         }
@@ -525,7 +530,7 @@ fn custom_multi_agent_harness() {
         ],
     };
 
-    let resp = harness.invoke(Path::new("/tmp"), "test").unwrap();
+    let resp = harness.invoke(Path::new("/tmp"), "test", &DiffScope::All).unwrap();
     assert_eq!(resp.text, "agent 3 succeeded");
 }
 
@@ -538,7 +543,7 @@ fn custom_multi_agent_all_fail() {
         ],
     };
 
-    let err = harness.invoke(Path::new("/tmp"), "test").unwrap_err();
+    let err = harness.invoke(Path::new("/tmp"), "test", &DiffScope::All).unwrap_err();
     assert_eq!(err.message, "All agents failed");
 }
 

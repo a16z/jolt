@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use super::super::{CheckError, FailedAttempt, Invariant};
-use crate::agent::AgentHarness;
+use crate::agent::{AgentHarness, DiffScope};
 
 /// Result of a red-team session.
 pub enum RedTeamResult {
@@ -63,7 +63,9 @@ pub fn auto_redteam<I: Invariant>(
             &failed_attempts,
         );
 
-        let response = match agent.invoke_structured(repo_dir, &prompt, &envelope_schema) {
+        let diff_scope = DiffScope::Include(vec!["jolt-eval/guest-sandbox/".into()]);
+        let response =
+            match agent.invoke_structured(repo_dir, &prompt, &envelope_schema, &diff_scope) {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!("Agent invocation failed: {e}");
@@ -108,6 +110,10 @@ pub fn auto_redteam<I: Invariant>(
                 continue;
             }
         };
+
+        // Let the invariant fill in fields from the agent's worktree diff
+        // (e.g. SoundnessInvariant uses it to populate the patch field).
+        let input = invariant.enrich_input(input, response.diff.as_deref());
 
         match invariant.check(&setup, input) {
             Ok(()) => {

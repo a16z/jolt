@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::agent::{truncate, AgentHarness};
+use crate::agent::{truncate, AgentHarness, DiffScope};
 use crate::objective::{Direction, OptimizationAttempt};
 
 /// Configuration for an optimization run.
@@ -73,7 +73,8 @@ pub fn auto_optimize<A: AgentHarness, E: OptimizeEnv>(
     for iteration in 0..config.num_iterations {
         let prompt = build_optimize_prompt(&directions, &best, &attempts, config.hint.as_deref());
 
-        let response = match agent.invoke(repo_dir, &prompt) {
+        let diff_scope = DiffScope::Exclude(vec!["jolt-eval/".into()]);
+        let response = match agent.invoke(repo_dir, &prompt, &diff_scope) {
             Ok(r) => r,
             Err(e) => {
                 tracing::info!("Agent error: {e}");
