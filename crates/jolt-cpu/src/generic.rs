@@ -66,6 +66,49 @@ pub fn compile<F: Field>(formula: &Formula) -> crate::CpuKernel<F> {
     )
 }
 
+/// Compile a single-point evaluator for domain iteration.
+///
+/// Returns a closure `fn(values: &[F], challenges: &[F]) -> F` that
+/// evaluates the composition formula at one point. Used by [`reduce_domain`]
+/// where inputs are not in lo/hi pairs.
+pub fn compile_domain_fn<F: Field>(
+    formula: &Formula,
+) -> impl Fn(&[F], &[F]) -> F + Send + Sync + 'static {
+    let terms: Vec<_> = formula
+        .terms
+        .iter()
+        .map(|t| {
+            let coeff = F::from_i128(t.coefficient);
+            let factors: Vec<_> = t
+                .factors
+                .iter()
+                .map(|f| match f {
+                    Factor::Input(i) => CompiledFactor::Input(*i as usize),
+                    Factor::Challenge(i) => CompiledFactor::Challenge(*i as usize),
+                })
+                .collect();
+            (coeff, factors)
+        })
+        .collect();
+
+    move |values: &[F], challenges: &[F]| -> F {
+        let mut sum = F::zero();
+        for (coeff, factors) in &terms {
+            let mut val = *coeff;
+            for factor in factors {
+                val *= match *factor {
+                    CompiledFactor::Input(i) => values[i],
+                    CompiledFactor::Challenge(i) => {
+                        challenges.get(i).copied().unwrap_or_else(F::zero)
+                    }
+                };
+            }
+            sum += val;
+        }
+        sum
+    }
+}
+
 /// Factor resolved at kernel eval time.
 #[derive(Clone, Copy)]
 enum CompiledFactor {

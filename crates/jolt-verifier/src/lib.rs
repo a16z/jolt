@@ -23,4 +23,4 @@ pub use verifier::verify;
 ///
 /// Both sides create `Blake2bTranscript::<F>::new(TRANSCRIPT_LABEL)` independently.
 /// Changing this constant is a protocol-breaking change.
-pub const TRANSCRIPT_LABEL: &[u8] = b"jolt";
+pub const TRANSCRIPT_LABEL: &[u8] = b"Jolt";

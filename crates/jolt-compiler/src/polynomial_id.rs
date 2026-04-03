@@ -7,7 +7,6 @@
 use serde::{Deserialize, Serialize};
 
 use crate::descriptor::{PolySource, PolynomialDescriptor, R1csColumn, StorageHint, WitnessSlot};
-use crate::module::PolynomialSpec;
 
 /// Identifies a polynomial in the Jolt protocol.
 ///
@@ -125,8 +124,9 @@ pub enum PolynomialId {
     BytecodeTable(usize),
 }
 
-impl PolynomialSpec for PolynomialId {
-    fn descriptor(&self) -> PolynomialDescriptor {
+impl PolynomialId {
+    /// Returns the operational semantics for this polynomial.
+    pub fn descriptor(&self) -> PolynomialDescriptor {
         match self {
             // ── Committed: trace-derived dense ─────────────────────────
             Self::RdInc => PolynomialDescriptor {
@@ -229,9 +229,7 @@ impl PolynomialSpec for PolynomialId {
             },
         }
     }
-}
 
-impl PolynomialId {
     /// Whether this polynomial has a PCS commitment.
     #[inline]
     pub fn is_committed(&self) -> bool {

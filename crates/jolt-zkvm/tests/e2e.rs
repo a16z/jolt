@@ -80,7 +80,7 @@ fn prove_verify_roundtrip() {
     let num_vars = 2;
     let size = 1usize << num_vars;
 
-    // -- 1. Compile + remap + link --
+    // -- 1. Compile + link --
     let protocol = build_protocol();
     let params = CompileParams {
         dim_sizes: vec![num_vars as u64],
@@ -92,12 +92,9 @@ fn prove_verify_roundtrip() {
         peak_memory: Objective::Ignore,
         prover_time: Objective::Ignore,
     };
-    let module = compile(&protocol, &params, &config).expect("compilation should succeed");
-
-    // Remap compiler poly indices → PolynomialId at the module boundary.
-    // This is the single point where compiler ordering meets protocol identity.
     let poly_ids = [PolynomialId::RdInc, PolynomialId::RamInc];
-    let module = module.remap(|i| poly_ids[i]);
+    let module =
+        compile(&protocol, &params, &config, &poly_ids).expect("compilation should succeed");
 
     let backend = CpuBackend;
     let executable = link(module, &backend);
@@ -134,7 +131,7 @@ fn prove_verify_roundtrip() {
 
     // -- 3. Prove --
     let mut transcript = Blake2bTranscript::<Fr>::new(TRANSCRIPT_LABEL);
-    let proof = prove_with_buffers::<_, _, _, _, MockPCS>(
+    let proof = prove_with_buffers::<_, _, _, MockPCS>(
         &executable,
         &mut provider,
         &backend,
@@ -144,6 +141,6 @@ fn prove_verify_roundtrip() {
     );
 
     // -- 4. Verify --
-    let vk = JoltVerifyingKey::<PolynomialId, Fr, MockPCS>::new(&executable.module, (), r1cs_key);
+    let vk = JoltVerifyingKey::<Fr, MockPCS>::new(&executable.module, (), r1cs_key);
     verify(&vk, &proof, &[0u8; 32]).expect("proof should verify");
 }

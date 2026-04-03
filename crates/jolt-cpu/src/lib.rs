@@ -22,7 +22,7 @@ pub mod toom_cook;
 
 pub use backend::{BoxedEvalFn, CpuBackend, CpuKernel};
 
-use jolt_compiler::KernelSpec;
+use jolt_compiler::{Iteration, KernelSpec};
 use jolt_field::Field;
 
 /// Compile a [`KernelSpec`] into a CPU kernel.
@@ -42,7 +42,18 @@ pub fn compile<F: Field>(spec: &KernelSpec) -> CpuKernel<F> {
         Box::new(generic::compile_fn::<F>(composition))
     };
 
-    CpuKernel::from_boxed(eval_fn, spec.num_evals, spec.iteration, spec.binding_order)
+    let mut kernel = CpuKernel::from_boxed(
+        eval_fn,
+        spec.num_evals,
+        spec.iteration.clone(),
+        spec.binding_order,
+    );
+
+    if matches!(spec.iteration, Iteration::Domain { .. }) {
+        kernel = kernel.with_domain_eval(Box::new(generic::compile_domain_fn::<F>(composition)));
+    }
+
+    kernel
 }
 
 #[cfg(test)]

@@ -61,7 +61,7 @@ pub enum KernelVariant {
 }
 
 impl KernelVariant {
-    pub fn from_spec(iteration: Iteration, binding_order: BindingOrder) -> Self {
+    pub fn from_spec(iteration: &Iteration, binding_order: BindingOrder) -> Self {
         match iteration {
             Iteration::DenseTensor => Self::Tensor,
             Iteration::Sparse => Self::Sparse,
@@ -69,6 +69,9 @@ impl KernelVariant {
                 BindingOrder::LowToHigh => Self::LowToHigh,
                 BindingOrder::HighToLow => Self::HighToLow,
             },
+            Iteration::Domain { .. } => {
+                panic!("Domain iteration not yet supported on Metal — use CpuBackend")
+            }
         }
     }
 

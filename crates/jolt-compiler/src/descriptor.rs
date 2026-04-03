@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 /// Operational semantics for a polynomial identity.
 ///
-/// Returned by [`PolynomialSpec::descriptor`](super::PolynomialSpec) and used by the runtime,
+/// Returned by [`PolynomialId::descriptor`] and used by the runtime,
 /// buffer providers, and witness layer to dispatch generically on polynomial
 /// kind rather than matching specific identities.
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Serialize, Deserialize)]

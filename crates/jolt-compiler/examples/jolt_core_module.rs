@@ -569,12 +569,12 @@ fn r1cs_input_polys(p: &Polys) -> [PolynomialId; NUM_R1CS_INPUTS] {
     ]
 }
 
-fn build_module(params: &ModuleParams) -> Module<PolynomialId> {
+fn build_module(params: &ModuleParams) -> Module {
     let mut pt = PolyTable::new();
     let p = register_polys(&mut pt, params);
 
-    let mut ops: Vec<Op<PolynomialId>> = Vec::new();
-    let mut kernels: Vec<KernelDef<PolynomialId>> = Vec::new();
+    let mut ops: Vec<Op> = Vec::new();
+    let mut kernels: Vec<KernelDef> = Vec::new();
     let mut ch = ChallengeTable::new();
 
     // Phase 0: Preamble + Commitment
@@ -626,7 +626,7 @@ fn build_module(params: &ModuleParams) -> Module<PolynomialId> {
 ///   1. Main witness: RdInc, RamInc, InstructionRa[..], RamRa[..], BytecodeRa[..]
 ///   2. UntrustedAdvice (separate tag: b"untrusted_advice")
 ///   3. TrustedAdvice (separate tag: b"trusted_advice")
-fn build_commitment_phase(p: &Polys, params: &ModuleParams, ops: &mut Vec<Op<PolynomialId>>) {
+fn build_commitment_phase(p: &Polys, params: &ModuleParams, ops: &mut Vec<Op>) {
     // Barrier 1: main witness polynomials
     let mut main_witness = Vec::with_capacity(params.num_committed);
     main_witness.push(p.rd_inc);
@@ -673,8 +673,8 @@ fn build_commitment_phase(p: &Polys, params: &ModuleParams, ops: &mut Vec<Op<Pol
 fn build_stage1(
     p: &Polys,
     params: &ModuleParams,
-    ops: &mut Vec<Op<PolynomialId>>,
-    kernels: &mut Vec<KernelDef<PolynomialId>>,
+    ops: &mut Vec<Op>,
+    kernels: &mut Vec<KernelDef>,
     ch: &mut ChallengeTable,
 ) {
     // ---------------------------------------------------------------
@@ -720,12 +720,21 @@ fn build_stage1(
         InputBinding::Provided { poly: p.bz },
     ];
 
+    // τ_high is the last tau challenge — the Lagrange kernel argument.
+    let tau_high_idx = tau_base + params.num_tau - 1;
+
     let outer_uniskip_kernel = kernels.len();
     kernels.push(KernelDef {
         spec: KernelSpec {
             formula: spartan_formula.clone(),
-            num_evals: params.outer_uniskip_num_coeffs,
-            iteration: Iteration::Dense,
+            num_evals: 2 * params.outer_uniskip_domain - 1, // 2K-1 = 37
+            iteration: Iteration::Domain {
+                domain_size: params.outer_uniskip_domain, // K = 19
+                stride: params.num_constraints_padded,    // K_pad = 32
+                domain_start: 0,
+                domain_indexed: vec![false, true, true], // eq=cycle, Az=domain, Bz=domain
+                tau_challenge: tau_high_idx,
+            },
             binding_order: BindingOrder::LowToHigh,
         },
         inputs: spartan_inputs.clone(),
@@ -758,18 +767,17 @@ fn build_stage1(
     //
     // After the uniskip, Az/Bz have `num_cycles × K_pad` entries.
     // The Lagrange projection evaluates the constraint-domain polynomial
-    // at r0, reducing to `num_cycles × 2` entries (one per constraint
-    // group). The streaming round (first remaining round) then binds
-    // the group selector variable.
-    //
-    // Domain: {-(D/2-1), ..., D/2} where D = outer_uniskip_domain = 10
-    // Group 0: constraints 0..D at offset 0 within each step
-    // Group 1: constraints D..2D-1 at offset D within each step
+    // at r0, reducing to `num_cycles` entries per group.
     // ---------------------------------------------------------------
-    // NOTE: The uniskip kernel uses multilinear reduce_dense (not Lagrange
-    // domain evaluation). The remaining kernel must bind at r0 to match.
-    // A future Op::LagrangeProject will be needed when the uniskip is
-    // replaced with a proper Lagrange-domain evaluation.
+    ops.push(Op::LagrangeProject {
+        polys: vec![p.az, p.bz],
+        challenge: ch_r0,
+        domain_size: params.outer_uniskip_domain,
+        domain_start: 0,
+        stride: params.num_constraints_padded,
+        group_offsets: vec![0],
+        kernel_tau: Some(tau_high_idx),
+    });
 
     // Flush uniskip opening claim: s1(r0) appended via flush_to_transcript.
     ops.push(Op::Evaluate {
@@ -814,12 +822,14 @@ fn build_stage1(
         challenge: ch_batch,
     });
 
-    // Remaining rounds (log_t binds including r0)
+    // Remaining rounds: log_t binary rounds over cycle variables.
+    // Round 0 has no bind (initial T-entry buffers from LagrangeProject).
+    // Rounds 1+ bind at the previous round's squeezed challenge.
     for round in 0..params.outer_remaining_rounds {
         let bind = if round > 0 {
             Some(ch_batch + round) // previous round's challenge
         } else {
-            Some(ch_r0) // bind at r0 to match uniskip output
+            None
         };
         ops.push(Op::SumcheckRound {
             kernel: outer_remaining_kernel,
@@ -872,16 +882,23 @@ fn build_verifier_stage1_ops(
     p: &Polys,
     params: &ModuleParams,
     ch: &ChallengeTable,
-) -> Vec<VerifierOp<PolynomialId>> {
-    // Commitment list: all 25 committed polys (3 barriers flattened).
-    let mut commitments = Vec::with_capacity(25);
-    commitments.push(p.rd_inc);
-    commitments.push(p.ram_inc);
-    commitments.extend_from_slice(&p.instruction_ra);
-    commitments.extend_from_slice(&p.ram_ra);
-    commitments.extend_from_slice(&p.bytecode_ra);
-    commitments.push(p.untrusted_advice);
-    commitments.push(p.trusted_advice);
+) -> Vec<VerifierOp> {
+    // Commitment list: per-barrier (poly, tag) pairs matching the prover's
+    // commitment phase. Tags must be identical for Fiat-Shamir consistency.
+    let mut commit_pairs: Vec<(PolynomialId, DomainSeparator)> = Vec::with_capacity(25);
+    // Barrier 1: main witness → tag "commitment"
+    for &poly in [p.rd_inc, p.ram_inc]
+        .iter()
+        .chain(p.instruction_ra.iter())
+        .chain(p.ram_ra.iter())
+        .chain(p.bytecode_ra.iter())
+    {
+        commit_pairs.push((poly, DomainSeparator::Commitment));
+    }
+    // Barrier 2: untrusted advice
+    commit_pairs.push((p.untrusted_advice, DomainSeparator::UntrustedAdvice));
+    // Barrier 3: trusted advice
+    commit_pairs.push((p.trusted_advice, DomainSeparator::TrustedAdvice));
 
     // τ challenges: indices 0..27
     let tau_challenges: Vec<usize> = (0..params.num_tau).collect();
@@ -906,25 +923,20 @@ fn build_verifier_stage1_ops(
 
     // Output check: the verifier evaluates the composition at the final sumcheck point.
     //
-    //   eq(τ_0, r0) × eq(τ_1..N, r_remaining) × L(τ_high, r0) × Az(r0, evals) × Bz(r0, evals)
+    //   eq(τ_cycle, r_remaining) × L(τ_high, r0) × Az(r0, evals) × Bz(r0, evals)
     //
-    // The eq table has num_tau-1 variables. Variable 0 was bound by the uniskip;
-    // variables 1..N were bound by the remaining sumcheck. We factor eq() as:
-    //   eq(τ_0, r0) — single-variable eq between first tau and uniskip challenge
-    //   eq(τ_1..N, sumcheck_point) — remaining tau vs remaining sumcheck point
+    // The uniskip handled the constraint dimension via the Lagrange kernel
+    // L(τ_high, ·). The remaining sumcheck bound all log_t cycle variables.
+    // The eq table has num_tau-1 = log_t cycle variables (τ_0..τ_{log_t-1}).
     let tau_high_idx = params.num_tau - 1;
     let r0_idx = params.num_tau; // the uniskip challenge
-    let tau_remaining: Vec<usize> = (1..params.num_tau - 1).collect();
+    let tau_cycle: Vec<usize> = (0..params.num_tau - 1).collect();
     let output_check = ClaimFormula {
         terms: vec![ClaimTerm {
             coeff: 1,
             factors: vec![
-                ClaimFactor::EqChallengePair {
-                    a: 0, // τ_0 (first tau challenge)
-                    b: r0_idx,
-                },
                 ClaimFactor::EqEval {
-                    challenges: tau_remaining,
+                    challenges: tau_cycle,
                     at_stage: VerifierStageIndex(0),
                 },
                 ClaimFactor::LagrangeKernelDomain {
@@ -964,10 +976,10 @@ fn build_verifier_stage1_ops(
 
     let mut ops = Vec::new();
     ops.push(VerifierOp::BeginStage);
-    for &c in &commitments {
+    for &(poly, ref tag) in &commit_pairs {
         ops.push(VerifierOp::AbsorbCommitment {
-            poly: c,
-            tag: DomainSeparator::Commitment,
+            poly,
+            tag: tag.clone(),
         });
     }
     for &c in &tau_challenges {
@@ -1036,8 +1048,8 @@ fn build_verifier_stage1_ops(
 fn build_stage2(
     p: &Polys,
     params: &ModuleParams,
-    ops: &mut Vec<Op<PolynomialId>>,
-    kernels: &mut Vec<KernelDef<PolynomialId>>,
+    ops: &mut Vec<Op>,
+    kernels: &mut Vec<KernelDef>,
     ch: &mut ChallengeTable,
 ) {
     // ---------------------------------------------------------------
@@ -1322,7 +1334,7 @@ fn build_verifier_stage2_ops(
     p: &Polys,
     params: &ModuleParams,
     ch: &ChallengeTable,
-) -> Vec<VerifierOp<PolynomialId>> {
+) -> Vec<VerifierOp> {
     // Pre-squeeze challenges squeezed before the batched sumcheck:
     // τ_high (1) + γ_rw (1) + γ_instruction (1) + r_address (20) = 23
     // These are appended after the uniskip completes, in the order
@@ -1937,7 +1949,7 @@ fn build_verifier_stage2_ops(
 // Stats printing
 // ---------------------------------------------------------------------------
 
-fn print_stats(module: &Module<PolynomialId>, params: &ModuleParams) {
+fn print_stats(module: &Module, params: &ModuleParams) {
     let polys = &module.polys;
     let committed = polys
         .iter()

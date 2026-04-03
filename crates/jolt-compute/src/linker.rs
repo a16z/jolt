@@ -6,7 +6,6 @@
 //! without further compilation.
 
 use jolt_compiler::module::{Module, Op};
-use jolt_compiler::PolynomialSpec;
 use jolt_field::Field;
 
 use crate::ComputeBackend;
@@ -16,11 +15,11 @@ use crate::ComputeBackend;
 /// Produced by [`link`]. Contains the compiled module, flat op sequence,
 /// and backend-compiled kernels. The prover runtime walks `ops` sequentially,
 /// dispatching compute operations to `B` via the compiled kernels.
-pub struct Executable<P: PolynomialSpec, B: ComputeBackend, F: Field> {
+pub struct Executable<B: ComputeBackend, F: Field> {
     /// The compiled module metadata (poly decls, challenge decls, verifier schedule).
-    pub module: Module<P>,
+    pub module: Module,
     /// Full op sequence: compute, PCS, and orchestration ops.
-    pub ops: Vec<Op<P>>,
+    pub ops: Vec<Op>,
     /// Backend-compiled kernels, indexed by compute ops (`SumcheckRound`, `AbsorbRoundPoly`).
     pub kernels: Vec<B::CompiledKernel<F>>,
 }
@@ -32,10 +31,7 @@ pub struct Executable<P: PolynomialSpec, B: ComputeBackend, F: Field> {
 /// [`ComputeBackend::compile`], which bakes in the formula, iteration
 /// pattern, evaluation grid, and binding order. Challenge values are
 /// resolved at execution time from the Fiat-Shamir transcript.
-pub fn link<P: PolynomialSpec, B: ComputeBackend, F: Field>(
-    module: Module<P>,
-    backend: &B,
-) -> Executable<P, B, F> {
+pub fn link<B: ComputeBackend, F: Field>(module: Module, backend: &B) -> Executable<B, F> {
     let kernels: Vec<B::CompiledKernel<F>> = module
         .prover
         .kernels
@@ -50,7 +46,7 @@ pub fn link<P: PolynomialSpec, B: ComputeBackend, F: Field>(
     }
 }
 
-impl<P: PolynomialSpec, B: ComputeBackend, F: Field> Executable<P, B, F> {
+impl<B: ComputeBackend, F: Field> Executable<B, F> {
     #[inline]
     pub fn kernel(&self, idx: usize) -> &B::CompiledKernel<F> {
         &self.kernels[idx]

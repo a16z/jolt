@@ -15,14 +15,19 @@ use crate::module::{
     Evaluation, InputBinding, KernelDef, Module, Op, PolyDecl, Schedule, SumcheckInstance,
     VerifierOp, VerifierSchedule, VerifierStageIndex,
 };
+use crate::polynomial_id::PolynomialId;
 
 use super::cost::CompileParams;
 use super::stage::{StagePlan, Staging};
 
 /// Emit the final compiled module from a staged protocol.
-pub(crate) fn emit(staging: &Staging, params: &CompileParams) -> Module {
+///
+/// `poly_map` bridges protocol polynomial indices to concrete
+/// [`PolynomialId`] values — every poly reference in the output
+/// Module goes through this mapping.
+pub(crate) fn emit(staging: &Staging, params: &CompileParams, poly_map: &[PolynomialId]) -> Module {
     let protocol = &staging.protocol;
-    let mut ctx = EmitCtx::new(protocol, params);
+    let mut ctx = EmitCtx::new(protocol, params, poly_map);
 
     // Preamble: committed polys
     let committed: Vec<usize> = protocol
@@ -34,7 +39,7 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams) -> Module {
         .collect();
     if !committed.is_empty() {
         ctx.ops.push(Op::Commit {
-            polys: committed.clone(),
+            polys: committed.iter().map(|&i| ctx.map_poly(i)).collect(),
             tag: DomainSeparator::Commitment,
         });
     }
@@ -43,7 +48,7 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams) -> Module {
     ctx.verifier_ops.push(VerifierOp::Preamble);
     for &pi in &committed {
         ctx.verifier_ops.push(VerifierOp::AbsorbCommitment {
-            poly: pi,
+            poly: ctx.map_poly(pi),
             tag: DomainSeparator::Commitment,
         });
     }
@@ -138,21 +143,22 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams) -> Module {
                 poly, at_vertex, ..
             } = &protocol.vertices[vi]
             {
-                ctx.ops.push(Op::Evaluate { poly: *poly });
+                let mapped = ctx.map_poly(*poly);
+                ctx.ops.push(Op::Evaluate { poly: mapped });
                 let target_staging = vertex_to_staging[at_vertex];
                 let at_stage = staging_to_verifier[target_staging]
                     .expect("evaluation target stage not yet emitted");
                 eval_descs.push(Evaluation {
-                    poly: *poly,
+                    poly: mapped,
                     at_stage: VerifierStageIndex(at_stage),
                 });
             }
         }
 
         if has_evals {
-            let eval_indices: Vec<usize> = eval_descs.iter().map(|e| e.poly).collect();
+            let eval_polys: Vec<PolynomialId> = eval_descs.iter().map(|e| e.poly).collect();
             ctx.ops.push(Op::AbsorbEvals {
-                polys: eval_indices.clone(),
+                polys: eval_polys.clone(),
                 tag: DomainSeparator::OpeningClaim,
             });
 
@@ -160,7 +166,7 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams) -> Module {
                 evals: eval_descs.clone(),
             });
             ctx.verifier_ops.push(VerifierOp::AbsorbEvals {
-                polys: eval_indices,
+                polys: eval_polys,
                 tag: DomainSeparator::OpeningClaim,
             });
 
@@ -170,15 +176,16 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams) -> Module {
                 } = &protocol.vertices[vi]
                 {
                     if matches!(protocol.polynomials[*poly].kind, PolyKind::Committed) {
+                        let mapped = ctx.map_poly(*poly);
                         let target_staging = vertex_to_staging[at_vertex];
                         let at_stage = staging_to_verifier[target_staging]
                             .expect("evaluation target stage not yet emitted");
                         ctx.ops.push(Op::CollectOpeningClaim {
-                            poly: *poly,
+                            poly: mapped,
                             at_stage: VerifierStageIndex(at_stage),
                         });
                         ctx.verifier_ops.push(VerifierOp::CollectOpeningClaim {
-                            poly: *poly,
+                            poly: mapped,
                             at_stage: VerifierStageIndex(at_stage),
                         });
                     }
@@ -235,7 +242,7 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams) -> Module {
 
     if !committed.is_empty() {
         ctx.ops.push(Op::ReleaseHost {
-            polys: committed.clone(),
+            polys: committed.iter().map(|&i| ctx.map_poly(i)).collect(),
         });
     }
 
@@ -281,6 +288,7 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams) -> Module {
 struct EmitCtx<'a> {
     protocol: &'a crate::ir::Protocol,
     params: &'a CompileParams,
+    poly_map: &'a [PolynomialId],
     ops: Vec<Op>,
     kernels: Vec<KernelDef>,
     challenges: Vec<ChallengeDecl>,
@@ -295,10 +303,15 @@ struct EmitCtx<'a> {
 }
 
 impl<'a> EmitCtx<'a> {
-    fn new(protocol: &'a crate::ir::Protocol, params: &'a CompileParams) -> Self {
+    fn new(
+        protocol: &'a crate::ir::Protocol,
+        params: &'a CompileParams,
+        poly_map: &'a [PolynomialId],
+    ) -> Self {
         Self {
             protocol,
             params,
+            poly_map,
             ops: Vec::new(),
             kernels: Vec::new(),
             challenges: Vec::new(),
@@ -309,6 +322,12 @@ impl<'a> EmitCtx<'a> {
             last_stage_rounds: 0,
             last_stage_degree: 0,
         }
+    }
+
+    /// Map a protocol polynomial index to a concrete `PolynomialId`.
+    #[inline]
+    fn map_poly(&self, idx: usize) -> PolynomialId {
+        self.poly_map[idx]
     }
 
     /// Resolve a `ClaimId` to the round challenge indices of the sumcheck
@@ -397,7 +416,7 @@ fn emit_sumcheck_stage(
         .iter()
         .map(|&pi| {
             poly_to_input_binding(
-                pi,
+                ctx.map_poly(pi),
                 &protocol.polynomials[pi].kind,
                 ctx,
                 &round_challenge_indices,
@@ -468,9 +487,10 @@ fn emit_sumcheck_stage(
     if !round_challenge_indices.is_empty() {
         let last_ch = *round_challenge_indices.last().unwrap();
         let future_polys = collect_future_polys(protocol, all_stages, stage_idx);
-        let surviving: Vec<usize> = all_polys
+        let surviving: Vec<PolynomialId> = all_polys
             .into_iter()
             .filter(|p| future_polys.contains(p))
+            .map(|p| ctx.map_poly(p))
             .collect();
         if !surviving.is_empty() {
             ctx.ops.push(Op::Bind {
@@ -564,10 +584,10 @@ fn build_input_claim_formula(
                 for f in &term.factors {
                     match f {
                         ExprFactor::Claim(cid) => {
-                            // The eval index is the claim's poly index for now.
-                            // In a full implementation, this would map to the
-                            // accumulated eval vector position.
-                            factors.push(ClaimFactor::Eval(cid.0 as usize));
+                            // The eval index is the claim's poly index mapped
+                            // through poly_map.
+                            let proto_poly = protocol.claims[cid.0 as usize].poly;
+                            factors.push(ClaimFactor::Eval(ctx.map_poly(proto_poly)));
                         }
                         ExprFactor::Challenge(idx) => {
                             if let Some(&mapped) = ctx.proto_challenge_map.get(idx) {
@@ -610,8 +630,7 @@ fn build_output_check_formula(
                 for f in &term.factors {
                     match f {
                         ExprFactor::Poly(idx) => {
-                            // Poly evaluation at the sumcheck challenge point
-                            factors.push(ClaimFactor::Eval(*idx));
+                            factors.push(ClaimFactor::Eval(ctx.map_poly(*idx)));
                         }
                         ExprFactor::Challenge(idx) => {
                             if let Some(&mapped) = ctx.proto_challenge_map.get(idx) {
@@ -722,7 +741,7 @@ fn union_binding_dims(protocol: &crate::ir::Protocol, plan: &StagePlan) -> Vec<u
 /// The round challenge indices are already in `vertex_challenges` for the
 /// current stage's vertices.
 fn poly_to_input_binding(
-    poly: usize,
+    poly: PolynomialId,
     kind: &PolyKind,
     ctx: &EmitCtx<'_>,
     current_round_challenges: &[usize],
@@ -801,8 +820,8 @@ fn vertex_degree(vertex: &Vertex) -> usize {
 // Release insertion via liveness analysis
 // ---------------------------------------------------------------------------
 
-/// Collect all poly indices referenced by an op (directly or via kernel inputs).
-fn op_poly_refs(op: &Op, kernels: &[KernelDef]) -> Vec<usize> {
+/// Collect all poly identifiers referenced by an op (directly or via kernel inputs).
+fn op_poly_refs(op: &Op, kernels: &[KernelDef]) -> Vec<PolynomialId> {
     match op {
         Op::SumcheckRound { kernel, .. } | Op::AbsorbRoundPoly { kernel, .. } => {
             kernels[*kernel].inputs.iter().map(|b| b.poly()).collect()
@@ -830,8 +849,8 @@ fn op_poly_refs(op: &Op, kernels: &[KernelDef]) -> Vec<usize> {
 /// Insertions are batched to avoid index shifting issues.
 fn insert_releases(ops: &mut Vec<Op>, kernels: &[KernelDef]) {
     let mut seen = HashSet::new();
-    // (insert_after_index, poly_index) — sorted by position descending for safe insertion
-    let mut releases: Vec<(usize, usize)> = Vec::new();
+    // (insert_after_index, poly_id) — sorted by position descending for safe insertion
+    let mut releases: Vec<(usize, PolynomialId)> = Vec::new();
 
     for i in (0..ops.len()).rev() {
         for poly in op_poly_refs(&ops[i], kernels) {

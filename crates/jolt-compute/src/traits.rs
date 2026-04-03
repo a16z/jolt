@@ -2,7 +2,7 @@
 
 pub use jolt_compiler::BindingOrder;
 use jolt_compiler::KernelSpec;
-pub use jolt_compiler::PolynomialSpec;
+use jolt_compiler::PolynomialId;
 use jolt_field::Field;
 
 /// Marker trait for types that can be stored in device buffers.
@@ -207,21 +207,18 @@ pub trait ComputeBackend: Send + Sync + 'static {
 /// is first needed. The provider uploads host data to the device and returns
 /// a [`DeviceBuffer`]. Implementations are free to cache, compute lazily, or
 /// stream from an external source.
-///
-/// `P` is the polynomial identity type: `usize` for the raw compiler output,
-/// or a domain-specific enum (e.g. `PolynomialId`) after [`Module::remap`].
-pub trait BufferProvider<P: PolynomialSpec, B: ComputeBackend, F: Field> {
+pub trait BufferProvider<B: ComputeBackend, F: Field> {
     /// Load polynomial data for `poly_id` onto the device.
     ///
     /// Called at most once per poly during execution. After loading, the
     /// runtime owns the buffer and manages its lifecycle.
-    fn load(&mut self, poly_id: P, backend: &B) -> Buf<B, F>;
+    fn load(&mut self, poly_id: PolynomialId, backend: &B) -> Buf<B, F>;
 
     /// Borrow the host-side evaluation table for `poly_id`.
     ///
     /// Used by PCS ops that need raw field elements without device upload.
-    fn as_slice(&self, poly_id: P) -> &[F];
+    fn as_slice(&self, poly_id: PolynomialId) -> &[F];
 
     /// Release host-side data for `poly_id`, freeing memory.
-    fn release(&mut self, _poly_id: P) {}
+    fn release(&mut self, _poly_id: PolynomialId) {}
 }

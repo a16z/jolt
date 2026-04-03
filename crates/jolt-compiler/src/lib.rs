@@ -19,9 +19,8 @@ pub use ir::{Claim, ClaimId, Density, PolyDef, PolyKind, Protocol, PublicPoly, V
 pub use kernel_spec::{Iteration, KernelSpec};
 pub use module::{
     ChallengeDecl, ChallengeSource, ClaimFactor, ClaimFormula, ClaimTerm, DomainSeparator,
-    Evaluation, InputBinding, KernelDef, Module, Op, PointNormalization, PolyDecl, PolynomialSpec,
-    R1CSMatrix, Schedule, SumcheckInstance, UniskipVerify, VerifierOp, VerifierSchedule,
-    VerifierStageIndex,
+    Evaluation, InputBinding, KernelDef, Module, Op, PointNormalization, PolyDecl, R1CSMatrix,
+    Schedule, SumcheckInstance, UniskipVerify, VerifierOp, VerifierSchedule, VerifierStageIndex,
 };
 pub use params::ModuleParams;
 pub use polynomial_id::PolynomialId;

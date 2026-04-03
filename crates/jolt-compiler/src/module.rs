@@ -5,38 +5,10 @@ use std::hash::Hash;
 
 use serde::{Deserialize, Serialize};
 
-use crate::descriptor::{PolySource, PolynomialDescriptor, StorageHint};
 use crate::formula::BindingOrder;
 use crate::ir::PolyKind;
 use crate::kernel_spec::KernelSpec;
-
-/// Identity type for polynomials in compiled modules.
-///
-/// The compiler is protocol-agnostic: it uses `usize` indices internally.
-/// Downstream crates instantiate with their own key type (e.g. the
-/// zkVM's `PolynomialId` enum) via [`Module::remap`].
-///
-/// Every polynomial carries a [`PolynomialDescriptor`] that encodes its
-/// operational semantics. Downstream crates use `descriptor()` for generic
-/// dispatch instead of matching specific identities.
-pub trait PolynomialSpec:
-    Copy + Eq + Hash + Ord + Debug + Send + Sync + Serialize + for<'de> Deserialize<'de> + 'static
-{
-    /// Returns the operational semantics for this polynomial.
-    ///
-    /// The default returns a generic derived/non-committed descriptor,
-    /// suitable for compiler-internal `usize` indices before remapping.
-    fn descriptor(&self) -> PolynomialDescriptor {
-        PolynomialDescriptor {
-            source: PolySource::Derived,
-            committed: false,
-            storage: StorageHint::Dense,
-            witness_slot: None,
-        }
-    }
-}
-
-impl PolynomialSpec for usize {}
+use crate::polynomial_id::PolynomialId;
 
 /// Index into `VerifierSchedule::stages`.
 ///
@@ -48,29 +20,14 @@ pub struct VerifierStageIndex(pub usize);
 
 /// Complete output of the compilation pipeline.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct Module<P: PolynomialSpec = usize> {
+pub struct Module {
     pub polys: Vec<PolyDecl>,
     pub challenges: Vec<ChallengeDecl>,
-    pub prover: Schedule<P>,
-    pub verifier: VerifierSchedule<P>,
+    pub prover: Schedule,
+    pub verifier: VerifierSchedule,
 }
 
-impl<Q: PolynomialSpec> Module<Q> {
-    /// Remap all polynomial identifiers using a mapping function.
-    ///
-    /// Converts `Module<Q>` to `Module<P>` by applying `f` to every
-    /// polynomial reference in the prover and verifier schedules.
-    /// Polynomial declarations and challenge metadata are unchanged.
-    pub fn remap<P: PolynomialSpec>(self, f: impl Fn(Q) -> P) -> Module<P> {
-        Module {
-            polys: self.polys,
-            challenges: self.challenges,
-            prover: self.prover.remap(&f),
-            verifier: self.verifier.remap(&f),
-        }
-    }
-
+impl Module {
     /// Serialize to a compact binary format (`.jolt` protocol binary).
     pub fn to_bytes(&self) -> Vec<u8> {
         bincode::serde::encode_to_vec(self, bincode::config::standard())
@@ -119,13 +76,12 @@ pub enum ChallengeSource {
 
 /// Prover execution schedule: a flat sequence of ops with compiled kernel defs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct Schedule<P: PolynomialSpec = usize> {
-    pub ops: Vec<Op<P>>,
-    pub kernels: Vec<KernelDef<P>>,
+pub struct Schedule {
+    pub ops: Vec<Op>,
+    pub kernels: Vec<KernelDef>,
 }
 
-impl<P: PolynomialSpec> Schedule<P> {
+impl Schedule {
     pub fn compute_op_count(&self) -> usize {
         self.ops.iter().filter(|s| s.is_compute()).count()
     }
@@ -139,23 +95,13 @@ impl<P: PolynomialSpec> Schedule<P> {
     }
 }
 
-impl<Q: PolynomialSpec> Schedule<Q> {
-    pub fn remap<P: PolynomialSpec>(self, f: &impl Fn(Q) -> P) -> Schedule<P> {
-        Schedule {
-            ops: self.ops.into_iter().map(|op| op.remap(f)).collect(),
-            kernels: self.kernels.into_iter().map(|k| k.remap(f)).collect(),
-        }
-    }
-}
-
 /// Definition of a single sumcheck kernel (compiled by the backend at link time).
 ///
 /// Combines a [`KernelSpec`] (what the backend compiles) with runtime context
 /// (where to get inputs, how many rounds). The spec captures the algorithmic
 /// decisions; the rest is orchestration metadata for the runtime.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct KernelDef<P: PolynomialSpec = usize> {
+pub struct KernelDef {
     /// Backend compilation target: formula, iteration pattern, eval grid, binding order.
     pub spec: KernelSpec,
     /// Data provenance for each kernel input. `inputs[i]` describes where
@@ -163,19 +109,9 @@ pub struct KernelDef<P: PolynomialSpec = usize> {
     /// `spec.formula.num_inputs` entries are formula value columns; any
     /// remaining entries are extra inputs required by the iteration pattern
     /// (e.g., tensor eq buffers, sparse key column).
-    pub inputs: Vec<InputBinding<P>>,
+    pub inputs: Vec<InputBinding>,
     /// Total sumcheck rounds for this kernel.
     pub num_rounds: usize,
-}
-
-impl<Q: PolynomialSpec> KernelDef<Q> {
-    pub fn remap<P: PolynomialSpec>(self, f: &impl Fn(Q) -> P) -> KernelDef<P> {
-        KernelDef {
-            spec: self.spec,
-            inputs: self.inputs.into_iter().map(|b| b.remap(f)).collect(),
-            num_rounds: self.num_rounds,
-        }
-    }
 }
 
 /// Data provenance for a kernel input.
@@ -188,47 +124,35 @@ impl<Q: PolynomialSpec> KernelDef<Q> {
 ///   challenge values at the given indices. The poly index is the storage slot
 ///   in `Module.polys` for lifecycle tracking.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub enum InputBinding<P: PolynomialSpec = usize> {
+pub enum InputBinding {
     /// Buffer loaded from the provider (witness / preprocessed).
-    Provided { poly: P },
+    Provided { poly: PolynomialId },
     /// Eq table built on-device: `eq(r, x) = Π(rᵢxᵢ + (1−rᵢ)(1−xᵢ))`.
     /// Challenge indices whose values form the evaluation point.
-    EqTable { poly: P, challenges: Vec<usize> },
+    EqTable {
+        poly: PolynomialId,
+        challenges: Vec<usize>,
+    },
     /// Eq-plus-one table: `eq(r, x) · (1 + r_{n-1})`.
-    EqPlusOneTable { poly: P, challenges: Vec<usize> },
+    EqPlusOneTable {
+        poly: PolynomialId,
+        challenges: Vec<usize>,
+    },
     /// Less-than table from challenge points.
-    LtTable { poly: P, challenges: Vec<usize> },
+    LtTable {
+        poly: PolynomialId,
+        challenges: Vec<usize>,
+    },
 }
 
-impl<P: PolynomialSpec> InputBinding<P> {
+impl InputBinding {
     /// The poly slot this binding writes to / reads from in the buffer table.
-    pub fn poly(&self) -> P {
+    pub fn poly(&self) -> PolynomialId {
         match self {
             InputBinding::Provided { poly }
             | InputBinding::EqTable { poly, .. }
             | InputBinding::EqPlusOneTable { poly, .. }
             | InputBinding::LtTable { poly, .. } => *poly,
-        }
-    }
-}
-
-impl<Q: PolynomialSpec> InputBinding<Q> {
-    pub fn remap<P: PolynomialSpec>(self, f: &impl Fn(Q) -> P) -> InputBinding<P> {
-        match self {
-            InputBinding::Provided { poly } => InputBinding::Provided { poly: f(poly) },
-            InputBinding::EqTable { poly, challenges } => InputBinding::EqTable {
-                poly: f(poly),
-                challenges,
-            },
-            InputBinding::EqPlusOneTable { poly, challenges } => InputBinding::EqPlusOneTable {
-                poly: f(poly),
-                challenges,
-            },
-            InputBinding::LtTable { poly, challenges } => InputBinding::LtTable {
-                poly: f(poly),
-                challenges,
-            },
         }
     }
 }
@@ -278,8 +202,7 @@ impl DomainSeparator {
 /// - **PCS** — dispatched to [`CommitmentScheme`] (commit, reduce, open).
 /// - **Orchestration** — zero-cost host bookkeeping (transcript, lifecycle).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub enum Op<P: PolynomialSpec = usize> {
+pub enum Op {
     // ── Compute (dispatched to ComputeBackend via compiled kernels) ──
     /// Compute one sumcheck round polynomial.
     ///
@@ -291,10 +214,10 @@ pub enum Op<P: PolynomialSpec = usize> {
         bind_challenge: Option<usize>,
     },
     /// Extract polynomial evaluation (buffer fully bound → single element).
-    Evaluate { poly: P },
+    Evaluate { poly: PolynomialId },
     /// Bind polynomial buffers at a challenge value (post-sumcheck survivors).
     Bind {
-        polys: Vec<P>,
+        polys: Vec<PolynomialId>,
         challenge: usize,
         order: BindingOrder,
     },
@@ -313,7 +236,7 @@ pub enum Op<P: PolynomialSpec = usize> {
     /// `{domain_start, …, domain_start + D - 1}`, `r = challenges[challenge]`,
     /// and `scale = L_kernel(challenges[kernel_tau], r)` if `kernel_tau` is set (1 otherwise).
     LagrangeProject {
-        polys: Vec<P>,
+        polys: Vec<PolynomialId>,
         challenge: usize,
         domain_size: usize,
         domain_start: i64,
@@ -328,7 +251,10 @@ pub enum Op<P: PolynomialSpec = usize> {
     // ── PCS (dispatched to CommitmentScheme trait) ──
     /// Commit polynomials, absorb commitments into transcript,
     /// capture raw data and hints for later opening proofs.
-    Commit { polys: Vec<P>, tag: DomainSeparator },
+    Commit {
+        polys: Vec<PolynomialId>,
+        tag: DomainSeparator,
+    },
     /// Commit polynomials via streaming (chunked) PCS.
     ///
     /// Uses `StreamingCommitment::begin/feed/finish` instead of
@@ -336,7 +262,7 @@ pub enum Op<P: PolynomialSpec = usize> {
     /// committed without holding the full evaluation table in a single
     /// contiguous allocation on the PCS side.
     CommitStreaming {
-        polys: Vec<P>,
+        polys: Vec<PolynomialId>,
         tag: DomainSeparator,
         /// Chunk size (evaluations per feed call).
         chunk_size: usize,
@@ -358,22 +284,25 @@ pub enum Op<P: PolynomialSpec = usize> {
         tag: DomainSeparator,
     },
     /// Absorb polynomial evaluations into transcript.
-    AbsorbEvals { polys: Vec<P>, tag: DomainSeparator },
+    AbsorbEvals {
+        polys: Vec<PolynomialId>,
+        tag: DomainSeparator,
+    },
     /// Squeeze a Fiat-Shamir challenge.
     Squeeze { challenge: usize },
     /// Accumulate a PCS opening claim: (poly data, eval point from stage).
     CollectOpeningClaim {
-        poly: P,
+        poly: PolynomialId,
         at_stage: VerifierStageIndex,
     },
     /// Release a device buffer (GPU memory).
-    ReleaseDevice { poly: P },
+    ReleaseDevice { poly: PolynomialId },
     /// Release host-side polynomial data (provider memory).
     /// Emitted after `ReduceOpenings` when evaluation tables are no longer needed.
-    ReleaseHost { polys: Vec<P> },
+    ReleaseHost { polys: Vec<PolynomialId> },
 }
 
-impl<P: PolynomialSpec> Op<P> {
+impl Op {
     pub fn is_compute(&self) -> bool {
         matches!(
             self,
@@ -406,97 +335,14 @@ impl<P: PolynomialSpec> Op<P> {
     }
 }
 
-impl<Q: PolynomialSpec> Op<Q> {
-    pub fn remap<P: PolynomialSpec>(self, f: &impl Fn(Q) -> P) -> Op<P> {
-        match self {
-            Op::SumcheckRound {
-                kernel,
-                round,
-                bind_challenge,
-            } => Op::SumcheckRound {
-                kernel,
-                round,
-                bind_challenge,
-            },
-            Op::Evaluate { poly } => Op::Evaluate { poly: f(poly) },
-            Op::Bind {
-                polys,
-                challenge,
-                order,
-            } => Op::Bind {
-                polys: polys.into_iter().map(&f).collect(),
-                challenge,
-                order,
-            },
-            Op::LagrangeProject {
-                polys,
-                challenge,
-                domain_size,
-                domain_start,
-                stride,
-                group_offsets,
-                kernel_tau,
-            } => Op::LagrangeProject {
-                polys: polys.into_iter().map(&f).collect(),
-                challenge,
-                domain_size,
-                domain_start,
-                stride,
-                group_offsets,
-                kernel_tau,
-            },
-            Op::Commit { polys, tag } => Op::Commit {
-                polys: polys.into_iter().map(&f).collect(),
-                tag,
-            },
-            Op::CommitStreaming {
-                polys,
-                tag,
-                chunk_size,
-            } => Op::CommitStreaming {
-                polys: polys.into_iter().map(&f).collect(),
-                tag,
-                chunk_size,
-            },
-            Op::ReduceOpenings => Op::ReduceOpenings,
-            Op::Open => Op::Open,
-            Op::Preamble => Op::Preamble,
-            Op::BeginStage { index } => Op::BeginStage { index },
-            Op::AbsorbRoundPoly {
-                kernel,
-                num_coeffs,
-                tag,
-            } => Op::AbsorbRoundPoly {
-                kernel,
-                num_coeffs,
-                tag,
-            },
-            Op::AbsorbEvals { polys, tag } => Op::AbsorbEvals {
-                polys: polys.into_iter().map(&f).collect(),
-                tag,
-            },
-            Op::Squeeze { challenge } => Op::Squeeze { challenge },
-            Op::CollectOpeningClaim { poly, at_stage } => Op::CollectOpeningClaim {
-                poly: f(poly),
-                at_stage,
-            },
-            Op::ReleaseDevice { poly } => Op::ReleaseDevice { poly: f(poly) },
-            Op::ReleaseHost { polys } => Op::ReleaseHost {
-                polys: polys.into_iter().map(&f).collect(),
-            },
-        }
-    }
-}
-
 /// Verifier execution schedule: a flat sequence of ops for Fiat-Shamir replay
 /// and claim checking.
 ///
 /// The verifier is a generic interpreter: it walks `ops` in order, one match
 /// arm per variant, mirroring the prover's flat `Vec<Op>` execution model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct VerifierSchedule<P: PolynomialSpec = usize> {
-    pub ops: Vec<VerifierOp<P>>,
+pub struct VerifierSchedule {
+    pub ops: Vec<VerifierOp>,
     /// Total number of challenge slots.
     pub num_challenges: usize,
     /// Total number of polynomial slots (for evaluation tracking).
@@ -505,32 +351,23 @@ pub struct VerifierSchedule<P: PolynomialSpec = usize> {
     pub num_stages: usize,
 }
 
-impl<Q: PolynomialSpec> VerifierSchedule<Q> {
-    pub fn remap<P: PolynomialSpec>(self, f: &impl Fn(Q) -> P) -> VerifierSchedule<P> {
-        VerifierSchedule {
-            ops: self.ops.into_iter().map(|op| op.remap(f)).collect(),
-            num_challenges: self.num_challenges,
-            num_polys: self.num_polys,
-            num_stages: self.num_stages,
-        }
-    }
-}
-
 /// A single verifier operation in the schedule.
 ///
 /// Mirrors the prover's [`Op`] enum: the verifier walks a flat `Vec<VerifierOp>`
 /// in a single match loop. The compiler places each op at the exact position
 /// where its data dependencies are satisfied.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub enum VerifierOp<P: PolynomialSpec = usize> {
+pub enum VerifierOp {
     /// Absorb prover config into transcript (matches prover's `Preamble`).
     Preamble,
     /// Advance stage proof cursor; subsequent `VerifySumcheck` and `RecordEvals`
     /// read from this stage proof.
     BeginStage,
     /// Absorb next commitment from proof, store in commitment map.
-    AbsorbCommitment { poly: P, tag: DomainSeparator },
+    AbsorbCommitment {
+        poly: PolynomialId,
+        tag: DomainSeparator,
+    },
     /// Squeeze a Fiat-Shamir challenge.
     Squeeze { challenge: usize },
     /// Absorb a round polynomial from the current stage proof into transcript.
@@ -548,64 +385,31 @@ pub enum VerifierOp<P: PolynomialSpec = usize> {
     /// Computes combined claim from instance `input_claim` formulas, verifies
     /// sumcheck rounds, stores `final_eval` and challenge point for the stage.
     VerifySumcheck {
-        instances: Vec<SumcheckInstance<P>>,
+        instances: Vec<SumcheckInstance>,
         stage: usize,
     },
     /// Read polynomial evaluations from current stage proof into the global table.
-    RecordEvals { evals: Vec<Evaluation<P>> },
+    RecordEvals { evals: Vec<Evaluation> },
     /// Absorb polynomial evaluations into transcript.
-    AbsorbEvals { polys: Vec<P>, tag: DomainSeparator },
+    AbsorbEvals {
+        polys: Vec<PolynomialId>,
+        tag: DomainSeparator,
+    },
     /// Verify output: composition formula must equal stored `final_eval`.
     ///
     /// The compiler places this at the exact position where all referenced
     /// evaluations are available, eliminating deferred checks.
     CheckOutput {
-        instances: Vec<SumcheckInstance<P>>,
+        instances: Vec<SumcheckInstance>,
         stage: usize,
     },
     /// Accumulate a PCS opening claim for a committed polynomial.
     CollectOpeningClaim {
-        poly: P,
+        poly: PolynomialId,
         at_stage: VerifierStageIndex,
     },
     /// RLC-reduce all collected claims and verify PCS opening proofs.
     VerifyOpenings,
-}
-
-impl<Q: PolynomialSpec> VerifierOp<Q> {
-    pub fn remap<P: PolynomialSpec>(self, f: &impl Fn(Q) -> P) -> VerifierOp<P> {
-        match self {
-            VerifierOp::Preamble => VerifierOp::Preamble,
-            VerifierOp::BeginStage => VerifierOp::BeginStage,
-            VerifierOp::AbsorbCommitment { poly, tag } => {
-                VerifierOp::AbsorbCommitment { poly: f(poly), tag }
-            }
-            VerifierOp::Squeeze { challenge } => VerifierOp::Squeeze { challenge },
-            VerifierOp::AbsorbRoundPoly { num_coeffs, tag } => {
-                VerifierOp::AbsorbRoundPoly { num_coeffs, tag }
-            }
-            VerifierOp::VerifySumcheck { instances, stage } => VerifierOp::VerifySumcheck {
-                instances: instances.into_iter().map(|i| i.remap(f)).collect(),
-                stage,
-            },
-            VerifierOp::RecordEvals { evals } => VerifierOp::RecordEvals {
-                evals: evals.into_iter().map(|e| e.remap(f)).collect(),
-            },
-            VerifierOp::AbsorbEvals { polys, tag } => VerifierOp::AbsorbEvals {
-                polys: polys.into_iter().map(&f).collect(),
-                tag,
-            },
-            VerifierOp::CheckOutput { instances, stage } => VerifierOp::CheckOutput {
-                instances: instances.into_iter().map(|i| i.remap(f)).collect(),
-                stage,
-            },
-            VerifierOp::CollectOpeningClaim { poly, at_stage } => VerifierOp::CollectOpeningClaim {
-                poly: f(poly),
-                at_stage,
-            },
-            VerifierOp::VerifyOpenings => VerifierOp::VerifyOpenings,
-        }
-    }
 }
 
 /// A single sumcheck instance within a batched stage.
@@ -615,14 +419,13 @@ impl<Q: PolynomialSpec> VerifierOp<Q> {
 /// sumcheck, it evaluates `output_check` at the instance's challenge
 /// slice to verify the composition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct SumcheckInstance<P: PolynomialSpec = usize> {
+pub struct SumcheckInstance {
     /// Symbolic formula for this instance's input claim.
-    pub input_claim: ClaimFormula<P>,
+    pub input_claim: ClaimFormula,
     /// Composition formula for the output claim check.
     /// Evaluated at the instance's challenge slice (offset by
     /// `max_rounds − num_rounds` into the stage's sumcheck challenges).
-    pub output_check: ClaimFormula<P>,
+    pub output_check: ClaimFormula,
     /// Number of sumcheck rounds for this instance.
     pub num_rounds: usize,
     /// Composition degree (determines round polynomial size).
@@ -631,18 +434,6 @@ pub struct SumcheckInstance<P: PolynomialSpec = usize> {
     /// used when evaluating `output_check`. Applied by the verifier before
     /// formula evaluation. `None` means raw challenges are used as-is.
     pub normalize: Option<PointNormalization>,
-}
-
-impl<Q: PolynomialSpec> SumcheckInstance<Q> {
-    pub fn remap<P: PolynomialSpec>(self, f: &impl Fn(Q) -> P) -> SumcheckInstance<P> {
-        SumcheckInstance {
-            input_claim: self.input_claim.remap(f),
-            output_check: self.output_check.remap(f),
-            num_rounds: self.num_rounds,
-            degree: self.degree,
-            normalize: self.normalize,
-        }
-    }
 }
 
 /// How raw sumcheck challenges are converted to the canonical opening point.
@@ -673,68 +464,38 @@ pub enum PointNormalization {
 /// it, squeezes a challenge, evaluates the polynomial at that challenge, and
 /// records the result as an opening claim.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct UniskipVerify<P: PolynomialSpec = usize> {
+pub struct UniskipVerify {
     /// Number of full polynomial coefficients (`degree + 1`).
     pub num_coeffs: usize,
     /// Poly index for the output evaluation (stored after verification).
-    pub eval_poly: P,
-}
-
-impl<Q: PolynomialSpec> UniskipVerify<Q> {
-    pub fn remap<P: PolynomialSpec>(self, f: &impl Fn(Q) -> P) -> UniskipVerify<P> {
-        UniskipVerify {
-            num_coeffs: self.num_coeffs,
-            eval_poly: f(self.eval_poly),
-        }
-    }
+    pub eval_poly: PolynomialId,
 }
 
 /// Symbolic sum-of-products for computing a verifier claim from
 /// upstream evaluation values and challenges.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct ClaimFormula<P: PolynomialSpec = usize> {
-    pub terms: Vec<ClaimTerm<P>>,
+pub struct ClaimFormula {
+    pub terms: Vec<ClaimTerm>,
 }
 
-impl<P: PolynomialSpec> ClaimFormula<P> {
+impl ClaimFormula {
     pub fn zero() -> Self {
         Self { terms: vec![] }
     }
 }
 
-impl<Q: PolynomialSpec> ClaimFormula<Q> {
-    pub fn remap<P: PolynomialSpec>(self, f: &impl Fn(Q) -> P) -> ClaimFormula<P> {
-        ClaimFormula {
-            terms: self.terms.into_iter().map(|t| t.remap(f)).collect(),
-        }
-    }
-}
-
 /// A single term in a claim formula.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct ClaimTerm<P: PolynomialSpec = usize> {
+pub struct ClaimTerm {
     pub coeff: i128,
-    pub factors: Vec<ClaimFactor<P>>,
-}
-
-impl<Q: PolynomialSpec> ClaimTerm<Q> {
-    pub fn remap<P: PolynomialSpec>(self, f: &impl Fn(Q) -> P) -> ClaimTerm<P> {
-        ClaimTerm {
-            coeff: self.coeff,
-            factors: self.factors.into_iter().map(|fac| fac.remap(f)).collect(),
-        }
-    }
+    pub factors: Vec<ClaimFactor>,
 }
 
 /// Factor in a claim formula term.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub enum ClaimFactor<P: PolynomialSpec = usize> {
+pub enum ClaimFactor {
     /// Value of evaluation `evals[poly_index]` (accumulated across stages).
-    Eval(P),
+    Eval(PolynomialId),
     /// Value of challenge `challenges[i]`.
     Challenge(usize),
     /// Single-variable eq between two challenge values:
@@ -771,7 +532,7 @@ pub enum ClaimFactor<P: PolynomialSpec = usize> {
     UniformR1CSEval {
         matrix: R1CSMatrix,
         /// Poly identifiers whose evaluations form the z-vector.
-        eval_polys: Vec<P>,
+        eval_polys: Vec<PolynomialId>,
         /// Challenge index for the Lagrange interpolation point (r0).
         at_challenge: usize,
     },
@@ -808,7 +569,7 @@ pub enum ClaimFactor<P: PolynomialSpec = usize> {
     /// (normalized) sumcheck point. The runtime resolves the polynomial from
     /// the verifying key by its module poly index.
     PreprocessedPolyEval {
-        poly: P,
+        poly: PolynomialId,
         at_stage: VerifierStageIndex,
     },
     /// Evaluation from the current stage's prover-provided evaluation list,
@@ -816,73 +577,6 @@ pub enum ClaimFactor<P: PolynomialSpec = usize> {
     /// polynomial is opened at multiple points by different instances within
     /// a single batched stage. Position indexes into the stage's evaluation list.
     StageEval(usize),
-}
-
-impl<Q: PolynomialSpec> ClaimFactor<Q> {
-    pub fn remap<P: PolynomialSpec>(self, f: &impl Fn(Q) -> P) -> ClaimFactor<P> {
-        match self {
-            ClaimFactor::Eval(poly) => ClaimFactor::Eval(f(poly)),
-            ClaimFactor::Challenge(i) => ClaimFactor::Challenge(i),
-            ClaimFactor::EqChallengePair { a, b } => ClaimFactor::EqChallengePair { a, b },
-            ClaimFactor::EqEval {
-                challenges,
-                at_stage,
-            } => ClaimFactor::EqEval {
-                challenges,
-                at_stage,
-            },
-            ClaimFactor::LagrangeKernel {
-                tau_challenge,
-                at_challenge,
-            } => ClaimFactor::LagrangeKernel {
-                tau_challenge,
-                at_challenge,
-            },
-            ClaimFactor::UniformR1CSEval {
-                matrix,
-                eval_polys,
-                at_challenge,
-            } => ClaimFactor::UniformR1CSEval {
-                matrix,
-                eval_polys: eval_polys.into_iter().map(f).collect(),
-                at_challenge,
-            },
-            ClaimFactor::EqEvalSlice {
-                challenges,
-                at_stage,
-                offset,
-            } => ClaimFactor::EqEvalSlice {
-                challenges,
-                at_stage,
-                offset,
-            },
-            ClaimFactor::LagrangeKernelDomain {
-                tau_challenge,
-                at_challenge,
-                domain_size,
-            } => ClaimFactor::LagrangeKernelDomain {
-                tau_challenge,
-                at_challenge,
-                domain_size,
-            },
-            ClaimFactor::LagrangeWeight {
-                challenge,
-                domain_size,
-                basis_index,
-            } => ClaimFactor::LagrangeWeight {
-                challenge,
-                domain_size,
-                basis_index,
-            },
-            ClaimFactor::PreprocessedPolyEval { poly, at_stage } => {
-                ClaimFactor::PreprocessedPolyEval {
-                    poly: f(poly),
-                    at_stage,
-                }
-            }
-            ClaimFactor::StageEval(i) => ClaimFactor::StageEval(i),
-        }
-    }
 }
 
 /// Which matrix of the R1CS relation `Az ∘ Bz = Cz`.
@@ -894,19 +588,9 @@ pub enum R1CSMatrix {
 
 /// A polynomial evaluation at a specific point in the verifier schedule.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct Evaluation<P: PolynomialSpec = usize> {
+pub struct Evaluation {
     /// Poly identifier in the module's poly table.
-    pub poly: P,
+    pub poly: PolynomialId,
     /// Verifier stage whose sumcheck challenge point is the evaluation point.
     pub at_stage: VerifierStageIndex,
-}
-
-impl<Q: PolynomialSpec> Evaluation<Q> {
-    pub fn remap<P: PolynomialSpec>(self, f: &impl Fn(Q) -> P) -> Evaluation<P> {
-        Evaluation {
-            poly: f(self.poly),
-            at_stage: self.at_stage,
-        }
-    }
 }

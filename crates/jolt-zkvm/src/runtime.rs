@@ -7,7 +7,7 @@
 //! - Direct calls for orchestration (transcript absorb/squeeze, lifecycle)
 //!
 //! ```text
-//! Protocol → compile() → Module → link(backend) → Executable<P,B,F>
+//! Protocol → compile() → Module → link(backend) → Executable<B,F>
 //!                                                       │
 //!                                          execute(exe, provider, backend, pcs, transcript)
 //!                                                       │
@@ -18,7 +18,7 @@
 use std::collections::HashMap;
 
 use jolt_compiler::module::{ChallengeSource, InputBinding, Op, VerifierStageIndex};
-use jolt_compiler::{KernelDef, PolynomialSpec};
+use jolt_compiler::{Iteration, KernelDef, PolynomialId};
 use jolt_compute::{Buf, BufferProvider, ComputeBackend, DeviceBuffer, Executable};
 use jolt_field::Field;
 use jolt_openings::{AdditivelyHomomorphic, ProverClaim};
@@ -54,17 +54,17 @@ impl<F: Field> StageBuilder<F> {
 
 /// Lightweight opening claim — defers the expensive evaluation table copy
 /// until `ReduceOpenings` where it's actually needed for RLC combination.
-struct PendingClaim<P: PolynomialSpec, F: Field> {
-    poly: P,
+struct PendingClaim<F: Field> {
+    poly: PolynomialId,
     point: Vec<F>,
     eval: F,
 }
 
 /// Mutable state accumulated during schedule execution.
-struct RuntimeState<P: PolynomialSpec, F: Field, PCS: AdditivelyHomomorphic<Field = F>> {
+struct RuntimeState<F: Field, PCS: AdditivelyHomomorphic<Field = F>> {
     // ── Compute state ──
     challenges: Vec<F>,
-    evaluations: HashMap<P, F>,
+    evaluations: HashMap<PolynomialId, F>,
     last_round_coeffs: Vec<F>,
     /// Last interpolated round polynomial (for scalar poly evaluation).
     last_round_poly: Option<UnivariatePoly<F>>,
@@ -77,8 +77,8 @@ struct RuntimeState<P: PolynomialSpec, F: Field, PCS: AdditivelyHomomorphic<Fiel
 
     // ── PCS state ──
     commitments: Vec<PCS::Output>,
-    hints: HashMap<P, PCS::OpeningHint>,
-    pending_claims: Vec<PendingClaim<P, F>>,
+    hints: HashMap<PolynomialId, PCS::OpeningHint>,
+    pending_claims: Vec<PendingClaim<F>>,
     pending_hints: Vec<PCS::OpeningHint>,
     reduced_claims: Vec<ProverClaim<F>>,
     reduced_hints: Vec<PCS::OpeningHint>,
@@ -89,16 +89,15 @@ struct RuntimeState<P: PolynomialSpec, F: Field, PCS: AdditivelyHomomorphic<Fiel
 ///
 /// Walks every op in the schedule, dispatching compute ops to `backend`,
 /// PCS ops to the commitment scheme, and orchestration ops directly.
-pub(crate) fn execute<P, B, F, T, PCS>(
-    executable: &Executable<P, B, F>,
-    provider: &mut impl BufferProvider<P, B, F>,
+pub(crate) fn execute<B, F, T, PCS>(
+    executable: &Executable<B, F>,
+    provider: &mut impl BufferProvider<B, F>,
     backend: &B,
     pcs_setup: &PCS::ProverSetup,
     transcript: &mut T,
     config: ProverConfig,
 ) -> JoltProof<F, PCS>
 where
-    P: PolynomialSpec,
     B: ComputeBackend,
     F: Field,
     T: Transcript<Challenge = F>,
@@ -107,7 +106,7 @@ where
 {
     let module = &executable.module;
 
-    let mut state = RuntimeState::<P, F, PCS> {
+    let mut state = RuntimeState::<F, PCS> {
         challenges: vec![F::zero(); module.challenges.len()],
         evaluations: HashMap::new(),
         last_round_coeffs: Vec::new(),
@@ -128,7 +127,7 @@ where
     let stage_point_indices: Vec<Vec<usize>> = precompute_stage_points(module);
 
     // Device buffer cache — compute ops work on backend buffers.
-    let mut device_buffers: HashMap<P, Buf<B, F>> = HashMap::new();
+    let mut device_buffers: HashMap<PolynomialId, Buf<B, F>> = HashMap::new();
 
     for op in &executable.ops {
         match op {
@@ -283,7 +282,7 @@ where
                 let hints = std::mem::take(&mut state.pending_hints);
 
                 let (claims, combined_hints) =
-                    fused_rlc_reduce::<_, _, _, PCS>(pending, hints, provider, transcript);
+                    fused_rlc_reduce::<_, _, PCS>(pending, hints, provider, transcript);
 
                 state.reduced_claims = claims;
                 state.reduced_hints = combined_hints;
@@ -317,16 +316,56 @@ where
             }
 
             Op::AbsorbRoundPoly {
-                num_coeffs, tag, ..
+                kernel,
+                num_coeffs,
+                tag,
             } => {
-                let evals = &state.last_round_coeffs[..*num_coeffs];
-                let points: Vec<(F, F)> = evals
-                    .iter()
-                    .enumerate()
-                    .map(|(slot, &val)| (F::from_u64(slot as u64), val))
-                    .collect();
-                let poly = UnivariatePoly::interpolate(&points);
-                let coeffs = poly.into_coefficients();
+                let kdef = &module.prover.kernels[*kernel];
+                let coeffs = if let Iteration::Domain {
+                    domain_size,
+                    domain_start,
+                    tau_challenge,
+                    ..
+                } = &kdef.spec.iteration
+                {
+                    // Uniskip post-processing: the kernel returned 2K-1
+                    // evaluations of the composition polynomial t1(Y).
+                    // We need to interpolate, convolve with the Lagrange
+                    // kernel polynomial, and extract the final coefficients.
+                    let k = *domain_size;
+                    let raw_evals = &state.last_round_coeffs;
+                    debug_assert_eq!(raw_evals.len(), 2 * k - 1);
+
+                    // 1. Interpolate t1(Y) from 2K-1 evaluations on
+                    //    {domain_start, ..., domain_start + 2K - 2}.
+                    let t1_coeffs =
+                        jolt_poly::lagrange::interpolate_to_coeffs(*domain_start, raw_evals);
+
+                    // 2. Build Lagrange kernel L(τ_high, Y) over the base
+                    //    domain {domain_start, ..., domain_start + K - 1}.
+                    let tau_high = state.challenges[*tau_challenge];
+                    let basis_at_tau =
+                        jolt_poly::lagrange::lagrange_evals(*domain_start, k, tau_high);
+                    let lagrange_coeffs =
+                        jolt_poly::lagrange::interpolate_to_coeffs(*domain_start, &basis_at_tau);
+
+                    // 3. Convolve: s1(Y) = t1(Y) × L(τ_high, Y).
+                    //    Degree 2(K-1) + (K-1) = 3(K-1), so 3K-2 coefficients.
+                    let mut s1 = jolt_poly::lagrange::poly_mul(&t1_coeffs, &lagrange_coeffs);
+                    s1.resize(*num_coeffs, F::zero());
+                    s1
+                } else {
+                    // Standard: evaluations at {0, 1, ..., num_coeffs - 1}
+                    // → interpolate to monomial coefficients.
+                    let evals = &state.last_round_coeffs[..*num_coeffs];
+                    let points: Vec<(F, F)> = evals
+                        .iter()
+                        .enumerate()
+                        .map(|(slot, &val)| (F::from_u64(slot as u64), val))
+                        .collect();
+                    UnivariatePoly::interpolate(&points).into_coefficients()
+                };
+
                 transcript.append(&LabelWithCount(tag.as_bytes(), coeffs.len() as u64));
                 for c in &coeffs {
                     transcript.append(c);
@@ -405,14 +444,13 @@ where
 /// Reads polynomial data directly from the provider via `as_slice` — no
 /// intermediate `ProverClaim` copies. Only the final RLC-combined evaluation
 /// table is allocated per group.
-fn fused_rlc_reduce<P, B, F, PCS>(
-    pending: Vec<PendingClaim<P, F>>,
+fn fused_rlc_reduce<B, F, PCS>(
+    pending: Vec<PendingClaim<F>>,
     hints: Vec<PCS::OpeningHint>,
-    provider: &impl BufferProvider<P, B, F>,
+    provider: &impl BufferProvider<B, F>,
     transcript: &mut impl Transcript<Challenge = F>,
 ) -> (Vec<ProverClaim<F>>, Vec<PCS::OpeningHint>)
 where
-    P: PolynomialSpec,
     B: ComputeBackend,
     F: Field,
     PCS: AdditivelyHomomorphic<Field = F>,
@@ -428,14 +466,14 @@ where
     }
 
     // Group by point (preserving insertion order).
-    struct PointGroup<'a, P, F, H> {
+    struct PointGroup<'a, F, H> {
         point: &'a Vec<F>,
-        poly_ids: Vec<P>,
+        poly_ids: Vec<PolynomialId>,
         evals: Vec<F>,
         hints: Vec<H>,
     }
 
-    let mut groups: Vec<PointGroup<'_, P, F, PCS::OpeningHint>> = Vec::new();
+    let mut groups: Vec<PointGroup<'_, F, PCS::OpeningHint>> = Vec::new();
 
     for (pc, hint) in pending.iter().zip(hints) {
         if let Some(g) = groups.iter_mut().find(|g| *g.point == pc.point) {
@@ -492,9 +530,7 @@ where
 /// For each verifier stage, collects the challenge indices corresponding
 /// to its sumcheck rounds, sorted by round number. This avoids per-op
 /// scanning of the challenge declarations during `CollectOpeningClaim`.
-fn precompute_stage_points<P: PolynomialSpec>(
-    module: &jolt_compiler::module::Module<P>,
-) -> Vec<Vec<usize>> {
+fn precompute_stage_points(module: &jolt_compiler::module::Module) -> Vec<Vec<usize>> {
     (0..module.verifier.num_stages)
         .map(|si| {
             let mut pairs: Vec<(usize, usize)> = module
@@ -517,14 +553,13 @@ fn precompute_stage_points<P: PolynomialSpec>(
 }
 
 /// Ensure all inputs for a kernel are loaded on-device.
-fn resolve_inputs<P, B, F>(
-    device_buffers: &mut HashMap<P, Buf<B, F>>,
+fn resolve_inputs<B, F>(
+    device_buffers: &mut HashMap<PolynomialId, Buf<B, F>>,
     challenges: &[F],
-    kdef: &KernelDef<P>,
-    provider: &mut impl BufferProvider<P, B, F>,
+    kdef: &KernelDef,
+    provider: &mut impl BufferProvider<B, F>,
     backend: &B,
 ) where
-    P: PolynomialSpec,
     B: ComputeBackend,
     F: Field,
 {

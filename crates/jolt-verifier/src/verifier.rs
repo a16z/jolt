@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use jolt_compiler::module::{
     ClaimFactor, ClaimFormula, PointNormalization, R1CSMatrix, VerifierOp,
 };
-use jolt_compiler::PolynomialSpec;
+use jolt_compiler::PolynomialId;
 use jolt_field::Field;
 use jolt_openings::{
     AdditivelyHomomorphic, OpeningReduction, OpeningsError, RlcReduction, VerifierClaim,
@@ -29,13 +29,12 @@ use crate::TRANSCRIPT_LABEL;
 /// Walks the flat [`VerifierOp`] sequence from the verifying key, replaying
 /// the Fiat-Shamir transcript in lockstep with the prover. Returns `Ok(())`
 /// if the proof is valid.
-pub fn verify<P, F, PCS>(
-    key: &JoltVerifyingKey<P, F, PCS>,
+pub fn verify<F, PCS>(
+    key: &JoltVerifyingKey<F, PCS>,
     proof: &JoltProof<F, PCS>,
     expected_io_hash: &[u8; 32],
 ) -> Result<(), JoltError>
 where
-    P: PolynomialSpec,
     F: Field,
     PCS: AdditivelyHomomorphic<Field = F>,
     PCS::Output: AppendToTranscript,
@@ -60,10 +59,10 @@ where
     let mut transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_LABEL);
 
     let mut challenges = vec![F::zero(); schedule.num_challenges];
-    let mut evaluations: HashMap<P, F> = HashMap::new();
+    let mut evaluations: HashMap<PolynomialId, F> = HashMap::new();
     let mut sumcheck_points: Vec<Vec<F>> = vec![Vec::new(); schedule.num_stages];
     let mut final_evals = vec![F::zero(); schedule.num_stages];
-    let mut commitment_map: HashMap<P, PCS::Output> = HashMap::new();
+    let mut commitment_map: HashMap<PolynomialId, PCS::Output> = HashMap::new();
     let mut commitments = proof.commitments.iter();
     let mut stage_proofs = proof.stage_proofs.iter();
     let mut current_stage: Option<&StageProof<F>> = None;
@@ -297,9 +296,9 @@ fn apply_normalization<F: Clone>(raw: &[F], normalize: Option<&PointNormalizatio
 /// factor referencing that stage uses the override point instead of
 /// `sumcheck_points[stage]`. This lets `CheckOutput` pass a normalized
 /// point without mutating shared state.
-fn evaluate_formula<P: PolynomialSpec, F: Field>(
-    formula: &ClaimFormula<P>,
-    evaluations: &HashMap<P, F>,
+fn evaluate_formula<F: Field>(
+    formula: &ClaimFormula,
+    evaluations: &HashMap<PolynomialId, F>,
     challenges: &[F],
     sumcheck_points: &[Vec<F>],
     point_override: Option<(usize, &[F])>,
@@ -417,7 +416,7 @@ fn resolve_point<'a, F>(
 mod tests {
     use super::*;
     use jolt_compiler::module::{ClaimTerm, Evaluation, SumcheckInstance, VerifierStageIndex};
-    use jolt_compiler::VerifierSchedule;
+    use jolt_compiler::{PolynomialId, VerifierSchedule};
     use jolt_field::Fr;
     use jolt_r1cs::ConstraintMatrices;
     use jolt_sumcheck::proof::SumcheckProof;
@@ -434,17 +433,18 @@ mod tests {
     /// Eval-only stage: BeginStage → RecordEvals → AbsorbEvals → Squeeze.
     #[test]
     fn verify_eval_only_schedule() {
+        let poly_a = PolynomialId::RdInc;
         let schedule = VerifierSchedule {
             ops: vec![
                 VerifierOp::BeginStage,
                 VerifierOp::RecordEvals {
                     evals: vec![Evaluation {
-                        poly: 0,
+                        poly: poly_a,
                         at_stage: VerifierStageIndex(0),
                     }],
                 },
                 VerifierOp::AbsorbEvals {
-                    polys: vec![0],
+                    polys: vec![poly_a],
                     tag: jolt_compiler::DomainSeparator::OpeningClaim,
                 },
                 VerifierOp::Squeeze { challenge: 0 },
@@ -460,7 +460,7 @@ mod tests {
         }];
 
         let mut challenges = [Fr::zero(); 1];
-        let mut evaluations: HashMap<usize, Fr> = HashMap::new();
+        let mut evaluations: HashMap<PolynomialId, Fr> = HashMap::new();
         let mut transcript = Blake2bTranscript::new(b"test");
         let mut stage_iter = stage_proofs.iter();
         let mut current_stage: Option<&StageProof<Fr>> = None;
@@ -491,28 +491,30 @@ mod tests {
             }
         }
 
-        assert_eq!(evaluations.get(&0), Some(&Fr::one()));
+        assert_eq!(evaluations.get(&poly_a), Some(&Fr::one()));
         assert_ne!(challenges[0], Fr::zero());
     }
 
     #[test]
     fn formula_evaluation() {
+        let poly_a = PolynomialId::RdInc;
+        let poly_b = PolynomialId::RamInc;
         let formula = ClaimFormula {
             terms: vec![
                 ClaimTerm {
                     coeff: 2,
-                    factors: vec![ClaimFactor::Eval(0), ClaimFactor::Challenge(0)],
+                    factors: vec![ClaimFactor::Eval(poly_a), ClaimFactor::Challenge(0)],
                 },
                 ClaimTerm {
                     coeff: 3,
-                    factors: vec![ClaimFactor::Eval(1)],
+                    factors: vec![ClaimFactor::Eval(poly_b)],
                 },
             ],
         };
 
         let mut evaluations = HashMap::new();
-        let _ = evaluations.insert(0usize, Fr::from_u64(5));
-        let _ = evaluations.insert(1usize, Fr::from_u64(7));
+        let _ = evaluations.insert(poly_a, Fr::from_u64(5));
+        let _ = evaluations.insert(poly_b, Fr::from_u64(7));
         let challenges = vec![Fr::from_u64(3)];
         let sumcheck_points: Vec<Vec<Fr>> = vec![];
 
@@ -614,7 +616,7 @@ mod tests {
 
         let mut sumcheck_points: Vec<Vec<Fr>> = vec![Vec::new(); 1];
         let mut transcript = Blake2bTranscript::new(b"schedule-test");
-        let evaluations: HashMap<usize, Fr> = HashMap::new();
+        let evaluations: HashMap<PolynomialId, Fr> = HashMap::new();
         let challenges: Vec<Fr> = vec![];
         let mut stage_iter = stage_proofs.iter();
         let mut current_stage: Option<&StageProof<Fr>> = None;
@@ -664,11 +666,12 @@ mod tests {
     /// Test formula with EqEval factor.
     #[test]
     fn formula_with_eq_eval() {
+        let poly_a = PolynomialId::RdInc;
         let formula = ClaimFormula {
             terms: vec![ClaimTerm {
                 coeff: 1,
                 factors: vec![
-                    ClaimFactor::Eval(0),
+                    ClaimFactor::Eval(poly_a),
                     ClaimFactor::EqEval {
                         challenges: vec![0, 1],
                         at_stage: VerifierStageIndex(0),
@@ -680,7 +683,7 @@ mod tests {
         let one = Fr::one();
         let zero = Fr::zero();
         let mut evaluations = HashMap::new();
-        let _ = evaluations.insert(0usize, Fr::from_u64(7));
+        let _ = evaluations.insert(poly_a, Fr::from_u64(7));
         let challenges = vec![one, zero];
         let sumcheck_points = vec![vec![one, zero]];
 
@@ -711,11 +714,12 @@ mod tests {
     /// Test that point_override works for CheckOutput pattern.
     #[test]
     fn formula_with_point_override() {
+        let poly_a = PolynomialId::RdInc;
         let formula = ClaimFormula {
             terms: vec![ClaimTerm {
                 coeff: 1,
                 factors: vec![
-                    ClaimFactor::Eval(0),
+                    ClaimFactor::Eval(poly_a),
                     ClaimFactor::EqEval {
                         challenges: vec![0],
                         at_stage: VerifierStageIndex(0),
@@ -727,7 +731,7 @@ mod tests {
         let one = Fr::one();
         let zero = Fr::zero();
         let mut evaluations = HashMap::new();
-        let _ = evaluations.insert(0usize, Fr::from_u64(5));
+        let _ = evaluations.insert(poly_a, Fr::from_u64(5));
         let challenges = vec![one];
         let sumcheck_points = vec![vec![zero]];
         let key = dummy_r1cs_key();

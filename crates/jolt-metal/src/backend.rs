@@ -139,7 +139,7 @@ impl MetalBackend {
     /// Get a cached pipeline or compile and cache it for the given variant.
     fn get_or_compile(&self, spec: &KernelSpec) -> Arc<CompiledPipeline> {
         use std::hash::{Hash, Hasher};
-        let variant = KernelVariant::from_spec(spec.iteration, spec.binding_order);
+        let variant = KernelVariant::from_spec(&spec.iteration, spec.binding_order);
         let msl = msl_reduce::generate_msl(
             &spec.formula,
             variant,
@@ -311,7 +311,7 @@ impl ComputeBackend for MetalBackend {
     fn compile<F: Field>(&self, spec: &KernelSpec) -> MetalKernel<F> {
         MetalKernel {
             compiled: self.get_or_compile(spec),
-            iteration: spec.iteration,
+            iteration: spec.iteration.clone(),
             binding_order: spec.binding_order,
             _marker: PhantomData,
         }
@@ -342,7 +342,7 @@ impl ComputeBackend for MetalBackend {
     ) -> Vec<F> {
         let num_formula_inputs = inputs.len()
             - match kernel.iteration {
-                Iteration::Dense => 0,
+                Iteration::Dense | Iteration::Domain { .. } => 0,
                 Iteration::DenseTensor => 2,
                 Iteration::Sparse => 1,
             };
@@ -410,6 +410,9 @@ impl ComputeBackend for MetalBackend {
                     n_pairs,
                 )
             }
+            Iteration::Domain { .. } => {
+                panic!("Domain iteration not yet supported on Metal — use CpuBackend")
+            }
         }
     }
 
@@ -446,6 +449,9 @@ impl ComputeBackend for MetalBackend {
                 }
 
                 *inputs[num_value_inputs].as_u64_mut() = self.upload(&parent_keys);
+            }
+            Iteration::Domain { .. } => {
+                unreachable!("Domain iteration kernels have exactly 1 round and are never bound");
             }
         }
     }

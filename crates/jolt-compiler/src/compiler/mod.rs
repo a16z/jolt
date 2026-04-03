@@ -17,6 +17,7 @@ pub use validate::Diagnostic;
 
 use crate::ir::Protocol;
 use crate::module::Module;
+use crate::polynomial_id::PolynomialId;
 
 /// Validate an L0 protocol and compute derived properties.
 pub fn analyze(protocol: &Protocol) -> Result<IRInfo, Vec<Diagnostic>> {
@@ -28,18 +29,30 @@ pub fn analyze(protocol: &Protocol) -> Result<IRInfo, Vec<Diagnostic>> {
 }
 
 /// Compile a protocol into a prover schedule and verifier script.
+///
+/// `poly_map` maps protocol polynomial indices (from `Protocol::poly()`)
+/// to concrete [`PolynomialId`] values. Length must equal
+/// `protocol.polynomials.len()`.
 pub fn compile(
     protocol: &Protocol,
     params: &CompileParams,
     config: &SolverConfig,
+    poly_map: &[PolynomialId],
 ) -> Result<Module, CompileError> {
+    assert_eq!(
+        poly_map.len(),
+        protocol.polynomials.len(),
+        "poly_map length ({}) must match protocol polynomial count ({})",
+        poly_map.len(),
+        protocol.polynomials.len(),
+    );
     let diagnostics = validate::validate(protocol);
     if !diagnostics.is_empty() {
         return Err(CompileError::Validation(diagnostics));
     }
     let info = analyze::compute(protocol);
     let staging = stage::stage(protocol, &info, params, config)?;
-    Ok(emit::emit(&staging, params))
+    Ok(emit::emit(&staging, params, poly_map))
 }
 
 /// Errors from the compilation pipeline.

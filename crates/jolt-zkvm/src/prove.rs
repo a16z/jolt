@@ -7,7 +7,6 @@
 //!   [`BufferProvider`] for non-RISC-V or custom protocols
 
 use common::jolt_device::MemoryLayout;
-use jolt_compiler::PolynomialSpec;
 use jolt_compute::{BufferProvider, ComputeBackend, Executable};
 use jolt_field::Field;
 use jolt_host::{extract_trace, BytecodePreprocessing, CycleRow};
@@ -44,7 +43,7 @@ pub struct TraceData<'a, C> {
 ///
 /// Panics if `config` is invalid (non-power-of-two trace length, etc.).
 pub fn prove<C, B, F, T, PCS>(
-    executable: &Executable<PolynomialId, B, F>,
+    executable: &Executable<B, F>,
     data: &TraceData<'_, C>,
     backend: &B,
     pcs_setup: &PCS::ProverSetup,
@@ -98,7 +97,7 @@ where
     let r1cs = R1csProvider::new(&r1cs_key, &r1cs_witness);
     let mut provider = ProverBuffers::new(&mut polys, r1cs);
 
-    execute::<PolynomialId, B, F, T, PCS>(
+    execute::<B, F, T, PCS>(
         executable,
         &mut provider,
         backend,
@@ -113,16 +112,15 @@ where
 /// Lower-level entry point for non-RISC-V protocols or testing.
 /// The caller is responsible for building witness polynomials and
 /// R1CS data; this function just validates config and executes the schedule.
-pub fn prove_with_buffers<P, B, F, T, PCS>(
-    executable: &Executable<P, B, F>,
-    provider: &mut impl BufferProvider<P, B, F>,
+pub fn prove_with_buffers<B, F, T, PCS>(
+    executable: &Executable<B, F>,
+    provider: &mut impl BufferProvider<B, F>,
     backend: &B,
     pcs_setup: &PCS::ProverSetup,
     transcript: &mut T,
     config: ProverConfig,
 ) -> jolt_verifier::JoltProof<F, PCS>
 where
-    P: PolynomialSpec,
     B: ComputeBackend,
     F: Field,
     T: Transcript<Challenge = F>,
@@ -132,5 +130,5 @@ where
     if let Err(e) = config.validate() {
         panic!("invalid ProverConfig: {e}");
     }
-    execute::<P, B, F, T, PCS>(executable, provider, backend, pcs_setup, transcript, config)
+    execute::<B, F, T, PCS>(executable, provider, backend, pcs_setup, transcript, config)
 }

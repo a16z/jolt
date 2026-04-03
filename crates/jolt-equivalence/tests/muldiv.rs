@@ -1,7 +1,7 @@
 //! Cross-system equivalence test for the muldiv guest program.
 //!
 //! Runs jolt-core's prover and jolt-zkvm's prover, both with
-//! `MockTranscript` (deterministic challenges from the same seed),
+//! `Blake2bTranscript` (real Fiat-Shamir, identical domain-separation labels),
 //! extracts per-stage protocol trace data, and compares them
 //! coefficient-by-coefficient.
 //!
@@ -20,14 +20,13 @@ use jolt_core::host;
 use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
 use jolt_core::poly::opening_proof::OpeningId;
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
-use jolt_core::transcripts::MockTranscript;
+use jolt_core::transcripts::Blake2bTranscript;
 use jolt_core::zkvm::proof_serialization::JoltProof;
 use jolt_core::zkvm::prover::{JoltCpuProver, JoltProverPreprocessing};
 use jolt_core::zkvm::verifier::{JoltSharedPreprocessing, JoltVerifier, JoltVerifierPreprocessing};
 
 use common::constants::RAM_START_ADDRESS;
 use jolt_compiler::module::Module;
-use jolt_compiler::PolynomialId;
 use jolt_compute::link;
 use jolt_cpu::CpuBackend;
 use jolt_host::{BytecodePreprocessing, Program};
@@ -42,9 +41,9 @@ type Fr = ark_bn254::Fr;
 type NewFr = jolt_field::Fr;
 type MockPCS = MockCommitmentScheme<NewFr>;
 
-type MockProver<'a> = JoltCpuProver<'a, Fr, Bn254Curve, DoryCommitmentScheme, MockTranscript>;
-type MockProof = JoltProof<Fr, Bn254Curve, DoryCommitmentScheme, MockTranscript>;
-type MockVerifier<'a> = JoltVerifier<'a, Fr, Bn254Curve, DoryCommitmentScheme, MockTranscript>;
+type CoreProver<'a> = JoltCpuProver<'a, Fr, Bn254Curve, DoryCommitmentScheme, Blake2bTranscript>;
+type CoreProof = JoltProof<Fr, Bn254Curve, DoryCommitmentScheme, Blake2bTranscript>;
+type CoreVerifier<'a> = JoltVerifier<'a, Fr, Bn254Curve, DoryCommitmentScheme, Blake2bTranscript>;
 
 fn to_ark(f: NewFr) -> Fr {
     f.into()
@@ -55,7 +54,7 @@ fn to_ark(f: NewFr) -> Fr {
 // ═══════════════════════════════════════════════════════════════════
 
 fn extract_clear_rounds(
-    proof: &SumcheckInstanceProof<Fr, Bn254Curve, MockTranscript>,
+    proof: &SumcheckInstanceProof<Fr, Bn254Curve, Blake2bTranscript>,
     initial_claim: Fr,
     challenges: &[<Fr as JoltField>::Challenge],
 ) -> Vec<Vec<Fr>> {
@@ -67,7 +66,7 @@ fn extract_clear_rounds(
     }
 }
 
-fn extract_clear_degree(proof: &SumcheckInstanceProof<Fr, Bn254Curve, MockTranscript>) -> usize {
+fn extract_clear_degree(proof: &SumcheckInstanceProof<Fr, Bn254Curve, Blake2bTranscript>) -> usize {
     match proof {
         SumcheckInstanceProof::Clear(clear) => clear
             .compressed_polys
@@ -79,7 +78,7 @@ fn extract_clear_degree(proof: &SumcheckInstanceProof<Fr, Bn254Curve, MockTransc
 
 /// Collect the claim values for all new openings added between two snapshots
 /// of the verifier's opening accumulator.
-fn diff_opening_evals(keys_before: &BTreeSet<OpeningId>, verifier: &MockVerifier<'_>) -> Vec<Fr> {
+fn diff_opening_evals(keys_before: &BTreeSet<OpeningId>, verifier: &CoreVerifier<'_>) -> Vec<Fr> {
     verifier
         .opening_accumulator
         .openings
@@ -89,7 +88,7 @@ fn diff_opening_evals(keys_before: &BTreeSet<OpeningId>, verifier: &MockVerifier
         .collect()
 }
 
-fn snapshot_opening_keys(verifier: &MockVerifier<'_>) -> BTreeSet<OpeningId> {
+fn snapshot_opening_keys(verifier: &CoreVerifier<'_>) -> BTreeSet<OpeningId> {
     verifier
         .opening_accumulator
         .openings
@@ -120,7 +119,7 @@ fn extract_jolt_core_stages() -> Vec<StageTrace<Fr>> {
     let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
 
     let elf_contents = program.get_elf_contents().expect("elf");
-    let prover: MockProver<'_> = MockProver::gen_from_elf(
+    let prover: CoreProver<'_> = CoreProver::gen_from_elf(
         &prover_preprocessing,
         &elf_contents,
         &inputs,
@@ -131,14 +130,13 @@ fn extract_jolt_core_stages() -> Vec<StageTrace<Fr>> {
         None,
     );
     let io = prover.program_io.clone();
-    let (proof, _debug): (MockProof, _) = prover.prove();
+    let (proof, _debug): (CoreProof, _) = prover.prove();
 
     let verifier_preprocessing: &'static _ = Box::leak(Box::new(JoltVerifierPreprocessing::from(
         &prover_preprocessing,
     )));
-    let mut verifier: MockVerifier<'_> =
-        MockVerifier::new(verifier_preprocessing, proof, io, None, None)
-            .expect("build mock verifier");
+    let mut verifier: CoreVerifier<'_> =
+        CoreVerifier::new(verifier_preprocessing, proof, io, None, None).expect("build verifier");
     verifier.run_preamble();
 
     let mut stages = Vec::new();
@@ -198,11 +196,7 @@ fn extract_jolt_core_stages() -> Vec<StageTrace<Fr>> {
 // jolt-zkvm extraction (new modular pipeline)
 // ═══════════════════════════════════════════════════════════════════
 
-fn build_protocol_module(
-    log_t: usize,
-    log_k_bytecode: usize,
-    log_k_ram: usize,
-) -> Module<PolynomialId> {
+fn build_protocol_module(log_t: usize, log_k_bytecode: usize, log_k_ram: usize) -> Module {
     let tmp_path = format!("/tmp/jolt_equiv_module_{log_t}_{log_k_bytecode}_{log_k_ram}.jolt");
 
     let output = Command::new("cargo")
@@ -254,7 +248,7 @@ fn extract_jolt_zkvm_stages() -> Vec<StageTrace<Fr>> {
 
     let module = build_protocol_module(log_t, log_k_bytecode, log_k_ram);
     let backend = CpuBackend;
-    let executable = link::<PolynomialId, CpuBackend, NewFr>(module, &backend);
+    let executable = link::<CpuBackend, NewFr>(module, &backend);
 
     let one_hot = OneHotConfig::new(log_t);
     let rw_config = ReadWriteConfig::new(log_t, log_k_ram);
@@ -282,7 +276,7 @@ fn extract_jolt_zkvm_stages() -> Vec<StageTrace<Fr>> {
         memory_layout,
     };
     let pcs_setup = ();
-    let mut transcript = jolt_transcript::MockTranscript::<NewFr>::new(b"jolt");
+    let mut transcript = jolt_transcript::Blake2bTranscript::<NewFr>::new(b"Jolt");
 
     let proof = prove::<_, _, _, _, MockPCS>(
         &executable,

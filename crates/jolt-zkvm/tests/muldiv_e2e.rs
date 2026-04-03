@@ -3,7 +3,7 @@
 //! Exercises the full pipeline with a real RISC-V program:
 //!   1. Compile + trace the muldiv guest via jolt-host
 //!   2. Generate protocol.jolt from the ground-truth example (matching params)
-//!   3. Link the Module<PolynomialId> to the CPU backend
+//!   3. Link the Module to the CPU backend
 //!   4. `prove()` with real trace data
 //!   5. `verify()` the proof
 //!
@@ -24,19 +24,16 @@ use jolt_host::{BytecodePreprocessing, Program};
 use jolt_openings::mock::MockCommitmentScheme;
 use jolt_r1cs::R1csKey;
 use jolt_transcript::{Blake2bTranscript, Transcript};
-use jolt_verifier::{verify, JoltVerifyingKey, OneHotConfig, ProverConfig, ReadWriteConfig};
-use jolt_witness::PolynomialId;
+use jolt_verifier::{
+    verify, JoltVerifyingKey, OneHotConfig, ProverConfig, ReadWriteConfig, TRANSCRIPT_LABEL,
+};
 use jolt_zkvm::prove::prove;
 
 type MockPCS = MockCommitmentScheme<Fr>;
 
-/// Generate a `Module<PolynomialId>` by running the ground-truth example
+/// Generate a `Module` by running the ground-truth example
 /// with the given trace parameters.
-fn build_protocol_module(
-    log_t: usize,
-    log_k_bytecode: usize,
-    log_k_ram: usize,
-) -> Module<PolynomialId> {
+fn build_protocol_module(log_t: usize, log_k_bytecode: usize, log_k_ram: usize) -> Module {
     let tmp_path = format!("/tmp/jolt_muldiv_e2e_{log_t}_{log_k_bytecode}_{log_k_ram}.jolt");
 
     let output = Command::new("cargo")
@@ -76,7 +73,7 @@ fn build_protocol_module(
 /// all verifier ops from the second `BeginStage` onward. This allows
 /// testing Stage 1 in isolation without needing virtual polynomials
 /// that Stage 2+ depends on.
-fn truncate_to_stage1(module: &mut Module<PolynomialId>) {
+fn truncate_to_stage1(module: &mut Module) {
     // Prover: cut at BeginStage { index: 1 }
     if let Some(pos) = module
         .prover
@@ -101,7 +98,6 @@ fn truncate_to_stage1(module: &mut Module<PolynomialId>) {
 
 /// Full end-to-end: trace real muldiv → prove → verify (Stage 1 only).
 #[test]
-#[ignore = "requires muldiv-guest build (run with --ignored)"]
 fn muldiv_prove_verify() {
     // 1. Compile + decode + trace the muldiv guest
     let mut program = Program::new("muldiv-guest");
@@ -130,7 +126,7 @@ fn muldiv_prove_verify() {
     truncate_to_stage1(&mut module);
 
     let backend = CpuBackend;
-    let executable = link::<PolynomialId, CpuBackend, Fr>(module, &backend);
+    let executable = link::<CpuBackend, Fr>(module, &backend);
 
     // 4. Build ProverConfig
     let one_hot = OneHotConfig::new(log_t);
@@ -160,7 +156,7 @@ fn muldiv_prove_verify() {
         memory_layout,
     };
     let pcs_setup = ();
-    let mut transcript = Blake2bTranscript::<Fr>::new(b"jolt");
+    let mut transcript = Blake2bTranscript::<Fr>::new(TRANSCRIPT_LABEL);
 
     let proof = prove::<_, _, _, _, MockPCS>(
         &executable,
@@ -200,6 +196,6 @@ fn muldiv_prove_verify() {
         jolt_r1cs::constraints::rv64::rv64_constraints::<Fr>(),
         trace_length,
     );
-    let vk = JoltVerifyingKey::<PolynomialId, Fr, MockPCS>::new(&executable.module, (), r1cs_key);
+    let vk = JoltVerifyingKey::<Fr, MockPCS>::new(&executable.module, (), r1cs_key);
     verify(&vk, &proof, &[0u8; 32]).expect("proof should verify");
 }

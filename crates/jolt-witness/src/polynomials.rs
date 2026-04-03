@@ -12,7 +12,7 @@
 
 use std::collections::BTreeMap;
 
-use jolt_compiler::{PolynomialSpec, WitnessSlot};
+use jolt_compiler::WitnessSlot;
 use jolt_compute::{Buf, BufferProvider, ComputeBackend, DeviceBuffer};
 use jolt_field::Field;
 use jolt_poly::OneHotPolynomial;
@@ -53,7 +53,7 @@ impl<F: Field> Polynomials<F> {
     /// Creates an empty polynomial buffer collection.
     ///
     /// Allocation strategy is driven by each polynomial's
-    /// [`descriptor().witness_slot`](PolynomialSpec::descriptor):
+    /// [`descriptor().witness_slot`](PolynomialId::descriptor):
     /// - [`WitnessSlot::Dense`] → allocate a `Vec<F>`
     /// - [`WitnessSlot::OneHotChunk`] → allocate a `OneHotBuffer`
     /// - `None` → skip (inserted separately or computed on demand)
@@ -205,7 +205,7 @@ impl<F: Field> Default for Polynomials<F> {
     }
 }
 
-impl<B: ComputeBackend, F: Field> BufferProvider<PolynomialId, B, F> for Polynomials<F> {
+impl<B: ComputeBackend, F: Field> BufferProvider<B, F> for Polynomials<F> {
     fn load(&mut self, poly_id: PolynomialId, backend: &B) -> Buf<B, F> {
         DeviceBuffer::Field(backend.upload(self.get(poly_id)))
     }

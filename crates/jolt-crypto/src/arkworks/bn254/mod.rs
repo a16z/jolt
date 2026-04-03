@@ -141,8 +141,9 @@ macro_rules! impl_jolt_group_wrapper {
                 use ark_serialize::CanonicalSerialize;
                 let mut buf = Vec::new();
                 self.0
-                    .serialize_compressed(&mut buf)
+                    .serialize_uncompressed(&mut buf)
                     .expect(concat!(stringify!($wrapper), " serialization cannot fail"));
+                buf.reverse();
                 transcript.append_bytes(&buf);
             }
         }

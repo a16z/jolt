@@ -8,7 +8,7 @@
 //! descriptor returns [`PolySource::R1cs(column)`] is handled here.
 
 use jolt_compiler::descriptor::{PolySource, R1csColumn};
-use jolt_compiler::PolynomialSpec;
+use jolt_compiler::PolynomialId;
 use jolt_compute::{Buf, BufferProvider, ComputeBackend, DeviceBuffer};
 use jolt_field::Field;
 
@@ -109,10 +109,8 @@ impl<'a, F: Field> R1csProvider<'a, F> {
     }
 }
 
-impl<P: PolynomialSpec, B: ComputeBackend, F: Field> BufferProvider<P, B, F>
-    for R1csProvider<'_, F>
-{
-    fn load(&mut self, poly_id: P, backend: &B) -> Buf<B, F> {
+impl<B: ComputeBackend, F: Field> BufferProvider<B, F> for R1csProvider<'_, F> {
+    fn load(&mut self, poly_id: PolynomialId, backend: &B) -> Buf<B, F> {
         match poly_id.descriptor().source {
             PolySource::R1cs(column) => self.load_column(column, backend),
             other => panic!(
@@ -122,7 +120,7 @@ impl<P: PolynomialSpec, B: ComputeBackend, F: Field> BufferProvider<P, B, F>
         }
     }
 
-    fn as_slice(&self, poly_id: P) -> &[F] {
+    fn as_slice(&self, poly_id: PolynomialId) -> &[F] {
         panic!("R1CS polynomial {poly_id:?} is computed on-the-fly and has no host-side slice");
     }
 }

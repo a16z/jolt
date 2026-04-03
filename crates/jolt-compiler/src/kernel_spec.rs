@@ -55,7 +55,7 @@ pub struct KernelSpec {
 /// For [`Dense`](Iteration::Dense): no extra inputs.
 /// For [`DenseTensor`](Iteration::DenseTensor): two extra inputs (outer eq, inner eq).
 /// For [`Sparse`](Iteration::Sparse): one extra input (sorted u64 key column).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Iteration {
     /// Dense pairwise: iterate over adjacent pairs in contiguous buffers.
     ///
@@ -84,6 +84,31 @@ pub enum Iteration {
     /// Entries present in only one half are paired with checkpoint defaults.
     /// Used for read-write memory checking where the address space is sparse.
     Sparse,
+
+    /// Lagrange-domain evaluation for univariate skip rounds.
+    ///
+    /// Some inputs are "cycle-indexed" (length T) and others are
+    /// "domain-indexed" (length T × stride, accessed at `buf[c*stride + d]`
+    /// for cycle c and domain point d). `domain_indexed[j]` is `true` if
+    /// formula input `j` is domain-indexed.
+    ///
+    /// The kernel produces `2K - 1` evaluation sums: K base evaluations
+    /// at domain points {domain_start, ..., domain_start + K - 1} and
+    /// K - 1 extended evaluations at points beyond the base domain
+    /// (needed to interpolate the degree-2(K-1) composition polynomial).
+    Domain {
+        /// Number of points in the Lagrange domain (K).
+        domain_size: usize,
+        /// Padded stride between cycles in domain-indexed buffers.
+        stride: usize,
+        /// First integer in the evaluation domain.
+        domain_start: i64,
+        /// Which formula inputs are domain-indexed (vs cycle-indexed).
+        domain_indexed: Vec<bool>,
+        /// Challenge index for the Lagrange kernel evaluation point (τ_high).
+        /// Used by `AbsorbRoundPoly` post-processing to convolve with L(τ_high, Y).
+        tau_challenge: usize,
+    },
 }
 
 impl KernelSpec {

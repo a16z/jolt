@@ -17,6 +17,12 @@ pub type EvalFn<F> = dyn Fn(&[F], &[F], &[F], &mut [F]) + Send + Sync;
 
 pub type BoxedEvalFn<F> = Box<EvalFn<F>>;
 
+/// Single-point composition evaluation for domain iteration.
+///
+/// Takes `(values, challenges)` and returns the scalar formula result.
+/// Used by [`reduce_domain`] where inputs are not in lo/hi pairs.
+pub type DomainEvalFn<F> = dyn Fn(&[F], &[F]) -> F + Send + Sync;
+
 /// CPU-compiled kernel: an eval closure plus metadata from the [`KernelSpec`].
 ///
 /// The eval closure signature:
@@ -34,6 +40,7 @@ pub type BoxedEvalFn<F> = Box<EvalFn<F>>;
 /// uses these to select the right loop structure.
 pub struct CpuKernel<F: Field> {
     eval_fn: Box<EvalFn<F>>,
+    domain_eval_fn: Option<Box<DomainEvalFn<F>>>,
     pub(crate) num_evals: usize,
     pub(crate) iteration: Iteration,
     pub(crate) binding_order: BindingOrder,
@@ -48,6 +55,7 @@ impl<F: Field> CpuKernel<F> {
     ) -> Self {
         Self {
             eval_fn: Box::new(eval_fn),
+            domain_eval_fn: None,
             num_evals,
             iteration,
             binding_order,
@@ -62,15 +70,30 @@ impl<F: Field> CpuKernel<F> {
     ) -> Self {
         Self {
             eval_fn,
+            domain_eval_fn: None,
             num_evals,
             iteration,
             binding_order,
         }
     }
 
+    pub fn with_domain_eval(mut self, f: Box<DomainEvalFn<F>>) -> Self {
+        self.domain_eval_fn = Some(f);
+        self
+    }
+
     #[inline]
     pub fn evaluate(&self, lo: &[F], hi: &[F], challenges: &[F], out: &mut [F]) {
         (self.eval_fn)(lo, hi, challenges, out);
+    }
+
+    /// Evaluate the composition at a single point (for domain iteration).
+    #[inline]
+    pub fn evaluate_domain(&self, values: &[F], challenges: &[F]) -> F {
+        (self
+            .domain_eval_fn
+            .as_ref()
+            .expect("domain_eval_fn not compiled"))(values, challenges)
     }
 }
 
@@ -102,7 +125,7 @@ impl ComputeBackend for CpuBackend {
         // Composition value columns (excluding iteration-specific extras).
         let num_value_inputs = inputs.len()
             - match kernel.iteration {
-                Iteration::Dense => 0,
+                Iteration::Dense | Iteration::Domain { .. } => 0,
                 Iteration::DenseTensor => 2,
                 Iteration::Sparse => 1,
             };
@@ -122,6 +145,21 @@ impl ComputeBackend for CpuBackend {
                 let keys = inputs[num_value_inputs].as_u64();
                 reduce_sparse(&value_refs, keys, kernel, challenges, num_evals)
             }
+            Iteration::Domain {
+                domain_size,
+                stride,
+                domain_start,
+                domain_indexed,
+                ..
+            } => reduce_domain(
+                &value_refs,
+                kernel,
+                challenges,
+                *domain_size,
+                *stride,
+                *domain_start,
+                domain_indexed,
+            ),
         }
     }
 
@@ -135,6 +173,9 @@ impl ComputeBackend for CpuBackend {
             }
             Iteration::Sparse => {
                 bind_sparse(inputs, scalar);
+            }
+            Iteration::Domain { .. } => {
+                unreachable!("Domain iteration kernels have exactly 1 round and are never bound");
             }
         }
     }
@@ -439,6 +480,120 @@ fn reduce_dense_dynamic<F: Field>(
         }
     }
 
+    accs.into_iter().map(FieldAccumulator::reduce).collect()
+}
+
+/// Lagrange-domain reduce for univariate skip rounds.
+///
+/// Evaluates the composition formula at `2K - 1` domain points. The first K
+/// points are base evaluations using direct buffer access; the remaining K - 1
+/// are extended evaluations using precomputed Lagrange interpolation weights.
+///
+/// Returns `Vec<F>` of length `2 * domain_size - 1`.
+#[allow(clippy::ptr_arg)]
+#[tracing::instrument(skip_all, name = "reduce_domain")]
+fn reduce_domain<F: Field>(
+    inputs: &[&Vec<F>],
+    kernel: &CpuKernel<F>,
+    challenges: &[F],
+    domain_size: usize,
+    stride: usize,
+    domain_start: i64,
+    domain_indexed: &[bool],
+) -> Vec<F> {
+    let num_inputs = inputs.len();
+    let num_extended = domain_size - 1;
+    let num_evals = 2 * domain_size - 1;
+
+    // Determine num_cycles from the first cycle-indexed input.
+    let num_cycles = domain_indexed
+        .iter()
+        .zip(inputs.iter())
+        .find_map(
+            |(&is_domain, inp)| {
+                if !is_domain {
+                    Some(inp.len())
+                } else {
+                    None
+                }
+            },
+        )
+        .unwrap_or_else(|| inputs[0].len() / stride);
+
+    // Precompute Lagrange weights for extended evaluation points.
+    // Extended points are at {domain_start + K, ..., domain_start + 2K - 2}.
+    let ext_weights: Vec<Vec<F>> = (0..num_extended)
+        .map(|e| {
+            let point = F::from_i64(domain_start + domain_size as i64 + e as i64);
+            jolt_poly::lagrange::lagrange_evals(domain_start, domain_size, point)
+        })
+        .collect();
+
+    let new_accs =
+        || -> Vec<F::Accumulator> { (0..num_evals).map(|_| F::Accumulator::default()).collect() };
+
+    let reduce_chunk = |accs: &mut [F::Accumulator], cycle_range: std::ops::Range<usize>| {
+        let mut values = vec![F::zero(); num_inputs];
+
+        for c in cycle_range {
+            // Base evaluations: domain points 0..K
+            for d in 0..domain_size {
+                for (j, val) in values.iter_mut().enumerate() {
+                    *val = if domain_indexed[j] {
+                        inputs[j][c * stride + d]
+                    } else {
+                        inputs[j][c]
+                    };
+                }
+                let result = kernel.evaluate_domain(&values, challenges);
+                accs[d].acc_add(result);
+            }
+
+            // Extended evaluations: domain points K..2K-1
+            for (e, weights) in ext_weights.iter().enumerate() {
+                for (j, val) in values.iter_mut().enumerate() {
+                    if domain_indexed[j] {
+                        // Lagrange interpolation at the extended point
+                        let mut interp = F::zero();
+                        for (k, &w) in weights.iter().enumerate() {
+                            interp += w * inputs[j][c * stride + k];
+                        }
+                        *val = interp;
+                    } else {
+                        *val = inputs[j][c];
+                    }
+                }
+                let result = kernel.evaluate_domain(&values, challenges);
+                accs[domain_size + e].acc_add(result);
+            }
+        }
+    };
+
+    #[cfg(feature = "parallel")]
+    {
+        if num_cycles >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+
+            let accs = (0..num_cycles)
+                .into_par_iter()
+                .with_min_len(256)
+                .fold(&new_accs, |mut acc, c| {
+                    reduce_chunk(&mut acc, c..c + 1);
+                    acc
+                })
+                .reduce(new_accs, |mut a, b| {
+                    for (ai, bi) in a.iter_mut().zip(b) {
+                        ai.merge(bi);
+                    }
+                    a
+                });
+
+            return accs.into_iter().map(FieldAccumulator::reduce).collect();
+        }
+    }
+
+    let mut accs = new_accs();
+    reduce_chunk(&mut accs, 0..num_cycles);
     accs.into_iter().map(FieldAccumulator::reduce).collect()
 }
 

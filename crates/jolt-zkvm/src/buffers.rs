@@ -4,7 +4,7 @@
 //! data source based on [`PolynomialDescriptor::source`]: witness polynomials
 //! come from [`Polynomials`], R1CS-derived polynomials come from [`R1csProvider`].
 
-use jolt_compiler::{PolySource, PolynomialSpec};
+use jolt_compiler::PolySource;
 use jolt_compute::{Buf, BufferProvider, ComputeBackend, DeviceBuffer};
 use jolt_field::Field;
 use jolt_r1cs::R1csProvider;
@@ -13,7 +13,7 @@ use jolt_witness::{PolynomialId, Polynomials};
 /// Composite [`BufferProvider`] that unifies witness and R1CS data sources.
 ///
 /// The runtime sees a single provider; internally it dispatches on
-/// [`descriptor().source`](PolynomialSpec::descriptor):
+/// [`descriptor().source`](PolynomialId::descriptor):
 /// - [`PolySource::R1cs`] → [`R1csProvider`]
 /// - Everything else → [`Polynomials<F>`]
 pub struct ProverBuffers<'a, F: Field> {
@@ -32,7 +32,7 @@ impl<'a, F: Field> ProverBuffers<'a, F> {
     }
 }
 
-impl<B: ComputeBackend, F: Field> BufferProvider<PolynomialId, B, F> for ProverBuffers<'_, F> {
+impl<B: ComputeBackend, F: Field> BufferProvider<B, F> for ProverBuffers<'_, F> {
     fn load(&mut self, poly_id: PolynomialId, backend: &B) -> Buf<B, F> {
         match poly_id.descriptor().source {
             PolySource::R1cs(_) => self.r1cs.load(poly_id, backend),
