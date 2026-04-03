@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use rust_code_analysis::FuncSpace;
 
 use super::lloc::{analyze_rust_file, rust_files};
-use super::{AbstractObjective, Direction, MeasurementError};
+use crate::objective::{AbstractObjective, Direction, MeasurementError};
 
 /// Average cognitive complexity per function across all Rust files under
 /// `jolt-core/src/`.

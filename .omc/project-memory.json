@@ -1,0 +1,581 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1775233644719,
+  "projectRoot": "/Users/mzhu/code/jolt",
+  "techStack": {
+    "languages": [
+      {
+        "name": "Rust",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "Cargo.toml"
+        ]
+      },
+      {
+        "name": "C/C++",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "Makefile"
+        ]
+      }
+    ],
+    "frameworks": [],
+    "packageManager": "cargo",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": "cargo build",
+    "testCommand": "cargo test",
+    "lintCommand": "cargo clippy",
+    "devCommand": "cargo run",
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "examples",
+      "scripts",
+      "src",
+      "tests"
+    ],
+    "gitBranches": {
+      "defaultBranch": "master",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "agent-skills": {
+      "path": "agent-skills",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1775233644693,
+      "keyFiles": []
+    },
+    "baseline flamegraphs": {
+      "path": "baseline flamegraphs",
+      "purpose": null,
+      "fileCount": 12,
+      "lastAccessed": 1775233644694,
+      "keyFiles": [
+        "stage2_end_flamechart.svg",
+        "stage2_start_flamechart.svg",
+        "stage3_end_flamechart.svg",
+        "stage3_start_flamechart.svg",
+        "stage4_end_flamechart.svg"
+      ]
+    },
+    "benchmark-runs": {
+      "path": "benchmark-runs",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1775233644694,
+      "keyFiles": [
+        "peak_memory_plot.html"
+      ]
+    },
+    "book": {
+      "path": "book",
+      "purpose": null,
+      "fileCount": 4,
+      "lastAccessed": 1775233644694,
+      "keyFiles": [
+        "README.md",
+        "book.toml"
+      ]
+    },
+    "common": {
+      "path": "common",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1775233644695,
+      "keyFiles": [
+        "Cargo.toml"
+      ]
+    },
+    "docker": {
+      "path": "docker",
+      "purpose": null,
+      "fileCount": 3,
+      "lastAccessed": 1775233644695,
+      "keyFiles": [
+        "Dockerfile.spike",
+        "README.md",
+        "build.sh"
+      ]
+    },
+    "examples": {
+      "path": "examples",
+      "purpose": "Example code",
+      "fileCount": 2,
+      "lastAccessed": 1775233644695,
+      "keyFiles": [
+        "run_ci_benchmarks.sh"
+      ]
+    },
+    "imgs": {
+      "path": "imgs",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1775233644695,
+      "keyFiles": [
+        "jolt_alpha.png"
+      ]
+    },
+    "jolt-core": {
+      "path": "jolt-core",
+      "purpose": null,
+      "fileCount": 10,
+      "lastAccessed": 1775233644695,
+      "keyFiles": [
+        "Cargo.toml",
+        "dory_srs_10_variables.srs",
+        "dory_srs_18_variables.srs",
+        "dory_srs_24_variables.srs",
+        "dory_srs_26_variables.srs"
+      ]
+    },
+    "jolt-eval": {
+      "path": "jolt-eval",
+      "purpose": null,
+      "fileCount": 3,
+      "lastAccessed": 1775233644695,
+      "keyFiles": [
+        "Cargo.toml",
+        "README.md",
+        "sync_targets.sh"
+      ]
+    },
+    "jolt-inlines": {
+      "path": "jolt-inlines",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1775233644696,
+      "keyFiles": []
+    },
+    "jolt-platform": {
+      "path": "jolt-platform",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1775233644696,
+      "keyFiles": [
+        "Cargo.toml"
+      ]
+    },
+    "jolt-sdk": {
+      "path": "jolt-sdk",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1775233644696,
+      "keyFiles": [
+        "Cargo.toml"
+      ]
+    },
+    "patches": {
+      "path": "patches",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1775233644696,
+      "keyFiles": [
+        "fix-c-extension-privilege-tests.patch",
+        "fix-isa-regex.patch"
+      ]
+    },
+    "prebuilt-files": {
+      "path": "prebuilt-files",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1775233644696,
+      "keyFiles": []
+    },
+    "scripts": {
+      "path": "scripts",
+      "purpose": "Build/utility scripts",
+      "fileCount": 9,
+      "lastAccessed": 1775233644696,
+      "keyFiles": [
+        "apply-patches",
+        "benchmark_summary.py",
+        "bootstrap",
+        "jolt_benchmarks.sh",
+        "optimize_machine.sh"
+      ]
+    },
+    "src": {
+      "path": "src",
+      "purpose": "Source code",
+      "fileCount": 4,
+      "lastAccessed": 1775233644696,
+      "keyFiles": [
+        "build_wasm.rs",
+        "lib.rs",
+        "linker.ld.template",
+        "main.rs"
+      ]
+    },
+    "target": {
+      "path": "target",
+      "purpose": null,
+      "fileCount": 3,
+      "lastAccessed": 1775233644696,
+      "keyFiles": [
+        "CACHEDIR.TAG"
+      ]
+    },
+    "tests": {
+      "path": "tests",
+      "purpose": "Test files",
+      "fileCount": 0,
+      "lastAccessed": 1775233644697,
+      "keyFiles": []
+    },
+    "third-party": {
+      "path": "third-party",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1775233644697,
+      "keyFiles": []
+    },
+    "tracer": {
+      "path": "tracer",
+      "purpose": null,
+      "fileCount": 3,
+      "lastAccessed": 1775233644697,
+      "keyFiles": [
+        "Cargo.toml",
+        "LICENSE",
+        "README.md"
+      ]
+    },
+    "z3-verifier": {
+      "path": "z3-verifier",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1775233644697,
+      "keyFiles": [
+        "Cargo.toml",
+        "README.md"
+      ]
+    },
+    "zklean-extractor": {
+      "path": "zklean-extractor",
+      "purpose": null,
+      "fileCount": 4,
+      "lastAccessed": 1775233644697,
+      "keyFiles": [
+        "Cargo.toml",
+        "LICENSE",
+        "README.md",
+        "build.rs"
+      ]
+    },
+    "book/src": {
+      "path": "book/src",
+      "purpose": "Source code",
+      "fileCount": 3,
+      "lastAccessed": 1775233644697,
+      "keyFiles": [
+        "SUMMARY.md",
+        "intro.md"
+      ]
+    },
+    "common/src": {
+      "path": "common/src",
+      "purpose": "Source code",
+      "fileCount": 4,
+      "lastAccessed": 1775233644698,
+      "keyFiles": [
+        "attributes.rs",
+        "constants.rs",
+        "jolt_device.rs"
+      ]
+    },
+    "jolt-eval/bin": {
+      "path": "jolt-eval/bin",
+      "purpose": "Executable scripts",
+      "fileCount": 3,
+      "lastAccessed": 1775233644698,
+      "keyFiles": [
+        "measure_objectives.rs",
+        "optimize.rs",
+        "redteam.rs"
+      ]
+    },
+    "jolt-eval/src": {
+      "path": "jolt-eval/src",
+      "purpose": "Source code",
+      "fileCount": 1,
+      "lastAccessed": 1775233644698,
+      "keyFiles": [
+        "lib.rs"
+      ]
+    },
+    "jolt-eval/tests": {
+      "path": "jolt-eval/tests",
+      "purpose": "Test files",
+      "fileCount": 3,
+      "lastAccessed": 1775233644698,
+      "keyFiles": [
+        "agent_test.rs",
+        "integration.rs",
+        "macro_test.rs"
+      ]
+    },
+    "jolt-platform/src": {
+      "path": "jolt-platform/src",
+      "purpose": "Source code",
+      "fileCount": 8,
+      "lastAccessed": 1775233644698,
+      "keyFiles": [
+        "advice.rs",
+        "cycle_tracking.rs",
+        "exit.rs"
+      ]
+    },
+    "jolt-sdk/src": {
+      "path": "jolt-sdk/src",
+      "purpose": "Source code",
+      "fileCount": 2,
+      "lastAccessed": 1775233644698,
+      "keyFiles": [
+        "host_utils.rs",
+        "lib.rs"
+      ]
+    },
+    "jolt-sdk/tests": {
+      "path": "jolt-sdk/tests",
+      "purpose": "Test files",
+      "fileCount": 3,
+      "lastAccessed": 1775233644699,
+      "keyFiles": [
+        "README.md",
+        "gen-fixtures.sh",
+        "verifier_api.rs"
+      ]
+    },
+    "tracer/src": {
+      "path": "tracer/src",
+      "purpose": "Source code",
+      "fileCount": 2,
+      "lastAccessed": 1775233644699,
+      "keyFiles": [
+        "lib.rs",
+        "main.rs"
+      ]
+    },
+    "z3-verifier/src": {
+      "path": "z3-verifier/src",
+      "purpose": "Source code",
+      "fileCount": 3,
+      "lastAccessed": 1775233644699,
+      "keyFiles": [
+        "cpu_constraints.rs",
+        "lib.rs",
+        "virtual_sequences.rs"
+      ]
+    },
+    "zklean-extractor/src": {
+      "path": "zklean-extractor/src",
+      "purpose": "Source code",
+      "fileCount": 10,
+      "lastAccessed": 1775233644699,
+      "keyFiles": [
+        "constants.rs",
+        "instruction.rs",
+        "lean_tests.rs"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "jolt-eval/src/agent/claude.rs",
+      "accessCount": 21,
+      "lastAccessed": 1775240914249,
+      "type": "file"
+    },
+    {
+      "path": "jolt-eval/tests/agent_test.rs",
+      "accessCount": 9,
+      "lastAccessed": 1775241109679,
+      "type": "directory"
+    },
+    {
+      "path": "jolt-eval/src/invariant/soundness.rs",
+      "accessCount": 7,
+      "lastAccessed": 1775240409793,
+      "type": "file"
+    },
+    {
+      "path": "jolt-eval/src/invariant/synthesis/redteam.rs",
+      "accessCount": 7,
+      "lastAccessed": 1775240966753,
+      "type": "file"
+    },
+    {
+      "path": "jolt-eval/src/objective/synthesis.rs",
+      "accessCount": 7,
+      "lastAccessed": 1775246445448,
+      "type": "file"
+    },
+    {
+      "path": "jolt-eval/benches/prover_time_fibonacci.rs",
+      "accessCount": 7,
+      "lastAccessed": 1775246451584,
+      "type": "file"
+    },
+    {
+      "path": "jolt-eval/src/invariant/mod.rs",
+      "accessCount": 4,
+      "lastAccessed": 1775240346261,
+      "type": "file"
+    },
+    {
+      "path": "jolt-eval/src/agent/mod.rs",
+      "accessCount": 4,
+      "lastAccessed": 1775241053447,
+      "type": "file"
+    },
+    {
+      "path": "jolt-eval/src",
+      "accessCount": 4,
+      "lastAccessed": 1775244964713,
+      "type": "directory"
+    },
+    {
+      "path": "jolt-eval/sync_targets.sh",
+      "accessCount": 4,
+      "lastAccessed": 1775246732070,
+      "type": "file"
+    },
+    {
+      "path": "jolt-eval/src/agent/mock.rs",
+      "accessCount": 3,
+      "lastAccessed": 1775240931907,
+      "type": "file"
+    },
+    {
+      "path": "jolt-eval/src/objective/optimize.rs",
+      "accessCount": 2,
+      "lastAccessed": 1775240941569,
+      "type": "file"
+    },
+    {
+      "path": "jolt-eval/Cargo.toml",
+      "accessCount": 2,
+      "lastAccessed": 1775245065190,
+      "type": "file"
+    },
+    {
+      "path": "jolt-eval/src/objective/prover_time.rs",
+      "accessCount": 2,
+      "lastAccessed": 1775245117960,
+      "type": "file"
+    },
+    {
+      "path": "jolt-eval/tests",
+      "accessCount": 1,
+      "lastAccessed": 1775240852235,
+      "type": "directory"
+    },
+    {
+      "path": "jolt-eval/bin",
+      "accessCount": 1,
+      "lastAccessed": 1775240853001,
+      "type": "directory"
+    },
+    {
+      "path": "jolt-eval/src/objective/bind_bench.rs",
+      "accessCount": 1,
+      "lastAccessed": 1775244945032,
+      "type": "file"
+    },
+    {
+      "path": "jolt-eval/src/guests/mod.rs",
+      "accessCount": 1,
+      "lastAccessed": 1775244951427,
+      "type": "file"
+    },
+    {
+      "path": "examples/fibonacci/guest/src",
+      "accessCount": 1,
+      "lastAccessed": 1775244971547,
+      "type": "directory"
+    },
+    {
+      "path": "examples/muldiv/guest/src",
+      "accessCount": 1,
+      "lastAccessed": 1775244972439,
+      "type": "directory"
+    },
+    {
+      "path": "examples/sha2-ex/guest/src",
+      "accessCount": 1,
+      "lastAccessed": 1775244973599,
+      "type": "directory"
+    },
+    {
+      "path": "jolt-eval/src/objective/mod.rs",
+      "accessCount": 1,
+      "lastAccessed": 1775245034647,
+      "type": "file"
+    },
+    {
+      "path": "examples/sha2-chain/guest/src",
+      "accessCount": 1,
+      "lastAccessed": 1775246992179,
+      "type": "directory"
+    },
+    {
+      "path": "examples/secp256k1-ecdsa-verify/guest/src",
+      "accessCount": 1,
+      "lastAccessed": 1775246993084,
+      "type": "directory"
+    },
+    {
+      "path": "examples/sha2-chain/guest/src/lib.rs",
+      "accessCount": 1,
+      "lastAccessed": 1775246993515,
+      "type": "file"
+    },
+    {
+      "path": "examples/secp256k1-ecdsa-verify/guest/src/lib.rs",
+      "accessCount": 1,
+      "lastAccessed": 1775246994292,
+      "type": "file"
+    },
+    {
+      "path": "examples/sha2-chain/guest/Cargo.toml",
+      "accessCount": 1,
+      "lastAccessed": 1775247000292,
+      "type": "file"
+    },
+    {
+      "path": "examples/secp256k1-ecdsa-verify/guest/Cargo.toml",
+      "accessCount": 1,
+      "lastAccessed": 1775247001105,
+      "type": "file"
+    },
+    {
+      "path": "examples/secp256k1-ecdsa-verify",
+      "accessCount": 1,
+      "lastAccessed": 1775247008932,
+      "type": "directory"
+    },
+    {
+      "path": "examples/secp256k1-ecdsa-verify/src/main.rs",
+      "accessCount": 1,
+      "lastAccessed": 1775247022060,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}

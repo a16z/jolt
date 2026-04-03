@@ -1,9 +1,6 @@
-pub mod bind_bench;
-pub mod cognitive;
-pub mod halstead_bugs;
-pub mod lloc;
+pub mod code_quality;
 pub mod optimize;
-pub mod prover_time;
+pub mod performance;
 pub mod synthesis;
 
 use std::fmt;
@@ -76,17 +73,19 @@ pub trait PerfObjective: Default + Send + Sync {
 /// Performance objectives are handled separately via Criterion benchmarks
 /// (see `PerfObjective` and `bench_objective!`).
 pub enum Objective {
-    Lloc(lloc::LlocObjective),
-    CognitiveComplexity(cognitive::CognitiveComplexityObjective),
-    HalsteadBugs(halstead_bugs::HalsteadBugsObjective),
+    Lloc(code_quality::lloc::LlocObjective),
+    CognitiveComplexity(code_quality::cognitive::CognitiveComplexityObjective),
+    HalsteadBugs(code_quality::halstead_bugs::HalsteadBugsObjective),
 }
 
 impl Objective {
     pub fn all(root: &Path) -> Vec<Self> {
         vec![
-            Self::Lloc(lloc::LlocObjective::new(root)),
-            Self::CognitiveComplexity(cognitive::CognitiveComplexityObjective::new(root)),
-            Self::HalsteadBugs(halstead_bugs::HalsteadBugsObjective::new(root)),
+            Self::Lloc(code_quality::lloc::LlocObjective::new(root)),
+            Self::CognitiveComplexity(code_quality::cognitive::CognitiveComplexityObjective::new(
+                root,
+            )),
+            Self::HalsteadBugs(code_quality::halstead_bugs::HalsteadBugsObjective::new(root)),
         ]
     }
 
@@ -126,8 +125,8 @@ impl Objective {
 /// Names of all registered `PerfObjective` benchmarks.
 pub fn perf_objective_names() -> &'static [&'static str] {
     &[
-        bind_bench::BindLowToHighObjective::NAME,
-        bind_bench::BindHighToLowObjective::NAME,
+        performance::bind_bench::BindLowToHighObjective::NAME,
+        performance::bind_bench::BindHighToLowObjective::NAME,
     ]
 }
 

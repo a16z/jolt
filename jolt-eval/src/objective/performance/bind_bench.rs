@@ -3,7 +3,7 @@ use jolt_core::field::JoltField;
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
 use jolt_core::poly::multilinear_polynomial::BindingOrder;
 
-use super::PerfObjective;
+use crate::objective::PerfObjective;
 
 type Challenge = <Fr as JoltField>::Challenge;
 

@@ -1,4 +1,5 @@
-use jolt_eval::objective::prover_time::{Fibonacci, ProverTimeObjective};
+use jolt_eval::guests::Fibonacci;
+use jolt_eval::objective::performance::prover_time::ProverTimeObjective;
 
 jolt_eval::bench_objective!(
     ProverTimeObjective::new(Fibonacci(100)),
