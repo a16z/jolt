@@ -118,6 +118,9 @@ zeroos-build.workspace = true
 
 ark-bn254.workspace = true
 
+hex.workspace = true
+tracer = { workspace = true, features = ["std"] }
+
 jolt-sdk = { workspace = true, features = ["host"] }
 jolt-core = { workspace = true, features = ["default"] }
 common = { workspace = true, features = ["std"] }

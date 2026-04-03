@@ -16,6 +16,15 @@ pub struct ProgramSummary {
     pub io_device: JoltDevice,
 }
 
+/// Detailed analysis result from tracing a guest program.
+pub struct AnalysisReport {
+    pub total_cycles: usize,
+    pub padded_trace_length: usize,
+    pub unique_bytecode_instructions: usize,
+    pub instruction_counts: Vec<(&'static str, usize)>,
+    pub panicked: bool,
+}
+
 impl ProgramSummary {
     pub fn trace_len(&self) -> usize {
         self.trace.len()
@@ -37,6 +46,22 @@ impl ProgramSummary {
         counts.reverse();
 
         counts
+    }
+
+    pub fn detailed_analyze<F: JoltField>(&self) -> AnalysisReport {
+        let instruction_counts = self.analyze::<F>();
+        let total_cycles = self.trace.len();
+        let padded_trace_length = total_cycles.next_power_of_two();
+        let unique_bytecode_instructions = self.bytecode.len();
+        let panicked = self.io_device.panic;
+
+        AnalysisReport {
+            total_cycles,
+            padded_trace_length,
+            unique_bytecode_instructions,
+            instruction_counts,
+            panicked,
+        }
     }
 
     pub fn write_to_file(self, path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {

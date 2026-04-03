@@ -2585,6 +2585,7 @@ dependencies = [
  "common",
  "env_logger",
  "eyre",
+ "hex",
  "jolt-core",
  "jolt-sdk",
  "log",
@@ -2592,6 +2593,7 @@ dependencies = [
  "syn 2.0.117",
  "sysinfo",
  "toml_edit",
+ "tracer",
  "zeroos-build",
 ]
 

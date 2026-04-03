@@ -2,7 +2,7 @@ mod build_wasm;
 
 use std::{
     fs::{self, File},
-    io::Write,
+    io::{Read, Write},
     path::PathBuf,
     process::{exit, Command},
 };
@@ -51,6 +51,10 @@ enum JoltCommand {
     /// Generate target specs or linker scripts
     #[command(subcommand)]
     Generate(GenerateCmd),
+
+    /// Analyze a guest ELF binary: trace execution and print cycle counts,
+    /// instruction breakdown, and padding overhead.
+    Analyze(AnalyzeArgs),
 
     /// Handles preprocessing and generates WASM compatible files
     BuildWasm,
@@ -104,6 +108,33 @@ struct JoltGenerateLinkerArgs {
     output: PathBuf,
 }
 
+#[derive(clap::Args, Debug)]
+struct AnalyzeArgs {
+    /// Path to the guest ELF binary (build with `jolt build` first)
+    #[arg(value_name = "ELF")]
+    elf: PathBuf,
+
+    /// Hex-encoded input bytes to pass to the guest program
+    #[arg(long, value_name = "HEX")]
+    input: Option<String>,
+
+    /// Stack size in bytes
+    #[arg(long)]
+    stack_size: Option<u64>,
+
+    /// Heap size in bytes
+    #[arg(long)]
+    heap_size: Option<u64>,
+
+    /// Maximum input size in bytes
+    #[arg(long)]
+    max_input_size: Option<u64>,
+
+    /// Maximum output size in bytes
+    #[arg(long)]
+    max_output_size: Option<u64>,
+}
+
 fn version() -> &'static str {
     concat!(
         env!("CARGO_PKG_VERSION"),
@@ -135,6 +166,7 @@ fn main() {
             GenerateCmd::Target(args) => generate_target_command(args),
             GenerateCmd::Linker(args) => generate_linker_command(args),
         },
+        JoltCommand::Analyze(args) => analyze_command(args),
         JoltCommand::BuildWasm => {
             build_wasm();
             Ok(())
@@ -391,6 +423,91 @@ fn generate_linker_command(cli_args: JoltGenerateLinkerArgs) -> Result<()> {
     })?;
 
     info!("Generated linker script: {}", cli_args.output.display());
+
+    Ok(())
+}
+
+fn analyze_command(args: AnalyzeArgs) -> Result<()> {
+    use ark_bn254::Fr;
+    use common::constants::RAM_START_ADDRESS;
+    use common::jolt_device::MemoryConfig;
+    use jolt_core::host::analyze::ProgramSummary;
+
+    if !args.elf.exists() {
+        anyhow::bail!("ELF not found: {}", args.elf.display());
+    }
+
+    let mut elf_file = File::open(&args.elf)
+        .with_context(|| format!("Failed to open ELF: {}", args.elf.display()))?;
+    let mut elf_contents = Vec::new();
+    elf_file
+        .read_to_end(&mut elf_contents)
+        .with_context(|| format!("Failed to read ELF: {}", args.elf.display()))?;
+
+    let input_bytes = match &args.input {
+        Some(hex) => {
+            let hex = hex.strip_prefix("0x").unwrap_or(hex);
+            hex::decode(hex).context("Invalid hex input")?
+        }
+        None => Vec::new(),
+    };
+
+    let (_, _, program_end, _, _) = tracer::decode(&elf_contents);
+    let program_size = program_end - RAM_START_ADDRESS;
+
+    let defaults = MemoryConfig::default();
+    let memory_config = MemoryConfig {
+        stack_size: args.stack_size.unwrap_or(defaults.stack_size),
+        heap_size: args.heap_size.unwrap_or(defaults.heap_size),
+        max_input_size: args.max_input_size.unwrap_or(defaults.max_input_size),
+        max_output_size: args.max_output_size.unwrap_or(defaults.max_output_size),
+        program_size: Some(program_size),
+        ..defaults
+    };
+
+    let (bytecode, memory_init, _, _) = jolt_core::guest::program::decode(&elf_contents);
+    let (_, trace, _, io_device, _) = tracer::trace(
+        &elf_contents,
+        Some(&args.elf),
+        &input_bytes,
+        &[],
+        &[],
+        &memory_config,
+        None,
+    );
+
+    let summary = ProgramSummary {
+        trace,
+        bytecode,
+        memory_init,
+        io_device,
+    };
+
+    let report = summary.detailed_analyze::<Fr>();
+
+    println!("Jolt Program Analysis");
+    println!("{}", "-".repeat(50));
+    println!("ELF:                          {}", args.elf.display());
+    println!("Total cycles:                 {}", report.total_cycles);
+    println!(
+        "Padded trace length:          {} ({:.1}% utilization)",
+        report.padded_trace_length,
+        100.0 * report.total_cycles as f64 / report.padded_trace_length as f64
+    );
+    println!(
+        "Unique bytecode instructions: {}",
+        report.unique_bytecode_instructions
+    );
+
+    if report.panicked {
+        println!("\nWARNING: Guest program panicked during execution!");
+    }
+
+    println!("\nInstruction breakdown:");
+    for (name, count) in &report.instruction_counts {
+        let pct = 100.0 * *count as f64 / report.total_cycles as f64;
+        println!("  {name:<30} {count:>8}  ({pct:>5.1}%)");
+    }
 
     Ok(())
 }
