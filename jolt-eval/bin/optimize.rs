@@ -54,22 +54,23 @@ impl OptimizeEnv for RealEnv {
             .collect();
 
         if self.bench_perf {
-            // Run Criterion with --save-baseline to enable comparison
-            let status = Command::new("cargo")
-                .current_dir(&self.repo_dir)
-                .args([
-                    "bench",
-                    "-p",
-                    "jolt-eval",
-                    "--",
-                    "--quick",
-                    "--save-baseline",
-                    "optimize",
-                ])
-                .status();
+            for &name in perf_objective_names() {
+                let status = Command::new("cargo")
+                    .current_dir(&self.repo_dir)
+                    .args([
+                        "bench",
+                        "-p",
+                        "jolt-eval",
+                        "--bench",
+                        name,
+                        "--",
+                        "--quick",
+                        "--save-baseline",
+                        "optimize",
+                    ])
+                    .status();
 
-            if matches!(status, Ok(s) if s.success()) {
-                for &name in perf_objective_names() {
+                if matches!(status, Ok(s) if s.success()) {
                     if let Some(secs) = read_criterion_estimate(name) {
                         results.insert(name.to_string(), secs);
                     }

@@ -45,30 +45,36 @@ fn main() -> eyre::Result<()> {
 
         if run_bench {
             eprintln!("Running Criterion benchmarks...");
-            let status = std::process::Command::new("cargo")
-                .args(["bench", "-p", "jolt-eval", "--", "--quick"])
-                .status();
-
-            match status {
-                Ok(s) if s.success() => {
-                    println!();
-                    print_header();
-                    for &name in perf_names {
-                        if let Some(ref filter) = cli.objective {
-                            if name != filter.as_str() {
-                                continue;
-                            }
-                        }
-                        match read_criterion_estimate(name) {
-                            Some(secs) => print_row(name, secs, "s", "min"),
-                            None => {
-                                println!("{:<35} {:>15}", name, "NO DATA");
-                            }
-                        }
+            let mut any_succeeded = false;
+            for &name in perf_names {
+                if let Some(ref filter) = cli.objective {
+                    if name != filter.as_str() {
+                        continue;
                     }
                 }
-                _ => {
-                    eprintln!("cargo bench failed; skipping perf objectives");
+                let status = std::process::Command::new("cargo")
+                    .args(["bench", "-p", "jolt-eval", "--bench", name, "--", "--quick"])
+                    .status();
+                if matches!(status, Ok(s) if s.success()) {
+                    any_succeeded = true;
+                }
+            }
+
+            if any_succeeded {
+                println!();
+                print_header();
+                for &name in perf_names {
+                    if let Some(ref filter) = cli.objective {
+                        if name != filter.as_str() {
+                            continue;
+                        }
+                    }
+                    match read_criterion_estimate(name) {
+                        Some(secs) => print_row(name, secs, "s", "min"),
+                        None => {
+                            println!("{:<35} {:>15}", name, "NO DATA");
+                        }
+                    }
                 }
             }
         }
