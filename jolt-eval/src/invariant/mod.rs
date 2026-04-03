@@ -1,6 +1,8 @@
 pub mod soundness;
 pub mod split_eq_bind;
 pub mod synthesis;
+#[cfg(test)]
+mod macro_tests;
 
 use std::fmt;
 
@@ -252,4 +254,53 @@ pub fn extract_json(text: &str) -> Option<String> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+
+    struct TrivialInvariant;
+    impl InvariantTargets for TrivialInvariant {}
+
+    impl Invariant for TrivialInvariant {
+        type Setup = ();
+        type Input = u8;
+        fn name(&self) -> &str { "trivial" }
+        fn description(&self) -> String { "Always passes".into() }
+        fn setup(&self) {}
+        fn check(&self, _: &(), _: u8) -> Result<(), CheckError> { Ok(()) }
+        fn seed_corpus(&self) -> Vec<u8> { vec![0, 1, 255] }
+    }
+
+    struct FailingInvariant;
+    impl InvariantTargets for FailingInvariant {}
+
+    impl Invariant for FailingInvariant {
+        type Setup = ();
+        type Input = u8;
+        fn name(&self) -> &str { "failing" }
+        fn description(&self) -> String { "Always fails".into() }
+        fn setup(&self) {}
+        fn check(&self, _: &(), input: u8) -> Result<(), CheckError> {
+            Err(CheckError::Violation(InvariantViolation::new(format!("failed for input {input}"))))
+        }
+        fn seed_corpus(&self) -> Vec<u8> { vec![42] }
+    }
+
+    #[test]
+    fn trivial_invariant_passes() {
+        let inv = TrivialInvariant;
+        for input in inv.seed_corpus() {
+            inv.check(&(), input).unwrap();
+        }
+    }
+
+    #[test]
+    fn failing_invariant_reports_violations() {
+        let inv = FailingInvariant;
+        for input in inv.seed_corpus() {
+            assert!(inv.check(&(), input).is_err());
+        }
+    }
 }

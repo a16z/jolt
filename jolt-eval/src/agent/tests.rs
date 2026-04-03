@@ -2,13 +2,14 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use enumset::EnumSet;
-use jolt_eval::agent::{AgentError, AgentHarness, AgentResponse, DiffScope, MockAgent};
-use jolt_eval::invariant::synthesis::redteam::{auto_redteam, RedTeamConfig, RedTeamResult};
-use jolt_eval::invariant::{
+
+use crate::agent::{AgentError, AgentHarness, AgentResponse, DiffScope, MockAgent};
+use crate::invariant::synthesis::redteam::{auto_redteam, RedTeamConfig, RedTeamResult};
+use crate::invariant::{
     CheckError, Invariant, InvariantTargets, InvariantViolation, SynthesisTarget,
 };
-use jolt_eval::objective::optimize::{auto_optimize, OptimizeConfig, OptimizeEnv};
-use jolt_eval::objective::Direction;
+use crate::objective::optimize::{auto_optimize, OptimizeConfig, OptimizeEnv};
+use crate::objective::Direction;
 
 // =========================================================================
 // Test invariants

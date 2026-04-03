@@ -137,3 +137,45 @@ pub struct OptimizationAttempt {
     pub measurements: std::collections::HashMap<String, f64>,
     pub invariants_passed: bool,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct ConstantObjective {
+        label: &'static str,
+        value: f64,
+        direction: Direction,
+    }
+
+    impl AbstractObjective for ConstantObjective {
+        fn name(&self) -> &str { self.label }
+        fn collect_measurement(&self) -> Result<f64, MeasurementError> { Ok(self.value) }
+        fn direction(&self) -> Direction { self.direction }
+    }
+
+    #[test]
+    fn constant_objective() {
+        let obj = ConstantObjective {
+            label: "latency",
+            value: 42.0,
+            direction: Direction::Minimize,
+        };
+        assert_eq!(obj.name(), "latency");
+        assert_eq!(obj.collect_measurement().unwrap(), 42.0);
+        assert_eq!(obj.direction(), Direction::Minimize);
+    }
+
+    #[test]
+    fn objective_all() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap();
+        let objectives = Objective::all(root);
+        assert_eq!(objectives.len(), 3);
+        for obj in &objectives {
+            let val = obj.collect_measurement().unwrap();
+            assert!(val > 0.0, "{} should be > 0, got {val}", obj.name());
+        }
+    }
+}

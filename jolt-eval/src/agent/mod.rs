@@ -1,5 +1,7 @@
 pub mod claude;
 pub mod mock;
+#[cfg(test)]
+mod tests;
 
 use std::fmt;
 use std::path::Path;

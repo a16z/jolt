@@ -1,4 +1,4 @@
-use jolt_eval::invariant::{CheckError, Invariant, InvariantViolation};
+use crate::invariant::{CheckError, Invariant, InvariantViolation};
 
 // ---------------------------------------------------------------------------
 // AlwaysPass: trivial invariant to test macro synthesis
