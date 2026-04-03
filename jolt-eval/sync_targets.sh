@@ -93,53 +93,20 @@ EOF
 mv "$FUZZ_DIR/Cargo.toml.tmp" "$FUZZ_DIR/Cargo.toml"
 
 # ── Criterion benchmarks ─────────────────────────────────────────────
+#
+# Bench files are hand-authored (they carry domain-specific config).
+# This script only syncs Cargo.toml [[bench]] entries from whatever
+# .rs files exist in benches/.
 
-echo "=== Syncing Criterion benchmarks ==="
+echo "=== Syncing Criterion bench entries ==="
 
 mkdir -p "$BENCH_DIR"
 
-# Find (bench_name, module_path, struct_name) for each PerfObjective
-bench_entries=""
-for file in "$EVAL_DIR"/src/objective/*.rs; do
-    [ -f "$file" ] || continue
-    basename_rs=$(basename "$file" .rs)
-    [ "$basename_rs" = "mod" ] && continue
-
-    { grep -n 'impl PerfObjective for' "$file" 2>/dev/null || true; } | while IFS=: read -r _ rest; do
-        struct=$(echo "$rest" | grep -o 'for [A-Za-z_]*' | awk '{print $2}')
-        [ -z "$struct" ] && continue
-        # Try to find the NAME const
-        bench_name=$(grep -A5 "impl $struct" "$file" \
-            | grep 'const NAME' | head -1 \
-            | grep -o '"[^"]*"' | tr -d '"') || true
-        [ -z "$bench_name" ] && bench_name=$(to_snake "$struct" | sed 's/_objective$//')
-        echo "$bench_name objective::${basename_rs}::${struct}"
-    done
-done | sort -u > /tmp/jolt_bench_entries
-
-# Generate missing bench files
-while read -r name mod_struct; do
-    [ -z "$name" ] && continue
-    struct="${mod_struct##*::}"
-    bench_file="$BENCH_DIR/${name}.rs"
-    if [ ! -f "$bench_file" ]; then
-        echo "  Creating benchmark: $name"
-        cat > "$bench_file" <<EOF
-use jolt_eval::${mod_struct};
-jolt_eval::bench_objective!(${struct});
-EOF
-    fi
-done < /tmp/jolt_bench_entries
-
-# Remove stale bench files
+# Collect bench names from existing .rs files (excluding symlinks)
 for f in "$BENCH_DIR"/*.rs; do
     [ -f "$f" ] || continue
-    base=$(basename "$f" .rs)
-    if ! grep -q "^$base " /tmp/jolt_bench_entries 2>/dev/null; then
-        echo "  Removing stale benchmark: $base"
-        rm "$f"
-    fi
-done
+    basename "$f" .rs
+done | sort -u > /tmp/jolt_bench_entries
 
 # Update Cargo.toml [[bench]] entries
 CARGO_TOML="$EVAL_DIR/Cargo.toml"
@@ -156,7 +123,7 @@ awk '
 # Insert new [[bench]] entries before the first [[bin]]
 {
     sed '/^\[\[bin\]\]/,$d' "$tmpfile"
-    while read -r name _; do
+    while read -r name; do
         [ -z "$name" ] && continue
         cat <<EOF
 [[bench]]

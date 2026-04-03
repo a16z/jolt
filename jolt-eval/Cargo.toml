@@ -38,6 +38,10 @@ harness = false
 name = "bind_parallel_low_to_high"
 harness = false
 
+[[bench]]
+name = "prover_time_fibonacci"
+harness = false
+
 [[bin]]
 name = "measure-objectives"
 path = "bin/measure_objectives.rs"

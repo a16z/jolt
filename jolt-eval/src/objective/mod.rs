@@ -3,6 +3,7 @@ pub mod cognitive;
 pub mod halstead_bugs;
 pub mod lloc;
 pub mod optimize;
+pub mod prover_time;
 pub mod synthesis;
 
 use std::fmt;
