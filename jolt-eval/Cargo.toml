@@ -42,6 +42,14 @@ harness = false
 name = "prover_time_fibonacci"
 harness = false
 
+[[bench]]
+name = "prover_time_secp256k1_ecdsa_verify"
+harness = false
+
+[[bench]]
+name = "prover_time_sha2_chain"
+harness = false
+
 [[bin]]
 name = "measure-objectives"
 path = "bin/measure_objectives.rs"
