@@ -139,13 +139,13 @@ fn validate_attributes(
     max_trace_length: u64,
     stack_size: u64,
     heap_size: u64,
-    max_input_size: u64,
-    max_output_size: u64,
-    max_trusted_advice_size: u64,
-    max_untrusted_advice_size: u64,
+    _max_input_size: u64,
+    _max_output_size: u64,
+    _max_trusted_advice_size: u64,
+    _max_untrusted_advice_size: u64,
 ) {
-    if max_trace_length == 0 || (max_trace_length & (max_trace_length - 1)) != 0 {
-        panic!("max_trace_length must be a power of 2, got {max_trace_length}");
+    if max_trace_length == 0 {
+        panic!("max_trace_length must be greater than 0");
     }
 
     if stack_size == 0 {
@@ -154,20 +154,6 @@ fn validate_attributes(
 
     if heap_size == 0 {
         panic!("heap_size must be greater than 0");
-    }
-
-    let size_fields: &[(&str, u64)] = &[
-        ("stack_size", stack_size),
-        ("heap_size", heap_size),
-        ("max_input_size", max_input_size),
-        ("max_output_size", max_output_size),
-        ("max_trusted_advice_size", max_trusted_advice_size),
-        ("max_untrusted_advice_size", max_untrusted_advice_size),
-    ];
-    for (name, value) in size_fields {
-        if value % 8 != 0 {
-            panic!("{name} must be a multiple of 8 (maps to u64-aligned memory), got {value}");
-        }
     }
 }
 
@@ -189,20 +175,12 @@ mod tests {
     }
 
     #[test]
-    fn accepts_valid_powers_of_two() {
-        for exp in 1..=30 {
-            validate_attributes(1 << exp, 8, 8, 0, 0, 0, 0);
-        }
+    fn accepts_non_power_of_two_trace_length() {
+        validate_attributes(50_000_000, 4096, 4096, 4096, 4096, 4096, 4096);
     }
 
     #[test]
-    #[should_panic(expected = "max_trace_length must be a power of 2")]
-    fn rejects_non_power_of_two_trace_length() {
-        validate_attributes(100, 4096, 4096, 4096, 4096, 4096, 4096);
-    }
-
-    #[test]
-    #[should_panic(expected = "max_trace_length must be a power of 2")]
+    #[should_panic(expected = "max_trace_length must be greater than 0")]
     fn rejects_zero_trace_length() {
         validate_attributes(0, 4096, 4096, 4096, 4096, 4096, 4096);
     }
@@ -220,43 +198,12 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "stack_size must be a multiple of 8")]
-    fn rejects_unaligned_stack_size() {
-        validate_attributes(1 << 20, 7, 4096, 4096, 4096, 4096, 4096);
-    }
-
-    #[test]
-    #[should_panic(expected = "heap_size must be a multiple of 8")]
-    fn rejects_unaligned_heap_size() {
-        validate_attributes(1 << 20, 4096, 10, 4096, 4096, 4096, 4096);
-    }
-
-    #[test]
-    #[should_panic(expected = "max_input_size must be a multiple of 8")]
-    fn rejects_unaligned_input_size() {
-        validate_attributes(1 << 20, 4096, 4096, 3, 4096, 4096, 4096);
-    }
-
-    #[test]
-    #[should_panic(expected = "max_output_size must be a multiple of 8")]
-    fn rejects_unaligned_output_size() {
-        validate_attributes(1 << 20, 4096, 4096, 4096, 5, 4096, 4096);
-    }
-
-    #[test]
-    #[should_panic(expected = "max_trusted_advice_size must be a multiple of 8")]
-    fn rejects_unaligned_trusted_advice_size() {
-        validate_attributes(1 << 20, 4096, 4096, 4096, 4096, 1, 4096);
-    }
-
-    #[test]
-    #[should_panic(expected = "max_untrusted_advice_size must be a multiple of 8")]
-    fn rejects_unaligned_untrusted_advice_size() {
-        validate_attributes(1 << 20, 4096, 4096, 4096, 4096, 4096, 9);
-    }
-
-    #[test]
     fn accepts_zero_io_and_advice_sizes() {
         validate_attributes(1 << 20, 8, 8, 0, 0, 0, 0);
+    }
+
+    #[test]
+    fn accepts_unaligned_sizes() {
+        validate_attributes(1 << 20, 100_000, 100_000, 4096, 4096, 4096, 4096);
     }
 }
