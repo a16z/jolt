@@ -189,7 +189,11 @@ fn build_redteam_prompt(
          3. Construct a concrete counterexample input that you believe will trigger \
             a violation.\n\
          4. The input will be deserialized and checked mechanically — only genuine \
-            violations count.\n\n",
+            violations count.\n\n\
+         IMPORTANT: Do NOT ask questions or request clarification. Do NOT create \
+         plans or outlines. You MUST produce a concrete counterexample JSON on \
+         every iteration. Spend your turns reading code and reasoning, then output \
+         your best counterexample. A wrong guess is always better than no guess.\n\n",
     );
 
     if let Some(example) = input_example {
@@ -225,9 +229,12 @@ fn build_redteam_prompt(
 
     prompt.push_str(
         "## Required output\n\n\
-         Respond with a JSON object containing:\n\
-         - `analysis`: your reasoning and what you investigated\n\
-         - `counterexample`: the candidate input matching the schema above\n",
+         You MUST respond with a JSON object containing exactly two fields:\n\
+         - `analysis`: a brief summary of what you investigated and why you \
+           chose this counterexample\n\
+         - `counterexample`: the candidate input matching the schema above\n\n\
+         Do NOT respond with anything other than this JSON object. No questions, \
+         no plans, no markdown outside the JSON.\n",
     );
 
     prompt
