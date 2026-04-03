@@ -5,7 +5,7 @@
 
 use jolt_field::MontgomeryConstants;
 
-use crate::msl_field_gen;
+use crate::msl_field;
 
 /// Validated Montgomery field parameters with pre-generated MSL.
 pub struct MslFieldParams {
@@ -61,8 +61,8 @@ impl MslFieldParams {
             n_limbs: n,
             acc_limbs: F::ACC_U32_LIMBS,
             byte_size: F::FIELD_BYTE_SIZE,
-            msl_preamble: msl_field_gen::generate_full_preamble::<F>(),
-            msl_test_kernels: msl_field_gen::generate_test_kernels::<F>(),
+            msl_preamble: msl_field::generate_full_preamble::<F>(),
+            msl_test_kernels: msl_field::generate_test_kernels::<F>(),
         }
     }
 }

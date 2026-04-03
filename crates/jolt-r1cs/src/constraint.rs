@@ -1,6 +1,7 @@
 //! Sparse per-cycle R1CS constraint matrices.
 
 use jolt_field::Field;
+use serde::{Deserialize, Serialize};
 
 /// Sparse row: `[(variable_index, coefficient)]`.
 pub type SparseRow<F> = Vec<(usize, F)>;
@@ -15,7 +16,8 @@ pub type SparseRow<F> = Vec<(usize, F)>;
 /// Each matrix is stored as a list of sparse rows, one per constraint.
 /// Entry `a[k] = [(v, α), ...]` means constraint k's A side has
 /// coefficient α at variable index v.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(bound = "")]
 pub struct ConstraintMatrices<F: Field> {
     pub num_constraints: usize,
     pub num_vars: usize,

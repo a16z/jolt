@@ -11,8 +11,8 @@ use std::ffi::c_void;
 
 use metal::{ComputePipelineState, Device, MTLResourceOptions, MTLSize};
 
-use crate::field_config::MslFieldParams;
-use crate::shaders::{build_source_with_preamble, make_pipeline};
+use crate::field_params::MslFieldParams;
+use crate::pipeline::{build_source_with_preamble, make_pipeline};
 
 /// N×u32 limbs matching the Metal Fr struct layout.
 /// Both CPU and Metal store Montgomery-form values in little-endian limb order.
@@ -72,6 +72,7 @@ impl FrKernels {
         let source = build_source_with_preamble(
             &field_config.msl_preamble,
             &[&field_config.msl_test_kernels],
+            false,
         );
         let options = metal::CompileOptions::new();
         let library = device

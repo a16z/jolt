@@ -12,6 +12,7 @@ workspace = true
 jolt-compute = { path = "../jolt-compute" }
 jolt-field = { path = "../jolt-field" }
 jolt-poly = { path = "../jolt-poly" }
+serde = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
 jolt-field = { path = "../jolt-field", features = ["bn254"] }

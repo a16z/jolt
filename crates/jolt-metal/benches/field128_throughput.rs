@@ -17,11 +17,11 @@ mod test_field128;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use jolt_field::{Field, Fr, MontgomeryConstants};
-use jolt_metal::compiler::{CompileMode, GeneratedMsl};
+use jolt_metal::config::MetalDeviceConfig;
 use jolt_metal::field::MetalFieldElement;
-use jolt_metal::field_config::MslFieldParams;
-use jolt_metal::metal_device_config::MetalDeviceConfig;
-use jolt_metal::shaders::{build_source_with_preamble, make_pipeline};
+use jolt_metal::field_params::MslFieldParams;
+use jolt_metal::msl_reduce::{CompileMode, GeneratedMsl, KernelVariant};
+use jolt_metal::pipeline::{build_source_with_preamble, make_pipeline};
 use metal::{ComputePipelineState, Device, MTLResourceOptions, MTLSize};
 use num_traits::Zero;
 use std::ffi::c_void;
@@ -42,7 +42,7 @@ struct FieldKernels {
 impl FieldKernels {
     fn compile<F: MontgomeryConstants>(device: &Device) -> Self {
         let config = MslFieldParams::new::<F>();
-        let source = build_source_with_preamble(&config.msl_preamble, &[&config.msl_test_kernels]);
+        let source = build_source_with_preamble(&config.msl_preamble, &[&config.msl_test_kernels], false);
         let opts = metal::CompileOptions::new();
         let lib = device
             .new_library_with_source(&source, &opts)
@@ -58,7 +58,7 @@ impl FieldKernels {
 
 struct ReduceKernels {
     l2h_unw: ComputePipelineState,
-    l2h: ComputePipelineState,
+    tensor: ComputePipelineState,
     num_evals: usize,
 }
 
@@ -67,7 +67,7 @@ impl ReduceKernels {
         use jolt_compiler::{Factor, Formula, ProductTerm};
 
         let field_config = MslFieldParams::new::<F>();
-        let device_config = MetalDeviceConfig::detect(device);
+        let device_config = MetalDeviceConfig::default();
         let formula = Formula::from_terms(
             (0..p)
                 .map(|g| ProductTerm {
@@ -77,22 +77,31 @@ impl ReduceKernels {
                 .collect(),
         );
 
-        let generated: GeneratedMsl = jolt_metal::compiler::generate_msl(
-            &formula,
-            CompileMode::FastCompile,
-            &field_config,
-            &device_config,
-        );
+        let compile = |variant: KernelVariant| {
+            let generated: GeneratedMsl = jolt_metal::msl_reduce::generate_msl(
+                &formula,
+                variant,
+                CompileMode::FastCompile,
+                &field_config,
+                &device_config,
+            );
+            let opts = metal::CompileOptions::new();
+            let lib = device
+                .new_library_with_source(&generated.source, &opts)
+                .expect("reduce MSL compilation failed");
+            (
+                make_pipeline(device, &lib, "reduce_kernel"),
+                generated.num_evals,
+            )
+        };
 
-        let opts = metal::CompileOptions::new();
-        let lib = device
-            .new_library_with_source(&generated.source, &opts)
-            .expect("reduce MSL compilation failed");
+        let (l2h_unw, num_evals) = compile(KernelVariant::LowToHigh);
+        let (tensor, _) = compile(KernelVariant::Tensor);
 
         Self {
-            l2h_unw: make_pipeline(device, &lib, "reduce_kernel_l2h_unw"),
-            l2h: make_pipeline(device, &lib, "reduce_kernel_l2h"),
-            num_evals: generated.num_evals,
+            l2h_unw,
+            tensor,
+            num_evals,
         }
     }
 }
@@ -700,7 +709,7 @@ fn bench_fmadd_depth(c: &mut Criterion) {
 fn bench_reduce(c: &mut Criterion, group_name: &str, d: usize, p: usize) {
     let device = Device::system_default().expect("no Metal device");
     let queue = device.new_command_queue();
-    let device_config = MetalDeviceConfig::detect(&device);
+    let device_config = MetalDeviceConfig::default();
     let rk128 = ReduceKernels::compile_product_sum::<F128Config>(&device, d, p);
     let rk256 = ReduceKernels::compile_product_sum::<Fr>(&device, d, p);
     let num_inputs = d * p;
@@ -793,7 +802,7 @@ fn bench_reduce_d8(c: &mut Criterion) {
 fn bench_reduce_weighted(c: &mut Criterion, group_name: &str, d: usize, p: usize) {
     let device = Device::system_default().expect("no Metal device");
     let queue = device.new_command_queue();
-    let device_config = MetalDeviceConfig::detect(&device);
+    let device_config = MetalDeviceConfig::default();
     let rk256 = ReduceKernels::compile_product_sum::<Fr>(&device, d, p);
     let num_inputs = d * p;
 
@@ -825,7 +834,7 @@ fn bench_reduce_weighted(c: &mut Criterion, group_name: &str, d: usize, p: usize
                 bench.iter(|| {
                     dispatch_reduce_weighted(
                         &queue,
-                        &rk256.l2h,
+                        &rk256.tensor,
                         &buf_refs_256,
                         &buf_weights,
                         &partials_256,
@@ -872,7 +881,7 @@ fn bench_reduce_d8_groupsize(c: &mut Criterion) {
     for &gs in &[64usize, 128, 256] {
         let device_config = MetalDeviceConfig {
             reduce_group_size: gs,
-            ..MetalDeviceConfig::detect(&device)
+            ..MetalDeviceConfig::default()
         };
         let field_config = MslFieldParams::new::<Fr>();
         let formula = {
@@ -886,8 +895,9 @@ fn bench_reduce_d8_groupsize(c: &mut Criterion) {
                     .collect(),
             )
         };
-        let generated: GeneratedMsl = jolt_metal::compiler::generate_msl(
+        let generated: GeneratedMsl = jolt_metal::msl_reduce::generate_msl(
             &formula,
+            KernelVariant::LowToHigh,
             CompileMode::FastCompile,
             &field_config,
             &device_config,
@@ -896,7 +906,7 @@ fn bench_reduce_d8_groupsize(c: &mut Criterion) {
         let lib = device
             .new_library_with_source(&generated.source, &opts)
             .expect("gs sweep MSL compilation failed");
-        let pipeline = make_pipeline(&device, &lib, "reduce_kernel_l2h_unw");
+        let pipeline = make_pipeline(&device, &lib, "reduce_kernel");
 
         for &n in &[1usize << 18, 1 << 20] {
             let n_pairs = n / 2;

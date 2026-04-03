@@ -589,14 +589,12 @@ For reference, these are the tuning knobs in the codebase:
 
 | Constant | Value | File | Purpose |
 |----------|-------|------|---------|
-| `reduce_group_size` | 128 | `metal_device_config.rs` | Threads per threadgroup for reduce |
-| `elementwise_group_size` | 256 | `metal_device_config.rs` | Threads per threadgroup for sum/dot |
-| `max_reduce_groups` | 256 | `metal_device_config.rs` | Max threadgroups per reduce dispatch |
-| `simd_size` | 32 | `metal_device_config.rs` | SIMD width (fixed on Apple GPU) |
-| `split_pass_threshold` | 1024 | `metal_device_config.rs` | D threshold for multi-pass (disabled) |
+| `reduce_group_size` | 128 | `config.rs` | Threads per threadgroup for reduce |
+| `max_reduce_groups` | 256 | `config.rs` | Max threadgroups per reduce dispatch |
+| `simd_size` | 32 | `config.rs` | SIMD width (fixed on Apple GPU) |
 | `HYBRID_THRESHOLD` | 2^12 | `sumcheck_e2e.rs` | Hybrid Metal→CPU switchover size |
-| `PAR_THRESHOLD` | 1024 | `device.rs` | Product table CPU→GPU switchover |
-| `CompileMode` | Performance | `compiler.rs` | Full LLVM inlining vs fast compile |
+| `PAR_THRESHOLD` | 1024 | `backend.rs` | Product table CPU→GPU switchover |
+| `CompileMode` | Performance | `msl_reduce.rs` | Full LLVM inlining vs fast compile |
 
 ## 8. Architecture-Specific Notes
 

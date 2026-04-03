@@ -38,3 +38,7 @@ harness = false
 [[bench]]
 name = "rayon_vs_backend"
 harness = false
+
+[[bench]]
+name = "quick_bench"
+harness = false

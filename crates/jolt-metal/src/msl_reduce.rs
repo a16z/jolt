@@ -1,4 +1,4 @@
-//! Kernel compiler: `Formula` → MSL source → `MetalKernel`.
+//! MSL reduce kernel codegen: `Formula` → MSL source → `CompiledPipeline`.
 //!
 //! Two compilation paths:
 //!
@@ -14,10 +14,8 @@
 //!   caching.
 //!   Uses incremental interpolation for the contiguous grid `{0, 1, 2, ..., degree}`.
 //!
-//! Three kernel variants are compiled from each formula:
-//! - **Tensor**: Weighted, L2H with two-buffer weight: `outer[i>>log] * inner[i&mask]`
-//! - **L2H_unw**: Unweighted L2H — no weight buffer, no weight multiply
-//! - **H2L_unw**: Unweighted H2L — no weight buffer, no weight multiply
+//! Each `generate_msl` call emits exactly one kernel variant (Tensor,
+//! LowToHigh, or HighToLow), determined by `KernelVariant::from_spec`.
 //!
 //! Single-pass reduce kernels accumulate directly into `Fr` values via
 //! `fr_add(fr_acc, fr_reduce(eval))` (unweighted) or
@@ -28,14 +26,14 @@
 use std::fmt::Write;
 use std::sync::Arc;
 
+use jolt_compiler::kernel_spec::Iteration;
 use jolt_compiler::{Factor, Formula, ProductTerm};
+use jolt_compute::BindingOrder;
 use metal::CompileOptions;
 
-use crate::field_config::MslFieldParams;
-use crate::kernel::CachedPipelines;
-use crate::shaders::{
-    build_source_with_preamble, build_source_with_preamble_noinline, make_pipeline,
-};
+use crate::field_params::MslFieldParams;
+use crate::kernel::CompiledPipeline;
+use crate::pipeline::{build_source_with_preamble, make_pipeline};
 
 /// Controls Metal shader compilation strategy.
 #[derive(Clone, Copy, Debug, Default)]
@@ -49,24 +47,32 @@ pub enum CompileMode {
 }
 
 /// Which pair-reading and weight strategy a kernel uses.
-#[derive(Clone, Copy)]
-enum KernelVariant {
-    /// Interleaved pairs: `lo = buf[2i], hi = buf[2i+1]`, single weight buffer.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KernelVariant {
+    /// Interleaved pairs: `lo = buf[2i], hi = buf[2i+1]`, no weight buffer.
     LowToHigh,
-    /// Split-half pairs: `lo = buf[i], hi = buf[i + n_pairs]`, single weight buffer.
+    /// Split-half pairs: `lo = buf[i], hi = buf[i + n_pairs]`, no weight buffer.
     HighToLow,
     /// Interleaved pairs with tensor weight: `w = outer[i>>log] * inner[i&mask]`.
     Tensor,
+    /// Sparse index-based pairs: `lo = buf[pair_index[2i]]`, `hi = buf[pair_index[2i+1]]`.
+    /// Missing entries (sentinel `0xFFFFFFFF`) default to zero.
+    Sparse,
 }
 
 impl KernelVariant {
-    fn function_name(self) -> &'static str {
-        match self {
-            Self::LowToHigh => "reduce_kernel_l2h_unw",
-            Self::HighToLow => "reduce_kernel_h2l_unw",
-            Self::Tensor => "reduce_kernel_tensor",
+    pub fn from_spec(iteration: Iteration, binding_order: BindingOrder) -> Self {
+        match iteration {
+            Iteration::DenseTensor => Self::Tensor,
+            Iteration::Sparse => Self::Sparse,
+            Iteration::Dense => match binding_order {
+                BindingOrder::LowToHigh => Self::LowToHigh,
+                BindingOrder::HighToLow => Self::HighToLow,
+            },
         }
     }
+
+    const FUNCTION_NAME: &'static str = "reduce_kernel";
 }
 
 /// Output of MSL generation — the full source string plus kernel metadata.
@@ -78,185 +84,71 @@ pub struct GeneratedMsl {
     pub has_challenges: bool,
 }
 
-/// Generate the full MSL source for a composition formula.
+/// Generate the MSL source for a single kernel variant of a composition formula.
 ///
-/// This is the deterministic, challenge-independent MSL generation. The
-/// returned source can be hashed to produce a cache key.
+/// Only emits the variant needed for the given `iteration` + `binding_order`,
+/// cutting shader compilation time to ~1/3.
 pub fn generate_msl(
     formula: &Formula,
+    variant: KernelVariant,
     mode: CompileMode,
     field_config: &MslFieldParams,
-    device_config: &crate::metal_device_config::MetalDeviceConfig,
+    device_config: &crate::config::MetalDeviceConfig,
 ) -> GeneratedMsl {
     let num_inputs = formula.num_inputs;
     let degree = formula.degree();
-    let num_evals = degree;
+    let is_weighted = matches!(variant, KernelVariant::Tensor);
+    let is_h2l = matches!(variant, KernelVariant::HighToLow);
+    let n_limbs = field_config.n_limbs;
 
     let mut msl = String::with_capacity(65536);
 
-    // Single-pass path for all shapes.
-    //
-    // `reads_inline`: when true, the eval body contains its own pair
-    // reads (deferred timing) and generate_reduce_kernel skips the
-    // generic read section. Used for D=8 Toom-Cook to reduce peak
-    // register pressure — half B's inputs are read after half A's
-    // lo/hi values are dead.
-    let (eval_body_weighted, eval_body_unweighted, weight_folded, reads_inline) =
+    // Determine eval body, weight-folding, and read strategy for this variant.
+    let is_sparse = matches!(variant, KernelVariant::Sparse);
+    let num_evals = degree;
+    let (eval_body, weight_folded, reads_inline, fuse_accumulate, tg_spill_count, has_challenges) =
         if let Some((d, p)) = formula.as_product_sum() {
-            if d == 8 && p == 1 {
-                // Toom-Cook D=8 with deferred reads: half B's lo/hi
-                // are read after half A is done, saving 64 registers
-                // at peak (lo_4..lo_7, hi_4..hi_7 not yet allocated
-                // while half A intermediates are live).
-                //
-                // tg_spill disabled for BN254: spilling a_1..a_7 to
-                // threadgroup memory (28 KB at gs=128) limits EU
-                // occupancy to 1 threadgroup, costing ~15% throughput.
-                // May help for 128-bit fields where spill is 14 KB.
-                let tg_spill = false;
-                let tg_spill_count = 0;
-                let body_unw_l2h = generate_toom_cook_d8_deferred(p, false, false, tg_spill);
-                let body_unw_h2l = generate_toom_cook_d8_deferred(p, false, true, tg_spill);
-                let body_w_l2h = generate_toom_cook_d8_deferred(p, true, false, tg_spill);
-                let n_limbs = field_config.n_limbs;
-                // Unweighted L2H
-                msl.push_str(&generate_reduce_kernel(
-                    num_inputs,
-                    num_evals,
-                    &body_unw_l2h,
-                    KernelVariant::LowToHigh,
-                    false,
-                    false,
-                    false,
-                    n_limbs,
-                    device_config,
-                    true,
-                    true,
-                    tg_spill_count,
-                ));
-                msl.push('\n');
-                // Unweighted H2L
-                msl.push_str(&generate_reduce_kernel(
-                    num_inputs,
-                    num_evals,
-                    &body_unw_h2l,
-                    KernelVariant::HighToLow,
-                    false,
-                    false,
-                    false,
-                    n_limbs,
-                    device_config,
-                    true,
-                    true,
-                    tg_spill_count,
-                ));
-                msl.push('\n');
-                // Tensor weighted (uses L2H indexing for reads)
-                msl.push_str(&generate_reduce_kernel(
-                    num_inputs,
-                    num_evals,
-                    &body_w_l2h,
-                    KernelVariant::Tensor,
-                    true,
-                    true,
-                    false,
-                    n_limbs,
-                    device_config,
-                    true,
-                    true,
-                    tg_spill_count,
-                ));
-                msl.push('\n');
-
-                let source = if matches!(mode, CompileMode::FastCompile) {
-                    build_source_with_preamble_noinline(&field_config.msl_preamble, &[&msl])
-                } else {
-                    build_source_with_preamble(&field_config.msl_preamble, &[&msl])
-                };
-                return GeneratedMsl {
-                    source,
-                    num_inputs,
-                    num_evals,
-                    has_challenges: false,
-                };
+            // The D=8 deferred path reads pairs inline with hardcoded positional
+            // indexing — incompatible with sparse index-based reads.
+            if d == 8 && p == 1 && !is_sparse {
+                let body = generate_toom_cook_d8_deferred(p, is_weighted, is_h2l, false);
+                (body, is_weighted, true, true, 0, false)
             } else if d == 4 || d == 8 {
-                // Toom-Cook D=4 (or D=8 P>1): weight-folded, generic reads
-                let body_unw = generate_toom_cook_body(d, p);
-                let body_w = generate_toom_cook_body_weighted(d, p);
-                (body_w, body_unw, true, false)
-            } else {
-                let fold = d > 2 * p;
-                let body = generate_product_sum_body(d, p, fold);
-                let body_unw = if fold {
-                    generate_product_sum_body(d, p, false)
+                let body = if is_weighted {
+                    generate_toom_cook_body_weighted(d, p)
                 } else {
-                    body.clone()
+                    generate_toom_cook_body(d, p)
                 };
-                (body, body_unw, fold, false)
+                (body, is_weighted, false, false, 0, false)
+            } else {
+                let fold = is_weighted && d > 2 * p;
+                let body = generate_product_sum_body(d, p, fold);
+                let has_ch = body.contains("challenges[");
+                (body, fold, false, false, 0, has_ch)
             }
-        } else if formula.is_hamming_booleanity() {
-            let body = r"
-        Fr d_eq = fr_sub(hi_0, lo_0);
-        Fr d_h = fr_sub(hi_1, lo_1);
-        evals[0] = fr_mul(fr_mul(lo_0, lo_1), fr_sub(lo_1, fr_one()));
-        Fr eq_val = fr_add(hi_0, d_eq);
-        Fr h_val = fr_add(hi_1, d_h);
-        evals[1] = fr_mul(fr_mul(eq_val, h_val), fr_sub(h_val, fr_one()));
-        eq_val = fr_add(eq_val, d_eq);
-        h_val = fr_add(h_val, d_h);
-        evals[2] = fr_mul(fr_mul(eq_val, h_val), fr_sub(h_val, fr_one()));"
-                .to_string();
-            (body.clone(), body, false, false)
         } else {
-            // Generic formula: generate MSL from the normalized sum-of-products
             let body = generate_formula_body(formula, degree);
-            (body.clone(), body, false, false)
+            let has_ch = body.contains("challenges[");
+            (body, false, false, false, 0, has_ch)
         };
 
-    let has_challenges = eval_body_weighted.contains("challenges[");
-
-    let n_limbs = field_config.n_limbs;
-    // Tensor (weighted — uses outer*inner eq buffers)
     msl.push_str(&generate_reduce_kernel(
         num_inputs,
         num_evals,
-        &eval_body_weighted,
-        KernelVariant::Tensor,
+        &eval_body,
+        variant,
         weight_folded,
-        true,
+        is_weighted,
         has_challenges,
         n_limbs,
         device_config,
         reads_inline,
-        false,
-        0,
+        fuse_accumulate,
+        tg_spill_count,
     ));
-    msl.push('\n');
-    // Unweighted L2H and H2L
-    for variant in [KernelVariant::LowToHigh, KernelVariant::HighToLow] {
-        msl.push_str(&generate_reduce_kernel(
-            num_inputs,
-            num_evals,
-            &eval_body_unweighted,
-            variant,
-            false,
-            false,
-            has_challenges,
-            n_limbs,
-            device_config,
-            reads_inline,
-            false,
-            0,
-        ));
-        msl.push('\n');
-    }
 
     let noinline = matches!(mode, CompileMode::FastCompile);
-    let source = if noinline {
-        build_source_with_preamble_noinline(&field_config.msl_preamble, &[&msl])
-    } else {
-        build_source_with_preamble(&field_config.msl_preamble, &[&msl])
-    };
+    let source = build_source_with_preamble(&field_config.msl_preamble, &[&msl], noinline);
 
     GeneratedMsl {
         source,
@@ -266,25 +158,21 @@ pub fn generate_msl(
     }
 }
 
-/// Compile a generated MSL source into pipeline states.
-///
-/// Creates the three pipeline states: tensor (weighted, outer×inner eq),
-/// l2h_unw (unweighted interleaved), and h2l_unw (unweighted split-half).
-pub(crate) fn compile_msl(device: &metal::Device, msl: &GeneratedMsl) -> Arc<CachedPipelines> {
+/// Compile a generated MSL source into a single pipeline state.
+pub(crate) fn compile_msl(device: &metal::Device, msl: &GeneratedMsl) -> Arc<CompiledPipeline> {
     let options = CompileOptions::new();
     let library = device
         .new_library_with_source(&msl.source, &options)
         .unwrap_or_else(|e| panic!("reduce kernel MSL compilation failed: {e}"));
 
-    Arc::new(CachedPipelines {
-        pipeline_tensor: make_pipeline(device, &library, "reduce_kernel_tensor"),
-        pipeline_l2h_unw: make_pipeline(device, &library, "reduce_kernel_l2h_unw"),
-        pipeline_h2l_unw: make_pipeline(device, &library, "reduce_kernel_h2l_unw"),
+    Arc::new(CompiledPipeline {
+        pipeline: make_pipeline(device, &library, KernelVariant::FUNCTION_NAME),
         num_evals: msl.num_evals,
         num_inputs: msl.num_inputs,
         has_challenges: msl.has_challenges,
     })
 }
+
 
 /// Generate a reduce kernel for a specific pair-reading variant.
 ///
@@ -320,14 +208,14 @@ fn generate_reduce_kernel(
     weighted: bool,
     has_challenges: bool,
     n_limbs: usize,
-    device_config: &crate::metal_device_config::MetalDeviceConfig,
+    device_config: &crate::config::MetalDeviceConfig,
     reads_inline: bool,
     fuse_accumulate: bool,
     tg_spill_count: usize,
 ) -> String {
     let gs = device_config.reduce_group_size;
     let num_simdgroups = device_config.num_simdgroups();
-    let fname = variant.function_name();
+    let fname = KernelVariant::FUNCTION_NAME;
     let is_tensor = matches!(variant, KernelVariant::Tensor);
 
     // All single-pass kernels use Fr accumulators (no WideAcc).
@@ -344,8 +232,15 @@ fn generate_reduce_kernel(
         let _ = writeln!(s, "    device const Fr* input_{k} [[buffer({k})]],");
     }
 
+    let is_sparse = matches!(variant, KernelVariant::Sparse);
     let mut next_buf = num_inputs;
-    if weighted {
+    if is_sparse {
+        let _ = writeln!(
+            s,
+            "    device const uint* pair_index [[buffer({next_buf})]],",
+        );
+        next_buf += 1;
+    } else if weighted {
         if is_tensor {
             let _ = writeln!(
                 s,
@@ -416,7 +311,21 @@ fn generate_reduce_kernel(
     // compiler can track per-element register lifetimes independently.
     // When reads_inline, the body handles its own reads with deferred timing.
     if !reads_inline {
-        if matches!(variant, KernelVariant::HighToLow) {
+        if is_sparse {
+            // Read pair indices, then load values with sentinel check.
+            let _ = writeln!(s, "        uint _lo_i = pair_index[2u * i];");
+            let _ = writeln!(s, "        uint _hi_i = pair_index[2u * i + 1u];");
+            for k in 0..num_inputs {
+                let _ = writeln!(
+                    s,
+                    "        Fr lo_{k} = (_lo_i != 0xFFFFFFFFu) ? input_{k}[_lo_i] : fr_zero();"
+                );
+                let _ = writeln!(
+                    s,
+                    "        Fr hi_{k} = (_hi_i != 0xFFFFFFFFu) ? input_{k}[_hi_i] : fr_zero();"
+                );
+            }
+        } else if matches!(variant, KernelVariant::HighToLow) {
             for k in 0..num_inputs {
                 let _ = writeln!(
                     s,
@@ -1107,17 +1016,15 @@ fn emit_product_sum(s: &mut String, d: usize, p: usize, arr: &str, eval_idx: usi
 /// Generate MSL evaluation body from a [`Formula`].
 ///
 /// Uses incremental interpolation: maintains `cur_k` starting at `lo[k]` and
-/// adding `diff_k` for each successive grid point. Grid is `{0, 1, 2, ..., degree}`.
-///
-/// At each grid point, evaluates `Σ_term coeff × Π_factor factor_val` where
-/// input factors map to `cur_k` and challenge factors to `challenges[id]`.
+/// adding `diff_k` for each successive grid point. Grid is `{0, 1, ..., degree-1}`,
+/// matching `KernelSpec.num_evals = degree`.
 ///
 /// Challenge values are read from a `device const Fr* challenges` buffer at
 /// runtime rather than baked as MSL constants. This makes the kernel shape
 /// deterministic at compile time, enabling AOT pipeline caching.
 fn generate_formula_body(formula: &Formula, degree: usize) -> String {
     let num_inputs = formula.num_inputs;
-    let num_evals = degree + 1;
+    let num_evals = degree;
     let mut s = String::with_capacity(2048);
 
     // Precompute diffs
@@ -1131,6 +1038,7 @@ fn generate_formula_body(formula: &Formula, degree: usize) -> String {
     }
     s.push('\n');
 
+    // Grid {0, 1, ..., degree-1}: matches KernelSpec.num_evals = degree.
     let grid: Vec<usize> = (0..num_evals).collect();
 
     let mut prev_t = 0usize;

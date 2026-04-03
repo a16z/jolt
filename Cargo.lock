@@ -2786,11 +2786,8 @@ dependencies = [
  "jolt-field",
  "jolt-host",
  "jolt-openings",
- "jolt-poly",
- "jolt-r1cs",
  "jolt-transcript",
  "jolt-verifier",
- "jolt-witness",
  "jolt-zkvm",
  "postcard",
 ]
@@ -3060,6 +3057,7 @@ dependencies = [
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
+ "serde",
 ]
 
 [[package]]
@@ -3126,6 +3124,7 @@ dependencies = [
  "jolt-field",
  "jolt-openings",
  "jolt-poly",
+ "jolt-r1cs",
  "jolt-sumcheck",
  "jolt-transcript",
  "num-traits",

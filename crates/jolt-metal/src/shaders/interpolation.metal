@@ -30,6 +30,25 @@ kernel void fr_interpolate_inplace_high_kernel(
     buf[tid] = fr_add(lo, fr_mul(s, fr_sub(hi, lo)));
 }
 
+// Sparse bind: interpolate paired entries via an index buffer.
+// pair_index[2*tid] = lo index, pair_index[2*tid+1] = hi index.
+// Sentinel 0xFFFFFFFF means the entry is absent (defaults to zero).
+// Dispatched with n_pairs threads.
+kernel void fr_sparse_bind_kernel(
+    device const Fr*   input      [[buffer(0)]],
+    device Fr*         output     [[buffer(1)]],
+    device const uint* pair_index [[buffer(2)]],
+    device const Fr*   scalar     [[buffer(3)]],
+    uint tid                      [[thread_position_in_grid]]
+) {
+    uint lo_i = pair_index[2 * tid];
+    uint hi_i = pair_index[2 * tid + 1];
+    Fr lo = (lo_i != 0xFFFFFFFFu) ? input[lo_i] : fr_zero();
+    Fr hi = (hi_i != 0xFFFFFFFFu) ? input[hi_i] : fr_zero();
+    Fr s = scalar[0];
+    output[tid] = fr_add(lo, fr_mul(s, fr_sub(hi, lo)));
+}
+
 // Eq table round (split-half): table[j+prev_len] = table[j] * r,
 // table[j] = table[j] - table[j+prev_len] (= table[j] * (1-r)).
 // Uses one fr_mul + one fr_sub instead of two fr_mul.

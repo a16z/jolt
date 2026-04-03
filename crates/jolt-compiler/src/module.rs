@@ -282,6 +282,32 @@ pub enum Op<P: PolyId = usize> {
         challenge: usize,
         order: BindingOrder,
     },
+    /// Project polynomial buffers by evaluating Lagrange basis at a challenge,
+    /// collapsing the constraint dimension after a univariate skip round.
+    ///
+    /// Transforms each buffer from `num_cycles × stride` entries to
+    /// `num_cycles × num_groups` entries:
+    ///
+    /// ```text
+    /// result[c * G + g] = scale · Σ_{k=0}^{D-1} L_k(r) · buf[c * stride + offsets[g] + k]
+    /// ```
+    ///
+    /// where `D` = `domain_size`, `G` = `group_offsets.len()`,
+    /// `L_k` are Lagrange basis polynomials over the symmetric domain
+    /// `{domain_start, …, domain_start + D - 1}`, `r = challenges[challenge]`,
+    /// and `scale = L_kernel(challenges[kernel_tau], r)` if `kernel_tau` is set (1 otherwise).
+    LagrangeProject {
+        polys: Vec<P>,
+        challenge: usize,
+        domain_size: usize,
+        domain_start: i64,
+        stride: usize,
+        group_offsets: Vec<usize>,
+        /// When set, all projected values are multiplied by the Lagrange kernel
+        /// `L(challenges[kernel_tau], challenges[challenge])` over the projection domain.
+        /// This folds the uniskip kernel factor into the projected buffers.
+        kernel_tau: Option<usize>,
+    },
 
     // ── PCS (dispatched to CommitmentScheme trait) ──
     /// Commit polynomials, absorb commitments into transcript,
@@ -341,7 +367,10 @@ impl<P: PolyId> Op<P> {
     pub fn is_compute(&self) -> bool {
         matches!(
             self,
-            Op::SumcheckRound { .. } | Op::Evaluate { .. } | Op::Bind { .. }
+            Op::SumcheckRound { .. }
+                | Op::Evaluate { .. }
+                | Op::Bind { .. }
+                | Op::LagrangeProject { .. }
         )
     }
 
@@ -388,6 +417,23 @@ impl<Q: PolyId> Op<Q> {
                 polys: polys.into_iter().map(&f).collect(),
                 challenge,
                 order,
+            },
+            Op::LagrangeProject {
+                polys,
+                challenge,
+                domain_size,
+                domain_start,
+                stride,
+                group_offsets,
+                kernel_tau,
+            } => Op::LagrangeProject {
+                polys: polys.into_iter().map(&f).collect(),
+                challenge,
+                domain_size,
+                domain_start,
+                stride,
+                group_offsets,
+                kernel_tau,
             },
             Op::Commit { polys, tag } => Op::Commit {
                 polys: polys.into_iter().map(&f).collect(),
@@ -677,6 +723,9 @@ pub enum ClaimFactor<P: PolyId = usize> {
     Eval(P),
     /// Value of challenge `challenges[i]`.
     Challenge(usize),
+    /// Single-variable eq between two challenge values:
+    /// `eq(challenges[a], challenges[b]) = a*b + (1-a)(1-b)`.
+    EqChallengePair { a: usize, b: usize },
     /// Multilinear eq polynomial evaluated at two points:
     /// `eq(r, s) = ∏ᵢ (rᵢ·sᵢ + (1−rᵢ)(1−sᵢ))`
     /// where `r` is formed from challenges at the given indices and
@@ -760,6 +809,7 @@ impl<Q: PolyId> ClaimFactor<Q> {
         match self {
             ClaimFactor::Eval(poly) => ClaimFactor::Eval(f(poly)),
             ClaimFactor::Challenge(i) => ClaimFactor::Challenge(i),
+            ClaimFactor::EqChallengePair { a, b } => ClaimFactor::EqChallengePair { a, b },
             ClaimFactor::EqEval {
                 challenges,
                 at_stage,

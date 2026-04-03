@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 jolt-compiler = { path = "../jolt-compiler" }
 jolt-field = { path = "../jolt-field" }
+jolt-r1cs = { path = "../jolt-r1cs" }
 jolt-transcript = { path = "../jolt-transcript" }
 jolt-crypto = { path = "../jolt-crypto" }
 jolt-poly = { path = "../jolt-poly" }

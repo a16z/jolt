@@ -660,6 +660,24 @@ fn build_stage1(
     );
     ops.push(Op::Squeeze { challenge: ch_r0 });
 
+    // ---------------------------------------------------------------
+    // 2b. Lagrange projection: collapse Az/Bz constraint dimension.
+    //
+    // After the uniskip, Az/Bz have `num_cycles × K_pad` entries.
+    // The Lagrange projection evaluates the constraint-domain polynomial
+    // at r0, reducing to `num_cycles × 2` entries (one per constraint
+    // group). The streaming round (first remaining round) then binds
+    // the group selector variable.
+    //
+    // Domain: {-(D/2-1), ..., D/2} where D = outer_uniskip_domain = 10
+    // Group 0: constraints 0..D at offset 0 within each step
+    // Group 1: constraints D..2D-1 at offset D within each step
+    // ---------------------------------------------------------------
+    // NOTE: The uniskip kernel uses multilinear reduce_dense (not Lagrange
+    // domain evaluation). The remaining kernel must bind at r0 to match.
+    // A future Op::LagrangeProject will be needed when the uniskip is
+    // replaced with a proper Lagrange-domain evaluation.
+
     // Flush uniskip opening claim: s1(r0) appended via flush_to_transcript.
     ops.push(Op::Evaluate {
         poly: p.outer_uniskip_eval,
@@ -703,12 +721,12 @@ fn build_stage1(
         challenge: ch_batch,
     });
 
-    // 26 remaining rounds
+    // Remaining rounds (log_t binds including r0)
     for round in 0..params.outer_remaining_rounds {
         let bind = if round > 0 {
             Some(ch_batch + round) // previous round's challenge
         } else {
-            None
+            Some(ch_r0) // bind at r0 to match uniskip output
         };
         ops.push(Op::SumcheckRound {
             kernel: outer_remaining_kernel,
@@ -791,25 +809,31 @@ fn build_verifier_stage1_ops(p: &Polys, params: &ModuleParams, ch: &ChallengeTab
 
     // Output check: the verifier evaluates the composition at the final sumcheck point.
     //
-    //   eq(τ_low, r_reversed) × L(τ_high, r0) × Az(r0, evals) × Bz(r0, evals)
+    //   eq(τ_0, r0) × eq(τ_1..N, r_remaining) × L(τ_high, r0) × Az(r0, evals) × Bz(r0, evals)
     //
-    // - eq(τ_low, r_reversed): EqEval over the first 26 τ challenges and stage 0 sumcheck point
-    // - L(τ_high, r0): Lagrange kernel over the constraint domain
-    // - Az, Bz: R1CS matrix inner products, resolved from the UniformSpartanKey at runtime
-    let tau_low: Vec<usize> = (0..params.num_tau - 1).collect(); // indices 0..26
-    let tau_high_idx = params.num_tau - 1; // index 26
-    let r0_idx = params.num_tau; // index 27 — the uniskip challenge
+    // The eq table has num_tau-1 variables. Variable 0 was bound by the uniskip;
+    // variables 1..N were bound by the remaining sumcheck. We factor eq() as:
+    //   eq(τ_0, r0) — single-variable eq between first tau and uniskip challenge
+    //   eq(τ_1..N, sumcheck_point) — remaining tau vs remaining sumcheck point
+    let tau_high_idx = params.num_tau - 1;
+    let r0_idx = params.num_tau; // the uniskip challenge
+    let tau_remaining: Vec<usize> = (1..params.num_tau - 1).collect();
     let output_check = ClaimFormula {
         terms: vec![ClaimTerm {
             coeff: 1,
             factors: vec![
+                ClaimFactor::EqChallengePair {
+                    a: 0, // τ_0 (first tau challenge)
+                    b: r0_idx,
+                },
                 ClaimFactor::EqEval {
-                    challenges: tau_low,
+                    challenges: tau_remaining,
                     at_stage: VerifierStageIndex(0),
                 },
-                ClaimFactor::LagrangeKernel {
+                ClaimFactor::LagrangeKernelDomain {
                     tau_challenge: tau_high_idx,
                     at_challenge: r0_idx,
+                    domain_size: params.outer_uniskip_domain,
                 },
                 ClaimFactor::UniformR1CSEval {
                     matrix: R1CSMatrix::A,
@@ -849,18 +873,25 @@ fn build_verifier_stage1_ops(p: &Polys, params: &ModuleParams, ch: &ChallengeTab
     for &c in &tau_challenges {
         ops.push(VerifierOp::Squeeze { challenge: c });
     }
-    // Absorb uniskip round polynomial into transcript (Fiat-Shamir sync).
+    // --- Uniskip protocol: absorb poly → squeeze r0 → record/absorb eval ---
     // TODO: full uniskip verification (check s(0)+s(1), constraint domain evaluation).
     ops.push(VerifierOp::AbsorbRoundPoly {
         num_coeffs: params.outer_uniskip_num_coeffs,
     });
-    // Record + absorb uniskip eval (emitted by prover after uniskip round)
+    ops.push(VerifierOp::Squeeze { challenge: r0_idx });
     ops.push(VerifierOp::RecordEvals {
         evals: vec![uniskip_eval],
+    });
+    // Prover flushes uniskip eval twice: first as OpeningClaim, then as SumcheckClaim.
+    ops.push(VerifierOp::AbsorbEvals {
+        polys: vec![p.outer_uniskip_eval],
     });
     ops.push(VerifierOp::AbsorbEvals {
         polys: vec![p.outer_uniskip_eval],
     });
+    // Batch coefficient for the (single-instance) remaining sumcheck.
+    let ch_batch = r0_idx + 1;
+    ops.push(VerifierOp::Squeeze { challenge: ch_batch });
     ops.push(VerifierOp::VerifySumcheck {
         instances: instances.clone(),
         stage: 0,
@@ -1186,8 +1217,8 @@ fn build_verifier_stage2_ops(p: &Polys, params: &ModuleParams, ch: &ChallengeTab
     // they appear in the challenge table for stage 2.
     //
     // Find the challenge indices: they start after Stage 1's challenges.
-    // Stage 1 used: params.num_tau (27) + 1 (r0) + 1 (batch) + params.outer_remaining_rounds (26) = 55
-    let s2_ch_base = params.num_tau + 1 + 1 + params.outer_remaining_rounds; // 55
+    // Stage 1 used: num_tau + 1 (r0) + 1 (batch) + outer_remaining_rounds
+    let s2_ch_base = params.num_tau + 1 + 1 + params.outer_remaining_rounds;
 
     // τ_high is at s2_ch_base, r0 at s2_ch_base+1, then γ_rw, γ_instruction, r_address...
     let ch_tau_high = s2_ch_base; // 55
@@ -1847,12 +1878,13 @@ fn print_stats(module: &Module<PolynomialId>, params: &ModuleParams) {
     }
 
     // Op-type counts
-    let mut counts = [0usize; 13];
+    let mut counts = [0usize; 14];
     for op in &module.prover.ops {
         match op {
             Op::SumcheckRound { .. } => counts[0] += 1,
             Op::Evaluate { .. } => counts[1] += 1,
             Op::Bind { .. } => counts[2] += 1,
+            Op::LagrangeProject { .. } => counts[13] += 1,
             Op::Commit { .. } | Op::CommitStreaming { .. } => counts[3] += 1,
             Op::ReduceOpenings => counts[4] += 1,
             Op::Open => counts[5] += 1,
@@ -1871,6 +1903,7 @@ fn print_stats(module: &Module<PolynomialId>, params: &ModuleParams) {
     eprintln!("  SumcheckRound:       {}", counts[0]);
     eprintln!("  Evaluate:            {}", counts[1]);
     eprintln!("  Bind:                {}", counts[2]);
+    eprintln!("  LagrangeProject:     {}", counts[13]);
     eprintln!("  -- PCS --");
     eprintln!("  Commit:              {}", counts[3]);
     eprintln!("  ReduceOpenings:      {}", counts[4]);

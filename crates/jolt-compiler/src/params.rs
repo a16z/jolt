@@ -60,6 +60,11 @@ pub struct ModuleParams {
     pub outer_remaining_degree: usize,
     pub outer_remaining_rounds: usize,
     pub num_tau: usize,
+    /// Padded constraint count (next power of two of total R1CS constraints).
+    /// This is the stride between cycles in Az/Bz buffers.
+    pub num_constraints_padded: usize,
+    /// Number of constraints in the first constraint group (= domain size).
+    pub num_constraints_first_group: usize,
 
     // -- Product virtual --
     pub product_uniskip_degree: usize,
@@ -108,8 +113,13 @@ impl ModuleParams {
         let outer_uniskip_num_coeffs = 3 * outer_uniskip_degree + 1;
         let outer_uniskip_poly_degree = outer_uniskip_num_coeffs - 1;
         let outer_remaining_degree = 3;
-        let outer_remaining_rounds = 1 + log_t;
+        // Uniskip consumed 1 variable of the eq table (num_tau - 1 total);
+        // remaining rounds = num_tau - 1 - 1 = log_t.
+        let outer_remaining_rounds = log_t;
         let num_tau = log_t + 2;
+        let num_constraints_padded = NUM_R1CS_CONSTRAINTS.next_power_of_two();
+        // Constraints split into two groups: first group = domain_size, second = remainder.
+        let num_constraints_first_group = outer_uniskip_domain;
 
         // Product virtual
         let product_uniskip_degree = NUM_PRODUCT_CONSTRAINTS - 1;
@@ -148,6 +158,8 @@ impl ModuleParams {
             outer_remaining_degree,
             outer_remaining_rounds,
             num_tau,
+            num_constraints_padded,
+            num_constraints_first_group,
             product_uniskip_degree,
             product_uniskip_domain,
             product_uniskip_num_coeffs,

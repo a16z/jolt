@@ -8,8 +8,8 @@
 mod test_field128;
 
 use jolt_metal::field::MetalFieldElement;
-use jolt_metal::field_config::MslFieldParams;
-use jolt_metal::shaders::{build_source_with_preamble, make_pipeline};
+use jolt_metal::field_params::MslFieldParams;
+use jolt_metal::pipeline::{build_source_with_preamble, make_pipeline};
 use metal::{ComputePipelineState, Device, MTLResourceOptions, MTLSize};
 use std::ffi::c_void;
 use test_field128::{F128Config, F128};
@@ -40,6 +40,7 @@ impl F128Kernels {
         let source = build_source_with_preamble(
             &field_config.msl_preamble,
             &[&field_config.msl_test_kernels],
+            false,
         );
         let options = metal::CompileOptions::new();
         let library = device

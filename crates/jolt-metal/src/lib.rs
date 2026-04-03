@@ -3,18 +3,16 @@
 #![allow(clippy::missing_safety_doc, dead_code)]
 
 mod buffer;
-pub mod compiler;
-pub mod coop_field_gen;
-mod device;
+pub mod config;
 pub mod field;
-pub mod field_config;
+pub mod field_params;
 mod kernel;
-pub mod metal_device_config;
-pub mod msl_field_gen;
-mod reduction;
-pub mod shaders;
+pub mod msl_field;
+pub mod msl_reduce;
+pub mod pipeline;
 
+mod backend;
+pub use backend::MetalBackend;
 pub use buffer::MetalBuffer;
-pub use compiler::CompileMode;
-pub use device::MetalBackend;
-pub use kernel::{MetalKernel, PipelineOccupancy};
+pub use kernel::MetalKernel;
+pub use msl_reduce::CompileMode;

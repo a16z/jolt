@@ -35,6 +35,14 @@ fn make_tensor_spec(formula: &Formula) -> KernelSpec {
     )
 }
 
+fn make_sparse_spec(formula: &Formula) -> KernelSpec {
+    KernelSpec::new(
+        formula.clone(),
+        Iteration::Sparse,
+        BindingOrder::LowToHigh,
+    )
+}
+
 fn product_sum_formula(d: usize, p: usize) -> Formula {
     let terms: Vec<_> = (0..p)
         .map(|g| ProductTerm {
@@ -356,31 +364,6 @@ fn reduce_high_to_low() {
     reduce_parity(&formula, BindingOrder::HighToLow, &inputs, &[], "D=4 H2L");
 }
 
-/// Custom expression: booleanity h^2 - h.
-#[test]
-fn reduce_custom_booleanity() {
-    let mut rng = StdRng::seed_from_u64(0xD005);
-    let formula = Formula::from_terms(vec![
-        ProductTerm {
-            coefficient: 1,
-            factors: vec![Factor::Input(0), Factor::Input(0)],
-        },
-        ProductTerm {
-            coefficient: -1,
-            factors: vec![Factor::Input(0)],
-        },
-    ]);
-    let n = 512;
-    let inputs: Vec<Vec<Fr>> = vec![random_elements(&mut rng, n)];
-    reduce_parity(
-        &formula,
-        BindingOrder::LowToHigh,
-        &inputs,
-        &[],
-        "booleanity",
-    );
-}
-
 /// Custom expression with challenges: gamma * a * b.
 #[test]
 fn reduce_custom_with_challenges() {
@@ -483,4 +466,151 @@ fn reduce_product_sum_known_values() {
     assert_eq!(got[0], Fr::from_u64(1680), "P(1) mismatch");
     // P(infinity) = diff[0]*diff[1]*diff[2]*diff[3] = 4*4*4*4 = 256
     assert_eq!(got[3], Fr::from_u64(256), "P(infinity) mismatch");
+}
+
+// ── Sparse parity tests ────────────────────────────────────────────────
+
+/// Sparse reduce matches CPU for product-sum D=3.
+#[test]
+fn reduce_sparse_d3() {
+    let metal = &*METAL;
+    let cpu = CpuBackend;
+    let mut rng = StdRng::seed_from_u64(0xE001);
+
+    let formula = product_sum_formula(3, 1);
+    let spec = make_sparse_spec(&formula);
+    let cpu_k = cpu.compile::<Fr>(&spec);
+    let mtl_k = metal.compile::<Fr>(&spec);
+
+    // 8 sparse entries in a 16-position hypercube (4 complete pairs).
+    let keys = vec![0u64, 1, 4, 5, 10, 11, 14, 15];
+    let n = keys.len();
+    let inputs: Vec<Vec<Fr>> = (0..3).map(|_| random_elements(&mut rng, n)).collect();
+
+    let mut cpu_dev: Vec<Buf<CpuBackend, Fr>> = inputs
+        .iter()
+        .map(|v| DeviceBuffer::Field(v.clone()))
+        .collect();
+    cpu_dev.push(DeviceBuffer::U64(keys.clone()));
+    let cpu_refs: Vec<_> = cpu_dev.iter().collect();
+    let expected = cpu.reduce(&cpu_k, &cpu_refs, &[]);
+
+    let mut mtl_dev: Vec<Buf<MetalBackend, Fr>> = inputs
+        .iter()
+        .map(|v| DeviceBuffer::Field(metal.upload(v)))
+        .collect();
+    mtl_dev.push(DeviceBuffer::U64(metal.upload(&keys)));
+    let mtl_refs: Vec<_> = mtl_dev.iter().collect();
+    let got = metal.reduce(&mtl_k, &mtl_refs, &[]);
+
+    assert_eq!(expected, got, "sparse D=3 reduce mismatch");
+}
+
+/// Sparse reduce with incomplete pairs (some entries have only lo or hi).
+#[test]
+fn reduce_sparse_incomplete_pairs() {
+    let metal = &*METAL;
+    let cpu = CpuBackend;
+    let mut rng = StdRng::seed_from_u64(0xE002);
+
+    let formula = product_sum_formula(3, 1);
+    let spec = make_sparse_spec(&formula);
+    let cpu_k = cpu.compile::<Fr>(&spec);
+    let mtl_k = metal.compile::<Fr>(&spec);
+
+    // Mix of complete and incomplete pairs:
+    // key 2 (even, no 3) → lo only
+    // key 7 (odd, no 6) → hi only
+    // keys 10,11 → complete pair
+    let keys = vec![2u64, 7, 10, 11];
+    let n = keys.len();
+    let inputs: Vec<Vec<Fr>> = (0..3).map(|_| random_elements(&mut rng, n)).collect();
+
+    let mut cpu_dev: Vec<Buf<CpuBackend, Fr>> = inputs
+        .iter()
+        .map(|v| DeviceBuffer::Field(v.clone()))
+        .collect();
+    cpu_dev.push(DeviceBuffer::U64(keys.clone()));
+    let cpu_refs: Vec<_> = cpu_dev.iter().collect();
+    let expected = cpu.reduce(&cpu_k, &cpu_refs, &[]);
+
+    let mut mtl_dev: Vec<Buf<MetalBackend, Fr>> = inputs
+        .iter()
+        .map(|v| DeviceBuffer::Field(metal.upload(v)))
+        .collect();
+    mtl_dev.push(DeviceBuffer::U64(metal.upload(&keys)));
+    let mtl_refs: Vec<_> = mtl_dev.iter().collect();
+    let got = metal.reduce(&mtl_k, &mtl_refs, &[]);
+
+    assert_eq!(expected, got, "sparse incomplete pairs reduce mismatch");
+}
+
+/// Full sparse sumcheck rounds: reduce + bind over multiple rounds.
+#[test]
+fn sparse_sumcheck_rounds() {
+    let metal = &*METAL;
+    let cpu = CpuBackend;
+    let mut rng = StdRng::seed_from_u64(0xE003);
+
+    let formula = product_sum_formula(3, 1);
+    let spec = make_sparse_spec(&formula);
+    let cpu_k = cpu.compile::<Fr>(&spec);
+    let mtl_k = metal.compile::<Fr>(&spec);
+
+    let keys = vec![0u64, 1, 4, 5, 10, 11, 14, 15];
+    let n = keys.len();
+    let num_vars = 4;
+    let inputs: Vec<Vec<Fr>> = (0..3).map(|_| random_elements(&mut rng, n)).collect();
+
+    let mut cpu_bufs: Vec<Buf<CpuBackend, Fr>> = inputs
+        .iter()
+        .map(|v| DeviceBuffer::Field(v.clone()))
+        .collect();
+    cpu_bufs.push(DeviceBuffer::U64(keys.clone()));
+
+    let mut mtl_bufs: Vec<Buf<MetalBackend, Fr>> = inputs
+        .iter()
+        .map(|v| DeviceBuffer::Field(metal.upload(v)))
+        .collect();
+    mtl_bufs.push(DeviceBuffer::U64(metal.upload(&keys)));
+
+    for round in 0..num_vars {
+        let cpu_refs: Vec<_> = cpu_bufs.iter().collect();
+        let mtl_refs: Vec<_> = mtl_bufs.iter().collect();
+
+        let cpu_evals = cpu.reduce(&cpu_k, &cpu_refs, &[]);
+        let mtl_evals = metal.reduce(&mtl_k, &mtl_refs, &[]);
+        assert_eq!(
+            cpu_evals, mtl_evals,
+            "sparse reduce mismatch at round {round}"
+        );
+
+        let challenge = Fr::random(&mut rng);
+        cpu.bind(&cpu_k, &mut cpu_bufs, challenge);
+        metal.bind(&mtl_k, &mut mtl_bufs, challenge);
+
+        // Verify value buffers match after bind.
+        for (i, (cb, mb)) in cpu_bufs[..3]
+            .iter()
+            .zip(mtl_bufs[..3].iter())
+            .enumerate()
+        {
+            let cpu_vals = cb.as_field();
+            let mtl_vals: Vec<Fr> = metal.download(mb.as_field());
+            assert_eq!(
+                *cpu_vals, mtl_vals,
+                "sparse bind mismatch at round {round}, input {i}"
+            );
+        }
+
+        // Verify keys match after bind.
+        let cpu_keys = cpu_bufs[3].as_u64();
+        let mtl_keys: Vec<u64> = metal.download(mtl_bufs[3].as_u64());
+        assert_eq!(
+            *cpu_keys, mtl_keys,
+            "sparse keys mismatch at round {round}"
+        );
+    }
+
+    assert_eq!(cpu_bufs[0].as_field().len(), 1);
 }

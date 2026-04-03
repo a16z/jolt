@@ -206,6 +206,66 @@ where
                 }
             }
 
+            Op::LagrangeProject {
+                polys,
+                challenge,
+                domain_size,
+                domain_start,
+                stride,
+                group_offsets,
+                kernel_tau,
+            } => {
+                let r = state.challenges[*challenge];
+                let basis = jolt_poly::lagrange::lagrange_evals(*domain_start, *domain_size, r);
+                let num_groups = group_offsets.len();
+
+                // Lagrange kernel scale: L(τ, r) = Σ_k L_k(τ) · L_k(r)
+                let scale = if let Some(tau_idx) = kernel_tau {
+                    let tau = state.challenges[*tau_idx];
+                    let tau_basis =
+                        jolt_poly::lagrange::lagrange_evals(*domain_start, *domain_size, tau);
+                    basis
+                        .iter()
+                        .zip(tau_basis.iter())
+                        .map(|(&lk_r, &lk_tau)| lk_r * lk_tau)
+                        .sum::<F>()
+                } else {
+                    F::one()
+                };
+
+                for pi in polys {
+                    let buf = device_buffers
+                        .remove(pi)
+                        .expect("LagrangeProject: buffer missing");
+                    let data = backend.download(buf.as_field());
+                    let num_cycles = data.len() / stride;
+
+                    let mut projected = vec![F::zero(); num_cycles * num_groups];
+                    for c in 0..num_cycles {
+                        for (g, &offset) in group_offsets.iter().enumerate() {
+                            let mut acc = F::zero();
+                            for (k, &lk) in basis.iter().enumerate() {
+                                let idx = c * stride + offset + k;
+                                if idx < data.len() {
+                                    acc += lk * data[idx];
+                                }
+                            }
+                            projected[c * num_groups + g] = acc;
+                        }
+                    }
+
+                    // Apply kernel scale to first poly only (avoids squaring the factor).
+                    if *pi == polys[0] {
+                        for v in &mut projected {
+                            *v *= scale;
+                        }
+                    }
+
+                    let new_buf = backend.upload(&projected);
+                    let _ = device_buffers.insert(*pi, DeviceBuffer::Field(new_buf));
+                }
+            }
+
             // ── PCS ──
             Op::Commit { polys, .. } | Op::CommitStreaming { polys, .. } => {
                 for pi in polys {

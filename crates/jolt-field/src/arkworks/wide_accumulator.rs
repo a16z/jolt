@@ -43,6 +43,30 @@ impl FieldAccumulator for WideAccumulator {
         self.limbs.fmadd::<4, 4>(&a.inner_limbs(), &b.inner_limbs());
     }
 
+    /// Accumulate `val` with unit weight, avoiding the 4×4 schoolbook multiply.
+    ///
+    /// Instead of `fmadd(one_mont, val_mont)` (which multiplies by R mod p),
+    /// we add `val_mont << 256` (= val_mont × R) directly to the accumulator.
+    /// After final Montgomery reduction (÷R), this contributes exactly `val`.
+    ///
+    /// Cost: 4 u64 additions with carry propagation vs 16 u64 multiplications.
+    #[inline(always)]
+    fn acc_add(&mut self, val: Fr) {
+        let val_limbs = val.inner_limbs();
+        // Add val_limbs[0..4] into self.limbs[4..8] with carry into limb 8.
+        let mut carry = 0u64;
+        for i in 0..4 {
+            let sum = (self.limbs.0[4 + i] as u128) + (val_limbs.0[i] as u128) + (carry as u128);
+            self.limbs.0[4 + i] = sum as u64;
+            carry = (sum >> 64) as u64;
+        }
+        // Propagate final carry into limb 8.
+        if carry != 0 {
+            let sum = (self.limbs.0[8] as u128) + (carry as u128);
+            self.limbs.0[8] = sum as u64;
+        }
+    }
+
     #[inline(always)]
     fn merge(&mut self, other: Self) {
         self.limbs.add_assign_trunc::<9>(&other.limbs);

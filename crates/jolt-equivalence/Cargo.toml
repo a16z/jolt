@@ -21,10 +21,7 @@ jolt-transcript = { path = "../jolt-transcript" }
 jolt-compiler = { path = "../jolt-compiler" }
 jolt-compute = { path = "../jolt-compute" }
 jolt-cpu = { path = "../jolt-cpu" }
-jolt-witness = { path = "../jolt-witness" }
 jolt-host = { path = "../jolt-host" }
-jolt-r1cs = { path = "../jolt-r1cs" }
-jolt-zkvm = { path = "../jolt-zkvm" }
-jolt-verifier = { path = "../jolt-verifier" }
 jolt-openings = { path = "../jolt-openings", features = ["test-utils"] }
-jolt-poly = { path = "../jolt-poly" }
+jolt-verifier = { path = "../jolt-verifier" }
+jolt-zkvm = { path = "../jolt-zkvm" }

@@ -6,12 +6,15 @@
 
 use std::collections::HashMap;
 
-use jolt_compiler::module::{ClaimFactor, ClaimFormula, PointNormalization, VerifierOp};
+use jolt_compiler::module::{
+    ClaimFactor, ClaimFormula, PointNormalization, R1CSMatrix, VerifierOp,
+};
 use jolt_compiler::PolyId;
 use jolt_field::Field;
 use jolt_openings::{
     AdditivelyHomomorphic, OpeningReduction, OpeningsError, RlcReduction, VerifierClaim,
 };
+use jolt_r1cs::R1csKey;
 use jolt_sumcheck::{ClearRoundVerifier, SumcheckClaim, SumcheckVerifier};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 
@@ -130,6 +133,7 @@ where
                         &challenges,
                         &sumcheck_points,
                         None,
+                        &key.r1cs_key,
                     )?;
                     combined_claim += val * F::from_u64(1u64 << (max_rounds - inst.num_rounds));
                 }
@@ -145,7 +149,7 @@ where
                     &claim,
                     round_polys,
                     &mut transcript,
-                    &jolt_sumcheck::ClearRoundVerifier,
+                    &ClearRoundVerifier,
                 )
                 .map_err(JoltError::Sumcheck)?;
                 round_poly_cursor += max_rounds;
@@ -194,6 +198,7 @@ where
                         &challenges,
                         &sumcheck_points,
                         Some((*stage, &normalized)),
+                        &key.r1cs_key,
                     )?;
                     combined_output += output;
                 }
@@ -292,6 +297,7 @@ fn evaluate_formula<P: PolyId, F: Field>(
     challenges: &[F],
     sumcheck_points: &[Vec<F>],
     point_override: Option<(usize, &[F])>,
+    r1cs_key: &R1csKey<F>,
 ) -> Result<F, JoltError> {
     let mut sum = F::zero();
     for term in &formula.terms {
@@ -304,6 +310,10 @@ fn evaluate_formula<P: PolyId, F: Field>(
                     ))
                 })?,
                 ClaimFactor::Challenge(i) => challenges[*i],
+                ClaimFactor::EqChallengePair { a, b } => {
+                    let (ra, rb) = (challenges[*a], challenges[*b]);
+                    ra * rb + (F::one() - ra) * (F::one() - rb)
+                }
                 ClaimFactor::EqEval {
                     challenges: chs,
                     at_stage,
@@ -335,10 +345,41 @@ fn evaluate_formula<P: PolyId, F: Field>(
                     domain_size,
                     basis_index,
                 } => eval_lagrange_basis(challenges[*challenge], *domain_size, *basis_index),
+                ClaimFactor::UniformR1CSEval {
+                    matrix,
+                    eval_polys,
+                    at_challenge,
+                } => {
+                    let r0 = challenges[*at_challenge];
+                    let domain_size = r1cs_key.matrices.num_constraints;
+                    let basis = jolt_poly::lagrange::lagrange_evals(0, domain_size, r0);
+                    let z: Vec<F> = eval_polys
+                        .iter()
+                        .map(|p| {
+                            evaluations.get(p).copied().ok_or_else(|| {
+                                JoltError::InvalidProof(format!(
+                                    "R1CS eval {p:?} not available"
+                                ))
+                            })
+                        })
+                        .collect::<Result<_, _>>()?;
+                    let rows = match matrix {
+                        R1CSMatrix::A => &r1cs_key.matrices.a,
+                        R1CSMatrix::B => &r1cs_key.matrices.b,
+                    };
+                    let mut acc = F::zero();
+                    for (k, row) in rows.iter().enumerate() {
+                        let mut dot = F::zero();
+                        for &(j, coeff) in row {
+                            dot += coeff * z[j];
+                        }
+                        acc += basis[k] * dot;
+                    }
+                    acc
+                }
                 ClaimFactor::StageEval(_)
                 | ClaimFactor::PreprocessedPolyEval { .. }
-                | ClaimFactor::LagrangeKernel { .. }
-                | ClaimFactor::UniformR1CSEval { .. } => {
+                | ClaimFactor::LagrangeKernel { .. } => {
                     return Err(JoltError::InvalidProof(format!(
                         "unsupported claim factor {factor:?} in compiled schedule"
                     )));
@@ -402,11 +443,17 @@ mod tests {
     use jolt_compiler::module::{ClaimTerm, Evaluation, SumcheckInstance, VerifierStageIndex};
     use jolt_compiler::VerifierSchedule;
     use jolt_field::Fr;
+    use jolt_r1cs::ConstraintMatrices;
     use jolt_sumcheck::proof::SumcheckProof;
     use jolt_transcript::Blake2bTranscript;
     use num_traits::{One, Zero};
 
     use crate::proof::StageProof;
+
+    fn dummy_r1cs_key() -> R1csKey<Fr> {
+        let m = ConstraintMatrices::new(1, 1, vec![vec![]], vec![vec![]], vec![vec![]]);
+        R1csKey::new(m, 1)
+    }
 
     /// Eval-only stage: BeginStage → RecordEvals → AbsorbEvals → Squeeze.
     #[test]
@@ -490,7 +537,7 @@ mod tests {
         let sumcheck_points: Vec<Vec<Fr>> = vec![];
 
         let result =
-            evaluate_formula(&formula, &evaluations, &challenges, &sumcheck_points, None).unwrap();
+            evaluate_formula(&formula, &evaluations, &challenges, &sumcheck_points, None, &dummy_r1cs_key()).unwrap();
         // 2 * 5 * 3 + 3 * 7 = 30 + 21 = 51
         assert_eq!(result, Fr::from_u64(51));
     }
@@ -596,6 +643,7 @@ mod tests {
                     let max_degree = instances.iter().map(|i| i.degree).max().unwrap_or(0);
 
                     let mut combined_claim = Fr::zero();
+                    let key = dummy_r1cs_key();
                     for inst in instances {
                         let val = evaluate_formula(
                             &inst.input_claim,
@@ -603,6 +651,7 @@ mod tests {
                             &challenges,
                             &sumcheck_points,
                             None,
+                            &key,
                         )
                         .unwrap();
                         combined_claim +=
@@ -649,12 +698,12 @@ mod tests {
         let sumcheck_points = vec![vec![one, zero]];
 
         let result =
-            evaluate_formula(&formula, &evaluations, &challenges, &sumcheck_points, None).unwrap();
+            evaluate_formula(&formula, &evaluations, &challenges, &sumcheck_points, None, &dummy_r1cs_key()).unwrap();
         assert_eq!(result, Fr::from_u64(7));
 
         let sumcheck_points2 = vec![vec![zero, one]];
         let result2 =
-            evaluate_formula(&formula, &evaluations, &challenges, &sumcheck_points2, None).unwrap();
+            evaluate_formula(&formula, &evaluations, &challenges, &sumcheck_points2, None, &dummy_r1cs_key()).unwrap();
         assert_eq!(result2, Fr::zero());
     }
 
@@ -679,15 +728,13 @@ mod tests {
         let mut evaluations = HashMap::new();
         let _ = evaluations.insert(0usize, Fr::from_u64(5));
         let challenges = vec![one];
-        // Original point [zero] → eq(1, 0) = 0
         let sumcheck_points = vec![vec![zero]];
+        let key = dummy_r1cs_key();
 
-        // Without override: 5 * eq(1, 0) = 5 * 0 = 0
         let result =
-            evaluate_formula(&formula, &evaluations, &challenges, &sumcheck_points, None).unwrap();
+            evaluate_formula(&formula, &evaluations, &challenges, &sumcheck_points, None, &key).unwrap();
         assert_eq!(result, Fr::zero());
 
-        // With override [one]: 5 * eq(1, 1) = 5 * 1 = 5
         let override_point = vec![one];
         let result2 = evaluate_formula(
             &formula,
@@ -695,6 +742,7 @@ mod tests {
             &challenges,
             &sumcheck_points,
             Some((0, &override_point)),
+            &key,
         )
         .unwrap();
         assert_eq!(result2, Fr::from_u64(5));

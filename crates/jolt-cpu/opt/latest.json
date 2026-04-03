@@ -1,0 +1,88 @@
+{
+  "metadata": {
+    "timestamp": "2026-04-03T12:58:44",
+    "git_sha": "90eb55b0f",
+    "git_dirty": true,
+    "rayon_threads": 8,
+    "log_n": 18
+  },
+  "benchmarks": {
+    "field_mul": {
+      "iterations": 3539,
+      "total_ns": 506506458,
+      "ops_per_iter": 10000,
+      "ns_per_op": 14.31,
+      "throughput_mops": 69.87
+    },
+    "field_add": {
+      "iterations": 8741,
+      "total_ns": 306273708,
+      "ops_per_iter": 10000,
+      "ns_per_op": 3.50,
+      "throughput_mops": 285.40
+    },
+    "fmadd_one": {
+      "iterations": 5173,
+      "total_ns": 472686750,
+      "ops_per_iter": 10000,
+      "ns_per_op": 9.14,
+      "throughput_mops": 109.44
+    },
+    "toom4_eval": {
+      "iterations": 286,
+      "total_ns": 482784625,
+      "ops_per_iter": 10000,
+      "ns_per_op": 168.81,
+      "throughput_mops": 5.92
+    },
+    "toom8_eval": {
+      "iterations": 85,
+      "total_ns": 506290916,
+      "ops_per_iter": 10000,
+      "ns_per_op": 595.64,
+      "throughput_mops": 1.68
+    },
+    "toom16_eval": {
+      "iterations": 23,
+      "total_ns": 505299625,
+      "ops_per_iter": 10000,
+      "ns_per_op": 2196.95,
+      "throughput_mops": 0.46
+    },
+    "dense_reduce_d4": {
+      "iterations": 83,
+      "total_ns": 524659584,
+      "ops_per_iter": 131072,
+      "ns_per_op": 48.23,
+      "throughput_mops": 20.74
+    },
+    "dense_reduce_d8": {
+      "iterations": 26,
+      "total_ns": 606763042,
+      "ops_per_iter": 131072,
+      "ns_per_op": 178.05,
+      "throughput_mops": 5.62
+    },
+    "dense_reduce_d16": {
+      "iterations": 6,
+      "total_ns": 508394750,
+      "ops_per_iter": 131072,
+      "ns_per_op": 646.46,
+      "throughput_mops": 1.55
+    },
+    "bind_l2h": {
+      "iterations": 118,
+      "total_ns": 510422873,
+      "ops_per_iter": 131072,
+      "ns_per_op": 33.00,
+      "throughput_mops": 30.30
+    },
+    "bind_h2l": {
+      "iterations": 145,
+      "total_ns": 512055712,
+      "ops_per_iter": 131072,
+      "ns_per_op": 26.94,
+      "throughput_mops": 37.12
+    }
+  }
+}

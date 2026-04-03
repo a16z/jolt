@@ -55,15 +55,12 @@ fn print_kernel_occupancy() {
     for (name, formula) in formulas {
         let spec = KernelSpec::new(formula, Iteration::Dense, BindingOrder::LowToHigh);
         let kernel = backend.compile::<Fr>(&spec);
-        println!("--- {name} ---");
-
-        for occ in kernel.occupancy() {
-            println!(
-                "  {:<16}  max_threads_per_tg={:<5}  simd_width={}",
-                occ.name, occ.max_threads_per_threadgroup, occ.thread_execution_width,
-            );
-        }
-
-        println!();
+        let pipeline = kernel.pipeline();
+        println!(
+            "{name:<24}  max_threads_per_tg={:<5}  simd_width={}",
+            pipeline.max_total_threads_per_threadgroup(),
+            pipeline.thread_execution_width(),
+        );
     }
+    println!();
 }

@@ -12,18 +12,87 @@ use jolt_field::Field;
 
 /// Compile a product-sum eval closure for `num_products` groups of `d` inputs.
 ///
-/// The closure evaluates on the Toom-Cook grid, producing `d` evaluations.
-/// Dispatches to the appropriate Toom-Cook specialization internally.
+/// Dispatches to const-generic specializations for common D values to avoid
+/// heap allocation in the eval hot path. Falls back to a dynamic-allocation
+/// path for uncommon D.
 pub fn compile_fn<F: Field>(d: usize, num_products: usize) -> crate::BoxedEvalFn<F> {
+    if num_products == 1 {
+        // P=1 fast path: write directly to `out`, no group accumulation.
+        match d {
+            2 => compile_single_product::<F, 2>(),
+            3 => compile_single_product::<F, 3>(),
+            4 => compile_single_product::<F, 4>(),
+            5 => compile_single_product::<F, 5>(),
+            6 => compile_single_product::<F, 6>(),
+            7 => compile_single_product::<F, 7>(),
+            8 => compile_single_product::<F, 8>(),
+            16 => compile_single_product::<F, 16>(),
+            32 => compile_single_product::<F, 32>(),
+            _ => compile_dynamic::<F>(d, 1),
+        }
+    } else {
+        match d {
+            2 => compile_multi_product::<F, 2>(num_products),
+            3 => compile_multi_product::<F, 3>(num_products),
+            4 => compile_multi_product::<F, 4>(num_products),
+            5 => compile_multi_product::<F, 5>(num_products),
+            6 => compile_multi_product::<F, 6>(num_products),
+            7 => compile_multi_product::<F, 7>(num_products),
+            8 => compile_multi_product::<F, 8>(num_products),
+            16 => compile_multi_product::<F, 16>(num_products),
+            32 => compile_multi_product::<F, 32>(num_products),
+            _ => compile_dynamic::<F>(d, num_products),
+        }
+    }
+}
+
+/// P=1 fast path: stack-allocated pairs, output written directly (no group buffer).
+fn compile_single_product<F: Field, const D: usize>() -> crate::BoxedEvalFn<F> {
+    Box::new(
+        move |lo: &[F], hi: &[F], _challenges: &[F], out: &mut [F]| {
+            let mut pairs = [(F::zero(), F::zero()); D];
+            for j in 0..D {
+                pairs[j] = (lo[j], hi[j]);
+            }
+            toom_cook::eval_linear_prod_assign(&pairs, out);
+        },
+    )
+}
+
+/// P>1 path: stack-allocated pairs and group buffer, accumulate into `out`.
+fn compile_multi_product<F: Field, const D: usize>(
+    num_products: usize,
+) -> crate::BoxedEvalFn<F> {
     Box::new(
         move |lo: &[F], hi: &[F], _challenges: &[F], out: &mut [F]| {
             for slot in out.iter_mut() {
                 *slot = F::zero();
             }
+            let mut pairs = [(F::zero(), F::zero()); D];
+            let mut group = [F::zero(); D];
+            for g in 0..num_products {
+                let base = g * D;
+                for j in 0..D {
+                    pairs[j] = (lo[base + j], hi[base + j]);
+                }
+                toom_cook::eval_linear_prod_assign(&pairs, &mut group);
+                for k in 0..D {
+                    out[k] += group[k];
+                }
+            }
+        },
+    )
+}
 
+/// Fallback for uncommon D values: uses Vec allocation.
+fn compile_dynamic<F: Field>(d: usize, num_products: usize) -> crate::BoxedEvalFn<F> {
+    Box::new(
+        move |lo: &[F], hi: &[F], _challenges: &[F], out: &mut [F]| {
+            for slot in out.iter_mut() {
+                *slot = F::zero();
+            }
             let mut pairs = vec![(F::zero(), F::zero()); d];
             let mut group = vec![F::zero(); d];
-
             for g in 0..num_products {
                 let base = g * d;
                 for j in 0..d {

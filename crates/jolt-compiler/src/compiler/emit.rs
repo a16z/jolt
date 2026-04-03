@@ -803,6 +803,7 @@ fn op_poly_refs(op: &Op, kernels: &[KernelDef]) -> Vec<usize> {
         }
         Op::Evaluate { poly } | Op::CollectOpeningClaim { poly, .. } => vec![*poly],
         Op::Bind { polys, .. }
+        | Op::LagrangeProject { polys, .. }
         | Op::Commit { polys, .. }
         | Op::CommitStreaming { polys, .. }
         | Op::AbsorbEvals { polys, .. } => polys.clone(),

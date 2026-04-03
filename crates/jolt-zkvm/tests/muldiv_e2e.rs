@@ -19,10 +19,11 @@ use jolt_compiler::module::Module;
 use jolt_compiler::{Op, VerifierOp};
 use jolt_compute::link;
 use jolt_cpu::CpuBackend;
-use jolt_field::Fr;
+use jolt_field::{Field, Fr};
 use jolt_host::{BytecodePreprocessing, Program};
 use jolt_openings::mock::MockCommitmentScheme;
-use jolt_transcript::MockTranscript;
+use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_r1cs::R1csKey;
 use jolt_verifier::{verify, JoltVerifyingKey, OneHotConfig, ProverConfig, ReadWriteConfig};
 use jolt_witness::PolynomialId;
 use jolt_zkvm::prove::prove;
@@ -155,7 +156,7 @@ fn muldiv_prove_verify() {
         memory_layout,
     };
     let pcs_setup = ();
-    let mut transcript = MockTranscript::<Fr>::default();
+    let mut transcript = Blake2bTranscript::<Fr>::new(b"jolt");
 
     let proof = prove::<_, _, _, _, MockPCS>(
         &executable,
@@ -172,10 +173,33 @@ fn muldiv_prove_verify() {
         proof.commitments.len(),
     );
 
+    // Debug: dump stage proof structure
+    for (si, sp) in proof.stage_proofs.iter().enumerate() {
+        eprintln!(
+            "  stage {si}: {} round_polys, {} evals",
+            sp.round_polys.round_polynomials.len(),
+            sp.evals.len(),
+        );
+        // Check if the claimed sum matches round_poly_1(0) + round_poly_1(1)
+        if sp.round_polys.round_polynomials.len() > 1 {
+            let rp = &sp.round_polys.round_polynomials[1]; // first remaining round poly
+            let sum = rp.evaluate(Fr::from_u64(0)) + rp.evaluate(Fr::from_u64(1));
+            eprintln!(
+                "    rp[1](0)+rp[1](1) = {sum}    (this is what sumcheck checks against combined_claim)"
+            );
+            eprintln!("    evals[0] (uniskip_eval) = {}", sp.evals[0]);
+        }
+    }
+
     // 6. Verify
-    let vk = JoltVerifyingKey::<PolynomialId, Fr, MockPCS>::from_module(
+    let r1cs_key = R1csKey::new(
+        jolt_r1cs::constraints::rv64::rv64_constraints::<Fr>(),
+        trace_length,
+    );
+    let vk = JoltVerifyingKey::<PolynomialId, Fr, MockPCS>::new(
         &executable.module,
         (),
+        r1cs_key,
     );
     verify(&vk, &proof, &[0u8; 32]).expect("proof should verify");
 }

@@ -63,6 +63,15 @@ pub trait FieldAccumulator: Default + Copy + Send + Sync {
         }
     }
 
+    /// Accumulate a field element with unit weight: `self += val`.
+    ///
+    /// Equivalent to `fmadd(one, val)` but implementations may optimize this
+    /// by avoiding the full multiply against the Montgomery form of 1.
+    #[inline]
+    fn acc_add(&mut self, val: Self::Field) {
+        self.fmadd(<Self::Field as One>::one(), val);
+    }
+
     /// Merge another accumulator's partial sum into this one.
     ///
     /// Used in parallel reduction (e.g., Rayon fold+reduce) where each thread

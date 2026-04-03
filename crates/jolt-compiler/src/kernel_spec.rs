@@ -26,9 +26,9 @@ use crate::formula::{BindingOrder, Formula};
 pub struct KernelSpec {
     /// Sum-of-products composition formula.
     pub formula: Formula,
-    /// Number of evaluation points on the grid.
+    /// Number of evaluation points on the grid (equals `formula.degree()`).
     ///
-    /// Standard grid: `degree + 1` points at `{0, 2, 3, ..., degree}`.
+    /// Standard grid: `degree` points at `{0, 1, ..., degree-1}`.
     /// Toom-Cook grid: `D` points at `{1, ..., D-1, ∞}`.
     pub num_evals: usize,
     /// How to traverse input data during reduce.

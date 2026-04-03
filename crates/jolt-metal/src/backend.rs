@@ -4,17 +4,47 @@ use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 
 use jolt_compiler::kernel_spec::Iteration;
-use jolt_compiler::{Formula, KernelSpec};
+use jolt_compiler::KernelSpec;
 use jolt_compute::{BindingOrder, Buf, ComputeBackend, Scalar};
 use jolt_field::Field;
-use metal::{Device, MTLResourceOptions, MTLSize};
+use metal::{CompileOptions, ComputePipelineState, Device, MTLResourceOptions, MTLSize};
 
 use crate::buffer::MetalBuffer;
-use crate::compiler::{self, CompileMode};
-use crate::field_config::MslFieldParams;
-use crate::kernel::{CachedPipelines, MetalKernel};
-use crate::metal_device_config::MetalDeviceConfig;
-use crate::shaders::InterpolationKernels;
+use crate::config::MetalDeviceConfig;
+use crate::field_params::MslFieldParams;
+use crate::kernel::{CompiledPipeline, MetalKernel};
+use crate::msl_reduce::{self, CompileMode, KernelVariant};
+use crate::pipeline::{build_source_with_preamble, make_pipeline, SHADER_INTERPOLATION};
+
+/// Pre-compiled pipelines for interpolation and eq table operations.
+struct InterpolationKernels {
+    interpolate_low: ComputePipelineState,
+    interpolate_inplace_high: ComputePipelineState,
+    sparse_bind: ComputePipelineState,
+    eq_table_round: ComputePipelineState,
+}
+
+impl InterpolationKernels {
+    fn compile(device: &Device, field_config: &MslFieldParams) -> Self {
+        let source =
+            build_source_with_preamble(&field_config.msl_preamble, &[SHADER_INTERPOLATION], false);
+        let options = CompileOptions::new();
+        let library = device
+            .new_library_with_source(&source, &options)
+            .expect("interpolation MSL compilation failed");
+
+        Self {
+            interpolate_low: make_pipeline(device, &library, "fr_interpolate_low_kernel"),
+            interpolate_inplace_high: make_pipeline(
+                device,
+                &library,
+                "fr_interpolate_inplace_high_kernel",
+            ),
+            sparse_bind: make_pipeline(device, &library, "fr_sparse_bind_kernel"),
+            eq_table_round: make_pipeline(device, &library, "fr_eq_table_round_kernel"),
+        }
+    }
+}
 
 /// Apple Metal compute backend for Jolt.
 ///
@@ -33,7 +63,7 @@ pub struct MetalBackend {
     compile_mode: CompileMode,
     field_config: MslFieldParams,
     device_config: MetalDeviceConfig,
-    pipeline_cache: Mutex<HashMap<u64, Arc<CachedPipelines>>>,
+    pipeline_cache: Mutex<HashMap<u64, Arc<CompiledPipeline>>>,
     /// Pre-allocated partials buffer for reduce dispatches.
     /// Sized for worst case: device_config.max_reduce_groups × max_evals(32) × field_byte_size.
     reduce_partials: metal::Buffer,
@@ -73,7 +103,7 @@ impl MetalBackend {
     ) -> Self {
         let device = Device::system_default().expect("no Metal device available");
         let queue = device.new_command_queue();
-        let device_config = MetalDeviceConfig::detect(&device);
+        let device_config = MetalDeviceConfig::default();
         let field_config = MslFieldParams::new::<F>();
         let interpolation = InterpolationKernels::compile(&device, &field_config);
 
@@ -106,11 +136,13 @@ impl MetalBackend {
         &self.queue
     }
 
-    /// Get cached pipelines or compile and cache them.
-    fn get_or_compile(&self, formula: &Formula) -> Arc<CachedPipelines> {
+    /// Get a cached pipeline or compile and cache it for the given variant.
+    fn get_or_compile(&self, spec: &KernelSpec) -> Arc<CompiledPipeline> {
         use std::hash::{Hash, Hasher};
-        let msl = compiler::generate_msl(
-            formula,
+        let variant = KernelVariant::from_spec(spec.iteration, spec.binding_order);
+        let msl = msl_reduce::generate_msl(
+            &spec.formula,
+            variant,
             self.compile_mode,
             &self.field_config,
             &self.device_config,
@@ -125,9 +157,9 @@ impl MetalBackend {
             return Arc::clone(cached);
         }
 
-        let pipelines = compiler::compile_msl(&self.device, &msl);
-        cache.insert(key, Arc::clone(&pipelines));
-        pipelines
+        let compiled = msl_reduce::compile_msl(&self.device, &msl);
+        cache.insert(key, Arc::clone(&compiled));
+        compiled
     }
 
     /// Upload a slice of field elements to a shared Metal buffer.
@@ -278,7 +310,7 @@ impl ComputeBackend for MetalBackend {
 
     fn compile<F: Field>(&self, spec: &KernelSpec) -> MetalKernel<F> {
         MetalKernel {
-            pipelines: self.get_or_compile(&spec.formula),
+            compiled: self.get_or_compile(spec),
             iteration: spec.iteration,
             binding_order: spec.binding_order,
             _marker: PhantomData,
@@ -324,30 +356,44 @@ impl ComputeBackend for MetalBackend {
         let n = value_refs[0].len();
         let n_pairs = n / 2;
 
-        let challenges_buf = if kernel.pipelines.has_challenges && !challenges.is_empty() {
+        let challenges_buf = if kernel.compiled.has_challenges && !challenges.is_empty() {
             Some(self.upload_field_buffer(challenges))
         } else {
             None
         };
         let challenges_ref = challenges_buf.as_ref();
 
+        let pipeline = kernel.pipeline();
+
         match &kernel.iteration {
-            Iteration::Dense => {
-                let pipeline = match kernel.binding_order {
-                    BindingOrder::LowToHigh => kernel.pipeline_l2h_unw(),
-                    BindingOrder::HighToLow => kernel.pipeline_h2l_unw(),
-                };
+            Iteration::Dense => self.dispatch_reduce(
+                pipeline,
+                kernel.num_evals(),
+                &value_refs,
+                &[],
+                challenges_ref,
+                &[n_pairs as u32],
+                n_pairs,
+            ),
+            Iteration::Sparse => {
+                let keys = inputs[num_formula_inputs].as_u64().to_vec();
+                let (pair_indices, _parent_keys) = build_sparse_pairs(&keys);
+                let n_sparse_pairs = pair_indices.len() / 2;
+                let pair_buf = self.device.new_buffer_with_data(
+                    pair_indices.as_ptr().cast::<c_void>(),
+                    std::mem::size_of_val(pair_indices.as_slice()) as u64,
+                    MTLResourceOptions::StorageModeShared,
+                );
                 self.dispatch_reduce(
                     pipeline,
                     kernel.num_evals(),
                     &value_refs,
-                    &[],
+                    &[&pair_buf],
                     challenges_ref,
-                    &[n_pairs as u32],
-                    n_pairs,
+                    &[n_sparse_pairs as u32],
+                    n_sparse_pairs,
                 )
             }
-            Iteration::Sparse => todo!("sparse reduce on Metal"),
             Iteration::DenseTensor => {
                 let outer = inputs[num_formula_inputs].as_field();
                 let inner = inputs[num_formula_inputs + 1].as_field();
@@ -355,7 +401,7 @@ impl ComputeBackend for MetalBackend {
                 let inner_log = inner_len.trailing_zeros();
                 let inner_mask = (inner_len - 1) as u32;
                 self.dispatch_reduce(
-                    kernel.pipeline_tensor(),
+                    pipeline,
                     kernel.num_evals(),
                     &value_refs,
                     &[&outer.raw, &inner.raw],
@@ -375,7 +421,32 @@ impl ComputeBackend for MetalBackend {
                     self.interpolate_inplace(buf.as_field_mut(), scalar, order);
                 }
             }
-            Iteration::Sparse => todo!("sparse bind on Metal"),
+            Iteration::Sparse => {
+                let num_value_inputs = inputs.len() - 1;
+                let keys = inputs[num_value_inputs].as_u64().to_vec();
+                let (pair_indices, parent_keys) = build_sparse_pairs(&keys);
+                let n_pairs = pair_indices.len() / 2;
+
+                let pair_buf = self.device.new_buffer_with_data(
+                    pair_indices.as_ptr().cast::<c_void>(),
+                    std::mem::size_of_val(pair_indices.as_slice()) as u64,
+                    MTLResourceOptions::StorageModeShared,
+                );
+                let scalar_buf = self.upload_scalar(&scalar);
+
+                for input in &mut inputs[..num_value_inputs] {
+                    let src = input.as_field();
+                    let out: MetalBuffer<F> = MetalBuffer::zeroed(&self.device, n_pairs);
+                    self.dispatch_1d(
+                        &self.interpolation.sparse_bind,
+                        &[&src.raw, &out.raw, &pair_buf, &scalar_buf],
+                        n_pairs,
+                    );
+                    *input.as_field_mut() = out;
+                }
+
+                *inputs[num_value_inputs].as_u64_mut() = self.upload(&parent_keys);
+            }
         }
     }
 
@@ -539,4 +610,43 @@ impl ComputeBackend for MetalBackend {
 
         (self.upload(&eq_evals), self.upload(&epo_evals))
     }
+}
+
+const SPARSE_SENTINEL: u32 = u32::MAX;
+
+/// Build the sparse pair index from a sorted key column.
+///
+/// Scans `keys` linearly, merging adjacent `(2k, 2k+1)` entries into a
+/// single pair with parent key `k`. Missing lo/hi entries use [`SPARSE_SENTINEL`].
+///
+/// Returns `(pair_indices, parent_keys)` where `pair_indices` is a flat
+/// `[lo_0, hi_0, lo_1, hi_1, ...]` buffer ready for GPU upload.
+fn build_sparse_pairs(keys: &[u64]) -> (Vec<u32>, Vec<u64>) {
+    let n = keys.len();
+    let mut indices = Vec::with_capacity(2 * n);
+    let mut parent_keys = Vec::with_capacity(n);
+    let mut i = 0;
+    while i < n {
+        let key = keys[i];
+        let parent = key / 2;
+        if key.is_multiple_of(2) {
+            if i + 1 < n && keys[i + 1] == key + 1 {
+                indices.push(i as u32);
+                indices.push((i + 1) as u32);
+                parent_keys.push(parent);
+                i += 2;
+            } else {
+                indices.push(i as u32);
+                indices.push(SPARSE_SENTINEL);
+                parent_keys.push(parent);
+                i += 1;
+            }
+        } else {
+            indices.push(SPARSE_SENTINEL);
+            indices.push(i as u32);
+            parent_keys.push(parent);
+            i += 1;
+        }
+    }
+    (indices, parent_keys)
 }

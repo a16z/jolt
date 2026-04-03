@@ -129,6 +129,6 @@ fn prove_verify_roundtrip() {
     );
 
     // -- 4. Verify --
-    let vk = JoltVerifyingKey::<PolynomialId, Fr, MockPCS>::from_module(&executable.module, ());
+    let vk = JoltVerifyingKey::<PolynomialId, Fr, MockPCS>::new(&executable.module, (), r1cs_key);
     verify(&vk, &proof, &[0u8; 32]).expect("proof should verify");
 }

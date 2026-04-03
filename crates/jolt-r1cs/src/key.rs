@@ -17,6 +17,7 @@
 
 use jolt_field::Field;
 use jolt_poly::EqPolynomial;
+use serde::{Deserialize, Serialize};
 
 use crate::constraint::ConstraintMatrices;
 
@@ -24,7 +25,8 @@ use crate::constraint::ConstraintMatrices;
 ///
 /// Stores per-cycle sparse constraint matrices and dimensional metadata.
 /// All evaluation methods exploit the uniform (repeated-constraint) structure.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(bound = "")]
 pub struct R1csKey<F: Field> {
     pub matrices: ConstraintMatrices<F>,
     pub num_cycles: usize,
