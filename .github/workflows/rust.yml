@@ -181,6 +181,32 @@ jobs:
         working-directory: ./sample_project
         run: node verify.mjs
 
+  test-crates:
+    name: Test modular crates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Discover modular crates
+        id: discover
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkgs=$(cargo metadata --format-version=1 --no-deps \
+                   | jq -r '.packages[] | select(.manifest_path | startswith("'"$(pwd)"'/crates/")) | .name' \
+                   | tr '\n' ' ')
+          echo "Found crates: $pkgs"
+          echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
+      - name: Test each crate
+        shell: bash
+        run: |
+          set -euo pipefail
+          for pkg in ${{ steps.discover.outputs.pkgs }}; do
+            cargo nextest run -p "$pkg" --no-tests=pass
+          done
+
   test-inlines:
     name: Test inlines
     runs-on: ubuntu-latest

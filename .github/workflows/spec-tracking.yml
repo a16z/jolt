@@ -140,7 +140,7 @@ jobs:
               BODY="$BODY
           > Large features and architectural changes benefit from a spec-driven workflow."
               BODY="$BODY
-          > See [CONTRIBUTING.md](CONTRIBUTING.md) for details on how to create a spec."
+          > See [CONTRIBUTING.md](https://github.com/a16z/jolt/blob/main/CONTRIBUTING.md) for details on how to create a spec."
               BODY="$BODY
           >"
               BODY="$BODY
