@@ -15,4 +15,4 @@ pub mod provider;
 
 pub use constraint::ConstraintMatrices;
 pub use key::R1csKey;
-pub use provider::{R1csProvider, SpartanChallenges, POLY_AZ, POLY_BZ, POLY_COMBINED_ROW, POLY_CZ};
+pub use provider::{R1csProvider, SpartanChallenges};

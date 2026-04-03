@@ -60,9 +60,7 @@ fn compile_single_product<F: Field, const D: usize>() -> crate::BoxedEvalFn<F> {
 }
 
 /// P>1 path: stack-allocated pairs and group buffer, accumulate into `out`.
-fn compile_multi_product<F: Field, const D: usize>(
-    num_products: usize,
-) -> crate::BoxedEvalFn<F> {
+fn compile_multi_product<F: Field, const D: usize>(num_products: usize) -> crate::BoxedEvalFn<F> {
     Box::new(
         move |lo: &[F], hi: &[F], _challenges: &[F], out: &mut [F]| {
             for slot in out.iter_mut() {

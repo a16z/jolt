@@ -152,6 +152,41 @@ pub fn interpolate_to_coeffs<F: Field>(domain_start: i64, values: &[F]) -> Vec<F
     coeffs
 }
 
+/// Evaluates the $k$-th Lagrange basis polynomial $L_k(r)$ over the
+/// domain $\{0, 1, \ldots, N{-}1\}$.
+///
+/// $$L_k(r) = \prod_{j \neq k} \frac{r - j}{k - j}$$
+///
+/// Time: $O(N)$. For evaluating all $N$ basis values at once, prefer
+/// [`lagrange_evals`] which amortizes the weight computation.
+pub fn lagrange_basis_eval<F: Field>(domain_size: usize, k: usize, r: F) -> F {
+    let mut numer = F::one();
+    let mut denom = F::one();
+    for j in 0..domain_size {
+        if j == k {
+            continue;
+        }
+        numer *= r - F::from_u64(j as u64);
+        denom *= F::from_i128(k as i128 - j as i128);
+    }
+    numer / denom
+}
+
+/// Evaluates the Lagrange kernel $L(\tau, r) = \sum_{k=0}^{N-1} L_k(\tau) \cdot L_k(r)$
+/// over the domain $\{0, 1, \ldots, N{-}1\}$.
+///
+/// Uses [`lagrange_evals`] to compute all basis values at both points,
+/// then dot-products. Time: $O(N)$ (dominated by two barycentric evaluations).
+pub fn lagrange_kernel_eval<F: Field>(domain_size: usize, tau: F, r: F) -> F {
+    let tau_evals = lagrange_evals(0, domain_size, tau);
+    let r_evals = lagrange_evals(0, domain_size, r);
+    tau_evals
+        .iter()
+        .zip(r_evals.iter())
+        .map(|(&a, &b)| a * b)
+        .fold(F::zero(), |acc, v| acc + v)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

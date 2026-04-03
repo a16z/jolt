@@ -48,10 +48,11 @@ pub fn cycle_to_input(
     });
 
     CycleInput {
-        rd_inc,
-        ram_inc,
-        lookup_index: cycle.lookup_index(),
-        pc_index: bytecode.get_pc(cycle) as u32,
-        ram_address,
+        dense: [rd_inc, ram_inc],
+        one_hot: [
+            Some(cycle.lookup_index()),
+            Some(bytecode.get_pc(cycle) as u128),
+            ram_address.map(|a| a as u128),
+        ],
     }
 }

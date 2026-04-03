@@ -33,19 +33,16 @@ use jolt_field::Field;
 pub fn compile<F: Field>(spec: &KernelSpec) -> CpuKernel<F> {
     let composition = &spec.formula;
 
-    let eval_fn: BoxedEvalFn<F> =
-        if let Some((d, p)) = composition.as_product_sum().filter(|&(d, _)| d == spec.num_evals) {
-            product_sum::compile_fn::<F>(d, p)
-        } else {
-            Box::new(generic::compile_fn::<F>(composition))
-        };
+    let eval_fn: BoxedEvalFn<F> = if let Some((d, p)) = composition
+        .as_product_sum()
+        .filter(|&(d, _)| d == spec.num_evals)
+    {
+        product_sum::compile_fn::<F>(d, p)
+    } else {
+        Box::new(generic::compile_fn::<F>(composition))
+    };
 
-    CpuKernel::from_boxed(
-        eval_fn,
-        spec.num_evals,
-        spec.iteration,
-        spec.binding_order,
-    )
+    CpuKernel::from_boxed(eval_fn, spec.num_evals, spec.iteration, spec.binding_order)
 }
 
 #[cfg(test)]

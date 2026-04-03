@@ -7,15 +7,15 @@
 //!   [`BufferProvider`] for non-RISC-V or custom protocols
 
 use common::jolt_device::MemoryLayout;
-use jolt_compiler::PolyId;
+use jolt_compiler::PolynomialSpec;
 use jolt_compute::{BufferProvider, ComputeBackend, Executable};
 use jolt_field::Field;
-use jolt_host::{build_r1cs_witness, cycle_to_input, BytecodePreprocessing, CycleRow};
+use jolt_host::{extract_trace, BytecodePreprocessing, CycleRow};
 use jolt_openings::AdditivelyHomomorphic;
 use jolt_r1cs::{constraints::rv64, R1csKey, R1csProvider};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::ProverConfig;
-use jolt_witness::{CycleInput, PolynomialConfig, PolynomialId, Polynomials};
+use jolt_witness::{PolynomialConfig, PolynomialId, Polynomials};
 
 use crate::buffers::ProverBuffers;
 use crate::runtime::execute;
@@ -66,45 +66,36 @@ where
     let size = config.trace_length;
     let one_hot = config.one_hot_params_from_config();
 
-    // -- 1. Convert trace → CycleInputs → Polynomials --
     let poly_config = PolynomialConfig::new(
         one_hot.log_k_chunk,
         LOG_K_INSTRUCTION,
-        config
-            .bytecode_k
-            .next_power_of_two()
-            .trailing_zeros() as usize,
+        config.bytecode_k.next_power_of_two().trailing_zeros() as usize,
         config.ram_k.trailing_zeros() as usize,
     );
 
-    let mut inputs: Vec<CycleInput> = data
-        .trace
-        .iter()
-        .map(|c| cycle_to_input(c, data.bytecode, data.memory_layout))
-        .collect();
-    inputs.resize(size, CycleInput::PADDING);
+    // -- 1. Single-pass extraction: trace → witness inputs + R1CS witness --
+    let matrices = rv64::rv64_constraints::<F>();
+    let r1cs_key = R1csKey::new(matrices, size);
 
+    let (inputs, r1cs_witness) = extract_trace::<C, F>(
+        data.trace,
+        size,
+        data.bytecode,
+        data.memory_layout,
+        r1cs_key.num_vars_padded,
+    );
+
+    // -- 2. Build witness polynomials --
     let mut polys = Polynomials::<F>::new(poly_config);
     polys.push(&inputs);
     polys.finish();
 
     // Advice polynomials (zero-filled when no advice tape is provided).
-    // TODO: populate from trace advice data when available.
     let _ = polys.insert(PolynomialId::UntrustedAdvice, vec![F::zero(); size]);
     let _ = polys.insert(PolynomialId::TrustedAdvice, vec![F::zero(); size]);
 
-    // -- 2. Build R1CS key + witness --
-    // Pad the trace to `size` cycles so the witness matches R1csKey.
-    let mut padded_trace = data.trace.to_vec();
-    padded_trace.resize(size, C::noop());
-
-    let matrices = rv64::rv64_constraints::<F>();
-    let r1cs_key = R1csKey::new(matrices, size);
-    let r1cs_witness =
-        build_r1cs_witness::<C, F>(&padded_trace, data.bytecode, r1cs_key.num_vars_padded);
-    let r1cs = R1csProvider::new(&r1cs_key, &r1cs_witness);
-
     // -- 3. Assemble buffers and execute --
+    let r1cs = R1csProvider::new(&r1cs_key, &r1cs_witness);
     let mut provider = ProverBuffers::new(&mut polys, r1cs);
 
     execute::<PolynomialId, B, F, T, PCS>(
@@ -131,7 +122,7 @@ pub fn prove_with_buffers<P, B, F, T, PCS>(
     config: ProverConfig,
 ) -> jolt_verifier::JoltProof<F, PCS>
 where
-    P: PolyId,
+    P: PolynomialSpec,
     B: ComputeBackend,
     F: Field,
     T: Transcript<Challenge = F>,

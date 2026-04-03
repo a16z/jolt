@@ -2,7 +2,7 @@
 
 pub use jolt_compiler::BindingOrder;
 use jolt_compiler::KernelSpec;
-pub use jolt_compiler::PolyId;
+pub use jolt_compiler::PolynomialSpec;
 use jolt_field::Field;
 
 /// Marker trait for types that can be stored in device buffers.
@@ -210,7 +210,7 @@ pub trait ComputeBackend: Send + Sync + 'static {
 ///
 /// `P` is the polynomial identity type: `usize` for the raw compiler output,
 /// or a domain-specific enum (e.g. `PolynomialId`) after [`Module::remap`].
-pub trait BufferProvider<P: PolyId, B: ComputeBackend, F: Field> {
+pub trait BufferProvider<P: PolynomialSpec, B: ComputeBackend, F: Field> {
     /// Load polynomial data for `poly_id` onto the device.
     ///
     /// Called at most once per poly during execution. After loading, the

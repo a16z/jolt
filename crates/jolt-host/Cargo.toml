@@ -15,6 +15,7 @@ workspace = true
 [dependencies]
 bincode.workspace = true
 common = { workspace = true }
+jolt-compiler = { path = "../jolt-compiler" }
 jolt-field = { path = "../jolt-field" }
 jolt-instructions = { path = "../jolt-instructions" }
 jolt-r1cs = { path = "../jolt-r1cs" }

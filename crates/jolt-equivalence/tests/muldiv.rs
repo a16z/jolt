@@ -23,9 +23,7 @@ use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
 use jolt_core::transcripts::MockTranscript;
 use jolt_core::zkvm::proof_serialization::JoltProof;
 use jolt_core::zkvm::prover::{JoltCpuProver, JoltProverPreprocessing};
-use jolt_core::zkvm::verifier::{
-    JoltSharedPreprocessing, JoltVerifier, JoltVerifierPreprocessing,
-};
+use jolt_core::zkvm::verifier::{JoltSharedPreprocessing, JoltVerifier, JoltVerifierPreprocessing};
 
 use common::constants::RAM_START_ADDRESS;
 use jolt_compiler::module::Module;
@@ -81,10 +79,7 @@ fn extract_clear_degree(proof: &SumcheckInstanceProof<Fr, Bn254Curve, MockTransc
 
 /// Collect the claim values for all new openings added between two snapshots
 /// of the verifier's opening accumulator.
-fn diff_opening_evals(
-    keys_before: &BTreeSet<OpeningId>,
-    verifier: &MockVerifier<'_>,
-) -> Vec<Fr> {
+fn diff_opening_evals(keys_before: &BTreeSet<OpeningId>, verifier: &MockVerifier<'_>) -> Vec<Fr> {
     verifier
         .opening_accumulator
         .openings
@@ -95,7 +90,12 @@ fn diff_opening_evals(
 }
 
 fn snapshot_opening_keys(verifier: &MockVerifier<'_>) -> BTreeSet<OpeningId> {
-    verifier.opening_accumulator.openings.keys().cloned().collect()
+    verifier
+        .opening_accumulator
+        .openings
+        .keys()
+        .cloned()
+        .collect()
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -133,8 +133,9 @@ fn extract_jolt_core_stages() -> Vec<StageTrace<Fr>> {
     let io = prover.program_io.clone();
     let (proof, _debug): (MockProof, _) = prover.prove();
 
-    let verifier_preprocessing: &'static _ =
-        Box::leak(Box::new(JoltVerifierPreprocessing::from(&prover_preprocessing)));
+    let verifier_preprocessing: &'static _ = Box::leak(Box::new(JoltVerifierPreprocessing::from(
+        &prover_preprocessing,
+    )));
     let mut verifier: MockVerifier<'_> =
         MockVerifier::new(verifier_preprocessing, proof, io, None, None)
             .expect("build mock verifier");
@@ -202,9 +203,7 @@ fn build_protocol_module(
     log_k_bytecode: usize,
     log_k_ram: usize,
 ) -> Module<PolynomialId> {
-    let tmp_path = format!(
-        "/tmp/jolt_equiv_module_{log_t}_{log_k_bytecode}_{log_k_ram}.jolt"
-    );
+    let tmp_path = format!("/tmp/jolt_equiv_module_{log_t}_{log_k_bytecode}_{log_k_ram}.jolt");
 
     let output = Command::new("cargo")
         .args([
@@ -269,6 +268,12 @@ fn extract_jolt_zkvm_stages() -> Vec<StageTrace<Fr>> {
         memory_end: RAM_START_ADDRESS + ram_k as u64,
         entry_address,
         io_hash: [0u8; 32],
+        max_input_size: memory_layout.max_input_size,
+        max_output_size: memory_layout.max_output_size,
+        heap_size: memory_layout.heap_size,
+        inputs: io_device.inputs.clone(),
+        outputs: io_device.outputs.clone(),
+        panic: io_device.panic,
     };
 
     let trace_data = TraceData {
@@ -393,10 +398,7 @@ macro_rules! equivalence_test {
             let zkvm = match jolt_zkvm_stages() {
                 Ok(s) => s,
                 Err(e) => {
-                    eprintln!(
-                        "SKIP stage {}: jolt-zkvm prove failed: {e}",
-                        $stage_idx + 1
-                    );
+                    eprintln!("SKIP stage {}: jolt-zkvm prove failed: {e}", $stage_idx + 1);
                     return;
                 }
             };

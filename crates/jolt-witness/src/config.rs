@@ -4,6 +4,8 @@
 //! into one-hot committed polynomial buffers. Constructed at preprocessing
 //! time and shared between prover and verifier.
 
+use crate::polynomial_id::PolynomialId;
+
 /// One-hot decomposition parameters for committed polynomial generation.
 ///
 /// Determines how 128-bit instruction indices, bytecode PCs, and RAM
@@ -66,22 +68,56 @@ impl PolynomialConfig {
         2 + self.instruction_d + self.bytecode_d + self.ram_d
     }
 
+    /// Extract chunk `dim` from one-hot source `source` with value `value`.
+    ///
+    /// Unified chunking used by [`Polynomials::push`](crate::Polynomials::push)
+    /// for descriptor-driven one-hot decomposition.
+    #[inline]
+    pub fn chunk(&self, source: usize, value: u128, dim: usize) -> u8 {
+        let shifts = match source {
+            0 => &self.instruction_shifts,
+            1 => &self.bytecode_shifts,
+            2 => &self.ram_shifts,
+            _ => panic!("unknown one-hot source {source}"),
+        };
+        ((value >> shifts[dim]) & (self.k_chunk - 1) as u128) as u8
+    }
+
     /// Extract the `idx`-th chunk from a 128-bit instruction lookup index.
     #[inline]
     pub fn lookup_index_chunk(&self, index: u128, idx: usize) -> u8 {
-        ((index >> self.instruction_shifts[idx]) & (self.k_chunk - 1) as u128) as u8
+        self.chunk(0, index, idx)
     }
 
     /// Extract the `idx`-th chunk from a bytecode PC index.
     #[inline]
     pub fn bytecode_pc_chunk(&self, pc: u32, idx: usize) -> u8 {
-        ((pc as usize >> self.bytecode_shifts[idx]) & (self.k_chunk - 1)) as u8
+        self.chunk(1, pc as u128, idx)
     }
 
     /// Extract the `idx`-th chunk from a remapped RAM address.
     #[inline]
     pub fn ram_address_chunk(&self, address: u64, idx: usize) -> u8 {
-        ((address >> self.ram_shifts[idx]) & (self.k_chunk - 1) as u64) as u8
+        self.chunk(2, address as u128, idx)
+    }
+
+    /// Enumerates all trace-derived witness polynomial IDs from this config.
+    ///
+    /// These are the polynomials populated by [`Polynomials::push`](crate::Polynomials::push)
+    /// from [`CycleInput`](crate::CycleInput) data. Other committed polynomials
+    /// (SpartanWitness, advice) are inserted separately.
+    pub fn witness_polynomial_ids(&self) -> Vec<PolynomialId> {
+        let mut ids = vec![PolynomialId::RdInc, PolynomialId::RamInc];
+        for i in 0..self.instruction_d {
+            ids.push(PolynomialId::InstructionRa(i));
+        }
+        for i in 0..self.bytecode_d {
+            ids.push(PolynomialId::BytecodeRa(i));
+        }
+        for i in 0..self.ram_d {
+            ids.push(PolynomialId::RamRa(i));
+        }
+        ids
     }
 }
 

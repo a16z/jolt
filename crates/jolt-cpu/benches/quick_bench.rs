@@ -1,4 +1,8 @@
-#![allow(clippy::print_stdout, clippy::print_stderr, clippy::undocumented_unsafe_blocks)]
+#![allow(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    clippy::undocumented_unsafe_blocks
+)]
 //! Fast iteration benchmark for jolt-cpu kernel optimization.
 //!
 //! Runs in ~15-20s total. Outputs JSON to stdout, human-readable table to stderr.
@@ -282,9 +286,7 @@ fn bench_bind(order: BindingOrder) -> BenchResult {
     };
     let name = format!("bind_{tag}");
 
-    let source: Vec<Vec<Fr>> = (0..4)
-        .map(|i| random_field_vec(n, 800 + i))
-        .collect();
+    let source: Vec<Vec<Fr>> = (0..4).map(|i| random_field_vec(n, 800 + i)).collect();
     let mut rng = ChaCha20Rng::seed_from_u64(700);
     let scalar = Fr::random(&mut rng);
 
@@ -324,7 +326,10 @@ fn bench_bind(order: BindingOrder) -> BenchResult {
 fn print_table(results: &[BenchResult], baseline: Option<&Vec<BenchResult>>) {
     eprintln!(
         "{:<22} {:>10} {:>12} {:>12} {}",
-        "Benchmark", "ns/op", "Mops/s", "iters",
+        "Benchmark",
+        "ns/op",
+        "Mops/s",
+        "iters",
         if baseline.is_some() { "   delta" } else { "" }
     );
     eprintln!("{}", "-".repeat(if baseline.is_some() { 72 } else { 60 }));
@@ -475,9 +480,7 @@ fn main() {
 
     let baseline = baseline_path.and_then(parse_baseline);
 
-    let should_run = |name: &str| -> bool {
-        filter.is_none_or(|f| name.contains(f))
-    };
+    let should_run = |name: &str| -> bool { filter.is_none_or(|f| name.contains(f)) };
 
     let mut results: Vec<BenchResult> = Vec::new();
 

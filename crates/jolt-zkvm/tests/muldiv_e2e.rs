@@ -22,8 +22,8 @@ use jolt_cpu::CpuBackend;
 use jolt_field::{Field, Fr};
 use jolt_host::{BytecodePreprocessing, Program};
 use jolt_openings::mock::MockCommitmentScheme;
-use jolt_transcript::{Blake2bTranscript, Transcript};
 use jolt_r1cs::R1csKey;
+use jolt_transcript::{Blake2bTranscript, Transcript};
 use jolt_verifier::{verify, JoltVerifyingKey, OneHotConfig, ProverConfig, ReadWriteConfig};
 use jolt_witness::PolynomialId;
 use jolt_zkvm::prove::prove;
@@ -37,9 +37,7 @@ fn build_protocol_module(
     log_k_bytecode: usize,
     log_k_ram: usize,
 ) -> Module<PolynomialId> {
-    let tmp_path = format!(
-        "/tmp/jolt_muldiv_e2e_{log_t}_{log_k_bytecode}_{log_k_ram}.jolt"
-    );
+    let tmp_path = format!("/tmp/jolt_muldiv_e2e_{log_t}_{log_k_bytecode}_{log_k_ram}.jolt");
 
     let output = Command::new("cargo")
         .args([
@@ -147,6 +145,12 @@ fn muldiv_prove_verify() {
         memory_end: RAM_START_ADDRESS + ram_k as u64,
         entry_address,
         io_hash: [0u8; 32],
+        max_input_size: memory_layout.max_input_size,
+        max_output_size: memory_layout.max_output_size,
+        heap_size: memory_layout.heap_size,
+        inputs: io_device.inputs.clone(),
+        outputs: io_device.outputs.clone(),
+        panic: io_device.panic,
     };
 
     // 5. Build trace data and prove
@@ -196,10 +200,6 @@ fn muldiv_prove_verify() {
         jolt_r1cs::constraints::rv64::rv64_constraints::<Fr>(),
         trace_length,
     );
-    let vk = JoltVerifyingKey::<PolynomialId, Fr, MockPCS>::new(
-        &executable.module,
-        (),
-        r1cs_key,
-    );
+    let vk = JoltVerifyingKey::<PolynomialId, Fr, MockPCS>::new(&executable.module, (), r1cs_key);
     verify(&vk, &proof, &[0u8; 32]).expect("proof should verify");
 }

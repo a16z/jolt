@@ -10,7 +10,7 @@
 
 use jolt_field::Field;
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
 
 use crate::error::SumcheckError;
 
@@ -48,7 +48,25 @@ pub trait RoundVerifier<F: Field> {
 }
 
 /// Cleartext verifier: checks polynomial consistency and evaluates.
-pub struct ClearRoundVerifier;
+///
+/// When `label` is `Some`, a [`LabelWithCount`] word is absorbed before
+/// each round's coefficients, matching jolt-core's `append_scalars(label, &coeffs)`.
+#[derive(Default)]
+pub struct ClearRoundVerifier {
+    label: Option<&'static [u8]>,
+}
+
+impl ClearRoundVerifier {
+    /// Verifier with no domain-separation labels (raw coefficient absorption).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Verifier that prepends a `LabelWithCount` word before each round's coefficients.
+    pub fn with_label(label: &'static [u8]) -> Self {
+        Self { label: Some(label) }
+    }
+}
 
 impl<F: Field> RoundVerifier<F> for ClearRoundVerifier {
     type RoundProof = UnivariatePoly<F>;
@@ -77,6 +95,10 @@ impl<F: Field> RoundVerifier<F> for ClearRoundVerifier {
             });
         }
 
+        if let Some(label) = self.label {
+            let coeffs = proof.coefficients();
+            transcript.append(&LabelWithCount(label, coeffs.len() as u64));
+        }
         for coeff in proof.coefficients() {
             coeff.append_to_transcript(transcript);
         }

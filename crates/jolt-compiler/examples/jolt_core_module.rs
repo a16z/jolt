@@ -23,13 +23,13 @@ use jolt_compiler::formula::{BindingOrder, Factor, Formula, ProductTerm};
 use jolt_compiler::ir::PolyKind;
 use jolt_compiler::kernel_spec::Iteration;
 use jolt_compiler::module::{
-    ChallengeDecl, ChallengeSource, ClaimFactor, ClaimFormula, ClaimTerm, Evaluation, InputBinding,
-    KernelDef, Module, Op, PointNormalization, PolyDecl, R1CSMatrix, Schedule, SumcheckInstance,
-    TranscriptTag, VerifierOp, VerifierSchedule, VerifierStageIndex,
+    ChallengeDecl, ChallengeSource, ClaimFactor, ClaimFormula, ClaimTerm, DomainSeparator,
+    Evaluation, InputBinding, KernelDef, Module, Op, PointNormalization, PolyDecl, R1CSMatrix,
+    Schedule, SumcheckInstance, VerifierOp, VerifierSchedule, VerifierStageIndex,
 };
 use jolt_compiler::params::{ModuleParams, LOG_K_REG, NUM_LOOKUP_TABLES, NUM_R1CS_INPUTS};
-use jolt_compiler::PolynomialId;
 use jolt_compiler::KernelSpec;
+use jolt_compiler::PolynomialId;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -53,14 +53,12 @@ fn main() {
 }
 
 fn parse_arg(args: &[String], flag: &str) -> Option<usize> {
-    args.iter()
-        .position(|a| a == flag)
-        .map(|pos| {
-            args.get(pos + 1)
-                .unwrap_or_else(|| panic!("{flag} requires a value"))
-                .parse()
-                .unwrap_or_else(|_| panic!("{flag} value must be a positive integer"))
-        })
+    args.iter().position(|a| a == flag).map(|pos| {
+        args.get(pos + 1)
+            .unwrap_or_else(|| panic!("{flag} requires a value"))
+            .parse()
+            .unwrap_or_else(|_| panic!("{flag} value must be a positive integer"))
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -81,7 +79,13 @@ impl PolyTable {
         Self { polys: Vec::new() }
     }
 
-    fn add(&mut self, id: PolynomialId, name: &str, kind: PolyKind, num_vars: usize) -> PolynomialId {
+    fn add(
+        &mut self,
+        id: PolynomialId,
+        name: &str,
+        kind: PolyKind,
+        num_vars: usize,
+    ) -> PolynomialId {
         self.polys.push(PolyDecl {
             name: name.to_string(),
             kind,
@@ -195,16 +199,15 @@ struct Polys {
 fn register_polys(pt: &mut PolyTable, p: &ModuleParams) -> Polys {
     use PolyKind::{Committed, Virtual};
     use PolynomialId::{
-        Az, BranchFlag, BytecodeRa, BytecodeReadRafVal, Bz, ExpandedPc, HammingG,
-        HammingWeight, Imm, InstructionRa, InstructionRafFlag, IoMask, LeftInstructionInput,
-        LeftIsPc, LeftIsRs1, LeftLookupOperand, LookupOutput, LookupTableFlag,
-        NextIsFirstInSequence, NextIsNoop, NextIsVirtual, NextPc, NextUnexpandedPc, NoopFlag,
-        OpFlag, OuterUniskipEval, Product, ProductLeft, ProductRight, ProductUniskipEval,
-        RamAddress, RamCombinedRa, RamInc, RamRa, RamRafRa, RamReadValue, RamVal, RamValFinal,
-        RamWriteValue, Rd, RdInc, RdWa, RdWriteValue, RegistersVal, RightInstructionInput,
-        RightIsImm, RightIsRs2, RightLookupOperand, Rs1Ra, Rs1Value, Rs2Ra, Rs2Value,
-        ShouldBranch, ShouldJump, SpartanEq, TrustedAdvice, UnexpandedPc, UntrustedAdvice,
-        ValIo,
+        Az, BranchFlag, BytecodeRa, BytecodeReadRafVal, Bz, ExpandedPc, HammingG, HammingWeight,
+        Imm, InstructionRa, InstructionRafFlag, IoMask, LeftInstructionInput, LeftIsPc, LeftIsRs1,
+        LeftLookupOperand, LookupOutput, LookupTableFlag, NextIsFirstInSequence, NextIsNoop,
+        NextIsVirtual, NextPc, NextUnexpandedPc, NoopFlag, OpFlag, OuterUniskipEval, Product,
+        ProductLeft, ProductRight, ProductUniskipEval, RamAddress, RamCombinedRa, RamInc, RamRa,
+        RamRafRa, RamReadValue, RamVal, RamValFinal, RamWriteValue, Rd, RdInc, RdWa, RdWriteValue,
+        RegistersVal, RightInstructionInput, RightIsImm, RightIsRs2, RightLookupOperand, Rs1Ra,
+        Rs1Value, Rs2Ra, Rs2Value, ShouldBranch, ShouldJump, SpartanEq, TrustedAdvice,
+        UnexpandedPc, UntrustedAdvice, ValIo,
     };
 
     // --- Committed (jolt-core transcript order) ---
@@ -221,10 +224,24 @@ fn register_polys(pt: &mut PolyTable, p: &ModuleParams) -> Polys {
         })
         .collect();
     let ram_ra: Vec<_> = (0..p.ram_d)
-        .map(|d| pt.add(RamRa(d), &format!("RamRa_{d}"), Committed, p.log_k_chunk + p.log_t))
+        .map(|d| {
+            pt.add(
+                RamRa(d),
+                &format!("RamRa_{d}"),
+                Committed,
+                p.log_k_chunk + p.log_t,
+            )
+        })
         .collect();
     let bytecode_ra: Vec<_> = (0..p.bytecode_d)
-        .map(|d| pt.add(BytecodeRa(d), &format!("BytecodeRa_{d}"), Committed, p.log_k_chunk + p.log_t))
+        .map(|d| {
+            pt.add(
+                BytecodeRa(d),
+                &format!("BytecodeRa_{d}"),
+                Committed,
+                p.log_k_chunk + p.log_t,
+            )
+        })
         .collect();
     let untrusted_advice = pt.add(UntrustedAdvice, "UntrustedAdvice", Committed, p.log_t);
     let trusted_advice = pt.add(TrustedAdvice, "TrustedAdvice", Committed, p.log_t);
@@ -237,8 +254,18 @@ fn register_polys(pt: &mut PolyTable, p: &ModuleParams) -> Polys {
     let product_right = pt.add(ProductRight, "ProductRight", Virtual, p.log_t);
 
     // --- Virtual — R1CS inputs (35 entries, ALL_R1CS_INPUTS order) ---
-    let left_instruction_input = pt.add(LeftInstructionInput, "LeftInstructionInput", Virtual, p.log_t);
-    let right_instruction_input = pt.add(RightInstructionInput, "RightInstructionInput", Virtual, p.log_t);
+    let left_instruction_input = pt.add(
+        LeftInstructionInput,
+        "LeftInstructionInput",
+        Virtual,
+        p.log_t,
+    );
+    let right_instruction_input = pt.add(
+        RightInstructionInput,
+        "RightInstructionInput",
+        Virtual,
+        p.log_t,
+    );
     let product = pt.add(Product, "Product", Virtual, p.log_t);
     let should_branch = pt.add(ShouldBranch, "ShouldBranch", Virtual, p.log_t);
     let pc = pt.add(ExpandedPc, "PC", Virtual, p.log_t);
@@ -255,7 +282,12 @@ fn register_polys(pt: &mut PolyTable, p: &ModuleParams) -> Polys {
     let next_unexpanded_pc = pt.add(NextUnexpandedPc, "NextUnexpandedPC", Virtual, p.log_t);
     let next_pc = pt.add(NextPc, "NextPC", Virtual, p.log_t);
     let next_is_virtual = pt.add(NextIsVirtual, "NextIsVirtual", Virtual, p.log_t);
-    let next_is_first = pt.add(NextIsFirstInSequence, "NextIsFirstInSequence", Virtual, p.log_t);
+    let next_is_first = pt.add(
+        NextIsFirstInSequence,
+        "NextIsFirstInSequence",
+        Virtual,
+        p.log_t,
+    );
     let lookup_output = pt.add(LookupOutput, "LookupOutput", Virtual, p.log_t);
     let should_jump = pt.add(ShouldJump, "ShouldJump", Virtual, p.log_t);
     let op_flags: Vec<_> = (0..14)
@@ -269,8 +301,18 @@ fn register_polys(pt: &mut PolyTable, p: &ModuleParams) -> Polys {
     // --- Virtual — InstructionFlags (6 variants) ---
     let inst_flag_left_is_pc = pt.add(LeftIsPc, "InstFlag_LeftOperandIsPC", Virtual, p.log_t);
     let inst_flag_right_is_imm = pt.add(RightIsImm, "InstFlag_RightOperandIsImm", Virtual, p.log_t);
-    let inst_flag_left_is_rs1 = pt.add(LeftIsRs1, "InstFlag_LeftOperandIsRs1Value", Virtual, p.log_t);
-    let inst_flag_right_is_rs2 = pt.add(RightIsRs2, "InstFlag_RightOperandIsRs2Value", Virtual, p.log_t);
+    let inst_flag_left_is_rs1 = pt.add(
+        LeftIsRs1,
+        "InstFlag_LeftOperandIsRs1Value",
+        Virtual,
+        p.log_t,
+    );
+    let inst_flag_right_is_rs2 = pt.add(
+        RightIsRs2,
+        "InstFlag_RightOperandIsRs2Value",
+        Virtual,
+        p.log_t,
+    );
     let inst_flag_branch = pt.add(BranchFlag, "InstFlag_Branch", Virtual, p.log_t);
     let inst_flag_is_noop = pt.add(NoopFlag, "InstFlag_IsNoop", Virtual, p.log_t);
 
@@ -281,7 +323,12 @@ fn register_polys(pt: &mut PolyTable, p: &ModuleParams) -> Polys {
     let reg_val = pt.add(RegistersVal, "RegVal", Virtual, LOG_K_REG + p.log_t);
 
     // --- Virtual — RAM ---
-    let ram_combined_ra = pt.add(RamCombinedRa, "RamCombinedRa", Virtual, p.log_k_ram + p.log_t);
+    let ram_combined_ra = pt.add(
+        RamCombinedRa,
+        "RamCombinedRa",
+        Virtual,
+        p.log_k_ram + p.log_t,
+    );
     let ram_val = pt.add(RamVal, "RamVal", Virtual, p.log_k_ram + p.log_t);
     let ram_val_final = pt.add(RamValFinal, "RamValFinal", Virtual, p.log_k_ram);
     let ram_wa = pt.add(PolynomialId::RamWa, "RamWA", Virtual, p.log_t);
@@ -289,16 +336,40 @@ fn register_polys(pt: &mut PolyTable, p: &ModuleParams) -> Polys {
 
     // --- Virtual — RAF ---
     let ram_raf_ra = pt.add(RamRafRa, "RamRafRa", Virtual, p.log_k_ram);
-    let inst_raf_ra = pt.add(PolynomialId::InstructionRafRa, "InstRafRa", Virtual, p.log_k_chunk + p.log_t);
-    let bytecode_raf_ra = pt.add(PolynomialId::BytecodeRafRa, "BytecodeRafRa", Virtual, p.log_k_chunk + p.log_t);
+    let inst_raf_ra = pt.add(
+        PolynomialId::InstructionRafRa,
+        "InstRafRa",
+        Virtual,
+        p.log_k_chunk + p.log_t,
+    );
+    let bytecode_raf_ra = pt.add(
+        PolynomialId::BytecodeRafRa,
+        "BytecodeRafRa",
+        Virtual,
+        p.log_k_chunk + p.log_t,
+    );
     let inst_raf_flag = pt.add(InstructionRafFlag, "InstructionRafFlag", Virtual, p.log_t);
     let lookup_table_flags: Vec<_> = (0..NUM_LOOKUP_TABLES)
-        .map(|i| pt.add(LookupTableFlag(i), &format!("LookupTableFlag_{i}"), Virtual, p.log_t))
+        .map(|i| {
+            pt.add(
+                LookupTableFlag(i),
+                &format!("LookupTableFlag_{i}"),
+                Virtual,
+                p.log_t,
+            )
+        })
         .collect();
 
     // --- Virtual — bytecode read values ---
     let bc_read_val: Vec<_> = (0..5)
-        .map(|s| pt.add(BytecodeReadRafVal(s), &format!("BcReadVal_{s}"), Virtual, p.log_t))
+        .map(|s| {
+            pt.add(
+                BytecodeReadRafVal(s),
+                &format!("BcReadVal_{s}"),
+                Virtual,
+                p.log_t,
+            )
+        })
         .collect();
 
     // --- Virtual — HW reduction pushforward ---
@@ -312,8 +383,18 @@ fn register_polys(pt: &mut PolyTable, p: &ModuleParams) -> Polys {
     let product_uniskip_eval = pt.add(ProductUniskipEval, "ProductUniskipEval", Virtual, 0);
 
     // --- Virtual — advice address phase ---
-    let trusted_advice_addr = pt.add(PolynomialId::TrustedAdviceAddr, "TrustedAdviceAddr", Virtual, p.log_k_ram);
-    let untrusted_advice_addr = pt.add(PolynomialId::UntrustedAdviceAddr, "UntrustedAdviceAddr", Virtual, p.log_k_ram);
+    let trusted_advice_addr = pt.add(
+        PolynomialId::TrustedAdviceAddr,
+        "TrustedAdviceAddr",
+        Virtual,
+        p.log_k_ram,
+    );
+    let untrusted_advice_addr = pt.add(
+        PolynomialId::UntrustedAdviceAddr,
+        "UntrustedAdviceAddr",
+        Virtual,
+        p.log_k_ram,
+    );
 
     // --- Public — preprocessed ---
     let pp = PolyKind::Public(jolt_compiler::PublicPoly::Preprocessed);
@@ -321,9 +402,21 @@ fn register_polys(pt: &mut PolyTable, p: &ModuleParams) -> Polys {
     let val_io = pt.add(ValIo, "ValIo", pp.clone(), p.log_k_ram);
     let ram_unmap = pt.add(PolynomialId::RamUnmap, "RamUnmap", pp.clone(), p.log_k_ram);
     let ram_init = pt.add(PolynomialId::RamInit, "RamInit", pp.clone(), p.log_k_ram);
-    let lookup_table = pt.add(PolynomialId::LookupTable, "LookupTable", pp.clone(), p.log_k_chunk);
+    let lookup_table = pt.add(
+        PolynomialId::LookupTable,
+        "LookupTable",
+        pp.clone(),
+        p.log_k_chunk,
+    );
     let bc_table: Vec<_> = (0..5)
-        .map(|s| pt.add(PolynomialId::BytecodeTable(s), &format!("BcTable_{s}"), pp.clone(), p.log_k_bytecode))
+        .map(|s| {
+            pt.add(
+                PolynomialId::BytecodeTable(s),
+                &format!("BcTable_{s}"),
+                pp.clone(),
+                p.log_k_bytecode,
+            )
+        })
         .collect();
 
     Polys {
@@ -543,19 +636,19 @@ fn build_commitment_phase(p: &Polys, params: &ModuleParams, ops: &mut Vec<Op<Pol
     main_witness.extend_from_slice(&p.bytecode_ra);
     ops.push(Op::Commit {
         polys: main_witness,
-        tag: TranscriptTag::Commitment,
+        tag: DomainSeparator::Commitment,
     });
 
     // Barrier 2: untrusted advice
     ops.push(Op::Commit {
         polys: vec![p.untrusted_advice],
-        tag: TranscriptTag::UntrustedAdvice,
+        tag: DomainSeparator::UntrustedAdvice,
     });
 
     // Barrier 3: trusted advice
     ops.push(Op::Commit {
         polys: vec![p.trusted_advice],
-        tag: TranscriptTag::TrustedAdvice,
+        tag: DomainSeparator::TrustedAdvice,
     });
 }
 
@@ -647,7 +740,7 @@ fn build_stage1(
     ops.push(Op::AbsorbRoundPoly {
         kernel: outer_uniskip_kernel,
         num_coeffs: params.outer_uniskip_num_coeffs,
-        tag: TranscriptTag::UniskipPoly,
+        tag: DomainSeparator::UniskipPoly,
     });
 
     // Squeeze r0 (uniskip challenge)
@@ -684,7 +777,7 @@ fn build_stage1(
     });
     ops.push(Op::AbsorbEvals {
         polys: vec![p.outer_uniskip_eval],
-        tag: TranscriptTag::OpeningClaim,
+        tag: DomainSeparator::OpeningClaim,
     });
 
     // ---------------------------------------------------------------
@@ -711,7 +804,7 @@ fn build_stage1(
     //   2. Squeeze N batching coefficients (N=1 for this single-instance batch)
     ops.push(Op::AbsorbEvals {
         polys: vec![p.outer_uniskip_eval],
-        tag: TranscriptTag::SumcheckClaim,
+        tag: DomainSeparator::SumcheckClaim,
     });
     let ch_batch = ch.add(
         "outer_remaining_batch",
@@ -744,7 +837,7 @@ fn build_stage1(
         ops.push(Op::AbsorbRoundPoly {
             kernel: outer_remaining_kernel,
             num_coeffs: params.outer_remaining_degree + 1,
-            tag: TranscriptTag::SumcheckPoly,
+            tag: DomainSeparator::SumcheckPoly,
         });
         ops.push(Op::Squeeze { challenge: ch_r });
     }
@@ -762,7 +855,7 @@ fn build_stage1(
     }
     ops.push(Op::AbsorbEvals {
         polys: r1cs_polys.to_vec(),
-        tag: TranscriptTag::OpeningClaim,
+        tag: DomainSeparator::OpeningClaim,
     });
 }
 
@@ -775,7 +868,11 @@ fn build_stage1(
 ///   4. Verify remaining: input claim = s1(r0), 26 rounds of degree-3 sumcheck
 ///   5. Record 35 R1CS input evaluations
 ///   6. Check output: eq(τ_low, r) × L(τ_high, r0) × Az(r0, evals) × Bz(r0, evals)
-fn build_verifier_stage1_ops(p: &Polys, params: &ModuleParams, ch: &ChallengeTable) -> Vec<VerifierOp<PolynomialId>> {
+fn build_verifier_stage1_ops(
+    p: &Polys,
+    params: &ModuleParams,
+    ch: &ChallengeTable,
+) -> Vec<VerifierOp<PolynomialId>> {
     // Commitment list: all 25 committed polys (3 barriers flattened).
     let mut commitments = Vec::with_capacity(25);
     commitments.push(p.rd_inc);
@@ -868,7 +965,10 @@ fn build_verifier_stage1_ops(p: &Polys, params: &ModuleParams, ch: &ChallengeTab
     let mut ops = Vec::new();
     ops.push(VerifierOp::BeginStage);
     for &c in &commitments {
-        ops.push(VerifierOp::AbsorbCommitment { poly: c });
+        ops.push(VerifierOp::AbsorbCommitment {
+            poly: c,
+            tag: DomainSeparator::Commitment,
+        });
     }
     for &c in &tau_challenges {
         ops.push(VerifierOp::Squeeze { challenge: c });
@@ -877,6 +977,7 @@ fn build_verifier_stage1_ops(p: &Polys, params: &ModuleParams, ch: &ChallengeTab
     // TODO: full uniskip verification (check s(0)+s(1), constraint domain evaluation).
     ops.push(VerifierOp::AbsorbRoundPoly {
         num_coeffs: params.outer_uniskip_num_coeffs,
+        tag: DomainSeparator::UniskipPoly,
     });
     ops.push(VerifierOp::Squeeze { challenge: r0_idx });
     ops.push(VerifierOp::RecordEvals {
@@ -885,19 +986,26 @@ fn build_verifier_stage1_ops(p: &Polys, params: &ModuleParams, ch: &ChallengeTab
     // Prover flushes uniskip eval twice: first as OpeningClaim, then as SumcheckClaim.
     ops.push(VerifierOp::AbsorbEvals {
         polys: vec![p.outer_uniskip_eval],
+        tag: DomainSeparator::OpeningClaim,
     });
     ops.push(VerifierOp::AbsorbEvals {
         polys: vec![p.outer_uniskip_eval],
+        tag: DomainSeparator::SumcheckClaim,
     });
     // Batch coefficient for the (single-instance) remaining sumcheck.
     let ch_batch = r0_idx + 1;
-    ops.push(VerifierOp::Squeeze { challenge: ch_batch });
+    ops.push(VerifierOp::Squeeze {
+        challenge: ch_batch,
+    });
     ops.push(VerifierOp::VerifySumcheck {
         instances: instances.clone(),
         stage: 0,
     });
     ops.push(VerifierOp::RecordEvals { evals: evaluations });
-    ops.push(VerifierOp::AbsorbEvals { polys: eval_polys });
+    ops.push(VerifierOp::AbsorbEvals {
+        polys: eval_polys,
+        tag: DomainSeparator::OpeningClaim,
+    });
     ops.push(VerifierOp::CheckOutput {
         instances,
         stage: 0,
@@ -992,7 +1100,7 @@ fn build_stage2(
     ops.push(Op::AbsorbRoundPoly {
         kernel: product_uniskip_kernel,
         num_coeffs: params.product_uniskip_num_coeffs,
-        tag: TranscriptTag::UniskipPoly,
+        tag: DomainSeparator::UniskipPoly,
     });
 
     // Squeeze r0 (product uniskip challenge)
@@ -1013,7 +1121,7 @@ fn build_stage2(
     });
     ops.push(Op::AbsorbEvals {
         polys: vec![p.product_uniskip_eval],
-        tag: TranscriptTag::OpeningClaim,
+        tag: DomainSeparator::OpeningClaim,
     });
 
     // ---------------------------------------------------------------
@@ -1072,23 +1180,23 @@ fn build_stage2(
     // In jolt-core, each claim is appended individually via append_scalar:
     ops.push(Op::AbsorbEvals {
         polys: vec![p.ram_read_value], // placeholder: RW checking input claim
-        tag: TranscriptTag::SumcheckClaim,
+        tag: DomainSeparator::SumcheckClaim,
     });
     ops.push(Op::AbsorbEvals {
         polys: vec![p.product_uniskip_eval], // ProductRemainder: s2(r0)
-        tag: TranscriptTag::SumcheckClaim,
+        tag: DomainSeparator::SumcheckClaim,
     });
     ops.push(Op::AbsorbEvals {
         polys: vec![p.lookup_output], // placeholder: instruction claim reduction
-        tag: TranscriptTag::SumcheckClaim,
+        tag: DomainSeparator::SumcheckClaim,
     });
     ops.push(Op::AbsorbEvals {
         polys: vec![p.ram_address], // placeholder: RAF evaluation
-        tag: TranscriptTag::SumcheckClaim,
+        tag: DomainSeparator::SumcheckClaim,
     });
     ops.push(Op::AbsorbEvals {
         polys: vec![], // Output: zero claim (empty emit)
-        tag: TranscriptTag::SumcheckClaim,
+        tag: DomainSeparator::SumcheckClaim,
     });
 
     // Squeeze 5 batching coefficients
@@ -1149,7 +1257,7 @@ fn build_stage2(
         ops.push(Op::AbsorbRoundPoly {
             kernel: batched_kernel,
             num_coeffs: params.rw_checking_degree + 1,
-            tag: TranscriptTag::SumcheckPoly,
+            tag: DomainSeparator::SumcheckPoly,
         });
         ops.push(Op::Squeeze { challenge: ch_r });
     }
@@ -1198,7 +1306,7 @@ fn build_stage2(
     }
     ops.push(Op::AbsorbEvals {
         polys: stage2_eval_polys,
-        tag: TranscriptTag::OpeningClaim,
+        tag: DomainSeparator::OpeningClaim,
     });
 }
 
@@ -1210,7 +1318,11 @@ fn build_stage2(
 ///   [2] InstructionClaimReduction  — 25 rounds, degree 2
 ///   [3] RafEvaluation              — 20 rounds, degree 2
 ///   [4] OutputCheck                — 20 rounds, degree 3
-fn build_verifier_stage2_ops(p: &Polys, params: &ModuleParams, ch: &ChallengeTable) -> Vec<VerifierOp<PolynomialId>> {
+fn build_verifier_stage2_ops(
+    p: &Polys,
+    params: &ModuleParams,
+    ch: &ChallengeTable,
+) -> Vec<VerifierOp<PolynomialId>> {
     // Pre-squeeze challenges squeezed before the batched sumcheck:
     // τ_high (1) + γ_rw (1) + γ_instruction (1) + r_address (20) = 23
     // These are appended after the uniskip completes, in the order
@@ -1810,7 +1922,10 @@ fn build_verifier_stage2_ops(p: &Polys, params: &ModuleParams, ch: &ChallengeTab
         stage: 1,
     });
     ops.push(VerifierOp::RecordEvals { evals: evaluations });
-    ops.push(VerifierOp::AbsorbEvals { polys: eval_polys });
+    ops.push(VerifierOp::AbsorbEvals {
+        polys: eval_polys,
+        tag: DomainSeparator::OpeningClaim,
+    });
     ops.push(VerifierOp::CheckOutput {
         instances,
         stage: 1,
@@ -1853,7 +1968,10 @@ fn print_stats(module: &Module<PolynomialId>, params: &ModuleParams) {
 
     eprintln!("\n=== Configuration ===");
     eprintln!("  log_t = {log_t}, T = {T}");
-    eprintln!("  log_k_chunk = {}, k_chunk = {}", params.log_k_chunk, params.k_chunk);
+    eprintln!(
+        "  log_k_chunk = {}, k_chunk = {}",
+        params.log_k_chunk, params.k_chunk
+    );
     eprintln!("  instruction_d = {}", params.instruction_d);
     eprintln!("  bytecode_d = {}", params.bytecode_d);
     eprintln!("  ram_d = {}", params.ram_d);

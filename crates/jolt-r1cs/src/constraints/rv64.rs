@@ -399,7 +399,9 @@ mod tests {
         let matrices = rv64_constraints::<Fr>();
         assert_eq!(matrices.num_constraints, NUM_CONSTRAINTS_PER_CYCLE);
         assert_eq!(matrices.num_vars, NUM_VARS_PER_CYCLE);
-        matrices.check_witness(&noop_witness()).expect("noop should satisfy all constraints");
+        matrices
+            .check_witness(&noop_witness())
+            .expect("noop should satisfy all constraints");
     }
 
     #[test]

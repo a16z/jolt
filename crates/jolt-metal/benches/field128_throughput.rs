@@ -42,7 +42,8 @@ struct FieldKernels {
 impl FieldKernels {
     fn compile<F: MontgomeryConstants>(device: &Device) -> Self {
         let config = MslFieldParams::new::<F>();
-        let source = build_source_with_preamble(&config.msl_preamble, &[&config.msl_test_kernels], false);
+        let source =
+            build_source_with_preamble(&config.msl_preamble, &[&config.msl_test_kernels], false);
         let opts = metal::CompileOptions::new();
         let lib = device
             .new_library_with_source(&source, &opts)

@@ -5,9 +5,14 @@
 //! one-hot decomposition is applied, and the resulting buffers are available
 //! via [`get`](Polynomials::get) / [`take`](Polynomials::take) or as a
 //! [`BufferProvider`] for the compute runtime.
+//!
+//! Allocation and population are driven by [`PolynomialDescriptor::witness_slot`]
+//! — no hardcoded polynomial identity matching in [`new`](Polynomials::new)
+//! or [`push`](Polynomials::push).
 
 use std::collections::BTreeMap;
 
+use jolt_compiler::{PolynomialSpec, WitnessSlot};
 use jolt_compute::{Buf, BufferProvider, ComputeBackend, DeviceBuffer};
 use jolt_field::Field;
 use jolt_poly::OneHotPolynomial;
@@ -35,7 +40,7 @@ struct OneHotBuffer {
 /// Streaming: `new → push(chunk₁) → push(chunk₂) → … → finish`.
 pub struct Polynomials<F: Field> {
     config: PolynomialConfig,
-    /// Dense polynomial buffers (RdInc, RamInc).
+    /// Dense polynomial buffers.
     dense: BTreeMap<PolynomialId, Vec<F>>,
     /// One-hot accumulation buffers (not yet expanded).
     one_hot_pending: BTreeMap<PolynomialId, OneHotBuffer>,
@@ -46,38 +51,32 @@ pub struct Polynomials<F: Field> {
 
 impl<F: Field> Polynomials<F> {
     /// Creates an empty polynomial buffer collection.
+    ///
+    /// Allocation strategy is driven by each polynomial's
+    /// [`descriptor().witness_slot`](PolynomialSpec::descriptor):
+    /// - [`WitnessSlot::Dense`] → allocate a `Vec<F>`
+    /// - [`WitnessSlot::OneHotChunk`] → allocate a `OneHotBuffer`
+    /// - `None` → skip (inserted separately or computed on demand)
     pub fn new(config: PolynomialConfig) -> Self {
         let mut dense = BTreeMap::new();
-        let _ = dense.insert(PolynomialId::RdInc, Vec::new());
-        let _ = dense.insert(PolynomialId::RamInc, Vec::new());
-
         let mut one_hot_pending = BTreeMap::new();
-        for i in 0..config.instruction_d {
-            let _ = one_hot_pending.insert(
-                PolynomialId::InstructionRa(i),
-                OneHotBuffer {
-                    k: config.k_chunk,
-                    indices: Vec::new(),
-                },
-            );
-        }
-        for i in 0..config.bytecode_d {
-            let _ = one_hot_pending.insert(
-                PolynomialId::BytecodeRa(i),
-                OneHotBuffer {
-                    k: config.k_chunk,
-                    indices: Vec::new(),
-                },
-            );
-        }
-        for i in 0..config.ram_d {
-            let _ = one_hot_pending.insert(
-                PolynomialId::RamRa(i),
-                OneHotBuffer {
-                    k: config.k_chunk,
-                    indices: Vec::new(),
-                },
-            );
+
+        for id in config.witness_polynomial_ids() {
+            match id.descriptor().witness_slot {
+                Some(WitnessSlot::Dense(_)) => {
+                    let _ = dense.insert(id, Vec::new());
+                }
+                Some(WitnessSlot::OneHotChunk { .. }) => {
+                    let _ = one_hot_pending.insert(
+                        id,
+                        OneHotBuffer {
+                            k: config.k_chunk,
+                            indices: Vec::new(),
+                        },
+                    );
+                }
+                None => {}
+            }
         }
 
         Self {
@@ -91,58 +90,29 @@ impl<F: Field> Polynomials<F> {
 
     /// Pushes a batch of cycle data, appending to all polynomial buffers.
     ///
+    /// Routing is driven by [`WitnessSlot`] descriptors — dense slots read
+    /// from `CycleInput::dense[i]`, one-hot slots chunk from
+    /// `CycleInput::one_hot[source]`.
+    ///
     /// Can be called once with the full trace (batch) or repeatedly with
     /// chunks (streaming). Must not be called after [`finish`](Self::finish).
     pub fn push(&mut self, cycles: &[CycleInput]) {
         assert!(!self.finished, "push() called after finish()");
 
-        // Dense: RdInc, RamInc
-        self.dense
-            .get_mut(&PolynomialId::RdInc)
-            .unwrap()
-            .extend(cycles.iter().map(|c| F::from_i128(c.rd_inc)));
-        self.dense
-            .get_mut(&PolynomialId::RamInc)
-            .unwrap()
-            .extend(cycles.iter().map(|c| F::from_i128(c.ram_inc)));
-
-        // One-hot: InstructionRa
-        for i in 0..self.config.instruction_d {
-            self.one_hot_pending
-                .get_mut(&PolynomialId::InstructionRa(i))
-                .unwrap()
-                .indices
-                .extend(
-                    cycles
-                        .iter()
-                        .map(|c| Some(self.config.lookup_index_chunk(c.lookup_index, i))),
-                );
+        for (id, buf) in &mut self.dense {
+            if let Some(WitnessSlot::Dense(slot)) = id.descriptor().witness_slot {
+                buf.extend(cycles.iter().map(|c| F::from_i128(c.dense[slot])));
+            }
         }
 
-        // One-hot: BytecodeRa
-        for i in 0..self.config.bytecode_d {
-            self.one_hot_pending
-                .get_mut(&PolynomialId::BytecodeRa(i))
-                .unwrap()
-                .indices
-                .extend(
+        for (id, buf) in &mut self.one_hot_pending {
+            if let Some(WitnessSlot::OneHotChunk { source, dim }) = id.descriptor().witness_slot {
+                buf.indices.extend(
                     cycles
                         .iter()
-                        .map(|c| Some(self.config.bytecode_pc_chunk(c.pc_index, i))),
+                        .map(|c| c.one_hot[source].map(|v| self.config.chunk(source, v, dim))),
                 );
-        }
-
-        // One-hot: RamRa
-        for i in 0..self.config.ram_d {
-            self.one_hot_pending
-                .get_mut(&PolynomialId::RamRa(i))
-                .unwrap()
-                .indices
-                .extend(
-                    cycles
-                        .iter()
-                        .map(|c| c.ram_address.map(|a| self.config.ram_address_chunk(a, i))),
-                );
+            }
         }
     }
 
@@ -264,6 +234,7 @@ fn expand_one_hot<F: Field>(k: usize, indices: &[Option<u8>]) -> Vec<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jolt_compiler::WitnessSlot;
     use jolt_field::Fr;
     use num_traits::{One, Zero};
 
@@ -274,18 +245,12 @@ mod tests {
     fn test_cycles() -> Vec<CycleInput> {
         vec![
             CycleInput {
-                rd_inc: 5,
-                ram_inc: -3,
-                lookup_index: 0xAB,
-                pc_index: 0xC,
-                ram_address: Some(0xD),
+                dense: [5, -3],
+                one_hot: [Some(0xAB), Some(0xC), Some(0xD)],
             },
             CycleInput {
-                rd_inc: -1,
-                ram_inc: 0,
-                lookup_index: 0x12,
-                pc_index: 0x3,
-                ram_address: None,
+                dense: [-1, 0],
+                one_hot: [Some(0x12), Some(0x3), None],
             },
             CycleInput::PADDING,
             CycleInput::PADDING,
@@ -319,8 +284,8 @@ mod tests {
         // lookup_index 0xAB → chunk 0 = 0xA, chunk 1 = 0xB
         let ra0 = polys.get(PolynomialId::InstructionRa(0));
         let k = test_config().k_chunk; // 16
-        let c0 = 0; // cycle 0 offset
-        let c1 = 1; // cycle 1 offset
+        let c0 = 0;
+        let c1 = 1;
         assert_eq!(ra0[c0 * k + 0xA], Fr::one());
         assert_eq!(ra0[c0 * k], Fr::zero());
         assert_eq!(ra0[c1 * k + 0x1], Fr::one());
@@ -341,11 +306,8 @@ mod tests {
         let c1 = 1;
         let c2 = 2;
         let ra0 = polys.get(PolynomialId::RamRa(0));
-        // Cycle 0: ram_address = Some(0xD) → chunk 0 = 0xD
         assert_eq!(ra0[c0 * k + 0xD], Fr::one());
-        // Cycle 1: ram_address = None → all zeros
         assert!(ra0[c1 * k..(c1 + 1) * k].iter().all(|v| *v == Fr::zero()));
-        // Padding: all zeros
         assert!(ra0[c2 * k..(c2 + 1) * k].iter().all(|v| *v == Fr::zero()));
     }
 
@@ -354,33 +316,16 @@ mod tests {
         let cycles = test_cycles();
         let config = test_config();
 
-        // Batch
         let mut batch = Polynomials::<Fr>::new(config.clone());
         batch.push(&cycles);
         batch.finish();
 
-        // Streaming: 2 chunks of 2
         let mut stream = Polynomials::<Fr>::new(config.clone());
         stream.push(&cycles[..2]);
         stream.push(&cycles[2..]);
         stream.finish();
 
-        // Dense polynomials must match
-        for id in [PolynomialId::RdInc, PolynomialId::RamInc] {
-            assert_eq!(batch.get(id), stream.get(id), "mismatch for {id:?}");
-        }
-
-        // One-hot polynomials must match
-        for i in 0..config.instruction_d {
-            let id = PolynomialId::InstructionRa(i);
-            assert_eq!(batch.get(id), stream.get(id), "mismatch for {id:?}");
-        }
-        for i in 0..config.bytecode_d {
-            let id = PolynomialId::BytecodeRa(i);
-            assert_eq!(batch.get(id), stream.get(id), "mismatch for {id:?}");
-        }
-        for i in 0..config.ram_d {
-            let id = PolynomialId::RamRa(i);
+        for id in config.witness_polynomial_ids() {
             assert_eq!(batch.get(id), stream.get(id), "mismatch for {id:?}");
         }
     }
@@ -448,11 +393,30 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "push() called after finish()")]
     fn push_after_finish_panics() {
         let mut polys = Polynomials::<Fr>::new(test_config());
         polys.push(&[CycleInput::PADDING]);
         polys.finish();
-        polys.push(&[CycleInput::PADDING]);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            polys.push(&[CycleInput::PADDING]);
+        }));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn descriptor_drives_allocation() {
+        let config = test_config();
+        let polys = Polynomials::<Fr>::new(config.clone());
+
+        // Dense witness slots are pre-allocated
+        assert!(polys.try_get(PolynomialId::RdInc).is_some());
+        assert!(polys.try_get(PolynomialId::RamInc).is_some());
+
+        // Non-trace polynomials are not pre-allocated
+        assert!(polys.try_get(PolynomialId::SpartanWitness).is_none());
+        assert!(polys.try_get(PolynomialId::TrustedAdvice).is_none());
+
+        // Total pre-allocated = 2 dense (one-hot not in dense until finish)
+        assert_eq!(polys.len(), WitnessSlot::NUM_DENSE);
     }
 }

@@ -72,12 +72,8 @@ pub fn r1cs_cycle_witness<C: CycleRow, F: Field>(
     w[V_PRODUCT] = w[V_LEFT_INSTRUCTION_INPUT] * w[V_RIGHT_INSTRUCTION_INPUT];
 
     // Lookup operands
-    let (left_lookup, right_lookup) = compute_lookup_operands(
-        left_input,
-        right_input,
-        w[V_PRODUCT],
-        &cflags,
-    );
+    let (left_lookup, right_lookup) =
+        compute_lookup_operands(left_input, right_input, w[V_PRODUCT], &cflags);
     w[V_LEFT_LOOKUP_OPERAND] = left_lookup;
     w[V_RIGHT_LOOKUP_OPERAND] = right_lookup;
 

@@ -9,14 +9,15 @@ use std::collections::HashMap;
 use jolt_compiler::module::{
     ClaimFactor, ClaimFormula, PointNormalization, R1CSMatrix, VerifierOp,
 };
-use jolt_compiler::PolyId;
+use jolt_compiler::PolynomialSpec;
 use jolt_field::Field;
 use jolt_openings::{
     AdditivelyHomomorphic, OpeningReduction, OpeningsError, RlcReduction, VerifierClaim,
 };
+use jolt_poly::EqPolynomial;
 use jolt_r1cs::R1csKey;
 use jolt_sumcheck::{ClearRoundVerifier, SumcheckClaim, SumcheckVerifier};
-use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
+use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Label, LabelWithCount, Transcript};
 
 use crate::error::JoltError;
 use crate::key::JoltVerifyingKey;
@@ -34,7 +35,7 @@ pub fn verify<P, F, PCS>(
     expected_io_hash: &[u8; 32],
 ) -> Result<(), JoltError>
 where
-    P: PolyId,
+    P: PolynomialSpec,
     F: Field,
     PCS: AdditivelyHomomorphic<Field = F>,
     PCS::Output: AppendToTranscript,
@@ -86,10 +87,11 @@ where
                 );
             }
 
-            VerifierOp::AbsorbCommitment { poly } => {
+            VerifierOp::AbsorbCommitment { poly, tag } => {
                 let c = commitments
                     .next()
                     .ok_or_else(|| JoltError::InvalidProof("missing commitment".into()))?;
+                transcript.append(&Label(tag.as_bytes()));
                 c.append_to_transcript(&mut transcript);
                 let _ = commitment_map.insert(*poly, c.clone());
             }
@@ -98,7 +100,7 @@ where
                 challenges[*challenge] = transcript.challenge();
             }
 
-            VerifierOp::AbsorbRoundPoly { num_coeffs: _ } => {
+            VerifierOp::AbsorbRoundPoly { num_coeffs: _, tag } => {
                 let sp = current_stage.ok_or_else(|| {
                     JoltError::InvalidProof("no active stage proof for round poly".into())
                 })?;
@@ -111,7 +113,9 @@ where
                             "missing round poly at cursor {round_poly_cursor}"
                         ))
                     })?;
-                for coeff in poly.coefficients() {
+                let coeffs = poly.coefficients();
+                transcript.append(&LabelWithCount(tag.as_bytes(), coeffs.len() as u64));
+                for coeff in coeffs {
                     coeff.append_to_transcript(&mut transcript);
                 }
                 round_poly_cursor += 1;
@@ -143,13 +147,14 @@ where
                     degree: max_degree,
                     claimed_sum: combined_claim,
                 };
-                let round_polys =
-                    &sp.round_polys.round_polynomials[round_poly_cursor..round_poly_cursor + max_rounds];
+                let round_polys = &sp.round_polys.round_polynomials
+                    [round_poly_cursor..round_poly_cursor + max_rounds];
+                let handler = ClearRoundVerifier::with_label(b"sumcheck_poly");
                 let (fe, sc) = SumcheckVerifier::verify_with_handler(
                     &claim,
                     round_polys,
                     &mut transcript,
-                    &ClearRoundVerifier,
+                    &handler,
                 )
                 .map_err(JoltError::Sumcheck)?;
                 round_poly_cursor += max_rounds;
@@ -173,9 +178,10 @@ where
                 }
             }
 
-            VerifierOp::AbsorbEvals { polys } => {
+            VerifierOp::AbsorbEvals { polys, tag } => {
                 for pi in polys {
                     if let Some(&val) = evaluations.get(pi) {
+                        transcript.append(&Label(tag.as_bytes()));
                         val.append_to_transcript(&mut transcript);
                     }
                 }
@@ -291,7 +297,7 @@ fn apply_normalization<F: Clone>(raw: &[F], normalize: Option<&PointNormalizatio
 /// factor referencing that stage uses the override point instead of
 /// `sumcheck_points[stage]`. This lets `CheckOutput` pass a normalized
 /// point without mutating shared state.
-fn evaluate_formula<P: PolyId, F: Field>(
+fn evaluate_formula<P: PolynomialSpec, F: Field>(
     formula: &ClaimFormula<P>,
     evaluations: &HashMap<P, F>,
     challenges: &[F],
@@ -320,7 +326,7 @@ fn evaluate_formula<P: PolyId, F: Field>(
                 } => {
                     let r: Vec<F> = chs.iter().map(|&ci| challenges[ci]).collect();
                     let s = resolve_point(sumcheck_points, point_override, at_stage.0);
-                    eval_eq(&r, s)
+                    EqPolynomial::<F>::mle(&r, s)
                 }
                 ClaimFactor::EqEvalSlice {
                     challenges: chs,
@@ -329,22 +335,26 @@ fn evaluate_formula<P: PolyId, F: Field>(
                 } => {
                     let r: Vec<F> = chs.iter().map(|&ci| challenges[ci]).collect();
                     let s = resolve_point(sumcheck_points, point_override, at_stage.0);
-                    eval_eq(&r, &s[*offset..*offset + r.len()])
+                    EqPolynomial::<F>::mle(&r, &s[*offset..*offset + r.len()])
                 }
                 ClaimFactor::LagrangeKernelDomain {
                     tau_challenge,
                     at_challenge,
                     domain_size,
-                } => eval_lagrange_kernel(
+                } => jolt_poly::lagrange::lagrange_kernel_eval(
+                    *domain_size,
                     challenges[*tau_challenge],
                     challenges[*at_challenge],
-                    *domain_size,
                 ),
                 ClaimFactor::LagrangeWeight {
                     challenge,
                     domain_size,
                     basis_index,
-                } => eval_lagrange_basis(challenges[*challenge], *domain_size, *basis_index),
+                } => jolt_poly::lagrange::lagrange_basis_eval(
+                    *domain_size,
+                    *basis_index,
+                    challenges[*challenge],
+                ),
                 ClaimFactor::UniformR1CSEval {
                     matrix,
                     eval_polys,
@@ -357,9 +367,7 @@ fn evaluate_formula<P: PolyId, F: Field>(
                         .iter()
                         .map(|p| {
                             evaluations.get(p).copied().ok_or_else(|| {
-                                JoltError::InvalidProof(format!(
-                                    "R1CS eval {p:?} not available"
-                                ))
+                                JoltError::InvalidProof(format!("R1CS eval {p:?} not available"))
                             })
                         })
                         .collect::<Result<_, _>>()?;
@@ -405,38 +413,6 @@ fn resolve_point<'a, F>(
     }
 }
 
-/// `eq(r, s) = ∏ᵢ (rᵢ·sᵢ + (1−rᵢ)(1−sᵢ))`
-#[inline]
-fn eval_eq<F: Field>(r: &[F], s: &[F]) -> F {
-    debug_assert_eq!(r.len(), s.len());
-    let one = F::one();
-    r.iter().zip(s).fold(F::one(), |acc, (&ri, &si)| {
-        acc * (ri * si + (one - ri) * (one - si))
-    })
-}
-
-/// Lagrange kernel `L(τ, r) = Σ_k L_k(τ) × L_k(r)` over `{0, ..., domain_size-1}`.
-fn eval_lagrange_kernel<F: Field>(tau: F, r: F, domain_size: usize) -> F {
-    (0..domain_size)
-        .map(|k| eval_lagrange_basis(tau, domain_size, k) * eval_lagrange_basis(r, domain_size, k))
-        .fold(F::zero(), |a, b| a + b)
-}
-
-/// k-th Lagrange basis at `r` over `{0, ..., N-1}`:
-/// `L_k(r) = ∏_{j≠k} (r - j) / (k - j)`
-fn eval_lagrange_basis<F: Field>(r: F, domain_size: usize, k: usize) -> F {
-    let mut numer = F::one();
-    let mut denom = F::one();
-    for j in 0..domain_size {
-        if j == k {
-            continue;
-        }
-        numer *= r - F::from_u64(j as u64);
-        denom *= F::from_i128(k as i128 - j as i128);
-    }
-    numer / denom
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -467,7 +443,10 @@ mod tests {
                         at_stage: VerifierStageIndex(0),
                     }],
                 },
-                VerifierOp::AbsorbEvals { polys: vec![0] },
+                VerifierOp::AbsorbEvals {
+                    polys: vec![0],
+                    tag: jolt_compiler::DomainSeparator::OpeningClaim,
+                },
                 VerifierOp::Squeeze { challenge: 0 },
             ],
             num_challenges: 1,
@@ -497,9 +476,10 @@ mod tests {
                         let _ = evaluations.insert(eval_desc.poly, sp.evals[ei]);
                     }
                 }
-                VerifierOp::AbsorbEvals { polys } => {
+                VerifierOp::AbsorbEvals { polys, tag } => {
                     for &pi in polys {
                         if let Some(&val) = evaluations.get(&pi) {
+                            transcript.append(&Label(tag.as_bytes()));
                             val.append_to_transcript(&mut transcript);
                         }
                     }
@@ -536,8 +516,15 @@ mod tests {
         let challenges = vec![Fr::from_u64(3)];
         let sumcheck_points: Vec<Vec<Fr>> = vec![];
 
-        let result =
-            evaluate_formula(&formula, &evaluations, &challenges, &sumcheck_points, None, &dummy_r1cs_key()).unwrap();
+        let result = evaluate_formula(
+            &formula,
+            &evaluations,
+            &challenges,
+            &sumcheck_points,
+            None,
+            &dummy_r1cs_key(),
+        )
+        .unwrap();
         // 2 * 5 * 3 + 3 * 7 = 30 + 21 = 51
         assert_eq!(result, Fr::from_u64(51));
     }
@@ -547,12 +534,12 @@ mod tests {
         let one = Fr::one();
         let zero = Fr::zero();
 
-        assert_eq!(eval_eq(&[one], &[one]), one);
-        assert_eq!(eval_eq(&[zero], &[zero]), one);
-        assert_eq!(eval_eq(&[one], &[zero]), zero);
-        assert_eq!(eval_eq(&[zero], &[one]), zero);
-        assert_eq!(eval_eq(&[one, zero], &[one, zero]), one);
-        assert_eq!(eval_eq(&[one, zero], &[zero, one]), zero);
+        assert_eq!(EqPolynomial::<Fr>::mle(&[one], &[one]), one);
+        assert_eq!(EqPolynomial::<Fr>::mle(&[zero], &[zero]), one);
+        assert_eq!(EqPolynomial::<Fr>::mle(&[one], &[zero]), zero);
+        assert_eq!(EqPolynomial::<Fr>::mle(&[zero], &[one]), zero);
+        assert_eq!(EqPolynomial::<Fr>::mle(&[one, zero], &[one, zero]), one);
+        assert_eq!(EqPolynomial::<Fr>::mle(&[one, zero], &[zero, one]), zero);
     }
 
     /// Generate a sumcheck proof then verify it through the flat schedule.
@@ -697,13 +684,27 @@ mod tests {
         let challenges = vec![one, zero];
         let sumcheck_points = vec![vec![one, zero]];
 
-        let result =
-            evaluate_formula(&formula, &evaluations, &challenges, &sumcheck_points, None, &dummy_r1cs_key()).unwrap();
+        let result = evaluate_formula(
+            &formula,
+            &evaluations,
+            &challenges,
+            &sumcheck_points,
+            None,
+            &dummy_r1cs_key(),
+        )
+        .unwrap();
         assert_eq!(result, Fr::from_u64(7));
 
         let sumcheck_points2 = vec![vec![zero, one]];
-        let result2 =
-            evaluate_formula(&formula, &evaluations, &challenges, &sumcheck_points2, None, &dummy_r1cs_key()).unwrap();
+        let result2 = evaluate_formula(
+            &formula,
+            &evaluations,
+            &challenges,
+            &sumcheck_points2,
+            None,
+            &dummy_r1cs_key(),
+        )
+        .unwrap();
         assert_eq!(result2, Fr::zero());
     }
 
@@ -731,8 +732,15 @@ mod tests {
         let sumcheck_points = vec![vec![zero]];
         let key = dummy_r1cs_key();
 
-        let result =
-            evaluate_formula(&formula, &evaluations, &challenges, &sumcheck_points, None, &key).unwrap();
+        let result = evaluate_formula(
+            &formula,
+            &evaluations,
+            &challenges,
+            &sumcheck_points,
+            None,
+            &key,
+        )
+        .unwrap();
         assert_eq!(result, Fr::zero());
 
         let override_point = vec![one];

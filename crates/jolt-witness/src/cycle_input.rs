@@ -4,45 +4,46 @@
 //! cycle. The caller extracts these values from whatever trace backend is
 //! in use (e.g. `tracer::Cycle`) before pushing them into [`Polynomials`].
 //!
+//! Fields are indexed arrays so [`Polynomials::push`] can generically route
+//! data to polynomial buffers via [`WitnessSlot`] descriptors — no hardcoded
+//! polynomial identity matching.
+//!
 //! [`Polynomials`]: crate::Polynomials
+//! [`WitnessSlot`]: jolt_compiler::WitnessSlot
+
+use jolt_compiler::WitnessSlot;
 
 /// Per-cycle input data for polynomial buffer generation.
 ///
-/// Each field maps to one or more committed polynomial buffers.
-/// [`Polynomials::push`](crate::Polynomials::push) decomposes these values
-/// into dense and one-hot evaluation entries.
-#[derive(Clone, Copy, Debug, Default)]
+/// Dense slots (indexed by [`WitnessSlot::Dense(i)`]):
+/// - `0` ([`RD_INC`](WitnessSlot::RD_INC)) — register write increment (rd post − rd pre)
+/// - `1` ([`RAM_INC`](WitnessSlot::RAM_INC)) — RAM write increment (ram post − ram pre)
+///
+/// One-hot sources (indexed by [`WitnessSlot::OneHotChunk { source, .. }`]):
+/// - `0` ([`INSTRUCTION`](WitnessSlot::INSTRUCTION)) — instruction lookup index (128-bit)
+/// - `1` ([`BYTECODE`](WitnessSlot::BYTECODE)) — bytecode PC index
+/// - `2` ([`RAM`](WitnessSlot::RAM)) — remapped RAM address (`None` = no access)
+#[derive(Clone, Copy, Debug)]
 pub struct CycleInput {
-    /// Register write increment: `post_value - pre_value`.
-    /// Zero for cycles with no register write. Maps to `RdInc`.
-    pub rd_inc: i128,
-
-    /// RAM write increment: `post_value - pre_value`.
-    /// Zero for cycles with no RAM write. Maps to `RamInc`.
-    pub ram_inc: i128,
-
-    /// Instruction lookup index (128-bit interleaved operand encoding).
-    /// Decomposed into `instruction_d` one-hot chunks for `InstructionRa`.
-    pub lookup_index: u128,
-
-    /// Virtual bytecode PC index.
-    /// Decomposed into `bytecode_d` one-hot chunks for `BytecodeRa`.
-    pub pc_index: u32,
-
-    /// Remapped RAM address, or `None` for cycles with no RAM access.
-    /// Decomposed into `ram_d` one-hot chunks for `RamRa`.
-    pub ram_address: Option<u64>,
+    /// Dense witness values, indexed by `WitnessSlot::Dense(i)`.
+    pub dense: [i128; WitnessSlot::NUM_DENSE],
+    /// One-hot source values, indexed by `WitnessSlot::OneHotChunk { source, .. }`.
+    /// `None` means no access for that source on this cycle.
+    pub one_hot: [Option<u128>; WitnessSlot::NUM_ONE_HOT],
 }
 
 impl CycleInput {
     /// A padding cycle: zero increments, zero indices, no RAM access.
     pub const PADDING: Self = Self {
-        rd_inc: 0,
-        ram_inc: 0,
-        lookup_index: 0,
-        pc_index: 0,
-        ram_address: None,
+        dense: [0; WitnessSlot::NUM_DENSE],
+        one_hot: [Some(0), Some(0), None],
     };
+}
+
+impl Default for CycleInput {
+    fn default() -> Self {
+        Self::PADDING
+    }
 }
 
 #[cfg(test)]
@@ -53,10 +54,7 @@ mod tests {
     fn padding_is_default() {
         let pad = CycleInput::PADDING;
         let def = CycleInput::default();
-        assert_eq!(pad.rd_inc, def.rd_inc);
-        assert_eq!(pad.ram_inc, def.ram_inc);
-        assert_eq!(pad.lookup_index, def.lookup_index);
-        assert_eq!(pad.pc_index, def.pc_index);
-        assert_eq!(pad.ram_address, def.ram_address);
+        assert_eq!(pad.dense, def.dense);
+        assert_eq!(pad.one_hot, def.one_hot);
     }
 }

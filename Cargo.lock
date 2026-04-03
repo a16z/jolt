@@ -2816,6 +2816,7 @@ version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
  "common",
+ "jolt-compiler",
  "jolt-field",
  "jolt-instructions",
  "jolt-r1cs",
@@ -3050,6 +3051,7 @@ dependencies = [
 name = "jolt-r1cs"
 version = "0.1.0"
 dependencies = [
+ "jolt-compiler",
  "jolt-compute",
  "jolt-field",
  "jolt-poly",

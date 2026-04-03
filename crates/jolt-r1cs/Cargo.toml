@@ -9,6 +9,7 @@ description = "R1CS constraint data structures for the Jolt proving system"
 workspace = true
 
 [dependencies]
+jolt-compiler = { path = "../jolt-compiler" }
 jolt-compute = { path = "../jolt-compute" }
 jolt-field = { path = "../jolt-field" }
 jolt-poly = { path = "../jolt-poly" }

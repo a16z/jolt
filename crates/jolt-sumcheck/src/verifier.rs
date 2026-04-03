@@ -94,7 +94,7 @@ impl SumcheckVerifier {
             claim,
             &proof.round_polynomials,
             transcript,
-            &ClearRoundVerifier,
+            &ClearRoundVerifier::new(),
         )
     }
 }

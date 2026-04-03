@@ -13,7 +13,6 @@
 
 mod binding;
 mod compressed_univariate;
-mod cpu_polynomial;
 mod eq;
 mod eq_plus_one;
 mod identity;
@@ -22,18 +21,19 @@ mod lt;
 pub mod math;
 mod multilinear;
 mod one_hot;
+mod polynomial;
 mod source;
 pub mod thread;
 mod univariate;
 
 pub use binding::BindingOrder;
 pub use compressed_univariate::CompressedPoly;
-pub use cpu_polynomial::Polynomial;
 pub use eq::EqPolynomial;
 pub use eq_plus_one::{EqPlusOnePolynomial, EqPlusOnePrefixSuffix};
 pub use identity::IdentityPolynomial;
 pub use lt::LtPolynomial;
 pub use multilinear::{MultilinearBinding, MultilinearEvaluation};
 pub use one_hot::OneHotPolynomial;
+pub use polynomial::{bind_high_to_low, bind_low_to_high, Polynomial};
 pub use source::{MultilinearPoly, RlcSource};
 pub use univariate::{UnivariatePoly, UnivariatePolynomial};

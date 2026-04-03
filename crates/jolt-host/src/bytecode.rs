@@ -103,8 +103,7 @@ impl BytecodePCMapper {
                     "Bytecode has non-decreasing inline sequences at index {idx}"
                 );
             } else {
-                indices[idx] =
-                    Some((last_pc, instr.virtual_sequence_remaining.unwrap_or(0)));
+                indices[idx] = Some((last_pc, instr.virtual_sequence_remaining.unwrap_or(0)));
             }
         }
         Self { indices }
@@ -112,8 +111,8 @@ impl BytecodePCMapper {
 
     /// Resolve `(address, virtual_sequence_remaining)` to a dense index.
     pub fn get_pc(&self, address: usize, virtual_sequence_remaining: u16) -> usize {
-        let (base_pc, max_inline_seq) = self.indices[Self::get_index(address)]
-            .expect("PC for address not found");
+        let (base_pc, max_inline_seq) =
+            self.indices[Self::get_index(address)].expect("PC for address not found");
         base_pc + (max_inline_seq - virtual_sequence_remaining) as usize
     }
 

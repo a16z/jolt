@@ -23,7 +23,6 @@
 //! accumulator instead of 2N+2 (`WideAcc`), cutting register pressure
 //! roughly in half and improving GPU occupancy at high D.
 
-use std::fmt::Write;
 use std::sync::Arc;
 
 use jolt_compiler::kernel_spec::Iteration;
@@ -33,6 +32,7 @@ use metal::CompileOptions;
 
 use crate::field_params::MslFieldParams;
 use crate::kernel::CompiledPipeline;
+use crate::msl_writer::{msl, Msl};
 use crate::pipeline::{build_source_with_preamble, make_pipeline};
 
 /// Controls Metal shader compilation strategy.
@@ -84,6 +84,14 @@ pub struct GeneratedMsl {
     pub has_challenges: bool,
 }
 
+struct EvalBody {
+    msl: String,
+    reads_inline: bool,
+    fuse_accumulate: bool,
+    weight_folded: bool,
+    has_challenges: bool,
+}
+
 /// Generate the MSL source for a single kernel variant of a composition formula.
 ///
 /// Only emits the variant needed for the given `iteration` + `binding_order`,
@@ -101,60 +109,45 @@ pub fn generate_msl(
     let is_h2l = matches!(variant, KernelVariant::HighToLow);
     let n_limbs = field_config.n_limbs;
 
-    let mut msl = String::with_capacity(65536);
-
-    // Determine eval body, weight-folding, and read strategy for this variant.
     let is_sparse = matches!(variant, KernelVariant::Sparse);
     let num_evals = degree;
-    let (eval_body, weight_folded, reads_inline, fuse_accumulate, tg_spill_count, has_challenges) =
-        if let Some((d, p)) = formula.as_product_sum() {
-            // The D=8 deferred path reads pairs inline with hardcoded positional
-            // indexing — incompatible with sparse index-based reads.
-            if d == 8 && p == 1 && !is_sparse {
-                let body = generate_toom_cook_d8_deferred(p, is_weighted, is_h2l, false);
-                (body, is_weighted, true, true, 0, false)
-            } else if d == 4 || d == 8 {
-                let body = if is_weighted {
-                    generate_toom_cook_body_weighted(d, p)
-                } else {
-                    generate_toom_cook_body(d, p)
-                };
-                (body, is_weighted, false, false, 0, false)
+
+    // The D=8 deferred path reads pairs inline with hardcoded positional
+    // indexing — incompatible with sparse index-based reads.
+    let body = if let Some((d, p)) = formula.as_product_sum() {
+        if d == 8 && p == 1 && !is_sparse {
+            generate_toom_cook_d8_deferred(p, is_weighted, is_h2l)
+        } else if d == 4 || d == 8 {
+            if is_weighted {
+                generate_toom_cook_body_weighted(d, p)
             } else {
-                let fold = is_weighted && d > 2 * p;
-                let body = generate_product_sum_body(d, p, fold);
-                let has_ch = body.contains("challenges[");
-                (body, fold, false, false, 0, has_ch)
+                generate_toom_cook_body(d, p)
             }
         } else {
-            let body = generate_formula_body(formula, degree);
-            let has_ch = body.contains("challenges[");
-            (body, false, false, false, 0, has_ch)
-        };
+            let fold = is_weighted && d > 2 * p;
+            generate_product_sum_body(d, p, fold)
+        }
+    } else {
+        generate_formula_body(formula, degree)
+    };
 
-    msl.push_str(&generate_reduce_kernel(
+    let kernel = generate_reduce_kernel(
         num_inputs,
         num_evals,
-        &eval_body,
+        &body,
         variant,
-        weight_folded,
-        is_weighted,
-        has_challenges,
         n_limbs,
         device_config,
-        reads_inline,
-        fuse_accumulate,
-        tg_spill_count,
-    ));
+    );
 
     let noinline = matches!(mode, CompileMode::FastCompile);
-    let source = build_source_with_preamble(&field_config.msl_preamble, &[&msl], noinline);
+    let source = build_source_with_preamble(&field_config.msl_preamble, &[&kernel], noinline);
 
     GeneratedMsl {
         source,
         num_inputs,
         num_evals,
-        has_challenges,
+        has_challenges: body.has_challenges,
     }
 }
 
@@ -172,7 +165,6 @@ pub(crate) fn compile_msl(device: &metal::Device, msl: &GeneratedMsl) -> Arc<Com
         has_challenges: msl.has_challenges,
     })
 }
-
 
 /// Generate a reduce kernel for a specific pair-reading variant.
 ///
@@ -192,278 +184,244 @@ pub(crate) fn compile_msl(device: &metal::Device, msl: &GeneratedMsl) -> Arc<Com
 /// final multiply + reduce + accumulate into `acc_d` directly. The evals
 /// array declaration and accumulation loop are skipped, saving `num_evals × N`
 /// registers (64 for BN254 D=8).
-///
-/// When `tg_spill_count > 0`, a `threadgroup Fr tg_data[...]` array is
-/// declared before the grid-stride loop for the eval body to spill
-/// intermediate values. The same array is reused for the post-loop
-/// simdgroup tree reduction. For BN254 D=8, `tg_spill_count = 7`
-/// spills half-A results (a_1..a_7), using 28 KB of threadgroup memory.
-#[allow(clippy::too_many_arguments)]
 fn generate_reduce_kernel(
     num_inputs: usize,
     num_evals: usize,
-    eval_body: &str,
+    body: &EvalBody,
     variant: KernelVariant,
-    weight_folded: bool,
-    weighted: bool,
-    has_challenges: bool,
     n_limbs: usize,
     device_config: &crate::config::MetalDeviceConfig,
-    reads_inline: bool,
-    fuse_accumulate: bool,
-    tg_spill_count: usize,
 ) -> String {
     let gs = device_config.reduce_group_size;
     let num_simdgroups = device_config.num_simdgroups();
     let fname = KernelVariant::FUNCTION_NAME;
     let is_tensor = matches!(variant, KernelVariant::Tensor);
+    let weighted = matches!(variant, KernelVariant::Tensor);
 
     // All single-pass kernels use Fr accumulators (no WideAcc).
     // This saves ACC_LIMBS - N registers per eval per thread.
     // For weighted + not folded: accumulation uses fr_mul(w, eval) + fr_add.
     // For unweighted / weight-folded: accumulation uses fr_reduce(eval) + fr_add.
-    let needs_weight_mul = weighted && !weight_folded;
+    let needs_weight_mul = weighted && !body.weight_folded;
 
-    let mut s = String::with_capacity(8192);
+    let mut w = Msl::new(8192);
 
     // Kernel signature
-    let _ = writeln!(s, "kernel void {fname}(");
+    msl!(w, "kernel void {fname}(");
+    w.push();
     for k in 0..num_inputs {
-        let _ = writeln!(s, "    device const Fr* input_{k} [[buffer({k})]],");
+        msl!(w, "device const Fr* input_{k} [[buffer({k})]],");
     }
 
     let is_sparse = matches!(variant, KernelVariant::Sparse);
     let mut next_buf = num_inputs;
     if is_sparse {
-        let _ = writeln!(
-            s,
-            "    device const uint* pair_index [[buffer({next_buf})]],",
-        );
+        msl!(w, "device const uint* pair_index [[buffer({next_buf})]],");
         next_buf += 1;
     } else if weighted {
         if is_tensor {
-            let _ = writeln!(
-                s,
-                "    device const Fr* outer_weights [[buffer({next_buf})]],",
-            );
+            msl!(w, "device const Fr* outer_weights [[buffer({next_buf})]],");
             next_buf += 1;
-            let _ = writeln!(
-                s,
-                "    device const Fr* inner_weights [[buffer({next_buf})]],",
-            );
+            msl!(w, "device const Fr* inner_weights [[buffer({next_buf})]],");
             next_buf += 1;
         } else {
-            let _ = writeln!(s, "    device const Fr* weights [[buffer({next_buf})]],",);
+            msl!(w, "device const Fr* weights [[buffer({next_buf})]],");
             next_buf += 1;
         }
     }
-    if has_challenges {
-        let _ = writeln!(s, "    device const Fr* challenges [[buffer({next_buf})]],",);
+    if body.has_challenges {
+        msl!(w, "device const Fr* challenges [[buffer({next_buf})]],");
         next_buf += 1;
     }
-    let _ = writeln!(s, "    device Fr* partials [[buffer({next_buf})]],");
+    msl!(w, "device Fr* partials [[buffer({next_buf})]],");
     next_buf += 1;
-    let _ = writeln!(s, "    device const uint* params [[buffer({next_buf})]],",);
-    let _ = writeln!(s, "    uint gid [[threadgroup_position_in_grid]],");
-    let _ = writeln!(s, "    uint lid [[thread_position_in_threadgroup]],");
-    let _ = writeln!(s, "    uint num_groups [[threadgroups_per_grid]],");
-    let _ = writeln!(s, "    uint simd_lane [[thread_index_in_simdgroup]],");
-    let _ = writeln!(s, "    uint simd_id [[simdgroup_index_in_threadgroup]]");
-    let _ = writeln!(s, ") {{");
+    msl!(w, "device const uint* params [[buffer({next_buf})]],");
+    w.line("uint gid [[threadgroup_position_in_grid]],");
+    w.line("uint lid [[thread_position_in_threadgroup]],");
+    w.line("uint num_groups [[threadgroups_per_grid]],");
+    w.line("uint simd_lane [[thread_index_in_simdgroup]],");
+    w.line("uint simd_id [[simdgroup_index_in_threadgroup]]");
+    w.pop();
+    w.line(") {");
+
+    w.push();
 
     // Read params
-    let _ = writeln!(s, "    uint n_pairs = params[0];");
+    w.line("uint n_pairs = params[0];");
     if is_tensor {
-        let _ = writeln!(s, "    uint inner_log = params[1];");
-        let _ = writeln!(s, "    uint inner_mask = params[2];");
+        w.line("uint inner_log = params[1];");
+        w.line("uint inner_mask = params[2];");
     }
-    s.push('\n');
-
-    // Threadgroup memory: shared across spill (inside loop) and reduction (after loop).
-    let sh_size = num_evals * num_simdgroups;
-    let tg_name = if tg_spill_count > 0 { "tg_data" } else { "sh" };
-    let tg_size = if tg_spill_count > 0 {
-        (gs * tg_spill_count).max(sh_size)
-    } else {
-        sh_size
-    };
-    if tg_spill_count > 0 {
-        // Declare before loop — eval body stores half-A intermediates here.
-        // Reused for simdgroup tree reduction after the loop (non-overlapping).
-        let _ = writeln!(s, "    threadgroup Fr {tg_name}[{tg_size}];");
-        s.push('\n');
-    }
+    w.blank();
 
     // Individual Fr accumulators (not arrays) for independent register scheduling.
     // N limbs per eval vs ACC_LIMBS with WideAcc — saves 80 registers for BN254 D=8.
     for d in 0..num_evals {
-        let _ = writeln!(s, "    Fr acc_{d} = fr_zero();");
+        msl!(w, "Fr acc_{d} = fr_zero();");
     }
-    s.push('\n');
+    w.blank();
 
     // Grid-stride loop
-    let _ = writeln!(
-        s,
-        "    for (uint i = gid * {gs}u + lid; i < n_pairs; i += num_groups * {gs}u) {{"
+    msl!(
+        w,
+        "for (uint i = gid * {gs}u + lid; i < n_pairs; i += num_groups * {gs}u) {{"
     );
+    w.push();
 
     // Read pairs into individual scalars (not arrays) so the Metal
     // compiler can track per-element register lifetimes independently.
     // When reads_inline, the body handles its own reads with deferred timing.
-    if !reads_inline {
+    if !body.reads_inline {
         if is_sparse {
             // Read pair indices, then load values with sentinel check.
-            let _ = writeln!(s, "        uint _lo_i = pair_index[2u * i];");
-            let _ = writeln!(s, "        uint _hi_i = pair_index[2u * i + 1u];");
+            w.line("uint _lo_i = pair_index[2u * i];");
+            w.line("uint _hi_i = pair_index[2u * i + 1u];");
             for k in 0..num_inputs {
-                let _ = writeln!(
-                    s,
-                    "        Fr lo_{k} = (_lo_i != 0xFFFFFFFFu) ? input_{k}[_lo_i] : fr_zero();"
+                msl!(
+                    w,
+                    "Fr lo_{k} = (_lo_i != 0xFFFFFFFFu) ? input_{k}[_lo_i] : fr_zero();"
                 );
-                let _ = writeln!(
-                    s,
-                    "        Fr hi_{k} = (_hi_i != 0xFFFFFFFFu) ? input_{k}[_hi_i] : fr_zero();"
+                msl!(
+                    w,
+                    "Fr hi_{k} = (_hi_i != 0xFFFFFFFFu) ? input_{k}[_hi_i] : fr_zero();"
                 );
             }
         } else if matches!(variant, KernelVariant::HighToLow) {
             for k in 0..num_inputs {
-                let _ = writeln!(
-                    s,
-                    "        Fr lo_{k} = input_{k}[i], hi_{k} = input_{k}[i + n_pairs];"
+                msl!(
+                    w,
+                    "Fr lo_{k} = input_{k}[i], hi_{k} = input_{k}[i + n_pairs];"
                 );
             }
         } else {
             for k in 0..num_inputs {
-                let _ = writeln!(
-                    s,
-                    "        Fr lo_{k} = input_{k}[2u * i], hi_{k} = input_{k}[2u * i + 1u];"
+                msl!(
+                    w,
+                    "Fr lo_{k} = input_{k}[2u * i], hi_{k} = input_{k}[2u * i + 1u];"
                 );
             }
         }
-        s.push('\n');
+        w.blank();
     }
 
     // Read weight (weighted variants only) — before eval body so
     // weight-folded bodies can reference `w`.
     if weighted {
         if is_tensor {
-            let _ = writeln!(
-                s,
-                "        Fr w = fr_mul(outer_weights[i >> inner_log], inner_weights[i & inner_mask]);"
-            );
+            w.line("Fr w = fr_mul(outer_weights[i >> inner_log], inner_weights[i & inner_mask]);");
         } else {
-            let _ = writeln!(s, "        Fr w = weights[i];");
+            w.line("Fr w = weights[i];");
         }
-        s.push('\n');
+        w.blank();
     }
 
-    if fuse_accumulate {
+    if body.fuse_accumulate {
         // Body directly accumulates into acc_d — no evals array needed.
-        let _ = write!(s, "{eval_body}");
+        w.raw(&body.msl);
     } else {
         // Scalar decomposition: replace `evals[d]` array with individual
         // `eval_d` scalars so the Metal compiler tracks per-element
         // register lifetimes independently (same technique as lo/hi).
-        let mut decomposed_body = eval_body.to_string();
+        let mut decomposed_body = body.msl.clone();
         for d in 0..num_evals {
             decomposed_body = decomposed_body.replace(&format!("evals[{d}]"), &format!("eval_{d}"));
         }
 
         for d in 0..num_evals {
-            let _ = writeln!(s, "        Fr eval_{d};");
+            msl!(w, "Fr eval_{d};");
         }
-        let _ = write!(s, "{decomposed_body}");
-        s.push('\n');
+        w.raw(&decomposed_body);
+        w.blank();
 
         if needs_weight_mul {
             for d in 0..num_evals {
-                let _ = writeln!(s, "        acc_{d} = fr_add(acc_{d}, fr_mul(w, eval_{d}));");
+                msl!(w, "acc_{d} = fr_add(acc_{d}, fr_mul(w, eval_{d}));");
             }
         } else {
             for d in 0..num_evals {
-                let _ = writeln!(s, "        acc_{d} = fr_add(acc_{d}, fr_reduce(eval_{d}));");
+                msl!(w, "acc_{d} = fr_add(acc_{d}, fr_reduce(eval_{d}));");
             }
         }
     }
-    let _ = writeln!(s, "    }}");
-    if tg_spill_count > 0 {
-        // Ensure all threadgroup memory writes from the spill phase
-        // are fully retired before we reuse tg_data for reduction.
-        let _ = writeln!(s, "    threadgroup_barrier(mem_flags::mem_threadgroup);");
-    }
-    s.push('\n');
+    w.pop();
+    w.line("}");
+    w.blank();
 
     // Simdgroup reduction: shuffle N limbs per eval, merge with fr_add.
     // For BN254 D=8: 8×8×5 = 320 shuffles (vs 8×18×5 = 720 with old WideAcc).
     let half_simd = device_config.simd_size / 2;
-    let _ = writeln!(
-        s,
-        "    for (ushort _off = {half_simd}u; _off > 0u; _off >>= 1u) {{"
+    msl!(
+        w,
+        "for (ushort _off = {half_simd}u; _off > 0u; _off >>= 1u) {{"
     );
+    w.push();
     for d in 0..num_evals {
-        let _ = writeln!(s, "        {{ Fr _o;");
+        w.line("{ Fr _o;");
         for l in 0..n_limbs {
-            let _ = writeln!(
-                s,
-                "        _o.limbs[{l}] = simd_shuffle_down(acc_{d}.limbs[{l}], _off);"
+            msl!(
+                w,
+                "_o.limbs[{l}] = simd_shuffle_down(acc_{d}.limbs[{l}], _off);"
             );
         }
-        let _ = writeln!(s, "        acc_{d} = fr_add(acc_{d}, _o); }}");
+        msl!(w, "acc_{d} = fr_add(acc_{d}, _o); }}");
     }
-    let _ = writeln!(s, "    }}");
-    s.push('\n');
+    w.pop();
+    w.line("}");
+    w.blank();
 
     // Lane 0 of each simdgroup writes Fr directly to shared memory.
-    // When tg_spill_count == 0, declare threadgroup memory here (after loop).
-    if tg_spill_count == 0 {
-        let _ = writeln!(s, "    threadgroup Fr {tg_name}[{tg_size}];");
-    }
-    let _ = writeln!(s, "    if (simd_lane == 0u) {{");
+    let sh_size = num_evals * num_simdgroups;
+    msl!(w, "threadgroup Fr sh[{sh_size}];");
+    w.line("if (simd_lane == 0u) {");
+    w.push();
     for d in 0..num_evals {
-        let _ = writeln!(
-            s,
-            "        {tg_name}[{}u + simd_id] = acc_{d};",
-            d * num_simdgroups
-        );
+        msl!(w, "sh[{}u + simd_id] = acc_{d};", d * num_simdgroups);
     }
-    let _ = writeln!(s, "    }}");
-    let _ = writeln!(s, "    threadgroup_barrier(mem_flags::mem_threadgroup);");
-    s.push('\n');
+    w.pop();
+    w.line("}");
+    w.line("threadgroup_barrier(mem_flags::mem_threadgroup);");
+    w.blank();
 
     // Tree reduction over simdgroup partials (8 → 1).
     // All threads must reach each threadgroup_barrier — never put barriers
     // inside divergent branches. Only the active lanes do the fr_add.
     let mut stride = num_simdgroups / 2;
     while stride > 0 {
-        let _ = writeln!(s, "    if (lid < {stride}u) {{");
+        msl!(w, "if (lid < {stride}u) {{");
+        w.push();
         for d in 0..num_evals {
             let base = d * num_simdgroups;
-            let _ = writeln!(
-                s,
-                "        {tg_name}[{base}u + lid] = fr_add({tg_name}[{base}u + lid], {tg_name}[{base}u + lid + {stride}u]);"
+            msl!(
+                w,
+                "sh[{base}u + lid] = fr_add(sh[{base}u + lid], sh[{base}u + lid + {stride}u]);"
             );
         }
-        let _ = writeln!(s, "    }}");
+        w.pop();
+        w.line("}");
         if stride > 1 {
-            let _ = writeln!(s, "    threadgroup_barrier(mem_flags::mem_threadgroup);");
+            w.line("threadgroup_barrier(mem_flags::mem_threadgroup);");
         }
         stride /= 2;
     }
-    s.push('\n');
+    w.blank();
 
     // Write final partials
-    let _ = writeln!(s, "    if (lid == 0u) {{");
+    w.line("if (lid == 0u) {");
+    w.push();
     for d in 0..num_evals {
-        let _ = writeln!(
-            s,
-            "        partials[gid * {num_evals}u + {d}u] = {tg_name}[{}u];",
+        msl!(
+            w,
+            "partials[gid * {num_evals}u + {d}u] = sh[{}u];",
             d * num_simdgroups
         );
     }
-    let _ = writeln!(s, "    }}");
-    let _ = writeln!(s, "}}");
+    w.pop();
+    w.line("}");
 
-    s
+    w.pop();
+    w.line("}");
+
+    w.into_string()
 }
 
 /// Generate Toom-Cook MSL evaluation body for ProductSum D=4 or D=8.
@@ -473,7 +431,17 @@ fn generate_reduce_kernel(
 /// - D=8: 4x4 split → 30 fr_mul (vs 56 naive)
 ///
 /// Extrapolation uses only fr_add/fr_sub (no mul_u64 needed on GPU).
-fn generate_toom_cook_body(d: usize, p: usize) -> String {
+fn generate_toom_cook_body(d: usize, p: usize) -> EvalBody {
+    EvalBody {
+        msl: generate_toom_cook_body_msl(d, p),
+        reads_inline: false,
+        fuse_accumulate: false,
+        weight_folded: false,
+        has_challenges: false,
+    }
+}
+
+fn generate_toom_cook_body_msl(d: usize, p: usize) -> String {
     match d {
         4 => generate_toom_cook_d4(p),
         8 => generate_toom_cook_d8(p),
@@ -485,13 +453,20 @@ fn generate_toom_cook_body(d: usize, p: usize) -> String {
 /// product group (lo_0/hi_0). All subsequent Toom-Cook evaluations carry the
 /// weight through the tree. Costs 2 `fr_mul` (for `w*lo_0`, `w*hi_0`)
 /// instead of D `fr_mul(w, eval)` in the accumulation — saves D-2 multiplies.
-fn generate_toom_cook_body_weighted(d: usize, p: usize) -> String {
-    let mut s = String::with_capacity(16384);
+fn generate_toom_cook_body_weighted(d: usize, p: usize) -> EvalBody {
+    let mut w = Msl::new_at(16384, 2);
     // Fold weight into first factor of first product group
-    let _ = writeln!(s, "        lo_0 = fr_mul(w, lo_0);");
-    let _ = writeln!(s, "        hi_0 = fr_mul(w, hi_0);");
-    s.push_str(&generate_toom_cook_body(d, p));
-    s
+    w.line("lo_0 = fr_mul(w, lo_0);");
+    w.line("hi_0 = fr_mul(w, hi_0);");
+    let mut msl_str = w.into_string();
+    msl_str.push_str(&generate_toom_cook_body_msl(d, p));
+    EvalBody {
+        msl: msl_str,
+        reads_inline: false,
+        fuse_accumulate: false,
+        weight_folded: true,
+        has_challenges: false,
+    }
 }
 
 /// Toom-Cook D=8 P=1 with deferred pair reads and fused accumulation.
@@ -505,152 +480,122 @@ fn generate_toom_cook_body_weighted(d: usize, p: usize) -> String {
 /// (fused eval-accumulate), eliminating the `evals[8]` intermediate
 /// array and saving 64 registers (8 Fr × 8 limbs) at peak.
 ///
-/// When `tg_spill` is true, half-A results (a_1..a_7) are spilled to
-/// threadgroup memory (`tg_data[lid * 7 + d]`) after computation and
-/// reloaded one-at-a-time during the pointwise phase. This reduces
-/// peak register liveness by 56 u32 (7 Fr × 8 limbs) during half-B
-/// computation, improving GPU occupancy for register-heavy BN254 D=8.
-/// `a_inf` stays in a register (only used in the final multiply).
-///
 /// `weighted`: if true, prepends weight fold (`lo_0 = fr_mul(w, lo_0)`)
 /// `h2l`: if true, uses H2L indexing (`input_k[i]`/`input_k[i + n_pairs]`)
-fn generate_toom_cook_d8_deferred(p: usize, weighted: bool, h2l: bool, tg_spill: bool) -> String {
+fn generate_toom_cook_d8_deferred(p: usize, weighted: bool, h2l: bool) -> EvalBody {
     assert_eq!(p, 1, "deferred reads only implemented for P=1");
-    let mut s = String::with_capacity(16384);
-
-    // Helper: read expression for input k
-    let read = |s: &mut String, k: usize| {
-        if h2l {
-            let _ = writeln!(
-                s,
-                "        Fr lo_{k} = input_{k}[i], hi_{k} = input_{k}[i + n_pairs];"
-            );
-        } else {
-            let _ = writeln!(
-                s,
-                "        Fr lo_{k} = input_{k}[2u * i], hi_{k} = input_{k}[2u * i + 1u];"
-            );
-        }
-    };
+    let mut w = Msl::new_at(16384, 2);
 
     // Read half A inputs (0-3)
     for k in 0..4 {
-        read(&mut s, k);
+        if h2l {
+            msl!(
+                w,
+                "Fr lo_{k} = input_{k}[i], hi_{k} = input_{k}[i + n_pairs];"
+            );
+        } else {
+            msl!(
+                w,
+                "Fr lo_{k} = input_{k}[2u * i], hi_{k} = input_{k}[2u * i + 1u];"
+            );
+        }
     }
 
     // Weight fold into first factor
     if weighted {
-        let _ = writeln!(s, "        lo_0 = fr_mul(w, lo_0);");
-        let _ = writeln!(s, "        hi_0 = fr_mul(w, hi_0);");
+        w.line("lo_0 = fr_mul(w, lo_0);");
+        w.line("hi_0 = fr_mul(w, hi_0);");
     }
 
     // Half A: inputs 0-3
     // Sub-pair (input0, input1) → (ar1, ar2, ar_inf)
-    emit_eval_linear_prod_2(&mut s, "ar", "lo_0", "hi_0", "lo_1", "hi_1");
-    emit_ex2(&mut s, "ar_3", "ar_1", "ar_2", "ar_inf");
-    emit_ex2(&mut s, "ar_4", "ar_2", "ar_3", "ar_inf");
+    emit_eval_linear_prod_2(&mut w, "ar", "lo_0", "hi_0", "lo_1", "hi_1");
+    emit_ex2(&mut w, "ar_3", "ar_1", "ar_2", "ar_inf");
+    emit_ex2(&mut w, "ar_4", "ar_2", "ar_3", "ar_inf");
 
     // Sub-pair (input2, input3) → (br1, br2, br_inf)
-    emit_eval_linear_prod_2(&mut s, "br", "lo_2", "hi_2", "lo_3", "hi_3");
-    emit_ex2(&mut s, "br_3", "br_1", "br_2", "br_inf");
-    emit_ex2(&mut s, "br_4", "br_2", "br_3", "br_inf");
+    emit_eval_linear_prod_2(&mut w, "br", "lo_2", "hi_2", "lo_3", "hi_3");
+    emit_ex2(&mut w, "br_3", "br_1", "br_2", "br_inf");
+    emit_ex2(&mut w, "br_4", "br_2", "br_3", "br_inf");
 
     // Point-wise: a_k = ar_k * br_k for k in {1,2,3,4,inf}
-    let _ = writeln!(s, "        Fr a_1 = fr_mul(ar_1, br_1);");
-    let _ = writeln!(s, "        Fr a_2 = fr_mul(ar_2, br_2);");
-    let _ = writeln!(s, "        Fr a_3 = fr_mul(ar_3, br_3);");
-    let _ = writeln!(s, "        Fr a_4 = fr_mul(ar_4, br_4);");
-    let _ = writeln!(s, "        Fr a_inf = fr_mul(ar_inf, br_inf);");
+    w.line("Fr a_1 = fr_mul(ar_1, br_1);");
+    w.line("Fr a_2 = fr_mul(ar_2, br_2);");
+    w.line("Fr a_3 = fr_mul(ar_3, br_3);");
+    w.line("Fr a_4 = fr_mul(ar_4, br_4);");
+    w.line("Fr a_inf = fr_mul(ar_inf, br_inf);");
 
     // Extrapolate a to {5, 6, 7}
-    let _ = writeln!(s, "        Fr a_inf2 = fr_add(a_inf, a_inf);");
-    let _ = writeln!(s, "        Fr a_inf3 = fr_add(a_inf2, a_inf);");
-    let _ = writeln!(s, "        Fr a_inf6 = fr_add(a_inf3, a_inf3);");
-    emit_ex4_2(&mut s, "a_5", "a_6", ["a_1", "a_2", "a_3", "a_4"], "a_inf6");
-    emit_ex4(&mut s, "a_7", "a_3", "a_4", "a_5", "a_6", "a_inf6");
-
-    // Spill half-A to threadgroup memory: a_1..a_7 stored, a_inf kept in register.
-    // Frees 56 u32 (7 Fr × 8 limbs) during half-B computation.
-    if tg_spill {
-        for (d, name) in ["a_1", "a_2", "a_3", "a_4", "a_5", "a_6", "a_7"]
-            .iter()
-            .enumerate()
-        {
-            let _ = writeln!(s, "        tg_data[lid * 7u + {d}u] = {name};");
-        }
-        s.push('\n');
-    }
+    w.line("Fr a_inf2 = fr_add(a_inf, a_inf);");
+    w.line("Fr a_inf3 = fr_add(a_inf2, a_inf);");
+    w.line("Fr a_inf6 = fr_add(a_inf3, a_inf3);");
+    emit_ex4_2(&mut w, "a_5", "a_6", ["a_1", "a_2", "a_3", "a_4"], "a_inf6");
+    emit_ex4(&mut w, "a_7", "a_3", "a_4", "a_5", "a_6", "a_inf6");
 
     // Deferred read: half B inputs (4-7)
     // lo_0..lo_3, hi_0..hi_3 are dead — their registers are available.
     for k in 4..8 {
-        read(&mut s, k);
+        if h2l {
+            msl!(
+                w,
+                "Fr lo_{k} = input_{k}[i], hi_{k} = input_{k}[i + n_pairs];"
+            );
+        } else {
+            msl!(
+                w,
+                "Fr lo_{k} = input_{k}[2u * i], hi_{k} = input_{k}[2u * i + 1u];"
+            );
+        }
     }
 
     // Half B: inputs 4-7
-    emit_eval_linear_prod_2(&mut s, "cr", "lo_4", "hi_4", "lo_5", "hi_5");
-    emit_ex2(&mut s, "cr_3", "cr_1", "cr_2", "cr_inf");
-    emit_ex2(&mut s, "cr_4", "cr_2", "cr_3", "cr_inf");
+    emit_eval_linear_prod_2(&mut w, "cr", "lo_4", "hi_4", "lo_5", "hi_5");
+    emit_ex2(&mut w, "cr_3", "cr_1", "cr_2", "cr_inf");
+    emit_ex2(&mut w, "cr_4", "cr_2", "cr_3", "cr_inf");
 
-    emit_eval_linear_prod_2(&mut s, "dr", "lo_6", "hi_6", "lo_7", "hi_7");
-    emit_ex2(&mut s, "dr_3", "dr_1", "dr_2", "dr_inf");
-    emit_ex2(&mut s, "dr_4", "dr_2", "dr_3", "dr_inf");
+    emit_eval_linear_prod_2(&mut w, "dr", "lo_6", "hi_6", "lo_7", "hi_7");
+    emit_ex2(&mut w, "dr_3", "dr_1", "dr_2", "dr_inf");
+    emit_ex2(&mut w, "dr_4", "dr_2", "dr_3", "dr_inf");
 
     // Point-wise: b_k = cr_k * dr_k for k in {1,2,3,4,inf}
-    let _ = writeln!(s, "        Fr b_1 = fr_mul(cr_1, dr_1);");
-    let _ = writeln!(s, "        Fr b_2 = fr_mul(cr_2, dr_2);");
-    let _ = writeln!(s, "        Fr b_3 = fr_mul(cr_3, dr_3);");
-    let _ = writeln!(s, "        Fr b_4 = fr_mul(cr_4, dr_4);");
-    let _ = writeln!(s, "        Fr b_inf = fr_mul(cr_inf, dr_inf);");
+    w.line("Fr b_1 = fr_mul(cr_1, dr_1);");
+    w.line("Fr b_2 = fr_mul(cr_2, dr_2);");
+    w.line("Fr b_3 = fr_mul(cr_3, dr_3);");
+    w.line("Fr b_4 = fr_mul(cr_4, dr_4);");
+    w.line("Fr b_inf = fr_mul(cr_inf, dr_inf);");
 
     // Extrapolate b to {5, 6, 7}
-    let _ = writeln!(s, "        Fr b_inf2 = fr_add(b_inf, b_inf);");
-    let _ = writeln!(s, "        Fr b_inf3 = fr_add(b_inf2, b_inf);");
-    let _ = writeln!(s, "        Fr b_inf6 = fr_add(b_inf3, b_inf3);");
-    emit_ex4_2(&mut s, "b_5", "b_6", ["b_1", "b_2", "b_3", "b_4"], "b_inf6");
-    emit_ex4(&mut s, "b_7", "b_3", "b_4", "b_5", "b_6", "b_inf6");
+    w.line("Fr b_inf2 = fr_add(b_inf, b_inf);");
+    w.line("Fr b_inf3 = fr_add(b_inf2, b_inf);");
+    w.line("Fr b_inf6 = fr_add(b_inf3, b_inf3);");
+    emit_ex4_2(&mut w, "b_5", "b_6", ["b_1", "b_2", "b_3", "b_4"], "b_inf6");
+    emit_ex4(&mut w, "b_7", "b_3", "b_4", "b_5", "b_6", "b_inf6");
 
     // Fused eval-accumulate: point-wise multiply → fr_reduce → fr_add
     // directly into accumulators. No evals[] array needed — saves 64 registers.
-    if tg_spill {
-        // Reload a_1..a_7 from threadgroup memory
-        for (d, b_name) in [
-            (0, "b_1"),
-            (1, "b_2"),
-            (2, "b_3"),
-            (3, "b_4"),
-            (4, "b_5"),
-            (5, "b_6"),
-            (6, "b_7"),
-        ] {
-            let _ = writeln!(
-                s,
-                "        acc_{d} = fr_add(acc_{d}, fr_reduce(fr_mul_unreduced(tg_data[lid * 7u + {d}u], {b_name})));"
-            );
-        }
-        let _ = writeln!(
-            s,
-            "        acc_7 = fr_add(acc_7, fr_reduce(fr_mul_unreduced(a_inf, b_inf)));"
+    for (d, a_name, b_name) in [
+        (0, "a_1", "b_1"),
+        (1, "a_2", "b_2"),
+        (2, "a_3", "b_3"),
+        (3, "a_4", "b_4"),
+        (4, "a_5", "b_5"),
+        (5, "a_6", "b_6"),
+        (6, "a_7", "b_7"),
+        (7, "a_inf", "b_inf"),
+    ] {
+        msl!(
+            w,
+            "acc_{d} = fr_add(acc_{d}, fr_reduce(fr_mul_unreduced({a_name}, {b_name})));"
         );
-    } else {
-        for (d, a_name, b_name) in [
-            (0, "a_1", "b_1"),
-            (1, "a_2", "b_2"),
-            (2, "a_3", "b_3"),
-            (3, "a_4", "b_4"),
-            (4, "a_5", "b_5"),
-            (5, "a_6", "b_6"),
-            (6, "a_7", "b_7"),
-            (7, "a_inf", "b_inf"),
-        ] {
-            let _ = writeln!(
-                s,
-                "        acc_{d} = fr_add(acc_{d}, fr_reduce(fr_mul_unreduced({a_name}, {b_name})));"
-            );
-        }
     }
 
-    s
+    EvalBody {
+        msl: w.into_string(),
+        reads_inline: true,
+        fuse_accumulate: true,
+        weight_folded: weighted,
+        has_challenges: false,
+    }
 }
 
 /// Emit MSL for the degree-2 sub-product of two linear polynomials.
@@ -658,76 +603,60 @@ fn generate_toom_cook_d8_deferred(p: usize, weighted: bool, h2l: bool, tg_spill:
 /// Given inputs at indices `i0` and `i1` in the `lo`/`hi` arrays, produces
 /// three sub-product evaluations `{prefix}_1`, `{prefix}_2`, `{prefix}_inf`
 /// at points {1, 2, ∞}. Uses 3 fr_mul.
-fn emit_eval_linear_prod_2(
-    s: &mut String,
-    prefix: &str,
-    lo0: &str,
-    hi0: &str,
-    lo1: &str,
-    hi1: &str,
-) {
-    let _ = writeln!(s, "        Fr {prefix}_s0 = fr_sub({hi0}, {lo0});");
-    let _ = writeln!(s, "        Fr {prefix}_v2_0 = fr_add({prefix}_s0, {hi0});");
-    let _ = writeln!(s, "        Fr {prefix}_s1 = fr_sub({hi1}, {lo1});");
-    let _ = writeln!(s, "        Fr {prefix}_v2_1 = fr_add({prefix}_s1, {hi1});");
-    let _ = writeln!(s, "        Fr {prefix}_1 = fr_mul({hi0}, {hi1});");
-    let _ = writeln!(
-        s,
-        "        Fr {prefix}_2 = fr_mul({prefix}_v2_0, {prefix}_v2_1);"
-    );
-    let _ = writeln!(
-        s,
-        "        Fr {prefix}_inf = fr_mul({prefix}_s0, {prefix}_s1);"
-    );
+fn emit_eval_linear_prod_2(w: &mut Msl, prefix: &str, lo0: &str, hi0: &str, lo1: &str, hi1: &str) {
+    msl!(w, "Fr {prefix}_s0 = fr_sub({hi0}, {lo0});");
+    msl!(w, "Fr {prefix}_v2_0 = fr_add({prefix}_s0, {hi0});");
+    msl!(w, "Fr {prefix}_s1 = fr_sub({hi1}, {lo1});");
+    msl!(w, "Fr {prefix}_v2_1 = fr_add({prefix}_s1, {hi1});");
+    msl!(w, "Fr {prefix}_1 = fr_mul({hi0}, {hi1});");
+    msl!(w, "Fr {prefix}_2 = fr_mul({prefix}_v2_0, {prefix}_v2_1);");
+    msl!(w, "Fr {prefix}_inf = fr_mul({prefix}_s0, {prefix}_s1);");
 }
 
 /// Emit MSL for `ex2` extrapolation: `result = 2*(f1 + find) - f0`.
-fn emit_ex2(s: &mut String, result: &str, f0: &str, f1: &str, find: &str) {
-    let _ = writeln!(s, "        Fr {result}_sum = fr_add({f1}, {find});");
-    let _ = writeln!(
-        s,
-        "        Fr {result} = fr_sub(fr_add({result}_sum, {result}_sum), {f0});"
+fn emit_ex2(w: &mut Msl, result: &str, f0: &str, f1: &str, find: &str) {
+    msl!(w, "Fr {result}_sum = fr_add({f1}, {find});");
+    msl!(
+        w,
+        "Fr {result} = fr_sub(fr_add({result}_sum, {result}_sum), {f0});"
     );
 }
 
 /// Emit MSL for `ex4_2`: returns two extrapolated values (f4, f5) from
 /// 4 consecutive evaluations `f[0..4]` and `6*f_inf`.
-fn emit_ex4_2(s: &mut String, r4: &str, r5: &str, f: [&str; 4], find6: &str) {
+fn emit_ex4_2(w: &mut Msl, r4: &str, r5: &str, f: [&str; 4], find6: &str) {
     // f4 = 2*(2*(find6 + f[3] - f[2] + f[1]) - f[2]) - f[0]
-    let _ = writeln!(s, "        Fr {r4}_f3m2 = fr_sub({}, {});", f[3], f[2]);
-    let _ = writeln!(
-        s,
-        "        Fr {r4}_t = fr_add(fr_add({find6}, {r4}_f3m2), {});",
+    msl!(w, "Fr {r4}_f3m2 = fr_sub({}, {});", f[3], f[2]);
+    msl!(
+        w,
+        "Fr {r4}_t = fr_add(fr_add({find6}, {r4}_f3m2), {});",
         f[1]
     );
-    let _ = writeln!(s, "        {r4}_t = fr_add({r4}_t, {r4}_t);");
-    let _ = writeln!(s, "        {r4}_t = fr_sub({r4}_t, {});", f[2]);
-    let _ = writeln!(s, "        {r4}_t = fr_add({r4}_t, {r4}_t);");
-    let _ = writeln!(s, "        Fr {r4} = fr_sub({r4}_t, {});", f[0]);
+    msl!(w, "{r4}_t = fr_add({r4}_t, {r4}_t);");
+    msl!(w, "{r4}_t = fr_sub({r4}_t, {});", f[2]);
+    msl!(w, "{r4}_t = fr_add({r4}_t, {r4}_t);");
+    msl!(w, "Fr {r4} = fr_sub({r4}_t, {});", f[0]);
 
     // f5 = 2*(2*(f4 - f3m2 + find6) - f[3]) - f[1]
-    let _ = writeln!(
-        s,
-        "        Fr {r5}_t = fr_add(fr_sub({r4}, {r4}_f3m2), {find6});"
-    );
-    let _ = writeln!(s, "        {r5}_t = fr_add({r5}_t, {r5}_t);");
-    let _ = writeln!(s, "        {r5}_t = fr_sub({r5}_t, {});", f[3]);
-    let _ = writeln!(s, "        {r5}_t = fr_add({r5}_t, {r5}_t);");
-    let _ = writeln!(s, "        Fr {r5} = fr_sub({r5}_t, {});", f[1]);
+    msl!(w, "Fr {r5}_t = fr_add(fr_sub({r4}, {r4}_f3m2), {find6});");
+    msl!(w, "{r5}_t = fr_add({r5}_t, {r5}_t);");
+    msl!(w, "{r5}_t = fr_sub({r5}_t, {});", f[3]);
+    msl!(w, "{r5}_t = fr_add({r5}_t, {r5}_t);");
+    msl!(w, "Fr {r5} = fr_sub({r5}_t, {});", f[1]);
 }
 
 /// Emit MSL for `ex4`: returns one extrapolated value from
 /// 4 consecutive evaluations and `6*f_inf`.
-fn emit_ex4(s: &mut String, result: &str, f0: &str, f1: &str, f2: &str, f3: &str, find6: &str) {
+fn emit_ex4(w: &mut Msl, result: &str, f0: &str, f1: &str, f2: &str, f3: &str, find6: &str) {
     // result = 2*(2*(find6 + f3 - f2 + f1) - f2) - f0
-    let _ = writeln!(
-        s,
-        "        Fr {result}_t = fr_add(fr_add({find6}, fr_sub({f3}, {f2})), {f1});"
+    msl!(
+        w,
+        "Fr {result}_t = fr_add(fr_add({find6}, fr_sub({f3}, {f2})), {f1});"
     );
-    let _ = writeln!(s, "        {result}_t = fr_add({result}_t, {result}_t);");
-    let _ = writeln!(s, "        {result}_t = fr_sub({result}_t, {f2});");
-    let _ = writeln!(s, "        {result}_t = fr_add({result}_t, {result}_t);");
-    let _ = writeln!(s, "        Fr {result} = fr_sub({result}_t, {f0});");
+    msl!(w, "{result}_t = fr_add({result}_t, {result}_t);");
+    msl!(w, "{result}_t = fr_sub({result}_t, {f2});");
+    msl!(w, "{result}_t = fr_add({result}_t, {result}_t);");
+    msl!(w, "Fr {result} = fr_sub({result}_t, {f0});");
 }
 
 /// Generate Toom-Cook D=4 MSL eval body for P product groups.
@@ -740,59 +669,56 @@ fn emit_ex4(s: &mut String, result: &str, f0: &str, f1: &str, f2: &str, f3: &str
 ///
 /// Total: 10 fr_mul per group (vs 12 naive).
 fn generate_toom_cook_d4(p: usize) -> String {
-    let mut s = String::with_capacity(4096);
+    let mut w = Msl::new_at(4096, 2);
 
     if p > 1 {
         for d in 0..4 {
-            let _ = writeln!(s, "        evals[{d}] = fr_zero();");
+            msl!(w, "evals[{d}] = fr_zero();");
         }
     }
 
     for g in 0..p {
         let base = g * 4;
-        let _ = writeln!(s, "        {{ // Product group {g}");
+        msl!(w, "{{ // Product group {g}");
 
         // Half A: sub-product of inputs [base+0, base+1]
         emit_eval_linear_prod_2(
-            &mut s,
+            &mut w,
             "a",
             &format!("lo_{base}"),
             &format!("hi_{base}"),
             &format!("lo_{}", base + 1),
             &format!("hi_{}", base + 1),
         );
-        emit_ex2(&mut s, "a_3", "a_1", "a_2", "a_inf");
+        emit_ex2(&mut w, "a_3", "a_1", "a_2", "a_inf");
 
         // Half B: sub-product of inputs [base+2, base+3]
         emit_eval_linear_prod_2(
-            &mut s,
+            &mut w,
             "b",
             &format!("lo_{}", base + 2),
             &format!("hi_{}", base + 2),
             &format!("lo_{}", base + 3),
             &format!("hi_{}", base + 3),
         );
-        emit_ex2(&mut s, "b_3", "b_1", "b_2", "b_inf");
+        emit_ex2(&mut w, "b_3", "b_1", "b_2", "b_inf");
 
         // Point-wise multiply
         if p == 1 {
-            let _ = writeln!(s, "        evals[0] = fr_mul_unreduced(a_1, b_1);");
-            let _ = writeln!(s, "        evals[1] = fr_mul_unreduced(a_2, b_2);");
-            let _ = writeln!(s, "        evals[2] = fr_mul_unreduced(a_3, b_3);");
-            let _ = writeln!(s, "        evals[3] = fr_mul_unreduced(a_inf, b_inf);");
+            w.line("evals[0] = fr_mul_unreduced(a_1, b_1);");
+            w.line("evals[1] = fr_mul_unreduced(a_2, b_2);");
+            w.line("evals[2] = fr_mul_unreduced(a_3, b_3);");
+            w.line("evals[3] = fr_mul_unreduced(a_inf, b_inf);");
         } else {
-            let _ = writeln!(s, "        evals[0] = fr_add(evals[0], fr_mul(a_1, b_1));");
-            let _ = writeln!(s, "        evals[1] = fr_add(evals[1], fr_mul(a_2, b_2));");
-            let _ = writeln!(s, "        evals[2] = fr_add(evals[2], fr_mul(a_3, b_3));");
-            let _ = writeln!(
-                s,
-                "        evals[3] = fr_add(evals[3], fr_mul(a_inf, b_inf));"
-            );
+            w.line("evals[0] = fr_add(evals[0], fr_mul(a_1, b_1));");
+            w.line("evals[1] = fr_add(evals[1], fr_mul(a_2, b_2));");
+            w.line("evals[2] = fr_add(evals[2], fr_mul(a_3, b_3));");
+            w.line("evals[3] = fr_add(evals[3], fr_mul(a_inf, b_inf));");
         }
-        let _ = writeln!(s, "        }}");
+        w.line("}");
     }
 
-    s
+    w.into_string()
 }
 
 /// Generate Toom-Cook D=8 MSL eval body for P product groups.
@@ -805,22 +731,22 @@ fn generate_toom_cook_d4(p: usize) -> String {
 ///
 /// Total: 30 fr_mul per group (vs 56 naive).
 fn generate_toom_cook_d8(p: usize) -> String {
-    let mut s = String::with_capacity(16384);
+    let mut w = Msl::new_at(16384, 2);
 
     if p > 1 {
         for d in 0..8 {
-            let _ = writeln!(s, "        evals[{d}] = fr_zero();");
+            msl!(w, "evals[{d}] = fr_zero();");
         }
     }
 
     for g in 0..p {
         let base = g * 8;
-        let _ = writeln!(s, "        {{ // Product group {g}");
+        msl!(w, "{{ // Product group {g}");
 
         // Half A: eval_linear_prod_4_internal(inputs[base..base+4])
         // Sub-pair (input0, input1) → (ar1, ar2, ar_inf)
         emit_eval_linear_prod_2(
-            &mut s,
+            &mut w,
             "ar",
             &format!("lo_{base}"),
             &format!("hi_{base}"),
@@ -828,99 +754,96 @@ fn generate_toom_cook_d8(p: usize) -> String {
             &format!("hi_{}", base + 1),
         );
         // Extrapolate: ar3 = ex2([ar1, ar2], ar_inf), ar4 = ex2([ar2, ar3], ar_inf)
-        emit_ex2(&mut s, "ar_3", "ar_1", "ar_2", "ar_inf");
-        emit_ex2(&mut s, "ar_4", "ar_2", "ar_3", "ar_inf");
+        emit_ex2(&mut w, "ar_3", "ar_1", "ar_2", "ar_inf");
+        emit_ex2(&mut w, "ar_4", "ar_2", "ar_3", "ar_inf");
 
         // Sub-pair (input2, input3) → (br1, br2, br_inf)
         emit_eval_linear_prod_2(
-            &mut s,
+            &mut w,
             "br",
             &format!("lo_{}", base + 2),
             &format!("hi_{}", base + 2),
             &format!("lo_{}", base + 3),
             &format!("hi_{}", base + 3),
         );
-        emit_ex2(&mut s, "br_3", "br_1", "br_2", "br_inf");
-        emit_ex2(&mut s, "br_4", "br_2", "br_3", "br_inf");
+        emit_ex2(&mut w, "br_3", "br_1", "br_2", "br_inf");
+        emit_ex2(&mut w, "br_4", "br_2", "br_3", "br_inf");
 
         // Point-wise: a_k = ar_k * br_k for k in {1,2,3,4,inf}
-        let _ = writeln!(s, "        Fr a_1 = fr_mul(ar_1, br_1);");
-        let _ = writeln!(s, "        Fr a_2 = fr_mul(ar_2, br_2);");
-        let _ = writeln!(s, "        Fr a_3 = fr_mul(ar_3, br_3);");
-        let _ = writeln!(s, "        Fr a_4 = fr_mul(ar_4, br_4);");
-        let _ = writeln!(s, "        Fr a_inf = fr_mul(ar_inf, br_inf);");
+        w.line("Fr a_1 = fr_mul(ar_1, br_1);");
+        w.line("Fr a_2 = fr_mul(ar_2, br_2);");
+        w.line("Fr a_3 = fr_mul(ar_3, br_3);");
+        w.line("Fr a_4 = fr_mul(ar_4, br_4);");
+        w.line("Fr a_inf = fr_mul(ar_inf, br_inf);");
 
         // Extrapolate a to {5, 6, 7}: a_inf6 = 6*a_inf via adds
-        let _ = writeln!(s, "        Fr a_inf2 = fr_add(a_inf, a_inf);");
-        let _ = writeln!(s, "        Fr a_inf3 = fr_add(a_inf2, a_inf);");
-        let _ = writeln!(s, "        Fr a_inf6 = fr_add(a_inf3, a_inf3);");
-        emit_ex4_2(&mut s, "a_5", "a_6", ["a_1", "a_2", "a_3", "a_4"], "a_inf6");
-        emit_ex4(&mut s, "a_7", "a_3", "a_4", "a_5", "a_6", "a_inf6");
+        w.line("Fr a_inf2 = fr_add(a_inf, a_inf);");
+        w.line("Fr a_inf3 = fr_add(a_inf2, a_inf);");
+        w.line("Fr a_inf6 = fr_add(a_inf3, a_inf3);");
+        emit_ex4_2(&mut w, "a_5", "a_6", ["a_1", "a_2", "a_3", "a_4"], "a_inf6");
+        emit_ex4(&mut w, "a_7", "a_3", "a_4", "a_5", "a_6", "a_inf6");
 
         // Half B: eval_linear_prod_4_internal(inputs[base+4..base+8])
         emit_eval_linear_prod_2(
-            &mut s,
+            &mut w,
             "cr",
             &format!("lo_{}", base + 4),
             &format!("hi_{}", base + 4),
             &format!("lo_{}", base + 5),
             &format!("hi_{}", base + 5),
         );
-        emit_ex2(&mut s, "cr_3", "cr_1", "cr_2", "cr_inf");
-        emit_ex2(&mut s, "cr_4", "cr_2", "cr_3", "cr_inf");
+        emit_ex2(&mut w, "cr_3", "cr_1", "cr_2", "cr_inf");
+        emit_ex2(&mut w, "cr_4", "cr_2", "cr_3", "cr_inf");
 
         emit_eval_linear_prod_2(
-            &mut s,
+            &mut w,
             "dr",
             &format!("lo_{}", base + 6),
             &format!("hi_{}", base + 6),
             &format!("lo_{}", base + 7),
             &format!("hi_{}", base + 7),
         );
-        emit_ex2(&mut s, "dr_3", "dr_1", "dr_2", "dr_inf");
-        emit_ex2(&mut s, "dr_4", "dr_2", "dr_3", "dr_inf");
+        emit_ex2(&mut w, "dr_3", "dr_1", "dr_2", "dr_inf");
+        emit_ex2(&mut w, "dr_4", "dr_2", "dr_3", "dr_inf");
 
         // Point-wise: b_k = cr_k * dr_k for k in {1,2,3,4,inf}
-        let _ = writeln!(s, "        Fr b_1 = fr_mul(cr_1, dr_1);");
-        let _ = writeln!(s, "        Fr b_2 = fr_mul(cr_2, dr_2);");
-        let _ = writeln!(s, "        Fr b_3 = fr_mul(cr_3, dr_3);");
-        let _ = writeln!(s, "        Fr b_4 = fr_mul(cr_4, dr_4);");
-        let _ = writeln!(s, "        Fr b_inf = fr_mul(cr_inf, dr_inf);");
+        w.line("Fr b_1 = fr_mul(cr_1, dr_1);");
+        w.line("Fr b_2 = fr_mul(cr_2, dr_2);");
+        w.line("Fr b_3 = fr_mul(cr_3, dr_3);");
+        w.line("Fr b_4 = fr_mul(cr_4, dr_4);");
+        w.line("Fr b_inf = fr_mul(cr_inf, dr_inf);");
 
         // Extrapolate b to {5, 6, 7}
-        let _ = writeln!(s, "        Fr b_inf2 = fr_add(b_inf, b_inf);");
-        let _ = writeln!(s, "        Fr b_inf3 = fr_add(b_inf2, b_inf);");
-        let _ = writeln!(s, "        Fr b_inf6 = fr_add(b_inf3, b_inf3);");
-        emit_ex4_2(&mut s, "b_5", "b_6", ["b_1", "b_2", "b_3", "b_4"], "b_inf6");
-        emit_ex4(&mut s, "b_7", "b_3", "b_4", "b_5", "b_6", "b_inf6");
+        w.line("Fr b_inf2 = fr_add(b_inf, b_inf);");
+        w.line("Fr b_inf3 = fr_add(b_inf2, b_inf);");
+        w.line("Fr b_inf6 = fr_add(b_inf3, b_inf3);");
+        emit_ex4_2(&mut w, "b_5", "b_6", ["b_1", "b_2", "b_3", "b_4"], "b_inf6");
+        emit_ex4(&mut w, "b_7", "b_3", "b_4", "b_5", "b_6", "b_inf6");
 
         // Final point-wise multiply
         if p == 1 {
-            let _ = writeln!(s, "        evals[0] = fr_mul_unreduced(a_1, b_1);");
-            let _ = writeln!(s, "        evals[1] = fr_mul_unreduced(a_2, b_2);");
-            let _ = writeln!(s, "        evals[2] = fr_mul_unreduced(a_3, b_3);");
-            let _ = writeln!(s, "        evals[3] = fr_mul_unreduced(a_4, b_4);");
-            let _ = writeln!(s, "        evals[4] = fr_mul_unreduced(a_5, b_5);");
-            let _ = writeln!(s, "        evals[5] = fr_mul_unreduced(a_6, b_6);");
-            let _ = writeln!(s, "        evals[6] = fr_mul_unreduced(a_7, b_7);");
-            let _ = writeln!(s, "        evals[7] = fr_mul_unreduced(a_inf, b_inf);");
+            w.line("evals[0] = fr_mul_unreduced(a_1, b_1);");
+            w.line("evals[1] = fr_mul_unreduced(a_2, b_2);");
+            w.line("evals[2] = fr_mul_unreduced(a_3, b_3);");
+            w.line("evals[3] = fr_mul_unreduced(a_4, b_4);");
+            w.line("evals[4] = fr_mul_unreduced(a_5, b_5);");
+            w.line("evals[5] = fr_mul_unreduced(a_6, b_6);");
+            w.line("evals[6] = fr_mul_unreduced(a_7, b_7);");
+            w.line("evals[7] = fr_mul_unreduced(a_inf, b_inf);");
         } else {
-            let _ = writeln!(s, "        evals[0] = fr_add(evals[0], fr_mul(a_1, b_1));");
-            let _ = writeln!(s, "        evals[1] = fr_add(evals[1], fr_mul(a_2, b_2));");
-            let _ = writeln!(s, "        evals[2] = fr_add(evals[2], fr_mul(a_3, b_3));");
-            let _ = writeln!(s, "        evals[3] = fr_add(evals[3], fr_mul(a_4, b_4));");
-            let _ = writeln!(s, "        evals[4] = fr_add(evals[4], fr_mul(a_5, b_5));");
-            let _ = writeln!(s, "        evals[5] = fr_add(evals[5], fr_mul(a_6, b_6));");
-            let _ = writeln!(s, "        evals[6] = fr_add(evals[6], fr_mul(a_7, b_7));");
-            let _ = writeln!(
-                s,
-                "        evals[7] = fr_add(evals[7], fr_mul(a_inf, b_inf));"
-            );
+            w.line("evals[0] = fr_add(evals[0], fr_mul(a_1, b_1));");
+            w.line("evals[1] = fr_add(evals[1], fr_mul(a_2, b_2));");
+            w.line("evals[2] = fr_add(evals[2], fr_mul(a_3, b_3));");
+            w.line("evals[3] = fr_add(evals[3], fr_mul(a_4, b_4));");
+            w.line("evals[4] = fr_add(evals[4], fr_mul(a_5, b_5));");
+            w.line("evals[5] = fr_add(evals[5], fr_mul(a_6, b_6));");
+            w.line("evals[6] = fr_add(evals[6], fr_mul(a_7, b_7));");
+            w.line("evals[7] = fr_add(evals[7], fr_mul(a_inf, b_inf));");
         }
-        let _ = writeln!(s, "        }}");
+        w.line("}");
     }
 
-    s
+    w.into_string()
 }
 
 /// Generate MSL evaluation body for ProductSum shape (single-pass, all evals at once).
@@ -938,22 +861,19 @@ fn generate_product_sum_body(
     num_inputs_per_product: usize,
     num_products: usize,
     weight_folded: bool,
-) -> String {
+) -> EvalBody {
     let d = num_inputs_per_product;
     let p = num_products;
     let k = d * p;
-    let mut s = String::with_capacity(2048);
+    let mut w = Msl::new_at(2048, 2);
 
     // Precompute differences. When weight-folded, the first index of each
     // product group (g*d) gets w baked in: diff_{g*d} = w * (hi_{g*d} - lo_{g*d}).
     for i in 0..k {
         if weight_folded && i % d == 0 {
-            let _ = writeln!(
-                s,
-                "        Fr diff_{i} = fr_mul(w, fr_sub(hi_{i}, lo_{i}));"
-            );
+            msl!(w, "Fr diff_{i} = fr_mul(w, fr_sub(hi_{i}, lo_{i}));");
         } else {
-            let _ = writeln!(s, "        Fr diff_{i} = fr_sub(hi_{i}, lo_{i});");
+            msl!(w, "Fr diff_{i} = fr_sub(hi_{i}, lo_{i});");
         }
     }
 
@@ -961,15 +881,15 @@ fn generate_product_sum_body(
     // When weight-folded: cur_{g*d} = w * hi_{g*d}.
     for i in 0..k {
         if weight_folded && i % d == 0 {
-            let _ = writeln!(s, "        Fr cur_{i} = fr_mul(w, hi_{i});");
+            msl!(w, "Fr cur_{i} = fr_mul(w, hi_{i});");
         } else {
-            let _ = writeln!(s, "        Fr cur_{i} = hi_{i};");
+            msl!(w, "Fr cur_{i} = hi_{i};");
         }
     }
-    s.push('\n');
+    w.blank();
 
     // t=1: product of cur values (with weight baked into first factor if folded)
-    emit_product_sum(&mut s, d, p, "cur", 0);
+    emit_product_sum(&mut w, d, p, "cur", 0);
 
     // t=2, ..., D-1: increment cur by diff, then compute product.
     // The incremental update w*cur_{g*d} += w*diff_{g*d} correctly maintains
@@ -977,16 +897,24 @@ fn generate_product_sum_body(
     for t in 2..d {
         let eval_idx = t - 1;
         for i in 0..k {
-            let _ = writeln!(s, "        cur_{i} = fr_add(cur_{i}, diff_{i});");
+            msl!(w, "cur_{i} = fr_add(cur_{i}, diff_{i});");
         }
-        emit_product_sum(&mut s, d, p, "cur", eval_idx);
+        emit_product_sum(&mut w, d, p, "cur", eval_idx);
     }
 
     // t=inf: product of diffs (leading coefficient).
     // diff_{g*d} already contains w*diff if weight-folded.
-    emit_product_sum(&mut s, d, p, "diff", d - 1);
+    emit_product_sum(&mut w, d, p, "diff", d - 1);
 
-    s
+    let msl_str = w.into_string();
+    let has_challenges = msl_str.contains("challenges[");
+    EvalBody {
+        msl: msl_str,
+        reads_inline: false,
+        fuse_accumulate: false,
+        weight_folded,
+        has_challenges,
+    }
 }
 
 /// Emit `evals[idx] = Σ_g Π_j arr[g*D+j]` where `arr` is "cur", "hi", or "diff".
@@ -996,21 +924,21 @@ fn generate_product_sum_body(
 /// (in [0, 2r)) is safe as CIOS input since BN254's 4r²/R < 2r. An explicit
 /// `fr_reduce` before `fr_add` brings the final product back to [0, r).
 /// Saves `(D-2)` `fr_reduce` calls per product group per grid point.
-fn emit_product_sum(s: &mut String, d: usize, p: usize, arr: &str, eval_idx: usize) {
-    let _ = writeln!(s, "        {{ Fr sum = fr_zero();");
+fn emit_product_sum(w: &mut Msl, d: usize, p: usize, arr: &str, eval_idx: usize) {
+    w.line("{ Fr sum = fr_zero();");
+    w.push();
     for g in 0..p {
         let base = g * d;
-        let _ = writeln!(s, "          {{ Fr prod = {arr}_{base};");
+        msl!(w, "{{ Fr prod = {arr}_{base};");
+        w.push();
         for j in 1..d {
-            let _ = writeln!(
-                s,
-                "            prod = fr_mul_unreduced(prod, {arr}_{});",
-                base + j
-            );
+            msl!(w, "prod = fr_mul_unreduced(prod, {arr}_{});", base + j);
         }
-        let _ = writeln!(s, "            sum = fr_add(sum, fr_reduce(prod)); }}");
+        msl!(w, "sum = fr_add(sum, fr_reduce(prod)); }}");
+        w.pop();
     }
-    let _ = writeln!(s, "          evals[{eval_idx}] = sum; }}");
+    msl!(w, "evals[{eval_idx}] = sum; }}");
+    w.pop();
 }
 
 /// Generate MSL evaluation body from a [`Formula`].
@@ -1022,21 +950,21 @@ fn emit_product_sum(s: &mut String, d: usize, p: usize, arr: &str, eval_idx: usi
 /// Challenge values are read from a `device const Fr* challenges` buffer at
 /// runtime rather than baked as MSL constants. This makes the kernel shape
 /// deterministic at compile time, enabling AOT pipeline caching.
-fn generate_formula_body(formula: &Formula, degree: usize) -> String {
+fn generate_formula_body(formula: &Formula, degree: usize) -> EvalBody {
     let num_inputs = formula.num_inputs;
     let num_evals = degree;
-    let mut s = String::with_capacity(2048);
+    let mut w = Msl::new_at(2048, 2);
 
     // Precompute diffs
     for k in 0..num_inputs {
-        let _ = writeln!(s, "        Fr diff_{k} = fr_sub(hi_{k}, lo_{k});");
+        msl!(w, "Fr diff_{k} = fr_sub(hi_{k}, lo_{k});");
     }
 
     // Running interpolated values: start at lo, add diff each step
     for k in 0..num_inputs {
-        let _ = writeln!(s, "        Fr cur_{k} = lo_{k};");
+        msl!(w, "Fr cur_{k} = lo_{k};");
     }
-    s.push('\n');
+    w.blank();
 
     // Grid {0, 1, ..., degree-1}: matches KernelSpec.num_evals = degree.
     let grid: Vec<usize> = (0..num_evals).collect();
@@ -1047,61 +975,74 @@ fn generate_formula_body(formula: &Formula, degree: usize) -> String {
         let steps = t - prev_t;
         for _ in 0..steps {
             for k in 0..num_inputs {
-                let _ = writeln!(s, "        cur_{k} = fr_add(cur_{k}, diff_{k});");
+                msl!(w, "cur_{k} = fr_add(cur_{k}, diff_{k});");
             }
         }
         prev_t = t;
 
-        let _ = writeln!(s, "        {{ // t = {t}");
+        msl!(w, "{{ // t = {t}");
+        w.push();
 
         // Emit sum-of-products evaluation from the formula terms
         let mut term_names = Vec::with_capacity(formula.terms.len());
         for (ti, term) in formula.terms.iter().enumerate() {
-            let term_name = emit_term_msl(&mut s, term, ti);
+            let term_name = emit_term_msl(&mut w, term, ti);
             term_names.push(term_name);
         }
 
         // Sum all terms
         if term_names.is_empty() {
-            let _ = writeln!(s, "            evals[{slot}] = fr_zero();");
+            msl!(w, "evals[{slot}] = fr_zero();");
         } else {
             let mut acc = term_names[0].clone();
             for tn in &term_names[1..] {
-                let _ = writeln!(s, "            Fr sum_{slot}_{tn} = fr_add({acc}, {tn});");
+                msl!(w, "Fr sum_{slot}_{tn} = fr_add({acc}, {tn});");
                 acc = format!("sum_{slot}_{tn}");
             }
-            let _ = writeln!(s, "            evals[{slot}] = {acc};");
+            msl!(w, "evals[{slot}] = {acc};");
         }
 
-        let _ = writeln!(s, "        }}");
+        w.pop();
+        w.line("}");
     }
 
-    s
+    let has_challenges = formula
+        .terms
+        .iter()
+        .any(|t| t.factors.iter().any(|f| matches!(f, Factor::Challenge(_))));
+
+    EvalBody {
+        msl: w.into_string(),
+        reads_inline: false,
+        fuse_accumulate: false,
+        weight_folded: false,
+        has_challenges,
+    }
 }
 
 /// Emit MSL for a single [`ProductTerm`]: `coefficient × Π factors`.
 ///
 /// Returns the MSL variable name holding the term's value.
-fn emit_term_msl(s: &mut String, term: &ProductTerm, idx: usize) -> String {
+fn emit_term_msl(w: &mut Msl, term: &ProductTerm, idx: usize) -> String {
     // Start with coefficient
     let coeff_name = format!("c_{idx}");
     match term.coefficient {
         0 => {
-            let _ = writeln!(s, "            Fr {coeff_name} = fr_zero();");
+            msl!(w, "Fr {coeff_name} = fr_zero();");
             return coeff_name;
         }
         1 => {
-            let _ = writeln!(s, "            Fr {coeff_name} = fr_one();");
+            msl!(w, "Fr {coeff_name} = fr_one();");
         }
         -1 => {
-            let _ = writeln!(s, "            Fr {coeff_name} = fr_neg(fr_one());");
+            msl!(w, "Fr {coeff_name} = fr_neg(fr_one());");
         }
         v if v > 0 => {
             assert!(
                 v <= i128::from(u64::MAX),
                 "MSL constant {v} exceeds u64 range"
             );
-            let _ = writeln!(s, "            Fr {coeff_name} = fr_from_u64((ulong){v});");
+            msl!(w, "Fr {coeff_name} = fr_from_u64((ulong){v});");
         }
         v => {
             let abs = -v;
@@ -1109,10 +1050,7 @@ fn emit_term_msl(s: &mut String, term: &ProductTerm, idx: usize) -> String {
                 abs <= i128::from(u64::MAX),
                 "MSL constant {v} exceeds u64 range"
             );
-            let _ = writeln!(
-                s,
-                "            Fr {coeff_name} = fr_neg(fr_from_u64((ulong){abs}));"
-            );
+            msl!(w, "Fr {coeff_name} = fr_neg(fr_from_u64((ulong){abs}));");
         }
     }
 
@@ -1128,10 +1066,7 @@ fn emit_term_msl(s: &mut String, term: &ProductTerm, idx: usize) -> String {
             Factor::Challenge(id) => format!("challenges[{id}]"),
         };
         let prod_name = format!("t_{idx}_{fi}");
-        let _ = writeln!(
-            s,
-            "            Fr {prod_name} = fr_mul({acc}, {factor_ref});"
-        );
+        msl!(w, "Fr {prod_name} = fr_mul({acc}, {factor_ref});");
         acc = prod_name;
     }
 

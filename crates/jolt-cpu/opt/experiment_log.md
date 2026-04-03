@@ -147,3 +147,109 @@ eliminates dead zero-init via DSE. Change is low-risk and adds no complexity.
 
 ### Decision
 - [x] Keep
+
+---
+
+## Experiment 004: In-place LowToHigh bind (eliminate Vec allocation)
+
+- **Date**: 2026-04-03 13:30
+- **Commit**: 90eb55b0f (dirty)
+- **Hypothesis**: The LowToHigh bind path allocates a new Vec<F> via par_iter().collect()
+  and replaces the old buffer — a 4MB allocation + 8MB deallocation per bind call.
+  HighToLow uses split_at_mut() in-place (no allocation) and is 2.6× faster.
+  Making L2H in-place should match H2L performance.
+- **Changes**:
+  - `backend.rs`: Replaced L2H parallel bind from `par_iter().map().collect()` to
+    unsafe in-place write via raw pointer. Safety: buf[i] is written after buf[2*i]
+    and buf[2*i+1] are read; since i < 2*i for i ≥ 1, writes never clobber unread inputs.
+    Each par_iter task writes a unique buf[i].
+- **Files**: backend.rs
+
+### Results
+| Benchmark | Before | After | Delta |
+|-----------|--------|-------|-------|
+| bind_l2h | 61.77 | 24.27 | **-60.7%** |
+| bind_h2l | 24.08 | 22.84 | -5.2% |
+
+### Analysis
+Eliminating the Vec allocation closed the L2H gap entirely. Both bind variants now
+perform identically at ~23-24ns/elem. The overhead was dominated by allocator cost
+(4MB malloc + 8MB free per call). With 8 Rayon threads vs 1-thread sequential:
+speedup = 145/24 = 6.0× (75% parallel efficiency on 8 threads).
+
+### Decision
+- [x] Keep
+
+---
+
+## Experiment 005: Pre-compute input data pointers in reduce_dense_fixed
+
+- **Date**: 2026-04-03 13:45
+- **Commit**: 90eb55b0f (dirty)
+- **Hypothesis**: The reduce inner loop dereferences through `&[&Vec<F>]` — two pointer
+  indirections per input per pair. For D=16 (16 inputs), this is 32 extra pointer loads
+  per pair. Pre-computing raw data pointers (stored as usize for Send+Sync) eliminates
+  this overhead. Expected to help most for large NI where indirection dominates.
+- **Changes**:
+  - `backend.rs`: In reduce_dense_fixed, pre-compute `ptrs: [usize; NI]` from
+    `inputs[k].as_ptr()`. Replace `inputs.iter().enumerate()` loop with direct
+    pointer arithmetic via `load_pair()` closure. Sequential path also updated.
+- **Files**: backend.rs
+
+### Results
+| Benchmark | Before | After | Delta |
+|-----------|--------|-------|-------|
+| dense_reduce_d4 | 47.77 | 47.07 | -1.5% |
+| dense_reduce_d8 | 162.63 | 170.60 | +4.9% |
+| dense_reduce_d16 | 789.51 | 707.78 | **-10.4%** |
+
+### Analysis
+Clear improvement for D=16 where 16 input streams amplify the indirection overhead.
+D=4 and D=8 are within measurement noise. The usize pointer cache eliminates per-pair
+slice lookups and Vec dereferences, but the benefit only shows when NI is large enough
+for the overhead to matter relative to the eval cost.
+
+### Decision
+- [x] Keep
+
+---
+
+## Current Status (after Experiments 001-005)
+
+| Benchmark | Original | Current | Δ vs baseline | Target | Gap |
+|-----------|----------|---------|---------------|--------|-----|
+| field_mul | 14.32 | 14.25 | -0.5% | ≤15 | ✅ MET |
+| toom4_eval | 221.23 | 169.08 | -23.6% | ≤194 | ✅ MET |
+| toom8_eval | 662.42 | 599.25 | -9.5% | ≤581 | ~3% gap |
+| toom16_eval | 2289.88 | 2191.52 | -4.3% | ≤2027 | ~8% gap |
+| dense_reduce_d4 | 69.53 | 47.07 | -32.3% | ≤39.5 | ~19% gap |
+| dense_reduce_d8 | 204.17 | 170.60 | -16.4% | ≤148.5 | ~15% gap |
+| dense_reduce_d16 | 813.66 | 707.78 | -13.0% | ≤625 | ~13% gap |
+| bind_l2h | 36.01 | 24.60 | -31.7% | ≤22.1 | ~11% gap |
+| bind_h2l | 29.57 | 24.53 | -17.0% | ≤22.1 | ~11% gap |
+
+---
+
+## Experiment 006: Direct toom eval in reduce (bypass dyn dispatch)
+
+- **Date**: 2026-04-03 14:15
+- **Hypothesis**: The Box<dyn Fn> eval dispatch + lo/hi→pairs copy adds ~15-20ns per pair.
+  A specialized reduce_product_sum_fixed that calls toom_cook::eval_linear_prod_assign
+  directly (no dyn dispatch, no intermediate lo/hi arrays) should improve D=4 by ~8%.
+- **Changes**: Added is_single_product_sum flag to CpuKernel, reduce_product_sum_fixed
+  function, dispatcher routing.
+
+### Results
+No measurable improvement in either sequential (1-thread) or parallel benchmarks.
+- d4: 235.2ns seq (was 235.8ns), 47ns par (was 47ns)
+- d8: 888.9ns seq (was 891ns), 164ns par (was 165ns)
+- d16: 3760ns seq (was 3751ns), 683ns par (was 708ns)
+
+### Analysis
+The compiler already optimizes the dyn dispatch path effectively. The Box<dyn Fn>
+overhead (~5ns) is hidden by superscalar execution (overlaps with memory loads).
+The lo/hi→pairs copy is optimized away or pipelined. The real bottleneck for dense
+reduce is memory access latency from scattered input arrays, not compute overhead.
+
+### Decision
+- [x] Revert (adds complexity for zero benefit)

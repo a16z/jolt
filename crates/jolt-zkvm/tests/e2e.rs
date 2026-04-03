@@ -10,14 +10,18 @@
 //! 4. `verify()` — checks the proof
 #![allow(unused_results)]
 
-use jolt_compiler::{compile, CompileParams, Density, Expr, Objective, PolyKind, Protocol, SolverConfig};
+use jolt_compiler::{
+    compile, CompileParams, Density, Expr, Objective, PolyKind, Protocol, SolverConfig,
+};
 use jolt_compute::link;
 use jolt_cpu::CpuBackend;
 use jolt_field::{Field, Fr};
 use jolt_openings::mock::MockCommitmentScheme;
 use jolt_r1cs::{ConstraintMatrices, R1csKey, R1csProvider};
 use jolt_transcript::{Blake2bTranscript, Transcript};
-use jolt_verifier::{verify, JoltVerifyingKey, OneHotConfig, ProverConfig, ReadWriteConfig, TRANSCRIPT_LABEL};
+use jolt_verifier::{
+    verify, JoltVerifyingKey, OneHotConfig, ProverConfig, ReadWriteConfig, TRANSCRIPT_LABEL,
+};
 use jolt_witness::{CycleInput, PolynomialConfig, PolynomialId, Polynomials};
 use jolt_zkvm::buffers::ProverBuffers;
 use jolt_zkvm::prove::prove_with_buffers;
@@ -37,7 +41,12 @@ fn build_protocol() -> Protocol {
     let b = p.poly("b", &[log_n], PolyKind::Committed);
 
     // Sumcheck: Σ_x a(x) · b(x) = 0
-    let claims = p.sumcheck(Expr::from(a) * Expr::from(b), Expr::from(0i64), &[log_n], Density::Dense);
+    let claims = p.sumcheck(
+        Expr::from(a) * Expr::from(b),
+        Expr::from(0i64),
+        &[log_n],
+        Density::Dense,
+    );
 
     // Evaluate both polys at the sumcheck challenge point
     p.evaluate(a, claims[0]);
@@ -115,6 +124,12 @@ fn prove_verify_roundtrip() {
         memory_end: 0x8001_0000,
         entry_address: 0x8000_0000,
         io_hash: [0u8; 32],
+        max_input_size: 0,
+        max_output_size: 0,
+        heap_size: 0,
+        inputs: Vec::new(),
+        outputs: Vec::new(),
+        panic: false,
     };
 
     // -- 3. Prove --

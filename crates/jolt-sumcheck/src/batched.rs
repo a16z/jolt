@@ -115,7 +115,7 @@ impl BatchedSumcheckVerifier {
             &combined_claim,
             &proof.round_polynomials,
             transcript,
-            &ClearRoundVerifier,
+            &ClearRoundVerifier::new(),
         )?;
 
         Ok((final_eval, challenges, alpha))
@@ -139,7 +139,7 @@ impl BatchedSumcheckVerifier {
             claims,
             &proof.round_polynomials,
             transcript,
-            &ClearRoundVerifier,
+            &ClearRoundVerifier::new(),
         )
     }
 }

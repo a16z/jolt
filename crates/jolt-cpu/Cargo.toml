@@ -12,12 +12,12 @@ workspace = true
 jolt-field = { path = "../jolt-field", default-features = false }
 jolt-compiler = { path = "../jolt-compiler" }
 jolt-compute = { path = "../jolt-compute" }
+jolt-poly = { path = "../jolt-poly" }
 tracing.workspace = true
 rayon = { workspace = true, optional = true }
 
 [dev-dependencies]
 jolt-field = { path = "../jolt-field", features = ["bn254"] }
-jolt-poly = { path = "../jolt-poly" }
 jolt-sumcheck = { path = "../jolt-sumcheck" }
 jolt-transcript = { path = "../jolt-transcript" }
 rand = { workspace = true }

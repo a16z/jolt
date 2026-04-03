@@ -252,7 +252,12 @@ mod tests {
         let upstream = p.sumcheck(eq * (a * b), 0, &[d], Density::Dense);
         let c = p.poly("c", &[d], PolyKind::Virtual);
         let rho = p.challenge("rho");
-        let _ = p.sumcheck(eq * c, rho * upstream[0] + upstream[1], &[d], Density::Dense);
+        let _ = p.sumcheck(
+            eq * c,
+            rho * upstream[0] + upstream[1],
+            &[d],
+            Density::Dense,
+        );
         p
     }
 

@@ -42,6 +42,7 @@
 
 mod blake2b;
 mod blanket;
+pub mod domain;
 mod impl_transcript;
 mod keccak;
 pub mod mock;
@@ -49,6 +50,7 @@ mod poseidon;
 mod transcript;
 
 pub use blake2b::Blake2bTranscript;
+pub use domain::{Label, LabelWithCount, U64Word};
 pub use keccak::KeccakTranscript;
 pub use mock::MockTranscript;
 pub use poseidon::PoseidonTranscript;

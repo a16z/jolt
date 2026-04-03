@@ -13,7 +13,7 @@ use crate::eq::EqPolynomial;
 /// Below this threshold the overhead of Rayon work-stealing exceeds the
 /// benefit. 1024 field elements is roughly one L1 cache line's worth of
 /// useful work per core, keeping synchronization cost negligible.
-const PAR_THRESHOLD: usize = 1024;
+pub(crate) const PAR_THRESHOLD: usize = 1024;
 
 /// Multilinear polynomial stored as evaluations over the Boolean hypercube $\{0,1\}^n$.
 ///
@@ -137,77 +137,13 @@ impl<F: Field> Polynomial<F> {
 
     #[inline]
     fn bind_high_to_low(&mut self, scalar: F) {
-        let half = self.evals.len() / 2;
-
-        #[cfg(feature = "parallel")]
-        {
-            if half >= PAR_THRESHOLD {
-                use rayon::prelude::*;
-                let (lo, hi) = self.evals.split_at_mut(half);
-                lo.par_iter_mut().zip(hi.par_iter()).for_each(|(a, b)| {
-                    *a = *a + scalar * (*b - *a);
-                });
-            } else {
-                for i in 0..half {
-                    let lo = self.evals[i];
-                    let hi = self.evals[i + half];
-                    self.evals[i] = lo + scalar * (hi - lo);
-                }
-            }
-        }
-
-        #[cfg(not(feature = "parallel"))]
-        {
-            for i in 0..half {
-                let lo = self.evals[i];
-                let hi = self.evals[i + half];
-                self.evals[i] = lo + scalar * (hi - lo);
-            }
-        }
-
-        self.evals.truncate(half);
+        bind_high_to_low(&mut self.evals, scalar);
         self.num_vars -= 1;
     }
 
     #[inline]
     fn bind_low_to_high(&mut self, scalar: F) {
-        let half = self.evals.len() / 2;
-
-        #[cfg(feature = "parallel")]
-        {
-            if half >= PAR_THRESHOLD {
-                use rayon::prelude::*;
-                // Parallel: write into a new buffer to avoid aliasing
-                let coeffs = &self.evals;
-                let new: Vec<F> = (0..half)
-                    .into_par_iter()
-                    .map(|i| {
-                        let lo = coeffs[2 * i];
-                        let hi = coeffs[2 * i + 1];
-                        lo + scalar * (hi - lo)
-                    })
-                    .collect();
-                self.evals = new;
-            } else {
-                for i in 0..half {
-                    let lo = self.evals[2 * i];
-                    let hi = self.evals[2 * i + 1];
-                    self.evals[i] = lo + scalar * (hi - lo);
-                }
-                self.evals.truncate(half);
-            }
-        }
-
-        #[cfg(not(feature = "parallel"))]
-        {
-            for i in 0..half {
-                let lo = self.evals[2 * i];
-                let hi = self.evals[2 * i + 1];
-                self.evals[i] = lo + scalar * (hi - lo);
-            }
-            self.evals.truncate(half);
-        }
-
+        bind_low_to_high(&mut self.evals, scalar);
         self.num_vars -= 1;
     }
 
@@ -465,6 +401,87 @@ impl<F: Field> Neg for Polynomial<F> {
         }
         self
     }
+}
+
+/// Fixes the MSB variable of an evaluation table to `scalar`, halving the buffer.
+///
+/// Pairs `evals[i]` with `evals[i + half]`:
+/// $$g(x_2, \ldots) = f(0, x_2, \ldots) + s \cdot (f(1, x_2, \ldots) - f(0, x_2, \ldots))$$
+///
+/// Operates directly on a `Vec<F>` without tracking `num_vars`. Used by
+/// [`Polynomial::bind`] internally and by compute backends that manage
+/// raw buffers.
+#[inline]
+pub fn bind_high_to_low<F: Field>(evals: &mut Vec<F>, scalar: F) {
+    let half = evals.len() / 2;
+
+    #[cfg(feature = "parallel")]
+    {
+        if half >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+            let (lo, hi) = evals.split_at_mut(half);
+            lo.par_iter_mut().zip(hi.par_iter()).for_each(|(a, b)| {
+                *a = *a + scalar * (*b - *a);
+            });
+            evals.truncate(half);
+            return;
+        }
+    }
+
+    for i in 0..half {
+        let lo = evals[i];
+        let hi = evals[i + half];
+        evals[i] = lo + scalar * (hi - lo);
+    }
+    evals.truncate(half);
+}
+
+/// Fixes the LSB variable of an evaluation table to `scalar`, halving the buffer.
+///
+/// Pairs `evals[2*i]` with `evals[2*i + 1]`:
+/// $$g(\ldots, x_{n-1}) = f(\ldots, 0) + s \cdot (f(\ldots, 1) - f(\ldots, 0))$$
+///
+/// Operates directly on a `Vec<F>` without tracking `num_vars`. Used by
+/// [`Polynomial::bind_with_order`] internally and by compute backends that
+/// manage raw buffers.
+#[inline]
+pub fn bind_low_to_high<F: Field>(evals: &mut Vec<F>, scalar: F) {
+    let half = evals.len() / 2;
+
+    #[cfg(feature = "parallel")]
+    {
+        if half >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+            // SAFETY: For each index i in [0, half):
+            //   - Reads from evals[2*i] and evals[2*i+1]
+            //   - Writes to evals[i]
+            //   Since i < 2*i for i >= 1, the output region [0, half)
+            //   never overwrites a not-yet-read input. Each par_iter task
+            //   writes to a unique evals[i], and read index sets for
+            //   distinct i values do not overlap.
+            let base = evals.as_mut_ptr() as usize;
+            (0..half).into_par_iter().for_each(move |i| {
+                // SAFETY: Each i writes to evals[i] and reads evals[2*i], evals[2*i+1].
+                // i < 2*i for i>=1, so writes never clobber unread inputs.
+                // Distinct i values have disjoint write and read index sets.
+                unsafe {
+                    let p = base as *mut F;
+                    let lo = *p.add(2 * i);
+                    let hi = *p.add(2 * i + 1);
+                    *p.add(i) = lo + scalar * (hi - lo);
+                }
+            });
+            evals.truncate(half);
+            return;
+        }
+    }
+
+    for i in 0..half {
+        let lo = evals[2 * i];
+        let hi = evals[2 * i + 1];
+        evals[i] = lo + scalar * (hi - lo);
+    }
+    evals.truncate(half);
 }
 
 #[cfg(test)]

@@ -514,7 +514,12 @@ mod tests {
         let upstream = p.sumcheck(eq * (a * b), 0, &[d], Density::Dense);
 
         let c = p.poly("c", &[d], PolyKind::Virtual);
-        let downstream = p.sumcheck(eq * c, rho * upstream[0] + upstream[1], &[d], Density::Dense);
+        let downstream = p.sumcheck(
+            eq * c,
+            rho * upstream[0] + upstream[1],
+            &[d],
+            Density::Dense,
+        );
         assert_eq!(downstream.len(), 1);
 
         let last = &p.vertices[p.vertices.len() - 1];

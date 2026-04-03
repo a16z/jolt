@@ -15,7 +15,7 @@
 //! and scalar evaluations respectively.
 
 use jolt_field::Field;
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::claims::{ProverClaim, VerifierClaim};
@@ -94,7 +94,8 @@ impl<PCS: AdditivelyHomomorphic> OpeningReduction<PCS> for RlcReduction {
             return (Vec::new(), ());
         }
 
-        // Bind all claim evaluations before drawing any RLC challenge rho.
+        // Domain separation + count prefix (matches jolt-core's append_scalars(b"rlc_claims", &all))
+        transcript.append(&LabelWithCount(b"rlc_claims", claims.len() as u64));
         for claim in &claims {
             claim.eval.append_to_transcript(transcript);
         }
@@ -143,7 +144,8 @@ impl<PCS: AdditivelyHomomorphic> OpeningReduction<PCS> for RlcReduction {
             return Ok(Vec::new());
         }
 
-        // Bind all claim evaluations (must match prover).
+        // Domain separation + count prefix (must match prover).
+        transcript.append(&LabelWithCount(b"rlc_claims", claims.len() as u64));
         for claim in &claims {
             claim.eval.append_to_transcript(transcript);
         }

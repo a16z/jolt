@@ -1,20 +1,21 @@
 //! Composite buffer provider for the prover runtime.
 //!
 //! [`ProverBuffers`] routes [`BufferProvider::load`] calls to the appropriate
-//! data source based on [`PolynomialId`]: witness polynomials come from
-//! [`Polynomials`], R1CS-derived polynomials (Az, Bz, Cz, combined row)
-//! come from [`R1csProvider`].
+//! data source based on [`PolynomialDescriptor::source`]: witness polynomials
+//! come from [`Polynomials`], R1CS-derived polynomials come from [`R1csProvider`].
 
+use jolt_compiler::{PolySource, PolynomialSpec};
 use jolt_compute::{Buf, BufferProvider, ComputeBackend, DeviceBuffer};
 use jolt_field::Field;
-use jolt_r1cs::{R1csProvider, POLY_AZ, POLY_BZ, POLY_COMBINED_ROW, POLY_CZ};
+use jolt_r1cs::R1csProvider;
 use jolt_witness::{PolynomialId, Polynomials};
 
 /// Composite [`BufferProvider`] that unifies witness and R1CS data sources.
 ///
-/// The runtime sees a single provider; internally it dispatches to:
-/// - [`Polynomials<F>`] for committed witness polynomials (RdInc, RamInc, RA, etc.)
-/// - [`R1csProvider`] for Spartan's R1CS-derived polynomials (Az, Bz, Cz, combined row)
+/// The runtime sees a single provider; internally it dispatches on
+/// [`descriptor().source`](PolynomialSpec::descriptor):
+/// - [`PolySource::R1cs`] → [`R1csProvider`]
+/// - Everything else → [`Polynomials<F>`]
 pub struct ProverBuffers<'a, F: Field> {
     polys: &'a mut Polynomials<F>,
     r1cs: R1csProvider<'a, F>,
@@ -33,32 +34,28 @@ impl<'a, F: Field> ProverBuffers<'a, F> {
 
 impl<B: ComputeBackend, F: Field> BufferProvider<PolynomialId, B, F> for ProverBuffers<'_, F> {
     fn load(&mut self, poly_id: PolynomialId, backend: &B) -> Buf<B, F> {
-        match poly_id {
-            PolynomialId::Az => self.r1cs.load(POLY_AZ, backend),
-            PolynomialId::Bz => self.r1cs.load(POLY_BZ, backend),
-            PolynomialId::Cz => self.r1cs.load(POLY_CZ, backend),
-            PolynomialId::CombinedRow => self.r1cs.load(POLY_COMBINED_ROW, backend),
-            id => DeviceBuffer::Field(backend.upload(self.polys.get(id))),
+        match poly_id.descriptor().source {
+            PolySource::R1cs(_) => self.r1cs.load(poly_id, backend),
+            _ => DeviceBuffer::Field(backend.upload(self.polys.get(poly_id))),
         }
     }
 
     fn as_slice(&self, poly_id: PolynomialId) -> &[F] {
-        match poly_id {
-            PolynomialId::Az | PolynomialId::Bz | PolynomialId::Cz | PolynomialId::CombinedRow => {
+        match poly_id.descriptor().source {
+            PolySource::R1cs(_) => {
                 panic!(
                     "R1CS polynomial {poly_id:?} is computed on-the-fly; \
-                 it should never appear in CollectOpeningClaim",
+                     it should never appear in CollectOpeningClaim",
                 )
             }
-            id => self.polys.get(id),
+            _ => self.polys.get(poly_id),
         }
     }
 
     fn release(&mut self, poly_id: PolynomialId) {
-        match poly_id {
-            // R1CS polys are computed on-the-fly, nothing to release
-            PolynomialId::Az | PolynomialId::Bz | PolynomialId::Cz | PolynomialId::CombinedRow => {}
-            id => self.polys.release(id),
+        match poly_id.descriptor().source {
+            PolySource::R1cs(_) => {} // on-the-fly, nothing to release
+            _ => self.polys.release(poly_id),
         }
     }
 }
@@ -76,13 +73,11 @@ mod tests {
 
     #[test]
     fn routes_witness_and_r1cs() {
-        // Minimal witness: 4 padding cycles
         let config = PolynomialConfig::new(4, 8, 4, 4);
         let mut polys = Polynomials::<Fr>::new(config);
         polys.push(&[CycleInput::PADDING; 4]);
         polys.finish();
 
-        // Minimal R1CS: 1 constraint, 2 vars, 2 cycles
         let one = Fr::one();
         let matrices = ConstraintMatrices::new(
             1,
@@ -96,7 +91,6 @@ mod tests {
         let r1cs = R1csProvider::new(&key, &witness);
 
         let mut provider = ProverBuffers::new(&mut polys, r1cs);
-
         let backend = CpuBackend;
 
         // Load witness poly
@@ -104,7 +98,11 @@ mod tests {
         let rd_data = backend.download(rd_buf.as_field());
         assert_eq!(rd_data.len(), 4);
 
-        // Load R1CS poly
+        // Load R1CS poly — dispatches through descriptor().source
+        assert!(matches!(
+            PolynomialId::Az.descriptor().source,
+            PolySource::R1cs(_)
+        ));
         let az_buf = provider.load(PolynomialId::Az, &backend);
         let az_data = backend.download(az_buf.as_field());
         assert!(!az_data.is_empty());

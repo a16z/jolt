@@ -63,9 +63,6 @@ pub struct ModuleParams {
     /// Padded constraint count (next power of two of total R1CS constraints).
     /// This is the stride between cycles in Az/Bz buffers.
     pub num_constraints_padded: usize,
-    /// Number of constraints in the first constraint group (= domain size).
-    pub num_constraints_first_group: usize,
-
     // -- Product virtual --
     pub product_uniskip_degree: usize,
     pub product_uniskip_domain: usize,
@@ -107,19 +104,20 @@ impl ModuleParams {
 
         let num_committed = 2 + instruction_d + ram_d + bytecode_d;
 
-        // Outer Spartan
-        let outer_uniskip_degree = (NUM_R1CS_CONSTRAINTS - 1) / 2;
-        let outer_uniskip_domain = outer_uniskip_degree + 1;
-        let outer_uniskip_num_coeffs = 3 * outer_uniskip_degree + 1;
-        let outer_uniskip_poly_degree = outer_uniskip_num_coeffs - 1;
+        // Outer Spartan — single-domain uniskip (no streaming/group-split).
+        //
+        // All 19 constraints in one Lagrange domain. Uniskip polynomial degree:
+        //   L(τ_high, Y) · Az(Y) · Bz(Y) → deg (K-1) + (K-1) + (K-1) = 3(K-1)
+        let outer_uniskip_degree = NUM_R1CS_CONSTRAINTS - 1; // 18
+        let outer_uniskip_domain = NUM_R1CS_CONSTRAINTS; // 19
+        let outer_uniskip_num_coeffs = 3 * outer_uniskip_degree + 1; // 55
+        let outer_uniskip_poly_degree = outer_uniskip_num_coeffs - 1; // 54
         let outer_remaining_degree = 3;
-        // Uniskip consumed 1 variable of the eq table (num_tau - 1 total);
-        // remaining rounds = num_tau - 1 - 1 = log_t.
+        // After uniskip + Lagrange projection, remaining sumcheck is over cycle variables.
         let outer_remaining_rounds = log_t;
-        let num_tau = log_t + 2;
+        // τ = [τ_low (log_t cycle challenges) ‖ τ_high (1 Lagrange kernel challenge)]
+        let num_tau = log_t + 1;
         let num_constraints_padded = NUM_R1CS_CONSTRAINTS.next_power_of_two();
-        // Constraints split into two groups: first group = domain_size, second = remainder.
-        let num_constraints_first_group = outer_uniskip_domain;
 
         // Product virtual
         let product_uniskip_degree = NUM_PRODUCT_CONSTRAINTS - 1;
@@ -159,7 +157,6 @@ impl ModuleParams {
             outer_remaining_rounds,
             num_tau,
             num_constraints_padded,
-            num_constraints_first_group,
             product_uniskip_degree,
             product_uniskip_domain,
             product_uniskip_num_coeffs,

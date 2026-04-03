@@ -3,17 +3,16 @@
 //! [`R1csProvider`] wraps an [`R1csKey`] and a witness slice, implementing
 //! [`BufferProvider`] so the runtime can load R1CS-derived polynomials
 //! (Az, Bz, Cz, combined row) as device buffers on demand.
+//!
+//! Dispatches on [`PolynomialDescriptor::source`] — any polynomial whose
+//! descriptor returns [`PolySource::R1cs(column)`] is handled here.
 
+use jolt_compiler::descriptor::{PolySource, R1csColumn};
+use jolt_compiler::PolynomialSpec;
 use jolt_compute::{Buf, BufferProvider, ComputeBackend, DeviceBuffer};
 use jolt_field::Field;
 
 use crate::key::R1csKey;
-
-/// Polynomial indices for R1CS-derived buffers.
-pub const POLY_AZ: usize = 0;
-pub const POLY_BZ: usize = 1;
-pub const POLY_CZ: usize = 2;
-pub const POLY_COMBINED_ROW: usize = 3;
 
 /// Spartan challenge state needed for combined row materialization.
 #[derive(Clone, Debug)]
@@ -30,14 +29,8 @@ pub struct SpartanChallenges<F> {
 /// Created from an [`R1csKey`] and a witness reference. Computes Az, Bz, Cz
 /// and the combined row polynomial on demand via [`BufferProvider::load`].
 ///
-/// # Buffer indices
-///
-/// | Index | Polynomial | When available |
-/// |-------|------------|----------------|
-/// | [`POLY_AZ`] | Az (A × witness) | Always |
-/// | [`POLY_BZ`] | Bz (B × witness) | Always |
-/// | [`POLY_CZ`] | Cz (C × witness) | Always |
-/// | [`POLY_COMBINED_ROW`] | ρ_A·A(r_x,·) + ρ_B·B(r_x,·) + ρ_C·C(r_x,·) | After `set_challenges` |
+/// Dispatches on [`PolynomialDescriptor::source`] — any polynomial whose
+/// descriptor returns [`PolySource::R1cs(column)`] is handled here.
 pub struct R1csProvider<'a, F: Field> {
     key: &'a R1csKey<F>,
     witness: &'a [F],
@@ -55,7 +48,7 @@ impl<'a, F: Field> R1csProvider<'a, F> {
 
     /// Sets the Spartan challenges needed for combined row materialization.
     ///
-    /// Must be called before loading [`POLY_COMBINED_ROW`].
+    /// Must be called before loading a `CombinedRow` polynomial.
     pub fn set_challenges(&mut self, challenges: SpartanChallenges<F>) {
         self.challenges = Some(challenges);
     }
@@ -84,43 +77,53 @@ impl<'a, F: Field> R1csProvider<'a, F> {
 
         result
     }
-}
 
-impl<B: ComputeBackend, F: Field> BufferProvider<usize, B, F> for R1csProvider<'_, F> {
-    fn load(&mut self, poly_index: usize, backend: &B) -> Buf<B, F> {
-        let buf = match poly_index {
-            POLY_AZ => {
+    /// Loads an R1CS-derived polynomial by column.
+    fn load_column<B: ComputeBackend>(&self, column: R1csColumn, backend: &B) -> Buf<B, F> {
+        let buf = match column {
+            R1csColumn::Az => {
                 let az = self.compute_matvec(&self.key.matrices.a);
                 backend.upload(&az)
             }
-            POLY_BZ => {
+            R1csColumn::Bz => {
                 let bz = self.compute_matvec(&self.key.matrices.b);
                 backend.upload(&bz)
             }
-            POLY_CZ => {
+            R1csColumn::Cz => {
                 let cz = self.compute_matvec(&self.key.matrices.c);
                 backend.upload(&cz)
             }
-            POLY_COMBINED_ROW => {
+            R1csColumn::CombinedRow => {
                 let ch = self
                     .challenges
                     .as_ref()
-                    .expect("set_challenges() must be called before loading POLY_COMBINED_ROW");
+                    .expect("set_challenges() must be called before loading CombinedRow");
                 let total_cols_padded = self.key.total_cols().next_power_of_two();
                 let row =
                     self.key
                         .combined_row(&ch.r_x, ch.rho_a, ch.rho_b, ch.rho_c, total_cols_padded);
                 backend.upload(&row)
             }
-            _ => panic!("unknown R1CS polynomial index: {poly_index}"),
         };
         DeviceBuffer::Field(buf)
     }
+}
 
-    fn as_slice(&self, poly_index: usize) -> &[F] {
-        panic!(
-            "R1CS polynomials (index {poly_index}) are computed on-the-fly and have no host-side slice"
-        );
+impl<P: PolynomialSpec, B: ComputeBackend, F: Field> BufferProvider<P, B, F>
+    for R1csProvider<'_, F>
+{
+    fn load(&mut self, poly_id: P, backend: &B) -> Buf<B, F> {
+        match poly_id.descriptor().source {
+            PolySource::R1cs(column) => self.load_column(column, backend),
+            other => panic!(
+                "R1csProvider only handles R1CS polynomials, got {:?} with source {:?}",
+                poly_id, other
+            ),
+        }
+    }
+
+    fn as_slice(&self, poly_id: P) -> &[F] {
+        panic!("R1CS polynomial {poly_id:?} is computed on-the-fly and has no host-side slice");
     }
 }
 

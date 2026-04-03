@@ -562,52 +562,12 @@ impl ComputeBackend for MetalBackend {
     }
 
     fn lt_table<F: Field>(&self, point: &[F]) -> Self::Buffer<F> {
-        let n = point.len();
-        let mut evals = vec![F::zero(); 1usize << n];
-        for (i, &ri) in point.iter().rev().enumerate() {
-            let half = 1usize << i;
-            let (left, right) = evals.split_at_mut(half);
-            left.iter_mut().zip(right.iter_mut()).for_each(|(x, y)| {
-                *y = *x * ri;
-                *x += ri - *y;
-            });
-        }
+        let evals = jolt_poly::LtPolynomial::evaluations(point);
         self.upload(&evals)
     }
 
     fn eq_plus_one_table<F: Field>(&self, point: &[F]) -> (Self::Buffer<F>, Self::Buffer<F>) {
-        let ell = point.len();
-        let size = 1usize << ell;
-        let mut eq_evals = vec![F::zero(); size];
-        eq_evals[0] = F::one();
-        let mut epo_evals = vec![F::zero(); size];
-
-        for i in 0..ell {
-            let step = 1usize << (ell - i);
-            let half_step = step / 2;
-
-            let mut r_lower_product = F::one();
-            for &x in point.iter().skip(i + 1) {
-                r_lower_product *= x;
-            }
-            r_lower_product *= F::one() - point[i];
-
-            let mut idx = half_step;
-            while idx < size {
-                epo_evals[idx] = eq_evals[idx - half_step] * r_lower_product;
-                idx += step;
-            }
-
-            let eq_step = 1usize << (ell - i - 1);
-            let mut k = 0;
-            while k < size {
-                let val = eq_evals[k] * point[i];
-                eq_evals[k + eq_step] = val;
-                eq_evals[k] -= val;
-                k += eq_step * 2;
-            }
-        }
-
+        let (eq_evals, epo_evals) = jolt_poly::EqPlusOnePolynomial::evals(point, None);
         (self.upload(&eq_evals), self.upload(&epo_evals))
     }
 }

@@ -412,8 +412,7 @@ pub fn eval_prod_5_assign<F: Field>(p: &[(F, F); 5], outputs: &mut [F]) {
 /// pointwise. ~20 field multiplications vs 30 naive.
 pub fn eval_prod_6_assign<F: Field>(p: &[(F, F); 6], outputs: &mut [F]) {
     // SAFETY: subslice has exactly 4 elements.
-    let (a1, a2, a3, a4, a_inf) =
-        eval_linear_prod_4_internal(*unsafe { as_array(&p[0..4]) });
+    let (a1, a2, a3, a4, a_inf) = eval_linear_prod_4_internal(*unsafe { as_array(&p[0..4]) });
     let a_inf6 = a_inf.mul_u64(6);
     let a5 = ex4(&[a1, a2, a3, a4], &a_inf6);
 
@@ -438,8 +437,7 @@ pub fn eval_prod_6_assign<F: Field>(p: &[(F, F); 6], outputs: &mut [F]) {
 /// multiply pointwise. ~28 field multiplications vs 42 naive.
 pub fn eval_prod_7_assign<F: Field>(p: &[(F, F); 7], outputs: &mut [F]) {
     // SAFETY: subslice has exactly 4 elements.
-    let (a1, a2, a3, a4, a_inf) =
-        eval_linear_prod_4_internal(*unsafe { as_array(&p[0..4]) });
+    let (a1, a2, a3, a4, a_inf) = eval_linear_prod_4_internal(*unsafe { as_array(&p[0..4]) });
     let a_inf6 = a_inf.mul_u64(6);
     let (a5, a6) = ex4_2(&[a1, a2, a3, a4], &a_inf6);
 

@@ -6,7 +6,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::module::PolyId;
+use crate::descriptor::{PolySource, PolynomialDescriptor, R1csColumn, StorageHint, WitnessSlot};
+use crate::module::PolynomialSpec;
 
 /// Identifies a polynomial in the Jolt protocol.
 ///
@@ -124,21 +125,116 @@ pub enum PolynomialId {
     BytecodeTable(usize),
 }
 
-impl PolyId for PolynomialId {}
+impl PolynomialSpec for PolynomialId {
+    fn descriptor(&self) -> PolynomialDescriptor {
+        match self {
+            // ── Committed: trace-derived dense ─────────────────────────
+            Self::RdInc => PolynomialDescriptor {
+                source: PolySource::Witness,
+                committed: true,
+                storage: StorageHint::Dense,
+                witness_slot: Some(WitnessSlot::Dense(WitnessSlot::RD_INC)),
+            },
+            Self::RamInc => PolynomialDescriptor {
+                source: PolySource::Witness,
+                committed: true,
+                storage: StorageHint::Dense,
+                witness_slot: Some(WitnessSlot::Dense(WitnessSlot::RAM_INC)),
+            },
+
+            // ── Committed: inserted separately (not from trace) ───────
+            Self::SpartanWitness | Self::TrustedAdvice | Self::UntrustedAdvice => {
+                PolynomialDescriptor {
+                    source: PolySource::Witness,
+                    committed: true,
+                    storage: StorageHint::Dense,
+                    witness_slot: None,
+                }
+            }
+
+            // ── Committed: trace-derived one-hot ──────────────────────
+            Self::InstructionRa(i) => PolynomialDescriptor {
+                source: PolySource::Witness,
+                committed: true,
+                storage: StorageHint::OneHot,
+                witness_slot: Some(WitnessSlot::OneHotChunk {
+                    source: WitnessSlot::INSTRUCTION,
+                    dim: *i,
+                }),
+            },
+            Self::BytecodeRa(i) => PolynomialDescriptor {
+                source: PolySource::Witness,
+                committed: true,
+                storage: StorageHint::OneHot,
+                witness_slot: Some(WitnessSlot::OneHotChunk {
+                    source: WitnessSlot::BYTECODE,
+                    dim: *i,
+                }),
+            },
+            Self::RamRa(i) => PolynomialDescriptor {
+                source: PolySource::Witness,
+                committed: true,
+                storage: StorageHint::OneHot,
+                witness_slot: Some(WitnessSlot::OneHotChunk {
+                    source: WitnessSlot::RAM,
+                    dim: *i,
+                }),
+            },
+
+            // ── R1CS: computed on demand ───────────────────────────────
+            Self::Az => PolynomialDescriptor {
+                source: PolySource::R1cs(R1csColumn::Az),
+                committed: false,
+                storage: StorageHint::OnDemand,
+                witness_slot: None,
+            },
+            Self::Bz => PolynomialDescriptor {
+                source: PolySource::R1cs(R1csColumn::Bz),
+                committed: false,
+                storage: StorageHint::OnDemand,
+                witness_slot: None,
+            },
+            Self::Cz => PolynomialDescriptor {
+                source: PolySource::R1cs(R1csColumn::Cz),
+                committed: false,
+                storage: StorageHint::OnDemand,
+                witness_slot: None,
+            },
+            Self::CombinedRow => PolynomialDescriptor {
+                source: PolySource::R1cs(R1csColumn::CombinedRow),
+                committed: false,
+                storage: StorageHint::OnDemand,
+                witness_slot: None,
+            },
+
+            // ── Preprocessed: loaded from verifying key ────────────────
+            Self::IoMask
+            | Self::ValIo
+            | Self::RamUnmap
+            | Self::RamInit
+            | Self::LookupTable
+            | Self::BytecodeTable(_) => PolynomialDescriptor {
+                source: PolySource::Preprocessed,
+                committed: false,
+                storage: StorageHint::Dense,
+                witness_slot: None,
+            },
+
+            // ── Virtual / derived: everything else ─────────────────────
+            _ => PolynomialDescriptor {
+                source: PolySource::Derived,
+                committed: false,
+                storage: StorageHint::Dense,
+                witness_slot: None,
+            },
+        }
+    }
+}
 
 impl PolynomialId {
     /// Whether this polynomial has a PCS commitment.
+    #[inline]
     pub fn is_committed(&self) -> bool {
-        matches!(
-            self,
-            Self::SpartanWitness
-                | Self::RamInc
-                | Self::RdInc
-                | Self::InstructionRa(_)
-                | Self::BytecodeRa(_)
-                | Self::RamRa(_)
-                | Self::TrustedAdvice
-                | Self::UntrustedAdvice
-        )
+        self.descriptor().committed
     }
 }

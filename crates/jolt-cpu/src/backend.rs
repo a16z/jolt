@@ -10,7 +10,6 @@ use jolt_compute::{BindingOrder, Buf, ComputeBackend, Scalar};
 /// Below this size the overhead of Rayon work-stealing exceeds the benefit.
 const PAR_THRESHOLD: usize = 1024;
 
-
 /// Composition evaluation function signature for [`CpuKernel`].
 ///
 /// Takes `(lo_values, hi_values, challenges, out)` and writes evaluations into `out`.
@@ -173,6 +172,11 @@ impl ComputeBackend for CpuBackend {
 
     #[tracing::instrument(skip_all, name = "CpuBackend::eq_table")]
     fn eq_table<F: Field>(&self, point: &[F]) -> Vec<F> {
+        // NOTE: Cannot delegate to jolt_poly::EqPolynomial::evaluations() because
+        // the parallel path here uses split-half layout (entries at [j] and [j+half])
+        // while jolt-poly uses interleaved layout ([2j] and [2j+1]). The Metal GPU
+        // shader matches this split-half convention, and downstream reduce/bind
+        // operations depend on it.
         let n = point.len();
         let size = 1usize << n;
         let mut table = Vec::with_capacity(size);
@@ -210,119 +214,19 @@ impl ComputeBackend for CpuBackend {
     }
 
     fn lt_table<F: Field>(&self, point: &[F]) -> Vec<F> {
-        let n = point.len();
-        let mut evals = vec![F::zero(); 1usize << n];
-        for (i, &ri) in point.iter().rev().enumerate() {
-            let half = 1usize << i;
-            let (left, right) = evals.split_at_mut(half);
-            left.iter_mut().zip(right.iter_mut()).for_each(|(x, y)| {
-                *y = *x * ri;
-                *x += ri - *y;
-            });
-        }
-        evals
+        jolt_poly::LtPolynomial::evaluations(point)
     }
 
     fn eq_plus_one_table<F: Field>(&self, point: &[F]) -> (Vec<F>, Vec<F>) {
-        let ell = point.len();
-        let size = 1usize << ell;
-        let mut eq_evals = vec![F::zero(); size];
-        eq_evals[0] = F::one();
-        let mut eq_plus_one_evals = vec![F::zero(); size];
-
-        for i in 0..ell {
-            let step = 1usize << (ell - i);
-            let half_step = step / 2;
-
-            let mut r_lower_product = F::one();
-            for &x in point.iter().skip(i + 1) {
-                r_lower_product *= x;
-            }
-            r_lower_product *= F::one() - point[i];
-
-            let mut idx = half_step;
-            while idx < size {
-                eq_plus_one_evals[idx] = eq_evals[idx - half_step] * r_lower_product;
-                idx += step;
-            }
-
-            let eq_step = 1usize << (ell - i - 1);
-            let mut k = 0;
-            while k < size {
-                let val = eq_evals[k] * point[i];
-                eq_evals[k + eq_step] = val;
-                eq_evals[k] -= val;
-                k += eq_step * 2;
-            }
-        }
-
-        (eq_evals, eq_plus_one_evals)
+        jolt_poly::EqPlusOnePolynomial::evals(point, None)
     }
 }
 
 #[tracing::instrument(skip_all, name = "interpolate_inplace")]
 fn interpolate_vec_inplace<F: Field>(buf: &mut Vec<F>, scalar: F, order: BindingOrder) {
-    let n = buf.len();
-    let half = n / 2;
-
     match order {
-        BindingOrder::HighToLow => {
-            #[cfg(feature = "parallel")]
-            {
-                if half >= PAR_THRESHOLD {
-                    use rayon::prelude::*;
-                    let (lo_half, hi_half) = buf.split_at_mut(half);
-                    lo_half
-                        .par_iter_mut()
-                        .zip(hi_half.par_iter())
-                        .for_each(|(lo, hi)| {
-                            *lo = *lo + scalar * (*hi - *lo);
-                        });
-                    buf.truncate(half);
-                    return;
-                }
-            }
-            for i in 0..half {
-                buf[i] = buf[i] + scalar * (buf[i + half] - buf[i]);
-            }
-            buf.truncate(half);
-        }
-        BindingOrder::LowToHigh => {
-            #[cfg(feature = "parallel")]
-            {
-                if half >= PAR_THRESHOLD {
-                    use rayon::prelude::*;
-                    // SAFETY: For each index i in [0, half):
-                    //   - Reads from buf[2*i] and buf[2*i+1]
-                    //   - Writes to buf[i]
-                    //   Since i < 2*i for i ≥ 1, the output region [0, half)
-                    //   never overwrites a not-yet-read input from [0, n).
-                    //   Each par_iter task writes to a unique buf[i], so no
-                    //   data races. Input ranges for distinct i values also
-                    //   do not overlap (each reads exactly 2*i, 2*i+1).
-                    let base = buf.as_mut_ptr() as usize;
-                    (0..half).into_par_iter().for_each(move |i| {
-                        // SAFETY: Each i writes to buf[i] and reads buf[2*i], buf[2*i+1].
-                        // i < 2*i for i≥1, so writes never clobber unread inputs.
-                        // Distinct i values have disjoint write and read index sets.
-                        unsafe {
-                            let p = base as *mut F;
-                            let lo = *p.add(2 * i);
-                            let hi = *p.add(2 * i + 1);
-                            *p.add(i) = lo + scalar * (hi - lo);
-                        }
-                    });
-                    buf.truncate(half);
-                    return;
-                }
-            }
-            for i in 0..half {
-                let lo = buf[2 * i];
-                let hi = buf[2 * i + 1];
-                buf[i] = lo + scalar * (hi - lo);
-            }
-            buf.truncate(half);
-        }
+        BindingOrder::HighToLow => jolt_poly::bind_high_to_low(buf, scalar),
+        BindingOrder::LowToHigh => jolt_poly::bind_low_to_high(buf, scalar),
     }
 }
 
@@ -353,7 +257,9 @@ fn reduce_dense<F: Field>(
         (8, 8) => reduce_dense_fixed::<F, 8, 8>(inputs, kernel, challenges, half, order),
         (16, 16) => reduce_dense_fixed::<F, 16, 16>(inputs, kernel, challenges, half, order),
         (32, 32) => reduce_dense_fixed::<F, 32, 32>(inputs, kernel, challenges, half, order),
-        _ => reduce_dense_dynamic(inputs, kernel, challenges, num_inputs, num_evals, half, order),
+        _ => reduce_dense_dynamic(
+            inputs, kernel, challenges, num_inputs, num_evals, half, order,
+        ),
     }
 }
 
@@ -372,11 +278,23 @@ fn reduce_dense_fixed<F: Field, const NI: usize, const NE: usize>(
     debug_assert_eq!(inputs.len(), NI);
     debug_assert_eq!(kernel.num_evals, NE);
 
+    // Pre-compute data pointers as usize to eliminate per-pair indirection
+    // through &[&Vec<F>] and to allow capture in Rayon closures (usize is Send+Sync).
+    let mut ptrs = [0usize; NI];
+    for (k, &input) in inputs.iter().enumerate() {
+        ptrs[k] = input.as_ptr() as usize;
+    }
 
-    let pair = |input: &[F], i: usize| -> (F, F) {
-        match order {
-            BindingOrder::LowToHigh => (input[2 * i], input[2 * i + 1]),
-            BindingOrder::HighToLow => (input[i], input[i + half]),
+    let load_pair = |ptrs: &[usize; NI], k: usize, i: usize| -> (F, F) {
+        // SAFETY: ptrs[k] was derived from inputs[k].as_ptr(), valid for
+        // inputs[k].len() elements. Indices 2*i, 2*i+1 (L2H) or i, i+half
+        // (H2L) are in [0, 2*half) = [0, n), within the allocation.
+        unsafe {
+            let p = ptrs[k] as *const F;
+            match order {
+                BindingOrder::LowToHigh => (*p.add(2 * i), *p.add(2 * i + 1)),
+                BindingOrder::HighToLow => (*p.add(i), *p.add(i + half)),
+            }
         }
     };
 
@@ -385,19 +303,17 @@ fn reduce_dense_fixed<F: Field, const NI: usize, const NE: usize>(
         if half >= PAR_THRESHOLD {
             use rayon::prelude::*;
 
-            // Use with_min_len to ensure each Rayon task has enough work
-            // to amortize scheduling overhead (~4096 pairs ≈ 0.7ms at D=4).
             let accs = (0..half)
                 .into_par_iter()
-                .with_min_len(4096)
+                .with_min_len(2048)
                 .fold(
                     || [F::Accumulator::default(); NE],
                     |mut acc, i| {
                         let mut lo = [F::zero(); NI];
                         let mut hi = [F::zero(); NI];
                         let mut evals = [F::zero(); NE];
-                        for (k, &input) in inputs.iter().enumerate() {
-                            let (l, h) = pair(input, i);
+                        for k in 0..NI {
+                            let (l, h) = load_pair(&ptrs, k, i);
                             lo[k] = l;
                             hi[k] = h;
                         }
@@ -428,8 +344,8 @@ fn reduce_dense_fixed<F: Field, const NI: usize, const NE: usize>(
     let mut evals = [F::zero(); NE];
 
     for i in 0..half {
-        for (k, &input) in inputs.iter().enumerate() {
-            let (l, h) = pair(input, i);
+        for k in 0..NI {
+            let (l, h) = load_pair(&ptrs, k, i);
             lo[k] = l;
             hi[k] = h;
         }
@@ -454,8 +370,6 @@ fn reduce_dense_dynamic<F: Field>(
     half: usize,
     order: BindingOrder,
 ) -> Vec<F> {
-
-
     let new_accs =
         || -> Vec<F::Accumulator> { (0..num_evals).map(|_| F::Accumulator::default()).collect() };
 
@@ -641,14 +555,26 @@ fn build_sparse_pairs(keys: &[u64]) -> Vec<SparsePair> {
         let parent = key / 2;
         if key.is_multiple_of(2) {
             if i + 1 < n && keys[i + 1] == key + 1 {
-                pairs.push(SparsePair { parent_key: parent, lo_idx: Some(i), hi_idx: Some(i + 1) });
+                pairs.push(SparsePair {
+                    parent_key: parent,
+                    lo_idx: Some(i),
+                    hi_idx: Some(i + 1),
+                });
                 i += 2;
             } else {
-                pairs.push(SparsePair { parent_key: parent, lo_idx: Some(i), hi_idx: None });
+                pairs.push(SparsePair {
+                    parent_key: parent,
+                    lo_idx: Some(i),
+                    hi_idx: None,
+                });
                 i += 1;
             }
         } else {
-            pairs.push(SparsePair { parent_key: parent, lo_idx: None, hi_idx: Some(i) });
+            pairs.push(SparsePair {
+                parent_key: parent,
+                lo_idx: None,
+                hi_idx: Some(i),
+            });
             i += 1;
         }
     }
@@ -668,25 +594,23 @@ fn reduce_sparse<F: Field>(
     let pairs = build_sparse_pairs(keys);
     let num_inputs = value_inputs.len();
 
-
     let new_accs =
         || -> Vec<F::Accumulator> { (0..num_evals).map(|_| F::Accumulator::default()).collect() };
 
-    let eval_pair =
-        |acc: &mut Vec<F::Accumulator>,
-         lo: &mut Vec<F>,
-         hi: &mut Vec<F>,
-         evals: &mut Vec<F>,
-         p: &SparsePair| {
-            for (k, input) in value_inputs.iter().enumerate() {
-                lo[k] = p.lo_idx.map_or(F::zero(), |j| input[j]);
-                hi[k] = p.hi_idx.map_or(F::zero(), |j| input[j]);
-            }
-            kernel.evaluate(lo, hi, challenges, evals);
-            for (a, e) in acc.iter_mut().zip(evals.iter()) {
-                a.acc_add(*e);
-            }
-        };
+    let eval_pair = |acc: &mut Vec<F::Accumulator>,
+                     lo: &mut Vec<F>,
+                     hi: &mut Vec<F>,
+                     evals: &mut Vec<F>,
+                     p: &SparsePair| {
+        for (k, input) in value_inputs.iter().enumerate() {
+            lo[k] = p.lo_idx.map_or(F::zero(), |j| input[j]);
+            hi[k] = p.hi_idx.map_or(F::zero(), |j| input[j]);
+        }
+        kernel.evaluate(lo, hi, challenges, evals);
+        for (a, e) in acc.iter_mut().zip(evals.iter()) {
+            a.acc_add(*e);
+        }
+    };
 
     #[cfg(feature = "parallel")]
     {
@@ -938,10 +862,18 @@ mod tests {
 
         // Keys (0,1) and (4,5): two complete pairs with parent keys 0, 2.
         let keys: Buf<CpuBackend, Fr> = DeviceBuffer::U64(b.upload(&[0u64, 1, 4, 5]));
-        let col_a: Buf<CpuBackend, Fr> =
-            DeviceBuffer::Field(b.upload(&[Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(5), Fr::from_u64(7)]));
-        let col_b: Buf<CpuBackend, Fr> =
-            DeviceBuffer::Field(b.upload(&[Fr::from_u64(11), Fr::from_u64(13), Fr::from_u64(17), Fr::from_u64(19)]));
+        let col_a: Buf<CpuBackend, Fr> = DeviceBuffer::Field(b.upload(&[
+            Fr::from_u64(2),
+            Fr::from_u64(3),
+            Fr::from_u64(5),
+            Fr::from_u64(7),
+        ]));
+        let col_b: Buf<CpuBackend, Fr> = DeviceBuffer::Field(b.upload(&[
+            Fr::from_u64(11),
+            Fr::from_u64(13),
+            Fr::from_u64(17),
+            Fr::from_u64(19),
+        ]));
 
         let result = b.reduce(&kernel, &[&col_a, &col_b, &keys], &[]);
 
@@ -993,10 +925,18 @@ mod tests {
 
         // Keys: 1(odd-only), 4(even-only), 6,7(paired)
         let keys: Buf<CpuBackend, Fr> = DeviceBuffer::U64(b.upload(&[1u64, 4, 6, 7]));
-        let col_a: Buf<CpuBackend, Fr> =
-            DeviceBuffer::Field(b.upload(&[Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(5), Fr::from_u64(8)]));
-        let col_b: Buf<CpuBackend, Fr> =
-            DeviceBuffer::Field(b.upload(&[Fr::from_u64(10), Fr::from_u64(20), Fr::from_u64(30), Fr::from_u64(40)]));
+        let col_a: Buf<CpuBackend, Fr> = DeviceBuffer::Field(b.upload(&[
+            Fr::from_u64(2),
+            Fr::from_u64(3),
+            Fr::from_u64(5),
+            Fr::from_u64(8),
+        ]));
+        let col_b: Buf<CpuBackend, Fr> = DeviceBuffer::Field(b.upload(&[
+            Fr::from_u64(10),
+            Fr::from_u64(20),
+            Fr::from_u64(30),
+            Fr::from_u64(40),
+        ]));
 
         let result = b.reduce(&kernel, &[&col_a, &col_b, &keys], &[]);
 
@@ -1014,8 +954,18 @@ mod tests {
         let scalar = Fr::from_u64(3);
 
         let mut inputs: Vec<Buf<CpuBackend, Fr>> = vec![
-            DeviceBuffer::Field(b.upload(&[Fr::from_u64(10), Fr::from_u64(20), Fr::from_u64(30), Fr::from_u64(40)])),
-            DeviceBuffer::Field(b.upload(&[Fr::from_u64(1), Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(4)])),
+            DeviceBuffer::Field(b.upload(&[
+                Fr::from_u64(10),
+                Fr::from_u64(20),
+                Fr::from_u64(30),
+                Fr::from_u64(40),
+            ])),
+            DeviceBuffer::Field(b.upload(&[
+                Fr::from_u64(1),
+                Fr::from_u64(2),
+                Fr::from_u64(3),
+                Fr::from_u64(4),
+            ])),
             DeviceBuffer::U64(b.upload(&[0u64, 1, 4, 5])),
         ];
 
@@ -1023,8 +973,14 @@ mod tests {
 
         // Pair (0,1) parent=0: 10+3*(20-10)=40, 1+3*(2-1)=4
         // Pair (4,5) parent=2: 30+3*(40-30)=60, 3+3*(4-3)=6
-        assert_eq!(*inputs[0].as_field(), vec![Fr::from_u64(40), Fr::from_u64(60)]);
-        assert_eq!(*inputs[1].as_field(), vec![Fr::from_u64(4), Fr::from_u64(6)]);
+        assert_eq!(
+            *inputs[0].as_field(),
+            vec![Fr::from_u64(40), Fr::from_u64(60)]
+        );
+        assert_eq!(
+            *inputs[1].as_field(),
+            vec![Fr::from_u64(4), Fr::from_u64(6)]
+        );
         assert_eq!(*inputs[2].as_u64(), vec![0u64, 2]);
     }
 

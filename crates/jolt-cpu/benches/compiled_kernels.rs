@@ -193,9 +193,7 @@ fn bench_bind(c: &mut Criterion) {
             let spec = KernelSpec::new(formula, Iteration::Dense, BindingOrder::LowToHigh);
             let kernel = compile::<Fr>(&spec);
 
-            let raw_data: Vec<Vec<Fr>> = (0..4)
-                .map(|i| random_field_vec(n, 800 + i))
-                .collect();
+            let raw_data: Vec<Vec<Fr>> = (0..4).map(|i| random_field_vec(n, 800 + i)).collect();
 
             group.throughput(Throughput::Elements((n / 2) as u64));
             group.bench_with_input(
@@ -230,9 +228,7 @@ fn bench_bind(c: &mut Criterion) {
                 .flat_map(|k| [k as u64 * 2, k as u64 * 2 + 1])
                 .collect();
 
-            let raw_data: Vec<Vec<Fr>> = (0..4)
-                .map(|i| random_field_vec(n, 900 + i))
-                .collect();
+            let raw_data: Vec<Vec<Fr>> = (0..4).map(|i| random_field_vec(n, 900 + i)).collect();
 
             group.throughput(Throughput::Elements(num_pairs as u64));
             group.bench_with_input(

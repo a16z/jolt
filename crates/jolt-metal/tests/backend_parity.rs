@@ -36,11 +36,7 @@ fn make_tensor_spec(formula: &Formula) -> KernelSpec {
 }
 
 fn make_sparse_spec(formula: &Formula) -> KernelSpec {
-    KernelSpec::new(
-        formula.clone(),
-        Iteration::Sparse,
-        BindingOrder::LowToHigh,
-    )
+    KernelSpec::new(formula.clone(), Iteration::Sparse, BindingOrder::LowToHigh)
 }
 
 fn product_sum_formula(d: usize, p: usize) -> Formula {
@@ -590,11 +586,7 @@ fn sparse_sumcheck_rounds() {
         metal.bind(&mtl_k, &mut mtl_bufs, challenge);
 
         // Verify value buffers match after bind.
-        for (i, (cb, mb)) in cpu_bufs[..3]
-            .iter()
-            .zip(mtl_bufs[..3].iter())
-            .enumerate()
-        {
+        for (i, (cb, mb)) in cpu_bufs[..3].iter().zip(mtl_bufs[..3].iter()).enumerate() {
             let cpu_vals = cb.as_field();
             let mtl_vals: Vec<Fr> = metal.download(mb.as_field());
             assert_eq!(
@@ -606,10 +598,7 @@ fn sparse_sumcheck_rounds() {
         // Verify keys match after bind.
         let cpu_keys = cpu_bufs[3].as_u64();
         let mtl_keys: Vec<u64> = metal.download(mtl_bufs[3].as_u64());
-        assert_eq!(
-            *cpu_keys, mtl_keys,
-            "sparse keys mismatch at round {round}"
-        );
+        assert_eq!(*cpu_keys, mtl_keys, "sparse keys mismatch at round {round}");
     }
 
     assert_eq!(cpu_bufs[0].as_field().len(), 1);

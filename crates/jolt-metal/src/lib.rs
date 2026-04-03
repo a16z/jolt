@@ -9,6 +9,7 @@ pub mod field_params;
 mod kernel;
 pub mod msl_field;
 pub mod msl_reduce;
+mod msl_writer;
 pub mod pipeline;
 
 mod backend;

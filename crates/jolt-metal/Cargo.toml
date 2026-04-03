@@ -12,6 +12,7 @@ workspace = true
 jolt-compiler = { path = "../jolt-compiler" }
 jolt-compute = { path = "../jolt-compute", default-features = false }
 jolt-field = { path = "../jolt-field", default-features = false, features = ["bn254"] }
+jolt-poly = { path = "../jolt-poly" }
 metal = "0.31"
 objc = "0.2"
 block = "0.1"
@@ -22,7 +23,6 @@ jolt-field = { path = "../jolt-field", features = ["bn254"] }
 jolt-compute = { path = "../jolt-compute" }
 jolt-cpu = { path = "../jolt-cpu" }
 jolt-hybrid = { path = "../jolt-hybrid" }
-jolt-poly = { path = "../jolt-poly" }
 jolt-transcript = { path = "../jolt-transcript" }
 rand = { workspace = true }
 rand_core = { workspace = true }

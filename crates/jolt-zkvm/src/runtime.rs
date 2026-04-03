@@ -18,13 +18,13 @@
 use std::collections::HashMap;
 
 use jolt_compiler::module::{ChallengeSource, InputBinding, Op, VerifierStageIndex};
-use jolt_compiler::{KernelDef, PolyId};
+use jolt_compiler::{KernelDef, PolynomialSpec};
 use jolt_compute::{Buf, BufferProvider, ComputeBackend, DeviceBuffer, Executable};
 use jolt_field::Field;
 use jolt_openings::{AdditivelyHomomorphic, ProverClaim};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::proof::SumcheckProof;
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
 use jolt_verifier::proof::{JoltProof, StageProof};
 use jolt_verifier::ProverConfig;
 
@@ -54,14 +54,14 @@ impl<F: Field> StageBuilder<F> {
 
 /// Lightweight opening claim — defers the expensive evaluation table copy
 /// until `ReduceOpenings` where it's actually needed for RLC combination.
-struct PendingClaim<P: PolyId, F: Field> {
+struct PendingClaim<P: PolynomialSpec, F: Field> {
     poly: P,
     point: Vec<F>,
     eval: F,
 }
 
 /// Mutable state accumulated during schedule execution.
-struct RuntimeState<P: PolyId, F: Field, PCS: AdditivelyHomomorphic<Field = F>> {
+struct RuntimeState<P: PolynomialSpec, F: Field, PCS: AdditivelyHomomorphic<Field = F>> {
     // ── Compute state ──
     challenges: Vec<F>,
     evaluations: HashMap<P, F>,
@@ -98,7 +98,7 @@ pub(crate) fn execute<P, B, F, T, PCS>(
     config: ProverConfig,
 ) -> JoltProof<F, PCS>
 where
-    P: PolyId,
+    P: PolynomialSpec,
     B: ComputeBackend,
     F: Field,
     T: Transcript<Challenge = F>,
@@ -267,10 +267,11 @@ where
             }
 
             // ── PCS ──
-            Op::Commit { polys, .. } | Op::CommitStreaming { polys, .. } => {
+            Op::Commit { polys, tag } | Op::CommitStreaming { polys, tag, .. } => {
                 for pi in polys {
                     let data = provider.as_slice(*pi);
                     let (commitment, hint) = PCS::commit(data, pcs_setup);
+                    transcript.append(&Label(tag.as_bytes()));
                     commitment.append_to_transcript(transcript);
                     let _ = state.hints.insert(*pi, hint);
                     state.commitments.push(commitment);
@@ -315,7 +316,9 @@ where
                 state.current_stage = Some(StageBuilder::new());
             }
 
-            Op::AbsorbRoundPoly { num_coeffs, .. } => {
+            Op::AbsorbRoundPoly {
+                num_coeffs, tag, ..
+            } => {
                 let evals = &state.last_round_coeffs[..*num_coeffs];
                 let points: Vec<(F, F)> = evals
                     .iter()
@@ -324,6 +327,7 @@ where
                     .collect();
                 let poly = UnivariatePoly::interpolate(&points);
                 let coeffs = poly.into_coefficients();
+                transcript.append(&LabelWithCount(tag.as_bytes(), coeffs.len() as u64));
                 for c in &coeffs {
                     transcript.append(c);
                 }
@@ -334,10 +338,11 @@ where
                 }
             }
 
-            Op::AbsorbEvals { polys, .. } => {
+            Op::AbsorbEvals { polys, tag } => {
                 let mut batch = Vec::with_capacity(polys.len());
                 for pi in polys {
                     if let Some(&val) = state.evaluations.get(pi) {
+                        transcript.append(&Label(tag.as_bytes()));
                         transcript.append(&val);
                         batch.push(val);
                     }
@@ -407,7 +412,7 @@ fn fused_rlc_reduce<P, B, F, PCS>(
     transcript: &mut impl Transcript<Challenge = F>,
 ) -> (Vec<ProverClaim<F>>, Vec<PCS::OpeningHint>)
 where
-    P: PolyId,
+    P: PolynomialSpec,
     B: ComputeBackend,
     F: Field,
     PCS: AdditivelyHomomorphic<Field = F>,
@@ -416,7 +421,8 @@ where
         return (Vec::new(), Vec::new());
     }
 
-    // Absorb all claim evaluations before drawing any RLC challenge rho.
+    // Domain separation + count prefix (matches jolt-core's append_scalars(b"rlc_claims", &all))
+    transcript.append(&LabelWithCount(b"rlc_claims", pending.len() as u64));
     for pc in &pending {
         pc.eval.append_to_transcript(transcript);
     }
@@ -486,7 +492,7 @@ where
 /// For each verifier stage, collects the challenge indices corresponding
 /// to its sumcheck rounds, sorted by round number. This avoids per-op
 /// scanning of the challenge declarations during `CollectOpeningClaim`.
-fn precompute_stage_points<P: PolyId>(
+fn precompute_stage_points<P: PolynomialSpec>(
     module: &jolt_compiler::module::Module<P>,
 ) -> Vec<Vec<usize>> {
     (0..module.verifier.num_stages)
@@ -518,7 +524,7 @@ fn resolve_inputs<P, B, F>(
     provider: &mut impl BufferProvider<P, B, F>,
     backend: &B,
 ) where
-    P: PolyId,
+    P: PolynomialSpec,
     B: ComputeBackend,
     F: Field,
 {

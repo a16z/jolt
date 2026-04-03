@@ -3,7 +3,7 @@
 //! The prover computes them from trace parameters; the verifier validates and
 //! expands them during verification.
 
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 use serde::{Deserialize, Serialize};
 
 /// One-hot decomposition configuration (serialized in proof).
@@ -208,9 +208,22 @@ pub struct ProverConfig {
     pub memory_end: u64,
     /// Entry point address (PC).
     pub entry_address: u64,
-    /// Hash of public inputs/outputs (binds I/O to Fiat-Shamir without
-    /// absorbing variable-length data).
+    /// Hash of public inputs/outputs for quick verifier check.
     pub io_hash: [u8; 32],
+
+    // IO fields for labeled Fiat-Shamir preamble (matching jolt-core):
+    /// Maximum input buffer size.
+    pub max_input_size: u64,
+    /// Maximum output buffer size.
+    pub max_output_size: u64,
+    /// Heap size.
+    pub heap_size: u64,
+    /// Serialized program inputs.
+    pub inputs: Vec<u8>,
+    /// Serialized program outputs.
+    pub outputs: Vec<u8>,
+    /// Whether the program panicked.
+    pub panic: bool,
 }
 
 impl ProverConfig {
@@ -256,15 +269,49 @@ impl ProverConfig {
 }
 
 impl AppendToTranscript for ProverConfig {
+    /// Absorbs the preamble in the same labeled format as jolt-core's
+    /// `fiat_shamir_preamble`:
+    ///
+    /// ```text
+    /// append_u64(b"max_input_size", ...)
+    /// append_u64(b"max_output_size", ...)
+    /// append_u64(b"heap_size", ...)
+    /// append_bytes(b"inputs", &inputs)
+    /// append_bytes(b"outputs", &outputs)
+    /// append_u64(b"panic", ...)
+    /// append_u64(b"ram_K", ...)
+    /// append_u64(b"trace_length", ...)
+    /// append_u64(b"entry_address", ...)
+    /// ```
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        transcript.append_bytes(&(self.trace_length as u64).to_le_bytes());
-        transcript.append_bytes(&(self.ram_k as u64).to_le_bytes());
-        transcript.append_bytes(&(self.bytecode_k as u64).to_le_bytes());
-        transcript.append_bytes(&[self.one_hot_config.log_k_chunk]);
-        transcript.append_bytes(&self.memory_start.to_le_bytes());
-        transcript.append_bytes(&self.memory_end.to_le_bytes());
-        transcript.append_bytes(&self.entry_address.to_le_bytes());
-        transcript.append_bytes(&self.io_hash);
+        // Label + U64Word pairs (matches jolt-core's append_u64)
+        transcript.append(&Label(b"max_input_size"));
+        transcript.append(&U64Word(self.max_input_size));
+
+        transcript.append(&Label(b"max_output_size"));
+        transcript.append(&U64Word(self.max_output_size));
+
+        transcript.append(&Label(b"heap_size"));
+        transcript.append(&U64Word(self.heap_size));
+
+        // LabelWithCount + raw bytes (matches jolt-core's append_bytes)
+        transcript.append(&LabelWithCount(b"inputs", self.inputs.len() as u64));
+        transcript.append_bytes(&self.inputs);
+
+        transcript.append(&LabelWithCount(b"outputs", self.outputs.len() as u64));
+        transcript.append_bytes(&self.outputs);
+
+        transcript.append(&Label(b"panic"));
+        transcript.append(&U64Word(self.panic as u64));
+
+        transcript.append(&Label(b"ram_K"));
+        transcript.append(&U64Word(self.ram_k as u64));
+
+        transcript.append(&Label(b"trace_length"));
+        transcript.append(&U64Word(self.trace_length as u64));
+
+        transcript.append(&Label(b"entry_address"));
+        transcript.append(&U64Word(self.entry_address));
     }
 }
 
@@ -307,10 +354,9 @@ mod tests {
         config.validate(20, 16).unwrap();
     }
 
-    #[test]
-    fn prover_config_validate() {
-        let config = ProverConfig {
-            trace_length: 1 << 20,
+    fn test_config(trace_length: usize) -> ProverConfig {
+        ProverConfig {
+            trace_length,
             ram_k: 1 << 16,
             bytecode_k: 1 << 10,
             one_hot_config: OneHotConfig::new(20),
@@ -319,24 +365,23 @@ mod tests {
             memory_end: 0x8001_0000,
             entry_address: 0x8000_0000,
             io_hash: [0u8; 32],
-        };
-        config.validate().unwrap();
+            max_input_size: 0,
+            max_output_size: 0,
+            heap_size: 0,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            panic: false,
+        }
+    }
+
+    #[test]
+    fn prover_config_validate() {
+        test_config(1 << 20).validate().unwrap();
     }
 
     #[test]
     fn prover_config_rejects_non_power_of_two() {
-        let config = ProverConfig {
-            trace_length: 100,
-            ram_k: 1 << 16,
-            bytecode_k: 1 << 10,
-            one_hot_config: OneHotConfig::new(20),
-            rw_config: ReadWriteConfig::new(20, 16),
-            memory_start: 0x8000_0000,
-            memory_end: 0x8001_0000,
-            entry_address: 0x8000_0000,
-            io_hash: [0u8; 32],
-        };
-        assert!(config.validate().is_err());
+        assert!(test_config(100).validate().is_err());
     }
 
     #[test]

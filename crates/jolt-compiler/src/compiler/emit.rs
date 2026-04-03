@@ -11,9 +11,9 @@ use crate::ir::expr::Factor as ExprFactor;
 use crate::ir::{Density, PolyKind, PublicPoly, Vertex};
 use crate::kernel_spec::{Iteration, KernelSpec};
 use crate::module::{
-    ChallengeDecl, ChallengeSource, ClaimFactor, ClaimFormula, ClaimTerm, Evaluation, InputBinding,
-    KernelDef, Module, Op, PolyDecl, Schedule, SumcheckInstance, TranscriptTag, VerifierOp,
-    VerifierSchedule, VerifierStageIndex,
+    ChallengeDecl, ChallengeSource, ClaimFactor, ClaimFormula, ClaimTerm, DomainSeparator,
+    Evaluation, InputBinding, KernelDef, Module, Op, PolyDecl, Schedule, SumcheckInstance,
+    VerifierOp, VerifierSchedule, VerifierStageIndex,
 };
 
 use super::cost::CompileParams;
@@ -35,15 +35,17 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams) -> Module {
     if !committed.is_empty() {
         ctx.ops.push(Op::Commit {
             polys: committed.clone(),
-            tag: TranscriptTag::Commitment,
+            tag: DomainSeparator::Commitment,
         });
     }
 
     // Verifier preamble
     ctx.verifier_ops.push(VerifierOp::Preamble);
     for &pi in &committed {
-        ctx.verifier_ops
-            .push(VerifierOp::AbsorbCommitment { poly: pi });
+        ctx.verifier_ops.push(VerifierOp::AbsorbCommitment {
+            poly: pi,
+            tag: DomainSeparator::Commitment,
+        });
     }
 
     // Per-stage Fiat-Shamir challenges allocated after each stage
@@ -151,7 +153,7 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams) -> Module {
             let eval_indices: Vec<usize> = eval_descs.iter().map(|e| e.poly).collect();
             ctx.ops.push(Op::AbsorbEvals {
                 polys: eval_indices.clone(),
-                tag: TranscriptTag::OpeningClaim,
+                tag: DomainSeparator::OpeningClaim,
             });
 
             ctx.verifier_ops.push(VerifierOp::RecordEvals {
@@ -159,6 +161,7 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams) -> Module {
             });
             ctx.verifier_ops.push(VerifierOp::AbsorbEvals {
                 polys: eval_indices,
+                tag: DomainSeparator::OpeningClaim,
             });
 
             for &vi in &plan.evaluations {
@@ -402,10 +405,13 @@ fn emit_sumcheck_stage(
         })
         .collect();
 
-    let is_sparse = plan.vertices.iter().any(|&vi| match &protocol.vertices[vi] {
-        Vertex::Sumcheck { density, .. } => *density == Density::Sparse,
-        Vertex::Evaluate { .. } => false,
-    });
+    let is_sparse = plan
+        .vertices
+        .iter()
+        .any(|&vi| match &protocol.vertices[vi] {
+            Vertex::Sumcheck { density, .. } => *density == Density::Sparse,
+            Vertex::Evaluate { .. } => false,
+        });
     let iteration = if is_sparse {
         Iteration::Sparse
     } else {
@@ -443,9 +449,9 @@ fn emit_sumcheck_stage(
             bind_challenge,
         });
         let round_tag = if r == 0 && uniskip_domain.is_some() {
-            TranscriptTag::UniskipPoly
+            DomainSeparator::UniskipPoly
         } else {
-            TranscriptTag::SumcheckPoly
+            DomainSeparator::SumcheckPoly
         };
         ctx.ops.push(Op::AbsorbRoundPoly {
             kernel: kernel_idx,

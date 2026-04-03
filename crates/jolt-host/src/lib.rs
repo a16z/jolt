@@ -12,12 +12,14 @@ pub mod bytecode;
 mod convert;
 mod cycle_row;
 mod cycle_row_impl;
+mod extract;
 mod program;
 pub mod r1cs_witness;
 
 pub use bytecode::BytecodePreprocessing;
 pub use convert::cycle_to_input;
 pub use cycle_row::CycleRow;
+pub use extract::extract_trace;
 pub use r1cs_witness::{build_r1cs_witness, r1cs_cycle_witness};
 
 use std::path::{Path, PathBuf};
