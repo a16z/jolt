@@ -25,6 +25,7 @@ static MEMORY_DELTA_MAP: LazyLock<Mutex<BTreeMap<&'static str, f64>>> =
 /// # Panics
 ///
 /// Panics if a span with the same label is already open (nested spans need distinct labels).
+#[expect(clippy::unwrap_used)]
 pub fn start_memory_tracing_span(label: &'static str) {
     let Some(stats) = memory_stats() else {
         tracing::warn!(
@@ -49,6 +50,7 @@ pub fn start_memory_tracing_span(label: &'static str) {
 /// # Panics
 ///
 /// Panics if no span with the given label was previously opened.
+#[expect(clippy::unwrap_used, clippy::panic)]
 pub fn end_memory_tracing_span(label: &'static str) {
     let Some(stats) = memory_stats() else {
         tracing::warn!(span = label, "memory stats unavailable, skipping span end");
@@ -66,6 +68,7 @@ pub fn end_memory_tracing_span(label: &'static str) {
 }
 
 /// Logs all collected memory deltas and warns about any unclosed spans.
+#[expect(clippy::unwrap_used)]
 pub fn report_memory_usage() {
     let memory_usage_map = MEMORY_USAGE_MAP.lock().unwrap();
     for label in memory_usage_map.keys() {
@@ -99,6 +102,7 @@ pub fn print_current_memory_usage(label: &str) {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

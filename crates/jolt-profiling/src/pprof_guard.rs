@@ -28,6 +28,7 @@ impl PprofGuard {
     ///
     /// The label determines the output filename: `{PPROF_PREFIX}{label}.pb`.
     /// Typically called via the [`pprof_scope!`] macro rather than directly.
+    #[expect(clippy::expect_used)]
     pub fn new(label: &'static str, frequency: i32) -> Self {
         Self {
             guard: pprof::ProfilerGuardBuilder::default()

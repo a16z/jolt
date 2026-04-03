@@ -33,6 +33,7 @@ impl MetricsMonitor {
     /// - `counters.cores_active_avg` — average active cores
     /// - `counters.cores_active` — cores with >0.1% usage
     /// - `counters.thread_count` — active thread count (Linux only, 0 elsewhere)
+    #[expect(clippy::expect_used)]
     pub fn start(interval_secs: f64) -> Self {
         let stop_flag = Arc::new(AtomicBool::new(false));
         let stop = stop_flag.clone();

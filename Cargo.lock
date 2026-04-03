@@ -2791,6 +2791,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-profiling"
+version = "0.1.0"
+dependencies = [
+ "allocative",
+ "inferno 0.12.6",
+ "memory-stats",
+ "pprof",
+ "prost 0.14.3",
+ "sysinfo",
+ "tracing",
+ "tracing-chrome",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "jolt-sdk"
 version = "0.1.0"
 dependencies = [

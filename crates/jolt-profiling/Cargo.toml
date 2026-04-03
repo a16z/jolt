@@ -10,6 +10,9 @@ keywords = ["profiling", "tracing", "performance"]
 categories = ["development-tools::profiling"]
 publish = false
 
+[lints]
+workspace = true
+
 [features]
 default = []
 monitor = ["dep:sysinfo"]
@@ -26,7 +29,7 @@ memory-stats.workspace = true
 
 # Optional: system metrics monitoring
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies.sysinfo]
-version = "0.37"
+workspace = true
 optional = true
 
 # Optional: CPU profiling via pprof
