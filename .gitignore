@@ -57,4 +57,4 @@ benchmark-runs/
 /perfetto_traces/
 *.pb
 *benchmark_results.json
-/.omc/
+.omc/
