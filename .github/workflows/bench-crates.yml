@@ -34,10 +34,7 @@ jobs:
         run: >
           cargo bench
           -p jolt-field
-          -p jolt-poly
-          -p jolt-transcript
-          -p jolt-sumcheck
-          -p jolt-openings
+          --bench '*'
           -- --save-baseline main_run
 
       - name: Upload baseline
@@ -64,10 +61,7 @@ jobs:
         run: >
           cargo bench
           -p jolt-field
-          -p jolt-poly
-          -p jolt-transcript
-          -p jolt-sumcheck
-          -p jolt-openings
+          --bench '*'
           -- --save-baseline pr_run
 
       - name: Compare benchmarks

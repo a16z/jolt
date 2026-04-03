@@ -130,8 +130,8 @@ jobs:
           HAS_SPEC=$(git diff --name-only "$BASE" "$HEAD" -- 'specs/*.md' | grep -v 'README.md' | grep -v 'TEMPLATE.md' | head -1)
 
           if [ "$LINES" -gt 500 ] && [ -z "$HAS_SPEC" ]; then
-            HAS_LABEL=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' | grep -c '^no-spec$' || true)
-            if [ "$HAS_LABEL" -eq 0 ]; then
+            EXISTING=$(gh pr view "$PR_NUMBER" --json comments --jq '.comments[].body' | grep -c "more than 500 changed lines" || true)
+            if [ "$EXISTING" -eq 0 ]; then
               BODY="> [!WARNING]"
               BODY="$BODY
           > This PR has **more than 500 changed lines** and does not include a spec."
@@ -140,7 +140,7 @@ jobs:
               BODY="$BODY
           > Large features and architectural changes benefit from a spec-driven workflow."
               BODY="$BODY
-          > See [CONTRIBUTING.md](CONTRIBUTING.md) for details on how to create a spec."
+          > See [CONTRIBUTING.md](https://github.com/a16z/jolt/blob/main/CONTRIBUTING.md) for details on how to create a spec."
               BODY="$BODY
           >"
               BODY="$BODY
