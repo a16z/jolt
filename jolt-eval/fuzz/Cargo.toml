@@ -21,15 +21,16 @@ libfuzzer-sys = "0.4"
 jolt-eval = { path = ".." }
 
 [[bin]]
+name = "split_eq_bind_high_low"
+path = "fuzz_targets/split_eq_bind_high_low.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "split_eq_bind_low_high"
 path = "fuzz_targets/split_eq_bind_low_high.rs"
 test = false
 doc = false
 bench = false
 
-[[bin]]
-name = "split_eq_bind_high_low"
-path = "fuzz_targets/split_eq_bind_high_low.rs"
-test = false
-doc = false
-bench = false

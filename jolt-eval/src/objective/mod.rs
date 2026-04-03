@@ -1,7 +1,9 @@
+pub mod bind_bench;
 pub mod cognitive;
 pub mod halstead_bugs;
 pub mod lloc;
 pub mod optimize;
+pub mod synthesis;
 
 use std::fmt;
 use std::path::Path;
@@ -42,7 +44,27 @@ pub trait AbstractObjective: Send + Sync {
     fn direction(&self) -> Direction;
 }
 
-/// Centralized objective enum dispatching to concrete implementations.
+/// A performance objective suitable for Criterion benchmarking.
+///
+/// Separates setup (run once) from the hot path (run many times in
+/// Criterion's `b.iter()` loop). Use the `bench_objective!` macro to
+/// generate a Criterion benchmark harness from a `PerfObjective`.
+pub trait PerfObjective: Default + Send + Sync {
+    type Setup: Send;
+
+    fn name(&self) -> &str;
+
+    /// One-time setup (e.g. allocate polynomial, generate challenges).
+    fn setup(&self) -> Self::Setup;
+
+    /// The hot path to benchmark. Called repeatedly by Criterion.
+    fn run(&self, setup: &mut Self::Setup);
+}
+
+/// Centralized enum for static-analysis objectives.
+///
+/// Performance objectives are handled separately via Criterion benchmarks
+/// (see `PerfObjective` and `bench_objective!`).
 pub enum Objective {
     Lloc(lloc::LlocObjective),
     CognitiveComplexity(cognitive::CognitiveComplexityObjective),
@@ -81,6 +103,14 @@ impl Objective {
             Self::HalsteadBugs(o) => o.direction(),
         }
     }
+}
+
+/// Names of all registered `PerfObjective` benchmarks.
+pub fn perf_objective_names() -> &'static [&'static str] {
+    &[
+        bind_bench::BindLowToHighObjective::NAME,
+        bind_bench::BindHighToLowObjective::NAME,
+    ]
 }
 
 /// Record of a single optimization attempt for post-hoc analysis.

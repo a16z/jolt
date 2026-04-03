@@ -2966,6 +2966,7 @@ dependencies = [
  "ark-bn254",
  "clap",
  "common",
+ "criterion",
  "enumset",
  "eyre",
  "jolt-core",

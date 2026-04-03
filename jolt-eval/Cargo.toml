@@ -27,6 +27,17 @@ rust-code-analysis = "0.0.24"
 
 jolt-eval-macros = { path = "macros" }
 
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "bind_parallel_high_to_low"
+harness = false
+
+[[bench]]
+name = "bind_parallel_low_to_high"
+harness = false
+
 [[bin]]
 name = "measure-objectives"
 path = "bin/measure_objectives.rs"
