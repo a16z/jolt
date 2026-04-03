@@ -23,7 +23,6 @@ pub type VerifierPreprocessing = jolt_core::zkvm::verifier::JoltVerifierPreproce
 pub struct TestCase {
     pub elf_contents: Vec<u8>,
     pub memory_config: common::jolt_device::MemoryConfig,
-    pub max_trace_length: usize,
 }
 
 impl TestCase {
@@ -31,9 +30,9 @@ impl TestCase {
         GuestProgram::new(&self.elf_contents, &self.memory_config)
     }
 
-    pub fn prover_preprocessing(&self) -> ProverPreprocessing {
+    pub fn prover_preprocessing(&self, max_trace_length: usize) -> ProverPreprocessing {
         let program = self.make_program();
-        jolt_core::guest::prover::preprocess(&program, self.max_trace_length)
+        jolt_core::guest::prover::preprocess(&program, max_trace_length)
             .expect("prover preprocessing failed")
     }
 

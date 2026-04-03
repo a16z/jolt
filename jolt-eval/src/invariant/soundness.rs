@@ -20,7 +20,6 @@ pub struct GuestMemoryConfig {
     pub max_output_size: u64,
     pub stack_size: u64,
     pub heap_size: u64,
-    pub max_trace_length: usize,
 }
 
 impl Default for GuestMemoryConfig {
@@ -30,18 +29,16 @@ impl Default for GuestMemoryConfig {
             max_output_size: 4096,
             stack_size: 65536,
             heap_size: 32768,
-            max_trace_length: 1048576,
         }
     }
 }
 
-/// Maximum allowed values for memory config parameters to prevent
-/// the red-team agent from requesting absurd resource usage.
+/// Maximum allowed values for memory config parameters.
 const MAX_INPUT_SIZE: u64 = 1 << 16;
 const MAX_OUTPUT_SIZE: u64 = 1 << 16;
 const MAX_STACK_SIZE: u64 = 1 << 16;
 const MAX_HEAP_SIZE: u64 = 1 << 20;
-const MAX_TRACE_LENGTH: usize = 1 << 20; // ~1M steps
+const MAX_TRACE_LENGTH: usize = 1 << 20;
 
 impl GuestMemoryConfig {
     pub fn validate(&self) -> Result<(), CheckError> {
@@ -49,19 +46,12 @@ impl GuestMemoryConfig {
             || self.max_output_size > MAX_OUTPUT_SIZE
             || self.stack_size > MAX_STACK_SIZE
             || self.heap_size > MAX_HEAP_SIZE
-            || self.max_trace_length > MAX_TRACE_LENGTH
         {
             return Err(CheckError::InvalidInput(format!(
                 "memory config exceeds limits: \
-                 input={}, output={}, stack={}, heap={}, trace={}; \
-                 limits: input/output/stack/heap<={}, trace<={}",
-                self.max_input_size,
-                self.max_output_size,
-                self.stack_size,
-                self.heap_size,
-                self.max_trace_length,
-                MAX_HEAP_SIZE,
-                MAX_TRACE_LENGTH,
+                 input={}, output={}, stack={}, heap={}; \
+                 limits: input/output/stack<={MAX_STACK_SIZE}, heap<={MAX_HEAP_SIZE}",
+                self.max_input_size, self.max_output_size, self.stack_size, self.heap_size,
             )));
         }
         Ok(())
@@ -129,11 +119,31 @@ impl Invariant for SoundnessInvariant {
     }
 
     fn description(&self) -> String {
-        "For any deterministic guest program (no advice) and fixed input, \
-         there is only one (output, panic) pair that the verifier accepts. \
-         A counterexample is a guest patch + input + dishonest (output, panic) \
-         claim that the verifier incorrectly accepts."
-            .to_string()
+        format!(
+            "For any deterministic guest program (no advice) and fixed input, \
+             there is only one (output, panic) pair that the verifier accepts. \
+             A counterexample is a guest patch + input + dishonest (output, panic) \
+             claim that the verifier incorrectly accepts. \
+             For full context, read the invariant file: jolt-eval/src/invariant/soundness.rs \n\n\
+             ### Guest sandbox\n\n\
+             The guest template is at `jolt-eval/guest-sandbox/`. It contains:\n\
+             - `Cargo.toml` — depends on `jolt-sdk`\n\
+             - `src/lib.rs` — the `#[jolt::provable]` function (main patch target)\n\
+             - `src/main.rs` — no_main entry point (rarely needs patching)\n\n\
+             ### Producing a patch\n\n\
+             To produce the `patch` field, modify files inside `jolt-eval/guest-sandbox/` \
+             and run `git diff` **from the `jolt-eval/guest-sandbox/` directory**:\n\
+             ```\n\
+             cd jolt-eval/guest-sandbox && git diff\n\
+             ```\n\
+             The patch is applied with `git apply` from the same directory. \
+             Hunks referencing paths with `..` are filtered out.\n\n\
+             ### Limits\n\n\
+             Memory config: max_input_size <= {MAX_INPUT_SIZE}, \
+             max_output_size <= {MAX_OUTPUT_SIZE}, \
+             stack_size <= {MAX_STACK_SIZE}, heap_size <= {MAX_HEAP_SIZE}. \
+             The program's execution trace must not exceed {MAX_TRACE_LENGTH} cycles."
+        )
     }
 
     fn setup(&self) -> SoundnessSetup {
@@ -143,11 +153,7 @@ impl Invariant for SoundnessInvariant {
         }
     }
 
-    fn check(
-        &self,
-        setup: &SoundnessSetup,
-        input: SoundnessInput,
-    ) -> Result<(), CheckError> {
+    fn check(&self, setup: &SoundnessSetup, input: SoundnessInput) -> Result<(), CheckError> {
         // 1. Validate memory config
         input.memory.validate()?;
         let memory_config = input.memory.to_memory_config();
@@ -160,13 +166,27 @@ impl Invariant for SoundnessInvariant {
 
         // _guard drops here (or on early return), reverting the patch
 
-        // 4. Build a TestCase and prove
-        let test_case = TestCase {
+        // 4. Trace to determine actual trace length, then prove
+        let mut test_case = TestCase {
             elf_contents: elf_bytes,
             memory_config,
-            max_trace_length: input.memory.max_trace_length,
         };
-        let prover_pp = test_case.prover_preprocessing();
+        let (_bytecode, _memory_init, program_size, _e_entry) =
+            jolt_core::guest::program::decode(&test_case.elf_contents);
+        test_case.memory_config.program_size = Some(program_size);
+
+        let program = test_case.make_program();
+        let (_lazy_trace, trace, _memory, _io) = program.trace(&input.program_input, &[], &[]);
+        let max_trace_length = (trace.len() + 1).next_power_of_two();
+        drop(trace);
+
+        if max_trace_length > MAX_TRACE_LENGTH {
+            return Err(CheckError::InvalidInput(format!(
+                "trace length {max_trace_length} exceeds limit {MAX_TRACE_LENGTH}"
+            )));
+        }
+
+        let prover_pp = test_case.prover_preprocessing(max_trace_length);
         let verifier_pp = TestCase::verifier_preprocessing(&prover_pp);
         let (proof, honest_device) = test_case.prove(&prover_pp, &input.program_input);
 
@@ -298,10 +318,7 @@ pub fn filter_patch(patch: &str) -> String {
 /// Compile the sandbox guest and return the ELF bytes.
 ///
 /// `Program::build` panics on compilation failure, so we catch it.
-fn compile_guest(
-    sandbox_dir: &Path,
-    memory_config: &MemoryConfig,
-) -> Result<Vec<u8>, CheckError> {
+fn compile_guest(sandbox_dir: &Path, memory_config: &MemoryConfig) -> Result<Vec<u8>, CheckError> {
     let target_dir = sandbox_dir.join("target").to_string_lossy().to_string();
     let mc = *memory_config;
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -409,31 +426,37 @@ diff --git a/Cargo.toml b/Cargo.toml
 
     #[test]
     fn validate_rejects_oversized_input() {
-        let c = GuestMemoryConfig { max_input_size: u64::MAX, ..Default::default() };
+        let c = GuestMemoryConfig {
+            max_input_size: u64::MAX,
+            ..Default::default()
+        };
         assert!(matches!(c.validate(), Err(CheckError::InvalidInput(_))));
     }
 
     #[test]
     fn validate_rejects_oversized_output() {
-        let c = GuestMemoryConfig { max_output_size: u64::MAX, ..Default::default() };
+        let c = GuestMemoryConfig {
+            max_output_size: u64::MAX,
+            ..Default::default()
+        };
         assert!(matches!(c.validate(), Err(CheckError::InvalidInput(_))));
     }
 
     #[test]
     fn validate_rejects_oversized_stack() {
-        let c = GuestMemoryConfig { stack_size: u64::MAX, ..Default::default() };
+        let c = GuestMemoryConfig {
+            stack_size: u64::MAX,
+            ..Default::default()
+        };
         assert!(matches!(c.validate(), Err(CheckError::InvalidInput(_))));
     }
 
     #[test]
     fn validate_rejects_oversized_heap() {
-        let c = GuestMemoryConfig { heap_size: u64::MAX, ..Default::default() };
-        assert!(matches!(c.validate(), Err(CheckError::InvalidInput(_))));
-    }
-
-    #[test]
-    fn validate_rejects_oversized_trace() {
-        let c = GuestMemoryConfig { max_trace_length: usize::MAX, ..Default::default() };
+        let c = GuestMemoryConfig {
+            heap_size: u64::MAX,
+            ..Default::default()
+        };
         assert!(matches!(c.validate(), Err(CheckError::InvalidInput(_))));
     }
 
@@ -442,10 +465,16 @@ diff --git a/Cargo.toml b/Cargo.toml
         let inv = SoundnessInvariant;
         let setup = inv.setup();
         let input = SoundnessInput {
-            memory: GuestMemoryConfig { heap_size: u64::MAX, ..Default::default() },
+            memory: GuestMemoryConfig {
+                heap_size: u64::MAX,
+                ..Default::default()
+            },
             ..default_input()
         };
-        assert!(matches!(inv.check(&setup, input), Err(CheckError::InvalidInput(_))));
+        assert!(matches!(
+            inv.check(&setup, input),
+            Err(CheckError::InvalidInput(_))
+        ));
     }
 
     // ── patching ────────────────────────────────────────────────────
@@ -508,6 +537,9 @@ diff --git a/../../etc/passwd b/../../etc/passwd
             claimed_panic: false,
             ..default_input()
         };
-        assert!(matches!(inv.check(&setup, input), Err(CheckError::InvalidInput(_))));
+        assert!(matches!(
+            inv.check(&setup, input),
+            Err(CheckError::InvalidInput(_))
+        ));
     }
 }
