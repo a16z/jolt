@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1775247522581,
+  "lastUpdate": 1775252968042,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -74266,6 +74266,246 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 864980,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "53157953+markosg04@users.noreply.github.com",
+            "name": "Markos",
+            "username": "markosg04"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "18bfa50983c8202079f8a3ab11c82a96f43f92ef",
+          "message": "feat(jolt-field): add jolt-field crate (#1363)\n\n* chore: workspace scaffolding for modular crates\n\n* feat: add jolt-field crate\n\n* fix(jolt-field): address PR review feedback\n\n- Fix negative-zero bug in From<i64/i128> for S96/S160 (val.is_positive() → val >= 0)\n- Add manual PartialEq for SignedBigIntHi32 that treats ±0 as equal (Ord/PartialEq contract)\n- Inline sub_assign_in_place to avoid unnecessary copy via Neg\n- Upgrade debug_assert! to assert! in magnitude_as_limbs_nplus1 and to_signed_bigint_nplus1\n- Replace unsafe generic From<S224> for Limbs<N> with concrete From<S224> for Limbs<4>\n- Restrict fmadd_trunc and bn254_ops functions to pub(crate) visibility\n- Replace From<BigInt>/Into<BigInt> trait impls on Limbs with pub(crate) inherent methods\n- Remove Option wrapper from Fr::from_bigint_unchecked\n\n* fix(jolt-field): gate tests and bench behind bn254 feature\n\nTests and bench use Fr which requires the bn254 feature. Without the\ngate, `cargo clippy --no-default-features --all-targets` fails.\n\n* refactor(jolt-field): decouple Limbs and SignedBigInt from arkworks\n\n- Fix SignedBigInt PartialEq/Ord inconsistency: +0 and -0 now compare\n  equal, matching the Ord impl (consistent with SignedBigIntHi32)\n- Remove ark_serialize impls from Limbs, SignedBigInt, SignedBigIntHi32\n  (unused outside tests)\n- Move BigInt<->Limbs conversion from limbs.rs into arkworks/mod.rs as\n  From impls, eliminating all arkworks references from limbs.rs and\n  signed/ modules\n- Delete dead code: fmadd_trunc, R2, mac_no_carry, from_barrett_reduce,\n  mul_by_hi_2limbs, mul_u64_accumulate\n- Comply with workspace lints (allow_attributes, unwrap_used, expect_used)\n\n* docs(jolt-field): replace README with crate-level doc comments\n\n* docs: add lint policy to CLAUDE.md\n\n* fix: deduplicate no-spec warning on large PRs\n\nThe previous dedup checked for the no-spec label, which races with the\nlabel job. Check for an existing warning comment instead.\n\n* ci: add test-crates job, remove non-existent crates from bench\n\n* fix: address PR review comments\n\n- Remove unused `digest` workspace dependency\n- Remove non-canonical `authors` field from jolt-field\n- Merge `arkworks` feature into `bn254` (single feature)\n\n---------\n\nCo-authored-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>",
+          "timestamp": "2026-04-03T16:51:28-04:00",
+          "tree_id": "0516696c3cc380231015abf6d208c34a2a4b921b",
+          "url": "https://github.com/a16z/jolt/commit/18bfa50983c8202079f8a3ab11c82a96f43f92ef"
+        },
+        "date": 1775252966175,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.8684,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 864348,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.4633,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 500872,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 500520,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 496272,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7759,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 500804,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.6204,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 498852,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.298,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 498652,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.5079,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 864812,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.6187,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 498500,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4887,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 502404,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 18.9745,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 496556,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.2102,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 498932,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 34.2479,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1005872,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 15.2698,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 652240,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 94.0444,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2126476,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.6061,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 496604,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.6376,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 498784,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 16.0772,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 863656,
             "unit": "KB",
             "extra": ""
           }
