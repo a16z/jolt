@@ -46,6 +46,10 @@ pub enum R1csColumn {
     Bz,
     Cz,
     CombinedRow,
+    /// A single witness variable column: `witness[c * V_pad + var_index]`
+    /// for each cycle `c`. Used to evaluate individual R1CS input polynomials
+    /// at the sumcheck challenge point.
+    Variable(usize),
 }
 
 /// Storage representation hint for the buffer layer.

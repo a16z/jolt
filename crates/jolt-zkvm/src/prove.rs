@@ -18,6 +18,7 @@ use jolt_witness::{PolynomialConfig, PolynomialId, Polynomials};
 
 use crate::buffers::ProverBuffers;
 use crate::runtime::execute;
+use crate::virtual_provider::VirtualProvider;
 
 /// Total instruction lookup index bit width (RV64: XLEN × 2 = 128).
 const LOG_K_INSTRUCTION: usize = 128;
@@ -95,7 +96,8 @@ where
 
     // -- 3. Assemble buffers and execute --
     let r1cs = R1csProvider::new(&r1cs_key, &r1cs_witness);
-    let mut provider = ProverBuffers::new(&mut polys, r1cs);
+    let virtual_ = VirtualProvider::new(&r1cs_witness, size, r1cs_key.num_vars_padded);
+    let mut provider = ProverBuffers::new(&mut polys, r1cs, virtual_);
 
     execute::<B, F, T, PCS>(
         executable,

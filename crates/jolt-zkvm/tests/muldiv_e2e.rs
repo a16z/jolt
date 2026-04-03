@@ -19,7 +19,7 @@ use jolt_compiler::module::Module;
 use jolt_compiler::{Op, VerifierOp};
 use jolt_compute::link;
 use jolt_cpu::CpuBackend;
-use jolt_field::{Field, Fr};
+use jolt_field::Fr;
 use jolt_host::{BytecodePreprocessing, Program};
 use jolt_openings::mock::MockCommitmentScheme;
 use jolt_r1cs::R1csKey;
@@ -67,24 +67,28 @@ fn build_protocol_module(log_t: usize, log_k_bytecode: usize, log_k_ram: usize) 
     Module::from_bytes(&bytes)
 }
 
-/// Truncate a module to only include Stage 1 (Outer Spartan).
+/// Prover runs Stage 1 + product uniskip; verifier only checks Stage 1.
 ///
-/// Removes all prover ops from `BeginStage { index: 1 }` onward and
-/// all verifier ops from the second `BeginStage` onward. This allows
-/// testing Stage 1 in isolation without needing virtual polynomials
-/// that Stage 2+ depends on.
-fn truncate_to_stage1(module: &mut Module) {
-    // Prover: cut at BeginStage { index: 1 }
-    if let Some(pos) = module
+/// Verifies Stage 1 correctness and exercises the product uniskip prover
+/// path (VirtualProvider, Domain reduce, AbsorbRoundPoly) without
+/// requiring verifier-side UniskipVerify support.
+fn truncate_to_product_uniskip(module: &mut Module) {
+    // Prover: keep through the first AbsorbEvals after BeginStage{1}.
+    if let Some(stage2_start) = module
         .prover
         .ops
         .iter()
         .position(|op| matches!(op, Op::BeginStage { index: 1 }))
     {
-        module.prover.ops.truncate(pos);
+        if let Some(rel) = module.prover.ops[stage2_start..]
+            .iter()
+            .position(|op| matches!(op, Op::AbsorbEvals { .. }))
+        {
+            module.prover.ops.truncate(stage2_start + rel + 1);
+        }
     }
 
-    // Verifier: cut at the second BeginStage
+    // Verifier: only Stage 1 (cut at second BeginStage).
     let mut stage_count = 0;
     if let Some(pos) = module.verifier.ops.iter().position(|op| {
         if matches!(op, VerifierOp::BeginStage) {
@@ -121,9 +125,9 @@ fn muldiv_prove_verify() {
         trace.len(),
     );
 
-    // 3. Build protocol module and truncate to Stage 1
+    // 3. Build protocol module — Stage 1 + product uniskip only
     let mut module = build_protocol_module(log_t, log_k_bytecode, log_k_ram);
-    truncate_to_stage1(&mut module);
+    truncate_to_product_uniskip(&mut module);
 
     let backend = CpuBackend;
     let executable = link::<CpuBackend, Fr>(module, &backend);
@@ -166,30 +170,6 @@ fn muldiv_prove_verify() {
         &mut transcript,
         config,
     );
-
-    eprintln!(
-        "proof: {} stages, {} commitments",
-        proof.stage_proofs.len(),
-        proof.commitments.len(),
-    );
-
-    // Debug: dump stage proof structure
-    for (si, sp) in proof.stage_proofs.iter().enumerate() {
-        eprintln!(
-            "  stage {si}: {} round_polys, {} evals",
-            sp.round_polys.round_polynomials.len(),
-            sp.evals.len(),
-        );
-        // Check if the claimed sum matches round_poly_1(0) + round_poly_1(1)
-        if sp.round_polys.round_polynomials.len() > 1 {
-            let rp = &sp.round_polys.round_polynomials[1]; // first remaining round poly
-            let sum = rp.evaluate(Fr::from_u64(0)) + rp.evaluate(Fr::from_u64(1));
-            eprintln!(
-                "    rp[1](0)+rp[1](1) = {sum}    (this is what sumcheck checks against combined_claim)"
-            );
-            eprintln!("    evals[0] (uniskip_eval) = {}", sp.evals[0]);
-        }
-    }
 
     // 6. Verify
     let r1cs_key = R1csKey::new(

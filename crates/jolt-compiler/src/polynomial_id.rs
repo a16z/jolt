@@ -220,6 +220,16 @@ impl PolynomialId {
                 witness_slot: None,
             },
 
+            // ── R1CS input variables: column slices of witness ──────────
+            _ if self.r1cs_variable_index().is_some() => PolynomialDescriptor {
+                source: PolySource::R1cs(R1csColumn::Variable(
+                    self.r1cs_variable_index().unwrap(),
+                )),
+                committed: false,
+                storage: StorageHint::Dense,
+                witness_slot: None,
+            },
+
             // ── Virtual / derived: everything else ─────────────────────
             _ => PolynomialDescriptor {
                 source: PolySource::Derived,
@@ -227,6 +237,36 @@ impl PolynomialId {
                 storage: StorageHint::Dense,
                 witness_slot: None,
             },
+        }
+    }
+
+    /// Returns the R1CS variable index for polynomials that are columns of
+    /// the per-cycle witness z-vector, or `None` for other polynomials.
+    pub fn r1cs_variable_index(&self) -> Option<usize> {
+        match self {
+            Self::LeftInstructionInput => Some(1),
+            Self::RightInstructionInput => Some(2),
+            Self::Product => Some(3),
+            Self::ShouldBranch => Some(4),
+            Self::ExpandedPc => Some(5),
+            Self::UnexpandedPc => Some(6),
+            Self::Imm => Some(7),
+            Self::RamAddress => Some(8),
+            Self::Rs1Value => Some(9),
+            Self::Rs2Value => Some(10),
+            Self::RdWriteValue => Some(11),
+            Self::RamReadValue => Some(12),
+            Self::RamWriteValue => Some(13),
+            Self::LeftLookupOperand => Some(14),
+            Self::RightLookupOperand => Some(15),
+            Self::NextUnexpandedPc => Some(16),
+            Self::NextPc => Some(17),
+            Self::NextIsVirtual => Some(18),
+            Self::NextIsFirstInSequence => Some(19),
+            Self::LookupOutput => Some(20),
+            Self::ShouldJump => Some(21),
+            Self::OpFlag(i) => Some(22 + i),
+            _ => None,
         }
     }
 

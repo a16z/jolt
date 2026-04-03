@@ -10,20 +10,32 @@ use jolt_field::Field;
 use jolt_r1cs::R1csProvider;
 use jolt_witness::{PolynomialId, Polynomials};
 
-/// Composite [`BufferProvider`] that unifies witness and R1CS data sources.
+use crate::virtual_provider::VirtualProvider;
+
+/// Composite [`BufferProvider`] that unifies witness, R1CS, and virtual data sources.
 ///
 /// The runtime sees a single provider; internally it dispatches on
 /// [`descriptor().source`](PolynomialId::descriptor):
 /// - [`PolySource::R1cs`] → [`R1csProvider`]
+/// - [`PolySource::Derived`] (if handled) → [`VirtualProvider`]
 /// - Everything else → [`Polynomials<F>`]
 pub struct ProverBuffers<'a, F: Field> {
     polys: &'a mut Polynomials<F>,
     r1cs: R1csProvider<'a, F>,
+    virtual_: VirtualProvider<'a, F>,
 }
 
 impl<'a, F: Field> ProverBuffers<'a, F> {
-    pub fn new(polys: &'a mut Polynomials<F>, r1cs: R1csProvider<'a, F>) -> Self {
-        Self { polys, r1cs }
+    pub fn new(
+        polys: &'a mut Polynomials<F>,
+        r1cs: R1csProvider<'a, F>,
+        virtual_: VirtualProvider<'a, F>,
+    ) -> Self {
+        Self {
+            polys,
+            r1cs,
+            virtual_,
+        }
     }
 
     /// Mutable access to the R1CS provider (e.g. to set Spartan challenges mid-proving).
@@ -36,6 +48,9 @@ impl<B: ComputeBackend, F: Field> BufferProvider<B, F> for ProverBuffers<'_, F> 
     fn load(&mut self, poly_id: PolynomialId, backend: &B) -> Buf<B, F> {
         match poly_id.descriptor().source {
             PolySource::R1cs(_) => self.r1cs.load(poly_id, backend),
+            PolySource::Derived if self.virtual_.handles(poly_id) => {
+                self.virtual_.load(poly_id, backend)
+            }
             _ => DeviceBuffer::Field(backend.upload(self.polys.get(poly_id))),
         }
     }
@@ -48,13 +63,19 @@ impl<B: ComputeBackend, F: Field> BufferProvider<B, F> for ProverBuffers<'_, F> 
                      it should never appear in CollectOpeningClaim",
                 )
             }
+            PolySource::Derived if self.virtual_.handles(poly_id) => {
+                panic!(
+                    "Virtual polynomial {poly_id:?} is computed on-the-fly; \
+                     it should never appear in CollectOpeningClaim",
+                )
+            }
             _ => self.polys.get(poly_id),
         }
     }
 
     fn release(&mut self, poly_id: PolynomialId) {
         match poly_id.descriptor().source {
-            PolySource::R1cs(_) => {} // on-the-fly, nothing to release
+            PolySource::R1cs(_) | PolySource::Derived => {} // on-the-fly, nothing to release
             _ => self.polys.release(poly_id),
         }
     }
@@ -89,8 +110,9 @@ mod tests {
         let key = R1csKey::new(matrices, 2);
         let witness = vec![Fr::one(); 2 * key.num_vars_padded];
         let r1cs = R1csProvider::new(&key, &witness);
+        let virtual_ = VirtualProvider::new(&witness, 2, key.num_vars_padded);
 
-        let mut provider = ProverBuffers::new(&mut polys, r1cs);
+        let mut provider = ProverBuffers::new(&mut polys, r1cs, virtual_);
         let backend = CpuBackend;
 
         // Load witness poly

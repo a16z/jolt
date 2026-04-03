@@ -9,3 +9,4 @@ pub mod preprocessing;
 pub mod prove;
 pub mod proving_key;
 pub mod runtime;
+pub mod virtual_provider;

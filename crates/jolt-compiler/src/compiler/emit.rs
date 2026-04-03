@@ -157,6 +157,9 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams, poly_map: &[Polyno
 
         if has_evals {
             let eval_polys: Vec<PolynomialId> = eval_descs.iter().map(|e| e.poly).collect();
+            ctx.ops.push(Op::RecordEvals {
+                polys: eval_polys.clone(),
+            });
             ctx.ops.push(Op::AbsorbEvals {
                 polys: eval_polys.clone(),
                 tag: DomainSeparator::OpeningClaim,
@@ -831,6 +834,7 @@ fn op_poly_refs(op: &Op, kernels: &[KernelDef]) -> Vec<PolynomialId> {
         | Op::LagrangeProject { polys, .. }
         | Op::Commit { polys, .. }
         | Op::CommitStreaming { polys, .. }
+        | Op::RecordEvals { polys, .. }
         | Op::AbsorbEvals { polys, .. } => polys.clone(),
         Op::Preamble
         | Op::BeginStage { .. }

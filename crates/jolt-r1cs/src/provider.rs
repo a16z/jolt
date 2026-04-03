@@ -104,6 +104,13 @@ impl<'a, F: Field> R1csProvider<'a, F> {
                         .combined_row(&ch.r_x, ch.rho_a, ch.rho_b, ch.rho_c, total_cols_padded);
                 backend.upload(&row)
             }
+            R1csColumn::Variable(var_idx) => {
+                let v_pad = self.key.num_vars_padded;
+                let column: Vec<F> = (0..self.key.num_cycles)
+                    .map(|c| self.witness[c * v_pad + var_idx])
+                    .collect();
+                backend.upload(&column)
+            }
         };
         DeviceBuffer::Field(buf)
     }

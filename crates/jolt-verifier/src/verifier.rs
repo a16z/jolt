@@ -358,24 +358,24 @@ fn evaluate_formula<F: Field>(
                     matrix,
                     eval_polys,
                     at_challenge,
+                    num_constraints,
                 } => {
                     let r0 = challenges[*at_challenge];
-                    let domain_size = r1cs_key.matrices.num_constraints;
-                    let basis = jolt_poly::lagrange::lagrange_evals(0, domain_size, r0);
-                    let z: Vec<F> = eval_polys
-                        .iter()
-                        .map(|p| {
-                            evaluations.get(p).copied().ok_or_else(|| {
-                                JoltError::InvalidProof(format!("R1CS eval {p:?} not available"))
-                            })
-                        })
-                        .collect::<Result<_, _>>()?;
+                    let basis = jolt_poly::lagrange::lagrange_evals(0, *num_constraints, r0);
+                    // R1CS variable 0 is the constant 1; variables 1..N are inputs.
+                    let mut z = Vec::with_capacity(1 + eval_polys.len());
+                    z.push(F::one());
+                    for p in eval_polys {
+                        z.push(evaluations.get(p).copied().ok_or_else(|| {
+                            JoltError::InvalidProof(format!("R1CS eval {p:?} not available"))
+                        })?);
+                    }
                     let rows = match matrix {
                         R1CSMatrix::A => &r1cs_key.matrices.a,
                         R1CSMatrix::B => &r1cs_key.matrices.b,
                     };
                     let mut acc = F::zero();
-                    for (k, row) in rows.iter().enumerate() {
+                    for (k, row) in rows[..*num_constraints].iter().enumerate() {
                         let mut dot = F::zero();
                         for &(j, coeff) in row {
                             dot += coeff * z[j];

@@ -107,7 +107,12 @@ fn prove_verify_roundtrip() {
 
     let (r1cs_key, r1cs_witness) = dummy_r1cs(size);
     let r1cs = R1csProvider::new(&r1cs_key, &r1cs_witness);
-    let mut provider = ProverBuffers::new(&mut polys, r1cs);
+    let virtual_ = jolt_zkvm::virtual_provider::VirtualProvider::new(
+        &r1cs_witness,
+        size,
+        r1cs_key.num_vars_padded,
+    );
+    let mut provider = ProverBuffers::new(&mut polys, r1cs, virtual_);
 
     let ram_k = size; // Must be power-of-two with log₂(ram_k) ≥ rw_config.ram_rw_phase2_num_rounds
     let ram_log_k = ram_k.trailing_zeros() as usize;

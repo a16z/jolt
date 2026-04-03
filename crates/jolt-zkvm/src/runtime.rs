@@ -185,8 +185,6 @@ where
                         let _ = state.evaluations.insert(*poly, data[0]);
                     }
                 } else if let Some(round_poly) = &state.last_round_poly {
-                    // Scalar evaluation: evaluate last round polynomial at
-                    // the most recently squeezed challenge.
                     let val = round_poly.evaluate(state.last_squeezed);
                     let _ = state.evaluations.insert(*poly, val);
                 }
@@ -199,6 +197,10 @@ where
             } => {
                 let scalar = state.challenges[*challenge];
                 for pi in polys {
+                    if !device_buffers.contains_key(pi) {
+                        let buf = provider.load(*pi, backend);
+                        let _ = device_buffers.insert(*pi, buf);
+                    }
                     if let Some(DeviceBuffer::Field(buf)) = device_buffers.get_mut(pi) {
                         backend.interpolate_inplace(buf, scalar, *order);
                     }
@@ -377,17 +379,22 @@ where
                 }
             }
 
+            Op::RecordEvals { polys } => {
+                if let Some(stage) = &mut state.current_stage {
+                    for pi in polys {
+                        if let Some(&val) = state.evaluations.get(pi) {
+                            stage.evals.push(val);
+                        }
+                    }
+                }
+            }
+
             Op::AbsorbEvals { polys, tag } => {
-                let mut batch = Vec::with_capacity(polys.len());
                 for pi in polys {
                     if let Some(&val) = state.evaluations.get(pi) {
                         transcript.append(&Label(tag.as_bytes()));
                         transcript.append(&val);
-                        batch.push(val);
                     }
-                }
-                if let Some(stage) = &mut state.current_stage {
-                    stage.evals.extend(batch);
                 }
             }
 

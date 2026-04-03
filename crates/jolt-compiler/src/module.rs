@@ -283,7 +283,15 @@ pub enum Op {
         num_coeffs: usize,
         tag: DomainSeparator,
     },
-    /// Absorb polynomial evaluations into transcript.
+    /// Record polynomial evaluations in the stage proof for the verifier.
+    ///
+    /// Pushes values to `stage.evals` so the verifier can read them via
+    /// `VerifierOp::RecordEvals`. Does not touch the transcript.
+    RecordEvals { polys: Vec<PolynomialId> },
+    /// Absorb polynomial evaluations into the Fiat-Shamir transcript.
+    ///
+    /// Transcript-only — does not record in the stage proof. Pair with
+    /// `RecordEvals` when the verifier also needs the values.
     AbsorbEvals {
         polys: Vec<PolynomialId>,
         tag: DomainSeparator,
@@ -326,6 +334,7 @@ impl Op {
             Op::Preamble
                 | Op::BeginStage { .. }
                 | Op::AbsorbRoundPoly { .. }
+                | Op::RecordEvals { .. }
                 | Op::AbsorbEvals { .. }
                 | Op::Squeeze { .. }
                 | Op::CollectOpeningClaim { .. }
@@ -535,6 +544,8 @@ pub enum ClaimFactor {
         eval_polys: Vec<PolynomialId>,
         /// Challenge index for the Lagrange interpolation point (r0).
         at_challenge: usize,
+        /// Number of constraints to evaluate (may be less than the full R1CS).
+        num_constraints: usize,
     },
     /// Eq evaluation between challenge values and a contiguous **slice** of a
     /// stage's (normalized) sumcheck point.

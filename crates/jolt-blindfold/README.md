@@ -28,8 +28,6 @@ proved via Nova folding and Spartan.
 - **`BlindFoldProver`** / **`BlindFoldVerifier`** -- Full BlindFold protocol (Nova folding + Spartan over verifier R1CS).
 - **`BlindFoldProof`** -- Serializable proof artifact.
 - **`StageConfig`** -- Per-stage configuration for the verifier R1CS.
-- **`BakedPublicInputs`** -- Fiat-Shamir-derived values baked into R1CS matrix coefficients.
-
 ### Nova Folding
 
 - **`RelaxedInstance`** / **`RelaxedWitness`** -- Relaxed R1CS instance and witness.

@@ -250,8 +250,22 @@ fn register_polys(pt: &mut PolyTable, p: &ModuleParams) -> Polys {
     let az = pt.add(Az, "Az", Virtual, p.log_t + 1);
     let bz = pt.add(Bz, "Bz", Virtual, p.log_t + 1);
     let spartan_eq = pt.add(SpartanEq, "SpartanEqTable", Virtual, p.log_t + 1);
-    let product_left = pt.add(ProductLeft, "ProductLeft", Virtual, p.log_t);
-    let product_right = pt.add(ProductRight, "ProductRight", Virtual, p.log_t);
+    // Domain-indexed: T cycles × stride 4 (3 product constraints, padded to next power of 2).
+    let product_stride_log = (p.product_uniskip_domain as u64)
+        .next_power_of_two()
+        .trailing_zeros() as usize;
+    let product_left = pt.add(
+        ProductLeft,
+        "ProductLeft",
+        Virtual,
+        p.log_t + product_stride_log,
+    );
+    let product_right = pt.add(
+        ProductRight,
+        "ProductRight",
+        Virtual,
+        p.log_t + product_stride_log,
+    );
 
     // --- Virtual — R1CS inputs (35 entries, ALL_R1CS_INPUTS order) ---
     let left_instruction_input = pt.add(
@@ -783,6 +797,9 @@ fn build_stage1(
     ops.push(Op::Evaluate {
         poly: p.outer_uniskip_eval,
     });
+    ops.push(Op::RecordEvals {
+        polys: vec![p.outer_uniskip_eval],
+    });
     ops.push(Op::AbsorbEvals {
         polys: vec![p.outer_uniskip_eval],
         tag: DomainSeparator::OpeningClaim,
@@ -853,16 +870,30 @@ fn build_stage1(
     }
 
     // ---------------------------------------------------------------
-    // 4. Cache + flush R1CS input evaluations at r_cycle.
+    // 4. Bind R1CS witness polynomials at the sumcheck challenge point,
+    //    then evaluate + flush.
     //
-    // After the remaining sumcheck completes, the prover caches 35
-    // virtual polynomial openings (the R1CS input values at the cycle
-    // challenge point) and flushes them to the transcript.
+    // The remaining sumcheck only bound the kernel inputs (eq, Az, Bz).
+    // The 35 R1CS witness polynomials (T-length buffers) must be bound
+    // at each of the 9 sumcheck challenges to produce scalar evaluations.
     // ---------------------------------------------------------------
     let r1cs_polys = r1cs_input_polys(p);
+    for round in 0..params.outer_remaining_rounds {
+        // challenge index = ch_batch + 1 + round (first sumcheck challenge
+        // is at ch_batch+1 because ch_batch is the batching coefficient)
+        let ch_idx = ch_batch + 1 + round;
+        ops.push(Op::Bind {
+            polys: r1cs_polys.to_vec(),
+            challenge: ch_idx,
+            order: BindingOrder::LowToHigh,
+        });
+    }
     for &poly in &r1cs_polys {
         ops.push(Op::Evaluate { poly });
     }
+    ops.push(Op::RecordEvals {
+        polys: r1cs_polys.to_vec(),
+    });
     ops.push(Op::AbsorbEvals {
         polys: r1cs_polys.to_vec(),
         tag: DomainSeparator::OpeningClaim,
@@ -948,11 +979,13 @@ fn build_verifier_stage1_ops(
                     matrix: R1CSMatrix::A,
                     eval_polys: r1cs_polys.to_vec(),
                     at_challenge: r0_idx,
+                    num_constraints: params.outer_uniskip_domain,
                 },
                 ClaimFactor::UniformR1CSEval {
                     matrix: R1CSMatrix::B,
                     eval_polys: r1cs_polys.to_vec(),
                     at_challenge: r0_idx,
+                    num_constraints: params.outer_uniskip_domain,
                 },
             ],
         }],
@@ -963,6 +996,8 @@ fn build_verifier_stage1_ops(
         output_check,
         num_rounds: params.outer_remaining_rounds,
         degree: params.outer_remaining_degree,
+        // LowToHigh binding fixes variables LSB-first, so the sumcheck
+        // point is reversed relative to the eq table's challenge ordering.
         normalize: Some(PointNormalization::Reverse),
     }];
 
@@ -1092,12 +1127,19 @@ fn build_stage2(
         },
     ];
 
+    let product_stride = (params.product_uniskip_domain).next_power_of_two();
     let product_uniskip_kernel = kernels.len();
     kernels.push(KernelDef {
         spec: KernelSpec {
             formula: product_uniskip_formula,
-            num_evals: params.product_uniskip_num_coeffs,
-            iteration: Iteration::Dense,
+            num_evals: 2 * params.product_uniskip_domain - 1,
+            iteration: Iteration::Domain {
+                domain_size: params.product_uniskip_domain,
+                stride: product_stride,
+                domain_start: 0,
+                domain_indexed: vec![false, true, true],
+                tau_challenge: ch_product_tau_high,
+            },
             binding_order: BindingOrder::LowToHigh,
         },
         inputs: product_uniskip_inputs,
@@ -1130,6 +1172,9 @@ fn build_stage2(
     // Flush product uniskip opening claim: s2(r0)
     ops.push(Op::Evaluate {
         poly: p.product_uniskip_eval,
+    });
+    ops.push(Op::RecordEvals {
+        polys: vec![p.product_uniskip_eval],
     });
     ops.push(Op::AbsorbEvals {
         polys: vec![p.product_uniskip_eval],
@@ -1316,6 +1361,9 @@ fn build_stage2(
     for &poly in &stage2_eval_polys {
         ops.push(Op::Evaluate { poly });
     }
+    ops.push(Op::RecordEvals {
+        polys: stage2_eval_polys.clone(),
+    });
     ops.push(Op::AbsorbEvals {
         polys: stage2_eval_polys,
         tag: DomainSeparator::OpeningClaim,
@@ -2021,7 +2069,7 @@ fn print_stats(module: &Module, params: &ModuleParams) {
             Op::Preamble => counts[6] += 1,
             Op::BeginStage { .. } => counts[12] += 1,
             Op::AbsorbRoundPoly { .. } => counts[7] += 1,
-            Op::AbsorbEvals { .. } => counts[8] += 1,
+            Op::RecordEvals { .. } | Op::AbsorbEvals { .. } => counts[8] += 1,
             Op::Squeeze { .. } => counts[9] += 1,
             Op::CollectOpeningClaim { .. } => counts[10] += 1,
             Op::ReleaseDevice { .. } => counts[11] += 1,
