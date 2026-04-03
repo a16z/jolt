@@ -59,9 +59,9 @@ pub trait OptimizeEnv {
 /// 3. If the agent produced a diff, applies it via [`OptimizeEnv::apply_diff`].
 /// 4. Re-measures objectives and checks invariants.
 /// 5. Accepts or rejects the change.
-pub fn auto_optimize(
-    agent: &dyn AgentHarness,
-    env: &mut dyn OptimizeEnv,
+pub fn auto_optimize<A: AgentHarness, E: OptimizeEnv>(
+    agent: &A,
+    env: &mut E,
     config: &OptimizeConfig,
     repo_dir: &Path,
 ) -> OptimizeResult {

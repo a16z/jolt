@@ -8,7 +8,7 @@ pub mod guests;
 pub mod invariant;
 pub mod objective;
 
-pub use guests::{JoltDevice, ProofVerifyError, TestCase};
+pub use guests::{GuestProgram, JoltDevice, ProofVerifyError};
 pub use invariant::{
     CheckError, Invariant, InvariantTargets, InvariantViolation, JoltInvariants, SynthesisTarget,
 };

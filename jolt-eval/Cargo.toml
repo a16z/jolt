@@ -28,5 +28,13 @@ rust-code-analysis = "0.0.24"
 jolt-eval-macros = { path = "macros" }
 
 [[bin]]
+name = "measure-objectives"
+path = "bin/measure_objectives.rs"
+
+[[bin]]
+name = "optimize"
+path = "bin/optimize.rs"
+
+[[bin]]
 name = "redteam"
 path = "bin/redteam.rs"

@@ -8,7 +8,7 @@ use common::jolt_device::MemoryConfig;
 use jolt_core::host::Program;
 
 use super::{CheckError, Invariant, InvariantViolation};
-use crate::TestCase;
+use crate::guests;
 
 /// Guest memory layout parameters.
 ///
@@ -156,7 +156,7 @@ impl Invariant for SoundnessInvariant {
     fn check(&self, setup: &SoundnessSetup, input: SoundnessInput) -> Result<(), CheckError> {
         // 1. Validate memory config
         input.memory.validate()?;
-        let memory_config = input.memory.to_memory_config();
+        let mut memory_config = input.memory.to_memory_config();
 
         // 2. Apply patch to sandbox in-place, revert on exit
         let _guard = apply_patch(&setup.sandbox_dir, &input.patch)?;
@@ -166,16 +166,12 @@ impl Invariant for SoundnessInvariant {
 
         // _guard drops here (or on early return), reverting the patch
 
-        // 4. Trace to determine actual trace length, then prove
-        let mut test_case = TestCase {
-            elf_contents: elf_bytes,
-            memory_config,
-        };
+        // 4. Decode to get program_size, then trace to get actual length
         let (_bytecode, _memory_init, program_size, _e_entry) =
-            jolt_core::guest::program::decode(&test_case.elf_contents);
-        test_case.memory_config.program_size = Some(program_size);
+            jolt_core::guest::program::decode(&elf_bytes);
+        memory_config.program_size = Some(program_size);
 
-        let program = test_case.make_program();
+        let program = guests::GuestProgram::new(&elf_bytes, &memory_config);
         let (_lazy_trace, trace, _memory, _io) = program.trace(&input.program_input, &[], &[]);
         let max_trace_length = (trace.len() + 1).next_power_of_two();
         drop(trace);
@@ -186,11 +182,12 @@ impl Invariant for SoundnessInvariant {
             )));
         }
 
-        let prover_pp = test_case.prover_preprocessing(max_trace_length);
-        let verifier_pp = TestCase::verifier_preprocessing(&prover_pp);
-        let (proof, honest_device) = test_case.prove(&prover_pp, &input.program_input);
+        // 5. Prove and verify
+        let prover_pp = guests::prover_preprocessing(&program, max_trace_length);
+        let verifier_pp = guests::verifier_preprocessing(&prover_pp);
+        let (proof, honest_device) = guests::prove(&program, &prover_pp, &input.program_input);
 
-        // 5. Skip no-op claims (the claim matches the honest execution)
+        // 6. Skip no-op claims (the claim matches the honest execution)
         if input.claimed_output == honest_device.outputs
             && input.claimed_panic == honest_device.panic
         {
@@ -199,8 +196,8 @@ impl Invariant for SoundnessInvariant {
             ));
         }
 
-        // 6. Verify with the dishonest claim — this SHOULD fail
-        match TestCase::verify_with_claims(
+        // 7. Verify with the dishonest claim — this SHOULD fail
+        match guests::verify_with_claims(
             &verifier_pp,
             proof,
             &honest_device.inputs,
