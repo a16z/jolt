@@ -23,31 +23,6 @@ fn main() -> eyre::Result<()> {
 
     let repo_root = std::env::current_dir()?;
 
-    println!("{:<35} {:>15} {:>10}", "Objective", "Value", "Direction");
-    println!("{}", "-".repeat(62));
-
-    // Static-analysis objectives
-    let objectives = Objective::all(&repo_root);
-    for obj in &objectives {
-        if let Some(ref name) = cli.objective {
-            if obj.name() != name.as_str() {
-                continue;
-            }
-        }
-        match obj.collect_measurement() {
-            Ok(val) => {
-                let dir = match obj.direction() {
-                    jolt_eval::Direction::Minimize => "min",
-                    jolt_eval::Direction::Maximize => "max",
-                };
-                println!("{:<35} {:>15.6} {:>10}", obj.name(), val, dir);
-            }
-            Err(e) => {
-                println!("{:<35} {:>15}", obj.name(), format!("ERROR: {e}"));
-            }
-        }
-    }
-
     // Performance objectives (from Criterion)
     if !cli.no_bench {
         let perf_names = perf_objective_names();
@@ -64,6 +39,11 @@ fn main() -> eyre::Result<()> {
 
             match status {
                 Ok(s) if s.success() => {
+                    println!(
+                        "\n\n{:<35} {:>15} {:>10}",
+                        "Objective", "Value", "Direction"
+                    );
+                    println!("{}", "-".repeat(62));
                     for &name in perf_names {
                         if let Some(ref filter) = cli.objective {
                             if name != filter.as_str() {
@@ -83,6 +63,34 @@ fn main() -> eyre::Result<()> {
                 _ => {
                     eprintln!("cargo bench failed; skipping perf objectives");
                 }
+            }
+        }
+    } else {
+        println!(
+            "\n\n{:<35} {:>15} {:>10}",
+            "Objective", "Value", "Direction"
+        );
+        println!("{}", "-".repeat(62));
+    }
+
+    // Static-analysis objectives
+    let objectives = Objective::all(&repo_root);
+    for obj in &objectives {
+        if let Some(ref name) = cli.objective {
+            if obj.name() != name.as_str() {
+                continue;
+            }
+        }
+        match obj.collect_measurement() {
+            Ok(val) => {
+                let dir = match obj.direction() {
+                    jolt_eval::Direction::Minimize => "min",
+                    jolt_eval::Direction::Maximize => "max",
+                };
+                println!("{:<35} {:>15.6} {:>10}", obj.name(), val, dir);
+            }
+            Err(e) => {
+                println!("{:<35} {:>15}", obj.name(), format!("ERROR: {e}"));
             }
         }
     }
