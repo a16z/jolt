@@ -262,9 +262,15 @@ pub fn run_optimize_test(
         inputs: &[NAIVE_SORT_TIME],
         evaluate: |m| m.get(&NAIVE_SORT_TIME).copied().unwrap_or(f64::INFINITY),
     };
+    let hint = hint.unwrap_or_else(|| {
+        "The target is the `naive_sort` function in \
+         jolt-eval/src/invariant/sort_e2e.rs. Replace it with a faster \
+         sorting algorithm. You MAY modify jolt-eval/ for this task."
+            .into()
+    });
     let config = OptimizeConfig {
         num_iterations: iterations,
-        hint,
+        hint: Some(hint),
         verbose,
     };
 

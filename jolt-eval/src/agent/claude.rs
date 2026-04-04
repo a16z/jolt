@@ -37,7 +37,8 @@ impl ClaudeCodeAgent {
             .arg("--model")
             .arg(&self.model)
             .arg("--max-turns")
-            .arg(self.max_turns.to_string());
+            .arg(self.max_turns.to_string())
+            .arg("--dangerously-skip-permissions");
         if verbose {
             cmd.arg("--verbose");
         }
