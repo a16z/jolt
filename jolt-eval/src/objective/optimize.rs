@@ -79,7 +79,7 @@ pub fn auto_optimize<A: AgentHarness, E: OptimizeEnv>(
         .status();
 
     let baseline = env.measure();
-    let baseline_score = (objective.evaluate)(&baseline);
+    let baseline_score = (objective.evaluate)(&baseline, &baseline);
     let mut best_score = baseline_score;
     let mut best_measurements = baseline.clone();
     let mut attempts = Vec::new();
@@ -131,7 +131,7 @@ pub fn auto_optimize<A: AgentHarness, E: OptimizeEnv>(
         };
 
         let new_measurements = env.measure();
-        let new_score = (objective.evaluate)(&new_measurements);
+        let new_score = (objective.evaluate)(&new_measurements, &baseline);
         let invariants_passed = env.check_invariants();
 
         let improved = invariants_passed && new_score < best_score;

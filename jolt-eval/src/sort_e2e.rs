@@ -238,7 +238,7 @@ pub fn run_optimize_test(
     let obj = ObjectiveFunction {
         name: "naive_sort_time",
         inputs: &[NAIVE_SORT_TIME],
-        evaluate: |m| m.get(&NAIVE_SORT_TIME).copied().unwrap_or(f64::INFINITY),
+        evaluate: |m, _| m.get(&NAIVE_SORT_TIME).copied().unwrap_or(f64::INFINITY),
     };
     let hint = hint.unwrap_or_else(|| {
         format!(
@@ -375,7 +375,7 @@ mod tests {
         let obj = ObjectiveFunction {
             name: "naive_sort_time",
             inputs: &[NAIVE_SORT_TIME],
-            evaluate: |m| m.get(&NAIVE_SORT_TIME).copied().unwrap_or(f64::INFINITY),
+            evaluate: |m, _| m.get(&NAIVE_SORT_TIME).copied().unwrap_or(f64::INFINITY),
         };
         let config = OptimizeConfig {
             num_iterations: 1,
@@ -431,7 +431,7 @@ mod tests {
         let obj = ObjectiveFunction {
             name: "naive_sort_time",
             inputs: &[NAIVE_SORT_TIME],
-            evaluate: |m| m.get(&NAIVE_SORT_TIME).copied().unwrap_or(f64::INFINITY),
+            evaluate: |m, _| m.get(&NAIVE_SORT_TIME).copied().unwrap_or(f64::INFINITY),
         };
         let config = OptimizeConfig {
             num_iterations: 1,

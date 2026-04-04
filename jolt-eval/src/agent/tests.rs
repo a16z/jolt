@@ -724,7 +724,7 @@ fn lloc_obj() -> ObjectiveFunction {
     ObjectiveFunction {
         name: "test_lloc",
         inputs: INPUTS,
-        evaluate: |m| m.get(&LLOC).copied().unwrap_or(f64::INFINITY),
+        evaluate: |m, _| m.get(&LLOC).copied().unwrap_or(f64::INFINITY),
     }
 }
 
@@ -807,7 +807,7 @@ fn optimize_custom_objective_function() {
     let weighted = ObjectiveFunction {
         name: "weighted",
         inputs: INPUTS,
-        evaluate: |m| 2.0 * m.get(&LLOC).unwrap_or(&0.0) + m.get(&HALSTEAD_BUGS).unwrap_or(&0.0),
+        evaluate: |m, _| 2.0 * m.get(&LLOC).unwrap_or(&0.0) + m.get(&HALSTEAD_BUGS).unwrap_or(&0.0),
     };
 
     let agent = MockAgent::from_responses(vec![Ok(AgentResponse {
@@ -1036,8 +1036,9 @@ fn objective_function_struct_evaluates() {
     let obj = lloc_obj();
     let mut m = HashMap::new();
     m.insert(lloc(), 3.5);
-    assert_eq!((obj.evaluate)(&m), 3.5);
+    let b = HashMap::new();
+    assert_eq!((obj.evaluate)(&m, &b), 3.5);
 
     let empty = HashMap::new();
-    assert_eq!((obj.evaluate)(&empty), f64::INFINITY);
+    assert_eq!((obj.evaluate)(&empty, &b), f64::INFINITY);
 }

@@ -166,7 +166,7 @@ fn main() -> eyre::Result<()> {
 
     println!("=== Baseline ===");
     let baseline = env.measure();
-    let baseline_score = (objective.evaluate)(&baseline);
+    let baseline_score = (objective.evaluate)(&baseline, &baseline);
     print_measurements(&baseline);
     println!("Objective: {} = {:.6}\n", objective.name, baseline_score);
 

@@ -120,17 +120,6 @@ impl StaticAnalysisObjective {
         }
     }
 
-    /// Reference scale for normalization. `value / baseline()` yields a
-    /// dimensionless ratio where 1.0 ≈ "typical current value".
-    /// Update these when the codebase changes significantly.
-    pub fn baseline(&self) -> f64 {
-        match self {
-            Self::Lloc(_) => 5500.0,
-            Self::CognitiveComplexity(_) => 4.0,
-            Self::HalsteadBugs(_) => 80.0,
-        }
-    }
-
     /// File paths that an optimizer should be allowed to modify.
     pub fn diff_paths(&self) -> &'static [&'static str] {
         match self {
@@ -192,14 +181,6 @@ impl PerformanceObjective {
             Self::NaiveSortTime => {
                 "Wall-clock time of the naive_sort function in jolt-eval/src/sort_targets.rs"
             }
-        }
-    }
-
-    pub fn baseline(&self) -> f64 {
-        match self {
-            Self::BindLowToHigh(_) => 0.04,
-            Self::BindHighToLow(_) => 0.04,
-            Self::NaiveSortTime => 0.01,
         }
     }
 
@@ -271,14 +252,6 @@ impl OptimizationObjective {
         }
     }
 
-    /// Reference scale for normalization. See [`normalized`].
-    pub fn baseline(&self) -> f64 {
-        match self {
-            Self::StaticAnalysis(s) => s.baseline(),
-            Self::Performance(p) => p.baseline(),
-        }
-    }
-
     pub fn diff_paths(&self) -> &'static [&'static str] {
         match self {
             Self::StaticAnalysis(s) => s.diff_paths(),
@@ -291,23 +264,26 @@ impl OptimizationObjective {
     }
 }
 
-/// Look up an objective's measurement and divide by its [`baseline`](OptimizationObjective::baseline),
-/// yielding a dimensionless ratio where 1.0 ≈ "typical current value".
+/// Look up an objective's measurement and divide by its baseline value,
+/// yielding a dimensionless ratio where 1.0 = the baseline.
 ///
-/// Use this in composite [`ObjectiveFunction`](objective_fn::ObjectiveFunction)
-/// evaluate closures so that objectives with different units contribute
-/// on a comparable scale:
+/// `baselines` is typically the initial measurements captured at the
+/// start of an optimization run (passed as the second argument to
+/// [`ObjectiveFunction::evaluate`](objective_fn::ObjectiveFunction)).
 ///
 /// ```ignore
 /// use jolt_eval::objective::{normalized, LLOC, HALSTEAD_BUGS};
 ///
-/// let evaluate = |m| 0.5 * normalized(&LLOC, m) + 0.5 * normalized(&HALSTEAD_BUGS, m);
+/// let evaluate = |m, b| 0.5 * normalized(&LLOC, m, b) + 0.5 * normalized(&HALSTEAD_BUGS, m, b);
 /// ```
 pub fn normalized(
     obj: &OptimizationObjective,
     measurements: &std::collections::HashMap<OptimizationObjective, f64>,
+    baselines: &std::collections::HashMap<OptimizationObjective, f64>,
 ) -> f64 {
-    measurements.get(obj).copied().unwrap_or(f64::INFINITY) / obj.baseline()
+    let value = measurements.get(obj).copied().unwrap_or(f64::INFINITY);
+    let baseline = baselines.get(obj).copied().unwrap_or(1.0);
+    value / baseline
 }
 
 impl PartialEq for OptimizationObjective {
