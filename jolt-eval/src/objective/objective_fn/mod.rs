@@ -137,4 +137,32 @@ mod tests {
         m.insert(HALSTEAD_BUGS, 100.0);
         assert_eq!((weighted.evaluate)(&m), 120.0);
     }
+
+    #[test]
+    fn normalized_composite_objective() {
+        use crate::objective::normalized;
+
+        // LLOC baseline is 5500, Halstead baseline is 80.
+        // Without normalization, LLOC dominates due to magnitude.
+        // With normalization, both contribute on a comparable scale.
+        const INPUTS: &[OptimizationObjective] = &[LLOC, HALSTEAD_BUGS];
+        let balanced = ObjectiveFunction {
+            name: "balanced_quality",
+            inputs: INPUTS,
+            evaluate: |m| 0.5 * normalized(&LLOC, m) + 0.5 * normalized(&HALSTEAD_BUGS, m),
+        };
+
+        let mut m = HashMap::new();
+        m.insert(LLOC, 5500.0); // exactly at baseline → normalized = 1.0
+        m.insert(HALSTEAD_BUGS, 80.0); // exactly at baseline → normalized = 1.0
+        let score = (balanced.evaluate)(&m);
+        assert!((score - 1.0).abs() < 1e-9, "expected 1.0, got {score}");
+
+        // 10% improvement in LLOC
+        m.insert(LLOC, 4950.0);
+        let score2 = (balanced.evaluate)(&m);
+        assert!(score2 < score, "10% LLOC improvement should reduce score");
+        // 0.5 * (4950/5500) + 0.5 * (80/80) = 0.5 * 0.9 + 0.5 = 0.95
+        assert!((score2 - 0.95).abs() < 1e-9, "expected 0.95, got {score2}");
+    }
 }

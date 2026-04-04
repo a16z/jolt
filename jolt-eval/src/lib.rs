@@ -22,7 +22,7 @@ pub use invariant::{
 };
 pub use objective::objective_fn::ObjectiveFunction;
 pub use objective::{
-    MeasurementError, Objective, OptimizationObjective, PerformanceObjective,
+    normalized, MeasurementError, Objective, OptimizationObjective, PerformanceObjective,
     StaticAnalysisObjective,
 };
 
