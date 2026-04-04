@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use crate::agent::DiffScope;
+
 use super::{
     OptimizationObjective, BIND_HIGH_TO_LOW, BIND_LOW_TO_HIGH, COGNITIVE_COMPLEXITY, HALSTEAD_BUGS,
     LLOC,
@@ -35,6 +37,20 @@ impl ObjectiveFunction {
     /// Look up an objective function by CLI name.
     pub fn by_name(name: &str) -> Option<&'static ObjectiveFunction> {
         Self::all().iter().find(|f| f.name == name)
+    }
+
+    /// Derive a [`DiffScope`] from the union of all input objectives' diff paths.
+    pub fn diff_scope(&self) -> DiffScope {
+        let mut paths = Vec::new();
+        for input in self.inputs {
+            for &p in input.diff_paths() {
+                let s = p.to_string();
+                if !paths.contains(&s) {
+                    paths.push(s);
+                }
+            }
+        }
+        DiffScope::Include(paths)
     }
 }
 

@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use crate::agent::{ClaudeCodeAgent, DiffScope};
+use crate::agent::ClaudeCodeAgent;
 use crate::invariant::synthesis::redteam::{auto_redteam, RedTeamConfig, RedTeamResult};
 use crate::invariant::{CheckError, Invariant, InvariantViolation};
 use crate::objective::objective_fn::ObjectiveFunction;
@@ -251,7 +251,6 @@ pub fn run_optimize_test(
         num_iterations: iterations,
         hint: Some(hint),
         verbose,
-        diff_scope: DiffScope::Include(vec![SORT_TARGETS_PATH.into()]),
     };
 
     println!("=== Optimize e2e: naive bubble sort ===");

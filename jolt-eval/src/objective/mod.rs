@@ -107,6 +107,13 @@ impl StaticAnalysisObjective {
             Self::HalsteadBugs(o) => o.units(),
         }
     }
+
+    /// File paths that an optimizer should be allowed to modify.
+    pub fn diff_paths(&self) -> &'static [&'static str] {
+        match self {
+            Self::Lloc(_) | Self::CognitiveComplexity(_) | Self::HalsteadBugs(_) => &["jolt-core/"],
+        }
+    }
 }
 
 impl PartialEq for StaticAnalysisObjective {
@@ -152,6 +159,13 @@ impl PerformanceObjective {
             Self::BindLowToHigh(o) => o.units(),
             Self::BindHighToLow(o) => o.units(),
             Self::NaiveSortTime => Some("s"),
+        }
+    }
+
+    pub fn diff_paths(&self) -> &'static [&'static str] {
+        match self {
+            Self::BindLowToHigh(_) | Self::BindHighToLow(_) => &["jolt-core/"],
+            Self::NaiveSortTime => &["jolt-eval/src/sort_targets.rs"],
         }
     }
 }
@@ -206,6 +220,13 @@ impl OptimizationObjective {
         match self {
             Self::StaticAnalysis(s) => s.units(),
             Self::Performance(p) => p.units(),
+        }
+    }
+
+    pub fn diff_paths(&self) -> &'static [&'static str] {
+        match self {
+            Self::StaticAnalysis(s) => s.diff_paths(),
+            Self::Performance(p) => p.diff_paths(),
         }
     }
 

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
 
-use crate::agent::{truncate, AgentHarness, DiffScope};
+use crate::agent::{truncate, AgentHarness};
 
 use super::objective_fn::ObjectiveFunction;
 use super::OptimizationObjective;
@@ -12,7 +12,6 @@ pub struct OptimizeConfig {
     pub num_iterations: usize,
     pub hint: Option<String>,
     pub verbose: bool,
-    pub diff_scope: DiffScope,
 }
 
 impl Default for OptimizeConfig {
@@ -21,7 +20,6 @@ impl Default for OptimizeConfig {
             num_iterations: 5,
             hint: None,
             verbose: false,
-            diff_scope: DiffScope::Exclude(vec!["jolt-eval/".into()]),
         }
     }
 }
@@ -101,7 +99,7 @@ pub fn auto_optimize<A: AgentHarness, E: OptimizeEnv>(
             eprintln!("────────────────────────");
         }
 
-        let response = match agent.invoke(repo_dir, &prompt, &config.diff_scope) {
+        let response = match agent.invoke(repo_dir, &prompt, &objective.diff_scope()) {
             Ok(r) => r,
             Err(e) => {
                 tracing::info!("Agent error: {e}");
