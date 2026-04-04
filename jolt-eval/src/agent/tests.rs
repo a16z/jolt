@@ -959,7 +959,7 @@ fn optimize_prompt_includes_past_attempts() {
     assert_eq!(prompts.len(), 2);
     assert!(!prompts[0].contains("Previous attempts"));
     assert!(prompts[1].contains("Previous attempts"));
-    assert!(prompts[1].contains("iteration 1"));
+    assert!(prompts[1].contains("Iteration 1"));
 }
 
 #[test]

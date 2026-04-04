@@ -6,7 +6,6 @@ pub mod synthesis;
 
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::path::Path;
 
 /// Error during objective measurement.
 #[derive(Debug, Clone)]
@@ -74,15 +73,17 @@ pub enum StaticAnalysisObjective {
 }
 
 impl StaticAnalysisObjective {
-    pub fn all(root: &Path) -> Vec<Self> {
+    pub fn all() -> Vec<Self> {
         vec![
-            Self::Lloc(code_quality::lloc::LlocObjective::new(root)),
-            Self::CognitiveComplexity(code_quality::cognitive::CognitiveComplexityObjective::new(
-                root,
-            )),
-            Self::HalsteadBugs(code_quality::halstead_bugs::HalsteadBugsObjective::new(
-                root,
-            )),
+            Self::Lloc(code_quality::lloc::LlocObjective {
+                target_dir: "jolt-core/src",
+            }),
+            Self::CognitiveComplexity(code_quality::cognitive::CognitiveComplexityObjective {
+                target_dir: "jolt-core/src",
+            }),
+            Self::HalsteadBugs(code_quality::halstead_bugs::HalsteadBugsObjective {
+                target_dir: "jolt-core/src",
+            }),
         ]
     }
 
@@ -213,9 +214,9 @@ pub const NAIVE_SORT_TIME: OptimizationObjective = OptimizationObjective::Perfor
 );
 
 impl OptimizationObjective {
-    pub fn all(root: &Path) -> Vec<Self> {
+    pub fn all() -> Vec<Self> {
         let mut all = Vec::new();
-        for s in StaticAnalysisObjective::all(root) {
+        for s in StaticAnalysisObjective::all() {
             all.push(Self::StaticAnalysis(s));
         }
         for p in PerformanceObjective::all() {
@@ -331,10 +332,7 @@ mod tests {
 
     #[test]
     fn static_analysis_all_measures() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap();
-        for sa in StaticAnalysisObjective::all(root) {
+        for sa in StaticAnalysisObjective::all() {
             let val = sa.collect_measurement().unwrap();
             assert!(val > 0.0, "{} should be > 0, got {val}", sa.name());
         }
@@ -343,33 +341,25 @@ mod tests {
     #[test]
     fn optimization_objective_hashmap_key() {
         use std::collections::HashMap;
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap();
-        let lloc = OptimizationObjective::StaticAnalysis(StaticAnalysisObjective::Lloc(
-            code_quality::lloc::LlocObjective::new(root),
-        ));
-        let bind = OptimizationObjective::Performance(PerformanceObjective::BindLowToHigh(
-            performance::binding::BindLowToHighObjective,
-        ));
+        let lloc = LLOC;
+        let bind = BIND_LOW_TO_HIGH;
         let mut m = HashMap::new();
         m.insert(lloc, 100.0);
         m.insert(bind, 0.5);
 
         // Look up with a freshly constructed key — works because Hash/Eq
-        // is discriminant-based.
+        // is discriminant-based, inner data doesn't matter.
         let lloc2 = OptimizationObjective::StaticAnalysis(StaticAnalysisObjective::Lloc(
-            code_quality::lloc::LlocObjective::new(Path::new("/other")),
+            code_quality::lloc::LlocObjective {
+                target_dir: "other/path",
+            },
         ));
         assert_eq!(m[&lloc2], 100.0);
     }
 
     #[test]
     fn optimization_objective_all() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap();
-        let all = OptimizationObjective::all(root);
+        let all = OptimizationObjective::all();
         assert_eq!(all.len(), 6); // 3 static + 3 perf
         assert!(all.iter().any(|o| o.is_perf()));
         assert!(all.iter().any(|o| !o.is_perf()));

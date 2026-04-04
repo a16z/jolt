@@ -29,8 +29,6 @@ fn main() -> eyre::Result<()> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
 
-    let repo_root = std::env::current_dir()?;
-
     // Performance objectives (from Criterion)
     if !cli.no_bench {
         let perf = PerformanceObjective::all();
@@ -88,7 +86,7 @@ fn main() -> eyre::Result<()> {
     }
 
     // Static-analysis objectives
-    for sa in StaticAnalysisObjective::all(&repo_root) {
+    for sa in StaticAnalysisObjective::all() {
         if let Some(ref name) = cli.objective {
             if sa.name() != name.as_str() {
                 continue;

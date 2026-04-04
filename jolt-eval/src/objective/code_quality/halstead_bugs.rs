@@ -8,23 +8,17 @@ use crate::objective::{
 };
 
 pub const HALSTEAD_BUGS: OptimizationObjective = OptimizationObjective::StaticAnalysis(
-    StaticAnalysisObjective::HalsteadBugs(HalsteadBugsObjective { root: "" }),
+    StaticAnalysisObjective::HalsteadBugs(HalsteadBugsObjective {
+        target_dir: "jolt-core/src",
+    }),
 );
 
 /// Estimated number of delivered bugs across all Rust files under
-/// `jolt-core/src/`, based on Halstead's bug prediction formula
+/// a target directory, based on Halstead's bug prediction formula
 /// (B = V / 3000, where V is program volume).
 #[derive(Clone, Copy)]
 pub struct HalsteadBugsObjective {
-    pub(crate) root: &'static str,
-}
-
-impl HalsteadBugsObjective {
-    pub fn new(root: &Path) -> Self {
-        Self {
-            root: Box::leak(root.to_string_lossy().into_owned().into_boxed_str()),
-        }
-    }
+    pub(crate) target_dir: &'static str,
 }
 
 impl Objective for HalsteadBugsObjective {
@@ -41,7 +35,8 @@ impl Objective for HalsteadBugsObjective {
     fn setup(&self) {}
 
     fn collect_measurement(&self) -> Result<f64, MeasurementError> {
-        let src_dir = std::path::PathBuf::from(self.root).join("jolt-core/src");
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let src_dir = repo_root.join(self.target_dir);
         let mut total = 0.0;
         for path in rust_files(&src_dir)? {
             if let Some(space) = analyze_rust_file(&path) {
@@ -67,8 +62,9 @@ mod tests {
 
     #[test]
     fn halstead_bugs_on_jolt_core() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-        let obj = HalsteadBugsObjective::new(root);
+        let obj = HalsteadBugsObjective {
+            target_dir: "jolt-core/src",
+        };
         let val = obj.collect_measurement().unwrap();
         assert!(val > 0.0, "halstead bugs should be > 0, got {val}");
     }

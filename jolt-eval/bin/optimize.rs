@@ -57,7 +57,7 @@ impl OptimizeEnv for RealEnv {
     fn measure(&mut self) -> HashMap<OptimizationObjective, f64> {
         let mut results = HashMap::new();
 
-        for sa in StaticAnalysisObjective::all(&self.repo_dir) {
+        for sa in StaticAnalysisObjective::all() {
             if let Ok(v) = sa.collect_measurement() {
                 results.insert(OptimizationObjective::StaticAnalysis(sa), v);
             }

@@ -8,22 +8,14 @@ use crate::objective::{
 
 pub const LLOC: OptimizationObjective =
     OptimizationObjective::StaticAnalysis(StaticAnalysisObjective::Lloc(LlocObjective {
-        root: "",
+        target_dir: "jolt-core/src",
     }));
 
 /// Total logical lines of code (LLOC) across all Rust files under
-/// `jolt-core/src/`.
+/// a target directory.
 #[derive(Clone, Copy)]
 pub struct LlocObjective {
-    pub(crate) root: &'static str,
-}
-
-impl LlocObjective {
-    pub fn new(root: &Path) -> Self {
-        Self {
-            root: Box::leak(root.to_string_lossy().into_owned().into_boxed_str()),
-        }
-    }
+    pub(crate) target_dir: &'static str,
 }
 
 impl Objective for LlocObjective {
@@ -40,7 +32,8 @@ impl Objective for LlocObjective {
     fn setup(&self) {}
 
     fn collect_measurement(&self) -> Result<f64, MeasurementError> {
-        let src_dir = PathBuf::from(self.root).join("jolt-core/src");
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let src_dir = repo_root.join(self.target_dir);
         let mut total = 0.0;
         for path in rust_files(&src_dir)? {
             if let Some(space) = analyze_rust_file(&path) {
@@ -89,8 +82,9 @@ mod tests {
 
     #[test]
     fn lloc_on_jolt_core() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-        let obj = LlocObjective::new(root);
+        let obj = LlocObjective {
+            target_dir: "jolt-core/src",
+        };
         let val = obj.collect_measurement().unwrap();
         assert!(val > 1000.0, "LLOC should be > 1000, got {val}");
     }
