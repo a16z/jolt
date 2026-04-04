@@ -2,6 +2,7 @@ use clap::Parser;
 use tracing::info;
 
 use jolt_eval::agent::ClaudeCodeAgent;
+use jolt_eval::invariant::sort_e2e;
 use jolt_eval::invariant::synthesis::redteam::{auto_redteam, RedTeamConfig, RedTeamResult};
 use jolt_eval::invariant::{JoltInvariants, SynthesisTarget};
 
@@ -9,9 +10,17 @@ use jolt_eval::invariant::{JoltInvariants, SynthesisTarget};
 #[command(name = "redteam")]
 #[command(about = "AI-driven red team testing of Jolt invariants")]
 struct Cli {
-    /// Name of the invariant to test
+    /// Name of the invariant to test (mutually exclusive with --test).
+    #[arg(long, conflicts_with = "test")]
+    invariant: Option<String>,
+
+    /// Run the built-in e2e sort test instead of a named invariant.
+    #[arg(long, conflicts_with = "invariant")]
+    test: bool,
+
+    /// List all red-teamable invariants and exit.
     #[arg(long)]
-    invariant: String,
+    list: bool,
 
     /// Number of red-team iterations
     #[arg(long, default_value = "10")]
@@ -28,10 +37,6 @@ struct Cli {
     /// Extra context or guidance for the red-team agent
     #[arg(long)]
     hint: Option<String>,
-
-    /// List available red-teamable invariants and exit
-    #[arg(long)]
-    list: bool,
 }
 
 fn main() -> eyre::Result<()> {
@@ -45,20 +50,29 @@ fn main() -> eyre::Result<()> {
                 println!("  {}", inv.name());
             }
         }
+        println!("\nBuilt-in e2e targets (use --test):");
+        println!("  candidate_sort");
         return Ok(());
     }
+
+    if cli.test {
+        sort_e2e::run_redteam_test(&cli.model, cli.max_turns, cli.iterations, cli.hint);
+        return Ok(());
+    }
+
+    let invariant_name = cli
+        .invariant
+        .as_deref()
+        .expect("--invariant or --test is required (use --list to see options)");
 
     let all = JoltInvariants::all();
     let invariant = all
         .iter()
         .filter(|inv| inv.targets().contains(SynthesisTarget::RedTeam))
-        .find(|inv| inv.name() == cli.invariant.as_str());
+        .find(|inv| inv.name() == invariant_name);
 
     let Some(invariant) = invariant else {
-        eprintln!(
-            "Invariant '{}' not found or not red-teamable.",
-            cli.invariant
-        );
+        eprintln!("Invariant '{invariant_name}' not found or not red-teamable.");
         eprintln!("Run with --list to see available invariants.");
         std::process::exit(1);
     };
@@ -71,8 +85,8 @@ fn main() -> eyre::Result<()> {
     let repo_dir = std::env::current_dir()?;
 
     info!(
-        "Starting red team: invariant={}, iterations={}, model={}",
-        cli.invariant, cli.iterations, cli.model
+        "Starting red team: invariant={invariant_name}, iterations={}, model={}",
+        cli.iterations, cli.model
     );
 
     let result = match invariant {

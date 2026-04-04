@@ -5,6 +5,7 @@ use std::process::Command;
 use clap::Parser;
 
 use jolt_eval::agent::ClaudeCodeAgent;
+use jolt_eval::invariant::sort_e2e;
 use jolt_eval::invariant::JoltInvariants;
 use jolt_eval::objective::objective_fn::ObjectiveFunction;
 use jolt_eval::objective::optimize::{auto_optimize, OptimizeConfig, OptimizeEnv};
@@ -14,10 +15,13 @@ use jolt_eval::objective::{OptimizationObjective, PerformanceObjective, StaticAn
 #[command(name = "optimize")]
 #[command(about = "AI-driven optimization of Jolt codebase objectives")]
 struct Cli {
-    /// Objective function to minimize.
-    /// Run with --list to see available functions.
-    #[arg(long)]
+    /// Objective function to minimize (mutually exclusive with --test).
+    #[arg(long, conflicts_with = "test")]
     objective: Option<String>,
+
+    /// Run the built-in e2e sort optimization test.
+    #[arg(long, conflicts_with = "objective")]
+    test: bool,
 
     /// List all available objective functions and exit.
     #[arg(long)]
@@ -129,13 +133,20 @@ fn main() -> eyre::Result<()> {
             let inputs: Vec<_> = f.inputs.iter().map(|i| i.name().to_string()).collect();
             println!("  {:<35} inputs: {}", f.name, inputs.join(", "));
         }
+        println!("\nBuilt-in e2e targets (use --test):");
+        println!("  naive_sort");
+        return Ok(());
+    }
+
+    if cli.test {
+        sort_e2e::run_optimize_test(&cli.model, cli.max_turns, cli.iterations, cli.hint);
         return Ok(());
     }
 
     let objective_name = cli
         .objective
         .as_deref()
-        .expect("--objective is required (use --list to see options)");
+        .expect("--objective or --test is required (use --list to see options)");
 
     let objective = ObjectiveFunction::by_name(objective_name).unwrap_or_else(|| {
         eprintln!("Unknown objective function: {objective_name}");

@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod macro_tests;
+pub mod sort_e2e;
 pub mod soundness;
 pub mod split_eq_bind;
 pub mod synthesis;
