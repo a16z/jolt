@@ -34,9 +34,7 @@ pub struct OptimizeResult {
 
 /// Record of a single optimization attempt.
 pub struct OptimizationAttempt {
-    pub description: String,
-    pub diff: String,
-    pub measurements: HashMap<OptimizationObjective, f64>,
+    pub iteration: usize,
     pub score: f64,
     pub invariants_passed: bool,
     /// Relative path to the persisted attempt directory, if available.
@@ -238,9 +236,7 @@ pub fn auto_optimize<A: AgentHarness, E: OptimizeEnv>(
         );
 
         let attempt = OptimizationAttempt {
-            description: format!("iteration {iter}"),
-            diff: truncate(&diff_text, 5000).to_string(),
-            measurements: new_measurements.clone(),
+            iteration: iter,
             score: new_score,
             invariants_passed,
             path: attempt_path,
@@ -393,13 +389,13 @@ fn build_optimize_prompt(
             };
             if let Some(ref path) = attempt.path {
                 prompt.push_str(&format!(
-                    "- **{}** — {status_label}, score={:.6}. Details: {path}/\n",
-                    attempt.description, attempt.score,
+                    "- **Iteration {}** — {status_label}, score={:.6}. Details: {path}/\n",
+                    attempt.iteration, attempt.score,
                 ));
             } else {
                 prompt.push_str(&format!(
-                    "- **{}** — {status_label}, score={:.6}\n",
-                    attempt.description, attempt.score,
+                    "- **Iteration {}** — {status_label}, score={:.6}\n",
+                    attempt.iteration, attempt.score,
                 ));
             }
         }
