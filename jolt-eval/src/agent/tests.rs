@@ -8,15 +8,14 @@ use crate::invariant::synthesis::redteam::{auto_redteam, RedTeamConfig, RedTeamR
 use crate::invariant::{
     CheckError, Invariant, InvariantTargets, InvariantViolation, SynthesisTarget,
 };
-use crate::objective::optimize::{
-    auto_optimize, ObjectiveFunction, OptimizeConfig, OptimizeEnv, SingleObjective,
-};
+use crate::objective::objective_fn::ObjectiveFunction;
+use crate::objective::optimize::{auto_optimize, OptimizeConfig, OptimizeEnv};
+use crate::objective::{OptimizationObjective, HALSTEAD_BUGS, LLOC};
 
 // =========================================================================
 // Test invariants
 // =========================================================================
 
-/// Always passes -- the red-team loop should never find a violation.
 struct AlwaysPassInvariant;
 impl InvariantTargets for AlwaysPassInvariant {
     fn targets(&self) -> EnumSet<SynthesisTarget> {
@@ -41,7 +40,6 @@ impl Invariant for AlwaysPassInvariant {
     }
 }
 
-/// Always fails -- the red-team loop should find a violation immediately.
 struct AlwaysFailInvariant;
 impl InvariantTargets for AlwaysFailInvariant {
     fn targets(&self) -> EnumSet<SynthesisTarget> {
@@ -68,7 +66,6 @@ impl Invariant for AlwaysFailInvariant {
     }
 }
 
-/// Fails only when the input is 0 -- tests that fuzz inputs can trigger it.
 struct FailsOnZeroInvariant;
 impl InvariantTargets for FailsOnZeroInvariant {
     fn targets(&self) -> EnumSet<SynthesisTarget> {
@@ -95,7 +92,7 @@ impl Invariant for FailsOnZeroInvariant {
         }
     }
     fn seed_corpus(&self) -> Vec<u8> {
-        vec![1, 2, 3] // seed corpus avoids 0
+        vec![1, 2, 3]
     }
 }
 
@@ -106,7 +103,9 @@ impl Invariant for FailsOnZeroInvariant {
 #[test]
 fn mock_always_ok_returns_text() {
     let agent = MockAgent::always_ok("hello world");
-    let resp = agent.invoke(Path::new("/tmp"), "test prompt", &DiffScope::All).unwrap();
+    let resp = agent
+        .invoke(Path::new("/tmp"), "test prompt", &DiffScope::All)
+        .unwrap();
     assert_eq!(resp.text, "hello world");
     assert!(resp.diff.is_none());
 }
@@ -114,16 +113,24 @@ fn mock_always_ok_returns_text() {
 #[test]
 fn mock_always_err_returns_error() {
     let agent = MockAgent::always_err("boom");
-    let err = agent.invoke(Path::new("/tmp"), "test", &DiffScope::All).unwrap_err();
+    let err = agent
+        .invoke(Path::new("/tmp"), "test", &DiffScope::All)
+        .unwrap_err();
     assert_eq!(err.message, "boom");
 }
 
 #[test]
 fn mock_records_prompts() {
     let agent = MockAgent::always_ok("ok");
-    agent.invoke(Path::new("/tmp"), "prompt 1", &DiffScope::All).unwrap();
-    agent.invoke(Path::new("/tmp"), "prompt 2", &DiffScope::All).unwrap();
-    agent.invoke(Path::new("/tmp"), "prompt 3", &DiffScope::All).unwrap();
+    agent
+        .invoke(Path::new("/tmp"), "prompt 1", &DiffScope::All)
+        .unwrap();
+    agent
+        .invoke(Path::new("/tmp"), "prompt 2", &DiffScope::All)
+        .unwrap();
+    agent
+        .invoke(Path::new("/tmp"), "prompt 3", &DiffScope::All)
+        .unwrap();
 
     let prompts = agent.recorded_prompts();
     assert_eq!(prompts.len(), 3);
@@ -136,7 +143,9 @@ fn mock_records_prompts() {
 fn mock_always_ok_repeats_indefinitely() {
     let agent = MockAgent::always_ok("same");
     for _ in 0..100 {
-        let resp = agent.invoke(Path::new("/tmp"), "x", &DiffScope::All).unwrap();
+        let resp = agent
+            .invoke(Path::new("/tmp"), "x", &DiffScope::All)
+            .unwrap();
         assert_eq!(resp.text, "same");
     }
 }
@@ -145,7 +154,9 @@ fn mock_always_ok_repeats_indefinitely() {
 fn mock_always_err_repeats_indefinitely() {
     let agent = MockAgent::always_err("fail");
     for _ in 0..100 {
-        let err = agent.invoke(Path::new("/tmp"), "x", &DiffScope::All).unwrap_err();
+        let err = agent
+            .invoke(Path::new("/tmp"), "x", &DiffScope::All)
+            .unwrap_err();
         assert_eq!(err.message, "fail");
     }
 }
@@ -164,15 +175,21 @@ fn mock_from_responses_returns_in_order() {
         Err(AgentError::new("third fails")),
     ]);
 
-    let r1 = agent.invoke(Path::new("/tmp"), "a", &DiffScope::All).unwrap();
+    let r1 = agent
+        .invoke(Path::new("/tmp"), "a", &DiffScope::All)
+        .unwrap();
     assert_eq!(r1.text, "first");
     assert!(r1.diff.is_none());
 
-    let r2 = agent.invoke(Path::new("/tmp"), "b", &DiffScope::All).unwrap();
+    let r2 = agent
+        .invoke(Path::new("/tmp"), "b", &DiffScope::All)
+        .unwrap();
     assert_eq!(r2.text, "second");
     assert_eq!(r2.diff.as_deref(), Some("diff"));
 
-    let r3 = agent.invoke(Path::new("/tmp"), "c", &DiffScope::All).unwrap_err();
+    let r3 = agent
+        .invoke(Path::new("/tmp"), "c", &DiffScope::All)
+        .unwrap_err();
     assert_eq!(r3.message, "third fails");
 }
 
@@ -189,11 +206,16 @@ fn mock_from_responses_last_entry_repeats() {
         }),
     ]);
 
-    agent.invoke(Path::new("/tmp"), "a", &DiffScope::All).unwrap();
-    let r2 = agent.invoke(Path::new("/tmp"), "b", &DiffScope::All).unwrap();
+    agent
+        .invoke(Path::new("/tmp"), "a", &DiffScope::All)
+        .unwrap();
+    let r2 = agent
+        .invoke(Path::new("/tmp"), "b", &DiffScope::All)
+        .unwrap();
     assert_eq!(r2.text, "last");
-    // After exhausting queue, last response repeats
-    let r3 = agent.invoke(Path::new("/tmp"), "c", &DiffScope::All).unwrap();
+    let r3 = agent
+        .invoke(Path::new("/tmp"), "c", &DiffScope::All)
+        .unwrap();
     assert_eq!(r3.text, "last");
 }
 
@@ -204,7 +226,9 @@ fn mock_with_diff() {
         diff: Some("--- a/foo\n+++ b/foo\n@@ ...\n-old\n+new".into()),
     })]);
 
-    let resp = agent.invoke(Path::new("/tmp"), "optimize", &DiffScope::All).unwrap();
+    let resp = agent
+        .invoke(Path::new("/tmp"), "optimize", &DiffScope::All)
+        .unwrap();
     assert!(resp.diff.is_some());
     assert!(resp.diff.unwrap().contains("+new"));
 }
@@ -213,7 +237,6 @@ fn mock_with_diff() {
 // auto_redteam tests with MockAgent
 // =========================================================================
 
-/// Helper: build a structured envelope response string.
 fn envelope(analysis: &str, counterexample: impl serde::Serialize) -> String {
     serde_json::json!({
         "analysis": analysis,
@@ -226,7 +249,10 @@ fn envelope(analysis: &str, counterexample: impl serde::Serialize) -> String {
 fn redteam_no_violation_when_invariant_always_passes() {
     let invariant = AlwaysPassInvariant;
     let agent = MockAgent::always_ok(&envelope("I analyzed the code.", 42));
-    let config = RedTeamConfig { num_iterations: 3, ..Default::default() };
+    let config = RedTeamConfig {
+        num_iterations: 3,
+        ..Default::default()
+    };
 
     let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
@@ -247,10 +273,12 @@ fn redteam_no_violation_when_invariant_always_passes() {
 
 #[test]
 fn redteam_finds_violation_with_structured_response() {
-    // AlwaysFailInvariant rejects every input.
     let invariant = AlwaysFailInvariant;
     let agent = MockAgent::always_ok(&envelope("I found a bug!", 99));
-    let config = RedTeamConfig { num_iterations: 10, ..Default::default() };
+    let config = RedTeamConfig {
+        num_iterations: 10,
+        ..Default::default()
+    };
 
     let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
@@ -271,10 +299,12 @@ fn redteam_finds_violation_with_structured_response() {
 
 #[test]
 fn redteam_finds_violation_with_targeted_input() {
-    // FailsOnZeroInvariant only fails for input 0.
     let invariant = FailsOnZeroInvariant;
     let agent = MockAgent::always_ok(&envelope("Try zero", 0));
-    let config = RedTeamConfig { num_iterations: 5, ..Default::default() };
+    let config = RedTeamConfig {
+        num_iterations: 5,
+        ..Default::default()
+    };
 
     let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
@@ -295,7 +325,10 @@ fn redteam_finds_violation_with_targeted_input() {
 fn redteam_no_violation_when_agent_misses() {
     let invariant = FailsOnZeroInvariant;
     let agent = MockAgent::always_ok(&envelope("Trying 1", 1));
-    let config = RedTeamConfig { num_iterations: 2, ..Default::default() };
+    let config = RedTeamConfig {
+        num_iterations: 2,
+        ..Default::default()
+    };
 
     let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
@@ -314,7 +347,10 @@ fn redteam_no_violation_when_agent_misses() {
 fn redteam_handles_agent_errors_gracefully() {
     let invariant = AlwaysPassInvariant;
     let agent = MockAgent::always_err("network timeout");
-    let config = RedTeamConfig { num_iterations: 3, ..Default::default() };
+    let config = RedTeamConfig {
+        num_iterations: 3,
+        ..Default::default()
+    };
 
     let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
@@ -334,10 +370,12 @@ fn redteam_handles_agent_errors_gracefully() {
 
 #[test]
 fn redteam_handles_no_json_in_response() {
-    // Agent returns plain text (no envelope, no code block)
     let invariant = AlwaysPassInvariant;
     let agent = MockAgent::always_ok("I looked around but have no candidate to offer.");
-    let config = RedTeamConfig { num_iterations: 1, ..Default::default() };
+    let config = RedTeamConfig {
+        num_iterations: 1,
+        ..Default::default()
+    };
 
     let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
@@ -354,10 +392,12 @@ fn redteam_handles_no_json_in_response() {
 
 #[test]
 fn redteam_handles_invalid_counterexample_type() {
-    // Structured envelope with wrong counterexample type for Input=u8
     let invariant = AlwaysPassInvariant;
     let agent = MockAgent::always_ok(&envelope("Here", "not_a_number"));
-    let config = RedTeamConfig { num_iterations: 1, ..Default::default() };
+    let config = RedTeamConfig {
+        num_iterations: 1,
+        ..Default::default()
+    };
 
     let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
@@ -374,10 +414,12 @@ fn redteam_handles_invalid_counterexample_type() {
 
 #[test]
 fn redteam_fallback_extracts_json_from_freeform_text() {
-    // Agent doesn't return structured envelope, but has a code block
     let invariant = AlwaysFailInvariant;
     let agent = MockAgent::always_ok("Found it!\n```json\n77\n```");
-    let config = RedTeamConfig { num_iterations: 1, ..Default::default() };
+    let config = RedTeamConfig {
+        num_iterations: 1,
+        ..Default::default()
+    };
 
     let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
@@ -393,7 +435,10 @@ fn redteam_fallback_extracts_json_from_freeform_text() {
 fn redteam_prompt_includes_invariant_description() {
     let invariant = AlwaysPassInvariant;
     let agent = MockAgent::always_ok(&envelope("ok", 0));
-    let config = RedTeamConfig { num_iterations: 1, ..Default::default() };
+    let config = RedTeamConfig {
+        num_iterations: 1,
+        ..Default::default()
+    };
 
     auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
@@ -407,7 +452,10 @@ fn redteam_prompt_includes_invariant_description() {
 fn redteam_prompt_includes_input_example() {
     let invariant = AlwaysPassInvariant;
     let agent = MockAgent::always_ok(&envelope("ok", 0));
-    let config = RedTeamConfig { num_iterations: 1, ..Default::default() };
+    let config = RedTeamConfig {
+        num_iterations: 1,
+        ..Default::default()
+    };
 
     auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
@@ -420,7 +468,10 @@ fn redteam_prompt_includes_input_example() {
 fn redteam_prompt_includes_failed_attempts_after_first_iteration() {
     let invariant = AlwaysPassInvariant;
     let agent = MockAgent::always_ok(&envelope("Tried something", 42));
-    let config = RedTeamConfig { num_iterations: 3, ..Default::default() };
+    let config = RedTeamConfig {
+        num_iterations: 3,
+        ..Default::default()
+    };
 
     auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
@@ -437,7 +488,10 @@ fn redteam_prompt_includes_failed_attempts_after_first_iteration() {
 fn redteam_zero_iterations_returns_immediately() {
     let invariant = AlwaysPassInvariant;
     let agent = MockAgent::always_ok("should not be called");
-    let config = RedTeamConfig { num_iterations: 0, ..Default::default() };
+    let config = RedTeamConfig {
+        num_iterations: 0,
+        ..Default::default()
+    };
 
     let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
@@ -465,7 +519,10 @@ fn redteam_mixed_agent_responses() {
             diff: None,
         }),
     ]);
-    let config = RedTeamConfig { num_iterations: 3, ..Default::default() };
+    let config = RedTeamConfig {
+        num_iterations: 3,
+        ..Default::default()
+    };
 
     let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
 
@@ -486,9 +543,10 @@ fn redteam_mixed_agent_responses() {
 
 #[test]
 fn agent_harness_is_object_safe() {
-    // Verify we can use AgentHarness as a trait object
     let agent: Box<dyn AgentHarness> = Box::new(MockAgent::always_ok("hi"));
-    let resp = agent.invoke(Path::new("/tmp"), "hello", &DiffScope::All).unwrap();
+    let resp = agent
+        .invoke(Path::new("/tmp"), "hello", &DiffScope::All)
+        .unwrap();
     assert_eq!(resp.text, "hi");
 }
 
@@ -496,12 +554,12 @@ fn agent_harness_is_object_safe() {
 fn agent_harness_works_with_arc() {
     use std::sync::Arc;
     let agent: Arc<dyn AgentHarness> = Arc::new(MockAgent::always_ok("shared"));
-    let resp = agent.invoke(Path::new("/tmp"), "test", &DiffScope::All).unwrap();
+    let resp = agent
+        .invoke(Path::new("/tmp"), "test", &DiffScope::All)
+        .unwrap();
     assert_eq!(resp.text, "shared");
 }
 
-/// A custom multi-agent harness that fans out to N agents and returns the
-/// first successful response. Demonstrates the trait's extensibility.
 struct FirstSuccessHarness {
     agents: Vec<Box<dyn AgentHarness>>,
 }
@@ -532,7 +590,9 @@ fn custom_multi_agent_harness() {
         ],
     };
 
-    let resp = harness.invoke(Path::new("/tmp"), "test", &DiffScope::All).unwrap();
+    let resp = harness
+        .invoke(Path::new("/tmp"), "test", &DiffScope::All)
+        .unwrap();
     assert_eq!(resp.text, "agent 3 succeeded");
 }
 
@@ -545,7 +605,9 @@ fn custom_multi_agent_all_fail() {
         ],
     };
 
-    let err = harness.invoke(Path::new("/tmp"), "test", &DiffScope::All).unwrap_err();
+    let err = harness
+        .invoke(Path::new("/tmp"), "test", &DiffScope::All)
+        .unwrap_err();
     assert_eq!(err.message, "All agents failed");
 }
 
@@ -559,14 +621,16 @@ fn custom_harness_plugs_into_auto_redteam() {
     };
 
     let invariant = AlwaysPassInvariant;
-    let config = RedTeamConfig { num_iterations: 2, ..Default::default() };
+    let config = RedTeamConfig {
+        num_iterations: 2,
+        ..Default::default()
+    };
 
     let result = auto_redteam(&invariant, &config, &harness, Path::new("/tmp"));
 
     match result {
         RedTeamResult::NoViolation { attempts } => {
             assert_eq!(attempts.len(), 2);
-            // The harness should have used agent 2's response
             assert!(attempts[0].approach.contains("agent 2 found nothing"));
         }
         _ => panic!("Expected NoViolation"),
@@ -577,8 +641,16 @@ fn custom_harness_plugs_into_auto_redteam() {
 // Mock OptimizeEnv
 // =========================================================================
 
+fn lloc() -> OptimizationObjective {
+    LLOC
+}
+
+fn halstead() -> OptimizationObjective {
+    HALSTEAD_BUGS
+}
+
 struct MockOptimizeEnv {
-    measurements: Vec<HashMap<String, f64>>,
+    measurements: Vec<HashMap<OptimizationObjective, f64>>,
     measure_index: usize,
     invariants_pass: Vec<bool>,
     invariant_index: usize,
@@ -600,7 +672,7 @@ impl MockOptimizeEnv {
         }
     }
 
-    fn with_measurements(mut self, measurements: Vec<HashMap<String, f64>>) -> Self {
+    fn with_measurements(mut self, measurements: Vec<HashMap<OptimizationObjective, f64>>) -> Self {
         self.measurements = measurements;
         self
     }
@@ -612,7 +684,7 @@ impl MockOptimizeEnv {
 }
 
 impl OptimizeEnv for MockOptimizeEnv {
-    fn measure(&mut self) -> HashMap<String, f64> {
+    fn measure(&mut self) -> HashMap<OptimizationObjective, f64> {
         if self.measurements.is_empty() {
             return HashMap::new();
         }
@@ -643,12 +715,24 @@ impl OptimizeEnv for MockOptimizeEnv {
     }
 }
 
-fn m(pairs: &[(&str, f64)]) -> HashMap<String, f64> {
-    pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect()
+fn m(pairs: &[(OptimizationObjective, f64)]) -> HashMap<OptimizationObjective, f64> {
+    pairs.iter().cloned().collect()
 }
 
-fn time_obj() -> SingleObjective {
-    SingleObjective { name: "time".into() }
+fn lloc_obj() -> ObjectiveFunction {
+    const INPUTS: &[OptimizationObjective] = &[LLOC];
+    ObjectiveFunction {
+        name: "test_lloc",
+        inputs: INPUTS,
+        evaluate: |m| m.get(&LLOC).copied().unwrap_or(f64::INFINITY),
+    }
+}
+
+fn opt_config(iterations: usize) -> OptimizeConfig {
+    OptimizeConfig {
+        num_iterations: iterations,
+        hint: None,
+    }
 }
 
 // =========================================================================
@@ -662,13 +746,11 @@ fn optimize_accepts_improvement() {
         diff: Some("fake diff".into()),
     })]);
 
-    let mut env = MockOptimizeEnv::new().with_measurements(vec![
-        m(&[("time", 10.0)]),
-        m(&[("time", 8.0)]),
-    ]);
+    let mut env =
+        MockOptimizeEnv::new().with_measurements(vec![m(&[(lloc(), 10.0)]), m(&[(lloc(), 8.0)])]);
 
-    let config = OptimizeConfig { num_iterations: 1, hint: None };
-    let obj = time_obj();
+    let config = opt_config(1);
+    let obj = lloc_obj();
     let result = auto_optimize(&agent, &mut env, &obj, &config, Path::new("/tmp"));
 
     assert_eq!(result.attempts.len(), 1);
@@ -685,13 +767,11 @@ fn optimize_rejects_regression() {
         diff: Some("bad diff".into()),
     })]);
 
-    let mut env = MockOptimizeEnv::new().with_measurements(vec![
-        m(&[("time", 10.0)]),
-        m(&[("time", 12.0)]),
-    ]);
+    let mut env =
+        MockOptimizeEnv::new().with_measurements(vec![m(&[(lloc(), 10.0)]), m(&[(lloc(), 12.0)])]);
 
-    let config = OptimizeConfig { num_iterations: 1, hint: None };
-    let obj = time_obj();
+    let config = opt_config(1);
+    let obj = lloc_obj();
     let result = auto_optimize(&agent, &mut env, &obj, &config, Path::new("/tmp"));
 
     assert_eq!(result.attempts.len(), 1);
@@ -708,14 +788,11 @@ fn optimize_rejects_when_invariants_fail() {
     })]);
 
     let mut env = MockOptimizeEnv::new()
-        .with_measurements(vec![
-            m(&[("time", 10.0)]),
-            m(&[("time", 5.0)]),
-        ])
+        .with_measurements(vec![m(&[(lloc(), 10.0)]), m(&[(lloc(), 5.0)])])
         .with_invariants(vec![false]);
 
-    let config = OptimizeConfig { num_iterations: 1, hint: None };
-    let obj = time_obj();
+    let config = opt_config(1);
+    let obj = lloc_obj();
     let result = auto_optimize(&agent, &mut env, &obj, &config, Path::new("/tmp"));
 
     assert!(!result.attempts[0].invariants_passed);
@@ -726,14 +803,12 @@ fn optimize_rejects_when_invariants_fail() {
 
 #[test]
 fn optimize_custom_objective_function() {
-    // Weighted sum: 2*time + size. Agent improves time but regresses size.
-    struct WeightedSum;
-    impl ObjectiveFunction for WeightedSum {
-        fn description(&self) -> String { "Minimize 2*time + size".into() }
-        fn evaluate(&self, m: &HashMap<String, f64>) -> f64 {
-            2.0 * m.get("time").unwrap_or(&0.0) + m.get("size").unwrap_or(&0.0)
-        }
-    }
+    const INPUTS: &[OptimizationObjective] = &[LLOC, HALSTEAD_BUGS];
+    let weighted = ObjectiveFunction {
+        name: "weighted",
+        inputs: INPUTS,
+        evaluate: |m| 2.0 * m.get(&LLOC).unwrap_or(&0.0) + m.get(&HALSTEAD_BUGS).unwrap_or(&0.0),
+    };
 
     let agent = MockAgent::from_responses(vec![Ok(AgentResponse {
         text: "optimized".into(),
@@ -741,15 +816,13 @@ fn optimize_custom_objective_function() {
     })]);
 
     let mut env = MockOptimizeEnv::new().with_measurements(vec![
-        m(&[("time", 10.0), ("size", 100.0)]), // score = 120
-        m(&[("time", 8.0), ("size", 110.0)]),  // score = 126 (regression!)
+        m(&[(lloc(), 10.0), (halstead(), 100.0)]), // score = 120
+        m(&[(lloc(), 8.0), (halstead(), 110.0)]),  // score = 126 (regression!)
     ]);
 
-    let config = OptimizeConfig { num_iterations: 1, hint: None };
-    let obj = WeightedSum;
-    let result = auto_optimize(&agent, &mut env, &obj, &config, Path::new("/tmp"));
+    let config = opt_config(1);
+    let result = auto_optimize(&agent, &mut env, &weighted, &config, Path::new("/tmp"));
 
-    // Rejected because 126 > 120
     assert_eq!(result.best_score, 120.0);
     assert!(env.accepted.is_empty());
     assert_eq!(env.rejected, 1);
@@ -758,20 +831,29 @@ fn optimize_custom_objective_function() {
 #[test]
 fn optimize_multi_iteration_progressive_improvement() {
     let agent = MockAgent::from_responses(vec![
-        Ok(AgentResponse { text: "iter 1".into(), diff: Some("diff1".into()) }),
-        Ok(AgentResponse { text: "iter 2".into(), diff: Some("diff2".into()) }),
-        Ok(AgentResponse { text: "iter 3".into(), diff: Some("diff3".into()) }),
+        Ok(AgentResponse {
+            text: "iter 1".into(),
+            diff: Some("diff1".into()),
+        }),
+        Ok(AgentResponse {
+            text: "iter 2".into(),
+            diff: Some("diff2".into()),
+        }),
+        Ok(AgentResponse {
+            text: "iter 3".into(),
+            diff: Some("diff3".into()),
+        }),
     ]);
 
     let mut env = MockOptimizeEnv::new().with_measurements(vec![
-        m(&[("time", 10.0)]),
-        m(&[("time", 8.0)]),
-        m(&[("time", 9.0)]),
-        m(&[("time", 6.0)]),
+        m(&[(lloc(), 10.0)]),
+        m(&[(lloc(), 8.0)]),
+        m(&[(lloc(), 9.0)]),
+        m(&[(lloc(), 6.0)]),
     ]);
 
-    let config = OptimizeConfig { num_iterations: 3, hint: None };
-    let obj = time_obj();
+    let config = opt_config(3);
+    let obj = lloc_obj();
     let result = auto_optimize(&agent, &mut env, &obj, &config, Path::new("/tmp"));
 
     assert_eq!(result.attempts.len(), 3);
@@ -783,15 +865,21 @@ fn optimize_multi_iteration_progressive_improvement() {
 #[test]
 fn optimize_stops_when_agent_produces_no_diff() {
     let agent = MockAgent::from_responses(vec![
-        Ok(AgentResponse { text: "changed".into(), diff: Some("diff1".into()) }),
-        Ok(AgentResponse { text: "nothing else".into(), diff: None }),
+        Ok(AgentResponse {
+            text: "changed".into(),
+            diff: Some("diff1".into()),
+        }),
+        Ok(AgentResponse {
+            text: "nothing else".into(),
+            diff: None,
+        }),
     ]);
 
-    let mut env = MockOptimizeEnv::new()
-        .with_measurements(vec![m(&[("time", 10.0)]), m(&[("time", 9.0)])]);
+    let mut env =
+        MockOptimizeEnv::new().with_measurements(vec![m(&[(lloc(), 10.0)]), m(&[(lloc(), 9.0)])]);
 
-    let config = OptimizeConfig { num_iterations: 5, hint: None };
-    let obj = time_obj();
+    let config = opt_config(5);
+    let obj = lloc_obj();
     let result = auto_optimize(&agent, &mut env, &obj, &config, Path::new("/tmp"));
 
     assert_eq!(result.attempts.len(), 1);
@@ -800,15 +888,18 @@ fn optimize_stops_when_agent_produces_no_diff() {
 #[test]
 fn optimize_stops_when_agent_errors() {
     let agent = MockAgent::from_responses(vec![
-        Ok(AgentResponse { text: "change".into(), diff: Some("diff".into()) }),
+        Ok(AgentResponse {
+            text: "change".into(),
+            diff: Some("diff".into()),
+        }),
         Err(AgentError::new("agent crashed")),
     ]);
 
-    let mut env = MockOptimizeEnv::new()
-        .with_measurements(vec![m(&[("time", 10.0)]), m(&[("time", 10.0)])]);
+    let mut env =
+        MockOptimizeEnv::new().with_measurements(vec![m(&[(lloc(), 10.0)]), m(&[(lloc(), 10.0)])]);
 
-    let config = OptimizeConfig { num_iterations: 5, hint: None };
-    let obj = time_obj();
+    let config = opt_config(5);
+    let obj = lloc_obj();
     let result = auto_optimize(&agent, &mut env, &obj, &config, Path::new("/tmp"));
 
     assert_eq!(result.attempts.len(), 1);
@@ -817,11 +908,10 @@ fn optimize_stops_when_agent_errors() {
 #[test]
 fn optimize_zero_iterations() {
     let agent = MockAgent::always_ok("should not be called");
-    let mut env = MockOptimizeEnv::new()
-        .with_measurements(vec![m(&[("time", 10.0)])]);
+    let mut env = MockOptimizeEnv::new().with_measurements(vec![m(&[(lloc(), 10.0)])]);
 
-    let config = OptimizeConfig { num_iterations: 0, hint: None };
-    let obj = time_obj();
+    let config = opt_config(0);
+    let obj = lloc_obj();
     let result = auto_optimize(&agent, &mut env, &obj, &config, Path::new("/tmp"));
 
     assert!(result.attempts.is_empty());
@@ -837,14 +927,14 @@ fn optimize_prompt_includes_measurements_and_hint() {
         diff: Some("diff".into()),
     })]);
 
-    let mut env = MockOptimizeEnv::new()
-        .with_measurements(vec![m(&[("time", 42.0)]), m(&[("time", 42.0)])]);
+    let mut env =
+        MockOptimizeEnv::new().with_measurements(vec![m(&[(lloc(), 42.0)]), m(&[(lloc(), 42.0)])]);
 
     let config = OptimizeConfig {
         num_iterations: 1,
         hint: Some("Focus on the inner loop".into()),
     };
-    let obj = time_obj();
+    let obj = lloc_obj();
     auto_optimize(&agent, &mut env, &obj, &config, Path::new("/tmp"));
 
     let prompts = agent.recorded_prompts();
@@ -856,18 +946,24 @@ fn optimize_prompt_includes_measurements_and_hint() {
 #[test]
 fn optimize_prompt_includes_past_attempts() {
     let agent = MockAgent::from_responses(vec![
-        Ok(AgentResponse { text: "attempt 1".into(), diff: Some("d1".into()) }),
-        Ok(AgentResponse { text: "attempt 2".into(), diff: Some("d2".into()) }),
+        Ok(AgentResponse {
+            text: "attempt 1".into(),
+            diff: Some("d1".into()),
+        }),
+        Ok(AgentResponse {
+            text: "attempt 2".into(),
+            diff: Some("d2".into()),
+        }),
     ]);
 
     let mut env = MockOptimizeEnv::new().with_measurements(vec![
-        m(&[("time", 10.0)]),
-        m(&[("time", 10.0)]),
-        m(&[("time", 10.0)]),
+        m(&[(lloc(), 10.0)]),
+        m(&[(lloc(), 10.0)]),
+        m(&[(lloc(), 10.0)]),
     ]);
 
-    let config = OptimizeConfig { num_iterations: 2, hint: None };
-    let obj = time_obj();
+    let config = opt_config(2);
+    let obj = lloc_obj();
     auto_optimize(&agent, &mut env, &obj, &config, Path::new("/tmp"));
 
     let prompts = agent.recorded_prompts();
@@ -884,11 +980,11 @@ fn optimize_diff_is_applied() {
         diff: Some("--- a/x\n+++ b/x\n".into()),
     })]);
 
-    let mut env = MockOptimizeEnv::new()
-        .with_measurements(vec![m(&[("time", 10.0)]), m(&[("time", 10.0)])]);
+    let mut env =
+        MockOptimizeEnv::new().with_measurements(vec![m(&[(lloc(), 10.0)]), m(&[(lloc(), 10.0)])]);
 
-    let config = OptimizeConfig { num_iterations: 1, hint: None };
-    let obj = time_obj();
+    let config = opt_config(1);
+    let obj = lloc_obj();
     auto_optimize(&agent, &mut env, &obj, &config, Path::new("/tmp"));
 
     assert_eq!(env.applied_diffs.len(), 1);
@@ -898,22 +994,31 @@ fn optimize_diff_is_applied() {
 #[test]
 fn optimize_invariant_failure_mid_sequence() {
     let agent = MockAgent::from_responses(vec![
-        Ok(AgentResponse { text: "i1".into(), diff: Some("d1".into()) }),
-        Ok(AgentResponse { text: "i2".into(), diff: Some("d2".into()) }),
-        Ok(AgentResponse { text: "i3".into(), diff: Some("d3".into()) }),
+        Ok(AgentResponse {
+            text: "i1".into(),
+            diff: Some("d1".into()),
+        }),
+        Ok(AgentResponse {
+            text: "i2".into(),
+            diff: Some("d2".into()),
+        }),
+        Ok(AgentResponse {
+            text: "i3".into(),
+            diff: Some("d3".into()),
+        }),
     ]);
 
     let mut env = MockOptimizeEnv::new()
         .with_measurements(vec![
-            m(&[("time", 10.0)]),
-            m(&[("time", 8.0)]),
-            m(&[("time", 5.0)]),
-            m(&[("time", 7.0)]),
+            m(&[(lloc(), 10.0)]),
+            m(&[(lloc(), 8.0)]),
+            m(&[(lloc(), 5.0)]),
+            m(&[(lloc(), 7.0)]),
         ])
         .with_invariants(vec![true, false, true]);
 
-    let config = OptimizeConfig { num_iterations: 3, hint: None };
-    let obj = time_obj();
+    let config = opt_config(3);
+    let obj = lloc_obj();
     let result = auto_optimize(&agent, &mut env, &obj, &config, Path::new("/tmp"));
 
     assert_eq!(result.attempts.len(), 3);
@@ -925,3 +1030,13 @@ fn optimize_invariant_failure_mid_sequence() {
     assert_eq!(result.best_score, 7.0);
 }
 
+#[test]
+fn objective_function_struct_evaluates() {
+    let obj = lloc_obj();
+    let mut m = HashMap::new();
+    m.insert(lloc(), 3.5);
+    assert_eq!((obj.evaluate)(&m), 3.5);
+
+    let empty = HashMap::new();
+    assert_eq!((obj.evaluate)(&empty), f64::INFINITY);
+}

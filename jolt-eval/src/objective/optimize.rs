@@ -3,34 +3,8 @@ use std::path::Path;
 
 use crate::agent::{truncate, AgentHarness, DiffScope};
 
-/// A function that combines raw objective measurements into a single
-/// scalar value to minimize.
-///
-/// The optimizer always minimizes. To maximize something, negate it
-/// in your implementation.
-pub trait ObjectiveFunction: Send + Sync {
-    /// Human-readable description of what this function optimizes,
-    /// included in the agent prompt.
-    fn description(&self) -> String;
-
-    /// Combine raw measurements into a single scalar to minimize.
-    fn evaluate(&self, measurements: &HashMap<String, f64>) -> f64;
-}
-
-/// A simple objective function that returns a single named measurement.
-pub struct SingleObjective {
-    pub name: String,
-}
-
-impl ObjectiveFunction for SingleObjective {
-    fn description(&self) -> String {
-        format!("Minimize {}", self.name)
-    }
-
-    fn evaluate(&self, measurements: &HashMap<String, f64>) -> f64 {
-        measurements.get(&self.name).copied().unwrap_or(f64::INFINITY)
-    }
-}
+use super::objective_fn::ObjectiveFunction;
+use super::OptimizationObjective;
 
 /// Configuration for an optimization run.
 pub struct OptimizeConfig {
@@ -52,22 +26,22 @@ pub struct OptimizeResult {
     pub attempts: Vec<OptimizationAttempt>,
     pub baseline_score: f64,
     pub best_score: f64,
-    pub best_measurements: HashMap<String, f64>,
+    pub best_measurements: HashMap<OptimizationObjective, f64>,
 }
 
 /// Record of a single optimization attempt.
 pub struct OptimizationAttempt {
     pub description: String,
     pub diff: String,
-    pub measurements: HashMap<String, f64>,
+    pub measurements: HashMap<OptimizationObjective, f64>,
     pub score: f64,
     pub invariants_passed: bool,
 }
 
 /// Environment trait that decouples the optimization loop from side effects.
 pub trait OptimizeEnv {
-    /// Measure all raw objectives. Returns name -> value.
-    fn measure(&mut self) -> HashMap<String, f64>;
+    /// Measure all raw objectives. Returns objective -> value.
+    fn measure(&mut self) -> HashMap<OptimizationObjective, f64>;
 
     /// Check all invariants. Returns `true` if they all pass.
     fn check_invariants(&mut self) -> bool;
@@ -89,12 +63,12 @@ pub trait OptimizeEnv {
 pub fn auto_optimize<A: AgentHarness, E: OptimizeEnv>(
     agent: &A,
     env: &mut E,
-    objective: &dyn ObjectiveFunction,
+    objective: &ObjectiveFunction,
     config: &OptimizeConfig,
     repo_dir: &Path,
 ) -> OptimizeResult {
     let baseline = env.measure();
-    let baseline_score = objective.evaluate(&baseline);
+    let baseline_score = (objective.evaluate)(&baseline);
     let mut best_score = baseline_score;
     let mut best_measurements = baseline.clone();
     let mut attempts = Vec::new();
@@ -129,7 +103,7 @@ pub fn auto_optimize<A: AgentHarness, E: OptimizeEnv>(
         };
 
         let new_measurements = env.measure();
-        let new_score = objective.evaluate(&new_measurements);
+        let new_score = (objective.evaluate)(&new_measurements);
         let invariants_passed = env.check_invariants();
 
         if !invariants_passed {
@@ -165,9 +139,9 @@ pub fn auto_optimize<A: AgentHarness, E: OptimizeEnv>(
 }
 
 fn build_optimize_prompt(
-    objective: &dyn ObjectiveFunction,
+    objective: &ObjectiveFunction,
     current_best_score: f64,
-    current_best_measurements: &HashMap<String, f64>,
+    current_best_measurements: &HashMap<OptimizationObjective, f64>,
     past_attempts: &[OptimizationAttempt],
     hint: Option<&str>,
 ) -> String {
@@ -178,18 +152,30 @@ fn build_optimize_prompt(
          Your goal is to make code changes that MINIMIZE the objective function.\n\n",
     );
 
-    prompt.push_str("## Objective function\n\n");
-    prompt.push_str(&objective.description());
+    prompt.push_str("## Objective\n\n");
+    prompt.push_str(&format!("Minimize: **{}**\n", objective.name));
+
+    let inputs = objective.inputs;
+    prompt.push_str("Inputs: ");
+    for (i, input) in inputs.iter().enumerate() {
+        if i > 0 {
+            prompt.push_str(", ");
+        }
+        prompt.push_str(input.name());
+    }
     prompt.push_str(&format!(
-        "\n\nCurrent best score: {current_best_score:.6}\n\n"
+        "\nCurrent best score: {current_best_score:.6}\n\n"
     ));
+    prompt.push_str(
+        "The objective function is defined in `jolt-eval/src/objective/objective_fn/`. \
+         Read the implementation to understand exactly what you are optimizing.\n\n",
+    );
 
     prompt.push_str("## Current measurements\n\n");
-    let mut names: Vec<_> = current_best_measurements.keys().collect();
-    names.sort();
-    for name in &names {
-        let val = current_best_measurements[*name];
-        prompt.push_str(&format!("- **{name}**: {val:.6}\n"));
+    let mut entries: Vec<_> = current_best_measurements.iter().collect();
+    entries.sort_by_key(|(k, _)| k.name());
+    for (key, val) in &entries {
+        prompt.push_str(&format!("- **{}**: {val:.6}\n", key.name()));
     }
     prompt.push('\n');
 
@@ -223,11 +209,10 @@ fn build_optimize_prompt(
                 "- **{}** ({}, score={:.6}): ",
                 attempt.description, status, attempt.score
             ));
-            let mut keys: Vec<_> = attempt.measurements.keys().collect();
-            keys.sort();
-            for name in keys {
-                let val = attempt.measurements[name];
-                prompt.push_str(&format!("{name}={val:.6} "));
+            let mut keys: Vec<_> = attempt.measurements.iter().collect();
+            keys.sort_by_key(|(k, _)| k.name());
+            for (key, val) in keys {
+                prompt.push_str(&format!("{}={val:.6} ", key.name()));
             }
             prompt.push('\n');
         }

@@ -1,4 +1,4 @@
-/// Macro that generates a Criterion benchmark harness for a `PerfObjective`.
+/// Macro that generates a Criterion benchmark harness for an [`Objective`].
 ///
 /// Uses `iter_batched` with `BatchSize::LargeInput` so that per-iteration
 /// setup (e.g. polynomial clone) is excluded from the measurement.
@@ -19,7 +19,7 @@
 macro_rules! bench_objective {
     // Expression form with config methods
     ($obj_expr:expr, config: $($method:ident($($arg:expr),*)),* $(,)?) => {
-        use $crate::PerfObjective as _;
+        use $crate::Objective as _;
 
         fn __bench(c: &mut ::criterion::Criterion) {
             let obj = $obj_expr;
@@ -43,7 +43,7 @@ macro_rules! bench_objective {
 
     // Simple form: just a type (uses Default + default Criterion config)
     ($obj_ty:ty) => {
-        use $crate::PerfObjective as _;
+        use $crate::Objective as _;
 
         fn __bench(c: &mut ::criterion::Criterion) {
             let obj = <$obj_ty>::default();

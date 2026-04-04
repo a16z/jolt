@@ -2,29 +2,41 @@ use std::path::{Path, PathBuf};
 
 use rust_code_analysis::{get_function_spaces, FuncSpace, LANG};
 
-use crate::objective::{AbstractObjective, MeasurementError};
+use crate::objective::{
+    MeasurementError, Objective, OptimizationObjective, StaticAnalysisObjective,
+};
+
+pub const LLOC: OptimizationObjective =
+    OptimizationObjective::StaticAnalysis(StaticAnalysisObjective::Lloc(LlocObjective {
+        root: "",
+    }));
 
 /// Total logical lines of code (LLOC) across all Rust files under
 /// `jolt-core/src/`.
+#[derive(Clone, Copy)]
 pub struct LlocObjective {
-    root: PathBuf,
+    pub(crate) root: &'static str,
 }
 
 impl LlocObjective {
     pub fn new(root: &Path) -> Self {
         Self {
-            root: root.to_path_buf(),
+            root: Box::leak(root.to_string_lossy().into_owned().into_boxed_str()),
         }
     }
 }
 
-impl AbstractObjective for LlocObjective {
+impl Objective for LlocObjective {
+    type Setup = ();
+
     fn name(&self) -> &str {
         "lloc"
     }
 
+    fn setup(&self) {}
+
     fn collect_measurement(&self) -> Result<f64, MeasurementError> {
-        let src_dir = self.root.join("jolt-core/src");
+        let src_dir = PathBuf::from(self.root).join("jolt-core/src");
         let mut total = 0.0;
         for path in rust_files(&src_dir)? {
             if let Some(space) = analyze_rust_file(&path) {
@@ -85,7 +97,10 @@ mod tests {
         let path = Path::new("test.rs");
         let space = get_function_spaces(&LANG::Rust, source, path, None).unwrap();
         let lloc = space.metrics.loc.lloc();
-        assert!(lloc >= 2.0, "two statements should give lloc >= 2, got {lloc}");
+        assert!(
+            lloc >= 2.0,
+            "two statements should give lloc >= 2, got {lloc}"
+        );
     }
 
     #[test]

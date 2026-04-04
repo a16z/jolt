@@ -2,7 +2,7 @@ use std::path::Path;
 
 use clap::Parser;
 
-use jolt_eval::objective::{perf_objective_names, Objective};
+use jolt_eval::objective::{PerformanceObjective, StaticAnalysisObjective};
 
 #[derive(Parser)]
 #[command(name = "measure-objectives")]
@@ -18,10 +18,7 @@ struct Cli {
 }
 
 fn print_header() {
-    println!(
-        "{:<35} {:>15} {:>8}",
-        "Objective", "Value", "Units"
-    );
+    println!("{:<35} {:>15} {:>8}", "Objective", "Value", "Units");
     println!("{}", "-".repeat(60));
 }
 
@@ -37,23 +34,31 @@ fn main() -> eyre::Result<()> {
 
     // Performance objectives (from Criterion)
     if !cli.no_bench {
-        let perf_names = perf_objective_names();
+        let perf = PerformanceObjective::all();
         let run_bench = cli
             .objective
             .as_ref()
-            .is_none_or(|name| perf_names.contains(&name.as_str()));
+            .is_none_or(|name| perf.iter().any(|p| p.name() == name.as_str()));
 
         if run_bench {
             eprintln!("Running Criterion benchmarks...");
             let mut any_succeeded = false;
-            for &name in perf_names {
+            for p in &perf {
                 if let Some(ref filter) = cli.objective {
-                    if name != filter.as_str() {
+                    if p.name() != filter.as_str() {
                         continue;
                     }
                 }
                 let status = std::process::Command::new("cargo")
-                    .args(["bench", "-p", "jolt-eval", "--bench", name, "--", "--quick"])
+                    .args([
+                        "bench",
+                        "-p",
+                        "jolt-eval",
+                        "--bench",
+                        p.name(),
+                        "--",
+                        "--quick",
+                    ])
                     .status();
                 if matches!(status, Ok(s) if s.success()) {
                     any_succeeded = true;
@@ -63,16 +68,16 @@ fn main() -> eyre::Result<()> {
             if any_succeeded {
                 println!();
                 print_header();
-                for &name in perf_names {
+                for p in &perf {
                     if let Some(ref filter) = cli.objective {
-                        if name != filter.as_str() {
+                        if p.name() != filter.as_str() {
                             continue;
                         }
                     }
-                    match read_criterion_estimate(name) {
-                        Some(secs) => print_row(name, secs, "s"),
+                    match read_criterion_estimate(p.name()) {
+                        Some(secs) => print_row(p.name(), secs, "s"),
                         None => {
-                            println!("{:<35} {:>15}", name, "NO DATA");
+                            println!("{:<35} {:>15}", p.name(), "NO DATA");
                         }
                     }
                 }
@@ -84,20 +89,19 @@ fn main() -> eyre::Result<()> {
     }
 
     // Static-analysis objectives
-    let objectives = Objective::all(&repo_root);
-    for obj in &objectives {
+    for sa in StaticAnalysisObjective::all(&repo_root) {
         if let Some(ref name) = cli.objective {
-            if obj.name() != name.as_str() {
+            if sa.name() != name.as_str() {
                 continue;
             }
         }
-        match obj.collect_measurement() {
+        match sa.collect_measurement() {
             Ok(val) => {
-                let units = obj.units().unwrap_or("-");
-                print_row(obj.name(), val, units);
+                let units = sa.units().unwrap_or("-");
+                print_row(sa.name(), val, units);
             }
             Err(e) => {
-                println!("{:<35} {:>15}", obj.name(), format!("ERROR: {e}"));
+                println!("{:<35} {:>15}", sa.name(), format!("ERROR: {e}"));
             }
         }
     }
@@ -105,7 +109,6 @@ fn main() -> eyre::Result<()> {
     Ok(())
 }
 
-/// Read the point estimate (mean, in seconds) from Criterion's output.
 fn read_criterion_estimate(bench_name: &str) -> Option<f64> {
     let path = Path::new("target/criterion")
         .join(bench_name)

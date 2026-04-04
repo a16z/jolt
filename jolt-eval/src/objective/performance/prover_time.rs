@@ -1,7 +1,7 @@
 use jolt_core::host::Program;
 
 use crate::guests::{self, GuestConfig, GuestProgram, ProverPreprocessing};
-use crate::objective::PerfObjective;
+use crate::objective::Objective;
 
 /// Per-iteration state: everything needed to call `prove`.
 pub struct ProverTimeSetup {
@@ -25,7 +25,7 @@ impl<G: GuestConfig> ProverTimeObjective<G> {
     }
 }
 
-impl<G: GuestConfig + 'static> PerfObjective for ProverTimeObjective<G> {
+impl<G: GuestConfig + 'static> Objective for ProverTimeObjective<G> {
     type Setup = ProverTimeSetup;
 
     fn name(&self) -> &str {
@@ -70,6 +70,10 @@ impl<G: GuestConfig + 'static> PerfObjective for ProverTimeObjective<G> {
     fn run(&self, setup: ProverTimeSetup) {
         let (_proof, _io) = guests::prove(&setup.program, &setup.prover_pp, &setup.input);
         std::hint::black_box(());
+    }
+
+    fn units(&self) -> Option<&str> {
+        Some("s")
     }
 }
 

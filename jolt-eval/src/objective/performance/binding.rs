@@ -3,20 +3,22 @@ use jolt_core::field::JoltField;
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
 use jolt_core::poly::multilinear_polynomial::BindingOrder;
 
-use crate::objective::PerfObjective;
+use crate::objective::{Objective, OptimizationObjective, PerformanceObjective};
+
+pub const BIND_LOW_TO_HIGH: OptimizationObjective =
+    OptimizationObjective::Performance(PerformanceObjective::BindLowToHigh(BindLowToHighObjective));
+pub const BIND_HIGH_TO_LOW: OptimizationObjective =
+    OptimizationObjective::Performance(PerformanceObjective::BindHighToLow(BindHighToLowObjective));
 
 type Challenge = <Fr as JoltField>::Challenge;
 
-/// Number of variables for the benchmark polynomial (2^NUM_VARS evaluations).
 const NUM_VARS: usize = 20;
 
-/// Per-iteration state: a fresh polynomial and a challenge to bind with.
 pub struct BindSetup {
     pub poly: DensePolynomial<Fr>,
     pub challenge: Challenge,
 }
 
-/// Shared state used to produce per-iteration setups cheaply.
 struct BindShared {
     evals: Vec<Fr>,
     challenge: Challenge,
@@ -26,9 +28,7 @@ impl BindShared {
     fn new() -> Self {
         let mut rng = rand::thread_rng();
         Self {
-            evals: (0..1 << NUM_VARS)
-                .map(|_| Fr::random(&mut rng))
-                .collect(),
+            evals: (0..1 << NUM_VARS).map(|_| Fr::random(&mut rng)).collect(),
             challenge: Challenge::random(&mut rng),
         }
     }
@@ -42,14 +42,14 @@ impl BindShared {
 }
 
 /// Benchmark `DensePolynomial::bind_parallel` with `LowToHigh` binding.
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub struct BindLowToHighObjective;
 
 impl BindLowToHighObjective {
     pub const NAME: &str = "bind_parallel_low_to_high";
 }
 
-impl PerfObjective for BindLowToHighObjective {
+impl Objective for BindLowToHighObjective {
     type Setup = BindSetup;
 
     fn name(&self) -> &str {
@@ -57,7 +57,6 @@ impl PerfObjective for BindLowToHighObjective {
     }
 
     fn setup(&self) -> BindSetup {
-        // Thread-local shared state so we only generate random evals once.
         thread_local! {
             static SHARED: BindShared = BindShared::new();
         }
@@ -70,17 +69,21 @@ impl PerfObjective for BindLowToHighObjective {
             .bind_parallel(setup.challenge, BindingOrder::LowToHigh);
         std::hint::black_box(&setup.poly);
     }
+
+    fn units(&self) -> Option<&str> {
+        Some("s")
+    }
 }
 
 /// Benchmark `DensePolynomial::bind_parallel` with `HighToLow` binding.
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub struct BindHighToLowObjective;
 
 impl BindHighToLowObjective {
     pub const NAME: &str = "bind_parallel_high_to_low";
 }
 
-impl PerfObjective for BindHighToLowObjective {
+impl Objective for BindHighToLowObjective {
     type Setup = BindSetup;
 
     fn name(&self) -> &str {
@@ -99,6 +102,10 @@ impl PerfObjective for BindHighToLowObjective {
             .poly
             .bind_parallel(setup.challenge, BindingOrder::HighToLow);
         std::hint::black_box(&setup.poly);
+    }
+
+    fn units(&self) -> Option<&str> {
+        Some("s")
     }
 }
 

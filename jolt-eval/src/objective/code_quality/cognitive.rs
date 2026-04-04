@@ -1,35 +1,42 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use rust_code_analysis::FuncSpace;
 
 use super::lloc::{analyze_rust_file, rust_files};
-use crate::objective::{AbstractObjective, MeasurementError};
+use crate::objective::{
+    MeasurementError, Objective, OptimizationObjective, StaticAnalysisObjective,
+};
+
+pub const COGNITIVE_COMPLEXITY: OptimizationObjective = OptimizationObjective::StaticAnalysis(
+    StaticAnalysisObjective::CognitiveComplexity(CognitiveComplexityObjective { root: "" }),
+);
 
 /// Average cognitive complexity per function across all Rust files under
 /// `jolt-core/src/`.
-///
-/// Cognitive complexity measures how difficult code is to understand,
-/// penalizing deeply nested control flow, recursion, and breaks in
-/// linear flow. Lower is better.
+#[derive(Clone, Copy)]
 pub struct CognitiveComplexityObjective {
-    root: PathBuf,
+    pub(crate) root: &'static str,
 }
 
 impl CognitiveComplexityObjective {
     pub fn new(root: &Path) -> Self {
         Self {
-            root: root.to_path_buf(),
+            root: Box::leak(root.to_string_lossy().into_owned().into_boxed_str()),
         }
     }
 }
 
-impl AbstractObjective for CognitiveComplexityObjective {
+impl Objective for CognitiveComplexityObjective {
+    type Setup = ();
+
     fn name(&self) -> &str {
         "cognitive_complexity_avg"
     }
 
+    fn setup(&self) {}
+
     fn collect_measurement(&self) -> Result<f64, MeasurementError> {
-        let src_dir = self.root.join("jolt-core/src");
+        let src_dir = std::path::PathBuf::from(self.root).join("jolt-core/src");
         let mut total = 0.0;
         let mut count = 0usize;
         for path in rust_files(&src_dir)? {
@@ -42,11 +49,8 @@ impl AbstractObjective for CognitiveComplexityObjective {
         }
         Ok(total / count as f64)
     }
-
 }
 
-/// Walk the function-space tree and collect cognitive complexity from
-/// leaf functions (functions with no child spaces).
 fn collect_leaf_cognitive(space: &FuncSpace, total: &mut f64, count: &mut usize) {
     if space.spaces.is_empty() {
         let c = space.metrics.cognitive.cognitive();
@@ -78,13 +82,16 @@ mod tests {
     fn cognitive_on_single_file() {
         let source = b"fn simple() { let x = 1; }".to_vec();
         let path = Path::new("test.rs");
-        let space =
-            rust_code_analysis::get_function_spaces(&rust_code_analysis::LANG::Rust, source, path, None)
-                .unwrap();
+        let space = rust_code_analysis::get_function_spaces(
+            &rust_code_analysis::LANG::Rust,
+            source,
+            path,
+            None,
+        )
+        .unwrap();
         let mut total = 0.0;
         let mut count = 0;
         collect_leaf_cognitive(&space, &mut total, &mut count);
-        // A straight-line function has 0 cognitive complexity
         assert_eq!(total, 0.0);
     }
 }
