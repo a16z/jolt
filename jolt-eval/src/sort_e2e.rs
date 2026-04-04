@@ -3,45 +3,13 @@
 
 use std::collections::HashMap;
 
-use super::{CheckError, Invariant, InvariantViolation};
 use crate::agent::{ClaudeCodeAgent, DiffScope};
 use crate::invariant::synthesis::redteam::{auto_redteam, RedTeamConfig, RedTeamResult};
+use crate::invariant::{CheckError, Invariant, InvariantViolation};
 use crate::objective::objective_fn::ObjectiveFunction;
 use crate::objective::optimize::{auto_optimize, OptimizeConfig, OptimizeEnv};
 use crate::objective::{OptimizationObjective, NAIVE_SORT_TIME};
-
-/// Naive bubble sort — the optimization target.
-/// Intentionally O(n²) so a "smarter" sort is measurably faster.
-pub fn naive_sort(data: &mut [i32]) {
-    let n = data.len();
-    for i in 0..n {
-        for j in 0..n.saturating_sub(1 + i) {
-            if data[j] > data[j + 1] {
-                data.swap(j, j + 1);
-            }
-        }
-    }
-}
-
-/// A sorting routine used as a red-team target.
-pub fn candidate_sort(data: &mut [i32]) {
-    if data.len() <= 16 {
-        // Small-array path: insertion sort.
-        for i in 1..data.len() {
-            let key = data[i];
-            let mut j = i;
-            while j > 0 && data[j - 1] > key {
-                data[j] = data[j - 1];
-                j -= 1;
-            }
-            data[j] = key;
-        }
-    } else {
-        // Large-array path: delegate to an optimized routine.
-        let last = data.len() - 1;
-        data[..last].sort();
-    }
-}
+use crate::sort_targets::{candidate_sort, naive_sort};
 
 // ── Red-team invariant ──────────────────────────────────────────────
 
@@ -60,7 +28,7 @@ impl Invariant for CandidateSortInvariant {
 
     fn description(&self) -> String {
         "The sort function `candidate_sort` in \
-         jolt-eval/src/invariant/sort_e2e.rs must return a \
+         jolt-eval/src/sort_targets.rs must return a \
          permutation of its input in non-decreasing order. \
          Any dropped, duplicated, or misplaced elements are a violation."
             .to_string()
@@ -147,7 +115,7 @@ impl Invariant for NaiveSortInvariant {
 /// An [`OptimizeEnv`] that measures wall-clock time of a sort function.
 /// `apply_diff` simulates optimization by swapping to `slice::sort`.
 pub struct SortOptimizeEnv {
-    sort_fn: fn(&mut [i32]),
+    pub(crate) sort_fn: fn(&mut [i32]),
     data: Vec<i32>,
     invariant_ok: bool,
 }
@@ -193,6 +161,8 @@ impl OptimizeEnv for SortOptimizeEnv {
 }
 
 // ── CLI-accessible e2e runners ──────────────────────────────────────
+
+const SORT_TARGETS_PATH: &str = "jolt-eval/src/sort_targets.rs";
 
 /// Run the red-team e2e test against `CandidateSortInvariant`.
 pub fn run_redteam_test(
@@ -263,16 +233,17 @@ pub fn run_optimize_test(
         evaluate: |m| m.get(&NAIVE_SORT_TIME).copied().unwrap_or(f64::INFINITY),
     };
     let hint = hint.unwrap_or_else(|| {
-        "The target is the `naive_sort` function in \
-         jolt-eval/src/invariant/sort_e2e.rs. Replace it with a faster \
-         sorting algorithm. You MAY modify jolt-eval/ for this task."
-            .into()
+        format!(
+            "The target is the `naive_sort` function in {SORT_TARGETS_PATH}. \
+             Replace it with a faster sorting algorithm. \
+             You MAY modify that file for this task."
+        )
     });
     let config = OptimizeConfig {
         num_iterations: iterations,
         hint: Some(hint),
         verbose,
-        diff_scope: DiffScope::All,
+        diff_scope: DiffScope::Include(vec![SORT_TARGETS_PATH.into()]),
     };
 
     println!("=== Optimize e2e: naive bubble sort ===");

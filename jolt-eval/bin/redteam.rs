@@ -2,9 +2,9 @@ use clap::Parser;
 use tracing::info;
 
 use jolt_eval::agent::ClaudeCodeAgent;
-use jolt_eval::invariant::sort_e2e;
 use jolt_eval::invariant::synthesis::redteam::{auto_redteam, RedTeamConfig, RedTeamResult};
 use jolt_eval::invariant::{JoltInvariants, SynthesisTarget};
+use jolt_eval::sort_e2e;
 
 #[derive(Parser)]
 #[command(name = "redteam")]

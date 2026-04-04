@@ -13,6 +13,8 @@ pub mod agent;
 pub mod guests;
 pub mod invariant;
 pub mod objective;
+pub mod sort_e2e;
+pub mod sort_targets;
 
 pub use guests::{GuestConfig, GuestProgram, JoltDevice, ProofVerifyError};
 pub use invariant::{

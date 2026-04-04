@@ -5,11 +5,11 @@ use std::process::Command;
 use clap::Parser;
 
 use jolt_eval::agent::ClaudeCodeAgent;
-use jolt_eval::invariant::sort_e2e;
 use jolt_eval::invariant::JoltInvariants;
 use jolt_eval::objective::objective_fn::ObjectiveFunction;
 use jolt_eval::objective::optimize::{auto_optimize, OptimizeConfig, OptimizeEnv};
 use jolt_eval::objective::{OptimizationObjective, PerformanceObjective, StaticAnalysisObjective};
+use jolt_eval::sort_e2e;
 
 #[derive(Parser)]
 #[command(name = "optimize")]
