@@ -732,6 +732,7 @@ fn opt_config(iterations: usize) -> OptimizeConfig {
     OptimizeConfig {
         num_iterations: iterations,
         hint: None,
+        verbose: false,
     }
 }
 
@@ -933,6 +934,7 @@ fn optimize_prompt_includes_measurements_and_hint() {
     let config = OptimizeConfig {
         num_iterations: 1,
         hint: Some("Focus on the inner loop".into()),
+        verbose: false,
     };
     let obj = lloc_obj();
     auto_optimize(&agent, &mut env, &obj, &config, Path::new("/tmp"));

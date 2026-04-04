@@ -37,6 +37,10 @@ struct Cli {
     /// Extra context or guidance for the red-team agent
     #[arg(long)]
     hint: Option<String>,
+
+    /// Print agent prompts and responses to stderr.
+    #[arg(long)]
+    verbose: bool,
 }
 
 fn main() -> eyre::Result<()> {
@@ -56,7 +60,13 @@ fn main() -> eyre::Result<()> {
     }
 
     if cli.test {
-        sort_e2e::run_redteam_test(&cli.model, cli.max_turns, cli.iterations, cli.hint);
+        sort_e2e::run_redteam_test(
+            &cli.model,
+            cli.max_turns,
+            cli.iterations,
+            cli.hint,
+            cli.verbose,
+        );
         return Ok(());
     }
 
@@ -80,6 +90,7 @@ fn main() -> eyre::Result<()> {
     let config = RedTeamConfig {
         num_iterations: cli.iterations,
         hint: cli.hint,
+        verbose: cli.verbose,
     };
     let agent = ClaudeCodeAgent::new(&cli.model, cli.max_turns);
     let repo_dir = std::env::current_dir()?;

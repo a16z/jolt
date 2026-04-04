@@ -19,6 +19,7 @@ pub enum RedTeamResult {
 pub struct RedTeamConfig {
     pub num_iterations: usize,
     pub hint: Option<String>,
+    pub verbose: bool,
 }
 
 impl Default for RedTeamConfig {
@@ -26,6 +27,7 @@ impl Default for RedTeamConfig {
         Self {
             num_iterations: 10,
             hint: None,
+            verbose: false,
         }
     }
 }
@@ -63,6 +65,12 @@ pub fn auto_redteam<I: Invariant>(
             &failed_attempts,
         );
 
+        if config.verbose {
+            eprintln!("── Iteration {} prompt ──", iteration + 1);
+            eprintln!("{prompt}");
+            eprintln!("────────────────────────");
+        }
+
         let diff_scope = DiffScope::Include(vec!["jolt-eval/guest-sandbox/".into()]);
         let response =
             match agent.invoke_structured(repo_dir, &prompt, &envelope_schema, &diff_scope) {
@@ -77,6 +85,16 @@ pub fn auto_redteam<I: Invariant>(
                     continue;
                 }
             };
+
+        if config.verbose {
+            eprintln!("── Iteration {} response ──", iteration + 1);
+            eprintln!("{}", response.text);
+            if let Some(ref d) = response.diff {
+                eprintln!("── diff ({} bytes) ──", d.len());
+                eprintln!("{d}");
+            }
+            eprintln!("──────────────────────────");
+        }
 
         let (analysis, counterexample_json) = match parse_envelope(&response.text) {
             Some(pair) => pair,

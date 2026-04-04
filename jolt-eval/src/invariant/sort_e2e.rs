@@ -195,13 +195,20 @@ impl OptimizeEnv for SortOptimizeEnv {
 // ── CLI-accessible e2e runners ──────────────────────────────────────
 
 /// Run the red-team e2e test against `CandidateSortInvariant`.
-pub fn run_redteam_test(model: &str, max_turns: usize, iterations: usize, hint: Option<String>) {
+pub fn run_redteam_test(
+    model: &str,
+    max_turns: usize,
+    iterations: usize,
+    hint: Option<String>,
+    verbose: bool,
+) {
     let invariant = CandidateSortInvariant;
     let agent = ClaudeCodeAgent::new(model, max_turns);
     let repo_dir = std::env::current_dir().expect("current dir");
     let config = RedTeamConfig {
         num_iterations: iterations,
         hint,
+        verbose,
     };
 
     println!("=== Red-team e2e: candidate_sort ===");
@@ -234,7 +241,13 @@ pub fn run_redteam_test(model: &str, max_turns: usize, iterations: usize, hint: 
 }
 
 /// Run the optimization e2e test against the naive bubble sort.
-pub fn run_optimize_test(model: &str, max_turns: usize, iterations: usize, hint: Option<String>) {
+pub fn run_optimize_test(
+    model: &str,
+    max_turns: usize,
+    iterations: usize,
+    hint: Option<String>,
+    verbose: bool,
+) {
     let agent = ClaudeCodeAgent::new(model, max_turns);
     let repo_dir = std::env::current_dir().expect("current dir");
 
@@ -252,6 +265,7 @@ pub fn run_optimize_test(model: &str, max_turns: usize, iterations: usize, hint:
     let config = OptimizeConfig {
         num_iterations: iterations,
         hint,
+        verbose,
     };
 
     println!("=== Optimize e2e: naive bubble sort ===");
@@ -353,7 +367,7 @@ mod tests {
     #[test]
     #[ignore] // Requires Claude API access
     fn redteam_e2e_real_agent() {
-        run_redteam_test("claude-sonnet-4-20250514", 10, 5, None);
+        run_redteam_test("claude-sonnet-4-20250514", 10, 5, None, false);
     }
 
     // ── Optimize e2e (MockAgent) ────────────────────────────────────
@@ -381,6 +395,7 @@ mod tests {
         let config = OptimizeConfig {
             num_iterations: 1,
             hint: None,
+            verbose: false,
         };
 
         let result = auto_optimize(&agent, &mut env, &obj, &config, Path::new("/tmp"));
@@ -437,6 +452,7 @@ mod tests {
         let config = OptimizeConfig {
             num_iterations: 1,
             hint: None,
+            verbose: false,
         };
 
         let result = auto_optimize(&agent, &mut broken_env, &obj, &config, Path::new("/tmp"));
@@ -449,6 +465,6 @@ mod tests {
     #[test]
     #[ignore] // Requires Claude API access
     fn optimize_e2e_real_agent() {
-        run_optimize_test("claude-sonnet-4-20250514", 10, 2, None);
+        run_optimize_test("claude-sonnet-4-20250514", 10, 2, None, false);
     }
 }

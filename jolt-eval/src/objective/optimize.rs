@@ -10,6 +10,7 @@ use super::OptimizationObjective;
 pub struct OptimizeConfig {
     pub num_iterations: usize,
     pub hint: Option<String>,
+    pub verbose: bool,
 }
 
 impl Default for OptimizeConfig {
@@ -17,6 +18,7 @@ impl Default for OptimizeConfig {
         Self {
             num_iterations: 5,
             hint: None,
+            verbose: false,
         }
     }
 }
@@ -82,6 +84,12 @@ pub fn auto_optimize<A: AgentHarness, E: OptimizeEnv>(
             config.hint.as_deref(),
         );
 
+        if config.verbose {
+            eprintln!("── Iteration {} prompt ──", iteration + 1);
+            eprintln!("{prompt}");
+            eprintln!("────────────────────────");
+        }
+
         let diff_scope = DiffScope::Exclude(vec!["jolt-eval/".into()]);
         let response = match agent.invoke(repo_dir, &prompt, &diff_scope) {
             Ok(r) => r,
@@ -90,6 +98,18 @@ pub fn auto_optimize<A: AgentHarness, E: OptimizeEnv>(
                 break;
             }
         };
+
+        if config.verbose {
+            eprintln!("── Iteration {} response ──", iteration + 1);
+            eprintln!("{}", response.text);
+            if let Some(ref d) = response.diff {
+                eprintln!("── diff ({} bytes) ──", d.len());
+                eprintln!("{}", truncate(d, 2000));
+            } else {
+                eprintln!("(no diff)");
+            }
+            eprintln!("──────────────────────────");
+        }
 
         let diff_text = match &response.diff {
             Some(d) => {

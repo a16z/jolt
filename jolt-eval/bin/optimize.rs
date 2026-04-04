@@ -42,6 +42,10 @@ struct Cli {
     /// Extra context to include in the optimization prompt
     #[arg(long)]
     hint: Option<String>,
+
+    /// Print agent prompts and responses to stderr.
+    #[arg(long)]
+    verbose: bool,
 }
 
 struct RealEnv {
@@ -139,7 +143,13 @@ fn main() -> eyre::Result<()> {
     }
 
     if cli.test {
-        sort_e2e::run_optimize_test(&cli.model, cli.max_turns, cli.iterations, cli.hint);
+        sort_e2e::run_optimize_test(
+            &cli.model,
+            cli.max_turns,
+            cli.iterations,
+            cli.hint,
+            cli.verbose,
+        );
         return Ok(());
     }
 
@@ -177,6 +187,7 @@ fn main() -> eyre::Result<()> {
     let config = OptimizeConfig {
         num_iterations: cli.iterations,
         hint: cli.hint.clone(),
+        verbose: cli.verbose,
     };
 
     let result = auto_optimize(&agent, &mut env, objective, &config, &repo_dir);
