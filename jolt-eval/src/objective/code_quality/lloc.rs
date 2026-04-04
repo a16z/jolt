@@ -25,8 +25,8 @@ impl Objective for LlocObjective {
         "lloc"
     }
 
-    fn description(&self) -> &str {
-        "Total logical lines of code in jolt-core/src/"
+    fn description(&self) -> String {
+        format!("Total logical lines of code in {}", self.target_dir)
     }
 
     fn setup(&self) {}

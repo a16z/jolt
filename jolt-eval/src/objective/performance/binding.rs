@@ -56,8 +56,8 @@ impl Objective for BindLowToHighObjective {
         Self::NAME
     }
 
-    fn description(&self) -> &str {
-        "Wall-clock time of DensePolynomial::bind_parallel with LowToHigh binding (2^20 evaluations)"
+    fn description(&self) -> String {
+        "Wall-clock time of DensePolynomial::bind_parallel with LowToHigh binding (2^20 evaluations)".to_string()
     }
 
     fn setup(&self) -> BindSetup {
@@ -94,8 +94,8 @@ impl Objective for BindHighToLowObjective {
         Self::NAME
     }
 
-    fn description(&self) -> &str {
-        "Wall-clock time of DensePolynomial::bind_parallel with HighToLow binding (2^20 evaluations)"
+    fn description(&self) -> String {
+        "Wall-clock time of DensePolynomial::bind_parallel with HighToLow binding (2^20 evaluations)".to_string()
     }
 
     fn setup(&self) -> BindSetup {

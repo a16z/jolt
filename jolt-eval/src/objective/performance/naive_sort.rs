@@ -13,8 +13,8 @@ impl Objective for NaiveSortObjective {
         "naive_sort_time"
     }
 
-    fn description(&self) -> &str {
-        "Wall-clock time of the naive_sort function in jolt-eval/src/sort_targets.rs"
+    fn description(&self) -> String {
+        "Wall-clock time of the naive_sort function in jolt-eval/src/sort_targets.rs".to_string()
     }
 
     fn setup(&self) -> Vec<i32> {

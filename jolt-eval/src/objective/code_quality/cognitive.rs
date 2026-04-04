@@ -27,8 +27,11 @@ impl Objective for CognitiveComplexityObjective {
         "cognitive_complexity_avg"
     }
 
-    fn description(&self) -> &str {
-        "Average cognitive complexity per function in jolt-core/src/"
+    fn description(&self) -> String {
+        format!(
+            "Average cognitive complexity per function in {}",
+            self.target_dir
+        )
     }
 
     fn setup(&self) {}

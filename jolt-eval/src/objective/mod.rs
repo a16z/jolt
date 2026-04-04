@@ -42,8 +42,8 @@ pub trait Objective: Send + Sync {
 
     fn name(&self) -> &str;
 
-    fn description(&self) -> &str {
-        self.name()
+    fn description(&self) -> String {
+        self.name().to_string()
     }
 
     fn units(&self) -> Option<&str> {
@@ -95,7 +95,7 @@ impl StaticAnalysisObjective {
         }
     }
 
-    pub fn description(&self) -> &str {
+    pub fn description(&self) -> String {
         match self {
             Self::Lloc(o) => o.description(),
             Self::CognitiveComplexity(o) => o.description(),
@@ -169,7 +169,7 @@ impl PerformanceObjective {
         }
     }
 
-    pub fn description(&self) -> &str {
+    pub fn description(&self) -> String {
         match self {
             Self::BindLowToHigh(o) => o.description(),
             Self::BindHighToLow(o) => o.description(),
@@ -239,7 +239,7 @@ impl OptimizationObjective {
         }
     }
 
-    pub fn description(&self) -> &str {
+    pub fn description(&self) -> String {
         match self {
             Self::StaticAnalysis(s) => s.description(),
             Self::Performance(p) => p.description(),

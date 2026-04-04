@@ -28,8 +28,11 @@ impl Objective for HalsteadBugsObjective {
         "halstead_bugs"
     }
 
-    fn description(&self) -> &str {
-        "Estimated delivered bugs (Halstead volume / 3000) in jolt-core/src/"
+    fn description(&self) -> String {
+        format!(
+            "Estimated delivered bugs (Halstead volume / 3000) in {}",
+            self.target_dir
+        )
     }
 
     fn setup(&self) {}
