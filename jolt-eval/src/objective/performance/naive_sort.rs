@@ -3,7 +3,7 @@ use crate::sort_targets::naive_sort;
 
 const SORT_DATA_SIZE: usize = 5000;
 
-#[derive(Clone, Copy, PartialEq, Hash)]
+#[derive(Clone, Copy, Default, PartialEq, Hash)]
 pub struct NaiveSortObjective;
 
 impl Objective for NaiveSortObjective {

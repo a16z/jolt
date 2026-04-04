@@ -42,7 +42,7 @@ impl BindShared {
 }
 
 /// Benchmark `DensePolynomial::bind_parallel` with `LowToHigh` binding.
-#[derive(Clone, Copy, PartialEq, Hash)]
+#[derive(Clone, Copy, Default, PartialEq, Hash)]
 pub struct BindLowToHighObjective;
 
 impl Objective for BindLowToHighObjective {
@@ -76,7 +76,7 @@ impl Objective for BindLowToHighObjective {
 }
 
 /// Benchmark `DensePolynomial::bind_parallel` with `HighToLow` binding.
-#[derive(Clone, Copy, PartialEq, Hash)]
+#[derive(Clone, Copy, Default, PartialEq, Hash)]
 pub struct BindHighToLowObjective;
 
 impl Objective for BindHighToLowObjective {
