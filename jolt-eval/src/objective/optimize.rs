@@ -136,10 +136,6 @@ pub fn auto_optimize<A: AgentHarness, E: OptimizeEnv>(
         let new_score = (objective.evaluate)(&new_measurements);
         let invariants_passed = env.check_invariants();
 
-        if !invariants_passed {
-            env.reject();
-        }
-
         let improved = invariants_passed && new_score < best_score;
 
         let attempt = OptimizationAttempt {
@@ -151,15 +147,15 @@ pub fn auto_optimize<A: AgentHarness, E: OptimizeEnv>(
         };
         attempts.push(attempt);
 
+        let iter = iteration + 1;
         if improved {
+            eprintln!("  ✓ iteration {iter} ACCEPTED — score {best_score:.10} → {new_score:.10}",);
             best_score = new_score;
             best_measurements = new_measurements;
-            env.accept(iteration + 1);
+            env.accept(iter);
             let msg = format!(
-                "perf(auto-optimize): {} iteration {} (score {:.6})",
+                "perf(auto-optimize): {} iteration {iter} (score {new_score:.10})",
                 objective.name,
-                iteration + 1,
-                new_score,
             );
             let _ = Command::new("git")
                 .current_dir(repo_dir)
@@ -169,12 +165,18 @@ pub fn auto_optimize<A: AgentHarness, E: OptimizeEnv>(
                 .current_dir(repo_dir)
                 .args(["commit", "-m", &msg])
                 .status();
+        } else if !invariants_passed {
+            eprintln!("  ✗ iteration {iter} REJECTED (invariants failed) — score {new_score:.10}",);
+            env.reject();
+            let _ = Command::new("git")
+                .current_dir(repo_dir)
+                .args(["checkout", "."])
+                .status();
         } else {
-            if !invariants_passed {
-                // Already rejected above.
-            } else {
-                env.reject();
-            }
+            eprintln!(
+                "  ✗ iteration {iter} REJECTED (no improvement) — score {new_score:.10} ≥ best {best_score:.10}",
+            );
+            env.reject();
             let _ = Command::new("git")
                 .current_dir(repo_dir)
                 .args(["checkout", "."])
