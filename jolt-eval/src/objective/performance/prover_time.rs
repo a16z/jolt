@@ -17,11 +17,13 @@ pub struct ProverTimeSetup {
 #[derive(Default)]
 pub struct ProverTimeObjective<G: GuestConfig> {
     guest: G,
+    name: String,
 }
 
 impl<G: GuestConfig> ProverTimeObjective<G> {
     pub fn new(guest: G) -> Self {
-        Self { guest }
+        let name = format!("{} prover time", guest.bench_name());
+        Self { guest, name }
     }
 }
 
@@ -29,10 +31,7 @@ impl<G: GuestConfig + 'static> Objective for ProverTimeObjective<G> {
     type Setup = ProverTimeSetup;
 
     fn name(&self) -> &str {
-        // Leak a string so we can return &str from a computed name.
-        // This is fine — there are only a handful of objectives.
-        let name = self.guest.bench_name();
-        Box::leak(name.into_boxed_str())
+        self.name.as_str()
     }
 
     fn setup(&self) -> ProverTimeSetup {

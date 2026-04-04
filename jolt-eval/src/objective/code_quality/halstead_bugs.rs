@@ -16,7 +16,7 @@ pub const HALSTEAD_BUGS: OptimizationObjective = OptimizationObjective::StaticAn
 /// Estimated number of delivered bugs across all Rust files under
 /// a target directory, based on Halstead's bug prediction formula
 /// (B = V / 3000, where V is program volume).
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Hash)]
 pub struct HalsteadBugsObjective {
     pub(crate) target_dir: &'static str,
 }

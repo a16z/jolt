@@ -42,18 +42,14 @@ impl BindShared {
 }
 
 /// Benchmark `DensePolynomial::bind_parallel` with `LowToHigh` binding.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, PartialEq, Hash)]
 pub struct BindLowToHighObjective;
-
-impl BindLowToHighObjective {
-    pub const NAME: &str = "bind_parallel_low_to_high";
-}
 
 impl Objective for BindLowToHighObjective {
     type Setup = BindSetup;
 
     fn name(&self) -> &str {
-        Self::NAME
+        "bind_parallel_low_to_high"
     }
 
     fn description(&self) -> String {
@@ -80,18 +76,14 @@ impl Objective for BindLowToHighObjective {
 }
 
 /// Benchmark `DensePolynomial::bind_parallel` with `HighToLow` binding.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, PartialEq, Hash)]
 pub struct BindHighToLowObjective;
-
-impl BindHighToLowObjective {
-    pub const NAME: &str = "bind_parallel_high_to_low";
-}
 
 impl Objective for BindHighToLowObjective {
     type Setup = BindSetup;
 
     fn name(&self) -> &str {
-        Self::NAME
+        "bind_parallel_high_to_low"
     }
 
     fn description(&self) -> String {

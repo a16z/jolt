@@ -65,7 +65,7 @@ pub trait Objective: Send + Sync {
 // Data-containing enums — Hash/Eq based on discriminant only
 
 /// Static-analysis objectives.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Hash)]
 pub enum StaticAnalysisObjective {
     Lloc(code_quality::lloc::LlocObjective),
     CognitiveComplexity(code_quality::cognitive::CognitiveComplexityObjective),
@@ -124,20 +124,8 @@ impl StaticAnalysisObjective {
     }
 }
 
-impl PartialEq for StaticAnalysisObjective {
-    fn eq(&self, other: &Self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-    }
-}
-impl Eq for StaticAnalysisObjective {}
-impl Hash for StaticAnalysisObjective {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        std::mem::discriminant(self).hash(state);
-    }
-}
-
 /// Criterion-benchmarked performance objectives.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Hash)]
 pub enum PerformanceObjective {
     BindLowToHigh(performance::binding::BindLowToHighObjective),
     BindHighToLow(performance::binding::BindHighToLowObjective),
@@ -182,18 +170,6 @@ impl PerformanceObjective {
             Self::BindLowToHigh(_) | Self::BindHighToLow(_) => &["jolt-core/"],
             Self::NaiveSortTime(_) => &["jolt-eval/src/sort_targets.rs"],
         }
-    }
-}
-
-impl PartialEq for PerformanceObjective {
-    fn eq(&self, other: &Self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-    }
-}
-impl Eq for PerformanceObjective {}
-impl Hash for PerformanceObjective {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        std::mem::discriminant(self).hash(state);
     }
 }
 

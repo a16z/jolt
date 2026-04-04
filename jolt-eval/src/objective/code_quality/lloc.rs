@@ -13,7 +13,7 @@ pub const LLOC: OptimizationObjective =
 
 /// Total logical lines of code (LLOC) across all Rust files under
 /// a target directory.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Hash)]
 pub struct LlocObjective {
     pub(crate) target_dir: &'static str,
 }
