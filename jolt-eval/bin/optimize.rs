@@ -188,6 +188,7 @@ fn main() -> eyre::Result<()> {
         num_iterations: cli.iterations,
         hint: cli.hint.clone(),
         verbose: cli.verbose,
+        ..Default::default()
     };
 
     let result = auto_optimize(&agent, &mut env, objective, &config, &repo_dir);

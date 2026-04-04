@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 
 use super::{CheckError, Invariant, InvariantViolation};
-use crate::agent::ClaudeCodeAgent;
+use crate::agent::{ClaudeCodeAgent, DiffScope};
 use crate::invariant::synthesis::redteam::{auto_redteam, RedTeamConfig, RedTeamResult};
 use crate::objective::objective_fn::ObjectiveFunction;
 use crate::objective::optimize::{auto_optimize, OptimizeConfig, OptimizeEnv};
@@ -272,6 +272,7 @@ pub fn run_optimize_test(
         num_iterations: iterations,
         hint: Some(hint),
         verbose,
+        diff_scope: DiffScope::All,
     };
 
     println!("=== Optimize e2e: naive bubble sort ===");
@@ -400,8 +401,7 @@ mod tests {
         };
         let config = OptimizeConfig {
             num_iterations: 1,
-            hint: None,
-            verbose: false,
+            ..Default::default()
         };
 
         let result = auto_optimize(&agent, &mut env, &obj, &config, Path::new("/tmp"));
@@ -457,8 +457,7 @@ mod tests {
         };
         let config = OptimizeConfig {
             num_iterations: 1,
-            hint: None,
-            verbose: false,
+            ..Default::default()
         };
 
         let result = auto_optimize(&agent, &mut broken_env, &obj, &config, Path::new("/tmp"));
