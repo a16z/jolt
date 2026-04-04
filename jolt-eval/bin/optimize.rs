@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::path::Path;
 use std::process::Command;
 
 use clap::Parser;
@@ -8,6 +7,7 @@ use jolt_eval::agent::ClaudeCodeAgent;
 use jolt_eval::invariant::JoltInvariants;
 use jolt_eval::objective::objective_fn::ObjectiveFunction;
 use jolt_eval::objective::optimize::{auto_optimize, OptimizeConfig, OptimizeEnv};
+use jolt_eval::objective::performance::read_criterion_estimate;
 use jolt_eval::objective::{OptimizationObjective, PerformanceObjective, StaticAnalysisObjective};
 use jolt_eval::sort_e2e;
 
@@ -82,7 +82,7 @@ impl OptimizeEnv for RealEnv {
                     .status();
 
                 if matches!(status, Ok(s) if s.success()) {
-                    if let Some(secs) = read_criterion_estimate(p.name()) {
+                    if let Some(secs) = read_criterion_estimate(p.name(), "optimize") {
                         results.insert(OptimizationObjective::Performance(p), secs);
                     }
                 }
@@ -205,15 +205,4 @@ fn print_measurements(measurements: &HashMap<OptimizationObjective, f64>) {
     for (key, val) in entries {
         println!("  {:<35} {:>15.6}", key.name(), val);
     }
-}
-
-fn read_criterion_estimate(bench_name: &str) -> Option<f64> {
-    let path = Path::new("target/criterion")
-        .join(bench_name)
-        .join("optimize")
-        .join("estimates.json");
-    let data = std::fs::read_to_string(path).ok()?;
-    let json: serde_json::Value = serde_json::from_str(&data).ok()?;
-    let nanos = json.get("mean")?.get("point_estimate")?.as_f64()?;
-    Some(nanos / 1e9)
 }

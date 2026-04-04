@@ -12,9 +12,7 @@ use crate::objective::objective_fn::ObjectiveFunction;
 use crate::objective::optimize::{auto_optimize, OptimizeConfig, OptimizeEnv};
 use crate::objective::{OptimizationObjective, HALSTEAD_BUGS, LLOC};
 
-// =========================================================================
 // Test invariants
-// =========================================================================
 
 struct AlwaysPassInvariant;
 impl InvariantTargets for AlwaysPassInvariant {
@@ -96,9 +94,7 @@ impl Invariant for FailsOnZeroInvariant {
     }
 }
 
-// =========================================================================
 // MockAgent tests
-// =========================================================================
 
 #[test]
 fn mock_always_ok_returns_text() {
@@ -233,9 +229,7 @@ fn mock_with_diff() {
     assert!(resp.diff.unwrap().contains("+new"));
 }
 
-// =========================================================================
 // auto_redteam tests with MockAgent
-// =========================================================================
 
 fn envelope(analysis: &str, counterexample: impl serde::Serialize) -> String {
     serde_json::json!({
@@ -537,9 +531,7 @@ fn redteam_mixed_agent_responses() {
     }
 }
 
-// =========================================================================
 // AgentHarness trait object tests
-// =========================================================================
 
 #[test]
 fn agent_harness_is_object_safe() {
@@ -637,9 +629,7 @@ fn custom_harness_plugs_into_auto_redteam() {
     }
 }
 
-// =========================================================================
 // Mock OptimizeEnv
-// =========================================================================
 
 fn lloc() -> OptimizationObjective {
     LLOC
@@ -735,9 +725,7 @@ fn opt_config(iterations: usize) -> OptimizeConfig {
     }
 }
 
-// =========================================================================
 // auto_optimize tests
-// =========================================================================
 
 #[test]
 fn optimize_accepts_improvement() {

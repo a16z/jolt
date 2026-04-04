@@ -1,7 +1,6 @@
-use std::path::Path;
-
 use clap::Parser;
 
+use jolt_eval::objective::performance::read_criterion_estimate;
 use jolt_eval::objective::{PerformanceObjective, StaticAnalysisObjective};
 
 #[derive(Parser)]
@@ -74,7 +73,7 @@ fn main() -> eyre::Result<()> {
                             continue;
                         }
                     }
-                    match read_criterion_estimate(p.name()) {
+                    match read_criterion_estimate(p.name(), "new") {
                         Some(secs) => print_row(p.name(), secs, "s"),
                         None => {
                             println!("{:<35} {:>15}", p.name(), "NO DATA");
@@ -107,15 +106,4 @@ fn main() -> eyre::Result<()> {
     }
 
     Ok(())
-}
-
-fn read_criterion_estimate(bench_name: &str) -> Option<f64> {
-    let path = Path::new("target/criterion")
-        .join(bench_name)
-        .join("new")
-        .join("estimates.json");
-    let data = std::fs::read_to_string(path).ok()?;
-    let json: serde_json::Value = serde_json::from_str(&data).ok()?;
-    let nanos = json.get("mean")?.get("point_estimate")?.as_f64()?;
-    Some(nanos / 1e9)
 }

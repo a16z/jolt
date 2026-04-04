@@ -246,16 +246,10 @@ fn build_optimize_prompt(
     }
     prompt.push('\n');
 
-    // Derive targeted reading guidance from the union of all input diff_paths.
-    let mut diff_paths: Vec<&str> = Vec::new();
-    for input in inputs {
-        for &p in input.diff_paths() {
-            if !diff_paths.contains(&p) {
-                diff_paths.push(p);
-            }
-        }
-    }
-    let paths_list = diff_paths.join(", ");
+    let paths_list = match objective.diff_scope() {
+        crate::agent::DiffScope::Include(paths) => paths.join(", "),
+        _ => "jolt-core/".to_string(),
+    };
     prompt.push_str("## Instructions\n\n");
     prompt.push_str(&format!(
         "1. Read the relevant source code in: {paths_list}. Also read \

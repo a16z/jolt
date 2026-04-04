@@ -63,9 +63,7 @@ pub trait Objective: Send + Sync {
     fn run(&self, _setup: Self::Setup) {}
 }
 
-// =========================================================================
 // Data-containing enums — Hash/Eq based on discriminant only
-// =========================================================================
 
 /// Static-analysis objectives.
 #[derive(Clone, Copy)]
@@ -120,11 +118,8 @@ impl StaticAnalysisObjective {
         }
     }
 
-    /// File paths that an optimizer should be allowed to modify.
     pub fn diff_paths(&self) -> &'static [&'static str] {
-        match self {
-            Self::Lloc(_) | Self::CognitiveComplexity(_) | Self::HalsteadBugs(_) => &["jolt-core/"],
-        }
+        &["jolt-core/"]
     }
 }
 

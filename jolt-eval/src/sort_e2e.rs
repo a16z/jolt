@@ -11,8 +11,6 @@ use crate::objective::optimize::{auto_optimize, OptimizeConfig, OptimizeEnv};
 use crate::objective::{OptimizationObjective, NAIVE_SORT_TIME};
 use crate::sort_targets::{candidate_sort, naive_sort};
 
-// ── Red-team invariant ──────────────────────────────────────────────
-
 /// Invariant: a sort function must preserve all elements (multiset
 /// equality) and produce sorted output.
 #[jolt_eval_macros::invariant(RedTeam)]
@@ -110,8 +108,6 @@ impl Invariant for NaiveSortInvariant {
     }
 }
 
-// ── SortOptimizeEnv ─────────────────────────────────────────────────
-
 /// An [`OptimizeEnv`] that measures wall-clock time of a sort function.
 ///
 /// `apply_diff` both applies the diff to the actual file on disk (so
@@ -167,8 +163,6 @@ impl OptimizeEnv for SortOptimizeEnv {
         self.sort_fn = naive_sort;
     }
 }
-
-// ── CLI-accessible e2e runners ──────────────────────────────────────
 
 const SORT_TARGETS_PATH: &str = "jolt-eval/src/sort_targets.rs";
 
@@ -285,8 +279,6 @@ mod tests {
 
     use super::*;
 
-    // ── Red-team e2e (MockAgent) ────────────────────────────────────
-
     #[test]
     fn redteam_e2e_finds_sort_violation() {
         let invariant = CandidateSortInvariant;
@@ -347,15 +339,11 @@ mod tests {
         }
     }
 
-    // ── Red-team e2e (real agent) ───────────────────────────────────
-
     #[test]
     #[ignore] // Requires Claude API access
     fn redteam_e2e_real_agent() {
         run_redteam_test("claude-sonnet-4-20250514", 10, 5, None, false);
     }
-
-    // ── Optimize e2e (MockAgent) ────────────────────────────────────
 
     #[test]
     fn optimize_e2e_sort_improves() {
@@ -442,8 +430,6 @@ mod tests {
 
         assert!(!result.attempts[0].invariants_passed);
     }
-
-    // ── Optimize e2e (real agent) ───────────────────────────────────
 
     #[test]
     #[ignore] // Requires Claude API access

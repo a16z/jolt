@@ -1,8 +1,6 @@
 use crate::invariant::{CheckError, Invariant, InvariantViolation};
 
-// ---------------------------------------------------------------------------
 // AlwaysPass: trivial invariant to test macro synthesis
-// ---------------------------------------------------------------------------
 
 #[jolt_eval_macros::invariant(Test, Fuzz, RedTeam)]
 #[derive(Default)]
@@ -27,9 +25,7 @@ impl Invariant for AlwaysPassInvariant {
     }
 }
 
-// ---------------------------------------------------------------------------
 // BoundsCheck: uses a struct Input type
-// ---------------------------------------------------------------------------
 
 #[derive(
     Debug,
@@ -86,7 +82,5 @@ impl Invariant for BoundsCheckInvariant {
     }
 }
 
-// ===========================================================================
 // The #[test] functions `seed_corpus` and `random_inputs` inside the
 // generated `*_synthesized` modules are auto-discovered by nextest.
-// ===========================================================================
