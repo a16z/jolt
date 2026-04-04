@@ -1,0 +1,93 @@
+name: Benchmark modular crates
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - "crates/**"
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: bench-crates-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    name: Criterion benchmarks
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install critcmp
+        run: cargo install critcmp --locked
+
+      # On main push: save baseline
+      - name: Run benchmarks (baseline)
+        if: github.event_name == 'push'
+        run: >
+          cargo bench
+          -p jolt-field
+          --bench '*'
+          -- --save-baseline main_run
+
+      - name: Upload baseline
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: criterion-baseline
+          path: target/criterion/
+          retention-days: 30
+
+      # On PR: compare against baseline
+      - name: Download baseline
+        if: github.event_name == 'pull_request'
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          name: criterion-baseline
+          path: target/criterion/
+          branch: main
+          workflow: bench-crates.yml
+          if_no_artifact_found: warn
+
+      - name: Run benchmarks (PR)
+        if: github.event_name == 'pull_request'
+        run: >
+          cargo bench
+          -p jolt-field
+          --bench '*'
+          -- --save-baseline pr_run
+
+      - name: Compare benchmarks
+        if: github.event_name == 'pull_request'
+        id: critcmp
+        run: |
+          if [ -d "target/criterion/main_run" ]; then
+            OUTPUT=$(critcmp main_run pr_run --threshold 5 2>&1) || true
+            echo "comparison<<EOF" >> "$GITHUB_OUTPUT"
+            echo "$OUTPUT" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          else
+            echo "comparison=No baseline found — skipping comparison." >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Post benchmark comparison
+        if: github.event_name == 'pull_request' && steps.critcmp.outputs.comparison != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = `## Benchmark comparison (crates)\n\n\`\`\`\n${process.env.COMPARISON}\n\`\`\``;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });
+        env:
+          COMPARISON: ${{ steps.critcmp.outputs.comparison }}

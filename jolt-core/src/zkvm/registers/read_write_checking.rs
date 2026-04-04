@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::PolynomialId;
@@ -495,16 +494,19 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
             let evals = (0..inc.len() / 2)
                 .into_par_iter()
                 .map(|j| {
-                    let inc_evals = inc.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
-                    let eq_evals = merged_eq.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
+                    let inc_evals = inc.sumcheck_evals_array::<DEGREE>(j, BindingOrder::LowToHigh);
+                    let eq_evals =
+                        merged_eq.sumcheck_evals_array::<DEGREE>(j, BindingOrder::LowToHigh);
                     let inner = (0..K_prime)
                         .into_par_iter()
                         .map(|k| {
                             let idx = k * T_prime / 2 + j;
-                            let ra_evals = ra.sumcheck_evals(idx, DEGREE, BindingOrder::LowToHigh);
-                            let wa_evals = wa.sumcheck_evals(idx, DEGREE, BindingOrder::LowToHigh);
+                            let ra_evals =
+                                ra.sumcheck_evals_array::<DEGREE>(idx, BindingOrder::LowToHigh);
+                            let wa_evals =
+                                wa.sumcheck_evals_array::<DEGREE>(idx, BindingOrder::LowToHigh);
                             let val_evals =
-                                val.sumcheck_evals(idx, DEGREE, BindingOrder::LowToHigh);
+                                val.sumcheck_evals_array::<DEGREE>(idx, BindingOrder::LowToHigh);
                             [
                                 ra_evals[0] * val_evals[0]
                                     + wa_evals[0] * (val_evals[0] + inc_evals[0]),
