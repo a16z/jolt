@@ -23,6 +23,11 @@ struct Cli {
     #[arg(long, conflicts_with = "objective")]
     test: bool,
 
+    /// Measure the objective's inputs and print JSON to stdout, then exit.
+    /// Requires --objective. Useful for subprocess-based measurement.
+    #[arg(long, requires = "objective")]
+    measure: bool,
+
     /// List all available objective functions and exit.
     #[arg(long)]
     list: bool,
@@ -155,6 +160,14 @@ fn main() -> eyre::Result<()> {
     });
 
     let repo_dir = std::env::current_dir()?;
+
+    if cli.measure {
+        let measurements = measure_inputs(objective, &repo_dir);
+        let json = serde_json::to_string(&measurements).unwrap();
+        println!("{json}");
+        return Ok(());
+    }
+
     let bench_perf = objective.inputs.iter().any(|i| i.is_perf());
     let invariants = JoltInvariants::all();
 
@@ -204,5 +217,52 @@ fn print_measurements(measurements: &HashMap<OptimizationObjective, f64>) {
     entries.sort_by_key(|(k, _)| k.name());
     for (key, val) in entries {
         println!("  {:<35} {:>15.6}", key.name(), val);
+    }
+}
+
+/// Measure just the inputs of an objective function and return a JSON-
+/// serializable map of `name -> value`.
+fn measure_inputs(
+    objective: &ObjectiveFunction,
+    repo_dir: &std::path::Path,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut out = serde_json::Map::new();
+
+    for &input in objective.inputs {
+        let value = match input {
+            OptimizationObjective::StaticAnalysis(sa) => sa.collect_measurement().ok(),
+            OptimizationObjective::Performance(p) => measure_perf(&p, repo_dir),
+        };
+        if let Some(v) = value {
+            out.insert(input.name().to_string(), serde_json::Value::from(v));
+        }
+    }
+
+    out
+}
+
+fn measure_perf(p: &PerformanceObjective, repo_dir: &std::path::Path) -> Option<f64> {
+    match p {
+        PerformanceObjective::BindLowToHigh(_) | PerformanceObjective::BindHighToLow(_) => {
+            let _ = Command::new("cargo")
+                .current_dir(repo_dir)
+                .args([
+                    "bench",
+                    "-p",
+                    "jolt-eval",
+                    "--bench",
+                    p.name(),
+                    "--",
+                    "--quick",
+                ])
+                .status();
+            read_criterion_estimate(p.name(), "new")
+        }
+        PerformanceObjective::NaiveSortTime => {
+            let mut data: Vec<i32> = (0..5000i32).rev().collect();
+            let start = std::time::Instant::now();
+            jolt_eval::sort_targets::naive_sort(&mut data);
+            Some(start.elapsed().as_secs_f64())
+        }
     }
 }

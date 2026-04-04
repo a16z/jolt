@@ -4,7 +4,7 @@ use crate::agent::DiffScope;
 
 use super::{
     OptimizationObjective, BIND_HIGH_TO_LOW, BIND_LOW_TO_HIGH, COGNITIVE_COMPLEXITY, HALSTEAD_BUGS,
-    LLOC,
+    LLOC, NAIVE_SORT_TIME,
 };
 
 /// A concrete objective function that the optimizer minimizes.
@@ -34,6 +34,7 @@ impl ObjectiveFunction {
             MINIMIZE_HALSTEAD_BUGS,
             MINIMIZE_BIND_LOW_TO_HIGH,
             MINIMIZE_BIND_HIGH_TO_LOW,
+            MINIMIZE_NAIVE_SORT_TIME,
         ]
     }
 
@@ -91,6 +92,12 @@ pub const MINIMIZE_BIND_HIGH_TO_LOW: ObjectiveFunction = ObjectiveFunction {
     evaluate: |m, _| m.get(&BIND_HIGH_TO_LOW).copied().unwrap_or(f64::INFINITY),
 };
 
+pub const MINIMIZE_NAIVE_SORT_TIME: ObjectiveFunction = ObjectiveFunction {
+    name: "minimize_naive_sort_time",
+    inputs: &[NAIVE_SORT_TIME],
+    evaluate: |m, _| m.get(&NAIVE_SORT_TIME).copied().unwrap_or(f64::INFINITY),
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,7 +135,7 @@ mod tests {
 
     #[test]
     fn all_returns_expected_count() {
-        assert_eq!(ObjectiveFunction::all().len(), 5);
+        assert_eq!(ObjectiveFunction::all().len(), 6);
     }
 
     #[test]
