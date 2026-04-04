@@ -33,6 +33,10 @@ impl Objective for LlocObjective {
         "lloc"
     }
 
+    fn description(&self) -> &str {
+        "Total logical lines of code in jolt-core/src/"
+    }
+
     fn setup(&self) {}
 
     fn collect_measurement(&self) -> Result<f64, MeasurementError> {

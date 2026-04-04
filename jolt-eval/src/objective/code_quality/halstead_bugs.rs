@@ -34,6 +34,10 @@ impl Objective for HalsteadBugsObjective {
         "halstead_bugs"
     }
 
+    fn description(&self) -> &str {
+        "Estimated delivered bugs (Halstead volume / 3000) in jolt-core/src/"
+    }
+
     fn setup(&self) {}
 
     fn collect_measurement(&self) -> Result<f64, MeasurementError> {

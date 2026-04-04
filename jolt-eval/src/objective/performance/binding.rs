@@ -56,6 +56,10 @@ impl Objective for BindLowToHighObjective {
         Self::NAME
     }
 
+    fn description(&self) -> &str {
+        "Wall-clock time of DensePolynomial::bind_parallel with LowToHigh binding (2^20 evaluations)"
+    }
+
     fn setup(&self) -> BindSetup {
         thread_local! {
             static SHARED: BindShared = BindShared::new();
@@ -88,6 +92,10 @@ impl Objective for BindHighToLowObjective {
 
     fn name(&self) -> &str {
         Self::NAME
+    }
+
+    fn description(&self) -> &str {
+        "Wall-clock time of DensePolynomial::bind_parallel with HighToLow binding (2^20 evaluations)"
     }
 
     fn setup(&self) -> BindSetup {

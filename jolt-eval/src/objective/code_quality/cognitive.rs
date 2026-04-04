@@ -33,6 +33,10 @@ impl Objective for CognitiveComplexityObjective {
         "cognitive_complexity_avg"
     }
 
+    fn description(&self) -> &str {
+        "Average cognitive complexity per function in jolt-core/src/"
+    }
+
     fn setup(&self) {}
 
     fn collect_measurement(&self) -> Result<f64, MeasurementError> {

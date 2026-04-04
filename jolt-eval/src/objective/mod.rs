@@ -43,6 +43,10 @@ pub trait Objective: Send + Sync {
 
     fn name(&self) -> &str;
 
+    fn description(&self) -> &str {
+        self.name()
+    }
+
     fn units(&self) -> Option<&str> {
         None
     }
@@ -94,13 +98,9 @@ impl StaticAnalysisObjective {
 
     pub fn description(&self) -> &str {
         match self {
-            Self::Lloc(_) => "Total logical lines of code in jolt-core/src/",
-            Self::CognitiveComplexity(_) => {
-                "Average cognitive complexity per function in jolt-core/src/"
-            }
-            Self::HalsteadBugs(_) => {
-                "Estimated delivered bugs (Halstead volume / 3000) in jolt-core/src/"
-            }
+            Self::Lloc(o) => o.description(),
+            Self::CognitiveComplexity(o) => o.description(),
+            Self::HalsteadBugs(o) => o.description(),
         }
     }
 
@@ -176,9 +176,11 @@ impl PerformanceObjective {
 
     pub fn description(&self) -> &str {
         match self {
-            Self::BindLowToHigh(_) => "Wall-clock time of DensePolynomial::bind_parallel with LowToHigh binding (2^20 evaluations)",
-            Self::BindHighToLow(_) => "Wall-clock time of DensePolynomial::bind_parallel with HighToLow binding (2^20 evaluations)",
-            Self::NaiveSortTime => "Wall-clock time of the naive_sort function in jolt-eval/src/sort_targets.rs",
+            Self::BindLowToHigh(o) => o.description(),
+            Self::BindHighToLow(o) => o.description(),
+            Self::NaiveSortTime => {
+                "Wall-clock time of the naive_sort function in jolt-eval/src/sort_targets.rs"
+            }
         }
     }
 
