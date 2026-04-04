@@ -117,7 +117,7 @@ pub fn auto_redteam<I: Invariant>(
         let input: I::Input = match serde_json::from_str(&counterexample_json) {
             Ok(v) => v,
             Err(e) => {
-                tracing::info!("Agent produced unparseable input: {e}");
+                tracing::info!("Agent produced unparsable input: {e}");
                 failed_attempts.push(FailedAttempt {
                     description: format!("Iteration {}", iteration + 1),
                     approach: analysis,
