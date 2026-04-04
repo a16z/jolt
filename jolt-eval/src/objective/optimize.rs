@@ -39,6 +39,8 @@ pub struct OptimizationAttempt {
     pub measurements: HashMap<OptimizationObjective, f64>,
     pub score: f64,
     pub invariants_passed: bool,
+    /// Relative path to the persisted attempt directory, if available.
+    pub path: Option<String>,
 }
 
 /// Environment trait that decouples the optimization loop from side effects.
@@ -57,6 +59,90 @@ pub trait OptimizeEnv {
 
     /// Called when a change is rejected.
     fn reject(&mut self);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_attempt_files(
+    dir: &Path,
+    diff: &str,
+    response_text: &str,
+    measurements: &HashMap<OptimizationObjective, f64>,
+    score: f64,
+    accepted: bool,
+    invariants_passed: bool,
+) -> Option<()> {
+    std::fs::write(dir.join("diff.patch"), diff).ok()?;
+    std::fs::write(dir.join("response.md"), response_text).ok()?;
+
+    let meas: HashMap<String, f64> = measurements
+        .iter()
+        .map(|(k, &v)| (k.name().to_string(), v))
+        .collect();
+    let meas_json = serde_json::to_string_pretty(&meas).ok()?;
+    std::fs::write(dir.join("measurements.json"), meas_json).ok()?;
+
+    let status = serde_json::json!({
+        "accepted": accepted,
+        "score": score,
+        "invariants_passed": invariants_passed,
+    });
+    std::fs::write(
+        dir.join("status.json"),
+        serde_json::to_string_pretty(&status).ok()?,
+    )
+    .ok()?;
+
+    Some(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn persist_attempt(
+    repo_dir: &Path,
+    objective_name: &str,
+    iteration: usize,
+    diff: &str,
+    response_text: &str,
+    measurements: &HashMap<OptimizationObjective, f64>,
+    score: f64,
+    accepted: bool,
+    invariants_passed: bool,
+) -> Option<String> {
+    let dir = repo_dir
+        .join("jolt-eval/optimize-history")
+        .join(objective_name)
+        .join(format!("attempt-{iteration}"));
+    std::fs::create_dir_all(&dir).ok()?;
+    write_attempt_files(
+        &dir,
+        diff,
+        response_text,
+        measurements,
+        score,
+        accepted,
+        invariants_passed,
+    )?;
+    Some(
+        dir.strip_prefix(repo_dir)
+            .ok()?
+            .to_string_lossy()
+            .to_string(),
+    )
+}
+
+fn persist_baseline(
+    repo_dir: &Path,
+    objective_name: &str,
+    measurements: &HashMap<OptimizationObjective, f64>,
+    score: f64,
+) {
+    let dir = repo_dir
+        .join("jolt-eval/optimize-history")
+        .join(objective_name)
+        .join("baseline");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let _ = write_attempt_files(&dir, "", "", measurements, score, true, true);
 }
 
 /// Run an AI-driven optimization loop.
@@ -80,6 +166,7 @@ pub fn auto_optimize<A: AgentHarness, E: OptimizeEnv>(
 
     let baseline = env.measure();
     let baseline_score = (objective.evaluate)(&baseline, &baseline);
+    persist_baseline(repo_dir, objective.name, &baseline, baseline_score);
     let mut best_score = baseline_score;
     let mut best_measurements = baseline.clone();
     let mut attempts = Vec::new();
@@ -119,6 +206,7 @@ pub fn auto_optimize<A: AgentHarness, E: OptimizeEnv>(
             eprintln!("──────────────────────────");
         }
 
+        let response_text = response.text.clone();
         let diff_text = match &response.diff {
             Some(d) => {
                 env.apply_diff(d);
@@ -135,17 +223,30 @@ pub fn auto_optimize<A: AgentHarness, E: OptimizeEnv>(
         let invariants_passed = env.check_invariants();
 
         let improved = invariants_passed && new_score < best_score;
+        let iter = iteration + 1;
+
+        let attempt_path = persist_attempt(
+            repo_dir,
+            objective.name,
+            iter,
+            &diff_text,
+            &response_text,
+            &new_measurements,
+            new_score,
+            improved,
+            invariants_passed,
+        );
 
         let attempt = OptimizationAttempt {
-            description: format!("iteration {}", iteration + 1),
+            description: format!("iteration {iter}"),
             diff: truncate(&diff_text, 5000).to_string(),
             measurements: new_measurements.clone(),
             score: new_score,
             invariants_passed,
+            path: attempt_path,
         };
         attempts.push(attempt);
 
-        let iter = iteration + 1;
         if improved {
             eprintln!("  ✓ iteration {iter} ACCEPTED — score {best_score:.10} → {new_score:.10}",);
             best_score = new_score;
@@ -282,34 +383,31 @@ fn build_optimize_prompt(
     if !past_attempts.is_empty() {
         prompt.push_str("## Previous attempts\n\n");
         for attempt in past_attempts {
-            let status = if attempt.invariants_passed {
-                "invariants passed"
-            } else {
-                "INVARIANTS FAILED"
+            let status_label = match (
+                attempt.invariants_passed,
+                attempt.score < current_best_score,
+            ) {
+                (true, true) => "ACCEPTED",
+                (false, _) => "REJECTED (invariants failed)",
+                _ => "REJECTED (no improvement)",
             };
-            prompt.push_str(&format!(
-                "- **{}** ({}, score={:.6}): ",
-                attempt.description, status, attempt.score
-            ));
-            let mut keys: Vec<_> = attempt.measurements.iter().collect();
-            keys.sort_by_key(|(k, _)| k.name());
-            for (key, val) in keys {
-                prompt.push_str(&format!("{}={val:.6} ", key.name()));
-            }
-            prompt.push('\n');
-            if !attempt.diff.is_empty() {
+            if let Some(ref path) = attempt.path {
                 prompt.push_str(&format!(
-                    "  Diff preview: `{}`\n",
-                    truncate(&attempt.diff, 500)
+                    "- **{}** — {status_label}, score={:.6}. Details: {path}/\n",
+                    attempt.description, attempt.score,
+                ));
+            } else {
+                prompt.push_str(&format!(
+                    "- **{}** — {status_label}, score={:.6}\n",
+                    attempt.description, attempt.score,
                 ));
             }
         }
         prompt.push('\n');
-
         prompt.push_str(
-            "If previous attempts failed or showed no improvement, try a fundamentally \
-             different approach. Analyze WHY the previous approach did not reduce the score \
-             and pivot to a new strategy.\n\n",
+            "Read the attempt directories for full diffs, measurements, and agent responses.\n\
+             If previous attempts failed or showed no improvement, try a fundamentally \
+             different approach.\n\n",
         );
     }
 

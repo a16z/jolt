@@ -58,3 +58,4 @@ benchmark-runs/
 *.pb
 *benchmark_results.json
 .omc/
+optimize-history/
