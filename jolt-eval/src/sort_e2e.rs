@@ -113,20 +113,25 @@ impl Invariant for NaiveSortInvariant {
 // ── SortOptimizeEnv ─────────────────────────────────────────────────
 
 /// An [`OptimizeEnv`] that measures wall-clock time of a sort function.
-/// `apply_diff` simulates optimization by swapping to `slice::sort`.
+///
+/// `apply_diff` both applies the diff to the actual file on disk (so
+/// git can track and commit it) and swaps the in-process function
+/// pointer (so `measure` reflects the improvement without recompiling).
 pub struct SortOptimizeEnv {
     pub(crate) sort_fn: fn(&mut [i32]),
     data: Vec<i32>,
     invariant_ok: bool,
+    repo_dir: std::path::PathBuf,
 }
 
 impl SortOptimizeEnv {
-    pub fn new(data_size: usize) -> Self {
+    pub fn new(data_size: usize, repo_dir: &std::path::Path) -> Self {
         let data: Vec<i32> = (0..data_size as i32).rev().collect();
         Self {
             sort_fn: naive_sort,
             data,
             invariant_ok: true,
+            repo_dir: repo_dir.to_path_buf(),
         }
     }
 }
@@ -149,7 +154,10 @@ impl OptimizeEnv for SortOptimizeEnv {
         self.invariant_ok
     }
 
-    fn apply_diff(&mut self, _diff: &str) {
+    fn apply_diff(&mut self, diff: &str) {
+        // Apply to the actual file so git can track and commit the change.
+        let _ = crate::agent::apply_diff(&self.repo_dir, diff);
+        // Simulate the optimization in-process (can't recompile at runtime).
         self.sort_fn = |d: &mut [i32]| d.sort();
     }
 
@@ -221,7 +229,7 @@ pub fn run_optimize_test(
     let agent = ClaudeCodeAgent::new(model, max_turns);
     let repo_dir = std::env::current_dir().expect("current dir");
 
-    let mut env = SortOptimizeEnv::new(5000);
+    let mut env = SortOptimizeEnv::new(5000, &repo_dir);
 
     let baseline = env.measure();
     let baseline_time = baseline[&NAIVE_SORT_TIME];
@@ -357,7 +365,7 @@ mod tests {
             diff: Some("--- a/sort.rs\n+++ b/sort.rs\n-bubble\n+merge".into()),
         })]);
 
-        let mut env = SortOptimizeEnv::new(5000);
+        let mut env = SortOptimizeEnv::new(5000, Path::new("/tmp"));
 
         let baseline = env.measure();
         let baseline_time = baseline[&NAIVE_SORT_TIME];
@@ -393,7 +401,7 @@ mod tests {
             diff: Some("--- a/sort.rs\n+++ b/sort.rs\n-sort\n+noop".into()),
         })]);
 
-        let env = SortOptimizeEnv::new(100);
+        let env = SortOptimizeEnv::new(100, Path::new("/tmp"));
 
         struct BrokenSortEnv(SortOptimizeEnv);
 
