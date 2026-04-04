@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
+use std::process::Command;
 
 use crate::agent::{truncate, AgentHarness, DiffScope};
 
@@ -71,6 +72,14 @@ pub fn auto_optimize<A: AgentHarness, E: OptimizeEnv>(
     config: &OptimizeConfig,
     repo_dir: &Path,
 ) -> OptimizeResult {
+    // Create a branch for this optimization run. Silently ignored if
+    // repo_dir is not a git repository (e.g. in tests).
+    let branch = format!("jolt-eval/optimize/{}", objective.name);
+    let _ = Command::new("git")
+        .current_dir(repo_dir)
+        .args(["checkout", "-b", &branch])
+        .status();
+
     let baseline = env.measure();
     let baseline_score = (objective.evaluate)(&baseline);
     let mut best_score = baseline_score;
@@ -146,8 +155,30 @@ pub fn auto_optimize<A: AgentHarness, E: OptimizeEnv>(
             best_score = new_score;
             best_measurements = new_measurements;
             env.accept(iteration + 1);
-        } else if invariants_passed {
-            env.reject();
+            let msg = format!(
+                "perf(auto-optimize): {} iteration {} (score {:.6})",
+                objective.name,
+                iteration + 1,
+                new_score,
+            );
+            let _ = Command::new("git")
+                .current_dir(repo_dir)
+                .args(["add", "-A"])
+                .status();
+            let _ = Command::new("git")
+                .current_dir(repo_dir)
+                .args(["commit", "-m", &msg])
+                .status();
+        } else {
+            if !invariants_passed {
+                // Already rejected above.
+            } else {
+                env.reject();
+            }
+            let _ = Command::new("git")
+                .current_dir(repo_dir)
+                .args(["checkout", "."])
+                .status();
         }
     }
 

@@ -106,24 +106,11 @@ impl OptimizeEnv for RealEnv {
     }
 
     fn accept(&mut self, iteration: usize) {
-        println!("  Improvement found -- keeping changes.");
-        let _ = Command::new("git")
-            .current_dir(&self.repo_dir)
-            .args(["add", "-A"])
-            .status();
-        let msg = format!("perf(auto-optimize): iteration {iteration}");
-        let _ = Command::new("git")
-            .current_dir(&self.repo_dir)
-            .args(["commit", "-m", &msg, "--allow-empty"])
-            .status();
+        println!("  Improvement found -- keeping changes (iteration {iteration}).");
     }
 
     fn reject(&mut self) {
         println!("  Reverting changes.");
-        let _ = Command::new("git")
-            .current_dir(&self.repo_dir)
-            .args(["checkout", "."])
-            .status();
     }
 }
 
