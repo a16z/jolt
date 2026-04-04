@@ -218,6 +218,8 @@ pub struct FailedAttempt {
     pub description: String,
     pub approach: String,
     pub failure_reason: String,
+    /// Path to the persisted attempt directory (relative to repo root).
+    pub path: Option<String>,
 }
 
 /// Try to extract a JSON object from free-form text. Looks for a

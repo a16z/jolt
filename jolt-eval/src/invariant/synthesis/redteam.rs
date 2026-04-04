@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use super::super::{CheckError, FailedAttempt, Invariant};
-use crate::agent::{truncate, AgentHarness, DiffScope};
+use crate::agent::{AgentHarness, DiffScope};
 
 /// Result of a red-team session.
 pub enum RedTeamResult {
@@ -51,9 +51,9 @@ pub fn auto_redteam<I: Invariant>(
     let mut failed_attempts = Vec::new();
 
     for iteration in 0..config.num_iterations {
+        let iter = iteration + 1;
         tracing::info!(
-            "Red team iteration {}/{} for '{}'",
-            iteration + 1,
+            "Red team iteration {iter}/{} for '{}'",
             config.num_iterations,
             invariant.name()
         );
@@ -64,12 +64,12 @@ pub fn auto_redteam<I: Invariant>(
             &input_schema,
             config.hint.as_deref(),
             &failed_attempts,
-            iteration + 1,
+            iter,
             config.num_iterations,
         );
 
         if config.verbose {
-            eprintln!("── Iteration {} prompt ──", iteration + 1);
+            eprintln!("── Iteration {iter} prompt ──");
             eprintln!("{prompt}");
             eprintln!("────────────────────────");
         }
@@ -80,17 +80,25 @@ pub fn auto_redteam<I: Invariant>(
                 Ok(r) => r,
                 Err(e) => {
                     tracing::warn!("Agent invocation failed: {e}");
+                    let path = persist_redteam_attempt(
+                        repo_dir,
+                        invariant.name(),
+                        iter,
+                        "Agent invocation failed",
+                        &e.to_string(),
+                    );
                     failed_attempts.push(FailedAttempt {
-                        description: format!("Iteration {}", iteration + 1),
+                        description: format!("Iteration {iter}"),
                         approach: "Agent invocation failed".to_string(),
                         failure_reason: e.to_string(),
+                        path,
                     });
                     continue;
                 }
             };
 
         if config.verbose {
-            eprintln!("── Iteration {} response ──", iteration + 1);
+            eprintln!("── Iteration {iter} response ──");
             eprintln!("{}", response.text);
             if let Some(ref d) = response.diff {
                 eprintln!("── diff ({} bytes) ──", d.len());
@@ -107,10 +115,19 @@ pub fn auto_redteam<I: Invariant>(
                     None => (response.text.clone(), json),
                 },
                 None => {
+                    let failure = "Agent response did not contain valid JSON".to_string();
+                    let path = persist_redteam_attempt(
+                        repo_dir,
+                        invariant.name(),
+                        iter,
+                        &response.text,
+                        &failure,
+                    );
                     failed_attempts.push(FailedAttempt {
-                        description: format!("Iteration {}", iteration + 1),
+                        description: format!("Iteration {iter}"),
                         approach: response.text,
-                        failure_reason: "Agent response did not contain valid JSON".to_string(),
+                        failure_reason: failure,
+                        path,
                     });
                     continue;
                 }
@@ -121,12 +138,14 @@ pub fn auto_redteam<I: Invariant>(
             Ok(v) => v,
             Err(e) => {
                 tracing::info!("Agent produced unparsable input: {e}");
+                let failure = format!("Could not deserialize response JSON into Input type: {e}");
+                let path =
+                    persist_redteam_attempt(repo_dir, invariant.name(), iter, &analysis, &failure);
                 failed_attempts.push(FailedAttempt {
-                    description: format!("Iteration {}", iteration + 1),
+                    description: format!("Iteration {iter}"),
                     approach: analysis,
-                    failure_reason: format!(
-                        "Could not deserialize response JSON into Input type: {e}"
-                    ),
+                    failure_reason: failure,
+                    path,
                 });
                 continue;
             }
@@ -138,12 +157,15 @@ pub fn auto_redteam<I: Invariant>(
 
         match invariant.check(&setup, input) {
             Ok(()) => {
+                let failure =
+                    format!("Candidate input did not violate the invariant: {counterexample_json}");
+                let path =
+                    persist_redteam_attempt(repo_dir, invariant.name(), iter, &analysis, &failure);
                 failed_attempts.push(FailedAttempt {
-                    description: format!("Iteration {}", iteration + 1),
+                    description: format!("Iteration {iter}"),
                     approach: analysis,
-                    failure_reason: format!(
-                        "Candidate input did not violate the invariant: {counterexample_json}"
-                    ),
+                    failure_reason: failure,
+                    path,
                 });
             }
             Err(CheckError::Violation(violation)) => {
@@ -155,10 +177,14 @@ pub fn auto_redteam<I: Invariant>(
                 };
             }
             Err(CheckError::InvalidInput(reason)) => {
+                let failure = format!("Invalid input: {reason}");
+                let path =
+                    persist_redteam_attempt(repo_dir, invariant.name(), iter, &analysis, &failure);
                 failed_attempts.push(FailedAttempt {
-                    description: format!("Iteration {}", iteration + 1),
+                    description: format!("Iteration {iter}"),
                     approach: analysis,
-                    failure_reason: format!("Invalid input: {reason}"),
+                    failure_reason: failure,
+                    path,
                 });
             }
         }
@@ -167,6 +193,29 @@ pub fn auto_redteam<I: Invariant>(
     RedTeamResult::NoViolation {
         attempts: failed_attempts,
     }
+}
+
+/// Persist a red-team attempt's approach to disk and return the relative path.
+fn persist_redteam_attempt(
+    repo_dir: &Path,
+    invariant_name: &str,
+    iteration: usize,
+    approach: &str,
+    failure_reason: &str,
+) -> Option<String> {
+    let dir = repo_dir
+        .join("jolt-eval/redteam-history")
+        .join(invariant_name)
+        .join(format!("attempt-{iteration}"));
+    std::fs::create_dir_all(&dir).ok()?;
+    std::fs::write(dir.join("approach.md"), approach).ok()?;
+    std::fs::write(dir.join("failure_reason.txt"), failure_reason).ok()?;
+    Some(
+        dir.strip_prefix(repo_dir)
+            .ok()?
+            .to_string_lossy()
+            .to_string(),
+    )
 }
 
 fn build_envelope_schema(input_schema: &serde_json::Value) -> serde_json::Value {
@@ -253,13 +302,20 @@ fn build_redteam_prompt(
              valid counterexample.\n\n",
         );
         for attempt in failed_attempts {
-            let approach_preview = truncate(&attempt.approach, 200);
+            let path_ref = attempt
+                .path
+                .as_deref()
+                .map(|p| format!(" Details: {p}/"))
+                .unwrap_or_default();
             prompt.push_str(&format!(
-                "- **{}**: {}\n  Failure: {}\n",
-                attempt.description, approach_preview, attempt.failure_reason
+                "- **{}** — {}{path_ref}\n",
+                attempt.description, attempt.failure_reason,
             ));
         }
-        prompt.push('\n');
+        prompt.push_str(
+            "\nRead the attempt directories for the full agent approach. \
+             Try a fundamentally different strategy.\n\n",
+        );
     }
 
     prompt.push_str(
