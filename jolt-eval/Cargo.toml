@@ -38,6 +38,10 @@ name = "bind_parallel_high_to_low"
 harness = false
 
 [[bench]]
+name = "naive_sort_time"
+harness = false
+
+[[bench]]
 name = "bind_parallel_low_to_high"
 harness = false
 

@@ -9,7 +9,6 @@ use jolt_eval::objective::objective_fn::ObjectiveFunction;
 use jolt_eval::objective::optimize::{auto_optimize, OptimizeConfig, OptimizeEnv};
 use jolt_eval::objective::performance::read_criterion_estimate;
 use jolt_eval::objective::{OptimizationObjective, PerformanceObjective, StaticAnalysisObjective};
-use jolt_eval::sort_e2e;
 
 #[derive(Parser)]
 #[command(name = "optimize")]
@@ -135,13 +134,51 @@ fn main() -> eyre::Result<()> {
     }
 
     if cli.test {
-        sort_e2e::run_optimize_test(
-            &cli.model,
-            cli.max_turns,
-            cli.iterations,
-            cli.hint,
-            cli.verbose,
+        const SORT_TARGETS_PATH: &str = "jolt-eval/src/sort_targets.rs";
+        let objective = ObjectiveFunction::by_name("minimize_naive_sort_time").unwrap();
+        let repo_dir = std::env::current_dir()?;
+        let invariants = JoltInvariants::all();
+        let mut env = RealEnv {
+            repo_dir: repo_dir.clone(),
+            invariants,
+            bench_perf: true,
+        };
+        let baseline = env.measure();
+        let baseline_score = (objective.evaluate)(&baseline, &baseline);
+        let hint = cli.hint.unwrap_or_else(|| {
+            format!(
+                "The target is the `naive_sort` function in {SORT_TARGETS_PATH}. \
+                 Replace it with a faster sorting algorithm. \
+                 You MAY modify that file for this task."
+            )
+        });
+        let config = OptimizeConfig {
+            num_iterations: cli.iterations,
+            hint: Some(hint),
+            verbose: cli.verbose,
+        };
+        println!("=== Optimize e2e: naive bubble sort ===");
+        println!(
+            "model={}, max_turns={}, iterations={}",
+            cli.model, cli.max_turns, cli.iterations
         );
+        println!("Baseline sort time: {baseline_score:.6}s");
+        println!();
+        let agent = ClaudeCodeAgent::new(&cli.model, cli.max_turns);
+        let result = auto_optimize(&agent, &mut env, objective, &config, &repo_dir);
+        println!("Best score: {:.6}s", result.best_score);
+        println!(
+            "Improvement: {:.1}%",
+            (1.0 - result.best_score / baseline_score) * 100.0
+        );
+        for (i, a) in result.attempts.iter().enumerate() {
+            println!(
+                "  attempt {}: score={:.6}, invariants={}",
+                i + 1,
+                a.score,
+                a.invariants_passed
+            );
+        }
         return Ok(());
     }
 
@@ -161,13 +198,6 @@ fn main() -> eyre::Result<()> {
 
     let repo_dir = std::env::current_dir()?;
 
-    if cli.measure {
-        let measurements = measure_inputs(objective, &repo_dir);
-        let json = serde_json::to_string(&measurements).unwrap();
-        println!("{json}");
-        return Ok(());
-    }
-
     let bench_perf = objective.inputs.iter().any(|i| i.is_perf());
     let invariants = JoltInvariants::all();
 
@@ -177,10 +207,21 @@ fn main() -> eyre::Result<()> {
         bench_perf,
     };
 
-    println!("=== Baseline ===");
     let baseline = env.measure();
-    let baseline_score = (objective.evaluate)(&baseline, &baseline);
+
+    if cli.measure {
+        let named: HashMap<String, f64> = baseline
+            .iter()
+            .map(|(k, &v)| (k.name().to_string(), v))
+            .collect();
+        let json = serde_json::to_string(&named).unwrap();
+        println!("{json}");
+        return Ok(());
+    }
+
+    println!("=== Baseline ===");
     print_measurements(&baseline);
+    let baseline_score = (objective.evaluate)(&baseline, &baseline);
     println!("Objective: {} = {:.6}\n", objective.name, baseline_score);
 
     let agent = ClaudeCodeAgent::new(&cli.model, cli.max_turns);
@@ -217,52 +258,5 @@ fn print_measurements(measurements: &HashMap<OptimizationObjective, f64>) {
     entries.sort_by_key(|(k, _)| k.name());
     for (key, val) in entries {
         println!("  {:<35} {:>15.6}", key.name(), val);
-    }
-}
-
-/// Measure just the inputs of an objective function and return a JSON-
-/// serializable map of `name -> value`.
-fn measure_inputs(
-    objective: &ObjectiveFunction,
-    repo_dir: &std::path::Path,
-) -> serde_json::Map<String, serde_json::Value> {
-    let mut out = serde_json::Map::new();
-
-    for &input in objective.inputs {
-        let value = match input {
-            OptimizationObjective::StaticAnalysis(sa) => sa.collect_measurement().ok(),
-            OptimizationObjective::Performance(p) => measure_perf(&p, repo_dir),
-        };
-        if let Some(v) = value {
-            out.insert(input.name().to_string(), serde_json::Value::from(v));
-        }
-    }
-
-    out
-}
-
-fn measure_perf(p: &PerformanceObjective, repo_dir: &std::path::Path) -> Option<f64> {
-    match p {
-        PerformanceObjective::BindLowToHigh(_) | PerformanceObjective::BindHighToLow(_) => {
-            let _ = Command::new("cargo")
-                .current_dir(repo_dir)
-                .args([
-                    "bench",
-                    "-p",
-                    "jolt-eval",
-                    "--bench",
-                    p.name(),
-                    "--",
-                    "--quick",
-                ])
-                .status();
-            read_criterion_estimate(p.name(), "new")
-        }
-        PerformanceObjective::NaiveSortTime => {
-            let mut data: Vec<i32> = (0..5000i32).rev().collect();
-            let start = std::time::Instant::now();
-            jolt_eval::sort_targets::naive_sort(&mut data);
-            Some(start.elapsed().as_secs_f64())
-        }
     }
 }

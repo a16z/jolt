@@ -140,16 +140,15 @@ impl Hash for StaticAnalysisObjective {
 pub enum PerformanceObjective {
     BindLowToHigh(performance::binding::BindLowToHighObjective),
     BindHighToLow(performance::binding::BindHighToLowObjective),
-    /// Wall-clock time of `naive_sort` — used by the e2e sort test.
-    NaiveSortTime,
+    NaiveSortTime(crate::sort_targets::NaiveSortObjective),
 }
 
 impl PerformanceObjective {
-    /// Criterion-benchmarked objectives (excludes test-only variants).
     pub fn all() -> Vec<Self> {
         vec![
             Self::BindLowToHigh(performance::binding::BindLowToHighObjective),
             Self::BindHighToLow(performance::binding::BindHighToLowObjective),
+            Self::NaiveSortTime(crate::sort_targets::NaiveSortObjective),
         ]
     }
 
@@ -157,7 +156,7 @@ impl PerformanceObjective {
         match self {
             Self::BindLowToHigh(o) => o.name(),
             Self::BindHighToLow(o) => o.name(),
-            Self::NaiveSortTime => "naive_sort_time",
+            Self::NaiveSortTime(o) => o.name(),
         }
     }
 
@@ -165,7 +164,7 @@ impl PerformanceObjective {
         match self {
             Self::BindLowToHigh(o) => o.units(),
             Self::BindHighToLow(o) => o.units(),
-            Self::NaiveSortTime => Some("s"),
+            Self::NaiveSortTime(o) => o.units(),
         }
     }
 
@@ -173,16 +172,14 @@ impl PerformanceObjective {
         match self {
             Self::BindLowToHigh(o) => o.description(),
             Self::BindHighToLow(o) => o.description(),
-            Self::NaiveSortTime => {
-                "Wall-clock time of the naive_sort function in jolt-eval/src/sort_targets.rs"
-            }
+            Self::NaiveSortTime(o) => o.description(),
         }
     }
 
     pub fn diff_paths(&self) -> &'static [&'static str] {
         match self {
             Self::BindLowToHigh(_) | Self::BindHighToLow(_) => &["jolt-core/"],
-            Self::NaiveSortTime => &["jolt-eval/src/sort_targets.rs"],
+            Self::NaiveSortTime(_) => &["jolt-eval/src/sort_targets.rs"],
         }
     }
 }
@@ -211,8 +208,9 @@ pub use code_quality::cognitive::COGNITIVE_COMPLEXITY;
 pub use code_quality::halstead_bugs::HALSTEAD_BUGS;
 pub use code_quality::lloc::LLOC;
 pub use performance::binding::{BIND_HIGH_TO_LOW, BIND_LOW_TO_HIGH};
-pub const NAIVE_SORT_TIME: OptimizationObjective =
-    OptimizationObjective::Performance(PerformanceObjective::NaiveSortTime);
+pub const NAIVE_SORT_TIME: OptimizationObjective = OptimizationObjective::Performance(
+    PerformanceObjective::NaiveSortTime(crate::sort_targets::NaiveSortObjective),
+);
 
 impl OptimizationObjective {
     pub fn all(root: &Path) -> Vec<Self> {
@@ -372,7 +370,7 @@ mod tests {
             .parent()
             .unwrap();
         let all = OptimizationObjective::all(root);
-        assert_eq!(all.len(), 5); // 3 static + 2 perf
+        assert_eq!(all.len(), 6); // 3 static + 3 perf
         assert!(all.iter().any(|o| o.is_perf()));
         assert!(all.iter().any(|o| !o.is_perf()));
     }
