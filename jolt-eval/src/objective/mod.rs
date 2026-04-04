@@ -140,7 +140,7 @@ impl Hash for StaticAnalysisObjective {
 pub enum PerformanceObjective {
     BindLowToHigh(performance::binding::BindLowToHighObjective),
     BindHighToLow(performance::binding::BindHighToLowObjective),
-    NaiveSortTime(crate::sort_targets::NaiveSortObjective),
+    NaiveSortTime(performance::naive_sort::NaiveSortObjective),
 }
 
 impl PerformanceObjective {
@@ -148,7 +148,7 @@ impl PerformanceObjective {
         vec![
             Self::BindLowToHigh(performance::binding::BindLowToHighObjective),
             Self::BindHighToLow(performance::binding::BindHighToLowObjective),
-            Self::NaiveSortTime(crate::sort_targets::NaiveSortObjective),
+            Self::NaiveSortTime(performance::naive_sort::NaiveSortObjective),
         ]
     }
 
@@ -209,7 +209,7 @@ pub use code_quality::halstead_bugs::HALSTEAD_BUGS;
 pub use code_quality::lloc::LLOC;
 pub use performance::binding::{BIND_HIGH_TO_LOW, BIND_LOW_TO_HIGH};
 pub const NAIVE_SORT_TIME: OptimizationObjective = OptimizationObjective::Performance(
-    PerformanceObjective::NaiveSortTime(crate::sort_targets::NaiveSortObjective),
+    PerformanceObjective::NaiveSortTime(performance::naive_sort::NaiveSortObjective),
 );
 
 impl OptimizationObjective {

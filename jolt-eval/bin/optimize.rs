@@ -22,11 +22,6 @@ struct Cli {
     #[arg(long, conflicts_with = "objective")]
     test: bool,
 
-    /// Measure the objective's inputs and print JSON to stdout, then exit.
-    /// Requires --objective. Useful for subprocess-based measurement.
-    #[arg(long, requires = "objective")]
-    measure: bool,
-
     /// List all available objective functions and exit.
     #[arg(long)]
     list: bool,
@@ -208,16 +203,6 @@ fn main() -> eyre::Result<()> {
     };
 
     let baseline = env.measure();
-
-    if cli.measure {
-        let named: HashMap<String, f64> = baseline
-            .iter()
-            .map(|(k, &v)| (k.name().to_string(), v))
-            .collect();
-        let json = serde_json::to_string(&named).unwrap();
-        println!("{json}");
-        return Ok(());
-    }
 
     println!("=== Baseline ===");
     print_measurements(&baseline);
