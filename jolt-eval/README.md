@@ -47,6 +47,8 @@ The motivation is twofold:
 | `prover_time_sha2_chain_100` | End-to-end prover time for 100 iterations of SHA-256 chain |
 | `prover_time_secp256k1_ecdsa_verify` | End-to-end prover time for secp256k1 ECDSA signature verification |
 
+Note: `prover_time_*` benchmarks are standalone Criterion bench targets (run via `cargo bench -p jolt-eval --bench <name>`). They are **not** included in `PerformanceObjective::all()` and are not tracked by the `optimize` or `measure-objectives` binaries.
+
 ### Objective functions
 
 | Name | Inputs | Description |
@@ -61,12 +63,12 @@ Custom composite objective functions can be defined as `ObjectiveFunction` struc
 
 ```rust
 use jolt_eval::objective::objective_fn::ObjectiveFunction;
-use jolt_eval::objective::{LLOC, HALSTEAD_BUGS};
+use jolt_eval::objective::{normalized, LLOC, HALSTEAD_BUGS};
 
 const WEIGHTED_QUALITY: ObjectiveFunction = ObjectiveFunction {
     name: "weighted_quality",
     inputs: &[LLOC, HALSTEAD_BUGS],
-    evaluate: |m| {
+    evaluate: |m, _b| {
         2.0 * m.get(&LLOC).unwrap_or(&0.0) + m.get(&HALSTEAD_BUGS).unwrap_or(&0.0)
     },
 };

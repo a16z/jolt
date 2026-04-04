@@ -87,6 +87,7 @@ pub fn apply_diff(repo_dir: &Path, diff: &str) -> Result<(), AgentError> {
         .current_dir(repo_dir)
         .args(["apply", "--allow-empty"])
         .stdin(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| AgentError::new(format!("git apply spawn: {e}")))?;
 
@@ -95,12 +96,13 @@ pub fn apply_diff(repo_dir: &Path, diff: &str) -> Result<(), AgentError> {
         let _ = stdin.write_all(diff.as_bytes());
     }
 
-    let status = child
-        .wait()
+    let output = child
+        .wait_with_output()
         .map_err(|e| AgentError::new(format!("git apply wait: {e}")))?;
 
-    if !status.success() {
-        return Err(AgentError::new("git apply failed"));
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(AgentError::new(format!("git apply failed: {stderr}")));
     }
     Ok(())
 }

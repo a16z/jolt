@@ -170,6 +170,10 @@ pub fn auto_optimize<A: AgentHarness, E: OptimizeEnv>(
                 .current_dir(repo_dir)
                 .args(["checkout", "."])
                 .status();
+            let _ = Command::new("git")
+                .current_dir(repo_dir)
+                .args(["clean", "-fd"])
+                .status();
         } else {
             eprintln!(
                 "  ✗ iteration {iter} REJECTED (no improvement) — score {new_score:.10} ≥ best {best_score:.10}",
@@ -178,6 +182,10 @@ pub fn auto_optimize<A: AgentHarness, E: OptimizeEnv>(
             let _ = Command::new("git")
                 .current_dir(repo_dir)
                 .args(["checkout", "."])
+                .status();
+            let _ = Command::new("git")
+                .current_dir(repo_dir)
+                .args(["clean", "-fd"])
                 .status();
         }
     }
