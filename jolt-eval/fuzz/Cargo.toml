@@ -16,6 +16,9 @@ allocative = { git = "https://github.com/facebookexperimental/allocative", rev =
 [package.metadata]
 cargo-fuzz = true
 
+[package.metadata.cargo-machete]
+ignored = ["libfuzzer-sys"]
+
 [dependencies]
 libfuzzer-sys = "0.4"
 jolt-eval = { path = ".." }
