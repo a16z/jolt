@@ -170,6 +170,17 @@ impl JoltInvariants {
     pub fn run_checks(&self, num_random: usize) -> Vec<Result<(), InvariantViolation>> {
         dispatch!(self, |inv| run_checks_impl(inv, num_random))
     }
+
+    pub fn red_team(
+        &self,
+        config: &synthesis::redteam::RedTeamConfig,
+        agent: &dyn crate::agent::AgentHarness,
+        repo_dir: &std::path::Path,
+    ) -> synthesis::redteam::RedTeamResult {
+        dispatch!(self, |inv| synthesis::redteam::auto_redteam(
+            inv, config, agent, repo_dir
+        ))
+    }
 }
 
 fn run_checks_impl<I: Invariant>(
