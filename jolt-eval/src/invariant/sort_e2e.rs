@@ -8,7 +8,7 @@ use crate::agent::ClaudeCodeAgent;
 use crate::invariant::synthesis::redteam::{auto_redteam, RedTeamConfig, RedTeamResult};
 use crate::objective::objective_fn::ObjectiveFunction;
 use crate::objective::optimize::{auto_optimize, OptimizeConfig, OptimizeEnv};
-use crate::objective::{OptimizationObjective, LLOC};
+use crate::objective::{OptimizationObjective, NAIVE_SORT_TIME};
 
 /// Naive bubble sort — the optimization target.
 /// Intentionally O(n²) so a "smarter" sort is measurably faster.
@@ -173,7 +173,7 @@ impl OptimizeEnv for SortOptimizeEnv {
         self.invariant_ok = buf.windows(2).all(|w| w[0] <= w[1]);
 
         let mut m = HashMap::new();
-        m.insert(LLOC, elapsed);
+        m.insert(NAIVE_SORT_TIME, elapsed);
         m
     }
 
@@ -254,13 +254,13 @@ pub fn run_optimize_test(
     let mut env = SortOptimizeEnv::new(5000);
 
     let baseline = env.measure();
-    let baseline_time = baseline[&LLOC];
+    let baseline_time = baseline[&NAIVE_SORT_TIME];
     env.sort_fn = naive_sort;
 
     let obj = ObjectiveFunction {
-        name: "sort_time",
-        inputs: &[LLOC],
-        evaluate: |m| m.get(&LLOC).copied().unwrap_or(f64::INFINITY),
+        name: "naive_sort_time",
+        inputs: &[NAIVE_SORT_TIME],
+        evaluate: |m| m.get(&NAIVE_SORT_TIME).copied().unwrap_or(f64::INFINITY),
     };
     let config = OptimizeConfig {
         num_iterations: iterations,
@@ -382,15 +382,15 @@ mod tests {
         let mut env = SortOptimizeEnv::new(5000);
 
         let baseline = env.measure();
-        let baseline_time = baseline[&LLOC];
+        let baseline_time = baseline[&NAIVE_SORT_TIME];
         assert!(baseline_time > 0.0);
 
         env.sort_fn = naive_sort;
 
         let obj = ObjectiveFunction {
-            name: "sort_time",
-            inputs: &[LLOC],
-            evaluate: |m| m.get(&LLOC).copied().unwrap_or(f64::INFINITY),
+            name: "naive_sort_time",
+            inputs: &[NAIVE_SORT_TIME],
+            evaluate: |m| m.get(&NAIVE_SORT_TIME).copied().unwrap_or(f64::INFINITY),
         };
         let config = OptimizeConfig {
             num_iterations: 1,
@@ -445,9 +445,9 @@ mod tests {
         let mut broken_env = BrokenSortEnv(env);
 
         let obj = ObjectiveFunction {
-            name: "sort_time",
-            inputs: &[LLOC],
-            evaluate: |m| m.get(&LLOC).copied().unwrap_or(f64::INFINITY),
+            name: "naive_sort_time",
+            inputs: &[NAIVE_SORT_TIME],
+            evaluate: |m| m.get(&NAIVE_SORT_TIME).copied().unwrap_or(f64::INFINITY),
         };
         let config = OptimizeConfig {
             num_iterations: 1,

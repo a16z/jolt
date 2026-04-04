@@ -126,9 +126,12 @@ impl Hash for StaticAnalysisObjective {
 pub enum PerformanceObjective {
     BindLowToHigh(performance::binding::BindLowToHighObjective),
     BindHighToLow(performance::binding::BindHighToLowObjective),
+    /// Wall-clock time of `naive_sort` — used by the e2e sort test.
+    NaiveSortTime,
 }
 
 impl PerformanceObjective {
+    /// Criterion-benchmarked objectives (excludes test-only variants).
     pub fn all() -> Vec<Self> {
         vec![
             Self::BindLowToHigh(performance::binding::BindLowToHighObjective),
@@ -140,6 +143,7 @@ impl PerformanceObjective {
         match self {
             Self::BindLowToHigh(o) => o.name(),
             Self::BindHighToLow(o) => o.name(),
+            Self::NaiveSortTime => "naive_sort_time",
         }
     }
 
@@ -147,6 +151,7 @@ impl PerformanceObjective {
         match self {
             Self::BindLowToHigh(o) => o.units(),
             Self::BindHighToLow(o) => o.units(),
+            Self::NaiveSortTime => Some("s"),
         }
     }
 }
@@ -175,6 +180,8 @@ pub use code_quality::cognitive::COGNITIVE_COMPLEXITY;
 pub use code_quality::halstead_bugs::HALSTEAD_BUGS;
 pub use code_quality::lloc::LLOC;
 pub use performance::binding::{BIND_HIGH_TO_LOW, BIND_LOW_TO_HIGH};
+pub const NAIVE_SORT_TIME: OptimizationObjective =
+    OptimizationObjective::Performance(PerformanceObjective::NaiveSortTime);
 
 impl OptimizationObjective {
     pub fn all(root: &Path) -> Vec<Self> {
