@@ -92,6 +92,18 @@ impl StaticAnalysisObjective {
         }
     }
 
+    pub fn description(&self) -> &str {
+        match self {
+            Self::Lloc(_) => "Total logical lines of code in jolt-core/src/",
+            Self::CognitiveComplexity(_) => {
+                "Average cognitive complexity per function in jolt-core/src/"
+            }
+            Self::HalsteadBugs(_) => {
+                "Estimated delivered bugs (Halstead volume / 3000) in jolt-core/src/"
+            }
+        }
+    }
+
     pub fn collect_measurement(&self) -> Result<f64, MeasurementError> {
         match self {
             Self::Lloc(o) => o.collect_measurement(),
@@ -162,6 +174,14 @@ impl PerformanceObjective {
         }
     }
 
+    pub fn description(&self) -> &str {
+        match self {
+            Self::BindLowToHigh(_) => "Wall-clock time of DensePolynomial::bind_parallel with LowToHigh binding (2^20 evaluations)",
+            Self::BindHighToLow(_) => "Wall-clock time of DensePolynomial::bind_parallel with HighToLow binding (2^20 evaluations)",
+            Self::NaiveSortTime => "Wall-clock time of the naive_sort function in jolt-eval/src/sort_targets.rs",
+        }
+    }
+
     pub fn diff_paths(&self) -> &'static [&'static str] {
         match self {
             Self::BindLowToHigh(_) | Self::BindHighToLow(_) => &["jolt-core/"],
@@ -220,6 +240,13 @@ impl OptimizationObjective {
         match self {
             Self::StaticAnalysis(s) => s.units(),
             Self::Performance(p) => p.units(),
+        }
+    }
+
+    pub fn description(&self) -> &str {
+        match self {
+            Self::StaticAnalysis(s) => s.description(),
+            Self::Performance(p) => p.description(),
         }
     }
 

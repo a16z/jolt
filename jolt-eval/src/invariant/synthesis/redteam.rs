@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use super::super::{CheckError, FailedAttempt, Invariant};
-use crate::agent::{AgentHarness, DiffScope};
+use crate::agent::{truncate, AgentHarness, DiffScope};
 
 /// Result of a red-team session.
 pub enum RedTeamResult {
@@ -61,8 +61,11 @@ pub fn auto_redteam<I: Invariant>(
         let prompt = build_redteam_prompt(
             &description,
             input_example.as_deref(),
+            &input_schema,
             config.hint.as_deref(),
             &failed_attempts,
+            iteration + 1,
+            config.num_iterations,
         );
 
         if config.verbose {
@@ -190,15 +193,19 @@ fn parse_envelope(text: &str) -> Option<(String, String)> {
 fn build_redteam_prompt(
     invariant_description: &str,
     input_example: Option<&str>,
+    input_schema: &serde_json::Value,
     hint: Option<&str>,
     failed_attempts: &[FailedAttempt],
+    current_iteration: usize,
+    total_iterations: usize,
 ) -> String {
     let mut prompt = String::new();
 
-    prompt.push_str(
+    prompt.push_str(&format!(
         "You are a security researcher red-teaming a zkVM (Jolt). \
-         Your goal is to find a concrete input that VIOLATES the following invariant.\n\n",
-    );
+         Your goal is to find a concrete input that VIOLATES the following invariant.\n\
+         Iteration {current_iteration}/{total_iterations}.\n\n"
+    ));
 
     prompt.push_str("## Invariant\n\n");
     prompt.push_str(invariant_description);
@@ -220,8 +227,8 @@ fn build_redteam_prompt(
          your best counterexample. A wrong guess is always better than no guess.\n\n",
     );
 
+    prompt.push_str("## Input format\n\n");
     if let Some(example) = input_example {
-        prompt.push_str("## Input format\n\n");
         prompt.push_str(
             "The counterexample must be a JSON value matching the schema. \
              Here is an example of a valid input:\n\n```json\n",
@@ -229,6 +236,9 @@ fn build_redteam_prompt(
         prompt.push_str(example);
         prompt.push_str("\n```\n\n");
     }
+    prompt.push_str("JSON schema for the counterexample:\n\n```json\n");
+    prompt.push_str(&serde_json::to_string_pretty(input_schema).unwrap_or_default());
+    prompt.push_str("\n```\n\n");
 
     if let Some(hint) = hint {
         prompt.push_str("## Hint\n\n");
@@ -243,9 +253,10 @@ fn build_redteam_prompt(
              valid counterexample.\n\n",
         );
         for attempt in failed_attempts {
+            let approach_preview = truncate(&attempt.approach, 200);
             prompt.push_str(&format!(
                 "- **{}**: {}\n  Failure: {}\n",
-                attempt.description, attempt.approach, attempt.failure_reason
+                attempt.description, approach_preview, attempt.failure_reason
             ));
         }
         prompt.push('\n');

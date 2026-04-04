@@ -223,20 +223,48 @@ fn build_optimize_prompt(
          Read the implementation to understand exactly what you are optimizing.\n\n",
     );
 
+    prompt.push_str("## What you are optimizing\n\n");
+    for input in inputs {
+        let units_str = input
+            .units()
+            .map(|u| format!(" (units: {u})"))
+            .unwrap_or_default();
+        prompt.push_str(&format!(
+            "- **{}**{units_str}: {}\n",
+            input.name(),
+            input.description()
+        ));
+    }
+    prompt.push('\n');
+
     prompt.push_str("## Current measurements\n\n");
     let mut entries: Vec<_> = current_best_measurements.iter().collect();
     entries.sort_by_key(|(k, _)| k.name());
     for (key, val) in &entries {
-        prompt.push_str(&format!("- **{}**: {val:.6}\n", key.name()));
+        let units_str = key.units().map(|u| format!(" {u}")).unwrap_or_default();
+        prompt.push_str(&format!("- **{}**: {val:.6}{units_str}\n", key.name()));
     }
     prompt.push('\n');
 
+    // Derive targeted reading guidance from the union of all input diff_paths.
+    let mut diff_paths: Vec<&str> = Vec::new();
+    for input in inputs {
+        for &p in input.diff_paths() {
+            if !diff_paths.contains(&p) {
+                diff_paths.push(p);
+            }
+        }
+    }
+    let paths_list = diff_paths.join(", ");
+    prompt.push_str("## Instructions\n\n");
+    prompt.push_str(&format!(
+        "1. Read the relevant source code in: {paths_list}. Also read \
+         `jolt-eval/src/objective/objective_fn/` to understand the exact scoring formula.\n"
+    ));
     prompt.push_str(
-        "## Instructions\n\n\
-         1. Read the relevant source code (especially `jolt-core/src/`) to understand \
-            hot paths and potential optimization opportunities.\n\
-         2. Make targeted code changes that you believe will reduce the objective function.\n\
-         3. Focus on changes to `jolt-core/` -- do NOT modify `jolt-eval/`.\n\
+        "2. Make targeted code changes that you believe will reduce the objective function.\n\
+         3. Focus your changes on the paths listed above -- do NOT modify `jolt-eval/` unless \
+            it is explicitly listed.\n\
          4. Prefer changes that are safe, correct, and unlikely to break invariants.\n\
          5. Run `cargo clippy -p jolt-core --features host --message-format=short -q` \
             to verify your changes compile.\n\
@@ -267,8 +295,20 @@ fn build_optimize_prompt(
                 prompt.push_str(&format!("{}={val:.6} ", key.name()));
             }
             prompt.push('\n');
+            if !attempt.diff.is_empty() {
+                prompt.push_str(&format!(
+                    "  Diff preview: `{}`\n",
+                    truncate(&attempt.diff, 500)
+                ));
+            }
         }
         prompt.push('\n');
+
+        prompt.push_str(
+            "If previous attempts failed or showed no improvement, try a fundamentally \
+             different approach. Analyze WHY the previous approach did not reduce the score \
+             and pivot to a new strategy.\n\n",
+        );
     }
 
     prompt.push_str(
