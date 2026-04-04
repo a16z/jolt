@@ -50,7 +50,7 @@ impl GuestMemoryConfig {
             return Err(CheckError::InvalidInput(format!(
                 "memory config exceeds limits: \
                  input={}, output={}, stack={}, heap={}; \
-                 limits: input/output/stack<={MAX_STACK_SIZE}, heap<={MAX_HEAP_SIZE}",
+                 limits: input<={MAX_INPUT_SIZE}, output<={MAX_OUTPUT_SIZE}, stack<={MAX_STACK_SIZE}, heap<={MAX_HEAP_SIZE}",
                 self.max_input_size, self.max_output_size, self.stack_size, self.heap_size,
             )));
         }
