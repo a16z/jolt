@@ -180,8 +180,7 @@ impl AgentHarness for ClaudeCodeAgent {
 /// filtered by the given [`DiffScope`].
 fn capture_diff(worktree_dir: &Path, scope: &DiffScope) -> Option<String> {
     let mut cmd = Command::new("git");
-    cmd.current_dir(worktree_dir)
-        .args(["diff", "HEAD", "--"]);
+    cmd.current_dir(worktree_dir).args(["diff", "HEAD", "--"]);
     match scope {
         DiffScope::All => {}
         DiffScope::Include(paths) => {

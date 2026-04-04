@@ -66,17 +66,17 @@ pub fn auto_redteam<I: Invariant>(
         let diff_scope = DiffScope::Include(vec!["jolt-eval/guest-sandbox/".into()]);
         let response =
             match agent.invoke_structured(repo_dir, &prompt, &envelope_schema, &diff_scope) {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::warn!("Agent invocation failed: {e}");
-                failed_attempts.push(FailedAttempt {
-                    description: format!("Iteration {}", iteration + 1),
-                    approach: "Agent invocation failed".to_string(),
-                    failure_reason: e.to_string(),
-                });
-                continue;
-            }
-        };
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!("Agent invocation failed: {e}");
+                    failed_attempts.push(FailedAttempt {
+                        description: format!("Iteration {}", iteration + 1),
+                        approach: "Agent invocation failed".to_string(),
+                        failure_reason: e.to_string(),
+                    });
+                    continue;
+                }
+            };
 
         let (analysis, counterexample_json) = match parse_envelope(&response.text) {
             Some(pair) => pair,

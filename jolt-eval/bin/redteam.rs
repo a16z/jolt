@@ -76,12 +76,8 @@ fn main() -> eyre::Result<()> {
     );
 
     let result = match invariant {
-        JoltInvariants::SplitEqBindLowHigh(inv) => {
-            auto_redteam(inv, &config, &agent, &repo_dir)
-        }
-        JoltInvariants::SplitEqBindHighLow(inv) => {
-            auto_redteam(inv, &config, &agent, &repo_dir)
-        }
+        JoltInvariants::SplitEqBindLowHigh(inv) => auto_redteam(inv, &config, &agent, &repo_dir),
+        JoltInvariants::SplitEqBindHighLow(inv) => auto_redteam(inv, &config, &agent, &repo_dir),
         JoltInvariants::Soundness(inv) => auto_redteam(inv, &config, &agent, &repo_dir),
     };
 

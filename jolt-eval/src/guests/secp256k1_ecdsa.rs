@@ -51,7 +51,9 @@ impl GuestConfig for Secp256k1EcdsaVerify {
         "secp256k1-ecdsa-verify-guest"
     }
     fn memory_config(&self) -> MemoryConfig {
-        use common::constants::{DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE};
+        use common::constants::{
+            DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE,
+        };
         MemoryConfig {
             max_input_size: 4096,
             max_output_size: 4096,

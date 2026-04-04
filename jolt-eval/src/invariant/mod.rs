@@ -1,8 +1,8 @@
+#[cfg(test)]
+mod macro_tests;
 pub mod soundness;
 pub mod split_eq_bind;
 pub mod synthesis;
-#[cfg(test)]
-mod macro_tests;
 
 use std::fmt;
 
@@ -266,11 +266,19 @@ mod integration_tests {
     impl Invariant for TrivialInvariant {
         type Setup = ();
         type Input = u8;
-        fn name(&self) -> &str { "trivial" }
-        fn description(&self) -> String { "Always passes".into() }
+        fn name(&self) -> &str {
+            "trivial"
+        }
+        fn description(&self) -> String {
+            "Always passes".into()
+        }
         fn setup(&self) {}
-        fn check(&self, _: &(), _: u8) -> Result<(), CheckError> { Ok(()) }
-        fn seed_corpus(&self) -> Vec<u8> { vec![0, 1, 255] }
+        fn check(&self, _: &(), _: u8) -> Result<(), CheckError> {
+            Ok(())
+        }
+        fn seed_corpus(&self) -> Vec<u8> {
+            vec![0, 1, 255]
+        }
     }
 
     struct FailingInvariant;
@@ -279,13 +287,21 @@ mod integration_tests {
     impl Invariant for FailingInvariant {
         type Setup = ();
         type Input = u8;
-        fn name(&self) -> &str { "failing" }
-        fn description(&self) -> String { "Always fails".into() }
+        fn name(&self) -> &str {
+            "failing"
+        }
+        fn description(&self) -> String {
+            "Always fails".into()
+        }
         fn setup(&self) {}
         fn check(&self, _: &(), input: u8) -> Result<(), CheckError> {
-            Err(CheckError::Violation(InvariantViolation::new(format!("failed for input {input}"))))
+            Err(CheckError::Violation(InvariantViolation::new(format!(
+                "failed for input {input}"
+            ))))
         }
-        fn seed_corpus(&self) -> Vec<u8> { vec![42] }
+        fn seed_corpus(&self) -> Vec<u8> {
+            vec![42]
+        }
     }
 
     #[test]
