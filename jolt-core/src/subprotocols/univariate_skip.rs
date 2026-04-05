@@ -1,6 +1,8 @@
 use std::marker::PhantomData;
 
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_serialize::{
+    CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
+};
 #[cfg(feature = "zk")]
 use rand_core::CryptoRngCore;
 
@@ -17,6 +19,10 @@ use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::transcripts::Transcript;
 use crate::utils::errors::ProofVerifyError;
+use crate::utils::serialization::{
+    deserialize_bounded_vec, serialize_vec_with_len, serialized_vec_with_len_size,
+    MAX_OPENING_CLAIMS,
+};
 
 /// Returns the interleaved symmetric univariate-skip target indices outside the base window.
 ///
@@ -214,10 +220,47 @@ pub fn prove_uniskip_round_zk<
 
 /// The sumcheck proof for a univariate skip round
 /// Consists of the (single) univariate polynomial sent in that round, no omission of any coefficient
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct UniSkipFirstRoundProof<F: JoltField, T: Transcript> {
     pub uni_poly: UniPoly<F>,
     _marker: PhantomData<T>,
+}
+
+impl<F: JoltField, T: Transcript> CanonicalSerialize for UniSkipFirstRoundProof<F, T> {
+    fn serialize_with_mode<W: std::io::Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.uni_poly.serialize_with_mode(&mut writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.uni_poly.serialized_size(compress)
+    }
+}
+
+impl<F: JoltField, T: Transcript> Valid for UniSkipFirstRoundProof<F, T> {
+    fn check(&self) -> Result<(), SerializationError> {
+        self.uni_poly.check()
+    }
+}
+
+impl<F: JoltField, T: Transcript> CanonicalDeserialize for UniSkipFirstRoundProof<F, T> {
+    fn deserialize_with_mode<R: std::io::Read>(
+        reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let proof = Self {
+            uni_poly: UniPoly::deserialize_with_mode(reader, compress, validate)?,
+            _marker: PhantomData,
+        };
+        if validate == Validate::Yes {
+            proof.check()?;
+        }
+        Ok(proof)
+    }
 }
 
 impl<F: JoltField, T: Transcript> UniSkipFirstRoundProof<F, T> {
@@ -237,6 +280,11 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundProof<F, T> {
         transcript: &mut T,
     ) -> Result<F::Challenge, ProofVerifyError> {
         let degree_bound = sumcheck_instance.degree();
+        if proof.uni_poly.coeffs.is_empty() {
+            return Err(ProofVerifyError::MalformedProof(
+                "empty uniskip polynomial".to_string(),
+            ));
+        }
         // Degree check for the high-degree first polynomial
         if proof.uni_poly.degree() > degree_bound {
             return Err(ProofVerifyError::InvalidInputLength(
@@ -325,19 +373,18 @@ impl<F: JoltField, C: JoltCurve<F = F>, T: Transcript> CanonicalSerialize
     fn serialize_with_mode<W: std::io::Write>(
         &self,
         mut writer: W,
-        compress: ark_serialize::Compress,
-    ) -> Result<(), ark_serialize::SerializationError> {
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
         self.commitment.serialize_with_mode(&mut writer, compress)?;
         self.poly_degree
             .serialize_with_mode(&mut writer, compress)?;
-        self.output_claims_commitments
-            .serialize_with_mode(writer, compress)
+        serialize_vec_with_len(&self.output_claims_commitments, writer, compress)
     }
 
-    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
+    fn serialized_size(&self, compress: Compress) -> usize {
         self.commitment.serialized_size(compress)
             + self.poly_degree.serialized_size(compress)
-            + self.output_claims_commitments.serialized_size(compress)
+            + serialized_vec_with_len_size(&self.output_claims_commitments, compress)
     }
 }
 
@@ -346,13 +393,13 @@ impl<F: JoltField, C: JoltCurve<F = F>, T: Transcript> CanonicalDeserialize
 {
     fn deserialize_with_mode<R: std::io::Read>(
         mut reader: R,
-        compress: ark_serialize::Compress,
-        validate: ark_serialize::Validate,
-    ) -> Result<Self, ark_serialize::SerializationError> {
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
         let commitment = C::G1::deserialize_with_mode(&mut reader, compress, validate)?;
         let poly_degree = usize::deserialize_with_mode(&mut reader, compress, validate)?;
         let output_claims_commitments =
-            Vec::<C::G1>::deserialize_with_mode(reader, compress, validate)?;
+            deserialize_bounded_vec(reader, compress, validate, MAX_OPENING_CLAIMS)?;
         Ok(Self::new(
             commitment,
             poly_degree,
@@ -364,7 +411,7 @@ impl<F: JoltField, C: JoltCurve<F = F>, T: Transcript> CanonicalDeserialize
 impl<F: JoltField, C: JoltCurve<F = F>, T: Transcript> ark_serialize::Valid
     for ZkUniSkipFirstRoundProof<F, C, T>
 {
-    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
+    fn check(&self) -> Result<(), SerializationError> {
         self.commitment.check()?;
         self.output_claims_commitments.check()
     }

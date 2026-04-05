@@ -12,6 +12,7 @@ pub mod math;
 #[cfg(feature = "monitor")]
 pub mod monitor;
 pub mod profiling;
+pub mod serialization;
 pub mod small_scalar;
 pub mod thread;
 

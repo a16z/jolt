@@ -17,7 +17,11 @@
 
 use crate::curve::{JoltCurve, JoltGroupElement};
 use crate::field::JoltField;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use crate::utils::serialization::{
+    deserialize_bounded_vec, serialize_vec_with_len, serialized_vec_with_len_size,
+    MAX_BLINDFOLD_VECTOR_LEN,
+};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
 use rayon::prelude::*;
 
 use super::protocol::BlindFoldVerifyError;
@@ -30,7 +34,7 @@ use super::r1cs::VerifierR1CS;
 /// - `round_commitments`: coefficient row commitments (reuse existing sumcheck round commitments)
 /// - `noncoeff_row_commitments`: non-coefficient row commitments (prover sends in proof)
 /// - `e_row_commitments`: E row commitments (derived from cross-term and random instance)
-#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, Debug)]
 pub struct RelaxedR1CSInstance<F: JoltField, C: JoltCurve<F = F>> {
     pub u: F,
     /// Per-round commitments from ZK sumcheck (= coefficient row commitments)
@@ -50,7 +54,7 @@ pub struct RelaxedR1CSInstance<F: JoltField, C: JoltCurve<F = F>> {
 ///
 /// W is in grid layout (R' × C). Row blindings cover all W rows.
 /// E is flat but has per-row blindings for Hyrax opening.
-#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, Debug)]
 pub struct RelaxedR1CSWitness<F: JoltField> {
     /// Error vector (zeros for non-relaxed)
     pub E: Vec<F>,
@@ -60,6 +64,145 @@ pub struct RelaxedR1CSWitness<F: JoltField> {
     pub w_row_blindings: Vec<F>,
     /// One blinding per E row (R_E elements)
     pub e_row_blindings: Vec<F>,
+}
+
+impl<F: JoltField, C: JoltCurve<F = F>> CanonicalSerialize for RelaxedR1CSInstance<F, C> {
+    fn serialize_with_mode<W: std::io::Write>(
+        &self,
+        mut writer: W,
+        compress: ark_serialize::Compress,
+    ) -> Result<(), ark_serialize::SerializationError> {
+        self.u.serialize_with_mode(&mut writer, compress)?;
+        serialize_vec_with_len(&self.round_commitments, &mut writer, compress)?;
+        serialize_vec_with_len(&self.output_claims_row_commitments, &mut writer, compress)?;
+        serialize_vec_with_len(&self.noncoeff_row_commitments, &mut writer, compress)?;
+        serialize_vec_with_len(&self.e_row_commitments, &mut writer, compress)?;
+        serialize_vec_with_len(&self.eval_commitments, writer, compress)
+    }
+
+    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
+        self.u.serialized_size(compress)
+            + serialized_vec_with_len_size(&self.round_commitments, compress)
+            + serialized_vec_with_len_size(&self.output_claims_row_commitments, compress)
+            + serialized_vec_with_len_size(&self.noncoeff_row_commitments, compress)
+            + serialized_vec_with_len_size(&self.e_row_commitments, compress)
+            + serialized_vec_with_len_size(&self.eval_commitments, compress)
+    }
+}
+
+impl<F: JoltField, C: JoltCurve<F = F>> ark_serialize::Valid for RelaxedR1CSInstance<F, C> {
+    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
+        self.u.check()?;
+        self.round_commitments.check()?;
+        self.output_claims_row_commitments.check()?;
+        self.noncoeff_row_commitments.check()?;
+        self.e_row_commitments.check()?;
+        self.eval_commitments.check()
+    }
+}
+
+impl<F: JoltField, C: JoltCurve<F = F>> CanonicalDeserialize for RelaxedR1CSInstance<F, C> {
+    fn deserialize_with_mode<R: std::io::Read>(
+        mut reader: R,
+        compress: ark_serialize::Compress,
+        validate: ark_serialize::Validate,
+    ) -> Result<Self, ark_serialize::SerializationError> {
+        let instance = Self {
+            u: F::deserialize_with_mode(&mut reader, compress, validate)?,
+            round_commitments: deserialize_bounded_vec(
+                &mut reader,
+                compress,
+                validate,
+                MAX_BLINDFOLD_VECTOR_LEN,
+            )?,
+            output_claims_row_commitments: deserialize_bounded_vec(
+                &mut reader,
+                compress,
+                validate,
+                MAX_BLINDFOLD_VECTOR_LEN,
+            )?,
+            noncoeff_row_commitments: deserialize_bounded_vec(
+                &mut reader,
+                compress,
+                validate,
+                MAX_BLINDFOLD_VECTOR_LEN,
+            )?,
+            e_row_commitments: deserialize_bounded_vec(
+                &mut reader,
+                compress,
+                validate,
+                MAX_BLINDFOLD_VECTOR_LEN,
+            )?,
+            eval_commitments: deserialize_bounded_vec(
+                &mut reader,
+                compress,
+                validate,
+                MAX_BLINDFOLD_VECTOR_LEN,
+            )?,
+        };
+        if validate == ark_serialize::Validate::Yes {
+            instance.check()?;
+        }
+        Ok(instance)
+    }
+}
+
+impl<F: JoltField> CanonicalSerialize for RelaxedR1CSWitness<F> {
+    fn serialize_with_mode<W: std::io::Write>(
+        &self,
+        mut writer: W,
+        compress: ark_serialize::Compress,
+    ) -> Result<(), ark_serialize::SerializationError> {
+        serialize_vec_with_len(&self.E, &mut writer, compress)?;
+        serialize_vec_with_len(&self.W, &mut writer, compress)?;
+        serialize_vec_with_len(&self.w_row_blindings, &mut writer, compress)?;
+        serialize_vec_with_len(&self.e_row_blindings, writer, compress)
+    }
+
+    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
+        serialized_vec_with_len_size(&self.E, compress)
+            + serialized_vec_with_len_size(&self.W, compress)
+            + serialized_vec_with_len_size(&self.w_row_blindings, compress)
+            + serialized_vec_with_len_size(&self.e_row_blindings, compress)
+    }
+}
+
+impl<F: JoltField> ark_serialize::Valid for RelaxedR1CSWitness<F> {
+    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
+        self.E.check()?;
+        self.W.check()?;
+        self.w_row_blindings.check()?;
+        self.e_row_blindings.check()
+    }
+}
+
+impl<F: JoltField> CanonicalDeserialize for RelaxedR1CSWitness<F> {
+    fn deserialize_with_mode<R: std::io::Read>(
+        mut reader: R,
+        compress: ark_serialize::Compress,
+        validate: ark_serialize::Validate,
+    ) -> Result<Self, ark_serialize::SerializationError> {
+        let witness = Self {
+            E: deserialize_bounded_vec(&mut reader, compress, validate, MAX_BLINDFOLD_VECTOR_LEN)?,
+            W: deserialize_bounded_vec(&mut reader, compress, validate, MAX_BLINDFOLD_VECTOR_LEN)?,
+            w_row_blindings: deserialize_bounded_vec(
+                &mut reader,
+                compress,
+                validate,
+                MAX_BLINDFOLD_VECTOR_LEN,
+            )?,
+            e_row_blindings: deserialize_bounded_vec(
+                &mut reader,
+                compress,
+                validate,
+                MAX_BLINDFOLD_VECTOR_LEN,
+            )?,
+        };
+        if validate == ark_serialize::Validate::Yes {
+            witness.check()?;
+        }
+        Ok(witness)
+    }
 }
 
 impl<F: JoltField, C: JoltCurve<F = F>> RelaxedR1CSInstance<F, C> {
