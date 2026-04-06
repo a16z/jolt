@@ -262,7 +262,11 @@ impl<
             ));
         }
 
-        // truncate trailing zeros on device outputs
+        // Truncate trailing zero bytes from outputs. Both prover and verifier
+        // apply the same truncation so the proof is internally consistent.
+        // WARNING: callers reading `program_io.outputs` directly after verification
+        // will see truncated data. The SDK re-pads to `max_output_size` before
+        // deserialization, but direct consumers must account for this.
         program_io.outputs.truncate(
             program_io
                 .outputs
@@ -346,11 +350,19 @@ impl<
     }
 
     #[tracing::instrument(skip_all)]
+    pub fn verify(self) -> Result<(), ProofVerifyError> {
+        // Catch panics from malformed proofs (e.g., missing opening claims) and
+        // convert them to clean error returns instead of crashing the verifier.
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.verify_inner()))
+            .unwrap_or(Err(ProofVerifyError::InternalError))
+    }
+
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
-    pub fn verify(mut self) -> Result<(), ProofVerifyError> {
+    fn verify_inner(mut self) -> Result<(), ProofVerifyError> {
         let _pprof_verify = pprof_scope!("verify");
         let zk_mode = self.opening_accumulator.zk_mode;
 
+        let preprocessing_digest = self.preprocessing.shared.digest();
         fiat_shamir_preamble(
             &self.program_io,
             self.proof.ram_K,
@@ -359,6 +371,7 @@ impl<
             &self.proof.rw_config,
             &self.proof.one_hot_config,
             self.proof.dory_layout,
+            &preprocessing_digest,
             &mut self.transcript,
         );
 
@@ -1622,6 +1635,20 @@ pub struct JoltSharedPreprocessing {
     pub ram: RAMPreprocessing,
     pub memory_layout: MemoryLayout,
     pub max_padded_trace_length: usize,
+}
+
+impl JoltSharedPreprocessing {
+    /// SHA3-256 digest of the serialized preprocessing, used to bind
+    /// the program identity to the Fiat-Shamir transcript.
+    pub fn digest(&self) -> [u8; 32] {
+        use ark_serialize::CanonicalSerialize;
+        use sha3::Digest;
+        let mut buf = Vec::new();
+        self.serialize_compressed(&mut buf)
+            .expect("serialization cannot fail for in-memory buffer");
+        let hash = sha3::Sha3_256::digest(&buf);
+        hash.into()
+    }
 }
 
 impl CanonicalSerialize for JoltSharedPreprocessing {

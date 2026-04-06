@@ -528,7 +528,8 @@ impl BatchedSumcheck {
             .iter()
             .zip(batching_coeffs.iter())
             .map(|(sumcheck, coeff)| {
-                let r_slice = &r_sumcheck[max_num_rounds - sumcheck.num_rounds()..];
+                let offset = sumcheck.round_offset(max_num_rounds);
+                let r_slice = &r_sumcheck[offset..offset + sumcheck.num_rounds()];
                 sumcheck.cache_openings(opening_accumulator, r_slice);
                 let claim = sumcheck.expected_output_claim(opening_accumulator, r_slice);
                 claim * coeff
@@ -579,10 +580,11 @@ impl<F: JoltField, ProofTranscript: Transcript> ClearSumcheckProof<F, ProofTrans
             ));
         }
         for i in 0..self.compressed_polys.len() {
-            if self.compressed_polys[i].degree() > degree_bound {
+            let poly_degree = self.compressed_polys[i].degree();
+            if poly_degree == 0 || poly_degree > degree_bound {
                 return Err(ProofVerifyError::InvalidInputLength(
                     degree_bound,
-                    self.compressed_polys[i].degree(),
+                    poly_degree,
                 ));
             }
 
