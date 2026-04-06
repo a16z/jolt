@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1775514558562,
+  "lastUpdate": 1775514748708,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -74986,6 +74986,246 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 864556,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "107961892+sagar-a16z@users.noreply.github.com",
+            "name": "Sagar Dhawan",
+            "username": "sagar-a16z"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f94a71ae55e93b50f667a602aad5579eec35eb62",
+          "message": "fix: verifier robustness and constraint consistency fixes  (#1408)\n\n* harden: verifier robustness and constraint consistency fixes\n\n- Reject empty sumcheck round polynomials (degree == 0) to prevent\n  verifier panic on malformed proofs\n- Use round_offset() instead of hardcoded slice in verify_standard,\n  matching the batched verify path\n- Truncate rs2 to 32 bits in VirtualChangeDivisorW to match rs1\n  and the table's internal truncation\n- Wrap verify() in catch_unwind to convert panics from malformed\n  proofs (e.g. missing opening claims) into error returns\n- Document trailing-zero truncation behavior on program_io.outputs\n\n* harden: bind preprocessing digest to Fiat-Shamir transcript\n\nAdd SHA3-256 digest of JoltSharedPreprocessing (bytecode, RAM init,\nmemory layout, max_padded_trace_length) to fiat_shamir_preamble.\n\nPreviously the transcript did not commit to which program was proven.\nThe verifier was safe because it recomputes val_polys from its own\ntrusted preprocessing, but in on-chain or delegated verification\nwhere preprocessing is stored separately, challenges were program-\nindependent. Now both sides absorb the preprocessing digest first,\nbinding all subsequent challenges to the specific program.\n\n* refine: gate catch_unwind on release, log panic payload\n\n- In test/debug builds, panics propagate for full backtraces\n- In release builds, catch panics and log the payload before returning\n  ProofVerifyError::InternalError",
+          "timestamp": "2026-04-06T17:33:39-04:00",
+          "tree_id": "2248c03acab6e8a77736cbd94611f4f88b37f6b9",
+          "url": "https://github.com/a16z/jolt/commit/f94a71ae55e93b50f667a602aad5579eec35eb62"
+        },
+        "date": 1775514746787,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.9247,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 862408,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3293,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 498740,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 498652,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 498808,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7153,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 500364,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5929,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 500904,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.7715,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 498672,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4363,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 864228,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5748,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 498708,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4547,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 504912,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 16.9829,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 500796,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.8337,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 496332,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 29.1997,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1011752,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 13.677,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 666772,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 83.5251,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2120472,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4837,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 496408,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.503,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 500664,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 14.3114,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 864308,
             "unit": "KB",
             "extra": ""
           }
