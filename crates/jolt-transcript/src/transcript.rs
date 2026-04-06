@@ -21,13 +21,13 @@ pub trait Transcript: Default + Clone + Sync + Send + 'static {
     ///
     /// For hash-based transcripts this is `F` (the field type), so challenges
     /// can be used directly in polynomial operations without conversion.
-    type Challenge: Copy + Default;
+    type Challenge: Copy + Default + PartialEq + Eq + std::fmt::Debug + std::hash::Hash;
 
     /// Creates a new transcript with the given domain separation label.
     ///
     /// # Panics
     ///
-    /// Panics if `label.len() >= 33`.
+    /// Panics if `label.len() > 32`.
     fn new(label: &'static [u8]) -> Self;
 
     /// Absorbs raw bytes into the transcript.

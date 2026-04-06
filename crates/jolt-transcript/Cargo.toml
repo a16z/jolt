@@ -17,8 +17,8 @@ ark-bn254.workspace = true
 ark-ff.workspace = true
 ark-serialize.workspace = true
 blake2.workspace = true
-digest = "0.10"
-light-poseidon = "0.4"
+digest.workspace = true
+light-poseidon.workspace = true
 sha3.workspace = true
 jolt-field = { path = "../jolt-field" }
 

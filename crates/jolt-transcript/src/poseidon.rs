@@ -1,8 +1,8 @@
 //! Poseidon-based Fiat-Shamir transcript for SNARK-friendly verification.
 //!
-//! Uses width-3 Poseidon (3 field element inputs) over BN254 Fr with
-//! circom-compatible parameters via [`light_poseidon`]. Each hash operation:
-//! `state = poseidon(state, n_rounds, data)`.
+//! Uses 3-input Poseidon (width-4 permutation: 3 inputs + 1 capacity element)
+//! over BN254 Fr with circom-compatible parameters via [`light_poseidon`].
+//! Each hash operation: `state = poseidon(state, n_rounds, data)`.
 //!
 //! # Why Poseidon?
 //!
@@ -13,7 +13,8 @@
 //!
 //! # Parameters
 //!
-//! - **Width**: 3 field elements (state, round counter, data)
+//! - **Inputs**: 3 field elements per hash (state, round counter, data)
+//! - **Permutation width**: 4 (3 inputs + 1 capacity)
 //! - **Curve**: BN254 scalar field (Fr)
 //! - **Constants**: circom-compatible (`light_poseidon::new_circom`)
 //! - **Rounds**: 8 full + 56 partial, x^5 S-box
@@ -22,7 +23,9 @@
 //!
 //! Each `append_bytes` call includes an `n_rounds` counter in the hash input
 //! for domain separation. Multi-chunk appends chain: first chunk includes
-//! `n_rounds`, remaining chunks chain as `poseidon(prev, 0, chunk_i)`.
+//! `n_rounds`, remaining chunks chain as `poseidon(prev, i+1, chunk_i)`.
+//! A final length-mixing step `poseidon(prev, 0, byte_len)` disambiguates
+//! inputs that differ only in trailing zero bytes.
 
 use ark_bn254::Fr;
 use ark_ff::{PrimeField, Zero};
@@ -31,8 +34,8 @@ use light_poseidon::{Poseidon, PoseidonHasher};
 
 use crate::transcript::Transcript;
 
-/// Poseidon hash width: 3 field elements.
-const WIDTH: usize = 3;
+/// Number of Poseidon inputs per hash call.
+const NR_INPUTS: usize = 3;
 
 /// Bytes per BN254 Fr field element.
 const BYTES_PER_CHUNK: usize = 32;
@@ -41,12 +44,13 @@ const BYTES_PER_CHUNK: usize = 32;
 ///
 /// Generic over the field type `F`. Challenges are produced as field
 /// elements directly via `F::from_u128()`.
-#[derive(Clone)]
 pub struct PoseidonTranscript<F: jolt_field::Field = jolt_field::Fr> {
     /// 256-bit running state (canonical LE serialization of Fr).
     state: [u8; 32],
     /// Round counter for domain separation.
     n_rounds: u32,
+    /// Cached Poseidon instance — round constants allocated once.
+    poseidon: Poseidon<Fr>,
     /// Test-only state history for transcript comparison.
     #[cfg(test)]
     state_history: Vec<[u8; 32]>,
@@ -55,17 +59,25 @@ pub struct PoseidonTranscript<F: jolt_field::Field = jolt_field::Fr> {
     _field: std::marker::PhantomData<F>,
 }
 
-impl<F: jolt_field::Field> Default for PoseidonTranscript<F> {
-    fn default() -> Self {
+impl<F: jolt_field::Field> Clone for PoseidonTranscript<F> {
+    #[expect(clippy::expect_used)]
+    fn clone(&self) -> Self {
         Self {
-            state: [0u8; 32],
-            n_rounds: 0,
+            state: self.state,
+            n_rounds: self.n_rounds,
+            poseidon: Poseidon::<Fr>::new_circom(NR_INPUTS).expect("Poseidon init failed"),
             #[cfg(test)]
-            state_history: Vec::new(),
+            state_history: self.state_history.clone(),
             #[cfg(test)]
-            expected_state_history: None,
+            expected_state_history: self.expected_state_history.clone(),
             _field: std::marker::PhantomData,
         }
+    }
+}
+
+impl<F: jolt_field::Field> Default for PoseidonTranscript<F> {
+    fn default() -> Self {
+        Self::new(b"")
     }
 }
 
@@ -79,21 +91,16 @@ impl<F: jolt_field::Field> std::fmt::Debug for PoseidonTranscript<F> {
 }
 
 impl<F: jolt_field::Field> PoseidonTranscript<F> {
-    #[expect(clippy::expect_used)]
-    fn hasher() -> Poseidon<Fr> {
-        Poseidon::<Fr>::new_circom(WIDTH).expect("failed to initialize Poseidon")
-    }
-
     /// Squeeze exactly 32 challenge bytes: `poseidon(state, n_rounds, 0)`.
     #[expect(clippy::expect_used)]
     fn challenge_bytes32(&mut self, out: &mut [u8; 32]) {
-        let mut poseidon = Self::hasher();
         let state_f = Fr::from_le_bytes_mod_order(&self.state);
-        let round_f = Fr::from(u64::from(self.n_rounds));
-        let zero = Fr::zero();
+        // Odd round tag = squeeze operation
+        let round_f = Fr::from(u64::from(self.n_rounds) * 2 + 1);
 
-        let output = poseidon
-            .hash(&[state_f, round_f, zero])
+        let output = self
+            .poseidon
+            .hash(&[state_f, round_f, Fr::zero()])
             .expect("Poseidon hash failed");
 
         output
@@ -156,7 +163,7 @@ impl<F: jolt_field::Field> Transcript for PoseidonTranscript<F> {
             "label must be at most {MAX_LABEL_LEN} bytes",
         );
 
-        let mut poseidon = Self::hasher();
+        let mut poseidon = Poseidon::<Fr>::new_circom(NR_INPUTS).expect("Poseidon init failed");
         let label_f = Fr::from_le_bytes_mod_order(label);
         let zero = Fr::zero();
 
@@ -172,6 +179,7 @@ impl<F: jolt_field::Field> Transcript for PoseidonTranscript<F> {
         Self {
             state,
             n_rounds: 0,
+            poseidon,
             #[cfg(test)]
             state_history: vec![state],
             #[cfg(test)]
@@ -182,25 +190,38 @@ impl<F: jolt_field::Field> Transcript for PoseidonTranscript<F> {
 
     #[expect(clippy::expect_used)]
     fn append_bytes(&mut self, bytes: &[u8]) {
-        let mut poseidon = Self::hasher();
         let state_f = Fr::from_le_bytes_mod_order(&self.state);
-        let round_f = Fr::from(u64::from(self.n_rounds));
-        let zero = Fr::zero();
+        // Even round tag = absorb operation
+        let round_f = Fr::from(u64::from(self.n_rounds) * 2);
 
         let mut chunks = bytes.chunks(BYTES_PER_CHUNK);
 
-        let first_f = chunks.next().map_or(zero, Fr::from_le_bytes_mod_order);
+        let first_f = chunks
+            .next()
+            .map_or(Fr::zero(), Fr::from_le_bytes_mod_order);
 
-        let mut current = poseidon
+        let mut current = self
+            .poseidon
             .hash(&[state_f, round_f, first_f])
             .expect("Poseidon hash failed");
 
-        for chunk in chunks {
+        for (i, chunk) in chunks.enumerate() {
             let chunk_f = Fr::from_le_bytes_mod_order(chunk);
-            current = poseidon
-                .hash(&[current, zero, chunk_f])
+            let continuation_idx = Fr::from((i + 1) as u64);
+            current = self
+                .poseidon
+                .hash(&[current, continuation_idx, chunk_f])
                 .expect("Poseidon hash failed");
         }
+
+        // Mix in byte length to disambiguate inputs that differ only in
+        // trailing zeros within a chunk (Fr::from_le_bytes_mod_order
+        // implicitly zero-pads short slices).
+        let len_f = Fr::from(bytes.len() as u64);
+        current = self
+            .poseidon
+            .hash(&[current, Fr::zero(), len_f])
+            .expect("Poseidon hash failed");
 
         let mut new_state = [0u8; 32];
         current
@@ -333,8 +354,9 @@ mod tests {
 
     #[test]
     fn hash_zeros_produces_known_output() {
-        let mut poseidon = PoseidonTranscript::<jolt_field::Fr>::hasher();
-        let result = poseidon
+        let mut hasher =
+            light_poseidon::Poseidon::<Fr>::new_circom(NR_INPUTS).expect("Poseidon init failed");
+        let result = hasher
             .hash(&[Fr::zero(), Fr::zero(), Fr::zero()])
             .expect("hash failed");
         assert_ne!(result, Fr::zero(), "hash(0,0,0) should not be zero");

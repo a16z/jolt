@@ -221,14 +221,19 @@ macro_rules! transcript_tests {
         }
 
         #[test]
-        fn test_default_vs_new() {
+        fn test_default_delegates_to_new() {
             let default_transcript = <$transcript_type>::default();
             let new_transcript = <$transcript_type>::new(b"");
 
-            assert_ne!(
+            assert_eq!(
                 default_transcript.state(),
                 new_transcript.state(),
-                "Default and new with empty label should differ"
+                "Default should delegate to new(b\"\")"
+            );
+
+            assert!(
+                !default_transcript.state().iter().all(|&b| b == 0),
+                "Default should produce a non-zero initial state"
             );
         }
 

@@ -1,20 +1,30 @@
-//! Fiat-Shamir transcript implementations for Jolt.
+//! Fiat-Shamir transcript implementations for [Jolt](https://github.com/a16z/jolt).
 //!
-//! This crate provides the [`Transcript`] trait and implementations for
-//! transforming interactive proofs into non-interactive ones via the
-//! Fiat-Shamir heuristic.
+//! This crate provides hash-based Fiat-Shamir transcripts that convert
+//! interactive proof protocols into non-interactive ones. The transcript
+//! maintains a 256-bit running state, absorbs prover messages via hashing,
+//! and squeezes deterministic challenges for the verifier.
 //!
-//! # Overview
+//! # Traits
 //!
-//! A Fiat-Shamir transcript absorbs data and produces deterministic challenges.
-//! Both prover and verifier maintain identical transcripts, ensuring they
-//! derive the same challenges.
+//! - [`Transcript`]: Main transcript trait — `new(label)`, `append_bytes(bytes)`,
+//!   `append(value)`, `challenge()`, `challenge_vector(len)`, `state()`.
+//! - [`AppendToTranscript`]: For types that can be absorbed into a transcript.
 //!
 //! # Implementations
 //!
-//! - [`Blake2bTranscript`]: Uses Blake2b-256 hash function
-//! - [`KeccakTranscript`]: Ethereum/EVM-compatible, uses Keccak-256
-//! - [`PoseidonTranscript`]: SNARK-friendly, uses Poseidon over BN254
+//! Three hash backends are provided. All produce 128-bit challenges (drawn
+//! from `u128`) and use a `state || round_counter` domain separation scheme.
+//!
+//! - [`Blake2bTranscript`]: Uses Blake2b-256. Default choice for Jolt proofs.
+//! - [`KeccakTranscript`]: Uses Keccak-256. EVM-compatible for on-chain verification.
+//! - [`PoseidonTranscript`]: Uses Poseidon over BN254. SNARK-friendly for recursive verification.
+//!
+//! # Dependency position
+//!
+//! Depends on `jolt-field` (for the blanket [`AppendToTranscript`] impl on
+//! [`Field`](jolt_field::Field) types). Used by `jolt-crypto`, `jolt-sumcheck`,
+//! `jolt-openings`, `jolt-dory`, `jolt-blindfold`, and `jolt-zkvm`.
 //!
 //! # Example
 //!

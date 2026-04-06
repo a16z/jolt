@@ -34,13 +34,7 @@ macro_rules! impl_transcript {
 
         impl<F: jolt_field::Field> Default for $name<F> {
             fn default() -> Self {
-                Self {
-                    state: [0u8; 32],
-                    n_rounds: 0,
-                    #[cfg(test)]
-                    test_state: TestState::default(),
-                    _field: std::marker::PhantomData,
-                }
+                Self::new(b"")
             }
         }
 
@@ -85,7 +79,11 @@ macro_rules! impl_transcript {
             /// Squeezes exactly 32 bytes from the transcript state.
             #[inline]
             fn challenge_bytes32(&mut self, out: &mut [u8; 32]) {
-                let hash: [u8; 32] = self.hasher().finalize().into();
+                let hash: [u8; 32] = self
+                    .hasher()
+                    .chain_update([0x01]) // squeeze domain tag
+                    .finalize()
+                    .into();
                 out.copy_from_slice(&hash);
                 self.update_state(hash);
             }
@@ -139,7 +137,12 @@ macro_rules! impl_transcript {
             }
 
             fn append_bytes(&mut self, bytes: &[u8]) {
-                let hash: [u8; 32] = self.hasher().chain_update(bytes).finalize().into();
+                let hash: [u8; 32] = self
+                    .hasher()
+                    .chain_update([0x00]) // absorb domain tag
+                    .chain_update(bytes)
+                    .finalize()
+                    .into();
                 self.update_state(hash);
             }
 

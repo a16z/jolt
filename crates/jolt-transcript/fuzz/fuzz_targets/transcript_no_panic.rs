@@ -1,5 +1,5 @@
 #![no_main]
-use jolt_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
+use jolt_transcript::{Blake2bTranscript, KeccakTranscript, PoseidonTranscript, Transcript};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
@@ -16,4 +16,11 @@ fuzz_target!(|data: &[u8]| {
     let _ = keccak.challenge();
     keccak.append_bytes(data);
     let _ = keccak.challenge();
+
+    // Poseidon: most complex impl — field arithmetic + multi-chunk chaining
+    let mut poseidon = PoseidonTranscript::default();
+    poseidon.append_bytes(data);
+    let _ = poseidon.challenge();
+    poseidon.append_bytes(data);
+    let _ = poseidon.challenge();
 });
