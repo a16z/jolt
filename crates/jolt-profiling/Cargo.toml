@@ -23,32 +23,14 @@ allocative = ["dep:inferno", "dep:allocative"]
 tracing.workspace = true
 tracing-chrome.workspace = true
 tracing-subscriber.workspace = true
+inferno = { workspace = true, optional = true }
+allocative = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 memory-stats.workspace = true
-
-# Optional: system metrics monitoring
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies.sysinfo]
-workspace = true
-optional = true
-
-# Optional: CPU profiling via pprof
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies.pprof]
-workspace = true
-optional = true
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies.prost]
-workspace = true
-optional = true
-
-# Optional: heap flamegraphs
-[dependencies.inferno]
-workspace = true
-optional = true
-
-[dependencies.allocative]
-workspace = true
-optional = true
+sysinfo = { workspace = true, optional = true }
+pprof = { workspace = true, optional = true }
+prost = { workspace = true, optional = true }
 
 [package.metadata.cargo-machete]
 # prost is required by pprof's prost-codec feature but not directly imported
