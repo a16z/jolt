@@ -291,6 +291,8 @@ tracing-chrome = "0.7.1"
 tracing-subscriber = { version = "0.3.20", features = ["fmt", "env-filter"] }
 inferno = { version = "0.12.3" }
 allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
+pprof = { version = "0.15", features = ["prost-codec", "flamegraph", "frame-pointer"] }
+prost = "0.14"
 
 # Parsing
 syn = { version = "2", features = ["full"] }

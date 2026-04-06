@@ -28,6 +28,19 @@
 //! );
 //! // All tracing spans from any Jolt crate now flow to Perfetto JSON output.
 //! ```
+//!
+//! # Feature Flags
+//!
+//! | Flag | Description |
+//! |------|-------------|
+//! | `monitor` | Background system metrics sampling (CPU, memory, cores) |
+//! | `pprof` | Scoped CPU profiling via `pprof` with `.pb` output |
+//! | `allocative` | Heap flamegraph generation from `allocative`-instrumented types |
+//!
+//! # Dependency Position
+//!
+//! This is a leaf crate — imported by host binaries and benchmarks.
+//! Library crates depend only on `tracing` for instrumentation.
 
 pub mod setup;
 
