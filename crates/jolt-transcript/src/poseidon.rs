@@ -79,11 +79,13 @@ impl<F: jolt_field::Field> std::fmt::Debug for PoseidonTranscript<F> {
 }
 
 impl<F: jolt_field::Field> PoseidonTranscript<F> {
+    #[expect(clippy::expect_used)]
     fn hasher() -> Poseidon<Fr> {
         Poseidon::<Fr>::new_circom(WIDTH).expect("failed to initialize Poseidon")
     }
 
     /// Squeeze exactly 32 challenge bytes: `poseidon(state, n_rounds, 0)`.
+    #[expect(clippy::expect_used)]
     fn challenge_bytes32(&mut self, out: &mut [u8; 32]) {
         let mut poseidon = Self::hasher();
         let state_f = Fr::from_le_bytes_mod_order(&self.state);
@@ -146,6 +148,7 @@ impl<F: jolt_field::Field> PoseidonTranscript<F> {
 impl<F: jolt_field::Field> Transcript for PoseidonTranscript<F> {
     type Challenge = F;
 
+    #[expect(clippy::expect_used)]
     fn new(label: &'static [u8]) -> Self {
         use crate::transcript::MAX_LABEL_LEN;
         assert!(
@@ -177,6 +180,7 @@ impl<F: jolt_field::Field> Transcript for PoseidonTranscript<F> {
         }
     }
 
+    #[expect(clippy::expect_used)]
     fn append_bytes(&mut self, bytes: &[u8]) {
         let mut poseidon = Self::hasher();
         let state_f = Fr::from_le_bytes_mod_order(&self.state);
@@ -224,6 +228,7 @@ impl<F: jolt_field::Field> Transcript for PoseidonTranscript<F> {
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used)]
 mod tests {
     use super::*;
 
