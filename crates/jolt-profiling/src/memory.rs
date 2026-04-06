@@ -57,10 +57,11 @@ pub fn end_memory_tracing_span(label: &'static str) {
         return;
     };
     let memory_gib_end = stats.physical_mem as f64 / BYTES_PER_GIB;
-    let mut memory_usage_map = MEMORY_USAGE_MAP.lock().unwrap();
-    let memory_gib_start = memory_usage_map
-        .remove(label)
-        .unwrap_or_else(|| panic!("no open memory span: {label}"));
+    let memory_gib_start = {
+        let mut map = MEMORY_USAGE_MAP.lock().unwrap();
+        map.remove(label)
+            .unwrap_or_else(|| panic!("no open memory span: {label}"))
+    };
 
     let delta = memory_gib_end - memory_gib_start;
     let mut memory_delta_map = MEMORY_DELTA_MAP.lock().unwrap();

@@ -41,13 +41,13 @@ impl MetricsMonitor {
         let handle = thread::Builder::new()
             .name("metrics-monitor".to_string())
             .spawn(move || {
-                let interval = Duration::from_millis((interval_secs * 1000.0) as u64);
-                let mut system = System::new_all();
+                let interval = Duration::from_millis(((interval_secs * 1000.0) as u64).max(50));
+                let mut system = System::new();
 
                 thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
 
-                while !stop.load(Ordering::Relaxed) {
-                    system.refresh_all();
+                while !stop.load(Ordering::Acquire) {
+                    system.refresh_cpu_all();
 
                     let memory_gib = memory_stats()
                         .map(|s| s.physical_mem as f64 / BYTES_PER_GIB)
@@ -92,7 +92,7 @@ impl MetricsMonitor {
 
 impl Drop for MetricsMonitor {
     fn drop(&mut self) {
-        self.stop_flag.store(true, Ordering::Relaxed);
+        self.stop_flag.store(true, Ordering::Release);
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
