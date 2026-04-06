@@ -33,12 +33,11 @@ impl MetricsMonitor {
     /// - `counters.cores_active_avg` — average active cores
     /// - `counters.cores_active` — cores with >0.1% usage
     /// - `counters.thread_count` — active thread count (Linux only, 0 elsewhere)
-    #[expect(clippy::expect_used)]
     pub fn start(interval_secs: f64) -> Self {
         let stop_flag = Arc::new(AtomicBool::new(false));
         let stop = stop_flag.clone();
 
-        let handle = thread::Builder::new()
+        let spawn_result = thread::Builder::new()
             .name("metrics-monitor".to_string())
             .spawn(move || {
                 let interval = Duration::from_millis(((interval_secs * 1000.0) as u64).max(50));
@@ -80,13 +79,17 @@ impl MetricsMonitor {
                 }
 
                 tracing::info!("MetricsMonitor stopping");
-            })
-            .expect("Failed to spawn metrics monitor thread");
+            });
 
-        MetricsMonitor {
-            handle: Some(handle),
-            stop_flag,
-        }
+        let handle = match spawn_result {
+            Ok(h) => Some(h),
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to spawn metrics monitor thread");
+                None
+            }
+        };
+
+        MetricsMonitor { handle, stop_flag }
     }
 }
 

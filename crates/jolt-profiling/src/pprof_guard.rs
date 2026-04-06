@@ -28,15 +28,17 @@ impl PprofGuard {
     ///
     /// The label determines the output filename: `{PPROF_PREFIX}{label}.pb`.
     /// Typically called via the [`pprof_scope!`] macro rather than directly.
-    #[expect(clippy::expect_used)]
-    pub fn new(label: &'static str, frequency: i32) -> Self {
-        Self {
-            guard: pprof::ProfilerGuardBuilder::default()
-                .frequency(frequency)
-                .blocklist(&["libc", "libgcc", "pthread", "vdso"])
-                .build()
-                .expect("Failed to initialize profiler"),
-            label,
+    pub fn new(label: &'static str, frequency: i32) -> Option<Self> {
+        match pprof::ProfilerGuardBuilder::default()
+            .frequency(frequency)
+            .blocklist(&["libc", "libgcc", "pthread", "vdso"])
+            .build()
+        {
+            Ok(guard) => Some(Self { guard, label }),
+            Err(e) => {
+                tracing::warn!(label = label, error = %e, "failed to initialize profiler");
+                None
+            }
         }
     }
 }
@@ -99,13 +101,13 @@ macro_rules! pprof_scope {
     ($label:expr) => {{
         #[cfg(feature = "pprof")]
         {
-            Some($crate::PprofGuard::new(
+            $crate::PprofGuard::new(
                 $label,
                 std::env::var("PPROF_FREQ")
                     .unwrap_or_else(|_| "100".to_string())
                     .parse::<i32>()
                     .unwrap_or(100),
-            ))
+            )
         }
         #[cfg(not(feature = "pprof"))]
         None::<$crate::PprofGuard>

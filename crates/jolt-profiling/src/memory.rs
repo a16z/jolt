@@ -20,12 +20,8 @@ static MEMORY_DELTA_MAP: LazyLock<Mutex<BTreeMap<&'static str, f64>>> =
 
 /// Records the current physical memory usage at the start of a labeled span.
 ///
-/// Logs a warning and returns without recording if memory stats are unavailable.
-///
-/// # Panics
-///
-/// Panics if a span with the same label is already open (nested spans need distinct labels).
-#[expect(clippy::unwrap_used)]
+/// Logs a warning and returns without recording if memory stats are unavailable
+/// or if a span with the same label is already open.
 pub fn start_memory_tracing_span(label: &'static str) {
     let Some(stats) = memory_stats() else {
         tracing::warn!(
@@ -35,48 +31,46 @@ pub fn start_memory_tracing_span(label: &'static str) {
         return;
     };
     let memory_gib = stats.physical_mem as f64 / BYTES_PER_GIB;
-    let mut map = MEMORY_USAGE_MAP.lock().unwrap();
-    assert_eq!(
-        map.insert(label, memory_gib),
-        None,
-        "duplicate memory span label: {label}"
-    );
+    let mut map = MEMORY_USAGE_MAP.lock().unwrap_or_else(|e| e.into_inner());
+    if map.insert(label, memory_gib).is_some() {
+        tracing::warn!(span = label, "duplicate memory span label, overwriting");
+    }
 }
 
 /// Closes a labeled memory span and records the memory delta (in GiB).
 ///
-/// Logs a warning and returns without recording if memory stats are unavailable.
-///
-/// # Panics
-///
-/// Panics if no span with the given label was previously opened.
-#[expect(clippy::unwrap_used, clippy::panic)]
+/// Logs a warning and returns without recording if memory stats are unavailable
+/// or if no matching span was opened.
 pub fn end_memory_tracing_span(label: &'static str) {
     let Some(stats) = memory_stats() else {
         tracing::warn!(span = label, "memory stats unavailable, skipping span end");
         return;
     };
     let memory_gib_end = stats.physical_mem as f64 / BYTES_PER_GIB;
-    let memory_gib_start = {
-        let mut map = MEMORY_USAGE_MAP.lock().unwrap();
-        map.remove(label)
-            .unwrap_or_else(|| panic!("no open memory span: {label}"))
+    let Some(memory_gib_start) = MEMORY_USAGE_MAP
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(label)
+    else {
+        tracing::warn!(span = label, "no open memory span, skipping span end");
+        return;
     };
 
     let delta = memory_gib_end - memory_gib_start;
-    let mut memory_delta_map = MEMORY_DELTA_MAP.lock().unwrap();
-    assert_eq!(memory_delta_map.insert(label, delta), None);
+    let _ = MEMORY_DELTA_MAP
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(label, delta);
 }
 
 /// Logs all collected memory deltas and warns about any unclosed spans.
-#[expect(clippy::unwrap_used)]
 pub fn report_memory_usage() {
-    let memory_usage_map = MEMORY_USAGE_MAP.lock().unwrap();
+    let memory_usage_map = MEMORY_USAGE_MAP.lock().unwrap_or_else(|e| e.into_inner());
     for label in memory_usage_map.keys() {
         tracing::warn!(span = label, "unclosed memory tracing span");
     }
 
-    let memory_delta_map = MEMORY_DELTA_MAP.lock().unwrap();
+    let memory_delta_map = MEMORY_DELTA_MAP.lock().unwrap_or_else(|e| e.into_inner());
     for (label, delta) in memory_delta_map.iter() {
         tracing::info!(
             span = label,
@@ -116,15 +110,13 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "duplicate memory span label")]
-    fn duplicate_span_label_panics() {
+    fn duplicate_span_warns_without_panic() {
         start_memory_tracing_span("test_span_dup");
         start_memory_tracing_span("test_span_dup");
     }
 
     #[test]
-    #[should_panic(expected = "no open memory span")]
-    fn end_without_start_panics() {
+    fn end_without_start_warns_without_panic() {
         end_memory_tracing_span("test_span_nonexistent");
     }
 }
