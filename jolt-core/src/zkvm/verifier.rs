@@ -351,10 +351,26 @@ impl<
 
     #[tracing::instrument(skip_all)]
     pub fn verify(self) -> Result<(), ProofVerifyError> {
-        // Catch panics from malformed proofs (e.g., missing opening claims) and
-        // convert them to clean error returns instead of crashing the verifier.
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.verify_inner()))
-            .unwrap_or(Err(ProofVerifyError::InternalError))
+        // In test/debug builds, let panics propagate for full backtraces.
+        // In release builds, catch panics from malformed proofs (e.g., missing
+        // opening claims) and convert them to clean error returns.
+        #[cfg(any(test, debug_assertions))]
+        {
+            self.verify_inner()
+        }
+        #[cfg(not(any(test, debug_assertions)))]
+        {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.verify_inner()))
+                .unwrap_or_else(|payload| {
+                    let msg = payload
+                        .downcast_ref::<&str>()
+                        .map(|s| s.to_string())
+                        .or_else(|| payload.downcast_ref::<String>().cloned())
+                        .unwrap_or_else(|| "unknown panic".to_string());
+                    tracing::error!("Verifier panicked on malformed proof: {msg}");
+                    Err(ProofVerifyError::InternalError)
+                })
+        }
     }
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
@@ -1638,16 +1654,15 @@ pub struct JoltSharedPreprocessing {
 }
 
 impl JoltSharedPreprocessing {
-    /// SHA3-256 digest of the serialized preprocessing, used to bind
+    /// Blake2b-256 digest of the serialized preprocessing, used to bind
     /// the program identity to the Fiat-Shamir transcript.
     pub fn digest(&self) -> [u8; 32] {
         use ark_serialize::CanonicalSerialize;
-        use sha3::Digest;
+        use blake2::{digest::consts::U32, Blake2b, Digest};
         let mut buf = Vec::new();
         self.serialize_compressed(&mut buf)
             .expect("serialization cannot fail for in-memory buffer");
-        let hash = sha3::Sha3_256::digest(&buf);
-        hash.into()
+        Blake2b::<U32>::digest(&buf).into()
     }
 }
 
