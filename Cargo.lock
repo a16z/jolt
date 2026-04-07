@@ -2833,6 +2833,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-transcript"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ff 0.5.0",
+ "ark-serialize 0.5.0",
+ "blake2",
+ "criterion",
+ "digest 0.10.7",
+ "jolt-field",
+ "light-poseidon",
+ "num-traits",
+ "sha3",
+]
+
+[[package]]
 name = "js-sys"
 version = "0.3.91"
 source = "registry+https://github.com/rust-lang/crates.io-index"
