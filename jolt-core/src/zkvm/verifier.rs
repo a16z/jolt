@@ -289,7 +289,7 @@ impl<
                 .map_or(0, |pos| pos + 1),
         );
 
-        let zk_mode = proof.stage1_sumcheck_proof.is_zk();
+        let zk_mode = proof.verify_zk_consistency()?;
         #[cfg(test)]
         #[allow(unused_mut)]
         let mut opening_accumulator =

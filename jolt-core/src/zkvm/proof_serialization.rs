@@ -62,6 +62,30 @@ pub struct JoltProof<
     pub dory_layout: DoryLayout,
 }
 
+impl<F: JoltField, C: JoltCurve<F = F>, PCS: CommitmentScheme<Field = F>, FS: Transcript>
+    JoltProof<F, C, PCS, FS>
+{
+    /// Verifies all sumcheck and uniskip proofs use the same ZK variant.
+    /// Returns the ZK mode if consistent, or an error if any stage disagrees.
+    pub fn verify_zk_consistency(&self) -> Result<bool, crate::utils::errors::ProofVerifyError> {
+        let zk_mode = self.stage1_sumcheck_proof.is_zk();
+
+        let consistent = self.stage1_uni_skip_first_round_proof.is_zk() == zk_mode
+            && self.stage2_uni_skip_first_round_proof.is_zk() == zk_mode
+            && self.stage2_sumcheck_proof.is_zk() == zk_mode
+            && self.stage3_sumcheck_proof.is_zk() == zk_mode
+            && self.stage4_sumcheck_proof.is_zk() == zk_mode
+            && self.stage5_sumcheck_proof.is_zk() == zk_mode
+            && self.stage6_sumcheck_proof.is_zk() == zk_mode
+            && self.stage7_sumcheck_proof.is_zk() == zk_mode;
+
+        if !consistent {
+            return Err(crate::utils::errors::ProofVerifyError::SumcheckVerificationError);
+        }
+        Ok(zk_mode)
+    }
+}
+
 #[cfg(not(feature = "zk"))]
 pub struct Claims<F: JoltField>(pub Openings<F>);
 
