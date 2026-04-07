@@ -1,10 +1,8 @@
 //! RV64I bitwise logic instructions.
 
-use crate::opcodes;
-
 define_instruction!(
     /// RV64I AND: bitwise AND of two registers.
-    And, opcodes::AND, "AND",
+    And, "AND",
     |x, y| x & y,
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
@@ -13,7 +11,7 @@ define_instruction!(
 
 define_instruction!(
     /// RV64I ANDI: bitwise AND with sign-extended immediate.
-    AndI, opcodes::ANDI, "ANDI",
+    AndI, "ANDI",
     |x, y| x & y,
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
@@ -22,7 +20,7 @@ define_instruction!(
 
 define_instruction!(
     /// RV64I OR: bitwise OR of two registers.
-    Or, opcodes::OR, "OR",
+    Or, "OR",
     |x, y| x | y,
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
@@ -31,7 +29,7 @@ define_instruction!(
 
 define_instruction!(
     /// RV64I ORI: bitwise OR with sign-extended immediate.
-    OrI, opcodes::ORI, "ORI",
+    OrI, "ORI",
     |x, y| x | y,
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
@@ -40,7 +38,7 @@ define_instruction!(
 
 define_instruction!(
     /// RV64I XOR: bitwise exclusive OR of two registers.
-    Xor, opcodes::XOR, "XOR",
+    Xor, "XOR",
     |x, y| x ^ y,
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
@@ -49,7 +47,7 @@ define_instruction!(
 
 define_instruction!(
     /// RV64I XORI: bitwise exclusive OR with sign-extended immediate.
-    XorI, opcodes::XORI, "XORI",
+    XorI, "XORI",
     |x, y| x ^ y,
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
@@ -58,7 +56,7 @@ define_instruction!(
 
 define_instruction!(
     /// Zbb ANDN: bitwise AND-NOT. `rd = rs1 & ~rs2`.
-    Andn, opcodes::ANDN, "ANDN",
+    Andn, "ANDN",
     |x, y| x & !y,
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],

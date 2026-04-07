@@ -31,7 +31,6 @@ pub mod flags;
 pub mod instruction_set;
 pub mod interleave;
 pub mod lookup_bits;
-pub mod opcodes;
 pub mod rv;
 pub mod tables;
 pub mod traits;

@@ -1,11 +1,9 @@
 //! RV64I/M arithmetic instructions: ADD, SUB, LUI, AUIPC, and
 //! the M-extension multiply/divide family.
 
-use crate::opcodes;
-
 define_instruction!(
     /// RV64I ADD: `rd = rs1 + rs2` (wrapping).
-    Add, opcodes::ADD, "ADD",
+    Add, "ADD",
     |x, y| x.wrapping_add(y),
     circuit: [AddOperands, WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
@@ -14,7 +12,7 @@ define_instruction!(
 
 define_instruction!(
     /// RV64I ADDI: `rd = rs1 + imm` (wrapping). Immediate already decoded.
-    Addi, opcodes::ADDI, "ADDI",
+    Addi, "ADDI",
     |x, y| x.wrapping_add(y),
     circuit: [AddOperands, WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
@@ -23,7 +21,7 @@ define_instruction!(
 
 define_instruction!(
     /// RV64I SUB: `rd = rs1 - rs2` (wrapping).
-    Sub, opcodes::SUB, "SUB",
+    Sub, "SUB",
     |x, y| x.wrapping_sub(y),
     circuit: [SubtractOperands, WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
@@ -32,7 +30,7 @@ define_instruction!(
 
 define_instruction!(
     /// RV64I LUI: load upper immediate. Result is the immediate value itself.
-    Lui, opcodes::LUI, "LUI",
+    Lui, "LUI",
     |x, _y| x,
     circuit: [AddOperands, WriteLookupOutputToRD],
     instruction: [RightOperandIsImm],
@@ -41,7 +39,7 @@ define_instruction!(
 
 define_instruction!(
     /// RV64I AUIPC: add upper immediate to PC. `rd = PC + imm`.
-    Auipc, opcodes::AUIPC, "AUIPC",
+    Auipc, "AUIPC",
     |x, y| x.wrapping_add(y),
     circuit: [AddOperands, WriteLookupOutputToRD],
     instruction: [LeftOperandIsPC, RightOperandIsImm],
@@ -50,7 +48,7 @@ define_instruction!(
 
 define_instruction!(
     /// RV64M MUL: signed multiply, lower 64 bits of the 128-bit product.
-    Mul, opcodes::MUL, "MUL",
+    Mul, "MUL",
     |x, y| x.wrapping_mul(y),
     circuit: [MultiplyOperands, WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
@@ -64,11 +62,6 @@ define_instruction!(
 pub struct MulH;
 
 impl crate::Instruction for MulH {
-    #[inline]
-    fn opcode(&self) -> u32 {
-        opcodes::MULH
-    }
-    #[inline]
     fn name(&self) -> &'static str {
         "MULH"
     }
@@ -104,11 +97,6 @@ impl crate::Flags for MulH {
 pub struct MulHSU;
 
 impl crate::Instruction for MulHSU {
-    #[inline]
-    fn opcode(&self) -> u32 {
-        opcodes::MULHSU
-    }
-    #[inline]
     fn name(&self) -> &'static str {
         "MULHSU"
     }
@@ -144,11 +132,6 @@ impl crate::Flags for MulHSU {
 pub struct MulHU;
 
 impl crate::Instruction for MulHU {
-    #[inline]
-    fn opcode(&self) -> u32 {
-        opcodes::MULHU
-    }
-    #[inline]
     fn name(&self) -> &'static str {
         "MULHU"
     }
@@ -191,11 +174,6 @@ impl crate::Flags for MulHU {
 pub struct Div;
 
 impl crate::Instruction for Div {
-    #[inline]
-    fn opcode(&self) -> u32 {
-        opcodes::DIV
-    }
-    #[inline]
     fn name(&self) -> &'static str {
         "DIV"
     }
@@ -238,11 +216,6 @@ impl crate::Flags for Div {
 pub struct DivU;
 
 impl crate::Instruction for DivU {
-    #[inline]
-    fn opcode(&self) -> u32 {
-        opcodes::DIVU
-    }
-    #[inline]
     fn name(&self) -> &'static str {
         "DIVU"
     }
@@ -282,11 +255,6 @@ impl crate::Flags for DivU {
 pub struct Rem;
 
 impl crate::Instruction for Rem {
-    #[inline]
-    fn opcode(&self) -> u32 {
-        opcodes::REM
-    }
-    #[inline]
     fn name(&self) -> &'static str {
         "REM"
     }
@@ -329,11 +297,6 @@ impl crate::Flags for Rem {
 pub struct RemU;
 
 impl crate::Instruction for RemU {
-    #[inline]
-    fn opcode(&self) -> u32 {
-        opcodes::REMU
-    }
-    #[inline]
     fn name(&self) -> &'static str {
         "REMU"
     }

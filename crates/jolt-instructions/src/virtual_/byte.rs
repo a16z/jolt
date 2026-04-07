@@ -1,10 +1,8 @@
 //! Virtual byte manipulation instructions.
 
-use crate::opcodes;
-
 define_instruction!(
     /// Virtual REV8W: byte-reverse within the lower 32 bits.
-    VirtualRev8W, opcodes::VIRTUAL_REV8W, "VIRTUAL_REV8W",
+    VirtualRev8W, "VIRTUAL_REV8W",
     |x, _y| {
         let w = x as u32;
         w.swap_bytes() as u64

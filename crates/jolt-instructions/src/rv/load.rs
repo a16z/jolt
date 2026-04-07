@@ -3,53 +3,51 @@
 //! In Jolt's execution model, `x` contains the loaded value from memory
 //! and the instruction performs sign/zero extension to 64 bits.
 
-use crate::opcodes;
-
 define_instruction!(
     /// RV64I LB: load byte, sign-extended to 64 bits.
-    Lb, opcodes::LB, "LB",
+    Lb, "LB",
     |x, _y| (x as i8) as i64 as u64,
     circuit: [Load],
 );
 
 define_instruction!(
     /// RV64I LBU: load byte, zero-extended to 64 bits.
-    Lbu, opcodes::LBU, "LBU",
+    Lbu, "LBU",
     |x, _y| x & 0xFF,
     circuit: [Load],
 );
 
 define_instruction!(
     /// RV64I LH: load halfword (16 bits), sign-extended to 64 bits.
-    Lh, opcodes::LH, "LH",
+    Lh, "LH",
     |x, _y| (x as i16) as i64 as u64,
     circuit: [Load],
 );
 
 define_instruction!(
     /// RV64I LHU: load halfword, zero-extended to 64 bits.
-    Lhu, opcodes::LHU, "LHU",
+    Lhu, "LHU",
     |x, _y| x & 0xFFFF,
     circuit: [Load],
 );
 
 define_instruction!(
     /// RV64I LW: load word (32 bits), sign-extended to 64 bits.
-    Lw, opcodes::LW, "LW",
+    Lw, "LW",
     |x, _y| (x as i32) as i64 as u64,
     circuit: [Load],
 );
 
 define_instruction!(
     /// RV64I LWU: load word, zero-extended to 64 bits.
-    Lwu, opcodes::LWU, "LWU",
+    Lwu, "LWU",
     |x, _y| x & 0xFFFF_FFFF,
     circuit: [Load],
 );
 
 define_instruction!(
     /// RV64I LD: load doubleword (64 bits). Identity operation.
-    Ld, opcodes::LD, "LD",
+    Ld, "LD",
     |x, _y| x,
     circuit: [Load],
 );

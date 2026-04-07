@@ -4,11 +4,9 @@
 //! These set `WriteLookupOutputToRD` (architectural rd-write) but have
 //! no lookup table — the VM decomposes them into virtual shift sequences.
 
-use crate::opcodes;
-
 define_instruction!(
     /// RV64I SLL: shift left logical. Shift amount from lower 6 bits of `y`.
-    Sll, opcodes::SLL, "SLL",
+    Sll, "SLL",
     |x, y| x << (y & 63),
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
@@ -16,7 +14,7 @@ define_instruction!(
 
 define_instruction!(
     /// RV64I SLLI: shift left logical by immediate. Immediate already masked.
-    SllI, opcodes::SLLI, "SLLI",
+    SllI, "SLLI",
     |x, y| x << (y & 63),
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
@@ -24,7 +22,7 @@ define_instruction!(
 
 define_instruction!(
     /// RV64I SRL: shift right logical. Shift amount from lower 6 bits of `y`.
-    Srl, opcodes::SRL, "SRL",
+    Srl, "SRL",
     |x, y| x >> (y & 63),
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
@@ -32,7 +30,7 @@ define_instruction!(
 
 define_instruction!(
     /// RV64I SRLI: shift right logical by immediate.
-    SrlI, opcodes::SRLI, "SRLI",
+    SrlI, "SRLI",
     |x, y| x >> (y & 63),
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
@@ -40,7 +38,7 @@ define_instruction!(
 
 define_instruction!(
     /// RV64I SRA: shift right arithmetic. Preserves sign bit.
-    Sra, opcodes::SRA, "SRA",
+    Sra, "SRA",
     |x, y| ((x as i64) >> (y & 63)) as u64,
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
@@ -48,7 +46,7 @@ define_instruction!(
 
 define_instruction!(
     /// RV64I SRAI: shift right arithmetic by immediate.
-    SraI, opcodes::SRAI, "SRAI",
+    SraI, "SRAI",
     |x, y| ((x as i64) >> (y & 63)) as u64,
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],

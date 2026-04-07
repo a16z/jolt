@@ -3,29 +3,27 @@
 //! These instructions produce side effects (syscalls, memory fences) that
 //! are handled by the VM. Their `execute` returns 0 as a no-op.
 
-use crate::opcodes;
-
 define_instruction!(
     /// RV64I ECALL: environment call (syscall). Returns 0.
-    Ecall, opcodes::ECALL, "ECALL",
+    Ecall, "ECALL",
     |_x, _y| 0,
 );
 
 define_instruction!(
     /// RV64I EBREAK: breakpoint trap. Returns 0.
-    Ebreak, opcodes::EBREAK, "EBREAK",
+    Ebreak, "EBREAK",
     |_x, _y| 0,
 );
 
 define_instruction!(
     /// RV64I FENCE: memory ordering fence. Returns 0.
-    Fence, opcodes::FENCE, "FENCE",
+    Fence, "FENCE",
     |_x, _y| 0,
 );
 
 define_instruction!(
     /// No-operation pseudo-instruction. Returns 0.
-    Noop, opcodes::NOOP, "NOOP",
+    Noop, "NOOP",
     |_x, _y| 0,
     instruction: [IsNoop],
 );

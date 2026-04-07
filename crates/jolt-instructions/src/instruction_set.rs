@@ -1,22 +1,27 @@
 //! The complete Jolt instruction set registry.
 //!
 //! [`JoltInstructionSet`] collects all instruction implementations into an
-//! array-indexed registry for O(1) opcode dispatch.
+//! array-indexed registry. The index of each instruction IS its opcode.
 
-use crate::opcodes;
 use crate::traits::Instruction;
 
 /// Registry of all Jolt instructions, indexed by opcode for fast dispatch.
 ///
 /// Instructions are stored in a flat array where the index equals the opcode,
-/// enabling O(1) lookup without hashing.
+/// enabling O(1) lookup without hashing. The registration order in [`new()`](Self::new)
+/// defines the opcode assignment.
 #[derive(Default)]
 pub struct JoltInstructionSet {
     instructions: Vec<Box<dyn Instruction>>,
 }
 
 impl JoltInstructionSet {
+    /// Total number of instructions in the Jolt ISA.
+    pub const COUNT: usize = 105;
+
     /// Creates a new instruction set with all RV64IMAC and virtual instructions registered.
+    ///
+    /// The position of each instruction in the list IS its opcode.
     pub fn new() -> Self {
         use crate::rv::arithmetic::*;
         use crate::rv::arithmetic_w::*;
@@ -39,7 +44,7 @@ impl JoltInstructionSet {
         use crate::virtual_::shift::*;
         use crate::virtual_::xor_rotate::*;
 
-        let all: Vec<Box<dyn Instruction>> = vec![
+        let instructions: Vec<Box<dyn Instruction>> = vec![
             // RV64I arithmetic (0-3)
             Box::new(Add),
             Box::new(Sub),
@@ -170,14 +175,7 @@ impl JoltInstructionSet {
             Box::new(VirtualHostIO),
         ];
 
-        debug_assert_eq!(all.len(), opcodes::COUNT as usize);
-        let mut sorted: Vec<(u32, Box<dyn Instruction>)> =
-            all.into_iter().map(|i| (i.opcode(), i)).collect();
-        sorted.sort_by_key(|(op, _)| *op);
-        for (i, (op, _)) in sorted.iter().enumerate() {
-            debug_assert_eq!(*op as usize, i, "expected opcode {i} but got {op}");
-        }
-        let instructions = sorted.into_iter().map(|(_, i)| i).collect();
+        debug_assert_eq!(instructions.len(), Self::COUNT);
 
         Self { instructions }
     }
@@ -211,28 +209,18 @@ impl JoltInstructionSet {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::rv::arithmetic::Add;
 
     #[test]
     fn all_opcodes_covered() {
         let set = JoltInstructionSet::new();
-        assert_eq!(set.len(), opcodes::COUNT as usize);
-
-        for (i, instr) in set.iter().enumerate() {
-            assert_eq!(
-                instr.opcode() as usize,
-                i,
-                "instruction {} has opcode {} but is at index {}",
-                instr.name(),
-                instr.opcode(),
-                i
-            );
-        }
+        assert_eq!(set.len(), JoltInstructionSet::COUNT);
     }
 
     #[test]
     fn lookup_by_opcode() {
         let set = JoltInstructionSet::new();
-        let add = set.instruction(opcodes::ADD).unwrap();
+        let add = set.instruction(0).unwrap();
         assert_eq!(add.name(), "ADD");
         assert_eq!(add.execute(3, 5), 8);
     }
@@ -240,7 +228,7 @@ mod tests {
     #[test]
     fn out_of_range_returns_none() {
         let set = JoltInstructionSet::new();
-        assert!(set.instruction(opcodes::COUNT).is_none());
+        assert!(set.instruction(JoltInstructionSet::COUNT as u32).is_none());
         assert!(set.instruction(u32::MAX).is_none());
     }
 
@@ -252,5 +240,12 @@ mod tests {
         let before = names.len();
         names.dedup();
         assert_eq!(before, names.len(), "duplicate instruction names found");
+    }
+
+    #[test]
+    fn struct_execute_matches_registry() {
+        let set = JoltInstructionSet::new();
+        let add_from_registry = set.instruction(0).unwrap();
+        assert_eq!(Add.execute(3, 5), add_from_registry.execute(3, 5));
     }
 }

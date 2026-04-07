@@ -5,11 +5,9 @@
 //! These set `WriteLookupOutputToRD` (architectural rd-write) but have
 //! no lookup table — the VM decomposes them into virtual shift sequences.
 
-use crate::opcodes;
-
 define_instruction!(
     /// RV64I SLLW: 32-bit shift left logical, sign-extended to 64 bits.
-    SllW, opcodes::SLLW, "SLLW",
+    SllW, "SLLW",
     |x, y| ((x as u32) << (y & 31)) as i32 as i64 as u64,
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
@@ -17,7 +15,7 @@ define_instruction!(
 
 define_instruction!(
     /// RV64I SLLIW: 32-bit shift left logical by immediate, sign-extended.
-    SllIW, opcodes::SLLIW, "SLLIW",
+    SllIW, "SLLIW",
     |x, y| ((x as u32) << (y & 31)) as i32 as i64 as u64,
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
@@ -25,7 +23,7 @@ define_instruction!(
 
 define_instruction!(
     /// RV64I SRLW: 32-bit shift right logical, sign-extended to 64 bits.
-    SrlW, opcodes::SRLW, "SRLW",
+    SrlW, "SRLW",
     |x, y| ((x as u32) >> (y & 31)) as i32 as i64 as u64,
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
@@ -33,7 +31,7 @@ define_instruction!(
 
 define_instruction!(
     /// RV64I SRLIW: 32-bit shift right logical by immediate, sign-extended.
-    SrlIW, opcodes::SRLIW, "SRLIW",
+    SrlIW, "SRLIW",
     |x, y| ((x as u32) >> (y & 31)) as i32 as i64 as u64,
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
@@ -41,7 +39,7 @@ define_instruction!(
 
 define_instruction!(
     /// RV64I SRAW: 32-bit shift right arithmetic, sign-extended to 64 bits.
-    SraW, opcodes::SRAW, "SRAW",
+    SraW, "SRAW",
     |x, y| ((x as i32) >> (y & 31)) as i64 as u64,
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
@@ -49,7 +47,7 @@ define_instruction!(
 
 define_instruction!(
     /// RV64I SRAIW: 32-bit shift right arithmetic by immediate, sign-extended.
-    SraIW, opcodes::SRAIW, "SRAIW",
+    SraIW, "SRAIW",
     |x, y| ((x as i32) >> (y & 31)) as i64 as u64,
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],

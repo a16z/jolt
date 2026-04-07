@@ -1,10 +1,8 @@
 //! Virtual arithmetic instructions used internally by the Jolt VM.
 
-use crate::opcodes;
-
 define_instruction!(
     /// Virtual POW2: computes `2^y` where exponent is from lower 6 bits of `y`.
-    Pow2, opcodes::POW2, "POW2",
+    Pow2, "POW2",
     |_x, y| 1u64 << (y & 63),
     circuit: [AddOperands, WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
@@ -13,7 +11,7 @@ define_instruction!(
 
 define_instruction!(
     /// Virtual POW2I: computes `2^imm` with immediate exponent.
-    Pow2I, opcodes::VIRTUAL_POW2I, "POW2I",
+    Pow2I, "POW2I",
     |_x, y| 1u64 << (y & 63),
     circuit: [AddOperands, WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
@@ -22,7 +20,7 @@ define_instruction!(
 
 define_instruction!(
     /// Virtual POW2W: computes `2^(y mod 32)` for 32-bit mode.
-    Pow2W, opcodes::VIRTUAL_POW2W, "POW2W",
+    Pow2W, "POW2W",
     |_x, y| 1u64 << (y & 31),
     circuit: [AddOperands, WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
@@ -31,7 +29,7 @@ define_instruction!(
 
 define_instruction!(
     /// Virtual POW2IW: computes `2^(imm mod 32)` for 32-bit immediate mode.
-    Pow2IW, opcodes::VIRTUAL_POW2IW, "POW2IW",
+    Pow2IW, "POW2IW",
     |_x, y| 1u64 << (y & 31),
     circuit: [AddOperands, WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
@@ -40,7 +38,7 @@ define_instruction!(
 
 define_instruction!(
     /// Virtual MULI: multiply by immediate. `rd = rs1 * imm`.
-    MulI, opcodes::VIRTUAL_MULI, "MULI",
+    MulI, "MULI",
     |x, y| x.wrapping_mul(y),
     circuit: [MultiplyOperands, WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],

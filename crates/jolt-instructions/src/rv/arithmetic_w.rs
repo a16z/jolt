@@ -4,11 +4,9 @@
 //! Instructions that set operand-combining flags (`AddOperands`, etc.) but have
 //! no lookup table are decomposed into virtual sequences by the VM.
 
-use crate::opcodes;
-
 define_instruction!(
     /// RV64I ADDW: 32-bit add, sign-extended to 64 bits.
-    AddW, opcodes::ADDW, "ADDW",
+    AddW, "ADDW",
     |x, y| (x as i32).wrapping_add(y as i32) as i64 as u64,
     circuit: [AddOperands, WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
@@ -16,7 +14,7 @@ define_instruction!(
 
 define_instruction!(
     /// RV64I ADDIW: 32-bit add immediate, sign-extended to 64 bits.
-    AddiW, opcodes::ADDIW, "ADDIW",
+    AddiW, "ADDIW",
     |x, y| (x as i32).wrapping_add(y as i32) as i64 as u64,
     circuit: [AddOperands, WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
@@ -24,7 +22,7 @@ define_instruction!(
 
 define_instruction!(
     /// RV64I SUBW: 32-bit subtract, sign-extended to 64 bits.
-    SubW, opcodes::SUBW, "SUBW",
+    SubW, "SUBW",
     |x, y| (x as i32).wrapping_sub(y as i32) as i64 as u64,
     circuit: [SubtractOperands, WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
@@ -32,7 +30,7 @@ define_instruction!(
 
 define_instruction!(
     /// RV64M MULW: 32-bit multiply, sign-extended to 64 bits.
-    MulW, opcodes::MULW, "MULW",
+    MulW, "MULW",
     |x, y| (x as i32).wrapping_mul(y as i32) as i64 as u64,
     circuit: [MultiplyOperands, WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
@@ -47,11 +45,6 @@ define_instruction!(
 pub struct DivW;
 
 impl crate::Instruction for DivW {
-    #[inline]
-    fn opcode(&self) -> u32 {
-        opcodes::DIVW
-    }
-    #[inline]
     fn name(&self) -> &'static str {
         "DIVW"
     }
@@ -95,11 +88,6 @@ impl crate::Flags for DivW {
 pub struct DivUW;
 
 impl crate::Instruction for DivUW {
-    #[inline]
-    fn opcode(&self) -> u32 {
-        opcodes::DIVUW
-    }
-    #[inline]
     fn name(&self) -> &'static str {
         "DIVUW"
     }
@@ -141,11 +129,6 @@ impl crate::Flags for DivUW {
 pub struct RemW;
 
 impl crate::Instruction for RemW {
-    #[inline]
-    fn opcode(&self) -> u32 {
-        opcodes::REMW
-    }
-    #[inline]
     fn name(&self) -> &'static str {
         "REMW"
     }
@@ -189,11 +172,6 @@ impl crate::Flags for RemW {
 pub struct RemUW;
 
 impl crate::Instruction for RemUW {
-    #[inline]
-    fn opcode(&self) -> u32 {
-        opcodes::REMUW
-    }
-    #[inline]
     fn name(&self) -> &'static str {
         "REMUW"
     }

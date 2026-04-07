@@ -1,11 +1,9 @@
 //! RV64I jump instructions.
 
-use crate::opcodes;
-
 define_instruction!(
     /// RV64I JAL: jump and link. `rd = PC + 4; PC = PC + imm`.
     /// The execute function computes the jump target `PC + imm`.
-    Jal, opcodes::JAL, "JAL",
+    Jal, "JAL",
     |x, y| x.wrapping_add(y),
     circuit: [AddOperands, Jump],
     instruction: [LeftOperandIsPC, RightOperandIsImm],
@@ -15,7 +13,7 @@ define_instruction!(
 define_instruction!(
     /// RV64I JALR: jump and link register. `rd = PC + 4; PC = (rs1 + imm) & !1`.
     /// The execute function computes the jump target `(rs1 + imm) & !1`.
-    Jalr, opcodes::JALR, "JALR",
+    Jalr, "JALR",
     |x, y| x.wrapping_add(y) & !1,
     circuit: [AddOperands, Jump],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],

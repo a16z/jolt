@@ -7,7 +7,7 @@
 /// ```ignore
 /// define_instruction!(
 ///     /// Doc comment.
-///     Add, opcodes::ADD, "ADD",
+///     Add, "ADD",
 ///     |x, y| x.wrapping_add(y),
 ///     circuit: [AddOperands, WriteLookupOutputToRD],
 ///     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
@@ -21,7 +21,7 @@
 macro_rules! define_instruction {
     (
         $(#[$meta:meta])*
-        $name:ident, $opcode:expr, $label:expr,
+        $name:ident, $label:expr,
         |$x:ident, $y:ident| $body:expr
         $(, circuit: [$($cflag:ident),* $(,)?])?
         $(, instruction: [$($iflag:ident),* $(,)?])?
@@ -34,11 +34,6 @@ macro_rules! define_instruction {
         pub struct $name;
 
         impl $crate::Instruction for $name {
-            #[inline]
-            fn opcode(&self) -> u32 {
-                $opcode
-            }
-
             #[inline]
             fn name(&self) -> &'static str {
                 $label

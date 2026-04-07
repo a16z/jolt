@@ -1,7 +1,5 @@
 //! Virtual division-related instructions.
 
-use crate::opcodes;
-
 /// Returns 1 if this is the signed division overflow case (MIN / -1), else returns the divisor.
 #[inline]
 fn change_divisor_64(dividend: u64, divisor: u64) -> u64 {
@@ -26,7 +24,7 @@ define_instruction!(
     /// Virtual CHANGE_DIVISOR: transforms divisor for signed division overflow.
     /// Returns the divisor unchanged, unless dividend == MIN && divisor == -1,
     /// in which case returns 1 to avoid overflow.
-    VirtualChangeDivisor, opcodes::VIRTUAL_CHANGE_DIVISOR, "VIRTUAL_CHANGE_DIVISOR",
+    VirtualChangeDivisor, "VIRTUAL_CHANGE_DIVISOR",
     |x, y| change_divisor_64(x, y),
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
@@ -35,7 +33,7 @@ define_instruction!(
 
 define_instruction!(
     /// Virtual CHANGE_DIVISOR_W: 32-bit version of change divisor.
-    VirtualChangeDivisorW, opcodes::VIRTUAL_CHANGE_DIVISOR_W, "VIRTUAL_CHANGE_DIVISOR_W",
+    VirtualChangeDivisorW, "VIRTUAL_CHANGE_DIVISOR_W",
     |x, y| change_divisor_32(x, y),
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],

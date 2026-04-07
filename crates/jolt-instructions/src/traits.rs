@@ -25,9 +25,6 @@ use crate::tables::LookupTableKind;
 /// and witness-generation flag configuration. Dynamic flags (virtual sequence
 /// state, compression, rd!=0) are applied by the runtime based on trace context.
 pub trait Instruction: Flags + Send + Sync + 'static {
-    /// Unique opcode identifying this instruction within the [`JoltInstructionSet`](crate::JoltInstructionSet).
-    fn opcode(&self) -> u32;
-
     /// Human-readable mnemonic (e.g., `"ADD"`, `"SRL"`).
     fn name(&self) -> &'static str;
 

@@ -1,10 +1,8 @@
 //! Virtual bitwise instructions used internally by the Jolt VM.
 
-use crate::opcodes;
-
 define_instruction!(
     /// Virtual MOVSIGN: returns all-ones if `x` is negative (signed), otherwise zero.
-    MovSign, opcodes::MOVSIGN, "MOVSIGN",
+    MovSign, "MOVSIGN",
     |x, _y| if (x as i64) < 0 { u64::MAX } else { 0 },
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
