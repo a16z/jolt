@@ -36,4 +36,3 @@ path = "src/main.rs"
 [[bin]]
 name = "compute_r_inv"
 path = "src/bin/compute_r_inv.rs"
-
