@@ -2765,7 +2765,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "jolt-instructions"
+name = "jolt-lookup-tables"
 version = "0.1.0"
 dependencies = [
  "jolt-field",
@@ -2813,6 +2813,15 @@ dependencies = [
  "tracing",
  "tracing-chrome",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "jolt-riscv"
+version = "0.1.0"
+dependencies = [
+ "jolt-field",
+ "jolt-lookup-tables",
+ "serde",
 ]
 
 [[package]]

@@ -1,12 +1,12 @@
 [package]
-name = "jolt-instructions"
+name = "jolt-riscv"
 version = "0.1.0"
 authors = ["Jolt Contributors"]
 edition = "2021"
 license = "MIT OR Apache-2.0"
-description = "RISC-V instruction set and lookup tables for the Jolt zkVM"
+description = "RISC-V instruction set definitions for the Jolt zkVM"
 repository = "https://github.com/a16z/jolt"
-keywords = ["SNARK", "zkvm", "risc-v", "lookup-tables"]
+keywords = ["SNARK", "zkvm", "risc-v"]
 categories = ["cryptography"]
 
 [lints]
@@ -14,7 +14,5 @@ workspace = true
 
 [dependencies]
 jolt-field = { path = "../jolt-field" }
+jolt-lookup-tables = { path = "../jolt-lookup-tables" }
 serde = { workspace = true, features = ["derive"] }
-
-[dev-dependencies]
-rand = { workspace = true }

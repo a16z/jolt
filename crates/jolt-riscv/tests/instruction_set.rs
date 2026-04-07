@@ -1,23 +1,23 @@
-//! Integration tests for the jolt-instructions crate.
+//! Integration tests for the jolt-riscv crate.
 //!
 //! Exercises the JoltInstructionSet registry, instruction execution semantics,
 //! flag consistency, and bit-interleaving utilities.
 
-use jolt_instructions::{
+use jolt_riscv::{
     interleave_bits, uninterleave_bits, CircuitFlags, Flags, Instruction, JoltInstructionSet,
     NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
 };
 
 // Import instruction structs directly
-use jolt_instructions::rv::arithmetic::*;
-use jolt_instructions::rv::arithmetic_w::*;
-use jolt_instructions::rv::branch::*;
-use jolt_instructions::rv::compare::*;
-use jolt_instructions::rv::jump::*;
-use jolt_instructions::rv::load::*;
-use jolt_instructions::rv::logic::*;
-use jolt_instructions::rv::shift::*;
-use jolt_instructions::rv::store::*;
+use jolt_riscv::rv::arithmetic::*;
+use jolt_riscv::rv::arithmetic_w::*;
+use jolt_riscv::rv::branch::*;
+use jolt_riscv::rv::compare::*;
+use jolt_riscv::rv::jump::*;
+use jolt_riscv::rv::load::*;
+use jolt_riscv::rv::logic::*;
+use jolt_riscv::rv::shift::*;
+use jolt_riscv::rv::store::*;
 
 // Registry completeness
 
