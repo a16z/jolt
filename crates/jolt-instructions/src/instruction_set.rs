@@ -34,15 +34,15 @@ impl JoltInstructionSet {
         use crate::rv::shift_w::*;
         use crate::rv::store::*;
         use crate::rv::system::*;
-        use crate::virtual_::advice::*;
-        use crate::virtual_::arithmetic::*;
-        use crate::virtual_::assert::*;
-        use crate::virtual_::bitwise::*;
-        use crate::virtual_::byte::*;
-        use crate::virtual_::division::*;
-        use crate::virtual_::extension::*;
-        use crate::virtual_::shift::*;
-        use crate::virtual_::xor_rotate::*;
+        use crate::virt::advice::*;
+        use crate::virt::arithmetic::*;
+        use crate::virt::assert::*;
+        use crate::virt::bitwise::*;
+        use crate::virt::byte::*;
+        use crate::virt::division::*;
+        use crate::virt::extension::*;
+        use crate::virt::shift::*;
+        use crate::virt::xor_rotate::*;
 
         let instructions: Vec<Box<dyn Instruction>> = vec![
             // RV64I arithmetic (0-3)

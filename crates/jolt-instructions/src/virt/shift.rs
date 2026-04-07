@@ -93,25 +93,25 @@ mod tests {
     use crate::Instruction;
 
     #[test]
-    fn virtual_srl_basic() {
+    fn virtsrl_basic() {
         assert_eq!(VirtualSrl.execute(1024, 10), 1);
         assert_eq!(VirtualSrl.execute(u64::MAX, 63), 1);
     }
 
     #[test]
-    fn virtual_sra_sign_extends() {
+    fn virtsra_sign_extends() {
         let neg = (-1024i64) as u64;
         assert_eq!(VirtualSra.execute(neg, 4), (-64i64) as u64);
     }
 
     #[test]
-    fn virtual_shift_right_bitmask() {
+    fn virtshift_right_bitmask() {
         assert_eq!(VirtualShiftRightBitmask.execute(0, 0), u64::MAX);
         assert_eq!(VirtualShiftRightBitmask.execute(0, 1), u64::MAX - 1);
     }
 
     #[test]
-    fn virtual_rotri_basic() {
+    fn virtrotri_basic() {
         assert_eq!(VirtualRotri.execute(1, 1), 1u64 << 63);
         assert_eq!(VirtualRotri.execute(0xFF, 4), 0xF000_0000_0000_000F);
     }

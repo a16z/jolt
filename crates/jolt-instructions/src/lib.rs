@@ -34,7 +34,7 @@ pub mod lookup_bits;
 pub mod rv;
 pub mod tables;
 pub mod traits;
-pub mod virtual_;
+pub mod virt;
 
 pub use challenge_ops::{ChallengeOps, FieldOps};
 pub use flags::{
