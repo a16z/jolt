@@ -1,6 +1,6 @@
 //! Pedersen commitment scheme tests over BN254 G1.
 
-use jolt_crypto::{Bn254, Bn254G1, JoltCommitment, JoltGroup, Pedersen, PedersenSetup};
+use jolt_crypto::{Bn254, Bn254G1, VectorCommitment, JoltGroup, Pedersen, PedersenSetup};
 use jolt_field::{Field, Fr};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;

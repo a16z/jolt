@@ -11,6 +11,7 @@ use jolt_compiler::module::{
 };
 use jolt_compiler::PolynomialId;
 use jolt_field::Field;
+use jolt_crypto::HomomorphicCommitment;
 use jolt_openings::{
     AdditivelyHomomorphic, OpeningReduction, OpeningsError, RlcReduction, VerifierClaim,
 };
@@ -19,6 +20,7 @@ use jolt_r1cs::R1csKey;
 use jolt_sumcheck::{ClearRoundVerifier, SumcheckClaim, SumcheckVerifier};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Label, LabelWithCount, Transcript};
 
+use crate::config::ProverConfig;
 use crate::error::JoltError;
 use crate::key::JoltVerifyingKey;
 use crate::proof::{JoltProof, StageProof};
@@ -37,7 +39,7 @@ pub fn verify<F, PCS>(
 where
     F: Field,
     PCS: AdditivelyHomomorphic<Field = F>,
-    PCS::Output: AppendToTranscript,
+    PCS::Output: AppendToTranscript + HomomorphicCommitment<F>,
 {
     if proof.config.io_hash != *expected_io_hash {
         fn fmt_hash(h: &[u8; 32]) -> String {
@@ -120,7 +122,12 @@ where
                 round_poly_cursor += 1;
             }
 
-            VerifierOp::VerifySumcheck { instances, stage } => {
+            VerifierOp::VerifySumcheck {
+                instances,
+                stage,
+                batch_challenges,
+                claim_tag,
+            } => {
                 let sp = current_stage.ok_or_else(|| {
                     JoltError::InvalidProof("no active stage proof for sumcheck".into())
                 })?;
@@ -128,7 +135,8 @@ where
                 let max_rounds = instances.iter().map(|i| i.num_rounds).max().unwrap_or(0);
                 let max_degree = instances.iter().map(|i| i.degree).max().unwrap_or(0);
 
-                let mut combined_claim = F::zero();
+                // Evaluate each instance's input claim.
+                let mut instance_claims: Vec<F> = Vec::with_capacity(instances.len());
                 for inst in instances {
                     let val = evaluate_formula(
                         &inst.input_claim,
@@ -136,11 +144,40 @@ where
                         &challenges,
                         &sumcheck_points,
                         None,
+                        None,
                         &key.r1cs_key,
+                        &proof.config,
                     )?;
-                    combined_claim += val * F::from_u64(1u64 << (max_rounds - inst.num_rounds));
+                    instance_claims.push(val);
                 }
 
+                // Batched: absorb claims, squeeze independent coefficients.
+                let combined_claim = if batch_challenges.is_empty() {
+                    // Unbatched: scale by 2^offset only.
+                    instance_claims
+                        .iter()
+                        .zip(instances.iter())
+                        .map(|(&c, inst)| c * F::from_u64(1u64 << (max_rounds - inst.num_rounds)))
+                        .sum()
+                } else {
+                    let tag = claim_tag.as_ref().expect("claim_tag required for batched");
+                    for &claim_val in &instance_claims {
+                        transcript.append(&Label(tag.as_bytes()));
+                        claim_val.append_to_transcript(&mut transcript);
+                    }
+                    for &ch_idx in batch_challenges {
+                        challenges[ch_idx] = transcript.challenge();
+                    }
+                    instance_claims
+                        .iter()
+                        .zip(instances.iter())
+                        .zip(batch_challenges.iter())
+                        .map(|((&c, inst), &ch_idx)| {
+                            let coeff = challenges[ch_idx];
+                            coeff * c * F::from_u64(1u64 << (max_rounds - inst.num_rounds))
+                        })
+                        .sum()
+                };
                 let claim = SumcheckClaim {
                     num_vars: max_rounds,
                     degree: max_degree,
@@ -148,14 +185,10 @@ where
                 };
                 let round_polys = &sp.round_polys.round_polynomials
                     [round_poly_cursor..round_poly_cursor + max_rounds];
-                let handler = ClearRoundVerifier::with_label(b"sumcheck_poly");
-                let (fe, sc) = SumcheckVerifier::verify_with_handler(
-                    &claim,
-                    round_polys,
-                    &mut transcript,
-                    &handler,
-                )
-                .map_err(JoltError::Sumcheck)?;
+                let round_verifier = ClearRoundVerifier::with_label(b"sumcheck_poly");
+                let (fe, sc) =
+                    SumcheckVerifier::verify(&claim, round_polys, &mut transcript, &round_verifier)
+                        .map_err(JoltError::Sumcheck)?;
                 round_poly_cursor += max_rounds;
 
                 final_evals[*stage] = fe;
@@ -186,32 +219,46 @@ where
                 }
             }
 
-            VerifierOp::CheckOutput { instances, stage } => {
+            VerifierOp::CheckOutput {
+                instances,
+                stage,
+                batch_challenges,
+            } => {
+                let sp = current_stage.ok_or_else(|| {
+                    JoltError::InvalidProof("no active stage for CheckOutput".into())
+                })?;
                 let max_rounds = instances.iter().map(|i| i.num_rounds).max().unwrap_or(0);
                 let raw_point = &sumcheck_points[*stage];
                 let mut combined_output = F::zero();
 
-                for inst in instances {
+                for (i, inst) in instances.iter().enumerate() {
                     let offset = max_rounds - inst.num_rounds;
                     let normalized =
                         apply_normalization(&raw_point[offset..], inst.normalize.as_ref());
-                    // Pass normalized point as override so EqEval/EqEvalSlice
-                    // at this stage use it, without mutating shared state.
                     let output = evaluate_formula(
                         &inst.output_check,
                         &evaluations,
                         &challenges,
                         &sumcheck_points,
                         Some((*stage, &normalized)),
+                        Some(&sp.evals),
                         &key.r1cs_key,
+                        &proof.config,
                     )?;
-                    combined_output += output;
+                    if batch_challenges.is_empty() {
+                        combined_output += output;
+                    } else {
+                        combined_output += challenges[batch_challenges[i]] * output;
+                    }
                 }
 
                 if final_evals[*stage] != combined_output {
                     return Err(JoltError::EvaluationMismatch {
                         stage: *stage,
-                        reason: "sumcheck final eval does not match batched composition".into(),
+                        reason: format!(
+                            "sumcheck final eval ({:?}) does not match batched composition ({:?})",
+                            final_evals[*stage], combined_output
+                        ),
                     });
                 }
             }
@@ -292,17 +339,21 @@ fn apply_normalization<F: Clone>(raw: &[F], normalize: Option<&PointNormalizatio
 
 /// Evaluate a symbolic claim formula using accumulated verifier state.
 ///
-/// When `point_override` is `Some((stage, point))`, any `EqEval`/`EqEvalSlice`
-/// factor referencing that stage uses the override point instead of
-/// `sumcheck_points[stage]`. This lets `CheckOutput` pass a normalized
-/// point without mutating shared state.
+/// `point_override`: when `Some((stage, point))`, `EqEval`/`EqEvalSlice`
+/// factors at that stage use the override point (for normalized CheckOutput).
+///
+/// `stage_evals`: when `Some(evals)`, `StageEval(i)` resolves to `evals[i]`.
+/// Required for output-check formulas in batched stages.
+#[allow(clippy::too_many_arguments)]
 fn evaluate_formula<F: Field>(
     formula: &ClaimFormula,
     evaluations: &HashMap<PolynomialId, F>,
     challenges: &[F],
     sumcheck_points: &[Vec<F>],
     point_override: Option<(usize, &[F])>,
+    stage_evals: Option<&[F]>,
     r1cs_key: &R1csKey<F>,
+    config: &ProverConfig,
 ) -> Result<F, JoltError> {
     let mut sum = F::zero();
     for term in &formula.terms {
@@ -362,7 +413,6 @@ fn evaluate_formula<F: Field>(
                 } => {
                     let r0 = challenges[*at_challenge];
                     let basis = jolt_poly::lagrange::lagrange_evals(0, *num_constraints, r0);
-                    // R1CS variable 0 is the constant 1; variables 1..N are inputs.
                     let mut z = Vec::with_capacity(1 + eval_polys.len());
                     z.push(F::one());
                     for p in eval_polys {
@@ -384,9 +434,22 @@ fn evaluate_formula<F: Field>(
                     }
                     acc
                 }
-                ClaimFactor::StageEval(_)
-                | ClaimFactor::PreprocessedPolyEval { .. }
-                | ClaimFactor::LagrangeKernel { .. } => {
+                ClaimFactor::StageEval(index) => {
+                    let evals = stage_evals.ok_or_else(|| {
+                        JoltError::InvalidProof("StageEval used but no stage_evals provided".into())
+                    })?;
+                    *evals.get(*index).ok_or_else(|| {
+                        JoltError::InvalidProof(format!(
+                            "StageEval({index}) out of bounds (len={})",
+                            evals.len()
+                        ))
+                    })?
+                }
+                ClaimFactor::PreprocessedPolyEval { poly, at_stage } => {
+                    let point = resolve_point(sumcheck_points, point_override, at_stage.0);
+                    evaluate_preprocessed_poly(*poly, point, config)?
+                }
+                ClaimFactor::LagrangeKernel { .. } => {
                     return Err(JoltError::InvalidProof(format!(
                         "unsupported claim factor {factor:?} in compiled schedule"
                     )));
@@ -396,6 +459,160 @@ fn evaluate_formula<F: Field>(
         sum += product;
     }
     Ok(sum)
+}
+
+/// Evaluate a preprocessed polynomial at a given point.
+///
+/// These polynomials are derivable entirely from public data carried in
+/// [`ProverConfig`]: memory layout, serialized I/O, and panic flag.
+fn evaluate_preprocessed_poly<F: Field>(
+    poly: PolynomialId,
+    point: &[F],
+    config: &ProverConfig,
+) -> Result<F, JoltError> {
+    match poly {
+        PolynomialId::IoMask => {
+            // 1 for addresses in the I/O range, 0 outside.
+            // MLE = LT(r, io_end) - LT(r, io_start).
+            let io_start = config.input_word_offset as u128;
+            let io_end = (config.termination_word_offset + 1) as u128;
+            Ok(lt_mle(point, io_end) - lt_mle(point, io_start))
+        }
+        PolynomialId::RamUnmap => {
+            // Maps remapped word index k back to physical byte address:
+            //   unmap(k) = k * 8 + ram_lowest_address
+            let identity = identity_mle(point);
+            Ok(identity * F::from_u64(8) + F::from_u64(config.ram_lowest_address))
+        }
+        PolynomialId::ValIo => eval_io_mle(point, config),
+        _ => Err(JoltError::InvalidProof(format!(
+            "PreprocessedPolyEval({poly:?}) not a known preprocessed polynomial"
+        ))),
+    }
+}
+
+/// Evaluate LT(r, threshold): the MLE of the indicator `{x < threshold}`
+/// over the Boolean hypercube.
+///
+/// Scans threshold bits MSB-first, accumulating the probability that a
+/// random hypercube point is strictly less than the threshold.
+fn lt_mle<F: Field>(r: &[F], threshold: u128) -> F {
+    let n = r.len();
+    debug_assert!(threshold < (1u128 << n), "threshold exceeds domain");
+    let mut lt = F::zero();
+    let mut eq = F::one();
+    for (i, ri) in r.iter().enumerate() {
+        let bit = (threshold >> (n - 1 - i)) & 1;
+        if bit == 1 {
+            lt += eq * (F::one() - *ri);
+            eq *= *ri;
+        } else {
+            eq *= F::one() - *ri;
+        }
+    }
+    lt
+}
+
+/// Evaluate the identity polynomial: the MLE of f(x) = x interpreted as
+/// a binary integer. Returns `Σ_i r[i] * 2^(n-1-i)`.
+fn identity_mle<F: Field>(r: &[F]) -> F {
+    let n = r.len();
+    let mut sum = F::zero();
+    for (i, ri) in r.iter().enumerate() {
+        sum += *ri * F::from_u128(1u128 << (n - 1 - i));
+    }
+    sum
+}
+
+/// Evaluate the I/O values MLE at point r.
+///
+/// The I/O polynomial is sparse: nonzero only at input word addresses,
+/// output word addresses, the panic flag, and the termination flag.
+/// Evaluated without materializing the full K-element vector.
+fn eval_io_mle<F: Field>(r: &[F], config: &ProverConfig) -> Result<F, JoltError> {
+    // The I/O region occupies the low portion of the address space.
+    let io_end = config.termination_word_offset + 1;
+    let io_len = io_end.next_power_of_two().max(1);
+    let num_io_vars = io_len.trailing_zeros() as usize;
+
+    if num_io_vars > r.len() {
+        return Err(JoltError::InvalidProof(format!(
+            "ValIo: num_io_vars ({num_io_vars}) > point len ({})",
+            r.len()
+        )));
+    }
+
+    let (r_hi, r_lo) = r.split_at(r.len() - num_io_vars);
+
+    // High-order bits must be 0 for I/O addresses — scale by Π(1 - r_i).
+    let mut hi_scale = F::one();
+    for ri in r_hi {
+        hi_scale *= F::one() - *ri;
+    }
+
+    let mut acc = F::zero();
+
+    // Inputs region
+    if !config.inputs.is_empty() {
+        let words = bytes_to_words(&config.inputs);
+        acc += sparse_block_eval(config.input_word_offset, &words, r_lo);
+    }
+
+    // Outputs region
+    if !config.outputs.is_empty() {
+        let words = bytes_to_words(&config.outputs);
+        acc += sparse_block_eval(config.output_word_offset, &words, r_lo);
+    }
+
+    // Panic flag (one word)
+    acc += sparse_block_eval(config.panic_word_offset, &[config.panic as u64], r_lo);
+
+    // Termination flag (set when not panicking)
+    if !config.panic {
+        acc += sparse_block_eval(config.termination_word_offset, &[1u64], r_lo);
+    }
+
+    Ok(hi_scale * acc)
+}
+
+/// Pack a byte slice into 8-byte little-endian words.
+fn bytes_to_words(bytes: &[u8]) -> Vec<u64> {
+    bytes
+        .chunks(8)
+        .map(|chunk| {
+            let mut word = [0u8; 8];
+            word[..chunk.len()].copy_from_slice(chunk);
+            u64::from_le_bytes(word)
+        })
+        .collect()
+}
+
+/// Evaluate `Σ_j values[j] * eq(start + j, r)` where eq is the
+/// multilinear equality polynomial at a Boolean hypercube index.
+fn sparse_block_eval<F: Field>(start: usize, values: &[u64], r: &[F]) -> F {
+    let mut acc = F::zero();
+    for (j, &val) in values.iter().enumerate() {
+        if val == 0 {
+            continue;
+        }
+        acc += eq_at_index(start + j, r) * F::from_u64(val);
+    }
+    acc
+}
+
+/// Evaluate `eq(idx, r)` treating idx as a binary vector (MSB-first).
+fn eq_at_index<F: Field>(idx: usize, r: &[F]) -> F {
+    let n = r.len();
+    let mut prod = F::one();
+    for (i, ri) in r.iter().enumerate() {
+        let bit = (idx >> (n - 1 - i)) & 1;
+        if bit == 1 {
+            prod *= *ri;
+        } else {
+            prod *= F::one() - *ri;
+        }
+    }
+    prod
 }
 
 /// Resolve the sumcheck point for a stage, using `point_override` when
@@ -415,6 +632,7 @@ fn resolve_point<'a, F>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{OneHotConfig, ReadWriteConfig};
     use jolt_compiler::module::{ClaimTerm, Evaluation, SumcheckInstance, VerifierStageIndex};
     use jolt_compiler::{PolynomialId, VerifierSchedule};
     use jolt_field::Fr;
@@ -428,6 +646,31 @@ mod tests {
     fn dummy_r1cs_key() -> R1csKey<Fr> {
         let m = ConstraintMatrices::new(1, 1, vec![vec![]], vec![vec![]], vec![vec![]]);
         R1csKey::new(m, 1)
+    }
+
+    fn dummy_config() -> ProverConfig {
+        ProverConfig {
+            trace_length: 1,
+            ram_k: 1,
+            bytecode_k: 1,
+            one_hot_config: OneHotConfig::new(10),
+            rw_config: ReadWriteConfig::new(10, 10),
+            memory_start: 0,
+            memory_end: 0,
+            entry_address: 0,
+            io_hash: [0u8; 32],
+            max_input_size: 0,
+            max_output_size: 0,
+            heap_size: 0,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            panic: false,
+            ram_lowest_address: 0,
+            input_word_offset: 0,
+            output_word_offset: 0,
+            panic_word_offset: 0,
+            termination_word_offset: 0,
+        }
     }
 
     /// Eval-only stage: BeginStage → RecordEvals → AbsorbEvals → Squeeze.
@@ -524,7 +767,9 @@ mod tests {
             &challenges,
             &sumcheck_points,
             None,
+            None,
             &dummy_r1cs_key(),
+            &dummy_config(),
         )
         .unwrap();
         // 2 * 5 * 3 + 3 * 7 = 30 + 21 = 51
@@ -607,6 +852,8 @@ mod tests {
                         normalize: None,
                     }],
                     stage: 0,
+                    batch_challenges: Vec::new(),
+                    claim_tag: None,
                 },
             ],
             num_challenges: 0,
@@ -626,7 +873,9 @@ mod tests {
                 VerifierOp::BeginStage => {
                     current_stage = stage_iter.next();
                 }
-                VerifierOp::VerifySumcheck { instances, stage } => {
+                VerifierOp::VerifySumcheck {
+                    instances, stage, ..
+                } => {
                     let sp = current_stage.unwrap();
                     let max_rounds = instances.iter().map(|i| i.num_rounds).max().unwrap_or(0);
                     let max_degree = instances.iter().map(|i| i.degree).max().unwrap_or(0);
@@ -640,7 +889,9 @@ mod tests {
                             &challenges,
                             &sumcheck_points,
                             None,
+                            None,
                             &key,
+                            &dummy_config(),
                         )
                         .unwrap();
                         combined_claim +=
@@ -652,8 +903,14 @@ mod tests {
                         degree: max_degree,
                         claimed_sum: combined_claim,
                     };
-                    let (_fe, sc) =
-                        SumcheckVerifier::verify(&claim, &sp.round_polys, &mut transcript).unwrap();
+                    let clear = ClearRoundVerifier::new();
+                    let (_fe, sc) = SumcheckVerifier::verify(
+                        &claim,
+                        &sp.round_polys.round_polynomials,
+                        &mut transcript,
+                        &clear,
+                    )
+                    .unwrap();
                     sumcheck_points[*stage] = sc;
                 }
                 _ => {}
@@ -687,13 +944,16 @@ mod tests {
         let challenges = vec![one, zero];
         let sumcheck_points = vec![vec![one, zero]];
 
+        let cfg = dummy_config();
         let result = evaluate_formula(
             &formula,
             &evaluations,
             &challenges,
             &sumcheck_points,
             None,
+            None,
             &dummy_r1cs_key(),
+            &cfg,
         )
         .unwrap();
         assert_eq!(result, Fr::from_u64(7));
@@ -705,7 +965,9 @@ mod tests {
             &challenges,
             &sumcheck_points2,
             None,
+            None,
             &dummy_r1cs_key(),
+            &cfg,
         )
         .unwrap();
         assert_eq!(result2, Fr::zero());
@@ -735,6 +997,7 @@ mod tests {
         let challenges = vec![one];
         let sumcheck_points = vec![vec![zero]];
         let key = dummy_r1cs_key();
+        let cfg = dummy_config();
 
         let result = evaluate_formula(
             &formula,
@@ -742,7 +1005,9 @@ mod tests {
             &challenges,
             &sumcheck_points,
             None,
+            None,
             &key,
+            &cfg,
         )
         .unwrap();
         assert_eq!(result, Fr::zero());
@@ -754,9 +1019,55 @@ mod tests {
             &challenges,
             &sumcheck_points,
             Some((0, &override_point)),
+            None,
             &key,
+            &cfg,
         )
         .unwrap();
         assert_eq!(result2, Fr::from_u64(5));
+    }
+
+    #[test]
+    fn lt_mle_basic() {
+        let one = Fr::one();
+        let zero = Fr::zero();
+
+        // LT(0, 0) = 0 — nothing is less than 0
+        assert_eq!(lt_mle::<Fr>(&[zero], 0), Fr::zero());
+        // LT(0, 1) = 1 — index 0 < 1
+        assert_eq!(lt_mle::<Fr>(&[zero], 1), Fr::one());
+        // LT(1, 1) = 0 — index 1 is not < 1
+        assert_eq!(lt_mle::<Fr>(&[one], 1), Fr::zero());
+
+        // 2-bit: LT(_, 2) should be 1 for indices 0,1 and 0 for 2,3
+        assert_eq!(lt_mle::<Fr>(&[zero, zero], 2), Fr::one()); // idx 0 < 2
+        assert_eq!(lt_mle::<Fr>(&[zero, one], 2), Fr::one()); // idx 1 < 2
+        assert_eq!(lt_mle::<Fr>(&[one, zero], 2), Fr::zero()); // idx 2 !< 2
+        assert_eq!(lt_mle::<Fr>(&[one, one], 2), Fr::zero()); // idx 3 !< 2
+    }
+
+    #[test]
+    fn identity_mle_basic() {
+        let one = Fr::one();
+        let zero = Fr::zero();
+
+        assert_eq!(identity_mle::<Fr>(&[zero, zero]), Fr::zero());
+        assert_eq!(identity_mle::<Fr>(&[zero, one]), Fr::one());
+        assert_eq!(identity_mle::<Fr>(&[one, zero]), Fr::from_u64(2));
+        assert_eq!(identity_mle::<Fr>(&[one, one]), Fr::from_u64(3));
+    }
+
+    #[test]
+    fn io_mask_range_check() {
+        let one = Fr::one();
+        let zero = Fr::zero();
+
+        // IoMask evaluates LT(r, io_end) - LT(r, io_start).
+        // Range [1, 3) in a 4-element domain (2 bits):
+        let mask = |r: &[Fr]| -> Fr { lt_mle(r, 3) - lt_mle(r, 1) };
+        assert_eq!(mask(&[zero, zero]), Fr::zero()); // idx 0 not in [1,3)
+        assert_eq!(mask(&[zero, one]), Fr::one()); // idx 1 in [1,3)
+        assert_eq!(mask(&[one, zero]), Fr::one()); // idx 2 in [1,3)
+        assert_eq!(mask(&[one, one]), Fr::zero()); // idx 3 not in [1,3)
     }
 }

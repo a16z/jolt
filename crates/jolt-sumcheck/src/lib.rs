@@ -1,7 +1,7 @@
 //! Sumcheck protocol: claims, proofs, and verification.
 //!
 //! This crate provides the core sumcheck protocol types and verification
-//! logic. It is backend-agnostic: any field and transcript can be plugged in.
+//! logic.
 //!
 //! # Protocol overview
 //!
@@ -20,22 +20,23 @@
 //! | [`proof`] | [`SumcheckProof`] — serializable proof |
 //! | [`verifier`] | [`SumcheckVerifier`] engine |
 //! | [`batched`] | [`BatchedSumcheckVerifier`] — batched verification via RLC |
-//! | [`handler`] | [`RoundVerifier`] — strategy trait for clear vs. committed mode |
+//! | [`round`] | [`RoundVerifier`] — strategy trait for clear vs. committed mode |
 //! | [`error`] | [`SumcheckError`] variants |
 //!
-//! Proving is handled by the compiled schedule and runtime in `jolt-zkvm`,
-//! which drives sumcheck rounds directly via `ComputeBackend` primitives.
 
 pub mod batched;
 pub mod claim;
 pub mod error;
-pub mod handler;
 pub mod proof;
+pub mod round;
 pub mod verifier;
+
+#[cfg(test)]
+mod tests;
 
 pub use batched::BatchedSumcheckVerifier;
 pub use claim::SumcheckClaim;
 pub use error::SumcheckError;
-pub use handler::{ClearRoundVerifier, RoundVerifier};
 pub use proof::SumcheckProof;
+pub use round::{ClearRoundVerifier, RoundVerifier};
 pub use verifier::SumcheckVerifier;

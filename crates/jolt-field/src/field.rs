@@ -114,6 +114,24 @@ pub trait Field:
         *self * Self::from_i128(n)
     }
 
+    /// Raises `self` to the power `exp` by repeated squaring.
+    fn pow(&self, exp: usize) -> Self {
+        if exp == 0 {
+            return Self::one();
+        }
+        let mut result = Self::one();
+        let mut base = *self;
+        let mut e = exp;
+        while e > 0 {
+            if e & 1 == 1 {
+                result *= base;
+            }
+            base = base.square();
+            e >>= 1;
+        }
+        result
+    }
+
     /// Multiplication of a field element and a power of 2.
     /// Split into chunks of 63 bits, then multiply and accumulate.
     fn mul_pow_2(&self, mut pow: usize) -> Self {

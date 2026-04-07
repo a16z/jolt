@@ -10,10 +10,10 @@ use dory::primitives::arithmetic::{
     DoryRoutines, Field as DoryField, Group as DoryGroup, PairingCurve,
 };
 use dory::primitives::poly::{MultilinearLagrange, Polynomial as DoryPolynomial};
-use jolt_crypto::{Bn254G1, Bn254GT, Commitment, Pedersen, PedersenSetup};
+use jolt_crypto::{Bn254G1, Bn254GT, Commitment, PedersenSetup};
 use jolt_field::Fr;
 use jolt_openings::{
-    AdditivelyHomomorphic, CommitmentScheme, OpeningsError, VcSetupExtractable, ZkOpeningScheme,
+    AdditivelyHomomorphic, CommitmentScheme, OpeningsError, ZkOpeningScheme,
 };
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::Transcript;
@@ -86,11 +86,16 @@ impl CommitmentScheme for DoryScheme {
     type VerifierSetup = DoryVerifierSetup;
     type Polynomial = jolt_poly::Polynomial<Fr>;
     type OpeningHint = DoryHint;
+    type SetupParams = usize;
 
-    fn setup(max_num_vars: usize) -> (DoryProverSetup, DoryVerifierSetup) {
+    fn setup(max_num_vars: Self::SetupParams) -> (DoryProverSetup, DoryVerifierSetup) {
         let prover = Self::setup_prover(max_num_vars);
-        let verifier = DoryVerifierSetup(prover.0.to_verifier_setup());
+        let verifier = Self::verifier_setup(&prover);
         (prover, verifier)
+    }
+
+    fn verifier_setup(prover_setup: &DoryProverSetup) -> DoryVerifierSetup {
+        DoryVerifierSetup(prover_setup.0.to_verifier_setup())
     }
 
     #[tracing::instrument(skip_all, name = "DoryScheme::commit")]
@@ -334,8 +339,13 @@ impl ZkOpeningScheme for DoryScheme {
     }
 }
 
-impl VcSetupExtractable<Pedersen<Bn254G1>> for DoryScheme {
-    fn extract_vc_setup(setup: &Self::ProverSetup, capacity: usize) -> PedersenSetup<Bn254G1> {
+impl DoryScheme {
+    /// Extracts Pedersen setup parameters from the Dory SRS.
+    ///
+    /// Uses the SRS G1 generators as Pedersen message generators and
+    /// the h1 element as the blinding generator. Used by BlindFold for
+    /// committed sumcheck rounds.
+    pub fn extract_pedersen_setup(setup: &DoryProverSetup, capacity: usize) -> PedersenSetup<Bn254G1> {
         let len = capacity.min(setup.0.g1_vec.len());
         let message_generators: Vec<Bn254G1> = setup.0.g1_vec[..len]
             .iter()
@@ -465,7 +475,7 @@ impl<S: MultilinearPoly<Fr>> MultilinearLagrange<InnerFr> for DorySourceAdapter<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_crypto::JoltCommitment;
+    use jolt_crypto::{Pedersen, VectorCommitment};
     use jolt_field::Field;
     use jolt_poly::Polynomial;
     use rand_chacha::ChaCha20Rng;
@@ -614,13 +624,10 @@ mod tests {
         let prover_setup = DoryScheme::setup_prover(num_vars);
 
         let capacity = 5;
-        let vc_setup = <DoryScheme as VcSetupExtractable<Pedersen<Bn254G1>>>::extract_vc_setup(
-            &prover_setup,
-            capacity,
-        );
+        let vc_setup = DoryScheme::extract_pedersen_setup(&prover_setup, capacity);
 
         assert_eq!(
-            <Pedersen<Bn254G1> as JoltCommitment>::capacity(&vc_setup),
+            <Pedersen<Bn254G1> as VectorCommitment>::capacity(&vc_setup),
             capacity,
         );
 
@@ -632,8 +639,8 @@ mod tests {
         ];
         let blinding = <Fr as Field>::from_u64(42);
         let commitment =
-            <Pedersen<Bn254G1> as JoltCommitment>::commit(&vc_setup, &values, &blinding);
-        assert!(<Pedersen<Bn254G1> as JoltCommitment>::verify(
+            <Pedersen<Bn254G1> as VectorCommitment>::commit(&vc_setup, &values, &blinding);
+        assert!(<Pedersen<Bn254G1> as VectorCommitment>::verify(
             &vc_setup,
             &commitment,
             &values,

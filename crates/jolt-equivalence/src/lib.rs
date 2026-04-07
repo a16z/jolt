@@ -1,12 +1,25 @@
 //! Cross-system equivalence testing between jolt-core and jolt-zkvm.
 //!
-//! Provides [`StageTrace`] and [`compare_stage`] for normalizing and comparing
-//! per-stage protocol data from either proving system. Both systems are run
-//! with deterministic mock transcripts (same seed), which forces identical
-//! challenges and therefore identical polynomial arithmetic. Every intermediate
-//! value becomes directly comparable.
+//! Provides two complementary comparison strategies:
+//!
+//! - **Stage-level**: [`StageTrace`] and [`compare_stage`] normalize and compare
+//!   per-stage sumcheck coefficients and evaluations.
+//! - **Op-level**: [`CheckpointTranscript`] records every transcript operation
+//!   and [`find_divergence`] pinpoints the exact op where two systems diverge.
+//!
+//! The checkpoint approach is strictly more precise: stage-level comparison
+//! tells you "stage 2 diverges at round 5", while op-level comparison tells
+//! you "the 47th transcript append diverges — it's the eq table construction
+//! for the RamRW phase 1 kernel".
+
+pub mod checkpoint;
 
 use std::fmt;
+
+pub use checkpoint::{
+    assert_transcripts_match, find_divergence, CheckpointTranscript, TranscriptDivergence,
+    TranscriptEvent,
+};
 
 /// Per-stage comparison data extracted from either proving system.
 ///

@@ -4,8 +4,7 @@
 //!
 //! - [`ConstraintMatrices`] — per-cycle sparse A, B, C matrices
 //! - [`R1csKey`] — preprocessed key combining matrices with runtime dimensions
-//! - [`R1csProvider`] — [`BufferProvider`](jolt_compute::BufferProvider) adapter
-//!   for loading R1CS-derived polynomials as device buffers
+//! - [`R1csSource`] — materializes R1CS-derived polynomials (Az, Bz, Cz, etc.)
 //! - [`constraints::rv64`] — Jolt RV64IMAC variable layout and dimension constants
 
 pub mod constraint;
@@ -15,4 +14,4 @@ pub mod provider;
 
 pub use constraint::ConstraintMatrices;
 pub use key::R1csKey;
-pub use provider::{R1csProvider, SpartanChallenges};
+pub use provider::{R1csSource, SpartanChallenges};

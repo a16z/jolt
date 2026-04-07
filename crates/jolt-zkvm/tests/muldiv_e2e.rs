@@ -1,38 +1,36 @@
 //! End-to-end test: real muldiv guest → protocol.jolt → prove → verify.
 //!
 //! Exercises the full pipeline with a real RISC-V program:
-//!   1. Compile + trace the muldiv guest via jolt-host
+//!   1. Compile + trace the muldiv guest via jolt-host (with small memory)
 //!   2. Generate protocol.jolt from the ground-truth example (matching params)
 //!   3. Link the Module to the CPU backend
-//!   4. `prove()` with real trace data
-//!   5. `verify()` the proof
-//!
-//! Currently limited to Stage 1 (Outer Spartan) — virtual polynomials for
-//! Stage 2+ (product accumulator, read-write checking) are not yet computed
-//! by `prove()`.
-#![allow(clippy::print_stderr)]
+//!   4. Build all witness, derived, and preprocessed polynomial data
+//!   5. `prove()` — full Stage 1 + Stage 2
+//!   6. `verify()` the proof
 
 use std::process::Command;
 
 use common::constants::RAM_START_ADDRESS;
 use jolt_compiler::module::Module;
-use jolt_compiler::{Op, VerifierOp};
 use jolt_compute::link;
 use jolt_cpu::CpuBackend;
-use jolt_field::Fr;
-use jolt_host::{BytecodePreprocessing, Program};
+use jolt_field::{Field, Fr};
+use jolt_host::{extract_trace, BytecodePreprocessing, CycleRow, Program};
 use jolt_openings::mock::MockCommitmentScheme;
-use jolt_r1cs::R1csKey;
+use jolt_r1cs::{constraints::rv64, R1csKey, R1csSource};
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use jolt_verifier::{
     verify, JoltVerifyingKey, OneHotConfig, ProverConfig, ReadWriteConfig, TRANSCRIPT_LABEL,
 };
+use jolt_witness::{PolynomialConfig, PolynomialId, Polynomials};
+use jolt_zkvm::derived::DerivedSource;
+use jolt_zkvm::preprocessed::PreprocessedSource;
 use jolt_zkvm::prove::prove;
+use jolt_zkvm::provider::ProverData;
+use num_traits::Zero;
 
 type MockPCS = MockCommitmentScheme<Fr>;
 
-/// Generate a `Module` by running the ground-truth example
-/// with the given trace parameters.
 fn build_protocol_module(log_t: usize, log_k_bytecode: usize, log_k_ram: usize) -> Module {
     let tmp_path = format!("/tmp/jolt_muldiv_e2e_{log_t}_{log_k_bytecode}_{log_k_ram}.jolt");
 
@@ -67,73 +65,252 @@ fn build_protocol_module(log_t: usize, log_k_bytecode: usize, log_k_ram: usize) 
     Module::from_bytes(&bytes)
 }
 
-/// Prover runs Stage 1 + product uniskip; verifier only checks Stage 1.
+/// Build the T×K per-address per-cycle RA indicator (address-major: ra[k*T + t]).
 ///
-/// Verifies Stage 1 correctness and exercises the product uniskip prover
-/// path (VirtualProvider, Domain reduce, AbsorbRoundPoly) without
-/// requiring verifier-side UniskipVerify support.
-fn truncate_to_product_uniskip(module: &mut Module) {
-    // Prover: keep through the first AbsorbEvals after BeginStage{1}.
-    if let Some(stage2_start) = module
-        .prover
-        .ops
-        .iter()
-        .position(|op| matches!(op, Op::BeginStage { index: 1 }))
-    {
-        if let Some(rel) = module.prover.ops[stage2_start..]
-            .iter()
-            .position(|op| matches!(op, Op::AbsorbEvals { .. }))
-        {
-            module.prover.ops.truncate(stage2_start + rel + 1);
+/// ra(k, t) = 1 if cycle t accessed address k, 0 otherwise.
+fn build_ram_combined_ra<C: CycleRow>(
+    trace: &[C],
+    trace_length: usize,
+    lowest_addr: u64,
+    ram_k: usize,
+) -> Vec<Fr> {
+    let mut ra = vec![Fr::zero(); ram_k * trace_length];
+    for (t, cycle) in trace.iter().enumerate() {
+        if cycle.is_noop() {
+            continue;
+        }
+        if let Some(addr) = cycle.ram_access_address() {
+            let k = ((addr - lowest_addr) / 8) as usize;
+            if k < ram_k {
+                ra[k * trace_length + t] = Fr::from_u64(1);
+            }
         }
     }
-
-    // Verifier: only Stage 1 (cut at second BeginStage).
-    let mut stage_count = 0;
-    if let Some(pos) = module.verifier.ops.iter().position(|op| {
-        if matches!(op, VerifierOp::BeginStage) {
-            stage_count += 1;
-        }
-        stage_count > 1
-    }) {
-        module.verifier.ops.truncate(pos);
-    }
+    ra
 }
 
-/// Full end-to-end: trace real muldiv → prove → verify (Stage 1 only).
+/// Build the T×K val polynomial (address-major: val[k*T + t]).
+///
+/// val(k, t) = read_value at cycle t if address k was accessed, 0 otherwise.
+fn build_ram_val<C: CycleRow>(
+    trace: &[C],
+    trace_length: usize,
+    lowest_addr: u64,
+    ram_k: usize,
+) -> Vec<Fr> {
+    let mut val = vec![Fr::zero(); ram_k * trace_length];
+    for (t, cycle) in trace.iter().enumerate() {
+        if cycle.is_noop() {
+            continue;
+        }
+        if let (Some(addr), Some(read_val)) =
+            (cycle.ram_access_address(), cycle.ram_read_value())
+        {
+            let k = ((addr - lowest_addr) / 8) as usize;
+            if k < ram_k {
+                val[k * trace_length + t] = Fr::from_u64(read_val);
+            }
+        }
+    }
+    val
+}
+
+/// Build the K-element final memory state.
+///
+/// Starts from initial memory, then applies each trace cycle's increment.
+fn build_ram_val_final<C: CycleRow>(
+    trace: &[C],
+    init_mem: &[(u64, u8)],
+    lowest_addr: u64,
+    ram_k: usize,
+) -> Vec<Fr> {
+    let mut val_final = vec![Fr::zero(); ram_k];
+
+    // Initialize from init_mem (byte-level address-value pairs → 8-byte LE words)
+    let mut word_bytes = [0u8; 8];
+    for &(addr, byte_val) in init_mem {
+        if addr < lowest_addr {
+            continue;
+        }
+        let word_idx = ((addr - lowest_addr) / 8) as usize;
+        let byte_offset = (addr - lowest_addr) % 8;
+        if word_idx < ram_k {
+            word_bytes.fill(0);
+            // Accumulate bytes into the word
+            word_bytes[byte_offset as usize] = byte_val;
+            val_final[word_idx] += Fr::from_u64(
+                (byte_val as u64) << (byte_offset * 8),
+            );
+        }
+    }
+
+    // Apply trace increments
+    for cycle in trace {
+        if cycle.is_noop() {
+            continue;
+        }
+        if let (Some(addr), Some(read_val), Some(write_val)) = (
+            cycle.ram_access_address(),
+            cycle.ram_read_value(),
+            cycle.ram_write_value(),
+        ) {
+            let k = ((addr - lowest_addr) / 8) as usize;
+            if k < ram_k && write_val != read_val {
+                val_final[k] += Fr::from_u64(write_val) - Fr::from_u64(read_val);
+            }
+        }
+    }
+    val_final
+}
+
+/// Build the T×K RAM access indicator (cycle-major: indicator[t*K + k]).
+fn build_ram_ra_indicator<C: CycleRow>(
+    trace: &[C],
+    trace_length: usize,
+    lowest_addr: u64,
+    ram_k: usize,
+) -> Vec<Fr> {
+    let mut indicator = vec![Fr::zero(); trace_length * ram_k];
+    for (t, cycle) in trace.iter().enumerate() {
+        if cycle.is_noop() {
+            continue;
+        }
+        if let Some(addr) = cycle.ram_access_address() {
+            let k = ((addr - lowest_addr) / 8) as usize;
+            if k < ram_k {
+                indicator[t * ram_k + k] = Fr::from_u64(1);
+            }
+        }
+    }
+    indicator
+}
+
+/// Build the K-element I/O mask: 1 for addresses in the I/O range.
+fn build_io_mask(config: &ProverConfig, ram_k: usize) -> Vec<Fr> {
+    let mut mask = vec![Fr::zero(); ram_k];
+    let start = config.input_word_offset;
+    let end = config.termination_word_offset + 1;
+    for m in mask.iter_mut().take(end.min(ram_k)).skip(start) {
+        *m = Fr::from_u64(1);
+    }
+    mask
+}
+
+/// Build the K-element address unmap: unmap[k] = k * 8 + lowest_address.
+fn build_ram_unmap(lowest_addr: u64, ram_k: usize) -> Vec<Fr> {
+    (0..ram_k)
+        .map(|k| Fr::from_u64(k as u64 * 8 + lowest_addr))
+        .collect()
+}
+
+/// Build the K-element I/O values polynomial.
+///
+/// Packs input/output bytes into 8-byte LE words at their remapped addresses.
+fn build_val_io(config: &ProverConfig, ram_k: usize) -> Vec<Fr> {
+    let mut val_io = vec![Fr::zero(); ram_k];
+
+    // Pack inputs
+    for (i, chunk) in config.inputs.chunks(8).enumerate() {
+        let k = config.input_word_offset + i;
+        if k < ram_k {
+            let mut word = 0u64;
+            for (j, &b) in chunk.iter().enumerate() {
+                word |= (b as u64) << (j * 8);
+            }
+            val_io[k] = Fr::from_u64(word);
+        }
+    }
+
+    // Pack outputs
+    for (i, chunk) in config.outputs.chunks(8).enumerate() {
+        let k = config.output_word_offset + i;
+        if k < ram_k {
+            let mut word = 0u64;
+            for (j, &b) in chunk.iter().enumerate() {
+                word |= (b as u64) << (j * 8);
+            }
+            val_io[k] = Fr::from_u64(word);
+        }
+    }
+
+    // Panic bit
+    if config.panic_word_offset < ram_k {
+        val_io[config.panic_word_offset] = Fr::from_u64(config.panic as u64);
+    }
+
+    // Termination bit (1 = program terminated normally)
+    if config.termination_word_offset < ram_k {
+        val_io[config.termination_word_offset] = Fr::from_u64(1);
+    }
+
+    val_io
+}
+
+/// Build the K-element initial RAM image from byte-level init_mem.
+fn build_ram_init(
+    init_mem: &[(u64, u8)],
+    lowest_addr: u64,
+    ram_k: usize,
+) -> Vec<Fr> {
+    // Accumulate bytes into 8-byte LE words
+    let mut words = vec![0u64; ram_k];
+    for &(addr, byte_val) in init_mem {
+        if addr < lowest_addr {
+            continue;
+        }
+        let word_idx = ((addr - lowest_addr) / 8) as usize;
+        let byte_offset = ((addr - lowest_addr) % 8) as u32;
+        if word_idx < ram_k {
+            words[word_idx] |= (byte_val as u64) << (byte_offset * 8);
+        }
+    }
+    words.into_iter().map(Fr::from_u64).collect()
+}
+
+/// Full end-to-end: trace real muldiv → prove (Stage 1 + Stage 2) → verify.
 #[test]
 fn muldiv_prove_verify() {
-    // 1. Compile + decode + trace the muldiv guest
+    // Reduce heap to keep T×K polynomials manageable.
+    // Defaults: advice=4096, input=4096, output=4096, stack=4096.
+    // The guest ELF stores to advice addresses, so those must stay at defaults.
     let mut program = Program::new("muldiv-guest");
-    let (bytecode_raw, _init_mem, _program_size, entry_address) = program.decode();
-    let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
-    let (_, trace, _, io_device) = program.trace(&inputs, &[], &[]);
+    let _ = program.set_heap_size(4096);
+
+    let (bytecode_raw, mut init_mem, _program_size, entry_address) = program.decode();
+    let inputs_bytes = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
+    let (_, trace, _, io_device) = program.trace(&inputs_bytes, &[], &[]);
 
     let bytecode = BytecodePreprocessing::preprocess(bytecode_raw, entry_address);
     let memory_layout = &io_device.memory_layout;
 
-    // 2. Derive trace parameters
+    // Merge I/O data into init_mem: decode() only returns ELF sections; the
+    // tracer writes inputs to device memory before execution. Without this,
+    // ram_init and val_final miss the input bytes and the output check fails.
+    for (i, &byte) in io_device.inputs.iter().enumerate() {
+        init_mem.push((memory_layout.input_start + i as u64, byte));
+    }
+
     let trace_length = trace.len().next_power_of_two();
     let log_t = trace_length.trailing_zeros() as usize;
     let bytecode_k = bytecode.code_size;
     let log_k_bytecode = bytecode_k.trailing_zeros() as usize;
-    let ram_k = 1usize << 20; // 1M entries
+
+    let lowest_addr = memory_layout.get_lowest_address();
+    let remap = |addr: u64| ((addr - lowest_addr) / 8) as usize;
+
+    // Compute ram_k from actual memory layout
+    let highest_addr = RAM_START_ADDRESS + memory_layout.get_total_memory_size();
+    let ram_k_words = ((highest_addr - lowest_addr) / 8) as usize;
+    let ram_k = ram_k_words.next_power_of_two();
     let log_k_ram = ram_k.trailing_zeros() as usize;
 
-    eprintln!(
-        "muldiv trace: {} cycles (padded to {trace_length}), log_t={log_t}, bytecode_k={bytecode_k} (log={log_k_bytecode}), ram_k={ram_k} (log={log_k_ram})",
-        trace.len(),
-    );
-
-    // 3. Build protocol module — Stage 1 + product uniskip only
-    let mut module = build_protocol_module(log_t, log_k_bytecode, log_k_ram);
-    truncate_to_product_uniskip(&mut module);
+    let module = build_protocol_module(log_t, log_k_bytecode, log_k_ram);
 
     let backend = CpuBackend;
     let executable = link::<CpuBackend, Fr>(module, &backend);
 
-    // 4. Build ProverConfig
     let one_hot = OneHotConfig::new(log_t);
+    let log_k_chunk = one_hot.log_k_chunk as usize;
     let rw_config = ReadWriteConfig::new(log_t, log_k_ram);
     let config = ProverConfig {
         trace_length,
@@ -142,7 +319,7 @@ fn muldiv_prove_verify() {
         one_hot_config: one_hot,
         rw_config,
         memory_start: RAM_START_ADDRESS,
-        memory_end: RAM_START_ADDRESS + ram_k as u64,
+        memory_end: highest_addr,
         entry_address,
         io_hash: [0u8; 32],
         max_input_size: memory_layout.max_input_size,
@@ -151,31 +328,79 @@ fn muldiv_prove_verify() {
         inputs: io_device.inputs.clone(),
         outputs: io_device.outputs.clone(),
         panic: io_device.panic,
+        ram_lowest_address: lowest_addr,
+        input_word_offset: remap(memory_layout.input_start),
+        output_word_offset: remap(memory_layout.output_start),
+        panic_word_offset: remap(memory_layout.panic),
+        termination_word_offset: remap(memory_layout.termination),
     };
 
-    // 5. Build trace data and prove
-    let trace_data = jolt_zkvm::prove::TraceData {
-        trace: &trace,
-        bytecode: &bytecode,
+    // ── Witness polynomials ──
+    let poly_config = PolynomialConfig::new(log_k_chunk, 128, log_k_bytecode, log_k_ram);
+    let matrices = rv64::rv64_constraints::<Fr>();
+    let r1cs_key = R1csKey::new(matrices, trace_length);
+    let (cycle_inputs, r1cs_witness) = extract_trace::<_, Fr>(
+        &trace,
+        trace_length,
+        &bytecode,
         memory_layout,
-    };
+        r1cs_key.num_vars_padded,
+    );
+
+    let mut polys = Polynomials::<Fr>::new(poly_config);
+    polys.push(&cycle_inputs);
+    polys.finish();
+    let _ = polys.insert(PolynomialId::UntrustedAdvice, vec![Fr::zero(); trace_length]);
+    let _ = polys.insert(PolynomialId::TrustedAdvice, vec![Fr::zero(); trace_length]);
+
+    // ── Derived polynomials (Stage 2) ──
+    let mut derived = DerivedSource::new(&r1cs_witness, trace_length, r1cs_key.num_vars_padded);
+    derived.insert(
+        PolynomialId::RamCombinedRa,
+        build_ram_combined_ra(&trace, trace_length, lowest_addr, ram_k),
+    );
+    derived.insert(
+        PolynomialId::RamVal,
+        build_ram_val(&trace, trace_length, lowest_addr, ram_k),
+    );
+    derived.insert(
+        PolynomialId::RamValFinal,
+        build_ram_val_final(&trace, &init_mem, lowest_addr, ram_k),
+    );
+    derived.insert(
+        PolynomialId::RamRaIndicator,
+        build_ram_ra_indicator(&trace, trace_length, lowest_addr, ram_k),
+    );
+
+    // ── Preprocessed polynomials (Stage 2) ──
+    let mut preprocessed = PreprocessedSource::new();
+    preprocessed.insert(PolynomialId::IoMask, build_io_mask(&config, ram_k));
+    preprocessed.insert(
+        PolynomialId::RamUnmap,
+        build_ram_unmap(lowest_addr, ram_k),
+    );
+    preprocessed.insert(PolynomialId::ValIo, build_val_io(&config, ram_k));
+    preprocessed.insert(
+        PolynomialId::RamInit,
+        build_ram_init(&init_mem, lowest_addr, ram_k),
+    );
+
+    let r1cs = R1csSource::new(&r1cs_key, &r1cs_witness);
+    let mut provider = ProverData::new(&mut polys, r1cs, derived, preprocessed);
+
+    // ── Prove ──
     let pcs_setup = ();
     let mut transcript = Blake2bTranscript::<Fr>::new(TRANSCRIPT_LABEL);
-
-    let proof = prove::<_, _, _, _, MockPCS>(
+    let proof = prove::<_, _, _, MockPCS>(
         &executable,
-        &trace_data,
+        &mut provider,
         &backend,
         &pcs_setup,
         &mut transcript,
         config,
     );
 
-    // 6. Verify
-    let r1cs_key = R1csKey::new(
-        jolt_r1cs::constraints::rv64::rv64_constraints::<Fr>(),
-        trace_length,
-    );
+    // ── Verify ──
     let vk = JoltVerifyingKey::<Fr, MockPCS>::new(&executable.module, (), r1cs_key);
     verify(&vk, &proof, &[0u8; 32]).expect("proof should verify");
 }

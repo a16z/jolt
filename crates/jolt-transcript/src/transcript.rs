@@ -78,4 +78,20 @@ pub const MAX_LABEL_LEN: usize = 32;
 pub trait AppendToTranscript {
     /// Absorbs this value into the transcript.
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T);
+
+    /// Number of raw bytes that [`append_to_transcript`](Self::append_to_transcript)
+    /// will feed to [`Transcript::append_bytes`].
+    ///
+    /// Used by the prover runtime to construct `LabelWithCount` headers that
+    /// match jolt-core's `append_serializable(label, data)` pattern.
+    ///
+    /// Implementors **must** return the exact byte count that `append_to_transcript`
+    /// passes to `transcript.append_bytes()`. The default panics — override for
+    /// any type absorbed with a label-with-count header (e.g., PCS commitments).
+    fn serialized_len(&self) -> u64 {
+        panic!(
+            "serialized_len not implemented for {}",
+            std::any::type_name::<Self>()
+        )
+    }
 }

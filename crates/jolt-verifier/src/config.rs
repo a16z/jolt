@@ -224,6 +224,20 @@ pub struct ProverConfig {
     pub outputs: Vec<u8>,
     /// Whether the program panicked.
     pub panic: bool,
+
+    // Remapped I/O layout — derived from MemoryLayout, used by verifier
+    // to evaluate preprocessed polynomials (IoMask, ValIo, RamUnmap).
+    /// Physical byte address of the first word in the RAM address space
+    /// (= `memory_layout.get_lowest_address()`).
+    pub ram_lowest_address: u64,
+    /// Remapped word offset where inputs begin.
+    pub input_word_offset: usize,
+    /// Remapped word offset where outputs begin.
+    pub output_word_offset: usize,
+    /// Remapped word offset of the panic flag.
+    pub panic_word_offset: usize,
+    /// Remapped word offset of the termination flag.
+    pub termination_word_offset: usize,
 }
 
 impl ProverConfig {
@@ -371,6 +385,11 @@ mod tests {
             inputs: Vec::new(),
             outputs: Vec::new(),
             panic: false,
+            ram_lowest_address: 0x7FFF_0000,
+            input_word_offset: 0,
+            output_word_offset: 0,
+            panic_word_offset: 0,
+            termination_word_offset: 0,
         }
     }
 

@@ -41,4 +41,8 @@ pub enum SumcheckError {
         /// Actual number of round polynomials in the proof.
         got: usize,
     },
+
+    /// Batched verification received an empty claims slice.
+    #[error("batched verification requires at least one claim")]
+    EmptyClaims,
 }

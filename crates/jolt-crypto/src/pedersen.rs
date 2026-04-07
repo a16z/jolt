@@ -1,14 +1,14 @@
 use jolt_field::Field;
 use serde::{Deserialize, Serialize};
 
-use crate::commitment::JoltCommitment;
+use crate::commitment::VectorCommitment;
 use crate::JoltGroup;
 
 /// Pedersen vector commitment scheme, generic over any `JoltGroup`.
 ///
 /// Commitment: `C = Σᵢ values[i] * message_generators[i] + blinding * blinding_generator`
 ///
-/// This provides a blanket `JoltCommitment` implementation for any group
+/// This provides a blanket `VectorCommitment` implementation for any group
 /// that implements `JoltGroup`, so concrete backends (BN254, etc.) inherit
 /// Pedersen commitments.
 #[derive(Clone, Debug)]
@@ -43,7 +43,7 @@ impl<G: JoltGroup> PedersenSetup<G> {
     }
 }
 
-impl<G: JoltGroup> JoltCommitment for Pedersen<G> {
+impl<G: JoltGroup> VectorCommitment for Pedersen<G> {
     type Setup = PedersenSetup<G>;
     type Commitment = G;
 

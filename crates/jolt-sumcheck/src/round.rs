@@ -5,8 +5,8 @@
 //!
 //! - **Clear mode** ([`ClearRoundVerifier`]): polynomial coefficients are
 //!   checked directly — `poly(0) + poly(1) == running_sum`.
-//! - **Committed mode** (in `jolt-blindfold`): polynomial commitments are
-//!   verified — BlindFold handles the consistency check.
+//! - **Committed mode** (future, in `jolt-blindfold`): polynomial commitments
+//!   are absorbed into the transcript; consistency is verified via BlindFold.
 
 use jolt_field::Field;
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
@@ -50,7 +50,7 @@ pub trait RoundVerifier<F: Field> {
 /// Cleartext verifier: checks polynomial consistency and evaluates.
 ///
 /// When `label` is `Some`, a [`LabelWithCount`] word is absorbed before
-/// each round's coefficients, matching jolt-core's `append_scalars(label, &coeffs)`.
+/// each round's coefficients.
 #[derive(Default)]
 pub struct ClearRoundVerifier {
     label: Option<&'static [u8]>,

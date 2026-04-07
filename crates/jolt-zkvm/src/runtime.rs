@@ -15,12 +15,17 @@
 //!                                                 JoltProof<F, PCS>
 //! ```
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
-use jolt_compiler::module::{ChallengeSource, InputBinding, Op, VerifierStageIndex};
+use jolt_compiler::module::{
+    ChallengeSource, ClaimFactor, ClaimFormula, InputBinding, Op, SegmentedConfig,
+    VerifierStageIndex,
+};
 use jolt_compiler::{Iteration, KernelDef, PolynomialId};
 use jolt_compute::{Buf, BufferProvider, ComputeBackend, DeviceBuffer, Executable};
 use jolt_field::Field;
+use jolt_crypto::HomomorphicCommitment;
 use jolt_openings::{AdditivelyHomomorphic, ProverClaim};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::proof::SumcheckProof;
@@ -61,7 +66,10 @@ struct PendingClaim<F: Field> {
 }
 
 /// Mutable state accumulated during schedule execution.
-struct RuntimeState<F: Field, PCS: AdditivelyHomomorphic<Field = F>> {
+struct RuntimeState<F: Field, PCS: AdditivelyHomomorphic<Field = F>>
+where
+    PCS::Output: HomomorphicCommitment<F>,
+{
     // ── Compute state ──
     challenges: Vec<F>,
     evaluations: HashMap<PolynomialId, F>,
@@ -70,6 +78,13 @@ struct RuntimeState<F: Field, PCS: AdditivelyHomomorphic<Field = F>> {
     last_round_poly: Option<UnivariatePoly<F>>,
     /// Most recently squeezed challenge value.
     last_squeezed: F,
+
+    // ── Batched sumcheck state ──
+    /// Per-batch → per-instance running claims for inactive-round halving.
+    batch_instance_claims: Vec<Vec<F>>,
+    /// Outer eq tables for segmented instances: `(batch, inst) → eq_outer`.
+    /// Built once at phase start, used for weighting during segmented reduce.
+    segmented_outer_eqs: HashMap<(usize, usize), Vec<F>>,
 
     // ── Proof assembly (incremental) ──
     current_stage: Option<StageBuilder<F>>,
@@ -85,13 +100,36 @@ struct RuntimeState<F: Field, PCS: AdditivelyHomomorphic<Field = F>> {
     opening_proofs: Vec<PCS::Proof>,
 }
 
+/// Remove kernel input buffers from cache, bind them at `scalar`, and reinsert.
+fn bind_kernel_inputs<B: ComputeBackend, F: Field>(
+    device_buffers: &mut HashMap<PolynomialId, Buf<B, F>>,
+    backend: &B,
+    compiled_kernel: &B::CompiledKernel<F>,
+    kdef: &KernelDef,
+    scalar: F,
+) {
+    let mut input_bufs: Vec<Buf<B, F>> = kdef
+        .inputs
+        .iter()
+        .map(|b| {
+            device_buffers
+                .remove(&b.poly())
+                .expect("bind_kernel_inputs: input buffer missing")
+        })
+        .collect();
+    backend.bind(compiled_kernel, &mut input_bufs, scalar);
+    for (buf, binding) in input_bufs.into_iter().zip(&kdef.inputs) {
+        let _ = device_buffers.insert(binding.poly(), buf);
+    }
+}
+
 /// Execute the full prover schedule and return a complete proof.
 ///
 /// Walks every op in the schedule, dispatching compute ops to `backend`,
 /// PCS ops to the commitment scheme, and orchestration ops directly.
 pub(crate) fn execute<B, F, T, PCS>(
     executable: &Executable<B, F>,
-    provider: &mut impl BufferProvider<B, F>,
+    provider: &mut impl BufferProvider<F>,
     backend: &B,
     pcs_setup: &PCS::ProverSetup,
     transcript: &mut T,
@@ -102,9 +140,17 @@ where
     F: Field,
     T: Transcript<Challenge = F>,
     PCS: AdditivelyHomomorphic<Field = F>,
-    PCS::Output: AppendToTranscript,
+    PCS::Output: AppendToTranscript + HomomorphicCommitment<F>,
 {
     let module = &executable.module;
+
+    // Pre-allocate per-batch instance claim vectors.
+    let batch_instance_claims: Vec<Vec<F>> = module
+        .prover
+        .batched_sumchecks
+        .iter()
+        .map(|b| vec![F::zero(); b.instances.len()])
+        .collect();
 
     let mut state = RuntimeState::<F, PCS> {
         challenges: vec![F::zero(); module.challenges.len()],
@@ -112,6 +158,8 @@ where
         last_round_coeffs: Vec::new(),
         last_round_poly: None,
         last_squeezed: F::zero(),
+        batch_instance_claims,
+        segmented_outer_eqs: HashMap::new(),
         current_stage: None,
         stage_proofs: Vec::new(),
         commitments: Vec::new(),
@@ -146,6 +194,7 @@ where
                     kdef,
                     provider,
                     backend,
+                    false,
                 );
 
                 // Bind (rounds 1+): take buffers out, bind via kernel-aware
@@ -153,19 +202,13 @@ where
                 // binding strategy (dense, tensor, sparse).
                 if let Some(ch) = bind_challenge {
                     let scalar = state.challenges[*ch];
-                    let mut input_bufs: Vec<Buf<B, F>> = kdef
-                        .inputs
-                        .iter()
-                        .map(|b| {
-                            device_buffers
-                                .remove(&b.poly())
-                                .expect("kernel input buffer missing")
-                        })
-                        .collect();
-                    backend.bind(compiled_kernel, &mut input_bufs, scalar);
-                    for (buf, binding) in input_bufs.into_iter().zip(&kdef.inputs) {
-                        let _ = device_buffers.insert(binding.poly(), buf);
-                    }
+                    bind_kernel_inputs(
+                        &mut device_buffers,
+                        backend,
+                        compiled_kernel,
+                        kdef,
+                        scalar,
+                    );
                 }
 
                 let input_refs: Vec<&Buf<B, F>> = kdef
@@ -178,12 +221,180 @@ where
                     backend.reduce(compiled_kernel, &input_refs, &state.challenges);
             }
 
+            Op::BatchedSumcheckRound {
+                batch,
+                round,
+                bind_challenge,
+            } => {
+                let bdef = &module.prover.batched_sumchecks[*batch];
+                let max_evals = bdef.max_degree + 1;
+                let mut combined = vec![F::zero(); max_evals];
+
+                for (inst_idx, inst) in bdef.instances.iter().enumerate() {
+                    let coeff = state.challenges[inst.batch_coeff];
+
+                    if *round < inst.first_active_round {
+                        // Inactive: constant contribution claim/2 to all eval slots.
+                        let two_inv = F::from_u64(2).inverse().unwrap();
+                        let half_claim =
+                            state.batch_instance_claims[*batch][inst_idx] * two_inv;
+                        for slot in &mut combined {
+                            *slot += coeff * half_claim;
+                        }
+                        state.batch_instance_claims[*batch][inst_idx] = half_claim;
+                        continue;
+                    }
+
+                    // Determine the current phase within this instance.
+                    let instance_round = *round - inst.first_active_round;
+                    let (phase_idx, phase_start) = inst.phase_for_round(instance_round);
+                    let phase = &inst.phases[phase_idx];
+                    let kdef = &module.prover.kernels[phase.kernel];
+                    let compiled_kernel = &executable.kernels[phase.kernel];
+
+                    if instance_round == 0 || instance_round == phase_start {
+                        // At a phase boundary (not the first round of the instance),
+                        // the previous phase's buffers still need the last bind from
+                        // the previous round's challenge before we can capture scalars.
+                        if instance_round > 0 {
+                            if let Some(ch) = bind_challenge {
+                                let scalar = state.challenges[*ch];
+                                let prev_phase = &inst.phases[phase_idx - 1];
+                                let prev_kdef =
+                                    &module.prover.kernels[prev_phase.kernel];
+                                let prev_compiled =
+                                    &executable.kernels[prev_phase.kernel];
+                                bind_kernel_inputs(
+                                    &mut device_buffers,
+                                    backend,
+                                    prev_compiled,
+                                    prev_kdef,
+                                    scalar,
+                                );
+                            }
+                        }
+
+                        for cap in &phase.scalar_captures {
+                            let val = device_buffers
+                                .get(&cap.poly)
+                                .map(|buf| {
+                                    let data = backend.download(buf.as_field());
+                                    assert!(
+                                        data.len() == 1,
+                                        "ScalarCapture: expected 1-element buffer for {:?}, got {}",
+                                        cap.poly,
+                                        data.len()
+                                    );
+                                    data[0]
+                                })
+                                .expect("ScalarCapture: buffer not found");
+                            state.challenges[cap.challenge] = val;
+                        }
+
+                        // Build outer eq table for segmented phases.
+                        if let Some(seg) = &phase.segmented {
+                            let outer_eq =
+                                build_outer_eq(&state.challenges, seg, backend);
+                            let _ = state
+                                .segmented_outer_eqs
+                                .insert((*batch, inst_idx), outer_eq);
+                        }
+
+                        // Force-refresh on instance activation (first active round)
+                        // to replace stale buffers from prior stages. At phase
+                        // boundaries within the same instance, preserve carry-over
+                        // buffers from the previous phase.
+                        let force = instance_round == 0;
+                        resolve_inputs(
+                            &mut device_buffers,
+                            &state.challenges,
+                            kdef,
+                            provider,
+                            backend,
+                            force,
+                        );
+                    } else if let Some(ch) = bind_challenge {
+                        let scalar = state.challenges[*ch];
+                        bind_kernel_inputs(
+                            &mut device_buffers,
+                            backend,
+                            compiled_kernel,
+                            kdef,
+                            scalar,
+                        );
+                    }
+
+                    // Reduce: segmented (column-extraction loop) or standard.
+                    let round_within_phase = instance_round - phase_start;
+                    let inst_evals = if let Some(seg) = &phase.segmented {
+                        let outer_eq = state
+                            .segmented_outer_eqs
+                            .get(&(*batch, inst_idx))
+                            .expect("segmented outer eq missing");
+                        segmented_reduce(
+                            &device_buffers,
+                            outer_eq,
+                            seg,
+                            kdef,
+                            compiled_kernel,
+                            &state.challenges,
+                            backend,
+                            round_within_phase,
+                        )
+                    } else {
+                        let input_refs: Vec<&Buf<B, F>> = kdef
+                            .inputs
+                            .iter()
+                            .filter_map(|b| device_buffers.get(&b.poly()))
+                            .collect();
+                        backend.reduce(compiled_kernel, &input_refs, &state.challenges)
+                    };
+
+                    // Extrapolate: if this instance has fewer evals than
+                    // max_evals (lower-degree kernel), fill the remaining
+                    // slots by polynomial interpolation so the combined
+                    // round polynomial is correct at ALL evaluation points.
+                    let mut full_evals = inst_evals.clone();
+                    if full_evals.len() < max_evals {
+                        let points: Vec<(F, F)> = full_evals
+                            .iter()
+                            .enumerate()
+                            .map(|(s, &v)| (F::from_u64(s as u64), v))
+                            .collect();
+                        let poly = UnivariatePoly::interpolate(&points);
+                        for s in full_evals.len()..max_evals {
+                            full_evals.push(poly.evaluate(F::from_u64(s as u64)));
+                        }
+                    }
+
+                    for (i, &v) in full_evals.iter().enumerate() {
+                        combined[i] += coeff * v;
+                    }
+                }
+                state.last_round_coeffs = combined;
+            }
+
             Op::Evaluate { poly } => {
                 if let Some(buf) = device_buffers.get(poly) {
                     let data = backend.download(buf.as_field());
-                    if !data.is_empty() {
-                        let _ = state.evaluations.insert(*poly, data[0]);
-                    }
+                    let val = match data.len() {
+                        0 => continue,
+                        1 => data[0],
+                        // After a sumcheck with n rounds, n-1 binds leave
+                        // 2-element buffers. Final evaluation = linear
+                        // interpolation at the last squeezed challenge.
+                        2 => {
+                            let r = state.last_squeezed;
+                            data[0] + r * (data[1] - data[0])
+                        }
+                        n => {
+                            panic!(
+                                "Evaluate: {poly:?} has {n}-element buffer; \
+                                 expected 1 (fully bound) or 2 (final interpolation)"
+                            )
+                        }
+                    };
+                    let _ = state.evaluations.insert(*poly, val);
                 } else if let Some(round_poly) = &state.last_round_poly {
                     let val = round_poly.evaluate(state.last_squeezed);
                     let _ = state.evaluations.insert(*poly, val);
@@ -198,7 +409,8 @@ where
                 let scalar = state.challenges[*challenge];
                 for pi in polys {
                     if !device_buffers.contains_key(pi) {
-                        let buf = provider.load(*pi, backend);
+                        let data = provider.materialize(*pi);
+                        let buf = DeviceBuffer::Field(backend.upload(&data));
                         let _ = device_buffers.insert(*pi, buf);
                     }
                     if let Some(DeviceBuffer::Field(buf)) = device_buffers.get_mut(pi) {
@@ -268,11 +480,29 @@ where
             }
 
             // ── PCS ──
-            Op::Commit { polys, tag } | Op::CommitStreaming { polys, tag, .. } => {
+            Op::Commit { polys, tag, num_vars }
+            | Op::CommitStreaming {
+                polys,
+                tag,
+                num_vars,
+                ..
+            } => {
+                let target_len = 1 << num_vars;
                 for pi in polys {
-                    let data = provider.as_slice(*pi);
-                    let (commitment, hint) = PCS::commit(data, pcs_setup);
-                    transcript.append(&Label(tag.as_bytes()));
+                    let raw = provider.materialize(*pi);
+                    let data = if raw.len() < target_len {
+                        let mut v = raw.into_owned();
+                        v.resize(target_len, F::zero());
+                        std::borrow::Cow::Owned(v)
+                    } else {
+                        raw
+                    };
+                    let (commitment, hint) = PCS::commit(&*data, pcs_setup);
+                    // Match jolt-core's append_serializable: LabelWithCount header + body
+                    transcript.append(&LabelWithCount(
+                        tag.as_bytes(),
+                        commitment.serialized_len(),
+                    ));
                     commitment.append_to_transcript(transcript);
                     let _ = state.hints.insert(*pi, hint);
                     state.commitments.push(commitment);
@@ -284,7 +514,7 @@ where
                 let hints = std::mem::take(&mut state.pending_hints);
 
                 let (claims, combined_hints) =
-                    fused_rlc_reduce::<_, _, PCS>(pending, hints, provider, transcript);
+                    fused_rlc_reduce::<_, PCS>(pending, hints, provider, transcript);
 
                 state.reduced_claims = claims;
                 state.reduced_hints = combined_hints;
@@ -398,6 +628,25 @@ where
                 }
             }
 
+            Op::AbsorbInputClaim {
+                formula,
+                tag,
+                batch,
+                instance,
+            } => {
+                let val = evaluate_claim(formula, &state.evaluations, &state.challenges);
+                transcript.append(&Label(tag.as_bytes()));
+                transcript.append(&val);
+                // Store input claim for inactive-round scaling.
+                // The runtime halves this each inactive round, so it must
+                // start at input_claim * 2^(max_rounds - num_rounds).
+                let bdef = &module.prover.batched_sumchecks[*batch];
+                let inst = &bdef.instances[*instance];
+                let offset = bdef.max_rounds - inst.num_rounds();
+                state.batch_instance_claims[*batch][*instance] =
+                    val * F::from_u64(1u64 << offset);
+            }
+
             Op::Squeeze { challenge } => {
                 let val = transcript.challenge();
                 state.challenges[*challenge] = val;
@@ -451,16 +700,16 @@ where
 /// Reads polynomial data directly from the provider via `as_slice` — no
 /// intermediate `ProverClaim` copies. Only the final RLC-combined evaluation
 /// table is allocated per group.
-fn fused_rlc_reduce<B, F, PCS>(
+fn fused_rlc_reduce<F, PCS>(
     pending: Vec<PendingClaim<F>>,
     hints: Vec<PCS::OpeningHint>,
-    provider: &impl BufferProvider<B, F>,
+    provider: &impl BufferProvider<F>,
     transcript: &mut impl Transcript<Challenge = F>,
 ) -> (Vec<ProverClaim<F>>, Vec<PCS::OpeningHint>)
 where
-    B: ComputeBackend,
     F: Field,
     PCS: AdditivelyHomomorphic<Field = F>,
+    PCS::Output: HomomorphicCommitment<F>,
 {
     if pending.is_empty() {
         return (Vec::new(), Vec::new());
@@ -509,9 +758,10 @@ where
     {
         let rho: F = transcript.challenge();
 
-        // RLC-combine evaluation tables directly from provider slices.
-        // One allocation for the combined result — no per-poly copies.
-        let slices: Vec<&[F]> = poly_ids.iter().map(|&pi| provider.as_slice(pi)).collect();
+        // RLC-combine evaluation tables from materialized provider data.
+        let materialized: Vec<Cow<'_, [F]>> =
+            poly_ids.iter().map(|&pi| provider.materialize(pi)).collect();
+        let slices: Vec<&[F]> = materialized.iter().map(|c| &**c).collect();
         let combined_evals = jolt_openings::rlc_combine(&slices, rho);
         let combined_eval = jolt_openings::rlc_combine_scalars(&evals, rho);
 
@@ -564,19 +814,46 @@ fn resolve_inputs<B, F>(
     device_buffers: &mut HashMap<PolynomialId, Buf<B, F>>,
     challenges: &[F],
     kdef: &KernelDef,
-    provider: &mut impl BufferProvider<B, F>,
+    provider: &impl BufferProvider<F>,
     backend: &B,
+    force_refresh: bool,
 ) where
     B: ComputeBackend,
     F: Field,
 {
     for binding in &kdef.inputs {
         let pi = binding.poly();
-        if device_buffers.contains_key(&pi) {
+        // When force_refresh is set (instance activation), always reload
+        // challenge-dependent inputs (EqTable, EqProject, etc.). For
+        // Provided inputs, check if the buffer size matches the kernel's
+        // expected round count: if the buffer has exactly 2^num_rounds
+        // elements, it was freshly populated by a compute op (e.g.
+        // LagrangeProject) and should be preserved. Otherwise (stale
+        // remnant from a prior stage), re-materialize.
+        let skip = if let Some(buf) = device_buffers.get(&pi) {
+            match binding {
+                InputBinding::Provided { .. } => {
+                    if force_refresh {
+                        let data = backend.download(buf.as_field());
+                        let expected = 1usize << kdef.num_rounds;
+                        data.len() == expected
+                    } else {
+                        true
+                    }
+                }
+                _ => !force_refresh,
+            }
+        } else {
+            false
+        };
+        if skip {
             continue;
         }
         let buf: Buf<B, F> = match binding {
-            InputBinding::Provided { .. } => provider.load(pi, backend),
+            InputBinding::Provided { .. } => {
+                let data = provider.materialize(pi);
+                DeviceBuffer::Field(backend.upload(&data))
+            }
             InputBinding::EqTable {
                 challenges: chs, ..
             } => {
@@ -596,7 +873,162 @@ fn resolve_inputs<B, F>(
                 let point: Vec<F> = chs.iter().map(|&ci| challenges[ci]).collect();
                 DeviceBuffer::Field(backend.lt_table(&point))
             }
+            InputBinding::EqProject {
+                source,
+                challenges: chs,
+                inner_size,
+                outer_size,
+                ..
+            } => {
+                // Compute result[k] = Σ_t eq(r_cycle, t) * source[t * outer_size + k]
+                let point: Vec<F> = chs.iter().map(|&ci| challenges[ci]).collect();
+                let eq_table = jolt_poly::EqPolynomial::<F>::evals(&point, None);
+
+                let src_data = provider.materialize(*source);
+                let mut projected = vec![F::zero(); *outer_size];
+                for (t, &eq_val) in eq_table.iter().enumerate().take(*inner_size) {
+                    if eq_val.is_zero() {
+                        continue;
+                    }
+                    let base = t * outer_size;
+                    for k in 0..*outer_size {
+                        projected[k] += eq_val * src_data[base + k];
+                    }
+                }
+                DeviceBuffer::Field(backend.upload(&projected))
+            }
         };
         let _ = device_buffers.insert(pi, buf);
     }
+}
+
+/// Build the outer eq table for a segmented phase.
+///
+/// When `outer_eq_challenges` is empty, returns uniform weights (all 1.0),
+/// giving an unweighted sum over the outer dimension. This is used by
+/// RamRW where the address dimension has no eq polynomial.
+fn build_outer_eq<B, F>(challenges: &[F], seg: &SegmentedConfig, backend: &B) -> Vec<F>
+where
+    B: ComputeBackend,
+    F: Field,
+{
+    if seg.outer_eq_challenges.is_empty() {
+        vec![F::one(); 1 << seg.outer_num_vars]
+    } else {
+        let point: Vec<F> = seg
+            .outer_eq_challenges
+            .iter()
+            .map(|&ci| challenges[ci])
+            .collect();
+        let buf = backend.eq_table(&point);
+        backend.download(&buf)
+    }
+}
+
+/// Segmented reduce: iterate over outer positions, extract inner columns
+/// from mixed inputs, run the Dense kernel per column, accumulate with
+/// outer eq weights.
+///
+/// For inner-only inputs, the same buffer is reused across all outer
+/// positions. For mixed inputs (inner × outer elements), a column is
+/// extracted per outer position.
+#[allow(clippy::too_many_arguments)]
+fn segmented_reduce<B, F>(
+    device_buffers: &HashMap<PolynomialId, Buf<B, F>>,
+    outer_eq: &[F],
+    seg: &SegmentedConfig,
+    kdef: &KernelDef,
+    compiled_kernel: &B::CompiledKernel<F>,
+    challenges: &[F],
+    backend: &B,
+    round_within_phase: usize,
+) -> Vec<F>
+where
+    B: ComputeBackend,
+    F: Field,
+{
+    let inner_size = 1usize << (seg.inner_num_vars - round_within_phase);
+    let num_inputs = kdef.inputs.len();
+
+    // Download all input data once.
+    let input_data: Vec<Vec<F>> = kdef
+        .inputs
+        .iter()
+        .map(|b| {
+            let buf = device_buffers
+                .get(&b.poly())
+                .expect("segmented reduce: input buffer missing");
+            backend.download(buf.as_field())
+        })
+        .collect();
+
+    // Pre-allocate column buffer for mixed inputs.
+    let mut col_buf = vec![F::zero(); inner_size];
+    let mut total_evals: Option<Vec<F>> = None;
+
+    for (a, &weight) in outer_eq.iter().enumerate() {
+        if weight.is_zero() {
+            continue;
+        }
+
+        // Build per-column input buffers.
+        let mut col_bufs: Vec<Buf<B, F>> = Vec::with_capacity(num_inputs);
+        for (j, data) in input_data.iter().enumerate() {
+            if seg.inner_only[j] {
+                // Inner-only: use the full buffer directly (T elements).
+                col_bufs.push(DeviceBuffer::Field(backend.upload(data)));
+            } else {
+                // Mixed: extract column a (elements a*inner_size .. (a+1)*inner_size).
+                let start = a * inner_size;
+                col_buf.copy_from_slice(&data[start..start + inner_size]);
+                col_bufs.push(DeviceBuffer::Field(backend.upload(&col_buf)));
+            }
+        }
+
+        let col_refs: Vec<&Buf<B, F>> = col_bufs.iter().collect();
+        let evals = backend.reduce(compiled_kernel, &col_refs, challenges);
+
+        match &mut total_evals {
+            Some(total) => {
+                for (t, &e) in total.iter_mut().zip(&evals) {
+                    *t += weight * e;
+                }
+            }
+            None => {
+                total_evals = Some(evals.iter().map(|&e| weight * e).collect());
+            }
+        }
+    }
+
+    total_evals.unwrap_or_else(|| vec![F::zero(); kdef.spec.num_evals])
+}
+
+/// Evaluate a [`ClaimFormula`] against the prover's current state.
+///
+/// Input claim formulas use only `Eval` and `Challenge` factors (no
+/// `EqEval`, `StageEval`, or `PreprocessedPolyEval`).
+fn evaluate_claim<F: Field>(
+    formula: &ClaimFormula,
+    evaluations: &HashMap<PolynomialId, F>,
+    challenges: &[F],
+) -> F {
+    let mut sum = F::zero();
+    for term in &formula.terms {
+        let mut product = F::from_i128(term.coeff);
+        for factor in &term.factors {
+            product *= match factor {
+                ClaimFactor::Eval(poly) => *evaluations
+                    .get(poly)
+                    .unwrap_or_else(|| panic!("evaluate_claim: {poly:?} not available")),
+                ClaimFactor::Challenge(i) => challenges[*i],
+                ClaimFactor::EqChallengePair { a, b } => {
+                    let (ra, rb) = (challenges[*a], challenges[*b]);
+                    ra * rb + (F::one() - ra) * (F::one() - rb)
+                }
+                other => panic!("evaluate_claim: unsupported factor {other:?}"),
+            };
+        }
+        sum += product;
+    }
+    sum
 }

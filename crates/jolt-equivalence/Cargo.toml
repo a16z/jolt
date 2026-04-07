@@ -8,6 +8,9 @@ description = "Cross-system equivalence testing between jolt-core and jolt-zkvm"
 [lints]
 workspace = true
 
+[dependencies]
+jolt-transcript = { path = "../jolt-transcript" }
+
 [dev-dependencies]
 # jolt-core (reference prover)
 jolt-core = { path = "../../jolt-core", features = ["host"] }
@@ -22,6 +25,10 @@ jolt-compiler = { path = "../jolt-compiler" }
 jolt-compute = { path = "../jolt-compute" }
 jolt-cpu = { path = "../jolt-cpu" }
 jolt-host = { path = "../jolt-host" }
+jolt-dory = { path = "../jolt-dory" }
 jolt-openings = { path = "../jolt-openings", features = ["test-utils"] }
+jolt-r1cs = { path = "../jolt-r1cs" }
 jolt-verifier = { path = "../jolt-verifier" }
+jolt-witness = { path = "../jolt-witness" }
 jolt-zkvm = { path = "../jolt-zkvm" }
+num-traits.workspace = true

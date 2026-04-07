@@ -1,78 +1,45 @@
 # jolt-sumcheck
 
-Sumcheck protocol engine for the Jolt zkVM.
+Sumcheck protocol verification for the Jolt zkVM.
 
 Part of the [Jolt](https://github.com/a16z/jolt) zkVM.
 
 ## Overview
 
-This crate implements the sumcheck interactive proof protocol for multilinear polynomials. Given a claim `sum_{x in {0,1}^n} g(x) = S`, the prover convinces the verifier of the sum's correctness in `n` rounds, each reducing one variable. The crate supports both single-polynomial and batched (random linear combination) sumcheck.
+This crate provides the core sumcheck protocol types and verification logic. Given a claim
+
+```
+sum_{x in {0,1}^n} g(x) = C
+```
+
+the sumcheck protocol reduces it to a single evaluation query `g(r_1, ..., r_n) = v` via `n` rounds of interaction. In each round the prover sends a univariate polynomial `s_i(X)` and the verifier checks `s_i(0) + s_i(1)` against the running sum, then derives a challenge `r_i` via Fiat-Shamir.
+
+This crate is **verifier-only and backend-agnostic**: any field and transcript can be plugged in. Proving is handled by `jolt-zkvm`'s runtime, which drives sumcheck rounds via `ComputeBackend` primitives.
 
 ## Public API
 
-### Claims
+### Types
 
-- **`SumcheckClaim<F>`** -- A sumcheck claim specifying `num_vars`, `degree`, and `claimed_sum`.
-
-### Proofs
-
+- **`SumcheckClaim<F>`** -- The public statement: `num_vars`, `degree`, and `claimed_sum`.
 - **`SumcheckProof<F>`** -- A sequence of univariate round polynomials, one per variable.
+- **`SumcheckError`** -- Error variants: `RoundCheckFailed`, `FinalEvalMismatch`, `DegreeBoundExceeded`, `WrongNumberOfRounds`, `EmptyClaims`.
 
-### Prover
+### Verifiers
 
-- **`SumcheckCompute<F>`** -- Trait for witness polynomials. Provides `round_polynomial` and `bind`.
-- **`SumcheckProver`** -- Drives the prover side: iterates rounds, queries the witness, produces a `SumcheckProof`.
-- **`BatchedSumcheckProver`** -- Batches multiple sumcheck instances via random linear combination.
-- **`StreamingSumcheckProver`** -- Memory-efficient streaming variant for large witnesses.
-- **`SplitEqEvaluator`** -- Split-eq optimization for sqrt-cost sumcheck evaluation.
+- **`SumcheckVerifier`** -- Single-instance verifier. Replays the Fiat-Shamir transcript and checks each round.
+- **`BatchedSumcheckVerifier`** -- Batched verification via random linear combination. Supports claims with different `num_vars` and `degree` bounds via front-loaded padding.
 
-### Prefix-Suffix Decomposition
+### Round Verification Strategy
 
-- **`PrefixSuffixEvaluator<F>`** -- Two-phase evaluator for tensor-decomposed polynomials `f(x) = Sum_i P_i(x_prefix) * S_i(x_suffix)`. Phase 1 operates on sqrt(N)-sized pair buffers; Phase 2 materializes suffix tables.
-- **`PrefixSuffixTransition<F>`** -- State at the Phase 1 to Phase 2 transition, carrying prefix challenges and scalar evaluations.
-
-### Streaming Types
-
-- **`StreamingSumcheck`** -- Streaming sumcheck prover for memory-constrained settings.
-- **`StreamingSumcheckWindow`** -- Window-based streaming interface.
-- **`LinearSumcheckStage`** -- Linear-scan sumcheck stage.
-- **`StreamingSchedule`** / **`HalfSplitSchedule`** / **`LinearOnlySchedule`** -- Schedule strategies for streaming.
-
-### Verifier
-
-- **`SumcheckVerifier`** -- Verifies a `SumcheckProof` against a claim.
-- **`BatchedSumcheckVerifier`** -- Verifies a batched sumcheck proof.
-
-### Reduction
-
-- **`SumcheckReduction<F>`** -- Trait for sumcheck-based claim reductions.
-- **`SumcheckWitnessBatch<F>`** -- Type alias for `(Vec<SumcheckClaim<F>>, Vec<Box<dyn SumcheckCompute<F>>>)`.
-
-### Round Handlers
-
-- **`RoundHandler<F>`** -- Prover-side strategy for absorbing round polynomials into the transcript.
-- **`RoundVerifier<F>`** -- Verifier-side strategy for checking round data.
-- **`ClearRoundHandler`** / **`ClearRoundVerifier`** -- Cleartext implementations. Committed-mode implementations live in `jolt-blindfold`.
-- **`CaptureHandler`** -- Cleartext handler that also captures per-round challenges for evaluation point extraction.
-- **`CapturedProof<F>`** -- Proof + challenge vector produced by `CaptureHandler`.
-
-### Errors
-
-- **`SumcheckError`** -- Variants: `RoundCheckFailed`, `FinalEvalMismatch`, `DegreeBoundExceeded`, `WrongNumberOfRounds`.
-
-## Feature Flags
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `parallel` | No | Enable rayon parallelism (also enables `jolt-poly/parallel`) |
+- **`RoundVerifier<F>`** -- Trait controlling how round data is absorbed into the transcript and checked. Enables both clear and committed (ZK) verification modes.
+- **`ClearRoundVerifier`** -- Cleartext implementation: checks `poly(0) + poly(1) == running_sum` and absorbs coefficients directly.
 
 ## Dependency Position
 
 ```
 jolt-field ─────┐
-jolt-poly  ─────┼─> jolt-sumcheck -> jolt-blindfold, jolt-spartan, jolt-zkvm
+jolt-poly  ─────┼─> jolt-sumcheck
 jolt-transcript ┘
-jolt-openings ──┘    (for ProverClaim/VerifierClaim used by SumcheckReduction)
 ```
 
 ## License

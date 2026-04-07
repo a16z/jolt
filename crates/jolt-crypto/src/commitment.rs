@@ -7,7 +7,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 /// Base commitment abstraction: defines only the output type.
 ///
 /// This is the root of the commitment trait hierarchy, shared by both
-/// vector commitments ([`JoltCommitment`], `VectorCommitment`) and
+/// vector commitments ([`VectorCommitment`]) and
 /// polynomial commitment schemes (`jolt_openings::CommitmentScheme`).
 /// The `Output` associated type is the single piece of connective tissue
 /// between these different levels of abstraction.
@@ -26,7 +26,7 @@ pub trait Commitment {
 /// (e.g., generators from a URS, lattice parameters). Setup data is
 /// expected to be derivable from or shared with a polynomial commitment
 /// scheme's structured reference string.
-pub trait JoltCommitment: Clone + Send + Sync + 'static {
+pub trait VectorCommitment: Clone + Send + Sync + 'static {
     /// Transparent setup parameters (generators, public parameters, etc.).
     type Setup: Clone + Send + Sync;
 

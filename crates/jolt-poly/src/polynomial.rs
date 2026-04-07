@@ -452,26 +452,19 @@ pub fn bind_low_to_high<F: Field>(evals: &mut Vec<F>, scalar: F) {
     {
         if half >= PAR_THRESHOLD {
             use rayon::prelude::*;
-            // SAFETY: For each index i in [0, half):
-            //   - Reads from evals[2*i] and evals[2*i+1]
-            //   - Writes to evals[i]
-            //   Since i < 2*i for i >= 1, the output region [0, half)
-            //   never overwrites a not-yet-read input. Each par_iter task
-            //   writes to a unique evals[i], and read index sets for
-            //   distinct i values do not overlap.
-            let base = evals.as_mut_ptr() as usize;
-            (0..half).into_par_iter().for_each(move |i| {
-                // SAFETY: Each i writes to evals[i] and reads evals[2*i], evals[2*i+1].
-                // i < 2*i for i>=1, so writes never clobber unread inputs.
-                // Distinct i values have disjoint write and read index sets.
-                unsafe {
-                    let p = base as *mut F;
-                    let lo = *p.add(2 * i);
-                    let hi = *p.add(2 * i + 1);
-                    *p.add(i) = lo + scalar * (hi - lo);
-                }
-            });
-            evals.truncate(half);
+            // Interleaved read pattern (2i, 2i+1) → write (i) aliases across
+            // iterations: iteration j reads evals[2j] which iteration i=2j
+            // writes. A separate output buffer avoids the data race.
+            let src: &[F] = evals;
+            let result: Vec<F> = (0..half)
+                .into_par_iter()
+                .map(|i| {
+                    let lo = src[2 * i];
+                    let hi = src[2 * i + 1];
+                    lo + scalar * (hi - lo)
+                })
+                .collect();
+            *evals = result;
             return;
         }
     }

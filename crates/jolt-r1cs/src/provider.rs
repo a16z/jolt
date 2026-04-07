@@ -1,15 +1,11 @@
-//! R1CS buffer provider for runtime integration.
+//! R1CS polynomial materialization for the prover runtime.
 //!
-//! [`R1csProvider`] wraps an [`R1csKey`] and a witness slice, implementing
-//! [`BufferProvider`] so the runtime can load R1CS-derived polynomials
-//! (Az, Bz, Cz, combined row) as device buffers on demand.
+//! [`R1csSource`] wraps an [`R1csKey`] and a witness slice, computing
+//! R1CS-derived polynomials (Az, Bz, Cz, combined row) on demand.
 //!
-//! Dispatches on [`PolynomialDescriptor::source`] — any polynomial whose
-//! descriptor returns [`PolySource::R1cs(column)`] is handled here.
+//! Used internally by `ProverData` — not a standalone `BufferProvider`.
 
-use jolt_compiler::descriptor::{PolySource, R1csColumn};
-use jolt_compiler::PolynomialId;
-use jolt_compute::{Buf, BufferProvider, ComputeBackend, DeviceBuffer};
+use jolt_compiler::descriptor::R1csColumn;
 use jolt_field::Field;
 
 use crate::key::R1csKey;
@@ -24,20 +20,18 @@ pub struct SpartanChallenges<F> {
     pub r_x: Vec<F>,
 }
 
-/// Provides R1CS-derived polynomial buffers to the runtime.
+/// Computes R1CS-derived polynomials from constraint matrices and witness.
 ///
-/// Created from an [`R1csKey`] and a witness reference. Computes Az, Bz, Cz
-/// and the combined row polynomial on demand via [`BufferProvider::load`].
-///
-/// Dispatches on [`PolynomialDescriptor::source`] — any polynomial whose
-/// descriptor returns [`PolySource::R1cs(column)`] is handled here.
-pub struct R1csProvider<'a, F: Field> {
+/// Handles `PolySource::R1cs(column)`: Az, Bz, Cz (sparse matvec),
+/// CombinedRow (linear combination with Spartan challenges), and
+/// Variable(i) column extraction from the per-cycle witness vector.
+pub struct R1csSource<'a, F: Field> {
     key: &'a R1csKey<F>,
     witness: &'a [F],
     challenges: Option<SpartanChallenges<F>>,
 }
 
-impl<'a, F: Field> R1csProvider<'a, F> {
+impl<'a, F: Field> R1csSource<'a, F> {
     pub fn new(key: &'a R1csKey<F>, witness: &'a [F]) -> Self {
         Self {
             key,
@@ -48,14 +42,14 @@ impl<'a, F: Field> R1csProvider<'a, F> {
 
     /// Sets the Spartan challenges needed for combined row materialization.
     ///
-    /// Must be called before loading a `CombinedRow` polynomial.
+    /// Must be called before computing a `CombinedRow` polynomial.
     pub fn set_challenges(&mut self, challenges: SpartanChallenges<F>) {
         self.challenges = Some(challenges);
     }
 
-    /// Computes the full Az, Bz, or Cz polynomial for the outer sumcheck.
+    /// Sparse matrix-vector product for one R1CS matrix.
     ///
-    /// For each cycle c and constraint k, computes:
+    /// For each cycle c and constraint k:
     /// `Mz[c * K_pad + k] = Σ_v M_local[k][v] * witness[c * V_pad + v]`
     fn compute_matvec(&self, matrix: &[Vec<(usize, F)>]) -> Vec<F> {
         let k_pad = self.key.num_constraints_padded;
@@ -78,57 +72,28 @@ impl<'a, F: Field> R1csProvider<'a, F> {
         result
     }
 
-    /// Loads an R1CS-derived polynomial by column.
-    fn load_column<B: ComputeBackend>(&self, column: R1csColumn, backend: &B) -> Buf<B, F> {
-        let buf = match column {
-            R1csColumn::Az => {
-                let az = self.compute_matvec(&self.key.matrices.a);
-                backend.upload(&az)
-            }
-            R1csColumn::Bz => {
-                let bz = self.compute_matvec(&self.key.matrices.b);
-                backend.upload(&bz)
-            }
-            R1csColumn::Cz => {
-                let cz = self.compute_matvec(&self.key.matrices.c);
-                backend.upload(&cz)
-            }
+    /// Compute an R1CS-derived polynomial by column.
+    pub fn compute(&self, column: R1csColumn) -> Vec<F> {
+        match column {
+            R1csColumn::Az => self.compute_matvec(&self.key.matrices.a),
+            R1csColumn::Bz => self.compute_matvec(&self.key.matrices.b),
+            R1csColumn::Cz => self.compute_matvec(&self.key.matrices.c),
             R1csColumn::CombinedRow => {
                 let ch = self
                     .challenges
                     .as_ref()
-                    .expect("set_challenges() must be called before loading CombinedRow");
+                    .expect("set_challenges() must be called before computing CombinedRow");
                 let total_cols_padded = self.key.total_cols().next_power_of_two();
-                let row =
-                    self.key
-                        .combined_row(&ch.r_x, ch.rho_a, ch.rho_b, ch.rho_c, total_cols_padded);
-                backend.upload(&row)
+                self.key
+                    .combined_row(&ch.r_x, ch.rho_a, ch.rho_b, ch.rho_c, total_cols_padded)
             }
             R1csColumn::Variable(var_idx) => {
                 let v_pad = self.key.num_vars_padded;
-                let column: Vec<F> = (0..self.key.num_cycles)
+                (0..self.key.num_cycles)
                     .map(|c| self.witness[c * v_pad + var_idx])
-                    .collect();
-                backend.upload(&column)
+                    .collect()
             }
-        };
-        DeviceBuffer::Field(buf)
-    }
-}
-
-impl<B: ComputeBackend, F: Field> BufferProvider<B, F> for R1csProvider<'_, F> {
-    fn load(&mut self, poly_id: PolynomialId, backend: &B) -> Buf<B, F> {
-        match poly_id.descriptor().source {
-            PolySource::R1cs(column) => self.load_column(column, backend),
-            other => panic!(
-                "R1csProvider only handles R1CS polynomials, got {:?} with source {:?}",
-                poly_id, other
-            ),
         }
-    }
-
-    fn as_slice(&self, poly_id: PolynomialId) -> &[F] {
-        panic!("R1CS polynomial {poly_id:?} is computed on-the-fly and has no host-side slice");
     }
 }
 
@@ -142,8 +107,6 @@ mod tests {
     #[test]
     fn compute_az_matches_manual() {
         let one = Fr::one();
-        // Single constraint: A = [(1, 1)], B = [(1, 1)], C = [(2, 1)]
-        // x * x = y, witness per cycle: [1, x, y, 0]
         let m = ConstraintMatrices::new(
             1,
             3,
@@ -153,8 +116,7 @@ mod tests {
         );
         let key = R1csKey::new(m, 2);
 
-        // Two cycles: cycle 0 witness [1, 3, 9, 0], cycle 1 witness [1, 5, 25, 0]
-        let v_pad = key.num_vars_padded; // 4
+        let v_pad = key.num_vars_padded;
         let mut witness = vec![Fr::zero(); 2 * v_pad];
         witness[0] = Fr::one();
         witness[1] = Fr::from_u64(3);
@@ -163,12 +125,9 @@ mod tests {
         witness[v_pad + 1] = Fr::from_u64(5);
         witness[v_pad + 2] = Fr::from_u64(25);
 
-        let provider = R1csProvider::new(&key, &witness);
+        let source = R1csSource::new(&key, &witness);
 
-        let az = provider.compute_matvec(&key.matrices.a);
-        // Az[0] = A_local · [1, 3, 9, 0] = 3
-        // Az[1] = 0 (padding constraint)
-        // Az[2] = A_local · [1, 5, 25, 0] = 5
+        let az = source.compute_matvec(&key.matrices.a);
         assert_eq!(az[0], Fr::from_u64(3));
         assert_eq!(az[key.num_constraints_padded], Fr::from_u64(5));
     }

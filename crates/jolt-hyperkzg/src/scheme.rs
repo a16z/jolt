@@ -5,9 +5,9 @@
 
 use std::marker::PhantomData;
 
-use jolt_crypto::{Commitment, JoltGroup, PairingGroup, Pedersen, PedersenSetup};
+use jolt_crypto::{Commitment, JoltGroup, PairingGroup, PedersenSetup};
 use jolt_field::Field;
-use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError, VcSetupExtractable};
+use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError};
 use jolt_poly::Polynomial;
 use jolt_transcript::{AppendToTranscript, Transcript};
 use num_traits::{One, Zero};
@@ -67,10 +67,6 @@ where
         }
     }
 
-    /// Derives the verifier setup from a prover setup.
-    pub fn verifier_setup(prover: &HyperKZGProverSetup<P>) -> HyperKZGVerifierSetup<P> {
-        HyperKZGVerifierSetup::from(prover)
-    }
 
     /// Phase 1 of the HyperKZG protocol: fold the multilinear polynomial.
     ///
@@ -209,6 +205,28 @@ where
 
         Ok(())
     }
+
+    /// Extracts Pedersen setup parameters from the HyperKZG SRS.
+    ///
+    /// Uses the first `capacity` SRS G1 powers as Pedersen message generators
+    /// and the next power as the blinding generator. Under the discrete-log
+    /// assumption, powers [g, β·g, β²·g, ...] are computationally independent.
+    pub fn extract_pedersen_setup(
+        setup: &HyperKZGProverSetup<P>,
+        capacity: usize,
+    ) -> PedersenSetup<P::G1> {
+        assert!(
+            setup.g1_powers.len() > capacity,
+            "SRS has {} G1 powers, need at least {} (capacity + 1 for blinding)",
+            setup.g1_powers.len(),
+            capacity + 1,
+        );
+
+        let message_generators = setup.g1_powers[..capacity].to_vec();
+        let blinding_generator = setup.g1_powers[capacity];
+
+        PedersenSetup::new(message_generators, blinding_generator)
+    }
 }
 
 impl<P: PairingGroup> Commitment for HyperKZGScheme<P> {
@@ -226,8 +244,9 @@ where
     type VerifierSetup = HyperKZGVerifierSetup<P>;
     type Polynomial = Polynomial<P::ScalarField>;
     type OpeningHint = ();
+    type SetupParams = usize;
 
-    fn setup(max_num_vars: usize) -> (Self::ProverSetup, Self::VerifierSetup) {
+    fn setup(max_num_vars: Self::SetupParams) -> (Self::ProverSetup, Self::VerifierSetup) {
         use rand_chacha::{rand_core::SeedableRng, ChaCha20Rng};
         let mut rng = ChaCha20Rng::seed_from_u64(0);
         let g1 = P::g1_generator();
@@ -235,8 +254,12 @@ where
         let max_degree = 1usize << max_num_vars;
         let prover =
             HyperKZGScheme::setup_from_secret(P::ScalarField::random(&mut rng), max_degree, g1, g2);
-        let verifier = HyperKZGScheme::verifier_setup(&prover);
+        let verifier = Self::verifier_setup(&prover);
         (prover, verifier)
+    }
+
+    fn verifier_setup(prover_setup: &Self::ProverSetup) -> Self::VerifierSetup {
+        HyperKZGVerifierSetup::from(prover_setup)
     }
 
     fn commit<S: jolt_poly::MultilinearPoly<Self::Field> + ?Sized>(
@@ -294,31 +317,6 @@ where
     }
 }
 
-impl<P: PairingGroup> VcSetupExtractable<Pedersen<P::G1>> for HyperKZGScheme<P>
-where
-    P::ScalarField: AppendToTranscript,
-    P::G1: AppendToTranscript,
-{
-    fn extract_vc_setup(setup: &Self::ProverSetup, capacity: usize) -> PedersenSetup<P::G1> {
-        // Use the first `capacity` SRS G1 powers as Pedersen message generators.
-        // Under the discrete-log assumption, powers [g, β·g, β²·g, ...] are
-        // computationally independent and suitable as Pedersen generators.
-        //
-        // The blinding generator is the next power g^(β^capacity), which is
-        // independent from the message generators.
-        assert!(
-            setup.g1_powers.len() > capacity,
-            "SRS has {} G1 powers, need at least {} (capacity + 1 for blinding)",
-            setup.g1_powers.len(),
-            capacity + 1,
-        );
-
-        let message_generators = setup.g1_powers[..capacity].to_vec();
-        let blinding_generator = setup.g1_powers[capacity];
-
-        PedersenSetup::new(message_generators, blinding_generator)
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -543,29 +541,26 @@ mod tests {
 
     #[test]
     fn extract_vc_setup_produces_valid_pedersen() {
-        use jolt_crypto::JoltCommitment;
+        use jolt_crypto::{Pedersen, VectorCommitment};
 
         let n = 1 << 4;
         let (pk, _vk) = test_setup(n);
 
         let capacity = 5;
-        let vc_setup =
-            <TestScheme as VcSetupExtractable<Pedersen<jolt_crypto::Bn254G1>>>::extract_vc_setup(
-                &pk, capacity,
-            );
+        let vc_setup = TestScheme::extract_pedersen_setup(&pk, capacity);
 
         assert_eq!(
-            <Pedersen<jolt_crypto::Bn254G1> as JoltCommitment>::capacity(&vc_setup),
+            <Pedersen<jolt_crypto::Bn254G1> as VectorCommitment>::capacity(&vc_setup),
             capacity,
         );
 
         // Commit and verify a small vector.
         let values = vec![Fr::one(), Fr::from_u64(2), Fr::from_u64(3)];
         let blinding = Fr::from_u64(42);
-        let commitment = <Pedersen<jolt_crypto::Bn254G1> as JoltCommitment>::commit(
+        let commitment = <Pedersen<jolt_crypto::Bn254G1> as VectorCommitment>::commit(
             &vc_setup, &values, &blinding,
         );
-        assert!(<Pedersen<jolt_crypto::Bn254G1> as JoltCommitment>::verify(
+        assert!(<Pedersen<jolt_crypto::Bn254G1> as VectorCommitment>::verify(
             &vc_setup,
             &commitment,
             &values,

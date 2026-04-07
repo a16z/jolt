@@ -46,9 +46,3 @@ pub fn link<B: ComputeBackend, F: Field>(module: Module, backend: &B) -> Executa
     }
 }
 
-impl<B: ComputeBackend, F: Field> Executable<B, F> {
-    #[inline]
-    pub fn kernel(&self, idx: usize) -> &B::CompiledKernel<F> {
-        &self.kernels[idx]
-    }
-}

@@ -40,7 +40,7 @@ proved via Nova folding and Spartan.
 
 - **`BlindFoldError`** -- Error type for proof generation and verification failures.
 
-All types are generic over `JoltCommitment` -- Pedersen, hash-based, or
+All types are generic over `VectorCommitment` -- Pedersen, hash-based, or
 lattice-based commitment schemes can be substituted.
 
 ## Feature Flags
@@ -55,7 +55,7 @@ jolt-blindfold
   +-- jolt-poly         (UnivariatePoly)
   +-- jolt-transcript   (Fiat-Shamir)
   +-- jolt-sumcheck     (RoundHandler / RoundVerifier traits)
-  +-- jolt-crypto       (JoltCommitment, Pedersen)
+  +-- jolt-crypto       (VectorCommitment, Pedersen)
   +-- jolt-spartan      (Spartan prover/verifier for BlindFold R1CS)
   +-- jolt-openings     (CommitmentScheme traits)
 ```

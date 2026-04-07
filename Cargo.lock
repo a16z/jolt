@@ -2783,12 +2783,16 @@ dependencies = [
  "jolt-compute",
  "jolt-core",
  "jolt-cpu",
+ "jolt-dory",
  "jolt-field",
  "jolt-host",
  "jolt-openings",
+ "jolt-r1cs",
  "jolt-transcript",
  "jolt-verifier",
+ "jolt-witness",
  "jolt-zkvm",
+ "num-traits",
  "postcard",
 ]
 
@@ -3052,7 +3056,6 @@ name = "jolt-r1cs"
 version = "0.1.0"
 dependencies = [
  "jolt-compiler",
- "jolt-compute",
  "jolt-field",
  "jolt-poly",
  "num-traits",
@@ -3162,6 +3165,7 @@ dependencies = [
  "jolt-compiler",
  "jolt-compute",
  "jolt-cpu",
+ "jolt-crypto",
  "jolt-field",
  "jolt-host",
  "jolt-openings",

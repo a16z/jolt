@@ -12,8 +12,10 @@
 
 use std::collections::BTreeMap;
 
+use std::borrow::Cow;
+
 use jolt_compiler::WitnessSlot;
-use jolt_compute::{Buf, BufferProvider, ComputeBackend, DeviceBuffer};
+use jolt_compute::BufferProvider;
 use jolt_field::Field;
 use jolt_poly::OneHotPolynomial;
 
@@ -205,13 +207,9 @@ impl<F: Field> Default for Polynomials<F> {
     }
 }
 
-impl<B: ComputeBackend, F: Field> BufferProvider<B, F> for Polynomials<F> {
-    fn load(&mut self, poly_id: PolynomialId, backend: &B) -> Buf<B, F> {
-        DeviceBuffer::Field(backend.upload(self.get(poly_id)))
-    }
-
-    fn as_slice(&self, poly_id: PolynomialId) -> &[F] {
-        self.get(poly_id)
+impl<F: Field> BufferProvider<F> for Polynomials<F> {
+    fn materialize(&self, poly_id: PolynomialId) -> Cow<'_, [F]> {
+        Cow::Borrowed(self.get(poly_id))
     }
 
     fn release(&mut self, poly_id: PolynomialId) {
@@ -219,13 +217,17 @@ impl<B: ComputeBackend, F: Field> BufferProvider<B, F> for Polynomials<F> {
     }
 }
 
-/// Expands one-hot indices into a flat evaluation buffer.
+/// Expand one-hot indices into a dense evaluation table using CycleMajor layout.
+///
+/// CycleMajor: `index = address * T + cycle`, matching jolt-core's default
+/// `DoryLayout::CycleMajor`. All cycles for address 0 come first, then
+/// address 1, etc.
 fn expand_one_hot<F: Field>(k: usize, indices: &[Option<u8>]) -> Vec<F> {
-    let n = indices.len();
-    let mut buf = vec![F::zero(); n * k];
+    let t = indices.len();
+    let mut buf = vec![F::zero(); t * k];
     for (cycle, &idx) in indices.iter().enumerate() {
         if let Some(i) = idx {
-            buf[cycle * k + i as usize] = F::one();
+            buf[i as usize * t + cycle] = F::one();
         }
     }
     buf
@@ -282,17 +284,18 @@ mod tests {
 
         // 8-bit instruction, 4-bit chunks → 2 polynomials
         // lookup_index 0xAB → chunk 0 = 0xA, chunk 1 = 0xB
+        // CycleMajor layout: index = address * T + cycle
         let ra0 = polys.get(PolynomialId::InstructionRa(0));
-        let k = test_config().k_chunk; // 16
+        let t = test_cycles().len(); // 4
         let c0 = 0;
         let c1 = 1;
-        assert_eq!(ra0[c0 * k + 0xA], Fr::one());
-        assert_eq!(ra0[c0 * k], Fr::zero());
-        assert_eq!(ra0[c1 * k + 0x1], Fr::one());
+        assert_eq!(ra0[0xA * t + c0], Fr::one());
+        assert_eq!(ra0[0 * t + c0], Fr::zero());
+        assert_eq!(ra0[0x1 * t + c1], Fr::one());
 
         let ra1 = polys.get(PolynomialId::InstructionRa(1));
-        assert_eq!(ra1[c0 * k + 0xB], Fr::one());
-        assert_eq!(ra1[c1 * k + 0x2], Fr::one());
+        assert_eq!(ra1[0xB * t + c0], Fr::one());
+        assert_eq!(ra1[0x2 * t + c1], Fr::one());
     }
 
     #[test]
@@ -301,14 +304,18 @@ mod tests {
         polys.push(&test_cycles());
         polys.finish();
 
-        let k = test_config().k_chunk;
+        let t = test_cycles().len(); // 4
         let c0 = 0;
         let c1 = 1;
         let c2 = 2;
         let ra0 = polys.get(PolynomialId::RamRa(0));
-        assert_eq!(ra0[c0 * k + 0xD], Fr::one());
-        assert!(ra0[c1 * k..(c1 + 1) * k].iter().all(|v| *v == Fr::zero()));
-        assert!(ra0[c2 * k..(c2 + 1) * k].iter().all(|v| *v == Fr::zero()));
+        // CycleMajor: index = address * T + cycle
+        assert_eq!(ra0[0xD * t + c0], Fr::one());
+        // Cycles 1 and 2 had no RAM access (None) → all addresses zero
+        for addr in 0..test_config().k_chunk {
+            assert_eq!(ra0[addr * t + c1], Fr::zero());
+            assert_eq!(ra0[addr * t + c2], Fr::zero());
+        }
     }
 
     #[test]

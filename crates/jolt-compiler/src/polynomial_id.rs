@@ -92,6 +92,9 @@ pub enum PolynomialId {
     // ── Virtual: RAM subsystem ──────────────────────────────────────
     RamCombinedRa,
     RamRafRa,
+    /// Full T×K RAM access indicator (cycle-major layout).
+    /// `indicator[t * K + k] = 1` if cycle `t` accesses address `k`, else `0`.
+    RamRaIndicator,
     InstructionRafRa,
     BytecodeRafRa,
 
@@ -101,6 +104,13 @@ pub enum PolynomialId {
     // ── Virtual: advice address phase ───────────────────────────────
     TrustedAdviceAddr,
     UntrustedAdviceAddr,
+
+    // ── Virtual: RamRW eq tables (segmented) ──────────────────────────
+    RamEqCycle,
+    RamEqAddr,
+
+    // ── Virtual: per-instance batched sumcheck eq tables ─────────────
+    BatchEq(usize),
 
     // ── Virtual: Spartan internals ──────────────────────────────────
     SpartanEq,

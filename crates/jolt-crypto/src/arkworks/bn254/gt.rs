@@ -141,6 +141,11 @@ impl AppendToTranscript for Bn254GT {
         buf.reverse();
         transcript.append_bytes(&buf);
     }
+
+    fn serialized_len(&self) -> u64 {
+        use ark_serialize::CanonicalSerialize;
+        self.0.uncompressed_size() as u64
+    }
 }
 
 impl JoltGroup for Bn254GT {

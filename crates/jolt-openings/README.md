@@ -34,8 +34,6 @@ This crate defines abstract interfaces for polynomial commitment schemes (PCS) a
 - **`AdditivelyHomomorphic: CommitmentScheme`** -- Commitments can be linearly combined. Method: `combine`.
 - **`StreamingCommitment: CommitmentScheme`** -- Incremental commitment: `begin`, `feed`, `finish`.
 - **`ZkOpeningScheme`** -- PCS that supports zero-knowledge evaluation proofs (committed evaluation output).
-- **`VcSetupExtractable`** -- Extract vector commitment setup parameters from a PCS setup.
-
 ### Claim Types
 
 - **`ProverClaim<F>`** -- Leaf claim with polynomial evaluations, point, and claimed value.
@@ -52,11 +50,6 @@ This crate defines abstract interfaces for polynomial commitment schemes (PCS) a
 
 - **`rlc_combine`** -- Random linear combination of polynomial evaluation tables.
 - **`rlc_combine_scalars`** -- Random linear combination of scalar evaluations.
-
-### Transcript Helpers (`transcript` module)
-
-- **`bind_opening_claim`** -- Appends point + cleartext eval to a Fiat-Shamir transcript (standard mode).
-- **`bind_opening_claim_zk`** -- Appends point + eval commitment to a transcript (ZK mode).
 
 ### Errors
 

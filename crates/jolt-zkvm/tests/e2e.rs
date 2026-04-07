@@ -17,14 +17,16 @@ use jolt_compute::link;
 use jolt_cpu::CpuBackend;
 use jolt_field::{Field, Fr};
 use jolt_openings::mock::MockCommitmentScheme;
-use jolt_r1cs::{ConstraintMatrices, R1csKey, R1csProvider};
+use jolt_r1cs::{ConstraintMatrices, R1csKey, R1csSource};
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use jolt_verifier::{
     verify, JoltVerifyingKey, OneHotConfig, ProverConfig, ReadWriteConfig, TRANSCRIPT_LABEL,
 };
 use jolt_witness::{CycleInput, PolynomialConfig, PolynomialId, Polynomials};
-use jolt_zkvm::buffers::ProverBuffers;
-use jolt_zkvm::prove::prove_with_buffers;
+use jolt_zkvm::derived::DerivedSource;
+use jolt_zkvm::preprocessed::PreprocessedSource;
+use jolt_zkvm::prove::prove;
+use jolt_zkvm::provider::ProverData;
 use num_traits::Zero;
 
 type MockPCS = MockCommitmentScheme<Fr>;
@@ -106,13 +108,10 @@ fn prove_verify_roundtrip() {
     polys.finish();
 
     let (r1cs_key, r1cs_witness) = dummy_r1cs(size);
-    let r1cs = R1csProvider::new(&r1cs_key, &r1cs_witness);
-    let virtual_ = jolt_zkvm::virtual_provider::VirtualProvider::new(
-        &r1cs_witness,
-        size,
-        r1cs_key.num_vars_padded,
-    );
-    let mut provider = ProverBuffers::new(&mut polys, r1cs, virtual_);
+    let r1cs = R1csSource::new(&r1cs_key, &r1cs_witness);
+    let derived = DerivedSource::new(&r1cs_witness, size, r1cs_key.num_vars_padded);
+    let preprocessed = PreprocessedSource::new();
+    let mut provider = ProverData::new(&mut polys, r1cs, derived, preprocessed);
 
     let ram_k = size; // Must be power-of-two with log₂(ram_k) ≥ rw_config.ram_rw_phase2_num_rounds
     let ram_log_k = ram_k.trailing_zeros() as usize;
@@ -132,11 +131,16 @@ fn prove_verify_roundtrip() {
         inputs: Vec::new(),
         outputs: Vec::new(),
         panic: false,
+        ram_lowest_address: 0x7FFF_0000,
+        input_word_offset: 0,
+        output_word_offset: 0,
+        panic_word_offset: 0,
+        termination_word_offset: 0,
     };
 
     // -- 3. Prove --
     let mut transcript = Blake2bTranscript::<Fr>::new(TRANSCRIPT_LABEL);
-    let proof = prove_with_buffers::<_, _, _, MockPCS>(
+    let proof = prove::<_, _, _, MockPCS>(
         &executable,
         &mut provider,
         &backend,

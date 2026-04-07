@@ -1,3 +1,4 @@
+pub mod builder;
 pub mod compiler;
 pub mod descriptor;
 pub mod dot;

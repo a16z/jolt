@@ -38,9 +38,21 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams, poly_map: &[Polyno
         .map(|(i, _)| i)
         .collect();
     if !committed.is_empty() {
+        let num_vars = committed
+            .iter()
+            .map(|&i| {
+                protocol.polynomials[i]
+                    .dims
+                    .iter()
+                    .map(|&d| params.dim_sizes[d] as usize)
+                    .sum::<usize>()
+            })
+            .max()
+            .unwrap_or(0);
         ctx.ops.push(Op::Commit {
             polys: committed.iter().map(|&i| ctx.map_poly(i)).collect(),
             tag: DomainSeparator::Commitment,
+            num_vars,
         });
     }
 
@@ -126,6 +138,8 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams, poly_map: &[Polyno
             ctx.verifier_ops.push(VerifierOp::VerifySumcheck {
                 instances: instances.clone(),
                 stage: verifier_stage_idx,
+                batch_challenges: Vec::new(),
+                claim_tag: None,
             });
 
             let has_output = instances.iter().any(|i| !i.output_check.terms.is_empty());
@@ -215,7 +229,11 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams, poly_map: &[Polyno
     // Emit all output checks now that all evaluations are recorded.
     for (instances, stage) in pending_output_checks {
         ctx.verifier_ops
-            .push(VerifierOp::CheckOutput { instances, stage });
+            .push(VerifierOp::CheckOutput {
+                instances,
+                stage,
+                batch_challenges: Vec::new(),
+            });
     }
 
     // Emit opening stage if present
@@ -274,6 +292,7 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams, poly_map: &[Polyno
         prover: Schedule {
             ops: ctx.ops,
             kernels: ctx.kernels,
+            batched_sumchecks: Vec::new(),
         },
         verifier: VerifierSchedule {
             ops: ctx.verifier_ops,
@@ -829,6 +848,14 @@ fn op_poly_refs(op: &Op, kernels: &[KernelDef]) -> Vec<PolynomialId> {
         Op::SumcheckRound { kernel, .. } | Op::AbsorbRoundPoly { kernel, .. } => {
             kernels[*kernel].inputs.iter().map(|b| b.poly()).collect()
         }
+        Op::BatchedSumcheckRound { batch, .. } => {
+            // Collect all poly refs from all instance kernels in the batch.
+            // Note: `batched_sumchecks` is not passed here; the caller handles
+            // lifecycle for batched ops via the schedule-level definition.
+            // For now, return empty — batched kernel inputs are resolved at runtime.
+            let _ = batch;
+            vec![]
+        }
         Op::Evaluate { poly } | Op::CollectOpeningClaim { poly, .. } => vec![*poly],
         Op::Bind { polys, .. }
         | Op::LagrangeProject { polys, .. }
@@ -838,6 +865,7 @@ fn op_poly_refs(op: &Op, kernels: &[KernelDef]) -> Vec<PolynomialId> {
         | Op::AbsorbEvals { polys, .. } => polys.clone(),
         Op::Preamble
         | Op::BeginStage { .. }
+        | Op::AbsorbInputClaim { .. }
         | Op::Squeeze { .. }
         | Op::ReleaseDevice { .. }
         | Op::ReleaseHost { .. }

@@ -10,21 +10,25 @@ use jolt_openings::CommitmentScheme;
 
 use crate::proving_key::JoltProvingKey;
 
-/// Build a proving key from a compiled module.
-///
-/// Determines the maximum polynomial size from the module's declarations
-/// and generates PCS setup material sized accordingly.
-pub fn preprocess<F: Field, PCS: CommitmentScheme<Field = F>>(
-    module: &Module,
-) -> JoltProvingKey<F, PCS> {
-    let max_num_vars = module
+/// Computes the maximum number of variables across all polynomials in a module.
+pub fn max_num_vars(module: &Module) -> usize {
+    module
         .polys
         .iter()
         .map(|p| p.num_elements.max(1).trailing_zeros() as usize)
         .max()
-        .unwrap_or(0);
+        .unwrap_or(0)
+}
 
-    let (pcs_prover_setup, pcs_verifier_setup) = PCS::setup(max_num_vars);
+/// Build a proving key from a compiled module.
+///
+/// The caller provides scheme-specific setup parameters. Use
+/// [`max_num_vars`] to compute the maximum polynomial size from the module
+/// if needed for constructing `PCS::SetupParams`.
+pub fn preprocess<F: Field, PCS: CommitmentScheme<Field = F>>(
+    setup_params: PCS::SetupParams,
+) -> JoltProvingKey<F, PCS> {
+    let (pcs_prover_setup, pcs_verifier_setup) = PCS::setup(setup_params);
 
     JoltProvingKey {
         pcs_prover_setup,
@@ -58,6 +62,7 @@ mod tests {
             prover: Schedule {
                 ops: vec![],
                 kernels: vec![],
+                batched_sumchecks: vec![],
             },
             verifier: VerifierSchedule {
                 ops: vec![],
@@ -70,15 +75,12 @@ mod tests {
 
     #[test]
     fn preprocess_builds_key() {
-        let module = test_module(&[16, 32]);
-        let _key = preprocess::<Fr, MockPCS>(&module);
+        let _key = preprocess::<Fr, MockPCS>(());
     }
 
     #[test]
-    fn preprocess_passes_correct_poly_size() {
+    fn max_num_vars_from_module() {
         let module = test_module(&[16, 256]);
-        let _key = preprocess::<Fr, MockPCS>(&module);
-        // 256 = 2^8, so max_num_vars = 8. MockPCS::setup is trivial
-        // but the sizing logic is exercised.
+        assert_eq!(max_num_vars(&module), 8); // 256 = 2^8
     }
 }

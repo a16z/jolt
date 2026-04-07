@@ -227,6 +227,44 @@ fn special_values() {
 }
 
 #[test]
+fn pow_basic() {
+    let x = <Fr as Field>::from_u64(3);
+    assert_eq!(x.pow(0), Fr::one());
+    assert_eq!(x.pow(1), x);
+    assert_eq!(x.pow(2), x * x);
+    assert_eq!(x.pow(3), x * x * x);
+    assert_eq!(x.pow(4), x * x * x * x);
+}
+
+#[test]
+fn pow_zero_base() {
+    let z = Fr::zero();
+    assert_eq!(z.pow(0), Fr::one()); // 0^0 = 1 by convention
+    assert_eq!(z.pow(1), Fr::zero());
+    assert_eq!(z.pow(10), Fr::zero());
+}
+
+#[test]
+fn pow_one_base() {
+    assert_eq!(Fr::one().pow(0), Fr::one());
+    assert_eq!(Fr::one().pow(100), Fr::one());
+}
+
+#[test]
+fn pow_large_exponent() {
+    let mut rng = test_rng();
+    let x: Fr = Field::random(&mut rng);
+
+    // Verify pow(n) matches repeated multiplication for a moderate exponent
+    let n = 17usize;
+    let mut expected = Fr::one();
+    for _ in 0..n {
+        expected *= x;
+    }
+    assert_eq!(x.pow(n), expected);
+}
+
+#[test]
 fn to_u64_conversion() {
     for i in 0..1000u64 {
         let field_elem = <Fr as Field>::from_u64(i);

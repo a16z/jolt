@@ -6,14 +6,14 @@ Part of the [Jolt](https://github.com/a16z/jolt) zkVM.
 
 ## Overview
 
-This crate defines the core group abstractions (`JoltGroup`, `PairingGroup`) and commitment trait hierarchy (`Commitment`, `JoltCommitment`, `HomomorphicCommitment`) used by the Jolt proving system. It provides a backend-agnostic interface -- the BN254 implementation wraps arkworks internally, but no arkworks types appear in the public API.
+This crate defines the core group abstractions (`JoltGroup`, `PairingGroup`) and commitment trait hierarchy (`Commitment`, `VectorCommitment`, `HomomorphicCommitment`) used by the Jolt proving system. It provides a backend-agnostic interface -- the BN254 implementation wraps arkworks internally, but no arkworks types appear in the public API.
 
 ## Commitment Hierarchy
 
 ```
 Commitment                   (base: just the Output type)
 
-JoltCommitment               (Setup, Commitment types; commit, verify)
+VectorCommitment               (Setup, Commitment types; commit, verify)
 
 HomomorphicCommitment<F>     (linear_combine for Nova folding)
 ```
@@ -31,14 +31,14 @@ HomomorphicCommitment<F>     (linear_combine for Nova folding)
 ### Core Traits
 
 - **`Commitment`** -- Base trait defining `type Output` with standard bounds.
-- **`JoltCommitment`** -- Backend-agnostic vector commitment with `Setup`, `Commitment` associated types. Methods: `capacity()`, `commit()`, `verify()`. Commit takes a blinding factor.
+- **`VectorCommitment`** -- Backend-agnostic vector commitment with `Setup`, `Commitment` associated types. Methods: `capacity()`, `commit()`, `verify()`. Commit takes a blinding factor.
 - **`HomomorphicCommitment<F>`** -- Additive homomorphism: `linear_combine(c1, c2, scalar) = c1 + scalar * c2`. Blanket-implemented for `JoltGroup`.
 - **`JoltGroup`** -- Cryptographic group with additive notation. Provides `identity()`, `is_identity()`, `double()`, `scalar_mul()`, `msm()`.
 - **`PairingGroup`** -- Pairing-friendly group. Associates `ScalarField`, `G1`, `G2`, `GT` (all `JoltGroup`), provides `pairing()` and `multi_pairing()`.
 
 ### Pedersen Commitment
 
-- **`Pedersen<G: JoltGroup>`** -- Generic Pedersen vector commitment. Implements `JoltCommitment`.
+- **`Pedersen<G: JoltGroup>`** -- Generic Pedersen vector commitment. Implements `VectorCommitment`.
 - **`PedersenSetup<G>`** -- Setup parameters (generators + blinding generator).
 
 ### BN254 Concrete Types

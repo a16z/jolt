@@ -11,7 +11,7 @@
 //! |--------|---------|
 //! | `group` | [`JoltGroup`] trait — additive group with scalar multiplication and MSM |
 //! | `pairing` | [`PairingGroup`] trait — pairing-friendly group (extends `JoltGroup`) |
-//! | `commitment` | [`JoltCommitment`] trait — backend-agnostic vector commitment |
+//! | `commitment` | [`VectorCommitment`] trait — backend-agnostic vector commitment |
 //! | `arkworks` | Arkworks backend implementations (BN254) |
 
 mod group;
@@ -21,7 +21,7 @@ mod pairing;
 pub use pairing::PairingGroup;
 
 mod commitment;
-pub use commitment::{Commitment, HomomorphicCommitment, JoltCommitment};
+pub use commitment::{Commitment, HomomorphicCommitment, VectorCommitment};
 
 mod pedersen;
 pub use pedersen::{Pedersen, PedersenSetup};

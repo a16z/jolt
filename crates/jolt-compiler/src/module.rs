@@ -79,6 +79,118 @@ pub enum ChallengeSource {
 pub struct Schedule {
     pub ops: Vec<Op>,
     pub kernels: Vec<KernelDef>,
+    /// Batched sumcheck definitions (indexed by `Op::BatchedSumcheckRound::batch`).
+    pub batched_sumchecks: Vec<BatchedSumcheckDef>,
+}
+
+/// A batched sumcheck stage grouping heterogeneous instances.
+///
+/// Each instance has its own kernel (formula + inputs) and runs for a
+/// subset of the total rounds. Shorter instances are front-loaded: inactive
+/// in early rounds, contributing `claim/2` per round until they activate.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchedSumcheckDef {
+    pub instances: Vec<BatchedInstance>,
+    /// Per-instance input claim formulas (evaluated by the runtime before
+    /// the first round, absorbed into transcript for Fiat-Shamir).
+    pub input_claims: Vec<ClaimFormula>,
+    pub max_rounds: usize,
+    pub max_degree: usize,
+}
+
+/// A single instance within a [`BatchedSumcheckDef`].
+///
+/// An instance may span multiple *phases*, each with its own compiled kernel.
+/// For most instances a single phase suffices. Multi-phase instances (e.g.
+/// RamReadWriteChecking) transition between kernels mid-sumcheck — the runtime
+/// resolves fresh inputs at each phase boundary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchedInstance {
+    /// Kernel phases executed sequentially. The sum of all phase `num_rounds`
+    /// equals the total round count for this instance.
+    pub phases: Vec<InstancePhase>,
+    /// Challenge index for this instance's batching coefficient.
+    pub batch_coeff: usize,
+    /// First round where this instance is active (`max_rounds - num_rounds`).
+    pub first_active_round: usize,
+}
+
+impl BatchedInstance {
+    /// Total number of rounds across all phases.
+    pub fn num_rounds(&self) -> usize {
+        self.phases.iter().map(|p| p.num_rounds).sum()
+    }
+
+    /// Find the phase and its start offset for a given instance-local round.
+    ///
+    /// Returns `(phase_index, phase_start_round)` where `phase_start_round`
+    /// is the first instance-local round of that phase.
+    pub fn phase_for_round(&self, instance_round: usize) -> (usize, usize) {
+        let mut cumulative = 0;
+        for (i, phase) in self.phases.iter().enumerate() {
+            if instance_round < cumulative + phase.num_rounds {
+                return (i, cumulative);
+            }
+            cumulative += phase.num_rounds;
+        }
+        panic!(
+            "instance_round {instance_round} exceeds total rounds {}",
+            self.num_rounds()
+        );
+    }
+}
+
+/// One phase of a [`BatchedInstance`].
+///
+/// Each phase has its own compiled kernel. The runtime resolves the phase's
+/// kernel inputs when the phase begins and binds them each subsequent round.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InstancePhase {
+    /// Index into `Schedule.kernels`.
+    pub kernel: usize,
+    /// Number of sumcheck rounds in this phase.
+    pub num_rounds: usize,
+    /// Scalar captures: at the start of this phase, the runtime reads the
+    /// scalar value from each listed polynomial's (now fully-bound) device
+    /// buffer and stores it in the corresponding challenge slot.
+    ///
+    /// This bridges phase boundaries: intermediate values from a prior phase
+    /// become challenge constants for the next phase's formula.
+    pub scalar_captures: Vec<ScalarCapture>,
+    /// When present, this phase uses segmented reduce for mixed-size inputs.
+    pub segmented: Option<SegmentedConfig>,
+}
+
+/// Captures a scalar value from a bound buffer into a challenge slot.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScalarCapture {
+    /// Polynomial whose device buffer holds a single scalar (1-element).
+    pub poly: PolynomialId,
+    /// Challenge index where the scalar value is stored.
+    pub challenge: usize,
+}
+
+/// Configuration for segmented reduce in a multi-dimensional sumcheck phase.
+///
+/// When a phase has mixed-size inputs (e.g. T-element cycle-only polynomials
+/// alongside T×K-element cycle×address polynomials), the runtime performs a
+/// segmented reduce: iterating over outer positions, extracting inner columns
+/// from mixed inputs, running the Dense kernel on inner-sized slices, and
+/// accumulating with outer eq weights.
+///
+/// The kernel itself is compiled as Dense over the inner dimension. The
+/// segmented structure is runtime-level orchestration, not a backend concern.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SegmentedConfig {
+    /// Log₂ of the inner segment size (bound in this phase).
+    pub inner_num_vars: usize,
+    /// Log₂ of the outer segment size (bound in a later phase).
+    pub outer_num_vars: usize,
+    /// Per kernel input: `true` = inner-only (`2^inner_num_vars` elements),
+    /// `false` = full inner×outer (`2^(inner + outer)` elements).
+    pub inner_only: Vec<bool>,
+    /// Challenge indices for the outer eq table (built once at phase start).
+    pub outer_eq_challenges: Vec<usize>,
 }
 
 impl Schedule {
@@ -143,6 +255,25 @@ pub enum InputBinding {
         poly: PolynomialId,
         challenges: Vec<usize>,
     },
+    /// Project a T×K source polynomial onto K elements via cycle eq weighting.
+    ///
+    /// Computes `result[k] = Σ_t eq(r_cycle, t) · source[t * outer_size + k]`
+    /// where `r_cycle` comes from the challenge slots at runtime.
+    ///
+    /// Used when a downstream sumcheck instance needs the cycle-bound
+    /// projection of a larger polynomial (e.g., RAM RAF RA from RamCombinedRa).
+    EqProject {
+        /// Polynomial ID for the projected result (storage/lifecycle).
+        poly: PolynomialId,
+        /// Source T×K polynomial to project from.
+        source: PolynomialId,
+        /// Challenge indices forming the cycle eq point.
+        challenges: Vec<usize>,
+        /// Size of the inner (cycle) dimension.
+        inner_size: usize,
+        /// Size of the outer (address) dimension.
+        outer_size: usize,
+    },
 }
 
 impl InputBinding {
@@ -152,7 +283,8 @@ impl InputBinding {
             InputBinding::Provided { poly }
             | InputBinding::EqTable { poly, .. }
             | InputBinding::EqPlusOneTable { poly, .. }
-            | InputBinding::LtTable { poly, .. } => *poly,
+            | InputBinding::LtTable { poly, .. }
+            | InputBinding::EqProject { poly, .. } => *poly,
         }
     }
 }
@@ -213,6 +345,13 @@ pub enum Op {
         round: usize,
         bind_challenge: Option<usize>,
     },
+    /// One round of a batched sumcheck: dispatch to active instance kernels,
+    /// combine round polynomials with batching coefficients.
+    BatchedSumcheckRound {
+        batch: usize,
+        round: usize,
+        bind_challenge: Option<usize>,
+    },
     /// Extract polynomial evaluation (buffer fully bound → single element).
     Evaluate { poly: PolynomialId },
     /// Bind polynomial buffers at a challenge value (post-sumcheck survivors).
@@ -254,6 +393,10 @@ pub enum Op {
     Commit {
         polys: Vec<PolynomialId>,
         tag: DomainSeparator,
+        /// Total multilinear variables for the PCS grid.
+        /// Polynomials shorter than `2^num_vars` are zero-padded.
+        /// Determines Dory matrix dimensions via balanced (sigma, nu) split.
+        num_vars: usize,
     },
     /// Commit polynomials via streaming (chunked) PCS.
     ///
@@ -266,6 +409,8 @@ pub enum Op {
         tag: DomainSeparator,
         /// Chunk size (evaluations per feed call).
         chunk_size: usize,
+        /// Total multilinear variables for the PCS grid.
+        num_vars: usize,
     },
     /// RLC-reduce all accumulated opening claims via transcript challenges.
     ReduceOpenings,
@@ -296,6 +441,17 @@ pub enum Op {
         polys: Vec<PolynomialId>,
         tag: DomainSeparator,
     },
+    /// Evaluate a [`ClaimFormula`] against current evaluations/challenges and
+    /// absorb the resulting scalar into the Fiat-Shamir transcript.
+    AbsorbInputClaim {
+        formula: ClaimFormula,
+        tag: DomainSeparator,
+        /// Batch index and instance index within the batch.
+        /// Used to initialize the runtime's per-instance claim for
+        /// inactive-round constant contributions.
+        batch: usize,
+        instance: usize,
+    },
     /// Squeeze a Fiat-Shamir challenge.
     Squeeze { challenge: usize },
     /// Accumulate a PCS opening claim: (poly data, eval point from stage).
@@ -315,6 +471,7 @@ impl Op {
         matches!(
             self,
             Op::SumcheckRound { .. }
+                | Op::BatchedSumcheckRound { .. }
                 | Op::Evaluate { .. }
                 | Op::Bind { .. }
                 | Op::LagrangeProject { .. }
@@ -336,6 +493,7 @@ impl Op {
                 | Op::AbsorbRoundPoly { .. }
                 | Op::RecordEvals { .. }
                 | Op::AbsorbEvals { .. }
+                | Op::AbsorbInputClaim { .. }
                 | Op::Squeeze { .. }
                 | Op::CollectOpeningClaim { .. }
                 | Op::ReleaseDevice { .. }
@@ -393,9 +551,21 @@ pub enum VerifierOp {
     ///
     /// Computes combined claim from instance `input_claim` formulas, verifies
     /// sumcheck rounds, stores `final_eval` and challenge point for the stage.
+    ///
+    /// When `batch_challenges` is non-empty, the handler:
+    /// 1. Evaluates each instance's `input_claim` formula
+    /// 2. Absorbs each claim into transcript with `claim_tag`
+    /// 3. Squeezes batch coefficients into `challenges[batch_challenges[i]]`
+    /// 4. Combines: `Σ batch_coeff[i] * claim[i] * 2^(max_rounds - num_rounds[i])`
     VerifySumcheck {
         instances: Vec<SumcheckInstance>,
         stage: usize,
+        /// Challenge indices for per-instance batching coefficients.
+        /// Empty for unbatched stages (scaling uses `2^offset` only).
+        batch_challenges: Vec<usize>,
+        /// Transcript tag for absorbing input claims before squeezing
+        /// batch coefficients. Required when `batch_challenges` is non-empty.
+        claim_tag: Option<DomainSeparator>,
     },
     /// Read polynomial evaluations from current stage proof into the global table.
     RecordEvals { evals: Vec<Evaluation> },
@@ -411,6 +581,10 @@ pub enum VerifierOp {
     CheckOutput {
         instances: Vec<SumcheckInstance>,
         stage: usize,
+        /// When non-empty, each instance's output is multiplied by its batch
+        /// coefficient (stored at the given challenge index). Empty for
+        /// unbatched sumchecks.
+        batch_challenges: Vec<usize>,
     },
     /// Accumulate a PCS opening claim for a committed polynomial.
     CollectOpeningClaim {

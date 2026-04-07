@@ -20,6 +20,8 @@ use serde::{de::DeserializeOwned, Serialize};
 
 use crate::claims::{ProverClaim, VerifierClaim};
 use crate::error::OpeningsError;
+use jolt_crypto::HomomorphicCommitment;
+
 use crate::traits::{AdditivelyHomomorphic, CommitmentScheme};
 
 #[allow(clippy::type_complexity)]
@@ -82,7 +84,10 @@ pub trait OpeningReduction<PCS: CommitmentScheme> {
 /// [`ReductionProof`](OpeningReduction::ReductionProof) is `()`.
 pub struct RlcReduction;
 
-impl<PCS: AdditivelyHomomorphic> OpeningReduction<PCS> for RlcReduction {
+impl<PCS: AdditivelyHomomorphic> OpeningReduction<PCS> for RlcReduction
+where
+    PCS::Output: HomomorphicCommitment<PCS::Field>,
+{
     type ReductionProof = ();
 
     #[tracing::instrument(skip_all, name = "RlcReduction::reduce_prover")]

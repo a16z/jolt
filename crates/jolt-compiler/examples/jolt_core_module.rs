@@ -23,9 +23,10 @@ use jolt_compiler::formula::{BindingOrder, Factor, Formula, ProductTerm};
 use jolt_compiler::ir::PolyKind;
 use jolt_compiler::kernel_spec::Iteration;
 use jolt_compiler::module::{
-    ChallengeDecl, ChallengeSource, ClaimFactor, ClaimFormula, ClaimTerm, DomainSeparator,
-    Evaluation, InputBinding, KernelDef, Module, Op, PointNormalization, PolyDecl, R1CSMatrix,
-    Schedule, SumcheckInstance, VerifierOp, VerifierSchedule, VerifierStageIndex,
+    BatchedInstance, BatchedSumcheckDef, ChallengeDecl, ChallengeSource, ClaimFactor, ClaimFormula,
+    ClaimTerm, DomainSeparator, Evaluation, InputBinding, InstancePhase, KernelDef, Module, Op,
+    PointNormalization, PolyDecl, R1CSMatrix, ScalarCapture, Schedule, SegmentedConfig,
+    SumcheckInstance, VerifierOp, VerifierSchedule, VerifierStageIndex,
 };
 use jolt_compiler::params::{ModuleParams, LOG_K_REG, NUM_LOOKUP_TABLES, NUM_R1CS_INPUTS};
 use jolt_compiler::KernelSpec;
@@ -166,7 +167,12 @@ struct Polys {
     ram_wa: PolynomialId,
     hamming_weight: PolynomialId,
 
+    // === Virtual — RamRW eq tables (segmented phase 1/2) ===
+    ram_eq_cycle: PolynomialId,
+    ram_eq_addr: PolynomialId,
+
     // === Virtual — RAF ===
+    ram_ra_indicator: PolynomialId,
     ram_raf_ra: PolynomialId,
     inst_raf_ra: PolynomialId,
     bytecode_raf_ra: PolynomialId,
@@ -204,8 +210,9 @@ fn register_polys(pt: &mut PolyTable, p: &ModuleParams) -> Polys {
         LeftLookupOperand, LookupOutput, LookupTableFlag, NextIsFirstInSequence, NextIsNoop,
         NextIsVirtual, NextPc, NextUnexpandedPc, NoopFlag, OpFlag, OuterUniskipEval, Product,
         ProductLeft, ProductRight, ProductUniskipEval, RamAddress, RamCombinedRa, RamInc, RamRa,
-        RamRafRa, RamReadValue, RamVal, RamValFinal, RamWriteValue, Rd, RdInc, RdWa, RdWriteValue,
-        RegistersVal, RightInstructionInput, RightIsImm, RightIsRs2, RightLookupOperand, Rs1Ra,
+        RamRafRa, RamReadValue, RamVal, RamValFinal, RamWriteValue,
+        Rd, RdInc, RdWa, RdWriteValue, RegistersVal, RightInstructionInput, RightIsImm,
+        RightIsRs2, RightLookupOperand, Rs1Ra,
         Rs1Value, Rs2Ra, Rs2Value, ShouldBranch, ShouldJump, SpartanEq, TrustedAdvice,
         UnexpandedPc, UntrustedAdvice, ValIo,
     };
@@ -348,7 +355,27 @@ fn register_polys(pt: &mut PolyTable, p: &ModuleParams) -> Polys {
     let ram_wa = pt.add(PolynomialId::RamWa, "RamWA", Virtual, p.log_t);
     let hamming_weight = pt.add(HammingWeight, "HammingWeight", Virtual, p.log_t);
 
+    // --- Virtual — RamRW segmented eq tables ---
+    let ram_eq_cycle = pt.add(
+        PolynomialId::RamEqCycle,
+        "RamEqCycle",
+        Virtual,
+        p.log_t,
+    );
+    let ram_eq_addr = pt.add(
+        PolynomialId::RamEqAddr,
+        "RamEqAddr",
+        Virtual,
+        p.log_k_ram,
+    );
+
     // --- Virtual — RAF ---
+    let ram_ra_indicator = pt.add(
+        PolynomialId::RamRaIndicator,
+        "RamRaIndicator",
+        Virtual,
+        p.log_k_ram + p.log_t,
+    );
     let ram_raf_ra = pt.add(RamRafRa, "RamRafRa", Virtual, p.log_k_ram);
     let inst_raf_ra = pt.add(
         PolynomialId::InstructionRafRa,
@@ -485,6 +512,9 @@ fn register_polys(pt: &mut PolyTable, p: &ModuleParams) -> Polys {
         ram_val_final,
         ram_wa,
         hamming_weight,
+        ram_eq_cycle,
+        ram_eq_addr,
+        ram_ra_indicator,
         ram_raf_ra,
         inst_raf_ra,
         bytecode_raf_ra,
@@ -601,7 +631,15 @@ fn build_module(params: &ModuleParams) -> Module {
 
     // Stage 2: Product + RamRW + InstructionClaimReduction + RafEval + OutputCheck
     ops.push(Op::BeginStage { index: 1 });
-    build_stage2(&p, params, &mut ops, &mut kernels, &mut ch);
+    let mut batched_sumchecks = Vec::new();
+    build_stage2(
+        &p,
+        params,
+        &mut ops,
+        &mut kernels,
+        &mut ch,
+        &mut batched_sumchecks,
+    );
 
     // TODO: Stage 3 — Shift + InstructionInput + RegistersClaimReduction
     // TODO: Stage 4 — RegistersRW + RamValCheck
@@ -624,7 +662,11 @@ fn build_module(params: &ModuleParams) -> Module {
     Module {
         polys,
         challenges,
-        prover: Schedule { ops, kernels },
+        prover: Schedule {
+            ops,
+            kernels,
+            batched_sumchecks,
+        },
         verifier: VerifierSchedule {
             ops: verifier_ops,
             num_challenges,
@@ -648,21 +690,26 @@ fn build_commitment_phase(p: &Polys, params: &ModuleParams, ops: &mut Vec<Op>) {
     main_witness.extend_from_slice(&p.instruction_ra);
     main_witness.extend_from_slice(&p.ram_ra);
     main_witness.extend_from_slice(&p.bytecode_ra);
+    // Main witness grid: K_chunk × T (matches DoryGlobals::initialize_context(K, T, Main))
+    let main_num_vars = params.log_k_chunk + params.log_t;
     ops.push(Op::Commit {
         polys: main_witness,
         tag: DomainSeparator::Commitment,
+        num_vars: main_num_vars,
     });
 
-    // Barrier 2: untrusted advice
+    // Barrier 2: untrusted advice (trace-length grid)
     ops.push(Op::Commit {
         polys: vec![p.untrusted_advice],
         tag: DomainSeparator::UntrustedAdvice,
+        num_vars: params.log_t,
     });
 
-    // Barrier 3: trusted advice
+    // Barrier 3: trusted advice (trace-length grid)
     ops.push(Op::Commit {
         polys: vec![p.trusted_advice],
         tag: DomainSeparator::TrustedAdvice,
+        num_vars: params.log_t,
     });
 }
 
@@ -1047,6 +1094,8 @@ fn build_verifier_stage1_ops(
     ops.push(VerifierOp::VerifySumcheck {
         instances: instances.clone(),
         stage: 0,
+        batch_challenges: Vec::new(),
+        claim_tag: None,
     });
     ops.push(VerifierOp::RecordEvals { evals: evaluations });
     ops.push(VerifierOp::AbsorbEvals {
@@ -1056,6 +1105,7 @@ fn build_verifier_stage1_ops(
     ops.push(VerifierOp::CheckOutput {
         instances,
         stage: 0,
+        batch_challenges: Vec::new(),
     });
     ops
 }
@@ -1086,10 +1136,20 @@ fn build_stage2(
     ops: &mut Vec<Op>,
     kernels: &mut Vec<KernelDef>,
     ch: &mut ChallengeTable,
+    batched_sumchecks: &mut Vec<BatchedSumcheckDef>,
 ) {
+    // Stage 1 cycle challenge indices: the outer remaining round challenges,
+    // reversed to BIG_ENDIAN order (matching jolt-core's r_cycle convention).
+    // These are used as τ_low for both the product uniskip and ProductRemainder.
+    let stage1_round_base = params.num_tau + 2; // τ_count + r0 + batch
+    let stage1_cycle_challenges: Vec<usize> =
+        (stage1_round_base..stage1_round_base + params.outer_remaining_rounds)
+            .rev()
+            .collect();
+
     // ---------------------------------------------------------------
     // 1. Squeeze τ_high for product uniskip
-    //    (τ_low is r_cycle from Stage 1, carried via opening accumulator)
+    //    (τ_low is r_cycle from Stage 1 outer remaining round challenges)
     // ---------------------------------------------------------------
     let ch_product_tau_high = ch.add(
         "product_tau_high",
@@ -1102,11 +1162,11 @@ fn build_stage2(
     // ---------------------------------------------------------------
     // 2. Product uniskip: 1 round producing a degree-6 polynomial.
     //
-    //   s2(Y) = L(τ_high, Y) · Σ_x eq(τ_low, x) · Left(x, Y) · Right(x, Y)
+    //   s2(Y) = L(τ_high, Y) · Σ_x eq(r_cycle, x) · Left(x, Y) · Right(x, Y)
     //
-    // Left(x,Y) and Right(x,Y) are fused linear combinations of the
-    // 3 product factor polynomials weighted by Lagrange at Y.
-    // The uniskip polynomial has 7 coefficients.
+    // τ_low = r_cycle (Stage 1 outer remaining round challenges), NOT
+    // the original Spartan tau. In jolt-core, ProductVirtualUniSkipParams
+    // retrieves r_cycle from the opening accumulator.
     // ---------------------------------------------------------------
     let product_uniskip_formula = Formula::from_terms(vec![ProductTerm {
         coefficient: 1,
@@ -1114,10 +1174,8 @@ fn build_stage2(
     }]);
     let product_uniskip_inputs = vec![
         InputBinding::EqTable {
-            poly: p.spartan_eq,
-            // τ_low from Stage 1: cycle challenges (indices from Stage 1 remain valid)
-            // Stage 1 τ indices 0..params.num_tau-1 = 0..26
-            challenges: (0..params.num_tau - 1).collect(),
+            poly: PolynomialId::BatchEq(0),
+            challenges: stage1_cycle_challenges.clone(),
         },
         InputBinding::Provided {
             poly: p.product_left,
@@ -1182,6 +1240,24 @@ fn build_stage2(
     });
 
     // ---------------------------------------------------------------
+    // 2b. Lagrange projection: collapse product_left/right domain dim.
+    //
+    // After the product uniskip, product_left/right are T × stride
+    // domain-indexed buffers. The Lagrange projection evaluates at r0,
+    // reducing to T-element vectors. kernel_tau absorbs L(τ_high, r0)
+    // into the first poly, so the ProductRemainder sum equals s2(r0).
+    // ---------------------------------------------------------------
+    ops.push(Op::LagrangeProject {
+        polys: vec![p.product_left, p.product_right],
+        challenge: ch_product_r0,
+        domain_size: params.product_uniskip_domain,
+        domain_start: 0,
+        stride: product_stride,
+        group_offsets: vec![0],
+        kernel_tau: Some(ch_product_tau_high),
+    });
+
+    // ---------------------------------------------------------------
     // 3. Pre-squeeze challenges for batched instances
     // ---------------------------------------------------------------
 
@@ -1233,27 +1309,125 @@ fn build_stage2(
     // NOTE: The runtime needs a ComputeClaim-style op to evaluate these
     // formulas. For now, we model the transcript structure directly.
 
-    // Instance input claims as EmitScalars (one per instance)
-    // In jolt-core, each claim is appended individually via append_scalar:
-    ops.push(Op::AbsorbEvals {
-        polys: vec![p.ram_read_value], // placeholder: RW checking input claim
+    // ---------------------------------------------------------------
+    // 4a. Emit 5 input claims via AbsorbInputClaim.
+    //
+    // Each ClaimFormula is evaluated by the runtime against current
+    // state.evaluations and state.challenges, then absorbed into the
+    // transcript with "sumcheck_claim" tag. The batch/instance indices
+    // allow the runtime to initialize per-instance claims for inactive
+    // round contributions.
+    // ---------------------------------------------------------------
+    let batch_idx = batched_sumchecks.len();
+
+    // [0] RamReadWriteChecking: ram_read_value + γ_rw * ram_write_value
+    let rw_input_claim = ClaimFormula {
+        terms: vec![
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![ClaimFactor::Eval(p.ram_read_value)],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_gamma_rw),
+                    ClaimFactor::Eval(p.ram_write_value),
+                ],
+            },
+        ],
+    };
+    ops.push(Op::AbsorbInputClaim {
+        formula: rw_input_claim.clone(),
         tag: DomainSeparator::SumcheckClaim,
+        batch: batch_idx,
+        instance: 0,
     });
-    ops.push(Op::AbsorbEvals {
-        polys: vec![p.product_uniskip_eval], // ProductRemainder: s2(r0)
+
+    // [1] ProductVirtualRemainder: product_uniskip_eval (= s2(r0))
+    let prod_input_claim = ClaimFormula {
+        terms: vec![ClaimTerm {
+            coeff: 1,
+            factors: vec![ClaimFactor::Eval(p.product_uniskip_eval)],
+        }],
+    };
+    ops.push(Op::AbsorbInputClaim {
+        formula: prod_input_claim.clone(),
         tag: DomainSeparator::SumcheckClaim,
+        batch: batch_idx,
+        instance: 1,
     });
-    ops.push(Op::AbsorbEvals {
-        polys: vec![p.lookup_output], // placeholder: instruction claim reduction
+
+    // [2] InstructionClaimReduction: lookup + γ*left_op + γ²*right_op + γ³*left_inst + γ⁴*right_inst
+    let inst_cr_input_claim = ClaimFormula {
+        terms: vec![
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![ClaimFactor::Eval(p.lookup_output)],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_gamma_instruction),
+                    ClaimFactor::Eval(p.left_lookup_operand),
+                ],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_gamma_instruction),
+                    ClaimFactor::Challenge(ch_gamma_instruction),
+                    ClaimFactor::Eval(p.right_lookup_operand),
+                ],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_gamma_instruction),
+                    ClaimFactor::Challenge(ch_gamma_instruction),
+                    ClaimFactor::Challenge(ch_gamma_instruction),
+                    ClaimFactor::Eval(p.left_instruction_input),
+                ],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_gamma_instruction),
+                    ClaimFactor::Challenge(ch_gamma_instruction),
+                    ClaimFactor::Challenge(ch_gamma_instruction),
+                    ClaimFactor::Challenge(ch_gamma_instruction),
+                    ClaimFactor::Eval(p.right_instruction_input),
+                ],
+            },
+        ],
+    };
+    ops.push(Op::AbsorbInputClaim {
+        formula: inst_cr_input_claim.clone(),
         tag: DomainSeparator::SumcheckClaim,
+        batch: batch_idx,
+        instance: 2,
     });
-    ops.push(Op::AbsorbEvals {
-        polys: vec![p.ram_address], // placeholder: RAF evaluation
+
+    // [3] RafEvaluation: ram_address
+    let raf_input_claim = ClaimFormula {
+        terms: vec![ClaimTerm {
+            coeff: 1,
+            factors: vec![ClaimFactor::Eval(p.ram_address)],
+        }],
+    };
+    ops.push(Op::AbsorbInputClaim {
+        formula: raf_input_claim.clone(),
         tag: DomainSeparator::SumcheckClaim,
+        batch: batch_idx,
+        instance: 3,
     });
-    ops.push(Op::AbsorbEvals {
-        polys: vec![], // Output: zero claim (empty emit)
+
+    // [4] OutputCheck: 0 (zero-check)
+    let output_check_input_claim = ClaimFormula::zero();
+    ops.push(Op::AbsorbInputClaim {
+        formula: output_check_input_claim.clone(),
         tag: DomainSeparator::SumcheckClaim,
+        batch: batch_idx,
+        instance: 4,
     });
 
     // Squeeze 5 batching coefficients
@@ -1267,39 +1441,412 @@ fn build_stage2(
     }
 
     // ---------------------------------------------------------------
-    // 5. 45 rounds of batched sumcheck
-    //
-    // Each round: all active instances compute round polys, linearly
-    // combined with batching coefficients → single compressed round poly.
+    // 5. Build per-instance kernels for the batched sumcheck.
     // ---------------------------------------------------------------
 
-    // Use a single "batched" kernel placeholder for the combined computation.
-    // In practice, the runtime would evaluate each instance's kernel and combine.
-    let batched_kernel = kernels.len();
+    // [0] RamReadWriteChecking — 2-phase: log_t cycle + log_k_ram address.
+    //
+    // The RamRW polynomial is eq_cycle(t) * ra(k,t) * ((1+γ)*val(k,t) + γ*inc(t)).
+    // NO eq_addr — the address dimension is an unweighted sum over K.
+    //
+    // Phase 1 (cycle, log_t rounds, degree 3, segmented):
+    //   eq_cycle * ra * val + γ_rw * eq_cycle * ra * val + γ_rw * eq_cycle * ra * inc
+    //   Segmented with UNIFORM outer weights (no eq_addr).
+    //   Mixed inputs: ra(T×K addr-major), val(T×K addr-major). Inner: eq_cycle(T), inc(T).
+    //
+    // Phase 2 (address, log_k_ram rounds, degree 2):
+    //   After phase 1, eq_cycle/inc are fully bound (scalars via ScalarCapture).
+    //   ra, val are K-element (carried from phase 1 binding).
+    //   Formula: eq_bound*(1+γ)*ra*val + γ*eq_bound*inc_bound*ra
+    //   Dense over K-element buffers, no eq_addr.
+
+    // Allocate challenge slots for scalar captures at the phase boundary.
+    // ra is T×K mixed — it reduces to K elements after phase 1, not a scalar.
+    let ch_rw_eq_bound = ch.add("rw_eq_cycle_bound", ChallengeSource::External);
+    let ch_rw_inc_bound = ch.add("rw_inc_bound", ChallengeSource::External);
+
+    // RamRW cycle challenge indices for the eq_cycle table:
+    // After Stage 1 Reverse normalization, the cycle point comes from
+    // the Stage 1 remaining round challenges reversed.
+    let rw_cycle_eq_challenges: Vec<usize> = stage1_cycle_challenges.clone();
+
+    // Address challenge indices for the outer eq table:
+    let rw_addr_eq_challenges: Vec<usize> =
+        (ch_r_address_base..ch_r_address_base + params.log_k_ram).collect();
+
+    // Phase 1 kernel: cycle binding (Dense inner kernel, segmented reduce).
+    let rw_phase1_kernel_idx = kernels.len();
     kernels.push(KernelDef {
         spec: KernelSpec {
-            formula: Formula::from_terms(vec![ProductTerm {
-                coefficient: 1,
-                factors: vec![Factor::Input(0)],
-            }]),
+            formula: Formula::from_terms(vec![
+                ProductTerm {
+                    coefficient: 1,
+                    factors: vec![Factor::Input(0), Factor::Input(1), Factor::Input(2)],
+                },
+                ProductTerm {
+                    coefficient: 1,
+                    factors: vec![
+                        Factor::Challenge(ch_gamma_rw as u32),
+                        Factor::Input(0),
+                        Factor::Input(1),
+                        Factor::Input(2),
+                    ],
+                },
+                ProductTerm {
+                    coefficient: 1,
+                    factors: vec![
+                        Factor::Challenge(ch_gamma_rw as u32),
+                        Factor::Input(0),
+                        Factor::Input(1),
+                        Factor::Input(3),
+                    ],
+                },
+            ]),
             num_evals: params.rw_checking_degree + 1,
             iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
         },
-        inputs: vec![InputBinding::Provided {
-            poly: p.product_left,
-        }],
-        num_rounds: params.stage2_max_rounds,
+        inputs: vec![
+            InputBinding::EqTable {
+                poly: p.ram_eq_cycle,
+                challenges: rw_cycle_eq_challenges.clone(),
+            },
+            InputBinding::Provided {
+                poly: p.ram_combined_ra,
+            },
+            InputBinding::Provided { poly: p.ram_val },
+            InputBinding::Provided { poly: p.ram_inc },
+        ],
+        num_rounds: params.log_t,
     });
 
+    // Phase 2 kernel: address binding (Dense, K-element inputs).
+    //
+    // After phase 1, eq_cycle → ch_rw_eq_bound, inc → ch_rw_inc_bound (scalars).
+    // ra → K elements (carried from phase 1 binding).
+    // val → K elements (carried from phase 1 binding).
+    // No eq_addr — the RamRW polynomial has no eq_addr factor.
+    // Formula terms:
+    //   ch_eq * ra * val + γ * ch_eq * ra * val + γ * ch_eq * ch_inc * ra
+    // Degree: max 2 inputs (ra × val).
+    let rw_phase2_kernel_idx = kernels.len();
+    kernels.push(KernelDef {
+        spec: KernelSpec {
+            formula: Formula::from_terms(vec![
+                ProductTerm {
+                    coefficient: 1,
+                    factors: vec![
+                        Factor::Challenge(ch_rw_eq_bound as u32),
+                        Factor::Input(0),
+                        Factor::Input(1),
+                    ],
+                },
+                ProductTerm {
+                    coefficient: 1,
+                    factors: vec![
+                        Factor::Challenge(ch_gamma_rw as u32),
+                        Factor::Challenge(ch_rw_eq_bound as u32),
+                        Factor::Input(0),
+                        Factor::Input(1),
+                    ],
+                },
+                ProductTerm {
+                    coefficient: 1,
+                    factors: vec![
+                        Factor::Challenge(ch_gamma_rw as u32),
+                        Factor::Challenge(ch_rw_eq_bound as u32),
+                        Factor::Challenge(ch_rw_inc_bound as u32),
+                        Factor::Input(0),
+                    ],
+                },
+            ]),
+            // Degree 2: max input factor count is 2 (ra × val)
+            num_evals: 3,
+            iteration: Iteration::Dense,
+            binding_order: BindingOrder::LowToHigh,
+        },
+        inputs: vec![
+            InputBinding::Provided {
+                poly: p.ram_combined_ra,
+            },
+            InputBinding::Provided { poly: p.ram_val },
+        ],
+        num_rounds: params.log_k_ram,
+    });
+
+    // [1] ProductVirtualRemainder — 25 rounds, degree 3.
+    //
+    // Formula: eq(τ_cycle, x) * left(x) * right(x)
+    let prod_kernel_idx = kernels.len();
+    kernels.push(KernelDef {
+        spec: KernelSpec {
+            formula: Formula::from_terms(vec![ProductTerm {
+                coefficient: 1,
+                factors: vec![Factor::Input(0), Factor::Input(1), Factor::Input(2)],
+            }]),
+            num_evals: params.product_remainder_degree + 1,
+            iteration: Iteration::Dense,
+            binding_order: BindingOrder::LowToHigh,
+        },
+        inputs: vec![
+            InputBinding::EqTable {
+                poly: PolynomialId::BatchEq(1),
+                challenges: stage1_cycle_challenges.clone(),
+            },
+            InputBinding::Provided { poly: p.product_left },
+            InputBinding::Provided { poly: p.product_right },
+        ],
+        num_rounds: params.product_remainder_rounds,
+    });
+
+    // [2] InstructionClaimReduction — 25 rounds, degree 2.
+    //
+    // Formula: eq * (lookup + γ·left_op + γ²·right_op + γ³·left_inst + γ⁴·right_inst)
+    let gamma = ch_gamma_instruction as u32;
+    let inst_cr_kernel_idx = kernels.len();
+    kernels.push(KernelDef {
+        spec: KernelSpec {
+            formula: Formula::from_terms(vec![
+                ProductTerm {
+                    coefficient: 1,
+                    factors: vec![Factor::Input(0), Factor::Input(1)],
+                },
+                ProductTerm {
+                    coefficient: 1,
+                    factors: vec![Factor::Challenge(gamma), Factor::Input(0), Factor::Input(2)],
+                },
+                ProductTerm {
+                    coefficient: 1,
+                    factors: vec![
+                        Factor::Challenge(gamma),
+                        Factor::Challenge(gamma),
+                        Factor::Input(0),
+                        Factor::Input(3),
+                    ],
+                },
+                ProductTerm {
+                    coefficient: 1,
+                    factors: vec![
+                        Factor::Challenge(gamma),
+                        Factor::Challenge(gamma),
+                        Factor::Challenge(gamma),
+                        Factor::Input(0),
+                        Factor::Input(4),
+                    ],
+                },
+                ProductTerm {
+                    coefficient: 1,
+                    factors: vec![
+                        Factor::Challenge(gamma),
+                        Factor::Challenge(gamma),
+                        Factor::Challenge(gamma),
+                        Factor::Challenge(gamma),
+                        Factor::Input(0),
+                        Factor::Input(5),
+                    ],
+                },
+            ]),
+            num_evals: params.instruction_claim_reduction_degree + 1,
+            iteration: Iteration::Dense,
+            binding_order: BindingOrder::LowToHigh,
+        },
+        inputs: vec![
+            InputBinding::EqTable {
+                poly: PolynomialId::BatchEq(2),
+                challenges: stage1_cycle_challenges,
+            },
+            InputBinding::Provided { poly: p.lookup_output },
+            InputBinding::Provided {
+                poly: p.left_lookup_operand,
+            },
+            InputBinding::Provided {
+                poly: p.right_lookup_operand,
+            },
+            InputBinding::Provided {
+                poly: p.left_instruction_input,
+            },
+            InputBinding::Provided {
+                poly: p.right_instruction_input,
+            },
+        ],
+        num_rounds: params.instruction_claim_reduction_rounds,
+    });
+
+    // [3] RafEvaluation — 20 rounds, degree 2.
+    //
+    // Formula: unmap(x) * ra(x)
+    let raf_kernel_idx = kernels.len();
+    kernels.push(KernelDef {
+        spec: KernelSpec {
+            formula: Formula::from_terms(vec![ProductTerm {
+                coefficient: 1,
+                factors: vec![Factor::Input(0), Factor::Input(1)],
+            }]),
+            num_evals: params.raf_evaluation_degree + 1,
+            iteration: Iteration::Dense,
+            binding_order: BindingOrder::LowToHigh,
+        },
+        inputs: vec![
+            InputBinding::Provided { poly: p.ram_unmap },
+            InputBinding::EqProject {
+                poly: p.ram_raf_ra,
+                source: p.ram_ra_indicator,
+                challenges: Vec::new(), // filled after round loop
+                inner_size: 1 << params.log_t,
+                outer_size: 1 << params.log_k_ram,
+            },
+        ],
+        num_rounds: params.raf_evaluation_rounds,
+    });
+
+    // [4] OutputCheck — 20 rounds, degree 3.
+    //
+    // Formula: eq(r_address, x) * mask(x) * val_final(x) - eq * mask * val_io(x)
+    let output_kernel_idx = kernels.len();
+    kernels.push(KernelDef {
+        spec: KernelSpec {
+            formula: Formula::from_terms(vec![
+                ProductTerm {
+                    coefficient: 1,
+                    factors: vec![Factor::Input(0), Factor::Input(1), Factor::Input(2)],
+                },
+                ProductTerm {
+                    coefficient: -1,
+                    factors: vec![Factor::Input(0), Factor::Input(1), Factor::Input(3)],
+                },
+            ]),
+            num_evals: params.output_check_degree + 1,
+            iteration: Iteration::Dense,
+            binding_order: BindingOrder::LowToHigh,
+        },
+        inputs: vec![
+            InputBinding::EqTable {
+                poly: PolynomialId::BatchEq(4),
+                challenges: (ch_r_address_base..ch_r_address_base + params.log_k_ram).collect(),
+            },
+            InputBinding::Provided { poly: p.io_mask },
+            InputBinding::Provided {
+                poly: p.ram_val_final,
+            },
+            InputBinding::Provided { poly: p.val_io },
+        ],
+        num_rounds: params.output_check_rounds,
+    });
+
+    // ---------------------------------------------------------------
+    // 5b. Build BatchedSumcheckDef with all 5 instances.
+    // ---------------------------------------------------------------
+    let batch_idx = batched_sumchecks.len();
+    batched_sumchecks.push(BatchedSumcheckDef {
+        instances: vec![
+            // [0] RamRW — 2 phases: cycle (log_t) + address (log_k_ram).
+            BatchedInstance {
+                phases: vec![
+                    InstancePhase {
+                        kernel: rw_phase1_kernel_idx,
+                        num_rounds: params.log_t,
+                        scalar_captures: vec![],
+                        segmented: Some(SegmentedConfig {
+                            inner_num_vars: params.log_t,
+                            outer_num_vars: params.log_k_ram,
+                            // [eq_cycle: inner, ra: mixed(T×K), val: mixed(T×K), inc: inner]
+                            inner_only: vec![true, false, false, true],
+                            // Empty = uniform outer weights (no eq_addr in RamRW formula).
+                            outer_eq_challenges: vec![],
+                        }),
+                    },
+                    InstancePhase {
+                        kernel: rw_phase2_kernel_idx,
+                        num_rounds: params.log_k_ram,
+                        // Capture bound scalars from phase 1 into challenge slots.
+                        scalar_captures: vec![
+                            ScalarCapture {
+                                poly: p.ram_eq_cycle,
+                                challenge: ch_rw_eq_bound,
+                            },
+                            ScalarCapture {
+                                poly: p.ram_inc,
+                                challenge: ch_rw_inc_bound,
+                            },
+                        ],
+                        segmented: None,
+                    },
+                ],
+                batch_coeff: ch_batch_base,
+                first_active_round: 0,
+            },
+            // [1] ProductRemainder — single phase.
+            BatchedInstance {
+                phases: vec![InstancePhase {
+                    kernel: prod_kernel_idx,
+                    num_rounds: params.product_remainder_rounds,
+                    scalar_captures: vec![],
+                    segmented: None,
+                }],
+                batch_coeff: ch_batch_base + 1,
+                first_active_round: params.stage2_max_rounds - params.product_remainder_rounds,
+            },
+            // [2] InstructionClaimReduction — single phase.
+            BatchedInstance {
+                phases: vec![InstancePhase {
+                    kernel: inst_cr_kernel_idx,
+                    num_rounds: params.instruction_claim_reduction_rounds,
+                    scalar_captures: vec![],
+                    segmented: None,
+                }],
+                batch_coeff: ch_batch_base + 2,
+                first_active_round: params.stage2_max_rounds
+                    - params.instruction_claim_reduction_rounds,
+            },
+            // [3] RafEvaluation — single phase.
+            BatchedInstance {
+                phases: vec![InstancePhase {
+                    kernel: raf_kernel_idx,
+                    num_rounds: params.raf_evaluation_rounds,
+                    scalar_captures: vec![],
+                    segmented: None,
+                }],
+                batch_coeff: ch_batch_base + 3,
+                first_active_round: params.stage2_max_rounds - params.raf_evaluation_rounds,
+            },
+            // [4] OutputCheck — single phase.
+            BatchedInstance {
+                phases: vec![InstancePhase {
+                    kernel: output_kernel_idx,
+                    num_rounds: params.output_check_rounds,
+                    scalar_captures: vec![],
+                    segmented: None,
+                }],
+                batch_coeff: ch_batch_base + 4,
+                first_active_round: params.stage2_max_rounds - params.output_check_rounds,
+            },
+        ],
+        input_claims: vec![
+            rw_input_claim,
+            prod_input_claim,
+            inst_cr_input_claim,
+            raf_input_claim,
+            output_check_input_claim,
+        ],
+        max_rounds: params.stage2_max_rounds,
+        max_degree: params.rw_checking_degree,
+    });
+
+    // ---------------------------------------------------------------
+    // 5c. 45 rounds of BatchedSumcheckRound.
+    //
+    // Each round: the runtime dispatches to active instance kernels,
+    // combines with batching coefficients, produces one round poly.
+    // ---------------------------------------------------------------
+    let mut round_challenge_indices = Vec::with_capacity(params.stage2_max_rounds);
     for round in 0..params.stage2_max_rounds {
         let bind = if round > 0 {
-            Some(ch_batch_base + params.stage2_num_instances + round - 1)
+            Some(round_challenge_indices[round - 1])
         } else {
             None
         };
-        ops.push(Op::SumcheckRound {
-            kernel: batched_kernel,
+        ops.push(Op::BatchedSumcheckRound {
+            batch: batch_idx,
             round,
             bind_challenge: bind,
         });
@@ -1308,19 +1855,66 @@ fn build_stage2(
             &format!("s2_r_{round}"),
             ChallengeSource::SumcheckRound {
                 stage: VerifierStageIndex(1),
-                round: round + 1, // +1 because round 0 is the uniskip
+                round: round + 1,
             },
         );
+        round_challenge_indices.push(ch_r);
         ops.push(Op::AbsorbRoundPoly {
-            kernel: batched_kernel,
+            kernel: rw_phase1_kernel_idx,
             num_coeffs: params.rw_checking_degree + 1,
             tag: DomainSeparator::SumcheckPoly,
         });
         ops.push(Op::Squeeze { challenge: ch_r });
     }
 
+    // Patch the RAF kernel's EqProject challenges.
+    // The EqProject marginalizes the cycle dimension of the RA indicator using
+    // the Stage 1 cycle point (where ram_address was evaluated), NOT the Stage 2
+    // round challenges. This ensures Σ_k unmap(k) * eq_project(indicator, r) = eval(ram_address, r).
+    {
+        if let InputBinding::EqProject {
+            challenges: ref mut chs,
+            ..
+        } = kernels[raf_kernel_idx].inputs[1]
+        {
+            chs.clone_from(&rw_cycle_eq_challenges);
+        }
+    }
+
     // ---------------------------------------------------------------
-    // 6. Flush 18 evaluation opening claims.
+    // 6. Bind polynomials opened by Instance 1 (ProductRemainder)
+    //    that are NOT kernel inputs of any batched instance.
+    //
+    //    Instances 1 and 2 share the same active rounds (13..21),
+    //    so their sumcheck points coincide. Instance 2's kernel
+    //    already binds: lookup_output, left/right_lookup_operand,
+    //    left/right_instruction_input. The remaining 5 polys need
+    //    explicit binding at the same (Instance 1/2) challenge point.
+    // ---------------------------------------------------------------
+    let prod_open_extra = vec![
+        p.op_flags[5], // Jump
+        p.op_flags[6], // WriteLookupOutputToRD
+        p.inst_flag_branch,
+        p.next_is_noop,
+        p.op_flags[7], // VirtualInstruction
+    ];
+    // Force-reload these polys from the provider: they may have stale
+    // (partially bound) buffers left over from Stage 1.
+    for &poly in &prod_open_extra {
+        ops.push(Op::ReleaseDevice { poly });
+    }
+    let inst_first_active = params.stage2_max_rounds - params.product_remainder_rounds;
+    for round in 0..params.product_remainder_rounds {
+        let ch_idx = round_challenge_indices[inst_first_active + round];
+        ops.push(Op::Bind {
+            polys: prod_open_extra.clone(),
+            challenge: ch_idx,
+            order: BindingOrder::LowToHigh,
+        });
+    }
+
+    // ---------------------------------------------------------------
+    // 7. Flush 18 evaluation opening claims.
     //
     // Order matches jolt-core's cache_openings call order:
     //   RamRW (3): RamVal, RamRa, RamInc
@@ -1399,15 +1993,6 @@ fn build_verifier_stage2_ops(
     let ch_gamma_instruction = s2_ch_base + 3; // 58
     let ch_r_address_base = s2_ch_base + 4; // 59..78
 
-    // Pre-squeeze: τ_high, then (after uniskip) γ_rw, γ_instruction, r_address
-    // The uniskip happens between τ_high and γ_rw, but in the verifier ops,
-    // pre_squeeze lists all challenges squeezed before the batched sumcheck.
-    let mut pre_squeeze = vec![ch_tau_high];
-    // After uniskip:
-    pre_squeeze.push(ch_gamma_rw);
-    pre_squeeze.push(ch_gamma_instruction);
-    pre_squeeze.extend(ch_r_address_base..ch_r_address_base + params.log_k_ram);
-
     // Evaluations: 18 openings (same order as prover flush)
     let stage2_eval_polys = [
         // RamReadWriteChecking (3)
@@ -1444,43 +2029,46 @@ fn build_verifier_stage2_ops(
 
     // ---------------------------------------------------------------
     // Stage 1 cycle challenge indices used for cross-stage eq evals.
-    // Stage 1 outer remaining produces 26 challenges (indices 29..54).
-    // After Reverse normalization, the cycle portion is the last 25
-    // elements = challenge values at indices [53, 52, ..., 29].
+    // Stage 1 outer remaining produces `outer_remaining_rounds` challenges
+    // starting at index `num_tau + 2` (after τ, r0, and batch). After
+    // Reverse normalization, the cycle point is these indices reversed.
     // ---------------------------------------------------------------
-    // Outer remaining: 26 rounds at indices 29..54. normalize_opening_point
-    // skips challenges[0] (streaming variable at index 29) and reverses the
-    // remaining 25 cycle challenges (indices 30..54). Result in big-endian:
-    // [outer_r_25(54), outer_r_24(53), ..., outer_r_1(30)].
-    let stage1_cycle_challenges: Vec<usize> = (30..55).rev().collect(); // 25 elements
+    let stage1_round_base = params.num_tau + 2; // τ + r0 + batch
+    let stage1_cycle_challenges: Vec<usize> =
+        (stage1_round_base..stage1_round_base + params.outer_remaining_rounds)
+            .rev()
+            .collect();
 
     // ---------------------------------------------------------------
     // Evaluation list positions (18 entries in flush order).
     // Used by StageEval in output_check formulas.
     // ---------------------------------------------------------------
+    // sp.evals[0] = product_uniskip_eval (from RecordEvals before the batch).
+    // Batched sumcheck evals start at index 1.
+    const SE_BASE: usize = 1;
     // RamReadWriteChecking (3):
-    const SE_RAM_VAL: usize = 0;
-    const SE_RAM_RA: usize = 1;
-    const SE_RAM_INC: usize = 2;
+    const SE_RAM_VAL: usize = SE_BASE;
+    const SE_RAM_RA: usize = SE_BASE + 1;
+    const SE_RAM_INC: usize = SE_BASE + 2;
     // ProductVirtualRemainder (8):
-    const SE_L_INST: usize = 3;
-    const SE_R_INST: usize = 4;
-    const SE_JUMP: usize = 5;
-    const _SE_WRITE_LO_TO_RD: usize = 6; // opened but not used in output formula
-    const SE_LOOKUP_OUT_PROD: usize = 7;
-    const SE_BRANCH: usize = 8;
-    const SE_NOOP: usize = 9;
-    const _SE_VIRTUAL_INST: usize = 10; // opened but not used in output formula
-                                        // InstructionClaimReduction (5):
-    const SE_LOOKUP_OUT_INST: usize = 11;
-    const SE_LEFT_LOOKUP_OP: usize = 12;
-    const SE_RIGHT_LOOKUP_OP: usize = 13;
-    const SE_L_INST_CR: usize = 14;
-    const SE_R_INST_CR: usize = 15;
+    const SE_L_INST: usize = SE_BASE + 3;
+    const SE_R_INST: usize = SE_BASE + 4;
+    const SE_JUMP: usize = SE_BASE + 5;
+    const _SE_WRITE_LO_TO_RD: usize = SE_BASE + 6; // opened but not used in output formula
+    const SE_LOOKUP_OUT_PROD: usize = SE_BASE + 7;
+    const SE_BRANCH: usize = SE_BASE + 8;
+    const SE_NOOP: usize = SE_BASE + 9;
+    const _SE_VIRTUAL_INST: usize = SE_BASE + 10; // opened but not used in output formula
+    // InstructionClaimReduction (5):
+    const SE_LOOKUP_OUT_INST: usize = SE_BASE + 11;
+    const SE_LEFT_LOOKUP_OP: usize = SE_BASE + 12;
+    const SE_RIGHT_LOOKUP_OP: usize = SE_BASE + 13;
+    const SE_L_INST_CR: usize = SE_BASE + 14;
+    const SE_R_INST_CR: usize = SE_BASE + 15;
     // RafEvaluation (1):
-    const SE_RAM_RAF_RA: usize = 16;
+    const SE_RAM_RAF_RA: usize = SE_BASE + 16;
     // OutputCheck (1):
-    const SE_VAL_FINAL: usize = 17;
+    const SE_VAL_FINAL: usize = SE_BASE + 17;
 
     // ---------------------------------------------------------------
     // Instance 0: RamReadWriteChecking
@@ -1971,15 +2559,50 @@ fn build_verifier_stage2_ops(
 
     let eval_polys: Vec<_> = evaluations.iter().map(|e| e.poly).collect();
 
-    let mut ops = Vec::new();
-    ops.push(VerifierOp::BeginStage);
-    for &c in &pre_squeeze {
+    let mut ops = vec![
+        VerifierOp::BeginStage,
+        VerifierOp::Squeeze {
+            challenge: ch_tau_high,
+        },
+    ];
+    // Product uniskip: absorb round poly, squeeze r0, record+absorb eval.
+    ops.push(VerifierOp::AbsorbRoundPoly {
+        num_coeffs: params.product_uniskip_num_coeffs,
+        tag: DomainSeparator::UniskipPoly,
+    });
+    ops.push(VerifierOp::Squeeze {
+        challenge: ch_product_r0,
+    });
+    ops.push(VerifierOp::RecordEvals {
+        evals: vec![Evaluation {
+            poly: p.product_uniskip_eval,
+            at_stage: VerifierStageIndex(1),
+        }],
+    });
+    ops.push(VerifierOp::AbsorbEvals {
+        polys: vec![p.product_uniskip_eval],
+        tag: DomainSeparator::OpeningClaim,
+    });
+    // Remaining pre-squeeze: γ_rw, γ_instruction, r_address
+    ops.push(VerifierOp::Squeeze {
+        challenge: ch_gamma_rw,
+    });
+    ops.push(VerifierOp::Squeeze {
+        challenge: ch_gamma_instruction,
+    });
+    for c in ch_r_address_base..ch_r_address_base + params.log_k_ram {
         ops.push(VerifierOp::Squeeze { challenge: c });
     }
-    // TODO: uniskip verification (UniskipVerify { num_coeffs: params.product_uniskip_num_coeffs, eval_poly: p.product_uniskip_eval })
+    // Batch coefficient challenge indices for the 5 instances.
+    let ch_batch_base = s2_ch_base + 2 + 1 + 1 + params.log_k_ram; // after τ_high, r0, γ_rw, γ_instruction, r_address
+    let batch_challenges: Vec<usize> = (0..params.stage2_num_instances)
+        .map(|i| ch_batch_base + i)
+        .collect();
     ops.push(VerifierOp::VerifySumcheck {
         instances: instances.clone(),
         stage: 1,
+        batch_challenges: batch_challenges.clone(),
+        claim_tag: Some(DomainSeparator::SumcheckClaim),
     });
     ops.push(VerifierOp::RecordEvals { evals: evaluations });
     ops.push(VerifierOp::AbsorbEvals {
@@ -1989,6 +2612,7 @@ fn build_verifier_stage2_ops(
     ops.push(VerifierOp::CheckOutput {
         instances,
         stage: 1,
+        batch_challenges,
     });
     ops
 }
@@ -2045,6 +2669,7 @@ fn print_stats(module: &Module, params: &ModuleParams) {
         if let Op::Commit {
             polys: committed,
             tag,
+            ..
         } = op
         {
             barrier += 1;
@@ -2056,10 +2681,11 @@ fn print_stats(module: &Module, params: &ModuleParams) {
     }
 
     // Op-type counts
-    let mut counts = [0usize; 14];
+    let mut counts = [0usize; 16];
     for op in &module.prover.ops {
         match op {
             Op::SumcheckRound { .. } => counts[0] += 1,
+            Op::BatchedSumcheckRound { .. } => counts[14] += 1,
             Op::Evaluate { .. } => counts[1] += 1,
             Op::Bind { .. } => counts[2] += 1,
             Op::LagrangeProject { .. } => counts[13] += 1,
@@ -2070,6 +2696,7 @@ fn print_stats(module: &Module, params: &ModuleParams) {
             Op::BeginStage { .. } => counts[12] += 1,
             Op::AbsorbRoundPoly { .. } => counts[7] += 1,
             Op::RecordEvals { .. } | Op::AbsorbEvals { .. } => counts[8] += 1,
+            Op::AbsorbInputClaim { .. } => counts[15] += 1,
             Op::Squeeze { .. } => counts[9] += 1,
             Op::CollectOpeningClaim { .. } => counts[10] += 1,
             Op::ReleaseDevice { .. } => counts[11] += 1,
@@ -2078,22 +2705,24 @@ fn print_stats(module: &Module, params: &ModuleParams) {
     }
     eprintln!("\n=== Op Counts ===");
     eprintln!("  -- Compute --");
-    eprintln!("  SumcheckRound:       {}", counts[0]);
-    eprintln!("  Evaluate:            {}", counts[1]);
-    eprintln!("  Bind:                {}", counts[2]);
-    eprintln!("  LagrangeProject:     {}", counts[13]);
+    eprintln!("  SumcheckRound:         {}", counts[0]);
+    eprintln!("  BatchedSumcheckRound:  {}", counts[14]);
+    eprintln!("  Evaluate:              {}", counts[1]);
+    eprintln!("  Bind:                  {}", counts[2]);
+    eprintln!("  LagrangeProject:       {}", counts[13]);
     eprintln!("  -- PCS --");
-    eprintln!("  Commit:              {}", counts[3]);
-    eprintln!("  ReduceOpenings:      {}", counts[4]);
-    eprintln!("  Open:                {}", counts[5]);
+    eprintln!("  Commit:                {}", counts[3]);
+    eprintln!("  ReduceOpenings:        {}", counts[4]);
+    eprintln!("  Open:                  {}", counts[5]);
     eprintln!("  -- Orchestration --");
-    eprintln!("  Preamble:            {}", counts[6]);
-    eprintln!("  BeginStage:          {}", counts[12]);
-    eprintln!("  AbsorbRoundPoly:     {}", counts[7]);
-    eprintln!("  AbsorbEvals:         {}", counts[8]);
-    eprintln!("  Squeeze:             {}", counts[9]);
-    eprintln!("  CollectOpeningClaim: {}", counts[10]);
-    eprintln!("  Release (dev+host):  {}", counts[11]);
+    eprintln!("  Preamble:              {}", counts[6]);
+    eprintln!("  BeginStage:            {}", counts[12]);
+    eprintln!("  AbsorbRoundPoly:       {}", counts[7]);
+    eprintln!("  AbsorbEvals:           {}", counts[8]);
+    eprintln!("  AbsorbInputClaim:      {}", counts[15]);
+    eprintln!("  Squeeze:               {}", counts[9]);
+    eprintln!("  CollectOpeningClaim:   {}", counts[10]);
+    eprintln!("  Release (dev+host):    {}", counts[11]);
 
     // Kernel details
     if !module.prover.kernels.is_empty() {
@@ -2107,6 +2736,38 @@ fn print_stats(module: &Module, params: &ModuleParams) {
                 k.inputs.len(),
                 k.spec.binding_order,
             );
+        }
+    }
+
+    // Batched sumchecks
+    if !module.prover.batched_sumchecks.is_empty() {
+        eprintln!("\n=== Batched Sumchecks ===");
+        for (i, bdef) in module.prover.batched_sumchecks.iter().enumerate() {
+            eprintln!(
+                "  [{i}] max_rounds={}, max_degree={}, instances={}",
+                bdef.max_rounds, bdef.max_degree, bdef.instances.len()
+            );
+            for (j, inst) in bdef.instances.iter().enumerate() {
+                let phase_descs: Vec<String> = inst
+                    .phases
+                    .iter()
+                    .map(|ph| {
+                        let seg = if ph.segmented.is_some() {
+                            " [segmented]"
+                        } else {
+                            ""
+                        };
+                        format!("k{}×{}r{}", ph.kernel, ph.num_rounds, seg)
+                    })
+                    .collect();
+                eprintln!(
+                    "    [{j}] phases=[{}], batch_coeff={}, first_active={}, total_rounds={}",
+                    phase_descs.join(", "),
+                    inst.batch_coeff,
+                    inst.first_active_round,
+                    inst.num_rounds(),
+                );
+            }
         }
     }
 

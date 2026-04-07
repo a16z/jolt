@@ -5,7 +5,8 @@
 
 use dory::backends::arkworks::{ArkDoryProof, ArkworksProverSetup, ArkworksVerifierSetup};
 use dory::primitives::serialization::{DoryDeserialize, DorySerialize};
-use jolt_crypto::{Bn254G1, Bn254GT};
+use jolt_crypto::{Bn254G1, Bn254GT, HomomorphicCommitment};
+use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Commitment produced by the Dory scheme.
@@ -25,6 +26,23 @@ impl Serialize for DoryCommitment {
 impl<'de> Deserialize<'de> for DoryCommitment {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         dory_deserialize(deserializer).map(Self)
+    }
+}
+
+impl AppendToTranscript for DoryCommitment {
+    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
+        self.0.append_to_transcript(transcript);
+    }
+
+    fn serialized_len(&self) -> u64 {
+        self.0.serialized_len()
+    }
+}
+
+impl<F: jolt_field::Field> HomomorphicCommitment<F> for DoryCommitment {
+    #[inline]
+    fn linear_combine(c1: &Self, c2: &Self, scalar: &F) -> Self {
+        Self(HomomorphicCommitment::linear_combine(&c1.0, &c2.0, scalar))
     }
 }
 

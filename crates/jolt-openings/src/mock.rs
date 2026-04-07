@@ -46,9 +46,18 @@ pub struct MockProof<F: Field> {
 
 impl<F: Field> AppendToTranscript for MockCommitment<F> {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
+        // Single-blob serialization matching jolt-core's append_serializable pattern:
+        // serialize all evaluations as LE bytes, reverse the entire buffer, append once.
+        let mut buf = Vec::with_capacity(self.evaluations.len() * 32);
         for e in &self.evaluations {
-            e.append_to_transcript(transcript);
+            buf.extend_from_slice(&e.to_bytes());
         }
+        buf.reverse();
+        transcript.append_bytes(&buf);
+    }
+
+    fn serialized_len(&self) -> u64 {
+        (self.evaluations.len() * 32) as u64
     }
 }
 
@@ -63,10 +72,13 @@ impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
     type VerifierSetup = ();
     type Polynomial = Polynomial<F>;
     type OpeningHint = ();
+    type SetupParams = ();
 
-    fn setup(_max_num_vars: usize) -> ((), ()) {
+    fn setup(_params: Self::SetupParams) -> ((), ()) {
         ((), ())
     }
+
+    fn verifier_setup(_prover_setup: &()) -> () {}
 
     fn commit<P: jolt_poly::MultilinearPoly<Self::Field> + ?Sized>(
         poly: &P,

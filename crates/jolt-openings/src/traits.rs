@@ -8,12 +8,10 @@
 //! 3. [`StreamingCommitment`] — incremental/chunked commitment.
 //! 4. [`ZkOpeningScheme`] — zero-knowledge opening proofs with committed evaluations.
 //!
-//! Additionally, [`VcSetupExtractable`] bridges PCS and vector commitment setup
-//! when both share trust assumptions (e.g., same SRS).
 
 use std::fmt::Debug;
 
-use jolt_crypto::{Commitment, JoltCommitment};
+use jolt_crypto::{Commitment, HomomorphicCommitment};
 use jolt_field::Field;
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::{AppendToTranscript, Transcript};
@@ -82,9 +80,21 @@ pub trait CommitmentScheme: Commitment + Clone + Send + Sync + 'static {
     /// For schemes without commit-phase hints: `()`.
     type OpeningHint: Clone + Send + Sync + Default;
 
-    /// Generate prover and verifier setup material for polynomials
-    /// with at most `max_num_vars` variables.
-    fn setup(max_num_vars: usize) -> (Self::ProverSetup, Self::VerifierSetup);
+    /// Scheme-specific parameters required for setup.
+    ///
+    /// Each PCS has unique setup requirements:
+    /// - KZG: trusted setup ceremony or test parameters (rng seed, generators)
+    /// - Dory: max polynomial size (`usize`) — SRS is generated internally
+    /// - Mock: `()` — no setup needed
+    type SetupParams;
+
+    /// Generate prover and verifier setup from scheme-specific parameters.
+    fn setup(params: Self::SetupParams) -> (Self::ProverSetup, Self::VerifierSetup);
+
+    /// Derive verifier setup from an existing prover setup.
+    ///
+    /// The verifier SRS is always a strict subset of the prover SRS.
+    fn verifier_setup(prover_setup: &Self::ProverSetup) -> Self::VerifierSetup;
 
     /// Commits to a multilinear polynomial.
     ///
@@ -144,7 +154,10 @@ pub trait CommitmentScheme: Commitment + Clone + Send + Sync + 'static {
 /// This algebraic property enables batch reduction strategies like
 /// [`RlcReduction`](crate::RlcReduction), but batching itself is not
 /// part of this trait — it is a reduction concern.
-pub trait AdditivelyHomomorphic: CommitmentScheme {
+pub trait AdditivelyHomomorphic: CommitmentScheme
+where
+    Self::Output: HomomorphicCommitment<Self::Field>,
+{
     /// Computes a linear combination of commitments:
     /// $C = \sum_i s_i \cdot C_i$.
     ///
@@ -269,21 +282,3 @@ pub trait ZkOpeningScheme: CommitmentScheme {
     fn extract_eval_commitment(proof: &Self::Proof) -> Option<Self::EvalCommitment>;
 }
 
-/// Bridge between a PCS's setup and a vector commitment's setup.
-///
-/// When a PCS and a vector commitment scheme share trust assumptions
-/// (e.g., both derive from the same SRS), this trait extracts the VC setup
-/// from the PCS prover setup. The orchestrator (jolt-zkvm) calls this once
-/// at setup time to obtain the VC parameters for BlindFold's committed
-/// sumcheck rounds.
-///
-/// No group structure assumed — works for Pedersen (extract generators from
-/// SRS), lattice VC (extract lattice parameters), hash VC (extract hash
-/// parameters), or any other vector commitment scheme.
-pub trait VcSetupExtractable<VC: JoltCommitment>: CommitmentScheme {
-    /// Derives a vector commitment setup from the PCS prover setup.
-    ///
-    /// `capacity` is the maximum number of values the VC needs to commit
-    /// (e.g., max sumcheck polynomial degree + 1).
-    fn extract_vc_setup(setup: &Self::ProverSetup, capacity: usize) -> VC::Setup;
-}

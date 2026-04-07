@@ -213,11 +213,14 @@ impl ComputeBackend for CpuBackend {
 
     #[tracing::instrument(skip_all, name = "CpuBackend::eq_table")]
     fn eq_table<F: Field>(&self, point: &[F]) -> Vec<F> {
-        // NOTE: Cannot delegate to jolt_poly::EqPolynomial::evaluations() because
-        // the parallel path here uses split-half layout (entries at [j] and [j+half])
-        // while jolt-poly uses interleaved layout ([2j] and [2j+1]). The Metal GPU
-        // shader matches this split-half convention, and downstream reduce/bind
-        // operations depend on it.
+        // Interleaved layout: each expansion maps table[j] → table[2j] and table[2j+1].
+        // This ensures bit 0 of the index always corresponds to the LAST processed
+        // variable, matching the LowToHigh binding convention used by sumcheck.
+        //
+        // The parallel path uses a separate output buffer to avoid the aliasing issue
+        // inherent in in-place interleaved expansion, preserving the same layout as
+        // the serial path. This is critical: a mixed serial/split-half layout would
+        // cause LowToHigh binding to eliminate variables in the wrong order.
         let n = point.len();
         let size = 1usize << n;
         let mut table = Vec::with_capacity(size);
@@ -226,24 +229,26 @@ impl ComputeBackend for CpuBackend {
         for &r_i in point {
             let one_minus_r_i = F::one() - r_i;
             let prev_len = table.len();
-            table.resize(prev_len * 2, F::zero());
 
             #[cfg(feature = "parallel")]
             {
                 if prev_len >= PAR_THRESHOLD {
                     use rayon::prelude::*;
-                    let (left, right) = table.split_at_mut(prev_len);
-                    left.par_iter_mut()
-                        .zip(right.par_iter_mut())
-                        .for_each(|(lo, hi)| {
-                            let base = *lo;
-                            *hi = base * r_i;
-                            *lo = base * one_minus_r_i;
+                    let mut out = vec![F::zero(); prev_len * 2];
+                    let src: &[F] = &table;
+                    out.par_chunks_mut(2)
+                        .enumerate()
+                        .for_each(|(j, pair)| {
+                            let base = src[j];
+                            pair[0] = base * one_minus_r_i;
+                            pair[1] = base * r_i;
                         });
+                    table = out;
                     continue;
                 }
             }
 
+            table.resize(prev_len * 2, F::zero());
             for j in (0..prev_len).rev() {
                 let base = table[j];
                 table[2 * j] = base * one_minus_r_i;

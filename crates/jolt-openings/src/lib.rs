@@ -33,9 +33,7 @@ mod traits;
 pub use claims::{CommittedEval, ProverClaim, VerifierClaim, VirtualEval};
 pub use error::OpeningsError;
 pub use reduction::{rlc_combine, rlc_combine_scalars, OpeningReduction, RlcReduction};
-pub mod transcript;
 
 pub use traits::{
-    AdditivelyHomomorphic, CommitmentScheme, StreamingCommitment, VcSetupExtractable,
-    ZkOpeningScheme,
+    AdditivelyHomomorphic, CommitmentScheme, StreamingCommitment, ZkOpeningScheme,
 };

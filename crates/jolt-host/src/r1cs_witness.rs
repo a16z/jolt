@@ -199,7 +199,7 @@ fn compute_lookup_operands<F: Field>(
 /// Build the full R1CS witness for the entire trace.
 ///
 /// Returns a flat `Vec<F>` of length `trace.len() * num_vars_padded`, suitable for
-/// passing to [`R1csProvider::new`](jolt_r1cs::R1csProvider::new).
+/// passing to [`R1csSource::new`](jolt_r1cs::R1csSource::new).
 pub fn build_r1cs_witness<C: CycleRow, F: Field>(
     trace: &[C],
     bytecode: &BytecodePreprocessing,

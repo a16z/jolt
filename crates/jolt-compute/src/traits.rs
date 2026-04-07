@@ -201,24 +201,19 @@ pub trait ComputeBackend: Send + Sync + 'static {
     fn eq_plus_one_table<F: Field>(&self, point: &[F]) -> (Self::Buffer<F>, Self::Buffer<F>);
 }
 
-/// Provides polynomial buffers to the runtime on demand.
+/// Materializes polynomial data for the prover runtime.
 ///
-/// The prover runtime calls [`load`](BufferProvider::load) when a kernel input
-/// is first needed. The provider uploads host data to the device and returns
-/// a [`DeviceBuffer`]. Implementations are free to cache, compute lazily, or
-/// stream from an external source.
-pub trait BufferProvider<B: ComputeBackend, F: Field> {
-    /// Load polynomial data for `poly_id` onto the device.
-    ///
-    /// Called at most once per poly during execution. After loading, the
-    /// runtime owns the buffer and manages its lifecycle.
-    fn load(&mut self, poly_id: PolynomialId, backend: &B) -> Buf<B, F>;
+/// The runtime calls [`materialize`](BufferProvider::materialize) whenever it
+/// needs polynomial data — for device upload (compute ops) or direct host
+/// access (PCS ops). The provider is backend-agnostic: it returns raw field
+/// data and the runtime decides how to consume it.
+///
+/// Returns [`Cow::Borrowed`] for stored polynomials (zero-copy) and
+/// [`Cow::Owned`] for computed polynomials (R1CS, virtual).
+pub trait BufferProvider<F: Field> {
+    /// Materialize polynomial data for the given ID.
+    fn materialize(&self, poly_id: PolynomialId) -> std::borrow::Cow<'_, [F]>;
 
-    /// Borrow the host-side evaluation table for `poly_id`.
-    ///
-    /// Used by PCS ops that need raw field elements without device upload.
-    fn as_slice(&self, poly_id: PolynomialId) -> &[F];
-
-    /// Release host-side data for `poly_id`, freeing memory.
+    /// Release stored polynomial data to reclaim memory.
     fn release(&mut self, _poly_id: PolynomialId) {}
 }
