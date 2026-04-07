@@ -19,6 +19,7 @@ use crate::{
         commitment::{commitment_scheme::CommitmentScheme, dory::DoryLayout},
         opening_proof::{OpeningId, PolynomialId, SumcheckId},
     },
+    utils::errors::ProofVerifyError,
 };
 use crate::{
     subprotocols::{
@@ -67,7 +68,7 @@ impl<F: JoltField, C: JoltCurve<F = F>, PCS: CommitmentScheme<Field = F>, FS: Tr
 {
     /// Verifies all sumcheck and uniskip proofs use the same ZK variant.
     /// Returns the ZK mode if consistent, or an error if any stage disagrees.
-    pub fn verify_zk_consistency(&self) -> Result<bool, crate::utils::errors::ProofVerifyError> {
+    pub fn verify_zk_consistency(&self) -> Result<bool, ProofVerifyError> {
         let zk_mode = self.stage1_sumcheck_proof.is_zk();
 
         let consistent = self.stage1_uni_skip_first_round_proof.is_zk() == zk_mode
@@ -80,7 +81,7 @@ impl<F: JoltField, C: JoltCurve<F = F>, PCS: CommitmentScheme<Field = F>, FS: Tr
             && self.stage7_sumcheck_proof.is_zk() == zk_mode;
 
         if !consistent {
-            return Err(crate::utils::errors::ProofVerifyError::SumcheckVerificationError);
+            return Err(ProofVerifyError::SumcheckVerificationError);
         }
         Ok(zk_mode)
     }
