@@ -46,7 +46,7 @@ define_instruction!(
         let product = (x as u128) * (y as u128);
         u64::from((product >> 64) == 0)
     },
-    circuit: [Assert],
+    circuit: [MultiplyOperands, Assert],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
 );
 
@@ -54,16 +54,16 @@ define_instruction!(
     /// Virtual ASSERT_WORD_ALIGNMENT: checks value is 4-byte aligned.
     AssertWordAlignment, "ASSERT_WORD_ALIGNMENT",
     |x, _y| u64::from(x.is_multiple_of(4)),
-    circuit: [Assert],
-    instruction: [LeftOperandIsRs1Value],
+    circuit: [AddOperands, Assert],
+    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
 );
 
 define_instruction!(
     /// Virtual ASSERT_HALFWORD_ALIGNMENT: checks value is 2-byte aligned.
     AssertHalfwordAlignment, "ASSERT_HALFWORD_ALIGNMENT",
     |x, _y| u64::from(x.is_multiple_of(2)),
-    circuit: [Assert],
-    instruction: [LeftOperandIsRs1Value],
+    circuit: [AddOperands, Assert],
+    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
 );
 
 #[cfg(test)]

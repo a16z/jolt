@@ -13,7 +13,7 @@ define_instruction!(
     Pow2I, "POW2I",
     |_x, y| 1u64 << (y & 63),
     circuit: [AddOperands, WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
+    instruction: [RightOperandIsImm],
 );
 
 define_instruction!(
@@ -21,7 +21,7 @@ define_instruction!(
     Pow2W, "POW2W",
     |_x, y| 1u64 << (y & 31),
     circuit: [AddOperands, WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
+    instruction: [LeftOperandIsRs1Value],
 );
 
 define_instruction!(
@@ -29,7 +29,7 @@ define_instruction!(
     Pow2IW, "POW2IW",
     |_x, y| 1u64 << (y & 31),
     circuit: [AddOperands, WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
+    instruction: [RightOperandIsImm],
 );
 
 define_instruction!(

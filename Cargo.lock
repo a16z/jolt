@@ -2820,7 +2820,6 @@ dependencies = [
 name = "jolt-riscv"
 version = "0.1.0"
 dependencies = [
- "jolt-field",
  "serde",
 ]
 
