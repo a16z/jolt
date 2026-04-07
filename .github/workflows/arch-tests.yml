@@ -7,6 +7,13 @@ on:
   pull_request:
     branches:
       - "**"
+    paths:
+      - "tracer/**"
+      - "Makefile"
+      - "tests/arch-tests/**"
+      - "third-party/riscv-arch-test/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
 
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -12,8 +12,8 @@ Jolt is a zkVM (zero-knowledge virtual machine) for RISC-V (RV64IMAC) that effic
 
 ```bash
 # CRITICAL: Must pass in BOTH standard and ZK modes
-cargo clippy -p jolt-core --features host --message-format=short -q --all-targets -- -D warnings
-cargo clippy -p jolt-core --features host,zk --message-format=short -q --all-targets -- -D warnings
+cargo clippy --all --features host -q --all-targets -- -D warnings
+cargo clippy --all --features host,zk -q --all-targets -- -D warnings
 cargo fmt -q
 ```
 
@@ -36,7 +36,7 @@ cargo nextest run -p jolt-core muldiv --cargo-quiet --features host,zk
 
 ```bash
 # Prefer clippy over build for validation. Only build when preparing to execute a binary.
-cargo build -p jolt-core --message-format=short -q
+cargo build -p jolt-core -q
 
 # After pulling changes, reinstall the jolt CLI or guest builds may fail.
 cargo install --path . --locked
@@ -218,6 +218,12 @@ Concrete implementations: `OuterRemainingSumcheckParams` (spartan/outer.rs), `Ra
 
 - `cargo fmt` + `cargo clippy` with zero warnings
 - Codebase uses `non_snake_case` convention for math variables: `log_T`, `ram_K`, `log_K`, etc.
+
+### Lint Policy
+
+- Workspace enforces `allow_attributes = "deny"` — use `#[expect(...)]` instead of `#[allow(...)]`
+- `.unwrap()` and `.expect()` are fine in tests. In non-test code, avoid them unless the alternative significantly hurts readability (e.g., infallible fixed-size array conversions). When used, annotate the function with `#[expect(clippy::unwrap_used)]` or `#[expect(clippy::expect_used)]`
+- Use `#[expect(clippy::...)]` on test modules to blanket-suppress test-inappropriate lints rather than per-function annotations
 
 ### Comment Policy
 

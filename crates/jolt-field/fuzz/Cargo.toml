@@ -1,0 +1,35 @@
+[workspace]
+
+[package]
+name = "jolt-field-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+jolt-field = { path = ".." }
+num-traits = "0.2"
+
+[[bin]]
+name = "from_bytes"
+path = "fuzz_targets/from_bytes.rs"
+doc = false
+
+[[bin]]
+name = "field_arith"
+path = "fuzz_targets/field_arith.rs"
+doc = false
+
+[[bin]]
+name = "wide_accumulator_fmadd"
+path = "fuzz_targets/wide_accumulator_fmadd.rs"
+doc = false
+
+[[bin]]
+name = "wide_accumulator_merge"
+path = "fuzz_targets/wide_accumulator_merge.rs"
+doc = false

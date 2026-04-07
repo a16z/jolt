@@ -288,6 +288,7 @@ impl<
     pub fn verify(mut self) -> Result<(), ProofVerifyError> {
         let _pprof_verify = pprof_scope!("verify");
 
+        let preprocessing_digest = self.preprocessing.shared.digest();
         fiat_shamir_preamble(
             &self.program_io,
             self.proof.ram_K,
@@ -296,6 +297,7 @@ impl<
             &self.proof.rw_config,
             &self.proof.one_hot_config,
             self.proof.dory_layout,
+            &preprocessing_digest,
             &mut self.transcript,
         );
 

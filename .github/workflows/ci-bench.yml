@@ -39,7 +39,7 @@ jobs:
         run: rustup component add rust-src
 
       - name: Build and install jolt CLI
-        run: cargo install --path . --locked
+        run: cargo install --path . --locked --force
 
       - name: Run benchmark
         run: |
