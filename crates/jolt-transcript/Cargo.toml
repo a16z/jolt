@@ -1,7 +1,6 @@
 [package]
 name = "jolt-transcript"
 version = "0.1.0"
-authors = ["Jolt Contributors"]
 edition = "2021"
 description = "Fiat-Shamir transcript implementations for Jolt"
 repository = "https://github.com/a16z/jolt"

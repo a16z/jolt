@@ -1,7 +1,6 @@
 [package]
 name = "jolt-profiling"
 version = "0.1.0"
-authors = ["Jolt Contributors"]
 edition = "2021"
 description = "Profiling and tracing infrastructure for the Jolt proving system"
 license = "MIT OR Apache-2.0"
