@@ -18,7 +18,7 @@ fn change_divisor_32(dividend: u64, divisor: u64) -> u64 {
     if dividend as u32 == i32::MIN as u32 && divisor as u32 == u32::MAX {
         1
     } else {
-        divisor
+        divisor as u32 as i32 as i64 as u64
     }
 }
 

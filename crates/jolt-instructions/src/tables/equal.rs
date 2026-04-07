@@ -34,8 +34,8 @@ impl<const XLEN: usize> LookupTable<XLEN> for EqualTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for EqualTable<XLEN> {
-    fn suffixes(&self) -> Vec<Suffixes> {
-        vec![Suffixes::Eq]
+    fn suffixes(&self) -> &'static [Suffixes] {
+        &[Suffixes::Eq]
     }
 
     #[expect(clippy::unwrap_used)]

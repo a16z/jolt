@@ -43,7 +43,7 @@ define_instruction!(
     VirtualXorRotW16, opcodes::VIRTUAL_XORROTW16, "VIRTUAL_XORROTW16",
     |x, y| {
         let val = (x as u32) ^ (y as u32);
-        val.rotate_right(16) as i32 as i64 as u64
+        val.rotate_right(16) as u64
     },
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
@@ -55,7 +55,7 @@ define_instruction!(
     VirtualXorRotW12, opcodes::VIRTUAL_XORROTW12, "VIRTUAL_XORROTW12",
     |x, y| {
         let val = (x as u32) ^ (y as u32);
-        val.rotate_right(12) as i32 as i64 as u64
+        val.rotate_right(12) as u64
     },
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
@@ -67,7 +67,7 @@ define_instruction!(
     VirtualXorRotW8, opcodes::VIRTUAL_XORROTW8, "VIRTUAL_XORROTW8",
     |x, y| {
         let val = (x as u32) ^ (y as u32);
-        val.rotate_right(8) as i32 as i64 as u64
+        val.rotate_right(8) as u64
     },
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
@@ -79,7 +79,7 @@ define_instruction!(
     VirtualXorRotW7, opcodes::VIRTUAL_XORROTW7, "VIRTUAL_XORROTW7",
     |x, y| {
         let val = (x as u32) ^ (y as u32);
-        val.rotate_right(7) as i32 as i64 as u64
+        val.rotate_right(7) as u64
     },
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],

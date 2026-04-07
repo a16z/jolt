@@ -31,8 +31,8 @@ impl<const XLEN: usize> LookupTable<XLEN> for MulUNoOverflowTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for MulUNoOverflowTable<XLEN> {
-    fn suffixes(&self) -> Vec<Suffixes> {
-        vec![Suffixes::OverflowBitsZero]
+    fn suffixes(&self) -> &'static [Suffixes] {
+        &[Suffixes::OverflowBitsZero]
     }
 
     #[expect(clippy::unwrap_used)]

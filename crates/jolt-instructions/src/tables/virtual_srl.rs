@@ -46,8 +46,8 @@ impl<const XLEN: usize> LookupTable<XLEN> for VirtualSRLTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for VirtualSRLTable<XLEN> {
-    fn suffixes(&self) -> Vec<Suffixes> {
-        vec![Suffixes::RightShift, Suffixes::RightShiftHelper]
+    fn suffixes(&self) -> &'static [Suffixes] {
+        &[Suffixes::RightShift, Suffixes::RightShiftHelper]
     }
 
     #[expect(clippy::unwrap_used)]

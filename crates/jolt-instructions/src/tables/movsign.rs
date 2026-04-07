@@ -35,8 +35,8 @@ impl<const XLEN: usize> LookupTable<XLEN> for MovsignTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for MovsignTable<XLEN> {
-    fn suffixes(&self) -> Vec<Suffixes> {
-        vec![Suffixes::One]
+    fn suffixes(&self) -> &'static [Suffixes] {
+        &[Suffixes::One]
     }
 
     #[expect(clippy::unwrap_used)]

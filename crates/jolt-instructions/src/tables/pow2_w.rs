@@ -30,8 +30,8 @@ impl<const XLEN: usize> LookupTable<XLEN> for Pow2WTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for Pow2WTable<XLEN> {
-    fn suffixes(&self) -> Vec<Suffixes> {
-        vec![Suffixes::Pow2W]
+    fn suffixes(&self) -> &'static [Suffixes] {
+        &[Suffixes::Pow2W]
     }
 
     #[expect(clippy::unwrap_used)]

@@ -30,8 +30,8 @@ impl<const XLEN: usize> LookupTable<XLEN> for UpperWordTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for UpperWordTable<XLEN> {
-    fn suffixes(&self) -> Vec<Suffixes> {
-        vec![Suffixes::One, Suffixes::UpperWord]
+    fn suffixes(&self) -> &'static [Suffixes] {
+        &[Suffixes::One, Suffixes::UpperWord]
     }
 
     #[expect(clippy::unwrap_used)]

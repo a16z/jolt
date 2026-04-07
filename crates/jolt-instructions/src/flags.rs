@@ -49,6 +49,8 @@ pub enum CircuitFlags {
 /// Number of circuit flags.
 pub const NUM_CIRCUIT_FLAGS: usize = 14;
 
+const _: () = assert!(CircuitFlags::IsLastInSequence as usize + 1 == NUM_CIRCUIT_FLAGS);
+
 /// Boolean flags that are NOT part of Jolt's R1CS constraints.
 ///
 /// These control witness generation, operand routing, and auxiliary prover logic.
@@ -73,6 +75,8 @@ pub enum InstructionFlags {
 
 /// Number of instruction flags.
 pub const NUM_INSTRUCTION_FLAGS: usize = 7;
+
+const _: () = assert!(InstructionFlags::IsRdNotZero as usize + 1 == NUM_INSTRUCTION_FLAGS);
 
 /// Static flag configuration for an instruction.
 ///

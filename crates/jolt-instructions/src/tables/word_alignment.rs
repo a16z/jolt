@@ -27,8 +27,8 @@ impl<const XLEN: usize> LookupTable<XLEN> for WordAlignmentTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for WordAlignmentTable<XLEN> {
-    fn suffixes(&self) -> Vec<Suffixes> {
-        vec![Suffixes::TwoLsb]
+    fn suffixes(&self) -> &'static [Suffixes] {
+        &[Suffixes::TwoLsb]
     }
 
     #[expect(clippy::unwrap_used)]

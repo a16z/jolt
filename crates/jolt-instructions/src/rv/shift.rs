@@ -1,5 +1,8 @@
 //! RV64I shift instructions operating on full 64-bit values.
 //! Shift amount is masked to 6 bits (0..63) per the RISC-V spec.
+//!
+//! These set `WriteLookupOutputToRD` (architectural rd-write) but have
+//! no lookup table — the VM decomposes them into virtual shift sequences.
 
 use crate::opcodes;
 

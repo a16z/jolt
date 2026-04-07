@@ -83,7 +83,7 @@ define_instruction!(
 define_instruction!(
     /// Virtual ROTRIW: 32-bit rotate right by immediate, sign-extended.
     VirtualRotriw, opcodes::VIRTUAL_ROTRIW, "VIRTUAL_ROTRIW",
-    |x, y| (x as u32).rotate_right((y & 31) as u32) as i32 as i64 as u64,
+    |x, y| (x as u32).rotate_right((y & 31) as u32) as u64,
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
     table: VirtualROTRW,

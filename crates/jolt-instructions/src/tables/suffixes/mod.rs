@@ -153,6 +153,8 @@ pub enum Suffixes {
 /// Total number of suffix variants.
 pub const NUM_SUFFIXES: usize = 43;
 
+const _: () = assert!(Suffixes::XorRotW7 as usize + 1 == NUM_SUFFIXES);
+
 impl Suffixes {
     /// Returns `true` if this suffix's output is guaranteed to be in {0, 1}.
     ///

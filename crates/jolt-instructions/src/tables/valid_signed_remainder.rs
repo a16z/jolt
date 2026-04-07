@@ -98,8 +98,8 @@ impl<const XLEN: usize> LookupTable<XLEN> for ValidSignedRemainderTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for ValidSignedRemainderTable<XLEN> {
-    fn suffixes(&self) -> Vec<Suffixes> {
-        vec![
+    fn suffixes(&self) -> &'static [Suffixes] {
+        &[
             Suffixes::One,
             Suffixes::LessThan,
             Suffixes::GreaterThan,

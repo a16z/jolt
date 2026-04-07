@@ -52,8 +52,8 @@ impl<const XLEN: usize> LookupTable<XLEN> for VirtualRev8WTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for VirtualRev8WTable<XLEN> {
-    fn suffixes(&self) -> Vec<Suffixes> {
-        vec![Suffixes::One, Suffixes::Rev8W]
+    fn suffixes(&self) -> &'static [Suffixes] {
+        &[Suffixes::One, Suffixes::Rev8W]
     }
 
     #[expect(clippy::unwrap_used)]

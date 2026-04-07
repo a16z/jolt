@@ -1,6 +1,9 @@
 //! RV64 W-suffix shift instructions operating on the lower 32 bits
 //! with sign-extension of the result to 64 bits.
 //! Shift amount is masked to 5 bits (0..31).
+//!
+//! These set `WriteLookupOutputToRD` (architectural rd-write) but have
+//! no lookup table — the VM decomposes them into virtual shift sequences.
 
 use crate::opcodes;
 

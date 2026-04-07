@@ -45,8 +45,8 @@ impl<const XLEN: usize> LookupTable<XLEN> for ShiftRightBitmaskTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for ShiftRightBitmaskTable<XLEN> {
-    fn suffixes(&self) -> Vec<Suffixes> {
-        vec![Suffixes::One, Suffixes::Pow2]
+    fn suffixes(&self) -> &'static [Suffixes] {
+        &[Suffixes::One, Suffixes::Pow2]
     }
 
     #[expect(clippy::unwrap_used)]

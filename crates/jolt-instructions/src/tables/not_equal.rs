@@ -28,8 +28,8 @@ impl<const XLEN: usize> LookupTable<XLEN> for NotEqualTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for NotEqualTable<XLEN> {
-    fn suffixes(&self) -> Vec<Suffixes> {
-        vec![Suffixes::One, Suffixes::Eq]
+    fn suffixes(&self) -> &'static [Suffixes] {
+        &[Suffixes::One, Suffixes::Eq]
     }
 
     #[expect(clippy::unwrap_used)]

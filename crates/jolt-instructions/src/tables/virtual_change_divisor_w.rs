@@ -72,8 +72,8 @@ impl<const XLEN: usize> LookupTable<XLEN> for VirtualChangeDivisorWTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for VirtualChangeDivisorWTable<XLEN> {
-    fn suffixes(&self) -> Vec<Suffixes> {
-        vec![
+    fn suffixes(&self) -> &'static [Suffixes] {
+        &[
             Suffixes::One,
             Suffixes::RightOperandW,
             Suffixes::ChangeDivisorW,

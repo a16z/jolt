@@ -1,5 +1,3 @@
-#![allow(unused_results)]
-
 //! Comprehensive lookup table correctness tests.
 //!
 //! Three test tiers per table:

@@ -26,8 +26,8 @@ impl<const XLEN: usize> LookupTable<XLEN> for HalfwordAlignmentTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for HalfwordAlignmentTable<XLEN> {
-    fn suffixes(&self) -> Vec<Suffixes> {
-        vec![Suffixes::One, Suffixes::Lsb]
+    fn suffixes(&self) -> &'static [Suffixes] {
+        &[Suffixes::One, Suffixes::Lsb]
     }
 
     #[expect(clippy::unwrap_used)]

@@ -34,8 +34,8 @@ impl<const XLEN: usize> LookupTable<XLEN> for LowerHalfWordTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for LowerHalfWordTable<XLEN> {
-    fn suffixes(&self) -> Vec<Suffixes> {
-        vec![Suffixes::One, Suffixes::LowerHalfWord]
+    fn suffixes(&self) -> &'static [Suffixes] {
+        &[Suffixes::One, Suffixes::LowerHalfWord]
     }
 
     #[expect(clippy::unwrap_used)]

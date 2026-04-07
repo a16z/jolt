@@ -1,5 +1,8 @@
 //! RV64 W-suffix arithmetic instructions operating on the lower 32 bits
 //! with sign-extension of the result to 64 bits.
+//!
+//! Instructions that set operand-combining flags (`AddOperands`, etc.) but have
+//! no lookup table are decomposed into virtual sequences by the VM.
 
 use crate::opcodes;
 

@@ -61,8 +61,8 @@ impl<const XLEN: usize> LookupTable<XLEN> for VirtualRotrTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for VirtualRotrTable<XLEN> {
-    fn suffixes(&self) -> Vec<Suffixes> {
-        vec![
+    fn suffixes(&self) -> &'static [Suffixes] {
+        &[
             Suffixes::RightShiftHelper,
             Suffixes::RightShift,
             Suffixes::LeftShift,

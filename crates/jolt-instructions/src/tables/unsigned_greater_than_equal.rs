@@ -35,8 +35,8 @@ impl<const XLEN: usize> LookupTable<XLEN> for UnsignedGreaterThanEqualTable<XLEN
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for UnsignedGreaterThanEqualTable<XLEN> {
-    fn suffixes(&self) -> Vec<Suffixes> {
-        vec![Suffixes::One, Suffixes::LessThan]
+    fn suffixes(&self) -> &'static [Suffixes] {
+        &[Suffixes::One, Suffixes::LessThan]
     }
 
     #[expect(clippy::unwrap_used)]

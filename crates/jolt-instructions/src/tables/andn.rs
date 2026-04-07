@@ -34,8 +34,8 @@ impl<const XLEN: usize> LookupTable<XLEN> for AndnTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for AndnTable<XLEN> {
-    fn suffixes(&self) -> Vec<Suffixes> {
-        vec![Suffixes::One, Suffixes::NotAnd]
+    fn suffixes(&self) -> &'static [Suffixes] {
+        &[Suffixes::One, Suffixes::NotAnd]
     }
 
     #[expect(clippy::unwrap_used)]

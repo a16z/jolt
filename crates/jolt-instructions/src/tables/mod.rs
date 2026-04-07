@@ -199,7 +199,7 @@ const _: () = assert!(LookupTableKind::VirtualXORROTW7 as usize + 1 == LookupTab
 /// This enables the sumcheck prover to avoid materializing the entire table.
 pub trait PrefixSuffixDecomposition<const XLEN: usize>: crate::LookupTable<XLEN> + Default {
     /// The suffix types used in this table's decomposition.
-    fn suffixes(&self) -> Vec<Suffixes>;
+    fn suffixes(&self) -> &'static [Suffixes];
 
     /// Recombine evaluated prefix and suffix values into the table's MLE evaluation.
     fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F;
@@ -501,7 +501,7 @@ kind_table_identity! {
 
 impl<const XLEN: usize> LookupTables<XLEN> {
     /// The suffix types used in this table's prefix/suffix decomposition.
-    pub fn suffixes(&self) -> Vec<Suffixes> {
+    pub fn suffixes(&self) -> &'static [Suffixes] {
         dispatch_table!(self, |t| PrefixSuffixDecomposition::<XLEN>::suffixes(&t))
     }
 

@@ -58,6 +58,7 @@ impl LookupBits {
 
     /// Pops and returns the most significant bit, decrementing `len`.
     pub fn pop_msb(&mut self) -> u8 {
+        debug_assert!(!self.is_empty(), "pop_msb on empty LookupBits");
         let mut bits = u128::from_le_bytes(self.bytes);
         let msb = (bits >> (self.len - 1)) & 1;
         bits %= 1 << (self.len - 1);
