@@ -4,6 +4,8 @@
 //! Instructions that set operand-combining flags (`AddOperands`, etc.) but have
 //! no lookup table are decomposed into virtual sequences by the VM.
 
+use crate::{CircuitFlagSet, Flags, Instruction, InstructionFlagSet, InstructionFlags};
+
 define_instruction!(
     /// RV64I ADDW: 32-bit add, sign-extended to 64 bits.
     AddW, "ADDW",
@@ -44,7 +46,7 @@ define_instruction!(
 )]
 pub struct DivW;
 
-impl crate::Instruction for DivW {
+impl Instruction for DivW {
     fn name(&self) -> &'static str {
         "DIVW"
     }
@@ -62,16 +64,16 @@ impl crate::Instruction for DivW {
     }
 }
 
-impl crate::Flags for DivW {
+impl Flags for DivW {
     #[inline]
-    fn circuit_flags(&self) -> crate::CircuitFlagSet {
-        crate::CircuitFlagSet::default()
+    fn circuit_flags(&self) -> CircuitFlagSet {
+        CircuitFlagSet::default()
     }
     #[inline]
-    fn instruction_flags(&self) -> crate::InstructionFlagSet {
-        crate::InstructionFlagSet::default()
-            .set(crate::InstructionFlags::LeftOperandIsRs1Value)
-            .set(crate::InstructionFlags::RightOperandIsRs2Value)
+    fn instruction_flags(&self) -> InstructionFlagSet {
+        InstructionFlagSet::default()
+            .set(InstructionFlags::LeftOperandIsRs1Value)
+            .set(InstructionFlags::RightOperandIsRs2Value)
     }
 }
 
@@ -82,7 +84,7 @@ impl crate::Flags for DivW {
 )]
 pub struct DivUW;
 
-impl crate::Instruction for DivUW {
+impl Instruction for DivUW {
     fn name(&self) -> &'static str {
         "DIVUW"
     }
@@ -98,16 +100,16 @@ impl crate::Instruction for DivUW {
     }
 }
 
-impl crate::Flags for DivUW {
+impl Flags for DivUW {
     #[inline]
-    fn circuit_flags(&self) -> crate::CircuitFlagSet {
-        crate::CircuitFlagSet::default()
+    fn circuit_flags(&self) -> CircuitFlagSet {
+        CircuitFlagSet::default()
     }
     #[inline]
-    fn instruction_flags(&self) -> crate::InstructionFlagSet {
-        crate::InstructionFlagSet::default()
-            .set(crate::InstructionFlags::LeftOperandIsRs1Value)
-            .set(crate::InstructionFlags::RightOperandIsRs2Value)
+    fn instruction_flags(&self) -> InstructionFlagSet {
+        InstructionFlagSet::default()
+            .set(InstructionFlags::LeftOperandIsRs1Value)
+            .set(InstructionFlags::RightOperandIsRs2Value)
     }
 }
 
@@ -118,7 +120,7 @@ impl crate::Flags for DivUW {
 )]
 pub struct RemW;
 
-impl crate::Instruction for RemW {
+impl Instruction for RemW {
     fn name(&self) -> &'static str {
         "REMW"
     }
@@ -136,16 +138,16 @@ impl crate::Instruction for RemW {
     }
 }
 
-impl crate::Flags for RemW {
+impl Flags for RemW {
     #[inline]
-    fn circuit_flags(&self) -> crate::CircuitFlagSet {
-        crate::CircuitFlagSet::default()
+    fn circuit_flags(&self) -> CircuitFlagSet {
+        CircuitFlagSet::default()
     }
     #[inline]
-    fn instruction_flags(&self) -> crate::InstructionFlagSet {
-        crate::InstructionFlagSet::default()
-            .set(crate::InstructionFlags::LeftOperandIsRs1Value)
-            .set(crate::InstructionFlags::RightOperandIsRs2Value)
+    fn instruction_flags(&self) -> InstructionFlagSet {
+        InstructionFlagSet::default()
+            .set(InstructionFlags::LeftOperandIsRs1Value)
+            .set(InstructionFlags::RightOperandIsRs2Value)
     }
 }
 
@@ -156,7 +158,7 @@ impl crate::Flags for RemW {
 )]
 pub struct RemUW;
 
-impl crate::Instruction for RemUW {
+impl Instruction for RemUW {
     fn name(&self) -> &'static str {
         "REMUW"
     }
@@ -172,23 +174,22 @@ impl crate::Instruction for RemUW {
     }
 }
 
-impl crate::Flags for RemUW {
+impl Flags for RemUW {
     #[inline]
-    fn circuit_flags(&self) -> crate::CircuitFlagSet {
-        crate::CircuitFlagSet::default()
+    fn circuit_flags(&self) -> CircuitFlagSet {
+        CircuitFlagSet::default()
     }
     #[inline]
-    fn instruction_flags(&self) -> crate::InstructionFlagSet {
-        crate::InstructionFlagSet::default()
-            .set(crate::InstructionFlags::LeftOperandIsRs1Value)
-            .set(crate::InstructionFlags::RightOperandIsRs2Value)
+    fn instruction_flags(&self) -> InstructionFlagSet {
+        InstructionFlagSet::default()
+            .set(InstructionFlags::LeftOperandIsRs1Value)
+            .set(InstructionFlags::RightOperandIsRs2Value)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Instruction;
 
     #[test]
     fn addw_sign_extends() {

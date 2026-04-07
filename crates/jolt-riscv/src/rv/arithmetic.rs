@@ -1,6 +1,10 @@
 //! RV64I/M arithmetic instructions: ADD, SUB, LUI, AUIPC, and
 //! the M-extension multiply/divide family.
 
+use crate::{
+    CircuitFlagSet, CircuitFlags, Flags, Instruction, InstructionFlagSet, InstructionFlags,
+};
+
 define_instruction!(
     /// RV64I ADD: `rd = rs1 + rs2` (wrapping).
     Add, "ADD",
@@ -55,7 +59,7 @@ define_instruction!(
 )]
 pub struct MulH;
 
-impl crate::Instruction for MulH {
+impl Instruction for MulH {
     fn name(&self) -> &'static str {
         "MULH"
     }
@@ -66,16 +70,16 @@ impl crate::Instruction for MulH {
     }
 }
 
-impl crate::Flags for MulH {
+impl Flags for MulH {
     #[inline]
-    fn circuit_flags(&self) -> crate::CircuitFlagSet {
-        crate::CircuitFlagSet::default()
+    fn circuit_flags(&self) -> CircuitFlagSet {
+        CircuitFlagSet::default()
     }
     #[inline]
-    fn instruction_flags(&self) -> crate::InstructionFlagSet {
-        crate::InstructionFlagSet::default()
-            .set(crate::InstructionFlags::LeftOperandIsRs1Value)
-            .set(crate::InstructionFlags::RightOperandIsRs2Value)
+    fn instruction_flags(&self) -> InstructionFlagSet {
+        InstructionFlagSet::default()
+            .set(InstructionFlags::LeftOperandIsRs1Value)
+            .set(InstructionFlags::RightOperandIsRs2Value)
     }
 }
 
@@ -85,7 +89,7 @@ impl crate::Flags for MulH {
 )]
 pub struct MulHSU;
 
-impl crate::Instruction for MulHSU {
+impl Instruction for MulHSU {
     fn name(&self) -> &'static str {
         "MULHSU"
     }
@@ -96,16 +100,16 @@ impl crate::Instruction for MulHSU {
     }
 }
 
-impl crate::Flags for MulHSU {
+impl Flags for MulHSU {
     #[inline]
-    fn circuit_flags(&self) -> crate::CircuitFlagSet {
-        crate::CircuitFlagSet::default()
+    fn circuit_flags(&self) -> CircuitFlagSet {
+        CircuitFlagSet::default()
     }
     #[inline]
-    fn instruction_flags(&self) -> crate::InstructionFlagSet {
-        crate::InstructionFlagSet::default()
-            .set(crate::InstructionFlags::LeftOperandIsRs1Value)
-            .set(crate::InstructionFlags::RightOperandIsRs2Value)
+    fn instruction_flags(&self) -> InstructionFlagSet {
+        InstructionFlagSet::default()
+            .set(InstructionFlags::LeftOperandIsRs1Value)
+            .set(InstructionFlags::RightOperandIsRs2Value)
     }
 }
 
@@ -115,7 +119,7 @@ impl crate::Flags for MulHSU {
 )]
 pub struct MulHU;
 
-impl crate::Instruction for MulHU {
+impl Instruction for MulHU {
     fn name(&self) -> &'static str {
         "MULHU"
     }
@@ -126,18 +130,18 @@ impl crate::Instruction for MulHU {
     }
 }
 
-impl crate::Flags for MulHU {
+impl Flags for MulHU {
     #[inline]
-    fn circuit_flags(&self) -> crate::CircuitFlagSet {
-        crate::CircuitFlagSet::default()
-            .set(crate::CircuitFlags::MultiplyOperands)
-            .set(crate::CircuitFlags::WriteLookupOutputToRD)
+    fn circuit_flags(&self) -> CircuitFlagSet {
+        CircuitFlagSet::default()
+            .set(CircuitFlags::MultiplyOperands)
+            .set(CircuitFlags::WriteLookupOutputToRD)
     }
     #[inline]
-    fn instruction_flags(&self) -> crate::InstructionFlagSet {
-        crate::InstructionFlagSet::default()
-            .set(crate::InstructionFlags::LeftOperandIsRs1Value)
-            .set(crate::InstructionFlags::RightOperandIsRs2Value)
+    fn instruction_flags(&self) -> InstructionFlagSet {
+        InstructionFlagSet::default()
+            .set(InstructionFlags::LeftOperandIsRs1Value)
+            .set(InstructionFlags::RightOperandIsRs2Value)
     }
 }
 
@@ -151,7 +155,7 @@ impl crate::Flags for MulHU {
 )]
 pub struct Div;
 
-impl crate::Instruction for Div {
+impl Instruction for Div {
     fn name(&self) -> &'static str {
         "DIV"
     }
@@ -169,16 +173,16 @@ impl crate::Instruction for Div {
     }
 }
 
-impl crate::Flags for Div {
+impl Flags for Div {
     #[inline]
-    fn circuit_flags(&self) -> crate::CircuitFlagSet {
-        crate::CircuitFlagSet::default()
+    fn circuit_flags(&self) -> CircuitFlagSet {
+        CircuitFlagSet::default()
     }
     #[inline]
-    fn instruction_flags(&self) -> crate::InstructionFlagSet {
-        crate::InstructionFlagSet::default()
-            .set(crate::InstructionFlags::LeftOperandIsRs1Value)
-            .set(crate::InstructionFlags::RightOperandIsRs2Value)
+    fn instruction_flags(&self) -> InstructionFlagSet {
+        InstructionFlagSet::default()
+            .set(InstructionFlags::LeftOperandIsRs1Value)
+            .set(InstructionFlags::RightOperandIsRs2Value)
     }
 }
 
@@ -188,7 +192,7 @@ impl crate::Flags for Div {
 )]
 pub struct DivU;
 
-impl crate::Instruction for DivU {
+impl Instruction for DivU {
     fn name(&self) -> &'static str {
         "DIVU"
     }
@@ -202,16 +206,16 @@ impl crate::Instruction for DivU {
     }
 }
 
-impl crate::Flags for DivU {
+impl Flags for DivU {
     #[inline]
-    fn circuit_flags(&self) -> crate::CircuitFlagSet {
-        crate::CircuitFlagSet::default()
+    fn circuit_flags(&self) -> CircuitFlagSet {
+        CircuitFlagSet::default()
     }
     #[inline]
-    fn instruction_flags(&self) -> crate::InstructionFlagSet {
-        crate::InstructionFlagSet::default()
-            .set(crate::InstructionFlags::LeftOperandIsRs1Value)
-            .set(crate::InstructionFlags::RightOperandIsRs2Value)
+    fn instruction_flags(&self) -> InstructionFlagSet {
+        InstructionFlagSet::default()
+            .set(InstructionFlags::LeftOperandIsRs1Value)
+            .set(InstructionFlags::RightOperandIsRs2Value)
     }
 }
 
@@ -222,7 +226,7 @@ impl crate::Flags for DivU {
 )]
 pub struct Rem;
 
-impl crate::Instruction for Rem {
+impl Instruction for Rem {
     fn name(&self) -> &'static str {
         "REM"
     }
@@ -240,16 +244,16 @@ impl crate::Instruction for Rem {
     }
 }
 
-impl crate::Flags for Rem {
+impl Flags for Rem {
     #[inline]
-    fn circuit_flags(&self) -> crate::CircuitFlagSet {
-        crate::CircuitFlagSet::default()
+    fn circuit_flags(&self) -> CircuitFlagSet {
+        CircuitFlagSet::default()
     }
     #[inline]
-    fn instruction_flags(&self) -> crate::InstructionFlagSet {
-        crate::InstructionFlagSet::default()
-            .set(crate::InstructionFlags::LeftOperandIsRs1Value)
-            .set(crate::InstructionFlags::RightOperandIsRs2Value)
+    fn instruction_flags(&self) -> InstructionFlagSet {
+        InstructionFlagSet::default()
+            .set(InstructionFlags::LeftOperandIsRs1Value)
+            .set(InstructionFlags::RightOperandIsRs2Value)
     }
 }
 
@@ -259,7 +263,7 @@ impl crate::Flags for Rem {
 )]
 pub struct RemU;
 
-impl crate::Instruction for RemU {
+impl Instruction for RemU {
     fn name(&self) -> &'static str {
         "REMU"
     }
@@ -273,23 +277,22 @@ impl crate::Instruction for RemU {
     }
 }
 
-impl crate::Flags for RemU {
+impl Flags for RemU {
     #[inline]
-    fn circuit_flags(&self) -> crate::CircuitFlagSet {
-        crate::CircuitFlagSet::default()
+    fn circuit_flags(&self) -> CircuitFlagSet {
+        CircuitFlagSet::default()
     }
     #[inline]
-    fn instruction_flags(&self) -> crate::InstructionFlagSet {
-        crate::InstructionFlagSet::default()
-            .set(crate::InstructionFlags::LeftOperandIsRs1Value)
-            .set(crate::InstructionFlags::RightOperandIsRs2Value)
+    fn instruction_flags(&self) -> InstructionFlagSet {
+        InstructionFlagSet::default()
+            .set(InstructionFlags::LeftOperandIsRs1Value)
+            .set(InstructionFlags::RightOperandIsRs2Value)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Instruction;
 
     #[test]
     fn add_basic() {
