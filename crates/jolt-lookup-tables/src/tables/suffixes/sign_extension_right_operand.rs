@@ -1,9 +1,10 @@
 use super::SparseDenseSuffix;
 use crate::lookup_bits::LookupBits;
+use crate::XLEN;
 
-pub enum SignExtensionRightOperandSuffix<const XLEN: usize> {}
+pub enum SignExtensionRightOperandSuffix {}
 
-impl<const XLEN: usize> SparseDenseSuffix for SignExtensionRightOperandSuffix<XLEN> {
+impl SparseDenseSuffix for SignExtensionRightOperandSuffix {
     fn suffix_mle(b: LookupBits) -> u64 {
         if b.len() >= XLEN {
             let bits = u128::from(b);

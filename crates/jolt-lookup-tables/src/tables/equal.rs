@@ -9,9 +9,9 @@ use crate::traits::LookupTable;
 use crate::uninterleave_bits;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct EqualTable<const XLEN: usize>;
+pub struct EqualTable;
 
-impl<const XLEN: usize> LookupTable<XLEN> for EqualTable<XLEN> {
+impl LookupTable for EqualTable {
     fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
         (x == y).into()
@@ -33,7 +33,7 @@ impl<const XLEN: usize> LookupTable<XLEN> for EqualTable<XLEN> {
     }
 }
 
-impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for EqualTable<XLEN> {
+impl PrefixSuffixDecomposition for EqualTable {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::Eq]
     }
@@ -43,5 +43,22 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for EqualTable<XLEN> {
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
         let [eq] = suffixes.try_into().unwrap();
         prefixes[Prefixes::Eq] * eq
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use jolt_field::Fr;
+
+    #[test]
+    fn mle_random() {
+        mle_random_test::<Fr, EqualTable>();
+    }
+
+    #[test]
+    fn prefix_suffix() {
+        prefix_suffix_test::<Fr, EqualTable>();
     }
 }

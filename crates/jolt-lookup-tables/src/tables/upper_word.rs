@@ -6,11 +6,12 @@ use crate::tables::prefixes::{PrefixEval, Prefixes};
 use crate::tables::suffixes::{SuffixEval, Suffixes};
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
+use crate::XLEN;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct UpperWordTable<const XLEN: usize>;
+pub struct UpperWordTable;
 
-impl<const XLEN: usize> LookupTable<XLEN> for UpperWordTable<XLEN> {
+impl LookupTable for UpperWordTable {
     fn materialize_entry(&self, index: u128) -> u64 {
         (index >> XLEN) as u64
     }
@@ -29,7 +30,7 @@ impl<const XLEN: usize> LookupTable<XLEN> for UpperWordTable<XLEN> {
     }
 }
 
-impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for UpperWordTable<XLEN> {
+impl PrefixSuffixDecomposition for UpperWordTable {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::One, Suffixes::UpperWord]
     }
@@ -38,5 +39,22 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for UpperWordTable<XLEN>
     fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         let [one, upper_word] = suffixes.try_into().unwrap();
         prefixes[Prefixes::UpperWord] * one + upper_word
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use jolt_field::Fr;
+
+    #[test]
+    fn mle_random() {
+        mle_random_test::<Fr, UpperWordTable>();
+    }
+
+    #[test]
+    fn prefix_suffix() {
+        prefix_suffix_test::<Fr, UpperWordTable>();
     }
 }

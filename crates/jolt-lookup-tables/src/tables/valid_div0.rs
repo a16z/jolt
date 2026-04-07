@@ -7,23 +7,17 @@ use crate::tables::suffixes::{SuffixEval, Suffixes};
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
 use crate::uninterleave_bits;
+use crate::XLEN;
 
 /// (divisor, quotient)
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct ValidDiv0Table<const XLEN: usize>;
+pub struct ValidDiv0Table;
 
-impl<const XLEN: usize> LookupTable<XLEN> for ValidDiv0Table<XLEN> {
-    #[expect(clippy::panic)]
+impl LookupTable for ValidDiv0Table {
     fn materialize_entry(&self, index: u128) -> u64 {
         let (divisor, quotient) = uninterleave_bits(index);
         if divisor == 0 {
-            match XLEN {
-                #[cfg(test)]
-                8 => (quotient == u8::MAX as u64).into(),
-                32 => (quotient == u32::MAX as u64).into(),
-                64 => (quotient == u64::MAX).into(),
-                _ => panic!("{XLEN}-bit word size is unsupported"),
-            }
+            (quotient == u64::MAX).into()
         } else {
             1
         }
@@ -48,7 +42,7 @@ impl<const XLEN: usize> LookupTable<XLEN> for ValidDiv0Table<XLEN> {
     }
 }
 
-impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for ValidDiv0Table<XLEN> {
+impl PrefixSuffixDecomposition for ValidDiv0Table {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[
             Suffixes::One,
@@ -63,5 +57,22 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for ValidDiv0Table<XLEN>
         let [one, left_operand_is_zero, div_by_zero] = suffixes.try_into().unwrap();
         one - prefixes[Prefixes::LeftOperandIsZero] * left_operand_is_zero
             + prefixes[Prefixes::DivByZero] * div_by_zero
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use jolt_field::Fr;
+
+    #[test]
+    fn mle_random() {
+        mle_random_test::<Fr, ValidDiv0Table>();
+    }
+
+    #[test]
+    fn prefix_suffix() {
+        prefix_suffix_test::<Fr, ValidDiv0Table>();
     }
 }

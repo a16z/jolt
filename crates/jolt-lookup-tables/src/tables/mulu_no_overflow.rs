@@ -6,11 +6,12 @@ use crate::tables::prefixes::{PrefixEval, Prefixes};
 use crate::tables::suffixes::{SuffixEval, Suffixes};
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
+use crate::XLEN;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct MulUNoOverflowTable<const XLEN: usize>;
+pub struct MulUNoOverflowTable;
 
-impl<const XLEN: usize> LookupTable<XLEN> for MulUNoOverflowTable<XLEN> {
+impl LookupTable for MulUNoOverflowTable {
     fn materialize_entry(&self, index: u128) -> u64 {
         let upper_bits = index >> XLEN;
         (upper_bits == 0) as u64
@@ -30,7 +31,7 @@ impl<const XLEN: usize> LookupTable<XLEN> for MulUNoOverflowTable<XLEN> {
     }
 }
 
-impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for MulUNoOverflowTable<XLEN> {
+impl PrefixSuffixDecomposition for MulUNoOverflowTable {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::OverflowBitsZero]
     }
@@ -40,5 +41,22 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for MulUNoOverflowTable<
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
         let [overflow_bits_zero] = suffixes.try_into().unwrap();
         prefixes[Prefixes::OverflowBitsZero] * overflow_bits_zero
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use jolt_field::Fr;
+
+    #[test]
+    fn mle_random() {
+        mle_random_test::<Fr, MulUNoOverflowTable>();
+    }
+
+    #[test]
+    fn prefix_suffix() {
+        prefix_suffix_test::<Fr, MulUNoOverflowTable>();
     }
 }

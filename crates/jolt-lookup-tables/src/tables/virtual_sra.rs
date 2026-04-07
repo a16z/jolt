@@ -8,11 +8,12 @@ use crate::tables::suffixes::{SuffixEval, Suffixes};
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
 use crate::uninterleave_bits;
+use crate::XLEN;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct VirtualSRATable<const XLEN: usize>;
+pub struct VirtualSRATable;
 
-impl<const XLEN: usize> LookupTable<XLEN> for VirtualSRATable<XLEN> {
+impl LookupTable for VirtualSRATable {
     fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
         let mut x = LookupBits::new(x as u128, XLEN);
@@ -54,7 +55,7 @@ impl<const XLEN: usize> LookupTable<XLEN> for VirtualSRATable<XLEN> {
     }
 }
 
-impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for VirtualSRATable<XLEN> {
+impl PrefixSuffixDecomposition for VirtualSRATable {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[
             Suffixes::One,
@@ -76,6 +77,23 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for VirtualSRATable<XLEN
 
     #[cfg(test)]
     fn random_lookup_index(rng: &mut rand::rngs::StdRng) -> u128 {
-        crate::tables::test_utils::gen_bitmask_lookup_index::<XLEN>(rng)
+        crate::tables::test_utils::gen_bitmask_lookup_index(rng)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use jolt_field::Fr;
+
+    #[test]
+    fn mle_random() {
+        mle_random_test::<Fr, VirtualSRATable>();
+    }
+
+    #[test]
+    fn prefix_suffix() {
+        prefix_suffix_test::<Fr, VirtualSRATable>();
     }
 }

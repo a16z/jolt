@@ -1,9 +1,10 @@
 use super::SparseDenseSuffix;
 use crate::lookup_bits::LookupBits;
+use crate::XLEN;
 
-pub enum SignExtensionSuffix<const XLEN: usize> {}
+pub enum SignExtensionSuffix {}
 
-impl<const XLEN: usize> SparseDenseSuffix for SignExtensionSuffix<XLEN> {
+impl SparseDenseSuffix for SignExtensionSuffix {
     fn suffix_mle(b: LookupBits) -> u64 {
         let (_, y) = b.uninterleave();
         let padding_len = std::cmp::min(u64::from(y).trailing_zeros() as usize, y.len());

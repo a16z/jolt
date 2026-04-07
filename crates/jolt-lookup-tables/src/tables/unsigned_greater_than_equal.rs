@@ -10,19 +10,12 @@ use crate::traits::LookupTable;
 use crate::uninterleave_bits;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct UnsignedGreaterThanEqualTable<const XLEN: usize>;
+pub struct UnsignedGreaterThanEqualTable;
 
-impl<const XLEN: usize> LookupTable<XLEN> for UnsignedGreaterThanEqualTable<XLEN> {
-    #[expect(clippy::panic)]
+impl LookupTable for UnsignedGreaterThanEqualTable {
     fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
-        match XLEN {
-            #[cfg(test)]
-            8 => (x >= y).into(),
-            32 => (x >= y).into(),
-            64 => (x >= y).into(),
-            _ => panic!("{XLEN}-bit word size is unsupported"),
-        }
+        (x >= y).into()
     }
 
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
@@ -30,11 +23,11 @@ impl<const XLEN: usize> LookupTable<XLEN> for UnsignedGreaterThanEqualTable<XLEN
         C: ChallengeOps<F>,
         F: Field + FieldOps<C>,
     {
-        F::one() - UnsignedLessThanTable::<XLEN>.evaluate_mle::<F, C>(r)
+        F::one() - UnsignedLessThanTable.evaluate_mle::<F, C>(r)
     }
 }
 
-impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for UnsignedGreaterThanEqualTable<XLEN> {
+impl PrefixSuffixDecomposition for UnsignedGreaterThanEqualTable {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::One, Suffixes::LessThan]
     }
@@ -45,5 +38,22 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for UnsignedGreaterThanE
         let [one, less_than] = suffixes.try_into().unwrap();
         // 1 - LTU(x, y)
         one - prefixes[Prefixes::LessThan] * one - prefixes[Prefixes::Eq] * less_than
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use jolt_field::Fr;
+
+    #[test]
+    fn mle_random() {
+        mle_random_test::<Fr, UnsignedGreaterThanEqualTable>();
+    }
+
+    #[test]
+    fn prefix_suffix() {
+        prefix_suffix_test::<Fr, UnsignedGreaterThanEqualTable>();
     }
 }

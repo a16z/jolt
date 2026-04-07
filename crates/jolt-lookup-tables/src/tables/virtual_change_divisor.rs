@@ -7,44 +7,20 @@ use crate::tables::suffixes::{SuffixEval, Suffixes};
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
 use crate::uninterleave_bits;
+use crate::XLEN;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct VirtualChangeDivisorTable<const XLEN: usize>;
+pub struct VirtualChangeDivisorTable;
 
-impl<const XLEN: usize> LookupTable<XLEN> for VirtualChangeDivisorTable<XLEN> {
+impl LookupTable for VirtualChangeDivisorTable {
     fn materialize_entry(&self, index: u128) -> u64 {
         let (dividend, divisor) = uninterleave_bits(index);
-
-        match XLEN {
-            #[cfg(test)]
-            8 => {
-                let dividend = dividend as i8;
-                let divisor = divisor as i8;
-                if dividend == i8::MIN && divisor == -1 {
-                    1
-                } else {
-                    divisor as u8 as u64
-                }
-            }
-            32 => {
-                let dividend = dividend as i32;
-                let divisor = divisor as i32;
-                if dividend == i32::MIN && divisor == -1 {
-                    1
-                } else {
-                    divisor as u32 as u64
-                }
-            }
-            64 => {
-                let dividend = dividend as i64;
-                let divisor = divisor as i64;
-                if dividend == i64::MIN && divisor == -1 {
-                    1
-                } else {
-                    divisor as u64
-                }
-            }
-            _ => unreachable!("{XLEN}-bit word size is unsupported"),
+        let dividend = dividend as i64;
+        let divisor = divisor as i64;
+        if dividend == i64::MIN && divisor == -1 {
+            1
+        } else {
+            divisor as u64
         }
     }
 
@@ -78,7 +54,7 @@ impl<const XLEN: usize> LookupTable<XLEN> for VirtualChangeDivisorTable<XLEN> {
     }
 }
 
-impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for VirtualChangeDivisorTable<XLEN> {
+impl PrefixSuffixDecomposition for VirtualChangeDivisorTable {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[
             Suffixes::One,
@@ -95,5 +71,22 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for VirtualChangeDivisor
         prefixes[Prefixes::RightOperand] * one
             + right_operand
             + prefixes[Prefixes::ChangeDivisor] * change_divisor
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use jolt_field::Fr;
+
+    #[test]
+    fn mle_random() {
+        mle_random_test::<Fr, VirtualChangeDivisorTable>();
+    }
+
+    #[test]
+    fn prefix_suffix() {
+        prefix_suffix_test::<Fr, VirtualChangeDivisorTable>();
     }
 }

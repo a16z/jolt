@@ -1,9 +1,10 @@
 use super::SparseDenseSuffix;
 use crate::lookup_bits::LookupBits;
+use crate::XLEN;
 
-pub enum ChangeDivisorWSuffix<const XLEN: usize> {}
+pub enum ChangeDivisorWSuffix {}
 
-impl<const XLEN: usize> SparseDenseSuffix for ChangeDivisorWSuffix<XLEN> {
+impl SparseDenseSuffix for ChangeDivisorWSuffix {
     fn suffix_mle(b: LookupBits) -> u64 {
         let (x, y) = b.uninterleave();
         let y_len = y.len().min(XLEN / 2);

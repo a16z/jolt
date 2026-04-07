@@ -6,11 +6,12 @@ use crate::tables::prefixes::{PrefixEval, Prefixes};
 use crate::tables::suffixes::{SuffixEval, Suffixes};
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
+use crate::XLEN;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct RangeCheckAlignedTable<const XLEN: usize>;
+pub struct RangeCheckAlignedTable;
 
-impl<const XLEN: usize> LookupTable<XLEN> for RangeCheckAlignedTable<XLEN> {
+impl LookupTable for RangeCheckAlignedTable {
     fn materialize_entry(&self, index: u128) -> u64 {
         if XLEN == 64 {
             (index as u64) & !1
@@ -35,7 +36,7 @@ impl<const XLEN: usize> LookupTable<XLEN> for RangeCheckAlignedTable<XLEN> {
     }
 }
 
-impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for RangeCheckAlignedTable<XLEN> {
+impl PrefixSuffixDecomposition for RangeCheckAlignedTable {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::One, Suffixes::LowerWord, Suffixes::Lsb]
     }
@@ -46,5 +47,22 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for RangeCheckAlignedTab
         let lower_word_contribution = prefixes[Prefixes::LowerWord] * one + lower_word;
         let lsb_contribution = prefixes[Prefixes::Lsb] * lsb;
         lower_word_contribution - lsb_contribution
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use jolt_field::Fr;
+
+    #[test]
+    fn mle_random() {
+        mle_random_test::<Fr, RangeCheckAlignedTable>();
+    }
+
+    #[test]
+    fn prefix_suffix() {
+        prefix_suffix_test::<Fr, RangeCheckAlignedTable>();
     }
 }

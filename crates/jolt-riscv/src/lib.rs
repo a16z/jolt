@@ -19,5 +19,5 @@ pub use traits::Instruction;
 pub use jolt_lookup_tables::tables;
 pub use jolt_lookup_tables::{
     interleave_bits, uninterleave_bits, ChallengeOps, FieldOps, LookupBits, LookupTable,
-    LookupTableKind, LookupTables, PrefixSuffixDecomposition, ALL_PREFIXES,
+    LookupTableKind, PrefixSuffixDecomposition, ALL_PREFIXES, XLEN,
 };

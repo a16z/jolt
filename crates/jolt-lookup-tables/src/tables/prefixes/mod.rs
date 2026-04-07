@@ -240,14 +240,14 @@ pub const ALL_PREFIXES: [Prefixes; NUM_PREFIXES] = [
 macro_rules! dispatch_prefix {
     ($self:expr, $method:ident, $($args:expr),* $(,)?) => {
         match $self {
-            Prefixes::LowerWord => lower_word::LowerWordPrefix::<XLEN>::$method($($args),*),
-            Prefixes::LowerHalfWord => lower_half_word::LowerHalfWordPrefix::<XLEN>::$method($($args),*),
-            Prefixes::UpperWord => upper_word::UpperWordPrefix::<XLEN>::$method($($args),*),
+            Prefixes::LowerWord => lower_word::LowerWordPrefix::$method($($args),*),
+            Prefixes::LowerHalfWord => lower_half_word::LowerHalfWordPrefix::$method($($args),*),
+            Prefixes::UpperWord => upper_word::UpperWordPrefix::$method($($args),*),
             Prefixes::Eq => eq::EqPrefix::$method($($args),*),
-            Prefixes::And => and::AndPrefix::<XLEN>::$method($($args),*),
-            Prefixes::Andn => andn::AndnPrefix::<XLEN>::$method($($args),*),
-            Prefixes::Or => or::OrPrefix::<XLEN>::$method($($args),*),
-            Prefixes::Xor => xor::XorPrefix::<XLEN>::$method($($args),*),
+            Prefixes::And => and::AndPrefix::$method($($args),*),
+            Prefixes::Andn => andn::AndnPrefix::$method($($args),*),
+            Prefixes::Or => or::OrPrefix::$method($($args),*),
+            Prefixes::Xor => xor::XorPrefix::$method($($args),*),
             Prefixes::LessThan => lt::LessThanPrefix::$method($($args),*),
             Prefixes::LeftOperandIsZero => left_is_zero::LeftOperandIsZeroPrefix::$method($($args),*),
             Prefixes::RightOperandIsZero => right_is_zero::RightOperandIsZeroPrefix::$method($($args),*),
@@ -259,40 +259,40 @@ macro_rules! dispatch_prefix {
             Prefixes::NegativeDivisorZeroRemainder => negative_divisor_zero_remainder::NegativeDivisorZeroRemainderPrefix::$method($($args),*),
             Prefixes::NegativeDivisorEqualsRemainder => negative_divisor_equals_remainder::NegativeDivisorEqualsRemainderPrefix::$method($($args),*),
             Prefixes::NegativeDivisorGreaterThanRemainder => negative_divisor_greater_than_remainder::NegativeDivisorGreaterThanRemainderPrefix::$method($($args),*),
-            Prefixes::Lsb => lsb::LsbPrefix::<XLEN>::$method($($args),*),
-            Prefixes::Pow2 => pow2::Pow2Prefix::<XLEN>::$method($($args),*),
-            Prefixes::Pow2W => pow2_w::Pow2WPrefix::<XLEN>::$method($($args),*),
+            Prefixes::Lsb => lsb::LsbPrefix::$method($($args),*),
+            Prefixes::Pow2 => pow2::Pow2Prefix::$method($($args),*),
+            Prefixes::Pow2W => pow2_w::Pow2WPrefix::$method($($args),*),
             Prefixes::Rev8W => rev8w::Rev8WPrefix::$method($($args),*),
             Prefixes::RightShift => right_shift::RightShiftPrefix::$method($($args),*),
-            Prefixes::SignExtension => sign_extension::SignExtensionPrefix::<XLEN>::$method($($args),*),
-            Prefixes::LeftShift => left_shift::LeftShiftPrefix::<XLEN>::$method($($args),*),
+            Prefixes::SignExtension => sign_extension::SignExtensionPrefix::$method($($args),*),
+            Prefixes::LeftShift => left_shift::LeftShiftPrefix::$method($($args),*),
             Prefixes::LeftShiftHelper => left_shift_helper::LeftShiftHelperPrefix::$method($($args),*),
-            Prefixes::TwoLsb => two_lsb::TwoLsbPrefix::<XLEN>::$method($($args),*),
-            Prefixes::SignExtensionUpperHalf => sign_extension_upper_half::SignExtensionUpperHalfPrefix::<XLEN>::$method($($args),*),
-            Prefixes::ChangeDivisor => change_divisor::ChangeDivisorPrefix::<XLEN>::$method($($args),*),
-            Prefixes::ChangeDivisorW => change_divisor_w::ChangeDivisorWPrefix::<XLEN>::$method($($args),*),
-            Prefixes::RightOperand => right_operand::RightOperandPrefix::<XLEN>::$method($($args),*),
-            Prefixes::RightOperandW => right_operand_w::RightOperandWPrefix::<XLEN>::$method($($args),*),
-            Prefixes::SignExtensionRightOperand => sign_extension_right_operand::SignExtensionRightOperandPrefix::<XLEN>::$method($($args),*),
-            Prefixes::RightShiftW => right_shift_w::RightShiftWPrefix::<XLEN>::$method($($args),*),
-            Prefixes::LeftShiftWHelper => left_shift_w_helper::LeftShiftWHelperPrefix::<XLEN>::$method($($args),*),
-            Prefixes::LeftShiftW => left_shift_w::LeftShiftWPrefix::<XLEN>::$method($($args),*),
-            Prefixes::OverflowBitsZero => overflow_bits_zero::OverflowBitsZeroPrefix::<XLEN>::$method($($args),*),
-            Prefixes::XorRot16 => xor_rot::XorRotPrefix::<XLEN, 16>::$method($($args),*),
-            Prefixes::XorRot24 => xor_rot::XorRotPrefix::<XLEN, 24>::$method($($args),*),
-            Prefixes::XorRot32 => xor_rot::XorRotPrefix::<XLEN, 32>::$method($($args),*),
-            Prefixes::XorRot63 => xor_rot::XorRotPrefix::<XLEN, 63>::$method($($args),*),
-            Prefixes::XorRotW7 => xor_rotw::XorRotWPrefix::<XLEN, 7>::$method($($args),*),
-            Prefixes::XorRotW8 => xor_rotw::XorRotWPrefix::<XLEN, 8>::$method($($args),*),
-            Prefixes::XorRotW12 => xor_rotw::XorRotWPrefix::<XLEN, 12>::$method($($args),*),
-            Prefixes::XorRotW16 => xor_rotw::XorRotWPrefix::<XLEN, 16>::$method($($args),*),
+            Prefixes::TwoLsb => two_lsb::TwoLsbPrefix::$method($($args),*),
+            Prefixes::SignExtensionUpperHalf => sign_extension_upper_half::SignExtensionUpperHalfPrefix::$method($($args),*),
+            Prefixes::ChangeDivisor => change_divisor::ChangeDivisorPrefix::$method($($args),*),
+            Prefixes::ChangeDivisorW => change_divisor_w::ChangeDivisorWPrefix::$method($($args),*),
+            Prefixes::RightOperand => right_operand::RightOperandPrefix::$method($($args),*),
+            Prefixes::RightOperandW => right_operand_w::RightOperandWPrefix::$method($($args),*),
+            Prefixes::SignExtensionRightOperand => sign_extension_right_operand::SignExtensionRightOperandPrefix::$method($($args),*),
+            Prefixes::RightShiftW => right_shift_w::RightShiftWPrefix::$method($($args),*),
+            Prefixes::LeftShiftWHelper => left_shift_w_helper::LeftShiftWHelperPrefix::$method($($args),*),
+            Prefixes::LeftShiftW => left_shift_w::LeftShiftWPrefix::$method($($args),*),
+            Prefixes::OverflowBitsZero => overflow_bits_zero::OverflowBitsZeroPrefix::$method($($args),*),
+            Prefixes::XorRot16 => xor_rot::XorRotPrefix::<16>::$method($($args),*),
+            Prefixes::XorRot24 => xor_rot::XorRotPrefix::<24>::$method($($args),*),
+            Prefixes::XorRot32 => xor_rot::XorRotPrefix::<32>::$method($($args),*),
+            Prefixes::XorRot63 => xor_rot::XorRotPrefix::<63>::$method($($args),*),
+            Prefixes::XorRotW7 => xor_rotw::XorRotWPrefix::<7>::$method($($args),*),
+            Prefixes::XorRotW8 => xor_rotw::XorRotWPrefix::<8>::$method($($args),*),
+            Prefixes::XorRotW12 => xor_rotw::XorRotWPrefix::<12>::$method($($args),*),
+            Prefixes::XorRotW16 => xor_rotw::XorRotWPrefix::<16>::$method($($args),*),
         }
     };
 }
 
 impl Prefixes {
     /// Evaluate the prefix MLE for this variant.
-    pub fn prefix_mle<const XLEN: usize, F, C>(
+    pub fn prefix_mle<F, C>(
         &self,
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: Option<C>,
@@ -316,7 +316,7 @@ impl Prefixes {
     }
 
     /// Update the checkpoint for this prefix variant.
-    fn update_prefix_checkpoint<const XLEN: usize, F, C>(
+    fn update_prefix_checkpoint<F, C>(
         &self,
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: C,
@@ -340,7 +340,7 @@ impl Prefixes {
     }
 
     /// Update all prefix checkpoints after binding two variables.
-    pub fn update_checkpoints<const XLEN: usize, F, C>(
+    pub fn update_checkpoints<F, C>(
         checkpoints: &mut [PrefixCheckpoint<F>],
         r_x: C,
         r_y: C,
@@ -354,7 +354,7 @@ impl Prefixes {
         let previous_checkpoints: Vec<_> = checkpoints.to_vec();
         for (index, checkpoint) in checkpoints.iter_mut().enumerate() {
             let prefix = ALL_PREFIXES[index];
-            *checkpoint = prefix.update_prefix_checkpoint::<XLEN, F, C>(
+            *checkpoint = prefix.update_prefix_checkpoint::<F, C>(
                 &previous_checkpoints,
                 r_x,
                 r_y,

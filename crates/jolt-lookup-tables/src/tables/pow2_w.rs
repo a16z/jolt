@@ -6,11 +6,12 @@ use crate::tables::prefixes::{PrefixEval, Prefixes};
 use crate::tables::suffixes::{SuffixEval, Suffixes};
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
+use crate::XLEN;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct Pow2WTable<const XLEN: usize>;
+pub struct Pow2WTable;
 
-impl<const XLEN: usize> LookupTable<XLEN> for Pow2WTable<XLEN> {
+impl LookupTable for Pow2WTable {
     fn materialize_entry(&self, index: u128) -> u64 {
         1 << (index % 32) as u64
     }
@@ -29,7 +30,7 @@ impl<const XLEN: usize> LookupTable<XLEN> for Pow2WTable<XLEN> {
     }
 }
 
-impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for Pow2WTable<XLEN> {
+impl PrefixSuffixDecomposition for Pow2WTable {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::Pow2W]
     }
@@ -39,5 +40,22 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for Pow2WTable<XLEN> {
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
         let [pow2w] = suffixes.try_into().unwrap();
         prefixes[Prefixes::Pow2W] * pow2w
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use jolt_field::Fr;
+
+    #[test]
+    fn mle_random() {
+        mle_random_test::<Fr, Pow2WTable>();
+    }
+
+    #[test]
+    fn prefix_suffix() {
+        prefix_suffix_test::<Fr, Pow2WTable>();
     }
 }

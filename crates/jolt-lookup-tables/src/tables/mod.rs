@@ -184,6 +184,436 @@ impl LookupTableKind {
     pub fn index(self) -> usize {
         self as usize
     }
+
+    pub fn materialize_entry(&self, index: u128) -> u64 {
+        match self {
+            Self::RangeCheck => range_check::RangeCheckTable.materialize_entry(index),
+            Self::RangeCheckAligned => {
+                range_check_aligned::RangeCheckAlignedTable.materialize_entry(index)
+            }
+            Self::And => and::AndTable.materialize_entry(index),
+            Self::Andn => andn::AndnTable.materialize_entry(index),
+            Self::Or => or::OrTable.materialize_entry(index),
+            Self::Xor => xor::XorTable.materialize_entry(index),
+            Self::Equal => equal::EqualTable.materialize_entry(index),
+            Self::NotEqual => not_equal::NotEqualTable.materialize_entry(index),
+            Self::SignedLessThan => signed_less_than::SignedLessThanTable.materialize_entry(index),
+            Self::UnsignedLessThan => {
+                unsigned_less_than::UnsignedLessThanTable.materialize_entry(index)
+            }
+            Self::SignedGreaterThanEqual => {
+                signed_greater_than_equal::SignedGreaterThanEqualTable.materialize_entry(index)
+            }
+            Self::UnsignedGreaterThanEqual => {
+                unsigned_greater_than_equal::UnsignedGreaterThanEqualTable.materialize_entry(index)
+            }
+            Self::UnsignedLessThanEqual => {
+                unsigned_less_than_equal::UnsignedLessThanEqualTable.materialize_entry(index)
+            }
+            Self::UpperWord => upper_word::UpperWordTable.materialize_entry(index),
+            Self::LowerHalfWord => lower_half_word::LowerHalfWordTable.materialize_entry(index),
+            Self::SignExtendHalfWord => {
+                sign_extend_half_word::SignExtendHalfWordTable.materialize_entry(index)
+            }
+            Self::Movsign => movsign::MovsignTable.materialize_entry(index),
+            Self::Pow2 => pow2::Pow2Table.materialize_entry(index),
+            Self::Pow2W => pow2_w::Pow2WTable.materialize_entry(index),
+            Self::ShiftRightBitmask => {
+                shift_right_bitmask::ShiftRightBitmaskTable.materialize_entry(index)
+            }
+            Self::VirtualSRL => virtual_srl::VirtualSRLTable.materialize_entry(index),
+            Self::VirtualSRA => virtual_sra::VirtualSRATable.materialize_entry(index),
+            Self::VirtualROTR => virtual_rotr::VirtualRotrTable.materialize_entry(index),
+            Self::VirtualROTRW => virtual_rotrw::VirtualRotrWTable.materialize_entry(index),
+            Self::ValidDiv0 => valid_div0::ValidDiv0Table.materialize_entry(index),
+            Self::ValidUnsignedRemainder => {
+                valid_unsigned_remainder::ValidUnsignedRemainderTable.materialize_entry(index)
+            }
+            Self::ValidSignedRemainder => {
+                valid_signed_remainder::ValidSignedRemainderTable.materialize_entry(index)
+            }
+            Self::VirtualChangeDivisor => {
+                virtual_change_divisor::VirtualChangeDivisorTable.materialize_entry(index)
+            }
+            Self::VirtualChangeDivisorW => {
+                virtual_change_divisor_w::VirtualChangeDivisorWTable.materialize_entry(index)
+            }
+            Self::HalfwordAlignment => {
+                halfword_alignment::HalfwordAlignmentTable.materialize_entry(index)
+            }
+            Self::WordAlignment => word_alignment::WordAlignmentTable.materialize_entry(index),
+            Self::MulUNoOverflow => mulu_no_overflow::MulUNoOverflowTable.materialize_entry(index),
+            Self::VirtualRev8W => virtual_rev8w::VirtualRev8WTable.materialize_entry(index),
+            Self::VirtualXORROT32 => {
+                virtual_xor_rot::VirtualXORROTTable::<32>.materialize_entry(index)
+            }
+            Self::VirtualXORROT24 => {
+                virtual_xor_rot::VirtualXORROTTable::<24>.materialize_entry(index)
+            }
+            Self::VirtualXORROT16 => {
+                virtual_xor_rot::VirtualXORROTTable::<16>.materialize_entry(index)
+            }
+            Self::VirtualXORROT63 => {
+                virtual_xor_rot::VirtualXORROTTable::<63>.materialize_entry(index)
+            }
+            Self::VirtualXORROTW16 => {
+                virtual_xor_rotw::VirtualXORROTWTable::<16>.materialize_entry(index)
+            }
+            Self::VirtualXORROTW12 => {
+                virtual_xor_rotw::VirtualXORROTWTable::<12>.materialize_entry(index)
+            }
+            Self::VirtualXORROTW8 => {
+                virtual_xor_rotw::VirtualXORROTWTable::<8>.materialize_entry(index)
+            }
+            Self::VirtualXORROTW7 => {
+                virtual_xor_rotw::VirtualXORROTWTable::<7>.materialize_entry(index)
+            }
+        }
+    }
+
+    pub fn evaluate_mle<F, C>(&self, r: &[C]) -> F
+    where
+        C: ChallengeOps<F>,
+        F: Field + FieldOps<C>,
+    {
+        match self {
+            Self::RangeCheck => range_check::RangeCheckTable.evaluate_mle(r),
+            Self::RangeCheckAligned => range_check_aligned::RangeCheckAlignedTable.evaluate_mle(r),
+            Self::And => and::AndTable.evaluate_mle(r),
+            Self::Andn => andn::AndnTable.evaluate_mle(r),
+            Self::Or => or::OrTable.evaluate_mle(r),
+            Self::Xor => xor::XorTable.evaluate_mle(r),
+            Self::Equal => equal::EqualTable.evaluate_mle(r),
+            Self::NotEqual => not_equal::NotEqualTable.evaluate_mle(r),
+            Self::SignedLessThan => signed_less_than::SignedLessThanTable.evaluate_mle(r),
+            Self::UnsignedLessThan => unsigned_less_than::UnsignedLessThanTable.evaluate_mle(r),
+            Self::SignedGreaterThanEqual => {
+                signed_greater_than_equal::SignedGreaterThanEqualTable.evaluate_mle(r)
+            }
+            Self::UnsignedGreaterThanEqual => {
+                unsigned_greater_than_equal::UnsignedGreaterThanEqualTable.evaluate_mle(r)
+            }
+            Self::UnsignedLessThanEqual => {
+                unsigned_less_than_equal::UnsignedLessThanEqualTable.evaluate_mle(r)
+            }
+            Self::UpperWord => upper_word::UpperWordTable.evaluate_mle(r),
+            Self::LowerHalfWord => lower_half_word::LowerHalfWordTable.evaluate_mle(r),
+            Self::SignExtendHalfWord => {
+                sign_extend_half_word::SignExtendHalfWordTable.evaluate_mle(r)
+            }
+            Self::Movsign => movsign::MovsignTable.evaluate_mle(r),
+            Self::Pow2 => pow2::Pow2Table.evaluate_mle(r),
+            Self::Pow2W => pow2_w::Pow2WTable.evaluate_mle(r),
+            Self::ShiftRightBitmask => shift_right_bitmask::ShiftRightBitmaskTable.evaluate_mle(r),
+            Self::VirtualSRL => virtual_srl::VirtualSRLTable.evaluate_mle(r),
+            Self::VirtualSRA => virtual_sra::VirtualSRATable.evaluate_mle(r),
+            Self::VirtualROTR => virtual_rotr::VirtualRotrTable.evaluate_mle(r),
+            Self::VirtualROTRW => virtual_rotrw::VirtualRotrWTable.evaluate_mle(r),
+            Self::ValidDiv0 => valid_div0::ValidDiv0Table.evaluate_mle(r),
+            Self::ValidUnsignedRemainder => {
+                valid_unsigned_remainder::ValidUnsignedRemainderTable.evaluate_mle(r)
+            }
+            Self::ValidSignedRemainder => {
+                valid_signed_remainder::ValidSignedRemainderTable.evaluate_mle(r)
+            }
+            Self::VirtualChangeDivisor => {
+                virtual_change_divisor::VirtualChangeDivisorTable.evaluate_mle(r)
+            }
+            Self::VirtualChangeDivisorW => {
+                virtual_change_divisor_w::VirtualChangeDivisorWTable.evaluate_mle(r)
+            }
+            Self::HalfwordAlignment => halfword_alignment::HalfwordAlignmentTable.evaluate_mle(r),
+            Self::WordAlignment => word_alignment::WordAlignmentTable.evaluate_mle(r),
+            Self::MulUNoOverflow => mulu_no_overflow::MulUNoOverflowTable.evaluate_mle(r),
+            Self::VirtualRev8W => virtual_rev8w::VirtualRev8WTable.evaluate_mle(r),
+            Self::VirtualXORROT32 => virtual_xor_rot::VirtualXORROTTable::<32>.evaluate_mle(r),
+            Self::VirtualXORROT24 => virtual_xor_rot::VirtualXORROTTable::<24>.evaluate_mle(r),
+            Self::VirtualXORROT16 => virtual_xor_rot::VirtualXORROTTable::<16>.evaluate_mle(r),
+            Self::VirtualXORROT63 => virtual_xor_rot::VirtualXORROTTable::<63>.evaluate_mle(r),
+            Self::VirtualXORROTW16 => virtual_xor_rotw::VirtualXORROTWTable::<16>.evaluate_mle(r),
+            Self::VirtualXORROTW12 => virtual_xor_rotw::VirtualXORROTWTable::<12>.evaluate_mle(r),
+            Self::VirtualXORROTW8 => virtual_xor_rotw::VirtualXORROTWTable::<8>.evaluate_mle(r),
+            Self::VirtualXORROTW7 => virtual_xor_rotw::VirtualXORROTWTable::<7>.evaluate_mle(r),
+        }
+    }
+
+    pub fn suffixes(&self) -> &'static [Suffixes] {
+        match self {
+            Self::RangeCheck => PrefixSuffixDecomposition::suffixes(&range_check::RangeCheckTable),
+            Self::RangeCheckAligned => {
+                PrefixSuffixDecomposition::suffixes(&range_check_aligned::RangeCheckAlignedTable)
+            }
+            Self::And => PrefixSuffixDecomposition::suffixes(&and::AndTable),
+            Self::Andn => PrefixSuffixDecomposition::suffixes(&andn::AndnTable),
+            Self::Or => PrefixSuffixDecomposition::suffixes(&or::OrTable),
+            Self::Xor => PrefixSuffixDecomposition::suffixes(&xor::XorTable),
+            Self::Equal => PrefixSuffixDecomposition::suffixes(&equal::EqualTable),
+            Self::NotEqual => PrefixSuffixDecomposition::suffixes(&not_equal::NotEqualTable),
+            Self::SignedLessThan => {
+                PrefixSuffixDecomposition::suffixes(&signed_less_than::SignedLessThanTable)
+            }
+            Self::UnsignedLessThan => {
+                PrefixSuffixDecomposition::suffixes(&unsigned_less_than::UnsignedLessThanTable)
+            }
+            Self::SignedGreaterThanEqual => PrefixSuffixDecomposition::suffixes(
+                &signed_greater_than_equal::SignedGreaterThanEqualTable,
+            ),
+            Self::UnsignedGreaterThanEqual => PrefixSuffixDecomposition::suffixes(
+                &unsigned_greater_than_equal::UnsignedGreaterThanEqualTable,
+            ),
+            Self::UnsignedLessThanEqual => PrefixSuffixDecomposition::suffixes(
+                &unsigned_less_than_equal::UnsignedLessThanEqualTable,
+            ),
+            Self::UpperWord => PrefixSuffixDecomposition::suffixes(&upper_word::UpperWordTable),
+            Self::LowerHalfWord => {
+                PrefixSuffixDecomposition::suffixes(&lower_half_word::LowerHalfWordTable)
+            }
+            Self::SignExtendHalfWord => {
+                PrefixSuffixDecomposition::suffixes(&sign_extend_half_word::SignExtendHalfWordTable)
+            }
+            Self::Movsign => PrefixSuffixDecomposition::suffixes(&movsign::MovsignTable),
+            Self::Pow2 => PrefixSuffixDecomposition::suffixes(&pow2::Pow2Table),
+            Self::Pow2W => PrefixSuffixDecomposition::suffixes(&pow2_w::Pow2WTable),
+            Self::ShiftRightBitmask => {
+                PrefixSuffixDecomposition::suffixes(&shift_right_bitmask::ShiftRightBitmaskTable)
+            }
+            Self::VirtualSRL => PrefixSuffixDecomposition::suffixes(&virtual_srl::VirtualSRLTable),
+            Self::VirtualSRA => PrefixSuffixDecomposition::suffixes(&virtual_sra::VirtualSRATable),
+            Self::VirtualROTR => {
+                PrefixSuffixDecomposition::suffixes(&virtual_rotr::VirtualRotrTable)
+            }
+            Self::VirtualROTRW => {
+                PrefixSuffixDecomposition::suffixes(&virtual_rotrw::VirtualRotrWTable)
+            }
+            Self::ValidDiv0 => PrefixSuffixDecomposition::suffixes(&valid_div0::ValidDiv0Table),
+            Self::ValidUnsignedRemainder => PrefixSuffixDecomposition::suffixes(
+                &valid_unsigned_remainder::ValidUnsignedRemainderTable,
+            ),
+            Self::ValidSignedRemainder => PrefixSuffixDecomposition::suffixes(
+                &valid_signed_remainder::ValidSignedRemainderTable,
+            ),
+            Self::VirtualChangeDivisor => PrefixSuffixDecomposition::suffixes(
+                &virtual_change_divisor::VirtualChangeDivisorTable,
+            ),
+            Self::VirtualChangeDivisorW => PrefixSuffixDecomposition::suffixes(
+                &virtual_change_divisor_w::VirtualChangeDivisorWTable,
+            ),
+            Self::HalfwordAlignment => {
+                PrefixSuffixDecomposition::suffixes(&halfword_alignment::HalfwordAlignmentTable)
+            }
+            Self::WordAlignment => {
+                PrefixSuffixDecomposition::suffixes(&word_alignment::WordAlignmentTable)
+            }
+            Self::MulUNoOverflow => {
+                PrefixSuffixDecomposition::suffixes(&mulu_no_overflow::MulUNoOverflowTable)
+            }
+            Self::VirtualRev8W => {
+                PrefixSuffixDecomposition::suffixes(&virtual_rev8w::VirtualRev8WTable)
+            }
+            Self::VirtualXORROT32 => {
+                PrefixSuffixDecomposition::suffixes(&virtual_xor_rot::VirtualXORROTTable::<32>)
+            }
+            Self::VirtualXORROT24 => {
+                PrefixSuffixDecomposition::suffixes(&virtual_xor_rot::VirtualXORROTTable::<24>)
+            }
+            Self::VirtualXORROT16 => {
+                PrefixSuffixDecomposition::suffixes(&virtual_xor_rot::VirtualXORROTTable::<16>)
+            }
+            Self::VirtualXORROT63 => {
+                PrefixSuffixDecomposition::suffixes(&virtual_xor_rot::VirtualXORROTTable::<63>)
+            }
+            Self::VirtualXORROTW16 => {
+                PrefixSuffixDecomposition::suffixes(&virtual_xor_rotw::VirtualXORROTWTable::<16>)
+            }
+            Self::VirtualXORROTW12 => {
+                PrefixSuffixDecomposition::suffixes(&virtual_xor_rotw::VirtualXORROTWTable::<12>)
+            }
+            Self::VirtualXORROTW8 => {
+                PrefixSuffixDecomposition::suffixes(&virtual_xor_rotw::VirtualXORROTWTable::<8>)
+            }
+            Self::VirtualXORROTW7 => {
+                PrefixSuffixDecomposition::suffixes(&virtual_xor_rotw::VirtualXORROTWTable::<7>)
+            }
+        }
+    }
+
+    pub fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        match self {
+            Self::RangeCheck => PrefixSuffixDecomposition::combine(
+                &range_check::RangeCheckTable,
+                prefixes,
+                suffixes,
+            ),
+            Self::RangeCheckAligned => PrefixSuffixDecomposition::combine(
+                &range_check_aligned::RangeCheckAlignedTable,
+                prefixes,
+                suffixes,
+            ),
+            Self::And => PrefixSuffixDecomposition::combine(&and::AndTable, prefixes, suffixes),
+            Self::Andn => PrefixSuffixDecomposition::combine(&andn::AndnTable, prefixes, suffixes),
+            Self::Or => PrefixSuffixDecomposition::combine(&or::OrTable, prefixes, suffixes),
+            Self::Xor => PrefixSuffixDecomposition::combine(&xor::XorTable, prefixes, suffixes),
+            Self::Equal => {
+                PrefixSuffixDecomposition::combine(&equal::EqualTable, prefixes, suffixes)
+            }
+            Self::NotEqual => {
+                PrefixSuffixDecomposition::combine(&not_equal::NotEqualTable, prefixes, suffixes)
+            }
+            Self::SignedLessThan => PrefixSuffixDecomposition::combine(
+                &signed_less_than::SignedLessThanTable,
+                prefixes,
+                suffixes,
+            ),
+            Self::UnsignedLessThan => PrefixSuffixDecomposition::combine(
+                &unsigned_less_than::UnsignedLessThanTable,
+                prefixes,
+                suffixes,
+            ),
+            Self::SignedGreaterThanEqual => PrefixSuffixDecomposition::combine(
+                &signed_greater_than_equal::SignedGreaterThanEqualTable,
+                prefixes,
+                suffixes,
+            ),
+            Self::UnsignedGreaterThanEqual => PrefixSuffixDecomposition::combine(
+                &unsigned_greater_than_equal::UnsignedGreaterThanEqualTable,
+                prefixes,
+                suffixes,
+            ),
+            Self::UnsignedLessThanEqual => PrefixSuffixDecomposition::combine(
+                &unsigned_less_than_equal::UnsignedLessThanEqualTable,
+                prefixes,
+                suffixes,
+            ),
+            Self::UpperWord => {
+                PrefixSuffixDecomposition::combine(&upper_word::UpperWordTable, prefixes, suffixes)
+            }
+            Self::LowerHalfWord => PrefixSuffixDecomposition::combine(
+                &lower_half_word::LowerHalfWordTable,
+                prefixes,
+                suffixes,
+            ),
+            Self::SignExtendHalfWord => PrefixSuffixDecomposition::combine(
+                &sign_extend_half_word::SignExtendHalfWordTable,
+                prefixes,
+                suffixes,
+            ),
+            Self::Movsign => {
+                PrefixSuffixDecomposition::combine(&movsign::MovsignTable, prefixes, suffixes)
+            }
+            Self::Pow2 => PrefixSuffixDecomposition::combine(&pow2::Pow2Table, prefixes, suffixes),
+            Self::Pow2W => {
+                PrefixSuffixDecomposition::combine(&pow2_w::Pow2WTable, prefixes, suffixes)
+            }
+            Self::ShiftRightBitmask => PrefixSuffixDecomposition::combine(
+                &shift_right_bitmask::ShiftRightBitmaskTable,
+                prefixes,
+                suffixes,
+            ),
+            Self::VirtualSRL => PrefixSuffixDecomposition::combine(
+                &virtual_srl::VirtualSRLTable,
+                prefixes,
+                suffixes,
+            ),
+            Self::VirtualSRA => PrefixSuffixDecomposition::combine(
+                &virtual_sra::VirtualSRATable,
+                prefixes,
+                suffixes,
+            ),
+            Self::VirtualROTR => PrefixSuffixDecomposition::combine(
+                &virtual_rotr::VirtualRotrTable,
+                prefixes,
+                suffixes,
+            ),
+            Self::VirtualROTRW => PrefixSuffixDecomposition::combine(
+                &virtual_rotrw::VirtualRotrWTable,
+                prefixes,
+                suffixes,
+            ),
+            Self::ValidDiv0 => {
+                PrefixSuffixDecomposition::combine(&valid_div0::ValidDiv0Table, prefixes, suffixes)
+            }
+            Self::ValidUnsignedRemainder => PrefixSuffixDecomposition::combine(
+                &valid_unsigned_remainder::ValidUnsignedRemainderTable,
+                prefixes,
+                suffixes,
+            ),
+            Self::ValidSignedRemainder => PrefixSuffixDecomposition::combine(
+                &valid_signed_remainder::ValidSignedRemainderTable,
+                prefixes,
+                suffixes,
+            ),
+            Self::VirtualChangeDivisor => PrefixSuffixDecomposition::combine(
+                &virtual_change_divisor::VirtualChangeDivisorTable,
+                prefixes,
+                suffixes,
+            ),
+            Self::VirtualChangeDivisorW => PrefixSuffixDecomposition::combine(
+                &virtual_change_divisor_w::VirtualChangeDivisorWTable,
+                prefixes,
+                suffixes,
+            ),
+            Self::HalfwordAlignment => PrefixSuffixDecomposition::combine(
+                &halfword_alignment::HalfwordAlignmentTable,
+                prefixes,
+                suffixes,
+            ),
+            Self::WordAlignment => PrefixSuffixDecomposition::combine(
+                &word_alignment::WordAlignmentTable,
+                prefixes,
+                suffixes,
+            ),
+            Self::MulUNoOverflow => PrefixSuffixDecomposition::combine(
+                &mulu_no_overflow::MulUNoOverflowTable,
+                prefixes,
+                suffixes,
+            ),
+            Self::VirtualRev8W => PrefixSuffixDecomposition::combine(
+                &virtual_rev8w::VirtualRev8WTable,
+                prefixes,
+                suffixes,
+            ),
+            Self::VirtualXORROT32 => PrefixSuffixDecomposition::combine(
+                &virtual_xor_rot::VirtualXORROTTable::<32>,
+                prefixes,
+                suffixes,
+            ),
+            Self::VirtualXORROT24 => PrefixSuffixDecomposition::combine(
+                &virtual_xor_rot::VirtualXORROTTable::<24>,
+                prefixes,
+                suffixes,
+            ),
+            Self::VirtualXORROT16 => PrefixSuffixDecomposition::combine(
+                &virtual_xor_rot::VirtualXORROTTable::<16>,
+                prefixes,
+                suffixes,
+            ),
+            Self::VirtualXORROT63 => PrefixSuffixDecomposition::combine(
+                &virtual_xor_rot::VirtualXORROTTable::<63>,
+                prefixes,
+                suffixes,
+            ),
+            Self::VirtualXORROTW16 => PrefixSuffixDecomposition::combine(
+                &virtual_xor_rotw::VirtualXORROTWTable::<16>,
+                prefixes,
+                suffixes,
+            ),
+            Self::VirtualXORROTW12 => PrefixSuffixDecomposition::combine(
+                &virtual_xor_rotw::VirtualXORROTWTable::<12>,
+                prefixes,
+                suffixes,
+            ),
+            Self::VirtualXORROTW8 => PrefixSuffixDecomposition::combine(
+                &virtual_xor_rotw::VirtualXORROTWTable::<8>,
+                prefixes,
+                suffixes,
+            ),
+            Self::VirtualXORROTW7 => PrefixSuffixDecomposition::combine(
+                &virtual_xor_rotw::VirtualXORROTWTable::<7>,
+                prefixes,
+                suffixes,
+            ),
+        }
+    }
 }
 
 const _: () = assert!(LookupTableKind::VirtualXORROTW7 as usize + 1 == LookupTableKind::COUNT);
@@ -197,7 +627,7 @@ const _: () = assert!(LookupTableKind::VirtualXORROTW7 as usize + 1 == LookupTab
 ///
 /// where the sum is over a small number of prefix-suffix pairs.
 /// This enables the sumcheck prover to avoid materializing the entire table.
-pub trait PrefixSuffixDecomposition<const XLEN: usize>: crate::LookupTable<XLEN> + Default {
+pub trait PrefixSuffixDecomposition: crate::LookupTable + Default {
     /// The suffix types used in this table's decomposition.
     fn suffixes(&self) -> &'static [Suffixes];
 
@@ -217,314 +647,3 @@ pub trait PrefixSuffixDecomposition<const XLEN: usize>: crate::LookupTable<XLEN>
 
 #[cfg(test)]
 pub(crate) mod test_utils;
-
-#[cfg(test)]
-mod lookup_table_tests;
-
-/// Runtime dispatch wrapper over all concrete lookup tables.
-///
-/// Each variant corresponds 1:1 to a [`LookupTableKind`] and delegates to the
-/// concrete ZST table type. The `XLEN` const generic selects the word size
-/// (8 for tests, 64 for production).
-///
-/// Construct from a [`LookupTableKind`] via [`From`]:
-/// ```ignore
-/// let table = LookupTables::<64>::from(LookupTableKind::And);
-/// assert_eq!(table.materialize_entry(0b11), 1);
-/// ```
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum LookupTables<const XLEN: usize> {
-    RangeCheck,
-    RangeCheckAligned,
-    And,
-    Andn,
-    Or,
-    Xor,
-    Equal,
-    NotEqual,
-    SignedLessThan,
-    UnsignedLessThan,
-    SignedGreaterThanEqual,
-    UnsignedGreaterThanEqual,
-    UnsignedLessThanEqual,
-    UpperWord,
-    LowerHalfWord,
-    SignExtendHalfWord,
-    Movsign,
-    Pow2,
-    Pow2W,
-    ShiftRightBitmask,
-    VirtualSRL,
-    VirtualSRA,
-    VirtualROTR,
-    VirtualROTRW,
-    ValidDiv0,
-    ValidUnsignedRemainder,
-    ValidSignedRemainder,
-    VirtualChangeDivisor,
-    VirtualChangeDivisorW,
-    HalfwordAlignment,
-    WordAlignment,
-    MulUNoOverflow,
-    VirtualRev8W,
-    VirtualXORROT32,
-    VirtualXORROT24,
-    VirtualXORROT16,
-    VirtualXORROT63,
-    VirtualXORROTW16,
-    VirtualXORROTW12,
-    VirtualXORROTW8,
-    VirtualXORROTW7,
-}
-
-/// Dispatches a method call to the concrete table type for each variant.
-macro_rules! dispatch_table {
-    ($self:expr, |$t:ident| $body:expr) => {
-        match $self {
-            Self::RangeCheck => {
-                let $t = range_check::RangeCheckTable::<XLEN>;
-                $body
-            }
-            Self::RangeCheckAligned => {
-                let $t = range_check_aligned::RangeCheckAlignedTable::<XLEN>;
-                $body
-            }
-            Self::And => {
-                let $t = and::AndTable::<XLEN>;
-                $body
-            }
-            Self::Andn => {
-                let $t = andn::AndnTable::<XLEN>;
-                $body
-            }
-            Self::Or => {
-                let $t = or::OrTable::<XLEN>;
-                $body
-            }
-            Self::Xor => {
-                let $t = xor::XorTable::<XLEN>;
-                $body
-            }
-            Self::Equal => {
-                let $t = equal::EqualTable::<XLEN>;
-                $body
-            }
-            Self::NotEqual => {
-                let $t = not_equal::NotEqualTable::<XLEN>;
-                $body
-            }
-            Self::SignedLessThan => {
-                let $t = signed_less_than::SignedLessThanTable::<XLEN>;
-                $body
-            }
-            Self::UnsignedLessThan => {
-                let $t = unsigned_less_than::UnsignedLessThanTable::<XLEN>;
-                $body
-            }
-            Self::SignedGreaterThanEqual => {
-                let $t = signed_greater_than_equal::SignedGreaterThanEqualTable::<XLEN>;
-                $body
-            }
-            Self::UnsignedGreaterThanEqual => {
-                let $t = unsigned_greater_than_equal::UnsignedGreaterThanEqualTable::<XLEN>;
-                $body
-            }
-            Self::UnsignedLessThanEqual => {
-                let $t = unsigned_less_than_equal::UnsignedLessThanEqualTable::<XLEN>;
-                $body
-            }
-            Self::UpperWord => {
-                let $t = upper_word::UpperWordTable::<XLEN>;
-                $body
-            }
-            Self::LowerHalfWord => {
-                let $t = lower_half_word::LowerHalfWordTable::<XLEN>;
-                $body
-            }
-            Self::SignExtendHalfWord => {
-                let $t = sign_extend_half_word::SignExtendHalfWordTable::<XLEN>;
-                $body
-            }
-            Self::Movsign => {
-                let $t = movsign::MovsignTable::<XLEN>;
-                $body
-            }
-            Self::Pow2 => {
-                let $t = pow2::Pow2Table::<XLEN>;
-                $body
-            }
-            Self::Pow2W => {
-                let $t = pow2_w::Pow2WTable::<XLEN>;
-                $body
-            }
-            Self::ShiftRightBitmask => {
-                let $t = shift_right_bitmask::ShiftRightBitmaskTable::<XLEN>;
-                $body
-            }
-            Self::VirtualSRL => {
-                let $t = virtual_srl::VirtualSRLTable::<XLEN>;
-                $body
-            }
-            Self::VirtualSRA => {
-                let $t = virtual_sra::VirtualSRATable::<XLEN>;
-                $body
-            }
-            Self::VirtualROTR => {
-                let $t = virtual_rotr::VirtualRotrTable::<XLEN>;
-                $body
-            }
-            Self::VirtualROTRW => {
-                let $t = virtual_rotrw::VirtualRotrWTable::<XLEN>;
-                $body
-            }
-            Self::ValidDiv0 => {
-                let $t = valid_div0::ValidDiv0Table::<XLEN>;
-                $body
-            }
-            Self::ValidUnsignedRemainder => {
-                let $t = valid_unsigned_remainder::ValidUnsignedRemainderTable::<XLEN>;
-                $body
-            }
-            Self::ValidSignedRemainder => {
-                let $t = valid_signed_remainder::ValidSignedRemainderTable::<XLEN>;
-                $body
-            }
-            Self::VirtualChangeDivisor => {
-                let $t = virtual_change_divisor::VirtualChangeDivisorTable::<XLEN>;
-                $body
-            }
-            Self::VirtualChangeDivisorW => {
-                let $t = virtual_change_divisor_w::VirtualChangeDivisorWTable::<XLEN>;
-                $body
-            }
-            Self::HalfwordAlignment => {
-                let $t = halfword_alignment::HalfwordAlignmentTable::<XLEN>;
-                $body
-            }
-            Self::WordAlignment => {
-                let $t = word_alignment::WordAlignmentTable::<XLEN>;
-                $body
-            }
-            Self::MulUNoOverflow => {
-                let $t = mulu_no_overflow::MulUNoOverflowTable::<XLEN>;
-                $body
-            }
-            Self::VirtualRev8W => {
-                let $t = virtual_rev8w::VirtualRev8WTable::<XLEN>;
-                $body
-            }
-            Self::VirtualXORROT32 => {
-                let $t = virtual_xor_rot::VirtualXORROTTable::<XLEN, 32>;
-                $body
-            }
-            Self::VirtualXORROT24 => {
-                let $t = virtual_xor_rot::VirtualXORROTTable::<XLEN, 24>;
-                $body
-            }
-            Self::VirtualXORROT16 => {
-                let $t = virtual_xor_rot::VirtualXORROTTable::<XLEN, 16>;
-                $body
-            }
-            Self::VirtualXORROT63 => {
-                let $t = virtual_xor_rot::VirtualXORROTTable::<XLEN, 63>;
-                $body
-            }
-            Self::VirtualXORROTW16 => {
-                let $t = virtual_xor_rotw::VirtualXORROTWTable::<XLEN, 16>;
-                $body
-            }
-            Self::VirtualXORROTW12 => {
-                let $t = virtual_xor_rotw::VirtualXORROTWTable::<XLEN, 12>;
-                $body
-            }
-            Self::VirtualXORROTW8 => {
-                let $t = virtual_xor_rotw::VirtualXORROTWTable::<XLEN, 8>;
-                $body
-            }
-            Self::VirtualXORROTW7 => {
-                let $t = virtual_xor_rotw::VirtualXORROTWTable::<XLEN, 7>;
-                $body
-            }
-        }
-    };
-}
-
-/// Generates identity mappings between `LookupTableKind` and `LookupTables` variants.
-macro_rules! kind_table_identity {
-    ($($variant:ident),* $(,)?) => {
-        impl<const XLEN: usize> LookupTables<XLEN> {
-            /// Returns the corresponding [`LookupTableKind`] identifier.
-            #[inline]
-            pub fn kind(self) -> LookupTableKind {
-                match self {
-                    $(Self::$variant => LookupTableKind::$variant,)*
-                }
-            }
-        }
-
-        impl<const XLEN: usize> From<LookupTableKind> for LookupTables<XLEN> {
-            #[inline]
-            fn from(kind: LookupTableKind) -> Self {
-                match kind {
-                    $(LookupTableKind::$variant => Self::$variant,)*
-                }
-            }
-        }
-
-        impl<const XLEN: usize> From<LookupTables<XLEN>> for LookupTableKind {
-            #[inline]
-            fn from(table: LookupTables<XLEN>) -> Self {
-                table.kind()
-            }
-        }
-    };
-}
-
-kind_table_identity! {
-    RangeCheck, RangeCheckAligned,
-    And, Andn, Or, Xor,
-    Equal, NotEqual,
-    SignedLessThan, UnsignedLessThan, SignedGreaterThanEqual,
-    UnsignedGreaterThanEqual, UnsignedLessThanEqual,
-    UpperWord, LowerHalfWord, SignExtendHalfWord,
-    Movsign,
-    Pow2, Pow2W,
-    ShiftRightBitmask, VirtualSRL, VirtualSRA, VirtualROTR, VirtualROTRW,
-    ValidDiv0, ValidUnsignedRemainder, ValidSignedRemainder,
-    VirtualChangeDivisor, VirtualChangeDivisorW,
-    HalfwordAlignment, WordAlignment,
-    MulUNoOverflow,
-    VirtualRev8W,
-    VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
-    VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7,
-}
-
-impl<const XLEN: usize> LookupTables<XLEN> {
-    /// The suffix types used in this table's prefix/suffix decomposition.
-    pub fn suffixes(&self) -> &'static [Suffixes] {
-        dispatch_table!(self, |t| PrefixSuffixDecomposition::<XLEN>::suffixes(&t))
-    }
-
-    /// Recombine evaluated prefix and suffix values into the table's MLE evaluation.
-    pub fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
-        dispatch_table!(self, |t| PrefixSuffixDecomposition::<XLEN>::combine(
-            &t, prefixes, suffixes
-        ))
-    }
-}
-
-impl<const XLEN: usize> LookupTable<XLEN> for LookupTables<XLEN> {
-    #[inline]
-    fn materialize_entry(&self, index: u128) -> u64 {
-        dispatch_table!(self, |t| t.materialize_entry(index))
-    }
-
-    #[inline]
-    fn evaluate_mle<F, C>(&self, r: &[C]) -> F
-    where
-        C: ChallengeOps<F>,
-        F: Field + FieldOps<C>,
-    {
-        dispatch_table!(self, |t| t.evaluate_mle(r))
-    }
-}

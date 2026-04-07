@@ -6,13 +6,14 @@ use crate::tables::prefixes::{PrefixEval, Prefixes};
 use crate::tables::suffixes::{SuffixEval, Suffixes};
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
+use crate::XLEN;
 
 /// Sign-extends the lower half of a word to the full word width.
 /// For XLEN=64, sign-extends a 32-bit value to 64 bits.
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct SignExtendHalfWordTable<const XLEN: usize>;
+pub struct SignExtendHalfWordTable;
 
-impl<const XLEN: usize> LookupTable<XLEN> for SignExtendHalfWordTable<XLEN> {
+impl LookupTable for SignExtendHalfWordTable {
     fn materialize_entry(&self, index: u128) -> u64 {
         let half_word_size = XLEN / 2;
         let lower_half = (index % (1u128 << half_word_size)) as u64;
@@ -49,7 +50,7 @@ impl<const XLEN: usize> LookupTable<XLEN> for SignExtendHalfWordTable<XLEN> {
     }
 }
 
-impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for SignExtendHalfWordTable<XLEN> {
+impl PrefixSuffixDecomposition for SignExtendHalfWordTable {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[
             Suffixes::One,
@@ -64,5 +65,22 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for SignExtendHalfWordTa
         prefixes[Prefixes::LowerHalfWord] * one
             + lower_half_word
             + prefixes[Prefixes::SignExtensionUpperHalf] * sign_extension_upper_half
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use jolt_field::Fr;
+
+    #[test]
+    fn mle_random() {
+        mle_random_test::<Fr, SignExtendHalfWordTable>();
+    }
+
+    #[test]
+    fn prefix_suffix() {
+        prefix_suffix_test::<Fr, SignExtendHalfWordTable>();
     }
 }

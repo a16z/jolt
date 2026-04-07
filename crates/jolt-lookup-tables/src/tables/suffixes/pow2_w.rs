@@ -2,9 +2,9 @@ use super::SparseDenseSuffix;
 use crate::lookup_bits::LookupBits;
 
 /// 2^shift where shift is the lower 5 bits (modulo 32).
-pub enum Pow2WSuffix<const XLEN: usize> {}
+pub enum Pow2WSuffix {}
 
-impl<const XLEN: usize> SparseDenseSuffix for Pow2WSuffix<XLEN> {
+impl SparseDenseSuffix for Pow2WSuffix {
     fn suffix_mle(b: LookupBits) -> u64 {
         if b.is_empty() {
             1

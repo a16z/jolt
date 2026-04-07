@@ -6,12 +6,13 @@ use crate::tables::prefixes::{PrefixEval, Prefixes};
 use crate::tables::suffixes::{SuffixEval, Suffixes};
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
+use crate::XLEN;
 
 /// Returns all-ones if the MSB of the first operand is set, else zero.
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct MovsignTable<const XLEN: usize>;
+pub struct MovsignTable;
 
-impl<const XLEN: usize> LookupTable<XLEN> for MovsignTable<XLEN> {
+impl LookupTable for MovsignTable {
     fn materialize_entry(&self, index: u128) -> u64 {
         let sign_bit_pos = 2 * XLEN - 1;
         let sign_bit = 1u128 << sign_bit_pos;
@@ -34,7 +35,7 @@ impl<const XLEN: usize> LookupTable<XLEN> for MovsignTable<XLEN> {
     }
 }
 
-impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for MovsignTable<XLEN> {
+impl PrefixSuffixDecomposition for MovsignTable {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::One]
     }
@@ -44,5 +45,22 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for MovsignTable<XLEN> {
         let [one] = suffixes.try_into().unwrap();
         let ones: u64 = ((1u128 << XLEN) - 1) as u64;
         F::from_u64(ones) * prefixes[Prefixes::LeftOperandMsb] * one
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use jolt_field::Fr;
+
+    #[test]
+    fn mle_random() {
+        mle_random_test::<Fr, MovsignTable>();
+    }
+
+    #[test]
+    fn prefix_suffix() {
+        prefix_suffix_test::<Fr, MovsignTable>();
     }
 }

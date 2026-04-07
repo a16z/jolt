@@ -1,10 +1,11 @@
 use super::SparseDenseSuffix;
 use crate::lookup_bits::LookupBits;
+use crate::XLEN;
 
 /// Left-shift W variant: processes lower 32 bits.
-pub enum LeftShiftWSuffix<const XLEN: usize> {}
+pub enum LeftShiftWSuffix {}
 
-impl<const XLEN: usize> SparseDenseSuffix for LeftShiftWSuffix<XLEN> {
+impl SparseDenseSuffix for LeftShiftWSuffix {
     fn suffix_mle(b: LookupBits) -> u64 {
         let (x, y) = b.uninterleave();
         let y = LookupBits::new(u128::from(y), y.len().min(XLEN / 2));

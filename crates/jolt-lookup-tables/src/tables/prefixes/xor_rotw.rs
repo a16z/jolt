@@ -4,12 +4,11 @@ use crate::challenge_ops::{ChallengeOps, FieldOps};
 use crate::lookup_bits::LookupBits;
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
+use crate::XLEN;
 
-pub enum XorRotWPrefix<const XLEN: usize, const ROTATION: u32> {}
+pub enum XorRotWPrefix<const ROTATION: u32> {}
 
-impl<const XLEN: usize, const ROTATION: u32, F: Field> SparseDensePrefix<F>
-    for XorRotWPrefix<XLEN, ROTATION>
-{
+impl<const ROTATION: u32, F: Field> SparseDensePrefix<F> for XorRotWPrefix<ROTATION> {
     fn prefix_mle<C>(
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: Option<C>,

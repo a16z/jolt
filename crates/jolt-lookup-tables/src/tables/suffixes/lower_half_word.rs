@@ -1,9 +1,10 @@
 use super::SparseDenseSuffix;
 use crate::lookup_bits::LookupBits;
+use crate::XLEN;
 
-pub enum LowerHalfWordSuffix<const XLEN: usize> {}
+pub enum LowerHalfWordSuffix {}
 
-impl<const XLEN: usize> SparseDenseSuffix for LowerHalfWordSuffix<XLEN> {
+impl SparseDenseSuffix for LowerHalfWordSuffix {
     fn suffix_mle(b: LookupBits) -> u64 {
         let half_word_size = XLEN / 2;
         if half_word_size == 64 {

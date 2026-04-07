@@ -4,10 +4,11 @@ use crate::challenge_ops::{ChallengeOps, FieldOps};
 use crate::lookup_bits::LookupBits;
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
+use crate::XLEN;
 
-pub enum ChangeDivisorWPrefix<const XLEN: usize> {}
+pub enum ChangeDivisorWPrefix {}
 
-impl<const XLEN: usize, F: Field> SparseDensePrefix<F> for ChangeDivisorWPrefix<XLEN> {
+impl<F: Field> SparseDensePrefix<F> for ChangeDivisorWPrefix {
     #[expect(clippy::unwrap_used)]
     fn prefix_mle<C>(
         checkpoints: &[PrefixCheckpoint<F>],

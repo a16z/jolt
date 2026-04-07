@@ -7,29 +7,16 @@ use crate::tables::suffixes::{SuffixEval, Suffixes};
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
 use crate::uninterleave_bits;
+use crate::XLEN;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct VirtualXORROTTable<const XLEN: usize, const ROTATION: u32>;
+pub struct VirtualXORROTTable<const ROTATION: u32>;
 
-impl<const XLEN: usize, const ROTATION: u32> LookupTable<XLEN>
-    for VirtualXORROTTable<XLEN, ROTATION>
-{
-    #[expect(clippy::panic)]
+impl<const ROTATION: u32> LookupTable for VirtualXORROTTable<ROTATION> {
     fn materialize_entry(&self, index: u128) -> u64 {
-        match XLEN {
-            #[cfg(test)]
-            8 => {
-                let (x, y) = uninterleave_bits(index);
-                let xor_result = x as u8 ^ y as u8;
-                xor_result.rotate_right(ROTATION) as u64
-            }
-            64 => {
-                let (x, y) = uninterleave_bits(index);
-                let xor_result = x ^ y;
-                xor_result.rotate_right(ROTATION)
-            }
-            _ => panic!("{XLEN}-bit word size is unsupported"),
-        }
+        let (x, y) = uninterleave_bits(index);
+        let xor_result = x ^ y;
+        xor_result.rotate_right(ROTATION)
     }
 
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
@@ -51,9 +38,7 @@ impl<const XLEN: usize, const ROTATION: u32> LookupTable<XLEN>
     }
 }
 
-impl<const XLEN: usize, const ROTATION: u32> PrefixSuffixDecomposition<XLEN>
-    for VirtualXORROTTable<XLEN, ROTATION>
-{
+impl<const ROTATION: u32> PrefixSuffixDecomposition for VirtualXORROTTable<ROTATION> {
     fn suffixes(&self) -> &'static [Suffixes] {
         debug_assert_eq!(XLEN, 64);
         match ROTATION {
@@ -77,5 +62,52 @@ impl<const XLEN: usize, const ROTATION: u32> PrefixSuffixDecomposition<XLEN>
             63 => prefixes[Prefixes::XorRot63] * one + xor_rot,
             _ => unreachable!("unsupported rotation {ROTATION}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use jolt_field::Fr;
+
+    #[test]
+    fn mle_random_rot32() {
+        mle_random_test::<Fr, VirtualXORROTTable<32>>();
+    }
+
+    #[test]
+    fn prefix_suffix_rot32() {
+        prefix_suffix_test::<Fr, VirtualXORROTTable<32>>();
+    }
+
+    #[test]
+    fn mle_random_rot24() {
+        mle_random_test::<Fr, VirtualXORROTTable<24>>();
+    }
+
+    #[test]
+    fn prefix_suffix_rot24() {
+        prefix_suffix_test::<Fr, VirtualXORROTTable<24>>();
+    }
+
+    #[test]
+    fn mle_random_rot16() {
+        mle_random_test::<Fr, VirtualXORROTTable<16>>();
+    }
+
+    #[test]
+    fn prefix_suffix_rot16() {
+        prefix_suffix_test::<Fr, VirtualXORROTTable<16>>();
+    }
+
+    #[test]
+    fn mle_random_rot63() {
+        mle_random_test::<Fr, VirtualXORROTTable<63>>();
+    }
+
+    #[test]
+    fn prefix_suffix_rot63() {
+        prefix_suffix_test::<Fr, VirtualXORROTTable<63>>();
     }
 }

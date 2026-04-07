@@ -10,10 +10,8 @@ use crate::tables::prefixes::{PrefixCheckpoint, Prefixes, ALL_PREFIXES, NUM_PREF
 use crate::tables::suffixes::SuffixEval;
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
+use crate::XLEN;
 
-/// Convert an integer to a vector of field elements representing its binary decomposition.
-///
-/// Returns MSB-first: index 0 is the highest bit.
 pub fn index_to_field_bitvector<F: Field + ChallengeOps<F>>(value: u128, bits: usize) -> Vec<F> {
     if bits != 128 {
         assert!(value < 1u128 << bits);
@@ -29,23 +27,17 @@ pub fn index_to_field_bitvector<F: Field + ChallengeOps<F>>(value: u128, bits: u
     bitvector
 }
 
-/// Generate a lookup index where the right operand is a bitmask of the form `111...000`.
-///
-/// Used by shift/rotate tables whose inputs must have this structure.
-pub fn gen_bitmask_lookup_index<const XLEN: usize>(rng: &mut StdRng) -> u128 {
+pub fn gen_bitmask_lookup_index(rng: &mut StdRng) -> u128 {
     let x = rng.next_u64();
     let zeros = rng.gen_range(0..=XLEN);
     let y = (!0u64).wrapping_shl(zeros as u32);
     interleave_bits(x, y)
 }
 
-/// Verify that `evaluate_mle` matches `materialize_entry` at 1000 random points.
-///
-/// Uses the production XLEN (64) challenge points.
-pub fn mle_random_test<const XLEN: usize, F, T>()
+pub fn mle_random_test<F, T>()
 where
     F: Field + FieldOps<F> + ChallengeOps<F>,
-    T: LookupTable<XLEN> + Default,
+    T: LookupTable + Default,
 {
     let mut rng = StdRng::seed_from_u64(12345);
     for _ in 0..1000 {
@@ -58,31 +50,10 @@ where
     }
 }
 
-/// Verify that `evaluate_mle` matches `materialize_entry` on the full 2^16 hypercube (XLEN=8).
-pub fn mle_full_hypercube_test<F, T>()
+pub fn prefix_suffix_test<F, T>()
 where
     F: Field + FieldOps<F> + ChallengeOps<F>,
-    T: LookupTable<8> + Default,
-{
-    let materialized = T::default().materialize();
-    for (i, entry) in materialized.iter().enumerate() {
-        assert_eq!(
-            F::from_u64(*entry),
-            T::default().evaluate_mle::<F, F>(&index_to_field_bitvector(i as u128, 16)),
-            "MLE did not match materialized table at index {i}",
-        );
-    }
-}
-
-/// Verify the prefix/suffix decomposition matches `evaluate_mle` across all sumcheck rounds.
-///
-/// For 300 random lookup indices, walks through every sumcheck round and checks that
-/// `combine(prefix_evals, suffix_evals) == evaluate_mle(partially_bound_point)`.
-/// This is the most comprehensive correctness test for the sparse-dense decomposition.
-pub fn prefix_suffix_test<const XLEN: usize, F, T>()
-where
-    F: Field + FieldOps<F> + ChallengeOps<F>,
-    T: PrefixSuffixDecomposition<XLEN>,
+    T: PrefixSuffixDecomposition,
 {
     const ROUNDS_PER_PHASE: usize = 16;
     let total_phases: usize = XLEN * 2 / ROUNDS_PER_PHASE;
@@ -102,7 +73,7 @@ where
             let suffix_evals: Vec<_> = T::default()
                 .suffixes()
                 .iter()
-                .map(|suffix| SuffixEval::from(F::from_u64(suffix.suffix_mle::<XLEN>(suffix_bits))))
+                .map(|suffix| SuffixEval::from(F::from_u64(suffix.suffix_mle(suffix_bits))))
                 .collect();
 
             for _ in 0..ROUNDS_PER_PHASE {
@@ -133,7 +104,7 @@ where
                 let prefix_evals: Vec<_> = ALL_PREFIXES
                     .iter()
                     .map(|prefix| {
-                        prefix.prefix_mle::<XLEN, F, F>(&prefix_checkpoints, r_x, c, prefix_bits, j)
+                        prefix.prefix_mle::<F, F>(&prefix_checkpoints, r_x, c, prefix_bits, j)
                     })
                     .collect();
 
@@ -148,7 +119,7 @@ where
                 r.push(F::from_u64(rng.next_u64()));
 
                 if r.len().is_multiple_of(2) {
-                    Prefixes::update_checkpoints::<XLEN, F, F>(
+                    Prefixes::update_checkpoints::<F, F>(
                         &mut prefix_checkpoints,
                         r[r.len() - 2],
                         r[r.len() - 1],

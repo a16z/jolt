@@ -4,10 +4,11 @@ use crate::challenge_ops::{ChallengeOps, FieldOps};
 use crate::lookup_bits::LookupBits;
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
+use crate::XLEN;
 
-pub enum SignExtensionPrefix<const XLEN: usize> {}
+pub enum SignExtensionPrefix {}
 
-impl<const XLEN: usize, F: Field> SparseDensePrefix<F> for SignExtensionPrefix<XLEN> {
+impl<F: Field> SparseDensePrefix<F> for SignExtensionPrefix {
     #[expect(clippy::unwrap_used)]
     fn prefix_mle<C>(
         checkpoints: &[PrefixCheckpoint<F>],

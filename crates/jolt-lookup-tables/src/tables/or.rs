@@ -7,11 +7,12 @@ use crate::tables::suffixes::{SuffixEval, Suffixes};
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
 use crate::uninterleave_bits;
+use crate::XLEN;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct OrTable<const XLEN: usize>;
+pub struct OrTable;
 
-impl<const XLEN: usize> LookupTable<XLEN> for OrTable<XLEN> {
+impl LookupTable for OrTable {
     fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
         x | y
@@ -33,7 +34,7 @@ impl<const XLEN: usize> LookupTable<XLEN> for OrTable<XLEN> {
     }
 }
 
-impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for OrTable<XLEN> {
+impl PrefixSuffixDecomposition for OrTable {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::One, Suffixes::Or]
     }
@@ -42,5 +43,22 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for OrTable<XLEN> {
     fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         let [one, or] = suffixes.try_into().unwrap();
         prefixes[Prefixes::Or] * one + or
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use jolt_field::Fr;
+
+    #[test]
+    fn mle_random() {
+        mle_random_test::<Fr, OrTable>();
+    }
+
+    #[test]
+    fn prefix_suffix() {
+        prefix_suffix_test::<Fr, OrTable>();
     }
 }

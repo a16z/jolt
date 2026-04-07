@@ -4,11 +4,11 @@ use crate::challenge_ops::{ChallengeOps, FieldOps};
 use crate::lookup_bits::LookupBits;
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
+use crate::XLEN;
 
-#[derive(Default)]
-pub struct UpperWordPrefix<const XLEN: usize>;
+pub enum UpperWordPrefix {}
 
-impl<const XLEN: usize, F: Field> SparseDensePrefix<F> for UpperWordPrefix<XLEN> {
+impl<F: Field> SparseDensePrefix<F> for UpperWordPrefix {
     fn prefix_mle<C>(
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: Option<C>,

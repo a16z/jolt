@@ -4,10 +4,11 @@ use crate::challenge_ops::{ChallengeOps, FieldOps};
 use crate::lookup_bits::LookupBits;
 
 use super::{PrefixCheckpoint, SparseDensePrefix};
+use crate::XLEN;
 
-pub enum LsbPrefix<const XLEN: usize> {}
+pub enum LsbPrefix {}
 
-impl<const XLEN: usize, F: Field> SparseDensePrefix<F> for LsbPrefix<XLEN> {
+impl<F: Field> SparseDensePrefix<F> for LsbPrefix {
     fn prefix_mle<C>(
         _checkpoints: &[PrefixCheckpoint<F>],
         _r_x: Option<C>,

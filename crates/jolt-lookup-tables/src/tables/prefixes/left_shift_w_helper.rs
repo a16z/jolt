@@ -4,10 +4,11 @@ use crate::challenge_ops::{ChallengeOps, FieldOps};
 use crate::lookup_bits::LookupBits;
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
+use crate::XLEN;
 
-pub enum LeftShiftWHelperPrefix<const XLEN: usize> {}
+pub enum LeftShiftWHelperPrefix {}
 
-impl<const XLEN: usize, F: Field> SparseDensePrefix<F> for LeftShiftWHelperPrefix<XLEN> {
+impl<F: Field> SparseDensePrefix<F> for LeftShiftWHelperPrefix {
     fn prefix_mle<C>(
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: Option<C>,

@@ -7,53 +7,23 @@ use crate::tables::suffixes::{SuffixEval, Suffixes};
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
 use crate::uninterleave_bits;
+use crate::XLEN;
 
 /// (remainder, divisor)
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct ValidSignedRemainderTable<const XLEN: usize>;
+pub struct ValidSignedRemainderTable;
 
-impl<const XLEN: usize> LookupTable<XLEN> for ValidSignedRemainderTable<XLEN> {
+impl LookupTable for ValidSignedRemainderTable {
     fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
-        match XLEN {
-            #[cfg(test)]
-            8 => {
-                let (remainder, divisor) = (x as u8 as i8, y as u8 as i8);
-                if remainder == 0 || divisor == 0 {
-                    1
-                } else {
-                    let remainder_sign = remainder >> (XLEN - 1);
-                    let divisor_sign = divisor >> (XLEN - 1);
-                    (remainder.unsigned_abs() < divisor.unsigned_abs()
-                        && remainder_sign == divisor_sign)
-                        .into()
-                }
-            }
-            32 => {
-                let (remainder, divisor) = (x as i32, y as i32);
-                if remainder == 0 || divisor == 0 {
-                    1
-                } else {
-                    let remainder_sign = remainder >> (XLEN - 1);
-                    let divisor_sign = divisor >> (XLEN - 1);
-                    (remainder.unsigned_abs() < divisor.unsigned_abs()
-                        && remainder_sign == divisor_sign)
-                        .into()
-                }
-            }
-            64 => {
-                let (remainder, divisor) = (x as i64, y as i64);
-                if remainder == 0 || divisor == 0 {
-                    1
-                } else {
-                    let remainder_sign = remainder >> (XLEN - 1);
-                    let divisor_sign = divisor >> (XLEN - 1);
-                    (remainder.unsigned_abs() < divisor.unsigned_abs()
-                        && remainder_sign == divisor_sign)
-                        .into()
-                }
-            }
-            _ => unreachable!("{XLEN}-bit word size is unsupported"),
+        let (remainder, divisor) = (x as i64, y as i64);
+        if remainder == 0 || divisor == 0 {
+            1
+        } else {
+            let remainder_sign = remainder >> (XLEN - 1);
+            let divisor_sign = divisor >> (XLEN - 1);
+            (remainder.unsigned_abs() < divisor.unsigned_abs() && remainder_sign == divisor_sign)
+                .into()
         }
     }
 
@@ -97,7 +67,7 @@ impl<const XLEN: usize> LookupTable<XLEN> for ValidSignedRemainderTable<XLEN> {
     }
 }
 
-impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for ValidSignedRemainderTable<XLEN> {
+impl PrefixSuffixDecomposition for ValidSignedRemainderTable {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[
             Suffixes::One,
@@ -119,5 +89,22 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for ValidSignedRemainder
             + prefixes[Prefixes::NegativeDivisorZeroRemainder] * left_operand_is_zero
             + prefixes[Prefixes::NegativeDivisorEqualsRemainder] * greater_than
             + prefixes[Prefixes::NegativeDivisorGreaterThanRemainder] * one
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use jolt_field::Fr;
+
+    #[test]
+    fn mle_random() {
+        mle_random_test::<Fr, ValidSignedRemainderTable>();
+    }
+
+    #[test]
+    fn prefix_suffix() {
+        prefix_suffix_test::<Fr, ValidSignedRemainderTable>();
     }
 }

@@ -5,8 +5,7 @@ use crate::lookup_bits::LookupBits;
 use crate::tables::virtual_rev8w::rev8w;
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
-
-const XLEN: usize = 64;
+use crate::XLEN;
 
 pub enum Rev8WPrefix {}
 

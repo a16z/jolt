@@ -18,9 +18,9 @@ pub(crate) fn rev8w(v: u64) -> u64 {
 }
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct VirtualRev8WTable<const XLEN: usize>;
+pub struct VirtualRev8WTable;
 
-impl<const XLEN: usize> LookupTable<XLEN> for VirtualRev8WTable<XLEN> {
+impl LookupTable for VirtualRev8WTable {
     fn materialize_entry(&self, index: u128) -> u64 {
         rev8w(index as u64)
     }
@@ -51,7 +51,7 @@ impl<const XLEN: usize> LookupTable<XLEN> for VirtualRev8WTable<XLEN> {
     }
 }
 
-impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for VirtualRev8WTable<XLEN> {
+impl PrefixSuffixDecomposition for VirtualRev8WTable {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::One, Suffixes::Rev8W]
     }
@@ -68,5 +68,22 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for VirtualRev8WTable<XL
     #[cfg(test)]
     fn random_lookup_index(rng: &mut rand::rngs::StdRng) -> u128 {
         rand::RngCore::next_u32(rng) as u128
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use jolt_field::Fr;
+
+    #[test]
+    fn mle_random() {
+        mle_random_test::<Fr, VirtualRev8WTable>();
+    }
+
+    #[test]
+    fn prefix_suffix() {
+        prefix_suffix_test::<Fr, VirtualRev8WTable>();
     }
 }

@@ -7,36 +7,18 @@ use crate::tables::suffixes::{SuffixEval, Suffixes};
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
 use crate::uninterleave_bits;
+use crate::XLEN;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct VirtualXORROTWTable<const XLEN: usize, const ROTATION: u32>;
+pub struct VirtualXORROTWTable<const ROTATION: u32>;
 
-impl<const XLEN: usize, const ROTATION: u32> LookupTable<XLEN>
-    for VirtualXORROTWTable<XLEN, ROTATION>
-{
-    #[expect(clippy::panic)]
+impl<const ROTATION: u32> LookupTable for VirtualXORROTWTable<ROTATION> {
     fn materialize_entry(&self, index: u128) -> u64 {
-        match XLEN {
-            #[cfg(test)]
-            8 => {
-                let rotation = ROTATION as usize % (XLEN / 2);
-                let (x_bits, y_bits) = uninterleave_bits(index);
-                let x_lower = x_bits as u8 & 0x0F;
-                let y_lower = y_bits as u8 & 0x0F;
-                let xor_result = x_lower ^ y_lower;
-                let rotated =
-                    ((xor_result >> rotation) | (xor_result << (XLEN / 2 - rotation))) & 0x0F;
-                rotated as u64
-            }
-            64 => {
-                let (x, y) = uninterleave_bits(index);
-                let x_32 = x as u32;
-                let y_32 = y as u32;
-                let xor_result = x_32 ^ y_32;
-                xor_result.rotate_right(ROTATION) as u64
-            }
-            _ => panic!("{XLEN}-bit word size is unsupported"),
-        }
+        let (x, y) = uninterleave_bits(index);
+        let x_32 = x as u32;
+        let y_32 = y as u32;
+        let xor_result = x_32 ^ y_32;
+        xor_result.rotate_right(ROTATION) as u64
     }
 
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
@@ -59,9 +41,7 @@ impl<const XLEN: usize, const ROTATION: u32> LookupTable<XLEN>
     }
 }
 
-impl<const XLEN: usize, const ROTATION: u32> PrefixSuffixDecomposition<XLEN>
-    for VirtualXORROTWTable<XLEN, ROTATION>
-{
+impl<const ROTATION: u32> PrefixSuffixDecomposition for VirtualXORROTWTable<ROTATION> {
     fn suffixes(&self) -> &'static [Suffixes] {
         debug_assert_eq!(XLEN, 64);
         match ROTATION {
@@ -85,5 +65,52 @@ impl<const XLEN: usize, const ROTATION: u32> PrefixSuffixDecomposition<XLEN>
             16 => prefixes[Prefixes::XorRotW16] * one + xor_rot,
             _ => unreachable!("unsupported rotation {ROTATION}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use jolt_field::Fr;
+
+    #[test]
+    fn mle_random_rotw16() {
+        mle_random_test::<Fr, VirtualXORROTWTable<16>>();
+    }
+
+    #[test]
+    fn prefix_suffix_rotw16() {
+        prefix_suffix_test::<Fr, VirtualXORROTWTable<16>>();
+    }
+
+    #[test]
+    fn mle_random_rotw12() {
+        mle_random_test::<Fr, VirtualXORROTWTable<12>>();
+    }
+
+    #[test]
+    fn prefix_suffix_rotw12() {
+        prefix_suffix_test::<Fr, VirtualXORROTWTable<12>>();
+    }
+
+    #[test]
+    fn mle_random_rotw8() {
+        mle_random_test::<Fr, VirtualXORROTWTable<8>>();
+    }
+
+    #[test]
+    fn prefix_suffix_rotw8() {
+        prefix_suffix_test::<Fr, VirtualXORROTWTable<8>>();
+    }
+
+    #[test]
+    fn mle_random_rotw7() {
+        mle_random_test::<Fr, VirtualXORROTWTable<7>>();
+    }
+
+    #[test]
+    fn prefix_suffix_rotw7() {
+        prefix_suffix_test::<Fr, VirtualXORROTWTable<7>>();
     }
 }

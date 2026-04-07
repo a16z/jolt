@@ -1,9 +1,10 @@
 use super::SparseDenseSuffix;
 use crate::lookup_bits::LookupBits;
+use crate::XLEN;
 
-pub enum SignExtensionUpperHalfSuffix<const XLEN: usize> {}
+pub enum SignExtensionUpperHalfSuffix {}
 
-impl<const XLEN: usize> SparseDenseSuffix for SignExtensionUpperHalfSuffix<XLEN> {
+impl SparseDenseSuffix for SignExtensionUpperHalfSuffix {
     fn suffix_mle(b: LookupBits) -> u64 {
         let half_word_size = XLEN / 2;
 

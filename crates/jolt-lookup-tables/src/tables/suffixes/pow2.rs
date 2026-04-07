@@ -1,10 +1,11 @@
 use super::SparseDenseSuffix;
 use crate::lookup_bits::LookupBits;
+use crate::XLEN;
 
 /// 2^shift where shift is the lower log2(XLEN) bits of the second operand.
-pub enum Pow2Suffix<const XLEN: usize> {}
+pub enum Pow2Suffix {}
 
-impl<const XLEN: usize> SparseDenseSuffix for Pow2Suffix<XLEN> {
+impl SparseDenseSuffix for Pow2Suffix {
     fn suffix_mle(b: LookupBits) -> u64 {
         if b.is_empty() {
             1

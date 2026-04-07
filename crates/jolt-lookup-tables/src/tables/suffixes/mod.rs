@@ -180,7 +180,7 @@ impl Suffixes {
     }
 
     /// Evaluate this suffix's MLE on bitvector `b`.
-    pub fn suffix_mle<const XLEN: usize>(&self, b: LookupBits) -> u64 {
+    pub fn suffix_mle(&self, b: LookupBits) -> u64 {
         match self {
             Suffixes::One => OneSuffix::suffix_mle(b),
             Suffixes::And => AndSuffix::suffix_mle(b),
@@ -190,10 +190,10 @@ impl Suffixes {
             Suffixes::RightOperand => RightOperandSuffix::suffix_mle(b),
             Suffixes::RightOperandW => RightOperandWSuffix::suffix_mle(b),
             Suffixes::ChangeDivisor => ChangeDivisorSuffix::suffix_mle(b),
-            Suffixes::ChangeDivisorW => ChangeDivisorWSuffix::<XLEN>::suffix_mle(b),
-            Suffixes::UpperWord => UpperWordSuffix::<XLEN>::suffix_mle(b),
-            Suffixes::LowerWord => LowerWordSuffix::<XLEN>::suffix_mle(b),
-            Suffixes::LowerHalfWord => LowerHalfWordSuffix::<XLEN>::suffix_mle(b),
+            Suffixes::ChangeDivisorW => ChangeDivisorWSuffix::suffix_mle(b),
+            Suffixes::UpperWord => UpperWordSuffix::suffix_mle(b),
+            Suffixes::LowerWord => LowerWordSuffix::suffix_mle(b),
+            Suffixes::LowerHalfWord => LowerHalfWordSuffix::suffix_mle(b),
             Suffixes::LessThan => LessThanSuffix::suffix_mle(b),
             Suffixes::GreaterThan => GreaterThanSuffix::suffix_mle(b),
             Suffixes::Eq => EqSuffix::suffix_mle(b),
@@ -201,24 +201,22 @@ impl Suffixes {
             Suffixes::RightOperandIsZero => RightOperandIsZeroSuffix::suffix_mle(b),
             Suffixes::Lsb => LsbSuffix::suffix_mle(b),
             Suffixes::DivByZero => DivByZeroSuffix::suffix_mle(b),
-            Suffixes::Pow2 => Pow2Suffix::<XLEN>::suffix_mle(b),
-            Suffixes::Pow2W => Pow2WSuffix::<XLEN>::suffix_mle(b),
+            Suffixes::Pow2 => Pow2Suffix::suffix_mle(b),
+            Suffixes::Pow2W => Pow2WSuffix::suffix_mle(b),
             Suffixes::Rev8W => Rev8WSuffix::suffix_mle(b),
-            Suffixes::RightShiftPadding => RightShiftPaddingSuffix::<XLEN>::suffix_mle(b),
+            Suffixes::RightShiftPadding => RightShiftPaddingSuffix::suffix_mle(b),
             Suffixes::RightShift => RightShiftSuffix::suffix_mle(b),
             Suffixes::RightShiftHelper => RightShiftHelperSuffix::suffix_mle(b),
-            Suffixes::SignExtension => SignExtensionSuffix::<XLEN>::suffix_mle(b),
+            Suffixes::SignExtension => SignExtensionSuffix::suffix_mle(b),
             Suffixes::LeftShift => LeftShiftSuffix::suffix_mle(b),
             Suffixes::TwoLsb => TwoLsbSuffix::suffix_mle(b),
-            Suffixes::SignExtensionUpperHalf => SignExtensionUpperHalfSuffix::<XLEN>::suffix_mle(b),
-            Suffixes::SignExtensionRightOperand => {
-                SignExtensionRightOperandSuffix::<XLEN>::suffix_mle(b)
-            }
-            Suffixes::RightShiftW => RightShiftWSuffix::<XLEN>::suffix_mle(b),
-            Suffixes::RightShiftWHelper => RightShiftWHelperSuffix::<XLEN>::suffix_mle(b),
+            Suffixes::SignExtensionUpperHalf => SignExtensionUpperHalfSuffix::suffix_mle(b),
+            Suffixes::SignExtensionRightOperand => SignExtensionRightOperandSuffix::suffix_mle(b),
+            Suffixes::RightShiftW => RightShiftWSuffix::suffix_mle(b),
+            Suffixes::RightShiftWHelper => RightShiftWHelperSuffix::suffix_mle(b),
             Suffixes::LeftShiftWHelper => LeftShiftWHelperSuffix::suffix_mle(b),
-            Suffixes::LeftShiftW => LeftShiftWSuffix::<XLEN>::suffix_mle(b),
-            Suffixes::OverflowBitsZero => OverflowBitsZeroSuffix::<XLEN>::suffix_mle(b),
+            Suffixes::LeftShiftW => LeftShiftWSuffix::suffix_mle(b),
+            Suffixes::OverflowBitsZero => OverflowBitsZeroSuffix::suffix_mle(b),
             Suffixes::XorRot16 => XorRotSuffix::<16>::suffix_mle(b),
             Suffixes::XorRot24 => XorRotSuffix::<24>::suffix_mle(b),
             Suffixes::XorRot32 => XorRotSuffix::<32>::suffix_mle(b),
@@ -232,7 +230,7 @@ impl Suffixes {
 
     /// Evaluate and promote to a field element.
     #[inline]
-    pub fn evaluate<const XLEN: usize, F: Field>(&self, b: LookupBits) -> SuffixEval<F> {
-        F::from_u64(self.suffix_mle::<XLEN>(b))
+    pub fn evaluate<F: Field>(&self, b: LookupBits) -> SuffixEval<F> {
+        F::from_u64(self.suffix_mle(b))
     }
 }
