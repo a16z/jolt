@@ -49,12 +49,13 @@
 
 mod blake2b;
 mod blanket;
-mod impl_transcript;
+mod digest;
 mod keccak;
 mod poseidon;
 mod transcript;
 
 pub use blake2b::Blake2bTranscript;
+pub use digest::DigestTranscript;
 pub use keccak::KeccakTranscript;
 pub use poseidon::PoseidonTranscript;
 pub use transcript::{AppendToTranscript, Transcript};
