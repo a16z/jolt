@@ -38,10 +38,14 @@ impl<F: JoltField> LagrangePolynomial<F> {
         while i < N {
             let dx = base_x;
             let dy = base_y;
-            if dx == F::zero() {
+            // Use is_zero() instead of == F::zero() to avoid generating spurious
+            // constraints when F is a symbolic type like MleAst. For symbolic values,
+            // is_zero() returns false (the challenge won't land exactly on a grid node),
+            // which is the correct behavior for transpilation.
+            if dx.is_zero() {
                 ix = Some(i);
             }
-            if dy == F::zero() {
+            if dy.is_zero() {
                 it = Some(i);
             }
             dists_x[i] = dx;
@@ -113,7 +117,8 @@ impl<F: JoltField> LagrangePolynomial<F> {
         let mut i: usize = 0;
         while i < N {
             let di = base;
-            if di == F::zero() {
+            // Use is_zero() instead of == F::zero() for symbolic type compatibility
+            if di.is_zero() {
                 hit = Some(i);
             }
             dists[i] = di;

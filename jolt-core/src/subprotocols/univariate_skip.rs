@@ -11,7 +11,7 @@ use crate::poly::commitment::pedersen::PedersenGenerators;
 use crate::poly::lagrange_poly::LagrangePolynomial;
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
-use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
+use crate::poly::opening_proof::{AbstractVerifierOpeningAccumulator, ProverOpeningAccumulator};
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
@@ -230,10 +230,14 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundProof<F, T> {
 
     /// Verify only the univariate-skip first round.
     /// Returns the challenge derived during verification.
-    pub fn verify<const N: usize, const FIRST_ROUND_POLY_NUM_COEFFS: usize>(
+    pub fn verify<
+        const N: usize,
+        const FIRST_ROUND_POLY_NUM_COEFFS: usize,
+        A: AbstractVerifierOpeningAccumulator<F>,
+    >(
         proof: &Self,
-        sumcheck_instance: &dyn SumcheckInstanceVerifier<F, T>,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F>,
+        sumcheck_instance: &dyn SumcheckInstanceVerifier<F, T, A>,
+        opening_accumulator: &mut A,
         transcript: &mut T,
     ) -> Result<F::Challenge, ProofVerifyError> {
         let degree_bound = sumcheck_instance.degree();
@@ -293,10 +297,13 @@ impl<F: JoltField, C: JoltCurve<F = F>, T: Transcript> ZkUniSkipFirstRoundProof<
 
     /// Verify transcript consistency only.
     /// The actual polynomial verification (sum check + evaluation) is done by BlindFold.
-    pub fn verify_transcript<I: SumcheckInstanceVerifier<F, T>>(
+    pub fn verify_transcript<
+        A: AbstractVerifierOpeningAccumulator<F>,
+        I: SumcheckInstanceVerifier<F, T, A>,
+    >(
         &self,
         sumcheck_instance: &I,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F>,
+        opening_accumulator: &mut A,
         transcript: &mut T,
     ) -> Result<F::Challenge, ProofVerifyError> {
         let degree_bound = sumcheck_instance.degree();

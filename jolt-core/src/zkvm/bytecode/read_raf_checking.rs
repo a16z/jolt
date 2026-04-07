@@ -17,8 +17,8 @@ use crate::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
+            AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningPoint,
+            ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
         },
         ra_poly::RaPolynomial,
         split_eq_poly::GruenSplitEqPolynomial,
@@ -702,11 +702,11 @@ pub struct BytecodeReadRafSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> BytecodeReadRafSumcheckVerifier<F> {
-    pub fn gen(
+    pub fn gen<A: AbstractVerifierOpeningAccumulator<F>>(
         bytecode_preprocessing: &BytecodePreprocessing,
         n_cycle_vars: usize,
         one_hot_params: &OneHotParams,
-        opening_accumulator: &VerifierOpeningAccumulator<F>,
+        opening_accumulator: &A,
         transcript: &mut impl Transcript,
     ) -> Self {
         Self {
@@ -721,18 +721,14 @@ impl<F: JoltField> BytecodeReadRafSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
-    for BytecodeReadRafSumcheckVerifier<F>
+impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
+    SumcheckInstanceVerifier<F, T, A> for BytecodeReadRafSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &VerifierOpeningAccumulator<F>,
-        sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, accumulator: &A, sumcheck_challenges: &[F::Challenge]) -> F {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         let (r_address_prime, r_cycle_prime) = opening_point.split_at(self.params.log_K);
         // r_cycle is bound LowToHigh, so reverse
@@ -799,7 +795,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
     fn cache_openings(
         &self,
-        accumulator: &mut VerifierOpeningAccumulator<F>,
+        accumulator: &mut A,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);

@@ -7,7 +7,7 @@ pub mod registers;
 
 pub use advice::{
     AdviceClaimReductionParams, AdviceClaimReductionProver, AdviceClaimReductionVerifier,
-    AdviceKind,
+    AdviceKind, ReductionPhase,
 };
 pub use hamming_weight::{
     HammingWeightClaimReductionParams, HammingWeightClaimReductionProver,
