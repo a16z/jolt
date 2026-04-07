@@ -385,6 +385,10 @@ pub enum UniSkipFirstRoundProofVariant<F: JoltField, C: JoltCurve<F = F>, T: Tra
 }
 
 impl<F: JoltField, C: JoltCurve<F = F>, T: Transcript> UniSkipFirstRoundProofVariant<F, C, T> {
+    pub fn is_zk(&self) -> bool {
+        matches!(self, Self::Zk(_))
+    }
+
     /// Returns the polynomial degree for BlindFold R1CS configuration.
     pub fn poly_degree(&self) -> usize {
         match self {
