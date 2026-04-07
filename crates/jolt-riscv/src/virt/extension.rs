@@ -6,7 +6,6 @@ define_instruction!(
     |x, _y| (x as i32) as i64 as u64,
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value],
-    table: RangeCheck,
 );
 
 define_instruction!(
@@ -15,7 +14,6 @@ define_instruction!(
     |x, _y| x & 0xFFFF_FFFF,
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value],
-    table: RangeCheck,
 );
 
 #[cfg(test)]

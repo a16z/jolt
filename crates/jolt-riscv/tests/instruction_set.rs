@@ -3,9 +3,7 @@
 //! Exercises the JoltInstructionSet registry, instruction execution semantics,
 //! flag consistency, and bit-interleaving utilities.
 
-use jolt_riscv::{
-    interleave_bits, uninterleave_bits, CircuitFlags, Flags, Instruction, JoltInstructionSet,
-};
+use jolt_riscv::{CircuitFlags, Flags, Instruction, JoltInstructionSet};
 
 // Import instruction structs directly
 use jolt_riscv::rv::arithmetic::*;
@@ -229,48 +227,4 @@ fn load_store_flags() {
 #[test]
 fn jump_flags() {
     assert!(Jal.circuit_flags()[CircuitFlags::Jump]);
-}
-
-// Lookup table consistency
-
-/// Instructions with lookup tables have non-None table kinds.
-/// Instructions without (loads, stores, system) have None.
-#[test]
-fn lookup_table_assignment() {
-    assert!(
-        Add.lookup_table().is_some(),
-        "ADD should have a lookup table"
-    );
-    assert!(
-        Lw.lookup_table().is_none(),
-        "LW should not have a lookup table"
-    );
-}
-
-// Bit interleaving
-
-/// Round-trip: uninterleave(interleave(x, y)) == (x, y).
-#[test]
-fn interleave_round_trip() {
-    let test_values = [0u64, 1, 0xFF, 0xFFFF, 0xDEAD_BEEF, u64::MAX, u64::MAX / 2];
-    for &x in &test_values {
-        for &y in &test_values {
-            let interleaved = interleave_bits(x, y);
-            let (rx, ry) = uninterleave_bits(interleaved);
-            assert_eq!((rx, ry), (x, y), "round-trip failed for x={x:#x}, y={y:#x}");
-        }
-    }
-}
-
-/// Single-bit positions are correctly placed.
-#[test]
-fn interleave_single_bits() {
-    for bit in 0..64 {
-        let x = 1u64 << bit;
-        let (rx, _) = uninterleave_bits(interleave_bits(x, 0));
-        assert_eq!(rx, x, "x single bit {bit} failed");
-
-        let (_, ry) = uninterleave_bits(interleave_bits(0, x));
-        assert_eq!(ry, x, "y single bit {bit} failed");
-    }
 }

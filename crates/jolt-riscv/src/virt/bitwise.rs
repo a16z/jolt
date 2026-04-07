@@ -6,7 +6,6 @@ define_instruction!(
     |x, _y| if (x as i64) < 0 { u64::MAX } else { 0 },
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-    table: Movsign,
 );
 
 #[cfg(test)]

@@ -6,7 +6,6 @@ define_instruction!(
     |x, y| (x ^ y).rotate_right(32),
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-    table: VirtualXORROT32,
 );
 
 define_instruction!(
@@ -15,7 +14,6 @@ define_instruction!(
     |x, y| (x ^ y).rotate_right(24),
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-    table: VirtualXORROT24,
 );
 
 define_instruction!(
@@ -24,7 +22,6 @@ define_instruction!(
     |x, y| (x ^ y).rotate_right(16),
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-    table: VirtualXORROT16,
 );
 
 define_instruction!(
@@ -33,7 +30,6 @@ define_instruction!(
     |x, y| (x ^ y).rotate_right(63),
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-    table: VirtualXORROT63,
 );
 
 define_instruction!(
@@ -45,7 +41,6 @@ define_instruction!(
     },
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-    table: VirtualXORROTW16,
 );
 
 define_instruction!(
@@ -57,7 +52,6 @@ define_instruction!(
     },
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-    table: VirtualXORROTW12,
 );
 
 define_instruction!(
@@ -69,7 +63,6 @@ define_instruction!(
     },
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-    table: VirtualXORROTW8,
 );
 
 define_instruction!(
@@ -81,7 +74,6 @@ define_instruction!(
     },
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-    table: VirtualXORROTW7,
 );
 
 #[cfg(test)]

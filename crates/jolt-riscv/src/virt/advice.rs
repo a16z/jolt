@@ -5,7 +5,6 @@ define_instruction!(
     VirtualAdvice, "VIRTUAL_ADVICE",
     |_x, _y| 0,
     circuit: [Advice, WriteLookupOutputToRD],
-    table: RangeCheck,
 );
 
 define_instruction!(
@@ -13,7 +12,6 @@ define_instruction!(
     VirtualAdviceLen, "VIRTUAL_ADVICE_LEN",
     |_x, _y| 0,
     circuit: [Advice, WriteLookupOutputToRD],
-    table: RangeCheck,
 );
 
 define_instruction!(
@@ -21,7 +19,6 @@ define_instruction!(
     VirtualAdviceLoad, "VIRTUAL_ADVICE_LOAD",
     |_x, _y| 0,
     circuit: [Advice, WriteLookupOutputToRD],
-    table: RangeCheck,
 );
 
 define_instruction!(

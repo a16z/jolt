@@ -10,9 +10,9 @@ use crate::uninterleave_bits;
 use crate::XLEN;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct VirtualRotrTable;
+pub struct VirtualROTRTable;
 
-impl LookupTable for VirtualRotrTable {
+impl LookupTable for VirtualROTRTable {
     fn materialize_entry(&self, index: u128) -> u64 {
         let (x_bits, y_bits) = uninterleave_bits(index);
 
@@ -61,7 +61,7 @@ impl LookupTable for VirtualRotrTable {
     }
 }
 
-impl PrefixSuffixDecomposition for VirtualRotrTable {
+impl PrefixSuffixDecomposition for VirtualROTRTable {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[
             Suffixes::RightShiftHelper,
@@ -95,11 +95,11 @@ mod tests {
 
     #[test]
     fn mle_random() {
-        mle_random_test::<Fr, VirtualRotrTable>();
+        mle_random_test::<Fr, VirtualROTRTable>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, VirtualRotrTable>();
+        prefix_suffix_test::<Fr, VirtualROTRTable>();
     }
 }

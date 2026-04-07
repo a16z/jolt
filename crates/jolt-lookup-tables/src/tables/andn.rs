@@ -36,7 +36,7 @@ impl LookupTable for AndnTable {
 
 impl PrefixSuffixDecomposition for AndnTable {
     fn suffixes(&self) -> &'static [Suffixes] {
-        &[Suffixes::One, Suffixes::NotAnd]
+        &[Suffixes::One, Suffixes::AndNot]
     }
 
     #[expect(clippy::unwrap_used)]

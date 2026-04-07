@@ -28,7 +28,6 @@ define_instruction!(
     |x, y| change_divisor_64(x, y),
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-    table: VirtualChangeDivisor,
 );
 
 define_instruction!(
@@ -37,7 +36,6 @@ define_instruction!(
     |x, y| change_divisor_32(x, y),
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-    table: VirtualChangeDivisorW,
 );
 
 #[cfg(test)]

@@ -6,7 +6,6 @@ define_instruction!(
     |x, y| u64::from(x == y),
     circuit: [Assert],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-    table: Equal,
 );
 
 define_instruction!(
@@ -15,7 +14,6 @@ define_instruction!(
     |x, y| u64::from(x <= y),
     circuit: [Assert],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-    table: UnsignedLessThanEqual,
 );
 
 define_instruction!(
@@ -27,7 +25,6 @@ define_instruction!(
     },
     circuit: [Assert],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-    table: ValidDiv0,
 );
 
 define_instruction!(
@@ -39,7 +36,6 @@ define_instruction!(
     },
     circuit: [Assert],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-    table: ValidUnsignedRemainder,
 );
 
 define_instruction!(
@@ -52,7 +48,6 @@ define_instruction!(
     },
     circuit: [Assert],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-    table: MulUNoOverflow,
 );
 
 define_instruction!(
@@ -61,7 +56,6 @@ define_instruction!(
     |x, _y| u64::from(x.is_multiple_of(4)),
     circuit: [Assert],
     instruction: [LeftOperandIsRs1Value],
-    table: WordAlignment,
 );
 
 define_instruction!(
@@ -70,7 +64,6 @@ define_instruction!(
     |x, _y| u64::from(x.is_multiple_of(2)),
     circuit: [Assert],
     instruction: [LeftOperandIsRs1Value],
-    table: HalfwordAlignment,
 );
 
 #[cfg(test)]

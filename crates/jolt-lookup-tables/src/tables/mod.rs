@@ -20,7 +20,6 @@ pub mod andn;
 pub mod equal;
 pub mod halfword_alignment;
 pub mod lower_half_word;
-pub mod movsign;
 pub mod mulu_no_overflow;
 pub mod not_equal;
 pub mod or;
@@ -31,6 +30,7 @@ pub mod range_check;
 pub mod range_check_aligned;
 pub mod shift_right_bitmask;
 pub mod sign_extend_half_word;
+pub mod sign_mask;
 pub mod signed_greater_than_equal;
 pub mod signed_less_than;
 pub mod suffixes;
@@ -60,7 +60,7 @@ pub use suffixes::{SuffixEval, Suffixes};
 ///
 /// Each variant corresponds to a concrete table with its own
 /// [`LookupTable`] implementation. Instructions
-/// declare which table they use via [`Instruction::lookup_table()`](crate::Instruction::lookup_table).
+/// declare which table they use via [`InstructionLookupTable::lookup_table()`](crate::InstructionLookupTable::lookup_table).
 ///
 /// The enum is `#[repr(u8)]` for compact serialization and efficient
 /// discriminant extraction.
@@ -110,7 +110,7 @@ pub enum LookupTableKind {
 
     // Sign/conditional
     /// Sign-bit conditional: returns all-ones if MSB set, else zero. Used by MOVSIGN.
-    Movsign,
+    SignMask,
 
     // Power of 2
     /// 2^(index mod XLEN). Used by POW2, POW2I.
@@ -215,7 +215,7 @@ impl LookupTableKind {
             Self::SignExtendHalfWord => {
                 sign_extend_half_word::SignExtendHalfWordTable.materialize_entry(index)
             }
-            Self::Movsign => movsign::MovsignTable.materialize_entry(index),
+            Self::SignMask => sign_mask::SignMaskTable.materialize_entry(index),
             Self::Pow2 => pow2::Pow2Table.materialize_entry(index),
             Self::Pow2W => pow2_w::Pow2WTable.materialize_entry(index),
             Self::ShiftRightBitmask => {
@@ -223,8 +223,8 @@ impl LookupTableKind {
             }
             Self::VirtualSRL => virtual_srl::VirtualSRLTable.materialize_entry(index),
             Self::VirtualSRA => virtual_sra::VirtualSRATable.materialize_entry(index),
-            Self::VirtualROTR => virtual_rotr::VirtualRotrTable.materialize_entry(index),
-            Self::VirtualROTRW => virtual_rotrw::VirtualRotrWTable.materialize_entry(index),
+            Self::VirtualROTR => virtual_rotr::VirtualROTRTable.materialize_entry(index),
+            Self::VirtualROTRW => virtual_rotrw::VirtualROTRWTable.materialize_entry(index),
             Self::ValidDiv0 => valid_div0::ValidDiv0Table.materialize_entry(index),
             Self::ValidUnsignedRemainder => {
                 valid_unsigned_remainder::ValidUnsignedRemainderTable.materialize_entry(index)
@@ -301,14 +301,14 @@ impl LookupTableKind {
             Self::SignExtendHalfWord => {
                 sign_extend_half_word::SignExtendHalfWordTable.evaluate_mle(r)
             }
-            Self::Movsign => movsign::MovsignTable.evaluate_mle(r),
+            Self::SignMask => sign_mask::SignMaskTable.evaluate_mle(r),
             Self::Pow2 => pow2::Pow2Table.evaluate_mle(r),
             Self::Pow2W => pow2_w::Pow2WTable.evaluate_mle(r),
             Self::ShiftRightBitmask => shift_right_bitmask::ShiftRightBitmaskTable.evaluate_mle(r),
             Self::VirtualSRL => virtual_srl::VirtualSRLTable.evaluate_mle(r),
             Self::VirtualSRA => virtual_sra::VirtualSRATable.evaluate_mle(r),
-            Self::VirtualROTR => virtual_rotr::VirtualRotrTable.evaluate_mle(r),
-            Self::VirtualROTRW => virtual_rotrw::VirtualRotrWTable.evaluate_mle(r),
+            Self::VirtualROTR => virtual_rotr::VirtualROTRTable.evaluate_mle(r),
+            Self::VirtualROTRW => virtual_rotrw::VirtualROTRWTable.evaluate_mle(r),
             Self::ValidDiv0 => valid_div0::ValidDiv0Table.evaluate_mle(r),
             Self::ValidUnsignedRemainder => {
                 valid_unsigned_remainder::ValidUnsignedRemainderTable.evaluate_mle(r)
@@ -371,7 +371,7 @@ impl LookupTableKind {
             Self::SignExtendHalfWord => {
                 PrefixSuffixDecomposition::suffixes(&sign_extend_half_word::SignExtendHalfWordTable)
             }
-            Self::Movsign => PrefixSuffixDecomposition::suffixes(&movsign::MovsignTable),
+            Self::SignMask => PrefixSuffixDecomposition::suffixes(&sign_mask::SignMaskTable),
             Self::Pow2 => PrefixSuffixDecomposition::suffixes(&pow2::Pow2Table),
             Self::Pow2W => PrefixSuffixDecomposition::suffixes(&pow2_w::Pow2WTable),
             Self::ShiftRightBitmask => {
@@ -380,10 +380,10 @@ impl LookupTableKind {
             Self::VirtualSRL => PrefixSuffixDecomposition::suffixes(&virtual_srl::VirtualSRLTable),
             Self::VirtualSRA => PrefixSuffixDecomposition::suffixes(&virtual_sra::VirtualSRATable),
             Self::VirtualROTR => {
-                PrefixSuffixDecomposition::suffixes(&virtual_rotr::VirtualRotrTable)
+                PrefixSuffixDecomposition::suffixes(&virtual_rotr::VirtualROTRTable)
             }
             Self::VirtualROTRW => {
-                PrefixSuffixDecomposition::suffixes(&virtual_rotrw::VirtualRotrWTable)
+                PrefixSuffixDecomposition::suffixes(&virtual_rotrw::VirtualROTRWTable)
             }
             Self::ValidDiv0 => PrefixSuffixDecomposition::suffixes(&valid_div0::ValidDiv0Table),
             Self::ValidUnsignedRemainder => PrefixSuffixDecomposition::suffixes(
@@ -497,8 +497,8 @@ impl LookupTableKind {
                 prefixes,
                 suffixes,
             ),
-            Self::Movsign => {
-                PrefixSuffixDecomposition::combine(&movsign::MovsignTable, prefixes, suffixes)
+            Self::SignMask => {
+                PrefixSuffixDecomposition::combine(&sign_mask::SignMaskTable, prefixes, suffixes)
             }
             Self::Pow2 => PrefixSuffixDecomposition::combine(&pow2::Pow2Table, prefixes, suffixes),
             Self::Pow2W => {
@@ -520,12 +520,12 @@ impl LookupTableKind {
                 suffixes,
             ),
             Self::VirtualROTR => PrefixSuffixDecomposition::combine(
-                &virtual_rotr::VirtualRotrTable,
+                &virtual_rotr::VirtualROTRTable,
                 prefixes,
                 suffixes,
             ),
             Self::VirtualROTRW => PrefixSuffixDecomposition::combine(
-                &virtual_rotrw::VirtualRotrWTable,
+                &virtual_rotrw::VirtualROTRWTable,
                 prefixes,
                 suffixes,
             ),

@@ -5,9 +5,9 @@ use crate::lookup_bits::LookupBits;
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
-pub enum RightMsbPrefix {}
+pub enum RightOperandMsbPrefix {}
 
-impl<F: Field> SparseDensePrefix<F> for RightMsbPrefix {
+impl<F: Field> SparseDensePrefix<F> for RightOperandMsbPrefix {
     #[expect(clippy::unwrap_used)]
     fn prefix_mle<C>(
         checkpoints: &[PrefixCheckpoint<F>],

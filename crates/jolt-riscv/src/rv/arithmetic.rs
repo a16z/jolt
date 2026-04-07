@@ -7,7 +7,6 @@ define_instruction!(
     |x, y| x.wrapping_add(y),
     circuit: [AddOperands, WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-    table: RangeCheck,
 );
 
 define_instruction!(
@@ -16,7 +15,6 @@ define_instruction!(
     |x, y| x.wrapping_add(y),
     circuit: [AddOperands, WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-    table: RangeCheck,
 );
 
 define_instruction!(
@@ -25,7 +23,6 @@ define_instruction!(
     |x, y| x.wrapping_sub(y),
     circuit: [SubtractOperands, WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-    table: RangeCheck,
 );
 
 define_instruction!(
@@ -34,7 +31,6 @@ define_instruction!(
     |x, _y| x,
     circuit: [AddOperands, WriteLookupOutputToRD],
     instruction: [RightOperandIsImm],
-    table: RangeCheck,
 );
 
 define_instruction!(
@@ -43,7 +39,6 @@ define_instruction!(
     |x, y| x.wrapping_add(y),
     circuit: [AddOperands, WriteLookupOutputToRD],
     instruction: [LeftOperandIsPC, RightOperandIsImm],
-    table: RangeCheck,
 );
 
 define_instruction!(
@@ -52,7 +47,6 @@ define_instruction!(
     |x, y| x.wrapping_mul(y),
     circuit: [MultiplyOperands, WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-    table: RangeCheck,
 );
 
 /// RV64M MULH: signed×signed multiply, upper 64 bits.
@@ -69,10 +63,6 @@ impl crate::Instruction for MulH {
     fn execute(&self, x: u64, y: u64) -> u64 {
         let product = (x as i64 as i128).wrapping_mul(y as i64 as i128);
         (product >> 64) as u64
-    }
-    #[inline]
-    fn lookup_table(&self) -> Option<crate::LookupTableKind> {
-        None
     }
 }
 
@@ -104,10 +94,6 @@ impl crate::Instruction for MulHSU {
         let product = (x as i64 as i128).wrapping_mul(y as u128 as i128);
         (product >> 64) as u64
     }
-    #[inline]
-    fn lookup_table(&self) -> Option<crate::LookupTableKind> {
-        None
-    }
 }
 
 impl crate::Flags for MulHSU {
@@ -137,10 +123,6 @@ impl crate::Instruction for MulHU {
     fn execute(&self, x: u64, y: u64) -> u64 {
         let product = (x as u128).wrapping_mul(y as u128);
         (product >> 64) as u64
-    }
-    #[inline]
-    fn lookup_table(&self) -> Option<crate::LookupTableKind> {
-        Some(crate::LookupTableKind::UpperWord)
     }
 }
 
@@ -185,10 +167,6 @@ impl crate::Instruction for Div {
             sx.wrapping_div(sy) as u64
         }
     }
-    #[inline]
-    fn lookup_table(&self) -> Option<crate::LookupTableKind> {
-        None
-    }
 }
 
 impl crate::Flags for Div {
@@ -221,10 +199,6 @@ impl crate::Instruction for DivU {
         } else {
             x / y
         }
-    }
-    #[inline]
-    fn lookup_table(&self) -> Option<crate::LookupTableKind> {
-        None
     }
 }
 
@@ -264,10 +238,6 @@ impl crate::Instruction for Rem {
             sx.wrapping_rem(sy) as u64
         }
     }
-    #[inline]
-    fn lookup_table(&self) -> Option<crate::LookupTableKind> {
-        None
-    }
 }
 
 impl crate::Flags for Rem {
@@ -300,10 +270,6 @@ impl crate::Instruction for RemU {
         } else {
             x % y
         }
-    }
-    #[inline]
-    fn lookup_table(&self) -> Option<crate::LookupTableKind> {
-        None
     }
 }
 

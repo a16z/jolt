@@ -6,7 +6,6 @@ define_instruction!(
     |x, y| u64::from((x as i64) < (y as i64)),
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-    table: SignedLessThan,
 );
 
 define_instruction!(
@@ -15,7 +14,6 @@ define_instruction!(
     |x, y| u64::from((x as i64) < (y as i64)),
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-    table: SignedLessThan,
 );
 
 define_instruction!(
@@ -24,7 +22,6 @@ define_instruction!(
     |x, y| u64::from(x < y),
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-    table: UnsignedLessThan,
 );
 
 define_instruction!(
@@ -33,7 +30,6 @@ define_instruction!(
     |x, y| u64::from(x < y),
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-    table: UnsignedLessThan,
 );
 
 #[cfg(test)]

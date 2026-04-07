@@ -21,7 +21,6 @@ define_instruction!(
     |x, y| x >> (y & 63),
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-    table: VirtualSRL,
 );
 
 define_instruction!(
@@ -30,7 +29,6 @@ define_instruction!(
     |x, y| x >> (y & 63),
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-    table: VirtualSRL,
 );
 
 define_instruction!(
@@ -39,7 +37,6 @@ define_instruction!(
     |x, y| ((x as i64) >> (y & 63)) as u64,
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-    table: VirtualSRA,
 );
 
 define_instruction!(
@@ -48,7 +45,6 @@ define_instruction!(
     |x, y| ((x as i64) >> (y & 63)) as u64,
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-    table: VirtualSRA,
 );
 
 define_instruction!(
@@ -57,7 +53,6 @@ define_instruction!(
     |_x, y| shift_right_bitmask(y),
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-    table: ShiftRightBitmask,
 );
 
 define_instruction!(
@@ -66,7 +61,6 @@ define_instruction!(
     |_x, y| shift_right_bitmask(y),
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-    table: ShiftRightBitmask,
 );
 
 define_instruction!(
@@ -75,7 +69,6 @@ define_instruction!(
     |x, y| x.rotate_right((y & 63) as u32),
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-    table: VirtualROTR,
 );
 
 define_instruction!(
@@ -84,7 +77,6 @@ define_instruction!(
     |x, y| (x as u32).rotate_right((y & 31) as u32) as u64,
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-    table: VirtualROTRW,
 );
 
 #[cfg(test)]

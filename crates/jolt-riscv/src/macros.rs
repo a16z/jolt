@@ -11,13 +11,11 @@
 ///     |x, y| x.wrapping_add(y),
 ///     circuit: [AddOperands, WriteLookupOutputToRD],
 ///     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-///     table: RangeCheck,
 /// );
 /// ```
 ///
-/// All three trailing sections (`circuit`, `instruction`, `table`) are optional.
-/// Omitting `circuit` or `instruction` produces an all-false flag array.
-/// Omitting `table` makes `lookup_table()` return `None`.
+/// Both trailing sections (`circuit`, `instruction`) are optional.
+/// Omitting either produces an all-false flag array.
 macro_rules! define_instruction {
     (
         $(#[$meta:meta])*
@@ -25,7 +23,6 @@ macro_rules! define_instruction {
         |$x:ident, $y:ident| $body:expr
         $(, circuit: [$($cflag:ident),* $(,)?])?
         $(, instruction: [$($iflag:ident),* $(,)?])?
-        $(, table: $table:ident)?
         $(,)?
     ) => {
         $(#[$meta])*
@@ -42,11 +39,6 @@ macro_rules! define_instruction {
             #[inline]
             fn execute(&self, $x: u64, $y: u64) -> u64 {
                 $body
-            }
-
-            #[inline]
-            fn lookup_table(&self) -> Option<$crate::LookupTableKind> {
-                define_instruction!(@table $($table)?)
             }
         }
 
@@ -72,8 +64,4 @@ macro_rules! define_instruction {
     (@iflags, $($flag:ident),+) => {
         $crate::InstructionFlagSet::default()$(.set($crate::InstructionFlags::$flag))+
     };
-
-    // Internal: resolve optional table to Some(Kind) or None.
-    (@table $table:ident) => { Some($crate::LookupTableKind::$table) };
-    (@table) => { None };
 }

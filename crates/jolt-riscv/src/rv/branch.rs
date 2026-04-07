@@ -8,7 +8,6 @@ define_instruction!(
     Beq, "BEQ",
     |x, y| u64::from(x == y),
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value, Branch],
-    table: Equal,
 );
 
 define_instruction!(
@@ -16,7 +15,6 @@ define_instruction!(
     Bne, "BNE",
     |x, y| u64::from(x != y),
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value, Branch],
-    table: NotEqual,
 );
 
 define_instruction!(
@@ -24,7 +22,6 @@ define_instruction!(
     Blt, "BLT",
     |x, y| u64::from((x as i64) < (y as i64)),
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value, Branch],
-    table: SignedLessThan,
 );
 
 define_instruction!(
@@ -32,7 +29,6 @@ define_instruction!(
     Bge, "BGE",
     |x, y| u64::from((x as i64) >= (y as i64)),
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value, Branch],
-    table: SignedGreaterThanEqual,
 );
 
 define_instruction!(
@@ -40,7 +36,6 @@ define_instruction!(
     BltU, "BLTU",
     |x, y| u64::from(x < y),
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value, Branch],
-    table: UnsignedLessThan,
 );
 
 define_instruction!(
@@ -48,7 +43,6 @@ define_instruction!(
     BgeU, "BGEU",
     |x, y| u64::from(x >= y),
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value, Branch],
-    table: UnsignedGreaterThanEqual,
 );
 
 #[cfg(test)]

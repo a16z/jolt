@@ -7,7 +7,6 @@ define_instruction!(
     |x, y| x.wrapping_add(y),
     circuit: [AddOperands, Jump],
     instruction: [LeftOperandIsPC, RightOperandIsImm],
-    table: RangeCheck,
 );
 
 define_instruction!(
@@ -17,7 +16,6 @@ define_instruction!(
     |x, y| x.wrapping_add(y) & !1,
     circuit: [AddOperands, Jump],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-    table: RangeCheckAligned,
 );
 
 #[cfg(test)]

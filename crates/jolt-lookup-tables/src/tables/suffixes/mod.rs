@@ -11,6 +11,7 @@
 use crate::lookup_bits::LookupBits;
 
 mod and;
+mod andnot;
 mod change_divisor;
 mod change_divisor_w;
 mod div_by_zero;
@@ -24,7 +25,6 @@ mod lower_half_word;
 mod lower_word;
 mod lsb;
 mod lt;
-mod notand;
 mod one;
 mod or;
 mod overflow_bits_zero;
@@ -49,6 +49,7 @@ mod xor_rot;
 mod xor_rotw;
 
 use and::AndSuffix;
+use andnot::AndNotSuffix;
 use change_divisor::ChangeDivisorSuffix;
 use change_divisor_w::ChangeDivisorWSuffix;
 use div_by_zero::DivByZeroSuffix;
@@ -62,7 +63,6 @@ use lower_half_word::LowerHalfWordSuffix;
 use lower_word::LowerWordSuffix;
 use lsb::LsbSuffix;
 use lt::LessThanSuffix;
-use notand::NotAndSuffix;
 use one::OneSuffix;
 use or::OrSuffix;
 use overflow_bits_zero::OverflowBitsZeroSuffix;
@@ -107,7 +107,7 @@ pub type SuffixEval<F> = F;
 pub enum Suffixes {
     One,
     And,
-    NotAnd,
+    AndNot,
     Xor,
     Or,
     RightOperand,
@@ -184,7 +184,7 @@ impl Suffixes {
         match self {
             Suffixes::One => OneSuffix::suffix_mle(b),
             Suffixes::And => AndSuffix::suffix_mle(b),
-            Suffixes::NotAnd => NotAndSuffix::suffix_mle(b),
+            Suffixes::AndNot => AndNotSuffix::suffix_mle(b),
             Suffixes::Or => OrSuffix::suffix_mle(b),
             Suffixes::Xor => XorSuffix::suffix_mle(b),
             Suffixes::RightOperand => RightOperandSuffix::suffix_mle(b),

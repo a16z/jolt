@@ -9,7 +9,6 @@ define_instruction!(
     },
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value],
-    table: VirtualRev8W,
 );
 
 #[cfg(test)]

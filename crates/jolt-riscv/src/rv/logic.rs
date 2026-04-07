@@ -6,7 +6,6 @@ define_instruction!(
     |x, y| x & y,
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-    table: And,
 );
 
 define_instruction!(
@@ -15,7 +14,6 @@ define_instruction!(
     |x, y| x & y,
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-    table: And,
 );
 
 define_instruction!(
@@ -24,7 +22,6 @@ define_instruction!(
     |x, y| x | y,
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-    table: Or,
 );
 
 define_instruction!(
@@ -33,7 +30,6 @@ define_instruction!(
     |x, y| x | y,
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-    table: Or,
 );
 
 define_instruction!(
@@ -42,7 +38,6 @@ define_instruction!(
     |x, y| x ^ y,
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-    table: Xor,
 );
 
 define_instruction!(
@@ -51,7 +46,6 @@ define_instruction!(
     |x, y| x ^ y,
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-    table: Xor,
 );
 
 define_instruction!(
@@ -60,7 +54,6 @@ define_instruction!(
     |x, y| x & !y,
     circuit: [WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-    table: Andn,
 );
 
 #[cfg(test)]

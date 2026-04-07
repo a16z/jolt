@@ -6,7 +6,6 @@ define_instruction!(
     |_x, y| 1u64 << (y & 63),
     circuit: [AddOperands, WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-    table: Pow2,
 );
 
 define_instruction!(
@@ -15,7 +14,6 @@ define_instruction!(
     |_x, y| 1u64 << (y & 63),
     circuit: [AddOperands, WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-    table: Pow2,
 );
 
 define_instruction!(
@@ -24,7 +22,6 @@ define_instruction!(
     |_x, y| 1u64 << (y & 31),
     circuit: [AddOperands, WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-    table: Pow2W,
 );
 
 define_instruction!(
@@ -33,7 +30,6 @@ define_instruction!(
     |_x, y| 1u64 << (y & 31),
     circuit: [AddOperands, WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-    table: Pow2W,
 );
 
 define_instruction!(
@@ -42,7 +38,6 @@ define_instruction!(
     |x, y| x.wrapping_mul(y),
     circuit: [MultiplyOperands, WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-    table: RangeCheck,
 );
 
 #[cfg(test)]

@@ -2769,6 +2769,7 @@ name = "jolt-lookup-tables"
 version = "0.1.0"
 dependencies = [
  "jolt-field",
+ "jolt-riscv",
  "rand 0.8.5",
  "serde",
 ]
@@ -2820,7 +2821,6 @@ name = "jolt-riscv"
 version = "0.1.0"
 dependencies = [
  "jolt-field",
- "jolt-lookup-tables",
  "serde",
 ]
 

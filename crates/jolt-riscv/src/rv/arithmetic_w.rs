@@ -60,10 +60,6 @@ impl crate::Instruction for DivW {
             sx.wrapping_div(sy) as i64 as u64
         }
     }
-    #[inline]
-    fn lookup_table(&self) -> Option<crate::LookupTableKind> {
-        None
-    }
 }
 
 impl crate::Flags for DivW {
@@ -99,10 +95,6 @@ impl crate::Instruction for DivUW {
         } else {
             (ux / uy) as i32 as i64 as u64
         }
-    }
-    #[inline]
-    fn lookup_table(&self) -> Option<crate::LookupTableKind> {
-        None
     }
 }
 
@@ -142,10 +134,6 @@ impl crate::Instruction for RemW {
             sx.wrapping_rem(sy) as i64 as u64
         }
     }
-    #[inline]
-    fn lookup_table(&self) -> Option<crate::LookupTableKind> {
-        None
-    }
 }
 
 impl crate::Flags for RemW {
@@ -181,10 +169,6 @@ impl crate::Instruction for RemUW {
         } else {
             (ux % uy) as i32 as i64 as u64
         }
-    }
-    #[inline]
-    fn lookup_table(&self) -> Option<crate::LookupTableKind> {
-        None
     }
 }
 

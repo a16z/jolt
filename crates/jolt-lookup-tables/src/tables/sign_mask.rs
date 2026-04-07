@@ -10,9 +10,9 @@ use crate::XLEN;
 
 /// Returns all-ones if the MSB of the first operand is set, else zero.
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct MovsignTable;
+pub struct SignMaskTable;
 
-impl LookupTable for MovsignTable {
+impl LookupTable for SignMaskTable {
     fn materialize_entry(&self, index: u128) -> u64 {
         let sign_bit_pos = 2 * XLEN - 1;
         let sign_bit = 1u128 << sign_bit_pos;
@@ -35,7 +35,7 @@ impl LookupTable for MovsignTable {
     }
 }
 
-impl PrefixSuffixDecomposition for MovsignTable {
+impl PrefixSuffixDecomposition for SignMaskTable {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::One]
     }
@@ -56,11 +56,11 @@ mod tests {
 
     #[test]
     fn mle_random() {
-        mle_random_test::<Fr, MovsignTable>();
+        mle_random_test::<Fr, SignMaskTable>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, MovsignTable>();
+        prefix_suffix_test::<Fr, SignMaskTable>();
     }
 }
