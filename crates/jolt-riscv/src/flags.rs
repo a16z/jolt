@@ -5,9 +5,9 @@
 //! directly constrained.
 //!
 //! Every instruction implements the [`Flags`] trait, returning its static flag
-//! configuration. The arrays support ergonomic indexing by enum variant.
+//! configuration via [`CircuitFlagSet`] and [`InstructionFlagSet`] packed bitfields.
 
-use std::ops::{Index, IndexMut};
+use std::ops::Index;
 
 /// Boolean flags used in Jolt's R1CS constraints (`opflags` in the Jolt paper).
 ///
@@ -78,17 +78,79 @@ pub const NUM_INSTRUCTION_FLAGS: usize = 7;
 
 const _: () = assert!(InstructionFlags::IsRdNotZero as usize + 1 == NUM_INSTRUCTION_FLAGS);
 
+/// Packed bitfield of [`CircuitFlags`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct CircuitFlagSet(u16);
+
+impl CircuitFlagSet {
+    #[inline]
+    pub fn set(self, flag: CircuitFlags) -> Self {
+        Self(self.0 | (1 << flag as u16))
+    }
+
+    #[inline]
+    pub fn get(self, flag: CircuitFlags) -> bool {
+        self.0 & (1 << flag as u16) != 0
+    }
+
+    #[inline]
+    pub fn bits(self) -> u16 {
+        self.0
+    }
+}
+
+impl Index<CircuitFlags> for CircuitFlagSet {
+    type Output = bool;
+    #[inline]
+    fn index(&self, flag: CircuitFlags) -> &bool {
+        if self.get(flag) {
+            &true
+        } else {
+            &false
+        }
+    }
+}
+
+/// Packed bitfield of [`InstructionFlags`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct InstructionFlagSet(u8);
+
+impl InstructionFlagSet {
+    #[inline]
+    pub fn set(self, flag: InstructionFlags) -> Self {
+        Self(self.0 | (1 << flag as u8))
+    }
+
+    #[inline]
+    pub fn get(self, flag: InstructionFlags) -> bool {
+        self.0 & (1 << flag as u8) != 0
+    }
+
+    #[inline]
+    pub fn bits(self) -> u8 {
+        self.0
+    }
+}
+
+impl Index<InstructionFlags> for InstructionFlagSet {
+    type Output = bool;
+    #[inline]
+    fn index(&self, flag: InstructionFlags) -> &bool {
+        if self.get(flag) {
+            &true
+        } else {
+            &false
+        }
+    }
+}
+
 /// Static flag configuration for an instruction.
 ///
 /// Every instruction struct implements this trait to declare which circuit
-/// and instruction flags are set. The returned arrays are indexed by
-/// [`CircuitFlags`] and [`InstructionFlags`] variants respectively.
+/// and instruction flags are set.
 pub trait Flags {
-    /// Returns the R1CS-relevant circuit flags for this instruction.
-    fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS];
-
-    /// Returns the non-R1CS instruction flags for this instruction.
-    fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS];
+    fn circuit_flags(&self) -> CircuitFlagSet;
+    fn instruction_flags(&self) -> InstructionFlagSet;
 }
 
 /// Checks whether an instruction uses interleaved-bit operand encoding.
@@ -102,43 +164,13 @@ pub trait InterleavedBitsMarker {
     fn is_interleaved_operands(&self) -> bool;
 }
 
-impl InterleavedBitsMarker for [bool; NUM_CIRCUIT_FLAGS] {
+impl InterleavedBitsMarker for CircuitFlagSet {
     #[inline]
     fn is_interleaved_operands(&self) -> bool {
-        !self[CircuitFlags::AddOperands]
-            && !self[CircuitFlags::SubtractOperands]
-            && !self[CircuitFlags::MultiplyOperands]
-            && !self[CircuitFlags::Advice]
-    }
-}
-
-impl Index<CircuitFlags> for [bool; NUM_CIRCUIT_FLAGS] {
-    type Output = bool;
-    #[inline]
-    fn index(&self, index: CircuitFlags) -> &bool {
-        &self[index as usize]
-    }
-}
-
-impl IndexMut<CircuitFlags> for [bool; NUM_CIRCUIT_FLAGS] {
-    #[inline]
-    fn index_mut(&mut self, index: CircuitFlags) -> &mut bool {
-        &mut self[index as usize]
-    }
-}
-
-impl Index<InstructionFlags> for [bool; NUM_INSTRUCTION_FLAGS] {
-    type Output = bool;
-    #[inline]
-    fn index(&self, index: InstructionFlags) -> &bool {
-        &self[index as usize]
-    }
-}
-
-impl IndexMut<InstructionFlags> for [bool; NUM_INSTRUCTION_FLAGS] {
-    #[inline]
-    fn index_mut(&mut self, index: InstructionFlags) -> &mut bool {
-        &mut self[index as usize]
+        !self.get(CircuitFlags::AddOperands)
+            && !self.get(CircuitFlags::SubtractOperands)
+            && !self.get(CircuitFlags::MultiplyOperands)
+            && !self.get(CircuitFlags::Advice)
     }
 }
 
@@ -163,23 +195,21 @@ mod tests {
     }
 
     #[test]
-    fn indexing_by_variant() {
-        let mut flags = [false; NUM_CIRCUIT_FLAGS];
-        flags[CircuitFlags::Load] = true;
+    fn set_and_get() {
+        let flags = CircuitFlagSet::default().set(CircuitFlags::Load);
         assert!(flags[CircuitFlags::Load]);
         assert!(!flags[CircuitFlags::Store]);
     }
 
     #[test]
     fn interleaved_default() {
-        let flags = [false; NUM_CIRCUIT_FLAGS];
+        let flags = CircuitFlagSet::default();
         assert!(flags.is_interleaved_operands());
     }
 
     #[test]
     fn add_operands_not_interleaved() {
-        let mut flags = [false; NUM_CIRCUIT_FLAGS];
-        flags[CircuitFlags::AddOperands] = true;
+        let flags = CircuitFlagSet::default().set(CircuitFlags::AddOperands);
         assert!(!flags.is_interleaved_operands());
     }
 }

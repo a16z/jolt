@@ -78,15 +78,14 @@ impl crate::Instruction for MulH {
 
 impl crate::Flags for MulH {
     #[inline]
-    fn circuit_flags(&self) -> [bool; crate::NUM_CIRCUIT_FLAGS] {
-        [false; crate::NUM_CIRCUIT_FLAGS]
+    fn circuit_flags(&self) -> crate::CircuitFlagSet {
+        crate::CircuitFlagSet::default()
     }
     #[inline]
-    fn instruction_flags(&self) -> [bool; crate::NUM_INSTRUCTION_FLAGS] {
-        let mut flags = [false; crate::NUM_INSTRUCTION_FLAGS];
-        flags[crate::InstructionFlags::LeftOperandIsRs1Value] = true;
-        flags[crate::InstructionFlags::RightOperandIsRs2Value] = true;
-        flags
+    fn instruction_flags(&self) -> crate::InstructionFlagSet {
+        crate::InstructionFlagSet::default()
+            .set(crate::InstructionFlags::LeftOperandIsRs1Value)
+            .set(crate::InstructionFlags::RightOperandIsRs2Value)
     }
 }
 
@@ -113,15 +112,14 @@ impl crate::Instruction for MulHSU {
 
 impl crate::Flags for MulHSU {
     #[inline]
-    fn circuit_flags(&self) -> [bool; crate::NUM_CIRCUIT_FLAGS] {
-        [false; crate::NUM_CIRCUIT_FLAGS]
+    fn circuit_flags(&self) -> crate::CircuitFlagSet {
+        crate::CircuitFlagSet::default()
     }
     #[inline]
-    fn instruction_flags(&self) -> [bool; crate::NUM_INSTRUCTION_FLAGS] {
-        let mut flags = [false; crate::NUM_INSTRUCTION_FLAGS];
-        flags[crate::InstructionFlags::LeftOperandIsRs1Value] = true;
-        flags[crate::InstructionFlags::RightOperandIsRs2Value] = true;
-        flags
+    fn instruction_flags(&self) -> crate::InstructionFlagSet {
+        crate::InstructionFlagSet::default()
+            .set(crate::InstructionFlags::LeftOperandIsRs1Value)
+            .set(crate::InstructionFlags::RightOperandIsRs2Value)
     }
 }
 
@@ -148,18 +146,16 @@ impl crate::Instruction for MulHU {
 
 impl crate::Flags for MulHU {
     #[inline]
-    fn circuit_flags(&self) -> [bool; crate::NUM_CIRCUIT_FLAGS] {
-        let mut flags = [false; crate::NUM_CIRCUIT_FLAGS];
-        flags[crate::CircuitFlags::MultiplyOperands] = true;
-        flags[crate::CircuitFlags::WriteLookupOutputToRD] = true;
-        flags
+    fn circuit_flags(&self) -> crate::CircuitFlagSet {
+        crate::CircuitFlagSet::default()
+            .set(crate::CircuitFlags::MultiplyOperands)
+            .set(crate::CircuitFlags::WriteLookupOutputToRD)
     }
     #[inline]
-    fn instruction_flags(&self) -> [bool; crate::NUM_INSTRUCTION_FLAGS] {
-        let mut flags = [false; crate::NUM_INSTRUCTION_FLAGS];
-        flags[crate::InstructionFlags::LeftOperandIsRs1Value] = true;
-        flags[crate::InstructionFlags::RightOperandIsRs2Value] = true;
-        flags
+    fn instruction_flags(&self) -> crate::InstructionFlagSet {
+        crate::InstructionFlagSet::default()
+            .set(crate::InstructionFlags::LeftOperandIsRs1Value)
+            .set(crate::InstructionFlags::RightOperandIsRs2Value)
     }
 }
 
@@ -197,15 +193,14 @@ impl crate::Instruction for Div {
 
 impl crate::Flags for Div {
     #[inline]
-    fn circuit_flags(&self) -> [bool; crate::NUM_CIRCUIT_FLAGS] {
-        [false; crate::NUM_CIRCUIT_FLAGS]
+    fn circuit_flags(&self) -> crate::CircuitFlagSet {
+        crate::CircuitFlagSet::default()
     }
     #[inline]
-    fn instruction_flags(&self) -> [bool; crate::NUM_INSTRUCTION_FLAGS] {
-        let mut flags = [false; crate::NUM_INSTRUCTION_FLAGS];
-        flags[crate::InstructionFlags::LeftOperandIsRs1Value] = true;
-        flags[crate::InstructionFlags::RightOperandIsRs2Value] = true;
-        flags
+    fn instruction_flags(&self) -> crate::InstructionFlagSet {
+        crate::InstructionFlagSet::default()
+            .set(crate::InstructionFlags::LeftOperandIsRs1Value)
+            .set(crate::InstructionFlags::RightOperandIsRs2Value)
     }
 }
 
@@ -235,15 +230,14 @@ impl crate::Instruction for DivU {
 
 impl crate::Flags for DivU {
     #[inline]
-    fn circuit_flags(&self) -> [bool; crate::NUM_CIRCUIT_FLAGS] {
-        [false; crate::NUM_CIRCUIT_FLAGS]
+    fn circuit_flags(&self) -> crate::CircuitFlagSet {
+        crate::CircuitFlagSet::default()
     }
     #[inline]
-    fn instruction_flags(&self) -> [bool; crate::NUM_INSTRUCTION_FLAGS] {
-        let mut flags = [false; crate::NUM_INSTRUCTION_FLAGS];
-        flags[crate::InstructionFlags::LeftOperandIsRs1Value] = true;
-        flags[crate::InstructionFlags::RightOperandIsRs2Value] = true;
-        flags
+    fn instruction_flags(&self) -> crate::InstructionFlagSet {
+        crate::InstructionFlagSet::default()
+            .set(crate::InstructionFlags::LeftOperandIsRs1Value)
+            .set(crate::InstructionFlags::RightOperandIsRs2Value)
     }
 }
 
@@ -278,15 +272,14 @@ impl crate::Instruction for Rem {
 
 impl crate::Flags for Rem {
     #[inline]
-    fn circuit_flags(&self) -> [bool; crate::NUM_CIRCUIT_FLAGS] {
-        [false; crate::NUM_CIRCUIT_FLAGS]
+    fn circuit_flags(&self) -> crate::CircuitFlagSet {
+        crate::CircuitFlagSet::default()
     }
     #[inline]
-    fn instruction_flags(&self) -> [bool; crate::NUM_INSTRUCTION_FLAGS] {
-        let mut flags = [false; crate::NUM_INSTRUCTION_FLAGS];
-        flags[crate::InstructionFlags::LeftOperandIsRs1Value] = true;
-        flags[crate::InstructionFlags::RightOperandIsRs2Value] = true;
-        flags
+    fn instruction_flags(&self) -> crate::InstructionFlagSet {
+        crate::InstructionFlagSet::default()
+            .set(crate::InstructionFlags::LeftOperandIsRs1Value)
+            .set(crate::InstructionFlags::RightOperandIsRs2Value)
     }
 }
 
@@ -316,15 +309,14 @@ impl crate::Instruction for RemU {
 
 impl crate::Flags for RemU {
     #[inline]
-    fn circuit_flags(&self) -> [bool; crate::NUM_CIRCUIT_FLAGS] {
-        [false; crate::NUM_CIRCUIT_FLAGS]
+    fn circuit_flags(&self) -> crate::CircuitFlagSet {
+        crate::CircuitFlagSet::default()
     }
     #[inline]
-    fn instruction_flags(&self) -> [bool; crate::NUM_INSTRUCTION_FLAGS] {
-        let mut flags = [false; crate::NUM_INSTRUCTION_FLAGS];
-        flags[crate::InstructionFlags::LeftOperandIsRs1Value] = true;
-        flags[crate::InstructionFlags::RightOperandIsRs2Value] = true;
-        flags
+    fn instruction_flags(&self) -> crate::InstructionFlagSet {
+        crate::InstructionFlagSet::default()
+            .set(crate::InstructionFlags::LeftOperandIsRs1Value)
+            .set(crate::InstructionFlags::RightOperandIsRs2Value)
     }
 }
 

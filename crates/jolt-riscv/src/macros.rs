@@ -52,24 +52,26 @@ macro_rules! define_instruction {
 
         impl $crate::Flags for $name {
             #[inline]
-            fn circuit_flags(&self) -> [bool; $crate::NUM_CIRCUIT_FLAGS] {
-                define_instruction!(@flags $crate::NUM_CIRCUIT_FLAGS, $crate::CircuitFlags $(, $($cflag),*)?)
+            fn circuit_flags(&self) -> $crate::CircuitFlagSet {
+                define_instruction!(@cflags $(, $($cflag),*)?)
             }
 
             #[inline]
-            fn instruction_flags(&self) -> [bool; $crate::NUM_INSTRUCTION_FLAGS] {
-                define_instruction!(@flags $crate::NUM_INSTRUCTION_FLAGS, $crate::InstructionFlags $(, $($iflag),*)?)
+            fn instruction_flags(&self) -> $crate::InstructionFlagSet {
+                define_instruction!(@iflags $(, $($iflag),*)?)
             }
         }
     };
 
-    // Internal: build flags array, no mut needed when empty.
-    (@flags $n:expr, $mod:path) => { [false; $n] };
-    (@flags $n:expr, $mod:path, $($flag:ident),+) => {{
-        let mut flags = [false; $n];
-        $(flags[<$mod>::$flag] = true;)+
-        flags
-    }};
+    (@cflags) => { $crate::CircuitFlagSet::default() };
+    (@cflags, $($flag:ident),+) => {
+        $crate::CircuitFlagSet::default()$(.set($crate::CircuitFlags::$flag))+
+    };
+
+    (@iflags) => { $crate::InstructionFlagSet::default() };
+    (@iflags, $($flag:ident),+) => {
+        $crate::InstructionFlagSet::default()$(.set($crate::InstructionFlags::$flag))+
+    };
 
     // Internal: resolve optional table to Some(Kind) or None.
     (@table $table:ident) => { Some($crate::LookupTableKind::$table) };

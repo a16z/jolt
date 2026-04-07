@@ -5,7 +5,6 @@
 
 use jolt_riscv::{
     interleave_bits, uninterleave_bits, CircuitFlags, Flags, Instruction, JoltInstructionSet,
-    NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
 };
 
 // Import instruction structs directly
@@ -206,60 +205,30 @@ fn bitwise_operations() {
 
 // Flag consistency
 
-/// All circuit flag arrays have the correct length.
-#[test]
-fn circuit_flag_dimensions() {
-    let set = JoltInstructionSet::new();
-    for instr in set.iter() {
-        let flags = instr.circuit_flags();
-        assert_eq!(
-            flags.len(),
-            NUM_CIRCUIT_FLAGS,
-            "circuit flags wrong size for {}",
-            instr.name()
-        );
-    }
-}
-
-/// All instruction flag arrays have the correct length.
-#[test]
-fn instruction_flag_dimensions() {
-    let set = JoltInstructionSet::new();
-    for instr in set.iter() {
-        let flags = instr.instruction_flags();
-        assert_eq!(
-            flags.len(),
-            NUM_INSTRUCTION_FLAGS,
-            "instruction flags wrong size for {}",
-            instr.name()
-        );
-    }
-}
-
 /// ADD has AddOperands and WriteLookupOutputToRD flags.
 #[test]
 fn add_has_expected_flags() {
     let cf = Add.circuit_flags();
-    assert!(cf[CircuitFlags::AddOperands as usize]);
-    assert!(cf[CircuitFlags::WriteLookupOutputToRD as usize]);
-    assert!(!cf[CircuitFlags::Load as usize]);
-    assert!(!cf[CircuitFlags::Store as usize]);
+    assert!(cf[CircuitFlags::AddOperands]);
+    assert!(cf[CircuitFlags::WriteLookupOutputToRD]);
+    assert!(!cf[CircuitFlags::Load]);
+    assert!(!cf[CircuitFlags::Store]);
 }
 
 /// Loads have Load flag, stores have Store flag.
 #[test]
 fn load_store_flags() {
-    assert!(Lw.circuit_flags()[CircuitFlags::Load as usize]);
-    assert!(!Lw.circuit_flags()[CircuitFlags::Store as usize]);
+    assert!(Lw.circuit_flags()[CircuitFlags::Load]);
+    assert!(!Lw.circuit_flags()[CircuitFlags::Store]);
 
-    assert!(Sw.circuit_flags()[CircuitFlags::Store as usize]);
-    assert!(!Sw.circuit_flags()[CircuitFlags::Load as usize]);
+    assert!(Sw.circuit_flags()[CircuitFlags::Store]);
+    assert!(!Sw.circuit_flags()[CircuitFlags::Load]);
 }
 
 /// Jump instructions have Jump flag.
 #[test]
 fn jump_flags() {
-    assert!(Jal.circuit_flags()[CircuitFlags::Jump as usize]);
+    assert!(Jal.circuit_flags()[CircuitFlags::Jump]);
 }
 
 // Lookup table consistency
