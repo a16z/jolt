@@ -46,9 +46,6 @@
 //! ```
 
 #![deny(missing_docs)]
-#![deny(clippy::all)]
-#![warn(clippy::pedantic)]
-#![allow(clippy::module_name_repetitions)]
 
 mod blake2b;
 mod blanket;

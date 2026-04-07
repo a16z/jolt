@@ -20,7 +20,7 @@ blake2.workspace = true
 digest.workspace = true
 light-poseidon.workspace = true
 sha3.workspace = true
-jolt-field = { path = "../jolt-field" }
+jolt-field.workspace = true
 
 [dev-dependencies]
 num-traits = { workspace = true }

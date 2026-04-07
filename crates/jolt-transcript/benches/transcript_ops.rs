@@ -1,4 +1,4 @@
-#![allow(unused_results)]
+#![expect(unused_results)]
 
 use std::hint::black_box;
 
