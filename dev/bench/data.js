@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1775514748708,
+  "lastUpdate": 1775578793730,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -75226,6 +75226,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 864308,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "102677731+0xParti@users.noreply.github.com",
+            "name": "parti",
+            "username": "0xParti"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c0cf7e4e7790b57c77205591701ae552b695738f",
+          "message": "feat: add Poseidon support, pipeline for Intermediate Representation and gnark verifier transpilation target (#1322)\n\n* feat: add Poseidon transcript\n\nAdds PoseidonTranscript using light_poseidon over BN254.\n\nUses width-3 Poseidon to include n_rounds in every hash call for domain\nseparation, same as Blake2b/Keccak. Chunks large inputs into 32-byte\npieces since Poseidon has fixed-width inputs.\n\nGated behind transcript-poseidon feature flag.\n\n* fix: apply cargo fmt formatting to poseidon.rs and mod.rs\n\n* Update comments in jolt-core/src/zkvm/mod.rs\n\nCo-authored-by: Markos <53157953+markosg04@users.noreply.github.com>\n\n* feat: make PoseidonTranscript generic over field type\n\n- Add PoseidonParams<F> trait for type-level parameter configuration\n- Implement FrParams (uses new_circom) and FqParams (generated params)\n- Add poseidon_fq_params.rs with BN254 Fq parameters (128-bit security)\n- Create type aliases PoseidonTranscriptFr and PoseidonTranscriptFq\n- Fq params generated with poseidon-paramgen v0.4.0 (audited by NCC Group)\n\nThis enables SNARK composition where sumchecks operate over Fq.\n\n* feat: add ASTBundle and serde support für MLE AST\n\n* feat: initial gnark transpilation setup\n\n* feat: append claims to transcript in MleOpeningAccumulator\n\n* feat: fix stage 1 gnark transpilation - cleanup and debug tooling\n\nStage 1 now works end-to-end with Groth16 prove/verify.\n\nThe main issue was using the wrong transcript - proof was generated with\nBlake2b (default) but Go circuit uses Poseidon. Fixed by documenting that\n--features transcript-poseidon is required for gnark transpilation.\n\nChanges:\n- Add debug-expected-output feature flag for transcript debugging\n- Add detailed debug output for challenge derivation (behind feature flag)\n- Clean up old stage1_* files (replaced by stages16)\n- Remove obsolete debug tools and witness loader\n- Improve codegen and mle_ast for per-assertion CSE\n\n* feat: Stage 2 working - fix is_one() spurious constraints\n\n* feat: Enable Stage 3 verification (Spartan shift, instruction input, register claim reduction)\n\nStage 3 adds 3 batched sumchecks to the transpiled verifier:\n- Spartan shift: verifies next-cycle values match trace\n- Instruction input: verifies operand constraints\n- Register claim reduction: batches register access claims\n\nResults (Stages 1-3):\n- Assertions: 5 (up from 4)\n- Constraints: 763,394 (+231,208 from Stage 2)\n- Groth16 prove: ~1.85s\n- Groth16 verify: ~1.44ms\n\n* feat: enable Stage 4 verification + fix AST traversal performance bug\n\nStage 4 adds 4 batched sumchecks:\n- Register read/write checking\n- RAM ra booleanity\n- RAM val evaluation\n- RAM val final\n\nResults (Stages 1-4):\n- Assertions: 10 (up from 5)\n- Constraints: 1,048,560 (+285,166 from Stage 3)\n- Groth16 prove: ~2.5s\n- Groth16 verify: ~1.5ms\n\nBug fix: Added memoization to count_mul_by_zero() in transpile_stages.rs.\nWithout memoization, the function hung for 6+ minutes due to exponential\ntraversal of shared AST nodes (common subexpressions).\n\n* feat: enable Stage 5 verification with iterative AST traversal fix\n\nStage 5 (Register val evaluation, RAM Hamming booleanity, RAM ra reduction,\nLookups read-raf) now passes with 13 assertions and 1,531,516 constraints.\n\nFixed stack overflow during code generation by converting recursive\n and  functions to iterative implementations\nusing explicit stacks. Stage 5's deeper AST exceeded stack limits even\nwith 128MB stack size.\n\nResults:\n- Assertions: 13 (up from 10 in Stage 4)\n- Constraints: 1,531,516 (+482,956 from Stage 4)\n- Proof size: 164 bytes\n- Prove time: 3.78s\n- Verify time: 1.59ms\n\n* feat dd sanity check tests for circuit verification integrity\n\nAdd comprehensive tests to verify the generated circuit is performing\nreal cryptographic verification and not passing blindly:\n\n- TestCorruptedWitnessRejected: Targeted corruption of commitment,\n  PC claims, register values, RAM booleanity - all correctly rejected\n- TestRandomFuzzing: 20 random field corruptions, 100% rejection rate\n- TestAssertionCountMatchesTheory: Verifies 13 assertions match expected\n- TestCircuitNotTrivial: Validates 1.5M constraints, 5924 Poseidon hashes,\n  11839 multiplications - confirms real cryptographic work\n\nThese tests provide confidence that the transpiled circuit is sound.\n\n* feat: Poseidon width benchmarking tools + semantic fix for immediate hashing\n\nAdd tools for benchmarking different Poseidon widths:\n- extract_poseidon_constants.rs: Generate Go constants for any width\n- poseidon_vectors.rs: Generate test vectors for verification\n- constants4.go, constants5.go: Pre-generated width-4/5 constants\n\nBenchmark results: width-4 (3 inputs) is optimal (+12.8% constraints for width-5).\n\nAlso applies semantic fix to PoseidonAstTranscript: append_message,\nappend_u64, append_scalar now use direct poseidon calls matching\njolt-core's immediate hashing semantics.\n\n* chore: remove deprecated stage1_only_verifier dependent code\n\nRemove functions and binaries that depended on the old stage1_only_verifier:\n- Remove generate_stage1_circuit* functions from codegen.rs\n- Remove export_stage1_ast/export_stage1_poseidon_ast from ast_json.rs\n- Delete verify_final_claim.rs binary\n- Delete run_full_stage1.rs binary (was broken)\n- Update lib.rs exports\n\nThe gnark-transpiler now uses transpilable_verifier exclusively for\nstages 1-5 verification.\n\n* chore: remove dead code and fix warnings in gnark-transpiler\n\nRemove unused functions and imports that were left behind after the\nstage1_only_verifier cleanup:\n\ncodegen.rs:\n- Remove unused imports (Bindings, common_subexpression_elimination_incremental, insert_node)\n- Remove unused method edge_to_gnark on MemoizedCodeGen\n- Remove dead CSE helper functions (~260 lines):\n  - atom_to_gnark_with_offset\n  - edge_to_gnark_with_offset\n  - generate_gnark_expr_with_vars_and_offset\n  - generate_gnark_expr_for_node_with_offset\n  - generate_gnark_expr_with_cse\n- Fix unused variable warning with matches!() macro\n\nast_json.rs:\n- Remove unused import get_node\n- Remove dead tree traversal functions (~80 lines):\n  - collect_nodes_from_root\n  - collect_vars_from_node\n  - collect_vars_from_edge\n\ntranspile_stages.rs:\n- Remove unused imports (ark_ff::PrimeField, serde::Serialize)\n- Fix unused mut warning on accumulator\n- Fix unused variables (indent, Poseidon match arms)\n\n* feat(transcript): add debug_state and AppendToTranscript\n\n* feat(zkvm): transpilable verifier stages\n\n* refactor(gnark-transpiler): cleanup debug bins, update src\n\n* feat(gnark-transpiler): Go circuit and tests\n\n* feat(zklean-extractor): AppendToTranscript for AstCommitment\n\n* chore: update Cargo.lock and gnark-transpiler deps\n\n* refactor(codegen): read nodes from AstBundle instead of global NODE_ARENA\n\nMemoizedCodeGen now takes &[Node] from bundle.nodes, making\ngenerate_circuit_from_bundle fully self-contained. Also adds\nlocal constant-check functions that operate on the node slice\nand exports scalar arithmetic from zklean-extractor.\n\n* chore: clean up gnark-transpiler for PR\n\n* chore: clean up transpiler branch for PR\n\nRemove unused/orphaned files and debug artifacts\n\n* fix: Add Poseidon verification tests for Rust/Go consistency\n\n* docs(gnark-transpiler): add comprehensive documentation and improve API\n\n* chore: gnark-transpiler: Add API improvements and developer tooling\n\n* fix(gnark-transpiler): resolve all clippy warnings\n\n* chore: Remove unused Keccak256 node variant, keep Neg/Div for zklean compatibility\n\n* refactor(codegen): simplify atom_to_gnark and edge_to_gnark_iterative\n\n* fix: manual review codegen\n\n* fix: general fixes on symbolic proof\n\n* refactor(transpiler): generalize for multiple code generation targets\n\n- Rename gnark-transpiler/ to transpiler/\n- Rename codegen.rs to gnark_codegen.rs (clarify gnark-specific)\n- Add TranspilationTarget enum with Gnark and AstBundle variants\n- Add -t/--target CLI flag (defaults to gnark)\n- Add -o/--output-dir CLI flag for custom output location\n- Extract common bundle writing before target-specific codegen\n- Refactor extract_witness_values with helper functions\n- Update README with ast-bundle docs and Adding a New Target guide\n\nUses simple match statement for target dispatch (not a trait) to avoid\npremature abstraction. Different targets may need different inputs.\n\n* feat(transpiler): add stage 7 (HammingWeight) and fix sanitize_go_name\n\nAdd Stage 7 (HammingWeight claim reduction sumcheck) to transpilable verifier:\n- Make HammingWeightClaimReductionVerifier::new generic over OpeningAccumulator\n- Add verify_stage7() to TranspilableVerifier\n- All sumcheck stages (1-7) now transpile and verify with Groth16\n\nFix sanitize_go_name regression that removed underscores:\n- Restore .collect::<Vec<_>>().join(_) to preserve underscores\n- Witness JSON keys must match circuit struct field names exactly\n\nResults (fib(50)):\n- 16 assertions, 2,895,024 constraints\n- 164 byte proof, 7.94s prove, 1.94ms verify\n\n* refactor(transpiler): single-pass witness capture in VarAllocator\n\nRefactor VarAllocator to store witness values during symbolic variable\nallocation, eliminating the separate extract_witness_values function.\n\nThis makes witness/symbolization mismatch bugs structurally impossible -\nboth the symbolic variable and its concrete value are recorded in the\nsame function call.\n\nChanges:\n- VarAllocator now stores witness_values: Vec<String>\n- New methods: alloc_with_value(), alloc_n_with_values(), alloc_commitment()\n- Updated symbolize_proof to pass concrete Fr values to allocator\n- Deleted extract_witness_values (no longer needed)\n- Updated main.rs to use var_alloc.witness_values()\n\n* docs(transpiler): improve ast_commitment_scheme and symbolic_proof documentation\n\n* refactor(transpiler): organize trait impls into symbolic_traits module\n\n* refactor(transpiler): improve symbolic_traits code quality\n\n- Rename files to match concrete type names (ast_commitment_scheme.rs, poseidon.rs)\n- Rename MleOpeningAccumulator to AstOpeningAccumulator for naming consistency\n- Add log_T field to match VerifierOpeningAccumulator\n- Extract get_opening/append_opening helpers to reduce code duplication\n- Remove unused methods (opening_ids, len, is_empty, from_opening_ids)\n- Consolidate test-only helpers under #[cfg(test)]\n- Fix module doc attribute placement\n\n* refactor(zklean-extractor): fix dual-compilation warnings and reorder mle_ast.rs\n\n- Replace `mod X` declarations in main.rs with `use zklean_extractor::X::*`\n  to avoid duplicate compilation of library modules as binary-local modules\n- Fix sumchecks.rs imports to use library path instead of crate path\n- Reorder mle_ast.rs per Rust conventions (imports, constants, types,\n  impls, helpers, trait impls, secondary types)\n- Remove unused test-only methods from opening_accumulator.rs\n- Fix typos and formatting in poseidon.rs\n\n* refactor(transpiler): clean up PoseidonAstTranscript\n\n- Implement challenge_scalar_powers_optimized mirroring jolt-core\n- Refactor all challenge methods to eliminate duplication\n- Deduplicate raw_append_* methods via hash_and_update/append_field_elements\n- Remove dead code: n_rounds(), new_mle(), challenge_vector_mle(), append_u64_symbolic()\n- Rename challenge_mle → challenge_ast\n- Fix docstrings and stale comments\n\n* refactor(ast): replace Node::Poseidon with TranscriptHash enum\n\nGeneralize the AST node for transcript hashing to support multiple\nhash backends (Poseidon, Blake2b) via TranscriptHashData enum.\nAdapt gnark_codegen and PoseidonAstTranscript to the new structure.\n\n* refactor: remove PoseidonTranscriptFq and Fq parameters\n\n- Delete poseidon_fq_params.rs (~160 lines of hex constants)\n- Remove FqParams struct and impl from poseidon.rs\n- Remove PoseidonTranscriptFq type alias\n- Remove 2 Fq-only test functions\n- Update mod.rs exports\n\nKeep generic PoseidonTranscript<F, P> structure for Fr.\nFq support was test-only and unused in production.\n\n* refactor(poseidon): implement byte transforms with api.ToBinary\n\nImplement ByteReverse, Truncate128, Truncate128Reverse, and\nAppendU64Transform using bit decomposition and linear recomposition.\n\n* feat: review a functions in symbolic_traits/poseidon.rs\n\n* refactor: refactor poseidon challenge computation\n\n* refactor(poseidon): improve code quality and add comprehensive tests\n\n* add new test of full pipeline\n\n* docs: improve documentation for debug and Montgomery utilities\n\n* chore: update transpilation readme\n\n* chore: update readme\n\n* feat: change a few rough edges in poseidon\n\n* refactor: optimize truncation to reduce amount of constraints in groth16\n\n* feat: add TargetField infrastructure for Fr/Fq field generalization\n\n* refactor(zklean-extractor): remove dead code and add documentation\n\n* refactor: move CSE from codegen to AST level\n\n* refactor(zklean-extractor): improve code quality and documentation\n\n* refactor(zklean-extractor): clean up scalar_ops and improve test coverage\n\n* refactor(zklean-extractor): rename InputKind to WitnessType\n\n* refactor(zklean-extractor): clean up AstBundle API and improve code quality\n\n* refactor(ast): make AstCommitment PCS-agnostic\n\n* chore(zklean-extractor): clean up lib.rs exports and comments\n\n* fix(transpiler): use has_inputs_for_field instead of removed method\n\n* refactor(transcript): improve Poseidon transcript code quality and tests\n\n* refactor(transpilable_verifier): improve docs and merge impl blocks\n\n* docs(opening_proof): add docstring for OpeningId impl block\n\n* docs(sumcheck): make debug comment target-agnostic\n\n* refactor(transcript): remove unused AppendToTranscript trait\n\nThe trait had a single implementation (AstCommitment) and was never used\nas a generic bound. Replaced with a direct inherent method on AstCommitment.\n\n* feat: review patterns in generic structs\n\n* refactor(transcripts): simplify Poseidon transcript exports\n\n* fix(transcript): remove orphaned AppendToTranscript references\n\n* test: add comprehensive test coverage for MleAst, improve Poseidon and sumcheck tests\n\n* test(transpiler): add comprehensive sanitize_go_name tests and fix panic messages\n\n* test: Add comprehensive test coverage for transpiler gnark_codegen and symbolic_proof\n\n* test: Add comprehensive test coverage for transpiler symbolic_traits\n\n* test(go): remove unused helper functions and their tests\n\n* feat(transpiler): add advice verifiers to stages 6 and 7\n\n* refactor(transpilable_verifier): improve symmetry with verifier.rs\n\n- Extract instances into explicit variable before BatchedSumcheck calls\n- Add .inspect_err() logging for all stage calls\n- Add min_ram_K validation in constructor\n- Fix e2e_test.go to remove obsolete --target gnark argument\n\nCo-Authored-By: 0xParti <102677731+0xParti@users.noreply.github.com>\n\n* docs(transpiler): update README and fix outdated advice references\n\n- Simplify README structure, remove verbose sections (Step-by-Step, Debug Mode, Output Files details)\n- Fix \"What Gets Transpiled\" to correctly state AdviceClaimReduction is included\n- Remove redundant transcript command examples\n- Update Module Overview to include symbolize module\n- Simplify \"Adding a New Target\" instructions\n- Fix lib.rs outdated comment about Stage 7 not including AdviceClaimReduction\n- Fix main.rs comment to clarify fibonacci doesn't use advice (not stages 1-6)\n\nCo-Authored-By: 0xParti <102677731+0xParti@users.noreply.github.com>\n\n* chore: cleanup orphaned files and unused imports\nCo-Authored-By: 0xParti <102677731+0xParti@users.noreply.github.com>\n\n* fix: adapt transpiler and jolt-core to main API changes post-rebase\n\n- Add AstCurve stub implementing JoltCurve for symbolic execution\n- Update JoltProof/SumcheckInstanceProof to 4/3 generic params (added C: JoltCurve)\n- Remove raw_append_point from Transcript (removed upstream)\n- Update OpeningAccumulator trait methods (removed transcript param)\n- Wrap UniSkipFirstRoundProof in UniSkipFirstRoundProofVariant::Standard\n- Remove bytecode_K from JoltProof (removed upstream)\n- Fix PoseidonTranscriptFr -> PoseidonTranscript rename\n- Fix clippy warnings (unused imports, cfg-gated BIG_ENDIAN)\n\n* style: cargo fmt + cleanup opening_proof.rs\n\n- Fix formatting in 7 files (rebase artifacts caught by CI)\n- Remove duplicate virtual_poly() method (use virt() everywhere)\n- Replace unimplemented!() trait defaults with safe no-ops\n- Reorder VerifierOpeningAccumulator methods to match trait definition\n- Fix backtrace default off -> disable (upstream bug)\n\n* feat: Revert verify() to concrete VerifierOpeningAccumulator, keep verify_standard() generic\n\nverify() only serves the real verifier path (including ZK), so it uses\nconcrete VerifierOpeningAccumulator<F>. verify_standard() stays generic\nover A: OpeningAccumulator<F> for transpilation.\n\nTranspilableVerifier call sites switched from verify() to verify_standard()\nwith extract_clear_proof() helper. BlindFoldSpartanVerifier impl made concrete.\n\n* fix: correct comment typo in transpiler main\n\n* chore: Remove debug-expected-output feature and debug_state infrastructure\n\n* fix: revert backtrace to off in jolt-core/src/host/program.rs\n\n* chore: format code and remove redundant Go tests\n\n* chore: replace panic! with unimplemented! in ast_curve stubs\n\n* test: add full unit test coverage for AstOpeningAccumulator\n\n* feat: add Keccak AST support at parity with Blake2b.\n\nCo-Authored-By: akoi <197815935+akoidefi@users.noreply.github.com>\n\n* chore: sync Cargo.lock with main and revert unnecessary sumchecks.rs change\n\n* eat(transpiler): add advice support and merkle-tree E2E verification\n\nEnable transpilation of Jolt programs that use TrustedAdvice (e.g.,\nmerkle-tree example). The key fix is in GenericRamValCheckVerifier::new\nwhich now computes init_eval using eval_initial_ram_mle + advice\ncontributions instead of a direct polynomial evaluation that missed\nadvice regions.\n\nChanges:\n- merkle-tree example: add --save flag and transcript feature flags\n- transpiler main.rs: add --trusted-advice CLI arg to load and\n  symbolize advice commitments\n- transpilable_verifier.rs: fix init_eval to include advice selector *\n  advice_eval terms via compute_advice_init_contributions\n- gnark_codegen.rs: split large constraints into sub-functions and\n  cap inline expression size to prevent Go compiler OOM\n\n* test: add TestEndToEndMerkleTree E2E for advice regression testing\n\n* refactor: extract merkle-tree --save into separate crate\n\n* fix: use unreachable! for impossible OpeningId variant and restore codegen comments\n\n* refactor: make RamValCheck generic over OpeningAccumulator, remove wrapper\n\n* chore: fix CI lints (clippy div_ceil, unused import under --features zk, fmt)\n\n* fix: replicate upstream opening accumulator aliasing in AstOpeningAccumulator\n\nAfter rebasing onto upstream/main, VerifierOpeningAccumulator gained\ndeduplication logic (populate_or_alias_opening) that aliases openings\nwhen the same polynomial is opened at the same evaluation point by\ndifferent sumcheck stages. AstOpeningAccumulator didn't handle this,\npushing extra zero claims to pending_claims and corrupting the\nFiat-Shamir transcript.\n\nReplicate the aliasing logic 1:1: Case A (key in proof) aliases if\nsame poly already opened at same point, otherwise stores normally.\nCase B (key not in proof) aliases to matching opening or creates with\nzero claim. Point comparison uses AST NodeId equality.\n\n* fix: repair CI checks (clippy, machete, zklean-extractor)\n\n- Remove unused deps ark-ec and serde from transpiler (machete)\n- Add zk feature to transpiler so cfg guards propagate correctly\n- Gate symbolize_proof body and helpers with #[cfg(not(feature = \"zk\"))]\n  to handle JoltProof conditional fields (opening_claims vs blindfold_proof)\n- Add zk_generator fields to JoltVerifierPreprocessing in main.rs\n- Inline format string variables in transpiler/main.rs (clippy)\n- Refactor zklean-extractor main.rs to use library imports instead of\n  mod re-declarations (fixes dead_code warnings and module resolution)\n- Export lookup_table_flags and sumchecks from zklean-extractor lib.rs\n- Add #[allow(clippy::op_ref)] on test that intentionally tests &refs\n- Add scripts/ci-local.sh for local CI verification\n\n* feat: symbolic IO — inputs/outputs/panic as circuit witness variables\n\nMake IO values (inputs, outputs, panic) symbolic witness variables instead\nof hardcoded constants in the generated Groth16 circuit. This is the first\nstep toward universality classes (same circuit for same-shaped programs).\n\njolt-core changes (non-breaking, additive only):\n- Add SparseEvalCoeff trait with u64 (Barrett) and F: JoltField (direct mul) impls\n- Rename sparse_eval_u64_block → sparse_eval_block<F, V: SparseEvalCoeff<F>>\n- Add thread-local overrides (PENDING_IO_MLE, PENDING_INITIAL_RAM)\n- Add early returns in eval_io_mle/eval_initial_ram_mle for symbolic path\n\ntranspiler changes:\n- New io_replay.rs: FIFO queue for transcript byte overrides\n- poseidon.rs: raw_append_bytes consumes FIFO, raw_append_label_with_len bypasses it\n- New symbolize.rs: symbolize_io_device() creates symbolic IO variables\n- main.rs: integrate symbolic IO + PENDING_INITIAL_RAM before verify()\n\nE2E verified: 2,777,232 constraints, 164-byte Groth16 proof, 2ms verify.\n\n* fix: move Poseidon challenge logic to challenge_scalar, mark challenge_scalar_128_bits unsupported\n\n* refactor: extract AbstractVerifierOpeningAccumulator trait from OpeningAccumulator\n\n* refactor: derive CanonicalSerialize/Deserialize for empty AST stub types\n\n* chore: remove stale Spanish comment from transpiler lib.rs\n\n* fix: panic instead of silent zero fallback in symbolic from_bytes and raw_append_scalar\n\n* chore: remove unused pow2 array and init() from Go poseidon package\n\n* docs: clarify panic symbolization paths in symbolize_io_device\n\n* docs: document public input design decision in gnark codegen\n\n* fix: fmt + unused import to pass CI checks\n\n- Remove unused OpeningAccumulator import in univariate_skip.rs\n- Fix long line formatting in verifier.rs, main.rs, ast_commitment_scheme.rs\n\n* fix: upgrade golang.org/x/crypto to v0.31.0 (CVE GHSA-v778-237x-gjrc)\n\n* fix: post-rebase fmt and fiat_shamir_preamble signature update\n\ncargo fmt for AbstractVerifierOpeningAccumulator long lines, remove\nduplicate Blake2bTranscript import, update fiat_shamir_preamble call\nin transpilable_verifier to match upstream 8-arg signature.\n\n* fix: gate symbolize helpers behind cfg(not(feature = \"zk\"))\n\nThe imports for JoltCurve, SumcheckInstanceProof, UniSkipFirstRoundProofVariant,\nand CompressedUniPoly were gated with #[cfg(not(feature = \"zk\"))], but the two\nfunctions using them (symbolize_uni_skip_variant, symbolize_sumcheck_variant)\nwere not. CI runs clippy with --features zk which removes the imports but leaves\nthe functions, causing \"cannot find type\" errors.\n\n---------\n\nCo-authored-by: akoi <197815935+akoidefi@users.noreply.github.com>\nCo-authored-by: Markos <53157953+markosg04@users.noreply.github.com>",
+          "timestamp": "2026-04-07T08:18:06-07:00",
+          "tree_id": "e8bdbea2534cbbcdf5909ee3e5325c5753e6b558",
+          "url": "https://github.com/a16z/jolt/commit/c0cf7e4e7790b57c77205591701ae552b695738f"
+        },
+        "date": 1775578792474,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.7704,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 864680,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.4073,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 500244,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 498756,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 498948,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7539,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 498400,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.6256,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 498616,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.0387,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 498280,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.7725,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 234256,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.5143,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 861408,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.6078,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 502544,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4868,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 500204,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 17.989,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 498004,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 6.0607,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 496192,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 32.3142,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1010936,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.8167,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 653824,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 88.6256,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2126032,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.5726,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 498520,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.6022,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 498716,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.4392,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 861312,
             "unit": "KB",
             "extra": ""
           }
