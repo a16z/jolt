@@ -1,9 +1,7 @@
 [package]
 name = "zklean-extractor"
 version = "0.1.0"
-authors = [
-    "Ben Hamlin <hamlinb@galois.com>",
-]
+authors = ["Ben Hamlin <hamlinb@galois.com>"]
 description = "Extracts an IR suitable for the ZKLean library for Jolt instructions"
 license = "MIT"
 homepage = "https://github.com/a16z/jolt/README.md"

@@ -9,7 +9,13 @@ repository = "https://github.com/a16z/jolt"
 
 [features]
 default = []
-host = ["jolt-inlines-sdk/host", "dep:ark-ff", "dep:ark-ec", "dep:ark-secp256r1", "dep:num-bigint"]
+host = [
+  "jolt-inlines-sdk/host",
+  "dep:ark-ff",
+  "dep:ark-ec",
+  "dep:ark-secp256r1",
+  "dep:num-bigint",
+]
 
 [dependencies]
 jolt-inlines-sdk = { workspace = true, features = ["elliptic-curve"] }

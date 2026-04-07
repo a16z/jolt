@@ -29,6 +29,17 @@ jobs:
       - name: cargo fmt
         run: cargo fmt --all --check
 
+  taplo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install taplo
+        uses: taiki-e/install-action@v2
+        with:
+          tool: taplo-cli
+      - name: taplo fmt --check
+        run: taplo fmt --check
+
   clippy:
     runs-on: ubuntu-latest
     steps:
