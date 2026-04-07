@@ -1,8 +1,4 @@
-//! Mock polynomial commitment scheme for testing.
-//!
-//! [`MockCommitmentScheme`] implements [`CommitmentScheme`],
-//! [`AdditivelyHomomorphic`], and [`ZkOpeningScheme`] with true additive
-//! homomorphism. It is intended solely for testing reduction and trait logic.
+//! Mock PCS for testing. Truly homomorphic, no hiding or soundness.
 
 use std::marker::PhantomData;
 
@@ -15,29 +11,18 @@ use serde::{Deserialize, Serialize};
 use jolt_crypto::HomomorphicCommitment;
 
 use crate::error::OpeningsError;
-use crate::traits::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
+use crate::schemes::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 
-/// A trivial commitment scheme for testing infrastructure.
-///
-/// - **Commitment**: stores the full evaluation table.
-/// - **Proof**: the full evaluation table, allowing the verifier to re-evaluate.
-///
-/// Truly homomorphic: `combine` computes the linear combination of evaluations.
-/// Provides no hiding or soundness guarantees.
 #[derive(Clone, Debug)]
 pub struct MockCommitmentScheme<F: Field>(PhantomData<F>);
 
-/// Mock commitment storing the full evaluation table.
-///
-/// This allows `combine` to compute the actual linear combination of
-/// polynomials, making the mock truly additively homomorphic.
+/// Stores the full evaluation table so `combine` is truly homomorphic.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct MockCommitment<F: Field> {
     evaluations: Vec<F>,
 }
 
-/// Mock proof: carries the full evaluation table for re-evaluation.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct MockProof<F: Field> {
@@ -46,8 +31,6 @@ pub struct MockProof<F: Field> {
 
 impl<F: Field> AppendToTranscript for MockCommitment<F> {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        // Single-blob serialization matching jolt-core's append_serializable pattern:
-        // serialize all evaluations as LE bytes, reverse the entire buffer, append once.
         let mut buf = Vec::with_capacity(self.evaluations.len() * 32);
         for e in &self.evaluations {
             buf.extend_from_slice(&e.to_bytes());
@@ -78,7 +61,7 @@ impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
         ((), ())
     }
 
-    fn verifier_setup(_prover_setup: &()) -> () {}
+    fn verifier_setup(_prover_setup: &()) {}
 
     fn commit<P: jolt_poly::MultilinearPoly<Self::Field> + ?Sized>(
         poly: &P,
@@ -162,26 +145,21 @@ impl<F: Field> AdditivelyHomomorphic for MockCommitmentScheme<F> {
     }
 }
 
-/// Mock eval commitment: wraps the cleartext evaluation for testing.
-///
-/// In a real ZK scheme this would be a hiding commitment (e.g., Pedersen).
-/// For testing, we just store the value directly.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
-pub struct MockEvalCommitment<F: Field> {
-    /// The evaluation value (stored in the clear for testing).
+pub struct MockHidingCommitment<F: Field> {
     pub eval: F,
 }
 
-impl<F: Field> AppendToTranscript for MockEvalCommitment<F> {
+impl<F: Field> AppendToTranscript for MockHidingCommitment<F> {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
         self.eval.append_to_transcript(transcript);
     }
 }
 
 impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
-    type EvalCommitment = MockEvalCommitment<F>;
-    type EvalBlinding = ();
+    type HidingCommitment = MockHidingCommitment<F>;
+    type Blind = ();
 
     fn open_zk(
         poly: &Self::Polynomial,
@@ -190,18 +168,18 @@ impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
         _setup: &Self::ProverSetup,
         _hint: Option<Self::OpeningHint>,
         _transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> (Self::Proof, Self::EvalCommitment, Self::EvalBlinding) {
+    ) -> (Self::Proof, Self::HidingCommitment, Self::Blind) {
         let proof = MockProof {
             evaluations: poly.evaluations().to_vec(),
         };
-        let eval_commitment = MockEvalCommitment { eval };
+        let eval_commitment = MockHidingCommitment { eval };
         (proof, eval_commitment, ())
     }
 
     fn verify_zk(
         commitment: &Self::Output,
         point: &[Self::Field],
-        eval_commitment: &Self::EvalCommitment,
+        eval_commitment: &Self::HidingCommitment,
         proof: &Self::Proof,
         _setup: &Self::VerifierSetup,
         _transcript: &mut impl Transcript<Challenge = Self::Field>,
@@ -221,18 +199,12 @@ impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
 
         Ok(())
     }
-
-    fn extract_eval_commitment(proof: &Self::Proof) -> Option<Self::EvalCommitment> {
-        // Mock always returns Some — real schemes would check a flag or enum variant.
-        let _ = proof;
-        None
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{OpeningReduction, ProverClaim, RlcReduction, VerifierClaim};
+    use crate::{OpeningReduction, ProverClaim, VerifierClaim};
     use jolt_field::Field;
     use jolt_field::Fr;
     use jolt_poly::Polynomial;
@@ -330,7 +302,6 @@ mod tests {
         assert_eq!(c_sum_direct, c_sum_combined);
     }
 
-    /// Builds prover and verifier claims, reduces via RLC, opens/verifies reduced claims.
     fn prove_and_verify(
         prover_polys: &[(Polynomial<Fr>, Vec<Fr>)],
         verifier_evals: Option<&[Fr]>,
@@ -341,7 +312,7 @@ mod tests {
         for (i, (poly, point)) in prover_polys.iter().enumerate() {
             let eval = poly.evaluate(point);
             prover_claims.push(ProverClaim {
-                evaluations: poly.evaluations().to_vec(),
+                polynomial: Polynomial::new(poly.evaluations().to_vec()),
                 point: point.clone(),
                 eval,
             });
@@ -357,16 +328,12 @@ mod tests {
 
         // Prover: reduce + open
         let mut transcript_p = Blake2bTranscript::new(b"e2e-test");
-        let (reduced_prover, ()) = <RlcReduction as OpeningReduction<MockPCS>>::reduce_prover(
-            prover_claims,
-            &mut transcript_p,
-        );
+        let reduced_prover = MockPCS::reduce_prover(prover_claims, &mut transcript_p);
         let proofs: Vec<_> = reduced_prover
             .iter()
             .map(|claim| {
-                let poly: Polynomial<Fr> = claim.evaluations.clone().into();
                 MockPCS::open(
-                    &poly,
+                    &claim.polynomial,
                     &claim.point,
                     claim.eval,
                     &(),
@@ -378,11 +345,8 @@ mod tests {
 
         // Verifier: reduce + verify
         let mut transcript_v = Blake2bTranscript::new(b"e2e-test");
-        let reduced_verifier = <RlcReduction as OpeningReduction<MockPCS>>::reduce_verifier(
-            verifier_claims,
-            &(),
-            &mut transcript_v,
-        )?;
+        let reduced_verifier =
+            MockPCS::reduce_verifier(verifier_claims, &mut transcript_v)?;
 
         assert_eq!(reduced_verifier.len(), proofs.len());
 
@@ -471,25 +435,24 @@ mod tests {
 
         let claims = vec![
             ProverClaim {
-                evaluations: p1.evaluations().to_vec(),
+                polynomial: Polynomial::new(p1.evaluations().to_vec()),
                 point: r.clone(),
                 eval: p1.evaluate(&r),
             },
             ProverClaim {
-                evaluations: p2.evaluations().to_vec(),
+                polynomial: Polynomial::new(p2.evaluations().to_vec()),
                 point: r.clone(),
                 eval: p2.evaluate(&r),
             },
             ProverClaim {
-                evaluations: p3.evaluations().to_vec(),
+                polynomial: Polynomial::new(p3.evaluations().to_vec()),
                 point: s.clone(),
                 eval: p3.evaluate(&s),
             },
         ];
 
         let mut transcript = Blake2bTranscript::new(b"grouping");
-        let (reduced, ()) =
-            <RlcReduction as OpeningReduction<MockPCS>>::reduce_prover(claims, &mut transcript);
+        let reduced = MockPCS::reduce_prover(claims, &mut transcript);
         assert_eq!(reduced.len(), 2, "two distinct points → two reduced claims");
     }
 
@@ -531,7 +494,7 @@ mod tests {
         let (proof, _eval_com, _blinding) =
             MockPCS::open_zk(&poly, &point, eval, &(), None, &mut transcript_p);
 
-        let wrong_eval_com = MockEvalCommitment {
+        let wrong_eval_com = MockHidingCommitment {
             eval: eval + Fr::from_u64(1),
         };
 
@@ -547,11 +510,4 @@ mod tests {
         assert!(result.is_err(), "wrong eval commitment should be rejected");
     }
 
-    #[test]
-    fn extract_eval_commitment_returns_none_for_mock() {
-        let proof = MockProof::<Fr> {
-            evaluations: vec![Fr::from_u64(1)],
-        };
-        assert!(MockPCS::extract_eval_commitment(&proof).is_none());
-    }
 }

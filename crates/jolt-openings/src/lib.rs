@@ -1,39 +1,30 @@
-//! Polynomial commitment scheme traits and opening reduction for the Jolt zkVM.
-//!
-//! This crate provides abstract interfaces for polynomial commitment schemes
-//! (PCS), stateless claim types, and a reduction framework for batching
-//! opening claims via random linear combination (RLC).
-//!
-//! # Trait hierarchy
+//! PCS traits and opening reduction for the Jolt zkVM.
 //!
 //! ```text
-//!               Commitment            (jolt-crypto: just Output type)
-//!                   |
-//!           CommitmentScheme           (+ Field, Proof, commit/open/verify)
-//!                   |
-//!       AdditivelyHomomorphic          (+ combine)
-//!                   |
-//!         StreamingCommitment          (+ begin/feed/finish)
+//!             Commitment              (jolt-crypto: Output type)
+//!                 |
+//!         CommitmentScheme            (+ Field, Proof, commit/open/verify)
+//!                 |
+//!     AdditivelyHomomorphic           (+ combine)
+//!                 |
+//!       StreamingCommitment           (+ begin/feed/finish)
 //! ```
 //!
-//! # Claims and reduction
-//!
-//! [`ProverClaim`] and [`VerifierClaim`] are stateless data types collected by
-//! the protocol orchestrator. [`OpeningReduction`] transforms many claims into
-//! fewer claims; [`RlcReduction`] is the standard implementation for homomorphic
-//! schemes.
+//! [`ProverClaim`] and [`VerifierClaim`] are stateless data collected by the
+//! protocol orchestrator. [`OpeningReduction`] reduces many claims into fewer;
+//! blanket-implemented for homomorphic schemes via RLC.
 
 mod claims;
 mod error;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod mock;
 mod reduction;
-mod traits;
+mod schemes;
 
-pub use claims::{CommittedEval, ProverClaim, VerifierClaim, VirtualEval};
+pub use claims::{ProverClaim, VerifierClaim};
 pub use error::OpeningsError;
-pub use reduction::{rlc_combine, rlc_combine_scalars, OpeningReduction, RlcReduction};
+pub use reduction::{rlc_combine, rlc_combine_scalars, OpeningReduction};
 
-pub use traits::{
+pub use schemes::{
     AdditivelyHomomorphic, CommitmentScheme, StreamingCommitment, ZkOpeningScheme,
 };

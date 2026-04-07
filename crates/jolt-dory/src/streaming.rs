@@ -2,14 +2,12 @@
 
 use dory::backends::arkworks::G1Routines;
 use dory::primitives::arithmetic::{DoryRoutines, PairingCurve};
-use jolt_crypto::Bn254GT;
 use jolt_field::Fr;
 use jolt_openings::StreamingCommitment;
 
-use crate::scheme::jolt_fr_to_ark;
+use crate::scheme::{ark_to_jolt_g1, ark_to_jolt_gt, jolt_fr_to_ark, jolt_g1_vec_to_ark, ArkFr};
 use crate::types::{DoryCommitment, DoryPartialCommitment};
 
-type InnerFr = dory::backends::arkworks::ArkFr;
 type InnerBN254 = dory::backends::arkworks::BN254;
 
 impl StreamingCommitment for crate::DoryScheme {
@@ -24,24 +22,17 @@ impl StreamingCommitment for crate::DoryScheme {
     #[tracing::instrument(skip_all, name = "DoryScheme::stream_feed")]
     fn feed(partial: &mut Self::PartialCommitment, chunk: &[Fr], setup: &Self::ProverSetup) {
         let g1_bases = &setup.0.g1_vec[..chunk.len()];
-        let scalars: Vec<InnerFr> = chunk.iter().map(jolt_fr_to_ark).collect();
+        let scalars: Vec<ArkFr> = chunk.iter().map(jolt_fr_to_ark).collect();
         let row_commitment = G1Routines::msm(g1_bases, &scalars);
-        // SAFETY: ArkG1 is repr(transparent) over G1Projective, same as Bn254G1.
-        let jolt_commitment: jolt_crypto::Bn254G1 = unsafe { std::mem::transmute(row_commitment) };
-        partial.row_commitments.push(jolt_commitment);
+        partial.row_commitments.push(ark_to_jolt_g1(row_commitment));
     }
 
     #[tracing::instrument(skip_all, name = "DoryScheme::stream_finish")]
     fn finish(partial: Self::PartialCommitment, setup: &Self::ProverSetup) -> Self::Output {
-        // SAFETY: Bn254G1 is repr(transparent) over G1Projective, same as ArkG1.
-        let ark_row_commitments: Vec<dory::backends::arkworks::ArkG1> =
-            unsafe { std::mem::transmute(partial.row_commitments) };
-        let g2_bases = &setup.0.g2_vec[..ark_row_commitments.len()];
-        let tier_2 =
-            <InnerBN254 as PairingCurve>::multi_pair_g2_setup(&ark_row_commitments, g2_bases);
-        // SAFETY: ArkGT is repr(transparent) over Fq12, same as Bn254GT.
-        let gt: Bn254GT = unsafe { std::mem::transmute(tier_2) };
-        DoryCommitment(gt)
+        let ark_rows = jolt_g1_vec_to_ark(partial.row_commitments);
+        let g2_bases = &setup.0.g2_vec[..ark_rows.len()];
+        let tier_2 = <InnerBN254 as PairingCurve>::multi_pair_g2_setup(&ark_rows, g2_bases);
+        DoryCommitment(ark_to_jolt_gt(&tier_2))
     }
 }
 

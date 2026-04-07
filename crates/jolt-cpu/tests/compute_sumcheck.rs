@@ -15,7 +15,7 @@ use jolt_cpu::{compile, CpuBackend};
 use jolt_field::{Field, Fr};
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::claim::SumcheckClaim;
-use jolt_sumcheck::SumcheckVerifier;
+use jolt_sumcheck::{ClearRoundVerifier, SumcheckVerifier};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 use num_traits::{One, Zero};
 use rand_chacha::ChaCha20Rng;
@@ -165,7 +165,8 @@ fn compute_witness_matches_reference() {
         round_polynomials: ref_polys,
     };
     let mut ref_vt = Blake2bTranscript::new(b"ref");
-    let ref_result = SumcheckVerifier::verify(&claim, &ref_proof, &mut ref_vt);
+    let clear = ClearRoundVerifier::new();
+    let ref_result = SumcheckVerifier::verify(&claim, &ref_proof.round_polynomials, &mut ref_vt, &clear);
     assert!(ref_result.is_ok(), "reference sumcheck should verify");
 
     // Compute-backend proof: inline prover loop (same LowToHigh layout)
@@ -191,7 +192,7 @@ fn compute_witness_matches_reference() {
         round_polynomials: compute_polys,
     };
     let mut compute_vt = Blake2bTranscript::new(b"compute");
-    let compute_result = SumcheckVerifier::verify(&claim, &compute_proof, &mut compute_vt);
+    let compute_result = SumcheckVerifier::verify(&claim, &compute_proof.round_polynomials, &mut compute_vt, &clear);
     assert!(
         compute_result.is_ok(),
         "compute-backend sumcheck should verify"

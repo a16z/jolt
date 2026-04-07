@@ -3,7 +3,7 @@
 //! Covers gaps in G2, GT, GLV (2D/4D), Dory vector ops, fixed-base MSM,
 //! HomomorphicCommitment, and Debug/From conversions.
 
-use jolt_crypto::arkworks::bn254::glv;
+use jolt_crypto::ec::bn254::glv;
 use jolt_crypto::{
     Bn254, Bn254G1, Bn254G2, Bn254GT, HomomorphicCommitment, JoltGroup, PairingGroup,
 };

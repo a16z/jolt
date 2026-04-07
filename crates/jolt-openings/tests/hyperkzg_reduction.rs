@@ -10,7 +10,7 @@
 use jolt_crypto::Bn254;
 use jolt_field::{Field, Fr};
 use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGScheme, HyperKZGVerifierSetup};
-use jolt_openings::{CommitmentScheme, OpeningReduction, ProverClaim, RlcReduction, VerifierClaim};
+use jolt_openings::{CommitmentScheme, OpeningReduction, ProverClaim, VerifierClaim};
 use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
@@ -43,7 +43,7 @@ fn reduce_open_verify(
     for (poly, point) in polys.iter().zip(points.iter()) {
         let eval = poly.evaluate(point);
         prover_claims.push(ProverClaim {
-            evaluations: poly.evaluations().to_vec(),
+            polynomial: Polynomial::new(poly.evaluations().to_vec()),
             point: point.clone(),
             eval,
         });
@@ -57,24 +57,18 @@ fn reduce_open_verify(
 
     // Prover: reduce + open
     let mut transcript_p = Blake2bTranscript::new(label);
-    let (reduced_p, ()) =
-        <RlcReduction as OpeningReduction<KzgPCS>>::reduce_prover(prover_claims, &mut transcript_p);
+    let reduced_p = KzgPCS::reduce_prover(prover_claims, &mut transcript_p);
     let proofs: Vec<_> = reduced_p
         .iter()
         .map(|c| {
-            let poly: Polynomial<Fr> = c.evaluations.clone().into();
-            <KzgPCS as CommitmentScheme>::open(&poly, &c.point, c.eval, pk, None, &mut transcript_p)
+            <KzgPCS as CommitmentScheme>::open(&c.polynomial, &c.point, c.eval, pk, None, &mut transcript_p)
         })
         .collect();
 
     // Verifier: reduce + verify
     let mut transcript_v = Blake2bTranscript::new(label);
-    let reduced_v = <RlcReduction as OpeningReduction<KzgPCS>>::reduce_verifier(
-        verifier_claims,
-        &(),
-        &mut transcript_v,
-    )
-    .expect("reduction should succeed");
+    let reduced_v = KzgPCS::reduce_verifier(verifier_claims, &mut transcript_v)
+        .expect("reduction should succeed");
 
     assert_eq!(reduced_v.len(), proofs.len());
     for (claim, proof) in reduced_v.iter().zip(proofs.iter()) {
@@ -173,12 +167,12 @@ fn tampered_eval_detected() {
 
     let prover_claims = vec![
         ProverClaim {
-            evaluations: poly_a.evaluations().to_vec(),
+            polynomial: Polynomial::new(poly_a.evaluations().to_vec()),
             point: point.clone(),
             eval: eval_a,
         },
         ProverClaim {
-            evaluations: poly_b.evaluations().to_vec(),
+            polynomial: Polynomial::new(poly_b.evaluations().to_vec()),
             point: point.clone(),
             eval: eval_b,
         },
@@ -201,14 +195,12 @@ fn tampered_eval_detected() {
 
     // Prover reduces and opens honestly
     let mut transcript_p = Blake2bTranscript::new(b"kzg-tampered");
-    let (reduced_p, ()) =
-        <RlcReduction as OpeningReduction<KzgPCS>>::reduce_prover(prover_claims, &mut transcript_p);
+    let reduced_p = KzgPCS::reduce_prover(prover_claims, &mut transcript_p);
     let proofs: Vec<_> = reduced_p
         .iter()
         .map(|c| {
-            let poly: Polynomial<Fr> = c.evaluations.clone().into();
             <KzgPCS as CommitmentScheme>::open(
-                &poly,
+                &c.polynomial,
                 &c.point,
                 c.eval,
                 &pk,
@@ -220,12 +212,8 @@ fn tampered_eval_detected() {
 
     // Verifier reduces with tampered claims
     let mut transcript_v = Blake2bTranscript::new(b"kzg-tampered");
-    let reduced_v = <RlcReduction as OpeningReduction<KzgPCS>>::reduce_verifier(
-        verifier_claims,
-        &(),
-        &mut transcript_v,
-    )
-    .expect("reduction itself should succeed");
+    let reduced_v = KzgPCS::reduce_verifier(verifier_claims, &mut transcript_v)
+        .expect("reduction itself should succeed");
 
     let mut any_failed = false;
     for (claim, proof) in reduced_v.iter().zip(proofs.iter()) {

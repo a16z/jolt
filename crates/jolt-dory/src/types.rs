@@ -1,7 +1,4 @@
-//! Wrapper types for dory-pcs types used in the public API.
-//!
-//! These wrappers bridge between `dory-pcs`'s types and the trait bounds
-//! required by `jolt-openings::CommitmentScheme`.
+//! Wrapper types bridging dory-pcs to jolt-openings.
 
 use dory::backends::arkworks::{ArkDoryProof, ArkworksProverSetup, ArkworksVerifierSetup};
 use dory::primitives::serialization::{DoryDeserialize, DorySerialize};
@@ -9,23 +6,21 @@ use jolt_crypto::{Bn254G1, Bn254GT, HomomorphicCommitment};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-/// Commitment produced by the Dory scheme.
-///
-/// Wraps a BN254 pairing target element (`Bn254GT`). The commitment is
-/// computed as a multi-pairing of row-level Pedersen commitments in G1
-/// with the SRS generators in G2.
+use crate::scheme::{ark_to_jolt_gt, jolt_gt_ref_to_ark, ArkGT};
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DoryCommitment(pub Bn254GT);
 
 impl Serialize for DoryCommitment {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        dory_serialize(&self.0, serializer)
+        dory_serialize(jolt_gt_ref_to_ark(&self.0), serializer)
     }
 }
 
 impl<'de> Deserialize<'de> for DoryCommitment {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        dory_deserialize(deserializer).map(Self)
+        let ark_gt: ArkGT = dory_deserialize(deserializer)?;
+        Ok(Self(ark_to_jolt_gt(&ark_gt)))
     }
 }
 
@@ -46,11 +41,6 @@ impl<F: jolt_field::Field> HomomorphicCommitment<F> for DoryCommitment {
     }
 }
 
-/// Opening proof for a single polynomial.
-///
-/// Wraps the `dory-pcs` proof structure. Serialization uses the arkworks
-/// backend's concrete `ArkDoryProof` type since the generic `DoryProof`
-/// doesn't derive serialization traits.
 #[derive(Clone, Debug)]
 pub struct DoryProof(pub ArkDoryProof);
 
@@ -66,29 +56,21 @@ impl<'de> Deserialize<'de> for DoryProof {
     }
 }
 
-/// Prover-side structured reference string (SRS) for Dory.
-///
-/// Uses the arkworks backend wrapper for disk-persistence and
-/// deterministic setup support via `new_from_urs()`.
 #[derive(Clone)]
 pub struct DoryProverSetup(pub ArkworksProverSetup);
 
-// SAFETY: ArkworksProverSetup contains only group element vectors which are plain data.
-// The missing auto-traits come from arkworks type-level plumbing.
+// SAFETY: ArkworksProverSetup contains only group element vectors (plain data).
+// Missing auto-traits come from arkworks type-level plumbing, not interior mutability.
 unsafe impl Send for DoryProverSetup {}
-// SAFETY: Same rationale as Send impl above.
+// SAFETY: same rationale.
 unsafe impl Sync for DoryProverSetup {}
 
-/// Verifier-side structured reference string (SRS) for Dory.
-///
-/// A subset of the prover SRS sufficient for verifying opening proofs.
 #[derive(Clone)]
 pub struct DoryVerifierSetup(pub ArkworksVerifierSetup);
 
-// SAFETY: ArkworksVerifierSetup contains only group elements and field elements,
-// all plain data without interior mutability.
+// SAFETY: ArkworksVerifierSetup contains only group/field elements (plain data).
 unsafe impl Send for DoryVerifierSetup {}
-// SAFETY: Same rationale as Send impl above.
+// SAFETY: same rationale.
 unsafe impl Sync for DoryVerifierSetup {}
 
 impl Serialize for DoryVerifierSetup {
@@ -103,14 +85,11 @@ impl<'de> Deserialize<'de> for DoryVerifierSetup {
     }
 }
 
-/// Row-level commitments used as an opening proof hint.
 #[derive(Clone, Debug, Default)]
 pub struct DoryHint(pub Vec<Bn254G1>);
 
-/// Partial commitment state accumulated during streaming.
 #[derive(Clone)]
 pub struct DoryPartialCommitment {
-    /// Row commitments accumulated from processed chunks.
     pub row_commitments: Vec<Bn254G1>,
 }
 

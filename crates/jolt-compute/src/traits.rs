@@ -199,6 +199,13 @@ pub trait ComputeBackend: Send + Sync + 'static {
 
     /// Eq-plus-one table: `(eq_evals, eq_plus_one_evals)`.
     fn eq_plus_one_table<F: Field>(&self, point: &[F]) -> (Self::Buffer<F>, Self::Buffer<F>);
+
+    /// Interleave-duplicate: `result[2i] = result[2i+1] = buf[i]`.
+    ///
+    /// Returns a buffer twice the size of the input, representing a
+    /// multilinear polynomial that does not depend on a new low-order
+    /// variable (streaming extension for outer Spartan).
+    fn duplicate_interleave<F: Field>(&self, buf: &Self::Buffer<F>) -> Self::Buffer<F>;
 }
 
 /// Materializes polynomial data for the prover runtime.

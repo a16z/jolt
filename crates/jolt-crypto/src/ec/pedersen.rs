@@ -1,8 +1,8 @@
 use jolt_field::Field;
 use serde::{Deserialize, Serialize};
 
-use crate::commitment::VectorCommitment;
-use crate::JoltGroup;
+use crate::commitment::{Commitment, VectorCommitment};
+use super::group::JoltGroup;
 
 /// Pedersen vector commitment scheme, generic over any `JoltGroup`.
 ///
@@ -43,9 +43,12 @@ impl<G: JoltGroup> PedersenSetup<G> {
     }
 }
 
+impl<G: JoltGroup> Commitment for Pedersen<G> {
+    type Output = G;
+}
+
 impl<G: JoltGroup> VectorCommitment for Pedersen<G> {
     type Setup = PedersenSetup<G>;
-    type Commitment = G;
 
     #[inline]
     fn capacity(setup: &Self::Setup) -> usize {

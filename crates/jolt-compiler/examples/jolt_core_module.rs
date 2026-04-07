@@ -716,12 +716,12 @@ fn build_commitment_phase(p: &Polys, params: &ModuleParams, ops: &mut Vec<Op>) {
 /// Stage 1: Outer Spartan — univariate skip + streaming remaining rounds.
 ///
 /// Transcript sequence (must match jolt-core exactly):
-///   1. Squeeze τ (params.num_tau = 27 challenges)
+///   1. Squeeze τ (params.num_tau = log_t + 2 challenges)
 ///   2. Outer uniskip: emit s1(Y) coefficients → squeeze r0 → flush 1 opening claim
 ///   3. Outer remaining (batched, 1 instance):
 ///      a. Emit 1 input claim (= s1(r0), tag "sumcheck_claim")
 ///      b. Squeeze 1 batching coefficient
-///      c. 26 rounds: emit compressed round poly → squeeze r_j
+///      c. log_t + 1 rounds (1 streaming + log_t linear): emit round poly → squeeze r_j
 ///      d. Flush 35 R1CS input opening claims (tag "opening_claim")
 ///
 /// The outer uniskip evaluates the Spartan R1CS identity:
@@ -739,10 +739,11 @@ fn build_stage1(
     ch: &mut ChallengeTable,
 ) {
     // ---------------------------------------------------------------
-    // 1. Squeeze τ = [τ_low ∥ τ_high] (27 challenges)
+    // 1. Squeeze τ = [τ_low ∥ τ_high] (num_tau = log_t + 2 challenges)
     //
     // τ_high (last element) is the Lagrange kernel argument for uniskip.
-    // τ_low (first 26 elements) seeds the eq table for the remaining rounds.
+    // τ_low (first log_t + 1 elements) seeds the eq table for the remaining
+    // rounds (1 streaming + log_t linear).
     // ---------------------------------------------------------------
     let tau_base = ch.decls.len();
     for i in 0..params.num_tau {
@@ -769,15 +770,26 @@ fn build_stage1(
         coefficient: 1,
         factors: vec![Factor::Input(0), Factor::Input(1), Factor::Input(2)],
     }]);
-    let spartan_inputs = vec![
-        // Input(0): eq table from τ_low
+
+    // Uniskip eq table: log_t cycle challenges only (size T).
+    // The streaming variable sums to 1 over {0,1} so doesn't affect the uniskip sum.
+    let uniskip_inputs = vec![
         InputBinding::EqTable {
             poly: p.spartan_eq,
-            challenges: (tau_base..tau_base + params.num_tau - 1).collect(),
+            challenges: (tau_base..tau_base + params.log_t).collect(),
         },
-        // Input(1): Az — R1CS A-matrix × SpartanWitness
         InputBinding::Provided { poly: p.az },
-        // Input(2): Bz — R1CS B-matrix × SpartanWitness
+        InputBinding::Provided { poly: p.bz },
+    ];
+
+    // Remaining eq table: log_t+1 challenges (streaming + cycle, size 2T).
+    // Az/Bz will be DuplicateInterleaved to 2T after LagrangeProject.
+    let remaining_inputs = vec![
+        InputBinding::EqTable {
+            poly: p.spartan_eq,
+            challenges: (tau_base..=tau_base + params.log_t).collect(),
+        },
+        InputBinding::Provided { poly: p.az },
         InputBinding::Provided { poly: p.bz },
     ];
 
@@ -792,13 +804,13 @@ fn build_stage1(
             iteration: Iteration::Domain {
                 domain_size: params.outer_uniskip_domain, // K = 19
                 stride: params.num_constraints_padded,    // K_pad = 32
-                domain_start: 0,
+                domain_start: -((params.outer_uniskip_domain as i64 - 1) / 2),
                 domain_indexed: vec![false, true, true], // eq=cycle, Az=domain, Bz=domain
                 tau_challenge: tau_high_idx,
             },
             binding_order: BindingOrder::LowToHigh,
         },
-        inputs: spartan_inputs.clone(),
+        inputs: uniskip_inputs,
         num_rounds: 1,
     });
 
@@ -834,7 +846,7 @@ fn build_stage1(
         polys: vec![p.az, p.bz],
         challenge: ch_r0,
         domain_size: params.outer_uniskip_domain,
-        domain_start: 0,
+        domain_start: -((params.outer_uniskip_domain as i64 - 1) / 2),
         stride: params.num_constraints_padded,
         group_offsets: vec![0],
         kernel_tau: Some(tau_high_idx),
@@ -853,11 +865,25 @@ fn build_stage1(
     });
 
     // ---------------------------------------------------------------
-    // 3. Outer Remaining: 26-round streaming sumcheck.
+    // 3. Outer Remaining: streaming sumcheck (1 streaming + log_t linear).
     //
     // Same composition as uniskip — eq(τ_low, x) · Az(x) · Bz(x) —
     // but evaluated via standard hypercube bind-and-reduce (degree 3).
+    //
+    // The streaming round handles the extra streaming variable: Az/Bz
+    // are DuplicateInterleaved to 2T (they don't depend on the streaming
+    // var), and the eq table uses all log_t+1 low-tau challenges (size 2T).
+    //
+    // Release the uniskip's T-sized eq table so resolve_inputs rebuilds
+    // it from the remaining kernel's log_t+1 challenge set.
     // ---------------------------------------------------------------
+    ops.push(Op::ReleaseDevice {
+        poly: p.spartan_eq,
+    });
+    ops.push(Op::DuplicateInterleave {
+        polys: vec![p.az, p.bz],
+    });
+
     let outer_remaining_kernel = kernels.len();
     kernels.push(KernelDef {
         spec: KernelSpec {
@@ -866,7 +892,7 @@ fn build_stage1(
             iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
         },
-        inputs: spartan_inputs,
+        inputs: remaining_inputs,
         num_rounds: params.outer_remaining_rounds,
     });
 
@@ -886,8 +912,8 @@ fn build_stage1(
         challenge: ch_batch,
     });
 
-    // Remaining rounds: log_t binary rounds over cycle variables.
-    // Round 0 has no bind (initial T-entry buffers from LagrangeProject).
+    // Remaining rounds: 1 streaming + log_t linear = log_t + 1 binary rounds.
+    // Round 0 has no bind (initial 2T-entry buffers from DuplicateInterleave).
     // Rounds 1+ bind at the previous round's squeezed challenge.
     for round in 0..params.outer_remaining_rounds {
         let bind = if round > 0 {
@@ -922,10 +948,13 @@ fn build_stage1(
     //
     // The remaining sumcheck only bound the kernel inputs (eq, Az, Bz).
     // The 35 R1CS witness polynomials (T-length buffers) must be bound
-    // at each of the 9 sumcheck challenges to produce scalar evaluations.
+    // at each of the log_t cycle challenges to produce scalar evaluations.
+    //
+    // Round 0 is the streaming round — R1CS witnesses don't depend on the
+    // streaming variable so we skip it (witnesses stay at size T).
     // ---------------------------------------------------------------
     let r1cs_polys = r1cs_input_polys(p);
-    for round in 0..params.outer_remaining_rounds {
+    for round in 1..params.outer_remaining_rounds {
         // challenge index = ch_batch + 1 + round (first sumcheck challenge
         // is at ch_batch+1 because ch_batch is the batching coefficient)
         let ch_idx = ch_batch + 1 + round;
@@ -1021,18 +1050,21 @@ fn build_verifier_stage1_ops(
                     tau_challenge: tau_high_idx,
                     at_challenge: r0_idx,
                     domain_size: params.outer_uniskip_domain,
+                    domain_start: -((params.outer_uniskip_domain as i64 - 1) / 2),
                 },
                 ClaimFactor::UniformR1CSEval {
                     matrix: R1CSMatrix::A,
                     eval_polys: r1cs_polys.to_vec(),
                     at_challenge: r0_idx,
                     num_constraints: params.outer_uniskip_domain,
+                    domain_start: -((params.outer_uniskip_domain as i64 - 1) / 2),
                 },
                 ClaimFactor::UniformR1CSEval {
                     matrix: R1CSMatrix::B,
                     eval_polys: r1cs_polys.to_vec(),
                     at_challenge: r0_idx,
                     num_constraints: params.outer_uniskip_domain,
+                    domain_start: -((params.outer_uniskip_domain as i64 - 1) / 2),
                 },
             ],
         }],
@@ -1194,7 +1226,7 @@ fn build_stage2(
             iteration: Iteration::Domain {
                 domain_size: params.product_uniskip_domain,
                 stride: product_stride,
-                domain_start: 0,
+                domain_start: -((params.product_uniskip_domain as i64 - 1) / 2),
                 domain_indexed: vec![false, true, true],
                 tau_challenge: ch_product_tau_high,
             },
@@ -1251,7 +1283,7 @@ fn build_stage2(
         polys: vec![p.product_left, p.product_right],
         challenge: ch_product_r0,
         domain_size: params.product_uniskip_domain,
-        domain_start: 0,
+        domain_start: -((params.product_uniskip_domain as i64 - 1) / 2),
         stride: product_stride,
         group_offsets: vec![0],
         kernel_tau: Some(ch_product_tau_high),
@@ -2156,6 +2188,7 @@ fn build_verifier_stage2_ops(
         tau_challenge: ch_tau_high,
         at_challenge: ch_product_r0,
         domain_size: params.product_uniskip_domain,
+        domain_start: -((params.product_uniskip_domain as i64 - 1) / 2),
     };
     let prod_eq = ClaimFactor::EqEval {
         challenges: stage1_cycle_challenges.clone(),
@@ -2164,6 +2197,7 @@ fn build_verifier_stage2_ops(
     let w = |k: usize| ClaimFactor::LagrangeWeight {
         challenge: ch_product_r0,
         domain_size: params.product_uniskip_domain,
+        domain_start: -((params.product_uniskip_domain as i64 - 1) / 2),
         basis_index: k,
     };
     let prod_input_claim = ClaimFormula {
@@ -2688,7 +2722,7 @@ fn print_stats(module: &Module, params: &ModuleParams) {
             Op::BatchedSumcheckRound { .. } => counts[14] += 1,
             Op::Evaluate { .. } => counts[1] += 1,
             Op::Bind { .. } => counts[2] += 1,
-            Op::LagrangeProject { .. } => counts[13] += 1,
+            Op::LagrangeProject { .. } | Op::DuplicateInterleave { .. } => counts[13] += 1,
             Op::Commit { .. } | Op::CommitStreaming { .. } => counts[3] += 1,
             Op::ReduceOpenings => counts[4] += 1,
             Op::Open => counts[5] += 1,

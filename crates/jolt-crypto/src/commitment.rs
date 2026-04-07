@@ -18,33 +18,15 @@ pub trait Commitment {
 
 /// Backend-agnostic vector commitment.
 ///
-/// Abstracts the ability to commit to a vector of field elements with a
-/// blinding factor. ZK protocols (BlindFold, sumcheck) should be generic
-/// over this trait rather than hardcoded to Pedersen or elliptic curves.
-///
-/// The `Setup` associated type represents transparent, shared parameters
-/// (e.g., generators from a URS, lattice parameters). Setup data is
-/// expected to be derivable from or shared with a polynomial commitment
-/// scheme's structured reference string.
-pub trait VectorCommitment: Clone + Send + Sync + 'static {
+/// Extends [`Commitment`] with the ability to commit to a vector of field
+/// elements with a blinding factor. Uses `Self::Output` from the supertrait
+/// as the commitment value type.
+pub trait VectorCommitment: Commitment + Clone + Send + Sync + 'static
+where
+    Self::Output: Copy + Default + AppendToTranscript + Serialize + for<'de> Deserialize<'de>,
+{
     /// Transparent setup parameters (generators, public parameters, etc.).
     type Setup: Clone + Send + Sync;
-
-    /// The commitment output (e.g., a group element, a lattice vector).
-    ///
-    /// Requires [`AppendToTranscript`] so commitments can be absorbed
-    /// into Fiat-Shamir transcripts during ZK sumcheck.
-    type Commitment: Clone
-        + Copy
-        + Debug
-        + Default
-        + Eq
-        + Send
-        + Sync
-        + 'static
-        + Serialize
-        + for<'de> Deserialize<'de>
-        + AppendToTranscript;
 
     /// Maximum number of values this setup can commit to.
     #[must_use]
@@ -56,13 +38,13 @@ pub trait VectorCommitment: Clone + Send + Sync + 'static {
     ///
     /// May panic if `values.len()` exceeds [`Self::capacity()`].
     #[must_use]
-    fn commit<F: Field>(setup: &Self::Setup, values: &[F], blinding: &F) -> Self::Commitment;
+    fn commit<F: Field>(setup: &Self::Setup, values: &[F], blinding: &F) -> Self::Output;
 
     /// Returns `true` if `commitment` opens to `(values, blinding)`.
     #[must_use]
     fn verify<F: Field>(
         setup: &Self::Setup,
-        commitment: &Self::Commitment,
+        commitment: &Self::Output,
         values: &[F],
         blinding: &F,
     ) -> bool;
@@ -87,6 +69,18 @@ pub trait HomomorphicCommitment<F: Field>: Clone {
     /// Computes `c1 + scalar * c2`.
     #[must_use]
     fn linear_combine(c1: &Self, c2: &Self, scalar: &F) -> Self;
+}
+
+/// Derives a commitment setup from a source setup (e.g., PCS SRS → Pedersen generators).
+///
+/// This is the bridge between a polynomial commitment scheme's structured
+/// reference string and a vector commitment's setup parameters. Each PCS
+/// implements this for the vector commitment setups it can derive.
+///
+/// Backend-agnostic: works for EC (Pedersen from Dory/KZG SRS), lattice
+/// (matrix columns from lattice SRS), or hash-based (Merkle params) schemes.
+pub trait DeriveSetup<Source> {
+    fn derive(source: &Source, capacity: usize) -> Self;
 }
 
 impl<G: crate::JoltGroup, F: Field> HomomorphicCommitment<F> for G {

@@ -1,8 +1,5 @@
 use super::{FieldOps, JoltField, UnreducedInteger};
-#[cfg(feature = "challenge-254-bit")]
 use crate::field::challenge::Mont254BitChallenge;
-#[cfg(not(feature = "challenge-254-bit"))]
-use crate::field::challenge::MontU128Challenge;
 use crate::field::folded_accum::{
     Folded256MulU128, Folded256MulU128Accum, Folded256MulU64, Folded256Product,
     Folded256ProductAccum,
@@ -41,9 +38,6 @@ impl JoltField for ark_bn254::Fr {
 
     type SmallValueLookupTables = [Vec<Self>; 2];
 
-    #[cfg(not(feature = "challenge-254-bit"))]
-    type Challenge = MontU128Challenge<ark_bn254::Fr>;
-    #[cfg(feature = "challenge-254-bit")]
     type Challenge = Mont254BitChallenge<ark_bn254::Fr>;
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {

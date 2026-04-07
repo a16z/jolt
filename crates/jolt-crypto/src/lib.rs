@@ -1,35 +1,15 @@
 //! Backend-agnostic cryptographic group and commitment primitives for Jolt.
 //!
-//! This crate provides the core group abstractions (`JoltGroup`, `PairingGroup`)
-//! and a vector commitment trait used throughout the Jolt zkVM. The traits are
-//! designed to be backend-agnostic: the BN254 implementation wraps arkworks
-//! internally, but no arkworks types appear in the public API.
-//!
-//! # Crate structure
-//!
 //! | Module | Purpose |
 //! |--------|---------|
-//! | `group` | [`JoltGroup`] trait — additive group with scalar multiplication and MSM |
-//! | `pairing` | [`PairingGroup`] trait — pairing-friendly group (extends `JoltGroup`) |
-//! | `commitment` | [`VectorCommitment`] trait — backend-agnostic vector commitment |
-//! | `arkworks` | Arkworks backend implementations (BN254) |
+//! | `ec` | Elliptic curve: `JoltGroup`, `PairingGroup`, `Pedersen` |
+//! | `commitment` | `Commitment`, `VectorCommitment`, `HomomorphicCommitment`, `DeriveSetup` |
 
-mod group;
-pub use group::JoltGroup;
-
-mod pairing;
-pub use pairing::PairingGroup;
+pub mod ec;
+pub use ec::{JoltGroup, PairingGroup, Pedersen, PedersenSetup};
 
 mod commitment;
-pub use commitment::{Commitment, HomomorphicCommitment, VectorCommitment};
-
-mod pedersen;
-pub use pedersen::{Pedersen, PedersenSetup};
+pub use commitment::{Commitment, DeriveSetup, HomomorphicCommitment, VectorCommitment};
 
 #[cfg(feature = "bn254")]
-pub mod arkworks;
-#[cfg(feature = "bn254")]
-pub use arkworks::bn254::{Bn254, Bn254G1, Bn254G2, Bn254GT};
-
-#[cfg(feature = "dory-pcs")]
-pub mod dory_interop;
+pub use ec::bn254::{Bn254, Bn254G1, Bn254G2, Bn254GT};

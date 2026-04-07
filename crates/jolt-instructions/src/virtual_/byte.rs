@@ -9,7 +9,7 @@ define_instruction!(
         let w = x as u32;
         w.swap_bytes() as u64
     },
-    circuit: [WriteLookupOutputToRD],
+    circuit: [WriteLookupOutputToRD, AddOperands],
     instruction: [LeftOperandIsRs1Value],
     table: VirtualRev8W,
 );

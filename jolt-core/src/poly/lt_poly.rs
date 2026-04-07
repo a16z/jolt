@@ -91,7 +91,7 @@ mod tests {
     use ark_bn254::Fr;
 
     use crate::{
-        field::challenge::MontU128Challenge,
+        field::challenge::Mont254BitChallenge,
         poly::{
             multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialEvaluation},
             opening_proof::{OpeningPoint, BIG_ENDIAN},
@@ -102,13 +102,13 @@ mod tests {
 
     #[test]
     fn test_bind_low_to_high_works() {
-        let r_cycle = OpeningPoint::new([9, 5, 7, 1].map(MontU128Challenge::from).to_vec());
+        let r_cycle = OpeningPoint::new([9, 5, 7, 1].map(Mont254BitChallenge::from).to_vec());
         let mut lt_poly = LtPolynomial::<Fr>::new(&r_cycle);
         let lt_poly_gt: MultilinearPolynomial<Fr> = lt_evals(&r_cycle).into();
-        let r0 = MontU128Challenge::from(2);
-        let r1 = MontU128Challenge::from(6);
-        let r2 = MontU128Challenge::from(3);
-        let r3 = MontU128Challenge::from(9);
+        let r0 = Mont254BitChallenge::from(2);
+        let r1 = Mont254BitChallenge::from(6);
+        let r2 = Mont254BitChallenge::from(3);
+        let r3 = Mont254BitChallenge::from(9);
         let r = OpeningPoint::<BIG_ENDIAN, Fr>::new(vec![r3, r2, r1, r0]);
 
         lt_poly.bind(r0, BindingOrder::LowToHigh);
@@ -121,13 +121,13 @@ mod tests {
 
     #[test]
     fn test_bind_high_to_low_works() {
-        let r_cycle = OpeningPoint::new([9, 5, 7, 1].map(MontU128Challenge::from).to_vec());
+        let r_cycle = OpeningPoint::new([9, 5, 7, 1].map(Mont254BitChallenge::from).to_vec());
         let mut lt_poly = LtPolynomial::<Fr>::new(&r_cycle);
         let lt_poly_gt: MultilinearPolynomial<Fr> = lt_evals(&r_cycle).into();
-        let r0 = MontU128Challenge::from(2);
-        let r1 = MontU128Challenge::from(6);
-        let r2 = MontU128Challenge::from(3);
-        let r3 = MontU128Challenge::from(9);
+        let r0 = Mont254BitChallenge::from(2);
+        let r1 = Mont254BitChallenge::from(6);
+        let r2 = Mont254BitChallenge::from(3);
+        let r3 = Mont254BitChallenge::from(9);
         let r = OpeningPoint::<BIG_ENDIAN, Fr>::new(vec![r0, r1, r2, r3]);
 
         lt_poly.bind(r0, BindingOrder::HighToLow);

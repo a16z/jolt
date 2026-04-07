@@ -234,14 +234,6 @@ impl PairingGroup for Bn254 {
     type G2 = Bn254G2;
     type GT = Bn254GT;
 
-    fn g1_generator() -> Self::G1 {
-        Bn254::g1_generator()
-    }
-
-    fn g2_generator() -> Self::G2 {
-        Bn254::g2_generator()
-    }
-
     fn pairing(g1: &Self::G1, g2: &Self::G2) -> Self::GT {
         Bn254GT(ArkBn254::pairing(g1.0, g2.0).0)
     }

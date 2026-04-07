@@ -728,8 +728,8 @@ fn transcript_divergence() {
     for i in 0..min_len {
         if golden_ops[i] != zkvm_states[i] {
             eprintln!("\n=== DIVERGENCE at operation #{i} ===");
-            // Show context
-            let start = i.saturating_sub(3);
+            // Show wider context (20 ops before)
+            let start = i.saturating_sub(20);
             eprintln!("Context (operations {start}..{}):", (i + 1).min(min_len));
             for j in start..=i.min(min_len - 1) {
                 let marker = if j == i { ">>>" } else { "   " };
@@ -740,7 +740,39 @@ fn transcript_divergence() {
                 );
                 // Show the checkpoint event details for zkvm
                 if j < log.len() {
-                    eprintln!("           zkvm event: {:?}", log[j]);
+                    match &log[j] {
+                        TranscriptEvent::Append { bytes, .. } => {
+                            let label_preview = if bytes.len() >= 32 {
+                                let label_end = bytes[..24].iter().position(|&b| b == 0).unwrap_or(24);
+                                let label_str = std::str::from_utf8(&bytes[..label_end]).unwrap_or("???");
+                                format!("Append(label={:?}, len={})", label_str, bytes.len())
+                            } else {
+                                format!("Append({} bytes)", bytes.len())
+                            };
+                            eprintln!("           zkvm event: {label_preview}");
+                        }
+                        TranscriptEvent::Squeeze { .. } => {
+                            eprintln!("           zkvm event: Squeeze");
+                        }
+                    }
+                }
+            }
+            // Print full diagnostic for divergence
+            eprintln!("\n=== FULL DIAGNOSTIC ===");
+            eprintln!("Op #{i} full states:");
+            eprintln!("  core: {}", hex(&golden_ops[i]));
+            eprintln!("  zkvm: {}", hex(&zkvm_states[i]));
+            if i > 0 {
+                eprintln!("Op #{} full states (prior):", i - 1);
+                eprintln!("  core: {}", hex(&golden_ops[i - 1]));
+                eprintln!("  zkvm: {}", hex(&zkvm_states[i - 1]));
+            }
+            // Print full bytes at divergence point
+            if let TranscriptEvent::Append { bytes, .. } = &log[i] {
+                eprintln!("Bytes appended at op #{i} ({} bytes): {}", bytes.len(), hex(bytes));
+                if bytes.len() == 32 {
+                    let count = u64::from_be_bytes(bytes[24..32].try_into().unwrap());
+                    eprintln!("  LabelWithCount count = {count}");
                 }
             }
             panic!(
@@ -774,4 +806,111 @@ fn transcript_divergence() {
             min_len,
         );
     }
+}
+
+/// Compare all InstructionRa chunk data between jolt-core and jolt-zkvm.
+#[test]
+fn instruction_ra0_data_matches() {
+    use jolt_core::poly::one_hot_polynomial::OneHotPolynomial as CoreOneHot;
+    use jolt_core::poly::commitment::dory::DoryGlobals;
+
+    let (_, params) = jolt_core_state_history();
+
+    // ── jolt-core side: extract InstructionRa(0) from prover ──
+    DoryGlobals::reset();
+    let mut program = host::Program::new("muldiv-guest");
+    let (bytecode, init_memory_state, _, e_entry) = program.decode();
+    let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
+    let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+
+    let shared_preprocessing = JoltSharedPreprocessing::new(
+        bytecode,
+        io_device.memory_layout.clone(),
+        init_memory_state,
+        1 << 16,
+        e_entry,
+    );
+    let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
+    let elf_contents = program.get_elf_contents().expect("elf");
+    let prover: CoreProver<'_> = CoreProver::gen_from_elf(
+        &prover_preprocessing,
+        &elf_contents,
+        &inputs,
+        &[],
+        &[],
+        None,
+        None,
+        None,
+    );
+
+    let one_hot_params = &prover.one_hot_params;
+    let instruction_d = one_hot_params.instruction_d;
+    let trace_length = params.trace_length;
+
+    // ── jolt-zkvm side ──
+    let (_, mut polys, _, _, _) = setup_zkvm_muldiv(params);
+
+    // Check ALL InstructionRa chunks
+    let mut total_diffs = 0;
+    for chunk in 0..instruction_d {
+        let core_dense: Vec<Fr> = {
+            use jolt_core::zkvm::instruction::LookupQuery;
+            let k_chunk = one_hot_params.k_chunk;
+            let addresses: Vec<Option<u8>> = prover.trace
+                .iter()
+                .map(|cycle| {
+                    let lookup_index = LookupQuery::<64>::to_lookup_index(cycle);
+                    Some(one_hot_params.lookup_index_chunk(lookup_index, chunk))
+                })
+                .collect();
+
+            let t = trace_length;
+            let mut dense = vec![Fr::zero(); t * k_chunk];
+            for (cycle, &addr) in addresses.iter().enumerate() {
+                if let Some(a) = addr {
+                    dense[a as usize * t + cycle] = Fr::from(1u64);
+                }
+            }
+            dense
+        };
+
+        let zkvm_data: Vec<NewFr> = polys.get(PolynomialId::InstructionRa(chunk)).to_vec();
+
+        let diffs: usize = core_dense.iter().zip(zkvm_data.iter())
+            .filter(|(c, z)| {
+                let z_ark: Fr = (**z).into();
+                **c != z_ark
+            })
+            .count();
+
+        if diffs > 0 {
+            eprintln!("InstructionRa({chunk}): {diffs} differences (len={})", core_dense.len());
+            // Print details for first diverging cycles
+            use jolt_core::zkvm::instruction::LookupQuery;
+            let t = trace_length;
+            for (i, (c, z)) in core_dense.iter().zip(zkvm_data.iter()).enumerate() {
+                let z_ark: Fr = (*z).into();
+                if *c != z_ark {
+                    let addr = i / t;
+                    let cycle = i % t;
+                    if cycle < prover.trace.len() {
+                        let core_lookup = LookupQuery::<64>::to_lookup_index(&prover.trace[cycle]);
+                        let core_chunk_val = one_hot_params.lookup_index_chunk(core_lookup, chunk);
+                        eprintln!(
+                            "  flat={i} addr={addr} cycle={cycle}: core={} zkvm={}, \
+                             core_lookup={core_lookup:#x} core_chunk{chunk}={core_chunk_val}, \
+                             instr={:?}",
+                            if c.is_zero() { 0 } else { 1 },
+                            if z_ark.is_zero() { 0 } else { 1 },
+                            &format!("{:?}", prover.trace[cycle]).split('(').next().unwrap_or("?"),
+                        );
+                    }
+                }
+            }
+            total_diffs += diffs;
+        }
+    }
+
+    eprintln!("Checked {instruction_d} InstructionRa chunks, total diffs: {total_diffs}");
+    assert_eq!(total_diffs, 0, "polynomial data should match exactly across all chunks");
 }

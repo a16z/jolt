@@ -13,7 +13,7 @@ use jolt_compiler::PolynomialId;
 use jolt_field::Field;
 use jolt_crypto::HomomorphicCommitment;
 use jolt_openings::{
-    AdditivelyHomomorphic, OpeningReduction, OpeningsError, RlcReduction, VerifierClaim,
+    AdditivelyHomomorphic, OpeningReduction, OpeningsError, VerifierClaim,
 };
 use jolt_poly::EqPolynomial;
 use jolt_r1cs::R1csKey;
@@ -283,12 +283,8 @@ where
                     continue;
                 }
                 let claims = std::mem::take(&mut pcs_claims);
-                let reduced = <RlcReduction as OpeningReduction<PCS>>::reduce_verifier(
-                    claims,
-                    &(),
-                    &mut transcript,
-                )
-                .map_err(JoltError::Opening)?;
+                let reduced = PCS::reduce_verifier(claims, &mut transcript)
+                    .map_err(JoltError::Opening)?;
 
                 if reduced.len() != proof.opening_proofs.len() {
                     return Err(JoltError::Opening(OpeningsError::VerificationFailed));
@@ -391,7 +387,9 @@ fn evaluate_formula<F: Field>(
                     tau_challenge,
                     at_challenge,
                     domain_size,
+                    domain_start,
                 } => jolt_poly::lagrange::lagrange_kernel_eval(
+                    *domain_start,
                     *domain_size,
                     challenges[*tau_challenge],
                     challenges[*at_challenge],
@@ -399,8 +397,10 @@ fn evaluate_formula<F: Field>(
                 ClaimFactor::LagrangeWeight {
                     challenge,
                     domain_size,
+                    domain_start,
                     basis_index,
                 } => jolt_poly::lagrange::lagrange_basis_eval(
+                    *domain_start,
                     *domain_size,
                     *basis_index,
                     challenges[*challenge],
@@ -410,9 +410,10 @@ fn evaluate_formula<F: Field>(
                     eval_polys,
                     at_challenge,
                     num_constraints,
+                    domain_start,
                 } => {
                     let r0 = challenges[*at_challenge];
-                    let basis = jolt_poly::lagrange::lagrange_evals(0, *num_constraints, r0);
+                    let basis = jolt_poly::lagrange::lagrange_evals(*domain_start, *num_constraints, r0);
                     let mut z = Vec::with_capacity(1 + eval_polys.len());
                     z.push(F::one());
                     for p in eval_polys {

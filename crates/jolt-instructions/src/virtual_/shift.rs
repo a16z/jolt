@@ -57,8 +57,8 @@ define_instruction!(
     /// Virtual SHIFT_RIGHT_BITMASK: bitmask for right-shift amount.
     VirtualShiftRightBitmask, opcodes::VIRTUAL_SHIFT_RIGHT_BITMASK, "VIRTUAL_SHIFT_RIGHT_BITMASK",
     |_x, y| shift_right_bitmask(y),
-    circuit: [WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
+    circuit: [WriteLookupOutputToRD, AddOperands],
+    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
     table: ShiftRightBitmask,
 );
 
@@ -66,8 +66,8 @@ define_instruction!(
     /// Virtual SHIFT_RIGHT_BITMASKI: bitmask for right-shift by immediate.
     VirtualShiftRightBitmaski, opcodes::VIRTUAL_SHIFT_RIGHT_BITMASKI, "VIRTUAL_SHIFT_RIGHT_BITMASKI",
     |_x, y| shift_right_bitmask(y),
-    circuit: [WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
+    circuit: [WriteLookupOutputToRD, AddOperands],
+    instruction: [RightOperandIsImm],
     table: ShiftRightBitmask,
 );
 

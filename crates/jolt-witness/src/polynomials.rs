@@ -220,8 +220,9 @@ impl<F: Field> BufferProvider<F> for Polynomials<F> {
 /// Expand one-hot indices into a dense evaluation table using CycleMajor layout.
 ///
 /// CycleMajor: `index = address * T + cycle`, matching jolt-core's default
-/// `DoryLayout::CycleMajor`. All cycles for address 0 come first, then
-/// address 1, etc.
+/// `DoryLayout::CycleMajor`. All T cycles for address 0 come first, then
+/// address 1, etc. This is the layout used by `OneHotPolynomial::commit_rows`
+/// via `DoryGlobals::get_layout()`.
 fn expand_one_hot<F: Field>(k: usize, indices: &[Option<u8>]) -> Vec<F> {
     let t = indices.len();
     let mut buf = vec![F::zero(); t * k];

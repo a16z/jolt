@@ -21,6 +21,3 @@ pub mod arkworks;
 pub use arkworks::bn254::Fr;
 #[cfg(feature = "bn254")]
 pub use arkworks::wide_accumulator::WideAccumulator;
-
-#[cfg(feature = "dory-pcs")]
-mod dory_interop;

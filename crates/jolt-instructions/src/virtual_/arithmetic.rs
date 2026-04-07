@@ -16,7 +16,7 @@ define_instruction!(
     Pow2I, opcodes::VIRTUAL_POW2I, "POW2I",
     |_x, y| 1u64 << (y & 63),
     circuit: [AddOperands, WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
+    instruction: [RightOperandIsImm],
     table: Pow2,
 );
 
@@ -25,7 +25,7 @@ define_instruction!(
     Pow2W, opcodes::VIRTUAL_POW2W, "POW2W",
     |_x, y| 1u64 << (y & 31),
     circuit: [AddOperands, WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
+    instruction: [LeftOperandIsRs1Value],
     table: Pow2W,
 );
 
@@ -34,7 +34,7 @@ define_instruction!(
     Pow2IW, opcodes::VIRTUAL_POW2IW, "POW2IW",
     |_x, y| 1u64 << (y & 31),
     circuit: [AddOperands, WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
+    instruction: [RightOperandIsImm],
     table: Pow2W,
 );
 

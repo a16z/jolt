@@ -12,7 +12,7 @@ This crate defines abstract interfaces for polynomial commitment schemes (PCS) a
 
 - **Stateless.** No accumulators. Claims are plain data (`ProverClaim`, `VerifierClaim`) collected by the caller in `Vec`s.
 - **Reduction is separate from proving.** The `OpeningReduction` trait transforms claims (many -> fewer). The PCS opens the reduced claims.
-- **No batching in PCS traits.** Batching is a reduction strategy (`RlcReduction`), not a PCS property.
+- **No batching in PCS traits.** Batching is a reduction concern (`OpeningReduction`), not a PCS property.
 
 ## Trait Hierarchy
 
@@ -36,15 +36,12 @@ This crate defines abstract interfaces for polynomial commitment schemes (PCS) a
 - **`ZkOpeningScheme`** -- PCS that supports zero-knowledge evaluation proofs (committed evaluation output).
 ### Claim Types
 
-- **`ProverClaim<F>`** -- Leaf claim with polynomial evaluations, point, and claimed value.
+- **`ProverClaim<F>`** -- Leaf claim with polynomial, evaluation point, and claimed value.
 - **`VerifierClaim<F, C>`** -- Leaf claim with commitment, point, and claimed value.
-- **`CommittedEval<F>`** -- Evaluation of a committed polynomial at a point (point + eval, no table).
-- **`VirtualEval<F>`** -- Zero-cost newtype for evaluations of virtual (non-committed) polynomials.
 
 ### Reduction
 
-- **`OpeningReduction<PCS>`** -- Trait for claim transformations (batching strategy).
-- **`RlcReduction`** -- Groups claims by evaluation point, combines via random linear combination.
+- **`OpeningReduction: CommitmentScheme`** -- Trait for claim transformations. Blanket-implemented for `AdditivelyHomomorphic` PCS via RLC (group by point, combine with Fiat-Shamir challenges). Non-homomorphic schemes must provide their own impl.
 
 ### Utilities
 

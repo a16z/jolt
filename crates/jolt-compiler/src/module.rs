@@ -386,6 +386,13 @@ pub enum Op {
         /// This folds the uniskip kernel factor into the projected buffers.
         kernel_tau: Option<usize>,
     },
+    /// Interleave-duplicate polynomial buffers: `buf'[2i] = buf'[2i+1] = buf[i]`.
+    ///
+    /// Extends a polynomial that does not depend on a new low-order variable
+    /// (e.g. the streaming variable in the outer Spartan remaining sumcheck).
+    /// The resulting buffer is twice as large and ready for standard dense
+    /// sumcheck rounds that bind the new variable first (LowToHigh order).
+    DuplicateInterleave { polys: Vec<PolynomialId> },
 
     // ── PCS (dispatched to CommitmentScheme trait) ──
     /// Commit polynomials, absorb commitments into transcript,
@@ -475,6 +482,7 @@ impl Op {
                 | Op::Evaluate { .. }
                 | Op::Bind { .. }
                 | Op::LagrangeProject { .. }
+                | Op::DuplicateInterleave { .. }
         )
     }
 
@@ -720,6 +728,8 @@ pub enum ClaimFactor {
         at_challenge: usize,
         /// Number of constraints to evaluate (may be less than the full R1CS).
         num_constraints: usize,
+        /// First integer in the Lagrange domain (symmetric convention: -(N-1)/2).
+        domain_start: i64,
     },
     /// Eq evaluation between challenge values and a contiguous **slice** of a
     /// stage's (normalized) sumcheck point.
@@ -742,12 +752,14 @@ pub enum ClaimFactor {
         tau_challenge: usize,
         at_challenge: usize,
         domain_size: usize,
+        domain_start: i64,
     },
     /// Single Lagrange basis polynomial `L_k(r)` at a challenge value `r`,
-    /// over the domain `{0, 1, ..., domain_size-1}`.
+    /// over the domain `{domain_start, ..., domain_start + domain_size - 1}`.
     LagrangeWeight {
         challenge: usize,
         domain_size: usize,
+        domain_start: i64,
         basis_index: usize,
     },
     /// Evaluation of a public/preprocessed polynomial at the current stage's

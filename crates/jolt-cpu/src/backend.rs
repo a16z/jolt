@@ -266,6 +266,16 @@ impl ComputeBackend for CpuBackend {
     fn eq_plus_one_table<F: Field>(&self, point: &[F]) -> (Vec<F>, Vec<F>) {
         jolt_poly::EqPlusOnePolynomial::evals(point, None)
     }
+
+    fn duplicate_interleave<F: Field>(&self, buf: &Vec<F>) -> Vec<F> {
+        let n = buf.len();
+        let mut out = Vec::with_capacity(2 * n);
+        for &val in buf {
+            out.push(val);
+            out.push(val);
+        }
+        out
+    }
 }
 
 #[tracing::instrument(skip_all, name = "interpolate_inplace")]

@@ -19,8 +19,8 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use jolt_compiler::module::{
-    ChallengeSource, ClaimFactor, ClaimFormula, InputBinding, Op, SegmentedConfig,
-    VerifierStageIndex,
+    ChallengeSource, ClaimFactor, ClaimFormula, DomainSeparator, InputBinding, Op,
+    SegmentedConfig, VerifierStageIndex,
 };
 use jolt_compiler::{Iteration, KernelDef, PolynomialId};
 use jolt_compute::{Buf, BufferProvider, ComputeBackend, DeviceBuffer, Executable};
@@ -479,6 +479,18 @@ where
                 }
             }
 
+            Op::DuplicateInterleave { polys } => {
+                for pi in polys {
+                    let buf = device_buffers
+                        .remove(pi)
+                        .expect("DuplicateInterleave: buffer missing");
+                    let expanded = DeviceBuffer::Field(
+                        backend.duplicate_interleave(buf.as_field()),
+                    );
+                    let _ = device_buffers.insert(*pi, expanded);
+                }
+            }
+
             // ── PCS ──
             Op::Commit { polys, tag, num_vars }
             | Op::CommitStreaming {
@@ -487,6 +499,18 @@ where
                 num_vars,
                 ..
             } => {
+                // jolt-core skips advice commits when data is empty/zero
+                let skip = matches!(
+                    tag,
+                    DomainSeparator::UntrustedAdvice | DomainSeparator::TrustedAdvice
+                ) && polys.iter().all(|pi| {
+                    let raw = provider.materialize(*pi);
+                    raw.iter().all(|v| *v == F::zero())
+                });
+                if skip {
+                    continue;
+                }
+
                 let target_len = 1 << num_vars;
                 for pi in polys {
                     let raw = provider.materialize(*pi);
@@ -522,7 +546,7 @@ where
 
             Op::Open => {
                 for (claim, hint) in state.reduced_claims.iter().zip(state.reduced_hints.iter()) {
-                    let poly: PCS::Polynomial = claim.evaluations.clone().into();
+                    let poly: PCS::Polynomial = claim.polynomial.evaluations().to_vec().into();
                     let proof = PCS::open(
                         &poly,
                         &claim.point,
@@ -772,7 +796,7 @@ where
         let combined_hint = PCS::combine_hints(group_hints, &powers);
 
         reduced_claims.push(ProverClaim {
-            evaluations: combined_evals,
+            polynomial: combined_evals.into(),
             point: point.clone(),
             eval: combined_eval,
         });

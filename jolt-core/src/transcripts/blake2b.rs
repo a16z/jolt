@@ -177,10 +177,9 @@ impl Transcript for Blake2bTranscript {
     }
 
     fn challenge_scalar_optimized<F: JoltField>(&mut self) -> F::Challenge {
-        // The smaller challenge which is then converted into a
-        // MontU128Challenge
-        let challenge_scalar: u128 = self.challenge_u128();
-        F::Challenge::from(challenge_scalar)
+        let mut buf = [0u8; 16];
+        self.challenge_bytes(&mut buf);
+        F::Challenge::from(u128::from_le_bytes(buf))
     }
 
     fn challenge_vector_optimized<F: JoltField>(&mut self, len: usize) -> Vec<F::Challenge> {

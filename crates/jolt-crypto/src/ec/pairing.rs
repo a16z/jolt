@@ -1,6 +1,6 @@
 use jolt_field::Field;
 
-use crate::JoltGroup;
+use super::group::JoltGroup;
 
 /// Pairing-friendly group for schemes that require bilinear maps (Dory, KZG).
 ///
@@ -17,12 +17,6 @@ pub trait PairingGroup: Clone + Sync + Send + 'static {
     type G1: JoltGroup;
     type G2: JoltGroup;
     type GT: JoltGroup;
-
-    /// Canonical G1 generator.
-    fn g1_generator() -> Self::G1;
-
-    /// Canonical G2 generator.
-    fn g2_generator() -> Self::G2;
 
     /// Computes the bilinear pairing `e(g1, g2)`.
     #[must_use]

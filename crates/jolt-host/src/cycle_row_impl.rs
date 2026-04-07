@@ -127,7 +127,10 @@ impl CycleRow for Cycle {
             (left as u128).wrapping_add(right_twos)
         } else if cflags[CircuitFlags::MultiplyOperands] {
             (left as u128).wrapping_mul(right)
-        } else if cflags[CircuitFlags::Advice] || self.is_noop() {
+        } else if cflags[CircuitFlags::Advice] {
+            // Advice lookup_index = the advice value (written to rd)
+            self.rd_write().map_or(0, |(_, _, post)| post as u128)
+        } else if self.is_noop() {
             0
         } else {
             jolt_instructions::interleave_bits(left, right as u64)
@@ -186,7 +189,7 @@ fn instruction_inputs(
         0
     };
 
-    (left, right as u128)
+    (left, right as u64 as u128)
 }
 
 // ISA dispatch tables (absorbed from jolt-zkvm/src/witness/flags.rs)

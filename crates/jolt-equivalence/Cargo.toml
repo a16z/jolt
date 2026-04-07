@@ -32,3 +32,4 @@ jolt-verifier = { path = "../jolt-verifier" }
 jolt-witness = { path = "../jolt-witness" }
 jolt-zkvm = { path = "../jolt-zkvm" }
 num-traits.workspace = true
+blake2.workspace = true

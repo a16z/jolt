@@ -2739,7 +2739,6 @@ dependencies = [
  "ark-std 0.5.0",
  "bincode 2.0.1",
  "criterion",
- "dory-pcs",
  "jolt-field",
  "jolt-transcript",
  "num-bigint",
@@ -2769,7 +2768,6 @@ dependencies = [
  "rand_core 0.6.4",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
  "tracing",
 ]
 
@@ -2778,6 +2776,7 @@ name = "jolt-equivalence"
 version = "0.1.0"
 dependencies = [
  "ark-bn254",
+ "blake2",
  "common",
  "jolt-compiler",
  "jolt-compute",
@@ -2806,7 +2805,6 @@ dependencies = [
  "ark-serialize 0.5.0",
  "ark-std 0.5.0",
  "criterion",
- "dory-pcs",
  "num-traits",
  "rand 0.8.5",
  "rand_chacha 0.3.1",

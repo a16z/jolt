@@ -113,10 +113,12 @@ impl ModuleParams {
         let outer_uniskip_num_coeffs = 3 * outer_uniskip_degree + 1; // 55
         let outer_uniskip_poly_degree = outer_uniskip_num_coeffs - 1; // 54
         let outer_remaining_degree = 3;
-        // After uniskip + Lagrange projection, remaining sumcheck is over cycle variables.
-        let outer_remaining_rounds = log_t;
-        // τ = [τ_low (log_t cycle challenges) ‖ τ_high (1 Lagrange kernel challenge)]
-        let num_tau = log_t + 1;
+        // 1 streaming round + log_t linear rounds. The streaming round binds
+        // the extra streaming variable (Az/Bz are DuplicateInterleaved to 2T).
+        let outer_remaining_rounds = log_t + 1;
+        // τ = [τ_cycle (log_t) ‖ τ_streaming (1) ‖ τ_high (Lagrange kernel)]
+        // jolt-core squeezes num_cycle_vars + 2 = log_t + 2 total.
+        let num_tau = log_t + 2;
         let num_constraints_padded = NUM_R1CS_CONSTRAINTS.next_power_of_two();
 
         // Product virtual

@@ -859,6 +859,7 @@ fn op_poly_refs(op: &Op, kernels: &[KernelDef]) -> Vec<PolynomialId> {
         Op::Evaluate { poly } | Op::CollectOpeningClaim { poly, .. } => vec![*poly],
         Op::Bind { polys, .. }
         | Op::LagrangeProject { polys, .. }
+        | Op::DuplicateInterleave { polys }
         | Op::Commit { polys, .. }
         | Op::CommitStreaming { polys, .. }
         | Op::RecordEvals { polys, .. }

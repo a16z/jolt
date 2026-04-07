@@ -182,11 +182,9 @@ impl Transcript for KeccakTranscript {
 
     // New methods that return F::Challenge
     fn challenge_scalar_optimized<F: JoltField>(&mut self) -> F::Challenge {
-        let mut buf = vec![0u8; 16];
+        let mut buf = [0u8; 16];
         self.challenge_bytes(&mut buf);
-
-        buf = buf.into_iter().rev().collect();
-        F::Challenge::from(u128::from_be_bytes(buf.try_into().unwrap()))
+        F::Challenge::from(u128::from_le_bytes(buf))
     }
 
     fn challenge_vector_optimized<F: JoltField>(&mut self, len: usize) -> Vec<F::Challenge> {

@@ -15,7 +15,6 @@ workspace = true
 [features]
 default = ["bn254"]
 bn254 = ["dep:ark-bn254", "dep:ark-ec", "dep:ark-ff", "dep:ark-serialize", "dep:ark-std", "dep:num-bigint", "dep:num-integer", "dep:num-traits", "dep:rayon"]
-dory-pcs = ["dep:dory", "bn254", "jolt-field/dory-pcs"]
 
 [dependencies]
 jolt-field = { path = "../jolt-field" }
@@ -23,7 +22,6 @@ jolt-transcript = { path = "../jolt-transcript" }
 tracing.workspace = true
 serde = { workspace = true, features = ["derive", "alloc"] }
 rand_core = { workspace = true }
-dory = { workspace = true, optional = true }
 
 # Arkworks — BN254 backend (internal, gated behind `bn254` feature)
 ark-bn254 = { workspace = true, features = ["curve"], optional = true }
