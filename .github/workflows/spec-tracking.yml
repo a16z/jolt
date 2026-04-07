@@ -1,7 +1,7 @@
 name: Spec Workflow
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, ready_for_review, reopened, labeled]
 
 permissions:
@@ -16,6 +16,9 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fetch PR head
+        run: git fetch origin +refs/pull/${{ github.event.pull_request.number }}/head
 
       - name: Detect spec and code changes
         id: detect
@@ -117,6 +120,9 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+
+      - name: Fetch PR head
+        run: git fetch origin +refs/pull/${{ github.event.pull_request.number }}/head
 
       - name: Check PR size
         env:
