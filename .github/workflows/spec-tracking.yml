@@ -12,13 +12,15 @@ jobs:
   spec-labels:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Fetch PR head
-        run: git fetch origin +refs/pull/${{ github.event.pull_request.number }}/head
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: git fetch origin "+refs/pull/${PR_NUMBER}/head"
 
       - name: Detect spec and code changes
         id: detect
@@ -93,6 +95,14 @@ jobs:
         run: |
           BASENAME=$(basename "$SPEC_FILE")
 
+          # Validate spec file path
+          case "$SPEC_FILE" in
+            *..* | */.*)
+              echo "::error::Invalid spec file path: $SPEC_FILE"
+              exit 1
+              ;;
+          esac
+
           # Skip if already prefixed with a PR number
           if echo "$BASENAME" | grep -qE '^[0-9]+-'; then
             echo "Spec file already has PR number prefix: $BASENAME"
@@ -101,7 +111,7 @@ jobs:
 
           NEW_NAME="specs/${PR_NUMBER}-${BASENAME}"
 
-          git checkout "$HEAD_REF"
+          git checkout "refs/heads/${HEAD_REF}"
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -115,14 +125,19 @@ jobs:
 
   large-pr-warning:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     if: github.event.action == 'opened' || github.event.action == 'synchronize'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 0
 
       - name: Fetch PR head
-        run: git fetch origin +refs/pull/${{ github.event.pull_request.number }}/head
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: git fetch origin "+refs/pull/${PR_NUMBER}/head"
 
       - name: Check PR size
         env:
