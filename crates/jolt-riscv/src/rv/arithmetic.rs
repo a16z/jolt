@@ -32,7 +32,7 @@ define_instruction!(
 define_instruction!(
     /// RV64I LUI: load upper immediate. Result is the immediate value itself.
     Lui, "LUI",
-    |x, _y| x,
+    |_x, y| y,
     circuit: [AddOperands, WriteLookupOutputToRD],
     instruction: [RightOperandIsImm],
 );
@@ -375,7 +375,7 @@ mod tests {
 
     #[test]
     fn lui_passthrough() {
-        assert_eq!(Lui.execute(0xDEAD_0000, 999), 0xDEAD_0000);
+        assert_eq!(Lui.execute(0xDEAD_0000, 999), 999);
     }
 
     #[test]

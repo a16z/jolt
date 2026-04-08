@@ -9,7 +9,8 @@ use crate::traits::Instruction;
 ///
 /// Instructions are stored in a flat array where the index equals the opcode,
 /// enabling O(1) lookup without hashing. The registration order in [`new()`](Self::new)
-/// defines the opcode assignment.
+/// defines the opcode assignment. This registry is not a substitute for the tracer CPU:
+/// runtime-managed opcodes such as advice and host I/O still require emulator state.
 #[derive(Default)]
 pub struct JoltInstructionSet {
     instructions: Vec<Box<dyn Instruction>>,

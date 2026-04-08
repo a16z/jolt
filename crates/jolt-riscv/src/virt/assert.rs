@@ -17,11 +17,11 @@ define_instruction!(
 );
 
 define_instruction!(
-    /// Virtual ASSERT_VALID_DIV0: validates division-by-zero result.
-    /// Returns 1 if divisor is nonzero, or if divisor is 0 and quotient is MAX.
+    /// Virtual ASSERT_VALID_DIV0: validates `(divisor, quotient)` for division-by-zero handling.
+    /// Returns 1 if the divisor is nonzero, or if the divisor is 0 and the quotient is MAX.
     AssertValidDiv0, "ASSERT_VALID_DIV0",
     |x, y| {
-        if y == 0 { u64::from(x == u64::MAX) } else { 1 }
+        if x == 0 { u64::from(y == u64::MAX) } else { 1 }
     },
     circuit: [Assert],
     instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
@@ -51,17 +51,17 @@ define_instruction!(
 );
 
 define_instruction!(
-    /// Virtual ASSERT_WORD_ALIGNMENT: checks value is 4-byte aligned.
+    /// Virtual ASSERT_WORD_ALIGNMENT: checks whether `rs1 + imm` is 4-byte aligned.
     AssertWordAlignment, "ASSERT_WORD_ALIGNMENT",
-    |x, _y| u64::from(x.is_multiple_of(4)),
+    |x, y| u64::from(x.wrapping_add(y).is_multiple_of(4)),
     circuit: [AddOperands, Assert],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
 );
 
 define_instruction!(
-    /// Virtual ASSERT_HALFWORD_ALIGNMENT: checks value is 2-byte aligned.
+    /// Virtual ASSERT_HALFWORD_ALIGNMENT: checks whether `rs1 + imm` is 2-byte aligned.
     AssertHalfwordAlignment, "ASSERT_HALFWORD_ALIGNMENT",
-    |x, _y| u64::from(x.is_multiple_of(2)),
+    |x, y| u64::from(x.wrapping_add(y).is_multiple_of(2)),
     circuit: [AddOperands, Assert],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
 );
@@ -86,9 +86,9 @@ mod tests {
 
     #[test]
     fn assert_valid_div0() {
-        assert_eq!(AssertValidDiv0.execute(u64::MAX, 0), 1);
-        assert_eq!(AssertValidDiv0.execute(42, 0), 0);
-        assert_eq!(AssertValidDiv0.execute(42, 3), 1);
+        assert_eq!(AssertValidDiv0.execute(0, u64::MAX), 1);
+        assert_eq!(AssertValidDiv0.execute(0, 42), 0);
+        assert_eq!(AssertValidDiv0.execute(3, 42), 1);
     }
 
     #[test]
@@ -102,13 +102,15 @@ mod tests {
     fn assert_word_alignment() {
         assert_eq!(AssertWordAlignment.execute(0, 0), 1);
         assert_eq!(AssertWordAlignment.execute(4, 0), 1);
-        assert_eq!(AssertWordAlignment.execute(3, 0), 0);
+        assert_eq!(AssertWordAlignment.execute(2, 2), 1);
+        assert_eq!(AssertWordAlignment.execute(4, 2), 0);
     }
 
     #[test]
     fn assert_halfword_alignment() {
         assert_eq!(AssertHalfwordAlignment.execute(0, 0), 1);
         assert_eq!(AssertHalfwordAlignment.execute(2, 0), 1);
-        assert_eq!(AssertHalfwordAlignment.execute(1, 0), 0);
+        assert_eq!(AssertHalfwordAlignment.execute(1, 1), 1);
+        assert_eq!(AssertHalfwordAlignment.execute(2, 1), 0);
     }
 }

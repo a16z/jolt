@@ -1,9 +1,9 @@
 //! Virtual arithmetic instructions used internally by the Jolt VM.
 
 define_instruction!(
-    /// Virtual POW2: computes `2^y` where exponent is from lower 6 bits of `y`.
+    /// Virtual POW2: computes `2^rs1` using the low 6 bits of `rs1`.
     Pow2, "POW2",
-    |_x, y| 1u64 << (y & 63),
+    |x, _y| 1u64 << (x & 63),
     circuit: [AddOperands, WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
 );
@@ -17,9 +17,9 @@ define_instruction!(
 );
 
 define_instruction!(
-    /// Virtual POW2W: computes `2^(y mod 32)` for 32-bit mode.
+    /// Virtual POW2W: computes `2^(rs1 mod 32)` for 32-bit mode.
     Pow2W, "POW2W",
-    |_x, y| 1u64 << (y & 31),
+    |x, _y| 1u64 << (x & 31),
     circuit: [AddOperands, WriteLookupOutputToRD],
     instruction: [LeftOperandIsRs1Value],
 );
@@ -48,24 +48,30 @@ mod tests {
     #[test]
     fn pow2_basic() {
         assert_eq!(Pow2.execute(0, 0), 1);
-        assert_eq!(Pow2.execute(0, 10), 1024);
-        assert_eq!(Pow2.execute(0, 63), 1 << 63);
+        assert_eq!(Pow2.execute(10, 0), 1024);
+        assert_eq!(Pow2.execute(63, 0), 1 << 63);
     }
 
     #[test]
     fn pow2_masks_exponent() {
-        assert_eq!(Pow2.execute(0, 64), 1);
+        assert_eq!(Pow2.execute(64, 0), 1);
     }
 
     #[test]
     fn pow2w_basic() {
         assert_eq!(Pow2W.execute(0, 0), 1);
-        assert_eq!(Pow2W.execute(0, 31), 1 << 31);
+        assert_eq!(Pow2W.execute(31, 0), 1 << 31);
     }
 
     #[test]
     fn pow2w_masks_to_32() {
-        assert_eq!(Pow2W.execute(0, 32), 1);
+        assert_eq!(Pow2W.execute(32, 0), 1);
+    }
+
+    #[test]
+    fn immediate_pow2_variants_use_y() {
+        assert_eq!(Pow2I.execute(0, 10), 1024);
+        assert_eq!(Pow2IW.execute(0, 31), 1 << 31);
     }
 
     #[test]
