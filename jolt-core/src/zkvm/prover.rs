@@ -409,7 +409,9 @@ impl<
         trusted_advice_hint: Option<PCS::OpeningProofHint>,
         final_memory_state: Memory,
     ) -> Self {
-        // truncate trailing zeros on device outputs
+        // Truncate trailing zero bytes from outputs. Both prover and verifier
+        // apply the same truncation so the proof is internally consistent.
+        // See the corresponding comment in JoltVerifier::new().
         program_io.outputs.truncate(
             program_io
                 .outputs
@@ -526,6 +528,7 @@ impl<
 
         #[cfg(not(target_arch = "wasm32"))]
         let start = Instant::now();
+        let preprocessing_digest = self.preprocessing.shared.digest();
         fiat_shamir_preamble(
             &self.program_io,
             self.one_hot_params.ram_k,
@@ -534,6 +537,7 @@ impl<
             &self.rw_config,
             &self.one_hot_params.to_config(),
             DoryGlobals::get_layout(),
+            &preprocessing_digest,
             &mut self.transcript,
         );
 

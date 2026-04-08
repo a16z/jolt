@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::PolynomialId;
@@ -25,8 +24,8 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
+            AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningPoint,
+            ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
         },
         split_eq_poly::GruenSplitEqPolynomial,
         unipoly::UniPoly,
@@ -495,16 +494,19 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
             let evals = (0..inc.len() / 2)
                 .into_par_iter()
                 .map(|j| {
-                    let inc_evals = inc.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
-                    let eq_evals = merged_eq.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
+                    let inc_evals = inc.sumcheck_evals_array::<DEGREE>(j, BindingOrder::LowToHigh);
+                    let eq_evals =
+                        merged_eq.sumcheck_evals_array::<DEGREE>(j, BindingOrder::LowToHigh);
                     let inner = (0..K_prime)
                         .into_par_iter()
                         .map(|k| {
                             let idx = k * T_prime / 2 + j;
-                            let ra_evals = ra.sumcheck_evals(idx, DEGREE, BindingOrder::LowToHigh);
-                            let wa_evals = wa.sumcheck_evals(idx, DEGREE, BindingOrder::LowToHigh);
+                            let ra_evals =
+                                ra.sumcheck_evals_array::<DEGREE>(idx, BindingOrder::LowToHigh);
+                            let wa_evals =
+                                wa.sumcheck_evals_array::<DEGREE>(idx, BindingOrder::LowToHigh);
                             let val_evals =
-                                val.sumcheck_evals(idx, DEGREE, BindingOrder::LowToHigh);
+                                val.sumcheck_evals_array::<DEGREE>(idx, BindingOrder::LowToHigh);
                             [
                                 ra_evals[0] * val_evals[0]
                                     + wa_evals[0] * (val_evals[0] + inc_evals[0]),
@@ -893,9 +895,9 @@ pub struct RegistersReadWriteCheckingVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> RegistersReadWriteCheckingVerifier<F> {
-    pub fn new(
+    pub fn new<A: AbstractVerifierOpeningAccumulator<F>>(
         trace_len: usize,
-        opening_accumulator: &VerifierOpeningAccumulator<F>,
+        opening_accumulator: &A,
         transcript: &mut impl Transcript,
         config: &ReadWriteConfig,
     ) -> Self {
@@ -909,10 +911,10 @@ impl<F: JoltField> RegistersReadWriteCheckingVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
-    for RegistersReadWriteCheckingVerifier<F>
+impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
+    SumcheckInstanceVerifier<F, T, A> for RegistersReadWriteCheckingVerifier<F>
 {
-    fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
+    fn input_claim(&self, accumulator: &A) -> F {
         let result = self.params.input_claim(accumulator);
 
         #[cfg(test)]
@@ -933,11 +935,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         &self.params
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &VerifierOpeningAccumulator<F>,
-        sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, accumulator: &A, sumcheck_challenges: &[F::Challenge]) -> F {
         let r = self.params.normalize_opening_point(sumcheck_challenges);
         let (_, r_cycle) = r.split_at(LOG_K);
 
@@ -987,7 +985,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
     fn cache_openings(
         &self,
-        accumulator: &mut VerifierOpeningAccumulator<F>,
+        accumulator: &mut A,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);

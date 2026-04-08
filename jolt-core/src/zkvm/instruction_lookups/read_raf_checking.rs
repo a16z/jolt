@@ -22,8 +22,8 @@ use crate::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
+            AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningPoint,
+            ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
         },
         prefix_suffix::{Prefix, PrefixRegistry, PrefixSuffixDecomposition},
         split_eq_poly::GruenSplitEqPolynomial,
@@ -1298,10 +1298,10 @@ pub struct InstructionReadRafSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> InstructionReadRafSumcheckVerifier<F> {
-    pub fn new(
+    pub fn new<A: AbstractVerifierOpeningAccumulator<F>>(
         n_cycle_vars: usize,
         one_hot_params: &OneHotParams,
-        opening_accumulator: &VerifierOpeningAccumulator<F>,
+        opening_accumulator: &A,
         transcript: &mut impl Transcript,
     ) -> Self {
         let params = InstructionReadRafSumcheckParams::new(
@@ -1314,18 +1314,14 @@ impl<F: JoltField> InstructionReadRafSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
-    for InstructionReadRafSumcheckVerifier<F>
+impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
+    SumcheckInstanceVerifier<F, T, A> for InstructionReadRafSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &VerifierOpeningAccumulator<F>,
-        sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, accumulator: &A, sumcheck_challenges: &[F::Challenge]) -> F {
         // Verifier's RHS reconstruction from virtual claims at r:
         //
         // Computes Val and RafVal contributions at r_address, forms EQ(r_cycle)
@@ -1394,11 +1390,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         eq_eval_r_reduction * ra_claim * (val_claim + self.params.gamma * raf_claim)
     }
 
-    fn cache_openings(
-        &self,
-        accumulator: &mut VerifierOpeningAccumulator<F>,
-        sumcheck_challenges: &[F::Challenge],
-    ) {
+    fn cache_openings(&self, accumulator: &mut A, sumcheck_challenges: &[F::Challenge]) {
         let r_sumcheck = self.params.normalize_opening_point(sumcheck_challenges);
         // Verifier requests the virtual openings that the prover must provide
         // for this sumcheck (same set as published by the prover-side cache).
@@ -1437,6 +1429,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::poly::opening_proof::VerifierOpeningAccumulator;
     use crate::subprotocols::sumcheck::BatchedSumcheck;
     use crate::transcripts::Blake2bTranscript;
     use ark_bn254::Fr;

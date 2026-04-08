@@ -612,7 +612,7 @@ impl MacroBuilder {
                 blindfold_setup: Option<jolt::BlindfoldSetup<jolt::Curve>>,
             ) -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::Curve, jolt::PCS>
             {
-                jolt::JoltVerifierPreprocessing::new_full(
+                jolt::JoltVerifierPreprocessing::new(
                     shared_preprocess,
                     generators,
                     blindfold_setup,
@@ -636,7 +636,7 @@ impl MacroBuilder {
                 blindfold_setup: Option<jolt::BlindfoldSetup<jolt::Curve>>,
             ) -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::Curve, jolt::PCS>
             {
-                jolt::JoltVerifierPreprocessing::new_full(shared_preprocess, generators, blindfold_setup)
+                jolt::JoltVerifierPreprocessing::new(shared_preprocess, generators, blindfold_setup)
             }
         }
     }

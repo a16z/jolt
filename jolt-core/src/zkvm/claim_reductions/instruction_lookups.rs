@@ -12,8 +12,8 @@ use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial};
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-    VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+    AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator,
+    SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::unipoly::UniPoly;
 #[cfg(feature = "zk")]
@@ -615,9 +615,9 @@ pub struct InstructionLookupsClaimReductionSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> InstructionLookupsClaimReductionSumcheckVerifier<F> {
-    pub fn new(
+    pub fn new<A: AbstractVerifierOpeningAccumulator<F>>(
         trace_len: usize,
-        accumulator: &VerifierOpeningAccumulator<F>,
+        accumulator: &A,
         transcript: &mut impl Transcript,
     ) -> Self {
         let params =
@@ -626,19 +626,15 @@ impl<F: JoltField> InstructionLookupsClaimReductionSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
-    for InstructionLookupsClaimReductionSumcheckVerifier<F>
+impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
+    SumcheckInstanceVerifier<F, T, A> for InstructionLookupsClaimReductionSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &VerifierOpeningAccumulator<F>,
-        sumcheck_challenges: &[F::Challenge],
-    ) -> F {
-        let opening_point = SumcheckInstanceVerifier::<F, T>::get_params(self)
+    fn expected_output_claim(&self, accumulator: &A, sumcheck_challenges: &[F::Challenge]) -> F {
+        let opening_point = SumcheckInstanceVerifier::<F, T, A>::get_params(self)
             .normalize_opening_point(sumcheck_challenges);
 
         let (r_spartan, _) = accumulator.get_virtual_polynomial_opening(
@@ -675,12 +671,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
                 + self.params.gamma_quart * right_instruction_input_claim)
     }
 
-    fn cache_openings(
-        &self,
-        accumulator: &mut VerifierOpeningAccumulator<F>,
-        sumcheck_challenges: &[F::Challenge],
-    ) {
-        let opening_point = SumcheckInstanceVerifier::<F, T>::get_params(self)
+    fn cache_openings(&self, accumulator: &mut A, sumcheck_challenges: &[F::Challenge]) {
+        let opening_point = SumcheckInstanceVerifier::<F, T, A>::get_params(self)
             .normalize_opening_point(sumcheck_challenges);
 
         accumulator.append_virtual(

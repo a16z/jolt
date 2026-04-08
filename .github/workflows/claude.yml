@@ -65,8 +65,19 @@ jobs:
 
       - name: Run Claude Code
         id: claude
-        uses: anthropics/claude-code-action@3ac52d0da9f8ec9ca7b4dc23bb477e36ef9c77a9 # v1
+        uses: anthropics/claude-code-action@58dbe8ed6879f0d3b02ac295b20d5fdfe7733e0c # v1
+        env:
+          CLAUDE_CODE_EFFORT_LEVEL: max
+          CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY: "1"
+          DISABLE_ERROR_REPORTING: "1"
+          DISABLE_FEEDBACK_COMMAND: "1"
+          DISABLE_TELEMETRY: "1"
+          ENABLE_CLAUDEAI_MCP_SERVERS: "false"
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: claude-sonnet-4-6
+          ANTHROPIC_DEFAULT_SONNET_MODEL: claude-opus-4-6
+          CLAUDE_CODE_SUBAGENT_MODEL: claude-opus-4-6
+          TASK_MAX_OUTPUT_LENGTH: "64000"
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          claude_args: '--allowed-tools "Bash(gh pr:*)" "Bash(gh issue:*)" "Bash(cargo:*)" Read Edit Write Glob Grep Agent'
+          claude_args: '--model claude-opus-4-6 --allowed-tools "Bash(gh pr:*)" "Bash(gh issue:*)" "Bash(cargo:*)" Read Edit Write Glob Grep Agent'

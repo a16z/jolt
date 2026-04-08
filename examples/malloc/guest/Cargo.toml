@@ -7,10 +7,12 @@ edition = "2021"
 guest = []
 
 [dependencies]
-jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = ["malloc-shim"] }
+jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [
+  "malloc-shim",
+] }
 
 [build-dependencies]
-cc = "1.0"
+cc = "1.2"
 
 [package.metadata.cargo-machete]
 ignored = ["cc"]

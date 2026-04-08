@@ -1,0 +1,39 @@
+name: Fuzz jolt-field
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/jolt-field/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - "crates/jolt-field/**"
+
+env:
+  CARGO_TERM_COLOR: always
+  FUZZ_DURATION: 60
+
+concurrency:
+  group: fuzz-jolt-field-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    name: Fuzz jolt-field
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Fuzz all targets
+        working-directory: crates/jolt-field
+        run: |
+          set -euo pipefail
+          for target in from_bytes field_arith wide_accumulator_fmadd wide_accumulator_merge; do
+            echo "--- Fuzzing $target for ${FUZZ_DURATION}s ---"
+            cargo +nightly fuzz run "$target" -- -max_total_time=$FUZZ_DURATION
+          done

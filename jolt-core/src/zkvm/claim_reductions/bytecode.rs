@@ -12,8 +12,8 @@ use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, P
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-    VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+    AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator,
+    SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::unipoly::UniPoly;
 #[cfg(feature = "zk")]
@@ -495,8 +495,8 @@ impl<F: JoltField> BytecodeClaimReductionVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
-    for BytecodeClaimReductionVerifier<F>
+impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
+    SumcheckInstanceVerifier<F, T, A> for BytecodeClaimReductionVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         unsafe { &*self.params.as_ptr() }
@@ -507,11 +507,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         params.round_offset(max_num_rounds)
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &VerifierOpeningAccumulator<F>,
-        sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, accumulator: &A, sumcheck_challenges: &[F::Challenge]) -> F {
         let params = self.params.borrow();
         match params.phase {
             PrecommittedPhase::CycleVariables => {
@@ -542,11 +538,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         }
     }
 
-    fn cache_openings(
-        &self,
-        accumulator: &mut VerifierOpeningAccumulator<F>,
-        sumcheck_challenges: &[F::Challenge],
-    ) {
+    fn cache_openings(&self, accumulator: &mut A, sumcheck_challenges: &[F::Challenge]) {
         let mut params = self.params.borrow_mut();
         if params.phase == PrecommittedPhase::CycleVariables {
             let opening_point = params.normalize_opening_point(sumcheck_challenges);

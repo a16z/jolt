@@ -1,0 +1,30 @@
+[package]
+name = "jolt-transcript"
+version = "0.1.0"
+edition = "2021"
+description = "Fiat-Shamir transcript implementations for Jolt"
+repository = "https://github.com/a16z/jolt"
+license = "MIT OR Apache-2.0"
+keywords = ["SNARK", "cryptography", "proofs", "fiat-shamir"]
+categories = ["cryptography", "no-std"]
+
+[lints]
+workspace = true
+
+[dependencies]
+ark-bn254.workspace = true
+ark-ff.workspace = true
+ark-serialize.workspace = true
+blake2.workspace = true
+digest.workspace = true
+light-poseidon.workspace = true
+sha3.workspace = true
+jolt-field.workspace = true
+
+[dev-dependencies]
+num-traits = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "transcript_ops"
+harness = false

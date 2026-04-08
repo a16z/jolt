@@ -27,7 +27,7 @@ pub fn preprocess(
     PreprocessingError,
 > {
     let shared = preprocess_shared(guest, max_trace_length)?;
-    Ok(JoltVerifierPreprocessing::new_full(
+    Ok(JoltVerifierPreprocessing::new(
         shared,
         verifier_setup,
         blindfold_setup,

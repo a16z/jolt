@@ -8,4 +8,8 @@ guest = []
 
 [dependencies]
 jolt = { package = "jolt-sdk", path = "../../../jolt-sdk" }
-secp256k1 = { version = "0.30", default-features = false, features = ["alloc", "recovery", "serde"] }
+secp256k1 = { version = "0.31", default-features = false, features = [
+  "alloc",
+  "recovery",
+  "serde",
+] }

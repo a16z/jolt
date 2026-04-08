@@ -1,0 +1,160 @@
+name: Spec Workflow
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, ready_for_review, reopened, labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  spec-labels:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fetch PR head
+        run: git fetch origin +refs/pull/${{ github.event.pull_request.number }}/head
+
+      - name: Detect spec and code changes
+        id: detect
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+
+          CHANGED=$(git diff --name-only "$BASE" "$HEAD")
+
+          HAS_SPEC=false
+          HAS_CODE=false
+          SPEC_FILE=""
+
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            case "$file" in
+              specs/*.md)
+                # Exclude README and TEMPLATE
+                basename=$(basename "$file")
+                if [ "$basename" != "README.md" ] && [ "$basename" != "TEMPLATE.md" ]; then
+                  HAS_SPEC=true
+                  SPEC_FILE="$file"
+                fi
+                ;;
+              *)
+                HAS_CODE=true
+                ;;
+            esac
+          done <<< "$CHANGED"
+
+          echo "has_spec=$HAS_SPEC" >> "$GITHUB_OUTPUT"
+          echo "has_code=$HAS_CODE" >> "$GITHUB_OUTPUT"
+          echo "spec_file=$SPEC_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure labels exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create "spec" --description "PR contains a spec" --color "0E8A16" 2>/dev/null || true
+          gh label create "no-spec" --description "PR has no spec file" --color "E4E669" 2>/dev/null || true
+          gh label create "implementation" --description "PR contains implementation of a spec" --color "1D76DB" 2>/dev/null || true
+          gh label create "claude-approved" --description "Claude analysis found no ambiguities" --color "5319E7" 2>/dev/null || true
+
+      - name: Apply labels
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HAS_SPEC: ${{ steps.detect.outputs.has_spec }}
+          HAS_CODE: ${{ steps.detect.outputs.has_code }}
+        run: |
+          if [ "$HAS_SPEC" = "true" ]; then
+            gh pr edit "$PR_NUMBER" --add-label "spec" --remove-label "no-spec" 2>/dev/null || true
+          else
+            gh pr edit "$PR_NUMBER" --add-label "no-spec" --remove-label "spec" 2>/dev/null || true
+          fi
+
+          if [ "$HAS_SPEC" = "true" ] && [ "$HAS_CODE" = "true" ]; then
+            gh pr edit "$PR_NUMBER" --add-label "implementation"
+          fi
+
+      - name: Rename spec file with PR number
+        if: >-
+          steps.detect.outputs.has_spec == 'true'
+          && steps.detect.outputs.spec_file != ''
+          && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          SPEC_FILE: ${{ steps.detect.outputs.spec_file }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          BASENAME=$(basename "$SPEC_FILE")
+
+          # Skip if already prefixed with a PR number
+          if echo "$BASENAME" | grep -qE '^[0-9]+-'; then
+            echo "Spec file already has PR number prefix: $BASENAME"
+            exit 0
+          fi
+
+          NEW_NAME="specs/${PR_NUMBER}-${BASENAME}"
+
+          git checkout "$HEAD_REF"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git mv "$SPEC_FILE" "$NEW_NAME"
+
+          sed -i "s/^| PR          |.*|$/| PR          | #${PR_NUMBER}                          |/" "$NEW_NAME"
+
+          git add "$NEW_NAME"
+          git commit -m "chore: rename spec to ${PR_NUMBER}-${BASENAME}"
+          git push
+
+  large-pr-warning:
+    runs-on: ubuntu-latest
+    if: github.event.action == 'opened' || github.event.action == 'synchronize'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Fetch PR head
+        run: git fetch origin +refs/pull/${{ github.event.pull_request.number }}/head
+
+      - name: Check PR size
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+
+          # Count changed lines (additions + deletions), excluding spec files
+          LINES=$(git diff --numstat "$BASE" "$HEAD" -- . ':!specs/' | \
+            awk '$1 != "-" && $2 != "-" { added += $1; removed += $2 } END { print (added + removed) ? added + removed : 0 }')
+
+          # Check if any spec file exists in the diff
+          HAS_SPEC=$(git diff --name-only "$BASE" "$HEAD" -- 'specs/*.md' | grep -v 'README.md' | grep -v 'TEMPLATE.md' | head -1)
+
+          if [ "$LINES" -gt 500 ] && [ -z "$HAS_SPEC" ]; then
+            EXISTING=$(gh pr view "$PR_NUMBER" --json comments --jq '.comments[].body' | grep -c "more than 500 changed lines" || true)
+            if [ "$EXISTING" -eq 0 ]; then
+              BODY="> [!WARNING]"
+              BODY="$BODY
+          > This PR has **more than 500 changed lines** and does not include a spec."
+              BODY="$BODY
+          >"
+              BODY="$BODY
+          > Large features and architectural changes benefit from a spec-driven workflow."
+              BODY="$BODY
+          > See [CONTRIBUTING.md](https://github.com/a16z/jolt/blob/main/CONTRIBUTING.md) for details on how to create a spec."
+              BODY="$BODY
+          >"
+              BODY="$BODY
+          > If this PR is a bug fix, refactor, or doesn't warrant a spec, feel free to ignore this message."
+              gh pr comment "$PR_NUMBER" --body "$BODY"
+            fi
+          fi
