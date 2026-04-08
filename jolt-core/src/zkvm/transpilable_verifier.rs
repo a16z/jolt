@@ -57,11 +57,11 @@ use crate::zkvm::{
         BytecodeReadRafAddressSumcheckVerifier, BytecodeReadRafCycleSumcheckVerifier,
         BytecodeReadRafSumcheckParams,
     },
-    config::ProgramMode,
     claim_reductions::{
         IncClaimReductionSumcheckVerifier, InstructionLookupsClaimReductionSumcheckVerifier,
         RamRaClaimReductionSumcheckVerifier,
     },
+    config::ProgramMode,
     fiat_shamir_preamble,
     instruction_lookups::{
         ra_virtual::RaSumcheckVerifier as LookupsRaSumcheckVerifier,
@@ -606,8 +606,13 @@ impl<
 
     fn verify_stage6a(
         &mut self,
-    ) -> Result<(BytecodeReadRafSumcheckParams<F>, BooleanitySumcheckParams<F>), ProofVerifyError>
-    {
+    ) -> Result<
+        (
+            BytecodeReadRafSumcheckParams<F>,
+            BooleanitySumcheckParams<F>,
+        ),
+        ProofVerifyError,
+    > {
         let n_cycle_vars = self.proof.trace_length.log_2();
         let program_mode = if self.preprocessing.shared.program.is_committed() {
             ProgramMode::Committed
@@ -685,12 +690,11 @@ impl<
         );
 
         let main_total_vars = self.proof.trace_length.log_2() + self.one_hot_params.log_k_chunk;
-        let precommitted_candidates =
-            self.preprocessing.shared.precommitted_candidate_total_vars(
-                self.preprocessing.shared.program.is_committed(),
-                self.trusted_advice_commitment.is_some(),
-                self.proof.untrusted_advice_commitment.is_some(),
-            );
+        let precommitted_candidates = self.preprocessing.shared.precommitted_candidate_total_vars(
+            self.preprocessing.shared.program.is_committed(),
+            self.trusted_advice_commitment.is_some(),
+            self.proof.untrusted_advice_commitment.is_some(),
+        );
         let precommitted_scheduling_reference =
             crate::zkvm::claim_reductions::PrecommittedClaimReduction::<F>::scheduling_reference(
                 main_total_vars,
@@ -724,8 +728,9 @@ impl<
                 &self.opening_accumulator,
                 &mut self.transcript,
             );
-            self.bytecode_reduction_verifier =
-                Some(BytecodeClaimReductionVerifier::new(bytecode_reduction_params));
+            self.bytecode_reduction_verifier = Some(BytecodeClaimReductionVerifier::new(
+                bytecode_reduction_params,
+            ));
 
             let padded_len_words = self
                 .preprocessing
@@ -741,9 +746,9 @@ impl<
                 &self.opening_accumulator,
                 &mut self.transcript,
             );
-            self.program_image_reduction_verifier = Some(
-                ProgramImageClaimReductionVerifier::new(program_image_reduction_params),
-            );
+            self.program_image_reduction_verifier = Some(ProgramImageClaimReductionVerifier::new(
+                program_image_reduction_params,
+            ));
         }
 
         let mut instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript, A>> = vec![

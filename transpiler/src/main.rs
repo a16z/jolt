@@ -252,55 +252,55 @@ fn main() {
             CommittedProgramPreprocessing, ProgramPreprocessing, TrustedProgramCommitments,
         };
 
-        let symbolic_program: ProgramPreprocessing<AstCommitmentScheme> =
-            match &real_preprocessing.shared.program {
-                ProgramPreprocessing::Full(full) => {
-                    println!("  Mode: Full");
-                    ProgramPreprocessing::Full(full.clone())
-                }
-                ProgramPreprocessing::Committed(committed) => {
-                    println!("  Mode: Committed (symbolizing trusted commitments)");
-                    let bytecode_commitments = TrustedBytecodeCommitments {
-                        commitments: committed
-                            .bytecode_commitments
-                            .commitments
-                            .iter()
-                            .enumerate()
-                            .map(|(i, c)| {
-                                let chunks = var_alloc
-                                    .alloc_commitment(c, &format!("trusted_bytecode_{i}"));
-                                AstCommitment::new(chunks)
-                            })
-                            .collect(),
-                        num_columns: committed.bytecode_commitments.num_columns,
-                        log_k_chunk: committed.bytecode_commitments.log_k_chunk,
-                        bytecode_chunk_count: committed.bytecode_commitments.bytecode_chunk_count,
-                        bytecode_len: committed.bytecode_commitments.bytecode_len,
-                        bytecode_T: committed.bytecode_commitments.bytecode_T,
-                    };
-                    let program_commitments = TrustedProgramCommitments {
-                        program_image_commitment: {
-                            let chunks = var_alloc.alloc_commitment(
-                                &committed.program_commitments.program_image_commitment,
-                                "trusted_program_image",
-                            );
+        let symbolic_program: ProgramPreprocessing<AstCommitmentScheme> = match &real_preprocessing
+            .shared
+            .program
+        {
+            ProgramPreprocessing::Full(full) => {
+                println!("  Mode: Full");
+                ProgramPreprocessing::Full(full.clone())
+            }
+            ProgramPreprocessing::Committed(committed) => {
+                println!("  Mode: Committed (symbolizing trusted commitments)");
+                let bytecode_commitments = TrustedBytecodeCommitments {
+                    commitments: committed
+                        .bytecode_commitments
+                        .commitments
+                        .iter()
+                        .enumerate()
+                        .map(|(i, c)| {
+                            let chunks =
+                                var_alloc.alloc_commitment(c, &format!("trusted_bytecode_{i}"));
                             AstCommitment::new(chunks)
-                        },
-                        program_image_num_columns: committed
-                            .program_commitments
-                            .program_image_num_columns,
-                        program_image_num_words: committed
-                            .program_commitments
-                            .program_image_num_words,
-                    };
-                    ProgramPreprocessing::Committed(CommittedProgramPreprocessing {
-                        meta: committed.meta.clone(),
-                        bytecode_commitments,
-                        program_commitments,
-                        prover_data: None,
-                    })
-                }
-            };
+                        })
+                        .collect(),
+                    num_columns: committed.bytecode_commitments.num_columns,
+                    log_k_chunk: committed.bytecode_commitments.log_k_chunk,
+                    bytecode_chunk_count: committed.bytecode_commitments.bytecode_chunk_count,
+                    bytecode_len: committed.bytecode_commitments.bytecode_len,
+                    bytecode_T: committed.bytecode_commitments.bytecode_T,
+                };
+                let program_commitments = TrustedProgramCommitments {
+                    program_image_commitment: {
+                        let chunks = var_alloc.alloc_commitment(
+                            &committed.program_commitments.program_image_commitment,
+                            "trusted_program_image",
+                        );
+                        AstCommitment::new(chunks)
+                    },
+                    program_image_num_columns: committed
+                        .program_commitments
+                        .program_image_num_columns,
+                    program_image_num_words: committed.program_commitments.program_image_num_words,
+                };
+                ProgramPreprocessing::Committed(CommittedProgramPreprocessing {
+                    meta: committed.meta.clone(),
+                    bytecode_commitments,
+                    program_commitments,
+                    prover_data: None,
+                })
+            }
+        };
 
         // Construct directly — don't use new_committed() because it calls
         // PCS::setup_prover + program.commit, which panics for AstCommitmentScheme.
