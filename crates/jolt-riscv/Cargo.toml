@@ -1,7 +1,6 @@
 [package]
 name = "jolt-riscv"
 version = "0.1.0"
-authors = ["Jolt Contributors"]
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "RISC-V instruction set definitions for the Jolt zkVM"
