@@ -3388,12 +3388,21 @@ version = "0.38.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "271638cd5fa9cca89c4c304675ca658efc4e64a66c716b7cfe1afb4b9611dbbc"
 dependencies = [
- "crc32fast",
  "flate2",
+ "memchr",
+ "ruzstd",
+]
+
+[[package]]
+name = "object"
+version = "0.39.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63944c133d03f44e75866bbd160b95af0ec3f6a13d936d69d31c81078cbc5baf"
+dependencies = [
+ "crc32fast",
  "hashbrown 0.16.1",
  "indexmap 2.13.0",
  "memchr",
- "ruzstd",
 ]
 
 [[package]]
@@ -5369,7 +5378,7 @@ dependencies = [
  "inventory",
  "itertools 0.14.0",
  "jolt-platform",
- "object 0.38.1",
+ "object 0.39.0",
  "paste",
  "postcard",
  "rand 0.8.5",
