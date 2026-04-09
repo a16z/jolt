@@ -121,10 +121,35 @@ pub fn build_uniskip_first_round_poly<
     let lagrange_coeffs =
         LagrangePolynomial::<F>::interpolate_coeffs::<DOMAIN_SIZE>(&lagrange_values);
 
+    #[cfg(debug_assertions)]
+    {
+        eprintln!("[jolt-core uniskip] t1_vals ({EXTENDED_SIZE} evals, domain -{}..{}):", DEGREE, DEGREE);
+        for (i, v) in t1_vals.iter().enumerate() {
+            let y = i as i64 - DEGREE as i64;
+            eprintln!("  t1_vals[{i}] (y={y}): {v:?}");
+        }
+        eprintln!("[jolt-core uniskip] t1 coefficients ({} terms):", t1_coeffs.len());
+        for (i, c) in t1_coeffs.iter().enumerate() {
+            eprintln!("  t1[{i}]: {c:?}");
+        }
+        eprintln!("[jolt-core uniskip] Lagrange kernel coefficients ({} terms):", lagrange_coeffs.len());
+        for (i, c) in lagrange_coeffs.iter().enumerate() {
+            eprintln!("  L[{i}]: {c:?}");
+        }
+    }
+
     let mut s1_coeffs: [F; NUM_COEFFS] = [F::zero(); NUM_COEFFS];
     for (i, &a) in lagrange_coeffs.iter().enumerate() {
         for (j, &b) in t1_coeffs.iter().enumerate() {
             s1_coeffs[i + j] += a * b;
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    {
+        eprintln!("[jolt-core uniskip] s1 coefficients ({NUM_COEFFS} terms):");
+        for (i, c) in s1_coeffs.iter().enumerate() {
+            eprintln!("  s1[{i}]: {c:?}");
         }
     }
 

@@ -16,7 +16,7 @@
 //! ```
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use jolt_compiler::module::{
     ChallengeSource, ClaimFactor, ClaimFormula, DomainSeparator, InputBinding, Op,
@@ -123,6 +123,34 @@ fn bind_kernel_inputs<B: ComputeBackend, F: Field>(
     }
 }
 
+/// Like [`bind_kernel_inputs`] but skips poly IDs already in `bound`.
+/// After binding, newly-bound poly IDs are added to `bound`.
+///
+/// When multiple instances in a batched sumcheck share the same underlying
+/// polynomial buffer, each buffer must only be bound (halved) once per round.
+/// Without tracking, instance 0's bind halves a shared buffer, then instance 1
+/// halves it again — causing an index-out-of-bounds crash on subsequent rounds.
+fn bind_kernel_inputs_tracked<B: ComputeBackend, F: Field>(
+    device_buffers: &mut HashMap<PolynomialId, Buf<B, F>>,
+    backend: &B,
+    kdef: &KernelDef,
+    scalar: F,
+    bound: &mut HashSet<PolynomialId>,
+) {
+    let order = kdef.spec.binding_order;
+    let mut seen = HashSet::new();
+    for b in &kdef.inputs {
+        let pid = b.poly();
+        if bound.contains(&pid) || !seen.insert(pid) {
+            continue;
+        }
+        if let Some(buf) = device_buffers.get_mut(&pid) {
+            backend.interpolate_inplace(buf.as_field_mut(), scalar, order);
+        }
+        bound.insert(pid);
+    }
+}
+
 /// Execute the full prover schedule and return a complete proof.
 ///
 /// Walks every op in the schedule, dispatching compute ops to `backend`,
@@ -177,7 +205,7 @@ where
     // Device buffer cache — compute ops work on backend buffers.
     let mut device_buffers: HashMap<PolynomialId, Buf<B, F>> = HashMap::new();
 
-    for op in &executable.ops {
+    for (op_idx, op) in executable.ops.iter().enumerate() {
         match op {
             // ── Compute ──
             Op::SumcheckRound {
@@ -217,6 +245,25 @@ where
                     .filter_map(|b| device_buffers.get(&b.poly()))
                     .collect();
 
+                #[cfg(debug_assertions)]
+                if matches!(kdef.spec.iteration, Iteration::Dense)
+                    && bind_challenge.is_none()
+                {
+                    // Dump buffer stats for the first Dense round (remaining round 0)
+                    for (j, b) in input_refs.iter().enumerate() {
+                        let data = backend.download(b.as_field());
+                        let s: F = data.iter().copied().sum();
+                        eprintln!(
+                            "[remaining r0] buf[{j}] len={} sum={s:?} first4=[{:?}, {:?}, {:?}, {:?}]",
+                            data.len(),
+                            data.get(0).unwrap_or(&F::zero()),
+                            data.get(1).unwrap_or(&F::zero()),
+                            data.get(2).unwrap_or(&F::zero()),
+                            data.get(3).unwrap_or(&F::zero()),
+                        );
+                    }
+                }
+
                 state.last_round_coeffs =
                     backend.reduce(compiled_kernel, &input_refs, &state.challenges);
             }
@@ -229,6 +276,7 @@ where
                 let bdef = &module.prover.batched_sumchecks[*batch];
                 let max_evals = bdef.max_degree + 1;
                 let mut combined = vec![F::zero(); max_evals];
+                let mut bound_this_round: HashSet<PolynomialId> = HashSet::new();
 
                 for (inst_idx, inst) in bdef.instances.iter().enumerate() {
                     let coeff = state.challenges[inst.batch_coeff];
@@ -238,6 +286,10 @@ where
                         let two_inv = F::from_u64(2).inverse().unwrap();
                         let half_claim =
                             state.batch_instance_claims[*batch][inst_idx] * two_inv;
+                        #[cfg(debug_assertions)]
+                        eprintln!(
+                            "  [zkvm round={round} inst={inst_idx} INACTIVE] half_claim={half_claim:?}, coeff={coeff:?}"
+                        );
                         for slot in &mut combined {
                             *slot += coeff * half_claim;
                         }
@@ -262,14 +314,12 @@ where
                                 let prev_phase = &inst.phases[phase_idx - 1];
                                 let prev_kdef =
                                     &module.prover.kernels[prev_phase.kernel];
-                                let prev_compiled =
-                                    &executable.kernels[prev_phase.kernel];
-                                bind_kernel_inputs(
+                                bind_kernel_inputs_tracked(
                                     &mut device_buffers,
                                     backend,
-                                    prev_compiled,
                                     prev_kdef,
                                     scalar,
+                                    &mut bound_this_round,
                                 );
                             }
                         }
@@ -315,12 +365,12 @@ where
                         );
                     } else if let Some(ch) = bind_challenge {
                         let scalar = state.challenges[*ch];
-                        bind_kernel_inputs(
+                        bind_kernel_inputs_tracked(
                             &mut device_buffers,
                             backend,
-                            compiled_kernel,
                             kdef,
                             scalar,
+                            &mut bound_this_round,
                         );
                     }
 
@@ -350,6 +400,26 @@ where
                         backend.reduce(compiled_kernel, &input_refs, &state.challenges)
                     };
 
+                    #[cfg(debug_assertions)]
+                    {
+                        eprintln!(
+                            "  [zkvm round={round} inst={inst_idx} ACTIVE] raw_evals={inst_evals:?}"
+                        );
+                        // Dump first 8 elements of each input at first active round.
+                        if instance_round == 0 && inst_idx == 1 {
+                            for (j, binding) in kdef.inputs.iter().enumerate() {
+                                if let Some(buf) = device_buffers.get(&binding.poly()) {
+                                    let data = backend.download(buf.as_field());
+                                    let n = data.len().min(8);
+                                    eprintln!(
+                                        "  [zkvm DUMP inst={inst_idx} input={j} ({:?})] len={}, first {n}: {:?}",
+                                        binding.poly(), data.len(), &data[..n]
+                                    );
+                                }
+                            }
+                        }
+                    }
+
                     // Extrapolate: if this instance has fewer evals than
                     // max_evals (lower-degree kernel), fill the remaining
                     // slots by polynomial interpolation so the combined
@@ -371,12 +441,21 @@ where
                         combined[i] += coeff * v;
                     }
                 }
+                #[cfg(debug_assertions)]
+                {
+                    eprintln!("[zkvm batch={batch} round={round}] combined evals:");
+                    for (i, v) in combined.iter().enumerate() {
+                        eprintln!("  combined[{i}] = {v:?}");
+                    }
+                }
                 state.last_round_coeffs = combined;
             }
 
             Op::Evaluate { poly } => {
                 if let Some(buf) = device_buffers.get(poly) {
                     let data = backend.download(buf.as_field());
+                    #[cfg(debug_assertions)]
+                    eprintln!("[zkvm eval] {poly:?} buf_len={}", data.len());
                     let val = match data.len() {
                         0 => continue,
                         1 => data[0],
@@ -491,6 +570,34 @@ where
                 }
             }
 
+            Op::RegroupConstraints {
+                polys,
+                group_indices,
+                old_stride,
+                new_stride,
+                num_cycles,
+            } => {
+                for pi in polys {
+                    // Auto-materialize if not yet on device.
+                    if !device_buffers.contains_key(pi) {
+                        let data = provider.materialize(*pi);
+                        let buf = DeviceBuffer::Field(backend.upload(&data));
+                        let _ = device_buffers.insert(*pi, buf);
+                    }
+                    let buf = device_buffers
+                        .remove(pi)
+                        .expect("RegroupConstraints: buffer missing");
+                    let regrouped = DeviceBuffer::Field(backend.regroup_constraints(
+                        buf.as_field(),
+                        group_indices,
+                        *old_stride,
+                        *new_stride,
+                        *num_cycles,
+                    ));
+                    let _ = device_buffers.insert(*pi, regrouped);
+                }
+            }
+
             // ── PCS ──
             Op::Commit { polys, tag, num_vars }
             | Op::CommitStreaming {
@@ -581,6 +688,7 @@ where
                     domain_size,
                     domain_start,
                     tau_challenge,
+                    zero_base,
                     ..
                 } = &kdef.spec.iteration
                 {
@@ -589,13 +697,38 @@ where
                     // We need to interpolate, convolve with the Lagrange
                     // kernel polynomial, and extract the final coefficients.
                     let k = *domain_size;
-                    let raw_evals = &state.last_round_coeffs;
+                    let mut raw_evals = state.last_round_coeffs.clone();
                     debug_assert_eq!(raw_evals.len(), 2 * k - 1);
+
+                    #[cfg(debug_assertions)]
+                    {
+                        eprintln!("[uniskip] raw_evals BEFORE zeroing (K={k}, domain_start={domain_start}, zero_base={zero_base}):");
+                        for (i, v) in raw_evals.iter().enumerate() {
+                            let y = *domain_start + i as i64;
+                            eprintln!("  raw[{i}] (y={y}): {v:?}");
+                        }
+                    }
+
+                    // Only zero base evaluations when the formula guarantees
+                    // vanishing (R1CS: Az*Bz = Cz). Product/other uniskip
+                    // rounds have non-zero base evaluations.
+                    if *zero_base {
+                        for v in raw_evals.iter_mut().take(k) {
+                            *v = F::zero();
+                        }
+                    }
 
                     // 1. Interpolate t1(Y) from 2K-1 evaluations on
                     //    {domain_start, ..., domain_start + 2K - 2}.
                     let t1_coeffs =
-                        jolt_poly::lagrange::interpolate_to_coeffs(*domain_start, raw_evals);
+                        jolt_poly::lagrange::interpolate_to_coeffs(*domain_start, &raw_evals);
+                    #[cfg(debug_assertions)]
+                    {
+                        eprintln!("[uniskip] t1 coefficients ({} terms):", t1_coeffs.len());
+                        for (i, c) in t1_coeffs.iter().enumerate() {
+                            eprintln!("  t1[{i}]: {c:?}");
+                        }
+                    }
 
                     // 2. Build Lagrange kernel L(τ_high, Y) over the base
                     //    domain {domain_start, ..., domain_start + K - 1}.
@@ -604,16 +737,38 @@ where
                         jolt_poly::lagrange::lagrange_evals(*domain_start, k, tau_high);
                     let lagrange_coeffs =
                         jolt_poly::lagrange::interpolate_to_coeffs(*domain_start, &basis_at_tau);
+                    #[cfg(debug_assertions)]
+                    {
+                        eprintln!("[uniskip] Lagrange kernel coefficients ({} terms):", lagrange_coeffs.len());
+                        for (i, c) in lagrange_coeffs.iter().enumerate() {
+                            eprintln!("  L[{i}]: {c:?}");
+                        }
+                    }
 
                     // 3. Convolve: s1(Y) = t1(Y) × L(τ_high, Y).
                     //    Degree 2(K-1) + (K-1) = 3(K-1), so 3K-2 coefficients.
                     let mut s1 = jolt_poly::lagrange::poly_mul(&t1_coeffs, &lagrange_coeffs);
                     s1.resize(*num_coeffs, F::zero());
+                    #[cfg(debug_assertions)]
+                    {
+                        eprintln!("[uniskip] s1 coefficients ({} terms, num_coeffs={num_coeffs}):", s1.len());
+                        for (i, c) in s1.iter().enumerate() {
+                            eprintln!("  s1[{i}]: {c:?}");
+                        }
+                    }
                     s1
                 } else {
                     // Standard: evaluations at {0, 1, ..., num_coeffs - 1}
                     // → interpolate to monomial coefficients.
                     let evals = &state.last_round_coeffs[..*num_coeffs];
+                    #[cfg(debug_assertions)]
+                    {
+                        eprintln!("[remaining round] kernel={kernel} raw evals:");
+                        for (i, v) in evals.iter().enumerate() {
+                            eprintln!("  eval[{i}] = {v:?}");
+                        }
+                        eprintln!("  sum(0+1) = {:?}", evals[0] + evals[1]);
+                    }
                     let points: Vec<(F, F)> = evals
                         .iter()
                         .enumerate()
@@ -622,9 +777,27 @@ where
                     UnivariatePoly::interpolate(&points).into_coefficients()
                 };
 
-                transcript.append(&LabelWithCount(tag.as_bytes(), coeffs.len() as u64));
-                for c in &coeffs {
-                    transcript.append(c);
+                let is_uniskip = matches!(
+                    &module.prover.kernels[*kernel].spec.iteration,
+                    Iteration::Domain { .. }
+                );
+
+                if is_uniskip {
+                    // Uniskip: send full polynomial (matches jolt-core's uniskip_poly)
+                    transcript.append(&LabelWithCount(tag.as_bytes(), coeffs.len() as u64));
+                    for c in &coeffs {
+                        transcript.append(c);
+                    }
+                } else {
+                    // Standard sumcheck: send compressed polynomial (skip c1)
+                    // to match jolt-core's CompressedUniPoly encoding.
+                    // compressed = [c0, c2, c3, ...] (coeffs.len() - 1 elements)
+                    let compressed_len = coeffs.len() - 1;
+                    transcript.append(&LabelWithCount(tag.as_bytes(), compressed_len as u64));
+                    transcript.append(&coeffs[0]); // c0
+                    for c in &coeffs[2..] {
+                        transcript.append(c); // c2, c3, ...
+                    }
                 }
                 let round_poly = UnivariatePoly::new(coeffs);
                 state.last_round_poly = Some(round_poly.clone());
@@ -659,6 +832,28 @@ where
                 instance,
             } => {
                 let val = evaluate_claim(formula, &state.evaluations, &state.challenges);
+                #[cfg(debug_assertions)]
+                {
+                    eprintln!("[AbsorbInputClaim batch={batch} inst={instance}] val={val:?}");
+                    for term in &formula.terms {
+                        let mut prod = F::from_i128(term.coeff);
+                        for f in &term.factors {
+                            match f {
+                                ClaimFactor::Eval(poly) => {
+                                    let e = state.evaluations.get(poly).copied().unwrap_or(F::zero());
+                                    eprintln!("    Eval({poly:?}) = {e:?}");
+                                    prod *= e;
+                                }
+                                ClaimFactor::Challenge(i) => {
+                                    eprintln!("    Challenge({i}) = {:?}", state.challenges[*i]);
+                                    prod *= state.challenges[*i];
+                                }
+                                _ => {}
+                            }
+                        }
+                        eprintln!("    term product = {prod:?}");
+                    }
+                }
                 transcript.append(&Label(tag.as_bytes()));
                 transcript.append(&val);
                 // Store input claim for inactive-round scaling.
@@ -667,14 +862,37 @@ where
                 let bdef = &module.prover.batched_sumchecks[*batch];
                 let inst = &bdef.instances[*instance];
                 let offset = bdef.max_rounds - inst.num_rounds();
-                state.batch_instance_claims[*batch][*instance] =
-                    val * F::from_u64(1u64 << offset);
+                // Multiply by 2^offset using repeated doubling (safe for large offsets).
+                let mut scaled = val;
+                let two = F::from_u64(2);
+                for _ in 0..offset {
+                    scaled = scaled * two;
+                }
+                state.batch_instance_claims[*batch][*instance] = scaled;
             }
 
             Op::Squeeze { challenge } => {
                 let val = transcript.challenge();
                 state.challenges[*challenge] = val;
                 state.last_squeezed = val;
+            }
+
+            Op::AppendDomainSeparator { tag } => {
+                // Match jolt-core's `append_bytes(label, &[])` which calls:
+                //   1. raw_append_label_with_len: pack label (24b) + BE length 0 (8b) = 32b → update_state
+                //   2. raw_append_bytes(&[]): hash empty bytes → update_state (increments n_rounds)
+                let label = tag.as_bytes();
+                let mut packed = [0u8; 32];
+                packed[..label.len()].copy_from_slice(label);
+                transcript.append_bytes(&packed);
+                transcript.append_bytes(&[]);
+            }
+
+            Op::EvaluatePreprocessed { source, at_challenges, store_as } => {
+                let data = provider.materialize(*source);
+                let point: Vec<F> = at_challenges.iter().map(|&ci| state.challenges[ci]).collect();
+                let eval = evaluate_mle(&data, &point);
+                state.evaluations.insert(*store_as, eval);
             }
 
             Op::CollectOpeningClaim { poly, at_stage } => {
@@ -904,22 +1122,42 @@ fn resolve_inputs<B, F>(
                 outer_size,
                 ..
             } => {
-                // Compute result[k] = Σ_t eq(r_cycle, t) * source[t * outer_size + k]
+                // Source layout: inner_size rows × outer_size cols = source[t * outer_size + k].
+                // The challenge point determines projection direction:
+                //   - If challenges span the inner dim (len=log(inner_size)):
+                //       project[k] = Σ_t eq(r, t) * source[t * outer + k]   → outer_size result
+                //   - If challenges span the outer dim (len=log(outer_size)):
+                //       project[t] = Σ_k eq(r, k) * source[t * outer + k]   → inner_size result
                 let point: Vec<F> = chs.iter().map(|&ci| challenges[ci]).collect();
                 let eq_table = jolt_poly::EqPolynomial::<F>::evals(&point, None);
 
                 let src_data = provider.materialize(*source);
-                let mut projected = vec![F::zero(); *outer_size];
-                for (t, &eq_val) in eq_table.iter().enumerate().take(*inner_size) {
-                    if eq_val.is_zero() {
-                        continue;
+                if eq_table.len() == *inner_size {
+                    // Project out the inner (cycle) dimension → outer_size result
+                    let mut projected = vec![F::zero(); *outer_size];
+                    for (t, &eq_val) in eq_table.iter().enumerate() {
+                        if eq_val.is_zero() {
+                            continue;
+                        }
+                        let base = t * outer_size;
+                        for k in 0..*outer_size {
+                            projected[k] += eq_val * src_data[base + k];
+                        }
                     }
-                    let base = t * outer_size;
-                    for k in 0..*outer_size {
-                        projected[k] += eq_val * src_data[base + k];
+                    DeviceBuffer::Field(backend.upload(&projected))
+                } else {
+                    // Project out the outer (address) dimension → inner_size result
+                    let mut projected = vec![F::zero(); *inner_size];
+                    for t in 0..*inner_size {
+                        let base = t * outer_size;
+                        for (k, &eq_val) in eq_table.iter().enumerate() {
+                            if !eq_val.is_zero() {
+                                projected[t] += eq_val * src_data[base + k];
+                            }
+                        }
                     }
+                    DeviceBuffer::Field(backend.upload(&projected))
                 }
-                DeviceBuffer::Field(backend.upload(&projected))
             }
         };
         let _ = device_buffers.insert(pi, buf);
@@ -1055,4 +1293,20 @@ fn evaluate_claim<F: Field>(
         sum += product;
     }
     sum
+}
+
+/// Evaluate a multilinear extension at a point.
+///
+/// Standard MLE evaluation: for each variable, fold adjacent pairs
+/// `f[2i], f[2i+1]` via `(1-r)*f[2i] + r*f[2i+1]`, halving the table.
+fn evaluate_mle<F: Field>(evals: &[F], point: &[F]) -> F {
+    let mut buf = evals.to_vec();
+    for r in point.iter().rev() {
+        let half = buf.len() / 2;
+        for i in 0..half {
+            buf[i] = buf[2 * i] + *r * (buf[2 * i + 1] - buf[2 * i]);
+        }
+        buf.truncate(half);
+    }
+    buf[0]
 }

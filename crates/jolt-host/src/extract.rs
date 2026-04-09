@@ -14,11 +14,24 @@ use jolt_witness::CycleInput;
 use crate::bytecode::BytecodePreprocessing;
 use crate::CycleRow;
 
+/// Per-cycle instruction flag polynomials extracted from the trace.
+///
+/// These flags are per-instruction-type booleans that aren't R1CS variables
+/// but are needed by sumcheck instances (Shift, InstructionInput).
+pub struct InstructionFlagData<F> {
+    pub is_noop: Vec<F>,
+    pub left_is_rs1: Vec<F>,
+    pub left_is_pc: Vec<F>,
+    pub right_is_rs2: Vec<F>,
+    pub right_is_imm: Vec<F>,
+}
+
 /// Single-pass extraction of both witness polynomial inputs and R1CS witness data.
 ///
 /// Iterates the trace once, producing:
 /// - `Vec<CycleInput>` of length `size` (padded with `CycleInput::PADDING`)
 /// - `Vec<F>` of length `size * num_vars_padded` (flat R1CS witness)
+/// - `InstructionFlagData<F>` — per-cycle instruction flags for sumcheck instances
 ///
 /// This replaces the previous two-pass approach where `cycle_to_input` and
 /// `build_r1cs_witness` independently iterated the trace.
@@ -28,9 +41,15 @@ pub fn extract_trace<C: CycleRow, F: Field>(
     bytecode: &BytecodePreprocessing,
     memory_layout: &MemoryLayout,
     num_vars_padded: usize,
-) -> (Vec<CycleInput>, Vec<F>) {
+) -> (Vec<CycleInput>, Vec<F>, InstructionFlagData<F>) {
     let mut inputs = Vec::with_capacity(size);
     let mut r1cs = vec![F::from_u64(0); size * num_vars_padded];
+
+    let mut iflag_is_noop = vec![F::from_u64(0); size];
+    let mut iflag_left_is_rs1 = vec![F::from_u64(0); size];
+    let mut iflag_left_is_pc = vec![F::from_u64(0); size];
+    let mut iflag_right_is_rs2 = vec![F::from_u64(0); size];
+    let mut iflag_right_is_imm = vec![F::from_u64(0); size];
 
     for t in 0..size {
         let r1cs_offset = t * num_vars_padded;
@@ -38,9 +57,11 @@ pub fn extract_trace<C: CycleRow, F: Field>(
         if t >= trace.len() {
             // Padding cycle
             inputs.push(CycleInput::PADDING);
+            iflag_is_noop[t] = F::from_u64(1);
             // R1CS: V_CONST=1, DoNotUpdateUnexpandedPC=1, rest zero
             r1cs[r1cs_offset + V_CONST] = F::from_u64(1);
             r1cs[r1cs_offset + V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC] = F::from_u64(1);
+            r1cs[r1cs_offset + V_NEXT_IS_NOOP] = F::from_u64(1);
             fill_next_r1cs::<C, F>(&mut r1cs, r1cs_offset, None, bytecode);
             continue;
         }
@@ -50,8 +71,11 @@ pub fn extract_trace<C: CycleRow, F: Field>(
 
         if cycle.is_noop() {
             inputs.push(CycleInput::PADDING);
+            iflag_is_noop[t] = F::from_u64(1);
             r1cs[r1cs_offset + V_CONST] = F::from_u64(1);
             r1cs[r1cs_offset + V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC] = F::from_u64(1);
+            r1cs[r1cs_offset + V_NEXT_IS_NOOP] =
+                F::from_u64(next.is_none_or(|c| c.is_noop()) as u64);
             fill_next_r1cs::<C, F>(&mut r1cs, r1cs_offset, next, bytecode);
             continue;
         }
@@ -71,6 +95,17 @@ pub fn extract_trace<C: CycleRow, F: Field>(
         let pc_index = bytecode.get_pc(cycle);
         let cflags = cycle.circuit_flags();
         let iflags = cycle.instruction_flags();
+
+        // Instruction flags
+        iflag_is_noop[t] = F::from_u64(iflags[InstructionFlags::IsNoop as usize] as u64);
+        iflag_left_is_rs1[t] =
+            F::from_u64(iflags[InstructionFlags::LeftOperandIsRs1Value as usize] as u64);
+        iflag_left_is_pc[t] =
+            F::from_u64(iflags[InstructionFlags::LeftOperandIsPC as usize] as u64);
+        iflag_right_is_rs2[t] =
+            F::from_u64(iflags[InstructionFlags::RightOperandIsRs2Value as usize] as u64);
+        iflag_right_is_imm[t] =
+            F::from_u64(iflags[InstructionFlags::RightOperandIsImm as usize] as u64);
 
         // ── CycleInput (witness polynomial data) ───────────────────────
 
@@ -129,6 +164,8 @@ pub fn extract_trace<C: CycleRow, F: Field>(
         let sub = cflags[CircuitFlags::SubtractOperands as usize];
         let mul = cflags[CircuitFlags::MultiplyOperands as usize];
 
+        let advice = cflags[CircuitFlags::Advice as usize];
+
         if add {
             let sum = left_input as i128 + right_input;
             w[V_LEFT_LOOKUP_OPERAND] = F::from_u64(0);
@@ -140,6 +177,10 @@ pub fn extract_trace<C: CycleRow, F: Field>(
         } else if mul {
             w[V_LEFT_LOOKUP_OPERAND] = F::from_u64(0);
             w[V_RIGHT_LOOKUP_OPERAND] = w[V_PRODUCT];
+        } else if advice {
+            // Advice: right_lookup = advice value = lookup_output
+            w[V_LEFT_LOOKUP_OPERAND] = F::from_u64(0);
+            w[V_RIGHT_LOOKUP_OPERAND] = F::from_u64(lookup_output);
         } else {
             w[V_LEFT_LOOKUP_OPERAND] = F::from_u64(left_input);
             w[V_RIGHT_LOOKUP_OPERAND] = F::from_i128(right_input);
@@ -195,13 +236,21 @@ pub fn extract_trace<C: CycleRow, F: Field>(
         // Next-cycle fields
         fill_next_r1cs::<C, F>(&mut r1cs, r1cs_offset, next, bytecode);
 
-        let next_is_noop = next.is_some_and(|c| c.is_noop());
+        let next_is_noop = next.is_none_or(|c| c.is_noop());
         r1cs[r1cs_offset + V_NEXT_IS_NOOP] = F::from_u64(next_is_noop as u64);
         r1cs[r1cs_offset + V_SHOULD_JUMP] =
             r1cs[r1cs_offset + V_FLAG_JUMP] * (F::from_u64(1) - r1cs[r1cs_offset + V_NEXT_IS_NOOP]);
     }
 
-    (inputs, r1cs)
+    let instruction_flags = InstructionFlagData {
+        is_noop: iflag_is_noop,
+        left_is_rs1: iflag_left_is_rs1,
+        left_is_pc: iflag_left_is_pc,
+        right_is_rs2: iflag_right_is_rs2,
+        right_is_imm: iflag_right_is_imm,
+    };
+
+    (inputs, r1cs, instruction_flags)
 }
 
 /// Fill next-cycle PC and flag fields in the R1CS witness.

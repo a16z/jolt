@@ -860,6 +860,7 @@ fn op_poly_refs(op: &Op, kernels: &[KernelDef]) -> Vec<PolynomialId> {
         Op::Bind { polys, .. }
         | Op::LagrangeProject { polys, .. }
         | Op::DuplicateInterleave { polys }
+        | Op::RegroupConstraints { polys, .. }
         | Op::Commit { polys, .. }
         | Op::CommitStreaming { polys, .. }
         | Op::RecordEvals { polys, .. }
@@ -868,6 +869,8 @@ fn op_poly_refs(op: &Op, kernels: &[KernelDef]) -> Vec<PolynomialId> {
         | Op::BeginStage { .. }
         | Op::AbsorbInputClaim { .. }
         | Op::Squeeze { .. }
+        | Op::AppendDomainSeparator { .. }
+        | Op::EvaluatePreprocessed { .. }
         | Op::ReleaseDevice { .. }
         | Op::ReleaseHost { .. }
         | Op::ReduceOpenings

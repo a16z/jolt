@@ -25,6 +25,11 @@ pub const NUM_R1CS_CONSTRAINTS: usize = 19;
 /// Number of R1CS input polynomials.
 pub const NUM_R1CS_INPUTS: usize = 35;
 
+/// Uniskip domain: constraints split into 2 groups, domain = (C-1)/2 + 1.
+pub const UNISKIP_DOMAIN_SIZE: usize = (NUM_R1CS_CONSTRAINTS - 1) / 2 + 1; // 10
+/// Group 1 has UNISKIP_DOMAIN_SIZE constraints, group 2 has the rest.
+pub const NUM_GROUP2_CONSTRAINTS: usize = NUM_R1CS_CONSTRAINTS - UNISKIP_DOMAIN_SIZE; // 9
+
 /// Number of circuit flags.
 pub const NUM_CIRCUIT_FLAGS: usize = 14;
 /// Number of instruction flags.
@@ -104,14 +109,16 @@ impl ModuleParams {
 
         let num_committed = 2 + instruction_d + ram_d + bytecode_d;
 
-        // Outer Spartan — single-domain uniskip (no streaming/group-split).
+        // Outer Spartan — group-split uniskip.
         //
-        // All 19 constraints in one Lagrange domain. Uniskip polynomial degree:
-        //   L(τ_high, Y) · Az(Y) · Bz(Y) → deg (K-1) + (K-1) + (K-1) = 3(K-1)
-        let outer_uniskip_degree = NUM_R1CS_CONSTRAINTS - 1; // 18
-        let outer_uniskip_domain = NUM_R1CS_CONSTRAINTS; // 19
-        let outer_uniskip_num_coeffs = 3 * outer_uniskip_degree + 1; // 55
-        let outer_uniskip_poly_degree = outer_uniskip_num_coeffs - 1; // 54
+        // 19 constraints split into 2 groups (10 + 9). The uniskip domain
+        // covers the larger group. One eq variable selects the group.
+        //   L(τ_high, Y) · t1(Y) where t1 has degree 2(K-1), L has degree K-1.
+        //   s1(Y) = L × t1 has degree 3(K-1), so 3(K-1)+1 coefficients.
+        let outer_uniskip_degree = UNISKIP_DOMAIN_SIZE - 1; // 9
+        let outer_uniskip_domain = UNISKIP_DOMAIN_SIZE; // 10
+        let outer_uniskip_num_coeffs = 3 * outer_uniskip_degree + 1; // 28
+        let outer_uniskip_poly_degree = outer_uniskip_num_coeffs - 1; // 27
         let outer_remaining_degree = 3;
         // 1 streaming round + log_t linear rounds. The streaming round binds
         // the extra streaming variable (Az/Bz are DuplicateInterleaved to 2T).

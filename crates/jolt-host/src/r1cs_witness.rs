@@ -71,14 +71,15 @@ pub fn r1cs_cycle_witness<C: CycleRow, F: Field>(
     // Product (field multiplication — matches modular semantics)
     w[V_PRODUCT] = w[V_LEFT_INSTRUCTION_INPUT] * w[V_RIGHT_INSTRUCTION_INPUT];
 
+    // Lookup output (computed before operands — needed for Advice)
+    let lookup_output = cycle.lookup_output();
+    w[V_LOOKUP_OUTPUT] = F::from_u64(lookup_output);
+
     // Lookup operands
     let (left_lookup, right_lookup) =
-        compute_lookup_operands(left_input, right_input, w[V_PRODUCT], &cflags);
+        compute_lookup_operands(left_input, right_input, w[V_PRODUCT], &cflags, lookup_output);
     w[V_LEFT_LOOKUP_OPERAND] = left_lookup;
     w[V_RIGHT_LOOKUP_OPERAND] = right_lookup;
-
-    // Lookup output
-    w[V_LOOKUP_OUTPUT] = F::from_u64(cycle.lookup_output());
 
     // Registers
     let (rs1_val, rs2_val, rd_val) = (
@@ -139,7 +140,7 @@ pub fn r1cs_cycle_witness<C: CycleRow, F: Field>(
     fill_next_cycle_fields(&mut w, next, bytecode);
 
     // ShouldJump = Jump * (1 - NextIsNoop)
-    let next_is_noop = next.is_some_and(|c| c.is_noop());
+    let next_is_noop = next.is_none_or(|c| c.is_noop());
     w[V_NEXT_IS_NOOP] = F::from_u64(next_is_noop as u64);
     w[V_SHOULD_JUMP] = w[V_FLAG_JUMP] * (F::from_u64(1) - w[V_NEXT_IS_NOOP]);
 
@@ -178,10 +179,12 @@ fn compute_lookup_operands<F: Field>(
     right_input: i128,
     product: F,
     cflags: &[bool],
+    lookup_output: u64,
 ) -> (F, F) {
     let add = cflags[CircuitFlags::AddOperands as usize];
     let sub = cflags[CircuitFlags::SubtractOperands as usize];
     let mul = cflags[CircuitFlags::MultiplyOperands as usize];
+    let advice = cflags[CircuitFlags::Advice as usize];
 
     if add {
         let sum = left_input as i128 + right_input;
@@ -191,6 +194,9 @@ fn compute_lookup_operands<F: Field>(
         (F::from_u64(0), F::from_i128(diff))
     } else if mul {
         (F::from_u64(0), product)
+    } else if advice {
+        // Advice: right_lookup = advice value = lookup_output
+        (F::from_u64(0), F::from_u64(lookup_output))
     } else {
         (F::from_u64(left_input), F::from_i128(right_input))
     }

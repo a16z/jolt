@@ -209,6 +209,7 @@ impl<F: jolt_field::Field> Transcript for PoseidonTranscript<F> {
     fn challenge(&mut self) -> F {
         let mut buf = [0u8; 16];
         self.challenge_bytes(&mut buf);
+        buf.reverse();
         F::from_u128(u128::from_le_bytes(buf))
     }
 

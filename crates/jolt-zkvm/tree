@@ -1,0 +1,406 @@
+jolt-zkvm v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-zkvm)
+├── common v0.2.0 (/Users/mgeorghiades/a16z/jolt/common)
+│   ├── allocative v0.3.4 (https://github.com/facebookexperimental/allocative?rev=85b773d85d526d068ce94724ff7a7b81203fc95e#85b773d8)
+│   │   ├── allocative_derive v0.3.3 (proc-macro) (https://github.com/facebookexperimental/allocative?rev=85b773d85d526d068ce94724ff7a7b81203fc95e#85b773d8)
+│   │   │   ├── proc-macro2 v1.0.106
+│   │   │   │   └── unicode-ident v1.0.24
+│   │   │   ├── quote v1.0.45
+│   │   │   │   └── proc-macro2 v1.0.106 (*)
+│   │   │   └── syn v2.0.117
+│   │   │       ├── proc-macro2 v1.0.106 (*)
+│   │   │       ├── quote v1.0.45 (*)
+│   │   │       └── unicode-ident v1.0.24
+│   │   └── ctor v0.1.26 (proc-macro)
+│   │       ├── quote v1.0.45 (*)
+│   │       └── syn v1.0.109
+│   │           ├── proc-macro2 v1.0.106 (*)
+│   │           ├── quote v1.0.45 (*)
+│   │           └── unicode-ident v1.0.24
+│   ├── ark-serialize v0.5.0 (https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a45)
+│   │   ├── ark-serialize-derive v0.5.0 (proc-macro) (https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a45)
+│   │   │   ├── proc-macro2 v1.0.106 (*)
+│   │   │   ├── quote v1.0.45 (*)
+│   │   │   └── syn v2.0.117 (*)
+│   │   ├── ark-std v0.5.0
+│   │   │   ├── num-traits v0.2.19
+│   │   │   │   [build-dependencies]
+│   │   │   │   └── autocfg v1.5.0
+│   │   │   ├── rand v0.8.5
+│   │   │   │   ├── rand_chacha v0.3.1
+│   │   │   │   │   ├── ppv-lite86 v0.2.21
+│   │   │   │   │   │   └── zerocopy v0.8.42
+│   │   │   │   │   └── rand_core v0.6.4
+│   │   │   │   │       └── getrandom v0.2.17
+│   │   │   │   │           ├── cfg-if v1.0.4
+│   │   │   │   │           └── libc v0.2.183
+│   │   │   │   └── rand_core v0.6.4 (*)
+│   │   │   └── rayon v1.11.0
+│   │   │       ├── either v1.15.0
+│   │   │       └── rayon-core v1.13.0
+│   │   │           ├── crossbeam-deque v0.8.6
+│   │   │           │   ├── crossbeam-epoch v0.9.18
+│   │   │           │   │   └── crossbeam-utils v0.8.21
+│   │   │           │   └── crossbeam-utils v0.8.21
+│   │   │           └── crossbeam-utils v0.8.21
+│   │   ├── arrayvec v0.7.6
+│   │   ├── digest v0.10.7
+│   │   │   ├── block-buffer v0.10.4
+│   │   │   │   └── generic-array v0.14.7
+│   │   │   │       └── typenum v1.19.0
+│   │   │   │       [build-dependencies]
+│   │   │   │       └── version_check v0.9.5
+│   │   │   ├── crypto-common v0.1.7
+│   │   │   │   ├── generic-array v0.14.7 (*)
+│   │   │   │   └── typenum v1.19.0
+│   │   │   └── subtle v2.6.1
+│   │   ├── num-bigint v0.4.6
+│   │   │   ├── num-integer v0.1.46
+│   │   │   │   └── num-traits v0.2.19 (*)
+│   │   │   └── num-traits v0.2.19 (*)
+│   │   └── rayon v1.11.0 (*)
+│   ├── serde v1.0.228
+│   │   ├── serde_core v1.0.228
+│   │   └── serde_derive v1.0.228 (proc-macro)
+│   │       ├── proc-macro2 v1.0.106 (*)
+│   │       ├── quote v1.0.45 (*)
+│   │       └── syn v2.0.117 (*)
+│   └── syn v2.0.117
+│       ├── proc-macro2 v1.0.106
+│       │   └── unicode-ident v1.0.24
+│       ├── quote v1.0.45
+│       │   └── proc-macro2 v1.0.106 (*)
+│       └── unicode-ident v1.0.24
+├── jolt-compiler v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-compiler)
+│   ├── bincode v2.0.1
+│   │   ├── bincode_derive v2.0.1 (proc-macro)
+│   │   │   └── virtue v0.0.18
+│   │   ├── serde v1.0.228 (*)
+│   │   └── unty v0.0.4
+│   └── serde v1.0.228 (*)
+├── jolt-compute v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-compute)
+│   ├── jolt-compiler v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-compiler) (*)
+│   └── jolt-field v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-field)
+│       ├── ark-bn254 v0.5.0 (https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a45)
+│       │   ├── ark-ec v0.5.0 (https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a45)
+│       │   │   ├── ahash v0.8.12
+│       │   │   │   ├── cfg-if v1.0.4
+│       │   │   │   ├── once_cell v1.21.4
+│       │   │   │   └── zerocopy v0.8.42
+│       │   │   │   [build-dependencies]
+│       │   │   │   └── version_check v0.9.5
+│       │   │   ├── ark-ff v0.5.0 (https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a45)
+│       │   │   │   ├── allocative v0.3.4 (https://github.com/facebookexperimental/allocative?rev=85b773d85d526d068ce94724ff7a7b81203fc95e#85b773d8) (*)
+│       │   │   │   ├── ark-ff-asm v0.5.0 (proc-macro) (https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a45)
+│       │   │   │   │   ├── quote v1.0.45 (*)
+│       │   │   │   │   └── syn v2.0.117 (*)
+│       │   │   │   ├── ark-ff-macros v0.5.0 (proc-macro) (https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a45)
+│       │   │   │   │   ├── num-bigint v0.4.6
+│       │   │   │   │   │   ├── num-integer v0.1.46
+│       │   │   │   │   │   │   └── num-traits v0.2.19
+│       │   │   │   │   │   │       [build-dependencies]
+│       │   │   │   │   │   │       └── autocfg v1.5.0
+│       │   │   │   │   │   └── num-traits v0.2.19 (*)
+│       │   │   │   │   ├── num-traits v0.2.19 (*)
+│       │   │   │   │   ├── proc-macro2 v1.0.106 (*)
+│       │   │   │   │   ├── quote v1.0.45 (*)
+│       │   │   │   │   └── syn v2.0.117 (*)
+│       │   │   │   ├── ark-serialize v0.5.0 (https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a45) (*)
+│       │   │   │   ├── ark-std v0.5.0 (*)
+│       │   │   │   ├── arrayvec v0.7.6
+│       │   │   │   ├── digest v0.10.7 (*)
+│       │   │   │   ├── educe v0.6.0 (proc-macro)
+│       │   │   │   │   ├── enum-ordinalize v4.3.2
+│       │   │   │   │   │   └── enum-ordinalize-derive v4.3.2 (proc-macro)
+│       │   │   │   │   │       ├── proc-macro2 v1.0.106 (*)
+│       │   │   │   │   │       ├── quote v1.0.45 (*)
+│       │   │   │   │   │       └── syn v2.0.117 (*)
+│       │   │   │   │   ├── proc-macro2 v1.0.106 (*)
+│       │   │   │   │   ├── quote v1.0.45 (*)
+│       │   │   │   │   └── syn v2.0.117 (*)
+│       │   │   │   ├── itertools v0.13.0
+│       │   │   │   │   └── either v1.15.0
+│       │   │   │   ├── num-bigint v0.4.6 (*)
+│       │   │   │   ├── num-traits v0.2.19 (*)
+│       │   │   │   ├── paste v1.0.15 (proc-macro)
+│       │   │   │   ├── rayon v1.11.0 (*)
+│       │   │   │   └── zeroize v1.8.2
+│       │   │   │       └── zeroize_derive v1.4.3 (proc-macro)
+│       │   │   │           ├── proc-macro2 v1.0.106 (*)
+│       │   │   │           ├── quote v1.0.45 (*)
+│       │   │   │           └── syn v2.0.117 (*)
+│       │   │   ├── ark-poly v0.5.0 (https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a45)
+│       │   │   │   ├── ahash v0.8.12 (*)
+│       │   │   │   ├── ark-ff v0.5.0 (https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a45) (*)
+│       │   │   │   ├── ark-serialize v0.5.0 (https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a45) (*)
+│       │   │   │   ├── ark-std v0.5.0 (*)
+│       │   │   │   ├── educe v0.6.0 (proc-macro) (*)
+│       │   │   │   └── hashbrown v0.15.5
+│       │   │   │       └── allocator-api2 v0.2.21
+│       │   │   ├── ark-serialize v0.5.0 (https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a45) (*)
+│       │   │   ├── ark-std v0.5.0 (*)
+│       │   │   ├── educe v0.6.0 (proc-macro) (*)
+│       │   │   ├── hashbrown v0.15.5 (*)
+│       │   │   ├── itertools v0.13.0 (*)
+│       │   │   ├── num-bigint v0.4.6 (*)
+│       │   │   ├── num-integer v0.1.46 (*)
+│       │   │   ├── num-traits v0.2.19 (*)
+│       │   │   ├── rayon v1.11.0 (*)
+│       │   │   └── zeroize v1.8.2 (*)
+│       │   ├── ark-ff v0.5.0 (https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a45) (*)
+│       │   ├── ark-serialize v0.5.0 (https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a45) (*)
+│       │   └── ark-std v0.5.0 (*)
+│       ├── ark-ff v0.5.0 (https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a45) (*)
+│       ├── ark-serialize v0.5.0 (https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a45) (*)
+│       ├── num-traits v0.2.19 (*)
+│       ├── rand v0.8.5 (*)
+│       ├── rand_core v0.6.4 (*)
+│       └── serde v1.0.228 (*)
+├── jolt-crypto v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-crypto)
+│   ├── ark-bn254 v0.5.0 (https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a45) (*)
+│   ├── ark-ec v0.5.0 (https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a45) (*)
+│   ├── ark-ff v0.5.0 (https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a45) (*)
+│   ├── ark-serialize v0.5.0 (https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a45) (*)
+│   ├── ark-std v0.5.0 (*)
+│   ├── jolt-field v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-field) (*)
+│   ├── jolt-transcript v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-transcript)
+│   │   ├── ark-bn254 v0.5.0 (https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a45) (*)
+│   │   ├── ark-ff v0.5.0 (https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a45) (*)
+│   │   ├── ark-serialize v0.5.0 (https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a45) (*)
+│   │   ├── blake2 v0.10.6
+│   │   │   └── digest v0.10.7 (*)
+│   │   ├── digest v0.10.7 (*)
+│   │   ├── jolt-field v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-field) (*)
+│   │   ├── light-poseidon v0.4.0
+│   │   │   ├── ark-bn254 v0.5.0 (https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a45) (*)
+│   │   │   ├── ark-ff v0.5.0 (https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a45) (*)
+│   │   │   ├── num-bigint v0.4.6 (*)
+│   │   │   └── thiserror v1.0.69
+│   │   │       └── thiserror-impl v1.0.69 (proc-macro)
+│   │   │           ├── proc-macro2 v1.0.106 (*)
+│   │   │           ├── quote v1.0.45 (*)
+│   │   │           └── syn v2.0.117 (*)
+│   │   └── sha3 v0.10.8
+│   │       ├── digest v0.10.7 (*)
+│   │       └── keccak v0.1.6
+│   │           └── cpufeatures v0.2.17
+│   │               └── libc v0.2.183
+│   ├── num-bigint v0.4.6 (*)
+│   ├── num-integer v0.1.46 (*)
+│   ├── num-traits v0.2.19 (*)
+│   ├── rand_core v0.6.4 (*)
+│   ├── rayon v1.11.0 (*)
+│   ├── serde v1.0.228 (*)
+│   └── tracing v0.1.44
+│       ├── pin-project-lite v0.2.17
+│       ├── tracing-attributes v0.1.31 (proc-macro)
+│       │   ├── proc-macro2 v1.0.106 (*)
+│       │   ├── quote v1.0.45 (*)
+│       │   └── syn v2.0.117 (*)
+│       └── tracing-core v0.1.36
+│           └── once_cell v1.21.4
+├── jolt-field v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-field) (*)
+├── jolt-host v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-host)
+│   ├── bincode v2.0.1 (*)
+│   ├── common v0.2.0 (/Users/mgeorghiades/a16z/jolt/common) (*)
+│   ├── jolt-compiler v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-compiler) (*)
+│   ├── jolt-field v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-field) (*)
+│   ├── jolt-instructions v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-instructions)
+│   │   ├── jolt-field v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-field) (*)
+│   │   └── serde v1.0.228 (*)
+│   ├── jolt-r1cs v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-r1cs)
+│   │   ├── jolt-compiler v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-compiler) (*)
+│   │   ├── jolt-field v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-field) (*)
+│   │   ├── jolt-poly v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-poly)
+│   │   │   ├── jolt-field v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-field) (*)
+│   │   │   ├── num-traits v0.2.19 (*)
+│   │   │   ├── rand_core v0.6.4 (*)
+│   │   │   ├── rayon v1.11.0 (*)
+│   │   │   ├── serde v1.0.228 (*)
+│   │   │   └── tracing v0.1.44 (*)
+│   │   └── serde v1.0.228 (*)
+│   ├── jolt-witness v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-witness)
+│   │   ├── jolt-compiler v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-compiler) (*)
+│   │   ├── jolt-compute v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-compute) (*)
+│   │   ├── jolt-field v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-field) (*)
+│   │   ├── jolt-poly v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-poly) (*)
+│   │   └── serde v1.0.228 (*)
+│   ├── serde v1.0.228 (*)
+│   ├── tracer v0.2.0 (/Users/mgeorghiades/a16z/jolt/tracer)
+│   │   ├── addr2line v0.26.0
+│   │   │   ├── cpp_demangle v0.5.1
+│   │   │   │   └── cfg-if v1.0.4
+│   │   │   ├── fallible-iterator v0.3.0
+│   │   │   ├── gimli v0.33.0
+│   │   │   ├── memmap2 v0.9.10
+│   │   │   │   └── libc v0.2.183
+│   │   │   ├── object v0.38.1
+│   │   │   │   ├── crc32fast v1.5.0
+│   │   │   │   │   └── cfg-if v1.0.4
+│   │   │   │   ├── flate2 v1.1.9
+│   │   │   │   │   ├── crc32fast v1.5.0 (*)
+│   │   │   │   │   └── miniz_oxide v0.8.9
+│   │   │   │   │       ├── adler2 v2.0.1
+│   │   │   │   │       └── simd-adler32 v0.3.8
+│   │   │   │   ├── hashbrown v0.16.1
+│   │   │   │   │   └── foldhash v0.2.0
+│   │   │   │   ├── indexmap v2.13.0
+│   │   │   │   │   ├── equivalent v1.0.2
+│   │   │   │   │   └── hashbrown v0.16.1 (*)
+│   │   │   │   ├── memchr v2.8.0
+│   │   │   │   └── ruzstd v0.8.2
+│   │   │   │       └── twox-hash v2.1.2
+│   │   │   ├── rustc-demangle v0.1.27
+│   │   │   ├── smallvec v1.15.1
+│   │   │   └── typed-arena v2.0.2
+│   │   ├── ark-serialize v0.5.0 (https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a45) (*)
+│   │   ├── clap v4.5.61
+│   │   │   ├── clap_builder v4.5.61
+│   │   │   │   ├── anstream v1.0.0
+│   │   │   │   │   ├── anstyle v1.0.13
+│   │   │   │   │   ├── anstyle-parse v1.0.0
+│   │   │   │   │   │   └── utf8parse v0.2.2
+│   │   │   │   │   ├── anstyle-query v1.1.5
+│   │   │   │   │   ├── colorchoice v1.0.4
+│   │   │   │   │   ├── is_terminal_polyfill v1.70.2
+│   │   │   │   │   └── utf8parse v0.2.2
+│   │   │   │   ├── anstyle v1.0.13
+│   │   │   │   ├── clap_lex v1.0.1
+│   │   │   │   └── strsim v0.11.1
+│   │   │   └── clap_derive v4.5.61 (proc-macro)
+│   │   │       ├── heck v0.5.0
+│   │   │       ├── proc-macro2 v1.0.106 (*)
+│   │   │       ├── quote v1.0.45 (*)
+│   │   │       └── syn v2.0.117 (*)
+│   │   ├── common v0.2.0 (/Users/mgeorghiades/a16z/jolt/common) (*)
+│   │   ├── derive_more v2.1.1
+│   │   │   └── derive_more-impl v2.1.1 (proc-macro)
+│   │   │       ├── proc-macro2 v1.0.106 (*)
+│   │   │       ├── quote v1.0.45 (*)
+│   │   │       └── syn v2.0.117 (*)
+│   │   │       [build-dependencies]
+│   │   │       └── rustc_version v0.4.1
+│   │   │           └── semver v1.0.27
+│   │   ├── fnv v1.0.7
+│   │   ├── itertools v0.14.0
+│   │   │   └── either v1.15.0
+│   │   ├── jolt-platform v0.1.0 (/Users/mgeorghiades/a16z/jolt/jolt-platform)
+│   │   │   ├── getrandom v0.2.17 (*)
+│   │   │   ├── getrandom v0.3.4
+│   │   │   │   ├── cfg-if v1.0.4
+│   │   │   │   └── libc v0.2.183
+│   │   │   └── rand v0.8.5 (*)
+│   │   ├── object v0.38.1 (*)
+│   │   ├── paste v1.0.15 (proc-macro)
+│   │   ├── postcard v1.1.3
+│   │   │   ├── cobs v0.3.0
+│   │   │   │   └── thiserror v2.0.18
+│   │   │   │       └── thiserror-impl v2.0.18 (proc-macro)
+│   │   │   │           ├── proc-macro2 v1.0.106 (*)
+│   │   │   │           ├── quote v1.0.45 (*)
+│   │   │   │           └── syn v2.0.117 (*)
+│   │   │   ├── embedded-io v0.6.1
+│   │   │   └── serde v1.0.228 (*)
+│   │   ├── serde v1.0.228 (*)
+│   │   ├── serde_json v1.0.149
+│   │   │   ├── itoa v1.0.17
+│   │   │   ├── memchr v2.8.0
+│   │   │   ├── serde_core v1.0.228
+│   │   │   └── zmij v1.0.21
+│   │   ├── strum v0.28.0
+│   │   ├── strum_macros v0.28.0 (proc-macro)
+│   │   │   ├── heck v0.5.0
+│   │   │   ├── proc-macro2 v1.0.106 (*)
+│   │   │   ├── quote v1.0.45 (*)
+│   │   │   └── syn v2.0.117 (*)
+│   │   ├── tracing v0.1.44 (*)
+│   │   └── tracing-subscriber v0.3.22
+│   │       ├── matchers v0.2.0
+│   │       │   └── regex-automata v0.4.14
+│   │       │       └── regex-syntax v0.8.10
+│   │       ├── nu-ansi-term v0.50.3
+│   │       ├── once_cell v1.21.4
+│   │       ├── regex-automata v0.4.14 (*)
+│   │       ├── sharded-slab v0.1.7
+│   │       │   └── lazy_static v1.5.0
+│   │       ├── smallvec v1.15.1
+│   │       ├── thread_local v1.1.9
+│   │       │   └── cfg-if v1.0.4
+│   │       ├── tracing v0.1.44 (*)
+│   │       ├── tracing-core v0.1.36 (*)
+│   │       └── tracing-log v0.2.0
+│   │           ├── log v0.4.29
+│   │           ├── once_cell v1.21.4
+│   │           └── tracing-core v0.1.36 (*)
+│   └── tracing v0.1.44 (*)
+├── jolt-openings v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-openings)
+│   ├── jolt-crypto v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-crypto) (*)
+│   ├── jolt-field v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-field) (*)
+│   ├── jolt-poly v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-poly) (*)
+│   ├── jolt-transcript v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-transcript) (*)
+│   ├── serde v1.0.228 (*)
+│   ├── thiserror v2.0.18 (*)
+│   └── tracing v0.1.44 (*)
+├── jolt-poly v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-poly) (*)
+├── jolt-r1cs v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-r1cs) (*)
+├── jolt-sumcheck v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-sumcheck)
+│   ├── jolt-field v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-field) (*)
+│   ├── jolt-poly v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-poly) (*)
+│   ├── jolt-transcript v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-transcript) (*)
+│   ├── serde v1.0.228 (*)
+│   ├── thiserror v2.0.18 (*)
+│   └── tracing v0.1.44 (*)
+├── jolt-transcript v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-transcript) (*)
+├── jolt-verifier v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-verifier)
+│   ├── jolt-compiler v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-compiler) (*)
+│   ├── jolt-crypto v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-crypto) (*)
+│   ├── jolt-dory v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-dory)
+│   │   ├── ark-serialize v0.5.0 (https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a45) (*)
+│   │   ├── dory-pcs v0.3.0
+│   │   │   ├── ark-bn254 v0.5.0 (https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a45) (*)
+│   │   │   ├── ark-ec v0.5.0 (https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a45) (*)
+│   │   │   ├── ark-ff v0.5.0 (https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a45) (*)
+│   │   │   ├── ark-serialize v0.5.0 (https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a45) (*)
+│   │   │   ├── ark-std v0.5.0 (*)
+│   │   │   ├── bincode v1.3.3
+│   │   │   │   └── serde v1.0.228 (*)
+│   │   │   ├── blake2 v0.10.6 (*)
+│   │   │   ├── digest v0.10.7 (*)
+│   │   │   ├── dory-derive v0.3.0 (proc-macro)
+│   │   │   │   ├── proc-macro2 v1.0.106 (*)
+│   │   │   │   ├── quote v1.0.45 (*)
+│   │   │   │   └── syn v2.0.117 (*)
+│   │   │   ├── rand_core v0.6.4 (*)
+│   │   │   ├── rayon v1.11.0 (*)
+│   │   │   ├── serde v1.0.228 (*)
+│   │   │   ├── thiserror v2.0.18 (*)
+│   │   │   └── tracing v0.1.44 (*)
+│   │   ├── jolt-crypto v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-crypto) (*)
+│   │   ├── jolt-field v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-field) (*)
+│   │   ├── jolt-openings v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-openings) (*)
+│   │   ├── jolt-poly v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-poly) (*)
+│   │   ├── jolt-transcript v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-transcript) (*)
+│   │   ├── serde v1.0.228 (*)
+│   │   └── tracing v0.1.44 (*)
+│   ├── jolt-field v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-field) (*)
+│   ├── jolt-openings v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-openings) (*)
+│   ├── jolt-poly v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-poly) (*)
+│   ├── jolt-r1cs v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-r1cs) (*)
+│   ├── jolt-sumcheck v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-sumcheck) (*)
+│   ├── jolt-transcript v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-transcript) (*)
+│   ├── serde v1.0.228 (*)
+│   ├── thiserror v2.0.18 (*)
+│   └── tracing v0.1.44 (*)
+├── jolt-witness v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-witness) (*)
+└── tracing v0.1.44 (*)
+[dev-dependencies]
+├── jolt-cpu v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-cpu)
+│   ├── jolt-compiler v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-compiler) (*)
+│   ├── jolt-compute v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-compute) (*)
+│   ├── jolt-field v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-field) (*)
+│   ├── jolt-poly v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-poly) (*)
+│   ├── rayon v1.11.0 (*)
+│   └── tracing v0.1.44 (*)
+├── jolt-field v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-field) (*)
+├── jolt-openings v0.1.0 (/Users/mgeorghiades/a16z/jolt/crates/jolt-openings) (*)
+├── num-traits v0.2.19 (*)
+└── postcard v1.1.3 (*)

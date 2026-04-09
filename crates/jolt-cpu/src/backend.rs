@@ -276,6 +276,28 @@ impl ComputeBackend for CpuBackend {
         }
         out
     }
+
+    fn regroup_constraints<F: Field>(
+        &self,
+        buf: &Vec<F>,
+        group_indices: &[Vec<usize>],
+        old_stride: usize,
+        new_stride: usize,
+        num_cycles: usize,
+    ) -> Vec<F> {
+        let num_groups = group_indices.len();
+        let total = num_groups * num_cycles * new_stride;
+        let mut out = vec![F::zero(); total];
+        for c in 0..num_cycles {
+            for (g, indices) in group_indices.iter().enumerate() {
+                let dst_row = num_groups * c + g;
+                for (k, &src_idx) in indices.iter().enumerate() {
+                    out[dst_row * new_stride + k] = buf[c * old_stride + src_idx];
+                }
+            }
+        }
+        out
+    }
 }
 
 #[tracing::instrument(skip_all, name = "interpolate_inplace")]
@@ -551,7 +573,7 @@ fn reduce_domain<F: Field>(
         let mut values = vec![F::zero(); num_inputs];
 
         for c in cycle_range {
-            // Base evaluations: domain points 0..K
+            // Base evaluations: formula at each domain point 0..K
             for d in 0..domain_size {
                 for (j, val) in values.iter_mut().enumerate() {
                     *val = if domain_indexed[j] {
@@ -560,26 +582,29 @@ fn reduce_domain<F: Field>(
                         inputs[j][c]
                     };
                 }
-                let result = kernel.evaluate_domain(&values, challenges);
-                accs[d].acc_add(result);
+                accs[d].acc_add(kernel.evaluate_domain(&values, challenges));
             }
 
-            // Extended evaluations: domain points K..2K-1
+            // Extended evaluations: Lagrange-interpolate each domain-indexed
+            // input independently, then evaluate the formula. This matches
+            // jolt-core, where Az(y) and Bz(y) are each degree-(K-1)
+            // polynomials and their product is degree-2(K-1). Interpolating
+            // the product directly would under-sample (K points for a
+            // degree-2(K-1) polynomial).
             for (e, weights) in ext_weights.iter().enumerate() {
                 for (j, val) in values.iter_mut().enumerate() {
                     if domain_indexed[j] {
-                        // Lagrange interpolation at the extended point
+                        let base = &inputs[j][c * stride..c * stride + domain_size];
                         let mut interp = F::zero();
                         for (k, &w) in weights.iter().enumerate() {
-                            interp += w * inputs[j][c * stride + k];
+                            interp += w * base[k];
                         }
                         *val = interp;
                     } else {
                         *val = inputs[j][c];
                     }
                 }
-                let result = kernel.evaluate_domain(&values, challenges);
-                accs[domain_size + e].acc_add(result);
+                accs[domain_size + e].acc_add(kernel.evaluate_domain(&values, challenges));
             }
         }
     };

@@ -8,11 +8,10 @@
 //! Two sources of data:
 //! - **Computed from witness**: ProductLeft/ProductRight — domain-indexed
 //!   product factors extracted from the per-cycle R1CS witness.
-//! - **Precomputed buffers**: RamVal, RamCombinedRa, RamValFinal, RamRafRa —
-//!   computed externally from trace data and inserted before proving.
+//! - **RAM polynomials**: RamCombinedRa, RamVal, RamValFinal, RamRaIndicator —
+//!   computed from R1CS witness columns + initial/final RAM state arrays.
 
 use std::borrow::Cow;
-use std::collections::HashMap;
 
 use jolt_compiler::PolynomialId;
 use jolt_field::Field;
@@ -48,13 +47,48 @@ const PRODUCT_A_VARS: [usize; NUM_PRODUCT_CONSTRAINTS] = [
     V_FLAG_JUMP,
 ];
 
-/// Computes derived polynomials from the flat R1CS witness and
-/// precomputed buffers inserted before proving.
+/// RAM configuration needed to build K×T polynomials from R1CS witness data.
+pub struct RamConfig {
+    /// Number of RAM addresses (K, power of two).
+    pub ram_k: usize,
+    /// Lowest byte address in memory layout, used to remap raw addresses:
+    /// `k = (raw_addr - lowest_addr) / 8`.
+    pub lowest_addr: u64,
+    /// Initial RAM state: K elements (u64 words, address-indexed).
+    pub initial_state: Vec<u64>,
+    /// Final RAM state: K elements (u64 words, address-indexed).
+    pub final_state: Vec<u64>,
+}
+
+/// Per-cycle register access data extracted from the execution trace.
+///
+/// Each vector has `trace_length` entries. `None` = no access that cycle.
+pub struct RegisterAccessData {
+    /// rd register index (0..127) when a write occurs.
+    pub rd_indices: Vec<Option<usize>>,
+    /// rs1 register index (0..127) when a read occurs.
+    pub rs1_indices: Vec<Option<usize>>,
+    /// rs2 register index (0..127) when a read occurs.
+    pub rs2_indices: Vec<Option<usize>>,
+}
+
+/// Pre-computed instruction flag polynomials (from trace extraction).
+pub struct InstructionFlags<F> {
+    pub is_noop: Vec<F>,
+    pub left_is_rs1: Vec<F>,
+    pub left_is_pc: Vec<F>,
+    pub right_is_rs2: Vec<F>,
+    pub right_is_imm: Vec<F>,
+}
+
 pub struct DerivedSource<'a, F> {
     witness: &'a [F],
     num_cycles: usize,
     vars_padded: usize,
-    precomputed: HashMap<PolynomialId, Vec<F>>,
+    ram: Option<RamConfig>,
+    iflags: Option<InstructionFlags<F>>,
+    reg_access: Option<RegisterAccessData>,
+    _marker: std::marker::PhantomData<F>,
 }
 
 impl<'a, F: Field> DerivedSource<'a, F> {
@@ -63,33 +97,78 @@ impl<'a, F: Field> DerivedSource<'a, F> {
             witness,
             num_cycles,
             vars_padded,
-            precomputed: HashMap::new(),
+            ram: None,
+            iflags: None,
+            reg_access: None,
+            _marker: std::marker::PhantomData,
         }
     }
 
-    /// Insert a precomputed derived polynomial buffer.
-    ///
-    /// Used for polynomials that require external data (trace, committed
-    /// polys, initial memory) beyond the R1CS witness.
-    pub fn insert(&mut self, poly_id: PolynomialId, data: Vec<F>) {
-        let _ = self.precomputed.insert(poly_id, data);
+    /// Attach RAM configuration for building RAM-derived polynomials.
+    pub fn with_ram(mut self, config: RamConfig) -> Self {
+        self.ram = Some(config);
+        self
+    }
+
+    /// Attach pre-computed instruction flag polynomials.
+    pub fn with_instruction_flags(mut self, flags: InstructionFlags<F>) -> Self {
+        self.iflags = Some(flags);
+        self
+    }
+
+    /// Attach register access data for building K_reg × T register polynomials.
+    pub fn with_register_access(mut self, data: RegisterAccessData) -> Self {
+        self.reg_access = Some(data);
+        self
+    }
+
+    fn ram(&self) -> &RamConfig {
+        self.ram.as_ref().expect(
+            "DerivedSource: RAM polynomial requested but no RamConfig provided. \
+             Call .with_ram() before proving.",
+        )
     }
 
     /// Compute or retrieve a derived polynomial by ID.
     pub fn compute(&self, poly_id: PolynomialId) -> Cow<'_, [F]> {
-        if let Some(data) = self.precomputed.get(&poly_id) {
-            return Cow::Borrowed(data);
-        }
         match poly_id {
             PolynomialId::ProductLeft => Cow::Owned(self.product_left()),
             PolynomialId::ProductRight => Cow::Owned(self.product_right()),
+            PolynomialId::RamCombinedRa => Cow::Owned(self.ram_combined_ra()),
+            PolynomialId::RamVal => Cow::Owned(self.ram_val()),
+            PolynomialId::RamValFinal => Cow::Owned(self.ram_val_final()),
+            PolynomialId::RamRaIndicator => Cow::Owned(self.ram_ra_indicator()),
+            PolynomialId::Rs1Ra => Cow::Owned(self.reg_rs1_ra()),
+            PolynomialId::Rs2Ra => Cow::Owned(self.reg_rs2_ra()),
+            PolynomialId::RdWa => Cow::Owned(self.reg_rd_wa()),
+            PolynomialId::RegistersVal => Cow::Owned(self.reg_val()),
+            PolynomialId::NoopFlag => {
+                let f = self.iflags.as_ref().expect("InstructionFlags not attached");
+                Cow::Borrowed(&f.is_noop)
+            }
+            PolynomialId::LeftIsRs1 => {
+                let f = self.iflags.as_ref().expect("InstructionFlags not attached");
+                Cow::Borrowed(&f.left_is_rs1)
+            }
+            PolynomialId::LeftIsPc => {
+                let f = self.iflags.as_ref().expect("InstructionFlags not attached");
+                Cow::Borrowed(&f.left_is_pc)
+            }
+            PolynomialId::RightIsRs2 => {
+                let f = self.iflags.as_ref().expect("InstructionFlags not attached");
+                Cow::Borrowed(&f.right_is_rs2)
+            }
+            PolynomialId::RightIsImm => {
+                let f = self.iflags.as_ref().expect("InstructionFlags not attached");
+                Cow::Borrowed(&f.right_is_imm)
+            }
             other => {
                 if let Some(var) = witness_var(other) {
                     Cow::Owned(self.extract_column(var))
                 } else {
                     panic!(
                         "DerivedSource: {other:?} is PolySource::Derived but has no compute \
-                         method and was not precomputed"
+                         method — check that RamConfig is attached if RAM polys are needed"
                     )
                 }
             }
@@ -128,5 +207,205 @@ impl<'a, F: Field> DerivedSource<'a, F> {
                 self.witness[w + V_CONST] - self.witness[w + V_NEXT_IS_NOOP];
         }
         buf
+    }
+
+    // ── RAM polynomial construction ──
+    //
+    // Built from R1CS witness columns V_RAM_ADDRESS, V_RAM_READ_VALUE,
+    // V_FLAG_LOAD, V_FLAG_STORE plus the initial/final RAM state arrays.
+    //
+    // Layout: address-major K×T — index(k, t) = k * T + t.
+    // This matches jolt-core's ReadWriteMatrixCycleMajor::materialize().
+
+    /// Remap a raw byte address to a dense RAM index k.
+    /// Returns `None` for address 0 (no-op cycles).
+    fn remap(&self, raw_addr_field: F) -> Option<usize> {
+        let raw = raw_addr_field.to_u64().expect("RAM address must fit in u64");
+        if raw == 0 {
+            return None;
+        }
+        let ram = self.ram();
+        Some(((raw - ram.lowest_addr) / 8) as usize)
+    }
+
+    /// K×T binary access indicator (address-major).
+    ///
+    /// `ra[k * T + t] = 1` if cycle t accesses address k, else 0.
+    /// Used as both `RamCombinedRa` and `RamRaIndicator` (same data).
+    fn ram_combined_ra(&self) -> Vec<F> {
+        let ram = self.ram();
+        let k = ram.ram_k;
+        let t = self.num_cycles;
+        let mut ra = vec![F::zero(); k * t];
+        for c in 0..t {
+            let w = c * self.vars_padded;
+            if let Some(col) = self.remap(self.witness[w + V_RAM_ADDRESS]) {
+                ra[col * t + c] = F::one();
+            }
+        }
+        ra
+    }
+
+    /// K×T value polynomial (address-major).
+    ///
+    /// Initialized to `val_init[k]` replicated across all T positions per
+    /// address k. At access points, overwritten with the pre-read value
+    /// (`V_RAM_READ_VALUE` — which is `pre_value` for writes, `read_value`
+    /// for reads, matching jolt-core's `val_coeff`).
+    /// K×T value polynomial (address-major).
+    ///
+    /// Matches jolt-core's sparse matrix `val_coeff` semantics:
+    /// - At access points: `V_RAM_READ_VALUE` (pre-access value)
+    /// - At non-access positions: persisted value from the most recent access
+    ///   (or `initial_state[k]` before any access)
+    ///
+    /// After the last access, remaining positions get the post-access value
+    /// (`V_RAM_WRITE_VALUE`), matching jolt-core's `next_val` propagation.
+    fn ram_val(&self) -> Vec<F> {
+        let ram = self.ram();
+        let k = ram.ram_k;
+        let t = self.num_cycles;
+
+        // Build per-address access event lists: (cycle, read_val, write_val).
+        let mut access_events: Vec<Vec<(usize, F, F)>> = vec![Vec::new(); k];
+        for c in 0..t {
+            let w = c * self.vars_padded;
+            if let Some(col) = self.remap(self.witness[w + V_RAM_ADDRESS]) {
+                access_events[col].push((
+                    c,
+                    self.witness[w + V_RAM_READ_VALUE],
+                    self.witness[w + V_RAM_WRITE_VALUE],
+                ));
+            }
+        }
+
+        let mut val = vec![F::zero(); k * t];
+        for addr in 0..k {
+            let base = addr * t;
+            let mut current = F::from_u64(ram.initial_state[addr]);
+            let events = &access_events[addr];
+            let mut ei = 0; // event index
+
+            for c in 0..t {
+                if ei < events.len() && events[ei].0 == c {
+                    // Access point: use pre-access value (read_value)
+                    val[base + c] = events[ei].1;
+                    // Update persisted value to post-access value (write_value)
+                    current = events[ei].2;
+                    ei += 1;
+                } else {
+                    // Non-access: persisted value
+                    val[base + c] = current;
+                }
+            }
+        }
+        val
+    }
+
+    /// T×K binary access indicator (cycle-major).
+    ///
+    /// `indicator[t * K + k] = 1` if cycle t accesses address k.
+    /// Used by EqProject which reads `source[t * outer_size + k]`.
+    fn ram_ra_indicator(&self) -> Vec<F> {
+        let ram = self.ram();
+        let k = ram.ram_k;
+        let t = self.num_cycles;
+        let mut indicator = vec![F::zero(); t * k];
+        for c in 0..t {
+            let w = c * self.vars_padded;
+            if let Some(col) = self.remap(self.witness[w + V_RAM_ADDRESS]) {
+                indicator[c * k + col] = F::one();
+            }
+        }
+        indicator
+    }
+
+    /// K-element final RAM state as field elements.
+    fn ram_val_final(&self) -> Vec<F> {
+        let ram = self.ram();
+        ram.final_state.iter().map(|&v| F::from_u64(v)).collect()
+    }
+
+    // ── Register polynomial construction ──────────────────────────────
+    //
+    // K_reg × T address-major: index(k, t) = k * T + t.
+    // K_reg = 128 (REGISTER_COUNT).
+
+    const K_REG: usize = 128;
+
+    fn reg_access(&self) -> &RegisterAccessData {
+        self.reg_access.as_ref().expect(
+            "DerivedSource: register polynomial requested but no RegisterAccessData provided. \
+             Call .with_register_access() before proving.",
+        )
+    }
+
+    /// K_reg × T binary indicator: rs1_ra(k, t) = 1 if rs1 at cycle t is register k.
+    fn reg_rs1_ra(&self) -> Vec<F> {
+        let ra = self.reg_access();
+        let t = self.num_cycles;
+        let mut out = vec![F::zero(); Self::K_REG * t];
+        for c in 0..t {
+            if let Some(k) = ra.rs1_indices[c] {
+                out[k * t + c] = F::one();
+            }
+        }
+        out
+    }
+
+    /// K_reg × T binary indicator: rs2_ra(k, t) = 1 if rs2 at cycle t is register k.
+    fn reg_rs2_ra(&self) -> Vec<F> {
+        let ra = self.reg_access();
+        let t = self.num_cycles;
+        let mut out = vec![F::zero(); Self::K_REG * t];
+        for c in 0..t {
+            if let Some(k) = ra.rs2_indices[c] {
+                out[k * t + c] = F::one();
+            }
+        }
+        out
+    }
+
+    /// K_reg × T binary indicator: rd_wa(k, t) = 1 if rd at cycle t is register k.
+    fn reg_rd_wa(&self) -> Vec<F> {
+        let ra = self.reg_access();
+        let t = self.num_cycles;
+        let mut out = vec![F::zero(); Self::K_REG * t];
+        for c in 0..t {
+            if let Some(k) = ra.rd_indices[c] {
+                out[k * t + c] = F::one();
+            }
+        }
+        out
+    }
+
+    /// K_reg × T register value polynomial (address-major).
+    ///
+    /// val(k, t) = value of register k just before cycle t.
+    /// Initialized to 0 (all registers start at 0). At write points,
+    /// the value is updated to the post-write value for subsequent cycles.
+    fn reg_val(&self) -> Vec<F> {
+        let ra = self.reg_access();
+        let t = self.num_cycles;
+        let mut out = vec![F::zero(); Self::K_REG * t];
+
+        // Track current register values. All registers start at 0.
+        let mut current_vals = vec![F::zero(); Self::K_REG];
+
+        for c in 0..t {
+            let w = c * self.vars_padded;
+
+            // Write the current (pre-access) value for ALL registers at cycle c.
+            for k in 0..Self::K_REG {
+                out[k * t + c] = current_vals[k];
+            }
+
+            // If rd is written this cycle, update the running value.
+            if let Some(k) = ra.rd_indices[c] {
+                // V_RD_WRITE_VALUE is the POST-write value.
+                current_vals[k] = self.witness[w + V_RD_WRITE_VALUE];
+            }
+        }
+        out
     }
 }

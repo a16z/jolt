@@ -101,6 +101,15 @@ where
                 challenges[*challenge] = transcript.challenge();
             }
 
+            VerifierOp::AppendDomainSeparator { tag } => {
+                // Match jolt-core's `append_bytes(label, &[])`: two update_state calls
+                let label = tag.as_bytes();
+                let mut packed = [0u8; 32];
+                packed[..label.len()].copy_from_slice(label);
+                transcript.append_bytes(&packed);
+                transcript.append_bytes(&[]);
+            }
+
             VerifierOp::AbsorbRoundPoly { num_coeffs: _, tag } => {
                 let sp = current_stage.ok_or_else(|| {
                     JoltError::InvalidProof("no active stage proof for round poly".into())

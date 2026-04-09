@@ -97,14 +97,7 @@ fn row_wide<F: Field>(entries: &[(usize, i128)]) -> SparseRow<F> {
     entries
         .iter()
         .filter(|(_, c)| *c != 0)
-        .map(|&(idx, c)| {
-            let f = if c >= 0 {
-                F::from_u64(c as u64)
-            } else {
-                -F::from_u64((-c) as u64)
-            };
-            (idx, f)
-        })
+        .map(|&(idx, c)| (idx, F::from_i128(c)))
         .collect()
 }
 

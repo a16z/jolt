@@ -108,6 +108,11 @@ pub enum Iteration {
         /// Challenge index for the Lagrange kernel evaluation point (τ_high).
         /// Used by `AbsorbRoundPoly` post-processing to convolve with L(τ_high, Y).
         tau_challenge: usize,
+        /// Whether base domain evaluations (first K values) should be zeroed
+        /// before interpolation. True for R1CS outer sumcheck where Az*Bz = Cz
+        /// guarantees t1 vanishes on the base domain. False for product/other
+        /// uniskip rounds where base evaluations are non-zero.
+        zero_base: bool,
     },
 }
 

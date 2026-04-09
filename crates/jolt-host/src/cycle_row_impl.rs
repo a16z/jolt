@@ -102,6 +102,10 @@ impl CycleRow for Cycle {
         let mut flags = static_circuit_flags(&instr);
         let norm = instr.normalize();
         apply_dynamic_circuit_flags(&mut flags, &norm);
+        // Only JALR sets IsLastInSequence (matches jolt-core behavior).
+        if matches!(instr, Instruction::JALR(_)) && norm.virtual_sequence_remaining == Some(0) {
+            flags[CircuitFlags::IsLastInSequence as usize] = true;
+        }
         flags
     }
 
@@ -146,17 +150,39 @@ impl CycleRow for Cycle {
     }
 
     fn lookup_output(&self) -> u64 {
-        // For instructions that write to rd: the lookup output = rd post_value.
-        // For branches: the comparison result is encoded in whether the branch is taken.
-        // For stores/noop: zero.
+        if self.is_noop() {
+            return 0;
+        }
         let cflags = self.circuit_flags();
-        if cflags[CircuitFlags::WriteLookupOutputToRD as usize] {
-            self.rd_write().map_or(0, |(_, _, post)| post)
-        } else if cflags[CircuitFlags::Jump as usize] {
+        let iflags = self.instruction_flags();
+
+        if cflags[CircuitFlags::Jump as usize] {
+            // JAL/JALR: lookup output = jump TARGET (not return address).
+            // Both have AddOperands, so target = left_input + right_input.
+            let left = if iflags[InstructionFlags::LeftOperandIsPC as usize] {
+                self.unexpanded_pc() // JAL
+            } else {
+                self.rs1_read().map_or(0, |(_, v)| v) // JALR
+            };
+            let right = self.imm();
+            let target = (left as i64).wrapping_add(right as i64) as u64;
+            if iflags[InstructionFlags::LeftOperandIsRs1Value as usize] {
+                target & !1 // JALR aligns to 2-byte boundary
+            } else {
+                target
+            }
+        } else if cflags[CircuitFlags::Assert as usize] {
+            // Assert instructions: comparison must be satisfied in valid trace → 1.
+            1
+        } else if iflags[InstructionFlags::Branch as usize] {
+            // Branch instructions: comparison result (0 or 1).
+            let rs1 = self.rs1_read().map_or(0, |(_, v)| v);
+            let rs2 = self.rs2_read().map_or(0, |(_, v)| v);
+            branch_comparison_output(self.instruction(), rs1, rs2)
+        } else if cflags[CircuitFlags::WriteLookupOutputToRD as usize] {
+            // Normal instructions: lookup output = rd write value.
             self.rd_write().map_or(0, |(_, _, post)| post)
         } else {
-            // Branches, stores, noop: lookup output = 0 in the R1CS sense
-            // (the actual comparison result is handled by ShouldBranch constraint)
             0
         }
     }
@@ -504,6 +530,21 @@ fn lookup_table_kind_for_instruction(instr: &Instruction) -> Option<LookupTableK
     }
 }
 
+/// Compute the comparison result for branch instructions.
+/// Returns 1 if the branch condition is true, 0 otherwise.
+fn branch_comparison_output(instr: Instruction, rs1: u64, rs2: u64) -> u64 {
+    let result = match instr {
+        Instruction::BEQ(_) => rs1 == rs2,
+        Instruction::BNE(_) => rs1 != rs2,
+        Instruction::BLT(_) => (rs1 as i64) < (rs2 as i64),
+        Instruction::BGE(_) => (rs1 as i64) >= (rs2 as i64),
+        Instruction::BLTU(_) => rs1 < rs2,
+        Instruction::BGEU(_) => rs1 >= rs2,
+        _ => false,
+    };
+    result as u64
+}
+
 fn apply_dynamic_circuit_flags(
     flags: &mut [bool; NUM_CIRCUIT_FLAGS],
     norm: &NormalizedInstruction,
@@ -520,9 +561,7 @@ fn apply_dynamic_circuit_flags(
     if norm.is_compressed {
         flags[CircuitFlags::IsCompressed as usize] = true;
     }
-    if norm.virtual_sequence_remaining == Some(0) {
-        flags[CircuitFlags::IsLastInSequence as usize] = true;
-    }
+    // IsLastInSequence is NOT set here — only JALR sets it (matches jolt-core).
 }
 
 #[cfg(test)]

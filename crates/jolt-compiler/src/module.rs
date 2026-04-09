@@ -310,6 +310,8 @@ pub enum DomainSeparator {
     SumcheckClaim,
     /// Polynomial opening evaluation: `b"opening_claim"`.
     OpeningClaim,
+    /// RAM value check batching gamma: `b"ram_val_check_gamma"`.
+    RamValCheckGamma,
 }
 
 impl DomainSeparator {
@@ -323,6 +325,7 @@ impl DomainSeparator {
             Self::SumcheckPoly => b"sumcheck_poly",
             Self::SumcheckClaim => b"sumcheck_claim",
             Self::OpeningClaim => b"opening_claim",
+            Self::RamValCheckGamma => b"ram_val_check_gamma",
         }
     }
 }
@@ -393,6 +396,25 @@ pub enum Op {
     /// The resulting buffer is twice as large and ready for standard dense
     /// sumcheck rounds that bind the new variable first (LowToHigh order).
     DuplicateInterleave { polys: Vec<PolynomialId> },
+    /// Regroup constraint buffers for the group-split uniskip.
+    ///
+    /// Transforms Az/Bz from flat layout `[cycle * old_stride + constraint]`
+    /// into interleaved layout `[(2 * cycle + group) * new_stride + k]`
+    /// where `k` is the constraint index within the group.
+    ///
+    /// `group_indices[0]` constraints form group 0, `group_indices[1]` form group 1.
+    /// Groups are zero-padded to `new_stride`. The group dimension is
+    /// INTERLEAVED (group bit at the LOW end / LSB) so that the eq table's
+    /// group-selection variable is the first variable bound in LowToHigh order,
+    /// matching jolt-core's GruenSplitEqPolynomial layout.
+    RegroupConstraints {
+        polys: Vec<PolynomialId>,
+        /// Indices of original constraints in each group (within `old_stride`).
+        group_indices: Vec<Vec<usize>>,
+        old_stride: usize,
+        new_stride: usize,
+        num_cycles: usize,
+    },
 
     // ── PCS (dispatched to CommitmentScheme trait) ──
     /// Commit polynomials, absorb commitments into transcript,
@@ -461,10 +483,22 @@ pub enum Op {
     },
     /// Squeeze a Fiat-Shamir challenge.
     Squeeze { challenge: usize },
+    /// Append a domain separator label (empty payload) to the transcript.
+    AppendDomainSeparator { tag: DomainSeparator },
     /// Accumulate a PCS opening claim: (poly data, eval point from stage).
     CollectOpeningClaim {
         poly: PolynomialId,
         at_stage: VerifierStageIndex,
+    },
+    /// Evaluate a preprocessed polynomial's MLE at a challenge-derived point.
+    ///
+    /// Materializes the polynomial from the provider, evaluates the MLE at
+    /// `[challenges[i] for i in at_challenges]`, and stores the result in
+    /// `state.evaluations[store_as]`. Used for init_eval in RamValCheck.
+    EvaluatePreprocessed {
+        source: PolynomialId,
+        at_challenges: Vec<usize>,
+        store_as: PolynomialId,
     },
     /// Release a device buffer (GPU memory).
     ReleaseDevice { poly: PolynomialId },
@@ -483,6 +517,7 @@ impl Op {
                 | Op::Bind { .. }
                 | Op::LagrangeProject { .. }
                 | Op::DuplicateInterleave { .. }
+                | Op::RegroupConstraints { .. }
         )
     }
 
@@ -503,7 +538,9 @@ impl Op {
                 | Op::AbsorbEvals { .. }
                 | Op::AbsorbInputClaim { .. }
                 | Op::Squeeze { .. }
+                | Op::AppendDomainSeparator { .. }
                 | Op::CollectOpeningClaim { .. }
+                | Op::EvaluatePreprocessed { .. }
                 | Op::ReleaseDevice { .. }
                 | Op::ReleaseHost { .. }
         )
@@ -545,6 +582,8 @@ pub enum VerifierOp {
     },
     /// Squeeze a Fiat-Shamir challenge.
     Squeeze { challenge: usize },
+    /// Append a domain separator label (empty payload) to the transcript.
+    AppendDomainSeparator { tag: DomainSeparator },
     /// Absorb a round polynomial from the current stage proof into transcript.
     ///
     /// Reads the next round polynomial (at `round_poly_cursor`) from the stage

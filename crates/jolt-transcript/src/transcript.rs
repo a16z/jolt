@@ -47,6 +47,8 @@ pub trait Transcript: Default + Clone + Sync + Send + 'static {
     /// Squeezes a challenge from the transcript.
     ///
     /// Each call produces a new challenge and advances the transcript state.
+    /// Squeezes 16 bytes, reverses them, then interprets as little-endian
+    /// (equivalent to big-endian interpretation of raw bytes).
     #[must_use]
     fn challenge(&mut self) -> Self::Challenge;
 

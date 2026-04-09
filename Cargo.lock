@@ -2776,6 +2776,8 @@ name = "jolt-equivalence"
 version = "0.1.0"
 dependencies = [
  "ark-bn254",
+ "ark-ff 0.5.0",
+ "ark-serialize 0.5.0",
  "blake2",
  "common",
  "jolt-compiler",
@@ -2786,6 +2788,7 @@ dependencies = [
  "jolt-field",
  "jolt-host",
  "jolt-openings",
+ "jolt-poly",
  "jolt-r1cs",
  "jolt-transcript",
  "jolt-verifier",
@@ -2793,6 +2796,7 @@ dependencies = [
  "jolt-zkvm",
  "num-traits",
  "postcard",
+ "tracer",
 ]
 
 [[package]]

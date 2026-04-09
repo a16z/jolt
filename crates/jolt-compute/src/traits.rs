@@ -206,6 +206,22 @@ pub trait ComputeBackend: Send + Sync + 'static {
     /// multilinear polynomial that does not depend on a new low-order
     /// variable (streaming extension for outer Spartan).
     fn duplicate_interleave<F: Field>(&self, buf: &Self::Buffer<F>) -> Self::Buffer<F>;
+
+    /// Regroup constraint buffers for group-split uniskip.
+    ///
+    /// Input: `buf[cycle * old_stride + constraint_idx]` for `num_cycles` cycles.
+    /// Output: `result[(2 * cycle + group) * new_stride + k]` (interleaved groups).
+    ///
+    /// `group_indices[g][k]` maps group `g`, position `k` → original constraint index.
+    /// Groups shorter than `new_stride` are zero-padded.
+    fn regroup_constraints<F: Field>(
+        &self,
+        buf: &Self::Buffer<F>,
+        group_indices: &[Vec<usize>],
+        old_stride: usize,
+        new_stride: usize,
+        num_cycles: usize,
+    ) -> Self::Buffer<F>;
 }
 
 /// Materializes polynomial data for the prover runtime.

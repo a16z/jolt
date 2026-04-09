@@ -115,6 +115,28 @@ impl BatchedSumcheck {
                     },
                 );
 
+            #[cfg(debug_assertions)]
+            {
+                for (i, poly) in univariate_polys.iter().enumerate() {
+                    let evals: Vec<F> = (0..4u64)
+                        .map(|j| poly.evaluate::<F>(&F::from_u64(j)))
+                        .collect();
+                    eprintln!("[core remaining round={round}] instance={i} unscaled evals:");
+                    for (j, e) in evals.iter().enumerate() {
+                        eprintln!("  eval[{j}] = {e:?}");
+                    }
+                    eprintln!("  coeff={:?}", batching_coeffs[i]);
+                }
+                let batched_evals: Vec<F> = (0..4u64)
+                    .map(|j| batched_univariate_poly.evaluate::<F>(&F::from_u64(j)))
+                    .collect();
+                eprintln!("[core remaining round={round}] batched evals:");
+                for (j, e) in batched_evals.iter().enumerate() {
+                    eprintln!("  eval[{j}] = {e:?}");
+                }
+                eprintln!("  sum(0+1) = {:?}", batched_evals[0] + batched_evals[1]);
+            }
+
             let compressed_poly = batched_univariate_poly.compress();
 
             // append the prover's message to the transcript

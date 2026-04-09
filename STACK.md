@@ -54,6 +54,36 @@ cargo clippy -p <crate> --message-format=short -q -- -D warnings
 2. Run `./scripts/sync-stack.sh sync` to create the new branch
 3. Run `./scripts/sync-stack.sh submit` to open its PR
 
+## Crate review status
+
+Tracks production-readiness review across all crates on `refactor/crates`.
+
+| Crate | Review | Confidence | Notes |
+|-------|--------|------------|-------|
+| `jolt-field` | - | - | |
+| `jolt-profiling` | - | - | |
+| `jolt-transcript` | - | - | |
+| `jolt-instructions` | - | - | |
+| `jolt-poly` | - | - | |
+| `jolt-crypto` | DONE | 8.5/10 | ec/ restructure, VectorCommitment extends Commitment, DeriveSetup trait, generators removed from PairingGroup |
+| `jolt-openings` | DONE | 9/10 | traits.rs->schemes.rs, blanket OpeningReduction, comments cleaned |
+| `jolt-dory` | DONE | 8.5/10 | dead code deleted, centralized transmutes, DeriveSetup, transcript fix |
+| `jolt-hyperkzg` | DONE | - | updated as part of DeriveSetup migration, not fully reviewed |
+| `jolt-sumcheck` | - | - | |
+| `jolt-r1cs` | - | - | |
+| `jolt-compiler` | - | - | |
+| `jolt-compute` | - | - | |
+| `jolt-cpu` | - | - | |
+| `jolt-metal` | - | - | |
+| `jolt-hybrid` | - | - | |
+| `jolt-witness` | - | - | |
+| `jolt-verifier` | - | - | |
+| `jolt-host` | - | - | |
+| `jolt-zkvm` | - | - | |
+| `jolt-equivalence` | - | - | test-only |
+| `jolt-blindfold` | - | - | stub |
+| `jolt-wrapper` | - | - | stub |
+
 ## Notes
 
 - **jolt-core stays**: all existing code compiles unchanged. The final PR removes it.

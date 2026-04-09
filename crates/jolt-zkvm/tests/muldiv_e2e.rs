@@ -23,7 +23,7 @@ use jolt_verifier::{
     verify, JoltVerifyingKey, OneHotConfig, ProverConfig, ReadWriteConfig, TRANSCRIPT_LABEL,
 };
 use jolt_witness::{PolynomialConfig, PolynomialId, Polynomials};
-use jolt_zkvm::derived::DerivedSource;
+use jolt_zkvm::derived::{DerivedSource, InstructionFlags};
 use jolt_zkvm::preprocessed::PreprocessedSource;
 use jolt_zkvm::prove::prove;
 use jolt_zkvm::provider::ProverData;
@@ -339,7 +339,7 @@ fn muldiv_prove_verify() {
     let poly_config = PolynomialConfig::new(log_k_chunk, 128, log_k_bytecode, log_k_ram);
     let matrices = rv64::rv64_constraints::<Fr>();
     let r1cs_key = R1csKey::new(matrices, trace_length);
-    let (cycle_inputs, r1cs_witness) = extract_trace::<_, Fr>(
+    let (cycle_inputs, r1cs_witness, instruction_flag_data) = extract_trace::<_, Fr>(
         &trace,
         trace_length,
         &bytecode,
@@ -354,7 +354,14 @@ fn muldiv_prove_verify() {
     let _ = polys.insert(PolynomialId::TrustedAdvice, vec![Fr::zero(); trace_length]);
 
     // ── Derived polynomials (Stage 2) ──
-    let mut derived = DerivedSource::new(&r1cs_witness, trace_length, r1cs_key.num_vars_padded);
+    let mut derived = DerivedSource::new(&r1cs_witness, trace_length, r1cs_key.num_vars_padded)
+        .with_instruction_flags(InstructionFlags {
+            is_noop: instruction_flag_data.is_noop,
+            left_is_rs1: instruction_flag_data.left_is_rs1,
+            left_is_pc: instruction_flag_data.left_is_pc,
+            right_is_rs2: instruction_flag_data.right_is_rs2,
+            right_is_imm: instruction_flag_data.right_is_imm,
+        });
     derived.insert(
         PolynomialId::RamCombinedRa,
         build_ram_combined_ra(&trace, trace_length, lowest_addr, ram_k),
