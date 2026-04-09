@@ -1,17 +1,35 @@
 //! Virtual bitwise instructions used internally by the Jolt VM.
 
-define_instruction!(
-    /// Virtual MOVSIGN: returns all-ones if `x` is negative (signed), otherwise zero.
-    MovSign, "MOVSIGN",
-    |x, _y| if (x as i64) < 0 { u64::MAX } else { 0 },
-    circuit: [WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-);
+use jolt_riscv_derive::Flags;
+use serde::{Deserialize, Serialize};
+
+use crate::Instruction;
+
+/// Virtual MOVSIGN: returns all-ones if `x` is negative (signed), otherwise zero.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsImm)]
+pub struct MovSign;
+
+impl Instruction for MovSign {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "MOVSIGN"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, _y: u64) -> u64 {
+        if (x as i64) < 0 {
+            u64::MAX
+        } else {
+            0
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Instruction;
 
     #[test]
     fn movsign_negative() {

@@ -1,41 +1,85 @@
 //! RV64I comparison instructions that write 1 or 0 to the destination register.
 
-define_instruction!(
-    /// RV64I SLT: set if less than (signed). `rd = (rs1 < rs2) ? 1 : 0`.
-    Slt, "SLT",
-    |x, y| u64::from((x as i64) < (y as i64)),
-    circuit: [WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-);
+use jolt_riscv_derive::Flags;
+use serde::{Deserialize, Serialize};
 
-define_instruction!(
-    /// RV64I SLTI: set if less than immediate (signed).
-    SltI, "SLTI",
-    |x, y| u64::from((x as i64) < (y as i64)),
-    circuit: [WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-);
+use crate::Instruction;
 
-define_instruction!(
-    /// RV64I SLTU: set if less than (unsigned). `rd = (rs1 < rs2) ? 1 : 0`.
-    SltU, "SLTU",
-    |x, y| u64::from(x < y),
-    circuit: [WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-);
+/// RV64I SLT: set if less than (signed). `rd = (rs1 < rs2) ? 1 : 0`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
+pub struct Slt;
 
-define_instruction!(
-    /// RV64I SLTIU: set if less than immediate (unsigned).
-    SltIU, "SLTIU",
-    |x, y| u64::from(x < y),
-    circuit: [WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-);
+impl Instruction for Slt {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "SLT"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        u64::from((x as i64) < (y as i64))
+    }
+}
+
+/// RV64I SLTI: set if less than immediate (signed).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsImm)]
+pub struct SltI;
+
+impl Instruction for SltI {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "SLTI"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        u64::from((x as i64) < (y as i64))
+    }
+}
+
+/// RV64I SLTU: set if less than (unsigned). `rd = (rs1 < rs2) ? 1 : 0`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
+pub struct SltU;
+
+impl Instruction for SltU {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "SLTU"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        u64::from(x < y)
+    }
+}
+
+/// RV64I SLTIU: set if less than immediate (unsigned).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsImm)]
+pub struct SltIU;
+
+impl Instruction for SltIU {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "SLTIU"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        u64::from(x < y)
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Instruction;
 
     #[test]
     fn slt_signed() {

@@ -1,75 +1,151 @@
 //! Virtual assertion instructions used by the Jolt VM for constraint checking.
 
-define_instruction!(
-    /// Virtual ASSERT_EQ: returns 1 if operands are equal, 0 otherwise.
-    AssertEq, "ASSERT_EQ",
-    |x, y| u64::from(x == y),
-    circuit: [Assert],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-);
+use jolt_riscv_derive::Flags;
+use serde::{Deserialize, Serialize};
 
-define_instruction!(
-    /// Virtual ASSERT_LTE: returns 1 if `x <= y` (unsigned), 0 otherwise.
-    AssertLte, "ASSERT_LTE",
-    |x, y| u64::from(x <= y),
-    circuit: [Assert],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-);
+use crate::Instruction;
 
-define_instruction!(
-    /// Virtual ASSERT_VALID_DIV0: validates `(divisor, quotient)` for division-by-zero handling.
-    /// Returns 1 if the divisor is nonzero, or if the divisor is 0 and the quotient is MAX.
-    AssertValidDiv0, "ASSERT_VALID_DIV0",
-    |x, y| {
-        if x == 0 { u64::from(y == u64::MAX) } else { 1 }
-    },
-    circuit: [Assert],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-);
+/// Virtual ASSERT_EQ: returns 1 if operands are equal, 0 otherwise.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(Assert)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
+pub struct AssertEq;
 
-define_instruction!(
-    /// Virtual ASSERT_VALID_UNSIGNED_REMAINDER: validates unsigned remainder.
-    /// Returns 1 if divisor is 0 or remainder < divisor.
-    AssertValidUnsignedRemainder, "ASSERT_VALID_UNSIGNED_REMAINDER",
-    |x, y| {
-        if y == 0 { 1 } else { u64::from(x < y) }
-    },
-    circuit: [Assert],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-);
+impl Instruction for AssertEq {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "ASSERT_EQ"
+    }
 
-define_instruction!(
-    /// Virtual ASSERT_MULU_NO_OVERFLOW: checks unsigned multiply doesn't overflow.
-    /// Returns 1 if the upper XLEN bits of `x * y` are all zero.
-    AssertMulUNoOverflow, "ASSERT_MULU_NO_OVERFLOW",
-    |x, y| {
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        u64::from(x == y)
+    }
+}
+
+/// Virtual ASSERT_LTE: returns 1 if `x <= y` (unsigned), 0 otherwise.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(Assert)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
+pub struct AssertLte;
+
+impl Instruction for AssertLte {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "ASSERT_LTE"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        u64::from(x <= y)
+    }
+}
+
+/// Virtual ASSERT_VALID_DIV0: validates `(divisor, quotient)` for division-by-zero handling.
+/// Returns 1 if the divisor is nonzero, or if the divisor is 0 and the quotient is MAX.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(Assert)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
+pub struct AssertValidDiv0;
+
+impl Instruction for AssertValidDiv0 {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "ASSERT_VALID_DIV0"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        if x == 0 {
+            u64::from(y == u64::MAX)
+        } else {
+            1
+        }
+    }
+}
+
+/// Virtual ASSERT_VALID_UNSIGNED_REMAINDER: validates unsigned remainder.
+/// Returns 1 if divisor is 0 or remainder < divisor.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(Assert)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
+pub struct AssertValidUnsignedRemainder;
+
+impl Instruction for AssertValidUnsignedRemainder {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "ASSERT_VALID_UNSIGNED_REMAINDER"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        if y == 0 {
+            1
+        } else {
+            u64::from(x < y)
+        }
+    }
+}
+
+/// Virtual ASSERT_MULU_NO_OVERFLOW: checks unsigned multiply doesn't overflow.
+/// Returns 1 if the upper XLEN bits of `x * y` are all zero.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(MultiplyOperands, Assert)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
+pub struct AssertMulUNoOverflow;
+
+impl Instruction for AssertMulUNoOverflow {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "ASSERT_MULU_NO_OVERFLOW"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
         let product = (x as u128) * (y as u128);
         u64::from((product >> 64) == 0)
-    },
-    circuit: [MultiplyOperands, Assert],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-);
+    }
+}
 
-define_instruction!(
-    /// Virtual ASSERT_WORD_ALIGNMENT: checks whether `rs1 + imm` is 4-byte aligned.
-    AssertWordAlignment, "ASSERT_WORD_ALIGNMENT",
-    |x, y| u64::from(x.wrapping_add(y).is_multiple_of(4)),
-    circuit: [AddOperands, Assert],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-);
+/// Virtual ASSERT_WORD_ALIGNMENT: checks whether `rs1 + imm` is 4-byte aligned.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(AddOperands, Assert)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsImm)]
+pub struct AssertWordAlignment;
 
-define_instruction!(
-    /// Virtual ASSERT_HALFWORD_ALIGNMENT: checks whether `rs1 + imm` is 2-byte aligned.
-    AssertHalfwordAlignment, "ASSERT_HALFWORD_ALIGNMENT",
-    |x, y| u64::from(x.wrapping_add(y).is_multiple_of(2)),
-    circuit: [AddOperands, Assert],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-);
+impl Instruction for AssertWordAlignment {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "ASSERT_WORD_ALIGNMENT"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        u64::from(x.wrapping_add(y).is_multiple_of(4))
+    }
+}
+
+/// Virtual ASSERT_HALFWORD_ALIGNMENT: checks whether `rs1 + imm` is 2-byte aligned.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(AddOperands, Assert)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsImm)]
+pub struct AssertHalfwordAlignment;
+
+impl Instruction for AssertHalfwordAlignment {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "ASSERT_HALFWORD_ALIGNMENT"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        u64::from(x.wrapping_add(y).is_multiple_of(2))
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Instruction;
 
     #[test]
     fn assert_eq_basic() {

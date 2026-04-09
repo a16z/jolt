@@ -3,59 +3,133 @@
 //! In Jolt's execution model, `x` contains the loaded value from memory
 //! and the instruction performs sign/zero extension to 64 bits.
 
-define_instruction!(
-    /// RV64I LB: load byte, sign-extended to 64 bits.
-    Lb, "LB",
-    |x, _y| (x as i8) as i64 as u64,
-    circuit: [Load],
-);
+use jolt_riscv_derive::Flags;
+use serde::{Deserialize, Serialize};
 
-define_instruction!(
-    /// RV64I LBU: load byte, zero-extended to 64 bits.
-    Lbu, "LBU",
-    |x, _y| x & 0xFF,
-    circuit: [Load],
-);
+use crate::Instruction;
 
-define_instruction!(
-    /// RV64I LH: load halfword (16 bits), sign-extended to 64 bits.
-    Lh, "LH",
-    |x, _y| (x as i16) as i64 as u64,
-    circuit: [Load],
-);
+/// RV64I LB: load byte, sign-extended to 64 bits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(Load)]
+pub struct Lb;
 
-define_instruction!(
-    /// RV64I LHU: load halfword, zero-extended to 64 bits.
-    Lhu, "LHU",
-    |x, _y| x & 0xFFFF,
-    circuit: [Load],
-);
+impl Instruction for Lb {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "LB"
+    }
 
-define_instruction!(
-    /// RV64I LW: load word (32 bits), sign-extended to 64 bits.
-    Lw, "LW",
-    |x, _y| (x as i32) as i64 as u64,
-    circuit: [Load],
-);
+    #[inline]
+    fn execute(&self, x: u64, _y: u64) -> u64 {
+        (x as i8) as i64 as u64
+    }
+}
 
-define_instruction!(
-    /// RV64I LWU: load word, zero-extended to 64 bits.
-    Lwu, "LWU",
-    |x, _y| x & 0xFFFF_FFFF,
-    circuit: [Load],
-);
+/// RV64I LBU: load byte, zero-extended to 64 bits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(Load)]
+pub struct Lbu;
 
-define_instruction!(
-    /// RV64I LD: load doubleword (64 bits). Identity operation.
-    Ld, "LD",
-    |x, _y| x,
-    circuit: [Load],
-);
+impl Instruction for Lbu {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "LBU"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, _y: u64) -> u64 {
+        x & 0xFF
+    }
+}
+
+/// RV64I LH: load halfword (16 bits), sign-extended to 64 bits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(Load)]
+pub struct Lh;
+
+impl Instruction for Lh {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "LH"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, _y: u64) -> u64 {
+        (x as i16) as i64 as u64
+    }
+}
+
+/// RV64I LHU: load halfword, zero-extended to 64 bits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(Load)]
+pub struct Lhu;
+
+impl Instruction for Lhu {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "LHU"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, _y: u64) -> u64 {
+        x & 0xFFFF
+    }
+}
+
+/// RV64I LW: load word (32 bits), sign-extended to 64 bits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(Load)]
+pub struct Lw;
+
+impl Instruction for Lw {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "LW"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, _y: u64) -> u64 {
+        (x as i32) as i64 as u64
+    }
+}
+
+/// RV64I LWU: load word, zero-extended to 64 bits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(Load)]
+pub struct Lwu;
+
+impl Instruction for Lwu {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "LWU"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, _y: u64) -> u64 {
+        x & 0xFFFF_FFFF
+    }
+}
+
+/// RV64I LD: load doubleword (64 bits). Identity operation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(Load)]
+pub struct Ld;
+
+impl Instruction for Ld {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "LD"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, _y: u64) -> u64 {
+        x
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Instruction;
 
     #[test]
     fn lb_sign_extends() {

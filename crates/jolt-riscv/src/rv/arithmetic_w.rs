@@ -4,46 +4,88 @@
 //! Instructions that set operand-combining flags (`AddOperands`, etc.) but have
 //! no lookup table are decomposed into virtual sequences by the VM.
 
-use crate::{CircuitFlagSet, Flags, Instruction, InstructionFlagSet, InstructionFlags};
+use jolt_riscv_derive::Flags;
+use serde::{Deserialize, Serialize};
 
-define_instruction!(
-    /// RV64I ADDW: 32-bit add, sign-extended to 64 bits.
-    AddW, "ADDW",
-    |x, y| (x as i32).wrapping_add(y as i32) as i64 as u64,
-    circuit: [AddOperands, WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-);
+use crate::Instruction;
 
-define_instruction!(
-    /// RV64I ADDIW: 32-bit add immediate, sign-extended to 64 bits.
-    AddiW, "ADDIW",
-    |x, y| (x as i32).wrapping_add(y as i32) as i64 as u64,
-    circuit: [AddOperands, WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-);
+/// RV64I ADDW: 32-bit add, sign-extended to 64 bits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(AddOperands, WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
+pub struct AddW;
 
-define_instruction!(
-    /// RV64I SUBW: 32-bit subtract, sign-extended to 64 bits.
-    SubW, "SUBW",
-    |x, y| (x as i32).wrapping_sub(y as i32) as i64 as u64,
-    circuit: [SubtractOperands, WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-);
+impl Instruction for AddW {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "ADDW"
+    }
 
-define_instruction!(
-    /// RV64M MULW: 32-bit multiply, sign-extended to 64 bits.
-    MulW, "MULW",
-    |x, y| (x as i32).wrapping_mul(y as i32) as i64 as u64,
-    circuit: [MultiplyOperands, WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-);
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        (x as i32).wrapping_add(y as i32) as i64 as u64
+    }
+}
+
+/// RV64I ADDIW: 32-bit add immediate, sign-extended to 64 bits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(AddOperands, WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsImm)]
+pub struct AddiW;
+
+impl Instruction for AddiW {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "ADDIW"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        (x as i32).wrapping_add(y as i32) as i64 as u64
+    }
+}
+
+/// RV64I SUBW: 32-bit subtract, sign-extended to 64 bits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(SubtractOperands, WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
+pub struct SubW;
+
+impl Instruction for SubW {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "SUBW"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        (x as i32).wrapping_sub(y as i32) as i64 as u64
+    }
+}
+
+/// RV64M MULW: 32-bit multiply, sign-extended to 64 bits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(MultiplyOperands, WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
+pub struct MulW;
+
+impl Instruction for MulW {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "MULW"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        (x as i32).wrapping_mul(y as i32) as i64 as u64
+    }
+}
 
 /// RV64M DIVW: 32-bit signed division, sign-extended to 64 bits.
 ///
 /// Division by zero returns `u64::MAX`. Overflow (`i32::MIN / -1`) returns `i32::MIN` sign-extended.
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
 pub struct DivW;
 
 impl Instruction for DivW {
@@ -64,24 +106,10 @@ impl Instruction for DivW {
     }
 }
 
-impl Flags for DivW {
-    #[inline]
-    fn circuit_flags(&self) -> CircuitFlagSet {
-        CircuitFlagSet::default()
-    }
-    #[inline]
-    fn instruction_flags(&self) -> InstructionFlagSet {
-        InstructionFlagSet::default()
-            .set(InstructionFlags::LeftOperandIsRs1Value)
-            .set(InstructionFlags::RightOperandIsRs2Value)
-    }
-}
-
 /// RV64M DIVUW: 32-bit unsigned division, sign-extended to 64 bits.
 /// Returns `u64::MAX` on division by zero.
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
 pub struct DivUW;
 
 impl Instruction for DivUW {
@@ -100,24 +128,10 @@ impl Instruction for DivUW {
     }
 }
 
-impl Flags for DivUW {
-    #[inline]
-    fn circuit_flags(&self) -> CircuitFlagSet {
-        CircuitFlagSet::default()
-    }
-    #[inline]
-    fn instruction_flags(&self) -> InstructionFlagSet {
-        InstructionFlagSet::default()
-            .set(InstructionFlags::LeftOperandIsRs1Value)
-            .set(InstructionFlags::RightOperandIsRs2Value)
-    }
-}
-
 /// RV64M REMW: 32-bit signed remainder, sign-extended to 64 bits.
 /// Returns `x` (truncated to 32 bits, sign-extended) on division by zero.
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
 pub struct RemW;
 
 impl Instruction for RemW {
@@ -138,24 +152,10 @@ impl Instruction for RemW {
     }
 }
 
-impl Flags for RemW {
-    #[inline]
-    fn circuit_flags(&self) -> CircuitFlagSet {
-        CircuitFlagSet::default()
-    }
-    #[inline]
-    fn instruction_flags(&self) -> InstructionFlagSet {
-        InstructionFlagSet::default()
-            .set(InstructionFlags::LeftOperandIsRs1Value)
-            .set(InstructionFlags::RightOperandIsRs2Value)
-    }
-}
-
 /// RV64M REMUW: 32-bit unsigned remainder, sign-extended to 64 bits.
 /// Returns `x` (truncated to 32 bits, sign-extended) on division by zero.
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
 pub struct RemUW;
 
 impl Instruction for RemUW {
@@ -171,19 +171,6 @@ impl Instruction for RemUW {
         } else {
             (ux % uy) as i32 as i64 as u64
         }
-    }
-}
-
-impl Flags for RemUW {
-    #[inline]
-    fn circuit_flags(&self) -> CircuitFlagSet {
-        CircuitFlagSet::default()
-    }
-    #[inline]
-    fn instruction_flags(&self) -> InstructionFlagSet {
-        InstructionFlagSet::default()
-            .set(InstructionFlags::LeftOperandIsRs1Value)
-            .set(InstructionFlags::RightOperandIsRs2Value)
     }
 }
 

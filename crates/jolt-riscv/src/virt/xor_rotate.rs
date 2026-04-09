@@ -1,85 +1,161 @@
 //! Virtual XOR-rotate instructions for SHA hash functions.
 
-define_instruction!(
-    /// Virtual XOR then rotate right by 32 bits.
-    VirtualXorRot32, "VIRTUAL_XORROT32",
-    |x, y| (x ^ y).rotate_right(32),
-    circuit: [WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-);
+use jolt_riscv_derive::Flags;
+use serde::{Deserialize, Serialize};
 
-define_instruction!(
-    /// Virtual XOR then rotate right by 24 bits.
-    VirtualXorRot24, "VIRTUAL_XORROT24",
-    |x, y| (x ^ y).rotate_right(24),
-    circuit: [WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-);
+use crate::Instruction;
 
-define_instruction!(
-    /// Virtual XOR then rotate right by 16 bits.
-    VirtualXorRot16, "VIRTUAL_XORROT16",
-    |x, y| (x ^ y).rotate_right(16),
-    circuit: [WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-);
+/// Virtual XOR then rotate right by 32 bits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
+pub struct VirtualXorRot32;
 
-define_instruction!(
-    /// Virtual XOR then rotate right by 63 bits.
-    VirtualXorRot63, "VIRTUAL_XORROT63",
-    |x, y| (x ^ y).rotate_right(63),
-    circuit: [WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-);
+impl Instruction for VirtualXorRot32 {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "VIRTUAL_XORROT32"
+    }
 
-define_instruction!(
-    /// Virtual XOR then rotate right word (32-bit) by 16 bits.
-    VirtualXorRotW16, "VIRTUAL_XORROTW16",
-    |x, y| {
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        (x ^ y).rotate_right(32)
+    }
+}
+
+/// Virtual XOR then rotate right by 24 bits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
+pub struct VirtualXorRot24;
+
+impl Instruction for VirtualXorRot24 {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "VIRTUAL_XORROT24"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        (x ^ y).rotate_right(24)
+    }
+}
+
+/// Virtual XOR then rotate right by 16 bits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
+pub struct VirtualXorRot16;
+
+impl Instruction for VirtualXorRot16 {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "VIRTUAL_XORROT16"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        (x ^ y).rotate_right(16)
+    }
+}
+
+/// Virtual XOR then rotate right by 63 bits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
+pub struct VirtualXorRot63;
+
+impl Instruction for VirtualXorRot63 {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "VIRTUAL_XORROT63"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        (x ^ y).rotate_right(63)
+    }
+}
+
+/// Virtual XOR then rotate right word (32-bit) by 16 bits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
+pub struct VirtualXorRotW16;
+
+impl Instruction for VirtualXorRotW16 {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "VIRTUAL_XORROTW16"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
         let val = (x as u32) ^ (y as u32);
         val.rotate_right(16) as u64
-    },
-    circuit: [WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-);
+    }
+}
 
-define_instruction!(
-    /// Virtual XOR then rotate right word by 12 bits.
-    VirtualXorRotW12, "VIRTUAL_XORROTW12",
-    |x, y| {
+/// Virtual XOR then rotate right word by 12 bits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
+pub struct VirtualXorRotW12;
+
+impl Instruction for VirtualXorRotW12 {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "VIRTUAL_XORROTW12"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
         let val = (x as u32) ^ (y as u32);
         val.rotate_right(12) as u64
-    },
-    circuit: [WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-);
+    }
+}
 
-define_instruction!(
-    /// Virtual XOR then rotate right word by 8 bits.
-    VirtualXorRotW8, "VIRTUAL_XORROTW8",
-    |x, y| {
+/// Virtual XOR then rotate right word by 8 bits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
+pub struct VirtualXorRotW8;
+
+impl Instruction for VirtualXorRotW8 {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "VIRTUAL_XORROTW8"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
         let val = (x as u32) ^ (y as u32);
         val.rotate_right(8) as u64
-    },
-    circuit: [WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-);
+    }
+}
 
-define_instruction!(
-    /// Virtual XOR then rotate right word by 7 bits.
-    VirtualXorRotW7, "VIRTUAL_XORROTW7",
-    |x, y| {
+/// Virtual XOR then rotate right word by 7 bits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
+pub struct VirtualXorRotW7;
+
+impl Instruction for VirtualXorRotW7 {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "VIRTUAL_XORROTW7"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
         let val = (x as u32) ^ (y as u32);
         val.rotate_right(7) as u64
-    },
-    circuit: [WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-);
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Instruction;
 
     #[test]
     fn xor_rot32() {

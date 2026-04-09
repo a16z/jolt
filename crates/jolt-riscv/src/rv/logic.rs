@@ -1,65 +1,139 @@
 //! RV64I bitwise logic instructions.
 
-define_instruction!(
-    /// RV64I AND: bitwise AND of two registers.
-    And, "AND",
-    |x, y| x & y,
-    circuit: [WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-);
+use jolt_riscv_derive::Flags;
+use serde::{Deserialize, Serialize};
 
-define_instruction!(
-    /// RV64I ANDI: bitwise AND with sign-extended immediate.
-    AndI, "ANDI",
-    |x, y| x & y,
-    circuit: [WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-);
+use crate::Instruction;
 
-define_instruction!(
-    /// RV64I OR: bitwise OR of two registers.
-    Or, "OR",
-    |x, y| x | y,
-    circuit: [WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-);
+/// RV64I AND: bitwise AND of two registers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
+pub struct And;
 
-define_instruction!(
-    /// RV64I ORI: bitwise OR with sign-extended immediate.
-    OrI, "ORI",
-    |x, y| x | y,
-    circuit: [WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-);
+impl Instruction for And {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "AND"
+    }
 
-define_instruction!(
-    /// RV64I XOR: bitwise exclusive OR of two registers.
-    Xor, "XOR",
-    |x, y| x ^ y,
-    circuit: [WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-);
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        x & y
+    }
+}
 
-define_instruction!(
-    /// RV64I XORI: bitwise exclusive OR with sign-extended immediate.
-    XorI, "XORI",
-    |x, y| x ^ y,
-    circuit: [WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-);
+/// RV64I ANDI: bitwise AND with sign-extended immediate.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsImm)]
+pub struct AndI;
 
-define_instruction!(
-    /// Zbb ANDN: bitwise AND-NOT. `rd = rs1 & ~rs2`.
-    Andn, "ANDN",
-    |x, y| x & !y,
-    circuit: [WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-);
+impl Instruction for AndI {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "ANDI"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        x & y
+    }
+}
+
+/// RV64I OR: bitwise OR of two registers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
+pub struct Or;
+
+impl Instruction for Or {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "OR"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        x | y
+    }
+}
+
+/// RV64I ORI: bitwise OR with sign-extended immediate.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsImm)]
+pub struct OrI;
+
+impl Instruction for OrI {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "ORI"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        x | y
+    }
+}
+
+/// RV64I XOR: bitwise exclusive OR of two registers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
+pub struct Xor;
+
+impl Instruction for Xor {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "XOR"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        x ^ y
+    }
+}
+
+/// RV64I XORI: bitwise exclusive OR with sign-extended immediate.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsImm)]
+pub struct XorI;
+
+impl Instruction for XorI {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "XORI"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        x ^ y
+    }
+}
+
+/// Zbb ANDN: bitwise AND-NOT. `rd = rs1 & ~rs2`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
+pub struct Andn;
+
+impl Instruction for Andn {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "ANDN"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        x & !y
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Instruction;
 
     #[test]
     fn and_basic() {

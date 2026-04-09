@@ -1,5 +1,10 @@
 //! Virtual division-related instructions.
 
+use jolt_riscv_derive::Flags;
+use serde::{Deserialize, Serialize};
+
+use crate::Instruction;
+
 /// Returns 1 if this is the signed division overflow case (MIN / -1), else returns the divisor.
 #[inline]
 fn change_divisor_64(dividend: u64, divisor: u64) -> u64 {
@@ -20,28 +25,47 @@ fn change_divisor_32(dividend: u64, divisor: u64) -> u64 {
     }
 }
 
-define_instruction!(
-    /// Virtual CHANGE_DIVISOR: transforms divisor for signed division overflow.
-    /// Returns the divisor unchanged, unless dividend == MIN && divisor == -1,
-    /// in which case returns 1 to avoid overflow.
-    VirtualChangeDivisor, "VIRTUAL_CHANGE_DIVISOR",
-    |x, y| change_divisor_64(x, y),
-    circuit: [WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-);
+/// Virtual CHANGE_DIVISOR: transforms divisor for signed division overflow.
+/// Returns the divisor unchanged, unless dividend == MIN && divisor == -1,
+/// in which case returns 1 to avoid overflow.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
+pub struct VirtualChangeDivisor;
 
-define_instruction!(
-    /// Virtual CHANGE_DIVISOR_W: 32-bit version of change divisor.
-    VirtualChangeDivisorW, "VIRTUAL_CHANGE_DIVISOR_W",
-    |x, y| change_divisor_32(x, y),
-    circuit: [WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-);
+impl Instruction for VirtualChangeDivisor {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "VIRTUAL_CHANGE_DIVISOR"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        change_divisor_64(x, y)
+    }
+}
+
+/// Virtual CHANGE_DIVISOR_W: 32-bit version of change divisor.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
+pub struct VirtualChangeDivisorW;
+
+impl Instruction for VirtualChangeDivisorW {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "VIRTUAL_CHANGE_DIVISOR_W"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        change_divisor_32(x, y)
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Instruction;
 
     #[test]
     fn change_divisor_normal() {

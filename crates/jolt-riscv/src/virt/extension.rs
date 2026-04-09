@@ -1,25 +1,49 @@
 //! Virtual sign/zero extension instructions.
 
-define_instruction!(
-    /// Virtual SIGN_EXTEND_WORD: sign-extends a 32-bit value to 64 bits.
-    VirtualSignExtendWord, "VIRTUAL_SIGN_EXTEND_WORD",
-    |x, _y| (x as i32) as i64 as u64,
-    circuit: [AddOperands, WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value],
-);
+use jolt_riscv_derive::Flags;
+use serde::{Deserialize, Serialize};
 
-define_instruction!(
-    /// Virtual ZERO_EXTEND_WORD: zero-extends a 32-bit value to 64 bits.
-    VirtualZeroExtendWord, "VIRTUAL_ZERO_EXTEND_WORD",
-    |x, _y| x & 0xFFFF_FFFF,
-    circuit: [AddOperands, WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value],
-);
+use crate::Instruction;
+
+/// Virtual SIGN_EXTEND_WORD: sign-extends a 32-bit value to 64 bits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(AddOperands, WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value)]
+pub struct VirtualSignExtendWord;
+
+impl Instruction for VirtualSignExtendWord {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "VIRTUAL_SIGN_EXTEND_WORD"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, _y: u64) -> u64 {
+        (x as i32) as i64 as u64
+    }
+}
+
+/// Virtual ZERO_EXTEND_WORD: zero-extends a 32-bit value to 64 bits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(AddOperands, WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value)]
+pub struct VirtualZeroExtendWord;
+
+impl Instruction for VirtualZeroExtendWord {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "VIRTUAL_ZERO_EXTEND_WORD"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, _y: u64) -> u64 {
+        x & 0xFFFF_FFFF
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Instruction;
 
     #[test]
     fn sign_extend_negative() {

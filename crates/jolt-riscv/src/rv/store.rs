@@ -3,38 +3,82 @@
 //! In Jolt's execution model, `x` is the value to store and the instruction
 //! truncates it to the target memory width.
 
-define_instruction!(
-    /// RV64I SB: store byte (lowest 8 bits).
-    Sb, "SB",
-    |x, _y| x & 0xFF,
-    circuit: [Store],
-);
+use jolt_riscv_derive::Flags;
+use serde::{Deserialize, Serialize};
 
-define_instruction!(
-    /// RV64I SH: store halfword (lowest 16 bits).
-    Sh, "SH",
-    |x, _y| x & 0xFFFF,
-    circuit: [Store],
-);
+use crate::Instruction;
 
-define_instruction!(
-    /// RV64I SW: store word (lowest 32 bits).
-    Sw, "SW",
-    |x, _y| x & 0xFFFF_FFFF,
-    circuit: [Store],
-);
+/// RV64I SB: store byte (lowest 8 bits).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(Store)]
+pub struct Sb;
 
-define_instruction!(
-    /// RV64I SD: store doubleword (full 64 bits). Identity operation.
-    Sd, "SD",
-    |x, _y| x,
-    circuit: [Store],
-);
+impl Instruction for Sb {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "SB"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, _y: u64) -> u64 {
+        x & 0xFF
+    }
+}
+
+/// RV64I SH: store halfword (lowest 16 bits).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(Store)]
+pub struct Sh;
+
+impl Instruction for Sh {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "SH"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, _y: u64) -> u64 {
+        x & 0xFFFF
+    }
+}
+
+/// RV64I SW: store word (lowest 32 bits).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(Store)]
+pub struct Sw;
+
+impl Instruction for Sw {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "SW"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, _y: u64) -> u64 {
+        x & 0xFFFF_FFFF
+    }
+}
+
+/// RV64I SD: store doubleword (full 64 bits). Identity operation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(Store)]
+pub struct Sd;
+
+impl Instruction for Sd {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "SD"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, _y: u64) -> u64 {
+        x
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Instruction;
 
     #[test]
     fn sb_masks_to_byte() {

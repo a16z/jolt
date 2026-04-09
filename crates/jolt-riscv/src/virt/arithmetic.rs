@@ -1,49 +1,103 @@
 //! Virtual arithmetic instructions used internally by the Jolt VM.
 
-define_instruction!(
-    /// Virtual POW2: computes `2^rs1` using the low 6 bits of `rs1`.
-    Pow2, "POW2",
-    |x, _y| 1u64 << (x & 63),
-    circuit: [AddOperands, WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-);
+use jolt_riscv_derive::Flags;
+use serde::{Deserialize, Serialize};
 
-define_instruction!(
-    /// Virtual POW2I: computes `2^imm` with immediate exponent.
-    Pow2I, "POW2I",
-    |_x, y| 1u64 << (y & 63),
-    circuit: [AddOperands, WriteLookupOutputToRD],
-    instruction: [RightOperandIsImm],
-);
+use crate::Instruction;
 
-define_instruction!(
-    /// Virtual POW2W: computes `2^(rs1 mod 32)` for 32-bit mode.
-    Pow2W, "POW2W",
-    |x, _y| 1u64 << (x & 31),
-    circuit: [AddOperands, WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value],
-);
+/// Virtual POW2: computes `2^rs1` using the low 6 bits of `rs1`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(AddOperands, WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsImm)]
+pub struct Pow2;
 
-define_instruction!(
-    /// Virtual POW2IW: computes `2^(imm mod 32)` for 32-bit immediate mode.
-    Pow2IW, "POW2IW",
-    |_x, y| 1u64 << (y & 31),
-    circuit: [AddOperands, WriteLookupOutputToRD],
-    instruction: [RightOperandIsImm],
-);
+impl Instruction for Pow2 {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "POW2"
+    }
 
-define_instruction!(
-    /// Virtual MULI: multiply by immediate. `rd = rs1 * imm`.
-    MulI, "MULI",
-    |x, y| x.wrapping_mul(y),
-    circuit: [MultiplyOperands, WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-);
+    #[inline]
+    fn execute(&self, x: u64, _y: u64) -> u64 {
+        1u64 << (x & 63)
+    }
+}
+
+/// Virtual POW2I: computes `2^imm` with immediate exponent.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(AddOperands, WriteLookupOutputToRD)]
+#[instruction(RightOperandIsImm)]
+pub struct Pow2I;
+
+impl Instruction for Pow2I {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "POW2I"
+    }
+
+    #[inline]
+    fn execute(&self, _x: u64, y: u64) -> u64 {
+        1u64 << (y & 63)
+    }
+}
+
+/// Virtual POW2W: computes `2^(rs1 mod 32)` for 32-bit mode.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(AddOperands, WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value)]
+pub struct Pow2W;
+
+impl Instruction for Pow2W {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "POW2W"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, _y: u64) -> u64 {
+        1u64 << (x & 31)
+    }
+}
+
+/// Virtual POW2IW: computes `2^(imm mod 32)` for 32-bit immediate mode.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(AddOperands, WriteLookupOutputToRD)]
+#[instruction(RightOperandIsImm)]
+pub struct Pow2IW;
+
+impl Instruction for Pow2IW {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "POW2IW"
+    }
+
+    #[inline]
+    fn execute(&self, _x: u64, y: u64) -> u64 {
+        1u64 << (y & 31)
+    }
+}
+
+/// Virtual MULI: multiply by immediate. `rd = rs1 * imm`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(MultiplyOperands, WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsImm)]
+pub struct MulI;
+
+impl Instruction for MulI {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "MULI"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        x.wrapping_mul(y)
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Instruction;
 
     #[test]
     fn pow2_basic() {

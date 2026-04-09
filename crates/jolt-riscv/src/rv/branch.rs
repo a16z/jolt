@@ -3,52 +3,116 @@
 //! Each returns 1 if the branch condition is true, 0 otherwise.
 //! The actual PC update is handled by the VM, not the instruction itself.
 
-define_instruction!(
-    /// RV64I BEQ: branch if equal. Returns 1 when `rs1 == rs2`.
-    Beq, "BEQ",
-    |x, y| u64::from(x == y),
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value, Branch],
-);
+use jolt_riscv_derive::Flags;
+use serde::{Deserialize, Serialize};
 
-define_instruction!(
-    /// RV64I BNE: branch if not equal. Returns 1 when `rs1 != rs2`.
-    Bne, "BNE",
-    |x, y| u64::from(x != y),
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value, Branch],
-);
+use crate::Instruction;
 
-define_instruction!(
-    /// RV64I BLT: branch if less than (signed).
-    Blt, "BLT",
-    |x, y| u64::from((x as i64) < (y as i64)),
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value, Branch],
-);
+/// RV64I BEQ: branch if equal. Returns 1 when `rs1 == rs2`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value, Branch)]
+pub struct Beq;
 
-define_instruction!(
-    /// RV64I BGE: branch if greater than or equal (signed).
-    Bge, "BGE",
-    |x, y| u64::from((x as i64) >= (y as i64)),
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value, Branch],
-);
+impl Instruction for Beq {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "BEQ"
+    }
 
-define_instruction!(
-    /// RV64I BLTU: branch if less than (unsigned).
-    BltU, "BLTU",
-    |x, y| u64::from(x < y),
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value, Branch],
-);
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        u64::from(x == y)
+    }
+}
 
-define_instruction!(
-    /// RV64I BGEU: branch if greater than or equal (unsigned).
-    BgeU, "BGEU",
-    |x, y| u64::from(x >= y),
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value, Branch],
-);
+/// RV64I BNE: branch if not equal. Returns 1 when `rs1 != rs2`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value, Branch)]
+pub struct Bne;
+
+impl Instruction for Bne {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "BNE"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        u64::from(x != y)
+    }
+}
+
+/// RV64I BLT: branch if less than (signed).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value, Branch)]
+pub struct Blt;
+
+impl Instruction for Blt {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "BLT"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        u64::from((x as i64) < (y as i64))
+    }
+}
+
+/// RV64I BGE: branch if greater than or equal (signed).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value, Branch)]
+pub struct Bge;
+
+impl Instruction for Bge {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "BGE"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        u64::from((x as i64) >= (y as i64))
+    }
+}
+
+/// RV64I BLTU: branch if less than (unsigned).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value, Branch)]
+pub struct BltU;
+
+impl Instruction for BltU {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "BLTU"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        u64::from(x < y)
+    }
+}
+
+/// RV64I BGEU: branch if greater than or equal (unsigned).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value, Branch)]
+pub struct BgeU;
+
+impl Instruction for BgeU {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "BGEU"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        u64::from(x >= y)
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Instruction;
 
     #[test]
     fn beq_bne() {

@@ -3,6 +3,11 @@
 //! The RV64 shift instructions (SRL, SRA, etc.) are decomposed into
 //! virtual sequences that use specialized lookup tables for the sumcheck prover.
 
+use jolt_riscv_derive::Flags;
+use serde::{Deserialize, Serialize};
+
+use crate::Instruction;
+
 #[inline]
 fn shift_from_bitmask(bitmask: u64) -> u32 {
     bitmask.trailing_zeros()
@@ -25,74 +30,153 @@ fn shift_right_bitmask(shift_amount: u64) -> u64 {
     }
 }
 
-define_instruction!(
-    /// Virtual SRL: logical right shift using a bitmask-encoded shift amount.
-    VirtualSrl, "VIRTUAL_SRL",
-    |x, y| x.wrapping_shr(shift_from_bitmask(y)),
-    circuit: [WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-);
+/// Virtual SRL: logical right shift using a bitmask-encoded shift amount.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
+pub struct VirtualSrl;
 
-define_instruction!(
-    /// Virtual SRLI: logical right shift using a bitmask immediate.
-    VirtualSrli, "VIRTUAL_SRLI",
-    |x, y| x.wrapping_shr(shift_from_bitmask(y)),
-    circuit: [WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-);
+impl Instruction for VirtualSrl {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "VIRTUAL_SRL"
+    }
 
-define_instruction!(
-    /// Virtual SRA: arithmetic right shift using a bitmask-encoded shift amount.
-    VirtualSra, "VIRTUAL_SRA",
-    |x, y| ((x as i64).wrapping_shr(shift_from_bitmask(y))) as u64,
-    circuit: [WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-);
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        x.wrapping_shr(shift_from_bitmask(y))
+    }
+}
 
-define_instruction!(
-    /// Virtual SRAI: arithmetic right shift using a bitmask immediate.
-    VirtualSrai, "VIRTUAL_SRAI",
-    |x, y| ((x as i64).wrapping_shr(shift_from_bitmask(y))) as u64,
-    circuit: [WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-);
+/// Virtual SRLI: logical right shift using a bitmask immediate.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsImm)]
+pub struct VirtualSrli;
 
-define_instruction!(
-    /// Virtual SHIFT_RIGHT_BITMASK: bitmask for the shift amount stored in `rs1`.
-    VirtualShiftRightBitmask, "VIRTUAL_SHIFT_RIGHT_BITMASK",
-    |x, _y| shift_right_bitmask(x),
-    circuit: [AddOperands, WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-);
+impl Instruction for VirtualSrli {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "VIRTUAL_SRLI"
+    }
 
-define_instruction!(
-    /// Virtual SHIFT_RIGHT_BITMASKI: bitmask for the shift amount stored in the immediate.
-    VirtualShiftRightBitmaski, "VIRTUAL_SHIFT_RIGHT_BITMASKI",
-    |_x, y| shift_right_bitmask(y),
-    circuit: [AddOperands, WriteLookupOutputToRD],
-    instruction: [RightOperandIsImm],
-);
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        x.wrapping_shr(shift_from_bitmask(y))
+    }
+}
 
-define_instruction!(
-    /// Virtual ROTRI: rotate right using a bitmask immediate.
-    VirtualRotri, "VIRTUAL_ROTRI",
-    |x, y| x.rotate_right(shift_from_bitmask(y)),
-    circuit: [WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-);
+/// Virtual SRA: arithmetic right shift using a bitmask-encoded shift amount.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
+pub struct VirtualSra;
 
-define_instruction!(
-    /// Virtual ROTRIW: 32-bit rotate right using a bitmask immediate, zero-extended to 64 bits.
-    VirtualRotriw, "VIRTUAL_ROTRIW",
-    |x, y| (x as u32).rotate_right(word_shift_from_bitmask(y)) as u64,
-    circuit: [WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-);
+impl Instruction for VirtualSra {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "VIRTUAL_SRA"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        ((x as i64).wrapping_shr(shift_from_bitmask(y))) as u64
+    }
+}
+
+/// Virtual SRAI: arithmetic right shift using a bitmask immediate.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsImm)]
+pub struct VirtualSrai;
+
+impl Instruction for VirtualSrai {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "VIRTUAL_SRAI"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        ((x as i64).wrapping_shr(shift_from_bitmask(y))) as u64
+    }
+}
+
+/// Virtual SHIFT_RIGHT_BITMASK: bitmask for the shift amount stored in `rs1`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(AddOperands, WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsImm)]
+pub struct VirtualShiftRightBitmask;
+
+impl Instruction for VirtualShiftRightBitmask {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "VIRTUAL_SHIFT_RIGHT_BITMASK"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, _y: u64) -> u64 {
+        shift_right_bitmask(x)
+    }
+}
+
+/// Virtual SHIFT_RIGHT_BITMASKI: bitmask for the shift amount stored in the immediate.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(AddOperands, WriteLookupOutputToRD)]
+#[instruction(RightOperandIsImm)]
+pub struct VirtualShiftRightBitmaski;
+
+impl Instruction for VirtualShiftRightBitmaski {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "VIRTUAL_SHIFT_RIGHT_BITMASKI"
+    }
+
+    #[inline]
+    fn execute(&self, _x: u64, y: u64) -> u64 {
+        shift_right_bitmask(y)
+    }
+}
+
+/// Virtual ROTRI: rotate right using a bitmask immediate.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsImm)]
+pub struct VirtualRotri;
+
+impl Instruction for VirtualRotri {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "VIRTUAL_ROTRI"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        x.rotate_right(shift_from_bitmask(y))
+    }
+}
+
+/// Virtual ROTRIW: 32-bit rotate right using a bitmask immediate, zero-extended to 64 bits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsImm)]
+pub struct VirtualRotriw;
+
+impl Instruction for VirtualRotriw {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "VIRTUAL_ROTRIW"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        (x as u32).rotate_right(word_shift_from_bitmask(y)) as u64
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Instruction;
 
     #[test]
     fn virtsrl_basic() {

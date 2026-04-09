@@ -1,6 +1,3 @@
-#[macro_use]
-mod macros;
-
 pub mod flags;
 pub mod instruction_set;
 pub mod rv;

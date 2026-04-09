@@ -1,62 +1,122 @@
 //! RV64I/M arithmetic instructions: ADD, SUB, LUI, AUIPC, and
 //! the M-extension multiply/divide family.
 
-use crate::{
-    CircuitFlagSet, CircuitFlags, Flags, Instruction, InstructionFlagSet, InstructionFlags,
-};
+use jolt_riscv_derive::Flags;
+use serde::{Deserialize, Serialize};
 
-define_instruction!(
-    /// RV64I ADD: `rd = rs1 + rs2` (wrapping).
-    Add, "ADD",
-    |x, y| x.wrapping_add(y),
-    circuit: [AddOperands, WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-);
+use crate::Instruction;
 
-define_instruction!(
-    /// RV64I ADDI: `rd = rs1 + imm` (wrapping). Immediate already decoded.
-    Addi, "ADDI",
-    |x, y| x.wrapping_add(y),
-    circuit: [AddOperands, WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
-);
+/// RV64I ADD: `rd = rs1 + rs2` (wrapping).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(AddOperands, WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
+pub struct Add;
 
-define_instruction!(
-    /// RV64I SUB: `rd = rs1 - rs2` (wrapping).
-    Sub, "SUB",
-    |x, y| x.wrapping_sub(y),
-    circuit: [SubtractOperands, WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-);
+impl Instruction for Add {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "ADD"
+    }
 
-define_instruction!(
-    /// RV64I LUI: load upper immediate. Result is the immediate value itself.
-    Lui, "LUI",
-    |_x, y| y,
-    circuit: [AddOperands, WriteLookupOutputToRD],
-    instruction: [RightOperandIsImm],
-);
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        x.wrapping_add(y)
+    }
+}
 
-define_instruction!(
-    /// RV64I AUIPC: add upper immediate to PC. `rd = PC + imm`.
-    Auipc, "AUIPC",
-    |x, y| x.wrapping_add(y),
-    circuit: [AddOperands, WriteLookupOutputToRD],
-    instruction: [LeftOperandIsPC, RightOperandIsImm],
-);
+/// RV64I ADDI: `rd = rs1 + imm` (wrapping). Immediate already decoded.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(AddOperands, WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsImm)]
+pub struct Addi;
 
-define_instruction!(
-    /// RV64M MUL: signed multiply, lower 64 bits of the 128-bit product.
-    Mul, "MUL",
-    |x, y| x.wrapping_mul(y),
-    circuit: [MultiplyOperands, WriteLookupOutputToRD],
-    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
-);
+impl Instruction for Addi {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "ADDI"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        x.wrapping_add(y)
+    }
+}
+
+/// RV64I SUB: `rd = rs1 - rs2` (wrapping).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(SubtractOperands, WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
+pub struct Sub;
+
+impl Instruction for Sub {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "SUB"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        x.wrapping_sub(y)
+    }
+}
+
+/// RV64I LUI: load upper immediate. Result is the immediate value itself.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(AddOperands, WriteLookupOutputToRD)]
+#[instruction(RightOperandIsImm)]
+pub struct Lui;
+
+impl Instruction for Lui {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "LUI"
+    }
+
+    #[inline]
+    fn execute(&self, _x: u64, y: u64) -> u64 {
+        y
+    }
+}
+
+/// RV64I AUIPC: add upper immediate to PC. `rd = PC + imm`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(AddOperands, WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsPC, RightOperandIsImm)]
+pub struct Auipc;
+
+impl Instruction for Auipc {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "AUIPC"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        x.wrapping_add(y)
+    }
+}
+
+/// RV64M MUL: signed multiply, lower 64 bits of the 128-bit product.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(MultiplyOperands, WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
+pub struct Mul;
+
+impl Instruction for Mul {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "MUL"
+    }
+
+    #[inline]
+    fn execute(&self, x: u64, y: u64) -> u64 {
+        x.wrapping_mul(y)
+    }
+}
 
 /// RV64M MULH: signed×signed multiply, upper 64 bits.
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
 pub struct MulH;
 
 impl Instruction for MulH {
@@ -70,23 +130,9 @@ impl Instruction for MulH {
     }
 }
 
-impl Flags for MulH {
-    #[inline]
-    fn circuit_flags(&self) -> CircuitFlagSet {
-        CircuitFlagSet::default()
-    }
-    #[inline]
-    fn instruction_flags(&self) -> InstructionFlagSet {
-        InstructionFlagSet::default()
-            .set(InstructionFlags::LeftOperandIsRs1Value)
-            .set(InstructionFlags::RightOperandIsRs2Value)
-    }
-}
-
 /// RV64M MULHSU: signed×unsigned multiply, upper 64 bits.
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
 pub struct MulHSU;
 
 impl Instruction for MulHSU {
@@ -100,23 +146,10 @@ impl Instruction for MulHSU {
     }
 }
 
-impl Flags for MulHSU {
-    #[inline]
-    fn circuit_flags(&self) -> CircuitFlagSet {
-        CircuitFlagSet::default()
-    }
-    #[inline]
-    fn instruction_flags(&self) -> InstructionFlagSet {
-        InstructionFlagSet::default()
-            .set(InstructionFlags::LeftOperandIsRs1Value)
-            .set(InstructionFlags::RightOperandIsRs2Value)
-    }
-}
-
 /// RV64M MULHU: unsigned×unsigned multiply, upper 64 bits.
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[circuit(MultiplyOperands, WriteLookupOutputToRD)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
 pub struct MulHU;
 
 impl Instruction for MulHU {
@@ -130,29 +163,13 @@ impl Instruction for MulHU {
     }
 }
 
-impl Flags for MulHU {
-    #[inline]
-    fn circuit_flags(&self) -> CircuitFlagSet {
-        CircuitFlagSet::default()
-            .set(CircuitFlags::MultiplyOperands)
-            .set(CircuitFlags::WriteLookupOutputToRD)
-    }
-    #[inline]
-    fn instruction_flags(&self) -> InstructionFlagSet {
-        InstructionFlagSet::default()
-            .set(InstructionFlags::LeftOperandIsRs1Value)
-            .set(InstructionFlags::RightOperandIsRs2Value)
-    }
-}
-
 /// RV64M DIV: signed division with RISC-V overflow handling.
 ///
 /// Special cases per the RISC-V spec:
 /// - Division by zero returns `u64::MAX` (all bits set, i.e. -1 unsigned).
 /// - `i64::MIN / -1` returns `i64::MIN` (overflow wraps).
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
 pub struct Div;
 
 impl Instruction for Div {
@@ -173,23 +190,9 @@ impl Instruction for Div {
     }
 }
 
-impl Flags for Div {
-    #[inline]
-    fn circuit_flags(&self) -> CircuitFlagSet {
-        CircuitFlagSet::default()
-    }
-    #[inline]
-    fn instruction_flags(&self) -> InstructionFlagSet {
-        InstructionFlagSet::default()
-            .set(InstructionFlags::LeftOperandIsRs1Value)
-            .set(InstructionFlags::RightOperandIsRs2Value)
-    }
-}
-
 /// RV64M DIVU: unsigned division. Returns `u64::MAX` on division by zero.
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
 pub struct DivU;
 
 impl Instruction for DivU {
@@ -206,24 +209,10 @@ impl Instruction for DivU {
     }
 }
 
-impl Flags for DivU {
-    #[inline]
-    fn circuit_flags(&self) -> CircuitFlagSet {
-        CircuitFlagSet::default()
-    }
-    #[inline]
-    fn instruction_flags(&self) -> InstructionFlagSet {
-        InstructionFlagSet::default()
-            .set(InstructionFlags::LeftOperandIsRs1Value)
-            .set(InstructionFlags::RightOperandIsRs2Value)
-    }
-}
-
 /// RV64M REM: signed remainder. Returns `x` on division by zero,
 /// returns 0 when `x == i64::MIN && y == -1`.
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
 pub struct Rem;
 
 impl Instruction for Rem {
@@ -244,23 +233,9 @@ impl Instruction for Rem {
     }
 }
 
-impl Flags for Rem {
-    #[inline]
-    fn circuit_flags(&self) -> CircuitFlagSet {
-        CircuitFlagSet::default()
-    }
-    #[inline]
-    fn instruction_flags(&self) -> InstructionFlagSet {
-        InstructionFlagSet::default()
-            .set(InstructionFlags::LeftOperandIsRs1Value)
-            .set(InstructionFlags::RightOperandIsRs2Value)
-    }
-}
-
 /// RV64M REMU: unsigned remainder. Returns `x` on division by zero.
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
+#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
 pub struct RemU;
 
 impl Instruction for RemU {
@@ -274,19 +249,6 @@ impl Instruction for RemU {
         } else {
             x % y
         }
-    }
-}
-
-impl Flags for RemU {
-    #[inline]
-    fn circuit_flags(&self) -> CircuitFlagSet {
-        CircuitFlagSet::default()
-    }
-    #[inline]
-    fn instruction_flags(&self) -> InstructionFlagSet {
-        InstructionFlagSet::default()
-            .set(InstructionFlags::LeftOperandIsRs1Value)
-            .set(InstructionFlags::RightOperandIsRs2Value)
     }
 }
 
