@@ -10,7 +10,7 @@ ark-bn254.workspace = true
 ark-serialize.workspace = true
 ark-ff.workspace = true
 serde_json = "1.0"
-clap = { version = "4.0", features = ["derive"] }
+clap = { version = "4.6", features = ["derive"] }
 
 rand_core.workspace = true
 jolt-core = { path = "../jolt-core" }
