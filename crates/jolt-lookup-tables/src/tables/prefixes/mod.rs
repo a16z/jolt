@@ -130,7 +130,7 @@ impl<F> Index<Prefixes> for &[PrefixEval<F>] {
 }
 
 /// All prefix types used by Jolt's lookup tables.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, strum::EnumCount)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, strum::EnumCount, strum::VariantArray)]
 #[repr(u8)]
 pub enum Prefixes {
     LowerWord,
@@ -185,54 +185,7 @@ pub enum Prefixes {
 pub const NUM_PREFIXES: usize = <Prefixes as strum::EnumCount>::COUNT;
 
 /// All prefix variants in discriminant order.
-pub const ALL_PREFIXES: [Prefixes; NUM_PREFIXES] = [
-    Prefixes::LowerWord,
-    Prefixes::LowerHalfWord,
-    Prefixes::UpperWord,
-    Prefixes::Eq,
-    Prefixes::And,
-    Prefixes::Andn,
-    Prefixes::Or,
-    Prefixes::Xor,
-    Prefixes::LessThan,
-    Prefixes::LeftOperandIsZero,
-    Prefixes::RightOperandIsZero,
-    Prefixes::LeftOperandMsb,
-    Prefixes::RightOperandMsb,
-    Prefixes::DivByZero,
-    Prefixes::PositiveRemainderEqualsDivisor,
-    Prefixes::PositiveRemainderLessThanDivisor,
-    Prefixes::NegativeDivisorZeroRemainder,
-    Prefixes::NegativeDivisorEqualsRemainder,
-    Prefixes::NegativeDivisorGreaterThanRemainder,
-    Prefixes::Lsb,
-    Prefixes::Pow2,
-    Prefixes::Pow2W,
-    Prefixes::Rev8W,
-    Prefixes::RightShift,
-    Prefixes::SignExtension,
-    Prefixes::LeftShift,
-    Prefixes::LeftShiftHelper,
-    Prefixes::TwoLsb,
-    Prefixes::SignExtensionUpperHalf,
-    Prefixes::ChangeDivisor,
-    Prefixes::ChangeDivisorW,
-    Prefixes::RightOperand,
-    Prefixes::RightOperandW,
-    Prefixes::SignExtensionRightOperand,
-    Prefixes::RightShiftW,
-    Prefixes::LeftShiftWHelper,
-    Prefixes::LeftShiftW,
-    Prefixes::OverflowBitsZero,
-    Prefixes::XorRot16,
-    Prefixes::XorRot24,
-    Prefixes::XorRot32,
-    Prefixes::XorRot63,
-    Prefixes::XorRotW7,
-    Prefixes::XorRotW8,
-    Prefixes::XorRotW12,
-    Prefixes::XorRotW16,
-];
+pub const ALL_PREFIXES: &[Prefixes] = <Prefixes as strum::VariantArray>::VARIANTS;
 
 /// Dispatches a `SparseDensePrefix` method call to the concrete type for each `Prefixes` variant.
 macro_rules! dispatch_prefix {
