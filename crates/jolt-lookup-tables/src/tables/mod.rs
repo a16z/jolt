@@ -64,7 +64,7 @@ pub use suffixes::{SuffixEval, Suffixes};
 ///
 /// The enum is `#[repr(u8)]` for compact serialization and efficient
 /// discriminant extraction.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, strum::EnumCount)]
 #[repr(u8)]
 pub enum LookupTableKind {
     // Arithmetic
@@ -176,9 +176,6 @@ pub enum LookupTableKind {
 }
 
 impl LookupTableKind {
-    /// Total number of distinct lookup table types.
-    pub const COUNT: usize = 41;
-
     /// Returns the discriminant as a `usize`, suitable for array indexing.
     #[inline]
     pub fn index(self) -> usize {
@@ -615,8 +612,6 @@ impl LookupTableKind {
         }
     }
 }
-
-const _: () = assert!(LookupTableKind::VirtualXORROTW7 as usize + 1 == LookupTableKind::COUNT);
 
 /// Prefix/suffix decomposition for sub-linear MLE evaluation.
 ///

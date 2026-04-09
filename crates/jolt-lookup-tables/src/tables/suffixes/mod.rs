@@ -102,7 +102,7 @@ pub trait SparseDenseSuffix: 'static + Sync {
 pub type SuffixEval<F> = F;
 
 /// All suffix types used by Jolt's lookup tables.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, strum::EnumCount)]
 #[repr(u8)]
 pub enum Suffixes {
     One,
@@ -151,9 +151,7 @@ pub enum Suffixes {
 }
 
 /// Total number of suffix variants.
-pub const NUM_SUFFIXES: usize = 43;
-
-const _: () = assert!(Suffixes::XorRotW7 as usize + 1 == NUM_SUFFIXES);
+pub const NUM_SUFFIXES: usize = <Suffixes as strum::EnumCount>::COUNT;
 
 impl Suffixes {
     /// Returns `true` if this suffix's output is guaranteed to be in {0, 1}.

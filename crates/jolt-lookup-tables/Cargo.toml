@@ -16,6 +16,7 @@ workspace = true
 jolt-field = { path = "../jolt-field" }
 jolt-riscv = { path = "../jolt-riscv" }
 serde = { workspace = true, features = ["derive"] }
+strum = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
 rand = { workspace = true }

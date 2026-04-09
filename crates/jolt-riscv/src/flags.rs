@@ -9,11 +9,13 @@
 
 use std::ops::Index;
 
+use strum::EnumCount;
+
 /// Boolean flags used in Jolt's R1CS constraints (`opflags` in the Jolt paper).
 ///
 /// Note: the flags below deviate somewhat from those described in Appendix A.1
 /// of the Jolt paper.
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, EnumCount)]
 #[repr(u8)]
 pub enum CircuitFlags {
     /// First lookup operand is the sum of the two instruction operands.
@@ -47,14 +49,12 @@ pub enum CircuitFlags {
 }
 
 /// Number of circuit flags.
-pub const NUM_CIRCUIT_FLAGS: usize = 14;
-
-const _: () = assert!(CircuitFlags::IsLastInSequence as usize + 1 == NUM_CIRCUIT_FLAGS);
+pub const NUM_CIRCUIT_FLAGS: usize = CircuitFlags::COUNT;
 
 /// Boolean flags that are NOT part of Jolt's R1CS constraints.
 ///
 /// These control witness generation, operand routing, and auxiliary prover logic.
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, EnumCount)]
 #[repr(u8)]
 pub enum InstructionFlags {
     /// First instruction operand is the program counter.
@@ -74,9 +74,7 @@ pub enum InstructionFlags {
 }
 
 /// Number of instruction flags.
-pub const NUM_INSTRUCTION_FLAGS: usize = 7;
-
-const _: () = assert!(InstructionFlags::IsRdNotZero as usize + 1 == NUM_INSTRUCTION_FLAGS);
+pub const NUM_INSTRUCTION_FLAGS: usize = InstructionFlags::COUNT;
 
 /// Packed bitfield of [`CircuitFlags`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]

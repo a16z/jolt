@@ -130,7 +130,7 @@ impl<F> Index<Prefixes> for &[PrefixEval<F>] {
 }
 
 /// All prefix types used by Jolt's lookup tables.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, strum::EnumCount)]
 #[repr(u8)]
 pub enum Prefixes {
     LowerWord,
@@ -182,9 +182,7 @@ pub enum Prefixes {
 }
 
 /// Total number of prefix variants.
-pub const NUM_PREFIXES: usize = 46;
-
-const _: () = assert!(Prefixes::XorRotW16 as usize + 1 == NUM_PREFIXES);
+pub const NUM_PREFIXES: usize = <Prefixes as strum::EnumCount>::COUNT;
 
 /// All prefix variants in discriminant order.
 pub const ALL_PREFIXES: [Prefixes; NUM_PREFIXES] = [
