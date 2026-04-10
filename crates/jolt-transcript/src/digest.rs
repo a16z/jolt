@@ -163,3 +163,56 @@ impl<D: Digest<OutputSize = U32>, F: jolt_field::Field> Transcript for DigestTra
         self.test_state.expected_state_history = Some(other.test_state.state_history.clone());
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use blake2::Blake2b;
+    use sha3::Keccak256;
+
+    macro_rules! digest_transcript_tests {
+        ($mod_name:ident, $digest:ty) => {
+            mod $mod_name {
+                use super::*;
+
+                type TestTranscript = DigestTranscript<$digest, jolt_field::Fr>;
+
+                #[test]
+                fn challenge_vector_advances_rounds() {
+                    let mut t = TestTranscript::new(b"test");
+                    t.append_bytes(b"seed");
+
+                    let _ = t.challenge_vector(5);
+                    assert_eq!(t.n_rounds, 6);
+                }
+
+                #[test]
+                fn transcript_comparison() {
+                    let mut prover = TestTranscript::new(b"test");
+                    prover.append_bytes(b"data");
+                    let _ = prover.challenge();
+
+                    let mut verifier = TestTranscript::new(b"test");
+                    verifier.compare_to(&prover);
+                    verifier.append_bytes(b"data");
+                    let _ = verifier.challenge();
+                }
+
+                #[test]
+                #[should_panic(expected = "Fiat-Shamir transcript mismatch")]
+                fn transcript_comparison_detects_divergence() {
+                    let mut prover = TestTranscript::new(b"test");
+                    prover.append_bytes(b"data");
+                    let _ = prover.challenge();
+
+                    let mut verifier = TestTranscript::new(b"test");
+                    verifier.compare_to(&prover);
+                    verifier.append_bytes(b"different");
+                }
+            }
+        };
+    }
+
+    digest_transcript_tests!(blake2b, Blake2b<U32>);
+    digest_transcript_tests!(keccak, Keccak256);
+}
