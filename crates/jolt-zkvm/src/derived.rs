@@ -81,6 +81,14 @@ pub struct InstructionFlags<F> {
     pub right_is_imm: Vec<F>,
 }
 
+/// Pre-computed per-cycle lookup table indices (in LookupTables enum order).
+pub struct LookupFlagData {
+    /// Per-cycle table index in `LookupTables<64>` ordering. None = no lookup.
+    pub table_indices: Vec<Option<usize>>,
+    /// Per-cycle RAF flag: true if instruction uses identity (non-interleaved) operands.
+    pub is_raf: Vec<bool>,
+}
+
 pub struct DerivedSource<'a, F> {
     witness: &'a [F],
     num_cycles: usize,
@@ -88,6 +96,7 @@ pub struct DerivedSource<'a, F> {
     ram: Option<RamConfig>,
     iflags: Option<InstructionFlags<F>>,
     reg_access: Option<RegisterAccessData>,
+    lookup_flags: Option<LookupFlagData>,
     _marker: std::marker::PhantomData<F>,
 }
 
@@ -100,6 +109,7 @@ impl<'a, F: Field> DerivedSource<'a, F> {
             ram: None,
             iflags: None,
             reg_access: None,
+            lookup_flags: None,
             _marker: std::marker::PhantomData,
         }
     }
@@ -119,6 +129,12 @@ impl<'a, F: Field> DerivedSource<'a, F> {
     /// Attach register access data for building K_reg × T register polynomials.
     pub fn with_register_access(mut self, data: RegisterAccessData) -> Self {
         self.reg_access = Some(data);
+        self
+    }
+
+    /// Attach pre-computed lookup flag data for LookupTableFlag/InstructionRafFlag polys.
+    pub fn with_lookup_flags(mut self, data: LookupFlagData) -> Self {
+        self.lookup_flags = Some(data);
         self
     }
 
@@ -162,6 +178,21 @@ impl<'a, F: Field> DerivedSource<'a, F> {
                 let f = self.iflags.as_ref().expect("InstructionFlags not attached");
                 Cow::Borrowed(&f.right_is_imm)
             }
+            PolynomialId::RdGatherIndex => Cow::Owned(self.rd_gather_index()),
+            PolynomialId::RamGatherIndex => Cow::Owned(self.ram_gather_index()),
+            PolynomialId::LookupTableFlag(i) => {
+                let lf = self.lookup_flags.as_ref().expect(
+                    "DerivedSource: LookupTableFlag requested but no LookupFlagData provided",
+                );
+                Cow::Owned(self.lookup_table_flag(&lf.table_indices, i))
+            }
+            PolynomialId::InstructionRafFlag => {
+                let lf = self.lookup_flags.as_ref().expect(
+                    "DerivedSource: InstructionRafFlag requested but no LookupFlagData provided",
+                );
+                Cow::Owned(self.instruction_raf_flag(&lf.is_raf))
+            }
+            PolynomialId::HammingWeight => Cow::Owned(self.hamming_weight()),
             other => {
                 if let Some(var) = witness_var(other) {
                     Cow::Owned(self.extract_column(var))
@@ -179,6 +210,20 @@ impl<'a, F: Field> DerivedSource<'a, F> {
     fn extract_column(&self, var: usize) -> Vec<F> {
         (0..self.num_cycles)
             .map(|c| self.witness[c * self.vars_padded + var])
+            .collect()
+    }
+
+    /// RAM Hamming weight: H[j] = 1 if RAM address at cycle j is nonzero.
+    fn hamming_weight(&self) -> Vec<F> {
+        (0..self.num_cycles)
+            .map(|c| {
+                let addr = self.witness[c * self.vars_padded + V_RAM_ADDRESS];
+                if addr == F::zero() {
+                    F::zero()
+                } else {
+                    F::one()
+                }
+            })
             .collect()
     }
 
@@ -280,10 +325,9 @@ impl<'a, F: Field> DerivedSource<'a, F> {
         }
 
         let mut val = vec![F::zero(); k * t];
-        for addr in 0..k {
+        for (addr, events) in access_events.iter().enumerate().take(k) {
             let base = addr * t;
             let mut current = F::from_u64(ram.initial_state[addr]);
-            let events = &access_events[addr];
             let mut ei = 0; // event index
 
             for c in 0..t {
@@ -379,6 +423,68 @@ impl<'a, F: Field> DerivedSource<'a, F> {
         out
     }
 
+    /// Per-cycle register destination index for EqGather.
+    ///
+    /// Returns T field elements: `F::from_u64(rd[j])` if cycle j writes a
+    /// register, or a sentinel (u64::MAX) if no write occurs. The sentinel
+    /// is outside any valid eq table range, producing zero in the gather.
+    fn rd_gather_index(&self) -> Vec<F> {
+        let ra = self.reg_access();
+        let sentinel = F::from_u64(u64::MAX);
+        ra.rd_indices
+            .iter()
+            .map(|idx| match idx {
+                Some(k) => F::from_u64(*k as u64),
+                None => sentinel,
+            })
+            .collect()
+    }
+
+    /// Per-cycle RAM address index for EqGather.
+    ///
+    /// Returns T field elements: `F::from_u64(addr_index)` if cycle j
+    /// accesses RAM, or a sentinel if no RAM access. The index is
+    /// `(raw_addr - lowest_addr) / 8`.
+    fn ram_gather_index(&self) -> Vec<F> {
+        let sentinel = F::from_u64(u64::MAX);
+        let t = self.num_cycles;
+        let mut out = Vec::with_capacity(t);
+        for c in 0..t {
+            let w = c * self.vars_padded;
+            match self.remap(self.witness[w + V_RAM_ADDRESS]) {
+                Some(k) => out.push(F::from_u64(k as u64)),
+                None => out.push(sentinel),
+            }
+        }
+        out
+    }
+
+    /// T-element flag polynomial: 1 if cycle uses lookup table `table_idx`.
+    fn lookup_table_flag(&self, table_indices: &[Option<usize>], table_idx: usize) -> Vec<F> {
+        (0..self.num_cycles)
+            .map(|j| {
+                if j < table_indices.len() && table_indices[j] == Some(table_idx) {
+                    F::one()
+                } else {
+                    F::zero()
+                }
+            })
+            .collect()
+    }
+
+    /// T-element RAF flag polynomial: 1 if cycle uses identity (non-interleaved) operands.
+    fn instruction_raf_flag(&self, is_raf: &[bool]) -> Vec<F> {
+        (0..self.num_cycles)
+            .map(|j| {
+                if j < is_raf.len() && is_raf[j] {
+                    F::one()
+                } else {
+                    F::zero()
+                }
+            })
+            .collect()
+    }
+
     /// K_reg × T register value polynomial (address-major).
     ///
     /// val(k, t) = value of register k just before cycle t.
@@ -390,6 +496,7 @@ impl<'a, F: Field> DerivedSource<'a, F> {
         let mut out = vec![F::zero(); Self::K_REG * t];
 
         // Track current register values. All registers start at 0.
+        #[allow(clippy::useless_vec)]
         let mut current_vals = vec![F::zero(); Self::K_REG];
 
         for c in 0..t {

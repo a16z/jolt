@@ -873,6 +873,7 @@ fn op_poly_refs(op: &Op, kernels: &[KernelDef]) -> Vec<PolynomialId> {
         | Op::EvaluatePreprocessed { .. }
         | Op::ReleaseDevice { .. }
         | Op::ReleaseHost { .. }
+        | Op::SnapshotEval { .. }
         | Op::ReduceOpenings
         | Op::Open => vec![],
     }

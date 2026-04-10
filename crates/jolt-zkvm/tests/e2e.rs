@@ -147,6 +147,8 @@ fn prove_verify_roundtrip() {
         &(),
         &mut transcript,
         prover_config,
+        None,
+        None,
     );
 
     // -- 4. Verify --

@@ -405,6 +405,8 @@ fn muldiv_prove_verify() {
         &pcs_setup,
         &mut transcript,
         config,
+        None,
+        None,
     );
 
     // ── Verify ──

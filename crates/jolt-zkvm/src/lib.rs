@@ -4,7 +4,9 @@
 //! The graph says what to prove; this crate says how — backend orchestration,
 //! witness building, proof serialization.
 
+pub mod bytecode_raf;
 pub mod derived;
+pub mod prefix_suffix;
 pub mod preprocessed;
 pub mod preprocessing;
 pub mod prove;

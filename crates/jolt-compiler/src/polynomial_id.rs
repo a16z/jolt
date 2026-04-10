@@ -88,6 +88,21 @@ pub enum PolynomialId {
     LookupTableFlag(usize),
     BytecodeReadRafVal(usize),
     InstructionReadRafVal(usize),
+    /// Per-cycle bytecode table index: pc_indices[t] ∈ {0..K-1}.
+    /// Used by EqPushforward to build F[s] tables.
+    BytecodePcIndex,
+    /// Pushforward eq table for BytecodeReadRaf address phase.
+    /// F[stage][k] = Σ_j eq(r_cycle_s, j) × 1{PC(j) == k}.
+    BytecodeReadRafF(usize),
+    /// One-hot polynomial at bytecode index of cycle 0 (from trace).
+    BytecodeEntryTrace,
+    /// One-hot polynomial at entry bytecode index (preprocessed).
+    BytecodeEntryExpected,
+    /// GammaVal[stage] = gamma^stage × (Val[stage] + RAF identity).
+    /// Materialized by BytecodeVal InputBinding.
+    BytecodeReadRafGammaVal(usize),
+    /// gamma^7 × f_entry_expected. Materialized by ScaleByChallenge.
+    BytecodeEntryWeighted,
 
     // ── Virtual: RAM subsystem ──────────────────────────────────────
     RamCombinedRa,
@@ -104,6 +119,19 @@ pub enum PolynomialId {
     // ── Virtual: advice address phase ───────────────────────────────
     TrustedAdviceAddr,
     UntrustedAdviceAddr,
+
+    // ── Virtual: per-cycle gather indices (compact integer vectors) ────
+    /// Per-cycle register destination index rd[j] ∈ {0..K_REG-1}.
+    /// Used by EqGather to build wa(j) = eq(r_address, rd[j]).
+    RdGatherIndex,
+    /// Per-cycle RAM address index addr[j] ∈ {0..K_RAM-1}.
+    /// Used by EqGather to build RA(r_address, j) for RAM claim reduction.
+    RamGatherIndex,
+
+    // ── Virtual: instruction lookup materialized outputs ───────────────
+    /// Combined Val+RAF polynomial materialized during the InstructionReadRaf
+    /// address→cycle transition. T elements, one per cycle.
+    InstructionCombinedVal,
 
     // ── Virtual: RamRW eq tables (segmented) ──────────────────────────
     RamEqCycle,
@@ -132,6 +160,12 @@ pub enum PolynomialId {
     RamInit,
     LookupTable,
     BytecodeTable(usize),
+
+    // ── Evaluation snapshots ───────────────────────────────────────
+    /// Stores a historical evaluation value that would otherwise be
+    /// overwritten by a later stage's eval flush. Used by
+    /// BytecodeReadRaf's multi-stage input_claim formula.
+    EvalSnapshot(usize),
 }
 
 impl PolynomialId {
@@ -223,7 +257,10 @@ impl PolynomialId {
             | Self::RamUnmap
             | Self::RamInit
             | Self::LookupTable
-            | Self::BytecodeTable(_) => PolynomialDescriptor {
+            | Self::BytecodeTable(_)
+            | Self::BytecodePcIndex
+            | Self::BytecodeEntryTrace
+            | Self::BytecodeEntryExpected => PolynomialDescriptor {
                 source: PolySource::Preprocessed,
                 committed: false,
                 storage: StorageHint::Dense,

@@ -274,6 +274,71 @@ pub enum InputBinding {
         /// Size of the outer (address) dimension.
         outer_size: usize,
     },
+    /// Eq-gather: build eq table from challenges, then gather per-element
+    /// values using integer indices from a source polynomial.
+    ///
+    /// Computes `result[j] = eq(r, index[j])` where `r` is the challenge
+    /// point and `index[j]` are per-cycle lookup indices from the provider.
+    ///
+    /// Used for register write-address indicators (eq(r_address, rd[j]))
+    /// and RAM access indicators (eq(r_address, addr[j])).
+    EqGather {
+        /// Polynomial ID for the gathered result (T elements).
+        poly: PolynomialId,
+        /// Challenge indices forming the eq point (log₂K entries).
+        eq_challenges: Vec<usize>,
+        /// Source of per-cycle integer indices (T entries, each in 0..K-1).
+        /// The provider materializes this from trace data.
+        indices: PolynomialId,
+    },
+    /// Pushforward of eq polynomial through an index mapping.
+    ///
+    /// Computes `result[k] = Σ_j eq(r, j) × 1{indices[j] == k}` where
+    /// `r` is the challenge point and `indices[j]` maps cycle `j` to an
+    /// address-space bin `k`. The result has `output_size` elements.
+    ///
+    /// Used for BytecodeReadRaf F[stage] tables: each F[s][k] accumulates
+    /// the eq weight of all cycles whose PC maps to bytecode index k.
+    EqPushforward {
+        poly: PolynomialId,
+        eq_challenges: Vec<usize>,
+        indices: PolynomialId,
+        output_size: usize,
+    },
+    /// Multiply a source polynomial element-wise by a challenge value.
+    ///
+    /// Computes `result[k] = challenges[challenge]^power × source[k]`.
+    /// Used for gamma-weighting preprocessed polynomials (e.g., entry_gamma × f_expected).
+    ScaleByChallenge {
+        poly: PolynomialId,
+        source: PolynomialId,
+        challenge: usize,
+        power: u8,
+    },
+    /// Compute a BytecodeReadRaf Val polynomial for a specific stage.
+    ///
+    /// Computes `gamma^stage × (Val[stage](k) + raf_contribution(k))` where:
+    /// - Val[stage] is a linear combination of bytecode fields weighted by
+    ///   powers of `challenges[stage_gamma_base]`
+    /// - raf_contribution = gamma^raf_power × k (identity polynomial), if present
+    /// - gamma = challenges[gamma_base]
+    BytecodeVal {
+        poly: PolynomialId,
+        /// Stage index (0-4) selects the Val formula.
+        stage: u8,
+        /// Challenge index for this stage's gamma base (one squeeze → N powers).
+        stage_gamma_base: usize,
+        /// Number of gamma powers needed for this stage's formula.
+        stage_gamma_count: usize,
+        /// Challenge index for the overall gamma (shared across all stages).
+        gamma_base: usize,
+        /// For stages 0/2: power p such that gamma^p × k is added to Val.
+        /// Stage 0: raf_gamma_power = Some(5), Stage 2: Some(4), others: None.
+        raf_gamma_power: Option<u8>,
+        /// For stages 3/4: challenge indices for the r_register eq point.
+        /// Used to compute eq(register_index, r_register) per bytecode entry.
+        register_eq_challenges: Vec<usize>,
+    },
 }
 
 impl InputBinding {
@@ -284,7 +349,11 @@ impl InputBinding {
             | InputBinding::EqTable { poly, .. }
             | InputBinding::EqPlusOneTable { poly, .. }
             | InputBinding::LtTable { poly, .. }
-            | InputBinding::EqProject { poly, .. } => *poly,
+            | InputBinding::EqProject { poly, .. }
+            | InputBinding::EqGather { poly, .. }
+            | InputBinding::EqPushforward { poly, .. }
+            | InputBinding::ScaleByChallenge { poly, .. }
+            | InputBinding::BytecodeVal { poly, .. } => *poly,
         }
     }
 }
@@ -505,6 +574,13 @@ pub enum Op {
     /// Release host-side polynomial data (provider memory).
     /// Emitted after `ReduceOpenings` when evaluation tables are no longer needed.
     ReleaseHost { polys: Vec<PolynomialId> },
+    /// Copy an evaluation value to a snapshot slot so it survives
+    /// later stages that re-evaluate the same polynomial at a new point.
+    /// Runtime: `state.evaluations[to] = state.evaluations[from]`.
+    SnapshotEval {
+        from: PolynomialId,
+        to: PolynomialId,
+    },
 }
 
 impl Op {
@@ -543,6 +619,7 @@ impl Op {
                 | Op::EvaluatePreprocessed { .. }
                 | Op::ReleaseDevice { .. }
                 | Op::ReleaseHost { .. }
+                | Op::SnapshotEval { .. }
         )
     }
 }

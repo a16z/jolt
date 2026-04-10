@@ -18,6 +18,13 @@ pub const LOG_K_INSTRUCTION: usize = 128;
 /// Register address space: 128 registers.
 pub const LOG_K_REG: usize = 7;
 
+/// Number of distinct lookup table types (LookupTables::COUNT for RV64).
+pub const NUM_DISTINCT_LOOKUP_TABLES: usize = 41;
+
+/// Trace length threshold for instruction sumcheck phase count.
+/// log_T < 24 → 16 phases; log_T >= 24 → 8 phases.
+pub const INSTRUCTION_PHASES_THRESHOLD_LOG_T: usize = 24;
+
 /// R1CS column dimension (padded to next power of 2 for Spartan).
 pub const NUM_VARS_PADDED: usize = 64;
 /// Number of R1CS constraints.
@@ -34,8 +41,8 @@ pub const NUM_GROUP2_CONSTRAINTS: usize = NUM_R1CS_CONSTRAINTS - UNISKIP_DOMAIN_
 pub const NUM_CIRCUIT_FLAGS: usize = 14;
 /// Number of instruction flags.
 pub const NUM_INSTRUCTION_FLAGS: usize = 6;
-/// Number of lookup tables.
-pub const NUM_LOOKUP_TABLES: usize = 8;
+/// Number of lookup tables (must match jolt-core's `LookupTables::COUNT` = 41).
+pub const NUM_LOOKUP_TABLES: usize = 41;
 /// Number of product constraints (shift, instruction input, output check).
 pub const NUM_PRODUCT_CONSTRAINTS: usize = 3;
 
@@ -75,6 +82,12 @@ pub struct ModuleParams {
     pub product_uniskip_poly_degree: usize,
     pub product_remainder_degree: usize,
     pub product_remainder_rounds: usize,
+
+    // -- Instruction lookup sumcheck --
+    pub instruction_phases: usize,
+    pub instruction_chunk_bits: usize,
+    pub ra_virtual_log_k_chunk: usize,
+    pub n_virtual_ra_polys: usize,
 
     // -- Stage 2 instances --
     pub rw_checking_degree: usize,
@@ -136,6 +149,20 @@ impl ModuleParams {
         let product_remainder_degree = 3;
         let product_remainder_rounds = log_t;
 
+        // Instruction lookup sumcheck
+        let instruction_phases = if log_t < INSTRUCTION_PHASES_THRESHOLD_LOG_T {
+            16
+        } else {
+            8
+        };
+        let instruction_chunk_bits = LOG_K_INSTRUCTION / instruction_phases;
+        let ra_virtual_log_k_chunk = if log_t < ONEHOT_CHUNK_THRESHOLD_LOG_T {
+            LOG_K_INSTRUCTION / 8
+        } else {
+            LOG_K_INSTRUCTION / 4
+        };
+        let n_virtual_ra_polys = LOG_K_INSTRUCTION / ra_virtual_log_k_chunk;
+
         // Stage 2 instances
         let rw_checking_degree = 3;
         let rw_checking_rounds = log_k_ram + log_t;
@@ -172,6 +199,10 @@ impl ModuleParams {
             product_uniskip_poly_degree,
             product_remainder_degree,
             product_remainder_rounds,
+            instruction_phases,
+            instruction_chunk_bits,
+            ra_virtual_log_k_chunk,
+            n_virtual_ra_polys,
             rw_checking_degree,
             rw_checking_rounds,
             instruction_claim_reduction_degree,

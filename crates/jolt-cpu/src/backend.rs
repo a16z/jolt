@@ -125,7 +125,7 @@ impl ComputeBackend for CpuBackend {
         // Composition value columns (excluding iteration-specific extras).
         let num_value_inputs = inputs.len()
             - match kernel.iteration {
-                Iteration::Dense | Iteration::Domain { .. } => 0,
+                Iteration::Dense | Iteration::Domain { .. } | Iteration::PrefixSuffix { .. } => 0,
                 Iteration::DenseTensor => 2,
                 Iteration::Sparse => 1,
             };
@@ -160,6 +160,9 @@ impl ComputeBackend for CpuBackend {
                 *domain_start,
                 domain_indexed,
             ),
+            Iteration::PrefixSuffix { .. } => {
+                unreachable!("PrefixSuffix reduce is handled by the runtime")
+            }
         }
     }
 
@@ -176,6 +179,9 @@ impl ComputeBackend for CpuBackend {
             }
             Iteration::Domain { .. } => {
                 unreachable!("Domain iteration kernels have exactly 1 round and are never bound");
+            }
+            Iteration::PrefixSuffix { .. } => {
+                unreachable!("PrefixSuffix bind is handled by the runtime")
             }
         }
     }

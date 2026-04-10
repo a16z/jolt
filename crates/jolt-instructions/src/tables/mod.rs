@@ -477,6 +477,24 @@ macro_rules! kind_table_identity {
                 table.kind()
             }
         }
+
+        /// Maps a [`LookupTableKind`] discriminant to the corresponding
+        /// `LookupTables` variant index (position in the `LookupTables` enum declaration).
+        ///
+        /// The two enums have different variant orderings, so `kind as usize`
+        /// is NOT the same as the `LookupTables` index.
+        pub fn table_index_from_kind(kind: LookupTableKind) -> usize {
+            // Build the mapping at compile-time via the macro's variant list.
+            // Each arm assigns the positional index within the LookupTables enum.
+            let mut _idx = 0usize;
+            $(
+                if matches!(kind, LookupTableKind::$variant) {
+                    return _idx;
+                }
+                _idx += 1;
+            )*
+            unreachable!()
+        }
     };
 }
 

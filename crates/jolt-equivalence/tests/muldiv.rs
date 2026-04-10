@@ -17,6 +17,10 @@ use std::sync::OnceLock;
 use jolt_core::curve::Bn254Curve;
 use jolt_core::field::JoltField;
 use jolt_core::host;
+use jolt_core::zkvm::instruction::{
+    Flags as CoreFlags, InterleavedBitsMarker as CoreInterleavedBits, InstructionLookup,
+};
+use jolt_core::zkvm::lookup_table::LookupTables as CoreLookupTables;
 use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
 use jolt_core::poly::opening_proof::OpeningId;
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
@@ -30,18 +34,21 @@ use jolt_compiler::module::Module;
 use jolt_compiler::{Op, VerifierOp};
 use jolt_compute::link;
 use jolt_cpu::CpuBackend;
-use jolt_host::{extract_trace, BytecodePreprocessing, InstructionFlagData, Program};
+use jolt_host::{extract_trace, BytecodePreprocessing, CycleRow, InstructionFlagData, Program};
+use jolt_instructions::LookupTableKind;
 use jolt_dory::types::DoryProverSetup;
 use jolt_dory::DoryScheme;
 use jolt_r1cs::{constraints::rv64, R1csKey, R1csSource};
 use jolt_transcript::Transcript;
 use jolt_verifier::{OneHotConfig, ProverConfig, ReadWriteConfig, TRANSCRIPT_LABEL};
 use jolt_witness::{PolynomialConfig, PolynomialId, Polynomials};
+use jolt_zkvm::bytecode_raf::{BytecodeData, BytecodeEntry};
 use jolt_zkvm::derived::{DerivedSource, InstructionFlags, RamConfig, RegisterAccessData};
+use jolt_zkvm::prefix_suffix::LookupTraceData;
 use jolt_zkvm::preprocessed::PreprocessedSource;
 use jolt_zkvm::prove::prove;
 use jolt_zkvm::provider::ProverData;
-use num_traits::Zero;
+use num_traits::{One, Zero};
 
 use jolt_equivalence::checkpoint::{CheckpointTranscript, TranscriptEvent};
 use jolt_equivalence::{compare_stage, StageTrace};
@@ -306,13 +313,27 @@ fn build_protocol_module(log_t: usize, log_k_bytecode: usize, log_k_ram: usize) 
 /// Verifier ops are cut at the corresponding boundary.
 fn truncate_after_stage(module: &mut Module, num_stages: usize) {
     // Prover: cut at BeginStage{num_stages} (the start of the next stage).
+    // Also cut at the first BatchedSumcheckRound in the last stage if
+    // the kernels are not yet wired (empty phases).
     let mut seen = 0;
+    let mut in_final_stage = false;
     if let Some(pos) = module.prover.ops.iter().position(|op| {
         if let Op::BeginStage { index } = op {
             if *index >= num_stages {
                 return true;
             }
+            in_final_stage = *index + 1 == num_stages;
             seen = *index + 1;
+        }
+        // Stop before BatchedSumcheckRound if we're in the final stage
+        // and the instance phases haven't been wired yet.
+        if in_final_stage {
+            if let Op::BatchedSumcheckRound { batch, .. } = op {
+                let bdef = &module.prover.batched_sumchecks[*batch];
+                if bdef.instances.iter().all(|inst| inst.phases.is_empty()) {
+                    return true;
+                }
+            }
         }
         false
     }) {
@@ -336,6 +357,7 @@ struct ZkvmSetup {
     config: ProverConfig,
 }
 
+#[allow(clippy::type_complexity)]
 fn setup_zkvm_muldiv(core_params: &CoreProtocolParams) -> (
     jolt_compute::Executable<CpuBackend, NewFr>,
     Polynomials<NewFr>,
@@ -346,6 +368,9 @@ fn setup_zkvm_muldiv(core_params: &CoreProtocolParams) -> (
     Vec<u64>,   // final_ram_state
     InstructionFlagData<NewFr>,
     RegisterAccessData,
+    LookupTraceData,
+    jolt_zkvm::derived::LookupFlagData,
+    BytecodeData<NewFr>,
 ) {
     let mut program = Program::new("muldiv-guest");
     let (bytecode_raw, init_mem, _program_size, entry_address) = program.decode();
@@ -368,7 +393,7 @@ fn setup_zkvm_muldiv(core_params: &CoreProtocolParams) -> (
     );
 
     let mut module = build_protocol_module(log_t, log_k_bytecode, log_k_ram);
-    truncate_after_stage(&mut module, 5);
+    truncate_after_stage(&mut module, 6);
     let backend = CpuBackend;
     let executable = link::<CpuBackend, NewFr>(module, &backend);
 
@@ -423,10 +448,14 @@ fn setup_zkvm_muldiv(core_params: &CoreProtocolParams) -> (
         r1cs_key.num_vars_padded,
     );
 
-    // Extract per-cycle register access indices from the trace.
+    // Extract per-cycle register access indices and lookup data from the trace.
     let mut rd_indices = vec![None; trace_length];
     let mut rs1_indices = vec![None; trace_length];
     let mut rs2_indices = vec![None; trace_length];
+    let mut lookup_keys = vec![0u128; trace_length];
+    let mut table_kinds: Vec<Option<LookupTableKind>> = vec![None; trace_length];
+    let mut table_indices: Vec<Option<usize>> = vec![None; trace_length];
+    let mut is_interleaved = vec![true; trace_length]; // NoOp padding has is_interleaved=true
     for (t, cycle) in trace.iter().enumerate() {
         if let Some((reg, _, _)) = cycle.rd_write() {
             rd_indices[t] = Some(reg as usize);
@@ -437,11 +466,32 @@ fn setup_zkvm_muldiv(core_params: &CoreProtocolParams) -> (
         if let Some((reg, _)) = cycle.rs2_read() {
             rs2_indices[t] = Some(reg as usize);
         }
+        lookup_keys[t] = cycle.lookup_index();
+        table_kinds[t] = cycle.lookup_table_index().map(|idx| {
+            assert!(idx < LookupTableKind::COUNT);
+            // SAFETY: LookupTableKind is #[repr(u8)] with contiguous discriminants
+            // 0..COUNT, and idx < COUNT is asserted above.
+            unsafe { std::mem::transmute::<u8, LookupTableKind>(idx as u8) }
+        });
+        table_indices[t] = InstructionLookup::<64>::lookup_table(cycle)
+            .map(|t| CoreLookupTables::<64>::enum_index(&t));
+        is_interleaved[t] = CoreInterleavedBits::is_interleaved_operands(&cycle.circuit_flags());
     }
     let reg_access = RegisterAccessData {
         rd_indices,
         rs1_indices,
         rs2_indices,
+    };
+    let lookup_trace = LookupTraceData {
+        lookup_keys,
+        table_kinds: table_kinds.clone(),
+        is_interleaved: is_interleaved.clone(),
+    };
+
+    let is_raf: Vec<bool> = is_interleaved.iter().map(|&b| !b).collect();
+    let lookup_flags = jolt_zkvm::derived::LookupFlagData {
+        table_indices,
+        is_raf,
     };
 
     let mut polys = Polynomials::<NewFr>::new(poly_config);
@@ -453,18 +503,80 @@ fn setup_zkvm_muldiv(core_params: &CoreProtocolParams) -> (
     let (initial_ram_state, final_ram_state) =
         jolt_host::ram::build_ram_states(&init_mem, &final_memory, &io_device, ram_k);
 
+    // Build BytecodeData for BytecodeReadRaf sumcheck
+    let bc_entries: Vec<BytecodeEntry<NewFr>> = bytecode.bytecode.iter().map(|instruction| {
+        let instr = instruction.normalize();
+        let circuit_flags = CoreFlags::circuit_flags(instruction);
+        let instr_flags = CoreFlags::instruction_flags(instruction);
+        let lookup_table = InstructionLookup::<64>::lookup_table(instruction)
+            .map(|t| CoreLookupTables::<64>::enum_index(&t));
+        BytecodeEntry {
+            address: jolt_field::Field::from_u64(instr.address as u64),
+            imm: jolt_field::Field::from_i128(instr.operands.imm),
+            circuit_flags: circuit_flags.to_vec(),
+            rd: instr.operands.rd,
+            rs1: instr.operands.rs1,
+            rs2: instr.operands.rs2,
+            lookup_table,
+            is_interleaved: CoreInterleavedBits::is_interleaved_operands(&circuit_flags),
+            is_branch: instr_flags[jolt_core::zkvm::instruction::InstructionFlags::Branch],
+            left_is_rs1: instr_flags[jolt_core::zkvm::instruction::InstructionFlags::LeftOperandIsRs1Value],
+            left_is_pc: instr_flags[jolt_core::zkvm::instruction::InstructionFlags::LeftOperandIsPC],
+            right_is_rs2: instr_flags[jolt_core::zkvm::instruction::InstructionFlags::RightOperandIsRs2Value],
+            right_is_imm: instr_flags[jolt_core::zkvm::instruction::InstructionFlags::RightOperandIsImm],
+            is_noop: instr_flags[jolt_core::zkvm::instruction::InstructionFlags::IsNoop],
+        }
+    }).collect();
+
+    let mut pc_indices = Vec::with_capacity(trace_length);
+    for cycle in trace.iter() {
+        pc_indices.push(bytecode.get_pc(cycle));
+    }
+    // Pad remaining cycles (NoOp) to bytecode index 0
+    pc_indices.resize(trace_length, 0);
+
+    let bytecode_data = BytecodeData {
+        pc_indices,
+        entries: bc_entries,
+        entry_index: bytecode.entry_bytecode_index(),
+        num_lookup_tables: jolt_compiler::params::NUM_LOOKUP_TABLES,
+    };
+
     let setup = ZkvmSetup {
         trace_length,
         config,
     };
 
-    (executable, polys, r1cs_key, r1cs_witness, setup, initial_ram_state, final_ram_state, instruction_flag_data, reg_access)
+    (executable, polys, r1cs_key, r1cs_witness, setup, initial_ram_state, final_ram_state, instruction_flag_data, reg_access, lookup_trace, lookup_flags, bytecode_data)
+}
+
+fn populate_bytecode_preprocessed(
+    preprocessed: &mut PreprocessedSource<NewFr>,
+    bc: &BytecodeData<NewFr>,
+) {
+    use jolt_field::Field;
+    let k = bc.entries.len();
+
+    // BytecodePcIndex: per-cycle bytecode table index as field elements (length = T, padded)
+    let pc_idx_poly: Vec<NewFr> = bc.pc_indices.iter().map(|&i| NewFr::from_u64(i as u64)).collect();
+    preprocessed.insert(PolynomialId::BytecodePcIndex, pc_idx_poly);
+
+    // BytecodeEntryTrace: one-hot at PC of cycle 0 (from trace)
+    let pc_0 = bc.pc_indices[0];
+    let mut entry_trace = vec![NewFr::zero(); k];
+    entry_trace[pc_0] = NewFr::one();
+    preprocessed.insert(PolynomialId::BytecodeEntryTrace, entry_trace);
+
+    // BytecodeEntryExpected: one-hot at expected entry bytecode index (from preprocessing)
+    let mut entry_expected = vec![NewFr::zero(); k];
+    entry_expected[bc.entry_index] = NewFr::one();
+    preprocessed.insert(PolynomialId::BytecodeEntryExpected, entry_expected);
 }
 
 fn extract_jolt_zkvm_stages() -> Vec<StageTrace<Fr>> {
     let (_, params) = jolt_core_state_history();
     let (executable, mut polys, r1cs_key, r1cs_witness, setup,
-         initial_ram, final_ram, instruction_flag_data, reg_access) = setup_zkvm_muldiv(params);
+         initial_ram, final_ram, instruction_flag_data, reg_access, lookup_trace, lookup_flags, bytecode_data) = setup_zkvm_muldiv(params);
 
     let r1cs = R1csSource::new(&r1cs_key, &r1cs_witness);
     let derived = DerivedSource::new(&r1cs_witness, setup.trace_length, r1cs_key.num_vars_padded)
@@ -481,9 +593,11 @@ fn extract_jolt_zkvm_stages() -> Vec<StageTrace<Fr>> {
             right_is_rs2: instruction_flag_data.right_is_rs2,
             right_is_imm: instruction_flag_data.right_is_imm,
         })
-        .with_register_access(reg_access);
+        .with_register_access(reg_access)
+        .with_lookup_flags(lookup_flags);
     let mut preprocessed = PreprocessedSource::new();
     preprocessed.populate_ram(&setup.config, &initial_ram);
+    populate_bytecode_preprocessed(&mut preprocessed, &bytecode_data);
     let mut provider = ProverData::new(&mut polys, r1cs, derived, preprocessed);
 
     let pcs_setup = &params.pcs_setup;
@@ -496,6 +610,8 @@ fn extract_jolt_zkvm_stages() -> Vec<StageTrace<Fr>> {
         &pcs_setup,
         &mut transcript,
         setup.config,
+        Some(lookup_trace),
+        Some(bytecode_data),
     );
 
     proof
@@ -522,7 +638,7 @@ fn extract_jolt_zkvm_stages() -> Vec<StageTrace<Fr>> {
 fn extract_jolt_zkvm_checkpoint_log() -> Vec<TranscriptEvent> {
     let (_, params) = jolt_core_state_history();
     let (executable, mut polys, r1cs_key, r1cs_witness, setup,
-         initial_ram, final_ram, instruction_flag_data, reg_access) = setup_zkvm_muldiv(params);
+         initial_ram, final_ram, instruction_flag_data, reg_access, lookup_trace, lookup_flags, bytecode_data) = setup_zkvm_muldiv(params);
 
     // Debug: print InstructionRa[0] stats
     if let Some(ra0) = polys.try_get(PolynomialId::InstructionRa(0)) {
@@ -550,9 +666,11 @@ fn extract_jolt_zkvm_checkpoint_log() -> Vec<TranscriptEvent> {
             right_is_rs2: instruction_flag_data.right_is_rs2,
             right_is_imm: instruction_flag_data.right_is_imm,
         })
-        .with_register_access(reg_access);
+        .with_register_access(reg_access)
+        .with_lookup_flags(lookup_flags);
     let mut preprocessed = PreprocessedSource::new();
     preprocessed.populate_ram(&setup.config, &initial_ram);
+    populate_bytecode_preprocessed(&mut preprocessed, &bytecode_data);
     let mut provider = ProverData::new(&mut polys, r1cs, derived, preprocessed);
 
     let pcs_setup = &params.pcs_setup;
@@ -567,6 +685,8 @@ fn extract_jolt_zkvm_checkpoint_log() -> Vec<TranscriptEvent> {
         &pcs_setup,
         &mut transcript,
         setup.config,
+        Some(lookup_trace),
+        Some(bytecode_data),
     );
 
     transcript.into_log()
@@ -702,6 +822,7 @@ macro_rules! equivalence_test_body {
     }};
 }
 
+#[allow(unused_macros)]
 macro_rules! equivalence_test {
     ($name:ident, $stage_idx:literal) => {
         #[test]
@@ -901,6 +1022,7 @@ fn transcript_divergence() {
 /// Compare all InstructionRa chunk data between jolt-core and jolt-zkvm.
 #[test]
 fn instruction_ra0_data_matches() {
+    #[allow(unused_imports)]
     use jolt_core::poly::one_hot_polynomial::OneHotPolynomial as CoreOneHot;
     use jolt_core::poly::commitment::dory::DoryGlobals;
 
@@ -938,7 +1060,7 @@ fn instruction_ra0_data_matches() {
     let trace_length = params.trace_length;
 
     // ── jolt-zkvm side ──
-    let (_, mut polys, _, _, _, _, _, _, _) = setup_zkvm_muldiv(params);
+    let (_, polys, _, _, _, _, _, _, _, _, _, _) = setup_zkvm_muldiv(params);
 
     // Check ALL InstructionRa chunks
     let mut total_diffs = 0;

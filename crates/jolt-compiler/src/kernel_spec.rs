@@ -85,6 +85,45 @@ pub enum Iteration {
     /// Used for read-write memory checking where the address space is sparse.
     Sparse,
 
+    /// Multi-phase prefix-suffix decomposition for instruction lookup sumchecks.
+    ///
+    /// Decomposes a high-dimensional sumcheck (total_address_bits address +
+    /// cycle rounds) into manageable sub-phases. Each sub-phase binds
+    /// `chunk_bits` address variables using prefix-suffix MLE decomposition.
+    ///
+    /// The runtime implements:
+    /// - Per sub-phase: build P (prefix) and Q (suffix) polynomials from
+    ///   expanding tables and trace data, then evaluate Σ P×Q for each point
+    /// - Between sub-phases: update expanding tables and prefix checkpoints
+    /// - At address→cycle transition: materialize RA polys and combined_val
+    ///
+    /// The formula field is ignored — the iteration handles all evaluation.
+    PrefixSuffix {
+        /// Total address bits in the decomposition (LOG_K_INSTRUCTION = 128).
+        total_address_bits: usize,
+        /// Bits per sub-phase (LOG_K / num_phases).
+        chunk_bits: usize,
+        /// Number of sub-phases in the address decomposition (8 or 16).
+        num_phases: usize,
+        /// Log₂ of the virtual RA polynomial chunk size.
+        ra_virtual_log_k_chunk: usize,
+        /// Challenge index for γ (instruction read-RAF batching).
+        gamma: usize,
+        /// Challenge indices for r_reduction (log_T entries, BIG_ENDIAN).
+        /// The cycle opening point from the prior InstructionClaimReduction
+        /// sumcheck. Used to build eq(r_reduction, j) for cycle weighting
+        /// in both the address-phase suffix accumulation and the cycle-phase
+        /// eq factor.
+        r_reduction: Vec<usize>,
+        /// PolynomialIds where materialized RA polys are stored at the
+        /// address→cycle transition. The cycle phase kernel reads these
+        /// as Provided inputs.
+        output_ra_polys: Vec<crate::polynomial_id::PolynomialId>,
+        /// PolynomialId where the combined_val polynomial is stored at
+        /// the address→cycle transition.
+        output_combined_val: crate::polynomial_id::PolynomialId,
+    },
+
     /// Lagrange-domain evaluation for univariate skip rounds.
     ///
     /// Some inputs are "cycle-indexed" (length T) and others are

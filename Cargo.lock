@@ -2787,6 +2787,7 @@ dependencies = [
  "jolt-dory",
  "jolt-field",
  "jolt-host",
+ "jolt-instructions",
  "jolt-openings",
  "jolt-poly",
  "jolt-r1cs",
@@ -3170,6 +3171,7 @@ dependencies = [
  "jolt-crypto",
  "jolt-field",
  "jolt-host",
+ "jolt-instructions",
  "jolt-openings",
  "jolt-poly",
  "jolt-r1cs",
@@ -3179,6 +3181,7 @@ dependencies = [
  "jolt-witness",
  "num-traits",
  "postcard",
+ "rayon",
  "tracing",
 ]
 

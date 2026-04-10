@@ -207,7 +207,7 @@ pub struct PrefixSuffixDecomposition<F: JoltField, const ORDER: usize> {
     /// P[i] = prefix polynomial i, computed from registry and cached for reuse.
     P: [Option<Arc<RwLock<CachedPolynomial<F>>>>; ORDER],
     /// Q[i] = suffix polynomial i, recomputed each phase from trace indices.
-    Q: [DensePolynomial<F>; ORDER],
+    pub(crate) Q: [DensePolynomial<F>; ORDER],
     /// Number of variables per chunk (typically LOG_M).
     chunk_len: usize,
     /// Total number of variables (typically LOG_K).

@@ -1,5 +1,5 @@
 //! Direct Blake2b hash computation test to debug op #112 divergence.
-#![allow(non_snake_case)]
+#![allow(non_snake_case, clippy::print_stderr)]
 
 use blake2::{Blake2b, Digest};
 use blake2::digest::consts::U32;

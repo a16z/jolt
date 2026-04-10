@@ -15,6 +15,8 @@ jolt-compute = { path = "../jolt-compute" }
 jolt-crypto = { path = "../jolt-crypto" }
 jolt-field = { path = "../jolt-field" }
 jolt-host = { path = "../jolt-host" }
+jolt-instructions = { path = "../jolt-instructions" }
+rayon = { workspace = true }
 jolt-openings = { path = "../jolt-openings" }
 jolt-poly = { path = "../jolt-poly" }
 jolt-r1cs = { path = "../jolt-r1cs" }

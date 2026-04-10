@@ -506,6 +506,30 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
             combined_val_polynomial: None,
             params,
         };
+        #[cfg(debug_assertions)]
+        {
+            let log_m = LOG_K / res.params.phases;
+            eprintln!(
+                "[CORE PS init] chunk_bits={} num_phases={} num_cycles={} gamma={:?}",
+                log_m, res.params.phases, res.trace.len(), res.params.gamma,
+            );
+            eprintln!(
+                "[CORE PS init] u_evals[0..4]={:?}",
+                &res.u_evals[..4.min(res.u_evals.len())],
+            );
+            let active_tables: Vec<(usize, usize)> = res.lookup_indices_by_table.iter()
+                .enumerate()
+                .filter(|(_, v)| !v.is_empty())
+                .map(|(i, v)| (i, v.len()))
+                .collect();
+            eprintln!("[CORE PS init] active_tables={active_tables:?}");
+            let keys: Vec<u128> = res.lookup_indices.iter().take(4).map(|k| (*k).into()).collect();
+            eprintln!("[CORE PS init] lookup_keys[0..4]={keys:?}");
+            eprintln!(
+                "[CORE PS init] is_interleaved[0..4]={:?}",
+                &res.is_interleaved_operands[..4.min(res.is_interleaved_operands.len())],
+            );
+        }
         res.init_phase(0);
         res
     }
@@ -546,6 +570,24 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
         );
 
         self.init_suffix_polys(phase);
+
+        #[cfg(debug_assertions)]
+        if phase == 0 {
+            let q_id_sum: [F; 2] = [
+                self.identity_ps.Q[0].evals_ref().iter().copied().sum(),
+                self.identity_ps.Q[1].evals_ref().iter().copied().sum(),
+            ];
+            let q_left_sum: [F; 2] = [
+                self.left_operand_ps.Q[0].evals_ref().iter().copied().sum(),
+                self.left_operand_ps.Q[1].evals_ref().iter().copied().sum(),
+            ];
+            eprintln!("[CORE init_phase(0)] q_identity_sum={q_id_sum:?}");
+            eprintln!("[CORE init_phase(0)] q_left_sum={q_left_sum:?}");
+            let suffix_sums: Vec<F> = self.suffix_polys[0].iter()
+                .map(|sp| sp.evals_ref().iter().copied().sum())
+                .collect();
+            eprintln!("[CORE init_phase(0)] suffix_polys[0] sums={suffix_sums:?}");
+        }
 
         self.identity_ps.init_P(&mut self.prefix_registry);
         self.right_operand_ps.init_P(&mut self.prefix_registry);

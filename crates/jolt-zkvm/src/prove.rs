@@ -21,6 +21,7 @@ use crate::runtime::execute;
 /// # Panics
 ///
 /// Panics if `config` is invalid (non-power-of-two trace length, etc.).
+#[allow(clippy::too_many_arguments)]
 pub fn prove<B, F, T, PCS>(
     executable: &Executable<B, F>,
     provider: &mut impl BufferProvider<F>,
@@ -28,6 +29,8 @@ pub fn prove<B, F, T, PCS>(
     pcs_setup: &PCS::ProverSetup,
     transcript: &mut T,
     config: ProverConfig,
+    lookup_trace: Option<crate::prefix_suffix::LookupTraceData>,
+    bytecode_data: Option<crate::bytecode_raf::BytecodeData<F>>,
 ) -> jolt_verifier::JoltProof<F, PCS>
 where
     B: ComputeBackend,
@@ -39,5 +42,5 @@ where
     if let Err(e) = config.validate() {
         panic!("invalid ProverConfig: {e}");
     }
-    execute::<B, F, T, PCS>(executable, provider, backend, pcs_setup, transcript, config)
+    execute::<B, F, T, PCS>(executable, provider, backend, pcs_setup, transcript, config, lookup_trace, bytecode_data)
 }

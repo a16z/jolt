@@ -33,6 +33,8 @@ use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
 use jolt_verifier::proof::{JoltProof, StageProof};
 use jolt_verifier::ProverConfig;
 
+use crate::prefix_suffix::{LookupTraceData, PrefixSuffixState};
+
 /// Per-stage proof being incrementally built.
 struct StageBuilder<F: Field> {
     round_polys: Vec<UnivariatePoly<F>>,
@@ -80,11 +82,17 @@ where
     last_squeezed: F,
 
     // ── Batched sumcheck state ──
-    /// Per-batch → per-instance running claims for inactive-round halving.
+    /// Per-batch → per-instance running claims.
     batch_instance_claims: Vec<Vec<F>>,
+    /// Per-instance evaluations from the last round, used to update claims
+    /// when the next round's challenge arrives. `[inst_idx] → [eval_0, eval_1, ...]`
+    last_round_instance_evals: Vec<Vec<F>>,
     /// Outer eq tables for segmented instances: `(batch, inst) → eq_outer`.
     /// Built once at phase start, used for weighting during segmented reduce.
     segmented_outer_eqs: HashMap<(usize, usize), Vec<F>>,
+    /// PrefixSuffix state for instances using PrefixSuffix iteration.
+    /// Key: `(batch_idx, instance_idx)`.
+    prefix_suffix_states: HashMap<(usize, usize), PrefixSuffixState<F>>,
 
     // ── Proof assembly (incremental) ──
     current_stage: Option<StageBuilder<F>>,
@@ -147,7 +155,7 @@ fn bind_kernel_inputs_tracked<B: ComputeBackend, F: Field>(
         if let Some(buf) = device_buffers.get_mut(&pid) {
             backend.interpolate_inplace(buf.as_field_mut(), scalar, order);
         }
-        bound.insert(pid);
+        let _ = bound.insert(pid);
     }
 }
 
@@ -155,6 +163,7 @@ fn bind_kernel_inputs_tracked<B: ComputeBackend, F: Field>(
 ///
 /// Walks every op in the schedule, dispatching compute ops to `backend`,
 /// PCS ops to the commitment scheme, and orchestration ops directly.
+#[allow(clippy::print_stderr, clippy::too_many_arguments)]
 pub(crate) fn execute<B, F, T, PCS>(
     executable: &Executable<B, F>,
     provider: &mut impl BufferProvider<F>,
@@ -162,6 +171,8 @@ pub(crate) fn execute<B, F, T, PCS>(
     pcs_setup: &PCS::ProverSetup,
     transcript: &mut T,
     config: ProverConfig,
+    lookup_trace: Option<LookupTraceData>,
+    bytecode_data: Option<crate::bytecode_raf::BytecodeData<F>>,
 ) -> JoltProof<F, PCS>
 where
     B: ComputeBackend,
@@ -187,7 +198,9 @@ where
         last_round_poly: None,
         last_squeezed: F::zero(),
         batch_instance_claims,
+        last_round_instance_evals: Vec::new(),
         segmented_outer_eqs: HashMap::new(),
+        prefix_suffix_states: HashMap::new(),
         current_stage: None,
         stage_proofs: Vec::new(),
         commitments: Vec::new(),
@@ -205,7 +218,7 @@ where
     // Device buffer cache — compute ops work on backend buffers.
     let mut device_buffers: HashMap<PolynomialId, Buf<B, F>> = HashMap::new();
 
-    for (op_idx, op) in executable.ops.iter().enumerate() {
+    for op in &executable.ops {
         match op {
             // ── Compute ──
             Op::SumcheckRound {
@@ -223,6 +236,7 @@ where
                     provider,
                     backend,
                     false,
+                    bytecode_data.as_ref(),
                 );
 
                 // Bind (rounds 1+): take buffers out, bind via kernel-aware
@@ -256,7 +270,7 @@ where
                         eprintln!(
                             "[remaining r0] buf[{j}] len={} sum={s:?} first4=[{:?}, {:?}, {:?}, {:?}]",
                             data.len(),
-                            data.get(0).unwrap_or(&F::zero()),
+                            data.first().unwrap_or(&F::zero()),
                             data.get(1).unwrap_or(&F::zero()),
                             data.get(2).unwrap_or(&F::zero()),
                             data.get(3).unwrap_or(&F::zero()),
@@ -277,6 +291,24 @@ where
                 let max_evals = bdef.max_degree + 1;
                 let mut combined = vec![F::zero(); max_evals];
                 let mut bound_this_round: HashSet<PolynomialId> = HashSet::new();
+
+                // Update per-instance claims from the previous round's evals
+                // using the bind challenge (= previous round's squeezed challenge).
+                if let Some(ch) = bind_challenge {
+                    let r = state.challenges[*ch];
+                    for (inst_idx, evals) in state.last_round_instance_evals.iter().enumerate() {
+                        if !evals.is_empty() {
+                            let points: Vec<(F, F)> = evals
+                                .iter()
+                                .enumerate()
+                                .map(|(s, &v)| (F::from_u64(s as u64), v))
+                                .collect();
+                            let poly = UnivariatePoly::interpolate(&points);
+                            state.batch_instance_claims[*batch][inst_idx] = poly.evaluate(r);
+                        }
+                    }
+                }
+                state.last_round_instance_evals = vec![Vec::new(); bdef.instances.len()];
 
                 for (inst_idx, inst) in bdef.instances.iter().enumerate() {
                     let coeff = state.challenges[inst.batch_coeff];
@@ -304,23 +336,44 @@ where
                     let kdef = &module.prover.kernels[phase.kernel];
                     let compiled_kernel = &executable.kernels[phase.kernel];
 
+                    let is_prefix_suffix =
+                        matches!(kdef.spec.iteration, Iteration::PrefixSuffix { .. });
+
                     if instance_round == 0 || instance_round == phase_start {
-                        // At a phase boundary (not the first round of the instance),
-                        // the previous phase's buffers still need the last bind from
-                        // the previous round's challenge before we can capture scalars.
+                        // At a phase boundary, bind previous phase's buffers.
                         if instance_round > 0 {
                             if let Some(ch) = bind_challenge {
                                 let scalar = state.challenges[*ch];
                                 let prev_phase = &inst.phases[phase_idx - 1];
                                 let prev_kdef =
                                     &module.prover.kernels[prev_phase.kernel];
-                                bind_kernel_inputs_tracked(
-                                    &mut device_buffers,
-                                    backend,
-                                    prev_kdef,
-                                    scalar,
-                                    &mut bound_this_round,
+                                let prev_is_ps = matches!(
+                                    prev_kdef.spec.iteration,
+                                    Iteration::PrefixSuffix { .. }
                                 );
+                                if prev_is_ps {
+                                    // PrefixSuffix→next phase transition:
+                                    // ingest last address challenge, then materialize outputs.
+                                    let ps_key = (*batch, inst_idx);
+                                    if let Some(ps) = state.prefix_suffix_states.get_mut(&ps_key) {
+                                        let addr_round = ps.total_round();
+                                        ps.ingest_challenge(scalar, addr_round);
+                                        let outputs = ps.materialize_outputs();
+                                        for (poly_id, data) in outputs {
+                                            let buf = DeviceBuffer::Field(backend.upload(&data));
+                                            let _ = device_buffers.insert(poly_id, buf);
+                                        }
+                                    }
+                                    let _ = state.prefix_suffix_states.remove(&ps_key);
+                                } else {
+                                    bind_kernel_inputs_tracked(
+                                        &mut device_buffers,
+                                        backend,
+                                        prev_kdef,
+                                        scalar,
+                                        &mut bound_this_round,
+                                    );
+                                }
                             }
                         }
 
@@ -341,42 +394,79 @@ where
                             state.challenges[cap.challenge] = val;
                         }
 
-                        // Build outer eq table for segmented phases.
-                        if let Some(seg) = &phase.segmented {
-                            let outer_eq =
-                                build_outer_eq(&state.challenges, seg, backend);
-                            let _ = state
-                                .segmented_outer_eqs
-                                .insert((*batch, inst_idx), outer_eq);
-                        }
+                        if is_prefix_suffix {
+                            // Create PrefixSuffix state on activation.
+                            let trace = lookup_trace.as_ref().expect(
+                                "PrefixSuffix iteration requires lookup_trace data"
+                            );
+                            let ps = PrefixSuffixState::new(
+                                &kdef.spec.iteration,
+                                &state.challenges,
+                                trace,
+                            );
+                            let _ = state.prefix_suffix_states
+                                .insert((*batch, inst_idx), ps);
+                        } else {
+                            // Build outer eq table for segmented phases.
+                            if let Some(seg) = &phase.segmented {
+                                let outer_eq =
+                                    build_outer_eq(&state.challenges, seg, backend);
+                                let _ = state
+                                    .segmented_outer_eqs
+                                    .insert((*batch, inst_idx), outer_eq);
+                            }
 
-                        // Force-refresh on instance activation (first active round)
-                        // to replace stale buffers from prior stages. At phase
-                        // boundaries within the same instance, preserve carry-over
-                        // buffers from the previous phase.
-                        let force = instance_round == 0;
-                        resolve_inputs(
-                            &mut device_buffers,
-                            &state.challenges,
-                            kdef,
-                            provider,
-                            backend,
-                            force,
-                        );
+                            // Force-refresh on instance activation (first active round)
+                            // to replace stale buffers from prior stages.
+                            let force = instance_round == 0;
+                            resolve_inputs(
+                                &mut device_buffers,
+                                &state.challenges,
+                                kdef,
+                                provider,
+                                backend,
+                                force,
+                                bytecode_data.as_ref(),
+                            );
+                        }
                     } else if let Some(ch) = bind_challenge {
                         let scalar = state.challenges[*ch];
-                        bind_kernel_inputs_tracked(
-                            &mut device_buffers,
-                            backend,
-                            kdef,
-                            scalar,
-                            &mut bound_this_round,
-                        );
+                        if is_prefix_suffix {
+                            // PrefixSuffix bind: ingest challenge into PS state.
+                            let ps_key = (*batch, inst_idx);
+                            if let Some(ps) = state.prefix_suffix_states.get_mut(&ps_key) {
+                                let addr_round = ps.total_round();
+                                ps.ingest_challenge(scalar, addr_round);
+                            }
+                        } else {
+                            bind_kernel_inputs_tracked(
+                                &mut device_buffers,
+                                backend,
+                                kdef,
+                                scalar,
+                                &mut bound_this_round,
+                            );
+                        }
                     }
 
-                    // Reduce: segmented (column-extraction loop) or standard.
+                    // Reduce: PrefixSuffix, segmented, or standard.
                     let round_within_phase = instance_round - phase_start;
-                    let inst_evals = if let Some(seg) = &phase.segmented {
+                    let inst_evals = if is_prefix_suffix {
+                        let ps_key = (*batch, inst_idx);
+                        let ps = state.prefix_suffix_states.get_mut(&ps_key)
+                            .expect("PrefixSuffix state missing");
+                        let [eval_0, eval_2] = ps.compute_address_round();
+                        // PrefixSuffix is degree 2 → 3 evals at {0, 1, 2}
+                        // eval_1 = previous_claim - eval_0 (from sumcheck relation)
+                        // We return [eval_0, eval_2] and let the caller build the UniPoly.
+                        // Actually, the runtime expects raw evaluation sums at grid points
+                        // {0, 1, ..., num_evals-1}. For degree 2, num_evals = 3.
+                        // eval_1 = previous_claim - eval_0
+                        let previous_claim =
+                            state.batch_instance_claims[*batch][inst_idx];
+                        let eval_1 = previous_claim - eval_0;
+                        vec![eval_0, eval_1, eval_2]
+                    } else if let Some(seg) = &phase.segmented {
                         let outer_eq = state
                             .segmented_outer_eqs
                             .get(&(*batch, inst_idx))
@@ -419,6 +509,9 @@ where
                             }
                         }
                     }
+
+                    // Save per-instance evals for claim update in next round.
+                    state.last_round_instance_evals[inst_idx].clone_from(&inst_evals);
 
                     // Extrapolate: if this instance has fewer evals than
                     // max_evals (lower-degree kernel), fill the remaining
@@ -866,7 +959,7 @@ where
                 let mut scaled = val;
                 let two = F::from_u64(2);
                 for _ in 0..offset {
-                    scaled = scaled * two;
+                    scaled *= two;
                 }
                 state.batch_instance_claims[*batch][*instance] = scaled;
             }
@@ -892,7 +985,13 @@ where
                 let data = provider.materialize(*source);
                 let point: Vec<F> = at_challenges.iter().map(|&ci| state.challenges[ci]).collect();
                 let eval = evaluate_mle(&data, &point);
-                state.evaluations.insert(*store_as, eval);
+                let _ = state.evaluations.insert(*store_as, eval);
+            }
+
+            Op::SnapshotEval { from, to } => {
+                if let Some(&val) = state.evaluations.get(from) {
+                    let _ = state.evaluations.insert(*to, val);
+                }
             }
 
             Op::CollectOpeningClaim { poly, at_stage } => {
@@ -1059,6 +1158,7 @@ fn resolve_inputs<B, F>(
     provider: &impl BufferProvider<F>,
     backend: &B,
     force_refresh: bool,
+    bytecode_data: Option<&crate::bytecode_raf::BytecodeData<F>>,
 ) where
     B: ComputeBackend,
     F: Field,
@@ -1148,16 +1248,125 @@ fn resolve_inputs<B, F>(
                 } else {
                     // Project out the outer (address) dimension → inner_size result
                     let mut projected = vec![F::zero(); *inner_size];
-                    for t in 0..*inner_size {
+                    for (t, proj) in projected.iter_mut().enumerate() {
                         let base = t * outer_size;
                         for (k, &eq_val) in eq_table.iter().enumerate() {
                             if !eq_val.is_zero() {
-                                projected[t] += eq_val * src_data[base + k];
+                                *proj += eq_val * src_data[base + k];
                             }
                         }
                     }
                     DeviceBuffer::Field(backend.upload(&projected))
                 }
+            }
+            InputBinding::EqGather {
+                eq_challenges: chs,
+                indices,
+                ..
+            } => {
+                let point: Vec<F> = chs.iter().map(|&ci| challenges[ci]).collect();
+                let eq_table = jolt_poly::EqPolynomial::<F>::evals(&point, None);
+                let idx_data = provider.materialize(*indices);
+                let t = idx_data.len();
+                let mut gathered = Vec::with_capacity(t);
+                for j in 0..t {
+                    let val = match idx_data[j].to_u64() {
+                        Some(k) if (k as usize) < eq_table.len() => eq_table[k as usize],
+                        _ => F::zero(),
+                    };
+                    gathered.push(val);
+                }
+                DeviceBuffer::Field(backend.upload(&gathered))
+            }
+            InputBinding::EqPushforward {
+                eq_challenges: chs,
+                indices,
+                output_size,
+                ..
+            } => {
+                let point: Vec<F> = chs.iter().map(|&ci| challenges[ci]).collect();
+                let eq_table = jolt_poly::EqPolynomial::<F>::evals(&point, None);
+                let idx_data = provider.materialize(*indices);
+                let mut result = vec![F::zero(); *output_size];
+                for (j, &eq_val) in eq_table.iter().enumerate() {
+                    if j < idx_data.len() {
+                        if let Some(k) = idx_data[j].to_u64() {
+                            let k = k as usize;
+                            if k < *output_size {
+                                result[k] += eq_val;
+                            }
+                        }
+                    }
+                }
+                DeviceBuffer::Field(backend.upload(&result))
+            }
+            InputBinding::ScaleByChallenge {
+                source,
+                challenge,
+                power,
+                ..
+            } => {
+                let base = challenges[*challenge];
+                let mut scale = F::one();
+                for _ in 0..*power {
+                    scale *= base;
+                }
+                let src = provider.materialize(*source);
+                let scaled: Vec<F> = src.iter().map(|&v| scale * v).collect();
+                DeviceBuffer::Field(backend.upload(&scaled))
+            }
+            InputBinding::BytecodeVal {
+                stage,
+                stage_gamma_base,
+                stage_gamma_count,
+                gamma_base,
+                raf_gamma_power,
+                register_eq_challenges: reg_chs,
+                ..
+            } => {
+                let bc = bytecode_data.expect(
+                    "BytecodeVal binding requires bytecode_data"
+                );
+                // Build stage gamma powers from single base: [1, γ, γ², ...]
+                let sg_base = challenges[*stage_gamma_base];
+                let mut gammas = Vec::with_capacity(*stage_gamma_count);
+                let mut pow = F::one();
+                for _ in 0..*stage_gamma_count {
+                    gammas.push(pow);
+                    pow *= sg_base;
+                }
+                let eq_r_register = if reg_chs.is_empty() {
+                    Vec::new()
+                } else {
+                    let point: Vec<F> = reg_chs.iter().map(|&ci| challenges[ci]).collect();
+                    jolt_poly::EqPolynomial::<F>::evals(&point, None)
+                };
+                let mut val = crate::bytecode_raf::compute_val_stage(
+                    &bc.entries,
+                    *stage,
+                    &gammas,
+                    &eq_r_register,
+                );
+                let gamma = challenges[*gamma_base];
+                // Add RAF identity contribution: gamma^raf_power × k
+                if let Some(p) = raf_gamma_power {
+                    let mut raf_g = F::one();
+                    for _ in 0..*p {
+                        raf_g *= gamma;
+                    }
+                    for (k, v) in val.iter_mut().enumerate() {
+                        *v += raf_g * F::from_u64(k as u64);
+                    }
+                }
+                // Multiply by gamma^stage
+                let mut overall = F::one();
+                for _ in 0..*stage {
+                    overall *= gamma;
+                }
+                for v in &mut val {
+                    *v *= overall;
+                }
+                DeviceBuffer::Field(backend.upload(&val))
             }
         };
         let _ = device_buffers.insert(pi, buf);
