@@ -152,11 +152,7 @@ impl<F: Field> PrefixSuffixState<F> {
     /// Create a new PrefixSuffix state for an InstructionReadRaf instance.
     ///
     /// Called at instance activation (first active round).
-    pub fn new(
-        iteration: &Iteration,
-        challenges: &[F],
-        trace_data: &LookupTraceData,
-    ) -> Self {
+    pub fn new(iteration: &Iteration, challenges: &[F], trace_data: &LookupTraceData) -> Self {
         let (
             chunk_bits,
             num_phases,
@@ -218,9 +214,7 @@ impl<F: Field> PrefixSuffixState<F> {
         // Initialize suffix_polys (empty, filled by init_phase)
         let suffix_polys: Vec<Vec<Vec<F>>> = (0..num_tables)
             .map(|t_idx| {
-                let table = LookupTables::<XLEN>::from(
-                    ALL_TABLE_KINDS[t_idx],
-                );
+                let table = LookupTables::<XLEN>::from(ALL_TABLE_KINDS[t_idx]);
                 let suffixes = table.suffixes();
                 suffixes.iter().map(|_| vec![F::zero(); m]).collect()
             })
@@ -388,8 +382,7 @@ impl<F: Field> PrefixSuffixState<F> {
 
             for &j in indices {
                 let k = self.lookup_keys[j];
-                let (prefix_bits, suffix_bits) =
-                    k.split((self.num_phases - 1 - phase) * log_m);
+                let (prefix_bits, suffix_bits) = k.split((self.num_phases - 1 - phase) * log_m);
                 let idx: usize = prefix_bits & m_mask;
                 let u = self.u_evals[j];
 
@@ -556,7 +549,9 @@ impl<F: Field> PrefixSuffixState<F> {
     /// with suffix accumulators via table.combine().
     fn prover_msg_read_checking(&self, j: usize) -> [F; 2] {
         // Use current suffix poly length (polys shrink after each bind)
-        let current_len = self.suffix_polys.first()
+        let current_len = self
+            .suffix_polys
+            .first()
             .and_then(|table_polys| table_polys.first())
             .map_or(0, |sp| sp.len());
         let half = current_len / 2;
@@ -579,25 +574,13 @@ impl<F: Field> PrefixSuffixState<F> {
             let prefixes_c0: Vec<PrefixEval<F>> = ALL_PREFIXES
                 .iter()
                 .map(|prefix| {
-                    prefix.prefix_mle::<XLEN, F, F>(
-                        &self.prefix_checkpoints,
-                        r_x,
-                        0,
-                        b,
-                        j,
-                    )
+                    prefix.prefix_mle::<XLEN, F, F>(&self.prefix_checkpoints, r_x, 0, b, j)
                 })
                 .collect();
             let prefixes_c2: Vec<PrefixEval<F>> = ALL_PREFIXES
                 .iter()
                 .map(|prefix| {
-                    prefix.prefix_mle::<XLEN, F, F>(
-                        &self.prefix_checkpoints,
-                        r_x,
-                        2,
-                        b,
-                        j,
-                    )
+                    prefix.prefix_mle::<XLEN, F, F>(&self.prefix_checkpoints, r_x, 2, b, j)
                 })
                 .collect();
 
@@ -605,8 +588,7 @@ impl<F: Field> PrefixSuffixState<F> {
             for (t_idx, suffix_polys) in self.suffix_polys.iter().enumerate() {
                 let table = LookupTables::<XLEN>::from(ALL_TABLE_KINDS[t_idx]);
 
-                let suffixes_left: Vec<F> =
-                    suffix_polys.iter().map(|sp| sp[b_val]).collect();
+                let suffixes_left: Vec<F> = suffix_polys.iter().map(|sp| sp[b_val]).collect();
                 let suffixes_right: Vec<F> =
                     suffix_polys.iter().map(|sp| sp[b_val + half]).collect();
 
@@ -669,8 +651,8 @@ impl<F: Field> PrefixSuffixState<F> {
         // Check if this is the last round in the phase
         if (round + 1).is_multiple_of(log_m) {
             // Update registry checkpoints from P final claims
-            self.registry_checkpoints[0] = Self::p_final_claim(&self.p_right);  // RightOperand
-            self.registry_checkpoints[1] = Self::p_final_claim(&self.p_left);   // LeftOperand
+            self.registry_checkpoints[0] = Self::p_final_claim(&self.p_right); // RightOperand
+            self.registry_checkpoints[1] = Self::p_final_claim(&self.p_left); // LeftOperand
             self.registry_checkpoints[2] = Self::p_final_claim(&self.p_identity); // Identity
 
             if phase != self.num_phases - 1 {

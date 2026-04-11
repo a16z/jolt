@@ -1,8 +1,8 @@
 use jolt_field::Field;
 use serde::{Deserialize, Serialize};
 
-use crate::commitment::{Commitment, VectorCommitment};
 use super::group::JoltGroup;
+use crate::commitment::{Commitment, VectorCommitment};
 
 /// Pedersen vector commitment scheme, generic over any `JoltGroup`.
 ///

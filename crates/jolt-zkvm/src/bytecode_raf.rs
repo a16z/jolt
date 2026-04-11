@@ -139,23 +139,15 @@ pub fn compute_val_stage<F: Field>(
             3 => {
                 // Stage 4 (registers read/write):
                 // Val(k) = γ₀·eq(rd,r_reg) + γ₁·eq(rs1,r_reg) + γ₂·eq(rs2,r_reg)
-                let rd_eq = entry
-                    .rd
-                    .map_or(F::zero(), |r| eq_r_register[r as usize]);
-                let rs1_eq = entry
-                    .rs1
-                    .map_or(F::zero(), |r| eq_r_register[r as usize]);
-                let rs2_eq = entry
-                    .rs2
-                    .map_or(F::zero(), |r| eq_r_register[r as usize]);
+                let rd_eq = entry.rd.map_or(F::zero(), |r| eq_r_register[r as usize]);
+                let rs1_eq = entry.rs1.map_or(F::zero(), |r| eq_r_register[r as usize]);
+                let rs2_eq = entry.rs2.map_or(F::zero(), |r| eq_r_register[r as usize]);
                 rd_eq * stage_gammas[0] + rs1_eq * stage_gammas[1] + rs2_eq * stage_gammas[2]
             }
             4 => {
                 // Stage 5 (registers val-eval + lookups):
                 // Val(k) = eq(rd,r_reg) + γ₁·raf_flag + Σ γ_{2+t}·table_flag[t]
-                let mut lc = entry
-                    .rd
-                    .map_or(F::zero(), |r| eq_r_register[r as usize]);
+                let mut lc = entry.rd.map_or(F::zero(), |r| eq_r_register[r as usize]);
                 if !entry.is_interleaved {
                     lc += stage_gammas[1];
                 }

@@ -25,6 +25,4 @@ pub use claims::{ProverClaim, VerifierClaim};
 pub use error::OpeningsError;
 pub use reduction::{rlc_combine, rlc_combine_scalars, OpeningReduction};
 
-pub use schemes::{
-    AdditivelyHomomorphic, CommitmentScheme, StreamingCommitment, ZkOpeningScheme,
-};
+pub use schemes::{AdditivelyHomomorphic, CommitmentScheme, StreamingCommitment, ZkOpeningScheme};

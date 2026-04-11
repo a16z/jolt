@@ -8,9 +8,7 @@ use dory::primitives::arithmetic::{
 use dory::primitives::poly::{MultilinearLagrange, Polynomial as DoryPolynomial};
 use jolt_crypto::{Bn254G1, Bn254GT, Commitment, DeriveSetup, JoltGroup, PedersenSetup};
 use jolt_field::Fr;
-use jolt_openings::{
-    AdditivelyHomomorphic, CommitmentScheme, OpeningsError, ZkOpeningScheme,
-};
+use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError, ZkOpeningScheme};
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::Transcript;
 
@@ -93,7 +91,6 @@ impl DoryScheme {
         let prover_setup = Self::setup_prover(max_num_vars);
         DoryVerifierSetup(prover_setup.0.to_verifier_setup())
     }
-
 }
 
 impl DeriveSetup<DoryProverSetup> for PedersenSetup<Bn254G1> {
@@ -352,10 +349,8 @@ fn commit_rows_sparse<P: MultilinearPoly<Fr> + ?Sized>(
     poly.for_each_nonzero(&mut |flat_idx, _val| {
         let row = flat_idx / num_cols;
         let col = flat_idx % num_cols;
-        row_commitments[row] = <InnerBN254 as PairingCurve>::G1::add(
-            &row_commitments[row],
-            &g1_bases[col],
-        );
+        row_commitments[row] =
+            <InnerBN254 as PairingCurve>::G1::add(&row_commitments[row], &g1_bases[col]);
     });
     row_commitments
 }
@@ -408,12 +403,7 @@ impl<S: MultilinearPoly<Fr>> DoryPolynomial<ArkFr> for DorySourceAdapter<'_, S> 
 }
 
 impl<S: MultilinearPoly<Fr>> MultilinearLagrange<ArkFr> for DorySourceAdapter<'_, S> {
-    fn vector_matrix_product(
-        &self,
-        left_vec: &[ArkFr],
-        _nu: usize,
-        sigma: usize,
-    ) -> Vec<ArkFr> {
+    fn vector_matrix_product(&self, left_vec: &[ArkFr], _nu: usize, sigma: usize) -> Vec<ArkFr> {
         let native_left: Vec<Fr> = left_vec.iter().map(ark_to_jolt_fr).collect();
         let result = self.source.fold_rows(&native_left, sigma);
         result.iter().map(jolt_fr_to_ark).collect()

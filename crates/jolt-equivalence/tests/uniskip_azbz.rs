@@ -38,8 +38,7 @@ fn compare_witness_variables() {
 
     // ── jolt-core: trace + BytecodePreprocessing ─────────────────────────
     let mut core_program = jolt_core::host::Program::new("muldiv-guest");
-    let (core_bytecode_raw, _core_init_mem, _core_prog_size, core_entry) =
-        core_program.decode();
+    let (core_bytecode_raw, _core_init_mem, _core_prog_size, core_entry) = core_program.decode();
     let core_inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
     let (_, core_trace, _, _core_io) = core_program.trace(&core_inputs, &[], &[]);
     let core_bytecode = CoreBytecodePP::preprocess(core_bytecode_raw, core_entry);
@@ -106,8 +105,7 @@ fn compare_witness_variables() {
     for c in 0..real_len.min(core_trace.len()) {
         let our_w = &r1cs_witness[c * v_pad..(c + 1) * v_pad];
 
-        let core_row =
-            R1CSCycleInputs::from_trace::<CoreFr>(&core_bytecode, &core_trace, c);
+        let core_row = R1CSCycleInputs::from_trace::<CoreFr>(&core_bytecode, &core_trace, c);
 
         // Build the 36 comparable witness values from jolt-core
         let core_vals = build_core_comparable(&core_row);
@@ -115,9 +113,12 @@ fn compare_witness_variables() {
         for v in compare_range.clone() {
             if our_w[v] != core_vals[v] {
                 if mismatch_by_var[v] < 5 {
-                    let add = core_row.flags[jolt_core::zkvm::instruction::CircuitFlags::AddOperands];
-                    let sub = core_row.flags[jolt_core::zkvm::instruction::CircuitFlags::SubtractOperands];
-                    let mul = core_row.flags[jolt_core::zkvm::instruction::CircuitFlags::MultiplyOperands];
+                    let add =
+                        core_row.flags[jolt_core::zkvm::instruction::CircuitFlags::AddOperands];
+                    let sub = core_row.flags
+                        [jolt_core::zkvm::instruction::CircuitFlags::SubtractOperands];
+                    let mul = core_row.flags
+                        [jolt_core::zkvm::instruction::CircuitFlags::MultiplyOperands];
                     let adv = core_row.flags[jolt_core::zkvm::instruction::CircuitFlags::Advice];
                     eprintln!(
                         "  MISMATCH cycle={c} var={v} ({}): ours={}, core={} [add={add} sub={sub} mul={mul} adv={adv}]",
@@ -229,10 +230,8 @@ fn build_core_comparable(row: &R1CSCycleInputs) -> [Fr; 36] {
     w[V_SHOULD_JUMP] = Fr::from_u64(row.should_jump as u64);
 
     w[V_FLAG_ADD_OPERANDS] = Fr::from_u64(row.flags[CircuitFlags::AddOperands] as u64);
-    w[V_FLAG_SUBTRACT_OPERANDS] =
-        Fr::from_u64(row.flags[CircuitFlags::SubtractOperands] as u64);
-    w[V_FLAG_MULTIPLY_OPERANDS] =
-        Fr::from_u64(row.flags[CircuitFlags::MultiplyOperands] as u64);
+    w[V_FLAG_SUBTRACT_OPERANDS] = Fr::from_u64(row.flags[CircuitFlags::SubtractOperands] as u64);
+    w[V_FLAG_MULTIPLY_OPERANDS] = Fr::from_u64(row.flags[CircuitFlags::MultiplyOperands] as u64);
     w[V_FLAG_LOAD] = Fr::from_u64(row.flags[CircuitFlags::Load] as u64);
     w[V_FLAG_STORE] = Fr::from_u64(row.flags[CircuitFlags::Store] as u64);
     w[V_FLAG_JUMP] = Fr::from_u64(row.flags[CircuitFlags::Jump] as u64);
@@ -247,8 +246,7 @@ fn build_core_comparable(row: &R1CSCycleInputs) -> [Fr; 36] {
     w[V_FLAG_IS_COMPRESSED] = Fr::from_u64(row.flags[CircuitFlags::IsCompressed] as u64);
     w[V_FLAG_IS_FIRST_IN_SEQUENCE] =
         Fr::from_u64(row.flags[CircuitFlags::IsFirstInSequence] as u64);
-    w[V_FLAG_IS_LAST_IN_SEQUENCE] =
-        Fr::from_u64(row.flags[CircuitFlags::IsLastInSequence] as u64);
+    w[V_FLAG_IS_LAST_IN_SEQUENCE] = Fr::from_u64(row.flags[CircuitFlags::IsLastInSequence] as u64);
 
     w
 }

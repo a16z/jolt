@@ -45,4 +45,3 @@ pub fn link<B: ComputeBackend, F: Field>(module: Module, backend: &B) -> Executa
         kernels,
     }
 }
-

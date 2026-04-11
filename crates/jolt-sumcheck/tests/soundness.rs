@@ -80,7 +80,6 @@ fn verify_with_oracle_check(
     Ok(challenges)
 }
 
-
 #[test]
 fn honest_proof_passes_oracle_check() {
     let evals: Vec<F> = (1..=8).map(F::from_u64).collect();
@@ -170,7 +169,6 @@ fn proof_for_different_polynomial_different_sum_fails_round_check() {
         Err(SumcheckError::RoundCheckFailed { round: 0, .. })
     ));
 }
-
 
 #[test]
 fn corrupted_middle_round_detected() {
@@ -329,7 +327,6 @@ fn all_zero_polynomial_honest_proof_for_zero_sum() {
     );
 }
 
-
 #[test]
 fn verifier_transcript_desync_rejected() {
     // If the verifier's transcript has been poisoned with extra data before
@@ -360,7 +357,6 @@ fn verifier_transcript_desync_rejected() {
     // but for num_vars >= 2, the transcript desync propagates to a round check failure.
     assert!(result.is_err(), "transcript desync must be rejected");
 }
-
 
 #[test]
 fn num_vars_zero_accepts_any_claimed_sum() {
@@ -432,7 +428,6 @@ fn constant_polynomial_all_same_evals() {
         SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt, &clear).unwrap();
     assert_eq!(final_eval, F::from_u64(7));
 }
-
 
 #[test]
 fn batched_one_dishonest_claim_rejected() {

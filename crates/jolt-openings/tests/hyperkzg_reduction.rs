@@ -61,7 +61,14 @@ fn reduce_open_verify(
     let proofs: Vec<_> = reduced_p
         .iter()
         .map(|c| {
-            <KzgPCS as CommitmentScheme>::open(&c.polynomial, &c.point, c.eval, pk, None, &mut transcript_p)
+            <KzgPCS as CommitmentScheme>::open(
+                &c.polynomial,
+                &c.point,
+                c.eval,
+                pk,
+                None,
+                &mut transcript_p,
+            )
         })
         .collect();
 

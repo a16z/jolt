@@ -22,9 +22,8 @@
 use crate::formula::BindingOrder;
 use crate::ir::PolyKind;
 use crate::module::{
-    BatchedSumcheckDef, ChallengeDecl, ChallengeSource, ClaimFormula, DomainSeparator,
-    KernelDef, Module, Op, PolyDecl, Schedule, VerifierOp,
-    VerifierSchedule, VerifierStageIndex,
+    BatchedSumcheckDef, ChallengeDecl, ChallengeSource, ClaimFormula, DomainSeparator, KernelDef,
+    Module, Op, PolyDecl, Schedule, VerifierOp, VerifierSchedule, VerifierStageIndex,
 };
 use crate::PolynomialId;
 
@@ -105,8 +104,15 @@ impl ModuleBuilder {
     }
 
     /// Squeeze N Fiat-Shamir challenges for a given stage. Returns the range.
-    pub fn squeeze_fiat_shamir(&mut self, prefix: &str, count: usize, after_stage: usize) -> Vec<usize> {
-        self.squeeze_n(prefix, count, |_| ChallengeSource::FiatShamir { after_stage })
+    pub fn squeeze_fiat_shamir(
+        &mut self,
+        prefix: &str,
+        count: usize,
+        after_stage: usize,
+    ) -> Vec<usize> {
+        self.squeeze_n(prefix, count, |_| ChallengeSource::FiatShamir {
+            after_stage,
+        })
     }
 
     /// Allocate an external challenge slot (value set by runtime, e.g. ScalarCapture).
@@ -327,12 +333,7 @@ impl ModuleBuilder {
     }
 
     /// Emit AbsorbInputClaim.
-    pub fn absorb_input_claim(
-        &mut self,
-        formula: ClaimFormula,
-        batch: usize,
-        instance: usize,
-    ) {
+    pub fn absorb_input_claim(&mut self, formula: ClaimFormula, batch: usize, instance: usize) {
         self.ops.push(Op::AbsorbInputClaim {
             formula,
             tag: DomainSeparator::SumcheckClaim,

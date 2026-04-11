@@ -147,7 +147,6 @@ impl<T: Transcript> Transcript for CheckpointTranscript<T> {
     fn state(&self) -> &[u8; 32] {
         self.inner.state()
     }
-
 }
 
 /// Describes where two transcript logs first diverge.

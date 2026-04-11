@@ -228,12 +228,11 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams, poly_map: &[Polyno
 
     // Emit all output checks now that all evaluations are recorded.
     for (instances, stage) in pending_output_checks {
-        ctx.verifier_ops
-            .push(VerifierOp::CheckOutput {
-                instances,
-                stage,
-                batch_challenges: Vec::new(),
-            });
+        ctx.verifier_ops.push(VerifierOp::CheckOutput {
+            instances,
+            stage,
+            batch_challenges: Vec::new(),
+        });
     }
 
     // Emit opening stage if present
@@ -869,6 +868,7 @@ fn op_poly_refs(op: &Op, kernels: &[KernelDef]) -> Vec<PolynomialId> {
         | Op::BeginStage { .. }
         | Op::AbsorbInputClaim { .. }
         | Op::Squeeze { .. }
+        | Op::ComputePower { .. }
         | Op::AppendDomainSeparator { .. }
         | Op::EvaluatePreprocessed { .. }
         | Op::ReleaseDevice { .. }

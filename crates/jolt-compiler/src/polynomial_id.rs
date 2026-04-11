@@ -116,6 +116,12 @@ pub enum PolynomialId {
     // ── Virtual: Hamming weight reduction ────────────────────────────
     HammingG(usize),
 
+    // ── Virtual: Booleanity projected arrays ─────────────────────────
+    /// G_d(k) = Σ_j eq(r_cycle, j) × ra_d(k, j): cycle-projected RA (Phase 1 input).
+    BooleanityG(usize),
+    /// H_d(j) = ra_d(r*_addr, j): address-projected RA (Phase 2 input).
+    BooleanityH(usize),
+
     // ── Virtual: advice address phase ───────────────────────────────
     TrustedAdviceAddr,
     UntrustedAdviceAddr,
@@ -269,9 +275,7 @@ impl PolynomialId {
 
             // ── R1CS input variables: column slices of witness ──────────
             _ if self.r1cs_variable_index().is_some() => PolynomialDescriptor {
-                source: PolySource::R1cs(R1csColumn::Variable(
-                    self.r1cs_variable_index().unwrap(),
-                )),
+                source: PolySource::R1cs(R1csColumn::Variable(self.r1cs_variable_index().unwrap())),
                 committed: false,
                 storage: StorageHint::Dense,
                 witness_slot: None,

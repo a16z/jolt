@@ -19,13 +19,13 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 use jolt_compiler::module::{
-    ChallengeSource, ClaimFactor, ClaimFormula, DomainSeparator, InputBinding, Op,
-    SegmentedConfig, VerifierStageIndex,
+    ChallengeSource, ClaimFactor, ClaimFormula, DomainSeparator, InputBinding, Op, SegmentedConfig,
+    VerifierStageIndex,
 };
 use jolt_compiler::{Iteration, KernelDef, PolynomialId};
 use jolt_compute::{Buf, BufferProvider, ComputeBackend, DeviceBuffer, Executable};
-use jolt_field::Field;
 use jolt_crypto::HomomorphicCommitment;
+use jolt_field::Field;
 use jolt_openings::{AdditivelyHomomorphic, ProverClaim};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::proof::SumcheckProof;
@@ -244,13 +244,7 @@ where
                 // binding strategy (dense, tensor, sparse).
                 if let Some(ch) = bind_challenge {
                     let scalar = state.challenges[*ch];
-                    bind_kernel_inputs(
-                        &mut device_buffers,
-                        backend,
-                        compiled_kernel,
-                        kdef,
-                        scalar,
-                    );
+                    bind_kernel_inputs(&mut device_buffers, backend, compiled_kernel, kdef, scalar);
                 }
 
                 let input_refs: Vec<&Buf<B, F>> = kdef
@@ -260,9 +254,7 @@ where
                     .collect();
 
                 #[cfg(debug_assertions)]
-                if matches!(kdef.spec.iteration, Iteration::Dense)
-                    && bind_challenge.is_none()
-                {
+                if matches!(kdef.spec.iteration, Iteration::Dense) && bind_challenge.is_none() {
                     // Dump buffer stats for the first Dense round (remaining round 0)
                     for (j, b) in input_refs.iter().enumerate() {
                         let data = backend.download(b.as_field());
@@ -316,8 +308,7 @@ where
                     if *round < inst.first_active_round {
                         // Inactive: constant contribution claim/2 to all eval slots.
                         let two_inv = F::from_u64(2).inverse().unwrap();
-                        let half_claim =
-                            state.batch_instance_claims[*batch][inst_idx] * two_inv;
+                        let half_claim = state.batch_instance_claims[*batch][inst_idx] * two_inv;
                         #[cfg(debug_assertions)]
                         eprintln!(
                             "  [zkvm round={round} inst={inst_idx} INACTIVE] half_claim={half_claim:?}, coeff={coeff:?}"
@@ -345,8 +336,7 @@ where
                             if let Some(ch) = bind_challenge {
                                 let scalar = state.challenges[*ch];
                                 let prev_phase = &inst.phases[phase_idx - 1];
-                                let prev_kdef =
-                                    &module.prover.kernels[prev_phase.kernel];
+                                let prev_kdef = &module.prover.kernels[prev_phase.kernel];
                                 let prev_is_ps = matches!(
                                     prev_kdef.spec.iteration,
                                     Iteration::PrefixSuffix { .. }
@@ -396,21 +386,19 @@ where
 
                         if is_prefix_suffix {
                             // Create PrefixSuffix state on activation.
-                            let trace = lookup_trace.as_ref().expect(
-                                "PrefixSuffix iteration requires lookup_trace data"
-                            );
+                            let trace = lookup_trace
+                                .as_ref()
+                                .expect("PrefixSuffix iteration requires lookup_trace data");
                             let ps = PrefixSuffixState::new(
                                 &kdef.spec.iteration,
                                 &state.challenges,
                                 trace,
                             );
-                            let _ = state.prefix_suffix_states
-                                .insert((*batch, inst_idx), ps);
+                            let _ = state.prefix_suffix_states.insert((*batch, inst_idx), ps);
                         } else {
                             // Build outer eq table for segmented phases.
                             if let Some(seg) = &phase.segmented {
-                                let outer_eq =
-                                    build_outer_eq(&state.challenges, seg, backend);
+                                let outer_eq = build_outer_eq(&state.challenges, seg, backend);
                                 let _ = state
                                     .segmented_outer_eqs
                                     .insert((*batch, inst_idx), outer_eq);
@@ -453,7 +441,9 @@ where
                     let round_within_phase = instance_round - phase_start;
                     let inst_evals = if is_prefix_suffix {
                         let ps_key = (*batch, inst_idx);
-                        let ps = state.prefix_suffix_states.get_mut(&ps_key)
+                        let ps = state
+                            .prefix_suffix_states
+                            .get_mut(&ps_key)
                             .expect("PrefixSuffix state missing");
                         let [eval_0, eval_2] = ps.compute_address_round();
                         // PrefixSuffix is degree 2 → 3 evals at {0, 1, 2}
@@ -462,8 +452,7 @@ where
                         // Actually, the runtime expects raw evaluation sums at grid points
                         // {0, 1, ..., num_evals-1}. For degree 2, num_evals = 3.
                         // eval_1 = previous_claim - eval_0
-                        let previous_claim =
-                            state.batch_instance_claims[*batch][inst_idx];
+                        let previous_claim = state.batch_instance_claims[*batch][inst_idx];
                         let eval_1 = previous_claim - eval_0;
                         vec![eval_0, eval_1, eval_2]
                     } else if let Some(seg) = &phase.segmented {
@@ -492,20 +481,80 @@ where
 
                     #[cfg(debug_assertions)]
                     {
-                        eprintln!(
-                            "  [zkvm round={round} inst={inst_idx} ACTIVE] raw_evals={inst_evals:?}"
-                        );
-                        // Dump first 8 elements of each input at first active round.
-                        if instance_round == 0 && inst_idx == 1 {
-                            for (j, binding) in kdef.inputs.iter().enumerate() {
-                                if let Some(buf) = device_buffers.get(&binding.poly()) {
-                                    let data = backend.download(buf.as_field());
-                                    let n = data.len().min(8);
-                                    eprintln!(
-                                        "  [zkvm DUMP inst={inst_idx} input={j} ({:?})] len={}, first {n}: {:?}",
-                                        binding.poly(), data.len(), &data[..n]
-                                    );
+                        if instance_round == 0 {
+                            eprintln!(
+                                "  [zkvm batch={batch} round={round} inst={inst_idx} ACTIVE phase={phase_idx}] raw_evals={inst_evals:?}"
+                            );
+                        }
+                        // Per-stage pointwise-product sums for BytecodeReadRaf (batch=4 inst=0)
+                        if instance_round == 0 && *batch == 4 && inst_idx == 0 {
+                            for s in 0..5 {
+                                let f_poly = jolt_compiler::PolynomialId::BytecodeReadRafF(s);
+                                let gv_poly =
+                                    jolt_compiler::PolynomialId::BytecodeReadRafGammaVal(s);
+                                if let (Some(f_buf), Some(gv_buf)) =
+                                    (device_buffers.get(&f_poly), device_buffers.get(&gv_poly))
+                                {
+                                    let f_data = backend.download(f_buf.as_field());
+                                    let gv_data = backend.download(gv_buf.as_field());
+                                    let dot: F = f_data
+                                        .iter()
+                                        .zip(gv_data.iter())
+                                        .map(|(&a, &b)| a * b)
+                                        .sum();
+                                    eprintln!("  [BCRAF stage={s}] dot(F[{s}], GV[{s}]) = {dot:?}");
                                 }
+                            }
+                            let et_poly = jolt_compiler::PolynomialId::BytecodeEntryTrace;
+                            let ew_poly = jolt_compiler::PolynomialId::BytecodeEntryWeighted;
+                            if let (Some(et_buf), Some(ew_buf)) =
+                                (device_buffers.get(&et_poly), device_buffers.get(&ew_poly))
+                            {
+                                let et_data = backend.download(et_buf.as_field());
+                                let ew_data = backend.download(ew_buf.as_field());
+                                let entry_dot: F = et_data
+                                    .iter()
+                                    .zip(ew_data.iter())
+                                    .map(|(&a, &b)| a * b)
+                                    .sum();
+                                eprintln!(
+                                    "  [BCRAF] dot(entry_trace, entry_weighted) = {entry_dot:?}"
+                                );
+                                let full_sum: F = (0..5)
+                                    .map(|s| {
+                                        let f_poly =
+                                            jolt_compiler::PolynomialId::BytecodeReadRafF(s);
+                                        let gv_poly =
+                                            jolt_compiler::PolynomialId::BytecodeReadRafGammaVal(s);
+                                        let f_data =
+                                            backend.download(device_buffers[&f_poly].as_field());
+                                        let gv_data =
+                                            backend.download(device_buffers[&gv_poly].as_field());
+                                        f_data
+                                            .iter()
+                                            .zip(gv_data.iter())
+                                            .map(|(&a, &b)| a * b)
+                                            .sum::<F>()
+                                    })
+                                    .sum::<F>()
+                                    + entry_dot;
+                                let claim = state.batch_instance_claims[*batch][inst_idx];
+                                eprintln!(
+                                    "  [BCRAF] full_sum={full_sum:?}  claim={claim:?}  match={}",
+                                    full_sum == claim
+                                );
+                            }
+                        }
+                    }
+
+                    #[cfg(debug_assertions)]
+                    if instance_round == 0 && *batch == 4 && inst_idx == 1 {
+                        // Dump eq table and transposed RA data for Booleanity debugging
+                        for (input_idx, binding) in kdef.inputs.iter().enumerate() {
+                            if let Some(buf) = device_buffers.get(&binding.poly()) {
+                                let data = backend.download(buf.as_field());
+                                let sum: F = data.iter().copied().sum();
+                                eprintln!("  [BOOL input={input_idx} poly={:?}] len={}, sum={sum:?}, first8={:?}", binding.poly(), data.len(), &data[..8.min(data.len())]);
                             }
                         }
                     }
@@ -656,9 +705,8 @@ where
                     let buf = device_buffers
                         .remove(pi)
                         .expect("DuplicateInterleave: buffer missing");
-                    let expanded = DeviceBuffer::Field(
-                        backend.duplicate_interleave(buf.as_field()),
-                    );
+                    let expanded =
+                        DeviceBuffer::Field(backend.duplicate_interleave(buf.as_field()));
                     let _ = device_buffers.insert(*pi, expanded);
                 }
             }
@@ -692,7 +740,11 @@ where
             }
 
             // ── PCS ──
-            Op::Commit { polys, tag, num_vars }
+            Op::Commit {
+                polys,
+                tag,
+                num_vars,
+            }
             | Op::CommitStreaming {
                 polys,
                 tag,
@@ -723,10 +775,7 @@ where
                     };
                     let (commitment, hint) = PCS::commit(&*data, pcs_setup);
                     // Match jolt-core's append_serializable: LabelWithCount header + body
-                    transcript.append(&LabelWithCount(
-                        tag.as_bytes(),
-                        commitment.serialized_len(),
-                    ));
+                    transcript.append(&LabelWithCount(tag.as_bytes(), commitment.serialized_len()));
                     commitment.append_to_transcript(transcript);
                     let _ = state.hints.insert(*pi, hint);
                     state.commitments.push(commitment);
@@ -832,7 +881,10 @@ where
                         jolt_poly::lagrange::interpolate_to_coeffs(*domain_start, &basis_at_tau);
                     #[cfg(debug_assertions)]
                     {
-                        eprintln!("[uniskip] Lagrange kernel coefficients ({} terms):", lagrange_coeffs.len());
+                        eprintln!(
+                            "[uniskip] Lagrange kernel coefficients ({} terms):",
+                            lagrange_coeffs.len()
+                        );
                         for (i, c) in lagrange_coeffs.iter().enumerate() {
                             eprintln!("  L[{i}]: {c:?}");
                         }
@@ -844,7 +896,10 @@ where
                     s1.resize(*num_coeffs, F::zero());
                     #[cfg(debug_assertions)]
                     {
-                        eprintln!("[uniskip] s1 coefficients ({} terms, num_coeffs={num_coeffs}):", s1.len());
+                        eprintln!(
+                            "[uniskip] s1 coefficients ({} terms, num_coeffs={num_coeffs}):",
+                            s1.len()
+                        );
                         for (i, c) in s1.iter().enumerate() {
                             eprintln!("  s1[{i}]: {c:?}");
                         }
@@ -933,7 +988,8 @@ where
                         for f in &term.factors {
                             match f {
                                 ClaimFactor::Eval(poly) => {
-                                    let e = state.evaluations.get(poly).copied().unwrap_or(F::zero());
+                                    let e =
+                                        state.evaluations.get(poly).copied().unwrap_or(F::zero());
                                     eprintln!("    Eval({poly:?}) = {e:?}");
                                     prod *= e;
                                 }
@@ -970,6 +1026,25 @@ where
                 state.last_squeezed = val;
             }
 
+            Op::ComputePower {
+                target,
+                base,
+                exponent,
+            } => {
+                let base_val = state.challenges[*base];
+                let mut result = F::one();
+                let mut b = base_val;
+                let mut exp = *exponent;
+                while exp > 0 {
+                    if exp & 1 == 1 {
+                        result *= b;
+                    }
+                    b = b.square();
+                    exp >>= 1;
+                }
+                state.challenges[*target] = result;
+            }
+
             Op::AppendDomainSeparator { tag } => {
                 // Match jolt-core's `append_bytes(label, &[])` which calls:
                 //   1. raw_append_label_with_len: pack label (24b) + BE length 0 (8b) = 32b → update_state
@@ -981,9 +1056,16 @@ where
                 transcript.append_bytes(&[]);
             }
 
-            Op::EvaluatePreprocessed { source, at_challenges, store_as } => {
+            Op::EvaluatePreprocessed {
+                source,
+                at_challenges,
+                store_as,
+            } => {
                 let data = provider.materialize(*source);
-                let point: Vec<F> = at_challenges.iter().map(|&ci| state.challenges[ci]).collect();
+                let point: Vec<F> = at_challenges
+                    .iter()
+                    .map(|&ci| state.challenges[ci])
+                    .collect();
                 let eval = evaluate_mle(&data, &point);
                 let _ = state.evaluations.insert(*store_as, eval);
             }
@@ -1100,8 +1182,10 @@ where
         let rho: F = transcript.challenge();
 
         // RLC-combine evaluation tables from materialized provider data.
-        let materialized: Vec<Cow<'_, [F]>> =
-            poly_ids.iter().map(|&pi| provider.materialize(pi)).collect();
+        let materialized: Vec<Cow<'_, [F]>> = poly_ids
+            .iter()
+            .map(|&pi| provider.materialize(pi))
+            .collect();
         let slices: Vec<&[F]> = materialized.iter().map(|c| &**c).collect();
         let combined_evals = jolt_openings::rlc_combine(&slices, rho);
         let combined_eval = jolt_openings::rlc_combine_scalars(&evals, rho);
@@ -1232,6 +1316,15 @@ fn resolve_inputs<B, F>(
                 let eq_table = jolt_poly::EqPolynomial::<F>::evals(&point, None);
 
                 let src_data = provider.materialize(*source);
+                // Debug: check if source is one-hot (should be 0/1 valued)
+                {
+                    let nonzero_count = src_data.iter().filter(|v| !v.is_zero()).count();
+                    let one_count = src_data.iter().filter(|v| **v == F::one()).count();
+                    eprintln!("[zkvm EqProject src] poly={source:?} len={}, nonzero={nonzero_count}, ones={one_count}", src_data.len());
+                    if src_data.len() >= 4 {
+                        eprintln!("[zkvm EqProject src] first 4: {:?}", &src_data[..4]);
+                    }
+                }
                 if eq_table.len() == *inner_size {
                     // Project out the inner (cycle) dimension → outer_size result
                     let mut projected = vec![F::zero(); *outer_size];
@@ -1244,6 +1337,9 @@ fn resolve_inputs<B, F>(
                             projected[k] += eq_val * src_data[base + k];
                         }
                     }
+                    eprintln!("[zkvm EqProject] inner_size={}, outer_size={}, result[0..8]: {:?}", inner_size, outer_size, &projected[..8.min(projected.len())]);
+                    let sum: F = projected.iter().copied().sum();
+                    eprintln!("[zkvm EqProject] sum={sum:?}");
                     DeviceBuffer::Field(backend.upload(&projected))
                 } else {
                     // Project out the outer (address) dimension → inner_size result
@@ -1256,8 +1352,31 @@ fn resolve_inputs<B, F>(
                             }
                         }
                     }
+                    eprintln!("[zkvm EqProject else] inner_size={}, outer_size={}, eq_len={}, result[0..8]: {:?}", inner_size, outer_size, eq_table.len(), &projected[..8.min(projected.len())]);
+                    let sum: F = projected.iter().copied().sum();
+                    eprintln!("[zkvm EqProject else] sum={sum:?}");
                     DeviceBuffer::Field(backend.upload(&projected))
                 }
+            }
+            InputBinding::Transpose {
+                source, rows, cols, ..
+            } => {
+                let src_data = provider.materialize(*source);
+                debug_assert_eq!(
+                    src_data.len(),
+                    rows * cols,
+                    "Transpose: source len {} != rows {} × cols {}",
+                    src_data.len(),
+                    rows,
+                    cols,
+                );
+                let mut transposed = vec![F::zero(); rows * cols];
+                for r in 0..*rows {
+                    for c in 0..*cols {
+                        transposed[c * rows + r] = src_data[r * cols + c];
+                    }
+                }
+                DeviceBuffer::Field(backend.upload(&transposed))
             }
             InputBinding::EqGather {
                 eq_challenges: chs,
@@ -1324,9 +1443,7 @@ fn resolve_inputs<B, F>(
                 register_eq_challenges: reg_chs,
                 ..
             } => {
-                let bc = bytecode_data.expect(
-                    "BytecodeVal binding requires bytecode_data"
-                );
+                let bc = bytecode_data.expect("BytecodeVal binding requires bytecode_data");
                 // Build stage gamma powers from single base: [1, γ, γ², ...]
                 let sg_base = challenges[*stage_gamma_base];
                 let mut gammas = Vec::with_capacity(*stage_gamma_count);

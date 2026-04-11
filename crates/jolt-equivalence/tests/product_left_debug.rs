@@ -6,10 +6,10 @@
 #![allow(non_snake_case, clippy::print_stderr)]
 
 use jolt_field::{Field, Fr};
-use num_traits::Zero;
 use jolt_host::{extract_trace, BytecodePreprocessing, Program};
 use jolt_r1cs::constraints::rv64::{self, *};
 use jolt_r1cs::R1csKey;
+use num_traits::Zero;
 
 use ark_ff::One as _;
 use jolt_core::field::JoltField;
@@ -81,7 +81,11 @@ fn product_left_projection_equivalence() {
         let core_vals: [CoreFr; 3] = [
             CoreFr::from_u64(row.instruction_left_input),
             CoreFr::from_u64(row.should_branch_lookup_output),
-            if row.jump_flag { CoreFr::one() } else { CoreFr::zero() },
+            if row.jump_flag {
+                CoreFr::one()
+            } else {
+                CoreFr::zero()
+            },
         ];
 
         for (k, (&var, &name)) in a_vars.iter().zip(a_names.iter()).enumerate() {
@@ -98,7 +102,10 @@ fn product_left_projection_equivalence() {
             }
         }
     }
-    eprintln!("Raw A-row variable mismatches: {raw_mismatches} / {}", trace_length * 3);
+    eprintln!(
+        "Raw A-row variable mismatches: {raw_mismatches} / {}",
+        trace_length * 3
+    );
 
     // ── Step 2: Build domain-indexed product_left from DerivedSource ──
     let derived = DerivedSource::<Fr>::new(&r1cs_witness, trace_length, v_pad);
@@ -108,7 +115,11 @@ fn product_left_projection_equivalence() {
     let domain_right = domain_right.as_ref();
 
     let stride = 4usize;
-    eprintln!("domain_left len = {}, domain_right len = {}", domain_left.len(), domain_right.len());
+    eprintln!(
+        "domain_left len = {}, domain_right len = {}",
+        domain_left.len(),
+        domain_right.len()
+    );
 
     // ── Step 3: Lagrange basis at a fixed r0 ────────────────────────
     let r0 = Fr::from_u64(42);
@@ -157,7 +168,8 @@ fn product_left_projection_equivalence() {
     let mut right_mismatches = 0;
     for c in 0..trace_length {
         let row = ProductCycleInputs::from_trace::<CoreFr>(&padded_core_trace, c);
-        let (_, core_right) = ProductVirtualEval::fused_left_right_at_r::<CoreFr>(&row, &basis_core);
+        let (_, core_right) =
+            ProductVirtualEval::fused_left_right_at_r::<CoreFr>(&row, &basis_core);
 
         let mut zkvm_right = Fr::zero();
         for (k, &lk) in basis_zkvm.iter().enumerate() {
@@ -177,7 +189,16 @@ fn product_left_projection_equivalence() {
     }
     eprintln!("Right projection mismatches: {right_mismatches} / {trace_length}");
 
-    assert_eq!(raw_mismatches, 0, "Raw A-row witness variables differ between systems");
-    assert_eq!(left_mismatches, 0, "Projected left values differ — Lagrange projection bug");
-    assert_eq!(right_mismatches, 0, "Projected right values differ — Lagrange projection bug");
+    assert_eq!(
+        raw_mismatches, 0,
+        "Raw A-row witness variables differ between systems"
+    );
+    assert_eq!(
+        left_mismatches, 0,
+        "Projected left values differ — Lagrange projection bug"
+    );
+    assert_eq!(
+        right_mismatches, 0,
+        "Projected right values differ — Lagrange projection bug"
+    );
 }

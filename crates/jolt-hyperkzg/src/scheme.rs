@@ -67,7 +67,6 @@ where
         }
     }
 
-
     /// Phase 1 of the HyperKZG protocol: fold the multilinear polynomial.
     ///
     /// Given polynomial $P$ with $2^\ell$ evaluations and opening point
@@ -205,7 +204,6 @@ where
 
         Ok(())
     }
-
 }
 
 impl<P: PairingGroup> DeriveSetup<HyperKZGProverSetup<P>> for PedersenSetup<P::G1> {
@@ -239,7 +237,9 @@ where
     type OpeningHint = ();
     type SetupParams = (usize, P::G1, P::G2);
 
-    fn setup((max_num_vars, g1, g2): Self::SetupParams) -> (Self::ProverSetup, Self::VerifierSetup) {
+    fn setup(
+        (max_num_vars, g1, g2): Self::SetupParams,
+    ) -> (Self::ProverSetup, Self::VerifierSetup) {
         use rand_chacha::{rand_core::SeedableRng, ChaCha20Rng};
         let mut rng = ChaCha20Rng::seed_from_u64(0);
         let max_degree = 1usize << max_num_vars;
@@ -307,7 +307,6 @@ where
         HyperKZGCommitment { point: combined }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -551,12 +550,14 @@ mod tests {
         let commitment = <Pedersen<jolt_crypto::Bn254G1> as VectorCommitment>::commit(
             &vc_setup, &values, &blinding,
         );
-        assert!(<Pedersen<jolt_crypto::Bn254G1> as VectorCommitment>::verify(
-            &vc_setup,
-            &commitment,
-            &values,
-            &blinding,
-        ));
+        assert!(
+            <Pedersen<jolt_crypto::Bn254G1> as VectorCommitment>::verify(
+                &vc_setup,
+                &commitment,
+                &values,
+                &blinding,
+            )
+        );
     }
 
     #[test]

@@ -49,13 +49,22 @@ fn reduce_open_verify<T: Transcript<Challenge = Fr>>(
     let reduced_p = MockPCS::reduce_prover(prover_claims, &mut transcript_p);
     let proofs: Vec<_> = reduced_p
         .iter()
-        .map(|c| MockPCS::open(&c.polynomial, &c.point, c.eval, &(), None, &mut transcript_p))
+        .map(|c| {
+            MockPCS::open(
+                &c.polynomial,
+                &c.point,
+                c.eval,
+                &(),
+                None,
+                &mut transcript_p,
+            )
+        })
         .collect();
 
     // Verifier side
     let mut transcript_v = T::new(label);
-    let reduced_v =
-        MockPCS::reduce_verifier(verifier_claims, &mut transcript_v).expect("reduction should succeed");
+    let reduced_v = MockPCS::reduce_verifier(verifier_claims, &mut transcript_v)
+        .expect("reduction should succeed");
 
     assert_eq!(reduced_v.len(), proofs.len());
     for (claim, proof) in reduced_v.iter().zip(proofs.iter()) {
@@ -194,12 +203,21 @@ fn tampered_eval_detected() {
     let reduced_p = MockPCS::reduce_prover(prover_claims, &mut transcript_p);
     let proofs: Vec<_> = reduced_p
         .iter()
-        .map(|c| MockPCS::open(&c.polynomial, &c.point, c.eval, &(), None, &mut transcript_p))
+        .map(|c| {
+            MockPCS::open(
+                &c.polynomial,
+                &c.point,
+                c.eval,
+                &(),
+                None,
+                &mut transcript_p,
+            )
+        })
         .collect();
 
     let mut transcript_v = Blake2bTranscript::new(b"tampered");
-    let reduced_v =
-        MockPCS::reduce_verifier(verifier_claims, &mut transcript_v).expect("reduction itself should succeed");
+    let reduced_v = MockPCS::reduce_verifier(verifier_claims, &mut transcript_v)
+        .expect("reduction itself should succeed");
 
     let mut any_failed = false;
     for (claim, proof) in reduced_v.iter().zip(proofs.iter()) {

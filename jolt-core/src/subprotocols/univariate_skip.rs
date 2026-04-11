@@ -123,16 +123,25 @@ pub fn build_uniskip_first_round_poly<
 
     #[cfg(debug_assertions)]
     {
-        eprintln!("[jolt-core uniskip] t1_vals ({EXTENDED_SIZE} evals, domain -{}..{}):", DEGREE, DEGREE);
+        eprintln!(
+            "[jolt-core uniskip] t1_vals ({EXTENDED_SIZE} evals, domain -{}..{}):",
+            DEGREE, DEGREE
+        );
         for (i, v) in t1_vals.iter().enumerate() {
             let y = i as i64 - DEGREE as i64;
             eprintln!("  t1_vals[{i}] (y={y}): {v:?}");
         }
-        eprintln!("[jolt-core uniskip] t1 coefficients ({} terms):", t1_coeffs.len());
+        eprintln!(
+            "[jolt-core uniskip] t1 coefficients ({} terms):",
+            t1_coeffs.len()
+        );
         for (i, c) in t1_coeffs.iter().enumerate() {
             eprintln!("  t1[{i}]: {c:?}");
         }
-        eprintln!("[jolt-core uniskip] Lagrange kernel coefficients ({} terms):", lagrange_coeffs.len());
+        eprintln!(
+            "[jolt-core uniskip] Lagrange kernel coefficients ({} terms):",
+            lagrange_coeffs.len()
+        );
         for (i, c) in lagrange_coeffs.iter().enumerate() {
             eprintln!("  L[{i}]: {c:?}");
         }

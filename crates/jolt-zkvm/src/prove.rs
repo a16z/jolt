@@ -4,8 +4,8 @@
 //! validates the config, and executes the proving schedule.
 
 use jolt_compute::{BufferProvider, ComputeBackend, Executable};
-use jolt_field::Field;
 use jolt_crypto::HomomorphicCommitment;
+use jolt_field::Field;
 use jolt_openings::AdditivelyHomomorphic;
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::ProverConfig;
@@ -42,5 +42,14 @@ where
     if let Err(e) = config.validate() {
         panic!("invalid ProverConfig: {e}");
     }
-    execute::<B, F, T, PCS>(executable, provider, backend, pcs_setup, transcript, config, lookup_trace, bytecode_data)
+    execute::<B, F, T, PCS>(
+        executable,
+        provider,
+        backend,
+        pcs_setup,
+        transcript,
+        config,
+        lookup_trace,
+        bytecode_data,
+    )
 }

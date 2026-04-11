@@ -1,8 +1,8 @@
 //! Direct Blake2b hash computation test to debug op #112 divergence.
 #![allow(non_snake_case, clippy::print_stderr)]
 
-use blake2::{Blake2b, Digest};
 use blake2::digest::consts::U32;
+use blake2::{Blake2b, Digest};
 
 type Blake2b256 = Blake2b<U32>;
 
@@ -18,7 +18,7 @@ fn hex(b: &[u8]) -> String {
 fn from_hex(s: &str) -> Vec<u8> {
     (0..s.len())
         .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i+2], 16).unwrap())
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
         .collect()
 }
 
@@ -36,8 +36,10 @@ fn try_hash(state: &[u8], n_rounds: u32, data: &[u8]) -> [u8; 32] {
 #[test]
 fn hash_op112_direct() {
     let state = from_hex("b14c4cefd0d915ad188a656b0c782a0fada66db863a197777c63e87a0e549c79");
-    let core_expected = from_hex("1bcf4b272ac94a8556251ed31264ef5b25965512c54b998262dfb40af02e203e");
-    let zkvm_expected = from_hex("f625bb6055493fcbaa0d6ff1d8087f1a949ad9380875353c70b42aa650d4b1a7");
+    let core_expected =
+        from_hex("1bcf4b272ac94a8556251ed31264ef5b25965512c54b998262dfb40af02e203e");
+    let zkvm_expected =
+        from_hex("f625bb6055493fcbaa0d6ff1d8087f1a949ad9380875353c70b42aa650d4b1a7");
 
     // What jolt-zkvm appends: LabelWithCount("uniskip_poly", 55)
     let data = from_hex("756e69736b69705f706f6c790000000000000000000000000000000000000037");
@@ -118,22 +120,30 @@ fn hash_op112_direct() {
     // === Scan: different labels at n_rounds=112 ===
     eprintln!("\n--- Scan: common labels at n_rounds=112 ---");
     let labels: &[&[u8]] = &[
-        b"sumcheck_poly", b"sumcheck_claim", b"opening_claim",
-        b"commitment", b"untrusted_advice", b"Jolt",
+        b"sumcheck_poly",
+        b"sumcheck_claim",
+        b"opening_claim",
+        b"commitment",
+        b"untrusted_advice",
+        b"Jolt",
     ];
     for label in labels {
         let mut buf = [0u8; 32];
         let len = label.len().min(32);
         buf[..len].copy_from_slice(&label[..len]);
         if try_hash(&state, 112, &buf)[..] == core_expected[..] {
-            eprintln!("FOUND: jolt-core used label {:?} (no count) at n_rounds=112",
-                std::str::from_utf8(label).unwrap_or("???"));
+            eprintln!(
+                "FOUND: jolt-core used label {:?} (no count) at n_rounds=112",
+                std::str::from_utf8(label).unwrap_or("???")
+            );
         }
         // Also try with count=55
         buf[24..32].copy_from_slice(&55u64.to_be_bytes());
         if try_hash(&state, 112, &buf)[..] == core_expected[..] {
-            eprintln!("FOUND: jolt-core used label {:?} with count=55 at n_rounds=112",
-                std::str::from_utf8(label).unwrap_or("???"));
+            eprintln!(
+                "FOUND: jolt-core used label {:?} with count=55 at n_rounds=112",
+                std::str::from_utf8(label).unwrap_or("???")
+            );
         }
     }
 

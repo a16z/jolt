@@ -345,8 +345,7 @@ mod tests {
 
         // Verifier: reduce + verify
         let mut transcript_v = Blake2bTranscript::new(b"e2e-test");
-        let reduced_verifier =
-            MockPCS::reduce_verifier(verifier_claims, &mut transcript_v)?;
+        let reduced_verifier = MockPCS::reduce_verifier(verifier_claims, &mut transcript_v)?;
 
         assert_eq!(reduced_verifier.len(), proofs.len());
 
@@ -509,5 +508,4 @@ mod tests {
         );
         assert!(result.is_err(), "wrong eval commitment should be rejected");
     }
-
 }

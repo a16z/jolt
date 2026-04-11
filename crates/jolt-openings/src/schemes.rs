@@ -119,4 +119,3 @@ pub trait ZkOpeningScheme: CommitmentScheme {
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<(), OpeningsError>;
 }
-

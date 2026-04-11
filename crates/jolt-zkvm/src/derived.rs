@@ -41,11 +41,8 @@ const PRODUCT_STRIDE: usize = NUM_PRODUCT_CONSTRAINTS.next_power_of_two(); // 4
 ///   k=0: Product = LeftInstructionInput × RightInstructionInput
 ///   k=1: ShouldBranch = LookupOutput × Branch
 ///   k=2: ShouldJump = Jump × (1 − NextIsNoop)
-const PRODUCT_A_VARS: [usize; NUM_PRODUCT_CONSTRAINTS] = [
-    V_LEFT_INSTRUCTION_INPUT,
-    V_LOOKUP_OUTPUT,
-    V_FLAG_JUMP,
-];
+const PRODUCT_A_VARS: [usize; NUM_PRODUCT_CONSTRAINTS] =
+    [V_LEFT_INSTRUCTION_INPUT, V_LOOKUP_OUTPUT, V_FLAG_JUMP];
 
 /// RAM configuration needed to build K×T polynomials from R1CS witness data.
 pub struct RamConfig {
@@ -265,7 +262,9 @@ impl<'a, F: Field> DerivedSource<'a, F> {
     /// Remap a raw byte address to a dense RAM index k.
     /// Returns `None` for address 0 (no-op cycles).
     fn remap(&self, raw_addr_field: F) -> Option<usize> {
-        let raw = raw_addr_field.to_u64().expect("RAM address must fit in u64");
+        let raw = raw_addr_field
+            .to_u64()
+            .expect("RAM address must fit in u64");
         if raw == 0 {
             return None;
         }

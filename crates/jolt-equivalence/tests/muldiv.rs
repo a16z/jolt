@@ -17,14 +17,14 @@ use std::sync::OnceLock;
 use jolt_core::curve::Bn254Curve;
 use jolt_core::field::JoltField;
 use jolt_core::host;
-use jolt_core::zkvm::instruction::{
-    Flags as CoreFlags, InterleavedBitsMarker as CoreInterleavedBits, InstructionLookup,
-};
-use jolt_core::zkvm::lookup_table::LookupTables as CoreLookupTables;
 use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
 use jolt_core::poly::opening_proof::OpeningId;
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
 use jolt_core::transcripts::Blake2bTranscript;
+use jolt_core::zkvm::instruction::{
+    Flags as CoreFlags, InstructionLookup, InterleavedBitsMarker as CoreInterleavedBits,
+};
+use jolt_core::zkvm::lookup_table::LookupTables as CoreLookupTables;
 use jolt_core::zkvm::proof_serialization::JoltProof;
 use jolt_core::zkvm::prover::{JoltCpuProver, JoltProverPreprocessing};
 use jolt_core::zkvm::verifier::{JoltSharedPreprocessing, JoltVerifier, JoltVerifierPreprocessing};
@@ -34,10 +34,10 @@ use jolt_compiler::module::Module;
 use jolt_compiler::{Op, VerifierOp};
 use jolt_compute::link;
 use jolt_cpu::CpuBackend;
-use jolt_host::{extract_trace, BytecodePreprocessing, CycleRow, InstructionFlagData, Program};
-use jolt_instructions::LookupTableKind;
 use jolt_dory::types::DoryProverSetup;
 use jolt_dory::DoryScheme;
+use jolt_host::{extract_trace, BytecodePreprocessing, CycleRow, InstructionFlagData, Program};
+use jolt_instructions::LookupTableKind;
 use jolt_r1cs::{constraints::rv64, R1csKey, R1csSource};
 use jolt_transcript::Transcript;
 use jolt_verifier::{OneHotConfig, ProverConfig, ReadWriteConfig, TRANSCRIPT_LABEL};
@@ -108,7 +108,7 @@ fn snapshot_opening_keys(verifier: &CoreVerifier<'_>) -> BTreeSet<OpeningId> {
         .opening_accumulator
         .openings
         .keys()
-        .cloned()
+        .copied()
         .collect()
 }
 
@@ -358,14 +358,16 @@ struct ZkvmSetup {
 }
 
 #[allow(clippy::type_complexity)]
-fn setup_zkvm_muldiv(core_params: &CoreProtocolParams) -> (
+fn setup_zkvm_muldiv(
+    core_params: &CoreProtocolParams,
+) -> (
     jolt_compute::Executable<CpuBackend, NewFr>,
     Polynomials<NewFr>,
     R1csKey<NewFr>,
     Vec<NewFr>, // r1cs_witness
     ZkvmSetup,
-    Vec<u64>,   // initial_ram_state
-    Vec<u64>,   // final_ram_state
+    Vec<u64>, // initial_ram_state
+    Vec<u64>, // final_ram_state
     InstructionFlagData<NewFr>,
     RegisterAccessData,
     LookupTraceData,
@@ -421,11 +423,7 @@ fn setup_zkvm_muldiv(core_params: &CoreProtocolParams) -> (
         outputs: {
             // jolt-core truncates trailing zeros from outputs in gen_from_trace
             let mut out = io_device.outputs.clone();
-            out.truncate(
-                out.iter()
-                    .rposition(|&b| b != 0)
-                    .map_or(0, |pos| pos + 1),
-            );
+            out.truncate(out.iter().rposition(|&b| b != 0).map_or(0, |pos| pos + 1));
             out
         },
         panic: io_device.panic,
@@ -497,39 +495,53 @@ fn setup_zkvm_muldiv(core_params: &CoreProtocolParams) -> (
     let mut polys = Polynomials::<NewFr>::new(poly_config);
     polys.push(&cycle_inputs);
     polys.finish();
-    let _ = polys.insert(PolynomialId::UntrustedAdvice, vec![NewFr::zero(); trace_length]);
-    let _ = polys.insert(PolynomialId::TrustedAdvice, vec![NewFr::zero(); trace_length]);
+    let _ = polys.insert(
+        PolynomialId::UntrustedAdvice,
+        vec![NewFr::zero(); trace_length],
+    );
+    let _ = polys.insert(
+        PolynomialId::TrustedAdvice,
+        vec![NewFr::zero(); trace_length],
+    );
 
     let (initial_ram_state, final_ram_state) =
         jolt_host::ram::build_ram_states(&init_mem, &final_memory, &io_device, ram_k);
 
     // Build BytecodeData for BytecodeReadRaf sumcheck
-    let bc_entries: Vec<BytecodeEntry<NewFr>> = bytecode.bytecode.iter().map(|instruction| {
-        let instr = instruction.normalize();
-        let circuit_flags = CoreFlags::circuit_flags(instruction);
-        let instr_flags = CoreFlags::instruction_flags(instruction);
-        let lookup_table = InstructionLookup::<64>::lookup_table(instruction)
-            .map(|t| CoreLookupTables::<64>::enum_index(&t));
-        BytecodeEntry {
-            address: jolt_field::Field::from_u64(instr.address as u64),
-            imm: jolt_field::Field::from_i128(instr.operands.imm),
-            circuit_flags: circuit_flags.to_vec(),
-            rd: instr.operands.rd,
-            rs1: instr.operands.rs1,
-            rs2: instr.operands.rs2,
-            lookup_table,
-            is_interleaved: CoreInterleavedBits::is_interleaved_operands(&circuit_flags),
-            is_branch: instr_flags[jolt_core::zkvm::instruction::InstructionFlags::Branch],
-            left_is_rs1: instr_flags[jolt_core::zkvm::instruction::InstructionFlags::LeftOperandIsRs1Value],
-            left_is_pc: instr_flags[jolt_core::zkvm::instruction::InstructionFlags::LeftOperandIsPC],
-            right_is_rs2: instr_flags[jolt_core::zkvm::instruction::InstructionFlags::RightOperandIsRs2Value],
-            right_is_imm: instr_flags[jolt_core::zkvm::instruction::InstructionFlags::RightOperandIsImm],
-            is_noop: instr_flags[jolt_core::zkvm::instruction::InstructionFlags::IsNoop],
-        }
-    }).collect();
+    let bc_entries: Vec<BytecodeEntry<NewFr>> = bytecode
+        .bytecode
+        .iter()
+        .map(|instruction| {
+            let instr = instruction.normalize();
+            let circuit_flags = CoreFlags::circuit_flags(instruction);
+            let instr_flags = CoreFlags::instruction_flags(instruction);
+            let lookup_table = InstructionLookup::<64>::lookup_table(instruction)
+                .map(|t| CoreLookupTables::<64>::enum_index(&t));
+            BytecodeEntry {
+                address: jolt_field::Field::from_u64(instr.address as u64),
+                imm: jolt_field::Field::from_i128(instr.operands.imm),
+                circuit_flags: circuit_flags.to_vec(),
+                rd: instr.operands.rd,
+                rs1: instr.operands.rs1,
+                rs2: instr.operands.rs2,
+                lookup_table,
+                is_interleaved: CoreInterleavedBits::is_interleaved_operands(&circuit_flags),
+                is_branch: instr_flags[jolt_core::zkvm::instruction::InstructionFlags::Branch],
+                left_is_rs1: instr_flags
+                    [jolt_core::zkvm::instruction::InstructionFlags::LeftOperandIsRs1Value],
+                left_is_pc: instr_flags
+                    [jolt_core::zkvm::instruction::InstructionFlags::LeftOperandIsPC],
+                right_is_rs2: instr_flags
+                    [jolt_core::zkvm::instruction::InstructionFlags::RightOperandIsRs2Value],
+                right_is_imm: instr_flags
+                    [jolt_core::zkvm::instruction::InstructionFlags::RightOperandIsImm],
+                is_noop: instr_flags[jolt_core::zkvm::instruction::InstructionFlags::IsNoop],
+            }
+        })
+        .collect();
 
     let mut pc_indices = Vec::with_capacity(trace_length);
-    for cycle in trace.iter() {
+    for cycle in &trace {
         pc_indices.push(bytecode.get_pc(cycle));
     }
     // Pad remaining cycles (NoOp) to bytecode index 0
@@ -547,7 +559,20 @@ fn setup_zkvm_muldiv(core_params: &CoreProtocolParams) -> (
         config,
     };
 
-    (executable, polys, r1cs_key, r1cs_witness, setup, initial_ram_state, final_ram_state, instruction_flag_data, reg_access, lookup_trace, lookup_flags, bytecode_data)
+    (
+        executable,
+        polys,
+        r1cs_key,
+        r1cs_witness,
+        setup,
+        initial_ram_state,
+        final_ram_state,
+        instruction_flag_data,
+        reg_access,
+        lookup_trace,
+        lookup_flags,
+        bytecode_data,
+    )
 }
 
 fn populate_bytecode_preprocessed(
@@ -558,7 +583,11 @@ fn populate_bytecode_preprocessed(
     let k = bc.entries.len();
 
     // BytecodePcIndex: per-cycle bytecode table index as field elements (length = T, padded)
-    let pc_idx_poly: Vec<NewFr> = bc.pc_indices.iter().map(|&i| NewFr::from_u64(i as u64)).collect();
+    let pc_idx_poly: Vec<NewFr> = bc
+        .pc_indices
+        .iter()
+        .map(|&i| NewFr::from_u64(i as u64))
+        .collect();
     preprocessed.insert(PolynomialId::BytecodePcIndex, pc_idx_poly);
 
     // BytecodeEntryTrace: one-hot at PC of cycle 0 (from trace)
@@ -575,8 +604,20 @@ fn populate_bytecode_preprocessed(
 
 fn extract_jolt_zkvm_stages() -> Vec<StageTrace<Fr>> {
     let (_, params) = jolt_core_state_history();
-    let (executable, mut polys, r1cs_key, r1cs_witness, setup,
-         initial_ram, final_ram, instruction_flag_data, reg_access, lookup_trace, lookup_flags, bytecode_data) = setup_zkvm_muldiv(params);
+    let (
+        executable,
+        mut polys,
+        r1cs_key,
+        r1cs_witness,
+        setup,
+        initial_ram,
+        final_ram,
+        instruction_flag_data,
+        reg_access,
+        lookup_trace,
+        lookup_flags,
+        bytecode_data,
+    ) = setup_zkvm_muldiv(params);
 
     let r1cs = R1csSource::new(&r1cs_key, &r1cs_witness);
     let derived = DerivedSource::new(&r1cs_witness, setup.trace_length, r1cs_key.num_vars_padded)
@@ -607,7 +648,7 @@ fn extract_jolt_zkvm_stages() -> Vec<StageTrace<Fr>> {
         &executable,
         &mut provider,
         &backend(),
-        &pcs_setup,
+        pcs_setup,
         &mut transcript,
         setup.config,
         Some(lookup_trace),
@@ -637,12 +678,29 @@ fn extract_jolt_zkvm_stages() -> Vec<StageTrace<Fr>> {
 /// Run jolt-zkvm prover with a CheckpointTranscript and return the event log.
 fn extract_jolt_zkvm_checkpoint_log() -> Vec<TranscriptEvent> {
     let (_, params) = jolt_core_state_history();
-    let (executable, mut polys, r1cs_key, r1cs_witness, setup,
-         initial_ram, final_ram, instruction_flag_data, reg_access, lookup_trace, lookup_flags, bytecode_data) = setup_zkvm_muldiv(params);
+    let (
+        executable,
+        mut polys,
+        r1cs_key,
+        r1cs_witness,
+        setup,
+        initial_ram,
+        final_ram,
+        instruction_flag_data,
+        reg_access,
+        lookup_trace,
+        lookup_flags,
+        bytecode_data,
+    ) = setup_zkvm_muldiv(params);
 
     // Debug: print InstructionRa[0] stats
     if let Some(ra0) = polys.try_get(PolynomialId::InstructionRa(0)) {
-        let nonzero: Vec<_> = ra0.iter().enumerate().filter(|(_, v)| !v.is_zero()).take(5).collect();
+        let nonzero: Vec<_> = ra0
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| !v.is_zero())
+            .take(5)
+            .collect();
         eprintln!(
             "InstructionRa(0): len={}, nonzero_count={}, first_nonzero={:?}",
             ra0.len(),
@@ -674,15 +732,14 @@ fn extract_jolt_zkvm_checkpoint_log() -> Vec<TranscriptEvent> {
     let mut provider = ProverData::new(&mut polys, r1cs, derived, preprocessed);
 
     let pcs_setup = &params.pcs_setup;
-    let mut transcript = CheckpointTranscript::<jolt_transcript::Blake2bTranscript<NewFr>>::new(
-        TRANSCRIPT_LABEL,
-    );
+    let mut transcript =
+        CheckpointTranscript::<jolt_transcript::Blake2bTranscript<NewFr>>::new(TRANSCRIPT_LABEL);
 
     let _proof = prove::<_, _, _, DoryScheme>(
         &executable,
         &mut provider,
         &backend(),
-        &pcs_setup,
+        pcs_setup,
         &mut transcript,
         setup.config,
         Some(lookup_trace),
@@ -834,25 +891,39 @@ macro_rules! equivalence_test {
 
 #[test]
 #[ignore = "requires full pipeline wiring"]
-fn cross_system_stage1() { equivalence_test_body!(0); }
+fn cross_system_stage1() {
+    equivalence_test_body!(0);
+}
 #[test]
 #[ignore = "requires full pipeline wiring"]
-fn cross_system_stage2() { equivalence_test_body!(1); }
+fn cross_system_stage2() {
+    equivalence_test_body!(1);
+}
 #[test]
 #[ignore = "requires full pipeline wiring"]
-fn cross_system_stage3() { equivalence_test_body!(2); }
+fn cross_system_stage3() {
+    equivalence_test_body!(2);
+}
 #[test]
 #[ignore = "requires full pipeline wiring"]
-fn cross_system_stage4() { equivalence_test_body!(3); }
+fn cross_system_stage4() {
+    equivalence_test_body!(3);
+}
 #[test]
 #[ignore = "requires full pipeline wiring"]
-fn cross_system_stage5() { equivalence_test_body!(4); }
+fn cross_system_stage5() {
+    equivalence_test_body!(4);
+}
 #[test]
 #[ignore = "requires full pipeline wiring"]
-fn cross_system_stage6() { equivalence_test_body!(5); }
+fn cross_system_stage6() {
+    equivalence_test_body!(5);
+}
 #[test]
 #[ignore = "requires full pipeline wiring"]
-fn cross_system_stage7() { equivalence_test_body!(6); }
+fn cross_system_stage7() {
+    equivalence_test_body!(6);
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // Transcript divergence test
@@ -902,21 +973,20 @@ fn transcript_divergence() {
     let min_len = golden_ops.len().min(zkvm_states.len());
 
     // Check initial states match (both from `new(b"Jolt")`)
-    eprintln!(
-        "Initial state (jolt-core): {}",
-        &hex(&golden[0])[..16]
-    );
+    eprintln!("Initial state (jolt-core): {}", &hex(&golden[0])[..16]);
 
     // Print label summary around any divergence to understand transcript structure
     {
         let mut last_label = String::new();
         let mut run_start = 0;
-        for i in 0..log.len() {
-            let label = match &log[i] {
+        for (i, event) in log.iter().enumerate() {
+            let label = match event {
                 TranscriptEvent::Append { bytes, .. } => {
                     if bytes.len() >= 32 {
                         let end = bytes[..24].iter().position(|&b| b == 0).unwrap_or(24);
-                        std::str::from_utf8(&bytes[..end]).unwrap_or("field").to_string()
+                        std::str::from_utf8(&bytes[..end])
+                            .unwrap_or("field")
+                            .to_string()
                     } else {
                         format!("raw({})", bytes.len())
                     }
@@ -932,7 +1002,11 @@ fn transcript_divergence() {
             }
         }
         if !last_label.is_empty() {
-            eprintln!("  ops[{run_start}..{}] ({}) = {last_label}", log.len(), log.len() - run_start);
+            eprintln!(
+                "  ops[{run_start}..{}] ({}) = {last_label}",
+                log.len(),
+                log.len() - run_start
+            );
         }
     }
 
@@ -954,8 +1028,10 @@ fn transcript_divergence() {
                     match &log[j] {
                         TranscriptEvent::Append { bytes, .. } => {
                             let label_preview = if bytes.len() >= 32 {
-                                let label_end = bytes[..24].iter().position(|&b| b == 0).unwrap_or(24);
-                                let label_str = std::str::from_utf8(&bytes[..label_end]).unwrap_or("???");
+                                let label_end =
+                                    bytes[..24].iter().position(|&b| b == 0).unwrap_or(24);
+                                let label_str =
+                                    std::str::from_utf8(&bytes[..label_end]).unwrap_or("???");
                                 format!("Append(label={:?}, len={})", label_str, bytes.len())
                             } else {
                                 format!("Append({} bytes)", bytes.len())
@@ -980,7 +1056,11 @@ fn transcript_divergence() {
             }
             // Print full bytes at divergence point
             if let TranscriptEvent::Append { bytes, .. } = &log[i] {
-                eprintln!("Bytes appended at op #{i} ({} bytes): {}", bytes.len(), hex(bytes));
+                eprintln!(
+                    "Bytes appended at op #{i} ({} bytes): {}",
+                    bytes.len(),
+                    hex(bytes)
+                );
                 if bytes.len() == 32 {
                     let count = u64::from_be_bytes(bytes[24..32].try_into().unwrap());
                     eprintln!("  LabelWithCount count = {count}");
@@ -995,36 +1075,31 @@ fn transcript_divergence() {
         }
     }
 
-    if golden_ops.len() > zkvm_states.len() {
-        eprintln!(
+    match golden_ops.len().cmp(&zkvm_states.len()) {
+        std::cmp::Ordering::Greater => eprintln!(
             "\njolt-zkvm log is shorter ({} ops) than jolt-core ({} ops). \
              {} operations matched before zkvm ran out.",
             zkvm_states.len(),
             golden_ops.len(),
             min_len,
-        );
-    } else if zkvm_states.len() > golden_ops.len() {
-        eprintln!(
+        ),
+        std::cmp::Ordering::Less => eprintln!(
             "\njolt-zkvm log is longer ({} ops) than jolt-core ({} ops). \
              {} operations matched before core ran out.",
             zkvm_states.len(),
             golden_ops.len(),
             min_len,
-        );
-    } else {
-        eprintln!(
-            "\nAll {} operations matched perfectly.",
-            min_len,
-        );
+        ),
+        std::cmp::Ordering::Equal => eprintln!("\nAll {} operations matched perfectly.", min_len,),
     }
 }
 
 /// Compare all InstructionRa chunk data between jolt-core and jolt-zkvm.
 #[test]
 fn instruction_ra0_data_matches() {
+    use jolt_core::poly::commitment::dory::DoryGlobals;
     #[allow(unused_imports)]
     use jolt_core::poly::one_hot_polynomial::OneHotPolynomial as CoreOneHot;
-    use jolt_core::poly::commitment::dory::DoryGlobals;
 
     let (_, params) = jolt_core_state_history();
 
@@ -1068,7 +1143,8 @@ fn instruction_ra0_data_matches() {
         let core_dense: Vec<Fr> = {
             use jolt_core::zkvm::instruction::LookupQuery;
             let k_chunk = one_hot_params.k_chunk;
-            let addresses: Vec<Option<u8>> = prover.trace
+            let addresses: Vec<Option<u8>> = prover
+                .trace
                 .iter()
                 .map(|cycle| {
                     let lookup_index = LookupQuery::<64>::to_lookup_index(cycle);
@@ -1088,7 +1164,9 @@ fn instruction_ra0_data_matches() {
 
         let zkvm_data: Vec<NewFr> = polys.get(PolynomialId::InstructionRa(chunk)).to_vec();
 
-        let diffs: usize = core_dense.iter().zip(zkvm_data.iter())
+        let diffs: usize = core_dense
+            .iter()
+            .zip(zkvm_data.iter())
             .filter(|(c, z)| {
                 let z_ark: Fr = (**z).into();
                 **c != z_ark
@@ -1096,7 +1174,10 @@ fn instruction_ra0_data_matches() {
             .count();
 
         if diffs > 0 {
-            eprintln!("InstructionRa({chunk}): {diffs} differences (len={})", core_dense.len());
+            eprintln!(
+                "InstructionRa({chunk}): {diffs} differences (len={})",
+                core_dense.len()
+            );
             // Print details for first diverging cycles
             use jolt_core::zkvm::instruction::LookupQuery;
             let t = trace_length;
@@ -1112,9 +1193,12 @@ fn instruction_ra0_data_matches() {
                             "  flat={i} addr={addr} cycle={cycle}: core={} zkvm={}, \
                              core_lookup={core_lookup:#x} core_chunk{chunk}={core_chunk_val}, \
                              instr={:?}",
-                            if c.is_zero() { 0 } else { 1 },
-                            if z_ark.is_zero() { 0 } else { 1 },
-                            &format!("{:?}", prover.trace[cycle]).split('(').next().unwrap_or("?"),
+                            i32::from(!c.is_zero()),
+                            i32::from(!z_ark.is_zero()),
+                            &format!("{:?}", prover.trace[cycle])
+                                .split('(')
+                                .next()
+                                .unwrap_or("?"),
                         );
                     }
                 }
@@ -1124,7 +1208,10 @@ fn instruction_ra0_data_matches() {
     }
 
     eprintln!("Checked {instruction_d} InstructionRa chunks, total diffs: {total_diffs}");
-    assert_eq!(total_diffs, 0, "polynomial data should match exactly across all chunks");
+    assert_eq!(
+        total_diffs, 0,
+        "polynomial data should match exactly across all chunks"
+    );
 }
 
 /// Compare initial and final RAM states built by jolt-host's `build_ram_states`
@@ -1153,8 +1240,12 @@ fn debug_ram_state_comparison() {
     let (_bytecode_raw, host_init_mem, _, _entry) = host_program.decode();
     let (_, _, host_final_memory, host_io_device) = host_program.trace(&inputs, &[], &[]);
 
-    let (host_initial, host_final) =
-        jolt_host::ram::build_ram_states(&host_init_mem, &host_final_memory, &host_io_device, ram_k);
+    let (host_initial, host_final) = jolt_host::ram::build_ram_states(
+        &host_init_mem,
+        &host_final_memory,
+        &host_io_device,
+        ram_k,
+    );
 
     // -- Compare initial states --
     eprintln!("ram_k = {ram_k}");

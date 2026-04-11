@@ -629,8 +629,14 @@ impl<F: JoltField> ProductVirtualRemainderProver<F> {
             let n = left_bound.len().min(8);
             let l_slice: Vec<F> = (0..n).map(|i| left_bound[i]).collect();
             let r_slice: Vec<F> = (0..n).map(|i| right_bound[i]).collect();
-            eprintln!("[core ProductRemainder init] left len={}, first {n}: {l_slice:?}", left_bound.len());
-            eprintln!("[core ProductRemainder init] right len={}, first {n}: {r_slice:?}", right_bound.len());
+            eprintln!(
+                "[core ProductRemainder init] left len={}, first {n}: {l_slice:?}",
+                left_bound.len()
+            );
+            eprintln!(
+                "[core ProductRemainder init] right len={}, first {n}: {r_slice:?}",
+                right_bound.len()
+            );
         }
 
         Self {

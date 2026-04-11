@@ -8,9 +8,9 @@
 
 use jolt_field::{Field, Fr};
 use jolt_host::{extract_trace, BytecodePreprocessing, Program};
+use jolt_r1cs::constraint::ConstraintMatrices;
 use jolt_r1cs::constraints::rv64::{self, *};
 use jolt_r1cs::{R1csKey, R1csSource};
-use jolt_r1cs::constraint::ConstraintMatrices;
 use num_traits::Zero;
 
 fn setup() -> (ConstraintMatrices<Fr>, Vec<Fr>, usize, usize) {
@@ -86,7 +86,10 @@ fn r1cs_per_cycle_satisfaction() {
     }
 
     if violations.is_empty() {
-        eprintln!("All {num_cycles} cycles × {} constraints satisfied.", matrices.num_constraints);
+        eprintln!(
+            "All {num_cycles} cycles × {} constraints satisfied.",
+            matrices.num_constraints
+        );
         return;
     }
 
@@ -194,11 +197,9 @@ fn r1cs_check_suspect_constraints() {
 /// Compare initial/final RAM states between jolt-core and jolt-host construction.
 #[test]
 fn compare_ram_states() {
-    use jolt_core::poly::commitment::dory::DoryGlobals;
-    use jolt_core::zkvm::ram::{
-        compute_min_ram_K, gen_ram_memory_states, RAMPreprocessing,
-    };
     use jolt_core::host;
+    use jolt_core::poly::commitment::dory::DoryGlobals;
+    use jolt_core::zkvm::ram::{compute_min_ram_K, gen_ram_memory_states, RAMPreprocessing};
 
     type CoreFr = ark_bn254::Fr;
 

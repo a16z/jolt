@@ -36,9 +36,7 @@ impl<F: Field> PreprocessedSource<F> {
         let lowest = config.ram_lowest_address;
 
         // RamUnmap: unmap[k] = k * 8 + lowest_address
-        let unmap: Vec<F> = (0..k)
-            .map(|i| F::from_u64(i as u64 * 8 + lowest))
-            .collect();
+        let unmap: Vec<F> = (0..k).map(|i| F::from_u64(i as u64 * 8 + lowest)).collect();
         self.insert(PolynomialId::RamUnmap, unmap);
 
         // IoMask: 1 for the full I/O region [input_start, RAM_START_ADDRESS).

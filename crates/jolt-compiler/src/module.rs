@@ -315,6 +315,20 @@ pub enum InputBinding {
         challenge: usize,
         power: u8,
     },
+    /// Transpose a source polynomial from row-major to column-major layout.
+    ///
+    /// Source layout: `src[row * cols + col]` (rows × cols elements).
+    /// Result layout: `dst[col * rows + row]` (cols × rows elements).
+    ///
+    /// Used by Booleanity to rearrange RA polynomials from address-major
+    /// `[k * T + j]` to cycle-major `[j * K + k]` so that LowToHigh binding
+    /// binds address variables first (matching jolt-core's Phase 1 → Phase 2).
+    Transpose {
+        poly: PolynomialId,
+        source: PolynomialId,
+        rows: usize,
+        cols: usize,
+    },
     /// Compute a BytecodeReadRaf Val polynomial for a specific stage.
     ///
     /// Computes `gamma^stage × (Val[stage](k) + raf_contribution(k))` where:
@@ -353,6 +367,7 @@ impl InputBinding {
             | InputBinding::EqGather { poly, .. }
             | InputBinding::EqPushforward { poly, .. }
             | InputBinding::ScaleByChallenge { poly, .. }
+            | InputBinding::Transpose { poly, .. }
             | InputBinding::BytecodeVal { poly, .. } => *poly,
         }
     }
@@ -552,6 +567,12 @@ pub enum Op {
     },
     /// Squeeze a Fiat-Shamir challenge.
     Squeeze { challenge: usize },
+    /// Compute a derived challenge: `challenges[target] = challenges[base]^exponent`.
+    ComputePower {
+        target: usize,
+        base: usize,
+        exponent: u64,
+    },
     /// Append a domain separator label (empty payload) to the transcript.
     AppendDomainSeparator { tag: DomainSeparator },
     /// Accumulate a PCS opening claim: (poly data, eval point from stage).
@@ -614,6 +635,7 @@ impl Op {
                 | Op::AbsorbEvals { .. }
                 | Op::AbsorbInputClaim { .. }
                 | Op::Squeeze { .. }
+                | Op::ComputePower { .. }
                 | Op::AppendDomainSeparator { .. }
                 | Op::CollectOpeningClaim { .. }
                 | Op::EvaluatePreprocessed { .. }

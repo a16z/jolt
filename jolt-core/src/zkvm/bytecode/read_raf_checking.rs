@@ -279,7 +279,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
                 },
             );
 
-        #[cfg(test)]
+        #[cfg(debug_assertions)]
         {
             // Verify that for each stage i: sum(val_i[k] * F_i[k] * eq_i[k]) = rv_claim_i
             for i in 0..N_STAGES {
@@ -300,6 +300,27 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
                     params.rv_claims[i]
                 );
             }
+            // Dump F and Val data for comparison with jolt-zkvm
+            for i in 0..N_STAGES {
+                let f_sum: F = F[i].iter().copied().sum();
+                let v_first4: Vec<F> = (0..4.min(params.K))
+                    .map(|k| params.val_polys[i].get_bound_coeff(k))
+                    .collect();
+                let f_first4: Vec<F> = F[i][..4.min(params.K)].to_vec();
+                eprintln!(
+                    "[BC_RAF init] stage {i}: F_sum={f_sum:?}, F[0..4]={f_first4:?}, Val[0..4]={v_first4:?}"
+                );
+            }
+            eprintln!(
+                "[BC_RAF init] K={}, log_K={}, log_T={}, entry_idx={}",
+                params.K, params.log_K, params.log_T, params.entry_bytecode_index
+            );
+            eprintln!("[BC_RAF init] gamma_powers={:?}", &params.gamma_powers);
+            eprintln!("[BC_RAF init] input_claim={:?}", params.input_claim);
+            eprintln!(
+                "[BC_RAF init] r_cycle_1[..4]={:?}",
+                &params.r_cycles[0][..4.min(params.r_cycles[0].len())]
+            );
         }
 
         let F = F.map(MultilinearPolynomial::from);
@@ -515,6 +536,37 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             let entry_at_1 = self.prev_entry_claim - entry_at_0;
             let entry_round_poly = UniPoly::from_evals(&[entry_at_0, entry_at_1, entry_at_2]);
             agg_round_poly += &(&entry_round_poly * self.params.entry_gamma);
+
+            #[cfg(debug_assertions)]
+            if round == 0 {
+                eprintln!("[BC_RAF] round 0 per-stage evals and claims:");
+                for (s, evals) in eval_per_stage.iter().enumerate() {
+                    let weighted = self.prev_round_claims[s] * self.params.gamma_powers[s];
+                    eprintln!(
+                        "  stage {s}: e0={:?} e2={:?} claim={:?} weighted={weighted:?}",
+                        evals[0], evals[1], self.prev_round_claims[s]
+                    );
+                }
+                let entry_weighted = self.prev_entry_claim * self.params.entry_gamma;
+                eprintln!(
+                    "  entry: e0={:?} e2={:?} claim={:?} weighted={entry_weighted:?}",
+                    entry_at_0, entry_at_2, self.prev_entry_claim
+                );
+                let full_check: F = self
+                    .prev_round_claims
+                    .iter()
+                    .zip(&self.params.gamma_powers)
+                    .map(|(&c, &g)| c * g)
+                    .sum::<F>()
+                    + entry_weighted;
+                eprintln!(
+                    "  full_check={full_check:?} input_claim={:?} match={}",
+                    self.params.input_claim,
+                    full_check == self.params.input_claim
+                );
+                eprintln!("  gamma_powers={:?}", &self.params.gamma_powers);
+                eprintln!("  agg coeffs: {:?}", agg_round_poly.coeffs);
+            }
             self.prev_entry_poly = Some(entry_round_poly);
 
             self.prev_round_polys = Some(round_polys);

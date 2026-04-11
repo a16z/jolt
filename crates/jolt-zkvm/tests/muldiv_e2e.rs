@@ -103,9 +103,7 @@ fn build_ram_val<C: CycleRow>(
         if cycle.is_noop() {
             continue;
         }
-        if let (Some(addr), Some(read_val)) =
-            (cycle.ram_access_address(), cycle.ram_read_value())
-        {
+        if let (Some(addr), Some(read_val)) = (cycle.ram_access_address(), cycle.ram_read_value()) {
             let k = ((addr - lowest_addr) / 8) as usize;
             if k < ram_k {
                 val[k * trace_length + t] = Fr::from_u64(read_val);
@@ -138,9 +136,7 @@ fn build_ram_val_final<C: CycleRow>(
             word_bytes.fill(0);
             // Accumulate bytes into the word
             word_bytes[byte_offset as usize] = byte_val;
-            val_final[word_idx] += Fr::from_u64(
-                (byte_val as u64) << (byte_offset * 8),
-            );
+            val_final[word_idx] += Fr::from_u64((byte_val as u64) << (byte_offset * 8));
         }
     }
 
@@ -247,11 +243,7 @@ fn build_val_io(config: &ProverConfig, ram_k: usize) -> Vec<Fr> {
 }
 
 /// Build the K-element initial RAM image from byte-level init_mem.
-fn build_ram_init(
-    init_mem: &[(u64, u8)],
-    lowest_addr: u64,
-    ram_k: usize,
-) -> Vec<Fr> {
+fn build_ram_init(init_mem: &[(u64, u8)], lowest_addr: u64, ram_k: usize) -> Vec<Fr> {
     // Accumulate bytes into 8-byte LE words
     let mut words = vec![0u64; ram_k];
     for &(addr, byte_val) in init_mem {
@@ -350,7 +342,10 @@ fn muldiv_prove_verify() {
     let mut polys = Polynomials::<Fr>::new(poly_config);
     polys.push(&cycle_inputs);
     polys.finish();
-    let _ = polys.insert(PolynomialId::UntrustedAdvice, vec![Fr::zero(); trace_length]);
+    let _ = polys.insert(
+        PolynomialId::UntrustedAdvice,
+        vec![Fr::zero(); trace_length],
+    );
     let _ = polys.insert(PolynomialId::TrustedAdvice, vec![Fr::zero(); trace_length]);
 
     // ── Derived polynomials (Stage 2) ──
@@ -382,10 +377,7 @@ fn muldiv_prove_verify() {
     // ── Preprocessed polynomials (Stage 2) ──
     let mut preprocessed = PreprocessedSource::new();
     preprocessed.insert(PolynomialId::IoMask, build_io_mask(&config, ram_k));
-    preprocessed.insert(
-        PolynomialId::RamUnmap,
-        build_ram_unmap(lowest_addr, ram_k),
-    );
+    preprocessed.insert(PolynomialId::RamUnmap, build_ram_unmap(lowest_addr, ram_k));
     preprocessed.insert(PolynomialId::ValIo, build_val_io(&config, ram_k));
     preprocessed.insert(
         PolynomialId::RamInit,

@@ -312,6 +312,12 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
             &params.r_cycle,
         );
 
+        eprintln!("[booleanity G] D={}, G[0][0..8]: {:?}", G.len(), &G[0][..8.min(G[0].len())]);
+        for (d, g) in G.iter().enumerate() {
+            let sum: F = g.iter().copied().sum();
+            eprintln!("[booleanity G] G[{d}] len={}, sum={sum:?}", g.len());
+        }
+
         // Initialize split-eq polynomials for address and cycle variables
         let B = GruenSplitEqPolynomial::new(&params.r_address, BindingOrder::LowToHigh);
         let D = GruenSplitEqPolynomial::new(&params.r_cycle, BindingOrder::LowToHigh);
@@ -455,11 +461,19 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanitySum
 
     #[tracing::instrument(skip_all, name = "BooleanitySumcheckProver::compute_message")]
     fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
-        if round < self.params.log_k_chunk {
+        let poly = if round < self.params.log_k_chunk {
             self.compute_phase1_message(round, previous_claim)
         } else {
             self.compute_phase2_message(round, previous_claim)
+        };
+        if round == 0 {
+            let evals: Vec<F> = (0..4u64).map(|t| {
+                let p = F::Challenge::from(t as u128);
+                poly.evaluate(&p)
+            }).collect();
+            eprintln!("[booleanity core round 0] evals: {evals:?}");
         }
+        poly
     }
 
     #[tracing::instrument(skip_all, name = "BooleanitySumcheckProver::ingest_challenge")]

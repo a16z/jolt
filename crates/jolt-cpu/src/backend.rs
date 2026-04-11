@@ -242,13 +242,11 @@ impl ComputeBackend for CpuBackend {
                     use rayon::prelude::*;
                     let mut out = vec![F::zero(); prev_len * 2];
                     let src: &[F] = &table;
-                    out.par_chunks_mut(2)
-                        .enumerate()
-                        .for_each(|(j, pair)| {
-                            let base = src[j];
-                            pair[0] = base * one_minus_r_i;
-                            pair[1] = base * r_i;
-                        });
+                    out.par_chunks_mut(2).enumerate().for_each(|(j, pair)| {
+                        let base = src[j];
+                        pair[0] = base * one_minus_r_i;
+                        pair[1] = base * r_i;
+                    });
                     table = out;
                     continue;
                 }
