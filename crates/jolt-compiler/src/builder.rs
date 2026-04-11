@@ -21,9 +21,11 @@
 
 use crate::formula::BindingOrder;
 use crate::ir::PolyKind;
+use crate::kernel_spec::Iteration;
 use crate::module::{
-    BatchedSumcheckDef, ChallengeDecl, ChallengeSource, ClaimFormula, DomainSeparator, KernelDef,
-    Module, Op, PolyDecl, Schedule, VerifierOp, VerifierSchedule, VerifierStageIndex,
+    BatchedSumcheckDef, ChallengeDecl, ChallengeSource, ClaimFormula, DomainSeparator, EvalMode,
+    InputBinding, KernelDef, Module, Op, PolyDecl, RoundPolyEncoding, Schedule, VerifierOp,
+    VerifierSchedule, VerifierStageIndex,
 };
 use crate::PolynomialId;
 
@@ -191,12 +193,17 @@ impl ModuleBuilder {
         });
     }
 
-    /// Emit AbsorbRoundPoly for a kernel.
-    pub fn absorb_round_poly(&mut self, kernel: usize, num_coeffs: usize, tag: DomainSeparator) {
+    /// Emit AbsorbRoundPoly with an explicit encoding.
+    pub fn absorb_round_poly(
+        &mut self,
+        num_coeffs: usize,
+        tag: DomainSeparator,
+        encoding: RoundPolyEncoding,
+    ) {
         self.ops.push(Op::AbsorbRoundPoly {
-            kernel,
             num_coeffs,
             tag,
+            encoding,
         });
     }
 
@@ -237,53 +244,9 @@ impl ModuleBuilder {
                 },
             );
             self.ops.push(Op::AbsorbRoundPoly {
-                kernel,
                 num_coeffs,
                 tag: DomainSeparator::SumcheckPoly,
-            });
-            self.ops.push(Op::Squeeze { challenge: ch_r });
-            indices.push(ch_r);
-        }
-        indices
-    }
-
-    /// Emit a loop of batched sumcheck rounds: round → absorb → squeeze.
-    /// `absorb_kernel` determines which kernel's metadata is used for AbsorbRoundPoly.
-    /// Returns the vector of round challenge indices.
-    #[allow(clippy::too_many_arguments)]
-    pub fn batched_sumcheck_rounds(
-        &mut self,
-        batch: usize,
-        num_rounds: usize,
-        num_coeffs: usize,
-        absorb_kernel: usize,
-        stage: VerifierStageIndex,
-        challenge_prefix: &str,
-        round_offset: usize,
-    ) -> Vec<usize> {
-        let mut indices = Vec::with_capacity(num_rounds);
-        for round in 0..num_rounds {
-            let bind = if round > 0 {
-                Some(indices[round - 1])
-            } else {
-                None
-            };
-            self.ops.push(Op::BatchedSumcheckRound {
-                batch,
-                round,
-                bind_challenge: bind,
-            });
-            let ch_r = self.add_challenge(
-                &format!("{challenge_prefix}_{round}"),
-                ChallengeSource::SumcheckRound {
-                    stage,
-                    round: round_offset + round,
-                },
-            );
-            self.ops.push(Op::AbsorbRoundPoly {
-                kernel: absorb_kernel,
-                num_coeffs,
-                tag: DomainSeparator::SumcheckPoly,
+                encoding: RoundPolyEncoding::Compressed,
             });
             self.ops.push(Op::Squeeze { challenge: ch_r });
             indices.push(ch_r);
@@ -292,8 +255,8 @@ impl ModuleBuilder {
     }
 
     /// Emit Op::Evaluate for a polynomial.
-    pub fn evaluate(&mut self, poly: PolynomialId) {
-        self.ops.push(Op::Evaluate { poly });
+    pub fn evaluate(&mut self, poly: PolynomialId, mode: EvalMode) {
+        self.ops.push(Op::Evaluate { poly, mode });
     }
 
     /// Emit Op::Bind for polynomials at a challenge.
@@ -333,22 +296,239 @@ impl ModuleBuilder {
     }
 
     /// Emit AbsorbInputClaim.
-    pub fn absorb_input_claim(&mut self, formula: ClaimFormula, batch: usize, instance: usize) {
+    pub fn absorb_input_claim(
+        &mut self,
+        formula: ClaimFormula,
+        batch: usize,
+        instance: usize,
+        inactive_scale_bits: usize,
+    ) {
         self.ops.push(Op::AbsorbInputClaim {
             formula,
             tag: DomainSeparator::SumcheckClaim,
             batch,
             instance,
+            inactive_scale_bits,
         });
     }
 
     /// Common pattern: evaluate + record + absorb for a set of polynomials.
     pub fn flush_evals(&mut self, polys: &[PolynomialId], tag: DomainSeparator) {
         for &poly in polys {
-            self.evaluate(poly);
+            self.evaluate(poly, EvalMode::FinalBind);
         }
         self.record_evals(polys);
         self.absorb_evals(polys, tag);
+    }
+
+    /// Emit unrolled granular ops for a batched sumcheck.
+    ///
+    /// Emits per-instance,
+    /// per-round granular ops so the runtime is a flat dispatch loop.
+    #[allow(clippy::too_many_arguments)]
+    pub fn unrolled_batched_sumcheck_rounds(
+        &mut self,
+        batch: usize,
+        num_rounds: usize,
+        num_coeffs: usize,
+        stage: VerifierStageIndex,
+        challenge_prefix: &str,
+        round_offset: usize,
+    ) -> Vec<usize> {
+        let bdef = self.batched_sumchecks[batch].clone();
+        let max_evals = bdef.max_degree + 1;
+        let mut indices = Vec::with_capacity(num_rounds);
+
+        for round in 0..num_rounds {
+            let bind = if round > 0 {
+                Some(indices[round - 1])
+            } else {
+                None
+            };
+
+            // Begin round: zero combined, update claims from prev round.
+            self.ops.push(Op::BatchRoundBegin {
+                batch,
+                round,
+                max_evals,
+                bind_challenge: bind,
+            });
+
+            // Per-instance ops.
+            for (inst_idx, inst) in bdef.instances.iter().enumerate() {
+                if round < inst.first_active_round {
+                    self.ops.push(Op::BatchInactiveContribution {
+                        batch,
+                        instance: inst_idx,
+                    });
+                    continue;
+                }
+
+                let instance_round = round - inst.first_active_round;
+                let (phase_idx, phase_start) = inst.phase_for_round(instance_round);
+                let phase = &inst.phases[phase_idx];
+                let kernel = phase.kernel;
+                let kdef = &self.kernels[kernel];
+                let is_ps = matches!(kdef.spec.iteration, Iteration::PrefixSuffix { .. });
+
+                if instance_round == 0 || instance_round == phase_start {
+                    // Phase boundary.
+                    if instance_round > 0 {
+                        let prev_phase = &inst.phases[phase_idx - 1];
+                        let prev_kernel = prev_phase.kernel;
+                        let prev_kdef = &self.kernels[prev_kernel];
+                        let prev_is_ps =
+                            matches!(prev_kdef.spec.iteration, Iteration::PrefixSuffix { .. });
+
+                        if prev_is_ps {
+                            // PrefixSuffix→next: bind last challenge, then materialize.
+                            if let Some(ch) = bind {
+                                self.ops.push(Op::PrefixSuffixBind {
+                                    batch,
+                                    instance: inst_idx,
+                                    challenge: ch,
+                                });
+                            }
+                            self.ops.push(Op::PrefixSuffixMaterialize {
+                                batch,
+                                instance: inst_idx,
+                            });
+                        } else if let Some(ch) = bind {
+                            self.ops.push(Op::InstanceBindPreviousPhase {
+                                batch,
+                                instance: inst_idx,
+                                kernel: prev_kernel,
+                                challenge: ch,
+                            });
+                        }
+                    }
+
+                    // Scalar captures.
+                    for cap in &phase.scalar_captures {
+                        self.ops.push(Op::CaptureScalar {
+                            poly: cap.poly,
+                            challenge: cap.challenge,
+                        });
+                    }
+
+                    if is_ps {
+                        self.ops.push(Op::PrefixSuffixInit {
+                            batch,
+                            instance: inst_idx,
+                            kernel,
+                        });
+                    } else {
+                        // Emit per-binding materialization ops.
+                        if let Some(seg) = &phase.segmented {
+                            self.ops.push(Op::MaterializeSegmentedOuterEq {
+                                batch,
+                                instance: inst_idx,
+                                segmented: seg.clone(),
+                            });
+                        }
+                        let is_activation = instance_round == 0;
+                        if is_activation {
+                            // Instance activation: materialize all bindings.
+                            // Provided polys use MaterializeUnlessFresh to
+                            // avoid overwriting buffers from prior compute ops
+                            // (e.g. PrefixSuffixMaterialize).
+                            let expected_size = 1usize << kdef.num_rounds;
+                            for binding in &kdef.inputs {
+                                match binding {
+                                    InputBinding::Provided { .. } => {
+                                        self.ops.push(Op::MaterializeUnlessFresh {
+                                            binding: binding.clone(),
+                                            expected_size,
+                                        });
+                                    }
+                                    _ => {
+                                        self.ops.push(Op::Materialize {
+                                            binding: binding.clone(),
+                                        });
+                                    }
+                                }
+                            }
+                        } else {
+                            // Phase transition: only materialize if no buffer
+                            // exists. Bound-down buffers from the previous
+                            // phase or other instances are preserved.
+                            for binding in &kdef.inputs {
+                                self.ops.push(Op::MaterializeIfAbsent {
+                                    binding: binding.clone(),
+                                });
+                            }
+                        }
+                    }
+                } else {
+                    // Mid-phase: bind.
+                    if let Some(ch) = bind {
+                        if is_ps {
+                            self.ops.push(Op::PrefixSuffixBind {
+                                batch,
+                                instance: inst_idx,
+                                challenge: ch,
+                            });
+                        } else {
+                            self.ops.push(Op::InstanceBind {
+                                batch,
+                                instance: inst_idx,
+                                kernel,
+                                challenge: ch,
+                            });
+                        }
+                    }
+                }
+
+                // Reduce.
+                if is_ps {
+                    self.ops.push(Op::PrefixSuffixReduce {
+                        batch,
+                        instance: inst_idx,
+                    });
+                } else if phase.segmented.is_some() {
+                    self.ops.push(Op::InstanceSegmentedReduce {
+                        batch,
+                        instance: inst_idx,
+                        kernel,
+                        round_within_phase: instance_round - phase_start,
+                        segmented: phase.segmented.clone().unwrap(),
+                    });
+                } else {
+                    self.ops.push(Op::InstanceReduce {
+                        batch,
+                        instance: inst_idx,
+                        kernel,
+                    });
+                }
+
+                self.ops.push(Op::BatchAccumulateInstance {
+                    batch,
+                    instance: inst_idx,
+                    max_evals,
+                    num_evals: kdef.spec.num_evals,
+                });
+            }
+
+            // Finalize round.
+            self.ops.push(Op::BatchRoundFinalize { batch });
+
+            // Absorb + squeeze (same as before).
+            let ch_r = self.add_challenge(
+                &format!("{challenge_prefix}_{round}"),
+                ChallengeSource::SumcheckRound {
+                    stage,
+                    round: round_offset + round,
+                },
+            );
+            self.ops.push(Op::AbsorbRoundPoly {
+                num_coeffs,
+                tag: DomainSeparator::SumcheckPoly,
+                encoding: RoundPolyEncoding::Compressed,
+            });
+            self.ops.push(Op::Squeeze { challenge: ch_r });
+            indices.push(ch_r);
+        }
+        indices
     }
 
     /// Release device buffers.

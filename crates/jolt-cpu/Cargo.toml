@@ -12,6 +12,7 @@ workspace = true
 jolt-field = { path = "../jolt-field", default-features = false }
 jolt-compiler = { path = "../jolt-compiler" }
 jolt-compute = { path = "../jolt-compute" }
+jolt-instructions = { path = "../jolt-instructions" }
 jolt-poly = { path = "../jolt-poly" }
 tracing.workspace = true
 rayon = { workspace = true, optional = true }

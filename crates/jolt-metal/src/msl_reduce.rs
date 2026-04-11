@@ -72,6 +72,9 @@ impl KernelVariant {
             Iteration::Domain { .. } => {
                 panic!("Domain iteration not yet supported on Metal — use CpuBackend")
             }
+            Iteration::PrefixSuffix { .. } => {
+                unreachable!("PrefixSuffix is handled by the runtime, not compiled to MSL")
+            }
         }
     }
 

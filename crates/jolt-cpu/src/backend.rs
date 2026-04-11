@@ -1,9 +1,13 @@
 //! CPU compute backend using Rayon for parallelism.
 
+use std::collections::HashMap;
+
 use jolt_compiler::kernel_spec::Iteration;
+use jolt_compiler::module::{ClaimFactor, ClaimFormula};
+use jolt_compiler::PolynomialId;
 use jolt_field::{Field, FieldAccumulator};
 
-use jolt_compute::{BindingOrder, Buf, ComputeBackend, Scalar};
+use jolt_compute::{BindingOrder, Buf, ComputeBackend, DeviceBuffer, LookupTraceData, Scalar};
 
 /// Parallelism threshold: buffers smaller than this use sequential loops.
 ///
@@ -301,6 +305,288 @@ impl ComputeBackend for CpuBackend {
             }
         }
         out
+    }
+
+    fn evaluate_claim<F: Field>(
+        &self,
+        formula: &ClaimFormula,
+        evaluations: &HashMap<PolynomialId, F>,
+        challenges: &[F],
+    ) -> F {
+        let mut sum = F::zero();
+        for term in &formula.terms {
+            let mut product = F::from_i128(term.coeff);
+            for factor in &term.factors {
+                product *= match factor {
+                    ClaimFactor::Eval(poly) => *evaluations
+                        .get(poly)
+                        .unwrap_or_else(|| panic!("evaluate_claim: {poly:?} not available")),
+                    ClaimFactor::Challenge(i) => challenges[*i],
+                    ClaimFactor::EqChallengePair { a, b } => {
+                        let (ra, rb) = (challenges[*a], challenges[*b]);
+                        ra * rb + (F::one() - ra) * (F::one() - rb)
+                    }
+                    other => panic!("evaluate_claim: unsupported factor {other:?}"),
+                };
+            }
+            sum += product;
+        }
+        sum
+    }
+
+    fn evaluate_mle<F: Field>(&self, evals: &[F], point: &[F]) -> F {
+        let mut buf = evals.to_vec();
+        for r in point.iter().rev() {
+            let half = buf.len() / 2;
+            for i in 0..half {
+                buf[i] = buf[2 * i] + *r * (buf[2 * i + 1] - buf[2 * i]);
+            }
+            buf.truncate(half);
+        }
+        buf[0]
+    }
+
+    fn uniskip_encode<F: Field>(
+        &self,
+        raw_evals: &mut [F],
+        domain_size: usize,
+        domain_start: i64,
+        tau: F,
+        zero_base: bool,
+        num_coeffs: usize,
+    ) -> Vec<F> {
+        let k = domain_size;
+        if zero_base {
+            for v in raw_evals.iter_mut().take(k) {
+                *v = F::zero();
+            }
+        }
+        let t1_coeffs = jolt_poly::lagrange::interpolate_to_coeffs(domain_start, raw_evals);
+        let basis_at_tau = jolt_poly::lagrange::lagrange_evals(domain_start, k, tau);
+        let lagrange_coeffs =
+            jolt_poly::lagrange::interpolate_to_coeffs(domain_start, &basis_at_tau);
+        let mut s1 = jolt_poly::lagrange::poly_mul(&t1_coeffs, &lagrange_coeffs);
+        s1.resize(num_coeffs, F::zero());
+        s1
+    }
+
+    fn compressed_encode<F: Field>(&self, evals: &[F]) -> Vec<F> {
+        let points: Vec<(F, F)> = evals
+            .iter()
+            .enumerate()
+            .map(|(s, &v)| (F::from_u64(s as u64), v))
+            .collect();
+        jolt_poly::UnivariatePoly::interpolate(&points).into_coefficients()
+    }
+
+    fn interpolate_evaluate<F: Field>(&self, evals: &[F], point: F) -> F {
+        let points: Vec<(F, F)> = evals
+            .iter()
+            .enumerate()
+            .map(|(s, &v)| (F::from_u64(s as u64), v))
+            .collect();
+        jolt_poly::UnivariatePoly::interpolate(&points).evaluate(point)
+    }
+
+    fn extend_evals<F: Field>(&self, evals: &[F], target_len: usize) -> Vec<F> {
+        let points: Vec<(F, F)> = evals
+            .iter()
+            .enumerate()
+            .map(|(s, &v)| (F::from_u64(s as u64), v))
+            .collect();
+        let poly = jolt_poly::UnivariatePoly::interpolate(&points);
+        let mut result = evals.to_vec();
+        for s in evals.len()..target_len {
+            result.push(poly.evaluate(F::from_u64(s as u64)));
+        }
+        result
+    }
+
+    fn scale_from_host<F: Field>(&self, data: &[F], scale: F) -> Vec<F> {
+        data.iter().map(|&v| scale * v).collect()
+    }
+
+    fn transpose_from_host<F: Field>(&self, data: &[F], rows: usize, cols: usize) -> Vec<F> {
+        debug_assert_eq!(data.len(), rows * cols);
+        let mut out = vec![F::zero(); rows * cols];
+        for r in 0..rows {
+            for c in 0..cols {
+                out[c * rows + r] = data[r * cols + c];
+            }
+        }
+        out
+    }
+
+    fn eq_gather<F: Field>(&self, eq_point: &[F], index_data: &[F]) -> Vec<F> {
+        let eq_table = jolt_poly::EqPolynomial::<F>::evals(eq_point, None);
+        index_data
+            .iter()
+            .map(|v| match v.to_u64() {
+                Some(k) if (k as usize) < eq_table.len() => eq_table[k as usize],
+                _ => F::zero(),
+            })
+            .collect()
+    }
+
+    fn eq_pushforward<F: Field>(
+        &self,
+        eq_point: &[F],
+        index_data: &[F],
+        output_size: usize,
+    ) -> Vec<F> {
+        let eq_table = jolt_poly::EqPolynomial::<F>::evals(eq_point, None);
+        let mut result = vec![F::zero(); output_size];
+        for (j, &eq_val) in eq_table.iter().enumerate() {
+            if j < index_data.len() {
+                if let Some(k) = index_data[j].to_u64() {
+                    let k = k as usize;
+                    if k < output_size {
+                        result[k] += eq_val;
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    fn eq_project<F: Field>(
+        &self,
+        source_data: &[F],
+        eq_point: &[F],
+        inner_size: usize,
+        outer_size: usize,
+    ) -> Vec<F> {
+        let eq_table = jolt_poly::EqPolynomial::<F>::evals(eq_point, None);
+        if eq_table.len() == inner_size {
+            let mut projected = vec![F::zero(); outer_size];
+            for (t, &eq_val) in eq_table.iter().enumerate() {
+                if eq_val.is_zero() {
+                    continue;
+                }
+                let base = t * outer_size;
+                for k in 0..outer_size {
+                    projected[k] += eq_val * source_data[base + k];
+                }
+            }
+            projected
+        } else {
+            let mut projected = vec![F::zero(); inner_size];
+            for (t, proj) in projected.iter_mut().enumerate() {
+                let base = t * outer_size;
+                for (k, &eq_val) in eq_table.iter().enumerate() {
+                    if !eq_val.is_zero() {
+                        *proj += eq_val * source_data[base + k];
+                    }
+                }
+            }
+            projected
+        }
+    }
+
+    fn lagrange_project<F: Field>(
+        &self,
+        buf: &Vec<F>,
+        challenge: F,
+        domain_start: i64,
+        domain_size: usize,
+        stride: usize,
+        group_offsets: &[usize],
+        scale: F,
+    ) -> Vec<F> {
+        let basis = jolt_poly::lagrange::lagrange_evals(domain_start, domain_size, challenge);
+        let num_groups = group_offsets.len();
+        let num_cycles = buf.len() / stride;
+        let mut projected = vec![F::zero(); num_cycles * num_groups];
+        for c in 0..num_cycles {
+            for (g, &offset) in group_offsets.iter().enumerate() {
+                let mut acc = F::zero();
+                for (k, &lk) in basis.iter().enumerate() {
+                    let idx = c * stride + offset + k;
+                    if idx < buf.len() {
+                        acc += lk * buf[idx];
+                    }
+                }
+                projected[c * num_groups + g] = acc;
+            }
+        }
+        if !scale.is_one() {
+            for v in &mut projected {
+                *v *= scale;
+            }
+        }
+        projected
+    }
+
+    fn segmented_reduce<F: Field>(
+        &self,
+        kernel: &CpuKernel<F>,
+        inputs: &[&Vec<F>],
+        outer_eq: &[F],
+        inner_only: &[bool],
+        inner_size: usize,
+        challenges: &[F],
+    ) -> Vec<F> {
+        let mut col_buf = vec![F::zero(); inner_size];
+        let mut total_evals: Option<Vec<F>> = None;
+
+        for (a, &weight) in outer_eq.iter().enumerate() {
+            if weight.is_zero() {
+                continue;
+            }
+            let mut col_bufs: Vec<Buf<Self, F>> = Vec::with_capacity(inputs.len());
+            for (j, &data) in inputs.iter().enumerate() {
+                if inner_only[j] {
+                    col_bufs.push(DeviceBuffer::Field(data.clone()));
+                } else {
+                    let start = a * inner_size;
+                    col_buf.copy_from_slice(&data[start..start + inner_size]);
+                    col_bufs.push(DeviceBuffer::Field(col_buf.clone()));
+                }
+            }
+            let col_refs: Vec<&Buf<Self, F>> = col_bufs.iter().collect();
+            let evals = self.reduce(kernel, &col_refs, challenges);
+
+            match &mut total_evals {
+                Some(total) => {
+                    for (t, &e) in total.iter_mut().zip(&evals) {
+                        *t += weight * e;
+                    }
+                }
+                None => {
+                    total_evals = Some(evals.iter().map(|&e| weight * e).collect());
+                }
+            }
+        }
+
+        total_evals.unwrap_or_else(|| vec![F::zero(); kernel.num_evals])
+    }
+
+    // ── PrefixSuffix lifecycle ──────────────────────────────────────────
+
+    type PrefixSuffixState<F: Field> = crate::prefix_suffix::CpuPrefixSuffixState<F>;
+
+    fn ps_init<F: Field>(
+        &self,
+        iteration: &Iteration,
+        challenges: &[F],
+        trace_data: &LookupTraceData,
+    ) -> Self::PrefixSuffixState<F> {
+        crate::prefix_suffix::CpuPrefixSuffixState::new(iteration, challenges, trace_data)
+    }
+
+    fn ps_bind<F: Field>(&self, state: &mut Self::PrefixSuffixState<F>, challenge: F) {
+        state.ingest_challenge(challenge);
+    }
+
+    fn ps_reduce<F: Field>(&self, state: &Self::PrefixSuffixState<F>) -> [F; 2] {
+        state.compute_address_round()
+    }
+
+    fn ps_materialize<F: Field>(
+        &self,
+        state: Self::PrefixSuffixState<F>,
+    ) -> Vec<(PolynomialId, Vec<F>)> {
+        state.materialize_outputs().into_iter().collect()
     }
 }
 

@@ -22,11 +22,11 @@ use jolt_transcript::{Blake2bTranscript, Transcript};
 use jolt_verifier::{
     verify, JoltVerifyingKey, OneHotConfig, ProverConfig, ReadWriteConfig, TRANSCRIPT_LABEL,
 };
+use jolt_witness::derived::DerivedSource;
+use jolt_witness::preprocessed::PreprocessedSource;
+use jolt_witness::provider::ProverData;
 use jolt_witness::{CycleInput, PolynomialConfig, PolynomialId, Polynomials};
-use jolt_zkvm::derived::DerivedSource;
-use jolt_zkvm::preprocessed::PreprocessedSource;
 use jolt_zkvm::prove::prove;
-use jolt_zkvm::provider::ProverData;
 use num_traits::Zero;
 
 type MockPCS = MockCommitmentScheme<Fr>;

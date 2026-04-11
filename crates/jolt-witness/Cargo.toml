@@ -3,7 +3,7 @@ name = "jolt-witness"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "Committed polynomial buffers for the Jolt zkVM"
+description = "Polynomial data providers and witness buffers for the Jolt zkVM"
 
 [lints]
 workspace = true
@@ -13,6 +13,8 @@ jolt-compiler = { path = "../jolt-compiler" }
 jolt-compute = { path = "../jolt-compute" }
 jolt-field = { path = "../jolt-field" }
 jolt-poly = { path = "../jolt-poly" }
+jolt-r1cs = { path = "../jolt-r1cs" }
+jolt-verifier = { path = "../jolt-verifier" }
 serde = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]

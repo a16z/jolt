@@ -24,9 +24,9 @@ use jolt_compiler::ir::PolyKind;
 use jolt_compiler::kernel_spec::Iteration;
 use jolt_compiler::module::{
     BatchedInstance, BatchedSumcheckDef, ChallengeDecl, ChallengeSource, ClaimFactor, ClaimFormula,
-    ClaimTerm, DomainSeparator, Evaluation, InputBinding, InstancePhase, KernelDef, Module, Op,
-    PointNormalization, PolyDecl, R1CSMatrix, ScalarCapture, Schedule, SegmentedConfig,
-    SumcheckInstance, VerifierOp, VerifierSchedule, VerifierStageIndex,
+    ClaimTerm, DomainSeparator, EvalMode, Evaluation, InputBinding, InstancePhase, KernelDef,
+    Module, Op, PointNormalization, PolyDecl, R1CSMatrix, RoundPolyEncoding, ScalarCapture,
+    Schedule, SegmentedConfig, SumcheckInstance, VerifierOp, VerifierSchedule, VerifierStageIndex,
 };
 use jolt_compiler::params::{
     ModuleParams, LOG_K_INSTRUCTION, LOG_K_REG, NUM_CIRCUIT_FLAGS, NUM_LOOKUP_TABLES,
@@ -558,6 +558,211 @@ impl ChallengeTable {
     }
 }
 
+/// Emit the unrolled granular ops for a batched sumcheck.
+///
+/// Emits unrolled per-instance, per-round granular ops for a batched sumcheck.
+/// Reads the BatchedSumcheckDef and kernel definitions to emit per-instance,
+/// per-round ops that the runtime can execute as a flat dispatch loop.
+#[allow(clippy::too_many_arguments)]
+fn emit_unrolled_batched_rounds(
+    ops: &mut Vec<Op>,
+    kernels: &[KernelDef],
+    batched_sumchecks: &[BatchedSumcheckDef],
+    ch: &mut ChallengeTable,
+    batch_idx: usize,
+    max_rounds: usize,
+    num_coeffs_fn: impl Fn(usize) -> usize,
+    stage: VerifierStageIndex,
+    challenge_prefix: &str,
+    round_offset: usize,
+    pre_allocated_challenges: Option<&[usize]>,
+) -> Vec<usize> {
+    let bdef = &batched_sumchecks[batch_idx];
+    let max_evals = bdef.max_degree + 1;
+    let mut indices = Vec::with_capacity(max_rounds);
+
+    for round in 0..max_rounds {
+        let bind = if round > 0 {
+            Some(indices[round - 1])
+        } else {
+            None
+        };
+
+        ops.push(Op::BatchRoundBegin {
+            batch: batch_idx,
+            round,
+            max_evals,
+            bind_challenge: bind,
+        });
+
+        for (inst_idx, inst) in bdef.instances.iter().enumerate() {
+            if round < inst.first_active_round {
+                ops.push(Op::BatchInactiveContribution {
+                    batch: batch_idx,
+                    instance: inst_idx,
+                });
+                continue;
+            }
+
+            let instance_round = round - inst.first_active_round;
+            let (phase_idx, phase_start) = inst.phase_for_round(instance_round);
+            let phase = &inst.phases[phase_idx];
+            let kernel = phase.kernel;
+            let kdef = &kernels[kernel];
+            let is_ps = matches!(kdef.spec.iteration, Iteration::PrefixSuffix { .. });
+
+            if instance_round == 0 || instance_round == phase_start {
+                // Phase boundary.
+                if instance_round > 0 {
+                    let prev_phase = &inst.phases[phase_idx - 1];
+                    let prev_kernel = prev_phase.kernel;
+                    let prev_kdef = &kernels[prev_kernel];
+                    let prev_is_ps =
+                        matches!(prev_kdef.spec.iteration, Iteration::PrefixSuffix { .. });
+
+                    if prev_is_ps {
+                        if let Some(ch_val) = bind {
+                            ops.push(Op::PrefixSuffixBind {
+                                batch: batch_idx,
+                                instance: inst_idx,
+                                challenge: ch_val,
+                            });
+                        }
+                        ops.push(Op::PrefixSuffixMaterialize {
+                            batch: batch_idx,
+                            instance: inst_idx,
+                        });
+                    } else if let Some(ch_val) = bind {
+                        ops.push(Op::InstanceBindPreviousPhase {
+                            batch: batch_idx,
+                            instance: inst_idx,
+                            kernel: prev_kernel,
+                            challenge: ch_val,
+                        });
+                    }
+                }
+
+                for cap in &phase.scalar_captures {
+                    ops.push(Op::CaptureScalar {
+                        poly: cap.poly,
+                        challenge: cap.challenge,
+                    });
+                }
+
+                if is_ps {
+                    ops.push(Op::PrefixSuffixInit {
+                        batch: batch_idx,
+                        instance: inst_idx,
+                        kernel,
+                    });
+                } else {
+                    if let Some(seg) = &phase.segmented {
+                        ops.push(Op::MaterializeSegmentedOuterEq {
+                            batch: batch_idx,
+                            instance: inst_idx,
+                            segmented: seg.clone(),
+                        });
+                    }
+                    let is_activation = instance_round == 0;
+                    if is_activation {
+                        let expected_size = 1usize << kdef.num_rounds;
+                        for binding in &kdef.inputs {
+                            match binding {
+                                InputBinding::Provided { .. } => {
+                                    ops.push(Op::MaterializeUnlessFresh {
+                                        binding: binding.clone(),
+                                        expected_size,
+                                    });
+                                }
+                                _ => {
+                                    ops.push(Op::Materialize {
+                                        binding: binding.clone(),
+                                    });
+                                }
+                            }
+                        }
+                    } else {
+                        for binding in &kdef.inputs {
+                            ops.push(Op::MaterializeIfAbsent {
+                                binding: binding.clone(),
+                            });
+                        }
+                    }
+                }
+            } else {
+                // Mid-phase: bind.
+                if let Some(ch_val) = bind {
+                    if is_ps {
+                        ops.push(Op::PrefixSuffixBind {
+                            batch: batch_idx,
+                            instance: inst_idx,
+                            challenge: ch_val,
+                        });
+                    } else {
+                        ops.push(Op::InstanceBind {
+                            batch: batch_idx,
+                            instance: inst_idx,
+                            kernel,
+                            challenge: ch_val,
+                        });
+                    }
+                }
+            }
+
+            // Reduce.
+            if is_ps {
+                ops.push(Op::PrefixSuffixReduce {
+                    batch: batch_idx,
+                    instance: inst_idx,
+                });
+            } else if phase.segmented.is_some() {
+                ops.push(Op::InstanceSegmentedReduce {
+                    batch: batch_idx,
+                    instance: inst_idx,
+                    kernel,
+                    round_within_phase: instance_round - phase_start,
+                    segmented: phase.segmented.clone().unwrap(),
+                });
+            } else {
+                ops.push(Op::InstanceReduce {
+                    batch: batch_idx,
+                    instance: inst_idx,
+                    kernel,
+                });
+            }
+
+            ops.push(Op::BatchAccumulateInstance {
+                batch: batch_idx,
+                instance: inst_idx,
+                max_evals,
+                num_evals: kdef.spec.num_evals,
+            });
+        }
+
+        ops.push(Op::BatchRoundFinalize { batch: batch_idx });
+
+        let ch_r = if let Some(pre) = pre_allocated_challenges {
+            pre[round]
+        } else {
+            ch.add(
+                &format!("{challenge_prefix}_{round}"),
+                ChallengeSource::SumcheckRound {
+                    stage,
+                    round: round_offset + round,
+                },
+            )
+        };
+        ops.push(Op::AbsorbRoundPoly {
+            num_coeffs: num_coeffs_fn(round),
+            tag: DomainSeparator::SumcheckPoly,
+            encoding: RoundPolyEncoding::Compressed,
+        });
+        ops.push(Op::Squeeze { challenge: ch_r });
+        indices.push(ch_r);
+    }
+    indices
+}
+
 // ---------------------------------------------------------------------------
 // R1CS input polynomial indices (35 entries, matching jolt-core's
 // `ALL_R1CS_INPUTS` ordering — determines transcript flush order).
@@ -881,15 +1086,35 @@ fn build_stage1(
         num_rounds: 1,
     });
 
+    for binding in &kernels[outer_uniskip_kernel].inputs {
+        match binding {
+            InputBinding::Provided { .. } => {
+                // Az/Bz are already regrouped by RegroupConstraints — don't overwrite.
+                ops.push(Op::MaterializeIfAbsent {
+                    binding: binding.clone(),
+                });
+            }
+            _ => {
+                ops.push(Op::Materialize {
+                    binding: binding.clone(),
+                });
+            }
+        }
+    }
     ops.push(Op::SumcheckRound {
         kernel: outer_uniskip_kernel,
         round: 0,
         bind_challenge: None,
     });
     ops.push(Op::AbsorbRoundPoly {
-        kernel: outer_uniskip_kernel,
         num_coeffs: params.outer_uniskip_num_coeffs,
         tag: DomainSeparator::UniskipPoly,
+        encoding: RoundPolyEncoding::Uniskip {
+            domain_size: params.outer_uniskip_domain,
+            domain_start: -((params.outer_uniskip_domain as i64 - 1) / 2),
+            tau_challenge: tau_high_idx,
+            zero_base: true,
+        },
     });
 
     // Squeeze r0 (uniskip challenge)
@@ -922,6 +1147,7 @@ fn build_stage1(
     // Flush uniskip opening claim: s1(r0) appended via flush_to_transcript.
     ops.push(Op::Evaluate {
         poly: p.outer_uniskip_eval,
+        mode: EvalMode::RoundPoly,
     });
     ops.push(Op::AbsorbEvals {
         polys: vec![p.outer_uniskip_eval],
@@ -981,6 +1207,15 @@ fn build_stage1(
         num_rounds: params.outer_remaining_rounds,
     });
 
+    // Remaining kernel inputs: EqTable reuses the uniskip's eq buffer;
+    // Az/Bz already have projected data from LagrangeProject.
+    // MaterializeIfAbsent skips existing buffers.
+    for binding in &kernels[outer_remaining_kernel].inputs {
+        ops.push(Op::MaterializeIfAbsent {
+            binding: binding.clone(),
+        });
+    }
+
     // Remaining rounds: log_t + 1 binary rounds binding all eq variables.
     // Round 0 has no bind (initial 2T-entry buffers from group-split projection).
     // Rounds 1+ bind at the previous round's squeezed challenge.
@@ -1004,9 +1239,9 @@ fn build_stage1(
             },
         );
         ops.push(Op::AbsorbRoundPoly {
-            kernel: outer_remaining_kernel,
             num_coeffs: params.outer_remaining_degree + 1,
             tag: DomainSeparator::SumcheckPoly,
+            encoding: RoundPolyEncoding::Compressed,
         });
         ops.push(Op::Squeeze { challenge: ch_r });
     }
@@ -1034,7 +1269,10 @@ fn build_stage1(
         });
     }
     for &poly in &r1cs_polys {
-        ops.push(Op::Evaluate { poly });
+        ops.push(Op::Evaluate {
+            poly,
+            mode: EvalMode::FinalBind,
+        });
     }
     ops.push(Op::AbsorbEvals {
         polys: r1cs_polys.to_vec(),
@@ -1353,15 +1591,25 @@ fn build_stage2(
         num_rounds: 1,
     });
 
+    for binding in &kernels[product_uniskip_kernel].inputs {
+        ops.push(Op::Materialize {
+            binding: binding.clone(),
+        });
+    }
     ops.push(Op::SumcheckRound {
         kernel: product_uniskip_kernel,
         round: 0,
         bind_challenge: None,
     });
     ops.push(Op::AbsorbRoundPoly {
-        kernel: product_uniskip_kernel,
         num_coeffs: params.product_uniskip_num_coeffs,
         tag: DomainSeparator::UniskipPoly,
+        encoding: RoundPolyEncoding::Uniskip {
+            domain_size: params.product_uniskip_domain,
+            domain_start: -((params.product_uniskip_domain as i64 - 1) / 2),
+            tau_challenge: ch_product_tau_high,
+            zero_base: false,
+        },
     });
 
     // Squeeze r0 (product uniskip challenge)
@@ -1379,6 +1627,7 @@ fn build_stage2(
     // Flush product uniskip opening claim: s2(r0)
     ops.push(Op::Evaluate {
         poly: p.product_uniskip_eval,
+        mode: EvalMode::RoundPoly,
     });
     ops.push(Op::AbsorbEvals {
         polys: vec![p.product_uniskip_eval],
@@ -1487,6 +1736,7 @@ fn build_stage2(
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
         instance: 0,
+        inactive_scale_bits: 0,
     });
 
     // [1] ProductVirtualRemainder: product_uniskip_eval (= s2(r0))
@@ -1501,6 +1751,7 @@ fn build_stage2(
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
         instance: 1,
+        inactive_scale_bits: params.stage2_max_rounds - params.product_remainder_rounds,
     });
 
     // [2] InstructionClaimReduction: lookup + γ*left_op + γ²*right_op + γ³*left_inst + γ⁴*right_inst
@@ -1551,6 +1802,7 @@ fn build_stage2(
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
         instance: 2,
+        inactive_scale_bits: params.stage2_max_rounds - params.instruction_claim_reduction_rounds,
     });
 
     // [3] RafEvaluation: ram_address
@@ -1565,6 +1817,7 @@ fn build_stage2(
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
         instance: 3,
+        inactive_scale_bits: params.stage2_max_rounds - params.raf_evaluation_rounds,
     });
 
     // [4] OutputCheck: 0 (zero-check)
@@ -1574,6 +1827,7 @@ fn build_stage2(
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
         instance: 4,
+        inactive_scale_bits: params.stage2_max_rounds - params.output_check_rounds,
     });
 
     // Squeeze 5 batching coefficients
@@ -1984,45 +2238,11 @@ fn build_stage2(
         max_degree: params.rw_checking_degree,
     });
 
-    // ---------------------------------------------------------------
-    // 5c. 45 rounds of BatchedSumcheckRound.
-    //
-    // Each round: the runtime dispatches to active instance kernels,
-    // combines with batching coefficients, produces one round poly.
-    // ---------------------------------------------------------------
-    let mut round_challenge_indices = Vec::with_capacity(params.stage2_max_rounds);
-    for round in 0..params.stage2_max_rounds {
-        let bind = if round > 0 {
-            Some(round_challenge_indices[round - 1])
-        } else {
-            None
-        };
-        ops.push(Op::BatchedSumcheckRound {
-            batch: batch_idx,
-            round,
-            bind_challenge: bind,
-        });
-
-        let ch_r = ch.add(
-            &format!("s2_r_{round}"),
-            ChallengeSource::SumcheckRound {
-                stage: VerifierStageIndex(1),
-                round: round + 1,
-            },
-        );
-        round_challenge_indices.push(ch_r);
-        ops.push(Op::AbsorbRoundPoly {
-            kernel: rw_phase1_kernel_idx,
-            num_coeffs: params.rw_checking_degree + 1,
-            tag: DomainSeparator::SumcheckPoly,
-        });
-        ops.push(Op::Squeeze { challenge: ch_r });
-    }
-
-    // Patch the RAF kernel's EqProject challenges.
+    // Patch the RAF kernel's EqProject challenges BEFORE emitting rounds,
+    // so the Materialize ops clone the binding with the correct challenges.
     // The EqProject marginalizes the cycle dimension of the RA indicator using
     // the Stage 1 cycle point (where ram_address was evaluated), NOT the Stage 2
-    // round challenges. This ensures Σ_k unmap(k) * eq_project(indicator, r) = eval(ram_address, r).
+    // round challenges.
     {
         if let InputBinding::EqProject {
             challenges: ref mut chs,
@@ -2032,6 +2252,24 @@ fn build_stage2(
             chs.clone_from(&rw_cycle_eq_challenges);
         }
     }
+
+    // ---------------------------------------------------------------
+    // 5c. Unrolled batched sumcheck rounds.
+    // ---------------------------------------------------------------
+    let rw_coeffs = params.rw_checking_degree + 1;
+    let round_challenge_indices = emit_unrolled_batched_rounds(
+        ops,
+        kernels,
+        batched_sumchecks,
+        ch,
+        batch_idx,
+        params.stage2_max_rounds,
+        |_| rw_coeffs,
+        VerifierStageIndex(1),
+        "s2_r",
+        1,
+        None,
+    );
 
     // ---------------------------------------------------------------
     // 6. Bind polynomials opened by Instance 1 (ProductRemainder)
@@ -2107,7 +2345,10 @@ fn build_stage2(
     ];
 
     for &poly in &stage2_eval_polys {
-        ops.push(Op::Evaluate { poly });
+        ops.push(Op::Evaluate {
+            poly,
+            mode: EvalMode::FinalBind,
+        });
     }
     ops.push(Op::AbsorbEvals {
         polys: stage2_eval_polys,
@@ -2245,6 +2486,7 @@ fn build_stage3(
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
         instance: 0,
+        inactive_scale_bits: 0,
     });
 
     // [1] InstructionInput: right_instruction_input + γ * left_instruction_input
@@ -2268,6 +2510,7 @@ fn build_stage3(
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
         instance: 1,
+        inactive_scale_bits: 0,
     });
 
     // [2] RegistersCR: rd_write_value + γ * rs1_val + γ² * rs2_val
@@ -2299,6 +2542,7 @@ fn build_stage3(
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
         instance: 2,
+        inactive_scale_bits: 0,
     });
 
     // Squeeze 3 batching coefficients
@@ -2594,36 +2838,21 @@ fn build_stage3(
     });
 
     // ---------------------------------------------------------------
-    // Sumcheck rounds (log_T rounds, all instances active every round).
+    // Unrolled batched sumcheck rounds (log_T rounds).
     // ---------------------------------------------------------------
-    let mut round_challenge_indices = Vec::with_capacity(params.log_t);
-    for round in 0..params.log_t {
-        let bind = if round > 0 {
-            Some(round_challenge_indices[round - 1])
-        } else {
-            None
-        };
-        ops.push(Op::BatchedSumcheckRound {
-            batch: batch_idx,
-            round,
-            bind_challenge: bind,
-        });
-
-        let ch_r = ch.add(
-            &format!("s3_r_{round}"),
-            ChallengeSource::SumcheckRound {
-                stage: VerifierStageIndex(2),
-                round: round + 1,
-            },
-        );
-        round_challenge_indices.push(ch_r);
-        ops.push(Op::AbsorbRoundPoly {
-            kernel: shift_kernel_idx, // any kernel with max_degree 3
-            num_coeffs: 4,            // degree 3 → 4 coefficients
-            tag: DomainSeparator::SumcheckPoly,
-        });
-        ops.push(Op::Squeeze { challenge: ch_r });
-    }
+    let round_challenge_indices = emit_unrolled_batched_rounds(
+        ops,
+        kernels,
+        batched_sumchecks,
+        ch,
+        batch_idx,
+        params.log_t,
+        |_| 4, // degree 3 → 4 coefficients
+        VerifierStageIndex(2),
+        "s3_r",
+        1,
+        None,
+    );
 
     // ---------------------------------------------------------------
     // Flush 13 unique evaluation opening claims.
@@ -2658,7 +2887,10 @@ fn build_stage3(
     ];
 
     for &poly in &stage3_eval_polys {
-        ops.push(Op::Evaluate { poly });
+        ops.push(Op::Evaluate {
+            poly,
+            mode: EvalMode::FinalBind,
+        });
     }
     ops.push(Op::AbsorbEvals {
         polys: stage3_eval_polys,
@@ -2799,6 +3031,7 @@ fn build_stage4(
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
         instance: 0,
+        inactive_scale_bits: 0,
     });
 
     // [1] RamValCheck: (val_rw - init_eval) + γ * (val_final - init_eval)
@@ -2834,6 +3067,7 @@ fn build_stage4(
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
         instance: 1,
+        inactive_scale_bits: stage4_max_rounds - ram_vc_rounds,
     });
 
     // ---------------------------------------------------------------
@@ -3096,36 +3330,21 @@ fn build_stage4(
     batched_sumchecks[batch_idx].input_claims = vec![reg_rw_input_claim, ram_vc_input_claim];
 
     // ---------------------------------------------------------------
-    // Sumcheck rounds (stage4_max_rounds rounds).
+    // Unrolled batched sumcheck rounds (stage4_max_rounds rounds).
     // ---------------------------------------------------------------
-    let mut round_challenge_indices = Vec::with_capacity(stage4_max_rounds);
-    for round in 0..stage4_max_rounds {
-        let bind = if round > 0 {
-            Some(round_challenge_indices[round - 1])
-        } else {
-            None
-        };
-        ops.push(Op::BatchedSumcheckRound {
-            batch: batch_idx,
-            round,
-            bind_challenge: bind,
-        });
-
-        let ch_r = ch.add(
-            &format!("s4_r_{round}"),
-            ChallengeSource::SumcheckRound {
-                stage: VerifierStageIndex(3),
-                round: round + 1,
-            },
-        );
-        round_challenge_indices.push(ch_r);
-        ops.push(Op::AbsorbRoundPoly {
-            kernel: reg_rw_p1_kernel_idx, // any kernel with max degree 3
-            num_coeffs: 4,                // degree 3 → 4 coefficients
-            tag: DomainSeparator::SumcheckPoly,
-        });
-        ops.push(Op::Squeeze { challenge: ch_r });
-    }
+    let round_challenge_indices = emit_unrolled_batched_rounds(
+        ops,
+        kernels,
+        batched_sumchecks,
+        ch,
+        batch_idx,
+        stage4_max_rounds,
+        |_| 4, // degree 3 → 4 coefficients
+        VerifierStageIndex(3),
+        "s4_r",
+        1,
+        None,
+    );
 
     // ---------------------------------------------------------------
     // Eval flush: open polynomials at the final sumcheck point.
@@ -3145,7 +3364,10 @@ fn build_stage4(
         p.ram_inc,
     ];
     for &poly in &stage4_eval_polys {
-        ops.push(Op::Evaluate { poly });
+        ops.push(Op::Evaluate {
+            poly,
+            mode: EvalMode::FinalBind,
+        });
     }
     ops.push(Op::AbsorbEvals {
         polys: stage4_eval_polys,
@@ -3522,6 +3744,7 @@ fn build_stage5(
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
         instance: 0,
+        inactive_scale_bits: 0,
     });
 
     // [1] RamRaClaimReduction: claim_raf + γ * claim_rw + γ² * claim_val
@@ -3553,6 +3776,7 @@ fn build_stage5(
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
         instance: 1,
+        inactive_scale_bits: stage5_max_rounds - ram_ra_reduction_rounds,
     });
 
     // [2] RegistersValEvaluation: RegistersVal claim (single term)
@@ -3567,6 +3791,7 @@ fn build_stage5(
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
         instance: 2,
+        inactive_scale_bits: stage5_max_rounds - reg_val_eval_rounds,
     });
 
     // ---------------------------------------------------------------
@@ -3621,43 +3846,25 @@ fn build_stage5(
     //   Combined degree = instruction_d + 2.
     // ---------------------------------------------------------------
     let inst_raf_addr_degree = 2;
-
-    let mut round_challenge_indices = Vec::with_capacity(stage5_max_rounds);
-    for round in 0..stage5_max_rounds {
-        let bind = if round > 0 {
-            Some(round_challenge_indices[round - 1])
-        } else {
-            None
-        };
-        ops.push(Op::BatchedSumcheckRound {
-            batch: batch_idx,
-            round,
-            bind_challenge: bind,
-        });
-
-        let ch_r = ch.add(
-            &format!("s5_r_{round}"),
-            ChallengeSource::SumcheckRound {
-                stage: VerifierStageIndex(4),
-                round: round + 1,
-            },
-        );
-        round_challenge_indices.push(ch_r);
-
-        // Address rounds: combined degree = 2, so 3 monomial coefficients.
-        // Cycle rounds: combined degree = instruction_d + 2, so degree+1 coefficients.
-        let num_coeffs = if round < LOG_K_INSTRUCTION {
-            inst_raf_addr_degree + 1 // 3
-        } else {
-            inst_raf_cycle_degree + 1 // instruction_d + 3
-        };
-        ops.push(Op::AbsorbRoundPoly {
-            kernel: inst_raf_addr_kernel_idx,
-            num_coeffs,
-            tag: DomainSeparator::SumcheckPoly,
-        });
-        ops.push(Op::Squeeze { challenge: ch_r });
-    }
+    let round_challenge_indices = emit_unrolled_batched_rounds(
+        ops,
+        kernels,
+        batched_sumchecks,
+        ch,
+        batch_idx,
+        stage5_max_rounds,
+        |round| {
+            if round < LOG_K_INSTRUCTION {
+                inst_raf_addr_degree + 1 // 3
+            } else {
+                inst_raf_cycle_degree + 1 // instruction_d + 3
+            }
+        },
+        VerifierStageIndex(4),
+        "s5_r",
+        1,
+        None,
+    );
 
     // ---------------------------------------------------------------
     // Post-sumcheck eval flush.
@@ -3707,7 +3914,10 @@ fn build_stage5(
     stage5_eval_polys.push(rd_wa_gather);
 
     for &poly in &stage5_eval_polys {
-        ops.push(Op::Evaluate { poly });
+        ops.push(Op::Evaluate {
+            poly,
+            mode: EvalMode::FinalBind,
+        });
     }
     ops.push(Op::AbsorbEvals {
         polys: stage5_eval_polys,
@@ -4525,6 +4735,7 @@ fn build_stage6(
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
         instance: 0,
+        inactive_scale_bits: 0,
     });
 
     // [1] Booleanity: input_claim = 0
@@ -4534,6 +4745,7 @@ fn build_stage6(
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
         instance: 1,
+        inactive_scale_bits: params.log_k_bytecode - params.log_k_chunk,
     });
 
     // [2] HammingBooleanity: input_claim = 0
@@ -4543,6 +4755,7 @@ fn build_stage6(
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
         instance: 2,
+        inactive_scale_bits: params.log_k_bytecode,
     });
 
     // [3] RamRaVirtual: input_claim = ram_combined_ra (from Stage 5)
@@ -4558,6 +4771,7 @@ fn build_stage6(
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
         instance: 3,
+        inactive_scale_bits: params.log_k_bytecode,
     });
 
     // [4] InstructionRaVirtual: input_claim = Σ gamma^i * InstructionRa(i) eval
@@ -4578,6 +4792,7 @@ fn build_stage6(
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
         instance: 4,
+        inactive_scale_bits: params.log_k_bytecode,
     });
 
     // [5] IncClaimReduction: v_1 + γ*v_2 + γ²*w_1 + γ³*w_2
@@ -4630,6 +4845,7 @@ fn build_stage6(
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
         instance: 5,
+        inactive_scale_bits: params.log_k_bytecode,
     });
 
     // ---------------------------------------------------------------
@@ -4661,9 +4877,7 @@ fn build_stage6(
     // ---------------------------------------------------------------
     // Sumcheck rounds: log_k_bytecode + log_t rounds
     // ---------------------------------------------------------------
-    // Per-instance degree per phase (indexed by instance, phase).
-    // The combined polynomial degree for each round equals the max
-    // degree among active instances' current-phase kernels.
+    // Per-instance degree per phase — used to compute per-round num_coeffs.
     let instance_phase_degrees: Vec<Vec<(usize, usize)>> = batched_sumchecks[batch_idx]
         .instances
         .iter()
@@ -4678,49 +4892,36 @@ fn build_stage6(
         })
         .collect();
 
-    // Use pre-allocated round challenge indices from s6_round_ch.
-    let round_challenge_indices = &s6_round_ch;
-    for round in 0..stage6_max_rounds {
-        let bind = if round > 0 {
-            Some(round_challenge_indices[round - 1])
-        } else {
-            None
-        };
-        ops.push(Op::BatchedSumcheckRound {
-            batch: batch_idx,
-            round,
-            bind_challenge: bind,
-        });
-
-        let ch_r = round_challenge_indices[round];
-
-        // Compute per-round num_coeffs from active instances' degrees.
-        let mut round_degree = 0usize;
-        for (inst_idx, inst) in batched_sumchecks[batch_idx].instances.iter().enumerate() {
-            if round >= inst.first_active_round {
-                let inst_round = round - inst.first_active_round;
-                let mut accum = 0;
-                for (ph_idx, &(ph_rounds, ph_evals)) in
-                    instance_phase_degrees[inst_idx].iter().enumerate()
-                {
-                    if inst_round < accum + ph_rounds {
-                        round_degree = round_degree.max(ph_evals - 1);
-                        break;
+    let bdef_instances = &batched_sumchecks[batch_idx].instances;
+    let _round_challenge_indices = emit_unrolled_batched_rounds(
+        ops,
+        kernels,
+        batched_sumchecks,
+        ch,
+        batch_idx,
+        stage6_max_rounds,
+        |round| {
+            let mut round_degree = 0usize;
+            for (inst_idx, inst) in bdef_instances.iter().enumerate() {
+                if round >= inst.first_active_round {
+                    let inst_round = round - inst.first_active_round;
+                    let mut accum = 0;
+                    for &(ph_rounds, ph_evals) in &instance_phase_degrees[inst_idx] {
+                        if inst_round < accum + ph_rounds {
+                            round_degree = round_degree.max(ph_evals - 1);
+                            break;
+                        }
+                        accum += ph_rounds;
                     }
-                    accum += ph_rounds;
-                    let _ = ph_idx;
                 }
             }
-        }
-        let num_coeffs = round_degree + 1;
-
-        ops.push(Op::AbsorbRoundPoly {
-            kernel: hamming_kernel_idx,
-            num_coeffs,
-            tag: DomainSeparator::SumcheckPoly,
-        });
-        ops.push(Op::Squeeze { challenge: ch_r });
-    }
+            round_degree + 1
+        },
+        VerifierStageIndex(5),
+        "s6_r",
+        1,
+        Some(&s6_round_ch),
+    );
 
     // ---------------------------------------------------------------
     // Post-sumcheck eval flush.
@@ -4765,7 +4966,10 @@ fn build_stage6(
     stage6_eval_polys.push(p.rd_inc);
 
     for &poly in &stage6_eval_polys {
-        ops.push(Op::Evaluate { poly });
+        ops.push(Op::Evaluate {
+            poly,
+            mode: EvalMode::FinalBind,
+        });
     }
     ops.push(Op::AbsorbEvals {
         polys: stage6_eval_polys,
@@ -5671,7 +5875,6 @@ fn print_stats(module: &Module, params: &ModuleParams) {
     for op in &module.prover.ops {
         match op {
             Op::SumcheckRound { .. } => counts[0] += 1,
-            Op::BatchedSumcheckRound { .. } => counts[14] += 1,
             Op::Evaluate { .. } => counts[1] += 1,
             Op::Bind { .. } => counts[2] += 1,
             Op::LagrangeProject { .. }
@@ -5692,12 +5895,29 @@ fn print_stats(module: &Module, params: &ModuleParams) {
             Op::AppendDomainSeparator { .. } => counts[9] += 1,
             Op::EvaluatePreprocessed { .. } => counts[9] += 1,
             Op::SnapshotEval { .. } => counts[9] += 1,
+            Op::BatchRoundBegin { .. }
+            | Op::BatchInactiveContribution { .. }
+            | Op::Materialize { .. }
+            | Op::MaterializeUnlessFresh { .. }
+            | Op::MaterializeIfAbsent { .. }
+            | Op::MaterializeSegmentedOuterEq { .. }
+            | Op::InstanceBindPreviousPhase { .. }
+            | Op::CaptureScalar { .. }
+            | Op::InstanceReduce { .. }
+            | Op::InstanceSegmentedReduce { .. }
+            | Op::InstanceBind { .. }
+            | Op::BatchAccumulateInstance { .. }
+            | Op::BatchRoundFinalize { .. }
+            | Op::PrefixSuffixInit { .. }
+            | Op::PrefixSuffixBind { .. }
+            | Op::PrefixSuffixReduce { .. }
+            | Op::PrefixSuffixMaterialize { .. } => counts[14] += 1,
         }
     }
     eprintln!("\n=== Op Counts ===");
     eprintln!("  -- Compute --");
     eprintln!("  SumcheckRound:         {}", counts[0]);
-    eprintln!("  BatchedSumcheckRound:  {}", counts[14]);
+    eprintln!("  GranularBatchOps:     {}", counts[14]);
     eprintln!("  Evaluate:              {}", counts[1]);
     eprintln!("  Bind:                  {}", counts[2]);
     eprintln!("  LagrangeProject:       {}", counts[13]);

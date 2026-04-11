@@ -16,7 +16,8 @@ use jolt_compiler::PolySource;
 use jolt_compute::BufferProvider;
 use jolt_field::Field;
 use jolt_r1cs::R1csSource;
-use jolt_witness::{PolynomialId, Polynomials};
+
+use crate::{PolynomialId, Polynomials};
 
 use crate::derived::DerivedSource;
 use crate::preprocessed::PreprocessedSource;
@@ -81,8 +82,8 @@ impl<F: Field> BufferProvider<F> for ProverData<'_, F> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{CycleInput, PolynomialConfig};
     use jolt_r1cs::{ConstraintMatrices, R1csKey};
-    use jolt_witness::{CycleInput, PolynomialConfig};
 
     use jolt_field::Fr;
     use num_traits::One;

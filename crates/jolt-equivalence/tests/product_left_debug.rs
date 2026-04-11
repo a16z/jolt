@@ -17,7 +17,7 @@ use jolt_core::poly::lagrange_poly::LagrangePolynomial;
 use jolt_core::zkvm::r1cs::evaluation::ProductVirtualEval;
 use jolt_core::zkvm::r1cs::inputs::ProductCycleInputs;
 
-use jolt_zkvm::derived::DerivedSource;
+use jolt_witness::derived::DerivedSource;
 
 type CoreFr = ark_bn254::Fr;
 

@@ -33,6 +33,7 @@ use common::constants::RAM_START_ADDRESS;
 use jolt_compiler::module::Module;
 use jolt_compiler::{Op, VerifierOp};
 use jolt_compute::link;
+use jolt_compute::LookupTraceData;
 use jolt_cpu::CpuBackend;
 use jolt_dory::types::DoryProverSetup;
 use jolt_dory::DoryScheme;
@@ -41,13 +42,12 @@ use jolt_instructions::LookupTableKind;
 use jolt_r1cs::{constraints::rv64, R1csKey, R1csSource};
 use jolt_transcript::Transcript;
 use jolt_verifier::{OneHotConfig, ProverConfig, ReadWriteConfig, TRANSCRIPT_LABEL};
+use jolt_witness::bytecode_raf::{BytecodeData, BytecodeEntry};
+use jolt_witness::derived::{DerivedSource, InstructionFlags, RamConfig, RegisterAccessData};
+use jolt_witness::preprocessed::PreprocessedSource;
+use jolt_witness::provider::ProverData;
 use jolt_witness::{PolynomialConfig, PolynomialId, Polynomials};
-use jolt_zkvm::bytecode_raf::{BytecodeData, BytecodeEntry};
-use jolt_zkvm::derived::{DerivedSource, InstructionFlags, RamConfig, RegisterAccessData};
-use jolt_zkvm::prefix_suffix::LookupTraceData;
-use jolt_zkvm::preprocessed::PreprocessedSource;
 use jolt_zkvm::prove::prove;
-use jolt_zkvm::provider::ProverData;
 use num_traits::{One, Zero};
 
 use jolt_equivalence::checkpoint::{CheckpointTranscript, TranscriptEvent};
@@ -313,8 +313,8 @@ fn build_protocol_module(log_t: usize, log_k_bytecode: usize, log_k_ram: usize) 
 /// Verifier ops are cut at the corresponding boundary.
 fn truncate_after_stage(module: &mut Module, num_stages: usize) {
     // Prover: cut at BeginStage{num_stages} (the start of the next stage).
-    // Also cut at the first BatchedSumcheckRound in the last stage if
-    // the kernels are not yet wired (empty phases).
+    // Also cut at the first BatchRoundBegin in the last stage if
+    // the instance phases haven't been wired yet.
     let mut seen = 0;
     let mut in_final_stage = false;
     if let Some(pos) = module.prover.ops.iter().position(|op| {
@@ -325,10 +325,10 @@ fn truncate_after_stage(module: &mut Module, num_stages: usize) {
             in_final_stage = *index + 1 == num_stages;
             seen = *index + 1;
         }
-        // Stop before BatchedSumcheckRound if we're in the final stage
+        // Stop before BatchRoundBegin if we're in the final stage
         // and the instance phases haven't been wired yet.
         if in_final_stage {
-            if let Op::BatchedSumcheckRound { batch, .. } = op {
+            if let Op::BatchRoundBegin { batch, .. } = op {
                 let bdef = &module.prover.batched_sumchecks[*batch];
                 if bdef.instances.iter().all(|inst| inst.phases.is_empty()) {
                     return true;
@@ -371,7 +371,7 @@ fn setup_zkvm_muldiv(
     InstructionFlagData<NewFr>,
     RegisterAccessData,
     LookupTraceData,
-    jolt_zkvm::derived::LookupFlagData,
+    jolt_witness::derived::LookupFlagData,
     BytecodeData<NewFr>,
 ) {
     let mut program = Program::new("muldiv-guest");
@@ -487,7 +487,7 @@ fn setup_zkvm_muldiv(
     };
 
     let is_raf: Vec<bool> = is_interleaved.iter().map(|&b| !b).collect();
-    let lookup_flags = jolt_zkvm::derived::LookupFlagData {
+    let lookup_flags = jolt_witness::derived::LookupFlagData {
         table_indices,
         is_raf,
     };

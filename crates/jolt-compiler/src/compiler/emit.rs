@@ -158,7 +158,10 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams, poly_map: &[Polyno
             } = &protocol.vertices[vi]
             {
                 let mapped = ctx.map_poly(*poly);
-                ctx.ops.push(Op::Evaluate { poly: mapped });
+                ctx.ops.push(Op::Evaluate {
+                    poly: mapped,
+                    mode: crate::module::EvalMode::FullyBound,
+                });
                 let target_staging = vertex_to_staging[at_vertex];
                 let at_stage = staging_to_verifier[target_staging]
                     .expect("evaluation target stage not yet emitted");
@@ -469,6 +472,13 @@ fn emit_sumcheck_stage(
         num_rounds,
     });
 
+    // Materialize all kernel inputs before the first round.
+    for binding in &ctx.kernels[kernel_idx].inputs {
+        ctx.ops.push(Op::Materialize {
+            binding: binding.clone(),
+        });
+    }
+
     // Emit round ops: round 0 has no bind, rounds 1+ fuse bind with reduce
     for r in 0..num_rounds {
         let num_coeffs = if r == 0 {
@@ -493,10 +503,12 @@ fn emit_sumcheck_stage(
         } else {
             DomainSeparator::SumcheckPoly
         };
+        // TODO: When uniskip is wired through the IR, emit Uniskip encoding
+        // for round 0 with appropriate domain params. For now, always Compressed.
         ctx.ops.push(Op::AbsorbRoundPoly {
-            kernel: kernel_idx,
             num_coeffs,
             tag: round_tag,
+            encoding: crate::module::RoundPolyEncoding::Compressed,
         });
         ctx.ops.push(Op::Squeeze {
             challenge: round_challenge_indices[r],
@@ -844,18 +856,11 @@ fn vertex_degree(vertex: &Vertex) -> usize {
 /// Collect all poly identifiers referenced by an op (directly or via kernel inputs).
 fn op_poly_refs(op: &Op, kernels: &[KernelDef]) -> Vec<PolynomialId> {
     match op {
-        Op::SumcheckRound { kernel, .. } | Op::AbsorbRoundPoly { kernel, .. } => {
+        Op::SumcheckRound { kernel, .. } => {
             kernels[*kernel].inputs.iter().map(|b| b.poly()).collect()
         }
-        Op::BatchedSumcheckRound { batch, .. } => {
-            // Collect all poly refs from all instance kernels in the batch.
-            // Note: `batched_sumchecks` is not passed here; the caller handles
-            // lifecycle for batched ops via the schedule-level definition.
-            // For now, return empty — batched kernel inputs are resolved at runtime.
-            let _ = batch;
-            vec![]
-        }
-        Op::Evaluate { poly } | Op::CollectOpeningClaim { poly, .. } => vec![*poly],
+        Op::AbsorbRoundPoly { .. } => vec![],
+        Op::Evaluate { poly, .. } | Op::CollectOpeningClaim { poly, .. } => vec![*poly],
         Op::Bind { polys, .. }
         | Op::LagrangeProject { polys, .. }
         | Op::DuplicateInterleave { polys }
@@ -864,6 +869,7 @@ fn op_poly_refs(op: &Op, kernels: &[KernelDef]) -> Vec<PolynomialId> {
         | Op::CommitStreaming { polys, .. }
         | Op::RecordEvals { polys, .. }
         | Op::AbsorbEvals { polys, .. } => polys.clone(),
+        Op::CaptureScalar { poly, .. } => vec![*poly],
         Op::Preamble
         | Op::BeginStage { .. }
         | Op::AbsorbInputClaim { .. }
@@ -875,7 +881,23 @@ fn op_poly_refs(op: &Op, kernels: &[KernelDef]) -> Vec<PolynomialId> {
         | Op::ReleaseHost { .. }
         | Op::SnapshotEval { .. }
         | Op::ReduceOpenings
-        | Op::Open => vec![],
+        | Op::Open
+        | Op::BatchRoundBegin { .. }
+        | Op::BatchInactiveContribution { .. }
+        | Op::Materialize { .. }
+        | Op::MaterializeUnlessFresh { .. }
+        | Op::MaterializeIfAbsent { .. }
+        | Op::MaterializeSegmentedOuterEq { .. }
+        | Op::InstanceBindPreviousPhase { .. }
+        | Op::InstanceReduce { .. }
+        | Op::InstanceSegmentedReduce { .. }
+        | Op::InstanceBind { .. }
+        | Op::BatchAccumulateInstance { .. }
+        | Op::BatchRoundFinalize { .. }
+        | Op::PrefixSuffixInit { .. }
+        | Op::PrefixSuffixBind { .. }
+        | Op::PrefixSuffixReduce { .. }
+        | Op::PrefixSuffixMaterialize { .. } => vec![],
     }
 }
 

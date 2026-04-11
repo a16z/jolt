@@ -1,9 +1,27 @@
 //! Core trait definitions for compute backends.
 
+use std::collections::HashMap;
+
+use jolt_compiler::kernel_spec::Iteration;
+use jolt_compiler::module::ClaimFormula;
 pub use jolt_compiler::BindingOrder;
 use jolt_compiler::KernelSpec;
 use jolt_compiler::PolynomialId;
 use jolt_field::Field;
+use jolt_instructions::LookupTableKind;
+
+/// Per-cycle data needed for the prefix-suffix decomposition.
+///
+/// Extracted from the execution trace and passed to the backend's
+/// prefix-suffix initialization.
+pub struct LookupTraceData {
+    /// Per-cycle lookup key (128-bit packed), T entries.
+    pub lookup_keys: Vec<u128>,
+    /// Per-cycle lookup table kind, T entries. None for cycles with no lookup.
+    pub table_kinds: Vec<Option<LookupTableKind>>,
+    /// Per-cycle interleaved-operands flag, T entries.
+    pub is_interleaved: Vec<bool>,
+}
 
 /// Marker trait for types that can be stored in device buffers.
 pub trait Scalar: Copy + Send + Sync + 'static {}
@@ -222,6 +240,149 @@ pub trait ComputeBackend: Send + Sync + 'static {
         new_stride: usize,
         num_cycles: usize,
     ) -> Self::Buffer<F>;
+
+    // ── Scalar operations ───────────────────────────────────────────────
+
+    /// Evaluate a [`ClaimFormula`] against polynomial evaluations and challenges.
+    fn evaluate_claim<F: Field>(
+        &self,
+        formula: &ClaimFormula,
+        evaluations: &HashMap<PolynomialId, F>,
+        challenges: &[F],
+    ) -> F;
+
+    /// Evaluate a multilinear extension at a point via repeated halving.
+    fn evaluate_mle<F: Field>(&self, evals: &[F], point: &[F]) -> F;
+
+    // ── Polynomial arithmetic ───────────────────────────────────────────
+
+    /// Encode Uniskip round polynomial into transcript-ready coefficients.
+    ///
+    /// Computes Lagrange interpolation of `raw_evals` on a domain starting at
+    /// `domain_start` with `domain_size` points, multiplies by the Lagrange
+    /// basis evaluated at `tau`, and truncates/pads to `num_coeffs`.
+    fn uniskip_encode<F: Field>(
+        &self,
+        raw_evals: &mut [F],
+        domain_size: usize,
+        domain_start: i64,
+        tau: F,
+        zero_base: bool,
+        num_coeffs: usize,
+    ) -> Vec<F>;
+
+    /// Encode round polynomial evaluations into monomial coefficients.
+    ///
+    /// Interpolates evaluations at `{0, 1, ..., n-1}` to monomial form.
+    fn compressed_encode<F: Field>(&self, evals: &[F]) -> Vec<F>;
+
+    /// Interpolate evaluations at `{0, 1, ..., n-1}` and evaluate at `point`.
+    fn interpolate_evaluate<F: Field>(&self, evals: &[F], point: F) -> F;
+
+    /// Extend evaluations at `{0, ..., n-1}` to `{0, ..., target_len-1}`.
+    fn extend_evals<F: Field>(&self, evals: &[F], target_len: usize) -> Vec<F>;
+
+    // ── Input materialization ───────────────────────────────────────────
+
+    /// Element-wise scale host data and produce a device buffer.
+    fn scale_from_host<F: Field>(&self, data: &[F], scale: F) -> Self::Buffer<F>;
+
+    /// Transpose a row-major matrix from host data and produce a device buffer.
+    fn transpose_from_host<F: Field>(
+        &self,
+        data: &[F],
+        rows: usize,
+        cols: usize,
+    ) -> Self::Buffer<F>;
+
+    /// Build eq table from `eq_point`, then gather by index from host data.
+    ///
+    /// For each `i`, output\[i\] = eq_table\[indices\[i\]\] (or zero if out of bounds).
+    fn eq_gather<F: Field>(&self, eq_point: &[F], index_data: &[F]) -> Self::Buffer<F>;
+
+    /// Build eq table from `eq_point`, then scatter-add into an output buffer.
+    ///
+    /// For each `j`, output\[indices\[j\]\] += eq_table\[j\].
+    fn eq_pushforward<F: Field>(
+        &self,
+        eq_point: &[F],
+        index_data: &[F],
+        output_size: usize,
+    ) -> Self::Buffer<F>;
+
+    /// Eq-weighted matrix-vector projection.
+    ///
+    /// Source layout: `inner_size` rows × `outer_size` cols.
+    /// If `eq_point.len() == log2(inner_size)`, projects out inner dim → `outer_size` result.
+    /// If `eq_point.len() == log2(outer_size)`, projects out outer dim → `inner_size` result.
+    fn eq_project<F: Field>(
+        &self,
+        source_data: &[F],
+        eq_point: &[F],
+        inner_size: usize,
+        outer_size: usize,
+    ) -> Self::Buffer<F>;
+
+    /// Lagrange basis projection with optional kernel tau scaling.
+    ///
+    /// For each polynomial buffer, projects data through Lagrange basis evaluated
+    /// at `challenge`, regrouped by `group_offsets` within `stride`-sized blocks.
+    /// Optionally scales by `L(τ, r) = Σ_k L_k(τ) · L_k(r)`.
+    ///
+    /// Returns `num_cycles × num_groups` elements per buffer.
+    #[allow(clippy::too_many_arguments)]
+    fn lagrange_project<F: Field>(
+        &self,
+        buf: &Self::Buffer<F>,
+        challenge: F,
+        domain_start: i64,
+        domain_size: usize,
+        stride: usize,
+        group_offsets: &[usize],
+        scale: F,
+    ) -> Self::Buffer<F>;
+
+    /// Fused segmented reduce over mixed-dimensional inputs.
+    ///
+    /// For each outer position, extracts inner-sized columns from mixed inputs
+    /// (inner-only inputs are shared across all positions), runs the kernel,
+    /// and accumulates with outer eq weights. Returns `num_evals` field elements.
+    #[allow(clippy::too_many_arguments)]
+    fn segmented_reduce<F: Field>(
+        &self,
+        kernel: &Self::CompiledKernel<F>,
+        inputs: &[&Self::Buffer<F>],
+        outer_eq: &[F],
+        inner_only: &[bool],
+        inner_size: usize,
+        challenges: &[F],
+    ) -> Vec<F>;
+
+    // ── PrefixSuffix lifecycle ──────────────────────────────────────────
+
+    /// Opaque state for a PrefixSuffix instance. Each backend controls
+    /// data layout (CPU: Vec-of-Vec, GPU: flat device buffers, etc.).
+    type PrefixSuffixState<F: Field>: Send + Sync;
+
+    /// Initialize a PrefixSuffix state from iteration config and trace data.
+    fn ps_init<F: Field>(
+        &self,
+        iteration: &Iteration,
+        challenges: &[F],
+        trace_data: &LookupTraceData,
+    ) -> Self::PrefixSuffixState<F>;
+
+    /// Bind a sumcheck challenge into the PrefixSuffix state.
+    fn ps_bind<F: Field>(&self, state: &mut Self::PrefixSuffixState<F>, challenge: F);
+
+    /// Compute the address-round evaluations `[eval_0, eval_2]`.
+    fn ps_reduce<F: Field>(&self, state: &Self::PrefixSuffixState<F>) -> [F; 2];
+
+    /// Consume the state and materialize output polynomial buffers.
+    fn ps_materialize<F: Field>(
+        &self,
+        state: Self::PrefixSuffixState<F>,
+    ) -> Vec<(PolynomialId, Self::Buffer<F>)>;
 }
 
 /// Materializes polynomial data for the prover runtime.

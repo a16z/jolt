@@ -46,14 +46,17 @@ After the unroll, these clean up the remaining runtime intelligence:
 |------|------|------|
 | [10-cleanup-debug](10-cleanup-debug.md) | Remove domain-specific debug instrumentation | None |
 
-## Completion
-When all tasks are done, move their files to `done/`. The runtime should be a flat op interpreter with zero protocol knowledge, and we'll be well-positioned for stage 6.
+## Phase 1-4 Complete
+Tasks 00-11 are done (see `done/`). The runtime is now a flat op interpreter with granular per-instance, per-round ops. The `BatchedSumcheckRound` sub-interpreter is deleted.
 
-## Stage 6 Readiness
-Stage 6 contains: BytecodeReadRaf, Booleanity (Gruen), RamHammingBooleanity, RamRaVirtualization, InstructionRaVirtualization, IncClaimReduction, and optional AdviceClaimReduction. Key patterns:
-- Multi-phase instances (cycle + address)
-- Sparse vs dense iteration
-- Cross-stage sumcheck (advice spans stages 6-7)
-- Claim consolidation from multiple prior stages
+## Phase 5-6 Complete
 
-The unrolled op vocabulary from Tasks 04-08 handles all of these naturally: each phase of each instance is explicit in the op stream.
+Tasks 13-21 are done (see `done/`). Task 12 (resolve_inputs to ops) is **deferred** — `resolve_inputs()` is now a clean protocol-unaware dispatcher after Phase 5-6 work eliminated all protocol logic from the runtime. Revisit if the schedule needs to be fully introspectable (e.g., for GPU command buffer recording).
+
+**What was achieved:**
+- All computation dispatches through `ComputeBackend` trait methods (eq tables, projections, materialization, PrefixSuffix state machine, scalar ops, polynomial arithmetic, segmented reduce, Lagrange projection)
+- Protocol-specific data providers (`bytecode_raf.rs`, `derived.rs`, `preprocessed.rs`, `provider.rs`) moved from jolt-zkvm to jolt-witness
+- jolt-zkvm is now protocol-unaware: `runtime.rs` is a generic flat `match op { ... }` executor, `prove.rs` orchestrates PCS generics
+- Metal backend stubs delegate to CPU fallback via `jolt-cpu` for all backend methods
+- BytecodeVal protocol logic encapsulated in `BytecodeData::materialize_val()` (jolt-witness)
+- PrefixSuffix routed through opaque `ComputeBackend::PrefixSuffixState<F>` associated type

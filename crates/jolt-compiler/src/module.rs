@@ -79,7 +79,7 @@ pub enum ChallengeSource {
 pub struct Schedule {
     pub ops: Vec<Op>,
     pub kernels: Vec<KernelDef>,
-    /// Batched sumcheck definitions (indexed by `Op::BatchedSumcheckRound::batch`).
+    /// Batched sumcheck definitions (indexed by batch index in granular ops).
     pub batched_sumchecks: Vec<BatchedSumcheckDef>,
 }
 
@@ -432,15 +432,116 @@ pub enum Op {
         round: usize,
         bind_challenge: Option<usize>,
     },
-    /// One round of a batched sumcheck: dispatch to active instance kernels,
-    /// combine round polynomials with batching coefficients.
-    BatchedSumcheckRound {
+    /// Initialize a batched sumcheck round: zero the combined accumulator and
+    /// update per-instance claims from the previous round's evaluations.
+    BatchRoundBegin {
         batch: usize,
         round: usize,
+        max_evals: usize,
         bind_challenge: Option<usize>,
     },
-    /// Extract polynomial evaluation (buffer fully bound → single element).
-    Evaluate { poly: PolynomialId },
+    /// Inactive instance contribution: add `coeff * (claim / 2)` to all eval
+    /// slots in the combined accumulator, then halve the stored claim.
+    BatchInactiveContribution { batch: usize, instance: usize },
+    /// Materialize a single kernel input buffer.
+    ///
+    /// Unconditionally builds/uploads the buffer described by `binding`.
+    /// Emitted by the compiler at the exact schedule position where the
+    /// buffer is needed — no runtime skip logic.
+    Materialize { binding: InputBinding },
+    /// Materialize a kernel input, but skip if a buffer of the expected
+    /// size already exists (e.g., produced by a prior compute op like
+    /// `PrefixSuffixMaterialize`).
+    ///
+    /// Only used for `Provided` bindings at instance activation where
+    /// a cross-instance compute op may have already produced the buffer.
+    MaterializeUnlessFresh {
+        binding: InputBinding,
+        expected_size: usize,
+    },
+    /// Materialize a kernel input, but only if no buffer exists for this
+    /// poly. Used at phase transitions where bound-down buffers from the
+    /// previous phase (or other instances) should be preserved.
+    MaterializeIfAbsent { binding: InputBinding },
+    /// Build the outer eq table for a segmented phase and store it in
+    /// the runtime's per-instance segmented state.
+    MaterializeSegmentedOuterEq {
+        batch: usize,
+        instance: usize,
+        segmented: SegmentedConfig,
+    },
+    /// Bind the previous phase's kernel inputs at a challenge.
+    /// Emitted at phase transitions (before resolving the new phase's inputs).
+    InstanceBindPreviousPhase {
+        batch: usize,
+        instance: usize,
+        kernel: usize,
+        challenge: usize,
+    },
+    /// Capture a scalar from a fully-bound 1-element device buffer into a
+    /// challenge slot. Bridges phase boundaries: an intermediate value computed
+    /// in one phase becomes a challenge constant for the next phase's formula.
+    CaptureScalar {
+        poly: PolynomialId,
+        challenge: usize,
+    },
+    /// Standard dense reduce for one instance within a batched round.
+    /// Stores the per-instance evaluations for later accumulation.
+    InstanceReduce {
+        batch: usize,
+        instance: usize,
+        kernel: usize,
+    },
+    /// Segmented reduce for one instance (mixed-dimensional inputs).
+    /// Uses the outer eq table to weight inner-dimension kernel evaluations.
+    InstanceSegmentedReduce {
+        batch: usize,
+        instance: usize,
+        kernel: usize,
+        round_within_phase: usize,
+        segmented: SegmentedConfig,
+    },
+    /// Bind kernel inputs for an active instance within a round.
+    /// Emitted for rounds after the first within a phase.
+    InstanceBind {
+        batch: usize,
+        instance: usize,
+        kernel: usize,
+        challenge: usize,
+    },
+    /// Extrapolate lower-degree instance evals to `max_evals` via interpolation,
+    /// then accumulate `coeff * evals[i]` into the combined polynomial.
+    BatchAccumulateInstance {
+        batch: usize,
+        instance: usize,
+        max_evals: usize,
+        num_evals: usize,
+    },
+    /// Finalize a batched round: store the combined evaluations as
+    /// `last_round_coeffs` for subsequent `AbsorbRoundPoly`.
+    BatchRoundFinalize { batch: usize },
+
+    // ── PrefixSuffix lifecycle ops ──
+    /// Initialize PrefixSuffix state for an instance entering a PS phase.
+    PrefixSuffixInit {
+        batch: usize,
+        instance: usize,
+        kernel: usize,
+    },
+    /// Ingest a challenge into the PrefixSuffix state machine.
+    PrefixSuffixBind {
+        batch: usize,
+        instance: usize,
+        challenge: usize,
+    },
+    /// Compute PrefixSuffix address round evaluations.
+    /// Produces 3 evals: `[eval_0, claim - eval_0, eval_2]`.
+    PrefixSuffixReduce { batch: usize, instance: usize },
+    /// Materialize PrefixSuffix outputs into device buffers and destroy
+    /// the PS state. Emitted at the end of a PS phase before transitioning.
+    PrefixSuffixMaterialize { batch: usize, instance: usize },
+    /// Extract polynomial evaluation.
+    Evaluate { poly: PolynomialId, mode: EvalMode },
     /// Bind polynomial buffers at a challenge value (post-sumcheck survivors).
     Bind {
         polys: Vec<PolynomialId>,
@@ -537,9 +638,9 @@ pub enum Op {
     BeginStage { index: usize },
     /// Interpolate round evals → monomial coefficients, absorb into transcript.
     AbsorbRoundPoly {
-        kernel: usize,
         num_coeffs: usize,
         tag: DomainSeparator,
+        encoding: RoundPolyEncoding,
     },
     /// Record polynomial evaluations in the stage proof for the verifier.
     ///
@@ -564,6 +665,9 @@ pub enum Op {
         /// inactive-round constant contributions.
         batch: usize,
         instance: usize,
+        /// Pre-computed scale: `val * 2^inactive_scale_bits`. The compiler
+        /// knows `max_rounds - inst.num_rounds()` at emit time.
+        inactive_scale_bits: usize,
     },
     /// Squeeze a Fiat-Shamir challenge.
     Squeeze { challenge: usize },
@@ -604,12 +708,43 @@ pub enum Op {
     },
 }
 
+/// How to compute and encode the round polynomial for transcript absorption.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum RoundPolyEncoding {
+    /// Standard sumcheck: interpolate evaluations at {0, 1, ..., num_coeffs-1}
+    /// to monomial coefficients, send compressed (skip c1).
+    Compressed,
+    /// Univariate skip: convolve composition evaluations with the Lagrange
+    /// kernel polynomial, send all coefficients (no compression).
+    Uniskip {
+        domain_size: usize,
+        domain_start: i64,
+        tau_challenge: usize,
+        zero_base: bool,
+    },
+}
+
+/// How the runtime should extract a polynomial evaluation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum EvalMode {
+    /// Buffer is fully bound (1 element). Direct scalar read.
+    FullyBound,
+    /// Buffer has 2 elements after n-1 bind rounds. Interpolate at last
+    /// squeezed challenge: `buf[0] + r * (buf[1] - buf[0])`.
+    FinalBind,
+    /// No buffer — evaluate the last round polynomial at the last squeezed challenge.
+    RoundPoly,
+}
+
 impl Op {
     pub fn is_compute(&self) -> bool {
         matches!(
             self,
             Op::SumcheckRound { .. }
-                | Op::BatchedSumcheckRound { .. }
+                | Op::InstanceReduce { .. }
+                | Op::InstanceSegmentedReduce { .. }
+                | Op::InstanceBind { .. }
+                | Op::PrefixSuffixReduce { .. }
                 | Op::Evaluate { .. }
                 | Op::Bind { .. }
                 | Op::LagrangeProject { .. }
@@ -642,6 +777,19 @@ impl Op {
                 | Op::ReleaseDevice { .. }
                 | Op::ReleaseHost { .. }
                 | Op::SnapshotEval { .. }
+                | Op::BatchRoundBegin { .. }
+                | Op::BatchInactiveContribution { .. }
+                | Op::Materialize { .. }
+                | Op::MaterializeUnlessFresh { .. }
+                | Op::MaterializeIfAbsent { .. }
+                | Op::MaterializeSegmentedOuterEq { .. }
+                | Op::InstanceBindPreviousPhase { .. }
+                | Op::CaptureScalar { .. }
+                | Op::BatchAccumulateInstance { .. }
+                | Op::BatchRoundFinalize { .. }
+                | Op::PrefixSuffixInit { .. }
+                | Op::PrefixSuffixBind { .. }
+                | Op::PrefixSuffixMaterialize { .. }
         )
     }
 }

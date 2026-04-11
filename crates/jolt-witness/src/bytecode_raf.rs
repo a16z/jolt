@@ -56,11 +56,71 @@ pub struct BytecodeData<F> {
     pub num_lookup_tables: usize,
 }
 
+impl<F: Field> BytecodeData<F> {
+    /// Materialize the full Val polynomial for a `BytecodeVal` input binding.
+    ///
+    /// Encapsulates all protocol logic: gamma power computation, eq table
+    /// construction, stage-specific formula dispatch, RAF modification, and
+    /// overall gamma scaling. The runtime calls this as a black box.
+    #[allow(clippy::too_many_arguments)]
+    pub fn materialize_val(
+        &self,
+        challenges: &[F],
+        stage: u8,
+        stage_gamma_base: usize,
+        stage_gamma_count: usize,
+        gamma_base: usize,
+        raf_gamma_power: Option<u8>,
+        register_eq_challenges: &[usize],
+    ) -> Vec<F> {
+        let sg_base = challenges[stage_gamma_base];
+        let mut gammas = Vec::with_capacity(stage_gamma_count);
+        let mut pow = F::one();
+        for _ in 0..stage_gamma_count {
+            gammas.push(pow);
+            pow *= sg_base;
+        }
+
+        let eq_r_register = if register_eq_challenges.is_empty() {
+            Vec::new()
+        } else {
+            let point: Vec<F> = register_eq_challenges
+                .iter()
+                .map(|&ci| challenges[ci])
+                .collect();
+            jolt_poly::EqPolynomial::<F>::evals(&point, None)
+        };
+
+        let mut val = compute_val_stage(&self.entries, stage, &gammas, &eq_r_register);
+
+        let gamma = challenges[gamma_base];
+        if let Some(p) = raf_gamma_power {
+            let mut raf_g = F::one();
+            for _ in 0..p {
+                raf_g *= gamma;
+            }
+            for (k, v) in val.iter_mut().enumerate() {
+                *v += raf_g * F::from_u64(k as u64);
+            }
+        }
+
+        let mut overall = F::one();
+        for _ in 0..stage {
+            overall *= gamma;
+        }
+        for v in &mut val {
+            *v *= overall;
+        }
+
+        val
+    }
+}
+
 /// Compute the Val polynomial for a given stage from bytecode entries and challenge values.
 ///
 /// This mirrors `BytecodeReadRafSumcheckParams::compute_val_polys` from jolt-core,
 /// producing byte-identical results.
-pub fn compute_val_stage<F: Field>(
+fn compute_val_stage<F: Field>(
     entries: &[BytecodeEntry<F>],
     stage: u8,
     stage_gammas: &[F],

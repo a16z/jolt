@@ -312,7 +312,11 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
             &params.r_cycle,
         );
 
-        eprintln!("[booleanity G] D={}, G[0][0..8]: {:?}", G.len(), &G[0][..8.min(G[0].len())]);
+        eprintln!(
+            "[booleanity G] D={}, G[0][0..8]: {:?}",
+            G.len(),
+            &G[0][..8.min(G[0].len())]
+        );
         for (d, g) in G.iter().enumerate() {
             let sum: F = g.iter().copied().sum();
             eprintln!("[booleanity G] G[{d}] len={}, sum={sum:?}", g.len());
@@ -467,10 +471,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanitySum
             self.compute_phase2_message(round, previous_claim)
         };
         if round == 0 {
-            let evals: Vec<F> = (0..4u64).map(|t| {
-                let p = F::Challenge::from(t as u128);
-                poly.evaluate(&p)
-            }).collect();
+            let evals: Vec<F> = (0..4u64)
+                .map(|t| {
+                    let p = F::Challenge::from(t as u128);
+                    poly.evaluate(&p)
+                })
+                .collect();
             eprintln!("[booleanity core round 0] evals: {evals:?}");
         }
         poly

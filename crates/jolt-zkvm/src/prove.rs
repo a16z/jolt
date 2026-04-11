@@ -29,8 +29,8 @@ pub fn prove<B, F, T, PCS>(
     pcs_setup: &PCS::ProverSetup,
     transcript: &mut T,
     config: ProverConfig,
-    lookup_trace: Option<crate::prefix_suffix::LookupTraceData>,
-    bytecode_data: Option<crate::bytecode_raf::BytecodeData<F>>,
+    lookup_trace: Option<jolt_compute::LookupTraceData>,
+    bytecode_data: Option<jolt_witness::bytecode_raf::BytecodeData<F>>,
 ) -> jolt_verifier::JoltProof<F, PCS>
 where
     B: ComputeBackend,
