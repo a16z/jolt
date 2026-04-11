@@ -1,6 +1,6 @@
 use crate::field::JoltField;
 use crate::poly::opening_proof::{Endianness, OpeningPoint};
-use crate::utils::{math::Math, thread::unsafe_allocate_zero_vec};
+use crate::utils::math::Math;
 use rayon::prelude::*;
 use std::{
     marker::PhantomData,
@@ -295,6 +295,9 @@ impl<F: JoltField> EqPolynomial<F> {
     /// Parallel version of [`Self::evals_with_scaling`].
     ///
     /// Uses rayon to compute the largest layers of the DP tree in parallel.
+    /// Fuses two butterfly levels at a time to reduce memory traffic by ~44%
+    /// (reads s + writes 4s = 5s per fused pair, vs reads s + writes 2s + reads 2s + writes 4s = 9s
+    /// for two separate levels).
     /// Uses the same **big-endian** index order as [`Self::evals`].
     #[tracing::instrument(skip_all, "EqPolynomial::evals_parallel")]
     #[inline]
@@ -303,23 +306,79 @@ impl<F: JoltField> EqPolynomial<F> {
         C: Copy + Send + Sync + Into<F>,
         F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
     {
-        let final_size = r.len().pow2();
-        let mut evals: Vec<F> = unsafe_allocate_zero_vec(final_size);
-        let mut size = 1;
+        let n = r.len();
+        let final_size = n.pow2();
+
+        // Skip zeroing: the butterfly writes every position unconditionally.
+        // SAFETY: F: Copy (no Drop), and every element is written before being read.
+        let mut evals: Vec<F> = Vec::with_capacity(final_size);
+        // SAFETY: we will write all `final_size` elements before reading them.
+        unsafe { evals.set_len(final_size) };
         evals[0] = scaling_factor.unwrap_or(F::one());
 
-        for r in r.iter().rev() {
-            let (evals_left, evals_right) = evals.split_at_mut(size);
-            let (evals_right, _) = evals_right.split_at_mut(size);
+        let mut size = 1;
+        let mut challenges = r.iter().rev();
 
-            evals_left
-                .par_iter_mut()
-                .zip(evals_right.par_iter_mut())
+        // Fused 2-level butterfly: process two challenges per pass.
+        // Each input element produces 4 outputs using 3 multiplies + 3 subtracts.
+        while size * 4 <= final_size {
+            let Some(&r_lo) = challenges.next() else {
+                break;
+            };
+            let Some(&r_hi) = challenges.next() else {
+                // Odd challenge remaining — fall back to single-level for this one.
+                let (left, right) = evals.split_at_mut(size);
+                let (right, _) = right.split_at_mut(size);
+                left.par_iter_mut()
+                    .zip(right.par_iter_mut())
+                    .for_each(|(x, y)| {
+                        *y = *x * r_lo;
+                        *x -= *y;
+                    });
+                size *= 2;
+                break;
+            };
+
+            // Four disjoint quadrants of `size` elements each.
+            // Original butterfly layout after two single levels:
+            //   [0..s]:   bit(n-1)=0, bit(n-2)=0 → (1-r_lo)(1-r_hi)
+            //   [s..2s]:  bit(n-1)=1, bit(n-2)=0 → r_lo * (1-r_hi)
+            //   [2s..3s]: bit(n-1)=0, bit(n-2)=1 → (1-r_lo) * r_hi
+            //   [3s..4s]: bit(n-1)=1, bit(n-2)=1 → r_lo * r_hi
+            let (q0, rest) = evals.split_at_mut(size);
+            let (q1, rest) = rest.split_at_mut(size);
+            let (q2, rest) = rest.split_at_mut(size);
+            let (q3, _) = rest.split_at_mut(size);
+
+            q0.par_iter_mut()
+                .zip(q1.par_iter_mut())
+                .zip(q2.par_iter_mut())
+                .zip(q3.par_iter_mut())
+                .for_each(|(((x, q1_out), q2_out), q3_out)| {
+                    // Split x by r_lo (the inner/LSB challenge processed first)
+                    let with_lo = *x * r_lo; // x * r_lo
+                    let without_lo = *x - with_lo; // x * (1 - r_lo)
+
+                    // Split each half by r_hi (the outer challenge)
+                    *q2_out = without_lo * r_hi; // (1 - r_lo) * r_hi
+                    *x = without_lo - *q2_out; // (1 - r_lo) * (1 - r_hi)
+                    *q3_out = with_lo * r_hi; // r_lo * r_hi
+                    *q1_out = with_lo - *q3_out; // r_lo * (1 - r_hi)
+                });
+
+            size *= 4;
+        }
+
+        // Handle any remaining single challenge (when n is odd).
+        for r in challenges {
+            let (left, right) = evals.split_at_mut(size);
+            let (right, _) = right.split_at_mut(size);
+            left.par_iter_mut()
+                .zip(right.par_iter_mut())
                 .for_each(|(x, y)| {
                     *y = *x * *r;
                     *x -= *y;
                 });
-
             size *= 2;
         }
 
