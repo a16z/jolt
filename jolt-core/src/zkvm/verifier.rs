@@ -101,6 +101,8 @@ struct StageVerifyResult<F: JoltField> {
     input_constraint_challenge_values: Vec<F>,
     uniskip_input_constraint: Option<InputClaimConstraint>,
     uniskip_input_constraint_challenge_values: Vec<F>,
+    uniskip_output_constraint: Option<OutputClaimConstraint>,
+    uniskip_output_constraint_challenge_values: Vec<F>,
     oc_block_ids: Vec<Vec<OpeningId>>,
 }
 
@@ -128,6 +130,8 @@ impl<F: JoltField> StageVerifyResult<F> {
             input_constraint_challenge_values,
             uniskip_input_constraint: None,
             uniskip_input_constraint_challenge_values: Vec::new(),
+            uniskip_output_constraint: None,
+            uniskip_output_constraint_challenge_values: Vec::new(),
             oc_block_ids,
         }
     }
@@ -141,6 +145,8 @@ impl<F: JoltField> StageVerifyResult<F> {
         input_constraint_challenge_values: Vec<F>,
         uniskip_input_constraint: InputClaimConstraint,
         uniskip_input_constraint_challenge_values: Vec<F>,
+        uniskip_output_constraint: Option<OutputClaimConstraint>,
+        uniskip_output_constraint_challenge_values: Vec<F>,
         oc_block_ids: Vec<Vec<OpeningId>>,
     ) -> Self {
         Self {
@@ -151,6 +157,8 @@ impl<F: JoltField> StageVerifyResult<F> {
             input_constraint_challenge_values,
             uniskip_input_constraint: Some(uniskip_input_constraint),
             uniskip_input_constraint_challenge_values,
+            uniskip_output_constraint,
+            uniskip_output_constraint_challenge_values,
             oc_block_ids,
         }
     }
@@ -513,6 +521,19 @@ impl<
                 oc_blocks.extend(stage6_result.oc_block_ids);
                 oc_blocks.extend(stage7_result.oc_block_ids);
 
+                let uniskip_output_constraints = [
+                    stage1_result.uniskip_output_constraint.clone(),
+                    stage2_result.uniskip_output_constraint.clone(),
+                ];
+                let uniskip_output_challenge_values = [
+                    stage1_result
+                        .uniskip_output_constraint_challenge_values
+                        .clone(),
+                    stage2_result
+                        .uniskip_output_constraint_challenge_values
+                        .clone(),
+                ];
+
                 self.verify_blindfold(
                     &sumcheck_challenges,
                     uniskip_challenges,
@@ -524,6 +545,8 @@ impl<
                     &stage2_result.batched_input_constraint,
                     &stage1_result.input_constraint_challenge_values,
                     &stage2_result.input_constraint_challenge_values,
+                    &uniskip_output_constraints,
+                    &uniskip_output_challenge_values,
                     &stage8_data,
                     oc_blocks,
                 )?;
@@ -605,6 +628,9 @@ impl<
             let uniskip_input_constraint = uni_skip_params.input_claim_constraint();
             let uniskip_input_constraint_challenge_values =
                 uni_skip_params.input_constraint_challenge_values(&self.opening_accumulator);
+            let uniskip_output_constraint = uni_skip_params.output_claim_constraint();
+            let uniskip_output_constraint_challenge_values =
+                uni_skip_params.output_constraint_challenge_values(&[uni_skip_challenge]);
 
             let stage_result = StageVerifyResult::with_uniskip(
                 r_stage1,
@@ -614,6 +640,8 @@ impl<
                 input_constraint_challenge_values,
                 uniskip_input_constraint,
                 uniskip_input_constraint_challenge_values,
+                uniskip_output_constraint,
+                uniskip_output_constraint_challenge_values,
                 vec![uniskip_oc_ids, regular_oc_ids],
             );
 
@@ -722,6 +750,9 @@ impl<
             let uniskip_input_constraint = uni_skip_params.input_claim_constraint();
             let uniskip_input_constraint_challenge_values =
                 uni_skip_params.input_constraint_challenge_values(&self.opening_accumulator);
+            let uniskip_output_constraint = uni_skip_params.output_claim_constraint();
+            let uniskip_output_constraint_challenge_values =
+                uni_skip_params.output_constraint_challenge_values(&[uni_skip_challenge]);
 
             let stage_result = StageVerifyResult::with_uniskip(
                 r_stage2,
@@ -731,6 +762,8 @@ impl<
                 input_constraint_challenge_values,
                 uniskip_input_constraint,
                 uniskip_input_constraint_challenge_values,
+                uniskip_output_constraint,
+                uniskip_output_constraint_challenge_values,
                 vec![uniskip_oc_ids, regular_oc_ids],
             );
 
@@ -1105,6 +1138,8 @@ impl<
         stage2_batched_input: &InputClaimConstraint,
         stage1_batched_input_values: &[F],
         stage2_batched_input_values: &[F],
+        uniskip_output_constraints: &[Option<OutputClaimConstraint>; 2],
+        uniskip_output_challenge_values: &[Vec<F>; 2],
         stage8_data: &Stage8VerifyData<F>,
         oc_blocks: Vec<Vec<OpeningId>>,
     ) -> Result<(), ProofVerifyError> {
@@ -1215,6 +1250,15 @@ impl<
                 Some(ClaimBindingConfig::with_constraint(constraint.clone()));
         }
 
+        // Add final_output configurations for uni-skip stages (stages 0-1)
+        for (i, constraint) in uniskip_output_constraints.iter().enumerate() {
+            if let Some(oc) = constraint {
+                let idx = uniskip_indices[i];
+                stage_configs[idx].final_output =
+                    Some(ClaimBindingConfig::with_constraint(oc.clone()));
+            }
+        }
+
         // Add initial_input configurations for regular first rounds (all 7 stages)
         // These use the batched input constraints from the stage results
         let regular_constraints = [
@@ -1269,13 +1313,25 @@ impl<
         }
 
         let mut baked_output_challenges: Vec<F> = Vec::new();
-        for expected_values in output_constraint_challenge_values.iter() {
+        for (stage_idx, expected_values) in output_constraint_challenge_values.iter().enumerate() {
+            if stage_idx < 2 && uniskip_output_constraints[stage_idx].is_some() {
+                baked_output_challenges
+                    .extend_from_slice(&uniskip_output_challenge_values[stage_idx]);
+            }
             baked_output_challenges.extend_from_slice(expected_values);
         }
 
+        // Count chains — ConstantInitialClaim paths index into this vector.
+        // Only chain 0 (outer uni-skip, initial_claim = zero) uses ConstantInitialClaim;
+        // all others use InitialClaimVar and won't read from here.
+        let num_chains = stage_configs
+            .iter()
+            .enumerate()
+            .filter(|(i, c)| *i == 0 || c.starts_new_chain)
+            .count();
         let baked = BakedPublicInputs {
             challenges: baked_challenges,
-            initial_claims: Vec::new(),
+            initial_claims: vec![F::zero(); num_chains],
             batching_coefficients: Vec::new(),
             output_constraint_challenges: baked_output_challenges,
             input_constraint_challenges: baked_input_challenges,

@@ -194,6 +194,10 @@ pub fn prove_uniskip_round_zk<
     let input_constraint_challenge_values = instance
         .get_params()
         .input_constraint_challenge_values(opening_accumulator);
+    let output_constraint = instance.get_params().output_claim_constraint();
+    let output_constraint_challenge_values = instance
+        .get_params()
+        .output_constraint_challenge_values(&[r0]);
 
     blindfold_accumulator.push_uniskip_data(UniSkipStageData {
         input_claim,
@@ -204,6 +208,8 @@ pub fn prove_uniskip_round_zk<
         commitment,
         input_constraint,
         input_constraint_challenge_values,
+        output_constraint,
+        output_constraint_challenge_values,
         output_claims,
         output_claims_blindings,
         output_claims_commitments: output_claims_commitments.clone(),

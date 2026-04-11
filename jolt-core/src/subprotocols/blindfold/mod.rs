@@ -82,6 +82,8 @@ pub struct UniSkipStageData<F: JoltField, C: JoltCurve<F = F>> {
     pub commitment: C::G1,
     pub input_constraint: InputClaimConstraint,
     pub input_constraint_challenge_values: Vec<F>,
+    pub output_constraint: Option<OutputClaimConstraint>,
+    pub output_constraint_challenge_values: Vec<F>,
     pub output_claims: Vec<(OpeningId, F)>,
     pub output_claims_blindings: Vec<F>,
     pub output_claims_commitments: Vec<C::G1>,
@@ -488,7 +490,7 @@ impl StageConfig {
         self.initial_input
             .as_ref()
             .and_then(|ii| ii.constraint.as_ref())
-            .is_some()
+            .is_some_and(|c| !c.terms.is_empty())
     }
 }
 
