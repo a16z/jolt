@@ -395,7 +395,7 @@ fn setup_zkvm_muldiv(
     );
 
     let mut module = build_protocol_module(log_t, log_k_bytecode, log_k_ram);
-    truncate_after_stage(&mut module, 6);
+    truncate_after_stage(&mut module, 8);
     let backend = CpuBackend;
     let executable = link::<CpuBackend, NewFr>(module, &backend);
 

@@ -129,7 +129,11 @@ impl ComputeBackend for CpuBackend {
         // Composition value columns (excluding iteration-specific extras).
         let num_value_inputs = inputs.len()
             - match kernel.iteration {
-                Iteration::Dense | Iteration::Domain { .. } | Iteration::PrefixSuffix { .. } => 0,
+                Iteration::Dense
+                | Iteration::Domain { .. }
+                | Iteration::PrefixSuffix { .. }
+                | Iteration::Booleanity { .. }
+                | Iteration::HammingWeightReduction { .. } => 0,
                 Iteration::DenseTensor => 2,
                 Iteration::Sparse => 1,
             };
@@ -167,6 +171,12 @@ impl ComputeBackend for CpuBackend {
             Iteration::PrefixSuffix { .. } => {
                 unreachable!("PrefixSuffix reduce is handled by the runtime")
             }
+            Iteration::Booleanity { .. } => {
+                unreachable!("Booleanity reduce is handled by the runtime")
+            }
+            Iteration::HammingWeightReduction { .. } => {
+                unreachable!("HammingWeightReduction reduce is handled by the runtime")
+            }
         }
     }
 
@@ -186,6 +196,12 @@ impl ComputeBackend for CpuBackend {
             }
             Iteration::PrefixSuffix { .. } => {
                 unreachable!("PrefixSuffix bind is handled by the runtime")
+            }
+            Iteration::Booleanity { .. } => {
+                unreachable!("Booleanity bind is handled by the runtime")
+            }
+            Iteration::HammingWeightReduction { .. } => {
+                unreachable!("HammingWeightReduction bind is handled by the runtime")
             }
         }
     }
@@ -457,7 +473,7 @@ impl ComputeBackend for CpuBackend {
         outer_size: usize,
     ) -> Vec<F> {
         let eq_table = jolt_poly::EqPolynomial::<F>::evals(eq_point, None);
-        if eq_table.len() == inner_size {
+        let result = if eq_table.len() == inner_size {
             let mut projected = vec![F::zero(); outer_size];
             for (t, &eq_val) in eq_table.iter().enumerate() {
                 if eq_val.is_zero() {
@@ -480,7 +496,8 @@ impl ComputeBackend for CpuBackend {
                 }
             }
             projected
-        }
+        };
+        result
     }
 
     fn lagrange_project<F: Field>(
@@ -588,6 +605,90 @@ impl ComputeBackend for CpuBackend {
     ) -> Vec<(PolynomialId, Vec<F>)> {
         state.materialize_outputs().into_iter().collect()
     }
+
+    // ── Booleanity lifecycle ───────────────────────────────────────────
+
+    type BooleanityState<F: Field> = crate::booleanity::CpuBooleanityState<F>;
+
+    fn bool_init<F: Field>(
+        &self,
+        ra_data: Vec<Vec<F>>,
+        addr_challenges: &[F],
+        cycle_challenges: &[F],
+        gamma_powers: Vec<F>,
+        gamma_powers_square: Vec<F>,
+        log_k_chunk: usize,
+        log_t: usize,
+    ) -> Self::BooleanityState<F> {
+        crate::booleanity::CpuBooleanityState::new(
+            ra_data,
+            addr_challenges,
+            cycle_challenges,
+            gamma_powers,
+            gamma_powers_square,
+            log_k_chunk,
+            log_t,
+        )
+    }
+
+    fn bool_bind<F: Field>(&self, state: &mut Self::BooleanityState<F>, challenge: F) {
+        state.ingest_challenge(challenge);
+    }
+
+    fn bool_reduce<F: Field>(
+        &self,
+        state: &Self::BooleanityState<F>,
+        previous_claim: F,
+    ) -> Vec<F> {
+        state.compute_round(previous_claim)
+    }
+
+    fn bool_final_claims<F: Field>(&self, state: &Self::BooleanityState<F>) -> Vec<F> {
+        state.final_ra_claims()
+    }
+
+    // ── HW Reduction lifecycle ───────────────────────────────────────────
+
+    type HwReductionState<F: Field> = crate::hw_reduction::CpuHwReductionState<F>;
+
+    fn hw_init<F: Field>(
+        &self,
+        ra_data: &[Vec<F>],
+        cycle_ch_be: &[F],
+        addr_bool_ch_be: &[F],
+        addr_virt_ch_be: &[Vec<F>],
+        gamma_powers: Vec<F>,
+        hw_claims: Vec<F>,
+        bool_claims: Vec<F>,
+        virt_claims: Vec<F>,
+        log_k_chunk: usize,
+        log_t: usize,
+    ) -> Self::HwReductionState<F> {
+        crate::hw_reduction::CpuHwReductionState::new(
+            ra_data,
+            cycle_ch_be,
+            addr_bool_ch_be,
+            addr_virt_ch_be,
+            gamma_powers,
+            hw_claims,
+            bool_claims,
+            virt_claims,
+            log_k_chunk,
+            log_t,
+        )
+    }
+
+    fn hw_bind<F: Field>(&self, state: &mut Self::HwReductionState<F>, challenge: F) {
+        state.bind(challenge);
+    }
+
+    fn hw_reduce<F: Field>(&self, state: &Self::HwReductionState<F>, previous_claim: F) -> Vec<F> {
+        state.reduce(previous_claim)
+    }
+
+    fn hw_final_claims<F: Field>(&self, state: &Self::HwReductionState<F>) -> Vec<F> {
+        state.final_g_claims()
+    }
 }
 
 #[tracing::instrument(skip_all, name = "interpolate_inplace")]
@@ -616,6 +717,14 @@ fn reduce_dense<F: Field>(
     debug_assert!(n.is_multiple_of(2), "buffer length must be even");
     let half = n / 2;
     let num_inputs = inputs.len();
+    for (idx, inp) in inputs.iter().enumerate() {
+        assert_eq!(
+            inp.len(),
+            n,
+            "reduce_dense: input[{idx}].len()={} != inputs[0].len()={n}, num_inputs={num_inputs}, num_evals={num_evals}",
+            inp.len()
+        );
+    }
 
     match (num_inputs, num_evals) {
         (2, 2) => reduce_dense_fixed::<F, 2, 2>(inputs, kernel, challenges, half, order),

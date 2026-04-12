@@ -10,7 +10,7 @@ use jolt_crypto::{Bn254G1, Bn254GT, Commitment, DeriveSetup, JoltGroup, Pedersen
 use jolt_field::Fr;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError, ZkOpeningScheme};
 use jolt_poly::MultilinearPoly;
-use jolt_transcript::Transcript;
+use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
 
 use crate::transcript::JoltToDoryTranscript;
 use crate::types::{DoryCommitment, DoryHint, DoryProof, DoryProverSetup, DoryVerifierSetup};
@@ -211,6 +211,19 @@ impl CommitmentScheme for DoryScheme {
             &mut dory_transcript,
         )
         .map_err(|_| OpeningsError::VerificationFailed)
+    }
+
+    fn bind_opening_inputs(
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        point: &[Self::Field],
+        eval: &Self::Field,
+    ) {
+        transcript.append(&LabelWithCount(b"dory_opening_point", point.len() as u64));
+        for p in point {
+            p.append_to_transcript(transcript);
+        }
+        transcript.append(&Label(b"dory_opening_eval"));
+        eval.append_to_transcript(transcript);
     }
 }
 

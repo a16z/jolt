@@ -343,7 +343,10 @@ impl ComputeBackend for MetalBackend {
     ) -> Vec<F> {
         let num_formula_inputs = inputs.len()
             - match kernel.iteration {
-                Iteration::Dense | Iteration::Domain { .. } | Iteration::PrefixSuffix { .. } => 0,
+                Iteration::Dense
+                | Iteration::Domain { .. }
+                | Iteration::PrefixSuffix { .. }
+                | Iteration::Booleanity { .. } => 0,
                 Iteration::DenseTensor => 2,
                 Iteration::Sparse => 1,
             };
@@ -417,6 +420,9 @@ impl ComputeBackend for MetalBackend {
             Iteration::PrefixSuffix { .. } => {
                 unreachable!("PrefixSuffix reduce is handled by the runtime")
             }
+            Iteration::Booleanity { .. } => {
+                unreachable!("Booleanity reduce is handled by the runtime")
+            }
         }
     }
 
@@ -459,6 +465,9 @@ impl ComputeBackend for MetalBackend {
             }
             Iteration::PrefixSuffix { .. } => {
                 unreachable!("PrefixSuffix bind is handled by the runtime")
+            }
+            Iteration::Booleanity { .. } => {
+                unreachable!("Booleanity bind is handled by the runtime")
             }
         }
     }
@@ -908,6 +917,34 @@ impl ComputeBackend for MetalBackend {
             .into_iter()
             .map(|(id, data)| (id, self.upload(&data)))
             .collect()
+    }
+
+    type BooleanityState<F: Field> = jolt_cpu::booleanity::CpuBooleanityState<F>;
+
+    fn bool_init<F: Field>(
+        &self,
+        ra_data: Vec<Vec<F>>,
+        addr_challenges: &[F],
+        cycle_challenges: &[F],
+        gamma_powers: Vec<F>,
+        gamma_powers_square: Vec<F>,
+        log_k_chunk: usize,
+        log_t: usize,
+    ) -> Self::BooleanityState<F> {
+        jolt_cpu::booleanity::CpuBooleanityState::new(
+            ra_data, addr_challenges, cycle_challenges,
+            gamma_powers, gamma_powers_square, log_k_chunk, log_t,
+        )
+    }
+
+    fn bool_bind<F: Field>(&self, state: &mut Self::BooleanityState<F>, challenge: F) {
+        state.ingest_challenge(challenge);
+    }
+
+    fn bool_reduce<F: Field>(
+        &self, state: &Self::BooleanityState<F>, previous_claim: F,
+    ) -> Vec<F> {
+        state.compute_round(previous_claim)
     }
 }
 

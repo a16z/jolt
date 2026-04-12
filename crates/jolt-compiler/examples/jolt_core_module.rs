@@ -23,10 +23,11 @@ use jolt_compiler::formula::{BindingOrder, Factor, Formula, ProductTerm};
 use jolt_compiler::ir::PolyKind;
 use jolt_compiler::kernel_spec::Iteration;
 use jolt_compiler::module::{
-    BatchedInstance, BatchedSumcheckDef, ChallengeDecl, ChallengeSource, ClaimFactor, ClaimFormula,
-    ClaimTerm, DomainSeparator, EvalMode, Evaluation, InputBinding, InstancePhase, KernelDef,
-    Module, Op, PointNormalization, PolyDecl, R1CSMatrix, RoundPolyEncoding, ScalarCapture,
-    Schedule, SegmentedConfig, SumcheckInstance, VerifierOp, VerifierSchedule, VerifierStageIndex,
+    BatchedInstance, BatchedSumcheckDef, BooleanityConfig, ChallengeDecl, ChallengeSource,
+    ClaimFactor, ClaimFormula, ClaimTerm, DomainSeparator, EvalMode, Evaluation, HwReductionConfig,
+    InputBinding, InstancePhase, KernelDef, Module, Op, PointNormalization, PolyDecl, R1CSMatrix,
+    RoundPolyEncoding, ScalarCapture, Schedule, SegmentedConfig, SumcheckInstance, VerifierOp,
+    VerifierSchedule, VerifierStageIndex,
 };
 use jolt_compiler::params::{
     ModuleParams, LOG_K_INSTRUCTION, LOG_K_REG, NUM_CIRCUIT_FLAGS, NUM_LOOKUP_TABLES,
@@ -94,6 +95,24 @@ impl PolyTable {
             name: name.to_string(),
             kind,
             num_elements: 1 << num_vars,
+            committed_num_vars: None,
+        });
+        id
+    }
+
+    fn add_committed(
+        &mut self,
+        id: PolynomialId,
+        name: &str,
+        kind: PolyKind,
+        num_vars: usize,
+        committed_num_vars: usize,
+    ) -> PolynomialId {
+        self.polys.push(PolyDecl {
+            name: name.to_string(),
+            kind,
+            num_elements: 1 << num_vars,
+            committed_num_vars: Some(committed_num_vars),
         });
         id
     }
@@ -220,8 +239,8 @@ fn register_polys(pt: &mut PolyTable, p: &ModuleParams) -> Polys {
     };
 
     // --- Committed (jolt-core transcript order) ---
-    let rd_inc = pt.add(RdInc, "RdInc", Committed, p.log_t);
-    let ram_inc = pt.add(RamInc, "RamInc", Committed, p.log_t);
+    let rd_inc = pt.add_committed(RdInc, "RdInc", Committed, p.log_t, p.log_k_chunk + p.log_t);
+    let ram_inc = pt.add_committed(RamInc, "RamInc", Committed, p.log_t, p.log_k_chunk + p.log_t);
     let instruction_ra: Vec<_> = (0..p.instruction_d)
         .map(|d| {
             pt.add(
@@ -610,6 +629,8 @@ fn emit_unrolled_batched_rounds(
             let kernel = phase.kernel;
             let kdef = &kernels[kernel];
             let is_ps = matches!(kdef.spec.iteration, Iteration::PrefixSuffix { .. });
+            let is_bool = matches!(kdef.spec.iteration, Iteration::Booleanity { .. });
+            let is_hw = matches!(kdef.spec.iteration, Iteration::HammingWeightReduction { .. });
 
             if instance_round == 0 || instance_round == phase_start {
                 // Phase boundary.
@@ -639,6 +660,16 @@ fn emit_unrolled_batched_rounds(
                             kernel: prev_kernel,
                             challenge: ch_val,
                         });
+                        // Bind previous phase's carry buffers at the transition challenge.
+                        let prev_carry_polys: Vec<_> =
+                            prev_phase.carry_bindings.iter().map(|b| b.poly()).collect();
+                        if !prev_carry_polys.is_empty() {
+                            ops.push(Op::BindCarryBuffers {
+                                polys: prev_carry_polys,
+                                challenge: ch_val,
+                                order: prev_kdef.spec.binding_order,
+                            });
+                        }
                     }
                 }
 
@@ -655,6 +686,22 @@ fn emit_unrolled_batched_rounds(
                         instance: inst_idx,
                         kernel,
                     });
+                } else if is_bool {
+                    if let Iteration::Booleanity { ref config } = kdef.spec.iteration {
+                        ops.push(Op::BooleanityInit {
+                            batch: batch_idx,
+                            instance: inst_idx,
+                            config: config.clone(),
+                        });
+                    }
+                } else if is_hw {
+                    if let Iteration::HammingWeightReduction { ref config } = kdef.spec.iteration {
+                        ops.push(Op::HwReductionInit {
+                            batch: batch_idx,
+                            instance: inst_idx,
+                            config: config.clone(),
+                        });
+                    }
                 } else {
                     if let Some(seg) = &phase.segmented {
                         ops.push(Op::MaterializeSegmentedOuterEq {
@@ -665,6 +712,12 @@ fn emit_unrolled_batched_rounds(
                     }
                     let is_activation = instance_round == 0;
                     if is_activation {
+                        // Materialize carry bindings first.
+                        for binding in &phase.carry_bindings {
+                            ops.push(Op::Materialize {
+                                binding: binding.clone(),
+                            });
+                        }
                         let expected_size = 1usize << kdef.num_rounds;
                         for binding in &kdef.inputs {
                             match binding {
@@ -682,6 +735,7 @@ fn emit_unrolled_batched_rounds(
                             }
                         }
                     } else {
+                        // Phase transition: materialize new kernel inputs if absent.
                         for binding in &kdef.inputs {
                             ops.push(Op::MaterializeIfAbsent {
                                 binding: binding.clone(),
@@ -698,6 +752,18 @@ fn emit_unrolled_batched_rounds(
                             instance: inst_idx,
                             challenge: ch_val,
                         });
+                    } else if is_bool {
+                        ops.push(Op::BooleanityBind {
+                            batch: batch_idx,
+                            instance: inst_idx,
+                            challenge: ch_val,
+                        });
+                    } else if is_hw {
+                        ops.push(Op::HwReductionBind {
+                            batch: batch_idx,
+                            instance: inst_idx,
+                            challenge: ch_val,
+                        });
                     } else {
                         ops.push(Op::InstanceBind {
                             batch: batch_idx,
@@ -705,6 +771,16 @@ fn emit_unrolled_batched_rounds(
                             kernel,
                             challenge: ch_val,
                         });
+                        // Bind carry buffers alongside kernel inputs.
+                        let carry_polys: Vec<_> =
+                            phase.carry_bindings.iter().map(|b| b.poly()).collect();
+                        if !carry_polys.is_empty() {
+                            ops.push(Op::BindCarryBuffers {
+                                polys: carry_polys,
+                                challenge: ch_val,
+                                order: kdef.spec.binding_order,
+                            });
+                        }
                     }
                 }
             }
@@ -712,6 +788,16 @@ fn emit_unrolled_batched_rounds(
             // Reduce.
             if is_ps {
                 ops.push(Op::PrefixSuffixReduce {
+                    batch: batch_idx,
+                    instance: inst_idx,
+                });
+            } else if is_bool {
+                ops.push(Op::BooleanityReduce {
+                    batch: batch_idx,
+                    instance: inst_idx,
+                });
+            } else if is_hw {
+                ops.push(Op::HwReductionReduce {
                     batch: batch_idx,
                     instance: inst_idx,
                 });
@@ -878,7 +964,7 @@ fn build_module(params: &ModuleParams) -> Module {
 
     // Stage 6: BytecodeRaf + Booleanity + HammingBool + RamRaVirt + InstRaVirt + IncReduction
     ops.push(Op::BeginStage { index: 5 });
-    build_stage6(
+    let s6 = build_stage6(
         &p,
         params,
         &mut ops,
@@ -891,8 +977,25 @@ fn build_module(params: &ModuleParams) -> Module {
         &s5,
     );
 
-    // TODO: Stage 7 — HammingWeightReduction + Advice(Address)
-    // TODO: Stage 8 — Dory batch opening proof
+    // Stage 7: HammingWeightReduction
+    ops.push(Op::BeginStage { index: 6 });
+    let s7 = build_stage7(
+        &p,
+        params,
+        &mut ops,
+        &mut kernels,
+        &mut ch,
+        &mut batched_sumchecks,
+        &s6,
+    );
+
+    // Stage 8: Dory batch opening proof
+    build_stage8(
+        &p,
+        params,
+        &mut ops,
+        &s7,
+    );
 
     // Build verifier schedule
     let mut verifier_ops = vec![VerifierOp::Preamble];
@@ -1509,6 +1612,23 @@ struct Stage4Challenges {
 struct Stage5Challenges {
     /// Stage 5 batched sumcheck round challenge indices (all max_rounds = LOG_K_INSTRUCTION + log_t).
     round_challenges: Vec<usize>,
+}
+
+/// Data produced by Stage 6 that Stage 7 needs.
+struct Stage6Challenges {
+    round_challenges: Vec<usize>,
+    /// Per-chunk address challenge indices for BytecodeRa virtualization opening.
+    bc_addr_chunks: Vec<Vec<usize>>,
+    /// Per-chunk address challenge indices for InstructionRa virtualization opening.
+    inst_addr_chunks: Vec<Vec<usize>>,
+    /// Per-chunk address challenge indices for RamRa virtualization opening.
+    ram_addr_chunks: Vec<Vec<usize>>,
+    /// BatchEq projection poly IDs for BytecodeRa from BytecodeReadRaf.
+    bc_raf_proj_ids: Vec<PolynomialId>,
+    /// BatchEq projection poly IDs for InstructionRa from InstructionRaVirtual.
+    inst_ra_proj_ids: Vec<PolynomialId>,
+    /// BatchEq projection poly IDs for RamRa from RamRaVirtual.
+    ram_ra_proj_ids: Vec<PolynomialId>,
 }
 
 fn build_stage2(
@@ -2160,6 +2280,7 @@ fn build_stage2(
                             // Empty = uniform outer weights (no eq_addr in RamRW formula).
                             outer_eq_challenges: vec![],
                         }),
+                        carry_bindings: vec![],
                     },
                     InstancePhase {
                         kernel: rw_phase2_kernel_idx,
@@ -2176,6 +2297,7 @@ fn build_stage2(
                             },
                         ],
                         segmented: None,
+                        carry_bindings: vec![],
                     },
                 ],
                 batch_coeff: ch_batch_base,
@@ -2188,6 +2310,7 @@ fn build_stage2(
                     num_rounds: params.product_remainder_rounds,
                     scalar_captures: vec![],
                     segmented: None,
+                    carry_bindings: vec![],
                 }],
                 batch_coeff: ch_batch_base + 1,
                 first_active_round: params.stage2_max_rounds - params.product_remainder_rounds,
@@ -2199,6 +2322,7 @@ fn build_stage2(
                     num_rounds: params.instruction_claim_reduction_rounds,
                     scalar_captures: vec![],
                     segmented: None,
+                    carry_bindings: vec![],
                 }],
                 batch_coeff: ch_batch_base + 2,
                 first_active_round: params.stage2_max_rounds
@@ -2211,6 +2335,7 @@ fn build_stage2(
                     num_rounds: params.raf_evaluation_rounds,
                     scalar_captures: vec![],
                     segmented: None,
+                    carry_bindings: vec![],
                 }],
                 batch_coeff: ch_batch_base + 3,
                 first_active_round: params.stage2_max_rounds - params.raf_evaluation_rounds,
@@ -2222,6 +2347,7 @@ fn build_stage2(
                     num_rounds: params.output_check_rounds,
                     scalar_captures: vec![],
                     segmented: None,
+                    carry_bindings: vec![],
                 }],
                 batch_coeff: ch_batch_base + 4,
                 first_active_round: params.stage2_max_rounds - params.output_check_rounds,
@@ -2807,6 +2933,7 @@ fn build_stage3(
                     num_rounds: params.log_t,
                     scalar_captures: vec![],
                     segmented: None,
+                    carry_bindings: vec![],
                 }],
                 batch_coeff: ch_batch_base,
                 first_active_round: 0,
@@ -2817,6 +2944,7 @@ fn build_stage3(
                     num_rounds: params.log_t,
                     scalar_captures: vec![],
                     segmented: None,
+                    carry_bindings: vec![],
                 }],
                 batch_coeff: ch_batch_base + 1,
                 first_active_round: 0,
@@ -2827,6 +2955,7 @@ fn build_stage3(
                     num_rounds: params.log_t,
                     scalar_captures: vec![],
                     segmented: None,
+                    carry_bindings: vec![],
                 }],
                 batch_coeff: ch_batch_base + 2,
                 first_active_round: 0,
@@ -3297,6 +3426,7 @@ fn build_stage4(
                     inner_only: vec![true, false, false, false, false, true],
                     outer_eq_challenges: vec![],
                 }),
+                carry_bindings: vec![],
             },
             InstancePhase {
                 kernel: reg_rw_p2_kernel_idx,
@@ -3312,6 +3442,7 @@ fn build_stage4(
                     },
                 ],
                 segmented: None,
+                carry_bindings: vec![],
             },
         ],
         batch_coeff: ch_batch0,
@@ -3323,6 +3454,7 @@ fn build_stage4(
             num_rounds: ram_vc_rounds,
             scalar_captures: vec![],
             segmented: None,
+            carry_bindings: vec![],
         }],
         batch_coeff: ch_batch1,
         first_active_round: stage4_max_rounds - ram_vc_rounds,
@@ -3670,12 +3802,14 @@ fn build_stage5(
                         num_rounds: LOG_K_INSTRUCTION,
                         scalar_captures: vec![],
                         segmented: None,
+                        carry_bindings: vec![],
                     },
                     InstancePhase {
                         kernel: inst_raf_cycle_kernel_idx,
                         num_rounds: params.log_t,
                         scalar_captures: vec![],
                         segmented: None,
+                        carry_bindings: vec![],
                     },
                 ],
                 batch_coeff: 0,
@@ -3688,6 +3822,7 @@ fn build_stage5(
                     num_rounds: ram_ra_reduction_rounds,
                     scalar_captures: vec![],
                     segmented: None,
+                    carry_bindings: vec![],
                 }],
                 batch_coeff: 0,
                 first_active_round: stage5_max_rounds - ram_ra_reduction_rounds,
@@ -3699,6 +3834,7 @@ fn build_stage5(
                     num_rounds: reg_val_eval_rounds,
                     scalar_captures: vec![],
                     segmented: None,
+                    carry_bindings: vec![],
                 }],
                 batch_coeff: 0,
                 first_active_round: stage5_max_rounds - reg_val_eval_rounds,
@@ -3955,7 +4091,7 @@ fn build_stage6(
     s3: &Stage3Challenges,
     s4: &Stage4Challenges,
     s5: &Stage5Challenges,
-) {
+) -> Stage6Challenges {
     let stage6_max_rounds = params.log_k_bytecode + params.log_t;
     let booleanity_rounds = params.log_k_chunk + params.log_t;
     let n_committed_per_virtual = params.ra_virtual_log_k_chunk / params.log_k_chunk;
@@ -4044,9 +4180,24 @@ fn build_stage6(
         })
         .collect();
 
-    // Booleanity eq_r_r: scalar captured at Phase 1→Phase 2 boundary.
-    // Value = eq(r_address_bound, r_address_bound) — the Gruen split-eq scalar.
-    // (booleanity_eq_r_r no longer needed — single kernel over K×T includes eq_r_r in combined eq table)
+    // Booleanity γ^d power challenges for Phase 2 H construction
+    let ch_booleanity_gamma_pow: Vec<usize> = (0..total_d)
+        .map(|d| {
+            let idx = ch.add(
+                &format!("booleanity_gamma_pow_{d}"),
+                ChallengeSource::Power {
+                    base: ch_booleanity_gamma,
+                    exponent: d,
+                },
+            );
+            ops.push(Op::ComputePower {
+                target: idx,
+                base: ch_booleanity_gamma,
+                exponent: d as u64,
+            });
+            idx
+        })
+        .collect();
 
     // InstructionRaVirtual: 1 challenge_scalar_powers(n_virtual_ra_polys)
     let ch_inst_ra_gamma = ch.add(
@@ -4090,27 +4241,35 @@ fn build_stage6(
         .rev()
         .copied()
         .collect();
+    // Pad with zero challenges at beginning (matching compute_r_address_chunks),
+    // then sequential chunks: chunk[0]=MSB (padded), chunk[D-1]=LSB
+    let ram_pad_len = if params.log_k_ram % params.log_k_chunk == 0 {
+        0
+    } else {
+        params.log_k_chunk - (params.log_k_ram % params.log_k_chunk)
+    };
+    let ram_pad_chs: Vec<usize> = (0..ram_pad_len)
+        .map(|i| ch.add(&format!("ram_ra_pad_{i}"), ChallengeSource::External))
+        .collect();
+    let ram_ra_padded: Vec<usize> = ram_pad_chs
+        .into_iter()
+        .chain(ram_ra_full_addr.into_iter())
+        .collect();
     let ram_addr_chunks: Vec<Vec<usize>> = (0..params.ram_d)
         .map(|i| {
-            let n = params.log_k_ram;
             let c = params.log_k_chunk;
-            let start = n.saturating_sub((i + 1) * c);
-            let end = n.saturating_sub(i * c);
-            ram_ra_full_addr[start..end].to_vec()
+            ram_ra_padded[i * c..(i + 1) * c].to_vec()
         })
         .collect();
 
     // InstructionRaVirtual: address chunks from Stage 5 address phase
-    let inst_ra_full_addr: Vec<usize> = s5.round_challenges[0..LOG_K_INSTRUCTION]
-        .iter()
-        .rev()
-        .copied()
-        .collect();
+    // InstructionReadRaf's normalize_opening_point keeps address in LE (squeezed) order,
+    // so we do NOT reverse here. compute_r_address_chunks splits LE left-to-right.
+    let inst_ra_full_addr: Vec<usize> = s5.round_challenges[0..LOG_K_INSTRUCTION].to_vec();
     let inst_addr_chunks: Vec<Vec<usize>> = (0..params.instruction_d)
         .map(|i| {
-            let n = LOG_K_INSTRUCTION;
             let c = params.log_k_chunk;
-            inst_ra_full_addr[n - (i + 1) * c..n - i * c].to_vec()
+            inst_ra_full_addr[i * c..(i + 1) * c].to_vec()
         })
         .collect();
 
@@ -4297,134 +4456,205 @@ fn build_stage6(
     }
 
     // [0] BytecodeReadRaf — cycle phase (degree bytecode_d+1)
-    // TODO: implement real cycle phase kernel
+    //
+    // After the address phase binds all k variables:
+    //   - GammaVal[s] → scalar = γ^s × (Val_s(r_addr) + raf)
+    //   - entry_weighted → scalar = γ^7 × f_entry_expected(r_addr)
+    //   - BytecodeRa(i) → projected via EqProject through address chunks
+    //
+    // Formula: Σ_{s=0..4} weight_s × eq_s(j) × ∏_i ra_proj_i(j)
+    //        + weight_entry × eq_entry(j) × ∏_i ra_proj_i(j)
+    //
+    // Degree: bytecode_d (from RA product) + 1 (from eq) = bytecode_d + 1
     let bc_raf_cycle_kernel_idx = kernels.len();
+    // Allocate challenge slots for ScalarCaptures at the phase boundary.
+    let ch_bc_cycle_weight: Vec<usize> = (0..5)
+        .map(|s| ch.add(&format!("bc_cycle_weight_{s}"), ChallengeSource::External))
+        .collect();
+    let ch_bc_entry_weight =
+        ch.add("bc_cycle_entry_weight", ChallengeSource::External);
+    let bc_raf_proj_ids: Vec<PolynomialId>;
+    let bc_addr_chunks: Vec<Vec<usize>>;
     {
-        let stub_ch: Vec<usize> = s2.round_challenges[..params.log_t].to_vec();
-        let eq_id = PolynomialId::BatchEq(next_eq);
+        // Bytecode address chunks from stage 6 round challenges 0..log_k_bytecode.
+        // These are the LE address challenges from the BytecodeReadRaf address phase.
+        // Reverse to BIG_ENDIAN, pad with zero challenges, then sequential chunks.
+        let bc_addr_be: Vec<usize> = s6_round_ch[0..params.log_k_bytecode]
+            .iter()
+            .rev()
+            .copied()
+            .collect();
+        let bc_pad_len = if params.log_k_bytecode % params.log_k_chunk == 0 {
+            0
+        } else {
+            params.log_k_chunk - (params.log_k_bytecode % params.log_k_chunk)
+        };
+        let bc_pad_chs: Vec<usize> = (0..bc_pad_len)
+            .map(|i| ch.add(&format!("bc_ra_pad_{i}"), ChallengeSource::External))
+            .collect();
+        let bc_addr_padded: Vec<usize> = bc_pad_chs
+            .into_iter()
+            .chain(bc_addr_be.into_iter())
+            .collect();
+        bc_addr_chunks = (0..params.bytecode_d)
+            .map(|i| {
+                let c = params.log_k_chunk;
+                bc_addr_padded[i * c..(i + 1) * c].to_vec()
+            })
+            .collect();
+
+        // Entry eq point: all-zero challenges → eq(0, j) = ∏(1 - j_i)
+        let entry_eq_chs: Vec<usize> = (0..params.log_t)
+            .map(|i| ch.add(&format!("bc_entry_eq_{i}"), ChallengeSource::External))
+            .collect();
+
+        let mut cycle_inputs = Vec::with_capacity(params.bytecode_d + 6);
+
+        // Inputs 0..d-1: EqProject of BytecodeRa(i) through address chunks
+        let mut proj_ids = Vec::with_capacity(params.bytecode_d);
+        for (i, chunk) in bc_addr_chunks.iter().enumerate() {
+            let proj_id = PolynomialId::BatchEq(next_eq);
+            next_eq += 1;
+            proj_ids.push(proj_id);
+            let chunk_k = 1usize << chunk.len();
+            cycle_inputs.push(InputBinding::EqProject {
+                poly: proj_id,
+                source: PolynomialId::BytecodeRa(i),
+                challenges: chunk.clone(),
+                inner_size: chunk_k,
+                outer_size: 1 << params.log_t,
+            });
+        }
+        bc_raf_proj_ids = proj_ids;
+
+        // Inputs d..d+4: per-stage eq tables (stage 0..4 cycle challenges)
+        let bc_cycle_chs = [
+            &bc_r_cycle_1,
+            &bc_r_cycle_2,
+            &bc_r_cycle_3,
+            &bc_r_cycle_4,
+            &bc_r_cycle_5,
+        ];
+        for (s, chs) in bc_cycle_chs.iter().enumerate() {
+            let eq_id = PolynomialId::BatchEq(next_eq);
+            next_eq += 1;
+            cycle_inputs.push(InputBinding::EqTable {
+                poly: eq_id,
+                challenges: (*chs).clone(),
+            });
+        }
+
+        // Input d+5: entry eq table (all zeros)
+        let entry_eq_id = PolynomialId::BatchEq(next_eq);
         next_eq += 1;
+        cycle_inputs.push(InputBinding::EqTable {
+            poly: entry_eq_id,
+            challenges: entry_eq_chs,
+        });
+
+        // Formula: 6 terms, each = Challenge(weight) × Input(eq) × ∏ Input(ra)
+        let d = params.bytecode_d;
+        let mut terms = Vec::with_capacity(6);
+        let ra_factors: Vec<Factor> = (0..d).map(|i| Factor::Input(i as u32)).collect();
+
+        for s in 0..5 {
+            let mut factors = vec![
+                Factor::Challenge(ch_bc_cycle_weight[s] as u32),
+                Factor::Input((d + s) as u32),
+            ];
+            factors.extend(ra_factors.iter().cloned());
+            terms.push(ProductTerm {
+                coefficient: 1,
+                factors,
+            });
+        }
+        // Entry term
+        {
+            let mut factors = vec![
+                Factor::Challenge(ch_bc_entry_weight as u32),
+                Factor::Input((d + 5) as u32),
+            ];
+            factors.extend(ra_factors.iter().cloned());
+            terms.push(ProductTerm {
+                coefficient: 1,
+                factors,
+            });
+        }
+
         kernels.push(KernelDef {
             spec: KernelSpec {
-                formula: Formula::from_terms(vec![ProductTerm {
-                    coefficient: 1,
-                    factors: vec![Factor::Input(0)],
-                }]),
-                num_evals: params.bytecode_d + 2,
+                formula: Formula::from_terms(terms),
+                num_evals: d + 2, // degree d+1
                 iteration: Iteration::Dense,
                 binding_order: BindingOrder::LowToHigh,
             },
-            inputs: vec![InputBinding::EqTable {
-                poly: eq_id,
-                challenges: stub_ch,
-            }],
+            inputs: cycle_inputs,
             num_rounds: params.log_t,
         });
     }
 
-    // [1] Booleanity — two-phase Gruen decomposition.
-    //
-    // Phase 1 (address): log_k_chunk rounds over K_chunk elements
-    //   G_d(addr) = Σ_cycle eq(r_cycle, cycle) × ra_d(addr, cycle)
-    //   Formula: Σ_d γ^{2d} × eq_addr × (G_d² − G_d)
-    //
-    // Single kernel over K_chunk × T elements using ORIGINAL ra_d values.
+    // [1] Booleanity — single kernel over full (K_chunk × T) ra_d polynomials.
     //
     // The Booleanity sumcheck verifies:
     //   Σ_{addr,cycle} eq(r_addr, addr) × eq(r_cycle, cycle) × Σ_d γ^{2d} × (ra_d² - ra_d) = 0
     //
     // Using projected G_d values is WRONG because (Σ eq×ra)² ≠ Σ eq×ra².
-    // Instead, operate on the original ra_d polynomial (K_chunk × T elements).
+    // We operate on the original ra_d polynomial (K_chunk × T elements) transposed
+    // to cycle-major layout: ra_d_cm[cycle * K_chunk + addr].
     //
-    // Layout: ra_d is transposed to cycle-major: ra_d[cycle * K + addr].
-    // With LowToHigh binding, address bits (low) are bound first, then cycle bits (high),
-    // matching jolt-core's Gruen Phase 1 (address) → Phase 2 (cycle) order.
+    // With LowToHigh binding on cycle-major layout:
+    //   - Low bits = addr (log_k_chunk rounds) → matches jolt-core Phase 1
+    //   - High bits = cycle (log_t rounds)     → matches jolt-core Phase 2
     //
-    // Combined eq table (13 vars): EqPolynomial::evals is BE (point[0]=MSB).
-    // Index bits: addr in low 4 bits, cycle in high 9 bits.
-    let bool_addr_ch: Vec<usize> = s5.round_challenges[0..params.log_k_chunk]
+    // The combined eq table uses MSB-first convention:
+    //   [r_cycle_BE..., r_addr_BE...] = reversed(r_cycle_LE) ++ reversed(r_addr_LE)
+    // so that LowToHigh binding processes addr_LE_0 first.
+    // Booleanity r_address: first log_k_chunk round challenges, reversed.
+    //
+    // Core's normalize_opening_point stores the address segment in squeezed order
+    // (LE: [r_0, r_1, ..., r_127]). BooleanitySumcheckParams then reverses the
+    // entire segment to [r_127, ..., r_0] and takes the last log_k_chunk entries
+    // = [r_{lkc-1}, ..., r_1, r_0]. With LowToHigh binding, current_index counts
+    // down, so w_j picks r_0 first — matching the sumcheck order.
+    let bool_addr_ch: Vec<usize> = s5.round_challenges[..params.log_k_chunk]
         .iter()
         .rev()
         .copied()
         .collect();
-    let bool_cycle_ch: Vec<usize> =
-        s5.round_challenges[LOG_K_INSTRUCTION..LOG_K_INSTRUCTION + params.log_t].to_vec();
+    let bool_cycle_ch: Vec<usize> = s5.round_challenges
+        [LOG_K_INSTRUCTION..LOG_K_INSTRUCTION + params.log_t]
+        .to_vec();
     let ra_poly_ids: Vec<PolynomialId> = (0..params.instruction_d)
         .map(PolynomialId::InstructionRa)
         .chain((0..params.bytecode_d).map(PolynomialId::BytecodeRa))
         .chain((0..params.ram_d).map(PolynomialId::RamRa))
         .collect();
 
-    let k_chunk = 1usize << params.log_k_chunk;
-    let t = 1usize << params.log_t;
-
+    // Booleanity: Gruen-based two-phase sumcheck.
+    // Phase 1 (log_k_chunk rounds): binds address variables using G_d projections
+    // Phase 2 (log_t rounds): binds cycle variables using pre-scaled H polynomials
+    // The runtime state machine handles all evaluation internally.
     let booleanity_kernel_idx = kernels.len();
-    let bool_eq_id = PolynomialId::BatchEq(next_eq);
-    next_eq += 1;
-    {
-        // Combined eq table: reverse(cycle_LE) ++ reverse(addr_LE) for BE convention
-        let mut combined_eq_chs = Vec::with_capacity(params.log_k_chunk + params.log_t);
-        for j in (0..params.log_t).rev() {
-            combined_eq_chs.push(bool_cycle_ch[j]);
-        }
-        for j in (0..params.log_k_chunk).rev() {
-            combined_eq_chs.push(bool_addr_ch[j]);
-        }
-
-        let mut inputs = vec![InputBinding::EqTable {
-            poly: bool_eq_id,
-            challenges: combined_eq_chs,
-        }];
-
-        // Transposed ra_d: addr-major → cycle-major
-        for (d, &src) in ra_poly_ids.iter().enumerate() {
-            let transposed_id = PolynomialId::BooleanityG(d);
-            inputs.push(InputBinding::Transpose {
-                poly: transposed_id,
-                source: src,
-                rows: k_chunk,
-                cols: t,
-            });
-        }
-
-        let terms: Vec<ProductTerm> = ch_booleanity_gamma_sq
-            .iter()
-            .enumerate()
-            .flat_map(|(d, &ch_idx)| {
-                let gamma = ch_idx as u32;
-                let inp = d as u32 + 1;
-                [
-                    ProductTerm {
-                        coefficient: 1,
-                        factors: vec![
-                            Factor::Challenge(gamma),
-                            Factor::Input(0),
-                            Factor::Input(inp),
-                            Factor::Input(inp),
-                        ],
-                    },
-                    ProductTerm {
-                        coefficient: -1,
-                        factors: vec![
-                            Factor::Challenge(gamma),
-                            Factor::Input(0),
-                            Factor::Input(inp),
-                        ],
-                    },
-                ]
-            })
-            .collect();
-
-        kernels.push(KernelDef {
-            spec: KernelSpec {
-                formula: Formula::from_terms(terms),
-                num_evals: 4,
-                iteration: Iteration::Dense,
-                binding_order: BindingOrder::LowToHigh,
+    kernels.push(KernelDef {
+        spec: KernelSpec {
+            formula: Formula::from_terms(vec![]),
+            num_evals: 4,
+            iteration: Iteration::Booleanity {
+                config: BooleanityConfig {
+                    ra_poly_ids: ra_poly_ids.clone(),
+                    addr_challenges: bool_addr_ch.clone(),
+                    cycle_challenges: bool_cycle_ch.clone(),
+                    gamma_powers: ch_booleanity_gamma_pow,
+                    gamma_powers_square: ch_booleanity_gamma_sq.clone(),
+                    log_k_chunk: params.log_k_chunk,
+                    log_t: params.log_t,
+                },
             },
-            inputs,
-            num_rounds: params.log_k_chunk + params.log_t,
-        });
-    }
+            binding_order: BindingOrder::LowToHigh,
+        },
+        inputs: vec![],
+        num_rounds: booleanity_rounds,
+    });
 
     // [2] HammingBooleanity — Dense, degree 3: eq × H² − eq × H
     let hamming_kernel_idx = kernels.len();
@@ -4462,6 +4692,7 @@ fn build_stage6(
 
     // [3] RamRaVirtual — Dense, degree ram_d+1: eq_cycle × Π EqProject(RamRa(i))
     let ram_ra_virtual_kernel_idx = kernels.len();
+    let ram_ra_proj_ids: Vec<PolynomialId>;
     {
         let mut factors: Vec<Factor> = vec![Factor::Input(0)];
         for i in 0..params.ram_d {
@@ -4473,17 +4704,21 @@ fn build_stage6(
             poly: eq_id,
             challenges: ra_virtual_r_cycle.clone(),
         }];
+        let mut proj_ids = Vec::with_capacity(params.ram_d);
         for (i, chunk) in ram_addr_chunks.iter().enumerate() {
             let proj_id = PolynomialId::BatchEq(next_eq);
             next_eq += 1;
+            proj_ids.push(proj_id);
+            let chunk_k = 1usize << chunk.len(); // actual K for this chunk
             inputs.push(InputBinding::EqProject {
                 poly: proj_id,
                 source: PolynomialId::RamRa(i),
                 challenges: chunk.clone(),
-                inner_size: 1 << params.log_t,
-                outer_size: params.k_chunk,
+                inner_size: chunk_k,
+                outer_size: 1 << params.log_t,
             });
         }
+        ram_ra_proj_ids = proj_ids;
         kernels.push(KernelDef {
             spec: KernelSpec {
                 formula: Formula::from_terms(vec![ProductTerm {
@@ -4502,6 +4737,7 @@ fn build_stage6(
     // [4] InstructionRaVirtual — Dense, degree M+1
     //     Σ_{b=0..N-1} γ^b × eq_cycle × Π_{k=0..M-1} ra_{b*M+k}
     let inst_ra_virtual_kernel_idx = kernels.len();
+    let inst_ra_proj_ids: Vec<PolynomialId>;
     {
         let m = n_committed_per_virtual;
         let eq_id = PolynomialId::BatchEq(next_eq);
@@ -4510,17 +4746,21 @@ fn build_stage6(
             poly: eq_id,
             challenges: ra_virtual_r_cycle,
         }];
+        let mut proj_ids = Vec::with_capacity(params.instruction_d);
         for (i, chunk) in inst_addr_chunks.iter().enumerate() {
             let proj_id = PolynomialId::BatchEq(next_eq);
             next_eq += 1;
+            proj_ids.push(proj_id);
+            let chunk_k = 1usize << chunk.len();
             inputs.push(InputBinding::EqProject {
                 poly: proj_id,
                 source: PolynomialId::InstructionRa(i),
                 challenges: chunk.clone(),
-                inner_size: 1 << params.log_t,
-                outer_size: params.k_chunk,
+                inner_size: chunk_k,
+                outer_size: 1 << params.log_t,
             });
         }
+        inst_ra_proj_ids = proj_ids;
         let g_inst = ch_inst_ra_gamma as u32;
         let mut terms = Vec::with_capacity(n_vra);
         for b in 0..n_vra {
@@ -4631,7 +4871,7 @@ fn build_stage6(
 
     batched_sumchecks.push(BatchedSumcheckDef {
         instances: vec![
-            // [0] BytecodeReadRaf — 2-phase stub
+            // [0] BytecodeReadRaf — 2 phases (address then cycle)
             BatchedInstance {
                 phases: vec![
                     InstancePhase {
@@ -4639,24 +4879,38 @@ fn build_stage6(
                         num_rounds: params.log_k_bytecode,
                         scalar_captures: vec![],
                         segmented: None,
+                        carry_bindings: vec![],
                     },
                     InstancePhase {
                         kernel: bc_raf_cycle_kernel_idx,
                         num_rounds: params.log_t,
-                        scalar_captures: vec![],
+                        // Capture bound scalars from address phase into challenge slots:
+                        // GammaVal[s] → γ^s × (Val_s(r_addr) + raf), entry_weighted → γ^7 × f_entry_expected(r_addr)
+                        scalar_captures: (0..5)
+                            .map(|s| ScalarCapture {
+                                poly: PolynomialId::BytecodeReadRafGammaVal(s),
+                                challenge: ch_bc_cycle_weight[s],
+                            })
+                            .chain(std::iter::once(ScalarCapture {
+                                poly: PolynomialId::BytecodeEntryWeighted,
+                                challenge: ch_bc_entry_weight,
+                            }))
+                            .collect(),
                         segmented: None,
+                        carry_bindings: vec![],
                     },
                 ],
                 batch_coeff: 0,
                 first_active_round: 0,
             },
-            // [1] Booleanity — single kernel over K_chunk × T
+            // [1] Booleanity — single phase over full k×j space
             BatchedInstance {
                 phases: vec![InstancePhase {
                     kernel: booleanity_kernel_idx,
-                    num_rounds: params.log_k_chunk + params.log_t,
+                    num_rounds: booleanity_rounds,
                     scalar_captures: vec![],
                     segmented: None,
+                    carry_bindings: vec![],
                 }],
                 batch_coeff: 0,
                 first_active_round: params.log_k_bytecode - params.log_k_chunk,
@@ -4668,6 +4922,7 @@ fn build_stage6(
                     num_rounds: params.log_t,
                     scalar_captures: vec![],
                     segmented: None,
+                    carry_bindings: vec![],
                 }],
                 batch_coeff: 0,
                 first_active_round: params.log_k_bytecode,
@@ -4679,6 +4934,7 @@ fn build_stage6(
                     num_rounds: params.log_t,
                     scalar_captures: vec![],
                     segmented: None,
+                    carry_bindings: vec![],
                 }],
                 batch_coeff: 0,
                 first_active_round: params.log_k_bytecode,
@@ -4690,6 +4946,7 @@ fn build_stage6(
                     num_rounds: params.log_t,
                     scalar_captures: vec![],
                     segmented: None,
+                    carry_bindings: vec![],
                 }],
                 batch_coeff: 0,
                 first_active_round: params.log_k_bytecode,
@@ -4701,6 +4958,7 @@ fn build_stage6(
                     num_rounds: params.log_t,
                     scalar_captures: vec![],
                     segmented: None,
+                    carry_bindings: vec![],
                 }],
                 batch_coeff: 0,
                 first_active_round: params.log_k_bytecode,
@@ -4892,6 +5150,10 @@ fn build_stage6(
         })
         .collect();
 
+    for (i, phases) in instance_phase_degrees.iter().enumerate() {
+        let inst = &batched_sumchecks[batch_idx].instances[i];
+        eprintln!("[stage6] instance[{i}]: first_active={}, phases={phases:?}", inst.first_active_round);
+    }
     let bdef_instances = &batched_sumchecks[batch_idx].instances;
     let _round_challenge_indices = emit_unrolled_batched_rounds(
         ops,
@@ -4926,54 +5188,468 @@ fn build_stage6(
     // ---------------------------------------------------------------
     // Post-sumcheck eval flush.
     //
+    // Each cache_openings group is flushed separately because the same
+    // PolynomialId can be opened at different points by different instances,
+    // producing different evaluation values. We compute each group's evaluations
+    // from the correct source before absorbing.
+    //
     // Order: BytecodeReadRaf, Booleanity, HammingBooleanity,
     //        RamRaVirtual, InstructionRaVirtual, IncClaimReduction
     // ---------------------------------------------------------------
-    let total_d = params.instruction_d + params.bytecode_d + params.ram_d;
-    let mut stage6_eval_polys = Vec::new();
 
-    // [0] BytecodeReadRaf: bytecode_d BytecodeRa polys
-    for i in 0..params.bytecode_d {
-        stage6_eval_polys.push(PolynomialId::BytecodeRa(i));
-    }
-
-    // [1] Booleanity: instruction_d InstructionRa + bytecode_d BytecodeRa + ram_d RamRa
-    for i in 0..params.instruction_d {
-        stage6_eval_polys.push(PolynomialId::InstructionRa(i));
-    }
-    for i in 0..params.bytecode_d {
-        stage6_eval_polys.push(PolynomialId::BytecodeRa(i));
-    }
-    for i in 0..params.ram_d {
-        stage6_eval_polys.push(PolynomialId::RamRa(i));
-    }
-
-    // [2] HammingBooleanity: 1 RamHammingWeight
-    stage6_eval_polys.push(p.hamming_weight);
-
-    // [3] RamRaVirtual: ram_d RamRa polys
-    for i in 0..params.ram_d {
-        stage6_eval_polys.push(PolynomialId::RamRa(i));
-    }
-
-    // [4] InstructionRaVirtual: instruction_d InstructionRa polys
-    for i in 0..params.instruction_d {
-        stage6_eval_polys.push(PolynomialId::InstructionRa(i));
-    }
-
-    // [5] IncClaimReduction: RamInc + RdInc
-    stage6_eval_polys.push(p.ram_inc);
-    stage6_eval_polys.push(p.rd_inc);
-
-    for &poly in &stage6_eval_polys {
+    // [0] BytecodeReadRaf: read from EqProject (BatchEq) buffers in the cycle kernel
+    for &proj_id in &bc_raf_proj_ids {
         ops.push(Op::Evaluate {
-            poly,
+            poly: proj_id,
             mode: EvalMode::FinalBind,
         });
     }
     ops.push(Op::AbsorbEvals {
-        polys: stage6_eval_polys,
+        polys: bc_raf_proj_ids.clone(),
         tag: DomainSeparator::OpeningClaim,
+    });
+
+    // [1] Booleanity: extract evaluations from booleanity state (device buffers are stale).
+    // The last round's challenge was squeezed but never bound into the booleanity state
+    // (the batched loop only binds at the START of each round, so the final squeeze has
+    // no subsequent bind). Apply it now to finish reducing H to 1 element per poly.
+    ops.push(Op::BooleanityBind {
+        batch: batch_idx,
+        instance: 1,
+        challenge: s6_round_ch[stage6_max_rounds - 1],
+    });
+    let bool_ra_poly_ids: Vec<PolynomialId> = (0..params.instruction_d)
+        .map(PolynomialId::InstructionRa)
+        .chain((0..params.bytecode_d).map(PolynomialId::BytecodeRa))
+        .chain((0..params.ram_d).map(PolynomialId::RamRa))
+        .collect();
+    ops.push(Op::BooleanityCacheOpenings {
+        batch: batch_idx,
+        instance: 1,
+        ra_poly_ids: bool_ra_poly_ids.clone(),
+    });
+    ops.push(Op::AbsorbEvals {
+        polys: bool_ra_poly_ids,
+        tag: DomainSeparator::OpeningClaim,
+    });
+
+    // [2] HammingBooleanity: device buffer is valid (bound during sumcheck)
+    ops.push(Op::Evaluate {
+        poly: p.hamming_weight,
+        mode: EvalMode::FinalBind,
+    });
+    ops.push(Op::AbsorbEvals {
+        polys: vec![p.hamming_weight],
+        tag: DomainSeparator::OpeningClaim,
+    });
+
+    // [3] RamRaVirtual: read from EqProject (BatchEq) buffers, not stale RamRa device buffers
+    for &proj_id in &ram_ra_proj_ids {
+        ops.push(Op::Evaluate {
+            poly: proj_id,
+            mode: EvalMode::FinalBind,
+        });
+    }
+    ops.push(Op::AbsorbEvals {
+        polys: ram_ra_proj_ids.clone(),
+        tag: DomainSeparator::OpeningClaim,
+    });
+
+    // [4] InstructionRaVirtual: read from EqProject (BatchEq) buffers
+    for &proj_id in &inst_ra_proj_ids {
+        ops.push(Op::Evaluate {
+            poly: proj_id,
+            mode: EvalMode::FinalBind,
+        });
+    }
+    ops.push(Op::AbsorbEvals {
+        polys: inst_ra_proj_ids.clone(),
+        tag: DomainSeparator::OpeningClaim,
+    });
+
+    // [5] IncClaimReduction: device buffers are valid (bound during sumcheck)
+    ops.push(Op::Evaluate {
+        poly: p.ram_inc,
+        mode: EvalMode::FinalBind,
+    });
+    ops.push(Op::Evaluate {
+        poly: p.rd_inc,
+        mode: EvalMode::FinalBind,
+    });
+    ops.push(Op::AbsorbEvals {
+        polys: vec![p.ram_inc, p.rd_inc],
+        tag: DomainSeparator::OpeningClaim,
+    });
+
+    Stage6Challenges {
+        round_challenges: s6_round_ch,
+        bc_addr_chunks,
+        inst_addr_chunks,
+        ram_addr_chunks,
+        bc_raf_proj_ids,
+        inst_ra_proj_ids,
+        ram_ra_proj_ids,
+    }
+}
+
+// -----------------------------------------------------------------------
+// Stage 7: HammingWeight + Address Reduction
+// -----------------------------------------------------------------------
+// 1 instance: HammingWeightClaimReduction (log_k_chunk rounds, degree 2)
+//
+// Fuses HammingWeight, Booleanity reduction, and Virtualization reduction
+// into a single sumcheck over the address chunk dimension.
+struct Stage7Challenges {
+    /// HW reduction round challenge indices (LE order, as squeezed).
+    round_challenges: Vec<usize>,
+    /// Booleanity cycle challenge indices (BE).
+    cycle_challenges_be: Vec<usize>,
+}
+
+fn build_stage7(
+    p: &Polys,
+    params: &ModuleParams,
+    ops: &mut Vec<Op>,
+    kernels: &mut Vec<KernelDef>,
+    ch: &mut ChallengeTable,
+    batched_sumchecks: &mut Vec<BatchedSumcheckDef>,
+    s6: &Stage6Challenges,
+) -> Stage7Challenges {
+    let total_d = params.instruction_d + params.bytecode_d + params.ram_d;
+    let hw_rounds = params.log_k_chunk;
+
+    // ---------------------------------------------------------------
+    // Pre-sumcheck: squeeze γ challenge for batching 3N claims.
+    // HammingWeightClaimReductionParams::new → 1 challenge_scalar
+    // ---------------------------------------------------------------
+    let ch_hw_gamma = ch.add(
+        "hw_gamma",
+        ChallengeSource::FiatShamir { after_stage: 6 },
+    );
+    ops.push(Op::Squeeze {
+        challenge: ch_hw_gamma,
+    });
+
+    // γ^0, γ^1, ..., γ^{3N-1}
+    let ch_hw_gamma_pow: Vec<usize> = (0..3 * total_d)
+        .map(|d| {
+            let idx = ch.add(
+                &format!("hw_gamma_pow_{d}"),
+                ChallengeSource::Power {
+                    base: ch_hw_gamma,
+                    exponent: d,
+                },
+            );
+            ops.push(Op::ComputePower {
+                target: idx,
+                base: ch_hw_gamma,
+                exponent: d as u64,
+            });
+            idx
+        })
+        .collect();
+
+    // ---------------------------------------------------------------
+    // RA poly IDs in jolt-core order: Instruction, Bytecode, Ram
+    // ---------------------------------------------------------------
+    let ra_poly_ids: Vec<PolynomialId> = (0..params.instruction_d)
+        .map(PolynomialId::InstructionRa)
+        .chain((0..params.bytecode_d).map(PolynomialId::BytecodeRa))
+        .chain((0..params.ram_d).map(PolynomialId::RamRa))
+        .collect();
+
+    // ---------------------------------------------------------------
+    // Challenge points for eq table construction.
+    //
+    // r_cycle (BE): booleanity's cycle challenges from stage 6, reversed.
+    // Booleanity instance activates at round (log_k_bytecode - log_k_chunk),
+    // its cycle portion spans rounds [log_k_bytecode, log_k_bytecode+log_t).
+    // ---------------------------------------------------------------
+    let cycle_challenges_be: Vec<usize> = s6.round_challenges
+        [params.log_k_bytecode..params.log_k_bytecode + params.log_t]
+        .iter()
+        .rev()
+        .copied()
+        .collect();
+
+    // r_addr_bool (BE): booleanity's address challenges from stage 6, reversed.
+    // Booleanity's address portion spans rounds [log_k_bytecode - log_k_chunk, log_k_bytecode).
+    let addr_bool_challenges_be: Vec<usize> = s6.round_challenges
+        [params.log_k_bytecode - params.log_k_chunk..params.log_k_bytecode]
+        .iter()
+        .rev()
+        .copied()
+        .collect();
+
+    // Per-RA addr_virt: address portion of each RA's virtualization opening.
+    // These use the same challenge indices as the EqProject projections in stage 6.
+    let mut addr_virt_challenges_be = Vec::with_capacity(total_d);
+    for d in 0..params.instruction_d {
+        addr_virt_challenges_be.push(s6.inst_addr_chunks[d].clone());
+    }
+    for d in 0..params.bytecode_d {
+        addr_virt_challenges_be.push(s6.bc_addr_chunks[d].clone());
+    }
+    for d in 0..params.ram_d {
+        addr_virt_challenges_be.push(s6.ram_addr_chunks[d].clone());
+    }
+
+    // ---------------------------------------------------------------
+    // HW Reduction config and kernel
+    // ---------------------------------------------------------------
+    let cycle_challenges_be_ret = cycle_challenges_be.clone();
+    let hw_config = HwReductionConfig {
+        ra_poly_ids: ra_poly_ids.clone(),
+        cycle_challenges_be,
+        addr_bool_challenges_be,
+        addr_virt_challenges_be,
+        gamma_powers: ch_hw_gamma_pow.clone(),
+        hw_eval_challenge: 0, // unused: claims only for input_claim() which module handles
+        instruction_d: params.instruction_d,
+        bytecode_d: params.bytecode_d,
+        ram_d: params.ram_d,
+        log_k_chunk: params.log_k_chunk,
+        log_t: params.log_t,
+    };
+
+    let hw_kernel_idx = kernels.len();
+    kernels.push(KernelDef {
+        spec: KernelSpec {
+            formula: Formula::from_terms(vec![]),
+            num_evals: 3, // degree 2 → evals at {0, 1, 2}
+            iteration: Iteration::HammingWeightReduction {
+                config: hw_config,
+            },
+            binding_order: BindingOrder::LowToHigh,
+        },
+        inputs: vec![],
+        num_rounds: hw_rounds,
+    });
+
+    // ---------------------------------------------------------------
+    // Batched sumcheck definition (1 instance)
+    // ---------------------------------------------------------------
+    let batch_idx = batched_sumchecks.len();
+    batched_sumchecks.push(BatchedSumcheckDef {
+        instances: vec![BatchedInstance {
+            phases: vec![InstancePhase {
+                kernel: hw_kernel_idx,
+                num_rounds: hw_rounds,
+                scalar_captures: vec![],
+                segmented: None,
+                carry_bindings: vec![],
+            }],
+            batch_coeff: 0,
+            first_active_round: 0,
+        }],
+        input_claims: vec![],
+        max_rounds: hw_rounds,
+        max_degree: 2,
+    });
+
+    // ---------------------------------------------------------------
+    // Input claim: Σ_i (γ^{3i}·H_i + γ^{3i+1}·bool_i + γ^{3i+2}·virt_i)
+    //
+    // After stage 6:
+    //   state.evaluations[ra_pid] = booleanity eval (from BooleanityCacheOpenings)
+    //   Virt evals stored under BatchEq projection IDs
+    // ---------------------------------------------------------------
+    let mut hw_input_terms = Vec::new();
+    for i in 0..total_d {
+        let ra_pid = ra_poly_ids[i];
+        let is_ram = i >= params.instruction_d + params.bytecode_d;
+
+        // γ^{3i} · H_i
+        if is_ram {
+            // H_i = HammingWeight evaluation (from stage 6)
+            hw_input_terms.push(ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_hw_gamma_pow[3 * i]),
+                    ClaimFactor::Eval(p.hamming_weight),
+                ],
+            });
+        } else {
+            // H_i = 1 for instruction and bytecode
+            hw_input_terms.push(ClaimTerm {
+                coeff: 1,
+                factors: vec![ClaimFactor::Challenge(ch_hw_gamma_pow[3 * i])],
+            });
+        }
+
+        // γ^{3i+1} · bool_i = ra_d eval from booleanity (in state.evaluations[ra_pid])
+        hw_input_terms.push(ClaimTerm {
+            coeff: 1,
+            factors: vec![
+                ClaimFactor::Challenge(ch_hw_gamma_pow[3 * i + 1]),
+                ClaimFactor::Eval(ra_pid),
+            ],
+        });
+
+        // γ^{3i+2} · virt_i = ra_d eval from virtualization (in BatchEq projection)
+        let virt_proj_id = if i < params.instruction_d {
+            s6.inst_ra_proj_ids[i]
+        } else if i < params.instruction_d + params.bytecode_d {
+            s6.bc_raf_proj_ids[i - params.instruction_d]
+        } else {
+            s6.ram_ra_proj_ids[i - params.instruction_d - params.bytecode_d]
+        };
+        hw_input_terms.push(ClaimTerm {
+            coeff: 1,
+            factors: vec![
+                ClaimFactor::Challenge(ch_hw_gamma_pow[3 * i + 2]),
+                ClaimFactor::Eval(virt_proj_id),
+            ],
+        });
+    }
+
+    let hw_input_claim = ClaimFormula {
+        terms: hw_input_terms,
+    };
+    ops.push(Op::AbsorbInputClaim {
+        formula: hw_input_claim.clone(),
+        tag: DomainSeparator::SumcheckClaim,
+        batch: batch_idx,
+        instance: 0,
+        inactive_scale_bits: 0,
+    });
+
+    // ---------------------------------------------------------------
+    // Batching coefficient (1 instance → 1 coefficient)
+    // ---------------------------------------------------------------
+    let ch_batch = ch.add(
+        "stage7_batch0",
+        ChallengeSource::FiatShamir { after_stage: 6 },
+    );
+    ops.push(Op::Squeeze {
+        challenge: ch_batch,
+    });
+    batched_sumchecks[batch_idx].instances[0].batch_coeff = ch_batch;
+    batched_sumchecks[batch_idx].input_claims = vec![hw_input_claim];
+
+    // ---------------------------------------------------------------
+    // Batched sumcheck rounds (log_k_chunk rounds, degree 2)
+    // ---------------------------------------------------------------
+    let num_coeffs_fn = |_round: usize| -> usize { 3 }; // degree 2 → 3 evals (degree + 1)
+    let s7_round_ch = emit_unrolled_batched_rounds(
+        ops,
+        kernels,
+        batched_sumchecks,
+        ch,
+        batch_idx,
+        hw_rounds,
+        num_coeffs_fn,
+        VerifierStageIndex(6),
+        "s7_r",
+        0,
+        None,
+    );
+
+    // ---------------------------------------------------------------
+    // Post-sumcheck: final bind + cache G evaluations
+    // ---------------------------------------------------------------
+    // The last round's challenge was squeezed but never bound into the HW state.
+    // Apply it now to finish reducing G, eq_bool, eq_virt to 1 element each.
+    ops.push(Op::HwReductionBind {
+        batch: batch_idx,
+        instance: 0,
+        challenge: s7_round_ch[hw_rounds - 1],
+    });
+
+    // Extract G_i evaluations and store as HammingG(i) evaluations.
+    let g_poly_ids: Vec<PolynomialId> = (0..total_d)
+        .map(|i| p.hw_g[i])
+        .collect();
+    ops.push(Op::HwReductionCacheOpenings {
+        batch: batch_idx,
+        instance: 0,
+        g_poly_ids: g_poly_ids.clone(),
+    });
+
+    // Flush G evaluations to transcript (one per RA polynomial).
+    ops.push(Op::AbsorbEvals {
+        polys: g_poly_ids,
+        tag: DomainSeparator::OpeningClaim,
+    });
+
+    Stage7Challenges {
+        round_challenges: s7_round_ch,
+        cycle_challenges_be: cycle_challenges_be_ret,
+    }
+}
+
+fn build_stage8(
+    p: &Polys,
+    params: &ModuleParams,
+    ops: &mut Vec<Op>,
+    s7: &Stage7Challenges,
+) {
+    ops.push(Op::BeginStage { index: 7 });
+
+    // Opening point = [r_address_BE, r_cycle_BE].
+    // r_address_BE: stage 7 round challenges reversed (LE→BE).
+    // r_cycle_BE: booleanity cycle challenges (already BE from stage 7 construction).
+    let r_addr_be: Vec<usize> = s7.round_challenges.iter().rev().copied().collect();
+    let opening_point: Vec<usize> = r_addr_be
+        .iter()
+        .chain(s7.cycle_challenges_be.iter())
+        .copied()
+        .collect();
+    let committed_num_vars = params.log_k_chunk + params.log_t;
+
+    // Claim order matches jolt-core prove_stage8:
+    //   RamInc, RdInc (dense, scaled by eq(r_addr, 0)),
+    //   InstructionRa[0..d], BytecodeRa[0..d], RamRa[0..d] (sparse, scale=1)
+
+    // Dense polys: scale eval by ∏(1 − r_addr_i)
+    ops.push(Op::ScaleEval {
+        poly: p.ram_inc,
+        factor_challenges: r_addr_be.clone(),
+    });
+    ops.push(Op::ScaleEval {
+        poly: p.rd_inc,
+        factor_challenges: r_addr_be.clone(),
+    });
+
+    // Collect all claims with explicit opening point
+    ops.push(Op::CollectOpeningClaimAt {
+        poly: p.ram_inc,
+        point_challenges: opening_point.clone(),
+        committed_num_vars: Some(committed_num_vars),
+    });
+    ops.push(Op::CollectOpeningClaimAt {
+        poly: p.rd_inc,
+        point_challenges: opening_point.clone(),
+        committed_num_vars: Some(committed_num_vars),
+    });
+
+    for d in 0..params.instruction_d {
+        ops.push(Op::CollectOpeningClaimAt {
+            poly: PolynomialId::InstructionRa(d),
+            point_challenges: opening_point.clone(),
+            committed_num_vars: None,
+        });
+    }
+    for d in 0..params.bytecode_d {
+        ops.push(Op::CollectOpeningClaimAt {
+            poly: PolynomialId::BytecodeRa(d),
+            point_challenges: opening_point.clone(),
+            committed_num_vars: None,
+        });
+    }
+    for d in 0..params.ram_d {
+        ops.push(Op::CollectOpeningClaimAt {
+            poly: PolynomialId::RamRa(d),
+            point_challenges: opening_point.clone(),
+            committed_num_vars: None,
+        });
+    }
+
+    // RLC reduction + PCS opening proof + post-proof binding
+    ops.push(Op::ReduceOpenings);
+    ops.push(Op::Open);
+    ops.push(Op::BindOpeningInputs {
+        point_challenges: opening_point,
     });
 }
 
@@ -5882,14 +6558,16 @@ fn print_stats(module: &Module, params: &ModuleParams) {
             | Op::RegroupConstraints { .. } => counts[13] += 1,
             Op::Commit { .. } | Op::CommitStreaming { .. } => counts[3] += 1,
             Op::ReduceOpenings => counts[4] += 1,
-            Op::Open => counts[5] += 1,
+            Op::Open | Op::BindOpeningInputs { .. } => counts[5] += 1,
             Op::Preamble => counts[6] += 1,
             Op::BeginStage { .. } => counts[12] += 1,
             Op::AbsorbRoundPoly { .. } => counts[7] += 1,
             Op::RecordEvals { .. } | Op::AbsorbEvals { .. } => counts[8] += 1,
             Op::AbsorbInputClaim { .. } => counts[15] += 1,
             Op::Squeeze { .. } | Op::ComputePower { .. } => counts[9] += 1,
-            Op::CollectOpeningClaim { .. } => counts[10] += 1,
+            Op::CollectOpeningClaim { .. }
+            | Op::CollectOpeningClaimAt { .. }
+            | Op::ScaleEval { .. } => counts[10] += 1,
             Op::ReleaseDevice { .. } => counts[11] += 1,
             Op::ReleaseHost { .. } => counts[11] += 1,
             Op::AppendDomainSeparator { .. } => counts[9] += 1,
@@ -5906,12 +6584,21 @@ fn print_stats(module: &Module, params: &ModuleParams) {
             | Op::InstanceReduce { .. }
             | Op::InstanceSegmentedReduce { .. }
             | Op::InstanceBind { .. }
+            | Op::BindCarryBuffers { .. }
             | Op::BatchAccumulateInstance { .. }
             | Op::BatchRoundFinalize { .. }
             | Op::PrefixSuffixInit { .. }
             | Op::PrefixSuffixBind { .. }
             | Op::PrefixSuffixReduce { .. }
-            | Op::PrefixSuffixMaterialize { .. } => counts[14] += 1,
+            | Op::PrefixSuffixMaterialize { .. }
+            | Op::BooleanityInit { .. }
+            | Op::BooleanityBind { .. }
+            | Op::BooleanityReduce { .. }
+            | Op::BooleanityCacheOpenings { .. }
+            | Op::HwReductionInit { .. }
+            | Op::HwReductionBind { .. }
+            | Op::HwReductionReduce { .. }
+            | Op::HwReductionCacheOpenings { .. } => counts[14] += 1,
         }
     }
     eprintln!("\n=== Op Counts ===");

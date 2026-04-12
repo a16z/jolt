@@ -207,6 +207,13 @@ impl<F: JoltField> RamRaVirtualSumcheckProver<F> {
         one_hot_params: &OneHotParams,
     ) -> Self {
         // Precompute EQ tables for each address chunk
+        #[cfg(debug_assertions)]
+        {
+            for (i, chunk) in params.r_address_chunks.iter().enumerate() {
+                eprintln!("[core ram_ra_virtual] chunk[{i}] eq_point({} entries): {:?}", chunk.len(), &chunk[..chunk.len().min(6)]);
+            }
+            eprintln!("[core ram_ra_virtual] r_cycle: {:?}", &params.r_cycle.r[..params.r_cycle.r.len().min(4)]);
+        }
         let eq_tables: Vec<Vec<F>> = params
             .r_address_chunks
             .iter()

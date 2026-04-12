@@ -124,6 +124,25 @@ pub enum Iteration {
         output_combined_val: crate::polynomial_id::PolynomialId,
     },
 
+    /// Gruen-based booleanity sumcheck.
+    ///
+    /// Two-phase iteration: Phase 1 binds address variables using G_d
+    /// projections and an expanding F table; Phase 2 binds cycle variables
+    /// using pre-scaled H polynomials. The formula field is ignored — the
+    /// runtime handles all evaluation via `BooleanityInit/Bind/Reduce` ops.
+    Booleanity {
+        config: crate::module::BooleanityConfig,
+    },
+
+    /// Fused HammingWeight + Address Reduction sumcheck (Stage 7).
+    ///
+    /// Operates on G_i polynomials (cycle-projected RA) with eq_bool and
+    /// eq_virt tables. The formula field is ignored — the runtime handles
+    /// evaluation via `HwReductionInit/Bind/Reduce` ops.
+    HammingWeightReduction {
+        config: crate::module::HwReductionConfig,
+    },
+
     /// Lagrange-domain evaluation for univariate skip rounds.
     ///
     /// Some inputs are "cycle-indexed" (length T) and others are

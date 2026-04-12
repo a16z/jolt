@@ -49,6 +49,11 @@ pub struct PolyDecl {
     pub kind: PolyKind,
     /// Total number of field elements (2^num_vars).
     pub num_elements: usize,
+    /// PCS-level number of variables for the opening proof.
+    /// When `Some(n)`, the polynomial is zero-padded to `2^n` elements
+    /// before PCS opening (e.g. dense cycle-only polys padded to K*T).
+    /// When `None`, `num_elements` is used as-is.
+    pub committed_num_vars: Option<usize>,
 }
 
 /// Challenge declaration in the compiled module.
@@ -159,6 +164,14 @@ pub struct InstancePhase {
     pub scalar_captures: Vec<ScalarCapture>,
     /// When present, this phase uses segmented reduce for mixed-size inputs.
     pub segmented: Option<SegmentedConfig>,
+    /// Extra buffers to bind alongside kernel inputs at each round.
+    ///
+    /// Carry bindings are materialized at phase start and bound with the
+    /// same round challenge as the kernel inputs.  They do NOT participate
+    /// in kernel evaluation — only in binding.  This bridges multi-phase
+    /// instances where a later phase needs the bound-down version of a
+    /// buffer that was not part of the earlier phase's formula.
+    pub carry_bindings: Vec<InputBinding>,
 }
 
 /// Captures a scalar value from a bound buffer into a challenge slot.
@@ -191,6 +204,54 @@ pub struct SegmentedConfig {
     pub inner_only: Vec<bool>,
     /// Challenge indices for the outer eq table (built once at phase start).
     pub outer_eq_challenges: Vec<usize>,
+}
+
+/// Configuration for the Gruen-based booleanity sumcheck.
+///
+/// Stored in [`Op::BooleanityInit`] and consumed by the runtime to
+/// initialize a [`CpuBooleanityState`](jolt_cpu::booleanity::CpuBooleanityState).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BooleanityConfig {
+    /// RA polynomial IDs to download for G_d / H construction.
+    pub ra_poly_ids: Vec<PolynomialId>,
+    /// Challenge slot indices for r_address (LE, length = log_k_chunk).
+    pub addr_challenges: Vec<usize>,
+    /// Challenge slot indices for r_cycle (LE, length = log_t).
+    pub cycle_challenges: Vec<usize>,
+    /// Challenge slot indices for γ^d (length = total_d).
+    pub gamma_powers: Vec<usize>,
+    /// Challenge slot indices for γ^{2d} (length = total_d).
+    pub gamma_powers_square: Vec<usize>,
+    pub log_k_chunk: usize,
+    pub log_t: usize,
+}
+
+/// Configuration for the fused HammingWeight + Address Reduction sumcheck (Stage 7).
+///
+/// Stored in [`Op::HwReductionInit`] and consumed by the runtime to
+/// initialize a `CpuHwReductionState`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HwReductionConfig {
+    /// RA polynomial IDs to download for G_i computation (N total).
+    pub ra_poly_ids: Vec<PolynomialId>,
+    /// Challenge slot indices for r_cycle (BE, length = log_t).
+    /// From the booleanity opening point's cycle portion.
+    pub cycle_challenges_be: Vec<usize>,
+    /// Challenge slot indices for r_addr_bool (BE, length = log_k_chunk).
+    /// Shared across all families.
+    pub addr_bool_challenges_be: Vec<usize>,
+    /// Per-RA-poly challenge slot indices for r_addr_virt (BE, length = log_k_chunk each).
+    pub addr_virt_challenges_be: Vec<Vec<usize>>,
+    /// Challenge slot indices for γ^{3i} powers (length = 3*N).
+    /// Order: γ^0, γ^1, ..., γ^{3N-1}.
+    pub gamma_powers: Vec<usize>,
+    /// HammingWeight evaluation challenge slot (for RAM HW claims).
+    pub hw_eval_challenge: usize,
+    pub instruction_d: usize,
+    pub bytecode_d: usize,
+    pub ram_d: usize,
+    pub log_k_chunk: usize,
+    pub log_t: usize,
 }
 
 impl Schedule {
@@ -540,6 +601,52 @@ pub enum Op {
     /// Materialize PrefixSuffix outputs into device buffers and destroy
     /// the PS state. Emitted at the end of a PS phase before transitioning.
     PrefixSuffixMaterialize { batch: usize, instance: usize },
+
+    // ── Booleanity lifecycle ops ──
+    /// Initialize Gruen-based booleanity state for an instance.
+    BooleanityInit {
+        batch: usize,
+        instance: usize,
+        config: BooleanityConfig,
+    },
+    /// Ingest a challenge into the booleanity state machine.
+    BooleanityBind {
+        batch: usize,
+        instance: usize,
+        challenge: usize,
+    },
+    /// Compute Gruen booleanity round evaluations (4 evals for degree 3).
+    BooleanityReduce { batch: usize, instance: usize },
+    /// Extract final per-RA-poly evaluations from the booleanity state.
+    BooleanityCacheOpenings {
+        batch: usize,
+        instance: usize,
+        ra_poly_ids: Vec<PolynomialId>,
+    },
+
+    // ── HammingWeight+Address Reduction lifecycle ops ──
+    /// Initialize HW reduction state: compute G_i from RA data + r_cycle,
+    /// build eq_bool and eq_virt tables.
+    HwReductionInit {
+        batch: usize,
+        instance: usize,
+        config: HwReductionConfig,
+    },
+    /// Ingest a challenge into the HW reduction state (bind G, eq_bool, eq_virt).
+    HwReductionBind {
+        batch: usize,
+        instance: usize,
+        challenge: usize,
+    },
+    /// Compute HW reduction round evaluations (3 evals for degree 2).
+    HwReductionReduce { batch: usize, instance: usize },
+    /// Extract final G_i evaluations from the HW reduction state.
+    HwReductionCacheOpenings {
+        batch: usize,
+        instance: usize,
+        g_poly_ids: Vec<PolynomialId>,
+    },
+
     /// Extract polynomial evaluation.
     Evaluate { poly: PolynomialId, mode: EvalMode },
     /// Bind polynomial buffers at a challenge value (post-sumcheck survivors).
@@ -684,6 +791,28 @@ pub enum Op {
         poly: PolynomialId,
         at_stage: VerifierStageIndex,
     },
+    /// Scale an evaluation by `∏(1 − ch[i])` (Lagrange zero selector).
+    /// Used for dense (cycle-only) polynomials whose Dory matrix embedding
+    /// includes a `eq(r_addr, 0)` factor.
+    ScaleEval {
+        poly: PolynomialId,
+        factor_challenges: Vec<usize>,
+    },
+    /// Accumulate a PCS opening claim with an explicit challenge-index point.
+    /// Unlike `CollectOpeningClaim`, the point spans multiple stages
+    /// (e.g. `[r_address_stage7, r_cycle_stage6]`).
+    CollectOpeningClaimAt {
+        poly: PolynomialId,
+        point_challenges: Vec<usize>,
+        /// When set, the polynomial's evaluation table is zero-padded to
+        /// `2^committed_num_vars` elements for the RLC combination.
+        committed_num_vars: Option<usize>,
+    },
+    /// Post-proof transcript binding: absorb opening point + joint eval.
+    /// Calls `PCS::bind_opening_inputs(transcript, point, eval)`.
+    BindOpeningInputs {
+        point_challenges: Vec<usize>,
+    },
     /// Evaluate a preprocessed polynomial's MLE at a challenge-derived point.
     ///
     /// Materializes the polynomial from the provider, evaluates the MLE at
@@ -705,6 +834,14 @@ pub enum Op {
     SnapshotEval {
         from: PolynomialId,
         to: PolynomialId,
+    },
+    /// Bind carry buffers for a phase.  These are extra polynomial buffers
+    /// that are not kernel inputs but must be bound at the same cadence
+    /// so they are the right size when the next phase begins.
+    BindCarryBuffers {
+        polys: Vec<PolynomialId>,
+        challenge: usize,
+        order: BindingOrder,
     },
 }
 
@@ -745,6 +882,10 @@ impl Op {
                 | Op::InstanceSegmentedReduce { .. }
                 | Op::InstanceBind { .. }
                 | Op::PrefixSuffixReduce { .. }
+                | Op::BooleanityReduce { .. }
+                | Op::BooleanityCacheOpenings { .. }
+                | Op::HwReductionReduce { .. }
+                | Op::HwReductionCacheOpenings { .. }
                 | Op::Evaluate { .. }
                 | Op::Bind { .. }
                 | Op::LagrangeProject { .. }
@@ -756,7 +897,11 @@ impl Op {
     pub fn is_pcs(&self) -> bool {
         matches!(
             self,
-            Op::Commit { .. } | Op::CommitStreaming { .. } | Op::ReduceOpenings | Op::Open
+            Op::Commit { .. }
+                | Op::CommitStreaming { .. }
+                | Op::ReduceOpenings
+                | Op::Open
+                | Op::BindOpeningInputs { .. }
         )
     }
 
@@ -773,6 +918,8 @@ impl Op {
                 | Op::ComputePower { .. }
                 | Op::AppendDomainSeparator { .. }
                 | Op::CollectOpeningClaim { .. }
+                | Op::ScaleEval { .. }
+                | Op::CollectOpeningClaimAt { .. }
                 | Op::EvaluatePreprocessed { .. }
                 | Op::ReleaseDevice { .. }
                 | Op::ReleaseHost { .. }
@@ -790,6 +937,10 @@ impl Op {
                 | Op::PrefixSuffixInit { .. }
                 | Op::PrefixSuffixBind { .. }
                 | Op::PrefixSuffixMaterialize { .. }
+                | Op::BooleanityInit { .. }
+                | Op::BooleanityBind { .. }
+                | Op::HwReductionInit { .. }
+                | Op::HwReductionBind { .. }
         )
     }
 }

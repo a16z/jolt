@@ -74,6 +74,15 @@ impl BatchedSumcheck {
             .map(|(claim, coeff)| *claim * coeff)
             .sum();
 
+        #[cfg(debug_assertions)]
+        {
+            eprintln!("[core batched_init] num_instances={} max_rounds={max_num_rounds}",
+                sumcheck_instances.len());
+            for (i, (claim, coeff)) in individual_claims.iter().zip(batching_coeffs.iter()).enumerate() {
+                eprintln!("  inst[{i}]: scaled_claim={claim:?} coeff={coeff:?}");
+            }
+        }
+
         #[cfg(test)]
         let mut batched_claim: F = initial_batched_claim;
 
@@ -138,6 +147,12 @@ impl BatchedSumcheck {
             }
 
             let compressed_poly = batched_univariate_poly.compress();
+
+            #[cfg(debug_assertions)]
+            {
+                let celt = &compressed_poly.coeffs_except_linear_term;
+                eprintln!("[core sumcheck] round={round} compressed_len={} coeffs={celt:?}", celt.len());
+            }
 
             // append the prover's message to the transcript
             transcript.append_scalars(b"sumcheck_poly", &compressed_poly.coeffs_except_linear_term);

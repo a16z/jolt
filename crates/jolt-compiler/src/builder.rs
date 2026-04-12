@@ -70,6 +70,7 @@ impl ModuleBuilder {
             name: name.to_string(),
             kind,
             num_elements: 1 << num_vars,
+            committed_num_vars: None,
         });
         id
     }
@@ -370,6 +371,7 @@ impl ModuleBuilder {
                 let kernel = phase.kernel;
                 let kdef = &self.kernels[kernel];
                 let is_ps = matches!(kdef.spec.iteration, Iteration::PrefixSuffix { .. });
+                let is_bool = matches!(kdef.spec.iteration, Iteration::Booleanity { .. });
 
                 if instance_round == 0 || instance_round == phase_start {
                     // Phase boundary.
@@ -400,6 +402,19 @@ impl ModuleBuilder {
                                 kernel: prev_kernel,
                                 challenge: ch,
                             });
+                            // Bind previous phase's carry buffers at the transition challenge.
+                            let prev_carry_polys: Vec<_> = prev_phase
+                                .carry_bindings
+                                .iter()
+                                .map(|b| b.poly())
+                                .collect();
+                            if !prev_carry_polys.is_empty() {
+                                self.ops.push(Op::BindCarryBuffers {
+                                    polys: prev_carry_polys,
+                                    challenge: ch,
+                                    order: prev_kdef.spec.binding_order,
+                                });
+                            }
                         }
                     }
 
@@ -417,6 +432,14 @@ impl ModuleBuilder {
                             instance: inst_idx,
                             kernel,
                         });
+                    } else if is_bool {
+                        if let Iteration::Booleanity { ref config } = kdef.spec.iteration {
+                            self.ops.push(Op::BooleanityInit {
+                                batch,
+                                instance: inst_idx,
+                                config: config.clone(),
+                            });
+                        }
                     } else {
                         // Emit per-binding materialization ops.
                         if let Some(seg) = &phase.segmented {
@@ -428,6 +451,12 @@ impl ModuleBuilder {
                         }
                         let is_activation = instance_round == 0;
                         if is_activation {
+                            // Materialize carry bindings first (kernel inputs may depend on them).
+                            for binding in &phase.carry_bindings {
+                                self.ops.push(Op::Materialize {
+                                    binding: binding.clone(),
+                                });
+                            }
                             // Instance activation: materialize all bindings.
                             // Provided polys use MaterializeUnlessFresh to
                             // avoid overwriting buffers from prior compute ops
@@ -468,6 +497,12 @@ impl ModuleBuilder {
                                 instance: inst_idx,
                                 challenge: ch,
                             });
+                        } else if is_bool {
+                            self.ops.push(Op::BooleanityBind {
+                                batch,
+                                instance: inst_idx,
+                                challenge: ch,
+                            });
                         } else {
                             self.ops.push(Op::InstanceBind {
                                 batch,
@@ -475,6 +510,19 @@ impl ModuleBuilder {
                                 kernel,
                                 challenge: ch,
                             });
+                            // Bind carry buffers alongside kernel inputs.
+                            let carry_polys: Vec<_> = phase
+                                .carry_bindings
+                                .iter()
+                                .map(|b| b.poly())
+                                .collect();
+                            if !carry_polys.is_empty() {
+                                self.ops.push(Op::BindCarryBuffers {
+                                    polys: carry_polys,
+                                    challenge: ch,
+                                    order: kdef.spec.binding_order,
+                                });
+                            }
                         }
                     }
                 }
@@ -482,6 +530,11 @@ impl ModuleBuilder {
                 // Reduce.
                 if is_ps {
                     self.ops.push(Op::PrefixSuffixReduce {
+                        batch,
+                        instance: inst_idx,
+                    });
+                } else if is_bool {
+                    self.ops.push(Op::BooleanityReduce {
                         batch,
                         instance: inst_idx,
                     });

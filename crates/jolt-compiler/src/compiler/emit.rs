@@ -280,6 +280,7 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams, poly_map: &[Polyno
                 name: p.name.clone(),
                 kind: p.kind.clone(),
                 num_elements,
+                committed_num_vars: None,
             }
         })
         .collect();
@@ -860,7 +861,10 @@ fn op_poly_refs(op: &Op, kernels: &[KernelDef]) -> Vec<PolynomialId> {
             kernels[*kernel].inputs.iter().map(|b| b.poly()).collect()
         }
         Op::AbsorbRoundPoly { .. } => vec![],
-        Op::Evaluate { poly, .. } | Op::CollectOpeningClaim { poly, .. } => vec![*poly],
+        Op::Evaluate { poly, .. }
+        | Op::CollectOpeningClaim { poly, .. }
+        | Op::ScaleEval { poly, .. }
+        | Op::CollectOpeningClaimAt { poly, .. } => vec![*poly],
         Op::Bind { polys, .. }
         | Op::LagrangeProject { polys, .. }
         | Op::DuplicateInterleave { polys }
@@ -892,12 +896,22 @@ fn op_poly_refs(op: &Op, kernels: &[KernelDef]) -> Vec<PolynomialId> {
         | Op::InstanceReduce { .. }
         | Op::InstanceSegmentedReduce { .. }
         | Op::InstanceBind { .. }
+        | Op::BindCarryBuffers { .. }
         | Op::BatchAccumulateInstance { .. }
         | Op::BatchRoundFinalize { .. }
         | Op::PrefixSuffixInit { .. }
         | Op::PrefixSuffixBind { .. }
         | Op::PrefixSuffixReduce { .. }
-        | Op::PrefixSuffixMaterialize { .. } => vec![],
+        | Op::PrefixSuffixMaterialize { .. }
+        | Op::BooleanityInit { .. }
+        | Op::BooleanityBind { .. }
+        | Op::BooleanityReduce { .. }
+        | Op::BooleanityCacheOpenings { .. }
+        | Op::HwReductionInit { .. }
+        | Op::HwReductionBind { .. }
+        | Op::HwReductionReduce { .. }
+        | Op::HwReductionCacheOpenings { .. }
+        | Op::BindOpeningInputs { .. } => vec![],
     }
 }
 

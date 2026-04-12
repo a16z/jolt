@@ -313,6 +313,11 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
         );
 
         eprintln!(
+            "[booleanity core] r_cycle (len={}) first3={:?}",
+            params.r_cycle.len(),
+            &params.r_cycle[..3.min(params.r_cycle.len())]
+        );
+        eprintln!(
             "[booleanity G] D={}, G[0][0..8]: {:?}",
             G.len(),
             &G[0][..8.min(G[0].len())]
@@ -325,6 +330,14 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
         // Initialize split-eq polynomials for address and cycle variables
         let B = GruenSplitEqPolynomial::new(&params.r_address, BindingOrder::LowToHigh);
         let D = GruenSplitEqPolynomial::new(&params.r_cycle, BindingOrder::LowToHigh);
+        {
+            let eq_addr: Vec<F> = EqPolynomial::<F>::evals(&params.r_address);
+            eprintln!("[booleanity core] eq_addr all: {:?}", eq_addr);
+            eprintln!("[booleanity core] r_address (LE): {:?}", params.r_address);
+            eprintln!("[booleanity core] G[0] all: {:?}", G[0]);
+            eprintln!("[booleanity core] gamma_sq first3: [{:?}, {:?}, {:?}]",
+                params.gamma_powers_square[0], params.gamma_powers_square[1], params.gamma_powers_square[2]);
+        }
 
         // Initialize expanding table for phase 1
         let k_chunk = 1 << params.log_k_chunk;

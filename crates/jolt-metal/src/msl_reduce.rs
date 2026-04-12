@@ -75,6 +75,9 @@ impl KernelVariant {
             Iteration::PrefixSuffix { .. } => {
                 unreachable!("PrefixSuffix is handled by the runtime, not compiled to MSL")
             }
+            Iteration::Booleanity { .. } => {
+                unreachable!("Booleanity is handled by the runtime, not compiled to MSL")
+            }
         }
     }
 

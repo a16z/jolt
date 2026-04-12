@@ -54,6 +54,7 @@ mod tests {
                 name: format!("p{i}"),
                 kind: PolyKind::Committed,
                 num_elements: size,
+                committed_num_vars: None,
             })
             .collect();
         Module {
