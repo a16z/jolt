@@ -5,7 +5,7 @@ use super::{
 };
 use crate::field::JoltField;
 use crate::poly::opening_proof::OpeningId;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 enum ResolvedValue<F> {
     Constant(F),
@@ -296,9 +296,18 @@ pub struct VerifierR1CS<F: JoltField> {
     /// Opening IDs placed in the output claims region, in layout-traversal order.
     /// Empty when output claims binding is disabled.
     pub output_claims_opening_ids: Vec<OpeningId>,
+    /// Alias map: aliased OpeningId → canonical OpeningId.
+    pub opening_aliases: BTreeMap<OpeningId, OpeningId>,
 }
 
 impl<F: JoltField> VerifierR1CS<F> {
+    pub fn resolve_alias(&self, mut key: OpeningId) -> OpeningId {
+        while let Some(next) = self.opening_aliases.get(&key) {
+            key = *next;
+        }
+        key
+    }
+
     /// Check satisfaction and return the first failing constraint index if any
     pub fn check_satisfaction(&self, z: &[F]) -> Result<(), usize> {
         assert_eq!(z.len(), self.num_vars);
@@ -331,6 +340,9 @@ pub struct VerifierR1CSBuilder<F: JoltField> {
     /// `ceil(len/C)` complete Hyrax rows. The per-stage Pedersen commitments
     /// map 1:1 to these rows.
     oc_blocks: Vec<Vec<OpeningId>>,
+    /// Alias map from the opening accumulator: aliased OpeningId → canonical OpeningId.
+    /// Used to ensure aliased IDs reuse the same R1CS variable as their canonical target.
+    opening_aliases: BTreeMap<OpeningId, OpeningId>,
 }
 
 struct RoundVariables {
@@ -341,7 +353,7 @@ struct RoundVariables {
 impl<F: JoltField> VerifierR1CSBuilder<F> {
     #[cfg(test)]
     pub fn new(stage_configs: &[StageConfig], baked: &BakedPublicInputs<F>) -> Self {
-        Self::new_with_extra(stage_configs, &[], baked, Vec::new())
+        Self::new_with_extra(stage_configs, &[], baked, Vec::new(), BTreeMap::new())
     }
 
     pub fn new_with_extra(
@@ -349,6 +361,7 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
         extra_constraints: &[OutputClaimConstraint],
         baked: &BakedPublicInputs<F>,
         oc_blocks: Vec<Vec<OpeningId>>,
+        opening_aliases: BTreeMap<OpeningId, OpeningId>,
     ) -> Self {
         Self {
             constraints: Vec::new(),
@@ -359,7 +372,15 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
             extra_blinding_vars: Vec::new(),
             baked: baked.clone(),
             oc_blocks,
+            opening_aliases,
         }
+    }
+
+    fn resolve_alias(&self, mut key: OpeningId) -> OpeningId {
+        while let Some(next) = self.opening_aliases.get(&key) {
+            key = *next;
+        }
+        key
     }
 
     /// Add a constraint: a * b = c
@@ -507,10 +528,16 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
                     constraint, kind, ..
                 } => {
                     for opening_id in &constraint.required_openings {
-                        if !global_opening_vars.contains_key(opening_id) {
+                        let resolved = self.resolve_alias(*opening_id);
+                        if let Some(&var) = global_opening_vars.get(&resolved) {
+                            global_opening_vars.insert(*opening_id, var);
+                        } else {
                             let var = Variable::new(self.next_var);
                             self.next_var += 1;
                             global_opening_vars.insert(*opening_id, var);
+                            if resolved != *opening_id {
+                                global_opening_vars.insert(resolved, var);
+                            }
                         }
                     }
 
@@ -594,10 +621,16 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
                 }
                 LayoutStep::ExtraConstraintVars { constraint, .. } => {
                     for opening_id in &constraint.required_openings {
-                        if !global_opening_vars.contains_key(opening_id) {
+                        let resolved = self.resolve_alias(*opening_id);
+                        if let Some(&var) = global_opening_vars.get(&resolved) {
+                            global_opening_vars.insert(*opening_id, var);
+                        } else {
                             let var = Variable::new(self.next_var);
                             self.next_var += 1;
                             global_opening_vars.insert(*opening_id, var);
+                            if resolved != *opening_id {
+                                global_opening_vars.insert(resolved, var);
+                            }
                         }
                     }
 
@@ -660,6 +693,7 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
             extra_blinding_vars: self.extra_blinding_vars,
             hyrax,
             output_claims_opening_ids,
+            opening_aliases: self.opening_aliases,
         }
     }
 

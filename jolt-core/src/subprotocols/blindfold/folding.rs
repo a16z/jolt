@@ -116,7 +116,8 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve<F = F>, R: Crypt
                 ..
             } => {
                 for id in &constraint.required_openings {
-                    if seen_openings.insert(*id) && !oc_opening_ids.contains(id) {
+                    let resolved = r1cs.resolve_alias(*id);
+                    if seen_openings.insert(resolved) && !oc_opening_ids.contains(&resolved) {
                         W[noncoeff_idx] = F::random(rng);
                         noncoeff_idx += 1;
                     }
@@ -161,7 +162,8 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve<F = F>, R: Crypt
                 ..
             } => {
                 for id in &constraint.required_openings {
-                    if seen_openings.insert(*id) && !oc_opening_ids.contains(id) {
+                    let resolved = r1cs.resolve_alias(*id);
+                    if seen_openings.insert(resolved) && !oc_opening_ids.contains(&resolved) {
                         W[noncoeff_idx] = F::random(rng);
                         noncoeff_idx += 1;
                     }
