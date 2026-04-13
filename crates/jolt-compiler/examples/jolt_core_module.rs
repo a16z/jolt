@@ -23,11 +23,11 @@ use jolt_compiler::formula::{BindingOrder, Factor, Formula, ProductTerm};
 use jolt_compiler::ir::PolyKind;
 use jolt_compiler::kernel_spec::Iteration;
 use jolt_compiler::module::{
-    BatchedInstance, BatchedSumcheckDef, BooleanityConfig, ChallengeDecl, ChallengeSource,
-    ClaimFactor, ClaimFormula, ClaimTerm, DomainSeparator, EvalMode, Evaluation, HwReductionConfig,
-    InputBinding, InstanceConfig, InstancePhase, KernelDef, Module, Op, PointNormalization,
-    PolyDecl, R1CSMatrix, RoundPolyEncoding, ScalarCapture, Schedule, SegmentedConfig,
-    SumcheckInstance, VerifierOp, VerifierSchedule, VerifierStageIndex,
+    BatchedInstance, BatchedSumcheckDef, ChallengeDecl, ChallengeSource, ClaimFactor, ClaimFormula,
+    ClaimTerm, DomainSeparator, EvalMode, Evaluation, InputBinding, InstanceConfig, InstancePhase,
+    KernelDef, Module, Op, PointNormalization, PolyDecl, R1CSMatrix, RoundPolyEncoding,
+    ScalarCapture, Schedule, SegmentedConfig, SumcheckInstance, VerifierOp, VerifierSchedule,
+    VerifierStageIndex,
 };
 use jolt_compiler::params::{
     ModuleParams, LOG_K_INSTRUCTION, LOG_K_REG, NUM_CIRCUIT_FLAGS, NUM_LOOKUP_TABLES,
@@ -628,11 +628,17 @@ fn emit_unrolled_batched_rounds(
             let phase = &inst.phases[phase_idx];
             let kernel = phase.kernel;
             let kdef = &kernels[kernel];
-            let is_ps = matches!(kdef.spec.iteration, Iteration::PrefixSuffix { .. });
-            let is_bool = matches!(kdef.spec.iteration, Iteration::Booleanity { .. });
+            let is_ps = matches!(
+                kdef.instance_config,
+                Some(InstanceConfig::PrefixSuffix { .. })
+            );
+            let is_bool = matches!(
+                kdef.instance_config,
+                Some(InstanceConfig::Booleanity { .. })
+            );
             let is_hw = matches!(
-                kdef.spec.iteration,
-                Iteration::HammingWeightReduction { .. }
+                kdef.instance_config,
+                Some(InstanceConfig::HwReduction { .. })
             );
 
             if instance_round == 0 || instance_round == phase_start {
@@ -641,8 +647,10 @@ fn emit_unrolled_batched_rounds(
                     let prev_phase = &inst.phases[phase_idx - 1];
                     let prev_kernel = prev_phase.kernel;
                     let prev_kdef = &kernels[prev_kernel];
-                    let prev_is_ps =
-                        matches!(prev_kdef.spec.iteration, Iteration::PrefixSuffix { .. });
+                    let prev_is_ps = matches!(
+                        prev_kdef.instance_config,
+                        Some(InstanceConfig::PrefixSuffix { .. })
+                    );
 
                     if prev_is_ps {
                         if let Some(ch_val) = bind {
@@ -652,12 +660,12 @@ fn emit_unrolled_batched_rounds(
                                 challenge: ch_val,
                             });
                         }
-                        let output_buffers = match &prev_kdef.spec.iteration {
-                            Iteration::PrefixSuffix {
+                        let output_buffers = match &prev_kdef.instance_config {
+                            Some(InstanceConfig::PrefixSuffix {
                                 output_ra_polys,
                                 output_combined_val,
                                 ..
-                            } => {
+                            }) => {
                                 let mut ids = output_ra_polys.clone();
                                 ids.push(*output_combined_val);
                                 ids.sort();
@@ -698,64 +706,13 @@ fn emit_unrolled_batched_rounds(
                     });
                 }
 
-                if is_ps {
-                    let output_buffers = match &kdef.spec.iteration {
-                        Iteration::PrefixSuffix {
-                            output_ra_polys,
-                            output_combined_val,
-                            ..
-                        } => {
-                            let mut ids = output_ra_polys.clone();
-                            ids.push(*output_combined_val);
-                            ids.sort();
-                            ids
-                        }
-                        _ => unreachable!(),
-                    };
+                if is_ps || is_bool || is_hw {
+                    let config = kdef.instance_config.clone().unwrap();
                     ops.push(Op::UnifiedInstanceInit {
                         batch: batch_idx,
                         instance: inst_idx,
-                        config: InstanceConfig::PrefixSuffix {
-                            kernel,
-                            output_buffers,
-                        },
+                        config,
                     });
-                } else if is_bool {
-                    if let Iteration::Booleanity { ref config } = kdef.spec.iteration {
-                        ops.push(Op::UnifiedInstanceInit {
-                            batch: batch_idx,
-                            instance: inst_idx,
-                            config: InstanceConfig::Booleanity {
-                                ra_poly_ids: config.ra_poly_ids.clone(),
-                                addr_challenges: config.addr_challenges.clone(),
-                                cycle_challenges: config.cycle_challenges.clone(),
-                                gamma_powers: config.gamma_powers.clone(),
-                                gamma_powers_square: config.gamma_powers_square.clone(),
-                                log_k_chunk: config.log_k_chunk,
-                                log_t: config.log_t,
-                            },
-                        });
-                    }
-                } else if is_hw {
-                    if let Iteration::HammingWeightReduction { ref config } = kdef.spec.iteration {
-                        ops.push(Op::UnifiedInstanceInit {
-                            batch: batch_idx,
-                            instance: inst_idx,
-                            config: InstanceConfig::HwReduction {
-                                ra_poly_ids: config.ra_poly_ids.clone(),
-                                cycle_challenges_be: config.cycle_challenges_be.clone(),
-                                addr_bool_challenges_be: config.addr_bool_challenges_be.clone(),
-                                addr_virt_challenges_be: config.addr_virt_challenges_be.clone(),
-                                gamma_powers: config.gamma_powers.clone(),
-                                hw_eval_challenge: config.hw_eval_challenge,
-                                instruction_d: config.instruction_d,
-                                bytecode_d: config.bytecode_d,
-                                ram_d: config.ram_d,
-                                log_k_chunk: config.log_k_chunk,
-                                log_t: config.log_t,
-                            },
-                        });
-                    }
                 } else {
                     if let Some(seg) = &phase.segmented {
                         ops.push(Op::MaterializeSegmentedOuterEq {
@@ -1208,6 +1165,7 @@ fn build_stage1(
         },
         inputs: uniskip_inputs,
         num_rounds: 1,
+        instance_config: None,
     });
 
     for binding in &kernels[outer_uniskip_kernel].inputs {
@@ -1325,6 +1283,7 @@ fn build_stage1(
         },
         inputs: remaining_inputs,
         num_rounds: params.outer_remaining_rounds,
+        instance_config: None,
     });
 
     // Remaining kernel inputs: EqTable reuses the uniskip's eq buffer;
@@ -1720,6 +1679,7 @@ fn build_stage2(
         },
         inputs: product_uniskip_inputs,
         num_rounds: 1,
+        instance_config: None,
     });
 
     for binding in &kernels[product_uniskip_kernel].inputs {
@@ -2039,6 +1999,7 @@ fn build_stage2(
             InputBinding::Provided { poly: p.ram_inc },
         ],
         num_rounds: params.log_t,
+        instance_config: None,
     });
 
     // Phase 2 kernel: address binding (Dense, K-element inputs).
@@ -2093,6 +2054,7 @@ fn build_stage2(
             InputBinding::Provided { poly: p.ram_val },
         ],
         num_rounds: params.log_k_ram,
+        instance_config: None,
     });
 
     // [1] ProductVirtualRemainder — 25 rounds, degree 3.
@@ -2122,6 +2084,7 @@ fn build_stage2(
             },
         ],
         num_rounds: params.product_remainder_rounds,
+        instance_config: None,
     });
 
     // [2] InstructionClaimReduction — 25 rounds, degree 2.
@@ -2197,6 +2160,7 @@ fn build_stage2(
             },
         ],
         num_rounds: params.instruction_claim_reduction_rounds,
+        instance_config: None,
     });
 
     // [3] RafEvaluation — 20 rounds, degree 2.
@@ -2224,6 +2188,7 @@ fn build_stage2(
             },
         ],
         num_rounds: params.raf_evaluation_rounds,
+        instance_config: None,
     });
 
     // [4] OutputCheck — 20 rounds, degree 3.
@@ -2258,6 +2223,7 @@ fn build_stage2(
             InputBinding::Provided { poly: p.val_io },
         ],
         num_rounds: params.output_check_rounds,
+        instance_config: None,
     });
 
     // 5b. Build BatchedSumcheckDef with all 5 instances.
@@ -2785,6 +2751,7 @@ fn build_stage3(
             },
         ],
         num_rounds: params.log_t,
+        instance_config: None,
     });
 
     // [1] InstructionInput kernel — degree 3.
@@ -2858,6 +2825,7 @@ fn build_stage3(
             },
         ],
         num_rounds: params.log_t,
+        instance_config: None,
     });
 
     // [2] RegistersClaimReduction kernel — degree 2.
@@ -2907,6 +2875,7 @@ fn build_stage3(
             InputBinding::Provided { poly: p.rs2_val },
         ],
         num_rounds: params.log_t,
+        instance_config: None,
     });
 
     // BatchedSumcheckDef with real kernel references.
@@ -3262,6 +3231,7 @@ fn build_stage4(
             InputBinding::Provided { poly: p.rd_inc },
         ],
         num_rounds: params.log_t,
+        instance_config: None,
     });
 
     // Phase 2 kernel: address binding (dense, log_K rounds, degree 2).
@@ -3325,6 +3295,7 @@ fn build_stage4(
             InputBinding::Provided { poly: p.reg_ra_rs2 },
         ],
         num_rounds: log_k_reg,
+        instance_config: None,
     });
 
     // Kernel definition for RamValCheck (single phase, log_T rounds, degree 3).
@@ -3373,6 +3344,7 @@ fn build_stage4(
             },
         ],
         num_rounds: ram_vc_rounds,
+        instance_config: None,
     });
 
     // Update BatchedSumcheckDef with kernel phases.
@@ -3592,6 +3564,7 @@ fn build_stage5(
             },
         ],
         num_rounds: reg_val_eval_rounds,
+        instance_config: None,
     });
 
     // Kernel: RamRaClaimReduction — degree 2, log_T rounds
@@ -3652,6 +3625,7 @@ fn build_stage5(
             },
         ],
         num_rounds: ram_ra_reduction_rounds,
+        instance_config: None,
     });
 
     // Kernel: InstructionReadRaf — 2-phase (address + cycle)
@@ -3686,20 +3660,22 @@ fn build_stage5(
                 factors: vec![Factor::Input(0)],
             }]),
             num_evals: 3, // degree 2 during address rounds
-            iteration: Iteration::PrefixSuffix {
-                total_address_bits: LOG_K_INSTRUCTION,
-                chunk_bits: params.instruction_chunk_bits,
-                num_phases: params.instruction_phases,
-                ra_virtual_log_k_chunk: params.ra_virtual_log_k_chunk,
-                gamma: ch_gamma_inst_raf,
-                r_reduction: r_reduction_challenges.clone(),
-                output_ra_polys: output_ra_polys.clone(),
-                output_combined_val: PolynomialId::InstructionCombinedVal,
-            },
+            iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
         },
         inputs: vec![],
         num_rounds: LOG_K_INSTRUCTION,
+        instance_config: Some(InstanceConfig::PrefixSuffix {
+            kernel: inst_raf_addr_kernel_idx,
+            total_address_bits: LOG_K_INSTRUCTION,
+            chunk_bits: params.instruction_chunk_bits,
+            num_phases: params.instruction_phases,
+            ra_virtual_log_k_chunk: params.ra_virtual_log_k_chunk,
+            gamma: ch_gamma_inst_raf,
+            r_reduction: r_reduction_challenges.clone(),
+            output_ra_polys: output_ra_polys.clone(),
+            output_combined_val: PolynomialId::InstructionCombinedVal,
+        }),
     });
 
     // Phase 2: cycle rounds (Dense product)
@@ -3730,6 +3706,7 @@ fn build_stage5(
             },
             inputs: cycle_inputs,
             num_rounds: params.log_t,
+            instance_config: None,
         });
     }
 
@@ -4374,6 +4351,7 @@ fn build_stage6(
             },
             inputs: addr_inputs,
             num_rounds: params.log_k_bytecode,
+            instance_config: None,
         });
     }
 
@@ -4508,6 +4486,7 @@ fn build_stage6(
             },
             inputs: cycle_inputs,
             num_rounds: params.log_t,
+            instance_config: None,
         });
     }
 
@@ -4556,21 +4535,20 @@ fn build_stage6(
         spec: KernelSpec {
             formula: Formula::from_terms(vec![]),
             num_evals: 4,
-            iteration: Iteration::Booleanity {
-                config: BooleanityConfig {
-                    ra_poly_ids: ra_poly_ids.clone(),
-                    addr_challenges: bool_addr_ch.clone(),
-                    cycle_challenges: bool_cycle_ch.clone(),
-                    gamma_powers: ch_booleanity_gamma_pow,
-                    gamma_powers_square: ch_booleanity_gamma_sq.clone(),
-                    log_k_chunk: params.log_k_chunk,
-                    log_t: params.log_t,
-                },
-            },
+            iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
         },
         inputs: vec![],
         num_rounds: booleanity_rounds,
+        instance_config: Some(InstanceConfig::Booleanity {
+            ra_poly_ids: ra_poly_ids.clone(),
+            addr_challenges: bool_addr_ch.clone(),
+            cycle_challenges: bool_cycle_ch.clone(),
+            gamma_powers: ch_booleanity_gamma_pow,
+            gamma_powers_square: ch_booleanity_gamma_sq.clone(),
+            log_k_chunk: params.log_k_chunk,
+            log_t: params.log_t,
+        }),
     });
 
     // [2] HammingBooleanity — Dense, degree 3: eq × H² − eq × H
@@ -4604,6 +4582,7 @@ fn build_stage6(
                 },
             ],
             num_rounds: params.log_t,
+            instance_config: None,
         });
     }
 
@@ -4648,6 +4627,7 @@ fn build_stage6(
             },
             inputs,
             num_rounds: params.log_t,
+            instance_config: None,
         });
     }
 
@@ -4703,6 +4683,7 @@ fn build_stage6(
             },
             inputs,
             num_rounds: params.log_t,
+            instance_config: None,
         });
     }
 
@@ -4778,6 +4759,7 @@ fn build_stage6(
                 },
             ],
             num_rounds: params.log_t,
+            instance_config: None,
         });
     }
 
@@ -5296,30 +5278,29 @@ fn build_stage7(
 
     // HW Reduction config and kernel
     let cycle_challenges_be_ret = cycle_challenges_be.clone();
-    let hw_config = HwReductionConfig {
-        ra_poly_ids: ra_poly_ids.clone(),
-        cycle_challenges_be,
-        addr_bool_challenges_be,
-        addr_virt_challenges_be,
-        gamma_powers: ch_hw_gamma_pow.clone(),
-        hw_eval_challenge: 0, // unused: claims only for input_claim() which module handles
-        instruction_d: params.instruction_d,
-        bytecode_d: params.bytecode_d,
-        ram_d: params.ram_d,
-        log_k_chunk: params.log_k_chunk,
-        log_t: params.log_t,
-    };
-
     let hw_kernel_idx = kernels.len();
     kernels.push(KernelDef {
         spec: KernelSpec {
             formula: Formula::from_terms(vec![]),
             num_evals: 3, // degree 2 → evals at {0, 1, 2}
-            iteration: Iteration::HammingWeightReduction { config: hw_config },
+            iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
         },
         inputs: vec![],
         num_rounds: hw_rounds,
+        instance_config: Some(InstanceConfig::HwReduction {
+            ra_poly_ids: ra_poly_ids.clone(),
+            cycle_challenges_be,
+            addr_bool_challenges_be,
+            addr_virt_challenges_be,
+            gamma_powers: ch_hw_gamma_pow.clone(),
+            hw_eval_challenge: 0, // unused: claims only for input_claim() which module handles
+            instruction_d: params.instruction_d,
+            bytecode_d: params.bytecode_d,
+            ram_d: params.ram_d,
+            log_k_chunk: params.log_k_chunk,
+            log_t: params.log_t,
+        }),
     });
 
     // Batched sumcheck definition (1 instance)

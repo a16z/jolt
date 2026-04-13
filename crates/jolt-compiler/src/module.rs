@@ -206,54 +206,6 @@ pub struct SegmentedConfig {
     pub outer_eq_challenges: Vec<usize>,
 }
 
-/// Configuration for the Gruen-based booleanity sumcheck.
-///
-/// Stored in [`InstanceConfig::Booleanity`] and consumed by the runtime to
-/// initialize a [`CpuBooleanityState`](jolt_cpu::booleanity::CpuBooleanityState).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BooleanityConfig {
-    /// RA polynomial IDs to download for G_d / H construction.
-    pub ra_poly_ids: Vec<PolynomialId>,
-    /// Challenge slot indices for r_address (LE, length = log_k_chunk).
-    pub addr_challenges: Vec<usize>,
-    /// Challenge slot indices for r_cycle (LE, length = log_t).
-    pub cycle_challenges: Vec<usize>,
-    /// Challenge slot indices for γ^d (length = total_d).
-    pub gamma_powers: Vec<usize>,
-    /// Challenge slot indices for γ^{2d} (length = total_d).
-    pub gamma_powers_square: Vec<usize>,
-    pub log_k_chunk: usize,
-    pub log_t: usize,
-}
-
-/// Configuration for the fused HammingWeight + Address Reduction sumcheck (Stage 7).
-///
-/// Stored in [`InstanceConfig::HwReduction`] and consumed by the runtime to
-/// initialize a `CpuHwReductionState`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HwReductionConfig {
-    /// RA polynomial IDs to download for G_i computation (N total).
-    pub ra_poly_ids: Vec<PolynomialId>,
-    /// Challenge slot indices for r_cycle (BE, length = log_t).
-    /// From the booleanity opening point's cycle portion.
-    pub cycle_challenges_be: Vec<usize>,
-    /// Challenge slot indices for r_addr_bool (BE, length = log_k_chunk).
-    /// Shared across all families.
-    pub addr_bool_challenges_be: Vec<usize>,
-    /// Per-RA-poly challenge slot indices for r_addr_virt (BE, length = log_k_chunk each).
-    pub addr_virt_challenges_be: Vec<Vec<usize>>,
-    /// Challenge slot indices for γ^{3i} powers (length = 3*N).
-    /// Order: γ^0, γ^1, ..., γ^{3N-1}.
-    pub gamma_powers: Vec<usize>,
-    /// HammingWeight evaluation challenge slot (for RAM HW claims).
-    pub hw_eval_challenge: usize,
-    pub instruction_d: usize,
-    pub bytecode_d: usize,
-    pub ram_d: usize,
-    pub log_k_chunk: usize,
-    pub log_t: usize,
-}
-
 /// Configuration for a stateful sumcheck instance.
 ///
 /// Each variant describes a different subprotocol's init parameters.
@@ -264,7 +216,22 @@ pub struct HwReductionConfig {
 pub enum InstanceConfig {
     PrefixSuffix {
         kernel: usize,
-        output_buffers: Vec<PolynomialId>,
+        /// Total address bits in the decomposition (LOG_K_INSTRUCTION = 128).
+        total_address_bits: usize,
+        /// Bits per sub-phase (LOG_K / num_phases).
+        chunk_bits: usize,
+        /// Number of sub-phases in the address decomposition (8 or 16).
+        num_phases: usize,
+        /// Log₂ of the virtual RA polynomial chunk size.
+        ra_virtual_log_k_chunk: usize,
+        /// Challenge index for γ (instruction read-RAF batching).
+        gamma: usize,
+        /// Challenge indices for r_reduction (log_T entries, BIG_ENDIAN).
+        r_reduction: Vec<usize>,
+        /// PolynomialIds for materialized RA polys at address→cycle transition.
+        output_ra_polys: Vec<PolynomialId>,
+        /// PolynomialId for the combined_val polynomial.
+        output_combined_val: PolynomialId,
     },
     Booleanity {
         ra_poly_ids: Vec<PolynomialId>,
@@ -321,6 +288,10 @@ pub struct KernelDef {
     pub inputs: Vec<InputBinding>,
     /// Total sumcheck rounds for this kernel.
     pub num_rounds: usize,
+    /// Instance-type config for subprotocol kernels (PrefixSuffix, Booleanity,
+    /// HwReduction). `None` for standard compute kernels (Dense/Sparse/Domain).
+    /// The builder reads this to emit `UnifiedInstanceInit` ops.
+    pub instance_config: Option<InstanceConfig>,
 }
 
 /// Data provenance for a kernel input.

@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use jolt_compiler::kernel_spec::Iteration;
+use jolt_compiler::InstanceConfig;
 use jolt_compiler::PolynomialId;
 use jolt_compute::LookupTraceData;
 use jolt_field::Field;
@@ -87,7 +87,7 @@ impl<F: Field> ExpandingTable<F> {
 }
 
 impl<F: Field> CpuPrefixSuffixState<F> {
-    pub fn new(iteration: &Iteration, challenges: &[F], trace_data: &LookupTraceData) -> Self {
+    pub fn new(config: &InstanceConfig, challenges: &[F], trace_data: &LookupTraceData) -> Self {
         let (
             chunk_bits,
             num_phases,
@@ -96,8 +96,8 @@ impl<F: Field> CpuPrefixSuffixState<F> {
             r_reduction,
             output_ra_polys,
             output_combined_val,
-        ) = match iteration {
-            Iteration::PrefixSuffix {
+        ) = match config {
+            InstanceConfig::PrefixSuffix {
                 chunk_bits,
                 num_phases,
                 ra_virtual_log_k_chunk,
@@ -115,7 +115,7 @@ impl<F: Field> CpuPrefixSuffixState<F> {
                 output_ra_polys.clone(),
                 *output_combined_val,
             ),
-            _ => panic!("CpuPrefixSuffixState::new called with non-PrefixSuffix iteration"),
+            _ => panic!("CpuPrefixSuffixState::new called with non-PrefixSuffix config"),
         };
 
         let gamma = challenges[gamma_idx];

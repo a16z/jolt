@@ -342,11 +342,7 @@ impl ComputeBackend for MetalBackend {
     ) -> Vec<F> {
         let num_formula_inputs = inputs.len()
             - match kernel.iteration {
-                Iteration::Dense
-                | Iteration::Domain { .. }
-                | Iteration::PrefixSuffix { .. }
-                | Iteration::Booleanity { .. }
-                | Iteration::HammingWeightReduction { .. } => 0,
+                Iteration::Dense | Iteration::Domain { .. } => 0,
                 Iteration::DenseTensor => 2,
                 Iteration::Sparse => 1,
             };
@@ -417,15 +413,6 @@ impl ComputeBackend for MetalBackend {
             Iteration::Domain { .. } => {
                 panic!("Domain iteration not yet supported on Metal — use CpuBackend")
             }
-            Iteration::PrefixSuffix { .. } => {
-                unreachable!("PrefixSuffix reduce is handled by the runtime")
-            }
-            Iteration::Booleanity { .. } => {
-                unreachable!("Booleanity reduce is handled by the runtime")
-            }
-            Iteration::HammingWeightReduction { .. } => {
-                unreachable!("HammingWeightReduction reduce is handled by the runtime")
-            }
         }
     }
 
@@ -465,15 +452,6 @@ impl ComputeBackend for MetalBackend {
             }
             Iteration::Domain { .. } => {
                 unreachable!("Domain iteration kernels have exactly 1 round and are never bound");
-            }
-            Iteration::PrefixSuffix { .. } => {
-                unreachable!("PrefixSuffix bind is handled by the runtime")
-            }
-            Iteration::Booleanity { .. } => {
-                unreachable!("Booleanity bind is handled by the runtime")
-            }
-            Iteration::HammingWeightReduction { .. } => {
-                unreachable!("HammingWeightReduction bind is handled by the runtime")
             }
         }
     }

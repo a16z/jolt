@@ -21,7 +21,6 @@
 
 use crate::formula::BindingOrder;
 use crate::ir::PolyKind;
-use crate::kernel_spec::Iteration;
 use crate::module::{
     BatchedSumcheckDef, ChallengeDecl, ChallengeSource, ClaimFormula, DomainSeparator, EvalMode,
     InputBinding, InstanceConfig, KernelDef, Module, Op, PolyDecl, RoundPolyEncoding, Schedule,
@@ -370,8 +369,7 @@ impl ModuleBuilder {
                 let phase = &inst.phases[phase_idx];
                 let kernel = phase.kernel;
                 let kdef = &self.kernels[kernel];
-                let is_ps = matches!(kdef.spec.iteration, Iteration::PrefixSuffix { .. });
-                let is_bool = matches!(kdef.spec.iteration, Iteration::Booleanity { .. });
+                let is_instance = kdef.instance_config.is_some();
 
                 if instance_round == 0 || instance_round == phase_start {
                     // Phase boundary.
@@ -379,8 +377,10 @@ impl ModuleBuilder {
                         let prev_phase = &inst.phases[phase_idx - 1];
                         let prev_kernel = prev_phase.kernel;
                         let prev_kdef = &self.kernels[prev_kernel];
-                        let prev_is_ps =
-                            matches!(prev_kdef.spec.iteration, Iteration::PrefixSuffix { .. });
+                        let prev_is_ps = matches!(
+                            prev_kdef.instance_config,
+                            Some(InstanceConfig::PrefixSuffix { .. })
+                        );
 
                         if prev_is_ps {
                             // PrefixSuffix→next: bind last challenge, then finalize.
@@ -391,13 +391,12 @@ impl ModuleBuilder {
                                     challenge: ch,
                                 });
                             }
-                            let prev_iter = &prev_kdef.spec.iteration;
-                            let output_buffers = match prev_iter {
-                                Iteration::PrefixSuffix {
+                            let output_buffers = match &prev_kdef.instance_config {
+                                Some(InstanceConfig::PrefixSuffix {
                                     output_ra_polys,
                                     output_combined_val,
                                     ..
-                                } => {
+                                }) => {
                                     let mut ids = output_ra_polys.clone();
                                     ids.push(*output_combined_val);
                                     ids.sort();
@@ -439,44 +438,12 @@ impl ModuleBuilder {
                         });
                     }
 
-                    if is_ps {
-                        let output_buffers = match &kdef.spec.iteration {
-                            Iteration::PrefixSuffix {
-                                output_ra_polys,
-                                output_combined_val,
-                                ..
-                            } => {
-                                let mut ids = output_ra_polys.clone();
-                                ids.push(*output_combined_val);
-                                ids.sort();
-                                ids
-                            }
-                            _ => unreachable!(),
-                        };
+                    if let Some(config) = &kdef.instance_config {
                         self.ops.push(Op::UnifiedInstanceInit {
                             batch,
                             instance: inst_idx,
-                            config: InstanceConfig::PrefixSuffix {
-                                kernel,
-                                output_buffers,
-                            },
+                            config: config.clone(),
                         });
-                    } else if is_bool {
-                        if let Iteration::Booleanity { ref config } = kdef.spec.iteration {
-                            self.ops.push(Op::UnifiedInstanceInit {
-                                batch,
-                                instance: inst_idx,
-                                config: InstanceConfig::Booleanity {
-                                    ra_poly_ids: config.ra_poly_ids.clone(),
-                                    addr_challenges: config.addr_challenges.clone(),
-                                    cycle_challenges: config.cycle_challenges.clone(),
-                                    gamma_powers: config.gamma_powers.clone(),
-                                    gamma_powers_square: config.gamma_powers_square.clone(),
-                                    log_k_chunk: config.log_k_chunk,
-                                    log_t: config.log_t,
-                                },
-                            });
-                        }
                     } else {
                         // Emit per-binding materialization ops.
                         if let Some(seg) = &phase.segmented {
@@ -528,7 +495,7 @@ impl ModuleBuilder {
                 } else {
                     // Mid-phase: bind.
                     if let Some(ch) = bind {
-                        if is_ps || is_bool {
+                        if is_instance {
                             self.ops.push(Op::UnifiedInstanceBind {
                                 batch,
                                 instance: inst_idx,
@@ -556,7 +523,7 @@ impl ModuleBuilder {
                 }
 
                 // Reduce.
-                if is_ps || is_bool {
+                if is_instance {
                     self.ops.push(Op::UnifiedInstanceReduce {
                         batch,
                         instance: inst_idx,

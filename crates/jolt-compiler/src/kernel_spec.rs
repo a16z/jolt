@@ -55,6 +55,9 @@ pub struct KernelSpec {
 /// For [`Dense`](Iteration::Dense): no extra inputs.
 /// For [`DenseTensor`](Iteration::DenseTensor): two extra inputs (outer eq, inner eq).
 /// For [`Sparse`](Iteration::Sparse): one extra input (sorted u64 key column).
+///
+/// Instance-type subprotocols (PrefixSuffix, Booleanity, HammingWeightReduction)
+/// are handled via [`InstanceConfig`](crate::module::InstanceConfig), not this enum.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Iteration {
     /// Dense pairwise: iterate over adjacent pairs in contiguous buffers.
@@ -84,64 +87,6 @@ pub enum Iteration {
     /// Entries present in only one half are paired with checkpoint defaults.
     /// Used for read-write memory checking where the address space is sparse.
     Sparse,
-
-    /// Multi-phase prefix-suffix decomposition for instruction lookup sumchecks.
-    ///
-    /// Decomposes a high-dimensional sumcheck (total_address_bits address +
-    /// cycle rounds) into manageable sub-phases. Each sub-phase binds
-    /// `chunk_bits` address variables using prefix-suffix MLE decomposition.
-    ///
-    /// The runtime implements:
-    /// - Per sub-phase: build P (prefix) and Q (suffix) polynomials from
-    ///   expanding tables and trace data, then evaluate Σ P×Q for each point
-    /// - Between sub-phases: update expanding tables and prefix checkpoints
-    /// - At address→cycle transition: materialize RA polys and combined_val
-    ///
-    /// The formula field is ignored — the iteration handles all evaluation.
-    PrefixSuffix {
-        /// Total address bits in the decomposition (LOG_K_INSTRUCTION = 128).
-        total_address_bits: usize,
-        /// Bits per sub-phase (LOG_K / num_phases).
-        chunk_bits: usize,
-        /// Number of sub-phases in the address decomposition (8 or 16).
-        num_phases: usize,
-        /// Log₂ of the virtual RA polynomial chunk size.
-        ra_virtual_log_k_chunk: usize,
-        /// Challenge index for γ (instruction read-RAF batching).
-        gamma: usize,
-        /// Challenge indices for r_reduction (log_T entries, BIG_ENDIAN).
-        /// The cycle opening point from the prior InstructionClaimReduction
-        /// sumcheck. Used to build eq(r_reduction, j) for cycle weighting
-        /// in both the address-phase suffix accumulation and the cycle-phase
-        /// eq factor.
-        r_reduction: Vec<usize>,
-        /// PolynomialIds where materialized RA polys are stored at the
-        /// address→cycle transition. The cycle phase kernel reads these
-        /// as Provided inputs.
-        output_ra_polys: Vec<crate::polynomial_id::PolynomialId>,
-        /// PolynomialId where the combined_val polynomial is stored at
-        /// the address→cycle transition.
-        output_combined_val: crate::polynomial_id::PolynomialId,
-    },
-
-    /// Gruen-based booleanity sumcheck.
-    ///
-    /// Two-phase iteration: Phase 1 binds address variables using G_d
-    /// projections and an expanding F table; Phase 2 binds cycle variables
-    /// using pre-scaled H polynomials. The formula field is ignored — the
-    /// runtime handles all evaluation via `BooleanityInit/Bind/Reduce` ops.
-    Booleanity {
-        config: crate::module::BooleanityConfig,
-    },
-
-    /// Fused HammingWeight + Address Reduction sumcheck (Stage 7).
-    ///
-    /// Operates on G_i polynomials (cycle-projected RA) with eq_bool and
-    /// eq_virt tables. The formula field is ignored — the runtime handles
-    /// evaluation via `HwReductionInit/Bind/Reduce` ops.
-    HammingWeightReduction {
-        config: crate::module::HwReductionConfig,
-    },
 
     /// Lagrange-domain evaluation for univariate skip rounds.
     ///

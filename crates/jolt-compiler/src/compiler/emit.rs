@@ -465,6 +465,7 @@ fn emit_sumcheck_stage(
         },
         inputs: input_bindings,
         num_rounds,
+        instance_config: None,
     });
 
     // Materialize all kernel inputs before the first round.
