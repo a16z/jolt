@@ -21,6 +21,19 @@ pub struct HalsteadBugsObjective {
     pub(crate) target_dir: &'static str,
 }
 
+impl HalsteadBugsObjective {
+    pub fn collect_measurement_in(&self, repo_root: &Path) -> Result<f64, MeasurementError> {
+        let src_dir = repo_root.join(self.target_dir);
+        let mut total = 0.0;
+        for path in rust_files(&src_dir)? {
+            if let Some(space) = analyze_rust_file(&path) {
+                total += sum_bugs(&space);
+            }
+        }
+        Ok(total)
+    }
+}
+
 impl Objective for HalsteadBugsObjective {
     type Setup = ();
 
@@ -39,14 +52,7 @@ impl Objective for HalsteadBugsObjective {
 
     fn collect_measurement(&self) -> Result<f64, MeasurementError> {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-        let src_dir = repo_root.join(self.target_dir);
-        let mut total = 0.0;
-        for path in rust_files(&src_dir)? {
-            if let Some(space) = analyze_rust_file(&path) {
-                total += sum_bugs(&space);
-            }
-        }
-        Ok(total)
+        self.collect_measurement_in(repo_root)
     }
 }
 

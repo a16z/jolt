@@ -108,6 +108,17 @@ impl StaticAnalysisObjective {
         }
     }
 
+    pub fn collect_measurement_in(
+        &self,
+        repo_root: &std::path::Path,
+    ) -> Result<f64, MeasurementError> {
+        match self {
+            Self::Lloc(o) => o.collect_measurement_in(repo_root),
+            Self::CognitiveComplexity(o) => o.collect_measurement_in(repo_root),
+            Self::HalsteadBugs(o) => o.collect_measurement_in(repo_root),
+        }
+    }
+
     pub fn units(&self) -> Option<&str> {
         match self {
             Self::Lloc(o) => o.units(),

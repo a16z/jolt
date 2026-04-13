@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::path::Path;
-use std::process::Command;
 
 use crate::agent::{truncate, AgentHarness};
 
@@ -30,6 +29,9 @@ pub struct OptimizeResult {
     pub baseline_score: f64,
     pub best_score: f64,
     pub best_measurements: HashMap<OptimizationObjective, f64>,
+    /// Cumulative patch of all accepted iterations, suitable for
+    /// `git apply`. `None` if no improvement was found.
+    pub best_patch: Option<String>,
 }
 
 /// Record of a single optimization attempt.
@@ -49,7 +51,14 @@ pub struct OptimizationAttempt {
 }
 
 /// Environment trait that decouples the optimization loop from side effects.
+///
+/// Implementations handle git isolation (e.g. running in a worktree),
+/// measurement, and version control of accepted/rejected changes.
 pub trait OptimizeEnv {
+    /// The working directory where diffs are applied and the agent operates.
+    /// For real runs this is typically an isolated git worktree.
+    fn work_dir(&self) -> &Path;
+
     /// Measure all raw objectives. Returns objective -> value.
     fn measure(&mut self) -> HashMap<OptimizationObjective, f64>;
 
@@ -59,11 +68,19 @@ pub trait OptimizeEnv {
     /// Apply an agent-produced diff to the working tree.
     fn apply_diff(&mut self, diff: &str);
 
-    /// Called when a change is accepted.
-    fn accept(&mut self, iteration: usize);
+    /// Called when a change is accepted. `commit_msg` is a suggested
+    /// git commit message for the accepted change.
+    fn accept(&mut self, iteration: usize, commit_msg: &str);
 
-    /// Called when a change is rejected.
+    /// Called when a change is rejected — revert uncommitted changes.
     fn reject(&mut self);
+
+    /// Export the cumulative patch of all accepted changes. Called once
+    /// at the end of the optimization run. Returns `None` if no
+    /// improvements were accepted.
+    fn finish(&mut self) -> Option<String> {
+        None
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -161,14 +178,6 @@ pub fn auto_optimize<A: AgentHarness, E: OptimizeEnv>(
     config: &OptimizeConfig,
     repo_dir: &Path,
 ) -> OptimizeResult {
-    // Create a branch for this optimization run. Silently ignored if
-    // repo_dir is not a git repository (e.g. in tests).
-    let branch = format!("jolt-eval/optimize/{}", objective.name);
-    let _ = Command::new("git")
-        .current_dir(repo_dir)
-        .args(["checkout", "-b", &branch])
-        .status();
-
     let baseline = env.measure();
     let baseline_score = (objective.evaluate)(&baseline, &baseline);
     persist_baseline(repo_dir, objective.name, &baseline, baseline_score);
@@ -191,7 +200,7 @@ pub fn auto_optimize<A: AgentHarness, E: OptimizeEnv>(
             eprintln!("────────────────────────");
         }
 
-        let response = match agent.invoke(repo_dir, &prompt, &objective.diff_scope()) {
+        let response = match agent.invoke(env.work_dir(), &prompt, &objective.diff_scope()) {
             Ok(r) => r,
             Err(e) => {
                 tracing::info!("Agent error: {e}");
@@ -257,51 +266,30 @@ pub fn auto_optimize<A: AgentHarness, E: OptimizeEnv>(
             eprintln!("  ✓ iteration {iter} ACCEPTED — score {best_score:.10} → {new_score:.10}",);
             best_score = new_score;
             best_measurements = new_measurements;
-            env.accept(iter);
             let msg = format!(
                 "perf(auto-optimize): {} iteration {iter} (score {new_score:.10})",
                 objective.name,
             );
-            let _ = Command::new("git")
-                .current_dir(repo_dir)
-                .args(["add", "-A"])
-                .status();
-            let _ = Command::new("git")
-                .current_dir(repo_dir)
-                .args(["commit", "-m", &msg])
-                .status();
+            env.accept(iter, &msg);
         } else if !invariants_passed {
             eprintln!("  ✗ iteration {iter} REJECTED (invariants failed) — score {new_score:.10}",);
             env.reject();
-            let _ = Command::new("git")
-                .current_dir(repo_dir)
-                .args(["checkout", "."])
-                .status();
-            let _ = Command::new("git")
-                .current_dir(repo_dir)
-                .args(["clean", "-fd"])
-                .status();
         } else {
             eprintln!(
                 "  ✗ iteration {iter} REJECTED (no improvement) — score {new_score:.10} ≥ best {best_score:.10}",
             );
             env.reject();
-            let _ = Command::new("git")
-                .current_dir(repo_dir)
-                .args(["checkout", "."])
-                .status();
-            let _ = Command::new("git")
-                .current_dir(repo_dir)
-                .args(["clean", "-fd"])
-                .status();
         }
     }
+
+    let best_patch = env.finish();
 
     OptimizeResult {
         attempts,
         baseline_score,
         best_score,
         best_measurements,
+        best_patch,
     }
 }
 

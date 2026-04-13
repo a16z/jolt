@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 use std::process::Command;
 
 use clap::Parser;
@@ -49,16 +50,71 @@ struct Cli {
 
 struct RealEnv {
     repo_dir: std::path::PathBuf,
+    work_dir: std::path::PathBuf,
+    base_commit: String,
     invariants: Vec<JoltInvariants>,
     bench_perf: bool,
 }
 
+impl RealEnv {
+    fn new(
+        repo_dir: std::path::PathBuf,
+        invariants: Vec<JoltInvariants>,
+        bench_perf: bool,
+    ) -> eyre::Result<Self> {
+        // Fail fast if the working tree is dirty.
+        let status_out = Command::new("git")
+            .current_dir(&repo_dir)
+            .args(["status", "--porcelain"])
+            .output()?;
+        let status_str = String::from_utf8_lossy(&status_out.stdout);
+        if !status_str.trim().is_empty() {
+            eyre::bail!(
+                "Repository has uncommitted changes — commit or stash before optimizing.\n\
+                 Dirty files:\n{status_str}"
+            );
+        }
+
+        // Record the base commit so we can export a cumulative patch later.
+        let head_out = Command::new("git")
+            .current_dir(&repo_dir)
+            .args(["rev-parse", "HEAD"])
+            .output()?;
+        eyre::ensure!(head_out.status.success(), "failed to resolve HEAD");
+        let base_commit = String::from_utf8_lossy(&head_out.stdout).trim().to_string();
+
+        // Create an isolated worktree for the optimization run.
+        let work_dir = jolt_eval::agent::claude::create_worktree(&repo_dir)
+            .map_err(|e| eyre::eyre!("Failed to create optimization worktree: {e}"))?;
+        eprintln!("Created optimization worktree at {}", work_dir.display());
+
+        Ok(Self {
+            repo_dir,
+            work_dir,
+            base_commit,
+            invariants,
+            bench_perf,
+        })
+    }
+}
+
+impl Drop for RealEnv {
+    fn drop(&mut self) {
+        jolt_eval::agent::claude::remove_worktree(&self.repo_dir, &self.work_dir);
+        let _ = std::fs::remove_dir_all(&self.work_dir);
+    }
+}
+
 impl OptimizeEnv for RealEnv {
+    fn work_dir(&self) -> &Path {
+        &self.work_dir
+    }
+
     fn measure(&mut self) -> HashMap<OptimizationObjective, f64> {
         let mut results = HashMap::new();
 
         for sa in StaticAnalysisObjective::all() {
-            if let Ok(v) = sa.collect_measurement() {
+            if let Ok(v) = sa.collect_measurement_in(&self.work_dir) {
                 results.insert(OptimizationObjective::StaticAnalysis(sa), v);
             }
         }
@@ -66,7 +122,7 @@ impl OptimizeEnv for RealEnv {
         if self.bench_perf {
             for p in PerformanceObjective::all() {
                 let status = Command::new("cargo")
-                    .current_dir(&self.repo_dir)
+                    .current_dir(&self.work_dir)
                     .args([
                         "bench",
                         "-p",
@@ -99,17 +155,47 @@ impl OptimizeEnv for RealEnv {
     }
 
     fn apply_diff(&mut self, diff: &str) {
-        if let Err(e) = jolt_eval::agent::apply_diff(&self.repo_dir, diff) {
+        if let Err(e) = jolt_eval::agent::apply_diff(&self.work_dir, diff) {
             tracing::warn!("Failed to apply diff: {e}");
         }
     }
 
-    fn accept(&mut self, iteration: usize) {
+    fn accept(&mut self, iteration: usize, commit_msg: &str) {
         println!("  Improvement found -- keeping changes (iteration {iteration}).");
+        let _ = Command::new("git")
+            .current_dir(&self.work_dir)
+            .args(["add", "-A"])
+            .status();
+        let _ = Command::new("git")
+            .current_dir(&self.work_dir)
+            .args(["commit", "-m", commit_msg])
+            .status();
     }
 
     fn reject(&mut self) {
         println!("  Reverting changes.");
+        let _ = Command::new("git")
+            .current_dir(&self.work_dir)
+            .args(["checkout", "."])
+            .status();
+        let _ = Command::new("git")
+            .current_dir(&self.work_dir)
+            .args(["clean", "-fd"])
+            .status();
+    }
+
+    fn finish(&mut self) -> Option<String> {
+        let output = Command::new("git")
+            .current_dir(&self.work_dir)
+            .args(["diff", &self.base_commit, "HEAD"])
+            .output()
+            .ok()?;
+        let diff = String::from_utf8_lossy(&output.stdout).to_string();
+        if diff.trim().is_empty() {
+            None
+        } else {
+            Some(diff)
+        }
     }
 }
 
@@ -133,11 +219,7 @@ fn main() -> eyre::Result<()> {
         let objective = ObjectiveFunction::by_name("minimize_naive_sort_time").unwrap();
         let repo_dir = std::env::current_dir()?;
         let invariants = JoltInvariants::all();
-        let mut env = RealEnv {
-            repo_dir: repo_dir.clone(),
-            invariants,
-            bench_perf: true,
-        };
+        let mut env = RealEnv::new(repo_dir.clone(), invariants, true)?;
         let baseline = env.measure();
         let baseline_score = (objective.evaluate)(&baseline, &baseline);
         let hint = cli.hint.unwrap_or_else(|| {
@@ -174,6 +256,7 @@ fn main() -> eyre::Result<()> {
                 a.invariants_passed
             );
         }
+        save_best_patch(&result, &repo_dir, "minimize_naive_sort_time");
         return Ok(());
     }
 
@@ -196,11 +279,7 @@ fn main() -> eyre::Result<()> {
     let bench_perf = objective.inputs.iter().any(|i| i.is_perf());
     let invariants = JoltInvariants::all();
 
-    let mut env = RealEnv {
-        repo_dir: repo_dir.clone(),
-        invariants,
-        bench_perf,
-    };
+    let mut env = RealEnv::new(repo_dir.clone(), invariants, bench_perf)?;
 
     let baseline = env.measure();
 
@@ -231,7 +310,33 @@ fn main() -> eyre::Result<()> {
     println!("\nFinal measurements:");
     print_measurements(&result.best_measurements);
 
+    save_best_patch(&result, &repo_dir, objective_name);
+
     Ok(())
+}
+
+fn save_best_patch(
+    result: &jolt_eval::objective::optimize::OptimizeResult,
+    repo_dir: &Path,
+    objective_name: &str,
+) {
+    if let Some(ref patch) = result.best_patch {
+        let history_dir = repo_dir
+            .join("jolt-eval/optimize-history")
+            .join(objective_name);
+        let _ = std::fs::create_dir_all(&history_dir);
+        let patch_path = history_dir.join("best.patch");
+        match std::fs::write(&patch_path, patch) {
+            Ok(()) => {
+                println!(
+                    "\nBest patch saved to: {}\nApply with: git apply {}",
+                    patch_path.display(),
+                    patch_path.display()
+                );
+            }
+            Err(e) => eprintln!("\nWarning: failed to save patch: {e}"),
+        }
+    }
 }
 
 fn print_measurements(measurements: &HashMap<OptimizationObjective, f64>) {

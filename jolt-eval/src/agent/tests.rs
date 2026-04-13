@@ -675,6 +675,10 @@ impl MockOptimizeEnv {
 }
 
 impl OptimizeEnv for MockOptimizeEnv {
+    fn work_dir(&self) -> &Path {
+        Path::new("/tmp")
+    }
+
     fn measure(&mut self) -> HashMap<OptimizationObjective, f64> {
         if self.measurements.is_empty() {
             return HashMap::new();
@@ -697,7 +701,7 @@ impl OptimizeEnv for MockOptimizeEnv {
         self.applied_diffs.push(diff.to_string());
     }
 
-    fn accept(&mut self, iteration: usize) {
+    fn accept(&mut self, iteration: usize, _commit_msg: &str) {
         self.accepted.push(iteration);
     }
 

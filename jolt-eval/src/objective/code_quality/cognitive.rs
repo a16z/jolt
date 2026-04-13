@@ -20,6 +20,23 @@ pub struct CognitiveComplexityObjective {
     pub(crate) target_dir: &'static str,
 }
 
+impl CognitiveComplexityObjective {
+    pub fn collect_measurement_in(&self, repo_root: &Path) -> Result<f64, MeasurementError> {
+        let src_dir = repo_root.join(self.target_dir);
+        let mut total = 0.0;
+        let mut count = 0usize;
+        for path in rust_files(&src_dir)? {
+            if let Some(space) = analyze_rust_file(&path) {
+                collect_leaf_cognitive(&space, &mut total, &mut count);
+            }
+        }
+        if count == 0 {
+            return Ok(0.0);
+        }
+        Ok(total / count as f64)
+    }
+}
+
 impl Objective for CognitiveComplexityObjective {
     type Setup = ();
 
@@ -38,18 +55,7 @@ impl Objective for CognitiveComplexityObjective {
 
     fn collect_measurement(&self) -> Result<f64, MeasurementError> {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-        let src_dir = repo_root.join(self.target_dir);
-        let mut total = 0.0;
-        let mut count = 0usize;
-        for path in rust_files(&src_dir)? {
-            if let Some(space) = analyze_rust_file(&path) {
-                collect_leaf_cognitive(&space, &mut total, &mut count);
-            }
-        }
-        if count == 0 {
-            return Ok(0.0);
-        }
-        Ok(total / count as f64)
+        self.collect_measurement_in(repo_root)
     }
 }
 
