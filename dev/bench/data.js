@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776109686497,
+  "lastUpdate": 1776119831296,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -81274,6 +81274,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 862788,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "734fb6f659403595fd60a77f2f7e2fd147440848",
+          "message": "fix(blindfold): soundness fixes for uni-skip and aliased OpeningIds (J-30–J-36) (#1433)\n\n* fix(blindfold): constrain uni-skip initial claim and link output to OC region\n\nTwo ZK-mode soundness bugs in the BlindFold R1CS encoding of uni-skip stages:\n\nJ-35: OuterUniSkipParams::input_claim_constraint() returned an empty\nInputClaimConstraint, causing has_initial_claim_var() to allocate a\nwitness variable that was never constrained (add_sum_of_products_constraint_baked\nearly-returns on empty terms). A malicious prover could set this variable\nto any value, bypassing the Spartan outer sumcheck's zero-sum check.\n\nFix: has_initial_claim_var() now also checks that the constraint has\nnon-empty terms. Empty constraints route through ConstantInitialClaim\n(baked F::zero()), which is immune to prover manipulation. Both prover\nand verifier now populate baked.initial_claims for constant chains.\n\nJ-36: OuterUniSkipParams and ProductVirtualUniSkipParams defined\noutput_claim_constraint() methods, but these were never attached to\nuni-skip stage configs — only .with_input_constraint() was called,\nnot .with_constraint() for the output. This left each uni-skip's\nNextClaim variable and its OC region variable as independent,\nunlinked witness variables.\n\nFix: Store output constraints in UniSkipStageData during proving,\nattach them to uni-skip stage configs via .with_constraint() in both\nprover and verifier, and include challenge values in baked outputs.\nThis links NextClaim = OC[UnivariateSkip] for both uni-skip stages.\n\n* fix(blindfold): resolve aliased OpeningIds in R1CS builder (J-30–J-34)\n\nVerifierR1CSBuilder::build() never resolved aliased OpeningIds when\npopulating global_opening_vars. An aliased ID (e.g. LookupOutput) got a\nfresh unconstrained variable instead of reusing the canonical ID's\nvariable from the OC region, breaking the R1CS soundness guarantee.\n\nPass the accumulator's alias map into VerifierR1CSBuilder and resolve\naliases before variable allocation in ConstraintVars and\nExtraConstraintVars loops. Propagate the same resolution to\nBlindFoldWitness::assign_with_u and sample_random_satisfying_pair so the\nwitness layout stays synchronized with the R1CS variable layout.",
+          "timestamp": "2026-04-13T17:37:43-04:00",
+          "tree_id": "544a9d1e3f48dd8a4b6b323c27d840cd940c0c85",
+          "url": "https://github.com/a16z/jolt/commit/734fb6f659403595fd60a77f2f7e2fd147440848"
+        },
+        "date": 1776119830077,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.8493,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 864568,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.2976,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 498456,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 498256,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 496604,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7056,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 498612,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5822,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 496624,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.7605,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 500860,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.6363,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 237760,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4262,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 860916,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5607,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 496588,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4569,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 498600,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 16.8267,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 500320,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.7375,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 498316,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.2958,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1004532,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 13.2203,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 665028,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 81.7138,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2113044,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.5053,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 500804,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.4875,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 498552,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 14.3179,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 863400,
             "unit": "KB",
             "extra": ""
           }
