@@ -36,4 +36,3 @@ path = "fuzz_targets/split_eq_bind_low_high.rs"
 test = false
 doc = false
 bench = false
-
