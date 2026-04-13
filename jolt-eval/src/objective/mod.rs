@@ -62,8 +62,6 @@ pub trait Objective: Send + Sync {
     fn run(&self, _setup: Self::Setup) {}
 }
 
-// Data-containing enums — Hash/Eq based on discriminant only
-
 /// Static-analysis objectives.
 #[derive(Clone, Copy, PartialEq, Hash)]
 pub enum StaticAnalysisObjective {
@@ -323,14 +321,21 @@ mod tests {
         m.insert(lloc, 100.0);
         m.insert(bind, 0.5);
 
-        // Look up with a freshly constructed key — works because Hash/Eq
-        // is discriminant-based, inner data doesn't matter.
-        let lloc2 = OptimizationObjective::StaticAnalysis(StaticAnalysisObjective::Lloc(
+        // Same variant with identical inner data looks up successfully.
+        let lloc_same = OptimizationObjective::StaticAnalysis(StaticAnalysisObjective::Lloc(
+            code_quality::lloc::LlocObjective {
+                target_dir: "jolt-core/src",
+            },
+        ));
+        assert_eq!(m[&lloc_same], 100.0);
+
+        // Same variant with different inner data does NOT match.
+        let lloc_other = OptimizationObjective::StaticAnalysis(StaticAnalysisObjective::Lloc(
             code_quality::lloc::LlocObjective {
                 target_dir: "other/path",
             },
         ));
-        assert_eq!(m[&lloc2], 100.0);
+        assert!(!m.contains_key(&lloc_other));
     }
 
     #[test]
