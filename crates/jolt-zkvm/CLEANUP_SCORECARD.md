@@ -59,7 +59,7 @@ cargo clippy -p jolt-compiler -p jolt-compute -p jolt-cpu -p jolt-zkvm -p jolt-d
 | 1.10 | No TODO/FIXME/HACK/XXX comments | PASS | |
 | 1.11 | Section separators removed | PASS | 107 removed across 15 files |
 | 1.12 | No #[allow(dead_code)] suppressions (delete the dead code) | PASS | 1 legit RAII remain (TracingGuards) |
-| 1.13 | No unreachable!() for dispatch paths | FAIL | 7 in jolt-cpu, 7 in jolt-metal — Iteration enum guards, structural |
+| 1.13 | No unreachable!() for dispatch paths | PASS | Iteration enum split: removed PrefixSuffix/Booleanity/HwReduction variants |
 
 ## Tier 2 — Simplification (Occam's razor — every line earns its place)
 
@@ -107,7 +107,7 @@ cargo clippy -p jolt-compiler -p jolt-compute -p jolt-cpu -p jolt-zkvm -p jolt-d
 |---|-----------|--------|-------|
 | 4.7 | Challenge indices: typed newtype | TODO | |
 | 4.8 | Batch/instance keys: typed | TODO | |
-| 4.9 | Dispatch paths compile-time provable | FAIL | Iteration enum can't split without major refactor |
+| 4.9 | Dispatch paths compile-time provable | PASS | Iteration enum split: 4 kernel variants, instance config separate |
 
 ### 4C — Extensibility
 
@@ -199,26 +199,26 @@ cargo clippy -p jolt-compiler -p jolt-compute -p jolt-cpu -p jolt-zkvm -p jolt-d
 
 ## Progress
 
-- **Tier 1**: 12/13 passing
+- **Tier 1**: 13/13 passing
 - **Tier 2**: 5/7 passing
 - **Tier 3**: 10/10 passing
-- **Tier 4**: 10/15 passing (4.5/4.6 need design, 4.7/4.8/4.9 structural)
+- **Tier 4**: 11/15 passing (4.5/4.6 need design, 4.7/4.8 structural)
 - **Tier 5**: 11/12 passing
 - **Tier 6**: 12/14 passing
-- **Overall: 60/71 passing (85%)**
+- **Overall: 62/71 passing (87%)**
 
 ## Remaining FAILs (structural / design-level)
 
 | # | Issue | Blocker | Category |
 |---|-------|---------|----------|
-| 1.13 | unreachable!() in Iteration match arms | Split Iteration enum into KernelIteration + InstanceIteration | Enum split |
+| ~~1.13~~ | ~~unreachable!() in Iteration match arms~~ | ~~DONE~~ | ~~Enum split~~ |
 | 2.5 | too_many_arguments (3 sites) | prove()/execute() 8 args each, HwReductionState::new 10 args | Domain-inherent |
 | 2.7 | SnapshotEval workaround | Needs scoped evaluation model (4.6) | Design |
 | 4.5 | SnapshotEval | Separate design needed | Design |
 | 4.6 | Scoped evaluation model | Separate design needed | Design |
 | 4.7 | Typed challenge indices | Newtype ChallengeIdx(usize) — ~200+ edit sites | Large mechanical |
 | 4.8 | Typed batch/instance keys | Newtype BatchIdx/InstanceIdx — ~100+ edit sites | Large mechanical |
-| 4.9 | Compile-time provable dispatch | Same as 1.13 — split Iteration enum | Enum split |
+| ~~4.9~~ | ~~Compile-time provable dispatch~~ | ~~DONE~~ | ~~Enum split~~ |
 | 5.11 | Out-of-band state (SnapshotEval) | Same as 4.5/4.6 | Design |
 | 6.2 | runtime.rs 1249 LOC (target 500) | execute() is 840 lines of flat Op dispatch; splitting adds complexity | Inherent |
 | 6.6 | DeviceBuffer panics on wrong variant | Result would add .unwrap() noise at 30+ call sites | Design choice |
