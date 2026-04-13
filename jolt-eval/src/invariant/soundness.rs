@@ -179,9 +179,10 @@ impl Invariant for SoundnessInvariant {
         let program = guests::GuestProgram::new(&elf_bytes, &memory_config);
         let (_lazy_trace, trace, _memory, _io) = program.trace(&input.program_input, &[], &[]);
 
-        if let Some(pos) = trace.iter().position(|c| {
-            matches!(c, Cycle::VirtualAdviceLoad(_) | Cycle::VirtualAdviceLen(_))
-        }) {
+        if let Some(pos) = trace
+            .iter()
+            .position(|c| matches!(c, Cycle::VirtualAdviceLoad(_) | Cycle::VirtualAdviceLen(_)))
+        {
             return Err(CheckError::InvalidInput(format!(
                 "guest uses runtime advice (cycle {pos}): \
                  soundness invariant requires no advice instructions"
