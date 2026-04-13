@@ -2,7 +2,7 @@
 //!
 //! During the sumcheck protocol over lookup tables, indices are decomposed
 //! into prefix/suffix substrings. [`LookupBits`] represents these substrings
-//! as a compact 17-byte bitvector (vs 32 bytes for `u128`), which matters
+//! as a compact 17-byte bitvector (vs 32 bytes for a `u128` + `u8` struct), which matters
 //! because millions of these are created during proving.
 
 use crate::uninterleave_bits;
@@ -12,8 +12,8 @@ use std::ops::BitAnd;
 /// A bitvector representing a substring of a lookup index.
 ///
 /// Stores up to 128 bits in a packed byte array with a length tag.
-/// The byte-array layout avoids the 16-byte alignment that `u128` requires,
-/// reducing struct size from 32 bytes to 17.
+/// The `[u8; 16]` layout avoids the 16-byte alignment that `u128` requires,
+/// reducing struct size from 32 bytes (`u128` + `u8` + 15 padding) to 17.
 #[derive(Clone, Copy, Debug)]
 pub struct LookupBits {
     bytes: [u8; 16],
