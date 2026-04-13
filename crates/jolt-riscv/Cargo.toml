@@ -1,0 +1,17 @@
+[package]
+name = "jolt-riscv"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "RISC-V instruction set definitions for the Jolt zkVM"
+repository = "https://github.com/a16z/jolt"
+keywords = ["SNARK", "zkvm", "risc-v"]
+categories = ["cryptography"]
+
+[lints]
+workspace = true
+
+[dependencies]
+jolt-riscv-derive = { path = "../jolt-riscv-derive" }
+serde = { workspace = true, features = ["derive"] }
+strum = { workspace = true, features = ["derive"] }

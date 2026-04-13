@@ -1,0 +1,21 @@
+[package]
+name = "jolt-lookup-tables"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Lookup table definitions and MLE evaluation for the Jolt zkVM"
+repository = "https://github.com/a16z/jolt"
+keywords = ["SNARK", "zkvm", "lookup-tables"]
+categories = ["cryptography"]
+
+[lints]
+workspace = true
+
+[dependencies]
+jolt-field = { path = "../jolt-field" }
+jolt-riscv = { path = "../jolt-riscv" }
+serde = { workspace = true, features = ["derive"] }
+strum = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+rand = { workspace = true }
