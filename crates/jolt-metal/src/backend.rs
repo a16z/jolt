@@ -614,6 +614,7 @@ impl ComputeBackend for MetalBackend {
         &self,
         formula: &jolt_compiler::module::ClaimFormula,
         evaluations: &std::collections::HashMap<jolt_compiler::PolynomialId, F>,
+        staged_evals: &std::collections::HashMap<(jolt_compiler::PolynomialId, usize), F>,
         challenges: &[F],
     ) -> F {
         use jolt_compiler::module::ClaimFactor;
@@ -625,6 +626,11 @@ impl ComputeBackend for MetalBackend {
                     ClaimFactor::Eval(poly) => *evaluations
                         .get(poly)
                         .unwrap_or_else(|| panic!("evaluate_claim: {poly:?} not available")),
+                    ClaimFactor::StagedEval { poly, stage } => {
+                        *staged_evals.get(&(*poly, *stage)).unwrap_or_else(|| {
+                            panic!("evaluate_claim: {poly:?}@stage{stage} not available")
+                        })
+                    }
                     ClaimFactor::Challenge(i) => challenges[*i],
                     ClaimFactor::EqChallengePair { a, b } => {
                         let (ra, rb) = (challenges[*a], challenges[*b]);

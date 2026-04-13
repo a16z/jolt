@@ -317,6 +317,7 @@ impl ComputeBackend for CpuBackend {
         &self,
         formula: &ClaimFormula,
         evaluations: &HashMap<PolynomialId, F>,
+        staged_evals: &HashMap<(PolynomialId, usize), F>,
         challenges: &[F],
     ) -> F {
         let mut sum = F::zero();
@@ -327,6 +328,11 @@ impl ComputeBackend for CpuBackend {
                     ClaimFactor::Eval(poly) => *evaluations
                         .get(poly)
                         .unwrap_or_else(|| panic!("evaluate_claim: {poly:?} not available")),
+                    ClaimFactor::StagedEval { poly, stage } => {
+                        *staged_evals.get(&(*poly, *stage)).unwrap_or_else(|| {
+                            panic!("evaluate_claim: {poly:?}@stage{stage} not available")
+                        })
+                    }
                     ClaimFactor::Challenge(i) => challenges[*i],
                     ClaimFactor::EqChallengePair { a, b } => {
                         let (ra, rb) = (challenges[*a], challenges[*b]);

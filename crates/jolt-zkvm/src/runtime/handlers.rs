@@ -82,6 +82,9 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                     n => panic!("Evaluate: {poly:?} has {n}-element buffer; expected 1 or 2"),
                 };
                 let _ = state.evaluations.insert(*poly, val);
+                let _ = state
+                    .staged_evals
+                    .insert((*poly, state.current_stage_idx), val);
             } else if matches!(mode, EvalMode::RoundPoly) {
                 let round_poly = state
                     .last_round_poly
@@ -89,9 +92,15 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                     .expect("RoundPoly: no round polynomial available");
                 let val = round_poly.evaluate(state.last_squeezed);
                 let _ = state.evaluations.insert(*poly, val);
+                let _ = state
+                    .staged_evals
+                    .insert((*poly, state.current_stage_idx), val);
             } else if let Some(round_poly) = &state.last_round_poly {
                 let val = round_poly.evaluate(state.last_squeezed);
                 let _ = state.evaluations.insert(*poly, val);
+                let _ = state
+                    .staged_evals
+                    .insert((*poly, state.current_stage_idx), val);
             }
         }
 
@@ -273,11 +282,12 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             transcript.append(&state.config);
         }
 
-        Op::BeginStage { index: _ } => {
+        Op::BeginStage { index } => {
             if let Some(builder) = state.current_stage.take() {
                 state.stage_proofs.push(builder.finalize());
             }
             state.current_stage = Some(super::StageBuilder::new());
+            state.current_stage_idx = *index;
         }
 
         Op::AbsorbRoundPoly {
@@ -358,7 +368,12 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             instance,
             inactive_scale_bits,
         } => {
-            let val = backend.evaluate_claim(formula, &state.evaluations, &state.challenges);
+            let val = backend.evaluate_claim(
+                formula,
+                &state.evaluations,
+                &state.staged_evals,
+                &state.challenges,
+            );
             transcript.append(&Label(tag.as_bytes()));
             transcript.append(&val);
             // Pre-scale claim by 2^inactive_scale_bits so that the
@@ -418,7 +433,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             let _ = state.evaluations.insert(*store_as, eval);
         }
 
-        Op::SnapshotEval { from, to } => {
+        Op::AliasEval { from, to } => {
             if let Some(&val) = state.evaluations.get(from) {
                 let _ = state.evaluations.insert(*to, val);
             }

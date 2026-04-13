@@ -791,10 +791,9 @@ pub enum Op {
     /// Release host-side polynomial data (provider memory).
     /// Emitted after `ReduceOpenings` when evaluation tables are no longer needed.
     ReleaseHost { polys: Vec<PolynomialId> },
-    /// Copy an evaluation value to a snapshot slot so it survives
-    /// later stages that re-evaluate the same polynomial at a new point.
+    /// Alias one evaluation under another polynomial ID.
     /// Runtime: `state.evaluations[to] = state.evaluations[from]`.
-    SnapshotEval {
+    AliasEval {
         from: PolynomialId,
         to: PolynomialId,
     },
@@ -882,7 +881,7 @@ impl Op {
                 | Op::EvaluatePreprocessed { .. }
                 | Op::ReleaseDevice { .. }
                 | Op::ReleaseHost { .. }
-                | Op::SnapshotEval { .. }
+                | Op::AliasEval { .. }
                 | Op::BatchRoundBegin { .. }
                 | Op::BatchInactiveContribution { .. }
                 | Op::Materialize { .. }
@@ -1166,6 +1165,11 @@ pub enum ClaimFactor {
     /// polynomial is opened at multiple points by different instances within
     /// a single batched stage. Position indexes into the stage's evaluation list.
     StageEval(usize),
+    /// Evaluation of a polynomial at a specific prover stage.
+    /// Resolved from `staged_evals[(poly, stage)]` — the value the polynomial
+    /// had when it was evaluated during that stage. Prover-only: the verifier
+    /// never sees this variant (it uses StageEval or Eval instead).
+    StagedEval { poly: PolynomialId, stage: usize },
 }
 
 /// Which matrix of the R1CS relation `Az ∘ Bz = Cz`.

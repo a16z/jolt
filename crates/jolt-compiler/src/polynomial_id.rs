@@ -166,12 +166,6 @@ pub enum PolynomialId {
     RamInit,
     LookupTable,
     BytecodeTable(usize),
-
-    // Evaluation snapshots
-    /// Stores a historical evaluation value that would otherwise be
-    /// overwritten by a later stage's eval flush. Used by
-    /// BytecodeReadRaf's multi-stage input_claim formula.
-    EvalSnapshot(usize),
 }
 
 impl PolynomialId {

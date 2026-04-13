@@ -161,7 +161,7 @@ cargo clippy -p jolt-compiler -p jolt-compute -p jolt-cpu -p jolt-zkvm -p jolt-d
 | # | Criterion | Status | Notes |
 |---|-----------|--------|-------|
 | 6.1 | ComputeBackend orthogonal concerns | PASS | buffer ops, kernel ops, instance ops |
-| 6.2 | runtime.rs < 500 LOC | FAIL | 1249 LOC (was 1392); execute() is 840 lines of flat Op dispatch |
+| 6.2 | runtime.rs < 500 LOC | PASS | 180 LOC (dispatch shell); handlers.rs 796, helpers.rs 285 |
 | 6.3 | Each file one reason to change | PASS | runtime=execution, prove=pipeline, preprocessing=setup |
 
 ### 6B — Dependency Inversion
@@ -204,8 +204,8 @@ cargo clippy -p jolt-compiler -p jolt-compute -p jolt-cpu -p jolt-zkvm -p jolt-d
 - **Tier 3**: 10/10 passing
 - **Tier 4**: 11/15 passing (4.5/4.6 need design, 4.7/4.8 structural)
 - **Tier 5**: 11/12 passing
-- **Tier 6**: 12/14 passing
-- **Overall: 62/71 passing (87%)**
+- **Tier 6**: 13/14 passing
+- **Overall: 63/71 passing (89%)**
 
 ## Remaining FAILs (structural / design-level)
 
@@ -220,5 +220,5 @@ cargo clippy -p jolt-compiler -p jolt-compute -p jolt-cpu -p jolt-zkvm -p jolt-d
 | 4.8 | Typed batch/instance keys | Newtype BatchIdx/InstanceIdx — ~100+ edit sites | Large mechanical |
 | ~~4.9~~ | ~~Compile-time provable dispatch~~ | ~~DONE~~ | ~~Enum split~~ |
 | 5.11 | Out-of-band state (SnapshotEval) | Same as 4.5/4.6 | Design |
-| 6.2 | runtime.rs 1249 LOC (target 500) | execute() is 840 lines of flat Op dispatch; splitting adds complexity | Inherent |
+| ~~6.2~~ | ~~runtime.rs 1249 LOC~~ | ~~DONE~~ | ~~Module split~~ |
 | 6.6 | DeviceBuffer panics on wrong variant | Result would add .unwrap() noise at 30+ call sites | Design choice |

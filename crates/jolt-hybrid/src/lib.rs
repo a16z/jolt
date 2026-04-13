@@ -452,6 +452,7 @@ impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, 
         &self,
         _formula: &jolt_compiler::module::ClaimFormula,
         _evaluations: &std::collections::HashMap<jolt_compiler::PolynomialId, F>,
+        _staged_evals: &std::collections::HashMap<(jolt_compiler::PolynomialId, usize), F>,
         _challenges: &[F],
     ) -> F {
         panic!("HybridBackend: not yet wired")
@@ -690,6 +691,7 @@ mod tests {
             &self,
             _f: &jolt_compiler::module::ClaimFormula,
             _e: &std::collections::HashMap<jolt_compiler::PolynomialId, F>,
+            _se: &std::collections::HashMap<(jolt_compiler::PolynomialId, usize), F>,
             _c: &[F],
         ) -> F {
             panic!("mock")

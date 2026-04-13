@@ -458,6 +458,11 @@ fn evaluate_formula<F: Field>(
                     let point = resolve_point(sumcheck_points, point_override, at_stage.0);
                     evaluate_preprocessed_poly(*poly, point, config)?
                 }
+                ClaimFactor::StagedEval { .. } => {
+                    return Err(JoltError::InvalidProof(
+                        "StagedEval is prover-only; not supported in verifier formulas".into(),
+                    ));
+                }
                 ClaimFactor::LagrangeKernel { .. } => {
                     return Err(JoltError::InvalidProof(format!(
                         "unsupported claim factor {factor:?} in compiled schedule"

@@ -237,6 +237,7 @@ pub trait ComputeBackend: Send + Sync + 'static {
         &self,
         formula: &ClaimFormula,
         evaluations: &HashMap<PolynomialId, F>,
+        staged_evals: &HashMap<(PolynomialId, usize), F>,
         challenges: &[F],
     ) -> F;
 

@@ -1355,24 +1355,6 @@ fn build_stage1(
         polys: r1cs_polys.to_vec(),
         tag: DomainSeparator::OpeningClaim,
     });
-
-    // Snapshot Stage 1 evaluations that Stage 2/3 will overwrite.
-    // BytecodeReadRaf's rv_claim_1 needs these at their SpartanOuter values.
-    use PolynomialId::EvalSnapshot;
-    for &(from, snap_idx) in &[
-        (p.unexpanded_pc, 0), // overwritten by Stage 3
-        (p.imm, 1),           // overwritten by Stage 3
-        (p.op_flags[5], 2),   // Jump — overwritten by Stage 2
-        (p.op_flags[6], 3),   // WriteLookupOutputToRD — overwritten by Stage 2
-        (p.op_flags[7], 4),   // VirtualInstruction — overwritten by Stages 2,3
-        (p.op_flags[12], 5),  // IsFirstInSequence — overwritten by Stage 3
-        (p.pc, 6),            // ExpandedPC for raf_claim — overwritten by Stage 3
-    ] {
-        ops.push(Op::SnapshotEval {
-            from,
-            to: EvalSnapshot(snap_idx),
-        });
-    }
 }
 
 /// Verifier schedule for Stage 1: Outer Spartan.
@@ -2440,19 +2422,6 @@ fn build_stage2(
         tag: DomainSeparator::OpeningClaim,
     });
 
-    // Snapshot Stage 2's VirtualInstruction eval before Stage 3 overwrites it.
-    // BytecodeReadRaf's rv_claim_2 needs the ProductVirtualization value.
-    ops.push(Op::SnapshotEval {
-        from: p.op_flags[7],
-        to: PolynomialId::EvalSnapshot(7),
-    });
-
-    // Snapshot RamInc@Stage2 for IncClaimReduction's v_1 term (Stage 4 will overwrite).
-    ops.push(Op::SnapshotEval {
-        from: p.ram_inc,
-        to: PolynomialId::EvalSnapshot(8),
-    });
-
     Stage2Challenges {
         stage1_cycle: stage1_cycle_challenges.clone(),
         round_challenges: round_challenge_indices,
@@ -3435,12 +3404,6 @@ fn build_stage4(
     ops.push(Op::AbsorbEvals {
         polys: stage4_eval_polys,
         tag: DomainSeparator::OpeningClaim,
-    });
-
-    // Snapshot RdInc@Stage4 for IncClaimReduction's w_1 term (Stage 5 will overwrite).
-    ops.push(Op::SnapshotEval {
-        from: p.rd_inc,
-        to: PolynomialId::EvalSnapshot(9),
     });
 
     Stage4Challenges {
@@ -4873,7 +4836,7 @@ fn build_stage6(
     // input_claim = Σ_{s=0..4} gamma^s * rv_claim_{s+1}
     //             + gamma^5 * raf_claim + gamma^6 * raf_shift_claim + gamma^7
     //
-    // Uses EvalSnapshot(0..7) for evaluations overwritten by later stages.
+    // Uses StagedEval for evaluations overwritten by later stages.
     let bc_raf_input_claim = build_bytecode_read_raf_claim(
         p,
         ch_bc_gamma,
@@ -4957,28 +4920,35 @@ fn build_stage6(
     // v_1 was overwritten (Stage 2 → Stage 4), w_1 was overwritten (Stage 4 → Stage 5).
     // Need snapshots for v_1 and w_1.
     //
-    // For now, use EvalSnapshot(8) = RamInc@Stage2, EvalSnapshot(9) = RdInc@Stage4.
-    // (These snapshots will be added to Stage 2 and Stage 4 eval flush code.)
+    // Stage indices: Stage 2 = index 1, Stage 4 = index 3, Stage 5 = index 4.
+    // RamInc is evaluated at both Stage 2 (v_1) and Stage 4 (v_2);
+    // RdInc is evaluated at both Stage 4 (w_1) and Stage 5 (w_2).
     let g_inc = ch_inc_gamma;
     let inc_input_claim = ClaimFormula {
         terms: vec![
-            // v_1: RamInc @ Stage 2 (snapshot)
+            // v_1: RamInc @ Stage 2
             ClaimTerm {
                 coeff: 1,
-                factors: vec![ClaimFactor::Eval(PolynomialId::EvalSnapshot(8))],
+                factors: vec![ClaimFactor::StagedEval {
+                    poly: p.ram_inc,
+                    stage: 1,
+                }],
             },
             // γ * v_2: RamInc @ Stage 4 (current)
             ClaimTerm {
                 coeff: 1,
                 factors: vec![ClaimFactor::Challenge(g_inc), ClaimFactor::Eval(p.ram_inc)],
             },
-            // γ² * w_1: RdInc @ Stage 4 (snapshot)
+            // γ² * w_1: RdInc @ Stage 4
             ClaimTerm {
                 coeff: 1,
                 factors: vec![
                     ClaimFactor::Challenge(g_inc),
                     ClaimFactor::Challenge(g_inc),
-                    ClaimFactor::Eval(PolynomialId::EvalSnapshot(9)),
+                    ClaimFactor::StagedEval {
+                        poly: p.rd_inc,
+                        stage: 3,
+                    },
                 ],
             },
             // γ³ * w_2: RdInc @ Stage 5 (current)
@@ -5491,21 +5461,21 @@ fn build_stage8(p: &Polys, params: &ModuleParams, ops: &mut Vec<Op>, s7: &Stage7
     // the stale Booleanity evaluation from stage 6.
     let mut g_idx = 0;
     for d in 0..params.instruction_d {
-        ops.push(Op::SnapshotEval {
+        ops.push(Op::AliasEval {
             from: p.hw_g[g_idx],
             to: PolynomialId::InstructionRa(d),
         });
         g_idx += 1;
     }
     for d in 0..params.bytecode_d {
-        ops.push(Op::SnapshotEval {
+        ops.push(Op::AliasEval {
             from: p.hw_g[g_idx],
             to: PolynomialId::BytecodeRa(d),
         });
         g_idx += 1;
     }
     for d in 0..params.ram_d {
-        ops.push(Op::SnapshotEval {
+        ops.push(Op::AliasEval {
             from: p.hw_g[g_idx],
             to: PolynomialId::RamRa(d),
         });
@@ -5546,7 +5516,7 @@ fn build_stage8(p: &Polys, params: &ModuleParams, ops: &mut Vec<Op>, s7: &Stage7
 ///
 /// This is the most complex input claim in the protocol: it references
 /// evaluations from ALL five previous stages, weighted by 6 sets of
-/// gamma challenges. Uses EvalSnapshot IDs for evaluations that were
+/// gamma challenges. Uses StagedEval for evaluations that were
 /// overwritten by later stages.
 fn build_bytecode_read_raf_claim(
     p: &Polys,
@@ -5576,34 +5546,53 @@ fn build_bytecode_read_raf_claim(
         ClaimTerm { coeff: 1, factors }
     };
 
+    // Helper: build factors for gamma^rv_idx * stage_gamma^j * staged_eval(poly, stage)
+    let term_staged = |rv_idx: usize,
+                       stage_gamma: usize,
+                       gamma_pow: usize,
+                       poly: PolynomialId,
+                       stage: usize|
+     -> ClaimTerm {
+        let mut factors = Vec::new();
+        for _ in 0..rv_idx {
+            factors.push(ClaimFactor::Challenge(ch_gamma));
+        }
+        for _ in 0..gamma_pow {
+            factors.push(ClaimFactor::Challenge(stage_gamma));
+        }
+        factors.push(ClaimFactor::StagedEval { poly, stage });
+        ClaimTerm { coeff: 1, factors }
+    };
+
     // rv_claim_1 (gamma^0): stage1_gamma[0]*UnexpandedPC + stage1_gamma[1]*Imm
     //   + stage1_gamma[2+i]*OpFlag(i) for i in 0..14
-    // Evaluations from Stage 1 (some snapshotted, some still current).
-    terms.push(term(0, ch_s1_gamma, 0, PolynomialId::EvalSnapshot(0))); // UnexpandedPC@S1
-    terms.push(term(0, ch_s1_gamma, 1, PolynomialId::EvalSnapshot(1))); // Imm@S1
-                                                                        // OpFlag(0..4): not overwritten, still hold Stage 1 values
+    // Evaluations from Stage 1 (stage index 0). Some polys are overwritten
+    // by later stages, so we use StagedEval to reference the Stage 1 value.
+    terms.push(term_staged(0, ch_s1_gamma, 0, p.unexpanded_pc, 0)); // UnexpandedPC@Stage1
+    terms.push(term_staged(0, ch_s1_gamma, 1, p.imm, 0)); // Imm@Stage1
+                                                          // OpFlag(0..4): not overwritten, still hold Stage 1 values
     for i in 0..5 {
         terms.push(term(0, ch_s1_gamma, 2 + i, p.op_flags[i]));
     }
-    terms.push(term(0, ch_s1_gamma, 7, PolynomialId::EvalSnapshot(2))); // Jump@S1
-    terms.push(term(0, ch_s1_gamma, 8, PolynomialId::EvalSnapshot(3))); // WriteLookupOutputToRD@S1
-    terms.push(term(0, ch_s1_gamma, 9, PolynomialId::EvalSnapshot(4))); // VirtualInstruction@S1
-                                                                        // OpFlag(8..11): not overwritten
+    terms.push(term_staged(0, ch_s1_gamma, 7, p.op_flags[5], 0)); // Jump@Stage1
+    terms.push(term_staged(0, ch_s1_gamma, 8, p.op_flags[6], 0)); // WriteLookupOutputToRD@Stage1
+    terms.push(term_staged(0, ch_s1_gamma, 9, p.op_flags[7], 0)); // VirtualInstruction@Stage1
+                                                                  // OpFlag(8..11): not overwritten
     for i in 8..12 {
         terms.push(term(0, ch_s1_gamma, 2 + i, p.op_flags[i]));
     }
-    terms.push(term(0, ch_s1_gamma, 14, PolynomialId::EvalSnapshot(5))); // IsFirstInSequence@S1
+    terms.push(term_staged(0, ch_s1_gamma, 14, p.op_flags[12], 0)); // IsFirstInSequence@Stage1
     terms.push(term(0, ch_s1_gamma, 15, p.op_flags[13])); // IsLastInSequence (not overwritten)
 
     // rv_claim_2 (gamma^1): stage2_gamma[0]*Jump + stage2_gamma[1]*Branch
     //   + stage2_gamma[2]*WriteLookupOutputToRD + stage2_gamma[3]*VirtualInstruction
     // OpFlag(5) Jump: Stage 2 value is current (not overwritten by Stage 3+)
     // OpFlag(6) WriteLookupOutputToRD: Stage 2 value is current
-    // OpFlag(7) VirtualInstruction: Stage 2 value was snapshotted before Stage 3
+    // OpFlag(7) VirtualInstruction: Stage 2 value was overwritten by Stage 3
     terms.push(term(1, ch_s2_gamma, 0, p.op_flags[5])); // Jump@S2 (current)
     terms.push(term(1, ch_s2_gamma, 1, p.inst_flag_branch)); // Branch@S2 (current)
     terms.push(term(1, ch_s2_gamma, 2, p.op_flags[6])); // WriteLookupOutputToRD@S2
-    terms.push(term(1, ch_s2_gamma, 3, PolynomialId::EvalSnapshot(7))); // VirtualInstruction@S2
+    terms.push(term_staged(1, ch_s2_gamma, 3, p.op_flags[7], 1)); // VirtualInstruction@Stage2
 
     // rv_claim_3 (gamma^2): 9 terms from Stage 3
     // All Stage 3 evaluations are current (Stage 3 is the last writer).
@@ -5638,13 +5627,16 @@ fn build_bytecode_read_raf_claim(
         ));
     }
 
-    // gamma^5 * raf_claim: PC @ SpartanOuter (Stage 1, snapshotted)
+    // gamma^5 * raf_claim: PC @ SpartanOuter (Stage 1, stage index 0)
     {
         let mut factors = Vec::new();
         for _ in 0..5 {
             factors.push(ClaimFactor::Challenge(ch_gamma));
         }
-        factors.push(ClaimFactor::Eval(PolynomialId::EvalSnapshot(6))); // PC@S1
+        factors.push(ClaimFactor::StagedEval {
+            poly: p.pc,
+            stage: 0,
+        }); // PC@Stage1
         terms.push(ClaimTerm { coeff: 1, factors });
     }
 
@@ -6442,7 +6434,7 @@ fn print_stats(module: &Module, params: &ModuleParams) {
             Op::ReleaseHost { .. } => counts[11] += 1,
             Op::AppendDomainSeparator { .. } => counts[9] += 1,
             Op::EvaluatePreprocessed { .. } => counts[9] += 1,
-            Op::SnapshotEval { .. } => counts[9] += 1,
+            Op::AliasEval { .. } => counts[9] += 1,
             Op::BatchRoundBegin { .. }
             | Op::BatchInactiveContribution { .. }
             | Op::Materialize { .. }
