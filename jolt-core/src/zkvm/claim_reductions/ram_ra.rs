@@ -55,8 +55,8 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
+            AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningPoint,
+            ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
         },
         unipoly::UniPoly,
     },
@@ -720,10 +720,10 @@ pub struct RamRaClaimReductionSumcheckVerifier<F: JoltField> {
 
 impl<F: JoltField> RamRaClaimReductionSumcheckVerifier<F> {
     /// Create a new RAM RA reduction sumcheck verifier.
-    pub fn new(
+    pub fn new<A: AbstractVerifierOpeningAccumulator<F>>(
         trace_len: usize,
         one_hot_params: &OneHotParams,
-        opening_accumulator: &VerifierOpeningAccumulator<F>,
+        opening_accumulator: &A,
         transcript: &mut impl Transcript,
     ) -> Self {
         let params =
@@ -732,18 +732,14 @@ impl<F: JoltField> RamRaClaimReductionSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
-    for RamRaClaimReductionSumcheckVerifier<F>
+impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
+    SumcheckInstanceVerifier<F, T, A> for RamRaClaimReductionSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &VerifierOpeningAccumulator<F>,
-        sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, accumulator: &A, sumcheck_challenges: &[F::Challenge]) -> F {
         let r_cycle_reduced: Vec<_> = sumcheck_challenges.iter().rev().copied().collect();
 
         // Compute eq_combined(r_cycle_reduced) at the fixed aligned address point.
@@ -765,11 +761,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         eq_combined * ra_claim_reduced
     }
 
-    fn cache_openings(
-        &self,
-        accumulator: &mut VerifierOpeningAccumulator<F>,
-        sumcheck_challenges: &[F::Challenge],
-    ) {
+    fn cache_openings(&self, accumulator: &mut A, sumcheck_challenges: &[F::Challenge]) {
         // Cache the reduced RA opening point for RA virtualization.
         // The address part is fixed to the aligned `r_address`; the cycle part is the sumcheck's
         // reduced cycle point.

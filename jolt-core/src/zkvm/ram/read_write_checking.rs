@@ -3,7 +3,9 @@ use num::Integer;
 use num_traits::Zero;
 
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::opening_proof::{OpeningAccumulator, PolynomialId};
+use crate::poly::opening_proof::{
+    AbstractVerifierOpeningAccumulator, OpeningAccumulator, PolynomialId,
+};
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 
 #[cfg(feature = "zk")]
@@ -29,10 +31,7 @@ use crate::{
     field::JoltField,
     poly::{
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
-        opening_proof::{
-            OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
-            BIG_ENDIAN,
-        },
+        opening_proof::{OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN},
     },
     transcripts::Transcript,
     utils::math::Math,
@@ -718,10 +717,10 @@ impl<F: JoltField> RamReadWriteCheckingVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
-    for RamReadWriteCheckingVerifier<F>
+impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
+    SumcheckInstanceVerifier<F, T, A> for RamReadWriteCheckingVerifier<F>
 {
-    fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
+    fn input_claim(&self, accumulator: &A) -> F {
         let result = self.params.input_claim(accumulator);
 
         #[cfg(test)]
@@ -743,11 +742,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         &self.params
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &VerifierOpeningAccumulator<F>,
-        sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, accumulator: &A, sumcheck_challenges: &[F::Challenge]) -> F {
         let r = self.params.normalize_opening_point(sumcheck_challenges);
         let (_, r_cycle) = r.split_at(self.params.K.log_2());
 
@@ -787,11 +782,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         result
     }
 
-    fn cache_openings(
-        &self,
-        accumulator: &mut VerifierOpeningAccumulator<F>,
-        sumcheck_challenges: &[F::Challenge],
-    ) {
+    fn cache_openings(&self, accumulator: &mut A, sumcheck_challenges: &[F::Challenge]) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         accumulator.append_virtual(
             VirtualPolynomial::RamVal,

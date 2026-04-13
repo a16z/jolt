@@ -65,7 +65,7 @@ jobs:
 
       - name: Run Claude Code
         id: claude
-        uses: anthropics/claude-code-action@58dbe8ed6879f0d3b02ac295b20d5fdfe7733e0c # v1
+        uses: anthropics/claude-code-action@26ddc358fe3befff50c5ec2f80304c90c763f6f8 # v1
         env:
           CLAUDE_CODE_EFFORT_LEVEL: max
           CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY: "1"

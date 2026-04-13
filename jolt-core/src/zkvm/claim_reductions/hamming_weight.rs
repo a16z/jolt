@@ -88,8 +88,8 @@ use crate::poly::{
     eq_poly::EqPolynomial,
     multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
     opening_proof::{
-        OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-        VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+        AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningPoint,
+        ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN,
     },
     shared_ra_polys::compute_all_G,
     unipoly::UniPoly,
@@ -572,9 +572,12 @@ pub struct HammingWeightClaimReductionVerifier<F: JoltField> {
 
 impl<F: JoltField> HammingWeightClaimReductionVerifier<F> {
     /// Create verifier. r_cycle and r_addr_bool are extracted from Booleanity opening.
+    ///
+    /// Takes a generic `OpeningAccumulator` to support both real verification
+    /// (`VerifierOpeningAccumulator`) and symbolic transpilation (`AstOpeningAccumulator`).
     pub fn new(
         one_hot_params: &OneHotParams,
-        accumulator: &VerifierOpeningAccumulator<F>,
+        accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
         let params =
@@ -583,18 +586,14 @@ impl<F: JoltField> HammingWeightClaimReductionVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
-    for HammingWeightClaimReductionVerifier<F>
+impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
+    SumcheckInstanceVerifier<F, T, A> for HammingWeightClaimReductionVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &VerifierOpeningAccumulator<F>,
-        sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, accumulator: &A, sumcheck_challenges: &[F::Challenge]) -> F {
         let N = self.params.polynomial_types.len();
 
         // When binding with LowToHigh, challenges[j] binds index bit j which corresponds to
@@ -630,11 +629,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         output_claim
     }
 
-    fn cache_openings(
-        &self,
-        accumulator: &mut VerifierOpeningAccumulator<F>,
-        sumcheck_challenges: &[F::Challenge],
-    ) {
+    fn cache_openings(&self, accumulator: &mut A, sumcheck_challenges: &[F::Challenge]) {
         let N = self.params.polynomial_types.len();
 
         // Compute full opening point (r_address || r_cycle)

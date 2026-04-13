@@ -1,0 +1,36 @@
+[package]
+name = "jolt-profiling"
+version = "0.1.0"
+edition = "2021"
+description = "Profiling and tracing infrastructure for the Jolt proving system"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/a16z/jolt"
+keywords = ["profiling", "tracing", "performance"]
+categories = ["development-tools::profiling"]
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+default = []
+monitor = ["dep:sysinfo"]
+pprof = ["dep:pprof", "dep:prost"]
+allocative = ["dep:inferno", "dep:allocative"]
+
+[dependencies]
+tracing.workspace = true
+tracing-chrome.workspace = true
+tracing-subscriber.workspace = true
+inferno = { workspace = true, optional = true }
+allocative = { workspace = true, optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+memory-stats.workspace = true
+sysinfo = { workspace = true, optional = true }
+pprof = { workspace = true, optional = true }
+prost = { workspace = true, optional = true }
+
+[package.metadata.cargo-machete]
+# prost is required by pprof's prost-codec feature but not directly imported
+ignored = ["prost"]
