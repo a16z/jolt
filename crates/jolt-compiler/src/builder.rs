@@ -463,10 +463,18 @@ impl ModuleBuilder {
                         });
                     } else if is_bool {
                         if let Iteration::Booleanity { ref config } = kdef.spec.iteration {
-                            self.ops.push(Op::BooleanityInit {
+                            self.ops.push(Op::UnifiedInstanceInit {
                                 batch,
                                 instance: inst_idx,
-                                config: config.clone(),
+                                config: InstanceConfig::Booleanity {
+                                    ra_poly_ids: config.ra_poly_ids.clone(),
+                                    addr_challenges: config.addr_challenges.clone(),
+                                    cycle_challenges: config.cycle_challenges.clone(),
+                                    gamma_powers: config.gamma_powers.clone(),
+                                    gamma_powers_square: config.gamma_powers_square.clone(),
+                                    log_k_chunk: config.log_k_chunk,
+                                    log_t: config.log_t,
+                                },
                             });
                         }
                     } else {
@@ -520,14 +528,8 @@ impl ModuleBuilder {
                 } else {
                     // Mid-phase: bind.
                     if let Some(ch) = bind {
-                        if is_ps {
+                        if is_ps || is_bool {
                             self.ops.push(Op::UnifiedInstanceBind {
-                                batch,
-                                instance: inst_idx,
-                                challenge: ch,
-                            });
-                        } else if is_bool {
-                            self.ops.push(Op::BooleanityBind {
                                 batch,
                                 instance: inst_idx,
                                 challenge: ch,
@@ -554,13 +556,8 @@ impl ModuleBuilder {
                 }
 
                 // Reduce.
-                if is_ps {
+                if is_ps || is_bool {
                     self.ops.push(Op::UnifiedInstanceReduce {
-                        batch,
-                        instance: inst_idx,
-                    });
-                } else if is_bool {
-                    self.ops.push(Op::BooleanityReduce {
                         batch,
                         instance: inst_idx,
                     });
