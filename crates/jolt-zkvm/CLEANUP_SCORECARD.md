@@ -1,18 +1,35 @@
 # Cleanup Scorecard
 
-**Status**: IN PROGRESS
+**Status**: IN PROGRESS — MIGRATION MODE
 **Last updated**: 2026-04-13
-**NEXT ACTION**: 1.11 (Section separators)
+**MODE**: SWEEP (finish Tier 1-2), then MIGRATION (Tier 4 via MIGRATION_PLAN.md)
+**NEXT ACTION**: 1.13 (unreachable! dispatch paths)
 
 ## Loop Protocol
 
+Three modes — see `ARCHITECTURE.md` and `MIGRATION_PLAN.md` for design docs.
+
 ```
-1. READ this file
-2. Execute NEXT ACTION
-3. Run test gate
-4. If pass: commit, mark criterion PASS, update NEXT ACTION to next FAIL
-5. If fail: diagnose, fix, goto 3
-6. If all PASS: DONE
+SWEEP MODE (Tiers 1-3, 5, 6):
+  1. Read this file → find NEXT ACTION
+  2. Execute it
+  3. Run test gate
+  4. Pass → commit, mark PASS, advance NEXT ACTION
+  5. Fail → fix, goto 3
+
+MIGRATION MODE (Tier 4):
+  1. Read MIGRATION_PLAN.md → find NEXT STEP
+  2. Execute it
+  3. Run test gate + verification greps
+  4. Pass → commit, mark step DONE, advance pointer
+  5. Fail → fix plan if needed, goto 2
+  6. All steps DONE → mark Tier 4 criteria PASS, return to SWEEP
+
+DESIGN MODE (when new architectural issues surface):
+  1. Deep-read relevant code
+  2. Update ARCHITECTURE.md with target design
+  3. Update MIGRATION_PLAN.md with ordered steps
+  4. Switch to MIGRATION MODE
 ```
 
 ## Test Gate
@@ -39,75 +56,74 @@ cargo clippy -p jolt-compiler -p jolt-compute -p jolt-cpu -p jolt-zkvm -p jolt-d
 | 1.7 | Clippy clean: jolt-verifier | PASS | |
 | 1.8 | cargo fmt clean | PASS | |
 | 1.9 | Clippy clean: jolt-core (blocker for equivalence) | PASS | |
-| 1.10 | No TODO/FIXME/HACK/XXX comments | PASS | 0 found |
-| 1.11 | Section separators removed (// ──, // ===, // ---) | FAIL | 107 across 15 files |
-| 1.12 | No #[allow(unused)]/dead_code suppressions | FAIL | 4 across 4 files |
-| 1.13 | No unreachable!() for dispatch paths | FAIL | 7 in jolt-cpu, 5 in jolt-metal |
+| 1.10 | No TODO/FIXME/HACK/XXX comments | PASS | |
+| 1.11 | Section separators removed | PASS | 107 removed across 15 files |
+| 1.12 | No #[allow(dead_code)] suppressions (delete the dead code) | PASS | 1 legit RAII remain (TracingGuards) |
+| 1.13 | No unreachable!() for dispatch paths | FAIL | 7 in jolt-cpu, 5 in jolt-metal — resolved by Tier 4 migration |
 
 ## Tier 2 — Simplification (Occam's razor — every line earns its place)
 
 | # | Criterion | Status | Notes |
 |---|-----------|--------|-------|
-| 2.1 | Unnecessary .clone() eliminated in runtime | FAIL | 6 clones in runtime.rs |
-| 2.2 | unwrap_or_else → unwrap_or where applicable | FAIL | jolt-cpu generic.rs, jolt-openings mock.rs |
+| 2.1 | Unnecessary .clone() eliminated in runtime | FAIL | runtime.rs |
+| 2.2 | unwrap_or_else → unwrap_or where applicable | FAIL | |
 | 2.3 | Verbose match/if-let simplified | TODO | |
-| 2.4 | Magic numbers named as constants | FAIL | jolt-compiler params.rs: hardcoded 4, 8 |
-| 2.5 | #[allow(clippy::ptr_arg)] reviewed | FAIL | 5 in jolt-cpu backend.rs |
-| 2.6 | No placeholders or janky code | TODO | Full scan needed |
-| 2.7 | No hacky workarounds (prefer clean redesign) | FAIL | SnapshotEval is a workaround for flat eval map |
+| 2.4 | Magic numbers named as constants | FAIL | |
+| 2.5 | #[allow(clippy::too_many_arguments)] eliminated | FAIL | 4 occurrences — resolved by Tier 4 migration |
+| 2.6 | No placeholders or janky code | TODO | |
+| 2.7 | No hacky workarounds | FAIL | SnapshotEval |
 
-## Tier 3 — Crate Boundaries & Visibility (each crate does one job, hides its internals)
+## Tier 3 — Crate Boundaries & Visibility
 
 | # | Criterion | Status | Notes |
 |---|-----------|--------|-------|
-| 3.1 | pub(crate) used for internal-only items | FAIL | Only jolt-dory has good discipline (11 pub(crate)) |
-| 3.2 | Consistent naming across crate boundaries | PASS | Minor: ProverConfig vs OneHotConfig |
+| 3.1 | pub(crate) used for internal-only items | FAIL | Most crates lack discipline |
+| 3.2 | Consistent naming across crate boundaries | PASS | |
 | 3.3 | Type aliases for repeated generic bounds | TODO | |
-| 3.4 | jolt-compiler: zero runtime code, only protocol→ops lowering | PASS | Clean |
-| 3.5 | jolt-compute: zero protocol knowledge in trait | FAIL | 38-method trait with protocol-specific state machines |
-| 3.6 | jolt-cpu: zero protocol types in public API | FAIL | Exposes Cpu{Booleanity,HwReduction,PrefixSuffix}State |
-| 3.7 | jolt-zkvm: zero protocol logic in runtime | FAIL | 12 match arms + 3 state fields |
-| 3.8 | jolt-dory: zero Jolt-specific leakage | PASS | Clean |
-| 3.9 | Coordinated constants use shared source | FAIL | LOG_K=128 duplicated |
-| 3.10 | Clean dependency DAG (no circular, minimal coupling) | PASS | No cycles detected |
+| 3.4 | jolt-compiler: pure protocol→ops lowering | PASS | |
+| 3.5 | jolt-compute: zero protocol knowledge in trait | FAIL | → MIGRATION_PLAN Step 6 |
+| 3.6 | jolt-cpu: zero protocol types in public API | FAIL | → MIGRATION_PLAN Step 6 |
+| 3.7 | jolt-zkvm: zero protocol logic in runtime | FAIL | → MIGRATION_PLAN Step 6 |
+| 3.8 | jolt-dory: zero Jolt-specific leakage | PASS | |
+| 3.9 | Coordinated constants use shared source | FAIL | |
+| 3.10 | Clean dependency DAG | PASS | |
 
-## Tier 4 — Architectural (ML Compiler of Cryptography)
+## Tier 4 — Architectural (MIGRATION_PLAN.md)
 
 ### 4A — Protocol-Unaware Runtime
 
 | # | Criterion | Status | Notes |
 |---|-----------|--------|-------|
-| 4.1 | Op enum: no algorithm-named variants | FAIL | 12 variants: PrefixSuffix(4) + Booleanity(4) + HwReduction(4) |
-| 4.2 | ComputeBackend: single InstanceState type + 4 methods | FAIL | Currently 3 types + 38 methods |
-| 4.3 | RuntimeState: 1 instance_states map | FAIL | 3 protocol-specific HashMaps |
-| 4.4 | Iteration enum: no protocol-specific variants | FAIL | PrefixSuffix, Booleanity, HammingWeightReduction |
-| 4.5 | CpuBackend: unified instance dispatch | FAIL | 12 separate impl methods |
-| 4.6 | No SnapshotEval workaround needed | FAIL | 12 occurrences across 4 files |
-| 4.7 | Scoped evaluation model (not flat HashMap) | FAIL | Single-slot per poly, stages overwrite |
+| 4.1 | Op enum: no algorithm-named variants | FAIL | → MIGRATION Steps 3-5 |
+| 4.2 | ComputeBackend: 1 InstanceState + 4 methods | FAIL | → MIGRATION Steps 1-2 |
+| 4.3 | RuntimeState: 1 instance_states map | FAIL | → MIGRATION Step 6 |
+| 4.4 | CpuBackend: unified instance dispatch | FAIL | → MIGRATION Step 2 |
+| 4.5 | No SnapshotEval workaround needed | FAIL | Separate design needed |
+| 4.6 | Scoped evaluation model | FAIL | Separate design needed |
 
-### 4B — Type Safety (compile-time correctness > runtime checks)
-
-| # | Criterion | Status | Notes |
-|---|-----------|--------|-------|
-| 4.8 | Challenge indices: typed newtype not raw usize | TODO | challenges[usize] throughout |
-| 4.9 | Batch/instance keys: typed not (usize, usize) | TODO | |
-| 4.10 | Dispatch paths compile-time provable (no unreachable!) | FAIL | 7 unreachable! in jolt-cpu |
-
-### 4C — Extensibility (new subprotocol = local change, not shotgun surgery)
+### 4B — Type Safety
 
 | # | Criterion | Status | Notes |
 |---|-----------|--------|-------|
-| 4.11 | Adding a subprotocol touches only compiler + backend impl | FAIL | Currently: Op + Backend trait + RuntimeState + CpuBackend |
-| 4.12 | Adding a backend touches only the new backend crate | FAIL | Must implement 38 protocol methods |
+| 4.7 | Challenge indices: typed newtype | TODO | |
+| 4.8 | Batch/instance keys: typed | TODO | |
+| 4.9 | Dispatch paths compile-time provable | FAIL | → MIGRATION Step 7 |
 
-### 4D — Abstraction Quality (Occam's razor applied to design)
+### 4C — Extensibility
 
 | # | Criterion | Status | Notes |
 |---|-----------|--------|-------|
-| 4.13 | Each abstraction has a clear, single purpose | FAIL | ComputeBackend mixes kernel dispatch + buffer ops + state machines |
-| 4.14 | No leaky abstractions (protocol doesn't leak through generic interfaces) | FAIL | BooleanityConfig visible through ComputeBackend |
-| 4.15 | Minimal indirection (fewest layers between intent and execution) | TODO | |
-| 4.16 | Traits have minimal surface area | FAIL | ComputeBackend: 38 methods |
+| 4.10 | New subprotocol = compiler + backend only | FAIL | → MIGRATION Step 6 |
+| 4.11 | New backend = one crate only | FAIL | → MIGRATION Step 6 |
+
+### 4D — Abstraction Quality
+
+| # | Criterion | Status | Notes |
+|---|-----------|--------|-------|
+| 4.12 | Each abstraction single-purpose | FAIL | → MIGRATION |
+| 4.13 | No leaky abstractions | FAIL | → MIGRATION Step 6 |
+| 4.14 | Minimal indirection | TODO | |
+| 4.15 | Traits have minimal surface area | FAIL | → MIGRATION Step 6 |
 
 ## Tier 5 — Production Quality
 
@@ -115,78 +131,86 @@ cargo clippy -p jolt-compiler -p jolt-compute -p jolt-cpu -p jolt-zkvm -p jolt-d
 
 | # | Criterion | Status | Notes |
 |---|-----------|--------|-------|
-| 5.1 | WHY comments on all non-obvious logic | TODO | |
-| 5.2 | SAFETY comments on all unsafe blocks | TODO | |
-| 5.3 | No doc comments that restate the item name | TODO | |
-| 5.4 | Public API docs explain behavior + constraints | TODO | |
+| 5.1 | WHY comments on non-obvious logic | TODO | |
+| 5.2 | SAFETY comments on unsafe blocks | TODO | |
+| 5.3 | No doc comments restating item name | TODO | |
+| 5.4 | Public API docs explain behavior | TODO | |
 
 ### 5B — Testing
 
 | # | Criterion | Status | Notes |
 |---|-----------|--------|-------|
-| 5.5 | All tests compile and pass | PASS | Both equivalence tests pass |
+| 5.5 | All tests compile and pass | PASS | |
 | 5.6 | No #[ignore] without justification | TODO | |
-| 5.7 | Fuzz targets compile | PASS | Fixed transcript_no_panic type inference |
+| 5.7 | Fuzz targets compile | PASS | |
 
-### 5C — Anti-Patterns (ML compiler design violations)
+### 5C — Anti-Patterns
 
 | # | Criterion | Status | Notes |
 |---|-----------|--------|-------|
-| 5.8 | Runtime never imports protocol-specific types | FAIL | Imports BooleanityConfig, HwReductionConfig |
-| 5.9 | Backend never sees algorithm names (only generic operations) | FAIL | ps_init, bool_bind, hw_reduce |
-| 5.10 | State machines encoded in compiler, not runtime | FAIL | PS/Bool/HW state machines live in runtime |
-| 5.11 | No out-of-band state (all state flows through Module) | FAIL | SnapshotEval patches state outside Module flow |
-| 5.12 | Module is self-describing (executable without external context) | TODO | |
+| 5.8 | Runtime never imports protocol types | FAIL | → MIGRATION Step 6 |
+| 5.9 | Backend trait uses only generic names | FAIL | → MIGRATION Step 6 |
+| 5.10 | State machines encoded in compiler | FAIL | → MIGRATION |
+| 5.11 | No out-of-band state | FAIL | SnapshotEval |
+| 5.12 | Module is self-describing | TODO | |
 
 ## Tier 6 — Systems Engineering Principles
 
-### 6A — Single Responsibility & Cohesion
+### 6A — Cohesion
 
 | # | Criterion | Status | Notes |
 |---|-----------|--------|-------|
-| 6.1 | jolt-compute trait separable into orthogonal concerns | FAIL | KernelDispatch + BufferOps + ReductionState mixed in 1 trait |
-| 6.2 | jolt-zkvm runtime.rs < 500 LOC | FAIL | ~1600 LOC, multiple concerns |
-| 6.3 | Each file has one reason to change | TODO | |
+| 6.1 | ComputeBackend orthogonal concerns | FAIL | → MIGRATION |
+| 6.2 | runtime.rs < 500 LOC | FAIL | → MIGRATION |
+| 6.3 | Each file one reason to change | TODO | |
 
 ### 6B — Dependency Inversion
 
 | # | Criterion | Status | Notes |
 |---|-----------|--------|-------|
-| 6.4 | High-level modules depend on abstractions, not concretions | FAIL | jolt-zkvm imports jolt-compiler IR types directly |
-| 6.5 | No upward dependencies (leaf crates stay leaves) | PASS | No cycles |
+| 6.4 | High-level depends on abstractions | FAIL | |
+| 6.5 | No upward dependencies | PASS | |
 
 ### 6C — Information Hiding
 
 | # | Criterion | Status | Notes |
 |---|-----------|--------|-------|
-| 6.6 | DeviceBuffer doesn't panic on wrong variant access | FAIL | 4 panics in accessor methods |
-| 6.7 | Internal state types not in pub API | FAIL | CpuKernel, BoxedEvalFn, EvalFn exposed |
-| 6.8 | Implementation details behind well-defined interfaces | FAIL | runtime.rs pattern-matches on compiler IR inline |
+| 6.6 | DeviceBuffer no panics on wrong variant | FAIL | |
+| 6.7 | Internal types not in pub API | FAIL | |
+| 6.8 | Impl details behind interfaces | FAIL | |
 
 ### 6D — Error Handling
 
 | # | Criterion | Status | Notes |
 |---|-----------|--------|-------|
-| 6.9 | No .expect() in non-test, non-setup code | FAIL | 23 in runtime.rs, 10 in jolt-dory |
-| 6.10 | Error types for all fallible operations | FAIL | jolt-compute has no error type |
-| 6.11 | Panics only for true invariant violations | TODO | |
+| 6.9 | No .expect() in non-test code | FAIL | |
+| 6.10 | Error types for fallible ops | FAIL | |
+| 6.11 | Panics only for invariant violations | TODO | |
 
-### 6E — Simplicity (the design you'd draw on a whiteboard)
+### 6E — Simplicity
 
 | # | Criterion | Status | Notes |
 |---|-----------|--------|-------|
-| 6.12 | Could explain the architecture in 5 sentences | FAIL | Protocol-aware escape hatches complicate the story |
-| 6.13 | No abstraction exists just for "flexibility" | TODO | |
-| 6.14 | Data flows in one direction through the pipeline | TODO | |
+| 6.12 | Explainable in 5 sentences | FAIL | |
+| 6.13 | No speculative abstractions | TODO | |
+| 6.14 | Unidirectional data flow | TODO | |
 
 ---
 
 ## Progress
 
-- **Tier 1**: 10/13 passing
+- **Tier 1**: 12/13 passing (1.13 deferred to migration)
 - **Tier 2**: 0/7 passing
 - **Tier 3**: 4/10 passing
-- **Tier 4**: 0/16 passing
+- **Tier 4**: 0/15 passing (all blocked on MIGRATION_PLAN)
 - **Tier 5**: 2/12 passing
 - **Tier 6**: 1/14 passing
-- **Overall: 17/72 passing**
+- **Overall: 19/71 passing**
+
+## Execution Order
+
+1. SWEEP: Tier 2 simplifications (clone, verbose patterns, magic numbers)
+2. MIGRATION: Tier 4 via MIGRATION_PLAN.md Steps 1-7
+3. SWEEP: Tier 3 remaining (pub visibility, constants)
+4. SWEEP: Tier 5 production polish (comments, docs, anti-patterns)
+5. SWEEP: Tier 6 systems principles (error handling, information hiding)
