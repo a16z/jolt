@@ -129,7 +129,11 @@ impl<F: JoltField> CanonicalDeserialize for Claims<F> {
         compress: Compress,
         validate: Validate,
     ) -> Result<Self, SerializationError> {
+        const MAX_CLAIMS: usize = 10_000;
         let size = usize::deserialize_with_mode(&mut reader, compress, validate)?;
+        if size > MAX_CLAIMS {
+            return Err(SerializationError::InvalidData);
+        }
         let mut claims = BTreeMap::new();
         for _ in 0..size {
             let key = OpeningId::deserialize_with_mode(&mut reader, compress, validate)?;

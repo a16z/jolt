@@ -277,7 +277,7 @@ impl SmallScalar for S64 {
         let a = self.to_i128();
         let b = other.to_i128();
         let diff = (a - b).unsigned_abs();
-        r.mul_u64(diff as u64)
+        r.mul_u128(diff)
     }
     #[inline]
     fn msm<G: VariableBaseMSM>(
