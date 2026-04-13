@@ -10,7 +10,8 @@ use jolt_core::{
         unipoly::UniPoly,
     },
     subprotocols::mles_product_sum::{
-        compute_mles_product_sum, eval_linear_prod_naive_assign, finish_mles_product_sum_from_evals,
+        compute_mles_product_sum, compute_mles_product_sum_evals_sum_of_products_d4,
+        eval_linear_prod_naive_assign, finish_mles_product_sum_from_evals,
     },
 };
 
@@ -106,6 +107,26 @@ fn bench_mles_product_sum(c: &mut Criterion, n_mle: usize) {
     group.finish();
 }
 
+/// Benchmark the sum-of-products path used in InstructionRaSumcheckProver.
+/// Tests D=4 with n_products=8, matching the typical fibonacci configuration.
+fn bench_sum_of_products_d4(c: &mut Criterion) {
+    let rng = &mut test_rng();
+    let mle_n_vars = 14;
+    let n_products = 8;
+    let d = 4;
+    let total_mles = n_products * d;
+
+    let random_mle: MultilinearPolynomial<Fr> =
+        vec![<Fr as JoltField>::random(rng); 1 << mle_n_vars].into();
+    let mles = vec![RaPolynomial::RoundN(random_mle); total_mles];
+    let r = vec![<Fr as JoltField>::Challenge::random(rng); mle_n_vars];
+    let eq_poly = GruenSplitEqPolynomial::new(&r, BindingOrder::LowToHigh);
+
+    c.bench_function("sum_of_products_d4_n8", |b| {
+        b.iter(|| compute_mles_product_sum_evals_sum_of_products_d4(&mles, n_products, &eq_poly))
+    });
+}
+
 fn mles_product_sum_benches(c: &mut Criterion) {
     bench_mles_product_sum(c, 2);
     bench_mles_product_sum(c, 3);
@@ -115,5 +136,5 @@ fn mles_product_sum_benches(c: &mut Criterion) {
     bench_mles_product_sum(c, 32);
 }
 
-criterion_group!(benches, mles_product_sum_benches);
+criterion_group!(benches, mles_product_sum_benches, bench_sum_of_products_d4);
 criterion_main!(benches);
