@@ -228,7 +228,8 @@ fn build_envelope_schema(input_schema: &serde_json::Value) -> serde_json::Value 
             },
             "counterexample": input_schema
         },
-        "required": ["analysis", "counterexample"]
+        "required": ["analysis", "counterexample"],
+        "additionalProperties": false
     })
 }
 
