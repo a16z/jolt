@@ -80,8 +80,6 @@ pub fn extract_trace<C: CycleRow, F: Field>(
             continue;
         }
 
-        // ── Shared reads from CycleRow ─────────────────────────────────
-
         let rd_write = cycle.rd_write();
         let rs1_read = cycle.rs1_read();
         let rs2_read = cycle.rs2_read();
@@ -107,8 +105,6 @@ pub fn extract_trace<C: CycleRow, F: Field>(
         iflag_right_is_imm[t] =
             F::from_u64(iflags[InstructionFlags::RightOperandIsImm as usize] as u64);
 
-        // ── CycleInput (witness polynomial data) ───────────────────────
-
         let rd_inc = match rd_write {
             Some((_, pre, post)) => post as i128 - pre as i128,
             None => 0,
@@ -132,8 +128,6 @@ pub fn extract_trace<C: CycleRow, F: Field>(
             dense: [rd_inc, ram_inc],
             one_hot: [Some(lookup_index), Some(pc_index as u128), ram_address],
         });
-
-        // ── R1CS witness (per-constraint verification vector) ──────────
 
         let w = &mut r1cs[r1cs_offset..r1cs_offset + NUM_VARS_PER_CYCLE];
         w[V_CONST] = F::from_u64(1);

@@ -38,7 +38,6 @@ fn fields_eq(core: CoreFr, zkvm: Fr) -> bool {
 
 #[test]
 fn product_left_projection_equivalence() {
-    // ── jolt-zkvm: extract trace + R1CS witness ─────────────────────
     let mut program = Program::new("muldiv-guest");
     let (bytecode_raw, _init_mem, _program_size, entry_address) = program.decode();
     let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
@@ -58,7 +57,6 @@ fn product_left_projection_equivalence() {
         v_pad,
     );
 
-    // ── jolt-core: trace (same guest, same inputs) ──────────────────
     let mut core_program = jolt_core::host::Program::new("muldiv-guest");
     let _ = core_program.decode();
     let core_inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
@@ -69,7 +67,6 @@ fn product_left_projection_equivalence() {
 
     eprintln!("trace_length = {trace_length}");
 
-    // ── Step 1: Compare raw A-row witness variables ─────────────────
     let a_vars = [V_LEFT_INSTRUCTION_INPUT, V_LOOKUP_OUTPUT, V_FLAG_JUMP];
     let a_names = ["LeftInstructionInput", "LookupOutput", "JumpFlag"];
 
@@ -107,7 +104,6 @@ fn product_left_projection_equivalence() {
         trace_length * 3
     );
 
-    // ── Step 2: Build domain-indexed product_left from DerivedSource ──
     let derived = DerivedSource::<Fr>::new(&r1cs_witness, trace_length, v_pad);
     let domain_left = derived.compute(jolt_compiler::PolynomialId::ProductLeft);
     let domain_left = domain_left.as_ref();
@@ -121,7 +117,6 @@ fn product_left_projection_equivalence() {
         domain_right.len()
     );
 
-    // ── Step 3: Lagrange basis at a fixed r0 ────────────────────────
     let r0 = Fr::from_u64(42);
     let r0_core = CoreFr::from_u64(42);
 
@@ -138,7 +133,6 @@ fn product_left_projection_equivalence() {
         }
     }
 
-    // ── Step 4: Compare projected left values ───────────────────────
     eprintln!("\n=== Projected LEFT comparison (first 16 cycles) ===");
     let mut left_mismatches = 0;
     for c in 0..trace_length {
@@ -163,7 +157,6 @@ fn product_left_projection_equivalence() {
     }
     eprintln!("Left projection mismatches: {left_mismatches} / {trace_length}");
 
-    // ── Step 5: Compare projected right values ──────────────────────
     eprintln!("\n=== Projected RIGHT comparison (first 16 cycles) ===");
     let mut right_mismatches = 0;
     for c in 0..trace_length {

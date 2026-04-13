@@ -879,16 +879,6 @@ macro_rules! equivalence_test_body {
     }};
 }
 
-#[allow(unused_macros)]
-macro_rules! equivalence_test {
-    ($name:ident, $stage_idx:literal) => {
-        #[test]
-        fn $name() {
-            equivalence_test_body!($stage_idx);
-        }
-    };
-}
-
 #[test]
 #[ignore = "requires full pipeline wiring"]
 fn cross_system_stage1() {
@@ -1098,12 +1088,9 @@ fn transcript_divergence() {
 #[test]
 fn instruction_ra0_data_matches() {
     use jolt_core::poly::commitment::dory::DoryGlobals;
-    #[allow(unused_imports)]
-    use jolt_core::poly::one_hot_polynomial::OneHotPolynomial as CoreOneHot;
 
     let (_, params) = jolt_core_state_history();
 
-    // ── jolt-core side: extract InstructionRa(0) from prover ──
     DoryGlobals::reset();
     let mut program = host::Program::new("muldiv-guest");
     let (bytecode, init_memory_state, _, e_entry) = program.decode();
@@ -1134,7 +1121,6 @@ fn instruction_ra0_data_matches() {
     let instruction_d = one_hot_params.instruction_d;
     let trace_length = params.trace_length;
 
-    // ── jolt-zkvm side ──
     let (_, polys, _, _, _, _, _, _, _, _, _, _) = setup_zkvm_muldiv(params);
 
     // Check ALL InstructionRa chunks
@@ -1596,7 +1582,7 @@ fn zkvm_proof_accepted_by_core_verifier() {
     verifier.verify_stage7().expect("stage 7 failed");
     eprintln!("[cross-system] stage 7 OK");
 
-    verifier.verify_stage8().expect("stage 8 failed");
+    let _ = verifier.verify_stage8().expect("stage 8 failed");
     eprintln!("[cross-system] stage 8 OK");
 
     eprintln!("SUCCESS: jolt-core verifier accepted jolt-zkvm proof (all 8 stages)");

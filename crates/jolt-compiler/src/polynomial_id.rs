@@ -15,7 +15,7 @@ use crate::descriptor::{PolySource, PolynomialDescriptor, R1csColumn, StorageHin
 /// verified through sumcheck output formulas.
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 pub enum PolynomialId {
-    // ── Committed (PCS-opened) ──────────────────────────────────────
+    // Committed (PCS-opened)
     SpartanWitness,
     RamInc,
     RdInc,
@@ -25,7 +25,7 @@ pub enum PolynomialId {
     TrustedAdvice,
     UntrustedAdvice,
 
-    // ── Virtual: memory subsystem ───────────────────────────────────
+    // Virtual: memory subsystem
     RamReadValue,
     RamWriteValue,
     RamAddress,
@@ -34,7 +34,7 @@ pub enum PolynomialId {
     HammingWeight,
     RamWa,
 
-    // ── Virtual: register subsystem ─────────────────────────────────
+    // Virtual: register subsystem
     RdWriteValue,
     Rs1Value,
     Rs2Value,
@@ -44,26 +44,26 @@ pub enum PolynomialId {
     RdWa,
     Rd,
 
-    // ── Virtual: instruction lookups ────────────────────────────────
+    // Virtual: instruction lookups
     LookupOutput,
     LeftLookupOperand,
     RightLookupOperand,
     LeftInstructionInput,
     RightInstructionInput,
 
-    // ── Virtual: R1CS products ──────────────────────────────────────
+    // Virtual: R1CS products
     Product,
     ShouldBranch,
     ShouldJump,
 
-    // ── Virtual: instruction flags ──────────────────────────────────
+    // Virtual: instruction flags
     IsRdNotZero,
     WriteLookupToRdFlag,
     JumpFlag,
     BranchFlag,
     NoopFlag,
 
-    // ── Virtual: instruction input decomposition ────────────────────
+    // Virtual: instruction input decomposition
     LeftIsRs1,
     LeftIsPc,
     RightIsRs2,
@@ -71,18 +71,18 @@ pub enum PolynomialId {
     UnexpandedPc,
     Imm,
 
-    // ── Virtual: shift (next-cycle) ─────────────────────────────────
+    // Virtual: shift (next-cycle)
     NextUnexpandedPc,
     NextPc,
     NextIsVirtual,
     NextIsFirstInSequence,
     NextIsNoop,
 
-    // ── Virtual: circuit flags ──────────────────────────────────────
+    // Virtual: circuit flags
     /// Index matches jolt-instructions CircuitFlags enum order.
     OpFlag(usize),
 
-    // ── Virtual: bytecode ───────────────────────────────────────────
+    // Virtual: bytecode
     ExpandedPc,
     InstructionRafFlag,
     LookupTableFlag(usize),
@@ -104,7 +104,7 @@ pub enum PolynomialId {
     /// gamma^7 × f_entry_expected. Materialized by ScaleByChallenge.
     BytecodeEntryWeighted,
 
-    // ── Virtual: RAM subsystem ──────────────────────────────────────
+    // Virtual: RAM subsystem
     RamCombinedRa,
     RamRafRa,
     /// Full T×K RAM access indicator (cycle-major layout).
@@ -113,20 +113,20 @@ pub enum PolynomialId {
     InstructionRafRa,
     BytecodeRafRa,
 
-    // ── Virtual: Hamming weight reduction ────────────────────────────
+    // Virtual: Hamming weight reduction
     HammingG(usize),
 
-    // ── Virtual: Booleanity projected arrays ─────────────────────────
+    // Virtual: Booleanity projected arrays
     /// G_d(k) = Σ_j eq(r_cycle, j) × ra_d(k, j): cycle-projected RA (Phase 1 input).
     BooleanityG(usize),
     /// H_d(j) = ra_d(r*_addr, j): address-projected RA (Phase 2 input).
     BooleanityH(usize),
 
-    // ── Virtual: advice address phase ───────────────────────────────
+    // Virtual: advice address phase
     TrustedAdviceAddr,
     UntrustedAdviceAddr,
 
-    // ── Virtual: per-cycle gather indices (compact integer vectors) ────
+    // Virtual: per-cycle gather indices (compact integer vectors)
     /// Per-cycle register destination index rd[j] ∈ {0..K_REG-1}.
     /// Used by EqGather to build wa(j) = eq(r_address, rd[j]).
     RdGatherIndex,
@@ -134,32 +134,32 @@ pub enum PolynomialId {
     /// Used by EqGather to build RA(r_address, j) for RAM claim reduction.
     RamGatherIndex,
 
-    // ── Virtual: instruction lookup materialized outputs ───────────────
+    // Virtual: instruction lookup materialized outputs
     /// Combined Val+RAF polynomial materialized during the InstructionReadRaf
     /// address→cycle transition. T elements, one per cycle.
     InstructionCombinedVal,
 
-    // ── Virtual: RamRW eq tables (segmented) ──────────────────────────
+    // Virtual: RamRW eq tables (segmented)
     RamEqCycle,
     RamEqAddr,
 
-    // ── Virtual: per-instance batched sumcheck eq tables ─────────────
+    // Virtual: per-instance batched sumcheck eq tables
     BatchEq(usize),
 
-    // ── Virtual: Spartan internals ──────────────────────────────────
+    // Virtual: Spartan internals
     SpartanEq,
     ProductLeft,
     ProductRight,
     OuterUniskipEval,
     ProductUniskipEval,
 
-    // ── Virtual: Spartan R1CS ───────────────────────────────────────
+    // Virtual: Spartan R1CS
     Az,
     Bz,
     Cz,
     CombinedRow,
 
-    // ── Public: preprocessed ────────────────────────────────────────
+    // Public: preprocessed
     IoMask,
     ValIo,
     RamUnmap,
@@ -167,7 +167,7 @@ pub enum PolynomialId {
     LookupTable,
     BytecodeTable(usize),
 
-    // ── Evaluation snapshots ───────────────────────────────────────
+    // Evaluation snapshots
     /// Stores a historical evaluation value that would otherwise be
     /// overwritten by a later stage's eval flush. Used by
     /// BytecodeReadRaf's multi-stage input_claim formula.
@@ -178,7 +178,7 @@ impl PolynomialId {
     /// Returns the operational semantics for this polynomial.
     pub fn descriptor(&self) -> PolynomialDescriptor {
         match self {
-            // ── Committed: trace-derived dense ─────────────────────────
+            // Committed: trace-derived dense
             Self::RdInc => PolynomialDescriptor {
                 source: PolySource::Witness,
                 committed: true,
@@ -192,7 +192,7 @@ impl PolynomialId {
                 witness_slot: Some(WitnessSlot::Dense(WitnessSlot::RAM_INC)),
             },
 
-            // ── Committed: inserted separately (not from trace) ───────
+            // Committed: inserted separately (not from trace)
             Self::SpartanWitness | Self::TrustedAdvice | Self::UntrustedAdvice => {
                 PolynomialDescriptor {
                     source: PolySource::Witness,
@@ -202,7 +202,7 @@ impl PolynomialId {
                 }
             }
 
-            // ── Committed: trace-derived one-hot ──────────────────────
+            // Committed: trace-derived one-hot
             Self::InstructionRa(i) => PolynomialDescriptor {
                 source: PolySource::Witness,
                 committed: true,
@@ -231,7 +231,7 @@ impl PolynomialId {
                 }),
             },
 
-            // ── R1CS: computed on demand ───────────────────────────────
+            // R1CS: computed on demand
             Self::Az => PolynomialDescriptor {
                 source: PolySource::R1cs(R1csColumn::Az),
                 committed: false,
@@ -257,7 +257,7 @@ impl PolynomialId {
                 witness_slot: None,
             },
 
-            // ── Preprocessed: loaded from verifying key ────────────────
+            // Preprocessed: loaded from verifying key
             Self::IoMask
             | Self::ValIo
             | Self::RamUnmap
@@ -273,7 +273,7 @@ impl PolynomialId {
                 witness_slot: None,
             },
 
-            // ── R1CS input variables: column slices of witness ──────────
+            // R1CS input variables: column slices of witness
             _ if self.r1cs_variable_index().is_some() => PolynomialDescriptor {
                 source: PolySource::R1cs(R1csColumn::Variable(self.r1cs_variable_index().unwrap())),
                 committed: false,
@@ -281,7 +281,7 @@ impl PolynomialId {
                 witness_slot: None,
             },
 
-            // ── Virtual / derived: everything else ─────────────────────
+            // Virtual / derived: everything else
             _ => PolynomialDescriptor {
                 source: PolySource::Derived,
                 committed: false,

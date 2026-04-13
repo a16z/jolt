@@ -56,7 +56,7 @@ impl ModuleBuilder {
         }
     }
 
-    // ── Polynomial registration ──
+    // Polynomial registration
 
     /// Register a polynomial and return its id.
     pub fn add_poly(
@@ -75,7 +75,7 @@ impl ModuleBuilder {
         id
     }
 
-    // ── Challenge management ──
+    // Challenge management
 
     /// Allocate a single challenge slot and return its index.
     pub fn add_challenge(&mut self, name: &str, source: ChallengeSource) -> usize {
@@ -128,7 +128,7 @@ impl ModuleBuilder {
         self.challenges.len()
     }
 
-    // ── Kernel management ──
+    // Kernel management
 
     /// Register a kernel definition and return its index.
     pub fn add_kernel(&mut self, kdef: KernelDef) -> usize {
@@ -147,7 +147,7 @@ impl ModuleBuilder {
         &mut self.kernels[idx]
     }
 
-    // ── Batched sumcheck management ──
+    // Batched sumcheck management
 
     /// Register a batched sumcheck definition and return its index.
     pub fn add_batched_sumcheck(&mut self, bdef: BatchedSumcheckDef) -> usize {
@@ -156,7 +156,7 @@ impl ModuleBuilder {
         idx
     }
 
-    // ── Prover ops ──
+    // Prover ops
 
     /// Emit a raw prover op.
     pub fn push_op(&mut self, op: Op) {
@@ -585,14 +585,14 @@ impl ModuleBuilder {
         }
     }
 
-    // ── Verifier ops ──
+    // Verifier ops
 
     /// Emit a raw verifier op.
     pub fn push_verifier_op(&mut self, op: VerifierOp) {
         self.verifier_ops.push(op);
     }
 
-    // ── Build ──
+    // Build
 
     /// Consume the builder and produce a [`Module`].
     pub fn build(self) -> Module {

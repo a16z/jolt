@@ -49,7 +49,7 @@ fn hash_op112_direct() {
     eprintln!("  matches jolt-zkvm: {}", hash[..] == zkvm_expected[..]);
     eprintln!("  matches jolt-core: {}", hash[..] == core_expected[..]);
 
-    // === Scan for what n_rounds jolt-core used with the same data ===
+    // Scan for what n_rounds jolt-core used with the same data
     eprintln!("\n--- Scan: n_rounds with LabelWithCount data ---");
     let mut found = false;
     for n in 0u32..2000 {
@@ -63,7 +63,7 @@ fn hash_op112_direct() {
         eprintln!("NOT FOUND: no n_rounds in 0..2000 matches core with LabelWithCount data");
     }
 
-    // === Scan for what coeff count jolt-core used ===
+    // Scan for what coeff count jolt-core used
     eprintln!("\n--- Scan: different coeff counts with n_rounds=112 ---");
     found = false;
     for count in 0u64..200 {
@@ -80,7 +80,7 @@ fn hash_op112_direct() {
         eprintln!("NOT FOUND: no count in 0..200 matches core with n_rounds=112");
     }
 
-    // === Scan: raw label (no count, 32 bytes zero-padded) ===
+    // Scan: raw label (no count, 32 bytes zero-padded)
     eprintln!("\n--- Scan: raw label (no count) at various n_rounds ---");
     let mut label_only = [0u8; 32];
     label_only[..12].copy_from_slice(b"uniskip_poly");
@@ -96,7 +96,7 @@ fn hash_op112_direct() {
         eprintln!("NOT FOUND: raw label (no count) doesn't match core for any n_rounds 0..2000");
     }
 
-    // === Scan: maybe it's a challenge (no data), not an append ===
+    // Scan: maybe it's a challenge (no data), not an append
     eprintln!("\n--- Scan: challenge (no data) at various n_rounds ---");
     found = false;
     for n in 0u32..2000 {
@@ -117,7 +117,7 @@ fn hash_op112_direct() {
         eprintln!("NOT FOUND: no-data challenge doesn't match core for any n_rounds 0..2000");
     }
 
-    // === Scan: different labels at n_rounds=112 ===
+    // Scan: different labels at n_rounds=112
     eprintln!("\n--- Scan: common labels at n_rounds=112 ---");
     let labels: &[&[u8]] = &[
         b"sumcheck_poly",
@@ -147,7 +147,7 @@ fn hash_op112_direct() {
         }
     }
 
-    // === Nuclear option: try ALL 32-byte scalar data at n_rounds=112 ===
+    // Nuclear option: try ALL 32-byte scalar data at n_rounds=112
     // This would find if it's a scalar append. Try a few known patterns.
     eprintln!("\n--- Scan: zero scalar at n_rounds=112 ---");
     let zero_scalar = [0u8; 32];

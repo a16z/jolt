@@ -72,7 +72,6 @@ struct RuntimeState<B: ComputeBackend, F: Field, PCS: AdditivelyHomomorphic<Fiel
 where
     PCS::Output: HomomorphicCommitment<F>,
 {
-    // ── Compute state ──
     challenges: Vec<F>,
     evaluations: HashMap<PolynomialId, F>,
     last_round_coeffs: Vec<F>,
@@ -81,7 +80,6 @@ where
     /// Most recently squeezed challenge value.
     last_squeezed: F,
 
-    // ── Batched sumcheck state ──
     /// Per-batch → per-instance running claims.
     batch_instance_claims: Vec<Vec<F>>,
     /// Per-instance evaluations from the last round, used to update claims
@@ -109,11 +107,9 @@ where
     /// Key: `(batch_idx, instance_idx)`.
     hw_reduction_states: HashMap<(usize, usize), B::HwReductionState<F>>,
 
-    // ── Proof assembly (incremental) ──
     current_stage: Option<StageBuilder<F>>,
     stage_proofs: Vec<StageProof<F>>,
 
-    // ── PCS state ──
     commitments: Vec<PCS::Output>,
     hints: HashMap<PolynomialId, PCS::OpeningHint>,
     pending_claims: Vec<PendingClaim<F>>,
@@ -221,7 +217,6 @@ where
     let mut t_ops: usize = 0;
     for op in &executable.ops {
         match op {
-            // ── Compute ──
             Op::SumcheckRound {
                 kernel,
                 round: _,
@@ -380,7 +375,6 @@ where
                 }
             }
 
-            // ── PCS ──
             Op::Commit {
                 polys,
                 tag,
@@ -456,7 +450,6 @@ where
                 }
             }
 
-            // ── Orchestration ──
             Op::Preamble => {
                 transcript.append(&config);
                 t_ops += 1;
@@ -713,7 +706,6 @@ where
                 }
             }
 
-            // ── Granular batched sumcheck ops ──
             Op::BatchRoundBegin {
                 batch,
                 round,
@@ -1081,7 +1073,6 @@ where
                 state.last_round_coeffs = state.batch_combined.clone();
             }
 
-            // ── PrefixSuffix lifecycle ops ──
             Op::PrefixSuffixInit {
                 batch,
                 instance,
@@ -1129,7 +1120,6 @@ where
                 }
             }
 
-            // ── Booleanity lifecycle ops ──
             Op::BooleanityInit {
                 batch,
                 instance,
@@ -1211,7 +1201,6 @@ where
                 }
             }
 
-            // ── HW Reduction lifecycle ops ──
             Op::HwReductionInit {
                 batch,
                 instance,

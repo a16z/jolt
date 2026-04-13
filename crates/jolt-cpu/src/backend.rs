@@ -578,8 +578,6 @@ impl ComputeBackend for CpuBackend {
         total_evals.unwrap_or_else(|| vec![F::zero(); kernel.num_evals])
     }
 
-    // ── PrefixSuffix lifecycle ──────────────────────────────────────────
-
     type PrefixSuffixState<F: Field> = crate::prefix_suffix::CpuPrefixSuffixState<F>;
 
     fn ps_init<F: Field>(
@@ -605,8 +603,6 @@ impl ComputeBackend for CpuBackend {
     ) -> Vec<(PolynomialId, Vec<F>)> {
         state.materialize_outputs().into_iter().collect()
     }
-
-    // ── Booleanity lifecycle ───────────────────────────────────────────
 
     type BooleanityState<F: Field> = crate::booleanity::CpuBooleanityState<F>;
 
@@ -642,8 +638,6 @@ impl ComputeBackend for CpuBackend {
     fn bool_final_claims<F: Field>(&self, state: &Self::BooleanityState<F>) -> Vec<F> {
         state.final_ra_claims()
     }
-
-    // ── HW Reduction lifecycle ───────────────────────────────────────────
 
     type HwReductionState<F: Field> = crate::hw_reduction::CpuHwReductionState<F>;
 

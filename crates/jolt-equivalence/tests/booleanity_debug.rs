@@ -31,10 +31,8 @@ use jolt_field::{Field, Fr as NewFr};
 // and NewFr for tests that touch jolt-cpu backend.
 type Fr = ArkFr;
 
-// ============================================================
 // Naive reference: the dumbest possible booleanity round evaluator.
 // No Gruen, no kernels, no split-eq — just direct summation.
-// ============================================================
 
 /// Compute booleanity Phase 1 round 0 polynomial by direct summation.
 ///
@@ -335,9 +333,7 @@ fn dense_eq_input_produces_correct_round_poly() {
     eprintln!("This kernel formula: Σ_i γ^{{2i}} × eq(r, k) × (G_i(k)² - G_i(k))");
 }
 
-// ============================================================
 // Task #26: Naive reference vs core's Gruen
-// ============================================================
 
 /// Verify naive reference matches core's Gruen split-eq for a small example.
 /// Uses K=8 (3 address vars), T=4, D=2 with hand-chosen boolean RA data.
@@ -415,9 +411,7 @@ fn naive_reference_matches_gruen() {
     );
 }
 
-// ============================================================
 // Task #27: K=2, T=2 synthetic test — all three paths
-// ============================================================
 
 /// The critical test: K=4, T=4, D=2 — small enough to verify, large enough to distinguish conventions.
 /// Compares naive reference and zkvm kernel evaluation.
@@ -530,9 +524,7 @@ fn synthetic_k4_t4_naive_vs_kernel() {
     eprintln!("eq_project G matches naive G: PASS");
 }
 
-// ============================================================
 // Task #28: Unit tests for individual materialization ops
-// ============================================================
 
 /// Unit test: eq_project with AddressMajor data produces correct G_d (K≠T)
 #[test]
@@ -687,7 +679,7 @@ fn gruen_vs_dense_round0_comparison() {
     let r_cycle: Vec<NewFr> = vec![NewFr::from_u64(7), NewFr::from_u64(11)];
     let gamma_sq: Vec<NewFr> = vec![NewFr::one()];
 
-    // === Path A: Phase 1 Dense kernel with projected G_d ===
+    // Path A: Phase 1 Dense kernel with projected G_d
     let G = backend.eq_project(&ra_addr_major, &r_cycle, K, T);
     let eq_addr = jolt_poly::EqPolynomial::<NewFr>::evals(&r_addr, None);
     eprintln!("G: {:?}", G);
@@ -719,7 +711,7 @@ fn gruen_vs_dense_round0_comparison() {
         projected_evals[0] + projected_evals[1]
     );
 
-    // === Path B: Single-phase Dense kernel with full data ===
+    // Path B: Single-phase Dense kernel with full data
     // Combined eq: [r_cycle, r_addr] so that addr bits are LSB
     let combined_point: Vec<NewFr> = r_cycle.iter().chain(r_addr.iter()).copied().collect();
     let eq_combined = jolt_poly::EqPolynomial::<NewFr>::evals(&combined_point, None);

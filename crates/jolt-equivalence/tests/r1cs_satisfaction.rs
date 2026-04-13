@@ -6,12 +6,11 @@
 //! base evaluations in the outer uniskip sumcheck.
 #![allow(non_snake_case, clippy::print_stderr)]
 
-use jolt_field::{Field, Fr};
+use jolt_field::Fr;
 use jolt_host::{extract_trace, BytecodePreprocessing, Program};
 use jolt_r1cs::constraint::ConstraintMatrices;
 use jolt_r1cs::constraints::rv64::{self, *};
-use jolt_r1cs::{R1csKey, R1csSource};
-use num_traits::Zero;
+use jolt_r1cs::R1csKey;
 
 fn setup() -> (ConstraintMatrices<Fr>, Vec<Fr>, usize, usize) {
     let mut program = Program::new("muldiv-guest");
@@ -206,7 +205,7 @@ fn compare_ram_states() {
     DoryGlobals::reset();
 
     let mut core_program = host::Program::new("muldiv-guest");
-    let (bytecode, init_memory_state, _, _e_entry) = core_program.decode();
+    let (_bytecode, init_memory_state, _, _e_entry) = core_program.decode();
     let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
     let (_, _, core_memory, io_device) = core_program.trace(&inputs, &[], &[]);
 

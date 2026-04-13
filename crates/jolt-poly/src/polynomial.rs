@@ -482,7 +482,7 @@ mod tests {
     use super::*;
     use jolt_field::Field;
     use jolt_field::Fr;
-    use num_traits::{One, Zero};
+    use num_traits::Zero;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
@@ -565,11 +565,6 @@ mod tests {
         }
         assert_eq!(p.evals.len(), 1);
         assert_eq!(p.evals[0], poly.evaluate(&point));
-    }
-
-    #[allow(unused)]
-    fn uses_one_trait() {
-        let _ = Fr::one();
     }
 
     #[test]

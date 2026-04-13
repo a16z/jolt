@@ -251,12 +251,10 @@ impl<'a, F: Field> DerivedSource<'a, F> {
         buf
     }
 
-    // ── RAM polynomial construction ──
-    //
     // Built from R1CS witness columns V_RAM_ADDRESS, V_RAM_READ_VALUE,
     // V_FLAG_LOAD, V_FLAG_STORE plus the initial/final RAM state arrays.
     //
-    // Layout: address-major K×T — index(k, t) = k * T + t.
+    // Layout: address-major K*T -- index(k, t) = k * T + t.
     // This matches jolt-core's ReadWriteMatrixCycleMajor::materialize().
 
     /// Remap a raw byte address to a dense RAM index k.
@@ -369,9 +367,7 @@ impl<'a, F: Field> DerivedSource<'a, F> {
         ram.final_state.iter().map(|&v| F::from_u64(v)).collect()
     }
 
-    // ── Register polynomial construction ──────────────────────────────
-    //
-    // K_reg × T address-major: index(k, t) = k * T + t.
+    // K_reg x T address-major: index(k, t) = k * T + t.
     // K_reg = 128 (REGISTER_COUNT).
 
     const K_REG: usize = 128;

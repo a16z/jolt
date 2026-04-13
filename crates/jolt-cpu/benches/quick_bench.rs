@@ -27,9 +27,7 @@ use num_traits::{One, Zero};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
-// ---------------------------------------------------------------------------
 // Config
-// ---------------------------------------------------------------------------
 
 /// Target measurement time per benchmark.
 const TARGET_SECS: f64 = 1.0;
@@ -40,9 +38,7 @@ const MIN_ITERS: u64 = 5;
 /// Size for reduce/bind benchmarks.
 const LOG_N: usize = 18;
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 fn random_field_vec(n: usize, seed: u64) -> Vec<Fr> {
     let mut rng = ChaCha20Rng::seed_from_u64(seed);
@@ -59,9 +55,7 @@ fn product_sum_formula(d: usize) -> Formula {
     Formula::from_terms(terms)
 }
 
-// ---------------------------------------------------------------------------
 // Measurement
-// ---------------------------------------------------------------------------
 
 struct BenchResult {
     name: String,
@@ -160,9 +154,7 @@ where
     }
 }
 
-// ---------------------------------------------------------------------------
 // Benchmarks
-// ---------------------------------------------------------------------------
 
 fn bench_field_mul() -> BenchResult {
     let ops = 10_000u64;
@@ -319,9 +311,7 @@ fn bench_bind(order: BindingOrder) -> BenchResult {
     )
 }
 
-// ---------------------------------------------------------------------------
 // Output
-// ---------------------------------------------------------------------------
 
 fn print_table(results: &[BenchResult], baseline: Option<&Vec<BenchResult>>) {
     eprintln!(
@@ -462,9 +452,7 @@ fn parse_baseline(path: &str) -> Option<Vec<BenchResult>> {
     Some(results)
 }
 
-// ---------------------------------------------------------------------------
 // Main
-// ---------------------------------------------------------------------------
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();

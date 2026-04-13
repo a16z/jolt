@@ -53,8 +53,6 @@ impl<F: Field> R1csKey<F> {
         }
     }
 
-    // --- Dimension queries ---
-
     #[inline]
     pub fn num_cycle_vars(&self) -> usize {
         self.num_cycles.trailing_zeros() as usize
@@ -89,8 +87,6 @@ impl<F: Field> R1csKey<F> {
     pub fn num_col_vars(&self) -> usize {
         self.num_cycle_vars() + self.num_var_vars()
     }
-
-    // --- MLE evaluation ---
 
     /// Evaluates the per-cycle (local) matrix MLEs at `(constraint_point, var_point)`.
     ///

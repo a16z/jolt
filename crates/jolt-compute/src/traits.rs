@@ -139,15 +139,11 @@ pub trait ComputeBackend: Send + Sync + 'static {
     /// values, which are provided at dispatch time.
     type CompiledKernel<F: Field>: Send + Sync;
 
-    // ── Kernel compilation ──────────────────────────────────────────────
-
     /// Compile a [`KernelSpec`] into backend-native code.
     ///
     /// Bakes in the formula, iteration pattern, evaluation grid, and
     /// binding order. Challenge values are provided at dispatch time.
     fn compile<F: Field>(&self, spec: &KernelSpec) -> Self::CompiledKernel<F>;
-
-    // ── Core dispatch ───────────────────────────────────────────────────
 
     /// Composition-reduce: evaluate the kernel over all input positions
     /// and return accumulated evaluation sums.
@@ -193,8 +189,6 @@ pub trait ComputeBackend: Send + Sync + 'static {
         order: BindingOrder,
     );
 
-    // ── Buffer management ───────────────────────────────────────────────
-
     /// Upload host data to a device buffer.
     fn upload<T: Scalar>(&self, data: &[T]) -> Self::Buffer<T>;
 
@@ -206,8 +200,6 @@ pub trait ComputeBackend: Send + Sync + 'static {
 
     /// Active element count of a buffer.
     fn len<T: Scalar>(&self, buf: &Self::Buffer<T>) -> usize;
-
-    // ── Table generation ────────────────────────────────────────────────
 
     /// Eq product table: `eq(r, x) = Π(rᵢxᵢ + (1−rᵢ)(1−xᵢ))`.
     fn eq_table<F: Field>(&self, point: &[F]) -> Self::Buffer<F>;
@@ -241,8 +233,6 @@ pub trait ComputeBackend: Send + Sync + 'static {
         num_cycles: usize,
     ) -> Self::Buffer<F>;
 
-    // ── Scalar operations ───────────────────────────────────────────────
-
     /// Evaluate a [`ClaimFormula`] against polynomial evaluations and challenges.
     fn evaluate_claim<F: Field>(
         &self,
@@ -253,8 +243,6 @@ pub trait ComputeBackend: Send + Sync + 'static {
 
     /// Evaluate a multilinear extension at a point via repeated halving.
     fn evaluate_mle<F: Field>(&self, evals: &[F], point: &[F]) -> F;
-
-    // ── Polynomial arithmetic ───────────────────────────────────────────
 
     /// Encode Uniskip round polynomial into transcript-ready coefficients.
     ///
@@ -281,8 +269,6 @@ pub trait ComputeBackend: Send + Sync + 'static {
 
     /// Extend evaluations at `{0, ..., n-1}` to `{0, ..., target_len-1}`.
     fn extend_evals<F: Field>(&self, evals: &[F], target_len: usize) -> Vec<F>;
-
-    // ── Input materialization ───────────────────────────────────────────
 
     /// Element-wise scale host data and produce a device buffer.
     fn scale_from_host<F: Field>(&self, data: &[F], scale: F) -> Self::Buffer<F>;
@@ -358,8 +344,6 @@ pub trait ComputeBackend: Send + Sync + 'static {
         challenges: &[F],
     ) -> Vec<F>;
 
-    // ── PrefixSuffix lifecycle ──────────────────────────────────────────
-
     /// Opaque state for a PrefixSuffix instance. Each backend controls
     /// data layout (CPU: Vec-of-Vec, GPU: flat device buffers, etc.).
     type PrefixSuffixState<F: Field>: Send + Sync;
@@ -383,8 +367,6 @@ pub trait ComputeBackend: Send + Sync + 'static {
         &self,
         state: Self::PrefixSuffixState<F>,
     ) -> Vec<(PolynomialId, Self::Buffer<F>)>;
-
-    // ── Booleanity lifecycle ───────────────────────────────────────────
 
     /// Opaque state for a Gruen-based booleanity sumcheck instance.
     type BooleanityState<F: Field>: Send + Sync;
@@ -413,8 +395,6 @@ pub trait ComputeBackend: Send + Sync + 'static {
     /// Returns `ra_d(r_addr, r_cycle)` for each committed RA polynomial,
     /// computed as `H_d[0] / γ^d`.
     fn bool_final_claims<F: Field>(&self, state: &Self::BooleanityState<F>) -> Vec<F>;
-
-    // ── HW Reduction lifecycle ─────────────────────────────────────────
 
     /// Opaque state for a fused HammingWeight + Address Reduction sumcheck instance.
     type HwReductionState<F: Field>: Send + Sync;

@@ -14,7 +14,6 @@ use jolt_poly::EqPolynomial;
 /// Mirrors `BooleanitySumcheckProver` in jolt-core but uses flat iteration
 /// instead of `GruenSplitEqPolynomial::par_fold_out_in_unreduced`.
 pub struct CpuBooleanityState<F: Field> {
-    // ── Phase 1 data ──
     /// G_d\[k\] = Σ_j eq(r_cycle, j) · ra_d(k, j).  One Vec per dimension.
     G: Vec<Vec<F>>,
     /// Expanding eq table for bound address variables (matches core's ExpandingTable).
@@ -24,26 +23,21 @@ pub struct CpuBooleanityState<F: Field> {
     /// Kept until Phase 2 transition to construct H.
     ra_data: Vec<Vec<F>>,
 
-    // ── Address Gruen eq state ──
     addr_w: Vec<F>,
     addr_current_scalar: F,
     addr_current_index: usize,
 
-    // ── Cycle Gruen eq state ──
     cycle_w: Vec<F>,
     cycle_current_scalar: F,
     cycle_current_index: usize,
 
-    // ── Gamma ──
     gamma_powers: Vec<F>,
     gamma_powers_square: Vec<F>,
 
-    // ── Phase 2 data (set at transition) ──
     /// H_d\[j\] pre-scaled by γ^d.  Bound in-place each Phase 2 round.
     H: Option<Vec<Vec<F>>>,
     eq_r_r: F,
 
-    // ── Shared ──
     /// Eq table over the "rest" (unbound, non-current) variables.
     /// Contracted (sum-of-pairs) after each round.
     eq_rest: Vec<F>,
@@ -131,8 +125,6 @@ impl<F: Field> CpuBooleanityState<F> {
         }
     }
 
-    // ── Phase 1 ─────────────────────────────────────────────────────────
-
     fn compute_phase1_round(&self, previous_claim: F) -> Vec<F> {
         let m = self.current_round + 1; // 1-indexed (matches core)
         let num_rest = self.eq_rest.len(); // 2^(n − m) groups
@@ -189,8 +181,6 @@ impl<F: Field> CpuBooleanityState<F> {
         )
     }
 
-    // ── Phase 2 ─────────────────────────────────────────────────────────
-
     fn compute_phase2_round(&self, previous_claim: F) -> Vec<F> {
         let h = self.H.as_ref().expect("H must be initialized in Phase 2");
         let half = h[0].len() / 2;
@@ -233,8 +223,6 @@ impl<F: Field> CpuBooleanityState<F> {
         // Multiply back by eq_r_r
         inner.into_iter().map(|v| v * self.eq_r_r).collect()
     }
-
-    // ── Challenge ingestion ─────────────────────────────────────────────
 
     /// Advance the state after a sumcheck challenge is squeezed.
     pub fn ingest_challenge(&mut self, r_j: F) {
@@ -349,8 +337,6 @@ impl<F: Field> CpuBooleanityState<F> {
             .collect()
     }
 }
-
-// ── Helpers ─────────────────────────────────────────────────────────────
 
 /// Gruen polynomial construction: s(X) = l(X) · q(X) evaluated at {0,1,2,3}.
 ///

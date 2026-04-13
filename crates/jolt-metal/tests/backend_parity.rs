@@ -257,8 +257,6 @@ fn eq_table_large() {
     assert_eq!(cpu_table, mtl_table, "large eq_table mismatch");
 }
 
-// ── Reduce parity tests ────────────────────────────────────────────────
-
 /// Helper: run reduce on both backends and compare results.
 fn reduce_parity(
     formula: &Formula,
@@ -463,8 +461,6 @@ fn reduce_product_sum_known_values() {
     // P(infinity) = diff[0]*diff[1]*diff[2]*diff[3] = 4*4*4*4 = 256
     assert_eq!(got[3], Fr::from_u64(256), "P(infinity) mismatch");
 }
-
-// ── Sparse parity tests ────────────────────────────────────────────────
 
 /// Sparse reduce matches CPU for product-sum D=3.
 #[test]

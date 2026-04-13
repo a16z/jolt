@@ -20,9 +20,7 @@ fn main() {
     eprintln!("\nAll expansions verified ✓");
 }
 
-// ---------------------------------------------------------------------------
 // Helpers: Lagrange basis and kernel over small integer domains
-// ---------------------------------------------------------------------------
 
 /// L_k(r) = ∏_{j≠k} (r - j) / (k - j) over domain {0, 1, ..., N-1}
 fn lagrange_basis(r: f64, domain_size: usize, k: usize) -> f64 {
@@ -66,12 +64,10 @@ fn assert_close(a: f64, b: f64, label: &str) {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Test 1: RamRW output_check
 //
 // Original:  eq(r_cycle_s1, r_cycle) * ra * (val + γ*(val + inc))
 // Expanded:  eq*ra*val + γ*eq*ra*val + γ*eq*ra*inc   (3 terms)
-// ---------------------------------------------------------------------------
 
 fn verify_ram_rw_output_check() {
     eprintln!("=== RamRW output_check ===");
@@ -101,7 +97,6 @@ fn verify_ram_rw_output_check() {
     eprintln!("  PASS ✓");
 }
 
-// ---------------------------------------------------------------------------
 // Test 2: ProductRemainder output_check
 //
 // Original:
@@ -111,7 +106,6 @@ fn verify_ram_rw_output_check() {
 //
 // Expanded: 12 terms from distributing fused_left × fused_right
 //   with the (1 - noop) split into positive and negative parts.
-// ---------------------------------------------------------------------------
 
 fn verify_product_remainder_output_check() {
     eprintln!("\n=== ProductRemainder output_check ===");
@@ -198,14 +192,12 @@ fn verify_product_remainder_output_check() {
     eprintln!("  PASS ✓ (12 terms, 3 groups, all match)");
 }
 
-// ---------------------------------------------------------------------------
 // Test 3: InstructionCR output_check
 //
 // Original:
 //   eq(r_spartan, r) * (LO + γ*LLOp + γ²*RLOp + γ³*LII + γ⁴*RII)
 //
 // Expanded: 5 terms, each with eq factor and γ^k weight
-// ---------------------------------------------------------------------------
 
 fn verify_instruction_cr_output_check() {
     eprintln!("\n=== InstructionCR output_check ===");
@@ -243,14 +235,12 @@ fn verify_instruction_cr_output_check() {
     eprintln!("  PASS ✓");
 }
 
-// ---------------------------------------------------------------------------
 // Test 4: OutputCheck output
 //
 // Original:
 //   eq(r_address, r') * io_mask(r') * (val_final(r') - val_io(r'))
 //
 // Expanded: 2 terms (positive val_final, negative val_io)
-// ---------------------------------------------------------------------------
 
 fn verify_output_check_output() {
     eprintln!("\n=== OutputCheck output ===");
@@ -278,14 +268,12 @@ fn verify_output_check_output() {
     eprintln!("  PASS ✓");
 }
 
-// ---------------------------------------------------------------------------
 // Test 5: Stage 1 cycle challenge indices
 //
 // Simulates the outer remaining's normalize_opening_point:
 //   r_cycle = challenges[1..].reverse()
 // and verifies that our challenge index mapping (30..55).rev() produces
 // the same values.
-// ---------------------------------------------------------------------------
 
 fn verify_stage1_cycle_challenge_indices() {
     eprintln!("\n=== Stage 1 cycle challenge indices ===");
@@ -344,7 +332,6 @@ fn verify_stage1_cycle_challenge_indices() {
     eprintln!("  Confirmed (29..54).rev() would be WRONG ✓");
 }
 
-// ---------------------------------------------------------------------------
 // Test 6: RamRW normalize_opening_point (Segments normalization)
 //
 // jolt-core's RamReadWriteCheckingParams::normalize_opening_point with
@@ -357,7 +344,6 @@ fn verify_stage1_cycle_challenge_indices() {
 //   segment 0: rev(raw[0..25])  = rev(phase1) = r_cycle
 //   segment 1: rev(raw[25..45]) = rev(phase2) = r_address
 //   output [1, 0]: [segment_1, segment_0] = [r_address, r_cycle]
-// ---------------------------------------------------------------------------
 
 fn verify_ram_rw_normalization() {
     eprintln!("\n=== RamRW normalization ===");
@@ -407,7 +393,6 @@ fn verify_ram_rw_normalization() {
     eprintln!("  Cycle portion at offset {log_k_ram} matches ✓");
 }
 
-// ---------------------------------------------------------------------------
 // Test 7: RafEvaluation normalize_opening_point
 //
 // jolt-core with default config (phase3_cycle_rounds = 0):
@@ -417,7 +402,6 @@ fn verify_ram_rw_normalization() {
 //   result = reverse(addr_challenges)
 //
 // Our: Reverse on 20 challenges
-// ---------------------------------------------------------------------------
 
 fn verify_raf_normalization() {
     eprintln!("\n=== RafEval normalization ===");

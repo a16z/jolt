@@ -120,7 +120,6 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams, poly_map: &[Polyno
             ctx.verifier_ops.push(VerifierOp::BeginStage);
         }
 
-        // ── Sumcheck: prover round ops + verifier VerifySumcheck ──
         if has_sumcheck {
             let verifier_stage_idx = ctx.verifier_stage_count;
             staging_to_verifier[si] = Some(verifier_stage_idx);
@@ -150,7 +149,6 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams, poly_map: &[Polyno
             ctx.verifier_stage_count += 1;
         }
 
-        // ── Evaluations ──
         let mut eval_descs = Vec::new();
         for &vi in &plan.evaluations {
             if let Vertex::Evaluate {
@@ -306,9 +304,7 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams, poly_map: &[Polyno
     }
 }
 
-// ---------------------------------------------------------------------------
 // Emit context
-// ---------------------------------------------------------------------------
 
 struct EmitCtx<'a> {
     protocol: &'a crate::ir::Protocol,
@@ -366,9 +362,7 @@ impl<'a> EmitCtx<'a> {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Sumcheck stage emission
-// ---------------------------------------------------------------------------
 
 fn emit_sumcheck_stage(
     ctx: &mut EmitCtx<'_>,
@@ -504,8 +498,7 @@ fn emit_sumcheck_stage(
         } else {
             DomainSeparator::SumcheckPoly
         };
-        // TODO: When uniskip is wired through the IR, emit Uniskip encoding
-        // for round 0 with appropriate domain params. For now, always Compressed.
+        // Uniskip round 0 currently always uses Compressed encoding.
         ctx.ops.push(Op::AbsorbRoundPoly {
             num_coeffs,
             tag: round_tag,
@@ -536,9 +529,7 @@ fn emit_sumcheck_stage(
     }
 }
 
-// ---------------------------------------------------------------------------
 // Formula conversion: protocol Expr → Formula
-// ---------------------------------------------------------------------------
 
 /// Convert a stage's composition expressions to a single Formula.
 /// Returns the formula and the poly index mapping (input_i → protocol poly index).
@@ -598,9 +589,7 @@ fn build_formula(protocol: &crate::ir::Protocol, plan: &StagePlan) -> (Formula, 
     (Formula::from_terms(all_terms), all_poly_indices)
 }
 
-// ---------------------------------------------------------------------------
 // Verifier claim formula construction
-// ---------------------------------------------------------------------------
 
 fn build_input_claim_formula(
     protocol: &crate::ir::Protocol,
@@ -687,9 +676,7 @@ fn build_output_check_formula(
     ClaimFormula { terms }
 }
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 /// Polys referenced by evaluations in the current stage or by any later stage
 /// (compositions + evaluations). A poly from the current stage's composition
@@ -850,9 +837,7 @@ fn vertex_degree(vertex: &Vertex) -> usize {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Release insertion via liveness analysis
-// ---------------------------------------------------------------------------
 
 /// Collect all poly identifiers referenced by an op (directly or via kernel inputs).
 fn op_poly_refs(op: &Op, kernels: &[KernelDef]) -> Vec<PolynomialId> {

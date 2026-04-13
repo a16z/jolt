@@ -36,7 +36,6 @@ pub fn protocol_to_dot(protocol: &Protocol) -> String {
     let max_depth = depth.iter().copied().max().unwrap_or(0);
     let mut dot = String::with_capacity(4096);
 
-    // --- preamble ---
     let _ = writeln!(dot, "digraph Protocol {{");
     let _ = writeln!(dot, "    rankdir=TB;");
     let _ = writeln!(
@@ -61,7 +60,6 @@ pub fn protocol_to_dot(protocol: &Protocol) -> String {
     );
     let _ = writeln!(dot);
 
-    // --- vertex nodes ---
     for (i, vertex) in protocol.vertices.iter().enumerate() {
         let d = depth[i];
         let bg = DEPTH_COLORS[d % DEPTH_COLORS.len()];
@@ -147,7 +145,6 @@ pub fn protocol_to_dot(protocol: &Protocol) -> String {
 
     let _ = writeln!(dot);
 
-    // --- claim edges ---
     for (vi, vertex) in protocol.vertices.iter().enumerate() {
         for &claim_id in vertex.consumes() {
             if let Some(claim) = protocol.claims.iter().find(|c| c.id == claim_id) {
@@ -172,7 +169,6 @@ pub fn protocol_to_dot(protocol: &Protocol) -> String {
         }
     }
 
-    // --- legend ---
     let _ = writeln!(dot);
     let _ = write!(
         dot,
@@ -219,9 +215,7 @@ pub fn protocol_to_dot(protocol: &Protocol) -> String {
     dot
 }
 
-// ---------------------------------------------------------------------------
 // Internal helpers
-// ---------------------------------------------------------------------------
 
 fn compute_depth(protocol: &Protocol) -> Vec<usize> {
     let n = protocol.vertices.len();

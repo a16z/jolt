@@ -317,8 +317,6 @@ impl Protocol {
     }
 }
 
-// --- Display ---
-
 impl fmt::Display for Protocol {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let sumchecks = self

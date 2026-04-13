@@ -93,8 +93,6 @@ impl Expr {
     }
 }
 
-// --- From conversions ---
-
 impl From<Poly> for Expr {
     #[inline]
     fn from(p: Poly) -> Self {
@@ -139,8 +137,6 @@ impl From<i64> for Expr {
     }
 }
 
-// --- Neg ---
-
 impl Neg for Expr {
     type Output = Expr;
     #[inline]
@@ -175,8 +171,6 @@ impl Neg for ClaimId {
         -Expr::from(self)
     }
 }
-
-// --- Add ---
 
 impl Add for Expr {
     type Output = Expr;
@@ -216,8 +210,6 @@ impl_add!(Expr, Poly);
 impl_add!(Expr, Challenge);
 impl_add!(Expr, ClaimId);
 
-// --- Sub ---
-
 impl Sub for Expr {
     type Output = Expr;
     #[inline]
@@ -253,8 +245,6 @@ impl_sub!(ClaimId, Expr);
 impl_sub!(Expr, Poly);
 impl_sub!(Expr, Challenge);
 impl_sub!(Expr, ClaimId);
-
-// --- Mul ---
 
 impl Mul for Expr {
     type Output = Expr;
@@ -305,8 +295,6 @@ impl_mul!(ClaimId, Expr);
 impl_mul!(Expr, Poly);
 impl_mul!(Expr, Challenge);
 impl_mul!(Expr, ClaimId);
-
-// --- Display ---
 
 impl fmt::Display for Factor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -511,8 +499,6 @@ mod tests {
         );
     }
 
-    // --- Canonicalization tests ---
-
     #[test]
     fn canonicalize_merges_like_terms() {
         let a = Poly(0);
@@ -559,8 +545,6 @@ mod tests {
         // a + b and b + a are the same expression
         assert_eq!(a + b, b + a);
     }
-
-    // --- Display tests ---
 
     #[test]
     fn display_zero() {

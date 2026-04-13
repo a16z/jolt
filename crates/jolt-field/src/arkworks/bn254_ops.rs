@@ -16,14 +16,6 @@ fn mac_with_carry(a: u64, b: u64, c: u64, carry: &mut u64) -> u64 {
     tmp as u64
 }
 
-/// a + b * c → (result, carry)  (no input carry)
-#[inline(always)]
-fn mac_no_carry(a: u64, b: u64, c: u64, carry: &mut u64) -> u64 {
-    let tmp = (a as u128) + (b as u128) * (c as u128);
-    *carry = (tmp >> 64) as u64;
-    tmp as u64
-}
-
 /// *a += b + carry → new carry
 #[inline(always)]
 fn adc(a: &mut u64, b: u64, carry: u64) -> u64 {
@@ -45,8 +37,6 @@ const N: usize = 4;
 const MODULUS: [u64; N] = <FrConfig as MontConfig<N>>::MODULUS.0;
 const INV: u64 = <FrConfig as MontConfig<N>>::INV;
 const R: BigInt<N> = <FrConfig as MontConfig<N>>::R;
-#[allow(dead_code)]
-const R2: BigInt<N> = <FrConfig as MontConfig<N>>::R2;
 
 const MODULUS_HAS_SPARE_BIT: bool = MODULUS[N - 1] >> 63 == 0;
 const MODULUS_NUM_SPARE_BITS: u32 = MODULUS[N - 1].leading_zeros();
@@ -268,22 +258,6 @@ fn mul_bigint5_by_u64_in_place(a: &mut BigInt<5>, b: u64) {
     // Overflow is discarded (caller ensures result fits in 5 limbs)
 }
 
-/// Barrett reduce an L-limb BigInt to a field element.
-///
-/// Folds from high limb to low, applying the 5→4 kernel at each step.
-#[inline(always)]
-pub fn from_barrett_reduce<const L: usize>(unreduced: BigInt<L>) -> Fr {
-    debug_assert!(L >= N);
-    let mut acc = BigInt::<N>([0u64; N]);
-    let mut i = L;
-    while i > 0 {
-        i -= 1;
-        let c5 = nplus1_from_low_and_high(unreduced.0[i], acc.0);
-        acc = barrett_reduce_5_to_4(c5);
-    }
-    Fp::new_unchecked(acc)
-}
-
 /// Perform N Montgomery reduction steps on a mutable buffer of L >= 2N limbs.
 /// Returns carry from the final step.
 #[inline(always)]
@@ -486,71 +460,10 @@ pub fn from_u128(n: u128) -> Fr {
     }
 }
 
-/// Multiply by a sparse RHS with exactly 2 non-zero high limbs at positions N-2 and N-1.
-///
-/// This is used in the Challenge × Field hot path where the challenge value
-/// has only its top 2 limbs set (128-bit challenge stored in high position).
-///
-/// Interleaves multiplication with Montgomery reduction for efficiency.
-#[inline(always)]
-pub fn mul_by_hi_2limbs(a: Fr, limb_lo: u64, limb_hi: u64) -> Fr {
-    let a_limbs = a.0 .0;
-    let mut r = [0u64; N];
-
-    // Process limb at position N-2 (limb_lo), with interleaved Montgomery step
-    {
-        let mut carry1 = 0u64;
-        r[0] = mac_no_carry(r[0], a_limbs[0], limb_lo, &mut carry1);
-        let k = r[0].wrapping_mul(INV);
-        let mut carry2 = 0u64;
-        let _ = mac_no_carry(r[0], k, MODULUS[0], &mut carry2);
-        for j in 1..N {
-            let new_rj = mac_with_carry(r[j], a_limbs[j], limb_lo, &mut carry1);
-            let new_rj_minus_1 = mac_with_carry(new_rj, k, MODULUS[j], &mut carry2);
-            r[j] = new_rj;
-            r[j - 1] = new_rj_minus_1;
-        }
-        r[N - 1] = carry1.wrapping_add(carry2);
-    }
-
-    // Process limb at position N-1 (limb_hi), with interleaved Montgomery step
-    {
-        let mut carry1 = 0u64;
-        r[0] = mac_no_carry(r[0], a_limbs[0], limb_hi, &mut carry1);
-        let k = r[0].wrapping_mul(INV);
-        let mut carry2 = 0u64;
-        let _ = mac_no_carry(r[0], k, MODULUS[0], &mut carry2);
-        for j in 1..N {
-            let new_rj = mac_with_carry(r[j], a_limbs[j], limb_hi, &mut carry1);
-            let new_rj_minus_1 = mac_with_carry(new_rj, k, MODULUS[j], &mut carry2);
-            r[j] = new_rj;
-            r[j - 1] = new_rj_minus_1;
-        }
-        r[N - 1] = carry1.wrapping_add(carry2);
-    }
-
-    let mut out = Fp::new_unchecked(BigInt::<N>(r));
-    if compare_4(out.0 .0, MODULUS) != core::cmp::Ordering::Less {
-        out.0 = BigInt(sub_4(out.0 .0, MODULUS));
-    }
-    out
-}
-
 /// Wrap a raw BigInt<4> as Fr without any reduction (caller guarantees it's valid).
 #[inline(always)]
 pub fn from_bigint_unchecked(r: BigInt<N>) -> Fr {
     Fp::new_unchecked(r)
-}
-
-/// Multiply `BigInt<N>` by `u64` and accumulate into `BigInt<5>`.
-#[inline(always)]
-pub(crate) fn mul_u64_accumulate(acc: &mut BigInt<5>, a: &BigInt<N>, b: u64) {
-    let mut carry = 0u64;
-    for i in 0..N {
-        acc.0[i] = mac_with_carry(acc.0[i], a.0[i], b, &mut carry);
-    }
-    let final_carry = adc(&mut acc.0[N], carry, 0);
-    debug_assert!(final_carry == 0, "overflow in mul_u64_accumulate");
 }
 
 #[cfg(test)]
@@ -698,35 +611,6 @@ mod tests {
     }
 
     #[test]
-    fn barrett_reduce_correct() {
-        let mut rng = test_rng();
-        // Barrett reduce of a product a*b should equal a*b in the field
-        for _ in 0..200 {
-            let a = Fr::rand(&mut rng);
-            let b = Fr::rand(&mut rng);
-            // Compute unreduced product in 8 limbs
-            let a_bigint = a.into_bigint();
-            let b_bigint = b.into_bigint();
-            let mut prod = BigInt::<8>::zero();
-            for i in 0..N {
-                let mut carry = 0u64;
-                for j in 0..N {
-                    prod.0[i + j] =
-                        mac_with_carry(prod.0[i + j], a_bigint.0[i], b_bigint.0[j], &mut carry);
-                }
-                prod.0[i + N] = carry;
-            }
-            // Barrett reduce should give the same result as Montgomery reduce
-            // (both map from standard 8-limb → 4-limb Montgomery)
-            let reduced = from_barrett_reduce::<8>(prod);
-            // Verify it's a valid field element by roundtripping
-            let _ = reduced.into_bigint();
-        }
-        // Barrett reduce of zero should give zero
-        assert_eq!(from_barrett_reduce::<5>(BigInt::<5>::zero()), Fr::zero());
-    }
-
-    #[test]
     fn montgomery_reduce_roundtrip() {
         let mut rng = test_rng();
         // Multiply the raw Montgomery-form BigInts: a_mont * b_mont = (aR)(bR).
@@ -749,25 +633,6 @@ mod tests {
             }
             let got = from_montgomery_reduce::<8>(prod);
             assert_eq!(got, expected, "Montgomery reduce roundtrip mismatch");
-        }
-    }
-
-    #[test]
-    fn mul_by_hi_2limbs_correct() {
-        let mut rng = test_rng();
-        for _ in 0..200 {
-            let a = Fr::rand(&mut rng);
-            let lo: u64 = rng.gen();
-            let hi: u64 = rng.gen();
-            // mul_by_hi_2limbs treats [0, 0, lo, hi] as a raw Montgomery-form scalar
-            let scalar = Fp::new_unchecked(BigInt::new([0, 0, lo, hi]));
-            let expected = a * scalar;
-            let got = mul_by_hi_2limbs(a, lo, hi);
-            assert_eq!(
-                got, expected,
-                "mul_by_hi_2limbs mismatch: lo={}, hi={}",
-                lo, hi
-            );
         }
     }
 }

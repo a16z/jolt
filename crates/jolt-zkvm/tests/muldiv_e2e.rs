@@ -194,7 +194,6 @@ fn muldiv_prove_verify() {
         termination_word_offset: remap(memory_layout.termination),
     };
 
-    // ── Witness polynomials ──
     let poly_config = PolynomialConfig::new(log_k_chunk, 128, log_k_bytecode, log_k_ram);
     let matrices = rv64::rv64_constraints::<Fr>();
     let r1cs_key = R1csKey::new(matrices, trace_length);
@@ -215,7 +214,6 @@ fn muldiv_prove_verify() {
     );
     let _ = polys.insert(PolynomialId::TrustedAdvice, vec![Fr::zero(); trace_length]);
 
-    // ── Derived polynomials (Stage 2) ──
     // Build initial/final RAM state as u64 word arrays for RamConfig.
     let initial_state = {
         let mut words = vec![0u64; ram_k];
@@ -265,7 +263,6 @@ fn muldiv_prove_verify() {
             final_state,
         });
 
-    // ── Preprocessed polynomials (Stage 2) ──
     let mut preprocessed = PreprocessedSource::new();
     preprocessed.insert(PolynomialId::IoMask, build_io_mask(&config, ram_k));
     preprocessed.insert(PolynomialId::RamUnmap, build_ram_unmap(lowest_addr, ram_k));
@@ -278,7 +275,6 @@ fn muldiv_prove_verify() {
     let r1cs = R1csSource::new(&r1cs_key, &r1cs_witness);
     let mut provider = ProverData::new(&mut polys, r1cs, derived, preprocessed);
 
-    // ── Prove ──
     let pcs_setup = ();
     let mut transcript = Blake2bTranscript::<Fr>::new(TRANSCRIPT_LABEL);
     let proof = prove::<_, _, _, MockPCS>(
@@ -292,7 +288,6 @@ fn muldiv_prove_verify() {
         None,
     );
 
-    // ── Verify ──
     let vk = JoltVerifyingKey::<Fr, MockPCS>::new(&executable.module, (), r1cs_key);
     verify(&vk, &proof, &[0u8; 32]).expect("proof should verify");
 }

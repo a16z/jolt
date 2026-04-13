@@ -21,8 +21,6 @@
 /// Constant-1 wire.
 pub const V_CONST: usize = 0;
 
-// --- R1CS inputs (1..=35) ---
-
 pub const V_LEFT_INSTRUCTION_INPUT: usize = 1;
 pub const V_RIGHT_INSTRUCTION_INPUT: usize = 2;
 pub const V_PRODUCT: usize = 3;
@@ -45,8 +43,6 @@ pub const V_NEXT_IS_FIRST_IN_SEQUENCE: usize = 19;
 pub const V_LOOKUP_OUTPUT: usize = 20;
 pub const V_SHOULD_JUMP: usize = 21;
 
-// --- Circuit flags (22..=35) ---
-
 pub const V_FLAG_ADD_OPERANDS: usize = 22;
 pub const V_FLAG_SUBTRACT_OPERANDS: usize = 23;
 pub const V_FLAG_MULTIPLY_OPERANDS: usize = 24;
@@ -62,12 +58,8 @@ pub const V_FLAG_IS_COMPRESSED: usize = 33;
 pub const V_FLAG_IS_FIRST_IN_SEQUENCE: usize = 34;
 pub const V_FLAG_IS_LAST_IN_SEQUENCE: usize = 35;
 
-// --- Product factors (36..=37) ---
-
 pub const V_BRANCH: usize = 36;
 pub const V_NEXT_IS_NOOP: usize = 37;
-
-// --- Counts ---
 
 pub const NUM_R1CS_INPUTS: usize = 35;
 pub const NUM_PRODUCT_FACTORS: usize = 2;
@@ -116,7 +108,7 @@ pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
 
     let empty = || Vec::new();
 
-    // ── Eq-conditional constraints (0–18) ──────────────────────────────
+    // Eq-conditional constraints (0-18)
     // Form: guard · (left − right) = 0  →  A=guard, B=left−right, C=0
 
     // 0: RamAddrEqRs1PlusImmIfLoadStore
@@ -340,7 +332,7 @@ pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
     ]));
     c_rows.push(empty());
 
-    // ── Product constraints (19–21) ────────────────────────────────────
+    // Product constraints (19-21)
     // Form: left · right = output  →  A=left, B=right, C=output
 
     // 19: Product = LeftInstructionInput × RightInstructionInput

@@ -483,7 +483,6 @@ impl DomainSeparator {
 /// - **Orchestration** — zero-cost host bookkeeping (transcript, lifecycle).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Op {
-    // ── Compute (dispatched to ComputeBackend via compiled kernels) ──
     /// Compute one sumcheck round polynomial.
     ///
     /// Round 0 (`bind_challenge: None`): reduce only.
@@ -582,7 +581,6 @@ pub enum Op {
     /// `last_round_coeffs` for subsequent `AbsorbRoundPoly`.
     BatchRoundFinalize { batch: usize },
 
-    // ── PrefixSuffix lifecycle ops ──
     /// Initialize PrefixSuffix state for an instance entering a PS phase.
     PrefixSuffixInit {
         batch: usize,
@@ -602,7 +600,6 @@ pub enum Op {
     /// the PS state. Emitted at the end of a PS phase before transitioning.
     PrefixSuffixMaterialize { batch: usize, instance: usize },
 
-    // ── Booleanity lifecycle ops ──
     /// Initialize Gruen-based booleanity state for an instance.
     BooleanityInit {
         batch: usize,
@@ -624,7 +621,6 @@ pub enum Op {
         ra_poly_ids: Vec<PolynomialId>,
     },
 
-    // ── HammingWeight+Address Reduction lifecycle ops ──
     /// Initialize HW reduction state: compute G_i from RA data + r_cycle,
     /// build eq_bool and eq_virt tables.
     HwReductionInit {
@@ -708,7 +704,6 @@ pub enum Op {
         num_cycles: usize,
     },
 
-    // ── PCS (dispatched to CommitmentScheme trait) ──
     /// Commit polynomials, absorb commitments into transcript,
     /// capture raw data and hints for later opening proofs.
     Commit {
@@ -738,7 +733,6 @@ pub enum Op {
     /// Generate PCS opening proofs for all reduced claims.
     Open,
 
-    // ── Orchestration (zero-cost host bookkeeping) ──
     /// Absorb public instance data into the transcript.
     Preamble,
     /// Begin a new verifier stage (for incremental proof assembly).

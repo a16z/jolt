@@ -16,7 +16,6 @@ type CoreFr = ark_bn254::Fr;
 
 #[test]
 fn compare_witness_variables() {
-    // ── Our system: extract trace + R1CS witness ─────────────────────────
     let mut program = Program::new("muldiv-guest");
     let (bytecode_raw, _init_mem, _program_size, entry_address) = program.decode();
     let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
@@ -36,7 +35,6 @@ fn compare_witness_variables() {
         v_pad,
     );
 
-    // ── jolt-core: trace + BytecodePreprocessing ─────────────────────────
     let mut core_program = jolt_core::host::Program::new("muldiv-guest");
     let (core_bytecode_raw, _core_init_mem, _core_prog_size, core_entry) = core_program.decode();
     let core_inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();

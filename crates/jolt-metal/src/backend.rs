@@ -887,8 +887,6 @@ impl ComputeBackend for MetalBackend {
         total_evals.unwrap_or_default()
     }
 
-    // ── PrefixSuffix lifecycle (CPU fallback) ───────────────────────────
-
     type PrefixSuffixState<F: Field> = jolt_cpu::prefix_suffix::CpuPrefixSuffixState<F>;
 
     fn ps_init<F: Field>(

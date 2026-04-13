@@ -25,9 +25,7 @@ pub(crate) struct Staging {
 }
 
 /// Data for the opening RLC + PCS verification stage.
-#[allow(dead_code)]
 pub(crate) struct OpeningData {
-    pub claims: Vec<ClaimId>,
     pub challenge_name: String,
 }
 
@@ -95,9 +93,7 @@ pub(crate) fn stage(
     Ok(assemble(&costs, &assignment, protocol, &terminal))
 }
 
-// ---------------------------------------------------------------------------
 // Terminal claims
-// ---------------------------------------------------------------------------
 
 fn find_terminal_claims(protocol: &Protocol) -> HashSet<ClaimId> {
     let consumed: HashSet<ClaimId> = protocol
@@ -113,9 +109,7 @@ fn find_terminal_claims(protocol: &Protocol) -> HashSet<ClaimId> {
         .collect()
 }
 
-// ---------------------------------------------------------------------------
 // Cost model
-// ---------------------------------------------------------------------------
 
 #[derive(Clone)]
 struct StageCostInfo {
@@ -269,9 +263,7 @@ fn evaluate_cost(stages: &[StageCostInfo], params: &CompileParams) -> Cost {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Local search
-// ---------------------------------------------------------------------------
 
 struct SearchCtx<'a> {
     protocol: &'a Protocol,
@@ -376,9 +368,7 @@ fn violated_list(config: &SolverConfig, cost: &Cost) -> Vec<String> {
     out
 }
 
-// ---------------------------------------------------------------------------
 // Assembly: build Staging from the final assignment
-// ---------------------------------------------------------------------------
 
 fn assemble(
     costs: &[StageCostInfo],
@@ -420,23 +410,20 @@ fn assemble(
     let n_points: usize = costs.iter().map(|s| s.n_terminal_points).sum();
     let last_user_stage = stage_plans.len().saturating_sub(1);
 
-    let opening_claims = if n_points > 1 {
-        synthesize_reduction(
+    if n_points > 1 {
+        let _ = synthesize_reduction(
             &mut extended,
             &mut stage_plans,
             &terminal_claims,
             costs,
             last_user_stage,
-        )
-    } else {
-        terminal_claims
-    };
+        );
+    }
 
     Staging {
         stages: stage_plans,
         protocol: extended,
         opening: Some(OpeningData {
-            claims: opening_claims,
             challenge_name: "rho_open".into(),
         }),
     }
