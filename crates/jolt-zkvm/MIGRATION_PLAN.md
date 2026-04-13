@@ -1,7 +1,7 @@
 # Migration Plan: Unified Instance State
 
-**Status**: Step 2 DONE
-**NEXT STEP**: Step 3
+**Status**: Step 3 DONE
+**NEXT STEP**: Step 4
 
 ## Overview
 

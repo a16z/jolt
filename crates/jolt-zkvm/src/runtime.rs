@@ -106,6 +106,8 @@ where
     /// HW reduction state for fused HammingWeight + Address Reduction instances.
     /// Key: `(batch_idx, instance_idx)`.
     hw_reduction_states: HashMap<(usize, usize), B::HwReductionState<F>>,
+    /// Unified instance states (replaces the 3 maps above as migration proceeds).
+    instance_states: HashMap<(usize, usize), B::InstanceState<F>>,
 
     current_stage: Option<StageBuilder<F>>,
     stage_proofs: Vec<StageProof<F>>,
@@ -196,6 +198,7 @@ where
         prefix_suffix_states: HashMap::new(),
         booleanity_states: HashMap::new(),
         hw_reduction_states: HashMap::new(),
+        instance_states: HashMap::new(),
         current_stage: None,
         stage_proofs: Vec::new(),
         commitments: Vec::new(),
@@ -1338,11 +1341,63 @@ where
                 }
             }
 
-            Op::UnifiedInstanceInit { .. }
-            | Op::UnifiedInstanceBind { .. }
-            | Op::UnifiedInstanceReduce { .. }
-            | Op::UnifiedInstanceFinalize { .. } => {
-                panic!("unified instance ops not yet wired")
+            Op::UnifiedInstanceInit {
+                batch,
+                instance,
+                config,
+            } => {
+                let is = backend.instance_init(
+                    config,
+                    &state.challenges,
+                    provider,
+                    lookup_trace.as_ref(),
+                    &module.prover.kernels,
+                );
+                let _ = state.instance_states.insert((*batch, *instance), is);
+            }
+
+            Op::UnifiedInstanceBind {
+                batch,
+                instance,
+                challenge,
+            } => {
+                let scalar = state.challenges[*challenge];
+                let is = state
+                    .instance_states
+                    .get_mut(&(*batch, *instance))
+                    .expect("UnifiedInstanceBind: state missing");
+                backend.instance_bind(is, scalar);
+            }
+
+            Op::UnifiedInstanceReduce { batch, instance } => {
+                let is = state
+                    .instance_states
+                    .get(&(*batch, *instance))
+                    .expect("UnifiedInstanceReduce: state missing");
+                let previous_claim = state.batch_instance_claims[*batch][*instance];
+                let evals = backend.instance_reduce(is, previous_claim);
+                state.last_round_instance_evals[*instance].clone_from(&evals);
+            }
+
+            Op::UnifiedInstanceFinalize {
+                batch,
+                instance,
+                output_buffers,
+                output_evals,
+            } => {
+                let is = state
+                    .instance_states
+                    .remove(&(*batch, *instance))
+                    .expect("UnifiedInstanceFinalize: state missing");
+                let output = backend.instance_finalize(is);
+                assert_eq!(output.buffers.len(), output_buffers.len());
+                assert_eq!(output.evaluations.len(), output_evals.len());
+                for (poly_id, buf) in output_buffers.iter().zip(output.buffers) {
+                    let _ = device_buffers.insert(*poly_id, DeviceBuffer::Field(buf));
+                }
+                for (poly_id, val) in output_evals.iter().zip(output.evaluations) {
+                    let _ = state.evaluations.insert(*poly_id, val);
+                }
             }
         }
     }

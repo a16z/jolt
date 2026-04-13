@@ -24,8 +24,8 @@ use crate::ir::PolyKind;
 use crate::kernel_spec::Iteration;
 use crate::module::{
     BatchedSumcheckDef, ChallengeDecl, ChallengeSource, ClaimFormula, DomainSeparator, EvalMode,
-    InputBinding, KernelDef, Module, Op, PolyDecl, RoundPolyEncoding, Schedule, VerifierOp,
-    VerifierSchedule, VerifierStageIndex,
+    InputBinding, InstanceConfig, KernelDef, Module, Op, PolyDecl, RoundPolyEncoding, Schedule,
+    VerifierOp, VerifierSchedule, VerifierStageIndex,
 };
 use crate::PolynomialId;
 
@@ -383,17 +383,33 @@ impl ModuleBuilder {
                             matches!(prev_kdef.spec.iteration, Iteration::PrefixSuffix { .. });
 
                         if prev_is_ps {
-                            // PrefixSuffix→next: bind last challenge, then materialize.
+                            // PrefixSuffix→next: bind last challenge, then finalize.
                             if let Some(ch) = bind {
-                                self.ops.push(Op::PrefixSuffixBind {
+                                self.ops.push(Op::UnifiedInstanceBind {
                                     batch,
                                     instance: inst_idx,
                                     challenge: ch,
                                 });
                             }
-                            self.ops.push(Op::PrefixSuffixMaterialize {
+                            let prev_iter = &prev_kdef.spec.iteration;
+                            let output_buffers = match prev_iter {
+                                Iteration::PrefixSuffix {
+                                    output_ra_polys,
+                                    output_combined_val,
+                                    ..
+                                } => {
+                                    let mut ids = output_ra_polys.clone();
+                                    ids.push(*output_combined_val);
+                                    ids.sort();
+                                    ids
+                                }
+                                _ => unreachable!(),
+                            };
+                            self.ops.push(Op::UnifiedInstanceFinalize {
                                 batch,
                                 instance: inst_idx,
+                                output_buffers,
+                                output_evals: Vec::new(),
                             });
                         } else if let Some(ch) = bind {
                             self.ops.push(Op::InstanceBindPreviousPhase {
@@ -424,10 +440,26 @@ impl ModuleBuilder {
                     }
 
                     if is_ps {
-                        self.ops.push(Op::PrefixSuffixInit {
+                        let output_buffers = match &kdef.spec.iteration {
+                            Iteration::PrefixSuffix {
+                                output_ra_polys,
+                                output_combined_val,
+                                ..
+                            } => {
+                                let mut ids = output_ra_polys.clone();
+                                ids.push(*output_combined_val);
+                                ids.sort();
+                                ids
+                            }
+                            _ => unreachable!(),
+                        };
+                        self.ops.push(Op::UnifiedInstanceInit {
                             batch,
                             instance: inst_idx,
-                            kernel,
+                            config: InstanceConfig::PrefixSuffix {
+                                kernel,
+                                output_buffers,
+                            },
                         });
                     } else if is_bool {
                         if let Iteration::Booleanity { ref config } = kdef.spec.iteration {
@@ -489,7 +521,7 @@ impl ModuleBuilder {
                     // Mid-phase: bind.
                     if let Some(ch) = bind {
                         if is_ps {
-                            self.ops.push(Op::PrefixSuffixBind {
+                            self.ops.push(Op::UnifiedInstanceBind {
                                 batch,
                                 instance: inst_idx,
                                 challenge: ch,
@@ -523,7 +555,7 @@ impl ModuleBuilder {
 
                 // Reduce.
                 if is_ps {
-                    self.ops.push(Op::PrefixSuffixReduce {
+                    self.ops.push(Op::UnifiedInstanceReduce {
                         batch,
                         instance: inst_idx,
                     });

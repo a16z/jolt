@@ -264,6 +264,7 @@ pub struct HwReductionConfig {
 pub enum InstanceConfig {
     PrefixSuffix {
         kernel: usize,
+        output_buffers: Vec<PolynomialId>,
     },
     Booleanity {
         ra_poly_ids: Vec<PolynomialId>,

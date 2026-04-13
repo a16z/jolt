@@ -704,7 +704,7 @@ impl ComputeBackend for CpuBackend {
         kernels: &[KernelDef],
     ) -> Self::InstanceState<F> {
         match config {
-            InstanceConfig::PrefixSuffix { kernel } => {
+            InstanceConfig::PrefixSuffix { kernel, .. } => {
                 let kdef = &kernels[*kernel];
                 let trace = lookup_trace.expect("PrefixSuffix requires lookup_trace");
                 CpuInstanceState::PrefixSuffix(Box::new(
