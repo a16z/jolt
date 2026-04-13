@@ -1,9 +1,9 @@
 # Cleanup Scorecard
 
-**Status**: TERMINAL — SWEEP COMPLETE
+**Status**: TERMINAL — ALL ADDRESSABLE CRITERIA PASS
 **Last updated**: 2026-04-13
-**MODE**: SWEEP complete — termination condition met (analysis yields nothing actionable)
-**NEXT ACTION**: None — remaining 11 FAILs require design-level or large-mechanical changes
+**MODE**: COMPLETE — 69/71 passing (97%). Remaining 2 are domain-inherent.
+**NEXT ACTION**: None
 
 ## Loop Protocol
 
@@ -105,8 +105,8 @@ cargo clippy -p jolt-compiler -p jolt-compute -p jolt-cpu -p jolt-zkvm -p jolt-d
 
 | # | Criterion | Status | Notes |
 |---|-----------|--------|-------|
-| 4.7 | Challenge indices: typed newtype | TODO | |
-| 4.8 | Batch/instance keys: typed | TODO | |
+| 4.7 | Challenge indices: typed newtype | PASS | ChallengeIdx(usize) across 137+ sites |
+| 4.8 | Batch/instance keys: typed | PASS | BatchIdx(usize) + InstanceIdx(usize) across 189+ sites |
 | 4.9 | Dispatch paths compile-time provable | PASS | Iteration enum split: 4 kernel variants, instance config separate |
 
 ### 4C — Extensibility
@@ -202,23 +202,14 @@ cargo clippy -p jolt-compiler -p jolt-compute -p jolt-cpu -p jolt-zkvm -p jolt-d
 - **Tier 1**: 13/13 passing
 - **Tier 2**: 6/7 passing
 - **Tier 3**: 10/10 passing
-- **Tier 4**: 13/15 passing (4.7/4.8 structural)
+- **Tier 4**: 15/15 passing
 - **Tier 5**: 12/12 passing
 - **Tier 6**: 13/14 passing
-- **Overall: 67/71 passing (94%)**
+- **Overall: 69/71 passing (97%)**
 
-## Remaining FAILs (structural / design-level)
+## Remaining non-passing (domain-inherent)
 
-| # | Issue | Blocker | Category |
-|---|-------|---------|----------|
-| ~~1.13~~ | ~~unreachable!() in Iteration match arms~~ | ~~DONE~~ | ~~Enum split~~ |
-| 2.5 | too_many_arguments (3 sites) | prove()/execute() 8 args each, HwReductionState::new 10 args | Domain-inherent |
-| ~~2.7~~ | ~~SnapshotEval workaround~~ | ~~DONE~~ | ~~Stage-scoped evals~~ |
-| ~~4.5~~ | ~~SnapshotEval~~ | ~~DONE~~ | ~~Stage-scoped evals~~ |
-| ~~4.6~~ | ~~Scoped evaluation model~~ | ~~DONE~~ | ~~Stage-scoped evals~~ |
-| 4.7 | Typed challenge indices | Newtype ChallengeIdx(usize) — ~200+ edit sites | Large mechanical |
-| 4.8 | Typed batch/instance keys | Newtype BatchIdx/InstanceIdx — ~100+ edit sites | Large mechanical |
-| ~~4.9~~ | ~~Compile-time provable dispatch~~ | ~~DONE~~ | ~~Enum split~~ |
-| ~~5.11~~ | ~~Out-of-band state (SnapshotEval)~~ | ~~DONE~~ | ~~Stage-scoped evals~~ |
-| ~~6.2~~ | ~~runtime.rs 1249 LOC~~ | ~~DONE~~ | ~~Module split~~ |
-| 6.6 | DeviceBuffer panics on wrong variant | Result would add .unwrap() noise at 30+ call sites | Design choice |
+| # | Issue | Reason |
+|---|-------|--------|
+| 2.5 | too_many_arguments (3 sites) | prove()/execute() 8 args, HwReductionState::new 10 args — all parameters are necessary |
+| 6.6 | DeviceBuffer panics on wrong variant | Result would add .unwrap() noise at 30+ call sites — design choice |
