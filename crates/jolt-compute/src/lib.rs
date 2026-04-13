@@ -16,5 +16,6 @@ mod traits;
 
 pub use linker::{link, Executable};
 pub use traits::{
-    BindingOrder, Buf, BufferProvider, ComputeBackend, DeviceBuffer, LookupTraceData, Scalar,
+    BindingOrder, Buf, BufferProvider, ComputeBackend, DeviceBuffer, InstanceOutput,
+    LookupTraceData, Scalar,
 };

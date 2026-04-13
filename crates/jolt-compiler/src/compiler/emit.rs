@@ -896,7 +896,11 @@ fn op_poly_refs(op: &Op, kernels: &[KernelDef]) -> Vec<PolynomialId> {
         | Op::HwReductionBind { .. }
         | Op::HwReductionReduce { .. }
         | Op::HwReductionCacheOpenings { .. }
-        | Op::BindOpeningInputs { .. } => vec![],
+        | Op::BindOpeningInputs { .. }
+        | Op::UnifiedInstanceInit { .. }
+        | Op::UnifiedInstanceBind { .. }
+        | Op::UnifiedInstanceReduce { .. }
+        | Op::UnifiedInstanceFinalize { .. } => vec![],
     }
 }
 

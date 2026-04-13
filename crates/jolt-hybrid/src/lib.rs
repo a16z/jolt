@@ -432,6 +432,38 @@ impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, 
             (HybridBuffer::Primary(eq), HybridBuffer::Primary(epo))
         }
     }
+
+    type InstanceState<F: Field> = ();
+
+    fn instance_init<F: Field>(
+        &self,
+        _config: &jolt_compiler::module::InstanceConfig,
+        _challenges: &[F],
+        _provider: &mut dyn jolt_compute::BufferProvider<F>,
+        _lookup_trace: Option<&jolt_compute::LookupTraceData>,
+        _kernels: &[jolt_compiler::KernelDef],
+    ) -> Self::InstanceState<F> {
+        panic!("unified instance API not yet wired")
+    }
+
+    fn instance_bind<F: Field>(&self, _state: &mut Self::InstanceState<F>, _challenge: F) {
+        panic!("unified instance API not yet wired")
+    }
+
+    fn instance_reduce<F: Field>(
+        &self,
+        _state: &Self::InstanceState<F>,
+        _previous_claim: F,
+    ) -> Vec<F> {
+        panic!("unified instance API not yet wired")
+    }
+
+    fn instance_finalize<F: Field>(
+        &self,
+        _state: Self::InstanceState<F>,
+    ) -> jolt_compute::InstanceOutput<Self::Buffer<F>, F> {
+        panic!("unified instance API not yet wired")
+    }
 }
 
 #[cfg(test)]

@@ -20,8 +20,8 @@ pub use ir::{Claim, ClaimId, Density, PolyDef, PolyKind, Protocol, PublicPoly, V
 pub use kernel_spec::{Iteration, KernelSpec};
 pub use module::{
     ChallengeDecl, ChallengeSource, ClaimFactor, ClaimFormula, ClaimTerm, DomainSeparator,
-    EvalMode, Evaluation, InputBinding, KernelDef, Module, Op, PointNormalization, PolyDecl,
-    R1CSMatrix, RoundPolyEncoding, Schedule, SumcheckInstance, UniskipVerify, VerifierOp,
+    EvalMode, Evaluation, InputBinding, InstanceConfig, KernelDef, Module, Op, PointNormalization,
+    PolyDecl, R1CSMatrix, RoundPolyEncoding, Schedule, SumcheckInstance, UniskipVerify, VerifierOp,
     VerifierSchedule, VerifierStageIndex,
 };
 pub use params::ModuleParams;

@@ -254,6 +254,41 @@ pub struct HwReductionConfig {
     pub log_t: usize,
 }
 
+/// Configuration for a stateful sumcheck instance.
+///
+/// Each variant describes a different subprotocol's init parameters.
+/// The runtime passes this through to the backend without inspecting it —
+/// only the backend matches on the variant to decide which state machine
+/// to instantiate.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum InstanceConfig {
+    PrefixSuffix {
+        kernel: usize,
+    },
+    Booleanity {
+        ra_poly_ids: Vec<PolynomialId>,
+        addr_challenges: Vec<usize>,
+        cycle_challenges: Vec<usize>,
+        gamma_powers: Vec<usize>,
+        gamma_powers_square: Vec<usize>,
+        log_k_chunk: usize,
+        log_t: usize,
+    },
+    HwReduction {
+        ra_poly_ids: Vec<PolynomialId>,
+        cycle_challenges_be: Vec<usize>,
+        addr_bool_challenges_be: Vec<usize>,
+        addr_virt_challenges_be: Vec<Vec<usize>>,
+        gamma_powers: Vec<usize>,
+        hw_eval_challenge: usize,
+        instruction_d: usize,
+        bytecode_d: usize,
+        ram_d: usize,
+        log_k_chunk: usize,
+        log_t: usize,
+    },
+}
+
 impl Schedule {
     pub fn compute_op_count(&self) -> usize {
         self.ops.iter().filter(|s| s.is_compute()).count()
@@ -643,6 +678,33 @@ pub enum Op {
         g_poly_ids: Vec<PolynomialId>,
     },
 
+    /// Initialize a stateful sumcheck instance (unified interface).
+    ///
+    /// Replaces PrefixSuffixInit, BooleanityInit, HwReductionInit.
+    /// The runtime passes `config` to the backend without inspecting it.
+    UnifiedInstanceInit {
+        batch: usize,
+        instance: usize,
+        config: InstanceConfig,
+    },
+    /// Bind a challenge into a stateful instance (unified interface).
+    UnifiedInstanceBind {
+        batch: usize,
+        instance: usize,
+        challenge: usize,
+    },
+    /// Compute round polynomial evaluations from a stateful instance.
+    UnifiedInstanceReduce { batch: usize, instance: usize },
+    /// Finalize a stateful instance: extract buffers and/or evaluations.
+    UnifiedInstanceFinalize {
+        batch: usize,
+        instance: usize,
+        /// Polynomial IDs for buffer outputs (inserted into device_buffers).
+        output_buffers: Vec<PolynomialId>,
+        /// Polynomial IDs for evaluation outputs (inserted into evaluations cache).
+        output_evals: Vec<PolynomialId>,
+    },
+
     /// Extract polynomial evaluation.
     Evaluate { poly: PolynomialId, mode: EvalMode },
     /// Bind polynomial buffers at a challenge value (post-sumcheck survivors).
@@ -878,6 +940,7 @@ impl Op {
                 | Op::BooleanityCacheOpenings { .. }
                 | Op::HwReductionReduce { .. }
                 | Op::HwReductionCacheOpenings { .. }
+                | Op::UnifiedInstanceReduce { .. }
                 | Op::Evaluate { .. }
                 | Op::Bind { .. }
                 | Op::LagrangeProject { .. }
@@ -933,6 +996,9 @@ impl Op {
                 | Op::BooleanityBind { .. }
                 | Op::HwReductionInit { .. }
                 | Op::HwReductionBind { .. }
+                | Op::UnifiedInstanceInit { .. }
+                | Op::UnifiedInstanceBind { .. }
+                | Op::UnifiedInstanceFinalize { .. }
         )
     }
 }

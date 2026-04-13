@@ -3,10 +3,10 @@
 use std::collections::HashMap;
 
 use jolt_compiler::kernel_spec::Iteration;
-use jolt_compiler::module::ClaimFormula;
+use jolt_compiler::module::{ClaimFormula, InstanceConfig};
 pub use jolt_compiler::BindingOrder;
-use jolt_compiler::KernelSpec;
 use jolt_compiler::PolynomialId;
+use jolt_compiler::{KernelDef, KernelSpec};
 use jolt_field::Field;
 use jolt_instructions::LookupTableKind;
 
@@ -426,6 +426,47 @@ pub trait ComputeBackend: Send + Sync + 'static {
 
     /// Extract final G_i evaluations after all rounds are bound.
     fn hw_final_claims<F: Field>(&self, state: &Self::HwReductionState<F>) -> Vec<F>;
+
+    /// Opaque state for a unified stateful sumcheck instance.
+    ///
+    /// Replaces `PrefixSuffixState`, `BooleanityState`, `HwReductionState`.
+    /// The backend internally dispatches based on `InstanceConfig` variant.
+    type InstanceState<F: Field>: Send + Sync;
+
+    /// Initialize a stateful sumcheck instance from config + runtime state.
+    fn instance_init<F: Field>(
+        &self,
+        config: &InstanceConfig,
+        challenges: &[F],
+        provider: &mut dyn BufferProvider<F>,
+        lookup_trace: Option<&LookupTraceData>,
+        kernels: &[KernelDef],
+    ) -> Self::InstanceState<F>;
+
+    /// Bind a sumcheck challenge into the instance state.
+    fn instance_bind<F: Field>(&self, state: &mut Self::InstanceState<F>, challenge: F);
+
+    /// Compute round polynomial evaluations. Returns the full eval vector
+    /// (e.g., [eval_0, eval_1, eval_2] for degree 2).
+    fn instance_reduce<F: Field>(
+        &self,
+        state: &Self::InstanceState<F>,
+        previous_claim: F,
+    ) -> Vec<F>;
+
+    /// Finalize the instance: consume state, return buffers and/or evaluations.
+    fn instance_finalize<F: Field>(
+        &self,
+        state: Self::InstanceState<F>,
+    ) -> InstanceOutput<Self::Buffer<F>, F>;
+}
+
+/// Output from finalizing a stateful sumcheck instance.
+pub struct InstanceOutput<Buf, F> {
+    /// Polynomial buffers to insert into the device buffer table.
+    pub buffers: Vec<(PolynomialId, Buf)>,
+    /// Scalar evaluations to insert into the evaluations cache.
+    pub evaluations: Vec<(PolynomialId, F)>,
 }
 
 /// Materializes polynomial data for the prover runtime.

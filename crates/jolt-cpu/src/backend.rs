@@ -679,6 +679,38 @@ impl ComputeBackend for CpuBackend {
     fn hw_final_claims<F: Field>(&self, state: &Self::HwReductionState<F>) -> Vec<F> {
         state.final_g_claims()
     }
+
+    type InstanceState<F: Field> = ();
+
+    fn instance_init<F: Field>(
+        &self,
+        _config: &jolt_compiler::module::InstanceConfig,
+        _challenges: &[F],
+        _provider: &mut dyn jolt_compute::BufferProvider<F>,
+        _lookup_trace: Option<&LookupTraceData>,
+        _kernels: &[jolt_compiler::KernelDef],
+    ) -> Self::InstanceState<F> {
+        panic!("unified instance API not yet wired")
+    }
+
+    fn instance_bind<F: Field>(&self, _state: &mut Self::InstanceState<F>, _challenge: F) {
+        panic!("unified instance API not yet wired")
+    }
+
+    fn instance_reduce<F: Field>(
+        &self,
+        _state: &Self::InstanceState<F>,
+        _previous_claim: F,
+    ) -> Vec<F> {
+        panic!("unified instance API not yet wired")
+    }
+
+    fn instance_finalize<F: Field>(
+        &self,
+        _state: Self::InstanceState<F>,
+    ) -> jolt_compute::InstanceOutput<Self::Buffer<F>, F> {
+        panic!("unified instance API not yet wired")
+    }
 }
 
 #[tracing::instrument(skip_all, name = "interpolate_inplace")]

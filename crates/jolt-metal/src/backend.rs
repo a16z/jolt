@@ -947,6 +947,83 @@ impl ComputeBackend for MetalBackend {
     fn bool_reduce<F: Field>(&self, state: &Self::BooleanityState<F>, previous_claim: F) -> Vec<F> {
         state.compute_round(previous_claim)
     }
+
+    fn bool_final_claims<F: Field>(&self, state: &Self::BooleanityState<F>) -> Vec<F> {
+        state.final_ra_claims()
+    }
+
+    type HwReductionState<F: Field> = jolt_cpu::hw_reduction::CpuHwReductionState<F>;
+
+    fn hw_init<F: Field>(
+        &self,
+        ra_data: &[Vec<F>],
+        cycle_ch_be: &[F],
+        addr_bool_ch_be: &[F],
+        addr_virt_ch_be: &[Vec<F>],
+        gamma_powers: Vec<F>,
+        hw_claims: Vec<F>,
+        bool_claims: Vec<F>,
+        virt_claims: Vec<F>,
+        log_k_chunk: usize,
+        log_t: usize,
+    ) -> Self::HwReductionState<F> {
+        jolt_cpu::hw_reduction::CpuHwReductionState::new(
+            ra_data,
+            cycle_ch_be,
+            addr_bool_ch_be,
+            addr_virt_ch_be,
+            gamma_powers,
+            hw_claims,
+            bool_claims,
+            virt_claims,
+            log_k_chunk,
+            log_t,
+        )
+    }
+
+    fn hw_bind<F: Field>(&self, state: &mut Self::HwReductionState<F>, challenge: F) {
+        state.bind(challenge);
+    }
+
+    fn hw_reduce<F: Field>(&self, state: &Self::HwReductionState<F>, previous_claim: F) -> Vec<F> {
+        state.reduce(previous_claim)
+    }
+
+    fn hw_final_claims<F: Field>(&self, state: &Self::HwReductionState<F>) -> Vec<F> {
+        state.final_g_claims()
+    }
+
+    type InstanceState<F: Field> = ();
+
+    fn instance_init<F: Field>(
+        &self,
+        _config: &jolt_compiler::module::InstanceConfig,
+        _challenges: &[F],
+        _provider: &mut dyn jolt_compute::BufferProvider<F>,
+        _lookup_trace: Option<&LookupTraceData>,
+        _kernels: &[jolt_compiler::KernelDef],
+    ) -> Self::InstanceState<F> {
+        panic!("unified instance API not yet wired")
+    }
+
+    fn instance_bind<F: Field>(&self, _state: &mut Self::InstanceState<F>, _challenge: F) {
+        panic!("unified instance API not yet wired")
+    }
+
+    fn instance_reduce<F: Field>(
+        &self,
+        _state: &Self::InstanceState<F>,
+        _previous_claim: F,
+    ) -> Vec<F> {
+        panic!("unified instance API not yet wired")
+    }
+
+    fn instance_finalize<F: Field>(
+        &self,
+        _state: Self::InstanceState<F>,
+    ) -> jolt_compute::InstanceOutput<MetalBuffer<F>, F> {
+        panic!("unified instance API not yet wired")
+    }
 }
 
 const SPARSE_SENTINEL: u32 = u32::MAX;

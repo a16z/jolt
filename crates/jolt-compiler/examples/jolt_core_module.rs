@@ -6456,7 +6456,11 @@ fn print_stats(module: &Module, params: &ModuleParams) {
             | Op::HwReductionInit { .. }
             | Op::HwReductionBind { .. }
             | Op::HwReductionReduce { .. }
-            | Op::HwReductionCacheOpenings { .. } => counts[14] += 1,
+            | Op::HwReductionCacheOpenings { .. }
+            | Op::UnifiedInstanceInit { .. }
+            | Op::UnifiedInstanceBind { .. }
+            | Op::UnifiedInstanceReduce { .. }
+            | Op::UnifiedInstanceFinalize { .. } => counts[14] += 1,
         }
     }
     eprintln!("\n=== Op Counts ===");

@@ -1337,6 +1337,13 @@ where
                     let _ = state.evaluations.insert(*poly_id, val);
                 }
             }
+
+            Op::UnifiedInstanceInit { .. }
+            | Op::UnifiedInstanceBind { .. }
+            | Op::UnifiedInstanceReduce { .. }
+            | Op::UnifiedInstanceFinalize { .. } => {
+                panic!("unified instance ops not yet wired")
+            }
         }
     }
 
