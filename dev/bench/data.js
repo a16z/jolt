@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776119831296,
+  "lastUpdate": 1776121515658,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -81526,6 +81526,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 863400,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "53157953+markosg04@users.noreply.github.com",
+            "name": "Markos",
+            "username": "markosg04"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fd49c91578ca8f35353e6ae8d3c6e0a779e0795f",
+          "message": "feat(jolt-instructions): add jolt-instructions crate (#1366)\n\n* feat: add jolt-instructions crate\n\n* fix(jolt-instructions): execute/table consistency, compile-time assertions, and suffixes allocation\n\n- Fix W-suffix execute()/table sign-extension mismatch: VirtualXorRotW{16,12,8,7}\n  and VirtualRotriw were sign-extending results but their tables zero-extend.\n  Aligned execute() to match tables.\n- Fix VirtualChangeDivisorW execute() to explicitly sign-extend, matching table.\n- Add compile-time const assertions for NUM_SUFFIXES, NUM_CIRCUIT_FLAGS,\n  and NUM_INSTRUCTION_FLAGS (matching existing LookupTableKind::COUNT pattern).\n- Change PrefixSuffixDecomposition::suffixes() to return &'static [Suffixes]\n  instead of Vec<Suffixes>, avoiding heap allocation in prover hot path.\n- Add debug_assert to LookupBits::pop_msb for empty bitvector.\n- Remove unnecessary #![allow(unused_results)] from lookup_table_tests.\n- Add WHY comments for shift/W-suffix instructions with flag/table mismatches.\n\n* refactor(jolt-instructions): remove opcodes module\n\nRemove the `opcodes` module and `fn opcode()` from the `Instruction` trait.\nThe opcode is now purely the registration index in `JoltInstructionSet::new()`,\neliminating a manually-synced constants file (105 constants) and simplifying\nthe instruction definition macro.\n\nIntegration tests now use instruction structs directly instead of\nopcode-based registry lookups.\n\n* refactor(jolt-instructions): rename virtual_ module to virt\n\n`virtual` is a reserved keyword; `virt` is the standard abbreviation.\n\n* refactor: split jolt-instructions into jolt-lookup-tables + jolt-riscv\n\njolt-lookup-tables: 41 lookup tables, MLE evaluation, prefix/suffix\ndecomposition, LookupBits, ChallengeOps, bit interleaving.\n\njolt-riscv: 105 RISC-V instruction definitions, flags, macro, registry.\nDepends on jolt-lookup-tables and re-exports all its types for downstream\nconvenience and macro compatibility.\n\n* refactor(jolt-lookup-tables): eliminate dispatch macros, inline tests, remove XLEN generic\n\n- Eliminate `LookupTables<XLEN>` enum, `dispatch_table!` macro, and\n  `kind_table_identity!` macro. All dispatch methods now live as explicit\n  match arms on `LookupTableKind`.\n- Move all lookup table tests from centralized `lookup_table_tests.rs`\n  into `#[cfg(test)] mod tests` blocks in each table file.\n- Replace `<const XLEN: usize>` generic with `pub const XLEN: usize = 64`.\n  Delete all XLEN=8 code paths, `mle_full_hypercube_test`, and the\n  `materialize()` default method.\n\n* refactor(jolt-riscv): pack flags into bitfield structs\n\nReplace `[bool; NUM_CIRCUIT_FLAGS]` and `[bool; NUM_INSTRUCTION_FLAGS]`\nwith `CircuitFlagSet(u16)` and `InstructionFlagSet(u8)` packed bitfields.\n\nBuilder-pattern `.set()` for construction, `Index` impl for ergonomic\naccess. 21 bytes → 3 bytes per instruction flag set.\n\n* refactor: invert jolt-riscv / jolt-lookup-tables dependency\n\njolt-riscv is now a leaf crate (jolt-field + serde only). Removed\nfn lookup_table() from Instruction trait and table: clause from\ndefine_instruction! macro.\n\njolt-lookup-tables depends on jolt-riscv and defines InstructionLookupTable\nextension trait mapping all 105 instructions to their lookup tables.\n\n* refactor(jolt-riscv): replace crate:: qualified paths with imports in arithmetic files\n\nAdd `use crate::{...}` imports at the top of arithmetic.rs and\narithmetic_w.rs, replacing all fully-qualified crate:: paths in\nmanual trait implementations.\n\n* fix(jolt-riscv): align instruction flags with jolt-core\n\n15 flag mismatches found by cross-referencing against jolt-core:\n\n- Add missing AddOperands to: AssertWordAlignment, AssertHalfwordAlignment,\n  VirtualRev8W, VirtualSignExtendWord, VirtualZeroExtendWord,\n  VirtualShiftRightBitmask, VirtualShiftRightBitmaskI\n- Add missing MultiplyOperands to AssertMulUNoOverflow\n- Add missing RightOperandIsImm to: AssertWordAlignment,\n  AssertHalfwordAlignment, VirtualShiftRightBitmask\n- Remove incorrect LeftOperandIsRs1Value from: Pow2I, Pow2IW,\n  VirtualShiftRightBitmaskI\n- Remove incorrect RightOperandIsImm from Pow2W\n- Remove unused jolt-field dependency from jolt-riscv\n\n* fix(jolt-riscv): restore extracted instruction contracts\n\nAlign the extracted instruction semantics with the existing tracer and jolt-core contracts for virtual shifts, assertions, pow2 helpers, and LISC-V LUI handling.\n\nClarify that advice and host I/O opcodes remain runtime-managed and only expose placeholder execute semantics through the registry API.\n\nConstraint: Keep extracted crate behavior aligned with existing tracer/jolt-core operand contracts\n\nRejected: Make advice instructions emulate runtime state | trait API has no access to emulator context\n\nConfidence: high\n\nScope-risk: narrow\n\n* refactor(jolt-riscv): replace define_instruction! macro with #[derive(Flags)]\n\nAdd jolt-riscv-derive proc macro crate that generates Flags trait impls\nfrom #[circuit(...)] and #[instruction(...)] attributes on structs.\nAll 105 instructions now use normal struct + impl Instruction + derive\ninstead of the declarative macro. Remove macros.rs entirely.\n\n* refactor: derive enum variant counts with strum::EnumCount\n\nReplace hardcoded NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,\nNUM_PREFIXES, NUM_SUFFIXES, and LookupTableKind::COUNT with\nstrum::EnumCount derives. Remove manual const assert checks.\n\n* refactor(jolt-riscv): remove JoltInstructionSet registry\n\nNo external consumers — only used in its own tests. Instruction structs\nare ZSTs usable directly. Opcode-indexed dispatch belongs at the\ntracer/jolt-core integration point, not here.\n\n* chore: remove placeholder authors field from new crates\n\n* refactor(jolt-lookup-tables): derive ALL_PREFIXES with strum::VariantArray\n\n* refactor(jolt-lookup-tables): replace prefix checkpoint system with phase-based evaluation\n\nSimplify SparseDensePrefix trait from incremental per-2-round checkpoint\nupdates to binary-point evaluation with phase-level checkpoints. The new\ntrait has default_checkpoint() + evaluate(checkpoints, b, suffix_len),\neliminating update_prefix_checkpoint, PrefixCheckpoint<F>, ChallengeOps\nbounds, and cross-prefix checkpoint dependencies. All 46 prefix impls\nreduced from ~60 lines to ~15 lines each. Tests rewritten to verify\nprefix/suffix decomposition across phases.\n\n* fix(jolt-lookup-tables): clarify LookupBits size comment\n\nThe 32-byte figure is for a (u128, u8) struct with alignment padding,\nnot u128 alone.\n\n---------\n\nCo-authored-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>",
+          "timestamp": "2026-04-13T17:54:08-04:00",
+          "tree_id": "c2be82110df85176721588a2dbfe04c6dbbd02e6",
+          "url": "https://github.com/a16z/jolt/commit/fd49c91578ca8f35353e6ae8d3c6e0a779e0795f"
+        },
+        "date": 1776121513531,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 4.1732,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 864684,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.4184,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 498828,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 501036,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 500472,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.786,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 498800,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.644,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 500984,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.3534,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 500640,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 6.4901,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 236680,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.5833,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 863524,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5901,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 498772,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.5034,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 499008,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 19.1493,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 496664,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.3015,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 498380,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 34.9468,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1014900,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 15.6702,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 658424,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 96.46,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2133460,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.5864,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 498796,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.7007,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 498712,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 16.2425,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 864396,
             "unit": "KB",
             "extra": ""
           }
