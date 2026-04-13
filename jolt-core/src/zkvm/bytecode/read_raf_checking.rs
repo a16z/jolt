@@ -416,11 +416,17 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
         {
             for (s, v) in bound_val_evals.iter().enumerate() {
                 eprintln!("[core bc_raf] bound_val_evals[{s}] = {:?}", v);
-                eprintln!("[core bc_raf] gamma^{s} * bound_val_evals[{s}] = {:?}", *v * self.params.gamma_powers[s]);
+                eprintln!(
+                    "[core bc_raf] gamma^{s} * bound_val_evals[{s}] = {:?}",
+                    *v * self.params.gamma_powers[s]
+                );
             }
             eprintln!("[core bc_raf] bound_f_entry = {:?}", bound_f_entry);
             eprintln!("[core bc_raf] entry_gamma = {:?}", self.params.entry_gamma);
-            eprintln!("[core bc_raf] entry_gamma * bound_f_entry = {:?}", self.params.entry_gamma * bound_f_entry);
+            eprintln!(
+                "[core bc_raf] entry_gamma * bound_f_entry = {:?}",
+                self.params.entry_gamma * bound_f_entry
+            );
         }
 
         // Reverse r_address_prime to get the correct order (it was built low-to-high)
@@ -472,7 +478,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         if round < self.params.log_K {
             const DEGREE: usize = 2;
             #[cfg(debug_assertions)]
-            if round >= 9 && round <= 10 {
+            if (9..=10).contains(&round) {
                 let buf_len = self.params.val_polys[0].len();
                 eprintln!("[core bc_raf_addr] round={round} buf_len={buf_len}");
                 for s in 0..5 {
@@ -718,7 +724,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheckProver::ingest_challenge")]
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
         #[cfg(debug_assertions)]
-        if round >= 9 && round <= 10 {
+        if (9..=10).contains(&round) {
             eprintln!("[core bc_raf ingest] round={round} r_j={r_j:?}");
         }
         if let Some(prev_round_polys) = self.prev_round_polys.take() {

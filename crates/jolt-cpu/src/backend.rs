@@ -635,11 +635,7 @@ impl ComputeBackend for CpuBackend {
         state.ingest_challenge(challenge);
     }
 
-    fn bool_reduce<F: Field>(
-        &self,
-        state: &Self::BooleanityState<F>,
-        previous_claim: F,
-    ) -> Vec<F> {
+    fn bool_reduce<F: Field>(&self, state: &Self::BooleanityState<F>, previous_claim: F) -> Vec<F> {
         state.compute_round(previous_claim)
     }
 

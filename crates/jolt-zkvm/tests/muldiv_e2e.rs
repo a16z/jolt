@@ -65,122 +65,6 @@ fn build_protocol_module(log_t: usize, log_k_bytecode: usize, log_k_ram: usize) 
     Module::from_bytes(&bytes)
 }
 
-/// Build the T×K per-address per-cycle RA indicator (address-major: ra[k*T + t]).
-///
-/// ra(k, t) = 1 if cycle t accessed address k, 0 otherwise.
-fn build_ram_combined_ra<C: CycleRow>(
-    trace: &[C],
-    trace_length: usize,
-    lowest_addr: u64,
-    ram_k: usize,
-) -> Vec<Fr> {
-    let mut ra = vec![Fr::zero(); ram_k * trace_length];
-    for (t, cycle) in trace.iter().enumerate() {
-        if cycle.is_noop() {
-            continue;
-        }
-        if let Some(addr) = cycle.ram_access_address() {
-            let k = ((addr - lowest_addr) / 8) as usize;
-            if k < ram_k {
-                ra[k * trace_length + t] = Fr::from_u64(1);
-            }
-        }
-    }
-    ra
-}
-
-/// Build the T×K val polynomial (address-major: val[k*T + t]).
-///
-/// val(k, t) = read_value at cycle t if address k was accessed, 0 otherwise.
-fn build_ram_val<C: CycleRow>(
-    trace: &[C],
-    trace_length: usize,
-    lowest_addr: u64,
-    ram_k: usize,
-) -> Vec<Fr> {
-    let mut val = vec![Fr::zero(); ram_k * trace_length];
-    for (t, cycle) in trace.iter().enumerate() {
-        if cycle.is_noop() {
-            continue;
-        }
-        if let (Some(addr), Some(read_val)) = (cycle.ram_access_address(), cycle.ram_read_value()) {
-            let k = ((addr - lowest_addr) / 8) as usize;
-            if k < ram_k {
-                val[k * trace_length + t] = Fr::from_u64(read_val);
-            }
-        }
-    }
-    val
-}
-
-/// Build the K-element final memory state.
-///
-/// Starts from initial memory, then applies each trace cycle's increment.
-fn build_ram_val_final<C: CycleRow>(
-    trace: &[C],
-    init_mem: &[(u64, u8)],
-    lowest_addr: u64,
-    ram_k: usize,
-) -> Vec<Fr> {
-    let mut val_final = vec![Fr::zero(); ram_k];
-
-    // Initialize from init_mem (byte-level address-value pairs → 8-byte LE words)
-    let mut word_bytes = [0u8; 8];
-    for &(addr, byte_val) in init_mem {
-        if addr < lowest_addr {
-            continue;
-        }
-        let word_idx = ((addr - lowest_addr) / 8) as usize;
-        let byte_offset = (addr - lowest_addr) % 8;
-        if word_idx < ram_k {
-            word_bytes.fill(0);
-            // Accumulate bytes into the word
-            word_bytes[byte_offset as usize] = byte_val;
-            val_final[word_idx] += Fr::from_u64((byte_val as u64) << (byte_offset * 8));
-        }
-    }
-
-    // Apply trace increments
-    for cycle in trace {
-        if cycle.is_noop() {
-            continue;
-        }
-        if let (Some(addr), Some(read_val), Some(write_val)) = (
-            cycle.ram_access_address(),
-            cycle.ram_read_value(),
-            cycle.ram_write_value(),
-        ) {
-            let k = ((addr - lowest_addr) / 8) as usize;
-            if k < ram_k && write_val != read_val {
-                val_final[k] += Fr::from_u64(write_val) - Fr::from_u64(read_val);
-            }
-        }
-    }
-    val_final
-}
-
-/// Build the T×K RAM access indicator (cycle-major: indicator[t*K + k]).
-fn build_ram_ra_indicator<C: CycleRow>(
-    trace: &[C],
-    trace_length: usize,
-    lowest_addr: u64,
-    ram_k: usize,
-) -> Vec<Fr> {
-    let mut indicator = vec![Fr::zero(); trace_length * ram_k];
-    for (t, cycle) in trace.iter().enumerate() {
-        if cycle.is_noop() {
-            continue;
-        }
-        if let Some(addr) = cycle.ram_access_address() {
-            let k = ((addr - lowest_addr) / 8) as usize;
-            if k < ram_k {
-                indicator[t * ram_k + k] = Fr::from_u64(1);
-            }
-        }
-    }
-    indicator
-}
-
 /// Build the K-element I/O mask: 1 for addresses in the I/O range.
 fn build_io_mask(config: &ProverConfig, ram_k: usize) -> Vec<Fr> {
     let mut mask = vec![Fr::zero(); ram_k];
@@ -240,23 +124,6 @@ fn build_val_io(config: &ProverConfig, ram_k: usize) -> Vec<Fr> {
     }
 
     val_io
-}
-
-/// Build the K-element initial RAM image from byte-level init_mem.
-fn build_ram_init(init_mem: &[(u64, u8)], lowest_addr: u64, ram_k: usize) -> Vec<Fr> {
-    // Accumulate bytes into 8-byte LE words
-    let mut words = vec![0u64; ram_k];
-    for &(addr, byte_val) in init_mem {
-        if addr < lowest_addr {
-            continue;
-        }
-        let word_idx = ((addr - lowest_addr) / 8) as usize;
-        let byte_offset = ((addr - lowest_addr) % 8) as u32;
-        if word_idx < ram_k {
-            words[word_idx] |= (byte_val as u64) << (byte_offset * 8);
-        }
-    }
-    words.into_iter().map(Fr::from_u64).collect()
 }
 
 /// Full end-to-end: trace real muldiv → prove (Stage 1 + Stage 2) → verify.
@@ -349,30 +216,54 @@ fn muldiv_prove_verify() {
     let _ = polys.insert(PolynomialId::TrustedAdvice, vec![Fr::zero(); trace_length]);
 
     // ── Derived polynomials (Stage 2) ──
-    let mut derived = DerivedSource::new(&r1cs_witness, trace_length, r1cs_key.num_vars_padded)
+    // Build initial/final RAM state as u64 word arrays for RamConfig.
+    let initial_state = {
+        let mut words = vec![0u64; ram_k];
+        for &(addr, byte_val) in &init_mem {
+            if addr < lowest_addr {
+                continue;
+            }
+            let word_idx = ((addr - lowest_addr) / 8) as usize;
+            let byte_offset = ((addr - lowest_addr) % 8) as usize;
+            if word_idx < ram_k {
+                words[word_idx] |= (byte_val as u64) << (byte_offset * 8);
+            }
+        }
+        words
+    };
+    let final_state = {
+        let mut words = initial_state.clone();
+        for cycle in &trace {
+            if cycle.is_noop() {
+                continue;
+            }
+            if let (Some(addr), Some(_read_val), Some(write_val)) = (
+                cycle.ram_access_address(),
+                cycle.ram_read_value(),
+                cycle.ram_write_value(),
+            ) {
+                let k = ((addr - lowest_addr) / 8) as usize;
+                if k < ram_k {
+                    words[k] = write_val;
+                }
+            }
+        }
+        words
+    };
+    let derived = DerivedSource::new(&r1cs_witness, trace_length, r1cs_key.num_vars_padded)
         .with_instruction_flags(InstructionFlags {
             is_noop: instruction_flag_data.is_noop,
             left_is_rs1: instruction_flag_data.left_is_rs1,
             left_is_pc: instruction_flag_data.left_is_pc,
             right_is_rs2: instruction_flag_data.right_is_rs2,
             right_is_imm: instruction_flag_data.right_is_imm,
+        })
+        .with_ram(jolt_witness::derived::RamConfig {
+            ram_k,
+            lowest_addr,
+            initial_state: initial_state.clone(),
+            final_state,
         });
-    derived.insert(
-        PolynomialId::RamCombinedRa,
-        build_ram_combined_ra(&trace, trace_length, lowest_addr, ram_k),
-    );
-    derived.insert(
-        PolynomialId::RamVal,
-        build_ram_val(&trace, trace_length, lowest_addr, ram_k),
-    );
-    derived.insert(
-        PolynomialId::RamValFinal,
-        build_ram_val_final(&trace, &init_mem, lowest_addr, ram_k),
-    );
-    derived.insert(
-        PolynomialId::RamRaIndicator,
-        build_ram_ra_indicator(&trace, trace_length, lowest_addr, ram_k),
-    );
 
     // ── Preprocessed polynomials (Stage 2) ──
     let mut preprocessed = PreprocessedSource::new();
@@ -381,7 +272,7 @@ fn muldiv_prove_verify() {
     preprocessed.insert(PolynomialId::ValIo, build_val_io(&config, ram_k));
     preprocessed.insert(
         PolynomialId::RamInit,
-        build_ram_init(&init_mem, lowest_addr, ram_k),
+        initial_state.iter().map(|&v| Fr::from_u64(v)).collect(),
     );
 
     let r1cs = R1csSource::new(&r1cs_key, &r1cs_witness);

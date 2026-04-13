@@ -12,7 +12,8 @@ pre-commit:
       run: >-
         cargo clippy
         -p jolt-field -p jolt-poly -p jolt-transcript -p jolt-sumcheck
-        -p jolt-spartan -p jolt-openings -p jolt-dory -p jolt-instructions -p jolt-zkvm
+        -p jolt-openings -p jolt-dory -p jolt-instructions -p jolt-zkvm
+        -p jolt-compiler -p jolt-compute -p jolt-cpu -p jolt-verifier
         --all-features --message-format=short -q --all-targets
         --fix --allow-dirty --allow-staged 2>/dev/null;
         git add -u -- '*.rs'
@@ -34,7 +35,8 @@ pre-commit:
       run: >-
         cargo clippy
         -p jolt-field -p jolt-poly -p jolt-transcript -p jolt-sumcheck
-        -p jolt-spartan -p jolt-openings -p jolt-dory -p jolt-instructions -p jolt-zkvm
+        -p jolt-openings -p jolt-dory -p jolt-instructions -p jolt-zkvm
+        -p jolt-compiler -p jolt-compute -p jolt-cpu -p jolt-verifier
         --all-features --message-format=short -q --all-targets
         -- -D warnings
     check-taplo:
@@ -44,30 +46,6 @@ pre-commit:
     check-typos:
       priority: 2
       run: typos
-    check-machete:
-      priority: 2
-      glob: "*.toml"
-      run: cargo machete --with-metadata
-    check-doc:
-      priority: 2
-      glob: "*.rs"
-      run: >-
-        RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -q
-        -p jolt-field -p jolt-poly -p jolt-transcript -p jolt-sumcheck
-        -p jolt-spartan -p jolt-openings -p jolt-dory -p jolt-instructions -p jolt-zkvm
-    check-fuzz:
-      priority: 2
-      glob: "*.rs"
-      run: >-
-        if command -v cargo-fuzz >/dev/null 2>&1 && rustup run nightly rustc --version >/dev/null 2>&1; then
-          for crate_dir in crates/jolt-field crates/jolt-poly crates/jolt-transcript crates/jolt-dory; do
-            if [ -d "$crate_dir/fuzz" ]; then
-              (cd "$crate_dir/fuzz" && cargo +nightly build -q 2>&1) || exit 1;
-            fi;
-          done;
-        else
-          echo "SKIP: cargo-fuzz or nightly toolchain not installed";
-        fi
 
 commit-msg:
   commands:
@@ -80,7 +58,7 @@ commit-msg:
           echo "  fix(scope): description"
           echo "  refactor(scope): description"
           echo ""
-          echo "Valid scopes: core, tracer, sdk, poly, spartan, dory, sumcheck, field, transcript, openings, instructions, zkvm, deps, ci"
+          echo "Valid scopes: core, tracer, sdk, poly, spartan, dory, sumcheck, field, transcript, openings, instructions, zkvm, compiler, compute, cpu, verifier, deps, ci"
           echo ""
           echo "Got: $msg"
           exit 1

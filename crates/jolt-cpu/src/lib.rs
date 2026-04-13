@@ -17,8 +17,8 @@
 
 mod backend;
 pub mod booleanity;
-pub mod hw_reduction;
 mod generic;
+pub mod hw_reduction;
 pub mod prefix_suffix;
 mod product_sum;
 pub mod toom_cook;

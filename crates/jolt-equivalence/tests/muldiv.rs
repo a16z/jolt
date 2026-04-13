@@ -1340,7 +1340,10 @@ fn to_compressed_uni_poly(
     poly: &jolt_poly::UnivariatePoly<NewFr>,
 ) -> jolt_core::poly::unipoly::CompressedUniPoly<Fr> {
     let coeffs = poly.coefficients();
-    assert!(coeffs.len() >= 2, "round poly must have at least 2 coefficients");
+    assert!(
+        coeffs.len() >= 2,
+        "round poly must have at least 2 coefficients"
+    );
     let mut compressed = Vec::with_capacity(coeffs.len() - 1);
     compressed.push(to_ark(coeffs[0]));
     for c in &coeffs[2..] {
@@ -1357,9 +1360,9 @@ fn to_core_sumcheck_proof(
     round_polys: &[jolt_poly::UnivariatePoly<NewFr>],
 ) -> SumcheckInstanceProof<Fr, Bn254Curve, Blake2bTranscript> {
     let compressed: Vec<_> = round_polys.iter().map(to_compressed_uni_poly).collect();
-    SumcheckInstanceProof::Clear(
-        jolt_core::subprotocols::sumcheck::ClearSumcheckProof::new(compressed),
-    )
+    SumcheckInstanceProof::Clear(jolt_core::subprotocols::sumcheck::ClearSumcheckProof::new(
+        compressed,
+    ))
 }
 
 /// Convert jolt-dory `DoryCommitment` to jolt-core `ArkGT`.
@@ -1421,9 +1424,9 @@ fn run_jolt_core_prover() -> (
         pcs_setup: DoryProverSetup(prover_preprocessing.generators.clone()),
     };
 
-    let verifier_preprocessing: &'static _ = Box::leak(Box::new(
-        JoltVerifierPreprocessing::from(&prover_preprocessing),
-    ));
+    let verifier_preprocessing: &'static _ = Box::leak(Box::new(JoltVerifierPreprocessing::from(
+        &prover_preprocessing,
+    )));
 
     (proof, verifier_preprocessing, io, params)
 }
@@ -1501,27 +1504,20 @@ fn zkvm_proof_accepted_by_core_verifier() {
     );
 
     // Stages 1, 2: skip first round poly (uniskip). Stages 3-7: all round polys.
-    let stage1_sc = to_core_sumcheck_proof(
-        &zkvm_proof.stage_proofs[0].round_polys.round_polynomials[1..],
-    );
-    let stage2_sc = to_core_sumcheck_proof(
-        &zkvm_proof.stage_proofs[1].round_polys.round_polynomials[1..],
-    );
-    let stage3_sc = to_core_sumcheck_proof(
-        &zkvm_proof.stage_proofs[2].round_polys.round_polynomials,
-    );
-    let stage4_sc = to_core_sumcheck_proof(
-        &zkvm_proof.stage_proofs[3].round_polys.round_polynomials,
-    );
-    let stage5_sc = to_core_sumcheck_proof(
-        &zkvm_proof.stage_proofs[4].round_polys.round_polynomials,
-    );
-    let stage6_sc = to_core_sumcheck_proof(
-        &zkvm_proof.stage_proofs[5].round_polys.round_polynomials,
-    );
-    let stage7_sc = to_core_sumcheck_proof(
-        &zkvm_proof.stage_proofs[6].round_polys.round_polynomials,
-    );
+    let stage1_sc =
+        to_core_sumcheck_proof(&zkvm_proof.stage_proofs[0].round_polys.round_polynomials[1..]);
+    let stage2_sc =
+        to_core_sumcheck_proof(&zkvm_proof.stage_proofs[1].round_polys.round_polynomials[1..]);
+    let stage3_sc =
+        to_core_sumcheck_proof(&zkvm_proof.stage_proofs[2].round_polys.round_polynomials);
+    let stage4_sc =
+        to_core_sumcheck_proof(&zkvm_proof.stage_proofs[3].round_polys.round_polynomials);
+    let stage5_sc =
+        to_core_sumcheck_proof(&zkvm_proof.stage_proofs[4].round_polys.round_polynomials);
+    let stage6_sc =
+        to_core_sumcheck_proof(&zkvm_proof.stage_proofs[5].round_polys.round_polynomials);
+    let stage7_sc =
+        to_core_sumcheck_proof(&zkvm_proof.stage_proofs[6].round_polys.round_polynomials);
 
     // Commitments: convert DoryCommitment → ArkGT.
     // jolt-core's proof.commitments has only the main witness (25 polys).
@@ -1573,56 +1569,34 @@ fn zkvm_proof_accepted_by_core_verifier() {
     };
 
     // 4. Verify with jolt-core verifier, stage by stage for diagnostics.
-    let mut verifier = CoreVerifier::new(
-        verifier_preprocessing,
-        converted_proof,
-        io,
-        None,
-        None,
-    )
-    .expect("failed to construct jolt-core verifier");
+    let mut verifier = CoreVerifier::new(verifier_preprocessing, converted_proof, io, None, None)
+        .expect("failed to construct jolt-core verifier");
 
     verifier.run_preamble();
     eprintln!("[cross-system] preamble OK");
 
-    verifier
-        .verify_stage1()
-        .expect("stage 1 failed");
+    verifier.verify_stage1().expect("stage 1 failed");
     eprintln!("[cross-system] stage 1 OK");
 
-    verifier
-        .verify_stage2()
-        .expect("stage 2 failed");
+    verifier.verify_stage2().expect("stage 2 failed");
     eprintln!("[cross-system] stage 2 OK");
 
-    verifier
-        .verify_stage3()
-        .expect("stage 3 failed");
+    verifier.verify_stage3().expect("stage 3 failed");
     eprintln!("[cross-system] stage 3 OK");
 
-    verifier
-        .verify_stage4()
-        .expect("stage 4 failed");
+    verifier.verify_stage4().expect("stage 4 failed");
     eprintln!("[cross-system] stage 4 OK");
 
-    verifier
-        .verify_stage5()
-        .expect("stage 5 failed");
+    verifier.verify_stage5().expect("stage 5 failed");
     eprintln!("[cross-system] stage 5 OK");
 
-    verifier
-        .verify_stage6()
-        .expect("stage 6 failed");
+    verifier.verify_stage6().expect("stage 6 failed");
     eprintln!("[cross-system] stage 6 OK");
 
-    verifier
-        .verify_stage7()
-        .expect("stage 7 failed");
+    verifier.verify_stage7().expect("stage 7 failed");
     eprintln!("[cross-system] stage 7 OK");
 
-    verifier
-        .verify_stage8()
-        .expect("stage 8 failed");
+    verifier.verify_stage8().expect("stage 8 failed");
     eprintln!("[cross-system] stage 8 OK");
 
     eprintln!("SUCCESS: jolt-core verifier accepted jolt-zkvm proof (all 8 stages)");

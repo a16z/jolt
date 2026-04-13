@@ -30,6 +30,7 @@ impl<F: Field> CpuHwReductionState<F> {
     /// * `hw_claims` – per-RA HammingWeight claims (1 for inst/bc, ram_hw_factor for ram).
     /// * `bool_claims` – per-RA booleanity claims.
     /// * `virt_claims` – per-RA virtualization claims.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         ra_data: &[Vec<F>],
         cycle_ch_be: &[F],
@@ -147,8 +148,7 @@ impl<F: Field> CpuHwReductionState<F> {
         {
             let half = self.eq_bool.len() / 2;
             for j in 0..half {
-                self.eq_bool[j] =
-                    self.eq_bool[2 * j] * one_minus_r + self.eq_bool[2 * j + 1] * r;
+                self.eq_bool[j] = self.eq_bool[2 * j] * one_minus_r + self.eq_bool[2 * j + 1] * r;
             }
             self.eq_bool.truncate(half);
         }
@@ -163,9 +163,12 @@ impl<F: Field> CpuHwReductionState<F> {
 
     /// Extract final G_i evaluations (after all rounds bound G to 1 element each).
     pub fn final_g_claims(&self) -> Vec<F> {
-        self.G.iter().map(|g| {
-            assert_eq!(g.len(), 1, "G not fully bound");
-            g[0]
-        }).collect()
+        self.G
+            .iter()
+            .map(|g| {
+                assert_eq!(g.len(), 1, "G not fully bound");
+                g[0]
+            })
+            .collect()
     }
 }

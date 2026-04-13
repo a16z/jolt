@@ -335,8 +335,12 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
             eprintln!("[booleanity core] eq_addr all: {:?}", eq_addr);
             eprintln!("[booleanity core] r_address (LE): {:?}", params.r_address);
             eprintln!("[booleanity core] G[0] all: {:?}", G[0]);
-            eprintln!("[booleanity core] gamma_sq first3: [{:?}, {:?}, {:?}]",
-                params.gamma_powers_square[0], params.gamma_powers_square[1], params.gamma_powers_square[2]);
+            eprintln!(
+                "[booleanity core] gamma_sq first3: [{:?}, {:?}, {:?}]",
+                params.gamma_powers_square[0],
+                params.gamma_powers_square[1],
+                params.gamma_powers_square[2]
+            );
         }
 
         // Initialize expanding table for phase 1

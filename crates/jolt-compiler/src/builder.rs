@@ -403,11 +403,8 @@ impl ModuleBuilder {
                                 challenge: ch,
                             });
                             // Bind previous phase's carry buffers at the transition challenge.
-                            let prev_carry_polys: Vec<_> = prev_phase
-                                .carry_bindings
-                                .iter()
-                                .map(|b| b.poly())
-                                .collect();
+                            let prev_carry_polys: Vec<_> =
+                                prev_phase.carry_bindings.iter().map(|b| b.poly()).collect();
                             if !prev_carry_polys.is_empty() {
                                 self.ops.push(Op::BindCarryBuffers {
                                     polys: prev_carry_polys,
@@ -511,11 +508,8 @@ impl ModuleBuilder {
                                 challenge: ch,
                             });
                             // Bind carry buffers alongside kernel inputs.
-                            let carry_polys: Vec<_> = phase
-                                .carry_bindings
-                                .iter()
-                                .map(|b| b.poly())
-                                .collect();
+                            let carry_polys: Vec<_> =
+                                phase.carry_bindings.iter().map(|b| b.poly()).collect();
                             if !carry_polys.is_empty() {
                                 self.ops.push(Op::BindCarryBuffers {
                                     polys: carry_polys,

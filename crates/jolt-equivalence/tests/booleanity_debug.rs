@@ -16,10 +16,8 @@
 
 use ark_bn254::Fr as ArkFr;
 use ark_ff::{One, Zero};
-use jolt_compiler::{
-    Factor, Formula, Iteration, KernelSpec, ProductTerm,
-};
 use jolt_compiler::BindingOrder as CompilerBindingOrder;
+use jolt_compiler::{Factor, Formula, Iteration, KernelSpec, ProductTerm};
 use jolt_compute::{Buf, ComputeBackend, DeviceBuffer};
 use jolt_core::field::JoltField;
 use jolt_core::poly::eq_poly::EqPolynomial;
@@ -49,9 +47,9 @@ type Fr = ArkFr;
 ///
 /// Returns evaluations at X = 0, 1, 2, 3.
 fn naive_booleanity_phase1_round0(
-    eq_addr: &[Fr],        // EqPolynomial::evals(r_address), length K
-    G: &[Vec<Fr>],         // G[d][k] for d in 0..D, k in 0..K
-    gamma_sq: &[Fr],       // gamma^{2d} for d in 0..D
+    eq_addr: &[Fr],  // EqPolynomial::evals(r_address), length K
+    G: &[Vec<Fr>],   // G[d][k] for d in 0..D, k in 0..K
+    gamma_sq: &[Fr], // gamma^{2d} for d in 0..D
 ) -> [Fr; 4] {
     let K = eq_addr.len();
     let half = K / 2;
@@ -83,8 +81,8 @@ fn naive_booleanity_phase1_round0(
 
 /// Compute G_d[k] = Σ_j eq(r_cycle, j) × ra_d_data[k * T + j] for AddressMajor layout.
 fn naive_compute_G(
-    ra_data: &[Fr],   // AddressMajor: data[addr * T + cycle]
-    r_cycle: &[Fr],   // Point passed to EqPolynomial::evals (same convention as core)
+    ra_data: &[Fr], // AddressMajor: data[addr * T + cycle]
+    r_cycle: &[Fr], // Point passed to EqPolynomial::evals (same convention as core)
     K: usize,
     T: usize,
 ) -> Vec<Fr> {
@@ -361,7 +359,8 @@ fn naive_reference_matches_gruen() {
     let gamma_sq = [Fr::one(), gamma * gamma]; // γ^0, γ^2
 
     // Naive reference
-    let naive_evals = naive_booleanity_phase1_round0(&eq_addr, &[G0.clone(), G1.clone()], &gamma_sq);
+    let naive_evals =
+        naive_booleanity_phase1_round0(&eq_addr, &[G0.clone(), G1.clone()], &gamma_sq);
 
     // Gruen approach
     let B = GruenSplitEqPolynomial::<Fr>::new(&r_addr, BindingOrder::LowToHigh);
@@ -382,7 +381,11 @@ fn naive_reference_matches_gruen() {
                 let G_k = G_i[idx];
                 let G_times_F = G_k * F_k;
                 let eval_infty = G_times_F * F_k;
-                let eval_0 = if k_m == 0 { eval_infty - G_times_F } else { Fr::zero() };
+                let eval_0 = if k_m == 0 {
+                    eval_infty - G_times_F
+                } else {
+                    Fr::zero()
+                };
                 inner_0 += eval_0;
                 inner_inf += eval_infty;
             }
@@ -397,14 +400,19 @@ fn naive_reference_matches_gruen() {
     // For the full claim = 0 (boolean inputs make the claim zero only for actual boolean data)
     let claim: Fr = (0..8usize)
         .map(|k| {
-            let inner = gamma_sq[0] * (G0[k].square() - G0[k]) + gamma_sq[1] * (G1[k].square() - G1[k]);
+            let inner =
+                gamma_sq[0] * (G0[k].square() - G0[k]) + gamma_sq[1] * (G1[k].square() - G1[k]);
             eq_addr[k] * inner
         })
         .sum();
 
     eprintln!("[naive_vs_gruen] claim = {claim:?}");
     eprintln!("[naive_vs_gruen] naive evals = {:?}", naive_evals);
-    assert_eq!(naive_evals[0] + naive_evals[1], claim, "naive s(0)+s(1) should = claim");
+    assert_eq!(
+        naive_evals[0] + naive_evals[1],
+        claim,
+        "naive s(0)+s(1) should = claim"
+    );
 }
 
 // ============================================================
@@ -429,7 +437,7 @@ fn synthetic_k4_t4_naive_vs_kernel() {
     ra0[1 * T + 1] = NewFr::one(); // addr=1, cycle=1
     ra0[2 * T + 2] = NewFr::one(); // addr=2, cycle=2
     ra0[3 * T + 3] = NewFr::one(); // addr=3, cycle=3
-    // Dimension 1: cycle→addr mapping: {0→1, 1→0, 2→3, 3→2}
+                                   // Dimension 1: cycle→addr mapping: {0→1, 1→0, 2→3, 3→2}
     let mut ra1 = vec![NewFr::zero(); K * T];
     ra1[1 * T + 0] = NewFr::one(); // addr=1, cycle=0
     ra1[0 * T + 1] = NewFr::one(); // addr=0, cycle=1
@@ -535,8 +543,14 @@ fn unit_eq_project_addr_major() {
 
     // AddressMajor: data[addr * T + cycle]
     let ra_data: Vec<NewFr> = vec![
-        NewFr::one(), NewFr::zero(), NewFr::one(), NewFr::zero(),
-        NewFr::zero(), NewFr::one(), NewFr::zero(), NewFr::one(),
+        NewFr::one(),
+        NewFr::zero(),
+        NewFr::one(),
+        NewFr::zero(),
+        NewFr::zero(),
+        NewFr::one(),
+        NewFr::zero(),
+        NewFr::one(),
     ];
 
     let r_cycle: Vec<NewFr> = vec![NewFr::from_u64(3), NewFr::from_u64(5)];
@@ -544,10 +558,14 @@ fn unit_eq_project_addr_major() {
     assert_eq!(eq_cycle.len(), 4);
 
     // Expected G[k] = Σ_j eq_cycle[j] × ra_data[k * T + j]
-    let expected_G0 = eq_cycle[0] * ra_data[0] + eq_cycle[1] * ra_data[1]
-        + eq_cycle[2] * ra_data[2] + eq_cycle[3] * ra_data[3];
-    let expected_G1 = eq_cycle[0] * ra_data[4] + eq_cycle[1] * ra_data[5]
-        + eq_cycle[2] * ra_data[6] + eq_cycle[3] * ra_data[7];
+    let expected_G0 = eq_cycle[0] * ra_data[0]
+        + eq_cycle[1] * ra_data[1]
+        + eq_cycle[2] * ra_data[2]
+        + eq_cycle[3] * ra_data[3];
+    let expected_G1 = eq_cycle[0] * ra_data[4]
+        + eq_cycle[1] * ra_data[5]
+        + eq_cycle[2] * ra_data[6]
+        + eq_cycle[3] * ra_data[7];
 
     // eq_project(inner_size=K, outer_size=T):
     //   eq_table.len()=4=T=outer_size ≠ inner_size=2=K → Branch 2
@@ -566,8 +584,18 @@ fn unit_kernel_reduce_booleanity() {
     let backend = CpuBackend;
 
     // K=4 (2 address vars), D=1
-    let eq_addr = vec![NewFr::from_u64(1), NewFr::from_u64(2), NewFr::from_u64(3), NewFr::from_u64(4)];
-    let G0 = vec![NewFr::from_u64(10), NewFr::from_u64(20), NewFr::from_u64(30), NewFr::from_u64(40)];
+    let eq_addr = vec![
+        NewFr::from_u64(1),
+        NewFr::from_u64(2),
+        NewFr::from_u64(3),
+        NewFr::from_u64(4),
+    ];
+    let G0 = vec![
+        NewFr::from_u64(10),
+        NewFr::from_u64(20),
+        NewFr::from_u64(30),
+        NewFr::from_u64(40),
+    ];
     let gamma_sq = vec![NewFr::one()];
 
     // Naive reference
@@ -615,8 +643,14 @@ fn unit_eq_project_matches_manual_G() {
     let T = 4usize;
 
     let ra_data: Vec<NewFr> = vec![
-        NewFr::one(), NewFr::zero(), NewFr::one(), NewFr::zero(),
-        NewFr::zero(), NewFr::one(), NewFr::zero(), NewFr::one(),
+        NewFr::one(),
+        NewFr::zero(),
+        NewFr::one(),
+        NewFr::zero(),
+        NewFr::zero(),
+        NewFr::one(),
+        NewFr::zero(),
+        NewFr::one(),
     ];
 
     let r_cycle: Vec<NewFr> = vec![NewFr::from_u64(3), NewFr::from_u64(5)];
@@ -680,7 +714,10 @@ fn gruen_vs_dense_round0_comparison() {
     let refs_p: Vec<&Buf<CpuBackend, NewFr>> = bufs_projected.iter().collect();
     let projected_evals = backend.reduce(&kernel, &refs_p, &gamma_sq);
     eprintln!("Projected Dense evals: {:?}", projected_evals);
-    eprintln!("  s(0)+s(1) = {:?}", projected_evals[0] + projected_evals[1]);
+    eprintln!(
+        "  s(0)+s(1) = {:?}",
+        projected_evals[0] + projected_evals[1]
+    );
 
     // === Path B: Single-phase Dense kernel with full data ===
     // Combined eq: [r_cycle, r_addr] so that addr bits are LSB

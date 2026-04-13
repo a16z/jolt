@@ -390,6 +390,7 @@ pub trait ComputeBackend: Send + Sync + 'static {
     type BooleanityState<F: Field>: Send + Sync;
 
     /// Initialize booleanity state from RA data and challenges.
+    #[allow(clippy::too_many_arguments)]
     fn bool_init<F: Field>(
         &self,
         ra_data: Vec<Vec<F>>,
@@ -405,8 +406,7 @@ pub trait ComputeBackend: Send + Sync + 'static {
     fn bool_bind<F: Field>(&self, state: &mut Self::BooleanityState<F>, challenge: F);
 
     /// Compute 4 round polynomial evaluations `[s(0), s(1), s(2), s(3)]`.
-    fn bool_reduce<F: Field>(&self, state: &Self::BooleanityState<F>, previous_claim: F)
-        -> Vec<F>;
+    fn bool_reduce<F: Field>(&self, state: &Self::BooleanityState<F>, previous_claim: F) -> Vec<F>;
 
     /// Extract per-RA-poly evaluations from fully-bound booleanity state.
     ///

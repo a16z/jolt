@@ -240,7 +240,13 @@ fn register_polys(pt: &mut PolyTable, p: &ModuleParams) -> Polys {
 
     // --- Committed (jolt-core transcript order) ---
     let rd_inc = pt.add_committed(RdInc, "RdInc", Committed, p.log_t, p.log_k_chunk + p.log_t);
-    let ram_inc = pt.add_committed(RamInc, "RamInc", Committed, p.log_t, p.log_k_chunk + p.log_t);
+    let ram_inc = pt.add_committed(
+        RamInc,
+        "RamInc",
+        Committed,
+        p.log_t,
+        p.log_k_chunk + p.log_t,
+    );
     let instruction_ra: Vec<_> = (0..p.instruction_d)
         .map(|d| {
             pt.add(
@@ -630,7 +636,10 @@ fn emit_unrolled_batched_rounds(
             let kdef = &kernels[kernel];
             let is_ps = matches!(kdef.spec.iteration, Iteration::PrefixSuffix { .. });
             let is_bool = matches!(kdef.spec.iteration, Iteration::Booleanity { .. });
-            let is_hw = matches!(kdef.spec.iteration, Iteration::HammingWeightReduction { .. });
+            let is_hw = matches!(
+                kdef.spec.iteration,
+                Iteration::HammingWeightReduction { .. }
+            );
 
             if instance_round == 0 || instance_round == phase_start {
                 // Phase boundary.
@@ -990,12 +999,7 @@ fn build_module(params: &ModuleParams) -> Module {
     );
 
     // Stage 8: Dory batch opening proof
-    build_stage8(
-        &p,
-        params,
-        &mut ops,
-        &s7,
-    );
+    build_stage8(&p, params, &mut ops, &s7);
 
     // Build verifier schedule
     let mut verifier_ops = vec![VerifierOp::Preamble];
@@ -4243,7 +4247,7 @@ fn build_stage6(
         .collect();
     // Pad with zero challenges at beginning (matching compute_r_address_chunks),
     // then sequential chunks: chunk[0]=MSB (padded), chunk[D-1]=LSB
-    let ram_pad_len = if params.log_k_ram % params.log_k_chunk == 0 {
+    let ram_pad_len = if params.log_k_ram.is_multiple_of(params.log_k_chunk) {
         0
     } else {
         params.log_k_chunk - (params.log_k_ram % params.log_k_chunk)
@@ -4251,10 +4255,7 @@ fn build_stage6(
     let ram_pad_chs: Vec<usize> = (0..ram_pad_len)
         .map(|i| ch.add(&format!("ram_ra_pad_{i}"), ChallengeSource::External))
         .collect();
-    let ram_ra_padded: Vec<usize> = ram_pad_chs
-        .into_iter()
-        .chain(ram_ra_full_addr.into_iter())
-        .collect();
+    let ram_ra_padded: Vec<usize> = ram_pad_chs.into_iter().chain(ram_ra_full_addr).collect();
     let ram_addr_chunks: Vec<Vec<usize>> = (0..params.ram_d)
         .map(|i| {
             let c = params.log_k_chunk;
@@ -4471,8 +4472,7 @@ fn build_stage6(
     let ch_bc_cycle_weight: Vec<usize> = (0..5)
         .map(|s| ch.add(&format!("bc_cycle_weight_{s}"), ChallengeSource::External))
         .collect();
-    let ch_bc_entry_weight =
-        ch.add("bc_cycle_entry_weight", ChallengeSource::External);
+    let ch_bc_entry_weight = ch.add("bc_cycle_entry_weight", ChallengeSource::External);
     let bc_raf_proj_ids: Vec<PolynomialId>;
     let bc_addr_chunks: Vec<Vec<usize>>;
     {
@@ -4484,7 +4484,7 @@ fn build_stage6(
             .rev()
             .copied()
             .collect();
-        let bc_pad_len = if params.log_k_bytecode % params.log_k_chunk == 0 {
+        let bc_pad_len = if params.log_k_bytecode.is_multiple_of(params.log_k_chunk) {
             0
         } else {
             params.log_k_chunk - (params.log_k_bytecode % params.log_k_chunk)
@@ -4492,10 +4492,7 @@ fn build_stage6(
         let bc_pad_chs: Vec<usize> = (0..bc_pad_len)
             .map(|i| ch.add(&format!("bc_ra_pad_{i}"), ChallengeSource::External))
             .collect();
-        let bc_addr_padded: Vec<usize> = bc_pad_chs
-            .into_iter()
-            .chain(bc_addr_be.into_iter())
-            .collect();
+        let bc_addr_padded: Vec<usize> = bc_pad_chs.into_iter().chain(bc_addr_be).collect();
         bc_addr_chunks = (0..params.bytecode_d)
             .map(|i| {
                 let c = params.log_k_chunk;
@@ -4557,12 +4554,12 @@ fn build_stage6(
         let mut terms = Vec::with_capacity(6);
         let ra_factors: Vec<Factor> = (0..d).map(|i| Factor::Input(i as u32)).collect();
 
-        for s in 0..5 {
+        for (s, &weight) in ch_bc_cycle_weight.iter().enumerate() {
             let mut factors = vec![
-                Factor::Challenge(ch_bc_cycle_weight[s] as u32),
+                Factor::Challenge(weight as u32),
                 Factor::Input((d + s) as u32),
             ];
-            factors.extend(ra_factors.iter().cloned());
+            factors.extend(ra_factors.iter().copied());
             terms.push(ProductTerm {
                 coefficient: 1,
                 factors,
@@ -4574,7 +4571,7 @@ fn build_stage6(
                 Factor::Challenge(ch_bc_entry_weight as u32),
                 Factor::Input((d + 5) as u32),
             ];
-            factors.extend(ra_factors.iter().cloned());
+            factors.extend(ra_factors.iter().copied());
             terms.push(ProductTerm {
                 coefficient: 1,
                 factors,
@@ -4621,9 +4618,8 @@ fn build_stage6(
         .rev()
         .copied()
         .collect();
-    let bool_cycle_ch: Vec<usize> = s5.round_challenges
-        [LOG_K_INSTRUCTION..LOG_K_INSTRUCTION + params.log_t]
-        .to_vec();
+    let bool_cycle_ch: Vec<usize> =
+        s5.round_challenges[LOG_K_INSTRUCTION..LOG_K_INSTRUCTION + params.log_t].to_vec();
     let ra_poly_ids: Vec<PolynomialId> = (0..params.instruction_d)
         .map(PolynomialId::InstructionRa)
         .chain((0..params.bytecode_d).map(PolynomialId::BytecodeRa))
@@ -5152,7 +5148,10 @@ fn build_stage6(
 
     for (i, phases) in instance_phase_degrees.iter().enumerate() {
         let inst = &batched_sumchecks[batch_idx].instances[i];
-        eprintln!("[stage6] instance[{i}]: first_active={}, phases={phases:?}", inst.first_active_round);
+        eprintln!(
+            "[stage6] instance[{i}]: first_active={}, phases={phases:?}",
+            inst.first_active_round
+        );
     }
     let bdef_instances = &batched_sumchecks[batch_idx].instances;
     let _round_challenge_indices = emit_unrolled_batched_rounds(
@@ -5322,10 +5321,7 @@ fn build_stage7(
     // Pre-sumcheck: squeeze γ challenge for batching 3N claims.
     // HammingWeightClaimReductionParams::new → 1 challenge_scalar
     // ---------------------------------------------------------------
-    let ch_hw_gamma = ch.add(
-        "hw_gamma",
-        ChallengeSource::FiatShamir { after_stage: 6 },
-    );
+    let ch_hw_gamma = ch.add("hw_gamma", ChallengeSource::FiatShamir { after_stage: 6 });
     ops.push(Op::Squeeze {
         challenge: ch_hw_gamma,
     });
@@ -5417,9 +5413,7 @@ fn build_stage7(
         spec: KernelSpec {
             formula: Formula::from_terms(vec![]),
             num_evals: 3, // degree 2 → evals at {0, 1, 2}
-            iteration: Iteration::HammingWeightReduction {
-                config: hw_config,
-            },
+            iteration: Iteration::HammingWeightReduction { config: hw_config },
             binding_order: BindingOrder::LowToHigh,
         },
         inputs: vec![],
@@ -5557,9 +5551,7 @@ fn build_stage7(
     });
 
     // Extract G_i evaluations and store as HammingG(i) evaluations.
-    let g_poly_ids: Vec<PolynomialId> = (0..total_d)
-        .map(|i| p.hw_g[i])
-        .collect();
+    let g_poly_ids: Vec<PolynomialId> = (0..total_d).map(|i| p.hw_g[i]).collect();
     ops.push(Op::HwReductionCacheOpenings {
         batch: batch_idx,
         instance: 0,
@@ -5578,12 +5570,7 @@ fn build_stage7(
     }
 }
 
-fn build_stage8(
-    p: &Polys,
-    params: &ModuleParams,
-    ops: &mut Vec<Op>,
-    s7: &Stage7Challenges,
-) {
+fn build_stage8(p: &Polys, params: &ModuleParams, ops: &mut Vec<Op>, s7: &Stage7Challenges) {
     ops.push(Op::BeginStage { index: 7 });
 
     // Opening point = [r_address_BE, r_cycle_BE].

@@ -429,8 +429,13 @@ where
                 let pending = std::mem::take(&mut state.pending_claims);
                 let hints = std::mem::take(&mut state.pending_hints);
 
-                let (claims, combined_hints) =
-                    fused_rlc_reduce::<_, PCS>(pending, hints, provider, &state.padded_poly_data, transcript);
+                let (claims, combined_hints) = fused_rlc_reduce::<_, PCS>(
+                    pending,
+                    hints,
+                    provider,
+                    &state.padded_poly_data,
+                    transcript,
+                );
 
                 state.reduced_claims = claims;
                 state.reduced_hints = combined_hints;
@@ -515,7 +520,9 @@ where
                             t_ops += 1;
                         }
                         {
-                            let absorbed: Vec<_> = std::iter::once(&coeffs[0]).chain(coeffs[2..].iter()).collect();
+                            let absorbed: Vec<_> = std::iter::once(&coeffs[0])
+                                .chain(coeffs[2..].iter())
+                                .collect();
                             eprintln!("[zkvm] AbsorbRoundPoly compressed: ops={label_op}..{t_ops} num_coeffs={num_coeffs} absorbed={absorbed:?}");
                         }
                     }
@@ -717,7 +724,10 @@ where
                 state.batch_combined = vec![F::zero(); *max_evals];
                 state.bound_this_round.clear();
                 if *batch == 4 && *round == 0 {
-                    eprintln!("[zkvm batch4 initial_claims] {:?}", &state.batch_instance_claims[*batch]);
+                    eprintln!(
+                        "[zkvm batch4 initial_claims] {:?}",
+                        &state.batch_instance_claims[*batch]
+                    );
                 }
                 if let Some(ch) = bind_challenge {
                     let r = state.challenges[*ch];
@@ -752,7 +762,10 @@ where
                 let pi = binding.poly();
                 #[cfg(debug_assertions)]
                 if matches!(pi, PolynomialId::BatchEq(70) | PolynomialId::BooleanityG(_)) {
-                    eprintln!("[zkvm Materialize] {:?} round={}", pi, state.current_batch_round);
+                    eprintln!(
+                        "[zkvm Materialize] {:?} round={}",
+                        pi, state.current_batch_round
+                    );
                 }
                 let buf = materialize_binding(
                     binding,
@@ -763,14 +776,23 @@ where
                 );
                 #[cfg(debug_assertions)]
                 if matches!(pi, PolynomialId::BatchEq(70)) {
-                    eprintln!("[zkvm Materialize] BatchEq(70) buffer size={}", backend.download(buf.as_field()).len());
+                    eprintln!(
+                        "[zkvm Materialize] BatchEq(70) buffer size={}",
+                        backend.download(buf.as_field()).len()
+                    );
                 }
                 #[cfg(debug_assertions)]
                 if matches!(binding, InputBinding::EqProject { .. }) {
                     let vals = backend.download(buf.as_field());
                     let sum: F = vals.iter().copied().sum();
                     let show: Vec<_> = vals.iter().take(8).collect();
-                    eprintln!("[zkvm EqProject] {:?} len={} sum={:?} first8={:?}", pi, vals.len(), sum, show);
+                    eprintln!(
+                        "[zkvm EqProject] {:?} len={} sum={:?} first8={:?}",
+                        pi,
+                        vals.len(),
+                        sum,
+                        show
+                    );
                 }
                 let _ = device_buffers.insert(pi, buf);
             }
@@ -799,7 +821,12 @@ where
                 let pi = binding.poly();
                 #[cfg(debug_assertions)]
                 if matches!(pi, PolynomialId::BatchEq(70) | PolynomialId::BooleanityG(_)) {
-                    eprintln!("[zkvm MaterializeIfAbsent] {:?} present={} round={}", pi, device_buffers.contains_key(&pi), state.current_batch_round);
+                    eprintln!(
+                        "[zkvm MaterializeIfAbsent] {:?} present={} round={}",
+                        pi,
+                        device_buffers.contains_key(&pi),
+                        state.current_batch_round
+                    );
                 }
                 if device_buffers.contains_key(&pi) {
                     continue;
@@ -835,7 +862,10 @@ where
                 let scalar = state.challenges[*challenge];
                 let order = kdef.spec.binding_order;
                 #[cfg(debug_assertions)]
-                eprintln!("[zkvm BindPrevPhase] kernel={} ch_idx={} scalar={:?}", kernel, challenge, scalar);
+                eprintln!(
+                    "[zkvm BindPrevPhase] kernel={} ch_idx={} scalar={:?}",
+                    kernel, challenge, scalar
+                );
                 let mut seen = HashSet::new();
                 for b in &kdef.inputs {
                     let pid = b.poly();
@@ -848,7 +878,10 @@ where
                             let before_len = backend.download(buf.as_field()).len();
                             backend.interpolate_inplace(buf.as_field_mut(), scalar, order);
                             let after_len = backend.download(buf.as_field()).len();
-                            eprintln!("[zkvm BindPrevPhase]   {:?}: {} -> {}", pid, before_len, after_len);
+                            eprintln!(
+                                "[zkvm BindPrevPhase]   {:?}: {} -> {}",
+                                pid, before_len, after_len
+                            );
                         }
                         #[cfg(not(debug_assertions))]
                         backend.interpolate_inplace(buf.as_field_mut(), scalar, order);
@@ -869,7 +902,10 @@ where
                     data.len()
                 );
                 #[cfg(debug_assertions)]
-                eprintln!("[zkvm CaptureScalar] poly={:?} ch_idx={} value={:?}", poly, challenge, data[0]);
+                eprintln!(
+                    "[zkvm CaptureScalar] poly={:?} ch_idx={} value={:?}",
+                    poly, challenge, data[0]
+                );
                 state.challenges[*challenge] = data[0];
             }
 
@@ -914,8 +950,11 @@ where
                         for (idx, buf) in input_refs.iter().enumerate() {
                             let vals = backend.download(buf.as_field());
                             let show: Vec<_> = vals.iter().take(4).collect();
-                            eprintln!("  [zkvm bc_raf_addr r={}] input[{idx}] len={} first4={show:?}",
-                                state.current_batch_round, vals.len());
+                            eprintln!(
+                                "  [zkvm bc_raf_addr r={}] input[{idx}] len={} first4={show:?}",
+                                state.current_batch_round,
+                                vals.len()
+                            );
                         }
                     }
                 }
@@ -967,7 +1006,10 @@ where
                 let scalar = state.challenges[*challenge];
                 let order = kdef.spec.binding_order;
                 // BytecodeReadRaf addr kernel: 12 inputs, num_evals=3
-                if kdef.inputs.len() == 12 && kdef.spec.num_evals == 3 && state.current_batch_round >= 9 {
+                if kdef.inputs.len() == 12
+                    && kdef.spec.num_evals == 3
+                    && state.current_batch_round >= 9
+                {
                     eprintln!(
                         "[zkvm InstanceBind bc_raf] round={} batch={batch} inst={instance} ch_idx={challenge} scalar={scalar:?}",
                         state.current_batch_round,
@@ -1018,7 +1060,8 @@ where
                 } else {
                     evals.clone()
                 };
-                if *batch == 4 && state.current_batch_round >= 9 && state.current_batch_round <= 13 {
+                if *batch == 4 && state.current_batch_round >= 9 && state.current_batch_round <= 13
+                {
                     eprintln!(
                         "[zkvm accum] batch={batch} round={} inst={instance} num_evals={num_evals} coeff={coeff:?} evals={evals:?} full_evals={full_evals:?}",
                         state.current_batch_round,
@@ -1497,7 +1540,7 @@ where
             DeviceBuffer::Field(backend.lt_table(&point))
         }
         InputBinding::EqProject {
-            poly,
+            poly: _,
             source,
             challenges: chs,
             inner_size,

@@ -810,9 +810,7 @@ pub enum Op {
     },
     /// Post-proof transcript binding: absorb opening point + joint eval.
     /// Calls `PCS::bind_opening_inputs(transcript, point, eval)`.
-    BindOpeningInputs {
-        point_challenges: Vec<usize>,
-    },
+    BindOpeningInputs { point_challenges: Vec<usize> },
     /// Evaluate a preprocessed polynomial's MLE at a challenge-derived point.
     ///
     /// Materializes the polynomial from the provider, evaluates the MLE at

@@ -207,9 +207,9 @@ impl<F: Field> CpuBooleanityState<F> {
             let mut group_c = F::zero();
             let mut group_e = F::zero();
 
-            for d in 0..self.num_polys {
-                let h_lo = h[d][2 * j];
-                let h_hi = h[d][2 * j + 1];
+            for (d, h_d) in h.iter().enumerate().take(self.num_polys) {
+                let h_lo = h_d[2 * j];
+                let h_hi = h_d[2 * j + 1];
                 let b = h_hi - h_lo;
                 let rho = self.gamma_powers[d];
                 group_c += h_lo * (h_lo - rho);
@@ -336,7 +336,10 @@ impl<F: Field> CpuBooleanityState<F> {
     ///
     /// H_d was pre-scaled by γ^d during Phase 2 construction, so we unscale.
     pub fn final_ra_claims(&self) -> Vec<F> {
-        let h = self.H.as_ref().expect("final_ra_claims: Phase 2 must be initialized");
+        let h = self
+            .H
+            .as_ref()
+            .expect("final_ra_claims: Phase 2 must be initialized");
         h.iter()
             .zip(&self.gamma_powers)
             .map(|(h_d, &gamma_pow)| {
@@ -371,10 +374,8 @@ fn gruen_poly_deg3<F: Field>(
     let cubic_eval_1 = s_0_plus_s_1 - cubic_eval_0;
     let quadratic_eval_1 = cubic_eval_1 / eq_eval_1;
     let e_times_2 = q_quadratic_coeff + q_quadratic_coeff;
-    let quadratic_eval_2 =
-        quadratic_eval_1 + quadratic_eval_1 - q_constant + e_times_2;
-    let quadratic_eval_3 =
-        quadratic_eval_2 + quadratic_eval_1 - q_constant + e_times_2 + e_times_2;
+    let quadratic_eval_2 = quadratic_eval_1 + quadratic_eval_1 - q_constant + e_times_2;
+    let quadratic_eval_3 = quadratic_eval_2 + quadratic_eval_1 - q_constant + e_times_2 + e_times_2;
 
     vec![
         cubic_eval_0,
@@ -400,6 +401,7 @@ fn contract_eq_rest<F: Field>(eq: &mut Vec<F>) {
 mod tests {
     use super::*;
     use jolt_field::Fr;
+    use num_traits::{One, Zero};
 
     #[test]
     fn expanding_table_matches_core() {

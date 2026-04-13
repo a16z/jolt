@@ -932,8 +932,13 @@ impl ComputeBackend for MetalBackend {
         log_t: usize,
     ) -> Self::BooleanityState<F> {
         jolt_cpu::booleanity::CpuBooleanityState::new(
-            ra_data, addr_challenges, cycle_challenges,
-            gamma_powers, gamma_powers_square, log_k_chunk, log_t,
+            ra_data,
+            addr_challenges,
+            cycle_challenges,
+            gamma_powers,
+            gamma_powers_square,
+            log_k_chunk,
+            log_t,
         )
     }
 
@@ -941,9 +946,7 @@ impl ComputeBackend for MetalBackend {
         state.ingest_challenge(challenge);
     }
 
-    fn bool_reduce<F: Field>(
-        &self, state: &Self::BooleanityState<F>, previous_claim: F,
-    ) -> Vec<F> {
+    fn bool_reduce<F: Field>(&self, state: &Self::BooleanityState<F>, previous_claim: F) -> Vec<F> {
         state.compute_round(previous_claim)
     }
 }

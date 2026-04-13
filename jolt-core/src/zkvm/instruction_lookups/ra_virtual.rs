@@ -201,9 +201,15 @@ impl<F: JoltField> InstructionRaSumcheckProver<F> {
         #[cfg(debug_assertions)]
         {
             for (i, chunk) in r_address_chunks.iter().enumerate() {
-                eprintln!("[core inst_ra_virtual] chunk[{i}] eq_point: {:?}", &chunk[..chunk.len().min(6)]);
+                eprintln!(
+                    "[core inst_ra_virtual] chunk[{i}] eq_point: {:?}",
+                    &chunk[..chunk.len().min(6)]
+                );
             }
-            eprintln!("[core inst_ra_virtual] r_cycle: {:?}", &params.r_cycle.r[..params.r_cycle.r.len().min(4)]);
+            eprintln!(
+                "[core inst_ra_virtual] r_cycle: {:?}",
+                &params.r_cycle.r[..params.r_cycle.r.len().min(4)]
+            );
         }
 
         let H_indices: Vec<Vec<Option<u8>>> = (0..params.one_hot_params.instruction_d)
