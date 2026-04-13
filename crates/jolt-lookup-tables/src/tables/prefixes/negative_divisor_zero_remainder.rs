@@ -1,94 +1,34 @@
 use jolt_field::Field;
 
-use crate::challenge_ops::{ChallengeOps, FieldOps};
 use crate::lookup_bits::LookupBits;
+use crate::XLEN;
 
-use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
+use super::{PrefixEval, Prefixes, SparseDensePrefix};
 
 pub enum NegativeDivisorZeroRemainderPrefix {}
 
 impl<F: Field> SparseDensePrefix<F> for NegativeDivisorZeroRemainderPrefix {
-    #[expect(clippy::unwrap_used)]
-    fn prefix_mle<C>(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<C>,
-        c: u32,
-        mut b: LookupBits,
-        j: usize,
-    ) -> F
-    where
-        C: ChallengeOps<F>,
-        F: FieldOps<C>,
-    {
-        if j == 0 {
-            let divisor_sign = F::from_u8(b.pop_msb());
-            let (remainder, _) = b.uninterleave();
-            if u64::from(remainder) != 0 {
-                return F::zero();
-            }
-            // `c` is the sign "bit" of the remainder.
-            // This prefix handles the case where the remainder is zero
-            // and the divisor is negative.
-            return (F::one() - F::from_u32(c)) * divisor_sign;
-        }
-        if j == 1 {
-            let (remainder, _) = b.uninterleave();
-            if u64::from(remainder) != 0 {
-                return F::zero();
-            }
-            // `r_x` is the sign "bit" of the remainder.
-            // `c` is the sign "bit" of the divisor.
-            // This prefix handles the case where the remainder is zero
-            // and the divisor is negative.
-            return (F::one() - r_x.unwrap()) * F::from_u32(c);
-        }
-
-        let negative_divisor_zero_remainder =
-            checkpoints[Prefixes::NegativeDivisorZeroRemainder].unwrap();
-
-        if let Some(r_x) = r_x {
-            let (remainder, _) = b.uninterleave();
-            // Short-circuit if low-order bits of remainder are not 0s
-            if u64::from(remainder) != 0 {
-                return F::zero();
-            }
-
-            negative_divisor_zero_remainder * (F::one() - r_x)
-        } else {
-            let _ = b.pop_msb();
-            let (remainder, _) = b.uninterleave();
-            // Short-circuit if low-order bits of remainder are not 0s
-            if u64::from(remainder) != 0 {
-                return F::zero();
-            }
-
-            negative_divisor_zero_remainder * (F::one() - F::from_u32(c))
-        }
+    fn default_checkpoint() -> F {
+        F::one()
     }
 
-    #[expect(clippy::unwrap_used)]
-    fn update_prefix_checkpoint<C>(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: C,
-        r_y: C,
-        j: usize,
-        _suffix_len: usize,
-    ) -> PrefixCheckpoint<F>
-    where
-        C: ChallengeOps<F>,
-        F: FieldOps<C>,
-    {
-        if j == 1 {
-            // `r_x` is the sign bit of the remainder
-            // `r_y` is the sign bit of the divisor
-            // This prefix handles the case where the remainder is zero
-            // and the divisor is negative.
-            return Some((F::one() - r_x) * r_y).into();
+    fn evaluate(checkpoints: &[PrefixEval<F>], b: LookupBits, suffix_len: usize) -> F {
+        let (remainder, divisor) = b.uninterleave();
+        if u64::from(remainder) != 0 {
+            return F::zero();
         }
 
-        let mut negative_divisor_zero_remainder =
-            checkpoints[Prefixes::NegativeDivisorZeroRemainder].unwrap();
-        negative_divisor_zero_remainder *= F::one() - r_x;
-        Some(negative_divisor_zero_remainder).into()
+        let j_start = 2 * XLEN - suffix_len - b.len();
+        if j_start == 0 && !b.is_empty() {
+            // Phase contains sign bits. Remainder sign must be 0 (positive/zero),
+            // divisor sign must be 1 (negative).
+            let div_sign = u64::from(divisor) >> (divisor.len() - 1);
+            // rem_sign is already checked via remainder == 0 (which includes sign bit = 0)
+            if div_sign != 1 {
+                return F::zero();
+            }
+        }
+
+        checkpoints[Prefixes::NegativeDivisorZeroRemainder]
     }
 }

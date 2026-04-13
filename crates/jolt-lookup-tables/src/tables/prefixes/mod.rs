@@ -1,9 +1,14 @@
 //! Prefix polynomial evaluations for the sparse-dense decomposition.
 //!
 //! Each prefix captures the "contribution" of high-order bound variables
-//! to a lookup table's MLE during sumcheck. Prefixes are field-valued
-//! (unlike suffixes which are `u64`), and maintain checkpoints that are
-//! updated every two sumcheck rounds.
+//! to a lookup table's MLE during sumcheck. Prefixes are evaluated at
+//! binary points to materialize a dense polynomial, which is then bound
+//! using standard polynomial operations during sumcheck rounds.
+//!
+//! Checkpoints accumulate prefix values across phases. They are initialized
+//! via [`SparseDensePrefix::default_checkpoint`] and updated by the consumer
+//! at phase boundaries (the bound polynomial's final scalar becomes the new
+//! checkpoint).
 
 pub mod and;
 pub mod andn;
@@ -50,51 +55,26 @@ use jolt_field::Field;
 use std::fmt::Display;
 use std::ops::Index;
 
-use crate::challenge_ops::{ChallengeOps, FieldOps};
 use crate::lookup_bits::LookupBits;
 
-/// A prefix polynomial: evaluates bound high-order variables during sumcheck.
+/// A prefix polynomial evaluated at binary points during materialization.
 ///
-/// The challenge type `C` supports smaller-than-field challenge values
-/// for performance (e.g., 128-bit challenges with a 254-bit field).
+/// Implementations provide:
+/// - `default_checkpoint()`: the initial checkpoint value before any phases
+/// - `evaluate()`: the prefix value at a binary point, given accumulated
+///   checkpoints from previous phases
 pub trait SparseDensePrefix<F: Field>: 'static + Sync {
-    /// Evaluate the prefix MLE incorporating the checkpoint, current variable `c`,
-    /// and unbound variables `b`.
-    ///
-    /// - On odd rounds (`j` odd): `r_x` is `Some(challenge)` from the previous round.
-    /// - On even rounds (`j` even): `r_x` is `None`; `c` is the current x-variable.
-    fn prefix_mle<C>(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<C>,
-        c: u32,
-        b: LookupBits,
-        j: usize,
-    ) -> F
-    where
-        C: ChallengeOps<F>,
-        F: FieldOps<C>;
+    /// Default checkpoint value for this prefix before any phases have run.
+    fn default_checkpoint() -> F;
 
-    /// Update the checkpoint after binding two variables (`r_x`, `r_y`).
-    ///
-    /// Called every two sumcheck rounds. May depend on other prefix checkpoints.
-    fn update_prefix_checkpoint<C>(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: C,
-        r_y: C,
-        j: usize,
-        suffix_len: usize,
-    ) -> PrefixCheckpoint<F>
-    where
-        C: ChallengeOps<F>,
-        F: FieldOps<C>;
+    /// Evaluate this prefix at binary point `b`, given accumulated checkpoints
+    /// from previous phases and the number of remaining suffix variables.
+    fn evaluate(checkpoints: &[PrefixEval<F>], b: LookupBits, suffix_len: usize) -> F;
 }
 
 /// Wrapper for prefix polynomial evaluations, used for type safety.
 #[derive(Clone, Copy)]
 pub struct PrefixEval<F>(pub(crate) F);
-
-/// Cached prefix evaluation after each pair of address-binding rounds.
-pub type PrefixCheckpoint<F> = PrefixEval<Option<F>>;
 
 impl<F: Display> Display for PrefixEval<F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -105,17 +85,6 @@ impl<F: Display> Display for PrefixEval<F> {
 impl<F> From<F> for PrefixEval<F> {
     fn from(value: F) -> Self {
         Self(value)
-    }
-}
-
-impl<F> PrefixCheckpoint<F> {
-    #[expect(clippy::unwrap_used)]
-    pub fn unwrap(self) -> PrefixEval<F> {
-        self.0.unwrap().into()
-    }
-
-    pub fn unwrap_or(self, default: F) -> F {
-        self.0.unwrap_or(default)
     }
 }
 
@@ -189,6 +158,9 @@ pub const ALL_PREFIXES: &[Prefixes] = <Prefixes as strum::VariantArray>::VARIANT
 
 /// Dispatches a `SparseDensePrefix` method call to the concrete type for each `Prefixes` variant.
 macro_rules! dispatch_prefix {
+    ($self:expr, $method:ident) => {
+        dispatch_prefix!($self, $method,)
+    };
     ($self:expr, $method:ident, $($args:expr),* $(,)?) => {
         match $self {
             Prefixes::LowerWord => lower_word::LowerWordPrefix::$method($($args),*),
@@ -242,76 +214,18 @@ macro_rules! dispatch_prefix {
 }
 
 impl Prefixes {
-    /// Evaluate the prefix MLE for this variant.
-    pub fn prefix_mle<F, C>(
+    /// Return the default checkpoint value for this prefix variant.
+    pub fn default_checkpoint<F: Field>(&self) -> PrefixEval<F> {
+        PrefixEval(dispatch_prefix!(self, default_checkpoint))
+    }
+
+    /// Evaluate this prefix at binary point `b`.
+    pub fn evaluate<F: Field>(
         &self,
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<C>,
-        c: u32,
+        checkpoints: &[PrefixEval<F>],
         b: LookupBits,
-        j: usize,
-    ) -> PrefixEval<F>
-    where
-        C: ChallengeOps<F>,
-        F: Field + FieldOps<C>,
-    {
-        PrefixEval(dispatch_prefix!(
-            self,
-            prefix_mle,
-            checkpoints,
-            r_x,
-            c,
-            b,
-            j
-        ))
-    }
-
-    /// Update the checkpoint for this prefix variant.
-    fn update_prefix_checkpoint<F, C>(
-        &self,
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: C,
-        r_y: C,
-        j: usize,
         suffix_len: usize,
-    ) -> PrefixCheckpoint<F>
-    where
-        C: ChallengeOps<F>,
-        F: Field + FieldOps<C>,
-    {
-        dispatch_prefix!(
-            self,
-            update_prefix_checkpoint,
-            checkpoints,
-            r_x,
-            r_y,
-            j,
-            suffix_len
-        )
-    }
-
-    /// Update all prefix checkpoints after binding two variables.
-    pub fn update_checkpoints<F, C>(
-        checkpoints: &mut [PrefixCheckpoint<F>],
-        r_x: C,
-        r_y: C,
-        j: usize,
-        suffix_len: usize,
-    ) where
-        C: ChallengeOps<F>,
-        F: Field + FieldOps<C>,
-    {
-        debug_assert_eq!(checkpoints.len(), NUM_PREFIXES);
-        let previous_checkpoints: Vec<_> = checkpoints.to_vec();
-        for (index, checkpoint) in checkpoints.iter_mut().enumerate() {
-            let prefix = ALL_PREFIXES[index];
-            *checkpoint = prefix.update_prefix_checkpoint::<F, C>(
-                &previous_checkpoints,
-                r_x,
-                r_y,
-                j,
-                suffix_len,
-            );
-        }
+    ) -> PrefixEval<F> {
+        PrefixEval(dispatch_prefix!(self, evaluate, checkpoints, b, suffix_len))
     }
 }

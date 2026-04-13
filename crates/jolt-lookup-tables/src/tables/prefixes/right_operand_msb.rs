@@ -1,50 +1,23 @@
 use jolt_field::Field;
 
-use crate::challenge_ops::{ChallengeOps, FieldOps};
 use crate::lookup_bits::LookupBits;
+use crate::XLEN;
 
-use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
+use super::{PrefixEval, Prefixes, SparseDensePrefix};
 
 pub enum RightOperandMsbPrefix {}
 
 impl<F: Field> SparseDensePrefix<F> for RightOperandMsbPrefix {
-    #[expect(clippy::unwrap_used)]
-    fn prefix_mle<C>(
-        checkpoints: &[PrefixCheckpoint<F>],
-        _: Option<C>,
-        c: u32,
-        mut b: LookupBits,
-        j: usize,
-    ) -> F
-    where
-        C: ChallengeOps<F>,
-        F: FieldOps<C>,
-    {
-        if j == 0 {
-            let y_msb = b.pop_msb();
-            F::from_u8(y_msb)
-        } else if j == 1 {
-            F::from_u32(c)
-        } else {
-            checkpoints[Prefixes::RightOperandMsb].unwrap()
-        }
+    fn default_checkpoint() -> F {
+        F::zero()
     }
 
-    fn update_prefix_checkpoint<C>(
-        checkpoints: &[PrefixCheckpoint<F>],
-        _: C,
-        r_y: C,
-        j: usize,
-        _suffix_len: usize,
-    ) -> PrefixCheckpoint<F>
-    where
-        C: ChallengeOps<F>,
-        F: FieldOps<C>,
-    {
-        if j == 1 {
-            Some(r_y.into()).into()
-        } else {
-            checkpoints[Prefixes::RightOperandMsb].into()
+    fn evaluate(checkpoints: &[PrefixEval<F>], b: LookupBits, suffix_len: usize) -> F {
+        let j_start = 2 * XLEN - suffix_len - b.len();
+        if j_start > 0 {
+            return checkpoints[Prefixes::RightOperandMsb];
         }
+        let (_, y) = b.uninterleave();
+        F::from_u64(u64::from(y) >> (y.len() - 1))
     }
 }

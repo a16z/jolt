@@ -1,12 +1,10 @@
-#![expect(clippy::unwrap_used)]
-
 use jolt_field::Field;
 use rand::prelude::*;
 
 use crate::challenge_ops::{ChallengeOps, FieldOps};
 use crate::interleave::interleave_bits;
 use crate::lookup_bits::LookupBits;
-use crate::tables::prefixes::{PrefixCheckpoint, Prefixes, ALL_PREFIXES, NUM_PREFIXES};
+use crate::tables::prefixes::{PrefixEval, ALL_PREFIXES};
 use crate::tables::suffixes::SuffixEval;
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
@@ -60,15 +58,20 @@ where
     let mut rng = StdRng::seed_from_u64(12345);
 
     for _ in 0..300 {
-        let mut prefix_checkpoints: Vec<PrefixCheckpoint<F>> = vec![None.into(); NUM_PREFIXES];
         let lookup_index = T::random_lookup_index(&mut rng);
-        let mut j = 0;
-        let mut r: Vec<F> = vec![];
+
+        // Evaluate at pure binary points: iterate over phases,
+        // using the actual lookup index bits for each phase.
+        let mut checkpoints: Vec<PrefixEval<F>> = ALL_PREFIXES
+            .iter()
+            .map(|p| p.default_checkpoint::<F>())
+            .collect();
+
         for phase in 0..total_phases {
             let suffix_len = (total_phases - 1 - phase) * ROUNDS_PER_PHASE;
-            let (mut prefix_bits, suffix_bits) =
-                LookupBits::new(lookup_index, XLEN * 2 - phase * ROUNDS_PER_PHASE)
-                    .split(suffix_len);
+            let full_bits = LookupBits::new(lookup_index, XLEN * 2);
+            let (prefix_bits, suffix_bits) = full_bits.split(suffix_len);
+            let (_, phase_bits) = prefix_bits.split(ROUNDS_PER_PHASE);
 
             let suffix_evals: Vec<_> = T::default()
                 .suffixes()
@@ -76,60 +79,26 @@ where
                 .map(|suffix| SuffixEval::from(F::from_u64(suffix.suffix_mle(suffix_bits))))
                 .collect();
 
-            for _ in 0..ROUNDS_PER_PHASE {
-                let mut eval_point = r.clone();
-                let c = if rng.next_u64().is_multiple_of(2) {
-                    0
-                } else {
-                    2
-                };
-                eval_point.push(F::from_u32(c));
-                let _ = prefix_bits.pop_msb();
+            let prefix_evals: Vec<PrefixEval<F>> = ALL_PREFIXES
+                .iter()
+                .map(|prefix| prefix.evaluate(&checkpoints, phase_bits, suffix_len))
+                .collect();
 
-                eval_point.extend(
-                    index_to_field_bitvector::<F>(prefix_bits.into(), prefix_bits.len()).iter(),
-                );
-                eval_point.extend(
-                    index_to_field_bitvector::<F>(suffix_bits.into(), suffix_bits.len()).iter(),
-                );
+            let combined: F = T::default().combine(&prefix_evals, &suffix_evals);
 
-                let mle_eval: F = T::default().evaluate_mle(&eval_point);
-
-                let r_x = if j % 2 == 1 {
-                    Some(*r.last().unwrap())
-                } else {
-                    None
-                };
-
-                let prefix_evals: Vec<_> = ALL_PREFIXES
-                    .iter()
-                    .map(|prefix| {
-                        prefix.prefix_mle::<F, F>(&prefix_checkpoints, r_x, c, prefix_bits, j)
-                    })
-                    .collect();
-
-                let combined = T::default().combine(&prefix_evals, &suffix_evals);
+            // At binary points, the full MLE should equal materialize_entry
+            if phase == total_phases - 1 {
+                let expected = F::from_u64(T::default().materialize_entry(lookup_index));
                 assert_eq!(
-                    combined, mle_eval,
-                    "prefix/suffix decomposition mismatch at round {j}, \
-                     lookup_index={lookup_index}, prefix_bits={prefix_bits}, \
-                     suffix_bits={suffix_bits}"
+                    combined, expected,
+                    "prefix/suffix decomposition mismatch at final phase, \
+                     lookup_index={lookup_index:#x}"
                 );
-
-                r.push(F::from_u64(rng.next_u64()));
-
-                if r.len().is_multiple_of(2) {
-                    Prefixes::update_checkpoints::<F, F>(
-                        &mut prefix_checkpoints,
-                        r[r.len() - 2],
-                        r[r.len() - 1],
-                        j,
-                        suffix_len,
-                    );
-                }
-
-                j += 1;
             }
+
+            // Update checkpoints: at binary points, the checkpoint for each prefix
+            // becomes its evaluated value from this phase.
+            checkpoints = prefix_evals;
         }
     }
 }

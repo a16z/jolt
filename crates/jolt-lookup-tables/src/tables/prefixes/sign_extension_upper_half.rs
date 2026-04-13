@@ -1,62 +1,44 @@
 use jolt_field::Field;
 
-use crate::challenge_ops::{ChallengeOps, FieldOps};
 use crate::lookup_bits::LookupBits;
-
-use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 use crate::XLEN;
+
+use super::{PrefixEval, Prefixes, SparseDensePrefix};
 
 pub enum SignExtensionUpperHalfPrefix {}
 
 impl<F: Field> SparseDensePrefix<F> for SignExtensionUpperHalfPrefix {
-    #[expect(clippy::unwrap_used)]
-    fn prefix_mle<C>(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<C>,
-        c: u32,
-        b: LookupBits,
-        j: usize,
-    ) -> F
-    where
-        C: ChallengeOps<F>,
-        F: FieldOps<C>,
-    {
-        let suffix_len = 2 * XLEN - j - b.len() - 1;
+    fn default_checkpoint() -> F {
+        F::one()
+    }
+
+    fn evaluate(checkpoints: &[PrefixEval<F>], b: LookupBits, suffix_len: usize) -> F {
         let half_word_size = XLEN / 2;
 
+        // Only defined on the lower half-word; returns 1 for higher bits.
         if suffix_len >= half_word_size {
             return F::one();
         }
 
-        if j == XLEN + half_word_size {
-            F::from_u128(((1u128 << (half_word_size)) - 1) << (half_word_size)).mul_u64(c as u64)
-        } else if j == XLEN + half_word_size + 1 {
-            F::from_u128(((1u128 << (half_word_size)) - 1) << (half_word_size)) * r_x.unwrap()
-        } else if j > XLEN + half_word_size + 1 {
-            checkpoints[Prefixes::SignExtensionUpperHalf].unwrap_or(F::zero())
-        } else {
-            unreachable!("This case should never happen if our prefixes start at half_word_size");
-        }
-    }
+        // The value is: sign_bit * ((2^half_word_size - 1) << half_word_size)
+        // where sign_bit is the MSB of the lower half-word's x operand.
+        // This is captured in the checkpoint after the first round where it's relevant.
+        // At binary points the sign_bit is either from the current phase or the checkpoint.
+        //
+        // j_start = 2*XLEN - suffix_len - b.len()
+        // The sign bit round is at j = XLEN + half_word_size (the first x bit of lower half).
+        let j_start = 2 * XLEN - suffix_len - b.len();
+        let sign_bit_round = XLEN + half_word_size;
 
-    fn update_prefix_checkpoint<C>(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: C,
-        _r_y: C,
-        j: usize,
-        _suffix_len: usize,
-    ) -> PrefixCheckpoint<F>
-    where
-        C: ChallengeOps<F>,
-        F: FieldOps<C>,
-    {
-        let half_word_size = XLEN / 2;
-
-        if j == XLEN + half_word_size + 1 {
-            let value = F::from_u128(((1u128 << (half_word_size)) - 1) << (half_word_size)) * r_x;
-            Some(value).into()
+        if j_start <= sign_bit_round && sign_bit_round < j_start + b.len() {
+            // Sign bit is in this phase's b bits
+            let (x, _y) = b.uninterleave();
+            let x_val = u64::from(x);
+            // The sign bit is the MSB of x in this phase
+            let sign_bit = (x_val >> (x.len() - 1)) & 1;
+            F::from_u128(((1u128 << half_word_size) - 1) << half_word_size) * F::from_u64(sign_bit)
         } else {
-            checkpoints[Prefixes::SignExtensionUpperHalf].into()
+            checkpoints[Prefixes::SignExtensionUpperHalf]
         }
     }
 }

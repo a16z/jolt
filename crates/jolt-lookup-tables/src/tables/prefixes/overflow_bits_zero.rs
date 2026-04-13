@@ -1,66 +1,35 @@
 use jolt_field::Field;
 
-use crate::challenge_ops::{ChallengeOps, FieldOps};
 use crate::lookup_bits::LookupBits;
-
-use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 use crate::XLEN;
+
+use super::{PrefixEval, Prefixes, SparseDensePrefix};
 
 pub enum OverflowBitsZeroPrefix {}
 
 impl<F: Field> SparseDensePrefix<F> for OverflowBitsZeroPrefix {
-    fn prefix_mle<C>(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<C>,
-        c: u32,
-        mut b: LookupBits,
-        j: usize,
-    ) -> F
-    where
-        C: ChallengeOps<F>,
-        F: FieldOps<C>,
-    {
-        let suffix_len = 2 * XLEN - j - b.len() - 1;
-        if j >= 128 - XLEN {
-            return checkpoints[Prefixes::OverflowBitsZero].unwrap_or(F::one());
-        }
-
-        let mut result = checkpoints[Prefixes::OverflowBitsZero].unwrap_or(F::one());
-
-        if let Some(r_x) = r_x {
-            let y = F::from_u8(c as u8);
-            result *= (F::one() - r_x) * (F::one() - y);
-        } else {
-            let x = F::from_u32(c);
-            let y = F::from_u8(b.pop_msb());
-            result *= (F::one() - x) * (F::one() - y);
-        }
-
-        let rest = u128::from(b);
-        let temp = F::from_u64((((rest << suffix_len) >> XLEN) == 0) as u64);
-        result *= temp;
-
-        result
+    fn default_checkpoint() -> F {
+        F::one()
     }
 
-    fn update_prefix_checkpoint<C>(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: C,
-        r_y: C,
-        j: usize,
-        _suffix_len: usize,
-    ) -> PrefixCheckpoint<F>
-    where
-        C: ChallengeOps<F>,
-        F: FieldOps<C>,
-    {
-        if j >= 128 - XLEN {
-            return checkpoints[Prefixes::OverflowBitsZero].into();
+    fn evaluate(checkpoints: &[PrefixEval<F>], b: LookupBits, suffix_len: usize) -> F {
+        let j_start = 2 * XLEN - suffix_len - b.len();
+        if j_start >= 128 - XLEN {
+            return checkpoints[Prefixes::OverflowBitsZero];
         }
-        let updated = checkpoints[Prefixes::OverflowBitsZero].unwrap_or(F::one())
-            * (F::one() - r_x)
-            * (F::one() - r_y);
 
-        Some(updated).into()
+        // Overflow region = interleaved positions 0..XLEN.
+        // Phase bits in overflow = top portion of `b`.
+        let overflow_bits = if suffix_len >= XLEN {
+            u128::from(b)
+        } else {
+            u128::from(b) >> (XLEN - suffix_len)
+        };
+
+        if overflow_bits != 0 {
+            F::zero()
+        } else {
+            checkpoints[Prefixes::OverflowBitsZero]
+        }
     }
 }
