@@ -221,11 +221,7 @@ fn main() -> eyre::Result<()> {
     println!("=== Summary ===");
     println!(
         "{}/{} iterations improved the objective.",
-        result
-            .attempts
-            .iter()
-            .filter(|a| a.invariants_passed && a.score < result.baseline_score)
-            .count(),
+        result.attempts.iter().filter(|a| a.accepted).count(),
         result.attempts.len()
     );
     println!(

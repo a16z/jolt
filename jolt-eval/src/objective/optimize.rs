@@ -37,6 +37,13 @@ pub struct OptimizationAttempt {
     pub iteration: usize,
     pub score: f64,
     pub invariants_passed: bool,
+    /// Whether this attempt was accepted by the greedy loop.
+    pub accepted: bool,
+    /// Score change relative to the best score *at the time this attempt
+    /// was evaluated* (negative = improvement).
+    pub score_delta_vs_best: f64,
+    /// Score change relative to the original baseline (negative = improvement).
+    pub score_delta_vs_baseline: f64,
     /// Relative path to the persisted attempt directory, if available.
     pub path: Option<String>,
 }
@@ -239,6 +246,9 @@ pub fn auto_optimize<A: AgentHarness, E: OptimizeEnv>(
             iteration: iter,
             score: new_score,
             invariants_passed,
+            accepted: improved,
+            score_delta_vs_best: new_score - best_score,
+            score_delta_vs_baseline: new_score - baseline_score,
             path: attempt_path,
         };
         attempts.push(attempt);
@@ -379,13 +389,12 @@ fn build_optimize_prompt(
     if !past_attempts.is_empty() {
         prompt.push_str("## Previous attempts\n\n");
         for attempt in past_attempts {
-            let status_label = match (
-                attempt.invariants_passed,
-                attempt.score < current_best_score,
-            ) {
-                (true, true) => "ACCEPTED",
-                (false, _) => "REJECTED (invariants failed)",
-                _ => "REJECTED (no improvement)",
+            let status_label = if attempt.accepted {
+                "ACCEPTED"
+            } else if !attempt.invariants_passed {
+                "REJECTED (invariants failed)"
+            } else {
+                "REJECTED (no improvement)"
             };
             if let Some(ref path) = attempt.path {
                 prompt.push_str(&format!(

@@ -744,6 +744,9 @@ fn optimize_accepts_improvement() {
 
     assert_eq!(result.attempts.len(), 1);
     assert!(result.attempts[0].invariants_passed);
+    assert!(result.attempts[0].accepted);
+    assert_eq!(result.attempts[0].score_delta_vs_best, -2.0);
+    assert_eq!(result.attempts[0].score_delta_vs_baseline, -2.0);
     assert_eq!(result.best_score, 8.0);
     assert_eq!(env.accepted, vec![1]);
     assert_eq!(env.rejected, 0);
@@ -764,6 +767,9 @@ fn optimize_rejects_regression() {
     let result = auto_optimize(&agent, &mut env, &obj, &config, Path::new("/tmp"));
 
     assert_eq!(result.attempts.len(), 1);
+    assert!(!result.attempts[0].accepted);
+    assert_eq!(result.attempts[0].score_delta_vs_best, 2.0);
+    assert_eq!(result.attempts[0].score_delta_vs_baseline, 2.0);
     assert_eq!(result.best_score, 10.0);
     assert!(env.accepted.is_empty());
     assert_eq!(env.rejected, 1);
@@ -785,6 +791,9 @@ fn optimize_rejects_when_invariants_fail() {
     let result = auto_optimize(&agent, &mut env, &obj, &config, Path::new("/tmp"));
 
     assert!(!result.attempts[0].invariants_passed);
+    assert!(!result.attempts[0].accepted);
+    assert_eq!(result.attempts[0].score_delta_vs_best, -5.0);
+    assert_eq!(result.attempts[0].score_delta_vs_baseline, -5.0);
     assert_eq!(result.best_score, 10.0);
     assert!(env.accepted.is_empty());
     assert_eq!(env.rejected, 1);
@@ -849,6 +858,21 @@ fn optimize_multi_iteration_progressive_improvement() {
     assert_eq!(result.best_score, 6.0);
     assert_eq!(env.accepted, vec![1, 3]);
     assert_eq!(env.rejected, 1);
+
+    // iter1: 8.0 vs best=10.0 (accepted), baseline=10.0
+    assert!(result.attempts[0].accepted);
+    assert_eq!(result.attempts[0].score_delta_vs_best, -2.0);
+    assert_eq!(result.attempts[0].score_delta_vs_baseline, -2.0);
+
+    // iter2: 9.0 vs best=8.0 (rejected), baseline=10.0
+    assert!(!result.attempts[1].accepted);
+    assert_eq!(result.attempts[1].score_delta_vs_best, 1.0);
+    assert_eq!(result.attempts[1].score_delta_vs_baseline, -1.0);
+
+    // iter3: 6.0 vs best=8.0 (accepted), baseline=10.0
+    assert!(result.attempts[2].accepted);
+    assert_eq!(result.attempts[2].score_delta_vs_best, -2.0);
+    assert_eq!(result.attempts[2].score_delta_vs_baseline, -4.0);
 }
 
 #[test]
