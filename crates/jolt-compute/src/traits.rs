@@ -462,11 +462,13 @@ pub trait ComputeBackend: Send + Sync + 'static {
 }
 
 /// Output from finalizing a stateful sumcheck instance.
+///
+/// Returns unlabeled buffers and evaluations in order. The runtime maps
+/// these to `PolynomialId`s using the `output_buffers` / `output_evals`
+/// lists from the `UnifiedInstanceFinalize` Op.
 pub struct InstanceOutput<Buf, F> {
-    /// Polynomial buffers to insert into the device buffer table.
-    pub buffers: Vec<(PolynomialId, Buf)>,
-    /// Scalar evaluations to insert into the evaluations cache.
-    pub evaluations: Vec<(PolynomialId, F)>,
+    pub buffers: Vec<Buf>,
+    pub evaluations: Vec<F>,
 }
 
 /// Materializes polynomial data for the prover runtime.

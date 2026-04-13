@@ -3,11 +3,24 @@
 use std::collections::HashMap;
 
 use jolt_compiler::kernel_spec::Iteration;
-use jolt_compiler::module::{ClaimFactor, ClaimFormula};
-use jolt_compiler::PolynomialId;
+use jolt_compiler::module::{ClaimFactor, ClaimFormula, InstanceConfig};
+use jolt_compiler::{KernelDef, PolynomialId};
 use jolt_field::{Field, FieldAccumulator};
 
-use jolt_compute::{BindingOrder, Buf, ComputeBackend, DeviceBuffer, LookupTraceData, Scalar};
+use jolt_compute::{
+    BindingOrder, Buf, BufferProvider, ComputeBackend, DeviceBuffer, InstanceOutput,
+    LookupTraceData, Scalar,
+};
+
+/// Unified stateful instance for all sumcheck instance protocols.
+///
+/// Dispatches to `CpuPrefixSuffixState`, `CpuBooleanityState`, or
+/// `CpuHwReductionState` based on the `InstanceConfig` used at init.
+pub enum CpuInstanceState<F: Field> {
+    PrefixSuffix(Box<crate::prefix_suffix::CpuPrefixSuffixState<F>>),
+    Booleanity(Box<crate::booleanity::CpuBooleanityState<F>>),
+    HwReduction(Box<crate::hw_reduction::CpuHwReductionState<F>>),
+}
 
 /// Parallelism threshold: buffers smaller than this use sequential loops.
 ///
@@ -680,36 +693,162 @@ impl ComputeBackend for CpuBackend {
         state.final_g_claims()
     }
 
-    type InstanceState<F: Field> = ();
+    type InstanceState<F: Field> = CpuInstanceState<F>;
 
     fn instance_init<F: Field>(
         &self,
-        _config: &jolt_compiler::module::InstanceConfig,
-        _challenges: &[F],
-        _provider: &mut dyn jolt_compute::BufferProvider<F>,
-        _lookup_trace: Option<&LookupTraceData>,
-        _kernels: &[jolt_compiler::KernelDef],
+        config: &InstanceConfig,
+        challenges: &[F],
+        provider: &mut dyn BufferProvider<F>,
+        lookup_trace: Option<&LookupTraceData>,
+        kernels: &[KernelDef],
     ) -> Self::InstanceState<F> {
-        panic!("unified instance API not yet wired")
+        match config {
+            InstanceConfig::PrefixSuffix { kernel } => {
+                let kdef = &kernels[*kernel];
+                let trace = lookup_trace.expect("PrefixSuffix requires lookup_trace");
+                CpuInstanceState::PrefixSuffix(Box::new(
+                    crate::prefix_suffix::CpuPrefixSuffixState::new(
+                        &kdef.spec.iteration,
+                        challenges,
+                        trace,
+                    ),
+                ))
+            }
+            InstanceConfig::Booleanity {
+                ra_poly_ids,
+                addr_challenges,
+                cycle_challenges,
+                gamma_powers,
+                gamma_powers_square,
+                log_k_chunk,
+                log_t,
+            } => {
+                let ra_data: Vec<Vec<F>> = ra_poly_ids
+                    .iter()
+                    .map(|pid| provider.materialize(*pid).into_owned())
+                    .collect();
+                let addr_ch: Vec<F> = addr_challenges.iter().map(|&i| challenges[i]).collect();
+                let cycle_ch: Vec<F> = cycle_challenges.iter().map(|&i| challenges[i]).collect();
+                let gamma_pow: Vec<F> = gamma_powers.iter().map(|&i| challenges[i]).collect();
+                let gamma_pow_sq: Vec<F> =
+                    gamma_powers_square.iter().map(|&i| challenges[i]).collect();
+                CpuInstanceState::Booleanity(Box::new(crate::booleanity::CpuBooleanityState::new(
+                    ra_data,
+                    &addr_ch,
+                    &cycle_ch,
+                    gamma_pow,
+                    gamma_pow_sq,
+                    *log_k_chunk,
+                    *log_t,
+                )))
+            }
+            InstanceConfig::HwReduction {
+                ra_poly_ids,
+                cycle_challenges_be,
+                addr_bool_challenges_be,
+                addr_virt_challenges_be,
+                gamma_powers,
+                hw_eval_challenge,
+                instruction_d,
+                bytecode_d,
+                ram_d,
+                log_k_chunk,
+                log_t,
+            } => {
+                let ra_data: Vec<Vec<F>> = ra_poly_ids
+                    .iter()
+                    .map(|pid| provider.materialize(*pid).into_owned())
+                    .collect();
+                let cycle_ch: Vec<F> = cycle_challenges_be.iter().map(|&i| challenges[i]).collect();
+                let addr_bool_ch: Vec<F> = addr_bool_challenges_be
+                    .iter()
+                    .map(|&i| challenges[i])
+                    .collect();
+                let addr_virt_ch: Vec<Vec<F>> = addr_virt_challenges_be
+                    .iter()
+                    .map(|ch| ch.iter().map(|&i| challenges[i]).collect())
+                    .collect();
+                let gamma_pow: Vec<F> = gamma_powers.iter().map(|&i| challenges[i]).collect();
+                let hw_eval = challenges[*hw_eval_challenge];
+                let total = instruction_d + bytecode_d + ram_d;
+                let mut hw_claims = Vec::with_capacity(total);
+                for _ in 0..(instruction_d + bytecode_d) {
+                    hw_claims.push(F::one());
+                }
+                for _ in 0..*ram_d {
+                    hw_claims.push(hw_eval);
+                }
+                // Bool/virt claims are only used in input_claim(), which the module
+                // handles via ClaimFormula. Pass zeros since reduce/bind/final don't use them.
+                let bool_claims = vec![F::zero(); total];
+                let virt_claims = vec![F::zero(); total];
+                CpuInstanceState::HwReduction(Box::new(
+                    crate::hw_reduction::CpuHwReductionState::new(
+                        &ra_data,
+                        &cycle_ch,
+                        &addr_bool_ch,
+                        &addr_virt_ch,
+                        gamma_pow,
+                        hw_claims,
+                        bool_claims,
+                        virt_claims,
+                        *log_k_chunk,
+                        *log_t,
+                    ),
+                ))
+            }
+        }
     }
 
-    fn instance_bind<F: Field>(&self, _state: &mut Self::InstanceState<F>, _challenge: F) {
-        panic!("unified instance API not yet wired")
+    fn instance_bind<F: Field>(&self, state: &mut Self::InstanceState<F>, challenge: F) {
+        match state {
+            CpuInstanceState::PrefixSuffix(s) => s.ingest_challenge(challenge),
+            CpuInstanceState::Booleanity(s) => s.ingest_challenge(challenge),
+            CpuInstanceState::HwReduction(s) => s.bind(challenge),
+        }
     }
 
     fn instance_reduce<F: Field>(
         &self,
-        _state: &Self::InstanceState<F>,
-        _previous_claim: F,
+        state: &Self::InstanceState<F>,
+        previous_claim: F,
     ) -> Vec<F> {
-        panic!("unified instance API not yet wired")
+        match state {
+            CpuInstanceState::PrefixSuffix(s) => {
+                let [eval_0, eval_2] = s.compute_address_round();
+                let eval_1 = previous_claim - eval_0;
+                vec![eval_0, eval_1, eval_2]
+            }
+            CpuInstanceState::Booleanity(s) => s.compute_round(previous_claim),
+            CpuInstanceState::HwReduction(s) => s.reduce(previous_claim),
+        }
     }
 
     fn instance_finalize<F: Field>(
         &self,
-        _state: Self::InstanceState<F>,
-    ) -> jolt_compute::InstanceOutput<Self::Buffer<F>, F> {
-        panic!("unified instance API not yet wired")
+        state: Self::InstanceState<F>,
+    ) -> InstanceOutput<Self::Buffer<F>, F> {
+        match state {
+            CpuInstanceState::PrefixSuffix(s) => {
+                let outputs = s.materialize_outputs();
+                // Collect buffers in PolynomialId order for deterministic mapping
+                let mut pairs: Vec<_> = outputs.into_iter().collect();
+                pairs.sort_by_key(|(id, _)| *id);
+                InstanceOutput {
+                    buffers: pairs.into_iter().map(|(_, buf)| buf).collect(),
+                    evaluations: Vec::new(),
+                }
+            }
+            CpuInstanceState::Booleanity(s) => InstanceOutput {
+                buffers: Vec::new(),
+                evaluations: s.final_ra_claims(),
+            },
+            CpuInstanceState::HwReduction(s) => InstanceOutput {
+                buffers: Vec::new(),
+                evaluations: s.final_g_claims(),
+            },
+        }
     }
 }
 
