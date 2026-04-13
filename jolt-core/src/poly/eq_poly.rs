@@ -317,27 +317,14 @@ impl<F: JoltField> EqPolynomial<F> {
         evals[0] = scaling_factor.unwrap_or(F::one());
 
         let mut size = 1;
-        let mut challenges = r.iter().rev();
+        let mut i = n;
 
         // Fused 2-level butterfly: process two challenges per pass.
         // Each input element produces 4 outputs using 3 multiplies + 3 subtracts.
-        while size * 4 <= final_size {
-            let Some(&r_lo) = challenges.next() else {
-                break;
-            };
-            let Some(&r_hi) = challenges.next() else {
-                // Odd challenge remaining — fall back to single-level for this one.
-                let (left, right) = evals.split_at_mut(size);
-                let (right, _) = right.split_at_mut(size);
-                left.par_iter_mut()
-                    .zip(right.par_iter_mut())
-                    .for_each(|(x, y)| {
-                        *y = *x * r_lo;
-                        *x -= *y;
-                    });
-                size *= 2;
-                break;
-            };
+        while i >= 2 {
+            let r_lo = r[i - 1];
+            let r_hi = r[i - 2];
+            i -= 2;
 
             // Four disjoint quadrants of `size` elements each.
             // Original butterfly layout after two single levels:
@@ -355,31 +342,29 @@ impl<F: JoltField> EqPolynomial<F> {
                 .zip(q2.par_iter_mut())
                 .zip(q3.par_iter_mut())
                 .for_each(|(((x, q1_out), q2_out), q3_out)| {
-                    // Split x by r_lo (the inner/LSB challenge processed first)
-                    let with_lo = *x * r_lo; // x * r_lo
-                    let without_lo = *x - with_lo; // x * (1 - r_lo)
+                    let with_lo = *x * r_lo;
+                    let without_lo = *x - with_lo;
 
-                    // Split each half by r_hi (the outer challenge)
-                    *q2_out = without_lo * r_hi; // (1 - r_lo) * r_hi
-                    *x = without_lo - *q2_out; // (1 - r_lo) * (1 - r_hi)
-                    *q3_out = with_lo * r_hi; // r_lo * r_hi
-                    *q1_out = with_lo - *q3_out; // r_lo * (1 - r_hi)
+                    *q2_out = without_lo * r_hi;
+                    *x = without_lo - *q2_out;
+                    *q3_out = with_lo * r_hi;
+                    *q1_out = with_lo - *q3_out;
                 });
 
             size *= 4;
         }
 
-        // Handle any remaining single challenge (when n is odd).
-        for r in challenges {
+        // Handle remaining single challenge (when n is odd).
+        if i == 1 {
+            let r_last = r[0];
             let (left, right) = evals.split_at_mut(size);
             let (right, _) = right.split_at_mut(size);
             left.par_iter_mut()
                 .zip(right.par_iter_mut())
                 .for_each(|(x, y)| {
-                    *y = *x * *r;
+                    *y = *x * r_last;
                     *x -= *y;
                 });
-            size *= 2;
         }
 
         evals
