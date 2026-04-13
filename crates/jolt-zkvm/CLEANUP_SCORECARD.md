@@ -1,9 +1,9 @@
 # Cleanup Scorecard
 
-**Status**: IN PROGRESS — MIGRATION MODE
+**Status**: IN PROGRESS — SWEEP MODE
 **Last updated**: 2026-04-13
-**MODE**: SWEEP (finish Tier 1-2), then MIGRATION (Tier 4 via MIGRATION_PLAN.md)
-**NEXT ACTION**: 1.13 (unreachable! dispatch paths)
+**MODE**: SWEEP (Tiers 1-3, 5, 6) — Migration complete
+**NEXT ACTION**: 3.1 (pub(crate) visibility audit)
 
 ## Loop Protocol
 
@@ -65,12 +65,12 @@ cargo clippy -p jolt-compiler -p jolt-compute -p jolt-cpu -p jolt-zkvm -p jolt-d
 
 | # | Criterion | Status | Notes |
 |---|-----------|--------|-------|
-| 2.1 | Unnecessary .clone() eliminated in runtime | FAIL | runtime.rs |
-| 2.2 | unwrap_or_else → unwrap_or where applicable | FAIL | |
-| 2.3 | Verbose match/if-let simplified | TODO | |
-| 2.4 | Magic numbers named as constants | FAIL | |
-| 2.5 | #[allow(clippy::too_many_arguments)] eliminated | FAIL | 4 occurrences — resolved by Tier 4 migration |
-| 2.6 | No placeholders or janky code | TODO | |
+| 2.1 | Unnecessary .clone() eliminated in runtime | PASS | 3 clones remain, all necessary (dual consumers) |
+| 2.2 | unwrap_or_else → unwrap_or where applicable | PASS | 2 remain, all for formatted panic messages |
+| 2.3 | Verbose match/if-let simplified | PASS | All patterns standard |
+| 2.4 | Magic numbers named as constants | PASS | Only in debug_assertions diagnostics |
+| 2.5 | #[allow(clippy::too_many_arguments)] eliminated | FAIL | 2 remain: prove() top-level API, HwReductionState::new internal |
+| 2.6 | No placeholders or janky code | PASS | debug_assertions diagnostics are intentional |
 | 2.7 | No hacky workarounds | FAIL | SnapshotEval |
 
 ## Tier 3 — Crate Boundaries & Visibility
@@ -81,9 +81,9 @@ cargo clippy -p jolt-compiler -p jolt-compute -p jolt-cpu -p jolt-zkvm -p jolt-d
 | 3.2 | Consistent naming across crate boundaries | PASS | |
 | 3.3 | Type aliases for repeated generic bounds | TODO | |
 | 3.4 | jolt-compiler: pure protocol→ops lowering | PASS | |
-| 3.5 | jolt-compute: zero protocol knowledge in trait | FAIL | → MIGRATION_PLAN Step 6 |
-| 3.6 | jolt-cpu: zero protocol types in public API | FAIL | → MIGRATION_PLAN Step 6 |
-| 3.7 | jolt-zkvm: zero protocol logic in runtime | FAIL | → MIGRATION_PLAN Step 6 |
+| 3.5 | jolt-compute: zero protocol knowledge in trait | PASS | trait uses only generic names |
+| 3.6 | jolt-cpu: zero protocol types in public API | FAIL | CpuInstanceState variant names leak protocol |
+| 3.7 | jolt-zkvm: zero protocol logic in runtime | FAIL | PolynomialId::BooleanityG refs remain |
 | 3.8 | jolt-dory: zero Jolt-specific leakage | PASS | |
 | 3.9 | Coordinated constants use shared source | FAIL | |
 | 3.10 | Clean dependency DAG | PASS | |
@@ -94,10 +94,10 @@ cargo clippy -p jolt-compiler -p jolt-compute -p jolt-cpu -p jolt-zkvm -p jolt-d
 
 | # | Criterion | Status | Notes |
 |---|-----------|--------|-------|
-| 4.1 | Op enum: no algorithm-named variants | FAIL | → MIGRATION Steps 3-5 |
-| 4.2 | ComputeBackend: 1 InstanceState + 4 methods | FAIL | → MIGRATION Steps 1-2 |
-| 4.3 | RuntimeState: 1 instance_states map | FAIL | → MIGRATION Step 6 |
-| 4.4 | CpuBackend: unified instance dispatch | FAIL | → MIGRATION Step 2 |
+| 4.1 | Op enum: no algorithm-named variants | PASS | 12 legacy ops deleted |
+| 4.2 | ComputeBackend: 1 InstanceState + 4 methods | PASS | |
+| 4.3 | RuntimeState: 1 instance_states map | PASS | |
+| 4.4 | CpuBackend: unified instance dispatch | PASS | |
 | 4.5 | No SnapshotEval workaround needed | FAIL | Separate design needed |
 | 4.6 | Scoped evaluation model | FAIL | Separate design needed |
 
@@ -113,17 +113,17 @@ cargo clippy -p jolt-compiler -p jolt-compute -p jolt-cpu -p jolt-zkvm -p jolt-d
 
 | # | Criterion | Status | Notes |
 |---|-----------|--------|-------|
-| 4.10 | New subprotocol = compiler + backend only | FAIL | → MIGRATION Step 6 |
-| 4.11 | New backend = one crate only | FAIL | → MIGRATION Step 6 |
+| 4.10 | New subprotocol = compiler + backend only | PASS | InstanceConfig variant + backend dispatch |
+| 4.11 | New backend = one crate only | PASS | implement ComputeBackend trait |
 
 ### 4D — Abstraction Quality
 
 | # | Criterion | Status | Notes |
 |---|-----------|--------|-------|
-| 4.12 | Each abstraction single-purpose | FAIL | → MIGRATION |
-| 4.13 | No leaky abstractions | FAIL | → MIGRATION Step 6 |
-| 4.14 | Minimal indirection | TODO | |
-| 4.15 | Traits have minimal surface area | FAIL | → MIGRATION Step 6 |
+| 4.12 | Each abstraction single-purpose | PASS | InstanceConfig=what, InstanceState=how |
+| 4.13 | No leaky abstractions | PASS | trait uses only generic names |
+| 4.14 | Minimal indirection | PASS | config→init→bind/reduce→finalize |
+| 4.15 | Traits have minimal surface area | PASS | 4 methods + 1 type (was 12+3) |
 
 ## Tier 5 — Production Quality
 
@@ -148,9 +148,9 @@ cargo clippy -p jolt-compiler -p jolt-compute -p jolt-cpu -p jolt-zkvm -p jolt-d
 
 | # | Criterion | Status | Notes |
 |---|-----------|--------|-------|
-| 5.8 | Runtime never imports protocol types | FAIL | → MIGRATION Step 6 |
-| 5.9 | Backend trait uses only generic names | FAIL | → MIGRATION Step 6 |
-| 5.10 | State machines encoded in compiler | FAIL | → MIGRATION |
+| 5.8 | Runtime never imports protocol types | FAIL | PolynomialId::BooleanityG refs remain |
+| 5.9 | Backend trait uses only generic names | PASS | instance_init/bind/reduce/finalize |
+| 5.10 | State machines encoded in compiler | PASS | InstanceConfig carries all protocol params |
 | 5.11 | No out-of-band state | FAIL | SnapshotEval |
 | 5.12 | Module is self-describing | TODO | |
 
@@ -160,7 +160,7 @@ cargo clippy -p jolt-compiler -p jolt-compute -p jolt-cpu -p jolt-zkvm -p jolt-d
 
 | # | Criterion | Status | Notes |
 |---|-----------|--------|-------|
-| 6.1 | ComputeBackend orthogonal concerns | FAIL | → MIGRATION |
+| 6.1 | ComputeBackend orthogonal concerns | PASS | buffer ops, kernel ops, instance ops |
 | 6.2 | runtime.rs < 500 LOC | FAIL | → MIGRATION |
 | 6.3 | Each file one reason to change | TODO | |
 
@@ -199,13 +199,13 @@ cargo clippy -p jolt-compiler -p jolt-compute -p jolt-cpu -p jolt-zkvm -p jolt-d
 
 ## Progress
 
-- **Tier 1**: 12/13 passing (1.13 deferred to migration)
-- **Tier 2**: 0/7 passing
-- **Tier 3**: 4/10 passing
-- **Tier 4**: 0/15 passing (all blocked on MIGRATION_PLAN)
-- **Tier 5**: 2/12 passing
-- **Tier 6**: 1/14 passing
-- **Overall: 19/71 passing**
+- **Tier 1**: 12/13 passing
+- **Tier 2**: 5/7 passing
+- **Tier 3**: 5/10 passing
+- **Tier 4**: 10/15 passing (migration complete, 5 remain)
+- **Tier 5**: 4/12 passing
+- **Tier 6**: 2/14 passing
+- **Overall: 38/71 passing (54%)**
 
 ## Execution Order
 
