@@ -1363,6 +1363,7 @@ impl<
             &extra_constraints,
             &baked,
             oc_blocks,
+            self.opening_accumulator.aliases.clone(),
         );
         let r1cs = builder.build();
 
