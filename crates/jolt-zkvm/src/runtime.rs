@@ -97,7 +97,7 @@ where
     /// Outer eq tables for segmented instances: `(batch, inst) → eq_outer`.
     /// Built once at phase start, used for weighting during segmented reduce.
     segmented_outer_eqs: HashMap<(usize, usize), Vec<F>>,
-    /// Stateful sumcheck instances (PrefixSuffix, Booleanity, HwReduction).
+    /// Stateful sumcheck instances (unified InstanceState).
     instance_states: HashMap<(usize, usize), B::InstanceState<F>>,
 
     current_stage: Option<StageBuilder<F>>,

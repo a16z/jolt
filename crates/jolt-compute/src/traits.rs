@@ -344,8 +344,6 @@ pub trait ComputeBackend: Send + Sync + 'static {
     ) -> Vec<F>;
 
     /// Opaque state for a stateful sumcheck instance.
-    ///
-    /// Replaces `PrefixSuffixState`, `BooleanityState`, `HwReductionState`.
     /// The backend internally dispatches based on `InstanceConfig` variant.
     type InstanceState<F: Field>: Send + Sync;
 

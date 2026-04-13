@@ -1,7 +1,6 @@
 # Migration Plan: Unified Instance State
 
-**Status**: Step 4 DONE (HW not in builder.rs, only in jolt_core_module.rs)
-**NEXT STEP**: Step 6 — delete old code
+**Status**: COMPLETE — all 7 steps done
 
 ## Overview
 
