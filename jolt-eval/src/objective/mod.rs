@@ -5,7 +5,6 @@ pub mod performance;
 pub mod synthesis;
 
 use std::fmt;
-use std::hash::{Hash, Hasher};
 
 /// Error during objective measurement.
 #[derive(Debug, Clone)]
@@ -63,7 +62,7 @@ pub trait Objective: Send + Sync {
 }
 
 /// Static-analysis objectives.
-#[derive(Clone, Copy, PartialEq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StaticAnalysisObjective {
     Lloc(code_quality::lloc::LlocObjective),
     CognitiveComplexity(code_quality::cognitive::CognitiveComplexityObjective),
@@ -123,7 +122,7 @@ impl StaticAnalysisObjective {
 }
 
 /// Criterion-benchmarked performance objectives.
-#[derive(Clone, Copy, PartialEq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PerformanceObjective {
     BindLowToHigh(performance::binding::BindLowToHighObjective),
     BindHighToLow(performance::binding::BindHighToLowObjective),
@@ -172,7 +171,7 @@ impl PerformanceObjective {
 }
 
 /// Union of all known objectives — used as a type-safe HashMap key.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OptimizationObjective {
     StaticAnalysis(StaticAnalysisObjective),
     Performance(PerformanceObjective),
@@ -252,26 +251,6 @@ pub fn normalized(
     let value = measurements.get(obj).copied().unwrap_or(f64::INFINITY);
     let baseline = baselines.get(obj).copied().unwrap_or(1.0);
     value / baseline
-}
-
-impl PartialEq for OptimizationObjective {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::StaticAnalysis(a), Self::StaticAnalysis(b)) => a == b,
-            (Self::Performance(a), Self::Performance(b)) => a == b,
-            _ => false,
-        }
-    }
-}
-impl Eq for OptimizationObjective {}
-impl Hash for OptimizationObjective {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        std::mem::discriminant(self).hash(state);
-        match self {
-            Self::StaticAnalysis(s) => s.hash(state),
-            Self::Performance(p) => p.hash(state),
-        }
-    }
 }
 
 #[cfg(test)]

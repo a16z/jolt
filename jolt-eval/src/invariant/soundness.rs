@@ -254,6 +254,10 @@ impl Drop for PatchGuard {
                 .current_dir(&self.dir)
                 .args(["checkout", "."])
                 .status();
+            let _ = Command::new("git")
+                .current_dir(&self.dir)
+                .args(["clean", "-fd"])
+                .status();
         }
     }
 }

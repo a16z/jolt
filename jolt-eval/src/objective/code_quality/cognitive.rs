@@ -15,7 +15,7 @@ pub const COGNITIVE_COMPLEXITY: OptimizationObjective = OptimizationObjective::S
 
 /// Average cognitive complexity per function across all Rust files under
 /// a target directory.
-#[derive(Clone, Copy, PartialEq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CognitiveComplexityObjective {
     pub(crate) target_dir: &'static str,
 }
