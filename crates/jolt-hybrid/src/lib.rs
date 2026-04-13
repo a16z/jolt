@@ -433,6 +433,119 @@ impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, 
         }
     }
 
+    fn duplicate_interleave<F: Field>(&self, _buf: &Self::Buffer<F>) -> Self::Buffer<F> {
+        panic!("HybridBackend: not yet wired")
+    }
+
+    fn regroup_constraints<F: Field>(
+        &self,
+        _buf: &Self::Buffer<F>,
+        _group_indices: &[Vec<usize>],
+        _old_stride: usize,
+        _new_stride: usize,
+        _num_cycles: usize,
+    ) -> Self::Buffer<F> {
+        panic!("HybridBackend: not yet wired")
+    }
+
+    fn evaluate_claim<F: Field>(
+        &self,
+        _formula: &jolt_compiler::module::ClaimFormula,
+        _evaluations: &std::collections::HashMap<jolt_compiler::PolynomialId, F>,
+        _challenges: &[F],
+    ) -> F {
+        panic!("HybridBackend: not yet wired")
+    }
+
+    fn evaluate_mle<F: Field>(&self, _evals: &[F], _point: &[F]) -> F {
+        panic!("HybridBackend: not yet wired")
+    }
+
+    fn uniskip_encode<F: Field>(
+        &self,
+        _raw_evals: &mut [F],
+        _domain_size: usize,
+        _domain_start: i64,
+        _tau: F,
+        _zero_base: bool,
+        _num_coeffs: usize,
+    ) -> Vec<F> {
+        panic!("HybridBackend: not yet wired")
+    }
+
+    fn compressed_encode<F: Field>(&self, _evals: &[F]) -> Vec<F> {
+        panic!("HybridBackend: not yet wired")
+    }
+
+    fn interpolate_evaluate<F: Field>(&self, _evals: &[F], _point: F) -> F {
+        panic!("HybridBackend: not yet wired")
+    }
+
+    fn extend_evals<F: Field>(&self, _evals: &[F], _target_len: usize) -> Vec<F> {
+        panic!("HybridBackend: not yet wired")
+    }
+
+    fn scale_from_host<F: Field>(&self, _data: &[F], _scale: F) -> Self::Buffer<F> {
+        panic!("HybridBackend: not yet wired")
+    }
+
+    fn transpose_from_host<F: Field>(
+        &self,
+        _data: &[F],
+        _rows: usize,
+        _cols: usize,
+    ) -> Self::Buffer<F> {
+        panic!("HybridBackend: not yet wired")
+    }
+
+    fn eq_gather<F: Field>(&self, _eq_point: &[F], _index_data: &[F]) -> Self::Buffer<F> {
+        panic!("HybridBackend: not yet wired")
+    }
+
+    fn eq_pushforward<F: Field>(
+        &self,
+        _eq_point: &[F],
+        _index_data: &[F],
+        _output_size: usize,
+    ) -> Self::Buffer<F> {
+        panic!("HybridBackend: not yet wired")
+    }
+
+    fn eq_project<F: Field>(
+        &self,
+        _source_data: &[F],
+        _eq_point: &[F],
+        _inner_size: usize,
+        _outer_size: usize,
+    ) -> Self::Buffer<F> {
+        panic!("HybridBackend: not yet wired")
+    }
+
+    fn lagrange_project<F: Field>(
+        &self,
+        _buf: &Self::Buffer<F>,
+        _challenge: F,
+        _domain_start: i64,
+        _domain_size: usize,
+        _stride: usize,
+        _group_offsets: &[usize],
+        _scale: F,
+    ) -> Self::Buffer<F> {
+        panic!("HybridBackend: not yet wired")
+    }
+
+    fn segmented_reduce<F: Field>(
+        &self,
+        _kernel: &Self::CompiledKernel<F>,
+        _inputs: &[&Self::Buffer<F>],
+        _outer_eq: &[F],
+        _inner_only: &[bool],
+        _inner_size: usize,
+        _challenges: &[F],
+    ) -> Vec<F> {
+        panic!("HybridBackend: not yet wired")
+    }
+
     type InstanceState<F: Field> = ();
 
     fn instance_init<F: Field>(
@@ -443,11 +556,11 @@ impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, 
         _lookup_trace: Option<&jolt_compute::LookupTraceData>,
         _kernels: &[jolt_compiler::KernelDef],
     ) -> Self::InstanceState<F> {
-        panic!("unified instance API not yet wired")
+        panic!("HybridBackend: not yet wired")
     }
 
     fn instance_bind<F: Field>(&self, _state: &mut Self::InstanceState<F>, _challenge: F) {
-        panic!("unified instance API not yet wired")
+        panic!("HybridBackend: not yet wired")
     }
 
     fn instance_reduce<F: Field>(
@@ -455,14 +568,14 @@ impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, 
         _state: &Self::InstanceState<F>,
         _previous_claim: F,
     ) -> Vec<F> {
-        panic!("unified instance API not yet wired")
+        panic!("HybridBackend: not yet wired")
     }
 
     fn instance_finalize<F: Field>(
         &self,
         _state: Self::InstanceState<F>,
     ) -> jolt_compute::InstanceOutput<Self::Buffer<F>, F> {
-        panic!("unified instance API not yet wired")
+        panic!("HybridBackend: not yet wired")
     }
 }
 
@@ -558,6 +671,123 @@ mod tests {
         fn eq_plus_one_table<F: Field>(&self, point: &[F]) -> (Vec<F>, Vec<F>) {
             let len = 1 << point.len();
             (vec![F::one(); len], vec![F::zero(); len])
+        }
+
+        fn duplicate_interleave<F: Field>(&self, _buf: &Vec<F>) -> Vec<F> {
+            panic!("mock")
+        }
+        fn regroup_constraints<F: Field>(
+            &self,
+            _buf: &Vec<F>,
+            _gi: &[Vec<usize>],
+            _os: usize,
+            _ns: usize,
+            _nc: usize,
+        ) -> Vec<F> {
+            panic!("mock")
+        }
+        fn evaluate_claim<F: Field>(
+            &self,
+            _f: &jolt_compiler::module::ClaimFormula,
+            _e: &std::collections::HashMap<jolt_compiler::PolynomialId, F>,
+            _c: &[F],
+        ) -> F {
+            panic!("mock")
+        }
+        fn evaluate_mle<F: Field>(&self, _evals: &[F], _point: &[F]) -> F {
+            panic!("mock")
+        }
+        fn uniskip_encode<F: Field>(
+            &self,
+            _r: &mut [F],
+            _ds: usize,
+            _dstart: i64,
+            _tau: F,
+            _zb: bool,
+            _nc: usize,
+        ) -> Vec<F> {
+            panic!("mock")
+        }
+        fn compressed_encode<F: Field>(&self, _evals: &[F]) -> Vec<F> {
+            panic!("mock")
+        }
+        fn interpolate_evaluate<F: Field>(&self, _evals: &[F], _point: F) -> F {
+            panic!("mock")
+        }
+        fn extend_evals<F: Field>(&self, _evals: &[F], _target_len: usize) -> Vec<F> {
+            panic!("mock")
+        }
+        fn scale_from_host<F: Field>(&self, _data: &[F], _scale: F) -> Vec<F> {
+            panic!("mock")
+        }
+        fn transpose_from_host<F: Field>(&self, _data: &[F], _r: usize, _c: usize) -> Vec<F> {
+            panic!("mock")
+        }
+        fn eq_gather<F: Field>(&self, _eq_point: &[F], _index_data: &[F]) -> Vec<F> {
+            panic!("mock")
+        }
+        fn eq_pushforward<F: Field>(
+            &self,
+            _eq_point: &[F],
+            _index_data: &[F],
+            _output_size: usize,
+        ) -> Vec<F> {
+            panic!("mock")
+        }
+        fn eq_project<F: Field>(
+            &self,
+            _src: &[F],
+            _eq: &[F],
+            _inner: usize,
+            _outer: usize,
+        ) -> Vec<F> {
+            panic!("mock")
+        }
+        fn lagrange_project<F: Field>(
+            &self,
+            _buf: &Vec<F>,
+            _ch: F,
+            _ds: i64,
+            _dsz: usize,
+            _stride: usize,
+            _go: &[usize],
+            _scale: F,
+        ) -> Vec<F> {
+            panic!("mock")
+        }
+        fn segmented_reduce<F: Field>(
+            &self,
+            _k: &MockKernel<F>,
+            _inputs: &[&Vec<F>],
+            _oeq: &[F],
+            _io: &[bool],
+            _is: usize,
+            _ch: &[F],
+        ) -> Vec<F> {
+            panic!("mock")
+        }
+        type InstanceState<F: Field> = ();
+        fn instance_init<F: Field>(
+            &self,
+            _config: &jolt_compiler::module::InstanceConfig,
+            _challenges: &[F],
+            _provider: &mut dyn jolt_compute::BufferProvider<F>,
+            _lookup_trace: Option<&jolt_compute::LookupTraceData>,
+            _kernels: &[jolt_compiler::KernelDef],
+        ) {
+            panic!("mock")
+        }
+        fn instance_bind<F: Field>(&self, _state: &mut (), _challenge: F) {
+            panic!("mock")
+        }
+        fn instance_reduce<F: Field>(&self, _state: &(), _previous_claim: F) -> Vec<F> {
+            panic!("mock")
+        }
+        fn instance_finalize<F: Field>(
+            &self,
+            _state: (),
+        ) -> jolt_compute::InstanceOutput<Vec<F>, F> {
+            panic!("mock")
         }
     }
 

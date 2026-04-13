@@ -884,18 +884,6 @@ fn op_poly_refs(op: &Op, kernels: &[KernelDef]) -> Vec<PolynomialId> {
         | Op::BindCarryBuffers { .. }
         | Op::BatchAccumulateInstance { .. }
         | Op::BatchRoundFinalize { .. }
-        | Op::PrefixSuffixInit { .. }
-        | Op::PrefixSuffixBind { .. }
-        | Op::PrefixSuffixReduce { .. }
-        | Op::PrefixSuffixMaterialize { .. }
-        | Op::BooleanityInit { .. }
-        | Op::BooleanityBind { .. }
-        | Op::BooleanityReduce { .. }
-        | Op::BooleanityCacheOpenings { .. }
-        | Op::HwReductionInit { .. }
-        | Op::HwReductionBind { .. }
-        | Op::HwReductionReduce { .. }
-        | Op::HwReductionCacheOpenings { .. }
         | Op::BindOpeningInputs { .. }
         | Op::UnifiedInstanceInit { .. }
         | Op::UnifiedInstanceBind { .. }

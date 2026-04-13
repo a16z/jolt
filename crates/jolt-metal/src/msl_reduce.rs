@@ -78,6 +78,11 @@ impl KernelVariant {
             Iteration::Booleanity { .. } => {
                 unreachable!("Booleanity is handled by the runtime, not compiled to MSL")
             }
+            Iteration::HammingWeightReduction { .. } => {
+                unreachable!(
+                    "HammingWeightReduction is handled by the runtime, not compiled to MSL"
+                )
+            }
         }
     }
 

@@ -25,9 +25,9 @@ use jolt_compiler::kernel_spec::Iteration;
 use jolt_compiler::module::{
     BatchedInstance, BatchedSumcheckDef, BooleanityConfig, ChallengeDecl, ChallengeSource,
     ClaimFactor, ClaimFormula, ClaimTerm, DomainSeparator, EvalMode, Evaluation, HwReductionConfig,
-    InputBinding, InstancePhase, KernelDef, Module, Op, PointNormalization, PolyDecl, R1CSMatrix,
-    RoundPolyEncoding, ScalarCapture, Schedule, SegmentedConfig, SumcheckInstance, VerifierOp,
-    VerifierSchedule, VerifierStageIndex,
+    InputBinding, InstanceConfig, InstancePhase, KernelDef, Module, Op, PointNormalization,
+    PolyDecl, R1CSMatrix, RoundPolyEncoding, ScalarCapture, Schedule, SegmentedConfig,
+    SumcheckInstance, VerifierOp, VerifierSchedule, VerifierStageIndex,
 };
 use jolt_compiler::params::{
     ModuleParams, LOG_K_INSTRUCTION, LOG_K_REG, NUM_CIRCUIT_FLAGS, NUM_LOOKUP_TABLES,
@@ -646,15 +646,30 @@ fn emit_unrolled_batched_rounds(
 
                     if prev_is_ps {
                         if let Some(ch_val) = bind {
-                            ops.push(Op::PrefixSuffixBind {
+                            ops.push(Op::UnifiedInstanceBind {
                                 batch: batch_idx,
                                 instance: inst_idx,
                                 challenge: ch_val,
                             });
                         }
-                        ops.push(Op::PrefixSuffixMaterialize {
+                        let output_buffers = match &prev_kdef.spec.iteration {
+                            Iteration::PrefixSuffix {
+                                output_ra_polys,
+                                output_combined_val,
+                                ..
+                            } => {
+                                let mut ids = output_ra_polys.clone();
+                                ids.push(*output_combined_val);
+                                ids.sort();
+                                ids
+                            }
+                            _ => unreachable!(),
+                        };
+                        ops.push(Op::UnifiedInstanceFinalize {
                             batch: batch_idx,
                             instance: inst_idx,
+                            output_buffers,
+                            output_evals: Vec::new(),
                         });
                     } else if let Some(ch_val) = bind {
                         ops.push(Op::InstanceBindPreviousPhase {
@@ -684,25 +699,61 @@ fn emit_unrolled_batched_rounds(
                 }
 
                 if is_ps {
-                    ops.push(Op::PrefixSuffixInit {
+                    let output_buffers = match &kdef.spec.iteration {
+                        Iteration::PrefixSuffix {
+                            output_ra_polys,
+                            output_combined_val,
+                            ..
+                        } => {
+                            let mut ids = output_ra_polys.clone();
+                            ids.push(*output_combined_val);
+                            ids.sort();
+                            ids
+                        }
+                        _ => unreachable!(),
+                    };
+                    ops.push(Op::UnifiedInstanceInit {
                         batch: batch_idx,
                         instance: inst_idx,
-                        kernel,
+                        config: InstanceConfig::PrefixSuffix {
+                            kernel,
+                            output_buffers,
+                        },
                     });
                 } else if is_bool {
                     if let Iteration::Booleanity { ref config } = kdef.spec.iteration {
-                        ops.push(Op::BooleanityInit {
+                        ops.push(Op::UnifiedInstanceInit {
                             batch: batch_idx,
                             instance: inst_idx,
-                            config: config.clone(),
+                            config: InstanceConfig::Booleanity {
+                                ra_poly_ids: config.ra_poly_ids.clone(),
+                                addr_challenges: config.addr_challenges.clone(),
+                                cycle_challenges: config.cycle_challenges.clone(),
+                                gamma_powers: config.gamma_powers.clone(),
+                                gamma_powers_square: config.gamma_powers_square.clone(),
+                                log_k_chunk: config.log_k_chunk,
+                                log_t: config.log_t,
+                            },
                         });
                     }
                 } else if is_hw {
                     if let Iteration::HammingWeightReduction { ref config } = kdef.spec.iteration {
-                        ops.push(Op::HwReductionInit {
+                        ops.push(Op::UnifiedInstanceInit {
                             batch: batch_idx,
                             instance: inst_idx,
-                            config: config.clone(),
+                            config: InstanceConfig::HwReduction {
+                                ra_poly_ids: config.ra_poly_ids.clone(),
+                                cycle_challenges_be: config.cycle_challenges_be.clone(),
+                                addr_bool_challenges_be: config.addr_bool_challenges_be.clone(),
+                                addr_virt_challenges_be: config.addr_virt_challenges_be.clone(),
+                                gamma_powers: config.gamma_powers.clone(),
+                                hw_eval_challenge: config.hw_eval_challenge,
+                                instruction_d: config.instruction_d,
+                                bytecode_d: config.bytecode_d,
+                                ram_d: config.ram_d,
+                                log_k_chunk: config.log_k_chunk,
+                                log_t: config.log_t,
+                            },
                         });
                     }
                 } else {
@@ -749,20 +800,8 @@ fn emit_unrolled_batched_rounds(
             } else {
                 // Mid-phase: bind.
                 if let Some(ch_val) = bind {
-                    if is_ps {
-                        ops.push(Op::PrefixSuffixBind {
-                            batch: batch_idx,
-                            instance: inst_idx,
-                            challenge: ch_val,
-                        });
-                    } else if is_bool {
-                        ops.push(Op::BooleanityBind {
-                            batch: batch_idx,
-                            instance: inst_idx,
-                            challenge: ch_val,
-                        });
-                    } else if is_hw {
-                        ops.push(Op::HwReductionBind {
+                    if is_ps || is_bool || is_hw {
+                        ops.push(Op::UnifiedInstanceBind {
                             batch: batch_idx,
                             instance: inst_idx,
                             challenge: ch_val,
@@ -789,18 +828,8 @@ fn emit_unrolled_batched_rounds(
             }
 
             // Reduce.
-            if is_ps {
-                ops.push(Op::PrefixSuffixReduce {
-                    batch: batch_idx,
-                    instance: inst_idx,
-                });
-            } else if is_bool {
-                ops.push(Op::BooleanityReduce {
-                    batch: batch_idx,
-                    instance: inst_idx,
-                });
-            } else if is_hw {
-                ops.push(Op::HwReductionReduce {
+            if is_ps || is_bool || is_hw {
+                ops.push(Op::UnifiedInstanceReduce {
                     batch: batch_idx,
                     instance: inst_idx,
                 });
@@ -5094,7 +5123,7 @@ fn build_stage6(
     // The last round's challenge was squeezed but never bound into the booleanity state
     // (the batched loop only binds at the START of each round, so the final squeeze has
     // no subsequent bind). Apply it now to finish reducing H to 1 element per poly.
-    ops.push(Op::BooleanityBind {
+    ops.push(Op::UnifiedInstanceBind {
         batch: batch_idx,
         instance: 1,
         challenge: s6_round_ch[stage6_max_rounds - 1],
@@ -5104,10 +5133,11 @@ fn build_stage6(
         .chain((0..params.bytecode_d).map(PolynomialId::BytecodeRa))
         .chain((0..params.ram_d).map(PolynomialId::RamRa))
         .collect();
-    ops.push(Op::BooleanityCacheOpenings {
+    ops.push(Op::UnifiedInstanceFinalize {
         batch: batch_idx,
         instance: 1,
-        ra_poly_ids: bool_ra_poly_ids.clone(),
+        output_buffers: Vec::new(),
+        output_evals: bool_ra_poly_ids.clone(),
     });
     ops.push(Op::AbsorbEvals {
         polys: bool_ra_poly_ids,
@@ -5406,7 +5436,7 @@ fn build_stage7(
     // Post-sumcheck: final bind + cache G evaluations
     // The last round's challenge was squeezed but never bound into the HW state.
     // Apply it now to finish reducing G, eq_bool, eq_virt to 1 element each.
-    ops.push(Op::HwReductionBind {
+    ops.push(Op::UnifiedInstanceBind {
         batch: batch_idx,
         instance: 0,
         challenge: s7_round_ch[hw_rounds - 1],
@@ -5414,10 +5444,11 @@ fn build_stage7(
 
     // Extract G_i evaluations and store as HammingG(i) evaluations.
     let g_poly_ids: Vec<PolynomialId> = (0..total_d).map(|i| p.hw_g[i]).collect();
-    ops.push(Op::HwReductionCacheOpenings {
+    ops.push(Op::UnifiedInstanceFinalize {
         batch: batch_idx,
         instance: 0,
-        g_poly_ids: g_poly_ids.clone(),
+        output_buffers: Vec::new(),
+        output_evals: g_poly_ids.clone(),
     });
 
     // Flush G evaluations to transcript (one per RA polynomial).
@@ -6445,18 +6476,6 @@ fn print_stats(module: &Module, params: &ModuleParams) {
             | Op::BindCarryBuffers { .. }
             | Op::BatchAccumulateInstance { .. }
             | Op::BatchRoundFinalize { .. }
-            | Op::PrefixSuffixInit { .. }
-            | Op::PrefixSuffixBind { .. }
-            | Op::PrefixSuffixReduce { .. }
-            | Op::PrefixSuffixMaterialize { .. }
-            | Op::BooleanityInit { .. }
-            | Op::BooleanityBind { .. }
-            | Op::BooleanityReduce { .. }
-            | Op::BooleanityCacheOpenings { .. }
-            | Op::HwReductionInit { .. }
-            | Op::HwReductionBind { .. }
-            | Op::HwReductionReduce { .. }
-            | Op::HwReductionCacheOpenings { .. }
             | Op::UnifiedInstanceInit { .. }
             | Op::UnifiedInstanceBind { .. }
             | Op::UnifiedInstanceReduce { .. }

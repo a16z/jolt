@@ -5,7 +5,6 @@ use std::sync::{Arc, Mutex};
 
 use jolt_compiler::kernel_spec::Iteration;
 use jolt_compiler::KernelSpec;
-use jolt_compiler::PolynomialId;
 use jolt_compute::{BindingOrder, Buf, ComputeBackend, LookupTraceData, Scalar};
 use jolt_field::Field;
 use metal::{CompileOptions, ComputePipelineState, Device, MTLResourceOptions, MTLSize};
@@ -346,7 +345,8 @@ impl ComputeBackend for MetalBackend {
                 Iteration::Dense
                 | Iteration::Domain { .. }
                 | Iteration::PrefixSuffix { .. }
-                | Iteration::Booleanity { .. } => 0,
+                | Iteration::Booleanity { .. }
+                | Iteration::HammingWeightReduction { .. } => 0,
                 Iteration::DenseTensor => 2,
                 Iteration::Sparse => 1,
             };
@@ -423,6 +423,9 @@ impl ComputeBackend for MetalBackend {
             Iteration::Booleanity { .. } => {
                 unreachable!("Booleanity reduce is handled by the runtime")
             }
+            Iteration::HammingWeightReduction { .. } => {
+                unreachable!("HammingWeightReduction reduce is handled by the runtime")
+            }
         }
     }
 
@@ -468,6 +471,9 @@ impl ComputeBackend for MetalBackend {
             }
             Iteration::Booleanity { .. } => {
                 unreachable!("Booleanity bind is handled by the runtime")
+            }
+            Iteration::HammingWeightReduction { .. } => {
+                unreachable!("HammingWeightReduction bind is handled by the runtime")
             }
         }
     }
@@ -885,112 +891,6 @@ impl ComputeBackend for MetalBackend {
             }
         }
         total_evals.unwrap_or_default()
-    }
-
-    type PrefixSuffixState<F: Field> = jolt_cpu::prefix_suffix::CpuPrefixSuffixState<F>;
-
-    fn ps_init<F: Field>(
-        &self,
-        iteration: &Iteration,
-        challenges: &[F],
-        trace_data: &LookupTraceData,
-    ) -> Self::PrefixSuffixState<F> {
-        jolt_cpu::prefix_suffix::CpuPrefixSuffixState::new(iteration, challenges, trace_data)
-    }
-
-    fn ps_bind<F: Field>(&self, state: &mut Self::PrefixSuffixState<F>, challenge: F) {
-        state.ingest_challenge(challenge);
-    }
-
-    fn ps_reduce<F: Field>(&self, state: &Self::PrefixSuffixState<F>) -> [F; 2] {
-        state.compute_address_round()
-    }
-
-    fn ps_materialize<F: Field>(
-        &self,
-        state: Self::PrefixSuffixState<F>,
-    ) -> Vec<(PolynomialId, MetalBuffer<F>)> {
-        state
-            .materialize_outputs()
-            .into_iter()
-            .map(|(id, data)| (id, self.upload(&data)))
-            .collect()
-    }
-
-    type BooleanityState<F: Field> = jolt_cpu::booleanity::CpuBooleanityState<F>;
-
-    fn bool_init<F: Field>(
-        &self,
-        ra_data: Vec<Vec<F>>,
-        addr_challenges: &[F],
-        cycle_challenges: &[F],
-        gamma_powers: Vec<F>,
-        gamma_powers_square: Vec<F>,
-        log_k_chunk: usize,
-        log_t: usize,
-    ) -> Self::BooleanityState<F> {
-        jolt_cpu::booleanity::CpuBooleanityState::new(
-            ra_data,
-            addr_challenges,
-            cycle_challenges,
-            gamma_powers,
-            gamma_powers_square,
-            log_k_chunk,
-            log_t,
-        )
-    }
-
-    fn bool_bind<F: Field>(&self, state: &mut Self::BooleanityState<F>, challenge: F) {
-        state.ingest_challenge(challenge);
-    }
-
-    fn bool_reduce<F: Field>(&self, state: &Self::BooleanityState<F>, previous_claim: F) -> Vec<F> {
-        state.compute_round(previous_claim)
-    }
-
-    fn bool_final_claims<F: Field>(&self, state: &Self::BooleanityState<F>) -> Vec<F> {
-        state.final_ra_claims()
-    }
-
-    type HwReductionState<F: Field> = jolt_cpu::hw_reduction::CpuHwReductionState<F>;
-
-    fn hw_init<F: Field>(
-        &self,
-        ra_data: &[Vec<F>],
-        cycle_ch_be: &[F],
-        addr_bool_ch_be: &[F],
-        addr_virt_ch_be: &[Vec<F>],
-        gamma_powers: Vec<F>,
-        hw_claims: Vec<F>,
-        bool_claims: Vec<F>,
-        virt_claims: Vec<F>,
-        log_k_chunk: usize,
-        log_t: usize,
-    ) -> Self::HwReductionState<F> {
-        jolt_cpu::hw_reduction::CpuHwReductionState::new(
-            ra_data,
-            cycle_ch_be,
-            addr_bool_ch_be,
-            addr_virt_ch_be,
-            gamma_powers,
-            hw_claims,
-            bool_claims,
-            virt_claims,
-            log_k_chunk,
-            log_t,
-        )
-    }
-
-    fn hw_bind<F: Field>(&self, state: &mut Self::HwReductionState<F>, challenge: F) {
-        state.bind(challenge);
-    }
-
-    fn hw_reduce<F: Field>(&self, state: &Self::HwReductionState<F>, previous_claim: F) -> Vec<F> {
-        state.reduce(previous_claim)
-    }
-
-    fn hw_final_claims<F: Field>(&self, state: &Self::HwReductionState<F>) -> Vec<F> {
-        state.final_g_claims()
     }
 
     type InstanceState<F: Field> = ();

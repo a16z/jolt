@@ -2,7 +2,6 @@
 
 use std::collections::HashMap;
 
-use jolt_compiler::kernel_spec::Iteration;
 use jolt_compiler::module::{ClaimFormula, InstanceConfig};
 pub use jolt_compiler::BindingOrder;
 use jolt_compiler::PolynomialId;
@@ -344,90 +343,7 @@ pub trait ComputeBackend: Send + Sync + 'static {
         challenges: &[F],
     ) -> Vec<F>;
 
-    /// Opaque state for a PrefixSuffix instance. Each backend controls
-    /// data layout (CPU: Vec-of-Vec, GPU: flat device buffers, etc.).
-    type PrefixSuffixState<F: Field>: Send + Sync;
-
-    /// Initialize a PrefixSuffix state from iteration config and trace data.
-    fn ps_init<F: Field>(
-        &self,
-        iteration: &Iteration,
-        challenges: &[F],
-        trace_data: &LookupTraceData,
-    ) -> Self::PrefixSuffixState<F>;
-
-    /// Bind a sumcheck challenge into the PrefixSuffix state.
-    fn ps_bind<F: Field>(&self, state: &mut Self::PrefixSuffixState<F>, challenge: F);
-
-    /// Compute the address-round evaluations `[eval_0, eval_2]`.
-    fn ps_reduce<F: Field>(&self, state: &Self::PrefixSuffixState<F>) -> [F; 2];
-
-    /// Consume the state and materialize output polynomial buffers.
-    fn ps_materialize<F: Field>(
-        &self,
-        state: Self::PrefixSuffixState<F>,
-    ) -> Vec<(PolynomialId, Self::Buffer<F>)>;
-
-    /// Opaque state for a Gruen-based booleanity sumcheck instance.
-    type BooleanityState<F: Field>: Send + Sync;
-
-    /// Initialize booleanity state from RA data and challenges.
-    #[allow(clippy::too_many_arguments)]
-    fn bool_init<F: Field>(
-        &self,
-        ra_data: Vec<Vec<F>>,
-        addr_challenges: &[F],
-        cycle_challenges: &[F],
-        gamma_powers: Vec<F>,
-        gamma_powers_square: Vec<F>,
-        log_k_chunk: usize,
-        log_t: usize,
-    ) -> Self::BooleanityState<F>;
-
-    /// Bind a sumcheck challenge into the booleanity state.
-    fn bool_bind<F: Field>(&self, state: &mut Self::BooleanityState<F>, challenge: F);
-
-    /// Compute 4 round polynomial evaluations `[s(0), s(1), s(2), s(3)]`.
-    fn bool_reduce<F: Field>(&self, state: &Self::BooleanityState<F>, previous_claim: F) -> Vec<F>;
-
-    /// Extract per-RA-poly evaluations from fully-bound booleanity state.
-    ///
-    /// Returns `ra_d(r_addr, r_cycle)` for each committed RA polynomial,
-    /// computed as `H_d[0] / γ^d`.
-    fn bool_final_claims<F: Field>(&self, state: &Self::BooleanityState<F>) -> Vec<F>;
-
-    /// Opaque state for a fused HammingWeight + Address Reduction sumcheck instance.
-    type HwReductionState<F: Field>: Send + Sync;
-
-    /// Initialize HW reduction state from RA data and challenge values.
-    ///
-    /// Computes `G_i(k) = Σ_j eq(r_cycle, j) · ra_i(k*T + j)` and builds
-    /// eq_bool / eq_virt tables.
-    #[allow(clippy::too_many_arguments)]
-    fn hw_init<F: Field>(
-        &self,
-        ra_data: &[Vec<F>],
-        cycle_ch_be: &[F],
-        addr_bool_ch_be: &[F],
-        addr_virt_ch_be: &[Vec<F>],
-        gamma_powers: Vec<F>,
-        hw_claims: Vec<F>,
-        bool_claims: Vec<F>,
-        virt_claims: Vec<F>,
-        log_k_chunk: usize,
-        log_t: usize,
-    ) -> Self::HwReductionState<F>;
-
-    /// Bind a sumcheck challenge into the HW reduction state.
-    fn hw_bind<F: Field>(&self, state: &mut Self::HwReductionState<F>, challenge: F);
-
-    /// Compute HW reduction round evaluations (3 values for degree 2).
-    fn hw_reduce<F: Field>(&self, state: &Self::HwReductionState<F>, previous_claim: F) -> Vec<F>;
-
-    /// Extract final G_i evaluations after all rounds are bound.
-    fn hw_final_claims<F: Field>(&self, state: &Self::HwReductionState<F>) -> Vec<F>;
-
-    /// Opaque state for a unified stateful sumcheck instance.
+    /// Opaque state for a stateful sumcheck instance.
     ///
     /// Replaces `PrefixSuffixState`, `BooleanityState`, `HwReductionState`.
     /// The backend internally dispatches based on `InstanceConfig` variant.

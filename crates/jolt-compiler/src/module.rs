@@ -208,7 +208,7 @@ pub struct SegmentedConfig {
 
 /// Configuration for the Gruen-based booleanity sumcheck.
 ///
-/// Stored in [`Op::BooleanityInit`] and consumed by the runtime to
+/// Stored in [`InstanceConfig::Booleanity`] and consumed by the runtime to
 /// initialize a [`CpuBooleanityState`](jolt_cpu::booleanity::CpuBooleanityState).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BooleanityConfig {
@@ -228,7 +228,7 @@ pub struct BooleanityConfig {
 
 /// Configuration for the fused HammingWeight + Address Reduction sumcheck (Stage 7).
 ///
-/// Stored in [`Op::HwReductionInit`] and consumed by the runtime to
+/// Stored in [`InstanceConfig::HwReduction`] and consumed by the runtime to
 /// initialize a `CpuHwReductionState`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HwReductionConfig {
@@ -547,7 +547,7 @@ pub enum Op {
     Materialize { binding: InputBinding },
     /// Materialize a kernel input, but skip if a buffer of the expected
     /// size already exists (e.g., produced by a prior compute op like
-    /// `PrefixSuffixMaterialize`).
+    /// `UnifiedInstanceFinalize`).
     ///
     /// Only used for `Provided` bindings at instance activation where
     /// a cross-instance compute op may have already produced the buffer.
@@ -617,71 +617,8 @@ pub enum Op {
     /// `last_round_coeffs` for subsequent `AbsorbRoundPoly`.
     BatchRoundFinalize { batch: usize },
 
-    /// Initialize PrefixSuffix state for an instance entering a PS phase.
-    PrefixSuffixInit {
-        batch: usize,
-        instance: usize,
-        kernel: usize,
-    },
-    /// Ingest a challenge into the PrefixSuffix state machine.
-    PrefixSuffixBind {
-        batch: usize,
-        instance: usize,
-        challenge: usize,
-    },
-    /// Compute PrefixSuffix address round evaluations.
-    /// Produces 3 evals: `[eval_0, claim - eval_0, eval_2]`.
-    PrefixSuffixReduce { batch: usize, instance: usize },
-    /// Materialize PrefixSuffix outputs into device buffers and destroy
-    /// the PS state. Emitted at the end of a PS phase before transitioning.
-    PrefixSuffixMaterialize { batch: usize, instance: usize },
-
-    /// Initialize Gruen-based booleanity state for an instance.
-    BooleanityInit {
-        batch: usize,
-        instance: usize,
-        config: BooleanityConfig,
-    },
-    /// Ingest a challenge into the booleanity state machine.
-    BooleanityBind {
-        batch: usize,
-        instance: usize,
-        challenge: usize,
-    },
-    /// Compute Gruen booleanity round evaluations (4 evals for degree 3).
-    BooleanityReduce { batch: usize, instance: usize },
-    /// Extract final per-RA-poly evaluations from the booleanity state.
-    BooleanityCacheOpenings {
-        batch: usize,
-        instance: usize,
-        ra_poly_ids: Vec<PolynomialId>,
-    },
-
-    /// Initialize HW reduction state: compute G_i from RA data + r_cycle,
-    /// build eq_bool and eq_virt tables.
-    HwReductionInit {
-        batch: usize,
-        instance: usize,
-        config: HwReductionConfig,
-    },
-    /// Ingest a challenge into the HW reduction state (bind G, eq_bool, eq_virt).
-    HwReductionBind {
-        batch: usize,
-        instance: usize,
-        challenge: usize,
-    },
-    /// Compute HW reduction round evaluations (3 evals for degree 2).
-    HwReductionReduce { batch: usize, instance: usize },
-    /// Extract final G_i evaluations from the HW reduction state.
-    HwReductionCacheOpenings {
-        batch: usize,
-        instance: usize,
-        g_poly_ids: Vec<PolynomialId>,
-    },
-
     /// Initialize a stateful sumcheck instance (unified interface).
     ///
-    /// Replaces PrefixSuffixInit, BooleanityInit, HwReductionInit.
     /// The runtime passes `config` to the backend without inspecting it.
     UnifiedInstanceInit {
         batch: usize,
@@ -936,11 +873,6 @@ impl Op {
                 | Op::InstanceReduce { .. }
                 | Op::InstanceSegmentedReduce { .. }
                 | Op::InstanceBind { .. }
-                | Op::PrefixSuffixReduce { .. }
-                | Op::BooleanityReduce { .. }
-                | Op::BooleanityCacheOpenings { .. }
-                | Op::HwReductionReduce { .. }
-                | Op::HwReductionCacheOpenings { .. }
                 | Op::UnifiedInstanceReduce { .. }
                 | Op::Evaluate { .. }
                 | Op::Bind { .. }
@@ -990,13 +922,6 @@ impl Op {
                 | Op::CaptureScalar { .. }
                 | Op::BatchAccumulateInstance { .. }
                 | Op::BatchRoundFinalize { .. }
-                | Op::PrefixSuffixInit { .. }
-                | Op::PrefixSuffixBind { .. }
-                | Op::PrefixSuffixMaterialize { .. }
-                | Op::BooleanityInit { .. }
-                | Op::BooleanityBind { .. }
-                | Op::HwReductionInit { .. }
-                | Op::HwReductionBind { .. }
                 | Op::UnifiedInstanceInit { .. }
                 | Op::UnifiedInstanceBind { .. }
                 | Op::UnifiedInstanceFinalize { .. }
