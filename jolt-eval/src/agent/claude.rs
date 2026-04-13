@@ -206,6 +206,10 @@ fn capture_diff(worktree_dir: &Path, scope: &DiffScope) -> Option<String> {
 }
 
 /// Create an isolated detached git worktree from `repo_dir`.
+///
+/// After creating the worktree, symlinks gitignored directories (like
+/// `redteam-history/`) so the agent can read cross-iteration state that
+/// only exists in the main working tree.
 pub fn create_worktree(repo_dir: &Path) -> Result<PathBuf, AgentError> {
     let tmp = tempfile::tempdir().map_err(|e| AgentError::new(format!("tempdir: {e}")))?;
     let worktree_dir = tmp.path().to_path_buf();
@@ -220,6 +224,15 @@ pub fn create_worktree(repo_dir: &Path) -> Result<PathBuf, AgentError> {
 
     if !status.success() {
         return Err(AgentError::new("git worktree add failed"));
+    }
+
+    // Symlink gitignored directories so the agent can read them.
+    #[cfg(unix)]
+    for subpath in ["jolt-eval/redteam-history", "jolt-eval/optimize-history"] {
+        let src = repo_dir.join(subpath);
+        if src.is_dir() {
+            let _ = std::os::unix::fs::symlink(&src, worktree_dir.join(subpath));
+        }
     }
 
     Ok(worktree_dir)

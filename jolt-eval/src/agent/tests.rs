@@ -234,6 +234,7 @@ fn mock_with_diff() {
 fn envelope(analysis: &str, counterexample: impl serde::Serialize) -> String {
     serde_json::json!({
         "analysis": analysis,
+        "approach_summary": analysis,
         "counterexample": counterexample,
     })
     .to_string()

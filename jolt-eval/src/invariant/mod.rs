@@ -217,6 +217,8 @@ fn run_checks_impl<I: Invariant>(
 pub struct FailedAttempt {
     pub description: String,
     pub approach: String,
+    /// Short summary of the approach (at most 4 sentences).
+    pub approach_summary: String,
     pub failure_reason: String,
     /// Path to the persisted attempt directory (relative to repo root).
     pub path: Option<String>,

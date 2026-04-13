@@ -90,6 +90,7 @@ pub fn auto_redteam<I: Invariant>(
                     failed_attempts.push(FailedAttempt {
                         description: format!("Iteration {iter}"),
                         approach: "Agent invocation failed".to_string(),
+                        approach_summary: "Agent invocation failed".to_string(),
                         failure_reason: e.to_string(),
                         path,
                     });
@@ -107,32 +108,34 @@ pub fn auto_redteam<I: Invariant>(
             eprintln!("──────────────────────────");
         }
 
-        let (analysis, counterexample_json) = match parse_envelope(&response.text) {
-            Some(pair) => pair,
-            None => match super::super::extract_json(&response.text) {
-                Some(json) => match parse_envelope(&json) {
-                    Some(pair) => pair,
-                    None => (response.text.clone(), json),
+        let (analysis, approach_summary, counterexample_json) =
+            match parse_envelope(&response.text) {
+                Some(triple) => triple,
+                None => match super::super::extract_json(&response.text) {
+                    Some(json) => match parse_envelope(&json) {
+                        Some(triple) => triple,
+                        None => (response.text.clone(), String::new(), json),
+                    },
+                    None => {
+                        let failure = "Agent response did not contain valid JSON".to_string();
+                        let path = persist_redteam_attempt(
+                            repo_dir,
+                            invariant.name(),
+                            iter,
+                            &response.text,
+                            &failure,
+                        );
+                        failed_attempts.push(FailedAttempt {
+                            description: format!("Iteration {iter}"),
+                            approach: response.text,
+                            approach_summary: String::new(),
+                            failure_reason: failure,
+                            path,
+                        });
+                        continue;
+                    }
                 },
-                None => {
-                    let failure = "Agent response did not contain valid JSON".to_string();
-                    let path = persist_redteam_attempt(
-                        repo_dir,
-                        invariant.name(),
-                        iter,
-                        &response.text,
-                        &failure,
-                    );
-                    failed_attempts.push(FailedAttempt {
-                        description: format!("Iteration {iter}"),
-                        approach: response.text,
-                        failure_reason: failure,
-                        path,
-                    });
-                    continue;
-                }
-            },
-        };
+            };
 
         let input: I::Input = match serde_json::from_str(&counterexample_json) {
             Ok(v) => v,
@@ -144,6 +147,7 @@ pub fn auto_redteam<I: Invariant>(
                 failed_attempts.push(FailedAttempt {
                     description: format!("Iteration {iter}"),
                     approach: analysis,
+                    approach_summary,
                     failure_reason: failure,
                     path,
                 });
@@ -164,6 +168,7 @@ pub fn auto_redteam<I: Invariant>(
                 failed_attempts.push(FailedAttempt {
                     description: format!("Iteration {iter}"),
                     approach: analysis,
+                    approach_summary,
                     failure_reason: failure,
                     path,
                 });
@@ -183,6 +188,7 @@ pub fn auto_redteam<I: Invariant>(
                 failed_attempts.push(FailedAttempt {
                     description: format!("Iteration {iter}"),
                     approach: analysis,
+                    approach_summary,
                     failure_reason: failure,
                     path,
                 });
@@ -226,18 +232,32 @@ fn build_envelope_schema(input_schema: &serde_json::Value) -> serde_json::Value 
                 "type": "string",
                 "description": "Your analysis of the invariant and approach to finding a violation"
             },
+            "approach_summary": {
+                "type": "string",
+                "description": "A short summary of your approach (at most 4 sentences)"
+            },
             "counterexample": input_schema
         },
-        "required": ["analysis", "counterexample"],
+        "required": ["analysis", "approach_summary", "counterexample"],
         "additionalProperties": false
     })
 }
 
-fn parse_envelope(text: &str) -> Option<(String, String)> {
+/// Parsed envelope: (analysis, approach_summary, counterexample_json).
+fn parse_envelope(text: &str) -> Option<(String, String, String)> {
     let val: serde_json::Value = serde_json::from_str(text).ok()?;
     let analysis = val.get("analysis")?.as_str()?.to_string();
+    let approach_summary = val
+        .get("approach_summary")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     let counterexample = val.get("counterexample")?;
-    Some((analysis, serde_json::to_string(counterexample).ok()?))
+    Some((
+        analysis,
+        approach_summary,
+        serde_json::to_string(counterexample).ok()?,
+    ))
 }
 
 fn build_redteam_prompt(
@@ -300,23 +320,20 @@ fn build_redteam_prompt(
         prompt.push_str("## Previous failed attempts\n\n");
         prompt.push_str(
             "The following approaches have already been tried and did NOT produce a \
-             valid counterexample.\n\n",
+             valid counterexample. Try a fundamentally different strategy.\n\n",
         );
         for attempt in failed_attempts {
             let path_ref = attempt
                 .path
                 .as_deref()
-                .map(|p| format!(" Details: {p}/"))
+                .map(|p| format!(" (full details in `{p}/`)"))
                 .unwrap_or_default();
             prompt.push_str(&format!(
-                "- **{}** — {}{path_ref}\n",
-                attempt.description, attempt.failure_reason,
+                "- **{}**: {}{path_ref}\n  Failure: {}\n",
+                attempt.description, attempt.approach_summary, attempt.failure_reason,
             ));
         }
-        prompt.push_str(
-            "\nRead the attempt directories for the full agent approach. \
-             Try a fundamentally different strategy.\n\n",
-        );
+        prompt.push('\n');
     }
 
     prompt.push_str(
