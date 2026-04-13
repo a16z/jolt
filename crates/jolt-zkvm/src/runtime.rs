@@ -475,7 +475,7 @@ where
                         tau_challenge,
                         zero_base,
                     } => {
-                        let mut raw_evals = state.last_round_coeffs.clone();
+                        let mut raw_evals = std::mem::take(&mut state.last_round_coeffs);
                         debug_assert_eq!(raw_evals.len(), 2 * *domain_size - 1);
                         let tau_high = state.challenges[*tau_challenge];
                         backend.uniskip_encode(
@@ -1047,10 +1047,12 @@ where
                 let coeff = state.challenges[bdef.instances[*instance].batch_coeff];
                 let evals = &state.last_round_instance_evals[*instance];
                 debug_assert_eq!(evals.len(), *num_evals);
+                let extended;
                 let full_evals = if *num_evals < *max_evals {
-                    backend.extend_evals(evals, *max_evals)
+                    extended = backend.extend_evals(evals, *max_evals);
+                    &extended
                 } else {
-                    evals.clone()
+                    evals.as_slice()
                 };
                 if *batch == 4 && state.current_batch_round >= 9 && state.current_batch_round <= 13
                 {
@@ -1070,7 +1072,7 @@ where
                     state.batch_combined.len(),
                     &state.batch_combined
                 );
-                state.last_round_coeffs = state.batch_combined.clone();
+                state.last_round_coeffs = std::mem::take(&mut state.batch_combined);
             }
 
             Op::PrefixSuffixInit {
