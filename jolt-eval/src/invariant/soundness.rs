@@ -7,6 +7,8 @@ use common::constants::{DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_A
 use common::jolt_device::MemoryConfig;
 use jolt_core::host::Program;
 
+use tracer::instruction::Cycle;
+
 use super::{CheckError, Invariant, InvariantViolation};
 use crate::guests;
 
@@ -120,8 +122,10 @@ impl Invariant for SoundnessInvariant {
 
     fn description(&self) -> String {
         format!(
-            "For any deterministic guest program (no advice) and fixed input, \
-             there is only one (output, panic) pair that the verifier accepts. \
+            "For any deterministic guest program (no advice inputs or runtime advice) \
+             and fixed input, there is only one (output, panic) pair that the \
+             verifier accepts. The guest must not read advice via \
+             VirtualAdviceLoad or VirtualAdviceLen instructions. \
              A counterexample is a guest patch + input + dishonest (output, panic) \
              claim that the verifier incorrectly accepts. \
              For full context, read the invariant file: jolt-eval/src/invariant/soundness.rs \n\n\
@@ -174,6 +178,16 @@ impl Invariant for SoundnessInvariant {
 
         let program = guests::GuestProgram::new(&elf_bytes, &memory_config);
         let (_lazy_trace, trace, _memory, _io) = program.trace(&input.program_input, &[], &[]);
+
+        if let Some(pos) = trace.iter().position(|c| {
+            matches!(c, Cycle::VirtualAdviceLoad(_) | Cycle::VirtualAdviceLen(_))
+        }) {
+            return Err(CheckError::InvalidInput(format!(
+                "guest uses runtime advice (cycle {pos}): \
+                 soundness invariant requires no advice instructions"
+            )));
+        }
+
         let max_trace_length = (trace.len() + 1).next_power_of_two();
         drop(trace);
 
