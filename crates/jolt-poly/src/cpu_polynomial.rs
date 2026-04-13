@@ -468,6 +468,7 @@ impl<F: Field> Neg for Polynomial<F> {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use jolt_field::Field;
@@ -557,7 +558,7 @@ mod tests {
         assert_eq!(p.evals[0], poly.evaluate(&point));
     }
 
-    #[allow(unused)]
+    #[expect(unused)]
     fn uses_one_trait() {
         let _ = Fr::one();
     }

@@ -1,6 +1,6 @@
-#![allow(unused_results)]
+#![expect(unused_results)]
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use jolt_field::{Field, Fr};
 use jolt_poly::{EqPolynomial, Polynomial};
 use rand_chacha::ChaCha20Rng;
@@ -20,7 +20,7 @@ fn bench_bind(c: &mut Criterion) {
                 bench.iter_batched(
                     || poly.clone(),
                     |mut p| {
-                        p.bind(black_box(scalar));
+                        p.bind(std::hint::black_box(scalar));
                         p
                     },
                     criterion::BatchSize::LargeInput,
@@ -42,7 +42,7 @@ fn bench_eq_evaluations(c: &mut Criterion) {
             BenchmarkId::from_parameter(num_vars),
             &num_vars,
             |bench, _| {
-                bench.iter(|| black_box(&eq).evaluations());
+                bench.iter(|| std::hint::black_box(&eq).evaluations());
             },
         );
     }
@@ -56,7 +56,7 @@ fn bench_evaluate(c: &mut Criterion) {
     let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
 
     c.bench_function("Polynomial::evaluate/20", |bench| {
-        bench.iter(|| black_box(&poly).evaluate(black_box(&point)));
+        bench.iter(|| std::hint::black_box(&poly).evaluate(std::hint::black_box(&point)));
     });
 }
 

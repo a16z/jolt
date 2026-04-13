@@ -2804,6 +2804,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-poly"
+version = "0.1.0"
+dependencies = [
+ "bincode 2.0.1",
+ "criterion",
+ "jolt-field",
+ "num-traits",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "rayon",
+ "serde",
+ "tracing",
+]
+
+[[package]]
 name = "jolt-profiling"
 version = "0.1.0"
 dependencies = [

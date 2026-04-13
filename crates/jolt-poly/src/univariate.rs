@@ -53,6 +53,7 @@ impl<F: Field> UnivariatePoly<F> {
     ///
     /// Computes $c_d + x(c_{d-1} + x(c_{d-2} + \cdots))$ in $O(d)$ multiplications.
     #[inline]
+    #[expect(clippy::unwrap_used)]
     pub fn evaluate(&self, point: F) -> F {
         if self.coefficients.is_empty() {
             return F::zero();
@@ -72,6 +73,7 @@ impl<F: Field> UnivariatePoly<F> {
     ///
     /// # Panics
     /// Panics if `points` is empty.
+    #[expect(clippy::expect_used)]
     pub fn interpolate(points: &[(F, F)]) -> Self {
         assert!(!points.is_empty(), "cannot interpolate zero points");
 
@@ -130,6 +132,7 @@ impl<F: Field> UnivariatePoly<F> {
     ///
     /// # Panics
     /// Panics if `index >= domain_size`.
+    #[expect(clippy::expect_used)]
     pub fn evaluate_basis(domain_size: usize, index: usize, point: F) -> F {
         assert!(
             index < domain_size,
@@ -289,6 +292,7 @@ impl<F: Field> UnivariatePoly<F> {
     ///
     /// Returns `Some((quotient, remainder))`, or `None` if `divisor` is the
     /// zero polynomial.
+    #[expect(clippy::unwrap_used, clippy::expect_used)]
     pub fn divide_with_remainder(&self, divisor: &Self) -> Option<(Self, Self)> {
         if self.is_zero() {
             return Some((Self::zero(), Self::zero()));
@@ -475,7 +479,7 @@ fn gaussian_elimination_augmented<F: Field>(matrix: &mut [Vec<F>]) -> Vec<F> {
         for j in i..size - 1 {
             if matrix[i][i] != F::zero() {
                 let factor = matrix[j + 1][i] / matrix[i][i];
-                #[allow(clippy::needless_range_loop)]
+                #[expect(clippy::needless_range_loop)]
                 for k in i..=size {
                     let tmp = matrix[i][k];
                     matrix[j + 1][k] -= factor * tmp;
@@ -505,6 +509,7 @@ fn gaussian_elimination_augmented<F: Field>(matrix: &mut [Vec<F>]) -> Vec<F> {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use jolt_field::Field;

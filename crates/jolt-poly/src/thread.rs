@@ -14,7 +14,7 @@ pub fn drop_in_background_thread<T: Send + 'static>(data: T) {
 ///
 /// The caller must ensure that `T::zero()` is represented as all-zero bytes.
 /// This is verified in debug/test builds via an assertion.
-#[allow(clippy::all)]
+#[expect(clippy::unwrap_used)]
 pub fn unsafe_allocate_zero_vec<T: Sized + Zero>(size: usize) -> Vec<T> {
     #[cfg(test)]
     {
@@ -40,7 +40,7 @@ pub fn unsafe_allocate_zero_vec<T: Sized + Zero>(size: usize) -> Vec<T> {
         if ptr.is_null() {
             std::alloc::handle_alloc_error(layout);
         }
-        #[allow(clippy::same_length_and_capacity)]
+        #[expect(clippy::same_length_and_capacity)]
         Vec::from_raw_parts(ptr, size, size)
     }
 }

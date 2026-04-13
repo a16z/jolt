@@ -25,7 +25,6 @@ keywords = ["SNARK", "cryptography", "proofs"]
 [workspace]
 members = [
   "crates/jolt-poly",
-  "crates/jolt-instructions",
   "crates/jolt-lookup-tables",
   "crates/jolt-riscv",
   "crates/jolt-riscv-derive",

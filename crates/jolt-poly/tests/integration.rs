@@ -1,3 +1,4 @@
+#![expect(clippy::expect_used)]
 //! Cross-type integration tests for jolt-poly.
 //!
 //! These tests verify composition patterns between polynomial types

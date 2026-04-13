@@ -14,6 +14,7 @@ use jolt_field::Field;
 ///
 /// # Panics
 /// Panics if `domain_size` is zero.
+#[expect(clippy::expect_used)]
 pub fn lagrange_evals<F: Field>(domain_start: i64, domain_size: usize, r: F) -> Vec<F> {
     assert!(domain_size > 0, "domain_size must be positive");
 
@@ -109,6 +110,7 @@ pub fn poly_mul<F: Field>(a: &[F], b: &[F]) -> Vec<F> {
 ///
 /// # Panics
 /// Panics if `values` is empty.
+#[expect(clippy::expect_used)]
 pub fn interpolate_to_coeffs<F: Field>(domain_start: i64, values: &[F]) -> Vec<F> {
     let n = values.len();
     assert!(n > 0, "cannot interpolate zero values");
