@@ -1327,3 +1327,303 @@ fn debug_ram_state_comparison() {
         "final RAM state has {final_diffs} differences between jolt-core and jolt-host"
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// Cross-system verification: jolt-zkvm proof → jolt-core verifier
+// ═══════════════════════════════════════════════════════════════════
+
+/// Convert a `jolt_poly::UnivariatePoly<NewFr>` to a `CompressedUniPoly<Fr>`.
+///
+/// `CompressedUniPoly` stores `[c0, c2, c3, ...]` (linear term `c1` omitted;
+/// the verifier reconstructs it from the sumcheck hint `h(0) + h(1)`).
+fn to_compressed_uni_poly(
+    poly: &jolt_poly::UnivariatePoly<NewFr>,
+) -> jolt_core::poly::unipoly::CompressedUniPoly<Fr> {
+    let coeffs = poly.coefficients();
+    assert!(coeffs.len() >= 2, "round poly must have at least 2 coefficients");
+    let mut compressed = Vec::with_capacity(coeffs.len() - 1);
+    compressed.push(to_ark(coeffs[0]));
+    for c in &coeffs[2..] {
+        compressed.push(to_ark(*c));
+    }
+    jolt_core::poly::unipoly::CompressedUniPoly {
+        coeffs_except_linear_term: compressed,
+    }
+}
+
+/// Convert a slice of jolt-zkvm round polynomials to a jolt-core
+/// `SumcheckInstanceProof::Clear` (non-zk).
+fn to_core_sumcheck_proof(
+    round_polys: &[jolt_poly::UnivariatePoly<NewFr>],
+) -> SumcheckInstanceProof<Fr, Bn254Curve, Blake2bTranscript> {
+    let compressed: Vec<_> = round_polys.iter().map(to_compressed_uni_poly).collect();
+    SumcheckInstanceProof::Clear(
+        jolt_core::subprotocols::sumcheck::ClearSumcheckProof::new(compressed),
+    )
+}
+
+/// Convert jolt-dory `DoryCommitment` to jolt-core `ArkGT`.
+///
+/// Both are repr(transparent) wrappers over the same `Fq12` type.
+fn commitment_to_ark(
+    c: &jolt_dory::types::DoryCommitment,
+) -> <DoryCommitmentScheme as jolt_core::poly::commitment::commitment_scheme::CommitmentScheme>::Commitment
+{
+    // DoryCommitment(Bn254GT) → Bn254GT → ArkGT via transmute_copy
+    // SAFETY: Bn254GT and ArkGT are both repr(transparent) over Fq12.
+    unsafe { std::mem::transmute_copy(&c.0) }
+}
+
+/// Run jolt-core prover and return the proof, verifier preprocessing, and IO.
+///
+/// This is separate from `extract_jolt_core_state_history` because we need
+/// the proof as a value (not consumed by a verifier).
+fn run_jolt_core_prover() -> (
+    CoreProof,
+    &'static JoltVerifierPreprocessing<Fr, Bn254Curve, DoryCommitmentScheme>,
+    common::jolt_device::JoltDevice,
+    CoreProtocolParams,
+) {
+    DoryGlobals::reset();
+
+    let mut program = host::Program::new("muldiv-guest");
+    let (bytecode, init_memory_state, _, e_entry) = program.decode();
+    let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
+    let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+
+    let shared_preprocessing = JoltSharedPreprocessing::new(
+        bytecode,
+        io_device.memory_layout.clone(),
+        init_memory_state,
+        1 << 16,
+        e_entry,
+    );
+    let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
+
+    let elf_contents = program.get_elf_contents().expect("elf");
+    let prover: CoreProver<'_> = CoreProver::gen_from_elf(
+        &prover_preprocessing,
+        &elf_contents,
+        &inputs,
+        &[],
+        &[],
+        None,
+        None,
+        None,
+    );
+    let io = prover.program_io.clone();
+    let (proof, _debug): (CoreProof, _) = prover.prove();
+
+    let params = CoreProtocolParams {
+        trace_length: proof.trace_length,
+        ram_k: proof.ram_K,
+        bytecode_k: prover_preprocessing.shared.bytecode.code_size,
+        pcs_setup: DoryProverSetup(prover_preprocessing.generators.clone()),
+    };
+
+    let verifier_preprocessing: &'static _ = Box::leak(Box::new(
+        JoltVerifierPreprocessing::from(&prover_preprocessing),
+    ));
+
+    (proof, verifier_preprocessing, io, params)
+}
+
+/// Run jolt-zkvm prover and return the proof.
+fn run_jolt_zkvm_prover(
+    params: &CoreProtocolParams,
+) -> jolt_verifier::JoltProof<NewFr, DoryScheme> {
+    let (
+        executable,
+        mut polys,
+        r1cs_key,
+        r1cs_witness,
+        setup,
+        initial_ram,
+        final_ram,
+        instruction_flag_data,
+        reg_access,
+        lookup_trace,
+        lookup_flags,
+        bytecode_data,
+    ) = setup_zkvm_muldiv(params);
+
+    let r1cs = R1csSource::new(&r1cs_key, &r1cs_witness);
+    let mut preprocessed = PreprocessedSource::new();
+    preprocessed.populate_ram(&setup.config, &initial_ram);
+    let derived = DerivedSource::new(&r1cs_witness, setup.trace_length, r1cs_key.num_vars_padded)
+        .with_ram(RamConfig {
+            ram_k: setup.config.ram_k,
+            lowest_addr: setup.config.ram_lowest_address,
+            initial_state: initial_ram,
+            final_state: final_ram,
+        })
+        .with_instruction_flags(InstructionFlags {
+            is_noop: instruction_flag_data.is_noop,
+            left_is_rs1: instruction_flag_data.left_is_rs1,
+            left_is_pc: instruction_flag_data.left_is_pc,
+            right_is_rs2: instruction_flag_data.right_is_rs2,
+            right_is_imm: instruction_flag_data.right_is_imm,
+        })
+        .with_register_access(reg_access)
+        .with_lookup_flags(lookup_flags);
+    populate_bytecode_preprocessed(&mut preprocessed, &bytecode_data);
+    let mut provider = ProverData::new(&mut polys, r1cs, derived, preprocessed);
+
+    let pcs_setup = &params.pcs_setup;
+    let mut transcript = jolt_transcript::Blake2bTranscript::<NewFr>::new(TRANSCRIPT_LABEL);
+
+    prove::<_, _, _, DoryScheme>(
+        &executable,
+        &mut provider,
+        &backend(),
+        pcs_setup,
+        &mut transcript,
+        setup.config,
+        Some(lookup_trace),
+        Some(bytecode_data),
+    )
+}
+
+/// Prove with jolt-zkvm, convert to jolt-core's proof type, verify with jolt-core verifier.
+#[test]
+fn zkvm_proof_accepted_by_core_verifier() {
+    // 1. Run jolt-core prover to get proof scaffolding + verifier preprocessing.
+    let (core_proof, verifier_preprocessing, io, params) = run_jolt_core_prover();
+
+    // 2. Run jolt-zkvm prover to get the proof under test.
+    let zkvm_proof = run_jolt_zkvm_prover(&params);
+
+    // 3. Convert: substitute zkvm proof data into core proof structure.
+    assert_eq!(
+        zkvm_proof.stage_proofs.len(),
+        8,
+        "expected 8 stage proofs from jolt-zkvm (7 sumcheck + 1 PCS opening)"
+    );
+
+    // Stages 1, 2: skip first round poly (uniskip). Stages 3-7: all round polys.
+    let stage1_sc = to_core_sumcheck_proof(
+        &zkvm_proof.stage_proofs[0].round_polys.round_polynomials[1..],
+    );
+    let stage2_sc = to_core_sumcheck_proof(
+        &zkvm_proof.stage_proofs[1].round_polys.round_polynomials[1..],
+    );
+    let stage3_sc = to_core_sumcheck_proof(
+        &zkvm_proof.stage_proofs[2].round_polys.round_polynomials,
+    );
+    let stage4_sc = to_core_sumcheck_proof(
+        &zkvm_proof.stage_proofs[3].round_polys.round_polynomials,
+    );
+    let stage5_sc = to_core_sumcheck_proof(
+        &zkvm_proof.stage_proofs[4].round_polys.round_polynomials,
+    );
+    let stage6_sc = to_core_sumcheck_proof(
+        &zkvm_proof.stage_proofs[5].round_polys.round_polynomials,
+    );
+    let stage7_sc = to_core_sumcheck_proof(
+        &zkvm_proof.stage_proofs[6].round_polys.round_polynomials,
+    );
+
+    // Commitments: convert DoryCommitment → ArkGT.
+    // jolt-core's proof.commitments has only the main witness (25 polys).
+    // jolt-zkvm's may include advice commitments too, so we take only the
+    // first N to match.
+    let expected_num_commitments = core_proof.commitments.len();
+    eprintln!(
+        "[cross-system] commitments: zkvm={} core={}",
+        zkvm_proof.commitments.len(),
+        expected_num_commitments
+    );
+    let commitments: Vec<_> = zkvm_proof
+        .commitments
+        .iter()
+        .take(expected_num_commitments)
+        .map(commitment_to_ark)
+        .collect();
+
+    // Opening proof: DoryProof(ArkDoryProof) → ArkDoryProof
+    assert_eq!(
+        zkvm_proof.opening_proofs.len(),
+        1,
+        "expected exactly 1 joint opening proof"
+    );
+    let joint_opening_proof = zkvm_proof.opening_proofs[0].0.clone();
+
+    let converted_proof = JoltProof {
+        // From jolt-zkvm (the data under test):
+        commitments,
+        stage1_sumcheck_proof: stage1_sc,
+        stage2_sumcheck_proof: stage2_sc,
+        stage3_sumcheck_proof: stage3_sc,
+        stage4_sumcheck_proof: stage4_sc,
+        stage5_sumcheck_proof: stage5_sc,
+        stage6_sumcheck_proof: stage6_sc,
+        stage7_sumcheck_proof: stage7_sc,
+        joint_opening_proof,
+        // From jolt-core (structural scaffolding — identical by transcript parity):
+        stage1_uni_skip_first_round_proof: core_proof.stage1_uni_skip_first_round_proof,
+        stage2_uni_skip_first_round_proof: core_proof.stage2_uni_skip_first_round_proof,
+        untrusted_advice_commitment: core_proof.untrusted_advice_commitment,
+        opening_claims: core_proof.opening_claims,
+        // Metadata:
+        trace_length: core_proof.trace_length,
+        ram_K: core_proof.ram_K,
+        rw_config: core_proof.rw_config,
+        one_hot_config: core_proof.one_hot_config,
+        dory_layout: core_proof.dory_layout,
+    };
+
+    // 4. Verify with jolt-core verifier, stage by stage for diagnostics.
+    let mut verifier = CoreVerifier::new(
+        verifier_preprocessing,
+        converted_proof,
+        io,
+        None,
+        None,
+    )
+    .expect("failed to construct jolt-core verifier");
+
+    verifier.run_preamble();
+    eprintln!("[cross-system] preamble OK");
+
+    verifier
+        .verify_stage1()
+        .expect("stage 1 failed");
+    eprintln!("[cross-system] stage 1 OK");
+
+    verifier
+        .verify_stage2()
+        .expect("stage 2 failed");
+    eprintln!("[cross-system] stage 2 OK");
+
+    verifier
+        .verify_stage3()
+        .expect("stage 3 failed");
+    eprintln!("[cross-system] stage 3 OK");
+
+    verifier
+        .verify_stage4()
+        .expect("stage 4 failed");
+    eprintln!("[cross-system] stage 4 OK");
+
+    verifier
+        .verify_stage5()
+        .expect("stage 5 failed");
+    eprintln!("[cross-system] stage 5 OK");
+
+    verifier
+        .verify_stage6()
+        .expect("stage 6 failed");
+    eprintln!("[cross-system] stage 6 OK");
+
+    verifier
+        .verify_stage7()
+        .expect("stage 7 failed");
+    eprintln!("[cross-system] stage 7 OK");
+
+    verifier
+        .verify_stage8()
+        .expect("stage 8 failed");
+    eprintln!("[cross-system] stage 8 OK");
+
+    eprintln!("SUCCESS: jolt-core verifier accepted jolt-zkvm proof (all 8 stages)");
+}

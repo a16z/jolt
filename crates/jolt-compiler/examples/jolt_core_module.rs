@@ -5623,6 +5623,34 @@ fn build_stage8(
         committed_num_vars: Some(committed_num_vars),
     });
 
+    // Copy G_i(rho) evaluations from HammingG slots to RA poly slots.
+    // HwReductionCacheOpenings stored G_i values as HammingG(i), but
+    // CollectOpeningClaimAt reads from the RA poly ID (e.g. InstructionRa(d)).
+    // Without this copy, state.evaluations[InstructionRa(d)] still holds
+    // the stale Booleanity evaluation from stage 6.
+    let mut g_idx = 0;
+    for d in 0..params.instruction_d {
+        ops.push(Op::SnapshotEval {
+            from: p.hw_g[g_idx],
+            to: PolynomialId::InstructionRa(d),
+        });
+        g_idx += 1;
+    }
+    for d in 0..params.bytecode_d {
+        ops.push(Op::SnapshotEval {
+            from: p.hw_g[g_idx],
+            to: PolynomialId::BytecodeRa(d),
+        });
+        g_idx += 1;
+    }
+    for d in 0..params.ram_d {
+        ops.push(Op::SnapshotEval {
+            from: p.hw_g[g_idx],
+            to: PolynomialId::RamRa(d),
+        });
+        g_idx += 1;
+    }
+
     for d in 0..params.instruction_d {
         ops.push(Op::CollectOpeningClaimAt {
             poly: PolynomialId::InstructionRa(d),
