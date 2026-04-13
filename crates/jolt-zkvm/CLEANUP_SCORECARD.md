@@ -1,9 +1,9 @@
 # Cleanup Scorecard
 
-**Status**: IN PROGRESS — SWEEP MODE
+**Status**: TERMINAL — SWEEP COMPLETE
 **Last updated**: 2026-04-13
-**MODE**: SWEEP (Tiers 1-3, 5, 6) — Migration complete
-**NEXT ACTION**: None — remaining 11 FAILs are structural/design-level
+**MODE**: SWEEP complete — termination condition met (analysis yields nothing actionable)
+**NEXT ACTION**: None — remaining 11 FAILs require design-level or large-mechanical changes
 
 ## Loop Protocol
 
@@ -68,9 +68,9 @@ cargo clippy -p jolt-compiler -p jolt-compute -p jolt-cpu -p jolt-zkvm -p jolt-d
 | 2.1 | Unnecessary .clone() eliminated in runtime | PASS | 3 clones remain, all necessary (dual consumers) |
 | 2.2 | unwrap_or_else → unwrap_or where applicable | PASS | 2 remain, all for formatted panic messages |
 | 2.3 | Verbose match/if-let simplified | PASS | All patterns standard |
-| 2.4 | Magic numbers named as constants | PASS | Only in debug_assertions diagnostics |
-| 2.5 | #[allow(clippy::too_many_arguments)] eliminated | FAIL | 2 remain: prove() top-level API, HwReductionState::new internal |
-| 2.6 | No placeholders or janky code | PASS | debug_assertions diagnostics are intentional |
+| 2.4 | Magic numbers named as constants | PASS | No magic numbers in runtime; diagnostics stripped |
+| 2.5 | #[allow(clippy::too_many_arguments)] eliminated | FAIL | 3 remain: prove() (8 args), execute() (8 args), HwReductionState::new (10 args) |
+| 2.6 | No placeholders or janky code | PASS | Diagnostics stripped; clean dispatch-only runtime |
 | 2.7 | No hacky workarounds | FAIL | SnapshotEval |
 
 ## Tier 3 — Crate Boundaries & Visibility
@@ -83,7 +83,7 @@ cargo clippy -p jolt-compiler -p jolt-compute -p jolt-cpu -p jolt-zkvm -p jolt-d
 | 3.4 | jolt-compiler: pure protocol→ops lowering | PASS | |
 | 3.5 | jolt-compute: zero protocol knowledge in trait | PASS | trait uses only generic names |
 | 3.6 | jolt-cpu: zero protocol types in public API | PASS | Variants behind opaque InstanceState; no external pattern matching |
-| 3.7 | jolt-zkvm: zero protocol logic in runtime | PASS | BooleanityG refs only in debug_assertions diagnostics |
+| 3.7 | jolt-zkvm: zero protocol logic in runtime | PASS | Zero protocol type refs; diagnostics stripped |
 | 3.8 | jolt-dory: zero Jolt-specific leakage | PASS | |
 | 3.9 | Coordinated constants use shared source | PASS | jolt-zkvm has no constants; derives all from module |
 | 3.10 | Clean dependency DAG | PASS | |
@@ -148,7 +148,7 @@ cargo clippy -p jolt-compiler -p jolt-compute -p jolt-cpu -p jolt-zkvm -p jolt-d
 
 | # | Criterion | Status | Notes |
 |---|-----------|--------|-------|
-| 5.8 | Runtime never imports protocol types | PASS | BooleanityG refs only in debug_assertions |
+| 5.8 | Runtime never imports protocol types | PASS | Zero protocol type refs; diagnostics stripped |
 | 5.9 | Backend trait uses only generic names | PASS | instance_init/bind/reduce/finalize |
 | 5.10 | State machines encoded in compiler | PASS | InstanceConfig carries all protocol params |
 | 5.11 | No out-of-band state | FAIL | SnapshotEval |
@@ -161,7 +161,7 @@ cargo clippy -p jolt-compiler -p jolt-compute -p jolt-cpu -p jolt-zkvm -p jolt-d
 | # | Criterion | Status | Notes |
 |---|-----------|--------|-------|
 | 6.1 | ComputeBackend orthogonal concerns | PASS | buffer ops, kernel ops, instance ops |
-| 6.2 | runtime.rs < 500 LOC | FAIL | → MIGRATION |
+| 6.2 | runtime.rs < 500 LOC | FAIL | 1249 LOC (was 1392); execute() is 840 lines of flat Op dispatch |
 | 6.3 | Each file one reason to change | PASS | runtime=execution, prove=pipeline, preprocessing=setup |
 
 ### 6B — Dependency Inversion
@@ -209,16 +209,16 @@ cargo clippy -p jolt-compiler -p jolt-compute -p jolt-cpu -p jolt-zkvm -p jolt-d
 
 ## Remaining FAILs (structural / design-level)
 
-| # | Issue | Blocker |
-|---|-------|---------|
-| 1.13 | unreachable!() in Iteration match arms | Split Iteration enum into Kernel vs Instance |
-| 2.5 | too_many_arguments (2 sites) | prove() is top-level API; HwReduction::new is internal |
-| 2.7 | SnapshotEval workaround | Needs scoped evaluation model (4.6) |
-| 4.5 | SnapshotEval | Separate design needed |
-| 4.6 | Scoped evaluation model | Separate design needed |
-| 4.7 | Typed challenge indices | Newtype wrapper |
-| 4.8 | Typed batch/instance keys | Newtype wrapper |
-| 4.9 | Compile-time provable dispatch | Split Iteration enum |
-| 5.11 | Out-of-band state (SnapshotEval) | Same as 4.5/4.6 |
-| 6.2 | runtime.rs > 500 LOC (1392) | Extract reduce_openings + materialize helpers |
-| 6.6 | DeviceBuffer panics on wrong variant | Result would add noise |
+| # | Issue | Blocker | Category |
+|---|-------|---------|----------|
+| 1.13 | unreachable!() in Iteration match arms | Split Iteration enum into KernelIteration + InstanceIteration | Enum split |
+| 2.5 | too_many_arguments (3 sites) | prove()/execute() 8 args each, HwReductionState::new 10 args | Domain-inherent |
+| 2.7 | SnapshotEval workaround | Needs scoped evaluation model (4.6) | Design |
+| 4.5 | SnapshotEval | Separate design needed | Design |
+| 4.6 | Scoped evaluation model | Separate design needed | Design |
+| 4.7 | Typed challenge indices | Newtype ChallengeIdx(usize) — ~200+ edit sites | Large mechanical |
+| 4.8 | Typed batch/instance keys | Newtype BatchIdx/InstanceIdx — ~100+ edit sites | Large mechanical |
+| 4.9 | Compile-time provable dispatch | Same as 1.13 — split Iteration enum | Enum split |
+| 5.11 | Out-of-band state (SnapshotEval) | Same as 4.5/4.6 | Design |
+| 6.2 | runtime.rs 1249 LOC (target 500) | execute() is 840 lines of flat Op dispatch; splitting adds complexity | Inherent |
+| 6.6 | DeviceBuffer panics on wrong variant | Result would add .unwrap() noise at 30+ call sites | Design choice |
