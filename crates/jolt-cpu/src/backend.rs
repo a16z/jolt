@@ -333,9 +333,9 @@ impl ComputeBackend for CpuBackend {
                             panic!("evaluate_claim: {poly:?}@stage{stage} not available")
                         })
                     }
-                    ClaimFactor::Challenge(i) => challenges[*i],
+                    ClaimFactor::Challenge(i) => challenges[i.0],
                     ClaimFactor::EqChallengePair { a, b } => {
-                        let (ra, rb) = (challenges[*a], challenges[*b]);
+                        let (ra, rb) = (challenges[a.0], challenges[b.0]);
                         ra * rb + (F::one() - ra) * (F::one() - rb)
                     }
                     other => panic!("evaluate_claim: unsupported factor {other:?}"),
@@ -604,11 +604,13 @@ impl ComputeBackend for CpuBackend {
                     .iter()
                     .map(|pid| provider.materialize(*pid).into_owned())
                     .collect();
-                let addr_ch: Vec<F> = addr_challenges.iter().map(|&i| challenges[i]).collect();
-                let cycle_ch: Vec<F> = cycle_challenges.iter().map(|&i| challenges[i]).collect();
-                let gamma_pow: Vec<F> = gamma_powers.iter().map(|&i| challenges[i]).collect();
-                let gamma_pow_sq: Vec<F> =
-                    gamma_powers_square.iter().map(|&i| challenges[i]).collect();
+                let addr_ch: Vec<F> = addr_challenges.iter().map(|&i| challenges[i.0]).collect();
+                let cycle_ch: Vec<F> = cycle_challenges.iter().map(|&i| challenges[i.0]).collect();
+                let gamma_pow: Vec<F> = gamma_powers.iter().map(|&i| challenges[i.0]).collect();
+                let gamma_pow_sq: Vec<F> = gamma_powers_square
+                    .iter()
+                    .map(|&i| challenges[i.0])
+                    .collect();
                 CpuInstanceState::Booleanity(Box::new(crate::booleanity::CpuBooleanityState::new(
                     ra_data,
                     &addr_ch,
@@ -636,17 +638,20 @@ impl ComputeBackend for CpuBackend {
                     .iter()
                     .map(|pid| provider.materialize(*pid).into_owned())
                     .collect();
-                let cycle_ch: Vec<F> = cycle_challenges_be.iter().map(|&i| challenges[i]).collect();
+                let cycle_ch: Vec<F> = cycle_challenges_be
+                    .iter()
+                    .map(|&i| challenges[i.0])
+                    .collect();
                 let addr_bool_ch: Vec<F> = addr_bool_challenges_be
                     .iter()
-                    .map(|&i| challenges[i])
+                    .map(|&i| challenges[i.0])
                     .collect();
                 let addr_virt_ch: Vec<Vec<F>> = addr_virt_challenges_be
                     .iter()
-                    .map(|ch| ch.iter().map(|&i| challenges[i]).collect())
+                    .map(|ch| ch.iter().map(|&i| challenges[i.0]).collect())
                     .collect();
-                let gamma_pow: Vec<F> = gamma_powers.iter().map(|&i| challenges[i]).collect();
-                let hw_eval = challenges[*hw_eval_challenge];
+                let gamma_pow: Vec<F> = gamma_powers.iter().map(|&i| challenges[i.0]).collect();
+                let hw_eval = challenges[hw_eval_challenge.0];
                 let total = instruction_d + bytecode_d + ram_d;
                 let mut hw_claims = Vec::with_capacity(total);
                 for _ in 0..(instruction_d + bytecode_d) {

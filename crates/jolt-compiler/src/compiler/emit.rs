@@ -11,9 +11,9 @@ use crate::ir::expr::Factor as ExprFactor;
 use crate::ir::{Density, PolyKind, PublicPoly, Vertex};
 use crate::kernel_spec::{Iteration, KernelSpec};
 use crate::module::{
-    ChallengeDecl, ChallengeSource, ClaimFactor, ClaimFormula, ClaimTerm, DomainSeparator,
-    Evaluation, InputBinding, KernelDef, Module, Op, PolyDecl, Schedule, SumcheckInstance,
-    VerifierOp, VerifierSchedule, VerifierStageIndex,
+    ChallengeDecl, ChallengeIdx, ChallengeSource, ClaimFactor, ClaimFormula, ClaimTerm,
+    DomainSeparator, Evaluation, InputBinding, KernelDef, Module, Op, PolyDecl, Schedule,
+    SumcheckInstance, VerifierOp, VerifierSchedule, VerifierStageIndex,
 };
 use crate::polynomial_id::PolynomialId;
 
@@ -66,9 +66,9 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams, poly_map: &[Polyno
     }
 
     // Per-stage Fiat-Shamir challenges allocated after each stage
-    let stage_challenges: Vec<usize> = (0..staging.stages.len())
+    let stage_challenges: Vec<ChallengeIdx> = (0..staging.stages.len())
         .map(|si| {
-            let ch_idx = ctx.challenges.len();
+            let ch_idx = ChallengeIdx(ctx.challenges.len());
             ctx.challenges.push(ChallengeDecl {
                 name: format!("alpha_s{si}"),
                 source: ChallengeSource::FiatShamir { after_stage: si },
@@ -78,12 +78,12 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams, poly_map: &[Polyno
         .collect();
 
     // External challenges from protocol
-    let _external_challenges: Vec<usize> = protocol
+    let _external_challenges: Vec<ChallengeIdx> = protocol
         .challenge_names
         .iter()
         .enumerate()
         .map(|(i, name)| {
-            let ch_idx = ctx.challenges.len();
+            let ch_idx = ChallengeIdx(ctx.challenges.len());
             ctx.challenges.push(ChallengeDecl {
                 name: name.clone(),
                 source: ChallengeSource::External,
@@ -241,7 +241,7 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams, poly_map: &[Polyno
         ctx.ops.push(Op::BeginStage {
             index: ctx.verifier_stage_count,
         });
-        let ch_idx = ctx.challenges.len();
+        let ch_idx = ChallengeIdx(ctx.challenges.len());
         ctx.challenges.push(ChallengeDecl {
             name: opening.challenge_name.clone(),
             source: ChallengeSource::FiatShamir {
@@ -316,9 +316,9 @@ struct EmitCtx<'a> {
     verifier_ops: Vec<VerifierOp>,
     verifier_stage_count: usize,
     /// Protocol challenge index → output challenge index
-    proto_challenge_map: std::collections::HashMap<usize, usize>,
+    proto_challenge_map: std::collections::HashMap<usize, ChallengeIdx>,
     /// Vertex index → round challenge indices for that vertex's sumcheck.
-    vertex_challenges: std::collections::HashMap<usize, Vec<usize>>,
+    vertex_challenges: std::collections::HashMap<usize, Vec<ChallengeIdx>>,
     last_stage_rounds: usize,
     last_stage_degree: usize,
 }
@@ -354,7 +354,7 @@ impl<'a> EmitCtx<'a> {
     /// Resolve a `ClaimId` to the round challenge indices of the sumcheck
     /// that produced it. Returns `None` for claims whose vertex hasn't been
     /// emitted yet (shouldn't happen with correct stage ordering).
-    fn claim_challenges(&self, claim_id: crate::ir::ClaimId) -> Option<&[usize]> {
+    fn claim_challenges(&self, claim_id: crate::ir::ClaimId) -> Option<&[ChallengeIdx]> {
         let claim = &self.protocol.claims[claim_id.0 as usize];
         self.vertex_challenges
             .get(&claim.produced_by)
@@ -403,9 +403,9 @@ fn emit_sumcheck_stage(
     let verifier_stage = VerifierStageIndex(ctx.verifier_stage_count);
 
     // Allocate all round challenges upfront so InputBindings can reference them
-    let round_challenge_indices: Vec<usize> = (0..num_rounds)
+    let round_challenge_indices: Vec<ChallengeIdx> = (0..num_rounds)
         .map(|r| {
-            let ch_idx = ctx.challenges.len();
+            let ch_idx = ChallengeIdx(ctx.challenges.len());
             ctx.challenges.push(ChallengeDecl {
                 name: format!("r_s{}_r{r}", verifier_stage.0),
                 source: ChallengeSource::SumcheckRound {
@@ -766,7 +766,7 @@ fn poly_to_input_binding(
     poly: PolynomialId,
     kind: &PolyKind,
     ctx: &EmitCtx<'_>,
-    current_round_challenges: &[usize],
+    current_round_challenges: &[ChallengeIdx],
 ) -> InputBinding {
     match kind {
         PolyKind::Committed | PolyKind::Virtual => InputBinding::Provided { poly },
@@ -801,8 +801,8 @@ fn poly_to_input_binding(
 fn resolve_table_challenges(
     claim: Option<&crate::ir::ClaimId>,
     ctx: &EmitCtx<'_>,
-    current_round_challenges: &[usize],
-) -> Vec<usize> {
+    current_round_challenges: &[ChallengeIdx],
+) -> Vec<ChallengeIdx> {
     match claim {
         Some(cid) => ctx
             .claim_challenges(*cid)

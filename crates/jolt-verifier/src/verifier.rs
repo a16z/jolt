@@ -96,7 +96,7 @@ where
             }
 
             VerifierOp::Squeeze { challenge } => {
-                challenges[*challenge] = transcript.challenge();
+                challenges[challenge.0] = transcript.challenge();
             }
 
             VerifierOp::AppendDomainSeparator { tag } => {
@@ -173,14 +173,14 @@ where
                         claim_val.append_to_transcript(&mut transcript);
                     }
                     for &ch_idx in batch_challenges {
-                        challenges[ch_idx] = transcript.challenge();
+                        challenges[ch_idx.0] = transcript.challenge();
                     }
                     instance_claims
                         .iter()
                         .zip(instances.iter())
                         .zip(batch_challenges.iter())
                         .map(|((&c, inst), &ch_idx)| {
-                            let coeff = challenges[ch_idx];
+                            let coeff = challenges[ch_idx.0];
                             coeff * c * F::from_u64(1u64 << (max_rounds - inst.num_rounds))
                         })
                         .sum()
@@ -255,7 +255,7 @@ where
                     if batch_challenges.is_empty() {
                         combined_output += output;
                     } else {
-                        combined_output += challenges[batch_challenges[i]] * output;
+                        combined_output += challenges[batch_challenges[i].0] * output;
                     }
                 }
 
@@ -368,16 +368,16 @@ fn evaluate_formula<F: Field>(
                         "evaluation {poly:?} referenced before available"
                     ))
                 })?,
-                ClaimFactor::Challenge(i) => challenges[*i],
+                ClaimFactor::Challenge(i) => challenges[i.0],
                 ClaimFactor::EqChallengePair { a, b } => {
-                    let (ra, rb) = (challenges[*a], challenges[*b]);
+                    let (ra, rb) = (challenges[a.0], challenges[b.0]);
                     ra * rb + (F::one() - ra) * (F::one() - rb)
                 }
                 ClaimFactor::EqEval {
                     challenges: chs,
                     at_stage,
                 } => {
-                    let r: Vec<F> = chs.iter().map(|&ci| challenges[ci]).collect();
+                    let r: Vec<F> = chs.iter().map(|&ci| challenges[ci.0]).collect();
                     let s = resolve_point(sumcheck_points, point_override, at_stage.0);
                     EqPolynomial::<F>::mle(&r, s)
                 }
@@ -386,7 +386,7 @@ fn evaluate_formula<F: Field>(
                     at_stage,
                     offset,
                 } => {
-                    let r: Vec<F> = chs.iter().map(|&ci| challenges[ci]).collect();
+                    let r: Vec<F> = chs.iter().map(|&ci| challenges[ci.0]).collect();
                     let s = resolve_point(sumcheck_points, point_override, at_stage.0);
                     EqPolynomial::<F>::mle(&r, &s[*offset..*offset + r.len()])
                 }
@@ -398,8 +398,8 @@ fn evaluate_formula<F: Field>(
                 } => jolt_poly::lagrange::lagrange_kernel_eval(
                     *domain_start,
                     *domain_size,
-                    challenges[*tau_challenge],
-                    challenges[*at_challenge],
+                    challenges[tau_challenge.0],
+                    challenges[at_challenge.0],
                 ),
                 ClaimFactor::LagrangeWeight {
                     challenge,
@@ -410,7 +410,7 @@ fn evaluate_formula<F: Field>(
                     *domain_start,
                     *domain_size,
                     *basis_index,
-                    challenges[*challenge],
+                    challenges[challenge.0],
                 ),
                 ClaimFactor::UniformR1CSEval {
                     matrix,
@@ -419,7 +419,7 @@ fn evaluate_formula<F: Field>(
                     num_constraints,
                     domain_start,
                 } => {
-                    let r0 = challenges[*at_challenge];
+                    let r0 = challenges[at_challenge.0];
                     let basis =
                         jolt_poly::lagrange::lagrange_evals(*domain_start, *num_constraints, r0);
                     let mut z = Vec::with_capacity(1 + eval_polys.len());
@@ -648,7 +648,7 @@ mod tests {
     use super::*;
     use crate::config::{OneHotConfig, ReadWriteConfig};
     use jolt_compiler::module::{ClaimTerm, Evaluation, SumcheckInstance, VerifierStageIndex};
-    use jolt_compiler::{PolynomialId, VerifierSchedule};
+    use jolt_compiler::{ChallengeIdx, PolynomialId, VerifierSchedule};
     use jolt_field::Fr;
     use jolt_r1cs::ConstraintMatrices;
     use jolt_sumcheck::proof::SumcheckProof;
@@ -704,7 +704,9 @@ mod tests {
                     polys: vec![poly_a],
                     tag: jolt_compiler::DomainSeparator::OpeningClaim,
                 },
-                VerifierOp::Squeeze { challenge: 0 },
+                VerifierOp::Squeeze {
+                    challenge: ChallengeIdx(0),
+                },
             ],
             num_challenges: 1,
             num_polys: 1,
@@ -742,7 +744,7 @@ mod tests {
                     }
                 }
                 VerifierOp::Squeeze { challenge } => {
-                    challenges[*challenge] = transcript.challenge();
+                    challenges[challenge.0] = transcript.challenge();
                 }
                 _ => {}
             }
@@ -760,7 +762,10 @@ mod tests {
             terms: vec![
                 ClaimTerm {
                     coeff: 2,
-                    factors: vec![ClaimFactor::Eval(poly_a), ClaimFactor::Challenge(0)],
+                    factors: vec![
+                        ClaimFactor::Eval(poly_a),
+                        ClaimFactor::Challenge(ChallengeIdx(0)),
+                    ],
                 },
                 ClaimTerm {
                     coeff: 3,
@@ -944,7 +949,7 @@ mod tests {
                 factors: vec![
                     ClaimFactor::Eval(poly_a),
                     ClaimFactor::EqEval {
-                        challenges: vec![0, 1],
+                        challenges: vec![ChallengeIdx(0), ChallengeIdx(1)],
                         at_stage: VerifierStageIndex(0),
                     },
                 ],
@@ -997,7 +1002,7 @@ mod tests {
                 factors: vec![
                     ClaimFactor::Eval(poly_a),
                     ClaimFactor::EqEval {
-                        challenges: vec![0],
+                        challenges: vec![ChallengeIdx(0)],
                         at_stage: VerifierStageIndex(0),
                     },
                 ],

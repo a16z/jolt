@@ -329,7 +329,7 @@ fn truncate_after_stage(module: &mut Module, num_stages: usize) {
         // and the instance phases haven't been wired yet.
         if in_final_stage {
             if let Op::BatchRoundBegin { batch, .. } = op {
-                let bdef = &module.prover.batched_sumchecks[*batch];
+                let bdef = &module.prover.batched_sumchecks[batch.0];
                 if bdef.instances.iter().all(|inst| inst.phases.is_empty()) {
                     return true;
                 }

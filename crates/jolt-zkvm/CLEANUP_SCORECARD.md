@@ -71,7 +71,7 @@ cargo clippy -p jolt-compiler -p jolt-compute -p jolt-cpu -p jolt-zkvm -p jolt-d
 | 2.4 | Magic numbers named as constants | PASS | No magic numbers in runtime; diagnostics stripped |
 | 2.5 | #[allow(clippy::too_many_arguments)] eliminated | FAIL | 3 remain: prove() (8 args), execute() (8 args), HwReductionState::new (10 args) |
 | 2.6 | No placeholders or janky code | PASS | Diagnostics stripped; clean dispatch-only runtime |
-| 2.7 | No hacky workarounds | FAIL | SnapshotEval |
+| 2.7 | No hacky workarounds | PASS | SnapshotEval eliminated; stage-scoped evaluations |
 
 ## Tier 3 — Crate Boundaries & Visibility
 
@@ -98,8 +98,8 @@ cargo clippy -p jolt-compiler -p jolt-compute -p jolt-cpu -p jolt-zkvm -p jolt-d
 | 4.2 | ComputeBackend: 1 InstanceState + 4 methods | PASS | |
 | 4.3 | RuntimeState: 1 instance_states map | PASS | |
 | 4.4 | CpuBackend: unified instance dispatch | PASS | |
-| 4.5 | No SnapshotEval workaround needed | FAIL | Separate design needed |
-| 4.6 | Scoped evaluation model | FAIL | Separate design needed |
+| 4.5 | No SnapshotEval workaround needed | PASS | Replaced with ClaimFactor::StagedEval + staged_evals map |
+| 4.6 | Scoped evaluation model | PASS | evaluations + staged_evals: HashMap<(PolyId, stage), F> |
 
 ### 4B — Type Safety
 
@@ -151,7 +151,7 @@ cargo clippy -p jolt-compiler -p jolt-compute -p jolt-cpu -p jolt-zkvm -p jolt-d
 | 5.8 | Runtime never imports protocol types | PASS | Zero protocol type refs; diagnostics stripped |
 | 5.9 | Backend trait uses only generic names | PASS | instance_init/bind/reduce/finalize |
 | 5.10 | State machines encoded in compiler | PASS | InstanceConfig carries all protocol params |
-| 5.11 | No out-of-band state | FAIL | SnapshotEval |
+| 5.11 | No out-of-band state | PASS | SnapshotEval eliminated; all eval state in explicit maps |
 | 5.12 | Module is self-describing | PASS | Module contains all ops, kernels, challenges, points |
 
 ## Tier 6 — Systems Engineering Principles
@@ -200,12 +200,12 @@ cargo clippy -p jolt-compiler -p jolt-compute -p jolt-cpu -p jolt-zkvm -p jolt-d
 ## Progress
 
 - **Tier 1**: 13/13 passing
-- **Tier 2**: 5/7 passing
+- **Tier 2**: 6/7 passing
 - **Tier 3**: 10/10 passing
-- **Tier 4**: 11/15 passing (4.5/4.6 need design, 4.7/4.8 structural)
-- **Tier 5**: 11/12 passing
+- **Tier 4**: 13/15 passing (4.7/4.8 structural)
+- **Tier 5**: 12/12 passing
 - **Tier 6**: 13/14 passing
-- **Overall: 63/71 passing (89%)**
+- **Overall: 67/71 passing (94%)**
 
 ## Remaining FAILs (structural / design-level)
 
@@ -213,12 +213,12 @@ cargo clippy -p jolt-compiler -p jolt-compute -p jolt-cpu -p jolt-zkvm -p jolt-d
 |---|-------|---------|----------|
 | ~~1.13~~ | ~~unreachable!() in Iteration match arms~~ | ~~DONE~~ | ~~Enum split~~ |
 | 2.5 | too_many_arguments (3 sites) | prove()/execute() 8 args each, HwReductionState::new 10 args | Domain-inherent |
-| 2.7 | SnapshotEval workaround | Needs scoped evaluation model (4.6) | Design |
-| 4.5 | SnapshotEval | Separate design needed | Design |
-| 4.6 | Scoped evaluation model | Separate design needed | Design |
+| ~~2.7~~ | ~~SnapshotEval workaround~~ | ~~DONE~~ | ~~Stage-scoped evals~~ |
+| ~~4.5~~ | ~~SnapshotEval~~ | ~~DONE~~ | ~~Stage-scoped evals~~ |
+| ~~4.6~~ | ~~Scoped evaluation model~~ | ~~DONE~~ | ~~Stage-scoped evals~~ |
 | 4.7 | Typed challenge indices | Newtype ChallengeIdx(usize) — ~200+ edit sites | Large mechanical |
 | 4.8 | Typed batch/instance keys | Newtype BatchIdx/InstanceIdx — ~100+ edit sites | Large mechanical |
 | ~~4.9~~ | ~~Compile-time provable dispatch~~ | ~~DONE~~ | ~~Enum split~~ |
-| 5.11 | Out-of-band state (SnapshotEval) | Same as 4.5/4.6 | Design |
+| ~~5.11~~ | ~~Out-of-band state (SnapshotEval)~~ | ~~DONE~~ | ~~Stage-scoped evals~~ |
 | ~~6.2~~ | ~~runtime.rs 1249 LOC~~ | ~~DONE~~ | ~~Module split~~ |
 | 6.6 | DeviceBuffer panics on wrong variant | Result would add .unwrap() noise at 30+ call sites | Design choice |

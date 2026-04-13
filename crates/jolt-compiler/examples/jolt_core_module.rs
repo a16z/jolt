@@ -23,11 +23,11 @@ use jolt_compiler::formula::{BindingOrder, Factor, Formula, ProductTerm};
 use jolt_compiler::ir::PolyKind;
 use jolt_compiler::kernel_spec::Iteration;
 use jolt_compiler::module::{
-    BatchedInstance, BatchedSumcheckDef, ChallengeDecl, ChallengeSource, ClaimFactor, ClaimFormula,
-    ClaimTerm, DomainSeparator, EvalMode, Evaluation, InputBinding, InstanceConfig, InstancePhase,
-    KernelDef, Module, Op, PointNormalization, PolyDecl, R1CSMatrix, RoundPolyEncoding,
-    ScalarCapture, Schedule, SegmentedConfig, SumcheckInstance, VerifierOp, VerifierSchedule,
-    VerifierStageIndex,
+    BatchIdx, BatchedInstance, BatchedSumcheckDef, ChallengeDecl, ChallengeIdx, ChallengeSource,
+    ClaimFactor, ClaimFormula, ClaimTerm, DomainSeparator, EvalMode, Evaluation, InputBinding,
+    InstanceConfig, InstanceIdx, InstancePhase, KernelDef, Module, Op, PointNormalization,
+    PolyDecl, R1CSMatrix, RoundPolyEncoding, ScalarCapture, Schedule, SegmentedConfig,
+    SumcheckInstance, VerifierOp, VerifierSchedule, VerifierStageIndex,
 };
 use jolt_compiler::params::{
     ModuleParams, LOG_K_INSTRUCTION, LOG_K_REG, NUM_CIRCUIT_FLAGS, NUM_LOOKUP_TABLES,
@@ -563,8 +563,8 @@ impl ChallengeTable {
         Self { decls: Vec::new() }
     }
 
-    fn add(&mut self, name: &str, source: ChallengeSource) -> usize {
-        let idx = self.decls.len();
+    fn add(&mut self, name: &str, source: ChallengeSource) -> ChallengeIdx {
+        let idx = ChallengeIdx(self.decls.len());
         self.decls.push(ChallengeDecl {
             name: name.to_string(),
             source,
@@ -588,15 +588,15 @@ fn emit_unrolled_batched_rounds(
     kernels: &[KernelDef],
     batched_sumchecks: &[BatchedSumcheckDef],
     ch: &mut ChallengeTable,
-    batch_idx: usize,
+    batch_idx: BatchIdx,
     max_rounds: usize,
     num_coeffs_fn: impl Fn(usize) -> usize,
     stage: VerifierStageIndex,
     challenge_prefix: &str,
     round_offset: usize,
-    pre_allocated_challenges: Option<&[usize]>,
-) -> Vec<usize> {
-    let bdef = &batched_sumchecks[batch_idx];
+    pre_allocated_challenges: Option<&[ChallengeIdx]>,
+) -> Vec<ChallengeIdx> {
+    let bdef = &batched_sumchecks[batch_idx.0];
     let max_evals = bdef.max_degree + 1;
     let mut indices = Vec::with_capacity(max_rounds);
 
@@ -614,7 +614,8 @@ fn emit_unrolled_batched_rounds(
             bind_challenge: bind,
         });
 
-        for (inst_idx, inst) in bdef.instances.iter().enumerate() {
+        for (inst_idx_raw, inst) in bdef.instances.iter().enumerate() {
+            let inst_idx = InstanceIdx(inst_idx_raw);
             if round < inst.first_active_round {
                 ops.push(Op::BatchInactiveContribution {
                     batch: batch_idx,
@@ -1104,7 +1105,7 @@ fn build_stage1(
     }]);
 
     // τ_high is the last tau challenge — the Lagrange kernel argument.
-    let tau_high_idx = tau_base + params.num_tau - 1;
+    let tau_high_idx = ChallengeIdx(tau_base + params.num_tau - 1);
 
     // Group-split constraint indices (matching jolt-core's R1CS_CONSTRAINTS_FIRST_GROUP_LABELS).
     // Group 0 (10 constraints): boolean guards / small-Bz constraints.
@@ -1128,7 +1129,9 @@ fn build_stage1(
     // corresponds to the LAST challenge (τ_{log_t}), which is the group
     // variable in jolt-core's convention (x_in & 1 selects the group).
     // This same eq table serves both the uniskip and the remaining sumcheck.
-    let eq_challenges: Vec<usize> = (tau_base..=tau_base + params.log_t).collect();
+    let eq_challenges: Vec<ChallengeIdx> = (tau_base..=tau_base + params.log_t)
+        .map(ChallengeIdx)
+        .collect();
 
     let uniskip_inputs = vec![
         InputBinding::EqTable {
@@ -1266,7 +1269,7 @@ fn build_stage1(
     let remaining_formula = Formula::from_terms(vec![ProductTerm {
         coefficient: 1,
         factors: vec![
-            Factor::Challenge(ch_batch as u32),
+            Factor::Challenge(ch_batch.0 as u32),
             Factor::Input(0),
             Factor::Input(1),
             Factor::Input(2),
@@ -1300,7 +1303,7 @@ fn build_stage1(
     // Rounds 1+ bind at the previous round's squeezed challenge.
     for round in 0..params.outer_remaining_rounds {
         let bind = if round > 0 {
-            Some(ch_batch + round) // previous round's challenge
+            Some(ChallengeIdx(ch_batch.0 + round)) // previous round's challenge
         } else {
             None
         };
@@ -1338,7 +1341,7 @@ fn build_stage1(
     for round in 1..params.outer_remaining_rounds {
         // challenge index = ch_batch + 1 + round (first sumcheck challenge
         // is at ch_batch+1 because ch_batch is the batching coefficient)
-        let ch_idx = ch_batch + 1 + round;
+        let ch_idx = ChallengeIdx(ch_batch.0 + 1 + round);
         ops.push(Op::Bind {
             polys: r1cs_polys.to_vec(),
             challenge: ch_idx,
@@ -1389,7 +1392,7 @@ fn build_verifier_stage1_ops(
     commit_pairs.push((p.trusted_advice, DomainSeparator::TrustedAdvice));
 
     // τ challenges: indices 0..27
-    let tau_challenges: Vec<usize> = (0..params.num_tau).collect();
+    let tau_challenges: Vec<ChallengeIdx> = (0..params.num_tau).map(ChallengeIdx).collect();
 
     // Evaluations: 35 R1CS inputs produced by the remaining sumcheck
     let r1cs_polys = r1cs_input_polys(p);
@@ -1416,9 +1419,9 @@ fn build_verifier_stage1_ops(
     // The uniskip handled the constraint dimension via the Lagrange kernel
     // L(τ_high, ·). The remaining sumcheck bound all log_t cycle variables.
     // The eq table has num_tau-1 = log_t cycle variables (τ_0..τ_{log_t-1}).
-    let tau_high_idx = params.num_tau - 1;
-    let r0_idx = params.num_tau; // the uniskip challenge
-    let tau_cycle: Vec<usize> = (0..params.num_tau - 1).collect();
+    let tau_high_idx = ChallengeIdx(params.num_tau - 1);
+    let r0_idx = ChallengeIdx(params.num_tau); // the uniskip challenge
+    let tau_cycle: Vec<ChallengeIdx> = (0..params.num_tau - 1).map(ChallengeIdx).collect();
     let output_check = ClaimFormula {
         terms: vec![ClaimTerm {
             coeff: 1,
@@ -1500,7 +1503,7 @@ fn build_verifier_stage1_ops(
         tag: DomainSeparator::SumcheckClaim,
     });
     // Batch coefficient for the (single-instance) remaining sumcheck.
-    let ch_batch = r0_idx + 1;
+    let ch_batch = ChallengeIdx(r0_idx.0 + 1);
     ops.push(VerifierOp::Squeeze {
         challenge: ch_batch,
     });
@@ -1546,39 +1549,39 @@ fn build_verifier_stage1_ops(
 /// Challenge indices produced by Stage 2 that downstream stages need.
 struct Stage2Challenges {
     /// Stage 1 outer remaining cycle challenges (big-endian, log_t entries).
-    stage1_cycle: Vec<usize>,
+    stage1_cycle: Vec<ChallengeIdx>,
     /// Stage 2 batched sumcheck round challenge indices (all max_rounds).
-    round_challenges: Vec<usize>,
+    round_challenges: Vec<ChallengeIdx>,
 }
 
 /// Challenge indices produced by Stage 3 that downstream stages need.
 struct Stage3Challenges {
     /// Stage 3 batched sumcheck round challenge indices (log_t entries).
-    round_challenges: Vec<usize>,
+    round_challenges: Vec<ChallengeIdx>,
 }
 
 /// Challenge indices produced by Stage 4 that downstream stages need.
 struct Stage4Challenges {
     /// Order: [cycle_0, ..., cycle_{log_t-1}, addr_0, ..., addr_{log_k_reg-1}]
     /// (LowToHigh binding order within each phase).
-    round_challenges: Vec<usize>,
+    round_challenges: Vec<ChallengeIdx>,
 }
 
 /// Challenge indices produced by Stage 5 that downstream stages need.
 struct Stage5Challenges {
     /// Stage 5 batched sumcheck round challenge indices (all max_rounds = LOG_K_INSTRUCTION + log_t).
-    round_challenges: Vec<usize>,
+    round_challenges: Vec<ChallengeIdx>,
 }
 
 /// Data produced by Stage 6 that Stage 7 needs.
 struct Stage6Challenges {
-    round_challenges: Vec<usize>,
+    round_challenges: Vec<ChallengeIdx>,
     /// Per-chunk address challenge indices for BytecodeRa virtualization opening.
-    bc_addr_chunks: Vec<Vec<usize>>,
+    bc_addr_chunks: Vec<Vec<ChallengeIdx>>,
     /// Per-chunk address challenge indices for InstructionRa virtualization opening.
-    inst_addr_chunks: Vec<Vec<usize>>,
+    inst_addr_chunks: Vec<Vec<ChallengeIdx>>,
     /// Per-chunk address challenge indices for RamRa virtualization opening.
-    ram_addr_chunks: Vec<Vec<usize>>,
+    ram_addr_chunks: Vec<Vec<ChallengeIdx>>,
     /// BatchEq projection poly IDs for BytecodeRa from BytecodeReadRaf.
     bc_raf_proj_ids: Vec<PolynomialId>,
     /// BatchEq projection poly IDs for InstructionRa from InstructionRaVirtual.
@@ -1604,9 +1607,10 @@ fn build_stage2(
     // jolt-core's normalize_opening_point drops challenge[0], so r_cycle
     // has log_t entries.
     let stage1_round_base = params.num_tau + 2; // τ_count + r0 + batch
-    let stage1_cycle_challenges: Vec<usize> = (stage1_round_base + 1
+    let stage1_cycle_challenges: Vec<ChallengeIdx> = (stage1_round_base + 1
         ..stage1_round_base + params.outer_remaining_rounds)
         .rev()
+        .map(ChallengeIdx)
         .collect();
 
     // 1. Squeeze τ_high for product uniskip
@@ -1741,7 +1745,7 @@ fn build_stage2(
     });
 
     // r_address (OutputCheck address challenges, params.log_k_ram = 20)
-    let ch_r_address_base = ch.decls.len();
+    let ch_r_address_base = ChallengeIdx(ch.decls.len());
     for i in 0..params.log_k_ram {
         let idx = ch.add(
             &format!("output_r_address_{i}"),
@@ -1778,7 +1782,7 @@ fn build_stage2(
     // transcript with "sumcheck_claim" tag. The batch/instance indices
     // allow the runtime to initialize per-instance claims for inactive
     // round contributions.
-    let batch_idx = batched_sumchecks.len();
+    let batch_idx = BatchIdx(batched_sumchecks.len());
 
     // [0] RamReadWriteChecking: ram_read_value + γ_rw * ram_write_value
     let rw_input_claim = ClaimFormula {
@@ -1800,7 +1804,7 @@ fn build_stage2(
         formula: rw_input_claim.clone(),
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
-        instance: 0,
+        instance: InstanceIdx(0),
         inactive_scale_bits: 0,
     });
 
@@ -1815,7 +1819,7 @@ fn build_stage2(
         formula: prod_input_claim.clone(),
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
-        instance: 1,
+        instance: InstanceIdx(1),
         inactive_scale_bits: params.stage2_max_rounds - params.product_remainder_rounds,
     });
 
@@ -1866,7 +1870,7 @@ fn build_stage2(
         formula: inst_cr_input_claim.clone(),
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
-        instance: 2,
+        instance: InstanceIdx(2),
         inactive_scale_bits: params.stage2_max_rounds - params.instruction_claim_reduction_rounds,
     });
 
@@ -1881,7 +1885,7 @@ fn build_stage2(
         formula: raf_input_claim.clone(),
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
-        instance: 3,
+        instance: InstanceIdx(3),
         inactive_scale_bits: params.stage2_max_rounds - params.raf_evaluation_rounds,
     });
 
@@ -1891,12 +1895,12 @@ fn build_stage2(
         formula: output_check_input_claim.clone(),
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
-        instance: 4,
+        instance: InstanceIdx(4),
         inactive_scale_bits: params.stage2_max_rounds - params.output_check_rounds,
     });
 
     // Squeeze 5 batching coefficients
-    let ch_batch_base = ch.decls.len();
+    let ch_batch_base = ChallengeIdx(ch.decls.len());
     for i in 0..params.stage2_num_instances {
         let idx = ch.add(
             &format!("s2_batch_{i}"),
@@ -1931,11 +1935,13 @@ fn build_stage2(
     // RamRW cycle challenge indices for the eq_cycle table:
     // After Stage 1 Reverse normalization, the cycle point comes from
     // the Stage 1 remaining round challenges reversed.
-    let rw_cycle_eq_challenges: Vec<usize> = stage1_cycle_challenges.clone();
+    let rw_cycle_eq_challenges: Vec<ChallengeIdx> = stage1_cycle_challenges.clone();
 
     // Address challenge indices for the outer eq table:
-    let rw_addr_eq_challenges: Vec<usize> =
-        (ch_r_address_base..ch_r_address_base + params.log_k_ram).collect();
+    let rw_addr_eq_challenges: Vec<ChallengeIdx> = (ch_r_address_base.0
+        ..ch_r_address_base.0 + params.log_k_ram)
+        .map(ChallengeIdx)
+        .collect();
 
     // Phase 1 kernel: cycle binding (Dense inner kernel, segmented reduce).
     let rw_phase1_kernel_idx = kernels.len();
@@ -1949,7 +1955,7 @@ fn build_stage2(
                 ProductTerm {
                     coefficient: 1,
                     factors: vec![
-                        Factor::Challenge(ch_gamma_rw as u32),
+                        Factor::Challenge(ch_gamma_rw.0 as u32),
                         Factor::Input(0),
                         Factor::Input(1),
                         Factor::Input(2),
@@ -1958,7 +1964,7 @@ fn build_stage2(
                 ProductTerm {
                     coefficient: 1,
                     factors: vec![
-                        Factor::Challenge(ch_gamma_rw as u32),
+                        Factor::Challenge(ch_gamma_rw.0 as u32),
                         Factor::Input(0),
                         Factor::Input(1),
                         Factor::Input(3),
@@ -2000,7 +2006,7 @@ fn build_stage2(
                 ProductTerm {
                     coefficient: 1,
                     factors: vec![
-                        Factor::Challenge(ch_rw_eq_bound as u32),
+                        Factor::Challenge(ch_rw_eq_bound.0 as u32),
                         Factor::Input(0),
                         Factor::Input(1),
                     ],
@@ -2008,8 +2014,8 @@ fn build_stage2(
                 ProductTerm {
                     coefficient: 1,
                     factors: vec![
-                        Factor::Challenge(ch_gamma_rw as u32),
-                        Factor::Challenge(ch_rw_eq_bound as u32),
+                        Factor::Challenge(ch_gamma_rw.0 as u32),
+                        Factor::Challenge(ch_rw_eq_bound.0 as u32),
                         Factor::Input(0),
                         Factor::Input(1),
                     ],
@@ -2017,9 +2023,9 @@ fn build_stage2(
                 ProductTerm {
                     coefficient: 1,
                     factors: vec![
-                        Factor::Challenge(ch_gamma_rw as u32),
-                        Factor::Challenge(ch_rw_eq_bound as u32),
-                        Factor::Challenge(ch_rw_inc_bound as u32),
+                        Factor::Challenge(ch_gamma_rw.0 as u32),
+                        Factor::Challenge(ch_rw_eq_bound.0 as u32),
+                        Factor::Challenge(ch_rw_inc_bound.0 as u32),
                         Factor::Input(0),
                     ],
                 },
@@ -2072,7 +2078,7 @@ fn build_stage2(
     // [2] InstructionClaimReduction — 25 rounds, degree 2.
     //
     // Formula: eq * (lookup + γ·left_op + γ²·right_op + γ³·left_inst + γ⁴·right_inst)
-    let gamma = ch_gamma_instruction as u32;
+    let gamma = ch_gamma_instruction.0 as u32;
     let inst_cr_kernel_idx = kernels.len();
     kernels.push(KernelDef {
         spec: KernelSpec {
@@ -2196,7 +2202,9 @@ fn build_stage2(
         inputs: vec![
             InputBinding::EqTable {
                 poly: PolynomialId::BatchEq(4),
-                challenges: (ch_r_address_base..ch_r_address_base + params.log_k_ram).collect(),
+                challenges: (ch_r_address_base.0..ch_r_address_base.0 + params.log_k_ram)
+                    .map(ChallengeIdx)
+                    .collect(),
             },
             InputBinding::Provided { poly: p.io_mask },
             InputBinding::Provided {
@@ -2209,7 +2217,7 @@ fn build_stage2(
     });
 
     // 5b. Build BatchedSumcheckDef with all 5 instances.
-    let batch_idx = batched_sumchecks.len();
+    let batch_idx = BatchIdx(batched_sumchecks.len());
     batched_sumchecks.push(BatchedSumcheckDef {
         instances: vec![
             // [0] RamRW — 2 phases: cycle (log_t) + address (log_k_ram).
@@ -2259,7 +2267,7 @@ fn build_stage2(
                     segmented: None,
                     carry_bindings: vec![],
                 }],
-                batch_coeff: ch_batch_base + 1,
+                batch_coeff: ChallengeIdx(ch_batch_base.0 + 1),
                 first_active_round: params.stage2_max_rounds - params.product_remainder_rounds,
             },
             // [2] InstructionClaimReduction — single phase.
@@ -2271,7 +2279,7 @@ fn build_stage2(
                     segmented: None,
                     carry_bindings: vec![],
                 }],
-                batch_coeff: ch_batch_base + 2,
+                batch_coeff: ChallengeIdx(ch_batch_base.0 + 2),
                 first_active_round: params.stage2_max_rounds
                     - params.instruction_claim_reduction_rounds,
             },
@@ -2284,7 +2292,7 @@ fn build_stage2(
                     segmented: None,
                     carry_bindings: vec![],
                 }],
-                batch_coeff: ch_batch_base + 3,
+                batch_coeff: ChallengeIdx(ch_batch_base.0 + 3),
                 first_active_round: params.stage2_max_rounds - params.raf_evaluation_rounds,
             },
             // [4] OutputCheck — single phase.
@@ -2296,7 +2304,7 @@ fn build_stage2(
                     segmented: None,
                     carry_bindings: vec![],
                 }],
-                batch_coeff: ch_batch_base + 4,
+                batch_coeff: ChallengeIdx(ch_batch_base.0 + 4),
                 first_active_round: params.stage2_max_rounds - params.output_check_rounds,
             },
         ],
@@ -2476,7 +2484,7 @@ fn build_stage3(
     });
 
     // Input claims (absorbed before sumcheck rounds begin).
-    let batch_idx = batched_sumchecks.len();
+    let batch_idx = BatchIdx(batched_sumchecks.len());
 
     // [0] Shift: unexpanded_pc + γ*next_pc + γ²*next_is_virtual
     //          + γ³*next_is_first + γ⁴*(1 - next_is_noop)
@@ -2537,7 +2545,7 @@ fn build_stage3(
         formula: shift_input_claim.clone(),
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
-        instance: 0,
+        instance: InstanceIdx(0),
         inactive_scale_bits: 0,
     });
 
@@ -2561,7 +2569,7 @@ fn build_stage3(
         formula: inst_input_claim.clone(),
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
-        instance: 1,
+        instance: InstanceIdx(1),
         inactive_scale_bits: 0,
     });
 
@@ -2593,12 +2601,12 @@ fn build_stage3(
         formula: registers_input_claim.clone(),
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
-        instance: 2,
+        instance: InstanceIdx(2),
         inactive_scale_bits: 0,
     });
 
     // Squeeze 3 batching coefficients
-    let ch_batch_base = ch.decls.len();
+    let ch_batch_base = ChallengeIdx(ch.decls.len());
     for i in 0..3 {
         let idx = ch.add(
             &format!("s3_batch_{i}"),
@@ -2614,10 +2622,11 @@ fn build_stage3(
     //
     // ProductRemainder was active for rounds [log_k_ram, log_k_ram+log_t).
     // Its cycle point reversed to big-endian = round_challenges[last..first].
-    let eq_outer_challenges: Vec<usize> = s2.stage1_cycle.clone();
+    let eq_outer_challenges: Vec<ChallengeIdx> = s2.stage1_cycle.clone();
 
     let prod_first_active = params.stage2_max_rounds - params.product_remainder_rounds;
-    let eq_prod_challenges: Vec<usize> = (prod_first_active..prod_first_active + params.log_t)
+    let eq_prod_challenges: Vec<ChallengeIdx> = (prod_first_active
+        ..prod_first_active + params.log_t)
         .rev()
         .map(|r| s2.round_challenges[r])
         .collect();
@@ -2632,7 +2641,7 @@ fn build_stage3(
     // + γ³ * eq_outer(x) * is_first(x)
     // + γ⁴ * eq_prod(x)
     // - γ⁴ * eq_prod(x) * is_noop(x)
-    let g = ch_shift_gamma as u32;
+    let g = ch_shift_gamma.0 as u32;
     let shift_kernel_idx = kernels.len();
     kernels.push(KernelDef {
         spec: KernelSpec {
@@ -2729,7 +2738,7 @@ fn build_stage3(
     // + eq * right_is_imm(x) * imm(x)
     // + γ * eq * left_is_rs1(x) * rs1_value(x)
     // + γ * eq * left_is_pc(x) * unexpanded_pc(x)
-    let gi = ch_inst_input_gamma as u32;
+    let gi = ch_inst_input_gamma.0 as u32;
     let inst_input_kernel_idx = kernels.len();
     kernels.push(KernelDef {
         spec: KernelSpec {
@@ -2802,7 +2811,7 @@ fn build_stage3(
     // eq(r_spartan, x) * rd_write_value(x)
     // + γ * eq * rs1_value(x)
     // + γ² * eq * rs2_value(x)
-    let gr = ch_registers_gamma as u32;
+    let gr = ch_registers_gamma.0 as u32;
     let registers_kernel_idx = kernels.len();
     kernels.push(KernelDef {
         spec: KernelSpec {
@@ -2869,7 +2878,7 @@ fn build_stage3(
                     segmented: None,
                     carry_bindings: vec![],
                 }],
-                batch_coeff: ch_batch_base + 1,
+                batch_coeff: ChallengeIdx(ch_batch_base.0 + 1),
                 first_active_round: 0,
             },
             BatchedInstance {
@@ -2880,7 +2889,7 @@ fn build_stage3(
                     segmented: None,
                     carry_bindings: vec![],
                 }],
-                batch_coeff: ch_batch_base + 2,
+                batch_coeff: ChallengeIdx(ch_batch_base.0 + 2),
                 first_active_round: 0,
             },
         ],
@@ -2998,7 +3007,7 @@ fn build_stage4(
     // Compute r_address for init_eval: the address portion of Stage 2's
     // RamRW opening point. Raw Stage 2 rounds [log_t..log_t+log_k_ram]
     // reversed to big-endian (matching Segments normalization).
-    let r_address_challenges: Vec<usize> = s2.round_challenges
+    let r_address_challenges: Vec<ChallengeIdx> = s2.round_challenges
         [params.log_t..params.log_t + params.log_k_ram]
         .iter()
         .rev()
@@ -3014,7 +3023,7 @@ fn build_stage4(
     });
 
     // Batched sumcheck definition (must exist before AbsorbInputClaim)
-    let batch_idx = batched_sumchecks.len();
+    let batch_idx = BatchIdx(batched_sumchecks.len());
     let log_k_reg = 7usize; // log2(REGISTER_COUNT=128)
     let reg_rw_rounds = log_k_reg + params.log_t; // 16 for log_t=9
     let ram_vc_rounds = params.log_t; // 9 for log_t=9
@@ -3025,13 +3034,13 @@ fn build_stage4(
             // [0] RegistersRW — active from round 0
             BatchedInstance {
                 phases: vec![],
-                batch_coeff: 0,
+                batch_coeff: ChallengeIdx(0),
                 first_active_round: 0,
             },
             // [1] RamValCheck — active from round (max_rounds - log_t)
             BatchedInstance {
                 phases: vec![],
-                batch_coeff: 0, // placeholder, set below after squeezing
+                batch_coeff: ChallengeIdx(0), // placeholder, set below after squeezing
                 first_active_round: stage4_max_rounds - ram_vc_rounds,
             },
         ],
@@ -3070,7 +3079,7 @@ fn build_stage4(
         formula: reg_rw_input_claim.clone(),
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
-        instance: 0,
+        instance: InstanceIdx(0),
         inactive_scale_bits: 0,
     });
 
@@ -3106,7 +3115,7 @@ fn build_stage4(
         formula: ram_vc_input_claim.clone(),
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
-        instance: 1,
+        instance: InstanceIdx(1),
         inactive_scale_bits: stage4_max_rounds - ram_vc_rounds,
     });
 
@@ -3127,18 +3136,18 @@ fn build_stage4(
     });
 
     // Wire batching coefficients into the BatchedSumcheckDef
-    batched_sumchecks[batch_idx].instances[0].batch_coeff = ch_batch0;
-    batched_sumchecks[batch_idx].instances[1].batch_coeff = ch_batch1;
+    batched_sumchecks[batch_idx.0].instances[0].batch_coeff = ch_batch0;
+    batched_sumchecks[batch_idx.0].instances[1].batch_coeff = ch_batch1;
 
     // Eq table challenge points for RegistersRW.
     //
     // r_cycle comes from RegistersClaimReduction's opening point, which
     // is the Stage 3 sumcheck challenges reversed to big-endian.
     // (RegistersClaimReduction: normalize_opening_point = LE→BE reverse)
-    let reg_rw_cycle_eq: Vec<usize> = s3.round_challenges.iter().rev().copied().collect();
+    let reg_rw_cycle_eq: Vec<ChallengeIdx> = s3.round_challenges.iter().rev().copied().collect();
 
     // Kernel definitions for RegistersRW (2-phase).
-    let g = ch_gamma_reg_rw as u32;
+    let g = ch_gamma_reg_rw.0 as u32;
 
     // Scalar capture challenge slots for phase boundary.
     let ch_reg_eq_bound = ch.add("reg_eq_cycle_bound", ChallengeSource::External);
@@ -3217,7 +3226,7 @@ fn build_stage4(
                 ProductTerm {
                     coefficient: 1,
                     factors: vec![
-                        Factor::Challenge(ch_reg_eq_bound as u32),
+                        Factor::Challenge(ch_reg_eq_bound.0 as u32),
                         Factor::Input(0),
                         Factor::Input(1),
                     ],
@@ -3226,8 +3235,8 @@ fn build_stage4(
                 ProductTerm {
                     coefficient: 1,
                     factors: vec![
-                        Factor::Challenge(ch_reg_eq_bound as u32),
-                        Factor::Challenge(ch_reg_inc_bound as u32),
+                        Factor::Challenge(ch_reg_eq_bound.0 as u32),
+                        Factor::Challenge(ch_reg_inc_bound.0 as u32),
                         Factor::Input(0),
                     ],
                 },
@@ -3236,7 +3245,7 @@ fn build_stage4(
                     coefficient: 1,
                     factors: vec![
                         Factor::Challenge(g),
-                        Factor::Challenge(ch_reg_eq_bound as u32),
+                        Factor::Challenge(ch_reg_eq_bound.0 as u32),
                         Factor::Input(2),
                         Factor::Input(1),
                     ],
@@ -3247,7 +3256,7 @@ fn build_stage4(
                     factors: vec![
                         Factor::Challenge(g),
                         Factor::Challenge(g),
-                        Factor::Challenge(ch_reg_eq_bound as u32),
+                        Factor::Challenge(ch_reg_eq_bound.0 as u32),
                         Factor::Input(3),
                         Factor::Input(1),
                     ],
@@ -3270,10 +3279,10 @@ fn build_stage4(
     // Kernel definition for RamValCheck (single phase, log_T rounds, degree 3).
     //
     // Formula: inc * wa * lt + γ * inc * wa
-    let g_vc = ch_gamma_ram_vc as u32;
+    let g_vc = ch_gamma_ram_vc.0 as u32;
 
     // r_cycle for the LT polynomial: Stage 2 RamRW cycle portion (big-endian).
-    let rw_cycle_challenges: Vec<usize> = s2.round_challenges[0..params.log_t]
+    let rw_cycle_challenges: Vec<ChallengeIdx> = s2.round_challenges[0..params.log_t]
         .iter()
         .rev()
         .copied()
@@ -3317,7 +3326,7 @@ fn build_stage4(
     });
 
     // Update BatchedSumcheckDef with kernel phases.
-    batched_sumchecks[batch_idx].instances[0] = BatchedInstance {
+    batched_sumchecks[batch_idx.0].instances[0] = BatchedInstance {
         phases: vec![
             InstancePhase {
                 kernel: reg_rw_p1_kernel_idx,
@@ -3352,7 +3361,7 @@ fn build_stage4(
         batch_coeff: ch_batch0,
         first_active_round: 0,
     };
-    batched_sumchecks[batch_idx].instances[1] = BatchedInstance {
+    batched_sumchecks[batch_idx.0].instances[1] = BatchedInstance {
         phases: vec![InstancePhase {
             kernel: ram_vc_kernel_idx,
             num_rounds: ram_vc_rounds,
@@ -3363,7 +3372,7 @@ fn build_stage4(
         batch_coeff: ch_batch1,
         first_active_round: stage4_max_rounds - ram_vc_rounds,
     };
-    batched_sumchecks[batch_idx].input_claims = vec![reg_rw_input_claim, ram_vc_input_claim];
+    batched_sumchecks[batch_idx.0].input_claims = vec![reg_rw_input_claim, ram_vc_input_claim];
 
     // Unrolled batched sumcheck rounds (stage4_max_rounds rounds).
     let round_challenge_indices = emit_unrolled_batched_rounds(
@@ -3466,32 +3475,33 @@ fn build_stage5(
     let log_k_reg = LOG_K_REG;
 
     // RegistersValEvaluation: from Stage 4 RegistersRW opening point
-    let reg_val_r_address: Vec<usize> = s4.round_challenges[params.log_t..params.log_t + log_k_reg]
+    let reg_val_r_address: Vec<ChallengeIdx> = s4.round_challenges
+        [params.log_t..params.log_t + log_k_reg]
         .iter()
         .rev()
         .copied()
         .collect();
-    let reg_val_r_cycle: Vec<usize> = s4.round_challenges[0..params.log_t]
+    let reg_val_r_cycle: Vec<ChallengeIdx> = s4.round_challenges[0..params.log_t]
         .iter()
         .rev()
         .copied()
         .collect();
 
     // RamRaClaimReduction: unified r_address from Stage 2 RamRW address phase
-    let ram_ra_r_address: Vec<usize> = s2.round_challenges
+    let ram_ra_r_address: Vec<ChallengeIdx> = s2.round_challenges
         [params.log_t..params.log_t + params.log_k_ram]
         .iter()
         .rev()
         .copied()
         .collect();
     // Three r_cycle points for the three eq tables
-    let ram_ra_r_cycle_raf: Vec<usize> = s2.stage1_cycle.clone(); // already BIG_ENDIAN
-    let ram_ra_r_cycle_rw: Vec<usize> = s2.round_challenges[0..params.log_t]
+    let ram_ra_r_cycle_raf: Vec<ChallengeIdx> = s2.stage1_cycle.clone(); // already BIG_ENDIAN
+    let ram_ra_r_cycle_rw: Vec<ChallengeIdx> = s2.round_challenges[0..params.log_t]
         .iter()
         .rev()
         .copied()
         .collect();
-    let ram_ra_r_cycle_val: Vec<usize> = s4.round_challenges[log_k_reg..]
+    let ram_ra_r_cycle_val: Vec<ChallengeIdx> = s4.round_challenges[log_k_reg..]
         .iter()
         .rev()
         .copied()
@@ -3537,7 +3547,7 @@ fn build_stage5(
     //   eq_rw  = eq(r_cycle_rw,  j)  (Stage 2 RamRW cycle)
     //   eq_val = eq(r_cycle_val, j)  (Stage 4 RamValCheck cycle)
     //   ra     = eq(r_address, addr[j]) via EqGather (RAM gather index)
-    let g_ram_ra = ch_gamma_ram_ra as u32;
+    let g_ram_ra = ch_gamma_ram_ra.0 as u32;
     let ram_ra_kernel_idx = kernels.len();
     kernels.push(KernelDef {
         spec: KernelSpec {
@@ -3604,7 +3614,7 @@ fn build_stage5(
 
     // r_reduction: InstructionClaimReduction opening point (BIG_ENDIAN)
     let inst_cr_first_active = params.stage2_max_rounds - params.instruction_claim_reduction_rounds;
-    let r_reduction_challenges: Vec<usize> = s2.round_challenges
+    let r_reduction_challenges: Vec<ChallengeIdx> = s2.round_challenges
         [inst_cr_first_active..inst_cr_first_active + params.log_t]
         .iter()
         .rev()
@@ -3674,7 +3684,7 @@ fn build_stage5(
     }
 
     // Batched sumcheck definition
-    let batch_idx = batched_sumchecks.len();
+    let batch_idx = BatchIdx(batched_sumchecks.len());
     let inst_raf_cycle_degree = n_vra + 2;
 
     batched_sumchecks.push(BatchedSumcheckDef {
@@ -3697,7 +3707,7 @@ fn build_stage5(
                         carry_bindings: vec![],
                     },
                 ],
-                batch_coeff: 0,
+                batch_coeff: ChallengeIdx(0),
                 first_active_round: 0,
             },
             // [1] RamRaClaimReduction — active from round LOG_K_INSTRUCTION
@@ -3709,7 +3719,7 @@ fn build_stage5(
                     segmented: None,
                     carry_bindings: vec![],
                 }],
-                batch_coeff: 0,
+                batch_coeff: ChallengeIdx(0),
                 first_active_round: stage5_max_rounds - ram_ra_reduction_rounds,
             },
             // [2] RegistersValEvaluation — active from round LOG_K_INSTRUCTION
@@ -3721,7 +3731,7 @@ fn build_stage5(
                     segmented: None,
                     carry_bindings: vec![],
                 }],
-                batch_coeff: 0,
+                batch_coeff: ChallengeIdx(0),
                 first_active_round: stage5_max_rounds - reg_val_eval_rounds,
             },
         ],
@@ -3762,7 +3772,7 @@ fn build_stage5(
         formula: inst_raf_input_claim.clone(),
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
-        instance: 0,
+        instance: InstanceIdx(0),
         inactive_scale_bits: 0,
     });
 
@@ -3794,7 +3804,7 @@ fn build_stage5(
         formula: ram_ra_input_claim.clone(),
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
-        instance: 1,
+        instance: InstanceIdx(1),
         inactive_scale_bits: stage5_max_rounds - ram_ra_reduction_rounds,
     });
 
@@ -3809,7 +3819,7 @@ fn build_stage5(
         formula: reg_val_input_claim.clone(),
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
-        instance: 2,
+        instance: InstanceIdx(2),
         inactive_scale_bits: stage5_max_rounds - reg_val_eval_rounds,
     });
 
@@ -3836,10 +3846,10 @@ fn build_stage5(
         challenge: ch_batch2,
     });
 
-    batched_sumchecks[batch_idx].instances[0].batch_coeff = ch_batch0;
-    batched_sumchecks[batch_idx].instances[1].batch_coeff = ch_batch1;
-    batched_sumchecks[batch_idx].instances[2].batch_coeff = ch_batch2;
-    batched_sumchecks[batch_idx].input_claims = vec![
+    batched_sumchecks[batch_idx.0].instances[0].batch_coeff = ch_batch0;
+    batched_sumchecks[batch_idx.0].instances[1].batch_coeff = ch_batch1;
+    batched_sumchecks[batch_idx.0].instances[2].batch_coeff = ch_batch2;
+    batched_sumchecks[batch_idx.0].input_claims = vec![
         inst_raf_input_claim,
         ram_ra_input_claim,
         reg_val_input_claim,
@@ -4035,7 +4045,7 @@ fn build_stage6(
 
     // Booleanity γ^{2d} power challenges for each RA polynomial dimension
     let total_d = params.instruction_d + params.bytecode_d + params.ram_d;
-    let ch_booleanity_gamma_sq: Vec<usize> = (0..total_d)
+    let ch_booleanity_gamma_sq: Vec<ChallengeIdx> = (0..total_d)
         .map(|d| {
             let idx = ch.add(
                 &format!("booleanity_gamma_sq_{d}"),
@@ -4054,7 +4064,7 @@ fn build_stage6(
         .collect();
 
     // Booleanity γ^d power challenges for Phase 2 H construction
-    let ch_booleanity_gamma_pow: Vec<usize> = (0..total_d)
+    let ch_booleanity_gamma_pow: Vec<ChallengeIdx> = (0..total_d)
         .map(|d| {
             let idx = ch.add(
                 &format!("booleanity_gamma_pow_{d}"),
@@ -4098,7 +4108,7 @@ fn build_stage6(
     let hamming_r_cycle = s2.stage1_cycle.clone();
 
     // RamRaVirtual & InstructionRaVirtual: r_cycle from Stage 5 cycle phase
-    let ra_virtual_r_cycle: Vec<usize> = s5.round_challenges
+    let ra_virtual_r_cycle: Vec<ChallengeIdx> = s5.round_challenges
         [LOG_K_INSTRUCTION..LOG_K_INSTRUCTION + params.log_t]
         .iter()
         .rev()
@@ -4106,7 +4116,7 @@ fn build_stage6(
         .collect();
 
     // RamRaVirtual: address chunks from Stage 2 (BIG_ENDIAN)
-    let ram_ra_full_addr: Vec<usize> = s2.round_challenges
+    let ram_ra_full_addr: Vec<ChallengeIdx> = s2.round_challenges
         [params.log_t..params.log_t + params.log_k_ram]
         .iter()
         .rev()
@@ -4119,11 +4129,12 @@ fn build_stage6(
     } else {
         params.log_k_chunk - (params.log_k_ram % params.log_k_chunk)
     };
-    let ram_pad_chs: Vec<usize> = (0..ram_pad_len)
+    let ram_pad_chs: Vec<ChallengeIdx> = (0..ram_pad_len)
         .map(|i| ch.add(&format!("ram_ra_pad_{i}"), ChallengeSource::External))
         .collect();
-    let ram_ra_padded: Vec<usize> = ram_pad_chs.into_iter().chain(ram_ra_full_addr).collect();
-    let ram_addr_chunks: Vec<Vec<usize>> = (0..params.ram_d)
+    let ram_ra_padded: Vec<ChallengeIdx> =
+        ram_pad_chs.into_iter().chain(ram_ra_full_addr).collect();
+    let ram_addr_chunks: Vec<Vec<ChallengeIdx>> = (0..params.ram_d)
         .map(|i| {
             let c = params.log_k_chunk;
             ram_ra_padded[i * c..(i + 1) * c].to_vec()
@@ -4133,8 +4144,8 @@ fn build_stage6(
     // InstructionRaVirtual: address chunks from Stage 5 address phase
     // InstructionReadRaf's normalize_opening_point keeps address in LE (squeezed) order,
     // so we do NOT reverse here. compute_r_address_chunks splits LE left-to-right.
-    let inst_ra_full_addr: Vec<usize> = s5.round_challenges[0..LOG_K_INSTRUCTION].to_vec();
-    let inst_addr_chunks: Vec<Vec<usize>> = (0..params.instruction_d)
+    let inst_ra_full_addr: Vec<ChallengeIdx> = s5.round_challenges[0..LOG_K_INSTRUCTION].to_vec();
+    let inst_addr_chunks: Vec<Vec<ChallengeIdx>> = (0..params.instruction_d)
         .map(|i| {
             let c = params.log_k_chunk;
             inst_ra_full_addr[i * c..(i + 1) * c].to_vec()
@@ -4142,22 +4153,22 @@ fn build_stage6(
         .collect();
 
     // IncClaimReduction: 4 cycle eq points from 3 distinct stages
-    let inc_r_ram_s2: Vec<usize> = s2.round_challenges[0..params.log_t]
+    let inc_r_ram_s2: Vec<ChallengeIdx> = s2.round_challenges[0..params.log_t]
         .iter()
         .rev()
         .copied()
         .collect();
-    let inc_r_ram_s4: Vec<usize> = s4.round_challenges[log_k_reg..log_k_reg + params.log_t]
+    let inc_r_ram_s4: Vec<ChallengeIdx> = s4.round_challenges[log_k_reg..log_k_reg + params.log_t]
         .iter()
         .rev()
         .copied()
         .collect();
-    let inc_r_rd_s4: Vec<usize> = s4.round_challenges[0..params.log_t]
+    let inc_r_rd_s4: Vec<ChallengeIdx> = s4.round_challenges[0..params.log_t]
         .iter()
         .rev()
         .copied()
         .collect();
-    let inc_r_rd_s5: Vec<usize> = s5.round_challenges
+    let inc_r_rd_s5: Vec<ChallengeIdx> = s5.round_challenges
         [LOG_K_INSTRUCTION..LOG_K_INSTRUCTION + params.log_t]
         .iter()
         .rev()
@@ -4166,39 +4177,42 @@ fn build_stage6(
 
     // BytecodeReadRaf challenge vectors (BIG_ENDIAN, log_t entries each)
     let bc_r_cycle_1 = s2.stage1_cycle.clone(); // SpartanOuter
-    let bc_r_cycle_2: Vec<usize> = s2.round_challenges // SpartanProductVirtualization
+    let bc_r_cycle_2: Vec<ChallengeIdx> =
+        s2.round_challenges // SpartanProductVirtualization
         [params.log_k_ram..params.log_k_ram + params.log_t]
-        .iter()
-        .rev()
-        .copied()
-        .collect();
-    let bc_r_cycle_3: Vec<usize> = s3.round_challenges // SpartanShift
+            .iter()
+            .rev()
+            .copied()
+            .collect();
+    let bc_r_cycle_3: Vec<ChallengeIdx> = s3.round_challenges // SpartanShift
         .iter().rev().copied().collect();
-    let bc_r_cycle_4: Vec<usize> = s4.round_challenges // RegistersReadWriteChecking cycle
+    let bc_r_cycle_4: Vec<ChallengeIdx> = s4.round_challenges // RegistersReadWriteChecking cycle
         [0..params.log_t]
         .iter()
         .rev()
         .copied()
         .collect();
-    let bc_r_cycle_5: Vec<usize> = s5.round_challenges // RegistersValEvaluation cycle
+    let bc_r_cycle_5: Vec<ChallengeIdx> =
+        s5.round_challenges // RegistersValEvaluation cycle
         [LOG_K_INSTRUCTION..LOG_K_INSTRUCTION + params.log_t]
-        .iter()
-        .rev()
-        .copied()
-        .collect();
+            .iter()
+            .rev()
+            .copied()
+            .collect();
     // Register eq challenges for Val stages 3 and 4 (BIG_ENDIAN)
     // Both use r_address from RegistersReadWriteChecking (s4), since
     // RegistersValEvaluation inherits the same r_address.
-    let bc_r_register_4: Vec<usize> = s4.round_challenges[params.log_t..params.log_t + log_k_reg]
+    let bc_r_register_4: Vec<ChallengeIdx> = s4.round_challenges
+        [params.log_t..params.log_t + log_k_reg]
         .iter()
         .rev()
         .copied()
         .collect();
-    let bc_r_register_5: Vec<usize> = bc_r_register_4.clone();
+    let bc_r_register_5: Vec<ChallengeIdx> = bc_r_register_4.clone();
 
     // Pre-allocate Stage 6 round challenge indices (needed by Phase 2 EqProject).
     // The actual Squeeze ops are emitted in the sumcheck loop below.
-    let s6_round_ch: Vec<usize> = (0..stage6_max_rounds)
+    let s6_round_ch: Vec<ChallengeIdx> = (0..stage6_max_rounds)
         .map(|r| {
             ch.add(
                 &format!("s6_r_{r}"),
@@ -4240,7 +4254,7 @@ fn build_stage6(
             &bc_r_cycle_4,
             &bc_r_cycle_5,
         ];
-        let stage_gamma_chs: [usize; 5] = [
+        let stage_gamma_chs: [ChallengeIdx; 5] = [
             ch_bc_stage1_gamma,
             ch_bc_stage2_gamma,
             ch_bc_stage3_gamma,
@@ -4250,7 +4264,8 @@ fn build_stage6(
         let stage_gamma_counts: [usize; 5] =
             [2 + NUM_CIRCUIT_FLAGS, 4, 9, 3, 2 + NUM_LOOKUP_TABLES];
         let raf_powers: [Option<u8>; 5] = [Some(5), None, Some(4), None, None];
-        let register_chs: [&[usize]; 5] = [&[], &[], &[], &bc_r_register_4, &bc_r_register_5];
+        let register_chs: [&[ChallengeIdx]; 5] =
+            [&[], &[], &[], &bc_r_register_4, &bc_r_register_5];
 
         let mut addr_inputs = Vec::with_capacity(12);
 
@@ -4331,17 +4346,17 @@ fn build_stage6(
     // Degree: bytecode_d (from RA product) + 1 (from eq) = bytecode_d + 1
     let bc_raf_cycle_kernel_idx = kernels.len();
     // Allocate challenge slots for ScalarCaptures at the phase boundary.
-    let ch_bc_cycle_weight: Vec<usize> = (0..5)
+    let ch_bc_cycle_weight: Vec<ChallengeIdx> = (0..5)
         .map(|s| ch.add(&format!("bc_cycle_weight_{s}"), ChallengeSource::External))
         .collect();
     let ch_bc_entry_weight = ch.add("bc_cycle_entry_weight", ChallengeSource::External);
     let bc_raf_proj_ids: Vec<PolynomialId>;
-    let bc_addr_chunks: Vec<Vec<usize>>;
+    let bc_addr_chunks: Vec<Vec<ChallengeIdx>>;
     {
         // Bytecode address chunks from stage 6 round challenges 0..log_k_bytecode.
         // These are the LE address challenges from the BytecodeReadRaf address phase.
         // Reverse to BIG_ENDIAN, pad with zero challenges, then sequential chunks.
-        let bc_addr_be: Vec<usize> = s6_round_ch[0..params.log_k_bytecode]
+        let bc_addr_be: Vec<ChallengeIdx> = s6_round_ch[0..params.log_k_bytecode]
             .iter()
             .rev()
             .copied()
@@ -4351,10 +4366,10 @@ fn build_stage6(
         } else {
             params.log_k_chunk - (params.log_k_bytecode % params.log_k_chunk)
         };
-        let bc_pad_chs: Vec<usize> = (0..bc_pad_len)
+        let bc_pad_chs: Vec<ChallengeIdx> = (0..bc_pad_len)
             .map(|i| ch.add(&format!("bc_ra_pad_{i}"), ChallengeSource::External))
             .collect();
-        let bc_addr_padded: Vec<usize> = bc_pad_chs.into_iter().chain(bc_addr_be).collect();
+        let bc_addr_padded: Vec<ChallengeIdx> = bc_pad_chs.into_iter().chain(bc_addr_be).collect();
         bc_addr_chunks = (0..params.bytecode_d)
             .map(|i| {
                 let c = params.log_k_chunk;
@@ -4363,7 +4378,7 @@ fn build_stage6(
             .collect();
 
         // Entry eq point: all-zero challenges → eq(0, j) = ∏(1 - j_i)
-        let entry_eq_chs: Vec<usize> = (0..params.log_t)
+        let entry_eq_chs: Vec<ChallengeIdx> = (0..params.log_t)
             .map(|i| ch.add(&format!("bc_entry_eq_{i}"), ChallengeSource::External))
             .collect();
 
@@ -4418,7 +4433,7 @@ fn build_stage6(
 
         for (s, &weight) in ch_bc_cycle_weight.iter().enumerate() {
             let mut factors = vec![
-                Factor::Challenge(weight as u32),
+                Factor::Challenge(weight.0 as u32),
                 Factor::Input((d + s) as u32),
             ];
             factors.extend(ra_factors.iter().copied());
@@ -4430,7 +4445,7 @@ fn build_stage6(
         // Entry term
         {
             let mut factors = vec![
-                Factor::Challenge(ch_bc_entry_weight as u32),
+                Factor::Challenge(ch_bc_entry_weight.0 as u32),
                 Factor::Input((d + 5) as u32),
             ];
             factors.extend(ra_factors.iter().copied());
@@ -4476,12 +4491,12 @@ fn build_stage6(
     // entire segment to [r_127, ..., r_0] and takes the last log_k_chunk entries
     // = [r_{lkc-1}, ..., r_1, r_0]. With LowToHigh binding, current_index counts
     // down, so w_j picks r_0 first — matching the sumcheck order.
-    let bool_addr_ch: Vec<usize> = s5.round_challenges[..params.log_k_chunk]
+    let bool_addr_ch: Vec<ChallengeIdx> = s5.round_challenges[..params.log_k_chunk]
         .iter()
         .rev()
         .copied()
         .collect();
-    let bool_cycle_ch: Vec<usize> =
+    let bool_cycle_ch: Vec<ChallengeIdx> =
         s5.round_challenges[LOG_K_INSTRUCTION..LOG_K_INSTRUCTION + params.log_t].to_vec();
     let ra_poly_ids: Vec<PolynomialId> = (0..params.instruction_d)
         .map(PolynomialId::InstructionRa)
@@ -4621,7 +4636,7 @@ fn build_stage6(
             });
         }
         inst_ra_proj_ids = proj_ids;
-        let g_inst = ch_inst_ra_gamma as u32;
+        let g_inst = ch_inst_ra_gamma.0 as u32;
         let mut terms = Vec::with_capacity(n_vra);
         for b in 0..n_vra {
             let mut factors = Vec::new();
@@ -4654,7 +4669,7 @@ fn build_stage6(
     //     RamInc×eq_s2 + γ×RamInc×eq_s4 + γ²×RdInc×eq_s4_rd + γ³×RdInc×eq_s5
     let inc_kernel_idx = kernels.len();
     {
-        let g_inc = ch_inc_gamma as u32;
+        let g_inc = ch_inc_gamma.0 as u32;
         let eq_s2_id = PolynomialId::BatchEq(next_eq);
         next_eq += 1;
         let eq_s4_ram_id = PolynomialId::BatchEq(next_eq);
@@ -4727,7 +4742,7 @@ fn build_stage6(
     }
 
     // Batched sumcheck definition
-    let batch_idx = batched_sumchecks.len();
+    let batch_idx = BatchIdx(batched_sumchecks.len());
 
     batched_sumchecks.push(BatchedSumcheckDef {
         instances: vec![
@@ -4760,7 +4775,7 @@ fn build_stage6(
                         carry_bindings: vec![],
                     },
                 ],
-                batch_coeff: 0,
+                batch_coeff: ChallengeIdx(0),
                 first_active_round: 0,
             },
             // [1] Booleanity — single phase over full k×j space
@@ -4772,7 +4787,7 @@ fn build_stage6(
                     segmented: None,
                     carry_bindings: vec![],
                 }],
-                batch_coeff: 0,
+                batch_coeff: ChallengeIdx(0),
                 first_active_round: params.log_k_bytecode - params.log_k_chunk,
             },
             // [2] HammingBooleanity
@@ -4784,7 +4799,7 @@ fn build_stage6(
                     segmented: None,
                     carry_bindings: vec![],
                 }],
-                batch_coeff: 0,
+                batch_coeff: ChallengeIdx(0),
                 first_active_round: params.log_k_bytecode,
             },
             // [3] RamRaVirtual
@@ -4796,7 +4811,7 @@ fn build_stage6(
                     segmented: None,
                     carry_bindings: vec![],
                 }],
-                batch_coeff: 0,
+                batch_coeff: ChallengeIdx(0),
                 first_active_round: params.log_k_bytecode,
             },
             // [4] InstructionRaVirtual
@@ -4808,7 +4823,7 @@ fn build_stage6(
                     segmented: None,
                     carry_bindings: vec![],
                 }],
-                batch_coeff: 0,
+                batch_coeff: ChallengeIdx(0),
                 first_active_round: params.log_k_bytecode,
             },
             // [5] IncClaimReduction
@@ -4820,7 +4835,7 @@ fn build_stage6(
                     segmented: None,
                     carry_bindings: vec![],
                 }],
-                batch_coeff: 0,
+                batch_coeff: ChallengeIdx(0),
                 first_active_round: params.log_k_bytecode,
             },
         ],
@@ -4850,7 +4865,7 @@ fn build_stage6(
         formula: bc_raf_input_claim.clone(),
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
-        instance: 0,
+        instance: InstanceIdx(0),
         inactive_scale_bits: 0,
     });
 
@@ -4860,7 +4875,7 @@ fn build_stage6(
         formula: booleanity_input_claim.clone(),
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
-        instance: 1,
+        instance: InstanceIdx(1),
         inactive_scale_bits: params.log_k_bytecode - params.log_k_chunk,
     });
 
@@ -4870,7 +4885,7 @@ fn build_stage6(
         formula: hamming_input_claim.clone(),
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
-        instance: 2,
+        instance: InstanceIdx(2),
         inactive_scale_bits: params.log_k_bytecode,
     });
 
@@ -4886,7 +4901,7 @@ fn build_stage6(
         formula: ram_ra_virtual_input_claim.clone(),
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
-        instance: 3,
+        instance: InstanceIdx(3),
         inactive_scale_bits: params.log_k_bytecode,
     });
 
@@ -4907,7 +4922,7 @@ fn build_stage6(
         formula: inst_ra_virtual_input_claim.clone(),
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
-        instance: 4,
+        instance: InstanceIdx(4),
         inactive_scale_bits: params.log_k_bytecode,
     });
 
@@ -4967,12 +4982,12 @@ fn build_stage6(
         formula: inc_input_claim.clone(),
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
-        instance: 5,
+        instance: InstanceIdx(5),
         inactive_scale_bits: params.log_k_bytecode,
     });
 
     // Batching coefficients (6 instances)
-    let batch_challenges: Vec<usize> = (0..6)
+    let batch_challenges: Vec<ChallengeIdx> = (0..6)
         .map(|i| {
             let c = ch.add(
                 &format!("stage6_batch{i}"),
@@ -4984,9 +4999,9 @@ fn build_stage6(
         .collect();
 
     for (i, &bc) in batch_challenges.iter().enumerate() {
-        batched_sumchecks[batch_idx].instances[i].batch_coeff = bc;
+        batched_sumchecks[batch_idx.0].instances[i].batch_coeff = bc;
     }
-    batched_sumchecks[batch_idx].input_claims = vec![
+    batched_sumchecks[batch_idx.0].input_claims = vec![
         bc_raf_input_claim,
         booleanity_input_claim,
         hamming_input_claim,
@@ -4997,7 +5012,7 @@ fn build_stage6(
 
     // Sumcheck rounds: log_k_bytecode + log_t rounds
     // Per-instance degree per phase — used to compute per-round num_coeffs.
-    let instance_phase_degrees: Vec<Vec<(usize, usize)>> = batched_sumchecks[batch_idx]
+    let instance_phase_degrees: Vec<Vec<(usize, usize)>> = batched_sumchecks[batch_idx.0]
         .instances
         .iter()
         .map(|inst| {
@@ -5012,13 +5027,13 @@ fn build_stage6(
         .collect();
 
     for (i, phases) in instance_phase_degrees.iter().enumerate() {
-        let inst = &batched_sumchecks[batch_idx].instances[i];
+        let inst = &batched_sumchecks[batch_idx.0].instances[i];
         eprintln!(
             "[stage6] instance[{i}]: first_active={}, phases={phases:?}",
             inst.first_active_round
         );
     }
-    let bdef_instances = &batched_sumchecks[batch_idx].instances;
+    let bdef_instances = &batched_sumchecks[batch_idx.0].instances;
     let _round_challenge_indices = emit_unrolled_batched_rounds(
         ops,
         kernels,
@@ -5077,7 +5092,7 @@ fn build_stage6(
     // no subsequent bind). Apply it now to finish reducing H to 1 element per poly.
     ops.push(Op::UnifiedInstanceBind {
         batch: batch_idx,
-        instance: 1,
+        instance: InstanceIdx(1),
         challenge: s6_round_ch[stage6_max_rounds - 1],
     });
     let bool_ra_poly_ids: Vec<PolynomialId> = (0..params.instruction_d)
@@ -5087,7 +5102,7 @@ fn build_stage6(
         .collect();
     ops.push(Op::UnifiedInstanceFinalize {
         batch: batch_idx,
-        instance: 1,
+        instance: InstanceIdx(1),
         output_buffers: Vec::new(),
         output_evals: bool_ra_poly_ids.clone(),
     });
@@ -5162,9 +5177,9 @@ fn build_stage6(
 // into a single sumcheck over the address chunk dimension.
 struct Stage7Challenges {
     /// HW reduction round challenge indices (LE order, as squeezed).
-    round_challenges: Vec<usize>,
+    round_challenges: Vec<ChallengeIdx>,
     /// Booleanity cycle challenge indices (BE).
-    cycle_challenges_be: Vec<usize>,
+    cycle_challenges_be: Vec<ChallengeIdx>,
 }
 
 fn build_stage7(
@@ -5187,7 +5202,7 @@ fn build_stage7(
     });
 
     // γ^0, γ^1, ..., γ^{3N-1}
-    let ch_hw_gamma_pow: Vec<usize> = (0..3 * total_d)
+    let ch_hw_gamma_pow: Vec<ChallengeIdx> = (0..3 * total_d)
         .map(|d| {
             let idx = ch.add(
                 &format!("hw_gamma_pow_{d}"),
@@ -5217,7 +5232,7 @@ fn build_stage7(
     // r_cycle (BE): booleanity's cycle challenges from stage 6, reversed.
     // Booleanity instance activates at round (log_k_bytecode - log_k_chunk),
     // its cycle portion spans rounds [log_k_bytecode, log_k_bytecode+log_t).
-    let cycle_challenges_be: Vec<usize> = s6.round_challenges
+    let cycle_challenges_be: Vec<ChallengeIdx> = s6.round_challenges
         [params.log_k_bytecode..params.log_k_bytecode + params.log_t]
         .iter()
         .rev()
@@ -5226,7 +5241,7 @@ fn build_stage7(
 
     // r_addr_bool (BE): booleanity's address challenges from stage 6, reversed.
     // Booleanity's address portion spans rounds [log_k_bytecode - log_k_chunk, log_k_bytecode).
-    let addr_bool_challenges_be: Vec<usize> = s6.round_challenges
+    let addr_bool_challenges_be: Vec<ChallengeIdx> = s6.round_challenges
         [params.log_k_bytecode - params.log_k_chunk..params.log_k_bytecode]
         .iter()
         .rev()
@@ -5264,7 +5279,7 @@ fn build_stage7(
             addr_bool_challenges_be,
             addr_virt_challenges_be,
             gamma_powers: ch_hw_gamma_pow.clone(),
-            hw_eval_challenge: 0, // unused: claims only for input_claim() which module handles
+            hw_eval_challenge: ChallengeIdx(0), // unused: claims only for input_claim() which module handles
             instruction_d: params.instruction_d,
             bytecode_d: params.bytecode_d,
             ram_d: params.ram_d,
@@ -5274,7 +5289,7 @@ fn build_stage7(
     });
 
     // Batched sumcheck definition (1 instance)
-    let batch_idx = batched_sumchecks.len();
+    let batch_idx = BatchIdx(batched_sumchecks.len());
     batched_sumchecks.push(BatchedSumcheckDef {
         instances: vec![BatchedInstance {
             phases: vec![InstancePhase {
@@ -5284,7 +5299,7 @@ fn build_stage7(
                 segmented: None,
                 carry_bindings: vec![],
             }],
-            batch_coeff: 0,
+            batch_coeff: ChallengeIdx(0),
             first_active_round: 0,
         }],
         input_claims: vec![],
@@ -5353,7 +5368,7 @@ fn build_stage7(
         formula: hw_input_claim.clone(),
         tag: DomainSeparator::SumcheckClaim,
         batch: batch_idx,
-        instance: 0,
+        instance: InstanceIdx(0),
         inactive_scale_bits: 0,
     });
 
@@ -5365,8 +5380,8 @@ fn build_stage7(
     ops.push(Op::Squeeze {
         challenge: ch_batch,
     });
-    batched_sumchecks[batch_idx].instances[0].batch_coeff = ch_batch;
-    batched_sumchecks[batch_idx].input_claims = vec![hw_input_claim];
+    batched_sumchecks[batch_idx.0].instances[0].batch_coeff = ch_batch;
+    batched_sumchecks[batch_idx.0].input_claims = vec![hw_input_claim];
 
     // Batched sumcheck rounds (log_k_chunk rounds, degree 2)
     let num_coeffs_fn = |_round: usize| -> usize { 3 }; // degree 2 → 3 evals (degree + 1)
@@ -5389,7 +5404,7 @@ fn build_stage7(
     // Apply it now to finish reducing G, eq_bool, eq_virt to 1 element each.
     ops.push(Op::UnifiedInstanceBind {
         batch: batch_idx,
-        instance: 0,
+        instance: InstanceIdx(0),
         challenge: s7_round_ch[hw_rounds - 1],
     });
 
@@ -5397,7 +5412,7 @@ fn build_stage7(
     let g_poly_ids: Vec<PolynomialId> = (0..total_d).map(|i| p.hw_g[i]).collect();
     ops.push(Op::UnifiedInstanceFinalize {
         batch: batch_idx,
-        instance: 0,
+        instance: InstanceIdx(0),
         output_buffers: Vec::new(),
         output_evals: g_poly_ids.clone(),
     });
@@ -5420,8 +5435,8 @@ fn build_stage8(p: &Polys, params: &ModuleParams, ops: &mut Vec<Op>, s7: &Stage7
     // Opening point = [r_address_BE, r_cycle_BE].
     // r_address_BE: stage 7 round challenges reversed (LE→BE).
     // r_cycle_BE: booleanity cycle challenges (already BE from stage 7 construction).
-    let r_addr_be: Vec<usize> = s7.round_challenges.iter().rev().copied().collect();
-    let opening_point: Vec<usize> = r_addr_be
+    let r_addr_be: Vec<ChallengeIdx> = s7.round_challenges.iter().rev().copied().collect();
+    let opening_point: Vec<ChallengeIdx> = r_addr_be
         .iter()
         .chain(s7.cycle_challenges_be.iter())
         .copied()
@@ -5520,18 +5535,18 @@ fn build_stage8(p: &Polys, params: &ModuleParams, ops: &mut Vec<Op>, s7: &Stage7
 /// overwritten by later stages.
 fn build_bytecode_read_raf_claim(
     p: &Polys,
-    ch_gamma: usize,    // gamma_powers(8) base
-    ch_s1_gamma: usize, // stage1_gammas(16) base
-    ch_s2_gamma: usize, // stage2_gammas(4) base
-    ch_s3_gamma: usize, // stage3_gammas(9) base
-    ch_s4_gamma: usize, // stage4_gammas(3) base
-    ch_s5_gamma: usize, // stage5_gammas(43) base
+    ch_gamma: ChallengeIdx,    // gamma_powers(8) base
+    ch_s1_gamma: ChallengeIdx, // stage1_gammas(16) base
+    ch_s2_gamma: ChallengeIdx, // stage2_gammas(4) base
+    ch_s3_gamma: ChallengeIdx, // stage3_gammas(9) base
+    ch_s4_gamma: ChallengeIdx, // stage4_gammas(3) base
+    ch_s5_gamma: ChallengeIdx, // stage5_gammas(43) base
 ) -> ClaimFormula {
     let mut terms = Vec::new();
 
     // Helper: build factors for gamma^s * stage_gamma^j * eval(poly)
     let term = |gamma_pow: usize,
-                stage_gamma: usize,
+                stage_gamma: ChallengeIdx,
                 stage_gamma_pow: usize,
                 poly: PolynomialId|
      -> ClaimTerm {
@@ -5548,7 +5563,7 @@ fn build_bytecode_read_raf_claim(
 
     // Helper: build factors for gamma^rv_idx * stage_gamma^j * staged_eval(poly, stage)
     let term_staged = |rv_idx: usize,
-                       stage_gamma: usize,
+                       stage_gamma: ChallengeIdx,
                        gamma_pow: usize,
                        poly: PolynomialId,
                        stage: usize|
@@ -5674,7 +5689,7 @@ fn build_verifier_stage4_ops(
 
     // γ_registers_rw
     ops.push(VerifierOp::Squeeze {
-        challenge: s4_ch_base,
+        challenge: ChallengeIdx(s4_ch_base),
     });
 
     // Domain separator
@@ -5684,7 +5699,7 @@ fn build_verifier_stage4_ops(
 
     // γ_ram_val_check
     ops.push(VerifierOp::Squeeze {
-        challenge: s4_ch_base + 1,
+        challenge: ChallengeIdx(s4_ch_base + 1),
     });
 
     ops
@@ -5705,7 +5720,7 @@ fn build_verifier_stage3_ops(
     // 3 gamma squeezes + 3 batching coefficient squeezes + log_t round squeezes
     for i in 0..num_s3_challenges {
         ops.push(VerifierOp::Squeeze {
-            challenge: s3_ch_base + i,
+            challenge: ChallengeIdx(s3_ch_base + i),
         });
     }
 
@@ -5735,11 +5750,11 @@ fn build_verifier_stage2_ops(
     let s2_ch_base = params.num_tau + 1 + 1 + params.outer_remaining_rounds;
 
     // τ_high is at s2_ch_base, r0 at s2_ch_base+1, then γ_rw, γ_instruction, r_address...
-    let ch_tau_high = s2_ch_base; // 55
-    let ch_product_r0 = s2_ch_base + 1; // 56
-    let ch_gamma_rw = s2_ch_base + 2; // 57
-    let ch_gamma_instruction = s2_ch_base + 3; // 58
-    let ch_r_address_base = s2_ch_base + 4; // 59..78
+    let ch_tau_high = ChallengeIdx(s2_ch_base); // 55
+    let ch_product_r0 = ChallengeIdx(s2_ch_base + 1); // 56
+    let ch_gamma_rw = ChallengeIdx(s2_ch_base + 2); // 57
+    let ch_gamma_instruction = ChallengeIdx(s2_ch_base + 3); // 58
+    let ch_r_address_base = ChallengeIdx(s2_ch_base + 4); // 59..78
 
     // 15 unique openings (duplicates aliased — see prover side comment).
     let stage2_eval_polys = [
@@ -5776,9 +5791,10 @@ fn build_verifier_stage2_ops(
     // The outer remaining has log_t+1 rounds: [0] = group, [1..] = cycle.
     // r_cycle is challenges[1..] reversed (big-endian), with log_t entries.
     let stage1_round_base = params.num_tau + 2; // τ + r0 + batch
-    let stage1_cycle_challenges: Vec<usize> = (stage1_round_base + 1
+    let stage1_cycle_challenges: Vec<ChallengeIdx> = (stage1_round_base + 1
         ..stage1_round_base + params.outer_remaining_rounds)
         .rev()
+        .map(ChallengeIdx)
         .collect();
 
     // Evaluation list positions (18 entries in flush order).
@@ -6206,7 +6222,9 @@ fn build_verifier_stage2_ops(
     //
     // normalize: Reverse (20 rounds → big-endian address point)
     let output_eq = ClaimFactor::EqEval {
-        challenges: (ch_r_address_base..ch_r_address_base + params.log_k_ram).collect(),
+        challenges: (ch_r_address_base.0..ch_r_address_base.0 + params.log_k_ram)
+            .map(ChallengeIdx)
+            .collect(),
         at_stage: VerifierStageIndex(1),
     };
     let output_check_input_claim = ClaimFormula::zero();
@@ -6320,13 +6338,15 @@ fn build_verifier_stage2_ops(
     ops.push(VerifierOp::Squeeze {
         challenge: ch_gamma_instruction,
     });
-    for c in ch_r_address_base..ch_r_address_base + params.log_k_ram {
-        ops.push(VerifierOp::Squeeze { challenge: c });
+    for c in ch_r_address_base.0..ch_r_address_base.0 + params.log_k_ram {
+        ops.push(VerifierOp::Squeeze {
+            challenge: ChallengeIdx(c),
+        });
     }
     // Batch coefficient challenge indices for the 5 instances.
     let ch_batch_base = s2_ch_base + 2 + 1 + 1 + params.log_k_ram; // after τ_high, r0, γ_rw, γ_instruction, r_address
-    let batch_challenges: Vec<usize> = (0..params.stage2_num_instances)
-        .map(|i| ch_batch_base + i)
+    let batch_challenges: Vec<ChallengeIdx> = (0..params.stage2_num_instances)
+        .map(|i| ChallengeIdx(ch_batch_base + i))
         .collect();
     ops.push(VerifierOp::VerifySumcheck {
         instances: instances.clone(),
@@ -6515,7 +6535,7 @@ fn print_stats(module: &Module, params: &ModuleParams) {
                     })
                     .collect();
                 eprintln!(
-                    "    [{j}] phases=[{}], batch_coeff={}, first_active={}, total_rounds={}",
+                    "    [{j}] phases=[{}], batch_coeff={:?}, first_active={}, total_rounds={}",
                     phase_descs.join(", "),
                     inst.batch_coeff,
                     inst.first_active_round,

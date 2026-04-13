@@ -48,7 +48,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             let compiled_kernel = &executable.kernels[*kernel];
 
             if let Some(ch) = bind_challenge {
-                let scalar = state.challenges[*ch];
+                let scalar = state.challenges[ch.0];
                 bind_kernel_inputs(device_buffers, backend, compiled_kernel, kdef, scalar);
             }
 
@@ -109,7 +109,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             challenge,
             order,
         } => {
-            let scalar = state.challenges[*challenge];
+            let scalar = state.challenges[challenge.0];
             for pi in polys {
                 if !device_buffers.contains_key(pi) {
                     let data = provider.materialize(*pi);
@@ -131,11 +131,11 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             group_offsets,
             kernel_tau,
         } => {
-            let r = state.challenges[*challenge];
+            let r = state.challenges[challenge.0];
 
             // Lagrange kernel scale: L(τ, r) = Σ_k L_k(τ) · L_k(r)
             let scale = if let Some(tau_idx) = kernel_tau {
-                let tau = state.challenges[*tau_idx];
+                let tau = state.challenges[tau_idx.0];
                 let basis = jolt_poly::lagrange::lagrange_evals(*domain_start, *domain_size, r);
                 let tau_basis =
                     jolt_poly::lagrange::lagrange_evals(*domain_start, *domain_size, tau);
@@ -304,7 +304,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                 } => {
                     let mut raw_evals = std::mem::take(&mut state.last_round_coeffs);
                     debug_assert_eq!(raw_evals.len(), 2 * *domain_size - 1);
-                    let tau_high = state.challenges[*tau_challenge];
+                    let tau_high = state.challenges[tau_challenge.0];
                     backend.uniskip_encode(
                         &mut raw_evals,
                         *domain_size,
@@ -383,12 +383,12 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             for _ in 0..*inactive_scale_bits {
                 scaled *= two;
             }
-            state.batch_instance_claims[*batch][*instance] = scaled;
+            state.batch_instance_claims[batch.0][instance.0] = scaled;
         }
 
         Op::Squeeze { challenge } => {
             let val = transcript.challenge();
-            state.challenges[*challenge] = val;
+            state.challenges[challenge.0] = val;
             state.last_squeezed = val;
         }
 
@@ -397,7 +397,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             base,
             exponent,
         } => {
-            let base_val = state.challenges[*base];
+            let base_val = state.challenges[base.0];
             let mut result = F::one();
             let mut b = base_val;
             let mut exp = *exponent;
@@ -408,7 +408,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                 b = b.square();
                 exp >>= 1;
             }
-            state.challenges[*target] = result;
+            state.challenges[target.0] = result;
         }
 
         Op::AppendDomainSeparator { tag } => {
@@ -427,7 +427,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             let data = provider.materialize(*source);
             let point: Vec<F> = at_challenges
                 .iter()
-                .map(|&ci| state.challenges[ci])
+                .map(|&ci| state.challenges[ci.0])
                 .collect();
             let eval = backend.evaluate_mle(&data, &point);
             let _ = state.evaluations.insert(*store_as, eval);
@@ -462,7 +462,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             if let Some(eval) = state.evaluations.get_mut(poly) {
                 let factor: F = factor_challenges
                     .iter()
-                    .map(|&ci| F::one() - state.challenges[ci])
+                    .map(|&ci| F::one() - state.challenges[ci.0])
                     .product();
                 *eval *= factor;
             }
@@ -476,7 +476,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             if let Some(&eval) = state.evaluations.get(poly) {
                 let point: Vec<F> = point_challenges
                     .iter()
-                    .map(|&ci| state.challenges[ci])
+                    .map(|&ci| state.challenges[ci.0])
                     .collect();
                 if let Some(nv) = committed_num_vars {
                     let target_len = 1 << nv;
@@ -500,7 +500,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
         Op::BindOpeningInputs { point_challenges } => {
             let point: Vec<F> = point_challenges
                 .iter()
-                .map(|&ci| state.challenges[ci])
+                .map(|&ci| state.challenges[ci.0])
                 .collect();
             let joint_eval = state
                 .reduced_claims
@@ -529,27 +529,27 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             state.batch_combined = vec![F::zero(); *max_evals];
             state.bound_this_round.clear();
             if let Some(ch) = bind_challenge {
-                let r = state.challenges[*ch];
+                let r = state.challenges[ch.0];
                 for (inst_idx, evals) in state.last_round_instance_evals.iter().enumerate() {
                     if !evals.is_empty() {
-                        state.batch_instance_claims[*batch][inst_idx] =
+                        state.batch_instance_claims[batch.0][inst_idx] =
                             backend.interpolate_evaluate(evals, r);
                     }
                 }
             }
-            let num_instances = state.batch_instance_claims[*batch].len();
+            let num_instances = state.batch_instance_claims[batch.0].len();
             state.last_round_instance_evals = vec![Vec::new(); num_instances];
         }
 
         Op::BatchInactiveContribution { batch, instance } => {
-            let bdef = &module.prover.batched_sumchecks[*batch];
-            let coeff = state.challenges[bdef.instances[*instance].batch_coeff];
+            let bdef = &module.prover.batched_sumchecks[batch.0];
+            let coeff = state.challenges[bdef.instances[instance.0].batch_coeff.0];
             let two_inv = F::from_u64(2).inverse().unwrap();
-            let half_claim = state.batch_instance_claims[*batch][*instance] * two_inv;
+            let half_claim = state.batch_instance_claims[batch.0][instance.0] * two_inv;
             for slot in &mut state.batch_combined {
                 *slot += coeff * half_claim;
             }
-            state.batch_instance_claims[*batch][*instance] = half_claim;
+            state.batch_instance_claims[batch.0][instance.0] = half_claim;
         }
 
         Op::Materialize { binding } => {
@@ -592,7 +592,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             let outer_eq = build_outer_eq(&state.challenges, segmented, backend);
             let _ = state
                 .segmented_outer_eqs
-                .insert((*batch, *instance), outer_eq);
+                .insert((batch.0, instance.0), outer_eq);
         }
 
         Op::InstanceBindPreviousPhase {
@@ -602,7 +602,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             challenge,
         } => {
             let kdef = &module.prover.kernels[*kernel];
-            let scalar = state.challenges[*challenge];
+            let scalar = state.challenges[challenge.0];
             let order = kdef.spec.binding_order;
             let mut seen = HashSet::new();
             for b in &kdef.inputs {
@@ -628,7 +628,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                 poly,
                 data.len()
             );
-            state.challenges[*challenge] = data[0];
+            state.challenges[challenge.0] = data[0];
         }
 
         Op::InstanceReduce {
@@ -644,14 +644,15 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                 .map(|b| {
                     device_buffers.get(&b.poly()).unwrap_or_else(|| {
                         panic!(
-                            "InstanceReduce: missing buffer {:?} (inst={instance}, kernel={kernel})",
-                            b.poly()
+                            "InstanceReduce: missing buffer {:?} (inst={}, kernel={kernel})",
+                            b.poly(),
+                            instance.0
                         )
                     })
                 })
                 .collect();
             let inst_evals = backend.reduce(compiled_kernel, &input_refs, &state.challenges);
-            state.last_round_instance_evals[*instance].clone_from(&inst_evals);
+            state.last_round_instance_evals[instance.0].clone_from(&inst_evals);
         }
 
         Op::InstanceSegmentedReduce {
@@ -665,7 +666,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             let compiled_kernel = &executable.kernels[*kernel];
             let outer_eq = state
                 .segmented_outer_eqs
-                .get(&(*batch, *instance))
+                .get(&(batch.0, instance.0))
                 .expect("InstanceSegmentedReduce: outer eq missing");
             let inner_size = 1usize << (segmented.inner_num_vars - round_within_phase);
             let input_bufs: Vec<&B::Buffer<F>> = kdef
@@ -686,7 +687,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                 inner_size,
                 &state.challenges,
             );
-            state.last_round_instance_evals[*instance].clone_from(&inst_evals);
+            state.last_round_instance_evals[instance.0].clone_from(&inst_evals);
         }
 
         Op::InstanceBind {
@@ -696,7 +697,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             challenge,
         } => {
             let kdef = &module.prover.kernels[*kernel];
-            let scalar = state.challenges[*challenge];
+            let scalar = state.challenges[challenge.0];
             let order = kdef.spec.binding_order;
             let mut seen = HashSet::new();
             for b in &kdef.inputs {
@@ -716,7 +717,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             challenge,
             order,
         } => {
-            let scalar = state.challenges[*challenge];
+            let scalar = state.challenges[challenge.0];
             for pid in polys {
                 if state.bound_this_round.contains(pid) {
                     continue;
@@ -734,9 +735,9 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             max_evals,
             num_evals,
         } => {
-            let bdef = &module.prover.batched_sumchecks[*batch];
-            let coeff = state.challenges[bdef.instances[*instance].batch_coeff];
-            let evals = &state.last_round_instance_evals[*instance];
+            let bdef = &module.prover.batched_sumchecks[batch.0];
+            let coeff = state.challenges[bdef.instances[instance.0].batch_coeff.0];
+            let evals = &state.last_round_instance_evals[instance.0];
             debug_assert_eq!(evals.len(), *num_evals);
             let extended;
             let full_evals = if *num_evals < *max_evals {
@@ -766,7 +767,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                 lookup_trace,
                 &module.prover.kernels,
             );
-            let _ = state.instance_states.insert((*batch, *instance), is);
+            let _ = state.instance_states.insert((batch.0, instance.0), is);
         }
 
         Op::UnifiedInstanceBind {
@@ -774,10 +775,10 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             instance,
             challenge,
         } => {
-            let scalar = state.challenges[*challenge];
+            let scalar = state.challenges[challenge.0];
             let is = state
                 .instance_states
-                .get_mut(&(*batch, *instance))
+                .get_mut(&(batch.0, instance.0))
                 .expect("UnifiedInstanceBind: state missing");
             backend.instance_bind(is, scalar);
         }
@@ -785,11 +786,11 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
         Op::UnifiedInstanceReduce { batch, instance } => {
             let is = state
                 .instance_states
-                .get(&(*batch, *instance))
+                .get(&(batch.0, instance.0))
                 .expect("UnifiedInstanceReduce: state missing");
-            let previous_claim = state.batch_instance_claims[*batch][*instance];
+            let previous_claim = state.batch_instance_claims[batch.0][instance.0];
             let evals = backend.instance_reduce(is, previous_claim);
-            state.last_round_instance_evals[*instance].clone_from(&evals);
+            state.last_round_instance_evals[instance.0].clone_from(&evals);
         }
 
         Op::UnifiedInstanceFinalize {
@@ -800,7 +801,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
         } => {
             let is = state
                 .instance_states
-                .remove(&(*batch, *instance))
+                .remove(&(batch.0, instance.0))
                 .expect("UnifiedInstanceFinalize: state missing");
             let output = backend.instance_finalize(is);
             assert_eq!(output.buffers.len(), output_buffers.len());

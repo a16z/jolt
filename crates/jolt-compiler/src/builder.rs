@@ -22,9 +22,9 @@
 use crate::formula::BindingOrder;
 use crate::ir::PolyKind;
 use crate::module::{
-    BatchedSumcheckDef, ChallengeDecl, ChallengeSource, ClaimFormula, DomainSeparator, EvalMode,
-    InputBinding, InstanceConfig, KernelDef, Module, Op, PolyDecl, RoundPolyEncoding, Schedule,
-    VerifierOp, VerifierSchedule, VerifierStageIndex,
+    BatchIdx, BatchedSumcheckDef, ChallengeDecl, ChallengeIdx, ChallengeSource, ClaimFormula,
+    DomainSeparator, EvalMode, InputBinding, InstanceConfig, InstanceIdx, KernelDef, Module, Op,
+    PolyDecl, RoundPolyEncoding, Schedule, VerifierOp, VerifierSchedule, VerifierStageIndex,
 };
 use crate::PolynomialId;
 
@@ -77,8 +77,8 @@ impl ModuleBuilder {
     // Challenge management
 
     /// Allocate a single challenge slot and return its index.
-    pub fn add_challenge(&mut self, name: &str, source: ChallengeSource) -> usize {
-        let idx = self.challenges.len();
+    pub fn add_challenge(&mut self, name: &str, source: ChallengeSource) -> ChallengeIdx {
+        let idx = ChallengeIdx(self.challenges.len());
         self.challenges.push(ChallengeDecl {
             name: name.to_string(),
             source,
@@ -87,7 +87,7 @@ impl ModuleBuilder {
     }
 
     /// Squeeze a challenge: allocate slot + emit Op::Squeeze. Returns challenge index.
-    pub fn squeeze(&mut self, name: &str, source: ChallengeSource) -> usize {
+    pub fn squeeze(&mut self, name: &str, source: ChallengeSource) -> ChallengeIdx {
         let idx = self.add_challenge(name, source);
         self.ops.push(Op::Squeeze { challenge: idx });
         idx
@@ -99,7 +99,7 @@ impl ModuleBuilder {
         prefix: &str,
         count: usize,
         source_fn: impl Fn(usize) -> ChallengeSource,
-    ) -> Vec<usize> {
+    ) -> Vec<ChallengeIdx> {
         (0..count)
             .map(|i| self.squeeze(&format!("{prefix}_{i}"), source_fn(i)))
             .collect()
@@ -111,14 +111,14 @@ impl ModuleBuilder {
         prefix: &str,
         count: usize,
         after_stage: usize,
-    ) -> Vec<usize> {
+    ) -> Vec<ChallengeIdx> {
         self.squeeze_n(prefix, count, |_| ChallengeSource::FiatShamir {
             after_stage,
         })
     }
 
     /// Allocate an external challenge slot (value set by runtime, e.g. ScalarCapture).
-    pub fn external_challenge(&mut self, name: &str) -> usize {
+    pub fn external_challenge(&mut self, name: &str) -> ChallengeIdx {
         self.add_challenge(name, ChallengeSource::External)
     }
 
@@ -149,8 +149,8 @@ impl ModuleBuilder {
     // Batched sumcheck management
 
     /// Register a batched sumcheck definition and return its index.
-    pub fn add_batched_sumcheck(&mut self, bdef: BatchedSumcheckDef) -> usize {
-        let idx = self.batched_sumchecks.len();
+    pub fn add_batched_sumcheck(&mut self, bdef: BatchedSumcheckDef) -> BatchIdx {
+        let idx = BatchIdx(self.batched_sumchecks.len());
         self.batched_sumchecks.push(bdef);
         idx
     }
@@ -185,7 +185,12 @@ impl ModuleBuilder {
     }
 
     /// Emit a single sumcheck round.
-    pub fn sumcheck_round(&mut self, kernel: usize, round: usize, bind_challenge: Option<usize>) {
+    pub fn sumcheck_round(
+        &mut self,
+        kernel: usize,
+        round: usize,
+        bind_challenge: Option<ChallengeIdx>,
+    ) {
         self.ops.push(Op::SumcheckRound {
             kernel,
             round,
@@ -222,7 +227,7 @@ impl ModuleBuilder {
         stage: VerifierStageIndex,
         challenge_prefix: &str,
         round_offset: usize,
-    ) -> Vec<usize> {
+    ) -> Vec<ChallengeIdx> {
         let mut indices = Vec::with_capacity(num_rounds);
         for round in 0..num_rounds {
             let bind = if round > 0 {
@@ -260,7 +265,7 @@ impl ModuleBuilder {
     }
 
     /// Emit Op::Bind for polynomials at a challenge.
-    pub fn bind(&mut self, polys: &[PolynomialId], challenge: usize, order: BindingOrder) {
+    pub fn bind(&mut self, polys: &[PolynomialId], challenge: ChallengeIdx, order: BindingOrder) {
         self.ops.push(Op::Bind {
             polys: polys.to_vec(),
             challenge,
@@ -272,7 +277,7 @@ impl ModuleBuilder {
     pub fn bind_at_challenges(
         &mut self,
         polys: &[PolynomialId],
-        challenges: &[usize],
+        challenges: &[ChallengeIdx],
         order: BindingOrder,
     ) {
         for &ch in challenges {
@@ -299,8 +304,8 @@ impl ModuleBuilder {
     pub fn absorb_input_claim(
         &mut self,
         formula: ClaimFormula,
-        batch: usize,
-        instance: usize,
+        batch: BatchIdx,
+        instance: InstanceIdx,
         inactive_scale_bits: usize,
     ) {
         self.ops.push(Op::AbsorbInputClaim {
@@ -328,14 +333,14 @@ impl ModuleBuilder {
     #[allow(clippy::too_many_arguments)]
     pub fn unrolled_batched_sumcheck_rounds(
         &mut self,
-        batch: usize,
+        batch: BatchIdx,
         num_rounds: usize,
         num_coeffs: usize,
         stage: VerifierStageIndex,
         challenge_prefix: &str,
         round_offset: usize,
-    ) -> Vec<usize> {
-        let bdef = self.batched_sumchecks[batch].clone();
+    ) -> Vec<ChallengeIdx> {
+        let bdef = self.batched_sumchecks[batch.0].clone();
         let max_evals = bdef.max_degree + 1;
         let mut indices = Vec::with_capacity(num_rounds);
 
@@ -355,7 +360,8 @@ impl ModuleBuilder {
             });
 
             // Per-instance ops.
-            for (inst_idx, inst) in bdef.instances.iter().enumerate() {
+            for (inst_idx_raw, inst) in bdef.instances.iter().enumerate() {
+                let inst_idx = InstanceIdx(inst_idx_raw);
                 if round < inst.first_active_round {
                     self.ops.push(Op::BatchInactiveContribution {
                         batch,

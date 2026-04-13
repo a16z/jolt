@@ -19,10 +19,10 @@ pub use ir::expr::{Challenge, Expr, Poly, Term};
 pub use ir::{Claim, ClaimId, Density, PolyDef, PolyKind, Protocol, PublicPoly, Vertex};
 pub use kernel_spec::{Iteration, KernelSpec};
 pub use module::{
-    ChallengeDecl, ChallengeSource, ClaimFactor, ClaimFormula, ClaimTerm, DomainSeparator,
-    EvalMode, Evaluation, InputBinding, InstanceConfig, KernelDef, Module, Op, PointNormalization,
-    PolyDecl, R1CSMatrix, RoundPolyEncoding, Schedule, SumcheckInstance, UniskipVerify, VerifierOp,
-    VerifierSchedule, VerifierStageIndex,
+    BatchIdx, ChallengeDecl, ChallengeIdx, ChallengeSource, ClaimFactor, ClaimFormula, ClaimTerm,
+    DomainSeparator, EvalMode, Evaluation, InputBinding, InstanceConfig, InstanceIdx, KernelDef,
+    Module, Op, PointNormalization, PolyDecl, R1CSMatrix, RoundPolyEncoding, Schedule,
+    SumcheckInstance, UniskipVerify, VerifierOp, VerifierSchedule, VerifierStageIndex,
 };
 pub use params::ModuleParams;
 pub use polynomial_id::PolynomialId;

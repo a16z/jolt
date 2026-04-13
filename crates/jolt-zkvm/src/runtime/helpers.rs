@@ -74,7 +74,7 @@ where
         let point: Vec<F> = seg
             .outer_eq_challenges
             .iter()
-            .map(|&ci| challenges[ci])
+            .map(|&ci| challenges[ci.0])
             .collect();
         let buf = backend.eq_table(&point);
         backend.download(&buf)
@@ -100,20 +100,20 @@ where
         InputBinding::EqTable {
             challenges: chs, ..
         } => {
-            let point: Vec<F> = chs.iter().map(|&ci| challenges[ci]).collect();
+            let point: Vec<F> = chs.iter().map(|&ci| challenges[ci.0]).collect();
             DeviceBuffer::Field(backend.eq_table(&point))
         }
         InputBinding::EqPlusOneTable {
             challenges: chs, ..
         } => {
-            let point: Vec<F> = chs.iter().map(|&ci| challenges[ci]).collect();
+            let point: Vec<F> = chs.iter().map(|&ci| challenges[ci.0]).collect();
             let (_eq, eq_plus_one) = backend.eq_plus_one_table(&point);
             DeviceBuffer::Field(eq_plus_one)
         }
         InputBinding::LtTable {
             challenges: chs, ..
         } => {
-            let point: Vec<F> = chs.iter().map(|&ci| challenges[ci]).collect();
+            let point: Vec<F> = chs.iter().map(|&ci| challenges[ci.0]).collect();
             DeviceBuffer::Field(backend.lt_table(&point))
         }
         InputBinding::EqProject {
@@ -123,7 +123,7 @@ where
             inner_size,
             outer_size,
         } => {
-            let point: Vec<F> = chs.iter().map(|&ci| challenges[ci]).collect();
+            let point: Vec<F> = chs.iter().map(|&ci| challenges[ci.0]).collect();
             let src_data = provider.materialize(*source);
             DeviceBuffer::Field(backend.eq_project(&src_data, &point, *inner_size, *outer_size))
         }
@@ -138,7 +138,7 @@ where
             indices,
             ..
         } => {
-            let point: Vec<F> = chs.iter().map(|&ci| challenges[ci]).collect();
+            let point: Vec<F> = chs.iter().map(|&ci| challenges[ci.0]).collect();
             let idx_data = provider.materialize(*indices);
             DeviceBuffer::Field(backend.eq_gather(&point, &idx_data))
         }
@@ -148,7 +148,7 @@ where
             output_size,
             ..
         } => {
-            let point: Vec<F> = chs.iter().map(|&ci| challenges[ci]).collect();
+            let point: Vec<F> = chs.iter().map(|&ci| challenges[ci.0]).collect();
             let idx_data = provider.materialize(*indices);
             DeviceBuffer::Field(backend.eq_pushforward(&point, &idx_data, *output_size))
         }
@@ -158,7 +158,7 @@ where
             power,
             ..
         } => {
-            let base = challenges[*challenge];
+            let base = challenges[challenge.0];
             let mut scale = F::one();
             for _ in 0..*power {
                 scale *= base;
@@ -176,14 +176,15 @@ where
             ..
         } => {
             let bc = bytecode_data.expect("BytecodeVal binding requires bytecode_data");
+            let reg_chs_usize: Vec<usize> = reg_chs.iter().map(|c| c.0).collect();
             let val = bc.materialize_val(
                 challenges,
                 *stage,
-                *stage_gamma_base,
+                stage_gamma_base.0,
                 *stage_gamma_count,
-                *gamma_base,
+                gamma_base.0,
                 *raf_gamma_power,
-                reg_chs,
+                &reg_chs_usize,
             );
             DeviceBuffer::Field(backend.upload(&val))
         }

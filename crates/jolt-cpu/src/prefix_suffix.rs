@@ -118,7 +118,7 @@ impl<F: Field> CpuPrefixSuffixState<F> {
             _ => panic!("CpuPrefixSuffixState::new called with non-PrefixSuffix config"),
         };
 
-        let gamma = challenges[gamma_idx];
+        let gamma = challenges[gamma_idx.0];
         let gamma_sqr = gamma * gamma;
         let num_cycles = trace_data.lookup_keys.len();
         let m = 1usize << chunk_bits;
@@ -129,7 +129,7 @@ impl<F: Field> CpuPrefixSuffixState<F> {
             .map(|&k| LookupBits::new(k, LOG_K))
             .collect();
 
-        let r_point: Vec<F> = r_reduction.iter().map(|&ci| challenges[ci]).collect();
+        let r_point: Vec<F> = r_reduction.iter().map(|&ci| challenges[ci.0]).collect();
         let u_evals = EqPolynomial::<F>::evals(&r_point, None);
 
         let num_tables = LookupTableKind::COUNT;

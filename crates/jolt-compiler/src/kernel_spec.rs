@@ -8,6 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::formula::{BindingOrder, Formula};
+use crate::module::ChallengeIdx;
 
 /// Full algorithmic description of a sumcheck kernel.
 ///
@@ -110,7 +111,7 @@ pub enum Iteration {
         domain_indexed: Vec<bool>,
         /// Challenge index for the Lagrange kernel evaluation point (τ_high).
         /// Used by `AbsorbRoundPoly` post-processing to convolve with L(τ_high, Y).
-        tau_challenge: usize,
+        tau_challenge: ChallengeIdx,
         /// Whether base domain evaluations (first K values) should be zeroed
         /// before interpolation. True for R1CS outer sumcheck where Az*Bz = Cz
         /// guarantees t1 vanishes on the base domain. False for product/other

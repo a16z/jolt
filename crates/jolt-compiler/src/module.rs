@@ -18,6 +18,20 @@ use crate::polynomial_id::PolynomialId;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct VerifierStageIndex(pub usize);
 
+/// Index into `Module::challenges` / `RuntimeState::challenges`.
+///
+/// Prevents confusion with polynomial indices, batch indices, and other usize values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ChallengeIdx(pub usize);
+
+/// Index into `Schedule::batched_sumchecks`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct BatchIdx(pub usize);
+
+/// Index into `BatchedSumcheckDef::instances`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct InstanceIdx(pub usize);
+
 /// Complete output of the compilation pipeline.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Module {
@@ -74,7 +88,7 @@ pub enum ChallengeSource {
         round: usize,
     },
     /// Power of another challenge: `challenges[base]^exponent`.
-    Power { base: usize, exponent: usize },
+    Power { base: ChallengeIdx, exponent: usize },
     /// From outside the protocol (preprocessing, public input).
     External,
 }
@@ -115,7 +129,7 @@ pub struct BatchedInstance {
     /// equals the total round count for this instance.
     pub phases: Vec<InstancePhase>,
     /// Challenge index for this instance's batching coefficient.
-    pub batch_coeff: usize,
+    pub batch_coeff: ChallengeIdx,
     /// First round where this instance is active (`max_rounds - num_rounds`).
     pub first_active_round: usize,
 }
@@ -180,7 +194,7 @@ pub struct ScalarCapture {
     /// Polynomial whose device buffer holds a single scalar (1-element).
     pub poly: PolynomialId,
     /// Challenge index where the scalar value is stored.
-    pub challenge: usize,
+    pub challenge: ChallengeIdx,
 }
 
 /// Configuration for segmented reduce in a multi-dimensional sumcheck phase.
@@ -203,7 +217,7 @@ pub struct SegmentedConfig {
     /// `false` = full inner×outer (`2^(inner + outer)` elements).
     pub inner_only: Vec<bool>,
     /// Challenge indices for the outer eq table (built once at phase start).
-    pub outer_eq_challenges: Vec<usize>,
+    pub outer_eq_challenges: Vec<ChallengeIdx>,
 }
 
 /// Configuration for a stateful sumcheck instance.
@@ -225,9 +239,9 @@ pub enum InstanceConfig {
         /// Log₂ of the virtual RA polynomial chunk size.
         ra_virtual_log_k_chunk: usize,
         /// Challenge index for γ (instruction read-RAF batching).
-        gamma: usize,
+        gamma: ChallengeIdx,
         /// Challenge indices for r_reduction (log_T entries, BIG_ENDIAN).
-        r_reduction: Vec<usize>,
+        r_reduction: Vec<ChallengeIdx>,
         /// PolynomialIds for materialized RA polys at address→cycle transition.
         output_ra_polys: Vec<PolynomialId>,
         /// PolynomialId for the combined_val polynomial.
@@ -235,20 +249,20 @@ pub enum InstanceConfig {
     },
     Booleanity {
         ra_poly_ids: Vec<PolynomialId>,
-        addr_challenges: Vec<usize>,
-        cycle_challenges: Vec<usize>,
-        gamma_powers: Vec<usize>,
-        gamma_powers_square: Vec<usize>,
+        addr_challenges: Vec<ChallengeIdx>,
+        cycle_challenges: Vec<ChallengeIdx>,
+        gamma_powers: Vec<ChallengeIdx>,
+        gamma_powers_square: Vec<ChallengeIdx>,
         log_k_chunk: usize,
         log_t: usize,
     },
     HwReduction {
         ra_poly_ids: Vec<PolynomialId>,
-        cycle_challenges_be: Vec<usize>,
-        addr_bool_challenges_be: Vec<usize>,
-        addr_virt_challenges_be: Vec<Vec<usize>>,
-        gamma_powers: Vec<usize>,
-        hw_eval_challenge: usize,
+        cycle_challenges_be: Vec<ChallengeIdx>,
+        addr_bool_challenges_be: Vec<ChallengeIdx>,
+        addr_virt_challenges_be: Vec<Vec<ChallengeIdx>>,
+        gamma_powers: Vec<ChallengeIdx>,
+        hw_eval_challenge: ChallengeIdx,
         instruction_d: usize,
         bytecode_d: usize,
         ram_d: usize,
@@ -311,17 +325,17 @@ pub enum InputBinding {
     /// Challenge indices whose values form the evaluation point.
     EqTable {
         poly: PolynomialId,
-        challenges: Vec<usize>,
+        challenges: Vec<ChallengeIdx>,
     },
     /// Eq-plus-one table: `eq(r, x) · (1 + r_{n-1})`.
     EqPlusOneTable {
         poly: PolynomialId,
-        challenges: Vec<usize>,
+        challenges: Vec<ChallengeIdx>,
     },
     /// Less-than table from challenge points.
     LtTable {
         poly: PolynomialId,
-        challenges: Vec<usize>,
+        challenges: Vec<ChallengeIdx>,
     },
     /// Project a T×K source polynomial onto K elements via cycle eq weighting.
     ///
@@ -336,7 +350,7 @@ pub enum InputBinding {
         /// Source T×K polynomial to project from.
         source: PolynomialId,
         /// Challenge indices forming the cycle eq point.
-        challenges: Vec<usize>,
+        challenges: Vec<ChallengeIdx>,
         /// Size of the inner (cycle) dimension.
         inner_size: usize,
         /// Size of the outer (address) dimension.
@@ -354,7 +368,7 @@ pub enum InputBinding {
         /// Polynomial ID for the gathered result (T elements).
         poly: PolynomialId,
         /// Challenge indices forming the eq point (log₂K entries).
-        eq_challenges: Vec<usize>,
+        eq_challenges: Vec<ChallengeIdx>,
         /// Source of per-cycle integer indices (T entries, each in 0..K-1).
         /// The provider materializes this from trace data.
         indices: PolynomialId,
@@ -369,7 +383,7 @@ pub enum InputBinding {
     /// the eq weight of all cycles whose PC maps to bytecode index k.
     EqPushforward {
         poly: PolynomialId,
-        eq_challenges: Vec<usize>,
+        eq_challenges: Vec<ChallengeIdx>,
         indices: PolynomialId,
         output_size: usize,
     },
@@ -380,7 +394,7 @@ pub enum InputBinding {
     ScaleByChallenge {
         poly: PolynomialId,
         source: PolynomialId,
-        challenge: usize,
+        challenge: ChallengeIdx,
         power: u8,
     },
     /// Transpose a source polynomial from row-major to column-major layout.
@@ -409,17 +423,17 @@ pub enum InputBinding {
         /// Stage index (0-4) selects the Val formula.
         stage: u8,
         /// Challenge index for this stage's gamma base (one squeeze → N powers).
-        stage_gamma_base: usize,
+        stage_gamma_base: ChallengeIdx,
         /// Number of gamma powers needed for this stage's formula.
         stage_gamma_count: usize,
         /// Challenge index for the overall gamma (shared across all stages).
-        gamma_base: usize,
+        gamma_base: ChallengeIdx,
         /// For stages 0/2: power p such that gamma^p × k is added to Val.
         /// Stage 0: raf_gamma_power = Some(5), Stage 2: Some(4), others: None.
         raf_gamma_power: Option<u8>,
         /// For stages 3/4: challenge indices for the r_register eq point.
         /// Used to compute eq(register_index, r_register) per bytecode entry.
-        register_eq_challenges: Vec<usize>,
+        register_eq_challenges: Vec<ChallengeIdx>,
     },
 }
 
@@ -497,19 +511,22 @@ pub enum Op {
     SumcheckRound {
         kernel: usize,
         round: usize,
-        bind_challenge: Option<usize>,
+        bind_challenge: Option<ChallengeIdx>,
     },
     /// Initialize a batched sumcheck round: zero the combined accumulator and
     /// update per-instance claims from the previous round's evaluations.
     BatchRoundBegin {
-        batch: usize,
+        batch: BatchIdx,
         round: usize,
         max_evals: usize,
-        bind_challenge: Option<usize>,
+        bind_challenge: Option<ChallengeIdx>,
     },
     /// Inactive instance contribution: add `coeff * (claim / 2)` to all eval
     /// slots in the combined accumulator, then halve the stored claim.
-    BatchInactiveContribution { batch: usize, instance: usize },
+    BatchInactiveContribution {
+        batch: BatchIdx,
+        instance: InstanceIdx,
+    },
     /// Materialize a single kernel input buffer.
     ///
     /// Unconditionally builds/uploads the buffer described by `binding`.
@@ -533,37 +550,37 @@ pub enum Op {
     /// Build the outer eq table for a segmented phase and store it in
     /// the runtime's per-instance segmented state.
     MaterializeSegmentedOuterEq {
-        batch: usize,
-        instance: usize,
+        batch: BatchIdx,
+        instance: InstanceIdx,
         segmented: SegmentedConfig,
     },
     /// Bind the previous phase's kernel inputs at a challenge.
     /// Emitted at phase transitions (before resolving the new phase's inputs).
     InstanceBindPreviousPhase {
-        batch: usize,
-        instance: usize,
+        batch: BatchIdx,
+        instance: InstanceIdx,
         kernel: usize,
-        challenge: usize,
+        challenge: ChallengeIdx,
     },
     /// Capture a scalar from a fully-bound 1-element device buffer into a
     /// challenge slot. Bridges phase boundaries: an intermediate value computed
     /// in one phase becomes a challenge constant for the next phase's formula.
     CaptureScalar {
         poly: PolynomialId,
-        challenge: usize,
+        challenge: ChallengeIdx,
     },
     /// Standard dense reduce for one instance within a batched round.
     /// Stores the per-instance evaluations for later accumulation.
     InstanceReduce {
-        batch: usize,
-        instance: usize,
+        batch: BatchIdx,
+        instance: InstanceIdx,
         kernel: usize,
     },
     /// Segmented reduce for one instance (mixed-dimensional inputs).
     /// Uses the outer eq table to weight inner-dimension kernel evaluations.
     InstanceSegmentedReduce {
-        batch: usize,
-        instance: usize,
+        batch: BatchIdx,
+        instance: InstanceIdx,
         kernel: usize,
         round_within_phase: usize,
         segmented: SegmentedConfig,
@@ -571,43 +588,46 @@ pub enum Op {
     /// Bind kernel inputs for an active instance within a round.
     /// Emitted for rounds after the first within a phase.
     InstanceBind {
-        batch: usize,
-        instance: usize,
+        batch: BatchIdx,
+        instance: InstanceIdx,
         kernel: usize,
-        challenge: usize,
+        challenge: ChallengeIdx,
     },
     /// Extrapolate lower-degree instance evals to `max_evals` via interpolation,
     /// then accumulate `coeff * evals[i]` into the combined polynomial.
     BatchAccumulateInstance {
-        batch: usize,
-        instance: usize,
+        batch: BatchIdx,
+        instance: InstanceIdx,
         max_evals: usize,
         num_evals: usize,
     },
     /// Finalize a batched round: store the combined evaluations as
     /// `last_round_coeffs` for subsequent `AbsorbRoundPoly`.
-    BatchRoundFinalize { batch: usize },
+    BatchRoundFinalize { batch: BatchIdx },
 
     /// Initialize a stateful sumcheck instance (unified interface).
     ///
     /// The runtime passes `config` to the backend without inspecting it.
     UnifiedInstanceInit {
-        batch: usize,
-        instance: usize,
+        batch: BatchIdx,
+        instance: InstanceIdx,
         config: InstanceConfig,
     },
     /// Bind a challenge into a stateful instance (unified interface).
     UnifiedInstanceBind {
-        batch: usize,
-        instance: usize,
-        challenge: usize,
+        batch: BatchIdx,
+        instance: InstanceIdx,
+        challenge: ChallengeIdx,
     },
     /// Compute round polynomial evaluations from a stateful instance.
-    UnifiedInstanceReduce { batch: usize, instance: usize },
+    UnifiedInstanceReduce {
+        batch: BatchIdx,
+        instance: InstanceIdx,
+    },
     /// Finalize a stateful instance: extract buffers and/or evaluations.
     UnifiedInstanceFinalize {
-        batch: usize,
-        instance: usize,
+        batch: BatchIdx,
+        instance: InstanceIdx,
         /// Polynomial IDs for buffer outputs (inserted into device_buffers).
         output_buffers: Vec<PolynomialId>,
         /// Polynomial IDs for evaluation outputs (inserted into evaluations cache).
@@ -619,7 +639,7 @@ pub enum Op {
     /// Bind polynomial buffers at a challenge value (post-sumcheck survivors).
     Bind {
         polys: Vec<PolynomialId>,
-        challenge: usize,
+        challenge: ChallengeIdx,
         order: BindingOrder,
     },
     /// Project polynomial buffers by evaluating Lagrange basis at a challenge,
@@ -638,7 +658,7 @@ pub enum Op {
     /// and `scale = L_kernel(challenges[kernel_tau], r)` if `kernel_tau` is set (1 otherwise).
     LagrangeProject {
         polys: Vec<PolynomialId>,
-        challenge: usize,
+        challenge: ChallengeIdx,
         domain_size: usize,
         domain_start: i64,
         stride: usize,
@@ -646,7 +666,7 @@ pub enum Op {
         /// When set, all projected values are multiplied by the Lagrange kernel
         /// `L(challenges[kernel_tau], challenges[challenge])` over the projection domain.
         /// This folds the uniskip kernel factor into the projected buffers.
-        kernel_tau: Option<usize>,
+        kernel_tau: Option<ChallengeIdx>,
     },
     /// Interleave-duplicate polynomial buffers: `buf'[2i] = buf'[2i+1] = buf[i]`.
     ///
@@ -735,18 +755,18 @@ pub enum Op {
         /// Batch index and instance index within the batch.
         /// Used to initialize the runtime's per-instance claim for
         /// inactive-round constant contributions.
-        batch: usize,
-        instance: usize,
+        batch: BatchIdx,
+        instance: InstanceIdx,
         /// Pre-computed scale: `val * 2^inactive_scale_bits`. The compiler
         /// knows `max_rounds - inst.num_rounds()` at emit time.
         inactive_scale_bits: usize,
     },
     /// Squeeze a Fiat-Shamir challenge.
-    Squeeze { challenge: usize },
+    Squeeze { challenge: ChallengeIdx },
     /// Compute a derived challenge: `challenges[target] = challenges[base]^exponent`.
     ComputePower {
-        target: usize,
-        base: usize,
+        target: ChallengeIdx,
+        base: ChallengeIdx,
         exponent: u64,
     },
     /// Append a domain separator label (empty payload) to the transcript.
@@ -761,21 +781,21 @@ pub enum Op {
     /// includes a `eq(r_addr, 0)` factor.
     ScaleEval {
         poly: PolynomialId,
-        factor_challenges: Vec<usize>,
+        factor_challenges: Vec<ChallengeIdx>,
     },
     /// Accumulate a PCS opening claim with an explicit challenge-index point.
     /// Unlike `CollectOpeningClaim`, the point spans multiple stages
     /// (e.g. `[r_address_stage7, r_cycle_stage6]`).
     CollectOpeningClaimAt {
         poly: PolynomialId,
-        point_challenges: Vec<usize>,
+        point_challenges: Vec<ChallengeIdx>,
         /// When set, the polynomial's evaluation table is zero-padded to
         /// `2^committed_num_vars` elements for the RLC combination.
         committed_num_vars: Option<usize>,
     },
     /// Post-proof transcript binding: absorb opening point + joint eval.
     /// Calls `PCS::bind_opening_inputs(transcript, point, eval)`.
-    BindOpeningInputs { point_challenges: Vec<usize> },
+    BindOpeningInputs { point_challenges: Vec<ChallengeIdx> },
     /// Evaluate a preprocessed polynomial's MLE at a challenge-derived point.
     ///
     /// Materializes the polynomial from the provider, evaluates the MLE at
@@ -783,7 +803,7 @@ pub enum Op {
     /// `state.evaluations[store_as]`. Used for init_eval in RamValCheck.
     EvaluatePreprocessed {
         source: PolynomialId,
-        at_challenges: Vec<usize>,
+        at_challenges: Vec<ChallengeIdx>,
         store_as: PolynomialId,
     },
     /// Release a device buffer (GPU memory).
@@ -802,7 +822,7 @@ pub enum Op {
     /// so they are the right size when the next phase begins.
     BindCarryBuffers {
         polys: Vec<PolynomialId>,
-        challenge: usize,
+        challenge: ChallengeIdx,
         order: BindingOrder,
     },
 }
@@ -818,7 +838,7 @@ pub enum RoundPolyEncoding {
     Uniskip {
         domain_size: usize,
         domain_start: i64,
-        tau_challenge: usize,
+        tau_challenge: ChallengeIdx,
         zero_base: bool,
     },
 }
@@ -933,7 +953,7 @@ pub enum VerifierOp {
         tag: DomainSeparator,
     },
     /// Squeeze a Fiat-Shamir challenge.
-    Squeeze { challenge: usize },
+    Squeeze { challenge: ChallengeIdx },
     /// Append a domain separator label (empty payload) to the transcript.
     AppendDomainSeparator { tag: DomainSeparator },
     /// Absorb a round polynomial from the current stage proof into transcript.
@@ -961,7 +981,7 @@ pub enum VerifierOp {
         stage: usize,
         /// Challenge indices for per-instance batching coefficients.
         /// Empty for unbatched stages (scaling uses `2^offset` only).
-        batch_challenges: Vec<usize>,
+        batch_challenges: Vec<ChallengeIdx>,
         /// Transcript tag for absorbing input claims before squeezing
         /// batch coefficients. Required when `batch_challenges` is non-empty.
         claim_tag: Option<DomainSeparator>,
@@ -983,7 +1003,7 @@ pub enum VerifierOp {
         /// When non-empty, each instance's output is multiplied by its batch
         /// coefficient (stored at the given challenge index). Empty for
         /// unbatched sumchecks.
-        batch_challenges: Vec<usize>,
+        batch_challenges: Vec<ChallengeIdx>,
     },
     /// Accumulate a PCS opening claim for a committed polynomial.
     CollectOpeningClaim {
@@ -1079,16 +1099,16 @@ pub enum ClaimFactor {
     /// Value of evaluation `evals[poly_index]` (accumulated across stages).
     Eval(PolynomialId),
     /// Value of challenge `challenges[i]`.
-    Challenge(usize),
+    Challenge(ChallengeIdx),
     /// Single-variable eq between two challenge values:
     /// `eq(challenges[a], challenges[b]) = a*b + (1-a)(1-b)`.
-    EqChallengePair { a: usize, b: usize },
+    EqChallengePair { a: ChallengeIdx, b: ChallengeIdx },
     /// Multilinear eq polynomial evaluated at two points:
     /// `eq(r, s) = ∏ᵢ (rᵢ·sᵢ + (1−rᵢ)(1−sᵢ))`
     /// where `r` is formed from challenges at the given indices and
     /// `s` is the sumcheck challenge point from the given stage.
     EqEval {
-        challenges: Vec<usize>,
+        challenges: Vec<ChallengeIdx>,
         at_stage: VerifierStageIndex,
     },
     /// Lagrange kernel evaluation `L(τ, r)` over the uniform R1CS constraint
@@ -1098,9 +1118,9 @@ pub enum ClaimFactor {
     /// constraint domain and `L_k` is the k-th Lagrange basis polynomial.
     LagrangeKernel {
         /// Challenge index for the τ value (e.g. τ_high).
-        tau_challenge: usize,
+        tau_challenge: ChallengeIdx,
         /// Challenge index for the evaluation point (e.g. uniskip r0).
-        at_challenge: usize,
+        at_challenge: ChallengeIdx,
     },
     /// Uniform R1CS matrix–evaluation inner product at a Lagrange point.
     ///
@@ -1116,7 +1136,7 @@ pub enum ClaimFactor {
         /// Poly identifiers whose evaluations form the z-vector.
         eval_polys: Vec<PolynomialId>,
         /// Challenge index for the Lagrange interpolation point (r0).
-        at_challenge: usize,
+        at_challenge: ChallengeIdx,
         /// Number of constraints to evaluate (may be less than the full R1CS).
         num_constraints: usize,
         /// First integer in the Lagrange domain (symmetric convention: -(N-1)/2).
@@ -1129,7 +1149,7 @@ pub enum ClaimFactor {
     /// This is needed when an output check uses only a portion of the opening
     /// point (e.g. the cycle portion of a combined address×cycle point).
     EqEvalSlice {
-        challenges: Vec<usize>,
+        challenges: Vec<ChallengeIdx>,
         at_stage: VerifierStageIndex,
         /// Starting index within the (normalized) sumcheck point.
         offset: usize,
@@ -1140,15 +1160,15 @@ pub enum ClaimFactor {
     /// Generalizes [`LagrangeKernel`] to arbitrary domain sizes (e.g. size 3
     /// for product virtualization, size 10 for R1CS outer).
     LagrangeKernelDomain {
-        tau_challenge: usize,
-        at_challenge: usize,
+        tau_challenge: ChallengeIdx,
+        at_challenge: ChallengeIdx,
         domain_size: usize,
         domain_start: i64,
     },
     /// Single Lagrange basis polynomial `L_k(r)` at a challenge value `r`,
     /// over the domain `{domain_start, ..., domain_start + domain_size - 1}`.
     LagrangeWeight {
-        challenge: usize,
+        challenge: ChallengeIdx,
         domain_size: usize,
         domain_start: i64,
         basis_index: usize,
