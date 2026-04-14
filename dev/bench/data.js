@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776200994891,
+  "lastUpdate": 1776208106044,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -82030,6 +82030,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 862480,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "53157953+markosg04@users.noreply.github.com",
+            "name": "Markos",
+            "username": "markosg04"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3d5e4310b4a4ad8a93c74f587eaf8e836872e4fd",
+          "message": "feat(jolt-poly): add jolt-poly crate (#1367)\n\n* feat: add jolt-poly crate\n\n* fix(jolt-poly): satisfy workspace lint rules after rebase\n\n- Remove phantom crates/jolt-instructions workspace member (merged separately as #1366)\n- Replace #[allow] with #[expect] per allow_attributes = \"deny\"\n- Add #[expect(clippy::unwrap_used/expect_used)] for infallible math operations\n- Blanket-suppress unwrap/expect in test modules\n- Replace deprecated criterion::black_box with std::hint::black_box\n\n* fix(jolt-poly): gate parallel-only constants and lint attrs behind feature flag\n\nPAR_THRESHOLD and the unsafe_derive_deserialize expectation are only\nrelevant when the `parallel` feature is enabled. CI runs without it,\ncausing dead-code and unfulfilled-expectation errors.\n\nAlso removes README.md and REVIEW.md in favor of doc comments in lib.rs.\n\n* fix(jolt-poly): harden invariants, eliminate UB, and add deserialization validation\n\n- Replace raw pointer writes in EqPolynomial parallel path with\n  par_chunks_mut to eliminate Stacked Borrows UB\n- Promote RlcSource::new num_vars consistency check from debug_assert\n  to assert (silent wrong results in release)\n- Guard all bind methods against zero-variable polynomials to prevent\n  num_vars underflow (wraps to usize::MAX in release)\n- Add partial pivoting to Gaussian elimination to handle zero pivots\n  and fail explicitly on singular matrices\n- Change unsafe_allocate_zero_vec safety assertion from #[cfg(test)]\n  to #[cfg(debug_assertions)] so downstream debug builds verify it\n- Add serde try_from validation on Polynomial deserialization to\n  enforce power-of-two and num_vars consistency invariants\n- Clean up for_each_nonzero default impl: explicit flat index\n  computation, remove dead take(total) call\n\n* chore(jolt-poly): use workspace dependency for jolt-field, remove authors\n\n* chore: replace path deps with workspace deps in jolt-riscv and jolt-lookup-tables\n\n* refactor(jolt-poly): rename cpu_polynomial to dense, use unsafe_allocate_zero_vec\n\n- Rename cpu_polynomial.rs → dense.rs (no GPU counterpart exists)\n- Replace vec![F::zero(); n] with unsafe_allocate_zero_vec for large\n  power-of-two allocations in dense.rs, eq_plus_one.rs, lt.rs,\n  one_hot.rs, and source.rs (skips small degree-sized arrays in\n  univariate.rs and lagrange.rs where the overhead is negligible)\n\n* refactor(jolt-poly): merge source.rs into multilinear.rs, polish API\n\n- Merge source.rs into multilinear.rs so all three multilinear traits\n  (MultilinearEvaluation, MultilinearBinding, MultilinearPoly) and\n  RlcSource live in one module\n- Make EqPolynomial::evals_serial/evals_parallel pub(crate) — callers\n  should use evals() which auto-selects the strategy\n- Add Polynomial::into_evals() consuming accessor\n- Assert k <= 256 in OneHotPolynomial::new() to match u8 index type\n\n* fix(jolt-poly): address PR review comments\n\n- Assert linear polynomial is nonzero at x=1 before division in\n  from_linear_times_quadratic_with_hint\n- Fix Math::log_2 doc: returns ceil(log2) for non-powers, not floor\n\n* fix(ci): fix bench-crates baseline detection and bench all crates\n\nBaseline check used `[ -d target/criterion/main_run ]` but criterion\nstores baselines as `target/criterion/<bench>/main_run/`, so the check\nalways failed. Also: bench jolt-poly and jolt-transcript alongside\njolt-field, upsert PR comment instead of creating duplicates, and\nsuppress posting when no baseline exists.\n\n---------\n\nCo-authored-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>",
+          "timestamp": "2026-04-14T18:06:45-04:00",
+          "tree_id": "921e8756adf5d6b5a669bb34e1bc98abbaee9316",
+          "url": "https://github.com/a16z/jolt/commit/3d5e4310b4a4ad8a93c74f587eaf8e836872e4fd"
+        },
+        "date": 1776208104449,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.7995,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 864264,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.324,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 502840,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 496136,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 496668,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7133,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 500676,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.6105,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 498188,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.7805,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 496556,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.4454,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 235196,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4327,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 863288,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5621,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 502352,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4581,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 498676,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 16.7464,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 500828,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.7416,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 500712,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.4175,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1005636,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.0521,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 658372,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 82.0178,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2125288,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.481,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 500908,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5146,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 498536,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.0952,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 864264,
             "unit": "KB",
             "extra": ""
           }
