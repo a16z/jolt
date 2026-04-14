@@ -43,6 +43,7 @@ The motivation is twofold:
 |---|---|
 | `bind_parallel_low_to_high` | `DensePolynomial::bind_parallel` with LowToHigh binding (2^20 evaluations) |
 | `bind_parallel_high_to_low` | `DensePolynomial::bind_parallel` with HighToLow binding (2^20 evaluations) |
+| `naive_sort_time` | Wall-clock time of the `naive_sort` function in `jolt-eval/src/sort_targets.rs` |
 | `prover_time_fibonacci_100` | End-to-end prover time for `fibonacci(100)` |
 | `prover_time_sha2_chain_100` | End-to-end prover time for 100 iterations of SHA-256 chain |
 | `prover_time_secp256k1_ecdsa_verify` | End-to-end prover time for secp256k1 ECDSA signature verification |
@@ -58,6 +59,7 @@ Note: `prover_time_*` benchmarks are standalone Criterion bench targets (run via
 | `minimize_halstead_bugs` | halstead_bugs | Minimize estimated delivered bugs |
 | `minimize_bind_low_to_high` | bind_parallel_low_to_high | Minimize LowToHigh binding time |
 | `minimize_bind_high_to_low` | bind_parallel_high_to_low | Minimize HighToLow binding time |
+| `minimize_naive_sort_time` | naive_sort_time | Minimize naive sort wall-clock time (e2e test target) |
 
 Custom composite objective functions can be defined as `ObjectiveFunction` structs:
 
@@ -181,11 +183,15 @@ cargo run --release -p jolt-eval --bin optimize -- \
     --objective minimize_lloc --iterations 5 \
     --hint "Focus on reducing complexity in jolt-core/src/subprotocols/"
 
+# With a custom result branch name
+cargo run --release -p jolt-eval --bin optimize -- \
+    --objective minimize_lloc --branch my-optimization
+
 # Run the built-in e2e sort test
 cargo run --release -p jolt-eval --bin optimize -- --test --verbose
 ```
 
-Each iteration: the agent works in an isolated worktree, the diff is applied, objectives are re-measured (including Criterion benchmarks with `--save-baseline`), invariants are checked, and the change is committed or reverted. The optimizer creates a git branch `jolt-eval/optimize/{name}` and commits each accepted iteration.
+Each iteration: the agent works in an isolated worktree, the diff is applied, objectives are re-measured (including Criterion benchmarks with `--save-baseline`), invariants are checked, and the change is committed or reverted. The result is a git branch (`auto-optimize/{objective}-{timestamp}` by default, or a custom name via `--branch`) with one commit per accepted iteration.
 
 ### Defining a performance benchmark
 
