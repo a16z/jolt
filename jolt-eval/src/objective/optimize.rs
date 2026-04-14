@@ -322,7 +322,7 @@ fn build_optimize_prompt(
         prompt.push_str(input.name());
     }
     prompt.push_str(&format!(
-        "\nCurrent best score: {current_best_score:.6}\n\n"
+        "\nCurrent best score: {current_best_score:.8}\n\n"
     ));
     prompt.push_str(
         "The objective function is defined in `jolt-eval/src/objective/objective_fn/`. \
@@ -348,7 +348,7 @@ fn build_optimize_prompt(
     entries.sort_by_key(|(k, _)| k.name());
     for (key, val) in &entries {
         let units_str = key.units().map(|u| format!(" {u}")).unwrap_or_default();
-        prompt.push_str(&format!("- **{}**: {val:.6}{units_str}\n", key.name()));
+        prompt.push_str(&format!("- **{}**: {val:.8}{units_str}\n", key.name()));
     }
     prompt.push('\n');
 
@@ -389,12 +389,12 @@ fn build_optimize_prompt(
             };
             if let Some(ref path) = attempt.path {
                 prompt.push_str(&format!(
-                    "- **Iteration {}** — {status_label}, score={:.6}. Details: {path}/\n",
+                    "- **Iteration {}** — {status_label}, score={:.8}. Details: {path}/\n",
                     attempt.iteration, attempt.score,
                 ));
             } else {
                 prompt.push_str(&format!(
-                    "- **Iteration {}** — {status_label}, score={:.6}\n",
+                    "- **Iteration {}** — {status_label}, score={:.8}\n",
                     attempt.iteration, attempt.score,
                 ));
             }

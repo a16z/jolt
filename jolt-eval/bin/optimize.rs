@@ -249,18 +249,18 @@ fn main() -> eyre::Result<()> {
             "model={}, max_turns={}, iterations={}",
             cli.model, cli.max_turns, cli.iterations
         );
-        println!("Baseline sort time: {baseline_score:.6}s");
+        println!("Baseline sort time: {baseline_score:.8}s");
         println!();
         let agent = ClaudeCodeAgent::new(&cli.model, cli.max_turns);
         let result = auto_optimize(&agent, &mut env, objective, &config, &repo_dir);
-        println!("Best score: {:.6}s", result.best_score);
+        println!("Best score: {:.8}s", result.best_score);
         println!(
             "Improvement: {:.1}%",
             (1.0 - result.best_score / baseline_score) * 100.0
         );
         for (i, a) in result.attempts.iter().enumerate() {
             println!(
-                "  attempt {}: score={:.6}, invariants={}",
+                "  attempt {}: score={:.8}, invariants={}",
                 i + 1,
                 a.score,
                 a.invariants_passed
@@ -293,7 +293,7 @@ fn main() -> eyre::Result<()> {
     println!("=== Baseline ===");
     print_measurements(&baseline);
     let baseline_score = (objective.evaluate)(&baseline, &baseline);
-    println!("Objective: {} = {:.6}\n", objective.name, baseline_score);
+    println!("Objective: {} = {:.8}\n", objective.name, baseline_score);
 
     let agent = ClaudeCodeAgent::new(&cli.model, cli.max_turns);
     let config = OptimizeConfig {
@@ -311,7 +311,7 @@ fn main() -> eyre::Result<()> {
         result.attempts.len()
     );
     println!(
-        "Score: {:.6} -> {:.6}",
+        "Score: {:.8} -> {:.8}",
         result.baseline_score, result.best_score
     );
     println!("\nFinal measurements:");
