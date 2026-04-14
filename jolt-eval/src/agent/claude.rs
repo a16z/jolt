@@ -179,7 +179,16 @@ impl AgentHarness for ClaudeCodeAgent {
 
 /// Capture a unified diff of changes in a worktree relative to HEAD,
 /// filtered by the given [`DiffScope`].
+///
+/// Stages intent-to-add for untracked files first so that `git diff HEAD`
+/// includes newly created files (not just edits to tracked ones).
 fn capture_diff(worktree_dir: &Path, scope: &DiffScope) -> Option<String> {
+    // Mark untracked files with intent-to-add so `git diff HEAD` sees them.
+    let _ = Command::new("git")
+        .current_dir(worktree_dir)
+        .args(["add", "--intent-to-add", "."])
+        .status();
+
     let mut cmd = Command::new("git");
     cmd.current_dir(worktree_dir).args(["diff", "HEAD", "--"]);
     match scope {
