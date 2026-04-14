@@ -51,11 +51,10 @@ struct RealEnv {
     repo_dir: std::path::PathBuf,
     work_dir: std::path::PathBuf,
     base_commit: String,
-    bench_perf: bool,
 }
 
 impl RealEnv {
-    fn new(repo_dir: std::path::PathBuf, bench_perf: bool) -> eyre::Result<Self> {
+    fn new(repo_dir: std::path::PathBuf) -> eyre::Result<Self> {
         // Fail fast if the working tree is dirty.
         let status_out = Command::new("git")
             .current_dir(&repo_dir)
@@ -86,7 +85,6 @@ impl RealEnv {
             repo_dir,
             work_dir,
             base_commit,
-            bench_perf,
         })
     }
 }
@@ -103,36 +101,44 @@ impl OptimizeEnv for RealEnv {
         &self.work_dir
     }
 
-    fn measure(&mut self) -> HashMap<OptimizationObjective, f64> {
+    fn measure(
+        &mut self,
+        objectives: &[OptimizationObjective],
+    ) -> HashMap<OptimizationObjective, f64> {
         let mut results = HashMap::new();
 
         for sa in StaticAnalysisObjective::all() {
-            if let Ok(v) = sa.collect_measurement_in(&self.work_dir) {
-                results.insert(OptimizationObjective::StaticAnalysis(sa), v);
+            let obj = OptimizationObjective::StaticAnalysis(sa);
+            if objectives.contains(&obj) {
+                if let Ok(v) = sa.collect_measurement_in(&self.work_dir) {
+                    results.insert(obj, v);
+                }
             }
         }
 
-        if self.bench_perf {
-            for p in PerformanceObjective::all() {
-                let status = Command::new("cargo")
-                    .current_dir(&self.work_dir)
-                    .args([
-                        "bench",
-                        "-p",
-                        "jolt-eval",
-                        "--bench",
-                        p.name(),
-                        "--",
-                        "--quick",
-                        "--save-baseline",
-                        "optimize",
-                    ])
-                    .status();
+        for p in PerformanceObjective::all() {
+            let obj = OptimizationObjective::Performance(p);
+            if !objectives.contains(&obj) {
+                continue;
+            }
+            let status = Command::new("cargo")
+                .current_dir(&self.work_dir)
+                .args([
+                    "bench",
+                    "-p",
+                    "jolt-eval",
+                    "--bench",
+                    p.name(),
+                    "--",
+                    "--quick",
+                    "--save-baseline",
+                    "optimize",
+                ])
+                .status();
 
-                if matches!(status, Ok(s) if s.success()) {
-                    if let Some(secs) = read_criterion_estimate(p.name(), "optimize") {
-                        results.insert(OptimizationObjective::Performance(p), secs);
-                    }
+            if matches!(status, Ok(s) if s.success()) {
+                if let Some(secs) = read_criterion_estimate(p.name(), "optimize") {
+                    results.insert(obj, secs);
                 }
             }
         }
@@ -223,8 +229,8 @@ fn main() -> eyre::Result<()> {
         const SORT_TARGETS_PATH: &str = "jolt-eval/src/sort_targets.rs";
         let objective = ObjectiveFunction::by_name("minimize_naive_sort_time").unwrap();
         let repo_dir = std::env::current_dir()?;
-        let mut env = RealEnv::new(repo_dir.clone(), true)?;
-        let baseline = env.measure();
+        let mut env = RealEnv::new(repo_dir.clone())?;
+        let baseline = env.measure(objective.inputs);
         let baseline_score = (objective.evaluate)(&baseline, &baseline);
         let hint = cli.hint.unwrap_or_else(|| {
             format!(
@@ -280,11 +286,9 @@ fn main() -> eyre::Result<()> {
 
     let repo_dir = std::env::current_dir()?;
 
-    let bench_perf = objective.inputs.iter().any(|i| i.is_perf());
+    let mut env = RealEnv::new(repo_dir.clone())?;
 
-    let mut env = RealEnv::new(repo_dir.clone(), bench_perf)?;
-
-    let baseline = env.measure();
+    let baseline = env.measure(objective.inputs);
 
     println!("=== Baseline ===");
     print_measurements(&baseline);

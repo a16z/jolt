@@ -59,8 +59,11 @@ pub trait OptimizeEnv {
     /// For real runs this is typically an isolated git worktree.
     fn work_dir(&self) -> &Path;
 
-    /// Measure all raw objectives. Returns objective -> value.
-    fn measure(&mut self) -> HashMap<OptimizationObjective, f64>;
+    /// Measure the given objectives. Returns objective -> value.
+    fn measure(
+        &mut self,
+        objectives: &[OptimizationObjective],
+    ) -> HashMap<OptimizationObjective, f64>;
 
     /// Check all invariants. Returns `true` if they all pass.
     fn check_invariants(&mut self) -> bool;
@@ -178,7 +181,7 @@ pub fn auto_optimize<A: AgentHarness, E: OptimizeEnv>(
     config: &OptimizeConfig,
     repo_dir: &Path,
 ) -> OptimizeResult {
-    let baseline = env.measure();
+    let baseline = env.measure(objective.inputs);
     let baseline_score = (objective.evaluate)(&baseline, &baseline);
     persist_baseline(repo_dir, objective.name, &baseline, baseline_score);
     let mut best_score = baseline_score;
@@ -232,7 +235,7 @@ pub fn auto_optimize<A: AgentHarness, E: OptimizeEnv>(
             }
         };
 
-        let new_measurements = env.measure();
+        let new_measurements = env.measure(objective.inputs);
         let new_score = (objective.evaluate)(&new_measurements, &baseline);
         let invariants_passed = env.check_invariants();
 

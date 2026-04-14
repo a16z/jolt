@@ -679,7 +679,10 @@ impl OptimizeEnv for MockOptimizeEnv {
         Path::new("/tmp")
     }
 
-    fn measure(&mut self) -> HashMap<OptimizationObjective, f64> {
+    fn measure(
+        &mut self,
+        _objectives: &[OptimizationObjective],
+    ) -> HashMap<OptimizationObjective, f64> {
         if self.measurements.is_empty() {
             return HashMap::new();
         }

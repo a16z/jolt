@@ -193,9 +193,7 @@ pub use code_quality::cognitive::COGNITIVE_COMPLEXITY;
 pub use code_quality::halstead_bugs::HALSTEAD_BUGS;
 pub use code_quality::lloc::LLOC;
 pub use performance::binding::{BIND_HIGH_TO_LOW, BIND_LOW_TO_HIGH};
-pub const NAIVE_SORT_TIME: OptimizationObjective = OptimizationObjective::Performance(
-    PerformanceObjective::NaiveSortTime(performance::naive_sort::NaiveSortObjective),
-);
+pub use performance::naive_sort::NAIVE_SORT_TIME;
 
 impl OptimizationObjective {
     pub fn all() -> Vec<Self> {

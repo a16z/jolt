@@ -1,5 +1,8 @@
-use crate::objective::Objective;
+use crate::objective::{Objective, OptimizationObjective, PerformanceObjective};
 use crate::sort_targets::naive_sort;
+
+pub const NAIVE_SORT_TIME: OptimizationObjective =
+    OptimizationObjective::Performance(PerformanceObjective::NaiveSortTime(NaiveSortObjective));
 
 const SORT_DATA_SIZE: usize = 5000;
 
