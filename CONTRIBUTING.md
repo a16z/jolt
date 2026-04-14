@@ -45,6 +45,7 @@ Focus on **intent and evaluation**. Execution is downstream — the implementer 
 | `spec` | PR contains a spec file | GitHub Action (auto) |
 | `no-spec` | PR has no spec file | GitHub Action (auto) |
 | `implementation` | PR contains code alongside a spec | GitHub Action (auto) |
+| `claude-spec-review-request` | Triggers external Claude spec analysis | Maintainer (manual) |
 | `claude-spec-approved` | Claude's analysis found no ambiguities | Claude |
 
 ### Soft Guardrails
@@ -60,8 +61,9 @@ These Claude Code skills are available in this repo:
 | `/new-spec <name>` | Create a new spec file from the template |
 | `/analyze-spec` | Interactive Socratic analysis of a spec (local) |
 | `/implement-spec` | Autonomous implementation from an approved spec (local/cloud) |
+| `/ci-code-review` | Deep PR code review with parallel analysis agents |
 
-Analysis can also be triggered externally by adding the `claude-spec-review-request` label to a PR.
+Spec analysis can also be triggered externally by adding the `claude-spec-review-request` label to a PR.
 
 ## Development Setup
 
