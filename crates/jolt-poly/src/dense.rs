@@ -137,7 +137,7 @@ impl<F: Field> Polynomial<F> {
     /// Creates the zero polynomial with $2^n$ evaluations all equal to zero.
     pub fn zeros(num_vars: usize) -> Self {
         Self {
-            evals: vec![F::zero(); 1 << num_vars],
+            evals: crate::thread::unsafe_allocate_zero_vec(1 << num_vars),
             num_vars,
         }
     }

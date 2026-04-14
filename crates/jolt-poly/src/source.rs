@@ -63,7 +63,7 @@ pub trait MultilinearPoly<F: Field>: Send + Sync {
     /// Panics if `left.len() != 2^(num_vars - sigma)`.
     fn fold_rows(&self, left: &[F], sigma: usize) -> Vec<F> {
         let num_cols = 1usize << sigma;
-        let mut result = vec![F::zero(); num_cols];
+        let mut result = crate::thread::unsafe_allocate_zero_vec(num_cols);
         self.for_each_row(sigma, &mut |row_idx, row| {
             let l = left[row_idx];
             for (r, &val) in result.iter_mut().zip(row.iter()) {
@@ -128,7 +128,7 @@ impl<F: Field> MultilinearPoly<F> for Polynomial<F> {
             "left vector length must equal number of rows"
         );
 
-        let mut result = vec![F::zero(); num_cols];
+        let mut result = crate::thread::unsafe_allocate_zero_vec(num_cols);
         for (row_idx, row) in evals.chunks(num_cols).enumerate() {
             let l = left[row_idx];
             for (r, &val) in result.iter_mut().zip(row.iter()) {
@@ -167,7 +167,7 @@ impl<F: Field> MultilinearPoly<F> for [F] {
 
     fn fold_rows(&self, left: &[F], sigma: usize) -> Vec<F> {
         let num_cols = 1usize << sigma;
-        let mut result = vec![F::zero(); num_cols];
+        let mut result = crate::thread::unsafe_allocate_zero_vec(num_cols);
         for (row_idx, row) in self.chunks(num_cols).enumerate() {
             let l = left[row_idx];
             for (r, &val) in result.iter_mut().zip(row.iter()) {
@@ -284,7 +284,7 @@ impl<F: Field, S: MultilinearPoly<F>> MultilinearPoly<F> for RlcSource<F, S> {
             })
             .collect();
 
-        let mut combined = vec![F::zero(); num_cols];
+        let mut combined = crate::thread::unsafe_allocate_zero_vec(num_cols);
         for row_idx in 0..num_rows {
             combined.fill(F::zero());
             for (source_rows, &scalar) in all_rows.iter().zip(&self.scalars) {
@@ -303,7 +303,7 @@ impl<F: Field, S: MultilinearPoly<F>> MultilinearPoly<F> for RlcSource<F, S> {
     /// ever materialized — this is the key streaming win.
     fn fold_rows(&self, left: &[F], sigma: usize) -> Vec<F> {
         let num_cols = 1usize << sigma;
-        let mut result = vec![F::zero(); num_cols];
+        let mut result = crate::thread::unsafe_allocate_zero_vec(num_cols);
         for (source, &scalar) in self.sources.iter().zip(&self.scalars) {
             let contribution = source.fold_rows(left, sigma);
             for (r, &c) in result.iter_mut().zip(contribution.iter()) {

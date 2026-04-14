@@ -45,7 +45,7 @@
 
 mod binding;
 mod compressed_univariate;
-mod cpu_polynomial;
+mod dense;
 mod eq;
 mod eq_plus_one;
 mod identity;
@@ -60,7 +60,7 @@ mod univariate;
 
 pub use binding::BindingOrder;
 pub use compressed_univariate::CompressedPoly;
-pub use cpu_polynomial::Polynomial;
+pub use dense::Polynomial;
 pub use eq::EqPolynomial;
 pub use eq_plus_one::{EqPlusOnePolynomial, EqPlusOnePrefixSuffix};
 pub use identity::IdentityPolynomial;

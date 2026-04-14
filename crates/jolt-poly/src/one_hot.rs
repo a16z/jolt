@@ -104,7 +104,7 @@ impl<F: Field> MultilinearPoly<F> for OneHotPolynomial {
             }
         }
 
-        let mut buf = vec![F::zero(); num_cols];
+        let mut buf = crate::thread::unsafe_allocate_zero_vec(num_cols);
         for (row_idx, cols) in row_hot_cols.into_iter().enumerate() {
             buf.fill(F::zero());
             for c in cols {
@@ -118,7 +118,7 @@ impl<F: Field> MultilinearPoly<F> for OneHotPolynomial {
     /// nonzero positions, avoiding the O(T × K) dense iteration.
     fn fold_rows(&self, left: &[F], sigma: usize) -> Vec<F> {
         let num_cols = 1usize << sigma;
-        let mut result = vec![F::zero(); num_cols];
+        let mut result = crate::thread::unsafe_allocate_zero_vec(num_cols);
         for (cycle, &opt_col) in self.indices.iter().enumerate() {
             if let Some(col) = opt_col {
                 let flat = cycle * self.k + col as usize;
