@@ -6,8 +6,12 @@ use std::path::Path;
 
 /// Read the point estimate (mean, in seconds) from Criterion's output
 /// for a given benchmark and baseline name.
-pub fn read_criterion_estimate(bench_name: &str, baseline: &str) -> Option<f64> {
-    let path = Path::new("target/criterion")
+///
+/// `work_dir` is the directory where `cargo bench` was invoked — Criterion
+/// writes its output under `{work_dir}/target/criterion/`.
+pub fn read_criterion_estimate(work_dir: &Path, bench_name: &str, baseline: &str) -> Option<f64> {
+    let path = work_dir
+        .join("target/criterion")
         .join(bench_name)
         .join(baseline)
         .join("estimates.json");

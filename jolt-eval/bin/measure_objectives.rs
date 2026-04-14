@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use clap::Parser;
 
 use jolt_eval::objective::performance::read_criterion_estimate;
@@ -71,7 +73,7 @@ fn main() -> eyre::Result<()> {
                             continue;
                         }
                     }
-                    match read_criterion_estimate(p.name(), "new") {
+                    match read_criterion_estimate(Path::new("."), p.name(), "new") {
                         Some(secs) => print_row(p.name(), secs, "s"),
                         None => {
                             println!("{:<35} {:>15}", p.name(), "NO DATA");

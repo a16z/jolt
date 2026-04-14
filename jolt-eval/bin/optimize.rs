@@ -137,7 +137,7 @@ impl OptimizeEnv for RealEnv {
                 .status();
 
             if matches!(status, Ok(s) if s.success()) {
-                if let Some(secs) = read_criterion_estimate(p.name(), "optimize") {
+                if let Some(secs) = read_criterion_estimate(&self.work_dir, p.name(), "optimize") {
                     results.insert(obj, secs);
                 }
             }
