@@ -31,7 +31,7 @@ struct Cli {
     iterations: usize,
 
     /// AI model to use
-    #[arg(long, default_value = "claude-sonnet-4-latest")]
+    #[arg(long, default_value = "sonnet")]
     model: String,
 
     /// Maximum number of Claude agentic turns per iteration
