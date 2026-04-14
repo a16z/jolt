@@ -24,6 +24,9 @@ keywords = ["SNARK", "cryptography", "proofs"]
 
 [workspace]
 members = [
+  "crates/jolt-lookup-tables",
+  "crates/jolt-riscv",
+  "crates/jolt-riscv-derive",
   "crates/jolt-transcript",
   "crates/jolt-profiling",
   "crates/jolt-field",
@@ -235,11 +238,11 @@ ark-secp256r1 = { git = "https://github.com/a16z/arkworks-algebra", branch = "de
 ark-serialize-derive = { version = "0.5.0", default-features = false }
 ark-std = { version = "0.5.0", default-features = false }
 sha2 = "0.11"
-sha3 = "0.10.8"
-blake2 = "0.10"
+sha3 = "0.11"
+blake2 = "0.11.0-rc.5"
 blake3 = { version = "1.5.0" }
 light-poseidon = "0.4"
-digest = "0.10"
+digest = "0.11"
 jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 dory = { package = "dory-pcs", version = "0.3.0", features = [
   "backends",
@@ -248,7 +251,7 @@ dory = { package = "dory-pcs", version = "0.3.0", features = [
 ] }
 
 # Core Utilities
-clap = { version = "4.5.4", features = ["derive"] }
+clap = { version = "4.6.0", features = ["derive"] }
 eyre = "0.6.12"
 anyhow = "1.0.97"
 thiserror = "2.0.18"
@@ -316,7 +319,7 @@ proc-macro2 = "1.0.79"
 
 # Platform-specific
 fnv = { version = "1.0.7", default-features = false }
-object = { version = "0.38.1", features = [
+object = { version = "0.39.0", features = [
   "build_core",
   "elf",
 ], default-features = false }
@@ -327,7 +330,7 @@ getrandom_v03 = { version = "0.3.3", package = "getrandom", default-features = f
 
 # Build and Development
 ctor = { version = "0.6" }
-hex-literal = "0.4.1"
+hex-literal = "1.1.0"
 inventory = "0.3"
 hex = "0.4.3"
 spinners = { version = "4.2.0", default-features = false }

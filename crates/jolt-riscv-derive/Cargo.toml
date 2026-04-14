@@ -1,0 +1,18 @@
+[package]
+name = "jolt-riscv-derive"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Derive macros for jolt-riscv instruction flags"
+repository = "https://github.com/a16z/jolt"
+
+[lib]
+proc-macro = true
+
+[lints]
+workspace = true
+
+[dependencies]
+syn = { workspace = true }
+quote = { workspace = true }
+proc-macro2 = { workspace = true }

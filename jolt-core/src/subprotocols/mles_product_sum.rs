@@ -166,6 +166,43 @@ impl_mles_product_sum_evals_d!(compute_mles_product_sum_evals_d32, 32, eval_prod
 ///
 /// Intended for cases where per-product scalars are already absorbed into one
 /// factor of each product term (e.g. by pre-scaling the first MLE in each product).
+///
+/// Uses `eval_prod_4_accumulate` to defer Montgomery reductions across product
+/// terms: the final pointwise multiplies stay as `UnreducedProductAccum` and are
+/// reduced once after all `n_products` terms are summed.
+#[inline]
+pub fn compute_mles_product_sum_evals_sum_of_products_d4<F: JoltField>(
+    mles: &[RaPolynomial<u8, F>],
+    n_products: usize,
+    eq_poly: &GruenSplitEqPolynomial<F>,
+) -> Vec<F> {
+    debug_assert!(n_products > 0);
+    debug_assert_eq!(mles.len(), n_products * 4);
+
+    let current_scalar = eq_poly.get_current_scalar();
+
+    let sum_evals_arr: [F; 4] = eq_poly.par_fold_out_in_unreduced::<4>(&|g| {
+        let mut sums = [F::UnreducedProductAccum::zero(); 4];
+
+        for t in 0..n_products {
+            let base = t * 4;
+            let pairs: [(F, F); 4] = core::array::from_fn(|i| {
+                let p0 = mles[base + i].get_bound_coeff(2 * g);
+                let p1 = mles[base + i].get_bound_coeff(2 * g + 1);
+                (p0, p1)
+            });
+            eval_prod_4_accumulate::<F>(&pairs, &mut sums);
+        }
+
+        core::array::from_fn(|k| F::reduce_product_accum(sums[k]))
+    });
+
+    sum_evals_arr
+        .into_iter()
+        .map(|x| x * current_scalar)
+        .collect()
+}
+
 macro_rules! impl_mles_sum_of_products_evals_d {
     ($fn_name:ident, $d:expr, $eval_prod:ident) => {
         #[inline]
@@ -185,18 +222,15 @@ macro_rules! impl_mles_sum_of_products_evals_d {
                 for t in 0..n_products {
                     let base = t * $d;
 
-                    // Build pairs[(p0, p1); D] on the stack for this product term.
                     let pairs: [(F, F); $d] = core::array::from_fn(|i| {
                         let p0 = mles[base + i].get_bound_coeff(2 * g);
                         let p1 = mles[base + i].get_bound_coeff(2 * g + 1);
                         (p0, p1)
                     });
 
-                    // Evaluate ∏ p_i(x) on U_D.
                     let mut endpoints = [F::zero(); $d];
                     $eval_prod::<F>(&pairs, &mut endpoints);
 
-                    // Accumulate across product terms.
                     for k in 0..$d {
                         sums[k] += endpoints[k];
                     }
@@ -213,11 +247,6 @@ macro_rules! impl_mles_sum_of_products_evals_d {
     };
 }
 
-impl_mles_sum_of_products_evals_d!(
-    compute_mles_product_sum_evals_sum_of_products_d4,
-    4,
-    eval_prod_4_assign
-);
 impl_mles_sum_of_products_evals_d!(
     compute_mles_product_sum_evals_sum_of_products_d8,
     8,
@@ -344,9 +373,10 @@ pub fn eval_linear_prod_accumulate<F: JoltField>(
     match pairs.len() {
         2 => eval_prod_2_accumulate(pairs.try_into().unwrap(), sums),
         3 => eval_prod_3_accumulate(pairs.try_into().unwrap(), sums),
+        4 => eval_prod_4_accumulate(pairs.try_into().unwrap(), sums),
         5 => eval_prod_5_accumulate(pairs.try_into().unwrap(), sums),
         9 => eval_prod_9_accumulate(pairs.try_into().unwrap(), sums),
-        4 | 6 | 7 | 8 => product_eval_univariate_naive_accumulate(pairs, sums),
+        6..=8 => product_eval_univariate_naive_accumulate(pairs, sums),
         _ => product_eval_univariate_naive_accumulate(pairs, sums),
     }
 }
@@ -460,6 +490,24 @@ fn eval_prod_4_assign<F: JoltField>(p: &[(F, F); 4], outputs: &mut [F]) {
     outputs[1] = a2 * b2; // 2
     outputs[2] = a3 * b3; // 3
     outputs[3] = a_inf * b_inf; // ∞
+}
+
+/// Accumulate the product of 4 linear polynomials on `U_4 = [1, 2, 3, ∞]`
+/// into unreduced accumulators, avoiding intermediate Montgomery reductions.
+///
+/// Same computation as `eval_prod_4_assign` but the 4 final pointwise products
+/// are accumulated unreduced via `mul_to_product_accum`, saving one Barrett
+/// reduction per output lane per call when used in a sum-of-products loop.
+#[inline(always)]
+fn eval_prod_4_accumulate<F: JoltField>(p: &[(F, F); 4], outputs: &mut [F::UnreducedProductAccum]) {
+    let (a1, a2, a_inf) = eval_linear_prod_2_internal(p[0], p[1]);
+    let a3 = ex2(&[a1, a2], &a_inf);
+    let (b1, b2, b_inf) = eval_linear_prod_2_internal(p[2], p[3]);
+    let b3 = ex2(&[b1, b2], &b_inf);
+    outputs[0] += a1.mul_to_product_accum(b1); // 1
+    outputs[1] += a2.mul_to_product_accum(b2); // 2
+    outputs[2] += a3.mul_to_product_accum(b3); // 3
+    outputs[3] += a_inf.mul_to_product_accum(b_inf); // ∞
 }
 
 /// Evaluate the product of 5 linear polynomials on `U_5 = [1, 2, 3, 4, ∞]`.

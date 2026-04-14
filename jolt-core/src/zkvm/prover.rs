@@ -1651,22 +1651,38 @@ impl<
                     FinalOutputWitness::general(input_challenge_values, input_opening_values);
 
                 // Uni-skip config with its input constraint
-                let config = if stage_idx == 0 {
+                let mut config = if stage_idx == 0 {
                     StageConfig::new_uniskip(poly_degree, power_sums)
                         .with_input_constraint(input_constraint)
                 } else {
                     StageConfig::new_uniskip_chain(poly_degree, power_sums)
                         .with_input_constraint(input_constraint)
                 };
+
+                // Attach output constraint to link NextClaim to OC region
+                let final_output = if let Some(oc) = uniskip.output_constraint.clone() {
+                    let opening_values: Vec<F> = oc
+                        .required_openings
+                        .iter()
+                        .map(|id| self.opening_accumulator.get_opening(*id))
+                        .collect();
+                    let fout = FinalOutputWitness::general(
+                        uniskip.output_constraint_challenge_values.clone(),
+                        opening_values,
+                    );
+                    config = config.with_constraint(oc);
+                    Some(fout)
+                } else {
+                    None
+                };
+
                 stage_configs.push(config);
-                stage_witnesses.push(StageWitness::with_initial_input(
-                    vec![RoundWitness::with_claimed_sum(
-                        coeffs.clone(),
-                        challenge,
-                        claimed_sum,
-                    )],
-                    initial_input,
-                ));
+                let round = RoundWitness::with_claimed_sum(coeffs.clone(), challenge, claimed_sum);
+                let stage_witness = match final_output {
+                    Some(fout) => StageWitness::with_both(vec![round], initial_input, fout),
+                    None => StageWitness::with_initial_input(vec![round], initial_input),
+                };
+                stage_witnesses.push(stage_witness);
             } else {
                 // Stages 2-6: no uni-skip, push initial claim for regular rounds
                 initial_claims.push(zk_data.initial_claim);
@@ -1803,6 +1819,11 @@ impl<
                 // Uni-skip input constraint challenges
                 baked_input_challenges
                     .extend(uniskip.input_constraint_challenge_values.iter().cloned());
+                // Uni-skip output constraint challenges
+                if uniskip.output_constraint.is_some() {
+                    baked_output_challenges
+                        .extend(uniskip.output_constraint_challenge_values.iter().cloned());
+                }
                 // Uni-skip round challenge
                 baked_challenges.push(uniskip.challenge.into());
             }
@@ -1841,7 +1862,7 @@ impl<
 
         let baked = BakedPublicInputs {
             challenges: baked_challenges,
-            initial_claims: Vec::new(),
+            initial_claims: initial_claims.clone(),
             batching_coefficients: Vec::new(),
             output_constraint_challenges: baked_output_challenges,
             input_constraint_challenges: baked_input_challenges,
@@ -1869,6 +1890,7 @@ impl<
             &extra_constraints,
             &baked,
             oc_blocks.clone(),
+            self.opening_accumulator.aliases.clone(),
         );
         let r1cs = builder.build();
 
