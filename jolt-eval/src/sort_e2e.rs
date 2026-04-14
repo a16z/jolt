@@ -131,11 +131,15 @@ pub fn run_redteam_test(
             approach,
             input_json,
             error,
+            path,
         } => {
             println!("VIOLATION FOUND");
             println!("  Approach:  {approach}");
             println!("  Input:     {input_json}");
             println!("  Error:     {error}");
+            if let Some(p) = path {
+                println!("  Details:   {p}/");
+            }
         }
         RedTeamResult::NoViolation { attempts } => {
             println!("No violation found after {} attempts.", attempts.len());

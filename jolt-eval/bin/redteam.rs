@@ -107,12 +107,16 @@ fn main() -> eyre::Result<()> {
             approach,
             input_json,
             error,
+            path,
         } => {
             println!();
             println!("==== VIOLATION FOUND ====");
             println!("Approach:  {approach}");
             println!("Input:     {input_json}");
             println!("Error:     {error}");
+            if let Some(p) = path {
+                println!("Details:   {p}/");
+            }
             std::process::exit(1);
         }
         RedTeamResult::NoViolation { attempts } => {

@@ -10,6 +10,8 @@ pub enum RedTeamResult {
         approach: String,
         input_json: String,
         error: String,
+        /// Path to the persisted attempt directory (relative to repo root).
+        path: Option<String>,
     },
     /// All attempts failed to find a violation.
     NoViolation { attempts: Vec<FailedAttempt> },
@@ -80,18 +82,26 @@ pub fn auto_redteam<I: Invariant>(
                 Ok(r) => r,
                 Err(e) => {
                     tracing::warn!("Agent invocation failed: {e}");
+                    let failure = e.to_string();
                     let path = persist_redteam_attempt(
                         repo_dir,
                         invariant.name(),
                         iter,
-                        "Agent invocation failed",
-                        &e.to_string(),
+                        &AttemptRecord {
+                            prompt: &prompt,
+                            raw_response: "",
+                            parsed_envelope: None,
+                            counterexample_json: None,
+                            diff: None,
+                            checker_result: &failure,
+                            outcome: "agent_error",
+                        },
                     );
                     failed_attempts.push(FailedAttempt {
                         description: format!("Iteration {iter}"),
                         approach: "Agent invocation failed".to_string(),
                         approach_summary: "Agent invocation failed".to_string(),
-                        failure_reason: e.to_string(),
+                        failure_reason: failure,
                         path,
                     });
                     continue;
@@ -122,8 +132,15 @@ pub fn auto_redteam<I: Invariant>(
                             repo_dir,
                             invariant.name(),
                             iter,
-                            &response.text,
-                            &failure,
+                            &AttemptRecord {
+                                prompt: &prompt,
+                                raw_response: &response.text,
+                                parsed_envelope: None,
+                                counterexample_json: None,
+                                diff: response.diff.as_deref(),
+                                checker_result: &failure,
+                                outcome: "parse_error",
+                            },
                         );
                         failed_attempts.push(FailedAttempt {
                             description: format!("Iteration {iter}"),
@@ -142,8 +159,20 @@ pub fn auto_redteam<I: Invariant>(
             Err(e) => {
                 tracing::info!("Agent produced unparsable input: {e}");
                 let failure = format!("Could not deserialize response JSON into Input type: {e}");
-                let path =
-                    persist_redteam_attempt(repo_dir, invariant.name(), iter, &analysis, &failure);
+                let path = persist_redteam_attempt(
+                    repo_dir,
+                    invariant.name(),
+                    iter,
+                    &AttemptRecord {
+                        prompt: &prompt,
+                        raw_response: &response.text,
+                        parsed_envelope: Some(&analysis),
+                        counterexample_json: Some(&counterexample_json),
+                        diff: response.diff.as_deref(),
+                        checker_result: &failure,
+                        outcome: "deserialize_error",
+                    },
+                );
                 failed_attempts.push(FailedAttempt {
                     description: format!("Iteration {iter}"),
                     approach: analysis,
@@ -159,12 +188,29 @@ pub fn auto_redteam<I: Invariant>(
         // (e.g. SoundnessInvariant uses it to populate the patch field).
         let input = invariant.enrich_input(input, response.diff.as_deref());
 
+        // Serialize the enriched input so we persist exactly what was checked.
+        let normalized_input =
+            serde_json::to_string_pretty(&input).unwrap_or_else(|_| counterexample_json.clone());
+
         match invariant.check(&setup, input) {
             Ok(()) => {
-                let failure =
-                    format!("Candidate input did not violate the invariant: {counterexample_json}");
-                let path =
-                    persist_redteam_attempt(repo_dir, invariant.name(), iter, &analysis, &failure);
+                let failure = format!(
+                    "Candidate input did not violate the invariant: {counterexample_json}"
+                );
+                let path = persist_redteam_attempt(
+                    repo_dir,
+                    invariant.name(),
+                    iter,
+                    &AttemptRecord {
+                        prompt: &prompt,
+                        raw_response: &response.text,
+                        parsed_envelope: Some(&analysis),
+                        counterexample_json: Some(&normalized_input),
+                        diff: response.diff.as_deref(),
+                        checker_result: "pass (no violation)",
+                        outcome: "no_violation",
+                    },
+                );
                 failed_attempts.push(FailedAttempt {
                     description: format!("Iteration {iter}"),
                     approach: analysis,
@@ -175,16 +221,44 @@ pub fn auto_redteam<I: Invariant>(
             }
             Err(CheckError::Violation(violation)) => {
                 tracing::info!("Counterexample CONFIRMED: {violation}");
+                let error = violation.to_string();
+                let path = persist_redteam_attempt(
+                    repo_dir,
+                    invariant.name(),
+                    iter,
+                    &AttemptRecord {
+                        prompt: &prompt,
+                        raw_response: &response.text,
+                        parsed_envelope: Some(&analysis),
+                        counterexample_json: Some(&normalized_input),
+                        diff: response.diff.as_deref(),
+                        checker_result: &format!("VIOLATION: {error}"),
+                        outcome: "violation",
+                    },
+                );
                 return RedTeamResult::Violation {
                     approach: analysis,
                     input_json: counterexample_json,
-                    error: violation.to_string(),
+                    error,
+                    path,
                 };
             }
             Err(CheckError::InvalidInput(reason)) => {
                 let failure = format!("Invalid input: {reason}");
-                let path =
-                    persist_redteam_attempt(repo_dir, invariant.name(), iter, &analysis, &failure);
+                let path = persist_redteam_attempt(
+                    repo_dir,
+                    invariant.name(),
+                    iter,
+                    &AttemptRecord {
+                        prompt: &prompt,
+                        raw_response: &response.text,
+                        parsed_envelope: Some(&analysis),
+                        counterexample_json: Some(&normalized_input),
+                        diff: response.diff.as_deref(),
+                        checker_result: &failure,
+                        outcome: "invalid_input",
+                    },
+                );
                 failed_attempts.push(FailedAttempt {
                     description: format!("Iteration {iter}"),
                     approach: analysis,
@@ -201,21 +275,42 @@ pub fn auto_redteam<I: Invariant>(
     }
 }
 
-/// Persist a red-team attempt's approach to disk and return the relative path.
+/// All available data for a single red-team attempt, used for persistence.
+struct AttemptRecord<'a> {
+    prompt: &'a str,
+    raw_response: &'a str,
+    parsed_envelope: Option<&'a str>,
+    counterexample_json: Option<&'a str>,
+    diff: Option<&'a str>,
+    checker_result: &'a str,
+    outcome: &'a str,
+}
+
+/// Persist a red-team attempt to disk and return the relative path.
 fn persist_redteam_attempt(
     repo_dir: &Path,
     invariant_name: &str,
     iteration: usize,
-    approach: &str,
-    failure_reason: &str,
+    record: &AttemptRecord<'_>,
 ) -> Option<String> {
     let dir = repo_dir
         .join("jolt-eval/redteam-history")
         .join(invariant_name)
         .join(format!("attempt-{iteration}"));
     std::fs::create_dir_all(&dir).ok()?;
-    std::fs::write(dir.join("approach.md"), approach).ok()?;
-    std::fs::write(dir.join("failure_reason.txt"), failure_reason).ok()?;
+    std::fs::write(dir.join("prompt.md"), record.prompt).ok()?;
+    std::fs::write(dir.join("raw_response.txt"), record.raw_response).ok()?;
+    if let Some(env) = record.parsed_envelope {
+        std::fs::write(dir.join("parsed_envelope.json"), env).ok()?;
+    }
+    if let Some(ce) = record.counterexample_json {
+        std::fs::write(dir.join("counterexample.json"), ce).ok()?;
+    }
+    if let Some(d) = record.diff {
+        std::fs::write(dir.join("diff.patch"), d).ok()?;
+    }
+    std::fs::write(dir.join("checker_result.txt"), record.checker_result).ok()?;
+    std::fs::write(dir.join("outcome.txt"), record.outcome).ok()?;
     Some(
         dir.strip_prefix(repo_dir)
             .ok()?
