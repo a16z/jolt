@@ -16,7 +16,7 @@ pub fn drop_in_background_thread<T: Send + 'static>(data: T) {
 /// This is verified in debug/test builds via an assertion.
 #[expect(clippy::unwrap_used)]
 pub fn unsafe_allocate_zero_vec<T: Sized + Zero>(size: usize) -> Vec<T> {
-    #[cfg(test)]
+    #[cfg(debug_assertions)]
     {
         // SAFETY: We read the zero representation as raw bytes to verify the
         // all-zeros invariant that `alloc_zeroed` relies on.

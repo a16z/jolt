@@ -24,10 +24,48 @@ const PAR_THRESHOLD: usize = 1024;
 /// - When `T` is a small type (`u8`, `bool`, `i64`, etc.): compact storage with
 ///   [`bind_to_field`](Polynomial::bind_to_field) for on-demand field promotion.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(serialize = "T: Serialize", deserialize = "T: for<'a> Deserialize<'a>",))]
+#[serde(
+    bound(serialize = "T: Serialize", deserialize = "T: for<'a> Deserialize<'a>"),
+    try_from = "PolynomialRaw<T>"
+)]
 pub struct Polynomial<T> {
     evals: Vec<T>,
     num_vars: usize,
+}
+
+/// Wire-format helper for validated deserialization.
+#[derive(Deserialize)]
+#[serde(bound(deserialize = "T: for<'a> Deserialize<'a>"))]
+struct PolynomialRaw<T> {
+    evals: Vec<T>,
+    num_vars: usize,
+}
+
+impl<T> TryFrom<PolynomialRaw<T>> for Polynomial<T> {
+    type Error = String;
+
+    fn try_from(raw: PolynomialRaw<T>) -> Result<Self, Self::Error> {
+        let len = raw.evals.len();
+        let expected = if len == 0 {
+            0
+        } else if len.is_power_of_two() {
+            len.trailing_zeros() as usize
+        } else {
+            return Err(format!(
+                "evaluation count must be a power of two, got {len}"
+            ));
+        };
+        if raw.num_vars != expected {
+            return Err(format!(
+                "num_vars mismatch: expected {expected}, got {}",
+                raw.num_vars
+            ));
+        }
+        Ok(Self {
+            evals: raw.evals,
+            num_vars: raw.num_vars,
+        })
+    }
 }
 
 impl<T> Polynomial<T> {
@@ -80,6 +118,7 @@ impl<T: Copy> Polynomial<T> {
     /// When `T = F`, the `From` conversion is the identity and the compiler
     /// eliminates it, making this equivalent to an allocating bind.
     pub fn bind_to_field<F: Field + From<T>>(&self, scalar: F) -> Polynomial<F> {
+        assert!(self.num_vars > 0, "cannot bind a zero-variable polynomial");
         let half = self.evals.len() / 2;
         let mut result = Vec::with_capacity(half);
         for i in 0..half {
@@ -138,6 +177,7 @@ impl<F: Field> Polynomial<F> {
 
     #[inline]
     fn bind_high_to_low(&mut self, scalar: F) {
+        assert!(self.num_vars > 0, "cannot bind a zero-variable polynomial");
         let half = self.evals.len() / 2;
 
         #[cfg(feature = "parallel")]
@@ -172,6 +212,7 @@ impl<F: Field> Polynomial<F> {
 
     #[inline]
     fn bind_low_to_high(&mut self, scalar: F) {
+        assert!(self.num_vars > 0, "cannot bind a zero-variable polynomial");
         let half = self.evals.len() / 2;
 
         #[cfg(feature = "parallel")]

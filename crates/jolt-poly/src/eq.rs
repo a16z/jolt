@@ -19,7 +19,6 @@ use crate::thread::unsafe_allocate_zero_vec;
 /// $$f(r) = \sum_{x \in \{0,1\}^n} f(x) \cdot \widetilde{eq}(x, r)$$
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(bound = "")]
-#[cfg_attr(feature = "parallel", expect(clippy::unsafe_derive_deserialize))]
 pub struct EqPolynomial<F: Field> {
     point: Vec<F>,
 }
@@ -67,15 +66,13 @@ impl<F: Field> EqPolynomial<F> {
                     use rayon::prelude::*;
                     // Snapshot the previous layer so we can scatter into interleaved positions.
                     let prev: Vec<F> = table[..prev_len].to_vec();
-                    prev.par_iter().enumerate().for_each(|(j, &base)| {
-                        let ptr = table.as_ptr().cast_mut();
-                        // SAFETY: each j maps to disjoint indices 2*j and 2*j+1,
-                        // and 2*j+1 < 2*prev_len = table.len().
-                        unsafe {
-                            ptr.add(2 * j).write(base * one_minus_r_i);
-                            ptr.add(2 * j + 1).write(base * r_i);
-                        }
-                    });
+                    let dest = &mut table[..prev_len * 2];
+                    dest.par_chunks_mut(2)
+                        .zip(prev.par_iter())
+                        .for_each(|(pair, &base)| {
+                            pair[0] = base * one_minus_r_i;
+                            pair[1] = base * r_i;
+                        });
                 } else {
                     for j in (0..prev_len).rev() {
                         let base = table[j];

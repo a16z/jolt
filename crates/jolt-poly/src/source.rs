@@ -88,11 +88,14 @@ pub trait MultilinearPoly<F: Field>: Send + Sync {
     /// sparse types (e.g., [`OneHotPolynomial`](crate::OneHotPolynomial)) yield only O(T) entries.
     fn for_each_nonzero(&self, f: &mut dyn FnMut(usize, F)) {
         let n = self.num_vars();
-        let total = 1usize << n;
-        self.for_each_row(n, &mut |_, row| {
-            for (i, &val) in row.iter().take(total).enumerate() {
+        let num_cols = 1usize << n;
+        // sigma = n: single row containing the full evaluation table,
+        // so row_idx is always 0 and column index equals flat index.
+        self.for_each_row(n, &mut |row_idx, row| {
+            let base = row_idx * num_cols;
+            for (col, &val) in row.iter().enumerate() {
                 if !val.is_zero() {
-                    f(i, val);
+                    f(base + col, val);
                 }
             }
         });
@@ -220,7 +223,7 @@ impl<F: Field, S: MultilinearPoly<F>> RlcSource<F, S> {
     pub fn new(sources: Vec<S>, scalars: Vec<F>) -> Self {
         assert_eq!(sources.len(), scalars.len());
         let num_vars = sources.first().map_or(0, |s| s.num_vars());
-        debug_assert!(
+        assert!(
             sources.iter().all(|s| s.num_vars() == num_vars),
             "all sources must have the same num_vars"
         );

@@ -467,36 +467,50 @@ fn gaussian_elimination_vandermonde<F: Field>(evals: &[F]) -> Vec<F> {
     gaussian_elimination_augmented(&mut matrix)
 }
 
-/// Gaussian elimination on an augmented matrix `[A | b]` where `A` is `n × n`.
+/// Gaussian elimination with partial pivoting on an augmented matrix `[A | b]`
+/// where `A` is `n × n`.
 ///
 /// Returns the solution vector `x` such that `A x = b`.
+///
+/// # Panics
+///
+/// Panics if the matrix is singular (no nonzero pivot in some column).
+#[expect(clippy::expect_used)]
 fn gaussian_elimination_augmented<F: Field>(matrix: &mut [Vec<F>]) -> Vec<F> {
     let size = matrix.len();
     debug_assert_eq!(size, matrix[0].len() - 1);
 
-    // Forward elimination (row echelon form)
+    // Forward elimination with partial pivoting
     for i in 0..size.saturating_sub(1) {
-        for j in i..size - 1 {
-            if matrix[i][i] != F::zero() {
-                let factor = matrix[j + 1][i] / matrix[i][i];
-                #[expect(clippy::needless_range_loop)]
-                for k in i..=size {
-                    let tmp = matrix[i][k];
-                    matrix[j + 1][k] -= factor * tmp;
-                }
+        // Find a row with a nonzero pivot in column i
+        let pivot_row = (i..size)
+            .find(|&r| matrix[r][i] != F::zero())
+            .expect("singular matrix in gaussian_elimination_augmented");
+        if pivot_row != i {
+            matrix.swap(i, pivot_row);
+        }
+
+        for j in (i + 1)..size {
+            let factor = matrix[j][i] / matrix[i][i];
+            #[expect(clippy::needless_range_loop)]
+            for k in i..=size {
+                let tmp = matrix[i][k];
+                matrix[j][k] -= factor * tmp;
             }
         }
     }
 
     // Back substitution
     for i in (1..size).rev() {
-        if matrix[i][i] != F::zero() {
-            for j in (1..=i).rev() {
-                let factor = matrix[j - 1][i] / matrix[i][i];
-                for k in (0..=size).rev() {
-                    let tmp = matrix[i][k];
-                    matrix[j - 1][k] -= factor * tmp;
-                }
+        assert!(
+            matrix[i][i] != F::zero(),
+            "singular matrix in gaussian_elimination_augmented"
+        );
+        for j in (0..i).rev() {
+            let factor = matrix[j][i] / matrix[i][i];
+            for k in (0..=size).rev() {
+                let tmp = matrix[i][k];
+                matrix[j][k] -= factor * tmp;
             }
         }
     }
