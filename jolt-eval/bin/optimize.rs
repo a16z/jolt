@@ -5,7 +5,6 @@ use std::process::Command;
 use clap::Parser;
 
 use jolt_eval::agent::ClaudeCodeAgent;
-use jolt_eval::invariant::JoltInvariants;
 use jolt_eval::objective::objective_fn::ObjectiveFunction;
 use jolt_eval::objective::optimize::{auto_optimize, OptimizeConfig, OptimizeEnv};
 use jolt_eval::objective::performance::read_criterion_estimate;
@@ -52,16 +51,11 @@ struct RealEnv {
     repo_dir: std::path::PathBuf,
     work_dir: std::path::PathBuf,
     base_commit: String,
-    invariants: Vec<JoltInvariants>,
     bench_perf: bool,
 }
 
 impl RealEnv {
-    fn new(
-        repo_dir: std::path::PathBuf,
-        invariants: Vec<JoltInvariants>,
-        bench_perf: bool,
-    ) -> eyre::Result<Self> {
+    fn new(repo_dir: std::path::PathBuf, bench_perf: bool) -> eyre::Result<Self> {
         // Fail fast if the working tree is dirty.
         let status_out = Command::new("git")
             .current_dir(&repo_dir)
@@ -92,7 +86,6 @@ impl RealEnv {
             repo_dir,
             work_dir,
             base_commit,
-            invariants,
             bench_perf,
         })
     }
@@ -148,10 +141,22 @@ impl OptimizeEnv for RealEnv {
     }
 
     fn check_invariants(&mut self) -> bool {
-        self.invariants.iter().all(|inv| {
-            let results = inv.run_checks(0);
-            results.iter().all(|r| r.is_ok())
-        })
+        // Run invariant tests as a subprocess in the worktree so they are
+        // compiled against the *modified* code, not the binary we're
+        // running in.
+        let status = Command::new("cargo")
+            .current_dir(&self.work_dir)
+            .args([
+                "nextest",
+                "run",
+                "-p",
+                "jolt-eval",
+                "--cargo-quiet",
+                "-E",
+                "test(/_synthesized::/)",
+            ])
+            .status();
+        matches!(status, Ok(s) if s.success())
     }
 
     fn apply_diff(&mut self, diff: &str) {
@@ -218,8 +223,7 @@ fn main() -> eyre::Result<()> {
         const SORT_TARGETS_PATH: &str = "jolt-eval/src/sort_targets.rs";
         let objective = ObjectiveFunction::by_name("minimize_naive_sort_time").unwrap();
         let repo_dir = std::env::current_dir()?;
-        let invariants = JoltInvariants::all();
-        let mut env = RealEnv::new(repo_dir.clone(), invariants, true)?;
+        let mut env = RealEnv::new(repo_dir.clone(), true)?;
         let baseline = env.measure();
         let baseline_score = (objective.evaluate)(&baseline, &baseline);
         let hint = cli.hint.unwrap_or_else(|| {
@@ -277,9 +281,8 @@ fn main() -> eyre::Result<()> {
     let repo_dir = std::env::current_dir()?;
 
     let bench_perf = objective.inputs.iter().any(|i| i.is_perf());
-    let invariants = JoltInvariants::all();
 
-    let mut env = RealEnv::new(repo_dir.clone(), invariants, bench_perf)?;
+    let mut env = RealEnv::new(repo_dir.clone(), bench_perf)?;
 
     let baseline = env.measure();
 
