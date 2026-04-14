@@ -118,41 +118,41 @@ pub fn auto_redteam<I: Invariant>(
             eprintln!("──────────────────────────");
         }
 
-        let (analysis, approach_summary, counterexample_json) =
-            match parse_envelope(&response.text) {
-                Some(triple) => triple,
-                None => match super::super::extract_json(&response.text) {
-                    Some(json) => match parse_envelope(&json) {
-                        Some(triple) => triple,
-                        None => (response.text.clone(), String::new(), json),
-                    },
-                    None => {
-                        let failure = "Agent response did not contain valid JSON".to_string();
-                        let path = persist_redteam_attempt(
-                            repo_dir,
-                            invariant.name(),
-                            iter,
-                            &AttemptRecord {
-                                prompt: &prompt,
-                                raw_response: &response.text,
-                                parsed_envelope: None,
-                                counterexample_json: None,
-                                diff: response.diff.as_deref(),
-                                checker_result: &failure,
-                                outcome: "parse_error",
-                            },
-                        );
-                        failed_attempts.push(FailedAttempt {
-                            description: format!("Iteration {iter}"),
-                            approach: response.text,
-                            approach_summary: String::new(),
-                            failure_reason: failure,
-                            path,
-                        });
-                        continue;
-                    }
+        let (analysis, approach_summary, counterexample_json) = match parse_envelope(&response.text)
+        {
+            Some(triple) => triple,
+            None => match super::super::extract_json(&response.text) {
+                Some(json) => match parse_envelope(&json) {
+                    Some(triple) => triple,
+                    None => (response.text.clone(), String::new(), json),
                 },
-            };
+                None => {
+                    let failure = "Agent response did not contain valid JSON".to_string();
+                    let path = persist_redteam_attempt(
+                        repo_dir,
+                        invariant.name(),
+                        iter,
+                        &AttemptRecord {
+                            prompt: &prompt,
+                            raw_response: &response.text,
+                            parsed_envelope: None,
+                            counterexample_json: None,
+                            diff: response.diff.as_deref(),
+                            checker_result: &failure,
+                            outcome: "parse_error",
+                        },
+                    );
+                    failed_attempts.push(FailedAttempt {
+                        description: format!("Iteration {iter}"),
+                        approach: response.text,
+                        approach_summary: String::new(),
+                        failure_reason: failure,
+                        path,
+                    });
+                    continue;
+                }
+            },
+        };
 
         let input: I::Input = match serde_json::from_str(&counterexample_json) {
             Ok(v) => v,
@@ -194,9 +194,8 @@ pub fn auto_redteam<I: Invariant>(
 
         match invariant.check(&setup, input) {
             Ok(()) => {
-                let failure = format!(
-                    "Candidate input did not violate the invariant: {counterexample_json}"
-                );
+                let failure =
+                    format!("Candidate input did not violate the invariant: {counterexample_json}");
                 let path = persist_redteam_attempt(
                     repo_dir,
                     invariant.name(),
