@@ -13,6 +13,7 @@ use crate::eq::EqPolynomial;
 /// Below this threshold the overhead of Rayon work-stealing exceeds the
 /// benefit. 1024 field elements is roughly one L1 cache line's worth of
 /// useful work per core, keeping synchronization cost negligible.
+#[cfg(feature = "parallel")]
 const PAR_THRESHOLD: usize = 1024;
 
 /// Multilinear polynomial stored as evaluations over the Boolean hypercube $\{0,1\}^n$.

@@ -19,12 +19,13 @@ use crate::thread::unsafe_allocate_zero_vec;
 /// $$f(r) = \sum_{x \in \{0,1\}^n} f(x) \cdot \widetilde{eq}(x, r)$$
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(bound = "")]
-#[expect(clippy::unsafe_derive_deserialize)]
+#[cfg_attr(feature = "parallel", expect(clippy::unsafe_derive_deserialize))]
 pub struct EqPolynomial<F: Field> {
     point: Vec<F>,
 }
 
 /// Parallelism threshold: tables larger than this are built with rayon.
+#[cfg(feature = "parallel")]
 const PAR_THRESHOLD: usize = 1024;
 
 impl<F: Field> EqPolynomial<F> {
