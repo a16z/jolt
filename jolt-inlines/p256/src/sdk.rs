@@ -235,7 +235,7 @@ impl<C: P256FieldConfig> P256Field<C> {
     /// Creates a new element from a `[u64; 4]` array (unchecked).
     /// The array is assumed to contain a value in the range `[0, modulus)`.
     #[inline(always)]
-    pub fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self {
+    pub(crate) fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self {
         Self {
             e: *arr,
             _phantom: PhantomData,
@@ -817,16 +817,35 @@ fn shamir_4x128(scalars: [u128; 4], points: [P256Point; 4]) -> P256Point {
 ///
 /// This halves the doublings: 128 instead of 256, achieving ~1.7x speedup.
 ///
-/// Security: it is the responsibility of the caller to ensure
-/// 1. z, r, and s are well formed
-/// 2. q is a valid point on the curve
-///
-/// Note that these checks are automatically performed by the from_u64_arr constructors.
+/// All inputs are validated internally — no caller-side validation is required.
 #[inline(always)]
 pub fn ecdsa_verify(z: P256Fr, r: P256Fr, s: P256Fr, q: P256Point) -> Result<(), P256Error> {
+    // Validate scalar field ranges: z, r, s must be in [0, n)
+    if is_non_canonical(&z.e(), &P256_ORDER) {
+        return Err(P256Error::InvalidFrElement);
+    }
+    if is_non_canonical(&r.e(), &P256_ORDER) {
+        return Err(P256Error::InvalidFrElement);
+    }
+    if is_non_canonical(&s.e(), &P256_ORDER) {
+        return Err(P256Error::InvalidFrElement);
+    }
+    // Validate base field ranges: q.x, q.y must be in [0, p)
+    if is_non_canonical(&q.x().e(), &P256_MODULUS) {
+        return Err(P256Error::InvalidFqElement);
+    }
+    if is_non_canonical(&q.y().e(), &P256_MODULUS) {
+        return Err(P256Error::InvalidFqElement);
+    }
+    // Validate q is on the curve
+    if !q.is_on_curve() {
+        return Err(P256Error::NotOnCurve);
+    }
+    // Check that q is not infinity
     if q.is_infinity() {
         return Err(P256Error::QAtInfinity);
     }
+    // Check that r, s, and z are non-zero
     if r.is_zero() || s.is_zero() || z.is_zero() {
         return Err(P256Error::ROrSZero);
     }

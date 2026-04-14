@@ -4,7 +4,7 @@
 |-------------|--------------------------------|
 | Author(s)   | @0xAndoroid                    |
 | Created     | 2026-04-02                     |
-| Status      | proposed                       |
+| Status      | implemented                    |
 | PR          | #1402                          |
 
 ## Summary
