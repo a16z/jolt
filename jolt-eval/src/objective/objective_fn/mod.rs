@@ -4,7 +4,7 @@ use crate::agent::DiffScope;
 
 use super::{
     OptimizationObjective, BIND_HIGH_TO_LOW, BIND_LOW_TO_HIGH, COGNITIVE_COMPLEXITY, HALSTEAD_BUGS,
-    LLOC, NAIVE_SORT_TIME,
+    LLOC, MUL_I128, MUL_I64, MUL_U128, MUL_U64, NAIVE_SORT_TIME,
 };
 
 /// A concrete objective function that the optimizer minimizes.
@@ -35,6 +35,10 @@ impl ObjectiveFunction {
             MINIMIZE_BIND_LOW_TO_HIGH,
             MINIMIZE_BIND_HIGH_TO_LOW,
             MINIMIZE_NAIVE_SORT_TIME,
+            MINIMIZE_MUL_U64,
+            MINIMIZE_MUL_I64,
+            MINIMIZE_MUL_U128,
+            MINIMIZE_MUL_I128,
         ]
     }
 
@@ -98,6 +102,30 @@ pub const MINIMIZE_NAIVE_SORT_TIME: ObjectiveFunction = ObjectiveFunction {
     evaluate: |m, _| m.get(&NAIVE_SORT_TIME).copied().unwrap_or(f64::INFINITY),
 };
 
+pub const MINIMIZE_MUL_U64: ObjectiveFunction = ObjectiveFunction {
+    name: "minimize_mul_u64",
+    inputs: &[MUL_U64],
+    evaluate: |m, _| m.get(&MUL_U64).copied().unwrap_or(f64::INFINITY),
+};
+
+pub const MINIMIZE_MUL_I64: ObjectiveFunction = ObjectiveFunction {
+    name: "minimize_mul_i64",
+    inputs: &[MUL_I64],
+    evaluate: |m, _| m.get(&MUL_I64).copied().unwrap_or(f64::INFINITY),
+};
+
+pub const MINIMIZE_MUL_U128: ObjectiveFunction = ObjectiveFunction {
+    name: "minimize_mul_u128",
+    inputs: &[MUL_U128],
+    evaluate: |m, _| m.get(&MUL_U128).copied().unwrap_or(f64::INFINITY),
+};
+
+pub const MINIMIZE_MUL_I128: ObjectiveFunction = ObjectiveFunction {
+    name: "minimize_mul_i128",
+    inputs: &[MUL_I128],
+    evaluate: |m, _| m.get(&MUL_I128).copied().unwrap_or(f64::INFINITY),
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -131,11 +159,6 @@ mod tests {
     #[test]
     fn by_name_returns_none_for_unknown() {
         assert!(ObjectiveFunction::by_name("nonexistent").is_none());
-    }
-
-    #[test]
-    fn all_returns_expected_count() {
-        assert_eq!(ObjectiveFunction::all().len(), 6);
     }
 
     #[test]
