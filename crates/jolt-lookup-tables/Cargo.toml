@@ -12,8 +12,8 @@ categories = ["cryptography"]
 workspace = true
 
 [dependencies]
-jolt-field = { path = "../jolt-field" }
-jolt-riscv = { path = "../jolt-riscv" }
+jolt-field = { workspace = true }
+jolt-riscv = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 strum = { workspace = true, features = ["derive"] }
 

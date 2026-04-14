@@ -369,6 +369,9 @@ common = { path = "./common", default-features = false }
 tracer = { path = "./tracer", default-features = false }
 jolt-core = { path = "./jolt-core", default-features = false }
 jolt-field = { path = "./crates/jolt-field" }
+jolt-riscv = { path = "./crates/jolt-riscv" }
+jolt-riscv-derive = { path = "./crates/jolt-riscv-derive" }
+jolt-lookup-tables = { path = "./crates/jolt-lookup-tables" }
 jolt-platform = { path = "./jolt-platform", default-features = false }
 jolt-sdk = { path = "./jolt-sdk", default-features = false }
 jolt-sdk-macros = { path = "./jolt-sdk/macros" }

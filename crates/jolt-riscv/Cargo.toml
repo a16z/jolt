@@ -12,6 +12,6 @@ categories = ["cryptography"]
 workspace = true
 
 [dependencies]
-jolt-riscv-derive = { path = "../jolt-riscv-derive" }
+jolt-riscv-derive = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 strum = { workspace = true, features = ["derive"] }
