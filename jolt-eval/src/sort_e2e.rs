@@ -225,6 +225,6 @@ mod tests {
     #[test]
     #[ignore] // Requires Claude API access
     fn redteam_e2e_real_agent() {
-        run_redteam_test("claude-sonnet-4-20250514", 10, 5, None, false);
+        run_redteam_test("claude-sonnet-4-latest", 10, 5, None, false);
     }
 }
