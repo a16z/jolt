@@ -107,6 +107,11 @@ impl<T> Polynomial<T> {
     pub fn evals(&self) -> &[T] {
         &self.evals
     }
+
+    /// Consumes the polynomial and returns the evaluation vector.
+    pub fn into_evals(self) -> Vec<T> {
+        self.evals
+    }
 }
 
 impl<T: Copy> Polynomial<T> {

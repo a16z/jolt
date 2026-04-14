@@ -54,7 +54,6 @@ mod lt;
 pub mod math;
 mod multilinear;
 mod one_hot;
-mod source;
 pub mod thread;
 mod univariate;
 
@@ -65,7 +64,6 @@ pub use eq::EqPolynomial;
 pub use eq_plus_one::{EqPlusOnePolynomial, EqPlusOnePrefixSuffix};
 pub use identity::IdentityPolynomial;
 pub use lt::LtPolynomial;
-pub use multilinear::{MultilinearBinding, MultilinearEvaluation};
+pub use multilinear::{MultilinearBinding, MultilinearEvaluation, MultilinearPoly, RlcSource};
 pub use one_hot::OneHotPolynomial;
-pub use source::{MultilinearPoly, RlcSource};
 pub use univariate::{UnivariatePoly, UnivariatePolynomial};

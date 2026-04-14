@@ -168,7 +168,7 @@ impl<F: Field> EqPolynomial<F> {
 
     /// Serial eq table construction with optional scaling.
     #[inline]
-    pub fn evals_serial<C>(r: &[C], scaling_factor: Option<F>) -> Vec<F>
+    pub(crate) fn evals_serial<C>(r: &[C], scaling_factor: Option<F>) -> Vec<F>
     where
         C: Copy + Send + Sync + Into<F>,
         F: Mul<C, Output = F> + SubAssign<F>,
@@ -243,7 +243,7 @@ impl<F: Field> EqPolynomial<F> {
     /// processes `r` in reverse so that the first coordinate ends up as the MSB.
     #[tracing::instrument(skip_all, name = "EqPolynomial::evals_parallel")]
     #[inline]
-    pub fn evals_parallel<C>(r: &[C], scaling_factor: Option<F>) -> Vec<F>
+    pub(crate) fn evals_parallel<C>(r: &[C], scaling_factor: Option<F>) -> Vec<F>
     where
         C: Copy + Send + Sync + Into<F>,
         F: Mul<C, Output = F> + SubAssign<F>,

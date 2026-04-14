@@ -9,7 +9,7 @@
 
 use jolt_field::Field;
 
-use crate::source::MultilinearPoly;
+use crate::multilinear::MultilinearPoly;
 
 /// Sparse multilinear polynomial where each row has at most one nonzero
 /// entry, and that entry is always `F::one()`.
@@ -34,6 +34,10 @@ impl OneHotPolynomial {
     ///
     /// Panics if `k * indices.len()` is not a power of two.
     pub fn new(k: usize, indices: Vec<Option<u8>>) -> Self {
+        assert!(
+            k <= u8::MAX as usize + 1,
+            "k exceeds u8 index range ({k} > 256)"
+        );
         let total = k * indices.len();
         assert!(
             total.is_power_of_two(),
