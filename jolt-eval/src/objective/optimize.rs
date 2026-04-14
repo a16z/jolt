@@ -11,6 +11,8 @@ pub struct OptimizeConfig {
     pub num_iterations: usize,
     pub hint: Option<String>,
     pub verbose: bool,
+    /// Override the result branch name (default: `auto-optimize/{objective}-{timestamp}`).
+    pub branch: Option<String>,
 }
 
 impl Default for OptimizeConfig {
@@ -19,6 +21,7 @@ impl Default for OptimizeConfig {
             num_iterations: 5,
             hint: None,
             verbose: false,
+            branch: None,
         }
     }
 }
@@ -286,7 +289,13 @@ pub fn auto_optimize<A: AgentHarness, E: OptimizeEnv>(
         }
     }
 
-    let branch_name = format!("auto-optimize/{}", objective.name);
+    let branch_name = config.branch.clone().unwrap_or_else(|| {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        format!("auto-optimize/{}-{ts}", objective.name)
+    });
     let branch = env.finish(&branch_name);
 
     OptimizeResult {

@@ -45,6 +45,10 @@ struct Cli {
     /// Print agent prompts and responses to stderr.
     #[arg(long)]
     verbose: bool,
+
+    /// Name of the result branch (default: auto-optimize/{objective}-{timestamp}).
+    #[arg(long)]
+    branch: Option<String>,
 }
 
 struct RealEnv {
@@ -255,6 +259,7 @@ fn main() -> eyre::Result<()> {
             num_iterations: cli.iterations,
             hint: Some(hint),
             verbose: cli.verbose,
+            branch: cli.branch.clone(),
         };
         println!("=== Optimize e2e: naive bubble sort ===");
         println!(
@@ -312,6 +317,7 @@ fn main() -> eyre::Result<()> {
         num_iterations: cli.iterations,
         hint: cli.hint.clone(),
         verbose: cli.verbose,
+        branch: cli.branch.clone(),
     };
 
     let result = auto_optimize(&agent, &mut env, objective, &config, &repo_dir);
@@ -334,10 +340,7 @@ fn main() -> eyre::Result<()> {
     Ok(())
 }
 
-fn print_branch_info(
-    result: &jolt_eval::objective::optimize::OptimizeResult,
-    base_commit: &str,
-) {
+fn print_branch_info(result: &jolt_eval::objective::optimize::OptimizeResult, base_commit: &str) {
     if let Some(ref branch) = result.branch {
         println!("\nResult branch: {branch}");
         println!("  Inspect: git log {base_commit}..{branch}");
