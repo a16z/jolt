@@ -195,18 +195,30 @@ impl OptimizeEnv for RealEnv {
             .status();
     }
 
-    fn finish(&mut self) -> Option<String> {
-        let output = Command::new("git")
+    fn finish(&mut self, branch_name: &str) -> Option<String> {
+        // Check whether any commits were added beyond the base.
+        let head_out = Command::new("git")
             .current_dir(&self.work_dir)
-            .args(["diff", &self.base_commit, "HEAD"])
+            .args(["rev-parse", "HEAD"])
             .output()
             .ok()?;
-        let diff = String::from_utf8_lossy(&output.stdout).to_string();
-        if diff.trim().is_empty() {
-            None
-        } else {
-            Some(diff)
+        let head = String::from_utf8_lossy(&head_out.stdout).trim().to_string();
+        if head == self.base_commit {
+            return None;
         }
+
+        // Create (or move) the branch at the worktree HEAD.  Because
+        // worktrees share refs with the main repo, this branch is
+        // immediately visible from repo_dir.
+        let status = Command::new("git")
+            .current_dir(&self.work_dir)
+            .args(["branch", "-f", branch_name, "HEAD"])
+            .status()
+            .ok()?;
+        if !status.success() {
+            return None;
+        }
+        Some(branch_name.to_string())
     }
 }
 
@@ -266,7 +278,7 @@ fn main() -> eyre::Result<()> {
                 a.invariants_passed
             );
         }
-        save_best_patch(&result, &repo_dir, "minimize_naive_sort_time");
+        print_branch_info(&result, &env.base_commit);
         return Ok(());
     }
 
@@ -317,32 +329,19 @@ fn main() -> eyre::Result<()> {
     println!("\nFinal measurements:");
     print_measurements(&result.best_measurements);
 
-    save_best_patch(&result, &repo_dir, objective_name);
+    print_branch_info(&result, &env.base_commit);
 
     Ok(())
 }
 
-fn save_best_patch(
+fn print_branch_info(
     result: &jolt_eval::objective::optimize::OptimizeResult,
-    repo_dir: &Path,
-    objective_name: &str,
+    base_commit: &str,
 ) {
-    if let Some(ref patch) = result.best_patch {
-        let history_dir = repo_dir
-            .join("jolt-eval/optimize-history")
-            .join(objective_name);
-        let _ = std::fs::create_dir_all(&history_dir);
-        let patch_path = history_dir.join("best.patch");
-        match std::fs::write(&patch_path, patch) {
-            Ok(()) => {
-                println!(
-                    "\nBest patch saved to: {}\nApply with: git apply {}",
-                    patch_path.display(),
-                    patch_path.display()
-                );
-            }
-            Err(e) => eprintln!("\nWarning: failed to save patch: {e}"),
-        }
+    if let Some(ref branch) = result.branch {
+        println!("\nResult branch: {branch}");
+        println!("  Inspect: git log {base_commit}..{branch}");
+        println!("  Apply:   git cherry-pick {base_commit}..{branch}");
     }
 }
 

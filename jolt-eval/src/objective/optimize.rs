@@ -29,9 +29,9 @@ pub struct OptimizeResult {
     pub baseline_score: f64,
     pub best_score: f64,
     pub best_measurements: HashMap<OptimizationObjective, f64>,
-    /// Cumulative patch of all accepted iterations, suitable for
-    /// `git apply`. `None` if no improvement was found.
-    pub best_patch: Option<String>,
+    /// Name of the result branch containing one commit per accepted
+    /// iteration. `None` if no improvement was found.
+    pub branch: Option<String>,
 }
 
 /// Record of a single optimization attempt.
@@ -78,10 +78,11 @@ pub trait OptimizeEnv {
     /// Called when a change is rejected — revert uncommitted changes.
     fn reject(&mut self);
 
-    /// Export the cumulative patch of all accepted changes. Called once
-    /// at the end of the optimization run. Returns `None` if no
-    /// improvements were accepted.
-    fn finish(&mut self) -> Option<String> {
+    /// Create a named branch containing the accepted commits. Called
+    /// once at the end of the optimization run. Returns the branch name
+    /// on success, `None` if no improvements were accepted.
+    fn finish(&mut self, branch_name: &str) -> Option<String> {
+        let _ = branch_name;
         None
     }
 }
@@ -285,14 +286,15 @@ pub fn auto_optimize<A: AgentHarness, E: OptimizeEnv>(
         }
     }
 
-    let best_patch = env.finish();
+    let branch_name = format!("auto-optimize/{}", objective.name);
+    let branch = env.finish(&branch_name);
 
     OptimizeResult {
         attempts,
         baseline_score,
         best_score,
         best_measurements,
-        best_patch,
+        branch,
     }
 }
 
