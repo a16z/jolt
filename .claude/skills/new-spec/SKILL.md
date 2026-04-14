@@ -80,8 +80,8 @@ Spec created: specs/<feature-name>.md
 
 Next steps:
 1. Review the spec above
-2. Open a PR — the spec will be auto-renamed to <PR#>-<feature-name>.md
-3. Run @claude analyze on the PR for a second-opinion analysis
+2. Open a PR — a GitHub Action will add the `spec` label
+3. Add the `claude-spec-review-request` label for external analysis, or run `/analyze-spec` locally
 ```
 
-Do NOT modify `TEMPLATE.md` itself. Do NOT add a date prefix to the filename — the PR number will be prepended by a GitHub Action after the PR is opened.
+Do NOT modify `TEMPLATE.md` itself.
