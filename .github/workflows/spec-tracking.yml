@@ -2,7 +2,7 @@ name: Spec Workflow
 
 on:
   pull_request_target:
-    types: [opened, synchronize, ready_for_review, reopened, labeled]
+    types: [opened, synchronize, ready_for_review, reopened]
 
 permissions:
   contents: read
@@ -60,7 +60,8 @@ jobs:
           gh label create "spec" --description "PR contains a spec" --color "0E8A16" 2>/dev/null || true
           gh label create "no-spec" --description "PR has no spec file" --color "E4E669" 2>/dev/null || true
           gh label create "implementation" --description "PR contains implementation of a spec" --color "1D76DB" 2>/dev/null || true
-          gh label create "claude-approved" --description "Claude analysis found no ambiguities" --color "5319E7" 2>/dev/null || true
+          gh label create "claude-spec-review-request" --description "Triggers Claude spec analysis" --color "D4C5F9" 2>/dev/null || true
+          gh label create "claude-spec-approved" --description "Claude analysis found no ambiguities" --color "5319E7" 2>/dev/null || true
 
       - name: Apply labels
         env:

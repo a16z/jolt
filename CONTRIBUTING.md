@@ -18,8 +18,8 @@ Large PRs are expensive to review. Code generation is cheap — human verificati
 A single PR carries a feature from spec to implementation:
 
 1. **Create a spec** using `/new-spec <feature-name>` in Claude Code, or copy [`specs/TEMPLATE.md`](specs/TEMPLATE.md) manually.
-2. **Open a PR** with just the spec file. A GitHub Action will rename it to `<PR#>-<name>.md` and add the `spec` label.
-3. **Spec analysis**: A maintainer triggers `@claude analyze` on the PR. Claude performs a single-pass analysis, posting all questions at once — ambiguities, missing invariants, unclear evaluation criteria. When satisfied, Claude adds the `claude-approved` label.
+2. **Open a PR** with just the spec file. A GitHub Action will add the `spec` label.
+3. **Spec analysis**: Adding the `claude-spec-review-request` label triggers an external analysis. Claude performs a single-pass analysis, posting all questions at once — ambiguities, missing invariants, unclear evaluation criteria. When satisfied, Claude adds the `claude-spec-approved` label.
 4. **Spec review**: Maintainers review and approve the spec.
 5. **Implementation**: Run `/implement-spec` in [Claude Code cloud](https://claude.ai/code) or locally. Claude generates a one-shot implementation from the approved spec.
 6. **Merge**: Maintainers review the implementation and merge.
@@ -45,7 +45,8 @@ Focus on **intent and evaluation**. Execution is downstream — the implementer 
 | `spec` | PR contains a spec file | GitHub Action (auto) |
 | `no-spec` | PR has no spec file | GitHub Action (auto) |
 | `implementation` | PR contains code alongside a spec | GitHub Action (auto) |
-| `claude-approved` | Claude's analysis found no ambiguities | Claude |
+| `claude-spec-review-request` | Triggers external Claude spec analysis | Maintainer (manual) |
+| `claude-spec-approved` | Claude's analysis found no ambiguities | Claude |
 
 ### Soft Guardrails
 
@@ -60,8 +61,9 @@ These Claude Code skills are available in this repo:
 | `/new-spec <name>` | Create a new spec file from the template |
 | `/analyze-spec` | Interactive Socratic analysis of a spec (local) |
 | `/implement-spec` | Autonomous implementation from an approved spec (local/cloud) |
+| `/ci-code-review` | Deep PR code review with parallel analysis agents |
 
-In CI, `@claude analyze` runs a single-pass version of the analysis.
+Spec analysis can also be triggered externally by adding the `claude-spec-review-request` label to a PR.
 
 ## Development Setup
 

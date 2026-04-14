@@ -105,13 +105,13 @@ Fix any issues found and re-validate.
 
 <Examples>
 <Good>
-User: "@claude implement"
+User: `/implement-spec`
 Action: Reads the spec from the PR, creates a plan, implements it, runs QA, validates, pushes commits.
 Why good: Full autonomous execution from spec to working code.
 </Good>
 
 <Bad>
-User: "@claude implement" on a spec without `claude-approved`
+User: `/implement-spec` on a spec without `claude-spec-approved`
 Action: Should warn that the spec hasn't been analyzed yet, but proceed if the user insists.
 Why bad situation: Implementation from an unanalyzed spec risks rework.
 </Bad>
