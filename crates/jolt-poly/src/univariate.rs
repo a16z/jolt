@@ -265,6 +265,10 @@ impl<F: Field> UnivariatePoly<F> {
         // l(1) = l(0) + l(∞) = linear_eval_one
         // q(1) = q(0) + q(1_coeff) + q(2_coeff)
         // Solve for the linear coefficient of q:
+        assert!(
+            !linear_eval_one.is_zero(),
+            "linear polynomial vanishes at x=1"
+        );
         let quadratic_coeff_1 =
             (hint - cubic_coeff_0) / linear_eval_one - quadratic_coeff_0 - quadratic_coeff_2;
 
