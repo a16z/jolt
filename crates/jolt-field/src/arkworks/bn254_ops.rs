@@ -256,6 +256,68 @@ fn mul_bigint5_by_u64_in_place(a: &mut BigInt<5>, b: u64) {
     // Overflow is discarded (caller ensures result fits in 5 limbs)
 }
 
+/// Barrett reduction on 5 individual limbs → \[u64; N\].
+/// Avoids BigInt construction overhead of `barrett_reduce_5_to_4`.
+#[inline(always)]
+fn barrett_reduce_limbs(c0: u64, c1: u64, c2: u64, c3: u64, c4: u64) -> [u64; N] {
+    let tilde_c: u64 = if MODULUS_HAS_SPARE_BIT {
+        (c4 << MODULUS_NUM_SPARE_BITS) + (c3 >> (64 - MODULUS_NUM_SPARE_BITS))
+    } else {
+        c4
+    };
+
+    let m: u64 = ((tilde_c as u128 * BARRETT_MU as u128) >> 64) as u64;
+
+    // m * MODULUS_TIMES_2: only 4 limbs needed (top limb is 0 for BN254)
+    let m2 = MODULUS_TIMES_2.0;
+    let mut carry = 0u64;
+    let mp0 = mac_with_carry(0, m2[0], m, &mut carry);
+    let mp1 = mac_with_carry(0, m2[1], m, &mut carry);
+    let mp2 = mac_with_carry(0, m2[2], m, &mut carry);
+    let mp3 = mac_with_carry(0, m2[3], m, &mut carry);
+    let mp4 = carry;
+
+    let mut r0 = c0;
+    let mut r1 = c1;
+    let mut r2 = c2;
+    let mut r3 = c3;
+    let mut r4 = c4;
+    let mut borrow = 0u64;
+    borrow = sbb(&mut r0, mp0, borrow);
+    borrow = sbb(&mut r1, mp1, borrow);
+    borrow = sbb(&mut r2, mp2, borrow);
+    borrow = sbb(&mut r3, mp3, borrow);
+    let _ = sbb(&mut r4, mp4, borrow);
+
+    barrett_cond_subtract(BigInt([r0, r1, r2, r3, r4])).0
+}
+
+/// Fused 4×2 multiply with two-round Barrett reduction.
+/// Computes `a * (b_lo + b_hi * 2^64) mod p` without intermediate BigInt allocations.
+#[inline(always)]
+fn mul_u128_barrett(a: &BigInt<N>, b_lo: u64, b_hi: u64) -> Fr {
+    // Pass 1: partial product a * b_lo → limbs e0..e4
+    let mut carry = 0u64;
+    let e0 = mac_with_carry(0, a.0[0], b_lo, &mut carry);
+    let mut e1 = mac_with_carry(0, a.0[1], b_lo, &mut carry);
+    let mut e2 = mac_with_carry(0, a.0[2], b_lo, &mut carry);
+    let mut e3 = mac_with_carry(0, a.0[3], b_lo, &mut carry);
+    let mut e4 = carry;
+
+    // Pass 2: accumulate a * b_hi at offset 1
+    carry = 0;
+    e1 = mac_with_carry(e1, a.0[0], b_hi, &mut carry);
+    e2 = mac_with_carry(e2, a.0[1], b_hi, &mut carry);
+    e3 = mac_with_carry(e3, a.0[2], b_hi, &mut carry);
+    e4 = mac_with_carry(e4, a.0[3], b_hi, &mut carry);
+    let e5 = carry;
+
+    // Two-round Barrett: 6 limbs → field element
+    let r1 = barrett_reduce_limbs(e1, e2, e3, e4, e5);
+    let r2 = barrett_reduce_limbs(e0, r1[0], r1[1], r1[2], r1[3]);
+    Fp::new_unchecked(BigInt(r2))
+}
+
 /// Perform N Montgomery reduction steps on a mutable buffer of L >= 2N limbs.
 /// Returns carry from the final step.
 #[inline(always)]
@@ -424,24 +486,13 @@ pub(crate) fn mul_u128(a: Fr, b: u128) -> Fr {
 /// Multiply a field element by i128.
 #[inline(always)]
 pub(crate) fn mul_i128(a: Fr, b: i128) -> Fr {
-    if b == 0 || Zero::is_zero(&a) {
-        return Fr::zero();
-    }
-    if b == 1 {
-        return a;
-    }
     let abs = b.unsigned_abs();
     let res = if abs <= u64::MAX as u128 {
         mul_u64(a, abs as u64)
     } else {
-        let prod = bigint4_mul_u128(&a.0, abs);
-        from_unchecked_nplus2(prod)
+        mul_u128_barrett(&a.0, abs as u64, (abs >> 64) as u64)
     };
-    if b < 0 {
-        -res
-    } else {
-        res
-    }
+    if b < 0 { -res } else { res }
 }
 
 /// Convert u64 → Fr using precomp table for small values, mul_u64(R, n) otherwise.
