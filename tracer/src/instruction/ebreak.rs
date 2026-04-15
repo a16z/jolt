@@ -55,6 +55,7 @@ impl RISCVTrace for EBREAK {
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
         let vr = allocator.allocate();
         asm.emit_j::<JAL>(*vr, 0);
+        drop(vr);
         asm.finalize()
     }
 }
