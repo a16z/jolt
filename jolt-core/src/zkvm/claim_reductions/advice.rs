@@ -248,6 +248,31 @@ impl<F: JoltField> AdviceClaimReductionProver<F> {
             core: PrecomittedProver::new(params, advice_poly, eq_poly),
         }
     }
+
+    pub fn from_bound_state(
+        params: AdviceClaimReductionParams<F>,
+        advice_coeffs: Vec<F>,
+        eq_coeffs: Vec<F>,
+    ) -> Self {
+        Self::from_bound_state_with_scale(params, advice_coeffs, eq_coeffs, F::one())
+    }
+
+    pub fn from_bound_state_with_scale(
+        params: AdviceClaimReductionParams<F>,
+        advice_coeffs: Vec<F>,
+        eq_coeffs: Vec<F>,
+        scale: F,
+    ) -> Self {
+        let mut prover = Self {
+            core: PrecomittedProver::new(
+                params,
+                MultilinearPolynomial::from(advice_coeffs),
+                MultilinearPolynomial::from(eq_coeffs),
+            ),
+        };
+        prover.core.set_scale(scale);
+        prover
+    }
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for AdviceClaimReductionProver<F> {

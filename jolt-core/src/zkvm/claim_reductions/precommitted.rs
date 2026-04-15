@@ -214,6 +214,18 @@ impl<F: JoltField> PrecommittedClaimReduction<F> {
         self.cycle_phase_rounds.contains(&round)
     }
 
+    pub fn cycle_phase_rounds_debug(&self) -> &[usize] {
+        &self.cycle_phase_rounds
+    }
+
+    pub fn address_phase_rounds_debug(&self) -> &[usize] {
+        &self.address_phase_rounds
+    }
+
+    pub fn is_address_phase_active_round(&self, round: usize) -> bool {
+        self.address_phase_rounds.contains(&round)
+    }
+
     #[inline]
     pub fn is_address_phase_round(&self, round: usize) -> bool {
         self.address_phase_rounds.contains(&round)
@@ -500,6 +512,14 @@ impl<F: JoltField, P: PrecomittedParams<F>> PrecomittedProver<F, P> {
 
     pub fn params_mut(&mut self) -> &mut P {
         &mut self.params
+    }
+
+    pub fn set_scale(&mut self, scale: F) {
+        self.scale = scale;
+    }
+
+    pub fn scale(&self) -> F {
+        self.scale
     }
 
     fn compute_message_unscaled(&self, previous_claim_unscaled: F) -> UniPoly<F> {
