@@ -4,9 +4,9 @@
 //! `Cycle` values) and the proving system (which consumes per-cycle data to
 //! build witnesses). All ISA-specific logic (instruction dispatch, flag
 //! computation, operand routing) is pushed into the `CycleRow` implementation,
-//! so the prover sees only scalars and boolean arrays.
+//! so the prover sees only scalars and flag sets.
 
-use jolt_instructions::flags::{NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
+use jolt_riscv::flags::{CircuitFlagSet, InstructionFlagSet};
 
 /// Abstract interface for one execution cycle of a RISC-V trace.
 ///
@@ -56,11 +56,11 @@ pub trait CycleRow: Copy {
     /// The immediate operand, sign-extended.
     fn imm(&self) -> i128;
 
-    /// R1CS circuit flags (14 booleans, indexed by `CircuitFlags`).
-    fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS];
+    /// R1CS circuit flags (packed bitfield, indexed by `CircuitFlags`).
+    fn circuit_flags(&self) -> CircuitFlagSet;
 
-    /// Non-R1CS instruction flags (7 booleans, indexed by `InstructionFlags`).
-    fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS];
+    /// Non-R1CS instruction flags (packed bitfield, indexed by `InstructionFlags`).
+    fn instruction_flags(&self) -> InstructionFlagSet;
 
     /// Combined lookup index for RA polynomial construction (128-bit).
     fn lookup_index(&self) -> u128;

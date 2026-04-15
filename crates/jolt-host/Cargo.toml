@@ -15,7 +15,8 @@ workspace = true
 [dependencies]
 bincode = { version = "2", features = ["serde"] }
 common = { workspace = true }
-jolt-instructions = { path = "../jolt-instructions" }
+jolt-lookup-tables = { workspace = true }
+jolt-riscv = { workspace = true }
 serde.workspace = true
 tracer = { workspace = true, features = ["std"] }
 tracing.workspace = true

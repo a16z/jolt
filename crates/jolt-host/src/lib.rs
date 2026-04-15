@@ -3,15 +3,15 @@
 //! Provides [`Program`] for building guest RISC-V programs via the `jolt` CLI,
 //! decoding ELFs into instructions, and tracing execution to produce [`Cycle`]
 //! vectors for the proving pipeline.
-//!
-//! This crate is independent of the proving system — it depends only on
-//! `common` (memory config), `tracer` (RISC-V emulation), and standard I/O.
 
 mod analyze;
+pub mod bytecode;
 mod cycle_row;
-mod cycle_row_impl;
 mod program;
+pub mod ram;
+mod tracer_cycle;
 
+pub use bytecode::BytecodePreprocessing;
 pub use cycle_row::CycleRow;
 
 use std::path::{Path, PathBuf};

@@ -132,6 +132,7 @@ impl Program {
     /// No-op if the ELF has already been built (unless `extra_features` contains
     /// `"compute_advice"`, which produces a separate ELF).
     #[tracing::instrument(skip_all, name = "Program::build_with_features")]
+    #[expect(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
     pub fn build_with_features(&mut self, target_dir: &str, extra_features: &[&str]) {
         if self.elf.is_some() {
             return;
@@ -202,8 +203,8 @@ impl Program {
 
     /// Compile (if needed) and decode the guest ELF into instructions and memory init data.
     ///
-    /// Returns `(instructions, memory_init_bytes, program_size)`.
-    pub fn decode(&mut self) -> (Vec<Instruction>, Vec<(u64, u8)>, u64) {
+    /// Returns `(instructions, memory_init_bytes, program_size, entry_address)`.
+    pub fn decode(&mut self) -> (Vec<Instruction>, Vec<(u64, u8)>, u64, u64) {
         self.build(DEFAULT_TARGET_DIR);
         decode(&self.read_elf())
     }
@@ -270,7 +271,7 @@ impl Program {
         untrusted_advice: &[u8],
         trusted_advice: &[u8],
     ) -> ProgramSummary {
-        let (bytecode, init_memory_state, _) = self.decode();
+        let (bytecode, init_memory_state, _, _) = self.decode();
         let (_, trace_vec, _, io_device) = self.trace(inputs, untrusted_advice, trusted_advice);
 
         ProgramSummary {
@@ -281,6 +282,7 @@ impl Program {
         }
     }
 
+    #[expect(clippy::expect_used)]
     fn read_elf(&self) -> Vec<u8> {
         self.get_elf_contents()
             .expect("ELF not built yet — call build() first")
@@ -364,6 +366,7 @@ impl Program {
     }
 }
 
+#[expect(clippy::panic)]
 fn read_elf_at(path: &Path) -> Vec<u8> {
     std::fs::read(path).unwrap_or_else(|_| panic!("could not read elf file: {}", path.display()))
 }
@@ -377,9 +380,9 @@ fn compute_program_size(elf_contents: &[u8]) -> u64 {
 ///
 /// Expands virtual instruction sequences (inline sequences) as part of decoding.
 ///
-/// Returns `(instructions, memory_init_bytes, program_size)`.
-pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64) {
-    let (mut instructions, raw_bytes, program_end, _, xlen) = tracer::decode(elf);
+/// Returns `(instructions, memory_init_bytes, program_size, entry_address)`.
+pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64, u64) {
+    let (mut instructions, raw_bytes, program_end, e_entry, xlen) = tracer::decode(elf);
     let program_size = program_end - RAM_START_ADDRESS;
     let allocator = VirtualRegisterAllocator::default();
 
@@ -388,7 +391,7 @@ pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64) {
         .flat_map(|instr: Instruction| instr.inline_sequence(&allocator, xlen))
         .collect();
 
-    (instructions, raw_bytes, program_size)
+    (instructions, raw_bytes, program_size, e_entry)
 }
 
 fn compose_command_line(program: &str, envs: &[(&str, String)], args: &[&str]) -> String {
@@ -466,6 +469,7 @@ fn compose_command_line(program: &str, envs: &[(&str, String)], args: &[&str]) -
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::Program;
