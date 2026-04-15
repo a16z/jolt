@@ -2743,6 +2743,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-crypto"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff 0.5.0",
+ "ark-serialize 0.5.0",
+ "ark-std 0.5.0",
+ "bincode 2.0.1",
+ "criterion",
+ "jolt-field",
+ "jolt-transcript",
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "rayon",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "jolt-field"
 version = "0.1.0"
 dependencies = [

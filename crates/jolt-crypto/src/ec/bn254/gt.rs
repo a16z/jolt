@@ -59,7 +59,11 @@ impl Default for Bn254GT {
 }
 
 // GT's additive notation maps to Fq12 multiplication by design.
-#[allow(clippy::suspicious_arithmetic_impl, clippy::suspicious_op_assign_impl)]
+#[expect(
+    clippy::suspicious_arithmetic_impl,
+    clippy::suspicious_op_assign_impl,
+    clippy::expect_used
+)]
 const _: () = {
     impl Add for Bn254GT {
         type Output = Self;
@@ -131,15 +135,18 @@ impl MulAssign for Bn254GT {
     }
 }
 
+#[expect(clippy::expect_used)]
 impl AppendToTranscript for Bn254GT {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
         use ark_serialize::CanonicalSerialize;
         let mut buf = Vec::new();
         self.0
-            .serialize_compressed(&mut buf)
+            .serialize_uncompressed(&mut buf)
             .expect("GT serialization cannot fail");
+        buf.reverse();
         transcript.append_bytes(&buf);
     }
+
 }
 
 impl JoltGroup for Bn254GT {

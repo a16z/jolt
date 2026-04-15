@@ -1,6 +1,6 @@
 use jolt_field::Field;
 
-use crate::JoltGroup;
+use super::group::JoltGroup;
 
 /// Pairing-friendly group for schemes that require bilinear maps (Dory, KZG).
 ///

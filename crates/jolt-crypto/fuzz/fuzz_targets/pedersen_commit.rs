@@ -1,5 +1,5 @@
 #![no_main]
-use jolt_crypto::{Bn254, Bn254G1, JoltCommitment, JoltGroup, Pedersen, PedersenSetup};
+use jolt_crypto::{Bn254, Bn254G1, VectorCommitment, JoltGroup, Pedersen, PedersenSetup};
 use jolt_field::{Field, Fr};
 use libfuzzer_sys::fuzz_target;
 

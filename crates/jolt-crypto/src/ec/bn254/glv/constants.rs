@@ -1,4 +1,4 @@
-#[allow(
+#[expect(
     clippy::unreadable_literal,
     clippy::type_complexity,
     clippy::large_const_arrays

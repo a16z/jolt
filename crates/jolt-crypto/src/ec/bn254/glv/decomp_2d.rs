@@ -30,6 +30,7 @@ const SCALAR_DECOMP_COEFFS: [(bool, <Fr as PrimeField>::BigInt); 4] = [
 
 /// Decompose a BN254 scalar into two ~128-bit components via GLV lattice reduction.
 /// Returns (coefficients, signs) where `signs[i]` = true means positive.
+#[expect(clippy::unwrap_used)]
 pub fn decompose_scalar_2d(scalar: Fr) -> ([<Fr as PrimeField>::BigInt; 2], [bool; 2]) {
     let scalar_bytes = scalar.into_bigint().to_bytes_be();
     let scalar_bigint = BigInt::from_bytes_be(Sign::Plus, &scalar_bytes);
