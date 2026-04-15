@@ -31,7 +31,7 @@ impl MULHSU {
                         >> 32,
                 ),
                 Xlen::Bit64 => {
-                    ((cpu.x[self.operands.rs1 as usize] as u128)
+                    ((cpu.x[self.operands.rs1 as usize] as i128 as u128)
                         .wrapping_mul(cpu.x[self.operands.rs2 as usize] as u64 as u128)
                         >> 64) as i64
                 }

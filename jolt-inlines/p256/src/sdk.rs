@@ -878,6 +878,12 @@ pub fn ecdsa_verify(z: P256Fr, r: P256Fr, s: P256Fr, q: P256Point) -> Result<(),
         spoil_proof();
     }
 
+    // Reject trivial zero decomposition: a=0, b=0 satisfies b*u=a for any u,
+    // collapsing the Shamir MSM and leaving R1/R2 unconstrained.
+    if b1_val == 0 || b2_val == 0 {
+        spoil_proof();
+    }
+
     // Step 6: Prepare points for 4-scalar 128-bit Shamir
     // We verify: a1*G + a2*Q - b1*R1 - b2*R2 = O
     // Which is: a1*G + a2*Q + (-b1)*R1 + (-b2)*R2 = O

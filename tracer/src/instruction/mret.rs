@@ -2,11 +2,20 @@
 //!
 //! Encoding: 0x30200073 (SYSTEM opcode, funct3=000, imm=0x302)
 //!
-//! For ZeroOS M-mode-only operation:
-//! - Reads mepc (from virtual register vr36) and sets PC to that value
-//! - In full RISC-V, MRET also restores privilege mode from mstatus.MPP
-//!   and sets mstatus.MIE from mstatus.MPIE, but for single-privilege
-//!   M-mode-only execution, these bits don't need to change.
+//! # Privilege model
+//!
+//! Jolt targets M-mode-only execution with no interrupt hardware. MRET is
+//! implemented as a single JALR to mepc — it does not modify mstatus.
+//!
+//! The full RISC-V spec requires MRET to restore MIE from MPIE, set MPIE=1,
+//! and reset MPP to the least-privileged mode. These operations are omitted
+//! because:
+//! - There is only one privilege level (Machine) — MPP is always 3.
+//! - No interrupt sources exist and the MIE CSR (0x304) is inaccessible,
+//!   so MIE/MPIE bits are unused.
+//! - The ZeroOS trap trampoline restores mstatus via `csrw mstatus, <saved>`
+//!   before executing `mret`, so the virtual register holds the correct value
+//!   without MRET needing to manipulate it.
 
 use serde::{Deserialize, Serialize};
 
@@ -39,14 +48,8 @@ impl MRET {
         let mepc = cpu.read_csr_raw(CSR_MEPC_ADDRESS);
         cpu.pc = mepc;
 
-        // In a full implementation, we would also:
-        // 1. Set privilege mode to mstatus.MPP
-        // 2. Set mstatus.MIE to mstatus.MPIE
-        // 3. Set mstatus.MPP to U-mode (or M-mode if only M-mode is supported)
-        // 4. Set mstatus.MPIE to 1
-        //
-        // For ZeroOS M-mode-only, single-core, no-interrupt use case,
-        // privilege mode stays M and interrupt enable bits don't matter.
+        // mstatus is not modified — see module-level docs for why this is
+        // correct in the M-mode-only model.
     }
 }
 
