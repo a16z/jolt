@@ -1,5 +1,5 @@
 [package]
-name = "jolt-host"
+name = "jolt-trace"
 version = "0.1.0"
 authors = ["Jolt Contributors"]
 edition = "2021"
