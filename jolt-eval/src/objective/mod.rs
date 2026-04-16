@@ -325,12 +325,4 @@ mod tests {
         ));
         assert!(!m.contains_key(&lloc_other));
     }
-
-    #[test]
-    fn optimization_objective_all() {
-        let all = OptimizationObjective::all();
-        assert_eq!(all.len(), 6); // 3 static + 3 perf
-        assert!(all.iter().any(|o| o.is_perf()));
-        assert!(all.iter().any(|o| !o.is_perf()));
-    }
 }

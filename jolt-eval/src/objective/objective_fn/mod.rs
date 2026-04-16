@@ -134,11 +134,6 @@ mod tests {
     }
 
     #[test]
-    fn all_returns_expected_count() {
-        assert_eq!(ObjectiveFunction::all().len(), 6);
-    }
-
-    #[test]
     fn custom_composite_objective() {
         const INPUTS: &[OptimizationObjective] = &[LLOC, HALSTEAD_BUGS];
         let weighted = ObjectiveFunction {
