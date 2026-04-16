@@ -52,6 +52,10 @@ impl RISCVInstruction for VirtualAdvice {
     fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
         cpu.write_register(self.operands.rd as usize, self.advice as i64);
     }
+
+    fn has_side_effects(&self) -> bool {
+        false
+    }
 }
 
 impl From<NormalizedInstruction> for VirtualAdvice {

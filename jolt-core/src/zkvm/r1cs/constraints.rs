@@ -234,6 +234,19 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
     // } else {
     //     assert!(RamAddress == 0)
     // }
+    //
+    // COMPLETENESS LIMITATION (RV64 wrap): RISC-V RV64 specifies the effective
+    // load/store address as `rs1 + sign_ext(imm)` mod 2^64 (wrapping). This
+    // constraint is evaluated in the BN254 scalar field (~254 bits), so if
+    // `Rs1Value + Imm >= 2^64` the field sum disagrees with the RISC-V wrapped
+    // sum and the proof fails. LD and SD are the only load/store instructions
+    // not decomposed into virtual sequences, so they are directly exposed.
+    // This is a completeness limitation (honest wrapping programs fail to
+    // prove), not a soundness issue. Real programs use addresses near
+    // `0x80000000`, far from the wrap boundary, so this is not triggered in
+    // practice. Closing this gap requires bit-decomposing `Rs1Value + Imm`
+    // with a conditional 2^64 subtraction — deferred as a soundness-sensitive
+    // R1CS change.
     r1cs_eq_conditional!(
         label: R1CSConstraintLabel::RamAddrEqRs1PlusImmIfLoadStore,
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::Load) } + { JoltR1CSInputs::OpFlags(CircuitFlags::Store) } }

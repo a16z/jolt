@@ -377,9 +377,15 @@ pub trait RISCVInstruction:
 
     fn execute(&self, cpu: &mut Cpu, ram_access: &mut Self::RAMAccess);
 
-    fn has_side_effects(&self) -> bool {
-        false
-    }
+    /// Whether this instruction has effects beyond writing `rd`.
+    ///
+    /// Implementations MUST declare this explicitly. When `rd = x0`, the
+    /// `inline_sequence` lowering in [`Instruction::inline_sequence`] replaces
+    /// the instruction with a NOP unless `has_side_effects()` returns `true`.
+    /// A silent default would cause a future instruction with side effects
+    /// (e.g. a memory store, CSR write, or I/O) to lose its effect when the
+    /// compiler selects `rd = x0` as a "discard" target.
+    fn has_side_effects(&self) -> bool;
 }
 
 pub trait RISCVTrace: RISCVInstruction
