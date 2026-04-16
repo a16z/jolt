@@ -1068,4 +1068,62 @@ mod p256_tests {
             assert!(ecdsa_verify(z.clone(), bad_r, s.clone(), q.clone()).is_err());
         }
     }
+
+    /// Regression test: ecdsa_verify must reject z=0 (message hash of zero).
+    ///
+    /// Before the fix, a zero message hash was accepted, which allowed a
+    /// trivial forgery: with z=0 the verification equation degenerates to
+    /// u1*G = (0/s)*G = O, so the attacker only needs u2*Q to have the
+    /// right x-coordinate, which is easy to arrange.
+    #[test]
+    fn test_ecdsa_verify_rejects_zero_hash() {
+        use crate::sdk::{ecdsa_verify, P256Error, P256Fr, P256Point};
+        let g = P256Point::generator();
+        let zero = P256Fr::from_u64_arr(&[0, 0, 0, 0]).unwrap();
+        let r = P256Fr::from_u64_arr(&[1, 0, 0, 0]).unwrap();
+        let s = P256Fr::from_u64_arr(&[1, 0, 0, 0]).unwrap();
+        let result = ecdsa_verify(zero, r, s, g);
+        assert!(matches!(result, Err(P256Error::ROrSZero)));
+    }
+
+    /// Verify that a zero GLV decomposition (a=0, b=0) is rejected.
+    ///
+    /// A malicious prover could supply a=0, b=0 as the Fake GLV decomposition,
+    /// which trivially satisfies `b*u = a (mod n)` for any u and collapses the
+    /// Shamir MSM to the identity, leaving the prover-supplied points R1/R2
+    /// unconstrained. This test exercises the `b_val == 0` guard with an attack
+    /// vector that would otherwise pass all other checks.
+    #[test]
+    #[should_panic(expected = "proof spoiled")]
+    fn test_zero_glv_decomposition_rejected() {
+        use crate::sdk::{verify_ecdsa_inner, P256Fr, P256Point};
+
+        let g = P256Point::generator();
+        let r_fr = P256Fr::from_u64_arr(&[1, 0, 0, 0]).unwrap();
+        let s_fr = P256Fr::from_u64_arr(&[1, 0, 0, 0]).unwrap();
+        let z_fr = P256Fr::from_u64_arr(&[1, 0, 0, 0]).unwrap();
+
+        let u1 = z_fr.div_assume_nonzero(&s_fr);
+        let u2 = r_fr.div_assume_nonzero(&s_fr);
+
+        // Attack vector: all-zero decomposition with R1 = G (on-curve, x mod n = r)
+        // and R2 = infinity. With b=0, the Shamir MSM collapses to O, the
+        // decomposition check 0*u = 0 passes, and (R1 + R2).x mod n = G.x mod n.
+        let _ = verify_ecdsa_inner(
+            &u1,
+            &u2,
+            &r_fr,
+            &g,
+            g.clone(),
+            0,
+            false,
+            0,
+            false, // r1=G, a1=0, b1=0
+            P256Point::infinity(),
+            0,
+            false,
+            0,
+            false, // r2=O, a2=0, b2=0
+        );
+    }
 }

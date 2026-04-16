@@ -394,4 +394,40 @@ mod tests {
             "SC.W after LR.D should fail (mixed width, rd=1)"
         );
     }
+
+    /// Regression test: SC.W with rd=x0 must still succeed when a reservation
+    /// is held. Before the fix, dispatching through the generic rd=x0 rewrite
+    /// path bypassed VirtualAdvice patching, so the prover-supplied success
+    /// flag was always 0 (failure) — causing the store to be a no-op even with
+    /// a valid reservation.
+    #[test]
+    fn test_scw_rd_x0_preserves_reservation_semantics() {
+        let mut cpu = setup_cpu();
+        let addr = DRAM_BASE;
+        let original_val: u32 = 0xDEADBEEF;
+        let store_val: u32 = 0x12345678;
+        cpu.mmu.store_word(addr, original_val).unwrap();
+
+        cpu.x[11] = addr as i64;
+        cpu.x[12] = store_val as i64;
+
+        // LR.W with rd=x0: establishes a reservation but discards the loaded value.
+        // Use Instruction::trace() (the enum dispatch) to exercise the exclusion list.
+        let decoded = Instruction::decode(encode_lrw(0, 11), 0x1000, false).unwrap();
+        let mut trace = Vec::new();
+        decoded.trace(&mut cpu, Some(&mut trace));
+
+        // SC.W with rd=x0: should succeed (reservation is held) and write memory.
+        // Again use Instruction::trace() to exercise the enum dispatch path.
+        let decoded = Instruction::decode(encode_scw(0, 11, 12), 0x1004, false).unwrap();
+        let mut trace = Vec::new();
+        decoded.trace(&mut cpu, Some(&mut trace));
+
+        // The store must have succeeded: memory should contain the new value.
+        let (val, _) = cpu.mmu.load_word(addr).unwrap();
+        assert_eq!(
+            val, store_val,
+            "SC.W with rd=x0 should still store when reservation is held"
+        );
+    }
 }
