@@ -15,6 +15,84 @@ use super::helpers::{
     bind_kernel_inputs, build_outer_eq, fused_rlc_reduce, materialize_binding, PendingClaim,
 };
 
+/// Enter a per-variant `info_span!` for the op currently being dispatched.
+///
+/// The span name is the op variant name — chrome/Perfetto groups self-time by
+/// span name, so this gives a per-op-kind wall-clock breakdown. Every arm is
+/// one line; new `Op` variants must be added here or they'll be invisible.
+fn op_span(op: &Op) -> tracing::span::EnteredSpan {
+    match op {
+        Op::SumcheckRound { .. } => tracing::info_span!("SumcheckRound").entered(),
+        Op::Evaluate { .. } => tracing::info_span!("Evaluate").entered(),
+        Op::Bind { .. } => tracing::info_span!("Bind").entered(),
+        Op::LagrangeProject { .. } => tracing::info_span!("LagrangeProject").entered(),
+        Op::DuplicateInterleave { .. } => tracing::info_span!("DuplicateInterleave").entered(),
+        Op::RegroupConstraints { .. } => tracing::info_span!("RegroupConstraints").entered(),
+        Op::Commit { .. } => tracing::info_span!("Commit").entered(),
+        Op::CommitStreaming { .. } => tracing::info_span!("CommitStreaming").entered(),
+        Op::ReduceOpenings => tracing::info_span!("ReduceOpenings").entered(),
+        Op::Open => tracing::info_span!("Open").entered(),
+        Op::Preamble => tracing::info_span!("Preamble").entered(),
+        Op::BeginStage { index } => tracing::info_span!("BeginStage", index = index).entered(),
+        Op::AbsorbRoundPoly { .. } => tracing::info_span!("AbsorbRoundPoly").entered(),
+        Op::RecordEvals { .. } => tracing::info_span!("RecordEvals").entered(),
+        Op::AbsorbEvals { .. } => tracing::info_span!("AbsorbEvals").entered(),
+        Op::AbsorbInputClaim { .. } => tracing::info_span!("AbsorbInputClaim").entered(),
+        Op::Squeeze { .. } => tracing::info_span!("Squeeze").entered(),
+        Op::ComputePower { .. } => tracing::info_span!("ComputePower").entered(),
+        Op::AppendDomainSeparator { .. } => tracing::info_span!("AppendDomainSeparator").entered(),
+        Op::EvaluatePreprocessed { .. } => tracing::info_span!("EvaluatePreprocessed").entered(),
+        Op::AliasEval { .. } => tracing::info_span!("AliasEval").entered(),
+        Op::CollectOpeningClaim { .. } => tracing::info_span!("CollectOpeningClaim").entered(),
+        Op::ScaleEval { .. } => tracing::info_span!("ScaleEval").entered(),
+        Op::CollectOpeningClaimAt { .. } => tracing::info_span!("CollectOpeningClaimAt").entered(),
+        Op::BindOpeningInputs { .. } => tracing::info_span!("BindOpeningInputs").entered(),
+        Op::ReleaseDevice { .. } => tracing::info_span!("ReleaseDevice").entered(),
+        Op::ReleaseHost { .. } => tracing::info_span!("ReleaseHost").entered(),
+        Op::BatchRoundBegin { .. } => tracing::info_span!("BatchRoundBegin").entered(),
+        Op::BatchInactiveContribution { .. } => {
+            tracing::info_span!("BatchInactiveContribution").entered()
+        }
+        Op::Materialize { .. } => tracing::info_span!("Materialize").entered(),
+        Op::MaterializeUnlessFresh { .. } => {
+            tracing::info_span!("MaterializeUnlessFresh").entered()
+        }
+        Op::MaterializeIfAbsent { .. } => tracing::info_span!("MaterializeIfAbsent").entered(),
+        Op::MaterializeSegmentedOuterEq { .. } => {
+            tracing::info_span!("MaterializeSegmentedOuterEq").entered()
+        }
+        Op::InstanceBindPreviousPhase { .. } => {
+            tracing::info_span!("InstanceBindPreviousPhase").entered()
+        }
+        Op::CaptureScalar { .. } => tracing::info_span!("CaptureScalar").entered(),
+        Op::InstanceReduce { .. } => tracing::info_span!("InstanceReduce").entered(),
+        Op::InstanceSegmentedReduce { .. } => {
+            tracing::info_span!("InstanceSegmentedReduce").entered()
+        }
+        Op::InstanceBind { .. } => tracing::info_span!("InstanceBind").entered(),
+        Op::BindCarryBuffers { .. } => tracing::info_span!("BindCarryBuffers").entered(),
+        Op::BatchAccumulateInstance { .. } => {
+            tracing::info_span!("BatchAccumulateInstance").entered()
+        }
+        Op::BatchRoundFinalize { .. } => tracing::info_span!("BatchRoundFinalize").entered(),
+        Op::ExpandingTableUpdate { .. } => tracing::info_span!("ExpandingTableUpdate").entered(),
+        Op::CheckpointEvalBatch { .. } => tracing::info_span!("CheckpointEvalBatch").entered(),
+        Op::InitInstanceWeights { .. } => tracing::info_span!("InitInstanceWeights").entered(),
+        Op::UpdateInstanceWeights { .. } => tracing::info_span!("UpdateInstanceWeights").entered(),
+        Op::SuffixScatter { .. } => tracing::info_span!("SuffixScatter").entered(),
+        Op::QBufferScatter { .. } => tracing::info_span!("QBufferScatter").entered(),
+        Op::MaterializePBuffers { .. } => tracing::info_span!("MaterializePBuffers").entered(),
+        Op::InitExpandingTable { .. } => tracing::info_span!("InitExpandingTable").entered(),
+        Op::ReadCheckingReduce { .. } => tracing::info_span!("ReadCheckingReduce").entered(),
+        Op::RafReduce { .. } => tracing::info_span!("RafReduce").entered(),
+        Op::MaterializeRA { .. } => tracing::info_span!("MaterializeRA").entered(),
+        Op::MaterializeCombinedVal { .. } => {
+            tracing::info_span!("MaterializeCombinedVal").entered()
+        }
+        Op::WeightedSum { .. } => tracing::info_span!("WeightedSum").entered(),
+    }
+}
+
 /// Dispatch a single Op from the schedule.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn dispatch_op<B, F, T, PCS>(
@@ -34,6 +112,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
     PCS: AdditivelyHomomorphic<Field = F>,
     PCS::Output: AppendToTranscript + HomomorphicCommitment<F>,
 {
+    let _op_span = op_span(op);
     let module = &executable.module;
 
     match op {

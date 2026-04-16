@@ -123,6 +123,7 @@ where
     PCS: AdditivelyHomomorphic<Field = F>,
     PCS::Output: AppendToTranscript + HomomorphicCommitment<F>,
 {
+    let _prove_span = tracing::info_span!("modular_prove").entered();
     let module = &executable.module;
 
     let batch_instance_claims: Vec<Vec<F>> = module

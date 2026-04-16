@@ -2652,6 +2652,7 @@ dependencies = [
  "jolt-instructions",
  "jolt-openings",
  "jolt-poly",
+ "jolt-profiling",
  "jolt-r1cs",
  "jolt-transcript",
  "jolt-verifier",

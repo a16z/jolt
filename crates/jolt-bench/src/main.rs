@@ -70,7 +70,15 @@ fn run_stack<R: StackRunner>(runner: R, label: StackLabel, cli: &Cli) -> Run {
 }
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
+
+    // When emitting a Perfetto trace, single-shot the run so the timeline is
+    // readable (no repeated iter+warmup layers on top of each other).
+    let _tracing_guards = cli.trace_chrome.as_deref().map(|name| {
+        cli.iters = 1;
+        cli.warmup = 0;
+        jolt_profiling::setup_tracing(&[jolt_profiling::TracingFormat::Chrome], name)
+    });
 
     let mut runs = Vec::new();
     if matches!(cli.stack, StackSelection::Core | StackSelection::Both) {

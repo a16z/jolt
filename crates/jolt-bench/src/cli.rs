@@ -52,4 +52,12 @@ pub struct Cli {
     /// the preprocessing cap — it does not force larger traces.
     #[arg(long)]
     pub log_t: Option<usize>,
+
+    /// Emit a Chrome/Perfetto trace of the run to
+    /// `benchmark-runs/perfetto_traces/<name>.json`. View at
+    /// <https://ui.perfetto.dev/>. The modular stack's prover is
+    /// instrumented per-op; core prove is a single span. When set, the
+    /// bench forces `--iters 1 --warmup 0` to keep the trace readable.
+    #[arg(long, value_name = "NAME")]
+    pub trace_chrome: Option<String>,
 }

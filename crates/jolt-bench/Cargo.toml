@@ -52,6 +52,7 @@ jolt-poly = { path = "../jolt-poly" }
 jolt-r1cs = { path = "../jolt-r1cs" }
 jolt-transcript = { path = "../jolt-transcript" }
 jolt-verifier = { path = "../jolt-verifier" }
+jolt-profiling = { path = "../jolt-profiling" }
 jolt-witness = { path = "../jolt-witness" }
 jolt-zkvm = { path = "../jolt-zkvm" }
 num-traits = { workspace = true }

@@ -28,6 +28,29 @@ when the Phase 3 stop condition fires.
 - **Phase 3 stop condition**: `modular.prove_ms ≤ core.prove_ms` at
   `log_t ∈ {18, 20}`, 3 consecutive green iters. Only this exits the loop.
 
+## Iter 1 Perfetto profile (log_t=12, muldiv, modular-only, 14575 ms)
+
+| Rank | Span | Self ms | % | Calls | Avg µs |
+|-----:|------|--------:|---:|------:|-------:|
+| 1 | `reduce_dense` | 12717.6 | **78.3%** | 83 428 | 152.4 |
+| 2 | `InstanceSegmentedReduce` subtree | 12517.2 | 77.1% | 20 | 625 860 |
+| 3 | `Program::build_with_features` | 682.4 | 4.2% | 4 | (guest build) |
+| 4 | `G1::msm` | 405.1 | 2.5% | 5 402 | 75.0 |
+| 5 | `multi_pair_g2_setup_parallel` | 370.8 | 2.3% | 112 | 3 650 |
+| 6 | `Materialize` | 325.1 | 2.0% | 197 | 1 665 |
+
+Trace: `benchmark-runs/perfetto_traces/muldiv_log_t12_iter1.json`.
+Command: `cargo run --release -p jolt-bench -- --program muldiv --log-t 12 --stack modular --trace-chrome muldiv_log_t12_iter1`.
+
+**Smoking gun**: `InstanceSegmentedReduce` loops serially over non-zero
+`outer_eq` positions and issues one small `self.reduce(...)` (→
+`reduce_dense`) per position. For this trace that's ~210 inner reduces
+per outer call × 20 outer calls ≈ 4 200 reduces. Each reduce is below
+`PAR_THRESHOLD = 1024` so the inner serial path is taken; the outer
+loop itself is also serial. Net: single-core, all 83 K reduces executed
+sequentially, with per-iteration `data.clone()` wrapping of inputs into
+`DeviceBuffer::Field(...)` before each call.
+
 ## Phase Graduation
 
 | Phase | log_t | Graduate when... |
