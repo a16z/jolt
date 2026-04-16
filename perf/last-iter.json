@@ -5,9 +5,9 @@
   "runs": [
     {
       "stack": "modular",
-      "prove_ms": 4054.58475,
-      "verify_ms": 56.512375,
-      "peak_rss_mb": 1176,
+      "prove_ms": 4080.373334,
+      "verify_ms": 57.039375,
+      "peak_rss_mb": 1190,
       "proof_bytes": 64080,
       "proof_encoding": "bincode-serde",
       "verify_note": "verify measured via proof transplant into jolt-core verifier (no native modular+Dory verifier wired today)"

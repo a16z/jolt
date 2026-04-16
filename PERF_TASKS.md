@@ -23,10 +23,10 @@ when the Phase 3 stop condition fires.
 - **log_t**: 12 (overrides `max_trace_length` to 2^12; actual prover work
   is min(guest cycles padded, 2^12))
 - **Program**: `muldiv` (only program supported on the modular stack today)
-- **Stall counter**: 0
+- **Stall counter**: 1
 - **Last green iter**: 1 — P10 `segmented_reduce` parallelize+hoist
   (−72.24% prove_ms: 14607 → 4055 ms, ratio 41.4× → 11.5×)
-- **Green streak**: 1
+- **Green streak**: 0 (iter 2 P11 flat +0.5%, reverted)
 - **Phase 3 stop condition**: `modular.prove_ms ≤ core.prove_ms` at
   `log_t ∈ {18, 20}`, 3 consecutive green iters. Only this exits the loop.
 
@@ -153,6 +153,21 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 2 — P11 `reduce_dense` slice-borrow + Dense fast path in
+  `segmented_reduce`** (target: `crates/jolt-cpu/src/backend.rs`).
+  Result: flat (two runs +0.36%, +0.64% vs 4054.58 ms baseline). Reverted.
+  Hypothesis was that the per-iter `.to_vec()` wrapping of outer-indexed
+  inputs into `DeviceBuffer::Field(...)` inside `segmented_reduce` was
+  eating the remaining ~9% self-time shown in the iter-2 Perfetto trace.
+  Changing `reduce_dense{,_fixed,_dynamic}` to take `&[&[F]]` and adding
+  a Dense fast path that passes slice refs directly was correct and
+  compiled cleanly, but the speedup was swamped — either the `to_vec`
+  was already hoisted out of the hot inner by rayon's chunking after
+  P10, or reduce_dense's own work (74% self-time) dominates such that
+  shaving per-call overhead is lost in the noise. Revisit only if a
+  future profile shows the Dense wrapping cost resurfacing after other
+  wins bring `reduce_dense` self-time down.
 
 ## Done
 
