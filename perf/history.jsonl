@@ -1,0 +1,1 @@
+{"iter":0,"phase":1,"log_t":12,"program":"muldiv","core_prove_ms":352.603834,"modular_prove_ms":14606.879958,"ratio":41.42,"core_verify_ms":54.072625,"modular_verify_ms":125.321833,"core_peak_rss_mb":111,"modular_peak_rss_mb":1102,"hypothesis":"baseline","outcome":"baseline","accepted":true,"commit":"pending"}
