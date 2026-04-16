@@ -47,6 +47,13 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Strip control chars and encode `%` so a hostile API response
+          # can't inject `::set-output`/`::add-mask`/etc. into workflow
+          # logs or sneak extra markdown past the PR comment body.
+          sanitize() {
+            printf '%s' "$1" | tr -d '\000-\037' | sed -e 's/%/%25/g'
+          }
+
           payload=$(jq -n \
             --arg num "$PR_NUMBER" \
             --arg title "$PR_TITLE" \
@@ -75,7 +82,7 @@ jobs:
 
           if [ "$http" != "200" ]; then
             err=$(jq -r '.error.message // "unparseable response"' response.json 2>/dev/null || echo "unparseable response")
-            echo "::error::Routine fire failed (HTTP $http): $err"
+            echo "::error::Routine fire failed (HTTP $http): $(sanitize "$err")"
             exit 1
           fi
 
@@ -83,12 +90,12 @@ jobs:
           session_url=$(jq -r 'select(.claude_code_session_url|type=="string") | .claude_code_session_url // empty' response.json)
 
           if [ -n "$session_id" ]; then
-            echo "::notice::Started Claude $SESSION_KIND session $session_id"
+            echo "::notice::Started Claude $SESSION_KIND session $(sanitize "$session_id")"
           fi
 
-          if [ -n "$session_url" ]; then
+          if [[ "$session_url" =~ ^https://[A-Za-z0-9._/-]+$ ]]; then
             gh pr comment "$PR_NUMBER" --repo "$BASE_REPO" \
               --body "Claude $SESSION_KIND session started: <$session_url>"
           else
-            echo "::warning::Routine fired but no session URL returned"
+            echo "::warning::Routine fired but session URL missing or malformed"
           fi
