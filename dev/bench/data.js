@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776365364374,
+  "lastUpdate": 1776370773881,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -82786,6 +82786,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 862428,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "107961892+sagar-a16z@users.noreply.github.com",
+            "name": "Sagar Dhawan",
+            "username": "sagar-a16z"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8c88795f7a6032b5177b3eda0c0caf0767fc271b",
+          "message": "fix: address ZeroOS security review findings (#1439)\n\n* fix: address ZeroOS security review findings\n\nSoundness fixes:\n- P-256 ECDSA: reject trivial zero GLV decomposition (a=0, b=0) that\n  collapses the Shamir MSM and allows signature forgery for any message\n  and public key. secp256k1 is not affected.\n- rd=x0 allowlist: exclude SCW/SCD/LRW/LRD/INLINE from the generic\n  rd=x0 trace rewriting path so their custom trace() methods run,\n  preserving VirtualAdvice patching and reservation state management.\n\nCompleteness fix:\n- EBREAK: expand into a JAL-to-self virtual sequence so the Jump flag\n  disables the NextUnexpPCUpdateOtherwise constraint at the NoOp\n  padding boundary.\n\nEmulator fix:\n- MULHSU exec(): sign-extend rs1 via `as i128 as u128` instead of\n  zero-extending via `as u128`. Only affects non-tracing emulator mode;\n  proof generation uses the correct inline_sequence path.\n\nDocumentation:\n- Document the M-mode-only privilege and trap model in the book and in\n  ecall.rs/mret.rs code comments. ECALL's constant mstatus write and\n  MRET's omitted mstatus restoration are correct by design for the\n  single-privilege, no-interrupt execution model.\n\n* fix: return EBREAK virtual register to allocator pool\n\nDrop the temporary virtual register before finalize() to return it to\nthe allocator, matching the pattern used by ECALL and MRET.\n\n* test: add zero GLV decomposition rejection test for P-256 ECDSA\n\nExtract verify_ecdsa_inner() from ecdsa_verify() so decomposition\nvalues can be injected directly. Add test_zero_glv_decomposition_rejected\nwhich crafts the exact attack vector (a=0, b=0, R1=G, R2=infinity) and\nverifies spoil_proof() fires.\n\n* fix: reject z=0 in P-256 ECDSA and add regression tests\n\nAdd z.is_zero() guard to ecdsa_verify for defense-in-depth — while a\nSHA-256 output of zero is cryptographically infeasible, rejecting it\ncloses the last theoretical edge case in the Fake GLV decomposition.\n\nRegression tests:\n- SCW with rd=x0 preserves reservation semantics (exercises the rd=x0\n  exclusion list via Instruction::trace dispatch)\n- MULHSU exec() with negative rs1 produces correct signed×unsigned\n  upper bits (exercises the i128 sign-extension fix)\n- P-256 ecdsa_verify rejects z=0 hash input",
+          "timestamp": "2026-04-16T15:17:09-04:00",
+          "tree_id": "8cc8ebd7814ead5f4e94060a375c4e24871361c2",
+          "url": "https://github.com/a16z/jolt/commit/8c88795f7a6032b5177b3eda0c0caf0767fc271b"
+        },
+        "date": 1776370771886,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.2071,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 859028,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3842,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 494976,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 496088,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 494468,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7722,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 495424,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.6234,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 492640,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.8399,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 493820,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.0221,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 231720,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.5099,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 862188,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.6096,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 493844,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4869,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 493096,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 17.8198,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 493924,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.1382,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 491764,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 32.3584,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1014760,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.7389,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 640376,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 88.5823,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2146944,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.5743,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 495336,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.603,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 492888,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.3313,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 861592,
             "unit": "KB",
             "extra": ""
           }
