@@ -28,6 +28,7 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
+          set -euo pipefail
 
           CHANGED=$(git diff --name-only "$BASE"..."$HEAD")
 
@@ -100,6 +101,7 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
+          set -euo pipefail
 
           # Count changed lines (additions + deletions), excluding spec files.
           # Three-dot diff (`BASE...HEAD`) diffs the merge-base against HEAD so
@@ -107,8 +109,10 @@ jobs:
           LINES=$(git diff --numstat "$BASE"..."$HEAD" -- . ':!specs/' | \
             awk '$1 != "-" && $2 != "-" { added += $1; removed += $2 } END { print (added + removed) ? added + removed : 0 }')
 
-          # Check if any spec file exists in the diff
-          HAS_SPEC=$(git diff --name-only "$BASE"..."$HEAD" -- 'specs/*.md' | grep -v 'README.md' | grep -v 'TEMPLATE.md' | head -1)
+          # Check if any spec file exists in the diff. Pathspec excludes
+          # README/TEMPLATE directly so the pipeline has no `grep -v`
+          # (which exits 1 on empty input and would trip `pipefail`).
+          HAS_SPEC=$(git diff --name-only "$BASE"..."$HEAD" -- 'specs/*.md' ':!specs/README.md' ':!specs/TEMPLATE.md' | head -1)
 
           if [ "$LINES" -gt 500 ] && [ -z "$HAS_SPEC" ]; then
             EXISTING=$(gh pr view "$PR_NUMBER" --json comments --jq '.comments[].body' | grep -c "more than 500 changed lines" || true)
