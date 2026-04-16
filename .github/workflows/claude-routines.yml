@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   code-review:
@@ -21,6 +22,8 @@ jobs:
         env:
           ROUTINE_ID: trig_0184QxNSKDj7Y9akvnEmo3s2
           ROUTINE_TOKEN: ${{ secrets.ANTHROPIC_REVIEW_AUTHORIZATION }}
+          SESSION_KIND: code review
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_URL: ${{ github.event.pull_request.html_url }}
@@ -43,7 +46,8 @@ jobs:
             --arg author "$PR_AUTHOR" \
             --arg source_repo "$PR_REPO" \
             --arg base_repo "$BASE_REPO" \
-            '{text: "Code review requested for PR #\($num): \($title)\nRepository: \($base_repo)\nURL: \($url)\nAuthor: @\($author)\nHead: \($source_repo) \($head) @ \($sha)\nBase: \($base)"}')
+            --arg kind "$SESSION_KIND" \
+            '{text: "\($kind | ascii_upcase) requested for PR #\($num): \($title)\nRepository: \($base_repo)\nURL: \($url)\nAuthor: @\($author)\nHead: \($source_repo) \($head) @ \($sha)\nBase: \($base)"}')
 
           http=$(curl -sS -o response.json -w "%{http_code}" \
             -X POST "https://api.anthropic.com/v1/claude_code/routines/${ROUTINE_ID}/fire" \
@@ -61,8 +65,14 @@ jobs:
           fi
 
           session_id=$(jq -r '.claude_code_session_id // empty' response.json)
+          session_url=$(jq -r '.claude_code_session_url // empty' response.json)
+
           if [ -n "$session_id" ]; then
-            echo "::notice::Started Claude session $session_id"
+            echo "::notice::Started Claude $SESSION_KIND session $session_id"
+          fi
+
+          if [ -n "$session_url" ]; then
+            gh pr comment "$PR_NUMBER" --repo "$BASE_REPO" --body "Claude $SESSION_KIND session started: $session_url"
           fi
 
   spec-review:
@@ -74,6 +84,8 @@ jobs:
         env:
           ROUTINE_ID: trig_01JBnYKwfoAgiruS15s3CcP7
           ROUTINE_TOKEN: ${{ secrets.ANTHROPIC_SPEC_REVIEW_AUTHORIZATION }}
+          SESSION_KIND: spec review
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_URL: ${{ github.event.pull_request.html_url }}
@@ -96,7 +108,8 @@ jobs:
             --arg author "$PR_AUTHOR" \
             --arg source_repo "$PR_REPO" \
             --arg base_repo "$BASE_REPO" \
-            '{text: "Spec review requested for PR #\($num): \($title)\nRepository: \($base_repo)\nURL: \($url)\nAuthor: @\($author)\nHead: \($source_repo) \($head) @ \($sha)\nBase: \($base)"}')
+            --arg kind "$SESSION_KIND" \
+            '{text: "\($kind | ascii_upcase) requested for PR #\($num): \($title)\nRepository: \($base_repo)\nURL: \($url)\nAuthor: @\($author)\nHead: \($source_repo) \($head) @ \($sha)\nBase: \($base)"}')
 
           http=$(curl -sS -o response.json -w "%{http_code}" \
             -X POST "https://api.anthropic.com/v1/claude_code/routines/${ROUTINE_ID}/fire" \
@@ -114,8 +127,14 @@ jobs:
           fi
 
           session_id=$(jq -r '.claude_code_session_id // empty' response.json)
+          session_url=$(jq -r '.claude_code_session_url // empty' response.json)
+
           if [ -n "$session_id" ]; then
-            echo "::notice::Started Claude session $session_id"
+            echo "::notice::Started Claude $SESSION_KIND session $session_id"
+          fi
+
+          if [ -n "$session_url" ]; then
+            gh pr comment "$PR_NUMBER" --repo "$BASE_REPO" --body "Claude $SESSION_KIND session started: $session_url"
           fi
 
   implement:
@@ -127,6 +146,8 @@ jobs:
         env:
           ROUTINE_ID: trig_01CzBwCbrD2q5m8QHCWU16r5
           ROUTINE_TOKEN: ${{ secrets.ANTHROPIC_IMPLEMENT_AUTHORIZATION }}
+          SESSION_KIND: implement-spec
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_URL: ${{ github.event.pull_request.html_url }}
@@ -149,7 +170,8 @@ jobs:
             --arg author "$PR_AUTHOR" \
             --arg source_repo "$PR_REPO" \
             --arg base_repo "$BASE_REPO" \
-            '{text: "Implementation requested for PR #\($num): \($title)\nRepository: \($base_repo)\nURL: \($url)\nAuthor: @\($author)\nHead: \($source_repo) \($head) @ \($sha)\nBase: \($base)"}')
+            --arg kind "$SESSION_KIND" \
+            '{text: "\($kind | ascii_upcase) requested for PR #\($num): \($title)\nRepository: \($base_repo)\nURL: \($url)\nAuthor: @\($author)\nHead: \($source_repo) \($head) @ \($sha)\nBase: \($base)"}')
 
           http=$(curl -sS -o response.json -w "%{http_code}" \
             -X POST "https://api.anthropic.com/v1/claude_code/routines/${ROUTINE_ID}/fire" \
@@ -167,6 +189,12 @@ jobs:
           fi
 
           session_id=$(jq -r '.claude_code_session_id // empty' response.json)
+          session_url=$(jq -r '.claude_code_session_url // empty' response.json)
+
           if [ -n "$session_id" ]; then
-            echo "::notice::Started Claude session $session_id"
+            echo "::notice::Started Claude $SESSION_KIND session $session_id"
+          fi
+
+          if [ -n "$session_url" ]; then
+            gh pr comment "$PR_NUMBER" --repo "$BASE_REPO" --body "Claude $SESSION_KIND session started: $session_url"
           fi
