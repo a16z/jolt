@@ -63,14 +63,10 @@ Follow these steps:
    - 75: Verified real issue that will impact functionality. Insufficient existing approach.
    - 100: Confirmed real issue that will happen frequently. Direct evidence confirms it.
 
-5. **List issues to user for double check** (IMMEDIATELY after step 4 — do not pause):
-
-   Present ALL issues in a single message, formatted as a numbered list with scores.
-   Include: file path, line number, one-line description, score, and 1-2 sentence rationale.
-   Then ask the user which issues to post to the PR. Wait for user response before step 6.
-
-6. **Post comments to PR**: For each issue that is approved by user, post a review to the PR
+5. **Post comments to PR**: For each validated issue with score >= 50, post a review to the PR
    with comments on specific lines of code. Or if no issues, do not post comments.
+
+   Runs in CI — do not pause, do not ask for user confirmation, do not list issues for approval.
 
    Build a JSON file and use the GitHub review API:
    ```bash
