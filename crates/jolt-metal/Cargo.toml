@@ -12,7 +12,9 @@ workspace = true
 jolt-compiler = { path = "../jolt-compiler" }
 jolt-compute = { path = "../jolt-compute", default-features = false }
 jolt-cpu = { path = "../jolt-cpu" }
-jolt-field = { path = "../jolt-field", default-features = false, features = ["bn254"] }
+jolt-field = { path = "../jolt-field", default-features = false, features = [
+  "bn254",
+] }
 jolt-poly = { path = "../jolt-poly" }
 metal = "0.31"
 objc = "0.2"
@@ -49,4 +51,3 @@ harness = false
 [[bench]]
 name = "field128_throughput"
 harness = false
-

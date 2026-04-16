@@ -2631,6 +2631,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-bench"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ff 0.5.0",
+ "ark-serialize 0.5.0",
+ "bincode 2.0.1",
+ "clap",
+ "common",
+ "jolt-compiler",
+ "jolt-compute",
+ "jolt-core",
+ "jolt-cpu",
+ "jolt-dory",
+ "jolt-field",
+ "jolt-host",
+ "jolt-inlines-keccak256",
+ "jolt-inlines-sha2",
+ "jolt-instructions",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-r1cs",
+ "jolt-transcript",
+ "jolt-verifier",
+ "jolt-witness",
+ "jolt-zkvm",
+ "memory-stats",
+ "mimalloc",
+ "num-traits",
+ "postcard",
+ "serde",
+ "serde_json",
+ "tracer",
+]
+
+[[package]]
 name = "jolt-blindfold"
 version = "0.1.0"
 

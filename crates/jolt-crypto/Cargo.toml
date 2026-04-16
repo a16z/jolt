@@ -6,7 +6,13 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/a16z/jolt"
 description = "Backend-agnostic cryptographic group and commitment primitives for Jolt"
-keywords = ["cryptography", "zero-knowledge", "commitment", "elliptic-curve", "zkvm"]
+keywords = [
+  "cryptography",
+  "zero-knowledge",
+  "commitment",
+  "elliptic-curve",
+  "zkvm",
+]
 categories = ["cryptography"]
 
 [lints]
@@ -14,7 +20,17 @@ workspace = true
 
 [features]
 default = ["bn254"]
-bn254 = ["dep:ark-bn254", "dep:ark-ec", "dep:ark-ff", "dep:ark-serialize", "dep:ark-std", "dep:num-bigint", "dep:num-integer", "dep:num-traits", "dep:rayon"]
+bn254 = [
+  "dep:ark-bn254",
+  "dep:ark-ec",
+  "dep:ark-ff",
+  "dep:ark-serialize",
+  "dep:ark-std",
+  "dep:num-bigint",
+  "dep:num-integer",
+  "dep:num-traits",
+  "dep:rayon",
+]
 
 [dependencies]
 jolt-field = { path = "../jolt-field" }
