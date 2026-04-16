@@ -4,8 +4,6 @@
 //! - `init_mem`: byte-level address-value pairs from ELF decoding
 //! - `Memory`: final tracer memory state
 //! - `JoltDevice`: I/O data (inputs, outputs, advice, panic/termination)
-//!
-//! Mirrors jolt-core's `gen_ram_memory_states` but uses jolt-host types.
 
 use common::constants::RAM_START_ADDRESS;
 use common::jolt_device::JoltDevice;
@@ -99,7 +97,6 @@ pub fn build_ram_states(
     (initial, final_state)
 }
 
-/// Pack bytes into 8-byte LE words at `start_idx` in both arrays.
 fn populate_words(start_idx: usize, bytes: &[u8], initial: &mut [u64], final_state: &mut [u64]) {
     for (i, chunk) in bytes.chunks(8).enumerate() {
         let idx = start_idx + i;
@@ -111,7 +108,6 @@ fn populate_words(start_idx: usize, bytes: &[u8], initial: &mut [u64], final_sta
     }
 }
 
-/// Pack bytes into 8-byte LE words at `start_idx` in final state only.
 fn populate_words_final(start_idx: usize, bytes: &[u8], final_state: &mut [u64]) {
     for (i, chunk) in bytes.chunks(8).enumerate() {
         let idx = start_idx + i;

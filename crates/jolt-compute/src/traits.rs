@@ -2,25 +2,11 @@
 
 use std::collections::HashMap;
 
-use jolt_compiler::module::{ClaimFormula, InstanceConfig};
+use jolt_compiler::module::ClaimFormula;
 pub use jolt_compiler::BindingOrder;
+use jolt_compiler::KernelSpec;
 use jolt_compiler::PolynomialId;
-use jolt_compiler::{KernelDef, KernelSpec};
 use jolt_field::Field;
-use jolt_instructions::LookupTableKind;
-
-/// Per-cycle data needed for the prefix-suffix decomposition.
-///
-/// Extracted from the execution trace and passed to the backend's
-/// prefix-suffix initialization.
-pub struct LookupTraceData {
-    /// Per-cycle lookup key (128-bit packed), T entries.
-    pub lookup_keys: Vec<u128>,
-    /// Per-cycle lookup table kind, T entries. None for cycles with no lookup.
-    pub table_kinds: Vec<Option<LookupTableKind>>,
-    /// Per-cycle interleaved-operands flag, T entries.
-    pub is_interleaved: Vec<bool>,
-}
 
 /// Marker trait for types that can be stored in device buffers.
 pub trait Scalar: Copy + Send + Sync + 'static {}
@@ -343,47 +329,21 @@ pub trait ComputeBackend: Send + Sync + 'static {
         inner_size: usize,
         challenges: &[F],
     ) -> Vec<F>;
-
-    /// Opaque state for a stateful sumcheck instance.
-    /// The backend internally dispatches based on `InstanceConfig` variant.
-    type InstanceState<F: Field>: Send + Sync;
-
-    /// Initialize a stateful sumcheck instance from config + runtime state.
-    fn instance_init<F: Field>(
-        &self,
-        config: &InstanceConfig,
-        challenges: &[F],
-        provider: &mut dyn BufferProvider<F>,
-        lookup_trace: Option<&LookupTraceData>,
-        kernels: &[KernelDef],
-    ) -> Self::InstanceState<F>;
-
-    /// Bind a sumcheck challenge into the instance state.
-    fn instance_bind<F: Field>(&self, state: &mut Self::InstanceState<F>, challenge: F);
-
-    /// Compute round polynomial evaluations. Returns the full eval vector
-    /// (e.g., [eval_0, eval_1, eval_2] for degree 2).
-    fn instance_reduce<F: Field>(
-        &self,
-        state: &Self::InstanceState<F>,
-        previous_claim: F,
-    ) -> Vec<F>;
-
-    /// Finalize the instance: consume state, return buffers and/or evaluations.
-    fn instance_finalize<F: Field>(
-        &self,
-        state: Self::InstanceState<F>,
-    ) -> InstanceOutput<Self::Buffer<F>, F>;
 }
 
-/// Output from finalizing a stateful sumcheck instance.
+/// Per-cycle trace data for the instruction lookup sumcheck.
 ///
-/// Returns unlabeled buffers and evaluations in order. The runtime maps
-/// these to `PolynomialId`s using the `output_buffers` / `output_evals`
-/// lists from the `UnifiedInstanceFinalize` Op.
-pub struct InstanceOutput<Buf, F> {
-    pub buffers: Vec<Buf>,
-    pub evaluations: Vec<F>,
+/// Provided alongside polynomial data as an input to the prover runtime.
+/// Non-field fields (u128 keys, Option<usize>, bool) that can't be expressed
+/// as polynomial evaluations. Used by SuffixScatter, QBufferScatter,
+/// UpdateInstanceWeights, MaterializeRA, and MaterializeCombinedVal.
+pub struct LookupTraceData {
+    /// Per-cycle lookup key (128-bit packed), T entries.
+    pub lookup_keys: Vec<u128>,
+    /// Per-cycle lookup table index, T entries. None for cycles with no lookup.
+    pub table_kind_indices: Vec<Option<usize>>,
+    /// Per-cycle interleaved-operands flag, T entries.
+    pub is_interleaved: Vec<bool>,
 }
 
 /// Materializes polynomial data for the prover runtime.
@@ -401,4 +361,10 @@ pub trait BufferProvider<F: Field> {
 
     /// Release stored polynomial data to reclaim memory.
     fn release(&mut self, _poly_id: PolynomialId) {}
+
+    /// Per-cycle lookup trace data used by instruction-lookup handlers.
+    /// Returns `None` when no lookup sumcheck is in the schedule.
+    fn lookup_trace(&self) -> Option<&LookupTraceData> {
+        None
+    }
 }

@@ -1,4 +1,5 @@
 pub mod builder;
+pub mod checkpoint_lowering;
 pub mod compiler;
 pub mod descriptor;
 pub mod dot;
@@ -8,6 +9,7 @@ pub mod kernel_spec;
 pub mod module;
 pub mod params;
 pub mod polynomial_id;
+pub mod prefix_mle_lowering;
 
 pub use compiler::{
     analyze, compile, CompileError, CompileParams, Cost, Diagnostic, IRInfo, Objective,
@@ -20,9 +22,10 @@ pub use ir::{Claim, ClaimId, Density, PolyDef, PolyKind, Protocol, PublicPoly, V
 pub use kernel_spec::{Iteration, KernelSpec};
 pub use module::{
     BatchIdx, ChallengeDecl, ChallengeIdx, ChallengeSource, ClaimFactor, ClaimFormula, ClaimTerm,
-    DomainSeparator, EvalMode, Evaluation, InputBinding, InstanceConfig, InstanceIdx, KernelDef,
-    Module, Op, PointNormalization, PolyDecl, R1CSMatrix, RoundPolyEncoding, Schedule,
-    SumcheckInstance, UniskipVerify, VerifierOp, VerifierSchedule, VerifierStageIndex,
+    CombineEntry, Comparison, DomainSeparator, EvalMode, Evaluation, InputBinding, InstanceConfig,
+    InstanceIdx, IntBitOp, KernelDef, Module, Op, PointNormalization, PolyDecl, PrefixMleFormula,
+    PrefixMleRule, R1CSMatrix, RemainingTest, RoundPolyEncoding, Schedule, SumcheckInstance,
+    UniskipVerify, VerifierOp, VerifierSchedule, VerifierStageIndex,
 };
 pub use params::ModuleParams;
 pub use polynomial_id::PolynomialId;

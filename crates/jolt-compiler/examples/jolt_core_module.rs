@@ -19,15 +19,18 @@
     clippy::print_stdout
 )]
 
+use jolt_compiler::checkpoint_lowering::lower_checkpoint_rule;
 use jolt_compiler::formula::{BindingOrder, Factor, Formula, ProductTerm};
 use jolt_compiler::ir::PolyKind;
 use jolt_compiler::kernel_spec::Iteration;
 use jolt_compiler::module::{
-    BatchIdx, BatchedInstance, BatchedSumcheckDef, ChallengeDecl, ChallengeIdx, ChallengeSource,
-    ClaimFactor, ClaimFormula, ClaimTerm, DomainSeparator, EvalMode, Evaluation, InputBinding,
-    InstanceConfig, InstanceIdx, InstancePhase, KernelDef, Module, Op, PointNormalization,
-    PolyDecl, R1CSMatrix, RoundPolyEncoding, ScalarCapture, Schedule, SegmentedConfig,
-    SumcheckInstance, VerifierOp, VerifierSchedule, VerifierStageIndex,
+    BatchIdx, BatchedInstance, BatchedSumcheckDef, BilinearExpr, ChallengeDecl, ChallengeIdx,
+    ChallengeSource, CheckpointAction, CheckpointEvalAction, CheckpointRule, ClaimFactor,
+    ClaimFormula, ClaimTerm, CombineEntry, Comparison, DefaultVal, DomainSeparator, EvalMode,
+    Evaluation, InputBinding, InstanceConfig, InstanceIdx, InstancePhase, IntBitOp, KernelDef,
+    Module, Op, PointNormalization, PolyDecl, PrefixMleFormula, PrefixMleRule, R1CSMatrix,
+    RemainingTest, RoundGuard, RoundPolyEncoding, ScalarCapture, Schedule, SegmentedConfig,
+    SuffixOp, SumcheckInstance, VerifierOp, VerifierSchedule, VerifierStageIndex, WeightFn,
 };
 use jolt_compiler::params::{
     ModuleParams, LOG_K_INSTRUCTION, LOG_K_REG, NUM_CIRCUIT_FLAGS, NUM_LOOKUP_TABLES,
@@ -35,6 +38,9 @@ use jolt_compiler::params::{
 };
 use jolt_compiler::KernelSpec;
 use jolt_compiler::PolynomialId;
+use jolt_instructions::tables::prefixes::{Prefixes, ALL_PREFIXES, NUM_PREFIXES};
+use jolt_instructions::tables::suffixes::Suffixes;
+use jolt_instructions::{LookupBits, LookupTableKind, LookupTables};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -580,6 +586,35 @@ impl ChallengeTable {
 /// Emit the unrolled granular ops for a batched sumcheck.
 ///
 /// Emits unrolled per-instance, per-round granular ops for a batched sumcheck.
+/// Build the per-slot update list for an `Op::CheckpointEvalBatch` at the
+/// given `round` of the sumcheck: lowers each checkpoint rule with the current
+/// `(r_x, r_y)` challenges and filters out passthrough slots.
+fn build_checkpoint_batch(
+    ic: &InstanceConfig,
+    r_x: ChallengeIdx,
+    r_y: ChallengeIdx,
+    round: usize,
+) -> Vec<(usize, CheckpointEvalAction)> {
+    let suffix_len = ic.total_address_bits - (round / ic.chunk_bits + 1) * ic.chunk_bits;
+    ic.checkpoint_rules
+        .iter()
+        .enumerate()
+        .filter_map(|(i, rule)| {
+            lower_checkpoint_rule(rule, i, r_x, r_y, round, suffix_len).map(|a| (i, a))
+        })
+        .collect()
+}
+
+fn emit_scatter_ops(ops: &mut Vec<Op>, kernel: usize, phase: usize, chunk_bits: usize) {
+    ops.push(Op::SuffixScatter { kernel, phase });
+    ops.push(Op::QBufferScatter { kernel, phase });
+    ops.push(Op::MaterializePBuffers { kernel });
+    ops.push(Op::InitExpandingTable {
+        table: PolynomialId::ExpandingTable(phase),
+        size: 1 << chunk_bits,
+    });
+}
+
 /// Reads the BatchedSumcheckDef and kernel definitions to emit per-instance,
 /// per-round ops that the runtime can execute as a flat dispatch loop.
 #[allow(clippy::too_many_arguments)]
@@ -629,56 +664,156 @@ fn emit_unrolled_batched_rounds(
             let phase = &inst.phases[phase_idx];
             let kernel = phase.kernel;
             let kdef = &kernels[kernel];
-            let is_ps = matches!(
-                kdef.instance_config,
-                Some(InstanceConfig::PrefixSuffix { .. })
-            );
-            let is_bool = matches!(
-                kdef.instance_config,
-                Some(InstanceConfig::Booleanity { .. })
-            );
-            let is_hw = matches!(
-                kdef.instance_config,
-                Some(InstanceConfig::HwReduction { .. })
-            );
+            let is_ps = kdef.instance_config.is_some();
 
-            if instance_round == 0 || instance_round == phase_start {
-                // Phase boundary.
+            if is_ps {
+                // Address-decomposition instance: stateless ops.
+                let ic = kdef.instance_config.as_ref().unwrap();
+                let chunk_bits = ic.chunk_bits;
+                let sub_phase = instance_round / chunk_bits;
+                let round_in_sub = instance_round % chunk_bits;
+
+                if instance_round == 0 {
+                    ops.push(Op::InitInstanceWeights {
+                        r_reduction: ic.r_reduction.clone(),
+                        num_prefixes: ic.num_prefixes,
+                    });
+                    emit_scatter_ops(ops, kernel, 0, chunk_bits);
+                } else if round_in_sub == 0 {
+                    let ch = bind.unwrap();
+                    ops.push(Op::Bind {
+                        polys: ic.bindable_polys(),
+                        challenge: ch,
+                        order: BindingOrder::HighToLow,
+                    });
+                    ops.push(Op::ExpandingTableUpdate {
+                        table: PolynomialId::ExpandingTable(sub_phase - 1),
+                        challenge: ch,
+                        current_len: 1 << (chunk_bits - 1),
+                    });
+                    if instance_round % 2 == 0 {
+                        let updates = build_checkpoint_batch(
+                            ic,
+                            indices[round - 2],
+                            indices[round - 1],
+                            instance_round - 1,
+                        );
+                        if !updates.is_empty() {
+                            ops.push(Op::CheckpointEvalBatch { updates });
+                        }
+                    }
+                    ops.push(Op::CaptureScalar {
+                        poly: PolynomialId::InstanceP(1, 0),
+                        challenge: ic.registry_checkpoint_slots[0],
+                    });
+                    ops.push(Op::CaptureScalar {
+                        poly: PolynomialId::InstanceP(0, 0),
+                        challenge: ic.registry_checkpoint_slots[1],
+                    });
+                    ops.push(Op::CaptureScalar {
+                        poly: PolynomialId::InstanceP(2, 0),
+                        challenge: ic.registry_checkpoint_slots[2],
+                    });
+                    ops.push(Op::UpdateInstanceWeights {
+                        expanding_table: PolynomialId::ExpandingTable(sub_phase - 1),
+                        chunk_bits,
+                        num_phases: ic.num_phases,
+                        phase: sub_phase,
+                    });
+                    emit_scatter_ops(ops, kernel, sub_phase, chunk_bits);
+                } else {
+                    let ch = bind.unwrap();
+                    ops.push(Op::Bind {
+                        polys: ic.bindable_polys(),
+                        challenge: ch,
+                        order: BindingOrder::HighToLow,
+                    });
+                    ops.push(Op::ExpandingTableUpdate {
+                        table: PolynomialId::ExpandingTable(sub_phase),
+                        challenge: ch,
+                        current_len: 1 << (round_in_sub - 1),
+                    });
+                    if instance_round >= 2 && instance_round % 2 == 0 {
+                        let updates = build_checkpoint_batch(
+                            ic,
+                            indices[round - 2],
+                            indices[round - 1],
+                            instance_round - 1,
+                        );
+                        if !updates.is_empty() {
+                            ops.push(Op::CheckpointEvalBatch { updates });
+                        }
+                    }
+                }
+
+                let r_x_challenge = if instance_round % 2 == 1 {
+                    Some(indices[round - 1])
+                } else {
+                    None
+                };
+                ops.push(Op::ReadCheckingReduce {
+                    kernel,
+                    round: instance_round,
+                    r_x_challenge,
+                });
+                ops.push(Op::RafReduce {
+                    batch: batch_idx,
+                    instance: inst_idx,
+                    kernel,
+                });
+            } else if instance_round == 0 || instance_round == phase_start {
+                // Phase boundary (non-decomp instance).
                 if instance_round > 0 {
                     let prev_phase = &inst.phases[phase_idx - 1];
                     let prev_kernel = prev_phase.kernel;
                     let prev_kdef = &kernels[prev_kernel];
-                    let prev_is_ps = matches!(
-                        prev_kdef.instance_config,
-                        Some(InstanceConfig::PrefixSuffix { .. })
-                    );
+                    let prev_is_decomp =
+                        matches!(prev_kdef.instance_config, Some(InstanceConfig { .. }));
 
-                    if prev_is_ps {
-                        if let Some(ch_val) = bind {
-                            ops.push(Op::UnifiedInstanceBind {
-                                batch: batch_idx,
-                                instance: inst_idx,
-                                challenge: ch_val,
-                            });
-                        }
-                        let output_buffers = match &prev_kdef.instance_config {
-                            Some(InstanceConfig::PrefixSuffix {
-                                output_ra_polys,
-                                output_combined_val,
-                                ..
-                            }) => {
-                                let mut ids = output_ra_polys.clone();
-                                ids.push(*output_combined_val);
-                                ids.sort();
-                                ids
+                    if prev_is_decomp {
+                        let ch = bind.unwrap();
+                        let ic = prev_kdef.instance_config.as_ref().unwrap();
+                        let chunk_bits = ic.chunk_bits;
+                        let last_sub_phase = ic.num_phases - 1;
+                        ops.push(Op::Bind {
+                            polys: ic.bindable_polys(),
+                            challenge: ch,
+                            order: BindingOrder::HighToLow,
+                        });
+                        ops.push(Op::ExpandingTableUpdate {
+                            table: PolynomialId::ExpandingTable(last_sub_phase),
+                            challenge: ch,
+                            current_len: 1 << (chunk_bits - 1),
+                        });
+                        let prev_instance_round = instance_round - 1;
+                        if prev_instance_round >= 1 && (prev_instance_round + 1) % 2 == 0 {
+                            let updates = build_checkpoint_batch(
+                                ic,
+                                indices[round - 2],
+                                indices[round - 1],
+                                prev_instance_round,
+                            );
+                            if !updates.is_empty() {
+                                ops.push(Op::CheckpointEvalBatch { updates });
                             }
-                            _ => unreachable!(),
-                        };
-                        ops.push(Op::UnifiedInstanceFinalize {
-                            batch: batch_idx,
-                            instance: inst_idx,
-                            output_buffers,
-                            output_evals: Vec::new(),
+                        }
+                        ops.push(Op::CaptureScalar {
+                            poly: PolynomialId::InstanceP(1, 0),
+                            challenge: ic.registry_checkpoint_slots[0],
+                        });
+                        ops.push(Op::CaptureScalar {
+                            poly: PolynomialId::InstanceP(0, 0),
+                            challenge: ic.registry_checkpoint_slots[1],
+                        });
+                        ops.push(Op::CaptureScalar {
+                            poly: PolynomialId::InstanceP(2, 0),
+                            challenge: ic.registry_checkpoint_slots[2],
+                        });
+                        ops.push(Op::MaterializeRA {
+                            kernel: prev_kernel,
+                        });
+                        ops.push(Op::MaterializeCombinedVal {
+                            kernel: prev_kernel,
                         });
                     } else if let Some(ch_val) = bind {
                         ops.push(Op::InstanceBindPreviousPhase {
@@ -687,7 +822,6 @@ fn emit_unrolled_batched_rounds(
                             kernel: prev_kernel,
                             challenge: ch_val,
                         });
-                        // Bind previous phase's carry buffers at the transition challenge.
                         let prev_carry_polys: Vec<_> =
                             prev_phase.carry_bindings.iter().map(|b| b.poly()).collect();
                         if !prev_carry_polys.is_empty() {
@@ -707,104 +841,84 @@ fn emit_unrolled_batched_rounds(
                     });
                 }
 
-                if is_ps || is_bool || is_hw {
-                    let config = kdef.instance_config.clone().unwrap();
-                    ops.push(Op::UnifiedInstanceInit {
+                if let Some(seg) = &phase.segmented {
+                    ops.push(Op::MaterializeSegmentedOuterEq {
                         batch: batch_idx,
                         instance: inst_idx,
-                        config,
+                        segmented: seg.clone(),
                     });
-                } else {
-                    if let Some(seg) = &phase.segmented {
-                        ops.push(Op::MaterializeSegmentedOuterEq {
-                            batch: batch_idx,
-                            instance: inst_idx,
-                            segmented: seg.clone(),
+                }
+                let is_activation = instance_round == 0;
+                if is_activation {
+                    for pre_op in &phase.pre_activation_ops {
+                        ops.push(pre_op.clone());
+                    }
+                    for binding in &phase.carry_bindings {
+                        ops.push(Op::Materialize {
+                            binding: binding.clone(),
                         });
                     }
-                    let is_activation = instance_round == 0;
-                    if is_activation {
-                        // Materialize carry bindings first.
-                        for binding in &phase.carry_bindings {
-                            ops.push(Op::Materialize {
-                                binding: binding.clone(),
-                            });
-                        }
-                        let expected_size = 1usize << kdef.num_rounds;
-                        for binding in &kdef.inputs {
-                            match binding {
-                                InputBinding::Provided { .. } => {
-                                    ops.push(Op::MaterializeUnlessFresh {
-                                        binding: binding.clone(),
-                                        expected_size,
-                                    });
-                                }
-                                _ => {
-                                    ops.push(Op::Materialize {
-                                        binding: binding.clone(),
-                                    });
-                                }
+                    let expected_size = 1usize << kdef.num_rounds;
+                    for binding in &kdef.inputs {
+                        match binding {
+                            InputBinding::Provided { .. } => {
+                                ops.push(Op::MaterializeUnlessFresh {
+                                    binding: binding.clone(),
+                                    expected_size,
+                                });
+                            }
+                            _ => {
+                                ops.push(Op::Materialize {
+                                    binding: binding.clone(),
+                                });
                             }
                         }
-                    } else {
-                        // Phase transition: materialize new kernel inputs if absent.
-                        for binding in &kdef.inputs {
-                            ops.push(Op::MaterializeIfAbsent {
-                                binding: binding.clone(),
-                            });
-                        }
+                    }
+                } else {
+                    for binding in &kdef.inputs {
+                        ops.push(Op::MaterializeIfAbsent {
+                            binding: binding.clone(),
+                        });
                     }
                 }
             } else {
-                // Mid-phase: bind.
+                // Mid-phase: bind (non-decomp instance).
                 if let Some(ch_val) = bind {
-                    if is_ps || is_bool || is_hw {
-                        ops.push(Op::UnifiedInstanceBind {
-                            batch: batch_idx,
-                            instance: inst_idx,
+                    ops.push(Op::InstanceBind {
+                        batch: batch_idx,
+                        instance: inst_idx,
+                        kernel,
+                        challenge: ch_val,
+                    });
+                    let carry_polys: Vec<_> =
+                        phase.carry_bindings.iter().map(|b| b.poly()).collect();
+                    if !carry_polys.is_empty() {
+                        ops.push(Op::BindCarryBuffers {
+                            polys: carry_polys,
                             challenge: ch_val,
+                            order: kdef.spec.binding_order,
                         });
-                    } else {
-                        ops.push(Op::InstanceBind {
-                            batch: batch_idx,
-                            instance: inst_idx,
-                            kernel,
-                            challenge: ch_val,
-                        });
-                        // Bind carry buffers alongside kernel inputs.
-                        let carry_polys: Vec<_> =
-                            phase.carry_bindings.iter().map(|b| b.poly()).collect();
-                        if !carry_polys.is_empty() {
-                            ops.push(Op::BindCarryBuffers {
-                                polys: carry_polys,
-                                challenge: ch_val,
-                                order: kdef.spec.binding_order,
-                            });
-                        }
                     }
                 }
             }
 
-            // Reduce.
-            if is_ps || is_bool || is_hw {
-                ops.push(Op::UnifiedInstanceReduce {
-                    batch: batch_idx,
-                    instance: inst_idx,
-                });
-            } else if phase.segmented.is_some() {
-                ops.push(Op::InstanceSegmentedReduce {
-                    batch: batch_idx,
-                    instance: inst_idx,
-                    kernel,
-                    round_within_phase: instance_round - phase_start,
-                    segmented: phase.segmented.clone().unwrap(),
-                });
-            } else {
-                ops.push(Op::InstanceReduce {
-                    batch: batch_idx,
-                    instance: inst_idx,
-                    kernel,
-                });
+            // Reduce (non-decomp cases — decomp reduce is emitted above).
+            if !is_ps {
+                if phase.segmented.is_some() {
+                    ops.push(Op::InstanceSegmentedReduce {
+                        batch: batch_idx,
+                        instance: inst_idx,
+                        kernel,
+                        round_within_phase: instance_round - phase_start,
+                        segmented: phase.segmented.clone().unwrap(),
+                    });
+                } else {
+                    ops.push(Op::InstanceReduce {
+                        batch: batch_idx,
+                        instance: inst_idx,
+                        kernel,
+                    });
+                }
             }
 
             ops.push(Op::BatchAccumulateInstance {
@@ -2236,6 +2350,7 @@ fn build_stage2(
                             outer_eq_challenges: vec![],
                         }),
                         carry_bindings: vec![],
+                        pre_activation_ops: vec![],
                     },
                     InstancePhase {
                         kernel: rw_phase2_kernel_idx,
@@ -2253,6 +2368,7 @@ fn build_stage2(
                         ],
                         segmented: None,
                         carry_bindings: vec![],
+                        pre_activation_ops: vec![],
                     },
                 ],
                 batch_coeff: ch_batch_base,
@@ -2266,6 +2382,7 @@ fn build_stage2(
                     scalar_captures: vec![],
                     segmented: None,
                     carry_bindings: vec![],
+                    pre_activation_ops: vec![],
                 }],
                 batch_coeff: ChallengeIdx(ch_batch_base.0 + 1),
                 first_active_round: params.stage2_max_rounds - params.product_remainder_rounds,
@@ -2278,6 +2395,7 @@ fn build_stage2(
                     scalar_captures: vec![],
                     segmented: None,
                     carry_bindings: vec![],
+                    pre_activation_ops: vec![],
                 }],
                 batch_coeff: ChallengeIdx(ch_batch_base.0 + 2),
                 first_active_round: params.stage2_max_rounds
@@ -2291,6 +2409,7 @@ fn build_stage2(
                     scalar_captures: vec![],
                     segmented: None,
                     carry_bindings: vec![],
+                    pre_activation_ops: vec![],
                 }],
                 batch_coeff: ChallengeIdx(ch_batch_base.0 + 3),
                 first_active_round: params.stage2_max_rounds - params.raf_evaluation_rounds,
@@ -2303,6 +2422,7 @@ fn build_stage2(
                     scalar_captures: vec![],
                     segmented: None,
                     carry_bindings: vec![],
+                    pre_activation_ops: vec![],
                 }],
                 batch_coeff: ChallengeIdx(ch_batch_base.0 + 4),
                 first_active_round: params.stage2_max_rounds - params.output_check_rounds,
@@ -2866,6 +2986,7 @@ fn build_stage3(
                     scalar_captures: vec![],
                     segmented: None,
                     carry_bindings: vec![],
+                    pre_activation_ops: vec![],
                 }],
                 batch_coeff: ch_batch_base,
                 first_active_round: 0,
@@ -2877,6 +2998,7 @@ fn build_stage3(
                     scalar_captures: vec![],
                     segmented: None,
                     carry_bindings: vec![],
+                    pre_activation_ops: vec![],
                 }],
                 batch_coeff: ChallengeIdx(ch_batch_base.0 + 1),
                 first_active_round: 0,
@@ -2888,6 +3010,7 @@ fn build_stage3(
                     scalar_captures: vec![],
                     segmented: None,
                     carry_bindings: vec![],
+                    pre_activation_ops: vec![],
                 }],
                 batch_coeff: ChallengeIdx(ch_batch_base.0 + 2),
                 first_active_round: 0,
@@ -3340,6 +3463,7 @@ fn build_stage4(
                     outer_eq_challenges: vec![],
                 }),
                 carry_bindings: vec![],
+                pre_activation_ops: vec![],
             },
             InstancePhase {
                 kernel: reg_rw_p2_kernel_idx,
@@ -3356,6 +3480,7 @@ fn build_stage4(
                 ],
                 segmented: None,
                 carry_bindings: vec![],
+                pre_activation_ops: vec![],
             },
         ],
         batch_coeff: ch_batch0,
@@ -3368,6 +3493,7 @@ fn build_stage4(
             scalar_captures: vec![],
             segmented: None,
             carry_bindings: vec![],
+            pre_activation_ops: vec![],
         }],
         batch_coeff: ch_batch1,
         first_active_round: stage4_max_rounds - ram_vc_rounds,
@@ -3624,6 +3750,23 @@ fn build_stage5(
     let n_vra = params.n_virtual_ra_polys;
     let output_ra_polys: Vec<PolynomialId> = (0..n_vra).map(PolynomialId::InstructionRa).collect();
 
+    // Registry checkpoint slots (p_right, p_left, p_identity).
+    let registry_checkpoint_slots: [ChallengeIdx; 3] = [
+        ch.add("ps_registry_p_right", ChallengeSource::External),
+        ch.add("ps_registry_p_left", ChallengeSource::External),
+        ch.add("ps_registry_p_identity", ChallengeSource::External),
+    ];
+
+    // Compute prefix-suffix protocol data from jolt-instructions.
+    let (
+        ps_combine_entries,
+        ps_suffix_at_empty,
+        ps_suffixes_per_table,
+        ps_suffix_ops,
+        ps_checkpoint_rules,
+        ps_prefix_mle_rules,
+    ) = compute_prefix_suffix_data();
+
     // Phase 1: address rounds (PrefixSuffix iteration)
     let inst_raf_addr_kernel_idx = kernels.len();
     kernels.push(KernelDef {
@@ -3638,7 +3781,7 @@ fn build_stage5(
         },
         inputs: vec![],
         num_rounds: LOG_K_INSTRUCTION,
-        instance_config: Some(InstanceConfig::PrefixSuffix {
+        instance_config: Some(InstanceConfig {
             kernel: inst_raf_addr_kernel_idx,
             total_address_bits: LOG_K_INSTRUCTION,
             chunk_bits: params.instruction_chunk_bits,
@@ -3648,6 +3791,15 @@ fn build_stage5(
             r_reduction: r_reduction_challenges.clone(),
             output_ra_polys: output_ra_polys.clone(),
             output_combined_val: PolynomialId::InstructionCombinedVal,
+            num_tables: NUM_LOOKUP_TABLES,
+            suffixes_per_table: ps_suffixes_per_table,
+            combine_entries: ps_combine_entries,
+            suffix_at_empty: ps_suffix_at_empty,
+            suffix_ops: ps_suffix_ops,
+            num_prefixes: NUM_PREFIXES,
+            checkpoint_rules: ps_checkpoint_rules,
+            prefix_mle_rules: ps_prefix_mle_rules,
+            registry_checkpoint_slots,
         }),
     });
 
@@ -3698,6 +3850,7 @@ fn build_stage5(
                         scalar_captures: vec![],
                         segmented: None,
                         carry_bindings: vec![],
+                        pre_activation_ops: vec![],
                     },
                     InstancePhase {
                         kernel: inst_raf_cycle_kernel_idx,
@@ -3705,6 +3858,7 @@ fn build_stage5(
                         scalar_captures: vec![],
                         segmented: None,
                         carry_bindings: vec![],
+                        pre_activation_ops: vec![],
                     },
                 ],
                 batch_coeff: ChallengeIdx(0),
@@ -3718,6 +3872,7 @@ fn build_stage5(
                     scalar_captures: vec![],
                     segmented: None,
                     carry_bindings: vec![],
+                    pre_activation_ops: vec![],
                 }],
                 batch_coeff: ChallengeIdx(0),
                 first_active_round: stage5_max_rounds - ram_ra_reduction_rounds,
@@ -3730,6 +3885,7 @@ fn build_stage5(
                     scalar_captures: vec![],
                     segmented: None,
                     carry_bindings: vec![],
+                    pre_activation_ops: vec![],
                 }],
                 batch_coeff: ChallengeIdx(0),
                 first_active_round: stage5_max_rounds - reg_val_eval_rounds,
@@ -4063,8 +4219,8 @@ fn build_stage6(
         })
         .collect();
 
-    // Booleanity γ^d power challenges for Phase 2 H construction
-    let ch_booleanity_gamma_pow: Vec<ChallengeIdx> = (0..total_d)
+    // Booleanity γ^d power challenges (kept for challenge index stability)
+    let _ch_booleanity_gamma_pow: Vec<ChallengeIdx> = (0..total_d)
         .map(|d| {
             let idx = ch.add(
                 &format!("booleanity_gamma_pow_{d}"),
@@ -4081,6 +4237,9 @@ fn build_stage6(
             idx
         })
         .collect();
+
+    // eq(r_addr, r'_addr) scalar captured at booleanity phase transition
+    let ch_bool_eq_r_r = ch.add("booleanity_eq_r_r", ChallengeSource::External);
 
     // InstructionRaVirtual: 1 challenge_scalar_powers(n_virtual_ra_polys)
     let ch_inst_ra_gamma = ch.add(
@@ -4245,7 +4404,10 @@ fn build_stage6(
     //
     // Formula: Σ_{s=0..4} Input(s) × Input(5+s) + Input(10) × Input(11)
     let bc_raf_addr_kernel_idx = kernels.len();
+    let bc_raf_addr_pre_ops: Vec<Op>;
     {
+        use jolt_compiler::polynomial_id::bytecode_field as bf;
+
         let bytecode_k = 1usize << params.log_k_bytecode;
         let bc_r_cycles = [
             &bc_r_cycle_1,
@@ -4261,11 +4423,6 @@ fn build_stage6(
             ch_bc_stage4_gamma,
             ch_bc_stage5_gamma,
         ];
-        let stage_gamma_counts: [usize; 5] =
-            [2 + NUM_CIRCUIT_FLAGS, 4, 9, 3, 2 + NUM_LOOKUP_TABLES];
-        let raf_powers: [Option<u8>; 5] = [Some(5), None, Some(4), None, None];
-        let register_chs: [&[ChallengeIdx]; 5] =
-            [&[], &[], &[], &bc_r_register_4, &bc_r_register_5];
 
         let mut addr_inputs = Vec::with_capacity(12);
 
@@ -4280,17 +4437,10 @@ fn build_stage6(
             });
         }
 
-        // Inputs 5-9: GammaVal[s] = gamma^s × (Val[s] + raf)
+        // Inputs 5-9: GammaVal[s] — produced by WeightedSum ops at activation
         for s in 0..5 {
-            let poly = PolynomialId::BytecodeReadRafGammaVal(s);
-            addr_inputs.push(InputBinding::BytecodeVal {
-                poly,
-                stage: s as u8,
-                stage_gamma_base: stage_gamma_chs[s],
-                stage_gamma_count: stage_gamma_counts[s],
-                gamma_base: ch_bc_gamma,
-                raf_gamma_power: raf_powers[s],
-                register_eq_challenges: register_chs[s].to_vec(),
+            addr_inputs.push(InputBinding::Provided {
+                poly: PolynomialId::BytecodeReadRafGammaVal(s),
             });
         }
 
@@ -4331,6 +4481,149 @@ fn build_stage6(
             num_rounds: params.log_k_bytecode,
             instance_config: None,
         });
+
+        // Build pre-activation WeightedSum ops for GammaVal[0..4].
+        // These produce BytecodeReadRafGammaVal(s) device buffers from
+        // BytecodeField preprocessed polys + EqGather register lookups.
+        let sg = stage_gamma_chs;
+        let g = ch_bc_gamma;
+        // EqGather for stages 3/4: eq(rd/rs1/rs2, r_register) per bytecode entry
+        // Stage 3 uses bc_r_register_4, stage 4 uses bc_r_register_5
+        let mut pre_ops = vec![
+            Op::Materialize {
+                binding: InputBinding::EqGather {
+                    poly: PolynomialId::BytecodeRegEq(0),
+                    eq_challenges: bc_r_register_4.clone(),
+                    indices: PolynomialId::BytecodeField(bf::RD_INDEX),
+                },
+            },
+            Op::Materialize {
+                binding: InputBinding::EqGather {
+                    poly: PolynomialId::BytecodeRegEq(1),
+                    eq_challenges: bc_r_register_4.clone(),
+                    indices: PolynomialId::BytecodeField(bf::RS1_INDEX),
+                },
+            },
+            Op::Materialize {
+                binding: InputBinding::EqGather {
+                    poly: PolynomialId::BytecodeRegEq(2),
+                    eq_challenges: bc_r_register_4.clone(),
+                    indices: PolynomialId::BytecodeField(bf::RS2_INDEX),
+                },
+            },
+            Op::Materialize {
+                binding: InputBinding::EqGather {
+                    poly: PolynomialId::BytecodeRegEq(3),
+                    eq_challenges: bc_r_register_5.clone(),
+                    indices: PolynomialId::BytecodeField(bf::RD_INDEX),
+                },
+            },
+        ];
+
+        // Stage 0: address + γ₀·imm + Σ γ₀^{2+f}·flag[f] + γ^5·k
+        {
+            let mut t: Vec<(PolynomialId, ChallengeIdx, u8)> = Vec::new();
+            t.push((PolynomialId::BytecodeField(bf::ADDRESS), sg[0], 0));
+            t.push((PolynomialId::BytecodeField(bf::IMM), sg[0], 1));
+            for f in 0..NUM_CIRCUIT_FLAGS {
+                t.push((
+                    PolynomialId::BytecodeField(bf::CIRCUIT_FLAG_BASE + f),
+                    sg[0],
+                    (2 + f) as u8,
+                ));
+            }
+            pre_ops.push(Op::WeightedSum {
+                output: PolynomialId::BytecodeReadRafGammaVal(0),
+                terms: t,
+                identity_term: Some((g, 5)),
+                overall_scale: None,
+            });
+        }
+
+        // Stage 1: γ₁⁰·jump + γ₁¹·branch + γ₁²·wlotord + γ₁³·virtual × γ
+        pre_ops.push(Op::WeightedSum {
+            output: PolynomialId::BytecodeReadRafGammaVal(1),
+            terms: vec![
+                (
+                    PolynomialId::BytecodeField(bf::CIRCUIT_FLAG_BASE + 5),
+                    sg[1],
+                    0,
+                ), // Jump
+                (PolynomialId::BytecodeField(bf::IS_BRANCH), sg[1], 1),
+                (
+                    PolynomialId::BytecodeField(bf::CIRCUIT_FLAG_BASE + 6),
+                    sg[1],
+                    2,
+                ), // WriteLookupOutputToRD
+                (
+                    PolynomialId::BytecodeField(bf::CIRCUIT_FLAG_BASE + 7),
+                    sg[1],
+                    3,
+                ), // VirtualInstruction
+            ],
+            identity_term: None,
+            overall_scale: Some((g, 1)),
+        });
+
+        // Stage 2: imm + γ₂·addr + γ₂²·left_is_rs1 + ... + γ₂⁸·is_first_in_seq + γ^4·k × γ²
+        pre_ops.push(Op::WeightedSum {
+            output: PolynomialId::BytecodeReadRafGammaVal(2),
+            terms: vec![
+                (PolynomialId::BytecodeField(bf::IMM), sg[2], 0),
+                (PolynomialId::BytecodeField(bf::ADDRESS), sg[2], 1),
+                (PolynomialId::BytecodeField(bf::LEFT_IS_RS1), sg[2], 2),
+                (PolynomialId::BytecodeField(bf::LEFT_IS_PC), sg[2], 3),
+                (PolynomialId::BytecodeField(bf::RIGHT_IS_RS2), sg[2], 4),
+                (PolynomialId::BytecodeField(bf::RIGHT_IS_IMM), sg[2], 5),
+                (PolynomialId::BytecodeField(bf::IS_NOOP), sg[2], 6),
+                (
+                    PolynomialId::BytecodeField(bf::CIRCUIT_FLAG_BASE + 7),
+                    sg[2],
+                    7,
+                ), // VirtualInstruction
+                (
+                    PolynomialId::BytecodeField(bf::CIRCUIT_FLAG_BASE + 12),
+                    sg[2],
+                    8,
+                ), // IsFirstInSequence
+            ],
+            identity_term: Some((g, 4)),
+            overall_scale: Some((g, 2)),
+        });
+
+        // Stage 3: γ₃⁰·eq(rd,r4) + γ₃¹·eq(rs1,r4) + γ₃²·eq(rs2,r4) × γ³
+        pre_ops.push(Op::WeightedSum {
+            output: PolynomialId::BytecodeReadRafGammaVal(3),
+            terms: vec![
+                (PolynomialId::BytecodeRegEq(0), sg[3], 0),
+                (PolynomialId::BytecodeRegEq(1), sg[3], 1),
+                (PolynomialId::BytecodeRegEq(2), sg[3], 2),
+            ],
+            identity_term: None,
+            overall_scale: Some((g, 3)),
+        });
+
+        // Stage 4: eq(rd,r5) + γ₄¹·raf + Σ γ₄^{2+t}·table_flag[t] × γ⁴
+        {
+            let mut t: Vec<(PolynomialId, ChallengeIdx, u8)> = Vec::new();
+            t.push((PolynomialId::BytecodeRegEq(3), sg[4], 0));
+            t.push((PolynomialId::BytecodeField(bf::RAF_FLAG), sg[4], 1));
+            for ti in 0..NUM_LOOKUP_TABLES {
+                t.push((
+                    PolynomialId::BytecodeField(bf::TABLE_FLAG_BASE + ti),
+                    sg[4],
+                    (2 + ti) as u8,
+                ));
+            }
+            pre_ops.push(Op::WeightedSum {
+                output: PolynomialId::BytecodeReadRafGammaVal(4),
+                terms: t,
+                identity_term: None,
+                overall_scale: Some((g, 4)),
+            });
+        }
+
+        bc_raf_addr_pre_ops = pre_ops;
     }
 
     // [0] BytecodeReadRaf — cycle phase (degree bytecode_d+1)
@@ -4481,17 +4774,16 @@ fn build_stage6(
     //   - Low bits = addr (log_k_chunk rounds) → matches jolt-core Phase 1
     //   - High bits = cycle (log_t rounds)     → matches jolt-core Phase 2
     //
-    // The combined eq table uses MSB-first convention:
-    //   [r_cycle_BE..., r_addr_BE...] = reversed(r_cycle_LE) ++ reversed(r_addr_LE)
-    // so that LowToHigh binding processes addr_LE_0 first.
-    // Booleanity r_address: first log_k_chunk round challenges, reversed.
+    // Booleanity r_address: derived from InstructionRa(0)'s opening point.
     //
-    // Core's normalize_opening_point stores the address segment in squeezed order
-    // (LE: [r_0, r_1, ..., r_127]). BooleanitySumcheckParams then reverses the
-    // entire segment to [r_127, ..., r_0] and takes the last log_k_chunk entries
-    // = [r_{lkc-1}, ..., r_1, r_0]. With LowToHigh binding, current_index counts
-    // down, so w_j picks r_0 first — matching the sumcheck order.
-    let bool_addr_ch: Vec<ChallengeIdx> = s5.round_challenges[..params.log_k_chunk]
+    // After Stage 5's PrefixSuffix sumcheck, each virtual RA polynomial
+    // (InstructionRa(i)) gets a ra_virtual_log_k_chunk-sized address chunk.
+    // InstructionRa(0) gets r_address_prime[0..16] = rounds 0..15 (the first
+    // two PrefixSuffix phases, which handle the MSB bits).
+    //
+    // jolt-core stores this 16-element point as BE, then reverses to LE and
+    // takes the last log_k_chunk entries = the first log_k_chunk rounds reversed.
+    let bool_addr_ch: Vec<ChallengeIdx> = s5.round_challenges[0..params.log_k_chunk]
         .iter()
         .rev()
         .copied()
@@ -4504,29 +4796,82 @@ fn build_stage6(
         .chain((0..params.ram_d).map(PolynomialId::RamRa))
         .collect();
 
-    // Booleanity: Gruen-based two-phase sumcheck.
-    // Phase 1 (log_k_chunk rounds): binds address variables using G_d projections
-    // Phase 2 (log_t rounds): binds cycle variables using pre-scaled H polynomials
-    // The runtime state machine handles all evaluation internally.
-    let booleanity_kernel_idx = kernels.len();
+    // Booleanity: single-phase dense kernel over transposed RA polynomials.
+    //
+    // Formula: Σ_d γ²_d × eq_tensor × (ra_d² - ra_d)
+    //   eq_tensor = eq([r_cycle_rev, r_addr_rev], [cycle, addr])  (BIG ENDIAN)
+    //   ra_d = Transpose(ra_d_committed, rows=k_chunk, cols=t_size) → cycle-major
+    //
+    // LowToHigh binding processes address (low bits) then cycle (high bits):
+    //   13 total rounds = log_k_chunk + log_t
+    let k_chunk = 1usize << params.log_k_chunk;
+    let t_size = 1usize << params.log_t;
+    let booleanity_rounds = params.log_k_chunk + params.log_t;
+    let bool_first_active = params.log_k_bytecode - params.log_k_chunk;
+
+    // Combined eq table: BIG ENDIAN point = [cycle_ch reversed, addr_ch]
+    // This ensures LowToHigh ch_i ↔ r_addr[i] for i < log_k_chunk,
+    // ch_{log_k_chunk+j} ↔ r_cycle[j] for j < log_t.
+    let bool_eq_id = PolynomialId::BatchEq(next_eq);
+    next_eq += 1;
+    // bool_addr_ch is r_address in LE order [ch_3, ch_2, ch_1, ch_0].
+    // BIG ENDIAN eq point needs r_addr reversed → [ch_0, ch_1, ch_2, ch_3].
+    let bool_eq_challenges: Vec<ChallengeIdx> = bool_cycle_ch
+        .iter()
+        .rev()
+        .chain(bool_addr_ch.iter().rev())
+        .copied()
+        .collect();
+
+    let mut bool_terms = Vec::with_capacity(2 * total_d);
+    for (d, gamma_sq) in ch_booleanity_gamma_sq.iter().enumerate() {
+        let gamma_sq_idx = gamma_sq.0 as u32;
+        let ra_input = (d + 1) as u32;
+        bool_terms.push(ProductTerm {
+            coefficient: 1,
+            factors: vec![
+                Factor::Challenge(gamma_sq_idx),
+                Factor::Input(0),
+                Factor::Input(ra_input),
+                Factor::Input(ra_input),
+            ],
+        });
+        bool_terms.push(ProductTerm {
+            coefficient: -1,
+            factors: vec![
+                Factor::Challenge(gamma_sq_idx),
+                Factor::Input(0),
+                Factor::Input(ra_input),
+            ],
+        });
+    }
+
+    let bool_g_ids: Vec<PolynomialId> = (0..total_d).map(PolynomialId::BooleanityG).collect();
+    let mut bool_inputs = Vec::with_capacity(1 + total_d);
+    bool_inputs.push(InputBinding::EqTable {
+        poly: bool_eq_id,
+        challenges: bool_eq_challenges,
+    });
+    for (d, &ra_pid) in ra_poly_ids.iter().enumerate() {
+        bool_inputs.push(InputBinding::Transpose {
+            poly: bool_g_ids[d],
+            source: ra_pid,
+            rows: k_chunk,
+            cols: t_size,
+        });
+    }
+
+    let bool_kernel_idx = kernels.len();
     kernels.push(KernelDef {
         spec: KernelSpec {
-            formula: Formula::from_terms(vec![]),
+            formula: Formula::from_terms(bool_terms),
             num_evals: 4,
             iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
         },
-        inputs: vec![],
+        inputs: bool_inputs,
         num_rounds: booleanity_rounds,
-        instance_config: Some(InstanceConfig::Booleanity {
-            ra_poly_ids: ra_poly_ids.clone(),
-            addr_challenges: bool_addr_ch.clone(),
-            cycle_challenges: bool_cycle_ch.clone(),
-            gamma_powers: ch_booleanity_gamma_pow,
-            gamma_powers_square: ch_booleanity_gamma_sq.clone(),
-            log_k_chunk: params.log_k_chunk,
-            log_t: params.log_t,
-        }),
+        instance_config: None,
     });
 
     // [2] HammingBooleanity — Dense, degree 3: eq × H² − eq × H
@@ -4755,6 +5100,7 @@ fn build_stage6(
                         scalar_captures: vec![],
                         segmented: None,
                         carry_bindings: vec![],
+                        pre_activation_ops: bc_raf_addr_pre_ops,
                     },
                     InstancePhase {
                         kernel: bc_raf_cycle_kernel_idx,
@@ -4773,22 +5119,24 @@ fn build_stage6(
                             .collect(),
                         segmented: None,
                         carry_bindings: vec![],
+                        pre_activation_ops: vec![],
                     },
                 ],
                 batch_coeff: ChallengeIdx(0),
                 first_active_round: 0,
             },
-            // [1] Booleanity — single phase over full k×j space
+            // [1] Booleanity — single-phase over transposed RA polys
             BatchedInstance {
                 phases: vec![InstancePhase {
-                    kernel: booleanity_kernel_idx,
+                    kernel: bool_kernel_idx,
                     num_rounds: booleanity_rounds,
                     scalar_captures: vec![],
                     segmented: None,
                     carry_bindings: vec![],
+                    pre_activation_ops: vec![],
                 }],
                 batch_coeff: ChallengeIdx(0),
-                first_active_round: params.log_k_bytecode - params.log_k_chunk,
+                first_active_round: bool_first_active,
             },
             // [2] HammingBooleanity
             BatchedInstance {
@@ -4798,6 +5146,7 @@ fn build_stage6(
                     scalar_captures: vec![],
                     segmented: None,
                     carry_bindings: vec![],
+                    pre_activation_ops: vec![],
                 }],
                 batch_coeff: ChallengeIdx(0),
                 first_active_round: params.log_k_bytecode,
@@ -4810,6 +5159,7 @@ fn build_stage6(
                     scalar_captures: vec![],
                     segmented: None,
                     carry_bindings: vec![],
+                    pre_activation_ops: vec![],
                 }],
                 batch_coeff: ChallengeIdx(0),
                 first_active_round: params.log_k_bytecode,
@@ -4822,6 +5172,7 @@ fn build_stage6(
                     scalar_captures: vec![],
                     segmented: None,
                     carry_bindings: vec![],
+                    pre_activation_ops: vec![],
                 }],
                 batch_coeff: ChallengeIdx(0),
                 first_active_round: params.log_k_bytecode,
@@ -4834,6 +5185,7 @@ fn build_stage6(
                     scalar_captures: vec![],
                     segmented: None,
                     carry_bindings: vec![],
+                    pre_activation_ops: vec![],
                 }],
                 batch_coeff: ChallengeIdx(0),
                 first_active_round: params.log_k_bytecode,
@@ -5086,13 +5438,12 @@ fn build_stage6(
         tag: DomainSeparator::OpeningClaim,
     });
 
-    // [1] Booleanity: extract evaluations from booleanity state (device buffers are stale).
-    // The last round's challenge was squeezed but never bound into the booleanity state
-    // (the batched loop only binds at the START of each round, so the final squeeze has
-    // no subsequent bind). Apply it now to finish reducing H to 1 element per poly.
-    ops.push(Op::UnifiedInstanceBind {
+    // [1] Booleanity: apply final bind on single-phase kernel, evaluate transposed RA buffers,
+    // alias to original RA poly IDs.
+    ops.push(Op::InstanceBind {
         batch: batch_idx,
         instance: InstanceIdx(1),
+        kernel: bool_kernel_idx,
         challenge: s6_round_ch[stage6_max_rounds - 1],
     });
     let bool_ra_poly_ids: Vec<PolynomialId> = (0..params.instruction_d)
@@ -5100,12 +5451,16 @@ fn build_stage6(
         .chain((0..params.bytecode_d).map(PolynomialId::BytecodeRa))
         .chain((0..params.ram_d).map(PolynomialId::RamRa))
         .collect();
-    ops.push(Op::UnifiedInstanceFinalize {
-        batch: batch_idx,
-        instance: InstanceIdx(1),
-        output_buffers: Vec::new(),
-        output_evals: bool_ra_poly_ids.clone(),
-    });
+    for (d, &ra_pid) in bool_ra_poly_ids.iter().enumerate() {
+        ops.push(Op::Evaluate {
+            poly: bool_g_ids[d],
+            mode: EvalMode::FullyBound,
+        });
+        ops.push(Op::AliasEval {
+            from: bool_g_ids[d],
+            to: ra_pid,
+        });
+    }
     ops.push(Op::AbsorbEvals {
         polys: bool_ra_poly_ids,
         tag: DomainSeparator::OpeningClaim,
@@ -5261,31 +5616,88 @@ fn build_stage7(
         addr_virt_challenges_be.push(s6.ram_addr_chunks[d].clone());
     }
 
-    // HW Reduction config and kernel
+    // HW Reduction kernel: fully compiled as Formula + InputBindings.
+    //
+    // Formula: Σ_d (γ^{3d}·G_d + γ^{3d+1}·G_d·eq_bool + γ^{3d+2}·G_d·eq_virt_d)
+    // Input layout: [G_0, ..., G_{N-1}, eq_bool, eq_virt_0, ..., eq_virt_{N-1}]
+    // Challenge layout: [γ^0, γ^1, ..., γ^{3N-1}] (mapped via ChallengeIdx)
     let cycle_challenges_be_ret = cycle_challenges_be.clone();
+
+    // Build formula terms
+    let mut hw_formula_terms = Vec::with_capacity(3 * total_d);
+    let eq_bool_input_idx = total_d as u32; // eq_bool is after all G_d inputs
+    for d in 0..total_d {
+        let g_input = d as u32;
+        let eq_virt_input = (total_d + 1 + d) as u32;
+        let gamma_hw = ch_hw_gamma_pow[3 * d].0 as u32;
+        let gamma_bool = ch_hw_gamma_pow[3 * d + 1].0 as u32;
+        let gamma_virt = ch_hw_gamma_pow[3 * d + 2].0 as u32;
+
+        // γ^{3d} · G_d
+        hw_formula_terms.push(ProductTerm {
+            coefficient: 1,
+            factors: vec![Factor::Challenge(gamma_hw), Factor::Input(g_input)],
+        });
+        // γ^{3d+1} · G_d · eq_bool
+        hw_formula_terms.push(ProductTerm {
+            coefficient: 1,
+            factors: vec![
+                Factor::Challenge(gamma_bool),
+                Factor::Input(g_input),
+                Factor::Input(eq_bool_input_idx),
+            ],
+        });
+        // γ^{3d+2} · G_d · eq_virt_d
+        hw_formula_terms.push(ProductTerm {
+            coefficient: 1,
+            factors: vec![
+                Factor::Challenge(gamma_virt),
+                Factor::Input(g_input),
+                Factor::Input(eq_virt_input),
+            ],
+        });
+    }
+
+    // Build input bindings: G_d via EqProject, eq_bool/eq_virt via EqTable
+    let k_chunk = 1usize << params.log_k_chunk;
+    let t_size = 1usize << params.log_t;
+    let eq_bool_poly = PolynomialId::BatchEq(100);
+
+    let mut hw_inputs = Vec::with_capacity(2 * total_d + 1);
+    // G_0, ..., G_{N-1}: project RA data over cycle dimension
+    for (g_poly, ra_poly) in p.hw_g.iter().zip(&ra_poly_ids) {
+        hw_inputs.push(InputBinding::EqProject {
+            poly: *g_poly,
+            source: *ra_poly,
+            challenges: cycle_challenges_be.clone(),
+            inner_size: k_chunk,
+            outer_size: t_size,
+        });
+    }
+    // eq_bool: shared eq table over addr_bool challenges
+    hw_inputs.push(InputBinding::EqTable {
+        poly: eq_bool_poly,
+        challenges: addr_bool_challenges_be.clone(),
+    });
+    // eq_virt_0, ..., eq_virt_{N-1}: per-dimension eq table over addr_virt challenges
+    for (d, addr_virt_ch) in addr_virt_challenges_be.iter().enumerate() {
+        hw_inputs.push(InputBinding::EqTable {
+            poly: PolynomialId::BatchEq(101 + d),
+            challenges: addr_virt_ch.clone(),
+        });
+    }
+
     let hw_kernel_idx = kernels.len();
     kernels.push(KernelDef {
         spec: KernelSpec {
-            formula: Formula::from_terms(vec![]),
+            formula: Formula::from_terms(hw_formula_terms),
             num_evals: 3, // degree 2 → evals at {0, 1, 2}
             iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
         },
-        inputs: vec![],
+        inputs: hw_inputs,
         num_rounds: hw_rounds,
-        instance_config: Some(InstanceConfig::HwReduction {
-            ra_poly_ids: ra_poly_ids.clone(),
-            cycle_challenges_be,
-            addr_bool_challenges_be,
-            addr_virt_challenges_be,
-            gamma_powers: ch_hw_gamma_pow.clone(),
-            hw_eval_challenge: ChallengeIdx(0), // unused: claims only for input_claim() which module handles
-            instruction_d: params.instruction_d,
-            bytecode_d: params.bytecode_d,
-            ram_d: params.ram_d,
-            log_k_chunk: params.log_k_chunk,
-            log_t: params.log_t,
-        }),
+        instance_config: None,
     });
 
     // Batched sumcheck definition (1 instance)
@@ -5298,6 +5710,7 @@ fn build_stage7(
                 scalar_captures: vec![],
                 segmented: None,
                 carry_bindings: vec![],
+                pre_activation_ops: vec![],
             }],
             batch_coeff: ChallengeIdx(0),
             first_active_round: 0,
@@ -5399,23 +5812,24 @@ fn build_stage7(
         None,
     );
 
-    // Post-sumcheck: final bind + cache G evaluations
-    // The last round's challenge was squeezed but never bound into the HW state.
-    // Apply it now to finish reducing G, eq_bool, eq_virt to 1 element each.
-    ops.push(Op::UnifiedInstanceBind {
+    // Post-sumcheck: final bind + extract G evaluations.
+    // The last round's challenge was squeezed but never bound into the kernel inputs.
+    // Apply it now to finish reducing all buffers to 1 element each.
+    ops.push(Op::InstanceBind {
         batch: batch_idx,
         instance: InstanceIdx(0),
+        kernel: hw_kernel_idx,
         challenge: s7_round_ch[hw_rounds - 1],
     });
 
-    // Extract G_i evaluations and store as HammingG(i) evaluations.
+    // Extract G_i evaluations (buffers are now 1-element after all binds).
     let g_poly_ids: Vec<PolynomialId> = (0..total_d).map(|i| p.hw_g[i]).collect();
-    ops.push(Op::UnifiedInstanceFinalize {
-        batch: batch_idx,
-        instance: InstanceIdx(0),
-        output_buffers: Vec::new(),
-        output_evals: g_poly_ids.clone(),
-    });
+    for &g_pid in &g_poly_ids {
+        ops.push(Op::Evaluate {
+            poly: g_pid,
+            mode: EvalMode::FullyBound,
+        });
+    }
 
     // Flush G evaluations to transcript (one per RA polynomial).
     ops.push(Op::AbsorbEvals {
@@ -6469,10 +6883,19 @@ fn print_stats(module: &Module, params: &ModuleParams) {
             | Op::BindCarryBuffers { .. }
             | Op::BatchAccumulateInstance { .. }
             | Op::BatchRoundFinalize { .. }
-            | Op::UnifiedInstanceInit { .. }
-            | Op::UnifiedInstanceBind { .. }
-            | Op::UnifiedInstanceReduce { .. }
-            | Op::UnifiedInstanceFinalize { .. } => counts[14] += 1,
+            | Op::ExpandingTableUpdate { .. }
+            | Op::CheckpointEvalBatch { .. }
+            | Op::InitInstanceWeights { .. }
+            | Op::UpdateInstanceWeights { .. }
+            | Op::SuffixScatter { .. }
+            | Op::QBufferScatter { .. }
+            | Op::MaterializePBuffers { .. }
+            | Op::InitExpandingTable { .. }
+            | Op::ReadCheckingReduce { .. }
+            | Op::RafReduce { .. }
+            | Op::MaterializeRA { .. }
+            | Op::MaterializeCombinedVal { .. }
+            | Op::WeightedSum { .. } => counts[14] += 1,
         }
     }
     eprintln!("\n=== Op Counts ===");
@@ -6574,4 +6997,1057 @@ fn print_stats(module: &Module, params: &ModuleParams) {
         }
         eprintln!("  FiatShamir: {fs}, SumcheckRound: {sc}, Power: {pw}, External: {ext}");
     }
+}
+
+/// Compute prefix-suffix protocol data from jolt-instructions.
+///
+/// Returns (combine_entries, suffix_at_empty, suffixes_per_table, suffix_ops, checkpoint_rules).
+#[allow(clippy::type_complexity)]
+fn compute_prefix_suffix_data() -> (
+    Vec<CombineEntry>,
+    Vec<Vec<u64>>,
+    Vec<usize>,
+    Vec<Vec<SuffixOp>>,
+    Vec<CheckpointRule>,
+    Vec<PrefixMleRule>,
+) {
+    const XLEN: usize = 64;
+    let all_kinds = all_table_kinds();
+    let mut combine_entries = Vec::new();
+    let mut suffix_at_empty = Vec::with_capacity(all_kinds.len());
+    let mut suffixes_per_table = Vec::with_capacity(all_kinds.len());
+    let mut suffix_ops = Vec::with_capacity(all_kinds.len());
+
+    for (t_idx, &kind) in all_kinds.iter().enumerate() {
+        let table = LookupTables::<XLEN>::from(kind);
+        let suffixes = table.suffixes();
+        let empty = LookupBits::new(0, 0);
+        suffix_at_empty.push(
+            suffixes
+                .iter()
+                .map(|s| s.suffix_mle::<XLEN>(empty))
+                .collect(),
+        );
+        suffixes_per_table.push(suffixes.len());
+        suffix_ops.push(suffixes.iter().map(suffix_to_op::<XLEN>).collect());
+        for entry in table.combine_entries() {
+            combine_entries.push(CombineEntry {
+                table_idx: t_idx,
+                prefix_idx: entry.prefix.map(|p| p as usize),
+                suffix_local_idx: entry.suffix_idx,
+                coefficient: entry.coefficient,
+            });
+        }
+    }
+
+    let checkpoint_rules: Vec<CheckpointRule> =
+        ALL_PREFIXES.iter().map(prefix_to_rule::<XLEN>).collect();
+
+    let prefix_mle_rules: Vec<PrefixMleRule> = ALL_PREFIXES
+        .iter()
+        .map(prefix_to_mle_rule::<XLEN>)
+        .collect();
+
+    (
+        combine_entries,
+        suffix_at_empty,
+        suffixes_per_table,
+        suffix_ops,
+        checkpoint_rules,
+        prefix_mle_rules,
+    )
+}
+
+fn prefix_to_rule<const XLEN: usize>(prefix: &Prefixes) -> CheckpointRule {
+    use BilinearExpr::{
+        AntiXY, AntiYX, EqBit, NorBit, OneMinusX, OneMinusY, OnePlusY, OrBit, Product, XorBit, X, Y,
+    };
+    use CheckpointAction::{
+        AddTwoTerm, AddWeighted, Const, DepAdd, DepAddWeighted, Hybrid, Mul, Null, Passthrough,
+        Pow2DoubleMul, Pow2Init, Rev8WAdd, Set, SetScaled, SignExtAccum,
+    };
+    use DefaultVal::{Custom, One, Zero};
+    use RoundGuard::{JEq, JGe, JGt, JLt, SuffixLenNonZero};
+    use WeightFn::{LinearJ, LinearJMinusOne, Positional};
+
+    let pos = |rot: u32, wb: u32, off: usize| Positional {
+        rotation: rot,
+        word_bits: wb,
+        j_offset: off,
+    };
+
+    match prefix {
+        // === Simple multiplicative: cp *= expr ===
+        Prefixes::Eq => CheckpointRule {
+            default: One,
+            cases: vec![],
+            fallback: Mul(EqBit),
+        },
+        Prefixes::LeftOperandIsZero => CheckpointRule {
+            default: One,
+            cases: vec![],
+            fallback: Mul(OneMinusX),
+        },
+        Prefixes::RightOperandIsZero => CheckpointRule {
+            default: One,
+            cases: vec![],
+            fallback: Mul(OneMinusY),
+        },
+        Prefixes::DivByZero => CheckpointRule {
+            default: One,
+            cases: vec![],
+            fallback: Mul(AntiXY),
+        },
+        Prefixes::LeftShiftHelper => CheckpointRule {
+            default: One,
+            cases: vec![],
+            fallback: Mul(OnePlusY),
+        },
+
+        // === Additive with positional shift: cp += 2^shift * expr ===
+        Prefixes::And => CheckpointRule {
+            default: Zero,
+            cases: vec![],
+            fallback: AddWeighted {
+                weight: pos(0, XLEN as u32, 0),
+                expr: Product,
+            },
+        },
+        Prefixes::Andn => CheckpointRule {
+            default: Zero,
+            cases: vec![],
+            fallback: AddWeighted {
+                weight: pos(0, XLEN as u32, 0),
+                expr: AntiYX,
+            },
+        },
+        Prefixes::Or => CheckpointRule {
+            default: Zero,
+            cases: vec![],
+            fallback: AddWeighted {
+                weight: pos(0, XLEN as u32, 0),
+                expr: OrBit,
+            },
+        },
+        Prefixes::Xor => CheckpointRule {
+            default: Zero,
+            cases: vec![],
+            fallback: AddWeighted {
+                weight: pos(0, XLEN as u32, 0),
+                expr: XorBit,
+            },
+        },
+        Prefixes::RightOperand => CheckpointRule {
+            default: Zero,
+            cases: vec![],
+            fallback: AddWeighted {
+                weight: pos(0, XLEN as u32, 0),
+                expr: Y,
+            },
+        },
+
+        // XorRot variants (64-bit word)
+        Prefixes::XorRot16 => CheckpointRule {
+            default: Zero,
+            cases: vec![],
+            fallback: AddWeighted {
+                weight: pos(16, XLEN as u32, 0),
+                expr: XorBit,
+            },
+        },
+        Prefixes::XorRot24 => CheckpointRule {
+            default: Zero,
+            cases: vec![],
+            fallback: AddWeighted {
+                weight: pos(24, XLEN as u32, 0),
+                expr: XorBit,
+            },
+        },
+        Prefixes::XorRot32 => CheckpointRule {
+            default: Zero,
+            cases: vec![],
+            fallback: AddWeighted {
+                weight: pos(32, XLEN as u32, 0),
+                expr: XorBit,
+            },
+        },
+        Prefixes::XorRot63 => CheckpointRule {
+            default: Zero,
+            cases: vec![],
+            fallback: AddWeighted {
+                weight: pos(63, XLEN as u32, 0),
+                expr: XorBit,
+            },
+        },
+
+        // XorRotW variants (32-bit word, j >= XLEN guard)
+        Prefixes::XorRotW7 => CheckpointRule {
+            default: Zero,
+            cases: vec![(JLt(XLEN), Const(Zero))],
+            fallback: AddWeighted {
+                weight: pos(7, 32, XLEN),
+                expr: XorBit,
+            },
+        },
+        Prefixes::XorRotW8 => CheckpointRule {
+            default: Zero,
+            cases: vec![(JLt(XLEN), Const(Zero))],
+            fallback: AddWeighted {
+                weight: pos(8, 32, XLEN),
+                expr: XorBit,
+            },
+        },
+        Prefixes::XorRotW12 => CheckpointRule {
+            default: Zero,
+            cases: vec![(JLt(XLEN), Const(Zero))],
+            fallback: AddWeighted {
+                weight: pos(12, 32, XLEN),
+                expr: XorBit,
+            },
+        },
+        Prefixes::XorRotW16 => CheckpointRule {
+            default: Zero,
+            cases: vec![(JLt(XLEN), Const(Zero))],
+            fallback: AddWeighted {
+                weight: pos(16, 32, XLEN),
+                expr: XorBit,
+            },
+        },
+
+        // === Two-term additive: cp += 2^a*rx + 2^b*ry ===
+        Prefixes::UpperWord => CheckpointRule {
+            default: Zero,
+            cases: vec![(JGe(XLEN), Passthrough)],
+            fallback: AddTwoTerm {
+                x_weight: LinearJ { base: XLEN },
+                y_weight: LinearJMinusOne { base: XLEN },
+            },
+        },
+        Prefixes::LowerWord => CheckpointRule {
+            default: Zero,
+            cases: vec![(JLt(XLEN), Null)],
+            fallback: AddTwoTerm {
+                x_weight: LinearJ { base: 2 * XLEN },
+                y_weight: LinearJMinusOne { base: 2 * XLEN },
+            },
+        },
+        Prefixes::LowerHalfWord => CheckpointRule {
+            default: Zero,
+            cases: vec![(JLt(XLEN + XLEN / 2), Null)],
+            fallback: AddTwoTerm {
+                x_weight: LinearJ { base: 2 * XLEN },
+                y_weight: LinearJMinusOne { base: 2 * XLEN },
+            },
+        },
+
+        // === Dependent additive: cp += dep_cp * expr ===
+        Prefixes::LessThan => CheckpointRule {
+            default: Zero,
+            cases: vec![],
+            fallback: DepAdd {
+                dep: Prefixes::Eq as usize,
+                dep_default: One,
+                expr: AntiXY,
+            },
+        },
+
+        // === Dependent additive with shift: cp += dep_cp * 2^shift * expr ===
+        Prefixes::LeftShift => CheckpointRule {
+            default: Zero,
+            cases: vec![],
+            fallback: DepAddWeighted {
+                dep: Prefixes::LeftShiftHelper as usize,
+                dep_default: One,
+                weight: pos(0, XLEN as u32, 0),
+                expr: AntiYX,
+            },
+        },
+
+        // === Hybrid: cp = cp*mul + add ===
+        Prefixes::RightShift => CheckpointRule {
+            default: Zero,
+            cases: vec![],
+            fallback: Hybrid {
+                mul: OnePlusY,
+                add: Product,
+            },
+        },
+
+        // === Round-specific set, else passthrough ===
+        Prefixes::LeftOperandMsb => CheckpointRule {
+            default: Zero,
+            cases: vec![(JEq(1), Set(X))],
+            fallback: Passthrough,
+        },
+        Prefixes::RightOperandMsb => CheckpointRule {
+            default: Zero,
+            cases: vec![(JEq(1), Set(Y))],
+            fallback: Passthrough,
+        },
+        Prefixes::TwoLsb => CheckpointRule {
+            default: One,
+            cases: vec![(JEq(2 * XLEN - 1), Set(NorBit))],
+            fallback: Passthrough,
+        },
+        Prefixes::SignExtensionUpperHalf => CheckpointRule {
+            default: Zero,
+            cases: vec![(
+                JEq(XLEN + XLEN / 2 + 1),
+                SetScaled {
+                    coeff: (((1i128 << (XLEN / 2)) - 1) << (XLEN / 2)),
+                    expr: X,
+                },
+            )],
+            fallback: Passthrough,
+        },
+        Prefixes::SignExtensionRightOperand => CheckpointRule {
+            default: Zero,
+            cases: vec![(
+                JEq(XLEN + 1),
+                SetScaled {
+                    coeff: (1i128 << XLEN) - (1i128 << (XLEN / 2)),
+                    expr: Y,
+                },
+            )],
+            fallback: Passthrough,
+        },
+
+        // === Round-specific set, else constant ===
+        Prefixes::Lsb => CheckpointRule {
+            default: One,
+            cases: vec![(JEq(2 * XLEN - 1), Set(Y))],
+            fallback: Const(One),
+        },
+
+        // === Multiplicative with j==1 init override ===
+        Prefixes::PositiveRemainderEqualsDivisor => CheckpointRule {
+            default: One,
+            cases: vec![(JEq(1), Set(NorBit))],
+            fallback: Mul(EqBit),
+        },
+        Prefixes::NegativeDivisorEqualsRemainder => CheckpointRule {
+            default: One,
+            cases: vec![(JEq(1), Set(Product))],
+            fallback: Mul(EqBit),
+        },
+
+        // === NegDivZeroRem: j==1 → set, else → cp*(1-rx) ===
+        Prefixes::NegativeDivisorZeroRemainder => CheckpointRule {
+            default: Zero,
+            cases: vec![(JEq(1), Set(AntiXY))],
+            fallback: Mul(OneMinusX),
+        },
+
+        // === Dependent additive with j==1 and j==3 overrides ===
+        Prefixes::PositiveRemainderLessThanDivisor => CheckpointRule {
+            default: Zero,
+            cases: vec![(JEq(1), Set(NorBit)), (JEq(3), Mul(AntiXY))],
+            fallback: DepAdd {
+                dep: Prefixes::PositiveRemainderEqualsDivisor as usize,
+                dep_default: One,
+                expr: AntiXY,
+            },
+        },
+        Prefixes::NegativeDivisorGreaterThanRemainder => CheckpointRule {
+            default: Zero,
+            cases: vec![(JEq(1), Set(Product)), (JEq(3), Mul(AntiYX))],
+            fallback: DepAdd {
+                dep: Prefixes::NegativeDivisorEqualsRemainder as usize,
+                dep_default: One,
+                expr: AntiYX,
+            },
+        },
+
+        // === ChangeDivisor: j==1 → cp*rx*ry, else → cp*(1-rx)*ry ===
+        Prefixes::ChangeDivisor => CheckpointRule {
+            default: Custom(2 - (1i128 << XLEN)),
+            cases: vec![(JEq(1), Mul(Product))],
+            fallback: Mul(AntiXY),
+        },
+
+        // === ChangeDivisorW: j<XLEN→0, j==XLEN+1→init, else→cp*(1-rx)*ry ===
+        Prefixes::ChangeDivisorW => CheckpointRule {
+            default: Zero,
+            cases: vec![
+                (JLt(XLEN), Const(Zero)),
+                (
+                    JEq(XLEN + 1),
+                    SetScaled {
+                        coeff: 2 - (1i128 << XLEN),
+                        expr: Product,
+                    },
+                ),
+            ],
+            fallback: Mul(AntiXY),
+        },
+
+        // === SignExtension ===
+        Prefixes::SignExtension => CheckpointRule {
+            default: Zero,
+            cases: vec![(JEq(1), Null)],
+            fallback: SignExtAccum {
+                dep: Prefixes::LeftOperandMsb as usize,
+                final_j: 2 * XLEN - 1,
+            },
+        },
+
+        // === Pow2 ===
+        Prefixes::Pow2 => {
+            let trail = XLEN.trailing_zeros() as usize;
+            CheckpointRule {
+                default: One,
+                cases: vec![
+                    (SuffixLenNonZero, Const(One)),
+                    (
+                        JEq(2 * XLEN - trail),
+                        Pow2Init {
+                            half_pow: (XLEN / 2) as u32,
+                        },
+                    ),
+                    (JGt(2 * XLEN - trail), Pow2DoubleMul { xlen: XLEN }),
+                ],
+                fallback: Const(One),
+            }
+        }
+        Prefixes::Pow2W => CheckpointRule {
+            default: One,
+            cases: vec![
+                (SuffixLenNonZero, Const(One)),
+                (JEq(2 * XLEN - 5), Pow2Init { half_pow: 16 }),
+                (JGt(2 * XLEN - 5), Pow2DoubleMul { xlen: XLEN }),
+            ],
+            fallback: Const(One),
+        },
+
+        // === Rev8W ===
+        Prefixes::Rev8W => CheckpointRule {
+            default: Zero,
+            cases: vec![],
+            fallback: Rev8WAdd { xlen: 64 },
+        },
+
+        // === W-guarded variants ===
+        Prefixes::RightShiftW => CheckpointRule {
+            default: Zero,
+            cases: vec![(JLt(XLEN), Const(Zero))],
+            fallback: Hybrid {
+                mul: OnePlusY,
+                add: Product,
+            },
+        },
+        Prefixes::LeftShiftWHelper => CheckpointRule {
+            default: One,
+            cases: vec![(JLt(XLEN), Const(One))],
+            fallback: Mul(OnePlusY),
+        },
+        Prefixes::LeftShiftW => CheckpointRule {
+            default: Zero,
+            cases: vec![(JLt(XLEN), Const(Zero))],
+            fallback: DepAddWeighted {
+                dep: Prefixes::LeftShiftWHelper as usize,
+                dep_default: One,
+                weight: pos(0, XLEN as u32, 0),
+                expr: AntiYX,
+            },
+        },
+        Prefixes::RightOperandW => CheckpointRule {
+            default: Zero,
+            cases: vec![(JLt(XLEN + 1), Passthrough)],
+            fallback: AddWeighted {
+                weight: pos(0, XLEN as u32, 0),
+                expr: Y,
+            },
+        },
+        Prefixes::OverflowBitsZero => CheckpointRule {
+            default: One,
+            cases: vec![(JGe(128 - XLEN), Passthrough)],
+            fallback: Mul(NorBit),
+        },
+    }
+}
+
+fn prefix_to_mle_rule<const XLEN: usize>(prefix: &Prefixes) -> PrefixMleRule {
+    use BilinearExpr::{
+        AntiXY, AntiYX, EqBit, NorBit, OneMinusX, OneMinusY, OrBit, Product, XorBit,
+    };
+
+    let total_bits = 2 * XLEN;
+    let idx = *prefix as usize;
+
+    let rule = |default, formula| PrefixMleRule {
+        checkpoint_idx: idx,
+        default,
+        formula,
+    };
+
+    match prefix {
+        Prefixes::Eq => rule(
+            DefaultVal::One,
+            PrefixMleFormula::Multiplicative {
+                pair: EqBit,
+                remaining: RemainingTest::Equality,
+            },
+        ),
+        Prefixes::LeftOperandIsZero => rule(
+            DefaultVal::One,
+            PrefixMleFormula::Multiplicative {
+                pair: OneMinusX,
+                remaining: RemainingTest::LeftZero,
+            },
+        ),
+        Prefixes::RightOperandIsZero => rule(
+            DefaultVal::One,
+            PrefixMleFormula::Multiplicative {
+                pair: OneMinusY,
+                remaining: RemainingTest::RightZero,
+            },
+        ),
+        Prefixes::DivByZero => rule(
+            DefaultVal::One,
+            PrefixMleFormula::Multiplicative {
+                pair: AntiXY,
+                remaining: RemainingTest::LeftZeroRightAllOnes,
+            },
+        ),
+        Prefixes::And => rule(
+            DefaultVal::Zero,
+            PrefixMleFormula::BitwiseAdditive {
+                pair: Product,
+                weight: WeightFn::Positional {
+                    rotation: 0,
+                    word_bits: XLEN as u32,
+                    j_offset: 0,
+                },
+                op: IntBitOp::And,
+                total_bits,
+                word_bits: XLEN,
+                rotation: 0,
+            },
+        ),
+        Prefixes::Andn => rule(
+            DefaultVal::Zero,
+            PrefixMleFormula::BitwiseAdditive {
+                pair: AntiYX,
+                weight: WeightFn::Positional {
+                    rotation: 0,
+                    word_bits: XLEN as u32,
+                    j_offset: 0,
+                },
+                op: IntBitOp::AndNot,
+                total_bits,
+                word_bits: XLEN,
+                rotation: 0,
+            },
+        ),
+        Prefixes::Or => rule(
+            DefaultVal::Zero,
+            PrefixMleFormula::BitwiseAdditive {
+                pair: OrBit,
+                weight: WeightFn::Positional {
+                    rotation: 0,
+                    word_bits: XLEN as u32,
+                    j_offset: 0,
+                },
+                op: IntBitOp::Or,
+                total_bits,
+                word_bits: XLEN,
+                rotation: 0,
+            },
+        ),
+        Prefixes::Xor => rule(
+            DefaultVal::Zero,
+            PrefixMleFormula::BitwiseAdditive {
+                pair: XorBit,
+                weight: WeightFn::Positional {
+                    rotation: 0,
+                    word_bits: XLEN as u32,
+                    j_offset: 0,
+                },
+                op: IntBitOp::Xor,
+                total_bits,
+                word_bits: XLEN,
+                rotation: 0,
+            },
+        ),
+        Prefixes::RightOperand => rule(
+            DefaultVal::Zero,
+            PrefixMleFormula::RightOperandExtract {
+                word_bits: XLEN,
+                start_round: 0,
+                total_bits,
+                suffix_guard: total_bits,
+            },
+        ),
+        Prefixes::XorRot16 => rule(
+            DefaultVal::Zero,
+            PrefixMleFormula::BitwiseAdditive {
+                pair: XorBit,
+                weight: WeightFn::Positional {
+                    rotation: 16,
+                    word_bits: XLEN as u32,
+                    j_offset: 0,
+                },
+                op: IntBitOp::Xor,
+                total_bits,
+                word_bits: XLEN,
+                rotation: 16,
+            },
+        ),
+        Prefixes::XorRot24 => rule(
+            DefaultVal::Zero,
+            PrefixMleFormula::BitwiseAdditive {
+                pair: XorBit,
+                weight: WeightFn::Positional {
+                    rotation: 24,
+                    word_bits: XLEN as u32,
+                    j_offset: 0,
+                },
+                op: IntBitOp::Xor,
+                total_bits,
+                word_bits: XLEN,
+                rotation: 24,
+            },
+        ),
+        Prefixes::XorRot32 => rule(
+            DefaultVal::Zero,
+            PrefixMleFormula::BitwiseAdditive {
+                pair: XorBit,
+                weight: WeightFn::Positional {
+                    rotation: 32,
+                    word_bits: XLEN as u32,
+                    j_offset: 0,
+                },
+                op: IntBitOp::Xor,
+                total_bits,
+                word_bits: XLEN,
+                rotation: 32,
+            },
+        ),
+        Prefixes::XorRot63 => rule(
+            DefaultVal::Zero,
+            PrefixMleFormula::BitwiseAdditive {
+                pair: XorBit,
+                weight: WeightFn::Positional {
+                    rotation: 63,
+                    word_bits: XLEN as u32,
+                    j_offset: 0,
+                },
+                op: IntBitOp::Xor,
+                total_bits,
+                word_bits: XLEN,
+                rotation: 63,
+            },
+        ),
+        Prefixes::XorRotW7 => rule(
+            DefaultVal::Zero,
+            PrefixMleFormula::BitwiseAdditive {
+                pair: XorBit,
+                weight: WeightFn::Positional {
+                    rotation: 7,
+                    word_bits: 32,
+                    j_offset: XLEN,
+                },
+                op: IntBitOp::Xor,
+                total_bits,
+                word_bits: 32,
+                rotation: 7,
+            },
+        ),
+        Prefixes::XorRotW8 => rule(
+            DefaultVal::Zero,
+            PrefixMleFormula::BitwiseAdditive {
+                pair: XorBit,
+                weight: WeightFn::Positional {
+                    rotation: 8,
+                    word_bits: 32,
+                    j_offset: XLEN,
+                },
+                op: IntBitOp::Xor,
+                total_bits,
+                word_bits: 32,
+                rotation: 8,
+            },
+        ),
+        Prefixes::XorRotW12 => rule(
+            DefaultVal::Zero,
+            PrefixMleFormula::BitwiseAdditive {
+                pair: XorBit,
+                weight: WeightFn::Positional {
+                    rotation: 12,
+                    word_bits: 32,
+                    j_offset: XLEN,
+                },
+                op: IntBitOp::Xor,
+                total_bits,
+                word_bits: 32,
+                rotation: 12,
+            },
+        ),
+        Prefixes::XorRotW16 => rule(
+            DefaultVal::Zero,
+            PrefixMleFormula::BitwiseAdditive {
+                pair: XorBit,
+                weight: WeightFn::Positional {
+                    rotation: 16,
+                    word_bits: 32,
+                    j_offset: XLEN,
+                },
+                op: IntBitOp::Xor,
+                total_bits,
+                word_bits: 32,
+                rotation: 16,
+            },
+        ),
+        Prefixes::UpperWord => rule(
+            DefaultVal::Zero,
+            PrefixMleFormula::OperandExtract {
+                base_shift: XLEN,
+                has_x: true,
+                has_y: true,
+                word_bits: XLEN,
+                total_bits,
+                active_when: Some(RoundGuard::JLt(XLEN)),
+                passthrough_when_inactive: true,
+                is_upper: true,
+            },
+        ),
+        Prefixes::LowerWord => rule(
+            DefaultVal::Zero,
+            PrefixMleFormula::OperandExtract {
+                base_shift: 2 * XLEN,
+                has_x: true,
+                has_y: true,
+                word_bits: XLEN,
+                total_bits,
+                active_when: Some(RoundGuard::JGe(XLEN)),
+                passthrough_when_inactive: false,
+                is_upper: false,
+            },
+        ),
+        Prefixes::LowerHalfWord => rule(
+            DefaultVal::Zero,
+            PrefixMleFormula::OperandExtract {
+                base_shift: 2 * XLEN,
+                has_x: true,
+                has_y: true,
+                word_bits: XLEN / 2,
+                total_bits,
+                active_when: Some(RoundGuard::JGe(XLEN + XLEN / 2)),
+                passthrough_when_inactive: false,
+                is_upper: false,
+            },
+        ),
+        Prefixes::RightOperandW => rule(
+            DefaultVal::Zero,
+            PrefixMleFormula::RightOperandExtract {
+                word_bits: XLEN,
+                start_round: XLEN,
+                total_bits,
+                suffix_guard: XLEN,
+            },
+        ),
+        Prefixes::LessThan => rule(
+            DefaultVal::Zero,
+            PrefixMleFormula::DependentComparison {
+                eq_idx: Prefixes::Eq as usize,
+                eq_default: DefaultVal::One,
+                cmp: Comparison::LessThan,
+            },
+        ),
+        Prefixes::PositiveRemainderLessThanDivisor => rule(
+            DefaultVal::Zero,
+            PrefixMleFormula::ComplexComparison {
+                eq_idx: Prefixes::PositiveRemainderEqualsDivisor as usize,
+                cmp: Comparison::LessThan,
+                sign_pair_j0: NorBit,
+                init_cmp: Comparison::LessThan,
+                mul_anti: AntiXY,
+                start_round: 0,
+            },
+        ),
+        Prefixes::NegativeDivisorGreaterThanRemainder => rule(
+            DefaultVal::Zero,
+            PrefixMleFormula::ComplexComparison {
+                eq_idx: Prefixes::NegativeDivisorEqualsRemainder as usize,
+                cmp: Comparison::GreaterThan,
+                sign_pair_j0: Product,
+                init_cmp: Comparison::GreaterThan,
+                mul_anti: AntiYX,
+                start_round: 0,
+            },
+        ),
+        Prefixes::PositiveRemainderEqualsDivisor => rule(
+            DefaultVal::One,
+            PrefixMleFormula::SignGatedMultiplicative {
+                sign_pair: NorBit,
+                base_pair: EqBit,
+                remaining: RemainingTest::Equality,
+                start_round: 0,
+            },
+        ),
+        Prefixes::NegativeDivisorEqualsRemainder => rule(
+            DefaultVal::One,
+            PrefixMleFormula::SignGatedMultiplicative {
+                sign_pair: Product,
+                base_pair: EqBit,
+                remaining: RemainingTest::Equality,
+                start_round: 0,
+            },
+        ),
+        Prefixes::LeftShift => rule(
+            DefaultVal::Zero,
+            PrefixMleFormula::LeftShift {
+                helper_idx: Prefixes::LeftShiftHelper as usize,
+                helper_default: DefaultVal::One,
+                word_bits: XLEN,
+                start_round: 0,
+            },
+        ),
+        Prefixes::LeftShiftHelper => rule(
+            DefaultVal::One,
+            PrefixMleFormula::LeftShiftHelper {
+                word_bits: XLEN,
+                start_round: 0,
+            },
+        ),
+        Prefixes::LeftShiftW => rule(
+            DefaultVal::Zero,
+            PrefixMleFormula::LeftShift {
+                helper_idx: Prefixes::LeftShiftWHelper as usize,
+                helper_default: DefaultVal::One,
+                word_bits: XLEN,
+                start_round: XLEN,
+            },
+        ),
+        Prefixes::LeftShiftWHelper => rule(
+            DefaultVal::One,
+            PrefixMleFormula::LeftShiftHelper {
+                word_bits: XLEN,
+                start_round: XLEN,
+            },
+        ),
+        Prefixes::RightShift => rule(
+            DefaultVal::Zero,
+            PrefixMleFormula::RightShift {
+                word_bits: XLEN,
+                start_round: 0,
+            },
+        ),
+        Prefixes::RightShiftW => rule(
+            DefaultVal::Zero,
+            PrefixMleFormula::RightShift {
+                word_bits: XLEN,
+                start_round: XLEN,
+            },
+        ),
+        Prefixes::LeftOperandMsb => rule(
+            DefaultVal::Zero,
+            PrefixMleFormula::Msb {
+                msb_idx: Prefixes::LeftOperandMsb as usize,
+                start_round: 0,
+                is_left: true,
+            },
+        ),
+        Prefixes::RightOperandMsb => rule(
+            DefaultVal::Zero,
+            PrefixMleFormula::Msb {
+                msb_idx: Prefixes::RightOperandMsb as usize,
+                start_round: 0,
+                is_left: false,
+            },
+        ),
+        Prefixes::Lsb => rule(DefaultVal::One, PrefixMleFormula::Lsb { total_bits }),
+        Prefixes::TwoLsb => rule(DefaultVal::One, PrefixMleFormula::TwoLsb { total_bits }),
+        Prefixes::SignExtension => rule(
+            DefaultVal::Zero,
+            PrefixMleFormula::SignExtension {
+                msb_idx: Prefixes::LeftOperandMsb as usize,
+                word_bits: XLEN,
+            },
+        ),
+        Prefixes::SignExtensionUpperHalf => rule(
+            DefaultVal::Zero,
+            PrefixMleFormula::SignExtUpperHalf { word_bits: XLEN },
+        ),
+        Prefixes::SignExtensionRightOperand => rule(
+            DefaultVal::Zero,
+            PrefixMleFormula::SignExtRightOp { word_bits: XLEN },
+        ),
+        Prefixes::Pow2 => rule(
+            DefaultVal::One,
+            PrefixMleFormula::Pow2 {
+                word_mask: XLEN - 1,
+                log_word_bits: XLEN.trailing_zeros(),
+                total_bits,
+            },
+        ),
+        Prefixes::Pow2W => rule(
+            DefaultVal::One,
+            PrefixMleFormula::Pow2 {
+                word_mask: 31,
+                log_word_bits: 5,
+                total_bits,
+            },
+        ),
+        Prefixes::Rev8W => rule(DefaultVal::Zero, PrefixMleFormula::Rev8W { xlen: 64 }),
+        Prefixes::ChangeDivisor => rule(
+            DefaultVal::Custom(2 - (1i128 << XLEN)),
+            PrefixMleFormula::ChangeDivisor {
+                word_bits: XLEN,
+                start_round: 0,
+            },
+        ),
+        Prefixes::ChangeDivisorW => rule(
+            DefaultVal::Zero,
+            PrefixMleFormula::ChangeDivisor {
+                word_bits: XLEN,
+                start_round: XLEN,
+            },
+        ),
+        Prefixes::NegativeDivisorZeroRemainder => rule(
+            DefaultVal::Zero,
+            PrefixMleFormula::NegDivZeroRem {
+                word_bits: XLEN,
+                start_round: 0,
+            },
+        ),
+        Prefixes::OverflowBitsZero => rule(
+            DefaultVal::One,
+            PrefixMleFormula::OverflowBitsZero {
+                pair: NorBit,
+                word_bits: XLEN,
+                total_bits,
+            },
+        ),
+    }
+}
+
+fn suffix_to_op<const XLEN: usize>(suffix: &Suffixes) -> SuffixOp {
+    match suffix {
+        Suffixes::One => SuffixOp::One,
+        Suffixes::And => SuffixOp::And,
+        Suffixes::NotAnd => SuffixOp::Andn,
+        Suffixes::Or => SuffixOp::Or,
+        Suffixes::Xor => SuffixOp::Xor,
+        Suffixes::Eq => SuffixOp::Eq,
+        Suffixes::LessThan => SuffixOp::Lt,
+        Suffixes::GreaterThan => SuffixOp::Gt,
+        Suffixes::RightOperand => SuffixOp::RightOperand,
+        Suffixes::RightOperandW => SuffixOp::RightOperandW,
+        Suffixes::LeftOperandIsZero => SuffixOp::XIsZero,
+        Suffixes::RightOperandIsZero => SuffixOp::YIsZero,
+        Suffixes::Lsb => SuffixOp::Lsb,
+        Suffixes::TwoLsb => SuffixOp::TwoLsbZero,
+        Suffixes::DivByZero => SuffixOp::DivByZero,
+        Suffixes::ChangeDivisor => SuffixOp::ChangeDivisor,
+        Suffixes::ChangeDivisorW => SuffixOp::ChangeDivisorW,
+        Suffixes::LeftShift => SuffixOp::LeftShift,
+        Suffixes::LeftShiftW => SuffixOp::LeftShiftW {
+            half_xlen: XLEN / 2,
+        },
+        Suffixes::LeftShiftWHelper => SuffixOp::LeftShiftWHelper,
+        Suffixes::RightShift => SuffixOp::RightShift,
+        Suffixes::RightShiftW => SuffixOp::RightShiftW {
+            half_xlen: XLEN / 2,
+        },
+        Suffixes::RightShiftHelper => SuffixOp::RightShiftHelper,
+        Suffixes::RightShiftWHelper => SuffixOp::RightShiftWHelper {
+            half_xlen: XLEN / 2,
+        },
+        Suffixes::SignExtension => SuffixOp::SignExtension { xlen: XLEN },
+        Suffixes::SignExtensionUpperHalf => SuffixOp::SignExtensionUpperHalf {
+            half_xlen: XLEN / 2,
+        },
+        Suffixes::SignExtensionRightOperand => SuffixOp::SignExtensionRightOperand { xlen: XLEN },
+        Suffixes::Pow2 => SuffixOp::Pow2 {
+            split_bits: XLEN.trailing_zeros() as usize,
+        },
+        Suffixes::Pow2W => SuffixOp::Pow2 { split_bits: 5 },
+        Suffixes::RightShiftPadding => SuffixOp::RightShiftPaddingMask { xlen: XLEN },
+        Suffixes::UpperWord => SuffixOp::UpperWord { xlen: XLEN },
+        Suffixes::LowerWord => SuffixOp::LowerWord { xlen: XLEN },
+        Suffixes::LowerHalfWord => SuffixOp::LowerHalfWord {
+            half_xlen: XLEN / 2,
+        },
+        Suffixes::Rev8W => SuffixOp::ByteReverseW,
+        Suffixes::OverflowBitsZero => SuffixOp::OverflowBitsZero { xlen: XLEN },
+        Suffixes::XorRot16 => SuffixOp::XorRotate {
+            rotation: 16,
+            word_bits: 64,
+        },
+        Suffixes::XorRot24 => SuffixOp::XorRotate {
+            rotation: 24,
+            word_bits: 64,
+        },
+        Suffixes::XorRot32 => SuffixOp::XorRotate {
+            rotation: 32,
+            word_bits: 64,
+        },
+        Suffixes::XorRot63 => SuffixOp::XorRotate {
+            rotation: 63,
+            word_bits: 64,
+        },
+        Suffixes::XorRotW7 => SuffixOp::XorRotate {
+            rotation: 7,
+            word_bits: 32,
+        },
+        Suffixes::XorRotW8 => SuffixOp::XorRotate {
+            rotation: 8,
+            word_bits: 32,
+        },
+        Suffixes::XorRotW12 => SuffixOp::XorRotate {
+            rotation: 12,
+            word_bits: 32,
+        },
+        Suffixes::XorRotW16 => SuffixOp::XorRotate {
+            rotation: 16,
+            word_bits: 32,
+        },
+    }
+}
+
+fn all_table_kinds() -> [LookupTableKind; LookupTableKind::COUNT] {
+    [
+        LookupTableKind::RangeCheck,
+        LookupTableKind::RangeCheckAligned,
+        LookupTableKind::And,
+        LookupTableKind::Andn,
+        LookupTableKind::Or,
+        LookupTableKind::Xor,
+        LookupTableKind::Equal,
+        LookupTableKind::NotEqual,
+        LookupTableKind::SignedLessThan,
+        LookupTableKind::UnsignedLessThan,
+        LookupTableKind::SignedGreaterThanEqual,
+        LookupTableKind::UnsignedGreaterThanEqual,
+        LookupTableKind::UnsignedLessThanEqual,
+        LookupTableKind::UpperWord,
+        LookupTableKind::LowerHalfWord,
+        LookupTableKind::SignExtendHalfWord,
+        LookupTableKind::Movsign,
+        LookupTableKind::Pow2,
+        LookupTableKind::Pow2W,
+        LookupTableKind::ShiftRightBitmask,
+        LookupTableKind::VirtualSRL,
+        LookupTableKind::VirtualSRA,
+        LookupTableKind::VirtualROTR,
+        LookupTableKind::VirtualROTRW,
+        LookupTableKind::ValidDiv0,
+        LookupTableKind::ValidUnsignedRemainder,
+        LookupTableKind::ValidSignedRemainder,
+        LookupTableKind::VirtualChangeDivisor,
+        LookupTableKind::VirtualChangeDivisorW,
+        LookupTableKind::HalfwordAlignment,
+        LookupTableKind::WordAlignment,
+        LookupTableKind::MulUNoOverflow,
+        LookupTableKind::VirtualRev8W,
+        LookupTableKind::VirtualXORROT32,
+        LookupTableKind::VirtualXORROT24,
+        LookupTableKind::VirtualXORROT16,
+        LookupTableKind::VirtualXORROT63,
+        LookupTableKind::VirtualXORROTW16,
+        LookupTableKind::VirtualXORROTW12,
+        LookupTableKind::VirtualXORROTW8,
+        LookupTableKind::VirtualXORROTW7,
+    ]
 }

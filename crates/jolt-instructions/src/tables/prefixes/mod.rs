@@ -91,7 +91,7 @@ pub trait SparseDensePrefix<F: Field>: 'static + Sync {
 
 /// Wrapper for prefix polynomial evaluations, used for type safety.
 #[derive(Clone, Copy)]
-pub struct PrefixEval<F>(pub(crate) F);
+pub struct PrefixEval<F>(pub F);
 
 /// Cached prefix evaluation after each pair of address-binding rounds.
 pub type PrefixCheckpoint<F> = PrefixEval<Option<F>>;

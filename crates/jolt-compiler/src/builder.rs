@@ -19,14 +19,36 @@
 //! let module = b.build(num_verifier_stages);
 //! ```
 
+use crate::checkpoint_lowering::lower_checkpoint_rule;
 use crate::formula::BindingOrder;
 use crate::ir::PolyKind;
 use crate::module::{
-    BatchIdx, BatchedSumcheckDef, ChallengeDecl, ChallengeIdx, ChallengeSource, ClaimFormula,
-    DomainSeparator, EvalMode, InputBinding, InstanceConfig, InstanceIdx, KernelDef, Module, Op,
-    PolyDecl, RoundPolyEncoding, Schedule, VerifierOp, VerifierSchedule, VerifierStageIndex,
+    BatchIdx, BatchedSumcheckDef, ChallengeDecl, ChallengeIdx, ChallengeSource,
+    CheckpointEvalAction, ClaimFormula, DomainSeparator, EvalMode, InputBinding, InstanceConfig,
+    InstanceIdx, KernelDef, Module, Op, PolyDecl, RoundPolyEncoding, Schedule, VerifierOp,
+    VerifierSchedule, VerifierStageIndex,
 };
 use crate::PolynomialId;
+
+/// Build the per-slot update list for an `Op::CheckpointEvalBatch` at
+/// `(round, suffix_len)` by lowering every rule in `config`.
+fn build_checkpoint_batch(
+    config: &InstanceConfig,
+    r_x: ChallengeIdx,
+    r_y: ChallengeIdx,
+    round: usize,
+) -> Vec<(usize, CheckpointEvalAction)> {
+    let suffix_len =
+        config.total_address_bits - (round / config.chunk_bits + 1) * config.chunk_bits;
+    config
+        .checkpoint_rules
+        .iter()
+        .enumerate()
+        .filter_map(|(i, rule)| {
+            lower_checkpoint_rule(rule, i, r_x, r_y, round, suffix_len).map(|a| (i, a))
+        })
+        .collect()
+}
 
 /// Ergonomic builder for constructing a [`Module`].
 ///
@@ -377,44 +399,162 @@ impl ModuleBuilder {
                 let kdef = &self.kernels[kernel];
                 let is_instance = kdef.instance_config.is_some();
 
-                if instance_round == 0 || instance_round == phase_start {
-                    // Phase boundary.
+                if is_instance {
+                    // Address-decomposition instance: stateless ops.
+                    let ic = kdef.instance_config.as_ref().unwrap();
+                    let chunk_bits = ic.chunk_bits;
+                    let sub_phase = instance_round / chunk_bits;
+                    let round_in_sub = instance_round % chunk_bits;
+
+                    if instance_round == 0 {
+                        // First round, first sub-phase: init + scatter.
+                        self.ops.push(Op::InitInstanceWeights {
+                            r_reduction: ic.r_reduction.clone(),
+                            num_prefixes: ic.num_prefixes,
+                        });
+                        emit_scatter_ops(&mut self.ops, kernel, 0, chunk_bits);
+                    } else if round_in_sub == 0 {
+                        // Sub-phase boundary: bind + expand + optional CP +
+                        // capture registries + scatter next sub-phase.
+                        let ch = bind.unwrap();
+                        self.ops.push(Op::Bind {
+                            polys: ic.bindable_polys(),
+                            challenge: ch,
+                            order: BindingOrder::HighToLow,
+                        });
+                        self.ops.push(Op::ExpandingTableUpdate {
+                            table: PolynomialId::ExpandingTable(sub_phase - 1),
+                            challenge: ch,
+                            current_len: 1 << (chunk_bits - 1),
+                        });
+                        if instance_round % 2 == 0 {
+                            let updates = build_checkpoint_batch(
+                                ic,
+                                indices[round - 2],
+                                indices[round - 1],
+                                instance_round - 1,
+                            );
+                            if !updates.is_empty() {
+                                self.ops.push(Op::CheckpointEvalBatch { updates });
+                            }
+                        }
+                        // Capture registry CPs from bound-down P buffers.
+                        self.ops.push(Op::CaptureScalar {
+                            poly: PolynomialId::InstanceP(1, 0),
+                            challenge: ic.registry_checkpoint_slots[0],
+                        });
+                        self.ops.push(Op::CaptureScalar {
+                            poly: PolynomialId::InstanceP(0, 0),
+                            challenge: ic.registry_checkpoint_slots[1],
+                        });
+                        self.ops.push(Op::CaptureScalar {
+                            poly: PolynomialId::InstanceP(2, 0),
+                            challenge: ic.registry_checkpoint_slots[2],
+                        });
+                        self.ops.push(Op::UpdateInstanceWeights {
+                            expanding_table: PolynomialId::ExpandingTable(sub_phase - 1),
+                            chunk_bits,
+                            num_phases: ic.num_phases,
+                            phase: sub_phase,
+                        });
+                        emit_scatter_ops(&mut self.ops, kernel, sub_phase, chunk_bits);
+                    } else {
+                        // Mid sub-phase: bind + expand + optional CP.
+                        let ch = bind.unwrap();
+                        self.ops.push(Op::Bind {
+                            polys: ic.bindable_polys(),
+                            challenge: ch,
+                            order: BindingOrder::HighToLow,
+                        });
+                        self.ops.push(Op::ExpandingTableUpdate {
+                            table: PolynomialId::ExpandingTable(sub_phase),
+                            challenge: ch,
+                            current_len: 1 << (round_in_sub - 1),
+                        });
+                        if instance_round >= 2 && instance_round % 2 == 0 {
+                            let updates = build_checkpoint_batch(
+                                ic,
+                                indices[round - 2],
+                                indices[round - 1],
+                                instance_round - 1,
+                            );
+                            if !updates.is_empty() {
+                                self.ops.push(Op::CheckpointEvalBatch { updates });
+                            }
+                        }
+                    }
+
+                    // Reduce.
+                    let r_x_challenge = if instance_round % 2 == 1 {
+                        Some(indices[round - 1])
+                    } else {
+                        None
+                    };
+                    self.ops.push(Op::ReadCheckingReduce {
+                        kernel,
+                        round: instance_round,
+                        r_x_challenge,
+                    });
+                    self.ops.push(Op::RafReduce {
+                        batch,
+                        instance: inst_idx,
+                        kernel,
+                    });
+                } else if instance_round == 0 || instance_round == phase_start {
+                    // Phase boundary (non-decomp instance).
                     if instance_round > 0 {
                         let prev_phase = &inst.phases[phase_idx - 1];
                         let prev_kernel = prev_phase.kernel;
                         let prev_kdef = &self.kernels[prev_kernel];
-                        let prev_is_ps = matches!(
-                            prev_kdef.instance_config,
-                            Some(InstanceConfig::PrefixSuffix { .. })
-                        );
+                        let prev_is_decomp = prev_kdef.instance_config.is_some();
 
-                        if prev_is_ps {
-                            // PrefixSuffix→next: bind last challenge, then finalize.
-                            if let Some(ch) = bind {
-                                self.ops.push(Op::UnifiedInstanceBind {
-                                    batch,
-                                    instance: inst_idx,
-                                    challenge: ch,
-                                });
-                            }
-                            let output_buffers = match &prev_kdef.instance_config {
-                                Some(InstanceConfig::PrefixSuffix {
-                                    output_ra_polys,
-                                    output_combined_val,
-                                    ..
-                                }) => {
-                                    let mut ids = output_ra_polys.clone();
-                                    ids.push(*output_combined_val);
-                                    ids.sort();
-                                    ids
+                        if prev_is_decomp {
+                            // Decomp→standard transition: bind, capture, materialize.
+                            let ch = bind.unwrap();
+                            let ic = prev_kdef.instance_config.as_ref().unwrap();
+                            let chunk_bits = ic.chunk_bits;
+                            let last_sub_phase = ic.num_phases - 1;
+                            self.ops.push(Op::Bind {
+                                polys: ic.bindable_polys(),
+                                challenge: ch,
+                                order: BindingOrder::HighToLow,
+                            });
+                            self.ops.push(Op::ExpandingTableUpdate {
+                                table: PolynomialId::ExpandingTable(last_sub_phase),
+                                challenge: ch,
+                                current_len: 1 << (chunk_bits - 1),
+                            });
+                            let prev_instance_round = instance_round - 1;
+                            if prev_instance_round >= 1 && (prev_instance_round + 1) % 2 == 0 {
+                                let updates = build_checkpoint_batch(
+                                    ic,
+                                    indices[round - 2],
+                                    indices[round - 1],
+                                    prev_instance_round,
+                                );
+                                if !updates.is_empty() {
+                                    self.ops.push(Op::CheckpointEvalBatch { updates });
                                 }
-                                _ => unreachable!(),
-                            };
-                            self.ops.push(Op::UnifiedInstanceFinalize {
-                                batch,
-                                instance: inst_idx,
-                                output_buffers,
-                                output_evals: Vec::new(),
+                            }
+                            // Capture registry CPs.
+                            self.ops.push(Op::CaptureScalar {
+                                poly: PolynomialId::InstanceP(1, 0),
+                                challenge: ic.registry_checkpoint_slots[0],
+                            });
+                            self.ops.push(Op::CaptureScalar {
+                                poly: PolynomialId::InstanceP(0, 0),
+                                challenge: ic.registry_checkpoint_slots[1],
+                            });
+                            self.ops.push(Op::CaptureScalar {
+                                poly: PolynomialId::InstanceP(2, 0),
+                                challenge: ic.registry_checkpoint_slots[2],
+                            });
+                            // Materialize output buffers.
+                            self.ops.push(Op::MaterializeRA {
+                                kernel: prev_kernel,
+                            });
+                            self.ops.push(Op::MaterializeCombinedVal {
+                                kernel: prev_kernel,
                             });
                         } else if let Some(ch) = bind {
                             self.ops.push(Op::InstanceBindPreviousPhase {
@@ -423,7 +563,6 @@ impl ModuleBuilder {
                                 kernel: prev_kernel,
                                 challenge: ch,
                             });
-                            // Bind previous phase's carry buffers at the transition challenge.
                             let prev_carry_polys: Vec<_> =
                                 prev_phase.carry_bindings.iter().map(|b| b.poly()).collect();
                             if !prev_carry_polys.is_empty() {
@@ -444,110 +583,82 @@ impl ModuleBuilder {
                         });
                     }
 
-                    if let Some(config) = &kdef.instance_config {
-                        self.ops.push(Op::UnifiedInstanceInit {
+                    // Emit per-binding materialization ops.
+                    if let Some(seg) = &phase.segmented {
+                        self.ops.push(Op::MaterializeSegmentedOuterEq {
                             batch,
                             instance: inst_idx,
-                            config: config.clone(),
+                            segmented: seg.clone(),
                         });
-                    } else {
-                        // Emit per-binding materialization ops.
-                        if let Some(seg) = &phase.segmented {
-                            self.ops.push(Op::MaterializeSegmentedOuterEq {
-                                batch,
-                                instance: inst_idx,
-                                segmented: seg.clone(),
+                    }
+                    let is_activation = instance_round == 0;
+                    if is_activation {
+                        for binding in &phase.carry_bindings {
+                            self.ops.push(Op::Materialize {
+                                binding: binding.clone(),
                             });
                         }
-                        let is_activation = instance_round == 0;
-                        if is_activation {
-                            // Materialize carry bindings first (kernel inputs may depend on them).
-                            for binding in &phase.carry_bindings {
-                                self.ops.push(Op::Materialize {
-                                    binding: binding.clone(),
-                                });
-                            }
-                            // Instance activation: materialize all bindings.
-                            // Provided polys use MaterializeUnlessFresh to
-                            // avoid overwriting buffers from prior compute ops
-                            // (e.g. PrefixSuffixMaterialize).
-                            let expected_size = 1usize << kdef.num_rounds;
-                            for binding in &kdef.inputs {
-                                match binding {
-                                    InputBinding::Provided { .. } => {
-                                        self.ops.push(Op::MaterializeUnlessFresh {
-                                            binding: binding.clone(),
-                                            expected_size,
-                                        });
-                                    }
-                                    _ => {
-                                        self.ops.push(Op::Materialize {
-                                            binding: binding.clone(),
-                                        });
-                                    }
+                        let expected_size = 1usize << kdef.num_rounds;
+                        for binding in &kdef.inputs {
+                            match binding {
+                                InputBinding::Provided { .. } => {
+                                    self.ops.push(Op::MaterializeUnlessFresh {
+                                        binding: binding.clone(),
+                                        expected_size,
+                                    });
+                                }
+                                _ => {
+                                    self.ops.push(Op::Materialize {
+                                        binding: binding.clone(),
+                                    });
                                 }
                             }
-                        } else {
-                            // Phase transition: only materialize if no buffer
-                            // exists. Bound-down buffers from the previous
-                            // phase or other instances are preserved.
-                            for binding in &kdef.inputs {
-                                self.ops.push(Op::MaterializeIfAbsent {
-                                    binding: binding.clone(),
-                                });
-                            }
+                        }
+                    } else {
+                        for binding in &kdef.inputs {
+                            self.ops.push(Op::MaterializeIfAbsent {
+                                binding: binding.clone(),
+                            });
                         }
                     }
                 } else {
-                    // Mid-phase: bind.
+                    // Mid-phase: bind (non-decomp instance).
                     if let Some(ch) = bind {
-                        if is_instance {
-                            self.ops.push(Op::UnifiedInstanceBind {
-                                batch,
-                                instance: inst_idx,
+                        self.ops.push(Op::InstanceBind {
+                            batch,
+                            instance: inst_idx,
+                            kernel,
+                            challenge: ch,
+                        });
+                        let carry_polys: Vec<_> =
+                            phase.carry_bindings.iter().map(|b| b.poly()).collect();
+                        if !carry_polys.is_empty() {
+                            self.ops.push(Op::BindCarryBuffers {
+                                polys: carry_polys,
                                 challenge: ch,
+                                order: kdef.spec.binding_order,
                             });
-                        } else {
-                            self.ops.push(Op::InstanceBind {
-                                batch,
-                                instance: inst_idx,
-                                kernel,
-                                challenge: ch,
-                            });
-                            // Bind carry buffers alongside kernel inputs.
-                            let carry_polys: Vec<_> =
-                                phase.carry_bindings.iter().map(|b| b.poly()).collect();
-                            if !carry_polys.is_empty() {
-                                self.ops.push(Op::BindCarryBuffers {
-                                    polys: carry_polys,
-                                    challenge: ch,
-                                    order: kdef.spec.binding_order,
-                                });
-                            }
                         }
                     }
                 }
 
-                // Reduce.
-                if is_instance {
-                    self.ops.push(Op::UnifiedInstanceReduce {
-                        batch,
-                        instance: inst_idx,
-                    });
-                } else if phase.segmented.is_some() {
-                    self.ops.push(Op::InstanceSegmentedReduce {
-                        batch,
-                        instance: inst_idx,
-                        kernel,
-                        round_within_phase: instance_round - phase_start,
-                        segmented: phase.segmented.clone().unwrap(),
-                    });
-                } else {
-                    self.ops.push(Op::InstanceReduce {
-                        batch,
-                        instance: inst_idx,
-                        kernel,
-                    });
+                // Reduce (non-PS cases — PS reduce is emitted above).
+                if !is_instance {
+                    if phase.segmented.is_some() {
+                        self.ops.push(Op::InstanceSegmentedReduce {
+                            batch,
+                            instance: inst_idx,
+                            kernel,
+                            round_within_phase: instance_round - phase_start,
+                            segmented: phase.segmented.clone().unwrap(),
+                        });
+                    } else {
+                        self.ops.push(Op::InstanceReduce {
+                            batch,
+                            instance: inst_idx,
+                            kernel,
+                        });
+                    }
                 }
 
                 self.ops.push(Op::BatchAccumulateInstance {
@@ -616,6 +727,16 @@ impl ModuleBuilder {
             },
         }
     }
+}
+
+fn emit_scatter_ops(ops: &mut Vec<Op>, kernel: usize, phase: usize, chunk_bits: usize) {
+    ops.push(Op::SuffixScatter { kernel, phase });
+    ops.push(Op::QBufferScatter { kernel, phase });
+    ops.push(Op::MaterializePBuffers { kernel });
+    ops.push(Op::InitExpandingTable {
+        table: PolynomialId::ExpandingTable(phase),
+        size: 1 << chunk_bits,
+    });
 }
 
 impl Default for ModuleBuilder {

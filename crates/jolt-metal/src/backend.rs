@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use jolt_compiler::kernel_spec::Iteration;
 use jolt_compiler::KernelSpec;
-use jolt_compute::{BindingOrder, Buf, ComputeBackend, LookupTraceData, Scalar};
+use jolt_compute::{BindingOrder, Buf, ComputeBackend, Scalar};
 use jolt_field::Field;
 use metal::{CompileOptions, ComputePipelineState, Device, MTLResourceOptions, MTLSize};
 
@@ -875,38 +875,6 @@ impl ComputeBackend for MetalBackend {
             }
         }
         total_evals.unwrap_or_default()
-    }
-
-    type InstanceState<F: Field> = ();
-
-    fn instance_init<F: Field>(
-        &self,
-        _config: &jolt_compiler::module::InstanceConfig,
-        _challenges: &[F],
-        _provider: &mut dyn jolt_compute::BufferProvider<F>,
-        _lookup_trace: Option<&LookupTraceData>,
-        _kernels: &[jolt_compiler::KernelDef],
-    ) -> Self::InstanceState<F> {
-        panic!("unified instance API not yet wired")
-    }
-
-    fn instance_bind<F: Field>(&self, _state: &mut Self::InstanceState<F>, _challenge: F) {
-        panic!("unified instance API not yet wired")
-    }
-
-    fn instance_reduce<F: Field>(
-        &self,
-        _state: &Self::InstanceState<F>,
-        _previous_claim: F,
-    ) -> Vec<F> {
-        panic!("unified instance API not yet wired")
-    }
-
-    fn instance_finalize<F: Field>(
-        &self,
-        _state: Self::InstanceState<F>,
-    ) -> jolt_compute::InstanceOutput<MetalBuffer<F>, F> {
-        panic!("unified instance API not yet wired")
     }
 }
 

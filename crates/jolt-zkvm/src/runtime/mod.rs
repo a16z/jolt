@@ -17,11 +17,14 @@
 
 mod handlers;
 mod helpers;
+pub mod prefix_suffix;
 
 use std::collections::{HashMap, HashSet};
 
 use jolt_compiler::PolynomialId;
-use jolt_compute::{Buf, BufferProvider, ComputeBackend, Executable, LookupTraceData};
+use jolt_compute::{Buf, BufferProvider, ComputeBackend, Executable};
+
+use helpers::PendingClaim;
 use jolt_crypto::HomomorphicCommitment;
 use jolt_field::Field;
 use jolt_openings::{AdditivelyHomomorphic, ProverClaim};
@@ -30,8 +33,6 @@ use jolt_sumcheck::proof::SumcheckProof;
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::proof::{JoltProof, StageProof};
 use jolt_verifier::ProverConfig;
-
-use helpers::PendingClaim;
 
 /// Per-stage proof being incrementally built.
 pub(super) struct StageBuilder<F: Field> {
@@ -58,7 +59,7 @@ impl<F: Field> StageBuilder<F> {
 }
 
 /// Mutable state accumulated during schedule execution.
-pub(super) struct RuntimeState<B: ComputeBackend, F: Field, PCS: AdditivelyHomomorphic<Field = F>>
+pub(super) struct RuntimeState<F: Field, PCS: AdditivelyHomomorphic<Field = F>>
 where
     PCS::Output: HomomorphicCommitment<F>,
 {
@@ -77,7 +78,6 @@ where
     pub(super) bound_this_round: HashSet<PolynomialId>,
     pub(super) current_batch_round: usize,
     pub(super) segmented_outer_eqs: HashMap<(usize, usize), Vec<F>>,
-    pub(super) instance_states: HashMap<(usize, usize), B::InstanceState<F>>,
 
     pub(super) current_stage: Option<StageBuilder<F>>,
     pub(super) stage_proofs: Vec<StageProof<F>>,
@@ -90,13 +90,24 @@ where
     pub(super) reduced_hints: Vec<PCS::OpeningHint>,
     pub(super) opening_proofs: Vec<PCS::Proof>,
     pub(super) padded_poly_data: HashMap<PolynomialId, Vec<F>>,
+
+    /// Per-cycle eq-weight vector for address-decomposition instance.
+    /// Initialized at phase 0, updated at each phase transition.
+    pub(super) instance_weights: Vec<F>,
+
+    /// Scalar checkpoints for address-decomposition instance (None = not yet initialized).
+    /// Must preserve None vs Some(F::zero()) distinction because some checkpoints
+    /// (e.g. Eq) use `unwrap_or(F::one())` where None means "use default".
+    pub(super) instance_checkpoints: Vec<Option<F>>,
+
+    /// Intermediate [eval_0, eval_2] from ReadCheckingReduce, consumed by RafReduce.
+    pub(super) read_checking_evals: [F; 2],
 }
 
 /// Execute the full prover schedule and return a complete proof.
 ///
 /// Walks every op in the schedule, dispatching compute ops to `backend`,
 /// PCS ops to the commitment scheme, and orchestration ops directly.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn execute<B, F, T, PCS>(
     executable: &Executable<B, F>,
     provider: &mut impl BufferProvider<F>,
@@ -104,8 +115,6 @@ pub(crate) fn execute<B, F, T, PCS>(
     pcs_setup: &PCS::ProverSetup,
     transcript: &mut T,
     config: ProverConfig,
-    lookup_trace: Option<LookupTraceData>,
-    bytecode_data: Option<jolt_witness::bytecode_raf::BytecodeData<F>>,
 ) -> JoltProof<F, PCS>
 where
     B: ComputeBackend,
@@ -123,7 +132,7 @@ where
         .map(|b| vec![F::zero(); b.instances.len()])
         .collect();
 
-    let mut state = RuntimeState::<B, F, PCS> {
+    let mut state = RuntimeState::<F, PCS> {
         config,
         challenges: vec![F::zero(); module.challenges.len()],
         evaluations: HashMap::new(),
@@ -138,7 +147,6 @@ where
         bound_this_round: HashSet::new(),
         current_batch_round: 0,
         segmented_outer_eqs: HashMap::new(),
-        instance_states: HashMap::new(),
         current_stage: None,
         stage_proofs: Vec::new(),
         commitments: Vec::new(),
@@ -149,6 +157,9 @@ where
         reduced_hints: Vec::new(),
         opening_proofs: Vec::new(),
         padded_poly_data: HashMap::new(),
+        instance_weights: Vec::new(),
+        instance_checkpoints: Vec::new(),
+        read_checking_evals: [F::zero(); 2],
     };
 
     let stage_point_indices: Vec<Vec<usize>> = helpers::precompute_stage_points(module);
@@ -166,8 +177,6 @@ where
             pcs_setup,
             transcript,
             &stage_point_indices,
-            bytecode_data.as_ref(),
-            lookup_trace.as_ref(),
         );
     }
 

@@ -186,6 +186,10 @@ pub struct InstancePhase {
     /// instances where a later phase needs the bound-down version of a
     /// buffer that was not part of the earlier phase's formula.
     pub carry_bindings: Vec<InputBinding>,
+    /// Ops emitted at phase activation, before kernel input materialization.
+    /// Used for data-driven buffer construction (e.g., WeightedSum for
+    /// BytecodeVal decomposition). Empty for most phases.
+    pub pre_activation_ops: Vec<Op>,
 }
 
 /// Captures a scalar value from a bound buffer into a challenge slot.
@@ -220,55 +224,686 @@ pub struct SegmentedConfig {
     pub outer_eq_challenges: Vec<ChallengeIdx>,
 }
 
+/// One entry of the combine matrix for read-checking.
+///
+/// Encodes `coefficient × prefix[prefix_idx] × suffix[table_idx][suffix_local_idx]`.
+/// When `prefix_idx` is `None`, the prefix factor is 1.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CombineEntry {
+    pub table_idx: usize,
+    pub prefix_idx: Option<usize>,
+    pub suffix_local_idx: usize,
+    pub coefficient: i128,
+}
+
+/// Data-driven suffix operation.
+///
+/// Replaces jolt-instructions `suffix_mle` calls at runtime.
+/// The compiler maps each table's suffixes to these ops at module build time;
+/// the runtime evaluates them without importing jolt-instructions.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum SuffixOp {
+    One,
+    And,
+    Or,
+    Xor,
+    Andn,
+    Eq,
+    Lt,
+    Gt,
+    RightOperand,
+    RightOperandW,
+    XIsZero,
+    YIsZero,
+    Lsb,
+    TwoLsbZero,
+    DivByZero,
+    ChangeDivisor,
+    ChangeDivisorW,
+    LeftShift,
+    LeftShiftW { half_xlen: usize },
+    LeftShiftWHelper,
+    RightShift,
+    RightShiftW { half_xlen: usize },
+    RightShiftHelper,
+    RightShiftWHelper { half_xlen: usize },
+    SignExtension { xlen: usize },
+    SignExtensionUpperHalf { half_xlen: usize },
+    SignExtensionRightOperand { xlen: usize },
+    XorRotate { rotation: u32, word_bits: u32 },
+    Pow2 { split_bits: usize },
+    RightShiftPaddingMask { xlen: usize },
+    UpperWord { xlen: usize },
+    LowerWord { xlen: usize },
+    LowerHalfWord { half_xlen: usize },
+    ByteReverseW,
+    OverflowBitsZero { xlen: usize },
+}
+
+impl SuffixOp {
+    /// Evaluate this suffix op on a bitvector of width `len`.
+    ///
+    /// `bits` contains the low `len` bits of the suffix bitvector.
+    /// Returns the same value as the corresponding `suffix_mle`.
+    pub fn eval(self, bits: u128, len: usize) -> u64 {
+        match self {
+            // ── Full-bits operations (no uninterleave) ──
+            SuffixOp::Pow2 { split_bits } => {
+                if len == 0 {
+                    return 1;
+                }
+                let shift = bits & ((1u128 << split_bits) - 1);
+                1u64 << shift
+            }
+            SuffixOp::RightShiftPaddingMask { xlen } => {
+                if len == 0 {
+                    return 1;
+                }
+                let log_xlen = xlen.trailing_zeros() as usize;
+                let shift = (bits & ((1u128 << log_xlen) - 1)) as usize;
+                1u64 << (xlen - 1 - shift)
+            }
+            SuffixOp::UpperWord { xlen } => (bits >> xlen) as u64,
+            SuffixOp::LowerWord { xlen } => {
+                if xlen >= 128 {
+                    bits as u64
+                } else {
+                    (bits % (1u128 << xlen)) as u64
+                }
+            }
+            SuffixOp::LowerHalfWord { half_xlen } => {
+                if half_xlen >= 64 {
+                    bits as u64
+                } else {
+                    (bits % (1u128 << half_xlen)) as u64
+                }
+            }
+            SuffixOp::ByteReverseW => (bits as u32).swap_bytes() as u64,
+            SuffixOp::OverflowBitsZero { xlen } => ((bits >> xlen) == 0) as u64,
+            SuffixOp::Lsb => {
+                if len == 0 {
+                    1
+                } else {
+                    (bits & 1) as u64
+                }
+            }
+            SuffixOp::TwoLsbZero => (len == 0 || bits.trailing_zeros() >= 2) as u64,
+            SuffixOp::SignExtensionUpperHalf { half_xlen } => {
+                if len >= half_xlen {
+                    let sign = (bits >> (half_xlen - 1)) & 1;
+                    if sign == 1 {
+                        ((1u64 << half_xlen) - 1) << half_xlen
+                    } else {
+                        0
+                    }
+                } else {
+                    1
+                }
+            }
+            SuffixOp::SignExtensionRightOperand { xlen } => {
+                if len >= xlen {
+                    let sign = (bits >> (xlen - 2)) & 1;
+                    if sign == 1 {
+                        ((1u128 << xlen) - (1u128 << (xlen / 2))) as u64
+                    } else {
+                        0
+                    }
+                } else {
+                    1
+                }
+            }
+
+            // ── Uninterleave-based operations ──
+            _ => {
+                let (xv, yv, y_len) = uninterleave_suffix(bits, len);
+                match self {
+                    SuffixOp::One => 1,
+                    SuffixOp::And => xv & yv,
+                    SuffixOp::Or => xv | yv,
+                    SuffixOp::Xor => xv ^ yv,
+                    SuffixOp::Andn => xv & !yv,
+                    SuffixOp::Eq => (xv == yv) as u64,
+                    SuffixOp::Lt => (xv < yv) as u64,
+                    SuffixOp::Gt => (xv > yv) as u64,
+                    SuffixOp::RightOperand => yv,
+                    SuffixOp::RightOperandW => yv as u32 as u64,
+                    SuffixOp::XIsZero => (xv == 0) as u64,
+                    SuffixOp::YIsZero => (yv == 0) as u64,
+                    SuffixOp::DivByZero => {
+                        let div_zero = xv == 0;
+                        let quot_ones = yv == (1u64 << y_len) - 1;
+                        (div_zero && quot_ones) as u64
+                    }
+                    SuffixOp::ChangeDivisor => ((1u64 << y_len) - 1 == yv && xv == 0) as u64,
+                    SuffixOp::ChangeDivisorW => {
+                        let yl = y_len.min(32);
+                        let xw = xv as u32 as u64;
+                        let yw = yv as u32 as u64;
+                        ((1u64 << yl) - 1 == yw && xw == 0) as u64
+                    }
+                    SuffixOp::LeftShift => (xv & !yv).unbounded_shl(leading_ones_u64(yv, y_len)),
+                    SuffixOp::LeftShiftW { half_xlen } => {
+                        let yl = y_len.min(half_xlen);
+                        let yw = yv as u32;
+                        let lo = leading_ones_u64(yv & ((1u64 << yl) - 1), yl);
+                        ((xv as u32) & !yw).unbounded_shl(lo) as u64
+                    }
+                    SuffixOp::LeftShiftWHelper => (1u32 << leading_ones_u64(yv, y_len)) as u64,
+                    SuffixOp::RightShift => xv.unbounded_shr(trailing_zeros_u64(yv, y_len)),
+                    SuffixOp::RightShiftW { half_xlen } => {
+                        let tz = trailing_zeros_u64(yv, y_len).min(half_xlen as u32);
+                        (xv as u32).unbounded_shr(tz) as u64
+                    }
+                    SuffixOp::RightShiftHelper => 1u64 << leading_ones_u64(yv, y_len),
+                    SuffixOp::RightShiftWHelper { half_xlen } => {
+                        let yl = y_len.min(half_xlen);
+                        let lo = leading_ones_u64(yv & ((1u64 << yl) - 1), yl);
+                        1u64 << lo
+                    }
+                    SuffixOp::SignExtension { xlen } => {
+                        let padding = std::cmp::min(yv.trailing_zeros() as usize, y_len);
+                        ((1u128 << xlen) - (1u128 << (xlen - padding))) as u64
+                    }
+                    SuffixOp::XorRotate {
+                        rotation,
+                        word_bits,
+                    } => {
+                        if word_bits == 64 {
+                            (xv ^ yv).rotate_right(rotation)
+                        } else {
+                            ((xv as u32) ^ (yv as u32)).rotate_right(rotation) as u64
+                        }
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
+    }
+}
+
+/// Separate interleaved x/y bits into (x_val, y_val, y_len).
+///
+/// Odd bit positions (1, 3, 5, …) → x; even positions (0, 2, 4, …) → y.
+fn uninterleave_suffix(bits: u128, len: usize) -> (u64, u64, usize) {
+    let mut x: u64 = 0;
+    let mut y: u64 = 0;
+    let half = len / 2;
+    for i in 0..half.max(len - half) {
+        if 2 * i < len {
+            y |= (((bits >> (2 * i)) & 1) as u64) << i;
+        }
+        if 2 * i + 1 < len {
+            x |= (((bits >> (2 * i + 1)) & 1) as u64) << i;
+        }
+    }
+    let y_len = len - half;
+    (x, y, y_len)
+}
+
+/// Count leading 1-bits in a `val` of width `len`.
+fn leading_ones_u64(val: u64, len: usize) -> u32 {
+    if len == 0 {
+        return 0;
+    }
+    (val as u128)
+        .wrapping_shl((128 - len) as u32)
+        .leading_ones()
+}
+
+/// Count trailing 0-bits in `val`, bounded by `len`.
+fn trailing_zeros_u64(val: u64, len: usize) -> u32 {
+    std::cmp::min(val.trailing_zeros(), len as u32)
+}
+
+/// Byte-reversal for 64-bit words (two 32-bit halves swapped independently).
+/// Duplicated from jolt-instructions so the runtime doesn't need that crate.
+pub fn rev8w(v: u64) -> u64 {
+    let lo = (v as u32).swap_bytes();
+    let hi = ((v >> 32) as u32).swap_bytes();
+    lo as u64 + ((hi as u64) << 32)
+}
+
+/// Default value when a prefix checkpoint is `None`.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum DefaultVal {
+    Zero,
+    One,
+    /// Signed field literal (e.g. `2 - 2^XLEN` for ChangeDivisor).
+    Custom(i128),
+}
+
+/// Two-variable expression evaluated from `(r_x, r_y)`.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum BilinearExpr {
+    /// r_x × r_y
+    Product,
+    /// (1 − r_x) × r_y
+    AntiXY,
+    /// r_x × (1 − r_y)
+    AntiYX,
+    /// (1 − r_x) × (1 − r_y)
+    NorBit,
+    /// r_x×r_y + (1−r_x)×(1−r_y)
+    EqBit,
+    /// (1−r_x)×r_y + r_x×(1−r_y)
+    XorBit,
+    /// r_x + r_y − r_x×r_y
+    OrBit,
+    /// 1 − r_x
+    OneMinusX,
+    /// 1 − r_y
+    OneMinusY,
+    /// 1 + r_y
+    OnePlusY,
+    /// r_x
+    X,
+    /// r_y
+    Y,
+}
+
+/// Round-dependent weight function producing a u64 scalar.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum WeightFn {
+    /// `2^(word_bits − 1 − ((j − j_offset)/2 + rotation) % word_bits)`.
+    /// Covers And/Or/Xor/Andn (`rotation=0`), XorRot/XorRotW (with rotation),
+    /// RightOperand, LeftShift.
+    Positional {
+        rotation: u32,
+        word_bits: u32,
+        j_offset: usize,
+    },
+    /// `2^(base − j)` — for the x-term in UpperWord/LowerWord/LowerHalfWord.
+    LinearJ { base: usize },
+    /// `2^(base − j − 1)` — for the y-term.
+    LinearJMinusOne { base: usize },
+    /// `2^(j / 2)` — for SignExtension.
+    HalfJ,
+}
+
+/// Condition on the round index `j` (or `suffix_len`).
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum RoundGuard {
+    JEq(usize),
+    JLt(usize),
+    JGe(usize),
+    JGt(usize),
+    SuffixLenNonZero,
+}
+
+/// Action to produce the updated checkpoint value.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum CheckpointAction {
+    /// `cp *= expr(r_x, r_y)`
+    Mul(BilinearExpr),
+    /// `cp += weight(j) × expr(r_x, r_y)`
+    AddWeighted {
+        weight: WeightFn,
+        expr: BilinearExpr,
+    },
+    /// `cp += weight_x(j)×r_x + weight_y(j)×r_y`
+    AddTwoTerm {
+        x_weight: WeightFn,
+        y_weight: WeightFn,
+    },
+    /// `cp += checkpoints[dep] × expr(r_x, r_y)`
+    DepAdd {
+        dep: usize,
+        dep_default: DefaultVal,
+        expr: BilinearExpr,
+    },
+    /// `cp += checkpoints[dep] × weight(j) × expr(r_x, r_y)`
+    DepAddWeighted {
+        dep: usize,
+        dep_default: DefaultVal,
+        weight: WeightFn,
+        expr: BilinearExpr,
+    },
+    /// `cp = cp × mul_expr + add_expr`
+    Hybrid {
+        mul: BilinearExpr,
+        add: BilinearExpr,
+    },
+    /// SignExtension: `cp += 2^(j/2) × (1−r_y)`;
+    /// then if `j == final_j`: `cp *= checkpoints[dep]`
+    SignExtAccum { dep: usize, final_j: usize },
+    /// Rev8W: `cp += r_x × rev8w(1 << r_x_bit) + r_y × rev8w(1 << r_y_bit)`
+    Rev8WAdd { xlen: usize },
+    /// Pow2 double-multiply:
+    /// `cp *= (1 + (2^(1<<(2×xlen−j)) − 1)×r_x) × (1 + (2^(1<<(2×xlen−j−1)) − 1)×r_y)`
+    Pow2DoubleMul { xlen: usize },
+    /// Pow2 init: `return 1 + (2^half_pow − 1) × r_y`
+    Pow2Init { half_pow: u32 },
+    /// `return expr(r_x, r_y)` (ignores current checkpoint)
+    Set(BilinearExpr),
+    /// `return coeff × expr(r_x, r_y)` (signed coefficient)
+    SetScaled { coeff: i128, expr: BilinearExpr },
+    /// `return default`
+    Const(DefaultVal),
+    /// Return checkpoint unchanged.
+    Passthrough,
+    /// Return `None` (checkpoint becomes unset).
+    Null,
+}
+
+/// Precomputed checkpoint update rule for one prefix.
+///
+/// The runtime evaluates `cases` in order; the first matching guard wins.
+/// If no guard matches, `fallback` is used.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CheckpointRule {
+    pub default: DefaultVal,
+    pub cases: Vec<(RoundGuard, CheckpointAction)>,
+    pub fallback: CheckpointAction,
+}
+
+/// One factor in a monomial for a `ScalarExpr`.
+///
+/// Leaf values pulled from runtime state at evaluation time. Runtime
+/// computes each factor as a field element and multiplies them.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum ValueSource {
+    /// `2^k` as a field element.
+    Pow2(u32),
+    /// `challenges[idx]`.
+    Challenge(ChallengeIdx),
+    /// `1 − challenges[idx]`.
+    OneMinusChallenge(ChallengeIdx),
+    /// Checkpoint snapshot `checkpoints[idx].unwrap_or(default)`.
+    ///
+    /// Reads from the pre-batch snapshot so updates within one
+    /// `CheckpointEvalBatch` don't see each other's writes.
+    Checkpoint { idx: usize, default: DefaultVal },
+    /// `buffers[poly][index]` — read the current evaluation index from a
+    /// named buffer. Used when evaluating per-`b` expressions such as
+    /// prefix MLEs against precomputed mask polynomials.
+    IndexedPoly(PolynomialId),
+    /// `values[buffers[index_poly][index]]` — gather a compile-time
+    /// constant by using the current-index entry of `index_poly` as an
+    /// offset into `values`. Treats `values[k]` as an `i128` coefficient
+    /// promoted to the field.
+    SelectByIndex {
+        index_poly: PolynomialId,
+        values: Vec<i128>,
+    },
+}
+
+/// Signed monomial `coeff × Π factors`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Monomial {
+    pub coeff: i128,
+    pub factors: Vec<ValueSource>,
+}
+
+/// Sum of monomials, evaluated against challenges + checkpoint snapshot.
+pub type ScalarExpr = Vec<Monomial>;
+
+/// Update action for a single checkpoint slot in `Op::CheckpointEvalBatch`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum CheckpointEvalAction {
+    /// Write `expr` evaluated against the pre-batch snapshot.
+    Set(ScalarExpr),
+    /// Clear the checkpoint (becomes `None`).
+    Clear,
+}
+
+/// Condition on the remaining (uninterleaved) bits after the current pair.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RemainingTest {
+    /// I(x == y)
+    Equality,
+    /// I(x == 0)
+    LeftZero,
+    /// I(y == 0)
+    RightZero,
+    /// I(x == 0 && y == all ones)
+    LeftZeroRightAllOnes,
+    /// Always 1
+    Always,
+}
+
+/// Integer bitwise operation on the remaining (uninterleaved) operand halves.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub enum IntBitOp {
+    And,
+    AndNot,
+    Or,
+    Xor,
+}
+
+/// Comparison direction for dependent-comparison prefixes.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Comparison {
+    LessThan,
+    GreaterThan,
+}
+
+/// How to evaluate `prefix_mle(checkpoints, r_x, c, b, j)` for one prefix.
+///
+/// The runtime evaluates this without importing jolt-instructions.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PrefixMleRule {
+    /// Primary checkpoint index.
+    pub checkpoint_idx: usize,
+    /// Default if primary checkpoint is `None`.
+    pub default: DefaultVal,
+    /// The evaluation formula.
+    pub formula: PrefixMleFormula,
+}
+
+/// Evaluation formula for a single prefix MLE.
+///
+/// Each variant encodes a distinct algebraic family found across the 46
+/// prefix types. The evaluator in `checkpoint_eval.rs` interprets these.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum PrefixMleFormula {
+    /// `cp × pair(x, y) × I(remaining_test)`
+    Multiplicative {
+        pair: BilinearExpr,
+        remaining: RemainingTest,
+    },
+
+    /// `cp + weight(j) × pair(x, y) + bitop(rem_x, rem_y) << suffix_shift`
+    BitwiseAdditive {
+        pair: BilinearExpr,
+        weight: WeightFn,
+        op: IntBitOp,
+        total_bits: usize,
+        word_bits: usize,
+        /// Non-zero for rotated XOR variants (XorRot16, etc.).
+        rotation: usize,
+    },
+
+    /// Operand extraction: `cp + weight(position) × x + weight(position+1) × y + remaining_in_word(b)`.
+    OperandExtract {
+        /// Base for weight computation: `weight = 2^(base_shift - 1 - position)`.
+        /// XLEN for upper-word, 2×XLEN for lower-word.
+        base_shift: usize,
+        has_x: bool,
+        has_y: bool,
+        word_bits: usize,
+        total_bits: usize,
+        active_when: Option<RoundGuard>,
+        /// When inactive and true, return checkpoint; when false, return zero.
+        passthrough_when_inactive: bool,
+        /// Upper-word extracts high bits of `b`; lower-word shifts full `b`.
+        is_upper: bool,
+    },
+
+    /// `lt_cp + eq_cp × anti_pair + eq_cp × eq_pair × I(rem_x cmp rem_y)`
+    DependentComparison {
+        eq_idx: usize,
+        eq_default: DefaultVal,
+        cmp: Comparison,
+    },
+
+    /// Complex comparison (NegDivGtRem, PosRemLtDiv).
+    /// Phases: j < start_round → 0; j = start_round..start_round+4 → init;
+    /// j ≥ start_round+4 → standard dependent comparison.
+    ComplexComparison {
+        eq_idx: usize,
+        cmp: Comparison,
+        sign_pair_j0: BilinearExpr,
+        init_cmp: Comparison,
+        mul_anti: BilinearExpr,
+        start_round: usize,
+    },
+
+    /// Eq-like with sign gates (PosRemEqDiv, NegDivEqRem).
+    /// j < start_round → 0; j = start_round,start_round+1 → sign_pair with equality test;
+    /// j ≥ start_round+2 → cp × base_pair × I(equality).
+    SignGatedMultiplicative {
+        sign_pair: BilinearExpr,
+        base_pair: BilinearExpr,
+        remaining: RemainingTest,
+        start_round: usize,
+    },
+
+    /// LeftShift family.
+    LeftShift {
+        helper_idx: usize,
+        helper_default: DefaultVal,
+        word_bits: usize,
+        start_round: usize,
+    },
+
+    /// LeftShiftHelper: `cp × (1 + y) × 2^(leading_ones of remaining y)`.
+    LeftShiftHelper {
+        word_bits: usize,
+        start_round: usize,
+    },
+
+    /// RightShift family.
+    RightShift {
+        word_bits: usize,
+        start_round: usize,
+    },
+
+    /// MSB extraction: c or pop_msb at j=start, r_x or c at j=start+1, then checkpoint.
+    Msb {
+        msb_idx: usize,
+        start_round: usize,
+        /// true = left operand (x-variable), false = right operand (y-variable).
+        is_left: bool,
+    },
+
+    /// LSB extraction.
+    Lsb { total_bits: usize },
+
+    /// Two-LSB extraction.
+    TwoLsb { total_bits: usize },
+
+    /// Sign extension.
+    SignExtension { msb_idx: usize, word_bits: usize },
+
+    /// Sign extension upper half.
+    SignExtUpperHalf { word_bits: usize },
+
+    /// Sign extension right operand.
+    SignExtRightOp { word_bits: usize },
+
+    /// Power of 2.
+    Pow2 {
+        word_mask: usize,
+        log_word_bits: u32,
+        total_bits: usize,
+    },
+
+    /// Rev8W: byte-reversal additive.
+    Rev8W { xlen: usize },
+
+    /// ChangeDivisor (sparse multiplicative).
+    ChangeDivisor {
+        word_bits: usize,
+        start_round: usize,
+    },
+
+    /// NegativeDivisorZeroRemainder.
+    NegDivZeroRem {
+        word_bits: usize,
+        start_round: usize,
+    },
+
+    /// RightOperand(W): `cp + [j>start && j odd] c×2^(word_bits-1-j/2) + uninterleaved_y_suffix`.
+    /// `suffix_guard`: only add y-suffix when suffix_len < this value. Use total_bits for "always".
+    RightOperandExtract {
+        word_bits: usize,
+        start_round: usize,
+        total_bits: usize,
+        suffix_guard: usize,
+    },
+
+    /// Overflow bits zero (multiplicative, active in specific round range).
+    OverflowBitsZero {
+        pair: BilinearExpr,
+        word_bits: usize,
+        total_bits: usize,
+    },
+}
+
 /// Configuration for a stateful sumcheck instance.
 ///
-/// Each variant describes a different subprotocol's init parameters.
-/// The runtime passes this through to the backend without inspecting it —
-/// only the backend matches on the variant to decide which state machine
-/// to instantiate.
+/// Contains structural parameters that the runtime needs to initialize and
+/// drive a multi-phase address-decomposition state machine.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum InstanceConfig {
-    PrefixSuffix {
-        kernel: usize,
-        /// Total address bits in the decomposition (LOG_K_INSTRUCTION = 128).
-        total_address_bits: usize,
-        /// Bits per sub-phase (LOG_K / num_phases).
-        chunk_bits: usize,
-        /// Number of sub-phases in the address decomposition (8 or 16).
-        num_phases: usize,
-        /// Log₂ of the virtual RA polynomial chunk size.
-        ra_virtual_log_k_chunk: usize,
-        /// Challenge index for γ (instruction read-RAF batching).
-        gamma: ChallengeIdx,
-        /// Challenge indices for r_reduction (log_T entries, BIG_ENDIAN).
-        r_reduction: Vec<ChallengeIdx>,
-        /// PolynomialIds for materialized RA polys at address→cycle transition.
-        output_ra_polys: Vec<PolynomialId>,
-        /// PolynomialId for the combined_val polynomial.
-        output_combined_val: PolynomialId,
-    },
-    Booleanity {
-        ra_poly_ids: Vec<PolynomialId>,
-        addr_challenges: Vec<ChallengeIdx>,
-        cycle_challenges: Vec<ChallengeIdx>,
-        gamma_powers: Vec<ChallengeIdx>,
-        gamma_powers_square: Vec<ChallengeIdx>,
-        log_k_chunk: usize,
-        log_t: usize,
-    },
-    HwReduction {
-        ra_poly_ids: Vec<PolynomialId>,
-        cycle_challenges_be: Vec<ChallengeIdx>,
-        addr_bool_challenges_be: Vec<ChallengeIdx>,
-        addr_virt_challenges_be: Vec<Vec<ChallengeIdx>>,
-        gamma_powers: Vec<ChallengeIdx>,
-        hw_eval_challenge: ChallengeIdx,
-        instruction_d: usize,
-        bytecode_d: usize,
-        ram_d: usize,
-        log_k_chunk: usize,
-        log_t: usize,
-    },
+pub struct InstanceConfig {
+    pub kernel: usize,
+    pub total_address_bits: usize,
+    /// Bits per sub-phase (LOG_K / num_phases).
+    pub chunk_bits: usize,
+    /// Number of sub-phases in the address decomposition (8 or 16).
+    pub num_phases: usize,
+    /// Log₂ of the virtual RA polynomial chunk size.
+    pub ra_virtual_log_k_chunk: usize,
+    /// Challenge index for γ (instruction read-RAF batching).
+    pub gamma: ChallengeIdx,
+    /// Challenge indices for r_reduction (log_T entries, BIG_ENDIAN).
+    pub r_reduction: Vec<ChallengeIdx>,
+    /// PolynomialIds for materialized RA polys at address→cycle transition.
+    pub output_ra_polys: Vec<PolynomialId>,
+    /// PolynomialId for the combined_val polynomial.
+    pub output_combined_val: PolynomialId,
+    /// Number of instruction tables.
+    pub num_tables: usize,
+    /// Number of suffix polynomials per table.
+    pub suffixes_per_table: Vec<usize>,
+    /// Combine matrix entries for read-checking.
+    pub combine_entries: Vec<CombineEntry>,
+    /// Precomputed suffix evaluations at the empty point (suffix_len=0).
+    /// `suffix_at_empty[table][suffix]` = suffix_mle(LookupBits::new(0, 0)).
+    pub suffix_at_empty: Vec<Vec<u64>>,
+    /// Data-driven suffix operations: `suffix_ops[table][suffix]`.
+    /// Replaces runtime calls to `suffix_mle`.
+    pub suffix_ops: Vec<Vec<SuffixOp>>,
+    /// Number of prefix checkpoints.
+    pub num_prefixes: usize,
+    /// Data-driven checkpoint update rules: `checkpoint_rules[prefix]`.
+    /// Replaces runtime calls to `update_prefix_checkpoint`.
+    pub checkpoint_rules: Vec<CheckpointRule>,
+    /// Data-driven prefix MLE evaluation rules: `prefix_mle_rules[prefix]`.
+    /// Replaces runtime calls to `prefix_mle` in `compute_read_checking`.
+    pub prefix_mle_rules: Vec<PrefixMleRule>,
+    /// Challenge indices for the 3 RAF registry checkpoints:
+    /// \[0\] = p_right, \[1\] = p_left, \[2\] = p_identity.
+    pub registry_checkpoint_slots: [ChallengeIdx; 3],
+}
+
+impl InstanceConfig {
+    /// All device buffer IDs that must be bound each round.
+    pub fn bindable_polys(&self) -> Vec<PolynomialId> {
+        let mut polys = Vec::new();
+        for t in 0..self.num_tables {
+            for s in 0..self.suffixes_per_table[t] {
+                polys.push(PolynomialId::InstanceSuffix(t, s));
+            }
+        }
+        for c in 0..3 {
+            polys.push(PolynomialId::InstanceQ(c, 0));
+            polys.push(PolynomialId::InstanceQ(c, 1));
+            // P only has one buffer per category (no second half).
+            polys.push(PolynomialId::InstanceP(c, 0));
+        }
+        polys
+    }
 }
 
 impl Schedule {
@@ -302,9 +937,8 @@ pub struct KernelDef {
     pub inputs: Vec<InputBinding>,
     /// Total sumcheck rounds for this kernel.
     pub num_rounds: usize,
-    /// Instance-type config for subprotocol kernels (PrefixSuffix, Booleanity,
+    /// Instance-type config for subprotocol kernels (address decomposition, booleanity,
     /// HwReduction). `None` for standard compute kernels (Dense/Sparse/Domain).
-    /// The builder reads this to emit `UnifiedInstanceInit` ops.
     pub instance_config: Option<InstanceConfig>,
 }
 
@@ -411,30 +1045,6 @@ pub enum InputBinding {
         rows: usize,
         cols: usize,
     },
-    /// Compute a BytecodeReadRaf Val polynomial for a specific stage.
-    ///
-    /// Computes `gamma^stage × (Val[stage](k) + raf_contribution(k))` where:
-    /// - Val[stage] is a linear combination of bytecode fields weighted by
-    ///   powers of `challenges[stage_gamma_base]`
-    /// - raf_contribution = gamma^raf_power × k (identity polynomial), if present
-    /// - gamma = challenges[gamma_base]
-    BytecodeVal {
-        poly: PolynomialId,
-        /// Stage index (0-4) selects the Val formula.
-        stage: u8,
-        /// Challenge index for this stage's gamma base (one squeeze → N powers).
-        stage_gamma_base: ChallengeIdx,
-        /// Number of gamma powers needed for this stage's formula.
-        stage_gamma_count: usize,
-        /// Challenge index for the overall gamma (shared across all stages).
-        gamma_base: ChallengeIdx,
-        /// For stages 0/2: power p such that gamma^p × k is added to Val.
-        /// Stage 0: raf_gamma_power = Some(5), Stage 2: Some(4), others: None.
-        raf_gamma_power: Option<u8>,
-        /// For stages 3/4: challenge indices for the r_register eq point.
-        /// Used to compute eq(register_index, r_register) per bytecode entry.
-        register_eq_challenges: Vec<ChallengeIdx>,
-    },
 }
 
 impl InputBinding {
@@ -449,8 +1059,7 @@ impl InputBinding {
             | InputBinding::EqGather { poly, .. }
             | InputBinding::EqPushforward { poly, .. }
             | InputBinding::ScaleByChallenge { poly, .. }
-            | InputBinding::Transpose { poly, .. }
-            | InputBinding::BytecodeVal { poly, .. } => *poly,
+            | InputBinding::Transpose { poly, .. } => *poly,
         }
     }
 }
@@ -535,7 +1144,7 @@ pub enum Op {
     Materialize { binding: InputBinding },
     /// Materialize a kernel input, but skip if a buffer of the expected
     /// size already exists (e.g., produced by a prior compute op like
-    /// `UnifiedInstanceFinalize`).
+    /// `MaterializeRA` / `MaterializeCombinedVal`).
     ///
     /// Only used for `Provided` bindings at instance activation where
     /// a cross-instance compute op may have already produced the buffer.
@@ -605,33 +1214,77 @@ pub enum Op {
     /// `last_round_coeffs` for subsequent `AbsorbRoundPoly`.
     BatchRoundFinalize { batch: BatchIdx },
 
-    /// Initialize a stateful sumcheck instance (unified interface).
+    /// Initialize instance weights from the eq polynomial at the r_reduction point.
+    /// Only emitted for phase 0 of address-decomposition instances.
+    InitInstanceWeights {
+        r_reduction: Vec<ChallengeIdx>,
+        num_prefixes: usize,
+    },
+    /// Multiply instance weights by expanding-table lookups at a phase boundary.
+    /// Emitted for phase > 0 of address-decomposition instances.
+    UpdateInstanceWeights {
+        expanding_table: PolynomialId,
+        chunk_bits: usize,
+        num_phases: usize,
+        phase: usize,
+    },
+    /// Scatter weighted suffix evaluations into per-table polynomial buffers.
+    SuffixScatter { kernel: usize, phase: usize },
+    /// Compute RAF quotient (Q) buffers from lookup keys and instance weights.
+    QBufferScatter { kernel: usize, phase: usize },
+    /// Materialize RAF product (P) buffers from registry checkpoint scalars.
+    MaterializePBuffers { kernel: usize },
+    /// Initialize an expanding eq table with a single 1.0 entry.
+    InitExpandingTable { table: PolynomialId, size: usize },
+    /// Read-checking reduce: evaluate prefix MLEs × suffix polys via combine matrix.
+    /// Stores partial result in `instance_read_checking_evals`.
+    ReadCheckingReduce {
+        kernel: usize,
+        round: usize,
+        r_x_challenge: Option<ChallengeIdx>,
+    },
+    /// RAF reduce: compute p × q contribution weighted by gamma.
+    /// Combines with read-checking result and stores final round evaluations.
+    RafReduce {
+        batch: BatchIdx,
+        instance: InstanceIdx,
+        kernel: usize,
+    },
+    /// Materialize RA polynomials from expanding tables and lookup keys.
+    MaterializeRA { kernel: usize },
+    /// Materialize combined_val polynomial from checkpoints + combine matrix.
+    MaterializeCombinedVal { kernel: usize },
+
+    /// Weighted linear combination of provider/device buffers with challenge scalars.
     ///
-    /// The runtime passes `config` to the backend without inspecting it.
-    UnifiedInstanceInit {
-        batch: BatchIdx,
-        instance: InstanceIdx,
-        config: InstanceConfig,
+    /// `result[i] = Σ_j (challenge_j^power_j × source_j[i]) + identity_scale × i`
+    /// optionally scaled by `overall_scale`. Sources are resolved from device_buffers
+    /// if present, else from the provider. Generic — no protocol knowledge.
+    WeightedSum {
+        output: PolynomialId,
+        terms: Vec<(PolynomialId, ChallengeIdx, u8)>,
+        identity_term: Option<(ChallengeIdx, u8)>,
+        overall_scale: Option<(ChallengeIdx, u8)>,
     },
-    /// Bind a challenge into a stateful instance (unified interface).
-    UnifiedInstanceBind {
-        batch: BatchIdx,
-        instance: InstanceIdx,
+
+    /// Update an expanding eq table by consuming a challenge value.
+    ///
+    /// Doubles the active portion of the buffer: for each entry `v[i]` in
+    /// `0..current_len`, produces `v[2i] = v[i] − r·v[i]` and `v[2i+1] = r·v[i]`.
+    /// After the update, the active length is `2 × current_len`.
+    ExpandingTableUpdate {
+        table: PolynomialId,
         challenge: ChallengeIdx,
+        /// Active length before this update (compiler knows from round geometry).
+        current_len: usize,
     },
-    /// Compute round polynomial evaluations from a stateful instance.
-    UnifiedInstanceReduce {
-        batch: BatchIdx,
-        instance: InstanceIdx,
-    },
-    /// Finalize a stateful instance: extract buffers and/or evaluations.
-    UnifiedInstanceFinalize {
-        batch: BatchIdx,
-        instance: InstanceIdx,
-        /// Polynomial IDs for buffer outputs (inserted into device_buffers).
-        output_buffers: Vec<PolynomialId>,
-        /// Polynomial IDs for evaluation outputs (inserted into evaluations cache).
-        output_evals: Vec<PolynomialId>,
+    /// Update a batch of instance checkpoints using compiled scalar expressions.
+    ///
+    /// Atomic: reads all inputs from a snapshot of `instance_checkpoints`
+    /// taken before any writes, so `DepAdd`-style rules that read one
+    /// checkpoint while updating another observe the pre-batch state.
+    CheckpointEvalBatch {
+        updates: Vec<(usize, CheckpointEvalAction)>,
     },
 
     /// Extract polynomial evaluation.
@@ -863,7 +1516,8 @@ impl Op {
                 | Op::InstanceReduce { .. }
                 | Op::InstanceSegmentedReduce { .. }
                 | Op::InstanceBind { .. }
-                | Op::UnifiedInstanceReduce { .. }
+                | Op::ReadCheckingReduce { .. }
+                | Op::RafReduce { .. }
                 | Op::Evaluate { .. }
                 | Op::Bind { .. }
                 | Op::LagrangeProject { .. }
@@ -912,9 +1566,16 @@ impl Op {
                 | Op::CaptureScalar { .. }
                 | Op::BatchAccumulateInstance { .. }
                 | Op::BatchRoundFinalize { .. }
-                | Op::UnifiedInstanceInit { .. }
-                | Op::UnifiedInstanceBind { .. }
-                | Op::UnifiedInstanceFinalize { .. }
+                | Op::ExpandingTableUpdate { .. }
+                | Op::InitInstanceWeights { .. }
+                | Op::UpdateInstanceWeights { .. }
+                | Op::SuffixScatter { .. }
+                | Op::QBufferScatter { .. }
+                | Op::MaterializePBuffers { .. }
+                | Op::InitExpandingTable { .. }
+                | Op::MaterializeRA { .. }
+                | Op::MaterializeCombinedVal { .. }
+                | Op::WeightedSum { .. }
         )
     }
 }

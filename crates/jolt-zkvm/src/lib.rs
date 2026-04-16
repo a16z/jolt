@@ -4,7 +4,9 @@
 //! The graph says what to prove; this crate says how — backend orchestration,
 //! witness building, proof serialization.
 
+pub mod checkpoint_eval;
 pub mod preprocessing;
 pub mod prove;
 pub mod proving_key;
 pub mod runtime;
+pub mod scalar_expr;

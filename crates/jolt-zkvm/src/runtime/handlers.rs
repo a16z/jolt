@@ -1,10 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
-use jolt_compiler::module::{DomainSeparator, EvalMode, Op, RoundPolyEncoding};
-use jolt_compiler::PolynomialId;
-use jolt_compute::{
-    Buf, BufferProvider, ComputeBackend, DeviceBuffer, Executable, LookupTraceData,
+use jolt_compiler::module::{
+    ChallengeIdx, CheckpointEvalAction, DomainSeparator, EvalMode, Op, RoundPolyEncoding,
 };
+use jolt_compiler::PolynomialId;
+use jolt_compute::{Buf, BufferProvider, ComputeBackend, DeviceBuffer, Executable};
 use jolt_crypto::HomomorphicCommitment;
 use jolt_field::Field;
 use jolt_openings::AdditivelyHomomorphic;
@@ -19,7 +19,7 @@ use super::helpers::{
 #[allow(clippy::too_many_arguments)]
 pub(super) fn dispatch_op<B, F, T, PCS>(
     op: &Op,
-    state: &mut super::RuntimeState<B, F, PCS>,
+    state: &mut super::RuntimeState<F, PCS>,
     device_buffers: &mut HashMap<PolynomialId, Buf<B, F>>,
     executable: &Executable<B, F>,
     provider: &mut impl BufferProvider<F>,
@@ -27,8 +27,6 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
     pcs_setup: &PCS::ProverSetup,
     transcript: &mut T,
     stage_point_indices: &[Vec<usize>],
-    bytecode_data: Option<&jolt_witness::bytecode_raf::BytecodeData<F>>,
-    lookup_trace: Option<&LookupTraceData>,
 ) where
     B: ComputeBackend,
     F: Field,
@@ -554,8 +552,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
 
         Op::Materialize { binding } => {
             let pi = binding.poly();
-            let buf =
-                materialize_binding(binding, &state.challenges, provider, backend, bytecode_data);
+            let buf = materialize_binding(binding, &state.challenges, provider, backend);
             let _ = device_buffers.insert(pi, buf);
         }
 
@@ -569,8 +566,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                     return;
                 }
             }
-            let buf =
-                materialize_binding(binding, &state.challenges, provider, backend, bytecode_data);
+            let buf = materialize_binding(binding, &state.challenges, provider, backend);
             let _ = device_buffers.insert(pi, buf);
         }
 
@@ -579,8 +575,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             if device_buffers.contains_key(&pi) {
                 return;
             }
-            let buf =
-                materialize_binding(binding, &state.challenges, provider, backend, bytecode_data);
+            let buf = materialize_binding(binding, &state.challenges, provider, backend);
             let _ = device_buffers.insert(pi, buf);
         }
 
@@ -755,63 +750,467 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             state.last_round_coeffs = std::mem::take(&mut state.batch_combined);
         }
 
-        Op::UnifiedInstanceInit {
-            batch,
-            instance,
-            config,
-        } => {
-            let is = backend.instance_init(
-                config,
-                &state.challenges,
-                provider,
-                lookup_trace,
-                &module.prover.kernels,
-            );
-            let _ = state.instance_states.insert((batch.0, instance.0), is);
-        }
-
-        Op::UnifiedInstanceBind {
-            batch,
-            instance,
+        Op::ExpandingTableUpdate {
+            table,
             challenge,
+            current_len,
         } => {
-            let scalar = state.challenges[challenge.0];
-            let is = state
-                .instance_states
-                .get_mut(&(batch.0, instance.0))
-                .expect("UnifiedInstanceBind: state missing");
-            backend.instance_bind(is, scalar);
+            let r = state.challenges[challenge.0];
+            let buf = device_buffers
+                .get(table)
+                .expect("ExpandingTableUpdate: buffer missing");
+            let mut data = backend.download(buf.as_field());
+            for i in (0..*current_len).rev() {
+                let v_i = data[i];
+                let eval_1 = r * v_i;
+                data[2 * i] = v_i - eval_1;
+                data[2 * i + 1] = eval_1;
+            }
+            let new_buf = backend.upload(&data);
+            let _ = device_buffers.insert(*table, DeviceBuffer::Field(new_buf));
         }
 
-        Op::UnifiedInstanceReduce { batch, instance } => {
-            let is = state
-                .instance_states
-                .get(&(batch.0, instance.0))
-                .expect("UnifiedInstanceReduce: state missing");
-            let previous_claim = state.batch_instance_claims[batch.0][instance.0];
-            let evals = backend.instance_reduce(is, previous_claim);
-            state.last_round_instance_evals[instance.0].clone_from(&evals);
+        Op::CheckpointEvalBatch { updates } => {
+            let snapshot: Vec<Option<F>> = state.instance_checkpoints.clone();
+            let empty_buffers: std::collections::HashMap<PolynomialId, &[F]> =
+                std::collections::HashMap::new();
+            for (idx, action) in updates {
+                match action {
+                    CheckpointEvalAction::Set(expr) => {
+                        let v = crate::scalar_expr::eval_scalar_expr(
+                            expr,
+                            &state.challenges,
+                            &snapshot,
+                            0,
+                            &empty_buffers,
+                        );
+                        state.instance_checkpoints[*idx] = Some(v);
+                    }
+                    CheckpointEvalAction::Clear => {
+                        state.instance_checkpoints[*idx] = None;
+                    }
+                }
+            }
         }
 
-        Op::UnifiedInstanceFinalize {
-            batch,
+        Op::InitInstanceWeights {
+            r_reduction,
+            num_prefixes,
+        } => {
+            let point: Vec<F> = r_reduction
+                .iter()
+                .map(|ci| state.challenges[ci.0])
+                .collect();
+            state.instance_weights = jolt_poly::EqPolynomial::<F>::evals(&point, None);
+            state.instance_checkpoints = vec![None; *num_prefixes];
+        }
+
+        Op::UpdateInstanceWeights {
+            expanding_table,
+            chunk_bits,
+            num_phases,
+            phase,
+        } => {
+            let trace = provider.lookup_trace().unwrap();
+            let prev_data = backend.download(device_buffers[expanding_table].as_field());
+            let m_mask = (1usize << chunk_bits) - 1;
+            let suffix_len = (num_phases - phase) * chunk_bits;
+            for (j, &key) in trace.lookup_keys.iter().enumerate() {
+                state.instance_weights[j] *= prev_data[((key >> suffix_len) as usize) & m_mask];
+            }
+        }
+
+        Op::SuffixScatter { kernel, phase } => {
+            let config = executable.module.prover.kernels[*kernel]
+                .instance_config
+                .as_ref()
+                .unwrap();
+            let trace = provider.lookup_trace().unwrap();
+            let m = 1usize << config.chunk_bits;
+            let suffix_len = (config.num_phases - 1 - phase) * config.chunk_bits;
+            let suffix_mask = (1u128 << suffix_len).wrapping_sub(1);
+            let mut all_polys: Vec<Vec<Vec<F>>> = (0..config.num_tables)
+                .map(|t| vec![vec![F::zero(); m]; config.suffixes_per_table[t]])
+                .collect();
+            for (j, &key) in trace.lookup_keys.iter().enumerate() {
+                let Some(t) = trace.table_kind_indices[j] else {
+                    continue;
+                };
+                let idx = ((key >> suffix_len) as usize) & (m - 1);
+                let u = state.instance_weights[j];
+                for (poly, op) in all_polys[t].iter_mut().zip(config.suffix_ops[t].iter()) {
+                    let v = op.eval(key & suffix_mask, suffix_len);
+                    match v {
+                        0 => {}
+                        1 => poly[idx] += u,
+                        _ => poly[idx] += u.mul_u64(v),
+                    }
+                }
+            }
+            for (t, table_polys) in all_polys.into_iter().enumerate() {
+                for (s, p) in table_polys.into_iter().enumerate() {
+                    let _ = device_buffers.insert(
+                        PolynomialId::InstanceSuffix(t, s),
+                        DeviceBuffer::Field(backend.upload(&p)),
+                    );
+                }
+            }
+        }
+
+        Op::QBufferScatter { kernel, phase } => {
+            let config = executable.module.prover.kernels[*kernel]
+                .instance_config
+                .as_ref()
+                .unwrap();
+            let trace = provider.lookup_trace().unwrap();
+            let m = 1usize << config.chunk_bits;
+            let suffix_len = (config.num_phases - 1 - phase) * config.chunk_bits;
+            let suffix_mask = (1u128 << suffix_len).wrapping_sub(1);
+            let shift_half_f = F::from_u128(if suffix_len >= 2 {
+                1u128 << (suffix_len / 2)
+            } else {
+                1
+            });
+            let shift_full_f = F::from_u128(if suffix_len > 0 {
+                1u128 << suffix_len
+            } else {
+                1
+            });
+            let (mut sh, mut l, mut r, mut sf, mut id) = (
+                vec![F::zero(); m],
+                vec![F::zero(); m],
+                vec![F::zero(); m],
+                vec![F::zero(); m],
+                vec![F::zero(); m],
+            );
+            for (j, &key) in trace.lookup_keys.iter().enumerate() {
+                let idx = ((key >> suffix_len) as usize) & (m - 1);
+                let u = state.instance_weights[j];
+                if trace.is_interleaved[j] {
+                    sh[idx] += u;
+                    let (lo, ro) = uninterleave_u128(key & suffix_mask);
+                    if lo != 0 {
+                        l[idx] += u.mul_u64(lo);
+                    }
+                    if ro != 0 {
+                        r[idx] += u.mul_u64(ro);
+                    }
+                } else {
+                    sf[idx] += u;
+                    let v = key & suffix_mask;
+                    if v != 0 {
+                        id[idx] += u.mul_u128(v);
+                    }
+                }
+            }
+            for v in &mut sh {
+                *v *= shift_half_f;
+            }
+            for v in &mut sf {
+                *v *= shift_full_f;
+            }
+            for (c, q) in [[sh.clone(), l], [sh, r], [sf, id]].into_iter().enumerate() {
+                let _ = device_buffers.insert(
+                    PolynomialId::InstanceQ(c, 0),
+                    DeviceBuffer::Field(backend.upload(&q[0])),
+                );
+                let _ = device_buffers.insert(
+                    PolynomialId::InstanceQ(c, 1),
+                    DeviceBuffer::Field(backend.upload(&q[1])),
+                );
+            }
+        }
+
+        Op::MaterializePBuffers { kernel } => {
+            let config = executable.module.prover.kernels[*kernel]
+                .instance_config
+                .as_ref()
+                .unwrap();
+            let m = 1usize << config.chunk_bits;
+            let half_m = 1usize << (config.chunk_bits / 2);
+            let cp = |i: usize| {
+                let v = state.challenges[config.registry_checkpoint_slots[i].0];
+                if v != F::zero() {
+                    Some(v)
+                } else {
+                    None
+                }
+            };
+            let id_base = cp(2).unwrap_or(F::zero()) * F::from_u64(m as u64);
+            let p_identity: Vec<F> = (0..m).map(|i| id_base + F::from_u64(i as u64)).collect();
+            let left_base = cp(1).unwrap_or(F::zero()) * F::from_u64(half_m as u64);
+            let right_base = cp(0).unwrap_or(F::zero()) * F::from_u64(half_m as u64);
+            let mut p_left = vec![F::zero(); m];
+            let mut p_right = vec![F::zero(); m];
+            for i in 0..m {
+                let (lo, ro) = uninterleave_u128(i as u128);
+                p_left[i] = left_base + F::from_u64(lo);
+                p_right[i] = right_base + F::from_u64(ro);
+            }
+            let _ = device_buffers.insert(
+                PolynomialId::InstanceP(0, 0),
+                DeviceBuffer::Field(backend.upload(&p_left)),
+            );
+            let _ = device_buffers.insert(
+                PolynomialId::InstanceP(1, 0),
+                DeviceBuffer::Field(backend.upload(&p_right)),
+            );
+            let _ = device_buffers.insert(
+                PolynomialId::InstanceP(2, 0),
+                DeviceBuffer::Field(backend.upload(&p_identity)),
+            );
+        }
+
+        Op::InitExpandingTable { table, size } => {
+            let mut expanding = vec![F::zero(); *size];
+            expanding[0] = F::one();
+            let _ = device_buffers.insert(*table, DeviceBuffer::Field(backend.upload(&expanding)));
+        }
+
+        Op::ReadCheckingReduce {
+            kernel,
+            round,
+            r_x_challenge,
+        } => {
+            let config = executable.module.prover.kernels[*kernel]
+                .instance_config
+                .as_ref()
+                .unwrap();
+            let suffix_polys: Vec<Vec<Vec<F>>> = (0..config.num_tables)
+                .map(|t| {
+                    (0..config.suffixes_per_table[t])
+                        .map(|s| {
+                            backend.download(
+                                device_buffers[&PolynomialId::InstanceSuffix(t, s)].as_field(),
+                            )
+                        })
+                        .collect()
+                })
+                .collect();
+            let checkpoints: Vec<Option<F>> = state.instance_checkpoints.clone();
+            let r_x: Option<F> = r_x_challenge.map(|ci| state.challenges[ci.0]);
+            state.read_checking_evals = crate::checkpoint_eval::compute_read_checking_from_lowered(
+                &config.prefix_mle_rules,
+                &config.combine_entries,
+                *round,
+                &suffix_polys,
+                &checkpoints,
+                r_x,
+                config.total_address_bits,
+            );
+        }
+
+        Op::RafReduce {
+            batch: ps_batch,
             instance,
-            output_buffers,
-            output_evals,
+            kernel,
         } => {
-            let is = state
-                .instance_states
-                .remove(&(batch.0, instance.0))
-                .expect("UnifiedInstanceFinalize: state missing");
-            let output = backend.instance_finalize(is);
-            assert_eq!(output.buffers.len(), output_buffers.len());
-            assert_eq!(output.evaluations.len(), output_evals.len());
-            for (poly_id, buf) in output_buffers.iter().zip(output.buffers) {
-                let _ = device_buffers.insert(*poly_id, DeviceBuffer::Field(buf));
+            let config = executable.module.prover.kernels[*kernel]
+                .instance_config
+                .as_ref()
+                .unwrap();
+            let gamma = state.challenges[config.gamma.0];
+            let gamma_sqr = gamma * gamma;
+            let q_bufs: Vec<Vec<F>> = (0..3)
+                .flat_map(|c| (0..2).map(move |h| (c, h)))
+                .map(|(c, h)| {
+                    backend.download(device_buffers[&PolynomialId::InstanceQ(c, h)].as_field())
+                })
+                .collect();
+            let p_bufs: Vec<Option<Vec<F>>> = (0..3)
+                .flat_map(|c| (0..2).map(move |h| (c, h)))
+                .map(|(c, h)| {
+                    device_buffers
+                        .get(&PolynomialId::InstanceP(c, h))
+                        .map(|b| backend.download(b.as_field()))
+                })
+                .collect();
+            let half = q_bufs[0].len() / 2;
+            let (mut l0, mut l2, mut r0, mut r2) = (F::zero(), F::zero(), F::zero(), F::zero());
+            for b in 0..half {
+                for (comp, (qb, pb)) in [(0usize, 0usize), (2, 2), (1, 1)].into_iter().enumerate() {
+                    let (mut e0, mut e2l, mut e2r) = (F::zero(), F::zero(), F::zero());
+                    for i in 0..2 {
+                        let (p0, p2) = match p_bufs[pb * 2 + i] {
+                            Some(ref d) => {
+                                let pl = d[b];
+                                (pl, d[b + half] + d[b + half] - pl)
+                            }
+                            None => (F::one(), F::one()),
+                        };
+                        e0 += p0 * q_bufs[qb * 2 + i][b];
+                        e2l += p2 * q_bufs[qb * 2 + i][b];
+                        e2r += p2 * q_bufs[qb * 2 + i][b + half];
+                    }
+                    if comp == 0 {
+                        l0 += e0;
+                        l2 += e2r + e2r - e2l;
+                    } else {
+                        r0 += e0;
+                        r2 += e2r + e2r - e2l;
+                    }
+                }
             }
-            for (poly_id, val) in output_evals.iter().zip(output.evaluations) {
-                let _ = state.evaluations.insert(*poly_id, val);
+            let eval_0 = state.read_checking_evals[0] + gamma * l0 + gamma_sqr * r0;
+            let eval_2 = state.read_checking_evals[1] + gamma * l2 + gamma_sqr * r2;
+            let eval_1 = state.batch_instance_claims[ps_batch.0][instance.0] - eval_0;
+            state.last_round_instance_evals[instance.0] = vec![eval_0, eval_1, eval_2];
+        }
+
+        Op::MaterializeRA { kernel } => {
+            let config = executable.module.prover.kernels[*kernel]
+                .instance_config
+                .as_ref()
+                .unwrap();
+            let trace = provider.lookup_trace().unwrap();
+            let (chunk_bits, num_phases) = (config.chunk_bits, config.num_phases);
+            let m_mask = (1usize << chunk_bits) - 1;
+            let tables: Vec<Vec<F>> = (0..num_phases)
+                .map(|p| {
+                    backend.download(device_buffers[&PolynomialId::ExpandingTable(p)].as_field())
+                })
+                .collect();
+            let n_vra = 128 / config.ra_virtual_log_k_chunk;
+            let chunk_size = num_phases / n_vra;
+            for chunk_i in 0..n_vra {
+                let off = chunk_i * chunk_size;
+                let ra: Vec<F> = trace
+                    .lookup_keys
+                    .iter()
+                    .map(|&key| {
+                        let mut shift = (num_phases - 1 - off) * chunk_bits;
+                        let mut acc = tables[off][((key >> shift) as usize) & m_mask];
+                        for et in &tables[(off + 1)..(off + chunk_size)] {
+                            shift -= chunk_bits;
+                            acc *= et[((key >> shift) as usize) & m_mask];
+                        }
+                        acc
+                    })
+                    .collect();
+                let _ = device_buffers.insert(
+                    config.output_ra_polys[chunk_i],
+                    DeviceBuffer::Field(backend.upload(&ra)),
+                );
             }
+        }
+
+        Op::MaterializeCombinedVal { kernel } => {
+            let config = executable.module.prover.kernels[*kernel]
+                .instance_config
+                .as_ref()
+                .unwrap();
+            let trace = provider.lookup_trace().unwrap();
+            let prefix_vals: Vec<F> = state
+                .instance_checkpoints
+                .iter()
+                .map(|v| v.unwrap_or(F::zero()))
+                .collect();
+            let mut table_values = vec![F::zero(); config.suffix_at_empty.len()];
+            for e in &config.combine_entries {
+                let p = e.prefix_idx.map_or(F::one(), |i| prefix_vals[i]);
+                let s = F::from_u64(config.suffix_at_empty[e.table_idx][e.suffix_local_idx]);
+                table_values[e.table_idx] += F::from_i128(e.coefficient) * p * s;
+            }
+            let gamma = state.challenges[config.gamma.0];
+            let gsqr = gamma * gamma;
+            let left = state.challenges[config.registry_checkpoint_slots[1].0];
+            let right = state.challenges[config.registry_checkpoint_slots[0].0];
+            let ident = state.challenges[config.registry_checkpoint_slots[2].0];
+            let raf_inter = gamma * left + gsqr * right;
+            let raf_ident = gsqr * ident;
+            let combined: Vec<F> = (0..trace.lookup_keys.len())
+                .map(|j| {
+                    trace.table_kind_indices[j].map_or(F::zero(), |t| table_values[t])
+                        + if trace.is_interleaved[j] {
+                            raf_inter
+                        } else {
+                            raf_ident
+                        }
+                })
+                .collect();
+            let _ = device_buffers.insert(
+                config.output_combined_val,
+                DeviceBuffer::Field(backend.upload(&combined)),
+            );
+        }
+
+        Op::WeightedSum {
+            output,
+            terms,
+            identity_term,
+            overall_scale,
+        } => {
+            let first_src = resolve_source(&terms[0].0, device_buffers, provider, backend);
+            let n = first_src.len();
+            let mut result = vec![F::zero(); n];
+            accumulate(
+                &mut result,
+                &first_src,
+                challenge_power(&state.challenges, &terms[0].1, terms[0].2),
+            );
+            for &(ref src, ref ch, pow) in &terms[1..] {
+                let data = resolve_source(src, device_buffers, provider, backend);
+                accumulate(
+                    &mut result,
+                    &data,
+                    challenge_power(&state.challenges, ch, pow),
+                );
+            }
+            if let Some((ch, pow)) = identity_term {
+                let scale = challenge_power(&state.challenges, ch, *pow);
+                for (i, r) in result.iter_mut().enumerate() {
+                    *r += scale * F::from_u64(i as u64);
+                }
+            }
+            if let Some((ch, pow)) = overall_scale {
+                let scale = challenge_power(&state.challenges, ch, *pow);
+                for r in &mut result {
+                    *r *= scale;
+                }
+            }
+            let _ = device_buffers.insert(*output, DeviceBuffer::Field(backend.upload(&result)));
         }
     }
+}
+
+/// Compute `base ^ power` from challenge slots.
+fn challenge_power<F: Field>(challenges: &[F], ch: &ChallengeIdx, power: u8) -> F {
+    let base = challenges[ch.0];
+    let mut result = F::one();
+    for _ in 0..power {
+        result *= base;
+    }
+    result
+}
+
+/// Resolve a polynomial source from device buffers (if present) or provider.
+fn resolve_source<B: ComputeBackend, F: Field>(
+    poly: &PolynomialId,
+    device_buffers: &HashMap<PolynomialId, Buf<B, F>>,
+    provider: &impl BufferProvider<F>,
+    backend: &B,
+) -> Vec<F> {
+    if let Some(buf) = device_buffers.get(poly) {
+        backend.download(buf.as_field())
+    } else {
+        provider.materialize(*poly).into_owned()
+    }
+}
+
+/// Accumulate `scale × data[i]` into `result[i]`.
+fn accumulate<F: Field>(result: &mut [F], data: &[F], scale: F) {
+    for (r, &d) in result.iter_mut().zip(data.iter()) {
+        *r += scale * d;
+    }
+}
+
+/// Separate interleaved x/y bits: odd positions → x (lo), even positions → y (ro).
+fn uninterleave_u128(bits: u128) -> (u64, u64) {
+    let mut x: u64 = 0;
+    let mut y: u64 = 0;
+    for i in 0..64 {
+        y |= (((bits >> (2 * i)) & 1) as u64) << i;
+        x |= (((bits >> (2 * i + 1)) & 1) as u64) << i;
+    }
+    (x, y)
 }

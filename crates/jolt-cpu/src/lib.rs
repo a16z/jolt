@@ -16,10 +16,7 @@
 //!   `{0, 2, 3, ..., degree}`. Handles all other compositions.
 
 mod backend;
-pub mod booleanity;
 mod generic;
-pub mod hw_reduction;
-pub mod prefix_suffix;
 mod product_sum;
 pub mod toom_cook;
 

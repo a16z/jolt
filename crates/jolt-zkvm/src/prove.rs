@@ -11,7 +11,6 @@ use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::ProverConfig;
 
 use crate::runtime::execute;
-
 /// Execute the proving pipeline.
 ///
 /// The caller is responsible for building witness polynomials, R1CS data,
@@ -21,7 +20,6 @@ use crate::runtime::execute;
 /// # Panics
 ///
 /// Panics if `config` is invalid (non-power-of-two trace length, etc.).
-#[allow(clippy::too_many_arguments)]
 pub fn prove<B, F, T, PCS>(
     executable: &Executable<B, F>,
     provider: &mut impl BufferProvider<F>,
@@ -29,8 +27,6 @@ pub fn prove<B, F, T, PCS>(
     pcs_setup: &PCS::ProverSetup,
     transcript: &mut T,
     config: ProverConfig,
-    lookup_trace: Option<jolt_compute::LookupTraceData>,
-    bytecode_data: Option<jolt_witness::bytecode_raf::BytecodeData<F>>,
 ) -> jolt_verifier::JoltProof<F, PCS>
 where
     B: ComputeBackend,
@@ -42,14 +38,5 @@ where
     if let Err(e) = config.validate() {
         panic!("invalid ProverConfig: {e}");
     }
-    execute::<B, F, T, PCS>(
-        executable,
-        provider,
-        backend,
-        pcs_setup,
-        transcript,
-        config,
-        lookup_trace,
-        bytecode_data,
-    )
+    execute::<B, F, T, PCS>(executable, provider, backend, pcs_setup, transcript, config)
 }

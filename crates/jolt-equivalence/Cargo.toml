@@ -17,6 +17,7 @@ jolt-core = { path = "../../jolt-core", features = ["host"] }
 ark-bn254.workspace = true
 ark-ff.workspace = true
 ark-serialize.workspace = true
+ark-std.workspace = true
 postcard.workspace = true
 
 # jolt-zkvm proving pipeline

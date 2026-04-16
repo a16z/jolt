@@ -11,7 +11,6 @@ workspace = true
 [dependencies]
 jolt-field = { path = "../jolt-field", default-features = false }
 jolt-compiler = { path = "../jolt-compiler" }
-jolt-instructions = { path = "../jolt-instructions" }
 
 [dev-dependencies]
 jolt-field = { path = "../jolt-field", features = ["bn254"] }

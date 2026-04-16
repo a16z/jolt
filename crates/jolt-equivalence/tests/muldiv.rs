@@ -33,7 +33,6 @@ use common::constants::RAM_START_ADDRESS;
 use jolt_compiler::module::Module;
 use jolt_compiler::{Op, VerifierOp};
 use jolt_compute::link;
-use jolt_compute::LookupTraceData;
 use jolt_cpu::CpuBackend;
 use jolt_dory::types::DoryProverSetup;
 use jolt_dory::DoryScheme;
@@ -48,6 +47,7 @@ use jolt_witness::preprocessed::PreprocessedSource;
 use jolt_witness::provider::ProverData;
 use jolt_witness::{PolynomialConfig, PolynomialId, Polynomials};
 use jolt_zkvm::prove::prove;
+use jolt_zkvm::runtime::prefix_suffix::LookupTraceData;
 use num_traits::{One, Zero};
 
 use jolt_equivalence::checkpoint::{CheckpointTranscript, TranscriptEvent};
@@ -451,7 +451,7 @@ fn setup_zkvm_muldiv(
     let mut rs1_indices = vec![None; trace_length];
     let mut rs2_indices = vec![None; trace_length];
     let mut lookup_keys = vec![0u128; trace_length];
-    let mut table_kinds: Vec<Option<LookupTableKind>> = vec![None; trace_length];
+    let mut table_kind_indices: Vec<Option<usize>> = vec![None; trace_length];
     let mut table_indices: Vec<Option<usize>> = vec![None; trace_length];
     let mut is_interleaved = vec![true; trace_length]; // NoOp padding has is_interleaved=true
     for (t, cycle) in trace.iter().enumerate() {
@@ -465,11 +465,8 @@ fn setup_zkvm_muldiv(
             rs2_indices[t] = Some(reg as usize);
         }
         lookup_keys[t] = cycle.lookup_index();
-        table_kinds[t] = cycle.lookup_table_index().map(|idx| {
+        table_kind_indices[t] = cycle.lookup_table_index().inspect(|&idx| {
             assert!(idx < LookupTableKind::COUNT);
-            // SAFETY: LookupTableKind is #[repr(u8)] with contiguous discriminants
-            // 0..COUNT, and idx < COUNT is asserted above.
-            unsafe { std::mem::transmute::<u8, LookupTableKind>(idx as u8) }
         });
         table_indices[t] = InstructionLookup::<64>::lookup_table(cycle)
             .map(|t| CoreLookupTables::<64>::enum_index(&t));
@@ -482,7 +479,7 @@ fn setup_zkvm_muldiv(
     };
     let lookup_trace = LookupTraceData {
         lookup_keys,
-        table_kinds: table_kinds.clone(),
+        table_kind_indices: table_kind_indices.clone(),
         is_interleaved: is_interleaved.clone(),
     };
 
@@ -600,6 +597,9 @@ fn populate_bytecode_preprocessed(
     let mut entry_expected = vec![NewFr::zero(); k];
     entry_expected[bc.entry_index] = NewFr::one();
     preprocessed.insert(PolynomialId::BytecodeEntryExpected, entry_expected);
+
+    // Per-field bytecode polynomials for WeightedSum (BytecodeVal decomposition)
+    bc.populate_preprocessed(preprocessed);
 }
 
 fn extract_jolt_zkvm_stages() -> Vec<StageTrace<Fr>> {
@@ -639,7 +639,8 @@ fn extract_jolt_zkvm_stages() -> Vec<StageTrace<Fr>> {
     let mut preprocessed = PreprocessedSource::new();
     preprocessed.populate_ram(&setup.config, &initial_ram);
     populate_bytecode_preprocessed(&mut preprocessed, &bytecode_data);
-    let mut provider = ProverData::new(&mut polys, r1cs, derived, preprocessed);
+    let mut provider =
+        ProverData::new(&mut polys, r1cs, derived, preprocessed).with_lookup_trace(lookup_trace);
 
     let pcs_setup = &params.pcs_setup;
     let mut transcript = jolt_transcript::Blake2bTranscript::<NewFr>::new(TRANSCRIPT_LABEL);
@@ -651,8 +652,6 @@ fn extract_jolt_zkvm_stages() -> Vec<StageTrace<Fr>> {
         pcs_setup,
         &mut transcript,
         setup.config,
-        Some(lookup_trace),
-        Some(bytecode_data),
     );
 
     proof
@@ -729,7 +728,8 @@ fn extract_jolt_zkvm_checkpoint_log() -> Vec<TranscriptEvent> {
     let mut preprocessed = PreprocessedSource::new();
     preprocessed.populate_ram(&setup.config, &initial_ram);
     populate_bytecode_preprocessed(&mut preprocessed, &bytecode_data);
-    let mut provider = ProverData::new(&mut polys, r1cs, derived, preprocessed);
+    let mut provider =
+        ProverData::new(&mut polys, r1cs, derived, preprocessed).with_lookup_trace(lookup_trace);
 
     let pcs_setup = &params.pcs_setup;
     let mut transcript =
@@ -742,8 +742,6 @@ fn extract_jolt_zkvm_checkpoint_log() -> Vec<TranscriptEvent> {
         pcs_setup,
         &mut transcript,
         setup.config,
-        Some(lookup_trace),
-        Some(bytecode_data),
     );
 
     transcript.into_log()
@@ -1456,7 +1454,8 @@ fn run_jolt_zkvm_prover(
         .with_register_access(reg_access)
         .with_lookup_flags(lookup_flags);
     populate_bytecode_preprocessed(&mut preprocessed, &bytecode_data);
-    let mut provider = ProverData::new(&mut polys, r1cs, derived, preprocessed);
+    let mut provider =
+        ProverData::new(&mut polys, r1cs, derived, preprocessed).with_lookup_trace(lookup_trace);
 
     let pcs_setup = &params.pcs_setup;
     let mut transcript = jolt_transcript::Blake2bTranscript::<NewFr>::new(TRANSCRIPT_LABEL);
@@ -1468,8 +1467,6 @@ fn run_jolt_zkvm_prover(
         pcs_setup,
         &mut transcript,
         setup.config,
-        Some(lookup_trace),
-        Some(bytecode_data),
     )
 }
 

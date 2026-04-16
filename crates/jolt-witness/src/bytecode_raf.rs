@@ -57,6 +57,115 @@ pub struct BytecodeData<F> {
 }
 
 impl<F: Field> BytecodeData<F> {
+    /// Register per-field bytecode polynomials into a PreprocessedSource.
+    ///
+    /// Extracts each field from `self.entries` into a separate K-length
+    /// `Vec<F>` indexed by `PolynomialId::BytecodeField(idx)`.
+    /// Index→field mapping is defined in [`field_indices`].
+    pub fn populate_preprocessed(
+        &self,
+        preprocessed: &mut crate::preprocessed::PreprocessedSource<F>,
+    ) {
+        use jolt_compiler::polynomial_id::bytecode_field as bf;
+        use jolt_compiler::PolynomialId;
+        let bool_to_f = |b: bool| if b { F::one() } else { F::zero() };
+        let sentinel = F::from_u64(255);
+
+        preprocessed.insert(
+            PolynomialId::BytecodeField(bf::ADDRESS),
+            self.entries.iter().map(|e| e.address).collect(),
+        );
+        preprocessed.insert(
+            PolynomialId::BytecodeField(bf::IMM),
+            self.entries.iter().map(|e| e.imm).collect(),
+        );
+        for f in 0..self.entries[0].circuit_flags.len() {
+            preprocessed.insert(
+                PolynomialId::BytecodeField(bf::CIRCUIT_FLAG_BASE + f),
+                self.entries
+                    .iter()
+                    .map(|e| bool_to_f(e.circuit_flags[f]))
+                    .collect(),
+            );
+        }
+        preprocessed.insert(
+            PolynomialId::BytecodeField(bf::IS_BRANCH),
+            self.entries
+                .iter()
+                .map(|e| bool_to_f(e.is_branch))
+                .collect(),
+        );
+        preprocessed.insert(
+            PolynomialId::BytecodeField(bf::LEFT_IS_RS1),
+            self.entries
+                .iter()
+                .map(|e| bool_to_f(e.left_is_rs1))
+                .collect(),
+        );
+        preprocessed.insert(
+            PolynomialId::BytecodeField(bf::LEFT_IS_PC),
+            self.entries
+                .iter()
+                .map(|e| bool_to_f(e.left_is_pc))
+                .collect(),
+        );
+        preprocessed.insert(
+            PolynomialId::BytecodeField(bf::RIGHT_IS_RS2),
+            self.entries
+                .iter()
+                .map(|e| bool_to_f(e.right_is_rs2))
+                .collect(),
+        );
+        preprocessed.insert(
+            PolynomialId::BytecodeField(bf::RIGHT_IS_IMM),
+            self.entries
+                .iter()
+                .map(|e| bool_to_f(e.right_is_imm))
+                .collect(),
+        );
+        preprocessed.insert(
+            PolynomialId::BytecodeField(bf::IS_NOOP),
+            self.entries.iter().map(|e| bool_to_f(e.is_noop)).collect(),
+        );
+        preprocessed.insert(
+            PolynomialId::BytecodeField(bf::RAF_FLAG),
+            self.entries
+                .iter()
+                .map(|e| bool_to_f(!e.is_interleaved))
+                .collect(),
+        );
+        preprocessed.insert(
+            PolynomialId::BytecodeField(bf::RD_INDEX),
+            self.entries
+                .iter()
+                .map(|e| e.rd.map_or(sentinel, |r| F::from_u64(r as u64)))
+                .collect(),
+        );
+        preprocessed.insert(
+            PolynomialId::BytecodeField(bf::RS1_INDEX),
+            self.entries
+                .iter()
+                .map(|e| e.rs1.map_or(sentinel, |r| F::from_u64(r as u64)))
+                .collect(),
+        );
+        preprocessed.insert(
+            PolynomialId::BytecodeField(bf::RS2_INDEX),
+            self.entries
+                .iter()
+                .map(|e| e.rs2.map_or(sentinel, |r| F::from_u64(r as u64)))
+                .collect(),
+        );
+        for t in 0..self.num_lookup_tables {
+            preprocessed.insert(
+                PolynomialId::BytecodeField(bf::TABLE_FLAG_BASE + t),
+                self.entries
+                    .iter()
+                    .map(|e| bool_to_f(e.lookup_table == Some(t)))
+                    .collect(),
+            );
+        }
+    }
+
     /// Materialize the full Val polynomial for a `BytecodeVal` input binding.
     ///
     /// Encapsulates all protocol logic: gamma power computation, eq table

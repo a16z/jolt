@@ -546,38 +546,6 @@ impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, 
     ) -> Vec<F> {
         panic!("HybridBackend: not yet wired")
     }
-
-    type InstanceState<F: Field> = ();
-
-    fn instance_init<F: Field>(
-        &self,
-        _config: &jolt_compiler::module::InstanceConfig,
-        _challenges: &[F],
-        _provider: &mut dyn jolt_compute::BufferProvider<F>,
-        _lookup_trace: Option<&jolt_compute::LookupTraceData>,
-        _kernels: &[jolt_compiler::KernelDef],
-    ) -> Self::InstanceState<F> {
-        panic!("HybridBackend: not yet wired")
-    }
-
-    fn instance_bind<F: Field>(&self, _state: &mut Self::InstanceState<F>, _challenge: F) {
-        panic!("HybridBackend: not yet wired")
-    }
-
-    fn instance_reduce<F: Field>(
-        &self,
-        _state: &Self::InstanceState<F>,
-        _previous_claim: F,
-    ) -> Vec<F> {
-        panic!("HybridBackend: not yet wired")
-    }
-
-    fn instance_finalize<F: Field>(
-        &self,
-        _state: Self::InstanceState<F>,
-    ) -> jolt_compute::InstanceOutput<Self::Buffer<F>, F> {
-        panic!("HybridBackend: not yet wired")
-    }
 }
 
 #[cfg(test)]
@@ -766,29 +734,6 @@ mod tests {
             _is: usize,
             _ch: &[F],
         ) -> Vec<F> {
-            panic!("mock")
-        }
-        type InstanceState<F: Field> = ();
-        fn instance_init<F: Field>(
-            &self,
-            _config: &jolt_compiler::module::InstanceConfig,
-            _challenges: &[F],
-            _provider: &mut dyn jolt_compute::BufferProvider<F>,
-            _lookup_trace: Option<&jolt_compute::LookupTraceData>,
-            _kernels: &[jolt_compiler::KernelDef],
-        ) {
-            panic!("mock")
-        }
-        fn instance_bind<F: Field>(&self, _state: &mut (), _challenge: F) {
-            panic!("mock")
-        }
-        fn instance_reduce<F: Field>(&self, _state: &(), _previous_claim: F) -> Vec<F> {
-            panic!("mock")
-        }
-        fn instance_finalize<F: Field>(
-            &self,
-            _state: (),
-        ) -> jolt_compute::InstanceOutput<Vec<F>, F> {
             panic!("mock")
         }
     }

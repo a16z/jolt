@@ -116,11 +116,9 @@ pub enum PolynomialId {
     // Virtual: Hamming weight reduction
     HammingG(usize),
 
-    // Virtual: Booleanity projected arrays
-    /// G_d(k) = Σ_j eq(r_cycle, j) × ra_d(k, j): cycle-projected RA (Phase 1 input).
+    // Virtual: Booleanity transposed RA arrays
+    /// Cycle-major transpose of ra_d: ra_cm[cycle * K + addr].
     BooleanityG(usize),
-    /// H_d(j) = ra_d(r*_addr, j): address-projected RA (Phase 2 input).
-    BooleanityH(usize),
 
     // Virtual: advice address phase
     TrustedAdviceAddr,
@@ -159,6 +157,30 @@ pub enum PolynomialId {
     Cz,
     CombinedRow,
 
+    // Virtual: address-decomposition instance internals
+    /// Suffix polynomial buffer: (table_idx, suffix_idx_within_table).
+    InstanceSuffix(usize, usize),
+    /// Q (read-RAF quotient) buffer: (component, half).
+    /// Component: 0=left, 1=right, 2=identity. Half: 0 or 1.
+    InstanceQ(usize, usize),
+    /// P (read-RAF product) buffer: (component, half).
+    /// Component: 0=left, 1=right, 2=identity. Half: 0 or 1.
+    InstanceP(usize, usize),
+    /// Expanding eq table for phase p.
+    ExpandingTable(usize),
+    /// Preprocessed mask buffer for prefix-MLE evaluation.
+    /// The index is a compile-time-allocated `(mask_role, b_len)` id.
+    /// Each buffer holds `2^b_len` field-encoded small integers indexed by `b`.
+    PrefixMask(usize),
+
+    /// Per-bytecode-entry field polynomial (K entries, bytecode-table-indexed).
+    /// Flat index into the canonical field extraction order. See
+    /// `BytecodeData::populate_preprocessed` for the index→field mapping.
+    BytecodeField(usize),
+    /// Eq-gathered register polynomial for bytecode stages 3/4.
+    /// Index: 0=rd, 1=rs1, 2=rs2.
+    BytecodeRegEq(usize),
+
     // Public: preprocessed
     IoMask,
     ValIo,
@@ -166,6 +188,30 @@ pub enum PolynomialId {
     RamInit,
     LookupTable,
     BytecodeTable(usize),
+}
+
+/// Index constants for `BytecodeField(idx)` — canonical extraction order.
+/// Used by both the compiler (to emit WeightedSum terms) and jolt-witness
+/// (to extract per-field polynomials from BytecodeData).
+pub mod bytecode_field {
+    pub const ADDRESS: usize = 0;
+    pub const IMM: usize = 1;
+    /// `circuit_flags[f]` → index `CIRCUIT_FLAG_BASE + f` for f in 0..14.
+    pub const CIRCUIT_FLAG_BASE: usize = 2;
+    pub const IS_BRANCH: usize = 16;
+    pub const LEFT_IS_RS1: usize = 17;
+    pub const LEFT_IS_PC: usize = 18;
+    pub const RIGHT_IS_RS2: usize = 19;
+    pub const RIGHT_IS_IMM: usize = 20;
+    pub const IS_NOOP: usize = 21;
+    /// `!is_interleaved` (i.e., IS a RAF instruction).
+    pub const RAF_FLAG: usize = 22;
+    /// Register indices for EqGather. Sentinel 255 → eq_gather returns 0.
+    pub const RD_INDEX: usize = 23;
+    pub const RS1_INDEX: usize = 24;
+    pub const RS2_INDEX: usize = 25;
+    /// `table_flag[t]` → index `TABLE_FLAG_BASE + t`.
+    pub const TABLE_FLAG_BASE: usize = 26;
 }
 
 impl PolynomialId {
@@ -260,7 +306,9 @@ impl PolynomialId {
             | Self::BytecodeTable(_)
             | Self::BytecodePcIndex
             | Self::BytecodeEntryTrace
-            | Self::BytecodeEntryExpected => PolynomialDescriptor {
+            | Self::BytecodeEntryExpected
+            | Self::BytecodeField(_)
+            | Self::PrefixMask(_) => PolynomialDescriptor {
                 source: PolySource::Preprocessed,
                 committed: false,
                 storage: StorageHint::Dense,

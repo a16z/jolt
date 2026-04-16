@@ -72,7 +72,6 @@ impl Program {
         self
     }
 
-    /// Apply all fields from a [`MemoryConfig`] to this program's settings.
     pub fn set_memory_config(&mut self, memory_config: MemoryConfig) -> &mut Self {
         self.heap_size = memory_config.heap_size;
         self.stack_size = memory_config.stack_size;
@@ -83,46 +82,36 @@ impl Program {
         self
     }
 
-    /// Set the guest heap size in bytes.
     pub fn set_heap_size(&mut self, size: u64) -> &mut Self {
         self.heap_size = size;
         self
     }
 
-    /// Set the guest stack size in bytes.
     pub fn set_stack_size(&mut self, size: u64) -> &mut Self {
         self.stack_size = size;
         self
     }
 
-    /// Set the maximum input buffer size in bytes.
     pub fn set_max_input_size(&mut self, size: u64) -> &mut Self {
         self.max_input_size = size;
         self
     }
 
-    /// Set the maximum trusted advice buffer size in bytes.
     pub fn set_max_trusted_advice_size(&mut self, size: u64) -> &mut Self {
         self.max_trusted_advice_size = size;
         self
     }
 
-    /// Set the maximum untrusted advice buffer size in bytes.
     pub fn set_max_untrusted_advice_size(&mut self, size: u64) -> &mut Self {
         self.max_untrusted_advice_size = size;
         self
     }
 
-    /// Set the maximum output buffer size in bytes.
     pub fn set_max_output_size(&mut self, size: u64) -> &mut Self {
         self.max_output_size = size;
         self
     }
 
-    /// Compile the guest program with default features.
-    ///
-    /// Uses [`Self::build_with_features`] with an empty feature set.
-    /// No-op if the ELF has already been built.
     pub fn build(&mut self, target_dir: &str) {
         self.build_with_features(target_dir, &[]);
     }

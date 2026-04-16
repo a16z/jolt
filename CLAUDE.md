@@ -2,6 +2,52 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Task Loop Protocol
+
+TASKS.md is the program counter. Read it at the start of every session and after
+every context compression. Follow this loop:
+
+```
+1. Read TASKS.md — find the first unchecked violation
+2. Read the relevant source code (file + line range from the violation)
+3. Understand what the handler currently does and WHY it violates the philosophy
+4. Design the fix:
+   - What primitive ops does the compiler need to emit?
+   - What backend methods or existing ops handle the lowered form?
+   - Does this require new Op variants? New ComputeBackend methods? Neither?
+5. Implement the NEW path alongside the old one (dual-path):
+   a. Add new Op variants / compiler emission / runtime handlers
+   b. In the runtime handler, run BOTH old and new paths
+   c. Assert the new path produces identical results to the old path
+   d. Add a jolt-equivalence test if the assertion is non-trivial
+6. Run the test gate from TASKS.md (includes transcript_divergence)
+7. Pass → the new path is proven correct. Now:
+   a. Remove the old path (delete old handler code, old Op variants)
+   b. Wire the runtime to use only the new path
+   c. Run the test gate again to confirm transcript parity
+8. Pass → mark the violation DONE in TASKS.md with a one-line summary, commit
+9. Fail → diagnose, fix, go to 6
+10. Go to 1
+```
+
+**Dual-path validation**: jolt-equivalence is the correctness sandbox. When
+replacing a complex handler, ALWAYS keep the old code running alongside the new
+code and assert equality before deleting. This catches subtle bugs (endianness,
+off-by-one in bit extraction, wrong binding order) that transcript_divergence
+would catch too late. Add targeted tests in `crates/jolt-equivalence/tests/`
+freely — they're cheap and survive refactors.
+
+**When stuck on design**: The abstraction is wrong. Don't compromise by leaving
+complex handlers. Step back and ask: "What would make this handler ≤ 30 LOC
+while keeping the runtime protocol-unaware?" Write your thinking to the Notes
+section of TASKS.md, then try the new approach.
+
+**Philosophy checkpoint**: After every change, verify the handler you touched is
+≤ 30 LOC and doesn't interpret any protocol-specific data structures. If it does,
+the compiler hasn't lowered far enough — go back to step 4.
+
+**North star**: `crates/jolt-zkvm/ARCHITECTURE.md`
+
 ## Project Overview
 
 Jolt is a zkVM (zero-knowledge virtual machine) for RISC-V (RV64IMAC) that efficiently proves and verifies program execution. It uses sumcheck-based protocols, multilinear polynomial commitments (Dory), and the Twist/Shout lookup argument.

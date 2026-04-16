@@ -886,10 +886,19 @@ fn op_poly_refs(op: &Op, kernels: &[KernelDef]) -> Vec<PolynomialId> {
         | Op::BatchAccumulateInstance { .. }
         | Op::BatchRoundFinalize { .. }
         | Op::BindOpeningInputs { .. }
-        | Op::UnifiedInstanceInit { .. }
-        | Op::UnifiedInstanceBind { .. }
-        | Op::UnifiedInstanceReduce { .. }
-        | Op::UnifiedInstanceFinalize { .. } => vec![],
+        | Op::ExpandingTableUpdate { .. }
+        | Op::CheckpointEvalBatch { .. }
+        | Op::InitInstanceWeights { .. }
+        | Op::UpdateInstanceWeights { .. }
+        | Op::SuffixScatter { .. }
+        | Op::QBufferScatter { .. }
+        | Op::MaterializePBuffers { .. }
+        | Op::InitExpandingTable { .. }
+        | Op::ReadCheckingReduce { .. }
+        | Op::RafReduce { .. }
+        | Op::MaterializeRA { .. }
+        | Op::MaterializeCombinedVal { .. }
+        | Op::WeightedSum { .. } => vec![],
     }
 }
 

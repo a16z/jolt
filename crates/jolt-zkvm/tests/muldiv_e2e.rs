@@ -284,8 +284,6 @@ fn muldiv_prove_verify() {
         &pcs_setup,
         &mut transcript,
         config,
-        None,
-        None,
     );
 
     let vk = JoltVerifyingKey::<Fr, MockPCS>::new(&executable.module, (), r1cs_key);

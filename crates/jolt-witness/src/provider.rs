@@ -13,7 +13,7 @@
 use std::borrow::Cow;
 
 use jolt_compiler::PolySource;
-use jolt_compute::BufferProvider;
+use jolt_compute::{BufferProvider, LookupTraceData};
 use jolt_field::Field;
 use jolt_r1cs::R1csSource;
 
@@ -32,6 +32,7 @@ pub struct ProverData<'a, F: Field> {
     r1cs: R1csSource<'a, F>,
     derived: DerivedSource<'a, F>,
     preprocessed: PreprocessedSource<F>,
+    lookup_trace: Option<LookupTraceData>,
 }
 
 impl<'a, F: Field> ProverData<'a, F> {
@@ -46,7 +47,14 @@ impl<'a, F: Field> ProverData<'a, F> {
             r1cs,
             derived,
             preprocessed,
+            lookup_trace: None,
         }
+    }
+
+    /// Attach per-cycle lookup trace data for instruction-lookup sumchecks.
+    pub fn with_lookup_trace(mut self, trace: LookupTraceData) -> Self {
+        self.lookup_trace = Some(trace);
+        self
     }
 
     /// Mutable access to the R1CS source for setting Spartan challenges.
@@ -76,6 +84,10 @@ impl<F: Field> BufferProvider<F> for ProverData<'_, F> {
             PolySource::R1cs(_) | PolySource::Derived => {}
             PolySource::Preprocessed => {}
         }
+    }
+
+    fn lookup_trace(&self) -> Option<&LookupTraceData> {
+        self.lookup_trace.as_ref()
     }
 }
 

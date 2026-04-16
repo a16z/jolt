@@ -517,6 +517,17 @@ kind_table_identity! {
     VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7,
 }
 
+/// A single term in a table's combine formula.
+///
+/// `combine(prefixes, suffixes) = Σ term.coefficient × prefixes[term.prefix] × suffixes[term.suffix_idx]`
+///
+/// When `prefix` is `None`, the term has no prefix factor (implicit 1).
+pub struct CombineTerm {
+    pub prefix: Option<prefixes::Prefixes>,
+    pub suffix_idx: usize,
+    pub coefficient: i128,
+}
+
 impl<const XLEN: usize> LookupTables<XLEN> {
     /// The suffix types used in this table's prefix/suffix decomposition.
     pub fn suffixes(&self) -> Vec<Suffixes> {
@@ -528,6 +539,587 @@ impl<const XLEN: usize> LookupTables<XLEN> {
         dispatch_table!(self, |t| PrefixSuffixDecomposition::<XLEN>::combine(
             &t, prefixes, suffixes
         ))
+    }
+
+    /// Returns the sparse combine structure for this table.
+    ///
+    /// Each entry encodes one bilinear term: `coefficient × prefix_eval × suffix_eval`.
+    /// The full combine result is the sum of all entries.
+    #[allow(clippy::vec_init_then_push)]
+    pub fn combine_entries(&self) -> Vec<CombineTerm> {
+        use prefixes::Prefixes as P;
+        match self {
+            Self::RangeCheck => vec![
+                CombineTerm {
+                    prefix: Some(P::LowerWord),
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: None,
+                    suffix_idx: 1,
+                    coefficient: 1,
+                },
+            ],
+            Self::RangeCheckAligned => vec![
+                CombineTerm {
+                    prefix: Some(P::LowerWord),
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: None,
+                    suffix_idx: 1,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: Some(P::Lsb),
+                    suffix_idx: 2,
+                    coefficient: -1,
+                },
+            ],
+            Self::And => vec![
+                CombineTerm {
+                    prefix: Some(P::And),
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: None,
+                    suffix_idx: 1,
+                    coefficient: 1,
+                },
+            ],
+            Self::Andn => vec![
+                CombineTerm {
+                    prefix: Some(P::Andn),
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: None,
+                    suffix_idx: 1,
+                    coefficient: 1,
+                },
+            ],
+            Self::Or => vec![
+                CombineTerm {
+                    prefix: Some(P::Or),
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: None,
+                    suffix_idx: 1,
+                    coefficient: 1,
+                },
+            ],
+            Self::Xor => vec![
+                CombineTerm {
+                    prefix: Some(P::Xor),
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: None,
+                    suffix_idx: 1,
+                    coefficient: 1,
+                },
+            ],
+            Self::Equal => vec![CombineTerm {
+                prefix: Some(P::Eq),
+                suffix_idx: 0,
+                coefficient: 1,
+            }],
+            Self::NotEqual => vec![
+                CombineTerm {
+                    prefix: None,
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: Some(P::Eq),
+                    suffix_idx: 1,
+                    coefficient: -1,
+                },
+            ],
+            Self::SignedLessThan => vec![
+                CombineTerm {
+                    prefix: Some(P::LeftOperandMsb),
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: Some(P::RightOperandMsb),
+                    suffix_idx: 0,
+                    coefficient: -1,
+                },
+                CombineTerm {
+                    prefix: Some(P::LessThan),
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: Some(P::Eq),
+                    suffix_idx: 1,
+                    coefficient: 1,
+                },
+            ],
+            Self::UnsignedLessThan => vec![
+                CombineTerm {
+                    prefix: Some(P::LessThan),
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: Some(P::Eq),
+                    suffix_idx: 1,
+                    coefficient: 1,
+                },
+            ],
+            Self::SignedGreaterThanEqual => vec![
+                CombineTerm {
+                    prefix: None,
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: Some(P::RightOperandMsb),
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: Some(P::LeftOperandMsb),
+                    suffix_idx: 0,
+                    coefficient: -1,
+                },
+                CombineTerm {
+                    prefix: Some(P::LessThan),
+                    suffix_idx: 0,
+                    coefficient: -1,
+                },
+                CombineTerm {
+                    prefix: Some(P::Eq),
+                    suffix_idx: 1,
+                    coefficient: -1,
+                },
+            ],
+            Self::UnsignedGreaterThanEqual => vec![
+                CombineTerm {
+                    prefix: None,
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: Some(P::LessThan),
+                    suffix_idx: 0,
+                    coefficient: -1,
+                },
+                CombineTerm {
+                    prefix: Some(P::Eq),
+                    suffix_idx: 1,
+                    coefficient: -1,
+                },
+            ],
+            Self::UnsignedLessThanEqual => vec![
+                CombineTerm {
+                    prefix: Some(P::LessThan),
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: Some(P::Eq),
+                    suffix_idx: 1,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: Some(P::Eq),
+                    suffix_idx: 2,
+                    coefficient: 1,
+                },
+            ],
+            Self::UpperWord => vec![
+                CombineTerm {
+                    prefix: Some(P::UpperWord),
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: None,
+                    suffix_idx: 1,
+                    coefficient: 1,
+                },
+            ],
+            Self::LowerHalfWord => vec![
+                CombineTerm {
+                    prefix: Some(P::LowerHalfWord),
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: None,
+                    suffix_idx: 1,
+                    coefficient: 1,
+                },
+            ],
+            Self::SignExtendHalfWord => vec![
+                CombineTerm {
+                    prefix: Some(P::LowerHalfWord),
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: None,
+                    suffix_idx: 1,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: Some(P::SignExtensionUpperHalf),
+                    suffix_idx: 2,
+                    coefficient: 1,
+                },
+            ],
+            Self::Movsign => vec![CombineTerm {
+                prefix: Some(P::LeftOperandMsb),
+                suffix_idx: 0,
+                coefficient: (1i128 << XLEN) - 1,
+            }],
+            Self::Pow2 => vec![CombineTerm {
+                prefix: Some(P::Pow2),
+                suffix_idx: 0,
+                coefficient: 1,
+            }],
+            Self::Pow2W => vec![CombineTerm {
+                prefix: Some(P::Pow2W),
+                suffix_idx: 0,
+                coefficient: 1,
+            }],
+            Self::ShiftRightBitmask => vec![
+                CombineTerm {
+                    prefix: None,
+                    suffix_idx: 0,
+                    coefficient: 1i128 << XLEN,
+                },
+                CombineTerm {
+                    prefix: Some(P::Pow2),
+                    suffix_idx: 1,
+                    coefficient: -1,
+                },
+            ],
+            Self::VirtualSRL => vec![
+                CombineTerm {
+                    prefix: Some(P::RightShift),
+                    suffix_idx: 1,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: None,
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+            ],
+            Self::VirtualSRA => vec![
+                CombineTerm {
+                    prefix: Some(P::RightShift),
+                    suffix_idx: 2,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: None,
+                    suffix_idx: 1,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: Some(P::LeftOperandMsb),
+                    suffix_idx: 3,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: Some(P::SignExtension),
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+            ],
+            Self::VirtualROTR => vec![
+                CombineTerm {
+                    prefix: Some(P::RightShift),
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: None,
+                    suffix_idx: 1,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: Some(P::LeftShiftHelper),
+                    suffix_idx: 2,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: Some(P::LeftShift),
+                    suffix_idx: 3,
+                    coefficient: 1,
+                },
+            ],
+            Self::VirtualROTRW => vec![
+                CombineTerm {
+                    prefix: Some(P::RightShiftW),
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: None,
+                    suffix_idx: 1,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: Some(P::LeftShiftWHelper),
+                    suffix_idx: 2,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: Some(P::LeftShiftW),
+                    suffix_idx: 3,
+                    coefficient: 1,
+                },
+            ],
+            Self::ValidDiv0 => vec![
+                CombineTerm {
+                    prefix: None,
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: Some(P::LeftOperandIsZero),
+                    suffix_idx: 1,
+                    coefficient: -1,
+                },
+                CombineTerm {
+                    prefix: Some(P::DivByZero),
+                    suffix_idx: 2,
+                    coefficient: 1,
+                },
+            ],
+            Self::ValidUnsignedRemainder => vec![
+                CombineTerm {
+                    prefix: Some(P::RightOperandIsZero),
+                    suffix_idx: 2,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: Some(P::LessThan),
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: Some(P::Eq),
+                    suffix_idx: 1,
+                    coefficient: 1,
+                },
+            ],
+            Self::ValidSignedRemainder => vec![
+                CombineTerm {
+                    prefix: Some(P::RightOperandIsZero),
+                    suffix_idx: 4,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: Some(P::PositiveRemainderEqualsDivisor),
+                    suffix_idx: 1,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: Some(P::PositiveRemainderLessThanDivisor),
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: Some(P::NegativeDivisorZeroRemainder),
+                    suffix_idx: 3,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: Some(P::NegativeDivisorEqualsRemainder),
+                    suffix_idx: 2,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: Some(P::NegativeDivisorGreaterThanRemainder),
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+            ],
+            Self::VirtualChangeDivisor => vec![
+                CombineTerm {
+                    prefix: Some(P::RightOperand),
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: None,
+                    suffix_idx: 1,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: Some(P::ChangeDivisor),
+                    suffix_idx: 2,
+                    coefficient: 1,
+                },
+            ],
+            Self::VirtualChangeDivisorW => vec![
+                CombineTerm {
+                    prefix: Some(P::RightOperandW),
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: None,
+                    suffix_idx: 1,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: Some(P::ChangeDivisorW),
+                    suffix_idx: 2,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: Some(P::SignExtensionRightOperand),
+                    suffix_idx: 3,
+                    coefficient: 1,
+                },
+            ],
+            Self::HalfwordAlignment => vec![
+                CombineTerm {
+                    prefix: None,
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: Some(P::Lsb),
+                    suffix_idx: 1,
+                    coefficient: -1,
+                },
+            ],
+            Self::WordAlignment => vec![CombineTerm {
+                prefix: Some(P::TwoLsb),
+                suffix_idx: 0,
+                coefficient: 1,
+            }],
+            Self::MulUNoOverflow => vec![CombineTerm {
+                prefix: Some(P::OverflowBitsZero),
+                suffix_idx: 0,
+                coefficient: 1,
+            }],
+            Self::VirtualRev8W => vec![
+                CombineTerm {
+                    prefix: Some(P::Rev8W),
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: None,
+                    suffix_idx: 1,
+                    coefficient: 1,
+                },
+            ],
+            Self::VirtualXORROT32 => vec![
+                CombineTerm {
+                    prefix: Some(P::XorRot32),
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: None,
+                    suffix_idx: 1,
+                    coefficient: 1,
+                },
+            ],
+            Self::VirtualXORROT24 => vec![
+                CombineTerm {
+                    prefix: Some(P::XorRot24),
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: None,
+                    suffix_idx: 1,
+                    coefficient: 1,
+                },
+            ],
+            Self::VirtualXORROT16 => vec![
+                CombineTerm {
+                    prefix: Some(P::XorRot16),
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: None,
+                    suffix_idx: 1,
+                    coefficient: 1,
+                },
+            ],
+            Self::VirtualXORROT63 => vec![
+                CombineTerm {
+                    prefix: Some(P::XorRot63),
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: None,
+                    suffix_idx: 1,
+                    coefficient: 1,
+                },
+            ],
+            Self::VirtualXORROTW16 => vec![
+                CombineTerm {
+                    prefix: Some(P::XorRotW16),
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: None,
+                    suffix_idx: 1,
+                    coefficient: 1,
+                },
+            ],
+            Self::VirtualXORROTW12 => vec![
+                CombineTerm {
+                    prefix: Some(P::XorRotW12),
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: None,
+                    suffix_idx: 1,
+                    coefficient: 1,
+                },
+            ],
+            Self::VirtualXORROTW8 => vec![
+                CombineTerm {
+                    prefix: Some(P::XorRotW8),
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: None,
+                    suffix_idx: 1,
+                    coefficient: 1,
+                },
+            ],
+            Self::VirtualXORROTW7 => vec![
+                CombineTerm {
+                    prefix: Some(P::XorRotW7),
+                    suffix_idx: 0,
+                    coefficient: 1,
+                },
+                CombineTerm {
+                    prefix: None,
+                    suffix_idx: 1,
+                    coefficient: 1,
+                },
+            ],
+        }
     }
 }
 

@@ -86,7 +86,6 @@ pub(super) fn materialize_binding<B, F>(
     challenges: &[F],
     provider: &impl BufferProvider<F>,
     backend: &B,
-    bytecode_data: Option<&jolt_witness::bytecode_raf::BytecodeData<F>>,
 ) -> Buf<B, F>
 where
     B: ComputeBackend,
@@ -117,11 +116,11 @@ where
             DeviceBuffer::Field(backend.lt_table(&point))
         }
         InputBinding::EqProject {
-            poly: _,
             source,
             challenges: chs,
             inner_size,
             outer_size,
+            ..
         } => {
             let point: Vec<F> = chs.iter().map(|&ci| challenges[ci.0]).collect();
             let src_data = provider.materialize(*source);
@@ -165,28 +164,6 @@ where
             }
             let src = provider.materialize(*source);
             DeviceBuffer::Field(backend.scale_from_host(&src, scale))
-        }
-        InputBinding::BytecodeVal {
-            stage,
-            stage_gamma_base,
-            stage_gamma_count,
-            gamma_base,
-            raf_gamma_power,
-            register_eq_challenges: reg_chs,
-            ..
-        } => {
-            let bc = bytecode_data.expect("BytecodeVal binding requires bytecode_data");
-            let reg_chs_usize: Vec<usize> = reg_chs.iter().map(|c| c.0).collect();
-            let val = bc.materialize_val(
-                challenges,
-                *stage,
-                stage_gamma_base.0,
-                *stage_gamma_count,
-                gamma_base.0,
-                *raf_gamma_power,
-                &reg_chs_usize,
-            );
-            DeviceBuffer::Field(backend.upload(&val))
         }
     }
 }
