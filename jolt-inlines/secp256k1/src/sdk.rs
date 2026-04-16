@@ -857,11 +857,9 @@ fn conditional_negate(x: Secp256k1Point, cond: bool) -> Secp256k1Point {
 /// q is the uncompressed public key point
 /// returns Ok(()) if the signature is valid
 /// returns Err(Secp256k1Error) if at any point, the verification fails
-/// Security: it is the responsibility of the caller to ensure
-/// 1. z, r, and s are well formed
-/// 2. q is a valid point on the curve
-///
-/// Note that these checks are automatically performed by the from_u64_arr constructors.
+/// Security: this function validates all inputs internally — z, r, s must be
+/// well-formed field elements (enforced by the `Secp256k1Fr` type), and q must
+/// be a non-infinity point on the secp256k1 curve (checked via `is_on_curve()`).
 #[inline(always)]
 pub fn ecdsa_verify(
     z: Secp256k1Fr,
