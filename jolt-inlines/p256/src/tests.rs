@@ -862,7 +862,7 @@ mod p256_tests {
     /// Negative ECDSA tests: invalid inputs should be rejected.
     #[test]
     fn test_ecdsa_verify_rejects_invalid() {
-        use crate::sdk::{ecdsa_verify, P256Error, P256Fr, P256Point};
+        use crate::sdk::{ecdsa_verify, P256Error, P256Fq, P256Fr, P256Point};
 
         let g = P256Point::generator();
         let z = P256Fr::from_u64_arr(&[1, 0, 0, 0]).unwrap();
@@ -881,6 +881,39 @@ mod p256_tests {
         // s = 0 → ROrSZero
         let result = ecdsa_verify(z.clone(), r.clone(), zero, g.clone());
         assert!(matches!(result, Err(P256Error::ROrSZero)));
+
+        // Non-canonical scalar (z >= n) → InvalidFrElement
+        let bad_z = P256Fr::from_u64_arr_unchecked(&[u64::MAX; 4]);
+        let result = ecdsa_verify(bad_z, r.clone(), s.clone(), g.clone());
+        assert!(matches!(result, Err(P256Error::InvalidFrElement)));
+
+        // Non-canonical scalar (r >= n) → InvalidFrElement
+        let bad_r = P256Fr::from_u64_arr_unchecked(&[u64::MAX; 4]);
+        let result = ecdsa_verify(z.clone(), bad_r, s.clone(), g.clone());
+        assert!(matches!(result, Err(P256Error::InvalidFrElement)));
+
+        // Non-canonical scalar (s >= n) → InvalidFrElement
+        let bad_s = P256Fr::from_u64_arr_unchecked(&[u64::MAX; 4]);
+        let result = ecdsa_verify(z.clone(), r.clone(), bad_s, g.clone());
+        assert!(matches!(result, Err(P256Error::InvalidFrElement)));
+
+        // Non-canonical coordinate (q.x >= p) → InvalidFqElement
+        let bad_x = P256Fq::from_u64_arr_unchecked(&[u64::MAX; 4]);
+        let bad_q = P256Point::new_unchecked(bad_x, g.y());
+        let result = ecdsa_verify(z.clone(), r.clone(), s.clone(), bad_q);
+        assert!(matches!(result, Err(P256Error::InvalidFqElement)));
+
+        // Non-canonical coordinate (q.y >= p) → InvalidFqElement
+        let bad_y = P256Fq::from_u64_arr_unchecked(&[u64::MAX; 4]);
+        let bad_q = P256Point::new_unchecked(g.x(), bad_y);
+        let result = ecdsa_verify(z.clone(), r.clone(), s.clone(), bad_q);
+        assert!(matches!(result, Err(P256Error::InvalidFqElement)));
+
+        // Off-curve point → NotOnCurve
+        let off_curve_y = P256Fq::from_u64_arr(&[1, 0, 0, 0]).unwrap();
+        let bad_q = P256Point::new_unchecked(g.x(), off_curve_y);
+        let result = ecdsa_verify(z.clone(), r.clone(), s.clone(), bad_q);
+        assert!(matches!(result, Err(P256Error::NotOnCurve)));
     }
 
     /// Verify a signature produced by the RustCrypto `p256` crate.

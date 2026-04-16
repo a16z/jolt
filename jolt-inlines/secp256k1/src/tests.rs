@@ -439,6 +439,63 @@ mod sequence_tests {
         assert!(crate::sdk::ecdsa_verify(z, r, s, q).is_ok());
     }
 
+    #[test]
+    fn test_ecdsa_verify_rejects_invalid() {
+        use crate::sdk::{ecdsa_verify, Secp256k1Error};
+
+        let g = Secp256k1Point::generator();
+        let z = Secp256k1Fr::from_u64_arr(&[1, 0, 0, 0]).unwrap();
+        let r = Secp256k1Fr::from_u64_arr(&[1, 0, 0, 0]).unwrap();
+        let s = Secp256k1Fr::from_u64_arr(&[1, 0, 0, 0]).unwrap();
+
+        // Q = infinity → QAtInfinity
+        let result = ecdsa_verify(z.clone(), r.clone(), s.clone(), Secp256k1Point::infinity());
+        assert!(matches!(result, Err(Secp256k1Error::QAtInfinity)));
+
+        // r = 0 → ROrSZero
+        let zero = Secp256k1Fr::from_u64_arr(&[0, 0, 0, 0]).unwrap();
+        let result = ecdsa_verify(z.clone(), zero.clone(), s.clone(), g.clone());
+        assert!(matches!(result, Err(Secp256k1Error::ROrSZero)));
+
+        // s = 0 → ROrSZero
+        let result = ecdsa_verify(z.clone(), r.clone(), zero, g.clone());
+        assert!(matches!(result, Err(Secp256k1Error::ROrSZero)));
+
+        // Non-canonical scalar (z >= n) → InvalidFrElement
+        let bad_z = Secp256k1Fr::from_u64_arr_unchecked(&[u64::MAX; 4]);
+        let result = ecdsa_verify(bad_z, r.clone(), s.clone(), g.clone());
+        assert!(matches!(result, Err(Secp256k1Error::InvalidFrElement)));
+
+        // Non-canonical scalar (r >= n) → InvalidFrElement
+        let bad_r = Secp256k1Fr::from_u64_arr_unchecked(&[u64::MAX; 4]);
+        let result = ecdsa_verify(z.clone(), bad_r, s.clone(), g.clone());
+        assert!(matches!(result, Err(Secp256k1Error::InvalidFrElement)));
+
+        // Non-canonical scalar (s >= n) → InvalidFrElement
+        let bad_s = Secp256k1Fr::from_u64_arr_unchecked(&[u64::MAX; 4]);
+        let result = ecdsa_verify(z.clone(), r.clone(), bad_s, g.clone());
+        assert!(matches!(result, Err(Secp256k1Error::InvalidFrElement)));
+
+        // Non-canonical coordinate (q.x >= p) → InvalidFqElement
+        let bad_x = Secp256k1Fq::from_u64_arr_unchecked(&[u64::MAX; 4]);
+        let bad_q = Secp256k1Point::new_unchecked(bad_x, g.y());
+        let result = ecdsa_verify(z.clone(), r.clone(), s.clone(), bad_q);
+        assert!(matches!(result, Err(Secp256k1Error::InvalidFqElement)));
+
+        // Non-canonical coordinate (q.y >= p) → InvalidFqElement
+        let bad_y = Secp256k1Fq::from_u64_arr_unchecked(&[u64::MAX; 4]);
+        let bad_q = Secp256k1Point::new_unchecked(g.x(), bad_y);
+        let result = ecdsa_verify(z.clone(), r.clone(), s.clone(), bad_q);
+        assert!(matches!(result, Err(Secp256k1Error::InvalidFqElement)));
+
+        // Off-curve point → NotOnCurve
+        // Take a valid x-coordinate and set y to a different valid value
+        let off_curve_y = Secp256k1Fq::from_u64_arr(&[1, 0, 0, 0]).unwrap();
+        let bad_q = Secp256k1Point::new_unchecked(g.x(), off_curve_y);
+        let result = ecdsa_verify(z.clone(), r.clone(), s.clone(), bad_q);
+        assert!(matches!(result, Err(Secp256k1Error::NotOnCurve)));
+    }
+
     /// Verify assumptions about Fq and Fr modulus limb structure used in
     /// `is_fq_non_canonical` and `is_fr_non_canonical`.
     #[test]

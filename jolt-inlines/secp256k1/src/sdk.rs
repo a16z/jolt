@@ -94,7 +94,7 @@ impl Secp256k1Fq {
     /// creates a new Secp256k1Fq element from a [u64; 4] array (unchecked)
     /// the array is assumed to contain a value in the range [0, p)
     #[inline(always)]
-    pub fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self {
+    pub(crate) fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self {
         Secp256k1Fq { e: *arr }
     }
     /// get limbs
@@ -403,9 +403,10 @@ impl Secp256k1Fr {
         Ok(Secp256k1Fr { e: *arr })
     }
     /// creates a new Secp256k1Fr element from a [u64; 4] array (unchecked)
-    /// the array is assumed to contain a value in the range [0, p)
+    /// the array is assumed to contain a value in the range [0, n)
     #[inline(always)]
-    pub fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self {
+    #[allow(dead_code)]
+    pub(crate) fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self {
         Secp256k1Fr { e: *arr }
     }
     /// get limbs
@@ -851,17 +852,14 @@ fn conditional_negate(x: Secp256k1Point, cond: bool) -> Secp256k1Point {
     }
 }
 
-/// verify an ECDSA signature
-/// z is the hash of the message being signed
-/// r and s are the signature components
-/// q is the uncompressed public key point
-/// returns Ok(()) if the signature is valid
-/// returns Err(Secp256k1Error) if at any point, the verification fails
-/// Security: it is the responsibility of the caller to ensure
-/// 1. z, r, and s are well formed
-/// 2. q is a valid point on the curve
+/// Verify an ECDSA signature.
 ///
-/// Note that these checks are automatically performed by the from_u64_arr constructors.
+/// `z` is the hash of the message being signed, `r` and `s` are the signature
+/// components, and `q` is the uncompressed public key point.
+///
+/// Returns `Ok(())` if the signature is valid. Returns `Err(Secp256k1Error)` if
+/// any input is malformed or the verification fails. All inputs are validated
+/// internally — no caller-side validation is required.
 #[inline(always)]
 pub fn ecdsa_verify(
     z: Secp256k1Fr,
@@ -869,13 +867,34 @@ pub fn ecdsa_verify(
     s: Secp256k1Fr,
     q: Secp256k1Point,
 ) -> Result<(), Secp256k1Error> {
-    // step 0: check that q is not infinity
-    if q.is_infinity() {
-        return Result::Err(Secp256k1Error::QAtInfinity);
+    // Validate scalar field ranges: z, r, s must be in [0, n)
+    if is_fr_non_canonical(&z.e()) {
+        return Err(Secp256k1Error::InvalidFrElement);
     }
-    // step 1: check that r and s are in the correct range
+    if is_fr_non_canonical(&r.e()) {
+        return Err(Secp256k1Error::InvalidFrElement);
+    }
+    if is_fr_non_canonical(&s.e()) {
+        return Err(Secp256k1Error::InvalidFrElement);
+    }
+    // Validate base field ranges: q.x, q.y must be in [0, p)
+    if is_fq_non_canonical(&q.x().e()) {
+        return Err(Secp256k1Error::InvalidFqElement);
+    }
+    if is_fq_non_canonical(&q.y().e()) {
+        return Err(Secp256k1Error::InvalidFqElement);
+    }
+    // Validate q is on the curve
+    if !q.is_on_curve() {
+        return Err(Secp256k1Error::NotOnCurve);
+    }
+    // Check that q is not infinity
+    if q.is_infinity() {
+        return Err(Secp256k1Error::QAtInfinity);
+    }
+    // Check that r and s are non-zero
     if r.is_zero() || s.is_zero() {
-        return Result::Err(Secp256k1Error::ROrSZero);
+        return Err(Secp256k1Error::ROrSZero);
     }
     // step 2: compute u1 = z / s (mod r) and u2 = r / s (mod r)
     let u1 = z.div_assume_nonzero(&s);
