@@ -1069,6 +1069,23 @@ mod p256_tests {
         }
     }
 
+    /// Regression test: ecdsa_verify must reject z=0 (message hash of zero).
+    ///
+    /// Before the fix, a zero message hash was accepted, which allowed a
+    /// trivial forgery: with z=0 the verification equation degenerates to
+    /// u1*G = (0/s)*G = O, so the attacker only needs u2*Q to have the
+    /// right x-coordinate, which is easy to arrange.
+    #[test]
+    fn test_ecdsa_verify_rejects_zero_hash() {
+        use crate::sdk::{ecdsa_verify, P256Error, P256Fr, P256Point};
+        let g = P256Point::generator();
+        let zero = P256Fr::from_u64_arr(&[0, 0, 0, 0]).unwrap();
+        let r = P256Fr::from_u64_arr(&[1, 0, 0, 0]).unwrap();
+        let s = P256Fr::from_u64_arr(&[1, 0, 0, 0]).unwrap();
+        let result = ecdsa_verify(zero, r, s, g);
+        assert!(matches!(result, Err(P256Error::ROrSZero)));
+    }
+
     /// Verify that a zero GLV decomposition (a=0, b=0) is rejected.
     ///
     /// A malicious prover could supply a=0, b=0 as the Fake GLV decomposition,

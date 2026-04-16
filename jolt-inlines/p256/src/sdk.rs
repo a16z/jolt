@@ -827,7 +827,7 @@ pub fn ecdsa_verify(z: P256Fr, r: P256Fr, s: P256Fr, q: P256Point) -> Result<(),
     if q.is_infinity() {
         return Err(P256Error::QAtInfinity);
     }
-    if r.is_zero() || s.is_zero() {
+    if r.is_zero() || s.is_zero() || z.is_zero() {
         return Err(P256Error::ROrSZero);
     }
 
