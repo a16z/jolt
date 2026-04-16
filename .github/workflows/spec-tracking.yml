@@ -29,7 +29,7 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
 
-          CHANGED=$(git diff --name-only "$BASE" "$HEAD")
+          CHANGED=$(git diff --name-only "$BASE"..."$HEAD")
 
           HAS_SPEC=false
           HAS_CODE=false
@@ -101,12 +101,14 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
 
-          # Count changed lines (additions + deletions), excluding spec files
-          LINES=$(git diff --numstat "$BASE" "$HEAD" -- . ':!specs/' | \
+          # Count changed lines (additions + deletions), excluding spec files.
+          # Three-dot diff (`BASE...HEAD`) diffs the merge-base against HEAD so
+          # unrelated progress on the base branch isn't counted as PR changes.
+          LINES=$(git diff --numstat "$BASE"..."$HEAD" -- . ':!specs/' | \
             awk '$1 != "-" && $2 != "-" { added += $1; removed += $2 } END { print (added + removed) ? added + removed : 0 }')
 
           # Check if any spec file exists in the diff
-          HAS_SPEC=$(git diff --name-only "$BASE" "$HEAD" -- 'specs/*.md' | grep -v 'README.md' | grep -v 'TEMPLATE.md' | head -1)
+          HAS_SPEC=$(git diff --name-only "$BASE"..."$HEAD" -- 'specs/*.md' | grep -v 'README.md' | grep -v 'TEMPLATE.md' | head -1)
 
           if [ "$LINES" -gt 500 ] && [ -z "$HAS_SPEC" ]; then
             EXISTING=$(gh pr view "$PR_NUMBER" --json comments --jq '.comments[].body' | grep -c "more than 500 changed lines" || true)
