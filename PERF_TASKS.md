@@ -23,10 +23,10 @@ when the Phase 3 stop condition fires.
 - **log_t**: 12 (overrides `max_trace_length` to 2^12; actual prover work
   is min(guest cycles padded, 2^12))
 - **Program**: `muldiv` (only program supported on the modular stack today)
-- **Stall counter**: 1
+- **Stall counter**: 2
 - **Last green iter**: 1 — P10 `segmented_reduce` parallelize+hoist
   (−72.24% prove_ms: 14607 → 4055 ms, ratio 41.4× → 11.5×)
-- **Green streak**: 0 (iter 2 P11 flat +0.5%, reverted)
+- **Green streak**: 0 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%, both reverted)
 - **Phase 3 stop condition**: `modular.prove_ms ≤ core.prove_ms` at
   `log_t ∈ {18, 20}`, 3 consecutive green iters. Only this exits the loop.
 
@@ -150,9 +150,28 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
     - **Abstraction risk**: very low.
     - **Expected delta**: 1-3%
 
+- [ ] P13: Parallelize InstanceBind's 16K serial `interpolate_inplace` calls — target: `crates/jolt-zkvm/src/runtime/handlers.rs:767-787` + new backend method
+    - **Hypothesis**: InstanceBind handler loops over `kdef.inputs` serially calling `backend.interpolate_inplace` per input (16K calls, 140 ms main-thread self-time). The loop also filters via `bound_this_round`/`seen`, so switching to `backend.bind` (which P12 made parallel) isn't a drop-in. Either (a) add `ComputeBackend::interpolate_inplace_many(&mut [&mut Buf])` that parallelizes internally + handler extracts the filtered &mut set via `iter_mut().filter()`, or (b) collect filtered pids, `remove` + `backend.bind` + reinsert.
+    - **Abstraction risk**: low — trait gets a defaulted `interpolate_inplace_many`; CpuBackend specializes; handler stays ≤30 LOC.
+    - **Expected delta**: 2-4% standalone; combined with P12 (re-apply parallel bind in CpuBackend) potentially 4-7%.
+
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 3 — P12 parallelize `CpuBackend::bind` across inputs via
+  `par_iter_mut`** (target: `crates/jolt-cpu/src/backend.rs:169-184`).
+  Result: consistent −2.89% (3934.58 ms + 3940.83 ms vs 4054.58 ms
+  baseline, both runs). Reverted per 5% threshold despite reproducible
+  signal. Backend::bind is called from `bind_kernel_inputs` helper in
+  the runtime; InstanceBind handler calls `backend.interpolate_inplace`
+  per input (one at a time) so those 16K calls weren't touched. The
+  signal was real but small because `bind_kernel_inputs` is called
+  rarely compared to the InstanceBind per-input path. Stacking P12
+  with a parallelization of the InstanceBind handler's 16K serial
+  interpolate_inplace calls (structural handler change) could push
+  past 5%. File under "combine with InstanceBind parallelism" in a
+  later iter if compound wins needed.
 
 - **Iter 2 — P11 `reduce_dense` slice-borrow + Dense fast path in
   `segmented_reduce`** (target: `crates/jolt-cpu/src/backend.rs`).
