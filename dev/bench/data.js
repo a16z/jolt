@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776370773881,
+  "lastUpdate": 1776373408466,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -83038,6 +83038,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 861592,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "daf2e3ae7ef589782633f8c446ba65460ea46c25",
+          "message": "ci: fire Claude routines via labels on fork PRs (#1443)\n\n* ci: fire Claude routines via labels on fork PRs\n\nAdds `.github/workflows/claude-routines.yml` triggered on\n`pull_request_target: labeled` so the token secrets are available on\nPRs from forks. Three label → routine mappings:\n\n- `claude-review-request`      → code review\n- `claude-spec-review-request` → spec review\n- `claude-implement-spec`      → implement spec\n\nEach job is gated on its label, POSTs to the Claude Code routines fire\nendpoint with a PR-context payload, and fails the check if the HTTP\nstatus is not 200.\n\n* ci(claude): post PR comment with session URL on trigger\n\nGrants `pull-requests: write` and uses `gh pr comment` after a\nsuccessful routine fire to drop a short \"Claude <kind> session\nstarted: <url>\" note on the PR. Makes the new session link\ndiscoverable without digging into the workflow run.\n\n* ci(claude): extract reusable workflow and harden routine fire\n\nAudit-driven cleanup:\n\n- Extract the curl/jq/comment logic into `_fire-claude-routine.yml`,\n  a reusable `workflow_call` workflow invoked by each label job.\n  Cuts `claude-routines.yml` from ~200 lines of triplicated shell\n  to ~40 lines of declarative routing.\n- Add `timeout-minutes: 5` — this is a single HTTP call, not a build.\n- Bound curl with `--max-time 30 --connect-timeout 10` and add\n  `--retry 2 --retry-all-errors` for transient network failures.\n- Stop dumping the full response body to logs on success; on error,\n  extract only `.error.message` from the Anthropic error envelope.\n- Type-check `claude_code_session_id`/`claude_code_session_url` via\n  `select(...|type==\"string\")` so schema drift can't turn a non-string\n  field into a bogus PR comment body.\n- Emit `::warning::` when the routine fires with HTTP 200 but no\n  session URL (prevents silent no-op if the response schema changes).\n- Angle-wrap the session URL in the PR comment (`<url>`) to defuse\n  any markdown interpretation of the server-supplied string.\n- Rephrase the payload to title case (\"Claude code review requested\n  for PR #...\") for readability.\n\n* fix(ci): use three-dot diff in spec-tracking, stop double-counting main drift\n\n`git diff \"$BASE\" \"$HEAD\"` (two-dot) counts all differences between the\ntwo commits, including commits that landed on `main` after the PR\nbranched off. When main drifts, that inflates both the \"changed lines\"\ntally for the large-PR warning and the file list used for label\nselection — so a small PR against a moving base can falsely trip the\n500-line warning.\n\nSwitch all three uses to three-dot diff (`\"$BASE\"...\"$HEAD\"`), which\ndiffs the merge-base against HEAD and reflects only the PR's actual\ncontribution.\n\nObserved on PR #1443: a 200-line PR tripped the warning because main had\nmoved ~311 lines past the merge-base. With three-dot, the same run\nreports 200 lines and stays quiet.",
+          "timestamp": "2026-04-16T16:05:17-04:00",
+          "tree_id": "abb9816ef6d6001015ed96d8c9a95283765997ba",
+          "url": "https://github.com/a16z/jolt/commit/daf2e3ae7ef589782633f8c446ba65460ea46c25"
+        },
+        "date": 1776373407169,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.0115,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 859212,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3066,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 492628,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 492536,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 491348,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7226,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 494456,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5805,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 492924,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.7414,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 493996,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.7353,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 242332,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4183,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 861672,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5571,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 493460,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4553,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 496516,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 16.884,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 492856,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.753,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 491480,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.549,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1007128,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.0139,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 647876,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 83.1308,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2125140,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4808,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 491256,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5087,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 493040,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.6696,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 860780,
             "unit": "KB",
             "extra": ""
           }
