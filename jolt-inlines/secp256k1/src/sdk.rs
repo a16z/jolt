@@ -873,6 +873,9 @@ pub fn ecdsa_verify(
     if q.is_infinity() {
         return Result::Err(Secp256k1Error::QAtInfinity);
     }
+    if !q.is_on_curve() {
+        return Result::Err(Secp256k1Error::NotOnCurve);
+    }
     // step 1: check that r and s are in the correct range
     if r.is_zero() || s.is_zero() {
         return Result::Err(Secp256k1Error::ROrSZero);
