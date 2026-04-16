@@ -842,6 +842,34 @@ pub fn ecdsa_verify(z: P256Fr, r: P256Fr, s: P256Fr, q: P256Point) -> Result<(),
     // Step 3: Get R2 = u2*Q and decomposition via Fake GLV advice
     let (r2, a2_val, a2_sign, b2_val, b2_sign) = fake_glv_scalar_mul(&u2, &q);
 
+    verify_ecdsa_inner(
+        &u1, &u2, &r, &q, r1, a1_val, a1_sign, b1_val, b1_sign, r2, a2_val, a2_sign, b2_val,
+        b2_sign,
+    )
+}
+
+/// Inner verification logic, separated from `ecdsa_verify` so it can be tested
+/// with injected decomposition values (e.g. zero GLV attack vectors).
+#[expect(clippy::too_many_arguments)]
+#[inline(always)]
+pub(crate) fn verify_ecdsa_inner(
+    u1: &P256Fr,
+    u2: &P256Fr,
+    r: &P256Fr,
+    q: &P256Point,
+    r1: P256Point,
+    a1_val: u128,
+    a1_sign: bool,
+    b1_val: u128,
+    b1_sign: bool,
+    r2: P256Point,
+    a2_val: u128,
+    a2_sign: bool,
+    b2_val: u128,
+    b2_sign: bool,
+) -> Result<(), P256Error> {
+    let g = P256Point::generator();
+
     // Step 4: Verify R1, R2 are on curve
     if !r1.is_on_curve() {
         spoil_proof();
@@ -868,12 +896,12 @@ pub fn ecdsa_verify(z: P256Fr, r: P256Fr, s: P256Fr, q: P256Point) -> Result<(),
     let b2_fr = make_fr(b2_val, b2_sign);
 
     // Check b1*u1 = a1 (mod n)
-    let check1 = b1_fr.mul(&u1);
+    let check1 = b1_fr.mul(u1);
     if check1.e() != a1_fr.e() {
         spoil_proof();
     }
     // Check b2*u2 = a2 (mod n)
-    let check2 = b2_fr.mul(&u2);
+    let check2 = b2_fr.mul(u2);
     if check2.e() != a2_fr.e() {
         spoil_proof();
     }
@@ -896,7 +924,7 @@ pub fn ecdsa_verify(z: P256Fr, r: P256Fr, s: P256Fr, q: P256Point) -> Result<(),
     let scalars = [a1_val, a2_val, b1_val, b2_val];
     let points_arr = [
         if a1_sign { g.neg() } else { g },
-        if a2_sign { q.neg() } else { q },
+        if a2_sign { q.neg() } else { q.clone() },
         r1_adj,
         r2_adj,
     ];
