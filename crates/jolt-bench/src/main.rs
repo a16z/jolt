@@ -63,7 +63,7 @@ fn aggregate(label: StackLabel, metrics: &[IterMetrics]) -> Run {
 }
 
 fn run_stack<R: StackRunner>(runner: R, label: StackLabel, cli: &Cli) -> Run {
-    match runner.run(cli.program, cli.iters, cli.warmup) {
+    match runner.run(cli.program, cli.iters, cli.warmup, cli.log_t) {
         StackOutcome::Metrics(iters) => aggregate(label, &iters),
         StackOutcome::Unsupported(run) => run,
     }

@@ -70,7 +70,7 @@ fn eval_remaining_test(test: RemainingTest, x: u64, y: u64, y_len: usize) -> boo
 ///
 /// Each `(role, b_len)` pair materializes as a distinct preprocessed buffer
 /// (`PolynomialId::PrefixMask(id)`) with `2^b_len` entries.
-#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum MaskRole {
     /// `pop_msb(b)` — the MSB bit of `b` as a length-`b_len` value.
     /// Returns 0 if `b_len == 0`.
@@ -1984,4 +1984,73 @@ impl MaskAllocator {
     pub fn into_pairs(self) -> Vec<(MaskRole, PolynomialId)> {
         self.order
     }
+}
+
+/// Pre-lower every `(round, rule, c-side)` triple into the ScalarExpr form the
+/// runtime expects. The runtime stores the resulting bundles in
+/// `InstanceConfig::prefix_lowered`, so `lower_prefix_mle` / `mask_roles_for`
+/// never need to run during proving — the runtime only evaluates the baked
+/// expressions and mask-role buffers.
+///
+/// Layout invariants (mirrored by the runtime):
+/// - Round `j` uses a fresh `MaskAllocator` per `(rule, c_side)`: buffer maps
+///   are rebuilt per rule at runtime, so ID collisions across rules are fine.
+/// - `r_x` is represented as the proxy `ChallengeIdx(0)`; the runtime passes a
+///   1-element `challenges` slice holding the bound x-challenge at index 0.
+/// - `b_len(j) = chunk_bits − (j mod chunk_bits) − 1`; `total_bits = num_phases
+///   × chunk_bits` matches the `InstanceConfig::total_address_bits` convention.
+pub fn build_prefix_lowered_rounds(
+    prefix_mle_rules: &[PrefixMleRule],
+    chunk_bits: usize,
+    num_phases: usize,
+) -> Vec<crate::module::PrefixLoweredRound> {
+    let total_bits = chunk_bits * num_phases;
+    let mut rounds = Vec::with_capacity(total_bits);
+    for j in 0..total_bits {
+        let round_in_sub = j % chunk_bits;
+        let b_len = chunk_bits - round_in_sub - 1;
+        let r_x = if j % 2 == 1 {
+            Some(ChallengeIdx(0))
+        } else {
+            None
+        };
+        let mut c0 = Vec::with_capacity(prefix_mle_rules.len());
+        let mut c1 = Vec::with_capacity(prefix_mle_rules.len());
+        let mut masks_c0 = Vec::with_capacity(prefix_mle_rules.len());
+        let mut masks_c1 = Vec::with_capacity(prefix_mle_rules.len());
+        for rule in prefix_mle_rules {
+            for c_side in 0..2u32 {
+                let ctx = LoweringCtx {
+                    j,
+                    b_len,
+                    total_bits,
+                    r_x,
+                    c: c_side,
+                };
+                let mut alloc = MaskAllocator::default();
+                let expr = lower_prefix_mle(rule, ctx, |role| alloc.get_or_alloc(role));
+                let bindings: Vec<(PolynomialId, MaskRole)> = alloc
+                    .into_pairs()
+                    .into_iter()
+                    .map(|(role, id)| (id, role))
+                    .collect();
+                if c_side == 0 {
+                    c0.push(expr);
+                    masks_c0.push(bindings);
+                } else {
+                    c1.push(expr);
+                    masks_c1.push(bindings);
+                }
+            }
+        }
+        rounds.push(crate::module::PrefixLoweredRound {
+            b_len,
+            c0,
+            c1,
+            masks_c0,
+            masks_c1,
+            r_x,
+        });
+    }
+    rounds
 }

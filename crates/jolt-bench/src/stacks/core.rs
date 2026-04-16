@@ -9,14 +9,16 @@ use super::{IterMetrics, StackOutcome, StackRunner};
 use crate::measure::{time_it, PeakRssSampler};
 use crate::programs::Program;
 
-/// `max_trace_length` passed to `JoltSharedPreprocessing`. Matches what the
-/// `#[jolt::provable]` macro stamps on example guest programs.
-const MAX_TRACE_LENGTH: usize = 1 << 16;
+/// Default `max_trace_length` passed to `JoltSharedPreprocessing`. Matches
+/// what the `#[jolt::provable]` macro stamps on example guest programs.
+/// Overridable via `--log-t`.
+const DEFAULT_MAX_TRACE_LENGTH: usize = 1 << 16;
 
 pub struct CoreStack;
 
 impl CoreStack {
-    fn run_once(program: Program) -> IterMetrics {
+    fn run_once(program: Program, log_t: Option<usize>) -> IterMetrics {
+        let max_trace_length = log_t.map_or(DEFAULT_MAX_TRACE_LENGTH, |n| 1usize << n);
         // Each iteration is a fresh Dory layout + preprocessing. This matches
         // how the jolt-core CLI invokes prove on a cold process.
         DoryGlobals::reset();
@@ -31,7 +33,7 @@ impl CoreStack {
             bytecode,
             io_device.memory_layout.clone(),
             init_memory_state,
-            MAX_TRACE_LENGTH,
+            max_trace_length,
             e_entry,
         );
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
@@ -76,11 +78,17 @@ impl CoreStack {
 }
 
 impl StackRunner for CoreStack {
-    fn run(&self, program: Program, iters: usize, warmup: usize) -> StackOutcome {
+    fn run(
+        &self,
+        program: Program,
+        iters: usize,
+        warmup: usize,
+        log_t: Option<usize>,
+    ) -> StackOutcome {
         for _ in 0..warmup {
-            let _ = Self::run_once(program);
+            let _ = Self::run_once(program, log_t);
         }
-        let measurements = (0..iters).map(|_| Self::run_once(program)).collect();
+        let measurements = (0..iters).map(|_| Self::run_once(program, log_t)).collect();
         StackOutcome::Metrics(measurements)
     }
 }

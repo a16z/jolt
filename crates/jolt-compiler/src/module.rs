@@ -882,9 +882,39 @@ pub struct InstanceConfig {
     /// Data-driven prefix MLE evaluation rules: `prefix_mle_rules[prefix]`.
     /// Replaces runtime calls to `prefix_mle` in `compute_read_checking`.
     pub prefix_mle_rules: Vec<PrefixMleRule>,
+    /// Per-round pre-lowered prefix MLE expressions.
+    ///
+    /// `prefix_lowered[round][rule]` holds the c=0/c=1 `ScalarExpr` pair plus
+    /// the mask-buffer bindings for that (round, rule). Round geometry
+    /// (j, b_len, r_x ChallengeIdx) is compile-time constant; baking the
+    /// lowering here keeps `lower_prefix_mle` out of the runtime hot path.
+    pub prefix_lowered: Vec<PrefixLoweredRound>,
     /// Challenge indices for the 3 RAF registry checkpoints:
     /// \[0\] = p_right, \[1\] = p_left, \[2\] = p_identity.
     pub registry_checkpoint_slots: [ChallengeIdx; 3],
+}
+
+/// Pre-lowered prefix MLE expressions for a single sumcheck round.
+///
+/// Emitted by the compiler at InstanceConfig-build time. Each entry holds the
+/// `ScalarExpr` for both c-sides and the `(MaskRole, PolynomialId)` bindings
+/// needed to evaluate it. The runtime evaluates these expressions directly —
+/// no protocol-specific match arms.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrefixLoweredRound {
+    /// `b_len` at this round (suffix poly has `2^(b_len+1)` entries).
+    pub b_len: usize,
+    /// Per-rule c=0 lowering.
+    pub c0: Vec<ScalarExpr>,
+    /// Per-rule c=1 lowering.
+    pub c1: Vec<ScalarExpr>,
+    /// Per-rule mask bindings used by c0. Roles are evaluated via
+    /// `compute_mask_value(role, b, b_len)` at runtime.
+    pub masks_c0: Vec<Vec<(PolynomialId, crate::prefix_mle_lowering::MaskRole)>>,
+    /// Per-rule mask bindings used by c1.
+    pub masks_c1: Vec<Vec<(PolynomialId, crate::prefix_mle_lowering::MaskRole)>>,
+    /// ChallengeIdx carrying `r_x` on odd rounds (`None` on even rounds).
+    pub r_x: Option<ChallengeIdx>,
 }
 
 impl InstanceConfig {

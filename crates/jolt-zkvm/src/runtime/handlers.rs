@@ -989,15 +989,14 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                 .collect();
             let checkpoints: Vec<Option<F>> = state.instance_checkpoints.clone();
             let r_x: Option<F> = r_x_challenge.map(|ci| state.challenges[ci.0]);
-            state.read_checking_evals = crate::checkpoint_eval::compute_read_checking_from_lowered(
-                &config.prefix_mle_rules,
-                &config.combine_entries,
-                *round,
-                &suffix_polys,
-                &checkpoints,
-                r_x,
-                config.total_address_bits,
-            );
+            state.read_checking_evals =
+                crate::runtime::prefix_suffix::compute_read_checking_from_lowered(
+                    &config.prefix_lowered[*round],
+                    &config.combine_entries,
+                    &suffix_polys,
+                    &checkpoints,
+                    r_x,
+                );
         }
 
         Op::RafReduce {

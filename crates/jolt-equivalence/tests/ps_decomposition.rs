@@ -17,8 +17,10 @@ use jolt_host::prefix_suffix_evaluator::JoltPrefixSuffixEvaluator;
 use jolt_instructions::tables::prefixes::{Prefixes, ALL_PREFIXES};
 use jolt_instructions::tables::suffixes::Suffixes;
 use jolt_instructions::{LookupBits, LookupTableKind, LookupTables};
-use jolt_zkvm::checkpoint_eval::{compute_read_checking_from_lowered, eval_checkpoint_rule};
-use jolt_zkvm::runtime::prefix_suffix::LookupTraceData;
+use jolt_zkvm::runtime::prefix_suffix::{compute_read_checking_from_lowered, LookupTraceData};
+
+mod common;
+use common::eval_checkpoint_rule;
 
 use jolt_field::Field;
 use num_traits::{One, Zero};
@@ -1477,6 +1479,10 @@ fn read_checking_matches_evaluator() {
         .collect();
 
     let total_bits = 2 * XLEN;
+    let _ = total_bits;
+    let prefix_lowered = jolt_compiler::prefix_mle_lowering::build_prefix_lowered_rounds(
+        &mle_rules, chunk_bits, num_phases,
+    );
     let mut rounds_checked = 0;
 
     for phase in 0..num_phases {
@@ -1506,13 +1512,11 @@ fn read_checking_matches_evaluator() {
             let ref_result =
                 evaluator.compute_read_checking(round, &suffix_polys, &checkpoints, r_x);
             let new_result = compute_read_checking_from_lowered(
-                &mle_rules,
+                &prefix_lowered[round],
                 &combine_entries,
-                round,
                 &suffix_polys,
                 &checkpoints,
                 r_x,
-                total_bits,
             );
 
             assert_eq!(

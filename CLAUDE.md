@@ -48,6 +48,54 @@ the compiler hasn't lowered far enough — go back to step 4.
 
 **North star**: `crates/jolt-zkvm/ARCHITECTURE.md`
 
+## Perf Loop Protocol
+
+Parallel to the Task Loop Protocol above. `PERF_TASKS.md` is the program
+counter for performance work. Read it at the start of every perf session
+and after every context compression. The loop drives modular-stack
+prove time toward jolt-core parity WITHOUT collapsing the ML-compiler
+abstraction — handlers stay ≤ 30 LOC and protocol-unaware.
+
+Per iteration:
+
+```
+1. Read PERF_TASKS.md — current phase, current log_t, first unchecked P-item
+2. MEASURE: cargo run --release -p jolt-bench -- --program muldiv \
+     --iters 1 --warmup 1 --log-t <current> --json perf/last-iter.json
+3. STOP CHECK: Phase 3 green (modular ≤ core at log_t ∈ {18, 20}) for
+   3 consecutive iters → exit. Nothing else exits.
+4. PICK HYPOTHESIS: first unchecked P-item. Empty queue or stall ≥ 5 →
+   run with --profile, analyze Perfetto trace, append new P-items.
+5. IMPLEMENT: respect ≤30 LOC handler rule + declared abstraction risk.
+6. CORRECTNESS GATE (hard — fail reverts + continues):
+   cargo nextest run -p jolt-equivalence transcript_divergence
+   cargo nextest run -p jolt-equivalence zkvm_proof_accepted
+   cargo nextest run -p jolt-equivalence
+   cargo clippy ... -- -D warnings  (see PERF_TASKS.md for full set)
+7. PERF GATE: re-measure, compare vs perf/baseline-modular-best.json.
+   Accept: ≥5% faster → update ratchet. Reject: ≥5% slower → revert.
+   Inconclusive band ±5% → one rerun; still in band → revert as flat.
+8. COMMIT ALWAYS — one commit per iter:
+   - Improvement: `perf(<scope>): P<n> <name> (-X% prove_ms on muldiv @ log_T=<n>)`
+   - Flat/reverted: `journal: P<n> reverted (<reason>)` — only bookkeeping
+9. GRADUATE if phase graduation condition met (see PERF_TASKS.md table).
+10. Schedule next tick via ScheduleWakeup. GOTO 1.
+```
+
+**Never exit except via step 3.** Reverts, flat results, empty hypothesis
+queue, stall mode — all continue. The loop is perpetual until Phase 3
+parity is achieved.
+
+**Commit discipline**: Every iteration produces exactly one commit. Reverts
+still commit the bookkeeping update so dead ends aren't rediscovered on
+resume. `git log --grep='^perf'` is the changelog of real wins.
+
+**State files** live in `perf/`:
+- `baseline-core.json` — frozen jolt-core reference
+- `baseline-modular-best.json` — monotone ratchet
+- `last-iter.json` — most recent bench output
+- `history.jsonl` — append-only per-iteration log
+
 ## Project Overview
 
 Jolt is a zkVM (zero-knowledge virtual machine) for RISC-V (RV64IMAC) that efficiently proves and verifies program execution. It uses sumcheck-based protocols, multilinear polynomial commitments (Dory), and the Twist/Shout lookup argument.

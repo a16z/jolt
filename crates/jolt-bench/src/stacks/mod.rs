@@ -22,5 +22,11 @@ pub enum StackOutcome {
 }
 
 pub trait StackRunner {
-    fn run(&self, program: Program, iters: usize, warmup: usize) -> StackOutcome;
+    fn run(
+        &self,
+        program: Program,
+        iters: usize,
+        warmup: usize,
+        log_t: Option<usize>,
+    ) -> StackOutcome;
 }

@@ -44,4 +44,12 @@ pub struct Cli {
     /// Regression threshold (multiplier). `1.05` = allow 5% regression.
     #[arg(long, default_value_t = 1.05, requires = "baseline")]
     pub threshold: f64,
+
+    /// Override `max_trace_length` to `1 << log_t`. When unset, the bench
+    /// uses its built-in default (`1 << 16`). Actual prover work is
+    /// determined by the guest program's execution length (padded to a
+    /// power of two ≤ `max_trace_length`), so shrinking this only lowers
+    /// the preprocessing cap — it does not force larger traces.
+    #[arg(long)]
+    pub log_t: Option<usize>,
 }

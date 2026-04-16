@@ -20,8 +20,10 @@ use jolt_compiler::module::{
 };
 use jolt_compiler::PolynomialId;
 use jolt_field::Fr;
-use jolt_zkvm::checkpoint_eval::eval_checkpoint_rule;
 use jolt_zkvm::scalar_expr::eval_scalar_expr;
+
+mod common;
+use common::eval_checkpoint_rule;
 
 type F = Fr;
 

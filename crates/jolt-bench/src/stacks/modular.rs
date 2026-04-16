@@ -66,7 +66,7 @@ type CoreProof = CoreJoltProof<ArkFr, Bn254Curve, DoryCommitmentScheme, CoreBlak
 type CoreVerifierAlias<'a> =
     JoltVerifier<'a, ArkFr, Bn254Curve, DoryCommitmentScheme, CoreBlake2bTranscript>;
 
-const MAX_TRACE_LENGTH: usize = 1 << 16;
+const DEFAULT_MAX_TRACE_LENGTH: usize = 1 << 16;
 
 fn to_ark(f: ModFr) -> ArkFr {
     f.into()
@@ -75,8 +75,10 @@ fn to_ark(f: ModFr) -> ArkFr {
 pub struct ModularStack;
 
 impl ModularStack {
-    fn run_muldiv_once(inputs: &[u8]) -> IterMetrics {
+    fn run_muldiv_once(inputs: &[u8], log_t: Option<usize>) -> IterMetrics {
         DoryGlobals::reset();
+
+        let max_trace_length = log_t.map_or(DEFAULT_MAX_TRACE_LENGTH, |n| 1usize << n);
 
         // -- 1. Scaffolding run: jolt-core prover. Outside measurement window.
         let mut core_program = host::Program::new("muldiv-guest");
@@ -87,7 +89,7 @@ impl ModularStack {
             bytecode,
             io_device_core.memory_layout.clone(),
             init_memory_state,
-            MAX_TRACE_LENGTH,
+            max_trace_length,
             e_entry,
         );
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
@@ -154,7 +156,8 @@ impl ModularStack {
         let mut preprocessed = PreprocessedSource::new();
         preprocessed.populate_ram(&setup.config, &initial_ram);
         populate_bytecode_preprocessed(&mut preprocessed, &bytecode_data);
-        let mut provider = ProverData::new(&mut polys, r1cs, derived, preprocessed);
+        let mut provider = ProverData::new(&mut polys, r1cs, derived, preprocessed)
+            .with_lookup_trace(lookup_trace);
 
         let pcs_setup = &core_params.pcs_setup;
         let mut transcript = ModBlake2bTranscript::<ModFr>::new(TRANSCRIPT_LABEL);
@@ -169,8 +172,6 @@ impl ModularStack {
                 pcs_setup,
                 &mut transcript,
                 setup.config.clone(),
-                Some(lookup_trace),
-                Some(bytecode_data),
             )
         });
         let peak_rss_mb = sampler.finish();
@@ -207,7 +208,13 @@ impl ModularStack {
 }
 
 impl StackRunner for ModularStack {
-    fn run(&self, program: Program, iters: usize, warmup: usize) -> StackOutcome {
+    fn run(
+        &self,
+        program: Program,
+        iters: usize,
+        warmup: usize,
+        log_t: Option<usize>,
+    ) -> StackOutcome {
         if program != Program::Muldiv {
             return StackOutcome::Unsupported(Run::unsupported(
                 StackLabel::Modular,
@@ -221,9 +228,11 @@ impl StackRunner for ModularStack {
 
         let inputs = program.canonical_inputs();
         for _ in 0..warmup {
-            let _ = Self::run_muldiv_once(&inputs);
+            let _ = Self::run_muldiv_once(&inputs, log_t);
         }
-        let measurements = (0..iters).map(|_| Self::run_muldiv_once(&inputs)).collect();
+        let measurements = (0..iters)
+            .map(|_| Self::run_muldiv_once(&inputs, log_t))
+            .collect();
         StackOutcome::Metrics(measurements)
     }
 }
@@ -403,7 +412,7 @@ fn setup_zkvm_muldiv(
     let mut rs1_indices = vec![None; trace_length];
     let mut rs2_indices = vec![None; trace_length];
     let mut lookup_keys = vec![0u128; trace_length];
-    let mut table_kinds: Vec<Option<LookupTableKind>> = vec![None; trace_length];
+    let mut table_kind_indices: Vec<Option<usize>> = vec![None; trace_length];
     let mut table_indices: Vec<Option<usize>> = vec![None; trace_length];
     let mut is_interleaved = vec![true; trace_length];
     for (t, cycle) in trace.iter().enumerate() {
@@ -417,11 +426,8 @@ fn setup_zkvm_muldiv(
             rs2_indices[t] = Some(reg as usize);
         }
         lookup_keys[t] = cycle.lookup_index();
-        table_kinds[t] = cycle.lookup_table_index().map(|idx| {
+        table_kind_indices[t] = cycle.lookup_table_index().inspect(|&idx| {
             assert!(idx < LookupTableKind::COUNT);
-            // SAFETY: LookupTableKind is #[repr(u8)] with contiguous discriminants
-            // 0..COUNT, and idx < COUNT is asserted above.
-            unsafe { std::mem::transmute::<u8, LookupTableKind>(idx as u8) }
         });
         table_indices[t] = InstructionLookup::<64>::lookup_table(cycle)
             .map(|t| CoreLookupTables::<64>::enum_index(&t));
@@ -434,7 +440,7 @@ fn setup_zkvm_muldiv(
     };
     let lookup_trace = LookupTraceData {
         lookup_keys,
-        table_kinds,
+        table_kind_indices,
         is_interleaved: is_interleaved.clone(),
     };
 
@@ -547,6 +553,11 @@ fn populate_bytecode_preprocessed(
     let mut entry_expected = vec![ModFr::zero(); k];
     entry_expected[bc.entry_index] = ModFr::one();
     preprocessed.insert(PolynomialId::BytecodeEntryExpected, entry_expected);
+
+    // Per-field bytecode polynomials (BytecodeField(*) — consumed by the
+    // WeightedSum decomposition of BytecodeVal). Matches what the
+    // jolt-equivalence muldiv test does.
+    bc.populate_preprocessed(preprocessed);
 }
 
 // ── proof transplant: modular → core ─────────────────────────────────────

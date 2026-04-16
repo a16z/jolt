@@ -3769,6 +3769,11 @@ fn build_stage5(
 
     // Phase 1: address rounds (PrefixSuffix iteration)
     let inst_raf_addr_kernel_idx = kernels.len();
+    let ps_prefix_lowered = jolt_compiler::prefix_mle_lowering::build_prefix_lowered_rounds(
+        &ps_prefix_mle_rules,
+        params.instruction_chunk_bits,
+        params.instruction_phases,
+    );
     kernels.push(KernelDef {
         spec: KernelSpec {
             formula: Formula::from_terms(vec![ProductTerm {
@@ -3799,6 +3804,7 @@ fn build_stage5(
             num_prefixes: NUM_PREFIXES,
             checkpoint_rules: ps_checkpoint_rules,
             prefix_mle_rules: ps_prefix_mle_rules,
+            prefix_lowered: ps_prefix_lowered,
             registry_checkpoint_slots,
         }),
     });
