@@ -1,0 +1,172 @@
+name: Claude Routines
+
+# Fires Claude Code routines when specific labels are added to a PR.
+# Uses `pull_request_target` so secrets are available on PRs from forks
+# (label application itself is already gated on write/triage permission).
+
+on:
+  pull_request_target:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  code-review:
+    name: Claude code review
+    if: github.event.label.name == 'claude-review-request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fire routine
+        env:
+          ROUTINE_ID: trig_0184QxNSKDj7Y9akvnEmo3s2
+          ROUTINE_TOKEN: ${{ secrets.ANTHROPIC_REVIEW_AUTHORIZATION }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+        run: |
+          set -euo pipefail
+
+          payload=$(jq -n \
+            --arg num "$PR_NUMBER" \
+            --arg title "$PR_TITLE" \
+            --arg url "$PR_URL" \
+            --arg sha "$PR_HEAD_SHA" \
+            --arg head "$PR_HEAD_REF" \
+            --arg base "$PR_BASE_REF" \
+            --arg author "$PR_AUTHOR" \
+            --arg source_repo "$PR_REPO" \
+            --arg base_repo "$BASE_REPO" \
+            '{text: "Code review requested for PR #\($num): \($title)\nRepository: \($base_repo)\nURL: \($url)\nAuthor: @\($author)\nHead: \($source_repo) \($head) @ \($sha)\nBase: \($base)"}')
+
+          http=$(curl -sS -o response.json -w "%{http_code}" \
+            -X POST "https://api.anthropic.com/v1/claude_code/routines/${ROUTINE_ID}/fire" \
+            -H "Authorization: Bearer ${ROUTINE_TOKEN}" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "anthropic-beta: experimental-cc-routine-2026-04-01" \
+            -H "Content-Type: application/json" \
+            -d "$payload")
+
+          echo "HTTP $http"
+          jq . response.json 2>/dev/null || cat response.json
+          if [ "$http" != "200" ]; then
+            echo "::error::Routine fire failed with HTTP $http"
+            exit 1
+          fi
+
+          session_id=$(jq -r '.claude_code_session_id // empty' response.json)
+          if [ -n "$session_id" ]; then
+            echo "::notice::Started Claude session $session_id"
+          fi
+
+  spec-review:
+    name: Claude spec review
+    if: github.event.label.name == 'claude-spec-review-request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fire routine
+        env:
+          ROUTINE_ID: trig_01JBnYKwfoAgiruS15s3CcP7
+          ROUTINE_TOKEN: ${{ secrets.ANTHROPIC_SPEC_REVIEW_AUTHORIZATION }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+        run: |
+          set -euo pipefail
+
+          payload=$(jq -n \
+            --arg num "$PR_NUMBER" \
+            --arg title "$PR_TITLE" \
+            --arg url "$PR_URL" \
+            --arg sha "$PR_HEAD_SHA" \
+            --arg head "$PR_HEAD_REF" \
+            --arg base "$PR_BASE_REF" \
+            --arg author "$PR_AUTHOR" \
+            --arg source_repo "$PR_REPO" \
+            --arg base_repo "$BASE_REPO" \
+            '{text: "Spec review requested for PR #\($num): \($title)\nRepository: \($base_repo)\nURL: \($url)\nAuthor: @\($author)\nHead: \($source_repo) \($head) @ \($sha)\nBase: \($base)"}')
+
+          http=$(curl -sS -o response.json -w "%{http_code}" \
+            -X POST "https://api.anthropic.com/v1/claude_code/routines/${ROUTINE_ID}/fire" \
+            -H "Authorization: Bearer ${ROUTINE_TOKEN}" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "anthropic-beta: experimental-cc-routine-2026-04-01" \
+            -H "Content-Type: application/json" \
+            -d "$payload")
+
+          echo "HTTP $http"
+          jq . response.json 2>/dev/null || cat response.json
+          if [ "$http" != "200" ]; then
+            echo "::error::Routine fire failed with HTTP $http"
+            exit 1
+          fi
+
+          session_id=$(jq -r '.claude_code_session_id // empty' response.json)
+          if [ -n "$session_id" ]; then
+            echo "::notice::Started Claude session $session_id"
+          fi
+
+  implement:
+    name: Claude implement spec
+    if: github.event.label.name == 'claude-implement-spec'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fire routine
+        env:
+          ROUTINE_ID: trig_01CzBwCbrD2q5m8QHCWU16r5
+          ROUTINE_TOKEN: ${{ secrets.ANTHROPIC_IMPLEMENT_AUTHORIZATION }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+        run: |
+          set -euo pipefail
+
+          payload=$(jq -n \
+            --arg num "$PR_NUMBER" \
+            --arg title "$PR_TITLE" \
+            --arg url "$PR_URL" \
+            --arg sha "$PR_HEAD_SHA" \
+            --arg head "$PR_HEAD_REF" \
+            --arg base "$PR_BASE_REF" \
+            --arg author "$PR_AUTHOR" \
+            --arg source_repo "$PR_REPO" \
+            --arg base_repo "$BASE_REPO" \
+            '{text: "Implementation requested for PR #\($num): \($title)\nRepository: \($base_repo)\nURL: \($url)\nAuthor: @\($author)\nHead: \($source_repo) \($head) @ \($sha)\nBase: \($base)"}')
+
+          http=$(curl -sS -o response.json -w "%{http_code}" \
+            -X POST "https://api.anthropic.com/v1/claude_code/routines/${ROUTINE_ID}/fire" \
+            -H "Authorization: Bearer ${ROUTINE_TOKEN}" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "anthropic-beta: experimental-cc-routine-2026-04-01" \
+            -H "Content-Type: application/json" \
+            -d "$payload")
+
+          echo "HTTP $http"
+          jq . response.json 2>/dev/null || cat response.json
+          if [ "$http" != "200" ]; then
+            echo "::error::Routine fire failed with HTTP $http"
+            exit 1
+          fi
+
+          session_id=$(jq -r '.claude_code_session_id // empty' response.json)
+          if [ -n "$session_id" ]; then
+            echo "::notice::Started Claude session $session_id"
+          fi
