@@ -4,14 +4,6 @@
   "warmup": 1,
   "runs": [
     {
-      "stack": "core",
-      "prove_ms": 352.603834,
-      "verify_ms": 54.072625,
-      "peak_rss_mb": 111,
-      "proof_bytes": 66924,
-      "proof_encoding": "ark-compressed"
-    },
-    {
       "stack": "modular",
       "prove_ms": 4054.58475,
       "verify_ms": 56.512375,

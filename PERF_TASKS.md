@@ -24,7 +24,9 @@ when the Phase 3 stop condition fires.
   is min(guest cycles padded, 2^12))
 - **Program**: `muldiv` (only program supported on the modular stack today)
 - **Stall counter**: 0
-- **Last green iter**: (none yet — baseline run pending)
+- **Last green iter**: 1 — P10 `segmented_reduce` parallelize+hoist
+  (−72.24% prove_ms: 14607 → 4055 ms, ratio 41.4× → 11.5×)
+- **Green streak**: 1
 - **Phase 3 stop condition**: `modular.prove_ms ≤ core.prove_ms` at
   `log_t ∈ {18, 20}`, 3 consecutive green iters. Only this exits the loop.
 
@@ -104,6 +106,9 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
     - **Hypothesis**: outer rule loop + mask-bit iteration is sequential; wrap in `rayon::par_iter` with per-thread local HashMaps merged at end. Instruction-lookup read-checking is 20-30% of total prover time.
     - **Abstraction risk**: low — belongs in runtime, stays protocol-agnostic.
     - **Expected delta**: 15-30%
+    - **Status**: deprioritized after iter 1 profile. `prefix_suffix` does
+      NOT show up in the top spans; it's not a current bottleneck at
+      log_t=12. Revisit if it surfaces at higher log_t.
 
 - [ ] P2: Fused reduce+bind kernel on ComputeBackend — target: `crates/jolt-zkvm/src/runtime/handlers.rs:629-652` (InstanceReduce) + `:534` (interpolate_evaluate in BatchRoundBegin)
     - **Hypothesis**: InstanceReduce → next-round interpolate_evaluate is effectively a fused bind+eval done sequentially. Add `ComputeBackend::reduce_and_bind(kernel, inputs, challenges, scalar) -> Vec<F>` with default-impl fallback; CPU backend specializes to avoid intermediate roundtrip.
@@ -151,4 +156,17 @@ Design decisions, dead ends, and stall-mode observations accumulate here.
 
 ## Done
 
-(completed items move here with commit hash + one-line summary of measured delta)
+- **Iter 1 — P10: Parallelize `CpuBackend::segmented_reduce` + hoist
+  inner-only clones + eliminate double-copy** (target:
+  `crates/jolt-cpu/src/backend.rs:520-562`).
+  - Result: prove_ms 14606.88 → 4054.58 on muldiv @ log_t=12 (**−72.24%**).
+  - Ratio vs core: 41.4× → 11.5×.
+  - Perfetto showed `InstanceSegmentedReduce` subtree at 77.1% self-time,
+    driven by a serial outer loop of ~4,200 small reduces/iter with
+    per-iter `data.clone()` wrapping of inputs into `DeviceBuffer::Field(...)`.
+    Fix parallelizes the non-zero-weight outer positions via rayon,
+    clones each inner-only input ONCE up front, and swaps the
+    double-copy (`copy_from_slice` + `.clone()`) for a single
+    `slice.to_vec()` on outer-indexed inputs.
+  - Abstraction risk: low — all changes inside CpuBackend; trait unchanged;
+    handler untouched.

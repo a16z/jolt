@@ -1,21 +1,13 @@
 {
   "program": "muldiv",
   "iters": 1,
-  "warmup": 1,
+  "warmup": 0,
   "runs": [
     {
-      "stack": "core",
-      "prove_ms": 352.603834,
-      "verify_ms": 54.072625,
-      "peak_rss_mb": 111,
-      "proof_bytes": 66924,
-      "proof_encoding": "ark-compressed"
-    },
-    {
       "stack": "modular",
-      "prove_ms": 4054.58475,
-      "verify_ms": 56.512375,
-      "peak_rss_mb": 1176,
+      "prove_ms": 14575.639541,
+      "verify_ms": 53.04875,
+      "peak_rss_mb": 937,
       "proof_bytes": 64080,
       "proof_encoding": "bincode-serde",
       "verify_note": "verify measured via proof transplant into jolt-core verifier (no native modular+Dory verifier wired today)"

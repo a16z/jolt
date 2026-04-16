@@ -517,6 +517,7 @@ impl ComputeBackend for CpuBackend {
         projected
     }
 
+    #[tracing::instrument(skip_all, name = "CpuBackend::segmented_reduce")]
     fn segmented_reduce<F: Field>(
         &self,
         kernel: &CpuKernel<F>,
@@ -526,39 +527,75 @@ impl ComputeBackend for CpuBackend {
         inner_size: usize,
         challenges: &[F],
     ) -> Vec<F> {
-        let mut col_buf = vec![F::zero(); inner_size];
-        let mut total_evals: Option<Vec<F>> = None;
+        let num_evals = kernel.num_evals;
 
-        for (a, &weight) in outer_eq.iter().enumerate() {
-            if weight.is_zero() {
-                continue;
-            }
-            let mut col_bufs: Vec<Buf<Self, F>> = Vec::with_capacity(inputs.len());
-            for (j, &data) in inputs.iter().enumerate() {
-                if inner_only[j] {
-                    col_bufs.push(DeviceBuffer::Field(data.clone()));
-                } else {
-                    let start = a * inner_size;
-                    col_buf.copy_from_slice(&data[start..start + inner_size]);
-                    col_bufs.push(DeviceBuffer::Field(col_buf.clone()));
-                }
-            }
-            let col_refs: Vec<&Buf<Self, F>> = col_bufs.iter().collect();
-            let evals = self.reduce(kernel, &col_refs, challenges);
+        // Hoist inner-only buffers once — they're invariant across outer
+        // positions, so cloning per-iter (old behavior) was N×cores wasted
+        // copies of the same data.
+        let inner_only_bufs: Vec<Option<Buf<Self, F>>> = inputs
+            .iter()
+            .enumerate()
+            .map(|(j, data)| inner_only[j].then(|| DeviceBuffer::Field((*data).clone())))
+            .collect();
 
-            match &mut total_evals {
-                Some(total) => {
-                    for (t, &e) in total.iter_mut().zip(&evals) {
-                        *t += weight * e;
+        let active: Vec<(usize, F)> = outer_eq
+            .iter()
+            .enumerate()
+            .filter_map(|(a, &w)| (!w.is_zero()).then_some((a, w)))
+            .collect();
+
+        let reduce_one = |a: usize, weight: F| -> Vec<F> {
+            let start = a * inner_size;
+            // Per-iter outer-indexed slice copy (single allocation, no
+            // double-copy via scratch+clone).
+            let outer_bufs: Vec<Buf<Self, F>> = inputs
+                .iter()
+                .zip(inner_only.iter())
+                .filter(|(_, &io)| !io)
+                .map(|(data, _)| DeviceBuffer::Field(data[start..start + inner_size].to_vec()))
+                .collect();
+
+            let mut outer_idx = 0;
+            let col_refs: Vec<&Buf<Self, F>> = (0..inputs.len())
+                .map(|j| {
+                    if let Some(b) = &inner_only_bufs[j] {
+                        b
+                    } else {
+                        let r = &outer_bufs[outer_idx];
+                        outer_idx += 1;
+                        r
                     }
-                }
-                None => {
-                    total_evals = Some(evals.iter().map(|&e| weight * e).collect());
-                }
+                })
+                .collect();
+
+            let evals = self.reduce(kernel, &col_refs, challenges);
+            evals.into_iter().map(|e| weight * e).collect()
+        };
+
+        #[cfg(feature = "parallel")]
+        {
+            if active.len() >= 2 {
+                use rayon::prelude::*;
+                return active.par_iter().map(|&(a, w)| reduce_one(a, w)).reduce(
+                    || vec![F::zero(); num_evals],
+                    |mut a, b| {
+                        for (ai, bi) in a.iter_mut().zip(b) {
+                            *ai += bi;
+                        }
+                        a
+                    },
+                );
             }
         }
 
-        total_evals.unwrap_or_else(|| vec![F::zero(); kernel.num_evals])
+        let mut total = vec![F::zero(); num_evals];
+        for (a, w) in active {
+            let evals = reduce_one(a, w);
+            for (t, e) in total.iter_mut().zip(evals) {
+                *t += e;
+            }
+        }
+        total
     }
 }
 
