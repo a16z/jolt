@@ -1,0 +1,47 @@
+use std::path::PathBuf;
+
+use clap::Parser;
+
+use crate::programs::Program;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum, Default)]
+pub enum StackSelection {
+    Core,
+    Modular,
+    #[default]
+    Both,
+}
+
+#[derive(Debug, Parser)]
+#[command(name = "jolt-bench", about = "Benchmark jolt-core vs modular stack")]
+pub struct Cli {
+    /// Canonical program to benchmark.
+    #[arg(long)]
+    pub program: Program,
+
+    /// Which stack(s) to measure.
+    #[arg(long, value_enum, default_value_t = StackSelection::Both)]
+    pub stack: StackSelection,
+
+    /// Number of measured iterations (medianed in the output).
+    #[arg(long, default_value_t = 3)]
+    pub iters: usize,
+
+    /// Number of warmup iterations run before measurement (discarded).
+    #[arg(long, default_value_t = 1)]
+    pub warmup: usize,
+
+    /// Write the JSON report to this path. Prints to stdout if absent.
+    #[arg(long)]
+    pub json: Option<PathBuf>,
+
+    /// Baseline JSON report to compare against. If set, the run exits
+    /// non-zero when any modular metric exceeds its baseline `core` value
+    /// by more than `--threshold`.
+    #[arg(long)]
+    pub baseline: Option<PathBuf>,
+
+    /// Regression threshold (multiplier). `1.05` = allow 5% regression.
+    #[arg(long, default_value_t = 1.05, requires = "baseline")]
+    pub threshold: f64,
+}

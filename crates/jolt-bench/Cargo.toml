@@ -1,0 +1,57 @@
+[package]
+name = "jolt-bench"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Performance benchmark harness — jolt-core vs modular stack on canonical programs"
+repository = "https://github.com/a16z/jolt"
+
+[lints]
+workspace = true
+
+[dependencies]
+# CLI and JSON
+clap = { workspace = true }
+serde = { workspace = true, default-features = false, features = [
+  "derive",
+  "std",
+] }
+serde_json = { workspace = true, features = ["std"] }
+
+# Measurement
+memory-stats = { workspace = true }
+mimalloc = { workspace = true }
+
+# Serialization
+ark-serialize = { workspace = true, features = ["std"] }
+bincode = { workspace = true }
+postcard = { workspace = true, features = ["use-std"] }
+
+# Reference stack (jolt-core)
+ark-bn254 = { workspace = true }
+ark-ff = { workspace = true, features = ["std"] }
+common = { workspace = true, features = ["std"] }
+jolt-core = { workspace = true, features = ["host"] }
+tracer = { workspace = true, features = ["std"] }
+
+# Inline builders — linked for their `#[ctor::ctor]` auto-registration so
+# guest programs that use SHA2/Keccak256 inline sequences can be traced.
+jolt-inlines-sha2 = { workspace = true, features = ["host"] }
+jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
+
+# Modular stack (muldiv-only runner)
+jolt-compiler = { path = "../jolt-compiler" }
+jolt-compute = { path = "../jolt-compute" }
+jolt-cpu = { path = "../jolt-cpu" }
+jolt-dory = { path = "../jolt-dory" }
+jolt-field = { path = "../jolt-field", features = ["bn254"] }
+jolt-host = { path = "../jolt-host" }
+jolt-instructions = { path = "../jolt-instructions" }
+jolt-openings = { path = "../jolt-openings" }
+jolt-poly = { path = "../jolt-poly" }
+jolt-r1cs = { path = "../jolt-r1cs" }
+jolt-transcript = { path = "../jolt-transcript" }
+jolt-verifier = { path = "../jolt-verifier" }
+jolt-witness = { path = "../jolt-witness" }
+jolt-zkvm = { path = "../jolt-zkvm" }
+num-traits = { workspace = true }
