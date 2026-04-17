@@ -3219,6 +3219,7 @@ dependencies = [
  "jolt-transcript",
  "jolt-verifier",
  "jolt-witness",
+ "libc",
  "num-traits",
  "postcard",
  "rayon",

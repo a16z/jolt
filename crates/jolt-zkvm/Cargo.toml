@@ -22,6 +22,7 @@ jolt-sumcheck = { path = "../jolt-sumcheck" }
 jolt-transcript = { path = "../jolt-transcript" }
 jolt-witness = { path = "../jolt-witness" }
 jolt-verifier = { path = "../jolt-verifier" }
+libc = "0.2"
 tracing.workspace = true
 
 [dev-dependencies]

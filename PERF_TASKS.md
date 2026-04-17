@@ -23,12 +23,12 @@ when the Phase 3 stop condition fires.
 - **log_t**: 12 (overrides `max_trace_length` to 2^12; actual prover work
   is min(guest cycles padded, 2^12))
 - **Program**: `muldiv` (only program supported on the modular stack today)
-- **Stall counter**: 1 (iter 21 flat; iter 20 green; iter 19 green; iter 18 reverted; iter 17 profiling-only; iter 16 infra; iter 15 infra; iter 14 infra; iter 13 flat; iter 12 green)
+- **Stall counter**: 1 (iter 22 instrumentation-only; iter 21 flat; iter 20 green; iter 19 green; iter 18 reverted; iter 17 profiling-only; iter 16 infra; iter 15 infra; iter 14 infra; iter 13 flat; iter 12 green)
 - **Last green iter**: 20 — parallelize `Op::Commit` outer loop via rayon.
   42 serial Dory `PCS::commit` calls (508 ms wall, 720 ms CPU, 1.4× effective
   parallelism) → parallel collect of commitments + serial transcript append
   (−22.6% prove_ms: 1867 → 1444 ms best, ratio 5.9× → 4.4×)
-- **Green streak**: 3 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infra primitive; iter 15 Gruen infra reduce; iter 16 Gruen infra variant; iter 17 post-P24 re-profile; iter 18 Gruen dispatch reverted; iter 19 Gruen end-to-end −49.2%; iter 20 parallel Op::Commit −22.6%; iter 21 P28 parallelize lt_evals + EqPlusOne::evals flat −1.7%)
+- **Green streak**: 3 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infra primitive; iter 15 Gruen infra reduce; iter 16 Gruen infra variant; iter 17 post-P24 re-profile; iter 18 Gruen dispatch reverted; iter 19 Gruen end-to-end −49.2%; iter 20 parallel Op::Commit −22.6%; iter 21 P28 parallelize lt_evals + EqPlusOne::evals flat −1.7%; iter 22 instrumentation-only — per-stage CPU vs wall saturation)
 - **Phase 3 stop condition**: `modular.prove_ms ≤ core.prove_ms` at
   `log_t ∈ {18, 20}`, 3 consecutive green iters. Only this exits the loop.
 
@@ -221,10 +221,129 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
   delta (5-12%) but smaller scope and lower abstraction risk. Consider
   as a fallback if P21 takes > 2 iters to land.
 
+- [ ] P29: Parallelize Stage 7 Dory Open op-dispatch — target:
+  `crates/jolt-zkvm/src/runtime/handlers.rs` (Op::Open handler) + same
+  compiler pattern as iter 20's Op::Commit parallel fan-out.
+    - **Hypothesis**: iter 22 saturation instrumentation showed Stage 7
+      (23.1% wall / 364 ms) runs at 1.63 cores / 20.4% saturation — the
+      Dory open proof. Iter 20 landed a −22.6% win on Op::Commit by
+      dispatching independent commits in parallel outer rayon while each
+      commit's internal tier-1/tier-2 MSMs still ran internally parallel.
+      Open follows the same pattern: the external `dory::prove` call is
+      serial-dominated internally, but the MULTIPLE open calls in stage 7
+      (one per committed polynomial, ~40+ opens per prove) are
+      independent. Fan them out like iter 20.
+    - **Abstraction risk**: low — same pattern as P27/iter 20 (parallel
+      over Vec of independent PCS ops, serial transcript append after).
+      Need to confirm dory::prove's output doesn't feed transcript until
+      collection.
+    - **Expected delta**: 8-15% total wall (364 ms × (1.63/4-6 cores
+      speedup) ≈ 150-250 ms saved; some Dory internal contention
+      possible).
+
+- [ ] P30: Parallelize Stage 1 Materialize op-dispatch — target:
+  `crates/jolt-zkvm/src/runtime/mod.rs:175` (execute loop) + compiler
+  annotation of independent-Materialize groups in stages.
+    - **Hypothesis**: iter 22 saturation showed Stage 1 (35.1% wall /
+      553 ms) already best-saturated at 3.38 cores (42%). Iter 20's
+      Op::Commit parallelism lifted it from ~1.4× to 3.4×. Next lever:
+      parallelize Materialize ops (~5 large calls in stage 1 per iter 21
+      analysis, +Cloth P27 fan-out). If stage-1 Materializes are
+      topologically independent (different PolynomialId outputs, no
+      cross-consumption within the stage), batch-dispatch them via
+      `par_iter().for_each(|op| run_materialize(...))` with a locked
+      HashMap for output buffer insertion.
+    - **Abstraction risk**: medium — needs compiler/schedule to annotate
+      "independent op groups" or runtime to analyze dependencies at
+      dispatch time. Same shape as P5 in the original queue but now
+      data-grounded.
+    - **Expected delta**: 8-15% total wall (push stage 1 3.4× → 5-6×
+      → 553 × 3.4/5.5 = 342 ms = 211 ms saved ≈ 13% wall).
+
+- [ ] P31: Finer-grained op-class saturation instrumentation — target:
+  `crates/jolt-zkvm/src/runtime/mod.rs:175-191` (dispatch loop) + a
+  per-op-class `(wall, cpu)` accumulator.
+    - **Hypothesis**: iter 22 gave per-stage saturation; next we need
+      per-op-class (Materialize*, InstanceReduce, InstanceSegmentedReduce,
+      Commit, Open, Bind, SumcheckRound, BatchRoundBegin, …) within each
+      stage. Stage 7's 1.63× is Dory Open; but Stage 4's 1.17× / 130 ms
+      / 14.6% sat is not yet attributed. Stage 1's mixed 3.38× may have
+      Materialize at 1.5× dragging down Commit at 5×. Op-class breakdown
+      identifies the specific low-saturation op that hides inside a
+      stage, unlocking precise attacks.
+    - **Abstraction risk**: very low — internal runtime instrumentation,
+      ~30 LOC, no protocol contact. Use `match op { Op::Materialize{..}
+      => "Materialize", … }` for key selection, `HashMap<&'static str,
+      (Duration, Duration)>` accumulator, emit summary at end of execute.
+    - **Expected delta**: 0% direct; unlocks 1-2 iters of precise
+      optimization work.
+
 
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 22 — Instrumentation: per-stage CPU-vs-wall saturation (infra, no perf claim)**
+  (target: `crates/jolt-zkvm/src/runtime/{cpu_clock.rs,mod.rs}`, +libc dep).
+  **Motivation**: user guidance — "instrument further to gather more info about
+  parallelism saturation and stage level differences". Iter 21's flat −1.7%
+  outcome + the modular stack still being 4.4× off core (1444 vs 330 ms)
+  suggested a need for data-grounded hypotheses instead of more hand-picked
+  targets. **Change**: 5-line `process_cpu_time()` helper wrapping
+  `getrusage(RUSAGE_SELF)` on Unix (user + system time across threads); ~40
+  LOC in `runtime/mod.rs` tracking `(wall, cpu)` per stage via the existing
+  `BeginStage` op and emitting a `tracing::info!` summary on target
+  `perf_stage` at end of `execute`. Overhead: 2 getrusage calls per stage
+  (~0.5 µs each) × 8 stages = negligible. **Gates**: 41/41 jolt-equivalence
+  green (transcript_divergence + zkvm_proof_accepted included), clippy clean
+  across all 8 modular crates. **Perf (5 runs at log_t=12)**: 1450, 1605,
+  1724, 1509, 1468 ms; median 1509 ms (+4.5% vs ratchet 1444.14, inside
+  ±5% band). Core prove varied 329–345 ms in the same set (~5% ambient
+  noise), confirming the measurement is in the noise envelope. **Ratchet
+  not updated** (no improvement). **Stall counter NOT incremented**
+  (instrumentation-only iter per iter 11/17 precedent).
+
+  **Findings (run with `RUST_LOG=perf_stage=info --trace-chrome`)**:
+  8-core machine, modular_prove total 1575 ms wall / 4258 ms CPU =
+  **2.70 threads avg / 33.8% saturation**. Per-stage:
+
+  | Stage | Wall (ms) | CPU (ms) | threads_avg | Sat % | Wall share |
+  |------:|----------:|---------:|------------:|------:|-----------:|
+  |   0   |        8  |      19  |       2.32  |  29.0 |      0.5%  |
+  | **1** |  **553**  | **1872** |    **3.38** |  42.3 |    **35.1%** |
+  |   2   |        7  |       7  |       1.11  |  13.8 |      0.4%  |
+  | **3** |  **181**  |   481    |     2.66    |  33.3 |    **11.5%** |
+  |   4   |      130  |     153  |    **1.17** | **14.6** |    8.3%  |
+  | **5** |  **270**  |   777    |     2.88    |  36.0 |    **17.1%** |
+  |   6   |       12  |      13  |       1.14  |  14.3 |      0.7%  |
+  | **7** |  **364**  |   594    |    **1.63** | **20.4** |   **23.1%** |
+
+  **Key takeaways (rank by leverage × tractability)**:
+
+  1. **Stage 7 (364 ms / 23.1% wall) runs at 1.63 cores / 20.4% sat.** This
+     is Dory open, consistent with iter 20's 258 ms/16.5% observation.
+     External `dory::prove` call is mostly serial. **Attack**: parallel-map
+     multiple opens like iter 20 did for commit — if opens are independent
+     (per PolynomialId/batch), a parallel outer loop gives ~2-3× wall
+     reduction → 150-250 ms saved = **9-15% total wall**.
+  2. **Stage 1 (553 ms / 35.1% wall) runs at 3.38 cores / 42.3% sat.**
+     Biggest wall share; already best-saturated but still 4.6 idle cores.
+     Stage 1 = Commit + Materialize (per iter 20). Iter 20's parallel commit
+     lifted this from 1.4× → 3.4×. Next lever: parallelize the Materialize
+     ops across the stage, similar to iter 20's pattern. If we can push to
+     6 cores avg, stage 1 drops 553 → 310 ms = **~15% total wall**.
+  3. **Stage 4 (130 ms / 8.3% wall) runs at 1.17 cores / 14.6% sat.** Nearly
+     serial. Probably Spartan inner/outer sumcheck claim reductions — small
+     work units, serial logic. Medium leverage (~4-6% potential) but low
+     risk, worth investigation.
+  4. **Aggregate parallelism gap**: 8 − 2.70 = 5.3 cores idle on average.
+     If all 8 stages ran at 6 cores avg, total wall would drop
+     1575 × 2.70/6 = 709 ms (~55% reduction). That's the theoretical
+     ceiling — realistic target ~4 cores avg = 1050 ms (~33% reduction).
+
+  **Hypothesis queue update**: add P29 (Stage 7 parallel Dory open),
+  P30 (Stage 1 parallel Materialize), P31 (Stage 4 parallelism
+  investigation via finer-grained op-class instrumentation).
 
 - **Iter 21 — P28 parallelize `lt_evals` + `EqPlusOnePolynomial::evals` (REVERTED, flat −1.7%)**
   (targets: `crates/jolt-poly/src/lt.rs:144-155`, `crates/jolt-poly/src/eq_plus_one.rs:71-118`).

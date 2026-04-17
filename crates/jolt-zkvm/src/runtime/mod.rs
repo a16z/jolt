@@ -15,11 +15,13 @@
 //!                                                 JoltProof<F, PCS>
 //! ```
 
+mod cpu_clock;
 mod handlers;
 mod helpers;
 pub mod prefix_suffix;
 
 use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
 
 use jolt_compiler::PolynomialId;
 use jolt_compute::{Buf, BufferProvider, ComputeBackend, Executable};
@@ -172,8 +174,25 @@ where
     // giving per-stage self-time breakdown without hand-tagging every op.
     let mut _stage_span: Option<tracing::span::EnteredSpan> = None;
 
+    // Per-stage (wall, cpu) saturation tracking. `cpu - wall_at_entry` / wall
+    // gives effective core count for the stage. Emitted at end of execute via
+    // tracing::info! on target "perf_stage". Overhead: 2 getrusage calls per
+    // stage (~500 ns each), negligible at ~8 stages / prove.
+    let prove_wall_start = Instant::now();
+    let prove_cpu_start = cpu_clock::process_cpu_time();
+    let mut stage_start: Option<(usize, Instant, Duration)> = None;
+    let mut stage_stats: Vec<(usize, Duration, Duration)> = Vec::new();
+
     for op in &executable.ops {
         if let jolt_compiler::module::Op::BeginStage { index } = op {
+            if let Some((prev_idx, wall_at_entry, cpu_at_entry)) = stage_start.take() {
+                stage_stats.push((
+                    prev_idx,
+                    wall_at_entry.elapsed(),
+                    cpu_clock::process_cpu_time().saturating_sub(cpu_at_entry),
+                ));
+            }
+            stage_start = Some((*index, Instant::now(), cpu_clock::process_cpu_time()));
             _stage_span = None;
             _stage_span = Some(tracing::info_span!("stage", index = *index).entered());
         }
@@ -190,8 +209,52 @@ where
         );
     }
 
+    if let Some((prev_idx, wall_at_entry, cpu_at_entry)) = stage_start.take() {
+        stage_stats.push((
+            prev_idx,
+            wall_at_entry.elapsed(),
+            cpu_clock::process_cpu_time().saturating_sub(cpu_at_entry),
+        ));
+    }
+
     if let Some(builder) = state.current_stage.take() {
         state.stage_proofs.push(builder.finalize());
+    }
+
+    let total_wall = prove_wall_start.elapsed();
+    let total_cpu = cpu_clock::process_cpu_time().saturating_sub(prove_cpu_start);
+    let ncpus = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    let total_wall_ms = total_wall.as_secs_f64() * 1000.0;
+    let total_cpu_ms = total_cpu.as_secs_f64() * 1000.0;
+    let avg_threads = if total_wall_ms > 0.0 {
+        total_cpu_ms / total_wall_ms
+    } else {
+        0.0
+    };
+    tracing::info!(
+        target: "perf_stage",
+        wall_ms = total_wall_ms,
+        cpu_ms = total_cpu_ms,
+        threads_avg = avg_threads,
+        cores = ncpus,
+        saturation_pct = (avg_threads / ncpus as f64) * 100.0,
+        "modular_prove total"
+    );
+    for (idx, wall, cpu) in &stage_stats {
+        let w = wall.as_secs_f64() * 1000.0;
+        let c = cpu.as_secs_f64() * 1000.0;
+        let r = if w > 0.0 { c / w } else { 0.0 };
+        tracing::info!(
+            target: "perf_stage",
+            stage = idx,
+            wall_ms = w,
+            cpu_ms = c,
+            threads_avg = r,
+            saturation_pct = (r / ncpus as f64) * 100.0,
+            "stage"
+        );
     }
 
     JoltProof {
