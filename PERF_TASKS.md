@@ -23,10 +23,10 @@ when the Phase 3 stop condition fires.
 - **log_t**: 12 (overrides `max_trace_length` to 2^12; actual prover work
   is min(guest cycles padded, 2^12))
 - **Program**: `muldiv` (only program supported on the modular stack today)
-- **Stall counter**: 5
+- **Stall counter**: 6
 - **Last green iter**: 1 — P10 `segmented_reduce` parallelize+hoist
   (−72.24% prove_ms: 14607 → 4055 ms, ratio 41.4× → 11.5×)
-- **Green streak**: 0 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%, all reverted)
+- **Green streak**: 0 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%, all reverted)
 - **Phase 3 stop condition**: `modular.prove_ms ≤ core.prove_ms` at
   `log_t ∈ {18, 20}`, 3 consecutive green iters. Only this exits the loop.
 
@@ -150,23 +150,6 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
     - **Abstraction risk**: very low.
     - **Expected delta**: 1-3%
 
-- [ ] P17 (REFINED): Shape-aware fused segmented_reduce — target: `crates/jolt-cpu/src/backend.rs:520-599`
-    - **Hypothesis**: iter 6's first attempt at fusing the per-outer
-      `reduce_dense` dispatches regressed +6.4% because the fused version
-      lost the inner-axis parallelism that per-outer `reduce_dense_fixed`
-      has via its PAR_THRESHOLD gate. For early rounds (large inner_size,
-      few active outer positions), parallelizing only across outer
-      positions halves the effective core utilization. A correct fusion
-      must dispatch on the (active_count, inner_size) shape: when
-      `inner_size >= PAR_THRESHOLD` and `active_count` is small,
-      parallelize inner pairs; when active_count is large and inner_size
-      is small, parallelize outer; possibly both via rayon nested
-      par_iter. The gain estimate remains: ~84k per-call overhead
-      dispatches × ~5µs each = ~420ms recoverable IF inner parallelism
-      is preserved.
-    - **Abstraction risk**: low — internal to jolt-cpu, trait unchanged.
-    - **Expected delta**: 10-25% (contingent on shape-aware parallelism).
-
 - [ ] P15: Devirtualize `kernel.evaluate` in `reduce_dense_fixed<_, 4, 4>` — target: `crates/jolt-cpu/src/backend.rs:699-750` + `crates/jolt-cpu/src/product_sum.rs:50-60`
     - **Hypothesis**: iter-5 instrumentation showed `reduce_dense_4x4` is
       70.9% self-time (81 933 calls / 197.5 µs avg). Every inner iter goes
@@ -196,6 +179,35 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 7 — P18 shape-aware fused segmented_reduce**
+  (target: `crates/jolt-cpu/src/backend.rs:520-599`). **Design step**:
+  Iter 7 Perfetto trace (generated in stall mode at counter=5) showed
+  `reduce_dense` 75.8% self-time (16 222 ms) and `segmented_reduce`
+  wrapper 9.4% self-time (2 014 ms) with ~84k reduce_one calls.
+  Re-attempted P17 fusion but preserved inner parallelism via the same
+  `if inner_half >= PAR_THRESHOLD` rayon gate reduce_dense_fixed uses.
+  Structure: const-generic `segmented_reduce_fixed<NI, NE>` for (2,2),
+  (3,3), (4,4), (8,4), (8,8), (16,16), (32,32) + dynamic fallback. Each
+  reduce_one inlines the per-outer pair loop with a base-offset load
+  (`if io[k] { 0 } else { a * inner_size }`), matching both LowToHigh
+  and HighToLow binding. Outer par_iter fires when `active.len() >= 2`,
+  inner par_iter when `inner_half >= PAR_THRESHOLD` — so nested rayon
+  is possible when both axes are large, matching pre-fusion behavior.
+  **Gates**: 41/41 equivalence tests green, clippy clean across
+  jolt-{zkvm,compute,cpu,compiler,dory,verifier,bench}. **Result**: two
+  runs 3981.43 ms (−1.80%) and 4122.88 ms (+1.68%) vs 4054.58 ms
+  baseline; avg −0.06%. Flat within ±5% band. Reverted.
+  **Diagnosis**: fusion eliminated the 9.4% thread-time wrapper work
+  but its contribution to wall time was masked by the outer par_iter
+  already running per-outer wrapper work in parallel across threads.
+  Per-call overhead at ~24 µs (2 014 ms / 84 k calls) is genuine but
+  amortized away when 8-way parallel — net wall savings ≈ wrapper /
+  effective_parallelism, which for this workload is within run-to-run
+  noise. The big structural opportunity remains: port core's
+  `GruenSplitEqPolynomial` approach so segmented sumchecks emit ONE
+  cubic per round instead of N per-outer reduces, eliminating the
+  segmentation entirely rather than optimizing per-outer dispatch.
 
 - **Iter 6 — P17 fuse segmented_reduce**
   (target: `crates/jolt-cpu/src/backend.rs:520-599`). **Design step**:
