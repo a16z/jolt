@@ -23,10 +23,10 @@ when the Phase 3 stop condition fires.
 - **log_t**: 12 (overrides `max_trace_length` to 2^12; actual prover work
   is min(guest cycles padded, 2^12))
 - **Program**: `muldiv` (only program supported on the modular stack today)
-- **Stall counter**: 2
+- **Stall counter**: 3
 - **Last green iter**: 1 — P10 `segmented_reduce` parallelize+hoist
   (−72.24% prove_ms: 14607 → 4055 ms, ratio 41.4× → 11.5×)
-- **Green streak**: 0 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%, both reverted)
+- **Green streak**: 0 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%, all reverted)
 - **Phase 3 stop condition**: `modular.prove_ms ≤ core.prove_ms` at
   `log_t ∈ {18, 20}`, 3 consecutive green iters. Only this exits the loop.
 
@@ -150,14 +150,27 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
     - **Abstraction risk**: very low.
     - **Expected delta**: 1-3%
 
-- [ ] P13: Parallelize InstanceBind's 16K serial `interpolate_inplace` calls — target: `crates/jolt-zkvm/src/runtime/handlers.rs:767-787` + new backend method
-    - **Hypothesis**: InstanceBind handler loops over `kdef.inputs` serially calling `backend.interpolate_inplace` per input (16K calls, 140 ms main-thread self-time). The loop also filters via `bound_this_round`/`seen`, so switching to `backend.bind` (which P12 made parallel) isn't a drop-in. Either (a) add `ComputeBackend::interpolate_inplace_many(&mut [&mut Buf])` that parallelizes internally + handler extracts the filtered &mut set via `iter_mut().filter()`, or (b) collect filtered pids, `remove` + `backend.bind` + reinsert.
-    - **Abstraction risk**: low — trait gets a defaulted `interpolate_inplace_many`; CpuBackend specializes; handler stays ≤30 LOC.
-    - **Expected delta**: 2-4% standalone; combined with P12 (re-apply parallel bind in CpuBackend) potentially 4-7%.
-
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 4 — P13 combine P12 parallel `bind` + new
+  `interpolate_inplace_many` trait method parallelizing the 16K serial
+  InstanceBind `interpolate_inplace` calls** (targets:
+  `crates/jolt-compute/src/traits.rs`, `crates/jolt-cpu/src/backend.rs`,
+  `crates/jolt-zkvm/src/runtime/handlers.rs`). Result: flat
+  (3944.09 ms −2.72%, rerun 4010.05 ms −1.10% vs 4054.58 ms baseline;
+  mean −1.91%). Reverted — inconclusive band confirmed on rerun.
+  Pattern: filter pids first, then `device_buffers.iter_mut().filter_map`
+  to obtain `&mut [&mut Buf]`, pass to new trait method that rayon
+  `par_iter_mut`'s. Compiled clean, correctness suite 41/41 green.
+  The real bottleneck is not the per-input parallelism at this scale —
+  per-call BN254 mul cost dominates per-buffer work, and buffer sizes
+  at log_t=12 are small enough that rayon fan-out overhead ≈ speedup.
+  This avenue is likely more productive at higher log_t once inner
+  buffers are larger. Mark "revisit at Phase 2/3 (log_t=14+)" if
+  stalls re-emerge in a regime where InstanceBind per-buffer work
+  exceeds rayon overhead.
 
 - **Iter 3 — P12 parallelize `CpuBackend::bind` across inputs via
   `par_iter_mut`** (target: `crates/jolt-cpu/src/backend.rs:169-184`).
