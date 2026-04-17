@@ -23,11 +23,11 @@ when the Phase 3 stop condition fires.
 - **log_t**: 12 (overrides `max_trace_length` to 2^12; actual prover work
   is min(guest cycles padded, 2^12))
 - **Program**: `muldiv` (only program supported on the modular stack today)
-- **Stall counter**: 1 (iter 13 flat on with_min_len extension; iter 12 green)
+- **Stall counter**: 1 (iter 14 infra-only, stall unchanged; iter 13 flat; iter 12 green)
 - **Last green iter**: 12 — P24 lower `reduce_dense_dynamic` with_min_len
   4096→1024 unlocking booleanity parallelism (−9.24% prove_ms:
   4054 → 3680 ms, ratio 12.1× → 11.0×)
-- **Green streak**: 1 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%)
+- **Green streak**: 1 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infrastructure-only)
 - **Phase 3 stop condition**: `modular.prove_ms ≤ core.prove_ms` at
   `log_t ∈ {18, 20}`, 3 consecutive green iters. Only this exits the loop.
 
@@ -224,6 +224,42 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 14 — Gruen infrastructure: `gruen_cubic_evals` scalar primitive
+  (infrastructure, no perf claim)** (target: new file
+  `crates/jolt-cpu/src/gruen.rs` + `pub mod gruen;` export in lib.rs).
+  **Design step**: pivoting away from micro-opts (e.g., P25 const-generic
+  shape arms) per user's "order-of-magnitude gain" bar while modular is
+  >2× off core. The 53% concentration on outer_remaining (kernel 3,
+  iter 11 trace) remains the dominant structural target. Rather than
+  land Gruen as one 200-LOC iter, split into 4 bounded iters:
+  (14) port scalar gruen_poly_deg_3 + unit test; (15) add
+  Iteration::Gruen + reduce_gruen backend method; (16) wire compiler
+  emission for outer_remaining with dual-path assertion; (17) delete
+  old path, measure. Iter 14 is step 1. **Change**: 125-line new
+  module with `gruen_cubic_evals(current_scalar, w_current, q_const,
+  q_quad, s_0_plus_s_1) → [F; 4]`. Callers supply `w_current` already
+  resolved from the binding order (LowToHigh uses `w[current_index-1]`,
+  HighToLow uses `w[current_index]`). Two unit tests: (a) bit-exact
+  match vs direct `(a+bX)(c+dX+eX²)` multiplication at X ∈ {0,1,2,3}
+  for 32 random inputs; (b) Lagrange-interpolation through evals
+  reproduces direct evaluation at X=4, verifying the 4 evals describe
+  a true cubic. **Gates**: 72/72 jolt-cpu tests green, 41/41
+  jolt-equivalence green, clippy clean both host and host+zk.
+  **Perf sanity**: 3654.95 ms (−0.47% vs 3672.07 baseline), flat as
+  expected since the module is unused dead code today. **Why this is
+  valuable even at 0% perf**: it de-risks the arithmetic. Once iter 15
+  plumbs a backend reduce that emits (q_const, q_quad), iter 16 can
+  assemble the cubic without rediscovering Gruen's formula. Unit tests
+  pin the exact arithmetic, so any downstream wiring bug surfaces as
+  an integration issue, not an arithmetic one. **Next iter (15)**: add
+  `Iteration::Gruen` enum variant to jolt-compiler + new
+  `ComputeBackend::reduce_gruen_deg2(kernel, inputs) → (q_const, q_quad)`
+  method. The reduce fuses two dot products over pairs into one parallel
+  pass: Σ e_active[i] × q_pair_const(lo[i]) for q_const and
+  Σ e_active[i] × q_pair_quad(hi[i]-lo[i]) for q_quad. Signature-only
+  step with unit tests against the pure function from iter 14. Still no
+  compiler/runtime wiring.
 
 - **Iter 13 — P25 extend `with_min_len` lowering to reduce_dense_fixed +
   reduce_sparse (REVERTED, flat)** (targets: `crates/jolt-cpu/src/backend.rs`

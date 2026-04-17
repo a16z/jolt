@@ -17,6 +17,7 @@
 
 mod backend;
 mod generic;
+pub mod gruen;
 mod product_sum;
 pub mod toom_cook;
 
