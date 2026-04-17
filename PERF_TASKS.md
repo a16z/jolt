@@ -23,10 +23,10 @@ when the Phase 3 stop condition fires.
 - **log_t**: 12 (overrides `max_trace_length` to 2^12; actual prover work
   is min(guest cycles padded, 2^12))
 - **Program**: `muldiv` (only program supported on the modular stack today)
-- **Stall counter**: 3
+- **Stall counter**: 4
 - **Last green iter**: 1 — P10 `segmented_reduce` parallelize+hoist
   (−72.24% prove_ms: 14607 → 4055 ms, ratio 41.4× → 11.5×)
-- **Green streak**: 0 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%, all reverted)
+- **Green streak**: 0 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%, all reverted)
 - **Phase 3 stop condition**: `modular.prove_ms ≤ core.prove_ms` at
   `log_t ∈ {18, 20}`, 3 consecutive green iters. Only this exits the loop.
 
@@ -153,6 +153,27 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 5 — P14 lower rayon thresholds in `reduce_dense_fixed`**
+  (target: `crates/jolt-cpu/src/backend.rs:14 + :693-731`). Motivation:
+  per-shape instrumentation of `reduce_dense` (added then reverted)
+  showed the `(NI=4, NE=4)` shape dominates at **70.9% self-time /
+  81 933 calls / 197.5 µs avg**; all other shapes (2x2, 3x3, 8x4, 8x8,
+  16x16, 32x32) together contribute <0.5%. With current
+  `PAR_THRESHOLD = 1024` and `with_min_len = 2048`, the average call
+  (half ≈ 246) falls fully on the serial inner loop, and even
+  half = 2048 gets only a single rayon task. Hypothesis: introduce
+  `REDUCE_DENSE_FIXED_MIN_LEN = 256` and gate both the parallel-path
+  entry and `with_min_len` on it, giving mid-size reduces real
+  fan-out. Result: two runs 4118.15 ms (+1.57%) and 4137.32 ms
+  (+2.04%) vs 4054.58 ms baseline — consistently slightly slower,
+  both in the ±5% inconclusive band. Reverted. Explanation: at D=4
+  the inner work per rayon task (~256 iters × ~8 field mults ≈
+  0.2 ms) is just above the rayon fan-out + merge overhead, so the
+  extra task-creation cost eats the parallelism gain. Kernels where
+  the work/task is larger (higher D, bigger halves at log_T ≥ 14)
+  are the regime where this would likely turn positive; revisit at
+  Phase 2.
 
 - **Iter 4 — P13 combine P12 parallel `bind` + new
   `interpolate_inplace_many` trait method parallelizing the 16K serial
