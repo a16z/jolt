@@ -23,10 +23,10 @@ when the Phase 3 stop condition fires.
 - **log_t**: 12 (overrides `max_trace_length` to 2^12; actual prover work
   is min(guest cycles padded, 2^12))
 - **Program**: `muldiv` (only program supported on the modular stack today)
-- **Stall counter**: 6
+- **Stall counter**: 7
 - **Last green iter**: 1 — P10 `segmented_reduce` parallelize+hoist
   (−72.24% prove_ms: 14607 → 4055 ms, ratio 41.4× → 11.5×)
-- **Green streak**: 0 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%, all reverted)
+- **Green streak**: 0 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%, all reverted)
 - **Phase 3 stop condition**: `modular.prove_ms ≤ core.prove_ms` at
   `log_t ∈ {18, 20}`, 3 consecutive green iters. Only this exits the loop.
 
@@ -176,9 +176,53 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
       `Field` and an `Accumulator` path that consumes it.
     - **Expected delta**: 5-10% (contingent on wiring + field support).
 
+<!-- P19 consumed iter 8; see Notes for result & diagnosis. -->
+
+
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 8 — P19 port folded-slot `[u128; 9]` representation to
+  `WideAccumulator`** (target: `crates/jolt-field/src/arkworks/wide_accumulator.rs`).
+  **Design step**: research via Explore agent pointed to BN254 Fr
+  `WideAccumulator` carry-propagation in `fmadd`/`acc_add`/`merge`
+  as a potential structural inefficiency — the existing `Limbs<9>`
+  (`[u64; 9]`) path serializes each row's carry through remaining
+  limbs on every op; jolt-core's `folded_accum.rs` uses `[u128; N]`
+  positional slots with inter-slot carries deferred to a single
+  `normalize()` right before Montgomery reduction, making each
+  accumulation an independent `u128 += u128` the CPU can issue in
+  parallel via ILP. Expected savings on the hot reduce_dense path:
+  ~2× on `acc_add`, ~5× on `fmadd`, across an estimated ~80M per-proof
+  calls. Target 10-20% wall-time. Implementation: replaced the
+  accumulator body with `slots: [u128; 9]`; `fmadd` does a 4×4
+  schoolbook scattering into adjacent slots without carries, `acc_add`
+  adds the 4 `val` limbs directly into slots 4..=7, `merge` is a
+  9-way independent u128 sum, `reduce` runs `normalize()` (single
+  carry pass) followed by the existing `bn254_ops::from_montgomery_reduce::<9>`.
+  **Gates**: 166/166 jolt-field tests green, 41/41 jolt-equivalence
+  green, clippy clean across jolt-{field,compiler,compute,cpu,zkvm,dory,openings,verifier,bench}.
+  **Result**: two runs 4121.31 ms (+1.65%) and 4036.40 ms (−0.45%)
+  vs 4054.58 ms baseline; avg 4078.85 ms (+0.60%). Flat within ±5%
+  band. Reverted. **Diagnosis**: the accumulator arithmetic is not
+  the reduce_dense bottleneck. Per-iter cost decomposition inside
+  `reduce_dense_fixed<_, 4, 4>`:
+  - `kernel.evaluate` runs `toom_cook::eval_prod_4_assign` → 4× `F::mul`
+    (Montgomery-reducing) → ~200+ cycles / iter
+  - `acc_add` × 4 lanes → 4× ~4 cycles = ~16 cycles / iter
+  So the accumulator is <10% of inner work; halving it would yield
+  ~5% wall-time improvement at best — masked by variance here.
+  Also: rustc/LLVM lower `u64 + carry` chains on BN254's
+  `Limbs<N>::fmadd` into `adc`/`addcarry` sequences that pipeline
+  well on modern CPUs — the expected serialization penalty was
+  overstated in the pre-experiment analysis. **Next structural
+  target**: attack `F::mul` inside `eval_prod_4_assign` (P16 in
+  queue) — defer Montgomery reduction for the pointwise product
+  outputs so they accumulate as unreduced wide integers, dropping
+  ~4 Mont-reductions per inner iter × ~80M iters of the reduce_dense
+  hot loop. That attacks the actual dominant cost rather than
+  the accumulator wrapper.
 
 - **Iter 7 — P18 shape-aware fused segmented_reduce**
   (target: `crates/jolt-cpu/src/backend.rs:520-599`). **Design step**:
