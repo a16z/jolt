@@ -37,13 +37,6 @@ impl Debug for Bn254GT {
     }
 }
 
-impl From<Fq12> for Bn254GT {
-    #[inline(always)]
-    fn from(inner: Fq12) -> Self {
-        Self(inner)
-    }
-}
-
 impl From<Bn254GT> for Fq12 {
     #[inline(always)]
     fn from(w: Bn254GT) -> Self {
@@ -139,7 +132,7 @@ impl MulAssign for Bn254GT {
 impl AppendToTranscript for Bn254GT {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
         use ark_serialize::CanonicalSerialize;
-        let mut buf = Vec::new();
+        let mut buf = Vec::with_capacity(self.0.uncompressed_size());
         self.0
             .serialize_uncompressed(&mut buf)
             .expect("GT serialization cannot fail");
@@ -187,7 +180,7 @@ impl JoltGroup for Bn254GT {
 impl serde::Serialize for Bn254GT {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use ark_serialize::CanonicalSerialize;
-        let mut buf = Vec::new();
+        let mut buf = Vec::with_capacity(self.0.compressed_size());
         self.0
             .serialize_compressed(&mut buf)
             .map_err(serde::ser::Error::custom)?;

@@ -2,6 +2,7 @@
 
 use ark_bn254::G1Affine;
 use ark_ec::CurveGroup;
+use ark_ff::Zero;
 use rayon::prelude::*;
 
 use super::Bn254G1;
@@ -36,6 +37,10 @@ fn batch_g1_additions_affine(bases: &[G1Affine], indices: &[usize]) -> G1Affine 
 
         let mut inverses = denominators;
         ark_ff::fields::batch_inversion(&mut inverses);
+        debug_assert!(
+            inverses.iter().all(|inv| !inv.is_zero()),
+            "batch addition requires distinct x-coordinates per pair",
+        );
 
         let mut new_points: Vec<G1Affine> = (0..pairs_count)
             .into_par_iter()
@@ -152,6 +157,10 @@ fn batch_g1_additions_multi_affine_inner(
 
         let mut inverses = all_denominators;
         ark_ff::fields::batch_inversion(&mut inverses);
+        debug_assert!(
+            inverses.iter().all(|inv| !inv.is_zero()),
+            "batch addition requires distinct x-coordinates per pair",
+        );
 
         let mut new_working_sets: Vec<Vec<G1Affine>> = working_sets
             .iter()

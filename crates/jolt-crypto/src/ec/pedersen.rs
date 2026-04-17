@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use super::group::JoltGroup;
 use crate::commitment::{Commitment, VectorCommitment};
 
+const EMPTY_GENERATORS_MSG: &str = "Pedersen setup requires at least one message generator";
+
 /// Pedersen vector commitment scheme, generic over any `JoltGroup`.
 ///
 /// Commitment: `C = Σᵢ values[i] * message_generators[i] + blinding * blinding_generator`
@@ -18,7 +20,7 @@ pub struct Pedersen<G: JoltGroup> {
 
 /// Setup parameters for Pedersen commitments: a vector of message generators
 /// and a separate blinding generator.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(bound = "")]
 pub struct PedersenSetup<G: JoltGroup> {
     pub message_generators: Vec<G>,
@@ -32,14 +34,30 @@ impl<G: JoltGroup> PedersenSetup<G> {
     ///
     /// Panics if `message_generators` is empty.
     pub fn new(message_generators: Vec<G>, blinding_generator: G) -> Self {
-        assert!(
-            !message_generators.is_empty(),
-            "Pedersen setup requires at least one message generator"
-        );
+        assert!(!message_generators.is_empty(), "{EMPTY_GENERATORS_MSG}");
         Self {
             message_generators,
             blinding_generator,
         }
+    }
+}
+
+impl<'de, G: JoltGroup> Deserialize<'de> for PedersenSetup<G> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(bound = "")]
+        struct Raw<G: JoltGroup> {
+            message_generators: Vec<G>,
+            blinding_generator: G,
+        }
+        let raw = Raw::<G>::deserialize(deserializer)?;
+        if raw.message_generators.is_empty() {
+            return Err(serde::de::Error::custom(EMPTY_GENERATORS_MSG));
+        }
+        Ok(Self {
+            message_generators: raw.message_generators,
+            blinding_generator: raw.blinding_generator,
+        })
     }
 }
 
