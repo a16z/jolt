@@ -49,7 +49,9 @@ fn op_span(op: &Op) -> tracing::span::EnteredSpan {
         Op::BindOpeningInputs { .. } => tracing::info_span!("BindOpeningInputs").entered(),
         Op::ReleaseDevice { .. } => tracing::info_span!("ReleaseDevice").entered(),
         Op::ReleaseHost { .. } => tracing::info_span!("ReleaseHost").entered(),
-        Op::BatchRoundBegin { .. } => tracing::info_span!("BatchRoundBegin").entered(),
+        Op::BatchRoundBegin { batch, round, .. } => {
+            tracing::info_span!("BatchRoundBegin", batch = batch.0, round = round).entered()
+        }
         Op::BatchInactiveContribution { .. } => {
             tracing::info_span!("BatchInactiveContribution").entered()
         }
@@ -65,11 +67,43 @@ fn op_span(op: &Op) -> tracing::span::EnteredSpan {
             tracing::info_span!("InstanceBindPreviousPhase").entered()
         }
         Op::CaptureScalar { .. } => tracing::info_span!("CaptureScalar").entered(),
-        Op::InstanceReduce { .. } => tracing::info_span!("InstanceReduce").entered(),
-        Op::InstanceSegmentedReduce { .. } => {
-            tracing::info_span!("InstanceSegmentedReduce").entered()
-        }
-        Op::InstanceBind { .. } => tracing::info_span!("InstanceBind").entered(),
+        Op::InstanceReduce {
+            batch,
+            instance,
+            kernel,
+        } => tracing::info_span!(
+            "InstanceReduce",
+            batch = batch.0,
+            instance = instance.0,
+            kernel = kernel
+        )
+        .entered(),
+        Op::InstanceSegmentedReduce {
+            batch,
+            instance,
+            kernel,
+            round_within_phase,
+            ..
+        } => tracing::info_span!(
+            "InstanceSegmentedReduce",
+            batch = batch.0,
+            instance = instance.0,
+            kernel = kernel,
+            round = round_within_phase
+        )
+        .entered(),
+        Op::InstanceBind {
+            batch,
+            instance,
+            kernel,
+            ..
+        } => tracing::info_span!(
+            "InstanceBind",
+            batch = batch.0,
+            instance = instance.0,
+            kernel = kernel
+        )
+        .entered(),
         Op::BindCarryBuffers { .. } => tracing::info_span!("BindCarryBuffers").entered(),
         Op::BatchAccumulateInstance { .. } => {
             tracing::info_span!("BatchAccumulateInstance").entered()

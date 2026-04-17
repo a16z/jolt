@@ -23,10 +23,10 @@ when the Phase 3 stop condition fires.
 - **log_t**: 12 (overrides `max_trace_length` to 2^12; actual prover work
   is min(guest cycles padded, 2^12))
 - **Program**: `muldiv` (only program supported on the modular stack today)
-- **Stall counter**: 9
+- **Stall counter**: 9 (iter 11 was instrumentation-only; not a stall)
 - **Last green iter**: 1 — P10 `segmented_reduce` parallelize+hoist
   (−72.24% prove_ms: 14607 → 4055 ms, ratio 41.4× → 11.5×)
-- **Green streak**: 0 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%, all reverted)
+- **Green streak**: 0 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only, no hypothesis)
 - **Phase 3 stop condition**: `modular.prove_ms ≤ core.prove_ms` at
   `log_t ∈ {18, 20}`, 3 consecutive green iters. Only this exits the loop.
 
@@ -209,6 +209,34 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 11 — per-stage instrumentation (infrastructure, no perf claim)**
+  (targets: `crates/jolt-zkvm/src/runtime/mod.rs` — added `_stage_span`
+  swap on `BeginStage` so every subsequent op nests under a `stage(index=N)`
+  span; `crates/jolt-zkvm/src/runtime/handlers.rs::op_span` — tagged
+  `InstanceSegmentedReduce`/`InstanceReduce`/`InstanceBind`/`BatchRoundBegin`
+  spans with `batch`, `instance`, `kernel`, `round` fields). Goal: pivot
+  from guessing at aggregate `reduce_dense` self-time to attributing
+  every microsecond to a specific sumcheck instance and round.
+  **Gates**: clippy clean jolt-zkvm + jolt-compiler + jolt-cpu + jolt-compute;
+  41/41 jolt-equivalence green. **Perf check (not a hypothesis)**:
+  3954.3 ms vs 4054.58 ms baseline = −2.47%, within noise — instrumentation
+  has no material cost.
+  **Key finding**:
+    - **Stage 1 outer_remaining sumcheck** (batch=0, instance=0, kernel=3)
+      alone = 53% of total prove wall (1993 ms / 3774 ms) with 7.5×
+      effective parallelism (15591 ms thread-time). 10 rounds, per-round
+      wall decays classically: 989 → 493 → 246 → 125 → 63 → 33 → 19 →
+      12 → 7 → 4 ms.
+    - Stage 5 `InstanceReduce` (register RW + RAM val check) = 460 ms
+      at 1× parallelism. Secondary target.
+    - Stage 7 `DoryScheme::open` = 416 ms (opening proof; not sumcheck,
+      not addressable by Gruen).
+  **Implication for iter 12**: the Gruen split-eq port must target
+  exactly this one sumcheck — outer_remaining, kernel 3. A correct port
+  should cut its per-round work by a factor dependent on the outer/inner
+  split (likely 2–4×), collapsing ~1000+ ms from stage 1 wall. That
+  single fix is worth more than the next 3 hypotheses combined.
 
 - **Iter 10 — P20 fused segmented_reduce (no decomposition)**
   (target: `crates/jolt-cpu/src/backend.rs` — replaced `segmented_reduce`

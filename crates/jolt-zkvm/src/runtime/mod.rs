@@ -167,7 +167,16 @@ where
 
     let mut device_buffers: HashMap<PolynomialId, Buf<B, F>> = HashMap::new();
 
+    // Stage-level tracing span. Dropped/replaced on every BeginStage so each
+    // stage's ops appear nested under a "stage" span in Perfetto/chrome traces,
+    // giving per-stage self-time breakdown without hand-tagging every op.
+    let mut _stage_span: Option<tracing::span::EnteredSpan> = None;
+
     for op in &executable.ops {
+        if let jolt_compiler::module::Op::BeginStage { index } = op {
+            _stage_span = None;
+            _stage_span = Some(tracing::info_span!("stage", index = *index).entered());
+        }
         handlers::dispatch_op(
             op,
             &mut state,
