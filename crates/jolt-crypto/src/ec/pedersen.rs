@@ -55,6 +55,18 @@ impl<G: JoltGroup> VectorCommitment for Pedersen<G> {
         setup.message_generators.len()
     }
 
+    /// Computes `C = Σᵢ values[i] · message_generators[i] + blinding · blinding_generator`.
+    ///
+    /// Short inputs commit over a prefix of the generators, which is equivalent
+    /// to zero-padding: `commit(setup, [a], r) == commit(setup, [a, 0], r)`.
+    /// This matters for binding: Pedersen only binds inputs of a fixed length.
+    /// Callers that accept variable-length inputs must pin the length
+    /// independently (e.g., append it to the Fiat-Shamir transcript) to
+    /// avoid accepting two different-length openings of the same commitment.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `values.len() > Self::capacity(setup)`.
     fn commit<F: Field>(setup: &Self::Setup, values: &[F], blinding: &F) -> G {
         assert!(
             values.len() <= setup.message_generators.len(),

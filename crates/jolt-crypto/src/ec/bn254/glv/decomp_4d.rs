@@ -17,6 +17,8 @@ fn fr_to_bigint(fr: Fr) -> BigInt {
 /// Decomposes k into (k0, k1, k2, k3) such that
 /// k ≡ k0 + k1·λ + k2·λ² + k3·λ³ (mod r).
 /// Each coefficient is at most ~66 bits.
+/// Returns `(|kᵢ|, signsᵢ)` with `signsᵢ = true` meaning positive — matching
+/// the 2D convention in [`super::decomp_2d::decompose_scalar_2d`].
 fn decompose_scalar_table_based(scalar: &BigInt) -> ([u128; 4], [bool; 4]) {
     let mut k0 = 0u128;
     let mut k1 = 0u128;
@@ -57,38 +59,39 @@ fn decompose_scalar_table_based(scalar: &BigInt) -> ([u128; 4], [bool; 4]) {
         bit_position += 1;
     }
 
-    let (final_k0, neg_flag0) = if (k0 as i128) < 0 {
-        (k0.wrapping_neg(), true)
+    let (final_k0, sign0) = if (k0 as i128) < 0 {
+        (k0.wrapping_neg(), false)
     } else {
-        (k0, false)
+        (k0, true)
     };
 
-    let (final_k1, neg_flag1) = if (k1 as i128) < 0 {
-        (k1.wrapping_neg(), true)
+    let (final_k1, sign1) = if (k1 as i128) < 0 {
+        (k1.wrapping_neg(), false)
     } else {
-        (k1, false)
+        (k1, true)
     };
 
-    let (final_k2, neg_flag2) = if (k2 as i128) < 0 {
-        (k2.wrapping_neg(), true)
+    let (final_k2, sign2) = if (k2 as i128) < 0 {
+        (k2.wrapping_neg(), false)
     } else {
-        (k2, false)
+        (k2, true)
     };
 
-    let (final_k3, neg_flag3) = if (k3 as i128) < 0 {
-        (k3.wrapping_neg(), true)
+    let (final_k3, sign3) = if (k3 as i128) < 0 {
+        (k3.wrapping_neg(), false)
     } else {
-        (k3, false)
+        (k3, true)
     };
 
     (
         [final_k0, final_k1, final_k2, final_k3],
-        [neg_flag0, neg_flag1, neg_flag2, neg_flag3],
+        [sign0, sign1, sign2, sign3],
     )
 }
 
 /// Decompose a BN254 scalar for 4D GLV multiplication (G2).
-/// Returns coefficients as `BigInt` and their sign flags.
+/// Returns `(coefficients, signs)` where `signs[i] = true` means positive,
+/// mirroring the convention used by [`super::decomp_2d::decompose_scalar_2d`].
 pub fn decompose_scalar_4d(scalar: Fr) -> ([<Fr as PrimeField>::BigInt; 4], [bool; 4]) {
     let scalar_bigint = fr_to_bigint(scalar);
     let (coeffs_u128, signs) = decompose_scalar_table_based(&scalar_bigint);

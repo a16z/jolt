@@ -1,8 +1,8 @@
 use std::fmt::Debug;
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-use ark_bn254::Fq12;
-use ark_ff::{Field as ArkField, PrimeField};
+use ark_bn254::{Fq12, Fr};
+use ark_ff::{AdditiveGroup, Field as ArkField, PrimeField};
 use jolt_field::Field;
 
 use jolt_transcript::{AppendToTranscript, Transcript};
@@ -200,6 +200,19 @@ impl<'de> serde::Deserialize<'de> for Bn254GT {
         use ark_serialize::CanonicalDeserialize;
         let buf = <Vec<u8>>::deserialize(deserializer)?;
         let inner = Fq12::deserialize_compressed(&buf[..]).map_err(serde::de::Error::custom)?;
+        // Reject Fq12::ZERO: not in any multiplicative subgroup, and later
+        // Neg/Sub/SubAssign would call .inverse().expect(...) and panic.
+        if inner == Fq12::ZERO {
+            return Err(serde::de::Error::custom(
+                "GT element is zero (not in r-torsion subgroup)",
+            ));
+        }
+        // Subgroup membership: GT is the r-torsion subgroup, so x^r == 1.
+        if inner.pow(Fr::MODULUS) != Fq12::ONE {
+            return Err(serde::de::Error::custom(
+                "GT element is not in the r-torsion subgroup",
+            ));
+        }
         Ok(Self(inner))
     }
 }
