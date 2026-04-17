@@ -23,12 +23,12 @@ when the Phase 3 stop condition fires.
 - **log_t**: 12 (overrides `max_trace_length` to 2^12; actual prover work
   is min(guest cycles padded, 2^12))
 - **Program**: `muldiv` (only program supported on the modular stack today)
-- **Stall counter**: 1 (iter 22 instrumentation-only; iter 21 flat; iter 20 green; iter 19 green; iter 18 reverted; iter 17 profiling-only; iter 16 infra; iter 15 infra; iter 14 infra; iter 13 flat; iter 12 green)
+- **Stall counter**: 1 (iter 23 instrumentation-only; iter 22 instrumentation-only; iter 21 flat; iter 20 green; iter 19 green; iter 18 reverted; iter 17 profiling-only; iter 16 infra; iter 15 infra; iter 14 infra; iter 13 flat; iter 12 green)
 - **Last green iter**: 20 — parallelize `Op::Commit` outer loop via rayon.
   42 serial Dory `PCS::commit` calls (508 ms wall, 720 ms CPU, 1.4× effective
   parallelism) → parallel collect of commitments + serial transcript append
   (−22.6% prove_ms: 1867 → 1444 ms best, ratio 5.9× → 4.4×)
-- **Green streak**: 3 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infra primitive; iter 15 Gruen infra reduce; iter 16 Gruen infra variant; iter 17 post-P24 re-profile; iter 18 Gruen dispatch reverted; iter 19 Gruen end-to-end −49.2%; iter 20 parallel Op::Commit −22.6%; iter 21 P28 parallelize lt_evals + EqPlusOne::evals flat −1.7%; iter 22 instrumentation-only — per-stage CPU vs wall saturation)
+- **Green streak**: 3 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infra primitive; iter 15 Gruen infra reduce; iter 16 Gruen infra variant; iter 17 post-P24 re-profile; iter 18 Gruen dispatch reverted; iter 19 Gruen end-to-end −49.2%; iter 20 parallel Op::Commit −22.6%; iter 21 P28 parallelize lt_evals + EqPlusOne::evals flat −1.7%; iter 22 instrumentation-only — per-stage CPU vs wall saturation; iter 23 instrumentation-only — per-op-class CPU vs wall saturation + explicit dory `parallel` feature)
 - **Phase 3 stop condition**: `modular.prove_ms ≤ core.prove_ms` at
   `log_t ∈ {18, 20}`, 3 consecutive green iters. Only this exits the loop.
 
@@ -260,28 +260,156 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
     - **Expected delta**: 8-15% total wall (push stage 1 3.4× → 5-6×
       → 553 × 3.4/5.5 = 342 ms = 211 ms saved ≈ 13% wall).
 
-- [ ] P31: Finer-grained op-class saturation instrumentation — target:
-  `crates/jolt-zkvm/src/runtime/mod.rs:175-191` (dispatch loop) + a
-  per-op-class `(wall, cpu)` accumulator.
-    - **Hypothesis**: iter 22 gave per-stage saturation; next we need
-      per-op-class (Materialize*, InstanceReduce, InstanceSegmentedReduce,
-      Commit, Open, Bind, SumcheckRound, BatchRoundBegin, …) within each
-      stage. Stage 7's 1.63× is Dory Open; but Stage 4's 1.17× / 130 ms
-      / 14.6% sat is not yet attributed. Stage 1's mixed 3.38× may have
-      Materialize at 1.5× dragging down Commit at 5×. Op-class breakdown
-      identifies the specific low-saturation op that hides inside a
-      stage, unlocking precise attacks.
-    - **Abstraction risk**: very low — internal runtime instrumentation,
-      ~30 LOC, no protocol contact. Use `match op { Op::Materialize{..}
-      => "Materialize", … }` for key selection, `HashMap<&'static str,
-      (Duration, Duration)>` accumulator, emit summary at end of execute.
-    - **Expected delta**: 0% direct; unlocks 1-2 iters of precise
-      optimization work.
+- [x] P31: Finer-grained op-class saturation instrumentation — DONE iter 23.
+  See **Notes / Iter 23** for the full op-class breakdown. Key finding:
+  Materialize family (Materialize + MaterializeUnlessFresh + ReadCheckingReduce)
+  runs at ~1.0 threads totalling ~510 ms wall — near-serial — now the top
+  parallelism opportunity.
+
+- [ ] P32: Parallel Materialize-family op dispatch — target:
+  `crates/jolt-zkvm/src/runtime/mod.rs` execute loop + compiler-side
+  "independent op window" detection (same pattern as iter 20's parallel
+  Op::Commit win).
+    - **Hypothesis**: iter 23 op-class instrumentation showed
+      `Op::Materialize` runs at **1.02 threads / 12.7% sat** across 197
+      calls totalling **297 ms wall** (stage 1 + stage 3 dominated), and
+      `Op::MaterializeUnlessFresh` at **1.00 threads / 12.5% sat** across
+      46 calls totalling **121 ms wall**. Combined: **418 ms wall at
+      ~1.0 threads**. The per-op internal backend work is already
+      rayon-parallel where applicable (`eq_table` PAR_THRESHOLD gate), so
+      the serial residue is either (a) small tables below PAR_THRESHOLD,
+      or (b) the outer dispatch loop iterating materializes sequentially.
+      Identifying topologically-independent Materialize ops in a stage
+      and dispatching them via `into_par_iter` (same pattern as iter 20
+      Op::Commit) should lift effective parallelism to 4-6 threads,
+      saving ~200-280 ms wall.
+    - **Abstraction risk**: medium — requires either (a) compiler to
+      annotate independent-op windows in Executable::ops, OR (b) runtime
+      to build per-Materialize input/output dependency graph at dispatch
+      time. `BufferProvider::Buf` must be Send (already is per iter 20's
+      Op::Commit parallelization). Bigger concern: `Materialize` writes
+      to `state.buffers: HashMap<BufferId, Buf>`, which needs Mutex for
+      parallel insert — unless we switch to `Vec<Option<Buf>>` indexed
+      by BufferId for lock-free writes. Handlers stay ≤30 LOC.
+    - **Expected delta**: 10-18% wall (418 × (1.0/5) ≈ 84 ms remaining,
+      saving ~334 ms ≈ 22%, discount for coordination overhead and the
+      subset of Materializes that are already small enough that parallel
+      dispatch overhead dominates).
+
+- [ ] P33: Parallelize single-call `ReduceOpenings` internals — target:
+  `crates/jolt-zkvm/src/runtime/handlers.rs` ReduceOpenings handler.
+    - **Hypothesis**: iter 23 op-class showed `Op::ReduceOpenings` at
+      **1.00 threads / 12.5% sat** over **93 ms wall** in 1 call. That's
+      one big RLC over ~40 opening claims, done serially. A rayon
+      `fold + reduce` over the claim vector (each partial sum is F * eval,
+      combined by addition) is straight-forward and should collapse the
+      wall to <20 ms at 5-6 cores = **~5-6% total wall**. Lower leverage
+      than P32 but low-risk quick win.
+    - **Abstraction risk**: low — single handler change, no compiler
+      contact. The RLC is associative, so reduction is trivially
+      parallelizable.
+    - **Expected delta**: 5-6% wall.
+
+- [ ] P34: Investigate Dory Open internal parallelism — target:
+  `dory-pcs` crate (external, but we control the fork).
+    - **Hypothesis**: iter 23 showed `Op::Open` at **1.87 threads / 23.4%
+      sat** in 257 ms / 1 call. `parallel` feature IS enabled (confirmed
+      via `cargo tree`, propagated through `cache`). So the internal
+      parallelism gap is WITHIN dory — specific phases of `dory::prove`
+      are serial (Fiat-Shamir transcript boundaries, non-MSM scalar
+      arithmetic, fold steps). Profile `dory::prove` top-down via
+      perfetto flamegraph to identify the serial residue, then (a) add
+      rayon to identified hot loops upstream in dory-pcs repo, or (b) if
+      protocol-bound, accept as a hard cap.
+    - **Abstraction risk**: low-medium — upstream code change in dory-pcs
+      is outside this repo but user owns the fork; runtime side stays
+      untouched.
+    - **Expected delta**: 3-8% wall (depends on how much of 257 ms is
+      inherently serial). If Dory internal can push from 1.87 → 5 cores,
+      save ~160 ms ≈ 10% wall.
 
 
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 23 — Instrumentation: per-op-class CPU-vs-wall saturation + explicit dory `parallel` feature (infra, no perf claim)**
+  (target: `crates/jolt-zkvm/src/runtime/mod.rs` op_class_tag + accumulator;
+  `Cargo.toml` workspace dep `dory` features).
+  **Motivation**: iter 22 revealed per-stage saturation but stages pack
+  heterogeneous ops (Materialize + Commit + Bind + … in stage 1); the next
+  attack needs op-class attribution. User also flagged "make sure we are
+  propagating the parallel feature for dory!" — on inspection the feature
+  WAS transitively enabled via dory-pcs's `cache = ["arkworks", "parallel"]`,
+  confirmed via `cargo tree -p jolt-dory -e features | grep parallel`. Made
+  the feature flag explicit in the workspace dory dep so future dependency
+  pruning can't accidentally disable it.
+  **Change (~50 LOC)**: added `op_class_tag(op: &Op) -> Option<&'static str>`
+  helper mapping ~35 Op variants to short static tags (microsecond
+  orchestration ops return None to avoid getrusage overhead dominating).
+  Wrapped each `dispatch_op` call in a `(wall, cpu)` pair and aggregated by
+  tag into `HashMap<&'static str, (Duration, Duration, u64)>`. Emitted
+  sorted `tracing::info!` events on target `perf_op` at end of execute.
+  **Gates**: 41/41 jolt-equivalence green (transcript_divergence + zkvm_proof_accepted); clippy clean. **Perf (3 runs at log_t=12)**: 1457, 1431, 1516 ms;
+  median 1457 (+0.9% vs ratchet 1444.14, inside ±5% band). **Ratchet not
+  updated** (instrumentation-only). **Stall counter NOT incremented** per
+  iter 11/17/22 precedent.
+
+  **Findings (8-core machine, log_t=12, muldiv, modular, 1504 ms wall run)**:
+
+  | Rank | Op | Wall (ms) | CPU (ms) | Calls | threads_avg | Sat % |
+  |---:|---|---:|---:|---:|---:|---:|
+  | 1 | **Materialize** | **297** | 302 | 197 | **1.02** | **12.7%** |
+  | 2 | **Open** | **257** | 482 | 1 | **1.87** | **23.4%** |
+  | 3 | InstanceReduce | 248 | 679 | 217 | 2.74 | 34.3% |
+  | 4 | InstanceSegmentedReduce | 203 | 1379 | 20 | 6.80 | 85.0% |
+  | 5 | InstanceBind | 128 | 656 | 216 | 5.14 | 64.2% |
+  | 6 | **MaterializeUnlessFresh** | **121** | 121 | 46 | **1.00** | **12.5%** |
+  | 7 | **ReduceOpenings** | **93** | 93 | 1 | **1.00** | **12.5%** |
+  | 8 | **ReadCheckingReduce** | **92** | 97 | 128 | **1.06** | **13.3%** |
+  | 9 | Commit | 49 | 326 | 3 | 6.66 | 83.3% |
+  | rest | (≤17 ms each) | — | — | — | — | — |
+
+  **Key takeaways (rank by leverage × tractability)**:
+
+  1. **Materialize family ≈ 510 ms wall at ~1.0 threads** (Materialize 297 +
+     MaterializeUnlessFresh 121 + ReadCheckingReduce 92). This is the new
+     #1 parallelism opportunity — single-threaded despite 7 idle cores.
+     Per-op internal work is already rayon-parallel where applicable
+     (`eq_table` has a PAR_THRESHOLD=1024 gate); the serial residue is
+     in the outer dispatch loop. **Attack**: parallel outer dispatch of
+     topologically-independent Materialize ops (same pattern as iter 20
+     Op::Commit which lifted commit from 1.4× → 6.7×). **P32 added**:
+     expected 10-18% wall. Trace: `muldiv_log_t12_iter23_op_class.json`.
+  2. **Dory Open 257 ms at 1.87 threads / 23.4% sat**, 1 call. The
+     `parallel` feature IS enabled for dory-pcs (confirmed via cargo
+     tree), so the remaining gap is inside dory. Protocol has
+     Fiat-Shamir transcript boundaries that are inherently serial, but
+     the MSM-heavy phases (setup_parallel, fold steps) can fan out
+     further. **P34 added**: profile dory::prove top-down, push internal
+     rayon; expected 3-8% wall.
+  3. **ReduceOpenings 93 ms single-call at 1.0 threads**. Low hanging
+     fruit — a single big RLC of ~40 opening claims. Fold+reduce via
+     rayon is trivial. **P33 added**: expected 5-6% wall.
+  4. **InstanceSegmentedReduce at 6.80 threads / 85% sat** (203 ms) is
+     already excellent — the P24/P26 Gruen kernel work made this work
+     fully parallel internally. Don't touch.
+  5. **Commit at 6.66 threads / 83.3%** — iter 20's P27 parallel
+     outer-commit win holding strong. Don't touch.
+  6. **InstanceBind at 5.14 threads / 64.2%** (128 ms). Moderate
+     saturation but moderate wall; worth looking at later if Materialize
+     fam + Dory-open closed.
+
+  **Why `parallel` was already transitively enabled**: dory-pcs v0.3.0
+  defines `cache = ["arkworks", "parallel"]`, so including `cache`
+  (which we need for dory's setup cache) pulls `parallel` along. Added
+  explicit `parallel` to the feature list anyway as defense-in-depth —
+  if someone later removes `cache`, parallelism survives.
+
+  **Hypothesis queue updates**: P31 marked DONE. P32 (parallel
+  Materialize dispatch) is the top iter-24 candidate. P33 (parallel
+  ReduceOpenings) and P34 (dory internal parallel profile) queued as
+  follow-ups.
 
 - **Iter 22 — Instrumentation: per-stage CPU-vs-wall saturation (infra, no perf claim)**
   (target: `crates/jolt-zkvm/src/runtime/{cpu_clock.rs,mod.rs}`, +libc dep).

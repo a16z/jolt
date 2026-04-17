@@ -23,6 +23,53 @@ pub mod prefix_suffix;
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
+/// Short static tag for op-class saturation instrumentation. Returns `None` for
+/// microsecond-scale orchestration ops (transcript absorb/squeeze/release)
+/// whose per-call getrusage overhead would be a large relative cost.
+fn op_class_tag(op: &jolt_compiler::module::Op) -> Option<&'static str> {
+    use jolt_compiler::module::Op;
+    Some(match op {
+        Op::Materialize { .. } => "Materialize",
+        Op::MaterializeUnlessFresh { .. } => "MaterializeUnlessFresh",
+        Op::MaterializeIfAbsent { .. } => "MaterializeIfAbsent",
+        Op::MaterializeSegmentedOuterEq { .. } => "MaterializeSegmentedOuterEq",
+        Op::MaterializePBuffers { .. } => "MaterializePBuffers",
+        Op::MaterializeRA { .. } => "MaterializeRA",
+        Op::MaterializeCombinedVal { .. } => "MaterializeCombinedVal",
+        Op::Commit { .. } => "Commit",
+        Op::CommitStreaming { .. } => "CommitStreaming",
+        Op::Open => "Open",
+        Op::ReduceOpenings => "ReduceOpenings",
+        Op::InstanceReduce { .. } => "InstanceReduce",
+        Op::InstanceSegmentedReduce { .. } => "InstanceSegmentedReduce",
+        Op::InstanceBind { .. } => "InstanceBind",
+        Op::InstanceBindPreviousPhase { .. } => "InstanceBindPreviousPhase",
+        Op::Bind { .. } => "Bind",
+        Op::Evaluate { .. } => "Evaluate",
+        Op::EvaluatePreprocessed { .. } => "EvaluatePreprocessed",
+        Op::BatchRoundBegin { .. } => "BatchRoundBegin",
+        Op::BatchRoundFinalize { .. } => "BatchRoundFinalize",
+        Op::BatchAccumulateInstance { .. } => "BatchAccumulateInstance",
+        Op::BatchInactiveContribution { .. } => "BatchInactiveContribution",
+        Op::ReadCheckingReduce { .. } => "ReadCheckingReduce",
+        Op::RafReduce { .. } => "RafReduce",
+        Op::SumcheckRound { .. } => "SumcheckRound",
+        Op::LagrangeProject { .. } => "LagrangeProject",
+        Op::DuplicateInterleave { .. } => "DuplicateInterleave",
+        Op::RegroupConstraints { .. } => "RegroupConstraints",
+        Op::BindCarryBuffers { .. } => "BindCarryBuffers",
+        Op::QBufferScatter { .. } => "QBufferScatter",
+        Op::SuffixScatter { .. } => "SuffixScatter",
+        Op::ExpandingTableUpdate { .. } => "ExpandingTableUpdate",
+        Op::InitExpandingTable { .. } => "InitExpandingTable",
+        Op::WeightedSum { .. } => "WeightedSum",
+        Op::CheckpointEvalBatch { .. } => "CheckpointEvalBatch",
+        Op::UpdateInstanceWeights { .. } => "UpdateInstanceWeights",
+        Op::InitInstanceWeights { .. } => "InitInstanceWeights",
+        _ => return None,
+    })
+}
+
 use jolt_compiler::PolynomialId;
 use jolt_compute::{Buf, BufferProvider, ComputeBackend, Executable};
 
@@ -183,6 +230,14 @@ where
     let mut stage_start: Option<(usize, Instant, Duration)> = None;
     let mut stage_stats: Vec<(usize, Duration, Duration)> = Vec::new();
 
+    // Per-op-class saturation: aggregate (wall, cpu) by op variant name, keyed
+    // by a short &'static str. Only the expensive op classes are instrumented
+    // (Materialize*, Commit, Open, InstanceReduce, InstanceSegmentedReduce,
+    // ReduceOpenings, BatchRoundBegin, SumcheckRound, Bind, Evaluate).
+    // Orchestration ops (Squeeze, Absorb*, BeginStage, RecordEvals, …) run in
+    // microseconds and the getrusage overhead would be a large relative cost.
+    let mut op_class_stats: HashMap<&'static str, (Duration, Duration, u64)> = HashMap::new();
+
     for op in &executable.ops {
         if let jolt_compiler::module::Op::BeginStage { index } = op {
             if let Some((prev_idx, wall_at_entry, cpu_at_entry)) = stage_start.take() {
@@ -196,6 +251,14 @@ where
             _stage_span = None;
             _stage_span = Some(tracing::info_span!("stage", index = *index).entered());
         }
+
+        let class = op_class_tag(op);
+        let (wall, cpu) = if class.is_some() {
+            (Some(Instant::now()), Some(cpu_clock::process_cpu_time()))
+        } else {
+            (None, None)
+        };
+
         handlers::dispatch_op(
             op,
             &mut state,
@@ -207,6 +270,17 @@ where
             transcript,
             &stage_point_indices,
         );
+
+        if let (Some(tag), Some(w_start), Some(c_start)) = (class, wall, cpu) {
+            let dw = w_start.elapsed();
+            let dc = cpu_clock::process_cpu_time().saturating_sub(c_start);
+            let e = op_class_stats
+                .entry(tag)
+                .or_insert((Duration::ZERO, Duration::ZERO, 0));
+            e.0 += dw;
+            e.1 += dc;
+            e.2 += 1;
+        }
     }
 
     if let Some((prev_idx, wall_at_entry, cpu_at_entry)) = stage_start.take() {
@@ -254,6 +328,24 @@ where
             threads_avg = r,
             saturation_pct = (r / ncpus as f64) * 100.0,
             "stage"
+        );
+    }
+
+    let mut op_classes: Vec<_> = op_class_stats.iter().collect();
+    op_classes.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
+    for (tag, (wall, cpu, calls)) in op_classes {
+        let w = wall.as_secs_f64() * 1000.0;
+        let c = cpu.as_secs_f64() * 1000.0;
+        let r = if w > 0.0 { c / w } else { 0.0 };
+        tracing::info!(
+            target: "perf_op",
+            op = tag,
+            wall_ms = w,
+            cpu_ms = c,
+            calls = calls,
+            threads_avg = r,
+            saturation_pct = (r / ncpus as f64) * 100.0,
+            "op_class"
         );
     }
 
