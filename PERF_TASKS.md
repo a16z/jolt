@@ -23,12 +23,12 @@ when the Phase 3 stop condition fires.
 - **log_t**: 12 (overrides `max_trace_length` to 2^12; actual prover work
   is min(guest cycles padded, 2^12))
 - **Program**: `muldiv` (only program supported on the modular stack today)
-- **Stall counter**: 4 (iter 27 instrumentation-only — fused_rlc_reduce group-level telemetry; iter 26 P35 parallel-over-groups fused_rlc_reduce flat/reverted; iter 25 P33 parallel inner rlc_combine flat/reverted; iter 24 P32 parallel Materialize flat/reverted; iter 23 instrumentation-only; iter 22 instrumentation-only; iter 21 flat; iter 20 green; iter 19 green; iter 18 reverted; iter 17 profiling-only; iter 16 infra; iter 15 infra; iter 14 infra; iter 13 flat; iter 12 green)
+- **Stall counter**: 5 (iter 28 P38 parallel Dory combine_hints flat +3.25% reverted; iter 27 instrumentation-only — fused_rlc_reduce group-level telemetry; iter 26 P35 parallel-over-groups fused_rlc_reduce flat/reverted; iter 25 P33 parallel inner rlc_combine flat/reverted; iter 24 P32 parallel Materialize flat/reverted; iter 23 instrumentation-only; iter 22 instrumentation-only; iter 21 flat; iter 20 green; iter 19 green; iter 18 reverted; iter 17 profiling-only; iter 16 infra; iter 15 infra; iter 14 infra; iter 13 flat; iter 12 green)
 - **Last green iter**: 20 — parallelize `Op::Commit` outer loop via rayon.
   42 serial Dory `PCS::commit` calls (508 ms wall, 720 ms CPU, 1.4× effective
   parallelism) → parallel collect of commitments + serial transcript append
   (−22.6% prove_ms: 1867 → 1444 ms best, ratio 5.9× → 4.4×)
-- **Green streak**: 3 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infra primitive; iter 15 Gruen infra reduce; iter 16 Gruen infra variant; iter 17 post-P24 re-profile; iter 18 Gruen dispatch reverted; iter 19 Gruen end-to-end −49.2%; iter 20 parallel Op::Commit −22.6%; iter 21 P28 parallelize lt_evals + EqPlusOne::evals flat −1.7%; iter 22 instrumentation-only — per-stage CPU vs wall saturation; iter 23 instrumentation-only — per-op-class CPU vs wall saturation + explicit dory `parallel` feature; iter 24 P32 parallel Materialize outer dispatch flat −0.55%, reverted — nested rayon pessimization hypothesis; iter 25 P33 parallel inner rlc_combine flat −0.69%, reverted — only ~11% of ReduceOpenings time is inner-loop parallelizable; iter 26 P35 parallel-over-groups fused_rlc_reduce flat +1.19%, reverted — likely single dominant group at log_t=12 so outer par_iter adds overhead with no parallelism gain; iter 27 P36 instrumentation-only — fused_rlc_reduce group-level telemetry confirms single group of 42 claims at log_t=12 with combine_hints = 83.3 ms / rlc_combine = 9.7 ms / materialize = 2 µs → combine_hints is 89% of ReduceOpenings wall and the correct attack target)
+- **Green streak**: 3 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infra primitive; iter 15 Gruen infra reduce; iter 16 Gruen infra variant; iter 17 post-P24 re-profile; iter 18 Gruen dispatch reverted; iter 19 Gruen end-to-end −49.2%; iter 20 parallel Op::Commit −22.6%; iter 21 P28 parallelize lt_evals + EqPlusOne::evals flat −1.7%; iter 22 instrumentation-only — per-stage CPU vs wall saturation; iter 23 instrumentation-only — per-op-class CPU vs wall saturation + explicit dory `parallel` feature; iter 24 P32 parallel Materialize outer dispatch flat −0.55%, reverted — nested rayon pessimization hypothesis; iter 25 P33 parallel inner rlc_combine flat −0.69%, reverted — only ~11% of ReduceOpenings time is inner-loop parallelizable; iter 26 P35 parallel-over-groups fused_rlc_reduce flat +1.19%, reverted — likely single dominant group at log_t=12 so outer par_iter adds overhead with no parallelism gain; iter 27 P36 instrumentation-only — fused_rlc_reduce group-level telemetry confirms single group of 42 claims at log_t=12 with combine_hints = 83.3 ms / rlc_combine = 9.7 ms / materialize = 2 µs → combine_hints is 89% of ReduceOpenings wall and the correct attack target; iter 28 P38 parallel Dory combine_hints (par_iter over rows) flat +3.25%, reverted — rayon overhead at 64 rows × ~1.3 ms/row eats the ~65 ms expected savings at log_t=12)
 - **Phase 3 stop condition**: `modular.prove_ms ≤ core.prove_ms` at
   `log_t ∈ {18, 20}`, 3 consecutive green iters. Only this exits the loop.
 
@@ -323,7 +323,19 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
     - **Abstraction risk**: none — measurement only.
     - **Expected delta**: none directly; infra to steer next attack.
 
-- [ ] P38: Parallelize PCS::combine_hints (Dory opening-hint MSM fold) —
+- [x] P38: Parallelize PCS::combine_hints (iter 28, flat +3.25%, REVERTED).
+  Added rayon + `into_par_iter` over rows in
+  `crates/jolt-dory/src/scheme.rs::AdditivelyHomomorphic::combine_hints`.
+  At log_t=12 the hint has `num_rows = 2^(num_vars - ceil(num_vars/2))` = 64
+  rows, 42 scalar_muls/row ≈ 1.3 ms/row; rayon task-setup overhead + cross-core
+  L2 traffic on the shared 387 KB hint working set eats the expected 65 ms
+  savings. At higher log_t the per-row work grows linearly (so 2× rows × same
+  inner loop = 2× work per row? no — per-row work is unchanged since it's
+  hints.len() × scalar_mul, which only depends on the group size, not num_vars).
+  The real gain scales with num_rows, so log_t=14 should at least halve the
+  relative overhead. See Notes.
+
+- [ ] P38-retry: Parallelize PCS::combine_hints (Dory opening-hint MSM fold) —
   target: `jolt-dory` (external fork) `AdditivelyHomomorphic::combine_hints`.
     - **Hypothesis**: iter 27 `perf_rlc` instrumentation showed
       `combine_hints` = **83.3 ms / 89%** of the 93 ms ReduceOpenings wall
@@ -369,6 +381,21 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 28 — P38 Parallel Dory combine_hints (flat +3.25%, REVERTED)**
+  (target: `crates/jolt-dory/src/scheme.rs` `<DoryScheme as AdditivelyHomomorphic>::combine_hints`).
+  **Hypothesis**: iter 27 `perf_rlc` telemetry showed `combine_hints` = **83.3 ms / 89%** of ReduceOpenings wall at log_t=12. The function does `combined[r] = Σ_i scalars[i] · hints[i].0[r]` with outer-over-hints, inner-over-rows, accumulating into a shared `combined` vec. Each row is independent across hints — a natural rayon `par_iter` target. Added `rayon` to `jolt-dory` deps and restructured as `(0..num_rows).into_par_iter().map(|r| { serial inner fold }).collect()`. Expected 60-70 ms savings = 4-5% total wall if parallelism lifts the 83 ms from 1.0 → 5-6 cores.
+  **Change (~15 LOC)**: added `rayon = { workspace = true }` to `crates/jolt-dory/Cargo.toml`; added `use rayon::prelude::*;` to `scheme.rs`; rewrote `combine_hints` body as `(0..num_rows).into_par_iter().map(|r| serial inner fold).collect::<Vec<_>>()`.
+  **Gates**: 41/41 jolt-equivalence green (transcript_divergence + zkvm_proof_accepted + full suite); clippy clean on 8 modular crates.
+  **Perf (5 runs at log_t=12)**: 1454 / 1475 / 1542 / 1522 / 1491 ms. Median = 1491 ms vs ratchet 1444.14 = **+3.25%**, inside ±5% band → flat → revert.
+  **Diagnosis (why flat, despite a clean 89%-of-the-hot-op attack)**:
+  - **Per-row work is only ~1.3 ms** at log_t=12: 83 ms / 64 rows = 1.3 ms/row. Rayon task-setup overhead is typically 10-50 µs per task (work-steal initialization, cache migration). With 64 tasks, overhead floor is 0.6-3 ms. Per-row work at 1.3 ms is dangerously close to that overhead floor.
+  - **num_rows at log_t=12**: Dory's commit layout uses `num_rows = 2^(num_vars - ceil(num_vars/2))` = 2^(12 - 6) = 64 for 4K-element polys. Scaling to log_t=14 gives num_rows = 128 or 256 depending on sigma rounding; the per-row work is unchanged (`hints.len() × scalar_mul`), so relative overhead drops.
+  - **Cross-core L2 traffic**: the 42 × 64 × 144-byte hint working set = 387 KB. Each worker reads all 42 hints for its assigned rows. 8 cores simultaneously pulling from the same 387 KB forces L2 cross-core traffic (M1 Pro has 12MB shared L2, but per-core L1 is 128KB data cache — hint data must stream through shared L2 repeatedly).
+  - **Implicit lock-free thread pool init**: first `par_iter` in a call chain often pays full thread-pool setup cost (~100 µs). Prior ops in the prove pipeline use rayon so the pool should already be warm; nonetheless there's some startup amortization.
+  - **Single call**: `combine_hints` is invoked once per fused_rlc_reduce group; at log_t=12 with one dominant group, that's one invocation. If there were 10+ invocations, `par_iter` would amortize its setup across calls; with 1 invocation, it pays full overhead for a single ~1.3-ms/task workload.
+  **Per protocol**: flat (±5% band) → revert. Reverted `crates/jolt-dory/Cargo.toml` + `crates/jolt-dory/src/scheme.rs`. Bookkeeping-only commit.
+  **Lessons for next iter**: (1) **4th consecutive parallelism-attack failure at log_t=12** (P32, P33, P35, P38). Pattern is now overwhelming: **log_t=12 workloads are overhead-dominated for rayon parallelism across all four attacked hotspots**. This directly validates iter 26's diagnosis and iter 27's implication that log_t=12 is too small for meaningful parallelism gains on top of what's already present. (2) **Next iter 29 must graduate the log_t**: P37 was queued for exactly this reason — re-profile at log_t=14 to see if per-op work finally clears the rayon overhead floor. At log_t=14 total prove time should be ~4-8× larger, so if combine_hints scales proportionally it becomes 300-600 ms instead of 83 ms, and a par_iter over 128-256 rows would have ~2.5 ms/row work — comfortably above overhead. (3) If log_t=14 profile shows different top spans (e.g., sumcheck rounds dominate again), we pivot. Either way, **continuing to attack log_t=12 is no longer productive** — the low-hanging runtime dispatch parallelism is already gone (iter 20 Commit), and the remaining hotspots at this log_t are all smaller than rayon's efficient-granularity threshold.
 
 - **Iter 27 — P36 Instrumentation: fused_rlc_reduce group structure + per-group breakdown (infra, no perf claim)**
   (target: `crates/jolt-zkvm/src/runtime/helpers.rs` `fused_rlc_reduce`).
