@@ -23,12 +23,12 @@ when the Phase 3 stop condition fires.
 - **log_t**: 12 (overrides `max_trace_length` to 2^12; actual prover work
   is min(guest cycles padded, 2^12))
 - **Program**: `muldiv` (only program supported on the modular stack today)
-- **Stall counter**: 4 (iter 26 P35 parallel-over-groups fused_rlc_reduce flat/reverted; iter 25 P33 parallel inner rlc_combine flat/reverted; iter 24 P32 parallel Materialize flat/reverted; iter 23 instrumentation-only; iter 22 instrumentation-only; iter 21 flat; iter 20 green; iter 19 green; iter 18 reverted; iter 17 profiling-only; iter 16 infra; iter 15 infra; iter 14 infra; iter 13 flat; iter 12 green)
+- **Stall counter**: 4 (iter 27 instrumentation-only — fused_rlc_reduce group-level telemetry; iter 26 P35 parallel-over-groups fused_rlc_reduce flat/reverted; iter 25 P33 parallel inner rlc_combine flat/reverted; iter 24 P32 parallel Materialize flat/reverted; iter 23 instrumentation-only; iter 22 instrumentation-only; iter 21 flat; iter 20 green; iter 19 green; iter 18 reverted; iter 17 profiling-only; iter 16 infra; iter 15 infra; iter 14 infra; iter 13 flat; iter 12 green)
 - **Last green iter**: 20 — parallelize `Op::Commit` outer loop via rayon.
   42 serial Dory `PCS::commit` calls (508 ms wall, 720 ms CPU, 1.4× effective
   parallelism) → parallel collect of commitments + serial transcript append
   (−22.6% prove_ms: 1867 → 1444 ms best, ratio 5.9× → 4.4×)
-- **Green streak**: 3 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infra primitive; iter 15 Gruen infra reduce; iter 16 Gruen infra variant; iter 17 post-P24 re-profile; iter 18 Gruen dispatch reverted; iter 19 Gruen end-to-end −49.2%; iter 20 parallel Op::Commit −22.6%; iter 21 P28 parallelize lt_evals + EqPlusOne::evals flat −1.7%; iter 22 instrumentation-only — per-stage CPU vs wall saturation; iter 23 instrumentation-only — per-op-class CPU vs wall saturation + explicit dory `parallel` feature; iter 24 P32 parallel Materialize outer dispatch flat −0.55%, reverted — nested rayon pessimization hypothesis; iter 25 P33 parallel inner rlc_combine flat −0.69%, reverted — only ~11% of ReduceOpenings time is inner-loop parallelizable; iter 26 P35 parallel-over-groups fused_rlc_reduce flat +1.19%, reverted — likely single dominant group at log_t=12 so outer par_iter adds overhead with no parallelism gain)
+- **Green streak**: 3 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infra primitive; iter 15 Gruen infra reduce; iter 16 Gruen infra variant; iter 17 post-P24 re-profile; iter 18 Gruen dispatch reverted; iter 19 Gruen end-to-end −49.2%; iter 20 parallel Op::Commit −22.6%; iter 21 P28 parallelize lt_evals + EqPlusOne::evals flat −1.7%; iter 22 instrumentation-only — per-stage CPU vs wall saturation; iter 23 instrumentation-only — per-op-class CPU vs wall saturation + explicit dory `parallel` feature; iter 24 P32 parallel Materialize outer dispatch flat −0.55%, reverted — nested rayon pessimization hypothesis; iter 25 P33 parallel inner rlc_combine flat −0.69%, reverted — only ~11% of ReduceOpenings time is inner-loop parallelizable; iter 26 P35 parallel-over-groups fused_rlc_reduce flat +1.19%, reverted — likely single dominant group at log_t=12 so outer par_iter adds overhead with no parallelism gain; iter 27 P36 instrumentation-only — fused_rlc_reduce group-level telemetry confirms single group of 42 claims at log_t=12 with combine_hints = 83.3 ms / rlc_combine = 9.7 ms / materialize = 2 µs → combine_hints is 89% of ReduceOpenings wall and the correct attack target)
 - **Phase 3 stop condition**: `modular.prove_ms ≤ core.prove_ms` at
   `log_t ∈ {18, 20}`, 3 consecutive green iters. Only this exits the loop.
 
@@ -305,17 +305,11 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
   +1.19%, REVERTED). Likely single dominant group at log_t=12; outer
   par_iter adds overhead with no parallelism gain. See Notes.
 
-- [ ] P36: Instrument fused_rlc_reduce group structure — target:
-  `crates/jolt-zkvm/src/runtime/helpers.rs` `fused_rlc_reduce`.
-    - **Hypothesis**: three consecutive parallelism attacks on
-      Materialize/ReduceOpenings failed at log_t=12 despite iter 23's
-      1.0-thread readings. Need to directly measure group count,
-      per-group wall, and per-op materialize wall inside
-      `fused_rlc_reduce` to confirm/deny the "single dominant group"
-      hypothesis. Emit `tracing::info!` target `perf_rlc` with group
-      count, max-group size, per-group (wall, poly_count, total_elems).
-    - **Abstraction risk**: none — instrumentation only.
-    - **Expected delta**: none; infra to steer next attack.
+- [x] P36: Instrument fused_rlc_reduce group structure — DONE iter 27.
+  Single group of 42 claims at log_t=12; combine_hints = 83.3 ms (89% of
+  ReduceOpenings wall), rlc_combine = 9.7 ms (10%), materialize = 2 µs
+  (padded-cache hit). Confirms P35 failure diagnosis and redirects attack
+  to PCS::combine_hints (P38). See Notes.
 
 - [ ] P37: Re-profile at log_t=14 — target: `perf/` measurement only.
     - **Hypothesis**: parallelism opportunities visible in iter 23
@@ -328,6 +322,30 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
       proportion → confirms overhead-dominated reading at log_t=12.
     - **Abstraction risk**: none — measurement only.
     - **Expected delta**: none directly; infra to steer next attack.
+
+- [ ] P38: Parallelize PCS::combine_hints (Dory opening-hint MSM fold) —
+  target: `jolt-dory` (external fork) `AdditivelyHomomorphic::combine_hints`.
+    - **Hypothesis**: iter 27 `perf_rlc` instrumentation showed
+      `combine_hints` = **83.3 ms / 89%** of the 93 ms ReduceOpenings wall
+      at log_t=12. Called once with 42 hints; folds via MSM-like
+      Σ powers[i] · hints[i]. Sits outside the runtime (PCS trait
+      dispatch), so runtime handlers stay generic. The call's internal
+      work is independent of the runtime's 1.0-threads reading — the
+      runtime measures "wall while calling combine_hints" which appears
+      serial from the outside but can be pushed in parallel inside dory.
+      Chunk hints into rayon par_iter groups, fold each group serially,
+      combine group results — standard MSM parallelism pattern.
+    - **Abstraction risk**: low — change is inside `jolt-dory` crate
+      (`combine_hints` impl). Runtime handler unchanged (stays at 8 LOC
+      call). Compiler unchanged. Fits the "extend ComputeBackend/PCS
+      internals" category from CLAUDE.md.
+    - **Expected delta**: lifting 83.3 ms from ~1.0 threads to 4-6 threads
+      → 13-20 ms residual wall on this op → **~60 ms saved ≈ 4-5% of
+      1444 ms total wall**. Meets the order-of-magnitude bar (≥5%
+      candidate) given three consecutive parallelism-attack failures at
+      ≤2% — this targets a single large function call with no external
+      sync and no nested rayon under it (combine_hints inside dory does
+      NOT currently use rayon, confirmed by the 1.0-thread reading).
 
 - [ ] P34: Investigate Dory Open internal parallelism — target:
   `dory-pcs` crate (external, but we control the fork).
@@ -351,6 +369,31 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 27 — P36 Instrumentation: fused_rlc_reduce group structure + per-group breakdown (infra, no perf claim)**
+  (target: `crates/jolt-zkvm/src/runtime/helpers.rs` `fused_rlc_reduce`).
+  **Motivation**: iter 26 P35 failed with the hypothesis that a single dominant group was starving the outer par_iter; instead of guessing, instrument the group structure directly. Three consecutive parallelism attacks (P32/P33/P35) at log_t=12 had gone flat, but iter 23 op-class data still showed 1.0 threads on 93 ms of ReduceOpenings. The gap between "looks parallelizable" and "parallelism helped" needs direct group-count + per-group cost data.
+  **Change (~25 LOC)**: inside `fused_rlc_reduce` per-group loop, record (poly_count, total_elems, materialize_us, rlc_us, hint_us) into a Vec, emit `tracing::info!(target: "perf_rlc", …, "rlc_group")` per group and `"rlc_summary"` with group_count + total_claims at end. No behavioral change; pure tracing. Consumable via `RUST_LOG=perf_rlc=info --trace-chrome <name>`.
+  **Gates**: 41/41 jolt-equivalence green (transcript_divergence + zkvm_proof_accepted + full suite); clippy clean across 8 modular crates.
+  **Run**: `RUST_LOG=perf_rlc=info cargo run --release -p jolt-bench --quiet -- --program muldiv --iters 1 --warmup 0 --log-t 12 --stack modular --trace-chrome iter27_perf_rlc`. Run time 1674 ms (cold single-warmup=0 run — not a perf number).
+
+  **Findings (log_t=12, muldiv, modular)**:
+
+  ```
+  INFO rlc_group group=0 poly_count=42 total_elems=688128 mat_us=2 rlc_us=9719 hint_us=83275
+  INFO rlc_summary groups=1 total_claims=42
+  ```
+
+  Definitively confirms the iter 26 single-group hypothesis: **exactly 1 group containing all 42 opening claims**. Per-group cost breakdown:
+  - `materialize`: **2 µs** (effectively free — polys are pre-cached in `state.padded_poly_data` by preceding stage ops, so Cow::Borrowed skips heavy materialization entirely). This is why iter 24 P32 parallel Materialize dispatch was flat — the work was ALREADY amortized by the padding cache for these polys.
+  - `rlc_combine`: **9.7 ms** (~10% of ReduceOpenings 93 ms). Iter 25's P33 attempt to parallelize this could only attack 10% of the wall — explains the observed −0.69% delta.
+  - `combine_hints`: **83.3 ms (~89% of ReduceOpenings wall)**. This is the PCS-side MSM-like fold of Dory opening hints. None of P32/P33/P35 touched it.
+
+  **Key takeaway**: the 93 ms ReduceOpenings op is essentially `PCS::combine_hints` plus 10 ms of rlc_combine. **At least 83 ms of the 1444 ms prove wall = 5.7% of total wall = 16% of the 510 ms "Materialize family + ReduceOpenings" aggregate lives inside a single function call**: `<DoryScheme as AdditivelyHomomorphic>::combine_hints`. Attacking this directly is now the most load-bearing parallelism lever we have at log_t=12.
+
+  **Implication for future iters**: `perf_rlc` telemetry leaves zero ambiguity about where RLC time goes. Keep the instrumentation landed (deleting it would re-blind us), since measurement overhead is negligible (`Instant::now` × 3 per group × 1 group = sub-microsecond). This is the same precedent as iters 11/17/22/23 where telemetry stayed in the tree to support future iters.
+
+  **Hypothesis queue updates**: Add P38 (profile + parallelize PCS::combine_hints for Dory) as the next iter 28 attack. Expected 60-80 ms wall savings = 4-5% total wall if we lift combine_hints from ~1.0 threads to ~4 threads.
 
 - **Iter 26 — P35 parallel-over-groups in fused_rlc_reduce (flat +1.19%, REVERTED)**
   (target: `crates/jolt-zkvm/src/runtime/helpers.rs` `fused_rlc_reduce`;

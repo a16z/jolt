@@ -215,8 +215,11 @@ where
         }
     }
 
-    let mut reduced_claims = Vec::with_capacity(groups.len());
-    let mut reduced_hints = Vec::with_capacity(groups.len());
+    let group_count = groups.len();
+    let total_claims = pending.len();
+    let mut reduced_claims = Vec::with_capacity(group_count);
+    let mut reduced_hints = Vec::with_capacity(group_count);
+    let mut group_stats: Vec<(usize, usize, u128, u128, u128)> = Vec::with_capacity(group_count);
 
     for PointGroup {
         point,
@@ -227,6 +230,8 @@ where
     {
         let rho: F = transcript.challenge();
 
+        let poly_count = poly_ids.len();
+        let t_mat_start = std::time::Instant::now();
         let materialized: Vec<Cow<'_, [F]>> = poly_ids
             .iter()
             .map(|&pi| {
@@ -237,14 +242,24 @@ where
                 }
             })
             .collect();
+        let t_mat_us = t_mat_start.elapsed().as_micros();
+
         let slices: Vec<&[F]> = materialized.iter().map(|c| &**c).collect();
+        let total_elems = slices.iter().map(|s| s.len()).sum::<usize>();
+
+        let t_rlc_start = std::time::Instant::now();
         let combined_evals = jolt_openings::rlc_combine(&slices, rho);
         let combined_eval = jolt_openings::rlc_combine_scalars(&evals, rho);
+        let t_rlc_us = t_rlc_start.elapsed().as_micros();
 
+        let t_hint_start = std::time::Instant::now();
         let powers: Vec<F> = std::iter::successors(Some(F::from_u64(1)), |prev| Some(*prev * rho))
             .take(group_hints.len())
             .collect();
         let combined_hint = PCS::combine_hints(group_hints, &powers);
+        let t_hint_us = t_hint_start.elapsed().as_micros();
+
+        group_stats.push((poly_count, total_elems, t_mat_us, t_rlc_us, t_hint_us));
 
         reduced_claims.push(ProverClaim {
             polynomial: combined_evals.into(),
@@ -253,6 +268,25 @@ where
         });
         reduced_hints.push(combined_hint);
     }
+
+    for (gi, (pc, te, tm, tr, th)) in group_stats.iter().enumerate() {
+        tracing::info!(
+            target: "perf_rlc",
+            group = gi,
+            poly_count = pc,
+            total_elems = te,
+            mat_us = *tm as u64,
+            rlc_us = *tr as u64,
+            hint_us = *th as u64,
+            "rlc_group"
+        );
+    }
+    tracing::info!(
+        target: "perf_rlc",
+        groups = group_count,
+        total_claims = total_claims,
+        "rlc_summary"
+    );
 
     (reduced_claims, reduced_hints)
 }
