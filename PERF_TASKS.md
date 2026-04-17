@@ -23,11 +23,11 @@ when the Phase 3 stop condition fires.
 - **log_t**: 12 (overrides `max_trace_length` to 2^12; actual prover work
   is min(guest cycles padded, 2^12))
 - **Program**: `muldiv` (only program supported on the modular stack today)
-- **Stall counter**: 1 (iter 17 profiling-only; iter 16 infra; iter 15 infra; iter 14 infra; iter 13 flat; iter 12 green)
+- **Stall counter**: 2 (iter 18 reverted; iter 17 profiling-only; iter 16 infra; iter 15 infra; iter 14 infra; iter 13 flat; iter 12 green)
 - **Last green iter**: 12 — P24 lower `reduce_dense_dynamic` with_min_len
   4096→1024 unlocking booleanity parallelism (−9.24% prove_ms:
   4054 → 3680 ms, ratio 12.1× → 11.0×)
-- **Green streak**: 1 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infra primitive; iter 15 Gruen infra reduce; iter 16 Gruen infra variant; iter 17 post-P24 re-profile)
+- **Green streak**: 1 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infra primitive; iter 15 Gruen infra reduce; iter 16 Gruen infra variant; iter 17 post-P24 re-profile; iter 18 Gruen dispatch reverted)
 - **Phase 3 stop condition**: `modular.prove_ms ≤ core.prove_ms` at
   `log_t ∈ {18, 20}`, 3 consecutive green iters. Only this exits the loop.
 
@@ -224,6 +224,57 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 18 — Gruen runtime dispatch REVERTED (dead-code regression, stall counter → 2)**
+  **Hypothesis**: wire `Iteration::Gruen` to `reduce_tensor_gruen_deg2` in
+  `CpuBackend::reduce` so the iter 14/15/16 infra could start being exercised.
+  No compiler-side emission yet — the dispatch code is dead until a later iter
+  teaches a kernel spec to emit `Iteration::Gruen`. Change was purely additive:
+  (a) ~10 LOC replacing the panic in the `Iteration::Gruen` arm, (b) ~35 LOC
+  of `reduce_tensor_gruen_deg2<F>` helper with `#[tracing::instrument]`,
+  (c) ~45 LOC unit test covering 6 shapes × 2 binding orders.
+
+  **Gates**: 41/41 jolt-equivalence green (transcript_divergence +
+  zkvm_proof_accepted included); clippy clean jolt-cpu + jolt-core
+  (host, host+zk). All correctness gates passed — the perf result was the
+  sole reject signal.
+
+  **Perf**: three clean runs against ratchet 3672.07 ms —
+  `iter18-run1.json` 4109.18 ms (+11.9%), `iter18-run2.json` 4222.54 ms
+  (+15.0%), `iter18-run3.json` 3910.96 ms (+6.5%). All three ≥ 5% slower.
+  Revert confirmed at 3769.11 ms (+2.6%, noise band).
+
+  **Diagnosis (tentative)**: change was verified dead — grep of
+  `Iteration::Gruen` shows it only in backend consumer sites, no compiler
+  emits it. Candidate mechanisms for the measurable regression on
+  never-executed code: (a) monomorphization of `reduce_tensor_gruen_deg2<F>`
+  in `jolt-cpu` (hot crate) shifts function layout in the release binary
+  and perturbs iCache / iTLB for `reduce_dense` / `reduce_tensor`, (b)
+  `#[tracing::instrument]` inserts span-registration code at the Monomorphized
+  site even when the function is never called, (c) ambient system noise
+  amplified by the 2m 35s background build that preceded the first two runs
+  (run 3 was at +6.5%, closest to noise band, consistent with cooling off).
+  Core prove times were also inconsistent (333 → 388 ms) in run 3,
+  supporting a partial ambient-noise contribution, but the 3-run average
+  is too far outside noise to call "flat".
+
+  **Takeaway for iter 19**: infra-only iters add dead code in the hot crate
+  and apparently can measurably regress the perf gate with no behavioural
+  change — the cost of splitting the Gruen port into ≥ 5 infra commits is
+  compounding. Switch strategy: iter 19 ports Gruen end-to-end for kernel 3
+  in one commit (compiler emission + runtime state tracking + dual-path
+  assertion for 1-2 rounds + delete old Toom-Cook path + measure) so the
+  perf gate fires on a change that actually exercises the new code. If that
+  single commit is too large, split iter 19 = dual-path + iter 20 = delete
+  old path + measure, which still only introduces live code in the gate.
+
+  **Bookkeeping**: iter 17's note refers to "outer_remaining (kernel 3)".
+  Attributing `InstanceSegmentedReduce` spans by kernel-arg against
+  `crates/jolt-compiler/examples/jolt_core_module.rs` shows kernel 3 is
+  actually the RAM RW phase 1 kernel (formula
+  `eq_cycle · ra · ((1+γ)·val + γ·inc)`, `NI=4`, `NE=4`, LowToHigh, segmented).
+  Still degree-2 product inside `l(X)`, so Gruen remains applicable — the
+  kernel identity was mislabelled, not the opportunity.
 
 - **Iter 17 — Post-P24 re-profile (profiling-only, stall counter unchanged)**
   (trace: `benchmark-runs/perfetto_traces/muldiv_log_t12_iter17_post_p24.json`).
