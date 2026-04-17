@@ -23,10 +23,10 @@ when the Phase 3 stop condition fires.
 - **log_t**: 12 (overrides `max_trace_length` to 2^12; actual prover work
   is min(guest cycles padded, 2^12))
 - **Program**: `muldiv` (only program supported on the modular stack today)
-- **Stall counter**: 7
+- **Stall counter**: 8
 - **Last green iter**: 1 — P10 `segmented_reduce` parallelize+hoist
   (−72.24% prove_ms: 14607 → 4055 ms, ratio 41.4× → 11.5×)
-- **Green streak**: 0 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%, all reverted)
+- **Green streak**: 0 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%, all reverted)
 - **Phase 3 stop condition**: `modular.prove_ms ≤ core.prove_ms` at
   `log_t ∈ {18, 20}`, 3 consecutive green iters. Only this exits the loop.
 
@@ -163,25 +163,84 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
     - **Expected delta**: 5-12% (single biggest hot-path; gain grows with
       how much the vtable call blocks register scheduling and inlining).
 
-- [ ] P16: Defer Montgomery reduction through the 4-output pointwise mul
-  block of `eval_prod_4_assign` — target:
-  `crates/jolt-cpu/src/toom_cook.rs:365-374`
-    - **Hypothesis**: the last 4 multiplications produce `outputs[0..4]`
-      that are *immediately* added into the per-thread accumulator. Using
-      BN254 unreduced / non-reduced multiplication primitives (returning
-      a 512-bit limb pair) for those 4 mults and letting `acc_add`
-      merge in non-reduced form would cut ~4 Montgomery reductions per
-      inner iter. ~20% of arithmetic savings on the D=4 hot path.
-    - **Abstraction risk**: medium — need a non-reduced mul API on
-      `Field` and an `Accumulator` path that consumes it.
-    - **Expected delta**: 5-10% (contingent on wiring + field support).
+- [ ] P20: Port `GruenSplitEqPolynomial`-style eq decomposition to
+  `jolt-zkvm::runtime::segmented_reduce` — target:
+  `crates/jolt-zkvm/src/runtime/handlers.rs` (InstanceSegmentedReduce
+  handler) + `crates/jolt-cpu/src/backend.rs` (segmented_reduce). Cross-
+  reference: `jolt-core/src/zkvm/ram/read_write_checking.rs:256,309-388`.
+    - **Hypothesis**: iters 6-9 have confirmed that per-iter arithmetic
+      (Mont reduce, fmadd, carry propagation) is saturated — each P1X
+      hypothesis targeting per-iter work has landed in the ±5% band.
+      The 4000× call-count ratio between modular (~84k per-outer
+      `reduce_dense_fixed` dispatches) and core (~20 single-cubic
+      emissions via Gruen pre-decomposition) is now the dominant gap.
+      Hypothesis: reshape segmented_reduce so outer×inner eq is
+      pre-decomposed into a tensor product, and each round emits a
+      single fused cubic integrated across ALL active outer positions
+      rather than one small reduce per active outer. This is the
+      structural approach jolt-core uses in `read_write_checking.rs`
+      lines 256 (tensor decomp) + 309-388 (per-round single cubic).
+    - **Abstraction risk**: high — requires new runtime op (e.g.
+      `SegmentedReduceGruen`) plus a `ComputeBackend::gruen_segmented_reduce`
+      method, and the compiler needs to know when segmented sumchecks
+      have a tensor-decomposable eq. Handlers can still stay ≤ 30 LOC
+      because the complexity is in the backend method signature, but
+      the compiler → runtime interface widens.
+    - **Expected delta**: 30-50% (the call count dominates; if core's
+      ratio is our target, this is where ~3-4× of the remaining gap
+      lives). Large scope — may need to be split into P20a (profile
+      to confirm) + P20b (implement).
 
+<!-- P16 consumed iter 9; see Notes for result & diagnosis. -->
 <!-- P19 consumed iter 8; see Notes for result & diagnosis. -->
 
 
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 9 — P16 defer Montgomery reduction through `eval_prod_D_assign`
+  via accumulator-writing kernel path** (targets:
+  `crates/jolt-cpu/src/toom_cook.rs` — added
+  `accumulate_linear_prod` + `accumulate_prod_{2..=8,16,32}` variants;
+  `crates/jolt-cpu/src/backend.rs` — added `AccEvalFn<F>` +
+  `acc_eval_fn` field on `CpuKernel`, `with_acc_eval`/`has_acc_eval`/
+  `evaluate_to_accs`, branched `reduce_dense_fixed` to skip
+  `evaluate → acc_add` when acc path is compiled;
+  `crates/jolt-cpu/src/product_sum.rs` — added `compile_acc_fn`
+  covering D ∈ {2,3,4,5,6,7,8,16,32} at P=1;
+  `crates/jolt-cpu/src/lib.rs` — wired acc_fn attachment in `compile()`
+  for product-sum specs with P=1 and supported D). **Design step**:
+  iter 8's diagnosis pointed to `F::mul` inside `eval_prod_4_assign`
+  as the actual dominant cost in `reduce_dense_fixed<_,4,4>` — each
+  inner iter pays 4× Montgomery reductions for `outputs[k] = a_k*b_k`,
+  which are then trivially acc_add'd. Deferring those reductions by
+  writing `accs[k].fmadd(a_k, b_k)` directly eliminates O(D × N_iters ×
+  N_calls) Montgomery reductions (~80M total for a muldiv @ log_T=12
+  proof). Hypothesis: ~20-25% wall-time savings if Mont reduce is
+  30-50 cycles and fills the lion's share of inner-loop work.
+  **Gates**: 70/70 jolt-cpu tests, 41/41 jolt-equivalence green,
+  clippy clean across jolt-cpu + jolt-core (host + host,zk) +
+  jolt-compiler + jolt-field + jolt-zkvm. **Result**: run 1 3870.07 ms
+  (−4.55%), run 2 3959.53 ms (−2.34%) vs 4054.58 ms baseline.
+  Both in ±5% inconclusive band; consistent improvement signal but
+  below the 5% acceptance threshold (avg −3.45%). Per protocol:
+  flat → reverted. **Diagnosis**: Montgomery reduction on arkworks
+  BN254 `Fr` is faster than the pre-experiment 50-80 cycle estimate
+  — the `from_montgomery_reduce` helper likely runs ~15-25 cycles on
+  modern x86 with BMI2 (mulx/adx); at 4 reductions per inner iter ×
+  ~246 iters × ~84k calls that's only ~80M × 20 cycles ≈ 1.6 Gcycles
+  = ~0.5 s on a single core, amortized by 8-way rayon fan-out in
+  `reduce_dense_fixed` to ≈ 60-80 ms. The accumulator path also
+  introduces new costs: `fmadd` in `Limbs<9>` runs a 4×4 schoolbook
+  scatter that is comparable in cost to `F::mul + acc_add` for small
+  accumulators, so the savings are partly consumed by the new fmadd
+  overhead. Real net gain is the observed 2-5%. **Next structural
+  target**: stop optimizing the per-iter arithmetic and attack the
+  O(N_calls) dispatch overhead — port core's `GruenSplitEqPolynomial`
+  so segmented sumchecks emit ONE cubic per round instead of N
+  per-outer reduces (~84k → ~20 calls). That collapses
+  `reduce_dense_fixed` calls by 4000×, not their per-call cost.
 
 - **Iter 8 — P19 port folded-slot `[u128; 9]` representation to
   `WideAccumulator`** (target: `crates/jolt-field/src/arkworks/wide_accumulator.rs`).
