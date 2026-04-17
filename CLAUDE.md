@@ -79,12 +79,21 @@ Per iteration:
    - Improvement: `perf(<scope>): P<n> <name> (-X% prove_ms on muldiv @ log_T=<n>)`
    - Flat/reverted: `journal: P<n> reverted (<reason>)` — only bookkeeping
 9. GRADUATE if phase graduation condition met (see PERF_TASKS.md table).
-10. Schedule next tick via ScheduleWakeup. GOTO 1.
+10. GO IMMEDIATELY BACK TO STEP 1. Do NOT call `ScheduleWakeup` or pause
+    between iterations. The loop is perpetual and active: after every
+    commit, re-read PERF_TASKS.md + latest profile, pick the next
+    highest-leverage hypothesis, and start the next iteration without
+    waiting. Only pause if the user explicitly interrupts.
 ```
 
 **Never exit except via step 3.** Reverts, flat results, empty hypothesis
 queue, stall mode — all continue. The loop is perpetual until Phase 3
 parity is achieved.
+
+**Never pause between iterations.** Step 10 is "GOTO 1", not "sleep".
+After committing, go directly back into analysis — re-read the profile,
+pick the next attack, start implementing. Scheduling wake-ups between
+iters wastes cache and slows progress on a multi-hour optimization task.
 
 **Commit discipline**: Every iteration produces exactly one commit. Reverts
 still commit the bookkeeping update so dead ends aren't rediscovered on

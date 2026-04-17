@@ -23,10 +23,10 @@ when the Phase 3 stop condition fires.
 - **log_t**: 12 (overrides `max_trace_length` to 2^12; actual prover work
   is min(guest cycles padded, 2^12))
 - **Program**: `muldiv` (only program supported on the modular stack today)
-- **Stall counter**: 8
+- **Stall counter**: 9
 - **Last green iter**: 1 — P10 `segmented_reduce` parallelize+hoist
   (−72.24% prove_ms: 14607 → 4055 ms, ratio 41.4× → 11.5×)
-- **Green streak**: 0 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%, all reverted)
+- **Green streak**: 0 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%, all reverted)
 - **Phase 3 stop condition**: `modular.prove_ms ≤ core.prove_ms` at
   `log_t ∈ {18, 20}`, 3 consecutive green iters. Only this exits the loop.
 
@@ -163,41 +163,89 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
     - **Expected delta**: 5-12% (single biggest hot-path; gain grows with
       how much the vtable call blocks register scheduling and inlining).
 
-- [ ] P20: Port `GruenSplitEqPolynomial`-style eq decomposition to
-  `jolt-zkvm::runtime::segmented_reduce` — target:
-  `crates/jolt-zkvm/src/runtime/handlers.rs` (InstanceSegmentedReduce
-  handler) + `crates/jolt-cpu/src/backend.rs` (segmented_reduce). Cross-
-  reference: `jolt-core/src/zkvm/ram/read_write_checking.rs:256,309-388`.
-    - **Hypothesis**: iters 6-9 have confirmed that per-iter arithmetic
-      (Mont reduce, fmadd, carry propagation) is saturated — each P1X
-      hypothesis targeting per-iter work has landed in the ±5% band.
-      The 4000× call-count ratio between modular (~84k per-outer
-      `reduce_dense_fixed` dispatches) and core (~20 single-cubic
-      emissions via Gruen pre-decomposition) is now the dominant gap.
-      Hypothesis: reshape segmented_reduce so outer×inner eq is
-      pre-decomposed into a tensor product, and each round emits a
-      single fused cubic integrated across ALL active outer positions
-      rather than one small reduce per active outer. This is the
-      structural approach jolt-core uses in `read_write_checking.rs`
-      lines 256 (tensor decomp) + 309-388 (per-round single cubic).
-    - **Abstraction risk**: high — requires new runtime op (e.g.
-      `SegmentedReduceGruen`) plus a `ComputeBackend::gruen_segmented_reduce`
-      method, and the compiler needs to know when segmented sumchecks
-      have a tensor-decomposable eq. Handlers can still stay ≤ 30 LOC
-      because the complexity is in the backend method signature, but
-      the compiler → runtime interface widens.
-    - **Expected delta**: 30-50% (the call count dominates; if core's
-      ratio is our target, this is where ~3-4× of the remaining gap
-      lives). Large scope — may need to be split into P20a (profile
-      to confirm) + P20b (implement).
-
 <!-- P16 consumed iter 9; see Notes for result & diagnosis. -->
 <!-- P19 consumed iter 8; see Notes for result & diagnosis. -->
+<!-- P20 consumed iter 10 (first attempt — fused loop only); see Notes. -->
+
+- [ ] P21: True Gruen split-eq (tensor decomposition of outer×inner eq) in
+  segmented sumcheck — target: `crates/jolt-zkvm/src/runtime/handlers.rs`
+  (InstanceSegmentedReduce handler pipeline) + new
+  `ComputeBackend::gruen_segmented_reduce` method + possibly a new compiler
+  `Op::SegmentedReduceGruen`. Cross-reference:
+  `jolt-core/src/zkvm/ram/read_write_checking.rs:256,309-388` (core's
+  implementation of the same technique).
+    - **Hypothesis**: iter 10 P20 (fused loop, no decomposition) landed
+      flat (+0.47%); confirms the structure of segmented_reduce is NOT
+      the bottleneck. The real gap is arithmetic intensity per round:
+      core emits ONE cubic polynomial per round via `gruen_poly_deg_3`
+      using E_out_vec (prefix) × E_in_vec (suffix), folding outer eq
+      as a prefix weight multiplied ONCE outside the inner sweep.
+      Modular currently computes Toom-Cook points per (outer, inner)
+      pair (4 F::mul per inner, D=4), then eq-weights per outer. If
+      outer eq is reduced to a prefix-weight scalar across all active
+      outer positions at the beginning of each round, the inner sweep
+      runs over a SINGLE virtual polynomial — collapsing 4× D field
+      mul / outer / inner → 4× field mul / inner (one per Toom-Cook
+      point), a ~N_active_outer×D reduction on the inner hot path.
+    - **Abstraction risk**: high — requires the compiler to recognize
+      segmented-eq patterns (outer × inner tensor) and lower to a
+      Gruen-style op; backend needs a specialized primitive; handler
+      stays ≤ 30 LOC but the compile-time contract widens.
+    - **Expected delta**: 30-50% wall-time on segmented rounds; these
+      are ~51% of prove wall, so net ~15-25%. If the compiler lowering
+      is clean and the backend primitive well-optimized, this is the
+      closest thing to a single structural fix for the remaining gap.
+
+- [ ] P22: Devirtualize `kernel.evaluate` for the reduce_dense_4x4 hot
+  path — already queued as P15 but bears re-examination: iter-5
+  instrumentation showed `(NI=4, NE=4)` is 70.9% self-time / 81 933
+  calls / 197.5 µs avg. The vtable call through `Box<dyn Fn>` in the
+  innermost loop blocks inlining `eval_prod_4_assign` and prevents
+  loop-invariant hoisting. Compared to P21 (structural): lower expected
+  delta (5-12%) but smaller scope and lower abstraction risk. Consider
+  as a fallback if P21 takes > 2 iters to land.
 
 
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 10 — P20 fused segmented_reduce (no decomposition)**
+  (target: `crates/jolt-cpu/src/backend.rs` — replaced `segmented_reduce`
+  with const-generic `segmented_fused_fixed<NI, NE>` + dynamic fallback).
+  **Design step**: iter-10 Perfetto showed `InstanceSegmentedReduce`
+  subtree at 51.3% wall (2139 ms / 20 calls), combined `reduce_dense`
+  variants 62.8% wall. Hypothesis: fuse outer×inner iteration into a
+  single parallel fold, eliminate Vec<&Buf> allocations, collapse ~83k
+  rayon fork/join into one, and merge per-outer eq weight into fmadd.
+  **Gates**: clippy clean jolt-cpu + jolt-zkvm + jolt-compiler + jolt-field
+  + jolt-compute; 41/41 jolt-equivalence green.
+  **Result**: two runs 4070.50 ms (+0.39%) and 4077.08 ms (+0.54%) vs
+  4054.58 ms baseline; avg +0.47%. Flat within ±5% band. Reverted.
+  **Diagnosis**: the "wins" I targeted weren't load-bearing.
+  (a) Vec<&Buf> allocations = 16 ptrs × 84k calls = 1.3 MB metadata,
+      not 5 GB data — I confused Vec-of-refs with data clone.
+  (b) The outer rayon par_iter in the old `segmented_reduce` was
+      already collapsing most fork/join overhead — "83k rayon calls"
+      was misleading; only 20 calls created outer forks, each
+      fanning out across ~4200 positions with stolen work.
+  (c) Per-outer eq mul folded into fmadd saves ~84k × 4 = 336k
+      F::muls ≈ 6 ms on a single core. Rounding error vs 4000 ms.
+  **Conclusion**: shape/structure of segmented_reduce is NOT the
+  bottleneck. The real gap is per-iter arithmetic intensity (D field
+  muls per Toom-Cook eval × active_outer × half_inner). Only a TRUE
+  Gruen-style tensor decomposition (outer eq reduced to a prefix
+  scalar fold BEFORE the inner sweep, like core's `gruen_poly_deg_3`)
+  cuts the inner arithmetic; P20's fused loop did not change inner
+  arithmetic at all — it still does outer × inner Toom-Cook work.
+  **Next iter pivot**: step back and INSTRUMENT. Current profile
+  reports `segmented_reduce` wrapper + `reduce_dense` but does not
+  show WHICH of the 20 segmented sumcheck rounds (RAM read-write,
+  instruction RA virtual, instruction lookups, bytecode, register
+  read-write, etc.) are eating the 2139 ms. Without that, picking
+  a specific target for Gruen port is guesswork. Iter 11 plan: add
+  per-stage/per-sumcheck-instance spans, re-capture trace, identify
+  the top-2 sumcheck instances, then target P21 Gruen port at those.
 
 - **Iter 9 — P16 defer Montgomery reduction through `eval_prod_D_assign`
   via accumulator-writing kernel path** (targets:
