@@ -146,7 +146,6 @@ impl AppendToTranscript for Bn254GT {
         buf.reverse();
         transcript.append_bytes(&buf);
     }
-
 }
 
 impl JoltGroup for Bn254GT {

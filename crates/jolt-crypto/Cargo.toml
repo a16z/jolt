@@ -6,7 +6,13 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/a16z/jolt"
 description = "Backend-agnostic cryptographic group and commitment primitives for Jolt"
-keywords = ["cryptography", "zero-knowledge", "commitment", "elliptic-curve", "zkvm"]
+keywords = [
+  "cryptography",
+  "zero-knowledge",
+  "commitment",
+  "elliptic-curve",
+  "zkvm",
+]
 categories = ["cryptography"]
 
 [lints]
@@ -14,12 +20,21 @@ workspace = true
 
 [features]
 default = ["bn254"]
-bn254 = ["dep:ark-bn254", "dep:ark-ec", "dep:ark-ff", "dep:ark-serialize", "dep:ark-std", "dep:num-bigint", "dep:num-integer", "dep:num-traits", "dep:rayon"]
+bn254 = [
+  "dep:ark-bn254",
+  "dep:ark-ec",
+  "dep:ark-ff",
+  "dep:ark-serialize",
+  "dep:ark-std",
+  "dep:num-bigint",
+  "dep:num-integer",
+  "dep:num-traits",
+  "dep:rayon",
+]
 
 [dependencies]
 jolt-field = { path = "../jolt-field" }
 jolt-transcript = { path = "../jolt-transcript" }
-tracing.workspace = true
 serde = { workspace = true, features = ["derive", "alloc"] }
 rand_core = { workspace = true }
 
@@ -41,6 +56,27 @@ serde_json = { workspace = true, features = ["std"] }
 bincode = { workspace = true }
 criterion = { workspace = true }
 
+[[test]]
+name = "coverage"
+required-features = ["bn254"]
+
+[[test]]
+name = "group_laws"
+required-features = ["bn254"]
+
+[[test]]
+name = "pairing"
+required-features = ["bn254"]
+
+[[test]]
+name = "pedersen"
+required-features = ["bn254"]
+
+[[test]]
+name = "serialization"
+required-features = ["bn254"]
+
 [[bench]]
 name = "crypto"
 harness = false
+required-features = ["bn254"]
