@@ -23,12 +23,12 @@ when the Phase 3 stop condition fires.
 - **log_t**: 12 (overrides `max_trace_length` to 2^12; actual prover work
   is min(guest cycles padded, 2^12))
 - **Program**: `muldiv` (only program supported on the modular stack today)
-- **Stall counter**: 0 (iter 20 green; iter 19 green; iter 18 reverted; iter 17 profiling-only; iter 16 infra; iter 15 infra; iter 14 infra; iter 13 flat; iter 12 green)
+- **Stall counter**: 1 (iter 21 flat; iter 20 green; iter 19 green; iter 18 reverted; iter 17 profiling-only; iter 16 infra; iter 15 infra; iter 14 infra; iter 13 flat; iter 12 green)
 - **Last green iter**: 20 — parallelize `Op::Commit` outer loop via rayon.
   42 serial Dory `PCS::commit` calls (508 ms wall, 720 ms CPU, 1.4× effective
   parallelism) → parallel collect of commitments + serial transcript append
   (−22.6% prove_ms: 1867 → 1444 ms best, ratio 5.9× → 4.4×)
-- **Green streak**: 3 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infra primitive; iter 15 Gruen infra reduce; iter 16 Gruen infra variant; iter 17 post-P24 re-profile; iter 18 Gruen dispatch reverted; iter 19 Gruen end-to-end −49.2%; iter 20 parallel Op::Commit −22.6%)
+- **Green streak**: 3 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infra primitive; iter 15 Gruen infra reduce; iter 16 Gruen infra variant; iter 17 post-P24 re-profile; iter 18 Gruen dispatch reverted; iter 19 Gruen end-to-end −49.2%; iter 20 parallel Op::Commit −22.6%; iter 21 P28 parallelize lt_evals + EqPlusOne::evals flat −1.7%)
 - **Phase 3 stop condition**: `modular.prove_ms ≤ core.prove_ms` at
   `log_t ∈ {18, 20}`, 3 consecutive green iters. Only this exits the loop.
 
@@ -225,6 +225,53 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 21 — P28 parallelize `lt_evals` + `EqPlusOnePolynomial::evals` (REVERTED, flat −1.7%)**
+  (targets: `crates/jolt-poly/src/lt.rs:144-155`, `crates/jolt-poly/src/eq_plus_one.rs:71-118`).
+  **Design step**: post-iter-20 Perfetto trace
+  (`benchmark-runs/perfetto_traces/muldiv_log_t12_iter21_post_parallel_commit.json`,
+  wall 1560 ms) showed "Materialize family" at 408 ms / 26.2% of wall — driven
+  by 5 giant eq/lt/eq_plus_one table constructions in stages 1+3 totalling
+  ~380 ms. `CpuBackend::eq_table` ALREADY has a parallel path (eq.rs
+  `PAR_THRESHOLD=1024` gate). `CpuBackend::lt_table` delegates to
+  `LtPolynomial::evaluations` → `lt_evals` which is sequential.
+  `CpuBackend::eq_plus_one_table` delegates to `EqPlusOnePolynomial::evals`
+  which is also sequential. The doubling pattern in both is cleanly
+  parallelizable over disjoint index pairs. Hypothesis: parallelizing both
+  unlocks the 5-10× sequential bottleneck on the late rounds (where most
+  work concentrates) for ~15-20% wall-time savings on the five hot calls.
+  **Implementation**: (a) `lt_evals` — gate `left.iter_mut().zip(right.iter_mut())`
+  on `left.len() >= PAR_THRESHOLD=1024`, swap to `par_iter_mut().zip(par_iter_mut())`.
+  (b) `EqPlusOnePolynomial::evals` — fused the two while-loops into one per-chunk
+  pass (within each `step`-sized chunk at `base = chunk_idx * step`, compute
+  `epo[base+half_step] = eq[base] * r_lower_product`, then update `eq[base]`
+  and `eq[base+half_step]` from the captured `eq[base]` value). Gate on
+  `num_chunks >= PAR_THRESHOLD=1024` via `par_chunks_mut(step)`.
+  Both use `crate::polynomial::PAR_THRESHOLD`. **Gates**: 160/160 jolt-poly
+  tests green, 41/41 jolt-equivalence green (transcript_divergence +
+  zkvm_proof_accepted included), clippy clean across all 8 modular crates +
+  jolt-poly + jolt-core (host, host+zk). **Perf**: 2 runs vs ratchet 1444.14 ms —
+  `iter21-run1.json` 1397.99 ms (−3.19%, below 5% accept threshold);
+  `iter21-run2.json` 1441.28 ms (−0.20%, flat). Both runs in ±5%
+  inconclusive band; per protocol → **revert as flat**. **Diagnosis**:
+  signal is real and directional (both runs below baseline, avg −1.7%),
+  but magnitude insufficient to clear 5% acceptance threshold. Likely causes:
+  (a) actual table sizes are smaller than the 2^20+ the trace's cumulative
+  wall suggested — at log_t=12, most eq_plus_one/lt tables are ≤2^12, so
+  only 2 rounds of 12 cross the PAR_THRESHOLD=1024 gate → parallelism
+  covers only ~75% of work per call. (b) rayon fork/join overhead for
+  `par_chunks_mut(step)` at small step (step=2, 4 in late rounds) may
+  consume a large fraction of the nominal work per item. (c) the 380 ms
+  attribution in the iter-21-post-commit trace likely included materialize
+  overhead (alloc_zeroed for 2^20-ish tables, memset, other ops) beyond
+  just the arithmetic inner loops my change targets. **Takeaway for iter 22**:
+  materialize bottleneck needs a different attack — either (i) reduce the
+  NUMBER of materializes by caching cross-round, (ii) shrink their size
+  (smaller inputs), (iii) parallelize more aggressively with raw pointers
+  instead of par_chunks_mut to skip rayon chunk-splitter overhead, or
+  (iv) pivot to a different bottleneck (Dory Open at 258 ms / 16.5% or
+  kernel 21 InstanceReduce at 205 ms / 13.2%). Raw-pointer approach is
+  the lowest-risk retry of this hypothesis.
 
 - **Iter 20 — P27 parallelize `Op::Commit` outer loop via rayon (GREEN −22.6%)**
   (target: `crates/jolt-zkvm/src/runtime/handlers.rs:319-359`). **Design step**:
