@@ -23,12 +23,12 @@ when the Phase 3 stop condition fires.
 - **log_t**: 12 (overrides `max_trace_length` to 2^12; actual prover work
   is min(guest cycles padded, 2^12))
 - **Program**: `muldiv` (only program supported on the modular stack today)
-- **Stall counter**: 1 (iter 23 instrumentation-only; iter 22 instrumentation-only; iter 21 flat; iter 20 green; iter 19 green; iter 18 reverted; iter 17 profiling-only; iter 16 infra; iter 15 infra; iter 14 infra; iter 13 flat; iter 12 green)
+- **Stall counter**: 2 (iter 24 P32 parallel Materialize flat/reverted; iter 23 instrumentation-only; iter 22 instrumentation-only; iter 21 flat; iter 20 green; iter 19 green; iter 18 reverted; iter 17 profiling-only; iter 16 infra; iter 15 infra; iter 14 infra; iter 13 flat; iter 12 green)
 - **Last green iter**: 20 — parallelize `Op::Commit` outer loop via rayon.
   42 serial Dory `PCS::commit` calls (508 ms wall, 720 ms CPU, 1.4× effective
   parallelism) → parallel collect of commitments + serial transcript append
   (−22.6% prove_ms: 1867 → 1444 ms best, ratio 5.9× → 4.4×)
-- **Green streak**: 3 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infra primitive; iter 15 Gruen infra reduce; iter 16 Gruen infra variant; iter 17 post-P24 re-profile; iter 18 Gruen dispatch reverted; iter 19 Gruen end-to-end −49.2%; iter 20 parallel Op::Commit −22.6%; iter 21 P28 parallelize lt_evals + EqPlusOne::evals flat −1.7%; iter 22 instrumentation-only — per-stage CPU vs wall saturation; iter 23 instrumentation-only — per-op-class CPU vs wall saturation + explicit dory `parallel` feature)
+- **Green streak**: 3 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infra primitive; iter 15 Gruen infra reduce; iter 16 Gruen infra variant; iter 17 post-P24 re-profile; iter 18 Gruen dispatch reverted; iter 19 Gruen end-to-end −49.2%; iter 20 parallel Op::Commit −22.6%; iter 21 P28 parallelize lt_evals + EqPlusOne::evals flat −1.7%; iter 22 instrumentation-only — per-stage CPU vs wall saturation; iter 23 instrumentation-only — per-op-class CPU vs wall saturation + explicit dory `parallel` feature; iter 24 P32 parallel Materialize outer dispatch flat −0.55%, reverted — nested rayon pessimization hypothesis)
 - **Phase 3 stop condition**: `modular.prove_ms ≤ core.prove_ms` at
   `log_t ∈ {18, 20}`, 3 consecutive green iters. Only this exits the loop.
 
@@ -332,6 +332,21 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 24 — P32 parallel Materialize outer dispatch (flat −0.55%, REVERTED)**
+  (target: `crates/jolt-zkvm/src/runtime/mod.rs` main dispatch loop;
+  `crates/jolt-zkvm/src/prove.rs` generic signature).
+  **Hypothesis**: iter 23 showed Materialize family (Materialize + MaterializeUnlessFresh + ReadCheckingReduce) ≈ 510 ms wall at ~1.0 threads / ~13% sat. Same shape as iter 20's Op::Commit win (1.4× → 6.7× parallelism). Expected 10-18% wall by parallel-dispatching consecutive Materialize ops in a batch via `rayon::into_par_iter`.
+  **Change**: converted dispatch for-loop to while-loop that greedily collects consecutive `Op::Materialize` into a batch, then `par_iter().map(|(bind, chs)| materialize_binding(...)).collect()` then serial `provider.insert_binding(buffer)`. Required changing `execute` generic to `P: BufferProvider<F> + Sync` and propagating `+ Sync` bound through `prove.rs` (viral bound). Verified `materialize_binding` pure (`&self` provider read, no shared mutation).
+  **Gates**: 41/41 jolt-equivalence green (transcript_divergence + zkvm_proof_accepted + full suite); clippy clean after adding Sync bound.
+  **Perf (5 runs at log_t=12)**: cold 1866, then 1548, 1455, 1414, 1418 ms. Median of warm runs (2-5) = 1436 ms = **−0.55% vs ratchet 1444.14**, inside ±5% band → flat.
+  **Post-change op-class**: Materialize 284 ms / 1.10 threads / 13.8% sat (was 297/1.02/12.7%). Structural batching confirmed: **24 batches formed, 197 Materialize calls**, with 3 large batches of sizes 33, 41, 81 covering **155/197 calls (79%)**. Despite batching 79% of the calls, effective parallelism only moved from 1.02 → 1.10 threads.
+  **Why flat (hypotheses)**:
+  - **Nested rayon pessimization**: `materialize_binding` internals (`eq_table`, `lt_table`) already use rayon with `PAR_THRESHOLD=1024`. Outer `par_iter` forks into a pool where inner `par_iter` calls contend for the same work-stealing queue. For small Materialize ops (avg ~1.5 ms), synchronization overhead ≥ useful work.
+  - **Allocator lock contention**: each Materialize allocates a large `Vec<F>`. Concurrent `Vec<F>::with_capacity` across 33-81 threads hits the system allocator (glibc malloc arena contention) more than SIMD adds work per thread.
+  - **Individual work too small**: Materialize avg 1.5 ms — below rayon's efficient-granularity threshold of ~1 ms. Overhead dominates.
+  **Per protocol**: flat (±5% band) → revert. Reverted `crates/jolt-zkvm/src/runtime/mod.rs` + `crates/jolt-zkvm/src/prove.rs`. Bookkeeping-only commit.
+  **Lessons for next iter**: (1) when outer dispatch work is already internally rayon-parallel, nested parallelism needs explicit `join` not `par_iter` to avoid queue contention; (2) P33 (ReduceOpenings 93 ms / single call / simple RLC fold) is lower-risk — no nested rayon, single large op to split.
 
 - **Iter 23 — Instrumentation: per-op-class CPU-vs-wall saturation + explicit dory `parallel` feature (infra, no perf claim)**
   (target: `crates/jolt-zkvm/src/runtime/mod.rs` op_class_tag + accumulator;
