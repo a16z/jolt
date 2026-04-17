@@ -43,8 +43,9 @@ When in doubt, default to local mode (interactive).
    - If no match, fall back to finding any `specs/*.md` file that is NOT `TEMPLATE.md`.
    - If multiple specs match, prefer the one matching the PR number. If still ambiguous, ask the user.
 2. **Read the spec** thoroughly — understand all sections (Summary, Intent, Evaluation, Design, Execution).
-3. **Explore the codebase**: Run `explore` agent to map codebase areas relevant to the spec's intent.
-4. **Read prior context (remote mode)**: Read all existing PR comments via `gh pr view --json comments` to identify questions already asked and answers already given. Account for these when scoring — don't re-ask answered questions.
+3. **Read `jolt-eval/README.md`** so you understand the invariant/objective framework for scoring Success Criteria and generating questions.
+4. **Explore the codebase**: Run `explore` agent to map codebase areas relevant to the spec's intent.
+5. **Read prior context (remote mode)**: Read all existing PR comments via `gh pr view --json comments` to identify questions already asked and answers already given. Account for these when scoring — don't re-ask answered questions.
 
 ## Phase 2: Analyze
 
@@ -53,12 +54,12 @@ Score clarity across four dimensions (0.0–1.0 each):
 | Dimension | Weight | What to assess |
 |-----------|--------|---------------|
 | Goal Clarity | 0.35 | Is the primary objective unambiguous? Can you state it in one sentence? Are key entities and relationships clear? |
-| Constraint Clarity | 0.25 | Are boundaries, limitations, and non-goals clear? |
-| Success Criteria | 0.25 | Could you write a test that verifies success? Are acceptance criteria concrete? |
+| Constraint Clarity | 0.20 | Are boundaries, limitations, and non-goals clear? |
+| Success Criteria | 0.30 | Could you write a test that verifies success? Are acceptance criteria concrete? Are relevant `jolt-eval` invariants/objectives described? |
 | Context Clarity | 0.15 | Do we understand the existing system well enough to modify it safely? |
 
 **Calculate ambiguity:**
-`ambiguity = 1 - (goal × 0.35 + constraints × 0.25 + criteria × 0.25 + context × 0.15)`
+`ambiguity = 1 - (goal × 0.35 + constraints × 0.20 + criteria × 0.30 + context × 0.15)`
 
 For each dimension below 0.9, generate a targeted question that would improve it:
 - Questions should expose ASSUMPTIONS, not gather feature lists
@@ -130,8 +131,8 @@ Round {n} complete.
 | Dimension | Score | Weight | Weighted | Gap |
 |-----------|-------|--------|----------|-----|
 | Goal | {s} | 0.35 | {s*w} | {gap or "Clear"} |
-| Constraints | {s} | 0.25 | {s*w} | {gap or "Clear"} |
-| Success Criteria | {s} | 0.25 | {s*w} | {gap or "Clear"} |
+| Constraints | {s} | 0.20 | {s*w} | {gap or "Clear"} |
+| Success Criteria | {s} | 0.30 | {s*w} | {gap or "Clear"} |
 | Context | {s} | 0.15 | {s*w} | {gap or "Clear"} |
 | **Ambiguity** | | | **{score}%** | |
 
@@ -199,6 +200,20 @@ streaming produces the same commitments as the non-streaming path? And what
 is the acceptable performance threshold (e.g., memory usage, throughput)?
 ```
 Why good: One question, targets weakest dimension, specific to the spec content.
+</Good>
+
+<Good>
+Probing jolt-eval coverage:
+```
+The Intent → Invariants section says "streaming must produce the same
+commitments as the non-streaming path." That looks like a binary property —
+have you considered capturing it as a new `jolt-eval` invariant? The existing
+`split_eq_bind_low_high` in `jolt-eval/src/invariant/` is a close model
+(reference vs. optimized implementation comparison). If this is out of scope,
+the Invariants section should say so explicitly.
+```
+Why good: Names a concrete existing invariant as a model, leaves the N/A
+door open, doesn't force a fit.
 </Good>
 
 <Good>
