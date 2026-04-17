@@ -23,10 +23,10 @@ when the Phase 3 stop condition fires.
 - **log_t**: 12 (overrides `max_trace_length` to 2^12; actual prover work
   is min(guest cycles padded, 2^12))
 - **Program**: `muldiv` (only program supported on the modular stack today)
-- **Stall counter**: 4
+- **Stall counter**: 5
 - **Last green iter**: 1 — P10 `segmented_reduce` parallelize+hoist
   (−72.24% prove_ms: 14607 → 4055 ms, ratio 41.4× → 11.5×)
-- **Green streak**: 0 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%, all reverted)
+- **Green streak**: 0 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%, all reverted)
 - **Phase 3 stop condition**: `modular.prove_ms ≤ core.prove_ms` at
   `log_t ∈ {18, 20}`, 3 consecutive green iters. Only this exits the loop.
 
@@ -150,6 +150,23 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
     - **Abstraction risk**: very low.
     - **Expected delta**: 1-3%
 
+- [ ] P17 (REFINED): Shape-aware fused segmented_reduce — target: `crates/jolt-cpu/src/backend.rs:520-599`
+    - **Hypothesis**: iter 6's first attempt at fusing the per-outer
+      `reduce_dense` dispatches regressed +6.4% because the fused version
+      lost the inner-axis parallelism that per-outer `reduce_dense_fixed`
+      has via its PAR_THRESHOLD gate. For early rounds (large inner_size,
+      few active outer positions), parallelizing only across outer
+      positions halves the effective core utilization. A correct fusion
+      must dispatch on the (active_count, inner_size) shape: when
+      `inner_size >= PAR_THRESHOLD` and `active_count` is small,
+      parallelize inner pairs; when active_count is large and inner_size
+      is small, parallelize outer; possibly both via rayon nested
+      par_iter. The gain estimate remains: ~84k per-call overhead
+      dispatches × ~5µs each = ~420ms recoverable IF inner parallelism
+      is preserved.
+    - **Abstraction risk**: low — internal to jolt-cpu, trait unchanged.
+    - **Expected delta**: 10-25% (contingent on shape-aware parallelism).
+
 - [ ] P15: Devirtualize `kernel.evaluate` in `reduce_dense_fixed<_, 4, 4>` — target: `crates/jolt-cpu/src/backend.rs:699-750` + `crates/jolt-cpu/src/product_sum.rs:50-60`
     - **Hypothesis**: iter-5 instrumentation showed `reduce_dense_4x4` is
       70.9% self-time (81 933 calls / 197.5 µs avg). Every inner iter goes
@@ -179,6 +196,39 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 6 — P17 fuse segmented_reduce**
+  (target: `crates/jolt-cpu/src/backend.rs:520-599`). **Design step**:
+  Explore agent comparison confirmed the 11.5× gap is STRUCTURAL — core
+  uses Gruen's `GruenSplitEqPolynomial` (jolt-core
+  `zkvm/ram/read_write_checking.rs:256, 309-388`) to pre-decompose
+  outer×inner eq and emit ONE cubic per round; modular stack's
+  `segmented_reduce` iterates `outer_eq.filter_map(non-zero)` and
+  issues a separate `self.reduce(kernel, col_refs, challenges)` per
+  active outer position — ~4200 tiny `reduce_dense` dispatches per
+  InstanceSegmentedReduce × 20 calls = ~84k dispatches. Hypothesis:
+  fuse into a const-generic single loop that inlines the inner pair
+  iteration across active positions, eliminating Vec<&Buf> allocation,
+  outer-slice clones, and reduce_dense dispatch overhead. Implemented
+  `segmented_reduce_fixed<NI, NE>` for shapes (2,2), (3,3), (4,4),
+  (8,4), (8,8), (16,16), (32,32) plus dynamic fallback, with stack
+  `[F; NI]` lo/hi scratch and `[F::Accumulator; NE]` local inner
+  accumulator. Gates: 41/41 equivalence tests green, clippy clean.
+  **Result**: two runs 4174 ms (+2.95%) and 4457 ms (+9.88%) vs 4055 ms
+  baseline — past the +5% regression threshold on rerun. Reverted.
+  **Diagnosis**: the fused version serializes the inner pair loop and
+  parallelizes ONLY across outer positions. `reduce_dense_fixed` has an
+  inner PAR_THRESHOLD gate — when inner_half ≥ 1024, it parallelizes
+  pair iterations. Early segmented-sumcheck rounds have large inner_size
+  and few active outer positions; the old per-outer path got inner
+  parallelism for free there. My fused path lost that, so early-round
+  throughput dropped more than the saved per-call overhead on late
+  rounds gained. **Fix**: iter 7 candidate P17' — shape-aware dispatch
+  that preserves inner parallelism when `inner_half >= PAR_THRESHOLD`,
+  or uses nested rayon. Also consider whether the correct answer is a
+  Gruen-style precompute + single non-segmented reduce (porting core's
+  algorithm rather than optimizing the per-outer iteration). That is
+  a larger rewrite but matches core's structural advantage directly.
 
 - **Iter 5 — P14 lower rayon thresholds in `reduce_dense_fixed`**
   (target: `crates/jolt-cpu/src/backend.rs:14 + :693-731`). Motivation:

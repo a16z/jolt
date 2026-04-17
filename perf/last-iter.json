@@ -5,17 +5,17 @@
   "runs": [
     {
       "stack": "core",
-      "prove_ms": 328.975083,
-      "verify_ms": 53.861875,
-      "peak_rss_mb": 106,
+      "prove_ms": 328.5625,
+      "verify_ms": 52.333167,
+      "peak_rss_mb": 108,
       "proof_bytes": 66924,
       "proof_encoding": "ark-compressed"
     },
     {
       "stack": "modular",
-      "prove_ms": 4137.320584,
-      "verify_ms": 74.344166,
-      "peak_rss_mb": 1061,
+      "prove_ms": 4457.203708,
+      "verify_ms": 55.808042,
+      "peak_rss_mb": 1104,
       "proof_bytes": 64080,
       "proof_encoding": "bincode-serde",
       "verify_note": "verify measured via proof transplant into jolt-core verifier (no native modular+Dory verifier wired today)"
