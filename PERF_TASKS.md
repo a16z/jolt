@@ -23,11 +23,11 @@ when the Phase 3 stop condition fires.
 - **log_t**: 12 (overrides `max_trace_length` to 2^12; actual prover work
   is min(guest cycles padded, 2^12))
 - **Program**: `muldiv` (only program supported on the modular stack today)
-- **Stall counter**: 1 (iter 15 infra-only, stall unchanged; iter 14 infra; iter 13 flat; iter 12 green)
+- **Stall counter**: 1 (iter 16 infra-only, stall unchanged; iter 15 infra; iter 14 infra; iter 13 flat; iter 12 green)
 - **Last green iter**: 12 — P24 lower `reduce_dense_dynamic` with_min_len
   4096→1024 unlocking booleanity parallelism (−9.24% prove_ms:
   4054 → 3680 ms, ratio 12.1× → 11.0×)
-- **Green streak**: 1 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infra primitive; iter 15 Gruen infra reduce)
+- **Green streak**: 1 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infra primitive; iter 15 Gruen infra reduce; iter 16 Gruen infra variant)
 - **Phase 3 stop condition**: `modular.prove_ms ≤ core.prove_ms` at
   `log_t ∈ {18, 20}`, 3 consecutive green iters. Only this exits the loop.
 
@@ -224,6 +224,37 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 16 — Gruen infrastructure: `Iteration::Gruen` enum variant
+  (infrastructure, no perf claim)** (targets:
+  `crates/jolt-compiler/src/kernel_spec.rs` +4 lines,
+  `crates/jolt-cpu/src/backend.rs` +2 match arms,
+  `crates/jolt-metal/src/{backend.rs,msl_reduce.rs}` +3 match arms).
+  **Scope decision**: land the variant and make every exhaustive `match`
+  still compile, without any site actually *emitting* Gruen. The CPU
+  reduce arm panics `"Iteration::Gruen runtime dispatch lands in iter
+  17"`; Metal arms panic `"Gruen iteration not yet supported on Metal —
+  use CpuBackend"`; `bind` treats Gruen identically to `Dense`/`DenseTensor`
+  (the buffers are bound the same way, only the round-poly assembly
+  changes). Two extra inputs follow formula columns (same shape as
+  `DenseTensor`: outer_eq then inner_eq). **Result**: new variant exists,
+  all existing emission sites unchanged, zero runtime behavior change.
+  **Gates**: 41/41 jolt-equivalence green, transcript_divergence +
+  zkvm_proof_accepted green, clippy clean across 8 modular crates
+  (compiler/compute/cpu/zkvm/dory/openings/verifier/bench), clippy clean
+  jolt-core (host, host+zk). (Metal backend has pre-existing
+  ChallengeIdx indexing errors on `refactor/crates` that predate my
+  changes — confirmed via `git stash`.) **Perf**: 3689.12 ms (+0.46% vs
+  3672.07 baseline), flat as expected (variant unused). **Next iter (17)**:
+  wire runtime handler — teach `reduce` to dispatch `Iteration::Gruen`
+  to `reduce_dense_gruen_deg2` and assemble the cubic via
+  `gruen_cubic_evals`. Also need to change caller's cubic-assembly shape:
+  the runtime handler currently calls `kernel.evaluate` which returns
+  4 Toom-Cook-grid evals; Gruen variant needs to receive `(q_const,
+  q_quad, prev_claim, current_scalar, w_current)` and emit the cubic at
+  {0,1,2,3}. Will likely add a new `CpuKernel` path or a sibling reduce
+  entry-point. Dual-path assertion for 1-2 rounds before iter 18 deletes
+  old path and ratchets.
 
 - **Iter 15 — Gruen infrastructure: `reduce_dense_gruen_deg2` free function
   (infrastructure, no perf claim)** (target: `crates/jolt-cpu/src/gruen.rs`).

@@ -1,0 +1,24 @@
+{
+  "program": "muldiv",
+  "iters": 1,
+  "warmup": 1,
+  "runs": [
+    {
+      "stack": "core",
+      "prove_ms": 332.322834,
+      "verify_ms": 54.409375,
+      "peak_rss_mb": 108,
+      "proof_bytes": 66924,
+      "proof_encoding": "ark-compressed"
+    },
+    {
+      "stack": "modular",
+      "prove_ms": 3689.124042,
+      "verify_ms": 55.04025,
+      "peak_rss_mb": 1150,
+      "proof_bytes": 64080,
+      "proof_encoding": "bincode-serde",
+      "verify_note": "verify measured via proof transplant into jolt-core verifier (no native modular+Dory verifier wired today)"
+    }
+  ]
+}

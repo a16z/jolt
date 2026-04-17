@@ -72,6 +72,9 @@ impl KernelVariant {
             Iteration::Domain { .. } => {
                 panic!("Domain iteration not yet supported on Metal — use CpuBackend")
             }
+            Iteration::Gruen => {
+                panic!("Gruen iteration not yet supported on Metal — use CpuBackend")
+            }
         }
     }
 

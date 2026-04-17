@@ -129,7 +129,7 @@ impl ComputeBackend for CpuBackend {
         let num_value_inputs = inputs.len()
             - match kernel.iteration {
                 Iteration::Dense | Iteration::Domain { .. } => 0,
-                Iteration::DenseTensor => 2,
+                Iteration::DenseTensor | Iteration::Gruen => 2,
                 Iteration::Sparse => 1,
             };
         let value_refs: Vec<&Vec<F>> = inputs[..num_value_inputs]
@@ -163,13 +163,16 @@ impl ComputeBackend for CpuBackend {
                 *domain_start,
                 domain_indexed,
             ),
+            Iteration::Gruen => {
+                panic!("Iteration::Gruen runtime dispatch lands in iter 17")
+            }
         }
     }
 
     fn bind<F: Field>(&self, kernel: &CpuKernel<F>, inputs: &mut [Buf<Self, F>], scalar: F) {
         let order = kernel.binding_order;
         match &kernel.iteration {
-            Iteration::Dense | Iteration::DenseTensor => {
+            Iteration::Dense | Iteration::DenseTensor | Iteration::Gruen => {
                 for buf in inputs.iter_mut() {
                     interpolate_vec_inplace(buf.as_field_mut(), scalar, order);
                 }

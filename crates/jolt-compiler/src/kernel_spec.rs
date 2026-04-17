@@ -79,6 +79,20 @@ pub enum Iteration {
     /// `outer_eq` then `inner_eq`.
     DenseTensor,
 
+    /// Dense with Dao-Thaler + Gruen split-eq cubic assembly.
+    ///
+    /// For `formula = eq(x) · q(x)` where `q(x)` is a deg-2 product of
+    /// multilinear factors, the round cubic `s(X) = l(X) · q(X)` is
+    /// assembled from `(q(0), q(∞) coefficient)` plus the previous-round
+    /// claim — avoiding the 4-point Toom-Cook eval grid. See
+    /// <https://eprint.iacr.org/2024/1210.pdf>.
+    ///
+    /// Two extra inputs follow the formula value columns: `outer_eq` then
+    /// `inner_eq` (same layout as [`DenseTensor`](Iteration::DenseTensor)),
+    /// but the runtime routes to `reduce_dense_gruen_deg2` instead of the
+    /// tensor reducer and assembles the cubic via `gruen_cubic_evals`.
+    Gruen,
+
     /// Sparse merge-join over sorted entries.
     ///
     /// Entries with adjacent keys `(2k, 2k+1)` are paired and composed.

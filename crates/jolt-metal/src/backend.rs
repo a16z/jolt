@@ -343,7 +343,7 @@ impl ComputeBackend for MetalBackend {
         let num_formula_inputs = inputs.len()
             - match kernel.iteration {
                 Iteration::Dense | Iteration::Domain { .. } => 0,
-                Iteration::DenseTensor => 2,
+                Iteration::DenseTensor | Iteration::Gruen => 2,
                 Iteration::Sparse => 1,
             };
 
@@ -413,13 +413,16 @@ impl ComputeBackend for MetalBackend {
             Iteration::Domain { .. } => {
                 panic!("Domain iteration not yet supported on Metal — use CpuBackend")
             }
+            Iteration::Gruen => {
+                panic!("Gruen iteration not yet supported on Metal — use CpuBackend")
+            }
         }
     }
 
     fn bind<F: Field>(&self, kernel: &MetalKernel<F>, inputs: &mut [Buf<Self, F>], scalar: F) {
         let order = kernel.binding_order;
         match &kernel.iteration {
-            Iteration::Dense | Iteration::DenseTensor => {
+            Iteration::Dense | Iteration::DenseTensor | Iteration::Gruen => {
                 for buf in inputs.iter_mut() {
                     self.interpolate_inplace(buf.as_field_mut(), scalar, order);
                 }
