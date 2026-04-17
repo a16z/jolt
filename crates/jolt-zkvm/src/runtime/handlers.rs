@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
+use rayon::prelude::*;
+
 use jolt_compiler::module::{
     ChallengeIdx, CheckpointEvalAction, DomainSeparator, EvalMode, Op, RoundPolyEncoding,
 };
@@ -340,20 +342,33 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             }
 
             let target_len = 1 << num_vars;
-            for pi in polys {
-                let raw = provider.materialize(*pi);
-                let data = if raw.len() < target_len {
+            // Materialize sequentially (BufferProvider's &mut receiver is shared here).
+            let data: Vec<(PolynomialId, Vec<F>)> = polys
+                .iter()
+                .map(|pi| {
+                    let raw = provider.materialize(*pi);
                     let mut v = raw.into_owned();
-                    v.resize(target_len, F::zero());
-                    std::borrow::Cow::Owned(v)
-                } else {
-                    raw
-                };
-                let (commitment, hint) = PCS::commit(&*data, pcs_setup);
-                // Match jolt-core's append_serializable: LabelWithCount header + body
+                    if v.len() < target_len {
+                        v.resize(target_len, F::zero());
+                    }
+                    (*pi, v)
+                })
+                .collect();
+            // Parallel: run Dory PCS::commit per polynomial (each call is tier-1 G1::msm
+            // chunks + tier-2 Pedersen). Trace showed 42 serial commits at 12 ms avg
+            // = 508 ms wall with only 1.4× effective internal parallelism.
+            let results: Vec<(PolynomialId, PCS::Output, PCS::OpeningHint)> = data
+                .into_par_iter()
+                .map(|(pi, data)| {
+                    let (commitment, hint) = PCS::commit(&data[..], pcs_setup);
+                    (pi, commitment, hint)
+                })
+                .collect();
+            // Sequential: append to transcript in the same order as the serial loop.
+            for (pi, commitment, hint) in results {
                 transcript.append(&LabelWithCount(tag.as_bytes(), commitment.serialized_len()));
                 commitment.append_to_transcript(transcript);
-                let _ = state.hints.insert(*pi, hint);
+                let _ = state.hints.insert(pi, hint);
                 state.commitments.push(commitment);
             }
         }

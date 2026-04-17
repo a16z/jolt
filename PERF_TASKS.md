@@ -23,13 +23,12 @@ when the Phase 3 stop condition fires.
 - **log_t**: 12 (overrides `max_trace_length` to 2^12; actual prover work
   is min(guest cycles padded, 2^12))
 - **Program**: `muldiv` (only program supported on the modular stack today)
-- **Stall counter**: 0 (iter 19 green; iter 18 reverted; iter 17 profiling-only; iter 16 infra; iter 15 infra; iter 14 infra; iter 13 flat; iter 12 green)
-- **Last green iter**: 19 — end-to-end Gruen port for kernel 3 (RAM RW phase 1)
-  via KernelSpec.gruen_hint + CpuBackend::gruen_segmented_reduce. Cubic
-  assembly replaces 4-point Toom-Cook eval grid across ~20k segmented
-  reduce invocations (−49.2% prove_ms: 3672 → 1867 ms best, ratio 11.0× → 5.9×;
-  median over 3 runs: 1992 ms)
-- **Green streak**: 2 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infra primitive; iter 15 Gruen infra reduce; iter 16 Gruen infra variant; iter 17 post-P24 re-profile; iter 18 Gruen dispatch reverted; iter 19 Gruen end-to-end −49.2%)
+- **Stall counter**: 0 (iter 20 green; iter 19 green; iter 18 reverted; iter 17 profiling-only; iter 16 infra; iter 15 infra; iter 14 infra; iter 13 flat; iter 12 green)
+- **Last green iter**: 20 — parallelize `Op::Commit` outer loop via rayon.
+  42 serial Dory `PCS::commit` calls (508 ms wall, 720 ms CPU, 1.4× effective
+  parallelism) → parallel collect of commitments + serial transcript append
+  (−22.6% prove_ms: 1867 → 1444 ms best, ratio 5.9× → 4.4×)
+- **Green streak**: 3 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infra primitive; iter 15 Gruen infra reduce; iter 16 Gruen infra variant; iter 17 post-P24 re-profile; iter 18 Gruen dispatch reverted; iter 19 Gruen end-to-end −49.2%; iter 20 parallel Op::Commit −22.6%)
 - **Phase 3 stop condition**: `modular.prove_ms ≤ core.prove_ms` at
   `log_t ∈ {18, 20}`, 3 consecutive green iters. Only this exits the loop.
 
@@ -226,6 +225,44 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 20 — P27 parallelize `Op::Commit` outer loop via rayon (GREEN −22.6%)**
+  (target: `crates/jolt-zkvm/src/runtime/handlers.rs:319-359`). **Design step**:
+  fresh Perfetto trace on post-Gruen binary
+  (`benchmark-runs/perfetto_traces/muldiv_log_t12_iter20_post_gruen.json`,
+  wall 2296 ms) showed Commit at **22.13% wall** (508 ms) = the single largest
+  remaining bottleneck after kernel 3's Gruen port. Internal trace breakdown:
+  42 serial `DoryScheme::commit` calls × 12 ms avg; 720 ms CPU-time but only
+  508 ms wall = **1.4× effective parallelism**. Each individual commit is
+  already parallelized internally (tier-1 G1::msm chunks + tier-2 Pedersen via
+  rayon), but the outer 42-iteration loop ran serially. Since each commit is
+  independent (no transcript append during commit — that's deferred), the
+  outer loop is trivially parallelizable. Change: ~18 LOC in handlers.rs —
+  (a) seq-materialize polys (BufferProvider's `&mut` receiver prevents sharing;
+  sequential Cow::Owned materialization is cheap — ~0.1 ms per poly at log_t=12),
+  (b) `data.into_par_iter().map(|(pi, data)| PCS::commit(&data[..], pcs_setup))`
+  for the parallel commit stage, (c) sequential transcript append in original
+  order for Fiat-Shamir determinism. **Gates**: 41/41 jolt-equivalence green
+  (transcript_divergence + zkvm_proof_accepted included), clippy clean across
+  all 8 modular crates. **Perf**: 3 runs vs ratchet 1866.86 ms —
+  `iter20-run1.json` (pre-change) 1875.99 ms (+0.49%, flat confirm baseline);
+  `iter20-run2.json` 1444.14 ms (−22.62%); `iter20-run3.json` 1461.77 ms
+  (−21.68%). Both post-change runs clear +5% accept threshold. Best 1444.14,
+  median 1453 ms. **Ratchet**: `baseline-modular-best.json` updated to 1444.14 ms.
+  Green streak 2 → 3. Ratio vs core: 5.90× → 4.38× (best). **Why this worked**:
+  the existing inner rayon fan-out was saturating 1-2 cores per commit; adding
+  outer parallelism across 8 cores × 8 commits-in-flight fills the work-steal
+  queue depth, collapsing serial wall into ~cores-wide parallel wall. Memory
+  cost: 42 × ~128KB (log_t=12) = ~5.4 MB transient alloc for Cow::Owned copies,
+  negligible. **Next iter (21)**: post-Gruen + post-parallel-commit trace will
+  show new top-3. Candidate targets: Stage 1 Materialize (309 ms wall / 13.5%)
+  — fuse materialize-into-kernel-input with bind to eliminate re-materialization
+  across rounds. Stage 5 `InstanceReduce` kernel 21 (IncClaimReduction, 315 ms /
+  13.7%) — NOT Gruen-compatible (4 independent eq·product terms, no single eq
+  factor) per Explore agent iter 20 investigation; attack requires algorithmic
+  rework of the claim-batching structure. Stage 7 `DoryScheme::open` (282 ms /
+  12.3%) — opening is sequential Dory inner-product loop; structural rework
+  would need batched opening.
 
 - **Iter 18 — Gruen runtime dispatch REVERTED (dead-code regression, stall counter → 2)**
   **Hypothesis**: wire `Iteration::Gruen` to `reduce_tensor_gruen_deg2` in
