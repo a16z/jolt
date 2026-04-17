@@ -150,6 +150,32 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
     - **Abstraction risk**: very low.
     - **Expected delta**: 1-3%
 
+- [ ] P15: Devirtualize `kernel.evaluate` in `reduce_dense_fixed<_, 4, 4>` — target: `crates/jolt-cpu/src/backend.rs:699-750` + `crates/jolt-cpu/src/product_sum.rs:50-60`
+    - **Hypothesis**: iter-5 instrumentation showed `reduce_dense_4x4` is
+      70.9% self-time (81 933 calls / 197.5 µs avg). Every inner iter goes
+      through `(self.eval_fn)(...)` on `Box<dyn Fn>`, blocking the compiler
+      from inlining `eval_prod_4_assign` and hoisting loop-invariants.
+      Bypass the Box for the known D=4 product-sum shape by holding a
+      typed static function pointer (or detecting the shape in
+      `CpuKernel::new` and caching an optional `eval_prod4_fn: fn(...)`)
+      so reduce_dense_fixed<_,4,4> calls the static function directly.
+    - **Abstraction risk**: low — internal to jolt-cpu, trait unchanged.
+    - **Expected delta**: 5-12% (single biggest hot-path; gain grows with
+      how much the vtable call blocks register scheduling and inlining).
+
+- [ ] P16: Defer Montgomery reduction through the 4-output pointwise mul
+  block of `eval_prod_4_assign` — target:
+  `crates/jolt-cpu/src/toom_cook.rs:365-374`
+    - **Hypothesis**: the last 4 multiplications produce `outputs[0..4]`
+      that are *immediately* added into the per-thread accumulator. Using
+      BN254 unreduced / non-reduced multiplication primitives (returning
+      a 512-bit limb pair) for those 4 mults and letting `acc_add`
+      merge in non-reduced form would cut ~4 Montgomery reductions per
+      inner iter. ~20% of arithmetic savings on the D=4 hot path.
+    - **Abstraction risk**: medium — need a non-reduced mul API on
+      `Field` and an `Accumulator` path that consumes it.
+    - **Expected delta**: 5-10% (contingent on wiring + field support).
+
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
