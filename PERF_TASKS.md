@@ -23,10 +23,11 @@ when the Phase 3 stop condition fires.
 - **log_t**: 12 (overrides `max_trace_length` to 2^12; actual prover work
   is min(guest cycles padded, 2^12))
 - **Program**: `muldiv` (only program supported on the modular stack today)
-- **Stall counter**: 9 (iter 11 was instrumentation-only; not a stall)
-- **Last green iter**: 1 — P10 `segmented_reduce` parallelize+hoist
-  (−72.24% prove_ms: 14607 → 4055 ms, ratio 41.4× → 11.5×)
-- **Green streak**: 0 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only, no hypothesis)
+- **Stall counter**: 0 (iter 12 P24 green at −9.24%)
+- **Last green iter**: 12 — P24 lower `reduce_dense_dynamic` with_min_len
+  4096→1024 unlocking booleanity parallelism (−9.24% prove_ms:
+  4054 → 3680 ms, ratio 12.1× → 11.0×)
+- **Green streak**: 1 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%)
 - **Phase 3 stop condition**: `modular.prove_ms ≤ core.prove_ms` at
   `log_t ∈ {18, 20}`, 3 consecutive green iters. Only this exits the loop.
 
@@ -166,6 +167,20 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
 <!-- P16 consumed iter 9; see Notes for result & diagnosis. -->
 <!-- P19 consumed iter 8; see Notes for result & diagnosis. -->
 <!-- P20 consumed iter 10 (first attempt — fused loop only); see Notes. -->
+<!-- P24 consumed iter 12 GREEN (−9.24%); see Notes. -->
+
+- [ ] P25: Extend P24 parallelism unlock to small-chunk-bandwidth kernels that
+  are NOT in reduce_dense_fixed's const-generic list — target: add
+  const-generic shapes like (5,3), (6,3), (7,4), (9,4), (10,4), (4,5), (5,5)
+  covering booleanity+hamming+ram_ra_virtual+inst_ra_virtual+inc/output. This
+  moves those from `reduce_dense_dynamic` (heap scratch, indirection) to
+  `reduce_dense_fixed` (stack scratch, pointer-array). P24 proved parallelism
+  was stuck; now unlock per-iter ILP.
+    - **Hypothesis**: dynamic path costs ~10-20% more per iter than fixed
+      due to heap Vec scratch + indirect &[&Vec<F>] access. For booleanity
+      (NI~10), that's ~40ms saved on stage 5 alone.
+    - **Abstraction risk**: low — internal to reduce_dense shape dispatch.
+    - **Expected delta**: 2-5%.
 
 - [ ] P21: True Gruen split-eq (tensor decomposition of outer×inner eq) in
   segmented sumcheck — target: `crates/jolt-zkvm/src/runtime/handlers.rs`
@@ -209,6 +224,31 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 12 — P24 lower reduce_dense_dynamic `with_min_len` (4096 → 1024)**
+  (target: `crates/jolt-cpu/src/backend.rs:775`). **Design step**: iter 11
+  instrumentation attributed stage 5's 515 ms wall to a single kernel —
+  kernel 21 (Booleanity, batch=4 instance=1) at 424 ms / 14 calls / 30 ms
+  avg, with first call at 142 ms. Booleanity shape is (NI=1+total_d, NE=4)
+  where total_d ≈ instruction_d + bytecode_d + ram_d ≈ 9-10 — not in the
+  const-generic list — so it falls to `reduce_dense_dynamic` which used
+  `with_min_len(4096)`. For typical booleanity first-round halves (8K-32K),
+  that produces only 2-8 rayon tasks; with `with_min_len(1024)` rayon can
+  split into 8-32 tasks, unlocking multi-core parallelism that was capped.
+  Change: one-char edit (`4096` → `1024`). **Gates**: 41/41 jolt-equivalence
+  green, clippy clean across jolt-{cpu,compiler,compute,zkvm,dory,openings,
+  verifier,bench}. **Result**: run 1 3672.07 ms (−9.43%), run 2 3687.88 ms
+  (−9.05%) vs 4054.58 ms baseline. Avg −9.24%, both runs past 5% accept
+  threshold. Ratio vs core: 12.1× → 11.0×. **Why this worked after iter 5
+  P14 (which lowered PAR_THRESHOLD and flatlined)**: iter 5 targeted the
+  FIXED path (NI=4, NE=4, dominating by call count but at already-good
+  parallelism). Iter 12 targets the DYNAMIC path (booleanity-shape, small
+  call count but massive per-call work × 1-2× parallelism). Different
+  regime, different bottleneck. **Ratchet**: baseline-modular-best.json now
+  at 3672.07 ms. Stall counter reset to 0. Green streak 1. **Next iter**:
+  P25 — add more const-generic shape arms to `reduce_dense_fixed` for
+  booleanity/hamming/ram_ra_virtual shapes; expected to compound P24 gain
+  with ILP/register allocation wins on top of parallelism.
 
 - **Iter 11 — per-stage instrumentation (infrastructure, no perf claim)**
   (targets: `crates/jolt-zkvm/src/runtime/mod.rs` — added `_stage_span`

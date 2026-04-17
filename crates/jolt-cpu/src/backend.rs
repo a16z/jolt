@@ -772,7 +772,7 @@ fn reduce_dense_dynamic<F: Field>(
 
             let accs = (0..half)
                 .into_par_iter()
-                .with_min_len(4096)
+                .with_min_len(1024)
                 .fold(
                     || {
                         (
