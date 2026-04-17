@@ -33,6 +33,7 @@ jobs:
         if: github.event_name == 'push'
         run: >
           cargo bench
+          -p jolt-crypto
           -p jolt-field
           -p jolt-poly
           -p jolt-transcript
@@ -62,6 +63,7 @@ jobs:
         if: github.event_name == 'pull_request'
         run: >
           cargo bench
+          -p jolt-crypto
           -p jolt-field
           -p jolt-poly
           -p jolt-transcript
