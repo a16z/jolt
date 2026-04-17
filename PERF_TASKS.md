@@ -23,11 +23,11 @@ when the Phase 3 stop condition fires.
 - **log_t**: 12 (overrides `max_trace_length` to 2^12; actual prover work
   is min(guest cycles padded, 2^12))
 - **Program**: `muldiv` (only program supported on the modular stack today)
-- **Stall counter**: 0 (iter 12 P24 green at −9.24%)
+- **Stall counter**: 1 (iter 13 flat on with_min_len extension; iter 12 green)
 - **Last green iter**: 12 — P24 lower `reduce_dense_dynamic` with_min_len
   4096→1024 unlocking booleanity parallelism (−9.24% prove_ms:
   4054 → 3680 ms, ratio 12.1× → 11.0×)
-- **Green streak**: 1 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%)
+- **Green streak**: 1 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%)
 - **Phase 3 stop condition**: `modular.prove_ms ≤ core.prove_ms` at
   `log_t ∈ {18, 20}`, 3 consecutive green iters. Only this exits the loop.
 
@@ -224,6 +224,32 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 13 — P25 extend `with_min_len` lowering to reduce_dense_fixed +
+  reduce_sparse (REVERTED, flat)** (targets: `crates/jolt-cpu/src/backend.rs`
+  lines 693 dense-fixed 2048→1024 and 1124 sparse 4096→1024). **Design
+  hypothesis**: mirror iter 12 P24's win — if the dynamic path was
+  under-parallelized, maybe fixed and sparse paths have similar late-round
+  or medium-shape blind spots. **Gates**: 41/41 jolt-equivalence green,
+  transcript_divergence + zkvm_proof_accepted green, clippy clean both
+  host and host+zk. **Result**: run 1 3667.57 ms (−0.12%), run 2 3684.26 ms
+  (+0.33%) vs 3672.07 ms baseline. Both in ±5% band; per protocol flat →
+  revert. **Diagnosis**: (a) reduce_dense_fixed's dominant consumer is
+  kernel 3 (NI=4, NE=4) where half starts at ≈2M and halves per round;
+  late rounds drop below PAR_THRESHOLD=1024 entirely (sequential path).
+  The 1024-2048 transition band is visited for ~1 round per sumcheck —
+  insufficient population to move the needle. (b) reduce_sparse pairs.len()
+  distribution is bimodal — either tiny (below PAR_THRESHOLD, sequential)
+  or huge (>>4096, saturated under either threshold); the 1024-4096 band
+  is thinly populated. **Generalized lesson**: the iter 12 win was
+  shape-specific — dynamic path has expensive per-pair work (NI=10 field
+  loads + NE=4 evals + dynamic Vec bookkeeping) where 1024-pair tasks
+  amortize thread fork cost; smaller-NI fixed workloads either already
+  have enough parallelism (large halves) or are below threshold entirely
+  (small halves). Don't blanket-extend parallel tuning — profile the
+  specific workload first. **Next iter**: P25 (extend const-generic shapes
+  for booleanity/hamming — stack-allocated scratch) or P26 (Gruen
+  split-eq port for kernel 3, the remaining 53% concentration).
 
 - **Iter 12 — P24 lower reduce_dense_dynamic `with_min_len` (4096 → 1024)**
   (target: `crates/jolt-cpu/src/backend.rs:775`). **Design step**: iter 11
