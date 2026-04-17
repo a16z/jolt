@@ -22,7 +22,7 @@
 use jolt_compiler::checkpoint_lowering::lower_checkpoint_rule;
 use jolt_compiler::formula::{BindingOrder, Factor, Formula, ProductTerm};
 use jolt_compiler::ir::PolyKind;
-use jolt_compiler::kernel_spec::Iteration;
+use jolt_compiler::kernel_spec::{GruenHint, Iteration, LinComboQ};
 use jolt_compiler::module::{
     BatchIdx, BatchedInstance, BatchedSumcheckDef, BilinearExpr, ChallengeDecl, ChallengeIdx,
     ChallengeSource, CheckpointAction, CheckpointEvalAction, CheckpointRule, ClaimFactor,
@@ -1279,6 +1279,7 @@ fn build_stage1(
                 zero_base: true, // R1CS: Az*Bz = Cz vanishes at base points
             },
             binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
         },
         inputs: uniskip_inputs,
         num_rounds: 1,
@@ -1397,6 +1398,7 @@ fn build_stage1(
             num_evals: params.outer_remaining_degree + 1,
             iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
         },
         inputs: remaining_inputs,
         num_rounds: params.outer_remaining_rounds,
@@ -1776,6 +1778,7 @@ fn build_stage2(
                 zero_base: false, // product: base evals are non-zero
             },
             binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
         },
         inputs: product_uniskip_inputs,
         num_rounds: 1,
@@ -2058,6 +2061,10 @@ fn build_stage2(
         .collect();
 
     // Phase 1 kernel: cycle binding (Dense inner kernel, segmented reduce).
+    //
+    // Formula factors as eq_cycle(x) · ra(x) · ((1 + γ_rw)·val(x) + γ_rw·inc(x)),
+    // matching the LinComboQ shape: q(x) = a(x) · ((1+γ)·b(x) + γ·c(x))
+    // with a=ra (Input 1), b=val (Input 2), c=inc (Input 3).
     let rw_phase1_kernel_idx = kernels.len();
     kernels.push(KernelDef {
         spec: KernelSpec {
@@ -2088,6 +2095,16 @@ fn build_stage2(
             num_evals: params.rw_checking_degree + 1,
             iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
+            gruen_hint: Some(GruenHint {
+                eq_input: 0,
+                eq_challenges: rw_cycle_eq_challenges.clone(),
+                q_lincombo: LinComboQ {
+                    a_input: 1,
+                    b_input: 2,
+                    c_input: 3,
+                    gamma_challenge: ch_gamma_rw,
+                },
+            }),
         },
         inputs: vec![
             InputBinding::EqTable {
@@ -2148,6 +2165,7 @@ fn build_stage2(
             num_evals: 3,
             iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
         },
         inputs: vec![
             InputBinding::Provided {
@@ -2172,6 +2190,7 @@ fn build_stage2(
             num_evals: params.product_remainder_degree + 1,
             iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
         },
         inputs: vec![
             InputBinding::EqTable {
@@ -2239,6 +2258,7 @@ fn build_stage2(
             num_evals: params.instruction_claim_reduction_degree + 1,
             iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
         },
         inputs: vec![
             InputBinding::EqTable {
@@ -2278,6 +2298,7 @@ fn build_stage2(
             num_evals: params.raf_evaluation_degree + 1,
             iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
         },
         inputs: vec![
             InputBinding::Provided { poly: p.ram_unmap },
@@ -2312,6 +2333,7 @@ fn build_stage2(
             num_evals: params.output_check_degree + 1,
             iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
         },
         inputs: vec![
             InputBinding::EqTable {
@@ -2824,6 +2846,7 @@ fn build_stage3(
             num_evals: 3, // degree 2 → 3 eval points
             iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
         },
         inputs: vec![
             InputBinding::EqPlusOneTable {
@@ -2897,6 +2920,7 @@ fn build_stage3(
             num_evals: 4, // degree 3 → 4 eval points
             iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
         },
         inputs: vec![
             InputBinding::EqTable {
@@ -2960,6 +2984,7 @@ fn build_stage3(
             num_evals: 3, // degree 2 → 3 eval points
             iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
         },
         inputs: vec![
             InputBinding::EqTable {
@@ -3319,6 +3344,7 @@ fn build_stage4(
             num_evals: 4, // degree 3
             iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
         },
         inputs: vec![
             InputBinding::EqTable {
@@ -3388,6 +3414,7 @@ fn build_stage4(
             num_evals: 3, // degree 2
             iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
         },
         inputs: vec![
             InputBinding::Provided { poly: p.reg_wa },
@@ -3429,6 +3456,7 @@ fn build_stage4(
             num_evals: 4, // degree 3
             iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
         },
         inputs: vec![
             InputBinding::Provided { poly: p.ram_inc },
@@ -3649,6 +3677,7 @@ fn build_stage5(
             num_evals: 4, // degree 3
             iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
         },
         inputs: vec![
             InputBinding::Provided { poly: p.rd_inc },
@@ -3703,6 +3732,7 @@ fn build_stage5(
             num_evals: 3, // degree 2
             iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
         },
         inputs: vec![
             InputBinding::EqTable {
@@ -3783,6 +3813,7 @@ fn build_stage5(
             num_evals: 3, // degree 2 during address rounds
             iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
         },
         inputs: vec![],
         num_rounds: LOG_K_INSTRUCTION,
@@ -3834,6 +3865,7 @@ fn build_stage5(
                 num_evals: n_vra + 3, // degree = n_vra + 2
                 iteration: Iteration::Dense,
                 binding_order: BindingOrder::LowToHigh,
+                gruen_hint: None,
             },
             inputs: cycle_inputs,
             num_rounds: params.log_t,
@@ -4482,6 +4514,7 @@ fn build_stage6(
                 num_evals: 3, // degree 2
                 iteration: Iteration::Dense,
                 binding_order: BindingOrder::LowToHigh,
+                gruen_hint: None,
             },
             inputs: addr_inputs,
             num_rounds: params.log_k_bytecode,
@@ -4760,6 +4793,7 @@ fn build_stage6(
                 num_evals: d + 2, // degree d+1
                 iteration: Iteration::Dense,
                 binding_order: BindingOrder::LowToHigh,
+                gruen_hint: None,
             },
             inputs: cycle_inputs,
             num_rounds: params.log_t,
@@ -4874,6 +4908,7 @@ fn build_stage6(
             num_evals: 4,
             iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
         },
         inputs: bool_inputs,
         num_rounds: booleanity_rounds,
@@ -4900,6 +4935,7 @@ fn build_stage6(
                 num_evals: 4,
                 iteration: Iteration::Dense,
                 binding_order: BindingOrder::LowToHigh,
+                gruen_hint: None,
             },
             inputs: vec![
                 InputBinding::EqTable {
@@ -4953,6 +4989,7 @@ fn build_stage6(
                 num_evals: params.ram_d + 2,
                 iteration: Iteration::Dense,
                 binding_order: BindingOrder::LowToHigh,
+                gruen_hint: None,
             },
             inputs,
             num_rounds: params.log_t,
@@ -5009,6 +5046,7 @@ fn build_stage6(
                 num_evals: m + 2,
                 iteration: Iteration::Dense,
                 binding_order: BindingOrder::LowToHigh,
+                gruen_hint: None,
             },
             inputs,
             num_rounds: params.log_t,
@@ -5066,6 +5104,7 @@ fn build_stage6(
                 num_evals: 3,
                 iteration: Iteration::Dense,
                 binding_order: BindingOrder::LowToHigh,
+                gruen_hint: None,
             },
             inputs: vec![
                 InputBinding::Provided { poly: p.ram_inc },
@@ -5700,6 +5739,7 @@ fn build_stage7(
             num_evals: 3, // degree 2 → evals at {0, 1, 2}
             iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
         },
         inputs: hw_inputs,
         num_rounds: hw_rounds,

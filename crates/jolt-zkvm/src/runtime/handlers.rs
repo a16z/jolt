@@ -787,14 +787,28 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                         .as_field()
                 })
                 .collect();
-            let inst_evals = backend.segmented_reduce(
-                compiled_kernel,
-                &input_bufs,
-                outer_eq,
-                &segmented.inner_only,
-                inner_size,
-                &state.challenges,
-            );
+            let inst_evals = if kdef.spec.gruen_hint.is_some() {
+                let prev_claim = state.batch_instance_claims[batch.0][instance.0];
+                backend.gruen_segmented_reduce(
+                    compiled_kernel,
+                    &input_bufs,
+                    outer_eq,
+                    &segmented.inner_only,
+                    inner_size,
+                    &state.challenges,
+                    prev_claim,
+                    *round_within_phase,
+                )
+            } else {
+                backend.segmented_reduce(
+                    compiled_kernel,
+                    &input_bufs,
+                    outer_eq,
+                    &segmented.inner_only,
+                    inner_size,
+                    &state.challenges,
+                )
+            };
             state.last_round_instance_evals[instance.0].clone_from(&inst_evals);
         }
 

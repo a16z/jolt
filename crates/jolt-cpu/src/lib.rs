@@ -54,6 +54,10 @@ pub fn compile<F: Field>(spec: &KernelSpec) -> CpuKernel<F> {
         kernel = kernel.with_domain_eval(Box::new(generic::compile_domain_fn::<F>(composition)));
     }
 
+    if let Some(hint) = &spec.gruen_hint {
+        kernel = kernel.with_gruen_hint(hint.clone());
+    }
+
     kernel
 }
 
@@ -85,6 +89,7 @@ mod tests {
             num_evals,
             iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
         }
     }
 
@@ -171,6 +176,7 @@ mod tests {
             formula,
             iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
         };
         let kernel: CpuKernel<Fr> = compile(&spec);
 
@@ -200,6 +206,7 @@ mod tests {
             formula,
             iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
         };
         let kernel: CpuKernel<Fr> = compile(&spec);
 
@@ -223,6 +230,7 @@ mod tests {
             formula,
             iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
         };
 
         let kernel: CpuKernel<Fr> = compile(&spec);

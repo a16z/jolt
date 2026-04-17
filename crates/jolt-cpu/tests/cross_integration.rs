@@ -27,6 +27,7 @@ fn make_spec(formula: &Formula) -> KernelSpec {
         formula: formula.clone(),
         iteration: Iteration::Dense,
         binding_order: BindingOrder::LowToHigh,
+        gruen_hint: None,
     }
 }
 
@@ -283,6 +284,7 @@ fn make_sparse_spec(formula: &Formula) -> KernelSpec {
         formula: formula.clone(),
         iteration: Iteration::Sparse,
         binding_order: BindingOrder::LowToHigh,
+        gruen_hint: None,
     }
 }
 

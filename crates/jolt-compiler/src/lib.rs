@@ -19,7 +19,7 @@ pub use descriptor::{PolySource, PolynomialDescriptor, R1csColumn, StorageHint, 
 pub use formula::{BindingOrder, Factor, Formula, ProductTerm};
 pub use ir::expr::{Challenge, Expr, Poly, Term};
 pub use ir::{Claim, ClaimId, Density, PolyDef, PolyKind, Protocol, PublicPoly, Vertex};
-pub use kernel_spec::{Iteration, KernelSpec};
+pub use kernel_spec::{GruenHint, Iteration, KernelSpec, LinComboQ};
 pub use module::{
     BatchIdx, ChallengeDecl, ChallengeIdx, ChallengeSource, ClaimFactor, ClaimFormula, ClaimTerm,
     CombineEntry, Comparison, DomainSeparator, EvalMode, Evaluation, InputBinding, InstanceConfig,

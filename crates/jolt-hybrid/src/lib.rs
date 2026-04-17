@@ -779,6 +779,7 @@ mod tests {
             num_evals: 4,
             iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
         }
     }
 
@@ -872,6 +873,7 @@ mod tests {
             num_evals: 2,
             iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
         };
         let kernel = hybrid.compile::<Fr>(&spec);
 
@@ -903,6 +905,7 @@ mod tests {
             num_evals: 2,
             iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
         };
         let kernel = hybrid.compile::<Fr>(&spec);
 
@@ -934,6 +937,7 @@ mod tests {
             num_evals: 2,
             iteration: Iteration::Dense,
             binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
         };
         let kernel = hybrid.compile::<Fr>(&spec);
 

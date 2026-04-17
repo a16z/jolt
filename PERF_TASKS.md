@@ -23,11 +23,13 @@ when the Phase 3 stop condition fires.
 - **log_t**: 12 (overrides `max_trace_length` to 2^12; actual prover work
   is min(guest cycles padded, 2^12))
 - **Program**: `muldiv` (only program supported on the modular stack today)
-- **Stall counter**: 2 (iter 18 reverted; iter 17 profiling-only; iter 16 infra; iter 15 infra; iter 14 infra; iter 13 flat; iter 12 green)
-- **Last green iter**: 12 — P24 lower `reduce_dense_dynamic` with_min_len
-  4096→1024 unlocking booleanity parallelism (−9.24% prove_ms:
-  4054 → 3680 ms, ratio 12.1× → 11.0×)
-- **Green streak**: 1 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infra primitive; iter 15 Gruen infra reduce; iter 16 Gruen infra variant; iter 17 post-P24 re-profile; iter 18 Gruen dispatch reverted)
+- **Stall counter**: 0 (iter 19 green; iter 18 reverted; iter 17 profiling-only; iter 16 infra; iter 15 infra; iter 14 infra; iter 13 flat; iter 12 green)
+- **Last green iter**: 19 — end-to-end Gruen port for kernel 3 (RAM RW phase 1)
+  via KernelSpec.gruen_hint + CpuBackend::gruen_segmented_reduce. Cubic
+  assembly replaces 4-point Toom-Cook eval grid across ~20k segmented
+  reduce invocations (−49.2% prove_ms: 3672 → 1867 ms best, ratio 11.0× → 5.9×;
+  median over 3 runs: 1992 ms)
+- **Green streak**: 2 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infra primitive; iter 15 Gruen infra reduce; iter 16 Gruen infra variant; iter 17 post-P24 re-profile; iter 18 Gruen dispatch reverted; iter 19 Gruen end-to-end −49.2%)
 - **Phase 3 stop condition**: `modular.prove_ms ≤ core.prove_ms` at
   `log_t ∈ {18, 20}`, 3 consecutive green iters. Only this exits the loop.
 

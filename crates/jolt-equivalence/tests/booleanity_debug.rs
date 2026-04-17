@@ -493,6 +493,7 @@ fn synthetic_k4_t4_naive_vs_kernel() {
         formula,
         iteration: Iteration::Dense,
         binding_order: CompilerBindingOrder::LowToHigh,
+        gruen_hint: None,
     };
     let kernel = jolt_cpu::compile::<NewFr>(&spec);
 
@@ -611,6 +612,7 @@ fn unit_kernel_reduce_booleanity() {
         formula,
         iteration: Iteration::Dense,
         binding_order: CompilerBindingOrder::LowToHigh,
+        gruen_hint: None,
     };
     let kernel = jolt_cpu::compile::<NewFr>(&spec);
 
@@ -697,6 +699,7 @@ fn gruen_vs_dense_round0_comparison() {
         formula: formula.clone(),
         iteration: Iteration::Dense,
         binding_order: CompilerBindingOrder::LowToHigh,
+        gruen_hint: None,
     };
     let kernel = jolt_cpu::compile::<NewFr>(&spec);
     let bufs_projected: Vec<Buf<CpuBackend, NewFr>> = vec![
@@ -723,6 +726,7 @@ fn gruen_vs_dense_round0_comparison() {
         formula,
         iteration: Iteration::Dense,
         binding_order: CompilerBindingOrder::LowToHigh,
+        gruen_hint: None,
     };
     let kernel2 = jolt_cpu::compile::<NewFr>(&spec2);
     let bufs_full: Vec<Buf<CpuBackend, NewFr>> = vec![

@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use jolt_compiler::module::{ClaimFactor, ClaimFormula};
-use jolt_compiler::{Iteration, PolynomialId};
+use jolt_compiler::{GruenHint, Iteration, PolynomialId};
 use jolt_field::{Field, FieldAccumulator};
 
 use jolt_compute::{BindingOrder, Buf, ComputeBackend, DeviceBuffer, Scalar};
@@ -47,6 +47,7 @@ pub struct CpuKernel<F: Field> {
     pub(crate) num_evals: usize,
     pub(crate) iteration: Iteration,
     pub(crate) binding_order: BindingOrder,
+    pub(crate) gruen_hint: Option<GruenHint>,
 }
 
 impl<F: Field> CpuKernel<F> {
@@ -62,6 +63,7 @@ impl<F: Field> CpuKernel<F> {
             num_evals,
             iteration,
             binding_order,
+            gruen_hint: None,
         }
     }
 
@@ -77,11 +79,17 @@ impl<F: Field> CpuKernel<F> {
             num_evals,
             iteration,
             binding_order,
+            gruen_hint: None,
         }
     }
 
     pub fn with_domain_eval(mut self, f: Box<DomainEvalFn<F>>) -> Self {
         self.domain_eval_fn = Some(f);
+        self
+    }
+
+    pub fn with_gruen_hint(mut self, hint: GruenHint) -> Self {
+        self.gruen_hint = Some(hint);
         self
     }
 
@@ -599,6 +607,143 @@ impl ComputeBackend for CpuBackend {
             }
         }
         total
+    }
+
+    #[tracing::instrument(skip_all, name = "CpuBackend::gruen_segmented_reduce")]
+    fn gruen_segmented_reduce<F: Field>(
+        &self,
+        kernel: &CpuKernel<F>,
+        inputs: &[&Vec<F>],
+        outer_eq: &[F],
+        inner_only: &[bool],
+        inner_size: usize,
+        challenges: &[F],
+        prev_claim: F,
+        current_round: usize,
+    ) -> Vec<F> {
+        let hint = kernel
+            .gruen_hint
+            .as_ref()
+            .expect("gruen_segmented_reduce: kernel missing GruenHint");
+        debug_assert_eq!(kernel.num_evals, 4, "Gruen cubic assembly expects 4 evals");
+        debug_assert!(
+            matches!(kernel.binding_order, BindingOrder::LowToHigh),
+            "Gruen CPU path currently assumes LowToHigh binding"
+        );
+
+        let half = inner_size / 2;
+        let eq_in = hint.eq_input as usize;
+        let a_in = hint.q_lincombo.a_input as usize;
+        let b_in = hint.q_lincombo.b_input as usize;
+        let c_in = hint.q_lincombo.c_input as usize;
+        let gamma = challenges[hint.q_lincombo.gamma_challenge.0];
+        // eq_table layout: bit 0 corresponds to the LAST entry processed
+        // (see `CpuBackend::eq_table`), so for LowToHigh binding of bit k
+        // the current variable's challenge is at `len - 1 - k`.
+        let w_current =
+            challenges[hint.eq_challenges[hint.eq_challenges.len() - 1 - current_round].0];
+
+        // eq_cycle is inner_only — shared across outers. Precompute
+        // E[i] = eq_cycle[2i] + eq_cycle[2i+1] (LowToHigh: (1-w)+w = 1 cancels
+        // the current-round variable, leaving only higher-variable contributions).
+        debug_assert!(
+            inner_only[eq_in],
+            "eq_input must be inner_only for Gruen path"
+        );
+        let eq_cycle = inputs[eq_in];
+        debug_assert_eq!(
+            eq_cycle.len(),
+            2 * half,
+            "eq_cycle length mismatch in Gruen path"
+        );
+        let e_active: Vec<F> = (0..half)
+            .map(|i| eq_cycle[2 * i] + eq_cycle[2 * i + 1])
+            .collect();
+
+        let ra_buf = inputs[a_in];
+        let val_buf = inputs[b_in];
+        let inc_buf = inputs[c_in];
+        // Inner-only buffers are shared across outer positions (length
+        // `inner_size`); outer-indexed buffers carry `outer × inner` and must
+        // be sliced at `a_idx * inner_size`.
+        let a_inner = inner_only[a_in];
+        let b_inner = inner_only[b_in];
+        let c_inner = inner_only[c_in];
+
+        // Per-outer accumulator: compute (q_const_a, q_quad_a) and multiply
+        // by outer_eq[a], then sum into totals. q(x) = a(x)·(b(x)+γ·(b(x)+c(x))).
+        let reduce_outer = |a_idx: usize, weight: F| -> (F, F) {
+            let start = a_idx * inner_size;
+            let ra_start = if a_inner { 0 } else { start };
+            let val_start = if b_inner { 0 } else { start };
+            let inc_start = if c_inner { 0 } else { start };
+            let ra = &ra_buf[ra_start..ra_start + inner_size];
+            let val = &val_buf[val_start..val_start + inner_size];
+            let inc = &inc_buf[inc_start..inc_start + inner_size];
+            let mut q_const = F::zero();
+            let mut q_quad = F::zero();
+            for i in 0..half {
+                let ra_lo = ra[2 * i];
+                let ra_hi = ra[2 * i + 1];
+                let val_lo = val[2 * i];
+                let val_hi = val[2 * i + 1];
+                let inc_lo = inc[2 * i];
+                let inc_hi = inc[2 * i + 1];
+                // b(x) = val(x) + gamma*(val(x) + inc(x))
+                let b_lo = val_lo + gamma * (val_lo + inc_lo);
+                let b_hi = val_hi + gamma * (val_hi + inc_hi);
+                let e = e_active[i];
+                q_const += e * ra_lo * b_lo;
+                q_quad += e * (ra_hi - ra_lo) * (b_hi - b_lo);
+            }
+            (weight * q_const, weight * q_quad)
+        };
+
+        let active: Vec<(usize, F)> = outer_eq
+            .iter()
+            .enumerate()
+            .filter_map(|(a, &w)| (!w.is_zero()).then_some((a, w)))
+            .collect();
+
+        let (total_q_const, total_q_quad) = {
+            #[cfg(feature = "parallel")]
+            {
+                use rayon::prelude::*;
+                if active.len() >= 2 {
+                    active
+                        .par_iter()
+                        .map(|&(a, w)| reduce_outer(a, w))
+                        .reduce(|| (F::zero(), F::zero()), |x, y| (x.0 + y.0, x.1 + y.1))
+                } else {
+                    let mut acc = (F::zero(), F::zero());
+                    for (a, w) in &active {
+                        let (c, q) = reduce_outer(*a, *w);
+                        acc.0 += c;
+                        acc.1 += q;
+                    }
+                    acc
+                }
+            }
+            #[cfg(not(feature = "parallel"))]
+            {
+                let mut acc = (F::zero(), F::zero());
+                for (a, w) in &active {
+                    let (c, q) = reduce_outer(*a, *w);
+                    acc.0 += c;
+                    acc.1 += q;
+                }
+                acc
+            }
+        };
+
+        crate::gruen::gruen_cubic_evals(
+            F::one(),
+            w_current,
+            total_q_const,
+            total_q_quad,
+            prev_claim,
+        )
+        .to_vec()
     }
 }
 
@@ -1357,6 +1502,7 @@ mod tests {
             formula,
             iteration: Iteration::Sparse,
             binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
         })
     }
 

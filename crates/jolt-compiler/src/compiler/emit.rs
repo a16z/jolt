@@ -462,6 +462,7 @@ fn emit_sumcheck_stage(
             num_evals: degree + 1,
             iteration,
             binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
         },
         inputs: input_bindings,
         num_rounds,

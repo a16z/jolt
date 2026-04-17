@@ -36,6 +36,43 @@ pub struct KernelSpec {
     pub iteration: Iteration,
     /// Variable binding direction.
     pub binding_order: BindingOrder,
+    /// Optional Dao-Thaler + Gruen cubic-assembly fast path.
+    ///
+    /// When `Some`, the runtime may invoke `gruen_segmented_reduce` on
+    /// backends that support it, assembling the round cubic via the
+    /// prev-claim trick instead of the standard evaluation grid.
+    /// Backends that don't recognize the hint fall back to the generic
+    /// `segmented_reduce`.
+    #[serde(default)]
+    pub gruen_hint: Option<GruenHint>,
+}
+
+/// Metadata directing the runtime to use the Gruen cubic-assembly fast path
+/// on a segmented dense kernel whose formula factors as `eq(w, x) · q(x)`
+/// with `q` a specific linear-combo-of-bilinear-product shape.
+///
+/// For kernel 3 (RAM read-write phase 1):
+/// `q(x) = a(x) · ((1 + γ) · b(x) + γ · c(x))`
+///
+/// Equivalently `q(x) = a(x) · (b(x) + γ · (b(x) + c(x)))`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GruenHint {
+    /// Which formula input is the eq-table (length `2^inner_num_vars` after binding).
+    pub eq_input: u32,
+    /// Per-round challenge indices: `w_current` at round `k` is
+    /// `challenges[eq_challenges[k].0]`.
+    pub eq_challenges: Vec<ChallengeIdx>,
+    /// The `q(x)` factorization baked in as a linear combination.
+    pub q_lincombo: LinComboQ,
+}
+
+/// `q(x) = a(x) · ((1 + γ) · b(x) + γ · c(x))` shape for [`GruenHint`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinComboQ {
+    pub a_input: u32,
+    pub b_input: u32,
+    pub c_input: u32,
+    pub gamma_challenge: ChallengeIdx,
 }
 
 /// Data traversal strategy for a sumcheck kernel.
@@ -143,6 +180,7 @@ impl KernelSpec {
             num_evals,
             iteration,
             binding_order,
+            gruen_hint: None,
         }
     }
 }

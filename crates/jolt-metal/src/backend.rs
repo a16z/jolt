@@ -634,9 +634,9 @@ impl ComputeBackend for MetalBackend {
                             panic!("evaluate_claim: {poly:?}@stage{stage} not available")
                         })
                     }
-                    ClaimFactor::Challenge(i) => challenges[*i],
+                    ClaimFactor::Challenge(i) => challenges[i.0],
                     ClaimFactor::EqChallengePair { a, b } => {
-                        let (ra, rb) = (challenges[*a], challenges[*b]);
+                        let (ra, rb) = (challenges[a.0], challenges[b.0]);
                         ra * rb + (F::one() - ra) * (F::one() - rb)
                     }
                     other => panic!("evaluate_claim: unsupported factor {other:?}"),

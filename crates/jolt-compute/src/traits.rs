@@ -329,6 +329,29 @@ pub trait ComputeBackend: Send + Sync + 'static {
         inner_size: usize,
         challenges: &[F],
     ) -> Vec<F>;
+
+    /// Dao-Thaler + Gruen cubic-assembly segmented reduce.
+    ///
+    /// Assembles `s(X) = l(X) · q(X)` evaluations at `{0,1,2,3}` using the
+    /// previous-round claim `prev_claim = s(0)+s(1)` to recover `q(1)`,
+    /// avoiding the 4-point evaluation grid. Requires the kernel to carry
+    /// a `GruenHint` baked in at compile time (see [`KernelSpec::gruen_hint`]).
+    /// Default implementation is `unimplemented!()`; backends opt in by
+    /// overriding. Returns 4 field elements (cubic evals).
+    #[allow(clippy::too_many_arguments)]
+    fn gruen_segmented_reduce<F: Field>(
+        &self,
+        _kernel: &Self::CompiledKernel<F>,
+        _inputs: &[&Self::Buffer<F>],
+        _outer_eq: &[F],
+        _inner_only: &[bool],
+        _inner_size: usize,
+        _challenges: &[F],
+        _prev_claim: F,
+        _current_round: usize,
+    ) -> Vec<F> {
+        panic!("gruen_segmented_reduce: backend has no Gruen fast path")
+    }
 }
 
 /// Per-cycle trace data for the instruction lookup sumcheck.
