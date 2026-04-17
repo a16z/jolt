@@ -23,11 +23,11 @@ when the Phase 3 stop condition fires.
 - **log_t**: 12 (overrides `max_trace_length` to 2^12; actual prover work
   is min(guest cycles padded, 2^12))
 - **Program**: `muldiv` (only program supported on the modular stack today)
-- **Stall counter**: 1 (iter 16 infra-only, stall unchanged; iter 15 infra; iter 14 infra; iter 13 flat; iter 12 green)
+- **Stall counter**: 1 (iter 17 profiling-only; iter 16 infra; iter 15 infra; iter 14 infra; iter 13 flat; iter 12 green)
 - **Last green iter**: 12 — P24 lower `reduce_dense_dynamic` with_min_len
   4096→1024 unlocking booleanity parallelism (−9.24% prove_ms:
   4054 → 3680 ms, ratio 12.1× → 11.0×)
-- **Green streak**: 1 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infra primitive; iter 15 Gruen infra reduce; iter 16 Gruen infra variant)
+- **Green streak**: 1 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infra primitive; iter 15 Gruen infra reduce; iter 16 Gruen infra variant; iter 17 post-P24 re-profile)
 - **Phase 3 stop condition**: `modular.prove_ms ≤ core.prove_ms` at
   `log_t ∈ {18, 20}`, 3 consecutive green iters. Only this exits the loop.
 
@@ -224,6 +224,62 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 17 — Post-P24 re-profile (profiling-only, stall counter unchanged)**
+  (trace: `benchmark-runs/perfetto_traces/muldiv_log_t12_iter17_post_p24.json`).
+  **Why**: iter 11's profile (`muldiv_log_t12_iter11_staged.json`) was the basis
+  for the Gruen hypothesis queue, but P24's −9.24% win (iter 12) invalidated
+  part of it — booleanity reduce dropped out of the top-5, so the queue needed
+  to be reconciled against the current top spans before continuing to burn
+  iters on the Gruen port. Per user memory on Perfetto-first hypothesis
+  selection. **Top 10 spans on post-P24 trace (wall 4352 ms, profile overhead
+  included)**:
+
+  | Rank | Span | Total ms | % wall | Calls | Avg µs |
+  |-----:|------|---------:|-------:|------:|-------:|
+  | 1 | `reduce_dense` (all threads) | 18 962.6 | — | 83 428 | 227.3 |
+  | 2 | `modular_prove` (wall) | 4 352.2 | 100.00 | 1 | — |
+  | 3 | `stage` (8 stages) | 3 882.6 | 89.2 | 8 | 485 320 |
+  | 4 | `InstanceSegmentedReduce` | 2 481.3 | **57.0** | 20 | 124 067 |
+  | 5 | `CpuBackend::segmented_reduce` | 2 481.3 | 57.0 | 20 | 124 063 |
+  | 6 | `prove` (outer wrappers) | 765.3 | 17.6 | 3 | 255 101 |
+  | 7 | `Program::build_with_features` | 733.4 | 16.9 | 4 | 183 348 |
+  | 8 | `Commit` | 465.3 | 10.7 | 3 | 155 114 |
+  | 9 | `DoryScheme::commit` | 465.0 | 10.7 | 42 | 11 072 |
+  | 10 | `BN254::multi_pair_g2_setup` | 429.7 | 9.9 | 112 | 3 836 |
+
+  **Reconciliation vs iter 11**: `InstanceSegmentedReduce` subtree was 77.1%
+  of prove wall at iter 11 (12 517 ms / 16 234 ms). Post-P24 it is 57.0%
+  (2 481 ms / 4 352 ms). The absolute drop (~10 s saved at profile scale) is
+  the P24 booleanity parallelism unlock plus the general wall compression
+  from 14.6 s → 4.35 s since iter 0. `ReadCheckingReduce` (booleanity
+  cluster) is now 93.1 ms / 128 calls — a 78% reduction vs iter 11's stage 5
+  460 ms. Rank 1 on thread-time remains `reduce_dense` at 83 428 calls total,
+  227 µs avg (iter 11 had 83 428 calls, 152 µs avg — higher avg now is
+  the per-call arithmetic, not more calls).
+
+  **Verdict**: `InstanceSegmentedReduce` is STILL the #1 wall bottleneck at
+  57%. The structural remainder after P24 is outer_remaining (kernel 3) +
+  other dense kernels inside segmented_reduce. Gruen port hypothesis
+  survives — the structural target (collapse per-outer × per-inner Toom-Cook
+  to one cubic-per-round) is unchanged. **Second-tier targets** (each 10-18%
+  of wall): `Commit` + `DoryScheme::commit` (465 ms, streaming tier-1/tier-2
+  Pedersen), `multi_pair_g2_setup_parallel` (429 ms, pairing setup for
+  tier-2), `DoryScheme::open` (276 ms, opening proof). These are
+  Dory-specific and sit downstream of sumcheck — lower leverage than Gruen
+  for Phase 1 unless Gruen lands and leaves them dominant.
+
+  **Hypothesis queue update**: no new entries — existing P21 Gruen split-eq
+  remains the highest-leverage target. Dory attack surface (P26+: streaming
+  commitment overlap, batched pairings) is queued but deferred until Gruen
+  lands or is shown infeasible. **Gates**: no code changes, so no gates run.
+  **Perf**: no measurement (profiling iter). **Next iter (18)**: resume
+  Gruen port — wire `Iteration::Gruen` runtime dispatch. Plan: teach the
+  outer_remaining kernel spec to emit `Iteration::Gruen`; add a
+  `ComputeBackend::gruen_reduce` trait method returning `(q_const, q_quad)`;
+  handler assembles the cubic via `gruen_cubic_evals` and stores all 4
+  evals in `last_round_coeffs`. Dual-path assertion for 1-2 rounds before
+  iter 19 deletes the old Toom-Cook path.
 
 - **Iter 16 — Gruen infrastructure: `Iteration::Gruen` enum variant
   (infrastructure, no perf claim)** (targets:
