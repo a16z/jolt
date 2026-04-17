@@ -101,7 +101,11 @@ members = [
   "zklean-extractor",
   "z3-verifier",
   "transpiler",
+  "jolt-eval",
+  "jolt-eval/macros",
+  "jolt-eval/guest-sandbox",
 ]
+exclude = ["jolt-eval/fuzz"]
 
 [features]
 host = ["jolt-sdk/host"]

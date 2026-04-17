@@ -1,0 +1,70 @@
+[package]
+name = "jolt-eval"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+jolt-core = { workspace = true, features = ["host"] }
+common = { workspace = true, features = ["std"] }
+tracer = { workspace = true }
+
+ark-bn254 = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["std"] }
+postcard = { workspace = true, features = ["use-std"] }
+eyre = { workspace = true }
+tracing = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+rand = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+arbitrary = { version = "1", features = ["derive"] }
+enumset = "1"
+schemars = "0.8"
+tempfile = "3"
+
+rust-code-analysis = "0.0.24"
+
+jolt-inlines-secp256k1 = { workspace = true, features = ["host"] }
+jolt-inlines-sha2 = { workspace = true, features = ["host"] }
+
+jolt-eval-macros = { path = "macros" }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "bind_parallel_high_to_low"
+harness = false
+
+[[bench]]
+name = "naive_sort_time"
+harness = false
+
+[[bench]]
+name = "bind_parallel_low_to_high"
+harness = false
+
+[[bench]]
+name = "prover_time_fibonacci"
+harness = false
+
+[[bench]]
+name = "prover_time_secp256k1_ecdsa_verify"
+harness = false
+
+[[bench]]
+name = "prover_time_sha2_chain"
+harness = false
+
+[[bin]]
+name = "measure-objectives"
+path = "bin/measure_objectives.rs"
+
+[[bin]]
+name = "optimize"
+path = "bin/optimize.rs"
+
+[[bin]]
+name = "redteam"
+path = "bin/redteam.rs"
