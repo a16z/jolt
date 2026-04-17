@@ -23,11 +23,11 @@ when the Phase 3 stop condition fires.
 - **log_t**: 12 (overrides `max_trace_length` to 2^12; actual prover work
   is min(guest cycles padded, 2^12))
 - **Program**: `muldiv` (only program supported on the modular stack today)
-- **Stall counter**: 1 (iter 14 infra-only, stall unchanged; iter 13 flat; iter 12 green)
+- **Stall counter**: 1 (iter 15 infra-only, stall unchanged; iter 14 infra; iter 13 flat; iter 12 green)
 - **Last green iter**: 12 — P24 lower `reduce_dense_dynamic` with_min_len
   4096→1024 unlocking booleanity parallelism (−9.24% prove_ms:
   4054 → 3680 ms, ratio 12.1× → 11.0×)
-- **Green streak**: 1 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infrastructure-only)
+- **Green streak**: 1 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infra primitive; iter 15 Gruen infra reduce)
 - **Phase 3 stop condition**: `modular.prove_ms ≤ core.prove_ms` at
   `log_t ∈ {18, 20}`, 3 consecutive green iters. Only this exits the loop.
 
@@ -224,6 +224,34 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 15 — Gruen infrastructure: `reduce_dense_gruen_deg2` free function
+  (infrastructure, no perf claim)** (target: `crates/jolt-cpu/src/gruen.rs`).
+  **Scope decision**: narrowed from "Iteration::Gruen enum + trait method"
+  to a pure free function on jolt-cpu with `BindingOrder` handling and two
+  unit tests. No enum variant, no trait plumbing — that lives in iter 16
+  when compiler emission needs to pick the path. Keeps iter 15's blast
+  radius zero (new file, dead code). **Change**: 54-line addition —
+  `reduce_dense_gruen_deg2(e_active, factor_a, factor_b, scalar, order) →
+  (q_const, q_quad)` plus ~90 lines of tests. Accumulates
+  `Σ e_active[i] × a_lo × b_lo` and `Σ e_active[i] × (a_hi-a_lo) × (b_hi-b_lo)`,
+  each scaled by `scalar`. Both `LowToHigh` (pair at `buf[2i], buf[2i+1]`)
+  and `HighToLow` (pair at `buf[i], buf[i+half]`) supported. **Tests**:
+  (a) bit-exact parity vs naive reference across half ∈ {1, 3, 8, 17}
+  for both binding orders; (b) end-to-end Gruen flow — feed reduce output
+  through iter 14's `gruen_cubic_evals`, verify the 4 cubic evals match
+  direct per-pair accumulation `Σ e_active[i] × l(X) × a_i(X) × b_i(X)` at
+  X ∈ {0,1,2,3}. This second test pins that iter 14 + iter 15 compose
+  correctly — the exact property iter 17's runtime wiring needs.
+  **Gates**: 4/4 gruen tests green, 41/41 jolt-equivalence green,
+  clippy clean both host and host+zk. **Perf**: 3665.31 ms (−0.18% vs
+  3672.07 baseline), flat as expected (dead code). **Next iter (16)**:
+  add `Iteration::Gruen` variant to jolt-compiler and teach the
+  outer_remaining kernel spec in `crates/jolt-compiler/examples/jolt_core_module.rs`
+  to emit it. Handler stays ≤30 LOC, protocol-unaware. Dual-path
+  assertion: runtime runs both Toom-Cook (current) and Gruen (new) and
+  asserts the cubic evals are equal for 1-2 rounds before deleting the
+  old path in iter 17.
 
 - **Iter 14 — Gruen infrastructure: `gruen_cubic_evals` scalar primitive
   (infrastructure, no perf claim)** (target: new file

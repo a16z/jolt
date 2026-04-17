@@ -10,6 +10,7 @@
 //! where `d` is inferred from the previous-round claim `s(0) + s(1)` without
 //! requiring a second pass over the witness to evaluate `q` at `X = 1`.
 
+use jolt_compute::BindingOrder;
 use jolt_field::Field;
 
 /// Assemble cubic polynomial `s(X) = l(X) · q(X)` evaluated at `{0, 1, 2, 3}`.
@@ -52,6 +53,55 @@ pub fn gruen_cubic_evals<F: Field>(
         eq_eval_2 * quadratic_eval_2,
         eq_eval_3 * quadratic_eval_3,
     ]
+}
+
+/// Fused reduce producing `(q(0), coeff_of_X²_in_q)` for a bilinear product
+/// `q(X) = Σ_i e_active[i] · a_i(X) · b_i(X)` scaled by `scalar`.
+///
+/// Each `a_i(X)`, `b_i(X)` is the multilinear extension of a polynomial at
+/// the pair `(lo_i, hi_i)`, so `a_i(X) = a_lo + X · (a_hi - a_lo)`. Their
+/// product is quadratic:
+///
+/// - `q(0)        = Σ e_active[i] · a_lo · b_lo`
+/// - `q(∞) coeff  = Σ e_active[i] · (a_hi - a_lo) · (b_hi - b_lo)`
+///
+/// Both outputs are multiplied by `scalar` at the end (typically the batching
+/// challenge). The missing linear coefficient is recovered by the caller
+/// from the previous-round claim via [`gruen_cubic_evals`].
+///
+/// # Layout
+///
+/// - `e_active.len() = half` — weights indexed by pair.
+/// - `factor_a.len() = factor_b.len() = 2 * half` — pairs laid out per
+///   `order`: `LowToHigh` → `(buf[2i], buf[2i+1])`; `HighToLow` →
+///   `(buf[i], buf[i+half])`.
+pub fn reduce_dense_gruen_deg2<F: Field>(
+    e_active: &[F],
+    factor_a: &[F],
+    factor_b: &[F],
+    scalar: F,
+    order: BindingOrder,
+) -> (F, F) {
+    let half = e_active.len();
+    debug_assert_eq!(factor_a.len(), 2 * half, "factor_a must have length 2·half");
+    debug_assert_eq!(factor_b.len(), 2 * half, "factor_b must have length 2·half");
+
+    let load_pair = |buf: &[F], i: usize| -> (F, F) {
+        match order {
+            BindingOrder::LowToHigh => (buf[2 * i], buf[2 * i + 1]),
+            BindingOrder::HighToLow => (buf[i], buf[i + half]),
+        }
+    };
+
+    let mut q_const = F::zero();
+    let mut q_quad = F::zero();
+    for (i, &w) in e_active.iter().enumerate() {
+        let (a_lo, a_hi) = load_pair(factor_a, i);
+        let (b_lo, b_hi) = load_pair(factor_b, i);
+        q_const += w * a_lo * b_lo;
+        q_quad += w * (a_hi - a_lo) * (b_hi - b_lo);
+    }
+    (scalar * q_const, scalar * q_quad)
 }
 
 #[cfg(test)]
@@ -99,6 +149,108 @@ mod tests {
             assert_eq!(actual[2], expected_2, "s(2) mismatch");
             assert_eq!(actual[3], expected_3, "s(3) mismatch");
         }
+    }
+
+    /// Naive reference: sum e_active[i] * a_i(X) * b_i(X) pointwise at X in
+    /// {0, ∞-coeff} and return (scalar * sum_const, scalar * sum_quad).
+    fn naive_reduce(
+        e_active: &[Fr],
+        factor_a: &[Fr],
+        factor_b: &[Fr],
+        scalar: Fr,
+        order: BindingOrder,
+    ) -> (Fr, Fr) {
+        let half = e_active.len();
+        let load = |buf: &[Fr], i: usize| match order {
+            BindingOrder::LowToHigh => (buf[2 * i], buf[2 * i + 1]),
+            BindingOrder::HighToLow => (buf[i], buf[i + half]),
+        };
+        let mut c = Fr::from_u64(0);
+        let mut e = Fr::from_u64(0);
+        for (i, &w) in e_active.iter().enumerate() {
+            let (a_lo, a_hi) = load(factor_a, i);
+            let (b_lo, b_hi) = load(factor_b, i);
+            c += w * a_lo * b_lo;
+            e += w * (a_hi - a_lo) * (b_hi - b_lo);
+        }
+        (scalar * c, scalar * e)
+    }
+
+    #[test]
+    fn reduce_gruen_deg2_matches_naive_both_orders() {
+        let mut rng = ChaCha20Rng::seed_from_u64(0xf00d_d15e_c001_b00b);
+        for order in [BindingOrder::LowToHigh, BindingOrder::HighToLow] {
+            for &half in &[1usize, 3, 8, 17] {
+                let e_active: Vec<Fr> = (0..half).map(|_| Fr::random(&mut rng)).collect();
+                let factor_a: Vec<Fr> = (0..2 * half).map(|_| Fr::random(&mut rng)).collect();
+                let factor_b: Vec<Fr> = (0..2 * half).map(|_| Fr::random(&mut rng)).collect();
+                let scalar = Fr::random(&mut rng);
+
+                let (q_c, q_e) =
+                    reduce_dense_gruen_deg2(&e_active, &factor_a, &factor_b, scalar, order);
+                let (ref_c, ref_e) = naive_reduce(&e_active, &factor_a, &factor_b, scalar, order);
+
+                assert_eq!(
+                    q_c, ref_c,
+                    "q_const mismatch for order {order:?}, half={half}"
+                );
+                assert_eq!(
+                    q_e, ref_e,
+                    "q_quad mismatch for order {order:?}, half={half}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn reduce_gruen_deg2_composes_with_cubic_assembly() {
+        // End-to-end Gruen flow: reduce a random bilinear sum, then feed
+        // (q_const, q_quad) through gruen_cubic_evals along with a previous
+        // round claim computed from the *same* witness. The four cubic
+        // evals must equal direct per-pair cubic accumulation at X ∈ {0..3}.
+        let mut rng = ChaCha20Rng::seed_from_u64(0xabad_cafe_b00b_dead);
+        let half = 4usize;
+        let order = BindingOrder::LowToHigh;
+
+        let e_active: Vec<Fr> = (0..half).map(|_| Fr::random(&mut rng)).collect();
+        let factor_a: Vec<Fr> = (0..2 * half).map(|_| Fr::random(&mut rng)).collect();
+        let factor_b: Vec<Fr> = (0..2 * half).map(|_| Fr::random(&mut rng)).collect();
+        let scalar = Fr::random(&mut rng);
+
+        let (q_const, q_quad) =
+            reduce_dense_gruen_deg2(&e_active, &factor_a, &factor_b, scalar, order);
+
+        // Build a random l(X) factor and derive prev_claim from it.
+        let current_scalar = Fr::random(&mut rng);
+        let w_current = Fr::random(&mut rng);
+        let eq_eval_1 = current_scalar * w_current;
+        let eq_eval_0 = current_scalar - eq_eval_1;
+
+        let load = |buf: &[Fr], i: usize| -> (Fr, Fr) { (buf[2 * i], buf[2 * i + 1]) };
+        let direct_cubic = |x: Fr| -> Fr {
+            let mut acc = Fr::from_u64(0);
+            for (i, &w) in e_active.iter().enumerate() {
+                let (a_lo, a_hi) = load(&factor_a, i);
+                let (b_lo, b_hi) = load(&factor_b, i);
+                let a_x = a_lo + x * (a_hi - a_lo);
+                let b_x = b_lo + x * (b_hi - b_lo);
+                acc += w * a_x * b_x;
+            }
+            let l_x = eq_eval_0 + x * (eq_eval_1 - eq_eval_0);
+            scalar * acc * l_x
+        };
+
+        let expected_0 = direct_cubic(Fr::from_u64(0));
+        let expected_1 = direct_cubic(Fr::from_u64(1));
+        let expected_2 = direct_cubic(Fr::from_u64(2));
+        let expected_3 = direct_cubic(Fr::from_u64(3));
+        let prev_claim = expected_0 + expected_1;
+
+        let evals = gruen_cubic_evals(current_scalar, w_current, q_const, q_quad, prev_claim);
+        assert_eq!(evals[0], expected_0, "s(0) mismatch");
+        assert_eq!(evals[1], expected_1, "s(1) mismatch");
+        assert_eq!(evals[2], expected_2, "s(2) mismatch");
+        assert_eq!(evals[3], expected_3, "s(3) mismatch");
     }
 
     #[test]
