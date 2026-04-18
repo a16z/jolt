@@ -49,17 +49,6 @@ pub struct Run {
     pub verify_note: Option<String>,
 }
 
-impl Run {
-    pub fn unsupported(stack: StackLabel, reason: impl Into<String>) -> Self {
-        Self {
-            stack: stack.as_str().to_string(),
-            unsupported: true,
-            reason: Some(reason.into()),
-            ..Default::default()
-        }
-    }
-}
-
 /// Top-level JSON report: one program, N runs (one per stack).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BenchReport {

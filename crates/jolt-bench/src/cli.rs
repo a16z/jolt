@@ -60,4 +60,11 @@ pub struct Cli {
     /// bench forces `--iters 1 --warmup 0` to keep the trace readable.
     #[arg(long, value_name = "NAME")]
     pub trace_chrome: Option<String>,
+
+    /// Override the `num_iters` inner loop count for chain programs
+    /// (`sha2-chain`, `sha3-chain`). No effect on other programs. When
+    /// unset, the bench uses each chain program's canonical default
+    /// (see `Program::canonical_inputs_with`).
+    #[arg(long)]
+    pub num_iters: Option<u32>,
 }

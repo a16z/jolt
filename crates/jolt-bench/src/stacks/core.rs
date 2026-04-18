@@ -17,7 +17,11 @@ const DEFAULT_MAX_TRACE_LENGTH: usize = 1 << 16;
 pub struct CoreStack;
 
 impl CoreStack {
-    fn run_once(program: Program, log_t: Option<usize>) -> IterMetrics {
+    fn run_once(
+        program: Program,
+        log_t: Option<usize>,
+        num_iters_override: Option<u32>,
+    ) -> IterMetrics {
         let max_trace_length = log_t.map_or(DEFAULT_MAX_TRACE_LENGTH, |n| 1usize << n);
         // Each iteration is a fresh Dory layout + preprocessing. This matches
         // how the jolt-core CLI invokes prove on a cold process.
@@ -25,7 +29,7 @@ impl CoreStack {
 
         let mut host_program = host::Program::new(program.guest_name());
         let (bytecode, init_memory_state, _program_size, e_entry) = host_program.decode();
-        let inputs = program.canonical_inputs();
+        let inputs = program.canonical_inputs_with(num_iters_override);
 
         let (_, _, _, io_device) = host_program.trace(&inputs, &[], &[]);
 
@@ -84,11 +88,14 @@ impl StackRunner for CoreStack {
         iters: usize,
         warmup: usize,
         log_t: Option<usize>,
+        num_iters_override: Option<u32>,
     ) -> StackOutcome {
         for _ in 0..warmup {
-            let _ = Self::run_once(program, log_t);
+            let _ = Self::run_once(program, log_t, num_iters_override);
         }
-        let measurements = (0..iters).map(|_| Self::run_once(program, log_t)).collect();
+        let measurements = (0..iters)
+            .map(|_| Self::run_once(program, log_t, num_iters_override))
+            .collect();
         StackOutcome::Metrics(measurements)
     }
 }

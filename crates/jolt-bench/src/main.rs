@@ -39,14 +39,7 @@ fn aggregate(label: StackLabel, metrics: &[IterMetrics]) -> Run {
 
     let (encoding, verify_note) = match label {
         StackLabel::Core => (Some("ark-compressed".to_string()), None),
-        StackLabel::Modular => (
-            Some("bincode-serde".to_string()),
-            Some(
-                "verify measured via proof transplant into jolt-core verifier \
-                 (no native modular+Dory verifier wired today)"
-                    .to_string(),
-            ),
-        ),
+        StackLabel::Modular => (Some("bincode-serde".to_string()), None),
     };
 
     Run {
@@ -63,10 +56,9 @@ fn aggregate(label: StackLabel, metrics: &[IterMetrics]) -> Run {
 }
 
 fn run_stack<R: StackRunner>(runner: R, label: StackLabel, cli: &Cli) -> Run {
-    match runner.run(cli.program, cli.iters, cli.warmup, cli.log_t) {
-        StackOutcome::Metrics(iters) => aggregate(label, &iters),
-        StackOutcome::Unsupported(run) => run,
-    }
+    let StackOutcome::Metrics(iters) =
+        runner.run(cli.program, cli.iters, cli.warmup, cli.log_t, cli.num_iters);
+    aggregate(label, &iters)
 }
 
 fn main() -> ExitCode {

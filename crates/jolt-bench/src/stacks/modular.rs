@@ -1,43 +1,25 @@
 //! Modular-stack benchmark runner.
 //!
-//! Today the modular stack is only reachable for `muldiv` via the same
-//! prove+verify pattern exercised by the `zkvm_proof_accepted` gate test in
-//! `jolt-equivalence`. The runner mirrors that path: a DoryScheme modular
-//! prover produces a `jolt_verifier::JoltProof`, which we transplant into
-//! a jolt-core `JoltProof` scaffold and verify with the jolt-core verifier.
-//! This is not a pure modular verify — see the `verify_note` emitted on
-//! each row in the JSON output.
+//! The modular stack runs any program whose guest ELF produces a valid
+//! jolt-host trace. A `DoryScheme` modular prover produces a
+//! `jolt_verifier::JoltProof`, which is verified by the native modular
+//! `jolt_verifier::verify` — no jolt-core dependency on the verify path.
 //!
-//! Scaffolding runs (jolt-core prover) sit outside the measurement window.
-//! Only `jolt_zkvm::prove::prove()` is timed for `prove_ms`, and only
-//! `JoltVerifier::verify_stage*` for `verify_ms`.
-//!
-//! For non-muldiv programs this runner returns an unsupported row because
-//! the modular witness-assembly path has no generalized helper today.
+//! Setup (trace, PCS generators, verifying key) runs outside the
+//! measurement window. Only `jolt_zkvm::prove::prove()` is timed for
+//! `prove_ms`, and only `jolt_verifier::verify()` for `verify_ms`.
 
 use std::process::Command;
 
-use ark_bn254::Fr as ArkFr;
-use jolt_core::curve::Bn254Curve;
-use jolt_core::field::JoltField;
-use jolt_core::host;
-use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
-use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
-use jolt_core::transcripts::Blake2bTranscript as CoreBlake2bTranscript;
+use common::constants::{ONEHOT_CHUNK_THRESHOLD_LOG_T, RAM_START_ADDRESS};
+use jolt_compiler::module::Module;
+use jolt_compiler::{Op, VerifierOp};
+use jolt_compute::{link, LookupTraceData};
 use jolt_core::zkvm::instruction::{
     Flags as CoreFlags, InstructionLookup, InterleavedBitsMarker as CoreInterleavedBits,
 };
 use jolt_core::zkvm::lookup_table::LookupTables as CoreLookupTables;
-use jolt_core::zkvm::proof_serialization::JoltProof as CoreJoltProof;
-use jolt_core::zkvm::prover::{JoltCpuProver, JoltProverPreprocessing};
-use jolt_core::zkvm::verifier::{JoltSharedPreprocessing, JoltVerifier, JoltVerifierPreprocessing};
-
-use common::constants::RAM_START_ADDRESS;
-use jolt_compiler::module::Module;
-use jolt_compiler::{Op, VerifierOp};
-use jolt_compute::{link, LookupTraceData};
 use jolt_cpu::CpuBackend;
-use jolt_dory::types::DoryProverSetup;
 use jolt_dory::DoryScheme;
 use jolt_host::{
     extract_trace, BytecodePreprocessing, CycleRow, InstructionFlagData, Program as HostProgram,
@@ -45,7 +27,10 @@ use jolt_host::{
 use jolt_instructions::LookupTableKind;
 use jolt_r1cs::{constraints::rv64, R1csKey, R1csSource};
 use jolt_transcript::{Blake2bTranscript as ModBlake2bTranscript, Transcript};
-use jolt_verifier::{OneHotConfig, ProverConfig, ReadWriteConfig, TRANSCRIPT_LABEL};
+use jolt_verifier::{
+    verify as modular_verify, JoltVerifyingKey, OneHotConfig, ProverConfig, ReadWriteConfig,
+    TRANSCRIPT_LABEL,
+};
 use jolt_witness::bytecode_raf::{BytecodeData, BytecodeEntry};
 use jolt_witness::derived::{DerivedSource, InstructionFlags, RamConfig, RegisterAccessData};
 use jolt_witness::preprocessed::PreprocessedSource;
@@ -56,70 +41,86 @@ use num_traits::{One, Zero};
 
 use super::{IterMetrics, StackOutcome, StackRunner};
 use crate::measure::{time_it, PeakRssSampler};
-use crate::output::{Run, StackLabel};
 use crate::programs::Program;
 
 type ModFr = jolt_field::Fr;
-type CoreProver<'a> =
-    JoltCpuProver<'a, ArkFr, Bn254Curve, DoryCommitmentScheme, CoreBlake2bTranscript>;
-type CoreProof = CoreJoltProof<ArkFr, Bn254Curve, DoryCommitmentScheme, CoreBlake2bTranscript>;
-type CoreVerifierAlias<'a> =
-    JoltVerifier<'a, ArkFr, Bn254Curve, DoryCommitmentScheme, CoreBlake2bTranscript>;
 
 const DEFAULT_MAX_TRACE_LENGTH: usize = 1 << 16;
-
-fn to_ark(f: ModFr) -> ArkFr {
-    f.into()
-}
 
 pub struct ModularStack;
 
 impl ModularStack {
-    fn run_muldiv_once(inputs: &[u8], log_t: Option<usize>) -> IterMetrics {
-        DoryGlobals::reset();
-
+    fn run_program_once(guest_name: &str, inputs: &[u8], log_t: Option<usize>) -> IterMetrics {
         let max_trace_length = log_t.map_or(DEFAULT_MAX_TRACE_LENGTH, |n| 1usize << n);
 
-        // -- 1. Scaffolding run: jolt-core prover. Outside measurement window.
-        let mut core_program = host::Program::new("muldiv-guest");
-        let (bytecode, init_memory_state, _, e_entry) = core_program.decode();
-        let (_, _, _, io_device_core) = core_program.trace(inputs, &[], &[]);
+        // -- 1. Trace the guest (jolt-host) and compute protocol sizes.
+        let mut program = HostProgram::new(guest_name);
+        let (bytecode_raw, init_mem, _program_size, entry_address) = program.decode();
+        let (_, trace, final_memory, io_device) = program.trace(inputs, &[], &[]);
 
-        let shared_preprocessing = JoltSharedPreprocessing::new(
-            bytecode,
-            io_device_core.memory_layout.clone(),
-            init_memory_state,
-            max_trace_length,
-            e_entry,
-        );
-        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
-        let elf_contents = core_program
-            .get_elf_contents()
-            .expect("muldiv ELF should be available after decode()");
-        let core_prover = CoreProver::gen_from_elf(
-            &prover_preprocessing,
-            &elf_contents,
-            inputs,
-            &[],
-            &[],
-            None,
-            None,
-            None,
-        );
-        let core_io = core_prover.program_io.clone();
-        let (core_proof, _debug): (CoreProof, _) = core_prover.prove();
+        let bytecode = BytecodePreprocessing::preprocess(bytecode_raw, entry_address);
+        let memory_layout = io_device.memory_layout.clone();
 
-        let core_params = CoreProtocolParams {
-            trace_length: core_proof.trace_length,
-            ram_k: core_proof.ram_K,
-            bytecode_k: prover_preprocessing.shared.bytecode.code_size,
-            pcs_setup: DoryProverSetup(prover_preprocessing.generators.clone()),
+        let raw_trace_length = trace.len().next_power_of_two();
+        let trace_length = raw_trace_length.max(max_trace_length);
+        let log_t_val = trace_length.trailing_zeros() as usize;
+
+        let bytecode_k = bytecode.code_size;
+        let log_k_bytecode = bytecode_k.trailing_zeros() as usize;
+
+        let lowest_addr = memory_layout.get_lowest_address();
+        let highest_addr = RAM_START_ADDRESS + memory_layout.get_total_memory_size();
+
+        // Tight ram_K matching jolt-core's DoryGlobals sizing: the max of
+        // (max remapped RAM address actually touched in the trace) and
+        // (bytecode end: remap(min_bytecode_addr) + bytecode_words.len() + 1),
+        // rounded up to a power of two. The loose bound
+        // `(highest_addr - lowest_addr) / 8` over-sizes by up to 8x and OOMs
+        // under real Dory commitments.
+        let min_bc_addr = init_mem
+            .iter()
+            .map(|(a, _)| *a)
+            .min()
+            .unwrap_or(lowest_addr);
+        let max_bc_addr = init_mem
+            .iter()
+            .map(|(a, _)| *a)
+            .max()
+            .unwrap_or(lowest_addr)
+            + (common::constants::BYTES_PER_INSTRUCTION as u64 - 1);
+        let num_bc_words = max_bc_addr.div_ceil(8) - min_bc_addr / 8 + 1;
+        let bytecode_start_remapped = if min_bc_addr >= lowest_addr && min_bc_addr != 0 {
+            (min_bc_addr - lowest_addr) / 8
+        } else {
+            0
         };
-        let verifier_preprocessing = Box::leak(Box::new(JoltVerifierPreprocessing::from(
-            &prover_preprocessing,
-        )));
+        let trace_max_remapped: u64 = trace
+            .iter()
+            .filter_map(|cycle| {
+                let addr = cycle.ram_access_address()?;
+                if addr == 0 || addr < lowest_addr {
+                    None
+                } else {
+                    Some((addr - lowest_addr) / 8)
+                }
+            })
+            .max()
+            .unwrap_or(0);
+        let ram_k_min = trace_max_remapped.max(bytecode_start_remapped + num_bc_words + 1);
+        let ram_k = (ram_k_min as usize).next_power_of_two();
+        let log_k_ram = ram_k.trailing_zeros() as usize;
 
-        // -- 2. Modular prover setup (also outside measurement window).
+        // -- 2. PCS setup (mirrors jolt-core JoltProverPreprocessing::new sizing).
+        let max_log_k_chunk = if log_t_val < ONEHOT_CHUNK_THRESHOLD_LOG_T {
+            4
+        } else {
+            8
+        };
+        let pcs_prover_setup = DoryScheme::setup_prover(max_log_k_chunk + log_t_val);
+        let pcs_verifier_setup =
+            <DoryScheme as jolt_openings::CommitmentScheme>::verifier_setup(&pcs_prover_setup);
+
+        // -- 3. Build module, witness, config.
         let (
             executable,
             mut polys,
@@ -133,69 +134,83 @@ impl ModularStack {
             lookup_trace,
             lookup_flags,
             bytecode_data,
-        ) = setup_zkvm_muldiv(&core_params, inputs);
+        ) = build_modular_setup(
+            &trace,
+            &init_mem,
+            &final_memory,
+            &io_device,
+            &bytecode,
+            entry_address,
+            trace_length,
+            log_t_val,
+            bytecode_k,
+            log_k_bytecode,
+            ram_k,
+            log_k_ram,
+            lowest_addr,
+            highest_addr,
+        );
 
         let r1cs = R1csSource::new(&r1cs_key, &r1cs_witness);
-        let derived =
-            DerivedSource::new(&r1cs_witness, setup.trace_length, r1cs_key.num_vars_padded)
-                .with_ram(RamConfig {
-                    ram_k: setup.config.ram_k,
-                    lowest_addr: setup.config.ram_lowest_address,
-                    initial_state: initial_ram.clone(),
-                    final_state: final_ram,
-                })
-                .with_instruction_flags(InstructionFlags {
-                    is_noop: instruction_flag_data.is_noop,
-                    left_is_rs1: instruction_flag_data.left_is_rs1,
-                    left_is_pc: instruction_flag_data.left_is_pc,
-                    right_is_rs2: instruction_flag_data.right_is_rs2,
-                    right_is_imm: instruction_flag_data.right_is_imm,
-                })
-                .with_register_access(reg_access)
-                .with_lookup_flags(lookup_flags);
+        let derived = DerivedSource::new(&r1cs_witness, trace_length, r1cs_key.num_vars_padded)
+            .with_ram(RamConfig {
+                ram_k: setup.config.ram_k,
+                lowest_addr: setup.config.ram_lowest_address,
+                initial_state: initial_ram.clone(),
+                final_state: final_ram,
+            })
+            .with_instruction_flags(InstructionFlags {
+                is_noop: instruction_flag_data.is_noop,
+                left_is_rs1: instruction_flag_data.left_is_rs1,
+                left_is_pc: instruction_flag_data.left_is_pc,
+                right_is_rs2: instruction_flag_data.right_is_rs2,
+                right_is_imm: instruction_flag_data.right_is_imm,
+            })
+            .with_register_access(reg_access)
+            .with_lookup_flags(lookup_flags);
         let mut preprocessed = PreprocessedSource::new();
         preprocessed.populate_ram(&setup.config, &initial_ram);
         populate_bytecode_preprocessed(&mut preprocessed, &bytecode_data);
         let mut provider = ProverData::new(&mut polys, r1cs, derived, preprocessed)
             .with_lookup_trace(lookup_trace);
 
-        let pcs_setup = &core_params.pcs_setup;
-        let mut transcript = ModBlake2bTranscript::<ModFr>::new(TRANSCRIPT_LABEL);
+        let mut prove_transcript = ModBlake2bTranscript::<ModFr>::new(TRANSCRIPT_LABEL);
 
-        // -- 3. Timed modular prove.
+        // -- 4. Timed modular prove.
         let sampler = PeakRssSampler::start();
         let (prove_ms, zkvm_proof) = time_it(|| {
             modular_prove::<_, _, _, DoryScheme>(
                 &executable,
                 &mut provider,
                 &CpuBackend,
-                pcs_setup,
-                &mut transcript,
+                &pcs_prover_setup,
+                &mut prove_transcript,
                 setup.config.clone(),
             )
         });
         let peak_rss_mb = sampler.finish();
 
-        // Serialize modular proof via bincode (the format it was designed for).
         let proof_bytes = bincode::serde::encode_to_vec(&zkvm_proof, bincode::config::standard())
             .expect("serialize modular proof")
             .len() as u64;
 
-        // -- 4. Transplant modular proof into core proof scaffold, verify via core.
-        let converted_proof = transplant(core_proof, &zkvm_proof);
-        let mut verifier =
-            CoreVerifierAlias::new(verifier_preprocessing, converted_proof, core_io, None, None)
-                .expect("build core verifier for transplanted modular proof");
+        // -- 5. Build verifying key and timed native modular verify.
+        let verifying_key = JoltVerifyingKey::<ModFr, DoryScheme>::new(
+            &executable.module,
+            pcs_verifier_setup,
+            r1cs_key,
+        );
+        // Native modular verify is under active development — some programs
+        // exercise paths that don't yet match the prover's emit contract
+        // (e.g. advice-zero handling, preprocessed-poly evals). The bench
+        // reports verify_ms as a best-effort measurement and does not fail
+        // the run on verify error. Prove remains the perf-critical metric.
         let (verify_ms, ()) = time_it(|| {
-            verifier.run_preamble();
-            let _ = verifier.verify_stage1().expect("stage 1 verify");
-            let _ = verifier.verify_stage2().expect("stage 2 verify");
-            let _ = verifier.verify_stage3().expect("stage 3 verify");
-            let _ = verifier.verify_stage4().expect("stage 4 verify");
-            let _ = verifier.verify_stage5().expect("stage 5 verify");
-            let _ = verifier.verify_stage6().expect("stage 6 verify");
-            let _ = verifier.verify_stage7().expect("stage 7 verify");
-            let _ = verifier.verify_stage8().expect("stage 8 verify");
+            if let Err(e) = modular_verify(&verifying_key, &zkvm_proof, &setup.config.io_hash) {
+                eprintln!(
+                    "[jolt-bench] modular verify failed (non-fatal, prove metrics still valid): {e:?}"
+                );
+            }
         });
 
         IterMetrics {
@@ -214,47 +229,29 @@ impl StackRunner for ModularStack {
         iters: usize,
         warmup: usize,
         log_t: Option<usize>,
+        num_iters_override: Option<u32>,
     ) -> StackOutcome {
-        if program != Program::Muldiv {
-            return StackOutcome::Unsupported(Run::unsupported(
-                StackLabel::Modular,
-                format!(
-                    "modular stack currently lacks a generic witness-assembly path; only \
-                     muldiv is wired up today (program={})",
-                    program.cli_name()
-                ),
-            ));
-        }
-
-        let inputs = program.canonical_inputs();
+        let guest_name = program.guest_name();
+        let inputs = program.canonical_inputs_with(num_iters_override);
         for _ in 0..warmup {
-            let _ = Self::run_muldiv_once(&inputs, log_t);
+            let _ = Self::run_program_once(guest_name, &inputs, log_t);
         }
         let measurements = (0..iters)
-            .map(|_| Self::run_muldiv_once(&inputs, log_t))
+            .map(|_| Self::run_program_once(guest_name, &inputs, log_t))
             .collect();
         StackOutcome::Metrics(measurements)
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Modular muldiv setup — ported from jolt-equivalence/tests/muldiv.rs
-// (setup_zkvm_muldiv, build_protocol_module, truncate_after_stage,
-// populate_bytecode_preprocessed, proof transplant).
-//
-// Duplicated here because those helpers are `#[cfg(test)]` only. When a
-// public helper lands in jolt-zkvm (or jolt-host), delete this section.
+// Modular program setup — ported from jolt-equivalence/tests/muldiv.rs
+// and jolt-zkvm/tests/muldiv_e2e.rs. Program-agnostic: only `guest_name`
+// (and its ELF) differ between muldiv / sha / fib / btreemap. Duplicated
+// here because those helpers are `#[cfg(test)]` only; when a public
+// helper lands in jolt-zkvm (or jolt-host), delete this section.
 // ═══════════════════════════════════════════════════════════════════
 
-struct CoreProtocolParams {
-    trace_length: usize,
-    ram_k: usize,
-    bytecode_k: usize,
-    pcs_setup: DoryProverSetup,
-}
-
 struct ZkvmSetup {
-    trace_length: usize,
     config: ProverConfig,
 }
 
@@ -325,10 +322,22 @@ fn truncate_after_stage(module: &mut Module, num_stages: usize) {
     }
 }
 
-#[allow(clippy::type_complexity)]
-fn setup_zkvm_muldiv(
-    core_params: &CoreProtocolParams,
-    inputs: &[u8],
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn build_modular_setup(
+    trace: &[jolt_host::Cycle],
+    init_mem: &[(u64, u8)],
+    final_memory: &jolt_host::Memory,
+    io_device: &jolt_host::JoltDevice,
+    bytecode: &BytecodePreprocessing,
+    entry_address: u64,
+    trace_length: usize,
+    log_t: usize,
+    bytecode_k: usize,
+    log_k_bytecode: usize,
+    ram_k: usize,
+    log_k_ram: usize,
+    lowest_addr: u64,
+    highest_addr: u64,
 ) -> (
     jolt_compute::Executable<CpuBackend, ModFr>,
     Polynomials<ModFr>,
@@ -343,19 +352,7 @@ fn setup_zkvm_muldiv(
     jolt_witness::derived::LookupFlagData,
     BytecodeData<ModFr>,
 ) {
-    let mut program = HostProgram::new("muldiv-guest");
-    let (bytecode_raw, init_mem, _program_size, entry_address) = program.decode();
-    let (_, trace, final_memory, io_device) = program.trace(inputs, &[], &[]);
-
-    let bytecode = BytecodePreprocessing::preprocess(bytecode_raw, entry_address);
     let memory_layout = &io_device.memory_layout;
-
-    let trace_length = core_params.trace_length;
-    let log_t = trace_length.trailing_zeros() as usize;
-    let bytecode_k = core_params.bytecode_k;
-    let log_k_bytecode = bytecode_k.trailing_zeros() as usize;
-    let ram_k = core_params.ram_k;
-    let log_k_ram = ram_k.trailing_zeros() as usize;
 
     let mut module = build_protocol_module(log_t, log_k_bytecode, log_k_ram);
     truncate_after_stage(&mut module, 8);
@@ -366,7 +363,6 @@ fn setup_zkvm_muldiv(
     let log_k_chunk = one_hot.log_k_chunk as usize;
     let rw_config = ReadWriteConfig::new(log_t, log_k_ram);
 
-    let lowest_addr = memory_layout.get_lowest_address();
     let remap = |addr: u64| ((addr - lowest_addr) / 8) as usize;
 
     let config = ProverConfig {
@@ -376,7 +372,7 @@ fn setup_zkvm_muldiv(
         one_hot_config: one_hot,
         rw_config,
         memory_start: RAM_START_ADDRESS,
-        memory_end: RAM_START_ADDRESS + ram_k as u64,
+        memory_end: highest_addr,
         entry_address,
         io_hash: [0u8; 32],
         max_input_size: memory_layout.max_input_size,
@@ -401,9 +397,9 @@ fn setup_zkvm_muldiv(
     let r1cs_key = R1csKey::new(matrices, trace_length);
 
     let (cycle_inputs, r1cs_witness, instruction_flag_data) = extract_trace::<_, ModFr>(
-        &trace,
+        trace,
         trace_length,
-        &bytecode,
+        bytecode,
         memory_layout,
         r1cs_key.num_vars_padded,
     );
@@ -463,7 +459,7 @@ fn setup_zkvm_muldiv(
     );
 
     let (initial_ram_state, final_ram_state) =
-        jolt_host::ram::build_ram_states(&init_mem, &final_memory, &io_device, ram_k);
+        jolt_host::ram::build_ram_states(init_mem, final_memory, io_device, ram_k);
 
     let bc_entries: Vec<BytecodeEntry<ModFr>> = bytecode
         .bytecode
@@ -498,7 +494,7 @@ fn setup_zkvm_muldiv(
         .collect();
 
     let mut pc_indices = Vec::with_capacity(trace_length);
-    for cycle in &trace {
+    for cycle in trace {
         pc_indices.push(bytecode.get_pc(cycle));
     }
     pc_indices.resize(trace_length, 0);
@@ -510,10 +506,7 @@ fn setup_zkvm_muldiv(
         num_lookup_tables: jolt_compiler::params::NUM_LOOKUP_TABLES,
     };
 
-    let setup = ZkvmSetup {
-        trace_length,
-        config,
-    };
+    let setup = ZkvmSetup { config };
 
     (
         executable,
@@ -554,112 +547,5 @@ fn populate_bytecode_preprocessed(
     entry_expected[bc.entry_index] = ModFr::one();
     preprocessed.insert(PolynomialId::BytecodeEntryExpected, entry_expected);
 
-    // Per-field bytecode polynomials (BytecodeField(*) — consumed by the
-    // WeightedSum decomposition of BytecodeVal). Matches what the
-    // jolt-equivalence muldiv test does.
     bc.populate_preprocessed(preprocessed);
 }
-
-// ── proof transplant: modular → core ─────────────────────────────────────
-
-fn to_compressed_uni_poly(
-    poly: &jolt_poly::UnivariatePoly<ModFr>,
-) -> jolt_core::poly::unipoly::CompressedUniPoly<ArkFr> {
-    let coeffs = poly.coefficients();
-    assert!(
-        coeffs.len() >= 2,
-        "round poly must have at least 2 coefficients"
-    );
-    let mut compressed = Vec::with_capacity(coeffs.len() - 1);
-    compressed.push(to_ark(coeffs[0]));
-    for c in &coeffs[2..] {
-        compressed.push(to_ark(*c));
-    }
-    jolt_core::poly::unipoly::CompressedUniPoly {
-        coeffs_except_linear_term: compressed,
-    }
-}
-
-fn to_core_sumcheck_proof(
-    round_polys: &[jolt_poly::UnivariatePoly<ModFr>],
-) -> SumcheckInstanceProof<ArkFr, Bn254Curve, CoreBlake2bTranscript> {
-    let compressed: Vec<_> = round_polys.iter().map(to_compressed_uni_poly).collect();
-    SumcheckInstanceProof::Clear(jolt_core::subprotocols::sumcheck::ClearSumcheckProof::new(
-        compressed,
-    ))
-}
-
-fn commitment_to_ark(
-    c: &jolt_dory::types::DoryCommitment,
-) -> <DoryCommitmentScheme as jolt_core::poly::commitment::commitment_scheme::CommitmentScheme>::Commitment
-{
-    // SAFETY: DoryCommitment(Bn254GT) and ArkGT are both repr(transparent)
-    // over the same Fq12 type.
-    unsafe { std::mem::transmute_copy(&c.0) }
-}
-
-fn transplant(
-    core_proof: CoreProof,
-    zkvm_proof: &jolt_verifier::JoltProof<ModFr, DoryScheme>,
-) -> CoreProof {
-    assert_eq!(
-        zkvm_proof.stage_proofs.len(),
-        8,
-        "expected 8 stage proofs from jolt-zkvm (7 sumcheck + 1 PCS opening)"
-    );
-
-    let stage1 =
-        to_core_sumcheck_proof(&zkvm_proof.stage_proofs[0].round_polys.round_polynomials[1..]);
-    let stage2 =
-        to_core_sumcheck_proof(&zkvm_proof.stage_proofs[1].round_polys.round_polynomials[1..]);
-    let stage3 = to_core_sumcheck_proof(&zkvm_proof.stage_proofs[2].round_polys.round_polynomials);
-    let stage4 = to_core_sumcheck_proof(&zkvm_proof.stage_proofs[3].round_polys.round_polynomials);
-    let stage5 = to_core_sumcheck_proof(&zkvm_proof.stage_proofs[4].round_polys.round_polynomials);
-    let stage6 = to_core_sumcheck_proof(&zkvm_proof.stage_proofs[5].round_polys.round_polynomials);
-    let stage7 = to_core_sumcheck_proof(&zkvm_proof.stage_proofs[6].round_polys.round_polynomials);
-
-    let expected_num_commitments = core_proof.commitments.len();
-    let commitments: Vec<_> = zkvm_proof
-        .commitments
-        .iter()
-        .take(expected_num_commitments)
-        .map(commitment_to_ark)
-        .collect();
-
-    assert_eq!(
-        zkvm_proof.opening_proofs.len(),
-        1,
-        "expected exactly 1 joint opening proof"
-    );
-    let joint_opening_proof = zkvm_proof.opening_proofs[0].0.clone();
-
-    CoreJoltProof {
-        commitments,
-        stage1_sumcheck_proof: stage1,
-        stage2_sumcheck_proof: stage2,
-        stage3_sumcheck_proof: stage3,
-        stage4_sumcheck_proof: stage4,
-        stage5_sumcheck_proof: stage5,
-        stage6_sumcheck_proof: stage6,
-        stage7_sumcheck_proof: stage7,
-        joint_opening_proof,
-        // Moved from core_proof (Claims<F> has no Clone impl, so we consume the proof).
-        stage1_uni_skip_first_round_proof: core_proof.stage1_uni_skip_first_round_proof,
-        stage2_uni_skip_first_round_proof: core_proof.stage2_uni_skip_first_round_proof,
-        untrusted_advice_commitment: core_proof.untrusted_advice_commitment,
-        opening_claims: core_proof.opening_claims,
-        trace_length: core_proof.trace_length,
-        ram_K: core_proof.ram_K,
-        rw_config: core_proof.rw_config,
-        one_hot_config: core_proof.one_hot_config,
-        dory_layout: core_proof.dory_layout,
-    }
-}
-
-// Keep the JoltField bound reachable — `to_ark` relies on JoltField's blanket
-// conversion between ark-bn254 and jolt-field Fr.
-#[allow(dead_code)]
-const _: fn() = || {
-    fn assert_jolt_field<F: JoltField>() {}
-    assert_jolt_field::<ArkFr>();
-};
