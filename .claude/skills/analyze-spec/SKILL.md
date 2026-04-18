@@ -1,15 +1,15 @@
 ---
 name: analyze-spec
-description: Socratic deep-interview analysis of a spec file to ensure zero ambiguity before implementation
+description: Spec analysis with ambiguity scoring — interactive locally, single-pass remotely via label
 argument-hint: "[spec file path]"
 ---
 
 <Purpose>
-Analyze a spec file using Socratic questioning with mathematical ambiguity scoring. The goal: ensure the spec is clear enough for a one-shot implementation with zero clarifying questions.
+Analyze a spec file using mathematical ambiguity scoring. The goal: ensure the spec is clear enough for a one-shot implementation with zero clarifying questions.
 
 This skill operates in two modes:
 - **Local mode** (invoked via `/analyze-spec` in Claude Code): Full interactive Socratic interview — one question at a time, iterative refinement with the spec author.
-- **CI mode** (invoked via `@claude analyze` on a GitHub PR): Single-pass analysis — all questions posted at once as a single PR comment. Reads prior PR comments as context to account for already-answered questions.
+- **Remote mode** (triggered externally via the `claude-spec-review-request` label): Single-pass analysis — all questions posted at once as a single PR comment. Reads prior PR comments as context to account for already-answered questions.
 
 Adapted from the Ouroboros-inspired deep interview methodology — specification quality is the primary bottleneck in AI-assisted development.
 </Purpose>
@@ -24,15 +24,15 @@ Adapted from the Ouroboros-inspired deep interview methodology — specification
 
 <Mode_Detection>
 Detect which mode to use:
-- **CI mode**: You are running inside a GitHub PR context (invoked by `@claude analyze` via the Claude Code Action). Indicators: the triggering comment mentions `@claude analyze`, or you can detect the PR number via `gh pr view`.
-- **Local mode**: You are running interactively in a terminal via `/analyze-spec`.
+- **Remote mode**: Running in a remote Claude instance triggered by the `claude-spec-review-request` label. Indicators: environment is non-interactive (no TTY), or running inside a GitHub PR context.
+- **Local mode**: Running interactively in a terminal via `/analyze-spec`.
 
-When in doubt, check if `gh pr view --json number` succeeds for the current branch. If so and the trigger is `@claude analyze`, use CI mode. Otherwise use local mode.
+When in doubt, default to local mode (interactive).
 </Mode_Detection>
 
 <Steps>
 
-## Phase 1: Initialize (both modes)
+## Phase 1: Initialize
 
 1. **Locate the spec**:
    - If a path is provided in `{{ARGUMENTS}}`, use that directly.
@@ -43,8 +43,9 @@ When in doubt, check if `gh pr view --json number` succeeds for the current bran
    - If no match, fall back to finding any `specs/*.md` file that is NOT `TEMPLATE.md`.
    - If multiple specs match, prefer the one matching the PR number. If still ambiguous, ask the user.
 2. **Read the spec** thoroughly — understand all sections (Summary, Intent, Evaluation, Design, Execution).
-3. **Explore the codebase**: Run `explore` agent to map codebase areas relevant to the spec's intent.
-4. **Read prior context (CI mode)**: Read all existing PR comments via `gh pr view --json comments` to identify questions already asked and answers already given. Account for these when scoring — don't re-ask answered questions.
+3. **Read `jolt-eval/README.md`** so you understand the invariant/objective framework for scoring Success Criteria and generating questions.
+4. **Explore the codebase**: Run `explore` agent to map codebase areas relevant to the spec's intent.
+5. **Read prior context (remote mode)**: Read all existing PR comments via `gh pr view --json comments` to identify questions already asked and answers already given. Account for these when scoring — don't re-ask answered questions.
 
 ## Phase 2: Analyze
 
@@ -53,12 +54,12 @@ Score clarity across four dimensions (0.0–1.0 each):
 | Dimension | Weight | What to assess |
 |-----------|--------|---------------|
 | Goal Clarity | 0.35 | Is the primary objective unambiguous? Can you state it in one sentence? Are key entities and relationships clear? |
-| Constraint Clarity | 0.25 | Are boundaries, limitations, and non-goals clear? |
-| Success Criteria | 0.25 | Could you write a test that verifies success? Are acceptance criteria concrete? |
+| Constraint Clarity | 0.20 | Are boundaries, limitations, and non-goals clear? |
+| Success Criteria | 0.30 | Could you write a test that verifies success? Are acceptance criteria concrete? Are relevant `jolt-eval` invariants/objectives described? |
 | Context Clarity | 0.15 | Do we understand the existing system well enough to modify it safely? |
 
 **Calculate ambiguity:**
-`ambiguity = 1 - (goal × 0.35 + constraints × 0.25 + criteria × 0.25 + context × 0.15)`
+`ambiguity = 1 - (goal × 0.35 + constraints × 0.20 + criteria × 0.30 + context × 0.15)`
 
 For each dimension below 0.9, generate a targeted question that would improve it:
 - Questions should expose ASSUMPTIONS, not gather feature lists
@@ -67,7 +68,7 @@ For each dimension below 0.9, generate a targeted question that would improve it
 
 ## Phase 3: Output (mode-dependent)
 
-### CI Mode — Single-Pass
+### Remote Mode — Single-Pass
 
 Post a **single PR comment** with all findings:
 
@@ -105,13 +106,12 @@ Post a **single PR comment** with all findings:
 
 ...
 
-> After addressing these questions in the spec, run `@claude analyze` again.
-> For a full interactive Socratic analysis, run `/analyze-spec` locally in Claude Code.
+> After addressing these questions, update the spec and re-add the `claude-spec-review-request` label.
 ```
 
-If approved, add the label: `gh pr edit --add-label claude-approved`
+If approved, add the label: `gh pr edit --add-label claude-spec-approved`
 
-If NOT approved, do NOT add the label. End with the suggestion to either update the spec and re-run `@claude analyze`, or run `/analyze-spec` locally for the interactive experience.
+If NOT approved, do NOT add the label.
 
 ### Local Mode — Interactive Socratic Interview
 
@@ -131,15 +131,15 @@ Round {n} complete.
 | Dimension | Score | Weight | Weighted | Gap |
 |-----------|-------|--------|----------|-----|
 | Goal | {s} | 0.35 | {s*w} | {gap or "Clear"} |
-| Constraints | {s} | 0.25 | {s*w} | {gap or "Clear"} |
-| Success Criteria | {s} | 0.25 | {s*w} | {gap or "Clear"} |
+| Constraints | {s} | 0.20 | {s*w} | {gap or "Clear"} |
+| Success Criteria | {s} | 0.30 | {s*w} | {gap or "Clear"} |
 | Context | {s} | 0.15 | {s*w} | {gap or "Clear"} |
 | **Ambiguity** | | | **{score}%** | |
 
 Next target: {weakest_dimension} — {rationale}
 ```
 
-**Challenge modes** (local only — these don't apply in single-pass CI):
+**Challenge modes** (local only):
 
 - **Round 4+ — Contrarian:** Challenge the spec's core assumption. "What if this constraint doesn't exist?" Test whether the framing is correct or habitual.
 - **Round 6+ — Simplifier:** Probe whether complexity can be removed. "What's the simplest version that satisfies the invariants?"
@@ -158,7 +158,7 @@ Each mode is used ONCE.
 
 <Examples>
 <Good>
-CI mode — single-pass with all questions:
+Remote mode — single-pass with all questions:
 ```
 **Spec Analysis: Streaming Commitments**
 
@@ -184,8 +184,7 @@ commitments to the non-streaming path? What's the performance target?
 **3. [Constraints]** What's the memory budget? The current non-streaming path
 peaks at ~2GB for large traces — should streaming reduce this, and to what?
 
-> After addressing these questions in the spec, run `@claude analyze` again.
-> For a full interactive analysis, run `/analyze-spec` locally.
+> After addressing these questions, update the spec and re-add the `claude-spec-review-request` label.
 ```
 Why good: All questions posted at once, each tagged with the dimension it targets, clear next steps.
 </Good>
@@ -201,6 +200,20 @@ streaming produces the same commitments as the non-streaming path? And what
 is the acceptable performance threshold (e.g., memory usage, throughput)?
 ```
 Why good: One question, targets weakest dimension, specific to the spec content.
+</Good>
+
+<Good>
+Probing jolt-eval coverage:
+```
+The Intent → Invariants section says "streaming must produce the same
+commitments as the non-streaming path." That looks like a binary property —
+have you considered capturing it as a new `jolt-eval` invariant? The existing
+`split_eq_bind_low_high` in `jolt-eval/src/invariant/` is a close model
+(reference vs. optimized implementation comparison). If this is out of scope,
+the Invariants section should say so explicitly.
+```
+Why good: Names a concrete existing invariant as a model, leaves the N/A
+door open, doesn't force a fit.
 </Good>
 
 <Good>
@@ -224,7 +237,7 @@ Why bad: Should have explored the codebase to find this.
 </Examples>
 
 <Escalation_And_Stop_Conditions>
-- **CI mode**: Single pass — no escalation needed. Either approve or list remaining questions.
+- **Remote mode**: Single pass — no escalation needed. Either approve or list remaining questions.
 - **Local mode**:
   - Hard cap at 15 rounds
   - Soft warning at 10 rounds

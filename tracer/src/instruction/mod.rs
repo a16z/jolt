@@ -552,7 +552,16 @@ macro_rules! define_rv32im_enums {
                 let normalized = self.normalize();
                 // Rewrite instructions with rd=x0 via inline_sequence so the
                 // constraint system never sees rd=x0.
-                if normalized.operands.rd == Some(0) {
+                if normalized.operands.rd == Some(0)
+                    && !matches!(
+                        self,
+                        Instruction::SCW(_)
+                            | Instruction::SCD(_)
+                            | Instruction::LRW(_)
+                            | Instruction::LRD(_)
+                            | Instruction::INLINE(_)
+                    )
+                {
                     let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
                     let mut trace = trace;
                     for instr in inline_sequence {

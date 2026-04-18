@@ -2,7 +2,7 @@ name: Spec Workflow
 
 on:
   pull_request_target:
-    types: [opened, synchronize, ready_for_review, reopened, labeled]
+    types: [opened, synchronize, ready_for_review, reopened]
 
 permissions:
   contents: read
@@ -28,8 +28,9 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
+          set -euo pipefail
 
-          CHANGED=$(git diff --name-only "$BASE" "$HEAD")
+          CHANGED=$(git diff --name-only "$BASE"..."$HEAD")
 
           HAS_SPEC=false
           HAS_CODE=false
@@ -60,7 +61,8 @@ jobs:
           gh label create "spec" --description "PR contains a spec" --color "0E8A16" 2>/dev/null || true
           gh label create "no-spec" --description "PR has no spec file" --color "E4E669" 2>/dev/null || true
           gh label create "implementation" --description "PR contains implementation of a spec" --color "1D76DB" 2>/dev/null || true
-          gh label create "claude-approved" --description "Claude analysis found no ambiguities" --color "5319E7" 2>/dev/null || true
+          gh label create "claude-spec-review-request" --description "Triggers Claude spec analysis" --color "D4C5F9" 2>/dev/null || true
+          gh label create "claude-spec-approved" --description "Claude analysis found no ambiguities" --color "5319E7" 2>/dev/null || true
 
       - name: Apply labels
         env:
@@ -99,13 +101,18 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
+          set -euo pipefail
 
-          # Count changed lines (additions + deletions), excluding spec files
-          LINES=$(git diff --numstat "$BASE" "$HEAD" -- . ':!specs/' | \
+          # Count changed lines (additions + deletions), excluding spec files.
+          # Three-dot diff (`BASE...HEAD`) diffs the merge-base against HEAD so
+          # unrelated progress on the base branch isn't counted as PR changes.
+          LINES=$(git diff --numstat "$BASE"..."$HEAD" -- . ':!specs/' | \
             awk '$1 != "-" && $2 != "-" { added += $1; removed += $2 } END { print (added + removed) ? added + removed : 0 }')
 
-          # Check if any spec file exists in the diff
-          HAS_SPEC=$(git diff --name-only "$BASE" "$HEAD" -- 'specs/*.md' | grep -v 'README.md' | grep -v 'TEMPLATE.md' | head -1)
+          # Check if any spec file exists in the diff. Pathspec excludes
+          # README/TEMPLATE directly so the pipeline has no `grep -v`
+          # (which exits 1 on empty input and would trip `pipefail`).
+          HAS_SPEC=$(git diff --name-only "$BASE"..."$HEAD" -- 'specs/*.md' ':!specs/README.md' ':!specs/TEMPLATE.md' | head -1)
 
           if [ "$LINES" -gt 500 ] && [ -z "$HAS_SPEC" ]; then
             EXISTING=$(gh pr view "$PR_NUMBER" --json comments --jq '.comments[].body' | grep -c "more than 500 changed lines" || true)

@@ -21,6 +21,8 @@ What are we building? State the primary objective in one sentence without qualif
 
 What properties must hold? List the correctness, safety, or consistency invariants that the implementation must preserve. For ZK features, include prover/verifier consistency requirements.
 
+Whenever possible, use the [`jolt-eval`](../jolt-eval/README.md) framework: describe any existing `jolt-eval/src/invariant/` entries that need to be changed, and describe any new invariants to add via `/new-invariant` during implementation.
+
 ### Non-Goals
 
 What is explicitly out of scope? Listing non-goals prevents scope creep and clarifies the feature's boundaries.
@@ -42,6 +44,8 @@ Which existing tests must continue passing? What new tests are needed? Specify b
 ### Performance
 
 What are the performance expectations? Specify benchmarks, acceptable regressions, memory budgets, or throughput targets. "No regression" is acceptable if there is a benchmark to verify against.
+
+Whenever possible, use the [`jolt-eval`](../jolt-eval/README.md) framework: list existing entries from `jolt-eval/src/objective/` this feature is expected to move (with direction and estimated magnitude), and describe any new objectives to add via `/new-objective` during implementation.
 
 ## Design
 

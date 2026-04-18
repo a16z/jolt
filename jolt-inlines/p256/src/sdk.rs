@@ -235,7 +235,7 @@ impl<C: P256FieldConfig> P256Field<C> {
     /// Creates a new element from a `[u64; 4]` array (unchecked).
     /// The array is assumed to contain a value in the range `[0, modulus)`.
     #[inline(always)]
-    pub fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self {
+    pub(crate) fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self {
         Self {
             e: *arr,
             _phantom: PhantomData,
@@ -817,17 +817,36 @@ fn shamir_4x128(scalars: [u128; 4], points: [P256Point; 4]) -> P256Point {
 ///
 /// This halves the doublings: 128 instead of 256, achieving ~1.7x speedup.
 ///
-/// Security: it is the responsibility of the caller to ensure
-/// 1. z, r, and s are well formed
-/// 2. q is a valid point on the curve
-///
-/// Note that these checks are automatically performed by the from_u64_arr constructors.
+/// All inputs are validated internally — no caller-side validation is required.
 #[inline(always)]
 pub fn ecdsa_verify(z: P256Fr, r: P256Fr, s: P256Fr, q: P256Point) -> Result<(), P256Error> {
+    // Validate scalar field ranges: z, r, s must be in [0, n)
+    if is_non_canonical(&z.e(), &P256_ORDER) {
+        return Err(P256Error::InvalidFrElement);
+    }
+    if is_non_canonical(&r.e(), &P256_ORDER) {
+        return Err(P256Error::InvalidFrElement);
+    }
+    if is_non_canonical(&s.e(), &P256_ORDER) {
+        return Err(P256Error::InvalidFrElement);
+    }
+    // Validate base field ranges: q.x, q.y must be in [0, p)
+    if is_non_canonical(&q.x().e(), &P256_MODULUS) {
+        return Err(P256Error::InvalidFqElement);
+    }
+    if is_non_canonical(&q.y().e(), &P256_MODULUS) {
+        return Err(P256Error::InvalidFqElement);
+    }
+    // Validate q is on the curve
+    if !q.is_on_curve() {
+        return Err(P256Error::NotOnCurve);
+    }
+    // Check that q is not infinity
     if q.is_infinity() {
         return Err(P256Error::QAtInfinity);
     }
-    if r.is_zero() || s.is_zero() {
+    // Check that r, s, and z are non-zero
+    if r.is_zero() || s.is_zero() || z.is_zero() {
         return Err(P256Error::ROrSZero);
     }
 
@@ -841,6 +860,34 @@ pub fn ecdsa_verify(z: P256Fr, r: P256Fr, s: P256Fr, q: P256Point) -> Result<(),
 
     // Step 3: Get R2 = u2*Q and decomposition via Fake GLV advice
     let (r2, a2_val, a2_sign, b2_val, b2_sign) = fake_glv_scalar_mul(&u2, &q);
+
+    verify_ecdsa_inner(
+        &u1, &u2, &r, &q, r1, a1_val, a1_sign, b1_val, b1_sign, r2, a2_val, a2_sign, b2_val,
+        b2_sign,
+    )
+}
+
+/// Inner verification logic, separated from `ecdsa_verify` so it can be tested
+/// with injected decomposition values (e.g. zero GLV attack vectors).
+#[expect(clippy::too_many_arguments)]
+#[inline(always)]
+pub(crate) fn verify_ecdsa_inner(
+    u1: &P256Fr,
+    u2: &P256Fr,
+    r: &P256Fr,
+    q: &P256Point,
+    r1: P256Point,
+    a1_val: u128,
+    a1_sign: bool,
+    b1_val: u128,
+    b1_sign: bool,
+    r2: P256Point,
+    a2_val: u128,
+    a2_sign: bool,
+    b2_val: u128,
+    b2_sign: bool,
+) -> Result<(), P256Error> {
+    let g = P256Point::generator();
 
     // Step 4: Verify R1, R2 are on curve
     if !r1.is_on_curve() {
@@ -868,13 +915,19 @@ pub fn ecdsa_verify(z: P256Fr, r: P256Fr, s: P256Fr, q: P256Point) -> Result<(),
     let b2_fr = make_fr(b2_val, b2_sign);
 
     // Check b1*u1 = a1 (mod n)
-    let check1 = b1_fr.mul(&u1);
+    let check1 = b1_fr.mul(u1);
     if check1.e() != a1_fr.e() {
         spoil_proof();
     }
     // Check b2*u2 = a2 (mod n)
-    let check2 = b2_fr.mul(&u2);
+    let check2 = b2_fr.mul(u2);
     if check2.e() != a2_fr.e() {
+        spoil_proof();
+    }
+
+    // Reject trivial zero decomposition: a=0, b=0 satisfies b*u=a for any u,
+    // collapsing the Shamir MSM and leaving R1/R2 unconstrained.
+    if b1_val == 0 || b2_val == 0 {
         spoil_proof();
     }
 
@@ -890,7 +943,7 @@ pub fn ecdsa_verify(z: P256Fr, r: P256Fr, s: P256Fr, q: P256Point) -> Result<(),
     let scalars = [a1_val, a2_val, b1_val, b2_val];
     let points_arr = [
         if a1_sign { g.neg() } else { g },
-        if a2_sign { q.neg() } else { q },
+        if a2_sign { q.neg() } else { q.clone() },
         r1_adj,
         r2_adj,
     ];

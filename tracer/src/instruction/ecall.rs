@@ -2,6 +2,18 @@
 //!
 //! The inline sequence writes mepc, mcause, mtval, and mstatus to their
 //! virtual registers, then jumps unconditionally to the trap handler.
+//!
+//! # Privilege model
+//!
+//! Jolt targets M-mode-only execution (no S/U privilege levels) with no
+//! interrupt hardware. mstatus is written as a constant `0x1800` (MPP=M-mode,
+//! MIE=0, MPIE=0) rather than via read-modify-write. This is correct because:
+//! - The privilege mode is always Machine — MPP is always 3.
+//! - The MIE CSR (0x304) is not in the supported CSR whitelist and cannot be
+//!   accessed by guest code. No interrupt sources exist (no timer, no CLINT,
+//!   no PLIC), so MIE/MPIE bits are unused.
+//! - The ZeroOS trap trampoline restores mstatus via `csrw` before `mret`,
+//!   so the virtual register always holds the correct value across traps.
 
 use serde::{Deserialize, Serialize};
 
@@ -76,7 +88,8 @@ impl RISCVTrace for ECALL {
         asm.emit_i::<ADDI>(vr_mcause, 0, MCAUSE_ECALL_FROM_MMODE);
         asm.emit_i::<ADDI>(vr_mtval, 0, 0);
 
-        // mstatus = 0x1800 (MPP=3 at bits 12:11)
+        // mstatus = 0x1800 (MPP=3 at bits 12:11). Written unconditionally —
+        // see module-level docs for why this is correct in the M-mode-only model.
         let three = allocator.allocate();
         asm.emit_i::<ADDI>(*three, 0, 3);
         asm.emit_i::<SLLI>(vr_mstatus, *three, 11);

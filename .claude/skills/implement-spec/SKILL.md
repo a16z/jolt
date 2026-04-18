@@ -26,13 +26,18 @@ This skill runs locally or in Claude Code cloud (claude.ai/code) — NOT in CI. 
 
 1. **Read the spec**: Find the `specs/*.md` file in this PR (exclude `TEMPLATE.md`). If a path is provided in `{{ARGUMENTS}}`, use that.
 2. **Read CLAUDE.md**: Understand architecture, conventions, testing requirements.
-3. **Explore relevant code**: Use `explore` agents to understand the modules, types, and patterns the implementation will touch.
-4. **Create implementation plan**: Based on the spec's Intent and Execution sections, determine:
+3. **Read `jolt-eval/README.md`**: Understand the eval framework — the spec's Intent → Invariants and Evaluation → Performance sections may reference it.
+4. **Explore relevant code**: Use `explore` agents to understand the modules, types, and patterns the implementation will touch.
+5. **Extract evals**: Scan the spec's Intent → Invariants and Evaluation → Performance sections for `jolt-eval` references and list:
+   - New invariants to add → each becomes a `/new-invariant <name>` subtask.
+   - New objectives to add → each becomes a `/new-objective <name>` subtask.
+   - Existing invariants/objectives that need to be changed.
+6. **Create implementation plan**: Based on the spec's Intent and Execution sections, determine:
    - Files to create, modify, or remove
    - Order of changes (dependencies first)
    - How existing patterns and abstractions should be extended
    - Which tasks can run in parallel vs. sequential
-5. **Post the plan** as a PR comment for visibility:
+7. **Post the plan** as a PR comment for visibility:
 
 ```
 **Implementation plan for: {spec title}**
@@ -48,11 +53,15 @@ This skill runs locally or in Claude Code cloud (claude.ai/code) — NOT in CI. 
 
 ## Phase 2: Execute
 
-1. **Implement** all changes from the plan.
+1. **Add jolt-eval scaffolding first**: For each new invariant/objective extracted in Phase 1, invoke the corresponding skill so the mechanical checks are in place before the implementation lands:
+   - `/new-invariant <name>` for each new invariant
+   - `/new-objective <name>` for each new objective
+   Commit these additions as their own logical units.
+2. **Implement** all changes from the plan.
    - Run independent tasks in parallel using agents where beneficial.
    - Follow project code style and conventions from CLAUDE.md.
    - Performance is critical — avoid regressions in hot paths.
-2. **Commit** with clear, well-scoped messages as logical units complete.
+3. **Commit** with clear, well-scoped messages as logical units complete.
 
 ## Phase 3: QA
 
@@ -65,6 +74,7 @@ Cycle until all checks pass (up to 5 cycles):
 3. **Test**: Run evaluation criteria from the spec, plus:
    - `cargo nextest run -p jolt-core muldiv --cargo-quiet --features host`
    - `cargo nextest run -p jolt-core muldiv --cargo-quiet --features host,zk`
+   - `cargo nextest run -p jolt-eval --cargo-quiet` — runs every invariant's seed-corpus + random-inputs tests; any named in the spec must pass.
 4. **Fix** any failures and repeat.
 
 If the same error persists 3 times, stop and post a PR comment describing the fundamental issue.
@@ -74,8 +84,9 @@ If the same error persists 3 times, stop and post a PR comment describing the fu
 Run parallel validation:
 
 1. **Correctness**: All spec evaluation criteria pass.
-2. **Code review**: Self-review for consistency with existing patterns, missing edge cases, unnecessary changes beyond the spec.
-3. **Security**: Check for OWASP top 10 patterns if the changes touch input handling or external data.
+2. **Mechanical checks (jolt-eval)**: For each objective named in the spec's Evaluation → Performance section, run `cargo run -p jolt-eval --bin measure-objectives -- --objective <name>` and confirm it moved in the declared direction (or stayed within the declared tolerance). All invariants named or introduced in the spec's Intent → Invariants section must pass — the Phase 3 `cargo nextest run -p jolt-eval` covers seed corpus + random inputs.
+3. **Code review**: Self-review for consistency with existing patterns, missing edge cases, unnecessary changes beyond the spec.
+4. **Security**: Check for OWASP top 10 patterns if the changes touch input handling or external data.
 
 Fix any issues found and re-validate.
 
@@ -105,13 +116,13 @@ Fix any issues found and re-validate.
 
 <Examples>
 <Good>
-User: "@claude implement"
+User: `/implement-spec`
 Action: Reads the spec from the PR, creates a plan, implements it, runs QA, validates, pushes commits.
 Why good: Full autonomous execution from spec to working code.
 </Good>
 
 <Bad>
-User: "@claude implement" on a spec without `claude-approved`
+User: `/implement-spec` on a spec without `claude-spec-approved`
 Action: Should warn that the spec hasn't been analyzed yet, but proceed if the user insists.
 Why bad situation: Implementation from an unanalyzed spec risks rework.
 </Bad>

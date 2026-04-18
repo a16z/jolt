@@ -57,6 +57,9 @@ benchmark-runs/
 /perfetto_traces/
 *.pb
 *benchmark_results.json
+.omc/
+optimize-history
+redteam-history
 
 # verifier test fixtures
 jolt-sdk/tests/fixtures

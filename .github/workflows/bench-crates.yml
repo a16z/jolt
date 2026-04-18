@@ -34,6 +34,8 @@ jobs:
         run: >
           cargo bench
           -p jolt-field
+          -p jolt-poly
+          -p jolt-transcript
           --bench '*'
           -- --save-baseline main_run
 
@@ -61,6 +63,8 @@ jobs:
         run: >
           cargo bench
           -p jolt-field
+          -p jolt-poly
+          -p jolt-transcript
           --bench '*'
           -- --save-baseline pr_run
 
@@ -68,26 +72,40 @@ jobs:
         if: github.event_name == 'pull_request'
         id: critcmp
         run: |
-          if [ -d "target/criterion/main_run" ]; then
+          if ls target/criterion/*/main_run/ &>/dev/null; then
             OUTPUT=$(critcmp main_run pr_run --threshold 5 2>&1) || true
             echo "comparison<<EOF" >> "$GITHUB_OUTPUT"
             echo "$OUTPUT" >> "$GITHUB_OUTPUT"
             echo "EOF" >> "$GITHUB_OUTPUT"
-          else
-            echo "comparison=No baseline found — skipping comparison." >> "$GITHUB_OUTPUT"
           fi
 
       - name: Post benchmark comparison
         if: github.event_name == 'pull_request' && steps.critcmp.outputs.comparison != ''
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
-            const body = `## Benchmark comparison (crates)\n\n\`\`\`\n${process.env.COMPARISON}\n\`\`\``;
-            github.rest.issues.createComment({
+            const marker = '<!-- bench-crates -->';
+            const body = `${marker}\n## Benchmark comparison (crates)\n\n\`\`\`\n${process.env.COMPARISON}\n\`\`\``;
+            const { data: comments } = await github.rest.issues.listComments({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body,
             });
+            const existing = comments.find(c => c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body,
+              });
+            }
         env:
           COMPARISON: ${{ steps.critcmp.outputs.comparison }}
