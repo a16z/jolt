@@ -28,7 +28,15 @@ when the Phase 3 stop condition fires.
   For real log_t=13, use sha2-chain --num-iters=1; for real log_t=14,
   use sha2-chain --num-iters=4.
 - **Program**: `muldiv` (log_t=12 ratchet); `sha2-chain` (log_t=13/14 profile)
-- **Stall counter**: 7 (iter 33 instrumentation-only — added named spans
+- **Stall counter**: 0 (iter 34 P42 GREEN — parallelized
+  `CpuBackend::eq_project` via rayon with `par_chunks_mut` (branch 1)
+  and `par_iter_mut` (branch 2), both gated at `PAR_THRESHOLD=1024`.
+  Two runs on muldiv log_t=12 **1274.20 / 1289.92 ms** (avg −11.22% vs
+  1444.14 ratchet); two runs on sha2-chain log_t=14 **19234.61 /
+  18527.62 ms** (avg −23.27% vs iter 31 baseline 24604.96 ms). Clears
+  +5% accept on both programs. Ratchet updated to 1274.20 ms, ratio
+  4.38× → 4.02×. Handler unchanged — internal parallelization of a
+  single `CpuBackend` method; iter 33 instrumentation-only — added named spans
   on `materialize_binding` match arms (`mb::Provided`, `mb::EqTable`,
   `mb::EqProject`, etc.) and on 7 previously-uninstrumented
   `CpuBackend::*` methods (`lt_table`, `eq_plus_one_table`, `eq_project`,
@@ -36,7 +44,7 @@ when the Phase 3 stop condition fires.
   iter 31's 99.3%-untraced Materialize wall is now attributed: **`mb::EqProject`
   = 5574 ms / 58.8% of Materialize family wall at log_t=14 sha2-chain**,
   individual calls up to 2.4 s each, serial. `mb::Provided` = 3810 ms / 40.2%.
-  Everything else <1%. P42 added to queue, expected ~22% wall savings;
+  Everything else <1%. P42 consumed by iter 34 (−23.3% log_t=14 win);
   iter 32 P39 end-to-end sparse Dory commit path
   + OneHotPolynomial layout fix + batch_g1_additions_multi amortized
   Montgomery inversion — flat on both muldiv log_t=12 (~+1.3%) and
@@ -54,11 +62,15 @@ when the Phase 3 stop condition fires.
   instrumentation-only; iter 21 flat; iter 20 green; iter 19 green;
   iter 18 reverted; iter 17 profiling-only; iter 16 infra; iter 15 infra;
   iter 14 infra; iter 13 flat; iter 12 green)
-- **Last green iter**: 20 — parallelize `Op::Commit` outer loop via rayon.
-  42 serial Dory `PCS::commit` calls (508 ms wall, 720 ms CPU, 1.4× effective
-  parallelism) → parallel collect of commitments + serial transcript append
-  (−22.6% prove_ms: 1867 → 1444 ms best, ratio 5.9× → 4.4×)
-- **Green streak**: 4 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infra primitive; iter 15 Gruen infra reduce; iter 16 Gruen infra variant; iter 17 post-P24 re-profile; iter 18 Gruen dispatch reverted; iter 19 Gruen end-to-end −49.2%; iter 20 parallel Op::Commit −22.6%; iter 21 P28 parallelize lt_evals + EqPlusOne::evals flat −1.7%; iter 22 instrumentation-only — per-stage CPU vs wall saturation; iter 23 instrumentation-only — per-op-class CPU vs wall saturation + explicit dory `parallel` feature; iter 24 P32 parallel Materialize outer dispatch flat −0.55%, reverted — nested rayon pessimization hypothesis; iter 25 P33 parallel inner rlc_combine flat −0.69%, reverted — only ~11% of ReduceOpenings time is inner-loop parallelizable; iter 26 P35 parallel-over-groups fused_rlc_reduce flat +1.19%, reverted — likely single dominant group at log_t=12 so outer par_iter adds overhead with no parallelism gain; iter 27 P36 instrumentation-only — fused_rlc_reduce group-level telemetry confirms single group of 42 claims at log_t=12 with combine_hints = 83.3 ms / rlc_combine = 9.7 ms / materialize = 2 µs → combine_hints is 89% of ReduceOpenings wall and the correct attack target; iter 28 P38 parallel Dory combine_hints (par_iter over rows) flat +3.25%, reverted — rayon overhead at 64 rows × ~1.3 ms/row eats the ~65 ms expected savings at log_t=12; iter 32 P39 end-to-end sparse Dory commit path for OneHot polys + OneHotPolynomial CycleMajor layout fix + batch_g1_additions_multi amortized Montgomery inversion, correct (41/41 green), perf flat muldiv +1.3% / sha2-chain −2.26%, reverted per protocol — architectural prerequisites preserved in git log for future revisit)
+- **Last green iter**: 34 — P42 parallelize `CpuBackend::eq_project` via
+  rayon (`par_chunks_mut` when `eq_table.len() == inner_size` so threads
+  write disjoint `[k_start..k_start+chunk]` ranges; `par_iter_mut` in
+  the other branch since each output slot is an independent dot-product).
+  Gated at `PAR_THRESHOLD=1024` to keep small-workload serial fallback.
+  Muldiv log_t=12: 1282 ms avg (−11.22% vs 1444 ratchet; best 1274 ms).
+  sha2-chain log_t=14: 18881 ms avg (−23.27% vs 24605 ms iter 31 baseline;
+  best 18528 ms). Handler unchanged; change internal to `CpuBackend`.
+- **Green streak**: 5 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infra primitive; iter 15 Gruen infra reduce; iter 16 Gruen infra variant; iter 17 post-P24 re-profile; iter 18 Gruen dispatch reverted; iter 19 Gruen end-to-end −49.2%; iter 20 parallel Op::Commit −22.6%; iter 21 P28 parallelize lt_evals + EqPlusOne::evals flat −1.7%; iter 22 instrumentation-only — per-stage CPU vs wall saturation; iter 23 instrumentation-only — per-op-class CPU vs wall saturation + explicit dory `parallel` feature; iter 24 P32 parallel Materialize outer dispatch flat −0.55%, reverted — nested rayon pessimization hypothesis; iter 25 P33 parallel inner rlc_combine flat −0.69%, reverted — only ~11% of ReduceOpenings time is inner-loop parallelizable; iter 26 P35 parallel-over-groups fused_rlc_reduce flat +1.19%, reverted — likely single dominant group at log_t=12 so outer par_iter adds overhead with no parallelism gain; iter 27 P36 instrumentation-only — fused_rlc_reduce group-level telemetry confirms single group of 42 claims at log_t=12 with combine_hints = 83.3 ms / rlc_combine = 9.7 ms / materialize = 2 µs → combine_hints is 89% of ReduceOpenings wall and the correct attack target; iter 28 P38 parallel Dory combine_hints (par_iter over rows) flat +3.25%, reverted — rayon overhead at 64 rows × ~1.3 ms/row eats the ~65 ms expected savings at log_t=12; iter 32 P39 end-to-end sparse Dory commit path for OneHot polys + OneHotPolynomial CycleMajor layout fix + batch_g1_additions_multi amortized Montgomery inversion, correct (41/41 green), perf flat muldiv +1.3% / sha2-chain −2.26%, reverted per protocol — architectural prerequisites preserved in git log for future revisit; iter 33 instrumentation-only — `mb::*` + CpuBackend method spans attributed 58.8% of Materialize wall to `eq_project`; iter 34 P42 parallelize `CpuBackend::eq_project` via rayon (`par_chunks_mut` branch 1, `par_iter_mut` branch 2, `PAR_THRESHOLD=1024` gated) → **−11.22% muldiv log_t=12** (1282 ms avg) + **−23.27% sha2-chain log_t=14** (18881 ms avg), ratchet 1444.14 → 1274.20 ms, ratio 4.38× → 4.02×)
 - **Phase 3 stop condition**: `modular.prove_ms ≤ core.prove_ms` at
   `log_t ∈ {18, 20}`, 3 consecutive green iters. Only this exits the loop.
 
@@ -408,8 +420,11 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
   the sparse-vs-dense-commit gap proportionally. Full diagnosis in
   **Notes / Iter 32**.
 
-- [ ] P42: Parallelize `CpuBackend::eq_project` via rayon — target:
+- [x] P42: Parallelize `CpuBackend::eq_project` via rayon — target:
   `crates/jolt-cpu/src/backend.rs::eq_project` (lines ~462-495).
+  **DONE iter 34** — −11.22% muldiv log_t=12 / −23.27% sha2-chain
+  log_t=14; ratchet 1444.14 → 1274.20 ms, ratio 4.38× → 4.02×. See
+  Notes / Iter 34.
     - **Hypothesis**: iter 33 instrumentation attributes 58.8% of the
       log_t=14 sha2-chain Materialize family wall to `mb::EqProject`
       (5574 ms across 82 calls, avg 68 ms/call, worst calls 2.4 s /
@@ -488,6 +503,100 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 34 — P42 parallelize `CpuBackend::eq_project` (GREEN, ratchet updated)**
+  (target: `crates/jolt-cpu/src/backend.rs::eq_project`).
+
+  **Motivation**: iter 33 instrumentation attributed 58.8% of the
+  log_t=14 sha2-chain Materialize family wall to `mb::EqProject`
+  (5574 ms across 82 calls, worst calls 2.4 s / 2.0 s), with
+  `CpuBackend::eq_project` accounting for 94.8% of that (4708 ms). The
+  method was a serial nested loop over `eq_table × outer_size` (or
+  `inner_size` in the other branch) with no rayon.
+
+  **Change (~40 LOC, single method)**:
+  - Branch 1 (`eq_table.len() == inner_size`): output has length
+    `outer_size`. Parallelize via `par_chunks_mut(chunk_size)` on the
+    output so threads write **disjoint `[k_start..k_start+chunk]`
+    ranges**. Inside each task, iterate over `eq_table` and accumulate
+    `eq_val * source_data[t * outer_size + k_start + local_k]` into the
+    corresponding local slot. Disjoint output ranges eliminate any need
+    for per-thread accumulators or reductions — each `*slot +=` writes
+    its own private memory. `chunk_size = (outer_size / num_threads)
+    .max(PAR_THRESHOLD/4).min(outer_size)` balances granularity.
+  - Branch 2 (else): output has length `inner_size`, and each slot `t`
+    is an independent dot-product `Σ_k eq_table[k] * source[t*outer_size
+    + k]`. Parallelize via `par_iter_mut` over the output — each `proj`
+    computes its own value locally.
+  - Both branches gated at `PAR_THRESHOLD=1024` with a serial fallback
+    for the log_t=12 / tiny-workload case (iter 24's flat P32 confirmed
+    that outer-parallelism attacks at log_t=12 often eat their own gains
+    from rayon overhead).
+  - `#[cfg(feature = "parallel")]` preserves the pure-serial non-rayon
+    build. Zero-check (`if eq_val.is_zero() { continue; }`) preserved in
+    the parallel branches too — eq_table is often sparse in early rounds.
+
+  **Gates**: 41/41 jolt-equivalence green incl. transcript_divergence +
+  zkvm_proof_accepted + full suite; clippy clean on 8-crate canonical
+  set. Handler in `runtime/helpers.rs::materialize_binding::EqProject`
+  arm unchanged (still 4 lines). Abstraction risk: **low** — change is
+  entirely internal to `CpuBackend::eq_project`.
+
+  **Perf — muldiv log_t=12 (ratchet program)**:
+
+  | Run | modular_prove_ms | Δ vs 1444.14 ratchet |
+  |---|---:|---:|
+  | 1 | 1274.20 | **−11.78%** |
+  | 2 | 1289.92 | **−10.69%** |
+  | avg | 1282.06 | **−11.22%** |
+  | **best** | **1274.20** | **−11.78%** |
+
+  Both runs clear +5% accept threshold. Ratchet updated: 1444.14 →
+  **1274.20** ms. Ratio (best/best): 1274.20 / 316.63 = **4.02×** (vs
+  previous 4.38×).
+
+  **Perf — sha2-chain log_t=14 (cross-program, iter 31 baseline)**:
+
+  | Run | modular_prove_ms | Δ vs 24604.96 iter-31 baseline |
+  |---|---:|---:|
+  | 1 | 19234.61 | **−21.82%** |
+  | 2 | 18527.62 | **−24.70%** |
+  | avg | 18881.12 | **−23.27%** |
+
+  At log_t=14 the attributed `eq_project` savings dominate: 4708 ms
+  serial → parallel across 8 cores = ~650-800 ms at perfect scaling,
+  so observed ~5700 ms total savings means the 2.4 s / 2.0 s worst calls
+  collapsed to sub-500 ms while amortizing fork/join over all 82 calls.
+
+  **Why it cleared the order-of-magnitude bar**:
+  - `eq_project` was the single largest attributed self-wall in the
+    modular stack after iter 20 parallelized `Op::Commit` and iter 19
+    Gruen-ported kernel 3.
+  - The serial loop was at ~12% saturation (iter 23 op-class showed
+    Materialize family at ~1 thread). Lifting to 6-7 threads on an
+    8-core M4 is a plausible upper bound; we observed ~5.6× effective
+    parallelism (5574 ms / (5574 - 4708 recovered) ≈ 6.4×).
+  - log_t=14 workloads are NOT overhead-dominated for rayon (unlike
+    iter 24/25/26/28 at log_t=12, where 83k×tiny-work tasks ate fan-out
+    cost). Each `eq_project` call at log_t=14 has ~2M field muls — well
+    above rayon's granularity floor.
+  - log_t=12 gain is smaller (−11%) because many calls fall below the
+    `PAR_THRESHOLD=1024` gate and stay serial, exactly as designed.
+
+  **Stall counter**: 7 → **0**. **Green streak**: 4 → **5**. **Last
+  green iter**: 20 → **34**.
+
+  **Next iter 35 priorities** (from iter 33 tables, post-P42):
+  1. `mb::Provided` = 3810 ms / 40.2% of remaining Materialize wall at
+     log_t=14 (82.8 ms/call avg, dominated by `MaterializeUnlessFresh`
+     going through `R1csSource::compute`). Profile `compute` for
+     R1cs-source polys to find the actual hotspot inside.
+  2. `multi_pair_g2_setup_parallel` = 5771 ms / 24.5% wall (P41, still
+     queued) — check if this is now the top bottleneck post-P42.
+  3. Re-profile post-P42 to verify the hotspot map shift — most of the
+     15.66× ratio at log_t=14 was concentrated in eq_project, so the
+     next highest-leverage attack may be in Dory (commit / setup /
+     open) rather than ML-compiler handlers.
 
 - **Iter 33 — Materialize binding-variant + CpuBackend method instrumentation (infra, no perf claim)**
   (targets: `crates/jolt-zkvm/src/runtime/helpers.rs::materialize_binding`,

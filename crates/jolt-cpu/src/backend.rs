@@ -474,8 +474,36 @@ impl ComputeBackend for CpuBackend {
         outer_size: usize,
     ) -> Vec<F> {
         let eq_table = jolt_poly::EqPolynomial::<F>::evals(eq_point, None);
-        let result = if eq_table.len() == inner_size {
+
+        if eq_table.len() == inner_size {
             let mut projected = vec![F::zero(); outer_size];
+
+            #[cfg(feature = "parallel")]
+            {
+                if outer_size >= PAR_THRESHOLD {
+                    use rayon::prelude::*;
+                    let chunk_size = (outer_size / rayon::current_num_threads())
+                        .max(PAR_THRESHOLD / 4)
+                        .min(outer_size);
+                    projected
+                        .par_chunks_mut(chunk_size)
+                        .enumerate()
+                        .for_each(|(ci, out_chunk)| {
+                            let k_start = ci * chunk_size;
+                            for (t, &eq_val) in eq_table.iter().enumerate() {
+                                if eq_val.is_zero() {
+                                    continue;
+                                }
+                                let base = t * outer_size + k_start;
+                                for (local_k, slot) in out_chunk.iter_mut().enumerate() {
+                                    *slot += eq_val * source_data[base + local_k];
+                                }
+                            }
+                        });
+                    return projected;
+                }
+            }
+
             for (t, &eq_val) in eq_table.iter().enumerate() {
                 if eq_val.is_zero() {
                     continue;
@@ -488,6 +516,23 @@ impl ComputeBackend for CpuBackend {
             projected
         } else {
             let mut projected = vec![F::zero(); inner_size];
+
+            #[cfg(feature = "parallel")]
+            {
+                if inner_size >= PAR_THRESHOLD {
+                    use rayon::prelude::*;
+                    projected.par_iter_mut().enumerate().for_each(|(t, proj)| {
+                        let base = t * outer_size;
+                        for (k, &eq_val) in eq_table.iter().enumerate() {
+                            if !eq_val.is_zero() {
+                                *proj += eq_val * source_data[base + k];
+                            }
+                        }
+                    });
+                    return projected;
+                }
+            }
+
             for (t, proj) in projected.iter_mut().enumerate() {
                 let base = t * outer_size;
                 for (k, &eq_val) in eq_table.iter().enumerate() {
@@ -497,8 +542,7 @@ impl ComputeBackend for CpuBackend {
                 }
             }
             projected
-        };
-        result
+        }
     }
 
     fn lagrange_project<F: Field>(

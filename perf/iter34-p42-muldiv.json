@@ -17,8 +17,7 @@
       "verify_ms": 0.072,
       "peak_rss_mb": 1175,
       "proof_bytes": 64080,
-      "proof_encoding": "bincode-serde",
-      "ratchet_note": "iter 34 P42 parallel CpuBackend::eq_project; best of 2 runs (1274.20, 1289.92)"
+      "proof_encoding": "bincode-serde"
     }
   ]
 }
