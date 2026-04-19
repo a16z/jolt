@@ -28,20 +28,37 @@ when the Phase 3 stop condition fires.
   For real log_t=13, use sha2-chain --num-iters=1; for real log_t=14,
   use sha2-chain --num-iters=4.
 - **Program**: `muldiv` (log_t=12 ratchet); `sha2-chain` (log_t=13/14 profile)
-- **Stall counter**: 1 (iter 41 INFRA — added `fields(ni, ne)` to
+- **Stall counter**: 2 (iter 42 P51 REVERTED — added `(6, 4)` and
+  `(41, 4)` arms to `reduce_dense` const-generic dispatch. Muldiv log_t=12
+  warm avg 1406.30 ms (3 runs excluding cold run 1 @ 1487.57 ms) =
+  **+10.4% vs 1274.20 ratchet, past reject threshold**. sha2-chain
+  log_t=14 num-iters=4 warm avg 16553.07 ms (runs 2/3, excluding cold run 1
+  @ 19801.81) = +2.99% vs iter-39 baseline 16072 ms — flat/inconclusive.
+  Expected 10-13% win did NOT materialize; instead got a muldiv regression.
+  **Diagnosis**: shape distribution was measured only at sha2-chain
+  log_t=14 (where (6,4) = 77.9% and (41,4) = 19.0%). Muldiv log_t=12's
+  shape distribution was NOT measured — we assumed similar. Plausibly,
+  muldiv's reduce_dense calls mostly hit shapes already covered by the
+  existing fixed dispatch (2,2/3,3/4,4 — iter 1 trace had 83K calls
+  mostly small shapes) so the new arms add code-size bloat / monomorph
+  compile time without callee benefit. Specifically `(41, 4)` generates
+  a large fixed-kernel body (41-wide stack arrays) that LLVM may even
+  inline-expand in ways that hurt the muldiv I-cache. **Next iter 43
+  attack options**: (a) measure muldiv log_t=12 shape distribution first,
+  (b) try `(6, 4)` ALONE without `(41, 4)` (maybe only one of the two
+  wins both programs), (c) instead of monomorphizing (41, 4), optimize
+  the dynamic path (swap Vec<F> scratch for SmallVec / reused scratch
+  across chunks). Revert: removed the 2 new match arms; tree-shake
+  takes the unused monomorphizations.
+  Iter 41 INFRA — added `fields(ni, ne)` to
   `reduce_dense` `#[tracing::instrument]` attribute. Attribution at
   sha2-chain log_t=14 num-iters=4 via one-time per-shape named spans
   (later removed to avoid 25% trace overhead): `rd_dynamic(6, 4)` =
   7316.6 ms / n=1792 = **77.9% of reduce_dense wall**; `rd_dynamic(41, 4)`
   = 1779.4 ms / n=18 = 19.0%; together **97% of reduce_dense wall** goes
-  through shapes NOT in the existing fixed dispatch, falling through to
-  heap-allocated `reduce_dense_dynamic`. Only `rd_fixed(4, 4)` = 5.7 ms /
-  n=13 of the existing fixed variants hit at all. Directly confirms user
-  hypothesis: "there may be many more algorithmic differences in how we
-  do reduce_dense for certain shapes vs what jolt core does bespokely".
-  Next iter 42 attack: P51 add `(6, 4)` and `(41, 4)` arms to the const-
-  generic dispatch. Stall counter NOT incremented (iter 11/17/22/23/27/31/
-  33/36/38 precedent for INFRA iterations).
+  through shapes NOT in the existing fixed dispatch. Directly confirmed
+  user hypothesis but attribution was sha2-chain-only — iter 42 revealed
+  muldiv shape distribution diverges.
   Iter 40 P49 REVERTED — attempted
   `init_cache` for dory prepared-point cache in modular
   `DoryScheme::setup_prover`. Clear regression sha2-chain log_t=14
@@ -607,25 +624,31 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
   `reduce_dense_fixed::<F, 6, 4>` + `reduce_dense_fixed::<F, 41, 4>`
   arms. See Notes / Iter 41.
 
-- [ ] P51: Add bespoke `reduce_dense_fixed::<F, 6, 4>` +
-  `reduce_dense_fixed::<F, 41, 4>` dispatch arms — target:
-  `crates/jolt-cpu/src/backend.rs::reduce_dense`.
-    - **Hypothesis**: iter 41 attribution showed `rd_dynamic_6_4` =
-      7316.6 ms (77.9% of reduce_dense wall) and `rd_dynamic_41_4` =
-      1779.4 ms (19.0%) at sha2-chain log_t=14. Both currently go through
-      the heap-allocated `reduce_dense_dynamic` path (per-chunk `Vec`
-      scratch, dynamic-size inner loops). Adding `(6, 4)` and `(41, 4)`
-      to the const-generic fixed dispatch would swap heap-allocated Vec
-      scratch for stack-allocated `[F; NI]` / `[F; NE]` arrays, and let
-      LLVM specialize/unroll the inner `kernel.evaluate` loop over fixed
-      `NI`/`NE`. **97% of reduce_dense wall** would shift from dynamic
-      to fixed path.
-    - **Abstraction risk**: low — internal to `CpuBackend`, no handler
-      or backend-trait change. Just more monomorphization.
-    - **Expected delta**: conservative 15-25% reduction on reduce_dense
-      wall (9095 ms → ~7000 ms at log_t=14) = **10-13% total wall
-      savings** on sha2-chain log_t=14. Even a 10% reduce_dense reduction
-      = 5.5% total wall, comfortably above the +5% accept threshold.
+- [x] P51: Add bespoke `reduce_dense_fixed::<F, 6, 4>` +
+  `reduce_dense_fixed::<F, 41, 4>` dispatch arms — REVERTED (iter 42).
+  Muldiv log_t=12 regressed +10.4% warm avg past reject threshold,
+  sha2-chain log_t=14 flat (+2.99%). Diagnosis: shape distribution was
+  measured only at sha2-chain log_t=14; muldiv log_t=12 has different
+  shape mix so new arms add codegen bloat without callee benefit.
+  See Notes / Iter 42. Next: P52 shape-distribution check at muldiv
+  log_t=12, then decide single-shape vs no-kernel-expansion attack.
+
+- [ ] P52: Measure shape distribution of `reduce_dense` at muldiv
+  log_t=12 — target: `crates/jolt-cpu/src/backend.rs` + ad-hoc bench
+  run with one-shot per-shape named spans.
+    - **Hypothesis**: iter 42 regressed muldiv while leaving sha2-chain
+      flat, implying shape distribution diverges between the two programs.
+      Muldiv may be dominated by shapes already in the existing fixed
+      dispatch (2,2 / 3,3 / 4,4) or by a different uncommon shape.
+      Instrumenting muldiv log_t=12 the same way as iter 41 did for
+      sha2-chain would reveal whether `(6, 4)` and `(41, 4)` are called
+      at all there, or if the new arms were pure code-size bloat.
+    - **Abstraction risk**: zero — instrumentation only.
+    - **Expected delta**: INFRA — output is an attribution map that
+      drives P53 design. If muldiv is dominated by `(6, 4)` too but
+      shape already IS that, then the problem with iter 42 was `(41, 4)`
+      specifically — try `(6, 4)` alone. If muldiv is dominated by a
+      different shape entirely, P53 picks that shape.
 
 - [ ] P41: Parallelize or memoize `multi_pair_g2_setup` across Dory
   commits — target: `dory` crate internals (user-controlled fork).
@@ -665,6 +688,62 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 42 — P51 bespoke `(6, 4)` + `(41, 4)` reduce_dense kernel arms (REVERTED — muldiv +10.4% regression past threshold)**
+  (target: `crates/jolt-cpu/src/backend.rs::reduce_dense` match dispatch;
+  added `(6, 4) => reduce_dense_fixed::<F, 6, 4>(...)` and
+  `(41, 4) => reduce_dense_fixed::<F, 41, 4>(...)` arms to the const-
+  generic dispatch. `reduce_dense_fixed` is already generic over `NI, NE`
+  so no new function body — only two more monomorphizations.)
+
+  **Motivation**: iter 41 attribution showed `rd_dynamic(6, 4)` = 77.9%
+  and `rd_dynamic(41, 4)` = 19.0% of reduce_dense wall at sha2-chain
+  log_t=14, both falling through to heap-allocated
+  `reduce_dense_dynamic`. Expected 10-13% total wall win by swapping
+  per-chunk `Vec` scratch for stack-allocated `[F; NI]` / `[F; NE]` +
+  LLVM specialization.
+
+  **Result**: **REJECT on muldiv** — primary perf gate.
+  | Program              | Runs (ms)                              | Warm avg | Δ vs baseline |
+  |----------------------|----------------------------------------|---------:|---------------|
+  | muldiv log_t=12      | 1487.57 / 1398.95 / 1369.30 / 1450.65 | 1406.30  | **+10.4%**    |
+  | sha2-chain log_t=14 n=4 | 19801.81 / 16586.72 / 16519.42      | 16553.07 | +2.99%        |
+
+  Warm avg excludes cold run 1 (both programs showed a ~+20% cold
+  outlier on first-run-of-session, per iter 39 precedent). Muldiv is
+  past reject threshold even on the most generous window.
+
+  **Diagnosis**: Attribution was measured ONLY at sha2-chain log_t=14
+  (where `(6, 4)` = 77.9% and `(41, 4)` = 19.0%). The assumption that
+  muldiv log_t=12 has a similar shape mix was unverified — and wrong.
+  Candidates for why muldiv regressed:
+  1. Muldiv's reduce_dense calls are dominated by shapes already in
+     the fixed dispatch (2,2 / 3,3 / 4,4) or an uncommon shape not
+     covered by either old or new arms. The new arms add code-size
+     bloat without callee benefit.
+  2. `(41, 4)` generates a large fixed-kernel body (41-wide stack
+     arrays × 2 + 4-wide evals). LLVM may auto-inline this into the
+     dispatch match arm's callsite, pushing other hot code out of
+     muldiv's L1 I-cache working set.
+  3. Monomorphization-time compile cost (not runtime) — but that
+     wouldn't regress `prove_ms` specifically; ignore.
+
+  **Revert**: removed the 2 new match arms; tree-shake drops unused
+  monomorphizations. Correctness re-verified: transcript_divergence
+  PASS on revert.
+
+  **Lesson**: Shape-based dispatch optimization REQUIRES per-program
+  shape distribution verification. The "97% of wall" figure was
+  sha2-chain-specific. For a durable win, either (a) the new arm must
+  dominate shape distribution on BOTH programs, or (b) we need a
+  different approach that doesn't require monomorphization bloat (e.g.,
+  optimize `reduce_dense_dynamic` itself via reused scratch buffers or
+  a small-vector-on-stack layout with dynamic length).
+
+  Stall counter 1 → 2. Green streak preserved at 6 (P47 still holds).
+  Ratchet unchanged. Iter 43 attack: P52 instrument muldiv shape
+  distribution, then revisit with either a single-shape try or a
+  dynamic-path optimization.
 
 - **Iter 41 — P50 instrument reduce_dense by shape (INFRA — attribution captured, 97% of wall in 2 unhandled shapes)**
   (target: `crates/jolt-cpu/src/backend.rs::reduce_dense`; added
