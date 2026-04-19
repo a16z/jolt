@@ -28,7 +28,16 @@ when the Phase 3 stop condition fires.
   For real log_t=13, use sha2-chain --num-iters=1; for real log_t=14,
   use sha2-chain --num-iters=4.
 - **Program**: `muldiv` (log_t=12 ratchet); `sha2-chain` (log_t=13/14 profile)
-- **Stall counter**: 0 (iter 39 P47 GREEN — zero-copy upload path via
+- **Stall counter**: 1 (iter 40 P49 REVERTED — attempted
+  `init_cache` for dory prepared-point cache in modular
+  `DoryScheme::setup_prover`. Clear regression sha2-chain log_t=14
+  avg +13.5% (17429 / 19067 ms vs 16072 iter-39 baseline). Root cause
+  likely: the cached `G2Prepared` `.to_vec()` clone of pre-computed
+  Miller loop lines is slower than fresh `G2Affine → G2Prepared`
+  conversion in parallel chunks. **Durable policy**: setup-phase
+  costs (EC generator prep, prepared-point caches, SRS init) are
+  one-time and off-limits as perf-loop targets per user direction.
+  Saved to memory as `feedback_setup_costs.md`. Iter 39 P47 GREEN — zero-copy upload path via
   `ComputeBackend::upload_vec(Vec<T>)` with CpuBackend pass-through
   override. Changed `materialize_binding::Provided` arm from
   `backend.upload(&data)` to `backend.upload_vec(data.into_owned())`.
@@ -562,6 +571,14 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
       expectation would save ~5.6s at log_t=14 = **24% total wall**. Even
       a 2× improvement per call is 12% total wall.
 
+- [x] P49: Init dory prepared-point cache in modular setup — REVERTED.
+  `init_cache()` enables the fast path in `multi_pair_g2_setup_parallel`
+  that clones cached `G2Prepared` slices instead of converting from
+  affine, but the G2Prepared deep-clone is SLOWER than fresh conversion
+  in parallel chunks. +13.5% regression at sha2-chain log_t=14. Plus
+  user-directed policy: setup-phase costs are one-time, off-limits as
+  perf targets. See Notes / Iter 40.
+
 - [ ] P41: Parallelize or memoize `multi_pair_g2_setup` across Dory
   commits — target: `dory` crate internals (user-controlled fork).
     - **Hypothesis**: iter 31 log_t=14 profile showed
@@ -600,6 +617,50 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 40 — P49 init dory prepared-point cache (REVERTED — +13.5% regression; EC setup class henceforth off-limits)**
+  (target: `crates/jolt-dory/src/scheme.rs::DoryScheme::setup_prover`;
+  added `dory::backends::arkworks::init_cache(&setup.g1_vec, &setup.g2_vec)`
+  gated on `#[cfg(not(test))]`).
+
+  **Motivation (wrong)**: iter 40 post-P47 trace showed
+  `multi_pair_g2_setup_parallel` = 5312 ms = **32.3% of total wall** at
+  sha2-chain log_t=14. dory-pcs 0.3.0 has a `cache` feature (already enabled
+  in Cargo.toml) that skips the G2Affine → G2Prepared conversion if
+  `init_cache()` was called. `jolt-core/src/poly/commitment/dory/commitment_scheme.rs:98`
+  calls `DoryGlobals::init_prepared_cache` at setup time, but modular
+  `jolt-dory` never did. Hypothesis: flipping this on yields 20-30%
+  savings on the 5312 ms bucket = ~1000-1600 ms total wall.
+
+  **Result**: **REGRESSION** on sha2-chain log_t=14.
+  | Run | modular_prove_ms | Δ vs iter-39 avg (16072) |
+  |-----|------------------|--------------------------|
+  | 1   | 17429.64         | +8.45%                   |
+  | 2   | 19067.23         | +18.64%                  |
+  | avg | 18248.44         | **+13.54%**              |
+
+  Clear reject on both runs — past −5% revert threshold by a wide margin.
+
+  **Diagnosis (partial)**: The `cache` feature's fast path does
+  `c.g2_prepared[start_idx..end_idx].to_vec()` per chunk — this clones
+  G2Prepared structs (each a large vector of pre-computed Miller loop
+  lines). The deep clone can be SLOWER than fresh G2Affine → G2Prepared
+  conversion, especially with parallel chunked pairings where chunk-local
+  work is dwarfed by the clone. Alternative hypothesis: 2^22 cached
+  G2Prepared values × hundreds of bytes each = hundreds of MB that
+  poison L2/L3 cache across parallel workers.
+
+  **Revert**: `git checkout -- crates/jolt-dory/src/scheme.rs`.
+  Correctness re-verified: transcript_divergence + zkvm_proof_accepted
+  PASS on revert.
+
+  **Durable policy update (user direction)**: Setup-phase costs — EC
+  generator prep, prepared-point caches, SRS init — are one-time and
+  off the perf-loop attack list from here on. Saved as user feedback
+  memory: `feedback_setup_costs.md`.
+
+  Stall counter 0 → 1. Green streak preserved at 6 (P47 still holds).
+  Bookkeeping commit. Iter 41 picks a non-setup hypothesis.
 
 - **Iter 39 — P47 zero-copy upload for Cow::Owned (GREEN — −18.74% sha2-chain log_t=14)**
   (target: `crates/jolt-compute/src/traits.rs::ComputeBackend` + trait
