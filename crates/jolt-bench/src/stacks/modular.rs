@@ -61,8 +61,21 @@ impl ModularStack {
         let bytecode = BytecodePreprocessing::preprocess(bytecode_raw, entry_address);
         let memory_layout = io_device.memory_layout.clone();
 
-        let raw_trace_length = trace.len().next_power_of_two();
-        let trace_length = raw_trace_length.max(max_trace_length);
+        // `--log-t N` → `max_padded_trace_length = 2^N` (a CEILING, matching
+        // jolt-core's `JoltSharedPreprocessing::new`). The actual trace length
+        // is the raw trace padded to the next power of two. If the guest
+        // program runs fewer cycles than the ceiling, the measured log_t is
+        // smaller than N — the ratchet's historical log_t=12 was real log_t=9
+        // for muldiv (≤512 cycles). For real log_t=N, pick a program large
+        // enough (sha2-chain with `--num-iters` scales cleanly).
+        assert!(
+            trace.len() <= max_trace_length,
+            "trace ({} cycles) exceeds max_trace_length (2^{}); \
+             increase --log-t or lower inputs",
+            trace.len(),
+            max_trace_length.trailing_zeros(),
+        );
+        let trace_length = trace.len().next_power_of_two();
         let log_t_val = trace_length.trailing_zeros() as usize;
 
         let bytecode_k = bytecode.code_size;
@@ -110,13 +123,18 @@ impl ModularStack {
         let ram_k = (ram_k_min as usize).next_power_of_two();
         let log_k_ram = ram_k.trailing_zeros() as usize;
 
-        // -- 2. PCS setup (mirrors jolt-core JoltProverPreprocessing::new sizing).
-        let max_log_k_chunk = if log_t_val < ONEHOT_CHUNK_THRESHOLD_LOG_T {
+        // -- 2. PCS setup — size for `max_log_T = log2(max_padded_trace_length)`
+        // (matches `JoltProverPreprocessing::new`). Not `log_t_val`: if the
+        // actual trace is smaller than the ceiling, we still want generators
+        // sized for the ceiling so the PCS setup is identical to what
+        // jolt-core would produce for the same --log-t flag.
+        let max_log_t = max_trace_length.trailing_zeros() as usize;
+        let max_log_k_chunk = if max_log_t < ONEHOT_CHUNK_THRESHOLD_LOG_T {
             4
         } else {
             8
         };
-        let pcs_prover_setup = DoryScheme::setup_prover(max_log_k_chunk + log_t_val);
+        let pcs_prover_setup = DoryScheme::setup_prover(max_log_k_chunk + max_log_t);
         let pcs_verifier_setup =
             <DoryScheme as jolt_openings::CommitmentScheme>::verifier_setup(&pcs_prover_setup);
 

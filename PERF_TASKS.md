@@ -20,10 +20,11 @@ when the Phase 3 stop condition fires.
 ## Current State
 
 - **Phase**: 1 (small traces for fast iteration)
-- **log_t**: 12 (overrides `max_trace_length` to 2^12; actual prover work
-  is min(guest cycles padded, 2^12))
-- **Program**: `muldiv` (only program supported on the modular stack today)
-- **Stall counter**: 5 (iter 28 P38 parallel Dory combine_hints flat +3.25% reverted; iter 27 instrumentation-only — fused_rlc_reduce group-level telemetry; iter 26 P35 parallel-over-groups fused_rlc_reduce flat/reverted; iter 25 P33 parallel inner rlc_combine flat/reverted; iter 24 P32 parallel Materialize flat/reverted; iter 23 instrumentation-only; iter 22 instrumentation-only; iter 21 flat; iter 20 green; iter 19 green; iter 18 reverted; iter 17 profiling-only; iter 16 infra; iter 15 infra; iter 14 infra; iter 13 flat; iter 12 green)
+- **log_t**: 12 (ceiling — `max_padded_trace_length = 2^12`; actual log_t =
+  `raw_trace.next_power_of_two().log2()`, which is 10 for muldiv at
+  684 cycles). For real log_t ≥ 14, use sha2-chain with `--num-iters`.
+- **Program**: `muldiv` (both stacks; sha2/3-chain also supported)
+- **Stall counter**: 6 (iter 29 bench rewrite — dropped jolt-core proof transplant, wired native `jolt_verifier::verify` best-effort, generalized modular stack to run any guest ELF; iter 30 bench ceiling fix — flat +4.19% at 5-run median 1504.67 ms, ratchet unchanged; iter 28 P38 parallel Dory combine_hints flat +3.25% reverted; iter 27 instrumentation-only — fused_rlc_reduce group-level telemetry; iter 26 P35 parallel-over-groups fused_rlc_reduce flat/reverted; iter 25 P33 parallel inner rlc_combine flat/reverted; iter 24 P32 parallel Materialize flat/reverted; iter 23 instrumentation-only; iter 22 instrumentation-only; iter 21 flat; iter 20 green; iter 19 green; iter 18 reverted; iter 17 profiling-only; iter 16 infra; iter 15 infra; iter 14 infra; iter 13 flat; iter 12 green)
 - **Last green iter**: 20 — parallelize `Op::Commit` outer loop via rayon.
   42 serial Dory `PCS::commit` calls (508 ms wall, 720 ms CPU, 1.4× effective
   parallelism) → parallel collect of commitments + serial transcript append
