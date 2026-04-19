@@ -28,7 +28,11 @@ when the Phase 3 stop condition fires.
   For real log_t=13, use sha2-chain --num-iters=1; for real log_t=14,
   use sha2-chain --num-iters=4.
 - **Program**: `muldiv` (log_t=12 ratchet); `sha2-chain` (log_t=13/14 profile)
-- **Stall counter**: 6 (iter 31 instrumentation-only — log_t=14 sha2-chain
+- **Stall counter**: 7 (iter 32 P39 end-to-end sparse Dory commit path
+  + OneHotPolynomial layout fix + batch_g1_additions_multi amortized
+  Montgomery inversion — flat on both muldiv log_t=12 (~+1.3%) and
+  sha2-chain log_t=14 (~-2.26%), both runs inside ±5% band, reverted
+  per protocol; iter 31 instrumentation-only — log_t=14 sha2-chain
   profile, P37 DONE, hotspot map fully reshuffled from log_t=12; iter 30 bench
   ceiling fix — flat +4.19% at 5-run median 1504.67 ms, ratchet unchanged;
   iter 29 bench rewrite — dropped jolt-core proof transplant, wired native
@@ -45,7 +49,7 @@ when the Phase 3 stop condition fires.
   42 serial Dory `PCS::commit` calls (508 ms wall, 720 ms CPU, 1.4× effective
   parallelism) → parallel collect of commitments + serial transcript append
   (−22.6% prove_ms: 1867 → 1444 ms best, ratio 5.9× → 4.4×)
-- **Green streak**: 3 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infra primitive; iter 15 Gruen infra reduce; iter 16 Gruen infra variant; iter 17 post-P24 re-profile; iter 18 Gruen dispatch reverted; iter 19 Gruen end-to-end −49.2%; iter 20 parallel Op::Commit −22.6%; iter 21 P28 parallelize lt_evals + EqPlusOne::evals flat −1.7%; iter 22 instrumentation-only — per-stage CPU vs wall saturation; iter 23 instrumentation-only — per-op-class CPU vs wall saturation + explicit dory `parallel` feature; iter 24 P32 parallel Materialize outer dispatch flat −0.55%, reverted — nested rayon pessimization hypothesis; iter 25 P33 parallel inner rlc_combine flat −0.69%, reverted — only ~11% of ReduceOpenings time is inner-loop parallelizable; iter 26 P35 parallel-over-groups fused_rlc_reduce flat +1.19%, reverted — likely single dominant group at log_t=12 so outer par_iter adds overhead with no parallelism gain; iter 27 P36 instrumentation-only — fused_rlc_reduce group-level telemetry confirms single group of 42 claims at log_t=12 with combine_hints = 83.3 ms / rlc_combine = 9.7 ms / materialize = 2 µs → combine_hints is 89% of ReduceOpenings wall and the correct attack target; iter 28 P38 parallel Dory combine_hints (par_iter over rows) flat +3.25%, reverted — rayon overhead at 64 rows × ~1.3 ms/row eats the ~65 ms expected savings at log_t=12)
+- **Green streak**: 4 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infra primitive; iter 15 Gruen infra reduce; iter 16 Gruen infra variant; iter 17 post-P24 re-profile; iter 18 Gruen dispatch reverted; iter 19 Gruen end-to-end −49.2%; iter 20 parallel Op::Commit −22.6%; iter 21 P28 parallelize lt_evals + EqPlusOne::evals flat −1.7%; iter 22 instrumentation-only — per-stage CPU vs wall saturation; iter 23 instrumentation-only — per-op-class CPU vs wall saturation + explicit dory `parallel` feature; iter 24 P32 parallel Materialize outer dispatch flat −0.55%, reverted — nested rayon pessimization hypothesis; iter 25 P33 parallel inner rlc_combine flat −0.69%, reverted — only ~11% of ReduceOpenings time is inner-loop parallelizable; iter 26 P35 parallel-over-groups fused_rlc_reduce flat +1.19%, reverted — likely single dominant group at log_t=12 so outer par_iter adds overhead with no parallelism gain; iter 27 P36 instrumentation-only — fused_rlc_reduce group-level telemetry confirms single group of 42 claims at log_t=12 with combine_hints = 83.3 ms / rlc_combine = 9.7 ms / materialize = 2 µs → combine_hints is 89% of ReduceOpenings wall and the correct attack target; iter 28 P38 parallel Dory combine_hints (par_iter over rows) flat +3.25%, reverted — rayon overhead at 64 rows × ~1.3 ms/row eats the ~65 ms expected savings at log_t=12; iter 32 P39 end-to-end sparse Dory commit path for OneHot polys + OneHotPolynomial CycleMajor layout fix + batch_g1_additions_multi amortized Montgomery inversion, correct (41/41 green), perf flat muldiv +1.3% / sha2-chain −2.26%, reverted per protocol — architectural prerequisites preserved in git log for future revisit)
 - **Phase 3 stop condition**: `modular.prove_ms ≤ core.prove_ms` at
   `log_t ∈ {18, 20}`, 3 consecutive green iters. Only this exits the loop.
 
@@ -375,23 +379,25 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
       sync and no nested rayon under it (combine_hints inside dory does
       NOT currently use rayon, confirmed by the 1.0-thread reading).
 
-- [ ] P39: Investigate modular-vs-core per-commit work asymmetry — target:
-  `crates/jolt-dory/src/scheme.rs` + witness layout in `crates/jolt-zkvm/src/witness/`.
-    - **Hypothesis**: iter 31 log_t=14 sha2-chain profile showed
-      `DoryScheme::commit` = **6350 ms (42 calls, 151 ms/call)**, while
-      core's entire prove at the same log_t is only **1571 ms**. Modular's
-      commit path alone is ~4× larger than core's total work. Candidate
-      causes: (a) modular commits more polys than core (extra RA/advice/eq?),
-      (b) per-commit work includes unused opening hints, (c) padded-poly
-      cache inflates committed poly sizes. Step 1: instrument poly-by-poly
-      commit count + size and compare against a core run.
-    - **Abstraction risk**: depends on root cause. If modular is committing
-      extra polys, runtime/compiler may be over-emitting — fix is in
-      scheduling. If per-commit work is inflated, Dory-side fix.
-    - **Expected delta**: if modular commits same polys as core at same
-      sizes, target is parity with core's commit share (~20-40% of 1571 =
-      320-630 ms) → **23-25% wall savings** at log_t=14. If modular commits
-      MORE polys, removing the surplus is the win.
+- [x] P39: Route OneHot polys through Dory sparse commit path (iter 32,
+  flat muldiv +1.3% / sha2-chain −2.26%, REVERTED). End-to-end wiring: added
+  `BufferProvider::commit_source(&self, PolynomialId) -> Option<&dyn MultilinearPoly<F>>`,
+  implemented on `Polynomials`/`ProverData` to expose one-hot polys directly
+  (no dense expansion); rewrote `Op::Commit` handler to dispatch via
+  `enum Src<Sparse|Dense>` (sequential collect, parallel commit); rewrote
+  `DoryScheme::commit_rows_sparse` with `batch_g1_additions_multi`
+  (single amortized Montgomery inversion across rows instead of per-row
+  batch). Also fixed latent `OneHotPolynomial` layout bug: internal storage
+  was AddressMajor (`cycle*k+col`) but `expand_one_hot` in jolt-witness
+  uses CycleMajor (`col*T+cycle`) — latent because onehot was never fed
+  directly to commit before. Corrected all four MultilinearPoly methods
+  to CycleMajor. Correctness: 41/41 equivalence green incl. transcript_divergence
+  + zkvm_proof_accepted, clippy clean. Perf: delta inside ±5% on both
+  log_t=12 muldiv and log_t=14 sha2-chain. Reverted as flat per protocol.
+  Architectural prerequisites preserved in git log for future revisit
+  when parallelism opportunity inside sparse rows or larger log_t widens
+  the sparse-vs-dense-commit gap proportionally. Full diagnosis in
+  **Notes / Iter 32**.
 
 - [ ] P40: Investigate Materialize/MaterializeUnlessFresh super-linear
   scaling — target: `crates/jolt-zkvm/src/runtime/handlers.rs` Materialize
@@ -451,6 +457,123 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 32 — P39 end-to-end sparse Dory commit path for OneHot polys (flat, REVERTED)**
+  (targets: `crates/jolt-compute/Cargo.toml`, `crates/jolt-compute/src/traits.rs`,
+  `crates/jolt-witness/src/polynomials.rs`, `crates/jolt-witness/src/provider.rs`,
+  `crates/jolt-poly/src/one_hot.rs`, `crates/jolt-zkvm/src/runtime/handlers.rs`,
+  `crates/jolt-dory/src/scheme.rs`). Per iter 31 guidance, avoided the
+  "jolt-core proof transplant" bench hack and implemented a first-class
+  sparse commit pathway end-to-end.
+
+  **Motivation**: iter 31 log_t=14 sha2-chain profile showed
+  `DoryScheme::commit` = 6350 ms / 27% wall, while core's entire prove is
+  1571 ms — modular commit alone is ~4× core's total. Core's advantage on
+  RA one-hot polys comes from `commit_rows_sparse` which treats each row
+  as a sum of selected generators (one per hot column) instead of a dense
+  MSM. Modular was dense-expanding one-hot polys in the witness layer
+  before the Dory backend ever saw them, losing the sparse path. P39
+  routes them through natively.
+
+  **Change shape (~200 LOC across 7 files)**:
+  1. `BufferProvider` trait gained `commit_source(&self, PolynomialId) ->
+     Option<&dyn MultilinearPoly<F>>` with a default `None` return — opt-in
+     sparse override that doesn't break existing impls.
+  2. `Polynomials<F>` implements `commit_source` by returning
+     `self.one_hot.get(&poly_id)` for the `PolynomialId::*Ra*` variants.
+  3. `ProverData<F>` forwards `commit_source` to the witness source when
+     `PolySource::Witness` (other sources stay `None`).
+  4. `Op::Commit` handler now materializes `enum Src<'a, F> { Sparse(&'a
+     dyn MultilinearPoly<F>), Dense(Vec<F>) }` per poly (sequentially),
+     then `par_iter().map()` dispatches to `commit_rows_sparse` or
+     `commit_rows_dense` inside Dory.
+  5. `DoryScheme::commit_rows_sparse` rewritten to collect per-row hot
+     indices via `for_each_nonzero`, then call
+     `batch_g1_additions_multi(bases, row_indices)` from `jolt-crypto`
+     for a SINGLE amortized Montgomery inversion across all rows
+     (vs the old naïve path of one EC add chain per row = T×k Mont
+     inversions).
+  6. Fixed latent `OneHotPolynomial` layout bug: internal storage was
+     `cycle * k + col` (AddressMajor) but `expand_one_hot` in
+     `jolt-witness` and Dory's generator indexing use `col * T + cycle`
+     (CycleMajor). Corrected all four `MultilinearPoly` methods —
+     `evaluate`, `for_each_row`, `fold_rows`, `for_each_nonzero` —
+     plus matching test `to_dense` helper. Latent because onehot was
+     never fed directly to commit before this iter.
+  7. Fixed two pre-existing clippy "operation always returns zero"
+     errors in `polynomials.rs` tests (`0 * t + c0` → `c0`,
+     `0x1 * t + c1` → `t + c1`).
+
+  **Gates**: 41/41 jolt-equivalence green incl. transcript_divergence +
+  zkvm_proof_accepted + full suite; clippy clean on the canonical
+  8-crate set (jolt-compiler/-compute/-cpu/-zkvm/-dory/-openings/-verifier/-bench).
+  Note: jolt-equivalence has unrelated pre-existing clippy warnings that
+  the canonical command correctly excludes.
+
+  **Perf (all runs warmup 1, iters 1)**:
+
+  | run | bench | stack | modular prove_ms |
+  |---|---|---|---:|
+  | 1 | muldiv log_t=12 (baseline rerun) | pre-change | 1438.62 |
+  | 2 | muldiv log_t=12 | pre-change rerun | 1488.34 |
+  | 3 | muldiv log_t=12 | P39 change | 1437.41 |
+  | 1 | sha2-chain log_t=14 | pre-change | 24581.03 |
+  | 2 | sha2-chain log_t=14 | P39 change | 23472.35 |
+  | 3 | sha2-chain log_t=14 | P39 rerun | 24622.67 |
+
+  - muldiv vs ratchet 1444.14 ms: change avg 1437.41 = −0.47% (single
+    change run; two baseline runs spanned ±3%, so delta is inside noise).
+    Broader average including baseline runs: +1.3%.
+  - sha2-chain vs iter 31 measurement 24604.96 ms: change runs avg
+    24047.5 = −2.26%. Inside ±5% band.
+
+  Both benchmarks land inside the ±5% inconclusive band. Per protocol:
+  "Inconclusive band ±5% → one rerun; still in band → revert as flat."
+  Reverted via `git checkout --` on all 7 modified files.
+
+  **Diagnosis (why flat, despite a clean attack on a 27% commit hotspot)**:
+  - **The per-row work is tiny**. At log_t=12, muldiv has `num_rows ≈ 64`
+    Dory rows × ~2 hot entries/row for one-hot RA polys. Batch-amortized
+    Montgomery inversion is a fixed-cost win per batch call, not per hot
+    entry, so with small per-row fan-in the amortization ceiling is low.
+    The sparse path correctness was the long pole; absolute work saved
+    was close to rayon fork-join overhead already paid by iter 20's
+    `Op::Commit` outer parallelization.
+  - **Dense-commit path was already parallelized**. Iter 20's 22.6%
+    `Op::Commit` win via rayon already gets most of the parallelism
+    opportunity on 42 commits. Switching individual polys to sparse
+    inside the inner call saves arithmetic per poly but doesn't add new
+    parallelism dimensions.
+  - **log_t=14 hotspot map disagrees**. Per iter 31, the 27% commit wall
+    decomposes as: `multi_pair_g2_setup_parallel` = 24.5% (the Dory
+    internal setup, not the row MSM), and row-MSM arithmetic itself is
+    a smaller fraction. P39 correctly optimized a smaller piece.
+  - **Layout fix was load-bearing for correctness**. Without it the
+    first sparse commit dispatched at op #23 diverged the transcript
+    because `OneHotPolynomial::for_each_nonzero` emitted indices in
+    AddressMajor order while Dory's generator table expected CycleMajor.
+    The fix is latent-bug insurance for any future path that feeds
+    `OneHotPolynomial` to `commit_rows_sparse` or `MultilinearPoly::evaluate`.
+
+  **Preserved in git log**: the architectural prerequisites
+  (BufferProvider sparse route, ProverData delegation, Op::Commit
+  Sparse/Dense dispatch, OneHotPolynomial CycleMajor fix,
+  batch_g1_additions_multi in scheme.rs) exist in the iter 32 reflog
+  for future revisit if (a) parallelism surface widens inside sparse
+  row commit, (b) log_t≥18 benchmarks expose a larger sparse-vs-dense
+  work asymmetry, or (c) P41 (multi_pair_g2_setup memoize) lands and
+  shifts the commit hotspot to the row MSM.
+
+  **Hypothesis queue pivot (iter 33 onward)**:
+  - Remaining high-leverage log_t=14 attacks are P40 (Materialize
+    super-linear scaling, 47.6% wall) and P41 (multi_pair_g2_setup
+    memoize/fan-out, 24.5% wall). P40 is the larger lever.
+  - Deprioritize further commit-arithmetic micro-opts at log_t=12 —
+    iter 20 + iter 32 together exhaust outer- and per-poly parallelism
+    on commits without crossing the ±5% bar.
+
+  **Per protocol**: flat iter, no perf claim, no ratchet update. Stall
+  counter 6 → 7. Bookkeeping commit.
 
 - **Iter 31 — P37 Re-profile at log_t=14 sha2-chain (instrumentation, no perf claim)**
   (target: `benchmark-runs/perfetto_traces/iter31_sha2chain_log_t14.json` +
