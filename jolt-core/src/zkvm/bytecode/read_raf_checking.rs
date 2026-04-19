@@ -1449,7 +1449,10 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
         let rv_claim_5 = Self::compute_rv_claim_5(opening_accumulator, &stage5_gammas);
         let rv_claims = [rv_claim_1, rv_claim_2, rv_claim_3, rv_claim_4, rv_claim_5];
 
-        // Fused pass: compute all val polynomials in a single parallel iteration in Full mode.
+        // Fused pass: compute all val polynomials in a single parallel iteration when the
+        // full bytecode table is available. The proxy committed path only needs staged
+        // `Val_s(r_bc)` openings, so keep the placeholder MLEs tiny instead of allocating
+        // length-K zero buffers that will never be uploaded or evaluated on Rust.
         let val_polys = if let Some(program) = program.and_then(|program| program.as_full().ok()) {
             let r_register_4 = opening_accumulator
                 .get_virtual_polynomial_opening(
@@ -1481,6 +1484,8 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
                 &stage4_gammas,
                 &stage5_gammas,
             )
+        } else if use_staged_val_claims {
+            array::from_fn(|_| MultilinearPolynomial::from(vec![F::zero()]))
         } else {
             array::from_fn(|_| {
                 MultilinearPolynomial::from(vec![F::zero(); one_hot_params.bytecode_k])
