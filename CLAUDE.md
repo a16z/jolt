@@ -60,8 +60,12 @@ Per iteration:
 
 ```
 1. Read PERF_TASKS.md — current phase, current log_t, first unchecked P-item
-2. MEASURE: cargo run --release -p jolt-bench -- --program muldiv \
-     --iters 1 --warmup 1 --log-t <current> --json perf/last-iter.json
+2. MEASURE: cargo run --release -p jolt-bench -- --program sha2-chain \
+     --num-iters 16 --log-t 16 --iters 1 --warmup 1 --json perf/last-iter.json
+   (Standardized workload: ~2^16 cycles. Replaced the prior muldiv log_t=12
+   standard effective 2026-04-19 per user direction — muldiv log_t=12 had
+   real log_t ≈ 10 with core/modular ratio ~4×; sha2-chain log_t=16 gives
+   a production-shape workload with ratio ~19×.)
 3. STOP CHECK: Phase 3 green (modular ≤ core at log_t ∈ {18, 20}) for
    3 consecutive iters → exit. Nothing else exits.
 4. PICK HYPOTHESIS: first unchecked P-item. Empty queue or stall ≥ 5 →
@@ -70,13 +74,18 @@ Per iteration:
 6. CORRECTNESS GATE (hard — fail reverts + continues):
    cargo nextest run -p jolt-equivalence transcript_divergence
    cargo nextest run -p jolt-equivalence zkvm_proof_accepted
+   cargo nextest run -p jolt-equivalence modular_self_verify
    cargo nextest run -p jolt-equivalence
    cargo clippy ... -- -D warnings  (see PERF_TASKS.md for full set)
+   NOTE: `modular_self_verify` exercises the full modular prove+verify
+   round-trip via `jolt_verifier::verify` (no jolt-core dependency) —
+   required per user direction "we need the proofs to verify before
+   continuing in the loop".
 7. PERF GATE: re-measure, compare vs perf/baseline-modular-best.json.
    Accept: ≥5% faster → update ratchet. Reject: ≥5% slower → revert.
    Inconclusive band ±5% → one rerun; still in band → revert as flat.
 8. COMMIT ALWAYS — one commit per iter:
-   - Improvement: `perf(<scope>): P<n> <name> (-X% prove_ms on muldiv @ log_T=<n>)`
+   - Improvement: `perf(<scope>): P<n> <name> (-X% prove_ms on sha2-chain @ log_T=<n>)`
    - Flat/reverted: `journal: P<n> reverted (<reason>)` — only bookkeeping
 9. GRADUATE if phase graduation condition met (see PERF_TASKS.md table).
 10. GO IMMEDIATELY BACK TO STEP 1. Do NOT call `ScheduleWakeup` or pause

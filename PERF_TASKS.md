@@ -19,15 +19,19 @@ when the Phase 3 stop condition fires.
 
 ## Current State
 
-- **Phase**: 1 (small traces for fast iteration); pivot-in-progress — iter 31
-  reveals log_t=14 sha2-chain ratio 15.7× (vs log_t=12 muldiv 3.96×), so
-  future iters should attack workload-scaling bugs first.
-- **log_t**: 12 ratchet tracked on muldiv (ratchet 1444.14 ms); iter 31
-  added log_t=14 sha2-chain as secondary reference (modular 24604 ms, core
-  1571 ms). `--log-t N` is a CEILING. muldiv raw = 684 cycles → real log_t=10.
-  For real log_t=13, use sha2-chain --num-iters=1; for real log_t=14,
-  use sha2-chain --num-iters=4.
-- **Program**: `muldiv` (log_t=12 ratchet); `sha2-chain` (log_t=13/14 profile)
+- **Phase**: 2 (log_t=16 standardized workload) — switched 2026-04-19 per
+  user direction: "let's up our standardized check to use sha chain with
+  2^16 cycles instead for every loop now and focus on optimizing that".
+  Replaces the prior muldiv log_t=12 standard (real log_t≈10, ratio ~4×)
+  with a production-shape workload (real log_t=16, ratio ~19.7×).
+- **log_t**: 16 ratchet on sha2-chain --num-iters=16 (ratchet 77525.5 ms
+  modular, 3938.4 ms core best). Full bench command:
+  `cargo run --release -p jolt-bench -- --program sha2-chain --num-iters 16
+  --iters 1 --warmup 1 --log-t 16 --json perf/last-iter.json`.
+  `--log-t N` is a CEILING matching `JoltSharedPreprocessing::new`.
+- **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
+  muldiv log_t=12 retired as standard (history kept for reference). Prior
+  baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
 - **Stall counter**: 2 (iter 42 P51 REVERTED — added `(6, 4)` and
   `(41, 4)` arms to `reduce_dense` const-generic dispatch. Muldiv log_t=12
   warm avg 1406.30 ms (3 runs excluding cold run 1 @ 1487.57 ms) =
