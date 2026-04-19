@@ -312,6 +312,31 @@ impl<F: JoltField> ProgramImageClaimReductionProver<F> {
             core: PrecomittedProver::new(params, program_word, eq_slice),
         }
     }
+
+    pub fn from_bound_state(
+        params: ProgramImageClaimReductionParams<F>,
+        program_word_coeffs: Vec<F>,
+        eq_slice_coeffs: Vec<F>,
+    ) -> Self {
+        Self::from_bound_state_with_scale(params, program_word_coeffs, eq_slice_coeffs, F::one())
+    }
+
+    pub fn from_bound_state_with_scale(
+        params: ProgramImageClaimReductionParams<F>,
+        program_word_coeffs: Vec<F>,
+        eq_slice_coeffs: Vec<F>,
+        scale: F,
+    ) -> Self {
+        let mut prover = Self {
+            core: PrecomittedProver::new(
+                params,
+                MultilinearPolynomial::from(program_word_coeffs),
+                MultilinearPolynomial::from(eq_slice_coeffs),
+            ),
+        };
+        prover.core.set_scale(scale);
+        prover
+    }
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
