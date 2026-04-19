@@ -87,12 +87,19 @@ where
             }
 
             VerifierOp::AbsorbCommitment { poly, tag } => {
-                let c = commitments
+                let slot = commitments
                     .next()
                     .ok_or_else(|| JoltError::InvalidProof("missing commitment".into()))?;
-                transcript.append(&Label(tag.as_bytes()));
-                c.append_to_transcript(&mut transcript);
-                let _ = commitment_map.insert(*poly, c.clone());
+                // `None` means the prover skipped this commit (all-zero
+                // advice poly) to match jolt-core's transcript. Skip the
+                // transcript append on the verifier side symmetrically;
+                // downstream CollectOpeningClaim's `commitment_map.get()`
+                // already handles a missing entry.
+                if let Some(c) = slot {
+                    transcript.append(&Label(tag.as_bytes()));
+                    c.append_to_transcript(&mut transcript);
+                    let _ = commitment_map.insert(*poly, c.clone());
+                }
             }
 
             VerifierOp::Squeeze { challenge } => {

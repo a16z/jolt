@@ -329,7 +329,11 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             num_vars,
             ..
         } => {
-            // jolt-core skips advice commits when data is empty/zero
+            // jolt-core skips advice commits when data is empty/zero.
+            // Push `None` per poly so the verifier's AbsorbCommitment
+            // schedule stays aligned; the verifier also skips the
+            // transcript append on None. (Transcript parity vs jolt-core
+            // is checked by transcript_divergence.)
             let skip = matches!(
                 tag,
                 DomainSeparator::UntrustedAdvice | DomainSeparator::TrustedAdvice
@@ -338,6 +342,9 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                 raw.iter().all(|v| *v == F::zero())
             });
             if skip {
+                for _ in polys {
+                    state.commitments.push(None);
+                }
                 return;
             }
 
@@ -369,7 +376,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                 transcript.append(&LabelWithCount(tag.as_bytes(), commitment.serialized_len()));
                 commitment.append_to_transcript(transcript);
                 let _ = state.hints.insert(pi, hint);
-                state.commitments.push(commitment);
+                state.commitments.push(Some(commitment));
             }
         }
 

@@ -131,7 +131,7 @@ where
     pub(super) current_stage: Option<StageBuilder<F>>,
     pub(super) stage_proofs: Vec<StageProof<F>>,
 
-    pub(super) commitments: Vec<PCS::Output>,
+    pub(super) commitments: Vec<Option<PCS::Output>>,
     pub(super) hints: HashMap<PolynomialId, PCS::OpeningHint>,
     pub(super) pending_claims: Vec<PendingClaim<F>>,
     pub(super) pending_hints: Vec<PCS::OpeningHint>,

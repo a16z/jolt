@@ -30,5 +30,9 @@ pub struct JoltProof<F: Field, PCS: CommitmentScheme<Field = F>> {
     pub config: ProverConfig,
     pub stage_proofs: Vec<StageProof<F>>,
     pub opening_proofs: Vec<PCS::Proof>,
-    pub commitments: Vec<PCS::Output>,
+    /// One entry per `VerifierOp::AbsorbCommitment` in the schedule.
+    /// `None` encodes the prover's runtime decision to skip the commit
+    /// (currently only all-zero `UntrustedAdvice`/`TrustedAdvice`, to
+    /// match jolt-core's transcript parity).
+    pub commitments: Vec<Option<PCS::Output>>,
 }

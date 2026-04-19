@@ -693,6 +693,53 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
 
+- **Correctness side-quest (2026-04-19) — modular self-verify unblock, partial**
+
+  **Why**: user directive — "natively the modular stack proof to be
+  verifiable by its own jolt-verifier as part of the gate / a test if
+  we don't have that already". Target: make `jolt-zkvm::prove →
+  jolt-verifier::verify` round-trip, then add it to the correctness
+  gate alongside `transcript_divergence` /
+  `zkvm_proof_accepted_by_core_verifier`.
+
+  **Fixed (this commit)**: prover/verifier disagreed on commitment
+  count when all-zero advice (`UntrustedAdvice`, `TrustedAdvice`) made
+  the prover skip `Op::Commit` while the verifier schedule still
+  expected a commitment per `VerifierOp::AbsorbCommitment`. Changed
+  `JoltProof::commitments` from `Vec<PCS::Output>` to
+  `Vec<Option<PCS::Output>>`; prover pushes `None` for each skipped
+  poly; verifier checks `Option::is_some()` before appending to
+  transcript + commitment map. Mirrors jolt-core's
+  `Option<PCS::Commitment>` pattern at
+  `jolt-core/src/zkvm/verifier.rs:360-368`. Cross-system test
+  `zkvm_proof_accepted_by_core_verifier` updated to `.filter_map(|c|
+  c.as_ref())` before truncating to core's expected count.
+
+  **New test**: `modular_self_verify_commit_skip_alignment` —
+  asserts `none == 2` for muldiv advice commits and that
+  `jolt-verifier::verify` no longer returns
+  `InvalidProof("missing commitment")`. PASSES.
+
+  **Blocked (remaining work)**: full `modular_self_verify` test is
+  added but `#[ignore]`d. First downstream error post-fix:
+  `InvalidProof("missing eval 0 in stage proof")`. Root cause —
+  `crates/jolt-compiler/examples/jolt_core_module.rs` (the hand-
+  written protocol reference used by the bench / modular stack)
+  emits an incomplete verifier schedule: (a) 4× `VerifierOp::
+  RecordEvals` with zero matching `Op::RecordEvals` on the prover
+  side, (b) no verifier ops for stages 5-7, (c) no
+  `VerifierOp::CollectOpeningClaim` anywhere to mirror the prover's
+  `CollectOpeningClaimAt`. Completing this is a multi-day refactor
+  (not a perf iter); the partial test guards the commit-skip fix
+  from regression in the meantime.
+
+  **Gate status**: correctness gate tests pass —
+  `transcript_divergence` OK, `zkvm_proof_accepted_by_core_verifier`
+  OK, full `jolt-equivalence` (42 tests) OK, clippy on touched
+  crates clean. Full modular self-verify deferred; `muldiv`
+  continues to exercise the prove path and prove↔core-verify parity.
+  No perf ratchet change.
+
 - **Iter 42 — P51 bespoke `(6, 4)` + `(41, 4)` reduce_dense kernel arms (REVERTED — muldiv +10.4% regression past threshold)**
   (target: `crates/jolt-cpu/src/backend.rs::reduce_dense` match dispatch;
   added `(6, 4) => reduce_dense_fixed::<F, 6, 4>(...)` and

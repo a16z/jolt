@@ -1515,6 +1515,7 @@ fn zkvm_proof_accepted_by_core_verifier() {
     let commitments: Vec<_> = zkvm_proof
         .commitments
         .iter()
+        .filter_map(|c| c.as_ref())
         .take(expected_num_commitments)
         .map(commitment_to_ark)
         .collect();
@@ -1583,4 +1584,126 @@ fn zkvm_proof_accepted_by_core_verifier() {
     eprintln!("[cross-system] stage 8 OK");
 
     eprintln!("SUCCESS: jolt-core verifier accepted jolt-zkvm proof (all 8 stages)");
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Modular self-verify: jolt-zkvm proof → jolt-verifier::verify
+// ═══════════════════════════════════════════════════════════════════
+
+/// Prove with jolt-zkvm (modular stack) and verify with the native
+/// `jolt_verifier::verify` — no jolt-core dependency on the verify path.
+///
+/// This test is the target for end-to-end modular self-verification.
+/// It requires that `jolt_core_module.rs` (the handwritten protocol
+/// reference used by the bench) emits a *complete* verifier schedule
+/// (all 7 stages, CollectOpeningClaim for every committed poly,
+/// matching Op::RecordEvals on the prover side). Today only stages
+/// 1–4 are wired on the verifier side and Op::RecordEvals is missing
+/// on the prover side — so this test currently fails with
+/// "missing eval 0 in stage proof". The commit-skip fix (Option
+/// commitments) is the first of several steps needed; the remaining
+/// work is tracked in PERF_TASKS.md.
+#[test]
+#[ignore = "modular verifier schedule in jolt_core_module.rs is not yet complete; see PERF_TASKS.md"]
+fn modular_self_verify() {
+    use jolt_dory::types::DoryVerifierSetup;
+
+    let (_, params) = jolt_core_state_history();
+    let zkvm_proof = run_jolt_zkvm_prover(params);
+
+    let (
+        executable,
+        _polys,
+        r1cs_key,
+        _r1cs_witness,
+        setup,
+        _initial_ram,
+        _final_ram,
+        _instruction_flag_data,
+        _reg_access,
+        _lookup_trace,
+        _lookup_flags,
+        _bytecode_data,
+    ) = setup_zkvm_muldiv(params);
+
+    let pcs_verifier_setup = DoryVerifierSetup(params.pcs_setup.0.to_verifier_setup());
+    let verifying_key = jolt_verifier::JoltVerifyingKey::<NewFr, DoryScheme>::new(
+        &executable.module,
+        pcs_verifier_setup,
+        r1cs_key,
+    );
+
+    jolt_verifier::verify(&verifying_key, &zkvm_proof, &setup.config.io_hash)
+        .expect("modular verify should accept modular proof");
+}
+
+/// Partial self-verify check: the commit-skip symmetry.
+///
+/// Proves that the `Vec<Option<PCS::Output>>` commitment encoding
+/// correctly round-trips through the modular verifier's
+/// `AbsorbCommitment` op — i.e. we no longer see the historical
+/// `InvalidProof("missing commitment")` error when all-zero advice
+/// polys cause the prover to skip the commit. This is a stepping
+/// stone toward full `modular_self_verify`.
+#[test]
+fn modular_self_verify_commit_skip_alignment() {
+    use jolt_dory::types::DoryVerifierSetup;
+
+    let (_, params) = jolt_core_state_history();
+    let zkvm_proof = run_jolt_zkvm_prover(params);
+
+    // muldiv has all-zero UntrustedAdvice + TrustedAdvice, so the prover
+    // must skip 2 commits. The proof's commitments Vec should carry
+    // `None` at those positions and `Some(...)` elsewhere.
+    let total = zkvm_proof.commitments.len();
+    let some = zkvm_proof
+        .commitments
+        .iter()
+        .filter(|c| c.is_some())
+        .count();
+    let none = total - some;
+    assert_eq!(
+        none, 2,
+        "expected 2 skipped advice commits (UntrustedAdvice + TrustedAdvice); \
+         got {none} none / {some} some (total {total})"
+    );
+
+    // Walk the verifier schedule up to the first op that needs an eval
+    // we don't yet record; until we hit that, AbsorbCommitment must
+    // succeed for every op (previously failed with "missing commitment").
+    let (
+        executable,
+        _polys,
+        r1cs_key,
+        _r1cs_witness,
+        setup,
+        _initial_ram,
+        _final_ram,
+        _instruction_flag_data,
+        _reg_access,
+        _lookup_trace,
+        _lookup_flags,
+        _bytecode_data,
+    ) = setup_zkvm_muldiv(params);
+
+    let pcs_verifier_setup = DoryVerifierSetup(params.pcs_setup.0.to_verifier_setup());
+    let verifying_key = jolt_verifier::JoltVerifyingKey::<NewFr, DoryScheme>::new(
+        &executable.module,
+        pcs_verifier_setup,
+        r1cs_key,
+    );
+
+    match jolt_verifier::verify(&verifying_key, &zkvm_proof, &setup.config.io_hash) {
+        Ok(()) => {
+            eprintln!("SUCCESS: full modular self-verify passed");
+        }
+        Err(e) => {
+            let s = format!("{e:?}");
+            assert!(
+                !s.contains("missing commitment"),
+                "regression: commit-skip alignment broken — {s}"
+            );
+            eprintln!("expected downstream error (pre-full-wiring): {s}");
+        }
+    }
 }
