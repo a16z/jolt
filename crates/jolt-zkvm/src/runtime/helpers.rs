@@ -93,18 +93,21 @@ where
 {
     match binding {
         InputBinding::Provided { poly, .. } => {
+            let _s = tracing::info_span!("mb::Provided").entered();
             let data = provider.materialize(*poly);
             DeviceBuffer::Field(backend.upload(&data))
         }
         InputBinding::EqTable {
             challenges: chs, ..
         } => {
+            let _s = tracing::info_span!("mb::EqTable").entered();
             let point: Vec<F> = chs.iter().map(|&ci| challenges[ci.0]).collect();
             DeviceBuffer::Field(backend.eq_table(&point))
         }
         InputBinding::EqPlusOneTable {
             challenges: chs, ..
         } => {
+            let _s = tracing::info_span!("mb::EqPlusOneTable").entered();
             let point: Vec<F> = chs.iter().map(|&ci| challenges[ci.0]).collect();
             let (_eq, eq_plus_one) = backend.eq_plus_one_table(&point);
             DeviceBuffer::Field(eq_plus_one)
@@ -112,6 +115,7 @@ where
         InputBinding::LtTable {
             challenges: chs, ..
         } => {
+            let _s = tracing::info_span!("mb::LtTable").entered();
             let point: Vec<F> = chs.iter().map(|&ci| challenges[ci.0]).collect();
             DeviceBuffer::Field(backend.lt_table(&point))
         }
@@ -122,6 +126,7 @@ where
             outer_size,
             ..
         } => {
+            let _s = tracing::info_span!("mb::EqProject").entered();
             let point: Vec<F> = chs.iter().map(|&ci| challenges[ci.0]).collect();
             let src_data = provider.materialize(*source);
             DeviceBuffer::Field(backend.eq_project(&src_data, &point, *inner_size, *outer_size))
@@ -129,6 +134,7 @@ where
         InputBinding::Transpose {
             source, rows, cols, ..
         } => {
+            let _s = tracing::info_span!("mb::Transpose").entered();
             let src_data = provider.materialize(*source);
             DeviceBuffer::Field(backend.transpose_from_host(&src_data, *rows, *cols))
         }
@@ -137,6 +143,7 @@ where
             indices,
             ..
         } => {
+            let _s = tracing::info_span!("mb::EqGather").entered();
             let point: Vec<F> = chs.iter().map(|&ci| challenges[ci.0]).collect();
             let idx_data = provider.materialize(*indices);
             DeviceBuffer::Field(backend.eq_gather(&point, &idx_data))
@@ -147,6 +154,7 @@ where
             output_size,
             ..
         } => {
+            let _s = tracing::info_span!("mb::EqPushforward").entered();
             let point: Vec<F> = chs.iter().map(|&ci| challenges[ci.0]).collect();
             let idx_data = provider.materialize(*indices);
             DeviceBuffer::Field(backend.eq_pushforward(&point, &idx_data, *output_size))
@@ -157,6 +165,7 @@ where
             power,
             ..
         } => {
+            let _s = tracing::info_span!("mb::ScaleByChallenge").entered();
             let base = challenges[challenge.0];
             let mut scale = F::one();
             for _ in 0..*power {

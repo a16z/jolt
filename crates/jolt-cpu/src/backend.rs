@@ -271,10 +271,12 @@ impl ComputeBackend for CpuBackend {
         table
     }
 
+    #[tracing::instrument(skip_all, name = "CpuBackend::lt_table")]
     fn lt_table<F: Field>(&self, point: &[F]) -> Vec<F> {
         jolt_poly::LtPolynomial::evaluations(point)
     }
 
+    #[tracing::instrument(skip_all, name = "CpuBackend::eq_plus_one_table")]
     fn eq_plus_one_table<F: Field>(&self, point: &[F]) -> (Vec<F>, Vec<F>) {
         jolt_poly::EqPlusOnePolynomial::evals(point, None)
     }
@@ -412,10 +414,12 @@ impl ComputeBackend for CpuBackend {
         result
     }
 
+    #[tracing::instrument(skip_all, name = "CpuBackend::scale_from_host")]
     fn scale_from_host<F: Field>(&self, data: &[F], scale: F) -> Vec<F> {
         data.iter().map(|&v| scale * v).collect()
     }
 
+    #[tracing::instrument(skip_all, name = "CpuBackend::transpose_from_host")]
     fn transpose_from_host<F: Field>(&self, data: &[F], rows: usize, cols: usize) -> Vec<F> {
         debug_assert_eq!(data.len(), rows * cols);
         let mut out = vec![F::zero(); rows * cols];
@@ -427,6 +431,7 @@ impl ComputeBackend for CpuBackend {
         out
     }
 
+    #[tracing::instrument(skip_all, name = "CpuBackend::eq_gather")]
     fn eq_gather<F: Field>(&self, eq_point: &[F], index_data: &[F]) -> Vec<F> {
         let eq_table = jolt_poly::EqPolynomial::<F>::evals(eq_point, None);
         index_data
@@ -438,6 +443,7 @@ impl ComputeBackend for CpuBackend {
             .collect()
     }
 
+    #[tracing::instrument(skip_all, name = "CpuBackend::eq_pushforward")]
     fn eq_pushforward<F: Field>(
         &self,
         eq_point: &[F],
@@ -459,6 +465,7 @@ impl ComputeBackend for CpuBackend {
         result
     }
 
+    #[tracing::instrument(skip_all, name = "CpuBackend::eq_project")]
     fn eq_project<F: Field>(
         &self,
         source_data: &[F],

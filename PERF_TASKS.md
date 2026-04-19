@@ -28,7 +28,16 @@ when the Phase 3 stop condition fires.
   For real log_t=13, use sha2-chain --num-iters=1; for real log_t=14,
   use sha2-chain --num-iters=4.
 - **Program**: `muldiv` (log_t=12 ratchet); `sha2-chain` (log_t=13/14 profile)
-- **Stall counter**: 7 (iter 32 P39 end-to-end sparse Dory commit path
+- **Stall counter**: 7 (iter 33 instrumentation-only — added named spans
+  on `materialize_binding` match arms (`mb::Provided`, `mb::EqTable`,
+  `mb::EqProject`, etc.) and on 7 previously-uninstrumented
+  `CpuBackend::*` methods (`lt_table`, `eq_plus_one_table`, `eq_project`,
+  `eq_gather`, `eq_pushforward`, `transpose_from_host`, `scale_from_host`);
+  iter 31's 99.3%-untraced Materialize wall is now attributed: **`mb::EqProject`
+  = 5574 ms / 58.8% of Materialize family wall at log_t=14 sha2-chain**,
+  individual calls up to 2.4 s each, serial. `mb::Provided` = 3810 ms / 40.2%.
+  Everything else <1%. P42 added to queue, expected ~22% wall savings;
+  iter 32 P39 end-to-end sparse Dory commit path
   + OneHotPolynomial layout fix + batch_g1_additions_multi amortized
   Montgomery inversion — flat on both muldiv log_t=12 (~+1.3%) and
   sha2-chain log_t=14 (~-2.26%), both runs inside ±5% band, reverted
@@ -399,6 +408,28 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
   the sparse-vs-dense-commit gap proportionally. Full diagnosis in
   **Notes / Iter 32**.
 
+- [ ] P42: Parallelize `CpuBackend::eq_project` via rayon — target:
+  `crates/jolt-cpu/src/backend.rs::eq_project` (lines ~462-495).
+    - **Hypothesis**: iter 33 instrumentation attributes 58.8% of the
+      log_t=14 sha2-chain Materialize family wall to `mb::EqProject`
+      (5574 ms across 82 calls, avg 68 ms/call, worst calls 2.4 s /
+      2.0 s). `CpuBackend::eq_project` is a single-threaded nested loop
+      over `eq_table` × `outer_size` (or × `inner_size` in the other
+      branch). Both branches build a fresh `EqPolynomial::evals` table
+      (O(N)) then do an O(eq_table × other_axis) weighted projection.
+      At log_t=14 the inner loop is 2^14 × 2^7 ≈ 2M field muls per call
+      worst-case. Parallelize via rayon on the eq_table iteration with
+      per-task local accumulators + reduce, OR on the output buffer
+      chunks (par_chunks_mut). Gate behind a PAR_THRESHOLD so log_t=12
+      calls fall back to serial (log_t=12 iter 23 ops-class saw
+      Materialize at 1.02 threads — instrumentation was missing).
+    - **Abstraction risk**: low — contained inside `CpuBackend::eq_project`.
+      No runtime/compiler change. Handler stays 4 lines.
+    - **Expected delta**: lifting 5574 ms from ~1 thread to ~6 threads
+      saves ~4600 ms = **18-20% of 24605 ms log_t=14 sha2-chain total
+      wall**. Meets order-of-magnitude bar. Even a 3× speedup on
+      eq_project → ~3700 ms saved = 15% total wall.
+
 - [ ] P40: Investigate Materialize/MaterializeUnlessFresh super-linear
   scaling — target: `crates/jolt-zkvm/src/runtime/handlers.rs` Materialize
   handlers + `crates/jolt-cpu/src/backend.rs::materialize_*`.
@@ -457,6 +488,97 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 33 — Materialize binding-variant + CpuBackend method instrumentation (infra, no perf claim)**
+  (targets: `crates/jolt-zkvm/src/runtime/helpers.rs::materialize_binding`,
+  `crates/jolt-cpu/src/backend.rs`).
+
+  **Motivation**: iter 31 log_t=14 sha2-chain profile attributed 47.6%
+  of prove wall to the Materialize family (Materialize + MaterializeUnlessFresh
+  + MaterializeIfAbsent). A post-iter-32 Explore-agent analysis of that
+  trace revealed **99.3% of Materialize wall is in untraced code** — only
+  `CpuBackend::eq_table` and `EqPolynomial::evals` were instrumented
+  under the Materialize span, summing to 0.4% of its wall. The actual
+  hot path was invisible. Iter 33 adds instrumentation to differentiate
+  which `InputBinding` variant in `materialize_binding` dominates and
+  which CPU backend methods are called from it.
+
+  **Change (~16 LOC across 2 files)**:
+  - `helpers.rs::materialize_binding`: each of the 9 `InputBinding`
+    match arms gets `let _s = tracing::info_span!("mb::<Variant>").entered();`
+    at the top. Variant names: `Provided`, `EqTable`, `EqPlusOneTable`,
+    `LtTable`, `EqProject`, `Transpose`, `EqGather`, `EqPushforward`,
+    `ScaleByChallenge`.
+  - `backend.rs`: added `#[tracing::instrument(skip_all, name = ...)]`
+    on 7 previously-uninstrumented `CpuBackend` methods: `lt_table`,
+    `eq_plus_one_table`, `eq_project`, `eq_gather`, `eq_pushforward`,
+    `transpose_from_host`, `scale_from_host`.
+
+  **Gates**: 41/41 jolt-equivalence green incl. transcript_divergence +
+  zkvm_proof_accepted; clippy clean on the 8-crate canonical set.
+  Stall counter NOT incremented (iter 11/17/22/23/27/31 precedent for
+  instrumentation-only iters). No ratchet update.
+
+  **Findings** (sha2-chain `--num-iters 4` log_t=14, single run):
+
+  | Variant | Calls | Total ms | Avg µs | % Materialize wall |
+  |---|---:|---:|---:|---:|
+  | `mb::EqProject` | 82 | 5573.6 | 67970 | **58.8%** |
+  | `mb::Provided` | 38 | 3809.9 | 100262 | **40.2%** |
+  | `mb::Transpose` | 40 | 74.8 | 1869 | 0.8% |
+  | `mb::EqTable` | 68 | 16.3 | 240 | 0.2% |
+  | `mb::EqPushforward` | 5 | 3.3 | 657 | 0.0% |
+  | `mb::EqGather` | 6 | 1.9 | 318 | 0.0% |
+  | `mb::EqPlusOneTable` | 2 | 1.3 | 644 | 0.0% |
+  | `mb::LtTable` | 2 | 0.8 | 423 | 0.0% |
+  | `mb::ScaleByChallenge` | 1 | 0.3 | 271 | 0.0% |
+
+  | CpuBackend method | Calls | Total ms | Avg µs |
+  |---|---:|---:|---:|
+  | `eq_project` | 82 | 4708.1 | 57416 |
+  | `transpose_from_host` | 40 | 74.6 | 1865 |
+  | `eq_table` | 68 | 16.2 | 238 |
+  | `eq_pushforward` | 5 | 3.3 | 655 |
+  | `eq_gather` | 6 | 1.5 | 258 |
+  | `eq_plus_one_table` | 2 | 1.3 | 640 |
+  | `lt_table` | 2 | 0.8 | 419 |
+  | `scale_from_host` | 1 | 0.3 | 268 |
+
+  | Outer op | Calls | Total ms | Avg ms |
+  |---|---:|---:|---:|
+  | `Materialize` | 197 | 5656.8 | 28.7 |
+  | `MaterializeUnlessFresh` | 46 | 3809.4 | 82.8 |
+  | `MaterializeIfAbsent` | 31 | 16.6 | 0.5 |
+
+  **Key takeaways**:
+  1. `CpuBackend::eq_project` accounts for **94.8% of `mb::EqProject`**
+     wall (4708/5574 ms). Serial nested loop over `eq_table × outer_size`
+     (or `inner_size`), no rayon. Individual calls reach 2.4 s / 2.0 s.
+     **This is the next attack target — P42 added.**
+  2. `mb::Provided` cost (3810 ms / 40.2% of Materialize wall) is almost
+     entirely in `MaterializeUnlessFresh` calls — `MaterializeUnlessFresh`
+     averages 82.8 ms/call vs Materialize's 28.7 ms/call. The 46 "unless
+     fresh" calls bypass the freshness short-circuit (since the cache
+     entry is absent or stale) and go through `provider.materialize`
+     which for witness sources is a `Cow::Borrowed` (cheap) but for R1cs
+     sources is `R1csSource::compute(column)` (actual work). Secondary
+     attack if eq_project alone doesn't close the gap.
+  3. `Materialize` (28.7 ms/call avg) and `MaterializeUnlessFresh`
+     (82.8 ms/call avg) have different dominant children — Materialize
+     is mostly `EqProject`, Unless is mostly `Provided`. Separate attack
+     vectors.
+
+  **Hypothesis queue (iter 34 onward)**:
+  - **Primary**: P42 parallelize `CpuBackend::eq_project` with rayon —
+    expected 18-20% total log_t=14 wall savings.
+  - **Secondary if P42 underdelivers**: profile `R1csSource::compute`
+    for MaterializeUnlessFresh-dominant polys.
+  - **Deprioritized**: P40 (generic super-linear investigation — now
+    narrowed to P42), P41 (multi_pair_g2_setup — still queued but
+    smaller than eq_project).
+
+  **Per protocol**: instrumentation-only, no perf claim, no ratchet update.
+  Stall counter NOT incremented. Bookkeeping commit.
 
 - **Iter 32 — P39 end-to-end sparse Dory commit path for OneHot polys (flat, REVERTED)**
   (targets: `crates/jolt-compute/Cargo.toml`, `crates/jolt-compute/src/traits.rs`,
