@@ -28,7 +28,21 @@ when the Phase 3 stop condition fires.
   For real log_t=13, use sha2-chain --num-iters=1; for real log_t=14,
   use sha2-chain --num-iters=4.
 - **Program**: `muldiv` (log_t=12 ratchet); `sha2-chain` (log_t=13/14 profile)
-- **Stall counter**: 1 (iter 40 P49 REVERTED — attempted
+- **Stall counter**: 1 (iter 41 INFRA — added `fields(ni, ne)` to
+  `reduce_dense` `#[tracing::instrument]` attribute. Attribution at
+  sha2-chain log_t=14 num-iters=4 via one-time per-shape named spans
+  (later removed to avoid 25% trace overhead): `rd_dynamic(6, 4)` =
+  7316.6 ms / n=1792 = **77.9% of reduce_dense wall**; `rd_dynamic(41, 4)`
+  = 1779.4 ms / n=18 = 19.0%; together **97% of reduce_dense wall** goes
+  through shapes NOT in the existing fixed dispatch, falling through to
+  heap-allocated `reduce_dense_dynamic`. Only `rd_fixed(4, 4)` = 5.7 ms /
+  n=13 of the existing fixed variants hit at all. Directly confirms user
+  hypothesis: "there may be many more algorithmic differences in how we
+  do reduce_dense for certain shapes vs what jolt core does bespokely".
+  Next iter 42 attack: P51 add `(6, 4)` and `(41, 4)` arms to the const-
+  generic dispatch. Stall counter NOT incremented (iter 11/17/22/23/27/31/
+  33/36/38 precedent for INFRA iterations).
+  Iter 40 P49 REVERTED — attempted
   `init_cache` for dory prepared-point cache in modular
   `DoryScheme::setup_prover`. Clear regression sha2-chain log_t=14
   avg +13.5% (17429 / 19067 ms vs 16072 iter-39 baseline). Root cause
@@ -579,6 +593,40 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
   user-directed policy: setup-phase costs are one-time, off-limits as
   perf targets. See Notes / Iter 40.
 
+- [x] P50: Instrument `reduce_dense` shape dispatch — INFRA DONE (iter 41).
+  Added `fields(ni, ne)` to the outer `#[tracing::instrument]` attribute
+  on `reduce_dense`. Attribution at sha2-chain log_t=14 num-iters=4 with
+  one-time per-shape named spans (later removed to avoid 25% trace
+  overhead): `rd_dynamic(6, 4)` = **7316.6 ms / n=1792 = 77.9% of
+  reduce_dense wall**; `rd_dynamic(41, 4)` = 1779.4 ms / n=18 = 19.0%;
+  all other shapes < 1% each combined. Only `rd_fixed(4, 4)` = 5.7 ms /
+  n=13 of the existing fixed variants was hit at all on this trace.
+  **97% of reduce_dense wall goes through 2 shapes that are NOT in the
+  fixed dispatch** and instead fall through to heap-allocated
+  `reduce_dense_dynamic`. Iter 42 attack: add bespoke
+  `reduce_dense_fixed::<F, 6, 4>` + `reduce_dense_fixed::<F, 41, 4>`
+  arms. See Notes / Iter 41.
+
+- [ ] P51: Add bespoke `reduce_dense_fixed::<F, 6, 4>` +
+  `reduce_dense_fixed::<F, 41, 4>` dispatch arms — target:
+  `crates/jolt-cpu/src/backend.rs::reduce_dense`.
+    - **Hypothesis**: iter 41 attribution showed `rd_dynamic_6_4` =
+      7316.6 ms (77.9% of reduce_dense wall) and `rd_dynamic_41_4` =
+      1779.4 ms (19.0%) at sha2-chain log_t=14. Both currently go through
+      the heap-allocated `reduce_dense_dynamic` path (per-chunk `Vec`
+      scratch, dynamic-size inner loops). Adding `(6, 4)` and `(41, 4)`
+      to the const-generic fixed dispatch would swap heap-allocated Vec
+      scratch for stack-allocated `[F; NI]` / `[F; NE]` arrays, and let
+      LLVM specialize/unroll the inner `kernel.evaluate` loop over fixed
+      `NI`/`NE`. **97% of reduce_dense wall** would shift from dynamic
+      to fixed path.
+    - **Abstraction risk**: low — internal to `CpuBackend`, no handler
+      or backend-trait change. Just more monomorphization.
+    - **Expected delta**: conservative 15-25% reduction on reduce_dense
+      wall (9095 ms → ~7000 ms at log_t=14) = **10-13% total wall
+      savings** on sha2-chain log_t=14. Even a 10% reduce_dense reduction
+      = 5.5% total wall, comfortably above the +5% accept threshold.
+
 - [ ] P41: Parallelize or memoize `multi_pair_g2_setup` across Dory
   commits — target: `dory` crate internals (user-controlled fork).
     - **Hypothesis**: iter 31 log_t=14 profile showed
@@ -617,6 +665,55 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 41 — P50 instrument reduce_dense by shape (INFRA — attribution captured, 97% of wall in 2 unhandled shapes)**
+  (target: `crates/jolt-cpu/src/backend.rs::reduce_dense`; added
+  `fields(ni = inputs.len(), ne = num_evals)` to the outer
+  `#[tracing::instrument]` attribute for durable span-arg attribution.
+  Diagnostic one-shot: per-shape named spans `rd_fixed_{NI}_{NE}` in each
+  fixed match arm and `rd_dynamic` + `ni`/`ne` fields in the dynamic
+  fallback — landed temporarily, then reverted before commit once
+  attribution was captured to avoid 25% trace-time overhead (2085 span
+  enter/exit events at log_t=14).
+
+  **Motivation**: user-directed pivot after iter 40 P49 revert and setup-
+  class policy: "there may be many more algorithmic differences in how we
+  do reduce_dense for certain shapes vs what jolt core does bespokely so
+  we need to expand / optimize our kernels to account for that".
+  `reduce_dense` currently dispatches only `(2,2)`, `(3,3)`, `(4,4)`,
+  `(8,4)`, `(8,8)`, `(16,16)`, `(32,32)` to const-generic fixed kernels;
+  everything else falls through to `reduce_dense_dynamic` (heap-allocated
+  `Vec` scratch, dynamic-size inner loops).
+
+  **Attribution** (sha2-chain log_t=14 num-iters=4, instrumented, 20884 ms total):
+  | Shape               | ms     | n    | % of `reduce_dense` wall |
+  |---------------------|-------:|-----:|-------------------------:|
+  | `rd_dynamic(6, 4)`  | 7316.6 | 1792 | **77.9%**                |
+  | `rd_dynamic(41, 4)` | 1779.4 | 18   | 19.0%                    |
+  | `rd_dynamic(33, 6)` | 72.8   | 14   | 0.8%                     |
+  | `rd_fixed(4, 4)`    | 5.7    | 13   | 0.06%                    |
+  | all other shapes    | < 100  | —    | < 2% combined            |
+
+  **Conclusion**: 97% of reduce_dense wall goes through just 2 shapes,
+  both UNHANDLED by the fixed dispatch. Only `(4, 4)` of the 7 existing
+  fixed variants was hit at all on this trace, and it's a rounding-error
+  (~6 ms). The existing fixed dispatch is **architecturally correct but
+  under-specialized for the actual workload**. Adding `(6, 4)` and
+  `(41, 4)` arms should:
+  1. Replace per-chunk `Vec` allocation with stack-allocated `[F; NI]` /
+     `[F; NE]` arrays (no malloc per rayon chunk).
+  2. Let LLVM specialize/unroll the `kernel.evaluate` inner loop over
+     fixed `NI`/`NE` constants.
+  3. Enable SIMD-friendly fixed-stride accumulator writes.
+
+  **Traces & data**:
+  - `benchmark-runs/perfetto_traces/iter41_reduce_dense_shapes.json`
+  - `perf/iter41-shapes-sha2chain.json` (wall=20884 ms modular, 2759 ms core)
+
+  Commit lands as INFRA — only diff is `fields(ni, ne)` on the outer
+  `#[tracing::instrument]` attribute (zero runtime overhead — span is
+  already created, just adds two recorded field values). Stall counter
+  unchanged. Iter 42: P51 add `(6, 4)` + `(41, 4)` fixed kernel arms.
 
 - **Iter 40 — P49 init dory prepared-point cache (REVERTED — +13.5% regression; EC setup class henceforth off-limits)**
   (target: `crates/jolt-dory/src/scheme.rs::DoryScheme::setup_prover`;

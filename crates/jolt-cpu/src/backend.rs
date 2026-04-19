@@ -817,7 +817,7 @@ fn interpolate_vec_inplace<F: Field>(buf: &mut Vec<F>, scalar: F, order: Binding
 /// pairs, using stack-allocated scratch arrays. Falls back to heap-allocated Vecs
 /// for uncommon sizes.
 #[allow(clippy::ptr_arg)]
-#[tracing::instrument(skip_all, name = "reduce_dense")]
+#[tracing::instrument(skip_all, name = "reduce_dense", fields(ni = inputs.len(), ne = num_evals))]
 fn reduce_dense<F: Field>(
     inputs: &[&Vec<F>],
     kernel: &CpuKernel<F>,
