@@ -28,7 +28,20 @@ when the Phase 3 stop condition fires.
   For real log_t=13, use sha2-chain --num-iters=1; for real log_t=14,
   use sha2-chain --num-iters=4.
 - **Program**: `muldiv` (log_t=12 ratchet); `sha2-chain` (log_t=13/14 profile)
-- **Stall counter**: 0 (iter 34 P42 GREEN — parallelized
+- **Stall counter**: 1 (iter 35 P43 REVERTED — parallelized
+  `R1csSource::compute_matvec` + Variable column extraction via rayon
+  targeting the 6345 ms `mb::Provided` bucket from the post-P42 trace.
+  Correctness green, but muldiv log_t=12 regressed on 2 of 3 runs past
+  the −5% reject threshold (1308.89 / 1354.49 / 1360.56 ms = +2.7% /
+  +6.3% / +6.8% vs 1274.20 ratchet) and sha2-chain log_t=14 was flat
+  at 18779.29 ms (−0.54% vs iter-34 avg 18881.12). Diagnosis: mb::Provided's
+  6345 ms at log_t=14 is NOT dominated by compute_matvec — attribution
+  hypothesis was wrong. The parallelization overhead was real but the
+  inner cost wasn't, so nothing was recovered. Lesson: instrument the
+  specific method BEFORE parallelizing a suspected hotspot; iter 36
+  = instrumentation of `provider.materialize` match arms + `R1csSource::compute`
+  arms + `DerivedSource::compute` to attribute the 6345 ms wall;
+  iter 34 P42 GREEN — parallelized
   `CpuBackend::eq_project` via rayon with `par_chunks_mut` (branch 1)
   and `par_iter_mut` (branch 2), both gated at `PAR_THRESHOLD=1024`.
   Two runs on muldiv log_t=12 **1274.20 / 1289.92 ms** (avg −11.22% vs
@@ -70,7 +83,7 @@ when the Phase 3 stop condition fires.
   Muldiv log_t=12: 1282 ms avg (−11.22% vs 1444 ratchet; best 1274 ms).
   sha2-chain log_t=14: 18881 ms avg (−23.27% vs 24605 ms iter 31 baseline;
   best 18528 ms). Handler unchanged; change internal to `CpuBackend`.
-- **Green streak**: 5 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infra primitive; iter 15 Gruen infra reduce; iter 16 Gruen infra variant; iter 17 post-P24 re-profile; iter 18 Gruen dispatch reverted; iter 19 Gruen end-to-end −49.2%; iter 20 parallel Op::Commit −22.6%; iter 21 P28 parallelize lt_evals + EqPlusOne::evals flat −1.7%; iter 22 instrumentation-only — per-stage CPU vs wall saturation; iter 23 instrumentation-only — per-op-class CPU vs wall saturation + explicit dory `parallel` feature; iter 24 P32 parallel Materialize outer dispatch flat −0.55%, reverted — nested rayon pessimization hypothesis; iter 25 P33 parallel inner rlc_combine flat −0.69%, reverted — only ~11% of ReduceOpenings time is inner-loop parallelizable; iter 26 P35 parallel-over-groups fused_rlc_reduce flat +1.19%, reverted — likely single dominant group at log_t=12 so outer par_iter adds overhead with no parallelism gain; iter 27 P36 instrumentation-only — fused_rlc_reduce group-level telemetry confirms single group of 42 claims at log_t=12 with combine_hints = 83.3 ms / rlc_combine = 9.7 ms / materialize = 2 µs → combine_hints is 89% of ReduceOpenings wall and the correct attack target; iter 28 P38 parallel Dory combine_hints (par_iter over rows) flat +3.25%, reverted — rayon overhead at 64 rows × ~1.3 ms/row eats the ~65 ms expected savings at log_t=12; iter 32 P39 end-to-end sparse Dory commit path for OneHot polys + OneHotPolynomial CycleMajor layout fix + batch_g1_additions_multi amortized Montgomery inversion, correct (41/41 green), perf flat muldiv +1.3% / sha2-chain −2.26%, reverted per protocol — architectural prerequisites preserved in git log for future revisit; iter 33 instrumentation-only — `mb::*` + CpuBackend method spans attributed 58.8% of Materialize wall to `eq_project`; iter 34 P42 parallelize `CpuBackend::eq_project` via rayon (`par_chunks_mut` branch 1, `par_iter_mut` branch 2, `PAR_THRESHOLD=1024` gated) → **−11.22% muldiv log_t=12** (1282 ms avg) + **−23.27% sha2-chain log_t=14** (18881 ms avg), ratchet 1444.14 → 1274.20 ms, ratio 4.38× → 4.02×)
+- **Green streak**: 5 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infra primitive; iter 15 Gruen infra reduce; iter 16 Gruen infra variant; iter 17 post-P24 re-profile; iter 18 Gruen dispatch reverted; iter 19 Gruen end-to-end −49.2%; iter 20 parallel Op::Commit −22.6%; iter 21 P28 parallelize lt_evals + EqPlusOne::evals flat −1.7%; iter 22 instrumentation-only — per-stage CPU vs wall saturation; iter 23 instrumentation-only — per-op-class CPU vs wall saturation + explicit dory `parallel` feature; iter 24 P32 parallel Materialize outer dispatch flat −0.55%, reverted — nested rayon pessimization hypothesis; iter 25 P33 parallel inner rlc_combine flat −0.69%, reverted — only ~11% of ReduceOpenings time is inner-loop parallelizable; iter 26 P35 parallel-over-groups fused_rlc_reduce flat +1.19%, reverted — likely single dominant group at log_t=12 so outer par_iter adds overhead with no parallelism gain; iter 27 P36 instrumentation-only — fused_rlc_reduce group-level telemetry confirms single group of 42 claims at log_t=12 with combine_hints = 83.3 ms / rlc_combine = 9.7 ms / materialize = 2 µs → combine_hints is 89% of ReduceOpenings wall and the correct attack target; iter 28 P38 parallel Dory combine_hints (par_iter over rows) flat +3.25%, reverted — rayon overhead at 64 rows × ~1.3 ms/row eats the ~65 ms expected savings at log_t=12; iter 32 P39 end-to-end sparse Dory commit path for OneHot polys + OneHotPolynomial CycleMajor layout fix + batch_g1_additions_multi amortized Montgomery inversion, correct (41/41 green), perf flat muldiv +1.3% / sha2-chain −2.26%, reverted per protocol — architectural prerequisites preserved in git log for future revisit; iter 33 instrumentation-only — `mb::*` + CpuBackend method spans attributed 58.8% of Materialize wall to `eq_project`; iter 34 P42 parallelize `CpuBackend::eq_project` via rayon (`par_chunks_mut` branch 1, `par_iter_mut` branch 2, `PAR_THRESHOLD=1024` gated) → **−11.22% muldiv log_t=12** (1282 ms avg) + **−23.27% sha2-chain log_t=14** (18881 ms avg), ratchet 1444.14 → 1274.20 ms, ratio 4.38× → 4.02×; iter 35 P43 parallelize `R1csSource::compute_matvec` targeting mb::Provided 6345 ms bucket — correct but muldiv +6.3% on 2/3 runs past reject, sha2-chain flat −0.54%, reverted — attribution hypothesis wrong; `mb::Provided` wall not dominated by `compute_matvec`)
 - **Phase 3 stop condition**: `modular.prove_ms ≤ core.prove_ms` at
   `log_t ∈ {18, 20}`, 3 consecutive green iters. Only this exits the loop.
 
@@ -425,6 +438,36 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
   **DONE iter 34** — −11.22% muldiv log_t=12 / −23.27% sha2-chain
   log_t=14; ratchet 1444.14 → 1274.20 ms, ratio 4.38× → 4.02×. See
   Notes / Iter 34.
+
+- [x] P43: Parallelize `R1csSource::compute_matvec` via rayon — target:
+  `crates/jolt-r1cs/src/provider.rs:54-73`. **REVERTED iter 35** —
+  muldiv log_t=12 regressed +6.3% on 2/3 runs (past reject threshold),
+  sha2-chain log_t=14 flat −0.54%. Attribution hypothesis was wrong:
+  `mb::Provided`'s 6345 ms at log_t=14 is NOT dominated by
+  `compute_matvec`. Correct attribution requires instrumenting the
+  specific match arms inside `provider.materialize` + `R1csSource::compute`
+  + `DerivedSource::compute`. See Notes / Iter 35.
+
+- [ ] P44: Instrument `provider.materialize` match arms + `R1csSource::compute`
+  sub-arms + `DerivedSource::compute` — target:
+  `crates/jolt-witness/src/provider.rs::BufferProvider::materialize`,
+  `crates/jolt-r1cs/src/provider.rs::R1csSource::compute`,
+  `crates/jolt-witness/src/derived.rs::DerivedSource::compute`.
+  **Hypothesis**: iter 35 P43 post-mortem — parallelizing compute_matvec
+  saved ~0 ms at log_t=14, which contradicts iter 33's attribution that
+  named `mb::Provided` as 3810 ms and post-P42 trace showing 6345 ms.
+  The 6345 ms wall must be distributed across the 4 `PolySource`
+  variants (Witness, R1cs, Derived, Preprocessed) with one dominating
+  and NOT being R1csSource::compute_matvec. Add tracing::info_span on:
+  - `provider.materialize`'s 4 match arms (`pm::Witness`, `pm::R1cs`,
+    `pm::Derived`, `pm::Preprocessed`);
+  - `R1csSource::compute`'s 5 match arms (`r1cs::Az`, `r1cs::Bz`,
+    `r1cs::Cz`, `r1cs::CombinedRow`, `r1cs::Variable`);
+  - `DerivedSource::compute`'s top-level dispatch (sub-arms per derived
+    poly family).
+  **Abstraction risk**: none (instrumentation only).
+  **Expected delta**: none (infra); sets up iter 37+ attack with
+  verified attribution.
     - **Hypothesis**: iter 33 instrumentation attributes 58.8% of the
       log_t=14 sha2-chain Materialize family wall to `mb::EqProject`
       (5574 ms across 82 calls, avg 68 ms/call, worst calls 2.4 s /
@@ -503,6 +546,96 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 35 — P43 parallelize `R1csSource::compute_matvec` (REVERTED — attribution hypothesis wrong)**
+  (target: `crates/jolt-r1cs/src/provider.rs::compute_matvec` +
+  `Variable` arm; added rayon to `crates/jolt-r1cs/Cargo.toml`).
+
+  **Motivation**: post-P42 trace at log_t=14 sha2-chain (22091 ms cold
+  total, `benchmark-runs/perfetto_traces/iter35_post_p42_sha2chain_log_t14.json`)
+  showed `mb::Provided` at **6345 ms / 100% self-time** — the new #1
+  Materialize bucket after iter 34 cut `mb::EqProject` from 5574 ms
+  to 2784 ms (wrapper) / 1738 ms (kernel). mb::Provided calls
+  `provider.materialize(poly_id)` which dispatches across 4
+  `PolySource` variants. Static reading of the code pinpointed
+  `R1csSource::compute_matvec` (jolt-r1cs/src/provider.rs:54-73) as
+  a fully serial nested loop over num_cycles × constraints ×
+  sparse_entries. **Static reasoning** claimed this was the hot path.
+
+  **Change (~20 LOC, single method + `Variable` arm)**:
+  - `compute_matvec`: outer loop `for c in 0..num_cycles` rewritten
+    to `result.par_chunks_mut(k_pad).enumerate().for_each(...)` when
+    `num_cycles >= PAR_THRESHOLD=1024`; each thread writes its own
+    disjoint `[c*k_pad..(c+1)*k_pad]` output range.
+  - `Variable(var_idx)` arm: `(0..num_cycles).into_par_iter().map(...)
+    .collect()` when above threshold.
+  - Added `rayon = { workspace = true }` to `crates/jolt-r1cs/Cargo.toml`.
+
+  **Gates**: 41/41 jolt-equivalence green incl. transcript_divergence +
+  zkvm_proof_accepted; clippy clean on 8-crate canonical set.
+
+  **Perf — muldiv log_t=12 (ratchet program)**:
+
+  | Run | modular_prove_ms | Δ vs 1274.20 ratchet |
+  |---|---:|---:|
+  | 1 | 1308.89 | +2.72% |
+  | 2 | 1354.49 | **+6.30%** |
+  | 3 | 1360.56 | **+6.78%** |
+  | median | 1354.49 | +6.30% (past reject threshold) |
+
+  **Perf — sha2-chain log_t=14 (cross-program)**:
+
+  | Run | modular_prove_ms | Δ vs 18881.12 iter-34 avg |
+  |---|---:|---:|
+  | 1 | 18779.29 | −0.54% (flat) |
+
+  Per protocol: two of three muldiv runs past the −5% reject threshold;
+  sha2-chain flat; REVERT.
+
+  **Diagnosis (critical learning)**:
+
+  The hypothesis that `mb::Provided`'s 6345 ms at log_t=14 is
+  dominated by `R1csSource::compute_matvec` was **wrong**. Evidence:
+  1. Parallelizing the method saved ~0 ms at log_t=14 (−0.54%).
+     If compute_matvec were even 30% of the 6345 ms wall,
+     parallelization should have recovered ~1200 ms wall = −5% total.
+  2. At log_t=12, parallelization ADDED cost (+6.3%) — typical
+     rayon-overhead-dominated regression per iter 24/25/26/28
+     precedent — but the baseline wasn't meaningfully displaced
+     downward at larger log_t either.
+
+  Plausible alternative attributions for the 6345 ms bucket:
+  - **Derived sources** (`DerivedSource::compute` via PolySource::Derived)
+    — never profiled, not yet instrumented, could be where the wall lives.
+  - **Witness sources** returning `Cow::Borrowed` — should be cheap,
+    but if the underlying `polys.get` does any work beyond index
+    arithmetic (dependency on commit-storage layout) it adds up.
+  - **R1csSource::compute for CombinedRow** (a different arm than
+    compute_matvec — calls `self.key.combined_row(...)` with Spartan
+    challenges) — possibly the dominant R1cs poly at stage time.
+  - **The freshness-check cache** (`MaterializeUnlessFresh`) may
+    short-circuit on most calls, so `compute_matvec` is invoked for
+    only a fraction of the attributed 6345 ms — the REAL work is
+    elsewhere in the freshness-check / cache-miss path.
+
+  **Lesson**: "static reading of the code" without direct instrumentation
+  to verify is a failure mode at this stage of the perf loop. Iter 33
+  taught us to instrument `CpuBackend::*` methods — we need the same
+  inside `provider.materialize`'s dispatch. Memory feedback
+  (`feedback_profiling.md`) reminds: "pick perf hypotheses from the
+  chrome-trace top spans, not statically from an Explore agent's code
+  read". I followed that rule for the `mb::Provided` *attribution*
+  but violated it for the *decomposition* of that bucket.
+
+  **Per protocol**: revert applied (`git checkout crates/jolt-r1cs/Cargo.toml
+  crates/jolt-r1cs/src/provider.rs Cargo.lock`); stall counter 0 → 1;
+  green streak unchanged at 5 (interrupted, counter resets — but
+  narrative continuity for iter 36 instrumentation). Bookkeeping commit.
+
+  **Next iter 36**: P44 — add tracing::info_span to
+  `provider.materialize`'s 4 PolySource arms + `R1csSource::compute`'s
+  5 column arms + `DerivedSource::compute`. Capture a fresh trace,
+  identify the true sub-span dominating 6345 ms, then attack in iter 37.
 
 - **Iter 34 — P42 parallelize `CpuBackend::eq_project` (GREEN, ratchet updated)**
   (target: `crates/jolt-cpu/src/backend.rs::eq_project`).
