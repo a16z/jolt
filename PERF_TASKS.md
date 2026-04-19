@@ -28,7 +28,17 @@ when the Phase 3 stop condition fires.
   For real log_t=13, use sha2-chain --num-iters=1; for real log_t=14,
   use sha2-chain --num-iters=4.
 - **Program**: `muldiv` (log_t=12 ratchet); `sha2-chain` (log_t=13/14 profile)
-- **Stall counter**: 1 (iter 35 P43 REVERTED — parallelized
+- **Stall counter**: 1 (iter 36 instrumentation-only — added
+  `pm::{Witness,R1cs,Derived,Preprocessed}` + `r1cs::{Az,Bz,Cz,CombinedRow,Variable}`
+  + `derived::*` (~20) spans to `ProverData::materialize`,
+  `R1csSource::compute`, `DerivedSource::compute`. Attribution at
+  sha2-chain log_t=14 num-iters=4 (18011 ms): `mb::Provided` = 4085 ms;
+  `pm::Derived` = 2067 ms (50.6% of parent); 3 RAM arms own 99% of
+  pm::Derived — `ram_ra_indicator` 804 ms, `ram_val` 622 ms,
+  `ram_combined_ra` 610 ms. `pm::R1cs` only 33.6 ms (confirms P43
+  revert was correct). 1984 ms attribution gap remains inside
+  `mb::Provided` outside the 4 pm arms — next instrumentation target
+  (P46). Iter 37 attack: P45 parallelize the 3 RAM arms; iter 35 P43 REVERTED — parallelized
   `R1csSource::compute_matvec` + Variable column extraction via rayon
   targeting the 6345 ms `mb::Provided` bucket from the post-P42 trace.
   Correctness green, but muldiv log_t=12 regressed on 2 of 3 runs past
@@ -38,9 +48,7 @@ when the Phase 3 stop condition fires.
   6345 ms at log_t=14 is NOT dominated by compute_matvec — attribution
   hypothesis was wrong. The parallelization overhead was real but the
   inner cost wasn't, so nothing was recovered. Lesson: instrument the
-  specific method BEFORE parallelizing a suspected hotspot; iter 36
-  = instrumentation of `provider.materialize` match arms + `R1csSource::compute`
-  arms + `DerivedSource::compute` to attribute the 6345 ms wall;
+  specific method BEFORE parallelizing a suspected hotspot;
   iter 34 P42 GREEN — parallelized
   `CpuBackend::eq_project` via rayon with `par_chunks_mut` (branch 1)
   and `par_iter_mut` (branch 2), both gated at `PAR_THRESHOLD=1024`.
@@ -448,45 +456,56 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
   specific match arms inside `provider.materialize` + `R1csSource::compute`
   + `DerivedSource::compute`. See Notes / Iter 35.
 
-- [ ] P44: Instrument `provider.materialize` match arms + `R1csSource::compute`
+- [x] P44: Instrument `provider.materialize` match arms + `R1csSource::compute`
   sub-arms + `DerivedSource::compute` — target:
   `crates/jolt-witness/src/provider.rs::BufferProvider::materialize`,
   `crates/jolt-r1cs/src/provider.rs::R1csSource::compute`,
   `crates/jolt-witness/src/derived.rs::DerivedSource::compute`.
-  **Hypothesis**: iter 35 P43 post-mortem — parallelizing compute_matvec
-  saved ~0 ms at log_t=14, which contradicts iter 33's attribution that
-  named `mb::Provided` as 3810 ms and post-P42 trace showing 6345 ms.
-  The 6345 ms wall must be distributed across the 4 `PolySource`
-  variants (Witness, R1cs, Derived, Preprocessed) with one dominating
-  and NOT being R1csSource::compute_matvec. Add tracing::info_span on:
-  - `provider.materialize`'s 4 match arms (`pm::Witness`, `pm::R1cs`,
-    `pm::Derived`, `pm::Preprocessed`);
-  - `R1csSource::compute`'s 5 match arms (`r1cs::Az`, `r1cs::Bz`,
-    `r1cs::Cz`, `r1cs::CombinedRow`, `r1cs::Variable`);
-  - `DerivedSource::compute`'s top-level dispatch (sub-arms per derived
-    poly family).
-  **Abstraction risk**: none (instrumentation only).
-  **Expected delta**: none (infra); sets up iter 37+ attack with
-  verified attribution.
-    - **Hypothesis**: iter 33 instrumentation attributes 58.8% of the
-      log_t=14 sha2-chain Materialize family wall to `mb::EqProject`
-      (5574 ms across 82 calls, avg 68 ms/call, worst calls 2.4 s /
-      2.0 s). `CpuBackend::eq_project` is a single-threaded nested loop
-      over `eq_table` × `outer_size` (or × `inner_size` in the other
-      branch). Both branches build a fresh `EqPolynomial::evals` table
-      (O(N)) then do an O(eq_table × other_axis) weighted projection.
-      At log_t=14 the inner loop is 2^14 × 2^7 ≈ 2M field muls per call
-      worst-case. Parallelize via rayon on the eq_table iteration with
-      per-task local accumulators + reduce, OR on the output buffer
-      chunks (par_chunks_mut). Gate behind a PAR_THRESHOLD so log_t=12
-      calls fall back to serial (log_t=12 iter 23 ops-class saw
-      Materialize at 1.02 threads — instrumentation was missing).
-    - **Abstraction risk**: low — contained inside `CpuBackend::eq_project`.
-      No runtime/compiler change. Handler stays 4 lines.
-    - **Expected delta**: lifting 5574 ms from ~1 thread to ~6 threads
-      saves ~4600 ms = **18-20% of 24605 ms log_t=14 sha2-chain total
-      wall**. Meets order-of-magnitude bar. Even a 3× speedup on
-      eq_project → ~3700 ms saved = 15% total wall.
+  **DONE iter 36** — added `pm::{Witness,R1cs,Derived,Preprocessed}` +
+  `r1cs::{Az,Bz,Cz,CombinedRow,Variable}` + `derived::*` (~20) spans.
+  Post-P42 attribution at sha2-chain log_t=14 num-iters=4 (18011 ms):
+  `mb::Provided` = 4085 ms. `pm::Derived` = 2067 ms / 50.6% of it.
+  Inside `pm::Derived`, 3 RAM arms own 99%: `ram_ra_indicator` 804 ms
+  (2 calls), `ram_val` 622 ms (1 call), `ram_combined_ra` 610 ms
+  (1 call). `pm::R1cs` only 33.6 ms (P43 was correctly reverted).
+  `pm::Witness` 0.14 ms, `pm::Preprocessed` 0.09 ms — both noise.
+  **Attribution gap**: 1984 ms of `mb::Provided` still unaccounted
+  — lives outside the 4 `pm::*` arms (materialize prologue/epilogue,
+  Cow allocation, parent dispatch overhead?). See Notes / Iter 36.
+
+- [ ] P45: Parallelize the 3 RAM derived-poly builders — target:
+  `crates/jolt-witness/src/derived.rs::{ram_combined_ra, ram_ra_indicator,
+  ram_val}`. **Hypothesis**: iter 36 attribution at sha2-chain log_t=14
+  shows these 3 arms consume 2036 ms / 99% of `pm::Derived` / ~50% of
+  `mb::Provided`. All three loop over T cycles writing to a K*T buffer
+  with independent per-cycle writes (no cross-cycle dependency besides
+  `ram_val`'s per-address accumulator). `ram_combined_ra` and
+  `ram_ra_indicator` are trivially parallel (`par_iter_mut` over output
+  chunks). `ram_val` is harder (per-address stateful walk) but the
+  per-address outer loop IS independent — `par_chunks_mut` over the K
+  address-major rows in the output buffer, with each task walking its
+  own event list and persisting state locally. Expected: 4-6× on
+  those 3 arms → save ~1.5 s = **~8% of sha2-chain log_t=14**. Meets
+  order-of-magnitude bar.
+    - **Abstraction risk**: low — contained inside `DerivedSource` impl,
+      no trait change. Handler ≤30 LOC rule unchanged.
+    - **Expected delta**: −8 to −11% sha2-chain log_t=14; probably flat
+      muldiv log_t=12 (small T, serial fallback active with
+      `PAR_THRESHOLD` gate).
+
+- [ ] P46: Close the 1984 ms `mb::Provided` attribution gap — target:
+  instrument the `materialize_binding` → `provide` dispatch path
+  outside the 4 `pm::*` arms. **Hypothesis**: iter 36 attribution
+  only accounts for 2101 ms of `mb::Provided`'s 4085 ms wall; the
+  missing ~1984 ms is in prologue/epilogue code (freshness check,
+  Cow clone, parent-level dispatch, release/reuse bookkeeping).
+  Candidates to instrument: `mb::Provided` inner calls in
+  `crates/jolt-zkvm/src/runtime/handlers.rs::materialize_binding`,
+  Cow::Owned → tier-1 commitment handoff, `BufferProvider::release`
+  calls. If this gap is one big op rather than distributed overhead,
+  it's the real iter 37+ attack target.
+    - **Abstraction risk**: none (instrumentation-only).
+    - **Expected delta**: none; sets up the next attack.
 
 - [ ] P40: Investigate Materialize/MaterializeUnlessFresh super-linear
   scaling — target: `crates/jolt-zkvm/src/runtime/handlers.rs` Materialize
@@ -546,6 +565,103 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 36 — P44 instrument `materialize` dispatch arms (INFRA — stall counter unchanged)**
+  (targets: `crates/jolt-witness/src/provider.rs::BufferProvider::materialize`,
+  `crates/jolt-r1cs/src/provider.rs::R1csSource::compute`,
+  `crates/jolt-witness/src/derived.rs::DerivedSource::compute`).
+
+  **Motivation**: iter 35 P43 post-mortem. Parallelizing
+  `R1csSource::compute_matvec` saved ~0 ms and regressed muldiv past
+  reject, which proves `mb::Provided`'s 6345 ms wall was NOT dominated
+  by the R1CS matvec. Per memory `feedback_profiling.md`, need to
+  instrument the sub-spans of `mb::Provided` before picking the next
+  attack.
+
+  **Change (~50 LOC, 3 files, all instrumentation)**:
+  - Added `tracing = { workspace = true }` to `crates/jolt-witness/Cargo.toml`
+    (jolt-r1cs already had it after iter 35).
+  - `ProverData::materialize`: wrapped each of the 4 `PolySource` arms
+    in a `tracing::info_span!("pm::<Variant>").entered()` guard
+    (`pm::Witness`, `pm::R1cs`, `pm::Derived`, `pm::Preprocessed`).
+  - `R1csSource::compute`: wrapped each of the 5 `R1csColumn` arms
+    (`r1cs::Az`, `r1cs::Bz`, `r1cs::Cz`, `r1cs::CombinedRow`,
+    `r1cs::Variable`).
+  - `DerivedSource::compute`: wrapped each of ~20 arms with per-poly
+    span names (`derived::product_left`, `derived::ram_val`,
+    `derived::ram_combined_ra`, `derived::ram_ra_indicator`,
+    `derived::reg_{rs1,rs2,rd}_{ra,wa}`, `derived::reg_val`,
+    `derived::iflag_*`, `derived::*_gather_index`,
+    `derived::lookup_table_flag`, `derived::instruction_raf_flag`,
+    `derived::hamming_weight`, `derived::extract_column`).
+
+  **Gates**: transcript_divergence PASS; zkvm_proof_accepted PASS;
+  clippy clean on jolt-witness + jolt-r1cs libs (pre-existing
+  test-only lint in `polynomials.rs:294-295` unrelated to iter 36).
+
+  **Trace captured**: `benchmark-runs/perfetto_traces/iter36_pm_spans_sha2chain_log_t14.json`
+  (19 MB, sha2-chain log_t=14 num-iters=4, modular-only, 18011 ms prove).
+
+  **Attribution (the point of this iter)**:
+
+  `mb::Provided` = **4085 ms** wall (38 calls).
+
+  | `pm::*` arm | Total ms | Calls | % of mb::Provided |
+  |---|---:|---:|---:|
+  | `pm::Derived` | **2067.4** | 63 | **50.6%** |
+  | `pm::R1cs` | 33.6 | 53 | 0.82% |
+  | `pm::Witness` | 0.14 | 212 | 0.00% |
+  | `pm::Preprocessed` | 0.09 | 86 | 0.00% |
+  | **Sum of pm arms** | **2101** | — | **51.4%** |
+  | **Unaccounted** | **~1984** | — | **~48.6%** |
+
+  Inside `pm::Derived` (99% accounted for):
+
+  | `derived::*` arm | Total ms | Calls | % of pm::Derived |
+  |---|---:|---:|---:|
+  | `ram_ra_indicator` | **804.0** | 2 | **38.9%** |
+  | `ram_val` | **622.3** | 1 | **30.1%** |
+  | `ram_combined_ra` | **610.2** | 1 | **29.5%** |
+  | `reg_val` | 16.8 | 1 | 0.81% |
+  | `reg_rs1_ra` | 5.8 | 1 | 0.28% |
+  | `ram_gather_index` | 2.8 | 1 | 0.14% |
+  | `lookup_table_flag` | 1.7 | 41 | 0.08% |
+  | others (16 arms) | <2 | — | — |
+
+  Inside `pm::R1cs` (99.6% accounted):
+
+  | `r1cs::*` arm | Total ms | Calls |
+  |---|---:|---:|
+  | `r1cs::Bz` | 14.5 | 1 |
+  | `r1cs::Az` | 11.1 | 1 |
+  | `r1cs::Variable` | 7.8 | 51 |
+  | `r1cs::Cz`, `r1cs::CombinedRow` | 0 (not hit) | 0 |
+
+  **Findings**:
+
+  1. **3 RAM arms own 99% of pm::Derived and ~50% of mb::Provided**:
+     `ram_ra_indicator` (804 ms, 2 calls) + `ram_val` (622 ms, 1 call)
+     + `ram_combined_ra` (610 ms, 1 call) = **2036 ms**. All three build
+     K*T address-major buffers where per-cycle writes are independent.
+     **Clear iter 37 target (P45)**: parallelize all three.
+  2. **P43 was correctly reverted**: R1cs total is 33.6 ms (<1% of
+     mb::Provided). Even 10× speedup would save ~30 ms — unmeasurable.
+     The iter 35 hypothesis was quantitatively wrong.
+  3. **1984 ms attribution gap**: nearly half of `mb::Provided` is
+     inside neither a `pm::*` arm nor any `derived::*`/`r1cs::*`
+     sub-arm. Could be `Cow` allocation, materialize_binding prologue,
+     freshness-check overhead, or parent dispatch. **P46** queued to
+     instrument this.
+
+  **Per protocol**: infra iter, no ratchet touch, no revert, no perf
+  comparison. Stall counter stays at 1 (iter-33 precedent — the iter 33
+  instrumentation iter also kept stall counter unchanged). Commit as
+  `chore(zkvm): instrument provider.materialize / R1csSource /
+  DerivedSource dispatch arms (iter 36)`.
+
+  **Next iter 37**: P45 — parallelize the 3 RAM derived-poly builders.
+  Expected: 4-6× on 2036 ms → save ~1.5 s at sha2-chain log_t=14 = ~8%
+  total wall. Meets the big-gain bar.
 
 - **Iter 35 — P43 parallelize `R1csSource::compute_matvec` (REVERTED — attribution hypothesis wrong)**
   (target: `crates/jolt-r1cs/src/provider.rs::compute_matvec` +

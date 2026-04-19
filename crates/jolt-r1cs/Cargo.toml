@@ -13,6 +13,7 @@ jolt-compiler = { path = "../jolt-compiler" }
 jolt-field = { path = "../jolt-field" }
 jolt-poly = { path = "../jolt-poly" }
 serde = { workspace = true, features = ["derive"] }
+tracing = { workspace = true }
 
 [dev-dependencies]
 jolt-field = { path = "../jolt-field", features = ["bn254"] }

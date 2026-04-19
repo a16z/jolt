@@ -75,10 +75,20 @@ impl<'a, F: Field> R1csSource<'a, F> {
     /// Compute an R1CS-derived polynomial by column.
     pub fn compute(&self, column: R1csColumn) -> Vec<F> {
         match column {
-            R1csColumn::Az => self.compute_matvec(&self.key.matrices.a),
-            R1csColumn::Bz => self.compute_matvec(&self.key.matrices.b),
-            R1csColumn::Cz => self.compute_matvec(&self.key.matrices.c),
+            R1csColumn::Az => {
+                let _s = tracing::info_span!("r1cs::Az").entered();
+                self.compute_matvec(&self.key.matrices.a)
+            }
+            R1csColumn::Bz => {
+                let _s = tracing::info_span!("r1cs::Bz").entered();
+                self.compute_matvec(&self.key.matrices.b)
+            }
+            R1csColumn::Cz => {
+                let _s = tracing::info_span!("r1cs::Cz").entered();
+                self.compute_matvec(&self.key.matrices.c)
+            }
             R1csColumn::CombinedRow => {
+                let _s = tracing::info_span!("r1cs::CombinedRow").entered();
                 let ch = self
                     .challenges
                     .as_ref()
@@ -88,6 +98,7 @@ impl<'a, F: Field> R1csSource<'a, F> {
                     .combined_row(&ch.r_x, ch.rho_a, ch.rho_b, ch.rho_c, total_cols_padded)
             }
             R1csColumn::Variable(var_idx) => {
+                let _s = tracing::info_span!("r1cs::Variable").entered();
                 let v_pad = self.key.num_vars_padded;
                 (0..self.key.num_cycles)
                     .map(|c| self.witness[c * v_pad + var_idx])

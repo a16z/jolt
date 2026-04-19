@@ -145,52 +145,99 @@ impl<'a, F: Field> DerivedSource<'a, F> {
     /// Compute or retrieve a derived polynomial by ID.
     pub fn compute(&self, poly_id: PolynomialId) -> Cow<'_, [F]> {
         match poly_id {
-            PolynomialId::ProductLeft => Cow::Owned(self.product_left()),
-            PolynomialId::ProductRight => Cow::Owned(self.product_right()),
-            PolynomialId::RamCombinedRa => Cow::Owned(self.ram_combined_ra()),
-            PolynomialId::RamVal => Cow::Owned(self.ram_val()),
-            PolynomialId::RamValFinal => Cow::Owned(self.ram_val_final()),
-            PolynomialId::RamRaIndicator => Cow::Owned(self.ram_ra_indicator()),
-            PolynomialId::Rs1Ra => Cow::Owned(self.reg_rs1_ra()),
-            PolynomialId::Rs2Ra => Cow::Owned(self.reg_rs2_ra()),
-            PolynomialId::RdWa => Cow::Owned(self.reg_rd_wa()),
-            PolynomialId::RegistersVal => Cow::Owned(self.reg_val()),
+            PolynomialId::ProductLeft => {
+                let _s = tracing::info_span!("derived::product_left").entered();
+                Cow::Owned(self.product_left())
+            }
+            PolynomialId::ProductRight => {
+                let _s = tracing::info_span!("derived::product_right").entered();
+                Cow::Owned(self.product_right())
+            }
+            PolynomialId::RamCombinedRa => {
+                let _s = tracing::info_span!("derived::ram_combined_ra").entered();
+                Cow::Owned(self.ram_combined_ra())
+            }
+            PolynomialId::RamVal => {
+                let _s = tracing::info_span!("derived::ram_val").entered();
+                Cow::Owned(self.ram_val())
+            }
+            PolynomialId::RamValFinal => {
+                let _s = tracing::info_span!("derived::ram_val_final").entered();
+                Cow::Owned(self.ram_val_final())
+            }
+            PolynomialId::RamRaIndicator => {
+                let _s = tracing::info_span!("derived::ram_ra_indicator").entered();
+                Cow::Owned(self.ram_ra_indicator())
+            }
+            PolynomialId::Rs1Ra => {
+                let _s = tracing::info_span!("derived::reg_rs1_ra").entered();
+                Cow::Owned(self.reg_rs1_ra())
+            }
+            PolynomialId::Rs2Ra => {
+                let _s = tracing::info_span!("derived::reg_rs2_ra").entered();
+                Cow::Owned(self.reg_rs2_ra())
+            }
+            PolynomialId::RdWa => {
+                let _s = tracing::info_span!("derived::reg_rd_wa").entered();
+                Cow::Owned(self.reg_rd_wa())
+            }
+            PolynomialId::RegistersVal => {
+                let _s = tracing::info_span!("derived::reg_val").entered();
+                Cow::Owned(self.reg_val())
+            }
             PolynomialId::NoopFlag => {
+                let _s = tracing::info_span!("derived::iflag_noop").entered();
                 let f = self.iflags.as_ref().expect("InstructionFlags not attached");
                 Cow::Borrowed(&f.is_noop)
             }
             PolynomialId::LeftIsRs1 => {
+                let _s = tracing::info_span!("derived::iflag_left_is_rs1").entered();
                 let f = self.iflags.as_ref().expect("InstructionFlags not attached");
                 Cow::Borrowed(&f.left_is_rs1)
             }
             PolynomialId::LeftIsPc => {
+                let _s = tracing::info_span!("derived::iflag_left_is_pc").entered();
                 let f = self.iflags.as_ref().expect("InstructionFlags not attached");
                 Cow::Borrowed(&f.left_is_pc)
             }
             PolynomialId::RightIsRs2 => {
+                let _s = tracing::info_span!("derived::iflag_right_is_rs2").entered();
                 let f = self.iflags.as_ref().expect("InstructionFlags not attached");
                 Cow::Borrowed(&f.right_is_rs2)
             }
             PolynomialId::RightIsImm => {
+                let _s = tracing::info_span!("derived::iflag_right_is_imm").entered();
                 let f = self.iflags.as_ref().expect("InstructionFlags not attached");
                 Cow::Borrowed(&f.right_is_imm)
             }
-            PolynomialId::RdGatherIndex => Cow::Owned(self.rd_gather_index()),
-            PolynomialId::RamGatherIndex => Cow::Owned(self.ram_gather_index()),
+            PolynomialId::RdGatherIndex => {
+                let _s = tracing::info_span!("derived::rd_gather_index").entered();
+                Cow::Owned(self.rd_gather_index())
+            }
+            PolynomialId::RamGatherIndex => {
+                let _s = tracing::info_span!("derived::ram_gather_index").entered();
+                Cow::Owned(self.ram_gather_index())
+            }
             PolynomialId::LookupTableFlag(i) => {
+                let _s = tracing::info_span!("derived::lookup_table_flag").entered();
                 let lf = self.lookup_flags.as_ref().expect(
                     "DerivedSource: LookupTableFlag requested but no LookupFlagData provided",
                 );
                 Cow::Owned(self.lookup_table_flag(&lf.table_indices, i))
             }
             PolynomialId::InstructionRafFlag => {
+                let _s = tracing::info_span!("derived::instruction_raf_flag").entered();
                 let lf = self.lookup_flags.as_ref().expect(
                     "DerivedSource: InstructionRafFlag requested but no LookupFlagData provided",
                 );
                 Cow::Owned(self.instruction_raf_flag(&lf.is_raf))
             }
-            PolynomialId::HammingWeight => Cow::Owned(self.hamming_weight()),
+            PolynomialId::HammingWeight => {
+                let _s = tracing::info_span!("derived::hamming_weight").entered();
+                Cow::Owned(self.hamming_weight())
+            }
             other => {
+                let _s = tracing::info_span!("derived::extract_column").entered();
                 if let Some(var) = witness_var(other) {
                     Cow::Owned(self.extract_column(var))
                 } else {

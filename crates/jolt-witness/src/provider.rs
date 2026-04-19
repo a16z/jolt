@@ -71,10 +71,22 @@ impl<'a, F: Field> ProverData<'a, F> {
 impl<F: Field> BufferProvider<F> for ProverData<'_, F> {
     fn materialize(&self, poly_id: PolynomialId) -> Cow<'_, [F]> {
         match poly_id.descriptor().source {
-            PolySource::Witness => Cow::Borrowed(self.witness.get(poly_id)),
-            PolySource::R1cs(column) => Cow::Owned(self.r1cs.compute(column)),
-            PolySource::Derived => self.derived.compute(poly_id),
-            PolySource::Preprocessed => Cow::Borrowed(self.preprocessed.get(poly_id)),
+            PolySource::Witness => {
+                let _s = tracing::info_span!("pm::Witness").entered();
+                Cow::Borrowed(self.witness.get(poly_id))
+            }
+            PolySource::R1cs(column) => {
+                let _s = tracing::info_span!("pm::R1cs").entered();
+                Cow::Owned(self.r1cs.compute(column))
+            }
+            PolySource::Derived => {
+                let _s = tracing::info_span!("pm::Derived").entered();
+                self.derived.compute(poly_id)
+            }
+            PolySource::Preprocessed => {
+                let _s = tracing::info_span!("pm::Preprocessed").entered();
+                Cow::Borrowed(self.preprocessed.get(poly_id))
+            }
         }
     }
 

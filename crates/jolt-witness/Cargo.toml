@@ -16,6 +16,7 @@ jolt-poly = { path = "../jolt-poly" }
 jolt-r1cs = { path = "../jolt-r1cs" }
 jolt-verifier = { path = "../jolt-verifier" }
 serde = { workspace = true, features = ["derive"] }
+tracing = { workspace = true }
 
 [dev-dependencies]
 jolt-field = { path = "../jolt-field", features = ["bn254"] }
