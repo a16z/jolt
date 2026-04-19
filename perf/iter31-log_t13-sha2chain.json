@@ -1,0 +1,23 @@
+{
+  "program": "sha2-chain",
+  "iters": 1,
+  "warmup": 1,
+  "runs": [
+    {
+      "stack": "core",
+      "prove_ms": 931.723833,
+      "verify_ms": 68.780583,
+      "peak_rss_mb": 335,
+      "proof_bytes": 74916,
+      "proof_encoding": "ark-compressed"
+    },
+    {
+      "stack": "modular",
+      "prove_ms": 10606.619209,
+      "verify_ms": 0.084125,
+      "peak_rss_mb": 4234,
+      "proof_bytes": 72602,
+      "proof_encoding": "bincode-serde"
+    }
+  ]
+}

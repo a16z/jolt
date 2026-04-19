@@ -19,12 +19,28 @@ when the Phase 3 stop condition fires.
 
 ## Current State
 
-- **Phase**: 1 (small traces for fast iteration)
-- **log_t**: 12 (ceiling — `max_padded_trace_length = 2^12`; actual log_t =
-  `raw_trace.next_power_of_two().log2()`, which is 10 for muldiv at
-  684 cycles). For real log_t ≥ 14, use sha2-chain with `--num-iters`.
-- **Program**: `muldiv` (both stacks; sha2/3-chain also supported)
-- **Stall counter**: 6 (iter 29 bench rewrite — dropped jolt-core proof transplant, wired native `jolt_verifier::verify` best-effort, generalized modular stack to run any guest ELF; iter 30 bench ceiling fix — flat +4.19% at 5-run median 1504.67 ms, ratchet unchanged; iter 28 P38 parallel Dory combine_hints flat +3.25% reverted; iter 27 instrumentation-only — fused_rlc_reduce group-level telemetry; iter 26 P35 parallel-over-groups fused_rlc_reduce flat/reverted; iter 25 P33 parallel inner rlc_combine flat/reverted; iter 24 P32 parallel Materialize flat/reverted; iter 23 instrumentation-only; iter 22 instrumentation-only; iter 21 flat; iter 20 green; iter 19 green; iter 18 reverted; iter 17 profiling-only; iter 16 infra; iter 15 infra; iter 14 infra; iter 13 flat; iter 12 green)
+- **Phase**: 1 (small traces for fast iteration); pivot-in-progress — iter 31
+  reveals log_t=14 sha2-chain ratio 15.7× (vs log_t=12 muldiv 3.96×), so
+  future iters should attack workload-scaling bugs first.
+- **log_t**: 12 ratchet tracked on muldiv (ratchet 1444.14 ms); iter 31
+  added log_t=14 sha2-chain as secondary reference (modular 24604 ms, core
+  1571 ms). `--log-t N` is a CEILING. muldiv raw = 684 cycles → real log_t=10.
+  For real log_t=13, use sha2-chain --num-iters=1; for real log_t=14,
+  use sha2-chain --num-iters=4.
+- **Program**: `muldiv` (log_t=12 ratchet); `sha2-chain` (log_t=13/14 profile)
+- **Stall counter**: 6 (iter 31 instrumentation-only — log_t=14 sha2-chain
+  profile, P37 DONE, hotspot map fully reshuffled from log_t=12; iter 30 bench
+  ceiling fix — flat +4.19% at 5-run median 1504.67 ms, ratchet unchanged;
+  iter 29 bench rewrite — dropped jolt-core proof transplant, wired native
+  `jolt_verifier::verify` best-effort, generalized modular stack to run any
+  guest ELF; iter 28 P38 parallel Dory combine_hints flat +3.25% reverted;
+  iter 27 instrumentation-only — fused_rlc_reduce group-level telemetry;
+  iter 26 P35 parallel-over-groups fused_rlc_reduce flat/reverted; iter 25
+  P33 parallel inner rlc_combine flat/reverted; iter 24 P32 parallel
+  Materialize flat/reverted; iter 23 instrumentation-only; iter 22
+  instrumentation-only; iter 21 flat; iter 20 green; iter 19 green;
+  iter 18 reverted; iter 17 profiling-only; iter 16 infra; iter 15 infra;
+  iter 14 infra; iter 13 flat; iter 12 green)
 - **Last green iter**: 20 — parallelize `Op::Commit` outer loop via rayon.
   42 serial Dory `PCS::commit` calls (508 ms wall, 720 ms CPU, 1.4× effective
   parallelism) → parallel collect of commitments + serial transcript append
@@ -312,17 +328,16 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
   (padded-cache hit). Confirms P35 failure diagnosis and redirects attack
   to PCS::combine_hints (P38). See Notes.
 
-- [ ] P37: Re-profile at log_t=14 — target: `perf/` measurement only.
-    - **Hypothesis**: parallelism opportunities visible in iter 23
-      op-class (Materialize 510 ms / 1.0 threads) may be
-      log_t-dependent. At log_t=12, polynomials are ≤4096 elements,
-      below most rayon granularity thresholds. At log_t=14 (16x work
-      per op), the same ops should either (a) rise proportionally in
-      wall and remain at 1.0 threads → confirms real serial work
-      worth parallelizing, or (b) stay ~constant or drop in wall
-      proportion → confirms overhead-dominated reading at log_t=12.
-    - **Abstraction risk**: none — measurement only.
-    - **Expected delta**: none directly; infra to steer next attack.
+- [x] P37: Re-profile at log_t=14 — DONE iter 31. sha2-chain with
+  `--num-iters 4` drives raw trace to 13120 cycles → padded 16384 (log_t=14).
+  Ratio at log_t=14 = **15.7×** (core 1571 ms / modular 24604 ms);
+  scaling multiplier modular/core = **1.63× per 2× workload** →
+  modular is diverging, not converging. Hotspot map fully reshuffled:
+  Materialize+MaterializeUnlessFresh = 47.6%, DoryScheme::commit = 27%,
+  multi_pair_g2_setup = 24.5%. `combine_hints` (iter 27 smoking gun
+  at log_t=12) drops to ~1% — no longer a meaningful attack at log_t=14.
+  Full spans + diagnosis in **Notes / Iter 31**. Redirects attack to
+  P39-P41 below.
 
 - [x] P38: Parallelize PCS::combine_hints (iter 28, flat +3.25%, REVERTED).
   Added rayon + `into_par_iter` over rows in
@@ -360,6 +375,60 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
       sync and no nested rayon under it (combine_hints inside dory does
       NOT currently use rayon, confirmed by the 1.0-thread reading).
 
+- [ ] P39: Investigate modular-vs-core per-commit work asymmetry — target:
+  `crates/jolt-dory/src/scheme.rs` + witness layout in `crates/jolt-zkvm/src/witness/`.
+    - **Hypothesis**: iter 31 log_t=14 sha2-chain profile showed
+      `DoryScheme::commit` = **6350 ms (42 calls, 151 ms/call)**, while
+      core's entire prove at the same log_t is only **1571 ms**. Modular's
+      commit path alone is ~4× larger than core's total work. Candidate
+      causes: (a) modular commits more polys than core (extra RA/advice/eq?),
+      (b) per-commit work includes unused opening hints, (c) padded-poly
+      cache inflates committed poly sizes. Step 1: instrument poly-by-poly
+      commit count + size and compare against a core run.
+    - **Abstraction risk**: depends on root cause. If modular is committing
+      extra polys, runtime/compiler may be over-emitting — fix is in
+      scheduling. If per-commit work is inflated, Dory-side fix.
+    - **Expected delta**: if modular commits same polys as core at same
+      sizes, target is parity with core's commit share (~20-40% of 1571 =
+      320-630 ms) → **23-25% wall savings** at log_t=14. If modular commits
+      MORE polys, removing the surplus is the win.
+
+- [ ] P40: Investigate Materialize/MaterializeUnlessFresh super-linear
+  scaling — target: `crates/jolt-zkvm/src/runtime/handlers.rs` Materialize
+  handlers + `crates/jolt-cpu/src/backend.rs::materialize_*`.
+    - **Hypothesis**: iter 31 log_t=14 profile showed `Op::Materialize` at
+      **6420 ms / 197 calls = 32.6 ms/call**, vs iter 23 at log_t=12 muldiv
+      of 1.5 ms/call. That's a **22× per-op wall jump for a 4× workload**.
+      At log_t=14, Materialize family (Materialize + MaterializeUnlessFresh)
+      is **47.6% of total wall** — the largest single category. Possible
+      root causes: (a) system allocator pressure on large `Vec<F>` per call
+      (log_t=14 polys = 128 KB each × 197 ops = contended glibc malloc arena),
+      (b) L2 cache thrash on eq/lt tables shared across parallel materializes,
+      (c) a hidden O(T²) in MaterializeUnlessFresh's freshness check
+      (103 ms/call × 46 calls = 4781 ms), (d) padded-poly cache that helps at
+      log_t=12 but thrashes at log_t=14 due to working-set size.
+    - **Abstraction risk**: low-medium — fix is internal to Materialize
+      handler + cpu backend; runtime contract unchanged.
+    - **Expected delta**: halving per-op wall to match the 4× linear-scaling
+      expectation would save ~5.6s at log_t=14 = **24% total wall**. Even
+      a 2× improvement per call is 12% total wall.
+
+- [ ] P41: Parallelize or memoize `multi_pair_g2_setup` across Dory
+  commits — target: `dory` crate internals (user-controlled fork).
+    - **Hypothesis**: iter 31 log_t=14 profile showed
+      `BN254::multi_pair_g2_setup_parallel` = **5771 ms in 60 calls**
+      (24.5% of wall). 60 calls for 42 Dory commits = ~1.4 calls per commit
+      (tier-1 + tier-2 setup). Most of these 60 setups should be redundant
+      if they operate on static G2 generators — cache the setup once per
+      (preprocessing, commit size) pair. The `_parallel` suffix means each
+      call is internally parallel, but 60 sequential-ish 96-ms calls on
+      shared G2 structures is wasted work.
+    - **Abstraction risk**: medium — requires Dory-internal change to
+      memoize G2 setup across commits. No modular-stack changes.
+    - **Expected delta**: if setup is truly static per preprocessing,
+      the 59 redundant calls × 96 ms = **5.7 s saved = 24% total wall**
+      at log_t=14. Conservative 50% reduction = 12% wall.
+
 - [ ] P34: Investigate Dory Open internal parallelism — target:
   `dory-pcs` crate (external, but we control the fork).
     - **Hypothesis**: iter 23 showed `Op::Open` at **1.87 threads / 23.4%
@@ -382,6 +451,101 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 31 — P37 Re-profile at log_t=14 sha2-chain (instrumentation, no perf claim)**
+  (target: `benchmark-runs/perfetto_traces/iter31_sha2chain_log_t14.json` +
+  `perf/iter31-log_t13-sha2chain.json` + `perf/iter31-log_t14-measure.json`).
+
+  **Motivation**: iter 28 post-mortem flagged log_t=12 workloads as
+  overhead-dominated for rayon parallelism (4 consecutive parallelism-attack
+  failures: P32, P33, P35, P38). P37 was queued to re-profile at real
+  log_t ≥ 14 to see if per-op work finally clears rayon's efficient-granularity
+  threshold. `muldiv` can't reach log_t=14 (raw 684 cycles), so switched
+  program to `sha2-chain` which takes ~3280 cycles/iter.
+
+  **Measurements (iters=1, warmup=1)**:
+
+  | workload | log_t | core ms | modular ms | ratio |
+  |---|---:|---:|---:|---:|
+  | muldiv (ratchet) | 12 | 380 | 1444 | 3.8× |
+  | sha2-chain --num-iters=1 | 13 | 931 | 10606 | **11.4×** |
+  | sha2-chain --num-iters=4 | 14 | 1571 | 24604 | **15.7×** |
+
+  **Critical finding — modular is diverging from core with log_t**:
+
+  Scaling sha2-chain from log_t=13 → log_t=14 (2× workload): modular grows
+  2.32×, core grows 1.69×. Net: **modular gets 37% worse per log_t step vs
+  core**. Extrapolated to log_t=18 (Phase 3 target), ratio climbs toward
+  40-60×. The current parallelism-micro-optimization approach cannot close
+  this gap.
+
+  **Top spans at log_t=14 sha2-chain (23531 ms wall, 8-core M1 Pro)**:
+
+  | Rank | Span | Self ms | % wall | Calls | Avg µs |
+  |---:|---|---:|---:|---:|---:|
+  | 1 | reduce_dense | 7535 | **32.0%** | 2085 | 3614 |
+  | 2 | Materialize | 6420 | **27.3%** | 197 | 32591 |
+  | 3 | DoryScheme::commit | 6350 | **27.0%** | 42 | 151185 |
+  | 4 | multi_pair_g2_setup_parallel | 5771 | **24.5%** | 60 | 96186 |
+  | 5 | MaterializeUnlessFresh | 4781 | **20.3%** | 46 | 103945 |
+  | 6 | InstanceSegmentedReduce | 4229 | **18.0%** | 28 | 151035 |
+  | 7 | CpuBackend::gruen_segmented_reduce | 3544 | **15.1%** | 14 | 253113 |
+  | 8 | interpolate_inplace | 3294 | **14.0%** | 16940 | 194 |
+  | 9 | InstanceBind | 3255 | 13.8% | 285 | 11420 |
+  | 10 | InstanceReduce | 1895 | 8.1% | 278 | 6815 |
+
+  (Percentages sum >100% due to span nesting; `multi_pair_g2_setup_parallel`
+  is inside `DoryScheme::commit`; `gruen_segmented_reduce` is inside
+  `InstanceSegmentedReduce`.)
+
+  **Hotspot map vs iter 23 (log_t=12 muldiv)**:
+
+  | Category | log_t=12 muldiv | log_t=14 sha2-chain | Δ |
+  |---|---:|---:|---:|
+  | Materialize+MaterializeUnlessFresh | 29% | **47.6%** | **+19pp** |
+  | DoryScheme::commit | ~15% | **27%** | **+12pp** |
+  | ReduceOpenings (combine_hints) | 6.4% | ~1% | **−5pp** |
+  | reduce_dense | 5.7% | 32% | **+26pp** |
+  | InstanceSegmentedReduce | 14% | 18% | +4pp |
+
+  `combine_hints` (iter 27 smoking gun) is NO LONGER a meaningful attack
+  target at log_t=14 — dropped from 83 ms/call at log_t=12 to sub-second total.
+  log_t=14 attack surface is dominated by: (a) Materialize family, (b) Dory
+  commit internals (specifically `multi_pair_g2_setup`), (c) `reduce_dense`
+  sumcheck inner loops.
+
+  **Structural concern — DoryScheme::commit alone > core's entire prove**:
+
+  Modular's `DoryScheme::commit` aggregate (6350 ms) is **4× larger than
+  core's total prove time** (1571 ms) at the same log_t. Both stacks use
+  the same `jolt-dory` backend via `PCS::setup_prover(max_log_k_chunk +
+  max_log_T)`, confirmed identical by `jolt-core/src/zkvm/prover.rs:2160`.
+  So either modular is committing MORE polys than core, or each commit is
+  doing more work (BlindFold hints? padded-poly cache inflation?). P39
+  queued to investigate.
+
+  **Super-linear Materialize scaling (critical)**:
+
+  `Op::Materialize` per-call jumped from 1.5 ms (iter 23, log_t=12 muldiv)
+  → 32.6 ms (iter 31, log_t=14 sha2-chain). That's a **22× per-op wall
+  increase for 4× workload** (polynomials 4× larger at log_t=14). Linear
+  scaling expected; super-linear observed. Memory peaks at 4255 MB modular
+  vs 508 MB core — **8× memory footprint mismatch** suggests cache-thrash
+  and allocator contention are the culprits, not algorithmic complexity.
+  P40 queued to investigate.
+
+  **Hypothesis queue reshuffle (iter 32 onward)**:
+  - **High-leverage log_t=14 attacks (NEW)**: P39 (modular vs core commit
+    asymmetry — potential 23-25% wall savings), P40 (Materialize
+    super-linear scaling — 12-24% wall), P41 (multi_pair_g2_setup memoize
+    / fan-out — 12-24% wall).
+  - **Deprioritized**: combine_hints-family attacks (P38-retry), fused_rlc_reduce
+    parallelism variants — these target log_t=12 hotspots that are
+    proportionally tiny at log_t=14.
+
+  **Per protocol**: profile-only iter, no perf claim, no ratchet update.
+  Stall counter NOT incremented (iter 11/17/22/23/27 precedent). Bookkeeping
+  commit.
 
 - **Iter 28 — P38 Parallel Dory combine_hints (flat +3.25%, REVERTED)**
   (target: `crates/jolt-dory/src/scheme.rs` `<DoryScheme as AdditivelyHomomorphic>::combine_hints`).
