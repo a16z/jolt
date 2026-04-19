@@ -28,7 +28,25 @@ when the Phase 3 stop condition fires.
   For real log_t=13, use sha2-chain --num-iters=1; for real log_t=14,
   use sha2-chain --num-iters=4.
 - **Program**: `muldiv` (log_t=12 ratchet); `sha2-chain` (log_t=13/14 profile)
-- **Stall counter**: 1 (iter 36 instrumentation-only — added
+- **Stall counter**: 2 (iter 37 P45 REVERTED — parallelized
+  `DerivedSource::{ram_combined_ra, ram_val, ram_ra_indicator}` via
+  `par_chunks_mut` gated at `PAR_THRESHOLD=1024`. Correctness green,
+  but sha2-chain log_t=14 avg +12.1% (19599 / 20796 ms vs 18011
+  iter-36 baseline) and muldiv log_t=12 avg +5.0% vs ratchet
+  (1303 / 1343 / 1368 ms = 1337.9 avg vs 1274.20). Both programs
+  past reject threshold. Diagnosis: the 3 arms have tiny per-chunk
+  inner work — `ram_ra_indicator` writes 1 element per T chunks of K,
+  `ram_combined_ra` writes ~0-1 elements per K columns of T,
+  `ram_val` is memory-bandwidth-bound on K*T writes. rayon dispatch
+  overhead + concurrent memory-bus contention exceeds parallelism
+  gain. Lesson repeated from iter 24/25/26/28: tiny-inner-work
+  parallelization doesn't win at these sizes. Attack these arms
+  differently in iter 38+ — candidates: (a) reduce allocation
+  (K*T Vec::zero may dominate), (b) coalesce the 3 arms into a single
+  combined walk, (c) change layout to avoid double-materialization,
+  (d) investigate if `MaterializeUnlessFresh` cache makes these
+  invocations redundant. Next iter 38: P46 close the 1984 ms
+  mb::Provided attribution gap; iter 36 instrumentation-only — added
   `pm::{Witness,R1cs,Derived,Preprocessed}` + `r1cs::{Az,Bz,Cz,CombinedRow,Variable}`
   + `derived::*` (~20) spans to `ProverData::materialize`,
   `R1csSource::compute`, `DerivedSource::compute`. Attribution at
@@ -473,25 +491,16 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
   — lives outside the 4 `pm::*` arms (materialize prologue/epilogue,
   Cow allocation, parent dispatch overhead?). See Notes / Iter 36.
 
-- [ ] P45: Parallelize the 3 RAM derived-poly builders — target:
-  `crates/jolt-witness/src/derived.rs::{ram_combined_ra, ram_ra_indicator,
-  ram_val}`. **Hypothesis**: iter 36 attribution at sha2-chain log_t=14
-  shows these 3 arms consume 2036 ms / 99% of `pm::Derived` / ~50% of
-  `mb::Provided`. All three loop over T cycles writing to a K*T buffer
-  with independent per-cycle writes (no cross-cycle dependency besides
-  `ram_val`'s per-address accumulator). `ram_combined_ra` and
-  `ram_ra_indicator` are trivially parallel (`par_iter_mut` over output
-  chunks). `ram_val` is harder (per-address stateful walk) but the
-  per-address outer loop IS independent — `par_chunks_mut` over the K
-  address-major rows in the output buffer, with each task walking its
-  own event list and persisting state locally. Expected: 4-6× on
-  those 3 arms → save ~1.5 s = **~8% of sha2-chain log_t=14**. Meets
-  order-of-magnitude bar.
-    - **Abstraction risk**: low — contained inside `DerivedSource` impl,
-      no trait change. Handler ≤30 LOC rule unchanged.
-    - **Expected delta**: −8 to −11% sha2-chain log_t=14; probably flat
-      muldiv log_t=12 (small T, serial fallback active with
-      `PAR_THRESHOLD` gate).
+- [x] P45: Parallelize the 3 RAM derived-poly builders.
+  **REVERTED iter 37** — `par_chunks_mut` gated at `PAR_THRESHOLD=1024`
+  on all 3 arms made sha2-chain log_t=14 avg **+12.1% WORSE** (avg
+  20198 ms across 2 runs vs 18011 iter-36 baseline) and pushed muldiv
+  log_t=12 avg to 1337.9 ms = +5.0% vs ratchet (reject boundary).
+  Diagnosis: all 3 arms have tiny inner work per chunk (`ram_ra_indicator`
+  = 1 remap + 1 write per cycle; `ram_combined_ra` per-col has ~0-1
+  writes; `ram_val` per-addr is a T-length loop but memory-bandwidth
+  bound for field writes). rayon overhead + concurrent memory-bus
+  contention exceeds the parallelism gain. See Notes / Iter 37.
 
 - [ ] P46: Close the 1984 ms `mb::Provided` attribution gap — target:
   instrument the `materialize_binding` → `provide` dispatch path
@@ -565,6 +574,91 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 37 — P45 parallelize the 3 RAM derived-poly arms (REVERTED — regression on both programs)**
+  (target: `crates/jolt-witness/src/derived.rs::{ram_combined_ra, ram_val,
+  ram_ra_indicator}`; added `rayon = { workspace = true }` to
+  `crates/jolt-witness/Cargo.toml`).
+
+  **Motivation**: iter 36 attribution (sha2-chain log_t=14): the 3
+  RAM arms consume 2036 ms = 99% of `pm::Derived` = ~50% of
+  `mb::Provided`. All 3 are K*T binary-indicator / value-carry builders
+  with seemingly-independent per-cycle / per-address writes.
+
+  **Change (~90 LOC, 3 methods + helper + const)**:
+  - `ram_combined_ra` (output `ra[col * t + c]`): pre-bucket cycles
+    by address via a serial O(T) pass into `Vec<Vec<usize>>`, then
+    `par_chunks_mut(t)` over K columns, each thread writes its column's
+    1's from its bucket.
+  - `ram_ra_indicator` (output `indicator[c * k + col]`): cycle-major
+    layout so `par_chunks_mut(k)` gives per-cycle slices of length K.
+    Each thread does 1 remap + 1 write per cycle.
+  - `ram_val` (output `val[addr * t + c]`, stateful per-addr walk):
+    extracted `fill_ram_val_chunk` helper, then `par_chunks_mut(t)`
+    over K addresses each walking its own event list.
+  - Threshold `PAR_THRESHOLD=1024` with serial fallback on all 3 arms.
+
+  **Gates**: transcript_divergence PASS, zkvm_proof_accepted PASS;
+  clippy clean on jolt-witness + jolt-r1cs libs.
+
+  **Perf — muldiv log_t=12**:
+
+  | Run | modular_prove_ms | Δ vs 1274.20 ratchet | Δ vs pre-P45 avg 1396 |
+  |---|---:|---:|---:|
+  | 1 | 1303.03 | +2.26% | −6.7% |
+  | 2 | 1342.95 | +5.40% | −3.8% |
+  | 3 | 1367.80 | +7.34% | −2.0% |
+  | avg | 1337.93 | **+5.0%** (reject) | −4.2% |
+
+  **Perf — sha2-chain log_t=14 num-iters=4**:
+
+  | Run | modular_prove_ms | Δ vs 18011 iter-36 baseline |
+  |---|---:|---:|
+  | 1 | 19599.35 | **+8.82%** |
+  | 2 | 20796.51 | **+15.46%** |
+  | avg | 20197.93 | **+12.1%** (reject) |
+
+  Per protocol: both programs past reject threshold. REVERT.
+
+  **Diagnosis**:
+
+  The attribution was correct (2036 ms in these 3 arms is real) but
+  the parallelization HURT. Three plausible compounding causes:
+
+  1. **rayon dispatch overhead** for tiny per-chunk work. `ram_ra_indicator`
+     produces T chunks of size K where each chunk does 1 remap + at
+     most 1 write. At T=2^14 that's ~16k chunks of ~100 ns each = the
+     rayon overhead per chunk dominates actual work. `ram_combined_ra`'s
+     per-column work is similarly sparse (most columns get zero writes).
+  2. **Memory-bandwidth contention**. K*T element writes (zero-fill +
+     sparse sets) at log_t=14 num-iters=4 is several hundred MB of
+     bus traffic. Multiple cores writing concurrently to the same
+     NUMA node doesn't scale — the bus is the bottleneck regardless
+     of core count.
+  3. **Pool contention with P42 eq_project**. The prover may have
+     other rayon-parallel stages running concurrently with materialize.
+     Adding more parallel work consumes the pool without new cores.
+
+  **Candidates for iter 38+** (NOT doing these in this revert commit):
+  - **P46 (queued)**: instrument the 1984 ms attribution gap inside
+    `mb::Provided` that's NOT in any `pm::*` arm — might reveal a bigger
+    single target than the 3 RAM arms combined.
+  - **P47 (NEW, queueing)**: investigate if the 3 RAM arms' output
+    buffers can be allocated lazily / be smaller (K*T is huge, many
+    cells are zero). Maybe RamVal and RamCombinedRa can share storage.
+  - **P48 (NEW, queueing)**: investigate whether these 3 arms are
+    RE-computed on every materialize call or cached — if cached, why
+    is the wall time so high? If RE-computed, could the freshness cache
+    be extended to cover them?
+
+  **Lesson**: attribution confirming a 2036 ms wall in 3 arms doesn't
+  imply parallelization helps. When inner per-chunk work is < ~50 µs,
+  rayon overhead wins. Same lesson as iter 24/25/26/28 which all saw
+  similar near-flat results from tiny-inner-loop parallelization.
+
+  **Per protocol**: revert applied (`git checkout
+  crates/jolt-witness/Cargo.toml crates/jolt-witness/src/derived.rs`);
+  stall counter 1 → 2; green streak unchanged at 5. Bookkeeping commit.
 
 - **Iter 36 — P44 instrument `materialize` dispatch arms (INFRA — stall counter unchanged)**
   (targets: `crates/jolt-witness/src/provider.rs::BufferProvider::materialize`,
