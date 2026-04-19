@@ -28,7 +28,18 @@ when the Phase 3 stop condition fires.
   For real log_t=13, use sha2-chain --num-iters=1; for real log_t=14,
   use sha2-chain --num-iters=4.
 - **Program**: `muldiv` (log_t=12 ratchet); `sha2-chain` (log_t=13/14 profile)
-- **Stall counter**: 2 (iter 37 P45 REVERTED — parallelized
+- **Stall counter**: 2 (iter 38 P46 INFRA — added `mb::upload`
+  span inside `mb::Provided` arm at
+  `crates/jolt-zkvm/src/runtime/helpers.rs`. Attribution at
+  sha2-chain log_t=14 num-iters=4: `mb::upload` = 3654.68 ms =
+  **67.8% of mb::Provided** (5389.72 ms) and larger than
+  `pm::Derived` (2556.20 ms). Root cause: `CpuBackend::upload`
+  = unconditional `data.to_vec()` clone, double-allocating every
+  `Cow::Owned` materialize return. Iter 39 attack: change
+  `ComputeBackend::upload` to accept `Cow<[T]>` so `Cow::Owned(v)`
+  → `DeviceBuffer::Field(v)` without copy. Expected: ~18.5% wall
+  savings at sha2-chain log_t=14; infra-only so stall counter
+  unchanged. Iter 37 P45 REVERTED — parallelized
   `DerivedSource::{ram_combined_ra, ram_val, ram_ra_indicator}` via
   `par_chunks_mut` gated at `PAR_THRESHOLD=1024`. Correctness green,
   but sha2-chain log_t=14 avg +12.1% (19599 / 20796 ms vs 18011
@@ -502,19 +513,24 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
   bound for field writes). rayon overhead + concurrent memory-bus
   contention exceeds the parallelism gain. See Notes / Iter 37.
 
-- [ ] P46: Close the 1984 ms `mb::Provided` attribution gap — target:
-  instrument the `materialize_binding` → `provide` dispatch path
-  outside the 4 `pm::*` arms. **Hypothesis**: iter 36 attribution
-  only accounts for 2101 ms of `mb::Provided`'s 4085 ms wall; the
-  missing ~1984 ms is in prologue/epilogue code (freshness check,
-  Cow clone, parent-level dispatch, release/reuse bookkeeping).
-  Candidates to instrument: `mb::Provided` inner calls in
-  `crates/jolt-zkvm/src/runtime/handlers.rs::materialize_binding`,
-  Cow::Owned → tier-1 commitment handoff, `BufferProvider::release`
-  calls. If this gap is one big op rather than distributed overhead,
-  it's the real iter 37+ attack target.
-    - **Abstraction risk**: none (instrumentation-only).
-    - **Expected delta**: none; sets up the next attack.
+- [x] P46: Close the 1984 ms `mb::Provided` attribution gap via
+  `mb::upload` span — iter 38 confirmed `backend.upload()` consumes
+  3654.68 ms = **67.8% of `mb::Provided`** at sha2-chain log_t=14. The
+  `CpuBackend::upload` impl does an unconditional `data.to_vec()` clone,
+  which for `Cow::Owned` materialize returns means 2 allocations per
+  poly. See Notes / Iter 38.
+
+- [ ] P47: Zero-copy upload for `Cow::Owned` materialize returns —
+  target: `ComputeBackend::upload` trait in
+  `crates/jolt-compute/src/backend.rs` + `CpuBackend::upload` +
+  `materialize_binding` caller in `crates/jolt-zkvm/src/runtime/helpers.rs`.
+  **Hypothesis**: every derived/r1cs poly double-allocates (materialize
+  produces Vec, upload clones it). Change trait to accept `Cow<'_, [T]>`
+  (or add `upload_vec(Vec<T>)` method) so `Cow::Owned(v)` becomes
+  `DeviceBuffer::Field(v)` with no copy. **Expected savings**: ~3654 ms
+  at sha2-chain log_t=14 = **~18.5% total wall**; corresponding fraction
+  at muldiv log_t=12. **Abstraction risk**: low — backend trait gains
+  one variant/method; handlers unchanged.
 
 - [ ] P40: Investigate Materialize/MaterializeUnlessFresh super-linear
   scaling — target: `crates/jolt-zkvm/src/runtime/handlers.rs` Materialize
@@ -574,6 +590,56 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 38 — P46 instrument `mb::upload` span (INFRA — stall counter unchanged)**
+  (target: `crates/jolt-zkvm/src/runtime/helpers.rs::materialize_binding`
+  `InputBinding::Provided` arm; +1 `tracing::info_span!("mb::upload")`
+  wrapping the `backend.upload(&data)` call).
+
+  **Motivation**: iter 36 attribution left a 1984 ms gap inside
+  `mb::Provided` (4085 ms parent − 2101 ms in 4 `pm::*` children).
+  Static read of `CpuBackend::upload` (`crates/jolt-cpu/src/backend.rs:202`)
+  showed `fn upload<T>(&self, data: &[T]) -> Vec<T> { data.to_vec() }` —
+  an unconditional clone. For every `Cow::Owned` return from `pm::Derived`
+  / `pm::R1cs`, `materialize_binding` allocates once (in materialize)
+  then `.to_vec()`'s it again (in upload). Hypothesis: this double-alloc
+  accounts for most of the 1984 ms gap.
+
+  **Attribution at sha2-chain log_t=14 num-iters=4** (19781 ms modular):
+  | Span               | Wall ms  | n  | % of parent         |
+  |--------------------|----------|----|---------------------|
+  | `mb::Provided`     |  5389.72 | 38 | 27.2% total         |
+  | `mb::upload`       |  3654.68 | 38 | **67.8% of Provided** |
+  | `pm::Derived`      |  2556.20 | 63 | 47.4% of Provided   |
+  | `pm::R1cs`         |  (<1%)   | —  | still negligible    |
+  | `mb::EqProject`    |  2468.56 | 82 | 12.5% total         |
+  | `CpuBackend::eq_project` | 1475.84 | 82 | 59.8% of EqProject |
+
+  **Gap closure**: 3654.68 / 1984 expected = **184% of the gap**
+  (expected since iter 36 gap was computed pre-`mb::upload` and the
+  upload span now "moves" time from parent Provided accounting into
+  its own child bucket). Practical interpretation: `mb::upload` is
+  **the dominant cost inside `mb::Provided`** and is also **larger
+  than `pm::Derived`** — i.e., the redundant `.to_vec()` clone costs
+  MORE than the initial derived computation that produced the Cow::Owned.
+
+  **Gates**: transcript_divergence PASS (5.454s), zkvm_proof_accepted
+  PASS (5.539s); clippy clean on jolt-zkvm/jolt-witness/jolt-r1cs.
+
+  **Perf — muldiv log_t=12**: 1318.55 ms (+3.5% vs ratchet 1274.20,
+  within ±5% band, expected for +1 span). **INFRA ITER**: ratchet
+  unchanged, stall counter unchanged (iter 33/36 precedent for
+  instrumentation-only iterations).
+
+  **Iter 39 attack (queued)**: zero-copy upload for Cow::Owned
+  materialize returns. Candidates: (a) change
+  `ComputeBackend::upload` trait signature to accept `Cow<[T]>` so
+  CpuBackend can `Cow::Owned(v) -> DeviceBuffer::Field(v)` without
+  re-cloning, or (b) add a separate `upload_vec(Vec<T>)` method and
+  wire `materialize_binding` to route `Cow::Owned` through it.
+  Expected savings: ~3654 ms at sha2-chain log_t=14 = **~18.5% of
+  total wall**. Abstraction risk: low — backend trait gains one
+  variant/method; handlers unchanged (still ≤ 30 LOC each).
 
 - **Iter 37 — P45 parallelize the 3 RAM derived-poly arms (REVERTED — regression on both programs)**
   (target: `crates/jolt-witness/src/derived.rs::{ram_combined_ra, ram_val,

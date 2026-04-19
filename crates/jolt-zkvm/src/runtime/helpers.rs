@@ -95,6 +95,7 @@ where
         InputBinding::Provided { poly, .. } => {
             let _s = tracing::info_span!("mb::Provided").entered();
             let data = provider.materialize(*poly);
+            let _s_upload = tracing::info_span!("mb::upload").entered();
             DeviceBuffer::Field(backend.upload(&data))
         }
         InputBinding::EqTable {
