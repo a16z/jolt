@@ -2105,7 +2105,12 @@ impl<
                 commitment_map
                     .remove(&k)
                     .map(|c| (v, c))
-                    .ok_or(ProofVerifyError::InternalError)
+                    .ok_or_else(|| {
+                        ProofVerifyError::DoryError(format!(
+                            "missing commitment for Stage 8 polynomial {:?}",
+                            k
+                        ))
+                    })
             })
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()

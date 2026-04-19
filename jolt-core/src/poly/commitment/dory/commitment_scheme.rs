@@ -258,7 +258,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
             setup.clone().into_inner(),
             &mut dory_transcript,
         )
-        .map_err(|_| ProofVerifyError::InternalError)?;
+        .map_err(|err| ProofVerifyError::DoryError(format!("dory::verify failed: {err:?}")))?;
 
         Ok(())
     }
