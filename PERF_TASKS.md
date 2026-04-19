@@ -28,7 +28,17 @@ when the Phase 3 stop condition fires.
   For real log_t=13, use sha2-chain --num-iters=1; for real log_t=14,
   use sha2-chain --num-iters=4.
 - **Program**: `muldiv` (log_t=12 ratchet); `sha2-chain` (log_t=13/14 profile)
-- **Stall counter**: 2 (iter 38 P46 INFRA — added `mb::upload`
+- **Stall counter**: 0 (iter 39 P47 GREEN — zero-copy upload path via
+  `ComputeBackend::upload_vec(Vec<T>)` with CpuBackend pass-through
+  override. Changed `materialize_binding::Provided` arm from
+  `backend.upload(&data)` to `backend.upload_vec(data.into_owned())`.
+  Eliminates the K*T `.to_vec()` clone per derived/r1cs materialize on
+  CPU. Muldiv log_t=12 flat (warm avg 1295 ms, +1.65% vs 1274.20 ratchet
+  — ratchet unchanged, not worth moving), sha2-chain log_t=14
+  **−18.74% vs iter-38 baseline (19782 → 16072 ms)**, −14.87% vs iter-34
+  avg, −10.76% vs iter-36 baseline. Attribution validated: iter 38
+  mb::upload = 3654.68 ms at sha2-chain log_t=14 → iter 39 recovers
+  most of that. iter 38 P46 INFRA — added `mb::upload`
   span inside `mb::Provided` arm at
   `crates/jolt-zkvm/src/runtime/helpers.rs`. Attribution at
   sha2-chain log_t=14 num-iters=4: `mb::upload` = 3654.68 ms =
@@ -112,14 +122,18 @@ when the Phase 3 stop condition fires.
   instrumentation-only; iter 21 flat; iter 20 green; iter 19 green;
   iter 18 reverted; iter 17 profiling-only; iter 16 infra; iter 15 infra;
   iter 14 infra; iter 13 flat; iter 12 green)
-- **Last green iter**: 34 — P42 parallelize `CpuBackend::eq_project` via
-  rayon (`par_chunks_mut` when `eq_table.len() == inner_size` so threads
-  write disjoint `[k_start..k_start+chunk]` ranges; `par_iter_mut` in
-  the other branch since each output slot is an independent dot-product).
-  Gated at `PAR_THRESHOLD=1024` to keep small-workload serial fallback.
-  Muldiv log_t=12: 1282 ms avg (−11.22% vs 1444 ratchet; best 1274 ms).
-  sha2-chain log_t=14: 18881 ms avg (−23.27% vs 24605 ms iter 31 baseline;
-  best 18528 ms). Handler unchanged; change internal to `CpuBackend`.
+- **Last green iter**: 39 — P47 zero-copy upload for `Cow::Owned`
+  materialize returns. Added `ComputeBackend::upload_vec(Vec<T>)` trait
+  method (default forwards to `upload(&data)`); CpuBackend overrides
+  to pass-through (zero copy). Changed `materialize_binding::Provided`
+  arm to `backend.upload_vec(data.into_owned())`. Eliminates the
+  redundant `data.to_vec()` clone for every Derived/R1cs materialize
+  (Cow::Owned cases). Muldiv log_t=12: 1290/1275/1320 ms warm avg
+  1295 = **+1.65% vs 1274.20 ratchet (flat, inconclusive band)**.
+  sha2-chain log_t=14 num-iters=4: **16031/16113 = 16072 ms avg =
+  −18.74% vs iter-38 baseline 19782** (or −14.87% vs iter-34 avg 18881,
+  or −10.76% vs iter-36 baseline 18011). Handler unchanged; backend
+  trait gains one method with default delegation.
 - **Green streak**: 5 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infra primitive; iter 15 Gruen infra reduce; iter 16 Gruen infra variant; iter 17 post-P24 re-profile; iter 18 Gruen dispatch reverted; iter 19 Gruen end-to-end −49.2%; iter 20 parallel Op::Commit −22.6%; iter 21 P28 parallelize lt_evals + EqPlusOne::evals flat −1.7%; iter 22 instrumentation-only — per-stage CPU vs wall saturation; iter 23 instrumentation-only — per-op-class CPU vs wall saturation + explicit dory `parallel` feature; iter 24 P32 parallel Materialize outer dispatch flat −0.55%, reverted — nested rayon pessimization hypothesis; iter 25 P33 parallel inner rlc_combine flat −0.69%, reverted — only ~11% of ReduceOpenings time is inner-loop parallelizable; iter 26 P35 parallel-over-groups fused_rlc_reduce flat +1.19%, reverted — likely single dominant group at log_t=12 so outer par_iter adds overhead with no parallelism gain; iter 27 P36 instrumentation-only — fused_rlc_reduce group-level telemetry confirms single group of 42 claims at log_t=12 with combine_hints = 83.3 ms / rlc_combine = 9.7 ms / materialize = 2 µs → combine_hints is 89% of ReduceOpenings wall and the correct attack target; iter 28 P38 parallel Dory combine_hints (par_iter over rows) flat +3.25%, reverted — rayon overhead at 64 rows × ~1.3 ms/row eats the ~65 ms expected savings at log_t=12; iter 32 P39 end-to-end sparse Dory commit path for OneHot polys + OneHotPolynomial CycleMajor layout fix + batch_g1_additions_multi amortized Montgomery inversion, correct (41/41 green), perf flat muldiv +1.3% / sha2-chain −2.26%, reverted per protocol — architectural prerequisites preserved in git log for future revisit; iter 33 instrumentation-only — `mb::*` + CpuBackend method spans attributed 58.8% of Materialize wall to `eq_project`; iter 34 P42 parallelize `CpuBackend::eq_project` via rayon (`par_chunks_mut` branch 1, `par_iter_mut` branch 2, `PAR_THRESHOLD=1024` gated) → **−11.22% muldiv log_t=12** (1282 ms avg) + **−23.27% sha2-chain log_t=14** (18881 ms avg), ratchet 1444.14 → 1274.20 ms, ratio 4.38× → 4.02×; iter 35 P43 parallelize `R1csSource::compute_matvec` targeting mb::Provided 6345 ms bucket — correct but muldiv +6.3% on 2/3 runs past reject, sha2-chain flat −0.54%, reverted — attribution hypothesis wrong; `mb::Provided` wall not dominated by `compute_matvec`)
 - **Phase 3 stop condition**: `modular.prove_ms ≤ core.prove_ms` at
   `log_t ∈ {18, 20}`, 3 consecutive green iters. Only this exits the loop.
@@ -520,17 +534,13 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
   which for `Cow::Owned` materialize returns means 2 allocations per
   poly. See Notes / Iter 38.
 
-- [ ] P47: Zero-copy upload for `Cow::Owned` materialize returns —
-  target: `ComputeBackend::upload` trait in
-  `crates/jolt-compute/src/backend.rs` + `CpuBackend::upload` +
-  `materialize_binding` caller in `crates/jolt-zkvm/src/runtime/helpers.rs`.
-  **Hypothesis**: every derived/r1cs poly double-allocates (materialize
-  produces Vec, upload clones it). Change trait to accept `Cow<'_, [T]>`
-  (or add `upload_vec(Vec<T>)` method) so `Cow::Owned(v)` becomes
-  `DeviceBuffer::Field(v)` with no copy. **Expected savings**: ~3654 ms
-  at sha2-chain log_t=14 = **~18.5% total wall**; corresponding fraction
-  at muldiv log_t=12. **Abstraction risk**: low — backend trait gains
-  one variant/method; handlers unchanged.
+- [x] P47: Zero-copy upload for `Cow::Owned` materialize returns —
+  target: `ComputeBackend::upload_vec(Vec<T>)` trait method
+  (default forwards to `upload(&data)`); CpuBackend override pass-through;
+  `materialize_binding::Provided` uses `upload_vec(data.into_owned())`.
+  **Result**: sha2-chain log_t=14 **−18.74% vs iter-38 baseline** (19782
+  → 16072 ms avg). Muldiv log_t=12 flat (+1.65% warm avg, within ±5%).
+  Ratchet unchanged. See Notes / Iter 39.
 
 - [ ] P40: Investigate Materialize/MaterializeUnlessFresh super-linear
   scaling — target: `crates/jolt-zkvm/src/runtime/handlers.rs` Materialize
@@ -590,6 +600,71 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
 ## Notes
 
 Design decisions, dead ends, and stall-mode observations accumulate here.
+
+- **Iter 39 — P47 zero-copy upload for Cow::Owned (GREEN — −18.74% sha2-chain log_t=14)**
+  (target: `crates/jolt-compute/src/traits.rs::ComputeBackend` + trait
+  impls in `crates/jolt-cpu/src/backend.rs`, default inheritance in
+  jolt-metal / jolt-hybrid; single caller change in
+  `crates/jolt-zkvm/src/runtime/helpers.rs::materialize_binding`).
+
+  **Motivation**: iter 38 attribution showed `mb::upload` = 3654.68 ms =
+  **67.8% of mb::Provided** at sha2-chain log_t=14, LARGER than
+  `pm::Derived` (2556.20 ms). Root cause: `CpuBackend::upload` was an
+  unconditional `data.to_vec()` clone. For every `Cow::Owned`
+  materialize return (pm::Derived + pm::R1cs), this meant two
+  allocations: materialize produces Vec, upload clones it.
+
+  **Change (~12 LOC across 3 files)**:
+  - `traits.rs`: added `fn upload_vec<T: Scalar>(&self, data: Vec<T>)
+    -> Self::Buffer<T>` to `ComputeBackend` trait with default impl
+    `self.upload(&data)` so Metal/Hybrid inherit unchanged behavior.
+  - `jolt-cpu/backend.rs`: CpuBackend override:
+    `fn upload_vec(&self, data: Vec<T>) -> Vec<T> { data }` — pass-through.
+  - `jolt-zkvm/runtime/helpers.rs`: `mb::Provided` arm changed from
+    `backend.upload(&data)` to `backend.upload_vec(data.into_owned())`.
+    Cow::Owned unwraps without copy; Cow::Borrowed falls back to
+    `slice.to_vec()` in `into_owned()` (rare — pm::Witness and
+    pm::Preprocessed together < 1% of mb::upload).
+
+  **Gates**: transcript_divergence PASS (8.767s), zkvm_proof_accepted
+  PASS (8.855s), full jolt-equivalence 41/41 PASS; clippy clean on
+  jolt-compute + jolt-cpu + jolt-zkvm + jolt-metal + jolt-hybrid.
+
+  **Perf — muldiv log_t=12** (ratchet 1274.20):
+  | Run | modular_prove_ms | Δ vs ratchet |
+  |-----|------------------|--------------|
+  | 1 (cold) | 1421.88 | +11.59% |
+  | 2       | 1290.03 | +1.24%  |
+  | 3       | 1275.14 | +0.07%  |
+  | 4       | 1320.46 | +3.63%  |
+  | warm avg (2-4) | 1295.21 | **+1.65%** (within ±5%, flat) |
+
+  **Perf — sha2-chain log_t=14 num-iters=4**:
+  | Run | modular_prove_ms | Δ vs iter-38 (19782) | Δ vs iter-34 avg (18881) |
+  |-----|------------------|----------------------|--------------------------|
+  | 1   | 16031.13         | −18.96%              | −15.10%                  |
+  | 2   | 16113.32         | −18.55%              | −14.66%                  |
+  | avg | 16072.23         | **−18.74%**          | **−14.87%**              |
+
+  **Modular/core ratio**: sha2-chain log_t=14: 16072 / 1544 = **10.41×**
+  (down from ~12.2× pre-P47). muldiv log_t=12: 1290 / 352 = 3.67×.
+
+  **Decision**: ACCEPT. muldiv flat (no regression), sha2-chain clears
+  +5% accept threshold by ~4× margin. Ratchet at muldiv log_t=12 stays
+  at 1274.20 (no primary-metric improvement), but the secondary program
+  is a meaningful win. Stall counter 2 → 0. Green streak 5 → 6.
+
+  **Iter 40 attack candidates**:
+  - P40: Materialize/MaterializeUnlessFresh super-linear scaling
+    (already queued pre-P47; still the largest remaining log_t=14
+    bucket at ~5.4 s mb::Provided).
+  - P41: parallelize or memoize `multi_pair_g2_setup` (6815 ms at
+    log_t=14 iter 38 = 34.4% total wall, same call count pattern
+    since it's g2 setup).
+  - P48: reduce materialize allocation cost — `pm::Derived` still
+    2556 ms; if K*T sized Vecs are allocated freshly each call and
+    discarded after consumption, allocator pressure could be
+    addressed by pooling.
 
 - **Iter 38 — P46 instrument `mb::upload` span (INFRA — stall counter unchanged)**
   (target: `crates/jolt-zkvm/src/runtime/helpers.rs::materialize_binding`

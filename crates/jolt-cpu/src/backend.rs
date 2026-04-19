@@ -204,6 +204,11 @@ impl ComputeBackend for CpuBackend {
     }
 
     #[inline]
+    fn upload_vec<T: Scalar>(&self, data: Vec<T>) -> Vec<T> {
+        data
+    }
+
+    #[inline]
     fn download<T: Scalar>(&self, buf: &Vec<T>) -> Vec<T> {
         buf.clone()
     }

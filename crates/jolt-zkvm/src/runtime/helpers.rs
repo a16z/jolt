@@ -96,7 +96,10 @@ where
             let _s = tracing::info_span!("mb::Provided").entered();
             let data = provider.materialize(*poly);
             let _s_upload = tracing::info_span!("mb::upload").entered();
-            DeviceBuffer::Field(backend.upload(&data))
+            // Cow::Owned → pass-through on CpuBackend (no memcpy);
+            // Cow::Borrowed → into_owned() does a single to_vec() for the rare
+            // borrow cases (Witness / Preprocessed polys are already ≤ 1% of mb::upload).
+            DeviceBuffer::Field(backend.upload_vec(data.into_owned()))
         }
         InputBinding::EqTable {
             challenges: chs, ..

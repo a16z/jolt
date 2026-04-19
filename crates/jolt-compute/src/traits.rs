@@ -177,6 +177,16 @@ pub trait ComputeBackend: Send + Sync + 'static {
     /// Upload host data to a device buffer.
     fn upload<T: Scalar>(&self, data: &[T]) -> Self::Buffer<T>;
 
+    /// Upload an owned host `Vec<T>` to a device buffer.
+    ///
+    /// Default forwards to `upload(&data)`. CPU backends override to pass the
+    /// `Vec` through without copying — saves a K*T memcpy per materialize
+    /// when the source already owns the vec (e.g., `Cow::Owned` returns).
+    #[inline]
+    fn upload_vec<T: Scalar>(&self, data: Vec<T>) -> Self::Buffer<T> {
+        self.upload(&data)
+    }
+
     /// Download device buffer contents to host memory.
     fn download<T: Scalar>(&self, buf: &Self::Buffer<T>) -> Vec<T>;
 
