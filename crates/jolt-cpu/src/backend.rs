@@ -689,7 +689,12 @@ impl ComputeBackend for CpuBackend {
 
         let half = inner_size / 2;
         let eq_in = hint.eq_input as usize;
-        let GruenQ::LinCombo(q_lincombo) = &hint.q;
+        let q_lincombo = match &hint.q {
+            GruenQ::LinCombo(q) => q,
+            GruenQ::GeneralQ { .. } => {
+                panic!("gruen_segmented_reduce: GeneralQ dispatch not wired yet (iter 72+)")
+            }
+        };
         let a_in = q_lincombo.a_input as usize;
         let b_in = q_lincombo.b_input as usize;
         let c_in = q_lincombo.c_input as usize;

@@ -67,13 +67,34 @@ pub struct GruenHint {
 ///
 /// Distinguishes the specialized linear-combo-of-bilinear-product shape
 /// (fast path for RamRW phase-1) from generic degree-≤2 compositions
-/// (future path for arbitrary eq-factored cubic kernels).
+/// (path for arbitrary eq-factored cubic kernels).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GruenQ {
     /// `q(x) = a(x) · ((1 + γ) · b(x) + γ · c(x))` shape used by
     /// RamRW phase-1 (kernel 3). Consumed by
     /// `CpuBackend::gruen_segmented_reduce`.
     LinCombo(LinComboQ),
+
+    /// Generic degree-≤2 composition carried as a [`Formula`].
+    ///
+    /// The parent kernel's formula factors as `eq(w, x) · q(x)` where
+    /// every [`ProductTerm`](crate::formula::ProductTerm) contains the
+    /// eq input factor. [`GruenQ::GeneralQ`] strips that factor and
+    /// carries the remaining `q(x)` as a standalone degree-≤2 formula
+    /// with its own input numbering; [`input_remap`](Self::GeneralQ::input_remap)
+    /// maps Q's input indices back to the parent kernel's indices so the
+    /// runtime can load the correct buffers.
+    ///
+    /// Consumed by the backend's forthcoming generic-Q Gruen reducer; not
+    /// yet constructed at any call site (iter 71 stub — wiring begins
+    /// iter 72 with kernel 22 HammingBooleanity).
+    GeneralQ {
+        /// The `q(x)` formula with eq factored out; degree must be ≤ 2.
+        q_formula: crate::formula::Formula,
+        /// Maps Q's [`Factor::Input(i)`](crate::formula::Factor::Input) to
+        /// the parent kernel's input index.
+        input_remap: Vec<u32>,
+    },
 }
 
 /// `q(x) = a(x) · ((1 + γ) · b(x) + γ · c(x))` shape for [`GruenQ::LinCombo`].

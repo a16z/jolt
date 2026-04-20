@@ -32,7 +32,33 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 14 (iter 70 P75-A infra-only commit; iter 69 design-only; iter 68 P73 reverted; iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+- **Stall counter**: 15 (iter 71 P75-B infra stub; iter 70 P75-A infra-only commit; iter 69 design-only; iter 68 P73 reverted; iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+
+  iter 71 P75-B INFRA — no behavior change. Added
+  `GruenQ::GeneralQ { q_formula: Formula, input_remap: Vec<u32> }`
+  variant to the enum introduced in iter 70. No constructors yet —
+  the variant is unreachable at runtime. `gruen_segmented_reduce`
+  destructure is now a match with an explicit `panic!()` on
+  `GeneralQ` (unreachable but explicit; removes the
+  irrefutable-let ambiguity once the variant can be constructed).
+  Correctness: 43/43 jolt-equivalence PASS; clippy lib-only -D
+  warnings clean. Perf gate skipped (no behavior change, pure
+  type-level addition). Stall 14 → 15. Green streak preserved at 1.
+  Ratchet unchanged 70762.94 ms. **Next iter 72 P75-C**:
+  - Compile Q formula to a separate `q_eval_fn: Option<Box<EvalFn>>`
+    on `CpuKernel` at compile time, using `generic::compile_fn` at
+    `num_evals = degree(Q) + 1` (grid `{0, 2, ..., degree}` for
+    generic path). For Q of degree 2, grid `{0, 2, 3}` gives enough
+    points to interpolate both `Q(0)=q_const` and the quadratic
+    leading coefficient via `c = (2·Q(3) - 3·Q(2) + Q(0)) / 6`.
+  - Add `gruen_segmented_reduce_general_q` method that evaluates
+    Q per-pair via `q_eval_fn` and assembles `(q_const, q_quad)`.
+  - Wire kernel 22 HammingBooleanity as first candidate — Q formula
+    is simply `h(x)² - h(x)` (degree 2, single input). input_remap
+    = [non-eq-input-index]. Because kernel 22 uses `Iteration::Dense`
+    (not segmented), we also need a **non-segmented** dispatcher
+    `gruen_dense_reduce`. This may be a thin wrapper over the
+    segmented form with dummy outer_eq of length 1 = [F::one()].
 
   iter 70 P75-A INFRA — no behavior change. Extended `GruenHint`
   struct field `q_lincombo: LinComboQ` → `q: GruenQ` where
