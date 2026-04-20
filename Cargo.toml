@@ -32,6 +32,7 @@ members = [
   "crates/jolt-sumcheck",
   "crates/jolt-openings",
   "crates/jolt-dory",
+  "crates/jolt-hyperkzg",
   "crates/jolt-riscv",
   "crates/jolt-transcript",
   "crates/jolt-profiling",
