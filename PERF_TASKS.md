@@ -32,7 +32,34 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 2 (iter 56 P66 reverted pathological variance).
+- **Stall counter**: 3 (iter 57 P67 reverted past-reject).
+  iter 57 P67 REVERTED — parallelized `DerivedSource::ram_val`
+  (crates/jolt-witness/src/derived.rs:353) using `rayon::par_chunks_mut`
+  over addresses AND replaced the per-cycle compare+write loop with
+  span-by-span `slice::fill` for constant spans. iter-56 profile
+  showed ram_val at 6843 ms / 1 call = 9.7% wall (up from iter-52's
+  8.3% due to ratchet improvement). Hypothesis: span-wise bulk writes
+  (memset-like) + parallelism across addresses (each chunk of length
+  t is unique mutable subrange of val, no sharing) SHOULD differ from
+  iter 51's failed per-cycle-inner-loop par attempt by reducing write
+  count 2x (memset fills one cache line at a time) and enabling SIMD
+  vectorization on the fill. Added `rayon = { workspace = true }` to
+  jolt-witness/Cargo.toml. Correctness gate green 43/43 jolt-equivalence.
+  Clippy lib-only -D warnings clean (pre-existing test compile issue
+  in polynomials.rs unrelated to this change). Perf gate: run 1
+  modular 76641.73 ms (**+8.31% past reject**, core 6454 = +65% thermal
+  — hot hardware). Past-reject threshold crossed on run 1, revert
+  immediate per protocol. **Lesson**: span-fill + par across addresses
+  DOES NOT recover the lost wall from iter 51's per-cycle par attempt
+  — same underlying memory-bandwidth / shared-allocation contention
+  dominates, even with 2x fewer writes. The `val` buffer is ~2 GB
+  (k × t × 32 bytes) and concurrent K-sized writes to a single
+  contiguous allocation remain the bottleneck regardless of
+  write-granularity. Closes the "parallelize ram_val via span fill"
+  avenue. Future RAM attacks: attack `access_events: Vec<Vec<...>>`
+  build phase (sequential O(T)) OR restructure to avoid materializing
+  the full val buffer (move computation into downstream consumer).
+  Ratchet unchanged 70762.94 ms.
   iter 56 P66 REVERTED — parallelized `CpuBackend::bind()` across
   polynomials for `Dense | DenseTensor | Gruen` iteration types via
   `inputs.par_iter_mut().for_each(|buf| interpolate_vec_inplace(...))`
