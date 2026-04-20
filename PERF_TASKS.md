@@ -32,9 +32,41 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 7 (iter 63 P90 reverted +11.3%; iter 62 P80 reverted).
-  Iter 64 escalates to P70 sparse-eq-project (structural, highest leverage
-  in remaining P-item queue).
+- **Stall counter**: 8 (iter 64 P70 reverted flat/inconclusive; iter 63 P90 reverted).
+  Iter 65 pivots — either revisit gruen (25% wall, 16 calls) with a new
+  pre-chunk tactic, or attack interpolate_inplace's 17416 call count via
+  call coalescing, or P73 CompactPolynomial for ram_val (7s span).
+  iter 64 P70 REVERTED — structural replacement of `EqProject` with sparse
+  variants (`EqPushforward` + `EqGather`) for ram_ra_indicator's 2 consumer
+  sites. Site 1 (ram_raf_ra, RAF eval): EqProject over cycle dim (eq_point
+  = r_cycle, output = K-sized) → EqPushforward { indices: RamGatherIndex,
+  output_size: K }. Site 2 (BatchEq(10) in ram_vc kernel): EqProject over
+  address dim (eq_point = r_address, output = T-sized) → EqGather
+  { eq_challenges: r_address, indices: RamGatherIndex }. Discovery mid-impl:
+  CpuBackend::eq_project has TWO branches — (eq_table.len()==inner_size)
+  projects cycle→addr returning K-sized, else projects addr→cycle returning
+  T-sized. Only the second branch (addr→cycle) was collapsible to EqGather
+  since EqPushforward only projects cycle→addr. RamGatherIndex already
+  existed as derived source with u64::MAX sentinel — no new derivation
+  needed. Expected 8-12 s savings (4.9 s ram_ra_indicator materialization +
+  ~8 s from 2× 4.2s K-sized eq_project calls per iter 61 profile).
+  Correctness: 43/43 jolt-equivalence PASS. Clippy -D warnings clean on
+  jolt-compiler+witness+zkvm. Perf gate: run 1 modular **70024.71 ms
+  (-1.04%)**, ratio 17.09× (vs 18.14× = -5.8% ratio improvement); run 2
+  modular **70733.55 ms (-0.04%)**, ratio 17.60× (-3.0% ratio). Both runs
+  in inconclusive ±5% band on ABSOLUTE → revert as flat per protocol.
+  **Ratio improvement is REAL and CONSISTENT** (-3% to -6%) — change helps
+  but not enough to cross absolute 5% threshold when combined with
+  ~3% thermal core variance. **Lesson**: sha2-chain log_t=16 has smaller
+  K than iter-61-profile extrapolation suggested (RSS 4 GB ⇒ K ≈ 2^14,
+  not 2^21), so actual savings from eliminating O(K*T) path ≈ 2 s,
+  not 8 s. Plus ram_gather_index materialization adds ~0.5-1 s
+  (called 2× per proof). **Closes "EqProject → EqPushforward/EqGather for
+  ram_ra_indicator" as single-iter win**. The replacement is
+  structurally cleaner and net-neutral perf-wise; could be bundled with
+  other changes to amortize into a combined ≥5% win. Stall 7 → 8.
+  Green streak preserved at 1 (iter 54 P64 holds). Ratchet unchanged
+  70762.94 ms.
   iter 63 P90 REVERTED — split `DerivedSource::ram_val` into fast-path
   for event-free addresses (skip if `init == 0`, `slice::fill(F::from_u64(init))`
   otherwise) vs slow-path for active addresses (hot per-cycle loop unchanged).
