@@ -29,6 +29,7 @@ members = [
   "crates/jolt-lookup-tables",
   "crates/jolt-r1cs",
   "crates/jolt-sumcheck",
+  "crates/jolt-openings",
   "crates/jolt-riscv",
   "crates/jolt-riscv-derive",
   "crates/jolt-transcript",
