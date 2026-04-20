@@ -2953,6 +2953,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-r1cs"
+version = "0.1.0"
+dependencies = [
+ "jolt-field",
+ "jolt-poly",
+ "num-traits",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "serde",
+ "tracing",
+]
+
+[[package]]
 name = "jolt-riscv"
 version = "0.1.0"
 dependencies = [
