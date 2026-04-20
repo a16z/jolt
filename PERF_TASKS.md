@@ -32,7 +32,56 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 9 (iter 51 P-ram_val-par REVERTED — `par_chunks_mut(t)`
+- **Stall counter**: 9 (iter 52 INFRA — fresh sha2-chain log_t=16 Perfetto
+  trace captured. `benchmark-runs/perfetto_traces/iter52-profile.json`.
+  Modular 78934 ms (+1.8% vs 77525 ratchet, flat in ±5% band; no ratchet
+  move). **Self-time top 10** (~95% of wall):
+    | # | span | self ms | % | calls | ms/call |
+    |--:|------|--------:|--:|------:|--------:|
+    | 1 | `reduce_dense` | 31007 | **39.3%** | 2373 | 13.1 |
+    | 2 | `CpuBackend::gruen_segmented_reduce` | 19078 | **24.2%** | 16 | 1192 |
+    | 3 | `interpolate_inplace` | 18362 | **23.3%** | 17416 | 1.05 |
+    | 4 | `multi_pair_g2_setup_parallel` | 9578 | 12.1% | 62 | 154 |
+    | 5 | `CpuBackend::eq_project` | 9341 | 11.8% | 82 | 113.9 |
+    | 6 | `derived::ram_val` | 6567 | 8.3% | 1 | 6567 |
+    | 7 | `derived::ram_ra_indicator` | 4806 | 6.1% | 2 | 2403 |
+    | 8 | `CpuBackend::segmented_reduce` | 3045 | 3.9% | 16 | 190 |
+    | 9 | `G1::msm` | 2381 | 3.0% | 43043 | 0.055 |
+    | 10| `derived::ram_combined_ra` | 2332 | 3.0% | 1 | 2332 |
+  **Shape distribution for `reduce_dense`** (2373 total calls):
+    | (ni,ne) | calls | incl ms | ms/call |
+    |--------:|------:|--------:|--------:|
+    | (6,4)   | 2048  | 25780   | 12.59   |
+    | (41,4)  | 20    | 6863    | 343.1   |
+    | (33,6)  | 16    | 199     | 12.4    |
+    | (10,6)  | 16    | 117     | 7.3     |
+    | (10,11) | 16    | 70      | 4.4     |
+    | rest    | 257   | ~160    | 0.6     |
+    **`(6,4)` is 82% of reduce_dense wall**; iter 42/43/49 all tried
+    specializing this arm and reverted under thermal variance. **`(41,4)`
+    at 343 ms/call** is the extreme outlier — 20 calls = 22% of wall.
+  **Parent-attributed breakdowns**:
+  - `interpolate_inplace`: 99% of time (18262/18362 ms) lives under
+    `InstanceBind` parent (2978 calls × 6.13 ms). Remaining 14368 tiny
+    calls under `Bind` parent average 6 µs (negligible). Confirms
+    **InstanceBind is the bind hot path**, not direct Bind ops. 2978
+    sub-calls / ~55 polys-per-call / ~54 InstanceBind ops / ~20 rounds
+    = ~2-3 InstanceBind ops per round on average.
+  - `reduce_dense`: 1995 calls (23489 ms) under ROOT (tracing anomaly,
+    likely top-level dispatch), 308 calls (7497 ms / 24 ms-avg) under
+    `InstanceReduce` parent.
+  **Changes vs iter 47 profile**: `multi_pair_g2_setup` call count
+  halved (124 → 62), saving ~1 s wall. Everything else ~identical. The
+  reason is undiagnosed — may be from the recent `auth/self-verify` /
+  `commit-skip-alignment` fixes since iter 47. **Closed avenues after
+  iters 42/43/49/50/51**: fixed-arm expansion on exact (NI,NE) shapes,
+  outer-rayon on tiny inner work (P45/P53/P55-narrow), nested
+  parallelism on gruen (P56), cross-binding source cache (P50
+  subset), outer-rayon on single big-call derived (P51 ram_val).
+  **New P-items appended below (P61, P62, P63)**. Iter 53 picks a
+  structural attack with >15% expected gain — not micro-opts.
+  Infra commit, stall unchanged at 9.
+  iter 51 P-ram_val-par REVERTED — `par_chunks_mut(t)`
   on `val` zipped with `access_events.par_iter()` and
   `initial_state.par_iter()` in `DerivedSource::ram_val`
   (crates/jolt-witness/src/derived.rs:353). Hypothesis: 6563 ms × 1 call
@@ -1071,6 +1120,88 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
     - **Expected delta**: INFRA — output is a shape distribution map
       that grounds P54 / (P51-retry with narrowed shape list) / a
       structural rewrite of reduce_dense_dynamic.
+    - **Status (iter 52)**: DONE. Shape distribution:
+      `(6,4)` = 25780 ms / 82% of reduce_dense; `(41,4)` = 6863 ms / 22%;
+      all others <1% each. Iter 42/43/49 already proved the exact-arm
+      specialization regresses under thermal variance. **Takeaway for
+      P61**: bound-based NE specialization (not exact-match) is the
+      remaining unexplored specialization angle.
+
+- [ ] P61: Fused bind+reduce across consecutive rounds —
+  target: new `Op::ReduceWithBindPrep` + `Op::BindFinalize` pair
+  replacing the current `Op::InstanceReduce` + `Op::InstanceBind`
+  sequence. CPU backend gains
+  `reduce_and_prep(inputs) -> (round_evals, prepped_state)` that
+  computes round-R evals AND writes `delta[i] = hi - lo` into each
+  poly's `hi` slot in one memory sweep. After verifier challenge,
+  `bind_finalize(poly, challenge)` does `poly[i] = lo + challenge * delta[i]`
+  in a single pass. Combines the two passes (reduce + bind) into one
+  full-read + one half-read-write (instead of two full-reads + one
+  half-write).
+    - **Hypothesis**: iter-47 + iter-52 profiles show `reduce_dense`
+      (31 s) + `interpolate_inplace` (18 s) = 49 s = 62% of wall doing
+      memory-bound work on the SAME polynomial buffers across back-to-
+      back rounds. Halving the memory bandwidth requirement on the
+      bind side (one read instead of two) targets the second-pass reads
+      directly — a bandwidth-bound kernel on DDR5 should scale roughly
+      linearly with reads eliminated.
+    - **Abstraction risk**: high. Needs new compiler op types, new
+      backend methods, runtime schedule rework. Bind is naturally
+      split into a "prep" phase (before challenge) and "finalize"
+      phase (after challenge), matching the sumcheck data-flow
+      structure. Handler stays ≤30 LOC per op — the complexity lives
+      in the compiler's schedule lowering and the new CPU-backend
+      method. Must be validated against `modular_self_verify` to
+      confirm no transcript divergence.
+    - **Expected delta**: 15-25% total wall if memory-bandwidth bound;
+      10-15% if compute-bound within the reduce kernel. Conservative
+      floor: 8-10% from eliminating one full poly read per round
+      across ~20 rounds × ~55 polys × 2^(16-r) elements each.
+      **ABSTRACTION WARNING**: this is a structural change across
+      compiler + runtime + backend. Budget 2-3 iters to implement,
+      debug, and verify transcript parity. If iter 53 picks P61,
+      iters 54-55 may be follow-up correctness fixes.
+
+- [ ] P62: Bound-NE specialization of `reduce_dense_dynamic` —
+  target: `crates/jolt-cpu/src/backend.rs::reduce_dense`.
+    - **Hypothesis**: iter-52 shape distribution shows 82% of
+      reduce_dense wall at (6,4) and 22% at (41,4). Both fall
+      through to `reduce_dense_dynamic`. Iter 42/43/49 tried exact-
+      match fixed arms on these shapes and failed under thermal
+      variance — likely an I-cache pressure effect from adding more
+      specialized code at the dispatch site. Alternative: create
+      ONE bound-based specialization that covers ALL num_evals=4
+      cases (and possibly num_evals≤8) with stack-allocated
+      `[F::Accumulator; MAX_NE]`, generic over MAX_NE but iterating
+      over ACTUAL num_evals. Dispatch arm: `(_, ne) if ne == 4 =>
+      reduce_dense_bounded::<F, 4>(...)`. Single extra instantiation,
+      limited I-cache impact, same stack-array benefit as fixed arms.
+    - **Abstraction risk**: low — single new function, inline into
+      dispatch match. Must measure I-cache impact with perf counters
+      if still regresses, but 1 new instantiation vs iter-42's 2 exact
+      arms should be safer.
+    - **Expected delta**: 3-8% wall — upper if stack-array accumulator
+      is the dominant missing optimization; lower if thermal variance
+      still dominates.
+
+- [ ] P63: Investigate `eq_project` eq_table recomputation —
+  target: `crates/jolt-cpu/src/backend.rs::eq_project`.
+    - **Hypothesis**: iter-52 profile shows `CpuBackend::eq_project`
+      at **9341 ms / 82 calls = 113.9 ms per call, 11.8% wall**. Each
+      call recomputes `jolt_poly::EqPolynomial::evals(eq_point)`
+      before the project loop. If multiple calls in the same sumcheck
+      round share the same `eq_point` (same challenge vector
+      projection), we redundantly compute the eq_table O(2^|eq_point|)
+      field ops. Add a short-TTL cache keyed by `hash(eq_point)` inside
+      CpuBackend (thread-local or RwLock). Conservative version:
+      count unique eq_points per round first as instrumentation; if
+      cache-hit-rate > 50%, ship the cache.
+    - **Abstraction risk**: low — add ThreadLocal<HashMap<[u8; 32],
+      Vec<F>>> or similar; invalidate per-round via a round counter.
+    - **Expected delta**: 2-5% wall if eq_table compute is significant
+      fraction of eq_project time (likely 10-30% given `EqPolynomial::
+      evals` builds 2^n entries with n multiplications each); higher
+      if cache-hit-rate is near 100% within rounds.
 
 
 ## Notes
