@@ -32,7 +32,27 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 4 (iter 45 INFRA — appended P54-P57 to hypothesis
+- **Stall counter**: 5 (iter 46 P55-narrow REVERTED — partition-by-size
+  `interpolate_inplace_batch` trait method: filter polys by
+  `buf.len() / 2 < PAR_THRESHOLD` then outer-rayon the small set while
+  large polys rely on their internal rayon. Added `Vec<&mut Buffer<F>>`
+  batch entry point via `device_buffers.iter_mut().filter_map(...)`.
+  Correctness gate green (43/43 jolt-equivalence pass, including
+  `modular_self_verify`, `transcript_divergence`,
+  `zkvm_proof_accepted_by_core_verifier`). Perf gate: run 1 modular
+  80934 ms (+4.4% vs 77525 ratchet, core 3988 ms +1.2%); run 2 modular
+  80933 ms (+4.4%, core 4012 ms +1.9%). Both runs consistently +4.4%
+  inside the ±5% inconclusive band → revert as flat.
+  **Lesson**: the hypothesis was "outer rayon over small polys beats
+  serial dispatch." Two plausible reasons for the regression: (a) the
+  `device_buffers.iter_mut().filter_map(|(pid, buf)| to_bind.contains(pid)...)`
+  replaces O(|kdef.inputs|) HashMap::get_mut calls with one O(|device_buffers|)
+  scan — at ~100 device buffers × 319 InstanceBinds, that's ~31K hash
+  comparisons added; (b) the Vec<&mut Buffer> + partition + rayon
+  dispatch has overhead exceeding the savings when small.len() is
+  already bounded by batch-size parallelism above it. Iter 47 at stall
+  5 → per protocol, run fresh --profile and append new P-items
+  informed by updated hot-span map. iter 45 INFRA — appended P54-P57 to hypothesis
   queue informed by iter-43 sha2-chain log_t=16 profile attribution
   (reduce_dense 43.1%, InstanceSegmentedReduce 26.7%, interpolate_inplace
   23.4%, InstanceBind 23.3%, gruen_segmented_reduce 22.8%, mb::EqProject
