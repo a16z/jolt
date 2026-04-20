@@ -30,6 +30,7 @@ members = [
   "crates/jolt-r1cs",
   "crates/jolt-sumcheck",
   "crates/jolt-openings",
+  "crates/jolt-dory",
   "crates/jolt-riscv",
   "crates/jolt-riscv-derive",
   "crates/jolt-transcript",
@@ -257,6 +258,7 @@ dory = { package = "dory-pcs", version = "0.3.0", features = [
   "backends",
   "cache",
   "disk-persistence",
+  "zk",
 ] }
 
 # Core Utilities
