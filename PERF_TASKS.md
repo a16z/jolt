@@ -32,8 +32,36 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 6 (iter 62 P80 reverted +9% to +19%; iter 61 infra).
-  Iter 63 picks next from P70-P73 queue (P70 sparse-eq-project next).
+- **Stall counter**: 7 (iter 63 P90 reverted +11.3%; iter 62 P80 reverted).
+  Iter 64 escalates to P70 sparse-eq-project (structural, highest leverage
+  in remaining P-item queue).
+  iter 63 P90 REVERTED — split `DerivedSource::ram_val` into fast-path
+  for event-free addresses (skip if `init == 0`, `slice::fill(F::from_u64(init))`
+  otherwise) vs slow-path for active addresses (hot per-cycle loop unchanged).
+  Motivation: combine P72 lesson (pre-filter OUTSIDE hot loop) with P80
+  failure-recovery (keep active-address loop vectorization intact).
+  Expected 2-4 s if meaningful fraction of addresses event-free.
+  Correctness: 43/43 PASS; clippy lib-only -D warnings clean. Perf gate:
+  run 1 modular **78743 ms (+11.3% past reject)**, core 4083.5, ratio
+  **19.28×** vs ratchet 18.14× = +6.3% relative regression. Past reject on
+  both absolute and ratio → revert-immediate per protocol.
+  **Lesson**: even pre-filtered-outside-hot-loop design regressed.
+  Possible causes: (a) fast-path branch on `events.is_empty()` adds a check
+  to every address iter including active ones (~T active in sha2-chain so
+  branch runs mostly "take slow path" — predictable but nonzero cost);
+  (b) `slice::fill` with `F::from_u64(init)` for the few nonzero-init-no-events
+  addresses is slower than the original loop due to fewer-but-larger memcpy
+  calls missing cache residency; (c) outer branching changed instruction
+  cache layout. **Closes "ram_val fast/slow path split" avenue** — iters 51,
+  57, 62, 63 all show ram_val optimizations regressing. ram_val (#5 profile
+  span at 7 s) is LOCKED IN; combined with iter 60 ram_ra_indicator, the
+  entire witness-materialization family appears exhausted. **Iter 64 target**:
+  escalate to P70 structural — add sparse-source tagging to compiler
+  `InputBinding::EqProject` + `eq_project_sparse` backend method iterating
+  only the T nonzeros from ram_ra_indicator's sparse (cycle→addr) form.
+  Eliminates ram_ra_indicator materialization entirely (rather than tweaking
+  allocation). Multi-iter structural. Stall 6 → 7. Green streak preserved
+  at 1 (iter 54 P64 holds). Ratchet unchanged 70762.94 ms.
   iter 62 P80 REVERTED — skip inner T-loop in `DerivedSource::ram_val`
   when `events.is_empty() && initial_state[addr] == 0`. Motivation:
   for sha2-chain most RAM addresses are never touched AND zero-init,
