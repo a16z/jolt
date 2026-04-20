@@ -24,15 +24,42 @@ when the Phase 3 stop condition fires.
   2^16 cycles instead for every loop now and focus on optimizing that".
   Replaces the prior muldiv log_t=12 standard (real log_t≈10, ratio ~4×)
   with a production-shape workload (real log_t=16, ratio ~19.7×).
-- **log_t**: 16 ratchet on sha2-chain --num-iters=16 (ratchet 77525.5 ms
-  modular, 3938.4 ms core best). Full bench command:
+- **log_t**: 16 ratchet on sha2-chain --num-iters=16 (ratchet **70762.9 ms
+  modular**, 3901.3 ms core best; updated iter 54). Full bench command:
   `cargo run --release -p jolt-bench -- --program sha2-chain --num-iters 16
   --iters 1 --warmup 1 --log-t 16 --json perf/last-iter.json`.
   `--log-t N` is a CEILING matching `JoltSharedPreprocessing::new`.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 10 (iter 53 P62-variant REVERTED — modified
+- **Stall counter**: 0 (iter 54 P64 GREEN — stall reset).
+  iter 54 P64 GREEN — `reduce_dense_dynamic`
+  inner-loop refactor: hoisted `BindingOrder` match out of the hot
+  `for i in 0..half` body via macro-based dispatch to two order-
+  specialized branches, and replaced per-iteration `inputs[k][2*i]` /
+  `inputs[k][i+half]` bounds-checked indexing with pre-computed
+  `*const F` pointer loads (`ptrs: Vec<usize>` + `*p.add(2*i)`-style
+  unsafe reads), mirroring the structure of `reduce_dense_fixed`.
+  Applied to BOTH serial and parallel branches. **Why it may help**:
+  iter-52 profile showed (6,4) shape = 82% of reduce_dense wall (25.78 s)
+  and (41,4) shape = 22% (6.86 s), both falling through to the dynamic
+  path. Previous monomorphization attempts (iter 42/43/49, fixed arms
+  for these exact shapes) reverted under thermal variance / I-cache
+  pressure. This refactor keeps the single dynamic body but makes it
+  (a) bounds-check-free like the fixed path, (b) branch-free in the
+  inner loop (order match is one hoisted outer branch per call, not
+  2 nested matches per inner iteration), giving LLVM a clean view for
+  vectorization / register allocation. No new monomorphizations added.
+  Correctness gate green 43/43 jolt-equivalence (transcript_divergence,
+  zkvm_proof_accepted_by_core_verifier, modular_self_verify all pass).
+  Clippy -D warnings clean (jolt-cpu). Perf gate three runs: run 1
+  modular **70762.94 ms (−8.71% vs 77525.5 ratchet, past accept)**,
+  core 4327.61 (+9.9% thermal); run 2 modular 77773.01 (+0.32% flat
+  inconclusive), core 3976.28 (+1.0%); run 3 modular **70781.79
+  (−8.70% past accept)**, core 3901.32 (−1.0%). Two-of-three past
+  accept, one flat, none past reject. **Best-of-3 accept** — ratchet
+  updated to 70762.94 ms. Ratio 70762.94/3901.32 = 18.14× (was 19.68×).
+  Peak RSS unchanged (~5.3 GB). iter 53 P62-variant REVERTED — modified
   `reduce_dense_dynamic` in-place (NOT a new specialization arm) to use
   stack-allocated `[F; MAX_NI=128]` and `[F::Accumulator; MAX_NE=32]`
   scratch in the rayon fold init, replacing the 4 per-chunk `Vec`
@@ -455,18 +482,19 @@ when the Phase 3 stop condition fires.
   instrumentation-only; iter 21 flat; iter 20 green; iter 19 green;
   iter 18 reverted; iter 17 profiling-only; iter 16 infra; iter 15 infra;
   iter 14 infra; iter 13 flat; iter 12 green)
-- **Last green iter**: 39 — P47 zero-copy upload for `Cow::Owned`
-  materialize returns. Added `ComputeBackend::upload_vec(Vec<T>)` trait
-  method (default forwards to `upload(&data)`); CpuBackend overrides
-  to pass-through (zero copy). Changed `materialize_binding::Provided`
-  arm to `backend.upload_vec(data.into_owned())`. Eliminates the
-  redundant `data.to_vec()` clone for every Derived/R1cs materialize
-  (Cow::Owned cases). Muldiv log_t=12: 1290/1275/1320 ms warm avg
-  1295 = **+1.65% vs 1274.20 ratchet (flat, inconclusive band)**.
-  sha2-chain log_t=14 num-iters=4: **16031/16113 = 16072 ms avg =
-  −18.74% vs iter-38 baseline 19782** (or −14.87% vs iter-34 avg 18881,
-  or −10.76% vs iter-36 baseline 18011). Handler unchanged; backend
-  trait gains one method with default delegation.
+- **Last green iter**: 54 — P64 `reduce_dense_dynamic` inner-loop
+  refactor: hoisted `BindingOrder` match out of the hot `for i in 0..half`
+  body (macro-dispatched to two order-specialized branches), and
+  replaced per-iteration bounds-checked indexing with pre-computed
+  `*const F` pointer loads mirroring `reduce_dense_fixed`. Applied
+  to both serial and parallel branches; no new monomorphizations.
+  Three-run bench: 70762.94 / 77773.01 / 70781.79 ms (two of three
+  past accept, −8.71% / +0.32% / −8.70% vs 77525.5 ratchet).
+  Best-of-3 → ratchet updated to 70762.94 ms. Ratio 18.14× (was 19.68×).
+  Targets the two dominant dynamic-path shapes: (6,4) 82% and (41,4)
+  22% of reduce_dense wall per iter-52 profile. Prior green: iter 39
+  P47 zero-copy upload for `Cow::Owned` materialize returns (−18.74%
+  on log_t=14 sha2-chain).
 - **Green streak**: 5 (iter 2 P11 flat +0.5%; iter 3 P12 flat −2.9%; iter 4 P13 flat −1.9%; iter 5 P14 flat +1.8%; iter 6 P17 regressed +6.4%; iter 7 P18 flat −0.1%; iter 8 P19 flat +0.6%; iter 9 P16 flat −3.45%; iter 10 P20 flat +0.47%; iter 11 instrumentation-only; iter 12 P24 −9.24%; iter 13 P25 flat +0.10%; iter 14 Gruen infra primitive; iter 15 Gruen infra reduce; iter 16 Gruen infra variant; iter 17 post-P24 re-profile; iter 18 Gruen dispatch reverted; iter 19 Gruen end-to-end −49.2%; iter 20 parallel Op::Commit −22.6%; iter 21 P28 parallelize lt_evals + EqPlusOne::evals flat −1.7%; iter 22 instrumentation-only — per-stage CPU vs wall saturation; iter 23 instrumentation-only — per-op-class CPU vs wall saturation + explicit dory `parallel` feature; iter 24 P32 parallel Materialize outer dispatch flat −0.55%, reverted — nested rayon pessimization hypothesis; iter 25 P33 parallel inner rlc_combine flat −0.69%, reverted — only ~11% of ReduceOpenings time is inner-loop parallelizable; iter 26 P35 parallel-over-groups fused_rlc_reduce flat +1.19%, reverted — likely single dominant group at log_t=12 so outer par_iter adds overhead with no parallelism gain; iter 27 P36 instrumentation-only — fused_rlc_reduce group-level telemetry confirms single group of 42 claims at log_t=12 with combine_hints = 83.3 ms / rlc_combine = 9.7 ms / materialize = 2 µs → combine_hints is 89% of ReduceOpenings wall and the correct attack target; iter 28 P38 parallel Dory combine_hints (par_iter over rows) flat +3.25%, reverted — rayon overhead at 64 rows × ~1.3 ms/row eats the ~65 ms expected savings at log_t=12; iter 32 P39 end-to-end sparse Dory commit path for OneHot polys + OneHotPolynomial CycleMajor layout fix + batch_g1_additions_multi amortized Montgomery inversion, correct (41/41 green), perf flat muldiv +1.3% / sha2-chain −2.26%, reverted per protocol — architectural prerequisites preserved in git log for future revisit; iter 33 instrumentation-only — `mb::*` + CpuBackend method spans attributed 58.8% of Materialize wall to `eq_project`; iter 34 P42 parallelize `CpuBackend::eq_project` via rayon (`par_chunks_mut` branch 1, `par_iter_mut` branch 2, `PAR_THRESHOLD=1024` gated) → **−11.22% muldiv log_t=12** (1282 ms avg) + **−23.27% sha2-chain log_t=14** (18881 ms avg), ratchet 1444.14 → 1274.20 ms, ratio 4.38× → 4.02×; iter 35 P43 parallelize `R1csSource::compute_matvec` targeting mb::Provided 6345 ms bucket — correct but muldiv +6.3% on 2/3 runs past reject, sha2-chain flat −0.54%, reverted — attribution hypothesis wrong; `mb::Provided` wall not dominated by `compute_matvec`)
 - **Phase 3 stop condition**: `modular.prove_ms ≤ core.prove_ms` at
   `log_t ∈ {18, 20}`, 3 consecutive green iters. Only this exits the loop.

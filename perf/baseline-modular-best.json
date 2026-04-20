@@ -13,12 +13,12 @@
     },
     {
       "stack": "modular",
-      "prove_ms": 77525.488666,
-      "verify_ms": 0.0955,
-      "peak_rss_mb": 4990,
-      "proof_bytes": 78382,
+      "prove_ms": 70762.9385,
+      "verify_ms": 0.737458,
+      "peak_rss_mb": 5384,
+      "proof_bytes": 80090,
       "proof_encoding": "bincode-serde",
-      "ratchet_note": "Initial ratchet at new standard: min of 2 warm runs (77525.5 / 78615.8 ms); 3rd run at 102154 was a thermal outlier. Core best: 3938.4 ms (run 2). Ratio 19.68x."
+      "ratchet_note": "Iter 54 P64 green — reduce_dense_dynamic hoist BindingOrder match + unsafe pointer loads. Best of 3 runs (run 1: 70762.94, run 2: 77773.01, run 3: 70781.79); two past accept, one flat. -8.71% vs prior 77525.5 ratchet. Ratio 70762.94 / 3901.31 (core best run 3) = 18.14x (vs 19.68x prior)."
     }
   ],
   "num_iters": 16,

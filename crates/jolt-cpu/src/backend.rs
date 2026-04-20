@@ -949,6 +949,10 @@ fn reduce_dense_fixed<F: Field, const NI: usize, const NE: usize>(
 
 /// Dynamic dense reduce for uncommon input/eval counts. Uses heap-allocated
 /// scratch Vecs.
+///
+/// Hoists the `BindingOrder` match out of the hot inner loop by dispatching
+/// to an order-specialized body, and replaces per-iteration `inputs[k][2*i]`
+/// bounds-checked indexing with pre-computed `*const F` pointer loads.
 #[allow(clippy::ptr_arg)]
 fn reduce_dense_dynamic<F: Field>(
     inputs: &[&Vec<F>],
@@ -959,13 +963,30 @@ fn reduce_dense_dynamic<F: Field>(
     half: usize,
     order: BindingOrder,
 ) -> Vec<F> {
+    // Pre-compute data pointers as usize to eliminate per-iteration
+    // `&[&Vec<F>]` indirection and allow capture in Rayon closures
+    // (usize is Send+Sync; raw pointers are not).
+    let ptrs: Vec<usize> = inputs.iter().map(|v| v.as_ptr() as usize).collect();
+
     let new_accs =
         || -> Vec<F::Accumulator> { (0..num_evals).map(|_| F::Accumulator::default()).collect() };
 
-    let pair = |input: &[F], i: usize| -> (F, F) {
-        match order {
-            BindingOrder::LowToHigh => (input[2 * i], input[2 * i + 1]),
-            BindingOrder::HighToLow => (input[i], input[i + half]),
+    // SAFETY in both branches: ptrs[k] was derived from inputs[k].as_ptr(),
+    // valid for inputs[k].len() = 2*half elements. Indices 2*i, 2*i+1
+    // (LowToHigh) or i, i+half (HighToLow) are in [0, 2*half), within the
+    // allocation.
+    let load_pair_l2h = |ptrs: &[usize], k: usize, i: usize| -> (F, F) {
+        // SAFETY: see comment above; 2*i, 2*i+1 < 2*half = input length.
+        unsafe {
+            let p = ptrs[k] as *const F;
+            (*p.add(2 * i), *p.add(2 * i + 1))
+        }
+    };
+    let load_pair_h2l = |ptrs: &[usize], k: usize, i: usize| -> (F, F) {
+        // SAFETY: see comment above; i, i+half < 2*half = input length.
+        unsafe {
+            let p = ptrs[k] as *const F;
+            (*p.add(i), *p.add(i + half))
         }
     };
 
@@ -974,38 +995,47 @@ fn reduce_dense_dynamic<F: Field>(
         if half >= PAR_THRESHOLD {
             use rayon::prelude::*;
 
-            let accs = (0..half)
-                .into_par_iter()
-                .with_min_len(1024)
-                .fold(
-                    || {
-                        (
-                            new_accs(),
-                            vec![F::zero(); num_inputs],
-                            vec![F::zero(); num_inputs],
-                            vec![F::zero(); num_evals],
+            macro_rules! par_fold_body {
+                ($load:expr) => {{
+                    (0..half)
+                        .into_par_iter()
+                        .with_min_len(1024)
+                        .fold(
+                            || {
+                                (
+                                    new_accs(),
+                                    vec![F::zero(); num_inputs],
+                                    vec![F::zero(); num_inputs],
+                                    vec![F::zero(); num_evals],
+                                )
+                            },
+                            |(mut acc, mut lo, mut hi, mut evals), i| {
+                                for k in 0..num_inputs {
+                                    let (l, h) = $load(&ptrs, k, i);
+                                    lo[k] = l;
+                                    hi[k] = h;
+                                }
+                                kernel.evaluate(&lo, &hi, challenges, &mut evals);
+                                for (a, e) in acc.iter_mut().zip(evals.iter()) {
+                                    a.acc_add(*e);
+                                }
+                                (acc, lo, hi, evals)
+                            },
                         )
-                    },
-                    |(mut acc, mut lo, mut hi, mut evals), i| {
-                        for (k, &input) in inputs.iter().enumerate() {
-                            let (l, h) = pair(input, i);
-                            lo[k] = l;
-                            hi[k] = h;
-                        }
-                        kernel.evaluate(&lo, &hi, challenges, &mut evals);
-                        for (a, e) in acc.iter_mut().zip(evals.iter()) {
-                            a.acc_add(*e);
-                        }
-                        (acc, lo, hi, evals)
-                    },
-                )
-                .map(|(acc, _, _, _)| acc)
-                .reduce(new_accs, |mut a, b| {
-                    for (ai, bi) in a.iter_mut().zip(b) {
-                        ai.merge(bi);
-                    }
-                    a
-                });
+                        .map(|(acc, _, _, _)| acc)
+                        .reduce(new_accs, |mut a, b| {
+                            for (ai, bi) in a.iter_mut().zip(b) {
+                                ai.merge(bi);
+                            }
+                            a
+                        })
+                }};
+            }
+
+            let accs = match order {
+                BindingOrder::LowToHigh => par_fold_body!(load_pair_l2h),
+                BindingOrder::HighToLow => par_fold_body!(load_pair_h2l),
+            };
 
             return accs.into_iter().map(FieldAccumulator::reduce).collect();
         }
@@ -1016,16 +1046,25 @@ fn reduce_dense_dynamic<F: Field>(
     let mut hi = vec![F::zero(); num_inputs];
     let mut evals = vec![F::zero(); num_evals];
 
-    for i in 0..half {
-        for (k, &input) in inputs.iter().enumerate() {
-            let (l, h) = pair(input, i);
-            lo[k] = l;
-            hi[k] = h;
-        }
-        kernel.evaluate(&lo, &hi, challenges, &mut evals);
-        for (a, e) in accs.iter_mut().zip(evals.iter()) {
-            a.acc_add(*e);
-        }
+    macro_rules! serial_body {
+        ($load:expr) => {{
+            for i in 0..half {
+                for k in 0..num_inputs {
+                    let (l, h) = $load(&ptrs, k, i);
+                    lo[k] = l;
+                    hi[k] = h;
+                }
+                kernel.evaluate(&lo, &hi, challenges, &mut evals);
+                for (a, e) in accs.iter_mut().zip(evals.iter()) {
+                    a.acc_add(*e);
+                }
+            }
+        }};
+    }
+
+    match order {
+        BindingOrder::LowToHigh => serial_body!(load_pair_l2h),
+        BindingOrder::HighToLow => serial_body!(load_pair_h2l),
     }
 
     accs.into_iter().map(FieldAccumulator::reduce).collect()
