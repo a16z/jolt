@@ -32,7 +32,28 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 1 (iter 55 P65 reverted flat).
+- **Stall counter**: 2 (iter 56 P66 reverted pathological variance).
+  iter 56 P66 REVERTED — parallelized `CpuBackend::bind()` across
+  polynomials for `Dense | DenseTensor | Gruen` iteration types via
+  `inputs.par_iter_mut().for_each(|buf| interpolate_vec_inplace(...))`
+  when `inputs.len() >= 2`. Hypothesis: 15506 bind calls × 1.23 ms/call
+  = 19 s / 18% wall (iter 56 fresh profile); each InstanceBind passes
+  ~55 independent polys sequentially, wasting cross-poly parallelism.
+  Rayon's nested-par work-stealing expected to handle inner rayon
+  (bind_low_to_high par path) gracefully. Correctness gate green 43/43
+  jolt-equivalence. Clippy -D warnings clean. Perf gate: run 1 modular
+  69802.96 ms (-1.36% vs 70762.94 ratchet, inconclusive), run 2 CAUGHT
+  IN PATHOLOGICAL NESTED-RAYON THRASH — 35+ minute wall, 409% CPU
+  usage (not the 800%+ expected on an 8-core). Killed and reverted
+  immediately. **Lesson**: outer `par_iter_mut` over polys + inner
+  rayon inside `bind_low_to_high` causes work-stealing contention
+  under cache pressure — sometimes fast (run 1), sometimes catastrophic
+  (run 2). Reaffirms iter 48 P56 (gruen nested par) failure mode.
+  **Closed avenue**: simple outer-par across polys without ALSO
+  disabling inner rayon. Future retry of this angle MUST pair with a
+  serial-within-poly path (e.g., `interpolate_vec_inplace_serial`
+  that bypasses the `half >= PAR_THRESHOLD` branch). Not worth
+  pursuing this iter — ratchet unchanged 70762.94 ms.
   iter 55 P65 REVERTED — applied the iter-54 bounds-check-elimination
   pattern to `gruen_segmented_reduce::reduce_outer` (24.2% wall at iter
   52), pre-computing `ra_base`/`val_base`/`inc_base`/`e_base` as `usize`
