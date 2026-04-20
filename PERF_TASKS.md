@@ -32,7 +32,29 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 6 (iter 48 P56 REVERTED — nested/flat parallelism
+- **Stall counter**: 7 (iter 49 P52-retry REVERTED — single `(6, 4)`
+  arm added to `reduce_dense` const-generic dispatch. Same change as
+  iter 43 but with `(41, 4)` excluded (iter 42 flagged `(41, 4)` arm as
+  probable I-cache polluter). Correctness green 43/43. Perf gate: run 1
+  modular 77399 ms (**−0.16% vs 77525 ratchet, flat in ±5%**); run 2
+  modular 96989 ms (**+25.1%, past reject**). Core stable on both runs
+  (4036 / 4072 = +2.5% / +3.4%), so the run-2 regression is NOT thermal.
+  Likely cause: monomorphized `(6, 4)` kernel body adds I-cache pressure
+  at the `reduce_dense` dispatch match site that intermittently causes
+  cache misses on the same codebase under different heap/kernel state.
+  The high between-run variance (−0.16% vs +25%) on identical code
+  indicates this fix's measurement is noise-dominated even at log_t=16.
+  Per protocol, rejected rerun → revert.
+  **Lesson**: fixed-kernel arm expansion for shapes already served
+  acceptably by the dynamic path does not yield a robust win —
+  iter 42 (both arms), iter 43 (6,4 alone), iter 49 (6,4 alone retry)
+  all failed. This closes the "add fixed arms" avenue for sha2-chain
+  log_t=16 at current abstractions. Future reduce_dense attacks need
+  to either (a) rewrite reduce_dense_dynamic to close the fixed-vs-
+  dynamic gap WITHOUT monomorphization (manual unroll, SmallVec stack
+  scratch), or (b) a fully different angle (memory layout, lazy
+  materialization, structural re-ordering of sumcheck inputs).
+  iter 48 P56 REVERTED — nested/flat parallelism
   for `CpuBackend::gruen_segmented_reduce`: (a) parallelized `e_active`
   precompute when `half >= PAR_THRESHOLD`; (b) restructured `reduce_outer`
   into `reduce_outer_chunk(a_idx, start, end)` returning unweighted
