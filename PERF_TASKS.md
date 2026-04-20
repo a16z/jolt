@@ -32,7 +32,48 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 4 (iter 59 P68 reverted +34.18%).
+- **Stall counter**: 5 (iter 60 P69 reverted +43.4% / +103.9%). **Next
+  iter must re-profile per CLAUDE.md stall ≥ 5 trigger**: run
+  `cargo run --release -p jolt-bench -- --program sha2-chain
+  --num-iters 16 --log-t 16 --iters 1 --warmup 1 --profile`
+  → fresh Perfetto trace → append new P-items after re-analyzing
+  self-time top 10.
+  iter 60 P69 REVERTED — swapped `vec![F::zero(); k*t]` →
+  `jolt_poly::thread::unsafe_allocate_zero_vec::<F>(k*t)` in
+  `DerivedSource::ram_ra_indicator` (5.7 s / 1 call @ iter 56) and
+  `DerivedSource::ram_combined_ra` (2.4 s / 1 call @ iter 56). Both
+  allocate a K×T-sized F-element buffer then write ONLY T sparse
+  elements (one per cycle) — the buffer is >99% zeros and most pages
+  are never written. `unsafe_allocate_zero_vec` calls
+  `std::alloc::alloc_zeroed` which on Unix backs large allocations
+  with VM-mapped zero pages (no eager memset). Expected 5-8% wall
+  reduction on the combined 8.1 s / 11% wall span. Correctness gate
+  green 43/43 jolt-equivalence. Clippy lib-only -D warnings clean on
+  jolt-witness + jolt-zkvm + jolt-cpu + jolt-poly. Perf gate: run 1
+  modular **101489.62 ms (+43.42% past reject)** with core 18255 ms
+  (thermal-throttled from back-to-back build+clippy); run 2 modular
+  **144297.52 ms (+103.9% past reject)** with core NORMAL at 4596 ms.
+  Run 2 makes the thermal argument invalid — modular got WORSE when
+  core got faster, confirming regression is not thermal. **Lesson**:
+  lazy zero-init via `alloc_zeroed` produces COLD pages for downstream
+  readers. `ram_ra_indicator` / `ram_combined_ra` are CONSUMED by
+  `CpuBackend::eq_project` which linearly scans `source[t * outer +
+  k]` across ALL t×K elements — every page must be touched at least
+  once. With `vec![F::zero();n]`, the eager write warms L2/L3 cache
+  and prefaults pages (mapped + dirty + zero-backed). With
+  `unsafe_allocate_zero_vec`, pages stay demand-paged; downstream
+  linear scan triggers TLB misses + first-touch page-fault storms in
+  the hot read path. The alloc 'savings' is paid for many times over
+  by cache-cold reads. This is the OPPOSITE of my assumption (I
+  thought the zero buffer was barely read — actually linearly scanned
+  in full). **Closes "unsafe_allocate_zero_vec for large sparse
+  polys" avenue** — use it ONLY when the vector is fully overwritten
+  before read (e.g. `EqPolynomial::evals_parallel`). Future retry for
+  ram_ra_indicator / ram_combined_ra must SKIP materialization entirely
+  and stream the 1-per-cycle nonzeros through a sparse-aware consumer
+  (requires ComputeBackend API extension for sparse eq_project).
+  Green streak preserved at 1 (iter 54 P64 holds). Ratchet unchanged
+  70762.94 ms.
   iter 59 P68 REVERTED — outer-parallel `CpuBackend::bind` across
   polys with FORCED SERIAL inner path. Added new `bind_low_to_high_serial`
   / `bind_high_to_low_serial` functions in jolt-poly that never fork a
