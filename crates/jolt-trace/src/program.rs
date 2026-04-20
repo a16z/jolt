@@ -134,12 +134,17 @@ impl Program {
     #[tracing::instrument(skip_all, name = "Program::build_with_features")]
     #[expect(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
     pub fn build_with_features(&mut self, target_dir: &str, extra_features: &[&str]) {
-        if self.elf.is_some() {
+        let is_compute_advice = extra_features.contains(&"compute_advice");
+        let already_built = if is_compute_advice {
+            self.elf_compute_advice.is_some()
+        } else {
+            self.elf.is_some()
+        };
+        if already_built {
             return;
         }
 
         let jolt_cmd = std::env::var("JOLT_PATH").unwrap_or_else(|_| "jolt".to_string());
-        let is_compute_advice = extra_features.contains(&"compute_advice");
         let guest_target_dir = self.guest_target_dir(target_dir, is_compute_advice);
         let args = self.build_args(extra_features, &guest_target_dir);
 

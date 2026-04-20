@@ -342,15 +342,15 @@ impl CycleRow for Cycle {
     }
 
     fn rs1_read(&self) -> Option<(u8, u64)> {
-        self.rs1_read()
+        Cycle::rs1_read(self)
     }
 
     fn rs2_read(&self) -> Option<(u8, u64)> {
-        self.rs2_read()
+        Cycle::rs2_read(self)
     }
 
     fn rd_write(&self) -> Option<(u8, u64, u64)> {
-        self.rd_write()
+        Cycle::rd_write(self)
     }
 
     fn rd_operand(&self) -> Option<u8> {
