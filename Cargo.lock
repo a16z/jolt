@@ -2929,6 +2929,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-openings"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "jolt-crypto",
+ "jolt-field",
+ "jolt-poly",
+ "jolt-transcript",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "serde",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "jolt-optimizations"
 version = "0.5.0"
 source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
