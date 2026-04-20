@@ -32,7 +32,46 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 10 (iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+- **Stall counter**: 11 (iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+
+  iter 67 P72 REVERTED — executed pinned plan: generalized GruenHint
+  from struct → enum `{ LinComboQ | GeneralQ { q_formula: Formula } }`,
+  added `CpuBackend::gruen_segmented_reduce_general_q` that bakes
+  challenge factors per-call then pairs `(lo,hi)` through a degree-≤2 Q
+  formula to emit `(q_const, q_quad)` per pair before Gruen-lifting to
+  degree-3 via `gruen_cubic_evals`. Dispatch wires in
+  `gruen_segmented_reduce` on `matches!(hint, GruenHint::GeneralQ{..})`.
+  Wired RegRW phase-1 kernel (line 3335) with GeneralQ hint: parent
+  formula `eq·rd_wa·val + eq·rd_wa·inc + γ·eq·rs1_ra·val +
+  γ²·eq·rs2_ra·val` factored through Input(0)=eq; Q-formula carries
+  parent's input indexing, so lo/hi slots [0] go unread in Q.
+  Correctness: 43/43 jolt-equivalence PASS; clippy -D warnings clean
+  (jolt-core host + host,zk; modular crates). Perf gate: ratchet
+  70762.94 ms; run1 modular **79362.95 ms (+12.2%)**, core 4195.91,
+  ratio 18.91×; run2 modular **79692.31 ms (+12.6%)**, core 3944.20,
+  ratio 20.20×. Both past reject vs ratchet. However, iter 66 baselines
+  at similar load (82978 ms @ load 8.68; 88962 ms @ load 105) were also
+  past reject — P72 ratios (18.91×, 20.20×) match baseline ratios
+  (18.95×, 20.69×) closely. **P72 is NEUTRAL on ratio but past reject
+  on absolute vs ratchet.** Load at measurement was 19→43; baseline at
+  same load would be ~same. So this is "revert as flat" per protocol
+  (absolute past reject, ratio flat). Strict protocol: revert →
+  commit journal. **Lesson**: RegRW phase-1 alone doesn't move the
+  needle — ni=6,ne=4 pool is 23s total but RegRW is maybe 2-4s of it
+  (16 rounds per instance × 16 instances × some overhead). The ~50%
+  per-pair speedup from Gruen saves ~1-2s (<3% of modular), which gets
+  lost in noise. To extract real value from Gruen extension, need to
+  wire MULTIPLE kernels (InstructionInput at 9 inputs with 9 terms all
+  eq-factored; others TBD) in one iter. **Next iter 68**: re-apply the
+  enum-infra + wire RegRW phase-1 AND InstructionInput AND any other
+  kernels where every term factors through eq (audit all 27 kernels).
+  Cumulative ~5-8 kernels swung Dense→Gruen could deliver 10-20% win
+  IF each kernel's per-call reduce_dense time is material. Before
+  re-applying, refine the per-kernel contribution estimate by running
+  `--profile` and attributing reduce_dense self-time to kernels via
+  the `fields(ni, ne)` span fields. Stall 10 → 11. Green streak
+  preserved at 1 (iter 54 P64 holds). Ratchet unchanged 70762.94 ms.
+
   iter 66 DESIGN STEP — no code changes. Baseline re-measurement at
   lower load (avg 8.68): core 4379 ms, modular 82978 ms (ratio 18.95×),
   rerun at avg 105 load jumped to core 4300/modular 88962 (ratio
