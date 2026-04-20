@@ -32,7 +32,39 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 7 (iter 49 P52-retry REVERTED — single `(6, 4)`
+- **Stall counter**: 8 (iter 50 P58-subset REVERTED — runtime-level
+  host source cache in `RuntimeState::host_source_cache:
+  HashMap<PolynomialId, Vec<F>>` populated by a new `with_cached_source`
+  helper in `runtime/helpers.rs`, covering the 5 `InputBinding` arms
+  whose source is `materialize_binding`'d (EqProject, Transpose,
+  EqGather, EqPushforward, ScaleByChallenge). Cache-on-first-use keyed
+  by PolySource::Derived only; witness/r1cs/preprocessed sources still
+  fresh-materialize. Target: iter-47 trace showed `ram_ra_indicator`
+  with 2 calls × 2439 ms and `ram_combined_ra`/`ram_val` each single-
+  call, suggesting the 2nd EqProject consumer of `ram_ra_indicator`
+  (jolt_core_module.rs lines 2331 and 3492) was redundantly re-running
+  `DerivedSource::compute`. Expected ≈3.2% wall savings (2439 ms /
+  77525 ms). Correctness gate green 43/43 jolt-equivalence
+  (transcript_divergence, zkvm_proof_accepted, modular_self_verify
+  all pass). Perf gate: run 1 modular 79526 ms (+2.58% vs 77525
+  ratchet, core 4298 = +9.1%), run 2 modular 80458 ms (+3.78% vs
+  ratchet, core 4468 = +13.4%). Both runs in ±5% inconclusive band,
+  both slightly slower → revert as flat per protocol. Peak RSS
+  dropped 4925→4451→4198 MB, which suggests the cache *isn't* the
+  dominant memory contributor — likely because only 1 source
+  polynomial (`ram_ra_indicator`) actually has multiple consumers,
+  and its single cached copy is small relative to the runtime-wide
+  working set. **Lesson**: the hot-span "2 calls" reading for
+  `ram_ra_indicator` may already reflect unavoidable per-stage work
+  (different ChallengeIdx / InstanceIdx contexts), OR the cache
+  saves the compute but adds equivalent HashMap::entry + Cow::into_owned
+  cost on the first insert. Either way, the iter-47 attribution that
+  "2nd call is redundant" did not translate to wall-clock improvement.
+  Future RAM-derived attacks need to collapse MULTIPLE calls (e.g.
+  coalesce ram_val + ram_combined_ra into a single 2-output pass) or
+  parallelize the one big call (ram_val @ 6563 ms × 1 call), not
+  de-duplicate across bindings.
+  iter 49 P52-retry REVERTED — single `(6, 4)`
   arm added to `reduce_dense` const-generic dispatch. Same change as
   iter 43 but with `(41, 4)` excluded (iter 42 flagged `(41, 4)` arm as
   probable I-cache polluter). Correctness green 43/43. Perf gate: run 1
