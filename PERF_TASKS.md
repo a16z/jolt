@@ -32,8 +32,34 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 5 (iter 60 P69 reverted; iter 61 infra profile
-  preserved stall). Iter 62 picks from fresh P70-P73 list below.
+- **Stall counter**: 6 (iter 62 P80 reverted +9% to +19%; iter 61 infra).
+  Iter 63 picks next from P70-P73 queue (P70 sparse-eq-project next).
+  iter 62 P80 REVERTED — skip inner T-loop in `DerivedSource::ram_val`
+  when `events.is_empty() && initial_state[addr] == 0`. Motivation:
+  for sha2-chain most RAM addresses are never touched AND zero-init,
+  so the inner loop writes `F::zero()` to already-zero memory (T
+  redundant writes per unused address). Added single branch at top
+  of per-address loop: `if events.is_empty() && init == 0 { continue; }`.
+  Expected 50-90% inner-loop reduction → 4-6 s savings → 5-9% wall.
+  Correctness gate 43/43 PASS (commit_skip_alignment flaky first run,
+  passed in isolation and on retest). Clippy lib-only -D warnings
+  clean. Perf gate: run 1 modular **84488 ms (+19.4% past reject)**
+  core 4698 (+20% thermal), ratio 17.99× (marginally better than
+  18.14× ratchet); run 2 modular **77178 ms (+9.07% past reject)**
+  core 4110 (cooler, +5% thermal), ratio 18.78× (3.5% WORSE than
+  ratchet). Run 2's cooler thermal shows NET RELATIVE REGRESSION.
+  **Lesson**: either (a) sha2-chain's RAM layout has few addresses
+  satisfying both `events.is_empty()` AND `init == 0` (initial_state
+  may reflect ROM, heap, stack contents — not pure zeros), so the
+  skip rarely fires, OR (b) the added branch disrupts compiler
+  auto-vectorization of the per-cycle write loop, slowing ALL
+  addresses. Run 2 ratio regression is consistent with (b). **Closes
+  "skip redundant zero-fills in ram_val" avenue**. Future retry
+  should PRE-FILTER addresses into a worklist of interesting ones
+  (nonzero init OR has events) before the hot per-cycle write loop,
+  so the branch exists only once (outer) rather than per-address
+  (still in the hot path). Stall 5 → 6. Green streak preserved at
+  1 (iter 54 P64 holds). Ratchet unchanged 70762.94 ms.
   iter 61 INFRA — fresh sha2-chain log_t=16 Perfetto trace captured
   (stall ≥ 5 trigger). `benchmark-runs/perfetto_traces/iter61-profile.json`.
   Modular 81212 ms (+14.7% vs ratchet, expected from trace-chrome
