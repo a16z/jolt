@@ -51,9 +51,15 @@ pub trait RoundVerifier<F: Field> {
 ///
 /// When `label` is `Some`, a [`LabelWithCount`] word is absorbed before
 /// each round's coefficients.
+///
+/// When `compressed` is `true`, the linear term `c1` is omitted from
+/// transcript absorption (matching the prover's compressed wire format:
+/// `c1` is recoverable from `running_sum - c0`). The label count then
+/// uses `coeffs.len() - 1`.
 #[derive(Default)]
 pub struct ClearRoundVerifier {
     label: Option<&'static [u8]>,
+    compressed: bool,
 }
 
 impl ClearRoundVerifier {
@@ -64,7 +70,19 @@ impl ClearRoundVerifier {
 
     /// Verifier that prepends a `LabelWithCount` word before each round's coefficients.
     pub fn with_label(label: &'static [u8]) -> Self {
-        Self { label: Some(label) }
+        Self {
+            label: Some(label),
+            compressed: false,
+        }
+    }
+
+    /// Verifier that absorbs the compressed form (omits linear term `c1`).
+    /// Matches the prover's `RoundPolyEncoding::Compressed` wire format.
+    pub fn with_label_compressed(label: &'static [u8]) -> Self {
+        Self {
+            label: Some(label),
+            compressed: true,
+        }
     }
 }
 
@@ -95,12 +113,25 @@ impl<F: Field> RoundVerifier<F> for ClearRoundVerifier {
             });
         }
 
-        if let Some(label) = self.label {
-            let coeffs = proof.coefficients();
-            transcript.append(&LabelWithCount(label, coeffs.len() as u64));
-        }
-        for coeff in proof.coefficients() {
-            coeff.append_to_transcript(transcript);
+        let coeffs = proof.coefficients();
+        if self.compressed {
+            let compressed_len = coeffs.len().saturating_sub(1);
+            if let Some(label) = self.label {
+                transcript.append(&LabelWithCount(label, compressed_len as u64));
+            }
+            if let Some(c0) = coeffs.first() {
+                c0.append_to_transcript(transcript);
+            }
+            for c in coeffs.iter().skip(2) {
+                c.append_to_transcript(transcript);
+            }
+        } else {
+            if let Some(label) = self.label {
+                transcript.append(&LabelWithCount(label, coeffs.len() as u64));
+            }
+            for coeff in coeffs {
+                coeff.append_to_transcript(transcript);
+            }
         }
 
         Ok(())

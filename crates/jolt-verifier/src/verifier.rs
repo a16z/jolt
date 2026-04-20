@@ -96,14 +96,15 @@ where
                 // downstream CollectOpeningClaim's `commitment_map.get()`
                 // already handles a missing entry.
                 if let Some(c) = slot {
-                    transcript.append(&Label(tag.as_bytes()));
+                    transcript.append(&LabelWithCount(tag.as_bytes(), c.serialized_len()));
                     c.append_to_transcript(&mut transcript);
                     let _ = commitment_map.insert(*poly, c.clone());
                 }
             }
 
             VerifierOp::Squeeze { challenge } => {
-                challenges[challenge.0] = transcript.challenge();
+                let val = transcript.challenge();
+                challenges[challenge.0] = val;
             }
 
             VerifierOp::AppendDomainSeparator { tag } => {
@@ -141,6 +142,7 @@ where
                 stage,
                 batch_challenges,
                 claim_tag,
+                sumcheck_challenge_slots,
             } => {
                 let sp = current_stage.ok_or_else(|| {
                     JoltError::InvalidProof("no active stage proof for sumcheck".into())
@@ -180,7 +182,8 @@ where
                         claim_val.append_to_transcript(&mut transcript);
                     }
                     for &ch_idx in batch_challenges {
-                        challenges[ch_idx.0] = transcript.challenge();
+                        let val = transcript.challenge();
+                        challenges[ch_idx.0] = val;
                     }
                     instance_claims
                         .iter()
@@ -199,11 +202,17 @@ where
                 };
                 let round_polys = &sp.round_polys.round_polynomials
                     [round_poly_cursor..round_poly_cursor + max_rounds];
-                let round_verifier = ClearRoundVerifier::with_label(b"sumcheck_poly");
+                let round_verifier = ClearRoundVerifier::with_label_compressed(b"sumcheck_poly");
                 let (fe, sc) =
                     SumcheckVerifier::verify(&claim, round_polys, &mut transcript, &round_verifier)
                         .map_err(JoltError::Sumcheck)?;
                 round_poly_cursor += max_rounds;
+
+                for (i, slot) in sumcheck_challenge_slots.iter().enumerate() {
+                    if i < sc.len() {
+                        challenges[slot.0] = sc[i];
+                    }
+                }
 
                 final_evals[*stage] = fe;
                 sumcheck_points[*stage] = sc;
@@ -369,7 +378,7 @@ fn evaluate_formula<F: Field>(
     for term in &formula.terms {
         let mut product = F::from_i128(term.coeff);
         for factor in &term.factors {
-            product *= match factor {
+            let factor_val: F = match factor {
                 ClaimFactor::Eval(poly) => evaluations.get(poly).copied().ok_or_else(|| {
                     JoltError::InvalidProof(format!(
                         "evaluation {poly:?} referenced before available"
@@ -450,6 +459,46 @@ fn evaluate_formula<F: Field>(
                     }
                     acc
                 }
+                ClaimFactor::GroupSplitR1CSEval {
+                    matrix,
+                    eval_polys,
+                    at_r0,
+                    at_r_group,
+                    group0_indices,
+                    group1_indices,
+                    domain_size,
+                    domain_start,
+                } => {
+                    let r0 = challenges[at_r0.0];
+                    let r_group = challenges[at_r_group.0];
+                    let basis =
+                        jolt_poly::lagrange::lagrange_evals(*domain_start, *domain_size, r0);
+                    let mut z = Vec::with_capacity(1 + eval_polys.len());
+                    z.push(F::one());
+                    for p in eval_polys {
+                        z.push(evaluations.get(p).copied().ok_or_else(|| {
+                            JoltError::InvalidProof(format!("R1CS eval {p:?} not available"))
+                        })?);
+                    }
+                    let rows = match matrix {
+                        R1CSMatrix::A => &r1cs_key.matrices.a,
+                        R1CSMatrix::B => &r1cs_key.matrices.b,
+                    };
+                    let eval_group = |indices: &[usize]| -> F {
+                        let mut acc = F::zero();
+                        for (i, &idx) in indices.iter().enumerate() {
+                            let mut dot = F::zero();
+                            for &(j, coeff) in &rows[idx] {
+                                dot += coeff * z[j];
+                            }
+                            acc += basis[i] * dot;
+                        }
+                        acc
+                    };
+                    let g0 = eval_group(group0_indices);
+                    let g1 = eval_group(group1_indices);
+                    g0 + r_group * (g1 - g0)
+                }
                 ClaimFactor::StageEval(index) => {
                     let evals = stage_evals.ok_or_else(|| {
                         JoltError::InvalidProof("StageEval used but no stage_evals provided".into())
@@ -476,6 +525,7 @@ fn evaluate_formula<F: Field>(
                     )));
                 }
             };
+            product *= factor_val;
         }
         sum += product;
     }
@@ -880,6 +930,7 @@ mod tests {
                     stage: 0,
                     batch_challenges: Vec::new(),
                     claim_tag: None,
+                    sumcheck_challenge_slots: Vec::new(),
                 },
             ],
             num_challenges: 0,

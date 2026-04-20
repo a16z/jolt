@@ -1347,6 +1347,9 @@ fn build_stage1(
         poly: p.outer_uniskip_eval,
         mode: EvalMode::RoundPoly,
     });
+    ops.push(Op::RecordEvals {
+        polys: vec![p.outer_uniskip_eval],
+    });
     ops.push(Op::AbsorbEvals {
         polys: vec![p.outer_uniskip_eval],
         tag: DomainSeparator::OpeningClaim,
@@ -1470,6 +1473,9 @@ fn build_stage1(
             mode: EvalMode::FinalBind,
         });
     }
+    ops.push(Op::RecordEvals {
+        polys: r1cs_polys.to_vec(),
+    });
     ops.push(Op::AbsorbEvals {
         polys: r1cs_polys.to_vec(),
         tag: DomainSeparator::OpeningClaim,
@@ -1537,7 +1543,14 @@ fn build_verifier_stage1_ops(
     // The eq table has num_tau-1 = log_t cycle variables (τ_0..τ_{log_t-1}).
     let tau_high_idx = ChallengeIdx(params.num_tau - 1);
     let r0_idx = ChallengeIdx(params.num_tau); // the uniskip challenge
+                                               // First sumcheck round challenge = r_stream (group bit).
+                                               // Challenge layout: τ (0..num_tau) | r0 (num_tau) | ch_batch (num_tau+1) | r_stream (num_tau+2) | ...
+    let r_group_idx = ChallengeIdx(params.num_tau + 2);
+    // tau_cycle = τ_low (log_t entries): τ_0..τ_{log_t-1}.
     let tau_cycle: Vec<ChallengeIdx> = (0..params.num_tau - 1).map(ChallengeIdx).collect();
+    // Group split matches jolt-core outer Spartan regrouping: 10 constraints per group.
+    let group0: Vec<usize> = vec![1, 2, 3, 4, 5, 6, 11, 14, 17, 18];
+    let group1: Vec<usize> = vec![0, 7, 8, 9, 10, 12, 13, 15, 16];
     let output_check = ClaimFormula {
         terms: vec![ClaimTerm {
             coeff: 1,
@@ -1552,18 +1565,24 @@ fn build_verifier_stage1_ops(
                     domain_size: params.outer_uniskip_domain,
                     domain_start: -((params.outer_uniskip_domain as i64 - 1) / 2),
                 },
-                ClaimFactor::UniformR1CSEval {
+                ClaimFactor::GroupSplitR1CSEval {
                     matrix: R1CSMatrix::A,
                     eval_polys: r1cs_polys.to_vec(),
-                    at_challenge: r0_idx,
-                    num_constraints: params.outer_uniskip_domain,
+                    at_r0: r0_idx,
+                    at_r_group: r_group_idx,
+                    group0_indices: group0.clone(),
+                    group1_indices: group1.clone(),
+                    domain_size: params.outer_uniskip_domain,
                     domain_start: -((params.outer_uniskip_domain as i64 - 1) / 2),
                 },
-                ClaimFactor::UniformR1CSEval {
+                ClaimFactor::GroupSplitR1CSEval {
                     matrix: R1CSMatrix::B,
                     eval_polys: r1cs_polys.to_vec(),
-                    at_challenge: r0_idx,
-                    num_constraints: params.outer_uniskip_domain,
+                    at_r0: r0_idx,
+                    at_r_group: r_group_idx,
+                    group0_indices: group0,
+                    group1_indices: group1,
+                    domain_size: params.outer_uniskip_domain,
                     domain_start: -((params.outer_uniskip_domain as i64 - 1) / 2),
                 },
             ],
@@ -1609,25 +1628,27 @@ fn build_verifier_stage1_ops(
     ops.push(VerifierOp::RecordEvals {
         evals: vec![uniskip_eval],
     });
-    // Prover flushes uniskip eval twice: first as OpeningClaim, then as SumcheckClaim.
+    // Prover flushes uniskip eval as OpeningClaim (the SumcheckClaim absorption
+    // + ch_batch squeeze are handled internally by VerifySumcheck below).
     ops.push(VerifierOp::AbsorbEvals {
         polys: vec![p.outer_uniskip_eval],
         tag: DomainSeparator::OpeningClaim,
     });
-    ops.push(VerifierOp::AbsorbEvals {
-        polys: vec![p.outer_uniskip_eval],
-        tag: DomainSeparator::SumcheckClaim,
-    });
     // Batch coefficient for the (single-instance) remaining sumcheck.
     let ch_batch = ChallengeIdx(r0_idx.0 + 1);
-    ops.push(VerifierOp::Squeeze {
-        challenge: ch_batch,
-    });
+    // Stage 0 sumcheck rounds populate challenges[num_tau+2 .. num_tau+2+outer_remaining_rounds].
+    // Slot num_tau+2 is the first round (r_group/r_stream — the group bit).
+    let stage0_round_base = params.num_tau + 2;
+    let stage0_round_slots: Vec<ChallengeIdx> = (stage0_round_base
+        ..stage0_round_base + params.outer_remaining_rounds)
+        .map(ChallengeIdx)
+        .collect();
     ops.push(VerifierOp::VerifySumcheck {
         instances: instances.clone(),
         stage: 0,
-        batch_challenges: Vec::new(),
-        claim_tag: None,
+        batch_challenges: vec![ch_batch],
+        claim_tag: Some(DomainSeparator::SumcheckClaim),
+        sumcheck_challenge_slots: stage0_round_slots,
     });
     ops.push(VerifierOp::RecordEvals { evals: evaluations });
     ops.push(VerifierOp::AbsorbEvals {
@@ -1637,7 +1658,7 @@ fn build_verifier_stage1_ops(
     ops.push(VerifierOp::CheckOutput {
         instances,
         stage: 0,
-        batch_challenges: Vec::new(),
+        batch_challenges: vec![ch_batch],
     });
     ops
 }
@@ -1822,6 +1843,9 @@ fn build_stage2(
     ops.push(Op::Evaluate {
         poly: p.product_uniskip_eval,
         mode: EvalMode::RoundPoly,
+    });
+    ops.push(Op::RecordEvals {
+        polys: vec![p.product_uniskip_eval],
     });
     ops.push(Op::AbsorbEvals {
         polys: vec![p.product_uniskip_eval],
@@ -2567,6 +2591,9 @@ fn build_stage2(
             mode: EvalMode::FinalBind,
         });
     }
+    ops.push(Op::RecordEvals {
+        polys: stage2_eval_polys.clone(),
+    });
     ops.push(Op::AbsorbEvals {
         polys: stage2_eval_polys,
         tag: DomainSeparator::OpeningClaim,
@@ -5423,13 +5450,6 @@ fn build_stage6(
         })
         .collect();
 
-    for (i, phases) in instance_phase_degrees.iter().enumerate() {
-        let inst = &batched_sumchecks[batch_idx.0].instances[i];
-        eprintln!(
-            "[stage6] instance[{i}]: first_active={}, phases={phases:?}",
-            inst.first_active_round
-        );
-    }
     let bdef_instances = &batched_sumchecks[batch_idx.0].instances;
     let _round_challenge_indices = emit_unrolled_batched_rounds(
         ops,
@@ -6257,10 +6277,14 @@ fn build_verifier_stage2_ops(
         .map(ChallengeIdx)
         .collect();
 
-    // Evaluation list positions (18 entries in flush order).
+    // Evaluation list positions in the deduplicated 15-entry flush layout.
     // Used by StageEval in output_check formulas.
-    // sp.evals[0] = product_uniskip_eval (from RecordEvals before the batch).
-    // Batched sumcheck evals start at index 1.
+    // sp.evals[0] = product_uniskip_eval (recorded before the batch).
+    // sp.evals[1..16] = the 15 unique batched-sumcheck final-bind evals.
+    //
+    // Aliased entries (LookupOutput, LeftInstructionInput, RightInstructionInput)
+    // point to the canonical position shared with an earlier instance — this
+    // matches jolt-core's `cache_openings` deduplication.
     const SE_BASE: usize = 1;
     // RamReadWriteChecking (3):
     const SE_RAM_VAL: usize = SE_BASE;
@@ -6275,16 +6299,16 @@ fn build_verifier_stage2_ops(
     const SE_BRANCH: usize = SE_BASE + 8;
     const SE_NOOP: usize = SE_BASE + 9;
     const _SE_VIRTUAL_INST: usize = SE_BASE + 10; // opened but not used in output formula
-                                                  // InstructionClaimReduction (5):
-    const SE_LOOKUP_OUT_INST: usize = SE_BASE + 11;
-    const SE_LEFT_LOOKUP_OP: usize = SE_BASE + 12;
-    const SE_RIGHT_LOOKUP_OP: usize = SE_BASE + 13;
-    const SE_L_INST_CR: usize = SE_BASE + 14;
-    const SE_R_INST_CR: usize = SE_BASE + 15;
-    // RafEvaluation (1):
-    const SE_RAM_RAF_RA: usize = SE_BASE + 16;
+                                                  // InstructionClaimReduction (aliased to earlier slots + 2 new):
+    const SE_LOOKUP_OUT_INST: usize = SE_LOOKUP_OUT_PROD; // aliased
+    const SE_LEFT_LOOKUP_OP: usize = SE_BASE + 11;
+    const SE_RIGHT_LOOKUP_OP: usize = SE_BASE + 12;
+    const SE_L_INST_CR: usize = SE_L_INST; // aliased
+    const SE_R_INST_CR: usize = SE_R_INST; // aliased
+                                           // RafEvaluation (1):
+    const SE_RAM_RAF_RA: usize = SE_BASE + 13;
     // OutputCheck (1):
-    const SE_VAL_FINAL: usize = SE_BASE + 17;
+    const SE_VAL_FINAL: usize = SE_BASE + 14;
 
     // Instance 0: RamReadWriteChecking
     //
@@ -6808,11 +6832,19 @@ fn build_verifier_stage2_ops(
     let batch_challenges: Vec<ChallengeIdx> = (0..params.stage2_num_instances)
         .map(|i| ChallengeIdx(ch_batch_base + i))
         .collect();
+    // Stage 2 sumcheck round challenges: after batch coefficients.
+    let stage2_round_base = ch_batch_base + params.stage2_num_instances;
+    let stage2_max_rounds = instances.iter().map(|i| i.num_rounds).max().unwrap_or(0);
+    let stage2_round_slots: Vec<ChallengeIdx> = (stage2_round_base
+        ..stage2_round_base + stage2_max_rounds)
+        .map(ChallengeIdx)
+        .collect();
     ops.push(VerifierOp::VerifySumcheck {
         instances: instances.clone(),
         stage: 1,
         batch_challenges: batch_challenges.clone(),
         claim_tag: Some(DomainSeparator::SumcheckClaim),
+        sumcheck_challenge_slots: stage2_round_slots,
     });
     ops.push(VerifierOp::RecordEvals { evals: evaluations });
     ops.push(VerifierOp::AbsorbEvals {

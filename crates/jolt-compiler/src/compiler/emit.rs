@@ -139,6 +139,7 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams, poly_map: &[Polyno
                 stage: verifier_stage_idx,
                 batch_challenges: Vec::new(),
                 claim_tag: None,
+                sumcheck_challenge_slots: Vec::new(),
             });
 
             let has_output = instances.iter().any(|i| !i.output_check.terms.is_empty());

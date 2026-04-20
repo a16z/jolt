@@ -1676,6 +1676,11 @@ pub enum VerifierOp {
         /// Transcript tag for absorbing input claims before squeezing
         /// batch coefficients. Required when `batch_challenges` is non-empty.
         claim_tag: Option<DomainSeparator>,
+        /// Challenge slots to populate with sumcheck round challenges.
+        /// After `SumcheckVerifier::verify` returns its Vec<F> of round
+        /// challenges, slot `i` receives round-`i` challenge. Used by
+        /// later ops that reference those challenges by `ChallengeIdx`.
+        sumcheck_challenge_slots: Vec<ChallengeIdx>,
     },
     /// Read polynomial evaluations from current stage proof into the global table.
     RecordEvals { evals: Vec<Evaluation> },
@@ -1870,6 +1875,36 @@ pub enum ClaimFactor {
     PreprocessedPolyEval {
         poly: PolynomialId,
         at_stage: VerifierStageIndex,
+    },
+    /// Two-group R1CS inner product with Lagrange interpolation at `r0` and
+    /// linear interpolation at `r_group` between two disjoint row-index sets.
+    ///
+    /// Computes:
+    /// ```text
+    /// (1 − r_group) · Σ_k L_k(r0) · (M[group0_indices[k]] · z)
+    ///  + r_group   · Σ_k L_k(r0) · (M[group1_indices[k]] · z)
+    /// ```
+    ///
+    /// Matches jolt-core's outer-Spartan group-split evaluation used after the
+    /// univariate-skip round folds the constraint dimension. `group1_indices`
+    /// may be shorter than `domain_size` (zero-padded to match `group0_indices`).
+    GroupSplitR1CSEval {
+        matrix: R1CSMatrix,
+        /// Poly identifiers whose evaluations form the z-vector (z[0] = 1).
+        eval_polys: Vec<PolynomialId>,
+        /// Challenge index for the Lagrange interpolation point `r0`.
+        at_r0: ChallengeIdx,
+        /// Challenge index for the group-bit interpolation point `r_group`
+        /// (usually the first sumcheck round challenge).
+        at_r_group: ChallengeIdx,
+        /// Constraint row indices for group 0.
+        group0_indices: Vec<usize>,
+        /// Constraint row indices for group 1 (may be shorter than group 0).
+        group1_indices: Vec<usize>,
+        /// Domain size for Lagrange basis at `r0`.
+        domain_size: usize,
+        /// First integer in the Lagrange domain.
+        domain_start: i64,
     },
     /// Evaluation from the current stage's prover-provided evaluation list,
     /// at the given position. Used in output_check formulas when the same

@@ -1604,7 +1604,6 @@ fn zkvm_proof_accepted_by_core_verifier() {
 /// commitments) is the first of several steps needed; the remaining
 /// work is tracked in PERF_TASKS.md.
 #[test]
-#[ignore = "modular verifier schedule in jolt_core_module.rs is not yet complete; see PERF_TASKS.md"]
 fn modular_self_verify() {
     use jolt_dory::types::DoryVerifierSetup;
 
