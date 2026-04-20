@@ -32,7 +32,36 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 11 (iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+- **Stall counter**: 12 (iter 68 P73 reverted; iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+
+  iter 68 P73 REVERTED — `derived::ram_val` parallelization via
+  `par_chunks_mut(t)` across k RAM addresses. Hypothesis: profile span
+  `derived::ram_val` = 7.09s single call on main thread, trivially
+  parallelizable since each address `addr` writes to disjoint
+  `val[addr*t..addr*t+t]`. Expected: ~4-6× speedup via 8 rayon workers
+  → 1.2-1.8s, saving ~5s = ~7% of 83s baseline prove. Change: added
+  `rayon` workspace dep to `crates/jolt-witness/Cargo.toml`; rewrote
+  `ram_val` to use `val.par_chunks_mut(t).enumerate().take(k).for_each(...)`.
+  Correctness: 43/43 jolt-equivalence PASS; clippy -p jolt-witness clean.
+  Perf gate: ratchet 70762.94 ms; run1 modular **82137.20 ms (+16.1%)**,
+  core 4813, ratio 17.07×; run2 modular **84926.97 ms (+20.0%)**, core
+  3950, ratio 21.50×. Both past reject — REVERT. **Lesson**: profile
+  main-thread wall time ≠ actual parallelizable cost. ram_val at 7.09s
+  on main thread likely includes oversubscription when the caller is
+  ALREADY inside a rayon par context (e.g., par over multiple derived
+  polys). Parallelizing the body then double-nests rayon and causes
+  cache thrashing + scheduler contention, reading back as +15-20%
+  regression across the whole prove. This matches P45 iter 45's
+  behavior (+12% on sha2-chain log_t=14 when par_chunks_mut applied to
+  3 bundled polys). **General rule going forward**: DO NOT apply
+  par_chunks_mut to derived polys while callers are themselves inside
+  rayon. Stall 11 → 12. Green streak preserved at 1 (iter 54 P64
+  holds). Ratchet unchanged 70762.94 ms. **Next iter 69**: pivot off
+  witness materialization. Profile shows Gruen segmented_reduce at 21s
+  and interpolate_inplace at 20s — interpolate_inplace is the top
+  non-Gruen attackable span. Candidate P74: call-coalesce or batch
+  `interpolate_inplace` calls across polys sharing the same
+  challenge + buffer size bucket (queued from iter 65).
 
   iter 67 P72 REVERTED — executed pinned plan: generalized GruenHint
   from struct → enum `{ LinComboQ | GeneralQ { q_formula: Formula } }`,
