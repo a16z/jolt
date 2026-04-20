@@ -1,0 +1,17 @@
+[package]
+name = "jolt-sumcheck"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Sumcheck protocol types and verification for the Jolt zkVM"
+
+[lints]
+workspace = true
+
+[dependencies]
+jolt-field = { path = "../jolt-field" }
+jolt-poly = { path = "../jolt-poly" }
+jolt-transcript = { path = "../jolt-transcript" }
+serde = { workspace = true, features = ["derive"] }
+tracing.workspace = true
+thiserror = { workspace = true }
