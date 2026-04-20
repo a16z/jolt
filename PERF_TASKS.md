@@ -32,7 +32,35 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 5 (iter 46 P55-narrow REVERTED — partition-by-size
+- **Stall counter**: 5 (iter 47 INFRA — fresh sha2-chain log_t=16
+  Perfetto trace captured post-iter-46-revert.
+  `benchmark-runs/perfetto_traces/iter47-profile.json`. Modular
+  76598 ms (−1.2% vs 77525 ratchet, flat in ±5% band; no ratchet move).
+  **Self-time top 10** (92.3% of 76598 ms wall):
+    | # | span | self ms | % | calls | µs/call |
+    |--:|------|--------:|--:|------:|--------:|
+    | 1 | `reduce_dense` | 28144 | **36.7%** | 2373 | 11860 |
+    | 2 | `CpuBackend::gruen_segmented_reduce` | 18244 | **23.8%** | 16 | 1140000 |
+    | 3 | `interpolate_inplace` | 17882 | **23.3%** | 17416 | 1027 |
+    | 4 | `multi_pair_g2_setup_parallel` | 10479 | 13.7% | 124 | 84509 |
+    | 5 | `CpuBackend::eq_project` | 9380 | 12.2% | 82 | 114400 |
+    | 6 | `derived::ram_val` | 6563 | 8.6% | 1 | 6562800 |
+    | 7 | `derived::ram_ra_indicator` | 4878 | 6.4% | 2 | 2439000 |
+    | 8 | `CpuBackend::segmented_reduce` | 2661 | 3.5% | 16 | 166300 |
+    | 9 | `derived::ram_combined_ra` | 2315 | 3.0% | 1 | 2314700 |
+    | 10 | `G1::msm` | 2260 | 2.9% | 43043 | 53 |
+  **Re-attribution vs iter 43**: hot-span map is stable —
+  `reduce_dense` still king (36.7% self vs 43.1% incl iter-43),
+  `gruen_segmented_reduce` per-call cost **1140 ms/call** confirmed as
+  highest per-call leverage (1 function × 16 calls = 23.8% of wall),
+  3 RAM derived arms total 13756 ms self over just **4 calls** (18%)
+  — single-call workhorses. P56 (nested-parallel gruen) and
+  P55 (coalesce bind ops once per round) are the two top structural
+  attacks. `multi_pair_g2_setup` 10479 ms self in 124 calls: per-call
+  cost ~85 ms × ~3 calls per commit; adjacent to setup-cost policy but
+  NOT one-time (called per commit). No code change; stall unchanged at
+  5. Iter 48 picks P56 (single-file CpuBackend change, highest per-call
+  leverage) as the first attack. iter 46 P55-narrow REVERTED — partition-by-size
   `interpolate_inplace_batch` trait method: filter polys by
   `buf.len() / 2 < PAR_THRESHOLD` then outer-rayon the small set while
   large polys rely on their internal rayon. Added `Vec<&mut Buffer<F>>`
@@ -820,24 +848,25 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
 
 - [ ] P56: Deep-dive on `gruen_segmented_reduce` — target:
   `crates/jolt-cpu/src/backend.rs:668-803`.
-    - **Hypothesis**: iter-43 profile shows 18522 ms / 16 calls =
-      **1157 ms per call**, the largest per-call wall in the trace. 16
-      calls ≈ 16 segmented sumcheck rounds. Each call's inner is (a)
-      build `e_active` from `eq_cycle` (sequential O(half)), (b) for
-      each `active` outer position compute `(q_const, q_quad)` over
-      `half` pairs — parallel across outers only if `active.len() >= 2`.
-      At late rounds `half` is small but active outer count may be large
-      (128+); at early rounds `half` is very large (1M+) but active outer
-      count may be small (1-4). Current code only parallelizes the
-      OUTER iteration; INNER parallelism across `half` is serial. Add a
-      nested parallel strategy: when `active.len() * half >= threshold`
-      and `active.len() < N_cores`, use `rayon::join` or
-      `par_chunks` over `half` within `reduce_outer`. Alternative: the
-      `e_active` precompute is pure-functional over shared
-      `eq_cycle` — parallelize that too when `half >= PAR_THRESHOLD`.
+    - **Hypothesis**: iter-47 profile (fresh) shows **18244 ms / 16 calls
+      = 1140 ms per call, 23.8% of wall** — the largest single span by
+      per-call cost. 16 calls ≈ 16 segmented sumcheck rounds. Each call's
+      inner is (a) build `e_active` from `eq_cycle` (sequential O(half)),
+      (b) for each `active` outer position compute `(q_const, q_quad)`
+      over `half` pairs — parallel across outers only if
+      `active.len() >= 2`. At late rounds `half` is small but active
+      outer count may be large (128+); at early rounds `half` is very
+      large (1M+) but active outer count may be small (1-4). Current
+      code only parallelizes the OUTER iteration; INNER parallelism
+      across `half` is serial. Add a nested parallel strategy: when
+      `active.len() * half >= threshold` and `active.len() < N_cores`,
+      use `rayon::join` or `par_chunks` over `half` within
+      `reduce_outer`. Alternative: the `e_active` precompute is
+      pure-functional over shared `eq_cycle` — parallelize that too
+      when `half >= PAR_THRESHOLD`.
     - **Abstraction risk**: low — internal to CpuBackend method.
     - **Expected delta**: 10-15% total wall if we can double core
-      saturation in this hot 22.8% band; lower if `active.len()` is
+      saturation in this hot 23.8% band; lower if `active.len()` is
       already saturating cores at round-onset and work is truly
       memory-bandwidth bound.
 
@@ -864,6 +893,79 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
       (needs eq_project argument hashability + thread-safe cache).
     - **Expected delta**: 5-10% total wall if cache hit-rate > 50% on
       EqProject calls; 2-4% if only layout/parallelism tuning works.
+
+- [ ] P58: Coalesce the 3 RAM derived-poly builders into a single pass —
+  target: `crates/jolt-witness/src/derived.rs::DerivedSource::compute`
+  arms `ram_val`, `ram_ra_indicator`, `ram_combined_ra`.
+    - **Hypothesis**: iter-47 profile attributes **13756 ms (18% of
+      wall) to 3 arms in 4 calls**: `ram_val` 6563 ms × 1 call,
+      `ram_ra_indicator` 4878 ms × 2 calls, `ram_combined_ra` 2315 ms
+      × 1 call. P45 (inner rayon on each arm) regressed both programs
+      due to tiny inner work + memory-bus contention. A structural fix
+      instead: if the 3 arms traverse overlapping underlying data
+      (RAM address traces / cycle index), coalesce the 3 producer
+      closures into ONE pass that writes 3 output buffers per
+      (cycle, addr) tuple visited — amortizing 3× memory traffic to
+      ~1× by keeping the inputs in L1/L2 across all 3 derivations.
+      Alternative: if 2 of the 3 are derivable from the 3rd by an
+      in-place post-pass, compute the hardest one first and derive
+      the others from its output buffer.
+    - **Abstraction risk**: medium — `DerivedSource::compute` is a
+      fan-out per-arm dispatch. Coalescing requires either (a) a new
+      `MultiDerivedSource` that emits multiple PolynomialIds from one
+      call, or (b) a post-compute fix-up that derives secondary
+      outputs from the primary. Also requires careful transcript
+      isolation — the combined op must produce identical bytes.
+    - **Expected delta**: 8-14% total wall if memory traffic is the
+      binding constraint (2-3× bandwidth savings → 30-50% per-arm
+      speedup on ~14 s). Lower (5-8%) if per-element compute
+      dominates — profile post-P58 to decide.
+
+- [ ] P59: Memoize `multi_pair_g2_setup` across Dory commits —
+  target: `jolt-dory` fork internals (currently calls
+  `multi_pair_g2_setup_parallel` 124 times for 42 commits at log_t=16).
+    - **Hypothesis**: iter-47 profile shows `multi_pair_g2_setup_parallel`
+      = **10479 ms self / 124 calls** (13.7% of wall, 85 ms/call avg).
+      124 calls across 42 commits ≈ 3 calls per commit (tier-1 + tier-2 +
+      evaluation setup). Most of the per-call work is computing
+      `G2Prepared` miller-loop lines from the static G2 SRS chunk used
+      by Dory. Those lines depend only on `(SRS chunk, size)` which is
+      fixed per preprocessing. Memoize per `(commit_size, SRS chunk)`
+      pair: first call materializes the prepared lines into a shared
+      cache, subsequent calls clone/ref them. Not a "setup cost" in the
+      one-time-at-preprocessing sense — it's called fresh per commit
+      today.
+    - **Abstraction risk**: medium — touches external `jolt-dory` crate
+      internals; requires thread-safe cache for multi-threaded commit
+      dispatch (iter 20's parallel Op::Commit fan-out means multiple
+      commits run in parallel). Policy check: this is NOT setup-cost
+      (per `feedback_setup_costs.md`) because it's per-commit, not
+      one-time; but adjacent to P49 (iter 40) which regressed on a
+      similar "cache prepared points" attempt. Needs measurement first
+      to confirm cache-hit-rate.
+    - **Expected delta**: if 80% of 124 calls are redundant setup that
+      can be cache-served: 0.8 × 10479 = **8380 ms saved ≈ 11% wall**.
+      Conservative 50% cache-hit: **5 s saved ≈ 6.5% wall**.
+
+- [ ] P60: End-of-loop meta — deep instrument of `reduce_dense`
+  hot-shape distribution at log_t=16 — target:
+  `crates/jolt-cpu/src/backend.rs::reduce_dense`.
+    - **Hypothesis**: `reduce_dense` is the top self-time span
+      (28144 ms / 36.7% of wall, 2373 calls × 11.9 ms/call avg). Iter 41
+      instrumented at log_t=14 found `(6, 4)` = 77.9% and `(41, 4)` =
+      19.0% of reduce_dense wall. Iter 42 tried fixed-kernel arms for
+      both shapes at log_t=12/14 and regressed muldiv due to
+      shape-distribution divergence between programs. At log_t=16
+      sha2-chain specifically, the distribution has probably shifted —
+      worth a fresh per-shape count to decide if (a) a single-shape
+      fixed-arm (e.g., (6, 4) only) would win at log_t=16 sha2-chain,
+      (b) the dynamic path itself needs a per-chunk-scratch-reuse
+      rewrite (P54), or (c) some other combination. Pure instrumentation
+      iteration (no code change shipped).
+    - **Abstraction risk**: zero — instrumentation only.
+    - **Expected delta**: INFRA — output is a shape distribution map
+      that grounds P54 / (P51-retry with narrowed shape list) / a
+      structural rewrite of reduce_dense_dynamic.
 
 
 ## Notes
