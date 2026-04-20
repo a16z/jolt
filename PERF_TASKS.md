@@ -32,8 +32,84 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 9 (iter 65 P71 reverted past-reject; iter 64 P70 reverted flat; iter 63 P90 reverted).
-  Iter 66 pivots — the fresh iter 65 profile (benchmark-runs/perfetto_traces/iter65-profile.json)
+- **Stall counter**: 10 (iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+  iter 66 DESIGN STEP — no code changes. Baseline re-measurement at
+  lower load (avg 8.68): core 4379 ms, modular 82978 ms (ratio 18.95×),
+  rerun at avg 105 load jumped to core 4300/modular 88962 (ratio
+  20.69×). Load variance 8-105 over 7 min makes absolute ±5% gates
+  unreliable. **Ratchet is frozen — use ratio-based comparison
+  judgment (not protocol-strict absolute) to triage candidate changes
+  during this noise window.** Submitting iter 66 as a bookkeeping
+  commit that pins the **P72 implementation plan** (detailed below)
+  so iter 67 can execute against a fixed design.
+
+  **P72 Implementation Plan** — generalize Gruen cubic to any
+  `eq(r, x) · Q(x)` kernel with `deg(Q) ≤ 2`:
+  1. `KernelSpec.gruen_hint` currently encodes only the RamRW-specific
+     LinComboQ `q(x) = a(x)·(b(x) + γ(b(x)+c(x)))`. **Extend** with a
+     general `GruenQComposition { formula: Formula, input_remap: Vec<u32> }`
+     variant. The `formula` is the degree-2 composition Q excluding eq;
+     `input_remap[i]` maps Q's input indices into the parent kernel's
+     input indices (since the parent formula's Input(eq_idx) drops).
+  2. **Add `CpuBackend::reduce_gruen_cubic`** at `crates/jolt-cpu/src/backend.rs`
+     mirroring `gruen_segmented_reduce` but (a) non-segmented — single-phase
+     over inner_size only, no outer_eq, (b) generic Q evaluation via
+     compiled degree-2 kernel closure (use the same `CpuKernel<F>` pattern
+     but with num_evals=3 for the Q kernel). The per-i inner loop:
+       - Load pairs (lo[k], hi[k]) for Q's inputs.
+       - Evaluate Q at x=0 and x=2 (deg-2 gives 3 points → Gruen lifts to deg-3 via eq).
+       - Accumulate `eq[i] * Q_at_0[i]` into `q_const`, `eq[i] * (Q_at_2[i] - 2·Q_at_1[i] + Q_at_0[i])` type quads.
+       - Call `gruen::gruen_cubic_evals` to assemble s(0),s(2),s(3),s(∞).
+  3. **Compile Q-kernel** alongside the parent kernel. Runtime stores
+     both compiled kernels; `reduce_gruen_cubic` takes the Q-kernel +
+     parent kernel's eq input + eq_challenges + current_round.
+  4. **Compiler**: in `jolt_core_module.rs` at kernel definitions where
+     every ProductTerm has `Factor::Input(eq_idx)`, factor Q out and
+     set `gruen_hint = Some(GruenHint::General { q_formula, ... })`.
+  5. **Emit.rs**: dispatch `Iteration::Gruen` for kernels with non-None
+     general `gruen_hint`, with corresponding `handlers.rs` routing to
+     `backend.reduce_gruen_cubic(...)`.
+  6. **Wire one kernel first** — RegRW phase-1 at line 3371. 6 inputs
+     (eq, reg_ra_rs1, reg_ra_rs2, reg_wa, reg_val, rd_inc), deg-3 cubic
+     with 4 terms all factoring Input(0)=eq. Expected savings: this
+     kernel's reduce_dense load (shape ni=6, ne=4) shifts from Dense to
+     Gruen. Current shape (6,4) accounts for 23s of reduce_dense
+     (multiple kernels) — RegRW is one. Gruen for RegRW alone could
+     save ~2-4 s (12-17% of the 23 s ni=6,ne=4 pool if RegRW is
+     proportional to its kernel call count).
+  7. **Correctness gate**: 43/43 jolt-equivalence + clippy -D warnings.
+     The primary risk is Q's degree-2 composition evaluation producing
+     different numerical results than the parent's degree-3 evaluation
+     of eq*Q — unit-test the Q-kernel in isolation against a brute-force
+     dense baseline to catch discrepancies before end-to-end.
+  8. **Perf gate**: ratchet 70762.94 ms ±5% absolute AND ratio vs core;
+     need low-load window (<15 load avg) for reliable signal.
+
+  Iter 67 executes this plan starting at step 2 (backend method).
+
+  Iter 65 P71 REVERTED — widened `reduce_dense_fixed` const-generic
+  dispatch to cover (5,4), (6,4), (7,4), (9,4) in addition to existing
+  (2,2) (3,3) (4,4) (8,4) (8,8) (16,16) (32,32). Target: eliminate the
+  heap-allocated Vec<F> scratch + ptrs-Vec bounds checks in
+  `reduce_dense_dynamic` for the dominant (ni=6, ne=4) shape (80% of
+  `reduce_dense` self time). Correctness: 43/43 jolt-equivalence PASS.
+  Clippy -D warnings clean. Perf gate: run 1 modular **77555 ms
+  (+9.6%)**, ratio 18.80×; run 2 modular **80274 ms (+13.4%)**, ratio
+  19.64×. Both past reject vs ratchet 70762.94 ms. HOWEVER, baseline
+  no-change measurements (same commit pre-change) also past reject:
+  run1 89074 ms, run2 83521 ms, run3 78399 ms, run4 76656 ms (load 25-37).
+  P71 measurements are within baseline envelope; vs immediate pre-change
+  best (76656 ms), P71 best 77555 ms is +1.2% — **flat**. Per protocol
+  past-reject vs ratchet ⇒ revert. **Lesson**: at current system load,
+  micro-dispatch changes of ≤5% expected magnitude are below
+  measurement noise floor. Even if (6,4) saved 5% on `reduce_dense`
+  self-time, that's ~1.3 s absolute on 70 s baseline = 1.8%, easily
+  swamped. Stall 8 → 9. Green streak preserved at 1 (iter 54 P64 holds).
+  Ratchet unchanged 70762.94 ms. **Next iter 66 must aim for
+  order-of-magnitude target per memory rule** — Gruen extension (P72)
+  is the right-sized swing; (6,4) dispatch alone isn't.
+  **SUPERSEDED BY ITER 66** (iter 66 pins the P72 plan above.)
+  Fresh iter 65 profile (benchmark-runs/perfetto_traces/iter65-profile.json)
   shows reduce_dense top span at 28.8s / 25.5% is dominated by one shape:
   **(ni=6, ne=4)** = 23.2s over 2048 calls (11.3ms avg). Sources: RegRW
   phase-1 kernel at line 3371 (inputs: eq, reg_ra_rs1, reg_ra_rs2, reg_wa,
