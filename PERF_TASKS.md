@@ -32,7 +32,35 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 8 (iter 50 P58-subset REVERTED — runtime-level
+- **Stall counter**: 9 (iter 51 P-ram_val-par REVERTED — `par_chunks_mut(t)`
+  on `val` zipped with `access_events.par_iter()` and
+  `initial_state.par_iter()` in `DerivedSource::ram_val`
+  (crates/jolt-witness/src/derived.rs:353). Hypothesis: 6563 ms × 1 call
+  (8.6% wall per iter-47 trace) is K addresses × T cycles with each
+  address fully independent; outer rayon over K should saturate cores
+  with non-trivial O(T) inner work per address, unlike P45 which
+  regressed on tiny inner work. Added `rayon = { workspace = true }`
+  to `jolt-witness/Cargo.toml`. Correctness gate green 43/43 (15.4s
+  full run). Perf gate: run 1 modular 81273 ms (+4.83% vs 77525
+  ratchet, core 4726 = +20% thermal); run 2 modular 86653 ms (+11.77%
+  past reject, core 4822). Both modular runs slower, run 2 past reject
+  threshold → revert. RSS jumped 4990→5155 MB (run 1) / 5082 MB (run
+  2) suggesting par_iter allocates thread-local scratch or memory
+  pressure from concurrent K-sized writes to shared `val` allocation.
+  **Lesson**: the single big call (`ram_val` at 6.5s) does NOT parallelize
+  cleanly despite having apparently independent outer iterations. Two
+  probable reasons: (a) `access_events: Vec<Vec<(usize, F, F)>>`
+  allocation of K separate subvectors (each tiny) is the actual work
+  bottleneck — not the outer write loop — and that's still sequential;
+  (b) writing O(K*T) = potentially billions of F-element writes into
+  a single contiguous allocation from N threads hits cache-line
+  contention / memory-bus saturation before compute-level parallelism
+  can amortize. Together with P45 (revert) and P53 (revert), this
+  closes the "parallelize derived-poly compute inner loop" avenue
+  for the ram_* family. Future RAM attacks must attack the
+  `access_events` precompute (sequential, O(T)) or reorganize the
+  output layout, not just outer-rayon the write phase.
+  iter 50 P58-subset REVERTED — runtime-level
   host source cache in `RuntimeState::host_source_cache:
   HashMap<PolynomialId, Vec<F>>` populated by a new `with_cached_source`
   helper in `runtime/helpers.rs`, covering the 5 `InputBinding` arms
