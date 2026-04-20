@@ -32,7 +32,17 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 4 (iter 44 P53 REVERTED — parallelized
+- **Stall counter**: 4 (iter 45 INFRA — appended P54-P57 to hypothesis
+  queue informed by iter-43 sha2-chain log_t=16 profile attribution
+  (reduce_dense 43.1%, InstanceSegmentedReduce 26.7%, interpolate_inplace
+  23.4%, InstanceBind 23.3%, gruen_segmented_reduce 22.8%, mb::EqProject
+  18.5%, DoryScheme::commit 20.4%). Queue targets:
+    - P54 reduce_dense_dynamic per-chunk Vec allocation (3-8%)
+    - P55 BindAllPolysInRound coalesced op w/ outer rayon amortization (8-15%)
+    - P56 gruen_segmented_reduce nested parallelism across `active × half` (10-15%)
+    - P57 mb::EqProject redundancy/caching (5-10%)
+  No code change; stall unchanged. Iter 46 picks P55 or P56 as the
+  structural attack. iter 44 P53 REVERTED — parallelized
   `Op::InstanceBind`'s outer loop over polynomials via `par_iter_mut`
   on a filtered Vec of DeviceBuffers. Target: 17416 interpolate_inplace
   calls × 1.09 ms per call; `kdef.inputs` dedup across ~55 polys per
@@ -731,6 +741,109 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
     - **Expected delta**: 3-8% wall (depends on how much of 257 ms is
       inherently serial). If Dory internal can push from 1.87 → 5 cores,
       save ~160 ms ≈ 10% wall.
+
+- [ ] P54: Reduce per-chunk heap allocation in `reduce_dense_dynamic` —
+  target: `crates/jolt-cpu/src/backend.rs::reduce_dense_dynamic` (parallel
+  fold path, lines ~977-1008).
+    - **Hypothesis**: iter-43 profile at sha2-chain log_t=16 shows
+      `reduce_dense` at 34975 ms (43.1% of 81077 ms total). Iter-41
+      attribution showed `(6, 4)` shape = 77.9% and `(41, 4)` = 19.0% of
+      reduce_dense wall at sha2-chain log_t=14 — both fall through to
+      `reduce_dense_dynamic`. P51 (monomorphize those shapes to
+      reduce_dense_fixed) regressed muldiv; the fixed-vs-dynamic gap is
+      real but the macroscopic symptom at sha2-chain is
+      `reduce_dense_dynamic` specifically. The rayon `fold` closure in
+      `reduce_dense_dynamic` allocates 4 fresh Vecs per parallel chunk
+      (new_accs + lo + hi + evals, each of length num_inputs or num_evals),
+      re-incurred on every scheduling boundary. Switch the init closure to
+      return `(SmallVec<[F::Accumulator; 8]>, SmallVec<[F; 64]>, ...)`
+      with inline capacity covering the (6, 4) and (41, 4) shapes, or
+      pre-allocate thread-local scratch outside the fold via a
+      `thread_local!` TLS cell. Either eliminates the per-chunk alloc
+      without requiring monomorphization of the inner loop.
+    - **Abstraction risk**: zero — internal to reduce_dense_dynamic,
+      no API change.
+    - **Expected delta**: 3-8% total wall if per-chunk alloc is ~10-20%
+      of reduce_dense_dynamic's 30-35 s. Worth measuring alloc share first
+      via `dhat` / rayon fold-chunk counter before committing the attack.
+
+- [ ] P55: Coalesce `InstanceBind`'s outer per-poly loop into a single
+  `BindAllPolysInRound` op dispatched once per round with internal rayon —
+  target: new compiler op in `crates/jolt-compiler/src/module.rs` that
+  emits a single "bind all dedup'd polys bound this round" op instead of
+  N per-instance InstanceBind ops; runtime dispatches once; CpuBackend
+  uses OUTER rayon across polys + INNER serial bind per poly.
+    - **Hypothesis**: iter-43 profile shows `interpolate_inplace` at
+      19009 ms / 17416 calls (1.09 ms/call) and `InstanceBind` at
+      18925 ms / 319 calls. The 319 InstanceBind calls mean ~55 polys
+      bound per call on average (17416 / 319 ≈ 55). Iter 44 P53 attempted
+      per-InstanceBind parallelism and regressed +8.2 to +17.5% because
+      rayon dispatch + memory-bus contention per InstanceBind dominated.
+      The STRUCTURAL fix is amortizing rayon dispatch to once-per-round:
+      a single op invocation takes all dedup'd polys for the round and
+      dispatches all of them in ONE outer rayon sweep. For a round with
+      N polys each of size S, current cost is N × (dispatch_overhead +
+      serial_bind(S)). New cost is dispatch_overhead_once +
+      N_parallel_across_cores × serial_bind(S). At small S (late rounds)
+      where rayon overhead per bind dominated iter-44's regression,
+      outer-rayon-once instead of inner-rayon-each flips the economics.
+    - **Abstraction risk**: medium — requires new Op variant on compiler
+      side, runtime handler stays ≤30 LOC. Compiler must be able to
+      identify which polys need binding in the current round (already
+      known — it's the `bound_this_round` set plus the per-instance
+      input list).
+    - **Expected delta**: 8-15% total wall if we can push
+      `interpolate_inplace` from its current serial-dispatch-per-poly
+      pattern to fully-parallel-once-per-round. Lower bound: ~6% even if
+      we only amortize dispatch and keep inner binds serial. Upper bound:
+      ~15% if outer rayon saturates 8+ cores on typical ~55-poly rounds.
+
+- [ ] P56: Deep-dive on `gruen_segmented_reduce` — target:
+  `crates/jolt-cpu/src/backend.rs:668-803`.
+    - **Hypothesis**: iter-43 profile shows 18522 ms / 16 calls =
+      **1157 ms per call**, the largest per-call wall in the trace. 16
+      calls ≈ 16 segmented sumcheck rounds. Each call's inner is (a)
+      build `e_active` from `eq_cycle` (sequential O(half)), (b) for
+      each `active` outer position compute `(q_const, q_quad)` over
+      `half` pairs — parallel across outers only if `active.len() >= 2`.
+      At late rounds `half` is small but active outer count may be large
+      (128+); at early rounds `half` is very large (1M+) but active outer
+      count may be small (1-4). Current code only parallelizes the
+      OUTER iteration; INNER parallelism across `half` is serial. Add a
+      nested parallel strategy: when `active.len() * half >= threshold`
+      and `active.len() < N_cores`, use `rayon::join` or
+      `par_chunks` over `half` within `reduce_outer`. Alternative: the
+      `e_active` precompute is pure-functional over shared
+      `eq_cycle` — parallelize that too when `half >= PAR_THRESHOLD`.
+    - **Abstraction risk**: low — internal to CpuBackend method.
+    - **Expected delta**: 10-15% total wall if we can double core
+      saturation in this hot 22.8% band; lower if `active.len()` is
+      already saturating cores at round-onset and work is truly
+      memory-bandwidth bound.
+
+- [ ] P57: `mb::EqProject` redundancy / caching — target:
+  `crates/jolt-cpu/src/backend.rs::eq_project` +
+  `crates/jolt-zkvm/src/runtime/helpers.rs` materialize pipeline.
+    - **Hypothesis**: iter-43 profile shows `mb::EqProject` at 15011 ms
+      (18.5% of wall), up from iter-33 attribution at sha2-chain log_t=14
+      (5574 ms = 58.8% of Materialize wall). Iter-34 P42 parallelized
+      `eq_project` internals (rayon on branch 1 par_chunks_mut + branch 2
+      par_iter_mut) and won −11% muldiv + −23% sha2-chain. The remaining
+      15 s wall spread over the log_t=16 workload suggests either (a)
+      repeated `eq_project` calls with the same `(prefix, suffix)` inputs
+      across materialize boundaries — candidate for a cache keyed by
+      (prefix_eval, suffix_eval) hash — or (b) the parallel branches
+      don't scale as well at log_t=16 as at log_t=14 due to per-call
+      overhead vs. inner work ratio changing. Instrument call counts
+      and per-call shape to decide between caching vs. reorganizing.
+      Conservative first step: add `mb::EqProject` span to count calls
+      per unique `(prefix_eval.len(), suffix_eval.len())` shape — if
+      many calls with same shape have redundant precomputed data, cache
+      hits are free wins.
+    - **Abstraction risk**: low for instrumentation; medium for caching
+      (needs eq_project argument hashability + thread-safe cache).
+    - **Expected delta**: 5-10% total wall if cache hit-rate > 50% on
+      EqProject calls; 2-4% if only layout/parallelism tuning works.
 
 
 ## Notes
