@@ -32,10 +32,47 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 8 (iter 64 P70 reverted flat/inconclusive; iter 63 P90 reverted).
-  Iter 65 pivots — either revisit gruen (25% wall, 16 calls) with a new
-  pre-chunk tactic, or attack interpolate_inplace's 17416 call count via
-  call coalescing, or P73 CompactPolynomial for ram_val (7s span).
+- **Stall counter**: 9 (iter 65 P71 reverted past-reject; iter 64 P70 reverted flat; iter 63 P90 reverted).
+  Iter 66 pivots — the fresh iter 65 profile (benchmark-runs/perfetto_traces/iter65-profile.json)
+  shows reduce_dense top span at 28.8s / 25.5% is dominated by one shape:
+  **(ni=6, ne=4)** = 23.2s over 2048 calls (11.3ms avg). Sources: RegRW
+  phase-1 kernel at line 3371 (inputs: eq, reg_ra_rs1, reg_ra_rs2, reg_wa,
+  reg_val, rd_inc; all 4 terms contain Factor::Input(0)=eq) and similar
+  6-input cubics. Every term has eq as a factor — **textbook
+  Gruen-cubic** candidates. Current Gruen usage: only RamRW phase-1 (one
+  kernel out of 27). Modular-vs-core structural gap: core uses Gruen for
+  nearly every eq-weighted sumcheck; modular uses plain Dense for 26/27
+  kernels. **P72 proposal**: generalize `gruen_segmented_reduce` or add
+  a non-segmented `gruen_cubic_reduce` backend method that accepts any
+  degree-2 composition Q(x) plus an eq input, then wire eligible
+  kernels (eq * Q, deg-2 Q) via `gruen_hint`. Multi-iter structural.
+  Secondary queue: P73 — CompactPolynomial-equivalent for RAM val
+  (run-length or sparse-update). P74 — call-coalesce `interpolate_inplace`
+  across polys sharing the same challenge + buffer-size bucket.
+  Environment note: system load avg 25-37 during iter 65 pushed baseline
+  no-change measurements 8-26% past reject vs ratchet 70762.94 ms;
+  ±5% thresholds are marginal in this environment until load settles.
+  iter 65 P71 REVERTED — widened `reduce_dense_fixed` const-generic
+  dispatch to cover (5,4), (6,4), (7,4), (9,4) in addition to existing
+  (2,2) (3,3) (4,4) (8,4) (8,8) (16,16) (32,32). Target: eliminate the
+  heap-allocated Vec<F> scratch + ptrs-Vec bounds checks in
+  `reduce_dense_dynamic` for the dominant (ni=6, ne=4) shape (80% of
+  `reduce_dense` self time). Correctness: 43/43 jolt-equivalence PASS.
+  Clippy -D warnings clean. Perf gate: run 1 modular **77555 ms
+  (+9.6%)**, ratio 18.80×; run 2 modular **80274 ms (+13.4%)**, ratio
+  19.64×. Both past reject vs ratchet 70762.94 ms. HOWEVER, baseline
+  no-change measurements (same commit pre-change) also past reject:
+  run1 89074 ms, run2 83521 ms, run3 78399 ms, run4 76656 ms (load 25-37).
+  P71 measurements are within baseline envelope; vs immediate pre-change
+  best (76656 ms), P71 best 77555 ms is +1.2% — **flat**. Per protocol
+  past-reject vs ratchet ⇒ revert. **Lesson**: at current system load,
+  micro-dispatch changes of ≤5% expected magnitude are below
+  measurement noise floor. Even if (6,4) saved 5% on `reduce_dense`
+  self-time, that's ~1.3 s absolute on 70 s baseline = 1.8%, easily
+  swamped. Stall 8 → 9. Green streak preserved at 1 (iter 54 P64 holds).
+  Ratchet unchanged 70762.94 ms. **Next iter 66 must aim for
+  order-of-magnitude target per memory rule** — Gruen extension (P72)
+  is the right-sized swing; (6,4) dispatch alone isn't.
   iter 64 P70 REVERTED — structural replacement of `EqProject` with sparse
   variants (`EqPushforward` + `EqGather`) for ram_ra_indicator's 2 consumer
   sites. Site 1 (ram_raf_ra, RAF eval): EqProject over cycle dim (eq_point
