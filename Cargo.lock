@@ -3011,6 +3011,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-sumcheck"
+version = "0.1.0"
+dependencies = [
+ "jolt-field",
+ "jolt-poly",
+ "jolt-transcript",
+ "serde",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "jolt-trace"
 version = "0.1.0"
 dependencies = [
