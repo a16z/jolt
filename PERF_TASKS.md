@@ -32,7 +32,40 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 9 (iter 52 INFRA — fresh sha2-chain log_t=16 Perfetto
+- **Stall counter**: 10 (iter 53 P62-variant REVERTED — modified
+  `reduce_dense_dynamic` in-place (NOT a new specialization arm) to use
+  stack-allocated `[F; MAX_NI=128]` and `[F::Accumulator; MAX_NE=32]`
+  scratch in the rayon fold init, replacing the 4 per-chunk `Vec`
+  allocations. **Rationale (iter 52 takeaway)**: iters 42/43/49 reverted
+  because new specialized arms (exact (NI,NE) monomorphizations) caused
+  I-cache pressure at the dispatch site; this variant AVOIDS new
+  monomorphization by editing the EXISTING dynamic path body. Kernel
+  evaluate call and inner loop structure unchanged — only the scratch
+  allocation changed from heap Vec to stack array. Correctness gate
+  green 43/43 jolt-equivalence (transcript_divergence, zkvm_proof_accepted,
+  modular_self_verify all pass; first attempt with MAX_NI=64 tripped
+  debug_assert on num_inputs=81 — bumped to 128). Clippy -D warnings
+  clean (jolt-cpu, jolt-core host, jolt-core host+zk). Perf gate: run 1
+  modular 92194 ms (**+18.9% past reject**, core 4234 = +7.5% thermal);
+  run 2 modular 78488 ms (**+1.24% inconclusive**, core 4264 = +8.3%).
+  Wild variance between runs (run-over-run Δ = 13.7 s on identical
+  code) — no reliable improvement, one catastrophic run. Per protocol,
+  inconclusive single-run means rerun → revert as flat; compounded with
+  a past-reject first run, revert is clear. **Lesson**: the per-chunk
+  Vec allocations in `reduce_dense_dynamic`'s fold init (~6–26 ms
+  theoretical savings by my estimate) are NOT a significant bottleneck.
+  The 10 KB stack frame added to the fold init closure captured by
+  rayon workers may ALSO HURT — rayon passes worker state across
+  work-stealing boundaries and large-by-value tuples can trigger
+  measurable memcpy overhead. Closes the "stack scratch in dynamic
+  path" avenue. Remaining top structural targets: P61 (fused
+  reduce+bind, multi-iter budget), or a fresh angle attacking
+  `reduce_dense` field-multiplication count directly (out of scope
+  without protocol-level changes). Next iter considers whether
+  to commit to P61 as a multi-iter structural project, or to
+  generate a new hypothesis targeting the combined 62% wall share
+  of `reduce_dense + interpolate_inplace` via a different angle.
+  iter 52 INFRA — fresh sha2-chain log_t=16 Perfetto
   trace captured. `benchmark-runs/perfetto_traces/iter52-profile.json`.
   Modular 78934 ms (+1.8% vs 77525 ratchet, flat in ±5% band; no ratchet
   move). **Self-time top 10** (~95% of wall):
