@@ -32,7 +32,25 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 3 (iter 43 P52-attack-b REVERTED — added `(6, 4)`
+- **Stall counter**: 4 (iter 44 P53 REVERTED — parallelized
+  `Op::InstanceBind`'s outer loop over polynomials via `par_iter_mut`
+  on a filtered Vec of DeviceBuffers. Target: 17416 interpolate_inplace
+  calls × 1.09 ms per call; `kdef.inputs` dedup across ~55 polys per
+  InstanceBind. Inner `bind_low_to_high` is already parallelized gated
+  at PAR_THRESHOLD=1024 — at small poly sizes (late sumcheck rounds)
+  inner parallelism doesn't trigger, so outer-across-polys was the
+  hypothesis. Correctness green.  Perf gate: run 1 modular 83857 ms
+  (+8.2% vs 77525 ratchet); run 2 modular 91106 ms (+17.5%). Both
+  runs past the 5% reject threshold with unstable ratio (17.8× / 20.3×
+  vs baseline 18.82×). **Repeats iter 37's lesson**: tiny-inner-work
+  parallelization adds rayon dispatch overhead + memory-bus contention
+  exceeding parallelism gains. Revert. For iter 45+ the parallel-bind
+  angle should be reconsidered ONLY as part of a larger structural
+  change (e.g. a coalesced "bind all dedup'd polys across all instances
+  in a single call" op, with OUTER rayon dispatch and INNER sequential
+  binds — a single rayon invocation amortizing dispatch once instead
+  of per InstanceBind×poly).
+  iter 43 P52-attack-b REVERTED — added `(6, 4)`
   arm ALONE to `reduce_dense_fixed` const-generic dispatch on the new
   sha2-chain log_t=16 standard. Correctness gate green
   (`modular_self_verify`, `transcript_divergence`,
