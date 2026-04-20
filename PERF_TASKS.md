@@ -32,7 +32,26 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 0 (iter 54 P64 GREEN — stall reset).
+- **Stall counter**: 1 (iter 55 P65 reverted flat).
+  iter 55 P65 REVERTED — applied the iter-54 bounds-check-elimination
+  pattern to `gruen_segmented_reduce::reduce_outer` (24.2% wall at iter
+  52), pre-computing `ra_base`/`val_base`/`inc_base`/`e_base` as `usize`
+  and using `*const F` unsafe reads in the inner `for i in 0..half`
+  body, replacing per-iteration `ra_buf[2*i]`/`val_buf[i]`-style
+  bounds-checked indexing. Correctness gate green 43/43 jolt-equivalence.
+  Clippy -D warnings clean. Perf gate: run 1 modular 71977.43 ms
+  (+1.72% vs 70762.94 ratchet, inconclusive band), run 2 modular
+  72013.43 ms (+1.77% vs ratchet, flat). Both runs consistently on
+  the slow side of ratchet, none past accept, none past reject —
+  revert per protocol (inconclusive rerun still in band → flat). 
+  **Lesson**: the gruen inner loop's 6 field multiplications per `i`
+  (two `val + gamma*(val+inc)` folds + two `e * ra * b` prods + one
+  `e * (Δra) * (Δb)` prod) dominate the bounds-check cost; the CPU
+  branch predictor likely already elides them. Unlike `reduce_dense_
+  dynamic` where the inner loop was mostly index arithmetic + two
+  `pair()` closure calls per `k`-coordinate (i.e., index work fraction
+  high), the gruen body is compute-heavy and bounds-check insensitive.
+  Closes the "apply P64 pattern to gruen" avenue.
   iter 54 P64 GREEN — `reduce_dense_dynamic`
   inner-loop refactor: hoisted `BindingOrder` match out of the hot
   `for i in 0..half` body via macro-based dispatch to two order-
