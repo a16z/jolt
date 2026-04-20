@@ -1,9 +1,9 @@
 [workspace]
 
 # The fuzz sub-workspace does not inherit the root workspace's `[patch.crates-io]`.
-# `light-poseidon` pulls unpatched `ark-ff` from crates.io; jolt-transcript's types
-# are built against the patched fork. Apply the same patches here so both sides
-# see the same `ark-ff`.
+# `light-poseidon` (via jolt-transcript) pulls unpatched `ark-ff` from crates.io;
+# jolt-crypto's types are built against the patched fork. Apply the same patches
+# here so both sides see the same `ark-ff`.
 [patch.crates-io]
 ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
@@ -11,7 +11,7 @@ ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist
 ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 
 [package]
-name = "jolt-transcript-fuzz"
+name = "jolt-crypto-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2021"
@@ -21,9 +21,24 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-jolt-transcript = { path = ".." }
+jolt-crypto = { path = ".." }
+jolt-field = { path = "../../jolt-field" }
+serde_json = "1"
+bincode = { version = "2", features = ["serde"] }
+rand_chacha = "0.3"
+rand_core = "0.6"
 
 [[bin]]
-name = "transcript_no_panic"
-path = "fuzz_targets/transcript_no_panic.rs"
+name = "deser_group"
+path = "fuzz_targets/deser_group.rs"
+doc = false
+
+[[bin]]
+name = "group_arith"
+path = "fuzz_targets/group_arith.rs"
+doc = false
+
+[[bin]]
+name = "pedersen_commit"
+path = "fuzz_targets/pedersen_commit.rs"
 doc = false
