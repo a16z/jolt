@@ -32,7 +32,33 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 3 (iter 57 P67 reverted past-reject).
+- **Stall counter**: 3 (iter 58 instrumentation — stall preserved).
+  iter 58 INSTRUMENTATION — measured thread/core saturation for
+  modular vs core per user directive: "core should be close to 100
+  (you should check) but if i had to guess we are lacking far behind
+  in saturation which could explain some big gaps". Bird's-eye via
+  `/usr/bin/time -l` on `jolt-bench --stack {core,modular}`; per-second
+  CPU% timeseries via `ps -p PID -o %cpu` loop during prove.
+  **Confirmed**: modular under-saturates. Core prove ~476% CPU = 59.5%
+  of 8 cores (~4.76 threads avg); modular prove ~295% CPU = 36.9% of
+  8 cores (~2.95 threads avg). Gap: 22.6 percentage points, upper-bound
+  38% wall reduction if saturation closed (ratio 18.14 → ~11x, still
+  off but meaningful). Modular has 14.9x more involuntary ctx-switches
+  (2.8M vs 188K) and 2.7x memory footprint (4.6 GB vs 1.7 GB) — classic
+  signals of rayon contention + memory-bandwidth pressure. Modular
+  CPU%-timeseries is bimodal: **25% of samples < 150% (serial stretches)**,
+  24% in 200-300%, 9% in 500-700%. Identified 4 serial runs of ≥3s:
+  elapsed 22-28s (7s @ 99%), **elapsed 31-39s (9s @ 65%** — biggest
+  lever), 81-84s (3s @ 81%), 109-111s (3s @ 101%). Raw data in
+  `perf/iter58-{core,modular}-saturation.json`, `perf/iter58-{core,
+  modular}-time.log`, `perf/iter58-modular-cpu-timeseries.log`.
+  No code changes — pure measurement. Stall counter preserved at 3.
+  Green streak preserved at 1 (iter 54 P64 holds). Ratchet unchanged
+  70762.94 ms. **Iter 59 attack**: target the 9s serial stretch; from
+  iter-56 Perfetto self-time, `eq_project` (9.7s across 2 calls ≈ 9%
+  wall, untouched) is the most likely culprit — largest per-call wall
+  AND parallelism untried. Read `eq_project` source, assess parallelism
+  structure, design the attack.
   iter 57 P67 REVERTED — parallelized `DerivedSource::ram_val`
   (crates/jolt-witness/src/derived.rs:353) using `rayon::par_chunks_mut`
   over addresses AND replaced the per-cycle compare+write loop with

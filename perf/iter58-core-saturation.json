@@ -1,0 +1,15 @@
+{
+  "program": "sha2-chain",
+  "iters": 1,
+  "warmup": 1,
+  "runs": [
+    {
+      "stack": "core",
+      "prove_ms": 4141.018834,
+      "verify_ms": 73.101625,
+      "peak_rss_mb": 1695,
+      "proof_bytes": 80244,
+      "proof_encoding": "ark-compressed"
+    }
+  ]
+}
