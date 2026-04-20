@@ -1559,25 +1559,25 @@ fn zkvm_proof_accepted_by_core_verifier() {
     verifier.run_preamble();
     eprintln!("[cross-system] preamble OK");
 
-    verifier.verify_stage1().expect("stage 1 failed");
+    let _ = verifier.verify_stage1().expect("stage 1 failed");
     eprintln!("[cross-system] stage 1 OK");
 
-    verifier.verify_stage2().expect("stage 2 failed");
+    let _ = verifier.verify_stage2().expect("stage 2 failed");
     eprintln!("[cross-system] stage 2 OK");
 
-    verifier.verify_stage3().expect("stage 3 failed");
+    let _ = verifier.verify_stage3().expect("stage 3 failed");
     eprintln!("[cross-system] stage 3 OK");
 
-    verifier.verify_stage4().expect("stage 4 failed");
+    let _ = verifier.verify_stage4().expect("stage 4 failed");
     eprintln!("[cross-system] stage 4 OK");
 
-    verifier.verify_stage5().expect("stage 5 failed");
+    let _ = verifier.verify_stage5().expect("stage 5 failed");
     eprintln!("[cross-system] stage 5 OK");
 
-    verifier.verify_stage6().expect("stage 6 failed");
+    let _ = verifier.verify_stage6().expect("stage 6 failed");
     eprintln!("[cross-system] stage 6 OK");
 
-    verifier.verify_stage7().expect("stage 7 failed");
+    let _ = verifier.verify_stage7().expect("stage 7 failed");
     eprintln!("[cross-system] stage 7 OK");
 
     let _ = verifier.verify_stage8().expect("stage 8 failed");

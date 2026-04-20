@@ -268,11 +268,12 @@ where
                         &key.r1cs_key,
                         &proof.config,
                     )?;
-                    if batch_challenges.is_empty() {
-                        combined_output += output;
+                    let coeff = if batch_challenges.is_empty() {
+                        F::one()
                     } else {
-                        combined_output += challenges[batch_challenges[i].0] * output;
-                    }
+                        challenges[batch_challenges[i].0]
+                    };
+                    combined_output += coeff * output;
                 }
 
                 if final_evals[*stage] != combined_output {
@@ -545,8 +546,11 @@ fn evaluate_preprocessed_poly<F: Field>(
         PolynomialId::IoMask => {
             // 1 for addresses in the I/O range, 0 outside.
             // MLE = LT(r, io_end) - LT(r, io_start).
+            // io_end = remap(memory_start) — includes advice regions and
+            // power-of-2 padding (matches jolt-core's RangeMaskPolynomial
+            // range [input_start, RAM_START_ADDRESS)).
             let io_start = config.input_word_offset as u128;
-            let io_end = (config.termination_word_offset + 1) as u128;
+            let io_end = ((config.memory_start - config.ram_lowest_address) / 8) as u128;
             Ok(lt_mle(point, io_end) - lt_mle(point, io_start))
         }
         PolynomialId::RamUnmap => {
@@ -602,8 +606,11 @@ fn identity_mle<F: Field>(r: &[F]) -> F {
 /// Evaluated without materializing the full K-element vector.
 fn eval_io_mle<F: Field>(r: &[F], config: &ProverConfig) -> Result<F, JoltError> {
     // The I/O region occupies the low portion of the address space.
-    let io_end = config.termination_word_offset + 1;
-    let io_len = io_end.next_power_of_two().max(1);
+    // Length = remap(RAM_START_ADDRESS) rounded up to a power of 2 —
+    // matches jolt-core's `io_len_words` (MemoryLayout pads io_region_bytes
+    // to the next power of 2, so this may exceed `termination_word_offset + 1`).
+    let io_end_words = ((config.memory_start - config.ram_lowest_address) / 8) as usize;
+    let io_len = io_end_words.next_power_of_two().max(1);
     let num_io_vars = io_len.trailing_zeros() as usize;
 
     if num_io_vars > r.len() {
