@@ -32,7 +32,30 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 5 (iter 47 INFRA — fresh sha2-chain log_t=16
+- **Stall counter**: 6 (iter 48 P56 REVERTED — nested/flat parallelism
+  for `CpuBackend::gruen_segmented_reduce`: (a) parallelized `e_active`
+  precompute when `half >= PAR_THRESHOLD`; (b) restructured `reduce_outer`
+  into `reduce_outer_chunk(a_idx, start, end)` returning unweighted
+  partial (q_const, q_quad); (c) added a 3-way strategy — outer-par
+  when `active.len() >= n_threads`; flat (outer, half-chunk) par when
+  `active.len() < n_threads && half >= PAR_THRESHOLD`; serial/outer-par
+  fallback otherwise. Correctness gate green (43/43 jolt-equivalence).
+  Perf gate: run 1 modular 85233 ms (**+9.9% vs 77525 ratchet, past
+  reject**); run 2 modular 82400 ms (**+6.3% vs 77525 ratchet, past
+  reject**). Both runs past the +5% reject threshold → revert.
+  **Lesson**: the new chunked path adds a `Vec<(usize, F, usize, usize)>`
+  allocation + a new parallel dispatch for `e_active` even on the outer-
+  par branch (since the precompute gate is separate). For typical sha2-
+  chain log_t=16 rounds, `active.len()` likely exceeds n_threads at the
+  boundaries where `half` is largest (early rounds have many active
+  outers from the spread-out eq), so the flat path almost never fires,
+  while the always-on `e_active` parallelization and restructured closure
+  add overhead on the common path. Iter 49 should avoid speculative
+  parallelism on new inner work and instead attack a different hot span.
+  Candidates: P58 (RAM derived arms coalesce, 18% wall in 4 calls,
+  structural), P59 (memoize multi_pair_g2_setup, 13.7% wall), or P55
+  (coalesce InstanceBind into BindAllPolysInRound — needs compiler op).
+  iter 47 INFRA — fresh sha2-chain log_t=16
   Perfetto trace captured post-iter-46-revert.
   `benchmark-runs/perfetto_traces/iter47-profile.json`. Modular
   76598 ms (−1.2% vs 77525 ratchet, flat in ±5% band; no ratchet move).
