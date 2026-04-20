@@ -32,12 +32,50 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 5 (iter 60 P69 reverted +43.4% / +103.9%). **Next
-  iter must re-profile per CLAUDE.md stall ≥ 5 trigger**: run
-  `cargo run --release -p jolt-bench -- --program sha2-chain
-  --num-iters 16 --log-t 16 --iters 1 --warmup 1 --profile`
-  → fresh Perfetto trace → append new P-items after re-analyzing
-  self-time top 10.
+- **Stall counter**: 5 (iter 60 P69 reverted; iter 61 infra profile
+  preserved stall). Iter 62 picks from fresh P70-P73 list below.
+  iter 61 INFRA — fresh sha2-chain log_t=16 Perfetto trace captured
+  (stall ≥ 5 trigger). `benchmark-runs/perfetto_traces/iter61-profile.json`.
+  Modular 81212 ms (+14.7% vs ratchet, expected from trace-chrome
+  overhead; ratio 18.47× consistent with iter 54 ratchet). **Self-time
+  top 10** (~95% of wall):
+    | # | span | self ms | % | calls | ms/call |
+    |--:|------|--------:|--:|------:|--------:|
+    | 1 | `reduce_dense` | 28505 | **35.1%** | 2373 | 12.01 |
+    | 2 | `interpolate_inplace` | 20966 | **25.8%** | 17416 | 1.20 |
+    | 3 | `CpuBackend::gruen_segmented_reduce` | 20450 | **25.2%** | 16 | 1278.2 |
+    | 4 | `multi_pair_g2_setup_parallel` | 10164 | 12.5% | 124 | 82.0 *(setup)* |
+    | 5 | `CpuBackend::eq_project` | 9148 | 11.3% | 82 | 111.6 |
+    | 6 | `derived::ram_val` | 7031 | 8.7% | 1 | 7031 *(serial)* |
+    | 7 | `derived::ram_ra_indicator` | 4860 | 6.0% | 2 | 2430 |
+    | 8 | `CpuBackend::segmented_reduce` | 2817 | 3.5% | 16 | 176 |
+    | 9 | `G1::msm` | 2138 | 2.6% | 43043 | 0.05 |
+    |10 | `derived::ram_combined_ra` | 2103 | 2.6% | 1 | 2103 |
+  Top-3 spans = 86% of wall, all heavily attacked: reduce_dense won
+  at P64 (iter 54), interpolate_inplace lost P66/P68, gruen lost
+  P56/P65, ram_val lost P51/P57, ram_ra_indicator lost P69. **Fresh
+  P-item queue** (structural, order-of-magnitude angles):
+    - **P70 SPARSE-EQ-PROJECT**: add `ComputeBackend` API for sparse
+      indicator sources. `ram_ra_indicator` is T nonzeros in T·K
+      buffer (~K-fold sparsity). `eq_project`'s inner `for k in 0..K`
+      is O(T·K) field muls, nearly all on zero source values.
+      Sparse-aware variant = O(T) muls; eliminates
+      `ram_ra_indicator` materialization (−5-6 s wall direct +
+      reduces `eq_project` self-time). Multi-iter structural.
+    - **P71 FUSED-REDUCE-BIND**: 2373 reduce + 17416 bind calls ⇒
+      significant intermediate-buffer traffic. Fuse into single
+      dispatch to skip materialization. Multi-iter structural.
+    - **P72 BATCH-BIND-COALESCE**: handler-level batching of
+      `bind()` calls across polys in a sumcheck round. 17416 calls /
+      ~316 per poly-batch suggests per-call rayon/bookkeeping
+      overhead. Lowest-risk new angle — single-iter doable.
+    - **P73 COMPACT-RAM-VAL**: emit `ram_val` as
+      `CompactPolynomial<u64>` (8 B) instead of dense F (32 B) —
+      4× memory-bandwidth reduction on K·T buffer. Consumer side
+      already supports CompactPolynomial variants.
+  **Iter 62 target**: P72 (lowest risk). Fallback: P70 structural
+  sparse-aware `eq_project` (highest leverage). Stall counter
+  preserved at 5.
   iter 60 P69 REVERTED — swapped `vec![F::zero(); k*t]` →
   `jolt_poly::thread::unsafe_allocate_zero_vec::<F>(k*t)` in
   `DerivedSource::ram_ra_indicator` (5.7 s / 1 call @ iter 56) and
