@@ -1,7 +1,6 @@
 [package]
 name = "jolt-trace"
 version = "0.1.0"
-authors = ["Jolt Contributors"]
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Host-side guest program compilation, decoding, and tracing for Jolt"
@@ -13,7 +12,7 @@ categories = ["cryptography"]
 workspace = true
 
 [dependencies]
-bincode = { version = "2", features = ["serde"] }
+bincode.workspace = true
 common = { workspace = true }
 jolt-lookup-tables = { workspace = true }
 jolt-riscv = { workspace = true }
