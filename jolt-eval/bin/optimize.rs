@@ -268,7 +268,7 @@ fn main() -> eyre::Result<()> {
         );
         println!("Baseline sort time: {baseline_score:.8}s");
         println!();
-        let agent = ClaudeCodeAgent::new(&cli.model, cli.max_turns);
+        let agent = ClaudeCodeAgent::new(&cli.model, cli.max_turns, cli.verbose);
         let result = auto_optimize(&agent, &mut env, objective, &config, &repo_dir);
         println!("Best score: {:.8}s", result.best_score);
         println!(
@@ -312,7 +312,7 @@ fn main() -> eyre::Result<()> {
     let baseline_score = (objective.evaluate)(&baseline, &baseline);
     println!("Objective: {} = {:.8}\n", objective.name, baseline_score);
 
-    let agent = ClaudeCodeAgent::new(&cli.model, cli.max_turns);
+    let agent = ClaudeCodeAgent::new(&cli.model, cli.max_turns, cli.verbose);
     let config = OptimizeConfig {
         num_iterations: cli.iterations,
         hint: cli.hint.clone(),
