@@ -32,7 +32,33 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 2 (iter 42 P51 REVERTED — added `(6, 4)` and
+- **Stall counter**: 3 (iter 43 P52-attack-b REVERTED — added `(6, 4)`
+  arm ALONE to `reduce_dense_fixed` const-generic dispatch on the new
+  sha2-chain log_t=16 standard. Correctness gate green
+  (`modular_self_verify`, `transcript_divergence`,
+  `zkvm_proof_accepted_by_core_verifier`, full jolt-equivalence).
+  Perf gate inconclusive under thermal throttling: run 1 core=5926 ms
+  (+50.5% vs 3938 ratchet), modular=92183 ms (+18.9% vs 77525 ratchet);
+  run 2 core=7243 ms (+84%), modular=93941 ms (+21.2%). Core regressed
+  more than modular — modular:core ratio improved from 18.82× baseline
+  to 15.56× (run 1) / 12.97× (run 2), hinting at a real relative win,
+  but absolute-ms-vs-ratchet is the gate criterion and both runs are
+  ≥18% slow → reverted as flat. New iter-43 trace re-attributed:
+  `reduce_dense` = 34975 ms (43.1% of 81077 ms total) still the king,
+  `InstanceSegmentedReduce` 21613 ms (26.7%), `interpolate_inplace`
+  19009 ms (23.4%), `InstanceBind` 18925 ms (23.3%),
+  `gruen_segmented_reduce` 18522 ms (22.8%), `DoryScheme::commit`
+  16506 ms (20.4%). The top 3 + bind together are 90% of wall — clear
+  signal that the sumcheck inner loop is where any order-of-magnitude
+  gains live. **Next iter 44 attack candidates**: (a) P53 fused
+  reduce+bind op (single pass over polynomial data — today's reduce
+  34.9 s + bind 18.9 s = 53.8 s doing two passes over same memory;
+  halving bandwidth could save 15-25 s = 19-31% total win);
+  (b) option (c) from prior iter — optimize the dynamic reduce path
+  with reusable scratch (currently each rayon chunk likely allocates
+  a fresh Vec<F> evals buffer); (c) measure reduce_dense per-shape at
+  log_t=16 before picking an isolated-arm attack again.
+  iter 42 P51 REVERTED — added `(6, 4)` and
   `(41, 4)` arms to `reduce_dense` const-generic dispatch. Muldiv log_t=12
   warm avg 1406.30 ms (3 runs excluding cold run 1 @ 1487.57 ms) =
   **+10.4% vs 1274.20 ratchet, past reject threshold**. sha2-chain
