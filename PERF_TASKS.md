@@ -32,7 +32,72 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 12 (iter 68 P73 reverted; iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+- **Stall counter**: 13 (iter 69 design-only; iter 68 P73 reverted; iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+
+  iter 69 DESIGN STEP — no code changes. Baseline re-measurement
+  82705 ms modular / 4203 core (ratio 19.68×); system load averaged
+  5.11 / 12.38 / 14.98, still in noisy envelope (5-min 12.4, 15-min
+  14.98). Per memory rule + iter 66 precedent: design step instead
+  of forcing a low-signal micro-opt. **Audit result for P75 Gruen
+  multi-wire plan**: audited all 27 kernels in
+  `crates/jolt-compiler/examples/jolt_core_module.rs` to identify
+  eq * Q(x) deg ≤ 3 candidates. Current state: only kernel 3
+  (RamRW phase-1) has `gruen_hint: Some(...)`. Eligible candidates
+  (fully eq-factored via `Input(0)`, degree ≤ 3, Dense iteration):
+
+  | idx | name | rounds (log_t=16) | iteration | Q degree |
+  |-----|------|-------------------|-----------|----------|
+  | 5   | ProductRemainder     | ~25 | Dense | 2 (left·right) |
+  | 8   | OutputCheck          | ~20 | Dense | 2 (mask·(val_final-val_io)) |
+  | 10  | InstructionInput     | ~9  | Dense | 2 |
+  | 12  | RegRW phase-1        | ~16 | Dense (segmented mixed) | 2 (4-term lincombo) |
+  | 21  | Booleanity           | ~13 | Dense | 2 (Σ_d γ²_d · (ra_d² - ra_d)) |
+  | 22  | HammingBooleanity    | ~9  | Dense | 2 (hamming² - hamming) |
+
+  Expected coverage shift: Dense→Gruen on 6 kernels sharing
+  ni=6,ne=4 shape (dominant shape = 23s of reduce_dense per iter65
+  profile). Each swung kernel saves ~50% on its reduce_dense
+  contribution. Kernel 3 (already-wired RamRW phase-1) proves the
+  approach — gruen_segmented_reduce is 20.7s (single-kernel win).
+  If new kernels collectively match 5-8s of reduce_dense load,
+  shift delivers ~3-5s absolute = 4-7%. If 10-15s shifted, 8-11%.
+  At 6 kernels, realistic mid-range = ~5-8% win. **Plan pinned
+  as P75 for iter 70 execution**:
+  1. Re-apply iter 67's GruenHint enum extension
+     (`GruenHint::LinComboQ` | `GruenHint::GeneralQ { q_formula, input_remap }`)
+     + `CpuBackend::gruen_segmented_reduce_general_q` method.
+  2. Audit `Iteration` variant for each candidate. Kernels 5, 8,
+     10, 21, 22 use `Iteration::Dense` (NOT segmented) — need
+     **non-segmented** Gruen path (`reduce_gruen_cubic` — plain
+     dense eq*Q over single dimension, no outer_eq).
+  3. Add new `Iteration::Gruen` variant OR extend `GruenHint` to
+     apply in both dense (non-segmented) and dense-tensor
+     (segmented) kernels.
+  4. Wire candidates in priority order per call volume:
+     - Tier A (highest round count × probable dominant shape):
+       Kernel 5 (ProductRemainder 25 rds), Kernel 8 (OutputCheck
+       20 rds), Kernel 12 (RegRW phase-1 16 rds segmented).
+     - Tier B (moderate): Kernel 21 (Booleanity 13 rds, multiple
+       γ²_d terms), Kernel 10 (InstructionInput 9 rds).
+     - Tier C (smallest): Kernel 22 (HammingBooleanity 9 rds).
+  5. Correctness gate on EACH kernel-wire before moving to next —
+     jolt-equivalence 43/43 + clippy -D warnings.
+  6. Perf gate on FULL BATCH (all wired) vs ratchet 70762.94 ms.
+
+  Key technical risks:
+  - Kernel 21 Booleanity formula is `Σ_d γ²_d · eq · (ra_d² - ra_d)`
+    — multi-term sum, not single product. Need GruenHint::GeneralQ
+    where q_formula carries the full sum-of-products.
+  - Kernel 5 ProductRemainder is BATCHED (product_remainder_rounds
+    first_active offset). Gruen dispatch must respect the first_active
+    phase start.
+  - Non-segmented Gruen path requires NEW backend method
+    (`gruen_dense_reduce` — no outer_eq, single inner dimension).
+
+  Stall 12 → 13. Green streak preserved at 1 (iter 54 P64 holds).
+  Ratchet unchanged 70762.94 ms. Next iter 70 executes P75 plan
+  starting at step 1 (re-apply enum infra) + step 2 (add
+  non-segmented Gruen method).
 
   iter 68 P73 REVERTED — `derived::ram_val` parallelization via
   `par_chunks_mut(t)` across k RAM addresses. Hypothesis: profile span
