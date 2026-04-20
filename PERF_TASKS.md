@@ -32,7 +32,43 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 3 (iter 58 instrumentation — stall preserved).
+- **Stall counter**: 4 (iter 59 P68 reverted +34.18%).
+  iter 59 P68 REVERTED — outer-parallel `CpuBackend::bind` across
+  polys with FORCED SERIAL inner path. Added new `bind_low_to_high_serial`
+  / `bind_high_to_low_serial` functions in jolt-poly that never fork a
+  rayon scope (bypass the `half >= PAR_THRESHOLD` branch). Modified
+  `CpuBackend::bind` to dispatch polys via `inputs.par_iter_mut().for_each`
+  over the serial-only helpers when `inputs.len() >= 2` for
+  `Dense|DenseTensor|Gruen` iteration. Design intent: avoid iter 56 P66's
+  nested-rayon thrash by forcing the inner body serial — each rayon
+  worker binds one poly end-to-end with no inner scope. Targeted iter-56
+  profile's 19 s `interpolate_inplace` span (15506 calls, #2 self-time).
+  Expected 5-15s wall (7-21% of 70.7 s ratchet). Correctness gate green
+  43/43 jolt-equivalence (transcript_divergence, zkvm_proof_accepted_by_
+  core_verifier, modular_self_verify). Clippy -D warnings clean on
+  jolt-cpu + jolt-poly + jolt-zkvm. Perf gate: run 1 modular
+  **94951.50 ms (+34.18% past reject)**, core 4156.42 ms. 34% regression
+  is far outside ±5% band — no rerun needed, revert immediate per
+  protocol. **Lesson**: forced-serial inner STILL regressed catastrophically.
+  Likely root causes: (a) ~55 polys with non-uniform sizes (tiny
+  single-round polys mixed with K=2^21-sized polys) → severe load
+  imbalance across 8 workers, largest poly blocks the whole batch;
+  (b) `bind_low_to_high_serial` still allocates a fresh Vec (no in-place
+  path due to `evals[i] = lo + scalar*(hi-lo)` write conflicting with
+  `evals[2*i]` reads when 2*i < half). 8 workers × ~32 MB per transient
+  buffer at K-sized poly = 256 MB concurrent heap pressure, hammering
+  memory bandwidth; (c) for small polys (< 1024 elements = below
+  `PAR_THRESHOLD`), the original inner path ALREADY runs serial, so
+  forcing serial outside doesn't help there. **Closes the "outer-par
+  bind with any inner serial variant" avenue** — P66 failed with nested
+  rayon, P68 fails with forced serial. Future retry would need: (1)
+  batch polys by size tier + parallelize only within same-tier batches
+  to balance load; (2) rewrite bind to stream/fuse into the next reduce
+  to avoid materializing intermediate Vec at all; (3) specialize
+  `bind_low_to_high` to be in-place for `high_to_low` mode (which IS
+  in-place via `split_at_mut(half)`) and accept the copy only for
+  `low_to_high`. Ratchet unchanged 70762.94 ms. Green streak preserved
+  at 1 (iter 54 P64 holds).
   iter 58 INSTRUMENTATION — measured thread/core saturation for
   modular vs core per user directive: "core should be close to 100
   (you should check) but if i had to guess we are lacking far behind
