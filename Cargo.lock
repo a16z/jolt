@@ -2802,6 +2802,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-hyperkzg"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "jolt-crypto",
+ "jolt-field",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-transcript",
+ "num-traits",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "rayon",
+ "serde",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "jolt-inlines-bigint"
 version = "0.1.0"
 dependencies = [
