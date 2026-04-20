@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use jolt_compiler::module::{ClaimFactor, ClaimFormula};
-use jolt_compiler::{GruenHint, Iteration, PolynomialId};
+use jolt_compiler::{GruenHint, GruenQ, Iteration, PolynomialId};
 use jolt_field::{Field, FieldAccumulator};
 
 use jolt_compute::{BindingOrder, Buf, ComputeBackend, DeviceBuffer, Scalar};
@@ -689,10 +689,11 @@ impl ComputeBackend for CpuBackend {
 
         let half = inner_size / 2;
         let eq_in = hint.eq_input as usize;
-        let a_in = hint.q_lincombo.a_input as usize;
-        let b_in = hint.q_lincombo.b_input as usize;
-        let c_in = hint.q_lincombo.c_input as usize;
-        let gamma = challenges[hint.q_lincombo.gamma_challenge.0];
+        let GruenQ::LinCombo(q_lincombo) = &hint.q;
+        let a_in = q_lincombo.a_input as usize;
+        let b_in = q_lincombo.b_input as usize;
+        let c_in = q_lincombo.c_input as usize;
+        let gamma = challenges[q_lincombo.gamma_challenge.0];
         // eq_table layout: bit 0 corresponds to the LAST entry processed
         // (see `CpuBackend::eq_table`), so for LowToHigh binding of bit k
         // the current variable's challenge is at `len - 1 - k`.

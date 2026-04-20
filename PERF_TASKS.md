@@ -32,7 +32,28 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 13 (iter 69 design-only; iter 68 P73 reverted; iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+- **Stall counter**: 14 (iter 70 P75-A infra-only commit; iter 69 design-only; iter 68 P73 reverted; iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+
+  iter 70 P75-A INFRA — no behavior change. Extended `GruenHint`
+  struct field `q_lincombo: LinComboQ` → `q: GruenQ` where
+  `GruenQ::LinCombo(LinComboQ)` wraps the existing specialized shape.
+  Enum currently has a single variant; iter 71+ will add
+  `GruenQ::GeneralQ { q_formula: Formula, input_remap: Vec<u32> }`
+  for generic eq-factored deg-2 Q. Changes: `kernel_spec.rs` enum
+  add; `lib.rs` re-export; `examples/jolt_core_module.rs` kernel 3
+  construction wraps `LinComboQ` in `GruenQ::LinCombo(...)`;
+  `backend.rs::gruen_segmented_reduce` destructures
+  `let GruenQ::LinCombo(q_lincombo) = &hint.q;` (irrefutable
+  single-variant, compiler accepts). Correctness: 43/43
+  jolt-equivalence PASS; clippy lib-only -D warnings clean.
+  Perf: run1 modular 87848 ms (+24.1% vs ratchet — matches iter 68/69
+  noise envelope at load 5-15). Commit as chore (infra, no perf
+  claim). Stall 13 → 14. Green streak preserved at 1.
+  Ratchet unchanged 70762.94 ms. Next iter 71 P75-B: add
+  `GruenQ::GeneralQ` variant + `CpuBackend::gruen_segmented_reduce_general_q`
+  method (generic Q evaluation via compiled Q-kernel at num_evals=3).
+  Iter 72+ wires non-segmented dense kernels (22 HammingBooleanity
+  first — simplest Q = h² - h).
 
   iter 69 DESIGN STEP — no code changes. Baseline re-measurement
   82705 ms modular / 4203 core (ratio 19.68×); system load averaged

@@ -22,7 +22,7 @@
 use jolt_compiler::checkpoint_lowering::lower_checkpoint_rule;
 use jolt_compiler::formula::{BindingOrder, Factor, Formula, ProductTerm};
 use jolt_compiler::ir::PolyKind;
-use jolt_compiler::kernel_spec::{GruenHint, Iteration, LinComboQ};
+use jolt_compiler::kernel_spec::{GruenHint, GruenQ, Iteration, LinComboQ};
 use jolt_compiler::module::{
     BatchIdx, BatchedInstance, BatchedSumcheckDef, BilinearExpr, ChallengeDecl, ChallengeIdx,
     ChallengeSource, CheckpointAction, CheckpointEvalAction, CheckpointRule, ClaimFactor,
@@ -2122,12 +2122,12 @@ fn build_stage2(
             gruen_hint: Some(GruenHint {
                 eq_input: 0,
                 eq_challenges: rw_cycle_eq_challenges.clone(),
-                q_lincombo: LinComboQ {
+                q: GruenQ::LinCombo(LinComboQ {
                     a_input: 1,
                     b_input: 2,
                     c_input: 3,
                     gamma_challenge: ch_gamma_rw,
-                },
+                }),
             }),
         },
         inputs: vec![

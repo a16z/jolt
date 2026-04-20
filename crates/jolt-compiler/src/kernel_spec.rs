@@ -48,13 +48,10 @@ pub struct KernelSpec {
 }
 
 /// Metadata directing the runtime to use the Gruen cubic-assembly fast path
-/// on a segmented dense kernel whose formula factors as `eq(w, x) · q(x)`
-/// with `q` a specific linear-combo-of-bilinear-product shape.
+/// on a kernel whose formula factors as `eq(w, x) · q(x)` with `deg(q) ≤ 2`.
 ///
-/// For kernel 3 (RAM read-write phase 1):
-/// `q(x) = a(x) · ((1 + γ) · b(x) + γ · c(x))`
-///
-/// Equivalently `q(x) = a(x) · (b(x) + γ · (b(x) + c(x)))`.
+/// The `q` shape is carried by [`GruenQ`], which discriminates between
+/// specialized and generic factorizations.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GruenHint {
     /// Which formula input is the eq-table (length `2^inner_num_vars` after binding).
@@ -62,11 +59,24 @@ pub struct GruenHint {
     /// Per-round challenge indices: `w_current` at round `k` is
     /// `challenges[eq_challenges[k].0]`.
     pub eq_challenges: Vec<ChallengeIdx>,
-    /// The `q(x)` factorization baked in as a linear combination.
-    pub q_lincombo: LinComboQ,
+    /// The `q(x)` factorization baked in.
+    pub q: GruenQ,
 }
 
-/// `q(x) = a(x) · ((1 + γ) · b(x) + γ · c(x))` shape for [`GruenHint`].
+/// Shape of the `q(x)` factor in [`GruenHint`].
+///
+/// Distinguishes the specialized linear-combo-of-bilinear-product shape
+/// (fast path for RamRW phase-1) from generic degree-≤2 compositions
+/// (future path for arbitrary eq-factored cubic kernels).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GruenQ {
+    /// `q(x) = a(x) · ((1 + γ) · b(x) + γ · c(x))` shape used by
+    /// RamRW phase-1 (kernel 3). Consumed by
+    /// `CpuBackend::gruen_segmented_reduce`.
+    LinCombo(LinComboQ),
+}
+
+/// `q(x) = a(x) · ((1 + γ) · b(x) + γ · c(x))` shape for [`GruenQ::LinCombo`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LinComboQ {
     pub a_input: u32,
