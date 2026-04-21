@@ -39,3 +39,4 @@ jolt-zkvm = { path = "../jolt-zkvm" }
 tracer = { path = "../../tracer" }
 num-traits.workspace = true
 blake2.workspace = true
+rayon.workspace = true

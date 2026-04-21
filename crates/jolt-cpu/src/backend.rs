@@ -6,7 +6,11 @@ use jolt_compiler::module::{ClaimFactor, ClaimFormula};
 use jolt_compiler::{GruenHint, GruenQ, Iteration, PolynomialId};
 use jolt_field::{Field, FieldAccumulator};
 
-use jolt_compute::{BindingOrder, Buf, ComputeBackend, DeviceBuffer, Scalar};
+use jolt_compute::{
+    BindingOrder, Buf, ComputeBackend, DeviceBuffer, HandleId, HandleShape, Scalar,
+};
+
+use crate::handles::{CpuHandleState, HandleStore};
 
 /// Parallelism threshold: buffers smaller than this use sequential loops.
 ///
@@ -806,6 +810,28 @@ impl ComputeBackend for CpuBackend {
             prev_claim,
         )
         .to_vec()
+    }
+
+    fn open_handle<F: Field>(&self, shape: HandleShape<'_, F>) -> HandleId {
+        HandleStore::global().open(shape)
+    }
+
+    fn bind_handle<F: Field>(&self, id: HandleId, round: usize, r: F) {
+        HandleStore::global().with_state_mut::<F, _>(id, |state| match state {
+            CpuHandleState::Scratch(v) => {
+                v[round] = r;
+            }
+        });
+    }
+
+    fn query_handle<F: Field>(&self, id: HandleId, idx: usize) -> F {
+        HandleStore::global().with_state::<F, _>(id, |state| match state {
+            CpuHandleState::Scratch(v) => v[idx],
+        })
+    }
+
+    fn close_handle(&self, id: HandleId) {
+        HandleStore::global().close(id);
     }
 }
 

@@ -32,7 +32,45 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 16 (iter 72 P76-A infra stub; iter 71 P75-B infra stub; iter 70 P75-A infra-only commit; iter 69 design-only; iter 68 P73 reverted; iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+- **Stall counter**: 17 (iter 73 P76-B infra; iter 72 P76-A infra stub; iter 71 P75-B infra stub; iter 70 P75-A infra-only commit; iter 69 design-only; iter 68 P73 reverted; iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+
+  iter 73 P76-B INFRA — no hot-path wiring yet. Stood up the
+  per-backend `HandleStore` infrastructure inside `CpuBackend`:
+  new `crates/jolt-cpu/src/handles.rs` with `CpuHandleState<F>`
+  enum (`Scratch(Vec<F>)`; `Eq` follows in iter 74) and a
+  module-private `OnceLock<HandleStore>` global (matches
+  CpuBackend being a unit struct — no call-site churn). Storage
+  type-erases per-F state via `Box<dyn Any + Send + Sync>`,
+  keeping the trait surface clean; downcast to
+  `CpuHandleState<F>` is the only type recovery and panics on
+  F mismatch. Implemented the 4 trait methods (`open_handle`,
+  `bind_handle`, `query_handle`, `close_handle`) on
+  `CpuBackend` by delegating to `HandleStore::global()`. Added
+  `crates/jolt-equivalence/tests/handle_scratch_roundtrip.rs`
+  with 4 tests: serial roundtrip, parallel (`par_iter` of 64
+  handles × 16 rounds), `HandleId` uniqueness under contention
+  (1024 opens), and `eq_shape_panics_until_wired` (pins the
+  unimplemented-Eq contract). All 4 pass; jolt-equivalence
+  47/47 PASS overall (was 43/43 → +4 from the new test file).
+  Clippy: modular set (compiler, compute, cpu, zkvm, dory,
+  openings, verifier, bench) + jolt-core host + jolt-core
+  host,zk -D warnings all clean. Pre-change measurement:
+  modular 98177.15 ms / core 5734.54 ms (ratio 17.12x) —
+  +11% vs iter 72 baseline 88540.09, within the elevated
+  ambient noise envelope seen iters 68-72. Perf gate skipped:
+  this change touches no hot path (new module + trait method
+  overrides that rebuild no data structure ever used on the
+  prove path). Ratchet unchanged 70762.94 ms. **Next iter 74
+  P76-C**: extend `CpuHandleState` with
+  `Eq(GruenSplitEqPolynomial<F>)`, plumb
+  `HandleShape::Eq { challenges, order }` into
+  `HandleStore::open`, replace the per-round eq-table rebuild
+  in `CpuBackend::eq_project` with open/bind/query against a
+  handle cached across rounds. First call site to wire:
+  `mb::EqProject` at `crates/jolt-zkvm/src/runtime/helpers.rs:136`
+  (82 calls in the memo top-5 — 9.8s self). Expected: kill
+  9,880 ms of `eq_project` rebuild, close most of the
+  `EqProject` 1000× gap vs core's `EqPolynomial::evals_parallel`.
 
   iter 72 P76-A INFRA — no behavior change. Added handle API
   surface to `ComputeBackend` trait per memo §5(B): `HandleId(u32)`
