@@ -145,35 +145,40 @@ fn binary_op<const FUNCT3: u32>(a: &Fr, b: &Fr, out: &mut Fr) {
     const SR1: u32 = f2i_word(19, 3, 1);
     const SR2: u32 = f2i_word(20, 3, 2);
     const SR3: u32 = f2i_word(21, 3, 3);
-    // FieldOp binary form: frs1=1, frs2=2, frd=3.
-    let op: u32 = field_op_word::<FUNCT3>(1, 2, 3);
+    // FieldOp binary form: frs1=1, frs2=2, frd=3. const-evaluable because
+    // `field_op_word` is a `const fn` and FUNCT3 is a const generic.
+    const fn op_word<const F: u32>() -> u32 {
+        field_op_word::<F>(1, 2, 3)
+    }
 
     unsafe {
         core::arch::asm!(
-            // Load a into field_regs[1] from a0..a3
+            // Load a into field_regs[1] from x10..x13
             ".word {la0}", ".word {la1}", ".word {la2}", ".word {la3}",
-            // Load b into field_regs[2] from a4..a7
+            // Load b into field_regs[2] from x14..x17
             ".word {lb0}", ".word {lb1}", ".word {lb2}", ".word {lb3}",
             // field_regs[3] = op(field_regs[1], field_regs[2])
             ".word {op}",
-            // Store field_regs[3] back into a8..a11
-            ".word {sr0}", ".word {sr1}", ".word {sr2}", ".word {sr3}",
+            // Store field_regs[3] back into x18..x21
+            ".word {wr0}", ".word {wr1}", ".word {wr2}", ".word {wr3}",
             la0 = const LA0, la1 = const LA1, la2 = const LA2, la3 = const LA3,
             lb0 = const LB0, lb1 = const LB1, lb2 = const LB2, lb3 = const LB3,
-            op = in(reg) op,
-            sr0 = const SR0, sr1 = const SR1, sr2 = const SR2, sr3 = const SR3,
-            in("a0") a.limbs[0],
-            in("a1") a.limbs[1],
-            in("a2") a.limbs[2],
-            in("a3") a.limbs[3],
-            in("a4") b.limbs[0],
-            in("a5") b.limbs[1],
-            in("a6") b.limbs[2],
-            in("a7") b.limbs[3],
-            lateout("a8") r0,
-            lateout("a9") r1,
-            lateout("a10") r2,
-            lateout("a11") r3,
+            op = const op_word::<FUNCT3>(),
+            wr0 = const SR0, wr1 = const SR1, wr2 = const SR2, wr3 = const SR3,
+            // Rust inline asm on RISC-V uses x-prefixed physical register
+            // names, not ABI mnemonics (a0→x10, a4→x14, a8→x18, ...).
+            in("x10") a.limbs[0],
+            in("x11") a.limbs[1],
+            in("x12") a.limbs[2],
+            in("x13") a.limbs[3],
+            in("x14") b.limbs[0],
+            in("x15") b.limbs[1],
+            in("x16") b.limbs[2],
+            in("x17") b.limbs[3],
+            lateout("x18") r0,
+            lateout("x19") r1,
+            lateout("x20") r2,
+            lateout("x21") r3,
         );
     }
 
@@ -202,24 +207,26 @@ fn unary_op<const FUNCT3: u32>(a: &Fr, out: &mut Fr) {
     const SR2: u32 = f2i_word(20, 3, 2);
     const SR3: u32 = f2i_word(21, 3, 3);
     // FINV unary form: frs1=1, frs2=0, frd=3.
-    let op: u32 = field_op_word::<FUNCT3>(1, 0, 3);
+    const fn op_word<const F: u32>() -> u32 {
+        field_op_word::<F>(1, 0, 3)
+    }
 
     unsafe {
         core::arch::asm!(
             ".word {la0}", ".word {la1}", ".word {la2}", ".word {la3}",
             ".word {op}",
-            ".word {sr0}", ".word {sr1}", ".word {sr2}", ".word {sr3}",
+            ".word {wr0}", ".word {wr1}", ".word {wr2}", ".word {wr3}",
             la0 = const LA0, la1 = const LA1, la2 = const LA2, la3 = const LA3,
-            op = in(reg) op,
-            sr0 = const SR0, sr1 = const SR1, sr2 = const SR2, sr3 = const SR3,
-            in("a0") a.limbs[0],
-            in("a1") a.limbs[1],
-            in("a2") a.limbs[2],
-            in("a3") a.limbs[3],
-            lateout("a8") r0,
-            lateout("a9") r1,
-            lateout("a10") r2,
-            lateout("a11") r3,
+            op = const op_word::<FUNCT3>(),
+            wr0 = const SR0, wr1 = const SR1, wr2 = const SR2, wr3 = const SR3,
+            in("x10") a.limbs[0],
+            in("x11") a.limbs[1],
+            in("x12") a.limbs[2],
+            in("x13") a.limbs[3],
+            lateout("x18") r0,
+            lateout("x19") r1,
+            lateout("x20") r2,
+            lateout("x21") r3,
         );
     }
 

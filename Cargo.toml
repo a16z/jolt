@@ -86,6 +86,8 @@ members = [
   "examples/stdlib/guest",
   "examples/muldiv",
   "examples/muldiv/guest",
+  "examples/bn254-fr-smoke",
+  "examples/bn254-fr-smoke/guest",
   "examples/overflow",
   "examples/overflow/guest",
   "examples/memory-ops",
