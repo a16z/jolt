@@ -33,6 +33,20 @@ when the Phase 3 stop condition fires.
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
 - **Stall counter**: 15 (iter 71 P75-B infra stub; iter 70 P75-A infra-only commit; iter 69 design-only; iter 68 P73 reverted; iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+- **Pivot (2026-04-20)**: tactical per-kernel Gruen multi-wire plan
+  (P75-A/B/C) paused at the infra stage. After iter 69's 6-kernel audit
+  the per-kernel gain estimate was only 5-8% and P72 at 18.9× already
+  showed the shape is flat under noise. We pivot to the architectural
+  attacks in `perf/report_tools/kernel_gap_memo.md` — a full CPU/wall
+  accounting (120,519 ms modular CPU vs 11,405 ms core CPU) identified
+  four ComputeBackend contract extensions (A/B/C/D) that together
+  project a 2.15-2.85× ratio if they all land. New P-items: **P76** (B)
+  HandleId + Slab stateful backend (unlocks the eq_project 1000× gap),
+  **P77** (C) variable-arity BatchRoundEvaluate, **P78** (A) persistent
+  scratch pool, **P79** (D) BufferEncoding tags, **P80** eager RAM
+  witness generation (pm::Derived), **P81** Dory G2 wrapper dedup,
+  **P82** cross-commit MSM batching. P75-C remains queued as a fallback
+  if (B) proves infeasible. P76 enters iter 72.
 
   iter 71 P75-B INFRA — no behavior change. Added
   `GruenQ::GeneralQ { q_formula: Formula, input_remap: Vec<u32> }`
@@ -1850,6 +1864,165 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
       fraction of eq_project time (likely 10-30% given `EqPolynomial::
       evals` builds 2^n entries with n multiplications each); higher
       if cache-hit-rate is near 100% within rounds.
+    - **Status**: subsumed by P76 (the handle-based fix doesn't just
+      cache the eq_table — it removes per-round rebuild entirely).
+      Keep as fallback only.
+
+<!-- P76-P82: memo-driven architectural attacks. See
+     perf/report_tools/kernel_gap_memo.md §§5-6 for full design. -->
+
+- [ ] P76: (B) Per-sumcheck-instance handle — HandleId + Slab stateful
+  backend — target: `crates/jolt-compute/src/traits.rs` + new methods
+  on `ComputeBackend` + `crates/jolt-cpu/src/backend.rs`
+  (`CpuBackend` becomes a struct with internal
+  `Slab<CpuHandleState<F>>`). Cross-ref: jolt-core's
+  `GruenSplitEqPolynomial` at
+  `crates/jolt-core/src/poly/split_eq_poly.rs:82-332`.
+    - **Hypothesis**: modular rebuilds the full eq table every round
+      inside `CpuBackend::eq_project` (ref: `crates/jolt-cpu/src/backend.rs:481`;
+      ~11.8% wall / 9.3 s on log_t=12 muldiv, ~30 s on log_t=16
+      sha2-chain per iter-52/-65 traces). Core's `GruenSplitEqPolynomial`
+      caches prefix tables + `current_scalar` across rounds, making
+      per-round eq binding O(1) amortized instead of O(2^remaining).
+      Introduce an opaque `HandleId(u32)` at the trait boundary;
+      backend owns the typed state internally via a concrete enum
+      `CpuHandleState<F> { Eq(GruenSplitEqPolynomial<F>) | Scratch(Vec<F>) }`.
+      No `Box<dyn Any>` (per user direction). Trait surface:
+      `open_handle(shape) -> HandleId`, `bind_handle(id, round, r)`,
+      `query_handle(id, idx) -> F`, `close_handle(id)`. Runtime
+      handler ≤ 30 LOC stays protocol-unaware: knows "a handle gets
+      bound then queried," doesn't know it's an eq polynomial.
+    - **Abstraction risk**: low — clean analog to core's existing
+      stateful eq. Trait grows 4 methods with associated type
+      `HandleState<F>`. Handler diff is a mechanical rewrite of
+      `Op::EqProject` → `Op::OpenHandle + Op::BindHandle + Op::QueryHandle`.
+      Backend state shifts from unit-struct to struct with `Slab`;
+      matches how all production ML runtimes work (cuBLAS handle,
+      PyTorch caching allocator).
+    - **Expected delta**: ~10 s wall (~12% of 80 s modular prove) per
+      memo §6 table; projected post-fix modular CPU drops 120,519 ms
+      → ~110 s via this alone.
+
+- [ ] P77: (C) Variable-arity `BatchRoundEvaluate` op — target: new
+  `Op::BatchRoundEvaluate { round, instances: Vec<InstanceDesc> }`
+  in jolt-compiler + handler in `crates/jolt-zkvm/src/runtime/handlers.rs`
+  + `ComputeBackend::batch_round_evaluate(&kernels, &inputs, &coeffs)`.
+  Replaces today's 120-instance per-round serial loop over
+  `InstanceReduce`/`InstanceBind`/`interpolate_evaluate`.
+    - **Hypothesis**: per-round we issue ~120 independent per-instance
+      reduce+bind calls (ref memo §2: "reduce_dense + interpolate
+      decomposition tax"). Each call is below `PAR_THRESHOLD=2048`
+      so serial in isolation, and the outer dispatch is also serial
+      — effective single-core on stage 5/6/8 hot loops. One
+      `BatchRoundEvaluate` hands the whole batch to the backend which
+      can fuse/parallelize across instances as one rayon region with
+      one scratch allocation. Locality win: input cache lines visited
+      once instead of 120× per round. Kernel-launch-overhead
+      mitigation that's the textbook GPU playbook — also wins on CPU
+      via L2/L3 reuse. Handler stays ≤ 30 LOC (pack + dispatch).
+    - **Abstraction risk**: medium — changes op schedule. Compiler
+      emits one op per round instead of N per round; runtime op
+      dispatcher has one new op to handle. Trait adds one method with
+      a default-impl fallback that loops over per-instance calls
+      (CUDA backend can opt in later). Variable arity preserves
+      per-instance heterogeneity (kernels may differ across instances).
+    - **Expected delta**: 7-12 s wall (~9-14%) per memo §6. Compounds
+      with P76 because eq handles get bound once per batch-round
+      instead of once per instance.
+
+- [ ] P78: (A) Per-kernel persistent scratch — target:
+  `crates/jolt-cpu/src/backend.rs` + `CpuKernel<F>` grows scratch
+  methods. Add `CpuHandleState::Scratch(Vec<F>)` rows that outlive
+  single-op calls; `interpolate_inplace` + `reduce_dense` reuse the
+  same scratch across rounds instead of allocating per call.
+    - **Hypothesis**: `interpolate_inplace` + `reduce_dense` allocate
+      fresh scratch Vec on every call (ref memo §2). Absolute cost is
+      small per call but aggregates to ~2-3 s across all rounds; also
+      triggers allocator thrash that shows up as locality noise. The
+      `HandleId::Scratch` row from P76 is already the right home;
+      P78 is mostly a wiring exercise once the handle plumbing lands.
+    - **Abstraction risk**: low — pure perf, no new semantics. CUDA
+      backend wants this MORE than CPU (device allocation is 100×
+      more expensive than host allocation).
+    - **Expected delta**: 2-3 s wall (~2-4%). Small absolute win but
+      shrinks allocator-noise variance.
+
+- [ ] P79: (D) `BufferEncoding` tags — propagate scalar-width
+  metadata through `Buf<Self, F>` — target: `crates/jolt-compute/src/traits.rs`
+  (`upload_tagged` variant) + `crates/jolt-cpu/src/backend.rs`
+  (reduce_dense Compact fast path). Today's `Buf<F>` erases whether
+  the underlying poly is `CompactPolynomial<u32>` or dense `Vec<F>`;
+  the compact fast path only fires inside jolt-core's monolithic
+  prover.
+    - **Hypothesis**: `CompactPolynomial<u32>` inputs (~30-40% of
+      committed witness polys) get promoted to `Vec<F>` at the op
+      boundary because `Buf` carries no dtype tag. Adding
+      `BufferEncoding { Dense, Compact(ScalarWidth), OneHot }` lets
+      the backend dispatch to a `reduce_compact_u32` kernel that runs
+      at 4× memory bandwidth (u32 vs BN254 Fr ~32 B). Handler
+      preserves whatever variant compiler emitted. Still
+      protocol-agnostic — just "this buffer holds small scalars."
+    - **Abstraction risk**: high (per memo §5 D). Breaks the
+      type-erased `Buf` abstraction; backends must implement multiple
+      dtype-specialized kernels. Prototype on one call site
+      (instruction_ra compact_u32) before broad rollout.
+    - **Expected delta**: unknown pre-prototype. Memo flagged as
+      "need prototype." Defer until P76+P77+P78 land and we re-measure
+      the residual gap.
+
+- [ ] P80: Eager materialization of `pm::Derived` RAM witness polys —
+  target: `crates/jolt-witness/src/derived.rs` + handler emit point in
+  jolt-zkvm. Today `pm::Derived` constructs RAM witness polys lazily
+  on first use, serial and on the main thread. Core's
+  `generate_and_commit_witness_polynomials` does the same algorithm
+  eagerly at stage 0 with rayon par over addresses.
+    - **Hypothesis**: iter-52 profile shows `derived::ram_val` at
+      7.09 s single-threaded (modular) vs equivalent core path at
+      ~1.6 s parallelized. 15.4 s total inside the modular RAM
+      witness pipeline. Eager generation at stage 0 + rayon
+      par_iter_mut over address bucket = 4-6× speedup (~13 s saved).
+      iter 68 P73 tried par_chunks_mut inside the lazy path and was
+      rejected because callers are already inside rayon — the fix
+      must reorder when the work happens (eager, pre-rayon), not
+      just where (parallelize the lazy path).
+    - **Abstraction risk**: low — same data, different schedule.
+      Compiler emits an explicit `Op::BuildRamWitnesses` at stage 0;
+      backend runs it par.
+    - **Expected delta**: 10-13 s wall (~13-16%). Largest single
+      follow-on win after (A)/(B)/(C).
+
+- [ ] P81: Consolidate Dory `multi_pair_g2_setup` wrapper overhead —
+  target: `crates/jolt-dory/src/scheme.rs` (or equivalent) +
+  `crates/jolt-dory/src/commitment_scheme.rs`. Today modular's
+  `multi_pair_g2_setup_parallel` runs 2.65× slower per-call than
+  core's (ref memo/profile data) despite calling the same underlying
+  primitive — the gap is in the wrapper layer.
+    - **Hypothesis**: jolt-dory's `DoryScheme` + `DoryCommitmentScheme`
+      both maintain G2-prep caches independently. Each `multi_pair_g2_setup`
+      call does bookkeeping (HashMap lookup, Vec clone, par-chunk split)
+      that core's single-layer cache skips. Dedup the two layers into
+      one prepared-point registry keyed by `(srs_hash, opening_idx)`;
+      return `&PreparedG2Point` refs instead of cloning.
+    - **Abstraction risk**: low — internal to jolt-dory. No trait change.
+    - **Expected delta**: 6 s wall (~7%). Per-call amortization plus
+      removed HashMap overhead.
+
+- [ ] P82: Batch MSMs across independent Dory commits — target:
+  `crates/jolt-zkvm/src/runtime/handlers.rs::Op::Commit` dispatcher.
+  Today multiple concurrent commits each issue their own `G1::msm`;
+  arkworks MSM is faster on one batched call than N sequential calls
+  at matching total points.
+    - **Hypothesis**: iter-1 profile logged `G1::msm` at 405 ms / 5402
+      calls, avg 75 µs. Many of those calls share input scalars or
+      have disjoint but independent point sets — batchable with
+      `G1::msm_batched` or a chunked multi-exp. Core's prover already
+      batches Dory commits per stage.
+    - **Abstraction risk**: medium — needs compiler to emit a
+      `Op::CommitBatch { polys: Vec<BufId> }` and runtime to dispatch
+      the whole group in one go. Handler still ≤ 30 LOC (pack +
+      dispatch).
+    - **Expected delta**: 2 s wall (~2.5%). Smaller than P80/P81 but
+      mechanical once the batching op exists.
 
 
 ## Notes
