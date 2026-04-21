@@ -89,6 +89,7 @@ pub fn trace(
     Memory,
     JoltDevice,
     cpu::AdviceTape,
+    Vec<cpu::FieldRegEvent>,
 ) {
     let mut lazy_trace_iter = trace_lazy(
         elf_contents,
@@ -104,6 +105,8 @@ pub fn trace(
 
     // Extract the populated advice tape before moving lazy_tracer
     let advice_tape_result = lazy_trace_iter.lazy_tracer.take_advice_tape();
+    // Drain FieldReg events emitted by any FieldOp / FMov{I2F,F2I} cycles
+    let field_reg_events = lazy_trace_iter.lazy_tracer.take_field_reg_events();
 
     let final_memory_state =
         std::mem::take(&mut lazy_trace_iter.lazy_tracer.final_memory_state).unwrap();
@@ -114,6 +117,7 @@ pub fn trace(
         final_memory_state,
         jolt_device,
         advice_tape_result, // Return the populated advice tape
+        field_reg_events,
     )
 }
 
@@ -586,6 +590,13 @@ impl CheckpointingTracer {
     pub fn take_advice_tape(&mut self) -> cpu::AdviceTape {
         self.emulator_state.take_advice_tape()
     }
+
+    /// Take ownership of the FieldReg event stream from the emulator.
+    /// Events are cycle-indexed FieldRegEvent records emitted by FieldOp /
+    /// FMov{I2F,F2I} instructions during trace.
+    pub fn take_field_reg_events(&mut self) -> Vec<cpu::FieldRegEvent> {
+        self.emulator_state.take_field_reg_events()
+    }
 }
 
 impl LazyTracer for CheckpointingTracer {
@@ -884,7 +895,7 @@ mod tests {
             program_size: Some(elf.len() as u64),
             ..Default::default()
         };
-        let (_, execution_trace, _, _, _) =
+        let (_, execution_trace, _, _, _, _) =
             trace(&elf, None, &INPUTS, &[], &[], &memory_config, None);
         let (checkpoints, _) = trace_checkpoints(&elf, &INPUTS, &[], &[], &memory_config, n);
         assert!(
@@ -911,7 +922,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (_, execution_trace, _, _, _) =
+        let (_, execution_trace, _, _, _, _) =
             trace(&elf, None, &INPUTS, &[], &[], &memory_config, None);
         let mut emulator: Emulator = setup_emulator(&elf, &INPUTS, &[], &[], &memory_config);
         let mut prev_pc: u64 = 0;
