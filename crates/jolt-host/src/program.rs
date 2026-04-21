@@ -212,15 +212,16 @@ impl Program {
         let program_size = compute_program_size(&elf_contents);
         let memory_config = self.memory_config(program_size);
 
-        let (lazy_trace, trace_vec, memory, jolt_device, _advice_tape) = tracer::trace(
-            &elf_contents,
-            self.elf.as_ref().map(|p| p as &PathBuf),
-            inputs,
-            untrusted_advice,
-            trusted_advice,
-            &memory_config,
-            None,
-        );
+        let (lazy_trace, trace_vec, memory, jolt_device, _advice_tape, _field_reg_events) =
+            tracer::trace(
+                &elf_contents,
+                self.elf.as_ref().map(|p| p as &PathBuf),
+                inputs,
+                untrusted_advice,
+                trusted_advice,
+                &memory_config,
+                None,
+            );
         (lazy_trace, trace_vec, memory, jolt_device)
     }
 

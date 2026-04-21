@@ -59,7 +59,7 @@ impl Program {
         untrusted_advice: &[u8],
         trusted_advice: &[u8],
     ) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice) {
-        let (lazy_trace, trace, memory, jolt_device, _advice_tape) = trace(
+        let (lazy_trace, trace, memory, jolt_device, _advice_tape, _field_reg_events) = trace(
             &self.elf_contents,
             self.elf.as_ref(),
             inputs,
@@ -118,6 +118,7 @@ pub fn trace(
     Memory,
     JoltDevice,
     tracer::AdviceTape,
+    Vec<tracer::emulator::cpu::FieldRegEvent>,
 ) {
     tracer::trace(
         elf_contents,
