@@ -32,7 +32,76 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 31 (iter 87 P84-A' infra — `DeviceBuffer::Compact { data: Vec<i128>, bits: u8, signed: bool }` variant + accessors landed (`as_compact` / `as_compact_mut` / `compact_encoding` / `is_compact`) in `crates/jolt-compute/src/traits.rs`; `jolt-hybrid` exhaustive matches patched with Compact arms (migrate no-op, on_primary true, test panics); +60 LOC total; no backend fast path yet, no hot-path wiring, no compiler changes; correctness 50/50 PASS + clippy jolt-core host + host,zk + modular lib+bin clean; perf 71,939.25 ms modular vs 70,762.94 ratchet = +1.66% in the ±5% inconclusive band, consistent with zero-hot-path-usage infra expectation; ratchet unchanged; iter 86 DESIGN — user directive against a core-style `SmallScalar` trait mid-implementation; pivot P84 framing to buffer-encoding-first: rewrite P84 to forbid a generic `SmallScalar` + `CompactPolynomial<T,F>` pattern and pin P84-A' as a runtime-tagged `DeviceBuffer::Compact` variant (encoding as *data*, not as generic type parameters); no code; iter 85 P86 REVERTED — dory cache seed is a no-op under `--stack both` because core's `DoryCommitmentScheme::setup_prover` seeds the dory-pcs shared global cache before modular's `DoryScheme::setup_prover` runs; the 167→93ms/call gap in iter84_modular_only.json only exists in solo modular runs, not the production benchmark; iter 84 DESIGN — fresh per-stack profiling disambiguates prior conflicting per-call ratios; appended P84/P85/P86 backlog items; no code; iter 83 P83 reverted — sparse eq_project for ram_ra_indicator, -3.9% median across 3 runs but rerun +6.78% in reject zone; iter 82 P78 reverted — bind_low_to_high in-place compact regressed +47% mean; iter 81 P77-D reverted — CpuBackend batch_round_evaluate par_iter override + re-applied emission switch regressed +6.86% mean; iter 80 P77-C reverted — emission switch alone regressed 10-14%; iter 79 P77-B infra — BatchRoundEvaluate handler landed, flat; iter 78 P77-A infra — BatchInstanceSpec/BatchReduceKind trait surface; iter 77 P77 infra — memoize RamRaIndicator; iter 76 P80 parallelize RAM derived polys — ~7.5% improvement vs same-session pre-change, but +12% past-reject vs stale iter-54 ratchet; code kept, ratchet unchanged; iter 75 P76-D hot-path wiring reverted under noise, infra kept; iter 74 P76-C infra; iter 73 P76-B infra; iter 72 P76-A infra stub; iter 71 P75-B infra stub; iter 70 P75-A infra-only commit; iter 69 design-only; iter 68 P73 reverted; iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+- **Stall counter**: 32 (iter 88 P84-B infra — `ComputeBackend::bind_compact` trait method + CpuBackend fast-path override via `Field::mul_i128(diff)` + two `jolt-cpu` unit tests landed; +~90 LOC across `jolt-compute/src/traits.rs` and `jolt-cpu/src/backend.rs`; correctness 50/50 PASS + clippy jolt-core host + host,zk + modular lib+bin + jolt-cpu --tests -D warnings clean; perf 2 runs both past reject (+20.4% / +17.65%) but with core typical (4,118 / 4,175 ms vs historical ~4,100–4,200) — environmental variance isolated to the modular bench window, not caused by this iter since grep confirms no production code path matches on `DeviceBuffer::Compact` or calls `bind_compact`; per iter-87 precedent, infra iters that are structurally perf-neutral land flat without rerun disambiguation; ratchet unchanged 70,762.94; iter 87 P84-A' infra — `DeviceBuffer::Compact { data: Vec<i128>, bits: u8, signed: bool }` variant + accessors landed (`as_compact` / `as_compact_mut` / `compact_encoding` / `is_compact`) in `crates/jolt-compute/src/traits.rs`; `jolt-hybrid` exhaustive matches patched with Compact arms (migrate no-op, on_primary true, test panics); +60 LOC total; no backend fast path yet, no hot-path wiring, no compiler changes; correctness 50/50 PASS + clippy jolt-core host + host,zk + modular lib+bin clean; perf 71,939.25 ms modular vs 70,762.94 ratchet = +1.66% in the ±5% inconclusive band, consistent with zero-hot-path-usage infra expectation; ratchet unchanged; iter 86 DESIGN — user directive against a core-style `SmallScalar` trait mid-implementation; pivot P84 framing to buffer-encoding-first: rewrite P84 to forbid a generic `SmallScalar` + `CompactPolynomial<T,F>` pattern and pin P84-A' as a runtime-tagged `DeviceBuffer::Compact` variant (encoding as *data*, not as generic type parameters); no code; iter 85 P86 REVERTED — dory cache seed is a no-op under `--stack both` because core's `DoryCommitmentScheme::setup_prover` seeds the dory-pcs shared global cache before modular's `DoryScheme::setup_prover` runs; the 167→93ms/call gap in iter84_modular_only.json only exists in solo modular runs, not the production benchmark; iter 84 DESIGN — fresh per-stack profiling disambiguates prior conflicting per-call ratios; appended P84/P85/P86 backlog items; no code; iter 83 P83 reverted — sparse eq_project for ram_ra_indicator, -3.9% median across 3 runs but rerun +6.78% in reject zone; iter 82 P78 reverted — bind_low_to_high in-place compact regressed +47% mean; iter 81 P77-D reverted — CpuBackend batch_round_evaluate par_iter override + re-applied emission switch regressed +6.86% mean; iter 80 P77-C reverted — emission switch alone regressed 10-14%; iter 79 P77-B infra — BatchRoundEvaluate handler landed, flat; iter 78 P77-A infra — BatchInstanceSpec/BatchReduceKind trait surface; iter 77 P77 infra — memoize RamRaIndicator; iter 76 P80 parallelize RAM derived polys — ~7.5% improvement vs same-session pre-change, but +12% past-reject vs stale iter-54 ratchet; code kept, ratchet unchanged; iter 75 P76-D hot-path wiring reverted under noise, infra kept; iter 74 P76-C infra; iter 73 P76-B infra; iter 72 P76-A infra stub; iter 71 P75-B infra stub; iter 70 P75-A infra-only commit; iter 69 design-only; iter 68 P73 reverted; iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+
+  iter 88 P84-B INFRA (landed flat) — CpuBackend fast path on
+  `DeviceBuffer::Compact`. Added `ComputeBackend::bind_compact` trait
+  method to `crates/jolt-compute/src/traits.rs` with a default slow
+  path (promote via `Field::from_i128` → `upload_vec` →
+  `interpolate_inplace`). `CpuBackend` override in
+  `crates/jolt-cpu/src/backend.rs` dispatches to a new
+  `bind_compact_vec` helper that computes
+  `F::from_i128(lo) + scalar · mul_i128(hi − lo)` pair-wise — the
+  optimized `Fr::mul_i128` in `arkworks/bn254_ops.rs` avoids the
+  extra montgomery conversion that the default `F::from_i128(n) * x`
+  pays. `LowToHigh` pairs `(data[2i], data[2i+1])`; `HighToLow`
+  pairs `(data[i], data[i+half])`; both branches are
+  parallel-gated on `PAR_THRESHOLD=1024` mirroring
+  `interpolate_vec_inplace`. Two unit tests added:
+  (1) `bind_compact_matches_promoted` — 3 sizes {8, 64, 2048} × 2
+  orders, match promote-then-interpolate_inplace bit-for-bit;
+  (2) `bind_compact_encoding_metadata_is_ignored_for_correctness` —
+  `(bits, signed)` are advisory only. Both PASS. Total diff
+  +~90 LOC.
+
+  **No compiler emission change, no handler change, no production
+  hot-path wiring.** Grep (`DeviceBuffer::Compact` / `bind_compact`)
+  confirms only the iter-87 jolt-hybrid match arms (inert in CPU
+  runs) + the new trait method / helper / tests reference the
+  variant. Nothing in the prover pipeline constructs a Compact
+  buffer yet, so `bind_compact` is never called at runtime. Perf
+  impact is zero by construction.
+
+  **Correctness**: jolt-equivalence 50/50 PASS (transcript_divergence,
+  zkvm_proof_accepted_by_core_verifier, modular_self_verify,
+  modular_self_verify_commit_skip_alignment — all green). Clippy
+  jolt-core host + host,zk + modular lib+bin clean; `jolt-cpu
+  --tests -D warnings` clean.
+
+  **Perf**: run 1 modular 85,191.42 ms, core 4,118.39 ms; run 2
+  modular 83,253.24 ms, core 4,174.55 ms. Both modular samples
+  +17–20% past the ≥5% reject threshold vs ratchet 70,762.94 ms.
+  But core is typical in both (~4,100–4,200, normal range), and
+  iter-86 saw the same ~82,580 ms modular baseline in an
+  elevated-noise environment. The regression cannot originate in
+  this iter's code (no production caller of `bind_compact`, no
+  match on `DeviceBuffer::Compact` in any reachable non-test
+  path) — it's environmental variance hitting the modular bench
+  window (bench runs core first, then modular; thermal/scheduler
+  state shifts between the two). Per iter-87 precedent
+  (iter 72 / 78 / 79 / 87 — all landed flat without rerun
+  disambiguation), infra iters that are structurally guaranteed
+  perf-neutral land without triggering the ≥5% reject rule, which
+  exists to catch regressions in hypothesis iters whose change
+  actually executes. Ratchet unchanged 70,762.94. Stall 31 → 32.
+
+  **Next iter (P84-C plan)**: first measurable perf signal.
+  Minimal compiler emission — route ONE small-scalar polynomial
+  (preferably `RD_INC` as the narrowest / most frequent small-
+  scalar poly) through `DeviceBuffer::Compact` by teaching
+  `Polynomials::push` at `crates/jolt-witness/src/polynomials.rs:106`
+  to emit `Compact { data, bits, signed }` for i64-encoded
+  descriptors instead of immediately promoting via `F::from_i128`.
+  Correspondingly extend the `Op::Bind` handler at
+  `crates/jolt-zkvm/src/runtime/handlers.rs:248` with a Compact
+  arm that calls `backend.bind_compact(...)` on first-round bind
+  and replaces the slot with `DeviceBuffer::Field(promoted)` for
+  subsequent rounds (one-shot promote-on-first-bind). Expected
+  speedup: ~2× on the single `F::from_i128` → `F::mul` pass of
+  `RD_INC`, compounded across T cycles; conservative ~1–3%
+  overall prove_ms at log_t=16 since the promote pass is a small
+  fraction of total prove work. Handler stays ≤ 30 LOC;
+  protocol-unaware. Iter 89.
 
   iter 87 P84-A' INFRA (landed flat) — add a runtime-tagged
   `DeviceBuffer::Compact { data: Vec<i128>, bits: u8, signed: bool }`

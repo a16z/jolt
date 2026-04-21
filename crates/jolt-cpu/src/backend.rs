@@ -202,6 +202,18 @@ impl ComputeBackend for CpuBackend {
         interpolate_vec_inplace(buf, scalar, order);
     }
 
+    #[tracing::instrument(skip_all, name = "CpuBackend::bind_compact")]
+    fn bind_compact<F: Field>(
+        &self,
+        data: &[i128],
+        _bits: u8,
+        _signed: bool,
+        scalar: F,
+        order: BindingOrder,
+    ) -> Vec<F> {
+        bind_compact_vec(data, scalar, order)
+    }
+
     #[inline]
     fn upload<T: Scalar>(&self, data: &[T]) -> Vec<T> {
         data.to_vec()
@@ -870,6 +882,69 @@ fn interpolate_vec_inplace<F: Field>(buf: &mut Vec<F>, scalar: F, order: Binding
     match order {
         BindingOrder::HighToLow => jolt_poly::bind_high_to_low(buf, scalar),
         BindingOrder::LowToHigh => jolt_poly::bind_low_to_high(buf, scalar),
+    }
+}
+
+/// Bind one variable of a compact i128 buffer and promote to `Vec<F>`.
+///
+/// Computes `out[i] = F::from_i128(lo) + scalar · (hi − lo)` pair-wise,
+/// using `Field::mul_i128` so the difference is multiplied without the
+/// per-operand montgomery conversion that `F::from_i128(diff) * scalar`
+/// would pay. For values fitting in ≤ 64 bits (all current compact
+/// encodings) `hi − lo` fits in i128 without overflow.
+#[inline]
+fn bind_compact_vec<F: Field>(data: &[i128], scalar: F, order: BindingOrder) -> Vec<F> {
+    let n = data.len();
+    debug_assert!(n.is_multiple_of(2), "bind_compact: len must be even");
+    let half = n / 2;
+
+    match order {
+        BindingOrder::LowToHigh => {
+            #[cfg(feature = "parallel")]
+            {
+                if half >= PAR_THRESHOLD {
+                    use rayon::prelude::*;
+                    return (0..half)
+                        .into_par_iter()
+                        .map(|i| {
+                            let lo = data[2 * i];
+                            let hi = data[2 * i + 1];
+                            F::from_i128(lo) + scalar.mul_i128(hi - lo)
+                        })
+                        .collect();
+                }
+            }
+            (0..half)
+                .map(|i| {
+                    let lo = data[2 * i];
+                    let hi = data[2 * i + 1];
+                    F::from_i128(lo) + scalar.mul_i128(hi - lo)
+                })
+                .collect()
+        }
+        BindingOrder::HighToLow => {
+            #[cfg(feature = "parallel")]
+            {
+                if half >= PAR_THRESHOLD {
+                    use rayon::prelude::*;
+                    return (0..half)
+                        .into_par_iter()
+                        .map(|i| {
+                            let lo = data[i];
+                            let hi = data[i + half];
+                            F::from_i128(lo) + scalar.mul_i128(hi - lo)
+                        })
+                        .collect();
+                }
+            }
+            (0..half)
+                .map(|i| {
+                    let lo = data[i];
+                    let hi = data[i + half];
+                    F::from_i128(lo) + scalar.mul_i128(hi - lo)
+                })
+                .collect()
+        }
     }
 }
 
@@ -1602,6 +1677,46 @@ mod tests {
         for i in 0..n / 2 {
             let expected = data[i] + scalar * (data[i + n / 2] - data[i]);
             assert_eq!(buf[i], expected);
+        }
+    }
+
+    /// Fast path must agree bit-for-bit with promote-then-bind on a small
+    /// sequential buffer, a mid-size buffer, and a large (≥ `PAR_THRESHOLD`)
+    /// buffer that exercises the Rayon branch.
+    #[test]
+    fn bind_compact_matches_promoted() {
+        let b = backend();
+        let mut rng = ChaCha20Rng::seed_from_u64(3);
+        for &n in &[8usize, 64, 2048] {
+            let data: Vec<i128> = (0..n)
+                .map(|i| (i as i128 - n as i128 / 2) * 37 - 1)
+                .collect();
+            let scalar = Fr::random(&mut rng);
+            for order in [BindingOrder::LowToHigh, BindingOrder::HighToLow] {
+                let fast = b.bind_compact::<Fr>(&data, 8, true, scalar, order);
+
+                let mut slow: Vec<Fr> = data.iter().map(|&v| Fr::from_i128(v)).collect();
+                b.interpolate_inplace(&mut slow, scalar, order);
+
+                assert_eq!(fast.len(), n / 2, "order={order:?} n={n}");
+                assert_eq!(fast, slow, "order={order:?} n={n}");
+            }
+        }
+    }
+
+    #[test]
+    fn bind_compact_encoding_metadata_is_ignored_for_correctness() {
+        // The (bits, signed) pair is an optimization hint for future
+        // backend specializations; it must never change the field result.
+        let b = backend();
+        let mut rng = ChaCha20Rng::seed_from_u64(4);
+        let data: Vec<i128> = vec![-5, 7, 0, 1_000_000, -42, 17, 9, -100];
+        let scalar = Fr::random(&mut rng);
+
+        let baseline = b.bind_compact::<Fr>(&data, 64, true, scalar, BindingOrder::LowToHigh);
+        for (bits, signed) in [(8u8, true), (32, false), (64, true), (128, true)] {
+            let got = b.bind_compact::<Fr>(&data, bits, signed, scalar, BindingOrder::LowToHigh);
+            assert_eq!(got, baseline, "bits={bits} signed={signed}");
         }
     }
 

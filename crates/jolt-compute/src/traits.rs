@@ -267,6 +267,42 @@ pub trait ComputeBackend: Send + Sync + 'static {
         order: BindingOrder,
     );
 
+    /// Bind one variable on a compact small-scalar buffer and return the
+    /// promoted field-element output.
+    ///
+    /// Pairs `data` according to `order` (LowToHigh pairs `(2i, 2i+1)`;
+    /// HighToLow pairs `(i, i+half)`) and computes `lo + scalar · (hi − lo)`
+    /// directly against the i128 operands — i.e., the caller never has to
+    /// materialize a full `Vec<F>` for a one-shot first-round bind.
+    ///
+    /// The `bits`/`signed` encoding metadata is reserved for backend-specific
+    /// fast paths that dispatch to tighter `Field::mul_{u64,i64,u128}` variants
+    /// when the range is known to fit; the default implementation ignores it.
+    ///
+    /// Default: promote `data` via [`Field::from_i128`], upload, and call
+    /// [`interpolate_inplace`](Self::interpolate_inplace). Backends override
+    /// to skip the full-field promote and use [`Field::mul_i128`] on the
+    /// difference `(hi − lo)` — on BN254 this is ~2× faster than the default
+    /// because `Fr::from_i128(n) * x` pays a montgomery conversion that the
+    /// specialized `mul_i128` avoids (see `arkworks/bn254_ops.rs`).
+    ///
+    /// P84-B infra: no production hot path wires this yet; iter 89 P84-C
+    /// will route small-scalar polynomials (RD_INC, RAM_INC) through
+    /// `DeviceBuffer::Compact` and call this method on the first-round bind.
+    fn bind_compact<F: Field>(
+        &self,
+        data: &[i128],
+        _bits: u8,
+        _signed: bool,
+        scalar: F,
+        order: BindingOrder,
+    ) -> Self::Buffer<F> {
+        let promoted: Vec<F> = data.iter().map(|&n| F::from_i128(n)).collect();
+        let mut buf = self.upload_vec(promoted);
+        self.interpolate_inplace(&mut buf, scalar, order);
+        buf
+    }
+
     /// Upload host data to a device buffer.
     fn upload<T: Scalar>(&self, data: &[T]) -> Self::Buffer<T>;
 
