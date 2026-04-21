@@ -12,6 +12,46 @@ use jolt_field::Field;
 pub trait Scalar: Copy + Send + Sync + 'static {}
 impl<T: Copy + Send + Sync + 'static> Scalar for T {}
 
+/// Opaque identifier for a backend-owned stateful resource.
+///
+/// Handles let the runtime refer to long-lived per-sumcheck-instance state
+/// (eq polynomials, scratch buffers, prepared caches) without leaking the
+/// backend's concrete state type across the trait boundary. The runtime
+/// never inspects the bits; it just passes `HandleId` through.
+///
+/// # Design rationale
+///
+/// Production ML runtimes (cuBLAS, cuDNN, PyTorch, TVM, IREE) all use an
+/// opaque-handle pattern for per-call resources. This mirrors that shape
+/// on the Jolt compute boundary, avoiding `Box<dyn Any>` (which would
+/// erase type information and require runtime downcasts).
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct HandleId(pub u32);
+
+/// Description of the state a newly-opened handle should hold.
+///
+/// The backend interprets this to allocate internal state; the runtime
+/// just passes it through. New variants may be added over time as
+/// additional handle-backed kernels are wired — marked `#[non_exhaustive]`
+/// so adding variants is not a breaking change.
+#[non_exhaustive]
+pub enum HandleShape<'a, F: Field> {
+    /// A zero-initialized scratch buffer of the given size.
+    ///
+    /// Owned by the backend so it can be reused across rounds of the same
+    /// sumcheck instance without reallocating on each call.
+    Scratch { size: usize },
+    /// A Gruen split-eq polynomial over `challenges`, bound with `order`.
+    ///
+    /// Backend may cache prefix tables + current scalar so per-round
+    /// binding runs in O(1) amortized instead of rebuilding the full eq
+    /// table each round. Reserved for P76-B wire (not yet live).
+    Eq {
+        challenges: &'a [F],
+        order: BindingOrder,
+    },
+}
+
 /// Type-erased device buffer for heterogeneous storage in the runtime.
 ///
 /// The runtime manages a flat array of `Option<DeviceBuffer<BufF, BufU64>>`,
@@ -361,6 +401,49 @@ pub trait ComputeBackend: Send + Sync + 'static {
         _current_round: usize,
     ) -> Vec<F> {
         panic!("gruen_segmented_reduce: backend has no Gruen fast path")
+    }
+
+    // === Handle API (P76-A infra stub) ===
+    //
+    // Opaque handles carry backend-owned state (eq polynomials, scratch
+    // buffers, prepared caches) across multiple op dispatches. The
+    // runtime stores `HandleId` values in its schedule; the backend owns
+    // the typed state internally (concrete enum, no `dyn Any`). All
+    // methods default to `panic!` so existing backends remain unchanged
+    // until they opt in. See `perf/report_tools/kernel_gap_memo.md` §5(B).
+
+    /// Open a new handle holding the state described by `shape`.
+    ///
+    /// Returns a freshly-minted `HandleId` the runtime stores for
+    /// subsequent `bind_handle` / `query_handle` / `close_handle` calls.
+    fn open_handle<F: Field>(&self, _shape: HandleShape<'_, F>) -> HandleId {
+        panic!("open_handle: backend does not support handles")
+    }
+
+    /// Bind variable `round` of the handle's polynomial to challenge `r`.
+    ///
+    /// Implementations may update cached prefix tables, fold scalars, or
+    /// halve the underlying buffer. The runtime does not know which.
+    fn bind_handle<F: Field>(&self, _id: HandleId, _round: usize, _r: F) {
+        panic!("bind_handle: backend does not support handles")
+    }
+
+    /// Read the handle's current value at index `idx`.
+    ///
+    /// For eq handles, this is `current_scalar × prefix_table[idx]` (the
+    /// standard evaluation of the partially-bound eq polynomial at `idx`).
+    /// For scratch handles, this is the scratch buffer's slot `idx`.
+    fn query_handle<F: Field>(&self, _id: HandleId, _idx: usize) -> F {
+        panic!("query_handle: backend does not support handles")
+    }
+
+    /// Release the handle; backend may free or recycle the underlying state.
+    ///
+    /// After `close_handle`, the id may be reused by the backend for a
+    /// later `open_handle` call. The runtime must not call any other
+    /// handle method with this id after closing.
+    fn close_handle(&self, _id: HandleId) {
+        panic!("close_handle: backend does not support handles")
     }
 }
 

@@ -32,7 +32,37 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 15 (iter 71 P75-B infra stub; iter 70 P75-A infra-only commit; iter 69 design-only; iter 68 P73 reverted; iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+- **Stall counter**: 16 (iter 72 P76-A infra stub; iter 71 P75-B infra stub; iter 70 P75-A infra-only commit; iter 69 design-only; iter 68 P73 reverted; iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+
+  iter 72 P76-A INFRA — no behavior change. Added handle API
+  surface to `ComputeBackend` trait per memo §5(B): `HandleId(u32)`
+  newtype + `HandleShape<'a, F>` enum (variants `Scratch { size }`,
+  `Eq { challenges, order }`) + 4 defaulted methods (`open_handle`,
+  `bind_handle`, `query_handle`, `close_handle`) that panic!() by
+  default so existing backends remain unchanged until they opt in.
+  Also re-exported HandleId/HandleShape from jolt-compute::lib. No
+  CpuBackend state changes — remains unit struct for now. Iter 73
+  will make CpuBackend stateful (`HandleStore<F>` behind RwLock) and
+  wire `HandleShape::Scratch` first (simplest variant, proves interior
+  mutability works under &self + Rayon parallel contexts). Iter 74 wires
+  `HandleShape::Eq` with `GruenSplitEqPolynomial`-style prefix tables
+  replacing the per-round rebuild in `mb::EqProject`. Correctness: 43/43
+  jolt-equivalence PASS (transcript_divergence, zkvm_proof_accepted,
+  modular_self_verify, modular_self_verify_commit_skip_alignment
+  all pass individually + as part of full suite). Clippy: modular
+  set (compiler, compute, cpu, zkvm, dory, openings, verifier,
+  bench) + jolt-core (host + host,zk) -D warnings clean. Perf gate
+  skipped (no behavior change, pure trait-level addition). Baseline
+  re-measurement at iter 72 start: modular 88540.09 ms / core 5195.56
+  (ratio 17.04x) — +25.1% vs ratchet 70762.94 from iter 54 but
+  matches iter 68-71 ambient noise envelope under elevated system
+  load. Ratchet unchanged. Green streak preserved at 1 (iter 54 P64
+  holds). **Next iter 73 P76-B**: introduce `HandleStore<F>` internal
+  to CpuBackend (HashMap<HandleId, CpuHandleState<F>> behind RwLock
+  + AtomicU32 counter), wire Scratch variant, add jolt-equivalence
+  test `handle_scratch_roundtrip` (open → bind → query → close) that
+  exercises interior mutability under rayon par context. No call-site
+  wiring yet — that lands in iter 74.
 - **Pivot (2026-04-20)**: tactical per-kernel Gruen multi-wire plan
   (P75-A/B/C) paused at the infra stage. After iter 69's 6-kernel audit
   the per-kernel gain estimate was only 5-8% and P72 at 18.9× already
