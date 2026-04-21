@@ -32,7 +32,41 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 28 (iter 84 DESIGN — fresh per-stack profiling disambiguates prior conflicting per-call ratios; appended P84/P85/P86 backlog items; no code; iter 83 P83 reverted — sparse eq_project for ram_ra_indicator, -3.9% median across 3 runs but rerun +6.78% in reject zone; iter 82 P78 reverted — bind_low_to_high in-place compact regressed +47% mean; iter 81 P77-D reverted — CpuBackend batch_round_evaluate par_iter override + re-applied emission switch regressed +6.86% mean; iter 80 P77-C reverted — emission switch alone regressed 10-14%; iter 79 P77-B infra — BatchRoundEvaluate handler landed, flat; iter 78 P77-A infra — BatchInstanceSpec/BatchReduceKind trait surface; iter 77 P77 infra — memoize RamRaIndicator; iter 76 P80 parallelize RAM derived polys — ~7.5% improvement vs same-session pre-change, but +12% past-reject vs stale iter-54 ratchet; code kept, ratchet unchanged; iter 75 P76-D hot-path wiring reverted under noise, infra kept; iter 74 P76-C infra; iter 73 P76-B infra; iter 72 P76-A infra stub; iter 71 P75-B infra stub; iter 70 P75-A infra-only commit; iter 69 design-only; iter 68 P73 reverted; iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+- **Stall counter**: 29 (iter 85 P86 REVERTED — dory cache seed is a no-op under `--stack both` because core's `DoryCommitmentScheme::setup_prover` seeds the dory-pcs shared global cache before modular's `DoryScheme::setup_prover` runs; the 167→93ms/call gap in iter84_modular_only.json only exists in solo modular runs, not the production benchmark; iter 84 DESIGN — fresh per-stack profiling disambiguates prior conflicting per-call ratios; appended P84/P85/P86 backlog items; no code; iter 83 P83 reverted — sparse eq_project for ram_ra_indicator, -3.9% median across 3 runs but rerun +6.78% in reject zone; iter 82 P78 reverted — bind_low_to_high in-place compact regressed +47% mean; iter 81 P77-D reverted — CpuBackend batch_round_evaluate par_iter override + re-applied emission switch regressed +6.86% mean; iter 80 P77-C reverted — emission switch alone regressed 10-14%; iter 79 P77-B infra — BatchRoundEvaluate handler landed, flat; iter 78 P77-A infra — BatchInstanceSpec/BatchReduceKind trait surface; iter 77 P77 infra — memoize RamRaIndicator; iter 76 P80 parallelize RAM derived polys — ~7.5% improvement vs same-session pre-change, but +12% past-reject vs stale iter-54 ratchet; code kept, ratchet unchanged; iter 75 P76-D hot-path wiring reverted under noise, infra kept; iter 74 P76-C infra; iter 73 P76-B infra; iter 72 P76-A infra stub; iter 71 P75-B infra stub; iter 70 P75-A infra-only commit; iter 69 design-only; iter 68 P73 reverted; iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+
+  iter 85 P86 REVERTED — dory prepared-G2 cache seed. Per iter-84
+  profile, `multi_pair_g2_setup_parallel` was 1.80× slower per-call
+  in modular (167.2ms) vs core (93.4ms), suggesting ~4s wall savings
+  (~5%) from seeding the dory-pcs global prepared-point cache in
+  `DoryScheme::setup_prover`. Attempted: added `init_cache(&setup.g1_vec,
+  &setup.g2_vec)` (gated `#[cfg(not(test))]` to avoid the multi-size
+  cache conflict core also avoids), mirroring core's
+  `DoryCommitmentScheme::setup_prover`. Correctness 50/50 PASS + clippy
+  jolt-dory, jolt-core host, host,zk clean. Perf runs vs 70,762.94
+  ratchet: run 1 80,789 ms (+14.2% reject), run 2 87,714 ms (+23.9%
+  reject, core inflated 4888 vs typical 4200), run 3 97,497 ms
+  (+37.8% reject, core strongly inflated 5606). **Root cause**: the
+  dory-pcs prepared cache is a single GLOBAL static (not per-scheme),
+  and jolt-bench runs `--stack both` order core→modular. Core's
+  existing `DoryGlobals::init_prepared_cache` call at
+  `jolt-core/src/poly/commitment/dory/commitment_scheme.rs:98`
+  populates the global cache before modular runs. By the time
+  modular's `DoryScheme::setup_prover` executes, `init_cache` finds
+  a populated cache and no-ops (via its smart re-init check:
+  "If cache exists and is large enough, do nothing"). My change is
+  therefore effectively a no-op under the production `--stack both`
+  workload. The 167→93 ms/call gap observed in
+  `iter84_modular_only.json` only manifests under `--stack modular`
+  solo — an artifact of the profiling configuration, not a real
+  gap in the production benchmark. Reverted the single import + 6-line
+  setup_prover change. Ratchet unchanged 70,762.94. Stall 28 → 29.
+  **Key insight for future perf hypotheses**: per-call ratios
+  measured from solo-stack profiles do NOT translate to `--stack
+  both` benchmark deltas when the two stacks share process-level
+  state (static caches, thread pools, mimalloc heap). Need to
+  separate "architectural gap" (real work core does less of)
+  from "solo-profile artifact" (one-time state both stacks share
+  in production). The dory cache is the latter.
 
   iter 84 DESIGN — fresh per-stack Perfetto profiling
   (`iter84_modular_only.json` / `iter84_core_only.json`).
@@ -2453,20 +2487,26 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
     - **Expected delta**: varies by program; ~5% on sha2-chain, ~15%
       on muldiv/btreemap.
 
-- [ ] P86: Fresh P81 re-attempt — multi_pair_g2_setup_parallel wrapper
-  dedup. Iter-84 PER-STACK profiling disambiguates prior conflicting
-  claims: **real ratio is 1.80× per-call** (modular 167.2 ms vs
-  core 93.4 ms total; 9036 vs 5001 self-ms across 62 calls each).
-  Memo §7.3(d) 2.65× was incorrect; pre-compaction 1.25× was also
-  incorrect. Gap is ~4.0 s wall (~5% of modular).
-    - **Hypothesis**: dedupe the prepared-G2-point cache in
-      `DoryScheme::commit` + `DoryCommitmentScheme`. Each layer
-      maintains its own HashMap lookup + Vec clone per call; consolidate
-      to a single registry keyed by `(srs_hash, opening_idx)` returning
-      `&PreparedG2Point`.
-    - **Abstraction risk**: low — internal to `crates/jolt-dory/`.
-    - **Expected delta**: 2-4 s wall (~3-5%). Sits right at the accept
-      gate; needs clean execution to clear ±5%.
+- [x] P86: Fresh P81 re-attempt — multi_pair_g2_setup_parallel wrapper
+  dedup. **CLOSED iter 85 as non-target** (not a real production gap).
+  Iter-84 PER-STACK profiling showed 1.80× per-call (modular 167.2ms
+  vs core 93.4ms, 62 calls each, ~4.0s wall gap). But the "gap"
+  only appears under `--stack modular` solo profiling. Under
+  `--stack both` (production benchmark), core's
+  `DoryCommitmentScheme::setup_prover` calls
+  `DoryGlobals::init_prepared_cache` at
+  `jolt-core/src/poly/commitment/dory/commitment_scheme.rs:98`,
+  populating the dory-pcs process-global prepared-G2 cache BEFORE
+  modular runs. When modular's `DoryScheme::setup_prover` runs,
+  `init_cache`'s smart re-init check finds the cache already
+  populated and no-ops. So modular implicitly uses the fast path
+  already. Iter 85 attempt to explicitly call `init_cache` from
+  modular setup was a no-op and reverted under +14%/+24%/+38%
+  noise-inflated runs. **Key lesson**: solo-stack profile ratios
+  don't translate to `--stack both` deltas when stacks share
+  process-level state. Need to distinguish "architectural gap"
+  (different work) from "solo-profile artifact" (shared state
+  freebie in production).
 
 - [x] P83: Sparse eq_project fast path for RamRaIndicator — target:
   `crates/jolt-zkvm/src/runtime/helpers.rs::materialize_binding`
