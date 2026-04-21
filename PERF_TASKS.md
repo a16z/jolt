@@ -32,7 +32,110 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 29 (iter 85 P86 REVERTED — dory cache seed is a no-op under `--stack both` because core's `DoryCommitmentScheme::setup_prover` seeds the dory-pcs shared global cache before modular's `DoryScheme::setup_prover` runs; the 167→93ms/call gap in iter84_modular_only.json only exists in solo modular runs, not the production benchmark; iter 84 DESIGN — fresh per-stack profiling disambiguates prior conflicting per-call ratios; appended P84/P85/P86 backlog items; no code; iter 83 P83 reverted — sparse eq_project for ram_ra_indicator, -3.9% median across 3 runs but rerun +6.78% in reject zone; iter 82 P78 reverted — bind_low_to_high in-place compact regressed +47% mean; iter 81 P77-D reverted — CpuBackend batch_round_evaluate par_iter override + re-applied emission switch regressed +6.86% mean; iter 80 P77-C reverted — emission switch alone regressed 10-14%; iter 79 P77-B infra — BatchRoundEvaluate handler landed, flat; iter 78 P77-A infra — BatchInstanceSpec/BatchReduceKind trait surface; iter 77 P77 infra — memoize RamRaIndicator; iter 76 P80 parallelize RAM derived polys — ~7.5% improvement vs same-session pre-change, but +12% past-reject vs stale iter-54 ratchet; code kept, ratchet unchanged; iter 75 P76-D hot-path wiring reverted under noise, infra kept; iter 74 P76-C infra; iter 73 P76-B infra; iter 72 P76-A infra stub; iter 71 P75-B infra stub; iter 70 P75-A infra-only commit; iter 69 design-only; iter 68 P73 reverted; iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+- **Stall counter**: 30 (iter 86 DESIGN — user directive against a core-style `SmallScalar` trait mid-implementation; pivot P84 framing to buffer-encoding-first: rewrite P84 to forbid a generic `SmallScalar` + `CompactPolynomial<T,F>` pattern and pin P84-A' as a runtime-tagged `DeviceBuffer::Compact` variant (encoding as *data*, not as generic type parameters); no code; iter 85 P86 REVERTED — dory cache seed is a no-op under `--stack both` because core's `DoryCommitmentScheme::setup_prover` seeds the dory-pcs shared global cache before modular's `DoryScheme::setup_prover` runs; the 167→93ms/call gap in iter84_modular_only.json only exists in solo modular runs, not the production benchmark; iter 84 DESIGN — fresh per-stack profiling disambiguates prior conflicting per-call ratios; appended P84/P85/P86 backlog items; no code; iter 83 P83 reverted — sparse eq_project for ram_ra_indicator, -3.9% median across 3 runs but rerun +6.78% in reject zone; iter 82 P78 reverted — bind_low_to_high in-place compact regressed +47% mean; iter 81 P77-D reverted — CpuBackend batch_round_evaluate par_iter override + re-applied emission switch regressed +6.86% mean; iter 80 P77-C reverted — emission switch alone regressed 10-14%; iter 79 P77-B infra — BatchRoundEvaluate handler landed, flat; iter 78 P77-A infra — BatchInstanceSpec/BatchReduceKind trait surface; iter 77 P77 infra — memoize RamRaIndicator; iter 76 P80 parallelize RAM derived polys — ~7.5% improvement vs same-session pre-change, but +12% past-reject vs stale iter-54 ratchet; code kept, ratchet unchanged; iter 75 P76-D hot-path wiring reverted under noise, infra kept; iter 74 P76-C infra; iter 73 P76-B infra; iter 72 P76-A infra stub; iter 71 P75-B infra stub; iter 70 P75-A infra-only commit; iter 69 design-only; iter 68 P73 reverted; iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+
+  iter 86 DESIGN — **pivot P84 away from a `SmallScalar` trait**.
+  After measuring baseline (82,580 ms modular / 5,258 ms core;
+  +16.7% past reject vs ratchet, elevated-noise environment — core
+  also inflated +35% vs typical 3,900 ms), iter 86 started on
+  **P84-A: add `SmallScalar` trait + per-integer-type impls to
+  `jolt-field`**, mirroring core's `jolt-core/src/utils/small_scalar.rs`
+  (trait with `field_mul`/`to_field`/`msm` methods + impls for
+  `bool/u8/u16/u32/u64/i64/u128/i128`). Drafted `crates/jolt-field/
+  src/small_scalar.rs` + `mod` line in `lib.rs`, clippy clean. User
+  intercepted before commit with directive: **"i dont want to have
+  a small scalar in our jolt, we should be able to avoid a trait
+  like that with our better abstractions that are more flexible"**.
+  Reverted the draft (`rm small_scalar.rs` + `git checkout lib.rs`);
+  working tree clean except for `perf/last-iter.json` (baseline
+  measurement only).
+
+  **Directive recorded** in `memory/feedback_no_smallscalar_trait.md`.
+  Key principle: core ties buffer representations to Rust types via
+  `CompactPolynomial<T: SmallScalar, F: JoltField>` and then
+  type-erases behind a `MultilinearPolynomial` enum; every call site
+  carries the `T` parameter. That pattern fights our existing
+  `ComputeBackend` + `PolynomialDescriptor` + `BufferProvider`
+  abstraction, which already carries polynomial metadata as *data*
+  on the descriptor rather than as generic type parameters.
+
+  **P84 reframe (mandatory for future attempts)**: the compact-poly
+  path must extend the *data* surface, not introduce trait-generic
+  type parameters. Three concrete options — all preserve handlers
+  ≤ 30 LOC and protocol-unaware:
+
+  1. **Runtime-tagged `DeviceBuffer::Compact` variant** (preferred
+     P84-A'). Add `DeviceBuffer::Compact { data: Vec<u128>, bits: u8,
+     signed: bool }` alongside `Field` / `U64` in
+     `crates/jolt-compute/src/traits.rs:67`. `Buf<B,F>` stays non-
+     generic over scalar type. Backend `bind` / `reduce` / `interp`
+     methods match on the variant and dispatch to a fast path that
+     does `Fr::mul_u64`/`mul_i128` (already optimized in
+     `arkworks/bn254_ops.rs`) instead of full-field mul. Encoding
+     info (`bits`, `signed`) lets the backend pick `mul_u64` vs
+     `mul_i64` vs `mul_u128` vs `mul_i128` per buffer without
+     generics.
+
+  2. **`BufferEncoding` tag on `PolynomialDescriptor`** (memo §5(D)).
+     The descriptor already carries shape metadata; add
+     `encoding: BufferEncoding { bits, signed, representation }`.
+     Backend ops look up the descriptor and dispatch on encoding.
+     More descriptor-centric than buffer-centric; cleaner for the
+     compiler but adds descriptor lookups on the fast path.
+
+  3. **Fused `ComputeBackend` methods for small-scalar flows**
+     (`bind_compact`, `reduce_compact`). The raw small-scalar buffer
+     (e.g. `Vec<u64>` inside `DeviceBuffer::U64`) and challenges are
+     passed together; the backend picks how to fast-path internally.
+     Most conservative — no new variant, no descriptor churn — but
+     requires the compiler to emit a *different op* for compact-poly
+     sumchecks, which bloats the op vocabulary.
+
+  Preferred path (P84-A' next iter): **option 1** (DeviceBuffer
+  variant). Reasons: (a) the `Vec<F>` full-promote happens in a
+  single location — `Polynomials::push` at
+  `crates/jolt-witness/src/polynomials.rs:106` — so swapping the
+  default output to `DeviceBuffer::Compact` when the input is a
+  small-scalar type is surgical; (b) backend can fall back to
+  `to_field_vec()` for operations it hasn't specialized, letting
+  us land infrastructure without one-shot rewriting every reduce
+  path; (c) the `bits`/`signed` fields make the fast-path choice
+  explicit without a vtable.
+
+  **P84-A' iter-87 plan** (tight, infra-only — no perf claim):
+    - `DeviceBuffer::Compact { data: Vec<u128>, bits: u8, signed: bool }`
+      variant in `crates/jolt-compute/src/traits.rs` with accessor
+      helpers (`as_compact`, `as_compact_mut`) mirroring existing
+      `Field`/`U64` accessors. `#[non_exhaustive]` the enum.
+    - Default `ComputeBackend` methods that reject the variant with
+      `unimplemented!("backend does not support compact buffers")`,
+      so existing backends keep compiling. No handler changes.
+    - No compiler changes, no op-vocabulary changes, no hot-path
+      wiring. ≤ 60 LOC diff. Kill-switch: if the infra is hard to
+      thread, revert and try option 2 or 3 next iter.
+
+  Subsequent iters (P84-B / P84-C):
+    - P84-B: fast-path `interpolate_inplace` / `bind_low_to_high`
+      on `DeviceBuffer::Compact` via `Fr::mul_u64`/`mul_i128`.
+      Backend dispatches internally; handlers untouched.
+    - P84-C: compiler emits `DeviceBuffer::Compact` outputs for
+      small-scalar sources (RD_INC, RAM_INC, indicators) by
+      routing `Polynomials::push` through an encoding-aware lane
+      that skips `F::from_i128` promotion.
+
+  **Why NOT a `SmallScalar` trait** (durable guidance):
+    - Forces every call site that holds a compact poly to carry
+      the `T: SmallScalar` generic parameter, polluting the
+      handler/compiler-level APIs that are currently `F`-only.
+    - Core then has to type-erase behind a
+      `MultilinearPolynomial<F>` enum; we already have the same
+      enum shape via `DeviceBuffer`, so we'd be duplicating the
+      abstraction with a leakier variant.
+    - The user directive is explicit: "more flexible abstractions"
+      means keep encoding as *runtime data on the buffer /
+      descriptor*, not as type-level generic parameters.
+
+  Ratchet unchanged 70,762.94. Stall 29 → 30. No code this iter.
 
   iter 85 P86 REVERTED — dory prepared-G2 cache seed. Per iter-84
   profile, `multi_pair_g2_setup_parallel` was 1.80× slower per-call
@@ -2448,25 +2551,48 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
     - **Expected delta**: 2 s wall (~2.5%). Smaller than P80/P81 but
       mechanical once the batching op exists.
 
-- [ ] P84: CompactPolynomial integration into modular stack — target:
-  `crates/jolt-compute/src/traits.rs` + `crates/jolt-witness/src/polynomials.rs`
-  + `crates/jolt-cpu/src/backend.rs`. Fresh per-stack analysis (iter 84,
+- [ ] P84: Compact-buffer small-scalar integration into modular stack —
+  target: `crates/jolt-compute/src/traits.rs` +
+  `crates/jolt-witness/src/polynomials.rs` +
+  `crates/jolt-cpu/src/backend.rs`. Fresh per-stack analysis (iter 84,
   `iter84_modular_only.json` / `iter84_core_only.json`):
     - Modular reduce_dense: 2373 calls × 18ms = 40.5s self.
     - Core's equivalent (BooleanitySumcheckProver::compute_message + others):
       20 calls × 46ms = 921ms self, **44× less wall**.
     - Gap driver: core binds small-scalar polys (u8/u32/u64 via
       CompactPolynomial) directly, deferring promote-to-field to bind-time.
-      Modular materializes every poly as `Vec<F>` and pays full BN254 Fr
-      arithmetic cost for every mul.
-    - **Hypothesis**: add `CompactPolynomial` variant to the device buffer
-      enum, threaded through `Op::Reduce` / `Op::InstanceReduce` /
-      bind handlers. Compiler emits a scalar-type tag per poly; backend
-      dispatches on tag at reduce/bind time. Expected 3-5× speedup on
-      small-scalar reduces, conservatively ~20s wall savings (~15-25%).
-    - **Abstraction risk**: high — requires a scalar-type tag on
-      `PolynomialId` / `Op::*` variants. Handlers branch on tag but stay
-      ≤ 30 LOC per. Multi-iter architectural arc.
+      Modular materializes every poly as `Vec<F>` via
+      `Polynomials::push`'s `F::from_i128` call at
+      `crates/jolt-witness/src/polynomials.rs:106`, paying full BN254 Fr
+      arithmetic cost for every subsequent mul.
+    - **Hypothesis** (updated iter 86): extend the `DeviceBuffer` enum
+      with a new runtime-tagged `Compact { data: Vec<u128>, bits: u8,
+      signed: bool }` variant. Backend `bind` / `reduce` /
+      `interpolate_inplace` match on the variant and dispatch to a fast
+      path that calls `Fr::mul_u64` / `Fr::mul_i64` / `Fr::mul_u128` /
+      `Fr::mul_i128` (already optimized in `arkworks/bn254_ops.rs`,
+      ~2× faster than `F::from_u64(n) * F`). Compiler routes small-
+      scalar sources through an encoding-aware lane that preserves
+      the raw integer representation instead of promoting to `Vec<F>`.
+      Expected 3-5× on small-scalar reduces, ~20s wall savings (~15-
+      25%). Multi-iter arc: P84-A' infra (variant + accessors);
+      P84-B backend fast paths; P84-C compiler emission.
+    - **Abstraction risk**: medium — new `DeviceBuffer` variant +
+      encoding fields (`bits`, `signed`) are *runtime data* on the
+      buffer, not generic type parameters. Handlers stay ≤ 30 LOC
+      and protocol-unaware because they only pass `Buf<B, F>` through
+      the trait surface; the backend owns all variant dispatch
+      internally. No new trait; no `T` generic parameter at call
+      sites.
+    - **FORBIDDEN** — do NOT introduce a `SmallScalar` trait (with
+      `field_mul` / `to_field` methods and per-integer-type impls)
+      or a generic `CompactPolynomial<T: SmallScalar, F: JoltField>`
+      struct. Per user directive 2026-04-21: "i dont want to have a
+      small scalar in our jolt, we should be able to avoid a trait
+      like that with our better abstractions that are more flexible."
+      See `memory/feedback_no_smallscalar_trait.md` and iter 86 design
+      notes above for the three acceptable alternatives (buffer
+      variant, descriptor encoding tag, fused backend methods).
     - **Expected delta**: 20-30 s wall (~25-40%). Largest remaining
       high-leverage attack.
 
