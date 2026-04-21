@@ -61,6 +61,7 @@ members = [
   "jolt-inlines/bigint",
   "jolt-inlines/secp256k1",
   "jolt-inlines/grumpkin",
+  "jolt-inlines/bn254-fr",
   "examples/btreemap/host",
   "examples/btreemap/guest",
   "examples/collatz",
@@ -372,3 +373,4 @@ jolt-inlines-blake3 = { path = "./jolt-inlines/blake3", default-features = false
 jolt-inlines-bigint = { path = "./jolt-inlines/bigint", default-features = false }
 jolt-inlines-secp256k1 = { path = "./jolt-inlines/secp256k1", default-features = false }
 jolt-inlines-grumpkin = { path = "./jolt-inlines/grumpkin", default-features = false }
+jolt-inlines-bn254-fr = { path = "./jolt-inlines/bn254-fr", default-features = false }
