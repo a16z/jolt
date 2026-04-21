@@ -448,25 +448,46 @@ Done:
   (`jolt-host`): writes V_FLAG_IS_FIELD_* + V_FIELD_OP_* + V_LEFT/V_RIGHT/
   V_PRODUCT + V_LOOKUP_OPERAND_* columns from a `FieldOpPayload` stream.
 
-Remaining (blocks on `#60`):
-- `#60` Trace-integrated smoke example. Needs:
-  1. `CycleRow for Cycle` handling of `Instruction::FieldOp` /
-     `Instruction::FMovIntToFieldLimb` / `Instruction::FMovFieldToIntLimb`
-     — currently these hit the `_ => panic!("unsupported instruction")` arm
-     of `with_isa_struct!` in `crates/jolt-host/src/tracer_cycle.rs`.
-  2. Dynamic flag dispatch: `circuit_flags()` on a `FieldOp` cycle must set
-     one of `IsFieldMul/Add/Sub/Inv` based on funct3 (Flags trait is static
-     per-variant; funct3 is dynamic so needs a post-dispatch hook).
-  3. Witness population: `r1cs_cycle_witness` writes default integer-register
-     data. On FieldOp cycles that default is near-zero and `apply_field_op_
-     events_to_r1cs` can overwrite the FieldOp-specific columns cleanly.
-  4. Bench / harness wiring: bench's `run_program_once` calls
-     `apply_field_op_events_to_r1cs` after `build_r1cs_witness`, consuming
-     the tracer's `field_reg_events` stream (already plumbed via `#61`).
+Recently completed (this session):
+- ✅ CycleRow for `FieldOp` / `FMov{I2F,F2I}` (special-cased in
+  `tracer_cycle.rs`; funct3-driven flag dispatch for FieldOp).
+- ✅ `r1cs_cycle_witness` populates `V_FLAG_IS_FIELD_*` from CycleRow flags.
+- ✅ Bench harness applies `apply_field_op_events_to_r1cs` after witness
+  build (`jolt-bench/src/stacks/modular.rs`).
+- ✅ Integration tests in `jolt-host` (`real_field_op_cycle_through_
+  witness_builder`) + `jolt-equivalence` (`modular_self_verify_with_
+  fieldreg_fadd_payload`) exercising real `Cycle::FieldOp` through the
+  witness builder and the event overlay.
+
+### CRITICAL SOUNDNESS GAP — task #63
+
+The FADD/FSUB/FMUL/FINV R1CS rows (matrix indices 19-26) are authored in
+`jolt-r1cs/src/constraints/rv64.rs` and pass `check_witness` unit tests, but
+they are **not sampled by Spartan's outer uniskip sumcheck**.
+`jolt-compiler/src/params.rs::NUM_R1CS_CONSTRAINTS = 19` caps the uniskip
+domain at the original eq-constraint count, so rows 19-26 are silently
+dropped during prove/verify.
+
+A tampered-result rejection test
+(`modular_self_verify_with_fieldreg_fadd_tampered_result_rejects`) exposed
+this: FieldOpResult=580 when a+b=579 still verified successfully end-to-end.
+
+Remediation (see task #63): bump `NUM_R1CS_CONSTRAINTS` to 27, recompute
+`UNISKIP_DOMAIN_SIZE` / `NUM_GROUP2_CONSTRAINTS` / `outer_uniskip_*`,
+regenerate both `jolt_core_module*.rs` to emit the new dimensions, and
+manage the cross-verify regression (jolt-core also hardcodes 19). Substantial
+multi-session protocol change.
+
+Until #63 lands, Phase 2b is **functionally complete at the matrix level**
+(honest paths prove + verify; R1CS unit tests accept/reject correctly) but
+**not soundness-complete end-to-end** — a malicious prover can supply
+incorrect FieldOpResult values and produce a verifying proof.
+
+Other remaining #60 subitems:
   5. Minimal `#[jolt::provable]` guest calling `Fr::mul/add/sub/inv` in a
      loop; exercise the inline SDK's assembly emission path.
-  6. Honest accepts + at least one adversarial mutation at the Fr-value level
-     (e.g. tamper `e.new` for an FMUL event, confirm R1CS rejects).
+  6. Adversarial FieldOp test — blocked on #63 until Spartan enforces the
+     rows.
 
 **Phase 3 — OPEN.** Soundness closure:
 

@@ -1776,7 +1776,7 @@ fn run_jolt_zkvm_prover_with_fieldreg_events(
         executable,
         mut polys,
         r1cs_key,
-        r1cs_witness,
+        mut r1cs_witness,
         setup,
         initial_ram,
         final_ram,
@@ -1791,6 +1791,15 @@ fn run_jolt_zkvm_prover_with_fieldreg_events(
     let log_t = t.trailing_zeros() as usize;
     let log_k_chunk = if log_t < 25 { 4 } else { 8 };
     let k_fieldreg = 1usize << log_k_chunk;
+
+    // Overlay FieldOp columns (flags + A/B/Result + V_PRODUCT routing) for any
+    // event carrying a FieldOpPayload. No-op when every event has op=None.
+    jolt_host::apply_field_op_events_to_r1cs::<NewFr>(
+        &mut r1cs_witness,
+        t,
+        r1cs_key.num_vars_padded,
+        &events,
+    );
 
     // Build the FieldRegConfig, then derive RV/WV from it (single source of truth).
     let field_reg_config = FieldRegConfig {
@@ -1949,6 +1958,69 @@ fn modular_self_verify_with_fieldreg_nonempty_events() {
 
     jolt_verifier::verify(&verifying_key, &zkvm_proof, &setup.config.io_hash)
         .expect("Phase 2b: non-empty FieldReg events should verify end-to-end");
+}
+
+/// Phase 2b acceptance (honest FADD overlay e2e): inject a `FieldRegEvent`
+/// carrying a `FieldOpPayload` with funct3 = FADD. The event overlay wires
+/// `V_FLAG_IS_FIELD_ADD = 1` + operand columns onto the R1CS witness. With
+/// honest `new = a + b`, the FADD gate's local `(A·B − C) = 0` holds, and
+/// the existing prover pipeline accepts the proof end-to-end.
+///
+/// Scope caveat: this test only exercises that the event overlay doesn't
+/// break honest proving. The FADD/FSUB/FMUL/FINV R1CS rows (matrix indices
+/// 19-26) are NOT yet enforced by the Spartan outer sumcheck — Spartan
+/// currently samples only rows 0-18 via `NUM_R1CS_CONSTRAINTS = 19` in
+/// `jolt-compiler/src/params.rs`. A negative (tampered-result rejects) test
+/// at this level would fail because the gate's unsatisfiability is silently
+/// dropped. See the spec's Phase 2b follow-up: bumping
+/// `NUM_R1CS_CONSTRAINTS` to 27 is a protocol-level change (outer uniskip
+/// domain, cross-verify parity with jolt-core) deferred to its own session.
+#[test]
+fn modular_self_verify_with_fieldreg_fadd_payload() {
+    use jolt_dory::types::DoryVerifierSetup;
+    use jolt_witness::derived::{FieldOpPayload, FieldRegEvent, FIELD_OP_FUNCT3_FADD};
+
+    let (_, params) = jolt_core_state_history();
+
+    // 123 + 456 = 579 in BN254 Fr (well within u64 so no modular wrap).
+    let events = vec![FieldRegEvent {
+        cycle: 5,
+        slot: 0,
+        old: [0, 0, 0, 0],
+        new: [579, 0, 0, 0],
+        op: Some(FieldOpPayload {
+            funct3: FIELD_OP_FUNCT3_FADD,
+            a: [123, 0, 0, 0],
+            b: [456, 0, 0, 0],
+        }),
+    }];
+
+    let zkvm_proof = run_jolt_zkvm_prover_with_fieldreg_events(params, events);
+
+    let (
+        executable,
+        _polys,
+        r1cs_key,
+        _r1cs_witness,
+        setup,
+        _initial_ram,
+        _final_ram,
+        _instruction_flag_data,
+        _reg_access,
+        _lookup_trace,
+        _lookup_flags,
+        _bytecode_data,
+    ) = setup_zkvm_muldiv_with_example(params, "jolt_core_module_with_fieldreg");
+
+    let pcs_verifier_setup = DoryVerifierSetup(params.pcs_setup.0.to_verifier_setup());
+    let verifying_key = jolt_verifier::JoltVerifyingKey::<NewFr, DoryScheme>::new(
+        &executable.module,
+        pcs_verifier_setup,
+        r1cs_key,
+    );
+
+    jolt_verifier::verify(&verifying_key, &zkvm_proof, &setup.config.io_hash)
+        .expect("Phase 2b: honest FADD payload must verify end-to-end");
 }
 
 /// Phase 2b acceptance (second half — adversarial path, witness-consistency):
