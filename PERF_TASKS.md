@@ -32,7 +32,122 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 32 (iter 88 P84-B infra — `ComputeBackend::bind_compact` trait method + CpuBackend fast-path override via `Field::mul_i128(diff)` + two `jolt-cpu` unit tests landed; +~90 LOC across `jolt-compute/src/traits.rs` and `jolt-cpu/src/backend.rs`; correctness 50/50 PASS + clippy jolt-core host + host,zk + modular lib+bin + jolt-cpu --tests -D warnings clean; perf 2 runs both past reject (+20.4% / +17.65%) but with core typical (4,118 / 4,175 ms vs historical ~4,100–4,200) — environmental variance isolated to the modular bench window, not caused by this iter since grep confirms no production code path matches on `DeviceBuffer::Compact` or calls `bind_compact`; per iter-87 precedent, infra iters that are structurally perf-neutral land flat without rerun disambiguation; ratchet unchanged 70,762.94; iter 87 P84-A' infra — `DeviceBuffer::Compact { data: Vec<i128>, bits: u8, signed: bool }` variant + accessors landed (`as_compact` / `as_compact_mut` / `compact_encoding` / `is_compact`) in `crates/jolt-compute/src/traits.rs`; `jolt-hybrid` exhaustive matches patched with Compact arms (migrate no-op, on_primary true, test panics); +60 LOC total; no backend fast path yet, no hot-path wiring, no compiler changes; correctness 50/50 PASS + clippy jolt-core host + host,zk + modular lib+bin clean; perf 71,939.25 ms modular vs 70,762.94 ratchet = +1.66% in the ±5% inconclusive band, consistent with zero-hot-path-usage infra expectation; ratchet unchanged; iter 86 DESIGN — user directive against a core-style `SmallScalar` trait mid-implementation; pivot P84 framing to buffer-encoding-first: rewrite P84 to forbid a generic `SmallScalar` + `CompactPolynomial<T,F>` pattern and pin P84-A' as a runtime-tagged `DeviceBuffer::Compact` variant (encoding as *data*, not as generic type parameters); no code; iter 85 P86 REVERTED — dory cache seed is a no-op under `--stack both` because core's `DoryCommitmentScheme::setup_prover` seeds the dory-pcs shared global cache before modular's `DoryScheme::setup_prover` runs; the 167→93ms/call gap in iter84_modular_only.json only exists in solo modular runs, not the production benchmark; iter 84 DESIGN — fresh per-stack profiling disambiguates prior conflicting per-call ratios; appended P84/P85/P86 backlog items; no code; iter 83 P83 reverted — sparse eq_project for ram_ra_indicator, -3.9% median across 3 runs but rerun +6.78% in reject zone; iter 82 P78 reverted — bind_low_to_high in-place compact regressed +47% mean; iter 81 P77-D reverted — CpuBackend batch_round_evaluate par_iter override + re-applied emission switch regressed +6.86% mean; iter 80 P77-C reverted — emission switch alone regressed 10-14%; iter 79 P77-B infra — BatchRoundEvaluate handler landed, flat; iter 78 P77-A infra — BatchInstanceSpec/BatchReduceKind trait surface; iter 77 P77 infra — memoize RamRaIndicator; iter 76 P80 parallelize RAM derived polys — ~7.5% improvement vs same-session pre-change, but +12% past-reject vs stale iter-54 ratchet; code kept, ratchet unchanged; iter 75 P76-D hot-path wiring reverted under noise, infra kept; iter 74 P76-C infra; iter 73 P76-B infra; iter 72 P76-A infra stub; iter 71 P75-B infra stub; iter 70 P75-A infra-only commit; iter 69 design-only; iter 68 P73 reverted; iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+- **Stall counter**: 33 (iter 89 DESIGN — P84-C closed without implementing after sizing-analysis showed ~0.006% savings [~3 ms push-phase `F::from_i128` + ~1 ms bind-phase fast-path delta vs 71 s prove]; violates the documented hypothesis bar ("order-of-magnitude gains while modular is >2× off core; no micro-opts"). Ran fresh Perfetto trace `benchmark-runs/perfetto_traces/iter89_modular.json` (32 MB, aggregated via `perf/report_tools/analyze_trace.py` → `perf/iter89-modular-spans.json`, 122,909 ms total_self_ms across rayon workers vs ~71 s wall). **Top 5 hotspots**: reduce_dense 30.9 s (25%, 2373 calls × 13.5 ms avg), interpolate_inplace 25.4 s (20.6%, 17,416 calls × 1.5 ms avg), gruen_segmented_reduce 21.6 s (17.6%, 16 calls × 1.35 s avg), eq_project 9.6 s (7.8%, 82 calls), derived::ram_val 5.6 s (4.5%, 1 call — single-threaded). **Sum of top 3 = 63%**. New P-item queue (P87 prefix/suffix on reduce_dense, P88 delayed-reduction accumulator on gruen/reduce_dense, P89 outer-level parallelism batching interpolate_inplace, P90 parallelize derived::ram_val, P91 delayed reduction on eq_project) documented below with sizing; iter 90 targets **P88 delayed reduction** as the smallest architectural surgery with a defensible 5%+ expected gain (leverages existing `WideAccumulator` on BN254). Ratchet unchanged 70,762.94; iter 88 P84-B infra — `ComputeBackend::bind_compact` trait method + CpuBackend fast-path override via `Field::mul_i128(diff)` + two `jolt-cpu` unit tests landed; +~90 LOC across `jolt-compute/src/traits.rs` and `jolt-cpu/src/backend.rs`; correctness 50/50 PASS + clippy jolt-core host + host,zk + modular lib+bin + jolt-cpu --tests -D warnings clean; perf 2 runs both past reject (+20.4% / +17.65%) but with core typical (4,118 / 4,175 ms vs historical ~4,100–4,200) — environmental variance isolated to the modular bench window, not caused by this iter since grep confirms no production code path matches on `DeviceBuffer::Compact` or calls `bind_compact`; per iter-87 precedent, infra iters that are structurally perf-neutral land flat without rerun disambiguation; ratchet unchanged 70,762.94; iter 87 P84-A' infra — `DeviceBuffer::Compact { data: Vec<i128>, bits: u8, signed: bool }` variant + accessors landed (`as_compact` / `as_compact_mut` / `compact_encoding` / `is_compact`) in `crates/jolt-compute/src/traits.rs`; `jolt-hybrid` exhaustive matches patched with Compact arms (migrate no-op, on_primary true, test panics); +60 LOC total; no backend fast path yet, no hot-path wiring, no compiler changes; correctness 50/50 PASS + clippy jolt-core host + host,zk + modular lib+bin clean; perf 71,939.25 ms modular vs 70,762.94 ratchet = +1.66% in the ±5% inconclusive band, consistent with zero-hot-path-usage infra expectation; ratchet unchanged; iter 86 DESIGN — user directive against a core-style `SmallScalar` trait mid-implementation; pivot P84 framing to buffer-encoding-first: rewrite P84 to forbid a generic `SmallScalar` + `CompactPolynomial<T,F>` pattern and pin P84-A' as a runtime-tagged `DeviceBuffer::Compact` variant (encoding as *data*, not as generic type parameters); no code; iter 85 P86 REVERTED — dory cache seed is a no-op under `--stack both` because core's `DoryCommitmentScheme::setup_prover` seeds the dory-pcs shared global cache before modular's `DoryScheme::setup_prover` runs; the 167→93ms/call gap in iter84_modular_only.json only exists in solo modular runs, not the production benchmark; iter 84 DESIGN — fresh per-stack profiling disambiguates prior conflicting per-call ratios; appended P84/P85/P86 backlog items; no code; iter 83 P83 reverted — sparse eq_project for ram_ra_indicator, -3.9% median across 3 runs but rerun +6.78% in reject zone; iter 82 P78 reverted — bind_low_to_high in-place compact regressed +47% mean; iter 81 P77-D reverted — CpuBackend batch_round_evaluate par_iter override + re-applied emission switch regressed +6.86% mean; iter 80 P77-C reverted — emission switch alone regressed 10-14%; iter 79 P77-B infra — BatchRoundEvaluate handler landed, flat; iter 78 P77-A infra — BatchInstanceSpec/BatchReduceKind trait surface; iter 77 P77 infra — memoize RamRaIndicator; iter 76 P80 parallelize RAM derived polys — ~7.5% improvement vs same-session pre-change, but +12% past-reject vs stale iter-54 ratchet; code kept, ratchet unchanged; iter 75 P76-D hot-path wiring reverted under noise, infra kept; iter 74 P76-C infra; iter 73 P76-B infra; iter 72 P76-A infra stub; iter 71 P75-B infra stub; iter 70 P75-A infra-only commit; iter 69 design-only; iter 68 P73 reverted; iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+
+  iter 89 DESIGN — **close P84-C, re-profile, queue new P-items**.
+
+  **P84-C sizing**: the iter-89 plan was to route RD_INC through
+  `DeviceBuffer::Compact` via `Polynomials::push` + an `Op::Bind`
+  Compact match arm that calls `backend.bind_compact` on first-
+  round bind. Savings decomposition:
+  - Push-phase `F::from_i128` × T=2^16 = ~3 ms on BN254 (mul_u64
+    with precomp table, ~50 ns/op).
+  - First-round bind with `mul_i128(diff)` vs current
+    `F::from_i128(diff) * scalar` = ~50 ns/op × T/2 = ~1.6 ms
+    saved per pair-op.
+  - Total expected: ~4 ms out of 71,000 ms = **~0.006%**.
+  - Even routing ALL small-scalar polys (RD_INC + RAM_INC +
+    indicators ≈ ~5 polys) nets under 30 ms = **<0.05%**.
+
+  Violates the hypothesis bar documented in `memory/
+  feedback_perf_hypothesis_bar.md` ("order-of-magnitude gains
+  while modular is >2× off core; no micro-opts"). Close
+  P84-C without implementing. The `bind_compact` trait
+  method + CpuBackend fast path (iter 88) remain in tree as
+  dead infra; keep them — they're correct, tested, and cost
+  nothing — but don't wire them through the compiler until a
+  hypothesis that NEEDS them surfaces.
+
+  **Fresh profile** (`benchmark-runs/perfetto_traces/
+  iter89_modular.json` → `perf/iter89-modular-spans.json`):
+  stall ≥ 5 triggers re-profile per Perf Loop Protocol step 4.
+  Aggregate self_ms across rayon workers = 122,909 ms;
+  modular wall = ~71 s. Top hotspots:
+
+  | Rank | Span                                | self_ms | %     | Calls | Mean ms |
+  |------|-------------------------------------|--------:|------:|------:|--------:|
+  | 1    | reduce_dense                        | 30,907  | 25.1% | 2,373 |    13.5 |
+  | 2    | interpolate_inplace                 | 25,365  | 20.6% |17,416 |     1.5 |
+  | 3    | CpuBackend::gruen_segmented_reduce  | 21,632  | 17.6% |    16 |  1352.0 |
+  | 4    | CpuBackend::eq_project              |  9,581  |  7.8% |    82 |   117.7 |
+  | 5    | multi_pair_g2_setup_parallel        |  9,290  |  7.6% |    62 |   165.9 |
+  | 6    | derived::ram_val                    |  5,591  |  4.5% |     1 |  5591.5 |
+  | 7    | CpuBackend::segmented_reduce        |  2,968  |  2.4% |    16 |   185.5 |
+  | 8    | derived::ram_ra_indicator           |  2,864  |  2.3% |     2 |  1432.1 |
+  | 9    | G1::msm                             |  2,488  |  2.0% |43,043 |     0.1 |
+  | 10   | derived::ram_combined_ra            |  2,453  |  2.0% |     1 |  2452.7 |
+
+  Top 3 = 63%; top 5 = 78.7%. Rank 5 (`multi_pair_g2_setup_parallel`)
+  is a solo-run artifact per iter-85 lesson — skip as non-target.
+
+  **New P-item queue** (ranked by expected impact ≥ 5%):
+
+  - **P87 — prefix/suffix sumcheck on reduce_dense** (target
+    15–20% prove_ms). Decompose the composition formula as
+    `Σ P_i(prefix) · Q_i(suffix)`. Current reduce_dense evaluates
+    the full composition at each grid point in every round —
+    O(num_inputs × num_evals × half) per round. With prefix/
+    suffix, the per-round work becomes O(prefix_size + suffix_size)
+    plus a one-shot O(full) materialize step. For degree-d kernels
+    savings scale with `d`. **Major surgery** — likely 5–10 iters
+    to land (new `ClaimFactor::PrefixSuffix` variant on
+    `jolt_compiler::module::ClaimFormula`, compiler emission
+    change, runtime prefix/suffix materialize ops, backend method
+    `reduce_prefix_suffix`). **Risk high**; **reward highest**.
+
+  - **P88 — delayed reduction via WideAccumulator**
+    (target 5–8% prove_ms). `reduce_dense` + `gruen_segmented_reduce`
+    accumulate sumcheck evals with full field reductions per
+    `F::mul + F::add`. BN254 already ships `WideAccumulator`
+    (`crates/jolt-field/src/arkworks/wide_accumulator.rs` per
+    `lib.rs:22`) that carries 5 uint64-limbs unreduced and only
+    reduces at the end. Switching the per-input inner accumulator
+    in `reduce_dense_fixed` (and the gruen inner loop) to
+    `WideAccumulator` saves the per-mul montgomery reduce — on
+    BN254 this is ~30-50% of field mul cost. Conservative
+    estimate: 30% × `reduce_dense` + 30% × `gruen_segmented_reduce`
+    = 30% × 52.5 s / 122.9 s total = ~12.8% of aggregate self_ms,
+    which at modular's parallel saturation ≈ 4-6% wall. **Smallest
+    architectural surgery** — accumulator type swap in the hot
+    inner loops of the two biggest kernels. Preferred iter-90
+    attack.
+
+  - **P89 — outer-level parallelism on interpolate_inplace
+    batches** (target 5-10% prove_ms, uncertain). 17,416 calls ×
+    1.5 ms avg ≈ many are below `PAR_THRESHOLD=1024` and run
+    serially. When `Op::Bind` dispatches to many polys in one
+    op, today CpuBackend::bind loops serially over buffers. If
+    we `par_iter_mut` over the poly-slice before falling through
+    to `interpolate_vec_inplace`, we parallelize at the poly
+    dimension when individual polys are small. **Low-medium
+    risk** — one change in `backend.rs:188` inside `bind()`
+    (and similar on `interpolate_inplace` callers in handler).
+    Magnitude uncertain; depends on call-size distribution.
+
+  - **P90 — parallelize `derived::ram_val`** (target 3-5% prove_ms).
+    Single 5.6 s call, count=1, means single-threaded. If the
+    derivation is data-parallel over T cycles or K addresses,
+    rayon-ing it is a straightforward chunked loop. Needs reading
+    `crates/jolt-zkvm/src/runtime/derived.rs` to identify the
+    parallelization axis. **Low risk**.
+
+  - **P91 — delayed reduction on eq_project** (target 3-5%).
+    Same idea as P88 applied to the eq-weighted projection inner
+    loops. 9.6 s / 122.9 s = 7.8%; 30% of that = 2.3% aggregate
+    → ~1-2% wall. Smaller but cheap to stack after P88 (same
+    accumulator pattern). **Low risk**.
+
+  **Iter 90 plan**: **P88 delayed reduction** — smallest
+  architectural surgery with defensible ≥5% expected gain,
+  leverages existing `WideAccumulator`, compound-reusable for P91.
+  Read `crates/jolt-cpu/src/backend.rs:reduce_dense_fixed` + gruen
+  inner loop; identify the per-eval accumulator variable; swap
+  from `F` to `WideAccumulator`; call `.reduce()` once at the
+  inner loop end. Verify no correctness regression (50/50
+  jolt-equivalence). Measure on sha2-chain log_t=16.
+
+  Stall 32 → 33. No code change this iter. Ratchet unchanged
+  70,762.94.
 
   iter 88 P84-B INFRA (landed flat) — CpuBackend fast path on
   `DeviceBuffer::Compact`. Added `ComputeBackend::bind_compact` trait
