@@ -1,3 +1,7 @@
+pub mod jolt_crypto_batch_addition;
+pub mod jolt_crypto_glv_vector;
+pub mod jolt_crypto_msm;
+pub mod jolt_crypto_scalar_decomp;
 #[cfg(test)]
 mod macro_tests;
 pub mod soundness;
@@ -134,6 +138,10 @@ pub enum JoltInvariants {
     SplitEqBindLowHigh(split_eq_bind::SplitEqBindLowHighInvariant),
     SplitEqBindHighLow(split_eq_bind::SplitEqBindHighLowInvariant),
     Soundness(soundness::SoundnessInvariant),
+    JoltCryptoMsm(jolt_crypto_msm::JoltCryptoMsmInvariant),
+    JoltCryptoGlvVector(jolt_crypto_glv_vector::JoltCryptoGlvVectorInvariant),
+    JoltCryptoBatchAddition(jolt_crypto_batch_addition::JoltCryptoBatchAdditionInvariant),
+    JoltCryptoScalarDecomp(jolt_crypto_scalar_decomp::JoltCryptoScalarDecompInvariant),
 }
 
 macro_rules! dispatch {
@@ -142,6 +150,10 @@ macro_rules! dispatch {
             JoltInvariants::SplitEqBindLowHigh($inv) => $body,
             JoltInvariants::SplitEqBindHighLow($inv) => $body,
             JoltInvariants::Soundness($inv) => $body,
+            JoltInvariants::JoltCryptoMsm($inv) => $body,
+            JoltInvariants::JoltCryptoGlvVector($inv) => $body,
+            JoltInvariants::JoltCryptoBatchAddition($inv) => $body,
+            JoltInvariants::JoltCryptoScalarDecomp($inv) => $body,
         }
     };
 }
@@ -152,6 +164,14 @@ impl JoltInvariants {
             Self::SplitEqBindLowHigh(split_eq_bind::SplitEqBindLowHighInvariant),
             Self::SplitEqBindHighLow(split_eq_bind::SplitEqBindHighLowInvariant),
             Self::Soundness(soundness::SoundnessInvariant),
+            Self::JoltCryptoMsm(jolt_crypto_msm::JoltCryptoMsmInvariant),
+            Self::JoltCryptoGlvVector(jolt_crypto_glv_vector::JoltCryptoGlvVectorInvariant),
+            Self::JoltCryptoBatchAddition(
+                jolt_crypto_batch_addition::JoltCryptoBatchAdditionInvariant,
+            ),
+            Self::JoltCryptoScalarDecomp(
+                jolt_crypto_scalar_decomp::JoltCryptoScalarDecompInvariant,
+            ),
         ]
     }
 

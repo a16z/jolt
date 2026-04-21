@@ -8,8 +8,8 @@
 //! - Dory: Lee. [Dory: Efficient, Transparent arguments for Generalised Inner Products](https://eprint.iacr.org/2020/1274)
 
 mod constants;
-mod decomp_2d;
-mod decomp_4d;
+pub mod decomp_2d;
+pub mod decomp_4d;
 mod frobenius;
 pub mod glv_four;
 pub mod glv_two;
