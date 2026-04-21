@@ -32,7 +32,77 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 18 (iter 74 P76-C infra; iter 73 P76-B infra; iter 72 P76-A infra stub; iter 71 P75-B infra stub; iter 70 P75-A infra-only commit; iter 69 design-only; iter 68 P73 reverted; iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+- **Stall counter**: 19 (iter 75 P76-D hot-path wiring reverted under noise, infra kept; iter 74 P76-C infra; iter 73 P76-B infra; iter 72 P76-A infra stub; iter 71 P75-B infra stub; iter 70 P75-A infra-only commit; iter 69 design-only; iter 68 P73 reverted; iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+
+  iter 75 P76-D HOT-PATH REVERT, INFRA KEPT — landed the
+  backend-side plumbing for Eq-handle-backed `eq_project` but
+  reverted the runtime wiring after noise-dominated measurement.
+  **Landed (kept)**: (1) new trait method
+  `ComputeBackend::eq_project_from_handle(id, source, inner_size,
+  outer_size)` with defaulted panic impl in
+  `crates/jolt-compute/src/traits.rs`; (2) `CpuBackend` impl in
+  `crates/jolt-cpu/src/backend.rs` that resolves the eq table
+  from the `CpuHandleState::Eq` variant via
+  `HandleStore::global().with_state::<F,_>(id, ...)` and panics
+  if the handle was opened with a non-Eq shape; (3) free helper
+  `eq_project_with_table<F>(source, eq_table, inner_size,
+  outer_size) -> Vec<F>` holding the full rayon-parallel
+  dot-product logic for both orientations (`eq_table.len() ==
+  inner_size` and `== outer_size`), shared by `eq_project` and
+  `eq_project_from_handle` so the eq-table-rebuild path stays
+  byte-for-byte identical to the cached-table path; (4) new
+  jolt-equivalence test `eq_project_from_handle_matches_eq_project`
+  in `crates/jolt-equivalence/tests/handle_scratch_roundtrip.rs`
+  covering 4 shape combos (eq on inner/outer × inner_bits
+  4/3/6/2) that opens an Eq handle, calls
+  `eq_project_from_handle`, and asserts byte-for-byte equality
+  against the reference `eq_project`. handle_scratch_roundtrip
+  7/7 PASS (was 6/6 → +1); full jolt-equivalence 50/50 PASS (was
+  49/49). Clippy jolt-core host + jolt-core host,zk -D warnings
+  clean. **Reverted**: the hot-path wiring that (a) added
+  `eq_project_handles: HashMap<Vec<ChallengeIdx>, HandleId>` to
+  `RuntimeState` in `crates/jolt-zkvm/src/runtime/mod.rs`,
+  (b) threaded `&mut` that map through `materialize_binding` in
+  `crates/jolt-zkvm/src/runtime/helpers.rs` so the `EqProject`
+  arm would lookup-or-open-on-demand a handle keyed on
+  `Vec<ChallengeIdx>` and dispatch to `eq_project_from_handle`,
+  and (c) updated 3 call sites in handlers.rs. **Revert reason**:
+  pre-change bench 104,246 ms was already past ratchet's 5%
+  reject threshold (70762.94 ms, +47%), same elevated-load
+  envelope as iters 65-67. Post-change two runs: 85,894 ms and
+  89,201 ms — both past reject vs ratchet (+21%, +26%), but
+  better than the pre-change baseline. No signal that cleanly
+  attributes the change's effect vs ambient noise — protocol
+  mandates revert under past-reject. **Why the memo's 9.8s win
+  didn't appear**: the memo's target assumes a **stateful
+  incremental-bind** eq handle (Gruen prefix tables + per-round
+  bind, see `jolt-core/src/poly/split_eq_poly.rs:82-332`). The
+  `CpuHandleState::Eq` landed in iter 74 is only the naïve
+  pre-built-table variant — it avoids the `EqPolynomial::evals`
+  rebuild per materialize call, but the memo's 9.8s figure counts
+  the round-by-round binding cost that the naïve variant still
+  pays on the other side of the call. With 82
+  `mb::EqProject` calls and ~120 ms avg per call (9.8 s self /
+  82 calls), at most ~540 ms–2 s of that is the table-build cost
+  the naïve handle would save; the rest is the dot-product inner
+  which the handle doesn't touch. **Next iter 76**: per
+  `perf/report_tools/kernel_gap_memo.md` §1 the real
+  architectural win is the incremental-bind Eq variant that
+  replaces the full-table open with a `GruenSplitEqPolynomial`-
+  shaped prefix structure and wires `bind_handle` to bind one
+  variable per round. This requires: (a) new variant
+  `CpuHandleState::EqGruen { prefix_tables: Vec<Vec<F>>,
+  current_scalar: F, order: BindingOrder }`; (b) `open_handle`
+  builds the same left/right factorization as
+  `GruenSplitEqPolynomial::new`; (c) `bind_handle(id, round,
+  r)` consumes the challenge into `current_scalar` and updates
+  the appropriate half-table; (d) `query_handle(id, k)`
+  reconstructs the full eval on demand or
+  `eq_project_from_handle` takes the split form and streams.
+  The wiring is more invasive (compiler must emit open+bind
+  per round, not just open+query once) but the expected gain
+  is the full 9.8 → ~1 s the memo projects. Ratchet unchanged
+  70762.94.
 
   iter 74 P76-C INFRA — no hot-path wiring yet. Extended
   `CpuHandleState` with an `Eq(Vec<F>)` variant: `HandleShape::Eq

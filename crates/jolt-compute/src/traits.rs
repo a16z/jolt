@@ -445,6 +445,24 @@ pub trait ComputeBackend: Send + Sync + 'static {
     fn close_handle(&self, _id: HandleId) {
         panic!("close_handle: backend does not support handles")
     }
+
+    /// Eq-weighted projection using a pre-opened Eq-shape handle.
+    ///
+    /// Semantically equivalent to [`eq_project`](Self::eq_project) with the
+    /// eq table drawn from the handle opened with `HandleShape::Eq`. The
+    /// point is resolved once at open time; subsequent calls reuse the
+    /// cached table instead of rebuilding it. Default forwards the handle
+    /// to `query_handle` slot-by-slot — slow but correct; backends that
+    /// keep the eq table contiguously should override.
+    fn eq_project_from_handle<F: Field>(
+        &self,
+        _id: HandleId,
+        _source_data: &[F],
+        _inner_size: usize,
+        _outer_size: usize,
+    ) -> Self::Buffer<F> {
+        panic!("eq_project_from_handle: backend does not support eq handles")
+    }
 }
 
 /// Per-cycle trace data for the instruction lookup sumcheck.

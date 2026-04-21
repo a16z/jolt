@@ -146,3 +146,36 @@ fn eq_shape_bind_panics() {
     });
     backend.bind_handle::<Fr>(id, 0, Fr::from_u64(7));
 }
+
+/// `eq_project_from_handle` reads the eq table from an opened Eq handle and
+/// matches the reference `eq_project` output byte-for-byte over both
+/// orientations (`eq_table.len() == inner_size` and `== outer_size`).
+#[test]
+fn eq_project_from_handle_matches_eq_project() {
+    use jolt_compute::ComputeBackend;
+    let backend = CpuBackend;
+    let mut rng = ark_std::test_rng();
+    for (inner_bits, outer_bits, eq_is_inner) in [
+        (4usize, 3usize, true),
+        (3, 4, false),
+        (6, 2, true),
+        (2, 6, false),
+    ] {
+        let inner_size = 1usize << inner_bits;
+        let outer_size = 1usize << outer_bits;
+        let source: Vec<Fr> = (0..inner_size * outer_size)
+            .map(|_| Fr::random(&mut rng))
+            .collect();
+        let eq_bits = if eq_is_inner { inner_bits } else { outer_bits };
+        let point = make_challenges(eq_bits);
+
+        let expected = backend.eq_project::<Fr>(&source, &point, inner_size, outer_size);
+        let id = backend.open_handle::<Fr>(HandleShape::Eq {
+            challenges: &point,
+            order: BindingOrder::LowToHigh,
+        });
+        let got = backend.eq_project_from_handle::<Fr>(id, &source, inner_size, outer_size);
+        backend.close_handle(id);
+        assert_eq!(got, expected, "inner={inner_bits} outer={outer_bits}");
+    }
+}
