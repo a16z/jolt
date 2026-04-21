@@ -151,6 +151,8 @@ use virtual_xor_rotw::{VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, Virt
 use virtual_zero_extend_word::VirtualZeroExtendWord;
 
 use self::field_op::FieldOp;
+use self::fmov_field_to_int_limb::FMovFieldToIntLimb;
+use self::fmov_int_to_field_limb::FMovIntToFieldLimb;
 use self::inline::INLINE;
 
 use crate::emulator::cpu::{Cpu, Xlen};
@@ -210,6 +212,8 @@ pub mod ebreak;
 pub mod ecall;
 pub mod fence;
 pub mod field_op;
+pub mod fmov_field_to_int_limb;
+pub mod fmov_int_to_field_limb;
 pub mod inline;
 pub mod jal;
 pub mod jalr;
@@ -784,7 +788,7 @@ define_rv32im_enums! {
         VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
         VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7,
         // BN254 Fr native-field coprocessor
-        FieldOp,
+        FieldOp, FMovIntToFieldLimb, FMovFieldToIntLimb,
     ]
 }
 
@@ -1087,12 +1091,27 @@ impl Instruction {
             // identified by funct7:
             // - 0x00: SHA256 (INLINE)
             // - 0x01: Keccak256 (INLINE)
-            // - 0x40: BN254 Fr native-field coprocessor (FieldOp) — funct3 selects op
+            // - 0x40: BN254 Fr native-field coprocessor — funct3 selects op
+            //     - 0x02 FMUL / 0x03 FADD / 0x04 FINV / 0x05 FSUB → FieldOp
+            //     - 0x06 → FMovIntToFieldLimb
+            //     - 0x07 → FMovFieldToIntLimb
             // All other funct7 values fall through to the generic INLINE registry.
             0b0001011 => {
                 let funct7 = (instr >> 25) & 0x7f;
                 if funct7 == 0x40 {
-                    Ok(FieldOp::new(instr, address, true, compressed).into())
+                    let funct3 = (instr >> 12) & 0x7;
+                    match funct3 {
+                        0x02..=0x05 => {
+                            Ok(FieldOp::new(instr, address, true, compressed).into())
+                        }
+                        0x06 => Ok(
+                            FMovIntToFieldLimb::new(instr, address, true, compressed).into()
+                        ),
+                        0x07 => Ok(
+                            FMovFieldToIntLimb::new(instr, address, true, compressed).into()
+                        ),
+                        _ => Err("Invalid funct3 for BN254 Fr coprocessor"),
+                    }
                 } else {
                     Ok(INLINE::new(instr, address, false, compressed).into())
                 }
