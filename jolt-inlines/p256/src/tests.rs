@@ -1119,6 +1119,42 @@ mod p256_tests {
         assert!(matches!(result, Err(P256Error::ROrSZero)));
     }
 
+    /// Verify that a cross-cancellation attack with correlated forged advice is
+    /// rejected by the independent per-point Shamir checks.
+    ///
+    /// The attack supplies R1=2G, R2=3G with correlated decompositions that
+    /// satisfy a combined 4-scalar equation but NOT the independent per-point
+    /// equations. With the old combined check, the weighted sum cancels:
+    ///   1*G + (-2)*G - 1*(2G) + 1*(3G) = O
+    /// But each independent check fails:
+    ///   a1*G - b1*R1 = 1*G - 1*(2G) = -G ≠ O
+    #[test]
+    #[should_panic(expected = "proof spoiled")]
+    fn test_cross_cancellation_attack_rejected() {
+        use crate::sdk::{verify_ecdsa_inner, P256Fr, P256Point};
+
+        let g = P256Point::generator();
+        let two = P256Fr::from_u64_arr(&[2, 0, 0, 0]).unwrap();
+        let one = P256Fr::from_u64_arr(&[1, 0, 0, 0]).unwrap();
+
+        let two_g = g.double();
+        let three_g = g.double_and_add(&g);
+        let five_g = two_g.double_and_add(&g);
+
+        let n = limbs_to_biguint(&P256_ORDER);
+        let mut r_big = limbs_to_biguint(&five_g.x().e());
+        if r_big >= n {
+            r_big -= &n;
+        }
+        let r_fr = P256Fr::from_u64_arr(&biguint_to_limbs(&r_big)).unwrap();
+
+        // u1 = z/s = 1, u2 = r/s = 2 (with s = r/2, z = s)
+        let _ = verify_ecdsa_inner(
+            &one, &two, &r_fr, &g, two_g, 1, false, 1, false, // R1=2G, a1=1, b1=1
+            three_g, 2, true, 1, true, // R2=3G, a2=-2, b2=-1
+        );
+    }
+
     /// Verify that a zero GLV decomposition (a=0, b=0) is rejected.
     ///
     /// A malicious prover could supply a=0, b=0 as the Fake GLV decomposition,
