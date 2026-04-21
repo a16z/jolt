@@ -62,5 +62,16 @@ benchmark-runs/
 *.pb
 *benchmark_results.json
 
+# Perf-loop ephemerals (per-iteration artifacts; tracked baselines/history are explicit)
+/perf/iter*.json
+/perf/report-*.json
+/perf/last-iter.json
+/perf/report_tools/perf_report.aux
+/perf/report_tools/perf_report.log
+/perf/report_tools/perf_report.out
+/perf/report_tools/core_spans.json
+/perf/report_tools/modular_spans.json
+/perf/report_tools/summary.json
+
 # Golden trace fixtures (regenerated from prover)
 **/test_fixtures/*.bin
