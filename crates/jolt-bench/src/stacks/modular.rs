@@ -32,7 +32,9 @@ use jolt_verifier::{
     TRANSCRIPT_LABEL,
 };
 use jolt_witness::bytecode_raf::{BytecodeData, BytecodeEntry};
-use jolt_witness::derived::{DerivedSource, InstructionFlags, RamConfig, RegisterAccessData};
+use jolt_witness::derived::{
+    DerivedSource, FieldRegConfig, InstructionFlags, RamConfig, RegisterAccessData,
+};
 use jolt_witness::preprocessed::PreprocessedSource;
 use jolt_witness::provider::ProverData;
 use jolt_witness::{PolynomialConfig, PolynomialId, Polynomials};
@@ -56,7 +58,8 @@ impl ModularStack {
         // -- 1. Trace the guest (jolt-host) and compute protocol sizes.
         let mut program = HostProgram::new(guest_name);
         let (bytecode_raw, init_mem, _program_size, entry_address) = program.decode();
-        let (_, trace, final_memory, io_device) = program.trace(inputs, &[], &[]);
+        let (_, trace, final_memory, io_device, field_reg_events) =
+            program.trace_with_field_reg_events(inputs, &[], &[]);
 
         let bytecode = BytecodePreprocessing::preprocess(bytecode_raw, entry_address);
         let memory_layout = io_device.memory_layout.clone();
@@ -170,6 +173,24 @@ impl ModularStack {
         );
 
         let r1cs = R1csSource::new(&r1cs_key, &r1cs_witness);
+        // BN254 Fr coprocessor: k=16 slots, zero-initialized.
+        // Events come from the tracer (empty if the guest didn't emit FieldOp /
+        // FMov{I2F,F2I} cycles). Wiring this unconditionally lets Modules that
+        // declare FR polynomials consume them; non-FR Modules simply don't
+        // materialize the FR polys.
+        let field_reg_config = FieldRegConfig {
+            k: 16,
+            initial_state: vec![[0u64; 4]; 16],
+            events: field_reg_events
+                .into_iter()
+                .map(|e| jolt_witness::derived::FieldRegEvent {
+                    cycle: e.cycle_index,
+                    slot: e.slot as usize,
+                    old: e.old,
+                    new: e.new,
+                })
+                .collect(),
+        };
         let derived = DerivedSource::new(&r1cs_witness, trace_length, r1cs_key.num_vars_padded)
             .with_ram(RamConfig {
                 ram_k: setup.config.ram_k,
@@ -185,7 +206,8 @@ impl ModularStack {
                 right_is_imm: instruction_flag_data.right_is_imm,
             })
             .with_register_access(reg_access)
-            .with_lookup_flags(lookup_flags);
+            .with_lookup_flags(lookup_flags)
+            .with_field_reg(field_reg_config);
         let mut preprocessed = PreprocessedSource::new();
         preprocessed.populate_ram(&setup.config, &initial_ram);
         populate_bytecode_preprocessed(&mut preprocessed, &bytecode_data);

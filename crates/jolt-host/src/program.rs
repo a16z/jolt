@@ -207,12 +207,34 @@ impl Program {
         untrusted_advice: &[u8],
         trusted_advice: &[u8],
     ) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice) {
+        let (lazy, trace_vec, memory, jolt_device, _field_reg_events) =
+            self.trace_with_field_reg_events(inputs, untrusted_advice, trusted_advice);
+        (lazy, trace_vec, memory, jolt_device)
+    }
+
+    /// Same as [`Program::trace`] but also returns the FieldReg event stream
+    /// emitted by any FieldOp / FMov{I2F,F2I} cycles the guest executed.
+    /// Callers building a `FieldRegConfig` for `DerivedSource::with_field_reg`
+    /// need this extended return.
+    #[tracing::instrument(skip_all, name = "Program::trace_with_field_reg_events")]
+    pub fn trace_with_field_reg_events(
+        &mut self,
+        inputs: &[u8],
+        untrusted_advice: &[u8],
+        trusted_advice: &[u8],
+    ) -> (
+        LazyTraceIterator,
+        Vec<Cycle>,
+        Memory,
+        JoltDevice,
+        Vec<tracer::emulator::cpu::FieldRegEvent>,
+    ) {
         self.build(DEFAULT_TARGET_DIR);
         let elf_contents = self.read_elf();
         let program_size = compute_program_size(&elf_contents);
         let memory_config = self.memory_config(program_size);
 
-        let (lazy_trace, trace_vec, memory, jolt_device, _advice_tape, _field_reg_events) =
+        let (lazy_trace, trace_vec, memory, jolt_device, _advice_tape, field_reg_events) =
             tracer::trace(
                 &elf_contents,
                 self.elf.as_ref().map(|p| p as &PathBuf),
@@ -222,7 +244,7 @@ impl Program {
                 &memory_config,
                 None,
             );
-        (lazy_trace, trace_vec, memory, jolt_device)
+        (lazy_trace, trace_vec, memory, jolt_device, field_reg_events)
     }
 
     /// Compile (if needed) and trace the guest program, writing the trace to a file.
