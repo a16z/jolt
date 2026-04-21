@@ -87,9 +87,9 @@ pub const V_NEXT_IS_NOOP: usize = 44;
 pub const NUM_R1CS_INPUTS: usize = 42;
 pub const NUM_PRODUCT_FACTORS: usize = 2;
 pub const NUM_VARS_PER_CYCLE: usize = 1 + NUM_R1CS_INPUTS + NUM_PRODUCT_FACTORS; // 45
-pub const NUM_EQ_CONSTRAINTS: usize = 21;
+pub const NUM_EQ_CONSTRAINTS: usize = 27;
 pub const NUM_PRODUCT_CONSTRAINTS: usize = 3;
-pub const NUM_CONSTRAINTS_PER_CYCLE: usize = NUM_EQ_CONSTRAINTS + NUM_PRODUCT_CONSTRAINTS; // 24
+pub const NUM_CONSTRAINTS_PER_CYCLE: usize = NUM_EQ_CONSTRAINTS + NUM_PRODUCT_CONSTRAINTS; // 30
 
 /// Two's complement bias for subtraction: 2^64.
 const TWOS_COMPLEMENT_BIAS: i128 = 0x1_0000_0000_0000_0000;
@@ -118,12 +118,16 @@ fn row_wide<F: Field>(entries: &[(usize, i128)]) -> SparseRow<F> {
 
 /// Build the Jolt RV64 R1CS constraint matrices.
 ///
-/// Returns 22 constraints over 38 variables per cycle:
-/// - 19 equality-conditional: `guard · (left − right) = 0` → A=guard, B=left−right, C=0
-/// - 3 product: `left · right = output` → A=left, B=right, C=output
+/// Returns [`NUM_CONSTRAINTS_PER_CYCLE`] constraints over [`NUM_VARS_PER_CYCLE`]
+/// variables per cycle:
+/// - [`NUM_EQ_CONSTRAINTS`] equality-conditional: `guard · (left − right) = 0`
+///   → A=guard, B=left−right, C=0
+/// - [`NUM_PRODUCT_CONSTRAINTS`] product: `left · right = output`
+///   → A=left, B=right, C=output
 ///
-/// Variable layout matches the constants in this module (V_CONST=0, inputs at 1–35,
-/// product factors at 36–37).
+/// Variable layout matches the constants in this module. The FMUL/FINV gates
+/// reuse the first product constraint (`V_PRODUCT = V_LEFT·V_RIGHT`) so no new
+/// product rows are introduced — see rows 21–26 for the routing.
 pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
     let mut a_rows: Vec<SparseRow<F>> = Vec::with_capacity(NUM_CONSTRAINTS_PER_CYCLE);
     let mut b_rows: Vec<SparseRow<F>> = Vec::with_capacity(NUM_CONSTRAINTS_PER_CYCLE);
@@ -379,20 +383,93 @@ pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
     ]));
     c_rows.push(empty());
 
-    // Product constraints (21-23)
+    // FMUL and FINV need a multiplication in R1CS (A·B = Result for FMUL;
+    // A·Result = 1 for FINV). Rather than adding a new product constraint
+    // (which would bump NUM_PRODUCT_CONSTRAINTS and ripple into the product
+    // virtual sumcheck dimensions and cross-verify compatibility), we REUSE
+    // the existing product constraint 21 (`V_PRODUCT = V_LEFT · V_RIGHT`) by
+    // binding the FieldOp operands onto V_LEFT / V_RIGHT on FMUL/FINV cycles.
+    //
+    // Contract enforced by rows 21-26:
+    //   FMUL:  V_LEFT = A, V_RIGHT = B, V_PRODUCT = FieldOpResult
+    //   FINV:  V_LEFT = A, V_RIGHT = FieldOpResult, V_PRODUCT = 1
+    //
+    // On a genuine FMUL/FINV cycle, all RV circuit flags (AddOperands,
+    // SubtractOperands, MultiplyOperands, Load, Store, Jump, ...) are 0, so
+    // the other eq constraints touching V_LEFT/V_RIGHT either have vacuous
+    // guards or require V_LOOKUP_OPERAND mirroring V_LEFT/V_RIGHT — both of
+    // which the witness builder handles via `apply_field_op_events_to_r1cs`.
+    // FINV(0)=0 is NOT covered by this gate (would require an is-zero helper
+    // variable); guests must avoid taking the inverse of zero.
+
+    // 21: FieldMul operand A binding
+    //     IsFieldMul · (V_LEFT_INSTRUCTION_INPUT − FieldOpA) = 0
+    a_rows.push(row::<F>(&[(V_FLAG_IS_FIELD_MUL, 1)]));
+    b_rows.push(row::<F>(&[
+        (V_LEFT_INSTRUCTION_INPUT, 1),
+        (V_FIELD_OP_A, -1),
+    ]));
+    c_rows.push(empty());
+
+    // 22: FieldMul operand B binding
+    //     IsFieldMul · (V_RIGHT_INSTRUCTION_INPUT − FieldOpB) = 0
+    a_rows.push(row::<F>(&[(V_FLAG_IS_FIELD_MUL, 1)]));
+    b_rows.push(row::<F>(&[
+        (V_RIGHT_INSTRUCTION_INPUT, 1),
+        (V_FIELD_OP_B, -1),
+    ]));
+    c_rows.push(empty());
+
+    // 23: FieldMul product output
+    //     IsFieldMul · (V_PRODUCT − FieldOpResult) = 0
+    //     Combined with product-constraint 27 (V_PRODUCT = V_LEFT · V_RIGHT),
+    //     this forces FieldOpResult = A · B on FMUL cycles.
+    a_rows.push(row::<F>(&[(V_FLAG_IS_FIELD_MUL, 1)]));
+    b_rows.push(row::<F>(&[(V_PRODUCT, 1), (V_FIELD_OP_RESULT, -1)]));
+    c_rows.push(empty());
+
+    // 24: FieldInv operand A binding
+    //     IsFieldInv · (V_LEFT_INSTRUCTION_INPUT − FieldOpA) = 0
+    a_rows.push(row::<F>(&[(V_FLAG_IS_FIELD_INV, 1)]));
+    b_rows.push(row::<F>(&[
+        (V_LEFT_INSTRUCTION_INPUT, 1),
+        (V_FIELD_OP_A, -1),
+    ]));
+    c_rows.push(empty());
+
+    // 25: FieldInv result-as-right-operand binding
+    //     IsFieldInv · (V_RIGHT_INSTRUCTION_INPUT − FieldOpResult) = 0
+    //     On FINV cycles, V_RIGHT carries the result so V_PRODUCT = A·Result.
+    a_rows.push(row::<F>(&[(V_FLAG_IS_FIELD_INV, 1)]));
+    b_rows.push(row::<F>(&[
+        (V_RIGHT_INSTRUCTION_INPUT, 1),
+        (V_FIELD_OP_RESULT, -1),
+    ]));
+    c_rows.push(empty());
+
+    // 26: FieldInv unit product
+    //     IsFieldInv · (V_PRODUCT − 1) = 0
+    //     With rows 24/25 and product-constraint 27, this forces A·Result = 1.
+    //     Does NOT cover FINV(0)=0 — guests must avoid inverting zero.
+    a_rows.push(row::<F>(&[(V_FLAG_IS_FIELD_INV, 1)]));
+    b_rows.push(row::<F>(&[(V_PRODUCT, 1), (V_CONST, -1)]));
+    c_rows.push(empty());
+
+    // Product constraints (27-29)
     // Form: left · right = output  →  A=left, B=right, C=output
 
-    // 21: Product = LeftInstructionInput × RightInstructionInput
+    // 27: Product = LeftInstructionInput × RightInstructionInput
+    //     Also supplies A·B (or A·Result for FINV) to the FMUL/FINV gates.
     a_rows.push(row::<F>(&[(V_LEFT_INSTRUCTION_INPUT, 1)]));
     b_rows.push(row::<F>(&[(V_RIGHT_INSTRUCTION_INPUT, 1)]));
     c_rows.push(row::<F>(&[(V_PRODUCT, 1)]));
 
-    // 22: ShouldBranch = LookupOutput × Branch
+    // 28: ShouldBranch = LookupOutput × Branch
     a_rows.push(row::<F>(&[(V_LOOKUP_OUTPUT, 1)]));
     b_rows.push(row::<F>(&[(V_BRANCH, 1)]));
     c_rows.push(row::<F>(&[(V_SHOULD_BRANCH, 1)]));
 
-    // 23: ShouldJump = Jump × (1 − NextIsNoop)
+    // 29: ShouldJump = Jump × (1 − NextIsNoop)
     a_rows.push(row::<F>(&[(V_FLAG_JUMP, 1)]));
     b_rows.push(row::<F>(&[(V_CONST, 1), (V_NEXT_IS_NOOP, -1)]));
     c_rows.push(row::<F>(&[(V_SHOULD_JUMP, 1)]));
@@ -532,5 +609,115 @@ mod tests {
         matrices
             .check_witness(&w)
             .expect("FSUB flag must not trigger FADD gate");
+    }
+
+    /// FMUL and FINV reuse V_PRODUCT, so their witnesses must populate
+    /// V_LEFT/V_RIGHT (= A / B-or-Result) in addition to the FieldOp columns,
+    /// and mirror those values into V_LEFT_LOOKUP_OPERAND / V_RIGHT_LOOKUP_OPERAND
+    /// to satisfy rows 6 and 10 whose guards fire on any cycle with RV
+    /// Add/Sub/Mul all zero.
+    fn field_op_mul_witness(a: Fr, b: Fr, result: Fr) -> Vec<Fr> {
+        let mut w = noop_witness();
+        w[V_FLAG_IS_FIELD_MUL] = Fr::from_u64(1);
+        w[V_FIELD_OP_A] = a;
+        w[V_FIELD_OP_B] = b;
+        w[V_FIELD_OP_RESULT] = result;
+        // Bind via V_PRODUCT: V_LEFT·V_RIGHT = V_PRODUCT (product constraint 27)
+        w[V_LEFT_INSTRUCTION_INPUT] = a;
+        w[V_RIGHT_INSTRUCTION_INPUT] = b;
+        w[V_PRODUCT] = a * b;
+        // Rows 6/10 fire (guard = 1-Add-Sub-Mul[-Advice]) → mirror into lookup slots.
+        w[V_LEFT_LOOKUP_OPERAND] = a;
+        w[V_RIGHT_LOOKUP_OPERAND] = b;
+        w
+    }
+
+    fn field_op_inv_witness(a: Fr, result: Fr) -> Vec<Fr> {
+        let mut w = noop_witness();
+        w[V_FLAG_IS_FIELD_INV] = Fr::from_u64(1);
+        w[V_FIELD_OP_A] = a;
+        // FINV: FieldOpB unused. Witness B=0; row 10 will force V_RIGHT_LOOKUP=V_RIGHT=Result.
+        w[V_FIELD_OP_B] = Fr::zero();
+        w[V_FIELD_OP_RESULT] = result;
+        w[V_LEFT_INSTRUCTION_INPUT] = a;
+        w[V_RIGHT_INSTRUCTION_INPUT] = result;
+        w[V_PRODUCT] = a * result;
+        w[V_LEFT_LOOKUP_OPERAND] = a;
+        w[V_RIGHT_LOOKUP_OPERAND] = result;
+        w
+    }
+
+    #[test]
+    fn fmul_gate_accepts_correct_result() {
+        let matrices = rv64_constraints::<Fr>();
+        let a = Fr::from_u64(1234);
+        let b = Fr::from_u64(5678);
+        let w = field_op_mul_witness(a, b, a * b);
+        matrices
+            .check_witness(&w)
+            .expect("FMUL with a·b=result should satisfy all constraints");
+    }
+
+    #[test]
+    fn fmul_gate_rejects_wrong_result() {
+        let matrices = rv64_constraints::<Fr>();
+        let a = Fr::from_u64(1234);
+        let b = Fr::from_u64(5678);
+        // Tamper: claim product is a·b + 1. V_PRODUCT stays a·b per the routing,
+        // so gate 23 fires: 1·(a·b − (a·b+1)) = -1 ≠ 0.
+        let w = field_op_mul_witness(a, b, a * b + Fr::from_u64(1));
+        assert!(
+            matrices.check_witness(&w).is_err(),
+            "FMUL with tampered result must violate gate 23",
+        );
+    }
+
+    #[test]
+    fn fmul_gate_ignored_when_flag_zero() {
+        let matrices = rv64_constraints::<Fr>();
+        // Noop skeleton with random FieldOp columns + flag=0 — all FMUL rows vacuous.
+        let mut w = noop_witness();
+        w[V_FIELD_OP_A] = Fr::from_u64(7);
+        w[V_FIELD_OP_B] = Fr::from_u64(9);
+        w[V_FIELD_OP_RESULT] = Fr::from_u64(42);
+        matrices
+            .check_witness(&w)
+            .expect("FMUL must be vacuous when flag=0");
+    }
+
+    #[test]
+    fn finv_gate_accepts_correct_result() {
+        let matrices = rv64_constraints::<Fr>();
+        let a = Fr::from_u64(7);
+        let inv = a.inverse().expect("7 ≠ 0 in BN254 Fr");
+        let w = field_op_inv_witness(a, inv);
+        matrices
+            .check_witness(&w)
+            .expect("FINV with a·inv=1 should satisfy all constraints");
+    }
+
+    #[test]
+    fn finv_gate_rejects_wrong_result() {
+        let matrices = rv64_constraints::<Fr>();
+        let a = Fr::from_u64(7);
+        // Claim result=2 so a·2 = 14 ≠ 1 — gate 26 fires: 1·(14 − 1) ≠ 0.
+        let w = field_op_inv_witness(a, Fr::from_u64(2));
+        assert!(
+            matrices.check_witness(&w).is_err(),
+            "FINV with tampered result must violate gate 26",
+        );
+    }
+
+    #[test]
+    fn fmul_and_finv_flags_are_exclusive() {
+        let matrices = rv64_constraints::<Fr>();
+        let a = Fr::from_u64(100);
+        let b = Fr::from_u64(30);
+        // Set IsFieldMul, populate the FMUL witness — FINV gate 26 must not
+        // fire (IsFieldInv=0 keeps its guard at zero).
+        let w = field_op_mul_witness(a, b, a * b);
+        matrices
+            .check_witness(&w)
+            .expect("IsFieldMul must not activate FINV's unit-product gate");
     }
 }

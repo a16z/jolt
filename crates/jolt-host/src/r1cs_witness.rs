@@ -219,15 +219,50 @@ pub fn apply_field_op_events_to_r1cs<F: Field>(
         }
 
         let base = e.cycle * num_vars_padded;
+        let a = limbs_to_field::<F>(&op.a);
+        let b = limbs_to_field::<F>(&op.b);
+        let result = limbs_to_field::<F>(&e.new);
+
         witness[base + flag_idx] = F::from_u64(1);
-        witness[base + V_FIELD_OP_A] = limbs_to_field::<F>(&op.a);
-        witness[base + V_FIELD_OP_B] = limbs_to_field::<F>(&op.b);
-        witness[base + V_FIELD_OP_RESULT] = limbs_to_field::<F>(&e.new);
+        witness[base + V_FIELD_OP_A] = a;
+        witness[base + V_FIELD_OP_B] = b;
+        witness[base + V_FIELD_OP_RESULT] = result;
+
+        // FMUL and FINV reuse V_PRODUCT (R1CS rows 21-26). We route the
+        // multiplication through V_LEFT · V_RIGHT = V_PRODUCT (product
+        // constraint 27), and mirror those into the lookup-operand slots so
+        // rows 6 / 10 stay satisfied (guard = 1 - Add - Sub - Mul is 1 on
+        // FieldOp cycles since all RV flags are zero).
+        //
+        // FMUL: V_LEFT = A, V_RIGHT = B, V_PRODUCT = A·B = Result
+        // FINV: V_LEFT = A, V_RIGHT = Result, V_PRODUCT = A·Result = 1
+        // FADD/FSUB don't go through V_PRODUCT — their gates (rows 19/20) bind
+        // the FieldOp columns directly — but we still mirror V_LEFT/V_RIGHT
+        // onto the lookup slots so rows 6/10 don't reject on a cycle whose
+        // underlying (noop) witness has V_LEFT_INSTRUCTION_INPUT = 0 but
+        // V_LEFT_LOOKUP_OPERAND = 0 (both zero ⇒ vacuously satisfied).
+        match op.funct3 {
+            FIELD_OP_FUNCT3_FMUL => {
+                witness[base + V_LEFT_INSTRUCTION_INPUT] = a;
+                witness[base + V_RIGHT_INSTRUCTION_INPUT] = b;
+                witness[base + V_PRODUCT] = a * b;
+                witness[base + V_LEFT_LOOKUP_OPERAND] = a;
+                witness[base + V_RIGHT_LOOKUP_OPERAND] = b;
+            }
+            FIELD_OP_FUNCT3_FINV => {
+                witness[base + V_LEFT_INSTRUCTION_INPUT] = a;
+                witness[base + V_RIGHT_INSTRUCTION_INPUT] = result;
+                witness[base + V_PRODUCT] = a * result;
+                witness[base + V_LEFT_LOOKUP_OPERAND] = a;
+                witness[base + V_RIGHT_LOOKUP_OPERAND] = result;
+            }
+            _ => {}
+        }
     }
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used)]
+#[expect(clippy::expect_used)]
 mod tests {
     use super::*;
     use jolt_field::Fr;
@@ -341,6 +376,142 @@ mod tests {
         matrices
             .check_witness(&witness[..NUM_VARS_PER_CYCLE])
             .expect("FSUB with a-b=result should satisfy gate 20");
+    }
+
+    #[test]
+    fn fmul_event_activates_gate_via_v_product() {
+        let num_cycles = 1;
+        let num_vars_padded = NUM_VARS_PER_CYCLE.next_power_of_two();
+        let mut witness = vec![Fr::zero(); num_cycles * num_vars_padded];
+        witness[V_CONST] = Fr::from_u64(1);
+        witness[V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC] = Fr::from_u64(1);
+        witness[V_NEXT_IS_NOOP] = Fr::from_u64(1);
+
+        // 6 · 7 = 42
+        let events = vec![FieldRegEvent {
+            cycle: 0,
+            slot: 2,
+            old: [0, 0, 0, 0],
+            new: [42, 0, 0, 0],
+            op: Some(FieldOpPayload {
+                funct3: FIELD_OP_FUNCT3_FMUL,
+                a: [6, 0, 0, 0],
+                b: [7, 0, 0, 0],
+            }),
+        }];
+
+        apply_field_op_events_to_r1cs::<Fr>(&mut witness, num_cycles, num_vars_padded, &events);
+
+        // Confirm V_LEFT/V_RIGHT/V_PRODUCT were routed.
+        assert_eq!(witness[V_LEFT_INSTRUCTION_INPUT], Fr::from_u64(6));
+        assert_eq!(witness[V_RIGHT_INSTRUCTION_INPUT], Fr::from_u64(7));
+        assert_eq!(witness[V_PRODUCT], Fr::from_u64(42));
+        assert_eq!(witness[V_LEFT_LOOKUP_OPERAND], Fr::from_u64(6));
+        assert_eq!(witness[V_RIGHT_LOOKUP_OPERAND], Fr::from_u64(7));
+
+        let matrices = rv64_constraints::<Fr>();
+        matrices
+            .check_witness(&witness[..NUM_VARS_PER_CYCLE])
+            .expect("FMUL event should produce a satisfying witness");
+    }
+
+    #[test]
+    fn fmul_event_with_wrong_result_rejects() {
+        let num_cycles = 1;
+        let num_vars_padded = NUM_VARS_PER_CYCLE.next_power_of_two();
+        let mut witness = vec![Fr::zero(); num_cycles * num_vars_padded];
+        witness[V_CONST] = Fr::from_u64(1);
+        witness[V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC] = Fr::from_u64(1);
+        witness[V_NEXT_IS_NOOP] = Fr::from_u64(1);
+
+        // Claim 6 · 7 = 43 (tamper). The helper writes V_PRODUCT = 6·7 = 42
+        // (not 43) — gate 23 checks IsFieldMul · (V_PRODUCT − Result) = 1·(42−43) ≠ 0.
+        let events = vec![FieldRegEvent {
+            cycle: 0,
+            slot: 0,
+            old: [0, 0, 0, 0],
+            new: [43, 0, 0, 0],
+            op: Some(FieldOpPayload {
+                funct3: FIELD_OP_FUNCT3_FMUL,
+                a: [6, 0, 0, 0],
+                b: [7, 0, 0, 0],
+            }),
+        }];
+
+        apply_field_op_events_to_r1cs::<Fr>(&mut witness, num_cycles, num_vars_padded, &events);
+
+        let matrices = rv64_constraints::<Fr>();
+        assert!(
+            matrices.check_witness(&witness[..NUM_VARS_PER_CYCLE]).is_err(),
+            "tampered FMUL result must violate gate 23"
+        );
+    }
+
+    #[test]
+    fn finv_event_activates_gate() {
+        let num_cycles = 1;
+        let num_vars_padded = NUM_VARS_PER_CYCLE.next_power_of_two();
+        let mut witness = vec![Fr::zero(); num_cycles * num_vars_padded];
+        witness[V_CONST] = Fr::from_u64(1);
+        witness[V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC] = Fr::from_u64(1);
+        witness[V_NEXT_IS_NOOP] = Fr::from_u64(1);
+
+        // Compute 7^{-1} in BN254 Fr, then serialize to natural-form limbs.
+        // Since we can't easily round-trip Fr → [u64;4] here without ark_ff,
+        // use a simpler case where a=1, inv=1 (1 · 1 = 1).
+        let events = vec![FieldRegEvent {
+            cycle: 0,
+            slot: 0,
+            old: [0, 0, 0, 0],
+            new: [1, 0, 0, 0],
+            op: Some(FieldOpPayload {
+                funct3: FIELD_OP_FUNCT3_FINV,
+                a: [1, 0, 0, 0],
+                b: [0, 0, 0, 0],
+            }),
+        }];
+
+        apply_field_op_events_to_r1cs::<Fr>(&mut witness, num_cycles, num_vars_padded, &events);
+
+        assert_eq!(witness[V_LEFT_INSTRUCTION_INPUT], Fr::from_u64(1));
+        assert_eq!(witness[V_RIGHT_INSTRUCTION_INPUT], Fr::from_u64(1));
+        assert_eq!(witness[V_PRODUCT], Fr::from_u64(1));
+
+        let matrices = rv64_constraints::<Fr>();
+        matrices
+            .check_witness(&witness[..NUM_VARS_PER_CYCLE])
+            .expect("FINV(1)=1 should satisfy all constraints");
+    }
+
+    #[test]
+    fn finv_event_with_wrong_result_rejects() {
+        let num_cycles = 1;
+        let num_vars_padded = NUM_VARS_PER_CYCLE.next_power_of_two();
+        let mut witness = vec![Fr::zero(); num_cycles * num_vars_padded];
+        witness[V_CONST] = Fr::from_u64(1);
+        witness[V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC] = Fr::from_u64(1);
+        witness[V_NEXT_IS_NOOP] = Fr::from_u64(1);
+
+        // Claim FINV(1) = 2 — gate 26 forces V_PRODUCT = 1, but 1·2 = 2 ≠ 1.
+        let events = vec![FieldRegEvent {
+            cycle: 0,
+            slot: 0,
+            old: [0, 0, 0, 0],
+            new: [2, 0, 0, 0],
+            op: Some(FieldOpPayload {
+                funct3: FIELD_OP_FUNCT3_FINV,
+                a: [1, 0, 0, 0],
+                b: [0, 0, 0, 0],
+            }),
+        }];
+
+        apply_field_op_events_to_r1cs::<Fr>(&mut witness, num_cycles, num_vars_padded, &events);
+
+        let matrices = rv64_constraints::<Fr>();
+        assert!(
+            matrices.check_witness(&witness[..NUM_VARS_PER_CYCLE]).is_err(),
+            "tampered FINV result must violate gate 26"
+        );
     }
 
     #[test]
