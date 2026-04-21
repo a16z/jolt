@@ -463,6 +463,115 @@ pub trait ComputeBackend: Send + Sync + 'static {
     ) -> Self::Buffer<F> {
         panic!("eq_project_from_handle: backend does not support eq handles")
     }
+
+    // === Batch round evaluate (P77-A infra stub) ===
+    //
+    // Per-round fused entry point: runs `reduce` across many instances in
+    // one call so the backend can amortize input prefetch, share eq tables
+    // across instances with identical challenge suffixes, and fuse the
+    // batch coefficient accumulation. The runtime still emits the per-
+    // instance ops today; this surface is reserved for P77-B wire-up.
+    // See `perf/report_tools/kernel_gap_memo.md` §7.3(a).
+
+    /// Per-round reductions for a batch of sumcheck instances.
+    ///
+    /// Returns one `Vec<F>` of kernel evaluations per instance, in the
+    /// same order as `specs`. Default implementation loops per-instance
+    /// via [`reduce`](Self::reduce) / [`segmented_reduce`](Self::segmented_reduce)
+    /// / [`gruen_segmented_reduce`](Self::gruen_segmented_reduce), matching
+    /// the current per-instance dispatch byte-for-byte. Backends opt in
+    /// to fused evaluation (shared prefetch, fused accumulation) by
+    /// overriding.
+    fn batch_round_evaluate<F: Field>(
+        &self,
+        specs: &[BatchInstanceSpec<'_, Self, F>],
+        challenges: &[F],
+    ) -> Vec<Vec<F>> {
+        specs
+            .iter()
+            .map(|spec| match &spec.kind {
+                BatchReduceKind::Dense => self.reduce(spec.kernel, spec.inputs, challenges),
+                BatchReduceKind::Segmented {
+                    outer_eq,
+                    inner_only,
+                    inner_size,
+                } => {
+                    let field_inputs: Vec<&Self::Buffer<F>> =
+                        spec.inputs.iter().map(|b| b.as_field()).collect();
+                    self.segmented_reduce(
+                        spec.kernel,
+                        &field_inputs,
+                        outer_eq,
+                        inner_only,
+                        *inner_size,
+                        challenges,
+                    )
+                }
+                BatchReduceKind::Gruen {
+                    outer_eq,
+                    inner_only,
+                    inner_size,
+                    prev_claim,
+                    current_round,
+                } => {
+                    let field_inputs: Vec<&Self::Buffer<F>> =
+                        spec.inputs.iter().map(|b| b.as_field()).collect();
+                    self.gruen_segmented_reduce(
+                        spec.kernel,
+                        &field_inputs,
+                        outer_eq,
+                        inner_only,
+                        *inner_size,
+                        challenges,
+                        *prev_claim,
+                        *current_round,
+                    )
+                }
+            })
+            .collect()
+    }
+}
+
+/// Per-instance reduce kind for [`ComputeBackend::batch_round_evaluate`].
+///
+/// Mirrors the dispatch union of [`reduce`](ComputeBackend::reduce) /
+/// [`segmented_reduce`](ComputeBackend::segmented_reduce) /
+/// [`gruen_segmented_reduce`](ComputeBackend::gruen_segmented_reduce). The
+/// runtime picks the variant per instance; backends may dispatch uniformly
+/// or branch by kind.
+#[non_exhaustive]
+pub enum BatchReduceKind<'a, F: Field> {
+    /// Plain `reduce` — no outer eq, no inner-only sharing.
+    Dense,
+    /// `segmented_reduce` with an outer eq weighting.
+    Segmented {
+        outer_eq: &'a [F],
+        inner_only: &'a [bool],
+        inner_size: usize,
+    },
+    /// `gruen_segmented_reduce` with Dao–Thaler + Gruen cubic assembly.
+    Gruen {
+        outer_eq: &'a [F],
+        inner_only: &'a [bool],
+        inner_size: usize,
+        prev_claim: F,
+        current_round: usize,
+    },
+}
+
+/// One instance's inputs for [`ComputeBackend::batch_round_evaluate`].
+///
+/// Carries the compiled kernel, the per-input buffer references, and the
+/// reduce kind discriminant. Lifetimes are tied to the caller's state:
+/// the runtime holds the batch/instance state and the backend borrows
+/// each input buffer for the duration of the call.
+pub struct BatchInstanceSpec<'a, B: ComputeBackend + ?Sized, F: Field> {
+    /// Compiled kernel for this instance's current phase.
+    pub kernel: &'a B::CompiledKernel<F>,
+    /// Ordered input buffers in kernel-input layout.
+    pub inputs: &'a [&'a Buf<B, F>],
+    /// Reduce kind (dense / segmented / gruen).
+    pub kind: BatchReduceKind<'a, F>,
 }
 
 /// Per-cycle trace data for the instruction lookup sumcheck.
