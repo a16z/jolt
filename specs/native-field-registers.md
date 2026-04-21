@@ -326,31 +326,73 @@ that actually calls `Fr::mul/add/sub/inv` to produce a proof:
 
 ## Phase 3 — Limb-to-Fr bridge sumcheck
 
-Once Phase 2b has the FieldReg Twist ingesting real Fr events and FieldOp
-arithmetic constraints firing, the remaining soundness gap is the binding
-between the Fr values the Twist commits to and the u64 limbs the guest
+### Soundness gap (what the bridge closes)
+
+Once Phase 2b has the FieldReg Twist ingesting real Fr events and the R1CS
+FADD/FSUB/FMUL/FINV gates firing (task #63 — DONE), the remaining gap is the
+binding between the Fr values the Twist commits to and the u64 limbs the guest
 actually passed via `FMovIntToFieldLimb`. Without this binding, a malicious
 prover can commit arbitrary self-consistent Fr values into `FieldRegInc` and
-matching `FieldOpA/B/Result` openings — all Twist sumchecks and FieldOp R1CS
-rows check out, but nothing ties the result to the guest-provided limbs.
+matching `FieldOpA/B/Result` openings — all Twist sumchecks and R1CS rows
+check out, but nothing ties the result to the guest-provided limbs.
 
-Close the gap with a dedicated bridge Module (new `SumcheckId::FieldRegLimbBridge`,
-Stage 3): a single degree-1 sumcheck over cycles, gated by a FieldOp-flag
-selector, proving
+### Locked-in SDK ABI (enables the simple bridge)
+
+The `jolt-inlines-bn254-fr` SDK emits every `Fr::{add,sub,mul,inv}` call as a
+**single inline-asm block** with fixed register bindings:
 
 ```
-FieldRegVal(r_slot, r_cycle)  ==  Σ_{k=0..3}  RegVal(limb_reg_k, r_cycle) · 2^{64·k}
+a.limbs[0..4]  →  a0..a3    (x10..x13)     live across the FieldOp cycle
+b.limbs[0..4]  →  a4..a7    (x14..x17)     live across the FieldOp cycle
+out.limbs[0..4] ←  a8..a11  (x18..x21)
 ```
 
-where `limb_reg_k` is the integer register bound by the k-th `FMovIntToFieldLimb`
-cycle in the 4-cycle group preceding the FieldOp cycle. The bridge consumes
-already-opened claims from the Registers Twist and the FieldReg Twist at their
-common `r_cycle` — no new commitments needed.
+The 8 FMov-I2F loads + the FieldOp + the 4 FMov-F2I stores live in one asm!
+block, so the compiler cannot clobber x10..x17 between loading the limbs and
+executing the FieldOp. At the FieldOp cycle, `x[10..=13]` hold a's limbs and
+`x[14..=17]` hold b's limbs — by construction.
 
-The refactor's Module-on-Module architecture makes this a single contained file,
-not a distributed asymmetry to hunt. It is explicitly the soundness-closing step
-for the native-field-inline feature; every downstream security property (ECDSA
-verify, recursive SNARK, pairing-based protocols) depends on it.
+### Bridge formulation
+
+The fixed ABI collapses the bridge to a **single equality per FieldOp cycle**:
+
+```
+FieldOpA(r_cycle)  ==  Σ_{k=0..3}  RegVal(10+k, r_cycle) · 2^{64·k}
+FieldOpB(r_cycle)  ==  Σ_{k=0..3}  RegVal(14+k, r_cycle) · 2^{64·k}
+```
+
+Gated by the FieldOp circuit-flag selector. Single sumcheck over cycles; all 8
+`RegVal(reg_idx, r_cycle)` claims reduce to openings of the existing Registers
+Twist's `Val` poly at a common `r_cycle` and 8 fixed register indices. No
+`FMovIntToFieldLimb` cycle traversal, no auxiliary per-limb polys, no new
+commitments for the bridge itself.
+
+Implementation shape (new Module, `SumcheckId::FieldRegLimbBridge`, Stage 3):
+- Declare the bridge sumcheck with 8 claim factors: `V_FIELD_OP_A`,
+  `V_FIELD_OP_B`, and 6 `RegVal` references at fixed reg indices
+  (actually 8 RegVal refs — 4 for a, 4 for b).
+- `input_claim` encodes the identity above as a linear combination weighted
+  by `2^{64k}` constants, gated by `OpFlag(IsFieldMul) + OpFlag(IsFieldAdd)
+  + OpFlag(IsFieldSub) + OpFlag(IsFieldInv)`.
+- `output_check` evaluates the same identity at the final sumcheck point.
+
+### Why this actually closes the gap
+
+- Honest guest: loads a's limbs from `a.limbs[k]` into x[10+k] via Rust asm
+  input bindings, FMov-I2F copies each into `field_regs[1][k]`, FieldOp reads
+  `field_regs[1]`. Bridge equality holds.
+- Malicious prover: to lie about `FieldOpA`, must either (1) commit
+  `V_FIELD_OP_A` ≠ actual FR Twist opening of `field_regs[1]` at that cycle
+  — rejected by the R1CS gate + FR Twist binding — or (2) commit bogus
+  `RegVal(10+k)` — rejected by the Registers Twist. Both Twists are
+  already cryptographically bound.
+
+### Deferred items
+
+- FINV-is-zero handling: the R1CS FINV gate doesn't cover `FINV(0) = 0`.
+  Guest must not invert zero; the bridge sumcheck inherits this restriction.
+- Fr-across-mul-chains optimization (avoid reloading limbs between chained
+  multiplies) — depends on compiler-managed field-register allocation.
 
 ## Design decisions
 

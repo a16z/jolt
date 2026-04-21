@@ -92,97 +92,176 @@ impl Fr {
 }
 
 // -------- Guest (RISC-V) and host (ark-bn254) dispatch ------------------------
+//
+// # ABI for the BN254 Fr native-field coprocessor
+//
+// Every `Fr::{add,sub,mul,inv}` call emits a single inline-asm block that
+// holds the entire load-compute-store sequence. The compiler binds:
+//
+//   a.limbs[0..4]  →  a0..a3     (x10..x13)
+//   b.limbs[0..4]  →  a4..a7     (x14..x17)    [binary ops only]
+//   out.limbs[0..4]←  a8..a11    (x18..x21)
+//
+// Those register assignments are load-bearing for **task #52**'s limb-to-Fr
+// bridge sumcheck. Keeping all eight source limbs live in x10..x17 across
+// the FieldOp instruction means the bridge can state its identity as:
+//
+//   FieldOpA(r_cycle)  ==  Σ_{k=0..3}  RegVal(10+k, r_cycle) · 2^{64·k}
+//   FieldOpB(r_cycle)  ==  Σ_{k=0..3}  RegVal(14+k, r_cycle) · 2^{64·k}
+//
+// on every FieldOp cycle, where `r_cycle` is a single opening point and the
+// register reads come from the existing Registers Twist. No FMov-cycle
+// traversal, no auxiliary per-limb witness polys. Single sumcheck over
+// cycles, gated by the FieldOp circuit flag.
+//
+// Any change to the register allocation below MUST be mirrored in the
+// bridge Module's constraint — see `specs/native-field-registers.md`
+// Phase 3.
 
-/// Emit a FieldOp with two Fr sources.
+/// Emit a FieldOp with two Fr sources (FADD / FSUB / FMUL).
 ///
-/// Guest: loads `a`/`b` into field_regs[1]/[2], invokes the FieldOp, reads
-/// field_regs[3] back into `out`. Host: delegates to ark-bn254.
+/// Guest: loads `a` → field_regs[1] (from a0..a3), `b` → field_regs[2] (from
+/// a4..a7), invokes the FieldOp writing field_regs[3], reads field_regs[3]
+/// back into a8..a11. Host: delegates to ark-bn254.
 #[cfg(all(target_arch = "riscv64", not(feature = "host")))]
 #[inline]
 fn binary_op<const FUNCT3: u32>(a: &Fr, b: &Fr, out: &mut Fr) {
-    // Layout: field_regs[1] ← a, field_regs[2] ← b, FieldOp, field_regs[3] → out.
-    load_fr_into_field_reg::<1>(a);
-    load_fr_into_field_reg::<2>(b);
+    let mut r0: u64;
+    let mut r1: u64;
+    let mut r2: u64;
+    let mut r3: u64;
+
+    // Instruction-word encodings. Each `limb_idx` / `rs1` / `frd` field is
+    // fixed by the ABI, so these resolve to compile-time constants.
+    const LA0: u32 = i2f_word(10, 0, 1);
+    const LA1: u32 = i2f_word(11, 1, 1);
+    const LA2: u32 = i2f_word(12, 2, 1);
+    const LA3: u32 = i2f_word(13, 3, 1);
+    const LB0: u32 = i2f_word(14, 0, 2);
+    const LB1: u32 = i2f_word(15, 1, 2);
+    const LB2: u32 = i2f_word(16, 2, 2);
+    const LB3: u32 = i2f_word(17, 3, 2);
+    const SR0: u32 = f2i_word(18, 3, 0);
+    const SR1: u32 = f2i_word(19, 3, 1);
+    const SR2: u32 = f2i_word(20, 3, 2);
+    const SR3: u32 = f2i_word(21, 3, 3);
+    // FieldOp binary form: frs1=1, frs2=2, frd=3.
+    let op: u32 = field_op_word::<FUNCT3>(1, 2, 3);
+
     unsafe {
-        // .insn r opcode, funct3, funct7, rd, rs1, rs2
-        // Encoded manually as a .word to avoid assembler limitations on
-        // custom-opcode immediates.
-        let word: u32 = (crate::BN254_FR_FUNCT7 << 25)
-            | (2u32 << 20)  // frs2 = 2
-            | (1u32 << 15)  // frs1 = 1
-            | (FUNCT3 << 12)
-            | (3u32 << 7)   // frd  = 3
-            | crate::INLINE_OPCODE;
-        core::arch::asm!(".word {w}", w = const word);
+        core::arch::asm!(
+            // Load a into field_regs[1] from a0..a3
+            ".word {la0}", ".word {la1}", ".word {la2}", ".word {la3}",
+            // Load b into field_regs[2] from a4..a7
+            ".word {lb0}", ".word {lb1}", ".word {lb2}", ".word {lb3}",
+            // field_regs[3] = op(field_regs[1], field_regs[2])
+            ".word {op}",
+            // Store field_regs[3] back into a8..a11
+            ".word {sr0}", ".word {sr1}", ".word {sr2}", ".word {sr3}",
+            la0 = const LA0, la1 = const LA1, la2 = const LA2, la3 = const LA3,
+            lb0 = const LB0, lb1 = const LB1, lb2 = const LB2, lb3 = const LB3,
+            op = in(reg) op,
+            sr0 = const SR0, sr1 = const SR1, sr2 = const SR2, sr3 = const SR3,
+            in("a0") a.limbs[0],
+            in("a1") a.limbs[1],
+            in("a2") a.limbs[2],
+            in("a3") a.limbs[3],
+            in("a4") b.limbs[0],
+            in("a5") b.limbs[1],
+            in("a6") b.limbs[2],
+            in("a7") b.limbs[3],
+            lateout("a8") r0,
+            lateout("a9") r1,
+            lateout("a10") r2,
+            lateout("a11") r3,
+        );
     }
-    store_field_reg_into_fr::<3>(out);
+
+    out.limbs[0] = r0;
+    out.limbs[1] = r1;
+    out.limbs[2] = r2;
+    out.limbs[3] = r3;
 }
 
+/// Emit a FieldOp with one Fr source (FINV). Layout mirrors `binary_op` but
+/// skips the b-loading cycles; frs2 is ignored by the FieldOp decoder.
 #[cfg(all(target_arch = "riscv64", not(feature = "host")))]
 #[inline]
 fn unary_op<const FUNCT3: u32>(a: &Fr, out: &mut Fr) {
-    load_fr_into_field_reg::<1>(a);
+    let mut r0: u64;
+    let mut r1: u64;
+    let mut r2: u64;
+    let mut r3: u64;
+
+    const LA0: u32 = i2f_word(10, 0, 1);
+    const LA1: u32 = i2f_word(11, 1, 1);
+    const LA2: u32 = i2f_word(12, 2, 1);
+    const LA3: u32 = i2f_word(13, 3, 1);
+    const SR0: u32 = f2i_word(18, 3, 0);
+    const SR1: u32 = f2i_word(19, 3, 1);
+    const SR2: u32 = f2i_word(20, 3, 2);
+    const SR3: u32 = f2i_word(21, 3, 3);
+    // FINV unary form: frs1=1, frs2=0, frd=3.
+    let op: u32 = field_op_word::<FUNCT3>(1, 0, 3);
+
     unsafe {
-        let word: u32 = (crate::BN254_FR_FUNCT7 << 25)
-            | (0u32 << 20)
-            | (1u32 << 15)
-            | (FUNCT3 << 12)
-            | (3u32 << 7)
-            | crate::INLINE_OPCODE;
-        core::arch::asm!(".word {w}", w = const word);
+        core::arch::asm!(
+            ".word {la0}", ".word {la1}", ".word {la2}", ".word {la3}",
+            ".word {op}",
+            ".word {sr0}", ".word {sr1}", ".word {sr2}", ".word {sr3}",
+            la0 = const LA0, la1 = const LA1, la2 = const LA2, la3 = const LA3,
+            op = in(reg) op,
+            sr0 = const SR0, sr1 = const SR1, sr2 = const SR2, sr3 = const SR3,
+            in("a0") a.limbs[0],
+            in("a1") a.limbs[1],
+            in("a2") a.limbs[2],
+            in("a3") a.limbs[3],
+            lateout("a8") r0,
+            lateout("a9") r1,
+            lateout("a10") r2,
+            lateout("a11") r3,
+        );
     }
-    store_field_reg_into_fr::<3>(out);
+
+    out.limbs[0] = r0;
+    out.limbs[1] = r1;
+    out.limbs[2] = r2;
+    out.limbs[3] = r3;
 }
 
+/// Encode a FMovIntToFieldLimb instruction word with the given rs1 (0..31),
+/// limb index (0..3), and frd (0..15).
 #[cfg(all(target_arch = "riscv64", not(feature = "host")))]
-#[inline]
-fn load_fr_into_field_reg<const FRD: u32>(a: &Fr) {
-    for limb_idx in 0..4u32 {
-        let limb = a.limbs[limb_idx as usize];
-        unsafe {
-            // FMovIntToFieldLimb: rd=frd, rs1=(any int reg holding limb),
-            // rs2=limb_idx. We use inline-asm register binding to stash
-            // the limb into a scratch integer register that the tracer
-            // reads as x[rs1].
-            let word: u32 = (crate::BN254_FR_FUNCT7 << 25)
-                | (limb_idx << 20)
-                | (10u32 << 15)        // rs1 = x10 (a0) – bound below
-                | (crate::FUNCT3_FMOV_I2F << 12)
-                | (FRD << 7)
-                | crate::INLINE_OPCODE;
-            core::arch::asm!(
-                "mv a0, {limb}",
-                ".word {w}",
-                limb = in(reg) limb,
-                w = const word,
-                out("a0") _,
-            );
-        }
-    }
+const fn i2f_word(rs1: u32, limb_idx: u32, frd: u32) -> u32 {
+    (crate::BN254_FR_FUNCT7 << 25)
+        | (limb_idx << 20)
+        | (rs1 << 15)
+        | (crate::FUNCT3_FMOV_I2F << 12)
+        | (frd << 7)
+        | crate::INLINE_OPCODE
 }
 
+/// Encode a FMovFieldToIntLimb instruction word with the given rd, frs1, and
+/// limb index.
 #[cfg(all(target_arch = "riscv64", not(feature = "host")))]
-#[inline]
-fn store_field_reg_into_fr<const FRS1: u32>(out: &mut Fr) {
-    for limb_idx in 0..4u32 {
-        let mut limb: u64;
-        unsafe {
-            let word: u32 = (crate::BN254_FR_FUNCT7 << 25)
-                | (limb_idx << 20)
-                | (FRS1 << 15)
-                | (crate::FUNCT3_FMOV_F2I << 12)
-                | (10u32 << 7)         // rd = x10 (a0)
-                | crate::INLINE_OPCODE;
-            core::arch::asm!(
-                ".word {w}",
-                "mv {out}, a0",
-                w = const word,
-                out = out(reg) limb,
-                out("a0") _,
-            );
-        }
-        out.limbs[limb_idx as usize] = limb;
-    }
+const fn f2i_word(rd: u32, frs1: u32, limb_idx: u32) -> u32 {
+    (crate::BN254_FR_FUNCT7 << 25)
+        | (limb_idx << 20)
+        | (frs1 << 15)
+        | (crate::FUNCT3_FMOV_F2I << 12)
+        | (rd << 7)
+        | crate::INLINE_OPCODE
+}
+
+/// Encode a FieldOp instruction word. `FUNCT3` selects FMUL/FADD/FSUB/FINV.
+#[cfg(all(target_arch = "riscv64", not(feature = "host")))]
+const fn field_op_word<const FUNCT3: u32>(frs1: u32, frs2: u32, frd: u32) -> u32 {
+    (crate::BN254_FR_FUNCT7 << 25)
+        | (frs2 << 20)
+        | (frs1 << 15)
+        | (FUNCT3 << 12)
+        | (frd << 7)
+        | crate::INLINE_OPCODE
 }
 
 // -------- Host implementation (for prover / bench / host tests) --------------
