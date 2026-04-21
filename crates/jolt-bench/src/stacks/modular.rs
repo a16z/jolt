@@ -22,7 +22,8 @@ use jolt_core::zkvm::lookup_table::LookupTables as CoreLookupTables;
 use jolt_cpu::CpuBackend;
 use jolt_dory::DoryScheme;
 use jolt_host::{
-    extract_trace, BytecodePreprocessing, CycleRow, InstructionFlagData, Program as HostProgram,
+    apply_field_op_events_to_r1cs, extract_trace, BytecodePreprocessing, CycleRow,
+    InstructionFlagData, Program as HostProgram,
 };
 use jolt_instructions::LookupTableKind;
 use jolt_r1cs::{constraints::rv64, R1csKey, R1csSource};
@@ -146,7 +147,7 @@ impl ModularStack {
             executable,
             mut polys,
             r1cs_key,
-            r1cs_witness,
+            mut r1cs_witness,
             setup,
             initial_ram,
             final_ram,
@@ -172,31 +173,42 @@ impl ModularStack {
             highest_addr,
         );
 
-        let r1cs = R1csSource::new(&r1cs_key, &r1cs_witness);
         // BN254 Fr coprocessor: k=16 slots, zero-initialized.
         // Events come from the tracer (empty if the guest didn't emit FieldOp /
         // FMov{I2F,F2I} cycles). Wiring this unconditionally lets Modules that
         // declare FR polynomials consume them; non-FR Modules simply don't
         // materialize the FR polys.
+        let fr_events: Vec<jolt_witness::derived::FieldRegEvent> = field_reg_events
+            .into_iter()
+            .map(|e| jolt_witness::derived::FieldRegEvent {
+                cycle: e.cycle_index,
+                slot: e.slot as usize,
+                old: e.old,
+                new: e.new,
+                op: e.op.map(|p| jolt_witness::derived::FieldOpPayload {
+                    funct3: p.funct3,
+                    a: p.a,
+                    b: p.b,
+                }),
+            })
+            .collect();
+
+        // Overlay the FieldOp columns (V_FLAG_IS_FIELD_*, V_FIELD_OP_{A,B,RESULT},
+        // and the V_LEFT/V_RIGHT/V_PRODUCT routing for FMUL/FINV) onto the
+        // R1CS witness BEFORE handing it to the Spartan R1csSource. No-op for
+        // guests that didn't emit FieldOp cycles.
+        apply_field_op_events_to_r1cs::<ModFr>(
+            &mut r1cs_witness,
+            trace_length,
+            r1cs_key.num_vars_padded,
+            &fr_events,
+        );
+
+        let r1cs = R1csSource::new(&r1cs_key, &r1cs_witness);
         let field_reg_config = FieldRegConfig {
             k: 16,
             initial_state: vec![[0u64; 4]; 16],
-            events: field_reg_events
-                .into_iter()
-                .map(|e| jolt_witness::derived::FieldRegEvent {
-                    cycle: e.cycle_index,
-                    slot: e.slot as usize,
-                    old: e.old,
-                    new: e.new,
-                    op: e
-                        .op
-                        .map(|p| jolt_witness::derived::FieldOpPayload {
-                            funct3: p.funct3,
-                            a: p.a,
-                            b: p.b,
-                        }),
-                })
-                .collect(),
+            events: fr_events,
         };
         let derived = DerivedSource::new(&r1cs_witness, trace_length, r1cs_key.num_vars_padded)
             .with_ram(RamConfig {
