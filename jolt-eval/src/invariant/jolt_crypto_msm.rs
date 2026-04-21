@@ -33,7 +33,7 @@ fn random_fr(rng: &mut ChaCha20Rng) -> Fr {
 fn naive_msm<G: JoltGroup>(bases: &[G], scalars: &[Fr]) -> G {
     let mut acc = G::identity();
     for (b, s) in bases.iter().zip(scalars.iter()) {
-        acc = acc + b.scalar_mul(s);
+        acc += b.scalar_mul(s);
     }
     acc
 }

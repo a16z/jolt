@@ -79,7 +79,7 @@ impl Invariant for JoltCryptoBatchAdditionInvariant {
         for (k, (indices, got)) in indices_sets.iter().zip(results.iter()).enumerate() {
             let mut expected = Bn254G1::identity();
             for &i in indices {
-                expected = expected + bases[i];
+                expected += bases[i];
             }
             if *got != expected {
                 return Err(CheckError::Violation(InvariantViolation::with_details(

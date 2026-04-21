@@ -4,8 +4,16 @@
 |-------------|--------------------------------|
 | Author(s)   | @0xAndoroid                    |
 | Created     | 2026-04-20                     |
-| Status      | proposed                       |
-| PR          |                                |
+| Status      | partially-implemented          |
+| PR          | #1453                          |
+
+> **Implementation note:** Optimizations 1, 2, 6, 7, 9 and the four new
+> `jolt-eval` invariants + four new performance objectives landed in PR
+> #1453. Optimizations 3 (GT sliding-window MSM), 4 (wNAF in Shamir 2D/4D),
+> 5 (precomputed 4D Shamir table), and 8 (native `i128` arithmetic in
+> `decompose_scalar_2d`) are deferred to a follow-up PR as permitted by
+> Alternatives Considered §1 — they are the most algorithmically involved
+> and merit independent benchmarking and review.
 
 ## Summary
 
