@@ -16,6 +16,7 @@ use std::borrow::Cow;
 use jolt_compiler::PolynomialId;
 use jolt_field::Field;
 use jolt_r1cs::constraints::rv64::*;
+use rayon::prelude::*;
 
 /// Maps a [`PolynomialId`] to its R1CS witness variable index, or `None`
 /// if the polynomial is not a direct column of the per-cycle witness.
@@ -325,12 +326,17 @@ impl<'a, F: Field> DerivedSource<'a, F> {
         let ram = self.ram();
         let k = ram.ram_k;
         let t = self.num_cycles;
+        let hits: Vec<(usize, usize)> = (0..t)
+            .into_par_iter()
+            .filter_map(|c| {
+                let w = c * self.vars_padded;
+                self.remap(self.witness[w + V_RAM_ADDRESS])
+                    .map(|col| (col, c))
+            })
+            .collect();
         let mut ra = vec![F::zero(); k * t];
-        for c in 0..t {
-            let w = c * self.vars_padded;
-            if let Some(col) = self.remap(self.witness[w + V_RAM_ADDRESS]) {
-                ra[col * t + c] = F::one();
-            }
+        for (col, c) in hits {
+            ra[col * t + c] = F::one();
         }
         ra
     }
@@ -369,24 +375,20 @@ impl<'a, F: Field> DerivedSource<'a, F> {
         }
 
         let mut val = vec![F::zero(); k * t];
-        for (addr, events) in access_events.iter().enumerate().take(k) {
-            let base = addr * t;
+        val.par_chunks_mut(t).enumerate().for_each(|(addr, slice)| {
+            let events = &access_events[addr];
             let mut current = F::from_u64(ram.initial_state[addr]);
-            let mut ei = 0; // event index
-
-            for c in 0..t {
+            let mut ei = 0;
+            for (c, v) in slice.iter_mut().enumerate() {
                 if ei < events.len() && events[ei].0 == c {
-                    // Access point: use pre-access value (read_value)
-                    val[base + c] = events[ei].1;
-                    // Update persisted value to post-access value (write_value)
+                    *v = events[ei].1;
                     current = events[ei].2;
                     ei += 1;
                 } else {
-                    // Non-access: persisted value
-                    val[base + c] = current;
+                    *v = current;
                 }
             }
-        }
+        });
         val
     }
 
@@ -399,12 +401,15 @@ impl<'a, F: Field> DerivedSource<'a, F> {
         let k = ram.ram_k;
         let t = self.num_cycles;
         let mut indicator = vec![F::zero(); t * k];
-        for c in 0..t {
-            let w = c * self.vars_padded;
-            if let Some(col) = self.remap(self.witness[w + V_RAM_ADDRESS]) {
-                indicator[c * k + col] = F::one();
-            }
-        }
+        indicator
+            .par_chunks_mut(k)
+            .enumerate()
+            .for_each(|(c, row)| {
+                let w = c * self.vars_padded;
+                if let Some(col) = self.remap(self.witness[w + V_RAM_ADDRESS]) {
+                    row[col] = F::one();
+                }
+            });
         indicator
     }
 

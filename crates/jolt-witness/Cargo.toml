@@ -15,6 +15,7 @@ jolt-field = { path = "../jolt-field" }
 jolt-poly = { path = "../jolt-poly" }
 jolt-r1cs = { path = "../jolt-r1cs" }
 jolt-verifier = { path = "../jolt-verifier" }
+rayon = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 tracing = { workspace = true }
 

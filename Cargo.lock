@@ -3196,6 +3196,7 @@ dependencies = [
  "jolt-r1cs",
  "jolt-verifier",
  "num-traits",
+ "rayon",
  "serde",
  "tracing",
 ]
