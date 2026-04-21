@@ -1960,21 +1960,16 @@ fn modular_self_verify_with_fieldreg_nonempty_events() {
         .expect("Phase 2b: non-empty FieldReg events should verify end-to-end");
 }
 
-/// Phase 2b acceptance (honest FADD overlay e2e): inject a `FieldRegEvent`
+/// Phase 2b acceptance (honest FADD e2e): inject a `FieldRegEvent`
 /// carrying a `FieldOpPayload` with funct3 = FADD. The event overlay wires
 /// `V_FLAG_IS_FIELD_ADD = 1` + operand columns onto the R1CS witness. With
-/// honest `new = a + b`, the FADD gate's local `(A·B − C) = 0` holds, and
-/// the existing prover pipeline accepts the proof end-to-end.
+/// honest `new = a + b`, the FADD gate at row 19 evaluates to 0 and the
+/// Spartan outer sumcheck (widened to sample row 19 via the FieldReg
+/// module's `num_r1cs_constraints = 27`) accepts end-to-end.
 ///
-/// Scope caveat: this test only exercises that the event overlay doesn't
-/// break honest proving. The FADD/FSUB/FMUL/FINV R1CS rows (matrix indices
-/// 19-26) are NOT yet enforced by the Spartan outer sumcheck — Spartan
-/// currently samples only rows 0-18 via `NUM_R1CS_CONSTRAINTS = 19` in
-/// `jolt-compiler/src/params.rs`. A negative (tampered-result rejects) test
-/// at this level would fail because the gate's unsatisfiability is silently
-/// dropped. See the spec's Phase 2b follow-up: bumping
-/// `NUM_R1CS_CONSTRAINTS` to 27 is a protocol-level change (outer uniskip
-/// domain, cross-verify parity with jolt-core) deferred to its own session.
+/// Paired with `modular_self_verify_with_fieldreg_fadd_tampered_*` below —
+/// together they prove FADD is actually enforced by the prove/verify
+/// pipeline, not just authored in the matrices.
 #[test]
 fn modular_self_verify_with_fieldreg_fadd_payload() {
     use jolt_dory::types::DoryVerifierSetup;
@@ -2021,6 +2016,78 @@ fn modular_self_verify_with_fieldreg_fadd_payload() {
 
     jolt_verifier::verify(&verifying_key, &zkvm_proof, &setup.config.io_hash)
         .expect("Phase 2b: honest FADD payload must verify end-to-end");
+}
+
+/// Phase 2b acceptance (FADD R1CS rejection): same setup as
+/// `modular_self_verify_with_fieldreg_fadd_payload` but claim `new = a + b + 1`.
+/// The R1CS FADD gate at row 19 evaluates to
+/// `IsFieldAdd · (FieldOpA + FieldOpB − FieldOpResult) = 1·(123+456−580) = -1 ≠ 0`.
+/// With `num_r1cs_constraints = 27`, Spartan's outer sumcheck samples row 19 and
+/// must reject. This is the acceptance signal that task #63 actually closes
+/// the soundness gap — prior to the uniskip bump this test would spuriously
+/// accept.
+#[test]
+fn modular_self_verify_with_fieldreg_fadd_tampered_result_rejects() {
+    use jolt_dory::types::DoryVerifierSetup;
+    use jolt_witness::derived::{FieldOpPayload, FieldRegEvent, FIELD_OP_FUNCT3_FADD};
+
+    let (_, params) = jolt_core_state_history();
+
+    let events = vec![FieldRegEvent {
+        cycle: 5,
+        slot: 0,
+        old: [0, 0, 0, 0],
+        new: [580, 0, 0, 0], // ← tamper: should be 579 = 123 + 456
+        op: Some(FieldOpPayload {
+            funct3: FIELD_OP_FUNCT3_FADD,
+            a: [123, 0, 0, 0],
+            b: [456, 0, 0, 0],
+        }),
+    }];
+
+    // Prover may succeed producing an invalid proof; the signal is verify-time
+    // rejection. Either outcome (prover panic OR verifier rejection) counts as
+    // a correct rejection.
+    let prove_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run_jolt_zkvm_prover_with_fieldreg_events(params, events)
+    }));
+
+    match prove_result {
+        Err(_) => {
+            // Prover caught the unsatisfiability early. Acceptable rejection.
+        }
+        Ok(zkvm_proof) => {
+            let (
+                executable,
+                _polys,
+                r1cs_key,
+                _r1cs_witness,
+                setup,
+                _initial_ram,
+                _final_ram,
+                _instruction_flag_data,
+                _reg_access,
+                _lookup_trace,
+                _lookup_flags,
+                _bytecode_data,
+            ) = setup_zkvm_muldiv_with_example(params, "jolt_core_module_with_fieldreg");
+
+            let pcs_verifier_setup = DoryVerifierSetup(params.pcs_setup.0.to_verifier_setup());
+            let verifying_key = jolt_verifier::JoltVerifyingKey::<NewFr, DoryScheme>::new(
+                &executable.module,
+                pcs_verifier_setup,
+                r1cs_key,
+            );
+
+            let verify_result =
+                jolt_verifier::verify(&verifying_key, &zkvm_proof, &setup.config.io_hash);
+            assert!(
+                verify_result.is_err(),
+                "Tampered FADD result (FieldOpA + FieldOpB ≠ FieldOpResult) \
+                 MUST be rejected by the verifier (R1CS gate 19 unsatisfied); got Ok(())"
+            );
+        }
+    }
 }
 
 /// Phase 2b acceptance (second half — adversarial path, witness-consistency):

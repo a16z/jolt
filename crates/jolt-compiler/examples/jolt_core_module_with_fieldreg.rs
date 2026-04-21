@@ -34,7 +34,6 @@ use jolt_compiler::module::{
 };
 use jolt_compiler::params::{
     ModuleParams, LOG_K_INSTRUCTION, LOG_K_REG, NUM_CIRCUIT_FLAGS, NUM_LOOKUP_TABLES,
-    NUM_R1CS_INPUTS,
 };
 use jolt_compiler::KernelSpec;
 use jolt_compiler::PolynomialId;
@@ -49,7 +48,13 @@ fn main() {
     let log_k_bytecode = parse_arg(&args, "--log-k-bytecode").unwrap_or(16);
     let log_k_ram = parse_arg(&args, "--log-k-ram").unwrap_or(20);
 
-    let p = ModuleParams::new(log_t, log_k_bytecode, log_k_ram);
+    // FieldReg-extended module: widens R1CS constraint count from the
+    // baseline 19 to 27 so Spartan's outer uniskip actually samples the
+    // FADD/FSUB/FMUL/FINV gates (matrix rows 19-26). This intentionally
+    // diverges from `jolt_core_module.rs` (which stays at 19 for cross-
+    // verify parity with jolt-core); FR-enabled proofs are verified only
+    // by the refactor's own verifier.
+    let p = ModuleParams::new_with_constraints(log_t, log_k_bytecode, log_k_ram, 27);
     let module = build_module(&p);
 
     if let Some(pos) = args.iter().position(|a| a == "--emit") {
@@ -166,7 +171,13 @@ struct Polys {
     next_is_first: PolynomialId,
     lookup_output: PolynomialId,
     should_jump: PolynomialId,
-    op_flags: Vec<PolynomialId>, // [0..NUM_CIRCUIT_FLAGS)
+    op_flags: Vec<PolynomialId>, // [0..NUM_CIRCUIT_FLAGS) — 18 for FR module
+
+    // BN254 Fr FieldOp R1CS columns (matrix vars 40, 41, 42).
+    // Referenced by the outer Spartan GroupSplitR1CSEval for rows 19-26.
+    field_op_a: PolynomialId,
+    field_op_b: PolynomialId,
+    field_op_result: PolynomialId,
 
     // Virtual — non-R1CS-input trace values
     next_is_noop: PolynomialId,
@@ -248,15 +259,16 @@ struct Polys {
 fn register_polys(pt: &mut PolyTable, p: &ModuleParams) -> Polys {
     use PolyKind::{Committed, Virtual};
     use PolynomialId::{
-        Az, BranchFlag, BytecodeRa, BytecodeReadRafVal, Bz, ExpandedPc, HammingG, HammingWeight,
-        Imm, InstructionRa, InstructionRafFlag, IoMask, LeftInstructionInput, LeftIsPc, LeftIsRs1,
-        LeftLookupOperand, LookupOutput, LookupTableFlag, NextIsFirstInSequence, NextIsNoop,
-        NextIsVirtual, NextPc, NextUnexpandedPc, NoopFlag, OpFlag, OuterUniskipEval, Product,
-        ProductLeft, ProductRight, ProductUniskipEval, RamAddress, RamCombinedRa, RamInc, RamRa,
-        RamRafRa, RamReadValue, RamVal, RamValFinal, RamWriteValue, Rd, RdInc, RdWa, RdWriteValue,
-        RegistersVal, RightInstructionInput, RightIsImm, RightIsRs2, RightLookupOperand, Rs1Ra,
-        Rs1Value, Rs2Ra, Rs2Value, ShouldBranch, ShouldJump, SpartanEq, TrustedAdvice,
-        UnexpandedPc, UntrustedAdvice, ValIo,
+        Az, BranchFlag, BytecodeRa, BytecodeReadRafVal, Bz, ExpandedPc, FieldOpOperandA,
+        FieldOpOperandB, FieldOpResultValue, HammingG, HammingWeight, Imm, InstructionRa,
+        InstructionRafFlag, IoMask, LeftInstructionInput, LeftIsPc, LeftIsRs1, LeftLookupOperand,
+        LookupOutput, LookupTableFlag, NextIsFirstInSequence, NextIsNoop, NextIsVirtual, NextPc,
+        NextUnexpandedPc, NoopFlag, OpFlag, OuterUniskipEval, Product, ProductLeft, ProductRight,
+        ProductUniskipEval, RamAddress, RamCombinedRa, RamInc, RamRa, RamRafRa, RamReadValue,
+        RamVal, RamValFinal, RamWriteValue, Rd, RdInc, RdWa, RdWriteValue, RegistersVal,
+        RightInstructionInput, RightIsImm, RightIsRs2, RightLookupOperand, Rs1Ra, Rs1Value, Rs2Ra,
+        Rs2Value, ShouldBranch, ShouldJump, SpartanEq, TrustedAdvice, UnexpandedPc,
+        UntrustedAdvice, ValIo,
     };
 
     // Committed (jolt-core transcript order)
@@ -359,9 +371,18 @@ fn register_polys(pt: &mut PolyTable, p: &ModuleParams) -> Polys {
     );
     let lookup_output = pt.add(LookupOutput, "LookupOutput", Virtual, p.log_t);
     let should_jump = pt.add(ShouldJump, "ShouldJump", Virtual, p.log_t);
-    let op_flags: Vec<_> = (0..14)
+    // FieldReg-extended modules include four additional circuit flags
+    // (IsFieldMul/Add/Sub/Inv at CircuitFlags indices 14-17) so the outer
+    // Spartan remaining sumcheck outputs their evaluations for the
+    // GroupSplitR1CSEval reconstruction of rows 19-26.
+    let op_flags: Vec<_> = (0..18)
         .map(|i| pt.add(OpFlag(i), &format!("OpFlag_{i}"), Virtual, p.log_t))
         .collect();
+
+    // BN254 Fr FieldOp operand/result columns (R1CS witness vars 40, 41, 42).
+    let field_op_a = pt.add(FieldOpOperandA, "FieldOpA", Virtual, p.log_t);
+    let field_op_b = pt.add(FieldOpOperandB, "FieldOpB", Virtual, p.log_t);
+    let field_op_result = pt.add(FieldOpResultValue, "FieldOpResult", Virtual, p.log_t);
 
     // Virtual — non-R1CS-input trace values
     let next_is_noop = pt.add(NextIsNoop, "NextIsNoop", Virtual, p.log_t);
@@ -576,6 +597,9 @@ fn register_polys(pt: &mut PolyTable, p: &ModuleParams) -> Polys {
         lookup_output,
         should_jump,
         op_flags,
+        field_op_a,
+        field_op_b,
+        field_op_result,
         next_is_noop,
         rd,
         inst_flag_left_is_pc,
@@ -1024,7 +1048,14 @@ fn emit_unrolled_batched_rounds(
 
 /// R1CS input poly IDs in ALL_R1CS_INPUTS order.
 /// This is the EXACT order jolt-core's outer sumcheck flushes evaluations.
-fn r1cs_input_polys(p: &Polys) -> [PolynomialId; NUM_R1CS_INPUTS] {
+/// Total R1CS input columns on the FR-extended module: baseline 35 + four
+/// BN254 Fr coprocessor flags + three FieldOp operand columns = 42.
+/// Matches `rv64::NUM_R1CS_INPUTS` so the verifier's `z` vector (length
+/// 1 + `NUM_R1CS_INPUTS_FR` = 43) covers every witness slot referenced by
+/// matrix rows 0-26.
+const NUM_R1CS_INPUTS_FR: usize = 42;
+
+fn r1cs_input_polys(p: &Polys) -> [PolynomialId; NUM_R1CS_INPUTS_FR] {
     [
         p.left_instruction_input,  //  0: LeftInstructionInput
         p.right_instruction_input, //  1: RightInstructionInput
@@ -1061,6 +1092,13 @@ fn r1cs_input_polys(p: &Polys) -> [PolynomialId; NUM_R1CS_INPUTS] {
         p.op_flags[11],            // 32: OpFlags(IsCompressed)
         p.op_flags[12],            // 33: OpFlags(IsFirstInSequence)
         p.op_flags[13],            // 34: OpFlags(IsLastInSequence)
+        p.op_flags[14],            // 35: OpFlags(IsFieldMul)
+        p.op_flags[15],            // 36: OpFlags(IsFieldAdd)
+        p.op_flags[16],            // 37: OpFlags(IsFieldSub)
+        p.op_flags[17],            // 38: OpFlags(IsFieldInv)
+        p.field_op_a,              // 39: FieldOpOperandA
+        p.field_op_b,              // 40: FieldOpOperandB
+        p.field_op_result,         // 41: FieldOpResultValue
     ]
 }
 
@@ -1307,11 +1345,20 @@ fn build_stage1(
     // τ_high is the last tau challenge — the Lagrange kernel argument.
     let tau_high_idx = ChallengeIdx(tau_base + params.num_tau - 1);
 
-    // Group-split constraint indices (matching jolt-core's R1CS_CONSTRAINTS_FIRST_GROUP_LABELS).
-    // Group 0 (10 constraints): boolean guards / small-Bz constraints.
-    // Group 1 (9 constraints): arithmetic / large-Bz constraints, zero-padded to domain_size.
-    let group0_indices: Vec<usize> = vec![1, 2, 3, 4, 5, 6, 11, 14, 17, 18];
-    let group1_indices: Vec<usize> = vec![0, 7, 8, 9, 10, 12, 13, 15, 16];
+    // Group-split constraint indices. The baseline 19-row layout (jolt-core's
+    // `R1CS_CONSTRAINTS_FIRST_GROUP_LABELS`) splits 10 + 9 — boolean-guard /
+    // small-Bz in group 0, arithmetic / large-Bz in group 1. The FieldReg
+    // module widens to 27 rows by appending the FADD/FSUB/FMUL/FINV gates
+    // (matrix rows 19-26) and balancing the split to 14 + 13 so both groups
+    // still fit inside the widened uniskip domain (`outer_uniskip_domain` =
+    // 14 when `num_r1cs_constraints` = 27).
+    //
+    // All 8 new rows have structure `IsFieldX · (linear combo) = 0` — same
+    // shape as the existing arithmetic gates — so they slot into either
+    // group equivalently. Rows 19-22 extend group 0 (to 14); rows 23-26
+    // extend group 1 (to 13).
+    let group0_indices: Vec<usize> = vec![1, 2, 3, 4, 5, 6, 11, 14, 17, 18, 19, 20, 21, 22];
+    let group1_indices: Vec<usize> = vec![0, 7, 8, 9, 10, 12, 13, 15, 16, 23, 24, 25, 26];
     let regrouped_stride = params.outer_uniskip_domain.next_power_of_two(); // 16
 
     // Regroup Az/Bz from flat T×32 to interleaved 2T×16 layout.
@@ -1637,9 +1684,12 @@ fn build_verifier_stage1_ops(
     let r_group_idx = ChallengeIdx(params.num_tau + 2);
     // tau_cycle = τ_low (log_t entries): τ_0..τ_{log_t-1}.
     let tau_cycle: Vec<ChallengeIdx> = (0..params.num_tau - 1).map(ChallengeIdx).collect();
-    // Group split matches jolt-core outer Spartan regrouping: 10 constraints per group.
-    let group0: Vec<usize> = vec![1, 2, 3, 4, 5, 6, 11, 14, 17, 18];
-    let group1: Vec<usize> = vec![0, 7, 8, 9, 10, 12, 13, 15, 16];
+    // Group split must match the prover's `RegroupConstraints` layout exactly.
+    // FieldReg module widens from the baseline 10+9 to 14+13 so Spartan's
+    // outer sumcheck samples the FADD/FSUB/FMUL/FINV gates at matrix rows
+    // 19-26. See the prover-side comment at `group0_indices` for rationale.
+    let group0: Vec<usize> = vec![1, 2, 3, 4, 5, 6, 11, 14, 17, 18, 19, 20, 21, 22];
+    let group1: Vec<usize> = vec![0, 7, 8, 9, 10, 12, 13, 15, 16, 23, 24, 25, 26];
     let output_check = ClaimFormula {
         terms: vec![ClaimTerm {
             coeff: 1,

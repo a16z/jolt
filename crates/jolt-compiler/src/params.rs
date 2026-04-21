@@ -27,15 +27,19 @@ pub const INSTRUCTION_PHASES_THRESHOLD_LOG_T: usize = 24;
 
 /// R1CS column dimension (padded to next power of 2 for Spartan).
 pub const NUM_VARS_PADDED: usize = 64;
-/// Number of R1CS constraints.
+/// Number of R1CS constraints for the BASELINE module (matches jolt-core's
+/// 19-constraint layout, preserving cross-verify parity). Modules that need
+/// to enforce additional gates (FieldReg's FADD/FSUB/FMUL/FINV at matrix
+/// rows 19-26) pass a widened count to
+/// [`ModuleParams::new_with_constraints`] instead of using this default.
 pub const NUM_R1CS_CONSTRAINTS: usize = 19;
 /// Number of R1CS input polynomials.
 pub const NUM_R1CS_INPUTS: usize = 35;
 
-/// Uniskip domain: constraints split into 2 groups, domain = (C-1)/2 + 1.
+/// Baseline uniskip domain (for 19 constraints). FieldReg-extended modules
+/// derive their uniskip domain from `num_r1cs_constraints` at runtime — read
+/// `params.outer_uniskip_domain` instead of this const in downstream code.
 pub const UNISKIP_DOMAIN_SIZE: usize = (NUM_R1CS_CONSTRAINTS - 1) / 2 + 1; // 10
-/// Group 1 has UNISKIP_DOMAIN_SIZE constraints, group 2 has the rest.
-pub const NUM_GROUP2_CONSTRAINTS: usize = NUM_R1CS_CONSTRAINTS - UNISKIP_DOMAIN_SIZE; // 9
 
 /// Number of circuit flags.
 pub const NUM_CIRCUIT_FLAGS: usize = 14;
@@ -83,6 +87,16 @@ pub struct ModuleParams {
     pub product_remainder_degree: usize,
     pub product_remainder_rounds: usize,
 
+    /// Number of active R1CS equality constraints for this module.
+    ///
+    /// Baseline modules (no FieldOp gates) use [`NUM_R1CS_CONSTRAINTS`] = 19,
+    /// preserving cross-verify parity with jolt-core. FieldReg-extended modules
+    /// pass `27` via [`ModuleParams::new_with_constraints`], which widens the
+    /// uniskip domain so Spartan actually samples rows 19-26 (FADD/FSUB/
+    /// FMUL/FINV gates). The R1CS matrices themselves are always 30 rows;
+    /// this field only controls how many rows the outer sumcheck enforces.
+    pub num_r1cs_constraints: usize,
+
     // -- Instruction lookup sumcheck --
     pub instruction_phases: usize,
     pub instruction_chunk_bits: usize,
@@ -111,7 +125,28 @@ impl ModuleParams {
     /// `log_t` is log₂ of the padded trace length.
     /// `log_k_bytecode` is log₂ of the bytecode address space (program-dependent).
     /// `log_k_ram` is log₂ of the RAM address space (program-dependent).
+    ///
+    /// Uses the baseline [`NUM_R1CS_CONSTRAINTS`] (19) — preserves cross-verify
+    /// parity with jolt-core. FieldReg-extended modules should call
+    /// [`ModuleParams::new_with_constraints`] with the widened count instead.
     pub fn new(log_t: usize, log_k_bytecode: usize, log_k_ram: usize) -> Self {
+        Self::new_with_constraints(log_t, log_k_bytecode, log_k_ram, NUM_R1CS_CONSTRAINTS)
+    }
+
+    /// Derive protocol parameters with an explicit R1CS constraint count.
+    ///
+    /// Modules that extend the baseline constraint set (e.g. the FieldReg-
+    /// enabled module authoring the FADD/FSUB/FMUL/FINV gates at matrix rows
+    /// 19-26) must pass the widened count here so the outer Spartan uniskip
+    /// domain covers the new rows. The R1CS matrices themselves are always
+    /// 30 rows (see `jolt-r1cs/src/constraints/rv64.rs`); this parameter
+    /// controls only how many rows Spartan samples.
+    pub fn new_with_constraints(
+        log_t: usize,
+        log_k_bytecode: usize,
+        log_k_ram: usize,
+        num_r1cs_constraints: usize,
+    ) -> Self {
         let log_k_chunk = if log_t < ONEHOT_CHUNK_THRESHOLD_LOG_T {
             4
         } else {
@@ -127,14 +162,17 @@ impl ModuleParams {
 
         // Outer Spartan — group-split uniskip.
         //
-        // 19 constraints split into 2 groups (10 + 9). The uniskip domain
-        // covers the larger group. One eq variable selects the group.
+        // Constraints split into 2 groups. The uniskip domain covers the
+        // larger group (ceil(C/2)). One eq variable selects the group.
         //   L(τ_high, Y) · t1(Y) where t1 has degree 2(K-1), L has degree K-1.
         //   s1(Y) = L × t1 has degree 3(K-1), so 3(K-1)+1 coefficients.
-        let outer_uniskip_degree = UNISKIP_DOMAIN_SIZE - 1; // 9
-        let outer_uniskip_domain = UNISKIP_DOMAIN_SIZE; // 10
-        let outer_uniskip_num_coeffs = 3 * outer_uniskip_degree + 1; // 28
-        let outer_uniskip_poly_degree = outer_uniskip_num_coeffs - 1; // 27
+        //
+        // For 19 constraints: domain = 10, degree = 9, coeffs = 28.
+        // For 27 constraints: domain = 14, degree = 13, coeffs = 40.
+        let outer_uniskip_domain = (num_r1cs_constraints - 1) / 2 + 1;
+        let outer_uniskip_degree = outer_uniskip_domain - 1;
+        let outer_uniskip_num_coeffs = 3 * outer_uniskip_degree + 1;
+        let outer_uniskip_poly_degree = outer_uniskip_num_coeffs - 1;
         let outer_remaining_degree = 3;
         // 1 streaming round + log_t linear rounds. The streaming round binds
         // the extra streaming variable (Az/Bz are DuplicateInterleaved to 2T).
@@ -142,7 +180,7 @@ impl ModuleParams {
         // τ = [τ_cycle (log_t) ‖ τ_streaming (1) ‖ τ_high (Lagrange kernel)]
         // jolt-core squeezes num_cycle_vars + 2 = log_t + 2 total.
         let num_tau = log_t + 2;
-        let num_constraints_padded = NUM_R1CS_CONSTRAINTS.next_power_of_two();
+        let num_constraints_padded = num_r1cs_constraints.next_power_of_two();
 
         // Product virtual
         let product_uniskip_degree = NUM_PRODUCT_CONSTRAINTS - 1;
@@ -205,6 +243,7 @@ impl ModuleParams {
             product_uniskip_poly_degree,
             product_remainder_degree,
             product_remainder_rounds,
+            num_r1cs_constraints,
             instruction_phases,
             instruction_chunk_bits,
             ra_virtual_log_k_chunk,

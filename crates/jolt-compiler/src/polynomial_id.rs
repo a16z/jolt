@@ -41,6 +41,16 @@ pub enum PolynomialId {
     // FieldReg coprocessor: Virtual polys (scratch/derived).
     FieldRegEqCycle,
 
+    // BN254 Fr FieldOp R1CS columns (direct R1CS witness variables at indices
+    // 40, 41, 42). Used by FADD/FSUB gates (rows 19-20) + FMUL/FINV gates
+    // (rows 21-26) in `jolt-r1cs/src/constraints/rv64.rs`. Populated by the
+    // event overlay `apply_field_op_events_to_r1cs`; evaluations flow through
+    // the outer Spartan remaining sumcheck so the verifier can reconstruct
+    // Az/Bz over rows 19-26.
+    FieldOpOperandA,
+    FieldOpOperandB,
+    FieldOpResultValue,
+
     // Virtual: memory subsystem
     RamReadValue,
     RamWriteValue,
@@ -388,6 +398,9 @@ impl PolynomialId {
             Self::LookupOutput => Some(20),
             Self::ShouldJump => Some(21),
             Self::OpFlag(i) => Some(22 + i),
+            Self::FieldOpOperandA => Some(40),
+            Self::FieldOpOperandB => Some(41),
+            Self::FieldOpResultValue => Some(42),
             _ => None,
         }
     }
