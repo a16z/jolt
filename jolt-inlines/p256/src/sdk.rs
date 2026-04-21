@@ -928,17 +928,17 @@ pub(crate) fn verify_ecdsa_inner(
     // Reference: https://ethresear.ch/t/fake-glv-you-dont-need-an-efficient-endomorphism-to-implement-glv-like-scalar-multiplication-in-snark-circuits/20394
 
     // Check R1: a1*G - b1*R1 = O  (binds R1 = u1*G)
-    let r1_neg = if b1_sign { r1.clone() } else { r1.neg() };
+    let r1_adj = if b1_sign { r1.clone() } else { r1.neg() };
     let g_adj = if a1_sign { g.neg() } else { g };
-    let check1 = shamir_2x128([a1_val, b1_val], [g_adj, r1_neg]);
+    let check1 = shamir_2x128([a1_val, b1_val], [g_adj, r1_adj]);
     if !check1.is_infinity() {
         spoil_proof();
     }
 
     // Check R2: a2*Q - b2*R2 = O  (binds R2 = u2*Q)
-    let r2_neg = if b2_sign { r2.clone() } else { r2.neg() };
+    let r2_adj = if b2_sign { r2.clone() } else { r2.neg() };
     let q_adj = if a2_sign { q.neg() } else { q.clone() };
-    let check2 = shamir_2x128([a2_val, b2_val], [q_adj, r2_neg]);
+    let check2 = shamir_2x128([a2_val, b2_val], [q_adj, r2_adj]);
     if !check2.is_infinity() {
         spoil_proof();
     }
