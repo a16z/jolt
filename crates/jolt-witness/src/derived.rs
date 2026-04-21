@@ -95,6 +95,10 @@ pub struct DerivedSource<'a, F> {
     iflags: Option<InstructionFlags<F>>,
     reg_access: Option<RegisterAccessData>,
     lookup_flags: Option<LookupFlagData>,
+    // RamRaIndicator is materialized twice per proof (two EqProject consumers
+    // in jolt_core_module.rs). Cache the T×K indicator buffer so the second
+    // call is a zero-copy borrow instead of a full recompute.
+    ram_ra_indicator_cache: std::sync::OnceLock<Vec<F>>,
     _marker: std::marker::PhantomData<F>,
 }
 
@@ -108,6 +112,7 @@ impl<'a, F: Field> DerivedSource<'a, F> {
             iflags: None,
             reg_access: None,
             lookup_flags: None,
+            ram_ra_indicator_cache: std::sync::OnceLock::new(),
             _marker: std::marker::PhantomData,
         }
     }
@@ -168,7 +173,10 @@ impl<'a, F: Field> DerivedSource<'a, F> {
             }
             PolynomialId::RamRaIndicator => {
                 let _s = tracing::info_span!("derived::ram_ra_indicator").entered();
-                Cow::Owned(self.ram_ra_indicator())
+                let cached = self
+                    .ram_ra_indicator_cache
+                    .get_or_init(|| self.ram_ra_indicator());
+                Cow::Borrowed(cached.as_slice())
             }
             PolynomialId::Rs1Ra => {
                 let _s = tracing::info_span!("derived::reg_rs1_ra").entered();
