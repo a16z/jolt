@@ -9,7 +9,8 @@ declare_riscv_instr!(
     mask   = 0x0000707f,
     match  = 0x00003003,
     format = FormatLoad,
-    ram    = super::RAMRead
+    ram    = super::RAMRead,
+    side_effects = true
 );
 
 impl LD {
