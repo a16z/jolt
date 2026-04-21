@@ -87,8 +87,15 @@ fn compare_witness_variables() {
         /* 33 */ "FLAG_IsCompressed",
         /* 34 */ "FLAG_IsFirstInSeq",
         /* 35 */ "FLAG_IsLastInSeq",
-        /* 36 */ "Branch",
-        /* 37 */ "NextIsNoop",
+        /* 36 */ "FLAG_IsFieldMul",
+        /* 37 */ "FLAG_IsFieldAdd",
+        /* 38 */ "FLAG_IsFieldSub",
+        /* 39 */ "FLAG_IsFieldInv",
+        /* 40 */ "FieldOpA",
+        /* 41 */ "FieldOpB",
+        /* 42 */ "FieldOpResult",
+        /* 43 */ "Branch",
+        /* 44 */ "NextIsNoop",
     ];
 
     // Compare witness variables for real cycles.

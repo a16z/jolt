@@ -439,8 +439,98 @@ mod tests {
     #[test]
     fn constraint_count() {
         let matrices = rv64_constraints::<Fr>();
-        assert_eq!(matrices.a.len(), 22);
-        assert_eq!(matrices.b.len(), 22);
-        assert_eq!(matrices.c.len(), 22);
+        assert_eq!(matrices.a.len(), NUM_CONSTRAINTS_PER_CYCLE);
+        assert_eq!(matrices.b.len(), NUM_CONSTRAINTS_PER_CYCLE);
+        assert_eq!(matrices.c.len(), NUM_CONSTRAINTS_PER_CYCLE);
+    }
+
+    /// A FieldOp-like witness mirroring the no-op skeleton but with the
+    /// FieldOp slots populated. Used by both the FADD/FSUB positive and
+    /// negative tests so the non-FieldOp constraints stay vacuously satisfied.
+    fn field_op_witness(
+        flag_idx: usize,
+        a: Fr,
+        b: Fr,
+        result: Fr,
+    ) -> Vec<Fr> {
+        let mut w = noop_witness();
+        w[flag_idx] = Fr::from_u64(1);
+        w[V_FIELD_OP_A] = a;
+        w[V_FIELD_OP_B] = b;
+        w[V_FIELD_OP_RESULT] = result;
+        w
+    }
+
+    #[test]
+    fn fadd_gate_accepts_correct_result() {
+        let matrices = rv64_constraints::<Fr>();
+        let a = Fr::from_u64(1234);
+        let b = Fr::from_u64(5678);
+        let w = field_op_witness(V_FLAG_IS_FIELD_ADD, a, b, a + b);
+        matrices
+            .check_witness(&w)
+            .expect("FADD with a+b=result should satisfy all constraints");
+    }
+
+    #[test]
+    fn fadd_gate_rejects_wrong_result() {
+        let matrices = rv64_constraints::<Fr>();
+        let a = Fr::from_u64(1234);
+        let b = Fr::from_u64(5678);
+        let w = field_op_witness(V_FLAG_IS_FIELD_ADD, a, b, a + b + Fr::from_u64(1));
+        assert!(
+            matrices.check_witness(&w).is_err(),
+            "FADD with tampered result must violate constraint 19",
+        );
+    }
+
+    #[test]
+    fn fadd_gate_ignored_when_flag_zero() {
+        let matrices = rv64_constraints::<Fr>();
+        // Flag = 0, so the guard nullifies the check; any A/B/RESULT is fine.
+        let mut w = noop_witness();
+        w[V_FIELD_OP_A] = Fr::from_u64(7);
+        w[V_FIELD_OP_B] = Fr::from_u64(9);
+        w[V_FIELD_OP_RESULT] = Fr::from_u64(42);
+        matrices
+            .check_witness(&w)
+            .expect("FADD must be vacuous when flag=0");
+    }
+
+    #[test]
+    fn fsub_gate_accepts_correct_result() {
+        let matrices = rv64_constraints::<Fr>();
+        let a = Fr::from_u64(9999);
+        let b = Fr::from_u64(1234);
+        let w = field_op_witness(V_FLAG_IS_FIELD_SUB, a, b, a - b);
+        matrices
+            .check_witness(&w)
+            .expect("FSUB with a-b=result should satisfy all constraints");
+    }
+
+    #[test]
+    fn fsub_gate_rejects_wrong_result() {
+        let matrices = rv64_constraints::<Fr>();
+        let a = Fr::from_u64(9999);
+        let b = Fr::from_u64(1234);
+        let w = field_op_witness(V_FLAG_IS_FIELD_SUB, a, b, a - b - Fr::from_u64(1));
+        assert!(
+            matrices.check_witness(&w).is_err(),
+            "FSUB with tampered result must violate constraint 20",
+        );
+    }
+
+    /// Sanity: FADD gate is NOT activated when FSUB flag is set. Used to verify
+    /// the flag→gate mapping isn't scrambled.
+    #[test]
+    fn field_flags_are_independent() {
+        let matrices = rv64_constraints::<Fr>();
+        let a = Fr::from_u64(100);
+        let b = Fr::from_u64(30);
+        // Set FSUB flag, supply correct sub result — FADD gate must not mis-fire.
+        let w = field_op_witness(V_FLAG_IS_FIELD_SUB, a, b, a - b);
+        matrices
+            .check_witness(&w)
+            .expect("FSUB flag must not trigger FADD gate");
     }
 }
