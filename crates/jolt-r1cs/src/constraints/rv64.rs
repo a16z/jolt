@@ -10,13 +10,17 @@
 //! | Range | Description |
 //! |-------|-------------|
 //! | `[0]` | Constant 1 |
-//! | `[1..=35]` | R1CS inputs (registers, flags, PC, lookups) |
-//! | `[36..=37]` | Product factor variables (`Branch`, `NextIsNoop`) |
+//! | `[1..=21]` | R1CS core inputs (registers, PC, lookups) |
+//! | `[22..=35]` | RV base circuit flags (14 flags, see [`CircuitFlags`] indices 0..14) |
+//! | `[36..=39]` | BN254 Fr coprocessor flags (IsFieldMul/Add/Sub/Inv) |
+//! | `[40..=42]` | BN254 Fr coprocessor operand columns (FieldOpA/B/Result) |
+//! | `[43..=44]` | Product factor variables (`Branch`, `NextIsNoop`) |
 //!
 //! # Constraint forms
 //!
-//! - **Eq-conditional** (rows 0–18): `guard · (left − right) = 0`
-//! - **Product** (rows 19–21): `left · right = output`
+//! - **Eq-conditional** (rows 0–18 base + 19 FieldAdd + 20 FieldSub):
+//!   `guard · (left − right) = 0`
+//! - **Product** (rows 21–23): `left · right = output`
 
 /// Constant-1 wire.
 pub const V_CONST: usize = 0;
@@ -58,15 +62,34 @@ pub const V_FLAG_IS_COMPRESSED: usize = 33;
 pub const V_FLAG_IS_FIRST_IN_SEQUENCE: usize = 34;
 pub const V_FLAG_IS_LAST_IN_SEQUENCE: usize = 35;
 
-pub const V_BRANCH: usize = 36;
-pub const V_NEXT_IS_NOOP: usize = 37;
+// --- BN254 Fr coprocessor slots (Phase 2b task #59) ---
 
-pub const NUM_R1CS_INPUTS: usize = 35;
+/// Per-cycle FMUL flag (1 on FMUL cycles, 0 otherwise).
+pub const V_FLAG_IS_FIELD_MUL: usize = 36;
+/// Per-cycle FADD flag.
+pub const V_FLAG_IS_FIELD_ADD: usize = 37;
+/// Per-cycle FSUB flag.
+pub const V_FLAG_IS_FIELD_SUB: usize = 38;
+/// Per-cycle FINV flag.
+pub const V_FLAG_IS_FIELD_INV: usize = 39;
+/// FieldOp read source A (`field_regs[frs1]` as Fr scalar).
+pub const V_FIELD_OP_A: usize = 40;
+/// FieldOp read source B (`field_regs[frs2]` as Fr scalar; 0 on FINV cycles).
+pub const V_FIELD_OP_B: usize = 41;
+/// FieldOp write destination (`field_regs[frd]` post-value as Fr scalar).
+pub const V_FIELD_OP_RESULT: usize = 42;
+
+// --- Product factors (shifted by +7 to make room for field-op slots) ---
+
+pub const V_BRANCH: usize = 43;
+pub const V_NEXT_IS_NOOP: usize = 44;
+
+pub const NUM_R1CS_INPUTS: usize = 42;
 pub const NUM_PRODUCT_FACTORS: usize = 2;
-pub const NUM_VARS_PER_CYCLE: usize = 1 + NUM_R1CS_INPUTS + NUM_PRODUCT_FACTORS; // 38
-pub const NUM_EQ_CONSTRAINTS: usize = 19;
+pub const NUM_VARS_PER_CYCLE: usize = 1 + NUM_R1CS_INPUTS + NUM_PRODUCT_FACTORS; // 45
+pub const NUM_EQ_CONSTRAINTS: usize = 21;
 pub const NUM_PRODUCT_CONSTRAINTS: usize = 3;
-pub const NUM_CONSTRAINTS_PER_CYCLE: usize = NUM_EQ_CONSTRAINTS + NUM_PRODUCT_CONSTRAINTS; // 22
+pub const NUM_CONSTRAINTS_PER_CYCLE: usize = NUM_EQ_CONSTRAINTS + NUM_PRODUCT_CONSTRAINTS; // 24
 
 /// Two's complement bias for subtraction: 2^64.
 const TWOS_COMPLEMENT_BIAS: i128 = 0x1_0000_0000_0000_0000;
@@ -332,20 +355,44 @@ pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
     ]));
     c_rows.push(empty());
 
-    // Product constraints (19-21)
+    // 19: FieldAdd gate
+    //     IsFieldAdd · (FieldOpA + FieldOpB − FieldOpResult) = 0
+    //     Enforces BN254 Fr addition semantics on cycles where funct3 = FADD.
+    //     In Fr, a + b wraps mod p automatically, so the equality holds iff
+    //     the guest-provided result matches a + b mod p.
+    a_rows.push(row::<F>(&[(V_FLAG_IS_FIELD_ADD, 1)]));
+    b_rows.push(row::<F>(&[
+        (V_FIELD_OP_A, 1),
+        (V_FIELD_OP_B, 1),
+        (V_FIELD_OP_RESULT, -1),
+    ]));
+    c_rows.push(empty());
+
+    // 20: FieldSub gate
+    //     IsFieldSub · (FieldOpA − FieldOpB − FieldOpResult) = 0
+    //     Enforces BN254 Fr subtraction semantics on FSUB cycles.
+    a_rows.push(row::<F>(&[(V_FLAG_IS_FIELD_SUB, 1)]));
+    b_rows.push(row::<F>(&[
+        (V_FIELD_OP_A, 1),
+        (V_FIELD_OP_B, -1),
+        (V_FIELD_OP_RESULT, -1),
+    ]));
+    c_rows.push(empty());
+
+    // Product constraints (21-23)
     // Form: left · right = output  →  A=left, B=right, C=output
 
-    // 19: Product = LeftInstructionInput × RightInstructionInput
+    // 21: Product = LeftInstructionInput × RightInstructionInput
     a_rows.push(row::<F>(&[(V_LEFT_INSTRUCTION_INPUT, 1)]));
     b_rows.push(row::<F>(&[(V_RIGHT_INSTRUCTION_INPUT, 1)]));
     c_rows.push(row::<F>(&[(V_PRODUCT, 1)]));
 
-    // 20: ShouldBranch = LookupOutput × Branch
+    // 22: ShouldBranch = LookupOutput × Branch
     a_rows.push(row::<F>(&[(V_LOOKUP_OUTPUT, 1)]));
     b_rows.push(row::<F>(&[(V_BRANCH, 1)]));
     c_rows.push(row::<F>(&[(V_SHOULD_BRANCH, 1)]));
 
-    // 21: ShouldJump = Jump × (1 − NextIsNoop)
+    // 23: ShouldJump = Jump × (1 − NextIsNoop)
     a_rows.push(row::<F>(&[(V_FLAG_JUMP, 1)]));
     b_rows.push(row::<F>(&[(V_CONST, 1), (V_NEXT_IS_NOOP, -1)]));
     c_rows.push(row::<F>(&[(V_SHOULD_JUMP, 1)]));
