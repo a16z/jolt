@@ -241,6 +241,7 @@ fn migrate_buf_to_fallback<F: Field, P: ComputeBackend, Fb: ComputeBackend>(
             }
             HybridBuffer::Fallback(_) => {}
         },
+        DeviceBuffer::Compact { .. } => {}
     }
 }
 
@@ -270,6 +271,7 @@ impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, 
         let on_primary = match inputs[0] {
             DeviceBuffer::Field(h) => h.is_primary(),
             DeviceBuffer::U64(h) => h.is_primary(),
+            DeviceBuffer::Compact { .. } => true,
         };
 
         if on_primary {
@@ -306,6 +308,7 @@ impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, 
         let on_primary = match &inputs[0] {
             DeviceBuffer::Field(h) => h.is_primary(),
             DeviceBuffer::U64(h) => h.is_primary(),
+            DeviceBuffer::Compact { .. } => true,
         };
 
         if on_primary {
@@ -603,6 +606,7 @@ mod tests {
                         interpolate_mock(v, scalar, kernel.binding_order);
                     }
                     DeviceBuffer::U64(_) => {}
+                    DeviceBuffer::Compact { .. } => {}
                 }
             }
         }
@@ -891,6 +895,7 @@ mod tests {
                 assert_eq!(hybrid.len(h), 4);
             }
             DeviceBuffer::U64(_) => panic!("expected Field"),
+            DeviceBuffer::Compact { .. } => panic!("expected Field"),
         }
     }
 
@@ -923,6 +928,7 @@ mod tests {
                 assert_eq!(hybrid.len(h), 8);
             }
             DeviceBuffer::U64(_) => panic!("expected Field"),
+            DeviceBuffer::Compact { .. } => panic!("expected Field"),
         }
     }
 
@@ -954,6 +960,7 @@ mod tests {
                 assert_eq!(hybrid.len(h), 2);
             }
             DeviceBuffer::U64(_) => panic!("expected Field"),
+            DeviceBuffer::Compact { .. } => panic!("expected Field"),
         }
     }
 

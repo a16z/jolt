@@ -69,6 +69,21 @@ pub enum DeviceBuffer<BufF, BufU64 = ()> {
     Field(BufF),
     /// 64-bit unsigned integer buffer (sparse keys, indices).
     U64(BufU64),
+    /// Host-side compact integer buffer + encoding metadata.
+    ///
+    /// Stores small-scalar data as `Vec<i128>` with runtime `bits`/`signed`
+    /// metadata; defers promote-to-field until bind/reduce time. Fast paths
+    /// in the backend read the encoding and dispatch to the matching
+    /// `Field::mul_{u64,i64,u128,i128}` variant (each ~2× faster than
+    /// `F::from_i128(n) * x` on BN254). Backend-opaque: the data lives on
+    /// host regardless of whether the backend is CPU or GPU, so no
+    /// per-backend `Buffer<i128>` generic is needed. P84-A' infra —
+    /// no backend method consumes it yet.
+    Compact {
+        data: Vec<i128>,
+        bits: u8,
+        signed: bool,
+    },
 }
 
 /// Shorthand: `DeviceBuffer` specialized for a backend's buffer types.
@@ -82,6 +97,7 @@ impl<BufF, BufU64> DeviceBuffer<BufF, BufU64> {
         match self {
             DeviceBuffer::Field(buf) => buf,
             DeviceBuffer::U64(_) => panic!("expected DeviceBuffer::Field"),
+            DeviceBuffer::Compact { .. } => panic!("expected DeviceBuffer::Field"),
         }
     }
 
@@ -91,6 +107,7 @@ impl<BufF, BufU64> DeviceBuffer<BufF, BufU64> {
         match self {
             DeviceBuffer::Field(buf) => buf,
             DeviceBuffer::U64(_) => panic!("expected DeviceBuffer::Field"),
+            DeviceBuffer::Compact { .. } => panic!("expected DeviceBuffer::Field"),
         }
     }
 
@@ -100,6 +117,7 @@ impl<BufF, BufU64> DeviceBuffer<BufF, BufU64> {
         match self {
             DeviceBuffer::U64(buf) => buf,
             DeviceBuffer::Field(_) => panic!("expected DeviceBuffer::U64"),
+            DeviceBuffer::Compact { .. } => panic!("expected DeviceBuffer::U64"),
         }
     }
 
@@ -109,6 +127,35 @@ impl<BufF, BufU64> DeviceBuffer<BufF, BufU64> {
         match self {
             DeviceBuffer::U64(buf) => buf,
             DeviceBuffer::Field(_) => panic!("expected DeviceBuffer::U64"),
+            DeviceBuffer::Compact { .. } => panic!("expected DeviceBuffer::U64"),
+        }
+    }
+
+    /// Borrow the compact i128 data slice. Panics if this is not `Compact`.
+    #[inline]
+    pub fn as_compact(&self) -> &[i128] {
+        match self {
+            DeviceBuffer::Compact { data, .. } => data,
+            _ => panic!("expected DeviceBuffer::Compact"),
+        }
+    }
+
+    /// Mutably borrow the compact i128 data. Panics if this is not `Compact`.
+    #[inline]
+    pub fn as_compact_mut(&mut self) -> &mut Vec<i128> {
+        match self {
+            DeviceBuffer::Compact { data, .. } => data,
+            _ => panic!("expected DeviceBuffer::Compact"),
+        }
+    }
+
+    /// Return `(bits, signed)` encoding metadata for a `Compact` buffer.
+    /// Panics if this is not `Compact`.
+    #[inline]
+    pub fn compact_encoding(&self) -> (u8, bool) {
+        match self {
+            DeviceBuffer::Compact { bits, signed, .. } => (*bits, *signed),
+            _ => panic!("expected DeviceBuffer::Compact"),
         }
     }
 
@@ -116,6 +163,12 @@ impl<BufF, BufU64> DeviceBuffer<BufF, BufU64> {
     #[inline]
     pub fn is_field(&self) -> bool {
         matches!(self, DeviceBuffer::Field(_))
+    }
+
+    /// Returns `true` if this is a `Compact` buffer.
+    #[inline]
+    pub fn is_compact(&self) -> bool {
+        matches!(self, DeviceBuffer::Compact { .. })
     }
 }
 
