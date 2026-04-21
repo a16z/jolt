@@ -32,7 +32,40 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 26 (iter 82 P78 reverted — bind_low_to_high in-place compact regressed +47% mean; iter 81 P77-D reverted — CpuBackend batch_round_evaluate par_iter override + re-applied emission switch regressed +6.86% mean; iter 80 P77-C reverted — emission switch alone regressed 10-14%; iter 79 P77-B infra — BatchRoundEvaluate handler landed, flat; iter 78 P77-A infra — BatchInstanceSpec/BatchReduceKind trait surface; iter 77 P77 infra — memoize RamRaIndicator; iter 76 P80 parallelize RAM derived polys — ~7.5% improvement vs same-session pre-change, but +12% past-reject vs stale iter-54 ratchet; code kept, ratchet unchanged; iter 75 P76-D hot-path wiring reverted under noise, infra kept; iter 74 P76-C infra; iter 73 P76-B infra; iter 72 P76-A infra stub; iter 71 P75-B infra stub; iter 70 P75-A infra-only commit; iter 69 design-only; iter 68 P73 reverted; iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+- **Stall counter**: 27 (iter 83 P83 reverted — sparse eq_project for ram_ra_indicator, -3.9% median across 3 runs but rerun +6.78% in reject zone; iter 82 P78 reverted — bind_low_to_high in-place compact regressed +47% mean; iter 81 P77-D reverted — CpuBackend batch_round_evaluate par_iter override + re-applied emission switch regressed +6.86% mean; iter 80 P77-C reverted — emission switch alone regressed 10-14%; iter 79 P77-B infra — BatchRoundEvaluate handler landed, flat; iter 78 P77-A infra — BatchInstanceSpec/BatchReduceKind trait surface; iter 77 P77 infra — memoize RamRaIndicator; iter 76 P80 parallelize RAM derived polys — ~7.5% improvement vs same-session pre-change, but +12% past-reject vs stale iter-54 ratchet; code kept, ratchet unchanged; iter 75 P76-D hot-path wiring reverted under noise, infra kept; iter 74 P76-C infra; iter 73 P76-B infra; iter 72 P76-A infra stub; iter 71 P75-B infra stub; iter 70 P75-A infra-only commit; iter 69 design-only; iter 68 P73 reverted; iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+
+  iter 83 P83 REVERTED — sparse eq_project for RamRaIndicator.
+  Iter-83 trace showed 2 of 82 eq_project calls (both sourcing
+  p.ram_ra_indicator at jolt_core_module.rs:2329 and :3490)
+  eating ~8.2 s of the 9.1 s eq_project span (K-fold dense scan
+  of a T×K binary one-hot-per-row indicator). Added
+  (a) `DerivedSource::ram_ra_indicator_cols` (per-cycle remapped
+  column index, cached via OnceLock, parallel build), (b)
+  `BufferProvider::sparse_row_indicator` default-None trait
+  method + `ProverData` override routing `RamRaIndicator` to the
+  cached cols, (c) `sparse_eq_project` kernel in
+  `runtime/helpers.rs` that computes the dense eq_project output
+  in O(T) by exploiting the one-nonzero-per-row invariant:
+  `projected[c] = eq_table[cols[c]]` for the K-dim eq_table
+  branch, `projected[k] += eq_table[c]` for the T-dim branch,
+  (d) `materialize_binding` EqProject arm tries sparse path
+  first, falls back to dense. Correctness 50/50 PASS + clippy
+  jolt-core host + host,zk clean. Perf: run 1 68,002.77 ms
+  (-3.90% inconclusive), run 2 75,558.65 ms (+6.78% past reject),
+  run 3 67,526.72 ms (-4.57% inconclusive). Median -3.90%, min
+  -4.57%, mean -0.56%. Rerun landed past reject threshold despite
+  clear algorithmic improvement and 2-of-3 runs improving — high
+  variance ~12% spread on this machine (precedent iter 54
+  70.76→77.77ms same-code spread). Per perf-gate protocol
+  "Reject: ≥5% slower → revert" on the authoritative rerun,
+  reverted all 4 source edits. Architectural payoff is real
+  (~4 s wall, ~5-6% of modular) but below the 5% accept gate.
+  Candidate for re-application when compounded with parallel
+  wins (same `sparse_row_indicator` channel would extend to
+  `Rs1Ra`, `Rs2Ra`, `RdWa` if they ever became hot — currently
+  address-major K_reg×T with exactly-one-per-column instead of
+  row, needs different kernel shape). Ratchet unchanged
+  70,762.94. Stall 26 → 27.
 
   iter 82 P78 REVERTED — replaced `bind_low_to_high` parallel
   `.collect()` path with an in-place compute + sequential compact:
@@ -2351,6 +2384,28 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
       dispatch).
     - **Expected delta**: 2 s wall (~2.5%). Smaller than P80/P81 but
       mechanical once the batching op exists.
+
+- [x] P83: Sparse eq_project fast path for RamRaIndicator — target:
+  `crates/jolt-zkvm/src/runtime/helpers.rs::materialize_binding`
+  EqProject arm + `crates/jolt-witness/src/derived.rs` +
+  `crates/jolt-compute/src/traits.rs::BufferProvider`. Iter-83 trace
+  showed 2 of 82 eq_project calls sourcing `p.ram_ra_indicator`
+  ate ~8.2 s of the 9.1 s total eq_project span, via K-fold dense
+  scan of a T×K binary indicator with exactly-one-nonzero-per-row.
+    - **Hypothesis (attempted iter 83)**: expose per-cycle remapped
+      column indices via `BufferProvider::sparse_row_indicator` and
+      compute the projection in O(T): `projected[c] = eq_table[cols[c]]`
+      for K-table branch, `projected[k] += eq_table[c]` for T-table
+      branch. Expected ~8 s savings.
+    - **Result**: REVERTED. Median -3.90% (run 1 -3.90, run 2 +6.78,
+      run 3 -4.57). Rerun landed in reject zone (≥5% slower) per
+      perf-gate protocol. Architectural savings (~4 s / ~5-6%) real
+      but below 5% accept gate. Candidate for re-application when
+      compounded with other wins or on a lower-noise measurement
+      environment. The `BufferProvider::sparse_row_indicator`
+      abstraction would also extend to `Rs1Ra`, `Rs2Ra`, `RdWa` if
+      they become hot (note: those are address-major K_reg×T with
+      one-per-column, not row — needs different kernel orientation).
 
 
 ## Notes
