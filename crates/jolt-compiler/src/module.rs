@@ -224,6 +224,31 @@ pub struct SegmentedConfig {
     pub outer_eq_challenges: Vec<ChallengeIdx>,
 }
 
+/// Per-instance reduce spec inside an `Op::BatchRoundEvaluate`.
+///
+/// Mirrors the discriminants of `Op::InstanceReduce` / `Op::InstanceSegmentedReduce`
+/// as a value-typed variant carrying per-instance metadata. The runtime's batch
+/// handler translates each variant into a [`BatchReduceKind`](jolt_compute::BatchReduceKind)
+/// and calls [`ComputeBackend::batch_round_evaluate`](jolt_compute::ComputeBackend::batch_round_evaluate)
+/// once with the full vector.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum InstanceEvalKind {
+    /// Plain dense reduce — no outer eq, no inner-only sharing.
+    Dense {
+        instance: InstanceIdx,
+        kernel: usize,
+    },
+    /// Segmented reduce with outer-eq weighting over mixed-dimensional inputs.
+    /// The handler resolves the Gruen vs. non-Gruen dispatch at runtime by
+    /// reading the kernel's `gruen_hint`, matching today's per-instance path.
+    Segmented {
+        instance: InstanceIdx,
+        kernel: usize,
+        round_within_phase: usize,
+        segmented: SegmentedConfig,
+    },
+}
+
 /// One entry of the combine matrix for read-checking.
 ///
 /// Encodes `coefficient × prefix[prefix_idx] × suffix[table_idx][suffix_local_idx]`.
@@ -1223,6 +1248,23 @@ pub enum Op {
         kernel: usize,
         round_within_phase: usize,
         segmented: SegmentedConfig,
+    },
+    /// Fused per-round reduce across many active instances in a batch.
+    ///
+    /// Variable-arity generalization of `InstanceReduce` + `InstanceSegmentedReduce`:
+    /// one op per batch-round replaces N per-instance reduce ops. The handler
+    /// packs a `&[BatchInstanceSpec]` and dispatches once to
+    /// `ComputeBackend::batch_round_evaluate`, which defaults to a per-instance
+    /// loop (byte-identical fallback) and is overridable for fused dispatch
+    /// (shared prefetch, fused accumulation across instances).
+    ///
+    /// Reserved for P77-C wire-up. The compiler does not emit this variant
+    /// yet; the handler arm is in place so emission can be switched over
+    /// without a second handler change.
+    BatchRoundEvaluate {
+        batch: BatchIdx,
+        round: usize,
+        instances: Vec<InstanceEvalKind>,
     },
     /// Bind kernel inputs for an active instance within a round.
     /// Emitted for rounds after the first within a phase.

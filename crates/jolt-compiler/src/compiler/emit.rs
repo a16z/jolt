@@ -848,6 +848,18 @@ fn op_poly_refs(op: &Op, kernels: &[KernelDef]) -> Vec<PolynomialId> {
         Op::SumcheckRound { kernel, .. } => {
             kernels[*kernel].inputs.iter().map(|b| b.poly()).collect()
         }
+        Op::BatchRoundEvaluate { instances, .. } => {
+            use crate::module::InstanceEvalKind;
+            let mut refs: Vec<PolynomialId> = Vec::new();
+            for kind in instances {
+                let k = match kind {
+                    InstanceEvalKind::Dense { kernel, .. }
+                    | InstanceEvalKind::Segmented { kernel, .. } => *kernel,
+                };
+                refs.extend(kernels[k].inputs.iter().map(|b| b.poly()));
+            }
+            refs
+        }
         Op::AbsorbRoundPoly { .. } => vec![],
         Op::Evaluate { poly, .. }
         | Op::CollectOpeningClaim { poly, .. }

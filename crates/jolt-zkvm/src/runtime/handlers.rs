@@ -3,10 +3,14 @@ use std::collections::{HashMap, HashSet};
 use rayon::prelude::*;
 
 use jolt_compiler::module::{
-    ChallengeIdx, CheckpointEvalAction, DomainSeparator, EvalMode, Op, RoundPolyEncoding,
+    ChallengeIdx, CheckpointEvalAction, DomainSeparator, EvalMode, InstanceEvalKind, Op,
+    RoundPolyEncoding,
 };
 use jolt_compiler::PolynomialId;
-use jolt_compute::{Buf, BufferProvider, ComputeBackend, DeviceBuffer, Executable};
+use jolt_compute::{
+    BatchInstanceSpec, BatchReduceKind, Buf, BufferProvider, ComputeBackend, DeviceBuffer,
+    Executable,
+};
 use jolt_crypto::HomomorphicCommitment;
 use jolt_field::Field;
 use jolt_openings::AdditivelyHomomorphic;
@@ -92,6 +96,17 @@ fn op_span(op: &Op) -> tracing::span::EnteredSpan {
             instance = instance.0,
             kernel = kernel,
             round = round_within_phase
+        )
+        .entered(),
+        Op::BatchRoundEvaluate {
+            batch,
+            round,
+            instances,
+        } => tracing::info_span!(
+            "BatchRoundEvaluate",
+            batch = batch.0,
+            round = round,
+            n_instances = instances.len()
         )
         .entered(),
         Op::InstanceBind {
@@ -832,6 +847,95 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                 )
             };
             state.last_round_instance_evals[instance.0].clone_from(&inst_evals);
+        }
+
+        Op::BatchRoundEvaluate {
+            batch,
+            round: _,
+            instances,
+        } => {
+            // Per-instance input buffer refs (one Vec<&Buf> per spec) must
+            // outlive the `specs` slice we hand to the backend; keep them
+            // in `all_inputs` for the duration of the call.
+            let mut all_inputs: Vec<Vec<&Buf<B, F>>> = Vec::with_capacity(instances.len());
+            let mut inst_indices: Vec<usize> = Vec::with_capacity(instances.len());
+            for kind in instances {
+                let (inst_idx, k_idx) = match kind {
+                    InstanceEvalKind::Dense { instance, kernel }
+                    | InstanceEvalKind::Segmented {
+                        instance, kernel, ..
+                    } => (instance.0, *kernel),
+                };
+                let kdef = &module.prover.kernels[k_idx];
+                let refs: Vec<&Buf<B, F>> = kdef
+                    .inputs
+                    .iter()
+                    .map(|b| {
+                        device_buffers.get(&b.poly()).unwrap_or_else(|| {
+                            panic!(
+                                "BatchRoundEvaluate: missing buffer {:?} (inst={inst_idx}, kernel={k_idx})",
+                                b.poly()
+                            )
+                        })
+                    })
+                    .collect();
+                all_inputs.push(refs);
+                inst_indices.push(inst_idx);
+            }
+            let specs: Vec<BatchInstanceSpec<'_, B, F>> = instances
+                .iter()
+                .enumerate()
+                .map(|(i, kind)| {
+                    let k_idx = match kind {
+                        InstanceEvalKind::Dense { kernel, .. }
+                        | InstanceEvalKind::Segmented { kernel, .. } => *kernel,
+                    };
+                    let kdef = &module.prover.kernels[k_idx];
+                    let compiled_kernel = &executable.kernels[k_idx];
+                    let kind_ref = match kind {
+                        InstanceEvalKind::Dense { .. } => BatchReduceKind::Dense,
+                        InstanceEvalKind::Segmented {
+                            round_within_phase,
+                            segmented,
+                            ..
+                        } => {
+                            let inst_idx = inst_indices[i];
+                            let outer_eq = state
+                                .segmented_outer_eqs
+                                .get(&(batch.0, inst_idx))
+                                .expect("BatchRoundEvaluate: outer eq missing");
+                            let inner_size =
+                                1usize << (segmented.inner_num_vars - round_within_phase);
+                            if kdef.spec.gruen_hint.is_some() {
+                                let prev_claim = state.batch_instance_claims[batch.0][inst_idx];
+                                BatchReduceKind::Gruen {
+                                    outer_eq,
+                                    inner_only: &segmented.inner_only,
+                                    inner_size,
+                                    prev_claim,
+                                    current_round: *round_within_phase,
+                                }
+                            } else {
+                                BatchReduceKind::Segmented {
+                                    outer_eq,
+                                    inner_only: &segmented.inner_only,
+                                    inner_size,
+                                }
+                            }
+                        }
+                    };
+                    BatchInstanceSpec {
+                        kernel: compiled_kernel,
+                        inputs: &all_inputs[i],
+                        kind: kind_ref,
+                    }
+                })
+                .collect();
+            let per_instance = backend.batch_round_evaluate(&specs, &state.challenges);
+            debug_assert_eq!(per_instance.len(), inst_indices.len());
+            for (i, evals) in per_instance.into_iter().enumerate() {
+                state.last_round_instance_evals[inst_indices[i]] = evals;
+            }
         }
 
         Op::InstanceBind {

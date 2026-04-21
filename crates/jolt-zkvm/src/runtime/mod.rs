@@ -42,6 +42,7 @@ fn op_class_tag(op: &jolt_compiler::module::Op) -> Option<&'static str> {
         Op::ReduceOpenings => "ReduceOpenings",
         Op::InstanceReduce { .. } => "InstanceReduce",
         Op::InstanceSegmentedReduce { .. } => "InstanceSegmentedReduce",
+        Op::BatchRoundEvaluate { .. } => "BatchRoundEvaluate",
         Op::InstanceBind { .. } => "InstanceBind",
         Op::InstanceBindPreviousPhase { .. } => "InstanceBindPreviousPhase",
         Op::Bind { .. } => "Bind",
