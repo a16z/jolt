@@ -32,7 +32,36 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 27 (iter 83 P83 reverted — sparse eq_project for ram_ra_indicator, -3.9% median across 3 runs but rerun +6.78% in reject zone; iter 82 P78 reverted — bind_low_to_high in-place compact regressed +47% mean; iter 81 P77-D reverted — CpuBackend batch_round_evaluate par_iter override + re-applied emission switch regressed +6.86% mean; iter 80 P77-C reverted — emission switch alone regressed 10-14%; iter 79 P77-B infra — BatchRoundEvaluate handler landed, flat; iter 78 P77-A infra — BatchInstanceSpec/BatchReduceKind trait surface; iter 77 P77 infra — memoize RamRaIndicator; iter 76 P80 parallelize RAM derived polys — ~7.5% improvement vs same-session pre-change, but +12% past-reject vs stale iter-54 ratchet; code kept, ratchet unchanged; iter 75 P76-D hot-path wiring reverted under noise, infra kept; iter 74 P76-C infra; iter 73 P76-B infra; iter 72 P76-A infra stub; iter 71 P75-B infra stub; iter 70 P75-A infra-only commit; iter 69 design-only; iter 68 P73 reverted; iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+- **Stall counter**: 28 (iter 84 DESIGN — fresh per-stack profiling disambiguates prior conflicting per-call ratios; appended P84/P85/P86 backlog items; no code; iter 83 P83 reverted — sparse eq_project for ram_ra_indicator, -3.9% median across 3 runs but rerun +6.78% in reject zone; iter 82 P78 reverted — bind_low_to_high in-place compact regressed +47% mean; iter 81 P77-D reverted — CpuBackend batch_round_evaluate par_iter override + re-applied emission switch regressed +6.86% mean; iter 80 P77-C reverted — emission switch alone regressed 10-14%; iter 79 P77-B infra — BatchRoundEvaluate handler landed, flat; iter 78 P77-A infra — BatchInstanceSpec/BatchReduceKind trait surface; iter 77 P77 infra — memoize RamRaIndicator; iter 76 P80 parallelize RAM derived polys — ~7.5% improvement vs same-session pre-change, but +12% past-reject vs stale iter-54 ratchet; code kept, ratchet unchanged; iter 75 P76-D hot-path wiring reverted under noise, infra kept; iter 74 P76-C infra; iter 73 P76-B infra; iter 72 P76-A infra stub; iter 71 P75-B infra stub; iter 70 P75-A infra-only commit; iter 69 design-only; iter 68 P73 reverted; iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+
+  iter 84 DESIGN — fresh per-stack Perfetto profiling
+  (`iter84_modular_only.json` / `iter84_core_only.json`).
+  **Per-call ratio settled** for multi_pair_g2_setup_parallel:
+  167.2 ms modular vs 93.4 ms core = 1.80× (memo 2.65× was wrong;
+  pre-compaction 1.25× was wrong; earlier claims used mixed-stack
+  or incorrectly scoped spans). Gap ~4 s wall; P81 renamed P86 with
+  correct magnitude.
+
+  **Real architectural gap**: span-level modular-minus-core self_ms:
+  - reduce_dense 40.5s vs ~0 core (core has no equivalent span
+    because BooleanitySumcheckProver + tensor iteration + compact
+    polys replace the generic reduce).
+  - interpolate_inplace 21.5s vs ~0 core.
+  - gruen_segmented_reduce 20.3s vs ~0 core.
+  - eq_project 12.0s vs ~0 core.
+  - multi_pair_g2_setup_parallel 9.0s vs 5.0s core.
+  - ram_val 6.1s vs ~0 core.
+
+  Core's 11.4s total self_ms vs modular's 130.8s = 11.5× gap. The
+  gap is NOT dominated by wrapper overhead or micro-inefficiencies;
+  it's driven by **modular materializing every polynomial as
+  `Vec<F>` while core uses CompactPolynomial<u8/u32/u64> + prefix/
+  suffix decomposition**. These are architectural additions, not
+  micro-opts.
+
+  Appended **P84** (CompactPolynomial integration, ~25-40%),
+  **P85** (prefix/suffix sumcheck, ~5-15%), **P86** (dedupe G2
+  wrapper, ~3-5%) to the P76-P82 section. Stall 27 → 28.
 
   iter 83 P83 REVERTED — sparse eq_project for RamRaIndicator.
   Iter-83 trace showed 2 of 82 eq_project calls (both sourcing
@@ -2384,6 +2413,60 @@ Seeded from Explore agent findings (ranked by expected delta × low risk).
       dispatch).
     - **Expected delta**: 2 s wall (~2.5%). Smaller than P80/P81 but
       mechanical once the batching op exists.
+
+- [ ] P84: CompactPolynomial integration into modular stack — target:
+  `crates/jolt-compute/src/traits.rs` + `crates/jolt-witness/src/polynomials.rs`
+  + `crates/jolt-cpu/src/backend.rs`. Fresh per-stack analysis (iter 84,
+  `iter84_modular_only.json` / `iter84_core_only.json`):
+    - Modular reduce_dense: 2373 calls × 18ms = 40.5s self.
+    - Core's equivalent (BooleanitySumcheckProver::compute_message + others):
+      20 calls × 46ms = 921ms self, **44× less wall**.
+    - Gap driver: core binds small-scalar polys (u8/u32/u64 via
+      CompactPolynomial) directly, deferring promote-to-field to bind-time.
+      Modular materializes every poly as `Vec<F>` and pays full BN254 Fr
+      arithmetic cost for every mul.
+    - **Hypothesis**: add `CompactPolynomial` variant to the device buffer
+      enum, threaded through `Op::Reduce` / `Op::InstanceReduce` /
+      bind handlers. Compiler emits a scalar-type tag per poly; backend
+      dispatches on tag at reduce/bind time. Expected 3-5× speedup on
+      small-scalar reduces, conservatively ~20s wall savings (~15-25%).
+    - **Abstraction risk**: high — requires a scalar-type tag on
+      `PolynomialId` / `Op::*` variants. Handlers branch on tag but stay
+      ≤ 30 LOC per. Multi-iter architectural arc.
+    - **Expected delta**: 20-30 s wall (~25-40%). Largest remaining
+      high-leverage attack.
+
+- [ ] P85: Prefix/suffix decomposition for instruction lookup polys —
+  target: compiler instruction-lookup emission + `crates/jolt-cpu/src/`.
+  Per fresh iter-84 modular-only trace, the sha2-chain workload does not
+  highlight this as a single hot span, but core's trace shows zero time
+  on generic reduce_dense for the instruction-lookup segments because
+  `PrefixSuffixDecomposition` factorization reduces the sumcheck to
+  O(sqrt(N)) work on factor polys instead of O(N) work on the full table.
+    - **Hypothesis**: add `PrefixSuffixSumcheck` handler that the compiler
+      emits for lookup-argument sumchecks. Runtime binds prefix and suffix
+      polys separately; reduce_dense never sees the full K·T tensor.
+      Expected ~10s wall savings on workloads with heavier lookup mix
+      (muldiv, btreemap, sha3); ~2-5s on sha2-chain.
+    - **Abstraction risk**: medium — new Op::PrefixSuffixReduce variant +
+      per-shape handler. Still backend-pluggable via trait method.
+    - **Expected delta**: varies by program; ~5% on sha2-chain, ~15%
+      on muldiv/btreemap.
+
+- [ ] P86: Fresh P81 re-attempt — multi_pair_g2_setup_parallel wrapper
+  dedup. Iter-84 PER-STACK profiling disambiguates prior conflicting
+  claims: **real ratio is 1.80× per-call** (modular 167.2 ms vs
+  core 93.4 ms total; 9036 vs 5001 self-ms across 62 calls each).
+  Memo §7.3(d) 2.65× was incorrect; pre-compaction 1.25× was also
+  incorrect. Gap is ~4.0 s wall (~5% of modular).
+    - **Hypothesis**: dedupe the prepared-G2-point cache in
+      `DoryScheme::commit` + `DoryCommitmentScheme`. Each layer
+      maintains its own HashMap lookup + Vec clone per call; consolidate
+      to a single registry keyed by `(srs_hash, opening_idx)` returning
+      `&PreparedG2Point`.
+    - **Abstraction risk**: low — internal to `crates/jolt-dory/`.
+    - **Expected delta**: 2-4 s wall (~3-5%). Sits right at the accept
+      gate; needs clean execution to clear ±5%.
 
 - [x] P83: Sparse eq_project fast path for RamRaIndicator — target:
   `crates/jolt-zkvm/src/runtime/helpers.rs::materialize_binding`
