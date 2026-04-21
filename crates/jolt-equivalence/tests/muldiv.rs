@@ -507,7 +507,12 @@ fn setup_zkvm_muldiv_with_example(
         });
         table_indices[t] = InstructionLookup::<64>::lookup_table(cycle)
             .map(|t| CoreLookupTables::<64>::enum_index(&t));
-        is_interleaved[t] = CoreInterleavedBits::is_interleaved_operands(&cycle.circuit_flags());
+        // Truncate refactor's 18-flag array to jolt-core's 14-flag shape
+        // (IsFieldMul/Add/Sub/Inv at indices 14..17 don't affect is_interleaved_operands).
+        let cycle_flags = cycle.circuit_flags();
+        let mut core_flags_14 = [false; 14];
+        core_flags_14.copy_from_slice(&cycle_flags[..14]);
+        is_interleaved[t] = CoreInterleavedBits::is_interleaved_operands(&core_flags_14);
     }
     let reg_access = RegisterAccessData {
         rd_indices,
@@ -559,7 +564,11 @@ fn setup_zkvm_muldiv_with_example(
                 rs1: instr.operands.rs1,
                 rs2: instr.operands.rs2,
                 lookup_table,
-                is_interleaved: CoreInterleavedBits::is_interleaved_operands(&circuit_flags),
+                is_interleaved: {
+                    let mut core_flags_14 = [false; 14];
+                    core_flags_14.copy_from_slice(&circuit_flags[..14]);
+                    CoreInterleavedBits::is_interleaved_operands(&core_flags_14)
+                },
                 is_branch: instr_flags[jolt_core::zkvm::instruction::InstructionFlags::Branch],
                 left_is_rs1: instr_flags
                     [jolt_core::zkvm::instruction::InstructionFlags::LeftOperandIsRs1Value],

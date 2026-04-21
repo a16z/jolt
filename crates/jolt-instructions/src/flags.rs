@@ -44,10 +44,18 @@ pub enum CircuitFlags {
     IsFirstInSequence,
     /// Last instruction in a virtual sequence.
     IsLastInSequence,
+    /// BN254 Fr native-field coprocessor: FMUL (`frd = frs1 * frs2` mod p).
+    IsFieldMul,
+    /// BN254 Fr native-field coprocessor: FADD (`frd = frs1 + frs2` mod p).
+    IsFieldAdd,
+    /// BN254 Fr native-field coprocessor: FSUB (`frd = frs1 - frs2` mod p).
+    IsFieldSub,
+    /// BN254 Fr native-field coprocessor: FINV (`frd = frs1^{-1}` mod p; 0 → 0).
+    IsFieldInv,
 }
 
 /// Number of circuit flags.
-pub const NUM_CIRCUIT_FLAGS: usize = 14;
+pub const NUM_CIRCUIT_FLAGS: usize = 18;
 
 /// Boolean flags that are NOT part of Jolt's R1CS constraints.
 ///
@@ -144,10 +152,7 @@ mod tests {
 
     #[test]
     fn circuit_flags_count_matches_enum() {
-        assert_eq!(
-            CircuitFlags::IsLastInSequence as usize + 1,
-            NUM_CIRCUIT_FLAGS
-        );
+        assert_eq!(CircuitFlags::IsFieldInv as usize + 1, NUM_CIRCUIT_FLAGS);
     }
 
     #[test]
