@@ -52,6 +52,7 @@ fn trace_contains_expected_field_op_cycles() {
     let mut n_fmov_f2i = 0usize;
     let mut n_field_op = 0usize;
     let mut field_op_funct3s: Vec<u8> = Vec::new();
+    let mut n_noop = 0usize;
 
     for cycle in &trace {
         match cycle {
@@ -61,8 +62,27 @@ fn trace_contains_expected_field_op_cycles() {
                 n_field_op += 1;
                 field_op_funct3s.push(op.instruction.funct3);
             }
+            Cycle::NoOp => n_noop += 1,
             _ => {}
         }
+    }
+
+    let n_fr_coprocessor = n_fmov_i2f + n_fmov_f2i + n_field_op;
+    let n_integer = trace.len() - n_noop - n_fr_coprocessor;
+
+    eprintln!("=== bn254-fr-smoke-guest trace breakdown ===");
+    eprintln!("  Total cycles         : {}", trace.len());
+    eprintln!("  Integer RV64 cycles  : {n_integer}");
+    eprintln!("  FieldOp cycles       : {n_field_op} (funct3s = {field_op_funct3s:?})");
+    eprintln!("  FMov I2F (load)      : {n_fmov_i2f}");
+    eprintln!("  FMov F2I (store)     : {n_fmov_f2i}");
+    eprintln!("  NoOp padding         : {n_noop}");
+    eprintln!("  Fr coprocessor total : {n_fr_coprocessor}");
+    if n_field_op > 0 {
+        eprintln!(
+            "  Per Fr op (amortized): {:.1} cycles",
+            n_fr_coprocessor as f64 / n_field_op as f64
+        );
     }
 
     // The guest does `(a + b) * a`: one Fr::add (8 I2F + 1 FieldOp + 4 F2I)
@@ -136,6 +156,47 @@ fn limbs_to_bytes(limbs: &[u64; 4]) -> [u8; 32] {
         bytes[i * 8..(i + 1) * 8].copy_from_slice(&l.to_le_bytes());
     }
     bytes
+}
+
+/// Compare cycle counts: our FieldOp-based SDK vs. pure-software ark-bn254.
+/// Both guests compute `(a + b) * a` over BN254 Fr with the same inputs.
+/// Reports absolute counts + speedup ratio.
+#[test]
+fn cycle_count_vs_arkworks() {
+    // Our SDK-based guest (uses FieldOp coprocessor).
+    let (sdk_trace, _) = trace_smoke_guest();
+    let sdk_n_noop = sdk_trace.iter().filter(|c| matches!(c, Cycle::NoOp)).count();
+    let sdk_real = sdk_trace.len() - sdk_n_noop;
+
+    // Pure-arkworks guest (software BN254 Fr).
+    let mut ark_program = Program::new("bn254-fr-arkworks-guest");
+    let ark_inputs = smoke_inputs();
+    let (_, ark_trace, _, _, _) =
+        ark_program.trace_with_field_reg_events(&ark_inputs, &[], &[]);
+    let ark_n_noop = ark_trace.iter().filter(|c| matches!(c, Cycle::NoOp)).count();
+    let ark_real = ark_trace.len() - ark_n_noop;
+
+    eprintln!("\n=== Cycle count comparison: (a + b) * a over BN254 Fr ===");
+    eprintln!(
+        "  SDK (FieldOp coprocessor) : {sdk_real:>7} real cycles ({} total)",
+        sdk_trace.len()
+    );
+    eprintln!(
+        "  ark-bn254 (software)      : {ark_real:>7} real cycles ({} total)",
+        ark_trace.len()
+    );
+    if sdk_real > 0 {
+        let ratio = ark_real as f64 / sdk_real as f64;
+        eprintln!("  Speedup                   : {ratio:.1}×");
+    }
+
+    // Sanity: arkworks should be MUCH heavier than our coprocessor path.
+    // Fr::add + Fr::mul in software is hundreds of u64 muladd cycles; our
+    // path is ~25 (8 I2F + 1 FADD + 4 F2I, ×2 ops).
+    assert!(
+        ark_real > sdk_real,
+        "ark-bn254 should be heavier than SDK; got ark={ark_real}, sdk={sdk_real}"
+    );
 }
 
 fn ark_to_limbs(fr: &ark_bn254::Fr) -> [u64; 4] {

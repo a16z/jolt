@@ -88,6 +88,7 @@ members = [
   "examples/muldiv/guest",
   "examples/bn254-fr-smoke",
   "examples/bn254-fr-smoke/guest",
+  "examples/bn254-fr-arkworks/guest",
   "examples/overflow",
   "examples/overflow/guest",
   "examples/memory-ops",
