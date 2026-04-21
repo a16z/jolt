@@ -17,7 +17,7 @@
 use std::any::Any;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use jolt_compute::{HandleId, HandleShape};
 use jolt_field::Field;
@@ -37,7 +37,13 @@ pub(crate) enum CpuHandleState<F: Field> {
     /// The point is fixed at open time; `bind_handle` on this variant
     /// panics (a future iter may introduce an incremental-bind variant
     /// backed by a Gruen-style prefix structure).
-    Eq(Vec<F>),
+    ///
+    /// Wrapped in `Arc` so long-running parallel consumers
+    /// (e.g. `eq_project_from_handle`) can clone the handle and drop the
+    /// outer `HandleStore` mutex guard before running the work — otherwise
+    /// concurrent handle access across rayon threads serializes on the
+    /// process-global store mutex.
+    Eq(Arc<Vec<F>>),
 }
 
 pub(crate) struct HandleStore {
@@ -65,7 +71,9 @@ impl HandleStore {
             HandleShape::Eq {
                 challenges,
                 order: _,
-            } => CpuHandleState::Eq(jolt_poly::EqPolynomial::<F>::evals(challenges, None)),
+            } => CpuHandleState::Eq(Arc::new(jolt_poly::EqPolynomial::<F>::evals(
+                challenges, None,
+            ))),
             _ => panic!("HandleShape variant not supported by CpuBackend"),
         };
         let id = HandleId(self.next_id.fetch_add(1, Ordering::Relaxed));

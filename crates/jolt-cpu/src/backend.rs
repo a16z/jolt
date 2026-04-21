@@ -790,14 +790,13 @@ impl ComputeBackend for CpuBackend {
         inner_size: usize,
         outer_size: usize,
     ) -> Vec<F> {
-        HandleStore::global().with_state::<F, _>(id, |state| match state {
-            CpuHandleState::Eq(table) => {
-                eq_project_with_table(source_data, table, inner_size, outer_size)
-            }
+        let table = HandleStore::global().with_state::<F, _>(id, |state| match state {
+            CpuHandleState::Eq(table) => table.clone(),
             CpuHandleState::Scratch(_) => {
                 panic!("eq_project_from_handle: handle opened with non-Eq shape")
             }
-        })
+        });
+        eq_project_with_table(source_data, &table, inner_size, outer_size)
     }
 }
 
