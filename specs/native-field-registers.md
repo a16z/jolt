@@ -5,7 +5,7 @@
 | Author(s)   | sdhawan                                                              |
 | Created     | 2026-04-13 (v1) / 2026-04-17 (v2)                                    |
 | Updated     | 2026-04-21                                                           |
-| Status      | Phase 1 DONE; Phase 2a DONE (Stage-2 fold); Phase 2b OPEN; Phase 3 OPEN |
+| Status      | Phase 1 DONE; Phase 2a DONE; Phase 2b R1CS+bridge DONE, trace-integration OPEN; Phase 3 OPEN |
 | Scope       | `refactor/crates` worktree at `jolt-refactor-crates/` only           |
 | See also    | `native-field-registers-plan.md` for the A/B/C execution history     |
 
@@ -428,28 +428,45 @@ Per-Module stages within the FR Twist Module:
   `crates/jolt-compiler/examples/jolt_core_module_with_fieldreg.rs`;
   `modular_self_verify_with_fieldreg` passes alongside baseline.
 
-**Phase 2b — OPEN.** Sequence a guest-callable `Fr::mul/add/sub/inv` pipeline:
+**Phase 2b — PARTIALLY DONE (R1CS + bridge shipped, trace integration remains).**
 
-- `#55` Widen `FieldRegEvent { old, new }` from `u64` to `[u64;4]` in
-  `crates/jolt-witness/src/derived.rs`. Smallest item, prereq for everything
-  else in 2b/3.
-- `v2-P2b-PolyIds` Rename Phase-1 `Ram*` aliases to dedicated
-  `PolynomialId::FieldReg*` variants.
-- `v2-P2b-ISA` Port the v1 FieldOp encoding (opcode 0x0B, funct7 0x40,
-  funct3 selector) into `crates/jolt-instructions/` + tracer hook emitting one
-  `FieldRegEvent` per FieldOp cycle.
-- `v2-P2b-SDK` Port or re-depend on `jolt-inlines-bn254-fr` so a refactor-side
-  guest can call `Fr::{add,sub,mul,inv}`.
-- `v2-P2b-R1CS` Wire FieldOp arithmetic R1CS constraints (`FieldMulCheck`,
-  `FieldAddCheck`, `FieldSubCheck`, `FieldInvCheck`) against Twist-opened
-  `FieldOpA/B/Result` columns.
-- `#49` Verified sequences for FADD/FSUB/FINV — v1 only shipped FMUL with
-  on-chain schoolbook verification.
-- `v2-P2b-E2E` Non-empty-events end-to-end test (honest + adversarial).
-  The first test that actually exercises non-zero Fr values through the full
-  Stage-1/2 R1CS + FR Twist pipeline end-to-end.
-- `v2-P2b-Bench` Port or re-author `examples/bn254-fr-bench` on refactor-crates;
-  measure cycles/Fr-op; target the v1 ~17 cycles/mul asymptote.
+Done:
+- ✅ `#55` Widen `FieldRegEvent { old, new }` from `u64` to `[u64;4]`.
+- ✅ `#58` Dedicated `PolynomialId::FieldReg*` variants (RAM aliases removed).
+- ✅ `#61` FieldOp encoding (opcode 0x0B, funct7 0x40, funct3 selector) +
+  tracer hook + FMov{I2F,F2I} instructions. Event stream plumbed to witness.
+- ✅ `#57` `jolt-inlines-bn254-fr` SDK crate with `Fr::{add,sub,mul,inv}`.
+- ✅ `#59` FieldOp arithmetic R1CS: FADD/FSUB gates (rows 19/20, direct bind
+  against `V_FIELD_OP_{A,B,RESULT}`).
+- ✅ `#49` FMUL/FINV gates (rows 21-26, routed through existing `V_PRODUCT`
+  to avoid bumping `NUM_PRODUCT_CONSTRAINTS`). Unit-tested accept+reject for
+  all four gates; cross-verify with jolt-core still passes.
+- ✅ `#62` Non-empty-events test using synthetic `FieldRegEvent`s (honest +
+  two adversarial mutations). Exercises FR Twist sumcheck, NOT the R1CS
+  gates — those require real FieldOp cycles (see below).
+- ✅ `FieldOpPayload` + `apply_field_op_events_to_r1cs` bridge
+  (`jolt-host`): writes V_FLAG_IS_FIELD_* + V_FIELD_OP_* + V_LEFT/V_RIGHT/
+  V_PRODUCT + V_LOOKUP_OPERAND_* columns from a `FieldOpPayload` stream.
+
+Remaining (blocks on `#60`):
+- `#60` Trace-integrated smoke example. Needs:
+  1. `CycleRow for Cycle` handling of `Instruction::FieldOp` /
+     `Instruction::FMovIntToFieldLimb` / `Instruction::FMovFieldToIntLimb`
+     — currently these hit the `_ => panic!("unsupported instruction")` arm
+     of `with_isa_struct!` in `crates/jolt-host/src/tracer_cycle.rs`.
+  2. Dynamic flag dispatch: `circuit_flags()` on a `FieldOp` cycle must set
+     one of `IsFieldMul/Add/Sub/Inv` based on funct3 (Flags trait is static
+     per-variant; funct3 is dynamic so needs a post-dispatch hook).
+  3. Witness population: `r1cs_cycle_witness` writes default integer-register
+     data. On FieldOp cycles that default is near-zero and `apply_field_op_
+     events_to_r1cs` can overwrite the FieldOp-specific columns cleanly.
+  4. Bench / harness wiring: bench's `run_program_once` calls
+     `apply_field_op_events_to_r1cs` after `build_r1cs_witness`, consuming
+     the tracer's `field_reg_events` stream (already plumbed via `#61`).
+  5. Minimal `#[jolt::provable]` guest calling `Fr::mul/add/sub/inv` in a
+     loop; exercise the inline SDK's assembly emission path.
+  6. Honest accepts + at least one adversarial mutation at the Fr-value level
+     (e.g. tamper `e.new` for an FMUL event, confirm R1CS rejects).
 
 **Phase 3 — OPEN.** Soundness closure:
 
