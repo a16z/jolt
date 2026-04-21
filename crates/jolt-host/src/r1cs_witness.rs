@@ -105,6 +105,13 @@ pub fn r1cs_cycle_witness<C: CycleRow, F: Field>(
     w[V_FLAG_IS_FIRST_IN_SEQUENCE] = F::from_u64(cflags[CircuitFlags::IsFirstInSequence] as u64);
     w[V_FLAG_IS_LAST_IN_SEQUENCE] = F::from_u64(cflags[CircuitFlags::IsLastInSequence] as u64);
 
+    // BN254 Fr coprocessor flags (populated by CycleRow::circuit_flags for
+    // FieldOp cycles based on funct3; zero on every other cycle).
+    w[V_FLAG_IS_FIELD_MUL] = F::from_u64(cflags[CircuitFlags::IsFieldMul] as u64);
+    w[V_FLAG_IS_FIELD_ADD] = F::from_u64(cflags[CircuitFlags::IsFieldAdd] as u64);
+    w[V_FLAG_IS_FIELD_SUB] = F::from_u64(cflags[CircuitFlags::IsFieldSub] as u64);
+    w[V_FLAG_IS_FIELD_INV] = F::from_u64(cflags[CircuitFlags::IsFieldInv] as u64);
+
     // Product factors
     w[V_BRANCH] = F::from_u64(iflags[InstructionFlags::Branch] as u64);
     w[V_SHOULD_BRANCH] = w[V_LOOKUP_OUTPUT] * w[V_BRANCH];
@@ -512,6 +519,93 @@ mod tests {
             matrices.check_witness(&witness[..NUM_VARS_PER_CYCLE]).is_err(),
             "tampered FINV result must violate gate 26"
         );
+    }
+
+    /// Integration: build a small trace `[FieldOp(FADD), NoOp, ...]`, run it
+    /// through `build_r1cs_witness` + `apply_field_op_events_to_r1cs`, and
+    /// confirm the full per-cycle R1CS accepts on the FADD cycle.
+    ///
+    /// Unlike the synthetic-witness tests above, this routes through
+    /// `CycleRow::circuit_flags` for a real `Cycle::FieldOp`, verifying that
+    /// the funct3-driven FieldOp flag lands in the right R1CS column.
+    #[test]
+    fn real_field_op_cycle_through_witness_builder() {
+        use common::constants::RAM_START_ADDRESS;
+        use tracer::instruction::field_op::{FieldOp, FUNCT3_FADD};
+        use tracer::instruction::format::format_r::FormatR;
+        use tracer::instruction::{Cycle, Instruction, RISCVCycle};
+
+        use crate::bytecode::BytecodePreprocessing;
+
+        // Build a minimal trace: one FADD cycle followed by trailing NoOps.
+        let field_addr = RAM_START_ADDRESS;
+        let field_op_instr = FieldOp {
+            address: field_addr,
+            operands: FormatR {
+                rd: 3,
+                rs1: 1,
+                rs2: 2,
+            },
+            funct3: FUNCT3_FADD,
+            virtual_sequence_remaining: None,
+            is_first_in_sequence: false,
+            is_compressed: false,
+        };
+        let trace = vec![
+            Cycle::FieldOp(RISCVCycle {
+                instruction: field_op_instr,
+                register_state: Default::default(),
+                ram_access: (),
+            }),
+            Cycle::NoOp,
+            Cycle::NoOp,
+            Cycle::NoOp,
+        ];
+
+        let bytecode = BytecodePreprocessing::preprocess(
+            vec![Instruction::FieldOp(field_op_instr)],
+            field_addr,
+        );
+
+        let num_vars_padded = NUM_VARS_PER_CYCLE.next_power_of_two();
+        let mut witness = build_r1cs_witness::<Cycle, Fr>(&trace, &bytecode, num_vars_padded);
+
+        // The witness builder fills NextUnexpandedPC from trace[1] (a NoOp at
+        // address 0), which doesn't match the FADD's `UnexpPC + 4`. In a real
+        // trace the next cycle would be the subsequent instruction at
+        // `field_addr + 4`. Patch that here so constraint 16 stays satisfied.
+        witness[V_NEXT_UNEXPANDED_PC] = Fr::from_u64(field_addr + 4);
+
+        // Before applying events: IsFieldAdd is set (from CycleRow), but the
+        // operand columns are still zero. The FADD gate evaluates to
+        // 1·(0+0-0) = 0 — vacuously satisfied.
+        assert_eq!(witness[V_FLAG_IS_FIELD_ADD], Fr::from_u64(1));
+        assert_eq!(witness[V_FIELD_OP_A], Fr::zero());
+        assert_eq!(witness[V_FIELD_OP_B], Fr::zero());
+
+        // Now inject operands via the event bridge.
+        let events = vec![FieldRegEvent {
+            cycle: 0,
+            slot: 3,
+            old: [0; 4],
+            new: [123 + 456, 0, 0, 0],
+            op: Some(FieldOpPayload {
+                funct3: FIELD_OP_FUNCT3_FADD,
+                a: [123, 0, 0, 0],
+                b: [456, 0, 0, 0],
+            }),
+        }];
+        apply_field_op_events_to_r1cs::<Fr>(&mut witness, trace.len(), num_vars_padded, &events);
+
+        assert_eq!(witness[V_FIELD_OP_A], Fr::from_u64(123));
+        assert_eq!(witness[V_FIELD_OP_B], Fr::from_u64(456));
+        assert_eq!(witness[V_FIELD_OP_RESULT], Fr::from_u64(579));
+
+        // R1CS accepts cycle 0 (the FADD).
+        let matrices = rv64_constraints::<Fr>();
+        matrices
+            .check_witness(&witness[..NUM_VARS_PER_CYCLE])
+            .expect("real FieldOp FADD cycle must satisfy the R1CS");
     }
 
     #[test]

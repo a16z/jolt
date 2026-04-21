@@ -8,6 +8,7 @@ use jolt_instructions::flags::{
 };
 use jolt_instructions::traits::Instruction as JoltInstructionTrait;
 use jolt_instructions::LookupTableKind;
+use tracer::instruction::field_op::{FUNCT3_FADD, FUNCT3_FINV, FUNCT3_FMUL, FUNCT3_FSUB};
 use tracer::instruction::{Cycle, Instruction, NormalizedInstruction, RAMAccess};
 
 use crate::CycleRow;
@@ -498,6 +499,13 @@ fn instruction_inputs(
 }
 
 fn static_circuit_flags(instr: &Instruction) -> [bool; NUM_CIRCUIT_FLAGS] {
+    // BN254 Fr coprocessor instructions don't live in the generic ISA-struct
+    // dispatch (their static Flags are dynamic in funct3 for FieldOp, and
+    // FMov{I2F,F2I} are identity with respect to the R1CS flag set). Handle
+    // them up-front before hitting the macro's `_ => panic!` catch-all.
+    if let Some(flags) = field_op_circuit_flags(instr) {
+        return flags;
+    }
     with_isa_struct!(instr, |i| Flags::circuit_flags(&i), noop => {
         let mut f = [false; NUM_CIRCUIT_FLAGS];
         f[CircuitFlags::DoNotUpdateUnexpandedPC] = true;
@@ -506,6 +514,12 @@ fn static_circuit_flags(instr: &Instruction) -> [bool; NUM_CIRCUIT_FLAGS] {
 }
 
 fn static_instruction_flags(instr: &Instruction) -> [bool; NUM_INSTRUCTION_FLAGS] {
+    if field_op_is_fr(instr) {
+        // FR coprocessor cycles: not a noop, no branch, no lookup — all flags
+        // default to false. (IsRdNotZero is set downstream by `circuit_flags`
+        // via the normalized-operand `rd`.)
+        return [false; NUM_INSTRUCTION_FLAGS];
+    }
     with_isa_struct!(instr, |i| Flags::instruction_flags(&i), noop => {
         let mut f = [false; NUM_INSTRUCTION_FLAGS];
         f[InstructionFlags::IsNoop] = true;
@@ -514,7 +528,48 @@ fn static_instruction_flags(instr: &Instruction) -> [bool; NUM_INSTRUCTION_FLAGS
 }
 
 fn lookup_table_kind(instr: &Instruction) -> Option<LookupTableKind> {
+    if field_op_is_fr(instr) {
+        return None;
+    }
     with_isa_struct!(instr, |i| i.lookup_table(), noop => None)
+}
+
+/// True if `instr` is a BN254 Fr coprocessor instruction (`FieldOp` or the
+/// two `FMov{I2F,F2I}` limb bridges). Used to short-circuit flag / lookup
+/// dispatch before the generic ISA-struct macro.
+fn field_op_is_fr(instr: &Instruction) -> bool {
+    matches!(
+        instr,
+        Instruction::FieldOp(_)
+            | Instruction::FMovIntToFieldLimb(_)
+            | Instruction::FMovFieldToIntLimb(_)
+    )
+}
+
+/// Circuit flags for BN254 Fr coprocessor cycles. Returns `Some(flags)` for
+/// FieldOp / FMov* cycles, `None` otherwise (let the caller fall through).
+///
+/// For `FieldOp`, funct3 selects one of `IsFieldMul/Add/Sub/Inv`. FMov cycles
+/// set no circuit flags — they're plain R-type instructions that advance PC
+/// but don't participate in any R1CS gate.
+fn field_op_circuit_flags(instr: &Instruction) -> Option<[bool; NUM_CIRCUIT_FLAGS]> {
+    match instr {
+        Instruction::FieldOp(op) => {
+            let mut f = [false; NUM_CIRCUIT_FLAGS];
+            match op.funct3 {
+                FUNCT3_FMUL => f[CircuitFlags::IsFieldMul] = true,
+                FUNCT3_FADD => f[CircuitFlags::IsFieldAdd] = true,
+                FUNCT3_FSUB => f[CircuitFlags::IsFieldSub] = true,
+                FUNCT3_FINV => f[CircuitFlags::IsFieldInv] = true,
+                other => panic!("invalid FieldOp funct3 in CycleRow: {other:#x}"),
+            }
+            Some(f)
+        }
+        Instruction::FMovIntToFieldLimb(_) | Instruction::FMovFieldToIntLimb(_) => {
+            Some([false; NUM_CIRCUIT_FLAGS])
+        }
+        _ => None,
+    }
 }
 
 fn branch_result(instr: Instruction, rs1: u64, rs2: u64) -> u64 {
@@ -568,5 +623,58 @@ mod tests {
     #[test]
     fn noop_lookup_index_is_zero() {
         assert_eq!(Cycle::noop().lookup_index(), 0);
+    }
+
+    /// Constructing a `Cycle::FieldOp` by hand and routing it through the
+    /// CycleRow methods (pre-fix this panicked at `with_isa_struct!`'s
+    /// catch-all arm).
+    fn make_field_op_cycle(funct3: u8) -> Cycle {
+        use tracer::instruction::field_op::FieldOp;
+        use tracer::instruction::format::format_r::FormatR;
+        use tracer::instruction::RISCVCycle;
+
+        let op = FieldOp {
+            address: 0x1000,
+            operands: FormatR { rd: 3, rs1: 1, rs2: 2 },
+            funct3,
+            virtual_sequence_remaining: None,
+            is_first_in_sequence: false,
+            is_compressed: false,
+        };
+        Cycle::FieldOp(RISCVCycle {
+            instruction: op,
+            register_state: Default::default(),
+            ram_access: (),
+        })
+    }
+
+    #[test]
+    fn field_op_cycle_row_sets_funct3_flag() {
+        for (funct3, want) in [
+            (FUNCT3_FMUL, CircuitFlags::IsFieldMul),
+            (FUNCT3_FADD, CircuitFlags::IsFieldAdd),
+            (FUNCT3_FSUB, CircuitFlags::IsFieldSub),
+            (FUNCT3_FINV, CircuitFlags::IsFieldInv),
+        ] {
+            let cycle = make_field_op_cycle(funct3);
+            let cflags = CycleRow::circuit_flags(&cycle);
+            assert!(cflags[want], "funct3 {funct3:#x}: expected {want:?} set");
+            // Exactly one FieldOp flag should be set on a FieldOp cycle.
+            let field_flag_count = [
+                cflags[CircuitFlags::IsFieldMul],
+                cflags[CircuitFlags::IsFieldAdd],
+                cflags[CircuitFlags::IsFieldSub],
+                cflags[CircuitFlags::IsFieldInv],
+            ]
+            .iter()
+            .filter(|&&b| b)
+            .count();
+            assert_eq!(field_flag_count, 1, "exactly one FieldOp flag per cycle");
+            // Not a noop, not virtual, and no lookup.
+            assert!(!cycle.is_noop());
+            let iflags = CycleRow::instruction_flags(&cycle);
+            assert!(!iflags[InstructionFlags::IsNoop]);
+            assert!(cycle.lookup_table_index().is_none());
+        }
     }
 }
