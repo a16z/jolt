@@ -88,16 +88,61 @@ fn scratch_handle_ids_unique_under_par() {
     }
 }
 
-/// `HandleShape::Eq` is declared on the trait but not yet implemented —
-/// attempts to open one panic. This test pins that contract so that the iter
-/// that wires Eq has a clear "remove this test" marker.
+/// `HandleShape::Eq` builds the full eq table over `challenges` at open
+/// time; queries must match `EqPolynomial::evals` index-for-index.
 #[test]
-#[should_panic(expected = "HandleShape::Eq")]
-fn eq_shape_panics_until_wired() {
+fn eq_shape_queries_match_eq_polynomial_evals() {
+    use jolt_poly::EqPolynomial;
+
     let backend = CpuBackend;
-    let challenges = make_challenges(4);
-    let _ = backend.open_handle::<Fr>(HandleShape::Eq {
+    for dim in [1usize, 4, 7, 10] {
+        let challenges = make_challenges(dim);
+        let expected = EqPolynomial::<Fr>::evals(&challenges, None);
+
+        let id = backend.open_handle::<Fr>(HandleShape::Eq {
+            challenges: &challenges,
+            order: BindingOrder::LowToHigh,
+        });
+        for (i, &want) in expected.iter().enumerate() {
+            assert_eq!(backend.query_handle::<Fr>(id, i), want, "dim={dim} i={i}");
+        }
+        backend.close_handle(id);
+    }
+}
+
+/// A single Eq handle is safe to query concurrently across Rayon threads
+/// (no mutation after open) — exercises the shared-read path.
+#[test]
+fn eq_shape_parallel_queries() {
+    use jolt_poly::EqPolynomial;
+
+    let backend = CpuBackend;
+    let challenges = make_challenges(10);
+    let expected = EqPolynomial::<Fr>::evals(&challenges, None);
+
+    let id = backend.open_handle::<Fr>(HandleShape::Eq {
         challenges: &challenges,
         order: BindingOrder::LowToHigh,
     });
+    let mismatches: usize = (0..expected.len())
+        .into_par_iter()
+        .filter(|&i| backend.query_handle::<Fr>(id, i) != expected[i])
+        .count();
+    assert_eq!(mismatches, 0);
+    backend.close_handle(id);
+}
+
+/// `bind_handle` is unsupported on the Eq variant — the point is fixed at
+/// open time. Pins the contract so the hot-path wiring iter doesn't regress
+/// it accidentally.
+#[test]
+#[should_panic(expected = "Eq variant")]
+fn eq_shape_bind_panics() {
+    let backend = CpuBackend;
+    let challenges = make_challenges(4);
+    let id = backend.open_handle::<Fr>(HandleShape::Eq {
+        challenges: &challenges,
+        order: BindingOrder::LowToHigh,
+    });
+    backend.bind_handle::<Fr>(id, 0, Fr::from_u64(7));
 }

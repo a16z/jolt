@@ -32,7 +32,48 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 17 (iter 73 P76-B infra; iter 72 P76-A infra stub; iter 71 P75-B infra stub; iter 70 P75-A infra-only commit; iter 69 design-only; iter 68 P73 reverted; iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+- **Stall counter**: 18 (iter 74 P76-C infra; iter 73 P76-B infra; iter 72 P76-A infra stub; iter 71 P75-B infra stub; iter 70 P75-A infra-only commit; iter 69 design-only; iter 68 P73 reverted; iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+
+  iter 74 P76-C INFRA — no hot-path wiring yet. Extended
+  `CpuHandleState` with an `Eq(Vec<F>)` variant: `HandleShape::Eq
+  { challenges, order }` opens a handle whose interior is a
+  pre-built `EqPolynomial::<F>::evals(challenges, None)` table.
+  `query_handle(id, idx)` returns the `idx`-th table entry;
+  `bind_handle` on this variant panics (the point is fixed at
+  open — a future iter may add an incremental-bind variant
+  backed by a Gruen-style prefix structure). Tests:
+  `eq_shape_queries_match_eq_polynomial_evals` compares
+  query_handle output index-for-index against
+  `EqPolynomial::evals` for dims {1,4,7,10};
+  `eq_shape_parallel_queries` stresses concurrent reads under
+  `par_iter` at dim=10 (K=1024 entries); `eq_shape_bind_panics`
+  pins the bind-unsupported contract so the wire iter can't
+  silently regress it. Dropped the `eq_shape_panics_until_wired`
+  test since the Eq variant now opens. Total
+  handle_scratch_roundtrip: 6/6 PASS; full jolt-equivalence
+  49/49 PASS (was 47/47 → +2 from the new Eq tests after
+  replacing the until-wired test). Clippy (-D warnings):
+  modular set + jolt-core host + jolt-core host,zk all clean.
+  Perf gate skipped — this change adds a handle variant but
+  nothing opens an Eq handle from any compiled op yet.
+  Ratchet unchanged 70762.94 ms. **Next iter 75 P76-D** (the
+  first iter that can land a measurable perf win on this P-arc):
+  1. Add `CpuBackend::eq_project_via_handle(handle, source,
+  inner_size, outer_size) -> Vec<F>` that reads the eq table
+  from the handle (no rebuild). 2. Extend the runtime with an
+  `Op::OpenEqHandle { poly_id, challenges }` that opens at a
+  point and stores `HandleId` in `state.eq_handles:
+  HashMap<PolynomialId, HandleId>`. 3. Rework the `mb::EqProject`
+  handler in `crates/jolt-zkvm/src/runtime/helpers.rs:126` to
+  look up or open-on-demand a handle keyed on `chs` content,
+  then dispatch to `eq_project_via_handle`. 4. On compiler side,
+  teach `InputBinding::EqProject` lowering to emit `Op::OpenEqHandle`
+  before the first materialize and `Op::CloseEqHandle` after the
+  last use. Measure: expected saving = (calls × eq_table_build_ms).
+  Report says builds are ~9ms × 82 calls = ~740ms if all
+  distinct points, but if repeated points exist the saving
+  scales with repetition factor. Profile first to confirm
+  repetition count before wiring.
 
   iter 73 P76-B INFRA — no hot-path wiring yet. Stood up the
   per-backend `HandleStore` infrastructure inside `CpuBackend`:

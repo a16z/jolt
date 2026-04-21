@@ -821,12 +821,16 @@ impl ComputeBackend for CpuBackend {
             CpuHandleState::Scratch(v) => {
                 v[round] = r;
             }
+            CpuHandleState::Eq(_) => {
+                panic!("bind_handle: Eq variant has a fixed point set at open time")
+            }
         });
     }
 
     fn query_handle<F: Field>(&self, id: HandleId, idx: usize) -> F {
         HandleStore::global().with_state::<F, _>(id, |state| match state {
             CpuHandleState::Scratch(v) => v[idx],
+            CpuHandleState::Eq(table) => table[idx],
         })
     }
 

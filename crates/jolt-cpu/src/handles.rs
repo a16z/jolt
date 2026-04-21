@@ -27,6 +27,17 @@ pub(crate) enum CpuHandleState<F: Field> {
     /// A simple scratchpad; [`CpuBackend::bind_handle`] writes round `r`
     /// values into slot `round`, [`CpuBackend::query_handle`] reads them out.
     Scratch(Vec<F>),
+    /// A pre-built equality polynomial evaluation table over a fixed point.
+    ///
+    /// Built once at [`HandleStore::open`] time via
+    /// `jolt_poly::EqPolynomial::evals(point, None)`. Shared across any
+    /// number of `query_handle` calls — amortizes the build cost whenever
+    /// the same eq point is reused by multiple kernel invocations.
+    ///
+    /// The point is fixed at open time; `bind_handle` on this variant
+    /// panics (a future iter may introduce an incremental-bind variant
+    /// backed by a Gruen-style prefix structure).
+    Eq(Vec<F>),
 }
 
 pub(crate) struct HandleStore {
@@ -51,9 +62,10 @@ impl HandleStore {
     pub(crate) fn open<F: Field>(&self, shape: HandleShape<'_, F>) -> HandleId {
         let state: CpuHandleState<F> = match shape {
             HandleShape::Scratch { size } => CpuHandleState::Scratch(vec![F::zero(); size]),
-            HandleShape::Eq { .. } => {
-                panic!("HandleShape::Eq: CpuBackend wiring lands in a follow-on iter")
-            }
+            HandleShape::Eq {
+                challenges,
+                order: _,
+            } => CpuHandleState::Eq(jolt_poly::EqPolynomial::<F>::evals(challenges, None)),
             _ => panic!("HandleShape variant not supported by CpuBackend"),
         };
         let id = HandleId(self.next_id.fetch_add(1, Ordering::Relaxed));
