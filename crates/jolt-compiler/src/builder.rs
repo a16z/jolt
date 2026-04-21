@@ -96,6 +96,26 @@ impl ModuleBuilder {
         id
     }
 
+    /// Variant of `add_poly` that sets `committed_num_vars` — tells the PCS
+    /// to zero-pad the polynomial to `2^committed_num_vars` elements before
+    /// opening. Used for dense cycle-only polys committed on the full grid.
+    pub fn add_padded_poly(
+        &mut self,
+        id: PolynomialId,
+        name: &str,
+        kind: PolyKind,
+        num_vars: usize,
+        committed_num_vars: usize,
+    ) -> PolynomialId {
+        self.polys.push(PolyDecl {
+            name: name.to_string(),
+            kind,
+            num_elements: 1 << num_vars,
+            committed_num_vars: Some(committed_num_vars),
+        });
+        id
+    }
+
     // Challenge management
 
     /// Allocate a single challenge slot and return its index.

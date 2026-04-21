@@ -1,0 +1,479 @@
+# Spec v2: BN254 Fr Native-Field Coprocessor (refactor-crates)
+
+| Field       | Value                                                                |
+|-------------|----------------------------------------------------------------------|
+| Author(s)   | sdhawan                                                              |
+| Created     | 2026-04-13 (v1) / 2026-04-17 (v2)                                    |
+| Updated     | 2026-04-21                                                           |
+| Status      | Phase 1 DONE; Phase 2a DONE (Stage-2 fold); Phase 2b OPEN; Phase 3 OPEN |
+| Scope       | `refactor/crates` worktree at `jolt-refactor-crates/` only           |
+| See also    | `native-field-registers-plan.md` for the A/B/C execution history     |
+
+## Summary
+
+Goal: a BN254 Fr coprocessor for the refactor-crates architecture. A single-cycle
+`FieldOp` instruction operates on a dedicated 16 × 256-bit field-register file; Fr
+values cross the integer/field boundary via per-limb moves
+(`FMovIntToFieldLimb` / `FMovFieldToIntLimb`). Target asymptote: ~17 traced
+cycles per `Fr::mul`.
+
+Per Markos's framing: **"field inline is just another read/write memory-checking
+instance."** The FR Twist is authored as a standalone `Module` in the refactor's
+`ModuleBuilder` / `Schedule` / `ClaimFormula` API — a sibling to the existing RAM
+and Registers Twists — then glued into the Jolt protocol as an extra Stage-2
+batched instance. Soundness closure (binding the Fr values the Twist commits to
+against the u64 limbs the guest actually passed) is a single contained bridge
+sumcheck, authored as its own Module in Phase 3.
+
+The refactor's architecture eliminates two structural issues by construction: the
+`Cycle<T>`-typed per-instruction trace gives a global cycle index natively, and
+F-valued `SparseRow` + unified `ClaimFormula` make the prover/verifier Az·Bz
+reconstruction symmetric. The remaining work is a design problem — authoring the
+bridge sumcheck and the associated R1CS constraints — not a representational
+hunt.
+
+## Intent
+
+### Goal
+
+Deliver a BN254 Fr coprocessor on refactor-crates — single-cycle `FieldOp`
+over a 16 × 256-bit field-register file, limb-register SDK ABI, sound binding
+from integer-register limbs to Fr values — in three phases:
+
+- **Phase 1 — Standalone Twist Module.** Author a `jolt_compiler::Module` that is
+  *only* the FieldReg Twist: 16 slots × 256-bit cells, per-cycle read/write events,
+  two-phase segmented sumcheck (cycle-binding, then address-binding), claim
+  reduction stage, standalone prove/verify harness on `MockCommitmentScheme`.
+  Passes honest-accepts and adversarial-rejects tests. No CPU, no RISC-V, no R1CS.
+  **DONE** (Plans A + C).
+- **Phase 2a — Protocol fold.** Fold the Phase 1 Module into the main Jolt
+  protocol Module as an additional Twist instance alongside RAM and Registers.
+  Runs through prove/verify on a synthetic empty-events trace alongside the
+  baseline muldiv. **DONE** (Plan B).
+- **Phase 2b — Real Fr ingestion.** Widen `FieldRegEvent` to `[u64;4]`, port the
+  FieldOp instruction + tracer hook + BN254 Fr inline SDK, wire FieldOp
+  arithmetic R1CS constraints, land an honest-accepts + adversarial-rejects
+  test on a guest program that actually calls `Fr::mul/add/sub/inv`. **OPEN.**
+- **Phase 3 — Limb-to-Fr bridge.** Author a single bridge sumcheck that proves
+  `FieldOpA / FieldOpB` on each FieldOp cycle equals `Σ_k limbs_k · 2^(64k)`
+  where `limbs_k` are the u64s tracked by the Registers Twist via
+  `FMovIntToFieldLimb`. The only Fr-in-R1CS point of contact; a single
+  contained Module. Closes the soundness gap. **OPEN.**
+
+### Invariants
+
+1. **Natural-form representation.** FieldReg cells store natural-form `[u64; 4]`.
+   The R1CS interface uses `F::from_natural_limbs(limbs)` everywhere
+   field-register-adjacent. No apparent-Montgomery reinterpretation.
+2. **Single access per cycle.** Each Fr SDK source op decomposes into a sequence
+   of single-cycle guest instructions. No Fr-coprocessor cycle emits more than
+   one FieldReg event.
+3. **FieldReg Twist consistency.** Every read of slot `f` at cycle `t` returns
+   the last value written to `f` before `t`. Phase 1's Module proves this.
+4. **Prover/verifier claim/constraint synchronization.** Enforced mechanically
+   by the `ClaimFormula` / `SumcheckDef` pairing — both sides evaluate the same
+   `Formula` against the same `Schedule`/`VerifierSchedule`. No hand-mirroring
+   of `input_claim` / `input_claim_constraint`.
+5. **Acceptance is load-bearing.** "Honest witnesses accept, mutated witnesses
+   reject" is the binary pass/fail for every Phase.
+
+### Non-goals
+
+- 32-byte atomic memory loads (RAM Twist stays u64-grain).
+- Multi-field coprocessor — BN254 Fr only.
+- G1/G2/Gt operations or pairings.
+- Rust-compiler-managed field-register allocation.
+- Recursive Jolt verifier.
+
+## Architecture — the refactor's Module pattern
+
+### Why the refactor makes this tractable
+
+A new coprocessor Twist on the refactor is a self-contained Module instead of a
+cross-cutting edit. The Module pattern gives us:
+
+- **Protocol / Module / Executable pipeline** (`jolt-compiler/`): `Protocol::new`
+  declares dims/polys/sumchecks; `compile()` produces a `Module` (a `Schedule` of
+  `Op`s + `VerifierSchedule`); `link(module, backend)` produces a backend-specific
+  `Executable` whose `prove()` calls are mechanical dispatch.
+- **Uniform ClaimFormula**: a single `Formula` carries the sumcheck polynomial
+  identity for both prover evaluation and verifier reconstruction — no separate
+  "streaming path" vs "structural path" to keep in sync.
+- **Per-instruction `Cycle<T>` buffers**: each instruction's tracer emits a
+  typed per-cycle record; global cycle indices are tracked by the outer `Trace`
+  container — no per-burst collision hazard.
+- **BufferProvider** is the single extension point for witness ingestion. A new
+  coprocessor Twist implements BufferProvider's three methods (materialize, release,
+  lookup_trace) and hands its output to the Module via the same `Polynomials`
+  entry-point the main Jolt protocol already uses.
+- **Mock commitment scheme** (`jolt-openings::mock`) allows standalone
+  prove→verify loops without Dory plumbing. This is what makes Phase 1 feasible.
+
+### The Module authoring pattern (template: RAM Twist)
+
+Primary reference: `crates/jolt-compiler/examples/jolt_core_module.rs` lines
+~1681–2230 (RAM Twist Stage 2 module construction) and ~3137–3723 (Register Twist
+module construction). The RAM Twist is the closer analog — single access per cycle,
+no separate read/write address. Pattern:
+
+```rust
+// 1. Declare polynomials and challenges on the ModuleBuilder
+let inc = builder.add_poly(PolynomialId::RamInc, "Inc", PolyKind::Committed, log_t);
+let val = builder.add_poly(PolynomialId::RamVal, "Val", PolyKind::Virtual, log_k);
+let wa  = builder.add_poly(PolynomialId::RamWa,  "Wa",  PolyKind::Virtual, log_t+log_k);
+// ... Ra, ReadValue, WriteValue ...
+let ch_gamma_rw = builder.add_challenge("rw_gamma");
+let ch_tau_rw   = builder.add_challenge("rw_tau");
+
+// 2. Phase-1 cycle-binding kernel
+kernels.push(KernelDef {
+    spec: KernelSpec {
+        formula: Formula::from_terms(vec![
+            ProductTerm { coefficient: 1, factors: vec![
+                Factor::Input(EQ_TABLE), Factor::Input(WA), Factor::Input(INC),
+            ]},
+            // γ-batched Ra · (ReadValue) term ...
+        ]),
+        num_evals: params.rw_checking_degree + 1,
+        iteration: Iteration::Dense,
+        binding_order: BindingOrder::LowToHigh,
+        gruen_hint: Some(GruenHint {
+            eq_input: EQ_TABLE,
+            eq_challenges: rw_cycle_eq_challenges.clone(),
+            q_lincombo: LinComboQ {
+                a_input: WA, b_input: INC, c_input: RA,
+                gamma_challenge: ch_gamma_rw,
+            },
+        }),
+    },
+    inputs: vec![/* EqTable, Provided(Wa), Provided(Inc), Provided(Ra), ... */],
+    num_rounds: params.log_t,
+    instance_config: None,
+});
+
+// 3. ScalarCapture at phase boundary
+schedule.push(Op::ScalarCapture { ... });
+
+// 4. Phase-2 address-binding kernel (analogous structure over log_k rounds)
+//    ...
+
+// 5. ValEvaluation stage (single sumcheck over Val MLE)
+//    ...
+
+// 6. ClaimReduction stage (final reduction of openings)
+//    ...
+
+// 7. Hand Module off to link() and prove() via the standard harness
+```
+
+### The standalone prove/verify harness (template: e2e.rs)
+
+Primary reference: `crates/jolt-zkvm/tests/e2e.rs` (prove_verify_roundtrip at L81).
+The four-step API:
+
+```rust
+let module = compile(&protocol, &params, &config, &poly_ids)?;
+let backend = CpuBackend;
+let executable = link(module, &backend);
+
+let mut polys = Polynomials::<Fr>::new(poly_config);
+polys.push(&[CycleInput::PADDING; 4]);
+polys.finish();
+
+let mut provider = ProverData::new(&mut polys, r1cs, derived, preprocessed);
+
+let mut transcript = Blake2bTranscript::<Fr>::new(TRANSCRIPT_LABEL);
+let proof = prove::<_, _, _, MockPCS>(
+    &executable, &mut provider, &backend, &(), &mut transcript, prover_config,
+);
+
+let vk = JoltVerifyingKey::<Fr, MockPCS>::new(&executable.module, (), r1cs_key);
+verify(&vk, &proof, &[0u8; 32]).expect("proof should verify");
+```
+
+Phase 1 will mirror this exact shape with `build_field_register_twist_protocol()`
+replacing `build_protocol()` and a dedicated `FrRegStandaloneProvider` replacing the
+toy `Polynomials::push([CycleInput::PADDING; 4])` filler.
+
+## Phase 1 — Standalone FieldReg Twist Module (DONE 2026-04-20)
+
+Shipped in Plans A + C of `native-field-registers-plan.md`. Passes 11/11
+honest + adversarial acceptance tests (5 adversarial mutations across Inc, Ra,
+Val, ReadValue, WriteValue, plus commitment tampering). Witness routed through
+the canonical `DerivedSource::with_field_reg` + `FieldRegConfig` path — no
+test-bypass provider.
+
+### Module shape
+
+Three stages, mirroring the RAM Twist structure scoped to FieldReg semantics:
+
+1. **`FrRegClaimReduction`** — reduces the Twist's exposed claims (ReadValue,
+   WriteValue, Val openings at the challenge point). In Phase 1 the test
+   harness asserts the claim equals ground-truth from the witness.
+2. **`FrRegReadWriteChecking`** — the heart. Two-phase segmented sumcheck:
+   ```
+   WriteValue(j) = Wa(j) · (Val(j) + Inc(j))
+   ReadValue(j)  = Ra(j) · Val(j)
+   ```
+   γ-batched across the two. Phase 1 binds cycles first (log_T rounds),
+   captures scalar, then binds addresses (log_K = 4 rounds).
+3. **`FrRegValEvaluation`** — evaluates the Val MLE at the Stage-2 binding
+   point; standard increment-over-LT-of-cycle sum.
+
+### Dimensions
+
+- `K = 16` slots (log_K = 4).
+- `T = 2^log_T` cycles. Test exercises `log_T ∈ {4, 10}`.
+- Cell width: 256 bits, represented as one `F` (Fr scalar).
+- Event shape: at most one write + up to two reads per cycle, flattened to a
+  sparse matrix of (cycle, slot, value, is_write) triples.
+
+### PolynomialId aliasing (Phase-1-only)
+
+Phase 1 repurposes the existing `Ram*` `PolynomialId` variants — the FR Module
+is structurally identical to a single RAM Twist. Phase 2b renames to dedicated
+`FieldRegInc / FieldRegVal / FieldRegWa / FieldRegRa / FieldRegReadValue /
+FieldRegWriteValue` so both Twists coexist cleanly (partial rename already
+shipped; audit and finish is a 2b item).
+
+### Files
+
+```
+crates/jolt-compiler/examples/field_register_module.rs         — Protocol + Module authoring
+crates/jolt-equivalence/tests/field_register_twist_standalone.rs — Harness + 11 tests
+crates/jolt-witness/src/derived.rs                             — FieldRegConfig, FieldRegEvent
+```
+
+### Acceptance gate
+
+`cargo nextest run -p jolt-equivalence --test field_register_twist_standalone`
+must be green. This is the regression signal Phase 2+ rely on.
+
+## Phase 2 — Glue into the main Jolt Module
+
+Phase 2 breaks into two halves. **Phase 2a (protocol fold)** is DONE. **Phase 2b
+(actually running Fr arithmetic)** is where the remaining refactor-only work lives.
+
+### Phase 2a — Stage-2 protocol fold (DONE 2026-04-21)
+
+Shipped in Plan B of `native-field-registers-plan.md` via
+`crates/jolt-compiler/examples/jolt_core_module_with_fieldreg.rs`. FR Twist
+is folded as the 6th Stage-2 batched instance with:
+
+- pre-sumcheck γ_fr squeeze + RV/WV bind+evaluate+record+absorb,
+- 2-phase kernel (Gruen-hinted segmented cycle phase + Dense address phase with scalar
+  captures for eq_bound/inc_bound),
+- `first_active_round = stage2_max_rounds - (log_t + log_k_chunk)`, `batch_coeff` = new
+  External slot,
+- verifier mirror with `fr_output_check` referencing `EqEvalSlice{offset=log_k_chunk}`
+  and `SE_FR_{RA,VAL,INC}` (SE_BASE=3 after RV/WV pre-batch evals).
+
+Tests: `modular_self_verify_with_fieldreg` passes; baseline `modular_self_verify`
+and all 11 standalone FR tests still pass. Clippy clean.
+
+What this proves: the FR Twist sumcheck protocol is sound when driven from a
+synthetic empty-events `FieldRegConfig`. What it does NOT yet prove: that the
+Twist correctly ingests real Fr values emitted by a guest program — that's
+Phase 2b.
+
+### Phase 2b — Real Fr ingestion + FieldOp arithmetic
+
+Phase 2a landed the witness+sumcheck plumbing with `FieldRegConfig::events = vec![]`.
+Phase 2b fills in everything required for a guest `#[jolt::provable]` function
+that actually calls `Fr::mul/add/sub/inv` to produce a proof:
+
+1. **Widen `FieldRegEvent` from `u64` → `[u64; 4]`.** Current shape in
+   `crates/jolt-witness/src/derived.rs` caps Fr values at `< 2^64`. Update
+   `compute_read_value` / `compute_write_value` / materialization to store
+   natural-form 256-bit limbs. Commit as a single `F` via
+   `F::from_natural_limbs(limbs)` to preserve the Invariant-1 convention.
+   (Equivalent to Phase 2a's "deferred items".)
+2. **Dedicated `PolynomialId` variants.** Rename the Phase-1 `Ram*` aliases to
+   `FieldRegInc / FieldRegVal / FieldRegWa / FieldRegRa / FieldRegReadValue /
+   FieldRegWriteValue` so RAM and FieldReg Twists coexist cleanly. Already
+   partially shipped — audit and finish.
+3. **FieldOp instruction + tracer hook.** `crates/jolt-instructions/` currently
+   has no FieldOp variant. Author the RISC-V encoding (opcode `0x0B`, funct7
+   `0x40`, funct3 selecting FMUL/FADD/FSUB/FINV/FMov{I2F,F2I}) and the tracer
+   hook that emits one `FieldRegEvent` per FieldOp cycle via the
+   `RISCVCycle<T>` per-instruction record. Global cycle indexing is native on
+   this architecture so events land at their real trace positions by
+   construction.
+4. **BN254 Fr inline SDK.** Provide a guest-side `Fr::{add,sub,mul,inv}` that
+   emits the limb-register ABI — Fr values live in integer registers as
+   `[u64;4]`, `FMovIntToFieldLimb` loads them into `field_regs[frd]` four
+   cycles at a time, `FieldOp` operates in one cycle, `FMovFieldToIntLimb`
+   reads them back. The host-side sequence builder needs to supply the
+   constraint chain for on-chain verification of FMUL (the schoolbook form
+   below); FADD/FSUB/FINV can ship advice-only initially and gain verified
+   sequences in step 6.
+5. **FieldOp arithmetic R1CS constraints.** Wire `FieldMulCheck` /
+   `FieldAddCheck` / `FieldSubCheck` / `FieldInvCheck` against the Twist-opened
+   `FieldOpA / FieldOpB / FieldOpResult` columns. FMUL uses the schoolbook
+   `a·b + w·p = 2^256·w + c` form; FADD is `a + b − c + k·p = 0` with
+   `k ∈ {0, 1}`; FSUB analogous; FINV is `a·c − 1 + k·p = 0`. Fr-valued
+   SparseRow constraints, consistent with how the refactor handles other
+   Twists.
+6. **Non-empty-events end-to-end test.** Synthesize a guest trace (or a
+   synthetic `FieldRegConfig` with non-zero events) exercising FMUL/FADD/FSUB
+   over real Fr values, run the full prove/verify pipeline, assert honest
+   accepts and adversarial mutation rejects. Until this lands green, every
+   claim about Fr-in-R1CS correctness is architectural reasoning, not
+   evidence.
+7. **Smoke example.** A minimal `#[jolt::provable]` guest that calls `Fr::mul`
+   in a loop; measure cycles/Fr-op. Target asymptote: ~17 cycles/mul.
+8. **Lint + format clean** across the workspace.
+
+## Phase 3 — Limb-to-Fr bridge sumcheck
+
+Once Phase 2b has the FieldReg Twist ingesting real Fr events and FieldOp
+arithmetic constraints firing, the remaining soundness gap is the binding
+between the Fr values the Twist commits to and the u64 limbs the guest
+actually passed via `FMovIntToFieldLimb`. Without this binding, a malicious
+prover can commit arbitrary self-consistent Fr values into `FieldRegInc` and
+matching `FieldOpA/B/Result` openings — all Twist sumchecks and FieldOp R1CS
+rows check out, but nothing ties the result to the guest-provided limbs.
+
+Close the gap with a dedicated bridge Module (new `SumcheckId::FieldRegLimbBridge`,
+Stage 3): a single degree-1 sumcheck over cycles, gated by a FieldOp-flag
+selector, proving
+
+```
+FieldRegVal(r_slot, r_cycle)  ==  Σ_{k=0..3}  RegVal(limb_reg_k, r_cycle) · 2^{64·k}
+```
+
+where `limb_reg_k` is the integer register bound by the k-th `FMovIntToFieldLimb`
+cycle in the 4-cycle group preceding the FieldOp cycle. The bridge consumes
+already-opened claims from the Registers Twist and the FieldReg Twist at their
+common `r_cycle` — no new commitments needed.
+
+The refactor's Module-on-Module architecture makes this a single contained file,
+not a distributed asymmetry to hunt. It is explicitly the soundness-closing step
+for the native-field-inline feature; every downstream security property (ECDSA
+verify, recursive SNARK, pairing-based protocols) depends on it.
+
+## Design decisions
+
+### Core
+
+- **Natural-form `[u64;4]` representation** for FieldReg cells and the R1CS
+  interface. `F::from_natural_limbs(limbs)` everywhere field-register-adjacent.
+  No apparent-Montgomery reinterpretation.
+- **Limb-register SDK ABI.** Fr values cross the SDK boundary as `[u64;4]`
+  through integer registers — no RAM round-trip. Enables the ~17 cycles/mul
+  target.
+- **16 × 256-bit FieldReg file, single-cycle FieldOp.** One write + up to two
+  reads per FieldOp cycle. No Fr-coprocessor cycle emits more than one
+  `FieldRegEvent`.
+- **MSB-first limb load order** for `FMovIntToFieldLimb` — matches the Horner
+  recurrence that Phase 3's bridge sumcheck will prove.
+- **Standalone Module first, then glue.** Phase 1 proves the Twist in isolation
+  with honest+adversarial tests; Phase 2a folds it into the main protocol;
+  Phase 2b wires real Fr arithmetic. Each layer has an independent pass/fail
+  signal.
+- **Soundness closure is one contained Module** — the Phase 3 limb-to-Fr
+  bridge. Not a distributed fix.
+- **Adversarial-rejects tests are mandatory acceptance criteria** at every
+  phase. Honest-only tests do not count.
+
+### Out of scope
+
+- **FLOAD / FSTORE / FLoadHorner ISA encodings.** Memory-backed Fr is not
+  needed for the limb-register SDK ABI. Not reintroducing unless a concrete
+  consumer demands it.
+- **Fr-through-registers across mul chains.** Getting below ~17 cycles/mul
+  toward the ~250× theoretical ceiling depends on compiler-managed
+  field-register allocation. Revisit after Phase 3 lands.
+
+## Naming (Phase 2b target)
+
+Phase 2b introduces dedicated `PolynomialId` variants so RAM and FieldReg Twists
+coexist without aliasing:
+
+- `PolynomialId::FieldRegInc` — Twist Inc poly (committed, dense, cycle-major)
+- `PolynomialId::FieldRegVal` — Twist Val poly (virtual, sparse)
+- `PolynomialId::FieldRegWa` / `FieldRegRa` — write and read address one-hot polys
+- `PolynomialId::FieldRegReadValue` / `FieldRegWriteValue` — Fr values read/written
+  on FieldOp and FMov cycles
+
+Per-Module stages within the FR Twist Module:
+- `FrRegReadWriteChecking` — the 2-phase segmented sumcheck (Phase 1)
+- `FrRegValEvaluation` — Val MLE eval at the Stage-2 binding point
+- `FrRegClaimReduction` — claim reduction stage
+
+## References
+
+### Primary refactor-side files
+
+- `crates/jolt-compiler/examples/jolt_core_module.rs` — RAM Twist template
+  (L1681–2230), Register Twist template (L3137–3723).
+- `crates/jolt-compiler/src/builder.rs` — `ModuleBuilder` API.
+- `crates/jolt-zkvm/tests/e2e.rs` — standalone prove/verify harness template.
+- `crates/jolt-openings/src/mock.rs` — `MockCommitmentScheme` used for Phase 1.
+- `crates/jolt-witness/src/lib.rs` — `Polynomials`, `BufferProvider`,
+  `CycleInput`.
+- `crates/jolt-verifier/src/lib.rs` — `JoltVerifyingKey`, `verify`,
+  `ProverConfig`, `TRANSCRIPT_LABEL`.
+- `crates/jolt-zkvm/src/prove.rs` — `prove()` entry point.
+- `crates/jolt-cpu/src/lib.rs` — `CpuBackend` used by Phase 1.
+
+### Open tasks
+
+**Phase 1 — DONE.**
+- ✅ Standalone FR Twist Module + 11-test honest/adversarial harness
+  (`crates/jolt-equivalence/tests/field_register_twist_standalone.rs`).
+
+**Phase 2a — DONE.**
+- ✅ FR folded as 6th Stage-2 batched instance in
+  `crates/jolt-compiler/examples/jolt_core_module_with_fieldreg.rs`;
+  `modular_self_verify_with_fieldreg` passes alongside baseline.
+
+**Phase 2b — OPEN.** Sequence a guest-callable `Fr::mul/add/sub/inv` pipeline:
+
+- `#55` Widen `FieldRegEvent { old, new }` from `u64` to `[u64;4]` in
+  `crates/jolt-witness/src/derived.rs`. Smallest item, prereq for everything
+  else in 2b/3.
+- `v2-P2b-PolyIds` Rename Phase-1 `Ram*` aliases to dedicated
+  `PolynomialId::FieldReg*` variants.
+- `v2-P2b-ISA` Port the v1 FieldOp encoding (opcode 0x0B, funct7 0x40,
+  funct3 selector) into `crates/jolt-instructions/` + tracer hook emitting one
+  `FieldRegEvent` per FieldOp cycle.
+- `v2-P2b-SDK` Port or re-depend on `jolt-inlines-bn254-fr` so a refactor-side
+  guest can call `Fr::{add,sub,mul,inv}`.
+- `v2-P2b-R1CS` Wire FieldOp arithmetic R1CS constraints (`FieldMulCheck`,
+  `FieldAddCheck`, `FieldSubCheck`, `FieldInvCheck`) against Twist-opened
+  `FieldOpA/B/Result` columns.
+- `#49` Verified sequences for FADD/FSUB/FINV — v1 only shipped FMUL with
+  on-chain schoolbook verification.
+- `v2-P2b-E2E` Non-empty-events end-to-end test (honest + adversarial).
+  The first test that actually exercises non-zero Fr values through the full
+  Stage-1/2 R1CS + FR Twist pipeline end-to-end.
+- `v2-P2b-Bench` Port or re-author `examples/bn254-fr-bench` on refactor-crates;
+  measure cycles/Fr-op; target the v1 ~17 cycles/mul asymptote.
+
+**Phase 3 — OPEN.** Soundness closure:
+
+- `#52` Limb-to-Fr bridge sumcheck (new `SumcheckId::FieldRegLimbBridge`,
+  Stage 3). Required for any security-sensitive guest using Fr.
+
+**Orthogonal track — OPEN.**
+
+- `#56` ZK mode for FR Twist on refactor-crates. `crates/jolt-blindfold/` is
+  currently an empty stub; multi-week substrate work independent of Phase
+  2b/3. Deferred until the non-ZK productization path is proven end-to-end.
+
+### Commands (Phase 1)
+
+```bash
+cd /Users/sdhawan/Work/jolt-refactor-crates
+
+# Core correctness (full refactor suite):
+cargo nextest run --cargo-quiet
+
+# Phase 1 smoke:
+cargo nextest run -p jolt-equivalence field_register_twist --cargo-quiet
+
+# Lint:
+cargo clippy -p jolt-compiler -p jolt-compute -p jolt-openings -p jolt-zkvm \
+    -p jolt-equivalence --all-targets -- -D warnings
+```

@@ -42,7 +42,9 @@ use jolt_r1cs::{constraints::rv64, R1csKey, R1csSource};
 use jolt_transcript::Transcript;
 use jolt_verifier::{OneHotConfig, ProverConfig, ReadWriteConfig, TRANSCRIPT_LABEL};
 use jolt_witness::bytecode_raf::{BytecodeData, BytecodeEntry};
-use jolt_witness::derived::{DerivedSource, InstructionFlags, RamConfig, RegisterAccessData};
+use jolt_witness::derived::{
+    DerivedSource, FieldRegConfig, InstructionFlags, RamConfig, RegisterAccessData,
+};
 use jolt_witness::preprocessed::PreprocessedSource;
 use jolt_witness::provider::ProverData;
 use jolt_witness::{PolynomialConfig, PolynomialId, Polynomials};
@@ -275,14 +277,27 @@ fn extract_jolt_core_state_history() -> (Vec<[u8; 32]>, CoreProtocolParams) {
 // jolt-zkvm extraction (new modular pipeline)
 // ═══════════════════════════════════════════════════════════════════
 
+#[allow(dead_code)]
 fn build_protocol_module(log_t: usize, log_k_bytecode: usize, log_k_ram: usize) -> Module {
-    let tmp_path = format!("/tmp/jolt_equiv_module_{log_t}_{log_k_bytecode}_{log_k_ram}.jolt");
+    build_protocol_module_with_example("jolt_core_module", log_t, log_k_bytecode, log_k_ram)
+}
+
+/// Generalized module builder: invokes `cargo run --example <example>` and
+/// deserializes the emitted `.jolt` binary.
+fn build_protocol_module_with_example(
+    example: &str,
+    log_t: usize,
+    log_k_bytecode: usize,
+    log_k_ram: usize,
+) -> Module {
+    let tmp_path =
+        format!("/tmp/jolt_equiv_{example}_{log_t}_{log_k_bytecode}_{log_k_ram}.jolt");
 
     let output = Command::new("cargo")
         .args([
             "run",
             "--example",
-            "jolt_core_module",
+            example,
             "-p",
             "jolt-compiler",
             "-q",
@@ -297,11 +312,11 @@ fn build_protocol_module(log_t: usize, log_k_bytecode: usize, log_k_ram: usize) 
             &tmp_path,
         ])
         .output()
-        .expect("failed to run jolt_core_module example");
+        .unwrap_or_else(|e| panic!("failed to run {example} example: {e}"));
 
     assert!(
         output.status.success(),
-        "jolt_core_module failed: {}",
+        "{example} failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 
@@ -374,6 +389,27 @@ fn setup_zkvm_muldiv(
     jolt_witness::derived::LookupFlagData,
     BytecodeData<NewFr>,
 ) {
+    setup_zkvm_muldiv_with_example(core_params, "jolt_core_module")
+}
+
+#[allow(clippy::type_complexity)]
+fn setup_zkvm_muldiv_with_example(
+    core_params: &CoreProtocolParams,
+    example_name: &str,
+) -> (
+    jolt_compute::Executable<CpuBackend, NewFr>,
+    Polynomials<NewFr>,
+    R1csKey<NewFr>,
+    Vec<NewFr>, // r1cs_witness
+    ZkvmSetup,
+    Vec<u64>, // initial_ram_state
+    Vec<u64>, // final_ram_state
+    InstructionFlagData<NewFr>,
+    RegisterAccessData,
+    LookupTraceData,
+    jolt_witness::derived::LookupFlagData,
+    BytecodeData<NewFr>,
+) {
     let mut program = Program::new("muldiv-guest");
     let (bytecode_raw, init_mem, _program_size, entry_address) = program.decode();
     let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
@@ -394,7 +430,8 @@ fn setup_zkvm_muldiv(
          ram_k={ram_k} (log_t={log_t}, log_k_bc={log_k_bytecode}, log_k_ram={log_k_ram})"
     );
 
-    let mut module = build_protocol_module(log_t, log_k_bytecode, log_k_ram);
+    let mut module =
+        build_protocol_module_with_example(example_name, log_t, log_k_bytecode, log_k_ram);
     truncate_after_stage(&mut module, 8);
     let backend = CpuBackend;
     let executable = link::<CpuBackend, NewFr>(module, &backend);
@@ -1705,4 +1742,351 @@ fn modular_self_verify_commit_skip_alignment() {
             eprintln!("expected downstream error (pre-full-wiring): {s}");
         }
     }
+}
+
+// -------- Phase 2: Jolt protocol + FieldReg coprocessor integration --------
+//
+// Uses `jolt_core_module_with_fieldreg` which extends the main Jolt Module
+// with committed FieldRegReadValue / FieldRegWriteValue polys (other FieldReg
+// polys stay Virtual per the Phase 1 scope note). The muldiv guest program
+// has no Fr operations, so both polys are all-zero; this test verifies that
+// adding the FieldReg commit barriers doesn't regress the existing muldiv
+// pipeline.
+
+fn run_jolt_zkvm_prover_with_fieldreg(
+    params: &CoreProtocolParams,
+) -> jolt_verifier::JoltProof<NewFr, DoryScheme> {
+    run_jolt_zkvm_prover_with_fieldreg_events(params, Vec::new())
+}
+
+fn run_jolt_zkvm_prover_with_fieldreg_events(
+    params: &CoreProtocolParams,
+    events: Vec<jolt_witness::derived::FieldRegEvent>,
+) -> jolt_verifier::JoltProof<NewFr, DoryScheme> {
+    let (
+        executable,
+        mut polys,
+        r1cs_key,
+        r1cs_witness,
+        setup,
+        initial_ram,
+        final_ram,
+        instruction_flag_data,
+        reg_access,
+        lookup_trace,
+        lookup_flags,
+        bytecode_data,
+    ) = setup_zkvm_muldiv_with_example(params, "jolt_core_module_with_fieldreg");
+
+    let t = setup.trace_length;
+    let log_t = t.trailing_zeros() as usize;
+    let log_k_chunk = if log_t < 25 { 4 } else { 8 };
+    let k_fieldreg = 1usize << log_k_chunk;
+
+    // Build the FieldRegConfig, then derive RV/WV from it (single source of truth).
+    let field_reg_config = FieldRegConfig {
+        k: k_fieldreg,
+        initial_state: vec![[0u64; 4]; k_fieldreg],
+        events,
+    };
+    let rv = field_reg_config.compute_read_value::<NewFr>(t);
+    let wv = field_reg_config.compute_write_value::<NewFr>(t);
+
+    let _ = polys.insert(jolt_witness::PolynomialId::FieldRegReadValue, rv);
+    let _ = polys.insert(jolt_witness::PolynomialId::FieldRegWriteValue, wv);
+
+    let r1cs = R1csSource::new(&r1cs_key, &r1cs_witness);
+    let mut preprocessed = PreprocessedSource::new();
+    preprocessed.populate_ram(&setup.config, &initial_ram);
+
+    let derived = DerivedSource::new(&r1cs_witness, setup.trace_length, r1cs_key.num_vars_padded)
+        .with_ram(RamConfig {
+            ram_k: setup.config.ram_k,
+            lowest_addr: setup.config.ram_lowest_address,
+            initial_state: initial_ram,
+            final_state: final_ram,
+        })
+        .with_instruction_flags(InstructionFlags {
+            is_noop: instruction_flag_data.is_noop,
+            left_is_rs1: instruction_flag_data.left_is_rs1,
+            left_is_pc: instruction_flag_data.left_is_pc,
+            right_is_rs2: instruction_flag_data.right_is_rs2,
+            right_is_imm: instruction_flag_data.right_is_imm,
+        })
+        .with_register_access(reg_access)
+        .with_lookup_flags(lookup_flags)
+        .with_field_reg(field_reg_config);
+    populate_bytecode_preprocessed(&mut preprocessed, &bytecode_data);
+    let mut provider =
+        ProverData::new(&mut polys, r1cs, derived, preprocessed).with_lookup_trace(lookup_trace);
+
+    let pcs_setup = &params.pcs_setup;
+    let mut transcript = jolt_transcript::Blake2bTranscript::<NewFr>::new(TRANSCRIPT_LABEL);
+
+    prove::<_, _, _, DoryScheme>(
+        &executable,
+        &mut provider,
+        &backend(),
+        pcs_setup,
+        &mut transcript,
+        setup.config,
+    )
+}
+
+/// Phase 2 acceptance: adding the FieldReg commit barriers to the main Jolt
+/// protocol Module doesn't regress muldiv modular self-verify. With empty
+/// FieldReg witness (muldiv has no Fr ops), the verifier MUST still accept.
+#[test]
+fn modular_self_verify_with_fieldreg() {
+    use jolt_dory::types::DoryVerifierSetup;
+
+    let (_, params) = jolt_core_state_history();
+    let zkvm_proof = run_jolt_zkvm_prover_with_fieldreg(params);
+
+    let (
+        executable,
+        _polys,
+        r1cs_key,
+        _r1cs_witness,
+        setup,
+        _initial_ram,
+        _final_ram,
+        _instruction_flag_data,
+        _reg_access,
+        _lookup_trace,
+        _lookup_flags,
+        _bytecode_data,
+    ) = setup_zkvm_muldiv_with_example(params, "jolt_core_module_with_fieldreg");
+
+    let pcs_verifier_setup = DoryVerifierSetup(params.pcs_setup.0.to_verifier_setup());
+    let verifying_key = jolt_verifier::JoltVerifyingKey::<NewFr, DoryScheme>::new(
+        &executable.module,
+        pcs_verifier_setup,
+        r1cs_key,
+    );
+
+    jolt_verifier::verify(&verifying_key, &zkvm_proof, &setup.config.io_hash)
+        .expect("Phase 2: FieldReg-extended Module should still verify muldiv");
+}
+
+/// Phase 2b acceptance (first half — honest path): inject non-zero synthetic
+/// FieldReg events into the muldiv proof pipeline and confirm the full protocol
+/// still accepts. This is the first test that actually exercises non-zero Fr
+/// values through the Stage-2 FR Twist batched instance.
+///
+/// The guest (muldiv) doesn't emit these events — we inject them synthetically
+/// via `FieldRegConfig`. The R1CS doesn't yet constrain `FieldOpA/B/Result`
+/// columns against the Twist (task #59), so honest non-zero events should pass
+/// without any tracer-layer wiring.
+#[test]
+fn modular_self_verify_with_fieldreg_nonempty_events() {
+    use jolt_dory::types::DoryVerifierSetup;
+    use jolt_witness::derived::FieldRegEvent;
+
+    let (_, params) = jolt_core_state_history();
+
+    // Three events consistent with initial_state = [[0;4]; k]:
+    //   cycle 5,  slot 0: 0 → (123, 0, 0, 0)
+    //   cycle 10, slot 1: 0 → (456, 789, 0, 0)
+    //   cycle 20, slot 0: (123, 0, 0, 0) → (999, 999, 999, 999)
+    // All cycles < trace_length (512 at log_t=9) and slots < k_fieldreg (16 at log_k_chunk=4).
+    let events = vec![
+        FieldRegEvent {
+            cycle: 5,
+            slot: 0,
+            old: [0, 0, 0, 0],
+            new: [123, 0, 0, 0],
+        },
+        FieldRegEvent {
+            cycle: 10,
+            slot: 1,
+            old: [0, 0, 0, 0],
+            new: [456, 789, 0, 0],
+        },
+        FieldRegEvent {
+            cycle: 20,
+            slot: 0,
+            old: [123, 0, 0, 0],
+            new: [999, 999, 999, 999],
+        },
+    ];
+
+    let zkvm_proof = run_jolt_zkvm_prover_with_fieldreg_events(params, events);
+
+    let (
+        executable,
+        _polys,
+        r1cs_key,
+        _r1cs_witness,
+        setup,
+        _initial_ram,
+        _final_ram,
+        _instruction_flag_data,
+        _reg_access,
+        _lookup_trace,
+        _lookup_flags,
+        _bytecode_data,
+    ) = setup_zkvm_muldiv_with_example(params, "jolt_core_module_with_fieldreg");
+
+    let pcs_verifier_setup = DoryVerifierSetup(params.pcs_setup.0.to_verifier_setup());
+    let verifying_key = jolt_verifier::JoltVerifyingKey::<NewFr, DoryScheme>::new(
+        &executable.module,
+        pcs_verifier_setup,
+        r1cs_key,
+    );
+
+    jolt_verifier::verify(&verifying_key, &zkvm_proof, &setup.config.io_hash)
+        .expect("Phase 2b: non-empty FieldReg events should verify end-to-end");
+}
+
+/// Phase 2b acceptance (second half — adversarial path, witness-consistency):
+/// Mutate an event's `old` value so it diverges from the running state.
+/// `FieldRegConfig::compute_read_value` catches this at prove time — the FR
+/// Twist witness is provably inconsistent before sumcheck begins. This tests
+/// the first line of defense.
+#[test]
+fn modular_self_verify_with_fieldreg_nonempty_events_inconsistent_event_rejects() {
+    use jolt_witness::derived::FieldRegEvent;
+
+    let (_, params) = jolt_core_state_history();
+
+    // Honest events would have `old = [0;4]` at cycle 5 slot 0 since initial_state
+    // is all zeros. Break that by claiming old=[99,0,0,0].
+    let events = vec![FieldRegEvent {
+        cycle: 5,
+        slot: 0,
+        old: [99, 0, 0, 0], // ← mutation: does not match initial_state = 0
+        new: [1, 0, 0, 0],
+    }];
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run_jolt_zkvm_prover_with_fieldreg_events(params, events)
+    }));
+
+    assert!(
+        result.is_err(),
+        "Inconsistent FieldReg event (old ≠ running state) MUST be rejected \
+         by the FR Twist witness computation"
+    );
+}
+
+/// Phase 2b acceptance (sumcheck-level adversarial): Inject honest events but
+/// then overwrite the committed `FieldRegWriteValue` polynomial with a bad
+/// value. The witness-consistency check passes (events are self-consistent),
+/// but the FR Twist sumcheck must reject because the committed WV polynomial
+/// no longer matches `Wa · (Val + Inc)` at the reduction point.
+///
+/// This directly tests the Plan B sumcheck's adversarial-rejection property
+/// on the full Jolt protocol (not just the standalone harness).
+#[test]
+fn modular_self_verify_with_fieldreg_nonempty_events_tampered_wv_rejects() {
+    use jolt_dory::types::DoryVerifierSetup;
+    use jolt_witness::derived::{FieldRegConfig, FieldRegEvent};
+    use num_traits::Zero;
+
+    let (_, params) = jolt_core_state_history();
+    let (
+        executable,
+        mut polys,
+        r1cs_key,
+        r1cs_witness,
+        setup,
+        initial_ram,
+        final_ram,
+        instruction_flag_data,
+        reg_access,
+        lookup_trace,
+        lookup_flags,
+        bytecode_data,
+    ) = setup_zkvm_muldiv_with_example(params, "jolt_core_module_with_fieldreg");
+
+    let t = setup.trace_length;
+    let log_t = t.trailing_zeros() as usize;
+    let log_k_chunk = if log_t < 25 { 4 } else { 8 };
+    let k_fieldreg = 1usize << log_k_chunk;
+
+    let events = vec![FieldRegEvent {
+        cycle: 5,
+        slot: 0,
+        old: [0, 0, 0, 0],
+        new: [42, 0, 0, 0],
+    }];
+    let field_reg_config = FieldRegConfig {
+        k: k_fieldreg,
+        initial_state: vec![[0u64; 4]; k_fieldreg],
+        events,
+    };
+    let rv = field_reg_config.compute_read_value::<NewFr>(t);
+    let mut wv = field_reg_config.compute_write_value::<NewFr>(t);
+
+    // Tamper: flip the written value at cycle 5 to something wrong.
+    // Honest wv[5] = 42; swap in NewFr::one() so the committed WV polynomial
+    // disagrees with the FR Twist identity WriteValue = Wa · (Val + Inc).
+    wv[5] = NewFr::one();
+
+    let _ = polys.insert(jolt_witness::PolynomialId::FieldRegReadValue, rv);
+    let _ = polys.insert(jolt_witness::PolynomialId::FieldRegWriteValue, wv);
+
+    let r1cs = R1csSource::new(&r1cs_key, &r1cs_witness);
+    let mut preprocessed = PreprocessedSource::new();
+    preprocessed.populate_ram(&setup.config, &initial_ram);
+
+    let derived = DerivedSource::new(&r1cs_witness, setup.trace_length, r1cs_key.num_vars_padded)
+        .with_ram(RamConfig {
+            ram_k: setup.config.ram_k,
+            lowest_addr: setup.config.ram_lowest_address,
+            initial_state: initial_ram,
+            final_state: final_ram,
+        })
+        .with_instruction_flags(InstructionFlags {
+            is_noop: instruction_flag_data.is_noop,
+            left_is_rs1: instruction_flag_data.left_is_rs1,
+            left_is_pc: instruction_flag_data.left_is_pc,
+            right_is_rs2: instruction_flag_data.right_is_rs2,
+            right_is_imm: instruction_flag_data.right_is_imm,
+        })
+        .with_register_access(reg_access)
+        .with_lookup_flags(lookup_flags)
+        .with_field_reg(field_reg_config);
+    populate_bytecode_preprocessed(&mut preprocessed, &bytecode_data);
+    let mut provider =
+        ProverData::new(&mut polys, r1cs, derived, preprocessed).with_lookup_trace(lookup_trace);
+
+    let pcs_setup = &params.pcs_setup;
+    let mut transcript = jolt_transcript::Blake2bTranscript::<NewFr>::new(TRANSCRIPT_LABEL);
+    let io_hash = setup.config.io_hash;
+    let prover_config = setup.config;
+
+    // Prove may succeed with tampered WV — the prover doesn't self-check. The
+    // verifier is the one that must catch it.
+    let prove_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        prove::<_, _, _, DoryScheme>(
+            &executable,
+            &mut provider,
+            &backend(),
+            pcs_setup,
+            &mut transcript,
+            prover_config,
+        )
+    }));
+
+    let Ok(zkvm_proof) = prove_result else {
+        // If the prover itself panics on the inconsistent witness, that's also
+        // a valid rejection signal — the tampering was caught before proof emission.
+        return;
+    };
+
+    let pcs_verifier_setup = DoryVerifierSetup(params.pcs_setup.0.to_verifier_setup());
+    let verifying_key = jolt_verifier::JoltVerifyingKey::<NewFr, DoryScheme>::new(
+        &executable.module,
+        pcs_verifier_setup,
+        r1cs_key,
+    );
+
+    let verify_result = jolt_verifier::verify(&verifying_key, &zkvm_proof, &io_hash);
+    assert!(
+        verify_result.is_err(),
+        "Tampered FieldRegWriteValue MUST be rejected by the FR Twist sumcheck, \
+         but verify returned Ok"
+    );
 }

@@ -86,6 +86,78 @@ pub struct LookupFlagData {
     pub is_raf: Vec<bool>,
 }
 
+/// Natural-form 256-bit Fr value as four little-endian u64 limbs:
+/// `value = Σ_k limbs[k] · 2^{64k}`. Used for BN254 Fr slot contents in the
+/// FieldReg Twist.
+pub type FrLimbs = [u64; 4];
+
+/// Convert natural-form Fr limbs to a field element via little-endian byte
+/// serialization + modular reduction. Matches the spec's Invariant 1 (natural-form
+/// representation with `F::from_natural_limbs` semantics).
+#[inline]
+pub fn limbs_to_field<F: Field>(limbs: &FrLimbs) -> F {
+    let mut bytes = [0u8; 32];
+    for (i, &limb) in limbs.iter().enumerate() {
+        bytes[i * 8..(i + 1) * 8].copy_from_slice(&limb.to_le_bytes());
+    }
+    F::from_bytes(&bytes)
+}
+
+/// A single FieldReg access: at `cycle`, slot `slot` transitions from `old` to
+/// `new`. For a read-only access, `old == new`. Events are the raw-event-stream
+/// source of truth for the FieldReg Twist witness. Values are natural-form Fr
+/// limbs (`[u64; 4]`) so the full 256-bit Fr range is expressible.
+#[derive(Clone, Copy, Debug)]
+pub struct FieldRegEvent {
+    pub cycle: usize,
+    pub slot: usize,
+    pub old: FrLimbs,
+    pub new: FrLimbs,
+}
+
+/// FieldReg coprocessor configuration. Mirrors `RamConfig` — raw-data sources
+/// for computing the per-cycle K×T witness polynomials.
+pub struct FieldRegConfig {
+    /// Number of FieldReg slots (K, power of two). Fixed at 16 for BN254 Fr.
+    pub k: usize,
+    /// Per-slot initial state (length `k`). Zero-initialized is the common case.
+    pub initial_state: Vec<FrLimbs>,
+    /// Full event stream; sparse (len << T typically). Must be ordered by cycle
+    /// and internally consistent with `initial_state` (i.e. each event's `old`
+    /// matches the running slot state).
+    pub events: Vec<FieldRegEvent>,
+}
+
+impl FieldRegConfig {
+    /// Helper: compute the per-cycle `ReadValue` polynomial (pre-access value
+    /// at each event's slot). `Polynomials::insert(FieldRegReadValue, ...)`
+    /// with this buffer populates the committed ReadValue poly.
+    pub fn compute_read_value<F: Field>(&self, num_cycles: usize) -> Vec<F> {
+        let mut rv = vec![F::zero(); num_cycles];
+        let mut state: Vec<F> = self.initial_state.iter().map(limbs_to_field::<F>).collect();
+        for e in &self.events {
+            assert!(e.cycle < num_cycles, "FieldRegEvent cycle out of range");
+            assert!(e.slot < self.k, "FieldRegEvent slot out of range");
+            let pre = state[e.slot];
+            let expected = limbs_to_field::<F>(&e.old);
+            assert_eq!(pre, expected, "event old-value mismatch at cycle {}", e.cycle);
+            rv[e.cycle] = pre;
+            state[e.slot] = limbs_to_field::<F>(&e.new);
+        }
+        rv
+    }
+
+    /// Helper: compute the per-cycle `WriteValue` polynomial (post-access
+    /// value at each event's slot).
+    pub fn compute_write_value<F: Field>(&self, num_cycles: usize) -> Vec<F> {
+        let mut wv = vec![F::zero(); num_cycles];
+        for e in &self.events {
+            wv[e.cycle] = limbs_to_field::<F>(&e.new);
+        }
+        wv
+    }
+}
+
 pub struct DerivedSource<'a, F> {
     witness: &'a [F],
     num_cycles: usize,
@@ -94,6 +166,7 @@ pub struct DerivedSource<'a, F> {
     iflags: Option<InstructionFlags<F>>,
     reg_access: Option<RegisterAccessData>,
     lookup_flags: Option<LookupFlagData>,
+    field_reg: Option<FieldRegConfig>,
     _marker: std::marker::PhantomData<F>,
 }
 
@@ -107,6 +180,7 @@ impl<'a, F: Field> DerivedSource<'a, F> {
             iflags: None,
             reg_access: None,
             lookup_flags: None,
+            field_reg: None,
             _marker: std::marker::PhantomData,
         }
     }
@@ -135,10 +209,24 @@ impl<'a, F: Field> DerivedSource<'a, F> {
         self
     }
 
+    /// Attach FieldReg coprocessor configuration. Required before materializing
+    /// `FieldRegInc`, `FieldRegRa`, `FieldRegVal`, or `FieldRegEqCycle`.
+    pub fn with_field_reg(mut self, config: FieldRegConfig) -> Self {
+        self.field_reg = Some(config);
+        self
+    }
+
     fn ram(&self) -> &RamConfig {
         self.ram.as_ref().expect(
             "DerivedSource: RAM polynomial requested but no RamConfig provided. \
              Call .with_ram() before proving.",
+        )
+    }
+
+    fn field_reg(&self) -> &FieldRegConfig {
+        self.field_reg.as_ref().expect(
+            "DerivedSource: FieldReg polynomial requested but no FieldRegConfig \
+             provided. Call .with_field_reg() before proving.",
         )
     }
 
@@ -235,6 +323,18 @@ impl<'a, F: Field> DerivedSource<'a, F> {
             PolynomialId::HammingWeight => {
                 let _s = tracing::info_span!("derived::hamming_weight").entered();
                 Cow::Owned(self.hamming_weight())
+            }
+            PolynomialId::FieldRegInc => {
+                let _s = tracing::info_span!("derived::field_reg_inc").entered();
+                Cow::Owned(self.field_reg_inc())
+            }
+            PolynomialId::FieldRegRa => {
+                let _s = tracing::info_span!("derived::field_reg_ra").entered();
+                Cow::Owned(self.field_reg_ra())
+            }
+            PolynomialId::FieldRegVal => {
+                let _s = tracing::info_span!("derived::field_reg_val").entered();
+                Cow::Owned(self.field_reg_val())
             }
             other => {
                 let _s = tracing::info_span!("derived::extract_column").entered();
@@ -412,6 +512,48 @@ impl<'a, F: Field> DerivedSource<'a, F> {
     fn ram_val_final(&self) -> Vec<F> {
         let ram = self.ram();
         ram.final_state.iter().map(|&v| F::from_u64(v)).collect()
+    }
+
+    /// FieldReg Inc: T elements. `inc[c] = new - old` for the event at cycle
+    /// `c`, else zero. No dependence on the R1CS witness — purely event-driven.
+    fn field_reg_inc(&self) -> Vec<F> {
+        let cfg = self.field_reg();
+        let mut inc = vec![F::zero(); self.num_cycles];
+        for e in &cfg.events {
+            inc[e.cycle] = limbs_to_field::<F>(&e.new) - limbs_to_field::<F>(&e.old);
+        }
+        inc
+    }
+
+    /// FieldReg Ra: K×T one-hot at (slot, cycle) of each event. Address-major
+    /// layout `ra[slot * T + cycle]` — cycle bits are LOW (matches RAM Twist).
+    fn field_reg_ra(&self) -> Vec<F> {
+        let cfg = self.field_reg();
+        let t = self.num_cycles;
+        let mut ra = vec![F::zero(); cfg.k * t];
+        for e in &cfg.events {
+            ra[e.slot * t + e.cycle] = F::one();
+        }
+        ra
+    }
+
+    /// FieldReg Val: K×T rolling per-slot state, address-major. `val[s, c]` is
+    /// the pre-access value of slot `s` at cycle `c` — replays events in order
+    /// to propagate state forward.
+    fn field_reg_val(&self) -> Vec<F> {
+        let cfg = self.field_reg();
+        let t = self.num_cycles;
+        let mut val = vec![F::zero(); cfg.k * t];
+        let mut state: Vec<F> = cfg.initial_state.iter().map(limbs_to_field::<F>).collect();
+        for c in 0..t {
+            for s in 0..cfg.k {
+                val[s * t + c] = state[s];
+            }
+            if let Some(e) = cfg.events.iter().find(|e| e.cycle == c) {
+                state[e.slot] = limbs_to_field::<F>(&e.new);
+            }
+        }
+        val
     }
 
     // K_reg x T address-major: index(k, t) = k * T + t.

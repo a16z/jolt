@@ -98,6 +98,9 @@ pub struct ModuleParams {
     pub raf_evaluation_rounds: usize,
     pub output_check_degree: usize,
     pub output_check_rounds: usize,
+    /// FieldReg Twist (6th stage-2 instance): log_t cycle + log_k_chunk address.
+    pub fr_checking_degree: usize,
+    pub fr_checking_rounds: usize,
     pub stage2_max_rounds: usize,
     pub stage2_num_instances: usize,
 }
@@ -172,6 +175,9 @@ impl ModuleParams {
         let raf_evaluation_rounds = log_k_ram;
         let output_check_degree = 3;
         let output_check_rounds = log_k_ram;
+        // FieldReg Twist: log_t cycle + log_k_chunk address (matches standalone).
+        let fr_checking_degree = 3;
+        let fr_checking_rounds = log_t + log_k_chunk;
         let stage2_max_rounds = rw_checking_rounds;
         let stage2_num_instances = 5;
 
@@ -211,6 +217,8 @@ impl ModuleParams {
             raf_evaluation_rounds,
             output_check_degree,
             output_check_rounds,
+            fr_checking_degree,
+            fr_checking_rounds,
             stage2_max_rounds,
             stage2_num_instances,
         }

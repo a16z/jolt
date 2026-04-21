@@ -1706,6 +1706,27 @@ pub enum VerifierOp {
         poly: PolynomialId,
         at_stage: VerifierStageIndex,
     },
+    /// Accumulate a PCS opening claim at an explicit challenge point (not a
+    /// stage's sumcheck point). Mirrors the prover's `Op::CollectOpeningClaimAt`.
+    ///
+    /// Used when a committed polynomial is opened at a point shorter than, or
+    /// unrelated to, any stage's full sumcheck point — e.g. a standalone Twist
+    /// that publishes ReadValue / WriteValue evaluations at the cycle-only
+    /// challenge vector before running its main address × cycle sumcheck.
+    CollectOpeningClaimAt {
+        poly: PolynomialId,
+        point_challenges: Vec<ChallengeIdx>,
+    },
+    /// Scale a recorded evaluation by `∏(1 − challenges[ci])`. Mirrors the
+    /// prover's `Op::ScaleEval`. Used for dense cycle-only polys committed
+    /// zero-padded to the full K×T grid: the prover's raw FinalBind scalar is
+    /// the cycle-only MLE; the PCS opens at the padded grid's MLE which equals
+    /// `∏(1 − r_addr_i) · MLE_cycle(r_cycle)`. Both sides pre-scale the claim
+    /// by the `∏(1 − r_addr_i)` factor so the opening matches.
+    ScaleEval {
+        poly: PolynomialId,
+        factor_challenges: Vec<ChallengeIdx>,
+    },
     /// RLC-reduce all collected claims and verify PCS opening proofs.
     VerifyOpenings,
 }

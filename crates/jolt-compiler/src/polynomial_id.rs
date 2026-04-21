@@ -25,6 +25,22 @@ pub enum PolynomialId {
     TrustedAdvice,
     UntrustedAdvice,
 
+    // FieldReg coprocessor: Committed polys.
+    // ReadValue / WriteValue published pre-Twist and opened at rw_cycle via
+    // CollectOpeningClaimAt (their values bind the Twist input_claim).
+    FieldRegReadValue,
+    FieldRegWriteValue,
+    // Inc / Ra / Val — committed in the ideal case but runtime's segmented
+    // reduce currently leaves their per-poly final-bind in a non-scalar state.
+    // Declared here for namespace hygiene; treated as Virtual in Phase 1/2
+    // standalone tests.
+    FieldRegInc,
+    FieldRegRa,
+    FieldRegVal,
+
+    // FieldReg coprocessor: Virtual polys (scratch/derived).
+    FieldRegEqCycle,
+
     // Virtual: memory subsystem
     RamReadValue,
     RamWriteValue,
@@ -233,9 +249,22 @@ impl PolynomialId {
             },
 
             // Committed: inserted separately (not from trace)
-            Self::SpartanWitness | Self::TrustedAdvice | Self::UntrustedAdvice => {
+            Self::SpartanWitness
+            | Self::TrustedAdvice
+            | Self::UntrustedAdvice
+            | Self::FieldRegReadValue
+            | Self::FieldRegWriteValue => PolynomialDescriptor {
+                source: PolySource::Witness,
+                committed: true,
+                storage: StorageHint::Dense,
+                witness_slot: None,
+            },
+
+            // FieldReg Inc/Ra/Val/EqCycle: computed by DerivedSource from
+            // `FieldRegConfig.events` — no R1CS witness dependence.
+            Self::FieldRegInc | Self::FieldRegRa | Self::FieldRegVal | Self::FieldRegEqCycle => {
                 PolynomialDescriptor {
-                    source: PolySource::Witness,
+                    source: PolySource::Derived,
                     committed: true,
                     storage: StorageHint::Dense,
                     witness_slot: None,
