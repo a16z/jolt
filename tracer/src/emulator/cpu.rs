@@ -165,12 +165,30 @@ pub const FIELD_REG_COUNT: usize = 16;
 /// slot `slot`, the register transitioned from `old` to `new` (natural-form
 /// `[u64;4]`). Read-only accesses emit an event with `old == new`. Events
 /// feed `jolt_witness::derived::FieldRegConfig` on the host side.
+///
+/// For `FieldOp` cycles, `op` carries the operands the R1CS FADD/FSUB/FMUL/FINV
+/// gates bind: `a` = `field_regs[frs1]` pre-read, `b` = `field_regs[frs2]`
+/// pre-read (zero on FINV), `funct3` selects the gate. Non-FieldOp events
+/// (e.g. FMov{I2F,F2I}) set `op = None`.
 #[derive(Clone, Copy, Debug)]
 pub struct FieldRegEvent {
     pub cycle_index: usize,
     pub slot: u8,
     pub old: [u64; 4],
     pub new: [u64; 4],
+    pub op: Option<FieldOpPayload>,
+}
+
+/// Operand + op-selector payload for a `FieldOp` cycle. Shipped with the
+/// `FieldRegEvent` so the R1CS witness builder can populate the FADD/FSUB
+/// gate columns without re-reading `field_regs`.
+#[derive(Clone, Copy, Debug)]
+pub struct FieldOpPayload {
+    pub funct3: u8,
+    /// Pre-read value of `field_regs[frs1]`.
+    pub a: [u64; 4],
+    /// Pre-read value of `field_regs[frs2]`. Zero on FINV.
+    pub b: [u64; 4],
 }
 
 /// Emulates a RISC-V CPU core

@@ -2867,6 +2867,7 @@ dependencies = [
  "jolt-r1cs",
  "jolt-witness",
  "jolt-zkvm",
+ "num-traits",
  "serde",
  "tracer",
  "tracing",

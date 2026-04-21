@@ -23,3 +23,6 @@ jolt-witness = { path = "../jolt-witness" }
 serde.workspace = true
 tracer = { workspace = true, features = ["std"] }
 tracing.workspace = true
+
+[dev-dependencies]
+num-traits = { workspace = true }

@@ -188,6 +188,13 @@ impl ModularStack {
                     slot: e.slot as usize,
                     old: e.old,
                     new: e.new,
+                    op: e
+                        .op
+                        .map(|p| jolt_witness::derived::FieldOpPayload {
+                            funct3: p.funct3,
+                            a: p.a,
+                            b: p.b,
+                        }),
                 })
                 .collect(),
         };

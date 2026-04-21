@@ -1905,18 +1905,21 @@ fn modular_self_verify_with_fieldreg_nonempty_events() {
             slot: 0,
             old: [0, 0, 0, 0],
             new: [123, 0, 0, 0],
+            op: None,
         },
         FieldRegEvent {
             cycle: 10,
             slot: 1,
             old: [0, 0, 0, 0],
             new: [456, 789, 0, 0],
+            op: None,
         },
         FieldRegEvent {
             cycle: 20,
             slot: 0,
             old: [123, 0, 0, 0],
             new: [999, 999, 999, 999],
+            op: None,
         },
     ];
 
@@ -1966,6 +1969,7 @@ fn modular_self_verify_with_fieldreg_nonempty_events_inconsistent_event_rejects(
         slot: 0,
         old: [99, 0, 0, 0], // ← mutation: does not match initial_state = 0
         new: [1, 0, 0, 0],
+        op: None,
     }];
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -2019,6 +2023,7 @@ fn modular_self_verify_with_fieldreg_nonempty_events_tampered_wv_rejects() {
         slot: 0,
         old: [0, 0, 0, 0],
         new: [42, 0, 0, 0],
+        op: None,
     }];
     let field_reg_config = FieldRegConfig {
         k: k_fieldreg,

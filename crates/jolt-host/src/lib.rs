@@ -17,7 +17,9 @@ mod tracer_cycle;
 pub use bytecode::BytecodePreprocessing;
 pub use cycle_row::CycleRow;
 pub use extract::{extract_trace, InstructionFlagData};
-pub use r1cs_witness::{build_r1cs_witness, r1cs_cycle_witness};
+pub use r1cs_witness::{
+    apply_field_op_events_to_r1cs, build_r1cs_witness, r1cs_cycle_witness,
+};
 
 use std::path::{Path, PathBuf};
 

@@ -107,12 +107,36 @@ pub fn limbs_to_field<F: Field>(limbs: &FrLimbs) -> F {
 /// `new`. For a read-only access, `old == new`. Events are the raw-event-stream
 /// source of truth for the FieldReg Twist witness. Values are natural-form Fr
 /// limbs (`[u64; 4]`) so the full 256-bit Fr range is expressible.
+///
+/// For `FieldOp` events, `op` additionally carries the operands the R1CS
+/// FADD/FSUB gates bind. Non-FieldOp events (e.g. `FMov{I2F,F2I}`) set
+/// `op = None`.
 #[derive(Clone, Copy, Debug)]
 pub struct FieldRegEvent {
     pub cycle: usize,
     pub slot: usize,
     pub old: FrLimbs,
     pub new: FrLimbs,
+    pub op: Option<FieldOpPayload>,
+}
+
+/// Funct3 selector bytes for FieldOp funct3 field, mirroring
+/// `tracer::instruction::field_op::FUNCT3_*`. Redeclared in the witness crate
+/// to avoid pulling in a tracer dependency.
+pub const FIELD_OP_FUNCT3_FMUL: u8 = 0x02;
+pub const FIELD_OP_FUNCT3_FADD: u8 = 0x03;
+pub const FIELD_OP_FUNCT3_FINV: u8 = 0x04;
+pub const FIELD_OP_FUNCT3_FSUB: u8 = 0x05;
+
+/// Operand + op-selector payload attached to a `FieldOp` cycle's event.
+///
+/// `a` and `b` are the pre-read values of `field_regs[frs1]` and
+/// `field_regs[frs2]` respectively. `b` is zero on FINV cycles.
+#[derive(Clone, Copy, Debug)]
+pub struct FieldOpPayload {
+    pub funct3: u8,
+    pub a: FrLimbs,
+    pub b: FrLimbs,
 }
 
 /// FieldReg coprocessor configuration. Mirrors `RamConfig` — raw-data sources

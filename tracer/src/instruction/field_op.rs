@@ -24,7 +24,7 @@ use ark_bn254::Fr;
 use ark_ff::{BigInteger, Field, PrimeField};
 use serde::{Deserialize, Serialize};
 
-use crate::emulator::cpu::{Cpu, FieldRegEvent};
+use crate::emulator::cpu::{Cpu, FieldOpPayload, FieldRegEvent};
 
 use super::{
     format::{format_r::FormatR, InstructionFormat},
@@ -139,7 +139,20 @@ impl RISCVTrace for FieldOp {
         let frs2 = self.operands.rs2;
         let frd_pre = cpu.field_regs[frd as usize];
         let frs1_val = cpu.field_regs[frs1 as usize];
-        let _frs2_val = cpu.field_regs[frs2 as usize];
+        let frs2_val = cpu.field_regs[frs2 as usize];
+        // FINV reads only frs1; zero b so the FieldOpB column doesn't leak a
+        // stale operand into the R1CS (the FINV constraint, when added, will
+        // use A·RESULT=1 with B unused).
+        let b_operand = if self.funct3 == FUNCT3_FINV {
+            [0u64; 4]
+        } else {
+            frs2_val
+        };
+        let payload = FieldOpPayload {
+            funct3: self.funct3,
+            a: frs1_val,
+            b: b_operand,
+        };
 
         let mut cycle = RISCVCycle::<Self> {
             instruction: *self,
@@ -161,14 +174,14 @@ impl RISCVTrace for FieldOp {
             let cycle_index = cpu.trace_len + trace_vec.len();
 
             // FieldOp writes frd (always) and reads frs1 (plus frs2 unless FINV).
-            // Emit a single write event for frd — reads are derivable from the
-            // FR Twist Ra one-hot + Val polys by the witness layer.
-            let _ = frs1_val; // Currently unused in the event; the Ra poly encodes the slot.
+            // Emit a single write event for frd; reads are encoded in `op` so
+            // the R1CS FieldOp gates can bind the operands.
             cpu.field_reg_events.push(FieldRegEvent {
                 cycle_index,
                 slot: frd,
                 old: frd_pre,
                 new: frd_post,
+                op: Some(payload),
             });
             trace_vec.push(cycle.into());
         }

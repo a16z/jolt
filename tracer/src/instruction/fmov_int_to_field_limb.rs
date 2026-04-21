@@ -115,6 +115,7 @@ impl RISCVTrace for FMovIntToFieldLimb {
                 slot: frd,
                 old,
                 new,
+                op: None,
             });
             trace_vec.push(cycle.into());
         }

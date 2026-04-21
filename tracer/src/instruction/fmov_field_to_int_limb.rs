@@ -113,6 +113,7 @@ impl RISCVTrace for FMovFieldToIntLimb {
                 slot: frs1,
                 old: snapshot,
                 new: snapshot,
+                op: None,
             });
             trace_vec.push(cycle.into());
         }
