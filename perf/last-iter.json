@@ -5,17 +5,17 @@
   "runs": [
     {
       "stack": "core",
-      "prove_ms": 4102.633041,
-      "verify_ms": 75.052333,
-      "peak_rss_mb": 1692,
+      "prove_ms": 4232.484083,
+      "verify_ms": 73.316417,
+      "peak_rss_mb": 1693,
       "proof_bytes": 80244,
       "proof_encoding": "ark-compressed"
     },
     {
       "stack": "modular",
-      "prove_ms": 71099.161208,
-      "verify_ms": 0.991292,
-      "peak_rss_mb": 5299,
+      "prove_ms": 73444.7975,
+      "verify_ms": 1.342791,
+      "peak_rss_mb": 5062,
       "proof_bytes": 80090,
       "proof_encoding": "bincode-serde"
     }

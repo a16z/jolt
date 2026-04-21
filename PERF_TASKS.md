@@ -32,7 +32,50 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 20 (iter 76 P80 parallelize RAM derived polys — ~7.5% improvement vs same-session pre-change, but +12% past-reject vs stale iter-54 ratchet; code kept, ratchet unchanged; iter 75 P76-D hot-path wiring reverted under noise, infra kept; iter 74 P76-C infra; iter 73 P76-B infra; iter 72 P76-A infra stub; iter 71 P75-B infra stub; iter 70 P75-A infra-only commit; iter 69 design-only; iter 68 P73 reverted; iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+- **Stall counter**: 25 (iter 81 P77-D reverted — CpuBackend batch_round_evaluate par_iter override + re-applied emission switch regressed +6.86% mean; iter 80 P77-C reverted — emission switch alone regressed 10-14%; iter 79 P77-B infra — BatchRoundEvaluate handler landed, flat; iter 78 P77-A infra — BatchInstanceSpec/BatchReduceKind trait surface; iter 77 P77 infra — memoize RamRaIndicator; iter 76 P80 parallelize RAM derived polys — ~7.5% improvement vs same-session pre-change, but +12% past-reject vs stale iter-54 ratchet; code kept, ratchet unchanged; iter 75 P76-D hot-path wiring reverted under noise, infra kept; iter 74 P76-C infra; iter 73 P76-B infra; iter 72 P76-A infra stub; iter 71 P75-B infra stub; iter 70 P75-A infra-only commit; iter 69 design-only; iter 68 P73 reverted; iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+
+  iter 81 P77-D REVERTED — re-applied iter 80's emission switch
+  (per-instance {InstanceReduce | InstanceSegmentedReduce} +
+  inline BatchAccumulateInstance → single Op::BatchRoundEvaluate
+  collecting all non-decomp reduce specs per round, with
+  BatchAccumulateInstance ops deferred to after the batched
+  evaluate) AND added a `CpuBackend::batch_round_evaluate`
+  override that uses `specs.par_iter().map(...)` to dispatch each
+  spec's reduce/segmented_reduce/gruen_segmented_reduce on a
+  Rayon worker. Theory: per-worker affinity would let each spec's
+  working set live in its core's L1/L2, recovering the L3
+  bandwidth that bind-all-then-reduce-all burns. Correctness
+  50/50 PASS (two transient protocol.jolt races on parallel runs,
+  isolated re-runs clean); clippy jolt-core host + host,zk +
+  modular workspace all clean. Perf: run 1 77,789.59 ms
+  (+9.93% past reject), run 2 73,444.80 ms (+3.79% inconclusive),
+  mean +6.86% — past reject. **REVERTED** both builder.rs
+  emission change and backend.rs override + imports.
+  **Root cause analysis**: par_iter across specs produces nested
+  Rayon (outer par × inner par in segmented_reduce /
+  gruen_segmented_reduce's active.par_iter), oversubscribing the
+  8-worker pool. More fundamentally, per-spec working sets at
+  early rounds (320KB-2MB for 5 inputs × 2^(16-R) field bytes)
+  don't fit in per-core L1/L2, so worker affinity doesn't help
+  for the high-bandwidth rounds where the regression is worst.
+  The emission reorder is the real culprit: 120 in-place binds
+  touch ~40MB of poly data before any reduce reads start —
+  overflowing the ~16MB L3 regardless of how reduce is
+  parallelized. **Insight for future**: a fused
+  batch_round_evaluate can only win if it re-interleaves reads
+  across specs at a granularity (outer position, inner chunk)
+  that fits in L2 per worker. But specs have different outer_eq
+  shapes and inner_sizes — no shared dimension to parallelize
+  across. Either (a) drop P77-D and pivot — the 120 binds +
+  120 reduces cache-thrash is structural to the batched
+  emission, not recoverable by backend-side fusion alone; or
+  (b) revive P77-D only alongside (D) BufferEncoding tags that
+  let shape-identical specs share code paths. Pivoting next iter
+  to **P78 persistent scratch** (the 1.2×/~4s `bind_low_to_high`
+  temp Vec factor from memo §7.3(a)) or **P81 Dory G2 wrapper
+  dedup** (the 2.65× `multi_pair_g2_setup` overhead, ~10s PCS
+  commit saving from memo §7.3(d)). Ratchet unchanged 70762.94.
+  Stall 24 → 25.
 
   iter 76 P80 PARALLELIZE RAM DERIVED POLYNOMIALS — landed
   pure rayon parallelization of three serial per-row /
