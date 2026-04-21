@@ -156,6 +156,23 @@ struct ActiveMarker {
     start_trace_len: usize, // trace.len()      at ‘start’
 }
 
+/// Number of BN254 Fr field registers — the native-field coprocessor operates
+/// over a dedicated 16-slot register file, each 256 bits wide. Values stored
+/// in natural form as `[u64; 4]` (little-endian limbs).
+pub const FIELD_REG_COUNT: usize = 16;
+
+/// A single FieldReg access for downstream witness generation. At `cycle` on
+/// slot `slot`, the register transitioned from `old` to `new` (natural-form
+/// `[u64;4]`). Read-only accesses emit an event with `old == new`. Events
+/// feed `jolt_witness::derived::FieldRegConfig` on the host side.
+#[derive(Clone, Copy, Debug)]
+pub struct FieldRegEvent {
+    pub cycle_index: usize,
+    pub slot: u8,
+    pub old: [u64; 4],
+    pub new: [u64; 4],
+}
+
 /// Emulates a RISC-V CPU core
 #[derive(Clone, Debug)]
 pub struct Cpu {
@@ -185,6 +202,12 @@ pub struct Cpu {
     call_stack: VecDeque<CallFrame>,
     /// Advice tape for runtime advice system
     pub advice_tape: AdviceTape,
+    /// BN254 Fr field register file (16 × 256 bits, natural-form limbs).
+    /// Mutated by FieldOp / FMov{I2F,F2I} instructions.
+    pub field_regs: [[u64; 4]; FIELD_REG_COUNT],
+    /// Per-cycle FieldReg event stream, drained by the host to build
+    /// `FieldRegConfig.events` for the FR Twist witness.
+    pub field_reg_events: Vec<FieldRegEvent>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -357,6 +380,8 @@ impl Cpu {
             vr_allocator: VirtualRegisterAllocator::new(),
             call_stack: VecDeque::with_capacity(MAX_CALL_STACK_DEPTH),
             advice_tape: AdviceTape::new(),
+            field_regs: [[0u64; 4]; FIELD_REG_COUNT],
+            field_reg_events: Vec::new(),
         };
         // cpu.x[0xb] = 0x1020; // I don't know why but Linux boot seems to require this initialization
         cpu.write_csr_raw(CSR_MISA_ADDRESS, 0x800000008014312f);
@@ -1169,6 +1194,8 @@ impl Cpu {
             vr_allocator: self.vr_allocator.clone(),
             call_stack: self.call_stack.clone(),
             advice_tape: self.advice_tape.clone(),
+            field_regs: self.field_regs,
+            field_reg_events: self.field_reg_events.clone(),
         }
     }
 }
