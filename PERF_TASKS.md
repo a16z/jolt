@@ -32,7 +32,41 @@ when the Phase 3 stop condition fires.
 - **Program**: `sha2-chain --num-iters 16 --log-t 16` (primary ratchet);
   muldiv log_t=12 retired as standard (history kept for reference). Prior
   baseline preserved in `perf/baseline-modular-best-prior-muldiv-log_t12.json`.
-- **Stall counter**: 25 (iter 81 P77-D reverted — CpuBackend batch_round_evaluate par_iter override + re-applied emission switch regressed +6.86% mean; iter 80 P77-C reverted — emission switch alone regressed 10-14%; iter 79 P77-B infra — BatchRoundEvaluate handler landed, flat; iter 78 P77-A infra — BatchInstanceSpec/BatchReduceKind trait surface; iter 77 P77 infra — memoize RamRaIndicator; iter 76 P80 parallelize RAM derived polys — ~7.5% improvement vs same-session pre-change, but +12% past-reject vs stale iter-54 ratchet; code kept, ratchet unchanged; iter 75 P76-D hot-path wiring reverted under noise, infra kept; iter 74 P76-C infra; iter 73 P76-B infra; iter 72 P76-A infra stub; iter 71 P75-B infra stub; iter 70 P75-A infra-only commit; iter 69 design-only; iter 68 P73 reverted; iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+- **Stall counter**: 26 (iter 82 P78 reverted — bind_low_to_high in-place compact regressed +47% mean; iter 81 P77-D reverted — CpuBackend batch_round_evaluate par_iter override + re-applied emission switch regressed +6.86% mean; iter 80 P77-C reverted — emission switch alone regressed 10-14%; iter 79 P77-B infra — BatchRoundEvaluate handler landed, flat; iter 78 P77-A infra — BatchInstanceSpec/BatchReduceKind trait surface; iter 77 P77 infra — memoize RamRaIndicator; iter 76 P80 parallelize RAM derived polys — ~7.5% improvement vs same-session pre-change, but +12% past-reject vs stale iter-54 ratchet; code kept, ratchet unchanged; iter 75 P76-D hot-path wiring reverted under noise, infra kept; iter 74 P76-C infra; iter 73 P76-B infra; iter 72 P76-A infra stub; iter 71 P75-B infra stub; iter 70 P75-A infra-only commit; iter 69 design-only; iter 68 P73 reverted; iter 67 P72 reverted; iter 66 design-only commit; iter 65 P71 reverted; iter 64 P70 reverted; iter 63 P90 reverted).
+
+  iter 82 P78 REVERTED — replaced `bind_low_to_high` parallel
+  `.collect()` path with an in-place compute + sequential compact:
+  Phase 1 `evals.par_chunks_exact_mut(2).for_each(|pair| pair[0]
+  = lo + s*(hi-lo))` (parallel write to even slots), Phase 2
+  `for i in 1..half { evals[i] = evals[2*i]; }` (sequential
+  compact). Theory: avoids the per-call `Vec::collect` allocation
+  in the parallel path (memo §7.3(a) 1.2× factor, ~4000 ms
+  estimated potential). Correctness: jolt-equivalence 50/50 PASS
+  on first attempt; jolt-core clippy host + host,zk clean.
+  Perf: run 1 107,134 ms, run 2 102,154 ms, mean 104,644 ms.
+  Core baseline also inflated (5,186 / 4,587 vs 4,232 ratchet),
+  indicating elevated system load — adjusted for 22% core-run
+  inflation, modular would be ~85,773 ms still +21% past reject.
+  **Regression mechanism**: Phase 2's sequential compact has
+  stride-2 reads + stride-1 writes that thrash the cache.
+  Original `.collect()` wrote a fresh contiguous Vec sequentially
+  from rayon workers — cache-friendly. My in-place approach
+  burns ~100 μs/call on sequential compact × 17,416 calls ≈
+  1.7 s wall, AND pollutes L1/L2 with the stride-2 read of the
+  now-mostly-stale Phase-1 output. Even a fast allocator wins
+  against stride-pattern cache thrash. **Insight**: the temp-Vec
+  fix memo suggested requires preserving Phase-1's contiguous-
+  write benefit. Options: (a) pass scratch Vec<F> explicitly
+  through CpuBackend.interpolate_inplace with caller-managed
+  buffer reuse; (b) thread_local!(Vec<u8>) reinterpreted as
+  Vec<F> with unsafe pointer arithmetic to avoid per-call
+  alloc — risk of aliasing bugs across rayon workers; (c) pure
+  allocator swap (jemalloc/mimalloc) at link time — crate-wide
+  change, nothing else required, but out-of-scope for a perf-op
+  iter. Shelving P78 pending the (A) persistent-scratch API
+  from memo §5 being designed. Pivoting iter 83 to **P81 Dory
+  G2 wrapper dedup** which has a 2.65×/~7,700 ms potential.
+  Ratchet unchanged 70762.94. Stall 25 → 26.
 
   iter 81 P77-D REVERTED — re-applied iter 80's emission switch
   (per-instance {InstanceReduce | InstanceSegmentedReduce} +
