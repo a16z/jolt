@@ -351,24 +351,82 @@ executing the FieldOp. At the FieldOp cycle, `x[10..=13]` hold a's limbs and
 The fixed ABI collapses the bridge to a **single equality per FieldOp cycle**:
 
 ```
-FieldOpA(r_cycle)  ==  Σ_{k=0..3}  RegVal(10+k, r_cycle) · 2^{64·k}
-FieldOpB(r_cycle)  ==  Σ_{k=0..3}  RegVal(14+k, r_cycle) · 2^{64·k}
+FieldOpA(r_cycle)  ==  Σ_{k=0..3}  Val_reg(10+k, r_cycle) · 2^{64·k}
+FieldOpB(r_cycle)  ==  Σ_{k=0..3}  Val_reg(14+k, r_cycle) · 2^{64·k}  [FMUL/FADD/FSUB only]
 ```
 
-Gated by the FieldOp circuit-flag selector. Single sumcheck over cycles; all 8
-`RegVal(reg_idx, r_cycle)` claims reduce to openings of the existing Registers
-Twist's `Val` poly at a common `r_cycle` and 8 fixed register indices. No
-`FMovIntToFieldLimb` cycle traversal, no auxiliary per-limb polys, no new
-commitments for the bridge itself.
+#### Sumcheck identity
 
-Implementation shape (new Module, `SumcheckId::FieldRegLimbBridge`, Stage 3):
-- Declare the bridge sumcheck with 8 claim factors: `V_FIELD_OP_A`,
-  `V_FIELD_OP_B`, and 6 `RegVal` references at fixed reg indices
-  (actually 8 RegVal refs — 4 for a, 4 for b).
-- `input_claim` encodes the identity above as a linear combination weighted
-  by `2^{64k}` constants, gated by `OpFlag(IsFieldMul) + OpFlag(IsFieldAdd)
-  + OpFlag(IsFieldSub) + OpFlag(IsFieldInv)`.
-- `output_check` evaluates the same identity at the final sumcheck point.
+Recast as a single sumcheck over (reg, cycle) ∈ [0, K_reg) × [0, T):
+
+```
+0  ≡  Σ_{reg, cycle}  eq(τ_bridge, cycle) · IsFieldOp(cycle) · [
+          IsLimbRegA(reg) · 2^{64·(reg-10)} · Val_reg(reg, cycle)
+        − IsAnchorReg(reg) · FieldOpA(cycle)
+      ]
+```
+
+Where:
+- `IsFieldOp(c) = IsFieldMul(c) + IsFieldAdd(c) + IsFieldSub(c) + IsFieldInv(c)`
+  — at most one FieldOp flag fires per cycle so the sum is 0 or 1.
+- `IsLimbRegA(reg)` — indicator `1 for reg ∈ {10,11,12,13}`, else 0. Selects the
+  4 int-register slots that hold `a`'s limbs under the SDK ABI.
+- `IsAnchorReg(reg)` — indicator `1 for reg = 10`, else 0. Exactly one per-reg
+  "anchor" so the `FieldOpA(c)` contribution is counted once per cycle.
+- `2^{64·(reg-10)}` weighting function — evaluable at any `reg ∈ {10,11,12,13}`.
+- `eq(τ_bridge, ·)` — Fiat-Shamir random weights per cycle that collapse the
+  sum to a per-cycle equality (standard sumcheck).
+
+The B-side identity is identical with `IsLimbRegB = 1 for reg ∈ {14..17}`,
+`IsAnchorReg_B = 1 for reg = 14`, and gating changed to `IsFieldMul + IsFieldAdd
++ IsFieldSub` (not `IsFieldInv`) — FINV doesn't read `b` so `x[14..17]` is
+uninitialised and must not be bound.
+
+Both A and B identities batch into one sumcheck via γ-combination.
+
+#### Claim-reduction coordination
+
+The bridge's output claim opens `Val_reg(r_reg_bridge, r_cycle_bridge)` at a
+random (r_reg_bridge, r_cycle_bridge) pair. This **reuses** the existing
+Registers Twist's `Val_reg` claim — the bridge is scheduled so its Val_reg
+opening is absorbed into the Stage-2 Registers Val-evaluation batch alongside
+the Twist's own opening. No new Val_reg commitment; no duplicate opening proof.
+
+Additional opening claims the bridge emits:
+- `FieldOpA(r_cycle_bridge)` — opens the R1CS column (already in the Stage-1
+  remaining-sumcheck's r1cs_input_polys evaluation output via `#63`).
+- `FieldOpB(r_cycle_bridge)` — same.
+- `IsFieldMul/Add/Sub/Inv(r_cycle_bridge)` — opens `OpFlag(14..17)` at the
+  bridge cycle. Again already in the r1cs_input_polys output.
+
+All four R1CS-column openings require the bridge's `r_cycle_bridge` to
+coincide with the Stage-1 remaining-sumcheck's cycle challenge. The simplest
+route: schedule the bridge to consume Stage-1's `r_cycle` directly.
+
+#### Implementation shape
+
+- Module: `crates/jolt-compiler/examples/jolt_core_module_with_fieldreg.rs`
+  (the FR-extended Module only — baseline `jolt_core_module.rs` stays
+  bridgeless and cross-verifies with jolt-core).
+- New stage (`Stage::FieldRegLimbBridge`) or folded into the existing Stage 2
+  batched sumcheck as an additional instance.
+- `num_rounds = log_K_reg + log_t`.
+- `degree = 3` (eq × IsFieldOp × Val_reg; the `FieldOpA` term is degree 1 in
+  cycle, 0 in reg).
+- `input_claim = 0` (trivial — the identity is of the form Σ … = 0).
+- `output_check` evaluates the full per-cycle, per-reg expression at the
+  final (r_reg, r_cycle) point using `LagrangeKernelDomain` for the indicator
+  selectors and explicit powers-of-2 for weights.
+
+#### Honest/adversarial acceptance criteria
+
+- Honest guest (SDK-emitted trace): bridge sumcheck accepts.
+- Tampered prover that commits `FieldOpA` ≠ actual limb sum: bridge rejects.
+- Tampered prover that commits matching FieldOpA but mutates Val_reg at one
+  of reg ∈ {10..13}: rejected by the Registers Twist (Val is already bound).
+
+These two adversarial tests — one per row of the identity — are the
+acceptance gate for Phase 3.
 
 ### Why this actually closes the gap
 
