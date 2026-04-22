@@ -57,16 +57,28 @@ impl<'a, F: Field> R1csSource<'a, F> {
         let total = self.key.num_cycles * k_pad;
         let mut result = vec![F::zero(); total];
 
-        for c in 0..self.key.num_cycles {
+        let compute_cycle = |(c, chunk): (usize, &mut [F])| {
             let w_base = c * v_pad;
-            let r_base = c * k_pad;
             for (k, row) in matrix.iter().enumerate() {
                 let mut acc = F::zero();
                 for &(j, coeff) in row {
                     acc += coeff * self.witness[w_base + j];
                 }
-                result[r_base + k] = acc;
+                chunk[k] = acc;
             }
+        };
+
+        #[cfg(feature = "parallel")]
+        {
+            use rayon::prelude::*;
+            result
+                .par_chunks_mut(k_pad)
+                .enumerate()
+                .for_each(compute_cycle);
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            result.chunks_mut(k_pad).enumerate().for_each(compute_cycle);
         }
 
         result
@@ -97,16 +109,35 @@ impl<'a, F: Field> R1csSource<'a, F> {
                     .challenges
                     .as_ref()
                     .expect("set_challenges() must be called before computing CombinedRow");
-                let total_cols_padded = self.key.total_cols().next_power_of_two();
-                self.key
-                    .combined_row(&ch.r_x, ch.rho_a, ch.rho_b, ch.rho_c, total_cols_padded)
+                self.key.combined_row(&ch.r_x, ch.rho_a, ch.rho_b, ch.rho_c)
             }
             R1csColumn::Variable(var_idx) => {
                 let _s = tracing::info_span!("r1cs::Variable").entered();
+                assert!(
+                    var_idx < self.key.matrices.num_vars,
+                    "R1csColumn::Variable({var_idx}) out of bounds: num_vars={}",
+                    self.key.matrices.num_vars,
+                );
                 let v_pad = self.key.num_vars_padded;
-                (0..self.key.num_cycles)
-                    .map(|c| self.witness[c * v_pad + var_idx])
-                    .collect()
+                let mut out = Vec::with_capacity(self.key.num_cycles);
+                let fill = |dst: &mut [F]| {
+                    #[cfg(feature = "parallel")]
+                    {
+                        use rayon::prelude::*;
+                        dst.par_iter_mut().enumerate().for_each(|(c, slot)| {
+                            *slot = self.witness[c * v_pad + var_idx];
+                        });
+                    }
+                    #[cfg(not(feature = "parallel"))]
+                    {
+                        for (c, slot) in dst.iter_mut().enumerate() {
+                            *slot = self.witness[c * v_pad + var_idx];
+                        }
+                    }
+                };
+                out.resize(self.key.num_cycles, F::zero());
+                fill(&mut out);
+                out
             }
         }
     }
@@ -145,5 +176,23 @@ mod tests {
         let az = source.compute_matvec(&key.matrices.a);
         assert_eq!(az[0], Fr::from_u64(3));
         assert_eq!(az[key.num_constraints_padded], Fr::from_u64(5));
+    }
+
+    #[test]
+    #[should_panic(expected = "out of bounds")]
+    fn variable_column_rejects_oob_index() {
+        let one = Fr::one();
+        let m = ConstraintMatrices::new(
+            1,
+            3,
+            vec![vec![(1, one)]],
+            vec![vec![(1, one)]],
+            vec![vec![(2, one)]],
+        );
+        let key = R1csKey::new(m, 2);
+        let witness = vec![Fr::zero(); 2 * key.num_vars_padded];
+        let source = R1csSource::new(&key, &witness);
+
+        let _ = source.compute(crate::R1csColumn::Variable(key.matrices.num_vars));
     }
 }

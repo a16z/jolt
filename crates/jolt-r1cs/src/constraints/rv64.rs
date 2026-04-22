@@ -75,11 +75,22 @@ use crate::constraint::SparseRow;
 use jolt_field::Field;
 
 /// Helper: sparse row from `[(variable_index, coefficient)]` pairs.
+///
+/// Panics at compile-time constant initialization if any coefficient does not
+/// fit in `i64`; callers with wider constants (e.g. `2^64`) must use
+/// [`row_wide`].
+#[expect(
+    clippy::expect_used,
+    reason = "compile-time constant table; silent i128→i64 truncation would be a correctness bug"
+)]
 fn row<F: Field>(entries: &[(usize, i128)]) -> SparseRow<F> {
     entries
         .iter()
         .filter(|(_, c)| *c != 0)
-        .map(|&(idx, c)| (idx, F::from_i64(c as i64)))
+        .map(|&(idx, c)| {
+            let narrow = i64::try_from(c).expect("coefficient out of i64 range; use row_wide");
+            (idx, F::from_i64(narrow))
+        })
         .collect()
 }
 
