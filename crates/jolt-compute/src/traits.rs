@@ -2,7 +2,9 @@
 
 use std::collections::HashMap;
 
-use jolt_compiler::module::{BufferRef, ClaimFormula, Op, ReduceAxes, ReduceSpec};
+use jolt_compiler::module::{
+    BufferRef, ClaimFormula, Op, ReduceAxes, ReduceDestination, ReduceSpec,
+};
 pub use jolt_compiler::BindingOrder;
 use jolt_compiler::KernelSpec;
 use jolt_compiler::PolynomialId;
@@ -737,13 +739,19 @@ pub struct BatchInstanceSpec<'a, B: ComputeBackend + ?Sized, F: Field> {
 /// The backend resolves each [`BufferRef`] in a [`ReduceSpec`] against
 /// this view: `BufferRef::Polynomial` looks up `buffers`, and
 /// `BufferRef::SegmentedOuterEq` looks up `outer_eqs`. Kernels are
-/// resolved by index via `kernels`. The borrow pattern keeps the
-/// backend decoupled from the runtime's concrete state type.
+/// resolved by index via `kernels`. The Gruen prev-claim is resolved
+/// from `instance_claims[batch][instance]` using the spec's
+/// [`ReduceDestination::Instance`] coordinates. The borrow pattern
+/// keeps the backend decoupled from the runtime's concrete state type.
 pub struct ReduceInputs<'a, B: ComputeBackend + ?Sized, F: Field> {
     /// Materialized polynomial buffers keyed by `PolynomialId`.
     pub buffers: &'a HashMap<PolynomialId, Buf<B, F>>,
     /// Per-instance segmented outer-eq buffers keyed by `(batch, instance)`.
     pub outer_eqs: &'a HashMap<(usize, usize), Vec<F>>,
+    /// Running per-instance claim — `instance_claims[batch][instance]` is the
+    /// previous round's claim consumed by Gruen cubic assembly. Mirrors
+    /// `RuntimeState::batch_instance_claims`.
+    pub instance_claims: &'a [Vec<F>],
     /// Compiled kernels indexed by `ReduceSpec::kernel`.
     pub kernels: &'a [B::CompiledKernel<F>],
 }
@@ -801,7 +809,7 @@ where
                             challenges,
                         ),
                         Some(gc) => {
-                            let prev_claim = challenges[gc.prev_claim_slot.0];
+                            let prev_claim = resolve_prev_claim(inputs, &spec.destination);
                             backend.gruen_segmented_reduce(
                                 kernel,
                                 &field_inputs,
@@ -843,6 +851,23 @@ where
             .unwrap_or_else(|| panic!("reduce input: missing polynomial buffer {id:?}")),
         BufferRef::SegmentedOuterEq { .. } => {
             panic!("reduce input: SegmentedOuterEq is not a kernel input — use ReduceAxes::Product.outer_eq")
+        }
+    }
+}
+
+fn resolve_prev_claim<B, F>(inputs: &ReduceInputs<'_, B, F>, dest: &ReduceDestination) -> F
+where
+    B: ComputeBackend + ?Sized,
+    F: Field,
+{
+    match dest {
+        ReduceDestination::Instance { batch, instance } => {
+            inputs.instance_claims[batch.0][instance.0]
+        }
+        ReduceDestination::SumcheckRound { .. } => {
+            panic!(
+                "reduce: GruenContext only valid with ReduceDestination::Instance (got SumcheckRound)"
+            )
         }
     }
 }

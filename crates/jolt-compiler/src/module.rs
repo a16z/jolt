@@ -272,13 +272,12 @@ pub enum BufferRef {
 /// Gruen cubic-assembly context for a segmented reduce.
 ///
 /// Present in [`ReduceAxes::Product`] when the kernel's `gruen_hint` calls for
-/// the Gruen optimization. The runtime supplies the previous round's claim
-/// and the current round index so the backend can reconstruct the cubic from
-/// one quadratic evaluation.
+/// the Gruen optimization. The runtime supplies the current round index;
+/// the previous round's claim is resolved from
+/// `state.batch_instance_claims[batch][instance]` via the spec's
+/// [`ReduceDestination::Instance`] coordinates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GruenContext {
-    /// Challenge slot storing the previous round's claim.
-    pub prev_claim_slot: ChallengeIdx,
     /// Current sumcheck round index (0-based within the phase).
     pub current_round: usize,
 }

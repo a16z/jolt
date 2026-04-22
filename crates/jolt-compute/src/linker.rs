@@ -46,6 +46,58 @@ impl FuseDebugMode {
     }
 }
 
+/// Switch between the legacy reduce ops and the unified `Op::Reduce` path.
+///
+/// Toggled via the `JOLT_UNIFIED_REDUCE` environment variable. Phase C bridge:
+/// - [`Self::Off`] (default): runtime executes the legacy reduce ops
+///   (`SumcheckRound`, `InstanceReduce`, `InstanceSegmentedReduce`,
+///   `BatchRoundEvaluate`); `Op::Reduce` is a no-op.
+/// - [`Self::On`]: runtime executes `Op::Reduce` only; legacy reduce-side work
+///   is skipped (`SumcheckRound` still performs its bind, but not the reduce).
+/// - [`Self::Shadow`]: like `On`, but additionally runs
+///   [`per_instance_reference_reduce`](crate::per_instance_reference_reduce)
+///   in lockstep and asserts byte-identical output before writing back —
+///   catches state-wiring regressions in Phase C and fused-kernel divergence
+///   in Phase E.
+///
+/// Phase D deletes this toggle entirely along with the legacy ops.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ReduceDebugMode {
+    /// Legacy path only (Phase B behavior).
+    #[default]
+    Off,
+    /// Unified `Op::Reduce` path only.
+    On,
+    /// Unified path with reference-impl shadow assertions.
+    Shadow,
+}
+
+impl ReduceDebugMode {
+    /// Read the mode from the `JOLT_UNIFIED_REDUCE` environment variable.
+    ///
+    /// `=1` → [`Self::On`], `=shadow` → [`Self::Shadow`], unset/other →
+    /// [`Self::Off`].
+    pub fn from_env() -> Self {
+        match std::env::var("JOLT_UNIFIED_REDUCE").as_deref() {
+            Ok("1") => Self::On,
+            Ok("shadow") => Self::Shadow,
+            _ => Self::Off,
+        }
+    }
+
+    /// Runtime should execute `Op::Reduce` rather than the legacy ops.
+    #[inline]
+    pub fn unified_active(self) -> bool {
+        matches!(self, Self::On | Self::Shadow)
+    }
+
+    /// Runtime should also run the reference shadow for cross-check.
+    #[inline]
+    pub fn shadow_active(self) -> bool {
+        matches!(self, Self::Shadow)
+    }
+}
+
 /// A linked schedule ready for execution on backend `B`.
 ///
 /// Produced by [`link`]. Contains the compiled module, flat op sequence,
@@ -63,6 +115,12 @@ pub struct Executable<B: ComputeBackend, F: Field> {
     /// to shadow-replay per-instance reduces and assert equivalence against
     /// each fused `BatchRoundEvaluate`.
     pub shadow_ops: Option<Vec<Op>>,
+    /// Unified-reduce dispatch mode, resolved from `JOLT_UNIFIED_REDUCE` at
+    /// link time. Runtime reads this to decide whether legacy reduce ops
+    /// (`InstanceReduce`, `InstanceSegmentedReduce`, `BatchRoundEvaluate`,
+    /// reduce-side of `SumcheckRound`) fire or are skipped in favor of the
+    /// unified `Op::Reduce` specs.
+    pub reduce_mode: ReduceDebugMode,
     /// Backend-compiled kernels, indexed by compute ops (`SumcheckRound`, `AbsorbRoundPoly`).
     pub kernels: Vec<B::CompiledKernel<F>>,
 }
@@ -109,6 +167,7 @@ pub fn link<B: ComputeBackend, F: Field>(module: Module, backend: &B) -> Executa
         module,
         ops,
         shadow_ops,
+        reduce_mode: ReduceDebugMode::from_env(),
         kernels,
     }
 }

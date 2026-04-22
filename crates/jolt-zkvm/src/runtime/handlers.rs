@@ -4,12 +4,12 @@ use rayon::prelude::*;
 
 use jolt_compiler::module::{
     ChallengeIdx, CheckpointEvalAction, DomainSeparator, EvalMode, InstanceEvalKind, Op,
-    RoundPolyEncoding,
+    ReduceDestination, RoundPolyEncoding,
 };
 use jolt_compiler::PolynomialId;
 use jolt_compute::{
-    per_instance_batch_evaluate, BatchInstanceSpec, BatchReduceKind, Buf, BufferProvider,
-    ComputeBackend, DeviceBuffer, Executable,
+    per_instance_batch_evaluate, per_instance_reference_reduce, BatchInstanceSpec, BatchReduceKind,
+    Buf, BufferProvider, ComputeBackend, DeviceBuffer, Executable, ReduceInputs,
 };
 use jolt_crypto::HomomorphicCommitment;
 use jolt_field::Field;
@@ -179,6 +179,10 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             if let Some(ch) = bind_challenge {
                 let scalar = state.challenges[ch.0];
                 bind_kernel_inputs(device_buffers, backend, compiled_kernel, kdef, scalar);
+            }
+
+            if executable.reduce_mode.unified_active() {
+                return;
             }
 
             let input_refs: Vec<&Buf<B, F>> = kdef
@@ -782,6 +786,9 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             instance,
             kernel,
         } => {
+            if executable.reduce_mode.unified_active() {
+                return;
+            }
             let kdef = &module.prover.kernels[*kernel];
             let compiled_kernel = &executable.kernels[*kernel];
             let input_refs: Vec<&Buf<B, F>> = kdef
@@ -808,6 +815,9 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             round_within_phase,
             segmented,
         } => {
+            if executable.reduce_mode.unified_active() {
+                return;
+            }
             let kdef = &module.prover.kernels[*kernel];
             let compiled_kernel = &executable.kernels[*kernel];
             let outer_eq = state
@@ -855,6 +865,9 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             round,
             instances,
         } => {
+            if executable.reduce_mode.unified_active() {
+                return;
+            }
             // Per-instance input buffer refs (one Vec<&Buf> per spec) must
             // outlive the `specs` slice we hand to the backend; keep them
             // in `all_inputs` for the duration of the call.
@@ -1435,11 +1448,39 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             let _ = device_buffers.insert(*output, DeviceBuffer::Field(backend.upload(&result)));
         }
 
-        Op::Reduce { .. } => {
-            // Phase B: compiler dual-emits Op::Reduce alongside the legacy
-            // reduce Ops, but the runtime still executes the legacy path and
-            // treats Op::Reduce as a no-op. Phase C flips dispatch behind
-            // JOLT_UNIFIED_REDUCE; Phase D deletes the legacy arms.
+        Op::Reduce { specs } => {
+            if !executable.reduce_mode.unified_active() {
+                return;
+            }
+            let inputs = ReduceInputs {
+                buffers: device_buffers,
+                outer_eqs: &state.segmented_outer_eqs,
+                instance_claims: &state.batch_instance_claims,
+                kernels: &executable.kernels,
+            };
+            let results = backend.reduce(specs, &inputs, &state.challenges);
+            if executable.reduce_mode.shadow_active() {
+                let shadow =
+                    per_instance_reference_reduce(backend, specs, &inputs, &state.challenges);
+                assert_eq!(results.len(), shadow.len());
+                for (i, (got, want)) in results.iter().zip(shadow.iter()).enumerate() {
+                    assert_eq!(
+                        got, want,
+                        "unified-reduce divergence at spec={i}: backend.reduce vs per_instance_reference_reduce"
+                    );
+                }
+            }
+            debug_assert_eq!(results.len(), specs.len());
+            for (spec, evals) in specs.iter().zip(results.into_iter()) {
+                match spec.destination {
+                    ReduceDestination::Instance { batch: _, instance } => {
+                        state.last_round_instance_evals[instance.0] = evals;
+                    }
+                    ReduceDestination::SumcheckRound { .. } => {
+                        state.last_round_coeffs = evals;
+                    }
+                }
+            }
         }
     }
 }

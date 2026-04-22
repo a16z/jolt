@@ -24,13 +24,14 @@ use jolt_compiler::formula::{BindingOrder, Factor, Formula, ProductTerm};
 use jolt_compiler::ir::PolyKind;
 use jolt_compiler::kernel_spec::{GruenHint, GruenQ, Iteration, LinComboQ};
 use jolt_compiler::module::{
-    BatchIdx, BatchedInstance, BatchedSumcheckDef, BilinearExpr, ChallengeDecl, ChallengeIdx,
-    ChallengeSource, CheckpointAction, CheckpointEvalAction, CheckpointRule, ClaimFactor,
-    ClaimFormula, ClaimTerm, CombineEntry, Comparison, DefaultVal, DomainSeparator, EvalMode,
-    Evaluation, InputBinding, InstanceConfig, InstanceIdx, InstancePhase, IntBitOp, KernelDef,
-    Module, Op, PointNormalization, PolyDecl, PrefixMleFormula, PrefixMleRule, R1CSMatrix,
-    RemainingTest, RoundGuard, RoundPolyEncoding, ScalarCapture, Schedule, SegmentedConfig,
-    SuffixOp, SumcheckInstance, VerifierOp, VerifierSchedule, VerifierStageIndex, WeightFn,
+    BatchIdx, BatchedInstance, BatchedSumcheckDef, BilinearExpr, BufferRef, ChallengeDecl,
+    ChallengeIdx, ChallengeSource, CheckpointAction, CheckpointEvalAction, CheckpointRule,
+    ClaimFactor, ClaimFormula, ClaimTerm, CombineEntry, Comparison, DefaultVal, DomainSeparator,
+    EvalMode, Evaluation, GruenContext, InputBinding, InstanceConfig, InstanceIdx, InstancePhase,
+    IntBitOp, KernelDef, Module, Op, PointNormalization, PolyDecl, PrefixMleFormula, PrefixMleRule,
+    R1CSMatrix, ReduceAxes, ReduceDestination, ReduceSpec, RemainingTest, RoundGuard,
+    RoundPolyEncoding, ScalarCapture, Schedule, SegmentedConfig, SuffixOp, SumcheckInstance,
+    VerifierOp, VerifierSchedule, VerifierStageIndex, WeightFn,
 };
 use jolt_compiler::params::{
     ModuleParams, LOG_K_INSTRUCTION, LOG_K_REG, NUM_CIRCUIT_FLAGS, NUM_LOOKUP_TABLES,
@@ -905,18 +906,61 @@ fn emit_unrolled_batched_rounds(
             // Reduce (non-decomp cases — decomp reduce is emitted above).
             if !is_ps {
                 if phase.segmented.is_some() {
+                    let seg = phase.segmented.clone().unwrap();
+                    let round_within_phase = instance_round - phase_start;
                     ops.push(Op::InstanceSegmentedReduce {
                         batch: batch_idx,
                         instance: inst_idx,
                         kernel,
-                        round_within_phase: instance_round - phase_start,
-                        segmented: phase.segmented.clone().unwrap(),
+                        round_within_phase,
+                        segmented: seg.clone(),
+                    });
+                    let gruen_context = kdef.spec.gruen_hint.as_ref().map(|_| GruenContext {
+                        current_round: round_within_phase,
+                    });
+                    ops.push(Op::Reduce {
+                        specs: vec![ReduceSpec {
+                            kernel,
+                            inputs: kdef
+                                .inputs
+                                .iter()
+                                .map(|b| BufferRef::Polynomial(b.poly()))
+                                .collect(),
+                            axes: ReduceAxes::Product {
+                                outer_eq: BufferRef::SegmentedOuterEq {
+                                    batch: batch_idx,
+                                    instance: inst_idx,
+                                },
+                                inner_only: seg.inner_only.clone(),
+                                inner_size: 1usize << (seg.inner_num_vars - round_within_phase),
+                                gruen_context,
+                            },
+                            destination: ReduceDestination::Instance {
+                                batch: batch_idx,
+                                instance: inst_idx,
+                            },
+                        }],
                     });
                 } else {
                     ops.push(Op::InstanceReduce {
                         batch: batch_idx,
                         instance: inst_idx,
                         kernel,
+                    });
+                    ops.push(Op::Reduce {
+                        specs: vec![ReduceSpec {
+                            kernel,
+                            inputs: kdef
+                                .inputs
+                                .iter()
+                                .map(|b| BufferRef::Polynomial(b.poly()))
+                                .collect(),
+                            axes: ReduceAxes::Flat,
+                            destination: ReduceDestination::Instance {
+                                batch: batch_idx,
+                                instance: inst_idx,
+                            },
+                        }],
                     });
                 }
             }
@@ -1306,6 +1350,21 @@ fn build_stage1(
         round: 0,
         bind_challenge: None,
     });
+    ops.push(Op::Reduce {
+        specs: vec![ReduceSpec {
+            kernel: outer_uniskip_kernel,
+            inputs: kernels[outer_uniskip_kernel]
+                .inputs
+                .iter()
+                .map(|b| BufferRef::Polynomial(b.poly()))
+                .collect(),
+            axes: ReduceAxes::Flat,
+            destination: ReduceDestination::SumcheckRound {
+                sumcheck: 0,
+                round: 0,
+            },
+        }],
+    });
     ops.push(Op::AbsorbRoundPoly {
         num_coeffs: params.outer_uniskip_num_coeffs,
         tag: DomainSeparator::UniskipPoly,
@@ -1430,6 +1489,21 @@ fn build_stage1(
             kernel: outer_remaining_kernel,
             round,
             bind_challenge: bind,
+        });
+        ops.push(Op::Reduce {
+            specs: vec![ReduceSpec {
+                kernel: outer_remaining_kernel,
+                inputs: kernels[outer_remaining_kernel]
+                    .inputs
+                    .iter()
+                    .map(|b| BufferRef::Polynomial(b.poly()))
+                    .collect(),
+                axes: ReduceAxes::Flat,
+                destination: ReduceDestination::SumcheckRound {
+                    sumcheck: 0,
+                    round: round + 1,
+                },
+            }],
         });
 
         let ch_r = ch.add(
@@ -1815,6 +1889,21 @@ fn build_stage2(
         kernel: product_uniskip_kernel,
         round: 0,
         bind_challenge: None,
+    });
+    ops.push(Op::Reduce {
+        specs: vec![ReduceSpec {
+            kernel: product_uniskip_kernel,
+            inputs: kernels[product_uniskip_kernel]
+                .inputs
+                .iter()
+                .map(|b| BufferRef::Polynomial(b.poly()))
+                .collect(),
+            axes: ReduceAxes::Flat,
+            destination: ReduceDestination::SumcheckRound {
+                sumcheck: 1,
+                round: 0,
+            },
+        }],
     });
     ops.push(Op::AbsorbRoundPoly {
         num_coeffs: params.product_uniskip_num_coeffs,

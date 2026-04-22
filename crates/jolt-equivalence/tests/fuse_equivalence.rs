@@ -77,13 +77,13 @@ impl ComputeBackend for TestBackend {
         never!("compile")
     }
 
-    fn reduce<F: Field>(
+    fn reduce_single<F: Field>(
         &self,
         _kernel: &Self::CompiledKernel<F>,
         _inputs: &[&Buf<Self, F>],
         _challenges: &[F],
     ) -> Vec<F> {
-        never!("reduce")
+        never!("reduce_single")
     }
 
     fn bind<F: Field>(

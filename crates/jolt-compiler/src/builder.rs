@@ -24,9 +24,9 @@ use crate::formula::BindingOrder;
 use crate::ir::PolyKind;
 use crate::module::{
     BatchIdx, BatchedSumcheckDef, BufferRef, ChallengeDecl, ChallengeIdx, ChallengeSource,
-    CheckpointEvalAction, ClaimFormula, DomainSeparator, EvalMode, InputBinding, InstanceConfig,
-    InstanceIdx, KernelDef, Module, Op, PolyDecl, ReduceAxes, ReduceDestination, ReduceSpec,
-    RoundPolyEncoding, Schedule, VerifierOp, VerifierSchedule, VerifierStageIndex,
+    CheckpointEvalAction, ClaimFormula, DomainSeparator, EvalMode, GruenContext, InputBinding,
+    InstanceConfig, InstanceIdx, KernelDef, Module, Op, PolyDecl, ReduceAxes, ReduceDestination,
+    ReduceSpec, RoundPolyEncoding, Schedule, VerifierOp, VerifierSchedule, VerifierStageIndex,
 };
 use crate::PolynomialId;
 
@@ -688,12 +688,16 @@ impl ModuleBuilder {
                 // Reduce (non-PS cases — PS reduce is emitted above).
                 if !is_instance {
                     if let Some(seg) = phase.segmented.as_ref() {
+                        let round_within_phase = instance_round - phase_start;
                         self.ops.push(Op::InstanceSegmentedReduce {
                             batch,
                             instance: inst_idx,
                             kernel,
-                            round_within_phase: instance_round - phase_start,
+                            round_within_phase,
                             segmented: seg.clone(),
+                        });
+                        let gruen_context = kdef.spec.gruen_hint.as_ref().map(|_| GruenContext {
+                            current_round: round_within_phase,
                         });
                         self.ops.push(Op::Reduce {
                             specs: vec![ReduceSpec {
@@ -709,11 +713,8 @@ impl ModuleBuilder {
                                         instance: inst_idx,
                                     },
                                     inner_only: seg.inner_only.clone(),
-                                    inner_size: 1usize << seg.inner_num_vars,
-                                    // Gruen prev-claim plumbing is resolved in Phase C.
-                                    // Dual-emission fallback path in per_instance_reference_reduce
-                                    // uses the non-Gruen segmented_reduce when gruen_context is None.
-                                    gruen_context: None,
+                                    inner_size: 1usize << (seg.inner_num_vars - round_within_phase),
+                                    gruen_context,
                                 },
                                 destination: ReduceDestination::Instance {
                                     batch,
