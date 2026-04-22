@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776798088758,
+  "lastUpdate": 1776887102957,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -86314,6 +86314,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 865948,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "53157953+markosg04@users.noreply.github.com",
+            "name": "Markos",
+            "username": "markosg04"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7f2db4a749d239323a1ee0e49ce246306e86e5a0",
+          "message": "feat(jolt-r1cs): add uniform R1CS data crate (#1448)\n\n* feat(jolt-r1cs): add uniform R1CS data crate\n\nExtracts the uniform R1CS types used by the Jolt proving system into a\nself-contained crate so downstream stacks (sumcheck, openings, …) can\ndepend on a stable surface without pulling in the full prover.\n\nThe crate exposes four building blocks:\n\n- `ConstraintMatrices` — per-cycle sparse A, B, C rows with an in-place\n  `check_witness` helper that reports the first violated row.\n- `R1csKey` — preprocessed key combining matrices with a runtime-chosen\n  `num_cycles`. Factorises the matrix MLE as\n  `eq(r_x^{cyc}, r_y^{cyc}) · M_local(r_x^{con}, r_y^{var})` for O(K_pad)\n  evaluation and ships `evaluate_local_mles`,\n  `evaluate_sparse_matvec`, and `combined_row` for the inner sumcheck.\n- `R1csSource` — the prover-side materialiser for R1CS-derived polynomials\n  (`Az`, `Bz`, `Cz`, `CombinedRow`, and per-variable columns) given a\n  witness slice and optional `SpartanChallenges`.\n- `constraints::rv64` — the RV64IMAC variable layout and constraint\n  builder used across the Jolt zkVM, with a `noop_satisfies_constraints`\n  smoke test.\n\n`R1csColumn` lives in `column.rs` in this crate. It used to sit inside\n`jolt-compiler::descriptor`, but it's a pure R1CS concept (Az/Bz/Cz/\nCombinedRow/Variable(i)) and dragging the full compiler in as a\ndependency blocked landing this crate ahead of jolt-compiler. Downstream\nconsumers can import `jolt_r1cs::R1csColumn` directly.\n\nTests cover satisfied/violated constraints, key dimensions, local MLE\nevaluation on boolean points, MLE factorisation versus brute force,\nsparse matvec on a known witness, combined-row/MLE consistency under\nrandom challenges, and the RV64 constraint count.\n\n* chore(jolt-r1cs): drop unused rand dev-dependency\n\n* feat(jolt-r1cs): parallelize hot paths and harden APIs\n\nAddresses review feedback on PR #1448:\n- Parallelize `compute_matvec` and `combined_row` via rayon (new `parallel`\n  feature, default on) so prover materialization scales across cycles.\n- Validate `R1csColumn::Variable(var_idx)` against `num_vars` to prevent\n  cross-cycle reads.\n- Replace silent `i128 as i64` narrowing in `row()` with a checked cast that\n  fails fast on out-of-range coefficients.\n- Drop redundant `total_cols_padded` parameter from `combined_row`; compute\n  from `self.total_cols()` instead.\n- Route `ConstraintMatrices` deserialization through a validating `try_from`\n  so malformed input is rejected at load time.\n\n---------\n\nCo-authored-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>",
+          "timestamp": "2026-04-22T14:41:16-04:00",
+          "tree_id": "29de527389670f7dcd32aadc01e5e22fb4f2a18f",
+          "url": "https://github.com/a16z/jolt/commit/7f2db4a749d239323a1ee0e49ce246306e86e5a0"
+        },
+        "date": 1776887100412,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.0956,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 864512,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 498764,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 498388,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 500632,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7247,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 501748,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5884,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 500320,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.0554,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 498544,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.8348,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 232844,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4291,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 862684,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5698,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 498484,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4599,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 498720,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 20.9997,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 498284,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.4719,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 498140,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.4299,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1002400,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.1764,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 653932,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 82.543,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2114660,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4862,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 500812,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5111,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 500964,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 14.8337,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 864952,
             "unit": "KB",
             "extra": ""
           }
