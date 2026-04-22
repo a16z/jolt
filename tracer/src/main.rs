@@ -59,7 +59,7 @@ fn main() {
     };
     emulator.get_mut_cpu().get_mut_mmu().jolt_device = Some(JoltDevice::new(&memory_config));
 
-    emulator.run_test(args.trace.unwrap_or(false), args.disassemble);
+    let endcode = emulator.run_test(args.trace.unwrap_or(false), args.disassemble);
 
     // If signature file is specified, write the signature with specified granularity
     if let Some(sig_path) = args.signature {
@@ -69,4 +69,16 @@ fn main() {
             exit(1);
         }
     }
+
+    // Propagate the HTIF endcode as the process exit status so the ACT4 shell
+    // runner (tests/arch-tests/run.sh) can detect pass/fail reliably. ACT4
+    // self-checking ELFs set endcode=0 on pass (RVMODEL_HALT_PASS) and non-zero
+    // on fail (RVMODEL_HALT_FAIL, derived from gp). Clamp to i32 range while
+    // preserving the non-zero property.
+    let code: i32 = if endcode == 0 {
+        0
+    } else {
+        i32::try_from(endcode).unwrap_or(1).max(1)
+    };
+    exit(code);
 }
