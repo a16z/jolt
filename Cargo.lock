@@ -3185,6 +3185,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-verifier-backend"
+version = "0.1.0"
+dependencies = [
+ "jolt-compiler",
+ "jolt-field",
+ "jolt-poly",
+ "jolt-r1cs",
+ "num-traits",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "jolt-witness"
 version = "0.1.0"
 dependencies = [

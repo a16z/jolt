@@ -1,0 +1,23 @@
+[package]
+name = "jolt-verifier-backend"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Backend trait for Jolt verifier scalar arithmetic — Native (zero-overhead), Tracing (AST), R1CSGen"
+
+[lints]
+workspace = true
+
+[dependencies]
+jolt-field = { path = "../jolt-field", default-features = false }
+jolt-compiler = { path = "../jolt-compiler" }
+jolt-poly = { path = "../jolt-poly" }
+jolt-r1cs = { path = "../jolt-r1cs" }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+jolt-field = { path = "../jolt-field", features = ["bn254"] }
+num-traits = { workspace = true }
+rand = { workspace = true }
+rand_chacha = { workspace = true }
+rand_core = { workspace = true }

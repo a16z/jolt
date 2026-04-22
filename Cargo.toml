@@ -43,6 +43,7 @@ members = [
   "crates/jolt-bench",
   "crates/jolt-blindfold",
   "crates/jolt-verifier",
+  "crates/jolt-verifier-backend",
   "crates/jolt-witness",
   "crates/jolt-zkvm",
   "crates/jolt-equivalence",
