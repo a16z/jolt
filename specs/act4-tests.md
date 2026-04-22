@@ -4,7 +4,7 @@
 |-------------|--------------------------------|
 | Author(s)   | @moodlezoup                    |
 | Created     | 2026-04-22                     |
-| Status      | proposed                       |
+| Status      | implemented                    |
 | PR          |                                |
 
 ## Summary
