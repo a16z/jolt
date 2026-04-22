@@ -333,8 +333,8 @@ impl ComputeBackend for MetalBackend {
         buf.len()
     }
 
-    #[tracing::instrument(skip_all, name = "MetalBackend::reduce")]
-    fn reduce<F: Field>(
+    #[tracing::instrument(skip_all, name = "MetalBackend::reduce_single")]
+    fn reduce_single<F: Field>(
         &self,
         kernel: &MetalKernel<F>,
         inputs: &[&Buf<Self, F>],
@@ -865,7 +865,7 @@ impl ComputeBackend for MetalBackend {
                 }
             }
             let col_refs: Vec<&jolt_compute::Buf<Self, F>> = col_bufs.iter().collect();
-            let evals = self.reduce(kernel, &col_refs, challenges);
+            let evals = self.reduce_single(kernel, &col_refs, challenges);
             match &mut total_evals {
                 Some(total) => {
                     for (t, &e) in total.iter_mut().zip(&evals) {

@@ -109,6 +109,7 @@ fn op_span(op: &Op) -> tracing::span::EnteredSpan {
             n_instances = instances.len()
         )
         .entered(),
+        Op::Reduce { specs } => tracing::info_span!("Reduce", n_specs = specs.len()).entered(),
         Op::InstanceBind {
             batch,
             instance,
@@ -194,7 +195,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                 .collect();
 
             state.last_round_coeffs =
-                backend.reduce(compiled_kernel, &input_refs, &state.challenges);
+                backend.reduce_single(compiled_kernel, &input_refs, &state.challenges);
         }
 
         Op::Evaluate { poly, mode } => {
@@ -796,7 +797,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                     })
                 })
                 .collect();
-            let inst_evals = backend.reduce(compiled_kernel, &input_refs, &state.challenges);
+            let inst_evals = backend.reduce_single(compiled_kernel, &input_refs, &state.challenges);
             state.last_round_instance_evals[instance.0].clone_from(&inst_evals);
         }
 
@@ -1432,6 +1433,13 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                 }
             }
             let _ = device_buffers.insert(*output, DeviceBuffer::Field(backend.upload(&result)));
+        }
+
+        Op::Reduce { .. } => {
+            // Phase A: types and trait method land alongside the legacy surface.
+            // The compiler does not emit Op::Reduce yet; emission lights up in
+            // Phase C. An arm is here so the exhaustive match compiles.
+            panic!("Op::Reduce reached runtime before Phase C emission wire-up");
         }
     }
 }

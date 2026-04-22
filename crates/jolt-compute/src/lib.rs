@@ -16,6 +16,7 @@ mod traits;
 
 pub use linker::{link, Executable, FuseDebugMode};
 pub use traits::{
-    per_instance_batch_evaluate, BatchInstanceSpec, BatchReduceKind, BindingOrder, Buf,
-    BufferProvider, ComputeBackend, DeviceBuffer, HandleId, HandleShape, LookupTraceData, Scalar,
+    per_instance_batch_evaluate, per_instance_reference_reduce, BatchInstanceSpec, BatchReduceKind,
+    BindingOrder, Buf, BufferProvider, ComputeBackend, DeviceBuffer, HandleId, HandleShape,
+    LookupTraceData, ReduceInputs, Scalar,
 };

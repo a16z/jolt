@@ -128,7 +128,7 @@ impl ComputeBackend for CpuBackend {
         crate::compile(spec)
     }
 
-    fn reduce<F: Field>(
+    fn reduce_single<F: Field>(
         &self,
         kernel: &CpuKernel<F>,
         inputs: &[&Buf<Self, F>],
@@ -583,7 +583,7 @@ impl ComputeBackend for CpuBackend {
                 })
                 .collect();
 
-            let evals = self.reduce(kernel, &col_refs, challenges);
+            let evals = self.reduce_single(kernel, &col_refs, challenges);
             evals.into_iter().map(|e| weight * e).collect()
         };
 
@@ -1797,7 +1797,7 @@ mod tests {
             Fr::from_u64(19),
         ]));
 
-        let result = b.reduce(&kernel, &[&col_a, &col_b, &keys], &[]);
+        let result = b.reduce_single(&kernel, &[&col_a, &col_b, &keys], &[]);
 
         // Toom-Cook grid {1, ∞} for d=2:
         // Pair 0: lo=(2,11), hi=(3,13) → P(1)=3*13=39, P(∞)=1*2=2
@@ -1816,7 +1816,7 @@ mod tests {
         let col_a: Buf<CpuBackend, Fr> = DeviceBuffer::Field(b.upload(&[Fr::from_u64(4)]));
         let col_b: Buf<CpuBackend, Fr> = DeviceBuffer::Field(b.upload(&[Fr::from_u64(8)]));
 
-        let result = b.reduce(&kernel, &[&col_a, &col_b, &keys], &[]);
+        let result = b.reduce_single(&kernel, &[&col_a, &col_b, &keys], &[]);
 
         // P(1)=hi_a*hi_b=0*0=0, P(∞)=(0-4)*(0-8)=(-4)*(-8)=32
         assert_eq!(result[0], Fr::zero());
@@ -1833,7 +1833,7 @@ mod tests {
         let col_a: Buf<CpuBackend, Fr> = DeviceBuffer::Field(b.upload(&[Fr::from_u64(5)]));
         let col_b: Buf<CpuBackend, Fr> = DeviceBuffer::Field(b.upload(&[Fr::from_u64(7)]));
 
-        let result = b.reduce(&kernel, &[&col_a, &col_b, &keys], &[]);
+        let result = b.reduce_single(&kernel, &[&col_a, &col_b, &keys], &[]);
 
         // P(1)=hi_a*hi_b=5*7=35, P(∞)=(5-0)*(7-0)=35
         assert_eq!(result[0], Fr::from_u64(35));
@@ -1860,7 +1860,7 @@ mod tests {
             Fr::from_u64(40),
         ]));
 
-        let result = b.reduce(&kernel, &[&col_a, &col_b, &keys], &[]);
+        let result = b.reduce_single(&kernel, &[&col_a, &col_b, &keys], &[]);
 
         // Key 1 (odd-only): lo=(0,0), hi=(2,10) → P(1)=2*10=20, P(∞)=2*10=20
         // Key 4 (even-only): lo=(3,20), hi=(0,0) → P(1)=0, P(∞)=(-3)*(-20)=60
@@ -2007,7 +2007,7 @@ mod tests {
             DeviceBuffer::U64(b.upload(&keys)),
         ];
         let buf_refs: Vec<&Buf<CpuBackend, Fr>> = bufs.iter().collect();
-        let result = b.reduce(&kernel, &buf_refs, &[]);
+        let result = b.reduce_single(&kernel, &buf_refs, &[]);
 
         let expected = reference_sparse_product(&col_a, &col_b, &keys);
         assert_eq!(result, expected, "large sparse reduce mismatch");

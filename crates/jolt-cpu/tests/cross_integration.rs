@@ -105,7 +105,7 @@ fn product_sum_d4_via_reduce() {
         .collect();
 
     let buf_refs: Vec<&Buf<CpuBackend, Fr>> = bufs.iter().collect();
-    let result = b.reduce(&kernel, &buf_refs, &[]);
+    let result = b.reduce_single(&kernel, &buf_refs, &[]);
 
     assert_eq!(result.len(), 4);
 
@@ -135,7 +135,7 @@ fn product_sum_d8_multiple_groups() {
         .collect();
 
     let buf_refs: Vec<&Buf<CpuBackend, Fr>> = bufs.iter().collect();
-    let result = b.reduce(&kernel, &buf_refs, &[]);
+    let result = b.reduce_single(&kernel, &buf_refs, &[]);
     assert_eq!(result.len(), d);
 
     let raw_refs: Vec<&Vec<Fr>> = bufs.iter().map(|db| db.as_field()).collect();
@@ -160,7 +160,7 @@ fn custom_product_via_reduce() {
         .collect();
 
     let buf_refs: Vec<&Buf<CpuBackend, Fr>> = bufs.iter().collect();
-    let result = b.reduce(&kernel, &buf_refs, &[]);
+    let result = b.reduce_single(&kernel, &buf_refs, &[]);
     assert_eq!(result.len(), 3);
 
     let raw_refs: Vec<&Vec<Fr>> = bufs.iter().map(|db| db.as_field()).collect();
@@ -217,7 +217,7 @@ fn custom_with_challenge_via_reduce() {
         ),
     );
 
-    let result = b.reduce(&kernel, &[&buf_a, &buf_b], &[gamma]);
+    let result = b.reduce_single(&kernel, &[&buf_a, &buf_b], &[gamma]);
     assert_eq!(result.len(), 2);
 
     // Verify t=0 (first eval): gamma * sum lo_a[i] * lo_b[i]
@@ -379,7 +379,7 @@ fn sparse_product_d4_via_reduce() {
     bufs.push(DeviceBuffer::U64(b.upload(&keys)));
 
     let buf_refs: Vec<&Buf<CpuBackend, Fr>> = bufs.iter().collect();
-    let result = b.reduce(&kernel, &buf_refs, &[]);
+    let result = b.reduce_single(&kernel, &buf_refs, &[]);
     assert_eq!(result.len(), d);
 
     let expected = reference_sparse_toom_cook_reduce(&value_data, &keys, d, 1);
@@ -410,7 +410,7 @@ fn sparse_d3_mixed_pairing_via_reduce() {
     bufs.push(DeviceBuffer::U64(b.upload(&keys)));
 
     let buf_refs: Vec<&Buf<CpuBackend, Fr>> = bufs.iter().collect();
-    let result = b.reduce(&kernel, &buf_refs, &[]);
+    let result = b.reduce_single(&kernel, &buf_refs, &[]);
     assert_eq!(result.len(), d);
 
     let expected = reference_sparse_toom_cook_reduce(&value_data, &keys, d, 1);

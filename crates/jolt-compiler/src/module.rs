@@ -249,6 +249,109 @@ pub enum InstanceEvalKind {
     },
 }
 
+/// A source for a reduce input buffer.
+///
+/// Used by [`ReduceSpec`] to describe where each input comes from. Most inputs
+/// resolve to device buffers keyed by [`PolynomialId`]; the segmented outer-eq
+/// table lives in per-instance runtime state instead of the device buffer map,
+/// so it has its own variant.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum BufferRef {
+    /// A materialized polynomial buffer keyed by `PolynomialId`.
+    Polynomial(PolynomialId),
+    /// The segmented outer-eq table stashed in per-instance runtime state.
+    ///
+    /// Built by `Op::MaterializeSegmentedOuterEq` and consumed by segmented
+    /// reduces. Resolved from `state.segmented_outer_eqs[(batch, instance)]`.
+    SegmentedOuterEq {
+        batch: BatchIdx,
+        instance: InstanceIdx,
+    },
+}
+
+/// Gruen cubic-assembly context for a segmented reduce.
+///
+/// Present in [`ReduceAxes::Product`] when the kernel's `gruen_hint` calls for
+/// the Gruen optimization. The runtime supplies the previous round's claim
+/// and the current round index so the backend can reconstruct the cubic from
+/// one quadratic evaluation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GruenContext {
+    /// Challenge slot storing the previous round's claim.
+    pub prev_claim_slot: ChallengeIdx,
+    /// Current sumcheck round index (0-based within the phase).
+    pub current_round: usize,
+}
+
+/// How a reduce traverses its input buffers.
+///
+/// Determines the iteration geometry and any outer-eq weighting; the kernel
+/// itself evaluates at the inner level.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ReduceAxes {
+    /// Flat reduce: single loop over the full buffer length (legacy
+    /// `fn reduce` / `fn reduce_single`).
+    Flat,
+    /// Segmented reduce over (outer × inner) with outer-eq weighting.
+    ///
+    /// - `inner_only[i] = true`: input `i` has `inner_size` elements
+    ///   (shared across outer positions).
+    /// - `inner_only[i] = false`: input `i` has `outer_size × inner_size`
+    ///   elements (outer-indexed).
+    /// - `gruen_context.is_some()` selects the Gruen cubic-assembly path.
+    Product {
+        outer_eq: BufferRef,
+        inner_only: Vec<bool>,
+        inner_size: usize,
+        gruen_context: Option<GruenContext>,
+    },
+    /// Lagrange-domain reduce at a set of domain points.
+    ///
+    /// - `stride` / `domain_start` define the evaluation grid.
+    /// - `domain_indexed[i] = true`: input `i` is indexed by domain point;
+    ///   `false`: input `i` is a plain buffer iterated flat.
+    Domain {
+        domain_size: usize,
+        stride: usize,
+        domain_start: i64,
+        domain_indexed: Vec<bool>,
+    },
+    /// Sparse merge-join reduce keyed by an explicit key buffer.
+    Sparse { keys: BufferRef },
+}
+
+/// Where a reduce writes its result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ReduceDestination {
+    /// Per-instance evals for a batched sumcheck round.
+    ///
+    /// Writes to `state.last_round_instance_evals[instance.0]`, consumed by
+    /// the later `Op::BatchAccumulateInstance` within the same
+    /// `BatchRoundBegin..BatchRoundFinalize` window.
+    Instance {
+        batch: BatchIdx,
+        instance: InstanceIdx,
+    },
+    /// Round polynomial coefficients for a standalone sumcheck instance.
+    ///
+    /// Writes to `state.last_round_coeffs` (mirrors today's `SumcheckRound`).
+    SumcheckRound { sumcheck: usize, round: usize },
+}
+
+/// A single reduce operation within a fused [`Op::Reduce`].
+///
+/// Encodes the kernel, input buffer references, iteration geometry, and
+/// destination slot. Multiple specs are packed into one `Op::Reduce` so the
+/// backend can fuse work across reduces (shared prefetch, single parallel
+/// region) without the runtime crossing the abstraction.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReduceSpec {
+    pub kernel: usize,
+    pub inputs: Vec<BufferRef>,
+    pub axes: ReduceAxes,
+    pub destination: ReduceDestination,
+}
+
 /// One entry of the combine matrix for read-checking.
 ///
 /// Encodes `coefficient × prefix[prefix_idx] × suffix[table_idx][suffix_local_idx]`.
@@ -1266,6 +1369,17 @@ pub enum Op {
         round: usize,
         instances: Vec<InstanceEvalKind>,
     },
+    /// Unified fused reduce across an arbitrary set of specs.
+    ///
+    /// Successor to `SumcheckRound`, `InstanceReduce`, `InstanceSegmentedReduce`,
+    /// and `BatchRoundEvaluate` — one op covers flat/segmented/Gruen/domain/
+    /// sparse reduces for either standalone sumchecks or batched per-instance
+    /// evals. The backend's `reduce(&[ReduceSpec], ...)` runs all specs in a
+    /// single parallel region, eliminating nested-rayon overhead.
+    ///
+    /// Reserved for Phase C wire-up. The compiler does not emit this variant
+    /// yet; Phase A only establishes the types + trait method.
+    Reduce { specs: Vec<ReduceSpec> },
     /// Bind kernel inputs for an active instance within a round.
     /// Emitted for rounds after the first within a phase.
     InstanceBind {
@@ -1587,6 +1701,7 @@ impl Op {
             Op::SumcheckRound { .. }
                 | Op::InstanceReduce { .. }
                 | Op::InstanceSegmentedReduce { .. }
+                | Op::Reduce { .. }
                 | Op::InstanceBind { .. }
                 | Op::ReadCheckingReduce { .. }
                 | Op::RafReduce { .. }

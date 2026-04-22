@@ -55,13 +55,13 @@ fn bench_reduce_latency<B: ComputeBackend>(
     let refs: Vec<&Buf<B, Fr>> = dev_bufs.iter().collect();
 
     for _ in 0..WARMUP {
-        let _ = backend.reduce(kernel, &refs, &[]);
+        let _ = backend.reduce_single(kernel, &refs, &[]);
     }
 
     let mut times = Vec::with_capacity(ITERS);
     for _ in 0..ITERS {
         let start = Instant::now();
-        let _ = backend.reduce(kernel, &refs, &[]);
+        let _ = backend.reduce_single(kernel, &refs, &[]);
         times.push(start.elapsed().as_nanos() as f64);
     }
 

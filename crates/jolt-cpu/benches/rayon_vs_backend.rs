@@ -167,7 +167,7 @@ fn bench_rayon_vs_backend(c: &mut Criterion) {
                 &n,
                 |b, _| {
                     b.iter(|| {
-                        black_box(backend.reduce(&kernel, &buf_refs, &[]));
+                        black_box(backend.reduce_single(&kernel, &buf_refs, &[]));
                     });
                 },
             );

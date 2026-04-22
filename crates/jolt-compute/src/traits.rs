@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use jolt_compiler::module::{ClaimFormula, Op};
+use jolt_compiler::module::{BufferRef, ClaimFormula, Op, ReduceAxes, ReduceSpec};
 pub use jolt_compiler::BindingOrder;
 use jolt_compiler::KernelSpec;
 use jolt_compiler::PolynomialId;
@@ -252,12 +252,42 @@ pub trait ComputeBackend: Send + Sync + 'static {
     /// | After value columns | Extra inputs (tensor eq weights) |
     ///
     /// Returns `num_evals` field elements (evaluation sums on the grid).
-    fn reduce<F: Field>(
+    ///
+    /// Legacy single-instance entry point. The unified entry point is
+    /// [`reduce`](Self::reduce), which takes `&[ReduceSpec]` and dispatches
+    /// many reductions in one call; `reduce_single` remains as a reference
+    /// leaf kernel callable by [`per_instance_reference_reduce`] and
+    /// backends' own flat-axes fast paths. Phase D deletes this method.
+    fn reduce_single<F: Field>(
         &self,
         kernel: &Self::CompiledKernel<F>,
         inputs: &[&Buf<Self, F>],
         challenges: &[F],
     ) -> Vec<F>;
+
+    /// Evaluate a batch of kernel reductions described by [`ReduceSpec`]s.
+    ///
+    /// Successor to [`reduce_single`](Self::reduce_single),
+    /// [`segmented_reduce`](Self::segmented_reduce),
+    /// [`gruen_segmented_reduce`](Self::gruen_segmented_reduce), and
+    /// [`batch_round_evaluate`](Self::batch_round_evaluate). A length-1
+    /// `specs` corresponds to a standalone sumcheck round; a length-N
+    /// `specs` replaces a batch-round window. Backends may group by
+    /// `(axes variant, binding order, inner_size)` and dispatch one fused
+    /// loop per group — returning the results in the same order as
+    /// `specs`.
+    ///
+    /// Default implementation forwards to [`per_instance_reference_reduce`],
+    /// which byte-identically matches the legacy per-method dispatch.
+    /// Phase E lights up the fused CPU override.
+    fn reduce<F: Field>(
+        &self,
+        specs: &[ReduceSpec],
+        inputs: &ReduceInputs<'_, Self, F>,
+        challenges: &[F],
+    ) -> Vec<Vec<F>> {
+        per_instance_reference_reduce(self, specs, inputs, challenges)
+    }
 
     /// Bind one variable across all kernel inputs.
     ///
@@ -583,7 +613,7 @@ pub trait ComputeBackend: Send + Sync + 'static {
     /// Returns one `Vec<F>` of kernel evaluations per instance, in the
     /// same order as `specs`. Default implementation forwards to
     /// [`per_instance_batch_evaluate`], which loops per-instance via
-    /// [`reduce`](Self::reduce) / [`segmented_reduce`](Self::segmented_reduce)
+    /// [`reduce_single`](Self::reduce_single) / [`segmented_reduce`](Self::segmented_reduce)
     /// / [`gruen_segmented_reduce`](Self::gruen_segmented_reduce), matching
     /// the current per-instance dispatch byte-for-byte. Backends opt in
     /// to fused evaluation (shared prefetch, fused accumulation) by
@@ -599,7 +629,7 @@ pub trait ComputeBackend: Send + Sync + 'static {
 
 /// Byte-identical per-instance shadow of [`ComputeBackend::batch_round_evaluate`].
 ///
-/// Dispatches to [`reduce`](ComputeBackend::reduce) /
+/// Dispatches to [`reduce_single`](ComputeBackend::reduce_single) /
 /// [`segmented_reduce`](ComputeBackend::segmented_reduce) /
 /// [`gruen_segmented_reduce`](ComputeBackend::gruen_segmented_reduce)
 /// per spec in the same order as the input. Factored out so both the
@@ -619,7 +649,7 @@ where
     specs
         .iter()
         .map(|spec| match &spec.kind {
-            BatchReduceKind::Dense => backend.reduce(spec.kernel, spec.inputs, challenges),
+            BatchReduceKind::Dense => backend.reduce_single(spec.kernel, spec.inputs, challenges),
             BatchReduceKind::Segmented {
                 outer_eq,
                 inner_only,
@@ -662,14 +692,14 @@ where
 
 /// Per-instance reduce kind for [`ComputeBackend::batch_round_evaluate`].
 ///
-/// Mirrors the dispatch union of [`reduce`](ComputeBackend::reduce) /
+/// Mirrors the dispatch union of [`reduce_single`](ComputeBackend::reduce_single) /
 /// [`segmented_reduce`](ComputeBackend::segmented_reduce) /
 /// [`gruen_segmented_reduce`](ComputeBackend::gruen_segmented_reduce). The
 /// runtime picks the variant per instance; backends may dispatch uniformly
 /// or branch by kind.
 #[non_exhaustive]
 pub enum BatchReduceKind<'a, F: Field> {
-    /// Plain `reduce` — no outer eq, no inner-only sharing.
+    /// Plain `reduce_single` — no outer eq, no inner-only sharing.
     Dense,
     /// `segmented_reduce` with an outer eq weighting.
     Segmented {
@@ -700,6 +730,143 @@ pub struct BatchInstanceSpec<'a, B: ComputeBackend + ?Sized, F: Field> {
     pub inputs: &'a [&'a Buf<B, F>],
     /// Reduce kind (dense / segmented / gruen).
     pub kind: BatchReduceKind<'a, F>,
+}
+
+/// Borrow view of runtime state passed to [`ComputeBackend::reduce`].
+///
+/// The backend resolves each [`BufferRef`] in a [`ReduceSpec`] against
+/// this view: `BufferRef::Polynomial` looks up `buffers`, and
+/// `BufferRef::SegmentedOuterEq` looks up `outer_eqs`. Kernels are
+/// resolved by index via `kernels`. The borrow pattern keeps the
+/// backend decoupled from the runtime's concrete state type.
+pub struct ReduceInputs<'a, B: ComputeBackend + ?Sized, F: Field> {
+    /// Materialized polynomial buffers keyed by `PolynomialId`.
+    pub buffers: &'a HashMap<PolynomialId, Buf<B, F>>,
+    /// Per-instance segmented outer-eq buffers keyed by `(batch, instance)`.
+    pub outer_eqs: &'a HashMap<(usize, usize), Vec<F>>,
+    /// Compiled kernels indexed by `ReduceSpec::kernel`.
+    pub kernels: &'a [B::CompiledKernel<F>],
+}
+
+/// Byte-identical per-spec shadow of [`ComputeBackend::reduce`].
+///
+/// Dispatches each [`ReduceSpec`] through the legacy single-instance
+/// methods in the default order ([`reduce_single`](ComputeBackend::reduce_single)
+/// / [`segmented_reduce`](ComputeBackend::segmented_reduce) /
+/// [`gruen_segmented_reduce`](ComputeBackend::gruen_segmented_reduce)),
+/// matching today's per-Op dispatch byte-for-byte. Both the default
+/// `reduce` impl AND the runtime's dual-path harness call this, so any
+/// divergence from a backend's fused override is by construction a
+/// fusion bug.
+///
+/// `ReduceAxes::Domain` and `ReduceAxes::Sparse` have no legacy backend
+/// method and panic here — they are reserved for Phase B wire-up.
+pub fn per_instance_reference_reduce<B, F>(
+    backend: &B,
+    specs: &[ReduceSpec],
+    inputs: &ReduceInputs<'_, B, F>,
+    challenges: &[F],
+) -> Vec<Vec<F>>
+where
+    B: ComputeBackend + ?Sized,
+    F: Field,
+{
+    specs
+        .iter()
+        .map(|spec| {
+            let kernel = &inputs.kernels[spec.kernel];
+            let input_bufs: Vec<&Buf<B, F>> = spec
+                .inputs
+                .iter()
+                .map(|r| resolve_buffer(inputs, r))
+                .collect();
+            match &spec.axes {
+                ReduceAxes::Flat => backend.reduce_single(kernel, &input_bufs, challenges),
+                ReduceAxes::Product {
+                    outer_eq,
+                    inner_only,
+                    inner_size,
+                    gruen_context,
+                } => {
+                    let outer = resolve_outer_eq(inputs, outer_eq);
+                    let field_inputs: Vec<&B::Buffer<F>> =
+                        input_bufs.iter().map(|b| b.as_field()).collect();
+                    match gruen_context {
+                        None => backend.segmented_reduce(
+                            kernel,
+                            &field_inputs,
+                            outer,
+                            inner_only,
+                            *inner_size,
+                            challenges,
+                        ),
+                        Some(gc) => {
+                            let prev_claim = challenges[gc.prev_claim_slot.0];
+                            backend.gruen_segmented_reduce(
+                                kernel,
+                                &field_inputs,
+                                outer,
+                                inner_only,
+                                *inner_size,
+                                challenges,
+                                prev_claim,
+                                gc.current_round,
+                            )
+                        }
+                    }
+                }
+                ReduceAxes::Domain { .. } => panic!(
+                    "per_instance_reference_reduce: ReduceAxes::Domain has no legacy backend \
+                     method; reserved for Phase B wire-up",
+                ),
+                ReduceAxes::Sparse { .. } => panic!(
+                    "per_instance_reference_reduce: ReduceAxes::Sparse has no legacy backend \
+                     method; reserved for Phase B wire-up",
+                ),
+            }
+        })
+        .collect()
+}
+
+fn resolve_buffer<'a, B, F>(
+    inputs: &'a ReduceInputs<'_, B, F>,
+    buf_ref: &BufferRef,
+) -> &'a Buf<B, F>
+where
+    B: ComputeBackend + ?Sized,
+    F: Field,
+{
+    match buf_ref {
+        BufferRef::Polynomial(id) => inputs
+            .buffers
+            .get(id)
+            .unwrap_or_else(|| panic!("reduce input: missing polynomial buffer {id:?}")),
+        BufferRef::SegmentedOuterEq { .. } => {
+            panic!("reduce input: SegmentedOuterEq is not a kernel input — use ReduceAxes::Product.outer_eq")
+        }
+    }
+}
+
+fn resolve_outer_eq<'a, B, F>(inputs: &'a ReduceInputs<'_, B, F>, buf_ref: &BufferRef) -> &'a [F]
+where
+    B: ComputeBackend + ?Sized,
+    F: Field,
+{
+    match buf_ref {
+        BufferRef::SegmentedOuterEq { batch, instance } => inputs
+            .outer_eqs
+            .get(&(batch.0, instance.0))
+            .unwrap_or_else(|| {
+                panic!(
+                    "reduce input: missing outer_eq for (batch={}, instance={})",
+                    batch.0, instance.0
+                )
+            })
+            .as_slice(),
+        BufferRef::Polynomial(_) => {
+            panic!("reduce input: ReduceAxes::Product.outer_eq must be SegmentedOuterEq")
+        }
+    }
 }
 
 /// Per-cycle trace data for the instruction lookup sumcheck.

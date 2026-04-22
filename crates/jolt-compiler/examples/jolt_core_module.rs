@@ -6958,6 +6958,7 @@ fn print_stats(module: &Module, params: &ModuleParams) {
             | Op::InstanceReduce { .. }
             | Op::InstanceSegmentedReduce { .. }
             | Op::BatchRoundEvaluate { .. }
+            | Op::Reduce { .. }
             | Op::InstanceBind { .. }
             | Op::BindCarryBuffers { .. }
             | Op::BatchAccumulateInstance { .. }

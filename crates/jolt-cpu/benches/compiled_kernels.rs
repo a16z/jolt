@@ -132,7 +132,7 @@ fn bench_dense_reduce(c: &mut Criterion) {
                 BenchmarkId::new(format!("D={d}"), format!("2^{log_n}")),
                 &n,
                 |b, _| {
-                    b.iter(|| black_box(backend.reduce(&kernel, &buf_refs, &[])));
+                    b.iter(|| black_box(backend.reduce_single(&kernel, &buf_refs, &[])));
                 },
             );
         }
@@ -169,7 +169,7 @@ fn bench_sparse_reduce(c: &mut Criterion) {
                 BenchmarkId::new(format!("D={d}"), format!("2^{log_n}")),
                 &n,
                 |b, _| {
-                    b.iter(|| black_box(backend.reduce(&kernel, &buf_refs, &[])));
+                    b.iter(|| black_box(backend.reduce_single(&kernel, &buf_refs, &[])));
                 },
             );
         }

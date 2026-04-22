@@ -21,11 +21,12 @@ pub use ir::expr::{Challenge, Expr, Poly, Term};
 pub use ir::{Claim, ClaimId, Density, PolyDef, PolyKind, Protocol, PublicPoly, Vertex};
 pub use kernel_spec::{GruenHint, GruenQ, Iteration, KernelSpec, LinComboQ};
 pub use module::{
-    BatchIdx, ChallengeDecl, ChallengeIdx, ChallengeSource, ClaimFactor, ClaimFormula, ClaimTerm,
-    CombineEntry, Comparison, DomainSeparator, EvalMode, Evaluation, InputBinding, InstanceConfig,
-    InstanceIdx, IntBitOp, KernelDef, Module, Op, PointNormalization, PolyDecl, PrefixMleFormula,
-    PrefixMleRule, R1CSMatrix, RemainingTest, RoundPolyEncoding, Schedule, SumcheckInstance,
-    UniskipVerify, VerifierOp, VerifierSchedule, VerifierStageIndex,
+    BatchIdx, BufferRef, ChallengeDecl, ChallengeIdx, ChallengeSource, ClaimFactor, ClaimFormula,
+    ClaimTerm, CombineEntry, Comparison, DomainSeparator, EvalMode, Evaluation, GruenContext,
+    InputBinding, InstanceConfig, InstanceIdx, IntBitOp, KernelDef, Module, Op, PointNormalization,
+    PolyDecl, PrefixMleFormula, PrefixMleRule, R1CSMatrix, ReduceAxes, ReduceDestination,
+    ReduceSpec, RemainingTest, RoundPolyEncoding, Schedule, SumcheckInstance, UniskipVerify,
+    VerifierOp, VerifierSchedule, VerifierStageIndex,
 };
 pub use params::ModuleParams;
 pub use polynomial_id::PolynomialId;

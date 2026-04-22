@@ -860,6 +860,19 @@ fn op_poly_refs(op: &Op, kernels: &[KernelDef]) -> Vec<PolynomialId> {
             }
             refs
         }
+        Op::Reduce { specs } => {
+            use crate::module::BufferRef;
+            let mut refs: Vec<PolynomialId> = Vec::new();
+            for spec in specs {
+                refs.extend(kernels[spec.kernel].inputs.iter().map(|b| b.poly()));
+                for buf in &spec.inputs {
+                    if let BufferRef::Polynomial(p) = buf {
+                        refs.push(*p);
+                    }
+                }
+            }
+            refs
+        }
         Op::AbsorbRoundPoly { .. } => vec![],
         Op::Evaluate { poly, .. }
         | Op::CollectOpeningClaim { poly, .. }

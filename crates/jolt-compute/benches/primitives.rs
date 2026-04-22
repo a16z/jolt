@@ -119,7 +119,7 @@ fn bench_reduce(c: &mut Criterion) {
                 &n,
                 |b, _| {
                     b.iter(|| {
-                        black_box(backend.reduce(&kernel, &refs, &[]));
+                        black_box(backend.reduce_single(&kernel, &refs, &[]));
                     });
                 },
             );
@@ -226,7 +226,7 @@ fn bench_tensor_reduce(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("flat", &label), &total_pairs, |b, _| {
             b.iter(|| {
-                black_box(backend.reduce(&dense_kernel, &flat_refs, &[]));
+                black_box(backend.reduce_single(&dense_kernel, &flat_refs, &[]));
             });
         });
 
@@ -248,7 +248,7 @@ fn bench_tensor_reduce(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("tensor", &label), &total_pairs, |b, _| {
             b.iter(|| {
-                black_box(backend.reduce(&tensor_kernel, &tensor_refs, &[]));
+                black_box(backend.reduce_single(&tensor_kernel, &tensor_refs, &[]));
             });
         });
     }
