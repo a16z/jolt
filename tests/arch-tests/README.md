@@ -9,13 +9,33 @@ target via `.github/workflows/arch-tests.yml`.
 
 ## Prerequisites
 
-One-time setup (Linux):
+### Linux
+
+One-time setup:
 
 ```sh
 make bootstrap
 ```
 
-This installs:
+### macOS (or any host without apt)
+
+`scripts/bootstrap` is Debian/Ubuntu-specific. On macOS, use the bundled
+Docker runner — it reproduces the CI environment exactly:
+
+```sh
+./tests/arch-tests/run-in-docker.sh
+```
+
+Defaults to `make bootstrap && make arch-tests-64imac && make arch-tests-smoke`.
+Named Docker volumes persist the Cargo build, the xpack toolchain, and Sail
+between invocations so repeat runs don't re-download anything. Run
+`./tests/arch-tests/run-in-docker.sh shell` to drop into an interactive
+container with the repo mounted, or pass your own Make target via
+`./tests/arch-tests/run-in-docker.sh -- arch-tests-generate`.
+
+### What gets installed
+
+Either path (`make bootstrap` directly or via Docker) provisions:
 
 - `riscv-none-elf-gcc` (GCC 15+) and binutils via xpack-dev-tools —
   assembles and links the ACT4 test sources. ACT4 enforces GCC 15+ at
