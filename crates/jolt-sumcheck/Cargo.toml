@@ -12,6 +12,7 @@ workspace = true
 jolt-field = { path = "../jolt-field" }
 jolt-poly = { path = "../jolt-poly" }
 jolt-transcript = { path = "../jolt-transcript" }
+jolt-verifier-backend = { path = "../jolt-verifier-backend" }
 serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true
 thiserror = { workspace = true }

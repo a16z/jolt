@@ -3141,6 +3141,7 @@ dependencies = [
  "jolt-field",
  "jolt-poly",
  "jolt-transcript",
+ "jolt-verifier-backend",
  "serde",
  "thiserror 2.0.18",
  "tracing",

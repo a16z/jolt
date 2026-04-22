@@ -3,6 +3,7 @@
 use jolt_field::{Field, Fr};
 use jolt_poly::UnivariatePoly;
 use jolt_transcript::{AppendToTranscript, LabelWithCount, MockTranscript, Transcript};
+use jolt_verifier_backend::FieldBackend;
 
 use crate::claim::SumcheckClaim;
 use crate::error::SumcheckError;
@@ -487,4 +488,122 @@ fn verify_dispatches_through_round_verifier_trait() {
     assert_eq!(challenges.len(), 3);
     // Mock always returns fixed_sum, so final eval should be fixed
     assert_eq!(final_eval, fixed);
+}
+
+/// Native FieldBackend path must produce bit-identical (final_eval, challenges)
+/// to the legacy `verify` path on the same proof, with the transcript ending
+/// in the same state.
+#[test]
+fn verify_with_backend_native_matches_legacy() {
+    use jolt_verifier_backend::Native;
+
+    let evals: Vec<F> = (1..=8).map(F::from_u64).collect();
+    let sum = compute_sum(&evals);
+    let num_vars = 3;
+
+    let mut prover_transcript = MockTranscript::<F>::default();
+    let proof = honest_prove(&evals, num_vars, &mut prover_transcript);
+
+    let claim = SumcheckClaim {
+        num_vars,
+        degree: 1,
+        claimed_sum: sum,
+    };
+
+    let mut legacy_transcript = MockTranscript::<F>::default();
+    let clear = ClearRoundVerifier::new();
+    let (legacy_eval, legacy_challenges) = SumcheckVerifier::verify(
+        &claim,
+        &proof.round_polynomials,
+        &mut legacy_transcript,
+        &clear,
+    )
+    .unwrap();
+    let legacy_post: F = legacy_transcript.challenge();
+
+    let mut backend = Native::<F>::new();
+    let mut backend_transcript = MockTranscript::<F>::default();
+    let claimed_sum_w = backend.wrap_proof(claim.claimed_sum, "input_claim");
+    let (backend_eval_w, backend_challenges_w, backend_challenges_f) =
+        SumcheckVerifier::verify_with_backend(
+            &mut backend,
+            &claim,
+            &proof.round_polynomials,
+            claimed_sum_w,
+            &mut backend_transcript,
+            None,
+            false,
+        )
+        .unwrap();
+    let backend_post: F = backend_transcript.challenge();
+
+    assert_eq!(backend_eval_w, legacy_eval, "final eval mismatch");
+    assert_eq!(
+        backend_challenges_f, legacy_challenges,
+        "challenges (raw F) mismatch"
+    );
+    assert_eq!(
+        backend_challenges_w, legacy_challenges,
+        "challenges (Native scalar = F) mismatch"
+    );
+    assert_eq!(
+        backend_post, legacy_post,
+        "post-verify transcript challenges diverged"
+    );
+}
+
+/// Tracing FieldBackend path must record a graph that, when replayed against
+/// the wrapped values seen during verification, reproduces the legacy final
+/// evaluation and challenges.
+#[test]
+fn verify_with_backend_tracing_replays_correctly() {
+    use jolt_verifier_backend::{replay_trace, Tracing};
+
+    let evals: Vec<F> = (1..=8).map(F::from_u64).collect();
+    let sum = compute_sum(&evals);
+    let num_vars = 3;
+
+    let mut prover_transcript = MockTranscript::<F>::default();
+    let proof = honest_prove(&evals, num_vars, &mut prover_transcript);
+
+    let claim = SumcheckClaim {
+        num_vars,
+        degree: 1,
+        claimed_sum: sum,
+    };
+
+    let mut legacy_transcript = MockTranscript::<F>::default();
+    let clear = ClearRoundVerifier::new();
+    let (legacy_eval, _legacy_challenges) = SumcheckVerifier::verify(
+        &claim,
+        &proof.round_polynomials,
+        &mut legacy_transcript,
+        &clear,
+    )
+    .unwrap();
+
+    let mut tracer = Tracing::<F>::new();
+    let mut tracer_transcript = MockTranscript::<F>::default();
+    let claimed_sum_w = tracer.wrap_proof(claim.claimed_sum, "input_claim");
+    let (final_eval_w, _challenges_w, _challenges_f) = SumcheckVerifier::verify_with_backend(
+        &mut tracer,
+        &claim,
+        &proof.round_polynomials,
+        claimed_sum_w,
+        &mut tracer_transcript,
+        None,
+        false,
+    )
+    .unwrap();
+
+    let graph = tracer.snapshot();
+    let wraps = tracer.wrap_values();
+    let values = replay_trace(&graph, &wraps).unwrap();
+    let final_eval_replayed = values[final_eval_w.id.0 as usize];
+
+    assert_eq!(final_eval_replayed, legacy_eval, "Tracing replay mismatch");
+    assert!(
+        graph.assertion_count() > 0,
+        "Tracing should have recorded sumcheck round-consistency assertions"
+    );
 }
