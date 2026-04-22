@@ -3176,6 +3176,7 @@ dependencies = [
  "jolt-r1cs",
  "jolt-sumcheck",
  "jolt-transcript",
+ "jolt-verifier-backend",
  "num-traits",
  "rand 0.8.5",
  "rand_chacha 0.3.1",

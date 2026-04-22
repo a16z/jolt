@@ -17,6 +17,16 @@ use jolt_poly::EqPolynomial;
 use jolt_r1cs::R1csKey;
 use jolt_sumcheck::{ClearRoundVerifier, SumcheckClaim, SumcheckVerifier};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Label, LabelWithCount, Transcript};
+use jolt_verifier_backend::{
+    helpers::{
+        eq_eval as backend_eq_eval, identity_mle as backend_identity_mle,
+        lagrange_basis_eval as backend_lagrange_basis_eval,
+        lagrange_evals as backend_lagrange_evals,
+        lagrange_kernel_eval as backend_lagrange_kernel_eval, lt_mle as backend_lt_mle,
+        sparse_block_eval as backend_sparse_block_eval,
+    },
+    FieldBackend,
+};
 
 use crate::config::ProverConfig;
 use crate::error::JoltError;
@@ -355,6 +365,333 @@ fn apply_normalization<F: Clone>(raw: &[F], normalize: Option<&PointNormalizatio
             result
         }
     }
+}
+
+/// Backend-aware claim formula evaluation.
+///
+/// Mirrors [`evaluate_formula`] but routes every field operation through
+/// the [`FieldBackend`] so a Tracing backend can capture the entire
+/// formula (sum-of-products + the inner Lagrange / matrix-MLE / preprocessed
+/// poly subcomputations) into an AST.
+///
+/// Native callers should pass `Native` as the backend and incur zero
+/// overhead.
+///
+/// # Arguments
+///
+/// Same as [`evaluate_formula`], but every state bucket is `B::Scalar`-typed.
+///
+/// `r1cs_matrix_const(coeff)` is invoked for every nonzero entry the
+/// formula touches; backends that want to dedupe constant matrix
+/// coefficients (e.g. `F::one()`, `F::zero()`) should override
+/// [`FieldBackend::wrap_public`] / `const_i128` accordingly.
+///
+/// # Errors
+///
+/// Returns [`JoltError::InvalidProof`] when the formula references an
+/// evaluation that hasn't been recorded yet, when [`ClaimFactor::StagedEval`]
+/// or [`ClaimFactor::LagrangeKernel`] (prover-only / unsupported variants)
+/// appear, or when [`StageEval`] indexes out of bounds. Lagrange
+/// inversions fail with [`BackendError`](jolt_verifier_backend::BackendError),
+/// which is wrapped as [`JoltError::InvalidProof`].
+// Wired into the VerifierOp interpreter in step 4c of the FieldBackend cutover.
+#[allow(dead_code)]
+#[allow(clippy::too_many_arguments)]
+fn evaluate_formula_with_backend<B>(
+    backend: &mut B,
+    formula: &ClaimFormula,
+    evaluations: &HashMap<PolynomialId, B::Scalar>,
+    challenges: &[B::Scalar],
+    sumcheck_points: &[Vec<B::Scalar>],
+    point_override: Option<(usize, &[B::Scalar])>,
+    stage_evals: Option<&[B::Scalar]>,
+    r1cs_key: &R1csKey<B::F>,
+    config: &ProverConfig,
+) -> Result<B::Scalar, JoltError>
+where
+    B: FieldBackend,
+{
+    let mut sum = backend.const_zero();
+    for term in &formula.terms {
+        let coeff_w = backend.const_i128(term.coeff);
+        let mut product = coeff_w;
+        for factor in &term.factors {
+            let factor_val: B::Scalar = match factor {
+                ClaimFactor::Eval(poly) => evaluations
+                    .get(poly)
+                    .cloned()
+                    .ok_or_else(|| {
+                        JoltError::InvalidProof(format!(
+                            "evaluation {poly:?} referenced before available"
+                        ))
+                    })?,
+                ClaimFactor::Challenge(i) => challenges[i.0].clone(),
+                ClaimFactor::EqChallengePair { a, b } => {
+                    let one_w = backend.const_one();
+                    let ra = challenges[a.0].clone();
+                    let rb = challenges[b.0].clone();
+                    let ab = backend.mul(&ra, &rb);
+                    let one_minus_a = backend.sub(&one_w, &ra);
+                    let one_minus_b = backend.sub(&one_w, &rb);
+                    let cross = backend.mul(&one_minus_a, &one_minus_b);
+                    backend.add(&ab, &cross)
+                }
+                ClaimFactor::EqEval { challenges: chs, at_stage } => {
+                    let r: Vec<B::Scalar> = chs.iter().map(|&ci| challenges[ci.0].clone()).collect();
+                    let s = resolve_point(sumcheck_points, point_override, at_stage.0);
+                    backend_eq_eval(backend, &r, s)
+                }
+                ClaimFactor::EqEvalSlice { challenges: chs, at_stage, offset } => {
+                    let r: Vec<B::Scalar> = chs.iter().map(|&ci| challenges[ci.0].clone()).collect();
+                    let s = resolve_point(sumcheck_points, point_override, at_stage.0);
+                    backend_eq_eval(backend, &r, &s[*offset..*offset + r.len()])
+                }
+                ClaimFactor::LagrangeKernelDomain {
+                    tau_challenge,
+                    at_challenge,
+                    domain_size,
+                    domain_start,
+                } => {
+                    let tau = challenges[tau_challenge.0].clone();
+                    let at = challenges[at_challenge.0].clone();
+                    backend_lagrange_kernel_eval(backend, *domain_start, *domain_size, &tau, &at)
+                        .map_err(|e| JoltError::InvalidProof(e.to_string()))?
+                }
+                ClaimFactor::LagrangeWeight {
+                    challenge,
+                    domain_size,
+                    domain_start,
+                    basis_index,
+                } => {
+                    let r = challenges[challenge.0].clone();
+                    backend_lagrange_basis_eval(
+                        backend,
+                        *domain_start,
+                        *domain_size,
+                        *basis_index,
+                        &r,
+                    )
+                    .map_err(|e| JoltError::InvalidProof(e.to_string()))?
+                }
+                ClaimFactor::UniformR1CSEval {
+                    matrix,
+                    eval_polys,
+                    at_challenge,
+                    num_constraints,
+                    domain_start,
+                } => {
+                    let r0 = challenges[at_challenge.0].clone();
+                    let basis =
+                        backend_lagrange_evals(backend, *domain_start, *num_constraints, &r0)
+                            .map_err(|e| JoltError::InvalidProof(e.to_string()))?;
+                    let mut z: Vec<B::Scalar> = Vec::with_capacity(1 + eval_polys.len());
+                    z.push(backend.const_one());
+                    for p in eval_polys {
+                        z.push(evaluations.get(p).cloned().ok_or_else(|| {
+                            JoltError::InvalidProof(format!("R1CS eval {p:?} not available"))
+                        })?);
+                    }
+                    let rows = match matrix {
+                        R1CSMatrix::A => &r1cs_key.matrices.a,
+                        R1CSMatrix::B => &r1cs_key.matrices.b,
+                    };
+                    let mut acc = backend.const_zero();
+                    for (k, row) in rows[..*num_constraints].iter().enumerate() {
+                        let mut dot = backend.const_zero();
+                        for &(j, coeff) in row {
+                            let coeff_w = backend.wrap_public(coeff, "r1cs_matrix_coeff");
+                            let term = backend.mul(&coeff_w, &z[j]);
+                            dot = backend.add(&dot, &term);
+                        }
+                        let weighted = backend.mul(&basis[k], &dot);
+                        acc = backend.add(&acc, &weighted);
+                    }
+                    acc
+                }
+                ClaimFactor::GroupSplitR1CSEval {
+                    matrix,
+                    eval_polys,
+                    at_r0,
+                    at_r_group,
+                    group0_indices,
+                    group1_indices,
+                    domain_size,
+                    domain_start,
+                } => {
+                    let r0 = challenges[at_r0.0].clone();
+                    let r_group = challenges[at_r_group.0].clone();
+                    let basis = backend_lagrange_evals(backend, *domain_start, *domain_size, &r0)
+                        .map_err(|e| JoltError::InvalidProof(e.to_string()))?;
+                    let mut z: Vec<B::Scalar> = Vec::with_capacity(1 + eval_polys.len());
+                    z.push(backend.const_one());
+                    for p in eval_polys {
+                        z.push(evaluations.get(p).cloned().ok_or_else(|| {
+                            JoltError::InvalidProof(format!("R1CS eval {p:?} not available"))
+                        })?);
+                    }
+                    let rows = match matrix {
+                        R1CSMatrix::A => &r1cs_key.matrices.a,
+                        R1CSMatrix::B => &r1cs_key.matrices.b,
+                    };
+                    // Closure over `&mut backend` requires explicit lifetime
+                    // on the captured slice; inline-expand to keep borrow checker happy.
+                    let mut g0 = backend.const_zero();
+                    for (i, &idx) in group0_indices.iter().enumerate() {
+                        let mut dot = backend.const_zero();
+                        for &(j, coeff) in &rows[idx] {
+                            let coeff_w = backend.wrap_public(coeff, "r1cs_matrix_coeff");
+                            let term = backend.mul(&coeff_w, &z[j]);
+                            dot = backend.add(&dot, &term);
+                        }
+                        let weighted = backend.mul(&basis[i], &dot);
+                        g0 = backend.add(&g0, &weighted);
+                    }
+                    let mut g1 = backend.const_zero();
+                    for (i, &idx) in group1_indices.iter().enumerate() {
+                        let mut dot = backend.const_zero();
+                        for &(j, coeff) in &rows[idx] {
+                            let coeff_w = backend.wrap_public(coeff, "r1cs_matrix_coeff");
+                            let term = backend.mul(&coeff_w, &z[j]);
+                            dot = backend.add(&dot, &term);
+                        }
+                        let weighted = backend.mul(&basis[i], &dot);
+                        g1 = backend.add(&g1, &weighted);
+                    }
+                    // g0 + r_group * (g1 - g0)
+                    let diff = backend.sub(&g1, &g0);
+                    let scaled = backend.mul(&r_group, &diff);
+                    backend.add(&g0, &scaled)
+                }
+                ClaimFactor::StageEval(index) => {
+                    let evals = stage_evals.ok_or_else(|| {
+                        JoltError::InvalidProof("StageEval used but no stage_evals provided".into())
+                    })?;
+                    evals
+                        .get(*index)
+                        .cloned()
+                        .ok_or_else(|| {
+                            JoltError::InvalidProof(format!(
+                                "StageEval({index}) out of bounds (len={})",
+                                evals.len()
+                            ))
+                        })?
+                }
+                ClaimFactor::PreprocessedPolyEval { poly, at_stage } => {
+                    let point = resolve_point(sumcheck_points, point_override, at_stage.0);
+                    evaluate_preprocessed_poly_with_backend(backend, *poly, point, config)?
+                }
+                ClaimFactor::StagedEval { .. } => {
+                    return Err(JoltError::InvalidProof(
+                        "StagedEval is prover-only; not supported in verifier formulas".into(),
+                    ));
+                }
+                ClaimFactor::LagrangeKernel { .. } => {
+                    return Err(JoltError::InvalidProof(format!(
+                        "unsupported claim factor {factor:?} in compiled schedule"
+                    )));
+                }
+            };
+            product = backend.mul(&product, &factor_val);
+        }
+        sum = backend.add(&sum, &product);
+    }
+    Ok(sum)
+}
+
+/// Backend-aware preprocessed polynomial evaluation.
+///
+/// Mirrors [`evaluate_preprocessed_poly`] but routes through the
+/// [`FieldBackend`]. Used inside [`evaluate_formula_with_backend`] for
+/// [`ClaimFactor::PreprocessedPolyEval`].
+// Wired into the VerifierOp interpreter in step 4c.
+#[allow(dead_code)]
+fn evaluate_preprocessed_poly_with_backend<B>(
+    backend: &mut B,
+    poly: PolynomialId,
+    point: &[B::Scalar],
+    config: &ProverConfig,
+) -> Result<B::Scalar, JoltError>
+where
+    B: FieldBackend,
+{
+    match poly {
+        PolynomialId::IoMask => {
+            let io_start = config.input_word_offset as u128;
+            let io_end = ((config.memory_start - config.ram_lowest_address) / 8) as u128;
+            let lt_end = backend_lt_mle(backend, point, io_end);
+            let lt_start = backend_lt_mle(backend, point, io_start);
+            Ok(backend.sub(&lt_end, &lt_start))
+        }
+        PolynomialId::RamUnmap => {
+            let identity = backend_identity_mle(backend, point);
+            let eight = backend.const_i128(8);
+            let scaled = backend.mul(&identity, &eight);
+            let base = backend.const_i128(i128::from(config.ram_lowest_address));
+            Ok(backend.add(&scaled, &base))
+        }
+        PolynomialId::ValIo => eval_io_mle_with_backend(backend, point, config),
+        _ => Err(JoltError::InvalidProof(format!(
+            "PreprocessedPolyEval({poly:?}) not a known preprocessed polynomial"
+        ))),
+    }
+}
+
+/// Backend-aware [`eval_io_mle`] mirror.
+// Wired into the VerifierOp interpreter in step 4c.
+#[allow(dead_code)]
+fn eval_io_mle_with_backend<B>(
+    backend: &mut B,
+    r: &[B::Scalar],
+    config: &ProverConfig,
+) -> Result<B::Scalar, JoltError>
+where
+    B: FieldBackend,
+{
+    let io_end_words = ((config.memory_start - config.ram_lowest_address) / 8) as usize;
+    let io_len = io_end_words.next_power_of_two().max(1);
+    let num_io_vars = io_len.trailing_zeros() as usize;
+
+    if num_io_vars > r.len() {
+        return Err(JoltError::InvalidProof(format!(
+            "ValIo: num_io_vars ({num_io_vars}) > point len ({})",
+            r.len()
+        )));
+    }
+
+    let (r_hi, r_lo) = r.split_at(r.len() - num_io_vars);
+
+    let one_w = backend.const_one();
+    let mut hi_scale = backend.const_one();
+    for ri in r_hi {
+        let one_minus_ri = backend.sub(&one_w, ri);
+        hi_scale = backend.mul(&hi_scale, &one_minus_ri);
+    }
+
+    let mut acc = backend.const_zero();
+
+    if !config.inputs.is_empty() {
+        let words = bytes_to_words(&config.inputs);
+        let block = backend_sparse_block_eval(backend, config.input_word_offset, &words, r_lo);
+        acc = backend.add(&acc, &block);
+    }
+
+    if !config.outputs.is_empty() {
+        let words = bytes_to_words(&config.outputs);
+        let block = backend_sparse_block_eval(backend, config.output_word_offset, &words, r_lo);
+        acc = backend.add(&acc, &block);
+    }
+
+    let panic_block =
+        backend_sparse_block_eval(backend, config.panic_word_offset, &[config.panic as u64], r_lo);
+    acc = backend.add(&acc, &panic_block);
+
+    if !config.panic {
+        let term_block =
+            backend_sparse_block_eval(backend, config.termination_word_offset, &[1u64], r_lo);
+        acc = backend.add(&acc, &term_block);
+    }
+
+    Ok(backend.mul(&hi_scale, &acc))
 }
 
 /// Evaluate a symbolic claim formula using accumulated verifier state.
@@ -1153,5 +1490,484 @@ mod tests {
         assert_eq!(mask(&[zero, one]), Fr::one()); // idx 1 in [1,3)
         assert_eq!(mask(&[one, zero]), Fr::one()); // idx 2 in [1,3)
         assert_eq!(mask(&[one, one]), Fr::zero()); // idx 3 not in [1,3)
+    }
+
+    // -----------------------------------------------------------------------
+    // FieldBackend parity tests: every claim formula and preprocessed-poly
+    // pattern produced by the prover must yield the exact same field value
+    // through the new `evaluate_formula_with_backend` /
+    // `evaluate_preprocessed_poly_with_backend` helpers when run with the
+    // `Native<Fr>` backend, AND the `Tracing<Fr>` AST must replay to the
+    // same value when fed the recorded wrap values.
+    // -----------------------------------------------------------------------
+
+    use jolt_verifier_backend::{replay_trace, Native, Tracing};
+
+    /// Adapter: lift a `(challenges, evaluations, sumcheck_points, override)`
+    /// configuration through a `FieldBackend` and call
+    /// `evaluate_formula_with_backend`. Returns the raw `B::Scalar` and the
+    /// concrete `Fr` underneath (via the backend's wrap-value table for
+    /// Tracing, or the value itself for Native).
+    #[allow(clippy::too_many_arguments)]
+    fn run_formula_backend<B>(
+        backend: &mut B,
+        formula: &ClaimFormula,
+        evaluations: &HashMap<PolynomialId, Fr>,
+        challenges: &[Fr],
+        sumcheck_points: &[Vec<Fr>],
+        point_override: Option<(usize, &[Fr])>,
+        stage_evals: Option<&[Fr]>,
+        r1cs_key: &R1csKey<Fr>,
+        config: &ProverConfig,
+    ) -> (B::Scalar, Vec<Vec<B::Scalar>>)
+    where
+        B: FieldBackend<F = Fr>,
+    {
+        let evals_w: HashMap<PolynomialId, B::Scalar> = evaluations
+            .iter()
+            .map(|(p, v)| (*p, backend.wrap_proof(*v, "eval")))
+            .collect();
+        let chs_w: Vec<B::Scalar> =
+            challenges.iter().map(|v| backend.wrap_challenge(*v, "ch")).collect();
+        let pts_w: Vec<Vec<B::Scalar>> = sumcheck_points
+            .iter()
+            .map(|p| {
+                p.iter()
+                    .map(|v| backend.wrap_challenge(*v, "sc_pt"))
+                    .collect()
+            })
+            .collect();
+        let override_owned: Option<Vec<B::Scalar>> = point_override.map(|(_, pts)| {
+            pts.iter().map(|v| backend.wrap_challenge(*v, "ov")).collect()
+        });
+        let override_ref =
+            point_override.map(|(s, _)| (s, override_owned.as_deref().unwrap()));
+        let stage_w: Option<Vec<B::Scalar>> = stage_evals.map(|s| {
+            s.iter()
+                .map(|v| backend.wrap_proof(*v, "stage_eval"))
+                .collect()
+        });
+        let stage_ref = stage_w.as_deref();
+
+        let result = evaluate_formula_with_backend(
+            backend,
+            formula,
+            &evals_w,
+            &chs_w,
+            &pts_w,
+            override_ref,
+            stage_ref,
+            r1cs_key,
+            config,
+        )
+        .unwrap();
+
+        (result, pts_w)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_formula_parity(
+        formula: &ClaimFormula,
+        evaluations: &HashMap<PolynomialId, Fr>,
+        challenges: &[Fr],
+        sumcheck_points: &[Vec<Fr>],
+        point_override: Option<(usize, &[Fr])>,
+        stage_evals: Option<&[Fr]>,
+        r1cs_key: &R1csKey<Fr>,
+        config: &ProverConfig,
+    ) {
+        let native_legacy = evaluate_formula(
+            formula,
+            evaluations,
+            challenges,
+            sumcheck_points,
+            point_override,
+            stage_evals,
+            r1cs_key,
+            config,
+        )
+        .unwrap();
+
+        let mut nb = Native::<Fr>::new();
+        let (native_backend, _) = run_formula_backend(
+            &mut nb,
+            formula,
+            evaluations,
+            challenges,
+            sumcheck_points,
+            point_override,
+            stage_evals,
+            r1cs_key,
+            config,
+        );
+        assert_eq!(
+            native_backend, native_legacy,
+            "Native FieldBackend must match legacy evaluate_formula"
+        );
+
+        let mut tracer = Tracing::<Fr>::new();
+        let (traced, _) = run_formula_backend(
+            &mut tracer,
+            formula,
+            evaluations,
+            challenges,
+            sumcheck_points,
+            point_override,
+            stage_evals,
+            r1cs_key,
+            config,
+        );
+        let graph = tracer.snapshot();
+        let wraps = tracer.wrap_values();
+        let values = replay_trace(&graph, &wraps).unwrap();
+        let traced_replayed = values[traced.id.0 as usize];
+        assert_eq!(
+            traced_replayed, native_legacy,
+            "Tracing replay must match legacy evaluate_formula"
+        );
+    }
+
+    #[test]
+    fn formula_backend_parity_eval_and_challenge() {
+        let poly_a = PolynomialId::RdInc;
+        let poly_b = PolynomialId::RamInc;
+        let formula = ClaimFormula {
+            terms: vec![
+                ClaimTerm {
+                    coeff: 2,
+                    factors: vec![
+                        ClaimFactor::Eval(poly_a),
+                        ClaimFactor::Challenge(ChallengeIdx(0)),
+                    ],
+                },
+                ClaimTerm {
+                    coeff: -3,
+                    factors: vec![ClaimFactor::Eval(poly_b)],
+                },
+            ],
+        };
+
+        let mut evaluations = HashMap::new();
+        let _ = evaluations.insert(poly_a, Fr::from_u64(5));
+        let _ = evaluations.insert(poly_b, Fr::from_u64(7));
+        let challenges = vec![Fr::from_u64(11)];
+        let sumcheck_points: Vec<Vec<Fr>> = vec![];
+
+        check_formula_parity(
+            &formula,
+            &evaluations,
+            &challenges,
+            &sumcheck_points,
+            None,
+            None,
+            &dummy_r1cs_key(),
+            &dummy_config(),
+        );
+    }
+
+    #[test]
+    fn formula_backend_parity_eq_eval_and_pair() {
+        let poly_a = PolynomialId::RdInc;
+        let formula = ClaimFormula {
+            terms: vec![ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Eval(poly_a),
+                    ClaimFactor::EqEval {
+                        challenges: vec![ChallengeIdx(0), ChallengeIdx(1)],
+                        at_stage: VerifierStageIndex(0),
+                    },
+                    ClaimFactor::EqChallengePair {
+                        a: ChallengeIdx(0),
+                        b: ChallengeIdx(1),
+                    },
+                ],
+            }],
+        };
+        let mut evaluations = HashMap::new();
+        let _ = evaluations.insert(poly_a, Fr::from_u64(13));
+        let challenges = vec![Fr::from_u64(7), Fr::from_u64(11)];
+        let sumcheck_points = vec![vec![Fr::from_u64(3), Fr::from_u64(5)]];
+
+        check_formula_parity(
+            &formula,
+            &evaluations,
+            &challenges,
+            &sumcheck_points,
+            None,
+            None,
+            &dummy_r1cs_key(),
+            &dummy_config(),
+        );
+    }
+
+    #[test]
+    fn formula_backend_parity_lagrange_kernel_and_weight() {
+        let formula = ClaimFormula {
+            terms: vec![ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::LagrangeKernelDomain {
+                        tau_challenge: ChallengeIdx(0),
+                        at_challenge: ChallengeIdx(1),
+                        domain_size: 4,
+                        domain_start: 0,
+                    },
+                    ClaimFactor::LagrangeWeight {
+                        challenge: ChallengeIdx(1),
+                        domain_size: 4,
+                        domain_start: 0,
+                        basis_index: 2,
+                    },
+                ],
+            }],
+        };
+        let challenges = vec![Fr::from_u64(17), Fr::from_u64(23)];
+        let sumcheck_points: Vec<Vec<Fr>> = vec![];
+
+        check_formula_parity(
+            &formula,
+            &HashMap::new(),
+            &challenges,
+            &sumcheck_points,
+            None,
+            None,
+            &dummy_r1cs_key(),
+            &dummy_config(),
+        );
+    }
+
+    #[test]
+    fn formula_backend_parity_uniform_r1cs() {
+        // Build a 2x3 A matrix (1 free var z[1] + the constant 1; pad to fit
+        // the 3-variable shape via z[2] as a second eval poly):
+        //   row0: 2*z[0] + 3*z[1]
+        //   row1: 5*z[1] - 7*z[2]
+        let two = Fr::from_u64(2);
+        let three = Fr::from_u64(3);
+        let five = Fr::from_u64(5);
+        let neg_seven = -Fr::from_u64(7);
+        let row0: Vec<(usize, Fr)> = vec![(0, two), (1, three)];
+        let row1: Vec<(usize, Fr)> = vec![(1, five), (2, neg_seven)];
+        let m = ConstraintMatrices::new(
+            2,
+            3,
+            vec![row0, row1],
+            vec![vec![], vec![]],
+            vec![vec![], vec![]],
+        );
+        let key = R1csKey::new(m, 1);
+
+        let poly_a = PolynomialId::RdInc;
+        let poly_b = PolynomialId::RamInc;
+        let formula = ClaimFormula {
+            terms: vec![ClaimTerm {
+                coeff: 1,
+                factors: vec![ClaimFactor::UniformR1CSEval {
+                    matrix: R1CSMatrix::A,
+                    eval_polys: vec![poly_a, poly_b],
+                    at_challenge: ChallengeIdx(0),
+                    num_constraints: 2,
+                    domain_start: 0,
+                }],
+            }],
+        };
+        let mut evaluations = HashMap::new();
+        let _ = evaluations.insert(poly_a, Fr::from_u64(11));
+        let _ = evaluations.insert(poly_b, Fr::from_u64(13));
+        let challenges = vec![Fr::from_u64(2)];
+        let sumcheck_points: Vec<Vec<Fr>> = vec![];
+
+        check_formula_parity(
+            &formula,
+            &evaluations,
+            &challenges,
+            &sumcheck_points,
+            None,
+            None,
+            &key,
+            &dummy_config(),
+        );
+    }
+
+    #[test]
+    fn formula_backend_parity_stage_eval() {
+        let formula = ClaimFormula {
+            terms: vec![ClaimTerm {
+                coeff: 4,
+                factors: vec![
+                    ClaimFactor::StageEval(0),
+                    ClaimFactor::StageEval(1),
+                ],
+            }],
+        };
+        let stage_evals = vec![Fr::from_u64(6), Fr::from_u64(9)];
+
+        check_formula_parity(
+            &formula,
+            &HashMap::new(),
+            &[],
+            &[],
+            None,
+            Some(&stage_evals),
+            &dummy_r1cs_key(),
+            &dummy_config(),
+        );
+    }
+
+    fn parity_config_with_io() -> ProverConfig {
+        let mut cfg = dummy_config();
+        cfg.ram_lowest_address = 64;
+        cfg.memory_start = 64 + 8 * 4; // 4-word io region
+        cfg.input_word_offset = 0;
+        cfg.output_word_offset = 1;
+        cfg.panic_word_offset = 2;
+        cfg.termination_word_offset = 3;
+        cfg.inputs = b"abcdefghABCD".to_vec(); // 12 bytes -> 2 words
+        cfg.outputs = b"xyz".to_vec(); // 3 bytes -> 1 word
+        cfg.panic = false;
+        cfg
+    }
+
+    #[test]
+    fn formula_backend_parity_preprocessed_io_mask() {
+        // `lt_mle` requires `threshold < 2^point.len()`. With io_end = 4
+        // (memory_start - ram_lowest_address = 32 bytes = 4 words) we need
+        // a point of length >= 3.
+        let cfg = parity_config_with_io();
+        let formula = ClaimFormula {
+            terms: vec![ClaimTerm {
+                coeff: 1,
+                factors: vec![ClaimFactor::PreprocessedPolyEval {
+                    poly: PolynomialId::IoMask,
+                    at_stage: VerifierStageIndex(0),
+                }],
+            }],
+        };
+        let sumcheck_points = vec![vec![
+            Fr::from_u64(2),
+            Fr::from_u64(3),
+            Fr::from_u64(5),
+        ]];
+        check_formula_parity(
+            &formula,
+            &HashMap::new(),
+            &[],
+            &sumcheck_points,
+            None,
+            None,
+            &dummy_r1cs_key(),
+            &cfg,
+        );
+    }
+
+    #[test]
+    fn formula_backend_parity_preprocessed_ram_unmap() {
+        let mut cfg = dummy_config();
+        cfg.ram_lowest_address = 128;
+        let formula = ClaimFormula {
+            terms: vec![ClaimTerm {
+                coeff: 1,
+                factors: vec![ClaimFactor::PreprocessedPolyEval {
+                    poly: PolynomialId::RamUnmap,
+                    at_stage: VerifierStageIndex(0),
+                }],
+            }],
+        };
+        let sumcheck_points = vec![vec![
+            Fr::from_u64(7),
+            Fr::from_u64(11),
+            Fr::from_u64(13),
+        ]];
+        check_formula_parity(
+            &formula,
+            &HashMap::new(),
+            &[],
+            &sumcheck_points,
+            None,
+            None,
+            &dummy_r1cs_key(),
+            &cfg,
+        );
+    }
+
+    #[test]
+    fn formula_backend_parity_preprocessed_val_io() {
+        let cfg = parity_config_with_io();
+        let formula = ClaimFormula {
+            terms: vec![ClaimTerm {
+                coeff: 1,
+                factors: vec![ClaimFactor::PreprocessedPolyEval {
+                    poly: PolynomialId::ValIo,
+                    at_stage: VerifierStageIndex(0),
+                }],
+            }],
+        };
+        // io_len_words = next_pow2(4) = 4, num_io_vars = 2, plus a
+        // single hi-bit to exercise the hi_scale path.
+        let sumcheck_points = vec![vec![
+            Fr::from_u64(2),
+            Fr::from_u64(3),
+            Fr::from_u64(5),
+        ]];
+        check_formula_parity(
+            &formula,
+            &HashMap::new(),
+            &[],
+            &sumcheck_points,
+            None,
+            None,
+            &dummy_r1cs_key(),
+            &cfg,
+        );
+    }
+
+    #[test]
+    fn formula_backend_parity_point_override() {
+        // Same shape as the existing `formula_with_point_override` test, but
+        // exercised through the backend.
+        let poly_a = PolynomialId::RdInc;
+        let formula = ClaimFormula {
+            terms: vec![ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Eval(poly_a),
+                    ClaimFactor::EqEval {
+                        challenges: vec![ChallengeIdx(0)],
+                        at_stage: VerifierStageIndex(0),
+                    },
+                ],
+            }],
+        };
+        let one = Fr::one();
+        let zero = Fr::zero();
+        let mut evaluations = HashMap::new();
+        let _ = evaluations.insert(poly_a, Fr::from_u64(5));
+        let challenges = vec![one];
+        let sumcheck_points = vec![vec![zero]];
+        let key = dummy_r1cs_key();
+        let cfg = dummy_config();
+
+        check_formula_parity(
+            &formula,
+            &evaluations,
+            &challenges,
+            &sumcheck_points,
+            None,
+            None,
+            &key,
+            &cfg,
+        );
+        let override_point = vec![one];
+        check_formula_parity(
+            &formula,
+            &evaluations,
+            &challenges,
+            &sumcheck_points,
+            Some((0, &override_point)),
+            None,
+            &key,
+            &cfg,
+        );
     }
 }

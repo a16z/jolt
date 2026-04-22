@@ -18,6 +18,7 @@ jolt-poly = { path = "../jolt-poly" }
 jolt-openings = { path = "../jolt-openings" }
 jolt-sumcheck = { path = "../jolt-sumcheck" }
 jolt-dory = { path = "../jolt-dory" }
+jolt-verifier-backend = { path = "../jolt-verifier-backend" }
 serde = { workspace = true, features = ["derive"] }
 thiserror = { workspace = true }
 tracing = { workspace = true }
