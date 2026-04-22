@@ -439,6 +439,26 @@ impl Cpu {
         self.is_reservation_set && self.reservation == address && self.reservation_width == width
     }
 
+    /// Returns true if a reservation is held at `address` whose reservation set
+    /// covers at least `min_bytes` starting at that address. Per the RISC-V A
+    /// spec (2024 ratified, §8.3): "SC succeeds only if the reservation is
+    /// still valid and the reservation set contains the bytes being written."
+    /// Concretely:
+    ///   - LR.W (4-byte reservation) + SC.W (4-byte write) → succeeds
+    ///   - LR.D (8-byte reservation) + SC.W (4-byte write) → succeeds (spec)
+    ///   - LR.W (4-byte reservation) + SC.D (8-byte write) → fails (out of range)
+    ///   - LR.D (8-byte reservation) + SC.D (8-byte write) → succeeds
+    pub fn reservation_covers(&self, address: u64, min_bytes: u64) -> bool {
+        if !self.is_reservation_set || self.reservation != address {
+            return false;
+        }
+        let reservation_bytes: u64 = match self.reservation_width {
+            ReservationWidth::Word => 4,
+            ReservationWidth::Doubleword => 8,
+        };
+        reservation_bytes >= min_bytes
+    }
+
     pub fn is_reservation_set(&self) -> bool {
         self.is_reservation_set
     }
