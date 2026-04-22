@@ -1,0 +1,40 @@
+# ACT4 top-level test configuration for Jolt (RV64IMAC).
+#
+# Consumed by the ACT4 driver via:
+#     CONFIG_FILES=tests/arch-tests/jolt/test_config.yaml \
+#         make -C third-party/riscv-arch-test -j$(nproc)
+#
+# Schema — keys are the set ACT4 parses (see the cvw-rv64gc example under
+# config/cores/cvw/ in riscv/riscv-arch-test):
+#   name            — config identifier; also the subdirectory name under
+#                     WORKDIR where ACT4 emits build artifacts.
+#   compiler_exe    — riscv64 C compiler.
+#   objdump_exe     — disassembly tool.
+#   ref_model_exe   — Sail reference model binary. Absolute path or a name
+#                     resolvable on PATH.
+#   udb_config      — UDB config file (relative to this test_config.yaml).
+#   linker_script   — linker script (relative to this test_config.yaml).
+#   dut_include_dir — directory containing rvmodel_macros.h,
+#                     rvtest_config.{h,svh}. "." means "the directory
+#                     holding this test_config.yaml".
+#
+# ACT4 runs sail_riscv_sim at ELF-build time to compute expected signatures
+# and bakes them into each self-checking ELF; no reference model is invoked
+# at run time. Pass/fail signaling is via the HTIF endcode written by
+# RVMODEL_HALT_PASS/FAIL — see tests/arch-tests/jolt/rvmodel_macros.h.
+
+name: jolt-rv64imac
+
+compiler_exe: riscv-none-elf-gcc
+objdump_exe: riscv-none-elf-objdump
+
+ref_model_exe: sail_riscv_sim
+
+udb_config: jolt-rv64imac.yaml
+linker_script: link.ld
+dut_include_dir: .
+
+# Privileged-mode tests (Sm/S/U) are out of scope per spec (Non-Goals).
+# This flag disables generation of every test whose required_extensions
+# intersect with {Sm, S, U} — see framework/src/act/select_tests.py.
+include_priv_tests: false
