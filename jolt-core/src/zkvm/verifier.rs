@@ -2102,15 +2102,12 @@ impl<
         let (coeffs, commitments): (Vec<F>, Vec<PCS::Commitment>) = rlc_map
             .into_iter()
             .map(|(k, v)| {
-                commitment_map
-                    .remove(&k)
-                    .map(|c| (v, c))
-                    .ok_or_else(|| {
-                        ProofVerifyError::DoryError(format!(
-                            "missing commitment for Stage 8 polynomial {:?}",
-                            k
-                        ))
-                    })
+                commitment_map.remove(&k).map(|c| (v, c)).ok_or_else(|| {
+                    ProofVerifyError::DoryError(format!(
+                        "missing commitment for Stage 8 polynomial {:?}",
+                        k
+                    ))
+                })
             })
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
