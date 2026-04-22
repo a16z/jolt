@@ -95,10 +95,8 @@ mod tests {
         let shamt_hi = (shamt >> 5) & 0x1;
         // c.slli: funct3=000 at bits [15:13] (implicit 0), bit 12 = imm[5],
         // bits [11:7] = rd, bits [6:2] = imm[4:0], op = 0b10 at bits [1:0].
-        let halfword: u32 = ((shamt_hi as u32) << 12)
-            | ((rd as u32) << 7)
-            | ((shamt5 as u32) << 2)
-            | 0b10;
+        let halfword: u32 =
+            ((shamt_hi as u32) << 12) | ((rd as u32) << 7) | ((shamt5 as u32) << 2) | 0b10;
         let word = uncompress_instruction(halfword, Xlen::Bit64);
         let decoded = Instruction::decode(word, 0x80000000, true).unwrap();
         let Instruction::SLLI(ref slli) = decoded else {
