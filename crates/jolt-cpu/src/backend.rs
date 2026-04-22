@@ -654,11 +654,137 @@ fn reduce_flat<F: Field>(
 
 /// Outer × inner segmented reduce with outer-eq weighting.
 ///
-/// Slices outer-indexed inputs at each active outer position, shares
-/// inner-only inputs across positions, calls [`reduce_flat`] on the
-/// inner-sized view, and sums `outer_eq[a] × inst_evals` across positions.
+/// Dispatches by kernel iteration: `Dense` kernels take the flattened
+/// single-rayon-region fast path; other iterations fall through to
+/// [`reduce_product_dense_generic`] which dispatches per outer position
+/// via [`reduce_flat`].
 #[tracing::instrument(skip_all, name = "reduce_product_dense")]
 fn reduce_product_dense<F: Field>(
+    kernel: &CpuKernel<F>,
+    inputs: &[&Vec<F>],
+    outer_eq: &[F],
+    inner_only: &[bool],
+    inner_size: usize,
+    challenges: &[F],
+) -> Vec<F> {
+    match kernel.iteration {
+        Iteration::Dense => {
+            reduce_product_dense_flat(kernel, inputs, outer_eq, inner_only, inner_size, challenges)
+        }
+        _ => reduce_product_dense_generic(
+            kernel, inputs, outer_eq, inner_only, inner_size, challenges,
+        ),
+    }
+}
+
+/// Single-rayon-region segmented reduce for `Dense` inner kernels.
+///
+/// Collapses the previous outer-par × inner-par nested dispatch into one
+/// parallel fold over active outer positions, with a serial inner bind/
+/// evaluate loop per outer. Eliminates rayon fork-join overhead on every
+/// outer position AND the per-iteration outer-indexed `Vec<F>` slice clone
+/// that the old path paid for the inner reduce's `Vec<F>` input contract.
+fn reduce_product_dense_flat<F: Field>(
+    kernel: &CpuKernel<F>,
+    inputs: &[&Vec<F>],
+    outer_eq: &[F],
+    inner_only: &[bool],
+    inner_size: usize,
+    challenges: &[F],
+) -> Vec<F> {
+    let num_evals = kernel.num_evals;
+    let num_inputs = inputs.len();
+    let half = inner_size / 2;
+    let order = kernel.binding_order;
+
+    let active: Vec<(usize, F)> = outer_eq
+        .iter()
+        .enumerate()
+        .filter_map(|(a, &w)| (!w.is_zero()).then_some((a, w)))
+        .collect();
+
+    // Pre-compute raw pointers as usize so they're `Send+Sync` for the rayon
+    // closure. Lifetimes of the underlying buffers are pinned by the
+    // `inputs` borrow which outlives the parallel region.
+    let ptrs: Vec<usize> = inputs.iter().map(|v| v.as_ptr() as usize).collect();
+    let inner_only_owned: Vec<bool> = inner_only.to_vec();
+
+    // Per-outer reduce: inline the inner bind/evaluate loop. No nested rayon.
+    let reduce_one = |a: usize, weight: F| -> Vec<F> {
+        let mut accs: Vec<F::Accumulator> =
+            (0..num_evals).map(|_| F::Accumulator::default()).collect();
+        let mut lo = vec![F::zero(); num_inputs];
+        let mut hi = vec![F::zero(); num_inputs];
+        let mut evals = vec![F::zero(); num_evals];
+
+        for i in 0..half {
+            for k in 0..num_inputs {
+                // SAFETY: ptrs[k] was derived from inputs[k].as_ptr(), valid
+                // for inputs[k].len() elements. For inner_only[k], inputs[k]
+                // has `inner_size` elements so base=0 and the indices below
+                // land in [0, inner_size). For outer-indexed, inputs[k] has
+                // `outer_size * inner_size` elements and base=a*inner_size
+                // so the indices land in [a*inner_size, (a+1)*inner_size).
+                let base = if inner_only_owned[k] {
+                    0
+                } else {
+                    a * inner_size
+                };
+                let (l_idx, h_idx) = match order {
+                    BindingOrder::LowToHigh => (base + 2 * i, base + 2 * i + 1),
+                    BindingOrder::HighToLow => (base + i, base + i + half),
+                };
+                // SAFETY: ptrs[k] is derived from inputs[k].as_ptr(), valid
+                // for inputs[k].len() elements. The SAFETY comment above
+                // bounds l_idx, h_idx within that length.
+                unsafe {
+                    let p = ptrs[k] as *const F;
+                    lo[k] = *p.add(l_idx);
+                    hi[k] = *p.add(h_idx);
+                }
+            }
+            kernel.evaluate(&lo, &hi, challenges, &mut evals);
+            for (acc, e) in accs.iter_mut().zip(evals.iter()) {
+                acc.acc_add(*e);
+            }
+        }
+
+        accs.into_iter().map(|acc| weight * acc.reduce()).collect()
+    };
+
+    #[cfg(feature = "parallel")]
+    {
+        if active.len() >= 2 {
+            use rayon::prelude::*;
+            return active.par_iter().map(|&(a, w)| reduce_one(a, w)).reduce(
+                || vec![F::zero(); num_evals],
+                |mut a, b| {
+                    for (ai, bi) in a.iter_mut().zip(b) {
+                        *ai += bi;
+                    }
+                    a
+                },
+            );
+        }
+    }
+
+    let mut total = vec![F::zero(); num_evals];
+    for (a, w) in active {
+        let evals = reduce_one(a, w);
+        for (t, e) in total.iter_mut().zip(evals) {
+            *t += e;
+        }
+    }
+    total
+}
+
+/// Fallback segmented reduce for non-`Dense` inner kernels (e.g.,
+/// `DenseTensor`, `Sparse`). Retains the per-outer [`reduce_flat`]
+/// dispatch so each leaf preserves its iteration-specific semantics.
+/// Not on the production hot path — standalone Product-axes reduces in
+/// the sumcheck pipeline use `Dense` or `Gruen` kernels, and `Gruen`
+/// routes through [`reduce_product_gruen`] instead.
+fn reduce_product_dense_generic<F: Field>(
     kernel: &CpuKernel<F>,
     inputs: &[&Vec<F>],
     outer_eq: &[F],

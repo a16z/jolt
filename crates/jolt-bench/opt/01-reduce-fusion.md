@@ -1,12 +1,209 @@
 # Ticket 1 — Reduce-side fusion: `fuse_ops` hook + CPU `batch_round_evaluate`
 
-**Status:** biggest single architectural win. Attack after ticket 0 lands.
+**Status:** in progress (see **Progress** below). Biggest single
+architectural win.
 **Est. perf win:** ~47s CPU on sha2-chain log_T=16 (factor B dispatch
 overhead + part of factor C cache thrash, per
 `perf/report_tools/kernel_gap_memo.md` §1).
 **Est. effort:** medium (~400-500 LOC + CPU kernel restructure).
 **Philosophy check:** handlers unchanged in LOC, compiler unchanged —
-rewrite pass lives entirely in `jolt-compute` / `jolt-cpu`.
+rewrite pass lives entirely in `jolt-cpu`.
+
+## Progress
+
+### Done
+
+- **Ticket 0 fully landed** (commit `8befd6613`): `fuse_ops` trait hook on
+  `ComputeBackend` (default `None`), `FuseDebugMode` enum + env toggle
+  (`JOLT_FUSE_DEBUG=1`), `Executable::shadow_ops` + `has_fuse_debug()`,
+  `per_instance_batch_evaluate` reference path extracted from the default
+  `batch_round_evaluate` impl, dual-path shadow harness in the
+  `BatchRoundEvaluate` handler, and 8 linker-level tests in
+  `crates/jolt-equivalence/tests/fuse_equivalence.rs`.
+- **Fusion pass `fuse_batch_round_reduces`** — implemented in
+  `crates/jolt-cpu/src/fuse.rs` (lives in the CPU crate because the hook
+  only matters when paired with a backend that overrides
+  `batch_round_evaluate`; promote to `jolt-compute` if a second backend
+  ever wants the same pass). Walks each `BatchRoundBegin ..
+  BatchRoundFinalize` window, collapses `InstanceReduce` /
+  `InstanceSegmentedReduce` into one `Op::BatchRoundEvaluate`, moves
+  `BatchAccumulateInstance` + `BatchInactiveContribution` after the fused
+  reduce, leaves everything else (materialize / bind / decomp
+  `ReadCheckingReduce`+`RafReduce` / scatter / captures) in place. Windows
+  with no reducible ops pass through unchanged.
+- **`CpuBackend::fuse_ops` opts in** — `crates/jolt-cpu/src/backend.rs`
+  returns `Some(fuse_batch_round_reduces(ops))`.
+- **6 unit tests** for the pass (same file): empty stream, single window,
+  prep ordering, inactive contribution move, no-reduces window skip,
+  multi-window independence. All green.
+
+### Not done (what blocks the perf win)
+
+The fused stream emits `Op::BatchRoundEvaluate`, but the handler dispatches
+to the default `ComputeBackend::batch_round_evaluate` implementation, which
+falls back to `per_instance_batch_evaluate` — a byte-identical per-instance
+loop over `reduce` / `segmented_reduce` / `gruen_segmented_reduce`. Zero
+perf delta from this alone.
+
+1. **Override `CpuBackend::batch_round_evaluate`** with a cache-friendly
+   implementation that actually fuses the work across instances (§4 below).
+   This is the ~47s CPU win.
+2. **Correctness gate** with `JOLT_FUSE_DEBUG=1` (shadow asserts every
+   `BatchRoundEvaluate` against `per_instance_batch_evaluate`) AND
+   `JOLT_FUSE_DEBUG=0` (release path — production-representative).
+3. **Perf gate** against `perf/baseline-modular-best.json` (current ratchet
+   `72638ms` on sha2-chain log_T=16). Accept ≥15%, reject <5%, revert +
+   journal on reject per `CLAUDE.md` Perf Loop.
+
+## Remaining work — step-by-step
+
+Read order for someone picking this up cold:
+
+1. `crates/jolt-bench/opt/01-reduce-fusion.md` (this file) — context.
+2. `crates/jolt-cpu/src/fuse.rs` — what the pass does today. Pass tests
+   show exact shape of the fused stream.
+3. `crates/jolt-zkvm/src/runtime/handlers.rs:852` — `BatchRoundEvaluate`
+   handler. Already packs specs and calls `backend.batch_round_evaluate(&specs, &challenges)`.
+   Do not edit — this stays.
+4. `crates/jolt-compute/src/traits.rs:591` — the default
+   `batch_round_evaluate` that we need to override for CPU. Read its
+   signature and the reference `per_instance_batch_evaluate` immediately
+   below it.
+5. `crates/jolt-cpu/src/backend.rs:131` — `reduce` (dense dispatch) and
+   nearby `segmented_reduce` / `gruen_segmented_reduce`. These are what
+   today's default fallback calls N times per batch-round.
+6. `crates/jolt-cpu/src/backend.rs:957` — `reduce_dense` / `reduce_dense_fixed` —
+   the shape we want to match inside the fused path: single `rayon::fold` /
+   `reduce` over `0..half`, with const-generic scratch arrays for Dense
+   kernels of known `(NI, NE)`. Study this: the override should reuse this
+   pattern, not call back into `reduce_dense`.
+7. `crates/jolt-core/src/subprotocols/booleanity.rs:327` — the jolt-core
+   inline fold over all RA polynomials is the *target shape*. One Rayon
+   region walks all instances per outer chunk.
+
+### Step 1 — implement the CPU override
+
+New function in `crates/jolt-cpu/src/backend.rs`, overriding the default
+trait method:
+
+```rust
+fn batch_round_evaluate<F: Field>(
+    &self,
+    specs: &[BatchInstanceSpec<'_, Self, F>],
+    challenges: &[F],
+) -> Vec<Vec<F>>
+```
+
+Design:
+
+1. **Partition `specs` by `BatchReduceKind`** (`Dense` / `Segmented` /
+   `Gruen`). Within each partition, every spec uses the same kernel
+   *shape* but potentially different kernels and different buffer lengths.
+2. **For the `Dense` partition**, group further by `(half_len,
+   binding_order, num_evals)`. Instances sharing a group can iterate the
+   same `0..half` range; each iteration pulls one pair from each instance's
+   input buffer and runs that instance's `evaluate` closure.
+3. **Single Rayon region per group**: one `par_iter` over
+   `0..half` (with `with_min_len(2048)`, matching `reduce_dense_fixed`),
+   fold into `Vec<[F::Accumulator; num_evals]>` — one per instance —
+   reduce across chunks, then `FieldAccumulator::reduce` into the output
+   `Vec<F>` for each instance. Write results into `results[spec_idx]`.
+4. **Segmented / Gruen partitions**: same outer-chunk idea but the
+   iteration bound is `outer_size`, and each chunk reads the shared
+   `outer_eq` slice once and applies it against every instance's
+   inner-size kernel call. Look at
+   `crates/jolt-cpu/src/backend.rs` for `segmented_reduce` / the existing
+   Gruen path to understand the inner calls we're replacing.
+5. **Pre-allocate `results: Vec<Vec<F>>`** sized per spec up front; each
+   worker writes to its own slot. Use `UnsafeCell` or slice splitting to
+   avoid mutex contention.
+6. **Guard on `feature = "parallel"`** — non-parallel builds should call
+   `per_instance_batch_evaluate(self, specs, challenges)` directly.
+
+Important constraints (from per-session memories):
+
+- **Outer `par_iter` across instances is the wrong axis.** Instance count
+  is ~120 but per-instance work drops off sharply in late rounds; nested
+  par_iter inside reduce_dense causes oversubscription. Parallelize across
+  *outer chunks*, iterate instances *inside* each chunk.
+- **`WideAccumulator` swap caveat** (`feedback_wide_accumulator_cache.md`):
+  the per-instance accumulator arrays are small stack allocations — fine
+  to keep as `[F::Accumulator; NE]`. Don't materialize a
+  `Vec<WideAccumulator>` that scales with instance count × outer_size.
+- **Global mutex hazard** (`feedback_global_mutex_guarded_parallel.md` and
+  `feedback_handle_mutex_contention.md`): the backend holds no mutexes on
+  the hot path, but if you touch `HandleStore`, drop the guard before
+  spinning up rayon.
+- **Handlers must remain ≤30 LOC** — the override lives in the backend,
+  not the handler. Do not touch `crates/jolt-zkvm/src/runtime/handlers.rs`.
+
+### Step 2 — correctness gate
+
+Run with `JOLT_FUSE_DEBUG=1` first — the shadow harness in the
+`BatchRoundEvaluate` handler asserts, for every fused dispatch, that the
+override's output matches `per_instance_batch_evaluate` byte-for-byte. Any
+reordering bug surfaces at the first divergence, not 200 rounds later.
+
+```bash
+JOLT_FUSE_DEBUG=1 cargo nextest run -p jolt-equivalence \
+  transcript_divergence zkvm_proof_accepted modular_self_verify --cargo-quiet
+JOLT_FUSE_DEBUG=1 cargo nextest run -p jolt-equivalence --cargo-quiet
+```
+
+Then with debug off (release-representative path):
+
+```bash
+cargo nextest run -p jolt-equivalence transcript_divergence \
+  zkvm_proof_accepted modular_self_verify --cargo-quiet
+cargo nextest run -p jolt-equivalence --cargo-quiet
+```
+
+Clippy gate (zero warnings in every mode we ship):
+
+```bash
+cargo clippy -p jolt-core --features host --message-format=short -q \
+  --all-targets -- -D warnings
+cargo clippy -p jolt-core --features host,zk --message-format=short -q \
+  --all-targets -- -D warnings
+cargo clippy -p jolt-cpu --message-format=short -q --all-targets -- -D warnings
+cargo clippy -p jolt-compute --message-format=short -q --all-targets -- -D warnings
+```
+
+Any failure → fix or revert. Do not commit a red tree.
+
+### Step 3 — perf gate
+
+Standard Perf Loop measurement:
+
+```bash
+cargo run --release -p jolt-bench -- --program sha2-chain \
+  --num-iters 16 --log-t 16 --iters 1 --warmup 1 \
+  --json perf/last-iter.json
+```
+
+Compare modular `prove_ms` against `perf/baseline-modular-best.json`
+(current ratchet `72638ms`). Accept thresholds from the Perf Loop:
+
+- **Accept**: ≥5% reduction. Update `perf/baseline-modular-best.json`.
+  Append to `perf/history.jsonl`.
+- **Target**: ≥15% reduction (~61500ms modular). Ticket projection: ~30%
+  (~51000ms).
+- **Reject**: <5%. Revert the override + the `fuse_ops` opt-in in
+  `CpuBackend` (leave the pass module in place as dormant infra), then
+  commit a `journal:` entry.
+
+If rejected, **do not leave the half-done state on the branch** — revert
+to the post-ticket-0 baseline and move on.
+
+### Step 4 — commit
+
+Exactly one commit per iteration per `CLAUDE.md`:
+
+- **Improvement**: `perf(fuse): T1 batch-round reduce fusion (-X% prove_ms on sha2-chain @ log_T=16)`
+  — include the new baseline number in the body.
+- **Reject**: `journal: T1 reverted (<reason>)` — keep the `fuse.rs`
+  module + tests + Ticket 0 infra in place; only revert the `fuse_ops`
+  opt-in and the override.
 
 ## Why this exists
 
@@ -55,27 +252,25 @@ Missing two pieces:
 
 ## Architectural change
 
-### 1. Add `fuse_ops` to `ComputeBackend` (lands via Ticket 0)
+### 1. Add `fuse_ops` to `ComputeBackend` (✅ landed via Ticket 0, commit `8befd6613`)
 
 ```rust
 // crates/jolt-compute/src/traits.rs
 pub trait ComputeBackend {
     // ... existing
-    /// Rewrite the emitted op stream with backend-specific fusion rules.
-    ///
-    /// Default returns `None` (no rewrite — runtime executes the input
-    /// stream as-is). Backends opt in by returning `Some(new_stream)`.
-    /// Called once at `Executable` construction; result is cached on the
-    /// executable.
-    fn fuse_ops(&self, ops: &[Op]) -> Option<Vec<Op>> {
+    fn fuse_ops(&self, _ops: &[Op]) -> Option<Vec<Op>> {
         None
     }
 }
 ```
 
-### 2. Pure pass: collapse reduces within batch-round windows
+### 2. Pure pass: collapse reduces within batch-round windows (✅ implemented in `crates/jolt-cpu/src/fuse.rs`)
 
-New module `crates/jolt-compute/src/fuse/batch_round.rs`:
+Sketch below was the original design. Live code + tests live in
+`crates/jolt-cpu/src/fuse.rs`; behavior matches this sketch. Moved into
+`jolt-cpu` (not `jolt-compute`) because the pass is only meaningful when
+paired with a backend override — promote to a shared crate only if a
+second backend needs it.
 
 ```rust
 pub fn fuse_batch_round_reduces(ops: &[Op]) -> Vec<Op> {
@@ -135,19 +330,19 @@ But the simpler rule — "do ALL reduces first, then ALL accumulates" — is
 safe and wins the cache battle because accumulate is cheap scalar work
 and doesn't need to overlap with reduce.
 
-### 3. CPU opts into the pass
+### 3. CPU opts into the pass (✅ done)
 
 ```rust
 // crates/jolt-cpu/src/backend.rs
 impl ComputeBackend for CpuBackend {
     fn fuse_ops(&self, ops: &[Op]) -> Option<Vec<Op>> {
-        Some(jolt_compute::fuse::fuse_batch_round_reduces(ops))
+        Some(crate::fuse::fuse_batch_round_reduces(ops))
     }
     // ...
 }
 ```
 
-### 4. CPU overrides `batch_round_evaluate` with a cache-friendly impl
+### 4. CPU overrides `batch_round_evaluate` with a cache-friendly impl (⏳ the remaining work)
 
 The shape to match (from `jolt-core/src/subprotocols/booleanity.rs:327`):
 
@@ -203,22 +398,33 @@ The win is:
 
 ## Code-level sketch — what files change
 
-- **NEW** `crates/jolt-compute/src/fuse/mod.rs` — pass module.
-- **NEW** `crates/jolt-compute/src/fuse/batch_round.rs` — the reduce pass.
-- **EDIT** `crates/jolt-compute/src/traits.rs` — add `fuse_ops` trait
-  method (if not already added by ticket 0).
-- **EDIT** `crates/jolt-cpu/src/backend.rs` — implement `fuse_ops`
-  (delegate to pass) + override `batch_round_evaluate`.
-- **EDIT** `crates/jolt-compiler/src/compiler/mod.rs` (or wherever
-  `Executable` is constructed) — call `backend.fuse_ops` and store result.
-- **EDIT** `crates/jolt-zkvm/src/runtime/handlers.rs` — no changes
-  required; handler already handles `BatchRoundEvaluate`. Verify the
-  ≤30 LOC rule still holds.
+Already landed (✅):
+
+- `crates/jolt-compute/src/traits.rs` — `fuse_ops` hook, default trait impl
+  of `batch_round_evaluate`, `per_instance_batch_evaluate` reference path.
+- `crates/jolt-compute/src/linker.rs` — `FuseDebugMode`, `Executable::shadow_ops`,
+  `has_fuse_debug()`.
+- `crates/jolt-zkvm/src/runtime/handlers.rs:852` — `BatchRoundEvaluate`
+  handler with shadow-harness assertion.
+- `crates/jolt-cpu/src/fuse.rs` — the pass + 6 unit tests.
+- `crates/jolt-cpu/src/lib.rs` — `mod fuse;`
+- `crates/jolt-cpu/src/backend.rs` — `fuse_ops` opt-in.
+- `crates/jolt-equivalence/tests/fuse_equivalence.rs` — linker-level
+  tests for the shadow plumbing.
+
+Still pending (⏳):
+
+- `crates/jolt-cpu/src/backend.rs` — add the `batch_round_evaluate`
+  override (see §4 / Step 1). Keep the file organized so the new function
+  sits next to `reduce` / `segmented_reduce`.
+- **No handler changes.** Confirm the `BatchRoundEvaluate` handler is
+  still ≤30 LOC of real logic after the override runs. (It is today.)
 
 ## Dependencies
 
-- Ticket 0 (dual-path validation harness) — must land first so fusion
-  divergence surfaces at a single assertion, not 200 rounds later.
+- Ticket 0 (dual-path validation harness) — ✅ landed in commit
+  `8befd6613`. Enables `JOLT_FUSE_DEBUG=1` shadow assertions per
+  `BatchRoundEvaluate`.
 
 ## Correctness gate
 
