@@ -1,7 +1,9 @@
 //! Sumcheck protocol: claims, proofs, and verification.
 //!
-//! This crate provides the core sumcheck protocol types and verification
-//! logic.
+//! Verifier-side types and logic for the sumcheck protocol, used by the Jolt
+//! zkVM. This crate is **verifier-only** and **backend-agnostic**: any field and
+//! transcript can be plugged in. Proving is handled by `jolt-zkvm`'s runtime,
+//! which drives sumcheck rounds via `ComputeBackend` primitives.
 //!
 //! # Protocol overview
 //!
@@ -22,6 +24,35 @@
 //! | [`batched`] | [`BatchedSumcheckVerifier`] — batched verification via RLC |
 //! | [`round`] | [`RoundVerifier`] — strategy trait for clear vs. committed mode |
 //! | [`error`] | [`SumcheckError`] variants |
+//!
+//! # Public API
+//!
+//! ## Types
+//! - [`SumcheckClaim<F>`] — the public statement: `num_vars`, `degree`, and `claimed_sum`.
+//! - [`SumcheckProof<F>`] — a sequence of univariate round polynomials, one per variable.
+//! - [`SumcheckError`] — error variants: `RoundCheckFailed`, `DegreeBoundExceeded`,
+//!   `WrongNumberOfRounds`, `EmptyClaims`.
+//!
+//! ## Verifiers
+//! - [`SumcheckVerifier`] — single-instance verifier. Replays the Fiat-Shamir
+//!   transcript and checks each round.
+//! - [`BatchedSumcheckVerifier`] — batched verification via random linear
+//!   combination. Supports claims with different `num_vars` and `degree` bounds
+//!   via front-loaded padding.
+//!
+//! ## Round verification strategy
+//! - [`RoundVerifier<F>`] — trait controlling how round data is absorbed into the
+//!   transcript and checked. Enables both clear and committed (ZK) verification modes.
+//! - [`ClearRoundVerifier`] — cleartext implementation: checks
+//!   `poly(0) + poly(1) == running_sum` and absorbs coefficients directly.
+//!
+//! # Dependency position
+//!
+//! ```text
+//! jolt-field      ─┐
+//! jolt-poly       ─┼─> jolt-sumcheck
+//! jolt-transcript ─┘
+//! ```
 //!
 
 pub mod batched;

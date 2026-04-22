@@ -53,8 +53,10 @@ pub trait RoundVerifier<F: Field> {
 /// each round's coefficients.
 ///
 /// When `compressed` is `true`, the linear term `c1` is omitted from
-/// transcript absorption (matching the prover's compressed wire format:
-/// `c1` is recoverable from `running_sum - c0`). The label count then
+/// transcript absorption (matching the prover's compressed wire format).
+/// The verifier recovers `c1` from the sum-check invariant
+/// `running_sum = s(0) + s(1) = 2·c0 + c1 + c2 + … + cd`, i.e.
+/// `c1 = running_sum − 2·c0 − (c2 + … + cd)`. The label count then
 /// uses `coeffs.len() - 1`.
 #[derive(Default)]
 pub struct ClearRoundVerifier {
@@ -115,13 +117,17 @@ impl<F: Field> RoundVerifier<F> for ClearRoundVerifier {
 
         let coeffs = proof.coefficients();
         if self.compressed {
-            let compressed_len = coeffs.len().saturating_sub(1);
+            if coeffs.len() < 2 {
+                return Err(SumcheckError::CompressedPolynomialTooShort {
+                    round,
+                    got: coeffs.len(),
+                });
+            }
+            let compressed_len = coeffs.len() - 1;
             if let Some(label) = self.label {
                 transcript.append(&LabelWithCount(label, compressed_len as u64));
             }
-            if let Some(c0) = coeffs.first() {
-                c0.append_to_transcript(transcript);
-            }
+            coeffs[0].append_to_transcript(transcript);
             for c in coeffs.iter().skip(2) {
                 c.append_to_transcript(transcript);
             }

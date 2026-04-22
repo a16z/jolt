@@ -17,6 +17,22 @@ use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 
 type F = Fr;
 
+#[derive(Debug)]
+enum OracleCheckError {
+    #[expect(
+        dead_code,
+        reason = "inner error shown via Debug in test panic messages"
+    )]
+    Sumcheck(SumcheckError),
+    FinalEvalMismatch,
+}
+
+impl From<SumcheckError> for OracleCheckError {
+    fn from(err: SumcheckError) -> Self {
+        OracleCheckError::Sumcheck(err)
+    }
+}
+
 fn new_transcript() -> Blake2bTranscript {
     Blake2bTranscript::new(b"soundness-test")
 }
@@ -61,14 +77,14 @@ fn compute_sum(evals: &[F]) -> F {
 
 /// Full verification pipeline: sumcheck round checks + oracle evaluation check.
 ///
-/// Returns the challenge vector on success. Returns `FinalEvalMismatch` if the
-/// proof passes all round checks but the final evaluation doesn't match the
-/// intended polynomial.
+/// Returns the challenge vector on success. Returns
+/// `OracleCheckError::FinalEvalMismatch` if the proof passes all round checks
+/// but the final evaluation doesn't match the intended polynomial.
 fn verify_with_oracle_check(
     claim: &SumcheckClaim<F>,
     proof: &SumcheckProof<F>,
     intended_evals: &[F],
-) -> Result<Vec<F>, SumcheckError> {
+) -> Result<Vec<F>, OracleCheckError> {
     let clear = ClearRoundVerifier::new();
     let mut transcript = new_transcript();
     let (final_eval, challenges) =
@@ -76,7 +92,7 @@ fn verify_with_oracle_check(
 
     let expected = Polynomial::new(intended_evals.to_vec()).evaluate_and_consume(&challenges);
     if final_eval != expected {
-        return Err(SumcheckError::FinalEvalMismatch);
+        return Err(OracleCheckError::FinalEvalMismatch);
     }
 
     Ok(challenges)
@@ -135,7 +151,7 @@ fn wrong_polynomial_same_sum_fails_oracle_check() {
     // But oracle check against f fails — the final eval is g(r), not f(r)
     let result = verify_with_oracle_check(&claim, &proof, &f_evals);
     assert!(
-        matches!(result, Err(SumcheckError::FinalEvalMismatch)),
+        matches!(result, Err(OracleCheckError::FinalEvalMismatch)),
         "oracle check must catch polynomial substitution: {:?}",
         result
     );

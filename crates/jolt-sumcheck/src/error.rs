@@ -6,6 +6,7 @@
 /// protocol, enabling the caller to diagnose exactly where verification
 /// diverged.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum SumcheckError {
     /// Round check failed: the sum $s_i(0) + s_i(1)$ did not match the
     /// expected value carried forward from the previous round.
@@ -19,10 +20,6 @@ pub enum SumcheckError {
         actual: String,
     },
 
-    /// The final evaluation did not match the oracle query.
-    #[error("final evaluation mismatch")]
-    FinalEvalMismatch,
-
     /// A round polynomial exceeded the declared degree bound.
     #[error("degree bound exceeded: degree {got}, max {max}")]
     DegreeBoundExceeded {
@@ -30,6 +27,17 @@ pub enum SumcheckError {
         got: usize,
         /// Maximum allowed degree from the claim.
         max: usize,
+    },
+
+    /// A round polynomial encoded in compressed form had fewer than two
+    /// coefficients, so there is no linear term to omit. Any valid
+    /// compressed sumcheck round polynomial has degree ≥ 1.
+    #[error("round {round}: compressed round polynomial requires >= 2 coefficients, got {got}")]
+    CompressedPolynomialTooShort {
+        /// Zero-indexed round number where the malformed polynomial appeared.
+        round: usize,
+        /// Actual number of coefficients received.
+        got: usize,
     },
 
     /// The number of round polynomials in the proof does not match

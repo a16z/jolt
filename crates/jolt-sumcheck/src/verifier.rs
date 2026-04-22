@@ -31,6 +31,14 @@ impl SumcheckVerifier {
     ///
     /// Returns [`SumcheckError`] if any round check fails, a degree bound
     /// is exceeded, or the proof has the wrong number of rounds.
+    ///
+    /// # Soundness
+    ///
+    /// When `claim.num_vars == 0`, this function performs no transcript
+    /// interaction and no checks: it returns `(claim.claimed_sum, vec![])`.
+    /// Sumcheck trivially reduces to a single oracle query at that point,
+    /// so the caller MUST verify `claim.claimed_sum` against the
+    /// commitment/oracle layer to retain soundness.
     #[tracing::instrument(skip_all, name = "SumcheckVerifier::verify")]
     pub fn verify<F, T, V>(
         claim: &SumcheckClaim<F>,
