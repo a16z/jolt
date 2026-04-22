@@ -41,17 +41,20 @@ else
     make_cmds=("make $*")
 fi
 
-bootstrap_script='
-    set -eu
-    export DEBIAN_FRONTEND=noninteractive
-    if ! command -v make >/dev/null 2>&1; then
-        apt-get update -qq
-        apt-get install -y --no-install-recommends ca-certificates curl git make
-    fi
-    if ! command -v cargo >/dev/null 2>&1; then
-        curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
-    fi
-    . "$HOME/.cargo/env"
+# The bootstrap snippet runs before the user's make command(s). `set -e`
+# propagates to the subsequent commands in the same `bash -lc` invocation,
+# so we don't need an explicit `&&` between them — which also avoids a
+# multi-line-string gotcha where `&&` ends up on its own line.
+bootstrap_script='set -e
+export DEBIAN_FRONTEND=noninteractive
+if ! command -v make >/dev/null 2>&1; then
+    apt-get update -qq
+    apt-get install -y --no-install-recommends ca-certificates curl git make
+fi
+if ! command -v cargo >/dev/null 2>&1; then
+    curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+fi
+. "$HOME/.cargo/env"
 '
 
 if [[ "$mode" == "shell" ]]; then
@@ -61,11 +64,11 @@ if [[ "$mode" == "shell" ]]; then
         -v "$OPT_VOL":/opt/riscv \
         -v "$HOME_VOL":/root \
         -w /jolt \
-        "$IMAGE" bash -lc "$bootstrap_script && exec bash"
+        "$IMAGE" bash -lc "${bootstrap_script}exec bash"
 fi
 
-joined_cmds="$(printf '%s && ' "${make_cmds[@]}")"
-joined_cmds="${joined_cmds% && }"
+# Join with newlines; `set -e` in the prelude aborts on any failure.
+joined_cmds="$(printf '%s\n' "${make_cmds[@]}")"
 
 exec docker run --rm -it \
     -v "$REPO_ROOT":/jolt \
@@ -73,4 +76,4 @@ exec docker run --rm -it \
     -v "$OPT_VOL":/opt/riscv \
     -v "$HOME_VOL":/root \
     -w /jolt \
-    "$IMAGE" bash -lc "$bootstrap_script && $joined_cmds"
+    "$IMAGE" bash -lc "${bootstrap_script}${joined_cmds}"
