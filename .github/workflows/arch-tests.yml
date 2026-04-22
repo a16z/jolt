@@ -36,6 +36,8 @@ jobs:
 
       - name: Checkout code
         uses: actions/checkout@v6
+        with:
+          submodules: recursive
 
       - name: Mark Git repo as safe
         run: |
@@ -44,16 +46,17 @@ jobs:
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
-      - name: Install dependencies
+      - name: Install ACT4 prerequisites
         run: |
           make bootstrap
 
-      - name: Setup PATH
+      - name: Setup PATH for sail_riscv_sim and mise
         run: |
           echo "/opt/riscv/bin" >> $GITHUB_PATH
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-      - name: Run RV32imac architecture tests
-        run: make arch-tests-32imac
-
-      - name: Run RV64imac architecture tests
+      - name: Run RV64IMAC architecture tests (ACT4)
         run: make arch-tests-64imac
+
+      - name: Deliberate-failure smoke test
+        run: make arch-tests-smoke
