@@ -1436,10 +1436,10 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
         }
 
         Op::Reduce { .. } => {
-            // Phase A: types and trait method land alongside the legacy surface.
-            // The compiler does not emit Op::Reduce yet; emission lights up in
-            // Phase C. An arm is here so the exhaustive match compiles.
-            panic!("Op::Reduce reached runtime before Phase C emission wire-up");
+            // Phase B: compiler dual-emits Op::Reduce alongside the legacy
+            // reduce Ops, but the runtime still executes the legacy path and
+            // treats Op::Reduce as a no-op. Phase C flips dispatch behind
+            // JOLT_UNIFIED_REDUCE; Phase D deletes the legacy arms.
         }
     }
 }

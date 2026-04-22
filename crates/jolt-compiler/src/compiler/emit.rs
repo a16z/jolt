@@ -11,9 +11,10 @@ use crate::ir::expr::Factor as ExprFactor;
 use crate::ir::{Density, PolyKind, PublicPoly, Vertex};
 use crate::kernel_spec::{Iteration, KernelSpec};
 use crate::module::{
-    ChallengeDecl, ChallengeIdx, ChallengeSource, ClaimFactor, ClaimFormula, ClaimTerm,
-    DomainSeparator, Evaluation, InputBinding, KernelDef, Module, Op, PolyDecl, Schedule,
-    SumcheckInstance, VerifierOp, VerifierSchedule, VerifierStageIndex,
+    BufferRef, ChallengeDecl, ChallengeIdx, ChallengeSource, ClaimFactor, ClaimFormula, ClaimTerm,
+    DomainSeparator, Evaluation, InputBinding, KernelDef, Module, Op, PolyDecl, ReduceAxes,
+    ReduceDestination, ReduceSpec, Schedule, SumcheckInstance, VerifierOp, VerifierSchedule,
+    VerifierStageIndex,
 };
 use crate::polynomial_id::PolynomialId;
 
@@ -495,6 +496,24 @@ fn emit_sumcheck_stage(
             kernel: kernel_idx,
             round: r,
             bind_challenge,
+        });
+        // Dual-emit Op::Reduce alongside the legacy Op::SumcheckRound so the
+        // new unified-reduce path sees every reduce site. Runtime ignores this
+        // op during Phase B and still dispatches off Op::SumcheckRound.
+        ctx.ops.push(Op::Reduce {
+            specs: vec![ReduceSpec {
+                kernel: kernel_idx,
+                inputs: ctx.kernels[kernel_idx]
+                    .inputs
+                    .iter()
+                    .map(|b| BufferRef::Polynomial(b.poly()))
+                    .collect(),
+                axes: ReduceAxes::Flat,
+                destination: ReduceDestination::SumcheckRound {
+                    sumcheck: verifier_stage.0,
+                    round: r,
+                },
+            }],
         });
         let round_tag = if r == 0 && uniskip_domain.is_some() {
             DomainSeparator::UniskipPoly

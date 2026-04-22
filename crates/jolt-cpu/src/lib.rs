@@ -16,6 +16,7 @@
 //!   `{0, 2, 3, ..., degree}`. Handles all other compositions.
 
 mod backend;
+mod fuse;
 mod generic;
 pub mod gruen;
 mod handles;

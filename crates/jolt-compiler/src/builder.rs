@@ -14,7 +14,7 @@
 //! b.begin_stage();
 //! let tau = b.squeeze_n("tau", 27, ChallengeSource::FiatShamir { after_stage: 0 });
 //! let kernel = b.add_kernel(KernelDef { ... });
-//! b.sumcheck_round(kernel, 0, None);
+//! b.sumcheck_round(kernel, 0, None, VerifierStageIndex(0));
 //! // ...
 //! let module = b.build(num_verifier_stages);
 //! ```
@@ -23,10 +23,10 @@ use crate::checkpoint_lowering::lower_checkpoint_rule;
 use crate::formula::BindingOrder;
 use crate::ir::PolyKind;
 use crate::module::{
-    BatchIdx, BatchedSumcheckDef, ChallengeDecl, ChallengeIdx, ChallengeSource,
+    BatchIdx, BatchedSumcheckDef, BufferRef, ChallengeDecl, ChallengeIdx, ChallengeSource,
     CheckpointEvalAction, ClaimFormula, DomainSeparator, EvalMode, InputBinding, InstanceConfig,
-    InstanceIdx, KernelDef, Module, Op, PolyDecl, RoundPolyEncoding, Schedule, VerifierOp,
-    VerifierSchedule, VerifierStageIndex,
+    InstanceIdx, KernelDef, Module, Op, PolyDecl, ReduceAxes, ReduceDestination, ReduceSpec,
+    RoundPolyEncoding, Schedule, VerifierOp, VerifierSchedule, VerifierStageIndex,
 };
 use crate::PolynomialId;
 
@@ -48,6 +48,24 @@ fn build_checkpoint_batch(
             lower_checkpoint_rule(rule, i, r_x, r_y, round, suffix_len).map(|a| (i, a))
         })
         .collect()
+}
+
+/// Build a [`ReduceSpec`] for a flat reduce that covers `kdef.inputs` as-is.
+///
+/// Used for the Phase B dual-emission alongside legacy `Op::SumcheckRound` and
+/// `Op::InstanceReduce` — both correspond to `ReduceAxes::Flat` reduces over
+/// every kernel input.
+fn flat_reduce_spec(kernel: usize, kdef: &KernelDef, destination: ReduceDestination) -> ReduceSpec {
+    ReduceSpec {
+        kernel,
+        inputs: kdef
+            .inputs
+            .iter()
+            .map(|b| BufferRef::Polynomial(b.poly()))
+            .collect(),
+        axes: ReduceAxes::Flat,
+        destination,
+    }
 }
 
 /// Ergonomic builder for constructing a [`Module`].
@@ -207,16 +225,31 @@ impl ModuleBuilder {
     }
 
     /// Emit a single sumcheck round.
+    ///
+    /// Dual-emits `Op::Reduce` alongside the legacy `Op::SumcheckRound` so the
+    /// new unified-reduce path sees every reduce site. Runtime ignores the
+    /// `Op::Reduce` during Phase B and dispatches off the legacy op.
     pub fn sumcheck_round(
         &mut self,
         kernel: usize,
         round: usize,
         bind_challenge: Option<ChallengeIdx>,
+        stage: VerifierStageIndex,
     ) {
         self.ops.push(Op::SumcheckRound {
             kernel,
             round,
             bind_challenge,
+        });
+        self.ops.push(Op::Reduce {
+            specs: vec![flat_reduce_spec(
+                kernel,
+                &self.kernels[kernel],
+                ReduceDestination::SumcheckRound {
+                    sumcheck: stage.0,
+                    round,
+                },
+            )],
         });
     }
 
@@ -261,6 +294,16 @@ impl ModuleBuilder {
                 kernel,
                 round,
                 bind_challenge: bind,
+            });
+            self.ops.push(Op::Reduce {
+                specs: vec![flat_reduce_spec(
+                    kernel,
+                    &self.kernels[kernel],
+                    ReduceDestination::SumcheckRound {
+                        sumcheck: stage.0,
+                        round,
+                    },
+                )],
             });
 
             let ch_r = self.add_challenge(
@@ -644,19 +687,55 @@ impl ModuleBuilder {
 
                 // Reduce (non-PS cases — PS reduce is emitted above).
                 if !is_instance {
-                    if phase.segmented.is_some() {
+                    if let Some(seg) = phase.segmented.as_ref() {
                         self.ops.push(Op::InstanceSegmentedReduce {
                             batch,
                             instance: inst_idx,
                             kernel,
                             round_within_phase: instance_round - phase_start,
-                            segmented: phase.segmented.clone().unwrap(),
+                            segmented: seg.clone(),
+                        });
+                        self.ops.push(Op::Reduce {
+                            specs: vec![ReduceSpec {
+                                kernel,
+                                inputs: kdef
+                                    .inputs
+                                    .iter()
+                                    .map(|b| BufferRef::Polynomial(b.poly()))
+                                    .collect(),
+                                axes: ReduceAxes::Product {
+                                    outer_eq: BufferRef::SegmentedOuterEq {
+                                        batch,
+                                        instance: inst_idx,
+                                    },
+                                    inner_only: seg.inner_only.clone(),
+                                    inner_size: 1usize << seg.inner_num_vars,
+                                    // Gruen prev-claim plumbing is resolved in Phase C.
+                                    // Dual-emission fallback path in per_instance_reference_reduce
+                                    // uses the non-Gruen segmented_reduce when gruen_context is None.
+                                    gruen_context: None,
+                                },
+                                destination: ReduceDestination::Instance {
+                                    batch,
+                                    instance: inst_idx,
+                                },
+                            }],
                         });
                     } else {
                         self.ops.push(Op::InstanceReduce {
                             batch,
                             instance: inst_idx,
                             kernel,
+                        });
+                        self.ops.push(Op::Reduce {
+                            specs: vec![flat_reduce_spec(
+                                kernel,
+                                kdef,
+                                ReduceDestination::Instance {
+                                    batch,
+                                    instance: inst_idx,
+                                },
+                            )],
                         });
                     }
                 }

@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use jolt_compiler::module::{ClaimFactor, ClaimFormula};
+use jolt_compiler::module::{ClaimFactor, ClaimFormula, Op};
 use jolt_compiler::{GruenHint, GruenQ, Iteration, PolynomialId};
 use jolt_field::{Field, FieldAccumulator};
 
@@ -10,6 +10,7 @@ use jolt_compute::{
     BindingOrder, Buf, ComputeBackend, DeviceBuffer, HandleId, HandleShape, Scalar,
 };
 
+use crate::fuse::fuse_reduce_windows;
 use crate::handles::{CpuHandleState, HandleStore};
 
 /// Parallelism threshold: buffers smaller than this use sequential loops.
@@ -123,6 +124,10 @@ pub struct CpuBackend;
 impl ComputeBackend for CpuBackend {
     type Buffer<T: Scalar> = Vec<T>;
     type CompiledKernel<F: Field> = CpuKernel<F>;
+
+    fn fuse_ops(&self, ops: &[Op]) -> Option<Vec<Op>> {
+        Some(fuse_reduce_windows(ops))
+    }
 
     fn compile<F: Field>(&self, spec: &jolt_compiler::KernelSpec) -> CpuKernel<F> {
         crate::compile(spec)
