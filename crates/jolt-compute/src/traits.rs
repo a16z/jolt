@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use jolt_compiler::module::ClaimFormula;
+use jolt_compiler::module::{ClaimFormula, Op};
 pub use jolt_compiler::BindingOrder;
 use jolt_compiler::KernelSpec;
 use jolt_compiler::PolynomialId;
@@ -209,6 +209,22 @@ impl<BufF, BufU64> DeviceBuffer<BufF, BufU64> {
 pub trait ComputeBackend: Send + Sync + 'static {
     /// Handle to a typed buffer on the device.
     type Buffer<T: Scalar>: Send + Sync;
+
+    /// Rewrite the emitted op stream with backend-specific fusion rules.
+    ///
+    /// Called once at [`Executable`](crate::Executable) construction. The
+    /// default returns `None` — the runtime executes the compiler's stream
+    /// as-is. Backends opt in by returning `Some(new_stream)`; the linker
+    /// caches the result on the executable and (when [`FuseDebugMode`] is
+    /// on) keeps the pre-fusion stream as a shadow for dual-path validation.
+    ///
+    /// Analogous to XLA's `HloFusion` pass or TVM's schedule rewriters:
+    /// purely a *backend codegen* concern, not a protocol concern. The
+    /// compiler emits unrolled primitives; the backend chooses how to
+    /// batch / interleave / fuse them for cache and dispatch efficiency.
+    fn fuse_ops(&self, _ops: &[Op]) -> Option<Vec<Op>> {
+        None
+    }
 
     /// Opaque compiled kernel produced from a [`KernelSpec`].
     ///
@@ -565,8 +581,9 @@ pub trait ComputeBackend: Send + Sync + 'static {
     /// Per-round reductions for a batch of sumcheck instances.
     ///
     /// Returns one `Vec<F>` of kernel evaluations per instance, in the
-    /// same order as `specs`. Default implementation loops per-instance
-    /// via [`reduce`](Self::reduce) / [`segmented_reduce`](Self::segmented_reduce)
+    /// same order as `specs`. Default implementation forwards to
+    /// [`per_instance_batch_evaluate`], which loops per-instance via
+    /// [`reduce`](Self::reduce) / [`segmented_reduce`](Self::segmented_reduce)
     /// / [`gruen_segmented_reduce`](Self::gruen_segmented_reduce), matching
     /// the current per-instance dispatch byte-for-byte. Backends opt in
     /// to fused evaluation (shared prefetch, fused accumulation) by
@@ -576,49 +593,71 @@ pub trait ComputeBackend: Send + Sync + 'static {
         specs: &[BatchInstanceSpec<'_, Self, F>],
         challenges: &[F],
     ) -> Vec<Vec<F>> {
-        specs
-            .iter()
-            .map(|spec| match &spec.kind {
-                BatchReduceKind::Dense => self.reduce(spec.kernel, spec.inputs, challenges),
-                BatchReduceKind::Segmented {
-                    outer_eq,
-                    inner_only,
-                    inner_size,
-                } => {
-                    let field_inputs: Vec<&Self::Buffer<F>> =
-                        spec.inputs.iter().map(|b| b.as_field()).collect();
-                    self.segmented_reduce(
-                        spec.kernel,
-                        &field_inputs,
-                        outer_eq,
-                        inner_only,
-                        *inner_size,
-                        challenges,
-                    )
-                }
-                BatchReduceKind::Gruen {
-                    outer_eq,
-                    inner_only,
-                    inner_size,
-                    prev_claim,
-                    current_round,
-                } => {
-                    let field_inputs: Vec<&Self::Buffer<F>> =
-                        spec.inputs.iter().map(|b| b.as_field()).collect();
-                    self.gruen_segmented_reduce(
-                        spec.kernel,
-                        &field_inputs,
-                        outer_eq,
-                        inner_only,
-                        *inner_size,
-                        challenges,
-                        *prev_claim,
-                        *current_round,
-                    )
-                }
-            })
-            .collect()
+        per_instance_batch_evaluate(self, specs, challenges)
     }
+}
+
+/// Byte-identical per-instance shadow of [`ComputeBackend::batch_round_evaluate`].
+///
+/// Dispatches to [`reduce`](ComputeBackend::reduce) /
+/// [`segmented_reduce`](ComputeBackend::segmented_reduce) /
+/// [`gruen_segmented_reduce`](ComputeBackend::gruen_segmented_reduce)
+/// per spec in the same order as the input. Factored out so both the
+/// default `batch_round_evaluate` impl AND the runtime's dual-path
+/// validation harness can call the same reference path — any divergence
+/// between a backend's fused override and this loop is by construction a
+/// fusion bug.
+pub fn per_instance_batch_evaluate<B, F>(
+    backend: &B,
+    specs: &[BatchInstanceSpec<'_, B, F>],
+    challenges: &[F],
+) -> Vec<Vec<F>>
+where
+    B: ComputeBackend + ?Sized,
+    F: Field,
+{
+    specs
+        .iter()
+        .map(|spec| match &spec.kind {
+            BatchReduceKind::Dense => backend.reduce(spec.kernel, spec.inputs, challenges),
+            BatchReduceKind::Segmented {
+                outer_eq,
+                inner_only,
+                inner_size,
+            } => {
+                let field_inputs: Vec<&B::Buffer<F>> =
+                    spec.inputs.iter().map(|b| b.as_field()).collect();
+                backend.segmented_reduce(
+                    spec.kernel,
+                    &field_inputs,
+                    outer_eq,
+                    inner_only,
+                    *inner_size,
+                    challenges,
+                )
+            }
+            BatchReduceKind::Gruen {
+                outer_eq,
+                inner_only,
+                inner_size,
+                prev_claim,
+                current_round,
+            } => {
+                let field_inputs: Vec<&B::Buffer<F>> =
+                    spec.inputs.iter().map(|b| b.as_field()).collect();
+                backend.gruen_segmented_reduce(
+                    spec.kernel,
+                    &field_inputs,
+                    outer_eq,
+                    inner_only,
+                    *inner_size,
+                    challenges,
+                    *prev_claim,
+                    *current_round,
+                )
+            }
+        })
+        .collect()
 }
 
 /// Per-instance reduce kind for [`ComputeBackend::batch_round_evaluate`].

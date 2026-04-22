@@ -291,8 +291,8 @@ mod tests {
         let c0 = 0;
         let c1 = 1;
         assert_eq!(ra0[0xA * t + c0], Fr::one());
-        assert_eq!(ra0[0 * t + c0], Fr::zero());
-        assert_eq!(ra0[0x1 * t + c1], Fr::one());
+        assert_eq!(ra0[c0], Fr::zero());
+        assert_eq!(ra0[t + c1], Fr::one());
 
         let ra1 = polys.get(PolynomialId::InstructionRa(1));
         assert_eq!(ra1[0xB * t + c0], Fr::one());

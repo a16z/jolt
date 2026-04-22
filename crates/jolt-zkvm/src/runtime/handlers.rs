@@ -8,8 +8,8 @@ use jolt_compiler::module::{
 };
 use jolt_compiler::PolynomialId;
 use jolt_compute::{
-    BatchInstanceSpec, BatchReduceKind, Buf, BufferProvider, ComputeBackend, DeviceBuffer,
-    Executable,
+    per_instance_batch_evaluate, BatchInstanceSpec, BatchReduceKind, Buf, BufferProvider,
+    ComputeBackend, DeviceBuffer, Executable,
 };
 use jolt_crypto::HomomorphicCommitment;
 use jolt_field::Field;
@@ -851,7 +851,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
 
         Op::BatchRoundEvaluate {
             batch,
-            round: _,
+            round,
             instances,
         } => {
             // Per-instance input buffer refs (one Vec<&Buf> per spec) must
@@ -933,6 +933,17 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                 .collect();
             let per_instance = backend.batch_round_evaluate(&specs, &state.challenges);
             debug_assert_eq!(per_instance.len(), inst_indices.len());
+            if executable.has_fuse_debug() {
+                let shadow = per_instance_batch_evaluate(backend, &specs, &state.challenges);
+                assert_eq!(shadow.len(), per_instance.len());
+                for (i, (fused, shadow)) in per_instance.iter().zip(shadow.iter()).enumerate() {
+                    assert_eq!(
+                        fused, shadow,
+                        "fuse divergence at batch={} round={} instance={} (fused vs per-instance shadow)",
+                        batch.0, round, inst_indices[i]
+                    );
+                }
+            }
             for (i, evals) in per_instance.into_iter().enumerate() {
                 state.last_round_instance_evals[inst_indices[i]] = evals;
             }
