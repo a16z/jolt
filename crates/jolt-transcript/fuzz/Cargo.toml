@@ -1,5 +1,15 @@
 [workspace]
 
+# The fuzz sub-workspace does not inherit the root workspace's `[patch.crates-io]`.
+# `light-poseidon` pulls unpatched `ark-ff` from crates.io; jolt-transcript's types
+# are built against the patched fork. Apply the same patches here so both sides
+# see the same `ark-ff`.
+[patch.crates-io]
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+
 [package]
 name = "jolt-transcript-fuzz"
 version = "0.0.0"

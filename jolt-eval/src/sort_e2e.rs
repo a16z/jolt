@@ -112,7 +112,7 @@ pub fn run_redteam_test(
     verbose: bool,
 ) {
     let invariant = CandidateSortInvariant;
-    let agent = ClaudeCodeAgent::new(model, max_turns);
+    let agent = ClaudeCodeAgent::new(model, max_turns, verbose);
     let repo_dir = std::env::current_dir().expect("current dir");
     let config = RedTeamConfig {
         num_iterations: iterations,

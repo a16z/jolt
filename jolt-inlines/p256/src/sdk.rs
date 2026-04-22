@@ -747,39 +747,21 @@ fn fake_glv_scalar_mul(_s: &P256Fr, _p: &P256Point) -> (P256Point, u128, bool, u
     panic!("fake_glv_scalar_mul not available on this target");
 }
 
-/// 4-scalar 128-bit Shamir's trick.
+/// 2-scalar 128-bit Shamir's trick.
+///
+/// Computes `scalars[0] * points[0] + scalars[1] * points[1]` using
+/// simultaneous double-and-add with a 4-entry precomputed table.
+///
+/// Used by the Fake GLV verification to check each scalar multiplication
+/// independently: `a_i * P - b_i * R_i = O` binds R_i = u_i * P.
 #[inline(always)]
-fn shamir_4x128(scalars: [u128; 4], points: [P256Point; 4]) -> P256Point {
-    // Build 16-entry lookup table from 4 base points
+fn shamir_2x128(scalars: [u128; 2], points: [P256Point; 2]) -> P256Point {
     let p01 = points[0].add(&points[1]);
-    let p02 = points[0].add(&points[2]);
-    let p03 = points[0].add(&points[3]);
-    let p12 = points[1].add(&points[2]);
-    let p13 = points[1].add(&points[3]);
-    let p23 = points[2].add(&points[3]);
-    let p012 = p01.add(&points[2]);
-    let p013 = p01.add(&points[3]);
-    let p023 = p02.add(&points[3]);
-    let p123 = p12.add(&points[3]);
-    let p0123 = p012.add(&points[3]);
-
     let table = [
         P256Point::infinity(),
         points[0].clone(),
         points[1].clone(),
         p01,
-        points[2].clone(),
-        p02,
-        p12,
-        p012,
-        points[3].clone(),
-        p03,
-        p13,
-        p013,
-        p23,
-        p023,
-        p123,
-        p0123,
     ];
 
     let mut res = P256Point::infinity();
@@ -812,10 +794,13 @@ fn shamir_4x128(scalars: [u128; 4], points: [P256Point; 4]) -> P256Point {
 /// The guest verifies:
 ///   1. b1*u1 = a1 (mod n) and b2*u2 = a2 (mod n) -- scalar field checks
 ///   2. R1, R2 on curve -- point validity
-///   3. a1*G - b1*R1 + a2*Q - b2*R2 = O -- 4-scalar 128-bit Shamir (the main savings)
-///   4. (R1 + R2).x mod n == r -- ECDSA final check
+///   3. a1*G - b1*R1 = O -- 2-scalar 128-bit Shamir (binds R1 = u1*G)
+///   4. a2*Q - b2*R2 = O -- 2-scalar 128-bit Shamir (binds R2 = u2*Q)
+///   5. (R1 + R2).x mod n == r -- ECDSA final check
 ///
-/// This halves the doublings: 128 instead of 256, achieving ~1.7x speedup.
+/// Each scalar multiplication is verified independently to prevent
+/// cross-cancellation attacks. See:
+/// <https://ethresear.ch/t/fake-glv-you-dont-need-an-efficient-endomorphism-to-implement-glv-like-scalar-multiplication-in-snark-circuits/20394>
 ///
 /// All inputs are validated internally — no caller-side validation is required.
 #[inline(always)]
@@ -925,36 +910,40 @@ pub(crate) fn verify_ecdsa_inner(
         spoil_proof();
     }
 
-    // Reject trivial zero decomposition: a=0, b=0 satisfies b*u=a for any u,
-    // collapsing the Shamir MSM and leaving R1/R2 unconstrained.
+    // Reject trivial zero decomposition: a=0, b=0 makes the independent
+    // Shamirs return infinity trivially (0*P + 0*(-R) = O), bypassing the check.
     if b1_val == 0 || b2_val == 0 {
         spoil_proof();
     }
 
-    // Step 6: Prepare points for 4-scalar 128-bit Shamir
-    // We verify: a1*G + a2*Q - b1*R1 - b2*R2 = O
-    // Which is: a1*G + a2*Q + (-b1)*R1 + (-b2)*R2 = O
-    // Negate the sign of b1, b2 by negating the points R1, R2 if b is positive,
-    // or keeping them if b is negative (since -b * R = |b| * (-R))
+    // Step 6: Verify each scalar multiplication independently.
+    //
+    // Each R_i is bound by its OWN 2-scalar 128-bit Shamir MSM:
+    //   a_i * P - b_i * R_i = O  ⟹  R_i = (a_i / b_i) * P = u_i * P
+    //
+    // Combining both into a single 4-scalar check would give the prover a
+    // cross-cancellation degree of freedom (one equation, two free point
+    // variables). Independent checks eliminate this.
+    //
+    // Reference: https://ethresear.ch/t/fake-glv-you-dont-need-an-efficient-endomorphism-to-implement-glv-like-scalar-multiplication-in-snark-circuits/20394
+
+    // Check R1: a1*G - b1*R1 = O  (binds R1 = u1*G)
     let r1_adj = if b1_sign { r1.clone() } else { r1.neg() };
-    let r2_adj = if b2_sign { r2.clone() } else { r2.neg() };
-
-    // Scalars for the 4-scalar Shamir: a1, a2, |b1|, |b2| (all <= 128 bits)
-    let scalars = [a1_val, a2_val, b1_val, b2_val];
-    let points_arr = [
-        if a1_sign { g.neg() } else { g },
-        if a2_sign { q.neg() } else { q.clone() },
-        r1_adj,
-        r2_adj,
-    ];
-
-    // Step 7: 4-scalar 128-bit Shamir -- should equal O (infinity)
-    let check_point = shamir_4x128(scalars, points_arr);
-    if !check_point.is_infinity() {
+    let g_adj = if a1_sign { g.neg() } else { g };
+    let check1 = shamir_2x128([a1_val, b1_val], [g_adj, r1_adj]);
+    if !check1.is_infinity() {
         spoil_proof();
     }
 
-    // Step 8: Check (R1 + R2).x mod n == r
+    // Check R2: a2*Q - b2*R2 = O  (binds R2 = u2*Q)
+    let r2_adj = if b2_sign { r2.clone() } else { r2.neg() };
+    let q_adj = if a2_sign { q.neg() } else { q.clone() };
+    let check2 = shamir_2x128([a2_val, b2_val], [q_adj, r2_adj]);
+    if !check2.is_infinity() {
+        spoil_proof();
+    }
+
+    // Step 7: Check (R1 + R2).x mod n == r
     let r_sum = r1.add(&r2);
     if r_sum.is_infinity() {
         return Err(P256Error::RxMismatch);

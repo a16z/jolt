@@ -92,7 +92,7 @@ fn main() -> eyre::Result<()> {
         hint: cli.hint,
         verbose: cli.verbose,
     };
-    let agent = ClaudeCodeAgent::new(&cli.model, cli.max_turns);
+    let agent = ClaudeCodeAgent::new(&cli.model, cli.max_turns, cli.verbose);
     let repo_dir = std::env::current_dir()?;
 
     info!(

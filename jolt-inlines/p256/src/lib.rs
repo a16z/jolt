@@ -5,8 +5,9 @@
 //! Each inline verifies `a*b + w*p = 2^256*w + c` where the prover supplies `w`
 //! as non-deterministic advice.
 //!
-//! Uses "Fake GLV" (Latincrypt 2025) to decompose 256-bit scalars into 128-bit
-//! pairs via half-GCD, enabling 4-scalar Shamir's trick without an endomorphism.
+//! Uses "Fake GLV" to decompose 256-bit scalars into 128-bit pairs via
+//! half-GCD, verifying each scalar multiplication with an independent
+//! 2-scalar Shamir MSM — no endomorphism required.
 //!
 //! ```rust,ignore
 //! use jolt_inlines_p256::{P256Fr, P256Point, ecdsa_verify, UnwrapOrSpoilProof};

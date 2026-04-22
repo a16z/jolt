@@ -63,19 +63,26 @@ Follow these steps:
    - 75: Verified real issue that will impact functionality. Insufficient existing approach.
    - 100: Confirmed real issue that will happen frequently. Direct evidence confirms it.
 
-5. **Post comments to PR**: For each validated issue with score >= 50, post a review to the PR
-   with comments on specific lines of code. Or if no issues, do not post comments.
+5. **Post comments to PR**: Always post a single review to the PR so the author has
+   confirmation that the review ran, regardless of whether issues were found.
+
+   - When there are validated issues with score >= 50, include them in the `comments` array.
+   - When there are none, post the review with an empty `comments` array and a body that
+     briefly states no issues were found (1-2 sentences, same tone as the comment
+     guidelines below — concise, senior-engineer voice, no scores/severity labels/ceremony).
 
    Runs in CI — do not pause, do not ask for user confirmation, do not list issues for approval.
 
    Build a JSON file and use the GitHub review API:
    ```bash
-   # Write review JSON to a unique temp file (use $$ for PID to avoid collisions)
+   # Write review JSON to a unique temp file (use $$ for PID to avoid collisions).
+   # With issues: populate the comments array. Without issues: leave it empty ([]) and
+   # write a short "nothing actionable" body.
    cat > "/tmp/pr-review-${PR_NUMBER}-$$.json" << 'EOF'
    {
      "commit_id": "<HEAD_SHA>",
      "event": "COMMENT",
-     "body": "Short review summary (1-2 sentences)",
+     "body": "Short review summary (1-2 sentences). When no issues were found, state that plainly.",
      "comments": [
        {
          "path": "relative/path/to/file.rs",
@@ -86,11 +93,13 @@ Follow these steps:
    }
    EOF
 
-   # Post the review (all comments appear as a single review)
+   # Post the review (all comments appear as a single review). Always run this call,
+   # even when "comments" is [].
    gh api repos/{owner}/{repo}/pulls/{number}/reviews --method POST --input "/tmp/pr-review-${PR_NUMBER}-$$.json"
    ```
 
    Key points:
+   - Always POST the review, even with an empty `comments` array, so authors see the review ran.
    - Use a heredoc with `'EOF'` (quoted) to prevent shell interpolation of `$`, backticks, etc.
    - The `line` field refers to the NEW file line number (right side of diff) for added/modified lines.
    - Get the head SHA via `gh api repos/{owner}/{repo}/pulls/{number} --jq '.head.sha'`.
