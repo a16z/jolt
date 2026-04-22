@@ -126,6 +126,9 @@ fn op_span(op: &Op) -> tracing::span::EnteredSpan {
             tracing::info_span!("MaterializeCombinedVal").entered()
         }
         Op::WeightedSum { .. } => tracing::info_span!("WeightedSum").entered(),
+        Op::BuildLinearCombination { .. } => {
+            tracing::info_span!("BuildLinearCombination").entered()
+        }
     }
 }
 
@@ -719,7 +722,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             instance,
             segmented,
         } => {
-            let outer_eq = build_outer_eq(&state.challenges, segmented, backend);
+            let outer_eq = build_outer_eq(&state.challenges, segmented, backend, provider);
             let _ = state
                 .segmented_outer_eqs
                 .insert((batch.0, instance.0), outer_eq);
@@ -1317,6 +1320,29 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                 }
             }
             let _ = device_buffers.insert(*output, DeviceBuffer::Field(backend.upload(&result)));
+        }
+
+        Op::BuildLinearCombination {
+            out,
+            base_term,
+            bases,
+        } => {
+            let base = resolve_source(base_term, device_buffers, provider, backend);
+            let n = base.len();
+            let mut result = base;
+            for (ch, src) in bases {
+                let scale = state.challenges[ch.0];
+                let data = resolve_source(src, device_buffers, provider, backend);
+                assert_eq!(
+                    data.len(),
+                    n,
+                    "BuildLinearCombination: source {src:?} length {} != base length {}",
+                    data.len(),
+                    n,
+                );
+                accumulate(&mut result, &data, scale);
+            }
+            let _ = device_buffers.insert(*out, DeviceBuffer::Field(backend.upload(&result)));
         }
     }
 }

@@ -2394,6 +2394,7 @@ fn build_stage2(
                             inner_only: vec![true, false, false, true],
                             // Empty = uniform outer weights (no eq_addr in RamRW formula).
                             outer_eq_challenges: vec![],
+                            ..Default::default()
                         }),
                         carry_bindings: vec![],
                         pre_activation_ops: vec![],
@@ -3516,6 +3517,7 @@ fn build_stage4(
                     // [eq: inner, rs1_ra: mixed, rs2_ra: mixed, rd_wa: mixed, val: mixed, inc: inner]
                     inner_only: vec![true, false, false, false, false, true],
                     outer_eq_challenges: vec![],
+                    ..Default::default()
                 }),
                 carry_bindings: vec![],
                 pre_activation_ops: vec![],
@@ -6973,7 +6975,8 @@ fn print_stats(module: &Module, params: &ModuleParams) {
             | Op::RafReduce { .. }
             | Op::MaterializeRA { .. }
             | Op::MaterializeCombinedVal { .. }
-            | Op::WeightedSum { .. } => counts[14] += 1,
+            | Op::WeightedSum { .. }
+            | Op::BuildLinearCombination { .. } => counts[14] += 1,
         }
     }
     eprintln!("\n=== Op Counts ===");

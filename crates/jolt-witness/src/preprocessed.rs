@@ -79,6 +79,55 @@ impl<F: Field> PreprocessedSource<F> {
         self.insert(PolynomialId::RamInit, ram_init);
     }
 
+    /// Build FieldReg limb→Fr bridge preprocessed polynomials.
+    ///
+    /// Inserts the four constant K_reg-element polynomials used by the Stage 2
+    /// bridge kernel to reconstruct Fr operand values from four 64-bit scalar-
+    /// register limbs:
+    ///
+    /// | PolynomialId | Nonzero coefficients |
+    /// |---|---|
+    /// | `BridgeValWeightA` | `[10] = 1`, `[11] = 2^64`, `[12] = 2^128`, `[13] = 2^192` |
+    /// | `BridgeValWeightB` | `[14] = 1`, `[15] = 2^64`, `[16] = 2^128`, `[17] = 2^192` |
+    /// | `BridgeAnchorA` | `[10] = 1` |
+    /// | `BridgeAnchorB` | `[14] = 1` |
+    ///
+    /// `K_reg = 128` (7-bit register index, matches the scalar register file).
+    /// The weight `2^(64·k)` is built by repeatedly multiplying `2^64` —
+    /// `F::from_u128(1u128 << 64)` does not fit in a u128 via shift, so we
+    /// build it as `F::from_u128(1) * (2^64)` chains; simpler: use
+    /// `F::from_u128(1u128 << 63) * F::from_u128(2)` for 2^64, then square
+    /// for 2^128 and multiply for 2^192.
+    pub fn populate_bridge(&mut self) {
+        const K_REG: usize = 128;
+        // Build 2^64 as `(1u128 << 63) * 2` to stay within u128 range.
+        let two_pow_64 = F::from_u128(1u128 << 63) * F::from_u128(2);
+        let two_pow_128 = two_pow_64 * two_pow_64;
+        let two_pow_192 = two_pow_128 * two_pow_64;
+
+        let mut weight_a = vec![F::zero(); K_REG];
+        weight_a[10] = F::one();
+        weight_a[11] = two_pow_64;
+        weight_a[12] = two_pow_128;
+        weight_a[13] = two_pow_192;
+        self.insert(PolynomialId::BridgeValWeightA, weight_a);
+
+        let mut weight_b = vec![F::zero(); K_REG];
+        weight_b[14] = F::one();
+        weight_b[15] = two_pow_64;
+        weight_b[16] = two_pow_128;
+        weight_b[17] = two_pow_192;
+        self.insert(PolynomialId::BridgeValWeightB, weight_b);
+
+        let mut anchor_a = vec![F::zero(); K_REG];
+        anchor_a[10] = F::one();
+        self.insert(PolynomialId::BridgeAnchorA, anchor_a);
+
+        let mut anchor_b = vec![F::zero(); K_REG];
+        anchor_b[14] = F::one();
+        self.insert(PolynomialId::BridgeAnchorB, anchor_b);
+    }
+
     /// Insert a preprocessed polynomial.
     pub fn insert(&mut self, poly_id: PolynomialId, values: Vec<F>) {
         let _ = self.data.insert(poly_id, values);

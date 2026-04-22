@@ -387,10 +387,25 @@ Both A and B identities batch into one sumcheck via γ-combination.
 #### Claim-reduction coordination
 
 The bridge's output claim opens `Val_reg(r_reg_bridge, r_cycle_bridge)` at a
-random (r_reg_bridge, r_cycle_bridge) pair. This **reuses** the existing
-Registers Twist's `Val_reg` claim — the bridge is scheduled so its Val_reg
-opening is absorbed into the Stage-2 Registers Val-evaluation batch alongside
-the Twist's own opening. No new Val_reg commitment; no duplicate opening proof.
+random (r_reg_bridge, r_cycle_bridge) pair. `Val_reg` is a **Virtual**
+polynomial — not committed — so it cannot open directly into Dory. It is
+reduced to the committed `RdInc` by Stage 5's `RegistersValEvaluation`
+sumcheck.
+
+The bridge's point `(r_reg_bridge, r_cycle_bridge)` differs from Stage 4's
+`Val_reg` opening point, so two `Val_reg` openings must be reduced. The
+canonical precedent is `IncClaimReduction` (`jolt_core_module.rs:5084-5159`,
+claim formula at `:5353-5404`), which γ-batches four openings of
+`RamInc`/`RdInc` at distinct points into a single reduction. Stage 5's
+`RegistersValEvaluation` is extended identically:
+
+- Input claim becomes γ-batched two-term: `Val_reg@Stage4 + γ_bridge ·
+  Val_reg@bridge`, referenced via `ClaimFactor::StagedEval { poly: p.reg_val,
+  stage: 3 }` for Stage 4's opening and `ClaimFactor::Eval(p.reg_val)` for
+  the bridge's (just-closed) opening.
+- Reduction output: two independent openings of the committed `RdInc` at the
+  two respective points, batched into Stage 6's existing `IncClaimReduction`.
+- No new Val_reg commitment; no new Dory opening proof.
 
 Additional opening claims the bridge emits:
 - `FieldOpA(r_cycle_bridge)` — opens the R1CS column (already in the Stage-1
@@ -400,23 +415,51 @@ Additional opening claims the bridge emits:
   bridge cycle. Again already in the r1cs_input_polys output.
 
 All four R1CS-column openings require the bridge's `r_cycle_bridge` to
-coincide with the Stage-1 remaining-sumcheck's cycle challenge. The simplest
-route: schedule the bridge to consume Stage-1's `r_cycle` directly.
+coincide with the Stage-1 remaining-sumcheck's cycle challenge. The bridge's
+Stage-2 placement makes this coincidence automatic — Stage 2 instances
+already consume `stage1_cycle_challenges` via their eq tables (FR Twist does
+this at `jolt_core_module_with_fieldreg.rs:2458`).
 
-#### Implementation shape
+#### Implementation shape — Option A (chosen)
 
+**Decision**: fold bridge into Stage 2 as an additional batched instance; do
+NOT author a new `Stage::FieldRegLimbBridge`. Rationale:
+
+1. `jolt_core_module_with_fieldreg.rs:1200-1208` explicitly warns against
+   new `BeginStage` ops — the prover emits 8 stages but the verifier
+   `num_stages: 4` and the mapping is hand-coded many-to-one. Adding a
+   stage forces untangling this mapping.
+2. Stages = Fiat-Shamir challenge windows; instances-within-a-stage = sumchecks
+   that share a window. The bridge's γ_bridge and τ_bridge depend only on
+   `after_stage: 1` challenges already available to Stage 2.
+3. The FR Twist chose the same path (`instances[5]` of Stage 2's batch,
+   authored at `:2417-2530`) — existing precedent. A hypothetical second
+   coprocessor would follow the same pattern; stage proliferation is the
+   anti-pattern.
+
+Concretely:
 - Module: `crates/jolt-compiler/examples/jolt_core_module_with_fieldreg.rs`
   (the FR-extended Module only — baseline `jolt_core_module.rs` stays
   bridgeless and cross-verifies with jolt-core).
-- New stage (`Stage::FieldRegLimbBridge`) or folded into the existing Stage 2
-  batched sumcheck as an additional instance.
-- `num_rounds = log_K_reg + log_t`.
+- Add `γ_bridge = ch.add("gamma_bridge", ChallengeSource::FiatShamir {
+  after_stage: 1 })` in the Stage-2 pre-sumcheck block alongside `γ_fr`.
+- New batched instance pushed to `stage2_batched_sumchecks` at
+  `InstanceIdx(6)`, authored adjacent to `fr_phase2_kernel`. Bump
+  `STAGE2_NUM_INSTANCES_FR` 6 → 7.
+- Extend Stage 5 `RegistersValEvaluation` input-claim formula to two-term
+  γ-batched form per the `IncClaimReduction` template.
+- Verifier mirror: add `SumcheckInstance` entry to Stage-2 verifier op with
+  `at_stage: VerifierStageIndex(1)` — `num_stages: 4` stays put.
+
+Kernel parameters:
+- `num_rounds = log_K_reg + log_t` (= 7 + log_t).
 - `degree = 3` (eq × IsFieldOp × Val_reg; the `FieldOpA` term is degree 1 in
   cycle, 0 in reg).
 - `input_claim = 0` (trivial — the identity is of the form Σ … = 0).
 - `output_check` evaluates the full per-cycle, per-reg expression at the
-  final (r_reg, r_cycle) point using `LagrangeKernelDomain` for the indicator
-  selectors and explicit powers-of-2 for weights.
+  final (r_reg, r_cycle) point using `LagrangeKernelDomain { domain_start:
+  10, domain_size: 4 }` for the A-side indicators (mirror at `14` for
+  B-side) and explicit `2^{64k}` powers-of-2 for weights.
 
 #### Honest/adversarial acceptance criteria
 

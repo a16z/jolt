@@ -115,6 +115,10 @@ pub struct ModuleParams {
     /// FieldReg Twist (6th stage-2 instance): log_t cycle + log_k_chunk address.
     pub fr_checking_degree: usize,
     pub fr_checking_rounds: usize,
+    /// Limb→Fr bridge (7th stage-2 instance): single 1-D cycle sumcheck,
+    /// `log_t` rounds, degree 3 (eq × IsFieldOp × LimbSum).
+    pub bridge_checking_degree: usize,
+    pub bridge_checking_rounds: usize,
     pub stage2_max_rounds: usize,
     pub stage2_num_instances: usize,
 }
@@ -216,6 +220,9 @@ impl ModuleParams {
         // FieldReg Twist: log_t cycle + log_k_chunk address (matches standalone).
         let fr_checking_degree = 3;
         let fr_checking_rounds = log_t + log_k_chunk;
+        // Limb→Fr bridge: 1-D cycle sumcheck, log_t rounds, degree 3.
+        let bridge_checking_degree = 3;
+        let bridge_checking_rounds = log_t;
         let stage2_max_rounds = rw_checking_rounds;
         let stage2_num_instances = 5;
 
@@ -258,6 +265,8 @@ impl ModuleParams {
             output_check_rounds,
             fr_checking_degree,
             fr_checking_rounds,
+            bridge_checking_degree,
+            bridge_checking_rounds,
             stage2_max_rounds,
             stage2_num_instances,
         }

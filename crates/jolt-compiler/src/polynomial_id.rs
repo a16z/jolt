@@ -214,6 +214,88 @@ pub enum PolynomialId {
     RamInit,
     LookupTable,
     BytecodeTable(usize),
+
+    // FieldReg limb→Fr bridge: Preprocessed K_reg-element indicator/weight polys.
+    //
+    // K_reg = 128 (7-bit register index, same as scalar register file).
+    // Non-zero coefficients encode which register file slots carry the four
+    // limbs of field-op operand A (slots 10..=13) and operand B (slots 14..=17),
+    // weighted by the corresponding power-of-2^64 limb multipliers. Used by
+    // the Stage 2 bridge kernel to reconstruct Fr values from four 64-bit
+    // scalar-register limbs.
+    //
+    // NOTE: These variants are appended to the end of the enum so that
+    // bincode discriminants for existing variants remain stable (the
+    // pre-compiled `protocol.jolt` binary is discriminant-sensitive).
+    /// K_reg-element weight polynomial for operand A: zero except
+    /// `[10] = 1`, `[11] = 2^64`, `[12] = 2^128`, `[13] = 2^192`.
+    BridgeValWeightA,
+    /// K_reg-element weight polynomial for operand B: zero except
+    /// `[14] = 1`, `[15] = 2^64`, `[16] = 2^128`, `[17] = 2^192`.
+    BridgeValWeightB,
+    /// K_reg-element anchor indicator for operand A: one-hot at slot 10.
+    BridgeAnchorA,
+    /// K_reg-element anchor indicator for operand B: one-hot at slot 14.
+    BridgeAnchorB,
+
+    // FieldReg limb→Fr bridge: scratch/runtime-composed weight polynomials.
+    //
+    // These are materialized at bridge-kernel activation time by the
+    // `Op::BuildLinearCombination` op. Contents are only valid after the
+    // op runs; the backing data lives in the runtime device_buffers store.
+    // No DerivedSource/Preprocessed population logic — declaration only.
+    /// Runtime `BridgeValWeightA + γ_bridge_side · BridgeValWeightB`.
+    BridgeValWeight,
+    /// Runtime `BridgeAnchorA + γ_bridge_side · BridgeAnchorB`.
+    BridgeAnchorWeight,
+
+    // FieldReg limb→Fr bridge: Derived T-element flag polynomials.
+    /// T-element indicator: `IsFieldOpAny[t] = OpFlag(14) + OpFlag(15) +
+    /// OpFlag(16) + OpFlag(17)` (FMUL + FADD + FSUB + FINV). One on any
+    /// FieldOp cycle, zero elsewhere.
+    IsFieldOpAny,
+    /// T-element: `field_op_b[t] · (1 − OpFlag(17)[t])`. Gates operand B to
+    /// zero on FINV cycles (matches the Fr-domain payload invariant).
+    FieldOpBGated,
+    /// T-element indicator: `IsFieldOpNoInv[t] = OpFlag(14) + OpFlag(15) +
+    /// OpFlag(16)` (FMUL + FADD + FSUB, excluding FINV). Used by the bridge
+    /// B-side term which is gated off on FINV cycles.
+    IsFieldOpNoInv,
+    /// T-element derived poly: `LimbSumA[t] = Σ_{k=0..3} 2^{64k} · Val_reg(10+k, t)`
+    /// — reconstructs the A-side Fr operand from four 64-bit limbs stored in
+    /// scalar registers x10..x13.
+    LimbSumA,
+    /// T-element derived poly: `LimbSumB[t] = Σ_{k=0..3} 2^{64k} · Val_reg(14+k, t)`
+    /// — reconstructs the B-side Fr operand from four 64-bit limbs stored in
+    /// scalar registers x14..x17.
+    LimbSumB,
+
+    /// Alias for `RdInc` used by the bridge's Stage 2 opening claim map.
+    /// Same underlying witness data, but a distinct variant so the verifier's
+    /// `StagedEval { poly, stage }` table has a dedicated slot for the bridge
+    /// stage's opening of `RdInc` without colliding with the primary Stage N
+    /// opening. Materialization forwards to `RdInc`.
+    RdIncAtBridge,
+
+    /// T-element derived poly: `WeightAOfRd[j] = BridgeValWeightA[rd[j]]`.
+    /// Gathers the A-side limb weight at the write-register index for each
+    /// cycle. Cycles with no write or writing outside `x10..x13` yield 0.
+    ///
+    /// Used by the Stage 5 LimbSumA reduction sumcheck:
+    /// `LimbSumA(r_cycle_bridge) = Σ_j RdInc[j] · WeightAOfRd[j] · LT(r_cycle_bridge, j)`
+    WeightAOfRd,
+    /// T-element derived poly: `WeightBOfRd[j] = BridgeValWeightB[rd[j]]`.
+    /// Symmetric to `WeightAOfRd` for B-side registers `x14..x17`.
+    WeightBOfRd,
+
+    /// Alias for `RdInc` at the Stage 5 LimbSumA reduction opening point.
+    /// Distinct variant so the Stage 5 eval list can hold a separate
+    /// opening of `RdInc` without colliding with the Stage 5
+    /// `RegistersValEvaluation` opening. Materialization forwards to `RdInc`.
+    RdIncAtBridgeA,
+    /// Alias for `RdInc` at the Stage 5 LimbSumB reduction opening point.
+    /// Symmetric to `RdIncAtBridgeA`.
+    RdIncAtBridgeB,
 }
 
 /// Index constants for `BytecodeField(idx)` — canonical extraction order.
@@ -347,12 +429,27 @@ impl PolynomialId {
             | Self::BytecodeEntryTrace
             | Self::BytecodeEntryExpected
             | Self::BytecodeField(_)
+            | Self::BridgeValWeightA
+            | Self::BridgeValWeightB
+            | Self::BridgeAnchorA
+            | Self::BridgeAnchorB
             | Self::PrefixMask(_) => PolynomialDescriptor {
                 source: PolySource::Preprocessed,
                 committed: false,
                 storage: StorageHint::Dense,
                 witness_slot: None,
             },
+
+            // Bridge aliases: same data as `RdInc` but distinct opening slots.
+            // ProverData::materialize intercepts these and forwards to RdInc.
+            Self::RdIncAtBridge | Self::RdIncAtBridgeA | Self::RdIncAtBridgeB => {
+                PolynomialDescriptor {
+                    source: PolySource::Witness,
+                    committed: false,
+                    storage: StorageHint::Dense,
+                    witness_slot: None,
+                }
+            }
 
             // R1CS input variables: column slices of witness
             _ if self.r1cs_variable_index().is_some() => PolynomialDescriptor {

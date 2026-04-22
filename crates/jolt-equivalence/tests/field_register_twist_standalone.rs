@@ -720,6 +720,7 @@ fn build_twist_module() -> Module {
                         outer_num_vars: LOG_K_TWIST,
                         inner_only: vec![true, false, false, true], // eq, ra, val, inc
                         outer_eq_challenges: vec![],
+                        ..Default::default()
                     }),
                     carry_bindings: vec![],
                     pre_activation_ops: vec![],

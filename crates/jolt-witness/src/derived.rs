@@ -348,6 +348,34 @@ impl<'a, F: Field> DerivedSource<'a, F> {
                 let _s = tracing::info_span!("derived::hamming_weight").entered();
                 Cow::Owned(self.hamming_weight())
             }
+            PolynomialId::IsFieldOpAny => {
+                let _s = tracing::info_span!("derived::is_field_op_any").entered();
+                Cow::Owned(self.is_field_op_any())
+            }
+            PolynomialId::FieldOpBGated => {
+                let _s = tracing::info_span!("derived::field_op_b_gated").entered();
+                Cow::Owned(self.field_op_b_gated())
+            }
+            PolynomialId::IsFieldOpNoInv => {
+                let _s = tracing::info_span!("derived::is_field_op_no_inv").entered();
+                Cow::Owned(self.is_field_op_no_inv())
+            }
+            PolynomialId::LimbSumA => {
+                let _s = tracing::info_span!("derived::limb_sum_a").entered();
+                Cow::Owned(self.limb_sum_a())
+            }
+            PolynomialId::LimbSumB => {
+                let _s = tracing::info_span!("derived::limb_sum_b").entered();
+                Cow::Owned(self.limb_sum_b())
+            }
+            PolynomialId::WeightAOfRd => {
+                let _s = tracing::info_span!("derived::weight_a_of_rd").entered();
+                Cow::Owned(self.weight_of_rd_range(10))
+            }
+            PolynomialId::WeightBOfRd => {
+                let _s = tracing::info_span!("derived::weight_b_of_rd").entered();
+                Cow::Owned(self.weight_of_rd_range(14))
+            }
             PolynomialId::FieldRegInc => {
                 let _s = tracing::info_span!("derived::field_reg_inc").entered();
                 Cow::Owned(self.field_reg_inc())
@@ -536,6 +564,134 @@ impl<'a, F: Field> DerivedSource<'a, F> {
     fn ram_val_final(&self) -> Vec<F> {
         let ram = self.ram();
         ram.final_state.iter().map(|&v| F::from_u64(v)).collect()
+    }
+
+    /// T-element `IsFieldOpAny` indicator: 1 on any FieldOp cycle, 0 elsewhere.
+    ///
+    /// Computed as `OpFlag(14) + OpFlag(15) + OpFlag(16) + OpFlag(17)` —
+    /// i.e. `V_FLAG_IS_FIELD_MUL + _ADD + _SUB + _INV` — pointwise over
+    /// cycles. The four flags are mutually exclusive per cycle so the sum is
+    /// 0 or 1.
+    fn is_field_op_any(&self) -> Vec<F> {
+        (0..self.num_cycles)
+            .map(|c| {
+                let w = c * self.vars_padded;
+                self.witness[w + V_FLAG_IS_FIELD_MUL]
+                    + self.witness[w + V_FLAG_IS_FIELD_ADD]
+                    + self.witness[w + V_FLAG_IS_FIELD_SUB]
+                    + self.witness[w + V_FLAG_IS_FIELD_INV]
+            })
+            .collect()
+    }
+
+    /// T-element `field_op_b[t] · (1 − OpFlag(17)[t])` — FINV-gated operand B.
+    ///
+    /// On FINV cycles (`V_FLAG_IS_FIELD_INV = 1`) operand B is unused in the
+    /// protocol; zeroing it here keeps the Fr-domain payload invariant that
+    /// unused operands contribute nothing to the bridge kernel's linear
+    /// combination.
+    fn field_op_b_gated(&self) -> Vec<F> {
+        (0..self.num_cycles)
+            .map(|c| {
+                let w = c * self.vars_padded;
+                let b = self.witness[w + V_FIELD_OP_B];
+                let inv = self.witness[w + V_FLAG_IS_FIELD_INV];
+                b * (F::one() - inv)
+            })
+            .collect()
+    }
+
+    /// T-element `IsFieldOpNoInv` indicator: `OpFlag(14) + OpFlag(15) + OpFlag(16)`
+    /// — i.e. FMUL + FADD + FSUB (excluding FINV). Used by the bridge kernel's
+    /// B-side gate, since FINV does not consume operand B.
+    fn is_field_op_no_inv(&self) -> Vec<F> {
+        (0..self.num_cycles)
+            .map(|c| {
+                let w = c * self.vars_padded;
+                self.witness[w + V_FLAG_IS_FIELD_MUL]
+                    + self.witness[w + V_FLAG_IS_FIELD_ADD]
+                    + self.witness[w + V_FLAG_IS_FIELD_SUB]
+            })
+            .collect()
+    }
+
+    /// T-element limb-sum polynomial for a 4-register limb range `[base..base+4)`:
+    /// `out[c] = Σ_{k=0..3} 2^{64k} · reg_val(base+k, c)` where `reg_val` is the
+    /// pre-access register value (same semantics as `reg_val()` above).
+    ///
+    /// Replays the register-write stream cycle-by-cycle to track running
+    /// pre-access values for the four target registers, then accumulates the
+    /// 2^{64k}-weighted sum per cycle. Avoids materializing the full K_REG × T
+    /// `reg_val` buffer.
+    fn limb_sum_range(&self, base: usize) -> Vec<F> {
+        let ra = self.reg_access();
+        let t = self.num_cycles;
+        // Four weights: 2^0, 2^64, 2^128, 2^192. Build 2^64 as (1<<63)*2 so we
+        // stay within u128. Mirrors `preprocessed.rs::populate_bridge`.
+        let two_pow_64 = F::from_u128(1u128 << 63) * F::from_u128(2);
+        let two_pow_128 = two_pow_64 * two_pow_64;
+        let two_pow_192 = two_pow_128 * two_pow_64;
+        let weights = [F::one(), two_pow_64, two_pow_128, two_pow_192];
+
+        // Four per-register running values, initialized to zero.
+        let mut current: [F; 4] = [F::zero(); 4];
+        let mut out = vec![F::zero(); t];
+
+        for (c, out_c) in out.iter_mut().enumerate().take(t) {
+            // Emit pre-access sum for cycle c.
+            let mut sum = F::zero();
+            for (k, cur) in current.iter().enumerate() {
+                sum += weights[k] * *cur;
+            }
+            *out_c = sum;
+
+            // Apply write (if any) AFTER emitting — matches reg_val() semantics.
+            if let Some(k) = ra.rd_indices[c] {
+                if (base..base + 4).contains(&k) {
+                    let w = c * self.vars_padded;
+                    current[k - base] = self.witness[w + V_RD_WRITE_VALUE];
+                }
+            }
+        }
+        out
+    }
+
+    /// T-element `LimbSumA[c] = Σ_{k=0..3} 2^{64k} · reg_val(10+k, c)`.
+    fn limb_sum_a(&self) -> Vec<F> {
+        self.limb_sum_range(10)
+    }
+
+    /// T-element `LimbSumB[c] = Σ_{k=0..3} 2^{64k} · reg_val(14+k, c)`.
+    fn limb_sum_b(&self) -> Vec<F> {
+        self.limb_sum_range(14)
+    }
+
+    /// T-element `WeightOfRd[j] = BridgeValWeight<side>[rd[j]]`.
+    ///
+    /// For a register limb-range base `b` (10 for A-side, 14 for B-side),
+    /// returns `2^{64*(rd[j] − b)}` when `rd[j] ∈ {b, b+1, b+2, b+3}`, else 0.
+    /// Non-writing cycles (`rd[j] = None` or `rd[j] = 0` from nop) also yield 0.
+    ///
+    /// Used by the Stage 5 LimbSum reduction sumcheck as the MLE of
+    /// `BridgeValWeight` evaluated at the integer-boolean cycle index `rd[j]`.
+    /// Equivalent to gathering `BridgeValWeightX` through `rd[j]` per cycle.
+    fn weight_of_rd_range(&self, base: usize) -> Vec<F> {
+        let ra = self.reg_access();
+        let t = self.num_cycles;
+        let two_pow_64 = F::from_u128(1u128 << 63) * F::from_u128(2);
+        let two_pow_128 = two_pow_64 * two_pow_64;
+        let two_pow_192 = two_pow_128 * two_pow_64;
+        let weights = [F::one(), two_pow_64, two_pow_128, two_pow_192];
+
+        let mut out = vec![F::zero(); t];
+        for (c, slot) in out.iter_mut().enumerate().take(t) {
+            if let Some(k) = ra.rd_indices[c] {
+                if (base..base + 4).contains(&k) {
+                    *slot = weights[k - base];
+                }
+            }
+        }
+        out
     }
 
     /// FieldReg Inc: T elements. `inc[c] = new - old` for the event at cycle

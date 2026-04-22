@@ -550,6 +550,15 @@ fn evaluate_formula<F: Field>(
                     let point = resolve_point(sumcheck_points, point_override, at_stage.0);
                     evaluate_preprocessed_poly(*poly, point, config)?
                 }
+                ClaimFactor::PreprocessedPolyEvalSlice {
+                    poly,
+                    at_stage,
+                    offset,
+                    len,
+                } => {
+                    let point = resolve_point(sumcheck_points, point_override, at_stage.0);
+                    evaluate_preprocessed_poly(*poly, &point[*offset..*offset + *len], config)?
+                }
                 ClaimFactor::StagedEval { .. } => {
                     return Err(JoltError::InvalidProof(
                         "StagedEval is prover-only; not supported in verifier formulas".into(),

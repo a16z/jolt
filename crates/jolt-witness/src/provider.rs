@@ -70,6 +70,17 @@ impl<'a, F: Field> ProverData<'a, F> {
 
 impl<F: Field> BufferProvider<F> for ProverData<'_, F> {
     fn materialize(&self, poly_id: PolynomialId) -> Cow<'_, [F]> {
+        // Bridge aliases: `RdIncAtBridge*` share witness data with `RdInc` but
+        // are distinct opening slots in the verifier's StagedEval map.
+        if matches!(
+            poly_id,
+            PolynomialId::RdIncAtBridge
+                | PolynomialId::RdIncAtBridgeA
+                | PolynomialId::RdIncAtBridgeB
+        ) {
+            let _s = tracing::info_span!("pm::WitnessAlias").entered();
+            return Cow::Borrowed(self.witness.get(PolynomialId::RdInc));
+        }
         match poly_id.descriptor().source {
             PolySource::Witness => {
                 let _s = tracing::info_span!("pm::Witness").entered();
@@ -91,6 +102,16 @@ impl<F: Field> BufferProvider<F> for ProverData<'_, F> {
     }
 
     fn release(&mut self, poly_id: PolynomialId) {
+        // Bridge aliases: never release the shared `RdInc` buffer via the alias
+        // — the alias doesn't own the data.
+        if matches!(
+            poly_id,
+            PolynomialId::RdIncAtBridge
+                | PolynomialId::RdIncAtBridgeA
+                | PolynomialId::RdIncAtBridgeB
+        ) {
+            return;
+        }
         match poly_id.descriptor().source {
             PolySource::Witness => self.witness.release(poly_id),
             PolySource::R1cs(_) | PolySource::Derived => {}

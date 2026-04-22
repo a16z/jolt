@@ -901,6 +901,17 @@ fn op_poly_refs(op: &Op, kernels: &[KernelDef]) -> Vec<PolynomialId> {
         | Op::MaterializeRA { .. }
         | Op::MaterializeCombinedVal { .. }
         | Op::WeightedSum { .. } => vec![],
+        Op::BuildLinearCombination {
+            out,
+            base_term,
+            bases,
+        } => {
+            let mut v = Vec::with_capacity(2 + bases.len());
+            v.push(*out);
+            v.push(*base_term);
+            v.extend(bases.iter().map(|(_, p)| *p));
+            v
+        }
     }
 }
 

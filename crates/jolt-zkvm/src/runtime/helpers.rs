@@ -63,13 +63,33 @@ pub(super) fn precompute_stage_points(module: &jolt_compiler::module::Module) ->
         .collect()
 }
 
-pub(super) fn build_outer_eq<B, F>(challenges: &[F], seg: &SegmentedConfig, backend: &B) -> Vec<F>
+pub(super) fn build_outer_eq<B, F>(
+    challenges: &[F],
+    seg: &SegmentedConfig,
+    backend: &B,
+    provider: &impl BufferProvider<F>,
+) -> Vec<F>
 where
     B: ComputeBackend,
     F: Field,
 {
-    if seg.outer_eq_challenges.is_empty() {
-        vec![F::one(); 1 << seg.outer_num_vars]
+    assert!(
+        seg.outer_weight_poly.is_none() || seg.outer_eq_challenges.is_empty(),
+        "SegmentedConfig: outer_weight_poly and outer_eq_challenges are mutually exclusive",
+    );
+    let expected_len = 1usize << seg.outer_num_vars;
+    if let Some(poly) = seg.outer_weight_poly {
+        let data = provider.materialize(poly);
+        assert_eq!(
+            data.len(),
+            expected_len,
+            "outer_weight_poly {poly:?} length {} != 1<<outer_num_vars = {}",
+            data.len(),
+            expected_len,
+        );
+        data.into_owned()
+    } else if seg.outer_eq_challenges.is_empty() {
+        vec![F::one(); expected_len]
     } else {
         let point: Vec<F> = seg
             .outer_eq_challenges

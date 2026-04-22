@@ -211,7 +211,7 @@ pub struct ScalarCapture {
 ///
 /// The kernel itself is compiled as Dense over the inner dimension. The
 /// segmented structure is runtime-level orchestration, not a backend concern.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SegmentedConfig {
     /// Log₂ of the inner segment size (bound in this phase).
     pub inner_num_vars: usize,
@@ -222,6 +222,16 @@ pub struct SegmentedConfig {
     pub inner_only: Vec<bool>,
     /// Challenge indices for the outer eq table (built once at phase start).
     pub outer_eq_challenges: Vec<ChallengeIdx>,
+    /// Optional outer-weight polynomial: when `Some(p)`, the outer-position
+    /// weights are read from preprocessed/virtual poly `p` (K elements).
+    /// Disallowed alongside `outer_eq_challenges` (asserts in the backend).
+    ///
+    /// Semantics summary:
+    ///  * `None` + `outer_eq_challenges.is_empty()` → uniform weight 1
+    ///  * `None` + `outer_eq_challenges` non-empty → eq-table over challenges
+    ///  * `Some(p)` + `outer_eq_challenges.is_empty()` → weights from poly `p`
+    #[serde(default)]
+    pub outer_weight_poly: Option<PolynomialId>,
 }
 
 /// One entry of the combine matrix for read-checking.
@@ -1297,6 +1307,26 @@ pub enum Op {
         overall_scale: Option<(ChallengeIdx, u8)>,
     },
 
+    /// Build a linear combination `out = base_term + Σ coeff_i · bases[i].poly`.
+    ///
+    /// `base_term` is added with coefficient 1 (no challenge multiplier); each
+    /// subsequent `(challenge, poly)` pair multiplies that poly by the named
+    /// challenge value before summing. All source polys must be resolvable
+    /// either from `device_buffers` (preferred) or the provider. The result
+    /// is written to `out` as a device buffer of length equal to `base_term`'s
+    /// length — all bases must share that length.
+    ///
+    /// Closely related to `WeightedSum` but encodes the common "pass-through
+    /// base + challenge-scaled deltas" idiom directly without per-challenge
+    /// power bookkeeping.
+    BuildLinearCombination {
+        out: PolynomialId,
+        /// The "1·" term — its length determines `out`'s length.
+        base_term: PolynomialId,
+        /// Additional (challenge-scaled) terms, summed on top of `base_term`.
+        bases: Vec<(ChallengeIdx, PolynomialId)>,
+    },
+
     /// Update an expanding eq table by consuming a challenge value.
     ///
     /// Doubles the active portion of the buffer: for each entry `v[i]` in
@@ -1606,6 +1636,7 @@ impl Op {
                 | Op::MaterializeRA { .. }
                 | Op::MaterializeCombinedVal { .. }
                 | Op::WeightedSum { .. }
+                | Op::BuildLinearCombination { .. }
         )
     }
 }
@@ -1896,6 +1927,21 @@ pub enum ClaimFactor {
     PreprocessedPolyEval {
         poly: PolynomialId,
         at_stage: VerifierStageIndex,
+    },
+    /// Evaluation of a preprocessed polynomial at a contiguous **slice** of a
+    /// stage's (normalized) sumcheck point — analogous to [`EqEvalSlice`] but
+    /// for preprocessed polys.
+    ///
+    /// Used when a preprocessed poly defined over a sub-dimension (e.g. the
+    /// K-element outer-weight poly of a 2-D segmented sumcheck) must be
+    /// evaluated at only the matching segment of the stage's opening point.
+    PreprocessedPolyEvalSlice {
+        poly: PolynomialId,
+        at_stage: VerifierStageIndex,
+        /// Starting index within the (normalized) sumcheck point.
+        offset: usize,
+        /// Number of variables consumed from the point.
+        len: usize,
     },
     /// Two-group R1CS inner product with Lagrange interpolation at `r0` and
     /// linear interpolation at `r_group` between two disjoint row-index sets.

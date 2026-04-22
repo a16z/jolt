@@ -1768,6 +1768,264 @@ fn run_jolt_zkvm_prover_with_fieldreg(
     run_jolt_zkvm_prover_with_fieldreg_events(params, Vec::new())
 }
 
+/// A synthetic register prologue entry: at `cycle`, the guest wrote `value` to
+/// register index `reg`. The test harness splices these into `reg_access` +
+/// the R1CS witness + the committed `RdInc` polynomial so the Registers Twist,
+/// derived `LimbSum*` polys, and bridge reduction identities all stay
+/// consistent. The chosen `cycle` must be inside the NoOp padding region
+/// (`>= trace.len()`) so we don't collide with real guest-emitted writes.
+#[derive(Clone, Copy, Debug)]
+struct PrologueWrite {
+    cycle: usize,
+    reg: usize,
+    value: u64,
+}
+
+/// Post-hoc R1CS witness tamper closure used by Phase 3 bridge adversarial
+/// tests. Signature: `(witness, num_vars_padded)` — see `run_jolt_zkvm_prover_with_prologue`.
+type R1csWitnessTamper = Box<dyn Fn(&mut [NewFr], usize)>;
+
+/// Phase 3 bridge test helpers — splice a synthetic "register prologue"
+/// (a sequence of writes to `x10..x17`) into the muldiv harness so
+/// `LimbSumA(c_fieldop) = Σ 2^{64k} · Val_reg(10+k, c_fieldop)` matches the
+/// FieldOp event's `a` limbs (and same for B side / `x14..x17`).
+///
+/// Each `PrologueWrite` must target a distinct `(cycle, reg)` with `cycle`
+/// strictly less than the paired FieldOp event's cycle, so the write
+/// propagates into the event cycle's pre-access `Val_reg`. Pre-access value
+/// is assumed to be 0 — this only holds for the FIRST write to each
+/// register, which is the only case we need.
+#[allow(clippy::needless_pass_by_value)]
+fn apply_prologue_writes(
+    r1cs_witness: &mut [NewFr],
+    reg_access: &mut RegisterAccessData,
+    polys: &mut Polynomials<NewFr>,
+    num_vars_padded: usize,
+    writes: &[PrologueWrite],
+) {
+    use jolt_field::Field;
+
+    // Mutate the committed RdInc polynomial to reflect the synthetic writes.
+    // For a prologue cycle (in padding), the baseline is 0: pre = 0, post = 0,
+    // so RdInc = 0. After splicing a write of `value`, RdInc becomes `value`.
+    let mut rd_inc = polys.take(PolynomialId::RdInc);
+    for w in writes {
+        assert!(w.cycle < r1cs_witness.len() / num_vars_padded);
+        assert!(
+            reg_access.rd_indices[w.cycle].is_none(),
+            "prologue cycle {} already has a write to rd={:?} — pick a NoOp padding cycle",
+            w.cycle,
+            reg_access.rd_indices[w.cycle],
+        );
+        // Splice the write into the tracker that both RegistersRW and the
+        // derived LimbSum polynomials read from.
+        reg_access.rd_indices[w.cycle] = Some(w.reg);
+        // V_RD_WRITE_VALUE is the post-write value consumed by RegVal / LimbSum.
+        r1cs_witness[w.cycle * num_vars_padded + rv64::V_RD_WRITE_VALUE] =
+            NewFr::from_u64(w.value);
+        // RdInc is committed and separately checked against Val transitions;
+        // keep it consistent with the post-pre delta (pre=0 → delta=value).
+        rd_inc[w.cycle] = NewFr::from_u64(w.value);
+    }
+    let _ = polys.insert(PolynomialId::RdInc, rd_inc);
+}
+
+/// Convert `[u64; 4]` natural-form limbs to an `ark_bn254::Fr` element (LE,
+/// mod-reduced). Mirrors `limbs_to_field::<NewFr>` but returns arkworks Fr so
+/// tests can perform honest Fr arithmetic with the canonical reference impl.
+fn limbs_to_ark(limbs: &[u64; 4]) -> Fr {
+    use ark_ff::PrimeField;
+    let mut bytes = [0u8; 32];
+    for (i, &l) in limbs.iter().enumerate() {
+        bytes[i * 8..(i + 1) * 8].copy_from_slice(&l.to_le_bytes());
+    }
+    Fr::from_le_bytes_mod_order(&bytes)
+}
+
+/// Convert an `ark_bn254::Fr` back to natural-form `[u64; 4]` limbs. The
+/// result is suitable for use as a `FieldRegEvent::new` payload.
+fn ark_to_limbs(fr: &Fr) -> [u64; 4] {
+    use ark_ff::{BigInteger, PrimeField};
+    let bi = fr.into_bigint();
+    let bytes = bi.to_bytes_le();
+    let mut limbs = [0u64; 4];
+    for (i, limb) in limbs.iter_mut().enumerate() {
+        let start = i * 8;
+        let end = core::cmp::min(start + 8, bytes.len());
+        if start < bytes.len() {
+            let mut buf = [0u8; 8];
+            buf[..end - start].copy_from_slice(&bytes[start..end]);
+            *limb = u64::from_le_bytes(buf);
+        }
+    }
+    limbs
+}
+
+/// Build a standard 8-write register prologue for a FieldOp cycle: at cycles
+/// `c_fieldop − 8 + i` for i ∈ 0..8, write limb `i` of `a` to `x[10+i]` for
+/// i<4 and limb `i-4` of `b` to `x[14 + i-4]` for i≥4. The FieldOp cycle
+/// itself must be strictly greater than `c_fieldop − 8` and should be inside
+/// the NoOp padding region of the muldiv trace.
+fn build_fmul_prologue(
+    c_fieldop: usize,
+    a: &[u64; 4],
+    b: &[u64; 4],
+) -> Vec<PrologueWrite> {
+    assert!(c_fieldop >= 8, "need 8 padding cycles before the FieldOp");
+    let mut writes = Vec::with_capacity(8);
+    for (i, &value) in a.iter().enumerate() {
+        writes.push(PrologueWrite {
+            cycle: c_fieldop - 8 + i,
+            reg: 10 + i,
+            value,
+        });
+    }
+    for (i, &value) in b.iter().enumerate() {
+        writes.push(PrologueWrite {
+            cycle: c_fieldop - 4 + i,
+            reg: 14 + i,
+            value,
+        });
+    }
+    writes
+}
+
+/// Find a cycle index `c_fieldop` deep in the NoOp padding region such that
+/// `c_fieldop − 8 .. c_fieldop + 1` (the 8 prologue cycles + the FieldOp
+/// cycle itself) all currently have `rd_indices[c] == None`. Scans backwards
+/// from `trace_length − 2` so we land in the tail padding (leaves the last
+/// cycle alone to avoid any boundary effects with `V_NEXT_*` columns).
+fn find_padding_field_op_cycle(reg_access: &RegisterAccessData) -> usize {
+    let t = reg_access.rd_indices.len();
+    // Walk backwards from t-2 looking for 9 consecutive `None` rd indices.
+    let mut c = t.saturating_sub(2);
+    while c >= 9 {
+        let all_none = (0..=8).all(|k| reg_access.rd_indices[c - k].is_none());
+        if all_none {
+            return c;
+        }
+        c -= 1;
+    }
+    panic!("could not find 9 consecutive NoOp padding cycles for bridge prologue");
+}
+
+/// Same as `run_jolt_zkvm_prover_with_fieldreg_events`, but also applies a
+/// synthetic register prologue: before `prove()` is called, `writes` are
+/// spliced into `reg_access.rd_indices` + `V_RD_WRITE_VALUE` + committed
+/// `RdInc`. This makes `LimbSumA/B(c_fieldop)` non-zero and matching the
+/// FieldOp event's operand limbs — which is the precondition for the Stage 2
+/// bridge kernel to accept.
+///
+/// `plan` is a closure that given the real trace's `reg_access` returns
+/// `(events, prologue, optional_tamper)`. This lets tests dynamically pick
+/// a FieldOp cycle inside the NoOp padding region without hardcoding trace
+/// length.
+fn run_jolt_zkvm_prover_with_prologue<P>(
+    params: &CoreProtocolParams,
+    plan: P,
+) -> jolt_verifier::JoltProof<NewFr, DoryScheme>
+where
+    P: FnOnce(
+        &RegisterAccessData,
+    ) -> (
+        Vec<jolt_witness::derived::FieldRegEvent>,
+        Vec<PrologueWrite>,
+        Option<R1csWitnessTamper>,
+    ),
+{
+    let (
+        executable,
+        mut polys,
+        r1cs_key,
+        mut r1cs_witness,
+        setup,
+        initial_ram,
+        final_ram,
+        instruction_flag_data,
+        mut reg_access,
+        lookup_trace,
+        lookup_flags,
+        bytecode_data,
+    ) = setup_zkvm_muldiv_with_example(params, "jolt_core_module_with_fieldreg");
+
+    let t = setup.trace_length;
+    let log_t_local = t.trailing_zeros() as usize;
+    let log_k_chunk = if log_t_local < 25 { 4 } else { 8 };
+    let k_fieldreg = 1usize << log_k_chunk;
+
+    let (events, prologue, r1cs_witness_tamper) = plan(&reg_access);
+
+    apply_prologue_writes(
+        &mut r1cs_witness,
+        &mut reg_access,
+        &mut polys,
+        r1cs_key.num_vars_padded,
+        &prologue,
+    );
+
+    jolt_host::apply_field_op_events_to_r1cs::<NewFr>(
+        &mut r1cs_witness,
+        t,
+        r1cs_key.num_vars_padded,
+        &events,
+    );
+
+    // Optional adversarial tamper — applied AFTER the honest prologue + event
+    // overlay so the test exercises rejection of a specific post-hoc mutation
+    // to the R1CS witness (e.g. only `V_FIELD_OP_A` at the FieldOp cycle).
+    if let Some(tamper) = r1cs_witness_tamper.as_ref() {
+        tamper(&mut r1cs_witness, r1cs_key.num_vars_padded);
+    }
+
+    let field_reg_config = FieldRegConfig {
+        k: k_fieldreg,
+        initial_state: vec![[0u64; 4]; k_fieldreg],
+        events,
+    };
+    let rv = field_reg_config.compute_read_value::<NewFr>(t);
+    let wv = field_reg_config.compute_write_value::<NewFr>(t);
+
+    let _ = polys.insert(jolt_witness::PolynomialId::FieldRegReadValue, rv);
+    let _ = polys.insert(jolt_witness::PolynomialId::FieldRegWriteValue, wv);
+
+    let r1cs = R1csSource::new(&r1cs_key, &r1cs_witness);
+    let mut preprocessed = PreprocessedSource::new();
+    preprocessed.populate_ram(&setup.config, &initial_ram);
+
+    let derived = DerivedSource::new(&r1cs_witness, setup.trace_length, r1cs_key.num_vars_padded)
+        .with_ram(RamConfig {
+            ram_k: setup.config.ram_k,
+            lowest_addr: setup.config.ram_lowest_address,
+            initial_state: initial_ram,
+            final_state: final_ram,
+        })
+        .with_instruction_flags(InstructionFlags {
+            is_noop: instruction_flag_data.is_noop,
+            left_is_rs1: instruction_flag_data.left_is_rs1,
+            left_is_pc: instruction_flag_data.left_is_pc,
+            right_is_rs2: instruction_flag_data.right_is_rs2,
+            right_is_imm: instruction_flag_data.right_is_imm,
+        })
+        .with_register_access(reg_access)
+        .with_lookup_flags(lookup_flags)
+        .with_field_reg(field_reg_config);
+    populate_bytecode_preprocessed(&mut preprocessed, &bytecode_data);
+    let mut provider =
+        ProverData::new(&mut polys, r1cs, derived, preprocessed).with_lookup_trace(lookup_trace);
+
+    let pcs_setup = &params.pcs_setup;
+    let mut transcript = jolt_transcript::Blake2bTranscript::<NewFr>::new(TRANSCRIPT_LABEL);
+
+    prove::<_, _, _, DoryScheme>(
+        &executable,
+        &mut provider,
+        &backend(),
+        pcs_setup,
+        &mut transcript,
+        setup.config,
+    )
+}
+
 fn run_jolt_zkvm_prover_with_fieldreg_events(
     params: &CoreProtocolParams,
     events: Vec<jolt_witness::derived::FieldRegEvent>,
@@ -1960,37 +2218,49 @@ fn modular_self_verify_with_fieldreg_nonempty_events() {
         .expect("Phase 2b: non-empty FieldReg events should verify end-to-end");
 }
 
-/// Phase 2b acceptance (honest FADD e2e): inject a `FieldRegEvent`
-/// carrying a `FieldOpPayload` with funct3 = FADD. The event overlay wires
-/// `V_FLAG_IS_FIELD_ADD = 1` + operand columns onto the R1CS witness. With
-/// honest `new = a + b`, the FADD gate at row 19 evaluates to 0 and the
-/// Spartan outer sumcheck (widened to sample row 19 via the FieldReg
-/// module's `num_r1cs_constraints = 27`) accepts end-to-end.
+/// Phase 3 acceptance (honest FADD e2e with register prologue): inject a
+/// `FieldRegEvent` carrying a `FieldOpPayload` with funct3 = FADD, preceded
+/// by a synthetic register prologue that loads `a[0]=123` into `x10` and
+/// `b[0]=456` into `x14`. With the Phase 3 bridge in place, the FieldOp
+/// cycle must have `LimbSumA(c) = FieldOpA(c)` and `LimbSumB(c) = FieldOpB(c)`
+/// — otherwise the Stage 2 bridge instance's output check rejects.
 ///
-/// Paired with `modular_self_verify_with_fieldreg_fadd_tampered_*` below —
-/// together they prove FADD is actually enforced by the prove/verify
-/// pipeline, not just authored in the matrices.
+/// Phase 3 history: originally named `modular_self_verify_with_fieldreg_fadd_payload`
+/// and written pre-bridge expecting acceptance without a prologue. Post-bridge,
+/// the bridge correctly rejects a payload forged relative to register state
+/// (LimbSumA = 0 ≠ 123). Renamed + adjusted here to add a prologue so it again
+/// tests the honest-acceptance path.
 #[test]
-fn modular_self_verify_with_fieldreg_fadd_payload() {
+fn modular_self_verify_with_fieldreg_fadd_payload_with_prologue_accepts() {
     use jolt_dory::types::DoryVerifierSetup;
     use jolt_witness::derived::{FieldOpPayload, FieldRegEvent, FIELD_OP_FUNCT3_FADD};
 
     let (_, params) = jolt_core_state_history();
 
-    // 123 + 456 = 579 in BN254 Fr (well within u64 so no modular wrap).
-    let events = vec![FieldRegEvent {
-        cycle: 5,
-        slot: 0,
-        old: [0, 0, 0, 0],
-        new: [579, 0, 0, 0],
-        op: Some(FieldOpPayload {
-            funct3: FIELD_OP_FUNCT3_FADD,
-            a: [123, 0, 0, 0],
-            b: [456, 0, 0, 0],
-        }),
-    }];
+    // Place the FieldOp + its prologue deep in the NoOp padding region so we
+    // don't collide with real guest-emitted register writes. trace_length=512
+    // at log_t=9; `find_padding_field_op_cycle` walks back until it finds 9
+    // consecutive NoOp cycles.
+    let a = [123u64, 0, 0, 0];
+    let b = [456u64, 0, 0, 0];
+    let new = [579u64, 0, 0, 0]; // 123 + 456 in BN254 Fr (small, no wrap)
 
-    let zkvm_proof = run_jolt_zkvm_prover_with_fieldreg_events(params, events);
+    let zkvm_proof = run_jolt_zkvm_prover_with_prologue(params, move |reg_access| {
+        let c_fieldop = find_padding_field_op_cycle(reg_access);
+        let events = vec![FieldRegEvent {
+            cycle: c_fieldop,
+            slot: 0,
+            old: [0, 0, 0, 0],
+            new,
+            op: Some(FieldOpPayload {
+                funct3: FIELD_OP_FUNCT3_FADD,
+                a,
+                b,
+            }),
+        }];
+        let prologue = build_fmul_prologue(c_fieldop, &a, &b);
+        (events, prologue, None)
+    });
 
     let (
         executable,
@@ -2015,7 +2285,7 @@ fn modular_self_verify_with_fieldreg_fadd_payload() {
     );
 
     jolt_verifier::verify(&verifying_key, &zkvm_proof, &setup.config.io_hash)
-        .expect("Phase 2b: honest FADD payload must verify end-to-end");
+        .expect("Phase 3: honest FADD payload with prologue must verify end-to-end");
 }
 
 /// Phase 2b acceptance (FADD R1CS rejection): same setup as
@@ -2134,7 +2404,6 @@ fn modular_self_verify_with_fieldreg_nonempty_events_inconsistent_event_rejects(
 fn modular_self_verify_with_fieldreg_nonempty_events_tampered_wv_rejects() {
     use jolt_dory::types::DoryVerifierSetup;
     use jolt_witness::derived::{FieldRegConfig, FieldRegEvent};
-    use num_traits::Zero;
 
     let (_, params) = jolt_core_state_history();
     let (
@@ -2241,5 +2510,283 @@ fn modular_self_verify_with_fieldreg_nonempty_events_tampered_wv_rejects() {
         verify_result.is_err(),
         "Tampered FieldRegWriteValue MUST be rejected by the FR Twist sumcheck, \
          but verify returned Ok"
+    );
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// Phase 3 Step 6 — Bridge acceptance tests
+//
+// The Stage 2 bridge sumcheck cryptographically binds each FieldOp cycle's
+// `FieldOpA` / `FieldOpB` R1CS columns to the limb-sum of registers
+// `x10..x13` / `x14..x17`. Stage 5 LimbSum{A,B}Reduction then binds those
+// sums back to committed `RdInc` via Stage 6's γ-batched IncClaimReduction.
+//
+// These tests exercise the bridge end-to-end via synthetic register
+// prologues spliced into NoOp-padding cycles:
+//   1. `bridge_honest_fmul_multilimb_accepts` — honest FMUL, all 4 limbs
+//      non-zero, multi-limb Fr product computed via ark_bn254.
+//   2. `bridge_tampered_field_op_a_rejects` — critical adversarial gate:
+//      prologue is honest, but `V_FIELD_OP_A` at the FieldOp cycle is
+//      post-hoc overwritten. The bridge MUST reject.
+//   3. `bridge_tampered_val_reg_rejects_via_registers_twist` — dual-sided
+//      check: tamper `V_RD_WRITE_VALUE` at a prologue cycle. Either the
+//      bridge or the Registers Twist catches the desync.
+// ═════════════════════════════════════════════════════════════════════════
+
+/// Phase 3 Step 6 Test 1 — honest multi-limb FMUL end-to-end acceptance.
+///
+/// Exercises the full bridge path with `a = [1, 2, 3, 4]` and
+/// `b = [5, 6, 7, 8]` so all four limb positions contribute non-trivially to
+/// `LimbSumA` / `LimbSumB`. The expected product is computed honestly via
+/// ark_bn254 (BN254 Fr multiplication with mod-p reduction) and written into
+/// the event's `new` field. A 8-write register prologue loads the limbs into
+/// `x10..x17` across 8 consecutive NoOp-padding cycles preceding the FMUL.
+///
+/// This is the positive acceptance case for the Phase 3 bridge: every
+/// binding identity holds honestly, and the verifier MUST accept.
+#[test]
+fn bridge_honest_fmul_multilimb_accepts() {
+    use jolt_dory::types::DoryVerifierSetup;
+    use jolt_witness::derived::{FieldOpPayload, FieldRegEvent, FIELD_OP_FUNCT3_FMUL};
+
+    let (_, params) = jolt_core_state_history();
+
+    let a = [1u64, 2, 3, 4];
+    let b = [5u64, 6, 7, 8];
+    let a_fr = limbs_to_ark(&a);
+    let b_fr = limbs_to_ark(&b);
+    let prod_fr = a_fr * b_fr;
+    let new = ark_to_limbs(&prod_fr);
+
+    let zkvm_proof = run_jolt_zkvm_prover_with_prologue(params, move |reg_access| {
+        let c_fieldop = find_padding_field_op_cycle(reg_access);
+        let events = vec![FieldRegEvent {
+            cycle: c_fieldop,
+            slot: 0,
+            old: [0, 0, 0, 0],
+            new,
+            op: Some(FieldOpPayload {
+                funct3: FIELD_OP_FUNCT3_FMUL,
+                a,
+                b,
+            }),
+        }];
+        let prologue = build_fmul_prologue(c_fieldop, &a, &b);
+        (events, prologue, None)
+    });
+
+    let (
+        executable,
+        _polys,
+        r1cs_key,
+        _r1cs_witness,
+        setup,
+        _initial_ram,
+        _final_ram,
+        _instruction_flag_data,
+        _reg_access,
+        _lookup_trace,
+        _lookup_flags,
+        _bytecode_data,
+    ) = setup_zkvm_muldiv_with_example(params, "jolt_core_module_with_fieldreg");
+
+    let pcs_verifier_setup = DoryVerifierSetup(params.pcs_setup.0.to_verifier_setup());
+    let verifying_key = jolt_verifier::JoltVerifyingKey::<NewFr, DoryScheme>::new(
+        &executable.module,
+        pcs_verifier_setup,
+        r1cs_key,
+    );
+
+    jolt_verifier::verify(&verifying_key, &zkvm_proof, &setup.config.io_hash)
+        .expect("honest multi-limb FMUL with prologue must accept");
+}
+
+/// Phase 3 Step 6 Test 2 — bridge forgery detection.
+///
+/// This is the acceptance gate for the entire Phase 3 bridge. The honest
+/// prologue loads `a = [1, 2, 3, 4]` into `x10..x13`, so `LimbSumA` at the
+/// FieldOp cycle equals `1 + 2·2^64 + 3·2^128 + 4·2^192`. After
+/// `apply_field_op_events_to_r1cs` writes the honest `FieldOpA`, we
+/// post-hoc tamper the `V_FIELD_OP_A` column at the FieldOp cycle to a
+/// different value (42). Everything else stays honest: register writes,
+/// `RdInc`, `LimbSum`, the FMUL result, `V_PRODUCT` routing.
+///
+/// The Stage 2 bridge kernel evaluates
+///     IsFieldOpAny(c) · (LimbSumA(c) − FieldOpA(c))
+/// which becomes `1 · (honest_limb_sum_a − 42) ≠ 0`, so the bridge output
+/// check MUST reject. If this test ever passes, the bridge is not
+/// cryptographically binding the R1CS `FieldOpA` column to the register
+/// state — and the whole Phase 3 soundness claim is void.
+#[test]
+fn bridge_tampered_field_op_a_rejects() {
+    use jolt_dory::types::DoryVerifierSetup;
+    use jolt_witness::derived::{FieldOpPayload, FieldRegEvent, FIELD_OP_FUNCT3_FMUL};
+
+    let (_, params) = jolt_core_state_history();
+
+    let a = [1u64, 2, 3, 4];
+    let b = [5u64, 6, 7, 8];
+    let prod_fr = limbs_to_ark(&a) * limbs_to_ark(&b);
+    let new = ark_to_limbs(&prod_fr);
+
+    let prove_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run_jolt_zkvm_prover_with_prologue(params, move |reg_access| {
+            let c_fieldop = find_padding_field_op_cycle(reg_access);
+            let events = vec![FieldRegEvent {
+                cycle: c_fieldop,
+                slot: 0,
+                old: [0, 0, 0, 0],
+                new,
+                op: Some(FieldOpPayload {
+                    funct3: FIELD_OP_FUNCT3_FMUL,
+                    a,
+                    b,
+                }),
+            }];
+            let prologue = build_fmul_prologue(c_fieldop, &a, &b);
+            // Tamper: overwrite V_FIELD_OP_A at the FieldOp cycle to an
+            // unrelated value after the honest event overlay has run. The
+            // prologue remains honest, so LimbSumA is unchanged; only
+            // FieldOpA diverges — the bridge MUST reject.
+            let tamper: R1csWitnessTamper =
+                Box::new(move |w: &mut [NewFr], num_vars_padded: usize| {
+                    use jolt_field::Field;
+                    w[c_fieldop * num_vars_padded + rv64::V_FIELD_OP_A] =
+                        NewFr::from_u64(42);
+                });
+            (events, prologue, Some(tamper))
+        })
+    }));
+
+    let Ok(zkvm_proof) = prove_result else {
+        // Prover panic is a valid rejection signal — tampering caught early.
+        return;
+    };
+
+    let (
+        executable,
+        _polys,
+        r1cs_key,
+        _r1cs_witness,
+        setup,
+        _initial_ram,
+        _final_ram,
+        _instruction_flag_data,
+        _reg_access,
+        _lookup_trace,
+        _lookup_flags,
+        _bytecode_data,
+    ) = setup_zkvm_muldiv_with_example(params, "jolt_core_module_with_fieldreg");
+
+    let pcs_verifier_setup = DoryVerifierSetup(params.pcs_setup.0.to_verifier_setup());
+    let verifying_key = jolt_verifier::JoltVerifyingKey::<NewFr, DoryScheme>::new(
+        &executable.module,
+        pcs_verifier_setup,
+        r1cs_key,
+    );
+
+    let verify_result = jolt_verifier::verify(&verifying_key, &zkvm_proof, &setup.config.io_hash);
+    assert!(
+        verify_result.is_err(),
+        "Tampered FieldOpA (LimbSumA ≠ FieldOpA at FieldOp cycle) MUST be \
+         rejected by the Stage 2 bridge; got Ok(())"
+    );
+}
+
+/// Phase 3 Step 6 Test 3 — dual-sided binding check.
+///
+/// The honest prologue writes limb values into `x10..x13`, then we tamper
+/// `V_RD_WRITE_VALUE` at the prologue cycle that wrote `x10` to an
+/// inconsistent value (while leaving the committed `RdInc` unchanged).
+///
+/// Bridge guards field side; Registers Twist guards int side. This tampering
+/// breaks the `Val(rd, c+1) = Val(rd, c) + RdInc(c)` identity — at the
+/// tampered cycle, `V_RD_WRITE_VALUE` says the post-write value is X but
+/// `RdInc` implies it should be Y. The Registers Twist (Stage 4 RegistersRW)
+/// binds `rd_write_value + γ·rs1_val + γ²·rs2_val` against the committed
+/// `RdInc` polynomial via `Val` — so the prover's derived `RegVal` no longer
+/// matches `Val(c) + RdInc(c)`, and the sumcheck rejects.
+///
+/// Note: the bridge may ALSO catch this (since LimbSumA pulls from
+/// `V_RD_WRITE_VALUE` while RdInc is committed-and-bound), but the spec
+/// intent is to document that mutating the integer-register side alone
+/// gets caught by the dual-sided binding — rejection is required, the
+/// specific sumcheck reporting it is informational.
+#[test]
+fn bridge_tampered_val_reg_rejects_via_registers_twist() {
+    use jolt_dory::types::DoryVerifierSetup;
+    use jolt_witness::derived::{FieldOpPayload, FieldRegEvent, FIELD_OP_FUNCT3_FMUL};
+
+    let (_, params) = jolt_core_state_history();
+
+    let a = [1u64, 2, 3, 4];
+    let b = [5u64, 6, 7, 8];
+    let prod_fr = limbs_to_ark(&a) * limbs_to_ark(&b);
+    let new = ark_to_limbs(&prod_fr);
+
+    let prove_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run_jolt_zkvm_prover_with_prologue(params, move |reg_access| {
+            let c_fieldop = find_padding_field_op_cycle(reg_access);
+            let events = vec![FieldRegEvent {
+                cycle: c_fieldop,
+                slot: 0,
+                old: [0, 0, 0, 0],
+                new,
+                op: Some(FieldOpPayload {
+                    funct3: FIELD_OP_FUNCT3_FMUL,
+                    a,
+                    b,
+                }),
+            }];
+            let prologue = build_fmul_prologue(c_fieldop, &a, &b);
+            // Prologue writes x10=a[0]=1 at cycle c_fieldop-8.
+            let c_write_x10 = c_fieldop - 8;
+            // Tamper: V_RD_WRITE_VALUE at the x10 prologue cycle — but
+            // leave the committed RdInc polynomial alone. `RegVal`
+            // (derived from V_RD_WRITE_VALUE) now disagrees with the
+            // committed `RdInc`'s implied Val transition, so Stage 4
+            // RegistersRW (and/or the bridge reduction) rejects.
+            let tamper: R1csWitnessTamper =
+                Box::new(move |w: &mut [NewFr], num_vars_padded: usize| {
+                    use jolt_field::Field;
+                    w[c_write_x10 * num_vars_padded + rv64::V_RD_WRITE_VALUE] =
+                        NewFr::from_u64(9999);
+                });
+            (events, prologue, Some(tamper))
+        })
+    }));
+
+    let Ok(zkvm_proof) = prove_result else {
+        // Prover panic on the inconsistent witness also counts as rejection.
+        return;
+    };
+
+    let (
+        executable,
+        _polys,
+        r1cs_key,
+        _r1cs_witness,
+        setup,
+        _initial_ram,
+        _final_ram,
+        _instruction_flag_data,
+        _reg_access,
+        _lookup_trace,
+        _lookup_flags,
+        _bytecode_data,
+    ) = setup_zkvm_muldiv_with_example(params, "jolt_core_module_with_fieldreg");
+
+    let pcs_verifier_setup = DoryVerifierSetup(params.pcs_setup.0.to_verifier_setup());
+    let verifying_key = jolt_verifier::JoltVerifyingKey::<NewFr, DoryScheme>::new(
+        &executable.module,
+        pcs_verifier_setup,
+        r1cs_key,
+    );
+
+    let verify_result = jolt_verifier::verify(&verifying_key, &zkvm_proof, &setup.config.io_hash);
+    assert!(
+        verify_result.is_err(),
+        "Tampered V_RD_WRITE_VALUE at the x10 prologue cycle MUST be rejected \
+         (either by the bridge or by the Registers Twist); got Ok(())"
     );
 }

@@ -254,6 +254,18 @@ struct Polys {
     field_reg_read_value: PolynomialId,
     field_reg_write_value: PolynomialId,
     field_reg_eq_cycle: PolynomialId,
+
+    // Limb→Fr bridge: Derived T-element polys (Step 3).
+    is_field_op_any: PolynomialId,
+    is_field_op_no_inv: PolynomialId,
+    limb_sum_a: PolynomialId,
+    limb_sum_b: PolynomialId,
+
+    // Limb→Fr bridge: Step 4 — Stage 5 reduction polys.
+    weight_a_of_rd: PolynomialId,
+    weight_b_of_rd: PolynomialId,
+    rd_inc_at_bridge_a: PolynomialId,
+    rd_inc_at_bridge_b: PolynomialId,
 }
 
 fn register_polys(pt: &mut PolyTable, p: &ModuleParams) -> Polys {
@@ -562,6 +574,50 @@ fn register_polys(pt: &mut PolyTable, p: &ModuleParams) -> Polys {
         p.log_t,
     );
 
+    // Limb→Fr bridge: Derived T-element polys (Step 3).
+    let is_field_op_any = pt.add(
+        PolynomialId::IsFieldOpAny,
+        "IsFieldOpAny",
+        Virtual,
+        p.log_t,
+    );
+    let is_field_op_no_inv = pt.add(
+        PolynomialId::IsFieldOpNoInv,
+        "IsFieldOpNoInv",
+        Virtual,
+        p.log_t,
+    );
+    let limb_sum_a = pt.add(PolynomialId::LimbSumA, "LimbSumA", Virtual, p.log_t);
+    let limb_sum_b = pt.add(PolynomialId::LimbSumB, "LimbSumB", Virtual, p.log_t);
+
+    // Step 4: Stage 5 LimbSum reduction polys.
+    let weight_a_of_rd = pt.add(
+        PolynomialId::WeightAOfRd,
+        "WeightAOfRd",
+        Virtual,
+        p.log_t,
+    );
+    let weight_b_of_rd = pt.add(
+        PolynomialId::WeightBOfRd,
+        "WeightBOfRd",
+        Virtual,
+        p.log_t,
+    );
+    // Aliases for the two RdInc openings at bridge-A/B cycle points.
+    // PolyKind::Virtual matches the existing RdIncAtBridge alias pattern.
+    let rd_inc_at_bridge_a = pt.add(
+        PolynomialId::RdIncAtBridgeA,
+        "RdIncAtBridgeA",
+        Virtual,
+        p.log_t,
+    );
+    let rd_inc_at_bridge_b = pt.add(
+        PolynomialId::RdIncAtBridgeB,
+        "RdIncAtBridgeB",
+        Virtual,
+        p.log_t,
+    );
+
     Polys {
         rd_inc,
         ram_inc,
@@ -643,6 +699,14 @@ fn register_polys(pt: &mut PolyTable, p: &ModuleParams) -> Polys {
         field_reg_read_value,
         field_reg_write_value,
         field_reg_eq_cycle,
+        is_field_op_any,
+        is_field_op_no_inv,
+        limb_sum_a,
+        limb_sum_b,
+        weight_a_of_rd,
+        weight_b_of_rd,
+        rd_inc_at_bridge_a,
+        rd_inc_at_bridge_b,
     }
 }
 
@@ -2040,6 +2104,15 @@ fn build_stage2(
         challenge: ch_gamma_fr,
     });
 
+    // γ_bridge_side (limb→Fr bridge A/B side mixing challenge)
+    let ch_gamma_bridge_side = ch.add(
+        "gamma_bridge_side",
+        ChallengeSource::FiatShamir { after_stage: 1 },
+    );
+    ops.push(Op::Squeeze {
+        challenge: ch_gamma_bridge_side,
+    });
+
     // FieldReg RV/WV: materialize + bind at r_cycle LowToHigh + evaluate +
     // record + absorb. This makes field_reg_read_value / field_reg_write_value
     // available as evaluations for the FR input_claim that's absorbed below.
@@ -2249,8 +2322,25 @@ fn build_stage2(
         inactive_scale_bits: params.stage2_max_rounds - params.fr_checking_rounds,
     });
 
-    // Squeeze batching coefficients (6 instances: base 5 + FieldReg Twist)
-    const STAGE2_NUM_INSTANCES_FR: usize = 6;
+    // [6] Limb→Fr bridge: zero-sum identity (input_claim = 0).
+    //   0 ≡ Σ_c eq(τ_bridge, c) · [
+    //         IsFieldOpAny(c) · (LimbSumA(c) − FieldOpA(c))
+    //       + γ_bridge_side · IsFieldOpNoInv(c) · (LimbSumB(c) − FieldOpB(c))
+    //       ]
+    // The LimbSum openings produced here are NOT yet cryptographically bound
+    // to Val_reg — Step 4 extends Stage 5 to reduce LimbSum openings to
+    // Val_reg openings.
+    let bridge_input_claim = ClaimFormula::zero();
+    ops.push(Op::AbsorbInputClaim {
+        formula: bridge_input_claim.clone(),
+        tag: DomainSeparator::SumcheckClaim,
+        batch: batch_idx,
+        instance: InstanceIdx(6),
+        inactive_scale_bits: params.stage2_max_rounds - params.bridge_checking_rounds,
+    });
+
+    // Squeeze batching coefficients (7 instances: base 5 + FieldReg Twist + bridge)
+    const STAGE2_NUM_INSTANCES_FR: usize = 7;
     let ch_batch_base = ChallengeIdx(ch.decls.len());
     for i in 0..STAGE2_NUM_INSTANCES_FR {
         let idx = ch.add(
@@ -2531,6 +2621,89 @@ fn build_stage2(
         instance_config: None,
     });
 
+    // [6] Limb→Fr bridge — single 1-D cycle sumcheck, log_t rounds, degree 3.
+    //
+    //   0 = Σ_c eq(τ_bridge, c) · [
+    //         IsFieldOpAny(c) · (LimbSumA(c) − FieldOpA(c))
+    //       + γ_bridge_side · IsFieldOpNoInv(c) · (LimbSumB(c) − FieldOpB(c))
+    //       ]
+    //
+    // Inputs (7):
+    //   0: eq_cycle (from BatchEq(3), τ_bridge = stage1_cycle_challenges)
+    //   1: IsFieldOpAny     T-element Derived
+    //   2: LimbSumA         T-element Derived
+    //   3: FieldOpA         R1CS column V_FIELD_OP_A
+    //   4: IsFieldOpNoInv   T-element Derived
+    //   5: LimbSumB         T-element Derived
+    //   6: FieldOpB         R1CS column V_FIELD_OP_B
+    let bridge_kernel_idx = kernels.len();
+    kernels.push(KernelDef {
+        spec: KernelSpec {
+            formula: Formula::from_terms(vec![
+                // eq · IsFieldOpAny · LimbSumA
+                ProductTerm {
+                    coefficient: 1,
+                    factors: vec![Factor::Input(0), Factor::Input(1), Factor::Input(2)],
+                },
+                // − eq · IsFieldOpAny · FieldOpA
+                ProductTerm {
+                    coefficient: -1,
+                    factors: vec![Factor::Input(0), Factor::Input(1), Factor::Input(3)],
+                },
+                // γ · eq · IsFieldOpNoInv · LimbSumB
+                ProductTerm {
+                    coefficient: 1,
+                    factors: vec![
+                        Factor::Challenge(ch_gamma_bridge_side.0 as u32),
+                        Factor::Input(0),
+                        Factor::Input(4),
+                        Factor::Input(5),
+                    ],
+                },
+                // − γ · eq · IsFieldOpNoInv · FieldOpB
+                ProductTerm {
+                    coefficient: -1,
+                    factors: vec![
+                        Factor::Challenge(ch_gamma_bridge_side.0 as u32),
+                        Factor::Input(0),
+                        Factor::Input(4),
+                        Factor::Input(6),
+                    ],
+                },
+            ]),
+            num_evals: params.bridge_checking_degree + 1,
+            iteration: Iteration::Dense,
+            binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
+        },
+        inputs: vec![
+            InputBinding::EqTable {
+                poly: PolynomialId::BatchEq(3),
+                challenges: stage1_cycle_challenges.clone(),
+            },
+            InputBinding::Provided {
+                poly: PolynomialId::IsFieldOpAny,
+            },
+            InputBinding::Provided {
+                poly: PolynomialId::LimbSumA,
+            },
+            InputBinding::Provided {
+                poly: p.field_op_a,
+            },
+            InputBinding::Provided {
+                poly: PolynomialId::IsFieldOpNoInv,
+            },
+            InputBinding::Provided {
+                poly: PolynomialId::LimbSumB,
+            },
+            InputBinding::Provided {
+                poly: p.field_op_b,
+            },
+        ],
+        num_rounds: params.bridge_checking_rounds,
+        instance_config: None,
+    });
+
     // [1] ProductVirtualRemainder — 25 rounds, degree 3.
     //
     // Formula: eq(τ_cycle, x) * left(x) * right(x)
@@ -2724,6 +2897,7 @@ fn build_stage2(
                             inner_only: vec![true, false, false, true],
                             // Empty = uniform outer weights (no eq_addr in RamRW formula).
                             outer_eq_challenges: vec![],
+                            ..Default::default()
                         }),
                         carry_bindings: vec![],
                         pre_activation_ops: vec![],
@@ -2816,6 +2990,7 @@ fn build_stage2(
                             // [eq_cycle: inner, ra: mixed, val: mixed, inc: inner]
                             inner_only: vec![true, false, false, true],
                             outer_eq_challenges: vec![],
+                            ..Default::default()
                         }),
                         carry_bindings: vec![],
                         pre_activation_ops: vec![],
@@ -2841,6 +3016,19 @@ fn build_stage2(
                 batch_coeff: ChallengeIdx(ch_batch_base.0 + 5),
                 first_active_round: params.stage2_max_rounds - params.fr_checking_rounds,
             },
+            // [6] Limb→Fr bridge — single phase, log_t rounds, degree 3.
+            BatchedInstance {
+                phases: vec![InstancePhase {
+                    kernel: bridge_kernel_idx,
+                    num_rounds: params.bridge_checking_rounds,
+                    scalar_captures: vec![],
+                    segmented: None,
+                    carry_bindings: vec![],
+                    pre_activation_ops: vec![],
+                }],
+                batch_coeff: ChallengeIdx(ch_batch_base.0 + 6),
+                first_active_round: params.stage2_max_rounds - params.bridge_checking_rounds,
+            },
         ],
         input_claims: vec![
             rw_input_claim,
@@ -2849,6 +3037,7 @@ fn build_stage2(
             raf_input_claim,
             output_check_input_claim,
             fr_input_claim,
+            bridge_input_claim,
         ],
         max_rounds: params.stage2_max_rounds,
         max_degree: params.rw_checking_degree,
@@ -2956,6 +3145,14 @@ fn build_stage2(
         p.field_reg_ra,
         p.field_reg_val,
         p.field_reg_inc,
+        // Limb→Fr bridge (6): FieldOpA, FieldOpB, IsFieldOpAny, IsFieldOpNoInv,
+        // LimbSumA, LimbSumB.
+        p.field_op_a,
+        p.field_op_b,
+        p.is_field_op_any,
+        p.is_field_op_no_inv,
+        p.limb_sum_a,
+        p.limb_sum_b,
     ];
 
     for &poly in &stage2_eval_polys {
@@ -3889,6 +4086,7 @@ fn build_stage4(
                     // [eq: inner, rs1_ra: mixed, rs2_ra: mixed, rd_wa: mixed, val: mixed, inc: inner]
                     inner_only: vec![true, false, false, false, false, true],
                     outer_eq_challenges: vec![],
+                    ..Default::default()
                 }),
                 carry_bindings: vec![],
                 pre_activation_ops: vec![],
@@ -4018,6 +4216,17 @@ fn build_stage5(
     });
 
     // Challenge index vectors for downstream kernels.
+
+    // Bridge reduction: r_cycle_bridge comes from the last `bridge_checking_rounds`
+    // (= log_t) entries of Stage 2 round_challenges, reversed to big-endian.
+    // The bridge instance has first_active_round = stage2_max_rounds - log_t
+    // and normalize: Reverse, so the opening point is the reversed tail.
+    let r_cycle_bridge: Vec<ChallengeIdx> = s2.round_challenges
+        [params.stage2_max_rounds - params.bridge_checking_rounds..]
+        .iter()
+        .rev()
+        .copied()
+        .collect();
     //
     // RegistersValEvaluation uses r_address/r_cycle from Stage 4's
     // RegistersRW sumcheck. RamRaClaimReduction uses r_address from
@@ -4092,6 +4301,74 @@ fn build_stage5(
             },
         ],
         num_rounds: reg_val_eval_rounds,
+        instance_config: None,
+    });
+
+    // Kernel: LimbSumAReduction — degree 3, log_T rounds (single phase)
+    //
+    // Reduces the Stage 2 bridge opening `LimbSumA(r_cycle_bridge)` to a
+    // cryptographically bound `RdInc` opening.
+    //
+    // Identity:
+    //   LimbSumA(t*) = Σ_{k=10..13} 2^{64·(k-10)} · Val_reg(k, t*)
+    //                = Σ_j RdInc[j] · W_A(rd[j]) · LT(t*, j)
+    //
+    // where `W_A(rd[j])` is gathered as a T-element derived poly
+    // `WeightAOfRd[j] = BridgeValWeightA[rd[j]]`.
+    //
+    // Formula: inc(j) × weight_a_of_rd(j) × lt(t*, j)
+    //
+    // Output opening: `RdInc(r_cycle_bridge_a)` at the post-sumcheck cycle point.
+    let limb_sum_a_kernel_idx = kernels.len();
+    kernels.push(KernelDef {
+        spec: KernelSpec {
+            formula: Formula::from_terms(vec![ProductTerm {
+                coefficient: 1,
+                factors: vec![Factor::Input(0), Factor::Input(1), Factor::Input(2)],
+            }]),
+            num_evals: 4, // degree 3
+            iteration: Iteration::Dense,
+            binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
+        },
+        inputs: vec![
+            InputBinding::Provided { poly: p.rd_inc },
+            InputBinding::Provided {
+                poly: p.weight_a_of_rd,
+            },
+            InputBinding::LtTable {
+                poly: PolynomialId::BatchEq(30),
+                challenges: r_cycle_bridge.clone(),
+            },
+        ],
+        num_rounds: params.log_t,
+        instance_config: None,
+    });
+
+    // Kernel: LimbSumBReduction — symmetric to LimbSumAReduction.
+    let limb_sum_b_kernel_idx = kernels.len();
+    kernels.push(KernelDef {
+        spec: KernelSpec {
+            formula: Formula::from_terms(vec![ProductTerm {
+                coefficient: 1,
+                factors: vec![Factor::Input(0), Factor::Input(1), Factor::Input(2)],
+            }]),
+            num_evals: 4, // degree 3
+            iteration: Iteration::Dense,
+            binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
+        },
+        inputs: vec![
+            InputBinding::Provided { poly: p.rd_inc },
+            InputBinding::Provided {
+                poly: p.weight_b_of_rd,
+            },
+            InputBinding::LtTable {
+                poly: PolynomialId::BatchEq(31),
+                challenges: r_cycle_bridge.clone(),
+            },
+        ],
+        num_rounds: params.log_t,
         instance_config: None,
     });
 
@@ -4328,6 +4605,32 @@ fn build_stage5(
                 batch_coeff: ChallengeIdx(0),
                 first_active_round: stage5_max_rounds - reg_val_eval_rounds,
             },
+            // [3] LimbSumAReduction — active from round LOG_K_INSTRUCTION
+            BatchedInstance {
+                phases: vec![InstancePhase {
+                    kernel: limb_sum_a_kernel_idx,
+                    num_rounds: params.log_t,
+                    scalar_captures: vec![],
+                    segmented: None,
+                    carry_bindings: vec![],
+                    pre_activation_ops: vec![],
+                }],
+                batch_coeff: ChallengeIdx(0),
+                first_active_round: stage5_max_rounds - params.log_t,
+            },
+            // [4] LimbSumBReduction — active from round LOG_K_INSTRUCTION
+            BatchedInstance {
+                phases: vec![InstancePhase {
+                    kernel: limb_sum_b_kernel_idx,
+                    num_rounds: params.log_t,
+                    scalar_captures: vec![],
+                    segmented: None,
+                    carry_bindings: vec![],
+                    pre_activation_ops: vec![],
+                }],
+                batch_coeff: ChallengeIdx(0),
+                first_active_round: stage5_max_rounds - params.log_t,
+            },
         ],
         input_claims: vec![],
         max_rounds: stage5_max_rounds,
@@ -4417,7 +4720,46 @@ fn build_stage5(
         inactive_scale_bits: stage5_max_rounds - reg_val_eval_rounds,
     });
 
-    // Batching coefficients (3 instances)
+    // [3] LimbSumAReduction: input_claim = LimbSumA(r_cycle_bridge) from Stage 2.
+    // Stage 2 is index 1 (0-indexed Stage indices). StagedEval snapshots the
+    // LimbSumA evaluation recorded at Stage 2 close so subsequent stage
+    // evaluations don't overwrite it.
+    let limb_sum_a_input_claim = ClaimFormula {
+        terms: vec![ClaimTerm {
+            coeff: 1,
+            factors: vec![ClaimFactor::StagedEval {
+                poly: p.limb_sum_a,
+                stage: 1,
+            }],
+        }],
+    };
+    ops.push(Op::AbsorbInputClaim {
+        formula: limb_sum_a_input_claim.clone(),
+        tag: DomainSeparator::SumcheckClaim,
+        batch: batch_idx,
+        instance: InstanceIdx(3),
+        inactive_scale_bits: stage5_max_rounds - params.log_t,
+    });
+
+    // [4] LimbSumBReduction: symmetric to [3].
+    let limb_sum_b_input_claim = ClaimFormula {
+        terms: vec![ClaimTerm {
+            coeff: 1,
+            factors: vec![ClaimFactor::StagedEval {
+                poly: p.limb_sum_b,
+                stage: 1,
+            }],
+        }],
+    };
+    ops.push(Op::AbsorbInputClaim {
+        formula: limb_sum_b_input_claim.clone(),
+        tag: DomainSeparator::SumcheckClaim,
+        batch: batch_idx,
+        instance: InstanceIdx(4),
+        inactive_scale_bits: stage5_max_rounds - params.log_t,
+    });
+
+    // Batching coefficients (5 instances)
     let ch_batch0 = ch.add(
         "stage5_batch0",
         ChallengeSource::FiatShamir { after_stage: 4 },
@@ -4430,6 +4772,14 @@ fn build_stage5(
         "stage5_batch2",
         ChallengeSource::FiatShamir { after_stage: 4 },
     );
+    let ch_batch3 = ch.add(
+        "stage5_batch3",
+        ChallengeSource::FiatShamir { after_stage: 4 },
+    );
+    let ch_batch4 = ch.add(
+        "stage5_batch4",
+        ChallengeSource::FiatShamir { after_stage: 4 },
+    );
     ops.push(Op::Squeeze {
         challenge: ch_batch0,
     });
@@ -4439,14 +4789,24 @@ fn build_stage5(
     ops.push(Op::Squeeze {
         challenge: ch_batch2,
     });
+    ops.push(Op::Squeeze {
+        challenge: ch_batch3,
+    });
+    ops.push(Op::Squeeze {
+        challenge: ch_batch4,
+    });
 
     batched_sumchecks[batch_idx.0].instances[0].batch_coeff = ch_batch0;
     batched_sumchecks[batch_idx.0].instances[1].batch_coeff = ch_batch1;
     batched_sumchecks[batch_idx.0].instances[2].batch_coeff = ch_batch2;
+    batched_sumchecks[batch_idx.0].instances[3].batch_coeff = ch_batch3;
+    batched_sumchecks[batch_idx.0].instances[4].batch_coeff = ch_batch4;
     batched_sumchecks[batch_idx.0].input_claims = vec![
         inst_raf_input_claim,
         ram_ra_input_claim,
         reg_val_input_claim,
+        limb_sum_a_input_claim,
+        limb_sum_b_input_claim,
     ];
 
     // Sumcheck rounds: 137 rounds (128 address + 9 cycle)
@@ -4529,6 +4889,16 @@ fn build_stage5(
     // [2] RegistersValEvaluation: RdInc + RdWa
     stage5_eval_polys.push(p.rd_inc);
     stage5_eval_polys.push(rd_wa_gather);
+
+    // [3] LimbSumAReduction: RdInc + WeightAOfRd at the reduction's post-sumcheck
+    //     cycle point. Uses RdIncAtBridgeA alias to distinguish from the
+    //     Stage 5 RegistersValEvaluation RdInc opening in the opening map.
+    stage5_eval_polys.push(p.rd_inc_at_bridge_a);
+    stage5_eval_polys.push(p.weight_a_of_rd);
+
+    // [4] LimbSumBReduction: symmetric to [3].
+    stage5_eval_polys.push(p.rd_inc_at_bridge_b);
+    stage5_eval_polys.push(p.weight_b_of_rd);
 
     for &poly in &stage5_eval_polys {
         ops.push(Op::Evaluate {
@@ -4771,6 +5141,23 @@ fn build_stage6(
         .rev()
         .copied()
         .collect();
+
+    // Step 4e: IncClaimReduction extension for LimbSumA/B bridge bindings.
+    //
+    // Stage 5 LimbSumAReduction and LimbSumBReduction produce RdInc openings
+    // at the same post-sumcheck cycle point as RegistersValEvaluation (the
+    // last log_t rounds of Stage 5). They use distinct PolynomialId slots
+    // (`RdIncAtBridgeA`, `RdIncAtBridgeB`) via the provider alias mechanism
+    // so each has its own StagedEval entry, but the underlying point and
+    // polynomial are identical to `RdInc @ Stage 5`.
+    //
+    // To cryptographically bind these three claims into a single RdInc
+    // opening, we add them as γ⁴ and γ⁵ γ-batched terms to the existing
+    // IncClaimReduction sumcheck. The eq points equal `inc_r_rd_s5`; we
+    // allocate new BatchEq slots to keep the eq table material distinct in
+    // the opening map (matching the distinct RdIncAtBridge* slot identities).
+    let inc_r_bridge_a: Vec<ChallengeIdx> = inc_r_rd_s5.clone();
+    let inc_r_bridge_b: Vec<ChallengeIdx> = inc_r_rd_s5.clone();
 
     // BytecodeReadRaf challenge vectors (BIG_ENDIAN, log_t entries each)
     let bc_r_cycle_1 = s2.stage1_cycle.clone(); // SpartanOuter
@@ -5456,6 +5843,13 @@ fn build_stage6(
 
     // [5] IncClaimReduction — Dense, degree 2
     //     RamInc×eq_s2 + γ×RamInc×eq_s4 + γ²×RdInc×eq_s4_rd + γ³×RdInc×eq_s5
+    //   + γ⁴×RdInc×eq_bridge_a + γ⁵×RdInc×eq_bridge_b (Step 4e)
+    //
+    // Step 4e: the last two terms fold the Stage 5 LimbSumA/LimbSumB output
+    // openings (`RdIncAtBridgeA`, `RdIncAtBridgeB`) into the single RdInc
+    // opening proved by IncClaimReduction. These aliases share the `RdInc`
+    // witness buffer (see provider.rs alias branch), so the sumcheck binds
+    // the same polynomial while claiming three distinct StagedEval entries.
     let inc_kernel_idx = kernels.len();
     {
         let g_inc = ch_inc_gamma.0 as u32;
@@ -5466,6 +5860,10 @@ fn build_stage6(
         let eq_s4_rd_id = PolynomialId::BatchEq(next_eq);
         next_eq += 1;
         let eq_s5_id = PolynomialId::BatchEq(next_eq);
+        next_eq += 1;
+        let eq_bridge_a_id = PolynomialId::BatchEq(next_eq);
+        next_eq += 1;
+        let eq_bridge_b_id = PolynomialId::BatchEq(next_eq);
         #[allow(unused_assignments)]
         {
             next_eq += 1;
@@ -5500,6 +5898,31 @@ fn build_stage6(
                             Factor::Input(5),
                         ],
                     },
+                    // γ⁴ · RdInc · eq_bridge_a  (Step 4e: LimbSumA binding)
+                    ProductTerm {
+                        coefficient: 1,
+                        factors: vec![
+                            Factor::Challenge(g_inc),
+                            Factor::Challenge(g_inc),
+                            Factor::Challenge(g_inc),
+                            Factor::Challenge(g_inc),
+                            Factor::Input(1),
+                            Factor::Input(6),
+                        ],
+                    },
+                    // γ⁵ · RdInc · eq_bridge_b  (Step 4e: LimbSumB binding)
+                    ProductTerm {
+                        coefficient: 1,
+                        factors: vec![
+                            Factor::Challenge(g_inc),
+                            Factor::Challenge(g_inc),
+                            Factor::Challenge(g_inc),
+                            Factor::Challenge(g_inc),
+                            Factor::Challenge(g_inc),
+                            Factor::Input(1),
+                            Factor::Input(7),
+                        ],
+                    },
                 ]),
                 num_evals: 3,
                 iteration: Iteration::Dense,
@@ -5524,6 +5947,14 @@ fn build_stage6(
                 InputBinding::EqTable {
                     poly: eq_s5_id,
                     challenges: inc_r_rd_s5,
+                },
+                InputBinding::EqTable {
+                    poly: eq_bridge_a_id,
+                    challenges: inc_r_bridge_a,
+                },
+                InputBinding::EqTable {
+                    poly: eq_bridge_b_id,
+                    challenges: inc_r_bridge_b,
                 },
             ],
             num_rounds: params.log_t,
@@ -5771,6 +6202,29 @@ fn build_stage6(
                     ClaimFactor::Challenge(g_inc),
                     ClaimFactor::Challenge(g_inc),
                     ClaimFactor::Eval(p.rd_inc),
+                ],
+            },
+            // γ⁴ * RdIncAtBridgeA @ Stage 5 (Step 4e: LimbSumA output opening)
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(g_inc),
+                    ClaimFactor::Challenge(g_inc),
+                    ClaimFactor::Challenge(g_inc),
+                    ClaimFactor::Challenge(g_inc),
+                    ClaimFactor::Eval(p.rd_inc_at_bridge_a),
+                ],
+            },
+            // γ⁵ * RdIncAtBridgeB @ Stage 5 (Step 4e: LimbSumB output opening)
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(g_inc),
+                    ClaimFactor::Challenge(g_inc),
+                    ClaimFactor::Challenge(g_inc),
+                    ClaimFactor::Challenge(g_inc),
+                    ClaimFactor::Challenge(g_inc),
+                    ClaimFactor::Eval(p.rd_inc_at_bridge_b),
                 ],
             },
         ],
@@ -6610,6 +7064,7 @@ fn build_verifier_stage2_ops(
     let ch_gamma_instruction = ChallengeIdx(s2_ch_base + 3); // 58
     let ch_r_address_base = ChallengeIdx(s2_ch_base + 4); // 59..78
     let ch_gamma_fr = ChallengeIdx(s2_ch_base + 4 + params.log_k_ram); // after r_address
+    let ch_gamma_bridge_side = ChallengeIdx(s2_ch_base + 4 + params.log_k_ram + 1); // after γ_fr
 
     // 18 unique openings (duplicates aliased — see prover side comment).
     let stage2_eval_polys = [
@@ -6637,6 +7092,14 @@ fn build_verifier_stage2_ops(
         p.field_reg_ra,
         p.field_reg_val,
         p.field_reg_inc,
+        // Limb→Fr bridge (6): FieldOpA, FieldOpB, IsFieldOpAny, IsFieldOpNoInv,
+        // LimbSumA, LimbSumB. Openings at r_cycle_bridge (log_t-dim).
+        p.field_op_a,
+        p.field_op_b,
+        p.is_field_op_any,
+        p.is_field_op_no_inv,
+        p.limb_sum_a,
+        p.limb_sum_b,
     ];
     let evaluations: Vec<_> = stage2_eval_polys
         .iter()
@@ -6694,6 +7157,13 @@ fn build_verifier_stage2_ops(
     const SE_FR_RA: usize = SE_BASE + 15;
     const SE_FR_VAL: usize = SE_BASE + 16;
     const SE_FR_INC: usize = SE_BASE + 17;
+    // Limb→Fr bridge (6):
+    const SE_FIELD_OP_A: usize = SE_BASE + 18;
+    const SE_FIELD_OP_B: usize = SE_BASE + 19;
+    const SE_IS_FIELD_OP_ANY: usize = SE_BASE + 20;
+    const SE_IS_FIELD_OP_NO_INV: usize = SE_BASE + 21;
+    const SE_LIMB_SUM_A: usize = SE_BASE + 22;
+    const SE_LIMB_SUM_B: usize = SE_BASE + 23;
 
     // Instance 0: RamReadWriteChecking
     //
@@ -7188,7 +7658,65 @@ fn build_verifier_stage2_ops(
         ],
     };
 
-    // Assemble all 6 instances
+    // Instance 6: Limb→Fr bridge (1-D cycle, log_t rounds, degree 3)
+    //
+    // input_claim = 0 (zero-sum identity)
+    // output_check = eq(τ_bridge, r_cycle) · [
+    //     IsFieldOpAny · (LimbSumA − FieldOpA)
+    //   + γ_bridge_side · IsFieldOpNoInv · (LimbSumB − FieldOpB)
+    // ]
+    //
+    // normalize: Reverse (single 1-D cycle phase, LowToHigh → MSB-first point).
+    let bridge_eq = ClaimFactor::EqEvalSlice {
+        challenges: stage1_cycle_challenges.clone(),
+        at_stage: VerifierStageIndex(1),
+        offset: 0,
+    };
+    let bridge_input_claim = ClaimFormula::zero();
+    let bridge_output_check = ClaimFormula {
+        terms: vec![
+            // +eq · IsFieldOpAny · LimbSumA
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    bridge_eq.clone(),
+                    ClaimFactor::StageEval(SE_IS_FIELD_OP_ANY),
+                    ClaimFactor::StageEval(SE_LIMB_SUM_A),
+                ],
+            },
+            // −eq · IsFieldOpAny · FieldOpA
+            ClaimTerm {
+                coeff: -1,
+                factors: vec![
+                    bridge_eq.clone(),
+                    ClaimFactor::StageEval(SE_IS_FIELD_OP_ANY),
+                    ClaimFactor::StageEval(SE_FIELD_OP_A),
+                ],
+            },
+            // +γ · eq · IsFieldOpNoInv · LimbSumB
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_gamma_bridge_side),
+                    bridge_eq.clone(),
+                    ClaimFactor::StageEval(SE_IS_FIELD_OP_NO_INV),
+                    ClaimFactor::StageEval(SE_LIMB_SUM_B),
+                ],
+            },
+            // −γ · eq · IsFieldOpNoInv · FieldOpB
+            ClaimTerm {
+                coeff: -1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_gamma_bridge_side),
+                    bridge_eq,
+                    ClaimFactor::StageEval(SE_IS_FIELD_OP_NO_INV),
+                    ClaimFactor::StageEval(SE_FIELD_OP_B),
+                ],
+            },
+        ],
+    };
+
+    // Assemble all 7 instances
     let instances = vec![
         // [0] RamReadWriteChecking — 45 rounds, degree 3
         SumcheckInstance {
@@ -7244,6 +7772,14 @@ fn build_verifier_stage2_ops(
                 output_order: vec![1, 0],
             }),
         },
+        // [6] Limb→Fr bridge — log_t rounds, degree 3
+        SumcheckInstance {
+            input_claim: bridge_input_claim,
+            output_check: bridge_output_check,
+            num_rounds: params.bridge_checking_rounds,
+            degree: params.bridge_checking_degree,
+            normalize: Some(PointNormalization::Reverse),
+        },
     ];
 
     let eval_polys: Vec<_> = evaluations.iter().map(|e| e.poly).collect();
@@ -7288,6 +7824,10 @@ fn build_verifier_stage2_ops(
     ops.push(VerifierOp::Squeeze {
         challenge: ch_gamma_fr,
     });
+    // γ_bridge_side (limb→Fr bridge A/B mixing challenge)
+    ops.push(VerifierOp::Squeeze {
+        challenge: ch_gamma_bridge_side,
+    });
     // FieldReg RV/WV record + absorb (mirrors prover's pre-sumcheck binding).
     ops.push(VerifierOp::RecordEvals {
         evals: vec![
@@ -7305,10 +7845,11 @@ fn build_verifier_stage2_ops(
         polys: vec![p.field_reg_read_value, p.field_reg_write_value],
         tag: DomainSeparator::OpeningClaim,
     });
-    // Batch coefficient challenge indices for the 6 instances (FR-extended).
-    // Layout: τ_high, r0, γ_rw, γ_instruction, r_address(log_k_ram), γ_fr.
-    const STAGE2_NUM_INSTANCES_FR: usize = 6;
-    let ch_batch_base = s2_ch_base + 2 + 1 + 1 + params.log_k_ram + 1;
+    // Batch coefficient challenge indices for the 7 instances (FR + bridge).
+    // Layout: τ_high, r0, γ_rw, γ_instruction, r_address(log_k_ram), γ_fr,
+    //         γ_bridge_side.
+    const STAGE2_NUM_INSTANCES_FR: usize = 7;
+    let ch_batch_base = s2_ch_base + 2 + 1 + 1 + params.log_k_ram + 1 + 1;
     let batch_challenges: Vec<ChallengeIdx> = (0..STAGE2_NUM_INSTANCES_FR)
         .map(|i| ChallengeIdx(ch_batch_base + i))
         .collect();
@@ -7453,7 +7994,8 @@ fn print_stats(module: &Module, params: &ModuleParams) {
             | Op::RafReduce { .. }
             | Op::MaterializeRA { .. }
             | Op::MaterializeCombinedVal { .. }
-            | Op::WeightedSum { .. } => counts[14] += 1,
+            | Op::WeightedSum { .. }
+            | Op::BuildLinearCombination { .. } => counts[14] += 1,
         }
     }
     eprintln!("\n=== Op Counts ===");
