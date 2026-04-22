@@ -28,6 +28,7 @@ members = [
   "crates/jolt-trace",
   "crates/jolt-poly",
   "crates/jolt-lookup-tables",
+  "crates/jolt-r1cs",
   "crates/jolt-riscv",
   "crates/jolt-riscv-derive",
   "crates/jolt-transcript",

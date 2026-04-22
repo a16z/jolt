@@ -1,0 +1,26 @@
+[package]
+name = "jolt-r1cs"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "R1CS constraint data structures for the Jolt proving system"
+
+[lints]
+workspace = true
+
+[dependencies]
+jolt-field = { path = "../jolt-field" }
+jolt-poly = { path = "../jolt-poly" }
+rayon = { workspace = true, optional = true }
+serde = { workspace = true, features = ["derive"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+jolt-field = { path = "../jolt-field", features = ["bn254"] }
+num-traits = { workspace = true }
+rand_chacha = { workspace = true }
+rand_core = { workspace = true }
+
+[features]
+default = ["parallel"]
+parallel = ["rayon", "jolt-poly/parallel"]
