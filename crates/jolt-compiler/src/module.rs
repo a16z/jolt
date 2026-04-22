@@ -224,31 +224,6 @@ pub struct SegmentedConfig {
     pub outer_eq_challenges: Vec<ChallengeIdx>,
 }
 
-/// Per-instance reduce spec inside an `Op::BatchRoundEvaluate`.
-///
-/// Mirrors the discriminants of `Op::InstanceReduce` / `Op::InstanceSegmentedReduce`
-/// as a value-typed variant carrying per-instance metadata. The runtime's batch
-/// handler translates each variant into a [`BatchReduceKind`](jolt_compute::BatchReduceKind)
-/// and calls [`ComputeBackend::batch_round_evaluate`](jolt_compute::ComputeBackend::batch_round_evaluate)
-/// once with the full vector.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum InstanceEvalKind {
-    /// Plain dense reduce — no outer eq, no inner-only sharing.
-    Dense {
-        instance: InstanceIdx,
-        kernel: usize,
-    },
-    /// Segmented reduce with outer-eq weighting over mixed-dimensional inputs.
-    /// The handler resolves the Gruen vs. non-Gruen dispatch at runtime by
-    /// reading the kernel's `gruen_hint`, matching today's per-instance path.
-    Segmented {
-        instance: InstanceIdx,
-        kernel: usize,
-        round_within_phase: usize,
-        segmented: SegmentedConfig,
-    },
-}
-
 /// A source for a reduce input buffer.
 ///
 /// Used by [`ReduceSpec`] to describe where each input comes from. Most inputs
@@ -1270,15 +1245,6 @@ impl DomainSeparator {
 /// - **Orchestration** — zero-cost host bookkeeping (transcript, lifecycle).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Op {
-    /// Compute one sumcheck round polynomial.
-    ///
-    /// Round 0 (`bind_challenge: None`): reduce only.
-    /// Rounds 1+ (`bind_challenge: Some(ch)`): fused bind-at-challenge + reduce.
-    SumcheckRound {
-        kernel: usize,
-        round: usize,
-        bind_challenge: Option<ChallengeIdx>,
-    },
     /// Initialize a batched sumcheck round: zero the combined accumulator and
     /// update per-instance claims from the previous round's evaluations.
     BatchRoundBegin {
@@ -1335,49 +1301,11 @@ pub enum Op {
         poly: PolynomialId,
         challenge: ChallengeIdx,
     },
-    /// Standard dense reduce for one instance within a batched round.
-    /// Stores the per-instance evaluations for later accumulation.
-    InstanceReduce {
-        batch: BatchIdx,
-        instance: InstanceIdx,
-        kernel: usize,
-    },
-    /// Segmented reduce for one instance (mixed-dimensional inputs).
-    /// Uses the outer eq table to weight inner-dimension kernel evaluations.
-    InstanceSegmentedReduce {
-        batch: BatchIdx,
-        instance: InstanceIdx,
-        kernel: usize,
-        round_within_phase: usize,
-        segmented: SegmentedConfig,
-    },
-    /// Fused per-round reduce across many active instances in a batch.
+    /// Fused reduce across an arbitrary set of specs.
     ///
-    /// Variable-arity generalization of `InstanceReduce` + `InstanceSegmentedReduce`:
-    /// one op per batch-round replaces N per-instance reduce ops. The handler
-    /// packs a `&[BatchInstanceSpec]` and dispatches once to
-    /// `ComputeBackend::batch_round_evaluate`, which defaults to a per-instance
-    /// loop (byte-identical fallback) and is overridable for fused dispatch
-    /// (shared prefetch, fused accumulation across instances).
-    ///
-    /// Reserved for P77-C wire-up. The compiler does not emit this variant
-    /// yet; the handler arm is in place so emission can be switched over
-    /// without a second handler change.
-    BatchRoundEvaluate {
-        batch: BatchIdx,
-        round: usize,
-        instances: Vec<InstanceEvalKind>,
-    },
-    /// Unified fused reduce across an arbitrary set of specs.
-    ///
-    /// Successor to `SumcheckRound`, `InstanceReduce`, `InstanceSegmentedReduce`,
-    /// and `BatchRoundEvaluate` — one op covers flat/segmented/Gruen/domain/
-    /// sparse reduces for either standalone sumchecks or batched per-instance
-    /// evals. The backend's `reduce(&[ReduceSpec], ...)` runs all specs in a
-    /// single parallel region, eliminating nested-rayon overhead.
-    ///
-    /// Reserved for Phase C wire-up. The compiler does not emit this variant
-    /// yet; Phase A only establishes the types + trait method.
+    /// Covers flat, segmented, Gruen, domain, and sparse reduces for either
+    /// standalone sumchecks or batched per-instance evals. The backend's
+    /// `reduce(&[ReduceSpec], ...)` runs all specs in a single parallel region.
     Reduce { specs: Vec<ReduceSpec> },
     /// Bind kernel inputs for an active instance within a round.
     /// Emitted for rounds after the first within a phase.
@@ -1697,10 +1625,7 @@ impl Op {
     pub fn is_compute(&self) -> bool {
         matches!(
             self,
-            Op::SumcheckRound { .. }
-                | Op::InstanceReduce { .. }
-                | Op::InstanceSegmentedReduce { .. }
-                | Op::Reduce { .. }
+            Op::Reduce { .. }
                 | Op::InstanceBind { .. }
                 | Op::ReadCheckingReduce { .. }
                 | Op::RafReduce { .. }

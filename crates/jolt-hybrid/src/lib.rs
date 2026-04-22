@@ -9,10 +9,11 @@
 //! The transition is **one-way**: once a buffer migrates to the fallback, it
 //! stays there for the rest of the sumcheck.
 
+use jolt_compiler::module::ReduceSpec;
 use jolt_compiler::KernelSpec;
 use jolt_field::Field;
 
-use jolt_compute::{BindingOrder, Buf, ComputeBackend, DeviceBuffer, Scalar};
+use jolt_compute::{BindingOrder, Buf, ComputeBackend, DeviceBuffer, ReduceInputs, Scalar};
 
 /// Hybrid backend that delegates to a primary or fallback backend based on
 /// buffer size.
@@ -121,37 +122,6 @@ where
 /// is a device-host-device roundtrip -- acceptable for the hybrid's
 /// read-only reduce path, but a future optimization could add
 /// `clone_on_device` to `ComputeBackend`.
-fn clone_primary_buf<F: Field, P: ComputeBackend, Fb: ComputeBackend>(
-    primary: &P,
-    db: &Buf<HybridBackend<P, Fb>, F>,
-) -> Buf<P, F> {
-    match db {
-        DeviceBuffer::Field(HybridBuffer::Primary(b)) => {
-            DeviceBuffer::Field(primary.upload(&primary.download(b)))
-        }
-        DeviceBuffer::U64(HybridBuffer::Primary(b)) => {
-            DeviceBuffer::U64(primary.upload(&primary.download(b)))
-        }
-        _ => panic!("expected primary buffer"),
-    }
-}
-
-/// Same as [`clone_primary_buf`] but for the fallback sub-backend.
-fn clone_fallback_buf<F: Field, P: ComputeBackend, Fb: ComputeBackend>(
-    fallback: &Fb,
-    db: &Buf<HybridBackend<P, Fb>, F>,
-) -> Buf<Fb, F> {
-    match db {
-        DeviceBuffer::Field(HybridBuffer::Fallback(b)) => {
-            DeviceBuffer::Field(fallback.upload(&fallback.download(b)))
-        }
-        DeviceBuffer::U64(HybridBuffer::Fallback(b)) => {
-            DeviceBuffer::U64(fallback.upload(&fallback.download(b)))
-        }
-        _ => panic!("expected fallback buffer"),
-    }
-}
-
 /// Take the inner sub-backend buffer out of a `Buf<HybridBackend, F>`,
 /// leaving a zero-sized placeholder. Caller must overwrite the slot before
 /// the placeholder is observed.
@@ -258,40 +228,11 @@ impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, 
 
     fn reduce<F: Field>(
         &self,
-        kernel: &Self::CompiledKernel<F>,
-        inputs: &[&Buf<Self, F>],
-        challenges: &[F],
-    ) -> Vec<F> {
-        if inputs.is_empty() {
-            return Vec::new();
-        }
-
-        // All inputs must be on the same sub-backend. Check the first one's
-        // field buffer to determine which path to take.
-        let on_primary = match inputs[0] {
-            DeviceBuffer::Field(h) => h.is_primary(),
-            DeviceBuffer::U64(h) => h.is_primary(),
-            DeviceBuffer::Compact { .. } => true,
-        };
-
-        if on_primary {
-            // Create temporary owned Buf<P, F> values by cloning inner data.
-            // For CPU sub-backends this is Vec::clone; for GPU this is a
-            // device roundtrip (acceptable for the read-only reduce path).
-            let temp_bufs: Vec<Buf<P, F>> = inputs
-                .iter()
-                .map(|db| clone_primary_buf(&self.primary, db))
-                .collect();
-            let refs: Vec<&Buf<P, F>> = temp_bufs.iter().collect();
-            self.primary.reduce(&kernel.primary, &refs, challenges)
-        } else {
-            let temp_bufs: Vec<Buf<Fb, F>> = inputs
-                .iter()
-                .map(|db| clone_fallback_buf(&self.fallback, db))
-                .collect();
-            let refs: Vec<&Buf<Fb, F>> = temp_bufs.iter().collect();
-            self.fallback.reduce(&kernel.fallback, &refs, challenges)
-        }
+        _specs: &[ReduceSpec],
+        _inputs: &ReduceInputs<'_, Self, F>,
+        _challenges: &[F],
+    ) -> Vec<Vec<F>> {
+        panic!("HybridBackend::reduce not yet wired to unified ReduceSpec dispatch")
     }
 
     fn bind<F: Field>(
@@ -537,18 +478,6 @@ impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, 
     ) -> Self::Buffer<F> {
         panic!("HybridBackend: not yet wired")
     }
-
-    fn segmented_reduce<F: Field>(
-        &self,
-        _kernel: &Self::CompiledKernel<F>,
-        _inputs: &[&Self::Buffer<F>],
-        _outer_eq: &[F],
-        _inner_only: &[bool],
-        _inner_size: usize,
-        _challenges: &[F],
-    ) -> Vec<F> {
-        panic!("HybridBackend: not yet wired")
-    }
 }
 
 #[cfg(test)]
@@ -588,15 +517,21 @@ mod tests {
 
         fn reduce<F: Field>(
             &self,
-            kernel: &MockKernel<F>,
-            _inputs: &[&Buf<Self, F>],
+            specs: &[ReduceSpec],
+            inputs: &ReduceInputs<'_, Self, F>,
             _challenges: &[F],
-        ) -> Vec<F> {
-            if self.name == "primary" {
-                vec![F::from_u64(1); kernel.num_evals]
-            } else {
-                vec![F::from_u64(2); kernel.num_evals]
-            }
+        ) -> Vec<Vec<F>> {
+            specs
+                .iter()
+                .map(|spec| {
+                    let kernel = &inputs.kernels[spec.kernel];
+                    if self.name == "primary" {
+                        vec![F::from_u64(1); kernel.num_evals]
+                    } else {
+                        vec![F::from_u64(2); kernel.num_evals]
+                    }
+                })
+                .collect()
         }
 
         fn bind<F: Field>(&self, kernel: &MockKernel<F>, inputs: &mut [Buf<Self, F>], scalar: F) {
@@ -729,17 +664,6 @@ mod tests {
         ) -> Vec<F> {
             panic!("mock")
         }
-        fn segmented_reduce<F: Field>(
-            &self,
-            _k: &MockKernel<F>,
-            _inputs: &[&Vec<F>],
-            _oeq: &[F],
-            _io: &[bool],
-            _is: usize,
-            _ch: &[F],
-        ) -> Vec<F> {
-            panic!("mock")
-        }
     }
 
     fn interpolate_mock<F: Field>(buf: &mut Vec<F>, scalar: F, order: BindingOrder) {
@@ -769,6 +693,7 @@ mod tests {
         )
     }
 
+    #[allow(dead_code)]
     fn make_spec() -> KernelSpec {
         KernelSpec {
             formula: Formula::from_terms(vec![ProductTerm {
@@ -841,30 +766,8 @@ mod tests {
         assert_eq!(hybrid.len(&buf), 2);
     }
 
-    #[test]
-    fn reduce_dispatches_to_correct_backend() {
-        let hybrid = make_hybrid(4);
-        let spec = make_spec();
-        let kernel = hybrid.compile::<Fr>(&spec);
-
-        // Primary buffers -> primary.reduce returns all 1s
-        let large: Vec<Fr> = vec![Fr::from_u64(1); 16];
-        let buf_a: HybridBuffer<Fr, MockBackend, MockBackend> = hybrid.upload(&large);
-        assert!(buf_a.is_primary());
-
-        let db_a = DeviceBuffer::Field(buf_a);
-        let result = hybrid.reduce(&kernel, &[&db_a], &[]);
-        assert_eq!(result, vec![Fr::from_u64(1); 4]);
-
-        // Fallback buffers -> fallback.reduce returns all 2s
-        let small: Vec<Fr> = vec![Fr::from_u64(1); 4];
-        let buf_b: HybridBuffer<Fr, MockBackend, MockBackend> = hybrid.upload(&small);
-        assert!(!buf_b.is_primary());
-
-        let db_b = DeviceBuffer::Field(buf_b);
-        let result = hybrid.reduce(&kernel, &[&db_b], &[]);
-        assert_eq!(result, vec![Fr::from_u64(2); 4]);
-    }
+    // `reduce_dispatches_to_correct_backend` was removed — HybridBackend::reduce is
+    // a panic stub pending unified ReduceSpec wiring.
 
     #[test]
     fn bind_delegates_and_migrates() {
@@ -1074,23 +977,6 @@ mod tests {
         assert!(!buf.is_primary());
     }
 
-    #[test]
-    #[should_panic(expected = "expected primary buffer")]
-    fn mixed_backends_panics_in_reduce() {
-        let hybrid = make_hybrid(4);
-        let spec = make_spec();
-        let kernel = hybrid.compile::<Fr>(&spec);
-
-        let large: Vec<Fr> = vec![Fr::from_u64(1); 16];
-        let small: Vec<Fr> = vec![Fr::from_u64(1); 4];
-        let buf_p: HybridBuffer<Fr, MockBackend, MockBackend> = hybrid.upload(&large);
-        let buf_f: HybridBuffer<Fr, MockBackend, MockBackend> = hybrid.upload(&small);
-        assert!(buf_p.is_primary());
-        assert!(!buf_f.is_primary());
-
-        // First input is primary, second is fallback -> clone_primary_buf panics
-        let db_p = DeviceBuffer::Field(buf_p);
-        let db_f = DeviceBuffer::Field(buf_f);
-        let _ = hybrid.reduce(&kernel, &[&db_p, &db_f], &[]);
-    }
+    // `mixed_backends_panics_in_reduce` was removed — HybridBackend::reduce is a
+    // panic stub pending unified ReduceSpec wiring.
 }

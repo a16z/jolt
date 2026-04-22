@@ -503,7 +503,7 @@ fn synthetic_k4_t4_naive_vs_kernel() {
         DeviceBuffer::Field(backend.upload(&G1)),
     ];
     let refs: Vec<&Buf<CpuBackend, NewFr>> = bufs.iter().collect();
-    let kernel_evals = backend.reduce_single(&kernel, &refs, &gamma_sq);
+    let kernel_evals = backend.reduce_flat(&kernel, &refs, &gamma_sq);
 
     eprintln!("Kernel evals: {:?}", kernel_evals);
 
@@ -621,7 +621,7 @@ fn unit_kernel_reduce_booleanity() {
         DeviceBuffer::Field(backend.upload(&G0)),
     ];
     let refs: Vec<&Buf<CpuBackend, NewFr>> = bufs.iter().collect();
-    let kernel_evals = backend.reduce_single(&kernel, &refs, &gamma_sq);
+    let kernel_evals = backend.reduce_flat(&kernel, &refs, &gamma_sq);
 
     for t in 0..4 {
         assert_eq!(naive[t], kernel_evals[t], "Mismatch at eval[{t}]");
@@ -707,7 +707,7 @@ fn gruen_vs_dense_round0_comparison() {
         DeviceBuffer::Field(backend.upload(&G)),
     ];
     let refs_p: Vec<&Buf<CpuBackend, NewFr>> = bufs_projected.iter().collect();
-    let projected_evals = backend.reduce_single(&kernel, &refs_p, &gamma_sq);
+    let projected_evals = backend.reduce_flat(&kernel, &refs_p, &gamma_sq);
     eprintln!("Projected Dense evals: {:?}", projected_evals);
     eprintln!(
         "  s(0)+s(1) = {:?}",
@@ -734,7 +734,7 @@ fn gruen_vs_dense_round0_comparison() {
         DeviceBuffer::Field(backend.upload(&ra_cycle_major)),
     ];
     let refs_f: Vec<&Buf<CpuBackend, NewFr>> = bufs_full.iter().collect();
-    let full_evals = backend.reduce_single(&kernel2, &refs_f, &gamma_sq);
+    let full_evals = backend.reduce_flat(&kernel2, &refs_f, &gamma_sq);
     eprintln!("Full Dense evals: {:?}", full_evals);
     eprintln!("  s(0)+s(1) = {:?}", full_evals[0] + full_evals[1]);
 

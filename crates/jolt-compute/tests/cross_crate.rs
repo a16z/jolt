@@ -138,7 +138,7 @@ fn reduce_identity_kernel() {
         Fr::from_u64(80),
     ]);
 
-    let result = b.reduce_single(&kernel, &[&buf_a, &buf_b], &[]);
+    let result = b.reduce_flat(&kernel, &[&buf_a, &buf_b], &[]);
 
     // LowToHigh pairs: (buf[2i], buf[2i+1])
     // t=0: sum of lo values across both buffers

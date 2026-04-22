@@ -9,7 +9,7 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use jolt_compiler::kernel_spec::Iteration;
 use jolt_compiler::{BindingOrder, Factor, Formula, KernelSpec, ProductTerm};
-use jolt_compute::{Buf, ComputeBackend, DeviceBuffer};
+use jolt_compute::{Buf, DeviceBuffer};
 use jolt_cpu::{compile, toom_cook, CpuBackend};
 use jolt_field::{Field, FieldAccumulator, Fr};
 use num_traits::{One, Zero};
@@ -167,7 +167,7 @@ fn bench_rayon_vs_backend(c: &mut Criterion) {
                 &n,
                 |b, _| {
                     b.iter(|| {
-                        black_box(backend.reduce_single(&kernel, &buf_refs, &[]));
+                        black_box(backend.reduce_flat(&kernel, &buf_refs, &[]));
                     });
                 },
             );

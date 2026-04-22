@@ -4,8 +4,6 @@
 //! to resolve the op #113 divergence (55 coeffs in module vs 28 in jolt-core).
 #![allow(non_snake_case, clippy::print_stderr)]
 
-use ark_bn254::Fr;
-use jolt_core::field::JoltField;
 use jolt_core::zkvm::r1cs::constraints::{
     NUM_R1CS_CONSTRAINTS, NUM_REMAINING_R1CS_CONSTRAINTS, OUTER_FIRST_ROUND_POLY_NUM_COEFFS,
     OUTER_UNIVARIATE_SKIP_DEGREE, OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,

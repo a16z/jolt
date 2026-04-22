@@ -492,14 +492,21 @@ fn emit_sumcheck_stage(
             None
         };
 
-        ctx.ops.push(Op::SumcheckRound {
-            kernel: kernel_idx,
-            round: r,
-            bind_challenge,
-        });
-        // Dual-emit Op::Reduce alongside the legacy Op::SumcheckRound so the
-        // new unified-reduce path sees every reduce site. Runtime ignores this
-        // op during Phase B and still dispatches off Op::SumcheckRound.
+        if let Some(ch) = bind_challenge {
+            let kdef = &ctx.kernels[kernel_idx];
+            let mut seen = std::collections::HashSet::new();
+            let polys: Vec<_> = kdef
+                .inputs
+                .iter()
+                .map(|b| b.poly())
+                .filter(|pid| seen.insert(*pid))
+                .collect();
+            ctx.ops.push(Op::Bind {
+                polys,
+                challenge: ch,
+                order: kdef.spec.binding_order,
+            });
+        }
         ctx.ops.push(Op::Reduce {
             specs: vec![ReduceSpec {
                 kernel: kernel_idx,
@@ -864,21 +871,6 @@ fn vertex_degree(vertex: &Vertex) -> usize {
 /// Collect all poly identifiers referenced by an op (directly or via kernel inputs).
 fn op_poly_refs(op: &Op, kernels: &[KernelDef]) -> Vec<PolynomialId> {
     match op {
-        Op::SumcheckRound { kernel, .. } => {
-            kernels[*kernel].inputs.iter().map(|b| b.poly()).collect()
-        }
-        Op::BatchRoundEvaluate { instances, .. } => {
-            use crate::module::InstanceEvalKind;
-            let mut refs: Vec<PolynomialId> = Vec::new();
-            for kind in instances {
-                let k = match kind {
-                    InstanceEvalKind::Dense { kernel, .. }
-                    | InstanceEvalKind::Segmented { kernel, .. } => *kernel,
-                };
-                refs.extend(kernels[k].inputs.iter().map(|b| b.poly()));
-            }
-            refs
-        }
         Op::Reduce { specs } => {
             use crate::module::BufferRef;
             let mut refs: Vec<PolynomialId> = Vec::new();
@@ -925,8 +917,6 @@ fn op_poly_refs(op: &Op, kernels: &[KernelDef]) -> Vec<PolynomialId> {
         | Op::MaterializeIfAbsent { .. }
         | Op::MaterializeSegmentedOuterEq { .. }
         | Op::InstanceBindPreviousPhase { .. }
-        | Op::InstanceReduce { .. }
-        | Op::InstanceSegmentedReduce { .. }
         | Op::InstanceBind { .. }
         | Op::BindCarryBuffers { .. }
         | Op::BatchAccumulateInstance { .. }

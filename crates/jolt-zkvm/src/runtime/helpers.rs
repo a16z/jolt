@@ -17,29 +17,6 @@ pub(crate) struct PendingClaim<F: Field> {
     pub eval: F,
 }
 
-/// Remove kernel input buffers from cache, bind them at `scalar`, and reinsert.
-pub(super) fn bind_kernel_inputs<B: ComputeBackend, F: Field>(
-    device_buffers: &mut HashMap<PolynomialId, Buf<B, F>>,
-    backend: &B,
-    compiled_kernel: &B::CompiledKernel<F>,
-    kdef: &jolt_compiler::KernelDef,
-    scalar: F,
-) {
-    let mut input_bufs: Vec<Buf<B, F>> = kdef
-        .inputs
-        .iter()
-        .map(|b| {
-            device_buffers
-                .remove(&b.poly())
-                .expect("bind_kernel_inputs: input buffer missing")
-        })
-        .collect();
-    backend.bind(compiled_kernel, &mut input_bufs, scalar);
-    for (buf, binding) in input_bufs.into_iter().zip(&kdef.inputs) {
-        let _ = device_buffers.insert(binding.poly(), buf);
-    }
-}
-
 /// Precompute verifier-stage → round challenge indices mapping.
 pub(super) fn precompute_stage_points(module: &jolt_compiler::module::Module) -> Vec<Vec<usize>> {
     (0..module.verifier.num_stages)

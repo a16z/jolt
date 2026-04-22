@@ -80,7 +80,7 @@ fn compute_round_poly(
     let f_dbuf: Buf<CpuBackend, Fr> = DeviceBuffer::Field(f_buf.to_vec());
     let g_dbuf: Buf<CpuBackend, Fr> = DeviceBuffer::Field(g_buf.to_vec());
 
-    let toom_evals = backend.reduce_single(kernel, &[&eq_dbuf, &f_dbuf, &g_dbuf], &[]);
+    let toom_evals = backend.reduce_flat(kernel, &[&eq_dbuf, &f_dbuf, &g_dbuf], &[]);
 
     let mut p0 = Fr::zero();
     for i in 0..half {
@@ -338,7 +338,7 @@ fn sparse_sumcheck_rounds() {
         );
 
         let buf_refs: Vec<&Buf<CpuBackend, Fr>> = bufs.iter().collect();
-        let toom_evals = backend.reduce_single(&kernel, &buf_refs, &[]);
+        let toom_evals = backend.reduce_flat(&kernel, &buf_refs, &[]);
         let s1 = toom_evals[0]; // Toom-Cook grid: first eval is at t=1.
 
         assert_eq!(

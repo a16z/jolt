@@ -3,23 +3,18 @@ use std::collections::{HashMap, HashSet};
 use rayon::prelude::*;
 
 use jolt_compiler::module::{
-    ChallengeIdx, CheckpointEvalAction, DomainSeparator, EvalMode, InstanceEvalKind, Op,
-    ReduceDestination, RoundPolyEncoding,
+    ChallengeIdx, CheckpointEvalAction, DomainSeparator, EvalMode, Op, ReduceDestination,
+    RoundPolyEncoding,
 };
 use jolt_compiler::PolynomialId;
-use jolt_compute::{
-    per_instance_batch_evaluate, per_instance_reference_reduce, BatchInstanceSpec, BatchReduceKind,
-    Buf, BufferProvider, ComputeBackend, DeviceBuffer, Executable, ReduceInputs,
-};
+use jolt_compute::{Buf, BufferProvider, ComputeBackend, DeviceBuffer, Executable, ReduceInputs};
 use jolt_crypto::HomomorphicCommitment;
 use jolt_field::Field;
 use jolt_openings::AdditivelyHomomorphic;
 use jolt_poly::UnivariatePoly;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
 
-use super::helpers::{
-    bind_kernel_inputs, build_outer_eq, fused_rlc_reduce, materialize_binding, PendingClaim,
-};
+use super::helpers::{build_outer_eq, fused_rlc_reduce, materialize_binding, PendingClaim};
 
 /// Enter a per-variant `info_span!` for the op currently being dispatched.
 ///
@@ -28,7 +23,6 @@ use super::helpers::{
 /// one line; new `Op` variants must be added here or they'll be invisible.
 fn op_span(op: &Op) -> tracing::span::EnteredSpan {
     match op {
-        Op::SumcheckRound { .. } => tracing::info_span!("SumcheckRound").entered(),
         Op::Evaluate { .. } => tracing::info_span!("Evaluate").entered(),
         Op::Bind { .. } => tracing::info_span!("Bind").entered(),
         Op::LagrangeProject { .. } => tracing::info_span!("LagrangeProject").entered(),
@@ -73,42 +67,6 @@ fn op_span(op: &Op) -> tracing::span::EnteredSpan {
             tracing::info_span!("InstanceBindPreviousPhase").entered()
         }
         Op::CaptureScalar { .. } => tracing::info_span!("CaptureScalar").entered(),
-        Op::InstanceReduce {
-            batch,
-            instance,
-            kernel,
-        } => tracing::info_span!(
-            "InstanceReduce",
-            batch = batch.0,
-            instance = instance.0,
-            kernel = kernel
-        )
-        .entered(),
-        Op::InstanceSegmentedReduce {
-            batch,
-            instance,
-            kernel,
-            round_within_phase,
-            ..
-        } => tracing::info_span!(
-            "InstanceSegmentedReduce",
-            batch = batch.0,
-            instance = instance.0,
-            kernel = kernel,
-            round = round_within_phase
-        )
-        .entered(),
-        Op::BatchRoundEvaluate {
-            batch,
-            round,
-            instances,
-        } => tracing::info_span!(
-            "BatchRoundEvaluate",
-            batch = batch.0,
-            round = round,
-            n_instances = instances.len()
-        )
-        .entered(),
         Op::Reduce { specs } => tracing::info_span!("Reduce", n_specs = specs.len()).entered(),
         Op::InstanceBind {
             batch,
@@ -168,40 +126,6 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
     let module = &executable.module;
 
     match op {
-        Op::SumcheckRound {
-            kernel,
-            round: _,
-            bind_challenge,
-        } => {
-            let kdef = &module.prover.kernels[*kernel];
-            let compiled_kernel = &executable.kernels[*kernel];
-
-            if let Some(ch) = bind_challenge {
-                let scalar = state.challenges[ch.0];
-                bind_kernel_inputs(device_buffers, backend, compiled_kernel, kdef, scalar);
-            }
-
-            if executable.reduce_mode.unified_active() {
-                return;
-            }
-
-            let input_refs: Vec<&Buf<B, F>> = kdef
-                .inputs
-                .iter()
-                .map(|b| {
-                    device_buffers.get(&b.poly()).unwrap_or_else(|| {
-                        panic!(
-                            "SumcheckRound: missing buffer {:?} (kernel={kernel})",
-                            b.poly()
-                        )
-                    })
-                })
-                .collect();
-
-            state.last_round_coeffs =
-                backend.reduce_single(compiled_kernel, &input_refs, &state.challenges);
-        }
-
         Op::Evaluate { poly, mode } => {
             if let Some(buf) = device_buffers.get(poly) {
                 let data = backend.download(buf.as_field());
@@ -781,188 +705,6 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             state.challenges[challenge.0] = data[0];
         }
 
-        Op::InstanceReduce {
-            batch: _,
-            instance,
-            kernel,
-        } => {
-            if executable.reduce_mode.unified_active() {
-                return;
-            }
-            let kdef = &module.prover.kernels[*kernel];
-            let compiled_kernel = &executable.kernels[*kernel];
-            let input_refs: Vec<&Buf<B, F>> = kdef
-                .inputs
-                .iter()
-                .map(|b| {
-                    device_buffers.get(&b.poly()).unwrap_or_else(|| {
-                        panic!(
-                            "InstanceReduce: missing buffer {:?} (inst={}, kernel={kernel})",
-                            b.poly(),
-                            instance.0
-                        )
-                    })
-                })
-                .collect();
-            let inst_evals = backend.reduce_single(compiled_kernel, &input_refs, &state.challenges);
-            state.last_round_instance_evals[instance.0].clone_from(&inst_evals);
-        }
-
-        Op::InstanceSegmentedReduce {
-            batch,
-            instance,
-            kernel,
-            round_within_phase,
-            segmented,
-        } => {
-            if executable.reduce_mode.unified_active() {
-                return;
-            }
-            let kdef = &module.prover.kernels[*kernel];
-            let compiled_kernel = &executable.kernels[*kernel];
-            let outer_eq = state
-                .segmented_outer_eqs
-                .get(&(batch.0, instance.0))
-                .expect("InstanceSegmentedReduce: outer eq missing");
-            let inner_size = 1usize << (segmented.inner_num_vars - round_within_phase);
-            let input_bufs: Vec<&B::Buffer<F>> = kdef
-                .inputs
-                .iter()
-                .map(|b| {
-                    device_buffers
-                        .get(&b.poly())
-                        .expect("InstanceSegmentedReduce: input missing")
-                        .as_field()
-                })
-                .collect();
-            let inst_evals = if kdef.spec.gruen_hint.is_some() {
-                let prev_claim = state.batch_instance_claims[batch.0][instance.0];
-                backend.gruen_segmented_reduce(
-                    compiled_kernel,
-                    &input_bufs,
-                    outer_eq,
-                    &segmented.inner_only,
-                    inner_size,
-                    &state.challenges,
-                    prev_claim,
-                    *round_within_phase,
-                )
-            } else {
-                backend.segmented_reduce(
-                    compiled_kernel,
-                    &input_bufs,
-                    outer_eq,
-                    &segmented.inner_only,
-                    inner_size,
-                    &state.challenges,
-                )
-            };
-            state.last_round_instance_evals[instance.0].clone_from(&inst_evals);
-        }
-
-        Op::BatchRoundEvaluate {
-            batch,
-            round,
-            instances,
-        } => {
-            if executable.reduce_mode.unified_active() {
-                return;
-            }
-            // Per-instance input buffer refs (one Vec<&Buf> per spec) must
-            // outlive the `specs` slice we hand to the backend; keep them
-            // in `all_inputs` for the duration of the call.
-            let mut all_inputs: Vec<Vec<&Buf<B, F>>> = Vec::with_capacity(instances.len());
-            let mut inst_indices: Vec<usize> = Vec::with_capacity(instances.len());
-            for kind in instances {
-                let (inst_idx, k_idx) = match kind {
-                    InstanceEvalKind::Dense { instance, kernel }
-                    | InstanceEvalKind::Segmented {
-                        instance, kernel, ..
-                    } => (instance.0, *kernel),
-                };
-                let kdef = &module.prover.kernels[k_idx];
-                let refs: Vec<&Buf<B, F>> = kdef
-                    .inputs
-                    .iter()
-                    .map(|b| {
-                        device_buffers.get(&b.poly()).unwrap_or_else(|| {
-                            panic!(
-                                "BatchRoundEvaluate: missing buffer {:?} (inst={inst_idx}, kernel={k_idx})",
-                                b.poly()
-                            )
-                        })
-                    })
-                    .collect();
-                all_inputs.push(refs);
-                inst_indices.push(inst_idx);
-            }
-            let specs: Vec<BatchInstanceSpec<'_, B, F>> = instances
-                .iter()
-                .enumerate()
-                .map(|(i, kind)| {
-                    let k_idx = match kind {
-                        InstanceEvalKind::Dense { kernel, .. }
-                        | InstanceEvalKind::Segmented { kernel, .. } => *kernel,
-                    };
-                    let kdef = &module.prover.kernels[k_idx];
-                    let compiled_kernel = &executable.kernels[k_idx];
-                    let kind_ref = match kind {
-                        InstanceEvalKind::Dense { .. } => BatchReduceKind::Dense,
-                        InstanceEvalKind::Segmented {
-                            round_within_phase,
-                            segmented,
-                            ..
-                        } => {
-                            let inst_idx = inst_indices[i];
-                            let outer_eq = state
-                                .segmented_outer_eqs
-                                .get(&(batch.0, inst_idx))
-                                .expect("BatchRoundEvaluate: outer eq missing");
-                            let inner_size =
-                                1usize << (segmented.inner_num_vars - round_within_phase);
-                            if kdef.spec.gruen_hint.is_some() {
-                                let prev_claim = state.batch_instance_claims[batch.0][inst_idx];
-                                BatchReduceKind::Gruen {
-                                    outer_eq,
-                                    inner_only: &segmented.inner_only,
-                                    inner_size,
-                                    prev_claim,
-                                    current_round: *round_within_phase,
-                                }
-                            } else {
-                                BatchReduceKind::Segmented {
-                                    outer_eq,
-                                    inner_only: &segmented.inner_only,
-                                    inner_size,
-                                }
-                            }
-                        }
-                    };
-                    BatchInstanceSpec {
-                        kernel: compiled_kernel,
-                        inputs: &all_inputs[i],
-                        kind: kind_ref,
-                    }
-                })
-                .collect();
-            let per_instance = backend.batch_round_evaluate(&specs, &state.challenges);
-            debug_assert_eq!(per_instance.len(), inst_indices.len());
-            if executable.has_fuse_debug() {
-                let shadow = per_instance_batch_evaluate(backend, &specs, &state.challenges);
-                assert_eq!(shadow.len(), per_instance.len());
-                for (i, (fused, shadow)) in per_instance.iter().zip(shadow.iter()).enumerate() {
-                    assert_eq!(
-                        fused, shadow,
-                        "fuse divergence at batch={} round={} instance={} (fused vs per-instance shadow)",
-                        batch.0, round, inst_indices[i]
-                    );
-                }
-            }
-            for (i, evals) in per_instance.into_iter().enumerate() {
-                state.last_round_instance_evals[inst_indices[i]] = evals;
-            }
-        }
-
         Op::InstanceBind {
             batch: _,
             instance: _,
@@ -1449,9 +1191,6 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
         }
 
         Op::Reduce { specs } => {
-            if !executable.reduce_mode.unified_active() {
-                return;
-            }
             let inputs = ReduceInputs {
                 buffers: device_buffers,
                 outer_eqs: &state.segmented_outer_eqs,
@@ -1459,17 +1198,6 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                 kernels: &executable.kernels,
             };
             let results = backend.reduce(specs, &inputs, &state.challenges);
-            if executable.reduce_mode.shadow_active() {
-                let shadow =
-                    per_instance_reference_reduce(backend, specs, &inputs, &state.challenges);
-                assert_eq!(results.len(), shadow.len());
-                for (i, (got, want)) in results.iter().zip(shadow.iter()).enumerate() {
-                    assert_eq!(
-                        got, want,
-                        "unified-reduce divergence at spec={i}: backend.reduce vs per_instance_reference_reduce"
-                    );
-                }
-            }
             debug_assert_eq!(results.len(), specs.len());
             for (spec, evals) in specs.iter().zip(results.into_iter()) {
                 match spec.destination {

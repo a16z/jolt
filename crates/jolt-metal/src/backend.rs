@@ -4,8 +4,9 @@ use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 
 use jolt_compiler::kernel_spec::Iteration;
+use jolt_compiler::module::{ReduceAxes, ReduceSpec};
 use jolt_compiler::KernelSpec;
-use jolt_compute::{BindingOrder, Buf, ComputeBackend, Scalar};
+use jolt_compute::{BindingOrder, Buf, ComputeBackend, ReduceInputs, Scalar};
 use jolt_field::Field;
 use metal::{CompileOptions, ComputePipelineState, Device, MTLResourceOptions, MTLSize};
 
@@ -333,90 +334,52 @@ impl ComputeBackend for MetalBackend {
         buf.len()
     }
 
-    #[tracing::instrument(skip_all, name = "MetalBackend::reduce_single")]
-    fn reduce_single<F: Field>(
+    #[tracing::instrument(skip_all, name = "MetalBackend::reduce")]
+    fn reduce<F: Field>(
         &self,
-        kernel: &MetalKernel<F>,
-        inputs: &[&Buf<Self, F>],
+        specs: &[ReduceSpec],
+        inputs: &ReduceInputs<'_, Self, F>,
         challenges: &[F],
-    ) -> Vec<F> {
-        let num_formula_inputs = inputs.len()
-            - match kernel.iteration {
-                Iteration::Dense | Iteration::Domain { .. } => 0,
-                Iteration::DenseTensor | Iteration::Gruen => 2,
-                Iteration::Sparse => 1,
-            };
-
-        let value_refs: Vec<&MetalBuffer<F>> = inputs[..num_formula_inputs]
+    ) -> Vec<Vec<F>> {
+        specs
             .iter()
-            .map(|db| db.as_field())
-            .collect();
-
-        debug_assert!(!value_refs.is_empty());
-        let n = value_refs[0].len();
-        let n_pairs = n / 2;
-
-        let challenges_buf = if kernel.compiled.has_challenges && !challenges.is_empty() {
-            Some(self.upload_field_buffer(challenges))
-        } else {
-            None
-        };
-        let challenges_ref = challenges_buf.as_ref();
-
-        let pipeline = kernel.pipeline();
-
-        match &kernel.iteration {
-            Iteration::Dense => self.dispatch_reduce(
-                pipeline,
-                kernel.num_evals(),
-                &value_refs,
-                &[],
-                challenges_ref,
-                &[n_pairs as u32],
-                n_pairs,
-            ),
-            Iteration::Sparse => {
-                let keys = inputs[num_formula_inputs].as_u64().to_vec();
-                let (pair_indices, _parent_keys) = build_sparse_pairs(&keys);
-                let n_sparse_pairs = pair_indices.len() / 2;
-                let pair_buf = self.device.new_buffer_with_data(
-                    pair_indices.as_ptr().cast::<c_void>(),
-                    std::mem::size_of_val(pair_indices.as_slice()) as u64,
-                    MTLResourceOptions::StorageModeShared,
-                );
-                self.dispatch_reduce(
-                    pipeline,
-                    kernel.num_evals(),
-                    &value_refs,
-                    &[&pair_buf],
-                    challenges_ref,
-                    &[n_sparse_pairs as u32],
-                    n_sparse_pairs,
-                )
-            }
-            Iteration::DenseTensor => {
-                let outer = inputs[num_formula_inputs].as_field();
-                let inner = inputs[num_formula_inputs + 1].as_field();
-                let inner_len = inner.len();
-                let inner_log = inner_len.trailing_zeros();
-                let inner_mask = (inner_len - 1) as u32;
-                self.dispatch_reduce(
-                    pipeline,
-                    kernel.num_evals(),
-                    &value_refs,
-                    &[&outer.raw, &inner.raw],
-                    challenges_ref,
-                    &[n_pairs as u32, inner_log, inner_mask],
-                    n_pairs,
-                )
-            }
-            Iteration::Domain { .. } => {
-                panic!("Domain iteration not yet supported on Metal — use CpuBackend")
-            }
-            Iteration::Gruen => {
-                panic!("Gruen iteration not yet supported on Metal — use CpuBackend")
-            }
-        }
+            .map(|spec| {
+                let kernel = &inputs.kernels[spec.kernel];
+                let input_bufs: Vec<&Buf<Self, F>> =
+                    spec.inputs.iter().map(|r| inputs.buffer(r)).collect();
+                match &spec.axes {
+                    ReduceAxes::Flat => self.reduce_flat(kernel, &input_bufs, challenges),
+                    ReduceAxes::Product {
+                        outer_eq,
+                        inner_only,
+                        inner_size,
+                        gruen_context,
+                    } => {
+                        assert!(
+                            gruen_context.is_none(),
+                            "MetalBackend: Gruen cubic assembly not yet implemented"
+                        );
+                        let outer = inputs.outer_eq(outer_eq);
+                        let field_inputs: Vec<&Self::Buffer<F>> =
+                            input_bufs.iter().map(|b| b.as_field()).collect();
+                        self.reduce_product_dense(
+                            kernel,
+                            &field_inputs,
+                            outer,
+                            inner_only,
+                            *inner_size,
+                            challenges,
+                        )
+                    }
+                    ReduceAxes::Domain { .. } => {
+                        panic!("MetalBackend: ReduceAxes::Domain not wired")
+                    }
+                    ReduceAxes::Sparse { .. } => {
+                        panic!("MetalBackend: ReduceAxes::Sparse not wired")
+                    }
+                }
+            })
+            .collect()
     }
 
     fn bind<F: Field>(&self, kernel: &MetalKernel<F>, inputs: &mut [Buf<Self, F>], scalar: F) {
@@ -836,11 +799,99 @@ impl ComputeBackend for MetalBackend {
         }
         self.upload(&projected)
     }
+}
 
-    fn segmented_reduce<F: Field>(
+impl MetalBackend {
+    #[tracing::instrument(skip_all, name = "MetalBackend::reduce_flat")]
+    pub fn reduce_flat<F: Field>(
         &self,
-        kernel: &Self::CompiledKernel<F>,
-        inputs: &[&Self::Buffer<F>],
+        kernel: &MetalKernel<F>,
+        inputs: &[&Buf<Self, F>],
+        challenges: &[F],
+    ) -> Vec<F> {
+        let num_formula_inputs = inputs.len()
+            - match kernel.iteration {
+                Iteration::Dense | Iteration::Domain { .. } => 0,
+                Iteration::DenseTensor | Iteration::Gruen => 2,
+                Iteration::Sparse => 1,
+            };
+
+        let value_refs: Vec<&MetalBuffer<F>> = inputs[..num_formula_inputs]
+            .iter()
+            .map(|db| db.as_field())
+            .collect();
+
+        debug_assert!(!value_refs.is_empty());
+        let n = value_refs[0].len();
+        let n_pairs = n / 2;
+
+        let challenges_buf = if kernel.compiled.has_challenges && !challenges.is_empty() {
+            Some(self.upload_field_buffer(challenges))
+        } else {
+            None
+        };
+        let challenges_ref = challenges_buf.as_ref();
+
+        let pipeline = kernel.pipeline();
+
+        match &kernel.iteration {
+            Iteration::Dense => self.dispatch_reduce(
+                pipeline,
+                kernel.num_evals(),
+                &value_refs,
+                &[],
+                challenges_ref,
+                &[n_pairs as u32],
+                n_pairs,
+            ),
+            Iteration::Sparse => {
+                let keys = inputs[num_formula_inputs].as_u64().to_vec();
+                let (pair_indices, _parent_keys) = build_sparse_pairs(&keys);
+                let n_sparse_pairs = pair_indices.len() / 2;
+                let pair_buf = self.device.new_buffer_with_data(
+                    pair_indices.as_ptr().cast::<c_void>(),
+                    std::mem::size_of_val(pair_indices.as_slice()) as u64,
+                    MTLResourceOptions::StorageModeShared,
+                );
+                self.dispatch_reduce(
+                    pipeline,
+                    kernel.num_evals(),
+                    &value_refs,
+                    &[&pair_buf],
+                    challenges_ref,
+                    &[n_sparse_pairs as u32],
+                    n_sparse_pairs,
+                )
+            }
+            Iteration::DenseTensor => {
+                let outer = inputs[num_formula_inputs].as_field();
+                let inner = inputs[num_formula_inputs + 1].as_field();
+                let inner_len = inner.len();
+                let inner_log = inner_len.trailing_zeros();
+                let inner_mask = (inner_len - 1) as u32;
+                self.dispatch_reduce(
+                    pipeline,
+                    kernel.num_evals(),
+                    &value_refs,
+                    &[&outer.raw, &inner.raw],
+                    challenges_ref,
+                    &[n_pairs as u32, inner_log, inner_mask],
+                    n_pairs,
+                )
+            }
+            Iteration::Domain { .. } => {
+                panic!("Domain iteration not yet supported on Metal — use CpuBackend")
+            }
+            Iteration::Gruen => {
+                panic!("Gruen iteration not yet supported on Metal — use CpuBackend")
+            }
+        }
+    }
+
+    fn reduce_product_dense<F: Field>(
+        &self,
+        kernel: &MetalKernel<F>,
+        inputs: &[&MetalBuffer<F>],
         outer_eq: &[F],
         inner_only: &[bool],
         inner_size: usize,
@@ -854,7 +905,7 @@ impl ComputeBackend for MetalBackend {
             if weight.is_zero() {
                 continue;
             }
-            let mut col_bufs: Vec<jolt_compute::Buf<Self, F>> = Vec::with_capacity(inputs.len());
+            let mut col_bufs: Vec<Buf<Self, F>> = Vec::with_capacity(inputs.len());
             for (j, data) in input_data.iter().enumerate() {
                 if inner_only[j] {
                     col_bufs.push(DeviceBuffer::Field(self.upload(data)));
@@ -864,8 +915,8 @@ impl ComputeBackend for MetalBackend {
                     col_bufs.push(DeviceBuffer::Field(self.upload(&col_buf)));
                 }
             }
-            let col_refs: Vec<&jolt_compute::Buf<Self, F>> = col_bufs.iter().collect();
-            let evals = self.reduce_single(kernel, &col_refs, challenges);
+            let col_refs: Vec<&Buf<Self, F>> = col_bufs.iter().collect();
+            let evals = self.reduce_flat(kernel, &col_refs, challenges);
             match &mut total_evals {
                 Some(total) => {
                     for (t, &e) in total.iter_mut().zip(&evals) {

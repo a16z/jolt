@@ -8,7 +8,6 @@ use jolt_r1cs::constraints::rv64::{self, *};
 use jolt_r1cs::R1csKey;
 
 // jolt-core types
-use jolt_core::field::JoltField;
 use jolt_core::zkvm::bytecode::BytecodePreprocessing as CoreBytecodePP;
 use jolt_core::zkvm::r1cs::inputs::R1CSCycleInputs;
 

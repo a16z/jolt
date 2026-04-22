@@ -263,7 +263,7 @@ fn bench_dense_reduce(d: usize) -> BenchResult {
         },
         |(kernel, bufs)| {
             let buf_refs: Vec<&Buf<CpuBackend, Fr>> = bufs.iter().collect();
-            let _ = std::hint::black_box(backend.reduce_single(kernel, &buf_refs, &[]));
+            let _ = std::hint::black_box(backend.reduce_flat(kernel, &buf_refs, &[]));
         },
     )
 }

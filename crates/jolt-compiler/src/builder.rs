@@ -52,9 +52,8 @@ fn build_checkpoint_batch(
 
 /// Build a [`ReduceSpec`] for a flat reduce that covers `kdef.inputs` as-is.
 ///
-/// Used for the Phase B dual-emission alongside legacy `Op::SumcheckRound` and
-/// `Op::InstanceReduce` — both correspond to `ReduceAxes::Flat` reduces over
-/// every kernel input.
+/// Flat reduces — used for both standalone sumcheck rounds and batched
+/// per-instance reduces — sweep every kernel input in a single `ReduceAxes::Flat`.
 fn flat_reduce_spec(kernel: usize, kdef: &KernelDef, destination: ReduceDestination) -> ReduceSpec {
     ReduceSpec {
         kernel,
@@ -65,6 +64,24 @@ fn flat_reduce_spec(kernel: usize, kdef: &KernelDef, destination: ReduceDestinat
             .collect(),
         axes: ReduceAxes::Flat,
         destination,
+    }
+}
+
+/// Build an [`Op::Bind`] that binds every kernel input at `challenge` in the
+/// kernel's declared binding order. Deduplicates repeated poly ids so each
+/// buffer is interpolated exactly once.
+fn bind_kernel_inputs_op(kdef: &KernelDef, challenge: ChallengeIdx) -> Op {
+    let mut seen = std::collections::HashSet::new();
+    let polys: Vec<PolynomialId> = kdef
+        .inputs
+        .iter()
+        .map(|b| b.poly())
+        .filter(|pid| seen.insert(*pid))
+        .collect();
+    Op::Bind {
+        polys,
+        challenge,
+        order: kdef.spec.binding_order,
     }
 }
 
@@ -224,11 +241,7 @@ impl ModuleBuilder {
         });
     }
 
-    /// Emit a single sumcheck round.
-    ///
-    /// Dual-emits `Op::Reduce` alongside the legacy `Op::SumcheckRound` so the
-    /// new unified-reduce path sees every reduce site. Runtime ignores the
-    /// `Op::Reduce` during Phase B and dispatches off the legacy op.
+    /// Emit a single sumcheck round as a bind (rounds ≥ 1) + reduce pair.
     pub fn sumcheck_round(
         &mut self,
         kernel: usize,
@@ -236,11 +249,10 @@ impl ModuleBuilder {
         bind_challenge: Option<ChallengeIdx>,
         stage: VerifierStageIndex,
     ) {
-        self.ops.push(Op::SumcheckRound {
-            kernel,
-            round,
-            bind_challenge,
-        });
+        if let Some(ch) = bind_challenge {
+            self.ops
+                .push(bind_kernel_inputs_op(&self.kernels[kernel], ch));
+        }
         self.ops.push(Op::Reduce {
             specs: vec![flat_reduce_spec(
                 kernel,
@@ -267,13 +279,8 @@ impl ModuleBuilder {
         });
     }
 
-    /// Emit a loop of standard sumcheck rounds: round → absorb → squeeze.
-    /// Returns the vector of round challenge indices.
-    ///
-    /// The emitted op sequence per round is:
-    ///   - `SumcheckRound { kernel, round, bind_challenge: prev }`
-    ///   - `AbsorbRoundPoly { kernel, num_coeffs, SumcheckPoly }`
-    ///   - `Squeeze { challenge }`
+    /// Emit a loop of standard sumcheck rounds: bind (rounds ≥ 1) → reduce →
+    /// absorb → squeeze. Returns the vector of round challenge indices.
     pub fn sumcheck_rounds(
         &mut self,
         kernel: usize,
@@ -285,16 +292,11 @@ impl ModuleBuilder {
     ) -> Vec<ChallengeIdx> {
         let mut indices = Vec::with_capacity(num_rounds);
         for round in 0..num_rounds {
-            let bind = if round > 0 {
-                Some(indices[round - 1])
-            } else {
-                None
-            };
-            self.ops.push(Op::SumcheckRound {
-                kernel,
-                round,
-                bind_challenge: bind,
-            });
+            if round > 0 {
+                let prev = indices[round - 1];
+                self.ops
+                    .push(bind_kernel_inputs_op(&self.kernels[kernel], prev));
+            }
             self.ops.push(Op::Reduce {
                 specs: vec![flat_reduce_spec(
                     kernel,
@@ -689,13 +691,6 @@ impl ModuleBuilder {
                 if !is_instance {
                     if let Some(seg) = phase.segmented.as_ref() {
                         let round_within_phase = instance_round - phase_start;
-                        self.ops.push(Op::InstanceSegmentedReduce {
-                            batch,
-                            instance: inst_idx,
-                            kernel,
-                            round_within_phase,
-                            segmented: seg.clone(),
-                        });
                         let gruen_context = kdef.spec.gruen_hint.as_ref().map(|_| GruenContext {
                             current_round: round_within_phase,
                         });
@@ -723,11 +718,6 @@ impl ModuleBuilder {
                             }],
                         });
                     } else {
-                        self.ops.push(Op::InstanceReduce {
-                            batch,
-                            instance: inst_idx,
-                            kernel,
-                        });
                         self.ops.push(Op::Reduce {
                             specs: vec![flat_reduce_spec(
                                 kernel,

@@ -2,15 +2,14 @@
 
 use std::collections::HashMap;
 
-use jolt_compiler::module::{ClaimFactor, ClaimFormula, Op};
+use jolt_compiler::module::{ClaimFactor, ClaimFormula, ReduceAxes, ReduceSpec};
 use jolt_compiler::{GruenHint, GruenQ, Iteration, PolynomialId};
 use jolt_field::{Field, FieldAccumulator};
 
 use jolt_compute::{
-    BindingOrder, Buf, ComputeBackend, DeviceBuffer, HandleId, HandleShape, Scalar,
+    BindingOrder, Buf, ComputeBackend, DeviceBuffer, HandleId, HandleShape, ReduceInputs, Scalar,
 };
 
-use crate::fuse::fuse_reduce_windows;
 use crate::handles::{CpuHandleState, HandleStore};
 
 /// Parallelism threshold: buffers smaller than this use sequential loops.
@@ -125,65 +124,67 @@ impl ComputeBackend for CpuBackend {
     type Buffer<T: Scalar> = Vec<T>;
     type CompiledKernel<F: Field> = CpuKernel<F>;
 
-    fn fuse_ops(&self, ops: &[Op]) -> Option<Vec<Op>> {
-        Some(fuse_reduce_windows(ops))
-    }
-
     fn compile<F: Field>(&self, spec: &jolt_compiler::KernelSpec) -> CpuKernel<F> {
         crate::compile(spec)
     }
 
-    fn reduce_single<F: Field>(
+    #[tracing::instrument(skip_all, name = "CpuBackend::reduce")]
+    fn reduce<F: Field>(
         &self,
-        kernel: &CpuKernel<F>,
-        inputs: &[&Buf<Self, F>],
+        specs: &[ReduceSpec],
+        inputs: &ReduceInputs<'_, Self, F>,
         challenges: &[F],
-    ) -> Vec<F> {
-        let num_evals = kernel.num_evals;
-        let order = kernel.binding_order;
-
-        // Composition value columns (excluding iteration-specific extras).
-        let num_value_inputs = inputs.len()
-            - match kernel.iteration {
-                Iteration::Dense | Iteration::Domain { .. } => 0,
-                Iteration::DenseTensor | Iteration::Gruen => 2,
-                Iteration::Sparse => 1,
-            };
-        let value_refs: Vec<&Vec<F>> = inputs[..num_value_inputs]
+    ) -> Vec<Vec<F>> {
+        specs
             .iter()
-            .map(|db| db.as_field())
-            .collect();
-
-        match &kernel.iteration {
-            Iteration::Dense => reduce_dense(&value_refs, kernel, challenges, num_evals, order),
-            Iteration::DenseTensor => {
-                let outer = inputs[num_value_inputs].as_field();
-                let inner = inputs[num_value_inputs + 1].as_field();
-                reduce_tensor(&value_refs, outer, inner, kernel, challenges, num_evals)
-            }
-            Iteration::Sparse => {
-                let keys = inputs[num_value_inputs].as_u64();
-                reduce_sparse(&value_refs, keys, kernel, challenges, num_evals)
-            }
-            Iteration::Domain {
-                domain_size,
-                stride,
-                domain_start,
-                domain_indexed,
-                ..
-            } => reduce_domain(
-                &value_refs,
-                kernel,
-                challenges,
-                *domain_size,
-                *stride,
-                *domain_start,
-                domain_indexed,
-            ),
-            Iteration::Gruen => {
-                panic!("Iteration::Gruen runtime dispatch lands in iter 17")
-            }
-        }
+            .map(|spec| {
+                let kernel = &inputs.kernels[spec.kernel];
+                let input_bufs: Vec<&Buf<Self, F>> =
+                    spec.inputs.iter().map(|r| inputs.buffer(r)).collect();
+                match &spec.axes {
+                    ReduceAxes::Flat => reduce_flat(kernel, &input_bufs, challenges),
+                    ReduceAxes::Product {
+                        outer_eq,
+                        inner_only,
+                        inner_size,
+                        gruen_context,
+                    } => {
+                        let outer = inputs.outer_eq(outer_eq);
+                        let field_inputs: Vec<&Vec<F>> =
+                            input_bufs.iter().map(|b| b.as_field()).collect();
+                        match gruen_context {
+                            None => reduce_product_dense(
+                                kernel,
+                                &field_inputs,
+                                outer,
+                                inner_only,
+                                *inner_size,
+                                challenges,
+                            ),
+                            Some(gc) => {
+                                let prev_claim = inputs.prev_claim(&spec.destination);
+                                reduce_product_gruen(
+                                    kernel,
+                                    &field_inputs,
+                                    outer,
+                                    inner_only,
+                                    *inner_size,
+                                    challenges,
+                                    prev_claim,
+                                    gc.current_round,
+                                )
+                            }
+                        }
+                    }
+                    ReduceAxes::Domain { .. } => {
+                        panic!("ReduceAxes::Domain has no CPU dispatch wired")
+                    }
+                    ReduceAxes::Sparse { .. } => {
+                        panic!("ReduceAxes::Sparse has no CPU dispatch wired")
+                    }
+                }
+            })
+            .collect()
     }
 
     fn bind<F: Field>(&self, kernel: &CpuKernel<F>, inputs: &mut [Buf<Self, F>], scalar: F) {
@@ -537,230 +538,6 @@ impl ComputeBackend for CpuBackend {
         projected
     }
 
-    #[tracing::instrument(skip_all, name = "CpuBackend::segmented_reduce")]
-    fn segmented_reduce<F: Field>(
-        &self,
-        kernel: &CpuKernel<F>,
-        inputs: &[&Vec<F>],
-        outer_eq: &[F],
-        inner_only: &[bool],
-        inner_size: usize,
-        challenges: &[F],
-    ) -> Vec<F> {
-        let num_evals = kernel.num_evals;
-
-        // Hoist inner-only buffers once — they're invariant across outer
-        // positions, so cloning per-iter (old behavior) was N×cores wasted
-        // copies of the same data.
-        let inner_only_bufs: Vec<Option<Buf<Self, F>>> = inputs
-            .iter()
-            .enumerate()
-            .map(|(j, data)| inner_only[j].then(|| DeviceBuffer::Field((*data).clone())))
-            .collect();
-
-        let active: Vec<(usize, F)> = outer_eq
-            .iter()
-            .enumerate()
-            .filter_map(|(a, &w)| (!w.is_zero()).then_some((a, w)))
-            .collect();
-
-        let reduce_one = |a: usize, weight: F| -> Vec<F> {
-            let start = a * inner_size;
-            // Per-iter outer-indexed slice copy (single allocation, no
-            // double-copy via scratch+clone).
-            let outer_bufs: Vec<Buf<Self, F>> = inputs
-                .iter()
-                .zip(inner_only.iter())
-                .filter(|(_, &io)| !io)
-                .map(|(data, _)| DeviceBuffer::Field(data[start..start + inner_size].to_vec()))
-                .collect();
-
-            let mut outer_idx = 0;
-            let col_refs: Vec<&Buf<Self, F>> = (0..inputs.len())
-                .map(|j| {
-                    if let Some(b) = &inner_only_bufs[j] {
-                        b
-                    } else {
-                        let r = &outer_bufs[outer_idx];
-                        outer_idx += 1;
-                        r
-                    }
-                })
-                .collect();
-
-            let evals = self.reduce_single(kernel, &col_refs, challenges);
-            evals.into_iter().map(|e| weight * e).collect()
-        };
-
-        #[cfg(feature = "parallel")]
-        {
-            if active.len() >= 2 {
-                use rayon::prelude::*;
-                return active.par_iter().map(|&(a, w)| reduce_one(a, w)).reduce(
-                    || vec![F::zero(); num_evals],
-                    |mut a, b| {
-                        for (ai, bi) in a.iter_mut().zip(b) {
-                            *ai += bi;
-                        }
-                        a
-                    },
-                );
-            }
-        }
-
-        let mut total = vec![F::zero(); num_evals];
-        for (a, w) in active {
-            let evals = reduce_one(a, w);
-            for (t, e) in total.iter_mut().zip(evals) {
-                *t += e;
-            }
-        }
-        total
-    }
-
-    #[tracing::instrument(skip_all, name = "CpuBackend::gruen_segmented_reduce")]
-    fn gruen_segmented_reduce<F: Field>(
-        &self,
-        kernel: &CpuKernel<F>,
-        inputs: &[&Vec<F>],
-        outer_eq: &[F],
-        inner_only: &[bool],
-        inner_size: usize,
-        challenges: &[F],
-        prev_claim: F,
-        current_round: usize,
-    ) -> Vec<F> {
-        let hint = kernel
-            .gruen_hint
-            .as_ref()
-            .expect("gruen_segmented_reduce: kernel missing GruenHint");
-        debug_assert_eq!(kernel.num_evals, 4, "Gruen cubic assembly expects 4 evals");
-        debug_assert!(
-            matches!(kernel.binding_order, BindingOrder::LowToHigh),
-            "Gruen CPU path currently assumes LowToHigh binding"
-        );
-
-        let half = inner_size / 2;
-        let eq_in = hint.eq_input as usize;
-        let q_lincombo = match &hint.q {
-            GruenQ::LinCombo(q) => q,
-            GruenQ::GeneralQ { .. } => {
-                panic!("gruen_segmented_reduce: GeneralQ dispatch not wired yet (iter 72+)")
-            }
-        };
-        let a_in = q_lincombo.a_input as usize;
-        let b_in = q_lincombo.b_input as usize;
-        let c_in = q_lincombo.c_input as usize;
-        let gamma = challenges[q_lincombo.gamma_challenge.0];
-        // eq_table layout: bit 0 corresponds to the LAST entry processed
-        // (see `CpuBackend::eq_table`), so for LowToHigh binding of bit k
-        // the current variable's challenge is at `len - 1 - k`.
-        let w_current =
-            challenges[hint.eq_challenges[hint.eq_challenges.len() - 1 - current_round].0];
-
-        // eq_cycle is inner_only — shared across outers. Precompute
-        // E[i] = eq_cycle[2i] + eq_cycle[2i+1] (LowToHigh: (1-w)+w = 1 cancels
-        // the current-round variable, leaving only higher-variable contributions).
-        debug_assert!(
-            inner_only[eq_in],
-            "eq_input must be inner_only for Gruen path"
-        );
-        let eq_cycle = inputs[eq_in];
-        debug_assert_eq!(
-            eq_cycle.len(),
-            2 * half,
-            "eq_cycle length mismatch in Gruen path"
-        );
-        let e_active: Vec<F> = (0..half)
-            .map(|i| eq_cycle[2 * i] + eq_cycle[2 * i + 1])
-            .collect();
-
-        let ra_buf = inputs[a_in];
-        let val_buf = inputs[b_in];
-        let inc_buf = inputs[c_in];
-        // Inner-only buffers are shared across outer positions (length
-        // `inner_size`); outer-indexed buffers carry `outer × inner` and must
-        // be sliced at `a_idx * inner_size`.
-        let a_inner = inner_only[a_in];
-        let b_inner = inner_only[b_in];
-        let c_inner = inner_only[c_in];
-
-        // Per-outer accumulator: compute (q_const_a, q_quad_a) and multiply
-        // by outer_eq[a], then sum into totals. q(x) = a(x)·(b(x)+γ·(b(x)+c(x))).
-        let reduce_outer = |a_idx: usize, weight: F| -> (F, F) {
-            let start = a_idx * inner_size;
-            let ra_start = if a_inner { 0 } else { start };
-            let val_start = if b_inner { 0 } else { start };
-            let inc_start = if c_inner { 0 } else { start };
-            let ra = &ra_buf[ra_start..ra_start + inner_size];
-            let val = &val_buf[val_start..val_start + inner_size];
-            let inc = &inc_buf[inc_start..inc_start + inner_size];
-            let mut q_const = F::zero();
-            let mut q_quad = F::zero();
-            for i in 0..half {
-                let ra_lo = ra[2 * i];
-                let ra_hi = ra[2 * i + 1];
-                let val_lo = val[2 * i];
-                let val_hi = val[2 * i + 1];
-                let inc_lo = inc[2 * i];
-                let inc_hi = inc[2 * i + 1];
-                // b(x) = val(x) + gamma*(val(x) + inc(x))
-                let b_lo = val_lo + gamma * (val_lo + inc_lo);
-                let b_hi = val_hi + gamma * (val_hi + inc_hi);
-                let e = e_active[i];
-                q_const += e * ra_lo * b_lo;
-                q_quad += e * (ra_hi - ra_lo) * (b_hi - b_lo);
-            }
-            (weight * q_const, weight * q_quad)
-        };
-
-        let active: Vec<(usize, F)> = outer_eq
-            .iter()
-            .enumerate()
-            .filter_map(|(a, &w)| (!w.is_zero()).then_some((a, w)))
-            .collect();
-
-        let (total_q_const, total_q_quad) = {
-            #[cfg(feature = "parallel")]
-            {
-                use rayon::prelude::*;
-                if active.len() >= 2 {
-                    active
-                        .par_iter()
-                        .map(|&(a, w)| reduce_outer(a, w))
-                        .reduce(|| (F::zero(), F::zero()), |x, y| (x.0 + y.0, x.1 + y.1))
-                } else {
-                    let mut acc = (F::zero(), F::zero());
-                    for (a, w) in &active {
-                        let (c, q) = reduce_outer(*a, *w);
-                        acc.0 += c;
-                        acc.1 += q;
-                    }
-                    acc
-                }
-            }
-            #[cfg(not(feature = "parallel"))]
-            {
-                let mut acc = (F::zero(), F::zero());
-                for (a, w) in &active {
-                    let (c, q) = reduce_outer(*a, *w);
-                    acc.0 += c;
-                    acc.1 += q;
-                }
-                acc
-            }
-        };
-
-        crate::gruen::gruen_cubic_evals(
-            F::one(),
-            w_current,
-            total_q_const,
-            total_q_quad,
-            prev_claim,
-        )
-        .to_vec()
-    }
-
     fn open_handle<F: Field>(&self, shape: HandleShape<'_, F>) -> HandleId {
         HandleStore::global().open(shape)
     }
@@ -803,6 +580,289 @@ impl ComputeBackend for CpuBackend {
         });
         eq_project_with_table(source_data, &table, inner_size, outer_size)
     }
+}
+
+impl CpuBackend {
+    /// Flat reduce leaf: dispatch by kernel iteration.
+    ///
+    /// Exposed primarily for tests and benches that want to exercise a single
+    /// leaf kernel without going through the full `reduce(specs, inputs, ...)`
+    /// dispatch.
+    pub fn reduce_flat<F: Field>(
+        &self,
+        kernel: &CpuKernel<F>,
+        inputs: &[&Buf<Self, F>],
+        challenges: &[F],
+    ) -> Vec<F> {
+        reduce_flat(kernel, inputs, challenges)
+    }
+}
+
+/// Flat reduce leaf: dispatch by kernel iteration. Each input is one of the
+/// spec's `inputs` in kernel-input layout (value columns first, then
+/// iteration-specific extras).
+fn reduce_flat<F: Field>(
+    kernel: &CpuKernel<F>,
+    inputs: &[&Buf<CpuBackend, F>],
+    challenges: &[F],
+) -> Vec<F> {
+    let num_evals = kernel.num_evals;
+    let order = kernel.binding_order;
+
+    let num_value_inputs = inputs.len()
+        - match kernel.iteration {
+            Iteration::Dense | Iteration::Domain { .. } => 0,
+            Iteration::DenseTensor | Iteration::Gruen => 2,
+            Iteration::Sparse => 1,
+        };
+    let value_refs: Vec<&Vec<F>> = inputs[..num_value_inputs]
+        .iter()
+        .map(|db| db.as_field())
+        .collect();
+
+    match &kernel.iteration {
+        Iteration::Dense => reduce_dense(&value_refs, kernel, challenges, num_evals, order),
+        Iteration::DenseTensor => {
+            let outer = inputs[num_value_inputs].as_field();
+            let inner = inputs[num_value_inputs + 1].as_field();
+            reduce_tensor(&value_refs, outer, inner, kernel, challenges, num_evals)
+        }
+        Iteration::Sparse => {
+            let keys = inputs[num_value_inputs].as_u64();
+            reduce_sparse(&value_refs, keys, kernel, challenges, num_evals)
+        }
+        Iteration::Domain {
+            domain_size,
+            stride,
+            domain_start,
+            domain_indexed,
+            ..
+        } => reduce_domain(
+            &value_refs,
+            kernel,
+            challenges,
+            *domain_size,
+            *stride,
+            *domain_start,
+            domain_indexed,
+        ),
+        Iteration::Gruen => {
+            panic!("Iteration::Gruen leaf dispatch routes through reduce_product_gruen")
+        }
+    }
+}
+
+/// Outer × inner segmented reduce with outer-eq weighting.
+///
+/// Slices outer-indexed inputs at each active outer position, shares
+/// inner-only inputs across positions, calls [`reduce_flat`] on the
+/// inner-sized view, and sums `outer_eq[a] × inst_evals` across positions.
+#[tracing::instrument(skip_all, name = "reduce_product_dense")]
+fn reduce_product_dense<F: Field>(
+    kernel: &CpuKernel<F>,
+    inputs: &[&Vec<F>],
+    outer_eq: &[F],
+    inner_only: &[bool],
+    inner_size: usize,
+    challenges: &[F],
+) -> Vec<F> {
+    let num_evals = kernel.num_evals;
+
+    let inner_only_bufs: Vec<Option<Buf<CpuBackend, F>>> = inputs
+        .iter()
+        .enumerate()
+        .map(|(j, data)| inner_only[j].then(|| DeviceBuffer::Field((*data).clone())))
+        .collect();
+
+    let active: Vec<(usize, F)> = outer_eq
+        .iter()
+        .enumerate()
+        .filter_map(|(a, &w)| (!w.is_zero()).then_some((a, w)))
+        .collect();
+
+    let reduce_one = |a: usize, weight: F| -> Vec<F> {
+        let start = a * inner_size;
+        let outer_bufs: Vec<Buf<CpuBackend, F>> = inputs
+            .iter()
+            .zip(inner_only.iter())
+            .filter(|(_, &io)| !io)
+            .map(|(data, _)| DeviceBuffer::Field(data[start..start + inner_size].to_vec()))
+            .collect();
+
+        let mut outer_idx = 0;
+        let col_refs: Vec<&Buf<CpuBackend, F>> = (0..inputs.len())
+            .map(|j| {
+                if let Some(b) = &inner_only_bufs[j] {
+                    b
+                } else {
+                    let r = &outer_bufs[outer_idx];
+                    outer_idx += 1;
+                    r
+                }
+            })
+            .collect();
+
+        let evals = reduce_flat(kernel, &col_refs, challenges);
+        evals.into_iter().map(|e| weight * e).collect()
+    };
+
+    #[cfg(feature = "parallel")]
+    {
+        if active.len() >= 2 {
+            use rayon::prelude::*;
+            return active.par_iter().map(|&(a, w)| reduce_one(a, w)).reduce(
+                || vec![F::zero(); num_evals],
+                |mut a, b| {
+                    for (ai, bi) in a.iter_mut().zip(b) {
+                        *ai += bi;
+                    }
+                    a
+                },
+            );
+        }
+    }
+
+    let mut total = vec![F::zero(); num_evals];
+    for (a, w) in active {
+        let evals = reduce_one(a, w);
+        for (t, e) in total.iter_mut().zip(evals) {
+            *t += e;
+        }
+    }
+    total
+}
+
+/// Dao-Thaler + Gruen cubic-assembly segmented reduce.
+///
+/// Assembles `s(X) = l(X) · q(X)` evaluations at `{0,1,2,3}` using the
+/// previous-round claim `prev_claim = s(0) + s(1)` to recover `q(1)`,
+/// avoiding the 4-point evaluation grid. Requires the kernel to carry
+/// a [`GruenHint`] baked in at compile time.
+#[tracing::instrument(skip_all, name = "reduce_product_gruen")]
+#[allow(clippy::too_many_arguments)]
+fn reduce_product_gruen<F: Field>(
+    kernel: &CpuKernel<F>,
+    inputs: &[&Vec<F>],
+    outer_eq: &[F],
+    inner_only: &[bool],
+    inner_size: usize,
+    challenges: &[F],
+    prev_claim: F,
+    current_round: usize,
+) -> Vec<F> {
+    let hint = kernel
+        .gruen_hint
+        .as_ref()
+        .expect("reduce_product_gruen: kernel missing GruenHint");
+    debug_assert_eq!(kernel.num_evals, 4, "Gruen cubic assembly expects 4 evals");
+    debug_assert!(
+        matches!(kernel.binding_order, BindingOrder::LowToHigh),
+        "Gruen CPU path currently assumes LowToHigh binding"
+    );
+
+    let half = inner_size / 2;
+    let eq_in = hint.eq_input as usize;
+    let q_lincombo = match &hint.q {
+        GruenQ::LinCombo(q) => q,
+        GruenQ::GeneralQ { .. } => {
+            panic!("reduce_product_gruen: GeneralQ dispatch not wired yet")
+        }
+    };
+    let a_in = q_lincombo.a_input as usize;
+    let b_in = q_lincombo.b_input as usize;
+    let c_in = q_lincombo.c_input as usize;
+    let gamma = challenges[q_lincombo.gamma_challenge.0];
+    // eq_table layout: bit 0 corresponds to the LAST entry processed
+    // (see `CpuBackend::eq_table`), so for LowToHigh binding of bit k
+    // the current variable's challenge is at `len - 1 - k`.
+    let w_current = challenges[hint.eq_challenges[hint.eq_challenges.len() - 1 - current_round].0];
+
+    debug_assert!(
+        inner_only[eq_in],
+        "eq_input must be inner_only for Gruen path"
+    );
+    let eq_cycle = inputs[eq_in];
+    debug_assert_eq!(
+        eq_cycle.len(),
+        2 * half,
+        "eq_cycle length mismatch in Gruen path"
+    );
+    let e_active: Vec<F> = (0..half)
+        .map(|i| eq_cycle[2 * i] + eq_cycle[2 * i + 1])
+        .collect();
+
+    let ra_buf = inputs[a_in];
+    let val_buf = inputs[b_in];
+    let inc_buf = inputs[c_in];
+    let a_inner = inner_only[a_in];
+    let b_inner = inner_only[b_in];
+    let c_inner = inner_only[c_in];
+
+    let reduce_outer = |a_idx: usize, weight: F| -> (F, F) {
+        let start = a_idx * inner_size;
+        let ra_start = if a_inner { 0 } else { start };
+        let val_start = if b_inner { 0 } else { start };
+        let inc_start = if c_inner { 0 } else { start };
+        let ra = &ra_buf[ra_start..ra_start + inner_size];
+        let val = &val_buf[val_start..val_start + inner_size];
+        let inc = &inc_buf[inc_start..inc_start + inner_size];
+        let mut q_const = F::zero();
+        let mut q_quad = F::zero();
+        for i in 0..half {
+            let ra_lo = ra[2 * i];
+            let ra_hi = ra[2 * i + 1];
+            let val_lo = val[2 * i];
+            let val_hi = val[2 * i + 1];
+            let inc_lo = inc[2 * i];
+            let inc_hi = inc[2 * i + 1];
+            let b_lo = val_lo + gamma * (val_lo + inc_lo);
+            let b_hi = val_hi + gamma * (val_hi + inc_hi);
+            let e = e_active[i];
+            q_const += e * ra_lo * b_lo;
+            q_quad += e * (ra_hi - ra_lo) * (b_hi - b_lo);
+        }
+        (weight * q_const, weight * q_quad)
+    };
+
+    let active: Vec<(usize, F)> = outer_eq
+        .iter()
+        .enumerate()
+        .filter_map(|(a, &w)| (!w.is_zero()).then_some((a, w)))
+        .collect();
+
+    let (total_q_const, total_q_quad) = {
+        #[cfg(feature = "parallel")]
+        {
+            use rayon::prelude::*;
+            if active.len() >= 2 {
+                active
+                    .par_iter()
+                    .map(|&(a, w)| reduce_outer(a, w))
+                    .reduce(|| (F::zero(), F::zero()), |x, y| (x.0 + y.0, x.1 + y.1))
+            } else {
+                let mut acc = (F::zero(), F::zero());
+                for (a, w) in &active {
+                    let (c, q) = reduce_outer(*a, *w);
+                    acc.0 += c;
+                    acc.1 += q;
+                }
+                acc
+            }
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            let mut acc = (F::zero(), F::zero());
+            for (a, w) in &active {
+                let (c, q) = reduce_outer(*a, *w);
+                acc.0 += c;
+                acc.1 += q;
+            }
+            acc
+        }
+    };
+
+    crate::gruen::gruen_cubic_evals(F::one(), w_current, total_q_const, total_q_quad, prev_claim)
+        .to_vec()
 }
 
 fn eq_project_with_table<F: Field>(
@@ -1802,7 +1862,7 @@ mod tests {
             Fr::from_u64(19),
         ]));
 
-        let result = b.reduce_single(&kernel, &[&col_a, &col_b, &keys], &[]);
+        let result = b.reduce_flat(&kernel, &[&col_a, &col_b, &keys], &[]);
 
         // Toom-Cook grid {1, ∞} for d=2:
         // Pair 0: lo=(2,11), hi=(3,13) → P(1)=3*13=39, P(∞)=1*2=2
@@ -1821,7 +1881,7 @@ mod tests {
         let col_a: Buf<CpuBackend, Fr> = DeviceBuffer::Field(b.upload(&[Fr::from_u64(4)]));
         let col_b: Buf<CpuBackend, Fr> = DeviceBuffer::Field(b.upload(&[Fr::from_u64(8)]));
 
-        let result = b.reduce_single(&kernel, &[&col_a, &col_b, &keys], &[]);
+        let result = b.reduce_flat(&kernel, &[&col_a, &col_b, &keys], &[]);
 
         // P(1)=hi_a*hi_b=0*0=0, P(∞)=(0-4)*(0-8)=(-4)*(-8)=32
         assert_eq!(result[0], Fr::zero());
@@ -1838,7 +1898,7 @@ mod tests {
         let col_a: Buf<CpuBackend, Fr> = DeviceBuffer::Field(b.upload(&[Fr::from_u64(5)]));
         let col_b: Buf<CpuBackend, Fr> = DeviceBuffer::Field(b.upload(&[Fr::from_u64(7)]));
 
-        let result = b.reduce_single(&kernel, &[&col_a, &col_b, &keys], &[]);
+        let result = b.reduce_flat(&kernel, &[&col_a, &col_b, &keys], &[]);
 
         // P(1)=hi_a*hi_b=5*7=35, P(∞)=(5-0)*(7-0)=35
         assert_eq!(result[0], Fr::from_u64(35));
@@ -1865,7 +1925,7 @@ mod tests {
             Fr::from_u64(40),
         ]));
 
-        let result = b.reduce_single(&kernel, &[&col_a, &col_b, &keys], &[]);
+        let result = b.reduce_flat(&kernel, &[&col_a, &col_b, &keys], &[]);
 
         // Key 1 (odd-only): lo=(0,0), hi=(2,10) → P(1)=2*10=20, P(∞)=2*10=20
         // Key 4 (even-only): lo=(3,20), hi=(0,0) → P(1)=0, P(∞)=(-3)*(-20)=60
@@ -2012,7 +2072,7 @@ mod tests {
             DeviceBuffer::U64(b.upload(&keys)),
         ];
         let buf_refs: Vec<&Buf<CpuBackend, Fr>> = bufs.iter().collect();
-        let result = b.reduce_single(&kernel, &buf_refs, &[]);
+        let result = b.reduce_flat(&kernel, &buf_refs, &[]);
 
         let expected = reference_sparse_product(&col_a, &col_b, &keys);
         assert_eq!(result, expected, "large sparse reduce mismatch");

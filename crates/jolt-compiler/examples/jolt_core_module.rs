@@ -908,13 +908,6 @@ fn emit_unrolled_batched_rounds(
                 if phase.segmented.is_some() {
                     let seg = phase.segmented.clone().unwrap();
                     let round_within_phase = instance_round - phase_start;
-                    ops.push(Op::InstanceSegmentedReduce {
-                        batch: batch_idx,
-                        instance: inst_idx,
-                        kernel,
-                        round_within_phase,
-                        segmented: seg.clone(),
-                    });
                     let gruen_context = kdef.spec.gruen_hint.as_ref().map(|_| GruenContext {
                         current_round: round_within_phase,
                     });
@@ -942,11 +935,6 @@ fn emit_unrolled_batched_rounds(
                         }],
                     });
                 } else {
-                    ops.push(Op::InstanceReduce {
-                        batch: batch_idx,
-                        instance: inst_idx,
-                        kernel,
-                    });
                     ops.push(Op::Reduce {
                         specs: vec![ReduceSpec {
                             kernel,
@@ -1345,11 +1333,6 @@ fn build_stage1(
             }
         }
     }
-    ops.push(Op::SumcheckRound {
-        kernel: outer_uniskip_kernel,
-        round: 0,
-        bind_challenge: None,
-    });
     ops.push(Op::Reduce {
         specs: vec![ReduceSpec {
             kernel: outer_uniskip_kernel,
@@ -1480,16 +1463,22 @@ fn build_stage1(
     // Round 0 has no bind (initial 2T-entry buffers from group-split projection).
     // Rounds 1+ bind at the previous round's squeezed challenge.
     for round in 0..params.outer_remaining_rounds {
-        let bind = if round > 0 {
-            Some(ChallengeIdx(ch_batch.0 + round)) // previous round's challenge
-        } else {
-            None
-        };
-        ops.push(Op::SumcheckRound {
-            kernel: outer_remaining_kernel,
-            round,
-            bind_challenge: bind,
-        });
+        if round > 0 {
+            let prev = ChallengeIdx(ch_batch.0 + round);
+            let kdef = &kernels[outer_remaining_kernel];
+            let mut seen = std::collections::HashSet::new();
+            let polys: Vec<_> = kdef
+                .inputs
+                .iter()
+                .map(|b| b.poly())
+                .filter(|pid| seen.insert(*pid))
+                .collect();
+            ops.push(Op::Bind {
+                polys,
+                challenge: prev,
+                order: kdef.spec.binding_order,
+            });
+        }
         ops.push(Op::Reduce {
             specs: vec![ReduceSpec {
                 kernel: outer_remaining_kernel,
@@ -1885,11 +1874,6 @@ fn build_stage2(
             binding: binding.clone(),
         });
     }
-    ops.push(Op::SumcheckRound {
-        kernel: product_uniskip_kernel,
-        round: 0,
-        bind_challenge: None,
-    });
     ops.push(Op::Reduce {
         specs: vec![ReduceSpec {
             kernel: product_uniskip_kernel,
@@ -7013,7 +6997,7 @@ fn print_stats(module: &Module, params: &ModuleParams) {
     let mut counts = [0usize; 16];
     for op in &module.prover.ops {
         match op {
-            Op::SumcheckRound { .. } => counts[0] += 1,
+            Op::Reduce { .. } => counts[0] += 1,
             Op::Evaluate { .. } => counts[1] += 1,
             Op::Bind { .. } => counts[2] += 1,
             Op::LagrangeProject { .. }
@@ -7044,10 +7028,6 @@ fn print_stats(module: &Module, params: &ModuleParams) {
             | Op::MaterializeSegmentedOuterEq { .. }
             | Op::InstanceBindPreviousPhase { .. }
             | Op::CaptureScalar { .. }
-            | Op::InstanceReduce { .. }
-            | Op::InstanceSegmentedReduce { .. }
-            | Op::BatchRoundEvaluate { .. }
-            | Op::Reduce { .. }
             | Op::InstanceBind { .. }
             | Op::BindCarryBuffers { .. }
             | Op::BatchAccumulateInstance { .. }
@@ -7069,7 +7049,7 @@ fn print_stats(module: &Module, params: &ModuleParams) {
     }
     eprintln!("\n=== Op Counts ===");
     eprintln!("  -- Compute --");
-    eprintln!("  SumcheckRound:         {}", counts[0]);
+    eprintln!("  Reduce:                {}", counts[0]);
     eprintln!("  GranularBatchOps:     {}", counts[14]);
     eprintln!("  Evaluate:              {}", counts[1]);
     eprintln!("  Bind:                  {}", counts[2]);
