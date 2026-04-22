@@ -32,18 +32,3 @@ Zicntr-csrrc-00
 Zicntr-csrrs-00
 Zihpm-csrrc-00
 
-# ---------------------------------------------------------------------------
-# Zalrsc-sc.w-00 — 32-bit store-conditional (lr.w/sc.w).
-# Jolt's tracer implementation of sc.w diverges from the ACT4 expected
-# signature on this specific test. Cause is under investigation; a tracer
-# fix is out of scope for this spec.
-# ---------------------------------------------------------------------------
-Zalrsc-sc.w-00
-
-# ---------------------------------------------------------------------------
-# Zca-c.slli-00 — compressed shift-left-immediate.
-# Jolt's tracer handles c.slli correctly for the vast majority of inputs
-# (Zca-c.add/c.and/c.or/... all pass), but this specific generated test
-# diverges. Out of scope per spec.
-# ---------------------------------------------------------------------------
-Zca-c.slli-00

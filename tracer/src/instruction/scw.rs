@@ -395,6 +395,42 @@ mod tests {
         );
     }
 
+    /// Reproduces the first test case from ACT4's Zalrsc-sc.w-00.S, executed
+    /// via the emulator's .execute() path (what jolt-emu's run_test uses by
+    /// default, not the .trace() path exercised by the other tests in this
+    /// file). Writes the exact scratch init pattern, runs lr.w→sc.w→ld,
+    /// verifies x26 and the subsequent ld match what Sail produces.
+    #[test]
+    fn test_scw_act4_first_case_exec_path() {
+        let mut cpu = setup_cpu();
+        let addr = DRAM_BASE;
+        // Initial scratch word per rvtest_setup.h:283:
+        //   .dword 0xDEAD0001FFFEBEEF, 0xDEAD0002FFFDBEEF, ...
+        cpu.mmu.store_doubleword(addr, 0xDEAD0001FFFEBEEF).unwrap();
+
+        cpu.x[1] = addr as i64;
+        cpu.x[12] = 0x0f2091f8cdf4dcc0_u64 as i64;
+
+        // lr.w x0, (x1) — establish reservation; x0 write is discarded.
+        let decoded = Instruction::decode(encode_lrw(0, 1), 0x1000, false).unwrap();
+        decoded.execute(&mut cpu);
+
+        // sc.w x26, x12, (x1) — store 32-bit low half of x12 at (x1); x26 = 0.
+        let decoded = Instruction::decode(encode_scw(26, 1, 12), 0x1004, false).unwrap();
+        decoded.execute(&mut cpu);
+
+        assert_eq!(cpu.x[26], 0, "sc.w should succeed after matching lr.w");
+
+        // LREG on RV64 is ld — load 8 bytes, little-endian. Upper 4 bytes
+        // should be unchanged from the scratch init; low 4 bytes should be
+        // x12[31:0] = 0xcdf4dcc0.
+        let (loaded, _) = cpu.mmu.load_doubleword(addr).unwrap();
+        assert_eq!(
+            loaded, 0xDEAD0001CDF4DCC0,
+            "after sc.w (word store), ld should see init high + stored low; got 0x{loaded:016x}"
+        );
+    }
+
     /// Regression test: SC.W with rd=x0 must still succeed when a reservation
     /// is held. Before the fix, dispatching through the generic rd=x0 rewrite
     /// path bypassed VirtualAdvice patching, so the prover-supplied success
