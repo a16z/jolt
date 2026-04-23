@@ -136,7 +136,9 @@ impl ModularStack {
         };
         let pcs_prover_setup = DoryScheme::setup_prover(max_log_k_chunk + max_log_t);
         let pcs_verifier_setup =
-            <DoryScheme as jolt_openings::CommitmentScheme>::verifier_setup(&pcs_prover_setup);
+            <DoryScheme as jolt_openings::CommitmentScheme>::project_verifier_setup(
+                &pcs_prover_setup,
+            );
 
         // -- 3. Build module, witness, config.
         let (

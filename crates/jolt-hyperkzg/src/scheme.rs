@@ -7,7 +7,11 @@ use std::marker::PhantomData;
 
 use jolt_crypto::{Commitment, DeriveSetup, JoltGroup, PairingGroup, PedersenSetup};
 use jolt_field::Field;
-use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError};
+use jolt_openings::{
+    homomorphic_prove_batch, homomorphic_verify_batch, AdditivelyHomomorphic,
+    AdditivelyHomomorphicVerifier, CommitmentScheme, CommitmentSchemeVerifier, OpeningClaim,
+    OpeningsError, ProverClaim,
+};
 use jolt_poly::Polynomial;
 use jolt_transcript::{AppendToTranscript, Transcript};
 use num_traits::{One, Zero};
@@ -224,15 +228,41 @@ impl<P: PairingGroup> Commitment for HyperKZGScheme<P> {
     type Output = HyperKZGCommitment<P>;
 }
 
-impl<P: PairingGroup> CommitmentScheme for HyperKZGScheme<P>
+impl<P: PairingGroup> CommitmentSchemeVerifier for HyperKZGScheme<P>
 where
     P::ScalarField: AppendToTranscript,
     P::G1: AppendToTranscript,
 {
     type Field = P::ScalarField;
-    type Proof = HyperKZGProof<P>;
-    type ProverSetup = HyperKZGProverSetup<P>;
     type VerifierSetup = HyperKZGVerifierSetup<P>;
+    type Proof = HyperKZGProof<P>;
+    type BatchProof = Vec<HyperKZGProof<P>>;
+    /// Verifier-only consumers (wasm, on-chain) load the
+    /// `HyperKZGVerifierSetup` directly from a serialized URS file. We
+    /// therefore take the verifier setup as the public input itself; no
+    /// regeneration is possible without the trusted-setup toxic waste.
+    type VerifierSetupParams = HyperKZGVerifierSetup<P>;
+
+    fn verifier_setup(params: Self::VerifierSetupParams) -> Self::VerifierSetup {
+        params
+    }
+
+    fn verify_batch(
+        claims: Vec<OpeningClaim<Self::Field, Self>>,
+        batch_proof: &Self::BatchProof,
+        setup: &Self::VerifierSetup,
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
+    ) -> Result<(), OpeningsError> {
+        homomorphic_verify_batch::<Self, _>(claims, batch_proof.as_slice(), setup, transcript)
+    }
+}
+
+impl<P: PairingGroup> CommitmentScheme for HyperKZGScheme<P>
+where
+    P::ScalarField: AppendToTranscript,
+    P::G1: AppendToTranscript,
+{
+    type ProverSetup = HyperKZGProverSetup<P>;
     type Polynomial = Polynomial<P::ScalarField>;
     type OpeningHint = ();
     type SetupParams = (usize, P::G1, P::G2);
@@ -245,11 +275,11 @@ where
         let max_degree = 1usize << max_num_vars;
         let prover =
             HyperKZGScheme::setup_from_secret(P::ScalarField::random(&mut rng), max_degree, g1, g2);
-        let verifier = Self::verifier_setup(&prover);
+        let verifier = Self::project_verifier_setup(&prover);
         (prover, verifier)
     }
 
-    fn verifier_setup(prover_setup: &Self::ProverSetup) -> Self::VerifierSetup {
+    fn project_verifier_setup(prover_setup: &Self::ProverSetup) -> Self::VerifierSetup {
         HyperKZGVerifierSetup::from(prover_setup)
     }
 
@@ -257,7 +287,6 @@ where
         poly: &S,
         setup: &Self::ProverSetup,
     ) -> (Self::Output, Self::OpeningHint) {
-        // HyperKZG always works on dense evaluations.
         let mut evaluations = Vec::with_capacity(1 << poly.num_vars());
         poly.for_each_row(poly.num_vars(), &mut |_, row| {
             evaluations.extend_from_slice(row);
@@ -267,16 +296,29 @@ where
         (HyperKZGCommitment { point }, ())
     }
 
-    fn open(
-        poly: &Self::Polynomial,
-        point: &[Self::Field],
-        _eval: Self::Field,
+    fn prove_batch<T: Transcript<Challenge = Self::Field>>(
+        claims: Vec<ProverClaim<Self::Field>>,
+        hints: Vec<Self::OpeningHint>,
         setup: &Self::ProverSetup,
-        _hint: Option<Self::OpeningHint>,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> Self::Proof {
-        Self::open(setup, poly.evaluations(), point, transcript)
-            .expect("HyperKZG open should not fail with valid inputs")
+        transcript: &mut T,
+    ) -> (Self::BatchProof, Vec<Self::Field>) {
+        homomorphic_prove_batch::<Self, T>(claims, hints, setup, transcript)
+    }
+}
+
+impl<P: PairingGroup> AdditivelyHomomorphicVerifier for HyperKZGScheme<P>
+where
+    P::ScalarField: AppendToTranscript,
+    P::G1: AppendToTranscript,
+{
+    fn combine(commitments: &[Self::Output], scalars: &[Self::Field]) -> Self::Output {
+        assert_eq!(commitments.len(), scalars.len());
+        let combined = commitments
+            .iter()
+            .zip(scalars.iter())
+            .map(|(c, s)| c.point.scalar_mul(s))
+            .fold(P::G1::identity(), |acc, x| acc + x);
+        HyperKZGCommitment { point: combined }
     }
 
     fn verify(
@@ -297,14 +339,16 @@ where
     P::ScalarField: AppendToTranscript,
     P::G1: AppendToTranscript,
 {
-    fn combine(commitments: &[Self::Output], scalars: &[Self::Field]) -> Self::Output {
-        assert_eq!(commitments.len(), scalars.len());
-        let combined = commitments
-            .iter()
-            .zip(scalars.iter())
-            .map(|(c, s)| c.point.scalar_mul(s))
-            .fold(P::G1::identity(), |acc, x| acc + x);
-        HyperKZGCommitment { point: combined }
+    fn open(
+        poly: &Self::Polynomial,
+        point: &[Self::Field],
+        _eval: Self::Field,
+        setup: &Self::ProverSetup,
+        _hint: Option<Self::OpeningHint>,
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
+    ) -> Self::Proof {
+        Self::open(setup, poly.evaluations(), point, transcript)
+            .expect("HyperKZG open should not fail with valid inputs")
     }
 }
 
@@ -325,7 +369,7 @@ mod tests {
         let g1 = Bn254::g1_generator();
         let g2 = Bn254::g2_generator();
         let prover = TestScheme::setup(&mut rng, max_degree, g1, g2);
-        let verifier = TestScheme::verifier_setup(&prover);
+        let verifier = TestScheme::project_verifier_setup(&prover);
         (prover, verifier)
     }
 
@@ -343,7 +387,7 @@ mod tests {
             let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk);
 
             let mut prover_transcript = Blake2bTranscript::new(b"test");
-            let proof = <TestScheme as CommitmentScheme>::open(
+            let proof = <TestScheme as AdditivelyHomomorphic>::open(
                 &poly,
                 &point,
                 eval,
@@ -353,7 +397,7 @@ mod tests {
             );
 
             let mut verifier_transcript = Blake2bTranscript::new(b"test");
-            let result = <TestScheme as CommitmentScheme>::verify(
+            let result = <TestScheme as AdditivelyHomomorphicVerifier>::verify(
                 &commitment,
                 &point,
                 eval,
@@ -380,7 +424,7 @@ mod tests {
         let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk);
 
         let mut prover_transcript = Blake2bTranscript::new(b"test-bad");
-        let proof = <TestScheme as CommitmentScheme>::open(
+        let proof = <TestScheme as AdditivelyHomomorphic>::open(
             &poly,
             &point,
             eval,
@@ -390,7 +434,7 @@ mod tests {
         );
 
         let mut verifier_transcript = Blake2bTranscript::new(b"test-bad");
-        let result = <TestScheme as CommitmentScheme>::verify(
+        let result = <TestScheme as AdditivelyHomomorphicVerifier>::verify(
             &commitment,
             &point,
             wrong_eval,
@@ -415,7 +459,7 @@ mod tests {
         let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk);
 
         let mut prover_transcript = Blake2bTranscript::new(b"test-tamper");
-        let mut proof = <TestScheme as CommitmentScheme>::open(
+        let mut proof = <TestScheme as AdditivelyHomomorphic>::open(
             &poly,
             &point,
             eval,
@@ -429,7 +473,7 @@ mod tests {
         proof.v[0].clone_from(&v1);
 
         let mut verifier_transcript = Blake2bTranscript::new(b"test-tamper");
-        let result = <TestScheme as CommitmentScheme>::verify(
+        let result = <TestScheme as AdditivelyHomomorphicVerifier>::verify(
             &commitment,
             &point,
             eval,
@@ -513,11 +557,12 @@ mod tests {
             let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk);
 
             let mut pt = Blake2bTranscript::new(b"rand-test");
-            let proof =
-                <TestScheme as CommitmentScheme>::open(&poly, &point, eval, &pk, None, &mut pt);
+            let proof = <TestScheme as AdditivelyHomomorphic>::open(
+                &poly, &point, eval, &pk, None, &mut pt,
+            );
 
             let mut vt = Blake2bTranscript::new(b"rand-test");
-            <TestScheme as CommitmentScheme>::verify(
+            <TestScheme as AdditivelyHomomorphicVerifier>::verify(
                 &commitment,
                 &point,
                 eval,
@@ -575,10 +620,18 @@ mod tests {
         let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk);
 
         let mut pt = Blake2bTranscript::new(b"trivial");
-        let proof = <TestScheme as CommitmentScheme>::open(&poly, &point, eval, &pk, None, &mut pt);
+        let proof =
+            <TestScheme as AdditivelyHomomorphic>::open(&poly, &point, eval, &pk, None, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"trivial");
-        <TestScheme as CommitmentScheme>::verify(&commitment, &point, eval, &proof, &vk, &mut vt)
-            .expect("trivial polynomial should verify");
+        <TestScheme as AdditivelyHomomorphicVerifier>::verify(
+            &commitment,
+            &point,
+            eval,
+            &proof,
+            &vk,
+            &mut vt,
+        )
+        .expect("trivial polynomial should verify");
     }
 }

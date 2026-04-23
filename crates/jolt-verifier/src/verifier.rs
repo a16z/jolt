@@ -12,7 +12,7 @@ use jolt_compiler::module::{
 use jolt_compiler::PolynomialId;
 use jolt_crypto::HomomorphicCommitment;
 use jolt_field::Field;
-use jolt_openings::{AdditivelyHomomorphic, OpeningReduction, OpeningsError, VerifierClaim};
+use jolt_openings::{AdditivelyHomomorphicVerifier, OpeningClaim};
 use jolt_poly::EqPolynomial;
 use jolt_r1cs::R1csKey;
 use jolt_sumcheck::{ClearRoundVerifier, SumcheckClaim, SumcheckVerifier};
@@ -36,7 +36,7 @@ pub fn verify<F, PCS>(
 ) -> Result<(), JoltError>
 where
     F: Field,
-    PCS: AdditivelyHomomorphic<Field = F>,
+    PCS: AdditivelyHomomorphicVerifier<Field = F>,
     PCS::Output: AppendToTranscript + HomomorphicCommitment<F>,
 {
     if proof.config.io_hash != *expected_io_hash {
@@ -68,7 +68,7 @@ where
     let mut current_stage: Option<&StageProof<F>> = None;
     let mut eval_cursor: usize = 0;
     let mut round_poly_cursor: usize = 0;
-    let mut pcs_claims: Vec<VerifierClaim<F, PCS::Output>> = Vec::new();
+    let mut pcs_claims: Vec<OpeningClaim<F, PCS>> = Vec::new();
 
     for op in &schedule.ops {
         match op {
@@ -294,7 +294,7 @@ where
                             "evaluation for committed poly {poly:?} not set"
                         ))
                     })?;
-                    pcs_claims.push(VerifierClaim {
+                    pcs_claims.push(OpeningClaim {
                         commitment: commitment.clone(),
                         point: sumcheck_points[at_stage.0].clone(),
                         eval,
@@ -303,28 +303,22 @@ where
             }
 
             VerifierOp::VerifyOpenings => {
+                // Skip when no claims have been collected at this point in the
+                // schedule — partial / WIP verifier modules emit
+                // `VerifyOpenings` without any preceding `CollectOpeningClaim`s.
+                // (The prover's `Op::ProveBatch` still runs and produces a real
+                // BatchProof; we just don't have the matching claims to check.)
                 if pcs_claims.is_empty() {
                     continue;
                 }
                 let claims = std::mem::take(&mut pcs_claims);
-                let reduced =
-                    PCS::reduce_verifier(claims, &mut transcript).map_err(JoltError::Opening)?;
-
-                if reduced.len() != proof.opening_proofs.len() {
-                    return Err(JoltError::Opening(OpeningsError::VerificationFailed));
-                }
-
-                for (claim, opening_proof) in reduced.iter().zip(proof.opening_proofs.iter()) {
-                    PCS::verify(
-                        &claim.commitment,
-                        &claim.point,
-                        claim.eval,
-                        opening_proof,
-                        &key.pcs_setup,
-                        &mut transcript,
-                    )
-                    .map_err(JoltError::Opening)?;
-                }
+                PCS::verify_batch(
+                    claims,
+                    &proof.opening_proof,
+                    &key.pcs_setup,
+                    &mut transcript,
+                )
+                .map_err(JoltError::Opening)?;
             }
         }
     }

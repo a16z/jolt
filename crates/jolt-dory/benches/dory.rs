@@ -4,7 +4,9 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use jolt_dory::{DoryScheme, DoryVerifierSetup};
 use jolt_field::{Field, Fr};
-use jolt_openings::{CommitmentScheme, StreamingCommitment};
+use jolt_openings::{
+    AdditivelyHomomorphic, AdditivelyHomomorphicVerifier, CommitmentScheme, StreamingCommitment,
+};
 use jolt_poly::Polynomial;
 use jolt_transcript::Transcript;
 use rand_chacha::ChaCha20Rng;
@@ -163,7 +165,7 @@ fn bench_combine(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::from_parameter(num_vars), &num_vars, |b, _| {
             b.iter(|| {
-                <DoryScheme as jolt_openings::AdditivelyHomomorphic>::combine(
+                <DoryScheme as AdditivelyHomomorphicVerifier>::combine(
                     &[commit_a.clone(), commit_b.clone()],
                     &[s_a, s_b],
                 )

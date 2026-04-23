@@ -1522,11 +1522,11 @@ fn zkvm_proof_accepted_by_core_verifier() {
 
     // Opening proof: DoryProof(ArkDoryProof) → ArkDoryProof
     assert_eq!(
-        zkvm_proof.opening_proofs.len(),
+        zkvm_proof.opening_proof.len(),
         1,
         "expected exactly 1 joint opening proof"
     );
-    let joint_opening_proof = zkvm_proof.opening_proofs[0].0.clone();
+    let joint_opening_proof = zkvm_proof.opening_proof[0].0.clone();
 
     let converted_proof = JoltProof {
         // From jolt-zkvm (the data under test):

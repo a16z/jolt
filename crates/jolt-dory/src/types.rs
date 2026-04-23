@@ -133,7 +133,7 @@ fn canonical_deserialize<'de, T: ark_serialize::CanonicalDeserialize, D: Deseria
 mod tests {
     use super::*;
     use jolt_field::Field;
-    use jolt_openings::CommitmentScheme;
+    use jolt_openings::{AdditivelyHomomorphic, AdditivelyHomomorphicVerifier, CommitmentScheme};
     use jolt_poly::Polynomial;
     use jolt_transcript::Transcript;
     use rand_chacha::ChaCha20Rng;
