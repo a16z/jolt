@@ -804,61 +804,19 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                 .as_ref()
                 .unwrap();
             let trace = provider.lookup_trace().unwrap();
-            let m = 1usize << config.chunk_bits;
-            let suffix_len = *suffix_len;
-            let suffix_mask = (1u128 << suffix_len).wrapping_sub(1);
-            let shift_half_f = F::from_u128(if suffix_len >= 2 {
-                1u128 << (suffix_len / 2)
-            } else {
-                1
-            });
-            let shift_full_f = F::from_u128(if suffix_len > 0 {
-                1u128 << suffix_len
-            } else {
-                1
-            });
-            let (mut sh, mut l, mut r, mut sf, mut id) = (
-                vec![F::zero(); m],
-                vec![F::zero(); m],
-                vec![F::zero(); m],
-                vec![F::zero(); m],
-                vec![F::zero(); m],
+            let q_buffers = compute_q_buffer_scatter(
+                config.chunk_bits,
+                *suffix_len,
+                trace,
+                &state.instance_weights,
             );
-            for (j, &key) in trace.lookup_keys.iter().enumerate() {
-                let idx = ((key >> suffix_len) as usize) & (m - 1);
-                let u = state.instance_weights[j];
-                if trace.is_interleaved[j] {
-                    sh[idx] += u;
-                    let (lo, ro) = uninterleave_u128(key & suffix_mask);
-                    if lo != 0 {
-                        l[idx] += u.mul_u64(lo);
-                    }
-                    if ro != 0 {
-                        r[idx] += u.mul_u64(ro);
-                    }
-                } else {
-                    sf[idx] += u;
-                    let v = key & suffix_mask;
-                    if v != 0 {
-                        id[idx] += u.mul_u128(v);
-                    }
+            for (c, pair) in q_buffers.into_iter().enumerate() {
+                for (h, q) in pair.into_iter().enumerate() {
+                    let _ = device_buffers.insert(
+                        PolynomialId::InstanceQ(c, h),
+                        DeviceBuffer::Field(backend.upload(&q)),
+                    );
                 }
-            }
-            for v in &mut sh {
-                *v *= shift_half_f;
-            }
-            for v in &mut sf {
-                *v *= shift_full_f;
-            }
-            for (c, q) in [[sh.clone(), l], [sh, r], [sf, id]].into_iter().enumerate() {
-                let _ = device_buffers.insert(
-                    PolynomialId::InstanceQ(c, 0),
-                    DeviceBuffer::Field(backend.upload(&q[0])),
-                );
-                let _ = device_buffers.insert(
-                    PolynomialId::InstanceQ(c, 1),
-                    DeviceBuffer::Field(backend.upload(&q[1])),
-                );
             }
         }
 
@@ -1193,4 +1151,65 @@ fn uninterleave_u128(bits: u128) -> (u64, u64) {
         x |= (((bits >> (2 * i + 1)) & 1) as u64) << i;
     }
     (x, y)
+}
+
+/// Compute the 6 Q-buffers (`[left, right, identity] × [half, low]`) for the
+/// `Op::QBufferScatter` read-RAF quotient-buffer scatter. Result shape is
+/// `[(left_half, left_lo), (right_half, right_lo), (identity_half, identity_lo)]`,
+/// each inner vec of size `m = 1 << chunk_bits`. Splits on
+/// `trace.is_interleaved[j]` per cycle — interleaved cycles contribute to
+/// `sh/l/r`, non-interleaved to `sf/id`. See `crates/jolt-compiler/OPS.md`
+/// Group A for the pending lowering (→ `Op::TraceScatter`).
+fn compute_q_buffer_scatter<F: Field>(
+    chunk_bits: usize,
+    suffix_len: usize,
+    trace: &jolt_compiler::LookupTraceData,
+    instance_weights: &[F],
+) -> [[Vec<F>; 2]; 3] {
+    let m = 1usize << chunk_bits;
+    let suffix_mask = (1u128 << suffix_len).wrapping_sub(1);
+    let shift_half_f = F::from_u128(if suffix_len >= 2 {
+        1u128 << (suffix_len / 2)
+    } else {
+        1
+    });
+    let shift_full_f = F::from_u128(if suffix_len > 0 {
+        1u128 << suffix_len
+    } else {
+        1
+    });
+    let (mut sh, mut l, mut r, mut sf, mut id) = (
+        vec![F::zero(); m],
+        vec![F::zero(); m],
+        vec![F::zero(); m],
+        vec![F::zero(); m],
+        vec![F::zero(); m],
+    );
+    for (j, &key) in trace.lookup_keys.iter().enumerate() {
+        let idx = ((key >> suffix_len) as usize) & (m - 1);
+        let u = instance_weights[j];
+        if trace.is_interleaved[j] {
+            sh[idx] += u;
+            let (lo, ro) = uninterleave_u128(key & suffix_mask);
+            if lo != 0 {
+                l[idx] += u.mul_u64(lo);
+            }
+            if ro != 0 {
+                r[idx] += u.mul_u64(ro);
+            }
+        } else {
+            sf[idx] += u;
+            let v = key & suffix_mask;
+            if v != 0 {
+                id[idx] += u.mul_u128(v);
+            }
+        }
+    }
+    for v in &mut sh {
+        *v *= shift_half_f;
+    }
+    for v in &mut sf {
+        *v *= shift_full_f;
+    }
+    [[sh.clone(), l], [sh, r], [sf, id]]
 }
