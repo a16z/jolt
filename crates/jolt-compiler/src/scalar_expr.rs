@@ -1,8 +1,14 @@
-//! Runtime evaluation of compiled [`ScalarExpr`]s.
+//! Interpreter for compiled [`crate::module::ScalarExpr`]s.
 //!
-//! Used by [`Op::CheckpointEvalBatch`] — the compiler lowers every checkpoint
-//! update rule into a sum of monomials over challenges and snapshot reads; the
-//! runtime just walks the list.
+//! [`ScalarExpr`](crate::module::ScalarExpr) is a compact IR for scalar
+//! linear combinations over challenges, per-instance state, and indexed
+//! polynomial reads. The compiler lowers protocol-specific scalar
+//! computations (checkpoint update rules, prefix-MLE factors) into this
+//! IR at compile time; the runtime calls [`eval_scalar_expr`] to turn
+//! each `ScalarExpr` into a field element at execution time.
+//!
+//! The interpreter lives alongside the IR so the compiler owns the full
+//! scalar-arithmetic surface: emission, type, and evaluation.
 //!
 //! The `index` + `buffers` parameters extend the evaluator to per-`b`
 //! expressions (e.g. prefix-MLE materialization) where factors may read a
@@ -10,8 +16,8 @@
 
 use std::collections::HashMap;
 
-use jolt_compiler::module::{DefaultVal, Monomial, ValueSource};
-use jolt_compiler::PolynomialId;
+use crate::module::{DefaultVal, Monomial, ValueSource};
+use crate::PolynomialId;
 use jolt_field::Field;
 
 /// Evaluate a scalar expression against current challenges, a checkpoint

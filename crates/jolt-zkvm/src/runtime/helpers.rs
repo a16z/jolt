@@ -2,8 +2,9 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use jolt_compiler::module::{ChallengeSource, InputBinding, SegmentedConfig, VerifierStageIndex};
+use jolt_compiler::BufferProvider;
 use jolt_compiler::PolynomialId;
-use jolt_compute::{Buf, BufferProvider, ComputeBackend, DeviceBuffer};
+use jolt_compute::{Buf, ComputeBackend, DeviceBuffer};
 use jolt_crypto::HomomorphicCommitment;
 use jolt_field::Field;
 use jolt_openings::{AdditivelyHomomorphic, ProverClaim};

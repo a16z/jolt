@@ -13,8 +13,9 @@ use std::process::Command;
 
 use common::constants::{ONEHOT_CHUNK_THRESHOLD_LOG_T, RAM_START_ADDRESS};
 use jolt_compiler::module::Module;
+use jolt_compiler::LookupTraceData;
 use jolt_compiler::{Op, VerifierOp};
-use jolt_compute::{link, LookupTraceData};
+use jolt_compute::link;
 use jolt_core::zkvm::instruction::{
     Flags as CoreFlags, InstructionLookup, InterleavedBitsMarker as CoreInterleavedBits,
 };

@@ -11,9 +11,9 @@ use jolt_compiler::prefix_mle_lowering::compute_mask_value;
 use jolt_compiler::PolynomialId;
 use jolt_field::Field;
 
-pub use jolt_compute::LookupTraceData;
+pub use jolt_compiler::LookupTraceData;
 
-use crate::scalar_expr::eval_scalar_expr;
+use jolt_compiler::scalar_expr::eval_scalar_expr;
 
 /// Per-phase buffer data produced by the suffix scatter handler.
 pub struct PhaseBuffers<F: Field> {

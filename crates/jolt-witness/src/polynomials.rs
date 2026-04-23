@@ -14,8 +14,8 @@ use std::collections::BTreeMap;
 
 use std::borrow::Cow;
 
+use jolt_compiler::BufferProvider;
 use jolt_compiler::WitnessSlot;
-use jolt_compute::BufferProvider;
 use jolt_field::Field;
 use jolt_poly::OneHotPolynomial;
 

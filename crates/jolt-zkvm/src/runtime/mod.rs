@@ -68,8 +68,9 @@ fn op_class_tag(op: &jolt_compiler::module::Op) -> Option<&'static str> {
     })
 }
 
+use jolt_compiler::BufferProvider;
 use jolt_compiler::PolynomialId;
-use jolt_compute::{Buf, BufferProvider, ComputeBackend, Executable};
+use jolt_compute::{Buf, ComputeBackend, Executable};
 
 use helpers::PendingClaim;
 use jolt_crypto::HomomorphicCommitment;

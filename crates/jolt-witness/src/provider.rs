@@ -13,7 +13,7 @@
 use std::borrow::Cow;
 
 use jolt_compiler::PolySource;
-use jolt_compute::{BufferProvider, LookupTraceData};
+use jolt_compiler::{BufferProvider, LookupTraceData};
 use jolt_field::Field;
 use jolt_r1cs::R1csSource;
 

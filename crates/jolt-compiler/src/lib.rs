@@ -1,3 +1,4 @@
+pub mod buffer_provider;
 pub mod builder;
 pub mod checkpoint_lowering;
 pub mod compiler;
@@ -10,7 +11,9 @@ pub mod module;
 pub mod params;
 pub mod polynomial_id;
 pub mod prefix_mle_lowering;
+pub mod scalar_expr;
 
+pub use buffer_provider::{BufferProvider, LookupTraceData};
 pub use compiler::{
     analyze, compile, CompileError, CompileParams, Cost, Diagnostic, IRInfo, Objective,
     SolverConfig,

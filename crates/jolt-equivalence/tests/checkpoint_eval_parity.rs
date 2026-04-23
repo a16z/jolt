@@ -18,9 +18,9 @@ use jolt_compiler::module::{
     BilinearExpr, ChallengeIdx, CheckpointAction, CheckpointEvalAction, CheckpointRule, DefaultVal,
     RoundGuard, WeightFn,
 };
+use jolt_compiler::scalar_expr::eval_scalar_expr;
 use jolt_compiler::PolynomialId;
 use jolt_field::Fr;
-use jolt_zkvm::scalar_expr::eval_scalar_expr;
 
 mod common;
 use common::eval_checkpoint_rule;

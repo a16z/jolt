@@ -6,8 +6,9 @@ use jolt_compiler::module::{
     ChallengeIdx, CheckpointEvalAction, DomainSeparator, EvalMode, Op, ReduceDestination,
     RoundPolyEncoding,
 };
+use jolt_compiler::BufferProvider;
 use jolt_compiler::PolynomialId;
-use jolt_compute::{Buf, BufferProvider, ComputeBackend, DeviceBuffer, Executable, ReduceInputs};
+use jolt_compute::{Buf, ComputeBackend, DeviceBuffer, Executable, ReduceInputs};
 use jolt_crypto::HomomorphicCommitment;
 use jolt_field::Field;
 use jolt_openings::AdditivelyHomomorphic;
@@ -797,7 +798,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             for (idx, action) in updates {
                 match action {
                     CheckpointEvalAction::Set(expr) => {
-                        let v = crate::scalar_expr::eval_scalar_expr(
+                        let v = jolt_compiler::scalar_expr::eval_scalar_expr(
                             expr,
                             &state.challenges,
                             &snapshot,

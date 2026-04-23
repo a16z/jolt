@@ -8,4 +8,3 @@ pub mod preprocessing;
 pub mod prove;
 pub mod proving_key;
 pub mod runtime;
-pub mod scalar_expr;

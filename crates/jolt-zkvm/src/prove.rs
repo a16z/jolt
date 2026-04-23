@@ -3,7 +3,8 @@
 //! [`prove`] takes a pre-built [`BufferProvider`] and [`Executable`],
 //! validates the config, and executes the proving schedule.
 
-use jolt_compute::{BufferProvider, ComputeBackend, Executable};
+use jolt_compiler::BufferProvider;
+use jolt_compute::{ComputeBackend, Executable};
 use jolt_crypto::HomomorphicCommitment;
 use jolt_field::Field;
 use jolt_openings::AdditivelyHomomorphic;
