@@ -81,10 +81,16 @@ backend.
 
 ### Non-Goals
 
-1. **`GroupBackend` / PCS.** Polynomial commitment and group operations stay
-   on raw curve types in this PR. PCS calls still take `&mut B::Transcript`
-   so transcript ops are tracked, but the elliptic-curve arithmetic itself
-   is not yet symbolic. Phase 2.
+1. **PCS / commitment backend.** Polynomial commitment and group operations
+   stay on raw curve types in this PR. PCS calls still take
+   `&mut B::Transcript` so transcript ops are tracked, but the verifier's
+   interaction with commitments themselves (wrap, absorb, opening check)
+   is not yet symbolic. Deferred to Phase 2 (see "Phase 2 Amendment"
+   below). The original sketch named this `GroupBackend` and proposed
+   lowering Dory's pairing/MSM internals through a curve-shaped trait.
+   That direction is **superseded**: Phase 2 introduces a much smaller
+   `CommitmentBackend` that keeps the verifier curve-agnostic and
+   future-proofs for hash-based and lattice-based PCS.
 2. **`VerifierOp` interpreter cutover.** The new `_with_backend` functions
    sit next to the legacy ones with `#[allow(dead_code)]`. Cutting the
    interpreter over and deleting the legacy paths is Phase 3.
@@ -313,8 +319,329 @@ This PR is split into 5 commits to make incremental review tractable:
    `verify_with_backend` and `SumcheckVerifier::verify_with_backend` to
    route every transcript event through the backend.
 
-**Phase 2 (next PR):** `GroupBackend` + cutting `VerifierOp` interpreter
-over to the backend-aware functions + deleting legacy paths.
+**Phase 2 (next PR):** `CommitmentBackend` (replaces the originally
+sketched `GroupBackend`) + cutting `VerifierOp` interpreter over to the
+backend-aware functions + deleting legacy paths. See "Phase 2 Amendment"
+immediately below.
+
+## Phase 2 Amendment: CommitmentBackend (supersedes "GroupBackend")
+
+| Field       | Value                          |
+|-------------|--------------------------------|
+| Amended     | 2026-04-22                     |
+| Status      | proposed                       |
+
+### Why an amendment
+
+The original Phase 2 sketch (`jolt-verifier-backend-ast-design.md` in
+`~/Documents/Notes/`) introduced a `GroupBackend` trait with low-level
+primitives (`g1_msm`, `pairing`, `g_combine`) modelled on Dory's verifier
+internals. This bakes elliptic-curve structure into the verifier's
+public surface: the `AstOp` enum grows curve-shaped opcodes, and any
+future PCS that does not factor through pairings or MSMs (FRI / hash-
+based, Ajtai / lattice-based; see `~/Documents/Notes/hachi-blindfold-
+walkthrough-and-lattice-generalization.md` for the lattice motivation)
+either gets shoe-horned into a curve-shaped AST or forces a parallel
+backend trait. Both outcomes break the "one verifier source of truth"
+invariant Phase 1 was built to protect.
+
+The amendment narrows the Phase 2 trait surface so the verifier is
+agnostic to *how* a commitment is verified, and pushes batching /
+linear-combination logic into the PCS crate where it belongs.
+
+### Diagnosis: where homomorphism currently leaks into the verifier
+
+`crates/jolt-verifier/src/verifier.rs:50` and `:92` bind
+`PCS: AdditivelyHomomorphic<Field = F>` and require
+`PCS::Output: HomomorphicCommitment<F>`. Those bounds are not used
+directly by the verifier body. They are inherited from a single blanket
+implementation:
+
+```rust
+// crates/jolt-openings/src/reduction.rs:28
+impl<PCS: AdditivelyHomomorphic> OpeningReduction for PCS
+where PCS::Output: HomomorphicCommitment<PCS::Field>,
+{ /* RLC-based reduction using PCS::combine */ }
+```
+
+So today every consumer of `OpeningReduction` is *implicitly* a
+homomorphic-RLC consumer. A FRI-style scheme that batches via a Merkle
+inclusion + DEEP-ALI cannot meaningfully `impl AdditivelyHomomorphic`,
+yet must still implement `OpeningReduction`; under the blanket it would
+have no place to put its native batching strategy.
+
+### Plan
+
+Phase 2 lands in seven logical steps (2.0 – 2.6); each compiles and
+passes `cargo nextest run -p jolt-equivalence modular_self_verify`
+before the next begins.
+
+**Step 2.0 — De-blanket `OpeningReduction`.** Pure refactor, no
+behaviour change.
+
+- Delete the blanket `impl<PCS: AdditivelyHomomorphic> OpeningReduction
+  for PCS` in `crates/jolt-openings/src/reduction.rs`.
+- Add three explicit per-PCS impls (one per existing PCS):
+  `crates/jolt-openings/src/mock.rs::MockCommitmentScheme`,
+  `crates/jolt-hyperkzg/src/scheme.rs::HyperKZGScheme`,
+  `crates/jolt-dory/src/scheme.rs::DoryScheme`. Each impl is a
+  copy of the blanket body, so the byte-level transcript output is
+  unchanged.
+- In `crates/jolt-verifier/src/verifier.rs`, replace
+  `PCS: AdditivelyHomomorphic<Field = ...>` with
+  `PCS: OpeningReduction<Field = ...>` on `verify_with_backend` and
+  any helpers. The `HomomorphicCommitment<F>` bound on `PCS::Output`
+  goes away from the verifier entirely; it stays inside the per-PCS
+  `OpeningReduction` impls where it is actually used.
+- Remove `crates/jolt-verifier/src/verifier.rs:15`'s import of
+  `AdditivelyHomomorphic` (no longer mentioned in the verifier).
+
+This step is the single most important load-bearing change in Phase 2:
+it severs the verifier's compile-time dependency on additive
+homomorphism. Future hash-based / lattice-based PCS implement
+`OpeningReduction` directly with whatever batching is natural for them.
+
+**Step 2.1 — Extend `AstOp` with three commitment variants.**
+
+Add to `crates/jolt-verifier-backend/src/tracing.rs::AstOp`:
+
+```rust
+CommitmentWrap   { origin: CommitmentOrigin, label: &'static str },
+TranscriptAbsorbCommitment {
+    transcript_state: AstNodeId,
+    commitment: AstNodeId,
+},
+OpeningCheck    {
+    commitment: AstNodeId,
+    point: Vec<AstNodeId>,    // evaluation point as field nodes
+    claim: AstNodeId,         // claimed evaluation as field node
+    proof_handle: ProofHandle,// opaque sidecar key
+    scheme_tag: SchemeTag,    // 'static str discriminator
+},
+```
+
+`CommitmentOrigin` mirrors `ScalarOrigin` (`Public`, `Proof`).
+`SchemeTag` is a `&'static str` (e.g. `"dory"`, `"hyperkzg"`) so the AST
+record stays human-readable without coupling to crate-specific types.
+`ProofHandle` is an opaque `u32` index into a per-graph
+`Vec<Box<dyn Any>>` sidecar that stores the raw opening proof; replay
+can hand it back to the PCS verifier as-is. This is the AST-extensibility
+escape hatch flagged in alternative 6 below.
+
+`AstAssertion` gains `OpeningHolds { check: AstNodeId }` so replay
+discharges opening checks the same way it discharges field equalities.
+
+Replay (`replay_trace`) gains:
+- `CommitmentWrap` → consumes one entry from a `commitment_wraps`
+  vector parameter (parallel to the existing `wraps: Vec<F>` parameter).
+- `TranscriptAbsorbCommitment` → forwards to the live transcript via
+  the `AppendToTranscript` impl on the wrapped commitment.
+- `OpeningCheck` / `OpeningHolds` → resolves the proof sidecar and
+  invokes `<PCS as CommitmentScheme>::verify`.
+
+**Step 2.2 — `CommitmentBackend` trait (3 methods, no curve mention).**
+
+```rust
+// crates/jolt-verifier-backend/src/backend.rs
+pub trait CommitmentBackend<PCS: CommitmentScheme>: FieldBackend {
+    /// Backend-side handle for a commitment. `Native::Commitment = PCS::Output`;
+    /// `Tracing::Commitment = AstNodeId`.
+    type Commitment: Clone + std::fmt::Debug;
+
+    fn wrap_commitment(
+        &mut self,
+        value: PCS::Output,
+        origin: CommitmentOrigin,
+        label: &'static str,
+    ) -> Self::Commitment;
+
+    fn absorb_commitment(
+        &mut self,
+        transcript: &mut Self::Transcript,
+        commitment: &Self::Commitment,
+        label: &'static [u8],
+    );
+
+    /// Verifies a single opening claim. Reduction (RLC, FRI batching, etc.)
+    /// is the PCS's responsibility via `OpeningReduction::reduce_verifier_with_backend`,
+    /// not the backend's.
+    fn verify_opening(
+        &mut self,
+        vk: &PCS::VerifyingKey,
+        commitment: &Self::Commitment,
+        point: &[Self::Scalar],
+        claim: &Self::Scalar,
+        proof: &PCS::OpeningProof,
+        transcript: &mut Self::Transcript,
+        scheme_tag: SchemeTag,
+    ) -> Result<(), OpeningsError>;
+}
+```
+
+What is *not* on this trait: anything that names a curve, a pairing,
+an MSM, or a linear combination of commitments. Those are PCS-internal
+details, exposed (or not) through `OpeningReduction::reduce_verifier_with_backend`
+on a per-PCS basis.
+
+**Step 2.3 — `Native<F>` impl.**
+
+```rust
+type Commitment = PCS::Output;          // identity wrap
+fn wrap_commitment(_, value, _, _) { value }
+fn absorb_commitment(_, t, c, label) { c.append_to_transcript(t, label); }
+fn verify_opening(_, vk, c, point, claim, proof, t, _) {
+    PCS::verify(vk, c, point, claim, proof, t)
+}
+```
+
+Zero-cost: every method is `#[inline]`, no allocation, transcript
+behaviour bit-identical to the legacy verifier.
+
+**Step 2.4 — `Tracing<F>` impl.**
+
+`Tracing` already owns `Arc<Mutex<AstGraph>>`. It additionally owns
+`Arc<Mutex<ProofSidecar>>` where `ProofSidecar = Vec<Box<dyn Any +
+Send>>`. `wrap_commitment` pushes a node and stashes nothing extra;
+`absorb_commitment` pushes a `TranscriptAbsorbCommitment` node *and*
+forwards to the live `TracingTranscript`'s inner Blake2b so squeezed
+challenges remain consistent with the native path; `verify_opening`
+pushes the proof into the sidecar, returns its `ProofHandle`, records
+an `OpeningCheck` node + `OpeningHolds` assertion, and returns `Ok(())`
+without invoking the actual PCS verifier (the assertion will fire at
+replay time).
+
+**Step 2.5 — `OpeningReduction::reduce_verifier_with_backend`.**
+
+Add a backend-aware mirror to the trait:
+
+```rust
+fn reduce_verifier_with_backend<B: CommitmentBackend<Self>>(
+    backend: &mut B,
+    claims: &[(B::Commitment, Vec<B::Scalar>, B::Scalar)],
+    transcript: &mut B::Transcript,
+) -> Result<Vec<(B::Commitment, Vec<B::Scalar>, B::Scalar)>, OpeningsError>;
+```
+
+The Dory / HyperKZG / Mock impls move their RLC body into this method,
+calling `backend.wrap_commitment` / `backend.absorb_commitment` for the
+combined commitment. A future FRI scheme implements `reduce_verifier_with_backend`
+with whatever batching is natural for it; the verifier never sees
+the difference.
+
+The blocking generic combine (`PCS::combine` on `PCS::Output`) is still
+called from inside the Dory / HyperKZG implementations of
+`reduce_verifier_with_backend`, but only against `Native::Commitment =
+PCS::Output`. For `Tracing`, the per-PCS impl emits a `CommitmentWrap`
+node carrying the precomputed combined commitment (computed natively in
+the Tracing prover-stub path) and records the inputs as transcript
+absorptions. This keeps the AST free of curve-shaped opcodes.
+
+**Step 2.6 — Cut `verify_with_backend` over.**
+
+In `crates/jolt-verifier/src/verifier.rs`:
+- Replace direct `c.append_to_transcript(...)` calls with
+  `backend.absorb_commitment(&mut transcript, &c, label)`.
+- Replace `PCS::reduce_verifier(...)` calls with
+  `<PCS as OpeningReduction>::reduce_verifier_with_backend(&mut backend, ...)`.
+- Replace `PCS::verify(...)` calls with
+  `backend.verify_opening(vk, &c, &point, &claim, &proof, &mut transcript, "<scheme>")`.
+- Replace the `where PCS: AdditivelyHomomorphic<Field = ...>` bound
+  with `where PCS: OpeningReduction<Field = ...>` (already done in
+  step 2.0) plus `B: CommitmentBackend<PCS>`.
+
+After this step the legacy `verify` (without `_with_backend`) is the
+only non-polymorphic caller of `PCS::verify` left in the crate, and is
+slated for deletion in step 2.6's commit.
+
+### Trait surface (summary)
+
+```
+FieldBackend  (Phase 1, unchanged)
+   └── CommitmentBackend<PCS>  (Phase 2, new)
+            wrap_commitment
+            absorb_commitment
+            verify_opening
+
+OpeningReduction  (Phase 1, unchanged signature; blanket removed in 2.0)
+   ├── reduce_verifier              (existing)
+   └── reduce_verifier_with_backend (Phase 2, new — required)
+   per-PCS impls in jolt-dory, jolt-hyperkzg, jolt-openings::mock
+```
+
+Crucially, no `GroupBackend` and no curve-shaped `AstOp` variants.
+
+### AST extensibility for non-Dory schemes
+
+`AstOp::OpeningCheck { scheme_tag, proof_handle, … }` is the
+single extension point. A scheme-specific verifier consumer (e.g. a
+Lean exporter, a recursion verifier) dispatches on `scheme_tag` and
+loads the corresponding `proof_handle` from the sidecar. This avoids
+making `AstOp` either a closed enum that knows every PCS or an open
+trait-object that loses serialisability. The cost is one indirection
+per opening check at replay time, which is negligible relative to the
+opening verification itself.
+
+### Phase 2 acceptance criteria
+
+- [ ] Step 2.0 compiles and `cargo nextest run -p jolt-openings`,
+      `-p jolt-verifier`, `-p jolt-equivalence modular_self_verify`,
+      `-p jolt-equivalence modular_self_verify_via_tracing_backend`
+      all pass with **no** `AdditivelyHomomorphic` bound on
+      `verify_with_backend`.
+- [ ] `cargo clippy -p jolt-verifier --all-targets -- -D warnings` shows
+      `AdditivelyHomomorphic` mentioned **only** inside `jolt-zkvm`
+      (prover side) and inside per-PCS crates; not in `jolt-verifier`
+      and not in `jolt-verifier-backend`.
+- [ ] `CommitmentBackend` trait exists with exactly three methods.
+      `Native::Commitment = PCS::Output`; `Tracing::Commitment = AstNodeId`.
+- [ ] `AstOp` gains exactly the three variants
+      `CommitmentWrap`, `TranscriptAbsorbCommitment`, `OpeningCheck`.
+      `AstAssertion` gains `OpeningHolds`. `viz::to_dot` /
+      `viz::to_mermaid` render each with distinct styling.
+- [ ] `OpeningReduction::reduce_verifier_with_backend` is implemented
+      for `MockCommitmentScheme`, `HyperKZGScheme`, `DoryScheme`. Each
+      impl is byte-identical to its legacy `reduce_verifier` on the
+      `Native` backend (asserted by a parity test).
+- [ ] `modular_self_verify_via_tracing_backend` (extended) asserts the
+      replayed AST contains ≥ 1 `CommitmentWrap`, ≥ 1
+      `TranscriptAbsorbCommitment`, ≥ 1 `OpeningCheck`, and discharges
+      every `OpeningHolds` assertion.
+- [ ] No mention of `g1_msm`, `pairing`, `MSM`, or `GroupBackend`
+      anywhere in `crates/jolt-verifier-backend/src/`. The Phase 2
+      surface is curve-agnostic.
+
+### Phase 2 testing strategy
+
+- **Reduction parity (per PCS).** New unit test in each of
+  `crates/jolt-dory`, `crates/jolt-hyperkzg`, `crates/jolt-openings`:
+  build a small bag of opening claims, call both `reduce_verifier` and
+  `reduce_verifier_with_backend::<Native<_>>`, assert byte-identical
+  combined commitment + transcript state.
+- **End-to-end Tracing replay (extended).**
+  `modular_self_verify_via_tracing_backend` runs the muldiv proof
+  through `Tracing` with `CommitmentBackend` engaged, replays the AST
+  + sidecar, and checks every `OpeningHolds` and field equality.
+- **Negative test.** A tampered opening proof in the sidecar causes
+  `OpeningHolds` to fail at replay with a structured error pointing
+  to the `OpeningCheck` node id.
+
+### Alternatives considered (Phase 2)
+
+6. **`AstOp::PcsExtension { tag, payload: Vec<u8> }`** — a fully
+   serialised escape hatch for arbitrary PCS-specific subgraphs.
+   Rejected for now in favour of the narrower
+   `OpeningCheck { scheme_tag, proof_handle, … }` shape: every PCS we
+   know of (curve, FRI, lattice) needs the same four field-side
+   ingredients (commitment, point, claim, proof), and the backend can
+   route them through a single AST node + sidecar. If a future PCS
+   needs a richer in-AST representation, `PcsExtension` can be added
+   without disturbing the existing variants.
+7. **`GroupBackend` with `g1_msm` / `pairing` (original sketch).**
+   Rejected. See "Why an amendment" above.
+8. **Keep the `AdditivelyHomomorphic` blanket and add a parallel
+   `OpeningReductionNonHomomorphic` trait.** Rejected — splits the
+   verifier surface in two and forces every consumer to handle both
+   cases. Single trait + per-PCS impl is strictly simpler.
 
 ## References
 
