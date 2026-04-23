@@ -1706,3 +1706,191 @@ fn modular_self_verify_commit_skip_alignment() {
         }
     }
 }
+
+/// End-to-end Tracing-backend verification.
+///
+/// Runs the full muldiv prove → modular verify pipeline through the
+/// `Tracing<NewFr>` backend instead of the default `Native<NewFr>` path
+/// and proves three properties:
+///
+/// 1. The `Tracing` backend never panics or short-circuits when driven by
+///    the live verifier schedule (i.e. no codepath in the new
+///    `verify_with_backend` calls `B::unwrap()` or otherwise assumes a
+///    concrete value, which would break recursion / Lean export).
+///
+/// 2. The captured AST is non-trivial — it must record at least one
+///    wrap, one arithmetic op, and one assertion. (Empty-graph regressions
+///    silently bypass the abstraction.)
+///
+/// 3. Replaying the captured graph against the recorded wrap values
+///    reproduces every node and discharges every assertion. This is the
+///    formal *faithfulness check*: the symbolic trace is a sound rewrite
+///    of the native execution.
+///
+/// Together with `modular_self_verify` (which exercises the Native path),
+/// this test pins down the multi-backend invariant: any future change
+/// that introduces a divergence between Native and Tracing — a missing
+/// `B::mul`, a stray `unwrap()` in the interpreter, an unsynced wrap-list
+/// — fails this test before it can land.
+#[test]
+fn modular_self_verify_via_tracing_backend() {
+    use jolt_dory::types::DoryVerifierSetup;
+    use jolt_verifier_backend::{replay_trace, AstOp, Tracing};
+
+    let (_, params) = jolt_core_state_history();
+    let zkvm_proof = run_jolt_zkvm_prover(params);
+
+    let (
+        executable,
+        _polys,
+        r1cs_key,
+        _r1cs_witness,
+        setup,
+        _initial_ram,
+        _final_ram,
+        _instruction_flag_data,
+        _reg_access,
+        _lookup_trace,
+        _lookup_flags,
+        _bytecode_data,
+    ) = setup_zkvm_muldiv(params);
+
+    let pcs_verifier_setup = DoryVerifierSetup(params.pcs_setup.0.to_verifier_setup());
+    let verifying_key = jolt_verifier::JoltVerifyingKey::<NewFr, DoryScheme>::new(
+        &executable.module,
+        pcs_verifier_setup,
+        r1cs_key,
+    );
+
+    let mut tracing = Tracing::<NewFr>::new();
+    jolt_verifier::verify_with_backend(
+        &mut tracing,
+        &verifying_key,
+        &zkvm_proof,
+        &setup.config.io_hash,
+    )
+    .expect("Tracing-backend verify should accept modular proof");
+
+    let graph = tracing.snapshot();
+    let wrap_values = tracing.wrap_values();
+
+    let wrap_count = graph
+        .nodes
+        .iter()
+        .filter(|n| matches!(n, AstOp::Wrap { .. }))
+        .count();
+    assert_eq!(
+        wrap_count,
+        wrap_values.len(),
+        "wrap-node count must match recorded wrap-value count"
+    );
+    assert!(wrap_count > 0, "Tracing graph must record some wraps");
+    assert!(
+        graph.node_count() > wrap_count,
+        "Tracing graph must record arithmetic, not just wraps (got {} nodes, {} wraps)",
+        graph.node_count(),
+        wrap_count
+    );
+    assert!(
+        graph.assertion_count() > 0,
+        "Tracing graph must record CheckOutput / sumcheck-final assertions"
+    );
+
+    let mut by_op = std::collections::BTreeMap::<&'static str, usize>::new();
+    let mut by_wrap_origin = std::collections::BTreeMap::<&'static str, usize>::new();
+    let mut by_wrap_label = std::collections::BTreeMap::<&'static str, usize>::new();
+    for n in &graph.nodes {
+        let kind = match n {
+            AstOp::Wrap { origin, label } => {
+                let origin_str = match origin {
+                    jolt_verifier_backend::ScalarOrigin::Public => "Public",
+                    jolt_verifier_backend::ScalarOrigin::Proof => "Proof",
+                    jolt_verifier_backend::ScalarOrigin::Challenge => "Challenge",
+                };
+                *by_wrap_origin.entry(origin_str).or_default() += 1;
+                *by_wrap_label.entry(*label).or_default() += 1;
+                "Wrap"
+            }
+            AstOp::Constant(_) => "Constant",
+            AstOp::Neg(_) => "Neg",
+            AstOp::Add(_, _) => "Add",
+            AstOp::Sub(_, _) => "Sub",
+            AstOp::Mul(_, _) => "Mul",
+            AstOp::Square(_) => "Square",
+            AstOp::Inverse { .. } => "Inverse",
+            AstOp::TranscriptInit { .. } => "TranscriptInit",
+            AstOp::TranscriptAbsorbBytes { .. } => "TranscriptAbsorbBytes",
+            AstOp::TranscriptChallengeState { .. } => "TranscriptChallengeState",
+            AstOp::TranscriptChallengeValue { .. } => "TranscriptChallengeValue",
+        };
+        *by_op.entry(kind).or_default() += 1;
+    }
+
+    // The full-AST cutover guarantees the tracing graph captures every
+    // Fiat-Shamir interaction the verifier performs. If a future refactor
+    // routes a transcript op outside the backend, these counts go to zero
+    // and this test catches it before it reaches recursion / Lean export.
+    let transcript_inits = by_op.get("TranscriptInit").copied().unwrap_or_default();
+    let transcript_absorbs = by_op
+        .get("TranscriptAbsorbBytes")
+        .copied()
+        .unwrap_or_default();
+    let transcript_squeezes = by_op
+        .get("TranscriptChallengeValue")
+        .copied()
+        .unwrap_or_default();
+    assert_eq!(
+        transcript_inits, 1,
+        "expected exactly one TranscriptInit at the top of the verifier"
+    );
+    assert!(
+        transcript_absorbs > 0,
+        "Tracing graph must record transcript absorbs (preamble, commitments, evals, …)"
+    );
+    assert!(
+        transcript_squeezes > 0,
+        "Tracing graph must record transcript squeezes (sumcheck rounds, batched challenges, …)"
+    );
+    eprintln!(
+        "Tracing AST: {} nodes ({} wraps, {} arithmetic), {} assertions",
+        graph.node_count(),
+        wrap_count,
+        graph.node_count() - wrap_count,
+        graph.assertion_count()
+    );
+    eprintln!("AST op distribution:");
+    for (k, v) in &by_op {
+        eprintln!("  {k:>10}: {v}");
+    }
+    eprintln!("Wrap-origin distribution (boundary between AST and native):");
+    for (k, v) in &by_wrap_origin {
+        eprintln!("  {k:>10}: {v}");
+    }
+    eprintln!("Wrap-label distribution:");
+    for (k, v) in &by_wrap_label {
+        eprintln!("  {k:>20}: {v}");
+    }
+
+    let values = replay_trace(&graph, &wrap_values).expect(
+        "replay must reproduce every node and discharge every assertion in the captured graph",
+    );
+    assert_eq!(values.len(), graph.node_count());
+
+    // Persist the captured AST under target/ast/ so it can be rendered
+    // outside the test (e.g. `dot -Tsvg`) without bloating CI memory.
+    if let Ok(dir) = std::env::var("CARGO_TARGET_DIR")
+        .or_else(|_| std::env::var("CARGO_MANIFEST_DIR").map(|d| format!("{d}/../../target")))
+    {
+        use jolt_verifier_backend::{to_dot, to_mermaid};
+        let out = std::path::Path::new(&dir).join("ast");
+        let _ = std::fs::create_dir_all(&out);
+        let dot_path = out.join("muldiv_verifier.dot");
+        let mmd_path = out.join("muldiv_verifier.mmd");
+        if std::fs::write(&dot_path, to_dot(&graph)).is_ok() {
+            eprintln!("AST DOT written to {}", dot_path.display());
+        }
+        if std::fs::write(&mmd_path, to_mermaid(&graph)).is_ok() {
+            eprintln!("AST Mermaid written to {}", mmd_path.display());
+        }
+    }
+}

@@ -34,6 +34,7 @@ jolt-openings = { path = "../jolt-openings", features = ["test-utils"] }
 jolt-poly = { path = "../jolt-poly" }
 jolt-r1cs = { path = "../jolt-r1cs" }
 jolt-verifier = { path = "../jolt-verifier" }
+jolt-verifier-backend = { path = "../jolt-verifier-backend" }
 jolt-witness = { path = "../jolt-witness" }
 jolt-zkvm = { path = "../jolt-zkvm" }
 tracer = { path = "../../tracer" }

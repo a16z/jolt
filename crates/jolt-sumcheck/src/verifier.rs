@@ -92,20 +92,22 @@ impl SumcheckVerifier {
     /// gate, so backends that record (Tracing) rather than enforce
     /// (Native) will return `Ok` even when the underlying field values
     /// disagree — replay catches the violation.
-    #[expect(clippy::type_complexity, reason = "triple-return for downstream wiring")]
+    #[expect(
+        clippy::type_complexity,
+        reason = "triple-return for downstream wiring"
+    )]
     #[tracing::instrument(skip_all, name = "SumcheckVerifier::verify_with_backend")]
-    pub fn verify_with_backend<B, T>(
+    pub fn verify_with_backend<B>(
         backend: &mut B,
         claim: &SumcheckClaim<B::F>,
         round_polys: &[UnivariatePoly<B::F>],
         running_sum_w: B::Scalar,
-        transcript: &mut T,
+        transcript: &mut B::Transcript,
         label: Option<&'static [u8]>,
         compressed: bool,
     ) -> Result<(B::Scalar, Vec<B::Scalar>, Vec<B::F>), SumcheckError>
     where
         B: FieldBackend,
-        T: Transcript<Challenge = B::F>,
     {
         if round_polys.len() != claim.num_vars {
             return Err(SumcheckError::WrongNumberOfRounds {
@@ -169,8 +171,7 @@ impl SumcheckVerifier {
                 }
             }
 
-            let r_f: B::F = transcript.challenge();
-            let r_w = backend.wrap_challenge(r_f, "sumcheck_r");
+            let (r_f, r_w) = backend.squeeze(transcript, "sumcheck_r");
 
             running_w = univariate_horner(backend, &coeffs_w, &r_w);
             challenges_w.push(r_w);

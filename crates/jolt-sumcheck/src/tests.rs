@@ -20,11 +20,10 @@ type F = Fr;
 /// This is a minimal reference prover: in each round it computes the
 /// round polynomial by partial evaluation, absorbs it into the
 /// transcript, squeezes a challenge, and binds.
-fn honest_prove(
-    evals: &[F],
-    num_vars: usize,
-    transcript: &mut MockTranscript<F>,
-) -> SumcheckProof<F> {
+fn honest_prove<T>(evals: &[F], num_vars: usize, transcript: &mut T) -> SumcheckProof<F>
+where
+    T: Transcript<Challenge = F>,
+{
     let mut buf = evals.to_vec();
     let mut round_polys = Vec::with_capacity(num_vars);
 
@@ -495,13 +494,14 @@ fn verify_dispatches_through_round_verifier_trait() {
 /// in the same state.
 #[test]
 fn verify_with_backend_native_matches_legacy() {
+    use jolt_transcript::Blake2bTranscript;
     use jolt_verifier_backend::Native;
 
     let evals: Vec<F> = (1..=8).map(F::from_u64).collect();
     let sum = compute_sum(&evals);
     let num_vars = 3;
 
-    let mut prover_transcript = MockTranscript::<F>::default();
+    let mut prover_transcript = Blake2bTranscript::<F>::new(b"native_parity");
     let proof = honest_prove(&evals, num_vars, &mut prover_transcript);
 
     let claim = SumcheckClaim {
@@ -510,7 +510,7 @@ fn verify_with_backend_native_matches_legacy() {
         claimed_sum: sum,
     };
 
-    let mut legacy_transcript = MockTranscript::<F>::default();
+    let mut legacy_transcript = Blake2bTranscript::<F>::new(b"native_parity");
     let clear = ClearRoundVerifier::new();
     let (legacy_eval, legacy_challenges) = SumcheckVerifier::verify(
         &claim,
@@ -522,7 +522,7 @@ fn verify_with_backend_native_matches_legacy() {
     let legacy_post: F = legacy_transcript.challenge();
 
     let mut backend = Native::<F>::new();
-    let mut backend_transcript = MockTranscript::<F>::default();
+    let mut backend_transcript = backend.new_transcript(b"native_parity");
     let claimed_sum_w = backend.wrap_proof(claim.claimed_sum, "input_claim");
     let (backend_eval_w, backend_challenges_w, backend_challenges_f) =
         SumcheckVerifier::verify_with_backend(
@@ -554,16 +554,19 @@ fn verify_with_backend_native_matches_legacy() {
 
 /// Tracing FieldBackend path must record a graph that, when replayed against
 /// the wrapped values seen during verification, reproduces the legacy final
-/// evaluation and challenges.
+/// evaluation and challenges. The `TracingTranscript` is fed the same Fiat-Shamir
+/// bytes as a fresh `Blake2bTranscript`, so the proof is byte-identical and
+/// the verifier sees the same challenge values on the wire.
 #[test]
 fn verify_with_backend_tracing_replays_correctly() {
+    use jolt_transcript::Blake2bTranscript;
     use jolt_verifier_backend::{replay_trace, Tracing};
 
     let evals: Vec<F> = (1..=8).map(F::from_u64).collect();
     let sum = compute_sum(&evals);
     let num_vars = 3;
 
-    let mut prover_transcript = MockTranscript::<F>::default();
+    let mut prover_transcript = Blake2bTranscript::<F>::new(b"tracing_replay");
     let proof = honest_prove(&evals, num_vars, &mut prover_transcript);
 
     let claim = SumcheckClaim {
@@ -572,7 +575,7 @@ fn verify_with_backend_tracing_replays_correctly() {
         claimed_sum: sum,
     };
 
-    let mut legacy_transcript = MockTranscript::<F>::default();
+    let mut legacy_transcript = Blake2bTranscript::<F>::new(b"tracing_replay");
     let clear = ClearRoundVerifier::new();
     let (legacy_eval, _legacy_challenges) = SumcheckVerifier::verify(
         &claim,
@@ -583,7 +586,7 @@ fn verify_with_backend_tracing_replays_correctly() {
     .unwrap();
 
     let mut tracer = Tracing::<F>::new();
-    let mut tracer_transcript = MockTranscript::<F>::default();
+    let mut tracer_transcript = tracer.new_transcript(b"tracing_replay");
     let claimed_sum_w = tracer.wrap_proof(claim.claimed_sum, "input_claim");
     let (final_eval_w, _challenges_w, _challenges_f) = SumcheckVerifier::verify_with_backend(
         &mut tracer,
@@ -595,6 +598,7 @@ fn verify_with_backend_tracing_replays_correctly() {
         false,
     )
     .unwrap();
+    drop(tracer_transcript);
 
     let graph = tracer.snapshot();
     let wraps = tracer.wrap_values();
@@ -605,5 +609,19 @@ fn verify_with_backend_tracing_replays_correctly() {
     assert!(
         graph.assertion_count() > 0,
         "Tracing should have recorded sumcheck round-consistency assertions"
+    );
+    assert!(
+        graph
+            .nodes
+            .iter()
+            .any(|n| matches!(n, jolt_verifier_backend::AstOp::TranscriptInit { .. })),
+        "Tracing should have recorded a TranscriptInit node"
+    );
+    assert!(
+        graph.nodes.iter().any(|n| matches!(
+            n,
+            jolt_verifier_backend::AstOp::TranscriptChallengeValue { .. }
+        )),
+        "Tracing should have recorded TranscriptChallengeValue nodes for sumcheck rounds"
     );
 }

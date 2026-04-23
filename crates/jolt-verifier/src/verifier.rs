@@ -15,8 +15,8 @@ use jolt_field::Field;
 use jolt_openings::{AdditivelyHomomorphic, OpeningReduction, OpeningsError, VerifierClaim};
 use jolt_poly::EqPolynomial;
 use jolt_r1cs::R1csKey;
-use jolt_sumcheck::{ClearRoundVerifier, SumcheckClaim, SumcheckVerifier};
-use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Label, LabelWithCount, Transcript};
+use jolt_sumcheck::{SumcheckClaim, SumcheckVerifier};
+use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
 use jolt_verifier_backend::{
     helpers::{
         eq_eval as backend_eq_eval, identity_mle as backend_identity_mle,
@@ -25,8 +25,9 @@ use jolt_verifier_backend::{
         lagrange_kernel_eval as backend_lagrange_kernel_eval, lt_mle as backend_lt_mle,
         sparse_block_eval as backend_sparse_block_eval,
     },
-    FieldBackend,
+    FieldBackend, Native,
 };
+use num_traits::Zero;
 
 use crate::config::ProverConfig;
 use crate::error::JoltError;
@@ -34,11 +35,11 @@ use crate::key::JoltVerifyingKey;
 use crate::proof::{JoltProof, StageProof};
 use crate::TRANSCRIPT_LABEL;
 
-/// End-to-end proof verification.
+/// End-to-end proof verification using the [`Native`] backend.
 ///
-/// Walks the flat [`VerifierOp`] sequence from the verifying key, replaying
-/// the Fiat-Shamir transcript in lockstep with the prover. Returns `Ok(())`
-/// if the proof is valid.
+/// Thin wrapper around [`verify_with_backend`]; identical behavior. Use
+/// [`verify_with_backend`] directly with a [`Tracing`] backend to capture
+/// the verifier's field-arithmetic AST for recursion / Lean export.
 pub fn verify<F, PCS>(
     key: &JoltVerifyingKey<F, PCS>,
     proof: &JoltProof<F, PCS>,
@@ -48,6 +49,48 @@ where
     F: Field,
     PCS: AdditivelyHomomorphic<Field = F>,
     PCS::Output: AppendToTranscript + HomomorphicCommitment<F>,
+{
+    let mut backend = Native::<F>::new();
+    verify_with_backend(&mut backend, key, proof, expected_io_hash)
+}
+
+/// Backend-polymorphic proof verification.
+///
+/// Walks the flat [`VerifierOp`] sequence from the verifying key, replaying
+/// the Fiat-Shamir transcript in lockstep with the prover. All field
+/// arithmetic for the verifier's checks (sumcheck round combination, claim
+/// formula evaluation, `CheckOutput` equality) routes through `B`; the
+/// transcript-bytes / PCS surface stays native (it deals with serialized
+/// commitments, not field arithmetic).
+///
+/// State buckets are kept as parallel `(F, B::Scalar)` pairs:
+///
+///   * `_f` slots feed the transcript and the PCS reducer (which require
+///     a concrete field value to hash / commit).
+///   * `_w` slots feed [`evaluate_formula_with_backend`] and
+///     [`SumcheckVerifier::verify_with_backend`] so the AST sees every op.
+///
+/// For `Native<F>` this redundant pair degenerates to two F copies; for
+/// `Tracing<F>` the F side keeps the verifier compatible with the existing
+/// transcript / PCS while the wrapped side records the symbolic graph.
+///
+/// # Errors
+///
+/// Returns the same error variants as [`verify`]. `CheckOutput` mismatches
+/// surface as [`JoltError::EvaluationMismatch`] (Native [`assert_eq`])
+/// or are recorded as AST assertions to be discharged by the outer proof
+/// (Tracing).
+#[allow(clippy::too_many_lines)]
+pub fn verify_with_backend<B, PCS>(
+    backend: &mut B,
+    key: &JoltVerifyingKey<B::F, PCS>,
+    proof: &JoltProof<B::F, PCS>,
+    expected_io_hash: &[u8; 32],
+) -> Result<(), JoltError>
+where
+    B: FieldBackend,
+    PCS: AdditivelyHomomorphic<Field = B::F>,
+    PCS::Output: AppendToTranscript + HomomorphicCommitment<B::F>,
 {
     if proof.config.io_hash != *expected_io_hash {
         fn fmt_hash(h: &[u8; 32]) -> String {
@@ -66,19 +109,26 @@ where
     proof.config.validate().map_err(JoltError::InvalidProof)?;
 
     let schedule = &key.schedule;
-    let mut transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_LABEL);
+    let mut transcript = backend.new_transcript(TRANSCRIPT_LABEL);
 
-    let mut challenges = vec![F::zero(); schedule.num_challenges];
-    let mut evaluations: HashMap<PolynomialId, F> = HashMap::new();
-    let mut sumcheck_points: Vec<Vec<F>> = vec![Vec::new(); schedule.num_stages];
-    let mut final_evals = vec![F::zero(); schedule.num_stages];
+    let mut challenges_f = vec![B::F::zero(); schedule.num_challenges];
+    let mut challenges_w: Vec<B::Scalar> = (0..schedule.num_challenges)
+        .map(|_| backend.const_zero())
+        .collect();
+    let mut evaluations_f: HashMap<PolynomialId, B::F> = HashMap::new();
+    let mut evaluations_w: HashMap<PolynomialId, B::Scalar> = HashMap::new();
+    let mut sumcheck_points_f: Vec<Vec<B::F>> = vec![Vec::new(); schedule.num_stages];
+    let mut sumcheck_points_w: Vec<Vec<B::Scalar>> = vec![Vec::new(); schedule.num_stages];
+    let mut final_evals_w: Vec<B::Scalar> = (0..schedule.num_stages)
+        .map(|_| backend.const_zero())
+        .collect();
     let mut commitment_map: HashMap<PolynomialId, PCS::Output> = HashMap::new();
     let mut commitments = proof.commitments.iter();
     let mut stage_proofs = proof.stage_proofs.iter();
-    let mut current_stage: Option<&StageProof<F>> = None;
+    let mut current_stage: Option<&StageProof<B::F>> = None;
     let mut eval_cursor: usize = 0;
     let mut round_poly_cursor: usize = 0;
-    let mut pcs_claims: Vec<VerifierClaim<F, PCS::Output>> = Vec::new();
+    let mut pcs_claims: Vec<VerifierClaim<B::F, PCS::Output>> = Vec::new();
 
     for op in &schedule.ops {
         match op {
@@ -113,8 +163,9 @@ where
             }
 
             VerifierOp::Squeeze { challenge } => {
-                let val = transcript.challenge();
-                challenges[challenge.0] = val;
+                let (val, val_w) = backend.squeeze(&mut transcript, "squeeze");
+                challenges_f[challenge.0] = val;
+                challenges_w[challenge.0] = val_w;
             }
 
             VerifierOp::AppendDomainSeparator { tag } => {
@@ -127,6 +178,14 @@ where
             }
 
             VerifierOp::AbsorbRoundPoly { num_coeffs: _, tag } => {
+                // Used for *uniskip* round polynomials that sit before a
+                // VerifySumcheck in the schedule (e.g. the outer
+                // univariate-skip protocol). Their coefficients live in the
+                // same `sp.round_polys` array as the sumcheck rounds, so we
+                // bump the cursor and absorb them into the transcript here.
+                // The corresponding eval is published separately via a
+                // following RecordEvals + AbsorbEvals pair, so the round
+                // poly itself does not need backend wrapping.
                 let sp = current_stage.ok_or_else(|| {
                     JoltError::InvalidProof("no active stage proof for round poly".into())
                 })?;
@@ -161,71 +220,114 @@ where
                 let max_rounds = instances.iter().map(|i| i.num_rounds).max().unwrap_or(0);
                 let max_degree = instances.iter().map(|i| i.degree).max().unwrap_or(0);
 
-                // Evaluate each instance's input claim.
-                let mut instance_claims: Vec<F> = Vec::with_capacity(instances.len());
+                // Evaluate each instance's input claim through both worlds
+                // in parallel. The native value drives the transcript when
+                // the batch is more than one instance; the wrapped value
+                // feeds the sumcheck verifier's running sum.
+                let mut instance_claims_f: Vec<B::F> = Vec::with_capacity(instances.len());
+                let mut instance_claims_w: Vec<B::Scalar> = Vec::with_capacity(instances.len());
                 for inst in instances {
-                    let val = evaluate_formula(
+                    let val_f = evaluate_formula(
                         &inst.input_claim,
-                        &evaluations,
-                        &challenges,
-                        &sumcheck_points,
+                        &evaluations_f,
+                        &challenges_f,
+                        &sumcheck_points_f,
                         None,
                         None,
                         &key.r1cs_key,
                         &proof.config,
                     )?;
-                    instance_claims.push(val);
+                    let val_w = evaluate_formula_with_backend(
+                        backend,
+                        &inst.input_claim,
+                        &evaluations_w,
+                        &challenges_w,
+                        &sumcheck_points_w,
+                        None,
+                        None,
+                        &key.r1cs_key,
+                        &proof.config,
+                    )?;
+                    instance_claims_f.push(val_f);
+                    instance_claims_w.push(val_w);
                 }
 
-                // Batched: absorb claims, squeeze independent coefficients.
-                let combined_claim = if batch_challenges.is_empty() {
-                    // Unbatched: scale by 2^offset only.
-                    instance_claims
-                        .iter()
-                        .zip(instances.iter())
-                        .map(|(&c, inst)| c * F::from_u64(1u64 << (max_rounds - inst.num_rounds)))
-                        .sum()
-                } else {
-                    let tag = claim_tag.as_ref().expect("claim_tag required for batched");
-                    for &claim_val in &instance_claims {
-                        transcript.append(&Label(tag.as_bytes()));
-                        claim_val.append_to_transcript(&mut transcript);
-                    }
-                    for &ch_idx in batch_challenges {
-                        let val = transcript.challenge();
-                        challenges[ch_idx.0] = val;
-                    }
-                    instance_claims
-                        .iter()
-                        .zip(instances.iter())
-                        .zip(batch_challenges.iter())
-                        .map(|((&c, inst), &ch_idx)| {
-                            let coeff = challenges[ch_idx.0];
-                            coeff * c * F::from_u64(1u64 << (max_rounds - inst.num_rounds))
-                        })
-                        .sum()
-                };
+                let (combined_claim_f, combined_claim_w): (B::F, B::Scalar) =
+                    if batch_challenges.is_empty() {
+                        let mut acc_f = B::F::zero();
+                        let mut acc_w = backend.const_zero();
+                        for ((&c_f, c_w), inst) in instance_claims_f
+                            .iter()
+                            .zip(instance_claims_w.iter())
+                            .zip(instances.iter())
+                        {
+                            let scale = 1u64 << (max_rounds - inst.num_rounds);
+                            acc_f += c_f * B::F::from_u64(scale);
+                            let scale_w = backend.const_i128(i128::from(scale));
+                            let scaled = backend.mul(c_w, &scale_w);
+                            acc_w = backend.add(&acc_w, &scaled);
+                        }
+                        (acc_f, acc_w)
+                    } else {
+                        let tag = claim_tag.as_ref().expect("claim_tag required for batched");
+                        for &claim_val in &instance_claims_f {
+                            transcript.append(&Label(tag.as_bytes()));
+                            claim_val.append_to_transcript(&mut transcript);
+                        }
+                        for &ch_idx in batch_challenges {
+                            let (val, val_w) = backend.squeeze(&mut transcript, "batch_squeeze");
+                            challenges_f[ch_idx.0] = val;
+                            challenges_w[ch_idx.0] = val_w;
+                        }
+                        let mut acc_f = B::F::zero();
+                        let mut acc_w = backend.const_zero();
+                        for (((&c_f, c_w), inst), &ch_idx) in instance_claims_f
+                            .iter()
+                            .zip(instance_claims_w.iter())
+                            .zip(instances.iter())
+                            .zip(batch_challenges.iter())
+                        {
+                            let coeff_f = challenges_f[ch_idx.0];
+                            let scale = 1u64 << (max_rounds - inst.num_rounds);
+                            acc_f += coeff_f * c_f * B::F::from_u64(scale);
+                            let coeff_w = &challenges_w[ch_idx.0];
+                            let cw = backend.mul(coeff_w, c_w);
+                            let scale_w = backend.const_i128(i128::from(scale));
+                            let scaled = backend.mul(&cw, &scale_w);
+                            acc_w = backend.add(&acc_w, &scaled);
+                        }
+                        (acc_f, acc_w)
+                    };
+
                 let claim = SumcheckClaim {
                     num_vars: max_rounds,
                     degree: max_degree,
-                    claimed_sum: combined_claim,
+                    claimed_sum: combined_claim_f,
                 };
                 let round_polys = &sp.round_polys.round_polynomials
                     [round_poly_cursor..round_poly_cursor + max_rounds];
-                let round_verifier = ClearRoundVerifier::with_label_compressed(b"sumcheck_poly");
-                let (fe, sc) =
-                    SumcheckVerifier::verify(&claim, round_polys, &mut transcript, &round_verifier)
-                        .map_err(JoltError::Sumcheck)?;
+                let (fe_w, sc_w, sc_f) = SumcheckVerifier::verify_with_backend(
+                    backend,
+                    &claim,
+                    round_polys,
+                    combined_claim_w,
+                    &mut transcript,
+                    Some(b"sumcheck_poly"),
+                    true,
+                )
+                .map_err(JoltError::Sumcheck)?;
                 round_poly_cursor += max_rounds;
 
                 for (i, slot) in sumcheck_challenge_slots.iter().enumerate() {
-                    if i < sc.len() {
-                        challenges[slot.0] = sc[i];
+                    if i < sc_f.len() {
+                        challenges_f[slot.0] = sc_f[i];
+                        challenges_w[slot.0] = sc_w[i].clone();
                     }
                 }
 
-                final_evals[*stage] = fe;
-                sumcheck_points[*stage] = sc;
+                final_evals_w[*stage] = fe_w;
+                sumcheck_points_f[*stage] = sc_f;
+                sumcheck_points_w[*stage] = sc_w;
             }
 
             VerifierOp::RecordEvals { evals } => {
@@ -238,14 +340,16 @@ where
                             "missing eval {eval_cursor} in stage proof"
                         ))
                     })?;
-                    let _ = evaluations.insert(eval_desc.poly, value);
+                    let value_w = backend.wrap_proof(value, "record_eval");
+                    let _ = evaluations_f.insert(eval_desc.poly, value);
+                    let _ = evaluations_w.insert(eval_desc.poly, value_w);
                     eval_cursor += 1;
                 }
             }
 
             VerifierOp::AbsorbEvals { polys, tag } => {
                 for pi in polys {
-                    if let Some(&val) = evaluations.get(pi) {
+                    if let Some(&val) = evaluations_f.get(pi) {
                         transcript.append(&Label(tag.as_bytes()));
                         val.append_to_transcript(&mut transcript);
                     }
@@ -261,52 +365,56 @@ where
                     JoltError::InvalidProof("no active stage for CheckOutput".into())
                 })?;
                 let max_rounds = instances.iter().map(|i| i.num_rounds).max().unwrap_or(0);
-                let raw_point = &sumcheck_points[*stage];
-                let mut combined_output = F::zero();
+                let raw_point_w = &sumcheck_points_w[*stage];
+                let mut combined_output_w = backend.const_zero();
+                let stage_evals_w: Vec<B::Scalar> = sp
+                    .evals
+                    .iter()
+                    .map(|&v| backend.wrap_proof(v, "stage_eval"))
+                    .collect();
 
                 for (i, inst) in instances.iter().enumerate() {
                     let offset = max_rounds - inst.num_rounds;
-                    let normalized =
-                        apply_normalization(&raw_point[offset..], inst.normalize.as_ref());
-                    let output = evaluate_formula(
+                    let normalized_w =
+                        apply_normalization(&raw_point_w[offset..], inst.normalize.as_ref());
+                    let output_w = evaluate_formula_with_backend(
+                        backend,
                         &inst.output_check,
-                        &evaluations,
-                        &challenges,
-                        &sumcheck_points,
-                        Some((*stage, &normalized)),
-                        Some(&sp.evals),
+                        &evaluations_w,
+                        &challenges_w,
+                        &sumcheck_points_w,
+                        Some((*stage, &normalized_w)),
+                        Some(&stage_evals_w),
                         &key.r1cs_key,
                         &proof.config,
                     )?;
-                    let coeff = if batch_challenges.is_empty() {
-                        F::one()
+                    let scaled_w = if batch_challenges.is_empty() {
+                        output_w
                     } else {
-                        challenges[batch_challenges[i].0]
+                        let coeff_w = &challenges_w[batch_challenges[i].0];
+                        backend.mul(coeff_w, &output_w)
                     };
-                    combined_output += coeff * output;
+                    combined_output_w = backend.add(&combined_output_w, &scaled_w);
                 }
 
-                if final_evals[*stage] != combined_output {
-                    return Err(JoltError::EvaluationMismatch {
+                backend
+                    .assert_eq(&final_evals_w[*stage], &combined_output_w, "check_output")
+                    .map_err(|_| JoltError::EvaluationMismatch {
                         stage: *stage,
-                        reason: format!(
-                            "sumcheck final eval ({:?}) does not match batched composition ({:?})",
-                            final_evals[*stage], combined_output
-                        ),
-                    });
-                }
+                        reason: "sumcheck final eval does not match batched composition".into(),
+                    })?;
             }
 
             VerifierOp::CollectOpeningClaim { poly, at_stage } => {
                 if let Some(commitment) = commitment_map.get(poly) {
-                    let eval = evaluations.get(poly).copied().ok_or_else(|| {
+                    let eval = evaluations_f.get(poly).copied().ok_or_else(|| {
                         JoltError::InvalidProof(format!(
                             "evaluation for committed poly {poly:?} not set"
                         ))
                     })?;
                     pcs_claims.push(VerifierClaim {
                         commitment: commitment.clone(),
-                        point: sumcheck_points[at_stage.0].clone(),
+                        point: sumcheck_points_f[at_stage.0].clone(),
                         eval,
                     });
                 }
@@ -417,14 +525,11 @@ where
         let mut product = coeff_w;
         for factor in &term.factors {
             let factor_val: B::Scalar = match factor {
-                ClaimFactor::Eval(poly) => evaluations
-                    .get(poly)
-                    .cloned()
-                    .ok_or_else(|| {
-                        JoltError::InvalidProof(format!(
-                            "evaluation {poly:?} referenced before available"
-                        ))
-                    })?,
+                ClaimFactor::Eval(poly) => evaluations.get(poly).cloned().ok_or_else(|| {
+                    JoltError::InvalidProof(format!(
+                        "evaluation {poly:?} referenced before available"
+                    ))
+                })?,
                 ClaimFactor::Challenge(i) => challenges[i.0].clone(),
                 ClaimFactor::EqChallengePair { a, b } => {
                     let one_w = backend.const_one();
@@ -436,13 +541,22 @@ where
                     let cross = backend.mul(&one_minus_a, &one_minus_b);
                     backend.add(&ab, &cross)
                 }
-                ClaimFactor::EqEval { challenges: chs, at_stage } => {
-                    let r: Vec<B::Scalar> = chs.iter().map(|&ci| challenges[ci.0].clone()).collect();
+                ClaimFactor::EqEval {
+                    challenges: chs,
+                    at_stage,
+                } => {
+                    let r: Vec<B::Scalar> =
+                        chs.iter().map(|&ci| challenges[ci.0].clone()).collect();
                     let s = resolve_point(sumcheck_points, point_override, at_stage.0);
                     backend_eq_eval(backend, &r, s)
                 }
-                ClaimFactor::EqEvalSlice { challenges: chs, at_stage, offset } => {
-                    let r: Vec<B::Scalar> = chs.iter().map(|&ci| challenges[ci.0].clone()).collect();
+                ClaimFactor::EqEvalSlice {
+                    challenges: chs,
+                    at_stage,
+                    offset,
+                } => {
+                    let r: Vec<B::Scalar> =
+                        chs.iter().map(|&ci| challenges[ci.0].clone()).collect();
                     let s = resolve_point(sumcheck_points, point_override, at_stage.0);
                     backend_eq_eval(backend, &r, &s[*offset..*offset + r.len()])
                 }
@@ -566,15 +680,12 @@ where
                     let evals = stage_evals.ok_or_else(|| {
                         JoltError::InvalidProof("StageEval used but no stage_evals provided".into())
                     })?;
-                    evals
-                        .get(*index)
-                        .cloned()
-                        .ok_or_else(|| {
-                            JoltError::InvalidProof(format!(
-                                "StageEval({index}) out of bounds (len={})",
-                                evals.len()
-                            ))
-                        })?
+                    evals.get(*index).cloned().ok_or_else(|| {
+                        JoltError::InvalidProof(format!(
+                            "StageEval({index}) out of bounds (len={})",
+                            evals.len()
+                        ))
+                    })?
                 }
                 ClaimFactor::PreprocessedPolyEval { poly, at_stage } => {
                     let point = resolve_point(sumcheck_points, point_override, at_stage.0);
@@ -681,8 +792,12 @@ where
         acc = backend.add(&acc, &block);
     }
 
-    let panic_block =
-        backend_sparse_block_eval(backend, config.panic_word_offset, &[config.panic as u64], r_lo);
+    let panic_block = backend_sparse_block_eval(
+        backend,
+        config.panic_word_offset,
+        &[config.panic as u64],
+        r_lo,
+    );
     acc = backend.add(&acc, &panic_block);
 
     if !config.panic {
@@ -1052,9 +1167,9 @@ mod tests {
     use jolt_compiler::{ChallengeIdx, PolynomialId, VerifierSchedule};
     use jolt_field::Fr;
     use jolt_r1cs::ConstraintMatrices;
-    use jolt_sumcheck::proof::SumcheckProof;
+    use jolt_sumcheck::{proof::SumcheckProof, ClearRoundVerifier};
     use jolt_transcript::Blake2bTranscript;
-    use num_traits::{One, Zero};
+    use num_traits::One;
 
     use crate::proof::StageProof;
 
@@ -1527,8 +1642,10 @@ mod tests {
             .iter()
             .map(|(p, v)| (*p, backend.wrap_proof(*v, "eval")))
             .collect();
-        let chs_w: Vec<B::Scalar> =
-            challenges.iter().map(|v| backend.wrap_challenge(*v, "ch")).collect();
+        let chs_w: Vec<B::Scalar> = challenges
+            .iter()
+            .map(|v| backend.wrap_challenge(*v, "ch"))
+            .collect();
         let pts_w: Vec<Vec<B::Scalar>> = sumcheck_points
             .iter()
             .map(|p| {
@@ -1538,10 +1655,11 @@ mod tests {
             })
             .collect();
         let override_owned: Option<Vec<B::Scalar>> = point_override.map(|(_, pts)| {
-            pts.iter().map(|v| backend.wrap_challenge(*v, "ov")).collect()
+            pts.iter()
+                .map(|v| backend.wrap_challenge(*v, "ov"))
+                .collect()
         });
-        let override_ref =
-            point_override.map(|(s, _)| (s, override_owned.as_deref().unwrap()));
+        let override_ref = point_override.map(|(s, _)| (s, override_owned.as_deref().unwrap()));
         let stage_w: Option<Vec<B::Scalar>> = stage_evals.map(|s| {
             s.iter()
                 .map(|v| backend.wrap_proof(*v, "stage_eval"))
@@ -1795,10 +1913,7 @@ mod tests {
         let formula = ClaimFormula {
             terms: vec![ClaimTerm {
                 coeff: 4,
-                factors: vec![
-                    ClaimFactor::StageEval(0),
-                    ClaimFactor::StageEval(1),
-                ],
+                factors: vec![ClaimFactor::StageEval(0), ClaimFactor::StageEval(1)],
             }],
         };
         let stage_evals = vec![Fr::from_u64(6), Fr::from_u64(9)];
@@ -1844,11 +1959,7 @@ mod tests {
                 }],
             }],
         };
-        let sumcheck_points = vec![vec![
-            Fr::from_u64(2),
-            Fr::from_u64(3),
-            Fr::from_u64(5),
-        ]];
+        let sumcheck_points = vec![vec![Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(5)]];
         check_formula_parity(
             &formula,
             &HashMap::new(),
@@ -1874,11 +1985,7 @@ mod tests {
                 }],
             }],
         };
-        let sumcheck_points = vec![vec![
-            Fr::from_u64(7),
-            Fr::from_u64(11),
-            Fr::from_u64(13),
-        ]];
+        let sumcheck_points = vec![vec![Fr::from_u64(7), Fr::from_u64(11), Fr::from_u64(13)]];
         check_formula_parity(
             &formula,
             &HashMap::new(),
@@ -1905,11 +2012,7 @@ mod tests {
         };
         // io_len_words = next_pow2(4) = 4, num_io_vars = 2, plus a
         // single hi-bit to exercise the hi_scale path.
-        let sumcheck_points = vec![vec![
-            Fr::from_u64(2),
-            Fr::from_u64(3),
-            Fr::from_u64(5),
-        ]];
+        let sumcheck_points = vec![vec![Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(5)]];
         check_formula_parity(
             &formula,
             &HashMap::new(),

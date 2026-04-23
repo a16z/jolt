@@ -1,4 +1,5 @@
 use jolt_field::Field;
+use jolt_transcript::Transcript;
 
 use crate::error::BackendError;
 
@@ -45,6 +46,15 @@ pub trait FieldBackend {
     /// For [`Native`](crate::Native) this is just `F`. For Tracing it is an
     /// `ExprId`-style node handle. For R1CSGen it is a witness-vector index.
     type Scalar: Clone + std::fmt::Debug;
+
+    /// Fiat-Shamir transcript implementation paired with this backend.
+    ///
+    /// For [`Native`](crate::Native) this is the underlying
+    /// `Blake2bTranscript<F>` directly. For Tracing it wraps the same
+    /// transcript but additionally records every absorb/squeeze into the
+    /// backend's [`AstGraph`](crate::AstGraph), so the symbolic execution
+    /// trace covers transcript operations as well as field arithmetic.
+    type Transcript: Transcript<Challenge = Self::F>;
 
     /// Wraps a native field element into the backend's scalar representation,
     /// labelling it with [`ScalarOrigin`] for provenance.
@@ -133,4 +143,27 @@ pub trait FieldBackend {
     /// the next protocol step (e.g., feeding a sumcheck output into an opening
     /// claim that wants the raw `F`).
     fn unwrap(&self, scalar: &Self::Scalar) -> Option<Self::F>;
+
+    /// Construct a fresh transcript bound to this backend.
+    ///
+    /// For Tracing the returned transcript shares the backend's [`AstGraph`]
+    /// so every absorb and squeeze is recorded into the same DAG that
+    /// arithmetic ops land in. For Native the returned transcript is just
+    /// a bare `Blake2bTranscript`.
+    fn new_transcript(&mut self, label: &'static [u8]) -> Self::Transcript;
+
+    /// Squeeze a Fiat-Shamir challenge through the backend's transcript.
+    ///
+    /// Returns both the raw [`Self::F`] (so the caller can keep driving the
+    /// transcript with native APIs) and a backend [`Self::Scalar`] that
+    /// references the AST node carrying the challenge value. For Native
+    /// these are the same field element; for Tracing the scalar is a node
+    /// handle to the [`AstOp::TranscriptChallengeValue`](crate::AstOp::TranscriptChallengeValue)
+    /// just emitted by the transcript, so subsequent field arithmetic links
+    /// to the squeeze instead of producing a fresh `Wrap` node.
+    fn squeeze(
+        &mut self,
+        transcript: &mut Self::Transcript,
+        label: &'static str,
+    ) -> (Self::F, Self::Scalar);
 }

@@ -1,6 +1,7 @@
 use std::marker::PhantomData;
 
 use jolt_field::Field;
+use jolt_transcript::{Blake2bTranscript, Transcript};
 
 use crate::backend::{FieldBackend, ScalarOrigin};
 use crate::error::BackendError;
@@ -26,6 +27,7 @@ impl<F: Field> Native<F> {
 impl<F: Field> FieldBackend for Native<F> {
     type F = F;
     type Scalar = F;
+    type Transcript = Blake2bTranscript<F>;
 
     #[inline(always)]
     fn wrap(&mut self, value: F, _origin: ScalarOrigin, _label: &'static str) -> F {
@@ -89,6 +91,17 @@ impl<F: Field> FieldBackend for Native<F> {
     #[inline(always)]
     fn unwrap(&self, scalar: &F) -> Option<F> {
         Some(*scalar)
+    }
+
+    #[inline(always)]
+    fn new_transcript(&mut self, label: &'static [u8]) -> Self::Transcript {
+        Blake2bTranscript::<F>::new(label)
+    }
+
+    #[inline(always)]
+    fn squeeze(&mut self, transcript: &mut Self::Transcript, _label: &'static str) -> (F, F) {
+        let v = transcript.challenge();
+        (v, v)
     }
 }
 

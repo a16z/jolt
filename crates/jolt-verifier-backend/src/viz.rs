@@ -90,6 +90,10 @@ pub fn to_mermaid(graph: &AstGraph) -> String {
     out.push_str("  classDef multi fill:#ffd8a8,stroke:#e8590c,color:#5c2a02;\n");
     out.push_str("  classDef inv fill:#ffe3e3,stroke:#c92a2a,color:#5c0000;\n");
     out.push_str("  classDef assertion fill:#fff5f5,stroke:#c92a2a,color:#c92a2a;\n");
+    out.push_str("  classDef tInit fill:#e7f5ff,stroke:#1971c2,color:#0b3a5c;\n");
+    out.push_str("  classDef tAbsorb fill:#d0ebff,stroke:#1971c2,color:#0b3a5c;\n");
+    out.push_str("  classDef tSqueezeState fill:#a5d8ff,stroke:#1864ab,color:#0b3a5c;\n");
+    out.push_str("  classDef tSqueezeValue fill:#74c0fc,stroke:#1864ab,color:#0b3a5c;\n");
 
     for (idx, op) in graph.nodes.iter().enumerate() {
         let (label, class) = mermaid_node(op);
@@ -168,6 +172,22 @@ fn describe_node(op: &AstOp) -> (String, &'static str) {
             format!("inv ({ctx})"),
             "fillcolor=\"#ffe3e3\", color=\"#c92a2a\", fontcolor=\"#5c0000\"",
         ),
+        AstOp::TranscriptInit { label } => (
+            format!("transcript init({})", display_label(label)),
+            "fillcolor=\"#e7f5ff\", color=\"#1971c2\", fontcolor=\"#0b3a5c\"",
+        ),
+        AstOp::TranscriptAbsorbBytes { bytes, .. } => (
+            format!("absorb {} B {}", bytes.len(), display_bytes_summary(bytes)),
+            "fillcolor=\"#d0ebff\", color=\"#1971c2\", fontcolor=\"#0b3a5c\"",
+        ),
+        AstOp::TranscriptChallengeState { .. } => (
+            "transcript squeeze (state)".to_owned(),
+            "fillcolor=\"#a5d8ff\", color=\"#1864ab\", fontcolor=\"#0b3a5c\"",
+        ),
+        AstOp::TranscriptChallengeValue { .. } => (
+            "transcript squeeze (F)".to_owned(),
+            "fillcolor=\"#74c0fc\", color=\"#1864ab\", fontcolor=\"#0b3a5c\"",
+        ),
     }
 }
 
@@ -185,17 +205,59 @@ fn mermaid_node(op: &AstOp) -> (String, &'static str) {
         AstOp::Mul(..) => ("*".to_owned(), "multi"),
         AstOp::Square(_) => ("^2".to_owned(), "multi"),
         AstOp::Inverse { ctx, .. } => (format!("inv ({ctx})"), "inv"),
+        AstOp::TranscriptInit { label } => (
+            format!("transcript init({})", display_label(label)),
+            "tInit",
+        ),
+        AstOp::TranscriptAbsorbBytes { bytes, .. } => (
+            format!("absorb {}B {}", bytes.len(), display_bytes_summary(bytes)),
+            "tAbsorb",
+        ),
+        AstOp::TranscriptChallengeState { .. } => {
+            ("transcript squeeze (state)".to_owned(), "tSqueezeState")
+        }
+        AstOp::TranscriptChallengeValue { .. } => {
+            ("transcript squeeze (F)".to_owned(), "tSqueezeValue")
+        }
     }
 }
 
 fn operands(op: &AstOp) -> Vec<(u32, Option<&'static str>)> {
     match op {
-        AstOp::Wrap { .. } | AstOp::Constant(_) => Vec::new(),
+        AstOp::Wrap { .. } | AstOp::Constant(_) | AstOp::TranscriptInit { .. } => Vec::new(),
         AstOp::Neg(a) | AstOp::Square(a) => vec![(a.0, None)],
         AstOp::Inverse { operand, .. } => vec![(operand.0, None)],
         AstOp::Add(a, b) => vec![(a.0, Some("a")), (b.0, Some("b"))],
         AstOp::Sub(a, b) => vec![(a.0, Some("a")), (b.0, Some("b"))],
         AstOp::Mul(a, b) => vec![(a.0, Some("a")), (b.0, Some("b"))],
+        AstOp::TranscriptAbsorbBytes { prev_state, .. }
+        | AstOp::TranscriptChallengeState { prev_state } => vec![(prev_state.0, Some("state"))],
+        AstOp::TranscriptChallengeValue { state } => vec![(state.0, Some("squeeze"))],
+    }
+}
+
+fn display_label(label: &[u8]) -> String {
+    match std::str::from_utf8(label) {
+        Ok(s) if !s.is_empty() => s.to_owned(),
+        _ => format!("{label:02x?}"),
+    }
+}
+
+/// Renders a short ASCII-prefix preview of a transcript byte payload, fenced
+/// in single quotes if printable and otherwise dropped. The verifier's
+/// labeled-domain encodings (`Label`, `LabelWithCount`) live at the start of
+/// each 32-byte buffer, so this preview almost always surfaces them.
+fn display_bytes_summary(bytes: &[u8]) -> String {
+    let prefix_len = bytes
+        .iter()
+        .take(24)
+        .take_while(|b| b.is_ascii_graphic() || **b == b' ')
+        .count();
+    if prefix_len >= 3 {
+        let printable = std::str::from_utf8(&bytes[..prefix_len]).unwrap_or_default();
+        format!("'{printable}'")
+    } else {
+        String::new()
     }
 }
 
