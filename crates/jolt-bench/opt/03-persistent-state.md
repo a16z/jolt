@@ -149,7 +149,7 @@ clearing it (but preserving capacity).
   lane-local temp vecs if any are needed.
 - Both can use `state.eq_handle` as the source-of-truth for the shared
   eq prefix across instances, avoiding the per-instance
-  `MaterializeSegmentedOuterEq` allocations when possible.
+  `BuildSegmentedEq` allocations when possible.
 
 ## Dependencies
 

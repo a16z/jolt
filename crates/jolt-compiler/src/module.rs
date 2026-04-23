@@ -795,7 +795,10 @@ pub struct PrefixMleRule {
 /// Evaluation formula for a single prefix MLE.
 ///
 /// Each variant encodes a distinct algebraic family found across the 46
-/// prefix types. The evaluator in `checkpoint_eval.rs` interprets these.
+/// prefix types. Compile-time lowering lives in
+/// `crates/jolt-compiler/src/prefix_mle_lowering.rs`; the runtime
+/// evaluator is `compute_read_checking_from_lowered` in
+/// `crates/jolt-zkvm/src/runtime/prefix_suffix.rs`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum PrefixMleFormula {
     /// `cp × pair(x, y) × I(remaining_test)`

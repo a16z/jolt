@@ -273,7 +273,7 @@ The **reason for deferral** (learned from the O4.b attempt in this branch):
 compile-time producer analysis is required to decide emit-vs-elide at each
 conditional site, and that analysis must enumerate the outputs of
 `Op::MaterializeRA`, `Op::MaterializeCombinedVal`, `Op::MaterializePBuffers`,
-`Op::WeightedSum`, `Op::MaterializeSegmentedOuterEq`, plus track which
+`Op::WeightedSum`, `Op::BuildSegmentedEq`, plus track which
 polys got bound-down (so `MaterializeUnlessFresh`'s size check can be
 computed at compile time). **That's the same reaching-definitions analysis
 O6/O7's `DeadMaterializeElim` pass needs**, so it lives there — once as a
