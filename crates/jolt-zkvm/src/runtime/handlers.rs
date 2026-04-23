@@ -581,11 +581,10 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
 
         Op::BatchRoundBegin {
             batch,
-            round,
+            round: _,
             max_evals,
             bind_challenge,
         } => {
-            state.current_batch_round = *round;
             state.batch_combined = vec![F::zero(); *max_evals];
             if let Some(ch) = bind_challenge {
                 let r = state.challenges[ch.0];

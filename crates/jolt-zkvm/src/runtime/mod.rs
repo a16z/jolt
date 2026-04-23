@@ -120,7 +120,6 @@ where
     pub(super) batch_instance_claims: Vec<Vec<F>>,
     pub(super) last_round_instance_evals: Vec<Vec<F>>,
     pub(super) batch_combined: Vec<F>,
-    pub(super) current_batch_round: usize,
     pub(super) segmented_outer_eqs: HashMap<(usize, usize), Vec<F>>,
 
     pub(super) current_stage: Option<StageBuilder<F>>,
@@ -201,7 +200,6 @@ where
         batch_instance_claims,
         last_round_instance_evals: Vec::new(),
         batch_combined: Vec::new(),
-        current_batch_round: 0,
         segmented_outer_eqs: HashMap::new(),
         current_stage: None,
         stage_proofs: Vec::new(),
