@@ -259,7 +259,7 @@ dory = { package = "dory-pcs", version = "0.3.0", features = [
 ] }
 
 # Core Utilities
-clap = { version = "4.6.0", features = ["derive"] }
+clap = { version = "4.6.1", features = ["derive"] }
 eyre = "0.6.12"
 anyhow = "1.0.97"
 thiserror = "2.0.18"
