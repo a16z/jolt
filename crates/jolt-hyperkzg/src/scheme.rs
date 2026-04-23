@@ -8,8 +8,10 @@ use std::marker::PhantomData;
 use jolt_crypto::{Commitment, DeriveSetup, JoltGroup, PairingGroup, PedersenSetup};
 use jolt_field::Field;
 use jolt_openings::{
-    homomorphic_reduce_prover, homomorphic_reduce_verifier, AdditivelyHomomorphic,
-    CommitmentScheme, OpeningReduction, OpeningsError, ProverClaim, VerifierClaim,
+    homomorphic_reduce_prover, homomorphic_reduce_verifier,
+    homomorphic_reduce_verifier_with_backend, AdditivelyHomomorphic, BackendVerifierClaim,
+    CommitmentBackend, CommitmentScheme, OpeningReduction, OpeningsError, ProverClaim,
+    VerifierClaim,
 };
 use jolt_poly::Polynomial;
 use jolt_transcript::{AppendToTranscript, Transcript};
@@ -328,6 +330,17 @@ where
         transcript: &mut T,
     ) -> Result<Vec<VerifierClaim<P::ScalarField, HyperKZGCommitment<P>>>, OpeningsError> {
         homomorphic_reduce_verifier::<Self, _>(claims, transcript)
+    }
+
+    fn reduce_verifier_with_backend<B>(
+        backend: &mut B,
+        claims: Vec<BackendVerifierClaim<B, Self>>,
+        transcript: &mut B::Transcript,
+    ) -> Result<Vec<BackendVerifierClaim<B, Self>>, OpeningsError>
+    where
+        B: CommitmentBackend<Self, F = Self::Field>,
+    {
+        homomorphic_reduce_verifier_with_backend::<Self, B>(backend, claims, transcript)
     }
 }
 

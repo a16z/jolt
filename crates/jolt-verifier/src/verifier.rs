@@ -11,7 +11,9 @@ use jolt_compiler::module::{
 };
 use jolt_compiler::PolynomialId;
 use jolt_field::Field;
-use jolt_openings::{OpeningReduction, OpeningsError, VerifierClaim};
+use jolt_openings::{
+    BackendVerifierClaim, CommitmentBackend, CommitmentOrigin, OpeningReduction, OpeningsError,
+};
 use jolt_poly::EqPolynomial;
 use jolt_r1cs::R1csKey;
 use jolt_sumcheck::{SumcheckClaim, SumcheckVerifier};
@@ -87,8 +89,8 @@ pub fn verify_with_backend<B, PCS>(
     expected_io_hash: &[u8; 32],
 ) -> Result<(), JoltError>
 where
-    B: FieldBackend,
-    PCS: OpeningReduction<Field = B::F>,
+    B: CommitmentBackend<PCS>,
+    PCS: OpeningReduction<Field = <B as FieldBackend>::F>,
     PCS::Output: AppendToTranscript,
 {
     if proof.config.io_hash != *expected_io_hash {
@@ -121,13 +123,13 @@ where
     let mut final_evals_w: Vec<B::Scalar> = (0..schedule.num_stages)
         .map(|_| backend.const_zero())
         .collect();
-    let mut commitment_map: HashMap<PolynomialId, PCS::Output> = HashMap::new();
+    let mut commitment_map: HashMap<PolynomialId, B::Commitment> = HashMap::new();
     let mut commitments = proof.commitments.iter();
     let mut stage_proofs = proof.stage_proofs.iter();
     let mut current_stage: Option<&StageProof<B::F>> = None;
     let mut eval_cursor: usize = 0;
     let mut round_poly_cursor: usize = 0;
-    let mut pcs_claims: Vec<VerifierClaim<B::F, PCS::Output>> = Vec::new();
+    let mut pcs_claims: Vec<BackendVerifierClaim<B, PCS>> = Vec::new();
 
     for op in &schedule.ops {
         match op {
@@ -155,9 +157,13 @@ where
                 // downstream CollectOpeningClaim's `commitment_map.get()`
                 // already handles a missing entry.
                 if let Some(c) = slot {
-                    transcript.append(&LabelWithCount(tag.as_bytes(), c.serialized_len()));
-                    c.append_to_transcript(&mut transcript);
-                    let _ = commitment_map.insert(*poly, c.clone());
+                    let wrapped = backend.wrap_commitment(
+                        c.clone(),
+                        CommitmentOrigin::Proof,
+                        "absorb_commitment",
+                    );
+                    backend.absorb_commitment(&mut transcript, &wrapped, tag.as_bytes());
+                    let _ = commitment_map.insert(*poly, wrapped);
                 }
             }
 
@@ -406,16 +412,16 @@ where
 
             VerifierOp::CollectOpeningClaim { poly, at_stage } => {
                 if let Some(commitment) = commitment_map.get(poly) {
-                    let eval = evaluations_f.get(poly).copied().ok_or_else(|| {
+                    let eval_w = evaluations_w.get(poly).cloned().ok_or_else(|| {
                         JoltError::InvalidProof(format!(
                             "evaluation for committed poly {poly:?} not set"
                         ))
                     })?;
-                    pcs_claims.push(VerifierClaim {
-                        commitment: commitment.clone(),
-                        point: sumcheck_points_f[at_stage.0].clone(),
-                        eval,
-                    });
+                    pcs_claims.push((
+                        commitment.clone(),
+                        sumcheck_points_w[at_stage.0].clone(),
+                        eval_w,
+                    ));
                 }
             }
 
@@ -424,23 +430,26 @@ where
                     continue;
                 }
                 let claims = std::mem::take(&mut pcs_claims);
-                let reduced =
-                    PCS::reduce_verifier(claims, &mut transcript).map_err(JoltError::Opening)?;
+                let reduced = PCS::reduce_verifier_with_backend(backend, claims, &mut transcript)
+                    .map_err(JoltError::Opening)?;
 
                 if reduced.len() != proof.opening_proofs.len() {
                     return Err(JoltError::Opening(OpeningsError::VerificationFailed));
                 }
 
-                for (claim, opening_proof) in reduced.iter().zip(proof.opening_proofs.iter()) {
-                    PCS::verify(
-                        &claim.commitment,
-                        &claim.point,
-                        claim.eval,
-                        opening_proof,
-                        &key.pcs_setup,
-                        &mut transcript,
-                    )
-                    .map_err(JoltError::Opening)?;
+                for ((commitment, point, claim), opening_proof) in
+                    reduced.iter().zip(proof.opening_proofs.iter())
+                {
+                    backend
+                        .verify_opening(
+                            &key.pcs_setup,
+                            commitment,
+                            point,
+                            claim,
+                            opening_proof,
+                            &mut transcript,
+                        )
+                        .map_err(JoltError::Opening)?;
                 }
             }
         }

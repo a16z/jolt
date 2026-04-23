@@ -50,17 +50,14 @@
 
 #![cfg_attr(not(test), warn(missing_docs))]
 
-mod backend;
-mod commitment;
-mod error;
 pub mod helpers;
 mod native;
 pub mod tracing;
 pub mod viz;
 
-pub use backend::{CommitmentOrigin, FieldBackend, ScalarOrigin};
-pub use commitment::CommitmentBackend;
-pub use error::BackendError;
+pub use jolt_openings::{
+    BackendError, CommitmentBackend, CommitmentOrigin, FieldBackend, ScalarOrigin,
+};
 pub use helpers::{eq_eval, eq_evals_table, pow_u64, univariate_horner};
 pub use native::Native;
 pub use tracing::{

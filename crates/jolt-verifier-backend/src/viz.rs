@@ -21,7 +21,7 @@ use std::fmt::Write;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::AppendToTranscript;
 
-use crate::backend::{CommitmentOrigin, ScalarOrigin};
+use jolt_openings::{CommitmentOrigin, ScalarOrigin};
 use crate::tracing::{AstAssertion, AstGraph, AstOp};
 
 /// Render `graph` as a Graphviz DOT digraph.
@@ -398,7 +398,7 @@ mod tests {
     #![expect(clippy::unwrap_used, reason = "tests")]
 
     use super::*;
-    use crate::backend::FieldBackend;
+    use jolt_openings::FieldBackend;
     use crate::tracing::Tracing;
     use jolt_field::{Field, Fr};
     use jolt_openings::mock::MockCommitmentScheme;

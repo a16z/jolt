@@ -3,10 +3,23 @@
 use jolt_field::Field;
 use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
 
+use crate::backend::{CommitmentBackend, CommitmentOrigin};
 use crate::claims::{ProverClaim, VerifierClaim};
 use crate::error::OpeningsError;
 use crate::schemes::{AdditivelyHomomorphic, CommitmentScheme};
 use jolt_crypto::HomomorphicCommitment;
+
+/// One backend-side opening claim: `(commitment_handle, point, eval)`.
+///
+/// Mirrors [`VerifierClaim`] but with the commitment, point, and
+/// evaluation lifted into a [`CommitmentBackend`]'s associated handles.
+/// Used as both input and output of
+/// [`OpeningReduction::reduce_verifier_with_backend`].
+pub type BackendVerifierClaim<B, PCS> = (
+    <B as CommitmentBackend<PCS>>::Commitment,
+    Vec<<B as crate::backend::FieldBackend>::Scalar>,
+    <B as crate::backend::FieldBackend>::Scalar,
+);
 
 /// Reduces many opening claims into fewer. Each PCS provides its own
 /// implementation, since the natural batching strategy is scheme-specific
@@ -15,7 +28,7 @@ use jolt_crypto::HomomorphicCommitment;
 ///
 /// Homomorphic schemes (Dory, HyperKZG, Mock) can delegate their
 /// [`OpeningReduction`] impls to [`homomorphic_reduce_prover`] /
-/// [`homomorphic_reduce_verifier`].
+/// [`homomorphic_reduce_verifier`] / [`homomorphic_reduce_verifier_with_backend`].
 #[allow(clippy::type_complexity)]
 pub trait OpeningReduction: CommitmentScheme {
     fn reduce_prover<T: Transcript<Challenge = Self::Field>>(
@@ -27,6 +40,26 @@ pub trait OpeningReduction: CommitmentScheme {
         claims: Vec<VerifierClaim<Self::Field, Self::Output>>,
         transcript: &mut T,
     ) -> Result<Vec<VerifierClaim<Self::Field, Self::Output>>, OpeningsError>;
+
+    /// Backend-aware mirror of [`Self::reduce_verifier`].
+    ///
+    /// Called from `verify_with_backend` (top-level Jolt verifier) so the
+    /// reduction is recorded into whatever backend the verifier is running
+    /// against (Native: direct combine; Tracing: emits the corresponding
+    /// AST nodes via `wrap_commitment` / `absorb_commitment`).
+    ///
+    /// The output Fiat-Shamir transcript bytes (and squeezed challenges)
+    /// MUST be byte-identical to [`Self::reduce_verifier`] on `Native` for
+    /// any input — this is what makes the
+    /// `modular_self_verify_via_tracing_backend` round-trip work.
+    fn reduce_verifier_with_backend<B>(
+        backend: &mut B,
+        claims: Vec<BackendVerifierClaim<B, Self>>,
+        transcript: &mut B::Transcript,
+    ) -> Result<Vec<BackendVerifierClaim<B, Self>>, OpeningsError>
+    where
+        B: CommitmentBackend<Self, F = Self::Field>,
+        Self::Output: AppendToTranscript;
 }
 
 /// RLC-based prover-side reduction for [`AdditivelyHomomorphic`] schemes.
@@ -125,6 +158,137 @@ where
     }
 
     Ok(reduced)
+}
+
+/// Backend-aware mirror of [`homomorphic_reduce_verifier`].
+///
+/// Each homomorphic scheme delegates its
+/// [`OpeningReduction::reduce_verifier_with_backend`] impl here. The
+/// backend's transcript is driven through the same byte sequence as the
+/// native helper (`LabelWithCount` header + per-claim eval absorbs +
+/// per-group ρ challenge squeeze), so squeezed challenges remain
+/// bit-identical to the native path. Commitments are unwrapped via
+/// [`CommitmentBackend::unwrap_commitment`], combined via `PCS::combine`,
+/// and re-wrapped with [`CommitmentBackend::wrap_commitment`]. Combined
+/// evaluations are computed as a backend-side Horner evaluation so the
+/// resulting scalar threads through the AST instead of arriving as a
+/// fresh wrap.
+#[allow(clippy::type_complexity)]
+#[tracing::instrument(skip_all, name = "homomorphic_reduce_verifier_with_backend")]
+pub fn homomorphic_reduce_verifier_with_backend<PCS, B>(
+    backend: &mut B,
+    claims: Vec<BackendVerifierClaim<B, PCS>>,
+    transcript: &mut B::Transcript,
+) -> Result<Vec<BackendVerifierClaim<B, PCS>>, OpeningsError>
+where
+    PCS: AdditivelyHomomorphic,
+    PCS::Output: HomomorphicCommitment<PCS::Field> + AppendToTranscript,
+    B: CommitmentBackend<PCS, F = PCS::Field>,
+{
+    if claims.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    transcript.append(&LabelWithCount(b"rlc_claims", claims.len() as u64));
+    for (_, _, eval_scalar) in &claims {
+        let eval_value = backend.unwrap(eval_scalar).expect(
+            "homomorphic_reduce_verifier_with_backend: \
+             backend must expose concrete eval values for transcript binding",
+        );
+        eval_value.append_to_transcript(transcript);
+    }
+
+    let groups = group_backend_claims_by_point::<PCS, B>(backend, claims);
+    let mut reduced = Vec::with_capacity(groups.len());
+
+    for (point_scalars, group_claims) in groups {
+        let (rho, rho_scalar) = backend.squeeze(transcript, "rlc_rho");
+
+        let commitment_outputs: Vec<PCS::Output> = group_claims
+            .iter()
+            .map(|(c, _, _)| backend.unwrap_commitment(c))
+            .collect();
+        let powers = rho_powers(rho, commitment_outputs.len());
+        let combined_commitment = PCS::combine(&commitment_outputs, &powers);
+        let combined_handle =
+            backend.wrap_commitment(combined_commitment, CommitmentOrigin::Proof, "rlc_combined");
+
+        let combined_eval = horner_combine_scalars(backend, &group_claims, &rho_scalar);
+
+        reduced.push((combined_handle, point_scalars, combined_eval));
+    }
+
+    Ok(reduced)
+}
+
+/// Backend-side Horner evaluation: returns
+/// `evals[0] + ρ · evals[1] + ρ² · evals[2] + ...`, threaded through
+/// `backend.add` / `backend.mul` so the result references the same AST
+/// nodes the original eval scalars do.
+fn horner_combine_scalars<PCS, B>(
+    backend: &mut B,
+    group_claims: &[BackendVerifierClaim<B, PCS>],
+    rho_scalar: &B::Scalar,
+) -> B::Scalar
+where
+    PCS: AdditivelyHomomorphic,
+    PCS::Output: HomomorphicCommitment<PCS::Field> + AppendToTranscript,
+    B: CommitmentBackend<PCS, F = PCS::Field>,
+{
+    let mut iter = group_claims.iter().rev();
+    let (_, _, last_eval) = iter
+        .next()
+        .expect("homomorphic_reduce_verifier_with_backend: empty group");
+    let mut acc = last_eval.clone();
+    for (_, _, eval) in iter {
+        let scaled = backend.mul(&acc, rho_scalar);
+        acc = backend.add(&scaled, eval);
+    }
+    acc
+}
+
+#[allow(clippy::type_complexity)]
+fn group_backend_claims_by_point<PCS, B>(
+    backend: &B,
+    claims: Vec<BackendVerifierClaim<B, PCS>>,
+) -> Vec<(Vec<B::Scalar>, Vec<BackendVerifierClaim<B, PCS>>)>
+where
+    PCS: CommitmentScheme,
+    PCS::Output: AppendToTranscript,
+    B: CommitmentBackend<PCS, F = PCS::Field>,
+{
+    // Group by the underlying field-valued point. Two claims belong to the
+    // same group iff their points unwrap to the same `Vec<F>` — this matches
+    // the native helper's `Vec<F> == Vec<F>` comparison while still letting
+    // each group keep its original backend-scalar handles for downstream
+    // ops.
+    let mut groups: Vec<(Vec<PCS::Field>, Vec<B::Scalar>, Vec<BackendVerifierClaim<B, PCS>>)> =
+        Vec::new();
+    for (commitment, point_scalars, eval) in claims {
+        let point_values: Vec<PCS::Field> = point_scalars
+            .iter()
+            .map(|s| {
+                backend.unwrap(s).expect(
+                    "homomorphic_reduce_verifier_with_backend: backend must expose concrete \
+                     point values for grouping",
+                )
+            })
+            .collect();
+        if let Some((_, _, group)) = groups.iter_mut().find(|(p, _, _)| *p == point_values) {
+            group.push((commitment, point_scalars, eval));
+        } else {
+            let canonical_point_scalars = point_scalars.clone();
+            groups.push((
+                point_values,
+                canonical_point_scalars,
+                vec![(commitment, point_scalars, eval)],
+            ));
+        }
+    }
+    groups
+        .into_iter()
+        .map(|(_, point_scalars, group)| (point_scalars, group))
+        .collect()
 }
 
 /// result[i] = p_1[i] + ρ · p_2[i] + ρ² · p_3[i] + ... (Horner evaluation).

@@ -4,7 +4,7 @@
 |-------------|--------------------------------|
 | Author(s)   | @quangvdao                     |
 | Created     | 2026-04-22                     |
-| Status      | in progress                    |
+| Status      | landed                         |
 | PR          | #1461                          |
 
 ## Summary
@@ -413,10 +413,17 @@ for downstream consumers: a Lean exporter can quantify only over
 - [x] No mention of `g1_msm`, `pairing`, `MSM`, or `GroupBackend`
       anywhere in `crates/jolt-verifier-backend/src/`. The trait
       surface is curve-agnostic.
-- [ ] `OpeningReduction::reduce_verifier_with_backend` implemented
+- [x] `OpeningReduction::reduce_verifier_with_backend` implemented
       for `MockCommitmentScheme`, `HyperKZGScheme`, `DoryScheme`,
       each byte-identical to its `reduce_verifier` on `Native`.
-- [ ] `verify_with_backend` calls
+      Per-PCS parity tests live in
+      `crates/jolt-verifier-backend/tests/reduction_parity.rs`,
+      `crates/jolt-hyperkzg/tests/reduction_parity.rs`, and
+      `crates/jolt-dory/tests/reduction_parity.rs` (5 cases each:
+      single, shared-point, distinct-points, mixed groups, empty),
+      asserting equal commitments / points / evals and equal
+      post-reduction transcript challenge.
+- [x] `verify_with_backend` calls
       `OpeningReduction::reduce_verifier_with_backend` and
       `CommitmentBackend::verify_opening` exclusively. No direct
       `PCS::verify` / `PCS::reduce_verifier` calls remain in the
@@ -439,11 +446,15 @@ for downstream consumers: a Lean exporter can quantify only over
     `Tracing<DoryScheme>` verifier + replay against real Dory
     openings. Asserts every commitment-shaped variant appears in
     the recorded graph and every `OpeningHolds` discharges.
-- **Reduction parity (per PCS, future).** Once
-  `reduce_verifier_with_backend` lands, each PCS gets a unit test:
-  build a small bag of opening claims, call `reduce_verifier` and
-  `reduce_verifier_with_backend::<Native<_>>`, assert byte-identical
-  combined commitment + transcript state.
+- **Reduction parity (per PCS).** Each homomorphic PCS ships a
+  dedicated `reduction_parity.rs` test (5 shapes: single,
+  shared-point, distinct-points, mixed groups, empty) that builds
+  a bag of opening claims, calls `reduce_verifier` and
+  `reduce_verifier_with_backend::<Native<_>>`, and asserts the
+  per-group `(commitment, point, eval)` triples and post-reduction
+  transcript challenge are byte-identical. `MockCommitmentScheme`
+  lives in `crates/jolt-verifier-backend/tests/`; `HyperKZGScheme`
+  and `DoryScheme` live in their own crate `tests/` directories.
 
 ### Performance
 
@@ -512,9 +523,9 @@ for downstream consumers: a Lean exporter can quantify only over
 ## Documentation
 
 No `book/` changes in this PR. The user-facing surface (`verify`)
-is unchanged; this PR is an internal abstraction. Once the two
-open Acceptance Criteria items above land, a "Verifier Backends"
-chapter in the book is warranted, covering:
+is unchanged; this PR is an internal abstraction. A "Verifier
+Backends" chapter in the book is warranted as a follow-up,
+covering:
 
 - The `FieldBackend` and `CommitmentBackend` trait surfaces.
 - How to write a custom backend (e.g. constraint synthesis for a

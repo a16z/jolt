@@ -1,12 +1,11 @@
 use std::marker::PhantomData;
 
 use jolt_field::Field;
-use jolt_openings::{CommitmentScheme, OpeningsError};
+use jolt_openings::{
+    BackendError, CommitmentBackend, CommitmentOrigin, CommitmentScheme, FieldBackend,
+    OpeningsError, ScalarOrigin,
+};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript};
-
-use crate::backend::{CommitmentOrigin, FieldBackend, ScalarOrigin};
-use crate::commitment::CommitmentBackend;
-use crate::error::BackendError;
 
 /// Zero-overhead [`FieldBackend`] backed by the underlying field directly.
 ///
@@ -129,6 +128,11 @@ where
         _label: &'static str,
     ) -> PCS::Output {
         value
+    }
+
+    #[inline(always)]
+    fn unwrap_commitment(&self, commitment: &PCS::Output) -> PCS::Output {
+        commitment.clone()
     }
 
     #[inline(always)]

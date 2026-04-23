@@ -18,6 +18,7 @@
 //! based, Ajtai / lattice-based) are free to provide a scheme-specific
 //! batching strategy.
 
+mod backend;
 mod claims;
 mod error;
 #[cfg(any(test, feature = "test-utils"))]
@@ -25,11 +26,17 @@ pub mod mock;
 mod reduction;
 mod schemes;
 
+pub use backend::{
+    BackendError, CommitmentBackend, CommitmentOrigin, FieldBackend, ScalarOrigin,
+};
 pub use claims::{ProverClaim, VerifierClaim};
 pub use error::OpeningsError;
 pub use reduction::{
-    homomorphic_reduce_prover, homomorphic_reduce_verifier, rlc_combine, rlc_combine_scalars,
-    OpeningReduction,
+    homomorphic_reduce_prover, homomorphic_reduce_verifier,
+    homomorphic_reduce_verifier_with_backend, rlc_combine, rlc_combine_scalars,
+    BackendVerifierClaim, OpeningReduction,
 };
 
 pub use schemes::{AdditivelyHomomorphic, CommitmentScheme, StreamingCommitment, ZkOpeningScheme};
+
+pub use jolt_crypto::Commitment;

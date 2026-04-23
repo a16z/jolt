@@ -10,8 +10,12 @@ use serde::{Deserialize, Serialize};
 
 use jolt_crypto::HomomorphicCommitment;
 
+use crate::backend::CommitmentBackend;
 use crate::error::OpeningsError;
-use crate::reduction::{homomorphic_reduce_prover, homomorphic_reduce_verifier, OpeningReduction};
+use crate::reduction::{
+    homomorphic_reduce_prover, homomorphic_reduce_verifier,
+    homomorphic_reduce_verifier_with_backend, BackendVerifierClaim, OpeningReduction,
+};
 use crate::schemes::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use crate::{ProverClaim, VerifierClaim};
 
@@ -160,6 +164,17 @@ impl<F: Field> OpeningReduction for MockCommitmentScheme<F> {
         transcript: &mut T,
     ) -> Result<Vec<VerifierClaim<F, MockCommitment<F>>>, OpeningsError> {
         homomorphic_reduce_verifier::<Self, _>(claims, transcript)
+    }
+
+    fn reduce_verifier_with_backend<B>(
+        backend: &mut B,
+        claims: Vec<BackendVerifierClaim<B, Self>>,
+        transcript: &mut B::Transcript,
+    ) -> Result<Vec<BackendVerifierClaim<B, Self>>, OpeningsError>
+    where
+        B: CommitmentBackend<Self, F = Self::Field>,
+    {
+        homomorphic_reduce_verifier_with_backend::<Self, B>(backend, claims, transcript)
     }
 }
 

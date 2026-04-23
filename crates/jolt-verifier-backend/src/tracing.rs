@@ -88,13 +88,12 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use jolt_field::Field;
-use jolt_openings::{CommitmentScheme, OpeningsError};
+use jolt_openings::{
+    BackendError, CommitmentBackend, CommitmentOrigin, CommitmentScheme, FieldBackend,
+    OpeningsError, ScalarOrigin,
+};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript};
 use num_traits::Zero;
-
-use crate::backend::{CommitmentOrigin, FieldBackend, ScalarOrigin};
-use crate::commitment::CommitmentBackend;
-use crate::error::BackendError;
 
 /// Stable identifier into [`AstGraph::nodes`].
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -676,6 +675,25 @@ where
         })
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "AstGraph mutex is internal; poisoning would itself be a bug"
+    )]
+    fn unwrap_commitment(&self, commitment: &Self::Commitment) -> PCS::Output {
+        // Looks up the inlined PCS::Output on the originating CommitmentWrap
+        // node. Used by per-PCS reduce_verifier_with_backend impls to feed
+        // commitments into PCS::combine and rewrap the result. Panics if the
+        // referenced node is not a CommitmentWrap (graph corruption).
+        let g = self.graph.lock().expect("AstGraph mutex poisoned");
+        match &g.nodes[commitment.0 as usize] {
+            AstOp::CommitmentWrap { value, .. } => (**value).clone(),
+            _ => panic!(
+                "Tracing::unwrap_commitment: node #{} is not CommitmentWrap",
+                commitment.0,
+            ),
+        }
+    }
+
     fn absorb_commitment(
         &mut self,
         transcript: &mut Self::Transcript,
@@ -1145,9 +1163,9 @@ mod tests {
     #![expect(clippy::unwrap_used, reason = "tests")]
 
     use super::*;
-    use crate::commitment::CommitmentBackend;
     use crate::helpers::eq_eval;
     use crate::native::Native;
+    use jolt_openings::CommitmentBackend;
     use jolt_field::{Field, Fr};
     use jolt_openings::mock::MockCommitmentScheme;
     use jolt_poly::Polynomial;

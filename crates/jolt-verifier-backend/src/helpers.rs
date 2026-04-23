@@ -11,8 +11,7 @@
 //! verifier-internal counterpart bit-for-bit (modulo associativity of the
 //! accumulator). See the per-function tests for parity proofs.
 
-use crate::backend::FieldBackend;
-use crate::error::BackendError;
+use jolt_openings::{BackendError, FieldBackend};
 
 /// Evaluates the multilinear equality polynomial
 /// `eq(a, b) = Π_i (a_i b_i + (1 - a_i)(1 - b_i))`.
