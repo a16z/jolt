@@ -2,7 +2,7 @@
 //!
 //! Confirms the outer uniskip domain size, degree, and coefficient count
 //! to resolve the op #113 divergence (55 coeffs in module vs 28 in jolt-core).
-#![allow(non_snake_case, clippy::print_stderr)]
+#![allow(non_snake_case, clippy::print_stderr, unused_imports, dead_code)]
 
 use ark_bn254::Fr;
 use jolt_core::field::JoltField;

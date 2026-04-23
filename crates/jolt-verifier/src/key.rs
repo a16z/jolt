@@ -1,7 +1,7 @@
 use jolt_compiler::module::Module;
 use jolt_compiler::VerifierSchedule;
 use jolt_field::Field;
-use jolt_openings::CommitmentScheme;
+use jolt_openings::CommitmentSchemeVerifier;
 use jolt_r1cs::R1csKey;
 use serde::{Deserialize, Serialize};
 
@@ -11,9 +11,13 @@ use serde::{Deserialize, Serialize};
 /// verifications for the same circuit. The schedule is the compiler's output
 /// describing the verifier's computation — the verifier is a generic
 /// interpreter over it.
+///
+/// Bounded on [`CommitmentSchemeVerifier`] so verifier-only crates (wasm,
+/// on-chain) do not transitively depend on `Polynomial`, `OpeningHint`,
+/// `ProverSetup`, etc.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(bound = "")]
-pub struct JoltVerifyingKey<F: Field, PCS: CommitmentScheme<Field = F>> {
+pub struct JoltVerifyingKey<F: Field, PCS: CommitmentSchemeVerifier<Field = F>> {
     /// PCS verifier-side structured reference string.
     pub pcs_setup: PCS::VerifierSetup,
     /// Compiled verifier schedule: stages, claim formulas, sumcheck params.
@@ -22,7 +26,7 @@ pub struct JoltVerifyingKey<F: Field, PCS: CommitmentScheme<Field = F>> {
     pub r1cs_key: R1csKey<F>,
 }
 
-impl<F: Field, PCS: CommitmentScheme<Field = F>> JoltVerifyingKey<F, PCS> {
+impl<F: Field, PCS: CommitmentSchemeVerifier<Field = F>> JoltVerifyingKey<F, PCS> {
     /// Construct from a compiled module, PCS verifier setup, and R1CS key.
     pub fn new(module: &Module, pcs_setup: PCS::VerifierSetup, r1cs_key: R1csKey<F>) -> Self {
         Self {

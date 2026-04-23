@@ -1402,10 +1402,12 @@ pub enum Op {
         /// Total multilinear variables for the PCS grid.
         num_vars: usize,
     },
-    /// RLC-reduce all accumulated opening claims via transcript challenges.
-    ReduceOpenings,
-    /// Generate PCS opening proofs for all reduced claims.
-    Open,
+    /// Fused batched opening: drive `PCS::prove_batch` with all currently
+    /// pending claims (collected via `CollectOpeningClaim` / `…At`).
+    /// Stores the resulting `BatchProof` in `state.opening_proof` and the
+    /// per-group joint evaluations in `state.binding_evals` for use by a
+    /// subsequent `BindOpeningInputs`.
+    ProveBatch,
 
     /// Absorb public instance data into the transcript.
     Preamble,
@@ -1492,7 +1494,7 @@ pub enum Op {
     /// Release a device buffer (GPU memory).
     ReleaseDevice { poly: PolynomialId },
     /// Release host-side polynomial data (provider memory).
-    /// Emitted after `ReduceOpenings` when evaluation tables are no longer needed.
+    /// Emitted after `ProveBatch` when evaluation tables are no longer needed.
     ReleaseHost { polys: Vec<PolynomialId> },
     /// Alias one evaluation under another polynomial ID.
     /// Runtime: `state.evaluations[to] = state.evaluations[from]`.
@@ -1561,8 +1563,7 @@ impl Op {
             self,
             Op::Commit { .. }
                 | Op::CommitStreaming { .. }
-                | Op::ReduceOpenings
-                | Op::Open
+                | Op::ProveBatch
                 | Op::BindOpeningInputs { .. }
         )
     }

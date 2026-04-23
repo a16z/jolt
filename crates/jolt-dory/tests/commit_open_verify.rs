@@ -5,7 +5,9 @@
 
 use jolt_dory::DoryScheme;
 use jolt_field::{Field, Fr};
-use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, StreamingCommitment};
+use jolt_openings::{
+    AdditivelyHomomorphic, AdditivelyHomomorphicVerifier, CommitmentScheme, StreamingCommitment,
+};
 use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;

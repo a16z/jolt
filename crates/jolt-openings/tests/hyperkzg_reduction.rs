@@ -1,7 +1,7 @@
-//! RLC reduction integration tests with HyperKZG (BN254).
+//! Fused batched-opening integration tests with HyperKZG (BN254).
 //!
-//! Exercises the full reduce → open → verify pipeline using real pairing-based
-//! polynomial commitments instead of MockPCS.
+//! Exercises the public `prove_batch` / `verify_batch` API end-to-end
+//! using real pairing-based polynomial commitments instead of MockPCS.
 //!
 //! Requires: `cargo nextest run -p jolt-openings --features test-utils`
 
@@ -10,7 +10,9 @@
 use jolt_crypto::Bn254;
 use jolt_field::{Field, Fr};
 use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGScheme, HyperKZGVerifierSetup};
-use jolt_openings::{CommitmentScheme, OpeningReduction, ProverClaim, VerifierClaim};
+use jolt_openings::{
+    CommitmentScheme, CommitmentSchemeVerifier, OpeningClaim, OpeningsError, ProverClaim,
+};
 use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
@@ -23,12 +25,12 @@ fn make_setup(max_degree: usize) -> (HyperKZGProverSetup<Bn254>, HyperKZGVerifie
     let g1 = Bn254::g1_generator();
     let g2 = Bn254::g2_generator();
     let pk = KzgPCS::setup(&mut rng, max_degree, g1, g2);
-    let vk = KzgPCS::verifier_setup(&pk);
+    let vk = KzgPCS::project_verifier_setup(&pk);
     (pk, vk)
 }
 
-/// Full reduce → open → verify pipeline with HyperKZG.
-fn reduce_open_verify(
+/// Drive `prove_batch` on prover and `verify_batch` on verifier.
+fn prove_verify_batch(
     polys: &[Polynomial<Fr>],
     points: &[Vec<Fr>],
     pk: &HyperKZGProverSetup<Bn254>,
@@ -38,7 +40,7 @@ fn reduce_open_verify(
     assert_eq!(polys.len(), points.len());
 
     let mut prover_claims = Vec::new();
-    let mut verifier_claims = Vec::new();
+    let mut verifier_claims: Vec<OpeningClaim<Fr, KzgPCS>> = Vec::new();
 
     for (poly, point) in polys.iter().zip(points.iter()) {
         let eval = poly.evaluate(point);
@@ -48,47 +50,22 @@ fn reduce_open_verify(
             eval,
         });
         let (commitment, ()) = <KzgPCS as CommitmentScheme>::commit(poly.evaluations(), pk);
-        verifier_claims.push(VerifierClaim {
+        verifier_claims.push(OpeningClaim {
             commitment,
             point: point.clone(),
             eval,
         });
     }
 
-    // Prover: reduce + open
+    let hints = vec![(); prover_claims.len()];
+
     let mut transcript_p = Blake2bTranscript::new(label);
-    let reduced_p = KzgPCS::reduce_prover(prover_claims, &mut transcript_p);
-    let proofs: Vec<_> = reduced_p
-        .iter()
-        .map(|c| {
-            <KzgPCS as CommitmentScheme>::open(
-                &c.polynomial,
-                &c.point,
-                c.eval,
-                pk,
-                None,
-                &mut transcript_p,
-            )
-        })
-        .collect();
+    let (batch_proof, _joint_evals) =
+        KzgPCS::prove_batch(prover_claims, hints, pk, &mut transcript_p);
 
-    // Verifier: reduce + verify
     let mut transcript_v = Blake2bTranscript::new(label);
-    let reduced_v = KzgPCS::reduce_verifier(verifier_claims, &mut transcript_v)
-        .expect("reduction should succeed");
-
-    assert_eq!(reduced_v.len(), proofs.len());
-    for (claim, proof) in reduced_v.iter().zip(proofs.iter()) {
-        <KzgPCS as CommitmentScheme>::verify(
-            &claim.commitment,
-            &claim.point,
-            claim.eval,
-            proof,
-            vk,
-            &mut transcript_v,
-        )
-        .expect("verification should succeed");
-    }
+    KzgPCS::verify_batch(verifier_claims, &batch_proof, vk, &mut transcript_v)
+        .expect("batched verification must succeed");
 }
 
 #[test]
@@ -99,7 +76,7 @@ fn single_claim() {
 
     let poly = Polynomial::<Fr>::random(nv, &mut rng);
     let point: Vec<Fr> = (0..nv).map(|_| Fr::random(&mut rng)).collect();
-    reduce_open_verify(&[poly], &[point], &pk, &vk, b"kzg-single");
+    prove_verify_batch(&[poly], &[point], &pk, &vk, b"kzg-single");
 }
 
 #[test]
@@ -114,7 +91,7 @@ fn multiple_claims_shared_point() {
         .collect();
     let points: Vec<_> = (0..5).map(|_| point.clone()).collect();
 
-    reduce_open_verify(&polys, &points, &pk, &vk, b"kzg-shared");
+    prove_verify_batch(&polys, &points, &pk, &vk, b"kzg-shared");
 }
 
 #[test]
@@ -130,7 +107,7 @@ fn multiple_claims_distinct_points() {
         .map(|_| (0..nv).map(|_| Fr::random(&mut rng)).collect())
         .collect();
 
-    reduce_open_verify(&polys, &points, &pk, &vk, b"kzg-distinct");
+    prove_verify_batch(&polys, &points, &pk, &vk, b"kzg-distinct");
 }
 
 #[test]
@@ -154,11 +131,10 @@ fn mixed_shared_and_distinct_points() {
         other_point,
     ];
 
-    reduce_open_verify(&polys, &points, &pk, &vk, b"kzg-mixed");
+    prove_verify_batch(&polys, &points, &pk, &vk, b"kzg-mixed");
 }
 
-/// Prover opens honestly, but verifier has a tampered evaluation.
-/// The PCS verify must detect the mismatch.
+/// Verifier with a tampered evaluation triggers `verify_batch` failure.
 #[test]
 fn tampered_eval_detected() {
     let mut rng = ChaCha20Rng::seed_from_u64(7004);
@@ -184,63 +160,29 @@ fn tampered_eval_detected() {
             eval: eval_b,
         },
     ];
+    let hints = vec![(); prover_claims.len()];
 
     let (com_a, ()) = <KzgPCS as CommitmentScheme>::commit(poly_a.evaluations(), &pk);
     let (com_b, ()) = <KzgPCS as CommitmentScheme>::commit(poly_b.evaluations(), &pk);
-    let verifier_claims = vec![
-        VerifierClaim {
+    let verifier_claims: Vec<OpeningClaim<Fr, KzgPCS>> = vec![
+        OpeningClaim {
             commitment: com_a,
             point: point.clone(),
             eval: eval_a,
         },
-        VerifierClaim {
+        OpeningClaim {
             commitment: com_b,
             point: point.clone(),
             eval: eval_b + Fr::from_u64(1), // tampered
         },
     ];
 
-    // Prover reduces and opens honestly
     let mut transcript_p = Blake2bTranscript::new(b"kzg-tampered");
-    let reduced_p = KzgPCS::reduce_prover(prover_claims, &mut transcript_p);
-    let proofs: Vec<_> = reduced_p
-        .iter()
-        .map(|c| {
-            <KzgPCS as CommitmentScheme>::open(
-                &c.polynomial,
-                &c.point,
-                c.eval,
-                &pk,
-                None,
-                &mut transcript_p,
-            )
-        })
-        .collect();
+    let (batch_proof, _) = KzgPCS::prove_batch(prover_claims, hints, &pk, &mut transcript_p);
 
-    // Verifier reduces with tampered claims
     let mut transcript_v = Blake2bTranscript::new(b"kzg-tampered");
-    let reduced_v = KzgPCS::reduce_verifier(verifier_claims, &mut transcript_v)
-        .expect("reduction itself should succeed");
-
-    let mut any_failed = false;
-    for (claim, proof) in reduced_v.iter().zip(proofs.iter()) {
-        if <KzgPCS as CommitmentScheme>::verify(
-            &claim.commitment,
-            &claim.point,
-            claim.eval,
-            proof,
-            &vk,
-            &mut transcript_v,
-        )
-        .is_err()
-        {
-            any_failed = true;
-        }
-    }
-    assert!(
-        any_failed,
-        "tampered evaluation must cause verification failure"
-    );
+    let result = KzgPCS::verify_batch(verifier_claims, &batch_proof, &vk, &mut transcript_v);
+    assert!(matches!(result, Err(OpeningsError::VerificationFailed)));
 }
 
 /// Property test: random claim counts and dimensions always verify.
@@ -266,6 +208,6 @@ fn property_random_claims_always_verify() {
             .map(|i| points[i % num_points].clone())
             .collect();
 
-        reduce_open_verify(&polys, &claim_points, &pk, &vk, b"kzg-property");
+        prove_verify_batch(&polys, &claim_points, &pk, &vk, b"kzg-property");
     }
 }

@@ -38,8 +38,7 @@ fn op_class_tag(op: &jolt_compiler::module::Op) -> Option<&'static str> {
         Op::MaterializeCombinedVal { .. } => "MaterializeCombinedVal",
         Op::Commit { .. } => "Commit",
         Op::CommitStreaming { .. } => "CommitStreaming",
-        Op::Open => "Open",
-        Op::ReduceOpenings => "ReduceOpenings",
+        Op::ProveBatch => "ProveBatch",
         Op::InstanceReduce { .. } => "InstanceReduce",
         Op::InstanceSegmentedReduce { .. } => "InstanceSegmentedReduce",
         Op::InstanceBind { .. } => "InstanceBind",
@@ -76,7 +75,7 @@ use jolt_compute::{Buf, BufferProvider, ComputeBackend, Executable};
 use helpers::PendingClaim;
 use jolt_crypto::HomomorphicCommitment;
 use jolt_field::Field;
-use jolt_openings::{AdditivelyHomomorphic, ProverClaim};
+use jolt_openings::AdditivelyHomomorphic;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::proof::SumcheckProof;
 use jolt_transcript::{AppendToTranscript, Transcript};
@@ -135,9 +134,14 @@ where
     pub(super) hints: HashMap<PolynomialId, PCS::OpeningHint>,
     pub(super) pending_claims: Vec<PendingClaim<F>>,
     pub(super) pending_hints: Vec<PCS::OpeningHint>,
-    pub(super) reduced_claims: Vec<ProverClaim<F>>,
-    pub(super) reduced_hints: Vec<PCS::OpeningHint>,
-    pub(super) opening_proofs: Vec<PCS::Proof>,
+    /// Single fused batched-opening proof, produced by `Op::ProveBatch`.
+    /// `Some` after `Op::ProveBatch` runs; `None` until then. The final
+    /// `JoltProof::opening_proof` defaults to `BatchProof::default()`-equivalent
+    /// (an empty batch) if `Op::ProveBatch` was never emitted.
+    pub(super) opening_proof: Option<PCS::BatchProof>,
+    /// Per-group joint evaluations from the most recent `Op::ProveBatch`,
+    /// consumed by subsequent `Op::BindOpeningInputs`.
+    pub(super) binding_evals: Vec<F>,
     pub(super) padded_poly_data: HashMap<PolynomialId, Vec<F>>,
 
     /// Per-cycle eq-weight vector for address-decomposition instance.
@@ -203,9 +207,8 @@ where
         hints: HashMap::new(),
         pending_claims: Vec::new(),
         pending_hints: Vec::new(),
-        reduced_claims: Vec::new(),
-        reduced_hints: Vec::new(),
-        opening_proofs: Vec::new(),
+        opening_proof: None,
+        binding_evals: Vec::new(),
         padded_poly_data: HashMap::new(),
         instance_weights: Vec::new(),
         instance_checkpoints: Vec::new(),
@@ -352,7 +355,9 @@ where
     JoltProof {
         config: state.config,
         stage_proofs: state.stage_proofs,
-        opening_proofs: state.opening_proofs,
+        opening_proof: state
+            .opening_proof
+            .expect("Op::ProveBatch must be emitted before execute returns"),
         commitments: state.commitments,
     }
 }

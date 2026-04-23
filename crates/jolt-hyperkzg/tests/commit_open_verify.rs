@@ -3,7 +3,7 @@
 use jolt_crypto::Bn254;
 use jolt_field::{Field, Fr};
 use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGScheme, HyperKZGVerifierSetup};
-use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};
+use jolt_openings::{AdditivelyHomomorphic, AdditivelyHomomorphicVerifier, CommitmentScheme};
 use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
@@ -16,7 +16,7 @@ fn make_setup(max_degree: usize) -> (HyperKZGProverSetup<Bn254>, HyperKZGVerifie
     let g1 = Bn254::g1_generator();
     let g2 = Bn254::g2_generator();
     let pk = KzgPCS::setup(&mut rng, max_degree, g1, g2);
-    let vk = KzgPCS::verifier_setup(&pk);
+    let vk = KzgPCS::project_verifier_setup(&pk);
     (pk, vk)
 }
 
@@ -31,11 +31,18 @@ fn commit_open_verify(
     let (commitment, ()) = <KzgPCS as CommitmentScheme>::commit(poly.evaluations(), pk);
 
     let mut t_p = Blake2bTranscript::new(label);
-    let proof = <KzgPCS as CommitmentScheme>::open(poly, point, eval, pk, None, &mut t_p);
+    let proof = <KzgPCS as AdditivelyHomomorphic>::open(poly, point, eval, pk, None, &mut t_p);
 
     let mut t_v = Blake2bTranscript::new(label);
-    <KzgPCS as CommitmentScheme>::verify(&commitment, point, eval, &proof, vk, &mut t_v)
-        .expect("verification should succeed");
+    <KzgPCS as AdditivelyHomomorphicVerifier>::verify(
+        &commitment,
+        point,
+        eval,
+        &proof,
+        vk,
+        &mut t_v,
+    )
+    .expect("verification should succeed");
 }
 
 // Basic roundtrip for various polynomial sizes
@@ -102,11 +109,11 @@ fn wrong_eval_rejected() {
     // Prover opens with correct eval
     let mut t_p = Blake2bTranscript::new(b"kzg-wrong");
     let proof =
-        <KzgPCS as CommitmentScheme>::open(&poly, &point, correct_eval, &pk, None, &mut t_p);
+        <KzgPCS as AdditivelyHomomorphic>::open(&poly, &point, correct_eval, &pk, None, &mut t_p);
 
     // Verifier checks with wrong eval
     let mut t_v = Blake2bTranscript::new(b"kzg-wrong");
-    let result = <KzgPCS as CommitmentScheme>::verify(
+    let result = <KzgPCS as AdditivelyHomomorphicVerifier>::verify(
         &commitment,
         &point,
         wrong_eval,
@@ -130,7 +137,7 @@ fn homomorphic_sum() {
 
     let (com_a, ()) = <KzgPCS as CommitmentScheme>::commit(a.evaluations(), &pk);
     let (com_b, ()) = <KzgPCS as CommitmentScheme>::commit(b.evaluations(), &pk);
-    let combined_com = <KzgPCS as AdditivelyHomomorphic>::combine(
+    let combined_com = <KzgPCS as AdditivelyHomomorphicVerifier>::combine(
         &[com_a, com_b],
         &[Fr::from_u64(1), Fr::from_u64(1)],
     );
@@ -140,11 +147,19 @@ fn homomorphic_sum() {
     let eval = sum_poly.evaluate(&point);
 
     let mut t_p = Blake2bTranscript::new(b"kzg-homo");
-    let proof = <KzgPCS as CommitmentScheme>::open(&sum_poly, &point, eval, &pk, None, &mut t_p);
+    let proof =
+        <KzgPCS as AdditivelyHomomorphic>::open(&sum_poly, &point, eval, &pk, None, &mut t_p);
 
     let mut t_v = Blake2bTranscript::new(b"kzg-homo");
-    <KzgPCS as CommitmentScheme>::verify(&combined_com, &point, eval, &proof, &vk, &mut t_v)
-        .expect("homomorphic sum must verify");
+    <KzgPCS as AdditivelyHomomorphicVerifier>::verify(
+        &combined_com,
+        &point,
+        eval,
+        &proof,
+        &vk,
+        &mut t_v,
+    )
+    .expect("homomorphic sum must verify");
 }
 
 /// combine with arbitrary scalars: s_a·C_a + s_b·C_b == commit(s_a·a + s_b·b).
@@ -160,7 +175,8 @@ fn homomorphic_weighted_combination() {
 
     let (com_a, ()) = <KzgPCS as CommitmentScheme>::commit(a.evaluations(), &pk);
     let (com_b, ()) = <KzgPCS as CommitmentScheme>::commit(b.evaluations(), &pk);
-    let combined_com = <KzgPCS as AdditivelyHomomorphic>::combine(&[com_a, com_b], &[s_a, s_b]);
+    let combined_com =
+        <KzgPCS as AdditivelyHomomorphicVerifier>::combine(&[com_a, com_b], &[s_a, s_b]);
 
     let weighted_poly = a * s_a + b * s_b;
     let point: Vec<Fr> = (0..nv).map(|_| Fr::random(&mut rng)).collect();
@@ -168,11 +184,18 @@ fn homomorphic_weighted_combination() {
 
     let mut t_p = Blake2bTranscript::new(b"kzg-weighted");
     let proof =
-        <KzgPCS as CommitmentScheme>::open(&weighted_poly, &point, eval, &pk, None, &mut t_p);
+        <KzgPCS as AdditivelyHomomorphic>::open(&weighted_poly, &point, eval, &pk, None, &mut t_p);
 
     let mut t_v = Blake2bTranscript::new(b"kzg-weighted");
-    <KzgPCS as CommitmentScheme>::verify(&combined_com, &point, eval, &proof, &vk, &mut t_v)
-        .expect("weighted combination must verify");
+    <KzgPCS as AdditivelyHomomorphicVerifier>::verify(
+        &combined_com,
+        &point,
+        eval,
+        &proof,
+        &vk,
+        &mut t_v,
+    )
+    .expect("weighted combination must verify");
 }
 
 // Deterministic setup
@@ -185,8 +208,8 @@ fn deterministic_setup_from_secret() {
 
     let pk1 = KzgPCS::setup_from_secret(beta, 16, g1, g2);
     let pk2 = KzgPCS::setup_from_secret(beta, 16, g1, g2);
-    let _vk1 = KzgPCS::verifier_setup(&pk1);
-    let vk2 = KzgPCS::verifier_setup(&pk2);
+    let _vk1 = KzgPCS::project_verifier_setup(&pk1);
+    let vk2 = KzgPCS::project_verifier_setup(&pk2);
 
     // Same setup yields same commitments
     let poly = Polynomial::new(vec![Fr::from_u64(1), Fr::from_u64(2)]);
@@ -201,9 +224,9 @@ fn deterministic_setup_from_secret() {
     let point = vec![Fr::from_u64(7)];
     let eval = poly.evaluate(&point);
     let mut t = Blake2bTranscript::new(b"det-setup");
-    let proof = <KzgPCS as CommitmentScheme>::open(&poly, &point, eval, &pk1, None, &mut t);
+    let proof = <KzgPCS as AdditivelyHomomorphic>::open(&poly, &point, eval, &pk1, None, &mut t);
     let mut t = Blake2bTranscript::new(b"det-setup");
-    <KzgPCS as CommitmentScheme>::verify(&com1, &point, eval, &proof, &vk2, &mut t)
+    <KzgPCS as AdditivelyHomomorphicVerifier>::verify(&com1, &point, eval, &proof, &vk2, &mut t)
         .expect("cross-setup verification must work");
 }
 

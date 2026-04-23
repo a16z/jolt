@@ -2,16 +2,19 @@
 
 use std::marker::PhantomData;
 
-use jolt_crypto::Commitment;
+use jolt_crypto::{Commitment, HomomorphicCommitment};
 use jolt_field::Field;
 use jolt_poly::Polynomial;
 use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{Deserialize, Serialize};
 
-use jolt_crypto::HomomorphicCommitment;
-
+use crate::claims::{OpeningClaim, ProverClaim};
 use crate::error::OpeningsError;
-use crate::schemes::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
+use crate::homomorphic::{homomorphic_prove_batch, homomorphic_verify_batch};
+use crate::schemes::{
+    AdditivelyHomomorphic, AdditivelyHomomorphicVerifier, CommitmentScheme,
+    CommitmentSchemeVerifier, ZkOpeningScheme, ZkOpeningSchemeVerifier,
+};
 
 #[derive(Clone, Debug)]
 pub struct MockCommitmentScheme<F: Field>(PhantomData<F>);
@@ -48,11 +51,27 @@ impl<F: Field> Commitment for MockCommitmentScheme<F> {
     type Output = MockCommitment<F>;
 }
 
-impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
+impl<F: Field> CommitmentSchemeVerifier for MockCommitmentScheme<F> {
     type Field = F;
-    type Proof = MockProof<F>;
-    type ProverSetup = ();
     type VerifierSetup = ();
+    type Proof = MockProof<F>;
+    type BatchProof = Vec<MockProof<F>>;
+    type VerifierSetupParams = ();
+
+    fn verifier_setup(_params: ()) {}
+
+    fn verify_batch(
+        claims: Vec<OpeningClaim<Self::Field, Self>>,
+        batch_proof: &Self::BatchProof,
+        setup: &Self::VerifierSetup,
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
+    ) -> Result<(), OpeningsError> {
+        homomorphic_verify_batch::<Self, _>(claims, batch_proof.as_slice(), setup, transcript)
+    }
+}
+
+impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
+    type ProverSetup = ();
     type Polynomial = Polynomial<F>;
     type OpeningHint = ();
     type SetupParams = ();
@@ -61,7 +80,7 @@ impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
         ((), ())
     }
 
-    fn verifier_setup(_prover_setup: &()) {}
+    fn project_verifier_setup(_prover_setup: &()) {}
 
     fn commit<P: jolt_poly::MultilinearPoly<Self::Field> + ?Sized>(
         poly: &P,
@@ -74,16 +93,45 @@ impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
         (MockCommitment { evaluations }, ())
     }
 
-    fn open(
-        poly: &Self::Polynomial,
-        _point: &[Self::Field],
-        _eval: Self::Field,
-        _setup: &Self::ProverSetup,
-        _hint: Option<()>,
-        _transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> Self::Proof {
-        MockProof {
-            evaluations: poly.evaluations().to_vec(),
+    fn prove_batch<T: Transcript<Challenge = Self::Field>>(
+        claims: Vec<ProverClaim<Self::Field>>,
+        hints: Vec<Self::OpeningHint>,
+        setup: &Self::ProverSetup,
+        transcript: &mut T,
+    ) -> (Self::BatchProof, Vec<Self::Field>) {
+        homomorphic_prove_batch::<Self, T>(claims, hints, setup, transcript)
+    }
+}
+
+impl<F: Field> HomomorphicCommitment<F> for MockCommitment<F> {
+    fn linear_combine(c1: &Self, c2: &Self, scalar: &F) -> Self {
+        let len = c1.evaluations.len().max(c2.evaluations.len());
+        let mut result = vec![F::zero(); len];
+        for (i, r) in result.iter_mut().enumerate() {
+            let a = c1.evaluations.get(i).copied().unwrap_or_else(F::zero);
+            let b = c2.evaluations.get(i).copied().unwrap_or_else(F::zero);
+            *r = a + *scalar * b;
+        }
+        MockCommitment {
+            evaluations: result,
+        }
+    }
+}
+
+impl<F: Field> AdditivelyHomomorphicVerifier for MockCommitmentScheme<F> {
+    fn combine(commitments: &[Self::Output], scalars: &[Self::Field]) -> Self::Output {
+        assert_eq!(commitments.len(), scalars.len());
+        let len = commitments.first().map_or(0, |c| c.evaluations.len());
+
+        let mut result = vec![F::zero(); len];
+        for (c, &s) in commitments.iter().zip(scalars.iter()) {
+            for (r, &e) in result.iter_mut().zip(c.evaluations.iter()) {
+                *r += s * e;
+            }
+        }
+
+        MockCommitment {
+            evaluations: result,
         }
     }
 
@@ -112,35 +160,17 @@ impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
     }
 }
 
-impl<F: Field> HomomorphicCommitment<F> for MockCommitment<F> {
-    fn linear_combine(c1: &Self, c2: &Self, scalar: &F) -> Self {
-        let len = c1.evaluations.len().max(c2.evaluations.len());
-        let mut result = vec![F::zero(); len];
-        for (i, r) in result.iter_mut().enumerate() {
-            let a = c1.evaluations.get(i).copied().unwrap_or_else(F::zero);
-            let b = c2.evaluations.get(i).copied().unwrap_or_else(F::zero);
-            *r = a + *scalar * b;
-        }
-        MockCommitment {
-            evaluations: result,
-        }
-    }
-}
-
 impl<F: Field> AdditivelyHomomorphic for MockCommitmentScheme<F> {
-    fn combine(commitments: &[Self::Output], scalars: &[Self::Field]) -> Self::Output {
-        assert_eq!(commitments.len(), scalars.len());
-        let len = commitments.first().map_or(0, |c| c.evaluations.len());
-
-        let mut result = vec![F::zero(); len];
-        for (c, &s) in commitments.iter().zip(scalars.iter()) {
-            for (r, &e) in result.iter_mut().zip(c.evaluations.iter()) {
-                *r += s * e;
-            }
-        }
-
-        MockCommitment {
-            evaluations: result,
+    fn open(
+        poly: &Self::Polynomial,
+        _point: &[Self::Field],
+        _eval: Self::Field,
+        _setup: &Self::ProverSetup,
+        _hint: Option<()>,
+        _transcript: &mut impl Transcript<Challenge = Self::Field>,
+    ) -> Self::Proof {
+        MockProof {
+            evaluations: poly.evaluations().to_vec(),
         }
     }
 }
@@ -157,24 +187,8 @@ impl<F: Field> AppendToTranscript for MockHidingCommitment<F> {
     }
 }
 
-impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
+impl<F: Field> ZkOpeningSchemeVerifier for MockCommitmentScheme<F> {
     type HidingCommitment = MockHidingCommitment<F>;
-    type Blind = ();
-
-    fn open_zk(
-        poly: &Self::Polynomial,
-        _point: &[Self::Field],
-        eval: Self::Field,
-        _setup: &Self::ProverSetup,
-        _hint: Option<Self::OpeningHint>,
-        _transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> (Self::Proof, Self::HidingCommitment, Self::Blind) {
-        let proof = MockProof {
-            evaluations: poly.evaluations().to_vec(),
-        };
-        let eval_commitment = MockHidingCommitment { eval };
-        (proof, eval_commitment, ())
-    }
 
     fn verify_zk(
         commitment: &Self::Output,
@@ -201,11 +215,29 @@ impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
     }
 }
 
+impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
+    type Blind = ();
+
+    fn open_zk(
+        poly: &Self::Polynomial,
+        _point: &[Self::Field],
+        eval: Self::Field,
+        _setup: &Self::ProverSetup,
+        _hint: Option<Self::OpeningHint>,
+        _transcript: &mut impl Transcript<Challenge = Self::Field>,
+    ) -> (Self::Proof, Self::HidingCommitment, Self::Blind) {
+        let proof = MockProof {
+            evaluations: poly.evaluations().to_vec(),
+        };
+        let eval_commitment = MockHidingCommitment { eval };
+        (proof, eval_commitment, ())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{OpeningReduction, ProverClaim, VerifierClaim};
-    use jolt_field::Field;
+    use crate::{OpeningClaim, ProverClaim};
     use jolt_field::Fr;
     use jolt_poly::Polynomial;
     use jolt_transcript::Blake2bTranscript;
@@ -306,8 +338,9 @@ mod tests {
         prover_polys: &[(Polynomial<Fr>, Vec<Fr>)],
         verifier_evals: Option<&[Fr]>,
     ) -> Result<(), OpeningsError> {
-        let mut prover_claims = Vec::new();
-        let mut verifier_claims = Vec::new();
+        let mut prover_claims: Vec<ProverClaim<Fr>> = Vec::new();
+        let mut verifier_claims: Vec<OpeningClaim<Fr, MockPCS>> = Vec::new();
+        let mut hints: Vec<()> = Vec::new();
 
         for (i, (poly, point)) in prover_polys.iter().enumerate() {
             let eval = poly.evaluate(point);
@@ -316,51 +349,23 @@ mod tests {
                 point: point.clone(),
                 eval,
             });
+            hints.push(());
 
             let (commitment, ()) = MockPCS::commit(poly.evaluations(), &());
             let v_eval = verifier_evals.map_or(eval, |overrides| overrides[i]);
-            verifier_claims.push(VerifierClaim {
+            verifier_claims.push(OpeningClaim {
                 commitment,
                 point: point.clone(),
                 eval: v_eval,
             });
         }
 
-        // Prover: reduce + open
         let mut transcript_p = Blake2bTranscript::new(b"e2e-test");
-        let reduced_prover = MockPCS::reduce_prover(prover_claims, &mut transcript_p);
-        let proofs: Vec<_> = reduced_prover
-            .iter()
-            .map(|claim| {
-                MockPCS::open(
-                    &claim.polynomial,
-                    &claim.point,
-                    claim.eval,
-                    &(),
-                    None,
-                    &mut transcript_p,
-                )
-            })
-            .collect();
+        let (batch_proof, _joint_evals) =
+            MockPCS::prove_batch(prover_claims, hints, &(), &mut transcript_p);
 
-        // Verifier: reduce + verify
         let mut transcript_v = Blake2bTranscript::new(b"e2e-test");
-        let reduced_verifier = MockPCS::reduce_verifier(verifier_claims, &mut transcript_v)?;
-
-        assert_eq!(reduced_verifier.len(), proofs.len());
-
-        for (claim, proof) in reduced_verifier.iter().zip(proofs.iter()) {
-            MockPCS::verify(
-                &claim.commitment,
-                &claim.point,
-                claim.eval,
-                proof,
-                &(),
-                &mut transcript_v,
-            )?;
-        }
-
-        Ok(())
+        MockPCS::verify_batch(verifier_claims, &batch_proof, &(), &mut transcript_v)
     }
 
     #[test]
@@ -423,7 +428,7 @@ mod tests {
     }
 
     #[test]
-    fn reduction_groups_claims_at_same_point() {
+    fn batch_groups_claims_at_same_point() {
         let mut rng = ChaCha20Rng::seed_from_u64(400);
         let nv = 3;
         let p1 = Polynomial::<Fr>::random(nv, &mut rng);
@@ -451,8 +456,10 @@ mod tests {
         ];
 
         let mut transcript = Blake2bTranscript::new(b"grouping");
-        let reduced = MockPCS::reduce_prover(claims, &mut transcript);
-        assert_eq!(reduced.len(), 2, "two distinct points → two reduced claims");
+        let (batch_proof, joint_evals) =
+            MockPCS::prove_batch(claims, vec![(); 3], &(), &mut transcript);
+        assert_eq!(batch_proof.len(), 2, "two distinct points → two proofs");
+        assert_eq!(joint_evals.len(), 2);
     }
 
     #[test]

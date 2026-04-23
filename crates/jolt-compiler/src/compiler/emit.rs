@@ -257,9 +257,8 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams, poly_map: &[Polyno
         ctx.verifier_stage_count += 1;
     }
 
-    // PCS tail
-    ctx.ops.push(Op::ReduceOpenings);
-    ctx.ops.push(Op::Open);
+    // PCS tail: fused batched opening, then verifier batch verification.
+    ctx.ops.push(Op::ProveBatch);
     ctx.verifier_ops.push(VerifierOp::VerifyOpenings);
 
     if !committed.is_empty() {
@@ -872,8 +871,7 @@ fn op_poly_refs(op: &Op, kernels: &[KernelDef]) -> Vec<PolynomialId> {
         | Op::ReleaseDevice { .. }
         | Op::ReleaseHost { .. }
         | Op::AliasEval { .. }
-        | Op::ReduceOpenings
-        | Op::Open
+        | Op::ProveBatch
         | Op::BatchRoundBegin { .. }
         | Op::BatchInactiveContribution { .. }
         | Op::Materialize { .. }

@@ -12,7 +12,15 @@
 //!   [3] RamRaVirtual      (9 rounds, offset=13)
 //!   [4] LookupsRaVirtual  (9 rounds, offset=13)
 //!   [5] IncClaimReduction  (9 rounds, offset=13)
-#![allow(non_snake_case, clippy::print_stderr)]
+#![allow(
+    non_snake_case,
+    clippy::print_stderr,
+    clippy::erasing_op,
+    clippy::identity_op,
+    unused_imports,
+    unused_variables,
+    dead_code
+)]
 
 use ark_bn254::Fr as ArkFr;
 use ark_ff::{One, Zero};

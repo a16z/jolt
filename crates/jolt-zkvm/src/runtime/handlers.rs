@@ -9,12 +9,13 @@ use jolt_compiler::PolynomialId;
 use jolt_compute::{Buf, BufferProvider, ComputeBackend, DeviceBuffer, Executable};
 use jolt_crypto::HomomorphicCommitment;
 use jolt_field::Field;
-use jolt_openings::AdditivelyHomomorphic;
+use jolt_openings::{AdditivelyHomomorphic, ProverClaim};
 use jolt_poly::UnivariatePoly;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
 
 use super::helpers::{
-    bind_kernel_inputs, build_outer_eq, fused_rlc_reduce, materialize_binding, PendingClaim,
+    bind_kernel_inputs, build_outer_eq, materialize_binding, materialize_pending_claims,
+    PendingClaim,
 };
 
 /// Enter a per-variant `info_span!` for the op currently being dispatched.
@@ -32,8 +33,7 @@ fn op_span(op: &Op) -> tracing::span::EnteredSpan {
         Op::RegroupConstraints { .. } => tracing::info_span!("RegroupConstraints").entered(),
         Op::Commit { .. } => tracing::info_span!("Commit").entered(),
         Op::CommitStreaming { .. } => tracing::info_span!("CommitStreaming").entered(),
-        Op::ReduceOpenings => tracing::info_span!("ReduceOpenings").entered(),
-        Op::Open => tracing::info_span!("Open").entered(),
+        Op::ProveBatch => tracing::info_span!("ProveBatch").entered(),
         Op::Preamble => tracing::info_span!("Preamble").entered(),
         Op::BeginStage { index } => tracing::info_span!("BeginStage", index = index).entered(),
         Op::AbsorbRoundPoly { .. } => tracing::info_span!("AbsorbRoundPoly").entered(),
@@ -380,35 +380,17 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             }
         }
 
-        Op::ReduceOpenings => {
+        Op::ProveBatch => {
             let pending = std::mem::take(&mut state.pending_claims);
             let hints = std::mem::take(&mut state.pending_hints);
 
-            let (claims, combined_hints) = fused_rlc_reduce::<_, PCS>(
-                pending,
-                hints,
-                provider,
-                &state.padded_poly_data,
-                transcript,
-            );
+            let claims: Vec<ProverClaim<F>> =
+                materialize_pending_claims(pending, provider, &mut state.padded_poly_data);
 
-            state.reduced_claims = claims;
-            state.reduced_hints = combined_hints;
-        }
+            let (batch_proof, joint_evals) = PCS::prove_batch(claims, hints, pcs_setup, transcript);
 
-        Op::Open => {
-            for (claim, hint) in state.reduced_claims.iter().zip(state.reduced_hints.iter()) {
-                let poly: PCS::Polynomial = claim.polynomial.evaluations().to_vec().into();
-                let proof = PCS::open(
-                    &poly,
-                    &claim.point,
-                    claim.eval,
-                    pcs_setup,
-                    Some(hint.clone()),
-                    transcript,
-                );
-                state.opening_proofs.push(proof);
-            }
+            state.opening_proof = Some(batch_proof);
+            state.binding_evals = joint_evals;
         }
 
         Op::Preamble => {
@@ -635,10 +617,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                 .iter()
                 .map(|&ci| state.challenges[ci.0])
                 .collect();
-            let joint_eval = state
-                .reduced_claims
-                .first()
-                .map_or_else(F::zero, |c| c.eval);
+            let joint_eval = state.binding_evals.first().copied().unwrap_or(F::zero());
             PCS::bind_opening_inputs(transcript, &point, &joint_eval);
         }
 

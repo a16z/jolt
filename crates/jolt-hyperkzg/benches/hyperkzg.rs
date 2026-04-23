@@ -5,7 +5,7 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use jolt_crypto::Bn254;
 use jolt_field::{Field, Fr};
 use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGScheme, HyperKZGVerifierSetup};
-use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};
+use jolt_openings::{AdditivelyHomomorphic, AdditivelyHomomorphicVerifier, CommitmentScheme};
 use jolt_poly::Polynomial;
 use jolt_transcript::Transcript;
 use rand_chacha::ChaCha20Rng;
@@ -18,7 +18,7 @@ fn make_setup(max_degree: usize) -> (HyperKZGProverSetup<Bn254>, HyperKZGVerifie
     let g1 = Bn254::g1_generator();
     let g2 = Bn254::g2_generator();
     let pk = TestScheme::setup(&mut rng, max_degree, g1, g2);
-    let vk = TestScheme::verifier_setup(&pk);
+    let vk = TestScheme::project_verifier_setup(&pk);
     (pk, vk)
 }
 
@@ -65,7 +65,7 @@ fn bench_open(c: &mut Criterion) {
                     },
                     |(poly, point, eval)| {
                         let mut transcript = jolt_transcript::Blake2bTranscript::new(b"bench-open");
-                        <TestScheme as CommitmentScheme>::open(
+                        <TestScheme as AdditivelyHomomorphic>::open(
                             &poly,
                             &point,
                             eval,
@@ -101,7 +101,7 @@ fn bench_verify(c: &mut Criterion) {
                         let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk);
                         let mut transcript =
                             jolt_transcript::Blake2bTranscript::new(b"bench-verify");
-                        let proof = <TestScheme as CommitmentScheme>::open(
+                        let proof = <TestScheme as AdditivelyHomomorphic>::open(
                             &poly,
                             &point,
                             eval,
@@ -114,7 +114,7 @@ fn bench_verify(c: &mut Criterion) {
                     |(commitment, point, eval, proof)| {
                         let mut transcript =
                             jolt_transcript::Blake2bTranscript::new(b"bench-verify");
-                        <TestScheme as CommitmentScheme>::verify(
+                        <TestScheme as AdditivelyHomomorphicVerifier>::verify(
                             &commitment,
                             &point,
                             eval,
@@ -149,7 +149,9 @@ fn bench_combine(c: &mut Criterion) {
         let scalars: Vec<Fr> = (0..count).map(|_| Fr::random(&mut rng)).collect();
 
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
-            b.iter(|| TestScheme::combine(&commitments, &scalars));
+            b.iter(|| {
+                <TestScheme as AdditivelyHomomorphicVerifier>::combine(&commitments, &scalars)
+            });
         });
     }
     group.finish();
