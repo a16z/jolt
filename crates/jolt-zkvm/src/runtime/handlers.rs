@@ -740,16 +740,13 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             }
         }
 
-        Op::InitInstanceWeights {
-            r_reduction,
-            num_prefixes,
-        } => {
+        Op::InitInstanceWeights { r_reduction } => {
             let point: Vec<F> = r_reduction
                 .iter()
                 .map(|ci| state.challenges[ci.0])
                 .collect();
             state.instance_weights = jolt_poly::EqPolynomial::<F>::evals(&point, None);
-            state.instance_scalars = vec![None; *num_prefixes];
+            state.instance_scalars.fill(None);
         }
 
         Op::UpdateInstanceWeights {

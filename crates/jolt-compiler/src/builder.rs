@@ -463,7 +463,6 @@ impl ModuleBuilder {
                         // First round, first sub-phase: init + scatter.
                         self.ops.push(Op::InitInstanceWeights {
                             r_reduction: ic.r_reduction.clone(),
-                            num_prefixes: ic.num_prefixes,
                         });
                         emit_scatter_ops(&mut self.ops, kernel, 0, chunk_bits, ic.num_phases);
                     } else if round_in_sub == 0 {

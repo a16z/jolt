@@ -177,6 +177,18 @@ where
         .map(|b| vec![F::zero(); b.instances.len()])
         .collect();
 
+    // Pre-size `instance_scalars` to the max `num_prefixes` across all
+    // address-decomposition kernels. `Op::InitInstanceWeights` then only
+    // needs to reset (fill with None), not resize — lets the op drop its
+    // `num_prefixes` field. Non-decomp workloads get a zero-length vec.
+    let max_num_prefixes: usize = module
+        .prover
+        .kernels
+        .iter()
+        .filter_map(|k| k.instance_config.as_ref().map(|ic| ic.num_prefixes))
+        .max()
+        .unwrap_or(0);
+
     let mut state = RuntimeState::<F, PCS> {
         config,
         challenges: vec![F::zero(); module.challenges.len()],
@@ -202,7 +214,7 @@ where
         opening_proofs: Vec::new(),
         padded_poly_data: HashMap::new(),
         instance_weights: Vec::new(),
-        instance_scalars: Vec::new(),
+        instance_scalars: vec![None; max_num_prefixes],
         read_checking_evals: [F::zero(); 2],
     };
 

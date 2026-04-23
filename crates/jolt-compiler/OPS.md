@@ -187,7 +187,7 @@ landing the first two S5 renames exposed three distinct blocker classes).
 
 | Variant | Blocker | Refined target |
 |---|---|---|
-| `InitInstanceWeights { r_reduction, num_prefixes }` | A | Build eq-table via `InitExpandingTable` + `ExpandingTableUpdate` ×`\|r_reduction\|` **into a device buffer** (new `PolynomialId::InstanceWeights`). Separately reset `instance_scalars` — either via `InstanceScalarUpdate` with N `Clear` actions, or via a new primitive `Op::AllocInstanceScalars { size }`. |
+| `InitInstanceWeights { r_reduction }` | A | Build eq-table via `InitExpandingTable` + `ExpandingTableUpdate` ×`\|r_reduction\|` **into a device buffer** (new `PolynomialId::InstanceWeights`). The `instance_scalars` reset is currently a `.fill(None)` on a vec pre-sized at runtime init from `max(ic.num_prefixes)` across kernels. Field set slimmed in S5.init_weights_slim (dropped `num_prefixes`). |
 | `UpdateInstanceWeights { expanding_table, chunk_bits, suffix_len }` | A | NOT an `ExpandingTableUpdate` — it's a trace-driven gather-multiply on `instance_weights[j]` indexed by `(key >> suffix_len) & mask`. Needs new primitive `Op::TraceGatherMultiply { dst, source_table, index_source, shift, mask }`. Field set already slimmed in S5.field_slim — `{num_phases, phase}` collapsed into `suffix_len` at emission time. |
 | `MaterializeRA { kernel }` | A | NOT a `WeightedSum` — trace-driven product of gathers across `num_phases/n_vra` expanding tables per output. Needs new primitive `Op::TraceGatherProduct { dst, source_tables, index_source, shifts, mask }` (closes over the full product loop), or decomposes into `n_vra` scatter/gather/multiply chains. |
 | `MaterializeCombinedVal { kernel }` | A | NOT a `WeightedSum` — combines a pre-computed `table_values` array (built from `instance_scalars` × `combine_entries`) with a trace-driven gather-by-`table_kind_indices[j]` plus per-cycle conditional from `is_interleaved[j]`. Needs new primitive `Op::TraceGatherIndexed` and conditional-scalar injection. |
@@ -207,6 +207,11 @@ landing the first two S5 renames exposed three distinct blocker classes).
    `QBufferScatter` `phase` → `suffix_len` (same pattern,
    `(num_phases − 1 − phase) × chunk_bits` precomputed at emission
    time). Variants persist pending Group A. One commit.
+1b. **S5.init_weights_slim** (landed): dropped `num_prefixes` from
+   `InitInstanceWeights` by pre-sizing `state.instance_scalars` at
+   runtime init from `max(ic.num_prefixes)` across kernels. Handler
+   resets via `.fill(None)` instead of re-allocating. Variant persists
+   pending Group A. One commit.
 2. **S5.materialize_p_buffers** (Group C): preprocessed-poly
    infrastructure + 3× `Op::WeightedSum` emission. Local; doesn't
    depend on Group A or B work. One commit.

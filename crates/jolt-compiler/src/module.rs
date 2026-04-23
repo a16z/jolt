@@ -1316,10 +1316,12 @@ pub enum Op {
 
     /// Initialize instance weights from the eq polynomial at the r_reduction point.
     /// Only emitted for phase 0 of address-decomposition instances.
-    InitInstanceWeights {
-        r_reduction: Vec<ChallengeIdx>,
-        num_prefixes: usize,
-    },
+    ///
+    /// Also resets `state.instance_scalars` to `None` for all slots. The
+    /// vector is pre-sized at runtime init from the module's kernels
+    /// (`max(ic.num_prefixes)` across address-decomposition kernels), so
+    /// the op carries no per-kernel size field (S5.init_weights_slim).
+    InitInstanceWeights { r_reduction: Vec<ChallengeIdx> },
     /// Multiply instance weights by expanding-table lookups at a phase boundary.
     /// Emitted for phase > 0 of address-decomposition instances.
     ///
