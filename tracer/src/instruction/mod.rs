@@ -545,6 +545,20 @@ macro_rules! define_rv32im_enums {
                     Cycle::INLINE(cycle) => cycle.instruction.into(),
                 }
             }
+
+            /// Returns a freshly randomized cycle of the same variant.
+            /// Used by jolt-core fuzz tests that need to iterate all
+            /// instruction variants via `Cycle::iter()`.
+            #[cfg(any(feature = "test-utils", test))]
+            pub fn random(&self, rng: &mut rand::rngs::StdRng) -> Self {
+                match self {
+                    Cycle::NoOp => Cycle::NoOp,
+                    $(
+                        Cycle::$instr(cycle) => Cycle::$instr(cycle.random(rng)),
+                    )*
+                    Cycle::INLINE(cycle) => Cycle::INLINE(cycle.random(rng)),
+                }
+            }
         }
 
         impl Instruction {
