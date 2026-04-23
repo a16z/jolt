@@ -1080,34 +1080,15 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             identity_term,
             overall_scale,
         } => {
-            let first_src = resolve_source(&terms[0].0, device_buffers, provider, backend);
-            let n = first_src.len();
-            let mut result = vec![F::zero(); n];
-            accumulate(
-                &mut result,
-                &first_src,
-                challenge_power(&state.challenges, &terms[0].1, terms[0].2),
+            let result = compute_weighted_sum(
+                terms,
+                identity_term.as_ref(),
+                overall_scale.as_ref(),
+                &state.challenges,
+                device_buffers,
+                provider,
+                backend,
             );
-            for &(ref src, ref ch, pow) in &terms[1..] {
-                let data = resolve_source(src, device_buffers, provider, backend);
-                accumulate(
-                    &mut result,
-                    &data,
-                    challenge_power(&state.challenges, ch, pow),
-                );
-            }
-            if let Some((ch, pow)) = identity_term {
-                let scale = challenge_power(&state.challenges, ch, *pow);
-                for (i, r) in result.iter_mut().enumerate() {
-                    *r += scale * F::from_u64(i as u64);
-                }
-            }
-            if let Some((ch, pow)) = overall_scale {
-                let scale = challenge_power(&state.challenges, ch, *pow);
-                for r in &mut result {
-                    *r *= scale;
-                }
-            }
             let _ = device_buffers.insert(*output, DeviceBuffer::Field(backend.upload(&result)));
         }
 
@@ -1163,6 +1144,44 @@ fn accumulate<F: Field>(result: &mut [F], data: &[F], scale: F) {
     for (r, &d) in result.iter_mut().zip(data.iter()) {
         *r += scale * d;
     }
+}
+
+/// Compute `Σ_j challenge_j^power_j × source_j[i] + identity_scale × i`,
+/// optionally multiplied by `overall_scale`. Output length is taken from
+/// the first term's source. See `Op::WeightedSum` for the formula.
+fn compute_weighted_sum<B: ComputeBackend, F: Field>(
+    terms: &[(PolynomialId, ChallengeIdx, u8)],
+    identity_term: Option<&(ChallengeIdx, u8)>,
+    overall_scale: Option<&(ChallengeIdx, u8)>,
+    challenges: &[F],
+    device_buffers: &HashMap<PolynomialId, Buf<B, F>>,
+    provider: &impl BufferProvider<F>,
+    backend: &B,
+) -> Vec<F> {
+    let first_src = resolve_source(&terms[0].0, device_buffers, provider, backend);
+    let mut result = vec![F::zero(); first_src.len()];
+    accumulate(
+        &mut result,
+        &first_src,
+        challenge_power(challenges, &terms[0].1, terms[0].2),
+    );
+    for (src, ch, pow) in &terms[1..] {
+        let data = resolve_source(src, device_buffers, provider, backend);
+        accumulate(&mut result, &data, challenge_power(challenges, ch, *pow));
+    }
+    if let Some((ch, pow)) = identity_term {
+        let scale = challenge_power(challenges, ch, *pow);
+        for (i, r) in result.iter_mut().enumerate() {
+            *r += scale * F::from_u64(i as u64);
+        }
+    }
+    if let Some((ch, pow)) = overall_scale {
+        let scale = challenge_power(challenges, ch, *pow);
+        for r in &mut result {
+            *r *= scale;
+        }
+    }
+    result
 }
 
 /// Separate interleaved x/y bits: odd positions → x (lo), even positions → y (ro).
