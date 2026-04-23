@@ -193,7 +193,10 @@ pub enum Xlen {
     Bit64, // @TODO: Support Bit128
 }
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+/// Width of an LR/SC reservation set. Ordered `Word < Doubleword` so
+/// `reservation_covers` can compare with `>=` — an 8-byte reservation set
+/// covers a 4-byte SC write, but not vice versa.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum ReservationWidth {
     Word,       // 32-bit (LR.W/SC.W)
     Doubleword, // 64-bit (LR.D/SC.D)
@@ -434,9 +437,18 @@ impl Cpu {
         self.is_reservation_set = false;
     }
 
-    /// Checks if a reservation is set for the given address and width
-    pub fn has_reservation(&self, address: u64, width: ReservationWidth) -> bool {
-        self.is_reservation_set && self.reservation == address && self.reservation_width == width
+    /// Returns true if a reservation is held at `address` whose reservation
+    /// set is at least `min_width` wide. Per the RISC-V A spec (2024 ratified,
+    /// §13.1.2): "SC succeeds only if the reservation is still valid and the
+    /// reservation set contains the bytes being written." Concretely:
+    ///   - LR.W + SC.W at same addr → succeeds (Word ≥ Word)
+    ///   - LR.D + SC.W at same addr → succeeds (Doubleword ≥ Word, spec)
+    ///   - LR.W + SC.D at same addr → fails    (Word < Doubleword)
+    ///   - LR.D + SC.D at same addr → succeeds (Doubleword ≥ Doubleword)
+    pub fn reservation_covers(&self, address: u64, min_width: ReservationWidth) -> bool {
+        self.is_reservation_set
+            && self.reservation == address
+            && self.reservation_width >= min_width
     }
 
     pub fn is_reservation_set(&self) -> bool {

@@ -1551,10 +1551,7 @@ pub fn uncompress_instruction(halfword: u32, xlen: Xlen) -> u32 {
                     let r = (halfword >> 7) & 0x1f;
                     let shamt = ((halfword >> 7) & 0x20) | // imm[5] <= [12]
                             ((halfword >> 2) & 0x1f); // imm[4:0] <= [6:2]
-                    if r != 0 {
-                        return (shamt << 20) | (r << 15) | (1 << 12) | (r << 7) | 0x13;
-                    }
-                    // r == 0 is reserved instruction?
+                    return (shamt << 20) | (r << 15) | (1 << 12) | (r << 7) | 0x13;
                 }
                 1 => {
                     // C.FLDSP
