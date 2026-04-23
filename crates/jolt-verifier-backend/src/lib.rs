@@ -1,8 +1,15 @@
-//! Verifier-side scalar arithmetic abstraction.
+//! Verifier-side scalar arithmetic and commitment abstractions.
 //!
-//! `FieldBackend` lifts the verifier's field-level computation off the concrete
-//! [`Field`](jolt_field::Field) so the same verification logic can run against
-//! multiple targets:
+//! Two parallel traits lift the verifier off concrete primitives:
+//!
+//! - [`FieldBackend`] — every scalar operation (`add`, `mul`,
+//!   `assert_eq`, transcript squeezes, ...) goes through this trait.
+//! - [`CommitmentBackend`] — every PCS-shaped operation
+//!   (`wrap_commitment`, `absorb_commitment`, `verify_opening`) goes
+//!   through this trait. PCS-family agnostic by design: no curves,
+//!   pairings, MSMs, or commitment linear combinations on its surface.
+//!
+//! The same verifier source code can run against multiple targets:
 //!
 //! | Backend     | `Scalar`    | What it does                                          |
 //! |-------------|-------------|-------------------------------------------------------|
@@ -44,6 +51,7 @@
 #![cfg_attr(not(test), warn(missing_docs))]
 
 mod backend;
+mod commitment;
 mod error;
 pub mod helpers;
 mod native;
@@ -51,6 +59,7 @@ pub mod tracing;
 pub mod viz;
 
 pub use backend::{CommitmentOrigin, FieldBackend, ScalarOrigin};
+pub use commitment::CommitmentBackend;
 pub use error::BackendError;
 pub use helpers::{eq_eval, eq_evals_table, pow_u64, univariate_horner};
 pub use native::Native;

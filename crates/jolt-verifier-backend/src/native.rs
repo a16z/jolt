@@ -1,10 +1,13 @@
 use std::marker::PhantomData;
 
 use jolt_field::Field;
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_openings::{CommitmentScheme, OpeningsError};
+use jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript};
 
-use crate::backend::{FieldBackend, ScalarOrigin};
+use crate::backend::{CommitmentOrigin, FieldBackend, ScalarOrigin};
+use crate::commitment::CommitmentBackend;
 use crate::error::BackendError;
+use crate::tracing::SchemeTag;
 
 /// Zero-overhead [`FieldBackend`] backed by the underlying field directly.
 ///
@@ -105,6 +108,61 @@ impl<F: Field> FieldBackend for Native<F> {
     }
 }
 
+/// Zero-overhead [`CommitmentBackend`] impl for [`Native`].
+///
+/// Identity wrap, direct transcript absorb, direct PCS verify. Every
+/// method is `#[inline(always)]`; monomorphization erases the trait
+/// dispatch and produces code byte-identical to the legacy verifier
+/// that calls `PCS::verify` directly.
+impl<F, PCS> CommitmentBackend<PCS> for Native<F>
+where
+    F: Field,
+    PCS: CommitmentScheme<Field = F>,
+    PCS::Output: AppendToTranscript,
+{
+    type Commitment = PCS::Output;
+
+    #[inline(always)]
+    fn wrap_commitment(
+        &mut self,
+        value: PCS::Output,
+        _origin: CommitmentOrigin,
+        _label: &'static str,
+    ) -> PCS::Output {
+        value
+    }
+
+    #[inline(always)]
+    fn absorb_commitment(
+        &mut self,
+        transcript: &mut Self::Transcript,
+        commitment: &PCS::Output,
+        label: &'static [u8],
+    ) {
+        // Same two-step pattern jolt-verifier already uses for inline
+        // commitment absorbs (see verifier.rs:158-159):
+        //   1. append a LabelWithCount header so the verifier-side
+        //      domain separation matches the prover's serialised stream;
+        //   2. forward the commitment's own AppendToTranscript impl.
+        transcript.append(&LabelWithCount(label, commitment.serialized_len()));
+        commitment.append_to_transcript(transcript);
+    }
+
+    #[inline(always)]
+    fn verify_opening(
+        &mut self,
+        vk: &PCS::VerifierSetup,
+        commitment: &PCS::Output,
+        point: &[F],
+        claim: &F,
+        proof: &PCS::Proof,
+        transcript: &mut Self::Transcript,
+        _scheme_tag: SchemeTag,
+    ) -> Result<(), OpeningsError> {
+        PCS::verify(commitment, point, *claim, proof, vk, transcript)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(clippy::unwrap_used, reason = "tests")]
@@ -146,5 +204,70 @@ mod tests {
         let s = b.square(&v);
         let m = b.mul(&v, &v);
         b.assert_eq(&s, &m, "square==mul").unwrap();
+    }
+
+    /// Native [`CommitmentBackend`] is the identity wrapper: `wrap_commitment`
+    /// returns its input by value, `absorb_commitment` matches the verifier's
+    /// label-with-count + `AppendToTranscript` two-step, and `verify_opening`
+    /// forwards directly to `<PCS as CommitmentScheme>::verify`. Run the
+    /// round-trip against `MockCommitmentScheme` (no curves required) to
+    /// catch any drift in the trait wiring.
+    #[test]
+    fn native_commitment_backend_round_trip_against_mock() {
+        use jolt_openings::mock::MockCommitmentScheme;
+
+        let mut backend = Native::<Fr>::new();
+        let mut transcript = backend.new_transcript(b"native_commit_test");
+
+        let evaluations = vec![
+            Fr::from_u64(1),
+            Fr::from_u64(2),
+            Fr::from_u64(3),
+            Fr::from_u64(4),
+        ];
+        let poly = jolt_poly::Polynomial::new(evaluations.clone());
+        let (commitment, _hint) =
+            <MockCommitmentScheme<Fr> as CommitmentScheme>::commit(&poly, &());
+        let point = vec![Fr::from_u64(5), Fr::from_u64(6)];
+        let eval = poly.evaluate(&point);
+        let proof = <MockCommitmentScheme<Fr> as CommitmentScheme>::open(
+            &poly,
+            &point,
+            eval,
+            &(),
+            None,
+            &mut transcript,
+        );
+
+        let wrapped = <Native<Fr> as CommitmentBackend<MockCommitmentScheme<Fr>>>::wrap_commitment(
+            &mut backend,
+            commitment.clone(),
+            CommitmentOrigin::Proof,
+            "C",
+        );
+        // Identity wrap: no allocation, no rewrap — just the same value back.
+        assert_eq!(
+            wrapped, commitment,
+            "Native::wrap_commitment must be identity"
+        );
+
+        <Native<Fr> as CommitmentBackend<MockCommitmentScheme<Fr>>>::absorb_commitment(
+            &mut backend,
+            &mut transcript,
+            &wrapped,
+            b"C",
+        );
+
+        <Native<Fr> as CommitmentBackend<MockCommitmentScheme<Fr>>>::verify_opening(
+            &mut backend,
+            &(),
+            &wrapped,
+            &point,
+            &eval,
+            &proof,
+            &mut transcript,
+            "mock",
+        )
+        .expect("Native::verify_opening must accept a valid mock opening");
     }
 }

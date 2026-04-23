@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 jolt-field = { path = "../jolt-field", default-features = false }
 jolt-compiler = { path = "../jolt-compiler" }
+jolt-openings = { path = "../jolt-openings" }
 jolt-poly = { path = "../jolt-poly" }
 jolt-r1cs = { path = "../jolt-r1cs" }
 jolt-transcript = { path = "../jolt-transcript" }
@@ -18,6 +19,7 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 jolt-field = { path = "../jolt-field", features = ["bn254"] }
+jolt-openings = { path = "../jolt-openings", features = ["test-utils"] }
 num-traits = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }

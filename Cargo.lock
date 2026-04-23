@@ -3193,6 +3193,7 @@ version = "0.1.0"
 dependencies = [
  "jolt-compiler",
  "jolt-field",
+ "jolt-openings",
  "jolt-poly",
  "jolt-r1cs",
  "jolt-transcript",
