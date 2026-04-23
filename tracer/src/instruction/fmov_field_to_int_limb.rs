@@ -15,7 +15,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::emulator::cpu::{Cpu, FieldRegEvent};
+use crate::emulator::cpu::{Cpu, FMovPayload, FieldRegEvent};
 
 use super::{
     field_op::{BN254_FR_FUNCT7, FIELD_OP_OPCODE},
@@ -108,12 +108,22 @@ impl RISCVTrace for FMovFieldToIntLimb {
 
         if let Some(trace_vec) = trace {
             let cycle_index = cpu.trace_len + trace_vec.len();
+            // Security fix #1 (task #64): ship the extracted limb + limb index
+            // so the R1CS FMov-F2I gate can bind V_FIELD_REG_READ_LIMB to
+            // V_RD_WRITE_VALUE on this cycle.
+            let limb_idx = self.operands.rs2 & 0x3;
+            let limb = snapshot[limb_idx as usize];
             cpu.field_reg_events.push(FieldRegEvent {
                 cycle_index,
                 slot: frs1,
                 old: snapshot,
                 new: snapshot,
                 op: None,
+                fmov: Some(FMovPayload {
+                    funct3: FUNCT3_FMOV_F2I,
+                    limb_idx,
+                    limb,
+                }),
             });
             trace_vec.push(cycle.into());
         }
@@ -145,7 +155,6 @@ impl From<FMovFieldToIntLimb> for NormalizedInstruction {
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::emulator::terminal::DummyTerminal;

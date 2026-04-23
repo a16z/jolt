@@ -51,6 +51,15 @@ pub enum PolynomialId {
     FieldOpOperandB,
     FieldOpResultValue,
 
+    // BN254 Fr FMov R1CS columns (direct R1CS witness variables at indices 45,
+    // 46). Used by FMov-I2F / FMov-F2I gates (rows 27-28) in
+    // `jolt-r1cs/src/constraints/rv64.rs` to bind integer-register reads/writes
+    // to FR limb writes/reads at FMov cycles (security fix #1, task #64).
+    /// FMov F2I read limb: `FR[frs1].limb[k]` projected to `rd`.
+    FieldRegReadLimb,
+    /// FMov I2F write limb: `FR[frd].limb[k]` sourced from `rs1`.
+    FieldRegWriteLimb,
+
     // Virtual: memory subsystem
     RamReadValue,
     RamWriteValue,
@@ -495,9 +504,11 @@ impl PolynomialId {
             Self::LookupOutput => Some(20),
             Self::ShouldJump => Some(21),
             Self::OpFlag(i) => Some(22 + i),
-            Self::FieldOpOperandA => Some(40),
-            Self::FieldOpOperandB => Some(41),
-            Self::FieldOpResultValue => Some(42),
+            Self::FieldOpOperandA => Some(42),
+            Self::FieldOpOperandB => Some(43),
+            Self::FieldOpResultValue => Some(44),
+            Self::FieldRegReadLimb => Some(45),
+            Self::FieldRegWriteLimb => Some(46),
             _ => None,
         }
     }

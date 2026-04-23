@@ -168,8 +168,12 @@ pub const FIELD_REG_COUNT: usize = 16;
 ///
 /// For `FieldOp` cycles, `op` carries the operands the R1CS FADD/FSUB/FMUL/FINV
 /// gates bind: `a` = `field_regs[frs1]` pre-read, `b` = `field_regs[frs2]`
-/// pre-read (zero on FINV), `funct3` selects the gate. Non-FieldOp events
-/// (e.g. FMov{I2F,F2I}) set `op = None`.
+/// pre-read (zero on FINV), `funct3` selects the gate. For `FMov{I2F,F2I}`
+/// cycles, `fmov` carries the raw 64-bit limb exchanged with the scalar
+/// register file — consumed by the R1CS FMov-I2F / FMov-F2I gates to bind
+/// integer-register reads/writes to field-register writes/reads (security
+/// fix #1, task #64). Non-FieldOp/non-FMov events set both `op` and `fmov`
+/// to `None`.
 #[derive(Clone, Copy, Debug)]
 pub struct FieldRegEvent {
     pub cycle_index: usize,
@@ -177,6 +181,7 @@ pub struct FieldRegEvent {
     pub old: [u64; 4],
     pub new: [u64; 4],
     pub op: Option<FieldOpPayload>,
+    pub fmov: Option<FMovPayload>,
 }
 
 /// Operand + op-selector payload for a `FieldOp` cycle. Shipped with the
@@ -189,6 +194,21 @@ pub struct FieldOpPayload {
     pub a: [u64; 4],
     /// Pre-read value of `field_regs[frs2]`. Zero on FINV.
     pub b: [u64; 4],
+}
+
+/// Limb-exchange payload for an `FMov{I2F,F2I}` cycle. Used by the R1CS
+/// FMov gates (rows 27-28 in `rv64_constraints`) to bind the integer-
+/// register read/write to the field-register limb-write/read so the two
+/// Twist subsystems (Registers Twist + FR Twist) cannot be decoupled.
+#[derive(Clone, Copy, Debug)]
+pub struct FMovPayload {
+    /// 0x06 = FMov-I2F (`FR[frd].limb[k] ← rs1`), 0x07 = FMov-F2I
+    /// (`rd ← FR[frs1].limb[k]`).
+    pub funct3: u8,
+    /// Limb index within the 4-limb Fr representation (0..=3).
+    pub limb_idx: u8,
+    /// Raw 64-bit limb exchanged with the integer register.
+    pub limb: u64,
 }
 
 /// Emulates a RISC-V CPU core

@@ -2173,6 +2173,7 @@ fn modular_self_verify_with_fieldreg_nonempty_events() {
             old: [0, 0, 0, 0],
             new: [123, 0, 0, 0],
             op: None,
+            fmov: None,
         },
         FieldRegEvent {
             cycle: 10,
@@ -2180,6 +2181,7 @@ fn modular_self_verify_with_fieldreg_nonempty_events() {
             old: [0, 0, 0, 0],
             new: [456, 789, 0, 0],
             op: None,
+            fmov: None,
         },
         FieldRegEvent {
             cycle: 20,
@@ -2187,6 +2189,7 @@ fn modular_self_verify_with_fieldreg_nonempty_events() {
             old: [123, 0, 0, 0],
             new: [999, 999, 999, 999],
             op: None,
+            fmov: None,
         },
     ];
 
@@ -2257,6 +2260,7 @@ fn modular_self_verify_with_fieldreg_fadd_payload_with_prologue_accepts() {
                 a,
                 b,
             }),
+            fmov: None,
         }];
         let prologue = build_fmul_prologue(c_fieldop, &a, &b);
         (events, prologue, None)
@@ -2313,6 +2317,7 @@ fn modular_self_verify_with_fieldreg_fadd_tampered_result_rejects() {
             a: [123, 0, 0, 0],
             b: [456, 0, 0, 0],
         }),
+        fmov: None,
     }];
 
     // Prover may succeed producing an invalid proof; the signal is verify-time
@@ -2379,6 +2384,7 @@ fn modular_self_verify_with_fieldreg_nonempty_events_inconsistent_event_rejects(
         old: [99, 0, 0, 0], // ← mutation: does not match initial_state = 0
         new: [1, 0, 0, 0],
         op: None,
+        fmov: None,
     }];
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -2432,6 +2438,7 @@ fn modular_self_verify_with_fieldreg_nonempty_events_tampered_wv_rejects() {
         old: [0, 0, 0, 0],
         new: [42, 0, 0, 0],
         op: None,
+        fmov: None,
     }];
     let field_reg_config = FieldRegConfig {
         k: k_fieldreg,
@@ -2570,6 +2577,7 @@ fn bridge_honest_fmul_multilimb_accepts() {
                 a,
                 b,
             }),
+            fmov: None,
         }];
         let prologue = build_fmul_prologue(c_fieldop, &a, &b);
         (events, prologue, None)
@@ -2642,6 +2650,7 @@ fn bridge_tampered_field_op_a_rejects() {
                     a,
                     b,
                 }),
+                fmov: None,
             }];
             let prologue = build_fmul_prologue(c_fieldop, &a, &b);
             // Tamper: overwrite V_FIELD_OP_A at the FieldOp cycle to an
@@ -2737,6 +2746,7 @@ fn bridge_tampered_val_reg_rejects_via_registers_twist() {
                     a,
                     b,
                 }),
+                fmov: None,
             }];
             let prologue = build_fmul_prologue(c_fieldop, &a, &b);
             // Prologue writes x10=a[0]=1 at cycle c_fieldop-8.
@@ -2788,5 +2798,198 @@ fn bridge_tampered_val_reg_rejects_via_registers_twist() {
         verify_result.is_err(),
         "Tampered V_RD_WRITE_VALUE at the x10 prologue cycle MUST be rejected \
          (either by the bridge or by the Registers Twist); got Ok(())"
+    );
+}
+
+/// Security fix #1 (task #64) — FMov-F2I limb tamper is caught.
+///
+/// Without the FMov-F2I R1CS gate (row 28), a prover could emit an FMov-F2I
+/// event writing a garbage limb to `V_FIELD_REG_READ_LIMB` that disagrees
+/// with the scalar-register write (`V_RD_WRITE_VALUE`), disconnecting the
+/// Registers Twist from the FR Twist at FMov cycles and enabling forgery
+/// of FR → integer results.
+///
+/// Strategy: honest FMUL prologue + FieldOp event (so bridge/Spartan pass),
+/// then post-hoc tamper `V_FIELD_REG_READ_LIMB` at a NoOp padding cycle to
+/// an unrelated value AND flip `V_FLAG_IS_FMOV_F2I` to 1 at the same cycle.
+/// The BytecodeField-bound flag polynomial says the flag is 0 at that NoOp
+/// cycle, so the R1CS flag column has been desynchronized from the bytecode
+/// commitment. Either path (bytecode flag mismatch, or the FMov-F2I gate
+/// itself if `V_RD_WRITE_VALUE` is forced to disagree) must reject.
+///
+/// This test exercises the R1CS-level presence of the FMov columns end-to-
+/// end through the prover/verifier pipeline. A real FMov-cycle adversarial
+/// test would require modifying muldiv's trace to include an FMov
+/// instruction, which is out of scope here.
+#[test]
+fn fmov_f2i_tampered_read_limb_rejects() {
+    use jolt_dory::types::DoryVerifierSetup;
+    use jolt_witness::derived::{FieldOpPayload, FieldRegEvent, FIELD_OP_FUNCT3_FMUL};
+
+    let (_, params) = jolt_core_state_history();
+
+    let a = [1u64, 2, 3, 4];
+    let b = [5u64, 6, 7, 8];
+    let prod_fr = limbs_to_ark(&a) * limbs_to_ark(&b);
+    let new = ark_to_limbs(&prod_fr);
+
+    let prove_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run_jolt_zkvm_prover_with_prologue(params, move |reg_access| {
+            let c_fieldop = find_padding_field_op_cycle(reg_access);
+            let events = vec![FieldRegEvent {
+                cycle: c_fieldop,
+                slot: 0,
+                old: [0, 0, 0, 0],
+                new,
+                op: Some(FieldOpPayload {
+                    funct3: FIELD_OP_FUNCT3_FMUL,
+                    a,
+                    b,
+                }),
+                fmov: None,
+            }];
+            let prologue = build_fmul_prologue(c_fieldop, &a, &b);
+            // Tamper at a NoOp padding cycle well away from the FieldOp /
+            // prologue region: set FMov-F2I flag to 1 + inject a garbage
+            // limb value. The bytecode-bound flag polynomial for that cycle
+            // says 0 (NoOp), so the flag desync triggers rejection via the
+            // bytecode flag binding; even if that path didn't fire, the
+            // FMov-F2I gate compares the limb to `V_RD_WRITE_VALUE` (zero
+            // on NoOp), forcing a non-zero residue.
+            let c_tamper = c_fieldop.saturating_sub(20);
+            let tamper: R1csWitnessTamper =
+                Box::new(move |w: &mut [NewFr], num_vars_padded: usize| {
+                    use jolt_field::Field;
+                    // Activate the FMov-F2I gate at a NoOp cycle and make
+                    // the limb disagree with V_RD_WRITE_VALUE (which is 0
+                    // on a NoOp). The gate
+                    //   IsFMovF2I · (V_RD_WRITE_VALUE − V_FIELD_REG_READ_LIMB) = 0
+                    // then evaluates to 1·(0 − X) ≠ 0 and Spartan rejects.
+                    w[c_tamper * num_vars_padded + rv64::V_FLAG_IS_FMOV_F2I] =
+                        NewFr::from_u64(1);
+                    w[c_tamper * num_vars_padded + rv64::V_FIELD_REG_READ_LIMB] =
+                        NewFr::from_u64(0xdead_beef);
+                });
+            (events, prologue, Some(tamper))
+        })
+    }));
+
+    let Ok(zkvm_proof) = prove_result else {
+        // Prover panic on the inconsistent witness also counts as rejection.
+        return;
+    };
+
+    let (
+        executable,
+        _polys,
+        r1cs_key,
+        _r1cs_witness,
+        setup,
+        _initial_ram,
+        _final_ram,
+        _instruction_flag_data,
+        _reg_access,
+        _lookup_trace,
+        _lookup_flags,
+        _bytecode_data,
+    ) = setup_zkvm_muldiv_with_example(params, "jolt_core_module_with_fieldreg");
+
+    let pcs_verifier_setup = DoryVerifierSetup(params.pcs_setup.0.to_verifier_setup());
+    let verifying_key = jolt_verifier::JoltVerifyingKey::<NewFr, DoryScheme>::new(
+        &executable.module,
+        pcs_verifier_setup,
+        r1cs_key,
+    );
+
+    let verify_result = jolt_verifier::verify(&verifying_key, &zkvm_proof, &setup.config.io_hash);
+    assert!(
+        verify_result.is_err(),
+        "Tampered V_FLAG_IS_FMOV_F2I + V_FIELD_REG_READ_LIMB at a NoOp cycle \
+         MUST be rejected by the R1CS / bytecode-flag binding; got Ok(())"
+    );
+}
+
+/// Security fix #1 — FMov-I2F limb tamper is caught.
+///
+/// Symmetric to `fmov_f2i_tampered_read_limb_rejects`, but exercises row 27
+/// (FMov-I2F gate): `IsFMovI2F · (V_FIELD_REG_WRITE_LIMB − V_RS1_VALUE) = 0`.
+/// Activating the flag at a NoOp cycle with a mismatched write-limb must be
+/// rejected by Spartan's outer sumcheck.
+#[test]
+fn fmov_i2f_tampered_write_limb_rejects() {
+    use jolt_dory::types::DoryVerifierSetup;
+    use jolt_witness::derived::{FieldOpPayload, FieldRegEvent, FIELD_OP_FUNCT3_FMUL};
+
+    let (_, params) = jolt_core_state_history();
+
+    let a = [1u64, 2, 3, 4];
+    let b = [5u64, 6, 7, 8];
+    let prod_fr = limbs_to_ark(&a) * limbs_to_ark(&b);
+    let new = ark_to_limbs(&prod_fr);
+
+    let prove_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run_jolt_zkvm_prover_with_prologue(params, move |reg_access| {
+            let c_fieldop = find_padding_field_op_cycle(reg_access);
+            let events = vec![FieldRegEvent {
+                cycle: c_fieldop,
+                slot: 0,
+                old: [0, 0, 0, 0],
+                new,
+                op: Some(FieldOpPayload {
+                    funct3: FIELD_OP_FUNCT3_FMUL,
+                    a,
+                    b,
+                }),
+                fmov: None,
+            }];
+            let prologue = build_fmul_prologue(c_fieldop, &a, &b);
+            let c_tamper = c_fieldop.saturating_sub(20);
+            let tamper: R1csWitnessTamper =
+                Box::new(move |w: &mut [NewFr], num_vars_padded: usize| {
+                    use jolt_field::Field;
+                    // Activate the FMov-I2F gate at a NoOp cycle and make
+                    // the write-limb disagree with V_RS1_VALUE (0 on NoOp).
+                    //   IsFMovI2F · (V_FIELD_REG_WRITE_LIMB − V_RS1_VALUE) = 0
+                    // evaluates to 1·(X − 0) ≠ 0 and Spartan rejects.
+                    w[c_tamper * num_vars_padded + rv64::V_FLAG_IS_FMOV_I2F] =
+                        NewFr::from_u64(1);
+                    w[c_tamper * num_vars_padded + rv64::V_FIELD_REG_WRITE_LIMB] =
+                        NewFr::from_u64(0xcafe_f00d);
+                });
+            (events, prologue, Some(tamper))
+        })
+    }));
+
+    let Ok(zkvm_proof) = prove_result else {
+        return;
+    };
+
+    let (
+        executable,
+        _polys,
+        r1cs_key,
+        _r1cs_witness,
+        setup,
+        _initial_ram,
+        _final_ram,
+        _instruction_flag_data,
+        _reg_access,
+        _lookup_trace,
+        _lookup_flags,
+        _bytecode_data,
+    ) = setup_zkvm_muldiv_with_example(params, "jolt_core_module_with_fieldreg");
+
+    let pcs_verifier_setup = DoryVerifierSetup(params.pcs_setup.0.to_verifier_setup());
+    let verifying_key = jolt_verifier::JoltVerifyingKey::<NewFr, DoryScheme>::new(
+        &executable.module,
+        pcs_verifier_setup,
+        r1cs_key,
+    );
+
+    let verify_result = jolt_verifier::verify(&verifying_key, &zkvm_proof, &setup.config.io_hash);
+    assert!(
+        verify_result.is_err(),
+        "Tampered V_FLAG_IS_FMOV_I2F + V_FIELD_REG_WRITE_LIMB at a NoOp cycle \
+         MUST be rejected by the R1CS FMov-I2F gate; got Ok(())"
     );
 }

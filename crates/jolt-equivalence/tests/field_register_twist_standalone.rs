@@ -1006,6 +1006,7 @@ fn honest_twist_events() -> Vec<FieldRegEvent> {
         old: [0; 4],
         new: [0; 4],
         op: None,
+        fmov: None,
     }]
 }
 

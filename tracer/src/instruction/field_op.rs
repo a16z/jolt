@@ -182,6 +182,7 @@ impl RISCVTrace for FieldOp {
                 old: frd_pre,
                 new: frd_post,
                 op: Some(payload),
+                fmov: None,
             });
             trace_vec.push(cycle.into());
         }

@@ -190,6 +190,11 @@ impl ModularStack {
                     a: p.a,
                     b: p.b,
                 }),
+                fmov: e.fmov.map(|p| jolt_witness::derived::FMovPayload {
+                    funct3: p.funct3,
+                    limb_idx: p.limb_idx,
+                    limb: p.limb,
+                }),
             })
             .collect();
 

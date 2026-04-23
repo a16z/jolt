@@ -8,7 +8,8 @@ use jolt_instructions::flags::{CircuitFlags, InstructionFlags, NUM_CIRCUIT_FLAGS
 use jolt_r1cs::constraints::rv64::*;
 use jolt_witness::derived::{
     limbs_to_field, FieldRegEvent, FIELD_OP_FUNCT3_FADD, FIELD_OP_FUNCT3_FINV,
-    FIELD_OP_FUNCT3_FMUL, FIELD_OP_FUNCT3_FSUB,
+    FIELD_OP_FUNCT3_FMOV_F2I, FIELD_OP_FUNCT3_FMOV_I2F, FIELD_OP_FUNCT3_FMUL,
+    FIELD_OP_FUNCT3_FSUB,
 };
 
 use crate::bytecode::BytecodePreprocessing;
@@ -112,6 +113,12 @@ pub fn r1cs_cycle_witness<C: CycleRow, F: Field>(
     w[V_FLAG_IS_FIELD_SUB] = F::from_u64(cflags[CircuitFlags::IsFieldSub] as u64);
     w[V_FLAG_IS_FIELD_INV] = F::from_u64(cflags[CircuitFlags::IsFieldInv] as u64);
 
+    // FMov flags (security fix #1, task #64). Limb columns
+    // (V_FIELD_REG_READ_LIMB / V_FIELD_REG_WRITE_LIMB) are populated by
+    // `apply_field_op_events_to_r1cs` from the FieldRegEvent stream.
+    w[V_FLAG_IS_FMOV_I2F] = F::from_u64(cflags[CircuitFlags::IsFMovI2F] as u64);
+    w[V_FLAG_IS_FMOV_F2I] = F::from_u64(cflags[CircuitFlags::IsFMovF2I] as u64);
+
     // Product factors
     w[V_BRANCH] = F::from_u64(iflags[InstructionFlags::Branch] as u64);
     w[V_SHOULD_BRANCH] = w[V_LOOKUP_OUTPUT] * w[V_BRANCH];
@@ -187,10 +194,17 @@ pub fn build_r1cs_witness<C: CycleRow, F: Field>(
     witness
 }
 
-/// Write the BN254 Fr coprocessor R1CS columns (`V_FLAG_IS_FIELD_*` and
-/// `V_FIELD_OP_{A,B,RESULT}`) from a stream of [`FieldRegEvent`]s carrying
-/// `FieldOpPayload`s. Events without a payload (e.g. `FMov{I2F,F2I}`) are
-/// skipped — they do not activate any FieldOp gate.
+/// Write the BN254 Fr coprocessor R1CS columns from a stream of
+/// [`FieldRegEvent`]s. Handles three event classes:
+///
+/// - `FieldOp` (`op = Some(payload)`): populates `V_FLAG_IS_FIELD_*`,
+///   `V_FIELD_OP_{A,B,RESULT}`, and (for FMUL/FINV) the V_PRODUCT routing
+///   so rows 19-26 of `rv64_constraints` are satisfied.
+/// - `FMov` (`fmov = Some(payload)`): populates `V_FIELD_REG_READ_LIMB`
+///   (F2I) or `V_FIELD_REG_WRITE_LIMB` (I2F) so rows 27-28 are satisfied
+///   (security fix #1, task #64). Flag columns (`V_FLAG_IS_FMOV_*`) are
+///   set by `r1cs_cycle_witness` from `CycleRow::circuit_flags`.
+/// - Plain reads (`op = None`, `fmov = None`): no R1CS side effect.
 ///
 /// Callers must ensure:
 /// - `witness` was produced by [`build_r1cs_witness`] (or equivalent) over a
@@ -208,10 +222,29 @@ pub fn apply_field_op_events_to_r1cs<F: Field>(
     events: &[FieldRegEvent],
 ) {
     for e in events {
+        debug_assert!(e.cycle < num_cycles, "FieldRegEvent cycle out of range");
+
+        if let Some(fmov) = e.fmov {
+            let base = e.cycle * num_vars_padded;
+            let limb_f = F::from_u64(fmov.limb);
+            match fmov.funct3 {
+                FIELD_OP_FUNCT3_FMOV_I2F => {
+                    // Gate 27: IsFMovI2F · (V_FIELD_REG_WRITE_LIMB − V_RS1_VALUE) = 0
+                    witness[base + V_FIELD_REG_WRITE_LIMB] = limb_f;
+                }
+                FIELD_OP_FUNCT3_FMOV_F2I => {
+                    // Gate 28: IsFMovF2I · (V_RD_WRITE_VALUE − V_FIELD_REG_READ_LIMB) = 0
+                    witness[base + V_FIELD_REG_READ_LIMB] = limb_f;
+                }
+                other => {
+                    debug_assert!(false, "invalid FMov funct3: {other:#x}");
+                }
+            }
+        }
+
         let Some(op) = e.op else {
             continue;
         };
-        debug_assert!(e.cycle < num_cycles, "FieldRegEvent cycle out of range");
 
         let (flag_idx, valid_funct3) = match op.funct3 {
             FIELD_OP_FUNCT3_FMUL => (V_FLAG_IS_FIELD_MUL, true),
@@ -304,6 +337,7 @@ mod tests {
                 a: [123, 0, 0, 0],
                 b: [456, 0, 0, 0],
             }),
+            fmov: None,
         }];
 
         apply_field_op_events_to_r1cs::<Fr>(&mut witness, num_cycles, num_vars_padded, &events);
@@ -343,6 +377,7 @@ mod tests {
                 a: [100, 0, 0, 0],
                 b: [200, 0, 0, 0],
             }),
+            fmov: None,
         }];
 
         apply_field_op_events_to_r1cs::<Fr>(&mut witness, num_cycles, num_vars_padded, &events);
@@ -375,6 +410,7 @@ mod tests {
                 a: [1000, 0, 0, 0],
                 b: [250, 0, 0, 0],
             }),
+            fmov: None,
         }];
 
         apply_field_op_events_to_r1cs::<Fr>(&mut witness, num_cycles, num_vars_padded, &events);
@@ -405,6 +441,7 @@ mod tests {
                 a: [6, 0, 0, 0],
                 b: [7, 0, 0, 0],
             }),
+            fmov: None,
         }];
 
         apply_field_op_events_to_r1cs::<Fr>(&mut witness, num_cycles, num_vars_padded, &events);
@@ -443,6 +480,7 @@ mod tests {
                 a: [6, 0, 0, 0],
                 b: [7, 0, 0, 0],
             }),
+            fmov: None,
         }];
 
         apply_field_op_events_to_r1cs::<Fr>(&mut witness, num_cycles, num_vars_padded, &events);
@@ -476,6 +514,7 @@ mod tests {
                 a: [1, 0, 0, 0],
                 b: [0, 0, 0, 0],
             }),
+            fmov: None,
         }];
 
         apply_field_op_events_to_r1cs::<Fr>(&mut witness, num_cycles, num_vars_padded, &events);
@@ -510,6 +549,7 @@ mod tests {
                 a: [1, 0, 0, 0],
                 b: [0, 0, 0, 0],
             }),
+            fmov: None,
         }];
 
         apply_field_op_events_to_r1cs::<Fr>(&mut witness, num_cycles, num_vars_padded, &events);
@@ -594,6 +634,7 @@ mod tests {
                 a: [123, 0, 0, 0],
                 b: [456, 0, 0, 0],
             }),
+            fmov: None,
         }];
         apply_field_op_events_to_r1cs::<Fr>(&mut witness, trace.len(), num_vars_padded, &events);
 
@@ -621,6 +662,7 @@ mod tests {
             old: [0, 0, 0, 0],
             new: [42, 0, 0, 0],
             op: None,
+            fmov: None,
         }];
 
         apply_field_op_events_to_r1cs::<Fr>(&mut witness, num_cycles, num_vars_padded, &events);

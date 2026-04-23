@@ -52,10 +52,18 @@ pub enum CircuitFlags {
     IsFieldSub,
     /// BN254 Fr native-field coprocessor: FINV (`frd = frs1^{-1}` mod p; 0 → 0).
     IsFieldInv,
+    /// BN254 Fr native-field coprocessor: FMov integer-to-field limb
+    /// (`FR[frd].limb[k] ← rs1`). Used by R1CS to bind `V_RS1_VALUE` to
+    /// `V_FIELD_REG_WRITE_LIMB` at this cycle.
+    IsFMovI2F,
+    /// BN254 Fr native-field coprocessor: FMov field-to-integer limb
+    /// (`rd ← FR[frs1].limb[k]`). Used by R1CS to bind `V_RD_WRITE_VALUE`
+    /// to `V_FIELD_REG_READ_LIMB` at this cycle.
+    IsFMovF2I,
 }
 
 /// Number of circuit flags.
-pub const NUM_CIRCUIT_FLAGS: usize = 18;
+pub const NUM_CIRCUIT_FLAGS: usize = 20;
 
 /// Boolean flags that are NOT part of Jolt's R1CS constraints.
 ///
@@ -152,7 +160,7 @@ mod tests {
 
     #[test]
     fn circuit_flags_count_matches_enum() {
-        assert_eq!(CircuitFlags::IsFieldInv as usize + 1, NUM_CIRCUIT_FLAGS);
+        assert_eq!(CircuitFlags::IsFMovF2I as usize + 1, NUM_CIRCUIT_FLAGS);
     }
 
     #[test]

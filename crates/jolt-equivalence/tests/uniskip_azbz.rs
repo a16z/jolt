@@ -91,11 +91,15 @@ fn compare_witness_variables() {
         /* 37 */ "FLAG_IsFieldAdd",
         /* 38 */ "FLAG_IsFieldSub",
         /* 39 */ "FLAG_IsFieldInv",
-        /* 40 */ "FieldOpA",
-        /* 41 */ "FieldOpB",
-        /* 42 */ "FieldOpResult",
-        /* 43 */ "Branch",
-        /* 44 */ "NextIsNoop",
+        /* 40 */ "FLAG_IsFMovI2F",
+        /* 41 */ "FLAG_IsFMovF2I",
+        /* 42 */ "FieldOpA",
+        /* 43 */ "FieldOpB",
+        /* 44 */ "FieldOpResult",
+        /* 45 */ "FieldRegReadLimb",
+        /* 46 */ "FieldRegWriteLimb",
+        /* 47 */ "Branch",
+        /* 48 */ "NextIsNoop",
     ];
 
     // Compare witness variables for real cycles.

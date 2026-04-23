@@ -565,8 +565,15 @@ fn field_op_circuit_flags(instr: &Instruction) -> Option<[bool; NUM_CIRCUIT_FLAG
             }
             Some(f)
         }
-        Instruction::FMovIntToFieldLimb(_) | Instruction::FMovFieldToIntLimb(_) => {
-            Some([false; NUM_CIRCUIT_FLAGS])
+        Instruction::FMovIntToFieldLimb(_) => {
+            let mut f = [false; NUM_CIRCUIT_FLAGS];
+            f[CircuitFlags::IsFMovI2F] = true;
+            Some(f)
+        }
+        Instruction::FMovFieldToIntLimb(_) => {
+            let mut f = [false; NUM_CIRCUIT_FLAGS];
+            f[CircuitFlags::IsFMovF2I] = true;
+            Some(f)
         }
         _ => None,
     }

@@ -109,8 +109,10 @@ pub fn limbs_to_field<F: Field>(limbs: &FrLimbs) -> F {
 /// limbs (`[u64; 4]`) so the full 256-bit Fr range is expressible.
 ///
 /// For `FieldOp` events, `op` additionally carries the operands the R1CS
-/// FADD/FSUB gates bind. Non-FieldOp events (e.g. `FMov{I2F,F2I}`) set
-/// `op = None`.
+/// FADD/FSUB gates bind. For `FMov{I2F,F2I}` events, `fmov` carries the raw
+/// 64-bit limb exchanged with the scalar register file (security fix #1,
+/// task #64). Plain reads with no side-effect set both `op` and `fmov` to
+/// `None`.
 #[derive(Clone, Copy, Debug)]
 pub struct FieldRegEvent {
     pub cycle: usize,
@@ -118,6 +120,10 @@ pub struct FieldRegEvent {
     pub old: FrLimbs,
     pub new: FrLimbs,
     pub op: Option<FieldOpPayload>,
+    /// Present iff this cycle is an `FMov{I2F,F2I}`. The payload carries the
+    /// raw 64-bit limb the R1CS FMov gate binds to `V_RS1_VALUE` (I2F) or
+    /// `V_RD_WRITE_VALUE` (F2I).
+    pub fmov: Option<FMovPayload>,
 }
 
 /// Funct3 selector bytes for FieldOp funct3 field, mirroring
@@ -137,6 +143,31 @@ pub struct FieldOpPayload {
     pub funct3: u8,
     pub a: FrLimbs,
     pub b: FrLimbs,
+}
+
+/// FMov funct3 selector bytes. Mirror `tracer::instruction::field_op::FUNCT3_*`
+/// for FMov-I2F / FMov-F2I so the R1CS bridge (`apply_field_op_events_to_r1cs`)
+/// can disambiguate direction without pulling in a tracer dependency.
+pub const FIELD_OP_FUNCT3_FMOV_I2F: u8 = 0x06;
+pub const FIELD_OP_FUNCT3_FMOV_F2I: u8 = 0x07;
+
+/// Payload attached to an `FMov{I2F,F2I}` cycle's `FieldRegEvent`.
+///
+/// - On I2F (`FR[frd].limb[k] ← rs1`): `limb` is the rs1 value being moved into
+///   the field register.
+/// - On F2I (`rd ← FR[frs1].limb[k]`): `limb` is the k-th limb of
+///   `FR[frs1]` being moved into the integer register file.
+///
+/// Consumed by the R1CS FMov gates (rows 27-28 in `rv64_constraints`) to bind
+/// integer-register reads/writes to field-register writes/reads.
+#[derive(Clone, Copy, Debug)]
+pub struct FMovPayload {
+    /// 0x06 for I2F, 0x07 for F2I.
+    pub funct3: u8,
+    /// Limb index within the 4-limb Fr representation (0..=3).
+    pub limb_idx: u8,
+    /// The 64-bit limb exchanged with the integer register.
+    pub limb: u64,
 }
 
 /// FieldReg coprocessor configuration. Mirrors `RamConfig` — raw-data sources

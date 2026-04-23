@@ -13,14 +13,16 @@
 //! | `[1..=21]` | R1CS core inputs (registers, PC, lookups) |
 //! | `[22..=35]` | RV base circuit flags (14 flags, see [`CircuitFlags`] indices 0..14) |
 //! | `[36..=39]` | BN254 Fr coprocessor flags (IsFieldMul/Add/Sub/Inv) |
-//! | `[40..=42]` | BN254 Fr coprocessor operand columns (FieldOpA/B/Result) |
-//! | `[43..=44]` | Product factor variables (`Branch`, `NextIsNoop`) |
+//! | `[40..=41]` | FMov flags (IsFMovI2F, IsFMovF2I) for FR↔scalar bridging gates |
+//! | `[42..=44]` | BN254 Fr coprocessor operand columns (FieldOpA/B/Result) |
+//! | `[45..=46]` | FMov limb columns (FieldRegReadLimb, FieldRegWriteLimb) |
+//! | `[47..=48]` | Product factor variables (`Branch`, `NextIsNoop`) |
 //!
 //! # Constraint forms
 //!
-//! - **Eq-conditional** (rows 0–18 base + 19 FieldAdd + 20 FieldSub):
-//!   `guard · (left − right) = 0`
-//! - **Product** (rows 21–23): `left · right = output`
+//! - **Eq-conditional**: `guard · (left − right) = 0` (rows 0–28 — 19 RV base
+//!   + FieldAdd, FieldSub, FMUL/FINV binding (6), FMov-I2F, FMov-F2I)
+//! - **Product**: `left · right = output` (final 3 rows)
 
 /// Constant-1 wire.
 pub const V_CONST: usize = 0;
@@ -72,24 +74,47 @@ pub const V_FLAG_IS_FIELD_ADD: usize = 37;
 pub const V_FLAG_IS_FIELD_SUB: usize = 38;
 /// Per-cycle FINV flag.
 pub const V_FLAG_IS_FIELD_INV: usize = 39;
+
+// --- FMov flag columns (Security fix #1: bind integer ↔ FR at FMov cycles) ---
+
+/// Per-cycle FMov I2F flag (`FR[frd].limb[k] ← rs1`). Gates the FMov-I2F
+/// equality constraint `V_FIELD_REG_WRITE_LIMB = V_RS1_VALUE`.
+pub const V_FLAG_IS_FMOV_I2F: usize = 40;
+/// Per-cycle FMov F2I flag (`rd ← FR[frs1].limb[k]`). Gates the FMov-F2I
+/// equality constraint `V_RD_WRITE_VALUE = V_FIELD_REG_READ_LIMB`.
+pub const V_FLAG_IS_FMOV_F2I: usize = 41;
+
+// --- BN254 Fr coprocessor operand columns (shifted +2 to make room for FMov flags) ---
+
 /// FieldOp read source A (`field_regs[frs1]` as Fr scalar).
-pub const V_FIELD_OP_A: usize = 40;
+pub const V_FIELD_OP_A: usize = 42;
 /// FieldOp read source B (`field_regs[frs2]` as Fr scalar; 0 on FINV cycles).
-pub const V_FIELD_OP_B: usize = 41;
+pub const V_FIELD_OP_B: usize = 43;
 /// FieldOp write destination (`field_regs[frd]` post-value as Fr scalar).
-pub const V_FIELD_OP_RESULT: usize = 42;
+pub const V_FIELD_OP_RESULT: usize = 44;
 
-// --- Product factors (shifted by +7 to make room for field-op slots) ---
+// --- FMov limb columns (raw 64-bit limb exchanged between FR and scalar on FMov) ---
 
-pub const V_BRANCH: usize = 43;
-pub const V_NEXT_IS_NOOP: usize = 44;
+/// FMov F2I read limb: 64-bit limb `FR[frs1].limb[k]` projected to `rd`.
+/// Bound to `V_RD_WRITE_VALUE` on FMov-F2I cycles by row 27 and populated
+/// by the FR Twist via the `FieldRegEvent` stream.
+pub const V_FIELD_REG_READ_LIMB: usize = 45;
+/// FMov I2F write limb: 64-bit limb `FR[frd].limb[k]` sourced from `rs1`.
+/// Bound to `V_RS1_VALUE` on FMov-I2F cycles by row 27 and populated by
+/// the FR Twist via the `FieldRegEvent` stream.
+pub const V_FIELD_REG_WRITE_LIMB: usize = 46;
 
-pub const NUM_R1CS_INPUTS: usize = 42;
+// --- Product factors (shifted by +9 past field-op + fmov-limb slots) ---
+
+pub const V_BRANCH: usize = 47;
+pub const V_NEXT_IS_NOOP: usize = 48;
+
+pub const NUM_R1CS_INPUTS: usize = 46;
 pub const NUM_PRODUCT_FACTORS: usize = 2;
-pub const NUM_VARS_PER_CYCLE: usize = 1 + NUM_R1CS_INPUTS + NUM_PRODUCT_FACTORS; // 45
-pub const NUM_EQ_CONSTRAINTS: usize = 27;
+pub const NUM_VARS_PER_CYCLE: usize = 1 + NUM_R1CS_INPUTS + NUM_PRODUCT_FACTORS; // 49
+pub const NUM_EQ_CONSTRAINTS: usize = 29;
 pub const NUM_PRODUCT_CONSTRAINTS: usize = 3;
-pub const NUM_CONSTRAINTS_PER_CYCLE: usize = NUM_EQ_CONSTRAINTS + NUM_PRODUCT_CONSTRAINTS; // 30
+pub const NUM_CONSTRAINTS_PER_CYCLE: usize = NUM_EQ_CONSTRAINTS + NUM_PRODUCT_CONSTRAINTS; // 32
 
 /// Two's complement bias for subtraction: 2^64.
 const TWOS_COMPLEMENT_BIAS: i128 = 0x1_0000_0000_0000_0000;
@@ -390,7 +415,8 @@ pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
     // the existing product constraint 21 (`V_PRODUCT = V_LEFT · V_RIGHT`) by
     // binding the FieldOp operands onto V_LEFT / V_RIGHT on FMUL/FINV cycles.
     //
-    // Contract enforced by rows 21-26:
+    // Contract enforced by rows 21-26 (FMUL/FINV binding). Rows 27-28 add
+    // the FMov-I2F / FMov-F2I bindings for security fix #1:
     //   FMUL:  V_LEFT = A, V_RIGHT = B, V_PRODUCT = FieldOpResult
     //   FINV:  V_LEFT = A, V_RIGHT = FieldOpResult, V_PRODUCT = 1
     //
@@ -422,7 +448,7 @@ pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
 
     // 23: FieldMul product output
     //     IsFieldMul · (V_PRODUCT − FieldOpResult) = 0
-    //     Combined with product-constraint 27 (V_PRODUCT = V_LEFT · V_RIGHT),
+    //     Combined with product-constraint 29 (V_PRODUCT = V_LEFT · V_RIGHT),
     //     this forces FieldOpResult = A · B on FMUL cycles.
     a_rows.push(row::<F>(&[(V_FLAG_IS_FIELD_MUL, 1)]));
     b_rows.push(row::<F>(&[(V_PRODUCT, 1), (V_FIELD_OP_RESULT, -1)]));
@@ -449,27 +475,60 @@ pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
 
     // 26: FieldInv unit product
     //     IsFieldInv · (V_PRODUCT − 1) = 0
-    //     With rows 24/25 and product-constraint 27, this forces A·Result = 1.
+    //     With rows 24/25 and product-constraint 29, this forces A·Result = 1.
     //     Does NOT cover FINV(0)=0 — guests must avoid inverting zero.
     a_rows.push(row::<F>(&[(V_FLAG_IS_FIELD_INV, 1)]));
     b_rows.push(row::<F>(&[(V_PRODUCT, 1), (V_CONST, -1)]));
     c_rows.push(empty());
 
-    // Product constraints (27-29)
+    // Security fix #1 (task #64): bind integer-register reads/writes to FR
+    // writes/reads at FMov cycles. Without these two gates, an adversarial
+    // prover can emit an FMov event whose `new` / `old` limbs are
+    // disconnected from the scalar register write/read — the Registers Twist
+    // and FR Twist were previously unlinked at FMov, letting a prover ship
+    // garbage through the bridge and forge any Fr output.
+
+    // 27: FMov-I2F binds rs1 → FR write-limb
+    //     IsFMovI2F · (V_FIELD_REG_WRITE_LIMB − V_RS1_VALUE) = 0
+    //     On I2F cycles the guest writes `FR[frd].limb[k] = rs1`. V_RS1_VALUE
+    //     comes from the Registers Twist read at (t, rs1), and
+    //     V_FIELD_REG_WRITE_LIMB comes from the FR Twist write limb for the
+    //     FMov event. This equality forces the two subsystems to agree.
+    a_rows.push(row::<F>(&[(V_FLAG_IS_FMOV_I2F, 1)]));
+    b_rows.push(row::<F>(&[
+        (V_FIELD_REG_WRITE_LIMB, 1),
+        (V_RS1_VALUE, -1),
+    ]));
+    c_rows.push(empty());
+
+    // 28: FMov-F2I binds FR read-limb → rd write
+    //     IsFMovF2I · (V_RD_WRITE_VALUE − V_FIELD_REG_READ_LIMB) = 0
+    //     On F2I cycles the guest writes `rd = FR[frs1].limb[k]`. V_RD_WRITE_VALUE
+    //     comes from the Registers Twist write at (t, rd), and
+    //     V_FIELD_REG_READ_LIMB comes from the FR Twist read limb for the
+    //     FMov event. This equality forces the two subsystems to agree.
+    a_rows.push(row::<F>(&[(V_FLAG_IS_FMOV_F2I, 1)]));
+    b_rows.push(row::<F>(&[
+        (V_RD_WRITE_VALUE, 1),
+        (V_FIELD_REG_READ_LIMB, -1),
+    ]));
+    c_rows.push(empty());
+
+    // Product constraints (29-31)
     // Form: left · right = output  →  A=left, B=right, C=output
 
-    // 27: Product = LeftInstructionInput × RightInstructionInput
+    // 29: Product = LeftInstructionInput × RightInstructionInput
     //     Also supplies A·B (or A·Result for FINV) to the FMUL/FINV gates.
     a_rows.push(row::<F>(&[(V_LEFT_INSTRUCTION_INPUT, 1)]));
     b_rows.push(row::<F>(&[(V_RIGHT_INSTRUCTION_INPUT, 1)]));
     c_rows.push(row::<F>(&[(V_PRODUCT, 1)]));
 
-    // 28: ShouldBranch = LookupOutput × Branch
+    // 30: ShouldBranch = LookupOutput × Branch
     a_rows.push(row::<F>(&[(V_LOOKUP_OUTPUT, 1)]));
     b_rows.push(row::<F>(&[(V_BRANCH, 1)]));
     c_rows.push(row::<F>(&[(V_SHOULD_BRANCH, 1)]));
 
-    // 29: ShouldJump = Jump × (1 − NextIsNoop)
+    // 31: ShouldJump = Jump × (1 − NextIsNoop)
     a_rows.push(row::<F>(&[(V_FLAG_JUMP, 1)]));
     b_rows.push(row::<F>(&[(V_CONST, 1), (V_NEXT_IS_NOOP, -1)]));
     c_rows.push(row::<F>(&[(V_SHOULD_JUMP, 1)]));
@@ -706,6 +765,88 @@ mod tests {
             matrices.check_witness(&w).is_err(),
             "FINV with tampered result must violate gate 26",
         );
+    }
+
+    /// Security fix #1: FMov-I2F gate binds V_RS1_VALUE → V_FIELD_REG_WRITE_LIMB.
+    /// Witness mimics a plain FMov cycle (no RV or FieldOp flags set).
+    fn fmov_i2f_witness(rs1: Fr, write_limb: Fr) -> Vec<Fr> {
+        let mut w = noop_witness();
+        w[V_FLAG_IS_FMOV_I2F] = Fr::from_u64(1);
+        w[V_RS1_VALUE] = rs1;
+        w[V_FIELD_REG_WRITE_LIMB] = write_limb;
+        w
+    }
+
+    fn fmov_f2i_witness(rd_write: Fr, read_limb: Fr) -> Vec<Fr> {
+        let mut w = noop_witness();
+        w[V_FLAG_IS_FMOV_F2I] = Fr::from_u64(1);
+        w[V_RD_WRITE_VALUE] = rd_write;
+        w[V_FIELD_REG_READ_LIMB] = read_limb;
+        w
+    }
+
+    #[test]
+    fn fmov_i2f_gate_accepts_matching_limb() {
+        let matrices = rv64_constraints::<Fr>();
+        let v = Fr::from_u64(0xdead_beef_cafe_babe);
+        let w = fmov_i2f_witness(v, v);
+        matrices
+            .check_witness(&w)
+            .expect("FMov-I2F with matching rs1/write_limb should satisfy all constraints");
+    }
+
+    #[test]
+    fn fmov_i2f_gate_rejects_mismatch() {
+        let matrices = rv64_constraints::<Fr>();
+        let v = Fr::from_u64(0xdead_beef_cafe_babe);
+        let w = fmov_i2f_witness(v, v + Fr::from_u64(1));
+        assert!(
+            matrices.check_witness(&w).is_err(),
+            "FMov-I2F with mismatched rs1/write_limb must violate constraint 27",
+        );
+    }
+
+    #[test]
+    fn fmov_i2f_gate_ignored_when_flag_zero() {
+        let matrices = rv64_constraints::<Fr>();
+        let mut w = noop_witness();
+        w[V_RS1_VALUE] = Fr::from_u64(7);
+        w[V_FIELD_REG_WRITE_LIMB] = Fr::from_u64(42);
+        matrices
+            .check_witness(&w)
+            .expect("FMov-I2F must be vacuous when flag=0");
+    }
+
+    #[test]
+    fn fmov_f2i_gate_accepts_matching_limb() {
+        let matrices = rv64_constraints::<Fr>();
+        let v = Fr::from_u64(0x1234_5678_9abc_def0);
+        let w = fmov_f2i_witness(v, v);
+        matrices
+            .check_witness(&w)
+            .expect("FMov-F2I with matching rd_write/read_limb should satisfy all constraints");
+    }
+
+    #[test]
+    fn fmov_f2i_gate_rejects_mismatch() {
+        let matrices = rv64_constraints::<Fr>();
+        let v = Fr::from_u64(0x1234_5678_9abc_def0);
+        let w = fmov_f2i_witness(v + Fr::from_u64(1), v);
+        assert!(
+            matrices.check_witness(&w).is_err(),
+            "FMov-F2I with mismatched rd_write/read_limb must violate constraint 28",
+        );
+    }
+
+    #[test]
+    fn fmov_f2i_gate_ignored_when_flag_zero() {
+        let matrices = rv64_constraints::<Fr>();
+        let mut w = noop_witness();
+        w[V_RD_WRITE_VALUE] = Fr::from_u64(7);
+        w[V_FIELD_REG_READ_LIMB] = Fr::from_u64(42);
+        matrices
+            .check_witness(&w)
+            .expect("FMov-F2I must be vacuous when flag=0");
     }
 
     #[test]
