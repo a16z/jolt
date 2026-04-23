@@ -50,7 +50,7 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams, poly_map: &[Polyno
             })
             .max()
             .unwrap_or(0);
-        ctx.ops.push(Op::Commit {
+        ctx.push_op(Op::Commit {
             polys: committed.iter().map(|&i| ctx.map_poly(i)).collect(),
             tag: DomainSeparator::Commitment,
             num_vars,
@@ -58,9 +58,9 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams, poly_map: &[Polyno
     }
 
     // Verifier preamble
-    ctx.verifier_ops.push(VerifierOp::Preamble);
+    ctx.push_verifier_op(VerifierOp::Preamble);
     for &pi in &committed {
-        ctx.verifier_ops.push(VerifierOp::AbsorbCommitment {
+        ctx.push_verifier_op(VerifierOp::AbsorbCommitment {
             poly: ctx.map_poly(pi),
             tag: DomainSeparator::Commitment,
         });
@@ -115,10 +115,10 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams, poly_map: &[Polyno
 
         if has_sumcheck || has_evals {
             let verifier_stage_idx = ctx.verifier_stage_count;
-            ctx.ops.push(Op::BeginStage {
+            ctx.push_op(Op::BeginStage {
                 index: verifier_stage_idx,
             });
-            ctx.verifier_ops.push(VerifierOp::BeginStage);
+            ctx.push_verifier_op(VerifierOp::BeginStage);
         }
 
         if has_sumcheck {
@@ -135,7 +135,7 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams, poly_map: &[Polyno
                 normalize: None,
             }];
 
-            ctx.verifier_ops.push(VerifierOp::VerifySumcheck {
+            ctx.push_verifier_op(VerifierOp::VerifySumcheck {
                 instances: instances.clone(),
                 stage: verifier_stage_idx,
                 batch_challenges: Vec::new(),
@@ -158,7 +158,7 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams, poly_map: &[Polyno
             } = &protocol.vertices[vi]
             {
                 let mapped = ctx.map_poly(*poly);
-                ctx.ops.push(Op::Evaluate {
+                ctx.push_op(Op::Evaluate {
                     poly: mapped,
                     mode: crate::module::EvalMode::FullyBound,
                 });
@@ -174,18 +174,18 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams, poly_map: &[Polyno
 
         if has_evals {
             let eval_polys: Vec<PolynomialId> = eval_descs.iter().map(|e| e.poly).collect();
-            ctx.ops.push(Op::RecordEvals {
+            ctx.push_op(Op::RecordEvals {
                 polys: eval_polys.clone(),
             });
-            ctx.ops.push(Op::AbsorbEvals {
+            ctx.push_op(Op::AbsorbEvals {
                 polys: eval_polys.clone(),
                 tag: DomainSeparator::OpeningClaim,
             });
 
-            ctx.verifier_ops.push(VerifierOp::RecordEvals {
+            ctx.push_verifier_op(VerifierOp::RecordEvals {
                 evals: eval_descs.clone(),
             });
-            ctx.verifier_ops.push(VerifierOp::AbsorbEvals {
+            ctx.push_verifier_op(VerifierOp::AbsorbEvals {
                 polys: eval_polys,
                 tag: DomainSeparator::OpeningClaim,
             });
@@ -200,11 +200,11 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams, poly_map: &[Polyno
                         let target_staging = vertex_to_staging[at_vertex];
                         let at_stage = staging_to_verifier[target_staging]
                             .expect("evaluation target stage not yet emitted");
-                        ctx.ops.push(Op::CollectOpeningClaim {
+                        ctx.push_op(Op::CollectOpeningClaim {
                             poly: mapped,
                             at_stage: VerifierStageIndex(at_stage),
                         });
-                        ctx.verifier_ops.push(VerifierOp::CollectOpeningClaim {
+                        ctx.push_verifier_op(VerifierOp::CollectOpeningClaim {
                             poly: mapped,
                             at_stage: VerifierStageIndex(at_stage),
                         });
@@ -220,10 +220,10 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams, poly_map: &[Polyno
 
         // Post-stage challenges
         if si < stage_challenges.len() {
-            ctx.ops.push(Op::Squeeze {
+            ctx.push_op(Op::Squeeze {
                 challenge: stage_challenges[si],
             });
-            ctx.verifier_ops.push(VerifierOp::Squeeze {
+            ctx.push_verifier_op(VerifierOp::Squeeze {
                 challenge: stage_challenges[si],
             });
         }
@@ -231,7 +231,7 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams, poly_map: &[Polyno
 
     // Emit all output checks now that all evaluations are recorded.
     for (instances, stage) in pending_output_checks {
-        ctx.verifier_ops.push(VerifierOp::CheckOutput {
+        ctx.push_verifier_op(VerifierOp::CheckOutput {
             instances,
             stage,
             batch_challenges: Vec::new(),
@@ -240,7 +240,7 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams, poly_map: &[Polyno
 
     // Emit opening stage if present
     if let Some(opening) = &staging.opening {
-        ctx.ops.push(Op::BeginStage {
+        ctx.push_op(Op::BeginStage {
             index: ctx.verifier_stage_count,
         });
         let ch_idx = ChallengeIdx(ctx.challenges.len());
@@ -250,21 +250,21 @@ pub(crate) fn emit(staging: &Staging, params: &CompileParams, poly_map: &[Polyno
                 after_stage: staging.stages.len(),
             },
         });
-        ctx.ops.push(Op::Squeeze { challenge: ch_idx });
+        ctx.push_op(Op::Squeeze { challenge: ch_idx });
 
-        ctx.verifier_ops.push(VerifierOp::BeginStage);
+        ctx.push_verifier_op(VerifierOp::BeginStage);
         ctx.verifier_ops
             .push(VerifierOp::Squeeze { challenge: ch_idx });
         ctx.verifier_stage_count += 1;
     }
 
     // PCS tail
-    ctx.ops.push(Op::ReduceOpenings);
-    ctx.ops.push(Op::Open);
-    ctx.verifier_ops.push(VerifierOp::VerifyOpenings);
+    ctx.push_op(Op::ReduceOpenings);
+    ctx.push_op(Op::Open);
+    ctx.push_verifier_op(VerifierOp::VerifyOpenings);
 
     if !committed.is_empty() {
-        ctx.ops.push(Op::ReleaseHost {
+        ctx.push_op(Op::ReleaseHost {
             polys: committed.iter().map(|&i| ctx.map_poly(i)).collect(),
         });
     }
@@ -351,6 +351,22 @@ impl<'a> EmitCtx<'a> {
     #[inline]
     fn map_poly(&self, idx: usize) -> PolynomialId {
         self.poly_map[idx]
+    }
+
+    /// Single emission entry point for prover ops.
+    ///
+    /// All `Op`s flowing into the compiled module go through this method.
+    /// Future phases (O3) will add a primitive-form assertion here; pass
+    /// pipelines (O6) rewrite the resulting `Vec<Op>` after emission.
+    #[inline]
+    fn push_op(&mut self, op: Op) {
+        self.ops.push(op);
+    }
+
+    /// Single emission entry point for verifier ops (mirror of [`Self::push_op`]).
+    #[inline]
+    fn push_verifier_op(&mut self, op: VerifierOp) {
+        self.verifier_ops.push(op);
     }
 
     /// Resolve a `ClaimId` to the round challenge indices of the sumcheck
@@ -472,10 +488,9 @@ fn emit_sumcheck_stage(
     });
 
     // Materialize all kernel inputs before the first round.
-    for binding in &ctx.kernels[kernel_idx].inputs {
-        ctx.ops.push(Op::Materialize {
-            binding: binding.clone(),
-        });
+    let bindings: Vec<InputBinding> = ctx.kernels[kernel_idx].inputs.clone();
+    for binding in bindings {
+        ctx.push_op(Op::Materialize { binding });
     }
 
     // Emit round ops: round 0 has no bind, rounds 1+ fuse bind with reduce
@@ -501,13 +516,13 @@ fn emit_sumcheck_stage(
                 .map(|b| b.poly())
                 .filter(|pid| seen.insert(*pid))
                 .collect();
-            ctx.ops.push(Op::Bind {
+            ctx.push_op(Op::Bind {
                 polys,
                 challenge: ch,
                 order: kdef.spec.binding_order,
             });
         }
-        ctx.ops.push(Op::Reduce {
+        ctx.push_op(Op::Reduce {
             specs: vec![ReduceSpec {
                 kernel: kernel_idx,
                 inputs: ctx.kernels[kernel_idx]
@@ -528,12 +543,12 @@ fn emit_sumcheck_stage(
             DomainSeparator::SumcheckPoly
         };
         // Uniskip round 0 currently always uses Compressed encoding.
-        ctx.ops.push(Op::AbsorbRoundPoly {
+        ctx.push_op(Op::AbsorbRoundPoly {
             num_coeffs,
             tag: round_tag,
             encoding: crate::module::RoundPolyEncoding::Compressed,
         });
-        ctx.ops.push(Op::Squeeze {
+        ctx.push_op(Op::Squeeze {
             challenge: round_challenge_indices[r],
         });
     }
@@ -549,7 +564,7 @@ fn emit_sumcheck_stage(
             .map(|p| ctx.map_poly(p))
             .collect();
         if !surviving.is_empty() {
-            ctx.ops.push(Op::Bind {
+            ctx.push_op(Op::Bind {
                 polys: surviving,
                 challenge: last_ch,
                 order: BindingOrder::LowToHigh,

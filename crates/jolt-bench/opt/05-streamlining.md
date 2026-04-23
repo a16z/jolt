@@ -107,36 +107,53 @@ Full per-phase detail below.
 
 ---
 
-## O1 — Crate boundary cleanup
+## O1 — Crate boundary cleanup — **LANDED** (`445d583c5`)
 
 **Why now**: pre-req for every other phase. Tiny commit, unblocks correctly-scoped
 imports for O2+.
 
-**What changes**:
-- Move `pub trait BufferProvider` + `pub struct LookupTraceData` out of
-  `crates/jolt-compute/src/traits.rs` into `crates/jolt-zkvm/src/runtime/`.
-  Re-exported from `jolt-zkvm::runtime::{BufferProvider, LookupTraceData}`.
-  The backend doesn't consume either trait — the move just aligns crate
-  ownership with usage.
-- Move `fn eval_scalar_expr` + helpers out of `crates/jolt-zkvm/src/scalar_expr.rs`
-  into `crates/jolt-compiler/src/scalar_expr.rs`. The IR (`ScalarExpr`,
-  `Monomial`, `ValueSource`, `DefaultVal`) already lives in `jolt-compiler`;
-  the interpreter belongs alongside it. `runtime/scalar_expr.rs` is deleted.
-- (Optional, low-priority) Move `Executable` + `link()` from
-  `crates/jolt-compute/src/linker.rs` into `crates/jolt-zkvm/src/runtime/`.
-  jolt-compute shrinks to just the `ComputeBackend` abstraction.
-- Tighten `crates/jolt-compute/src/lib.rs` crate-level docstring to
-  **"ComputeBackend trait, DeviceBuffer, and ReduceInputs only. No
-  data-pipeline, no protocol types."**
+**What landed**:
+- `pub trait BufferProvider` + `pub struct LookupTraceData` moved from
+  `crates/jolt-compute/src/traits.rs` to a new file
+  `crates/jolt-compiler/src/buffer_provider.rs`, re-exported at the
+  `jolt_compiler` crate root.
+- `fn eval_scalar_expr` + helpers moved from `crates/jolt-zkvm/src/scalar_expr.rs`
+  to `crates/jolt-compiler/src/scalar_expr.rs`, alongside the IR types
+  (`ScalarExpr`, `Monomial`, `ValueSource`, `DefaultVal`) that were
+  already in `jolt-compiler::module`. `runtime/scalar_expr.rs` deleted.
+- `jolt-compute/src/lib.rs` crate-level docstring tightened to explicitly
+  state **"ComputeBackend trait + buffer / reduce-input types. Only
+  that."** — lists what lives elsewhere (BufferProvider in jolt-compiler,
+  scalar_expr in jolt-compiler, runtime walker in jolt-zkvm).
+- `jolt-field` added as a production dep of `jolt-compiler` to support
+  the `F: Field` bound on `BufferProvider`. No other jolt-* production
+  deps added.
+- `Executable` + `link()` stayed in `jolt-compute/src/linker.rs` — they
+  bridge compiler output to backend-compiled kernels, which is a
+  compute-adjacent concern. Optional move deferred.
 
-**Correctness rail**: pure file moves + re-export shims. Full nextest
-correctness gate must pass.
+**Deviation from original plan**: BufferProvider targeted jolt-zkvm in
+the original plan, but `jolt-witness` implements the trait and can't
+depend on `jolt-zkvm` without a crate cycle (jolt-zkvm already depends
+on jolt-witness). The trait must live upstream of any implementor, so
+jolt-compiler — the only common ancestor of both `jolt-witness`
+(implementor) and `jolt-zkvm` (consumer) — is the right home. The
+semantic framing is arguably cleaner too: the compiler defines the IR
+contract, including the witness-shape the runtime will need to resolve
+polynomial references.
 
-**Exit**: `grep -r BufferProvider crates/jolt-compute/` returns zero hits.
-`jolt-compute::traits` exports only backend abstractions (ComputeBackend,
-DeviceBuffer, Buf, ReduceInputs, HandleId, HandleShape, Scalar, BindingOrder).
+**Importers updated**: jolt-witness (provider.rs, polynomials.rs),
+jolt-zkvm (prove.rs, runtime/{mod, handlers, helpers, prefix_suffix}.rs),
+jolt-bench/stacks/modular.rs, jolt-equivalence/tests/checkpoint_eval_parity.rs.
 
-**Scope**: 1 commit, ~150 LOC of moves + import fixes.
+**Correctness gate**: jolt-equivalence 50/50 PASS. Clippy clean on
+jolt-core (host + host,zk), jolt-cpu, jolt-compute, jolt-compiler,
+jolt-zkvm under `-D warnings`.
+
+**Exit achieved**: `grep -r BufferProvider crates/jolt-compute/` returns
+zero hits. `jolt-compute::traits` exports only backend abstractions.
+
+**Actual scope**: 1 commit, ~700 LOC of moves + import fixes + plan doc.
 
 ---
 
