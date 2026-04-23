@@ -139,6 +139,100 @@ mod flags {
     }
 }
 
+/// Fuzz-check that every instruction's `LookupQuery::to_instruction_inputs`
+/// agrees with the instruction input R1CS constraints:
+///
+///   left_input  = LeftOperandIsRs1Value  · Rs1Value     + LeftOperandIsPC   · UnexpandedPC
+///   right_input = RightOperandIsRs2Value · Rs2Value     + RightOperandIsImm · Imm
+///
+/// Source of truth for the constraint:
+/// `jolt-core/src/zkvm/spartan/instruction_input.rs::output_claim_constraint`.
+///
+/// A mismatch here means the trace witness polynomials `LeftInstructionInput` /
+/// `RightInstructionInput` disagree with what the constraint reconstructs from
+/// `Rs1Value` / `Rs2Value` / `Imm` / `UnexpandedPC` — causing a Stage 3 sumcheck
+/// verification failure whenever any high-order bits of a register value are set.
+mod r1cs_consistency {
+    use common::constants::XLEN;
+    use rand::{rngs::StdRng, SeedableRng};
+    use strum::IntoEnumIterator;
+    use tracer::instruction::Cycle;
+
+    use crate::zkvm::instruction::{Flags, InstructionFlags, LookupQuery, SupportedInstruction};
+
+    #[test]
+    fn instruction_inputs_match_constraint() {
+        let mut rng = StdRng::seed_from_u64(12345);
+        let mut failures: Vec<String> = Vec::new();
+
+        for default_cycle in Cycle::iter() {
+            // Skip enum variants without LookupQuery/Flags impls in jolt-core.
+            // These are either the structural variants (NoOp, INLINE) or
+            // architectural instructions that are always lowered to a virtual
+            // sequence before appearing in a trace (DIV, LW, AMOSWAP.W, ...).
+            let default_instr = default_cycle.instruction();
+            if !default_instr.is_supported_instruction() {
+                continue;
+            }
+            let variant: &'static str = (&default_instr).into();
+            let mut first_failure_for_variant: Option<String> = None;
+
+            for _ in 0..10_000 {
+                let cycle = default_cycle.random(&mut rng);
+                let instr = cycle.instruction();
+                let flags = instr.instruction_flags();
+                let norm = instr.normalize();
+
+                let rs1 = cycle.rs1_read().map(|(_, v)| v).unwrap_or(0);
+                let rs2 = cycle.rs2_read().map(|(_, v)| v).unwrap_or(0);
+                let unexpanded_pc = norm.address as u64;
+                let imm = norm.operands.imm;
+
+                let left_expected: u64 = if flags[InstructionFlags::LeftOperandIsRs1Value] {
+                    rs1
+                } else if flags[InstructionFlags::LeftOperandIsPC] {
+                    unexpanded_pc
+                } else {
+                    0
+                };
+                let right_expected: i128 = if flags[InstructionFlags::RightOperandIsRs2Value] {
+                    rs2 as i128
+                } else if flags[InstructionFlags::RightOperandIsImm] {
+                    imm
+                } else {
+                    0
+                };
+
+                let (left_actual, right_actual) =
+                    LookupQuery::<XLEN>::to_instruction_inputs(&cycle);
+
+                if left_actual != left_expected || right_actual != right_expected {
+                    first_failure_for_variant.get_or_insert_with(|| {
+                        format!(
+                            "{variant}: left actual={left_actual:#x} expected={left_expected:#x}; \
+                             right actual={right_actual} expected={right_expected}; \
+                             flags={flags:?}, rs1={rs1:#x}, rs2={rs2:#x}, \
+                             unexpanded_pc={unexpanded_pc:#x}, imm={imm}"
+                        )
+                    });
+                    break;
+                }
+            }
+            if let Some(msg) = first_failure_for_variant {
+                failures.push(msg);
+            }
+        }
+
+        if !failures.is_empty() {
+            panic!(
+                "{} instruction(s) violate the instruction input constraints:\n\n{}",
+                failures.len(),
+                failures.join("\n\n")
+            );
+        }
+    }
+}
+
 pub fn lookup_output_matches_trace_test<T>()
 where
     T: InstructionLookup<XLEN> + RISCVInstruction + RISCVTrace + Default + Flags + 'static,
