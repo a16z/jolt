@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776965512659,
+  "lastUpdate": 1776970590705,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -87574,6 +87574,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 863784,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "8365992+moodlezoup@users.noreply.github.com",
+            "name": "Michael Zhu",
+            "username": "moodlezoup"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d4b18d080bbc967c305e2cc79c83b0f6aab351de",
+          "message": "test: fuzz-check instruction inputs against instruction input constraints (#1469)\n\n* test(jolt-core): fuzz-check to_instruction_inputs against R1CS constraint\n\nFor every supported instruction, run 10k random cycles and verify that\nLookupQuery::to_instruction_inputs matches the Stage 3\nInstructionInputSumcheck constraint from\njolt-core/src/zkvm/spartan/instruction_input.rs:\n\n  left_input  = LeftOperandIsRs1Value  * Rs1Value    + LeftOperandIsPC   * UnexpandedPC\n  right_input = RightOperandIsRs2Value * Rs2Value    + RightOperandIsImm * Imm\n\nThis is the fuzz test that would have caught the DIVW/REMW completeness\nbug fixed in a26d5b46c, where VirtualChangeDivisorW::to_instruction_inputs\ntruncated rs1/rs2 to 32 bits while the constraint used the full 64-bit\nregister value.\n\nThe test is a blanket Cycle::iter() walker so new instructions get the\ncheck automatically; adds Cycle::random to the tracer macro to dispatch\nRISCVCycle<T>::random over every variant.\n\nTest currently fails on two latent flag over-declarations in VirtualPow2\nand VirtualShiftRightBitmask; fixes in the follow-up commit.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n* fix(jolt-core): drop spurious RightOperandIsImm flag on VirtualPow2/VirtualShiftRightBitmask\n\nBoth declared `RightOperandIsImm = true` in their instruction flags but\nreturned `(rs1, 0)` from `to_instruction_inputs`, leaving the immediate\nunused by the witness. The Stage 3 InstructionInputSumcheck constraint\ncomputes `right_input = RightOperandIsImm * imm`, so any trace emitting\none of these with a non-zero imm would cause a verification failure —\nthe same completeness failure mode as the DIVW bug (a26d5b46c).\n\nNo production trace currently triggers this: all five emitters hardcode\n`imm = 0` — SLL for VirtualPow2, and SRA/SRAW/SRL/SRLW for\nVirtualShiftRightBitmask. The fix aligns the flag declaration with the\nsemantics, mirroring VirtualPow2W / VirtualShiftRightBitmaskI which\ncorrectly omit the flag.\n\nCaught by the instruction-input R1CS consistency fuzz test added in the\nprior commit.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Opus 4.7 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-04-23T13:55:57-04:00",
+          "tree_id": "29fb4ffa76d66733928855b42fd456f113b1547c",
+          "url": "https://github.com/a16z/jolt/commit/d4b18d080bbc967c305e2cc79c83b0f6aab351de"
+        },
+        "date": 1776970589382,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.0278,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 863084,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3178,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 493396,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 491812,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 494252,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7191,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 493388,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5861,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 492756,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 6.1115,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 491200,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.7875,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 223404,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4427,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 863780,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5722,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 491832,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4662,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 495952,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 20.8789,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 495944,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.7772,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 493308,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.496,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1016760,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.1494,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 632252,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 82.7497,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2130712,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4908,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 493340,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.4974,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 493616,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.5303,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 861432,
             "unit": "KB",
             "extra": ""
           }
