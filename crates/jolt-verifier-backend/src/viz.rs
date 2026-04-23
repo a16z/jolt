@@ -12,8 +12,8 @@
 
 use std::fmt::Write;
 
-use crate::backend::ScalarOrigin;
-use crate::tracing::{AstGraph, AstOp};
+use crate::backend::{CommitmentOrigin, ScalarOrigin};
+use crate::tracing::{AstAssertion, AstGraph, AstOp};
 
 /// Render `graph` as a Graphviz DOT digraph.
 ///
@@ -51,24 +51,41 @@ pub fn to_dot(graph: &AstGraph) -> String {
     }
 
     for (a_idx, assertion) in graph.assertions.iter().enumerate() {
-        let ctx = escape_dot(assertion.ctx);
-        writeln!(
-            out,
-            "  a{a_idx} [label=\"assert\\n{ctx}\", shape=diamond, fillcolor=\"#fff5f5\", color=\"#c92a2a\", fontcolor=\"#c92a2a\"];",
-        )
-        .unwrap();
-        let lhs = assertion.lhs.0;
-        writeln!(
-            out,
-            "  n{lhs} -> a{a_idx} [color=\"#c92a2a\", style=dashed, arrowhead=none];",
-        )
-        .unwrap();
-        let rhs = assertion.rhs.0;
-        writeln!(
-            out,
-            "  a{a_idx} -> n{rhs} [color=\"#c92a2a\", style=dashed, arrowhead=none];",
-        )
-        .unwrap();
+        let ctx = escape_dot(assertion.ctx());
+        match assertion {
+            AstAssertion::Equality { lhs, rhs, .. } => {
+                writeln!(
+                    out,
+                    "  a{a_idx} [label=\"assert\\n{ctx}\", shape=diamond, fillcolor=\"#fff5f5\", color=\"#c92a2a\", fontcolor=\"#c92a2a\"];",
+                )
+                .unwrap();
+                let lhs = lhs.0;
+                writeln!(
+                    out,
+                    "  n{lhs} -> a{a_idx} [color=\"#c92a2a\", style=dashed, arrowhead=none];",
+                )
+                .unwrap();
+                let rhs = rhs.0;
+                writeln!(
+                    out,
+                    "  a{a_idx} -> n{rhs} [color=\"#c92a2a\", style=dashed, arrowhead=none];",
+                )
+                .unwrap();
+            }
+            AstAssertion::OpeningHolds { check, .. } => {
+                writeln!(
+                    out,
+                    "  a{a_idx} [label=\"opening holds\\n{ctx}\", shape=diamond, fillcolor=\"#f3f0ff\", color=\"#5f3dc4\", fontcolor=\"#5f3dc4\"];",
+                )
+                .unwrap();
+                let check = check.0;
+                writeln!(
+                    out,
+                    "  n{check} -> a{a_idx} [color=\"#5f3dc4\", style=dashed, arrowhead=none];",
+                )
+                .unwrap();
+            }
+        }
     }
 
     out.push_str("}\n");
@@ -94,6 +111,11 @@ pub fn to_mermaid(graph: &AstGraph) -> String {
     out.push_str("  classDef tAbsorb fill:#d0ebff,stroke:#1971c2,color:#0b3a5c;\n");
     out.push_str("  classDef tSqueezeState fill:#a5d8ff,stroke:#1864ab,color:#0b3a5c;\n");
     out.push_str("  classDef tSqueezeValue fill:#74c0fc,stroke:#1864ab,color:#0b3a5c;\n");
+    out.push_str("  classDef commitPub fill:#d0bfff,stroke:#5f3dc4,color:#3d1c7a;\n");
+    out.push_str("  classDef commitProof fill:#b197fc,stroke:#5f3dc4,color:#3d1c7a;\n");
+    out.push_str("  classDef commitAbsorb fill:#e5dbff,stroke:#5f3dc4,color:#3d1c7a;\n");
+    out.push_str("  classDef openingCheck fill:#f3f0ff,stroke:#5f3dc4,color:#5f3dc4;\n");
+    out.push_str("  classDef openingHolds fill:#f3f0ff,stroke:#5f3dc4,color:#5f3dc4;\n");
 
     for (idx, op) in graph.nodes.iter().enumerate() {
         let (label, class) = mermaid_node(op);
@@ -112,12 +134,21 @@ pub fn to_mermaid(graph: &AstGraph) -> String {
     }
 
     for (a_idx, assertion) in graph.assertions.iter().enumerate() {
-        let ctx = escape_mermaid(assertion.ctx);
-        writeln!(out, "  a{a_idx}{{{{assert: {ctx}}}}}:::assertion").unwrap();
-        let lhs = assertion.lhs.0;
-        writeln!(out, "  n{lhs} -.-> a{a_idx}").unwrap();
-        let rhs = assertion.rhs.0;
-        writeln!(out, "  a{a_idx} -.-> n{rhs}").unwrap();
+        let ctx = escape_mermaid(assertion.ctx());
+        match assertion {
+            AstAssertion::Equality { lhs, rhs, .. } => {
+                writeln!(out, "  a{a_idx}{{{{assert: {ctx}}}}}:::assertion").unwrap();
+                let lhs = lhs.0;
+                writeln!(out, "  n{lhs} -.-> a{a_idx}").unwrap();
+                let rhs = rhs.0;
+                writeln!(out, "  a{a_idx} -.-> n{rhs}").unwrap();
+            }
+            AstAssertion::OpeningHolds { check, .. } => {
+                writeln!(out, "  a{a_idx}{{{{opening holds: {ctx}}}}}:::openingHolds").unwrap();
+                let check = check.0;
+                writeln!(out, "  n{check} -.-> a{a_idx}").unwrap();
+            }
+        }
     }
 
     out
@@ -188,6 +219,38 @@ fn describe_node(op: &AstOp) -> (String, &'static str) {
             "transcript squeeze (F)".to_owned(),
             "fillcolor=\"#74c0fc\", color=\"#1864ab\", fontcolor=\"#0b3a5c\"",
         ),
+        AstOp::CommitmentWrap { origin, label } => {
+            let kind = match origin {
+                CommitmentOrigin::Public => "vk-commit",
+                CommitmentOrigin::Proof => "proof-commit",
+            };
+            let attrs = match origin {
+                CommitmentOrigin::Public => {
+                    "fillcolor=\"#d0bfff\", color=\"#5f3dc4\", fontcolor=\"#3d1c7a\""
+                }
+                CommitmentOrigin::Proof => {
+                    "fillcolor=\"#b197fc\", color=\"#5f3dc4\", fontcolor=\"#3d1c7a\""
+                }
+            };
+            (format!("{kind}: {label}"), attrs)
+        }
+        AstOp::TranscriptAbsorbCommitment { .. } => (
+            "absorb commitment".to_owned(),
+            "fillcolor=\"#e5dbff\", color=\"#5f3dc4\", fontcolor=\"#3d1c7a\"",
+        ),
+        AstOp::OpeningCheck {
+            scheme_tag,
+            point,
+            proof_handle,
+            ..
+        } => (
+            format!(
+                "opening check ({scheme_tag}, |z|={}, p#{})",
+                point.len(),
+                proof_handle.0,
+            ),
+            "fillcolor=\"#f3f0ff\", color=\"#5f3dc4\", fontcolor=\"#5f3dc4\"",
+        ),
     }
 }
 
@@ -219,12 +282,35 @@ fn mermaid_node(op: &AstOp) -> (String, &'static str) {
         AstOp::TranscriptChallengeValue { .. } => {
             ("transcript squeeze (F)".to_owned(), "tSqueezeValue")
         }
+        AstOp::CommitmentWrap { origin, label } => match origin {
+            CommitmentOrigin::Public => (format!("vk-commit: {label}"), "commitPub"),
+            CommitmentOrigin::Proof => (format!("proof-commit: {label}"), "commitProof"),
+        },
+        AstOp::TranscriptAbsorbCommitment { .. } => {
+            ("absorb commitment".to_owned(), "commitAbsorb")
+        }
+        AstOp::OpeningCheck {
+            scheme_tag,
+            point,
+            proof_handle,
+            ..
+        } => (
+            format!(
+                "opening check ({scheme_tag}, |z|={}, p#{})",
+                point.len(),
+                proof_handle.0,
+            ),
+            "openingCheck",
+        ),
     }
 }
 
 fn operands(op: &AstOp) -> Vec<(u32, Option<&'static str>)> {
     match op {
-        AstOp::Wrap { .. } | AstOp::Constant(_) | AstOp::TranscriptInit { .. } => Vec::new(),
+        AstOp::Wrap { .. }
+        | AstOp::Constant(_)
+        | AstOp::TranscriptInit { .. }
+        | AstOp::CommitmentWrap { .. } => Vec::new(),
         AstOp::Neg(a) | AstOp::Square(a) => vec![(a.0, None)],
         AstOp::Inverse { operand, .. } => vec![(operand.0, None)],
         AstOp::Add(a, b) => vec![(a.0, Some("a")), (b.0, Some("b"))],
@@ -233,6 +319,34 @@ fn operands(op: &AstOp) -> Vec<(u32, Option<&'static str>)> {
         AstOp::TranscriptAbsorbBytes { prev_state, .. }
         | AstOp::TranscriptChallengeState { prev_state } => vec![(prev_state.0, Some("state"))],
         AstOp::TranscriptChallengeValue { state } => vec![(state.0, Some("squeeze"))],
+        AstOp::TranscriptAbsorbCommitment {
+            prev_state,
+            commitment,
+        } => vec![
+            (prev_state.0, Some("state")),
+            (commitment.0, Some("commit")),
+        ],
+        AstOp::OpeningCheck {
+            commitment,
+            point,
+            claim,
+            ..
+        } => {
+            let mut ops = Vec::with_capacity(2 + point.len());
+            ops.push((commitment.0, Some("commit")));
+            ops.push((claim.0, Some("claim")));
+            for (i, p) in point.iter().enumerate() {
+                let label: &'static str = match i {
+                    0 => "z[0]",
+                    1 => "z[1]",
+                    2 => "z[2]",
+                    3 => "z[3]",
+                    _ => "z[..]",
+                };
+                ops.push((p.0, Some(label)));
+            }
+            ops
+        }
     }
 }
 

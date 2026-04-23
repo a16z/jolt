@@ -18,6 +18,20 @@ pub enum ScalarOrigin {
     Challenge,
 }
 
+/// Provenance label for a wrapped commitment, mirroring [`ScalarOrigin`].
+///
+/// Most commitments the verifier sees are `Proof`-origin (sent by the
+/// prover and absorbed into the transcript). `Public`-origin is reserved
+/// for commitments that are part of the verifying key (e.g., a baked-in
+/// commitment to a setup polynomial).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum CommitmentOrigin {
+    /// Commitment baked into the verification key.
+    Public,
+    /// Commitment pulled from the proof.
+    Proof,
+}
+
 /// Backend abstraction for verifier-side field arithmetic.
 ///
 /// Every method on the verifier's hot path (`add`, `sub`, `mul`, `assert_eq`,

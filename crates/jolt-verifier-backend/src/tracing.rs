@@ -61,12 +61,29 @@ use std::sync::{Arc, Mutex};
 use jolt_field::Field;
 use jolt_transcript::{Blake2bTranscript, Transcript};
 
-use crate::backend::{FieldBackend, ScalarOrigin};
+use crate::backend::{CommitmentOrigin, FieldBackend, ScalarOrigin};
 use crate::error::BackendError;
 
 /// Stable identifier into [`AstGraph::nodes`].
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct AstNodeId(pub u32);
+
+/// Opaque key into a graph's proof sidecar.
+///
+/// Commitment-shaped AST nodes ([`AstOp::OpeningCheck`]) cannot embed the
+/// raw opening proof directly without making `AstOp` PCS-generic. Instead,
+/// the backend stashes the proof in a side vector and records this handle
+/// in the AST. At replay time, the resolver loads the proof back by
+/// `ProofHandle.0` index. See `specs/1461` "AST extensibility" for design
+/// rationale.
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+pub struct ProofHandle(pub u32);
+
+/// `&'static` discriminator string identifying the PCS family that
+/// produced an [`AstOp::OpeningCheck`] node. Examples: `"dory"`,
+/// `"hyperkzg"`, `"mock"`. Consumers that walk the AST (recursion
+/// circuits, Lean exporters) dispatch on this tag to pick a verifier.
+pub type SchemeTag = &'static str;
 
 /// A single recorded operation.
 ///
@@ -143,22 +160,106 @@ pub enum AstOp {
         /// Companion state node produced in the same squeeze.
         state: AstNodeId,
     },
+    /// Wrapped input commitment — provenance plus a static label.
+    ///
+    /// The raw commitment value lives in the backend's sidecar and is
+    /// keyed by `ProofHandle`-style indices on adjacent nodes
+    /// ([`AstOp::TranscriptAbsorbCommitment`], [`AstOp::OpeningCheck`]).
+    /// `CommitmentWrap` itself is the symbolic anchor that downstream ops
+    /// can reference; it carries no field value and is never an operand
+    /// of arithmetic ops.
+    CommitmentWrap {
+        /// Where the commitment came from (vk-pinned vs. proof).
+        origin: CommitmentOrigin,
+        /// Caller-supplied label, propagated for inspection.
+        label: &'static str,
+    },
+    /// Absorbs a commitment into the transcript via its scheme-specific
+    /// `AppendToTranscript` impl.
+    ///
+    /// `prev_state` is the transcript state node before the absorb; the new
+    /// node id is the post-absorb state. `commitment` references a
+    /// [`AstOp::CommitmentWrap`] node (the symbolic anchor for the
+    /// commitment being absorbed). The backend's sidecar holds the actual
+    /// commitment data; replay forwards it through the live transcript.
+    TranscriptAbsorbCommitment {
+        /// Previous transcript state node.
+        prev_state: AstNodeId,
+        /// `CommitmentWrap` node identifying the commitment to absorb.
+        commitment: AstNodeId,
+    },
+    /// Records a PCS opening verification: `commitment` opens to `claim`
+    /// at multilinear evaluation point `point`, with a proof identified by
+    /// `proof_handle` in the backend's sidecar.
+    ///
+    /// `OpeningCheck` produces a *check* node id. The corresponding
+    /// [`AstAssertion::OpeningHolds`] obligation references this node and
+    /// fires at replay time, dispatching on `scheme_tag` to invoke the
+    /// right `<PCS as CommitmentScheme>::verify` implementation.
+    ///
+    /// The node carries no field value of its own; its purpose is to be
+    /// the operand of an `OpeningHolds` assertion and to give downstream
+    /// AST consumers (Lean export, recursion circuits) a single hook for
+    /// PCS verification.
+    OpeningCheck {
+        /// `CommitmentWrap` node identifying the commitment being opened.
+        commitment: AstNodeId,
+        /// Scalar nodes describing the multilinear evaluation point. Each
+        /// entry references an arithmetic node (typically a transcript
+        /// challenge or a constant).
+        point: Vec<AstNodeId>,
+        /// Scalar node carrying the claimed evaluation value.
+        claim: AstNodeId,
+        /// Sidecar key into the backend's per-graph proof vector.
+        proof_handle: ProofHandle,
+        /// PCS family discriminator (e.g., `"dory"`, `"hyperkzg"`).
+        scheme_tag: SchemeTag,
+    },
 }
 
-/// A recorded equality assertion `lhs == rhs`.
+/// A recorded verifier obligation.
 ///
-/// Assertions are kept on the side from [`AstOp`] so a graph can carry both
-/// the *value DAG* and the *constraint set*. R1CSGen-style consumers turn
-/// each into a `lhs - rhs == 0` constraint; native replays check them by
-/// equality.
+/// Assertions are kept on the side from [`AstOp`] so a graph can carry
+/// both the *value DAG* and the *constraint set*. R1CSGen-style consumers
+/// lower each variant into the appropriate constraint shape; native
+/// replays check each one against concrete witness values.
+///
+/// Variants:
+/// - [`AstAssertion::Equality`] is the bread-and-butter `lhs == rhs`
+///   assertion produced by [`FieldBackend::assert_eq`].
+/// - [`AstAssertion::OpeningHolds`] discharges a PCS opening obligation
+///   recorded as an [`AstOp::OpeningCheck`] node. Recursion lowerings
+///   replace it with the in-circuit verifier for the named scheme; native
+///   replay invokes the PCS's `verify` directly.
 #[derive(Clone, Debug)]
-pub struct AstAssertion {
-    /// Left-hand side of `lhs == rhs`.
-    pub lhs: AstNodeId,
-    /// Right-hand side of `lhs == rhs`.
-    pub rhs: AstNodeId,
-    /// Caller-supplied debug context.
-    pub ctx: &'static str,
+pub enum AstAssertion {
+    /// Equality constraint `lhs == rhs`.
+    Equality {
+        /// Left-hand side of `lhs == rhs`.
+        lhs: AstNodeId,
+        /// Right-hand side of `lhs == rhs`.
+        rhs: AstNodeId,
+        /// Caller-supplied debug context.
+        ctx: &'static str,
+    },
+    /// PCS opening obligation: the named [`AstOp::OpeningCheck`] node
+    /// must verify successfully against the scheme it tags.
+    OpeningHolds {
+        /// `OpeningCheck` node carrying the commitment / point / claim /
+        /// proof-handle / scheme-tag bundle.
+        check: AstNodeId,
+        /// Caller-supplied debug context.
+        ctx: &'static str,
+    },
+}
+
+impl AstAssertion {
+    /// Returns the caller-supplied debug context, regardless of variant.
+    pub fn ctx(&self) -> &'static str {
+        match self {
+            AstAssertion::Equality { ctx, .. } | AstAssertion::OpeningHolds { ctx, .. } => ctx,
+        }
+    }
 }
 
 /// Symbolic execution trace produced by [`Tracing`].
@@ -430,7 +531,7 @@ impl<F: Field> FieldBackend for Tracing<F> {
             .lock()
             .expect("AstGraph mutex poisoned")
             .assertions
-            .push(AstAssertion {
+            .push(AstAssertion::Equality {
                 lhs: a.id,
                 rhs: b.id,
                 ctx,
@@ -670,6 +771,22 @@ pub fn replay<F: Field>(graph: &AstGraph, wrap_values: &[F]) -> Result<Vec<F>, B
             AstOp::TranscriptChallengeValue { state } => {
                 values[idx] = values[state.0 as usize];
             }
+            // Commitment-shaped nodes have no field-value semantics by
+            // themselves; they require a sidecar resolver that arrives in
+            // step 2.4 of the CommitmentBackend cutover (see specs/1461).
+            // Until then, no producer emits these nodes, so reaching them
+            // signals a wiring bug.
+            AstOp::CommitmentWrap { .. } => {
+                return Err(BackendError::CommitmentReplayUnwired("CommitmentWrap"));
+            }
+            AstOp::TranscriptAbsorbCommitment { .. } => {
+                return Err(BackendError::CommitmentReplayUnwired(
+                    "TranscriptAbsorbCommitment",
+                ));
+            }
+            AstOp::OpeningCheck { .. } => {
+                return Err(BackendError::CommitmentReplayUnwired("OpeningCheck"));
+            }
         }
     }
     assert_eq!(
@@ -680,8 +797,15 @@ pub fn replay<F: Field>(graph: &AstGraph, wrap_values: &[F]) -> Result<Vec<F>, B
     );
 
     for assertion in &graph.assertions {
-        if values[assertion.lhs.0 as usize] != values[assertion.rhs.0 as usize] {
-            return Err(BackendError::AssertionFailed(assertion.ctx));
+        match assertion {
+            AstAssertion::Equality { lhs, rhs, ctx } => {
+                if values[lhs.0 as usize] != values[rhs.0 as usize] {
+                    return Err(BackendError::AssertionFailed(ctx));
+                }
+            }
+            AstAssertion::OpeningHolds { .. } => {
+                return Err(BackendError::CommitmentReplayUnwired("OpeningHolds"));
+            }
         }
     }
     Ok(values)
@@ -731,7 +855,8 @@ mod tests {
         t.assert_eq(&a, &three, "demo").unwrap();
         let g = t.snapshot();
         assert_eq!(g.assertion_count(), 1);
-        assert_eq!(g.assertions[0].ctx, "demo");
+        assert_eq!(g.assertions[0].ctx(), "demo");
+        assert!(matches!(g.assertions[0], AstAssertion::Equality { .. }));
     }
 
     /// `eq_eval` is a non-trivial helper that mixes wraps, constants, subs
@@ -838,5 +963,47 @@ mod tests {
         let values = replay(&g, &tracer.wrap_values()).unwrap();
         assert_eq!(values[challenge_w.id.0 as usize], challenge_f);
         assert_eq!(values[doubled.id.0 as usize], challenge_f + challenge_f);
+    }
+
+    /// Step 2.1 introduces commitment-shaped variants (`CommitmentWrap`,
+    /// `TranscriptAbsorbCommitment`, `OpeningCheck`, and the
+    /// `AstAssertion::OpeningHolds` obligation) but does not yet wire a
+    /// resolver into [`replay`]. Replay must surface a clear
+    /// `CommitmentReplayUnwired` error rather than panic so the rest of
+    /// the test suite (which never produces these nodes) keeps passing
+    /// while step 2.4 lands the resolver.
+    #[test]
+    fn replay_flags_unwired_commitment_nodes() {
+        let mut g = AstGraph::new();
+        let c = g.push(AstOp::CommitmentWrap {
+            origin: CommitmentOrigin::Proof,
+            label: "C",
+        });
+        // Synthetic obligation referencing the new check kind. We construct
+        // a minimal `OpeningCheck` directly so we do not need a producer.
+        let init = g.push(AstOp::TranscriptInit { label: b"t" });
+        let absorb = g.push(AstOp::TranscriptAbsorbCommitment {
+            prev_state: init,
+            commitment: c,
+        });
+        let _ = absorb; // silence "unused" — exists only to validate construction.
+        let claim = g.push(AstOp::Constant(0));
+        let check = g.push(AstOp::OpeningCheck {
+            commitment: c,
+            point: vec![],
+            claim,
+            proof_handle: ProofHandle(0),
+            scheme_tag: "mock",
+        });
+        g.assertions.push(AstAssertion::OpeningHolds {
+            check,
+            ctx: "mock_open",
+        });
+
+        let err = replay::<Fr>(&g, &[]).unwrap_err();
+        assert!(
+            matches!(err, BackendError::CommitmentReplayUnwired(_)),
+            "expected CommitmentReplayUnwired, got {err:?}",
+        );
     }
 }

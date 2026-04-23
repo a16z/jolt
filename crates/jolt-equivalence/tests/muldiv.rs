@@ -1822,6 +1822,12 @@ fn modular_self_verify_via_tracing_backend() {
             AstOp::TranscriptAbsorbBytes { .. } => "TranscriptAbsorbBytes",
             AstOp::TranscriptChallengeState { .. } => "TranscriptChallengeState",
             AstOp::TranscriptChallengeValue { .. } => "TranscriptChallengeValue",
+            // Commitment-shaped variants land in step 2.4 of the
+            // CommitmentBackend cutover (specs/1461). Until a producer
+            // emits them they should not appear in the muldiv graph.
+            AstOp::CommitmentWrap { .. } => "CommitmentWrap",
+            AstOp::TranscriptAbsorbCommitment { .. } => "TranscriptAbsorbCommitment",
+            AstOp::OpeningCheck { .. } => "OpeningCheck",
         };
         *by_op.entry(kind).or_default() += 1;
     }

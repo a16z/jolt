@@ -20,4 +20,14 @@ pub enum BackendError {
     /// for a value the backend determined to be zero.
     #[error("backend inverse of zero (ctx: {0})")]
     InverseOfZero(&'static str),
+
+    /// `replay` encountered a commitment-shaped AST node
+    /// ([`AstOp::CommitmentWrap`](crate::AstOp::CommitmentWrap),
+    /// [`AstOp::TranscriptAbsorbCommitment`](crate::AstOp::TranscriptAbsorbCommitment),
+    /// or [`AstOp::OpeningCheck`](crate::AstOp::OpeningCheck)) but no
+    /// commitment-aware resolver was provided. Step 2.4 of the
+    /// `CommitmentBackend` cutover (see `specs/1461`) wires the resolver and
+    /// removes this error path.
+    #[error("backend replay reached '{0}' but no commitment resolver is wired (CommitmentBackend cutover step 2.4)")]
+    CommitmentReplayUnwired(&'static str),
 }
