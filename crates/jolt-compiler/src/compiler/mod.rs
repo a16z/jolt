@@ -52,7 +52,24 @@ pub fn compile(
     }
     let info = analyze::compute(protocol);
     let staging = stage::stage(protocol, &info, params, config)?;
-    Ok(emit::emit(&staging, params, poly_map))
+    let module = emit::emit(&staging, params, poly_map);
+
+    // Post-emit primitive-form rail. See `crates/jolt-compiler/OPS.md` and
+    // `crates/jolt-bench/opt/05-streamlining.md` §O3. Today `is_primitive()`
+    // returns `true` for every variant, so this is a no-op. Phases O4 and O5
+    // flip variants to `false` as they lower them, at which point this
+    // assertion catches any emission site that still uses the old form.
+    debug_assert!(
+        module
+            .prover
+            .ops
+            .iter()
+            .all(crate::module::Op::is_primitive),
+        "compiler emitted non-primitive op: {:?}",
+        module.prover.ops.iter().find(|op| !op.is_primitive())
+    );
+
+    Ok(module)
 }
 
 /// Errors from the compilation pipeline.

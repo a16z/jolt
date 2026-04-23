@@ -1689,6 +1689,98 @@ impl Op {
                 | Op::WeightedSum { .. }
         )
     }
+
+    /// Is this variant in its canonical primitive form?
+    ///
+    /// A **primitive** op is one logical step with no runtime conditional,
+    /// backend-agnostic semantics, and a name that doesn't leak protocol
+    /// concepts. See `crates/jolt-compiler/OPS.md` for the full taxonomy
+    /// and the per-variant classification target.
+    ///
+    /// Enforcement: `pub fn compile()` runs a post-emit `debug_assert!`
+    /// that every emitted op satisfies `is_primitive()`. As each sub-phase
+    /// of the streamlining plan (`crates/jolt-bench/opt/05-streamlining.md`,
+    /// phases O4 and O5) lowers a non-primitive variant, it flips that
+    /// variant's arm below to `false` in the same commit that removes the
+    /// variant from emission.
+    ///
+    /// **Today this returns `true` for every variant** — the classifier
+    /// is a ratchet scaffold. Flipping a variant to `false` before the
+    /// compiler stops emitting it would trip the assertion on every
+    /// proof. The intentional order is: stop emission → flip classifier
+    /// → assertion now catches regressions.
+    pub fn is_primitive(&self) -> bool {
+        // Exhaustive match — do not use `_ =>` fallthrough. Adding an Op
+        // variant must force a decision about its primitive status.
+        match self {
+            // --- primitive: compute ---
+            Op::Reduce { .. }
+            | Op::Bind { .. }
+            | Op::Materialize { .. }
+            | Op::WeightedSum { .. }
+            | Op::LagrangeProject { .. }
+            | Op::DuplicateInterleave { .. }
+            | Op::RegroupConstraints { .. }
+            | Op::ExpandingTableUpdate { .. }
+            | Op::InitExpandingTable { .. }
+            | Op::ScaleEval { .. }
+            | Op::Evaluate { .. }
+            | Op::EvaluatePreprocessed { .. }
+            | Op::CaptureScalar { .. } => true,
+
+            // --- primitive: PCS ---
+            Op::Commit { .. }
+            | Op::CommitStreaming { .. }
+            | Op::ReduceOpenings
+            | Op::Open
+            | Op::BindOpeningInputs { .. }
+            | Op::CollectOpeningClaim { .. }
+            | Op::CollectOpeningClaimAt { .. } => true,
+
+            // --- primitive: orchestration ---
+            Op::Preamble
+            | Op::BeginStage { .. }
+            | Op::AbsorbRoundPoly { .. }
+            | Op::RecordEvals { .. }
+            | Op::AbsorbEvals { .. }
+            | Op::AbsorbInputClaim { .. }
+            | Op::AppendDomainSeparator { .. }
+            | Op::Squeeze { .. }
+            | Op::ComputePower { .. } => true,
+
+            // --- primitive: resource ---
+            Op::ReleaseDevice { .. } | Op::ReleaseHost { .. } | Op::AliasEval { .. } => true,
+
+            // --- batch-scaffold (structural, primitive) ---
+            Op::BatchRoundBegin { .. }
+            | Op::BatchInactiveContribution { .. }
+            | Op::BatchAccumulateInstance { .. }
+            | Op::BatchRoundFinalize { .. } => true,
+
+            // --- redundant: collapses into Op::Bind in O4.a ---
+            Op::InstanceBind { .. }
+            | Op::InstanceBindPreviousPhase { .. }
+            | Op::BindCarryBuffers { .. } => true, // flip to false in O4.a
+
+            // --- conditional: collapses via producer-analysis in O4.b ---
+            Op::MaterializeUnlessFresh { .. } | Op::MaterializeIfAbsent { .. } => true, // flip to false in O4.b
+
+            // --- protocol-specific: renamed in O5 ---
+            Op::CheckpointEvalBatch { .. } => true, // flip to false in O5 (rename to InstanceScalarUpdate)
+
+            // --- protocol-specific: lowered to primitives in O5 ---
+            Op::ReadCheckingReduce { .. }
+            | Op::RafReduce { .. }
+            | Op::SuffixScatter { .. }
+            | Op::QBufferScatter { .. }
+            | Op::MaterializeRA { .. }
+            | Op::MaterializeCombinedVal { .. }
+            | Op::MaterializePBuffers { .. }
+            | Op::MaterializeSegmentedOuterEq { .. }
+            | Op::InitInstanceWeights { .. }
+            | Op::UpdateInstanceWeights { .. } => true, // flip to false in O5
+        }
+    }
 }
 
 /// Verifier execution schedule: a flat sequence of ops for Fiat-Shamir replay

@@ -1263,6 +1263,17 @@ fn build_module(params: &ModuleParams) -> Module {
     let num_polys = polys.len();
     let num_challenges = challenges.len();
 
+    // Mirror of the post-emit rail in `compiler::compile()` — see
+    // `crates/jolt-compiler/OPS.md` and
+    // `crates/jolt-bench/opt/05-streamlining.md` §O3. Guards this
+    // hand-written reference module against reintroducing a non-primitive
+    // op as the O4/O5 classifier flips land.
+    debug_assert!(
+        ops.iter().all(Op::is_primitive),
+        "hand-written reference module emitted non-primitive op: {:?}",
+        ops.iter().find(|op| !op.is_primitive())
+    );
+
     Module {
         polys,
         challenges,
