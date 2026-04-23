@@ -8,8 +8,14 @@ use crate::error::OpeningsError;
 use crate::schemes::{AdditivelyHomomorphic, CommitmentScheme};
 use jolt_crypto::HomomorphicCommitment;
 
-/// Reduces many opening claims into fewer. Blanket-implemented for
-/// [`AdditivelyHomomorphic`] PCS; non-homomorphic schemes must provide their own impl.
+/// Reduces many opening claims into fewer. Each PCS provides its own
+/// implementation, since the natural batching strategy is scheme-specific
+/// (RLC for homomorphic schemes, FRI/DEEP-ALI batching for hash-based
+/// schemes, etc.).
+///
+/// Homomorphic schemes (Dory, HyperKZG, Mock) can delegate their
+/// [`OpeningReduction`] impls to [`homomorphic_reduce_prover`] /
+/// [`homomorphic_reduce_verifier`].
 #[allow(clippy::type_complexity)]
 pub trait OpeningReduction: CommitmentScheme {
     fn reduce_prover<T: Transcript<Challenge = Self::Field>>(
@@ -23,88 +29,102 @@ pub trait OpeningReduction: CommitmentScheme {
     ) -> Result<Vec<VerifierClaim<Self::Field, Self::Output>>, OpeningsError>;
 }
 
+/// RLC-based prover-side reduction for [`AdditivelyHomomorphic`] schemes.
+///
 /// Groups claims by point, draws ρ per group, combines: p = Σ ρ^i · p_i.
-#[allow(clippy::type_complexity)]
-impl<PCS: AdditivelyHomomorphic> OpeningReduction for PCS
+/// Each homomorphic scheme should delegate its
+/// [`OpeningReduction::reduce_prover`] impl to this helper.
+#[tracing::instrument(skip_all, name = "homomorphic_reduce_prover")]
+pub fn homomorphic_reduce_prover<PCS, T>(
+    claims: Vec<ProverClaim<PCS::Field>>,
+    transcript: &mut T,
+) -> Vec<ProverClaim<PCS::Field>>
 where
+    PCS: AdditivelyHomomorphic,
     PCS::Output: HomomorphicCommitment<PCS::Field>,
+    T: Transcript<Challenge = PCS::Field>,
 {
-    #[tracing::instrument(skip_all, name = "OpeningReduction::reduce_prover")]
-    fn reduce_prover<T: Transcript<Challenge = PCS::Field>>(
-        claims: Vec<ProverClaim<PCS::Field>>,
-        transcript: &mut T,
-    ) -> Vec<ProverClaim<PCS::Field>> {
-        if claims.is_empty() {
-            return Vec::new();
-        }
-
-        transcript.append(&LabelWithCount(b"rlc_claims", claims.len() as u64));
-        for claim in &claims {
-            claim.eval.append_to_transcript(transcript);
-        }
-
-        let groups = group_prover_claims_by_point(claims);
-        let mut reduced = Vec::with_capacity(groups.len());
-
-        for (point, group_claims) in groups {
-            let rho: PCS::Field = transcript.challenge();
-
-            let eval_slices: Vec<&[PCS::Field]> = group_claims
-                .iter()
-                .map(|c| c.polynomial.evaluations())
-                .collect();
-            let evals: Vec<PCS::Field> = group_claims.iter().map(|c| c.eval).collect();
-
-            let combined_evals = rlc_combine(&eval_slices, rho);
-            let combined_eval = rlc_combine_scalars(&evals, rho);
-
-            reduced.push(ProverClaim {
-                polynomial: combined_evals.into(),
-                point,
-                eval: combined_eval,
-            });
-        }
-
-        reduced
+    if claims.is_empty() {
+        return Vec::new();
     }
 
-    #[tracing::instrument(skip_all, name = "OpeningReduction::reduce_verifier")]
-    fn reduce_verifier<T: Transcript<Challenge = PCS::Field>>(
-        claims: Vec<VerifierClaim<PCS::Field, PCS::Output>>,
-        transcript: &mut T,
-    ) -> Result<Vec<VerifierClaim<PCS::Field, PCS::Output>>, OpeningsError> {
-        if claims.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        transcript.append(&LabelWithCount(b"rlc_claims", claims.len() as u64));
-        for claim in &claims {
-            claim.eval.append_to_transcript(transcript);
-        }
-
-        let groups = group_verifier_claims_by_point(claims);
-        let mut reduced = Vec::with_capacity(groups.len());
-
-        for (point, group_claims) in groups {
-            let rho: PCS::Field = transcript.challenge();
-
-            let commitments: Vec<PCS::Output> =
-                group_claims.iter().map(|c| c.commitment.clone()).collect();
-            let evals: Vec<PCS::Field> = group_claims.iter().map(|c| c.eval).collect();
-
-            let powers = rho_powers(rho, commitments.len());
-            let combined_commitment = PCS::combine(&commitments, &powers);
-            let combined_eval = rlc_combine_scalars(&evals, rho);
-
-            reduced.push(VerifierClaim {
-                commitment: combined_commitment,
-                point,
-                eval: combined_eval,
-            });
-        }
-
-        Ok(reduced)
+    transcript.append(&LabelWithCount(b"rlc_claims", claims.len() as u64));
+    for claim in &claims {
+        claim.eval.append_to_transcript(transcript);
     }
+
+    let groups = group_prover_claims_by_point(claims);
+    let mut reduced = Vec::with_capacity(groups.len());
+
+    for (point, group_claims) in groups {
+        let rho: PCS::Field = transcript.challenge();
+
+        let eval_slices: Vec<&[PCS::Field]> = group_claims
+            .iter()
+            .map(|c| c.polynomial.evaluations())
+            .collect();
+        let evals: Vec<PCS::Field> = group_claims.iter().map(|c| c.eval).collect();
+
+        let combined_evals = rlc_combine(&eval_slices, rho);
+        let combined_eval = rlc_combine_scalars(&evals, rho);
+
+        reduced.push(ProverClaim {
+            polynomial: combined_evals.into(),
+            point,
+            eval: combined_eval,
+        });
+    }
+
+    reduced
+}
+
+/// RLC-based verifier-side reduction for [`AdditivelyHomomorphic`] schemes.
+///
+/// Groups claims by point, draws ρ per group, combines commitments via
+/// `PCS::combine`. Each homomorphic scheme should delegate its
+/// [`OpeningReduction::reduce_verifier`] impl to this helper.
+#[allow(clippy::type_complexity)]
+#[tracing::instrument(skip_all, name = "homomorphic_reduce_verifier")]
+pub fn homomorphic_reduce_verifier<PCS, T>(
+    claims: Vec<VerifierClaim<PCS::Field, PCS::Output>>,
+    transcript: &mut T,
+) -> Result<Vec<VerifierClaim<PCS::Field, PCS::Output>>, OpeningsError>
+where
+    PCS: AdditivelyHomomorphic,
+    PCS::Output: HomomorphicCommitment<PCS::Field>,
+    T: Transcript<Challenge = PCS::Field>,
+{
+    if claims.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    transcript.append(&LabelWithCount(b"rlc_claims", claims.len() as u64));
+    for claim in &claims {
+        claim.eval.append_to_transcript(transcript);
+    }
+
+    let groups = group_verifier_claims_by_point(claims);
+    let mut reduced = Vec::with_capacity(groups.len());
+
+    for (point, group_claims) in groups {
+        let rho: PCS::Field = transcript.challenge();
+
+        let commitments: Vec<PCS::Output> =
+            group_claims.iter().map(|c| c.commitment.clone()).collect();
+        let evals: Vec<PCS::Field> = group_claims.iter().map(|c| c.eval).collect();
+
+        let powers = rho_powers(rho, commitments.len());
+        let combined_commitment = PCS::combine(&commitments, &powers);
+        let combined_eval = rlc_combine_scalars(&evals, rho);
+
+        reduced.push(VerifierClaim {
+            commitment: combined_commitment,
+            point,
+            eval: combined_eval,
+        });
+    }
+
+    Ok(reduced)
 }
 
 /// result[i] = p_1[i] + ρ · p_2[i] + ρ² · p_3[i] + ... (Horner evaluation).

@@ -11,7 +11,9 @@ use serde::{Deserialize, Serialize};
 use jolt_crypto::HomomorphicCommitment;
 
 use crate::error::OpeningsError;
+use crate::reduction::{homomorphic_reduce_prover, homomorphic_reduce_verifier, OpeningReduction};
 use crate::schemes::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
+use crate::{ProverClaim, VerifierClaim};
 
 #[derive(Clone, Debug)]
 pub struct MockCommitmentScheme<F: Field>(PhantomData<F>);
@@ -142,6 +144,22 @@ impl<F: Field> AdditivelyHomomorphic for MockCommitmentScheme<F> {
         MockCommitment {
             evaluations: result,
         }
+    }
+}
+
+impl<F: Field> OpeningReduction for MockCommitmentScheme<F> {
+    fn reduce_prover<T: Transcript<Challenge = F>>(
+        claims: Vec<ProverClaim<F>>,
+        transcript: &mut T,
+    ) -> Vec<ProverClaim<F>> {
+        homomorphic_reduce_prover::<Self, _>(claims, transcript)
+    }
+
+    fn reduce_verifier<T: Transcript<Challenge = F>>(
+        claims: Vec<VerifierClaim<F, MockCommitment<F>>>,
+        transcript: &mut T,
+    ) -> Result<Vec<VerifierClaim<F, MockCommitment<F>>>, OpeningsError> {
+        homomorphic_reduce_verifier::<Self, _>(claims, transcript)
     }
 }
 

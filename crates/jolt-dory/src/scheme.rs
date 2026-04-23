@@ -8,7 +8,10 @@ use dory::primitives::arithmetic::{
 use dory::primitives::poly::{MultilinearLagrange, Polynomial as DoryPolynomial};
 use jolt_crypto::{Bn254G1, Bn254GT, Commitment, DeriveSetup, JoltGroup, PedersenSetup};
 use jolt_field::Fr;
-use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError, ZkOpeningScheme};
+use jolt_openings::{
+    homomorphic_reduce_prover, homomorphic_reduce_verifier, AdditivelyHomomorphic,
+    CommitmentScheme, OpeningReduction, OpeningsError, ProverClaim, VerifierClaim, ZkOpeningScheme,
+};
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
 
@@ -256,6 +259,22 @@ impl AdditivelyHomomorphic for DoryScheme {
         }
 
         DoryHint(combined)
+    }
+}
+
+impl OpeningReduction for DoryScheme {
+    fn reduce_prover<T: Transcript<Challenge = Fr>>(
+        claims: Vec<ProverClaim<Fr>>,
+        transcript: &mut T,
+    ) -> Vec<ProverClaim<Fr>> {
+        homomorphic_reduce_prover::<Self, _>(claims, transcript)
+    }
+
+    fn reduce_verifier<T: Transcript<Challenge = Fr>>(
+        claims: Vec<VerifierClaim<Fr, DoryCommitment>>,
+        transcript: &mut T,
+    ) -> Result<Vec<VerifierClaim<Fr, DoryCommitment>>, OpeningsError> {
+        homomorphic_reduce_verifier::<Self, _>(claims, transcript)
     }
 }
 

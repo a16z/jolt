@@ -10,9 +10,8 @@ use jolt_compiler::module::{
     ClaimFactor, ClaimFormula, PointNormalization, R1CSMatrix, VerifierOp,
 };
 use jolt_compiler::PolynomialId;
-use jolt_crypto::HomomorphicCommitment;
 use jolt_field::Field;
-use jolt_openings::{AdditivelyHomomorphic, OpeningReduction, OpeningsError, VerifierClaim};
+use jolt_openings::{OpeningReduction, OpeningsError, VerifierClaim};
 use jolt_poly::EqPolynomial;
 use jolt_r1cs::R1csKey;
 use jolt_sumcheck::{SumcheckClaim, SumcheckVerifier};
@@ -47,8 +46,8 @@ pub fn verify<F, PCS>(
 ) -> Result<(), JoltError>
 where
     F: Field,
-    PCS: AdditivelyHomomorphic<Field = F>,
-    PCS::Output: AppendToTranscript + HomomorphicCommitment<F>,
+    PCS: OpeningReduction<Field = F>,
+    PCS::Output: AppendToTranscript,
 {
     let mut backend = Native::<F>::new();
     verify_with_backend(&mut backend, key, proof, expected_io_hash)
@@ -89,8 +88,8 @@ pub fn verify_with_backend<B, PCS>(
 ) -> Result<(), JoltError>
 where
     B: FieldBackend,
-    PCS: AdditivelyHomomorphic<Field = B::F>,
-    PCS::Output: AppendToTranscript + HomomorphicCommitment<B::F>,
+    PCS: OpeningReduction<Field = B::F>,
+    PCS::Output: AppendToTranscript,
 {
     if proof.config.io_hash != *expected_io_hash {
         fn fmt_hash(h: &[u8; 32]) -> String {

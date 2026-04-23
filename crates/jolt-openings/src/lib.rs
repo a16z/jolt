@@ -11,8 +11,12 @@
 //! ```
 //!
 //! [`ProverClaim`] and [`VerifierClaim`] are stateless data collected by the
-//! protocol orchestrator. [`OpeningReduction`] reduces many claims into fewer;
-//! blanket-implemented for homomorphic schemes via RLC.
+//! protocol orchestrator. [`OpeningReduction`] reduces many claims into
+//! fewer; each PCS provides its own implementation. Homomorphic schemes
+//! (Dory, HyperKZG, Mock) delegate to [`homomorphic_reduce_prover`] /
+//! [`homomorphic_reduce_verifier`]. Non-homomorphic schemes (FRI / hash-
+//! based, Ajtai / lattice-based) are free to provide a scheme-specific
+//! batching strategy.
 
 mod claims;
 mod error;
@@ -23,6 +27,9 @@ mod schemes;
 
 pub use claims::{ProverClaim, VerifierClaim};
 pub use error::OpeningsError;
-pub use reduction::{rlc_combine, rlc_combine_scalars, OpeningReduction};
+pub use reduction::{
+    homomorphic_reduce_prover, homomorphic_reduce_verifier, rlc_combine, rlc_combine_scalars,
+    OpeningReduction,
+};
 
 pub use schemes::{AdditivelyHomomorphic, CommitmentScheme, StreamingCommitment, ZkOpeningScheme};

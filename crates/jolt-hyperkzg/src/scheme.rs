@@ -7,7 +7,10 @@ use std::marker::PhantomData;
 
 use jolt_crypto::{Commitment, DeriveSetup, JoltGroup, PairingGroup, PedersenSetup};
 use jolt_field::Field;
-use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError};
+use jolt_openings::{
+    homomorphic_reduce_prover, homomorphic_reduce_verifier, AdditivelyHomomorphic,
+    CommitmentScheme, OpeningReduction, OpeningsError, ProverClaim, VerifierClaim,
+};
 use jolt_poly::Polynomial;
 use jolt_transcript::{AppendToTranscript, Transcript};
 use num_traits::{One, Zero};
@@ -305,6 +308,26 @@ where
             .map(|(c, s)| c.point.scalar_mul(s))
             .fold(P::G1::identity(), |acc, x| acc + x);
         HyperKZGCommitment { point: combined }
+    }
+}
+
+impl<P: PairingGroup> OpeningReduction for HyperKZGScheme<P>
+where
+    P::ScalarField: AppendToTranscript,
+    P::G1: AppendToTranscript,
+{
+    fn reduce_prover<T: Transcript<Challenge = P::ScalarField>>(
+        claims: Vec<ProverClaim<P::ScalarField>>,
+        transcript: &mut T,
+    ) -> Vec<ProverClaim<P::ScalarField>> {
+        homomorphic_reduce_prover::<Self, _>(claims, transcript)
+    }
+
+    fn reduce_verifier<T: Transcript<Challenge = P::ScalarField>>(
+        claims: Vec<VerifierClaim<P::ScalarField, HyperKZGCommitment<P>>>,
+        transcript: &mut T,
+    ) -> Result<Vec<VerifierClaim<P::ScalarField, HyperKZGCommitment<P>>>, OpeningsError> {
+        homomorphic_reduce_verifier::<Self, _>(claims, transcript)
     }
 }
 

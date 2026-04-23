@@ -41,10 +41,12 @@ This crate defines abstract interfaces for polynomial commitment schemes (PCS) a
 
 ### Reduction
 
-- **`OpeningReduction: CommitmentScheme`** -- Trait for claim transformations. Blanket-implemented for `AdditivelyHomomorphic` PCS via RLC (group by point, combine with Fiat-Shamir challenges). Non-homomorphic schemes must provide their own impl.
+- **`OpeningReduction: CommitmentScheme`** -- Trait for claim transformations. Each PCS provides its own impl, since the natural batching strategy is scheme-specific (RLC for homomorphic schemes, FRI/DEEP-ALI for hash-based, etc.). Homomorphic schemes (Dory, HyperKZG, Mock) delegate to `homomorphic_reduce_prover` / `homomorphic_reduce_verifier`.
 
 ### Utilities
 
+- **`homomorphic_reduce_prover`** -- RLC-based prover-side reduction; per-PCS `OpeningReduction::reduce_prover` impls forward to this for homomorphic schemes.
+- **`homomorphic_reduce_verifier`** -- RLC-based verifier-side reduction (uses `PCS::combine`); the corresponding helper for verifier impls.
 - **`rlc_combine`** -- Random linear combination of polynomial evaluation tables.
 - **`rlc_combine_scalars`** -- Random linear combination of scalar evaluations.
 
