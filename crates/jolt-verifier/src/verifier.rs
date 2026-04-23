@@ -11,9 +11,7 @@ use jolt_compiler::module::{
 };
 use jolt_compiler::PolynomialId;
 use jolt_field::Field;
-use jolt_openings::{
-    BackendVerifierClaim, CommitmentBackend, CommitmentOrigin, OpeningReduction, OpeningsError,
-};
+use jolt_openings::{CommitmentBackend, CommitmentOrigin, OpeningClaim, OpeningVerification};
 use jolt_poly::EqPolynomial;
 use jolt_r1cs::R1csKey;
 use jolt_sumcheck::{SumcheckClaim, SumcheckVerifier};
@@ -48,7 +46,7 @@ pub fn verify<F, PCS>(
 ) -> Result<(), JoltError>
 where
     F: Field,
-    PCS: OpeningReduction<Field = F>,
+    PCS: OpeningVerification<Field = F>,
     PCS::Output: AppendToTranscript,
 {
     let mut backend = Native::<F>::new();
@@ -66,8 +64,8 @@ where
 ///
 /// State buckets are kept as parallel `(F, B::Scalar)` pairs:
 ///
-///   * `_f` slots feed the transcript and the PCS reducer (which require
-///     a concrete field value to hash / commit).
+///   * `_f` slots feed the transcript and `verify_batch_with_backend`
+///     (both of which require concrete field values to hash / commit).
 ///   * `_w` slots feed [`evaluate_formula_with_backend`] and
 ///     [`SumcheckVerifier::verify_with_backend`] so the AST sees every op.
 ///
@@ -90,7 +88,7 @@ pub fn verify_with_backend<B, PCS>(
 ) -> Result<(), JoltError>
 where
     B: CommitmentBackend<PCS>,
-    PCS: OpeningReduction<Field = <B as FieldBackend>::F>,
+    PCS: OpeningVerification<Field = <B as FieldBackend>::F>,
     PCS::Output: AppendToTranscript,
 {
     if proof.config.io_hash != *expected_io_hash {
@@ -129,7 +127,7 @@ where
     let mut current_stage: Option<&StageProof<B::F>> = None;
     let mut eval_cursor: usize = 0;
     let mut round_poly_cursor: usize = 0;
-    let mut pcs_claims: Vec<BackendVerifierClaim<B, PCS>> = Vec::new();
+    let mut pcs_claims: Vec<OpeningClaim<B, PCS>> = Vec::new();
 
     for op in &schedule.ops {
         match op {
@@ -417,11 +415,11 @@ where
                             "evaluation for committed poly {poly:?} not set"
                         ))
                     })?;
-                    pcs_claims.push((
-                        commitment.clone(),
-                        sumcheck_points_w[at_stage.0].clone(),
-                        eval_w,
-                    ));
+                    pcs_claims.push(OpeningClaim {
+                        commitment: commitment.clone(),
+                        point: sumcheck_points_w[at_stage.0].clone(),
+                        eval: eval_w,
+                    });
                 }
             }
 
@@ -430,27 +428,14 @@ where
                     continue;
                 }
                 let claims = std::mem::take(&mut pcs_claims);
-                let reduced = PCS::reduce_verifier_with_backend(backend, claims, &mut transcript)
-                    .map_err(JoltError::Opening)?;
-
-                if reduced.len() != proof.opening_proofs.len() {
-                    return Err(JoltError::Opening(OpeningsError::VerificationFailed));
-                }
-
-                for ((commitment, point, claim), opening_proof) in
-                    reduced.iter().zip(proof.opening_proofs.iter())
-                {
-                    backend
-                        .verify_opening(
-                            &key.pcs_setup,
-                            commitment,
-                            point,
-                            claim,
-                            opening_proof,
-                            &mut transcript,
-                        )
-                        .map_err(JoltError::Opening)?;
-                }
+                PCS::verify_batch_with_backend(
+                    backend,
+                    &key.pcs_setup,
+                    claims,
+                    &proof.opening_proof,
+                    &mut transcript,
+                )
+                .map_err(JoltError::Opening)?;
             }
         }
     }

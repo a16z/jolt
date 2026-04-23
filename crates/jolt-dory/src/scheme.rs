@@ -9,10 +9,9 @@ use dory::primitives::poly::{MultilinearLagrange, Polynomial as DoryPolynomial};
 use jolt_crypto::{Bn254G1, Bn254GT, Commitment, DeriveSetup, JoltGroup, PedersenSetup};
 use jolt_field::Fr;
 use jolt_openings::{
-    homomorphic_reduce_prover, homomorphic_reduce_verifier,
-    homomorphic_reduce_verifier_with_backend, AdditivelyHomomorphic, BackendVerifierClaim,
-    CommitmentBackend, CommitmentScheme, OpeningReduction, OpeningsError, ProverClaim,
-    VerifierClaim, ZkOpeningScheme,
+    homomorphic_prove_batch, homomorphic_verify_batch_with_backend, AdditivelyHomomorphic,
+    CommitmentBackend, CommitmentScheme, OpeningClaim, OpeningVerification, OpeningsError,
+    ProverClaim, ZkOpeningScheme,
 };
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
@@ -264,30 +263,35 @@ impl AdditivelyHomomorphic for DoryScheme {
     }
 }
 
-impl OpeningReduction for DoryScheme {
-    fn reduce_prover<T: Transcript<Challenge = Fr>>(
+impl OpeningVerification for DoryScheme {
+    type BatchProof = Vec<DoryProof>;
+
+    fn prove_batch<T: Transcript<Challenge = Fr>>(
         claims: Vec<ProverClaim<Fr>>,
+        hints: Vec<Self::OpeningHint>,
+        setup: &Self::ProverSetup,
         transcript: &mut T,
-    ) -> Vec<ProverClaim<Fr>> {
-        homomorphic_reduce_prover::<Self, _>(claims, transcript)
+    ) -> (Self::BatchProof, Vec<Fr>) {
+        homomorphic_prove_batch::<Self, _>(claims, hints, setup, transcript)
     }
 
-    fn reduce_verifier<T: Transcript<Challenge = Fr>>(
-        claims: Vec<VerifierClaim<Fr, DoryCommitment>>,
-        transcript: &mut T,
-    ) -> Result<Vec<VerifierClaim<Fr, DoryCommitment>>, OpeningsError> {
-        homomorphic_reduce_verifier::<Self, _>(claims, transcript)
-    }
-
-    fn reduce_verifier_with_backend<B>(
+    fn verify_batch_with_backend<B>(
         backend: &mut B,
-        claims: Vec<BackendVerifierClaim<B, Self>>,
+        vk: &Self::VerifierSetup,
+        claims: Vec<OpeningClaim<B, Self>>,
+        batch_proof: &Self::BatchProof,
         transcript: &mut B::Transcript,
-    ) -> Result<Vec<BackendVerifierClaim<B, Self>>, OpeningsError>
+    ) -> Result<(), OpeningsError>
     where
-        B: CommitmentBackend<Self, F = Self::Field>,
+        B: CommitmentBackend<Self, F = <Self as CommitmentScheme>::Field>,
     {
-        homomorphic_reduce_verifier_with_backend::<Self, B>(backend, claims, transcript)
+        homomorphic_verify_batch_with_backend::<Self, B>(
+            backend,
+            vk,
+            claims,
+            batch_proof,
+            transcript,
+        )
     }
 }
 

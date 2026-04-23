@@ -681,7 +681,7 @@ where
     )]
     fn unwrap_commitment(&self, commitment: &Self::Commitment) -> PCS::Output {
         // Looks up the inlined PCS::Output on the originating CommitmentWrap
-        // node. Used by per-PCS reduce_verifier_with_backend impls to feed
+        // node. Used by per-PCS verify_batch_with_backend impls to feed
         // commitments into PCS::combine and rewrap the result. Panics if the
         // referenced node is not a CommitmentWrap (graph corruption).
         let g = self.graph.lock().expect("AstGraph mutex poisoned");

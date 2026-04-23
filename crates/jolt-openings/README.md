@@ -1,18 +1,18 @@
 # jolt-openings
 
-Polynomial commitment scheme traits and opening reduction for the Jolt zkVM.
+Polynomial commitment scheme traits and batched opening verification for the Jolt zkVM.
 
 Part of the [Jolt](https://github.com/a16z/jolt) zkVM.
 
 ## Overview
 
-This crate defines abstract interfaces for polynomial commitment schemes (PCS) and provides a reduction framework for batching opening claims. By separating the PCS abstraction from concrete implementations (Dory, KZG, lattice, hash), protocol code is written generically over the PCS with zero implementation leakage.
+This crate defines abstract interfaces for polynomial commitment schemes (PCS) and provides a fused batched-opening framework. By separating the PCS abstraction from concrete implementations (Dory, KZG, lattice, hash), protocol code is written generically over the PCS with zero implementation leakage.
 
 ### Design Principles
 
-- **Stateless.** No accumulators. Claims are plain data (`ProverClaim`, `VerifierClaim`) collected by the caller in `Vec`s.
-- **Reduction is separate from proving.** The `OpeningReduction` trait transforms claims (many -> fewer). The PCS opens the reduced claims.
-- **No batching in PCS traits.** Batching is a reduction concern (`OpeningReduction`), not a PCS property.
+- **Stateless.** No accumulators. Claims are plain data (`ProverClaim`, `VerifierClaim`, `OpeningClaim`) collected by the caller in `Vec`s.
+- **Fused batching.** The `OpeningVerification` trait exposes a single `prove_batch` / `verify_batch_with_backend` pair that consumes a whole bag of claims and emits / accepts one `BatchProof`. Schemes that prefer a "reduce then open" decomposition (Mock, HyperKZG, Dory) implement it via `homomorphic_prove_batch` / `homomorphic_verify_batch_with_backend`; schemes with native fused batching (e.g. lattice-based Hachi) plug in their own `BatchedProof` directly.
+- **No batching in PCS traits.** Batching is a verification concern (`OpeningVerification`), not a per-claim `CommitmentScheme` property.
 
 ## Trait Hierarchy
 
@@ -36,17 +36,20 @@ This crate defines abstract interfaces for polynomial commitment schemes (PCS) a
 - **`ZkOpeningScheme`** -- PCS that supports zero-knowledge evaluation proofs (committed evaluation output).
 ### Claim Types
 
-- **`ProverClaim<F>`** -- Leaf claim with polynomial, evaluation point, and claimed value.
-- **`VerifierClaim<F, C>`** -- Leaf claim with commitment, point, and claimed value.
+- **`ProverClaim<F>`** -- Prover-side leaf claim: polynomial, evaluation point, claimed value. (Likely renamed to `ProverOpeningClaim<F>` in a follow-up; see TODO in `claims.rs`.)
+- **`VerifierClaim<F, C>`** -- Native verifier-side leaf claim: commitment, point, claimed value. Used at API boundaries that have not yet been ported to the backend-aware `OpeningClaim`.
+- **`OpeningClaim<B, PCS>`** -- Backend-aware verifier-side leaf claim consumed by `OpeningVerification::verify_batch_with_backend`. Holds `B::Commitment`, `Vec<B::Scalar>`, and `B::Scalar`.
 
-### Reduction
+### Verification
 
-- **`OpeningReduction: CommitmentScheme`** -- Trait for claim transformations. Each PCS provides its own impl, since the natural batching strategy is scheme-specific (RLC for homomorphic schemes, FRI/DEEP-ALI for hash-based, etc.). Homomorphic schemes (Dory, HyperKZG, Mock) delegate to `homomorphic_reduce_prover` / `homomorphic_reduce_verifier`.
+- **`OpeningVerification: CommitmentScheme`** -- Trait for fused batched proving / verification. Associated `BatchProof` is the scheme's natural batched proof object (e.g. `Vec<PCS::Proof>` for additively homomorphic schemes, `HachiCommitmentScheme::BatchedProof` for lattice schemes). Methods:
+  - `prove_batch(claims, hints, pk, transcript) -> (BatchProof, Vec<F>)` — the trailing `Vec<F>` is per-group "binding evals" the runtime threads into transcript-binding ops downstream.
+  - `verify_batch_with_backend(backend, vk, claims, batch_proof, transcript) -> Result<(), OpeningsError>` — fused: no separate "reduce then verify" step.
 
 ### Utilities
 
-- **`homomorphic_reduce_prover`** -- RLC-based prover-side reduction; per-PCS `OpeningReduction::reduce_prover` impls forward to this for homomorphic schemes.
-- **`homomorphic_reduce_verifier`** -- RLC-based verifier-side reduction (uses `PCS::combine`); the corresponding helper for verifier impls.
+- **`homomorphic_prove_batch`** -- Group-by-point + RLC-combine + per-group `PCS::open` helper used by `OpeningVerification::prove_batch` impls for additively homomorphic schemes.
+- **`homomorphic_verify_batch_with_backend`** -- Mirror helper used by additively homomorphic `verify_batch_with_backend` impls; calls `backend.verify_opening` once per group.
 - **`rlc_combine`** -- Random linear combination of polynomial evaluation tables.
 - **`rlc_combine_scalars`** -- Random linear combination of scalar evaluations.
 

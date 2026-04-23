@@ -38,8 +38,7 @@ fn op_class_tag(op: &jolt_compiler::module::Op) -> Option<&'static str> {
         Op::MaterializeCombinedVal { .. } => "MaterializeCombinedVal",
         Op::Commit { .. } => "Commit",
         Op::CommitStreaming { .. } => "CommitStreaming",
-        Op::Open => "Open",
-        Op::ReduceOpenings => "ReduceOpenings",
+        Op::ProveBatch => "ProveBatch",
         Op::InstanceReduce { .. } => "InstanceReduce",
         Op::InstanceSegmentedReduce { .. } => "InstanceSegmentedReduce",
         Op::InstanceBind { .. } => "InstanceBind",
@@ -76,7 +75,7 @@ use jolt_compute::{Buf, BufferProvider, ComputeBackend, Executable};
 use helpers::PendingClaim;
 use jolt_crypto::HomomorphicCommitment;
 use jolt_field::Field;
-use jolt_openings::{AdditivelyHomomorphic, ProverClaim};
+use jolt_openings::{AdditivelyHomomorphic, OpeningVerification};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::proof::SumcheckProof;
 use jolt_transcript::{AppendToTranscript, Transcript};
@@ -108,7 +107,7 @@ impl<F: Field> StageBuilder<F> {
 }
 
 /// Mutable state accumulated during schedule execution.
-pub(super) struct RuntimeState<F: Field, PCS: AdditivelyHomomorphic<Field = F>>
+pub(super) struct RuntimeState<F: Field, PCS: AdditivelyHomomorphic<Field = F> + OpeningVerification>
 where
     PCS::Output: HomomorphicCommitment<F>,
 {
@@ -135,9 +134,13 @@ where
     pub(super) hints: HashMap<PolynomialId, PCS::OpeningHint>,
     pub(super) pending_claims: Vec<PendingClaim<F>>,
     pub(super) pending_hints: Vec<PCS::OpeningHint>,
-    pub(super) reduced_claims: Vec<ProverClaim<F>>,
-    pub(super) reduced_hints: Vec<PCS::OpeningHint>,
-    pub(super) opening_proofs: Vec<PCS::Proof>,
+    /// Filled by `Op::ProveBatch` exactly once per execution. `None`
+    /// before that op runs (or if no opening claims were collected).
+    pub(super) opening_proof: Option<PCS::BatchProof>,
+    /// Per-group RLC-combined evaluations produced by `Op::ProveBatch`.
+    /// `Op::BindOpeningInputs` reads `binding_evals[0]` to drive the
+    /// post-proof Dory transcript bind. Empty if no claims were collected.
+    pub(super) binding_evals: Vec<F>,
     pub(super) padded_poly_data: HashMap<PolynomialId, Vec<F>>,
 
     /// Per-cycle eq-weight vector for address-decomposition instance.
@@ -169,7 +172,7 @@ where
     B: ComputeBackend,
     F: Field,
     T: Transcript<Challenge = F>,
-    PCS: AdditivelyHomomorphic<Field = F>,
+    PCS: AdditivelyHomomorphic<Field = F> + OpeningVerification,
     PCS::Output: AppendToTranscript + HomomorphicCommitment<F>,
 {
     let _prove_span = tracing::info_span!("modular_prove").entered();
@@ -203,9 +206,8 @@ where
         hints: HashMap::new(),
         pending_claims: Vec::new(),
         pending_hints: Vec::new(),
-        reduced_claims: Vec::new(),
-        reduced_hints: Vec::new(),
-        opening_proofs: Vec::new(),
+        opening_proof: None,
+        binding_evals: Vec::new(),
         padded_poly_data: HashMap::new(),
         instance_weights: Vec::new(),
         instance_checkpoints: Vec::new(),
@@ -232,10 +234,10 @@ where
 
     // Per-op-class saturation: aggregate (wall, cpu) by op variant name, keyed
     // by a short &'static str. Only the expensive op classes are instrumented
-    // (Materialize*, Commit, Open, InstanceReduce, InstanceSegmentedReduce,
-    // ReduceOpenings, BatchRoundBegin, SumcheckRound, Bind, Evaluate).
-    // Orchestration ops (Squeeze, Absorb*, BeginStage, RecordEvals, …) run in
-    // microseconds and the getrusage overhead would be a large relative cost.
+    // (Materialize*, Commit, ProveBatch, InstanceReduce, InstanceSegmentedReduce,
+    // BatchRoundBegin, SumcheckRound, Bind, Evaluate). Orchestration ops
+    // (Squeeze, Absorb*, BeginStage, RecordEvals, …) run in microseconds and
+    // the getrusage overhead would be a large relative cost.
     let mut op_class_stats: HashMap<&'static str, (Duration, Duration, u64)> = HashMap::new();
 
     for op in &executable.ops {
@@ -352,7 +354,9 @@ where
     JoltProof {
         config: state.config,
         stage_proofs: state.stage_proofs,
-        opening_proofs: state.opening_proofs,
+        opening_proof: state
+            .opening_proof
+            .expect("Op::ProveBatch must run exactly once before finalize"),
         commitments: state.commitments,
     }
 }

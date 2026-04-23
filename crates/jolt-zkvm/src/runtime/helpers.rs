@@ -1,16 +1,15 @@
-use std::borrow::Cow;
 use std::collections::HashMap;
 
 use jolt_compiler::module::{ChallengeSource, InputBinding, SegmentedConfig, VerifierStageIndex};
 use jolt_compiler::PolynomialId;
 use jolt_compute::{Buf, BufferProvider, ComputeBackend, DeviceBuffer};
-use jolt_crypto::HomomorphicCommitment;
 use jolt_field::Field;
-use jolt_openings::{AdditivelyHomomorphic, ProverClaim};
-use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
 
-/// Lightweight opening claim — defers the expensive evaluation table copy
-/// until `ReduceOpenings` where it's actually needed for RLC combination.
+/// Lightweight opening claim accumulated during sumcheck stages.
+///
+/// Defers the expensive evaluation-table materialization until
+/// `Op::ProveBatch`, where the polynomial is materialized once and
+/// handed to `PCS::prove_batch`.
 pub(crate) struct PendingClaim<F: Field> {
     pub poly: PolynomialId,
     pub point: Vec<F>,
@@ -181,125 +180,3 @@ where
     }
 }
 
-/// Fused RLC reduction: groups pending claims by point, draws one rho per group
-/// from the transcript, and produces combined (claim, hint) pairs in a single pass.
-pub(super) fn fused_rlc_reduce<F, PCS>(
-    pending: Vec<PendingClaim<F>>,
-    hints: Vec<PCS::OpeningHint>,
-    provider: &impl BufferProvider<F>,
-    padded: &HashMap<PolynomialId, Vec<F>>,
-    transcript: &mut impl Transcript<Challenge = F>,
-) -> (Vec<ProverClaim<F>>, Vec<PCS::OpeningHint>)
-where
-    F: Field,
-    PCS: AdditivelyHomomorphic<Field = F>,
-    PCS::Output: HomomorphicCommitment<F>,
-{
-    if pending.is_empty() {
-        return (Vec::new(), Vec::new());
-    }
-
-    transcript.append(&LabelWithCount(b"rlc_claims", pending.len() as u64));
-    for pc in &pending {
-        pc.eval.append_to_transcript(transcript);
-    }
-
-    struct PointGroup<'a, F, H> {
-        point: &'a Vec<F>,
-        poly_ids: Vec<PolynomialId>,
-        evals: Vec<F>,
-        hints: Vec<H>,
-    }
-
-    let mut groups: Vec<PointGroup<'_, F, PCS::OpeningHint>> = Vec::new();
-
-    for (pc, hint) in pending.iter().zip(hints) {
-        if let Some(g) = groups.iter_mut().find(|g| *g.point == pc.point) {
-            g.poly_ids.push(pc.poly);
-            g.evals.push(pc.eval);
-            g.hints.push(hint);
-        } else {
-            groups.push(PointGroup {
-                point: &pc.point,
-                poly_ids: vec![pc.poly],
-                evals: vec![pc.eval],
-                hints: vec![hint],
-            });
-        }
-    }
-
-    let group_count = groups.len();
-    let total_claims = pending.len();
-    let mut reduced_claims = Vec::with_capacity(group_count);
-    let mut reduced_hints = Vec::with_capacity(group_count);
-    let mut group_stats: Vec<(usize, usize, u128, u128, u128)> = Vec::with_capacity(group_count);
-
-    for PointGroup {
-        point,
-        poly_ids,
-        evals,
-        hints: group_hints,
-    } in groups
-    {
-        let rho: F = transcript.challenge();
-
-        let poly_count = poly_ids.len();
-        let t_mat_start = std::time::Instant::now();
-        let materialized: Vec<Cow<'_, [F]>> = poly_ids
-            .iter()
-            .map(|&pi| {
-                if let Some(p) = padded.get(&pi) {
-                    Cow::Borrowed(p.as_slice())
-                } else {
-                    provider.materialize(pi)
-                }
-            })
-            .collect();
-        let t_mat_us = t_mat_start.elapsed().as_micros();
-
-        let slices: Vec<&[F]> = materialized.iter().map(|c| &**c).collect();
-        let total_elems = slices.iter().map(|s| s.len()).sum::<usize>();
-
-        let t_rlc_start = std::time::Instant::now();
-        let combined_evals = jolt_openings::rlc_combine(&slices, rho);
-        let combined_eval = jolt_openings::rlc_combine_scalars(&evals, rho);
-        let t_rlc_us = t_rlc_start.elapsed().as_micros();
-
-        let t_hint_start = std::time::Instant::now();
-        let powers: Vec<F> = std::iter::successors(Some(F::from_u64(1)), |prev| Some(*prev * rho))
-            .take(group_hints.len())
-            .collect();
-        let combined_hint = PCS::combine_hints(group_hints, &powers);
-        let t_hint_us = t_hint_start.elapsed().as_micros();
-
-        group_stats.push((poly_count, total_elems, t_mat_us, t_rlc_us, t_hint_us));
-
-        reduced_claims.push(ProverClaim {
-            polynomial: combined_evals.into(),
-            point: point.clone(),
-            eval: combined_eval,
-        });
-        reduced_hints.push(combined_hint);
-    }
-
-    for (gi, (pc, te, tm, tr, th)) in group_stats.iter().enumerate() {
-        tracing::info!(
-            target: "perf_rlc",
-            group = gi,
-            poly_count = pc,
-            total_elems = te,
-            mat_us = *tm as u64,
-            rlc_us = *tr as u64,
-            hint_us = *th as u64,
-            "rlc_group"
-        );
-    }
-    tracing::info!(
-        target: "perf_rlc",
-        groups = group_count,
-        total_claims = total_claims,
-        "rlc_summary"
-    );
-
-    (reduced_claims, reduced_hints)
-}

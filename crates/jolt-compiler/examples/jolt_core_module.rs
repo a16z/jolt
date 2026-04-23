@@ -5999,9 +5999,8 @@ fn build_stage8(p: &Polys, params: &ModuleParams, ops: &mut Vec<Op>, s7: &Stage7
         });
     }
 
-    // RLC reduction + PCS opening proof + post-proof binding
-    ops.push(Op::ReduceOpenings);
-    ops.push(Op::Open);
+    // Single fused PCS batch-prove + post-proof binding
+    ops.push(Op::ProveBatch);
     ops.push(Op::BindOpeningInputs {
         point_challenges: opening_point,
     });
@@ -6931,8 +6930,8 @@ fn print_stats(module: &Module, params: &ModuleParams) {
             | Op::DuplicateInterleave { .. }
             | Op::RegroupConstraints { .. } => counts[13] += 1,
             Op::Commit { .. } | Op::CommitStreaming { .. } => counts[3] += 1,
-            Op::ReduceOpenings => counts[4] += 1,
-            Op::Open | Op::BindOpeningInputs { .. } => counts[5] += 1,
+            Op::ProveBatch => counts[4] += 1,
+            Op::BindOpeningInputs { .. } => counts[5] += 1,
             Op::Preamble => counts[6] += 1,
             Op::BeginStage { .. } => counts[12] += 1,
             Op::AbsorbRoundPoly { .. } => counts[7] += 1,
@@ -6985,8 +6984,8 @@ fn print_stats(module: &Module, params: &ModuleParams) {
     eprintln!("  LagrangeProject:       {}", counts[13]);
     eprintln!("  -- PCS --");
     eprintln!("  Commit:                {}", counts[3]);
-    eprintln!("  ReduceOpenings:        {}", counts[4]);
-    eprintln!("  Open:                  {}", counts[5]);
+    eprintln!("  ProveBatch:            {}", counts[4]);
+    eprintln!("  BindOpeningInputs:     {}", counts[5]);
     eprintln!("  -- Orchestration --");
     eprintln!("  Preamble:              {}", counts[6]);
     eprintln!("  BeginStage:            {}", counts[12]);

@@ -6,7 +6,7 @@
 use jolt_compute::{BufferProvider, ComputeBackend, Executable};
 use jolt_crypto::HomomorphicCommitment;
 use jolt_field::Field;
-use jolt_openings::AdditivelyHomomorphic;
+use jolt_openings::{AdditivelyHomomorphic, OpeningVerification};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::ProverConfig;
 
@@ -32,7 +32,7 @@ where
     B: ComputeBackend,
     F: Field,
     T: Transcript<Challenge = F>,
-    PCS: AdditivelyHomomorphic<Field = F>,
+    PCS: AdditivelyHomomorphic<Field = F> + OpeningVerification,
     PCS::Output: AppendToTranscript + HomomorphicCommitment<F>,
 {
     if let Err(e) = config.validate() {

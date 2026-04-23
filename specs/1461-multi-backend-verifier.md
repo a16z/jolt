@@ -196,8 +196,8 @@ The trait is **deliberately PCS-family agnostic**: it never names a
 curve, a pairing, an MSM, or a linear combination of commitments.
 Per-PCS batching (RLC for additively homomorphic schemes, FRI
 folding for hash-based schemes, lattice aggregation) lives behind
-`OpeningReduction::reduce_verifier_with_backend` (see "Opening
-reduction" below), not on this trait.
+`OpeningVerification::verify_batch_with_backend` (see "Opening
+verification" below), not on this trait.
 
 ### AST: generic over `PCS`, values inlined
 
@@ -299,37 +299,99 @@ Per-variant semantics:
   `check` and returns
   `BackendError::OpeningCheckFailed { ctx, source }` on `Err`.
 
-### Opening reduction (per-PCS batching)
+### Opening verification (per-PCS batching)
 
-`OpeningReduction` is the trait every PCS implements to combine a
-batch of opening claims down to one. Each PCS supplies its own
-implementation; there is **no blanket impl** over
+`OpeningVerification` is the trait every PCS implements to verify a
+**batch of opening claims as a single fused operation**. Each PCS
+supplies its own implementation; there is **no blanket impl** over
 `AdditivelyHomomorphic`, so a future hash-based or lattice-based
-scheme implements `OpeningReduction` directly with whatever batching
-is natural for it.
+scheme (e.g. `HachiCommitmentScheme`) implements `OpeningVerification`
+directly with whatever batching is natural for it.
 
-The trait carries two methods: `reduce_verifier` (the concrete
-native path, called from the `Native<F>` backend) and the
-backend-aware mirror called from `verify_with_backend`:
+The trait carries one associated type and two symmetric methods:
 
 ```rust
-trait OpeningReduction: CommitmentScheme {
-    fn reduce_verifier(...) -> Result<..., OpeningsError>;
+pub struct OpeningClaim<B: CommitmentBackend<Self>, Self: CommitmentScheme>
+where Self::Output: AppendToTranscript,
+{
+    pub commitment: B::Commitment,
+    pub point: Vec<B::Scalar>,
+    pub eval: B::Scalar,
+}
 
-    fn reduce_verifier_with_backend<B: CommitmentBackend<Self>>(
+pub trait OpeningVerification: CommitmentScheme {
+    /// Single proof object covering the entire batch. For additively
+    /// homomorphic schemes (Mock, HyperKZG, Dory) this is just
+    /// `Vec<Self::Proof>` — one inner opening per RLC group. For
+    /// fused lattice schemes (Hachi) this is the scheme's native
+    /// `BatchedProof` type.
+    type BatchProof: ...;
+
+    fn prove_batch<T: Transcript<Challenge = Self::Field>>(
+        claims: Vec<ProverClaim<Self::Field>>,
+        hints: Vec<Self::OpeningHint>,
+        setup: &Self::ProverSetup,
+        transcript: &mut T,
+    ) -> (Self::BatchProof, Vec<Self::Field>);
+
+    fn verify_batch_with_backend<B: CommitmentBackend<Self, F = Self::Field>>(
         backend: &mut B,
-        claims: &[(B::Commitment, Vec<B::Scalar>, B::Scalar)],
+        vk: &Self::VerifierSetup,
+        claims: Vec<OpeningClaim<B, Self>>,
+        batch_proof: &Self::BatchProof,
         transcript: &mut B::Transcript,
-    ) -> Result<Vec<(B::Commitment, Vec<B::Scalar>, B::Scalar)>, OpeningsError>;
+    ) -> Result<(), OpeningsError>
+    where Self::Output: AppendToTranscript;
 }
 ```
 
+The two methods are **symmetric**: `prove_batch` and
+`verify_batch_with_backend` consume the entire bag of claims and
+emit / consume a single `BatchProof`. The earlier two-step
+"reduce then verify" surface (`reduce_prover` + per-claim `open` /
+`reduce_verifier` + per-claim `verify`) was collapsed into this
+fused form because lattice-based schemes do not factor through that
+intermediate "reduced claim" step at all — they compute one batched
+proof in a single pass.
+
+Returned `Vec<Self::Field>` from `prove_batch` is the per-group
+"binding eval" — for additively homomorphic schemes, the RLC-combined
+evaluation per opening point. The runtime threads these into
+`Op::BindOpeningInputs` so Dory's existing transcript binding
+behavior is preserved.
+
 Per-PCS impls (`MockCommitmentScheme`, `HyperKZGScheme`,
-`DoryScheme`) take a fast path on `Native::Commitment = PCS::Output`
-(direct combine) and an AST-emitting path on
+`DoryScheme`) delegate to two helpers in `jolt-openings`:
+`homomorphic_prove_batch` (group claims by point, RLC-combine
+polynomials, open one per group) and
+`homomorphic_verify_batch_with_backend` (mirror: group, combine
+commitments + evals, verify one per group). The combine step takes a
+fast path on `Native::Commitment = PCS::Output` (direct
+`PCS::combine`) and an AST-emitting path on
 `Tracing::Commitment = AstNodeId` (record the inputs as transcript
 absorbs, push a `CommitmentWrap` for the precomputed combined
 commitment). The verifier never sees the per-PCS difference.
+
+A future `HachiCommitmentScheme::OpeningVerification` impl can set
+`type BatchProof = HachiCommitmentScheme::BatchedProof` and call
+the lattice scheme's fused `batched_open` / `batched_verify`
+directly — no homomorphism required, no intermediate reduce step.
+
+### Note: `ProverClaim` rename TODO
+
+`ProverClaim<F>` (in `jolt-openings::claims`) currently bundles
+`{polynomial, point, eval}` and is the prover-side analogue of
+`OpeningClaim<B, PCS>`. Two follow-up refactors are likely:
+
+1. Rename to `ProverOpeningClaim<F>` for naming symmetry with
+   `OpeningClaim<B, PCS>`.
+2. Optionally extend with `commitment` / slot metadata to match the
+   verifier-side struct, which would let lattice schemes thread
+   commitment-slot information through `prove_batch` without
+   side-channel state.
+
+Both are non-blocking; deferred to a follow-up PR. Tagged in
+`jolt-openings/src/claims.rs` with a TODO.
 
 ### Wrap origins
 
@@ -393,9 +455,9 @@ for downstream consumers: a Lean exporter can quantify only over
 
 **CommitmentBackend surface:**
 
-- [x] `OpeningReduction` is implemented per-PCS — no blanket impl
+- [x] `OpeningVerification` is implemented per-PCS — no blanket impl
       over `AdditivelyHomomorphic`. `verify_with_backend` requires
-      only `PCS: OpeningReduction`; the `HomomorphicCommitment<F>`
+      only `PCS: OpeningVerification`; the `HomomorphicCommitment<F>`
       bound is no longer in `jolt-verifier`.
 - [x] `CommitmentBackend<PCS>` trait exists with three methods.
       `Native::Commitment = PCS::Output` (identity);
@@ -413,21 +475,24 @@ for downstream consumers: a Lean exporter can quantify only over
 - [x] No mention of `g1_msm`, `pairing`, `MSM`, or `GroupBackend`
       anywhere in `crates/jolt-verifier-backend/src/`. The trait
       surface is curve-agnostic.
-- [x] `OpeningReduction::reduce_verifier_with_backend` implemented
-      for `MockCommitmentScheme`, `HyperKZGScheme`, `DoryScheme`,
-      each byte-identical to its `reduce_verifier` on `Native`.
-      Per-PCS parity tests live in
-      `crates/jolt-verifier-backend/tests/reduction_parity.rs`,
-      `crates/jolt-hyperkzg/tests/reduction_parity.rs`, and
-      `crates/jolt-dory/tests/reduction_parity.rs` (5 cases each:
+- [x] `OpeningVerification::verify_batch_with_backend` and
+      `OpeningVerification::prove_batch` implemented for
+      `MockCommitmentScheme`, `HyperKZGScheme`, `DoryScheme`. Per-PCS
+      parity tests live in
+      `crates/jolt-verifier-backend/tests/verification_parity.rs`,
+      `crates/jolt-hyperkzg/tests/verification_parity.rs`, and
+      `crates/jolt-dory/tests/verification_parity.rs` (5 cases each:
       single, shared-point, distinct-points, mixed groups, empty),
-      asserting equal commitments / points / evals and equal
-      post-reduction transcript challenge.
+      driving `prove_batch` then `verify_batch_with_backend` over the
+      `Native<F>` backend and asserting both transcripts end in
+      byte-identical state.
 - [x] `verify_with_backend` calls
-      `OpeningReduction::reduce_verifier_with_backend` and
-      `CommitmentBackend::verify_opening` exclusively. No direct
-      `PCS::verify` / `PCS::reduce_verifier` calls remain in the
-      verifier crate.
+      `OpeningVerification::verify_batch_with_backend` exclusively.
+      No direct `PCS::verify` / `PCS::reduce_verifier` /
+      `reduce_verifier_with_backend` calls remain in the verifier
+      crate. The `JoltProof` carries a single
+      `opening_proof: PCS::BatchProof` (was previously
+      `Vec<PCS::Proof>`).
 
 ### Testing Strategy
 
@@ -446,13 +511,13 @@ for downstream consumers: a Lean exporter can quantify only over
     `Tracing<DoryScheme>` verifier + replay against real Dory
     openings. Asserts every commitment-shaped variant appears in
     the recorded graph and every `OpeningHolds` discharges.
-- **Reduction parity (per PCS).** Each homomorphic PCS ships a
-  dedicated `reduction_parity.rs` test (5 shapes: single,
-  shared-point, distinct-points, mixed groups, empty) that builds
-  a bag of opening claims, calls `reduce_verifier` and
-  `reduce_verifier_with_backend::<Native<_>>`, and asserts the
-  per-group `(commitment, point, eval)` triples and post-reduction
-  transcript challenge are byte-identical. `MockCommitmentScheme`
+- **Verification parity (per PCS).** Each PCS ships a dedicated
+  `verification_parity.rs` test (5 shapes: single, shared-point,
+  distinct-points, mixed groups, empty) that builds a bag of opening
+  claims, calls `prove_batch` against a Blake2b transcript, then
+  `verify_batch_with_backend::<Native<_>>` against a fresh
+  Blake2b transcript with the same label, and asserts both
+  transcripts emit equal post-batch challenges. `MockCommitmentScheme`
   lives in `crates/jolt-verifier-backend/tests/`; `HyperKZGScheme`
   and `DoryScheme` live in their own crate `tests/` directories.
 
@@ -501,7 +566,7 @@ for downstream consumers: a Lean exporter can quantify only over
    curve-shaped AST or forces a parallel backend trait. Both
    outcomes break the "one verifier source of truth" invariant.
    `CommitmentBackend` keeps the surface curve-agnostic and pushes
-   per-PCS batching into `OpeningReduction::reduce_verifier_with_backend`.
+   per-PCS batching into `OpeningVerification::verify_batch_with_backend`.
 7. **Type-erased proof sidecar (`Box<dyn Any>` per
    `OpeningCheck`).** Rejected — pushes critical typing
    information into runtime metadata, hostile to formal
@@ -516,9 +581,20 @@ for downstream consumers: a Lean exporter can quantify only over
    serialisation contract per PCS. Future PCS variants get their
    own `AstGraph<NewScheme>` instead.
 9. **Keep an `AdditivelyHomomorphic` blanket on
-   `OpeningReduction`.** Rejected — couples every consumer of
-   `OpeningReduction` to the curve-based / RLC batching strategy.
+   `OpeningVerification`.** Rejected — couples every consumer of
+   `OpeningVerification` to the curve-based / RLC batching strategy.
    Single trait + per-PCS impl admits any batching strategy.
+10. **Two-step `OpeningReduction` (separate `reduce` + `open` /
+    `verify` phases).** Rejected — does not fit fused lattice
+    schemes (Hachi's `batched_open` / `batched_verify` is a single
+    primitive, not two). Earlier drafts of this PR shipped this
+    surface; it was collapsed into the single-method
+    `OpeningVerification` trait once the Hachi mismatch surfaced.
+    The fused form is strictly more general: additively
+    homomorphic schemes implement it via `homomorphic_prove_batch`
+    / `homomorphic_verify_batch_with_backend` helpers, lattice
+    schemes implement it directly with their native batched
+    primitives.
 
 ## Documentation
 

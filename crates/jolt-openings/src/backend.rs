@@ -10,8 +10,8 @@
 //!
 //! The traits live in `jolt-openings` (rather than the higher-level
 //! `jolt-verifier-backend` crate that ships their concrete implementations)
-//! so [`crate::OpeningReduction::reduce_verifier_with_backend`] can name
-//! `CommitmentBackend<Self>` directly. Per-PCS reduction impls (Dory,
+//! so [`crate::OpeningVerification::verify_batch_with_backend`] can name
+//! `CommitmentBackend<Self>` directly. Per-PCS batch impls (Dory,
 //! HyperKZG, Mock) thus stay in their own crates without the verifier
 //! crate having to expose a parallel "backend opening reduction" trait.
 //! Concrete backend implementations (`Native`, `Tracing`) live in
@@ -260,7 +260,7 @@ pub trait FieldBackend {
 /// never names a curve, a pairing, an MSM, or a linear combination of
 /// commitments. Anything PCS-specific (RLC batching, FRI folding, lattice
 /// aggregation) lives inside per-PCS implementations of
-/// [`crate::OpeningReduction::reduce_verifier_with_backend`], not on this
+/// [`crate::OpeningVerification::verify_batch_with_backend`], not on this
 /// trait.
 ///
 /// # Implementation contract
@@ -305,7 +305,7 @@ where
     /// originating `CommitmentWrap` node.
     ///
     /// This method exists so per-PCS implementations of
-    /// [`crate::OpeningReduction::reduce_verifier_with_backend`] can
+    /// [`crate::OpeningVerification::verify_batch_with_backend`] can
     /// combine commitments via the PCS algebra (e.g.
     /// `AdditivelyHomomorphic::combine`) and then re-wrap the result with
     /// [`Self::wrap_commitment`]. It is **not** intended for use inside the
@@ -338,7 +338,7 @@ where
     ///
     /// **Batching is the PCS's responsibility, not this trait's.** The
     /// verifier reduces a batch of claims to a single combined claim via
-    /// [`crate::OpeningReduction::reduce_verifier_with_backend`] before
+    /// [`crate::OpeningVerification::verify_batch_with_backend`] before
     /// invoking `verify_opening`.
     fn verify_opening(
         &mut self,
