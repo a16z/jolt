@@ -656,9 +656,16 @@ fn build_scalar_update_batch(
         .collect()
 }
 
-fn emit_scatter_ops(ops: &mut Vec<Op>, kernel: usize, phase: usize, chunk_bits: usize) {
-    push_op!(ops, Op::SuffixScatter { kernel, phase });
-    push_op!(ops, Op::QBufferScatter { kernel, phase });
+fn emit_scatter_ops(
+    ops: &mut Vec<Op>,
+    kernel: usize,
+    phase: usize,
+    chunk_bits: usize,
+    num_phases: usize,
+) {
+    let suffix_len = (num_phases - 1 - phase) * chunk_bits;
+    push_op!(ops, Op::SuffixScatter { kernel, suffix_len });
+    push_op!(ops, Op::QBufferScatter { kernel, suffix_len });
     push_op!(ops, Op::MaterializePBuffers { kernel });
     push_op!(
         ops,
@@ -751,7 +758,7 @@ fn emit_unrolled_batched_rounds(
                             num_prefixes: ic.num_prefixes,
                         }
                     );
-                    emit_scatter_ops(ops, kernel, 0, chunk_bits);
+                    emit_scatter_ops(ops, kernel, 0, chunk_bits, ic.num_phases);
                 } else if round_in_sub == 0 {
                     let ch = bind.unwrap();
                     push_op!(
@@ -810,7 +817,7 @@ fn emit_unrolled_batched_rounds(
                             suffix_len: (ic.num_phases - sub_phase) * chunk_bits,
                         }
                     );
-                    emit_scatter_ops(ops, kernel, sub_phase, chunk_bits);
+                    emit_scatter_ops(ops, kernel, sub_phase, chunk_bits, ic.num_phases);
                 } else {
                     let ch = bind.unwrap();
                     push_op!(

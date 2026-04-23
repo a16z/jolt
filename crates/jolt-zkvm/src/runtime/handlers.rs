@@ -765,14 +765,14 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             }
         }
 
-        Op::SuffixScatter { kernel, phase } => {
+        Op::SuffixScatter { kernel, suffix_len } => {
             let config = executable.module.prover.kernels[*kernel]
                 .instance_config
                 .as_ref()
                 .unwrap();
             let trace = provider.lookup_trace().unwrap();
             let m = 1usize << config.chunk_bits;
-            let suffix_len = (config.num_phases - 1 - phase) * config.chunk_bits;
+            let suffix_len = *suffix_len;
             let suffix_mask = (1u128 << suffix_len).wrapping_sub(1);
             let mut all_polys: Vec<Vec<Vec<F>>> = (0..config.num_tables)
                 .map(|t| vec![vec![F::zero(); m]; config.suffixes_per_table[t]])
@@ -802,14 +802,14 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             }
         }
 
-        Op::QBufferScatter { kernel, phase } => {
+        Op::QBufferScatter { kernel, suffix_len } => {
             let config = executable.module.prover.kernels[*kernel]
                 .instance_config
                 .as_ref()
                 .unwrap();
             let trace = provider.lookup_trace().unwrap();
             let m = 1usize << config.chunk_bits;
-            let suffix_len = (config.num_phases - 1 - phase) * config.chunk_bits;
+            let suffix_len = *suffix_len;
             let suffix_mask = (1u128 << suffix_len).wrapping_sub(1);
             let shift_half_f = F::from_u128(if suffix_len >= 2 {
                 1u128 << (suffix_len / 2)

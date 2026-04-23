@@ -1333,9 +1333,15 @@ pub enum Op {
         suffix_len: usize,
     },
     /// Scatter weighted suffix evaluations into per-table polynomial buffers.
-    SuffixScatter { kernel: usize, phase: usize },
+    ///
+    /// `suffix_len` is precomputed at emission time as
+    /// `(num_phases − 1 − phase) × chunk_bits` (S5.scatter_field_slim).
+    SuffixScatter { kernel: usize, suffix_len: usize },
     /// Compute RAF quotient (Q) buffers from lookup keys and instance weights.
-    QBufferScatter { kernel: usize, phase: usize },
+    ///
+    /// `suffix_len` is precomputed at emission time as
+    /// `(num_phases − 1 − phase) × chunk_bits` (S5.scatter_field_slim).
+    QBufferScatter { kernel: usize, suffix_len: usize },
     /// Materialize RAF product (P) buffers from registry checkpoint scalars.
     MaterializePBuffers { kernel: usize },
     /// Initialize an expanding eq table with a single 1.0 entry.

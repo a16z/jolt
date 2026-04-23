@@ -465,7 +465,7 @@ impl ModuleBuilder {
                             r_reduction: ic.r_reduction.clone(),
                             num_prefixes: ic.num_prefixes,
                         });
-                        emit_scatter_ops(&mut self.ops, kernel, 0, chunk_bits);
+                        emit_scatter_ops(&mut self.ops, kernel, 0, chunk_bits, ic.num_phases);
                     } else if round_in_sub == 0 {
                         // Sub-phase boundary: bind + expand + optional CP +
                         // capture registries + scatter next sub-phase.
@@ -509,7 +509,13 @@ impl ModuleBuilder {
                             chunk_bits,
                             suffix_len: (ic.num_phases - sub_phase) * chunk_bits,
                         });
-                        emit_scatter_ops(&mut self.ops, kernel, sub_phase, chunk_bits);
+                        emit_scatter_ops(
+                            &mut self.ops,
+                            kernel,
+                            sub_phase,
+                            chunk_bits,
+                            ic.num_phases,
+                        );
                     } else {
                         // Mid sub-phase: bind + expand + optional CP.
                         let ch = bind.unwrap();
@@ -831,9 +837,16 @@ impl ModuleBuilder {
     }
 }
 
-fn emit_scatter_ops(ops: &mut Vec<Op>, kernel: usize, phase: usize, chunk_bits: usize) {
-    ops.push(Op::SuffixScatter { kernel, phase });
-    ops.push(Op::QBufferScatter { kernel, phase });
+fn emit_scatter_ops(
+    ops: &mut Vec<Op>,
+    kernel: usize,
+    phase: usize,
+    chunk_bits: usize,
+    num_phases: usize,
+) {
+    let suffix_len = (num_phases - 1 - phase) * chunk_bits;
+    ops.push(Op::SuffixScatter { kernel, suffix_len });
+    ops.push(Op::QBufferScatter { kernel, suffix_len });
     ops.push(Op::MaterializePBuffers { kernel });
     ops.push(Op::InitExpandingTable {
         table: PolynomialId::ExpandingTable(phase),

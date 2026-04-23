@@ -191,8 +191,8 @@ landing the first two S5 renames exposed three distinct blocker classes).
 | `UpdateInstanceWeights { expanding_table, chunk_bits, suffix_len }` | A | NOT an `ExpandingTableUpdate` — it's a trace-driven gather-multiply on `instance_weights[j]` indexed by `(key >> suffix_len) & mask`. Needs new primitive `Op::TraceGatherMultiply { dst, source_table, index_source, shift, mask }`. Field set already slimmed in S5.field_slim — `{num_phases, phase}` collapsed into `suffix_len` at emission time. |
 | `MaterializeRA { kernel }` | A | NOT a `WeightedSum` — trace-driven product of gathers across `num_phases/n_vra` expanding tables per output. Needs new primitive `Op::TraceGatherProduct { dst, source_tables, index_source, shifts, mask }` (closes over the full product loop), or decomposes into `n_vra` scatter/gather/multiply chains. |
 | `MaterializeCombinedVal { kernel }` | A | NOT a `WeightedSum` — combines a pre-computed `table_values` array (built from `instance_scalars` × `combine_entries`) with a trace-driven gather-by-`table_kind_indices[j]` plus per-cycle conditional from `is_interleaved[j]`. Needs new primitive `Op::TraceGatherIndexed` and conditional-scalar injection. |
-| `SuffixScatter { kernel, phase }` | A | NOT a `WeightedSum` — trace-driven scatter into `num_tables × suffixes_per_table` output polys, weighted by `instance_weights[j]` and `suffix_ops[t].eval(key & suffix_mask)`. Needs new `Op::TraceScatter { outputs, index_source, weight_source, value_fn }`. |
-| `QBufferScatter { kernel, phase }` | A | Same primitive family as `SuffixScatter` — 6 Q-buffer outputs with bit-uninterleave and a conditional on `is_interleaved[j]`. Same new primitive applies with richer output set. |
+| `SuffixScatter { kernel, suffix_len }` | A | NOT a `WeightedSum` — trace-driven scatter into `num_tables × suffixes_per_table` output polys, weighted by `instance_weights[j]` and `suffix_ops[t].eval(key & suffix_mask)`. Needs new `Op::TraceScatter { outputs, index_source, weight_source, value_fn }`. Field set already slimmed in S5.scatter_field_slim — `phase` collapsed into `suffix_len` at emission time. |
+| `QBufferScatter { kernel, suffix_len }` | A | Same primitive family as `SuffixScatter` — 6 Q-buffer outputs with bit-uninterleave and a conditional on `is_interleaved[j]`. Same new primitive applies with richer output set. Field set already slimmed in S5.scatter_field_slim (same as `SuffixScatter`). |
 | `ReadCheckingReduce { kernel, round, r_x_challenge }` | B | `Op::Reduce { specs: [ReduceSpec { axes: Flat, kernel: composed_prefix_suffix, .. }] }`. Compiler lowers the `combine_entries` matrix + `prefix_lowered[round]` into `KernelSpec.formula` at compile time. Substantial `KernelSpec` extension. |
 | `RafReduce { batch, instance, kernel }` | B | `Op::Reduce` with a product-of-sums formula over the Q/P buffers, gamma-weighted. Reads `state.read_checking_evals` + `state.batch_instance_claims[batch][instance]` as implicit inputs; generic `Op::Reduce` doesn't express this state flow yet. |
 | `MaterializePBuffers { kernel }` | C | Feasible with preprocessed polys. Outputs `p_identity[i] = cp × m + i`, `p_left[i] = cp × half_m + lo(i)`, `p_right[i] = cp × half_m + ro(i)`. Needs new preprocessed polys `ChunkSizeConst(chunk_bits)`, `HalfChunkSizeConst(chunk_bits)`, `Identity(chunk_bits)`, `UninterleaveLo(chunk_bits)`, `UninterleaveRo(chunk_bits)` + 3× `Op::WeightedSum`. |
@@ -203,6 +203,10 @@ landing the first two S5 renames exposed three distinct blocker classes).
    `{num_phases, phase}` → `suffix_len`. Reduces field-set protocol
    leakage even though the variant itself persists pending Group A
    resolution. One commit.
+1a. **S5.scatter_field_slim** (landed): slimmed `SuffixScatter` and
+   `QBufferScatter` `phase` → `suffix_len` (same pattern,
+   `(num_phases − 1 − phase) × chunk_bits` precomputed at emission
+   time). Variants persist pending Group A. One commit.
 2. **S5.materialize_p_buffers** (Group C): preprocessed-poly
    infrastructure + 3× `Op::WeightedSum` emission. Local; doesn't
    depend on Group A or B work. One commit.
