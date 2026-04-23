@@ -309,25 +309,55 @@ green.
 ## O5 — Lower protocol-specific compute ops
 
 **Why now**: the big win. Every symptom of "runtime knows about protocols"
-comes from these 9+ ops.
+comes from these ops.
 
-**What changes** — one sub-phase per op family. Each landed via dual-path.
+**Status snapshot** (updated after the first three S5 sub-phases landed):
 
-| Protocol op | Target lowering |
-|---|---|
-| `Op::ReadCheckingReduce { kernel, round, r_x_challenge }` | `Op::Reduce { specs: [ReduceSpec { axes: Flat, kernel: composed_prefix_suffix_kernel, … }] }` — the per-round prefix×suffix evaluation becomes a kernel formula; compiler lowers the combine matrix into `KernelSpec.formula` |
-| `Op::RafReduce { batch, instance, kernel }` | `Op::Reduce` with product-of-sums formula kernel |
-| `Op::SuffixScatter` / `Op::QBufferScatter` | `Op::WeightedSum` + `Op::Reduce` with sparse axes; introduce a generic `Op::Scatter { dst, source, index_poly }` if the pattern doesn't fit `Op::WeightedSum` |
-| `Op::InitInstanceWeights` / `Op::UpdateInstanceWeights` | `Op::ExpandingTableUpdate` (already generic primitive — just reroute the emission + delete the specialized arms) |
-| `Op::MaterializeRA` / `Op::MaterializeCombinedVal` | `Op::WeightedSum` + primitive materializes; protocol-specific kernel-input construction moves into compiler lowering (not a runtime op) |
-| `Op::MaterializePBuffers` | `Op::InstanceScalarUpdate` (see below) + primitive materializes |
-| `Op::MaterializeSegmentedOuterEq` | New generic primitive `Op::BuildSegmentedEq { batch, instance, outer_challenges, inner_num_vars, outer_num_vars }` — names what it builds, not what uses it |
-| `Op::CheckpointEvalBatch { updates: Vec<(usize, CheckpointEvalAction)> }` | Rename to `Op::InstanceScalarUpdate { updates: Vec<(InstanceIdx, ScalarUpdateAction)> }`. `CheckpointEvalAction` → `ScalarUpdateAction`. `state.instance_checkpoints` → `state.instance_scalars`. The IR primitive (`ScalarExpr`) stays — it's a legitimate generic scalar-arithmetic primitive |
+| Sub-phase | Status | Commit |
+|---|---|---|
+| `S5.rename` — `CheckpointEvalBatch` → `InstanceScalarUpdate` | landed | `4d5e36832` |
+| `S5.build_segmented_eq` — `MaterializeSegmentedOuterEq` → `BuildSegmentedEq` (rename + field slim) | landed | `91dc8a2f6` |
+| `S5.field_slim` — `UpdateInstanceWeights {num_phases, phase}` → `{suffix_len}` | landed | `52125c160` |
+| Docs refresh — revised S5 targets with accurate blocker classes | landed | `9c4f4d39a` |
 
-**Also deleted in O5**: `crates/jolt-zkvm/src/runtime/prefix_suffix.rs` — a
-131-LOC file that exists only to implement the protocol-specific
-`Op::SuffixScatter` et al. Once those ops are lowered, the file's callers
-disappear and it deletes itself.
+Three sub-phases remain at the variant-removal level; 9 protocol-specific
+variants still emit. See `crates/jolt-compiler/OPS.md` §"Protocol-specific —
+lower to primitives" for the authoritative target table — this section
+records the plan-level framing.
+
+**Blocker groups** (from reading each remaining handler — the original
+targets conflated three distinct classes under "simple reroute"):
+
+- **(A) State-in-host + trace-driven**: `state.instance_weights: Vec<F>`
+  is host-allocated and accessed by trace cycle index; the ops that
+  read/write it while also consuming `provider.lookup_trace()` have no
+  existing primitive analog. Relocating `instance_weights` to a device
+  buffer (`PolynomialId::InstanceWeights`) plus introducing
+  `Op::TraceGatherMultiply` / `Op::TraceGatherProduct` /
+  `Op::TraceGatherIndexed` / `Op::TraceScatter` primitives is a
+  prerequisite for 6 ops: `InitInstanceWeights`, `UpdateInstanceWeights`,
+  `MaterializeRA`, `MaterializeCombinedVal`, `SuffixScatter`,
+  `QBufferScatter`.
+- **(B) Kernel formula lowering**: `ReadCheckingReduce` / `RafReduce`
+  lower to `Op::Reduce` once `KernelSpec.formula` can express
+  combine-entries + gamma-weighted products. Affects 2 ops.
+- **(C) `WeightedSum` shape mismatch**: `MaterializePBuffers` produces
+  `base_scalar + index_fn(i)` where `index_fn ∈ {i, lo(i), ro(i)}`.
+  Feasible standalone with new preprocessed polys (`ChunkSizeConst`,
+  `HalfChunkSizeConst`, `UninterleaveLo`, `UninterleaveRo`) + 3×
+  `Op::WeightedSum`. Affects 1 op.
+
+**Revised graduation order** (subsequent sub-phases):
+
+1. `S5.materialize_p_buffers` (Group C, standalone): preprocessed-poly
+   infrastructure + 3× `Op::WeightedSum` emission. One commit.
+2. `S5.instance_weights_device` (Group A prerequisite, multi-commit):
+   relocate `state.instance_weights` to a device buffer; introduce
+   `Op::TraceGatherMultiply` + `Op::TraceScatter` primitives. Unblocks
+   6 ops.
+3. `S5.kernel_formula` (Group B prerequisite): extend `KernelSpec` for
+   combine-entry + gamma-weighted product shapes. Unblocks 2 ops.
+4. Remaining ops lower one-by-one post-prerequisites.
 
 **Correctness rail**: dual-path validation per op family. For each op X:
 1. Compiler emits BOTH the old `Op::X` AND the new primitive-lowered sequence.
@@ -340,21 +370,25 @@ disappear and it deletes itself.
 
 Same pattern that unified-reduce (T2-C) validated. Re-use that bridge.
 
+**Also deleted in O5**: `crates/jolt-zkvm/src/runtime/prefix_suffix.rs` — a
+131-LOC file that exists only to implement the protocol-specific
+`Op::SuffixScatter` et al. Once those ops are lowered, the file's callers
+disappear and it deletes itself.
+
 **Exit**:
-- 9 protocol-specific ops removed from the `Op` enum (after the rename of
-  `CheckpointEvalBatch`, 8 removed outright + 1 renamed).
+- 9 protocol-specific ops removed from the `Op` enum.
 - Runtime `handlers.rs` arm count drops from ~41 to ~23.
 - `grep -E 'Op::(Lookup|Ram|Instruction|RA|RAF|Booleanity|Checkpoint|Read|Raf|Suffix|QBuffer)' crates/jolt-zkvm/src/runtime/handlers.rs` returns zero hits.
 - `Op::is_primitive()` returns `true` for every remaining variant.
 - `runtime/prefix_suffix.rs` is deleted.
 - Full jolt-equivalence suite green; all three handler-size grep tests pass.
 
-**Scope**: 5–10 commits, ~2000–3000 LOC churn. This is the dominant cost
-of the overhaul. Order within O5 can follow dependency: `InitInstanceWeights`/
-`UpdateInstanceWeights` → `MaterializeRA`/`MaterializeCombinedVal` →
-`MaterializeSegmentedOuterEq` → `ReadCheckingReduce` → `RafReduce` →
-`SuffixScatter`/`QBufferScatter` → `MaterializePBuffers` → `CheckpointEvalBatch`
-rename.
+**Scope** (revised after blocker analysis): ~10–15 commits, ~3000–4500
+LOC churn including the Group A / Group B prerequisite infrastructure.
+Original estimate of 5–10 commits / 2000–3000 LOC was based on the
+optimistic "simple reroute" framing; the actual infrastructure for
+device-side `instance_weights` and `KernelSpec.formula` extension is
+larger than the original plan anticipated.
 
 ---
 
