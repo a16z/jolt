@@ -188,7 +188,7 @@ landing the first two S5 renames exposed three distinct blocker classes).
 | Variant | Blocker | Refined target |
 |---|---|---|
 | `InitInstanceWeights { r_reduction, num_prefixes }` | A | Build eq-table via `InitExpandingTable` + `ExpandingTableUpdate` ×`\|r_reduction\|` **into a device buffer** (new `PolynomialId::InstanceWeights`). Separately reset `instance_scalars` — either via `InstanceScalarUpdate` with N `Clear` actions, or via a new primitive `Op::AllocInstanceScalars { size }`. |
-| `UpdateInstanceWeights { expanding_table, chunk_bits, num_phases, phase }` | A | NOT an `ExpandingTableUpdate` — it's a trace-driven gather-multiply on `instance_weights[j]` indexed by `(key >> suffix_len) & mask`. Needs new primitive `Op::TraceGatherMultiply { dst, source_table, index_source, shift, mask }`. Field slim: `num_phases, phase` collapse to `suffix_len = (num_phases − phase) × chunk_bits`. |
+| `UpdateInstanceWeights { expanding_table, chunk_bits, suffix_len }` | A | NOT an `ExpandingTableUpdate` — it's a trace-driven gather-multiply on `instance_weights[j]` indexed by `(key >> suffix_len) & mask`. Needs new primitive `Op::TraceGatherMultiply { dst, source_table, index_source, shift, mask }`. Field set already slimmed in S5.field_slim — `{num_phases, phase}` collapsed into `suffix_len` at emission time. |
 | `MaterializeRA { kernel }` | A | NOT a `WeightedSum` — trace-driven product of gathers across `num_phases/n_vra` expanding tables per output. Needs new primitive `Op::TraceGatherProduct { dst, source_tables, index_source, shifts, mask }` (closes over the full product loop), or decomposes into `n_vra` scatter/gather/multiply chains. |
 | `MaterializeCombinedVal { kernel }` | A | NOT a `WeightedSum` — combines a pre-computed `table_values` array (built from `instance_scalars` × `combine_entries`) with a trace-driven gather-by-`table_kind_indices[j]` plus per-cycle conditional from `is_interleaved[j]`. Needs new primitive `Op::TraceGatherIndexed` and conditional-scalar injection. |
 | `SuffixScatter { kernel, phase }` | A | NOT a `WeightedSum` — trace-driven scatter into `num_tables × suffixes_per_table` output polys, weighted by `instance_weights[j]` and `suffix_ops[t].eval(key & suffix_mask)`. Needs new `Op::TraceScatter { outputs, index_source, weight_source, value_fn }`. |
@@ -199,7 +199,7 @@ landing the first two S5 renames exposed three distinct blocker classes).
 
 **Graduation order** (revised):
 
-1. **S5.field_slim** (easy, single op): slim `UpdateInstanceWeights`
+1. **S5.field_slim** (landed): slimmed `UpdateInstanceWeights`
    `{num_phases, phase}` → `suffix_len`. Reduces field-set protocol
    leakage even though the variant itself persists pending Group A
    resolution. One commit.

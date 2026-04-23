@@ -755,13 +755,11 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
         Op::UpdateInstanceWeights {
             expanding_table,
             chunk_bits,
-            num_phases,
-            phase,
+            suffix_len,
         } => {
             let trace = provider.lookup_trace().unwrap();
             let prev_data = backend.download(device_buffers[expanding_table].as_field());
             let m_mask = (1usize << chunk_bits) - 1;
-            let suffix_len = (num_phases - phase) * chunk_bits;
             for (j, &key) in trace.lookup_keys.iter().enumerate() {
                 state.instance_weights[j] *= prev_data[((key >> suffix_len) as usize) & m_mask];
             }

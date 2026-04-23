@@ -1322,11 +1322,15 @@ pub enum Op {
     },
     /// Multiply instance weights by expanding-table lookups at a phase boundary.
     /// Emitted for phase > 0 of address-decomposition instances.
+    ///
+    /// `suffix_len` is the bit shift applied to each lookup key before
+    /// indexing the table — equal to `(num_phases − phase) × chunk_bits`
+    /// at the call site. Collapsed from `{num_phases, phase}` at compile
+    /// time (S5.field_slim).
     UpdateInstanceWeights {
         expanding_table: PolynomialId,
         chunk_bits: usize,
-        num_phases: usize,
-        phase: usize,
+        suffix_len: usize,
     },
     /// Scatter weighted suffix evaluations into per-table polynomial buffers.
     SuffixScatter { kernel: usize, phase: usize },

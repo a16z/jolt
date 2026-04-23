@@ -507,8 +507,7 @@ impl ModuleBuilder {
                         self.ops.push(Op::UpdateInstanceWeights {
                             expanding_table: PolynomialId::ExpandingTable(sub_phase - 1),
                             chunk_bits,
-                            num_phases: ic.num_phases,
-                            phase: sub_phase,
+                            suffix_len: (ic.num_phases - sub_phase) * chunk_bits,
                         });
                         emit_scatter_ops(&mut self.ops, kernel, sub_phase, chunk_bits);
                     } else {
