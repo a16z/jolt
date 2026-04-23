@@ -1,4 +1,4 @@
-//! Lower [`CheckpointRule`]s into compiled [`CheckpointEvalAction`]s.
+//! Lower [`CheckpointRule`]s into compiled [`ScalarUpdateAction`]s.
 //!
 //! At compile time we know `(j, suffix_len, r_x, r_y)`, so the guard selection,
 //! weight exponents, and special-case constants can all be baked into the op.
@@ -6,8 +6,8 @@
 //! of the rule structure.
 
 use crate::module::{
-    BilinearExpr, ChallengeIdx, CheckpointAction, CheckpointEvalAction, CheckpointRule, DefaultVal,
-    Monomial, RoundGuard, ScalarExpr, ValueSource, WeightFn,
+    BilinearExpr, ChallengeIdx, CheckpointAction, CheckpointRule, DefaultVal, Monomial, RoundGuard,
+    ScalarExpr, ScalarUpdateAction, ValueSource, WeightFn,
 };
 
 /// Lower one [`CheckpointRule`] at a specific round for the given challenges.
@@ -21,7 +21,7 @@ pub fn lower_checkpoint_rule(
     r_y: ChallengeIdx,
     j: usize,
     suffix_len: usize,
-) -> Option<CheckpointEvalAction> {
+) -> Option<ScalarUpdateAction> {
     let action = rule
         .cases
         .iter()
@@ -50,7 +50,7 @@ fn lower_action(
     r_x: ChallengeIdx,
     r_y: ChallengeIdx,
     j: usize,
-) -> CheckpointEvalAction {
+) -> ScalarUpdateAction {
     let cp_self = |d: DefaultVal| ValueSource::Checkpoint {
         idx: self_idx,
         default: d,
@@ -63,7 +63,7 @@ fn lower_action(
             for m in bilinear_monomials(*expr, r_x, r_y) {
                 out.push(prepend_factor(m, cp_self(rule_default)));
             }
-            CheckpointEvalAction::Set(out)
+            ScalarUpdateAction::Set(out)
         }
         CheckpointAction::AddWeighted { weight, expr } => {
             let weight_src = weight_value(*weight, j);
@@ -74,9 +74,9 @@ fn lower_action(
             for m in bilinear_monomials(*expr, r_x, r_y) {
                 out.push(prepend_factor(m, weight_src.clone()));
             }
-            CheckpointEvalAction::Set(out)
+            ScalarUpdateAction::Set(out)
         }
-        CheckpointAction::AddTwoTerm { x_weight, y_weight } => CheckpointEvalAction::Set(vec![
+        CheckpointAction::AddTwoTerm { x_weight, y_weight } => ScalarUpdateAction::Set(vec![
             Monomial {
                 coeff: 1,
                 factors: vec![cp_self(rule_default)],
@@ -102,7 +102,7 @@ fn lower_action(
             for m in bilinear_monomials(*expr, r_x, r_y) {
                 out.push(prepend_factor(m, cp_dep(*dep, *dep_default)));
             }
-            CheckpointEvalAction::Set(out)
+            ScalarUpdateAction::Set(out)
         }
         CheckpointAction::DepAddWeighted {
             dep,
@@ -124,7 +124,7 @@ fn lower_action(
                     factors,
                 });
             }
-            CheckpointEvalAction::Set(out)
+            ScalarUpdateAction::Set(out)
         }
         CheckpointAction::Hybrid { mul, add } => {
             let mut out = ScalarExpr::new();
@@ -132,7 +132,7 @@ fn lower_action(
                 out.push(prepend_factor(m, cp_self(rule_default)));
             }
             out.extend(bilinear_monomials(*add, r_x, r_y));
-            CheckpointEvalAction::Set(out)
+            ScalarUpdateAction::Set(out)
         }
         CheckpointAction::SignExtAccum { dep, final_j } => {
             // Interpreter uses F::zero() for missing self, not rule.default.
@@ -162,7 +162,7 @@ fn lower_action(
                     m.factors.push(dep_factor.clone());
                 }
             }
-            CheckpointEvalAction::Set(out)
+            ScalarUpdateAction::Set(out)
         }
         CheckpointAction::Rev8WAdd { xlen } => {
             let self_zero = ValueSource::Checkpoint {
@@ -187,7 +187,7 @@ fn lower_action(
                     factors: vec![ValueSource::Challenge(r_x)],
                 });
             }
-            CheckpointEvalAction::Set(out)
+            ScalarUpdateAction::Set(out)
         }
         CheckpointAction::Pow2DoubleMul { xlen } => {
             // val = cp * (1 + (shift_x - 1) * r_x) * (1 + (shift_y - 1) * r_y)
@@ -204,7 +204,7 @@ fn lower_action(
             let sy: i128 = (shift_y as i128) - 1;
             // (cp) * (1 + sx*r_x) * (1 + sy*r_y)
             //   = cp + sx*cp*r_x + sy*cp*r_y + sx*sy*cp*r_x*r_y
-            CheckpointEvalAction::Set(vec![
+            ScalarUpdateAction::Set(vec![
                 Monomial {
                     coeff: 1,
                     factors: vec![self_zero.clone()],
@@ -229,7 +229,7 @@ fn lower_action(
         }
         CheckpointAction::Pow2Init { half_pow } => {
             let shift: u64 = 1u64 << *half_pow;
-            CheckpointEvalAction::Set(vec![
+            ScalarUpdateAction::Set(vec![
                 Monomial {
                     coeff: 1,
                     factors: vec![],
@@ -240,23 +240,21 @@ fn lower_action(
                 },
             ])
         }
-        CheckpointAction::Set(expr) => {
-            CheckpointEvalAction::Set(bilinear_monomials(*expr, r_x, r_y))
-        }
+        CheckpointAction::Set(expr) => ScalarUpdateAction::Set(bilinear_monomials(*expr, r_x, r_y)),
         CheckpointAction::SetScaled { coeff, expr } => {
             let mut out = bilinear_monomials(*expr, r_x, r_y);
             for m in &mut out {
                 m.coeff = m.coeff.wrapping_mul(*coeff);
             }
-            CheckpointEvalAction::Set(out)
+            ScalarUpdateAction::Set(out)
         }
         CheckpointAction::Const(val) => match val {
-            DefaultVal::Zero => CheckpointEvalAction::Set(vec![]),
-            DefaultVal::One => CheckpointEvalAction::Set(vec![Monomial {
+            DefaultVal::Zero => ScalarUpdateAction::Set(vec![]),
+            DefaultVal::One => ScalarUpdateAction::Set(vec![Monomial {
                 coeff: 1,
                 factors: vec![],
             }]),
-            DefaultVal::Custom(v) => CheckpointEvalAction::Set(vec![Monomial {
+            DefaultVal::Custom(v) => ScalarUpdateAction::Set(vec![Monomial {
                 coeff: *v,
                 factors: vec![],
             }]),
@@ -264,7 +262,7 @@ fn lower_action(
         CheckpointAction::Passthrough => {
             unreachable!("Passthrough is handled by lower_checkpoint_rule returning None")
         }
-        CheckpointAction::Null => CheckpointEvalAction::Clear,
+        CheckpointAction::Null => ScalarUpdateAction::Clear,
     }
 }
 

@@ -24,20 +24,21 @@ use crate::formula::BindingOrder;
 use crate::ir::PolyKind;
 use crate::module::{
     BatchIdx, BatchedSumcheckDef, BufferRef, ChallengeDecl, ChallengeIdx, ChallengeSource,
-    CheckpointEvalAction, ClaimFormula, DomainSeparator, EvalMode, GruenContext, InputBinding,
-    InstanceConfig, InstanceIdx, KernelDef, Module, Op, PolyDecl, ReduceAxes, ReduceDestination,
-    ReduceSpec, RoundPolyEncoding, Schedule, VerifierOp, VerifierSchedule, VerifierStageIndex,
+    ClaimFormula, DomainSeparator, EvalMode, GruenContext, InputBinding, InstanceConfig,
+    InstanceIdx, KernelDef, Module, Op, PolyDecl, ReduceAxes, ReduceDestination, ReduceSpec,
+    RoundPolyEncoding, ScalarUpdateAction, Schedule, VerifierOp, VerifierSchedule,
+    VerifierStageIndex,
 };
 use crate::PolynomialId;
 
-/// Build the per-slot update list for an `Op::CheckpointEvalBatch` at
+/// Build the per-slot update list for an `Op::InstanceScalarUpdate` at
 /// `(round, suffix_len)` by lowering every rule in `config`.
-fn build_checkpoint_batch(
+fn build_scalar_update_batch(
     config: &InstanceConfig,
     r_x: ChallengeIdx,
     r_y: ChallengeIdx,
     round: usize,
-) -> Vec<(usize, CheckpointEvalAction)> {
+) -> Vec<(usize, ScalarUpdateAction)> {
     let suffix_len =
         config.total_address_bits - (round / config.chunk_bits + 1) * config.chunk_bits;
     config
@@ -480,14 +481,14 @@ impl ModuleBuilder {
                             current_len: 1 << (chunk_bits - 1),
                         });
                         if instance_round % 2 == 0 {
-                            let updates = build_checkpoint_batch(
+                            let updates = build_scalar_update_batch(
                                 ic,
                                 indices[round - 2],
                                 indices[round - 1],
                                 instance_round - 1,
                             );
                             if !updates.is_empty() {
-                                self.ops.push(Op::CheckpointEvalBatch { updates });
+                                self.ops.push(Op::InstanceScalarUpdate { updates });
                             }
                         }
                         // Capture registry CPs from bound-down P buffers.
@@ -524,14 +525,14 @@ impl ModuleBuilder {
                             current_len: 1 << (round_in_sub - 1),
                         });
                         if instance_round >= 2 && instance_round % 2 == 0 {
-                            let updates = build_checkpoint_batch(
+                            let updates = build_scalar_update_batch(
                                 ic,
                                 indices[round - 2],
                                 indices[round - 1],
                                 instance_round - 1,
                             );
                             if !updates.is_empty() {
-                                self.ops.push(Op::CheckpointEvalBatch { updates });
+                                self.ops.push(Op::InstanceScalarUpdate { updates });
                             }
                         }
                     }
@@ -578,14 +579,14 @@ impl ModuleBuilder {
                             });
                             let prev_instance_round = instance_round - 1;
                             if prev_instance_round >= 1 && (prev_instance_round + 1) % 2 == 0 {
-                                let updates = build_checkpoint_batch(
+                                let updates = build_scalar_update_batch(
                                     ic,
                                     indices[round - 2],
                                     indices[round - 1],
                                     prev_instance_round,
                                 );
                                 if !updates.is_empty() {
-                                    self.ops.push(Op::CheckpointEvalBatch { updates });
+                                    self.ops.push(Op::InstanceScalarUpdate { updates });
                                 }
                             }
                             // Capture registry CPs.

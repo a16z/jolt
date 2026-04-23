@@ -713,7 +713,7 @@ pub enum ValueSource {
     /// Checkpoint snapshot `checkpoints[idx].unwrap_or(default)`.
     ///
     /// Reads from the pre-batch snapshot so updates within one
-    /// `CheckpointEvalBatch` don't see each other's writes.
+    /// `InstanceScalarUpdate` don't see each other's writes.
     Checkpoint { idx: usize, default: DefaultVal },
     /// `buffers[poly][index]` — read the current evaluation index from a
     /// named buffer. Used when evaluating per-`b` expressions such as
@@ -739,9 +739,9 @@ pub struct Monomial {
 /// Sum of monomials, evaluated against challenges + checkpoint snapshot.
 pub type ScalarExpr = Vec<Monomial>;
 
-/// Update action for a single checkpoint slot in `Op::CheckpointEvalBatch`.
+/// Update action for a single checkpoint slot in `Op::InstanceScalarUpdate`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum CheckpointEvalAction {
+pub enum ScalarUpdateAction {
     /// Write `expr` evaluated against the pre-batch snapshot.
     Set(ScalarExpr),
     /// Clear the checkpoint (becomes `None`).
@@ -1377,11 +1377,11 @@ pub enum Op {
     },
     /// Update a batch of instance checkpoints using compiled scalar expressions.
     ///
-    /// Atomic: reads all inputs from a snapshot of `instance_checkpoints`
+    /// Atomic: reads all inputs from a snapshot of `instance_scalars`
     /// taken before any writes, so `DepAdd`-style rules that read one
     /// checkpoint while updating another observe the pre-batch state.
-    CheckpointEvalBatch {
-        updates: Vec<(usize, CheckpointEvalAction)>,
+    InstanceScalarUpdate {
+        updates: Vec<(usize, ScalarUpdateAction)>,
     },
 
     /// Extract polynomial evaluation.
@@ -1739,7 +1739,7 @@ impl Op {
             Op::MaterializeUnlessFresh { .. } | Op::MaterializeIfAbsent { .. } => true, // flip to false in O4.b
 
             // --- protocol-specific: renamed in O5 ---
-            Op::CheckpointEvalBatch { .. } => true, // flip to false in O5 (rename to InstanceScalarUpdate)
+            Op::InstanceScalarUpdate { .. } => true, // flip to false in O5 (rename to InstanceScalarUpdate)
 
             // --- protocol-specific: lowered to primitives in O5 ---
             Op::ReadCheckingReduce { .. }

@@ -15,8 +15,8 @@ use std::collections::HashMap;
 use ark_ff::UniformRand;
 use jolt_compiler::checkpoint_lowering::lower_checkpoint_rule;
 use jolt_compiler::module::{
-    BilinearExpr, ChallengeIdx, CheckpointAction, CheckpointEvalAction, CheckpointRule, DefaultVal,
-    RoundGuard, WeightFn,
+    BilinearExpr, ChallengeIdx, CheckpointAction, CheckpointRule, DefaultVal, RoundGuard,
+    ScalarUpdateAction, WeightFn,
 };
 use jolt_compiler::scalar_expr::eval_scalar_expr;
 use jolt_compiler::PolynomialId;
@@ -45,8 +45,8 @@ fn run_both(
     let new = match lowered {
         // Skipped (Passthrough): slot stays at its pre-batch value.
         None => snapshot[self_idx],
-        Some(CheckpointEvalAction::Clear) => None,
-        Some(CheckpointEvalAction::Set(e)) => {
+        Some(ScalarUpdateAction::Clear) => None,
+        Some(ScalarUpdateAction::Set(e)) => {
             Some(eval_scalar_expr(&e, &[rx, ry], snapshot, 0, &empty))
         }
     };

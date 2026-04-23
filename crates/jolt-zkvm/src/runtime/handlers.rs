@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use rayon::prelude::*;
 
 use jolt_compiler::module::{
-    ChallengeIdx, CheckpointEvalAction, DomainSeparator, EvalMode, Op, ReduceDestination,
-    RoundPolyEncoding,
+    ChallengeIdx, DomainSeparator, EvalMode, Op, ReduceDestination, RoundPolyEncoding,
+    ScalarUpdateAction,
 };
 use jolt_compiler::BufferProvider;
 use jolt_compiler::PolynomialId;
@@ -71,7 +71,7 @@ fn op_span(op: &Op) -> tracing::span::EnteredSpan {
         }
         Op::BatchRoundFinalize { .. } => tracing::info_span!("BatchRoundFinalize").entered(),
         Op::ExpandingTableUpdate { .. } => tracing::info_span!("ExpandingTableUpdate").entered(),
-        Op::CheckpointEvalBatch { .. } => tracing::info_span!("CheckpointEvalBatch").entered(),
+        Op::InstanceScalarUpdate { .. } => tracing::info_span!("InstanceScalarUpdate").entered(),
         Op::InitInstanceWeights { .. } => tracing::info_span!("InitInstanceWeights").entered(),
         Op::UpdateInstanceWeights { .. } => tracing::info_span!("UpdateInstanceWeights").entered(),
         Op::SuffixScatter { .. } => tracing::info_span!("SuffixScatter").entered(),
@@ -713,13 +713,13 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             let _ = device_buffers.insert(*table, DeviceBuffer::Field(new_buf));
         }
 
-        Op::CheckpointEvalBatch { updates } => {
-            let snapshot: Vec<Option<F>> = state.instance_checkpoints.clone();
+        Op::InstanceScalarUpdate { updates } => {
+            let snapshot: Vec<Option<F>> = state.instance_scalars.clone();
             let empty_buffers: std::collections::HashMap<PolynomialId, &[F]> =
                 std::collections::HashMap::new();
             for (idx, action) in updates {
                 match action {
-                    CheckpointEvalAction::Set(expr) => {
+                    ScalarUpdateAction::Set(expr) => {
                         let v = jolt_compiler::scalar_expr::eval_scalar_expr(
                             expr,
                             &state.challenges,
@@ -727,10 +727,10 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                             0,
                             &empty_buffers,
                         );
-                        state.instance_checkpoints[*idx] = Some(v);
+                        state.instance_scalars[*idx] = Some(v);
                     }
-                    CheckpointEvalAction::Clear => {
-                        state.instance_checkpoints[*idx] = None;
+                    ScalarUpdateAction::Clear => {
+                        state.instance_scalars[*idx] = None;
                     }
                 }
             }
@@ -745,7 +745,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                 .map(|ci| state.challenges[ci.0])
                 .collect();
             state.instance_weights = jolt_poly::EqPolynomial::<F>::evals(&point, None);
-            state.instance_checkpoints = vec![None; *num_prefixes];
+            state.instance_scalars = vec![None; *num_prefixes];
         }
 
         Op::UpdateInstanceWeights {
@@ -930,7 +930,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                         .collect()
                 })
                 .collect();
-            let checkpoints: Vec<Option<F>> = state.instance_checkpoints.clone();
+            let checkpoints: Vec<Option<F>> = state.instance_scalars.clone();
             let r_x: Option<F> = r_x_challenge.map(|ci| state.challenges[ci.0]);
             state.read_checking_evals =
                 crate::runtime::prefix_suffix::compute_read_checking_from_lowered(
@@ -1043,7 +1043,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                 .unwrap();
             let trace = provider.lookup_trace().unwrap();
             let prefix_vals: Vec<F> = state
-                .instance_checkpoints
+                .instance_scalars
                 .iter()
                 .map(|v| v.unwrap_or(F::zero()))
                 .collect();

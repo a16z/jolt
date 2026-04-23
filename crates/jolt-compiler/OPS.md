@@ -125,14 +125,23 @@ that compile-time producer-analysis can replace. **Resolved in O4.b.**
 | `MaterializeUnlessFresh { binding, expected_size }` | Either `Op::Materialize { binding }` or nothing — compiler tracks which polys earlier ops have produced, emits straight `Op::Materialize` only where needed. |
 | `MaterializeIfAbsent { binding }` | Same pattern: either `Op::Materialize` or nothing. |
 
-### Protocol-specific — rename only (1)
+### Protocol-specific — rename only (0, landed)
 
-Primitive behavior, but the name leaks a protocol concept.
-**Resolved in O5 by rename** (not by lowering).
+Primitive behavior, name-only protocol leak. **Landed via rename** — see
+below.
 
-| Variant | Target |
-|---|---|
-| `CheckpointEvalBatch { updates: Vec<(usize, CheckpointEvalAction)> }` | Rename to `Op::InstanceScalarUpdate { updates: Vec<(InstanceIdx, ScalarUpdateAction)> }`. Behavior unchanged: evaluate compiled `ScalarExpr`s against the pre-batch snapshot of per-instance scalars, write back atomically. The mechanism is generic; "checkpoint" is only a lookup-address-decomposition usage. `CheckpointEvalAction` → `ScalarUpdateAction`. Runtime's `state.instance_checkpoints` → `state.instance_scalars`. |
+| Former variant | Renamed to | Commit |
+|---|---|---|
+| `CheckpointEvalBatch { updates: Vec<(usize, CheckpointEvalAction)> }` | `InstanceScalarUpdate { updates: Vec<(usize, ScalarUpdateAction)> }` | S5.rename |
+
+Also renamed: `CheckpointEvalAction` → `ScalarUpdateAction`; runtime
+`state.instance_checkpoints` → `state.instance_scalars`;
+`build_checkpoint_batch` helper → `build_scalar_update_batch`. Behavior
+unchanged: evaluate compiled `ScalarExpr`s against a pre-batch snapshot
+of per-instance scalar state, write back atomically. The `usize` index
+into per-instance scalar slots was kept as-is (it's a checkpoint-slot
+index, not an `InstanceIdx` — the original OPS.md proposal to retype it
+was inaccurate; the `usize` is correct for the schema).
 
 ### Protocol-specific — lower to primitives (10)
 
@@ -164,11 +173,11 @@ corresponding O5 sub-phase actually lands).
 | Primitive — orchestration | 9 | `true` |
 | Primitive — resource | 3 | `true` |
 | Batch-scaffold | 4 | `true` |
-| Redundant (→ O4.a) | 3 | `false` |
-| Conditional (→ O4.b) | 2 | `false` |
-| Protocol-specific: rename (→ O5) | 1 | `false` |
-| Protocol-specific: lower (→ O5) | 10 | `false` |
-| **Total** | **52** | |
+| Redundant (landed O4.a) | 0 (was 3) | — |
+| Conditional (deferred to O6/O7) | 2 | `true` (ratchet unchanged until pass ships) |
+| Protocol-specific: rename (landed S5.rename) | 0 (was 1) | — |
+| Protocol-specific: lower (→ O5) | 10 | `true` (ratchet unchanged until lowered) |
+| **Current total** | **48** | |
 
 Post-O5 target: 36 primitive + batch-scaffold variants (plus any new generic
 primitives introduced during O5 lowering — e.g., `Op::BuildSegmentedEq`,

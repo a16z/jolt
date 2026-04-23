@@ -58,7 +58,7 @@ fn op_class_tag(op: &jolt_compiler::module::Op) -> Option<&'static str> {
         Op::ExpandingTableUpdate { .. } => "ExpandingTableUpdate",
         Op::InitExpandingTable { .. } => "InitExpandingTable",
         Op::WeightedSum { .. } => "WeightedSum",
-        Op::CheckpointEvalBatch { .. } => "CheckpointEvalBatch",
+        Op::InstanceScalarUpdate { .. } => "InstanceScalarUpdate",
         Op::UpdateInstanceWeights { .. } => "UpdateInstanceWeights",
         Op::InitInstanceWeights { .. } => "InitInstanceWeights",
         _ => return None,
@@ -142,7 +142,7 @@ where
     /// Scalar checkpoints for address-decomposition instance (None = not yet initialized).
     /// Must preserve None vs Some(F::zero()) distinction because some checkpoints
     /// (e.g. Eq) use `unwrap_or(F::one())` where None means "use default".
-    pub(super) instance_checkpoints: Vec<Option<F>>,
+    pub(super) instance_scalars: Vec<Option<F>>,
 
     /// Intermediate [eval_0, eval_2] from ReadCheckingReduce, consumed by RafReduce.
     pub(super) read_checking_evals: [F; 2],
@@ -202,7 +202,7 @@ where
         opening_proofs: Vec::new(),
         padded_poly_data: HashMap::new(),
         instance_weights: Vec::new(),
-        instance_checkpoints: Vec::new(),
+        instance_scalars: Vec::new(),
         read_checking_evals: [F::zero(); 2],
     };
 

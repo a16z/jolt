@@ -25,12 +25,12 @@ use jolt_compiler::ir::PolyKind;
 use jolt_compiler::kernel_spec::{GruenHint, GruenQ, Iteration, LinComboQ};
 use jolt_compiler::module::{
     BatchIdx, BatchedInstance, BatchedSumcheckDef, BilinearExpr, BufferRef, ChallengeDecl,
-    ChallengeIdx, ChallengeSource, CheckpointAction, CheckpointEvalAction, CheckpointRule,
-    ClaimFactor, ClaimFormula, ClaimTerm, CombineEntry, Comparison, DefaultVal, DomainSeparator,
-    EvalMode, Evaluation, GruenContext, InputBinding, InstanceConfig, InstanceIdx, InstancePhase,
-    IntBitOp, KernelDef, Module, Op, PointNormalization, PolyDecl, PrefixMleFormula, PrefixMleRule,
-    R1CSMatrix, ReduceAxes, ReduceDestination, ReduceSpec, RemainingTest, RoundGuard,
-    RoundPolyEncoding, ScalarCapture, Schedule, SegmentedConfig, SuffixOp, SumcheckInstance,
+    ChallengeIdx, ChallengeSource, CheckpointAction, CheckpointRule, ClaimFactor, ClaimFormula,
+    ClaimTerm, CombineEntry, Comparison, DefaultVal, DomainSeparator, EvalMode, Evaluation,
+    GruenContext, InputBinding, InstanceConfig, InstanceIdx, InstancePhase, IntBitOp, KernelDef,
+    Module, Op, PointNormalization, PolyDecl, PrefixMleFormula, PrefixMleRule, R1CSMatrix,
+    ReduceAxes, ReduceDestination, ReduceSpec, RemainingTest, RoundGuard, RoundPolyEncoding,
+    ScalarCapture, ScalarUpdateAction, Schedule, SegmentedConfig, SuffixOp, SumcheckInstance,
     VerifierOp, VerifierSchedule, VerifierStageIndex, WeightFn,
 };
 use jolt_compiler::params::{
@@ -637,15 +637,15 @@ impl ChallengeTable {
 /// Emit the unrolled granular ops for a batched sumcheck.
 ///
 /// Emits unrolled per-instance, per-round granular ops for a batched sumcheck.
-/// Build the per-slot update list for an `Op::CheckpointEvalBatch` at the
+/// Build the per-slot update list for an `Op::InstanceScalarUpdate` at the
 /// given `round` of the sumcheck: lowers each checkpoint rule with the current
 /// `(r_x, r_y)` challenges and filters out passthrough slots.
-fn build_checkpoint_batch(
+fn build_scalar_update_batch(
     ic: &InstanceConfig,
     r_x: ChallengeIdx,
     r_y: ChallengeIdx,
     round: usize,
-) -> Vec<(usize, CheckpointEvalAction)> {
+) -> Vec<(usize, ScalarUpdateAction)> {
     let suffix_len = ic.total_address_bits - (round / ic.chunk_bits + 1) * ic.chunk_bits;
     ic.checkpoint_rules
         .iter()
@@ -771,14 +771,14 @@ fn emit_unrolled_batched_rounds(
                         }
                     );
                     if instance_round % 2 == 0 {
-                        let updates = build_checkpoint_batch(
+                        let updates = build_scalar_update_batch(
                             ic,
                             indices[round - 2],
                             indices[round - 1],
                             instance_round - 1,
                         );
                         if !updates.is_empty() {
-                            push_op!(ops, Op::CheckpointEvalBatch { updates });
+                            push_op!(ops, Op::InstanceScalarUpdate { updates });
                         }
                     }
                     push_op!(
@@ -831,14 +831,14 @@ fn emit_unrolled_batched_rounds(
                         }
                     );
                     if instance_round >= 2 && instance_round % 2 == 0 {
-                        let updates = build_checkpoint_batch(
+                        let updates = build_scalar_update_batch(
                             ic,
                             indices[round - 2],
                             indices[round - 1],
                             instance_round - 1,
                         );
                         if !updates.is_empty() {
-                            push_op!(ops, Op::CheckpointEvalBatch { updates });
+                            push_op!(ops, Op::InstanceScalarUpdate { updates });
                         }
                     }
                 }
@@ -896,14 +896,14 @@ fn emit_unrolled_batched_rounds(
                         );
                         let prev_instance_round = instance_round - 1;
                         if prev_instance_round >= 1 && (prev_instance_round + 1) % 2 == 0 {
-                            let updates = build_checkpoint_batch(
+                            let updates = build_scalar_update_batch(
                                 ic,
                                 indices[round - 2],
                                 indices[round - 1],
                                 prev_instance_round,
                             );
                             if !updates.is_empty() {
-                                push_op!(ops, Op::CheckpointEvalBatch { updates });
+                                push_op!(ops, Op::InstanceScalarUpdate { updates });
                             }
                         }
                         push_op!(
@@ -7634,7 +7634,7 @@ fn print_stats(module: &Module, params: &ModuleParams) {
             | Op::BatchAccumulateInstance { .. }
             | Op::BatchRoundFinalize { .. }
             | Op::ExpandingTableUpdate { .. }
-            | Op::CheckpointEvalBatch { .. }
+            | Op::InstanceScalarUpdate { .. }
             | Op::InitInstanceWeights { .. }
             | Op::UpdateInstanceWeights { .. }
             | Op::SuffixScatter { .. }
