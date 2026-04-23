@@ -2993,3 +2993,330 @@ fn fmov_i2f_tampered_write_limb_rejects() {
          MUST be rejected by the R1CS FMov-I2F gate; got Ok(())"
     );
 }
+
+// ═════════════════════════════════════════════════════════════════════════
+// AUDIT POC — bridge StageEval forgery test.
+//
+// Hypothesis from audit: the bridge sumcheck's claimed values for
+// IsFieldOpAny / IsFieldOpNoInv / FieldOpA / FieldOpB / LimbSumA / LimbSumB
+// at r_cycle_bridge are "virtual" (not PCS-committed) and only consumed via
+// StageEval inside the Stage-2 batched CheckOutput formula. If so, a
+// malicious prover could substitute zeros (or any values that make the
+// formula trivially compose with the already-fixed sumcheck final_eval),
+// bypassing the bridge identity.
+//
+// This test takes an honest proof, mutates proof.stage_proofs[1].evals
+// (Stage 2 batched sumcheck), and re-runs the verifier. Outcome reveals
+// whether the audit finding is real.
+//
+// Stage 2 eval layout (SE_BASE = 3):
+//   [21] SE_FIELD_OP_A
+//   [22] SE_FIELD_OP_B
+//   [23] SE_IS_FIELD_OP_ANY
+//   [24] SE_IS_FIELD_OP_NO_INV
+//   [25] SE_LIMB_SUM_A
+//   [26] SE_LIMB_SUM_B
+// ═════════════════════════════════════════════════════════════════════════
+
+const SE_FIELD_OP_A_IDX: usize = 21;
+const SE_FIELD_OP_B_IDX: usize = 22;
+const SE_IS_FIELD_OP_ANY_IDX: usize = 23;
+const SE_IS_FIELD_OP_NO_INV_IDX: usize = 24;
+const SE_LIMB_SUM_A_IDX: usize = 25;
+const SE_LIMB_SUM_B_IDX: usize = 26;
+
+/// Helper: generate an honest FMUL bridge proof and its verifying key.
+fn generate_honest_bridge_artifacts() -> (
+    jolt_verifier::JoltVerifyingKey<NewFr, DoryScheme>,
+    jolt_verifier::JoltProof<NewFr, DoryScheme>,
+    [u8; 32],
+) {
+    use jolt_dory::types::DoryVerifierSetup;
+    use jolt_witness::derived::{FieldOpPayload, FieldRegEvent, FIELD_OP_FUNCT3_FMUL};
+
+    let (_, params) = jolt_core_state_history();
+
+    let a = [1u64, 2, 3, 4];
+    let b = [5u64, 6, 7, 8];
+    let prod_fr = limbs_to_ark(&a) * limbs_to_ark(&b);
+    let new = ark_to_limbs(&prod_fr);
+
+    let zkvm_proof = run_jolt_zkvm_prover_with_prologue(params, move |reg_access| {
+        let c_fieldop = find_padding_field_op_cycle(reg_access);
+        let events = vec![FieldRegEvent {
+            cycle: c_fieldop,
+            slot: 0,
+            old: [0, 0, 0, 0],
+            new,
+            op: Some(FieldOpPayload {
+                funct3: FIELD_OP_FUNCT3_FMUL,
+                a,
+                b,
+            }),
+            fmov: None,
+        }];
+        let prologue = build_fmul_prologue(c_fieldop, &a, &b);
+        (events, prologue, None)
+    });
+
+    let (executable, _, r1cs_key, _, setup, _, _, _, _, _, _, _) =
+        setup_zkvm_muldiv_with_example(params, "jolt_core_module_with_fieldreg");
+
+    let pcs_verifier_setup = DoryVerifierSetup(params.pcs_setup.0.to_verifier_setup());
+    let verifying_key = jolt_verifier::JoltVerifyingKey::<NewFr, DoryScheme>::new(
+        &executable.module,
+        pcs_verifier_setup,
+        r1cs_key,
+    );
+
+    let io_hash = setup.config.io_hash;
+    (verifying_key, zkvm_proof, io_hash)
+}
+
+/// PoC #1 — overwrite IsFieldOpAny eval to zero.
+/// If the audit is right, the verifier still accepts.
+#[test]
+fn audit_poc_forged_is_field_op_any_zero() {
+    let (vk, mut proof, io_hash) = generate_honest_bridge_artifacts();
+
+    // Sanity: honest verify must pass before we tamper.
+    jolt_verifier::verify(&vk, &proof, &io_hash).expect("pre-tamper honest proof must accept");
+
+    let before = proof.stage_proofs[1].evals[SE_IS_FIELD_OP_ANY_IDX];
+    eprintln!("Honest IsFieldOpAny eval: {before:?}");
+    proof.stage_proofs[1].evals[SE_IS_FIELD_OP_ANY_IDX] = NewFr::zero();
+
+    let res = jolt_verifier::verify(&vk, &proof, &io_hash);
+    match res {
+        Ok(()) => panic!(
+            "SOUNDNESS GAP CONFIRMED: tampered IsFieldOpAny=0 at bridge r_cycle still verified"
+        ),
+        Err(e) => eprintln!("Verifier rejected tampered IsFieldOpAny: {e:?}"),
+    }
+}
+
+/// PoC #2 — overwrite FieldOpA eval to zero.
+#[test]
+fn audit_poc_forged_field_op_a_zero() {
+    let (vk, mut proof, io_hash) = generate_honest_bridge_artifacts();
+    jolt_verifier::verify(&vk, &proof, &io_hash).expect("pre-tamper honest proof must accept");
+
+    let before = proof.stage_proofs[1].evals[SE_FIELD_OP_A_IDX];
+    eprintln!("Honest FieldOpA eval: {before:?}");
+    proof.stage_proofs[1].evals[SE_FIELD_OP_A_IDX] = NewFr::zero();
+
+    let res = jolt_verifier::verify(&vk, &proof, &io_hash);
+    match res {
+        Ok(()) => panic!("SOUNDNESS GAP: tampered FieldOpA=0 accepted"),
+        Err(e) => eprintln!("Verifier rejected tampered FieldOpA: {e:?}"),
+    }
+}
+
+/// PoC #3 — overwrite LimbSumA to match FieldOpA (zero the A-term identity).
+#[test]
+fn audit_poc_forged_limb_sum_a_matches_field_op_a() {
+    let (vk, mut proof, io_hash) = generate_honest_bridge_artifacts();
+    jolt_verifier::verify(&vk, &proof, &io_hash).expect("pre-tamper honest proof must accept");
+
+    let field_op_a = proof.stage_proofs[1].evals[SE_FIELD_OP_A_IDX];
+    let limb_sum_a_before = proof.stage_proofs[1].evals[SE_LIMB_SUM_A_IDX];
+    eprintln!(
+        "Honest FieldOpA: {field_op_a:?}\nHonest LimbSumA: {limb_sum_a_before:?}\n(should be equal on honest prologue)"
+    );
+    // No-op if already equal; otherwise: force LimbSumA := FieldOpA so the A
+    // term vanishes. This is the "match and erase" forgery pattern.
+    proof.stage_proofs[1].evals[SE_LIMB_SUM_A_IDX] = field_op_a;
+
+    let res = jolt_verifier::verify(&vk, &proof, &io_hash);
+    eprintln!("Result of LimbSumA := FieldOpA overlay: {res:?}");
+}
+
+/// PoC #4 — zero ALL four bridge factors simultaneously.
+///
+/// If the bridge output_check terms all become zero, but the sumcheck
+/// final_eval was a nonzero value (since at random r the kernel MLE is not
+/// zero), CheckOutput should mismatch. This confirms whether the
+/// final_eval pins things down.
+#[test]
+fn audit_poc_zero_all_four_bridge_factors() {
+    let (vk, mut proof, io_hash) = generate_honest_bridge_artifacts();
+    jolt_verifier::verify(&vk, &proof, &io_hash).expect("pre-tamper honest proof must accept");
+
+    for idx in [
+        SE_FIELD_OP_A_IDX,
+        SE_FIELD_OP_B_IDX,
+        SE_IS_FIELD_OP_ANY_IDX,
+        SE_IS_FIELD_OP_NO_INV_IDX,
+    ] {
+        proof.stage_proofs[1].evals[idx] = NewFr::zero();
+    }
+
+    let res = jolt_verifier::verify(&vk, &proof, &io_hash);
+    match res {
+        Ok(()) => panic!("SOUNDNESS GAP: four-way zero bridge factors accepted"),
+        Err(e) => eprintln!("Four-way zero tamper rejected: {e:?}"),
+    }
+}
+
+/// PoC #5 — CheckOutput-preserving tamper.
+///
+/// The bridge contribution to the Stage-2 batched `combined_output` is a
+/// scalar: `γ_bridge · eq · [IsAny·(SumA - OpA) + γ_side·IsNoInv·(SumB - OpB)]`
+/// at the sumcheck challenge point. We can preserve that scalar by adjusting
+/// only the bridge factors; the other 6 instances (RW, Prod, InstCR, Raf,
+/// OutCheck, FR) depend on other StageEvals that we leave alone.
+///
+/// Strategy: set IsFieldOpAny := 0 AND modify FieldOpB to absorb the
+/// resulting delta into the B-term. If CheckOutput passes after this
+/// tamper, then the remaining question is: does downstream verification
+/// (PCS opening at other points) still pass? If yes, the audit finding is
+/// real. If not, which mechanism rejects?
+#[test]
+fn audit_poc_compensated_tamper() {
+    let (vk, mut proof, io_hash) = generate_honest_bridge_artifacts();
+    jolt_verifier::verify(&vk, &proof, &io_hash).expect("pre-tamper honest proof must accept");
+
+    // To compute the compensating delta we need the challenge values and
+    // eq_eval at the bridge point — which requires re-running the verifier's
+    // transcript replay up to AbsorbEvals. That's non-trivial but feasible
+    // via a custom "extract then tamper" pass.
+    //
+    // For the purposes of this audit PoC we take the brute approach: iterate
+    // over a small set of tamper patterns and check whether any verifies.
+    // If none of the 5 "simple" tampers verified above, and a careful
+    // compensated tamper is needed, the attack requires solving the bridge
+    // identity with knowledge of the sumcheck challenge point and batch
+    // coefficients — a non-trivial prover-side forgery but NOT a verifier-
+    // level PCS bypass.
+    //
+    // Instead, we try a different simple tamper: flip the sign of the bridge
+    // γ_side term by negating IsFieldOpNoInv. This is an "A-term unchanged,
+    // B-term sign-flipped" variant that would *still* zero-sum in the honest
+    // case (both sides are zero pointwise), but breaks at random r.
+    let is_no_inv_before = proof.stage_proofs[1].evals[SE_IS_FIELD_OP_NO_INV_IDX];
+    eprintln!("Honest IsFieldOpNoInv: {is_no_inv_before:?}");
+    proof.stage_proofs[1].evals[SE_IS_FIELD_OP_NO_INV_IDX] = -is_no_inv_before;
+
+    let res = jolt_verifier::verify(&vk, &proof, &io_hash);
+    match res {
+        Ok(()) => panic!("SOUNDNESS GAP: negated IsFieldOpNoInv accepted"),
+        Err(e) => eprintln!("Negated IsFieldOpNoInv tamper rejected: {e:?}"),
+    }
+}
+
+/// PoC #6 — **compensating** multi-eval tamper that DEFINITELY preserves
+/// Stage-2 `combined_output` without any knowledge of `γ_bridge_side`,
+/// `γ_bridge_batch_coeff`, or the `eq_bridge(r_cycle_bridge)` evaluation.
+///
+/// Construction:
+///   Bridge contribution to `combined_output` is
+///     `coeff6 · eq · [ IsAny·(SumA − OpA) + γ_side · IsNoInv · (SumB − OpB) ]`.
+///   Preserving `(SumA − OpA)` AND `(SumB − OpB)` independently preserves the
+///   bridge contribution for any values of the unknown coefficients.
+///   Set:
+///     SumA' = SumA + δ,  OpA' = OpA + δ   →  (SumA' − OpA') = (SumA − OpA)
+///     SumB' = SumB + ε,  OpB' = OpB + ε   →  (SumB' − OpB') = (SumB − OpB)
+///   Four StageEvals changed. Stage-2 `CheckOutput` must still pass.
+///   Remaining question: does verify still reject, and at which check?
+///
+/// This is the "maximally adversarial" compensating tamper requested by the
+/// audit. It requires NO transcript-extraction instrumentation — the algebra
+/// of the bridge identity alone is enough to construct it.
+///
+///   If verify ACCEPTS: bridge eval-binding is broken, reopen Task #65.
+///   If verify REJECTS: report the downstream catch-mechanism.
+///
+/// As of 2026-04-23 the compensating tamper DOES pass verification — this
+/// test documents the confirmed soundness gap (task #65). It panics with
+/// "SOUNDNESS GAP CONFIRMED" under the current codebase; `#[should_panic]`
+/// keeps CI green. When Task #65 lands, remove `#[should_panic]` and the
+/// test will catch any regression.
+#[test]
+#[should_panic(expected = "SOUNDNESS GAP CONFIRMED")]
+fn audit_poc_compensating_tamper_solved() {
+    use jolt_field::Field;
+
+    let (vk, mut proof, io_hash) = generate_honest_bridge_artifacts();
+    jolt_verifier::verify(&vk, &proof, &io_hash).expect("pre-tamper honest proof must accept");
+
+    let sum_a = proof.stage_proofs[1].evals[SE_LIMB_SUM_A_IDX];
+    let op_a = proof.stage_proofs[1].evals[SE_FIELD_OP_A_IDX];
+    let sum_b = proof.stage_proofs[1].evals[SE_LIMB_SUM_B_IDX];
+    let op_b = proof.stage_proofs[1].evals[SE_FIELD_OP_B_IDX];
+    let is_any = proof.stage_proofs[1].evals[SE_IS_FIELD_OP_ANY_IDX];
+    let is_no_inv = proof.stage_proofs[1].evals[SE_IS_FIELD_OP_NO_INV_IDX];
+
+    eprintln!("Honest bridge evals @ r_cycle_bridge:");
+    eprintln!("  SumA    = {sum_a:?}");
+    eprintln!("  OpA     = {op_a:?}");
+    eprintln!("  SumB    = {sum_b:?}");
+    eprintln!("  OpB     = {op_b:?}");
+    eprintln!("  IsAny   = {is_any:?}");
+    eprintln!("  IsNoInv = {is_no_inv:?}");
+
+    let delta = NewFr::from_u64(0xdead_beef);
+    let epsilon = NewFr::from_u64(0xcafe_f00d);
+
+    proof.stage_proofs[1].evals[SE_LIMB_SUM_A_IDX] = sum_a + delta;
+    proof.stage_proofs[1].evals[SE_FIELD_OP_A_IDX] = op_a + delta;
+    proof.stage_proofs[1].evals[SE_LIMB_SUM_B_IDX] = sum_b + epsilon;
+    proof.stage_proofs[1].evals[SE_FIELD_OP_B_IDX] = op_b + epsilon;
+
+    // All four modifications MUST change the value — else the "tamper" is empty.
+    assert_ne!(proof.stage_proofs[1].evals[SE_LIMB_SUM_A_IDX], sum_a);
+    assert_ne!(proof.stage_proofs[1].evals[SE_FIELD_OP_A_IDX], op_a);
+    assert_ne!(proof.stage_proofs[1].evals[SE_LIMB_SUM_B_IDX], sum_b);
+    assert_ne!(proof.stage_proofs[1].evals[SE_FIELD_OP_B_IDX], op_b);
+
+    let res = jolt_verifier::verify(&vk, &proof, &io_hash);
+    match res {
+        Ok(()) => panic!(
+            "SOUNDNESS GAP CONFIRMED: compensating tamper (SumA+δ, OpA+δ, \
+             SumB+ε, OpB+ε) preserved combined_output AND the verifier \
+             accepted. Bridge eval-binding is NOT robust. Reopen Task #65."
+        ),
+        Err(e) => {
+            eprintln!(
+                "Compensating tamper rejected: {e:?}\n\
+                 combined_output was preserved by construction; rejection \
+                 comes from a downstream mechanism (FS poisoning via \
+                 AbsorbEvals or PCS opening at the tampered evals)."
+            );
+        }
+    }
+}
+
+/// AUDIT PoC cross-validation control — tamper a KNOWN-BOUND Stage 2 eval.
+///
+/// The bridge PoCs above tamper SE_FIELD_OP_A / SE_IS_FIELD_OP_ANY / etc.
+/// (PolynomialId::FieldOpA, etc. which are registered as Virtual, not
+/// PCS-committed). They all reject with EvaluationMismatch at stage 1.
+///
+/// This control tampers SE_RAM_INC (idx = SE_BASE + 2 = 5) — a Stage 2 eval
+/// whose polynomial IS PCS-committed (RamInc). It verifies that the test
+/// harness and generic eval-tamper pathway DO get detected — i.e., the bridge
+/// tampers are being rejected for the same structural reason a known-bound
+/// eval would be, not due to an unrelated harness bug upstream of CheckOutput.
+///
+/// Expected: rejection with EvaluationMismatch at stage 1 (CheckOutput fires
+/// before any PCS opening reduction, so the error surface is identical).
+#[test]
+fn audit_poc_control_tamper_ram_inc() {
+    const SE_RAM_INC_IDX: usize = 5; // SE_BASE + 2 in the module layout.
+
+    let (vk, mut proof, io_hash) = generate_honest_bridge_artifacts();
+    jolt_verifier::verify(&vk, &proof, &io_hash).expect("pre-tamper honest proof must accept");
+
+    let before = proof.stage_proofs[1].evals[SE_RAM_INC_IDX];
+    eprintln!("Honest RamInc eval (Stage 2): {before:?}");
+    proof.stage_proofs[1].evals[SE_RAM_INC_IDX] = NewFr::zero();
+
+    let res = jolt_verifier::verify(&vk, &proof, &io_hash);
+    match res {
+        Ok(()) => panic!(
+            "CONTROL FAILED: zeroing SE_RAM_INC (a PCS-committed Stage 2 eval) \
+             was NOT rejected — harness is broken, bridge PoCs cannot be trusted"
+        ),
+        Err(e) => eprintln!("Control RamInc=0 rejected: {e:?}"),
+    }
+}
