@@ -80,7 +80,7 @@ pub struct HyperKZGProof<P: PairingGroup> {
 // `#[derive(Debug)]` would otherwise demand `P: Debug`, which is not
 // implied by `PairingGroup` and would force every consumer to add an
 // extra `P: Debug` bound. Required so `HyperKZGScheme<P>::Proof: Debug`
-// (see `CommitmentScheme::Proof` and `specs/1461`).
+// (see `CommitmentScheme::Proof`).
 impl<P: PairingGroup> std::fmt::Debug for HyperKZGProof<P>
 where
     P::G1: std::fmt::Debug,

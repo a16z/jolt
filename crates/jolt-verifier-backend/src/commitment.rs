@@ -14,9 +14,8 @@
 //! never names a curve, a pairing, an MSM, or a linear combination of
 //! commitments. Anything PCS-specific (RLC batching, FRI folding, lattice
 //! aggregation) lives inside per-PCS implementations of
-//! [`OpeningReduction::reduce_verifier_with_backend`](jolt_openings::OpeningReduction)
-//! (added in step 2.5 of the `CommitmentBackend` cutover, see
-//! `specs/1461`), not on this trait.
+//! [`OpeningReduction::reduce_verifier_with_backend`](jolt_openings::OpeningReduction),
+//! not on this trait.
 //!
 //! # Why this lives next to `FieldBackend`
 //!
@@ -39,13 +38,6 @@
 //! `PCS: CommitmentScheme<Field = Self::F>` keeps the backend's field
 //! aligned with the PCS's field — without it, the transcript challenges
 //! would not type-check across the boundary.
-//!
-//! # No `GroupBackend`
-//!
-//! The earlier Phase 2 sketch (`GroupBackend` with low-level `MSM` /
-//! `pairing` primitives) was rejected as PCS-specific and not
-//! representable by hash- or lattice-based schemes. See `specs/1461`
-//! "Phase 2 Amendment" for the full rationale.
 
 use jolt_openings::{CommitmentScheme, OpeningsError};
 use jolt_transcript::{AppendToTranscript, Transcript};
@@ -83,10 +75,9 @@ where
     /// Backend-side handle for a commitment.
     ///
     /// - `Native::Commitment = PCS::Output` (zero-overhead identity).
-    /// - `Tracing::Commitment = AstNodeId` (handle into the recorded
-    ///   AST; the raw `PCS::Output` is *inlined* on the
-    ///   [`CommitmentWrap`](crate::AstOp::CommitmentWrap) node, not
-    ///   held in a side vector).
+    /// - `Tracing::Commitment = AstNodeId` — handle into the recorded
+    ///   AST. The raw `PCS::Output` is *inlined* on the
+    ///   [`CommitmentWrap`](crate::AstOp::CommitmentWrap) node.
     type Commitment: Clone + std::fmt::Debug;
 
     /// Wraps a raw commitment value into the backend's representation,
@@ -117,18 +108,17 @@ where
     /// Verifies a single opening claim against `commitment`.
     ///
     /// `point` and `claim` are backend-wrapped scalars. `proof`, `vk`,
-    /// and the live `transcript` are passed through to `<PCS as
-    /// CommitmentScheme>::verify` by native backends, or recorded as
-    /// an [`AstOp::OpeningCheck`](crate::AstOp::OpeningCheck) node by
-    /// AST backends. The `PCS` is statically known via the
-    /// `CommitmentBackend<PCS>` type parameter, so no runtime
-    /// `scheme_tag` discriminator is needed (downstream consumers
-    /// walking an `AstGraph<PCS>` learn the scheme from the type).
+    /// and the live `transcript` are passed through to
+    /// `<PCS as CommitmentScheme>::verify` by native backends, or
+    /// recorded as an [`AstOp::OpeningCheck`](crate::AstOp::OpeningCheck)
+    /// node by AST backends. The `PCS` is statically known via the
+    /// `CommitmentBackend<PCS>` type parameter, so downstream consumers
+    /// walking an `AstGraph<PCS>` learn the scheme from the type alone.
     ///
     /// **Batching is the PCS's responsibility, not this trait's.** The
     /// verifier reduces a batch of claims to a single combined claim
-    /// via `OpeningReduction::reduce_verifier_with_backend` (added in
-    /// step 2.5 of the cutover) before invoking `verify_opening`.
+    /// via `OpeningReduction::reduce_verifier_with_backend` before
+    /// invoking `verify_opening`.
     fn verify_opening(
         &mut self,
         vk: &PCS::VerifierSetup,

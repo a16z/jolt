@@ -501,7 +501,6 @@ fn apply_normalization<F: Clone>(raw: &[F], normalize: Option<&PointNormalizatio
 /// appear, or when [`StageEval`] indexes out of bounds. Lagrange
 /// inversions fail with [`BackendError`](jolt_verifier_backend::BackendError),
 /// which is wrapped as [`JoltError::InvalidProof`].
-// Wired into the VerifierOp interpreter in step 4c of the FieldBackend cutover.
 #[allow(dead_code)]
 #[allow(clippy::too_many_arguments)]
 fn evaluate_formula_with_backend<B>(
@@ -1700,7 +1699,7 @@ mod tests {
         r1cs_key: &R1csKey<Fr>,
         config: &ProverConfig,
     ) {
-        let native_legacy = evaluate_formula(
+        let native_concrete = evaluate_formula(
             formula,
             evaluations,
             challenges,
@@ -1725,8 +1724,8 @@ mod tests {
             config,
         );
         assert_eq!(
-            native_backend, native_legacy,
-            "Native FieldBackend must match legacy evaluate_formula"
+            native_backend, native_concrete,
+            "Native FieldBackend must match concrete evaluate_formula"
         );
 
         let mut tracer = Tracing::<TraceMock>::new();
@@ -1746,8 +1745,8 @@ mod tests {
         let values = replay_trace::<TraceMock>(&graph, &wraps, &()).unwrap();
         let traced_replayed = values[traced.id.0 as usize];
         assert_eq!(
-            traced_replayed, native_legacy,
-            "Tracing replay must match legacy evaluate_formula"
+            traced_replayed, native_concrete,
+            "Tracing replay must match concrete evaluate_formula"
         );
     }
 

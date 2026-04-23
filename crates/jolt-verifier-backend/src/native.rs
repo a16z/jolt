@@ -111,8 +111,8 @@ impl<F: Field> FieldBackend for Native<F> {
 ///
 /// Identity wrap, direct transcript absorb, direct PCS verify. Every
 /// method is `#[inline(always)]`; monomorphization erases the trait
-/// dispatch and produces code byte-identical to the legacy verifier
-/// that calls `PCS::verify` directly.
+/// dispatch and produces code byte-identical to a verifier that calls
+/// `PCS::verify` directly.
 impl<F, PCS> CommitmentBackend<PCS> for Native<F>
 where
     F: Field,
@@ -138,8 +138,7 @@ where
         commitment: &PCS::Output,
         label: &'static [u8],
     ) {
-        // Same two-step pattern jolt-verifier already uses for inline
-        // commitment absorbs (see verifier.rs:158-159):
+        // Standard two-step inline absorb:
         //   1. append a LabelWithCount header so the verifier-side
         //      domain separation matches the prover's serialised stream;
         //   2. forward the commitment's own AppendToTranscript impl.
@@ -204,12 +203,13 @@ mod tests {
         b.assert_eq(&s, &m, "square==mul").unwrap();
     }
 
-    /// Native [`CommitmentBackend`] is the identity wrapper: `wrap_commitment`
-    /// returns its input by value, `absorb_commitment` matches the verifier's
-    /// label-with-count + `AppendToTranscript` two-step, and `verify_opening`
-    /// forwards directly to `<PCS as CommitmentScheme>::verify`. Run the
-    /// round-trip against `MockCommitmentScheme` (no curves required) to
-    /// catch any drift in the trait wiring.
+    /// Native [`CommitmentBackend`] is the identity wrapper:
+    /// `wrap_commitment` returns its input by value, `absorb_commitment`
+    /// performs the standard label-with-count + `AppendToTranscript`
+    /// two-step, and `verify_opening` forwards directly to
+    /// `<PCS as CommitmentScheme>::verify`. Round-tripping against
+    /// `MockCommitmentScheme` (no curves required) catches any drift in
+    /// the trait wiring.
     #[test]
     fn native_commitment_backend_round_trip_against_mock() {
         use jolt_openings::mock::MockCommitmentScheme;

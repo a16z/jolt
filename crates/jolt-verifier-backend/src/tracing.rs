@@ -1,46 +1,47 @@
-//! AST-recording [`FieldBackend`] for symbolic execution of the verifier.
+//! AST-recording [`FieldBackend`] + [`CommitmentBackend`] for symbolic
+//! execution of the verifier.
 //!
-//! `Tracing` runs the verifier code through the [`FieldBackend`] interface
-//! while doing no field arithmetic at all. Every wrap, every constant, every
-//! arithmetic op, every assertion, every Fiat-Shamir transcript op, **and
-//! every PCS commitment / opening check** becomes a node (or a constraint)
-//! in an [`AstGraph`]. The resulting graph is the verifier's *symbolic
-//! execution trace*: a side-effect-free, deterministic record of which
-//! operations the verifier would have performed on the supplied (still
-//! abstract) inputs.
+//! `Tracing` runs the verifier through the backend traits while doing no
+//! field arithmetic and no PCS verification at all. Every wrap, every
+//! constant, every arithmetic op, every assertion, every Fiat-Shamir
+//! transcript op, and every PCS commitment / opening check becomes a node
+//! (or an assertion) in an [`AstGraph`]. The resulting graph is the
+//! verifier's *symbolic execution trace*: a side-effect-free, deterministic
+//! record of every operation the verifier would have performed on the
+//! supplied (still abstract) inputs.
 //!
-//! ## Why a separate AST instead of trait-style "do work in the ZK target"
+//! ## Downstream consumers
 //!
-//! By emitting an explicit [`AstGraph`] we keep three downstream consumers
-//! plug-in compatible:
+//! An explicit [`AstGraph`] keeps three downstream consumers plug-in
+//! compatible:
 //!
 //! 1. **Recursion / SNARK composition.** Lower the AST to a circuit (R1CS,
 //!    AIR, Plonkish, …) inside an outer proof system. The lowering pass owns
 //!    the encoding decisions; the verifier source code does not.
 //! 2. **Theorem prover export (Lean/Coq).** Walk the AST and emit
-//!    proof-friendly definitions, see `jolt-ir`'s Lean emitter for the
+//!    proof-friendly definitions; see `jolt-ir`'s Lean emitter for the
 //!    pattern.
 //! 3. **Inspection / fuzzing / golden tests.** The graph is `Debug + Clone`
 //!    so test code can examine it, snapshot it, or replay a smaller instance
 //!    through [`Native`](crate::Native) for differential checks.
 //!
-//! ## Why the AST is generic over `PCS`
+//! ## Generic over `PCS`
 //!
-//! `AstGraph<PCS>`, `AstOp<PCS>`, and `Tracing<PCS>` are all parameterised
-//! by the [`CommitmentScheme`](jolt_openings::CommitmentScheme). This is
-//! deliberate: it makes commitment values ([`PCS::Output`](jolt_openings::CommitmentScheme::Output))
-//! and opening proofs ([`PCS::Proof`](jolt_openings::CommitmentScheme::Proof))
-//! statically typed inhabitants of the AST instead of opaque sidecar
-//! handles. Lean / R1CS lowerings see `AstGraph<DoryScheme>` literally
-//! containing `DoryProof`s — the soundness obligation per `OpeningCheck`
-//! node is "`DoryScheme.verify` accepts these inputs", with no
-//! marshalling. See `specs/1461` for the design rationale (alternative 6).
+//! [`AstGraph<PCS>`], [`AstOp<PCS>`], and [`Tracing<PCS>`] are parameterised
+//! by the [`CommitmentScheme`](jolt_openings::CommitmentScheme). Commitment
+//! values ([`PCS::Output`](jolt_openings::CommitmentScheme::Output)) and
+//! opening proofs ([`PCS::Proof`](jolt_openings::CommitmentScheme::Proof))
+//! are statically typed inhabitants of the AST: a Lean / R1CS lowering of
+//! `AstGraph<DoryScheme>` reads off `DoryProof`s directly, with the
+//! soundness obligation per [`AstOp::OpeningCheck`] node being
+//! "`DoryScheme.verify` accepts these inputs" with no marshalling.
 //!
-//! Field-only tracing (no commitment ops) still picks a concrete `PCS` —
-//! typically [`MockCommitmentScheme<F>`](jolt_openings::mock::MockCommitmentScheme)
-//! — because the AST is type-honest about which scheme it would use if a
-//! commitment showed up. `MockCommitmentScheme<F>::Field = F`, so all
-//! field-side methods continue to take `F` directly.
+//! Field-only tracing (no commitment ops) still picks a concrete `PCS` so
+//! the AST is type-honest about which scheme it would use if a commitment
+//! showed up. The standard choice is
+//! [`MockCommitmentScheme<F>`](jolt_openings::mock::MockCommitmentScheme):
+//! its `Field = F`, so all field-side methods take `F` directly and
+//! [`replay`] takes `&()` for the verifier setup.
 //!
 //! ## Transcript operations
 //!
@@ -52,25 +53,24 @@
 //! - [`AstOp::TranscriptInit`] starts a new transcript with a domain label.
 //! - [`AstOp::TranscriptAbsorbBytes`] threads in a chunk of bytes (the
 //!   verifier's labeled-domain encodings, field-element absorbs — anything
-//!   that the underlying `Blake2bTranscript` would feed to its hash that
-//!   isn't already covered by a commitment-shaped node).
+//!   the underlying `Blake2bTranscript` would feed to its hash that isn't
+//!   covered by a commitment-shaped node).
 //! - [`AstOp::TranscriptAbsorbCommitment`] is the structured-absorb variant
-//!   for PCS commitments: rather than two byte-level absorbs (label header
-//!   plus serialised `PCS::Output`), the AST records one node tying back
-//!   to the originating [`AstOp::CommitmentWrap`]. The inner
-//!   `Blake2bTranscript` is still driven through both byte absorbs so
-//!   squeezed challenges replay bit-identically against the
-//!   [`Native`](crate::Native) backend.
+//!   for PCS commitments: one node per logical absorb tying back to the
+//!   originating [`AstOp::CommitmentWrap`]. The inner `Blake2bTranscript`
+//!   is still driven through the standard `LabelWithCount +
+//!   AppendToTranscript` byte sequence so squeezed challenges replay
+//!   bit-identically against the [`Native`](crate::Native) backend.
 //! - [`AstOp::TranscriptChallengeState`] advances the sponge by one squeeze
 //!   and represents the post-state.
 //! - [`AstOp::TranscriptChallengeValue`] is the squeezed field-element value;
-//!   it is the node that subsequent arithmetic ops reference.
+//!   subsequent arithmetic ops reference this node.
 //!
 //! Splitting "post-state" and "value" into two nodes keeps the AST a pure
-//! DAG: state nodes thread through `TranscriptAbsorbBytes` /
-//! `TranscriptAbsorbCommitment` / `TranscriptInit` / `OpeningCheck` edges,
-//! value nodes thread through arithmetic edges. Downstream consumers can
-//! keep them in two separate variable spaces (state hashes vs.
+//! DAG: state nodes thread through `TranscriptInit` /
+//! `TranscriptAbsorbBytes` / `TranscriptAbsorbCommitment` / `OpeningCheck`
+//! edges, value nodes thread through arithmetic edges. Downstream consumers
+//! can keep them in two separate variable spaces (state hashes vs.
 //! field-element witnesses) when lowering to a recursive verifier.
 //!
 //! ## Provenance
@@ -88,9 +88,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use jolt_field::Field;
-use num_traits::Zero;
 use jolt_openings::{CommitmentScheme, OpeningsError};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript};
+use num_traits::Zero;
 
 use crate::backend::{CommitmentOrigin, FieldBackend, ScalarOrigin};
 use crate::commitment::CommitmentBackend;
@@ -111,10 +111,10 @@ pub struct AstNodeId(pub u32);
 /// ## `PCS`-generic variants
 ///
 /// Three variants ([`AstOp::CommitmentWrap`],
-/// [`AstOp::TranscriptAbsorbCommitment`], [`AstOp::OpeningCheck`]) carry
+/// [`AstOp::TranscriptAbsorbCommitment`], [`AstOp::OpeningCheck`]) inline
 /// inhabitants of [`PCS::Output`](jolt_openings::CommitmentScheme::Output)
-/// or [`PCS::Proof`](jolt_openings::CommitmentScheme::Proof) inline. The
-/// values are boxed to keep `size_of::<AstOp<PCS>>()` independent of the
+/// and [`PCS::Proof`](jolt_openings::CommitmentScheme::Proof). The values
+/// are boxed to keep `size_of::<AstOp<PCS>>()` independent of the
 /// underlying PCS proof size.
 #[derive(Clone, Debug)]
 pub enum AstOp<PCS: CommitmentScheme>
@@ -189,9 +189,9 @@ where
         /// Companion state node produced in the same squeeze.
         state: AstNodeId,
     },
-    /// Wrapped input commitment — the inhabitant
-    /// [`PCS::Output`](jolt_openings::CommitmentScheme::Output) inline,
-    /// plus provenance and a static label.
+    /// Wrapped input commitment — inlines a
+    /// [`PCS::Output`](jolt_openings::CommitmentScheme::Output) plus
+    /// provenance and a static label.
     ///
     /// Boxed so `size_of::<AstOp<PCS>>()` does not balloon for schemes
     /// with large commitments.
@@ -206,12 +206,10 @@ where
     /// Absorbs a commitment into the transcript via the standard
     /// `LabelWithCount + AppendToTranscript` two-step.
     ///
-    /// Recorded as a single structured node (rather than the two byte-level
-    /// absorbs the underlying `Blake2bTranscript` actually performs) so
-    /// downstream consumers see one logical "absorb commitment" step.
-    /// The inner `Blake2bTranscript` is still driven through both absorbs
-    /// at recording time, so squeezed challenges remain bit-identical
-    /// across backends.
+    /// One structured node per logical absorb so downstream consumers
+    /// see "absorb commitment" as a single step. The inner
+    /// `Blake2bTranscript` is driven through the matching byte sequence
+    /// so squeezed challenges remain bit-identical across backends.
     ///
     /// `prev_state` is the transcript state node before the absorb; this
     /// node id is the post-absorb state. `commitment` references the
@@ -378,16 +376,14 @@ impl<F: jolt_field::Field> AstScalar<F> {
 /// arithmetic, transcript history, and commitment checks all sit in the
 /// same node-id space.
 ///
-/// In addition to the side-effect-free [`AstGraph`], `Tracing` keeps an
-/// internal sidecar of the concrete wrap *scalar* values it received
-/// (proof / public field elements that flow into the arithmetic). Note
-/// that commitment values and opening proofs are *not* shadowed in a
-/// sidecar — they live inline in [`AstOp::CommitmentWrap::value`] and
-/// [`AstOp::OpeningCheck::proof`]. The graph and the scalar value list
-/// are independent: graph consumers (Lean export, R1CS lower) ignore the
-/// scalar values, while differential testing against [`Native`](crate::Native)
-/// uses them via [`replay`] without the caller having to reconstruct the
-/// wrap sequence.
+/// Alongside the [`AstGraph`], `Tracing` keeps the concrete wrap *scalar*
+/// values it received (proof / public field elements that flow into the
+/// arithmetic). Commitment values and opening proofs live inline on
+/// [`AstOp::CommitmentWrap::value`] and [`AstOp::OpeningCheck::proof`];
+/// they are not duplicated here. Graph consumers (Lean export, R1CS lower)
+/// ignore the scalar value list; differential testing against
+/// [`Native`](crate::Native) uses it via [`replay`] without the caller
+/// having to reconstruct the wrap sequence.
 ///
 /// Internally the graph lives behind `Arc<Mutex<…>>` (rather than
 /// `Rc<RefCell<…>>`) because [`Transcript`] requires `Sync + Send + 'static`
@@ -466,7 +462,6 @@ where
     pub fn new_transcript(&self, label: &'static [u8]) -> TracingTranscript<PCS> {
         TracingTranscript::with_graph(label, self.graph.clone())
     }
-
 }
 
 impl<PCS: CommitmentScheme> FieldBackend for Tracing<PCS>
@@ -619,8 +614,8 @@ where
     fn unwrap(&self, _scalar: &Self::Scalar) -> Option<PCS::Field> {
         // Tracing intentionally does not expose concrete values through the
         // backend interface — that would let downstream code branch on
-        // witness data and leak symbolic faithfulness. Replay uses the
-        // sidecar wrap-value list explicitly via [`Tracing::wrap_values`].
+        // witness data and leak symbolic faithfulness. Replay reads the
+        // wrap-value list explicitly via [`Tracing::wrap_values`].
         None
     }
 
@@ -652,8 +647,8 @@ where
 /// The actual `<PCS as CommitmentScheme>::verify` invocation happens in
 /// [`replay`] (or in a downstream lowering pass).
 ///
-/// This separation is the key invariant of the cutover: tracing must not
-/// short-circuit on a bad witness, because the *graph itself* is the
+/// This separation is the load-bearing invariant of the trait: tracing must
+/// not short-circuit on a bad witness, because the *graph itself* is the
 /// artifact downstream consumers (Lean export, R1CS lowering) depend on
 /// being well-formed. Replay then closes the loop for differential
 /// testing against [`Native`].
@@ -689,8 +684,8 @@ where
     ) {
         // Drive the inner Blake2bTranscript through the same byte sequence
         // Native produces (LabelWithCount + AppendToTranscript) so squeezed
-        // challenges replay bit-identically. Suppress the per-byte AST
-        // nodes — the graph instead carries one structured
+        // challenges replay bit-identically. The per-byte AST nodes are
+        // suppressed; the graph carries one structured
         // TranscriptAbsorbCommitment node tying the new state back to the
         // originating CommitmentWrap.
         let value = transcript.with_commitment_value(commitment, |value: &PCS::Output| {
@@ -859,10 +854,10 @@ where
         let g = self.graph.lock().expect("AstGraph mutex poisoned");
         match &g.nodes[commitment.0 as usize] {
             AstOp::CommitmentWrap { value, .. } => f(value),
-            // Avoid `{other:?}` here: `AstOp<PCS>: Debug` would impose a
-            // bound `PCS: Debug` (the standard `derive(Debug)` puts the
-            // bound on the type parameter, not on the actually-used
-            // associated types). Stick to the variant name.
+            // SAFETY (panic-message): we don't `Debug`-format the variant
+            // because `AstOp<PCS>: Debug` would force a `PCS: Debug` bound
+            // (the auto-derived `Debug` puts the bound on the type
+            // parameter, not on the actually-used associated types).
             _ => panic!(
                 "with_commitment_value: node #{} is not CommitmentWrap",
                 commitment.0,
@@ -890,11 +885,11 @@ where
     PCS::Output: AppendToTranscript,
 {
     fn default() -> Self {
-        // Default constructs an *isolated* graph rather than panicking; the
-        // primary construction path is `Tracing::new_transcript`, which
-        // shares the backend's graph. Default exists only to satisfy the
-        // [`Transcript`] trait bound; downstream code must avoid relying on
-        // it for graph aggregation.
+        // Default constructs an *isolated* graph (rather than panicking)
+        // only to satisfy the [`Transcript`] trait bound. The primary
+        // construction path is [`Tracing::new_transcript`], which shares
+        // the backend's graph; downstream code must use that for graph
+        // aggregation.
         Self::with_graph(
             b"jolt_tracing_default",
             Arc::new(Mutex::new(AstGraph::new())),
@@ -1008,8 +1003,7 @@ where
     PCS::Output: AppendToTranscript,
 {
     let mut values: Vec<PCS::Field> = vec![PCS::Field::zero(); graph.nodes.len()];
-    let mut transcripts: Vec<Option<Blake2bTranscript<PCS::Field>>> =
-        vec![None; graph.nodes.len()];
+    let mut transcripts: Vec<Option<Blake2bTranscript<PCS::Field>>> = vec![None; graph.nodes.len()];
     let mut opening_results: HashMap<AstNodeId, Result<(), OpeningsError>> = HashMap::new();
     let mut wrap_cursor = 0usize;
 
@@ -1069,7 +1063,10 @@ where
                 // CommitmentWrap node.
                 let value = match &graph.nodes[commitment.0 as usize] {
                     AstOp::CommitmentWrap { value, .. } => value,
-                    _ => panic!("replay: TranscriptAbsorbCommitment refers to non-CommitmentWrap node #{}", commitment.0),
+                    _ => panic!(
+                        "replay: TranscriptAbsorbCommitment refers to non-CommitmentWrap node #{}",
+                        commitment.0
+                    ),
                 };
                 let mut t = transcripts[prev_state.0 as usize]
                     .take()
@@ -1125,21 +1122,19 @@ where
                     return Err(BackendError::AssertionFailed(ctx));
                 }
             }
-            AstAssertion::OpeningHolds { check, ctx } => {
-                match opening_results.get(check) {
-                    Some(Ok(())) => {}
-                    Some(Err(source)) => {
-                        return Err(BackendError::OpeningCheckFailed {
-                            ctx,
-                            source: source.clone(),
-                        });
-                    }
-                    None => panic!(
-                        "replay: OpeningHolds references node #{} which is not an OpeningCheck",
-                        check.0
-                    ),
+            AstAssertion::OpeningHolds { check, ctx } => match opening_results.get(check) {
+                Some(Ok(())) => {}
+                Some(Err(source)) => {
+                    return Err(BackendError::OpeningCheckFailed {
+                        ctx,
+                        source: source.clone(),
+                    });
                 }
-            }
+                None => panic!(
+                    "replay: OpeningHolds references node #{} which is not an OpeningCheck",
+                    check.0
+                ),
+            },
         }
     }
     Ok(values)
@@ -1320,10 +1315,8 @@ mod tests {
 
         let evaluations: Vec<Fr> = (1..=4).map(Fr::from_u64).collect();
         let poly = Polynomial::<Fr>::new(evaluations);
-        let (commitment_value, _hint) = <Mock as jolt_openings::CommitmentScheme>::commit(
-            &poly,
-            &(),
-        );
+        let (commitment_value, _hint) =
+            <Mock as jolt_openings::CommitmentScheme>::commit(&poly, &());
 
         // Build the proof against the *prover-side* transcript so its
         // Fiat-Shamir state mirrors what `Native` would do; then we feed
@@ -1359,10 +1352,7 @@ mod tests {
             b"C",
         );
 
-        let point_w: Vec<_> = point
-            .iter()
-            .map(|p| tracer.wrap_proof(*p, "z"))
-            .collect();
+        let point_w: Vec<_> = point.iter().map(|p| tracer.wrap_proof(*p, "z")).collect();
         let claim_w = tracer.wrap_proof(eval, "claim");
 
         <Tracing<Mock> as CommitmentBackend<Mock>>::verify_opening(
@@ -1418,10 +1408,8 @@ mod tests {
 
         let evaluations: Vec<Fr> = (1..=4).map(Fr::from_u64).collect();
         let poly = Polynomial::<Fr>::new(evaluations);
-        let (commitment_value, _hint) = <Mock as jolt_openings::CommitmentScheme>::commit(
-            &poly,
-            &(),
-        );
+        let (commitment_value, _hint) =
+            <Mock as jolt_openings::CommitmentScheme>::commit(&poly, &());
 
         let point = vec![Fr::from_u64(5), Fr::from_u64(6)];
         let eval = poly.evaluate(&point);
@@ -1450,10 +1438,7 @@ mod tests {
             b"C",
         );
 
-        let point_w: Vec<_> = point
-            .iter()
-            .map(|p| tracer.wrap_proof(*p, "z"))
-            .collect();
+        let point_w: Vec<_> = point.iter().map(|p| tracer.wrap_proof(*p, "z")).collect();
         // Tamper the claim: claim a wrong evaluation. The tracer happily
         // records this; replay should reject it via `MockPCS::verify`.
         let tampered_claim = eval + Fr::from_u64(1);

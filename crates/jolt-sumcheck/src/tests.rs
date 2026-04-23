@@ -489,11 +489,11 @@ fn verify_dispatches_through_round_verifier_trait() {
     assert_eq!(final_eval, fixed);
 }
 
-/// Native FieldBackend path must produce bit-identical (final_eval, challenges)
-/// to the legacy `verify` path on the same proof, with the transcript ending
-/// in the same state.
+/// `verify_with_backend::<Native<F>>` must produce bit-identical
+/// `(final_eval, challenges)` to the concrete `verify` path on the same
+/// proof, with the transcript ending in the same state.
 #[test]
-fn verify_with_backend_native_matches_legacy() {
+fn verify_with_backend_native_matches_concrete() {
     use jolt_transcript::Blake2bTranscript;
     use jolt_verifier_backend::Native;
 
@@ -510,16 +510,16 @@ fn verify_with_backend_native_matches_legacy() {
         claimed_sum: sum,
     };
 
-    let mut legacy_transcript = Blake2bTranscript::<F>::new(b"native_parity");
+    let mut concrete_transcript = Blake2bTranscript::<F>::new(b"native_parity");
     let clear = ClearRoundVerifier::new();
-    let (legacy_eval, legacy_challenges) = SumcheckVerifier::verify(
+    let (concrete_eval, concrete_challenges) = SumcheckVerifier::verify(
         &claim,
         &proof.round_polynomials,
-        &mut legacy_transcript,
+        &mut concrete_transcript,
         &clear,
     )
     .unwrap();
-    let legacy_post: F = legacy_transcript.challenge();
+    let concrete_post: F = concrete_transcript.challenge();
 
     let mut backend = Native::<F>::new();
     let mut backend_transcript = backend.new_transcript(b"native_parity");
@@ -537,26 +537,27 @@ fn verify_with_backend_native_matches_legacy() {
         .unwrap();
     let backend_post: F = backend_transcript.challenge();
 
-    assert_eq!(backend_eval_w, legacy_eval, "final eval mismatch");
+    assert_eq!(backend_eval_w, concrete_eval, "final eval mismatch");
     assert_eq!(
-        backend_challenges_f, legacy_challenges,
+        backend_challenges_f, concrete_challenges,
         "challenges (raw F) mismatch"
     );
     assert_eq!(
-        backend_challenges_w, legacy_challenges,
+        backend_challenges_w, concrete_challenges,
         "challenges (Native scalar = F) mismatch"
     );
     assert_eq!(
-        backend_post, legacy_post,
+        backend_post, concrete_post,
         "post-verify transcript challenges diverged"
     );
 }
 
-/// Tracing FieldBackend path must record a graph that, when replayed against
-/// the wrapped values seen during verification, reproduces the legacy final
-/// evaluation and challenges. The `TracingTranscript` is fed the same Fiat-Shamir
-/// bytes as a fresh `Blake2bTranscript`, so the proof is byte-identical and
-/// the verifier sees the same challenge values on the wire.
+/// `verify_with_backend::<Tracing<_>>` must record a graph that, when
+/// replayed against the wrapped values seen during verification,
+/// reproduces the concrete final evaluation and challenges. The
+/// `TracingTranscript` is fed the same Fiat-Shamir bytes as a fresh
+/// `Blake2bTranscript`, so the proof is byte-identical and the verifier
+/// sees the same challenge values on the wire.
 #[test]
 fn verify_with_backend_tracing_replays_correctly() {
     use jolt_openings::mock::MockCommitmentScheme;
@@ -578,12 +579,12 @@ fn verify_with_backend_tracing_replays_correctly() {
         claimed_sum: sum,
     };
 
-    let mut legacy_transcript = Blake2bTranscript::<F>::new(b"tracing_replay");
+    let mut concrete_transcript = Blake2bTranscript::<F>::new(b"tracing_replay");
     let clear = ClearRoundVerifier::new();
-    let (legacy_eval, _legacy_challenges) = SumcheckVerifier::verify(
+    let (concrete_eval, _concrete_challenges) = SumcheckVerifier::verify(
         &claim,
         &proof.round_polynomials,
-        &mut legacy_transcript,
+        &mut concrete_transcript,
         &clear,
     )
     .unwrap();
@@ -608,7 +609,10 @@ fn verify_with_backend_tracing_replays_correctly() {
     let values = replay_trace::<Mock>(&graph, &wraps, &()).unwrap();
     let final_eval_replayed = values[final_eval_w.id.0 as usize];
 
-    assert_eq!(final_eval_replayed, legacy_eval, "Tracing replay mismatch");
+    assert_eq!(
+        final_eval_replayed, concrete_eval,
+        "Tracing replay mismatch"
+    );
     assert!(
         graph.assertion_count() > 0,
         "Tracing should have recorded sumcheck round-consistency assertions"

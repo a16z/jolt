@@ -1640,10 +1640,10 @@ fn modular_self_verify() {
 ///
 /// Proves that the `Vec<Option<PCS::Output>>` commitment encoding
 /// correctly round-trips through the modular verifier's
-/// `AbsorbCommitment` op — i.e. we no longer see the historical
-/// `InvalidProof("missing commitment")` error when all-zero advice
-/// polys cause the prover to skip the commit. This is a stepping
-/// stone toward full `modular_self_verify`.
+/// `AbsorbCommitment` op — when all-zero advice polys cause the prover
+/// to skip a commit, the verifier must skip the matching transcript
+/// absorb on its side rather than erroring out with
+/// `InvalidProof("missing commitment")`.
 #[test]
 fn modular_self_verify_commit_skip_alignment() {
     use jolt_dory::types::DoryVerifierSetup;
@@ -1667,9 +1667,9 @@ fn modular_self_verify_commit_skip_alignment() {
          got {none} none / {some} some (total {total})"
     );
 
-    // Walk the verifier schedule up to the first op that needs an eval
-    // we don't yet record; until we hit that, AbsorbCommitment must
-    // succeed for every op (previously failed with "missing commitment").
+    // Walk the verifier schedule. `AbsorbCommitment` must succeed for
+    // every op — a `"missing commitment"` failure means commit-skip
+    // alignment is broken between prover and verifier.
     let (
         executable,
         _polys,
@@ -1702,7 +1702,7 @@ fn modular_self_verify_commit_skip_alignment() {
                 !s.contains("missing commitment"),
                 "regression: commit-skip alignment broken — {s}"
             );
-            eprintln!("expected downstream error (pre-full-wiring): {s}");
+            eprintln!("downstream error (not commit-skip): {s}");
         }
     }
 }
@@ -1710,28 +1710,28 @@ fn modular_self_verify_commit_skip_alignment() {
 /// End-to-end Tracing-backend verification.
 ///
 /// Runs the full muldiv prove → modular verify pipeline through the
-/// `Tracing<NewFr>` backend instead of the default `Native<NewFr>` path
-/// and proves three properties:
+/// `Tracing<DoryScheme>` backend instead of the `Native<DoryScheme>`
+/// path and proves three properties:
 ///
-/// 1. The `Tracing` backend never panics or short-circuits when driven by
-///    the live verifier schedule (i.e. no codepath in the new
+/// 1. The `Tracing` backend never panics or short-circuits when driven
+///    by the live verifier schedule (i.e. no codepath in
 ///    `verify_with_backend` calls `B::unwrap()` or otherwise assumes a
 ///    concrete value, which would break recursion / Lean export).
 ///
 /// 2. The captured AST is non-trivial — it must record at least one
-///    wrap, one arithmetic op, and one assertion. (Empty-graph regressions
-///    silently bypass the abstraction.)
+///    wrap, one arithmetic op, and one assertion. Empty-graph
+///    regressions silently bypass the abstraction.
 ///
 /// 3. Replaying the captured graph against the recorded wrap values
 ///    reproduces every node and discharges every assertion. This is the
-///    formal *faithfulness check*: the symbolic trace is a sound rewrite
-///    of the native execution.
+///    *faithfulness check*: the symbolic trace is a sound rewrite of
+///    the native execution.
 ///
-/// Together with `modular_self_verify` (which exercises the Native path),
-/// this test pins down the multi-backend invariant: any future change
-/// that introduces a divergence between Native and Tracing — a missing
-/// `B::mul`, a stray `unwrap()` in the interpreter, an unsynced wrap-list
-/// — fails this test before it can land.
+/// Together with `modular_self_verify` (which exercises the Native
+/// path), this test pins down the multi-backend invariant: any future
+/// change that introduces a divergence between Native and Tracing — a
+/// missing `B::mul`, a stray `unwrap()` in the interpreter, an unsynced
+/// wrap list — fails this test before it can land.
 #[test]
 fn modular_self_verify_via_tracing_backend() {
     use jolt_dory::types::DoryVerifierSetup;
@@ -1834,10 +1834,10 @@ fn modular_self_verify_via_tracing_backend() {
         *by_op.entry(kind).or_default() += 1;
     }
 
-    // The full-AST cutover guarantees the tracing graph captures every
-    // Fiat-Shamir interaction the verifier performs. If a future refactor
-    // routes a transcript op outside the backend, these counts go to zero
-    // and this test catches it before it reaches recursion / Lean export.
+    // The tracing graph captures every Fiat-Shamir interaction the
+    // verifier performs. If a future refactor routes a transcript op
+    // outside the backend, these counts go to zero and this test
+    // catches it before it reaches recursion / Lean export.
     let transcript_inits = by_op.get("TranscriptInit").copied().unwrap_or_default();
     let transcript_absorbs = by_op
         .get("TranscriptAbsorbBytes")
