@@ -303,7 +303,7 @@ sysinfo = "0.38"
 memory-stats = { version = "1.0.0", features = ["always_use_statm"] }
 
 # Parallel Processing
-rayon = { version = "^1.8.0" }
+rayon = { version = "^1.12.0" }
 
 # Tracing and Profiling
 tracing = { version = "0.1.37", default-features = false, features = [
