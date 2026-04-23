@@ -360,7 +360,7 @@ riscv = { version = "0.16", default-features = false }
 
 # Ethereum/Crypto (for sig-recovery example)
 alloy-primitives = "1"
-alloy-consensus = "1"
+alloy-consensus = "2"
 alloy-eips = "1"
 reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", features = [
   "rayon",
