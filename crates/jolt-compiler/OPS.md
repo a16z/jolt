@@ -156,20 +156,66 @@ directly instead of a `&SegmentedConfig`.
 ### Protocol-specific — lower to primitives (9)
 
 Protocol-specific both in name and behavior. Each lowers to a sequence of
-primitives. **Resolved in O5** (tentative targets below — refined when the
-corresponding O5 sub-phase actually lands).
+primitives. **Resolved in O5** (refined targets below — the original
+OPS.md targets were optimistic; reading the actual handlers after
+landing the first two S5 renames exposed three distinct blocker classes).
 
-| Variant | Tentative target (pending O5.<n>) |
-|---|---|
-| `ReadCheckingReduce { kernel, round, r_x_challenge }` | `Op::Reduce { specs: [ReduceSpec { axes: Flat, kernel: composed_prefix_suffix, .. }] }`. The per-round prefix×suffix + combine-matrix evaluation becomes a single kernel formula; compiler lowers the combine matrix into `KernelSpec.formula` during emission. |
-| `RafReduce { batch, instance, kernel }` | `Op::Reduce` with a product-of-sums formula kernel; raf/gamma weighting lowered into the composed formula. |
-| `SuffixScatter { kernel, phase }` | `Op::WeightedSum` + `Op::Reduce` with sparse axes. If the pattern doesn't fit `WeightedSum`, introduce a generic `Op::Scatter { dst, source, index_poly }` primitive. |
-| `QBufferScatter { kernel, phase }` | Same shape as `SuffixScatter` — either `Op::WeightedSum` + `Op::Reduce`, or the new generic `Op::Scatter`. |
-| `MaterializeRA { kernel }` | `Op::WeightedSum` (RLC of per-chunk RA one-hot polys) + primitive `Op::Materialize` ops. Protocol-specific kernel-input construction (which chunks, which weights) moves into compiler lowering, not a runtime op. |
-| `MaterializeCombinedVal { kernel }` | `Op::WeightedSum` (combined-val = Σ flag_table × table_val + raf × gamma) + `Op::Materialize`. |
-| `MaterializePBuffers { kernel }` | `Op::InstanceScalarUpdate` (after O5 rename of `CheckpointEvalBatch`) + `Op::Materialize` for the P buffers. |
-| `InitInstanceWeights { r_reduction, num_prefixes }` | Reroute to `Op::ExpandingTableUpdate` + `Op::InitExpandingTable`. The "instance-weights" naming is lookup-specific; the mechanism is already generic. |
-| `UpdateInstanceWeights { expanding_table, chunk_bits, num_phases, phase }` | Reroute to `Op::ExpandingTableUpdate`. Same rationale as `InitInstanceWeights`. |
+**Blocker groups:**
+
+- **(A) State-in-host + trace-driven**: `state.instance_weights: Vec<F>`
+  is host-allocated and accessed by trace cycle index. The handlers
+  below either write to or read from this state while also consuming
+  `provider.lookup_trace()`. No existing primitive combines both —
+  either the state must relocate to a device buffer
+  (`PolynomialId::InstanceWeights` or similar, cascading into every
+  op that reads `instance_weights[j]`), or a new primitive family
+  (`Op::TraceGather*` / `Op::TraceScatter*`) must land first.
+- **(B) Kernel formula lowering**: The per-round prefix×suffix +
+  `combine_entries` evaluation in `ReadCheckingReduce` / `RafReduce`
+  would need to lower into a `KernelSpec.formula` that the existing
+  `Op::Reduce` machinery can evaluate. Substantial compiler work —
+  requires extending `KernelSpec` with the needed formula shape
+  (sum-over-entries, gamma-weighted product) and verifying the
+  `Op::Reduce` backend path produces the same result.
+- **(C) WeightedSum shape mismatch**: `Op::WeightedSum` computes
+  `Σ challenge^power × source[i] + identity_scale × i`. The handlers
+  below produce either (1) trace-driven gather-products (not a linear
+  combination) or (2) per-cycle conditional constant injection (not a
+  linear combination). Either needs new primitive surface or
+  preprocessed polys that encode pure functions of `i` (identity,
+  bit-uninterleave, chunk-size constant).
+
+| Variant | Blocker | Refined target |
+|---|---|---|
+| `InitInstanceWeights { r_reduction, num_prefixes }` | A | Build eq-table via `InitExpandingTable` + `ExpandingTableUpdate` ×`\|r_reduction\|` **into a device buffer** (new `PolynomialId::InstanceWeights`). Separately reset `instance_scalars` — either via `InstanceScalarUpdate` with N `Clear` actions, or via a new primitive `Op::AllocInstanceScalars { size }`. |
+| `UpdateInstanceWeights { expanding_table, chunk_bits, num_phases, phase }` | A | NOT an `ExpandingTableUpdate` — it's a trace-driven gather-multiply on `instance_weights[j]` indexed by `(key >> suffix_len) & mask`. Needs new primitive `Op::TraceGatherMultiply { dst, source_table, index_source, shift, mask }`. Field slim: `num_phases, phase` collapse to `suffix_len = (num_phases − phase) × chunk_bits`. |
+| `MaterializeRA { kernel }` | A | NOT a `WeightedSum` — trace-driven product of gathers across `num_phases/n_vra` expanding tables per output. Needs new primitive `Op::TraceGatherProduct { dst, source_tables, index_source, shifts, mask }` (closes over the full product loop), or decomposes into `n_vra` scatter/gather/multiply chains. |
+| `MaterializeCombinedVal { kernel }` | A | NOT a `WeightedSum` — combines a pre-computed `table_values` array (built from `instance_scalars` × `combine_entries`) with a trace-driven gather-by-`table_kind_indices[j]` plus per-cycle conditional from `is_interleaved[j]`. Needs new primitive `Op::TraceGatherIndexed` and conditional-scalar injection. |
+| `SuffixScatter { kernel, phase }` | A | NOT a `WeightedSum` — trace-driven scatter into `num_tables × suffixes_per_table` output polys, weighted by `instance_weights[j]` and `suffix_ops[t].eval(key & suffix_mask)`. Needs new `Op::TraceScatter { outputs, index_source, weight_source, value_fn }`. |
+| `QBufferScatter { kernel, phase }` | A | Same primitive family as `SuffixScatter` — 6 Q-buffer outputs with bit-uninterleave and a conditional on `is_interleaved[j]`. Same new primitive applies with richer output set. |
+| `ReadCheckingReduce { kernel, round, r_x_challenge }` | B | `Op::Reduce { specs: [ReduceSpec { axes: Flat, kernel: composed_prefix_suffix, .. }] }`. Compiler lowers the `combine_entries` matrix + `prefix_lowered[round]` into `KernelSpec.formula` at compile time. Substantial `KernelSpec` extension. |
+| `RafReduce { batch, instance, kernel }` | B | `Op::Reduce` with a product-of-sums formula over the Q/P buffers, gamma-weighted. Reads `state.read_checking_evals` + `state.batch_instance_claims[batch][instance]` as implicit inputs; generic `Op::Reduce` doesn't express this state flow yet. |
+| `MaterializePBuffers { kernel }` | C | Feasible with preprocessed polys. Outputs `p_identity[i] = cp × m + i`, `p_left[i] = cp × half_m + lo(i)`, `p_right[i] = cp × half_m + ro(i)`. Needs new preprocessed polys `ChunkSizeConst(chunk_bits)`, `HalfChunkSizeConst(chunk_bits)`, `Identity(chunk_bits)`, `UninterleaveLo(chunk_bits)`, `UninterleaveRo(chunk_bits)` + 3× `Op::WeightedSum`. |
+
+**Graduation order** (revised):
+
+1. **S5.field_slim** (easy, single op): slim `UpdateInstanceWeights`
+   `{num_phases, phase}` → `suffix_len`. Reduces field-set protocol
+   leakage even though the variant itself persists pending Group A
+   resolution. One commit.
+2. **S5.materialize_p_buffers** (Group C): preprocessed-poly
+   infrastructure + 3× `Op::WeightedSum` emission. Local; doesn't
+   depend on Group A or B work. One commit.
+3. **S5.instance_weights_device** (Group A, prerequisite): relocate
+   `state.instance_weights` to a `PolynomialId::InstanceWeights`
+   device buffer. Cascades through handlers — every
+   `state.instance_weights[j]` read becomes a device-buffer read.
+   Introduces new `Op::TraceGatherMultiply` and `Op::TraceScatter`
+   primitives. Pre-requisite for ops 1–6 above. Multi-commit.
+4. **S5.kernel_formula** (Group B): extend `KernelSpec.formula` to
+   express `combine_entries` + gamma-weighted product shapes.
+   Substantial compiler work; standalone. Pre-requisite for ops 7–8.
+5. Then the individual ops lower to primitives one-by-one.
 
 ---
 
@@ -188,10 +234,14 @@ corresponding O5 sub-phase actually lands).
 | Protocol-specific: lower (→ O5) | 9 | `true` (ratchet unchanged until lowered) |
 | **Current total** | **48** | |
 
-Post-O5 target: 36 primitive + batch-scaffold variants (plus any new generic
-primitives introduced during O5 lowering — e.g., possibly `Op::Scatter`;
-`Op::BuildSegmentedEq` and `Op::InstanceScalarUpdate` already landed via
-rename). Estimated final variant count: ~38.
+Post-O5 target: 36 primitive + batch-scaffold variants plus the new
+primitive surface introduced during Group A and Group B lowering —
+expected additions include `Op::TraceGatherMultiply`,
+`Op::TraceGatherProduct`, `Op::TraceGatherIndexed`, `Op::TraceScatter`
+(Group A); possibly an extended `Op::Reduce` with richer `KernelSpec`
+state inputs (Group B). `Op::BuildSegmentedEq` and
+`Op::InstanceScalarUpdate` already landed via rename. Conservative
+estimated final variant count: ~42.
 
 ## Invariant wiring
 
