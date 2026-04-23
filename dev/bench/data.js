@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776887102957,
+  "lastUpdate": 1776913870238,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -86566,6 +86566,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 864952,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "8365992+moodlezoup@users.noreply.github.com",
+            "name": "Michael Zhu",
+            "username": "moodlezoup"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "31ad4a16f1ed211ce2d99c37b88b2e30022c82cd",
+          "message": "feat: migrate architectural tests from RISCOF to ACT4 (#1460)\n\n* spec: ACT4 architectural tests\n\nReplace Jolt's deprecated RISCOF-based architectural-test integration\nwith an ACT4-based one (riscv/riscv-arch-test), dropping Spike as a\nreference model and narrowing coverage to RV64IMAC.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n* feat(tracer): propagate HTIF endcode as jolt-emu exit status\n\nSurfaces the HTIF termination code from Emulator::run_test so the ACT4\nshell runner can distinguish pass (exit 0) from fail (non-zero). Prior\nbehavior unconditionally exited 0, which made self-checking ELFs\nindistinguishable from silently-failing ones.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n* chore(arch-tests): re-point submodule to riscv/riscv-arch-test (ACT4)\n\nThe ACT4 framework lives on the active `riscv/riscv-arch-test` repo;\nthe old `riscv-non-isa/riscv-arch-test` remote was deprecated. Pin to\nmain-branch HEAD (a7c99303..., \"Add version 4.0 release notes\") so a\ndeterministic commit lands on disk after `git submodule update`.\n\nDrops `shallow = true` — a shallow clone cannot reach back to a pinned\ncommit once upstream main advances past it, which would surface as\n\"fatal: reference is not a tree\" weeks from now.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n* chore(arch-tests): remove RISCOF/Spike infrastructure\n\nACT4 is declarative — no per-DUT Python plugin, no Spike reference\nmodel, no multi-ISA .ini configs. The companion patch directory is\nalso gone: the new submodule is consumed unmodified.\n\nRemoved:\n- scripts/apply-patches and patches/ (fix-isa-regex, fix-c-extension-\n  privilege-tests) — no longer needed; ACT4 submodule used as-is.\n- tests/arch-tests/spike/ — Spike is no longer the reference model; Sail\n  computes expected signatures at ELF-build time and bakes them in.\n- tests/arch-tests/jolt-{32,64}{im,imac,gc}.ini — RISCOF DUT/reference\n  pairing configs; ACT4 uses a single test_config.yaml instead.\n- tests/arch-tests/jolt/riscof_jolt.py, jolt_platform.yaml,\n  jolt_isa_*.yaml — per-DUT Python plugin and ISA configs, superseded by\n  test_config.yaml + jolt-rv64imac.yaml UDB config (next commit).\n- tests/arch-tests/jolt/env/ — RISCOF linker script and macros, replaced\n  by ACT4-shaped link.ld and rvmodel_macros.h (next commit).\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n* feat(arch-tests): ACT4 config tree + shell runner\n\nNew files under tests/arch-tests/jolt/:\n- test_config.yaml — ACT4 top-level config (compiler/objdump/Sail paths,\n  UDB config pointer, linker script, dut_include_dir). Uses xpack's\n  riscv-none-elf-gcc (ACT4 enforces GCC 15+). Sets include_priv_tests=\n  false so privileged-mode tests never reach the runner (spec Non-Goals).\n- jolt-rv64imac.yaml — UDB config declaring RV64IMAC extensions with\n  unprivileged-only params, adapted from upstream's cvw-rv32imc example.\n- rvmodel_macros.h — ACT4 assembly macros. RVMODEL_HALT_PASS/FAIL map\n  onto jolt-emu's HTIF tohost termination primitive. Interrupt/timer\n  macros are no-ops (filtered at generate time).\n- link.ld — ACT4-shaped linker script with .text.init/.text.rvtest/\n  .text.rvmodel sections at Jolt's 0x80000000 base.\n- sail.json — sail_riscv_sim config matching shipped schema: M/A/C +\n  Zicntr/Zicsr/Zihpm/Zmmul/Zca supported, single RAM region, no PMP.\n- rvtest_config.{h,svh} — DUT config headers required by ACT4.\n\nHarness:\n- run.sh — portable POSIX-ish shell runner. Iterates *.elf under the\n  ACT4 build dir (excluding *.sig.elf intermediates), skips entries\n  in skip.txt, runs each remaining ELF through jolt-emu, treats exit\n  status as pass/fail. Supports --timeout-secs (gtimeout on macOS).\n- skip.txt — documented skip list for a handful of CSR-family tests\n  (Zicsr/Zicntr/Zihpm csrr*) plus Zalrsc-sc.w-00 and Zca-c.slli-00\n  whose failures would require tracer changes out of scope for the\n  migration (spec Non-Goals: \"No tracer semantics changes\").\n- smoke/fail.S — deliberate-failure ELF for arch-tests-smoke target;\n  writes non-zero HTIF endcode so the harness exercises the failure\n  plumbing.\n- README.md — local run instructions, ACT4↔Jolt file mapping, guidance\n  for adding skip entries.\n- .gitignore — ignore smoke build artifacts; un-ignore skip.txt\n  (root .gitignore excludes *.txt).\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n* feat(arch-tests): ACT4 bootstrap, Makefile, and CI workflow\n\nscripts/bootstrap:\n- Installs riscv-none-elf GCC 15.2 via xpack-dev-tools prebuilts\n  (ACT4 requires GCC 15+; Ubuntu 24.04's apt-provided 13.2 is too old).\n  Supports both Linux x86_64 and aarch64.\n- Installs mise to provision the Ruby 3.4.9 and uv 0.11.6 versions\n  declared in ACT4's .mise.toml; trusts the submodule's config\n  non-interactively so CI doesn't prompt.\n- Fetches sail_riscv_sim from upstream riscv/sail-riscv releases\n  (pinned weekly tag) instead of a Jolt-hosted mirror.\n- Adds `git submodule sync` before `update --init` so existing\n  checkouts pick up the remote URL change.\n- Removes riscof/riscv-ctg/riscv-isac pip installs and the Spike\n  tarball download.\n\nMakefile:\n- New target arch-tests-64imac composes build-emulator, arch-tests-\n  generate (invokes ACT4 driver via `make -C submodule CONFIG_FILES=...\n  WORKDIR=target/arch-tests-work`), and arch-tests-run (invokes the\n  shell runner).\n- New arch-tests-smoke target assembles tests/arch-tests/smoke/fail.S\n  and asserts jolt-emu exits non-zero on it.\n- Removes old multi-ISA targets arch-tests-32im/32imac/32gc/64im/64gc.\n- `bootstrap` no longer chains ./scripts/apply-patches (deleted).\n\n.github/workflows/arch-tests.yml:\n- Single job runs `make arch-tests-64imac` on ubuntu:24.04, followed\n  by `make arch-tests-smoke`. Checks out submodules recursively.\n- Replaces the old RV32imac + RV64imac two-step CI with a single call;\n  32-bit is out of scope.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n* spec(act4-tests): mark status implemented\n\nAll acceptance criteria verified end-to-end in a ubuntu:24.04 container:\n  make arch-tests-64imac — 124 passed, 0 failed, 9 skipped\n  make arch-tests-smoke  — jolt-emu exited 2 on deliberate-failure ELF\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n* fix(tracer): C.SLLI with rd=x0 is a HINT, not reserved\n\nThe RISC-V C standard says C.SLLI with rd=x0 is a HINT (decode-as-no-op\nSLLI x0, x0, shamt), not a reserved encoding. The uncompressor was\nrejecting it and returning 0xffffffff, which caused a decode panic at\nruntime when ACT4's Zca-c.slli-00.S exercised the `c.slli x0, 52` case\nand produced a Rust-panic exit code.\n\n- mod.rs: drop the `if r != 0` guard on C.SLLI uncompress; SLLI x0\n  executes naturally (write-to-x0 is discarded).\n- slli.rs: add focused unit tests covering all shift amounts 1..=63 on\n  RV64, the ACT4 first case (c.slli x1, 33 → 0x7DE1B64C_00000000), and\n  the HINT case (c.slli x0, 52 decodes and executes without panicking).\n- scw.rs: add a faithful reproduction of ACT4's Zalrsc-sc.w-00.S first\n  case via the .execute() path (what jolt-emu uses by default). Passes\n  — isolates sc.w semantics from the rest of the ACT4 framework.\n- skip.txt: un-skip Zca-c.slli-00 and Zalrsc-sc.w-00 so CI catches any\n  regression.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n* fix(tracer): align SC.W/SC.D reservation checks with Sail's implementation\n\nACT4's Zalrsc-sc.w-00.S `cp_custom_sc_lrsc with prev lr.d` exercises the\nwidth-mismatch LR/SC case: `lr.d x0, (x26); sc.w x7, x30, (x26)`. Sail's\nreference model treats this as a success (the 8-byte reservation set\ncontains the 4 bytes SC.W writes), while Jolt's tracer was enforcing a\nstrict same-width match and failing — producing a diverging signature\nagainst the Sail-baked expected values.\n\nThe RISC-V A-extension spec (2024 unpriv §13.1.2/13.1.3) is permissive\nhere: width-mismatched LR/SC is an *unconstrained* loop whose outcome is\nimplementation-defined — \"might succeed on some implementations, but\nmight never succeed on others.\" Both Sail's choice (\"succeed when the\nreservation set contains the written bytes\") and the prior Jolt choice\n(\"fail on any width mismatch\") are spec-compliant; ACT4 bakes Sail's\nchoice into the signature, so the tracer must match it.\n\nTraced via `jolt-emu --disassemble` on the generated ELF: divergence was\nat `sc.w x7, x30, (x26)` after `lr.d x0, (x26)`. Tracer set x7=1 / memory\nunchanged; Sail set x7=0 / memory written.\n\n- cpu.rs: add `reservation_covers(addr, min_bytes)` — true iff a\n  reservation at `addr` covers at least `min_bytes`. Keeps the existing\n  `has_reservation(addr, width)` for other callers.\n- scw.rs: use `reservation_covers(addr, 4)` in both exec and trace paths\n  so SC.W succeeds for any reservation (word or doubleword) at its addr.\n- scd.rs: use `reservation_covers(addr, 8)` — SC.D still needs an 8-byte\n  reservation, so LR.W + SC.D still fails (4 < 8), but LR.D + SC.D\n  succeeds as before.\n- lrd.rs: set both `v_reservation_w` and `v_reservation_d` to rs1 so the\n  SC.W-after-LR.D constraint check passes in the ZK trace path.\n- scw.rs tests: replace obsolete `test_scw_after_lrd_fails_mixed_width`\n  (which codified the pre-Sail-aligned behavior) with `test_scw_after_\n  lrd_succeeds`; refresh neighboring test comment.\n\nVerified end-to-end by running the Sail-generated Zalrsc-sc.w-00.elf\nthrough jolt-emu: \"Test Passed with 0\".\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n* chore(arch-tests): add Docker runner for non-Linux hosts\n\nscripts/bootstrap is Debian/Ubuntu-specific, which makes `make\narch-tests-64imac` a non-starter on macOS. `tests/arch-tests/run-in-\ndocker.sh` wraps the same ubuntu:24.04 environment CI uses — mounts the\nrepo, sets up rustup + make, and runs the ACT4 Make targets. Named\nvolumes persist the Cargo build, the xpack toolchain, and Sail across\ninvocations so repeat runs are fast.\n\nThree invocation modes:\n  run-in-docker.sh                       # default: bootstrap + arch-tests-64imac + arch-tests-smoke\n  run-in-docker.sh shell                 # interactive shell with the env ready\n  run-in-docker.sh -- <make-target...>   # custom target\n\nREADME gets a \"macOS (or any host without apt)\" prerequisites subsection\npointing at the script.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n* fix(arch-tests): stop joining prelude and make commands with `&&`\n\nThe Docker runner built its `bash -lc` argument by joining a multi-line\nbootstrap prelude and `make` commands with `&&`. The prelude ended with\na trailing newline, so the generated script had `&&` on its own line,\ntriggering:\n\n  bash: -c: line 12: syntax error near unexpected token `&&'\n\nDrop the `&&` joins. `set -e` in the prelude is inherited by the rest\nof the script (same `bash -lc` invocation), so any failure still aborts.\nUse plain newline separators instead.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n* chore: satisfy fmt and typos CI\n\n- slli.rs: let rustfmt collapse the c.slli halfword expression onto a\n  single line in the new unit test.\n- typos.toml: allowlist \"nto\", \"useed\", \"sseed\" — Sail config schema\n  field names in tests/arch-tests/jolt/sail.json (Zawrs no-timeout,\n  Zkr entropy CSR settings). We can't rename them; the Sail validator\n  rejects unknown keys.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n* refactor(tracer): tighten reservation/exit-code APIs per review\n\nAddresses four PR review findings:\n\n1. main.rs exit-code truncation: Unix `exit()` truncates to the low 8\n   bits, so returning the raw HTIF endcode mapped any multiple of 256 to\n   kernel exit 0 — the shell runner would record PASS on a failing test.\n   Collapse to 0 on pass, 1 on any non-zero endcode.\n\n2. mod.rs Emulator::run_test: document the new return contract (0 =\n   clean exit; non-zero = HTIF endcode from `tohost`).\n\n3. cpu.rs Cpu::reservation_covers: take `ReservationWidth` (now deriving\n   Ord) instead of `u64 min_bytes`. Check collapses to\n   `self.reservation_width >= min_width`, call sites read as intent,\n   and accidental `reservation_covers(addr, 2)` can no longer compile.\n\n4. cpu.rs has_reservation: removed. Both previous callers (SCW, SCD)\n   migrated to `reservation_covers` in the parent commit, so keeping\n   the strict-width predicate around only invites a new SC variant\n   from re-introducing the LR.D/SC.W bug we just fixed.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Opus 4.7 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-04-22T22:10:18-04:00",
+          "tree_id": "10e6ec126c573a655e45df23d870e53531cc7daa",
+          "url": "https://github.com/a16z/jolt/commit/31ad4a16f1ed211ce2d99c37b88b2e30022c82cd"
+        },
+        "date": 1776913867712,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.4571,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 862448,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.4068,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 496964,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 498760,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 502936,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7587,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 498860,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.6266,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 500252,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.1715,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 502280,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.209,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 220596,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.5584,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 862248,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5942,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 496684,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4888,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 498752,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 23.2269,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 498864,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.4024,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 500600,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 34.1676,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1004952,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 15.684,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 656436,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 92.9071,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2118932,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.5937,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 498588,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.6317,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 498760,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 16.0268,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 861588,
             "unit": "KB",
             "extra": ""
           }
