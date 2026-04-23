@@ -26,7 +26,7 @@ to the old form.
 
 ## Variant catalog
 
-### Primitive — compute (13)
+### Primitive — compute (14)
 
 These ops describe backend-dispatchable compute. They cover the full
 sumcheck inner loop and post-sumcheck evaluation. `is_primitive()` is
@@ -43,6 +43,7 @@ sumcheck inner loop and post-sumcheck evaluation. `is_primitive()` is
 | `RegroupConstraints { polys, group_indices, old_stride, new_stride, num_cycles }` | Constraint-dim regroup for group-split uniskip. |
 | `ExpandingTableUpdate { table, challenge, current_len }` | Double an eq-table-like buffer by consuming one challenge variable. |
 | `InitExpandingTable { table, size }` | Zero-initialize an expanding-table slot. |
+| `BuildSegmentedEq { batch, instance, outer_challenges, outer_num_vars }` | Build an eq-table from a challenge list (or all-ones vector when empty) and stash under `(batch, instance)` in the runtime's per-instance segmented state. Consumed by segmented reduces. |
 | `ScaleEval { poly, factor_challenges }` | Multiply an evaluation by `∏(1 − ch[i])`. |
 | `Evaluate { poly, mode }` | Extract an evaluation from a polynomial. |
 | `EvaluatePreprocessed { source, at_challenges, store_as }` | Evaluate a preprocessed polynomial's MLE at a challenge-derived point. |
@@ -125,7 +126,7 @@ that compile-time producer-analysis can replace. **Resolved in O4.b.**
 | `MaterializeUnlessFresh { binding, expected_size }` | Either `Op::Materialize { binding }` or nothing — compiler tracks which polys earlier ops have produced, emits straight `Op::Materialize` only where needed. |
 | `MaterializeIfAbsent { binding }` | Same pattern: either `Op::Materialize` or nothing. |
 
-### Protocol-specific — rename only (0, landed)
+### Protocol-specific — rename only (landed)
 
 Primitive behavior, name-only protocol leak. **Landed via rename** — see
 below.
@@ -133,6 +134,7 @@ below.
 | Former variant | Renamed to | Commit |
 |---|---|---|
 | `CheckpointEvalBatch { updates: Vec<(usize, CheckpointEvalAction)> }` | `InstanceScalarUpdate { updates: Vec<(usize, ScalarUpdateAction)> }` | S5.rename |
+| `MaterializeSegmentedOuterEq { batch, instance, segmented: SegmentedConfig }` | `BuildSegmentedEq { batch, instance, outer_challenges: Vec<ChallengeIdx>, outer_num_vars: usize }` | S5.build_segmented_eq |
 
 Also renamed: `CheckpointEvalAction` → `ScalarUpdateAction`; runtime
 `state.instance_checkpoints` → `state.instance_scalars`;
@@ -143,7 +145,15 @@ into per-instance scalar slots was kept as-is (it's a checkpoint-slot
 index, not an `InstanceIdx` — the original OPS.md proposal to retype it
 was inaccurate; the `usize` is correct for the schema).
 
-### Protocol-specific — lower to primitives (10)
+`BuildSegmentedEq` drops the unused `SegmentedConfig::inner_num_vars`
+and `SegmentedConfig::inner_only` fields from the op — the build step
+only reads `outer_eq_challenges` and `outer_num_vars`. Consumers of the
+eq table (segmented reduces) still pull `SegmentedConfig` from
+`PhaseDef::segmented` where the inner-side fields live. `build_outer_eq`
+in `jolt-zkvm/src/runtime/helpers.rs` now takes those two values
+directly instead of a `&SegmentedConfig`.
+
+### Protocol-specific — lower to primitives (9)
 
 Protocol-specific both in name and behavior. Each lowers to a sequence of
 primitives. **Resolved in O5** (tentative targets below — refined when the
@@ -158,7 +168,6 @@ corresponding O5 sub-phase actually lands).
 | `MaterializeRA { kernel }` | `Op::WeightedSum` (RLC of per-chunk RA one-hot polys) + primitive `Op::Materialize` ops. Protocol-specific kernel-input construction (which chunks, which weights) moves into compiler lowering, not a runtime op. |
 | `MaterializeCombinedVal { kernel }` | `Op::WeightedSum` (combined-val = Σ flag_table × table_val + raf × gamma) + `Op::Materialize`. |
 | `MaterializePBuffers { kernel }` | `Op::InstanceScalarUpdate` (after O5 rename of `CheckpointEvalBatch`) + `Op::Materialize` for the P buffers. |
-| `MaterializeSegmentedOuterEq { batch, instance, segmented }` | New generic primitive `Op::BuildSegmentedEq { batch, instance, outer_challenges, inner_num_vars, outer_num_vars }`. Named for what it builds, not what uses it. |
 | `InitInstanceWeights { r_reduction, num_prefixes }` | Reroute to `Op::ExpandingTableUpdate` + `Op::InitExpandingTable`. The "instance-weights" naming is lookup-specific; the mechanism is already generic. |
 | `UpdateInstanceWeights { expanding_table, chunk_bits, num_phases, phase }` | Reroute to `Op::ExpandingTableUpdate`. Same rationale as `InitInstanceWeights`. |
 
@@ -168,21 +177,21 @@ corresponding O5 sub-phase actually lands).
 
 | Category | Count | `is_primitive()` target |
 |---|---|---|
-| Primitive — compute | 13 | `true` |
+| Primitive — compute | 14 | `true` |
 | Primitive — PCS | 7 | `true` |
 | Primitive — orchestration | 9 | `true` |
 | Primitive — resource | 3 | `true` |
 | Batch-scaffold | 4 | `true` |
 | Redundant (landed O4.a) | 0 (was 3) | — |
 | Conditional (deferred to O6/O7) | 2 | `true` (ratchet unchanged until pass ships) |
-| Protocol-specific: rename (landed S5.rename) | 0 (was 1) | — |
-| Protocol-specific: lower (→ O5) | 10 | `true` (ratchet unchanged until lowered) |
+| Protocol-specific: rename (landed S5.rename, S5.build_segmented_eq) | 0 (was 2) | — |
+| Protocol-specific: lower (→ O5) | 9 | `true` (ratchet unchanged until lowered) |
 | **Current total** | **48** | |
 
 Post-O5 target: 36 primitive + batch-scaffold variants (plus any new generic
-primitives introduced during O5 lowering — e.g., `Op::BuildSegmentedEq`,
-possibly `Op::Scatter`, and `Op::InstanceScalarUpdate` from the rename).
-Estimated final variant count: ~38.
+primitives introduced during O5 lowering — e.g., possibly `Op::Scatter`;
+`Op::BuildSegmentedEq` and `Op::InstanceScalarUpdate` already landed via
+rename). Estimated final variant count: ~38.
 
 ## Invariant wiring
 

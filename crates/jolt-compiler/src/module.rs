@@ -236,8 +236,8 @@ pub enum BufferRef {
     Polynomial(PolynomialId),
     /// The segmented outer-eq table stashed in per-instance runtime state.
     ///
-    /// Built by `Op::MaterializeSegmentedOuterEq` and consumed by segmented
-    /// reduces. Resolved from `state.segmented_outer_eqs[(batch, instance)]`.
+    /// Built by `Op::BuildSegmentedEq` and consumed by segmented reduces.
+    /// Resolved from `state.segmented_outer_eqs[(batch, instance)]`.
     SegmentedOuterEq {
         batch: BatchIdx,
         instance: InstanceIdx,
@@ -1279,12 +1279,15 @@ pub enum Op {
     /// poly. Used at phase transitions where bound-down buffers from the
     /// previous phase (or other instances) should be preserved.
     MaterializeIfAbsent { binding: InputBinding },
-    /// Build the outer eq table for a segmented phase and store it in
-    /// the runtime's per-instance segmented state.
-    MaterializeSegmentedOuterEq {
+    /// Build an eq-table from a challenge list (or an all-ones vector when
+    /// the challenge list is empty) and stash it under the `(batch, instance)`
+    /// key in the runtime's per-instance segmented state. Named for what it
+    /// builds, not what consumes it.
+    BuildSegmentedEq {
         batch: BatchIdx,
         instance: InstanceIdx,
-        segmented: SegmentedConfig,
+        outer_challenges: Vec<ChallengeIdx>,
+        outer_num_vars: usize,
     },
     /// Capture a scalar from a fully-bound 1-element device buffer into a
     /// challenge slot. Bridges phase boundaries: an intermediate value computed
@@ -1647,7 +1650,7 @@ impl Op {
                 | Op::Materialize { .. }
                 | Op::MaterializeUnlessFresh { .. }
                 | Op::MaterializeIfAbsent { .. }
-                | Op::MaterializeSegmentedOuterEq { .. }
+                | Op::BuildSegmentedEq { .. }
                 | Op::CaptureScalar { .. }
                 | Op::BatchAccumulateInstance { .. }
                 | Op::BatchRoundFinalize { .. }
@@ -1697,6 +1700,7 @@ impl Op {
             | Op::RegroupConstraints { .. }
             | Op::ExpandingTableUpdate { .. }
             | Op::InitExpandingTable { .. }
+            | Op::BuildSegmentedEq { .. }
             | Op::ScaleEval { .. }
             | Op::Evaluate { .. }
             | Op::EvaluatePreprocessed { .. }
@@ -1749,7 +1753,6 @@ impl Op {
             | Op::MaterializeRA { .. }
             | Op::MaterializeCombinedVal { .. }
             | Op::MaterializePBuffers { .. }
-            | Op::MaterializeSegmentedOuterEq { .. }
             | Op::InitInstanceWeights { .. }
             | Op::UpdateInstanceWeights { .. } => true, // flip to false in O5
         }

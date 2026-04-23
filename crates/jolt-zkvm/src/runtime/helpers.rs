@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use jolt_compiler::module::{ChallengeSource, InputBinding, SegmentedConfig, VerifierStageIndex};
+use jolt_compiler::module::{ChallengeIdx, ChallengeSource, InputBinding, VerifierStageIndex};
 use jolt_compiler::BufferProvider;
 use jolt_compiler::PolynomialId;
 use jolt_compute::{Buf, ComputeBackend, DeviceBuffer};
@@ -41,16 +41,20 @@ pub(super) fn precompute_stage_points(module: &jolt_compiler::module::Module) ->
         .collect()
 }
 
-pub(super) fn build_outer_eq<B, F>(challenges: &[F], seg: &SegmentedConfig, backend: &B) -> Vec<F>
+pub(super) fn build_outer_eq<B, F>(
+    challenges: &[F],
+    outer_challenges: &[ChallengeIdx],
+    outer_num_vars: usize,
+    backend: &B,
+) -> Vec<F>
 where
     B: ComputeBackend,
     F: Field,
 {
-    if seg.outer_eq_challenges.is_empty() {
-        vec![F::one(); 1 << seg.outer_num_vars]
+    if outer_challenges.is_empty() {
+        vec![F::one(); 1 << outer_num_vars]
     } else {
-        let point: Vec<F> = seg
-            .outer_eq_challenges
+        let point: Vec<F> = outer_challenges
             .iter()
             .map(|&ci| challenges[ci.0])
             .collect();

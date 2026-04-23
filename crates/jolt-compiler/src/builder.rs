@@ -650,10 +650,11 @@ impl ModuleBuilder {
 
                     // Emit per-binding materialization ops.
                     if let Some(seg) = &phase.segmented {
-                        self.ops.push(Op::MaterializeSegmentedOuterEq {
+                        self.ops.push(Op::BuildSegmentedEq {
                             batch,
                             instance: inst_idx,
-                            segmented: seg.clone(),
+                            outer_challenges: seg.outer_eq_challenges.clone(),
+                            outer_num_vars: seg.outer_num_vars,
                         });
                     }
                     let is_activation = instance_round == 0;

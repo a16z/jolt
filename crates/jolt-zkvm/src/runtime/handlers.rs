@@ -61,9 +61,7 @@ fn op_span(op: &Op) -> tracing::span::EnteredSpan {
             tracing::info_span!("MaterializeUnlessFresh").entered()
         }
         Op::MaterializeIfAbsent { .. } => tracing::info_span!("MaterializeIfAbsent").entered(),
-        Op::MaterializeSegmentedOuterEq { .. } => {
-            tracing::info_span!("MaterializeSegmentedOuterEq").entered()
-        }
+        Op::BuildSegmentedEq { .. } => tracing::info_span!("BuildSegmentedEq").entered(),
         Op::CaptureScalar { .. } => tracing::info_span!("CaptureScalar").entered(),
         Op::Reduce { specs } => tracing::info_span!("Reduce", n_specs = specs.len()).entered(),
         Op::BatchAccumulateInstance { .. } => {
@@ -642,12 +640,18 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             let _ = device_buffers.insert(pi, buf);
         }
 
-        Op::MaterializeSegmentedOuterEq {
+        Op::BuildSegmentedEq {
             batch,
             instance,
-            segmented,
+            outer_challenges,
+            outer_num_vars,
         } => {
-            let outer_eq = build_outer_eq(&state.challenges, segmented, backend);
+            let outer_eq = build_outer_eq(
+                &state.challenges,
+                outer_challenges,
+                *outer_num_vars,
+                backend,
+            );
             let _ = state
                 .segmented_outer_eqs
                 .insert((batch.0, instance.0), outer_eq);

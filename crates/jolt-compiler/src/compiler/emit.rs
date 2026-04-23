@@ -930,7 +930,7 @@ fn op_poly_refs(op: &Op, kernels: &[KernelDef]) -> Vec<PolynomialId> {
         | Op::Materialize { .. }
         | Op::MaterializeUnlessFresh { .. }
         | Op::MaterializeIfAbsent { .. }
-        | Op::MaterializeSegmentedOuterEq { .. }
+        | Op::BuildSegmentedEq { .. }
         | Op::BatchAccumulateInstance { .. }
         | Op::BatchRoundFinalize { .. }
         | Op::BindOpeningInputs { .. }

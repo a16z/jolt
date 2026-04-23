@@ -972,10 +972,11 @@ fn emit_unrolled_batched_rounds(
                 if let Some(seg) = &phase.segmented {
                     push_op!(
                         ops,
-                        Op::MaterializeSegmentedOuterEq {
+                        Op::BuildSegmentedEq {
                             batch: batch_idx,
                             instance: inst_idx,
-                            segmented: seg.clone(),
+                            outer_challenges: seg.outer_eq_challenges.clone(),
+                            outer_num_vars: seg.outer_num_vars,
                         }
                     );
                 }
@@ -7629,7 +7630,7 @@ fn print_stats(module: &Module, params: &ModuleParams) {
             | Op::Materialize { .. }
             | Op::MaterializeUnlessFresh { .. }
             | Op::MaterializeIfAbsent { .. }
-            | Op::MaterializeSegmentedOuterEq { .. }
+            | Op::BuildSegmentedEq { .. }
             | Op::CaptureScalar { .. }
             | Op::BatchAccumulateInstance { .. }
             | Op::BatchRoundFinalize { .. }
