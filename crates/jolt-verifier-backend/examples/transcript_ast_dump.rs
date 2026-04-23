@@ -22,11 +22,18 @@ use std::fs;
 use std::path::PathBuf;
 
 use jolt_field::{Field, Fr};
+use jolt_openings::mock::MockCommitmentScheme;
 use jolt_transcript::Transcript;
 use jolt_verifier_backend::{to_dot, to_mermaid, FieldBackend, Tracing};
 
+/// AST-side `Tracing` is generic over the [`CommitmentScheme`]. This example
+/// only uses field-side ops, so we instantiate against
+/// `MockCommitmentScheme<Fr>` (whose `Field = Fr`) to keep the snippet
+/// self-contained without pulling in a real PCS.
+type Mock = MockCommitmentScheme<Fr>;
+
 fn main() {
-    let mut tracer = Tracing::<Fr>::new();
+    let mut tracer = Tracing::<Mock>::new();
     let mut transcript = tracer.new_transcript(b"jolt_demo");
 
     // Absorb a labeled domain (mimics what the verifier does before squeezing

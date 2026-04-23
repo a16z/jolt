@@ -401,49 +401,129 @@ it severs the verifier's compile-time dependency on additive
 homomorphism. Future hash-based / lattice-based PCS implement
 `OpeningReduction` directly with whatever batching is natural for them.
 
-**Step 2.1 — Extend `AstOp` with three commitment variants.**
+**Step 2.1 — Lift the AST into `PCS`.**
 
-Add to `crates/jolt-verifier-backend/src/tracing.rs::AstOp`:
+The first iteration of this step (commit `4da5d72c3`) routed
+commitment values and opening proofs through a `Box<dyn Any>` sidecar
+keyed by an opaque `ProofHandle(u32)`, with a `SchemeTag = &'static str`
+discriminator on each `OpeningCheck` node so a replay-time dispatcher
+could pick the right `<PCS as CommitmentScheme>::verify`. That design
+was rejected: it pushes critical typing information into runtime
+metadata, which is hostile to formal-verification export (Lean / Coq
+sees a node that merely *promises* to verify a Dory proof, not one
+that *is* a Dory opening) and leaks the `Box<dyn Any>` indirection
+into every downstream AST consumer (recursion lowering, viz,
+documentation).
+
+The replacement makes the entire AST generic over the
+`CommitmentScheme`:
 
 ```rust
-CommitmentWrap   { origin: CommitmentOrigin, label: &'static str },
-TranscriptAbsorbCommitment {
-    transcript_state: AstNodeId,
-    commitment: AstNodeId,
-},
-OpeningCheck    {
-    commitment: AstNodeId,
-    point: Vec<AstNodeId>,    // evaluation point as field nodes
-    claim: AstNodeId,         // claimed evaluation as field node
-    proof_handle: ProofHandle,// opaque sidecar key
-    scheme_tag: SchemeTag,    // 'static str discriminator
-},
+// crates/jolt-verifier-backend/src/tracing.rs
+pub struct AstGraph<PCS: CommitmentScheme>
+where
+    PCS::Output: AppendToTranscript + Debug,
+    PCS::Proof: Debug,
+{
+    pub nodes: Vec<AstOp<PCS>>,
+    pub assertions: Vec<AstAssertion>,
+}
+
+pub enum AstOp<PCS: CommitmentScheme>
+where
+    PCS::Output: AppendToTranscript + Debug,
+    PCS::Proof: Debug,
+{
+    // ...existing field/transcript variants unchanged...
+
+    CommitmentWrap {
+        value: Box<PCS::Output>,
+        origin: CommitmentOrigin,
+        label: &'static str,
+    },
+    TranscriptAbsorbCommitment {
+        prev_state: AstNodeId,
+        commitment: AstNodeId, // -> CommitmentWrap node
+        label: &'static [u8],
+    },
+    OpeningCheck {
+        prev_state: AstNodeId,    // transcript state going in
+        commitment: AstNodeId,    // -> CommitmentWrap node
+        point: Vec<AstNodeId>,    // field nodes (challenges / consts)
+        claim: AstNodeId,         // field node (claimed evaluation)
+        proof: Box<PCS::Proof>,
+    },
+}
+
+pub struct Tracing<PCS: CommitmentScheme> where /* same bounds */ { ... }
 ```
 
-`CommitmentOrigin` mirrors `ScalarOrigin` (`Public`, `Proof`).
-`SchemeTag` is a `&'static str` (e.g. `"dory"`, `"hyperkzg"`) so the AST
-record stays human-readable without coupling to crate-specific types.
-`ProofHandle` is an opaque `u32` index into a per-graph
-`Vec<Box<dyn Any>>` sidecar that stores the raw opening proof; replay
-can hand it back to the PCS verifier as-is. This is the AST-extensibility
-escape hatch flagged in alternative 6 below.
+Cross-cutting trait change in `jolt-openings`:
 
-`AstAssertion` gains `OpeningHolds { check: AstNodeId }` so replay
-discharges opening checks the same way it discharges field equalities.
+```rust
+// crates/jolt-openings/src/schemes.rs
+pub trait CommitmentScheme: Commitment + ... {
+    type Proof: Clone + Debug + Send + Sync + Serialize + DeserializeOwned;
+    //                ^^^^^^ added so AstOp<PCS>: Debug derives.
+    // ...
+}
+```
 
-Replay (`replay_trace`) gains:
-- `CommitmentWrap` → consumes one entry from a `commitment_wraps`
-  vector parameter (parallel to the existing `wraps: Vec<F>` parameter).
-- `TranscriptAbsorbCommitment` → forwards to the live transcript via
-  the `AppendToTranscript` impl on the wrapped commitment.
-- `OpeningCheck` / `OpeningHolds` → resolves the proof sidecar and
-  invokes `<PCS as CommitmentScheme>::verify`.
+`AstAssertion` gains `OpeningHolds { check: AstNodeId, ctx }`. It does
+NOT need to be PCS-generic (it only references node ids).
+
+Why "value/proof inline" wins:
+
+1. **Type-honest.** `AstGraph<DoryScheme>` literally contains
+   `DoryProof`s, not opaque handles. A Lean export reads off `nodes:
+   List (AstOp DoryScheme)` directly; the soundness obligation on
+   each `OpeningCheck` node is "`DoryScheme.verify` accepts these
+   inputs", with no marshalling.
+2. **No erasure.** Every constructor is exhaustively checked at
+   compile time; renaming a variant or changing `OpeningCheck` shape
+   trips every consumer immediately.
+3. **One source of truth per op.** `CommitmentWrap.value` is the
+   commitment; `OpeningCheck.proof` is the proof. There is no parallel
+   `Vec<Box<dyn Any>>` whose ordering can drift from the AST.
+4. **Smaller blast radius for non-Dory schemes.** A future
+   `HachiCommitmentScheme` lights up `AstGraph<HachiCommitmentScheme>`
+   with no new opcodes and no scheme-tag bookkeeping.
+
+Replay (`replay`) becomes:
+
+```rust
+pub fn replay<PCS: CommitmentScheme>(
+    graph: &AstGraph<PCS>,
+    wrap_values: &[PCS::Field],
+    vk: &PCS::VerifierSetup,
+) -> Result<Vec<PCS::Field>, BackendError>
+```
+
+Per-variant semantics:
+- `CommitmentWrap` is a no-op for replay (value already inline; no
+  field-side semantics).
+- `TranscriptAbsorbCommitment` resolves `commitment` to its inline
+  `PCS::Output`, calls `Native::absorb_commitment` on the live
+  Blake2b transcript (LabelWithCount + AppendToTranscript), and
+  threads the post-absorb transcript state into `idx`.
+- `OpeningCheck` resolves the live transcript at `prev_state`, calls
+  `<PCS as CommitmentScheme>::verify(commitment, point, claim, proof,
+  vk, transcript)`, threads the post-verify transcript into `idx`,
+  and stores the `Result<(), OpeningsError>` in a per-replay map.
+- `AstAssertion::OpeningHolds { check, ctx }` looks up the stored
+  `Result` for `check` and returns
+  `BackendError::OpeningCheckFailed { ctx, source }` on `Err`.
 
 **Step 2.2 — `CommitmentBackend` trait (3 methods, no curve mention).**
 
 ```rust
-// crates/jolt-verifier-backend/src/backend.rs
-pub trait CommitmentBackend<PCS: CommitmentScheme>: FieldBackend {
+// crates/jolt-verifier-backend/src/commitment.rs
+pub trait CommitmentBackend<PCS>: FieldBackend
+where
+    PCS: CommitmentScheme<Field = <Self as FieldBackend>::F>,
+    PCS::Output: AppendToTranscript,
+    Self::Transcript: Transcript<Challenge = <Self as FieldBackend>::F>,
+{
     /// Backend-side handle for a commitment. `Native::Commitment = PCS::Output`;
     /// `Tracing::Commitment = AstNodeId`.
     type Commitment: Clone + std::fmt::Debug;
@@ -467,48 +547,67 @@ pub trait CommitmentBackend<PCS: CommitmentScheme>: FieldBackend {
     /// not the backend's.
     fn verify_opening(
         &mut self,
-        vk: &PCS::VerifyingKey,
+        vk: &PCS::VerifierSetup,
         commitment: &Self::Commitment,
         point: &[Self::Scalar],
         claim: &Self::Scalar,
-        proof: &PCS::OpeningProof,
+        proof: &PCS::Proof,
         transcript: &mut Self::Transcript,
-        scheme_tag: SchemeTag,
     ) -> Result<(), OpeningsError>;
 }
 ```
 
 What is *not* on this trait: anything that names a curve, a pairing,
-an MSM, or a linear combination of commitments. Those are PCS-internal
-details, exposed (or not) through `OpeningReduction::reduce_verifier_with_backend`
-on a per-PCS basis.
+an MSM, a linear combination of commitments, or a runtime PCS
+discriminator (`SchemeTag`). The PCS is statically known via the
+`CommitmentBackend<PCS>` type parameter; downstream consumers walking
+an `AstGraph<PCS>` learn the scheme from the type.
 
 **Step 2.3 — `Native<F>` impl.**
 
 ```rust
 type Commitment = PCS::Output;          // identity wrap
 fn wrap_commitment(_, value, _, _) { value }
-fn absorb_commitment(_, t, c, label) { c.append_to_transcript(t, label); }
-fn verify_opening(_, vk, c, point, claim, proof, t, _) {
-    PCS::verify(vk, c, point, claim, proof, t)
+fn absorb_commitment(_, t, c, label) {
+    t.append(&LabelWithCount(label, c.serialized_len()));
+    c.append_to_transcript(t);
+}
+fn verify_opening(_, vk, c, point, claim, proof, t) {
+    PCS::verify(c, point, *claim, proof, vk, t)
 }
 ```
 
-Zero-cost: every method is `#[inline]`, no allocation, transcript
-behaviour bit-identical to the legacy verifier.
+Zero-cost: every method is `#[inline(always)]`, no allocation,
+transcript behaviour bit-identical to the legacy verifier.
 
-**Step 2.4 — `Tracing<F>` impl.**
+**Step 2.4 — `Tracing<PCS>` impl.**
 
-`Tracing` already owns `Arc<Mutex<AstGraph>>`. It additionally owns
-`Arc<Mutex<ProofSidecar>>` where `ProofSidecar = Vec<Box<dyn Any +
-Send>>`. `wrap_commitment` pushes a node and stashes nothing extra;
-`absorb_commitment` pushes a `TranscriptAbsorbCommitment` node *and*
-forwards to the live `TracingTranscript`'s inner Blake2b so squeezed
-challenges remain consistent with the native path; `verify_opening`
-pushes the proof into the sidecar, returns its `ProofHandle`, records
-an `OpeningCheck` node + `OpeningHolds` assertion, and returns `Ok(())`
-without invoking the actual PCS verifier (the assertion will fire at
-replay time).
+`Tracing` is lifted from `Tracing<F>` to `Tracing<PCS>` so the AST
+records `PCS::Output` and `PCS::Proof` directly (no sidecar, no
+`Box<dyn Any>`). It owns `Arc<Mutex<AstGraph<PCS>>>` plus the existing
+`Arc<Mutex<Vec<F>>>` of wrap values.
+
+- `Type Commitment = AstNodeId` — the id of a `CommitmentWrap` node.
+- `wrap_commitment(value, origin, label)` pushes
+  `AstOp::CommitmentWrap { value: Box::new(value), origin, label }`
+  and returns the node id.
+- `absorb_commitment(transcript, commitment, label)` (a) records a
+  structured `TranscriptAbsorbCommitment { prev_state, commitment,
+  label }` node so downstream consumers see one logical
+  "absorb-commitment" step rather than two byte-level absorbs, and
+  (b) drives the inner `Blake2bTranscript` through the same
+  `LabelWithCount + AppendToTranscript` pair `Native` does, so
+  squeezed challenges remain bit-identical between backends.
+- `verify_opening(vk, commitment, point, claim, proof, transcript)`
+  pushes `OpeningCheck { prev_state, commitment, point, claim,
+  proof: Box::new(proof.clone()) }` plus the matching
+  `AstAssertion::OpeningHolds`, threads `transcript.state_node` to
+  the new node id, and returns `Ok(())`. The actual `PCS::verify` is
+  invoked at replay time via the `vk` parameter on `replay`.
+
+Existing field-only `Tracing<F>` callers update to
+`Tracing<MockCommitmentScheme<F>>` (or any concrete PCS); the field
+ops are unchanged because `MockCommitmentScheme<F>::Field = F`.
 
 **Step 2.5 — `OpeningReduction::reduce_verifier_with_backend`.**
 
@@ -572,14 +671,22 @@ Crucially, no `GroupBackend` and no curve-shaped `AstOp` variants.
 
 ### AST extensibility for non-Dory schemes
 
-`AstOp::OpeningCheck { scheme_tag, proof_handle, … }` is the
-single extension point. A scheme-specific verifier consumer (e.g. a
-Lean exporter, a recursion verifier) dispatches on `scheme_tag` and
-loads the corresponding `proof_handle` from the sidecar. This avoids
-making `AstOp` either a closed enum that knows every PCS or an open
-trait-object that loses serialisability. The cost is one indirection
-per opening check at replay time, which is negligible relative to the
-opening verification itself.
+`AstGraph<PCS>` is itself the extension point: a future PCS lights
+up an `AstGraph<NewScheme>` with the same opcodes, and downstream
+consumers (Lean exporter, recursion verifier) dispatch on the static
+`PCS` type parameter rather than a runtime tag. The shape of every
+opening check is identical: `(commitment, point, claim, proof, vk)`
+fed to `<PCS as CommitmentScheme>::verify`. Only the inhabitant
+types of `PCS::Output` / `PCS::Proof` differ.
+
+This generic-over-`PCS` design is the post-rejection successor to the
+`Box<dyn Any>` proof sidecar + `SchemeTag` discriminator that the
+first iteration of step 2.1 introduced (see commit `4da5d72c3` and
+alternative 6 below). The sidecar approach was rejected for being
+type-erased — it pushes critical typing into runtime metadata and
+presents downstream Lean / R1CS lowerings with `OpeningCheck` nodes
+that merely *claim* to be openings of some scheme rather than
+*being* statically-typed openings of `PCS`.
 
 ### Phase 2 acceptance criteria
 
@@ -594,8 +701,11 @@ opening verification itself.
       and not in `jolt-verifier-backend`.
 - [ ] `CommitmentBackend` trait exists with exactly three methods.
       `Native::Commitment = PCS::Output`; `Tracing::Commitment = AstNodeId`.
-- [ ] `AstOp` gains exactly the three variants
-      `CommitmentWrap`, `TranscriptAbsorbCommitment`, `OpeningCheck`.
+- [ ] `AstGraph` and `AstOp` are generic over `PCS: CommitmentScheme`.
+      `AstOp` gains exactly the three variants `CommitmentWrap`,
+      `TranscriptAbsorbCommitment`, `OpeningCheck`, with
+      `PCS::Output` / `PCS::Proof` *inlined* (no `Box<dyn Any>`
+      sidecar, no `ProofHandle`, no `SchemeTag`).
       `AstAssertion` gains `OpeningHolds`. `viz::to_dot` /
       `viz::to_mermaid` render each with distinct styling.
 - [ ] `OpeningReduction::reduce_verifier_with_backend` is implemented
@@ -627,18 +737,32 @@ opening verification itself.
 
 ### Alternatives considered (Phase 2)
 
-6. **`AstOp::PcsExtension { tag, payload: Vec<u8> }`** — a fully
+6. **Type-erased proof sidecar (`Box<dyn Any>` + `ProofHandle` +
+   `SchemeTag`).** The first commit of step 2.1 (commit
+   `4da5d72c3`) shipped this design: `AstOp::OpeningCheck` carried
+   a `proof_handle: ProofHandle(u32)` indexing a per-graph
+   `Vec<Box<dyn Any + Send>>`, and a `scheme_tag: &'static str` for
+   replay-time dispatch into `<PCS as CommitmentScheme>::verify`.
+   The intent was to keep `AstOp` monomorphic so the rest of the
+   crate stayed PCS-agnostic. **Rejected** after explicit
+   user feedback (`"everything seems more untyped than I'd like.
+   ... think of extracting into Lean. we need to be super explicit
+   & formal."`). Concretely, the sidecar approach (a) erases the
+   PCS at the AST level so a Lean export sees `OpeningCheck` nodes
+   that merely *claim* to be openings, (b) introduces a parallel
+   `Vec<Box<dyn Any>>` whose ordering must stay in sync with the
+   AST, and (c) leaks `Any` into every downstream consumer. The
+   replacement (step 2.1 above) lifts the AST into `PCS` so
+   `PCS::Output` and `PCS::Proof` are *inlined* in the recorded
+   nodes, with no runtime tag and no marshalling.
+7. **`AstOp::PcsExtension { tag, payload: Vec<u8> }`** — a fully
    serialised escape hatch for arbitrary PCS-specific subgraphs.
-   Rejected for now in favour of the narrower
-   `OpeningCheck { scheme_tag, proof_handle, … }` shape: every PCS we
-   know of (curve, FRI, lattice) needs the same four field-side
-   ingredients (commitment, point, claim, proof), and the backend can
-   route them through a single AST node + sidecar. If a future PCS
-   needs a richer in-AST representation, `PcsExtension` can be added
-   without disturbing the existing variants.
-7. **`GroupBackend` with `g1_msm` / `pairing` (original sketch).**
+   Rejected: same Lean-unfriendliness as alternative 6, plus an
+   ad-hoc serialisation contract per PCS. Future PCS variants get
+   their own `AstGraph<NewScheme>` instead.
+8. **`GroupBackend` with `g1_msm` / `pairing` (original sketch).**
    Rejected. See "Why an amendment" above.
-8. **Keep the `AdditivelyHomomorphic` blanket and add a parallel
+9. **Keep the `AdditivelyHomomorphic` blanket and add a parallel
    `OpeningReductionNonHomomorphic` trait.** Rejected — splits the
    verifier surface in two and forces every consumer to handle both
    cases. Single trait + per-PCS impl is strictly simpler.

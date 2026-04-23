@@ -1,3 +1,4 @@
+use jolt_openings::OpeningsError;
 use thiserror::Error;
 
 /// Errors raised by a [`FieldBackend`](crate::FieldBackend).
@@ -21,13 +22,19 @@ pub enum BackendError {
     #[error("backend inverse of zero (ctx: {0})")]
     InverseOfZero(&'static str),
 
-    /// `replay` encountered a commitment-shaped AST node
-    /// ([`AstOp::CommitmentWrap`](crate::AstOp::CommitmentWrap),
-    /// [`AstOp::TranscriptAbsorbCommitment`](crate::AstOp::TranscriptAbsorbCommitment),
-    /// or [`AstOp::OpeningCheck`](crate::AstOp::OpeningCheck)) but no
-    /// commitment-aware resolver was provided. Step 2.4 of the
-    /// `CommitmentBackend` cutover (see `specs/1461`) wires the resolver and
-    /// removes this error path.
-    #[error("backend replay reached '{0}' but no commitment resolver is wired (CommitmentBackend cutover step 2.4)")]
-    CommitmentReplayUnwired(&'static str),
+    /// A `replay`-time PCS opening check
+    /// ([`AstAssertion::OpeningHolds`](crate::AstAssertion::OpeningHolds))
+    /// failed: `<PCS as CommitmentScheme>::verify` returned `Err` for the
+    /// referenced [`AstOp::OpeningCheck`](crate::AstOp::OpeningCheck) node.
+    ///
+    /// `ctx` is the caller-supplied label (matching the assertion site);
+    /// `source` is the underlying [`OpeningsError`].
+    #[error("backend opening check '{ctx}' failed: {source}")]
+    OpeningCheckFailed {
+        /// Caller-supplied debug context (`AstAssertion::OpeningHolds.ctx`).
+        ctx: &'static str,
+        /// Underlying PCS verification failure.
+        #[source]
+        source: OpeningsError,
+    },
 }

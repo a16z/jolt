@@ -3140,6 +3140,7 @@ name = "jolt-sumcheck"
 version = "0.1.0"
 dependencies = [
  "jolt-field",
+ "jolt-openings",
  "jolt-poly",
  "jolt-transcript",
  "jolt-verifier-backend",

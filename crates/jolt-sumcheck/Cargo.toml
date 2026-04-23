@@ -16,3 +16,6 @@ jolt-verifier-backend = { path = "../jolt-verifier-backend" }
 serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true
 thiserror = { workspace = true }
+
+[dev-dependencies]
+jolt-openings = { path = "../jolt-openings", features = ["test-utils"] }

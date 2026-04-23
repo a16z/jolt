@@ -9,8 +9,17 @@
 //!
 //! These are intentionally text-only utilities so they can be used in
 //! tests, examples, and design notes without pulling in a renderer.
+//!
+//! Both renderers are generic over the [`CommitmentScheme`] so the AST
+//! type they walk stays type-honest. Commitment-shaped variants
+//! ([`AstOp::CommitmentWrap`], [`AstOp::TranscriptAbsorbCommitment`],
+//! [`AstOp::OpeningCheck`]) print metadata about the inlined commitment
+//! / proof rather than the raw payload.
 
 use std::fmt::Write;
+
+use jolt_openings::CommitmentScheme;
+use jolt_transcript::AppendToTranscript;
 
 use crate::backend::{CommitmentOrigin, ScalarOrigin};
 use crate::tracing::{AstAssertion, AstGraph, AstOp};
@@ -21,7 +30,10 @@ use crate::tracing::{AstAssertion, AstGraph, AstOp};
 /// is meant to make a glance enough to distinguish proof inputs from
 /// transcript challenges from intermediate arithmetic. Assertions appear
 /// as dashed red edges between the two participating nodes.
-pub fn to_dot(graph: &AstGraph) -> String {
+pub fn to_dot<PCS: CommitmentScheme>(graph: &AstGraph<PCS>) -> String
+where
+    PCS::Output: AppendToTranscript,
+{
     let mut out = String::new();
     out.push_str("digraph AstGraph {\n");
     out.push_str("  rankdir=TB;\n");
@@ -96,7 +108,10 @@ pub fn to_dot(graph: &AstGraph) -> String {
 ///
 /// Suitable for inlining in markdown design docs. Uses Mermaid `classDef`
 /// styling so node colour matches [`to_dot`].
-pub fn to_mermaid(graph: &AstGraph) -> String {
+pub fn to_mermaid<PCS: CommitmentScheme>(graph: &AstGraph<PCS>) -> String
+where
+    PCS::Output: AppendToTranscript,
+{
     let mut out = String::new();
     out.push_str("graph TD\n");
     out.push_str("  classDef wrapPub fill:#d3f9d8,stroke:#2f9e44,color:#1b4332;\n");
@@ -154,7 +169,10 @@ pub fn to_mermaid(graph: &AstGraph) -> String {
     out
 }
 
-fn describe_node(op: &AstOp) -> (String, &'static str) {
+fn describe_node<PCS: CommitmentScheme>(op: &AstOp<PCS>) -> (String, &'static str)
+where
+    PCS::Output: AppendToTranscript,
+{
     match op {
         AstOp::Wrap { origin, label } => {
             let kind = match origin {
@@ -219,7 +237,7 @@ fn describe_node(op: &AstOp) -> (String, &'static str) {
             "transcript squeeze (F)".to_owned(),
             "fillcolor=\"#74c0fc\", color=\"#1864ab\", fontcolor=\"#0b3a5c\"",
         ),
-        AstOp::CommitmentWrap { origin, label } => {
+        AstOp::CommitmentWrap { origin, label, .. } => {
             let kind = match origin {
                 CommitmentOrigin::Public => "vk-commit",
                 CommitmentOrigin::Proof => "proof-commit",
@@ -234,27 +252,21 @@ fn describe_node(op: &AstOp) -> (String, &'static str) {
             };
             (format!("{kind}: {label}"), attrs)
         }
-        AstOp::TranscriptAbsorbCommitment { .. } => (
-            "absorb commitment".to_owned(),
+        AstOp::TranscriptAbsorbCommitment { label, .. } => (
+            format!("absorb commitment({})", display_label(label)),
             "fillcolor=\"#e5dbff\", color=\"#5f3dc4\", fontcolor=\"#3d1c7a\"",
         ),
-        AstOp::OpeningCheck {
-            scheme_tag,
-            point,
-            proof_handle,
-            ..
-        } => (
-            format!(
-                "opening check ({scheme_tag}, |z|={}, p#{})",
-                point.len(),
-                proof_handle.0,
-            ),
+        AstOp::OpeningCheck { point, .. } => (
+            format!("opening check (|z|={})", point.len()),
             "fillcolor=\"#f3f0ff\", color=\"#5f3dc4\", fontcolor=\"#5f3dc4\"",
         ),
     }
 }
 
-fn mermaid_node(op: &AstOp) -> (String, &'static str) {
+fn mermaid_node<PCS: CommitmentScheme>(op: &AstOp<PCS>) -> (String, &'static str)
+where
+    PCS::Output: AppendToTranscript,
+{
     match op {
         AstOp::Wrap { origin, label } => match origin {
             ScalarOrigin::Public => (format!("public: {label}"), "wrapPub"),
@@ -282,30 +294,25 @@ fn mermaid_node(op: &AstOp) -> (String, &'static str) {
         AstOp::TranscriptChallengeValue { .. } => {
             ("transcript squeeze (F)".to_owned(), "tSqueezeValue")
         }
-        AstOp::CommitmentWrap { origin, label } => match origin {
+        AstOp::CommitmentWrap { origin, label, .. } => match origin {
             CommitmentOrigin::Public => (format!("vk-commit: {label}"), "commitPub"),
             CommitmentOrigin::Proof => (format!("proof-commit: {label}"), "commitProof"),
         },
-        AstOp::TranscriptAbsorbCommitment { .. } => {
-            ("absorb commitment".to_owned(), "commitAbsorb")
-        }
-        AstOp::OpeningCheck {
-            scheme_tag,
-            point,
-            proof_handle,
-            ..
-        } => (
-            format!(
-                "opening check ({scheme_tag}, |z|={}, p#{})",
-                point.len(),
-                proof_handle.0,
-            ),
+        AstOp::TranscriptAbsorbCommitment { label, .. } => (
+            format!("absorb commitment({})", display_label(label)),
+            "commitAbsorb",
+        ),
+        AstOp::OpeningCheck { point, .. } => (
+            format!("opening check (|z|={})", point.len()),
             "openingCheck",
         ),
     }
 }
 
-fn operands(op: &AstOp) -> Vec<(u32, Option<&'static str>)> {
+fn operands<PCS: CommitmentScheme>(op: &AstOp<PCS>) -> Vec<(u32, Option<&'static str>)>
+where
+    PCS::Output: AppendToTranscript,
+{
     match op {
         AstOp::Wrap { .. }
         | AstOp::Constant(_)
@@ -322,17 +329,20 @@ fn operands(op: &AstOp) -> Vec<(u32, Option<&'static str>)> {
         AstOp::TranscriptAbsorbCommitment {
             prev_state,
             commitment,
+            ..
         } => vec![
             (prev_state.0, Some("state")),
             (commitment.0, Some("commit")),
         ],
         AstOp::OpeningCheck {
+            prev_state,
             commitment,
             point,
             claim,
             ..
         } => {
-            let mut ops = Vec::with_capacity(2 + point.len());
+            let mut ops = Vec::with_capacity(3 + point.len());
+            ops.push((prev_state.0, Some("state")));
             ops.push((commitment.0, Some("commit")));
             ops.push((claim.0, Some("claim")));
             for (i, p) in point.iter().enumerate() {
@@ -391,9 +401,12 @@ mod tests {
     use crate::backend::FieldBackend;
     use crate::tracing::Tracing;
     use jolt_field::{Field, Fr};
+    use jolt_openings::mock::MockCommitmentScheme;
 
-    fn small_graph() -> AstGraph {
-        let mut t = Tracing::<Fr>::new();
+    type Mock = MockCommitmentScheme<Fr>;
+
+    fn small_graph() -> AstGraph<Mock> {
+        let mut t = Tracing::<Mock>::new();
         let a = t.wrap_proof(Fr::from_u64(2), "a");
         let b = t.wrap_challenge(Fr::from_u64(3), "b");
         let c = t.const_i128(7);

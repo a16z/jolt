@@ -1762,7 +1762,12 @@ fn modular_self_verify_via_tracing_backend() {
         r1cs_key,
     );
 
-    let mut tracing = Tracing::<NewFr>::new();
+    // `Tracing<DoryScheme>::F = DoryScheme::Field = NewFr`, so the backend
+    // is type-compatible with `verify_with_backend<_, DoryScheme>` and the
+    // resulting `AstOp<DoryScheme>` is the artifact downstream consumers
+    // (Lean export, R1CS lower) walk. `replay_trace` uses the supplied
+    // `DoryVerifierSetup` to discharge any `OpeningHolds` obligations.
+    let mut tracing = Tracing::<DoryScheme>::new();
     jolt_verifier::verify_with_backend(
         &mut tracing,
         &verifying_key,
@@ -1822,9 +1827,6 @@ fn modular_self_verify_via_tracing_backend() {
             AstOp::TranscriptAbsorbBytes { .. } => "TranscriptAbsorbBytes",
             AstOp::TranscriptChallengeState { .. } => "TranscriptChallengeState",
             AstOp::TranscriptChallengeValue { .. } => "TranscriptChallengeValue",
-            // Commitment-shaped variants land in step 2.4 of the
-            // CommitmentBackend cutover (specs/1461). Until a producer
-            // emits them they should not appear in the muldiv graph.
             AstOp::CommitmentWrap { .. } => "CommitmentWrap",
             AstOp::TranscriptAbsorbCommitment { .. } => "TranscriptAbsorbCommitment",
             AstOp::OpeningCheck { .. } => "OpeningCheck",
@@ -1877,7 +1879,11 @@ fn modular_self_verify_via_tracing_backend() {
         eprintln!("  {k:>20}: {v}");
     }
 
-    let values = replay_trace(&graph, &wrap_values).expect(
+    // `replay_trace` needs the verifier setup to discharge any
+    // `OpeningHolds` assertions (it invokes `<DoryScheme as
+    // CommitmentScheme>::verify` for each `OpeningCheck` node).
+    let dory_verifier_setup = DoryVerifierSetup(params.pcs_setup.0.to_verifier_setup());
+    let values = replay_trace::<DoryScheme>(&graph, &wrap_values, &dory_verifier_setup).expect(
         "replay must reproduce every node and discharge every assertion in the captured graph",
     );
     assert_eq!(values.len(), graph.node_count());

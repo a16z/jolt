@@ -559,8 +559,11 @@ fn verify_with_backend_native_matches_legacy() {
 /// the verifier sees the same challenge values on the wire.
 #[test]
 fn verify_with_backend_tracing_replays_correctly() {
+    use jolt_openings::mock::MockCommitmentScheme;
     use jolt_transcript::Blake2bTranscript;
     use jolt_verifier_backend::{replay_trace, Tracing};
+
+    type Mock = MockCommitmentScheme<F>;
 
     let evals: Vec<F> = (1..=8).map(F::from_u64).collect();
     let sum = compute_sum(&evals);
@@ -585,7 +588,7 @@ fn verify_with_backend_tracing_replays_correctly() {
     )
     .unwrap();
 
-    let mut tracer = Tracing::<F>::new();
+    let mut tracer = Tracing::<Mock>::new();
     let mut tracer_transcript = tracer.new_transcript(b"tracing_replay");
     let claimed_sum_w = tracer.wrap_proof(claim.claimed_sum, "input_claim");
     let (final_eval_w, _challenges_w, _challenges_f) = SumcheckVerifier::verify_with_backend(
@@ -602,7 +605,7 @@ fn verify_with_backend_tracing_replays_correctly() {
 
     let graph = tracer.snapshot();
     let wraps = tracer.wrap_values();
-    let values = replay_trace(&graph, &wraps).unwrap();
+    let values = replay_trace::<Mock>(&graph, &wraps, &()).unwrap();
     let final_eval_replayed = values[final_eval_w.id.0 as usize];
 
     assert_eq!(final_eval_replayed, legacy_eval, "Tracing replay mismatch");

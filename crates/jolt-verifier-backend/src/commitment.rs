@@ -51,7 +51,6 @@ use jolt_openings::{CommitmentScheme, OpeningsError};
 use jolt_transcript::{AppendToTranscript, Transcript};
 
 use crate::backend::{CommitmentOrigin, FieldBackend};
-use crate::tracing::SchemeTag;
 
 /// Backend abstraction for verifier-side commitment operations.
 ///
@@ -85,8 +84,9 @@ where
     ///
     /// - `Native::Commitment = PCS::Output` (zero-overhead identity).
     /// - `Tracing::Commitment = AstNodeId` (handle into the recorded
-    ///   AST; the raw `PCS::Output` is held in a side vector keyed by
-    ///   the [`CommitmentWrap`](crate::AstOp::CommitmentWrap) node id).
+    ///   AST; the raw `PCS::Output` is *inlined* on the
+    ///   [`CommitmentWrap`](crate::AstOp::CommitmentWrap) node, not
+    ///   held in a side vector).
     type Commitment: Clone + std::fmt::Debug;
 
     /// Wraps a raw commitment value into the backend's representation,
@@ -120,21 +120,15 @@ where
     /// and the live `transcript` are passed through to `<PCS as
     /// CommitmentScheme>::verify` by native backends, or recorded as
     /// an [`AstOp::OpeningCheck`](crate::AstOp::OpeningCheck) node by
-    /// AST backends.
-    ///
-    /// `scheme_tag` is a `&'static str` discriminator (e.g. `"dory"`,
-    /// `"hyperkzg"`, `"mock"`) that downstream consumers (Lean export,
-    /// recursion circuits) dispatch on. Native backends ignore it; AST
-    /// backends record it on the emitted `OpeningCheck` node.
+    /// AST backends. The `PCS` is statically known via the
+    /// `CommitmentBackend<PCS>` type parameter, so no runtime
+    /// `scheme_tag` discriminator is needed (downstream consumers
+    /// walking an `AstGraph<PCS>` learn the scheme from the type).
     ///
     /// **Batching is the PCS's responsibility, not this trait's.** The
     /// verifier reduces a batch of claims to a single combined claim
     /// via `OpeningReduction::reduce_verifier_with_backend` (added in
     /// step 2.5 of the cutover) before invoking `verify_opening`.
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "mirrors CommitmentScheme::verify (vk, c, point, claim, proof, transcript) plus scheme_tag for AST consumers; collapsing into a struct buys nothing"
-    )]
     fn verify_opening(
         &mut self,
         vk: &PCS::VerifierSetup,
@@ -143,6 +137,5 @@ where
         claim: &Self::Scalar,
         proof: &PCS::Proof,
         transcript: &mut Self::Transcript,
-        scheme_tag: SchemeTag,
     ) -> Result<(), OpeningsError>;
 }

@@ -7,7 +7,6 @@ use jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Tra
 use crate::backend::{CommitmentOrigin, FieldBackend, ScalarOrigin};
 use crate::commitment::CommitmentBackend;
 use crate::error::BackendError;
-use crate::tracing::SchemeTag;
 
 /// Zero-overhead [`FieldBackend`] backed by the underlying field directly.
 ///
@@ -157,7 +156,6 @@ where
         claim: &F,
         proof: &PCS::Proof,
         transcript: &mut Self::Transcript,
-        _scheme_tag: SchemeTag,
     ) -> Result<(), OpeningsError> {
         PCS::verify(commitment, point, *claim, proof, vk, transcript)
     }
@@ -266,7 +264,6 @@ mod tests {
             &eval,
             &proof,
             &mut transcript,
-            "mock",
         )
         .expect("Native::verify_opening must accept a valid mock opening");
     }

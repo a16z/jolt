@@ -1615,7 +1615,14 @@ mod tests {
     // same value when fed the recorded wrap values.
     // -----------------------------------------------------------------------
 
+    use jolt_openings::mock::MockCommitmentScheme;
     use jolt_verifier_backend::{replay_trace, Native, Tracing};
+
+    /// Field-only parity tests pick a concrete (trivial) PCS so the
+    /// `Tracing<PCS>` shape is type-honest. `MockCommitmentScheme<Fr>`
+    /// has `Field = Fr` and `VerifierSetup = ()`, so field-side methods
+    /// take `Fr` directly and `replay_trace` takes `&()`.
+    type TraceMock = MockCommitmentScheme<Fr>;
 
     /// Adapter: lift a `(challenges, evaluations, sumcheck_points, override)`
     /// configuration through a `FieldBackend` and call
@@ -1722,7 +1729,7 @@ mod tests {
             "Native FieldBackend must match legacy evaluate_formula"
         );
 
-        let mut tracer = Tracing::<Fr>::new();
+        let mut tracer = Tracing::<TraceMock>::new();
         let (traced, _) = run_formula_backend(
             &mut tracer,
             formula,
@@ -1736,7 +1743,7 @@ mod tests {
         );
         let graph = tracer.snapshot();
         let wraps = tracer.wrap_values();
-        let values = replay_trace(&graph, &wraps).unwrap();
+        let values = replay_trace::<TraceMock>(&graph, &wraps, &()).unwrap();
         let traced_replayed = values[traced.id.0 as usize];
         assert_eq!(
             traced_replayed, native_legacy,

@@ -64,7 +64,7 @@ pub use error::BackendError;
 pub use helpers::{eq_eval, eq_evals_table, pow_u64, univariate_horner};
 pub use native::Native;
 pub use tracing::{
-    replay as replay_trace, AstAssertion, AstGraph, AstNodeId, AstOp, ProofHandle, SchemeTag,
-    Tracing,
+    replay as replay_trace, AstAssertion, AstGraph, AstNodeId, AstOp, AstScalar, Tracing,
+    TracingTranscript,
 };
 pub use viz::{to_dot, to_mermaid};
