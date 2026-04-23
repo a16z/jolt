@@ -15,5 +15,5 @@ jolt-inlines-blake3.workspace = true
 
 sha2 = { version = "0.11.0", default-features = false }
 sha3 = { version = "0.10", default-features = false }
-blake2 = { version = "0.10.6", default-features = false }
+blake2 = { version = "0.11.0-rc", default-features = false }
 blake3 = { version = "1.6", default-features = false }

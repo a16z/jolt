@@ -1024,9 +1024,9 @@ dependencies = [
 
 [[package]]
 name = "blake2"
-version = "0.11.0-rc.5"
+version = "0.11.0-rc.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d52965399b470437fc7f4d4b51134668dbc96573fea6f1b83318a420e4605745"
+checksum = "061f1a09225e328e1ffbb378d2d49923c0ca5fee19fb5ac1cc9c1e9d52b93690"
 dependencies = [
  "digest 0.11.2",
 ]
@@ -2278,7 +2278,7 @@ dependencies = [
 name = "hashbench-guest"
 version = "0.1.0"
 dependencies = [
- "blake2 0.10.6",
+ "blake2 0.11.0-rc.6",
  "blake3",
  "jolt-inlines-blake2",
  "jolt-inlines-blake3",
@@ -2666,7 +2666,7 @@ dependencies = [
  "ark-serialize 0.5.0",
  "ark-std 0.5.0",
  "bincode 2.0.1",
- "blake2 0.11.0-rc.5",
+ "blake2 0.11.0-rc.6",
  "chrono",
  "clap",
  "common",
@@ -2796,7 +2796,7 @@ dependencies = [
 name = "jolt-inlines-blake2"
 version = "0.1.0"
 dependencies = [
- "blake2 0.11.0-rc.5",
+ "blake2 0.11.0-rc.6",
  "hex-literal",
  "jolt-inlines-sdk",
  "rand 0.8.5",
@@ -3030,7 +3030,7 @@ dependencies = [
  "ark-bn254",
  "ark-ff 0.5.0",
  "ark-serialize 0.5.0",
- "blake2 0.11.0-rc.5",
+ "blake2 0.11.0-rc.6",
  "criterion",
  "digest 0.11.2",
  "jolt-field",
