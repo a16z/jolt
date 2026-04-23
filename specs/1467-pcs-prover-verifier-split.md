@@ -109,7 +109,7 @@ Four pressures align:
 4. **Single-claim methods don't belong on the core trait.** In
    production today single-claim `open`/`verify` are called from
    exactly one site each: the body of `homomorphic_prove_batch` /
-   `homomorphic_verify_batch` (`crates/jolt-openings/src/verification.rs:162`).
+   `homomorphic_verify_batch` (`crates/jolt-openings/src/homomorphic.rs`).
    They are RLC-helper internals masquerading as part of the core
    PCS API. Hachi-style fused-batch schemes don't have a native
    single-claim notion: forcing them to implement `open`/`verify`
@@ -410,9 +410,12 @@ deferred. Note inherited from #1461; same TODO comment.
 
 ## Helper Functions
 
-`crates/jolt-openings/src/verification.rs` (renamed from "fused"
-back to plain "verification" once the trait is folded in). Two
-free helpers, no backend parameters, plain `Transcript`:
+`crates/jolt-openings/src/homomorphic.rs` holds the helpers (the
+file groups both prover- and verifier-side bodies for
+additively-homomorphic schemes; the name tracks the
+`AdditivelyHomomorphic` / `AdditivelyHomomorphicVerifier` trait
+pair they target). Two free helpers, no backend parameters, plain
+`Transcript`:
 
 ```rust
 pub fn homomorphic_prove_batch<PCS, T>(

@@ -29,17 +29,17 @@
 
 mod claims;
 mod error;
+mod homomorphic;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod mock;
 mod schemes;
-mod verification;
 
 pub use claims::{OpeningClaim, ProverClaim};
 pub use error::OpeningsError;
+pub use homomorphic::{
+    homomorphic_prove_batch, homomorphic_verify_batch, rlc_combine, rlc_combine_scalars,
+};
 pub use schemes::{
     AdditivelyHomomorphic, AdditivelyHomomorphicVerifier, CommitmentScheme,
     CommitmentSchemeVerifier, StreamingCommitment, ZkOpeningScheme, ZkOpeningSchemeVerifier,
-};
-pub use verification::{
-    homomorphic_prove_batch, homomorphic_verify_batch, rlc_combine, rlc_combine_scalars,
 };

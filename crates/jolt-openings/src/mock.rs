@@ -10,11 +10,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::claims::{OpeningClaim, ProverClaim};
 use crate::error::OpeningsError;
+use crate::homomorphic::{homomorphic_prove_batch, homomorphic_verify_batch};
 use crate::schemes::{
     AdditivelyHomomorphic, AdditivelyHomomorphicVerifier, CommitmentScheme,
     CommitmentSchemeVerifier, ZkOpeningScheme, ZkOpeningSchemeVerifier,
 };
-use crate::verification::{homomorphic_prove_batch, homomorphic_verify_batch};
 
 #[derive(Clone, Debug)]
 pub struct MockCommitmentScheme<F: Field>(PhantomData<F>);
