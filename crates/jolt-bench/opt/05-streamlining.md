@@ -245,36 +245,49 @@ runs in debug builds without firing.
 
 ## O4 — Collapse redundant variants
 
-**Why now**: the cheapest structural simplification. Both sub-phases are
-compile-time bookkeeping; no new algorithms.
+**Why now**: the cheapest structural simplification. O4.a was compile-time
+bookkeeping; O4.b wants producer analysis that's the same analysis O6/O7's
+`DeadMaterializeElim` pass needs, so it's deferred there.
 
-### O4.a Bind collapse
+### O4.a Bind collapse — **LANDED** (`51cd49cf0`)
 
 Four ops → one:
-- `Op::InstanceBind { batch, instance, kernel, challenge }`
-- `Op::InstanceBindPreviousPhase { batch, instance, kernel, challenge }`
-- `Op::BindCarryBuffers { polys, challenge, order }`
-- `Op::Bind { polys, challenge, order }` ← **target**
+- `Op::InstanceBind { batch, instance, kernel, challenge }` — **deleted**
+- `Op::InstanceBindPreviousPhase { batch, instance, kernel, challenge }` — **deleted**
+- `Op::BindCarryBuffers { polys, challenge, order }` — **deleted**
+- `Op::Bind { polys, challenge, order }` ← **sole bind primitive**
 
-Compiler tracks per-instance bound-poly sets (information already known at
-emission time — `BatchedInstance::phases` + `phase.carry_bindings`) and
-emits pre-deduped `Op::Bind { polys, challenge, order }`. The runtime's
-`state.bound_this_round: HashSet<PolynomialId>` is deleted.
+Compiler tracks per-batch-round bound-poly sets via an `emit_bind(...,
+bound_this_round: &mut HashSet)` helper scoped to each `for round in ..`
+loop. The runtime's `state.bound_this_round: HashSet<PolynomialId>` and
+its `.clear()` site are deleted; every emitted `Op::Bind` carries a
+pre-deduped poly list and the runtime arm binds unconditionally.
 
-Flip `is_primitive()` for the three collapsed variants to `false`; the
-assertion then catches any compiler site that still emits them.
+### O4.b Materialize collapse — **DEFERRED to O6/O7**
 
-### O4.b Materialize collapse
-
-Three ops → one:
+Two ops would collapse into `Op::Materialize`:
 - `Op::MaterializeUnlessFresh { binding, expected_size }`
 - `Op::MaterializeIfAbsent { binding }`
-- `Op::Materialize { binding }` ← **target**
 
-Compiler walks its own op stream to build a producer map: for each
-`PolynomialId`, which earlier op produced it (`Materialize`, `WeightedSum`,
-`MaterializeRA` etc. — until O5 rewrites those). At each conditional site,
-the compiler emits straight `Op::Materialize` or nothing.
+The **reason for deferral** (learned from the O4.b attempt in this branch):
+compile-time producer analysis is required to decide emit-vs-elide at each
+conditional site, and that analysis must enumerate the outputs of
+`Op::MaterializeRA`, `Op::MaterializeCombinedVal`, `Op::MaterializePBuffers`,
+`Op::WeightedSum`, `Op::MaterializeSegmentedOuterEq`, plus track which
+polys got bound-down (so `MaterializeUnlessFresh`'s size check can be
+computed at compile time). **That's the same reaching-definitions analysis
+O6/O7's `DeadMaterializeElim` pass needs**, so it lives there — once as a
+reusable pass, not scattered inline at each emission site.
+
+Until that pass lands, both variants remain in the Op enum with
+`is_primitive()` returning `true` (the O3 classifier scaffold is
+unchanged for these two). The runtime handler arms remain load-bearing.
+
+Retry path for O4.b: it becomes a rewrite pass inside O7 that consumes a
+producer-analysis result built in O6's pass infra. Input is the un-collapsed
+stream with both conditional ops; output is the primitive form with only
+`Op::Materialize` (or elided). The pass unit-tests against a hand-built
+fixture module just like every other O7 rule.
 
 **Correctness rail for both sub-phases**: dual-path validation (the
 T2-C pattern). During the landing window, keep both arms running — old
@@ -282,9 +295,10 @@ conditional arms AND new primitive arms — and assert byte-equal
 `device_buffers` state after each op. Delete the legacy arm only after
 jolt-equivalence full suite greens on the new path.
 
-**Exit**: four bind ops → one; three materialize ops → one. Runtime has no
-`bound_this_round` set and no runtime "buffer exists?" check. `is_primitive()`
-returns `true` for `Op::Bind` and `Op::Materialize` only among the
+**Exit (O4.a achieved)**: four bind ops → one. Runtime has no
+`bound_this_round` set. O4.b's "three materialize ops → one" exit
+deferred per above. `is_primitive()` returns `true` for `Op::Bind`
+among the
 collapsed families. Muldiv + `transcript_divergence` + `modular_self_verify`
 green.
 
