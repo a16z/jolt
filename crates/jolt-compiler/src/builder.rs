@@ -418,6 +418,13 @@ impl ModuleBuilder {
                 None
             };
 
+            // Compile-time bind dedup per batch round — replaces the
+            // runtime `bound_this_round` set once driven by the legacy
+            // InstanceBind / InstanceBindPreviousPhase / BindCarryBuffers
+            // handlers. See O4.a in the streamlining plan.
+            let mut bound_this_round: std::collections::HashSet<PolynomialId> =
+                std::collections::HashSet::new();
+
             // Begin round: zero combined, update claims from prev round.
             self.ops.push(Op::BatchRoundBegin {
                 batch,
@@ -602,19 +609,31 @@ impl ModuleBuilder {
                                 kernel: prev_kernel,
                             });
                         } else if let Some(ch) = bind {
-                            self.ops.push(Op::InstanceBindPreviousPhase {
-                                batch,
-                                instance: inst_idx,
-                                kernel: prev_kernel,
-                                challenge: ch,
-                            });
-                            let prev_carry_polys: Vec<_> =
-                                prev_phase.carry_bindings.iter().map(|b| b.poly()).collect();
+                            let prev_order = prev_kdef.spec.binding_order;
+                            let kernel_polys: Vec<PolynomialId> = prev_kdef
+                                .inputs
+                                .iter()
+                                .map(|b| b.poly())
+                                .filter(|pid| bound_this_round.insert(*pid))
+                                .collect();
+                            if !kernel_polys.is_empty() {
+                                self.ops.push(Op::Bind {
+                                    polys: kernel_polys,
+                                    challenge: ch,
+                                    order: prev_order,
+                                });
+                            }
+                            let prev_carry_polys: Vec<PolynomialId> = prev_phase
+                                .carry_bindings
+                                .iter()
+                                .map(|b| b.poly())
+                                .filter(|pid| bound_this_round.insert(*pid))
+                                .collect();
                             if !prev_carry_polys.is_empty() {
-                                self.ops.push(Op::BindCarryBuffers {
+                                self.ops.push(Op::Bind {
                                     polys: prev_carry_polys,
                                     challenge: ch,
-                                    order: prev_kdef.spec.binding_order,
+                                    order: prev_order,
                                 });
                             }
                         }
@@ -669,19 +688,31 @@ impl ModuleBuilder {
                 } else {
                     // Mid-phase: bind (non-decomp instance).
                     if let Some(ch) = bind {
-                        self.ops.push(Op::InstanceBind {
-                            batch,
-                            instance: inst_idx,
-                            kernel,
-                            challenge: ch,
-                        });
-                        let carry_polys: Vec<_> =
-                            phase.carry_bindings.iter().map(|b| b.poly()).collect();
+                        let order = kdef.spec.binding_order;
+                        let kernel_polys: Vec<PolynomialId> = kdef
+                            .inputs
+                            .iter()
+                            .map(|b| b.poly())
+                            .filter(|pid| bound_this_round.insert(*pid))
+                            .collect();
+                        if !kernel_polys.is_empty() {
+                            self.ops.push(Op::Bind {
+                                polys: kernel_polys,
+                                challenge: ch,
+                                order,
+                            });
+                        }
+                        let carry_polys: Vec<PolynomialId> = phase
+                            .carry_bindings
+                            .iter()
+                            .map(|b| b.poly())
+                            .filter(|pid| bound_this_round.insert(*pid))
+                            .collect();
                         if !carry_polys.is_empty() {
-                            self.ops.push(Op::BindCarryBuffers {
+                            self.ops.push(Op::Bind {
                                 polys: carry_polys,
                                 challenge: ch,
-                                order: kdef.spec.binding_order,
+                                order,
                             });
                         }
                     }

@@ -62,6 +62,37 @@ macro_rules! push_verifier_op {
     };
 }
 
+/// Emit a deduped `Op::Bind` for a batch-round's per-instance / carry bind
+/// site. Filters `polys` against `bound_this_round` (set of polys already
+/// bound this batch round), emits `Op::Bind` for the residual, and records
+/// the bound polys back into the set. No-op if the residual is empty.
+///
+/// This replaces the legacy `Op::InstanceBind` / `Op::InstanceBindPreviousPhase` /
+/// `Op::BindCarryBuffers` ops (O4.a). Compile-time dedup subsumes the
+/// runtime `bound_this_round` set that the old handlers consulted.
+fn emit_bind(
+    ops: &mut Vec<Op>,
+    polys: impl IntoIterator<Item = PolynomialId>,
+    challenge: ChallengeIdx,
+    order: BindingOrder,
+    bound_this_round: &mut std::collections::HashSet<PolynomialId>,
+) {
+    let filtered: Vec<PolynomialId> = polys
+        .into_iter()
+        .filter(|pid| bound_this_round.insert(*pid))
+        .collect();
+    if !filtered.is_empty() {
+        push_op!(
+            ops,
+            Op::Bind {
+                polys: filtered,
+                challenge,
+                order,
+            }
+        );
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
@@ -665,6 +696,16 @@ fn emit_unrolled_batched_rounds(
             None
         };
 
+        // Compile-time bind dedup, scoped to this batch round. Mirrors what
+        // the runtime's `bound_this_round` set used to do when the legacy
+        // `Op::InstanceBind` / `Op::InstanceBindPreviousPhase` /
+        // `Op::BindCarryBuffers` handlers were live — now every emitted
+        // `Op::Bind` carries a deduped poly list, and the runtime arm does
+        // an unconditional interpolate per listed poly. See O4.a in
+        // `crates/jolt-bench/opt/05-streamlining.md`.
+        let mut bound_this_round: std::collections::HashSet<PolynomialId> =
+            std::collections::HashSet::new();
+
         push_op!(
             ops,
             Op::BatchRoundBegin {
@@ -899,27 +940,22 @@ fn emit_unrolled_batched_rounds(
                             }
                         );
                     } else if let Some(ch_val) = bind {
-                        push_op!(
+                        emit_bind(
                             ops,
-                            Op::InstanceBindPreviousPhase {
-                                batch: batch_idx,
-                                instance: inst_idx,
-                                kernel: prev_kernel,
-                                challenge: ch_val,
-                            }
+                            prev_kdef.inputs.iter().map(|b| b.poly()),
+                            ch_val,
+                            prev_kdef.spec.binding_order,
+                            &mut bound_this_round,
                         );
                         let prev_carry_polys: Vec<_> =
                             prev_phase.carry_bindings.iter().map(|b| b.poly()).collect();
-                        if !prev_carry_polys.is_empty() {
-                            push_op!(
-                                ops,
-                                Op::BindCarryBuffers {
-                                    polys: prev_carry_polys,
-                                    challenge: ch_val,
-                                    order: prev_kdef.spec.binding_order,
-                                }
-                            );
-                        }
+                        emit_bind(
+                            ops,
+                            prev_carry_polys,
+                            ch_val,
+                            prev_kdef.spec.binding_order,
+                            &mut bound_this_round,
+                        );
                     }
                 }
 
@@ -991,27 +1027,22 @@ fn emit_unrolled_batched_rounds(
             } else {
                 // Mid-phase: bind (non-decomp instance).
                 if let Some(ch_val) = bind {
-                    push_op!(
+                    emit_bind(
                         ops,
-                        Op::InstanceBind {
-                            batch: batch_idx,
-                            instance: inst_idx,
-                            kernel,
-                            challenge: ch_val,
-                        }
+                        kdef.inputs.iter().map(|b| b.poly()),
+                        ch_val,
+                        kdef.spec.binding_order,
+                        &mut bound_this_round,
                     );
                     let carry_polys: Vec<_> =
                         phase.carry_bindings.iter().map(|b| b.poly()).collect();
-                    if !carry_polys.is_empty() {
-                        push_op!(
-                            ops,
-                            Op::BindCarryBuffers {
-                                polys: carry_polys,
-                                challenge: ch_val,
-                                order: kdef.spec.binding_order,
-                            }
-                        );
-                    }
+                    emit_bind(
+                        ops,
+                        carry_polys,
+                        ch_val,
+                        kdef.spec.binding_order,
+                        &mut bound_this_round,
+                    );
                 }
             }
 
@@ -6020,14 +6051,12 @@ fn build_stage6(
 
     // [1] Booleanity: apply final bind on single-phase kernel, evaluate transposed RA buffers,
     // alias to original RA poly IDs.
-    push_op!(
+    emit_bind(
         ops,
-        Op::InstanceBind {
-            batch: batch_idx,
-            instance: InstanceIdx(1),
-            kernel: bool_kernel_idx,
-            challenge: s6_round_ch[stage6_max_rounds - 1],
-        }
+        kernels[bool_kernel_idx].inputs.iter().map(|b| b.poly()),
+        s6_round_ch[stage6_max_rounds - 1],
+        kernels[bool_kernel_idx].spec.binding_order,
+        &mut std::collections::HashSet::new(),
     );
     let bool_ra_poly_ids: Vec<PolynomialId> = (0..params.instruction_d)
         .map(PolynomialId::InstructionRa)
@@ -6447,14 +6476,12 @@ fn build_stage7(
     // Post-sumcheck: final bind + extract G evaluations.
     // The last round's challenge was squeezed but never bound into the kernel inputs.
     // Apply it now to finish reducing all buffers to 1 element each.
-    push_op!(
+    emit_bind(
         ops,
-        Op::InstanceBind {
-            batch: batch_idx,
-            instance: InstanceIdx(0),
-            kernel: hw_kernel_idx,
-            challenge: s7_round_ch[hw_rounds - 1],
-        }
+        kernels[hw_kernel_idx].inputs.iter().map(|b| b.poly()),
+        s7_round_ch[hw_rounds - 1],
+        kernels[hw_kernel_idx].spec.binding_order,
+        &mut std::collections::HashSet::new(),
     );
 
     // Extract G_i evaluations (buffers are now 1-element after all binds).
@@ -7603,10 +7630,7 @@ fn print_stats(module: &Module, params: &ModuleParams) {
             | Op::MaterializeUnlessFresh { .. }
             | Op::MaterializeIfAbsent { .. }
             | Op::MaterializeSegmentedOuterEq { .. }
-            | Op::InstanceBindPreviousPhase { .. }
             | Op::CaptureScalar { .. }
-            | Op::InstanceBind { .. }
-            | Op::BindCarryBuffers { .. }
             | Op::BatchAccumulateInstance { .. }
             | Op::BatchRoundFinalize { .. }
             | Op::ExpandingTableUpdate { .. }

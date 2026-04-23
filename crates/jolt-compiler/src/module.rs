@@ -1286,14 +1286,6 @@ pub enum Op {
         instance: InstanceIdx,
         segmented: SegmentedConfig,
     },
-    /// Bind the previous phase's kernel inputs at a challenge.
-    /// Emitted at phase transitions (before resolving the new phase's inputs).
-    InstanceBindPreviousPhase {
-        batch: BatchIdx,
-        instance: InstanceIdx,
-        kernel: usize,
-        challenge: ChallengeIdx,
-    },
     /// Capture a scalar from a fully-bound 1-element device buffer into a
     /// challenge slot. Bridges phase boundaries: an intermediate value computed
     /// in one phase becomes a challenge constant for the next phase's formula.
@@ -1307,14 +1299,6 @@ pub enum Op {
     /// standalone sumchecks or batched per-instance evals. The backend's
     /// `reduce(&[ReduceSpec], ...)` runs all specs in a single parallel region.
     Reduce { specs: Vec<ReduceSpec> },
-    /// Bind kernel inputs for an active instance within a round.
-    /// Emitted for rounds after the first within a phase.
-    InstanceBind {
-        batch: BatchIdx,
-        instance: InstanceIdx,
-        kernel: usize,
-        challenge: ChallengeIdx,
-    },
     /// Extrapolate lower-degree instance evals to `max_evals` via interpolation,
     /// then accumulate `coeff * evals[i]` into the combined polynomial.
     BatchAccumulateInstance {
@@ -1583,14 +1567,6 @@ pub enum Op {
         from: PolynomialId,
         to: PolynomialId,
     },
-    /// Bind carry buffers for a phase.  These are extra polynomial buffers
-    /// that are not kernel inputs but must be bound at the same cadence
-    /// so they are the right size when the next phase begins.
-    BindCarryBuffers {
-        polys: Vec<PolynomialId>,
-        challenge: ChallengeIdx,
-        order: BindingOrder,
-    },
 }
 
 /// How to compute and encode the round polynomial for transcript absorption.
@@ -1626,7 +1602,6 @@ impl Op {
         matches!(
             self,
             Op::Reduce { .. }
-                | Op::InstanceBind { .. }
                 | Op::ReadCheckingReduce { .. }
                 | Op::RafReduce { .. }
                 | Op::Evaluate { .. }
@@ -1673,7 +1648,6 @@ impl Op {
                 | Op::MaterializeUnlessFresh { .. }
                 | Op::MaterializeIfAbsent { .. }
                 | Op::MaterializeSegmentedOuterEq { .. }
-                | Op::InstanceBindPreviousPhase { .. }
                 | Op::CaptureScalar { .. }
                 | Op::BatchAccumulateInstance { .. }
                 | Op::BatchRoundFinalize { .. }
@@ -1757,10 +1731,9 @@ impl Op {
             | Op::BatchAccumulateInstance { .. }
             | Op::BatchRoundFinalize { .. } => true,
 
-            // --- redundant: collapses into Op::Bind in O4.a ---
-            Op::InstanceBind { .. }
-            | Op::InstanceBindPreviousPhase { .. }
-            | Op::BindCarryBuffers { .. } => true, // flip to false in O4.a
+            // --- redundant bind family collapsed in O4.a — variants removed ---
+            // (InstanceBind, InstanceBindPreviousPhase, BindCarryBuffers
+            //  used to be here; emission now produces deduped Op::Bind.)
 
             // --- conditional: collapses via producer-analysis in O4.b ---
             Op::MaterializeUnlessFresh { .. } | Op::MaterializeIfAbsent { .. } => true, // flip to false in O4.b

@@ -931,9 +931,6 @@ fn op_poly_refs(op: &Op, kernels: &[KernelDef]) -> Vec<PolynomialId> {
         | Op::MaterializeUnlessFresh { .. }
         | Op::MaterializeIfAbsent { .. }
         | Op::MaterializeSegmentedOuterEq { .. }
-        | Op::InstanceBindPreviousPhase { .. }
-        | Op::InstanceBind { .. }
-        | Op::BindCarryBuffers { .. }
         | Op::BatchAccumulateInstance { .. }
         | Op::BatchRoundFinalize { .. }
         | Op::BindOpeningInputs { .. }

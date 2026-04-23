@@ -20,7 +20,7 @@ mod handlers;
 mod helpers;
 pub mod prefix_suffix;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 /// Short static tag for op-class saturation instrumentation. Returns `None` for
@@ -41,8 +41,6 @@ fn op_class_tag(op: &jolt_compiler::module::Op) -> Option<&'static str> {
         Op::Open => "Open",
         Op::ReduceOpenings => "ReduceOpenings",
         Op::Reduce { .. } => "Reduce",
-        Op::InstanceBind { .. } => "InstanceBind",
-        Op::InstanceBindPreviousPhase { .. } => "InstanceBindPreviousPhase",
         Op::Bind { .. } => "Bind",
         Op::Evaluate { .. } => "Evaluate",
         Op::EvaluatePreprocessed { .. } => "EvaluatePreprocessed",
@@ -55,7 +53,6 @@ fn op_class_tag(op: &jolt_compiler::module::Op) -> Option<&'static str> {
         Op::LagrangeProject { .. } => "LagrangeProject",
         Op::DuplicateInterleave { .. } => "DuplicateInterleave",
         Op::RegroupConstraints { .. } => "RegroupConstraints",
-        Op::BindCarryBuffers { .. } => "BindCarryBuffers",
         Op::QBufferScatter { .. } => "QBufferScatter",
         Op::SuffixScatter { .. } => "SuffixScatter",
         Op::ExpandingTableUpdate { .. } => "ExpandingTableUpdate",
@@ -123,7 +120,6 @@ where
     pub(super) batch_instance_claims: Vec<Vec<F>>,
     pub(super) last_round_instance_evals: Vec<Vec<F>>,
     pub(super) batch_combined: Vec<F>,
-    pub(super) bound_this_round: HashSet<PolynomialId>,
     pub(super) current_batch_round: usize,
     pub(super) segmented_outer_eqs: HashMap<(usize, usize), Vec<F>>,
 
@@ -193,7 +189,6 @@ where
         batch_instance_claims,
         last_round_instance_evals: Vec::new(),
         batch_combined: Vec::new(),
-        bound_this_round: HashSet::new(),
         current_batch_round: 0,
         segmented_outer_eqs: HashMap::new(),
         current_stage: None,

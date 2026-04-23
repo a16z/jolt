@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use rayon::prelude::*;
 
@@ -64,24 +64,8 @@ fn op_span(op: &Op) -> tracing::span::EnteredSpan {
         Op::MaterializeSegmentedOuterEq { .. } => {
             tracing::info_span!("MaterializeSegmentedOuterEq").entered()
         }
-        Op::InstanceBindPreviousPhase { .. } => {
-            tracing::info_span!("InstanceBindPreviousPhase").entered()
-        }
         Op::CaptureScalar { .. } => tracing::info_span!("CaptureScalar").entered(),
         Op::Reduce { specs } => tracing::info_span!("Reduce", n_specs = specs.len()).entered(),
-        Op::InstanceBind {
-            batch,
-            instance,
-            kernel,
-            ..
-        } => tracing::info_span!(
-            "InstanceBind",
-            batch = batch.0,
-            instance = instance.0,
-            kernel = kernel
-        )
-        .entered(),
-        Op::BindCarryBuffers { .. } => tracing::info_span!("BindCarryBuffers").entered(),
         Op::BatchAccumulateInstance { .. } => {
             tracing::info_span!("BatchAccumulateInstance").entered()
         }
@@ -605,7 +589,6 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
         } => {
             state.current_batch_round = *round;
             state.batch_combined = vec![F::zero(); *max_evals];
-            state.bound_this_round.clear();
             if let Some(ch) = bind_challenge {
                 let r = state.challenges[ch.0];
                 for (inst_idx, evals) in state.last_round_instance_evals.iter().enumerate() {
@@ -670,28 +653,6 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                 .insert((batch.0, instance.0), outer_eq);
         }
 
-        Op::InstanceBindPreviousPhase {
-            batch: _,
-            instance: _,
-            kernel,
-            challenge,
-        } => {
-            let kdef = &module.prover.kernels[*kernel];
-            let scalar = state.challenges[challenge.0];
-            let order = kdef.spec.binding_order;
-            let mut seen = HashSet::new();
-            for b in &kdef.inputs {
-                let pid = b.poly();
-                if state.bound_this_round.contains(&pid) || !seen.insert(pid) {
-                    continue;
-                }
-                if let Some(buf) = device_buffers.get_mut(&pid) {
-                    backend.interpolate_inplace(buf.as_field_mut(), scalar, order);
-                }
-                let _ = state.bound_this_round.insert(pid);
-            }
-        }
-
         Op::CaptureScalar { poly, challenge } => {
             let buf = device_buffers
                 .get(poly)
@@ -704,45 +665,6 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                 data.len()
             );
             state.challenges[challenge.0] = data[0];
-        }
-
-        Op::InstanceBind {
-            batch: _,
-            instance: _,
-            kernel,
-            challenge,
-        } => {
-            let kdef = &module.prover.kernels[*kernel];
-            let scalar = state.challenges[challenge.0];
-            let order = kdef.spec.binding_order;
-            let mut seen = HashSet::new();
-            for b in &kdef.inputs {
-                let pid = b.poly();
-                if state.bound_this_round.contains(&pid) || !seen.insert(pid) {
-                    continue;
-                }
-                if let Some(buf) = device_buffers.get_mut(&pid) {
-                    backend.interpolate_inplace(buf.as_field_mut(), scalar, order);
-                }
-                let _ = state.bound_this_round.insert(pid);
-            }
-        }
-
-        Op::BindCarryBuffers {
-            polys,
-            challenge,
-            order,
-        } => {
-            let scalar = state.challenges[challenge.0];
-            for pid in polys {
-                if state.bound_this_round.contains(pid) {
-                    continue;
-                }
-                if let Some(buf) = device_buffers.get_mut(pid) {
-                    backend.interpolate_inplace(buf.as_field_mut(), scalar, *order);
-                }
-                let _ = state.bound_this_round.insert(*pid);
-            }
         }
 
         Op::BatchAccumulateInstance {
