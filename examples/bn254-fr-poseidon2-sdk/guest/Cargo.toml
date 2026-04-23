@@ -1,0 +1,11 @@
+[package]
+name = "bn254-fr-poseidon2-sdk-guest"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+guest = []
+
+[dependencies]
+jolt = { package = "jolt-sdk", path = "../../../jolt-sdk" }
+jolt-inlines-bn254-fr.workspace = true

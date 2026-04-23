@@ -199,6 +199,92 @@ fn cycle_count_vs_arkworks() {
     );
 }
 
+/// Horner evaluation of a degree-(N-1) polynomial over BN254 Fr.
+/// N = 32 coefficients ⇒ 32 Fr multiplications + 32 Fr additions.
+/// (N capped at 32 by serde's blanket `Serialize` impl on fixed arrays.)
+/// Compares SDK (FieldOp coprocessor) vs. pure-software arkworks.
+#[test]
+fn horner_64_cycle_count_vs_arkworks() {
+    const N: usize = 32;
+
+    // x = 12345; coeffs = [1, 2, 3, ..., N] (each a single-limb Fr).
+    let x_limbs: [u64; 4] = [12345, 0, 0, 0];
+    let mut coeffs: [[u64; 4]; 32] = [[0u64; 4]; 32];
+    for i in 0..N {
+        coeffs[i][0] = (i as u64) + 1;
+    }
+
+    let inputs =
+        postcard::to_stdvec(&(x_limbs, coeffs)).expect("postcard encode horner inputs");
+
+    // SDK guest (FieldOp coprocessor). Bigger stack/heap than the default
+    // 4 KiB — passing `[[u64; 4]; 32]` (~1 KiB) by value and postcard's
+    // stack-allocated deserialization push the stack frame well past 4 KiB.
+    let mut sdk_program = Program::new("bn254-fr-horner-sdk-guest");
+    sdk_program
+        .set_stack_size(1 << 20)
+        .set_heap_size(1 << 20)
+        .set_max_input_size(8192);
+    let (_, sdk_trace, _, _, sdk_events) =
+        sdk_program.trace_with_field_reg_events(&inputs, &[], &[]);
+    let sdk_n_noop = sdk_trace.iter().filter(|c| matches!(c, Cycle::NoOp)).count();
+    let sdk_real = sdk_trace.len() - sdk_n_noop;
+    let sdk_n_field_op = sdk_trace
+        .iter()
+        .filter(|c| matches!(c, Cycle::FieldOp(_)))
+        .count();
+
+    // Arkworks guest (software).
+    let mut ark_program = Program::new("bn254-fr-horner-arkworks-guest");
+    ark_program
+        .set_stack_size(1 << 20)
+        .set_heap_size(1 << 20)
+        .set_max_input_size(8192);
+    let (_, ark_trace, _, _, _) =
+        ark_program.trace_with_field_reg_events(&inputs, &[], &[]);
+    let ark_n_noop = ark_trace.iter().filter(|c| matches!(c, Cycle::NoOp)).count();
+    let ark_real = ark_trace.len() - ark_n_noop;
+
+    // Expected: 2 * N Fr ops (N mul + N add) = 128 FieldOps. Compiler may
+    // elide the first mul where acc == 0 but we tolerate slight variation.
+    let n_fr_ops = 2 * N;
+
+    eprintln!(
+        "\n=== Horner-{N} cycle count comparison (N mul + N add = {n_fr_ops} Fr ops) ==="
+    );
+    eprintln!(
+        "  SDK (FieldOp coprocessor) : {sdk_real:>8} real cycles ({} total, {sdk_n_field_op} FieldOps, {} events)",
+        sdk_trace.len(),
+        sdk_events.len()
+    );
+    eprintln!(
+        "  ark-bn254 (software)      : {ark_real:>8} real cycles ({} total)",
+        ark_trace.len()
+    );
+    if sdk_real > 0 {
+        let ratio = ark_real as f64 / sdk_real as f64;
+        eprintln!("  Speedup                   : {ratio:.1}x");
+    }
+    eprintln!("  Per Fr op (amortized):");
+    eprintln!(
+        "    SDK      : {:.2} cycles/op",
+        sdk_real as f64 / n_fr_ops as f64
+    );
+    eprintln!(
+        "    arkworks : {:.2} cycles/op",
+        ark_real as f64 / n_fr_ops as f64
+    );
+
+    assert!(
+        ark_real > sdk_real,
+        "ark-bn254 should be heavier than SDK; got ark={ark_real}, sdk={sdk_real}"
+    );
+    assert!(
+        sdk_n_field_op >= n_fr_ops - 2,
+        "expected ~{n_fr_ops} FieldOp cycles, got {sdk_n_field_op}"
+    );
+}
+
 fn ark_to_limbs(fr: &ark_bn254::Fr) -> [u64; 4] {
     use ark_ff::{BigInteger, PrimeField};
     let bi = fr.into_bigint();
@@ -214,4 +300,154 @@ fn ark_to_limbs(fr: &ark_bn254::Fr) -> [u64; 4] {
         }
     }
     limbs
+}
+
+/// Poseidon2 BN254 t=3 permutation (HorizenLabs reference parameters:
+/// d=5, R_F=8, R_P=56). Per permutation: ~4*3+56+4*3 = 72 S-boxes @ 3 muls each
+/// (~216 Fr muls), plus ~650 Fr adds from the MDS layers and RC additions.
+///
+/// Three-way cycle-count comparison on input (1, 2, 3):
+///   1. `bn254-fr-poseidon2-sdk-guest`      — our hand-written perm on the
+///      FieldOp coprocessor (native-field Jolt instructions).
+///   2. `bn254-fr-poseidon2-arkworks-guest` — our hand-written perm on
+///      software `ark_bn254::Fr`.
+///   3. `bn254-fr-poseidon2-external-guest` — vendored copy of the public
+///      `taceo-poseidon2` crate (v0.2.1, MIT/Apache) on software `ark_bn254::Fr`.
+///      Same HorizenLabs-compatible parameters; different algorithmic style
+///      (`double_in_place`, generic `Poseidon2Permutation` struct).
+///
+/// All three use the SAME round constants and `MAT_DIAG_M_1 = [1,1,2]`, so
+/// outputs must match bit-for-bit.
+#[test]
+fn poseidon2_cycle_count_vs_arkworks() {
+    // Input state: (1, 2, 3) — each Fr fits in a single limb.
+    let s0: [u64; 4] = [1, 0, 0, 0];
+    let s1: [u64; 4] = [2, 0, 0, 0];
+    let s2: [u64; 4] = [3, 0, 0, 0];
+
+    let inputs =
+        postcard::to_stdvec(&(s0, s1, s2)).expect("postcard encode poseidon2 inputs");
+
+    // SDK guest (FieldOp coprocessor).
+    let mut sdk_program = Program::new("bn254-fr-poseidon2-sdk-guest");
+    sdk_program
+        .set_stack_size(1 << 20)
+        .set_heap_size(1 << 20)
+        .set_max_input_size(8192);
+    let (_, sdk_trace, _, sdk_device, sdk_events) =
+        sdk_program.trace_with_field_reg_events(&inputs, &[], &[]);
+    let sdk_n_noop = sdk_trace.iter().filter(|c| matches!(c, Cycle::NoOp)).count();
+    let sdk_real = sdk_trace.len() - sdk_n_noop;
+    let sdk_n_field_op = sdk_trace
+        .iter()
+        .filter(|c| matches!(c, Cycle::FieldOp(_)))
+        .count();
+
+    // Arkworks guest (software — our own hand-written Poseidon2 impl).
+    let mut ark_program = Program::new("bn254-fr-poseidon2-arkworks-guest");
+    ark_program
+        .set_stack_size(1 << 20)
+        .set_heap_size(1 << 20)
+        .set_max_input_size(8192);
+    let (_, ark_trace, _, ark_device, _) =
+        ark_program.trace_with_field_reg_events(&inputs, &[], &[]);
+    let ark_n_noop = ark_trace.iter().filter(|c| matches!(c, Cycle::NoOp)).count();
+    let ark_real = ark_trace.len() - ark_n_noop;
+
+    // External guest (software — vendored `taceo-poseidon2` v0.2.1 algorithm).
+    let mut ext_program = Program::new("bn254-fr-poseidon2-external-guest");
+    ext_program
+        .set_stack_size(1 << 20)
+        .set_heap_size(1 << 20)
+        .set_max_input_size(8192);
+    let (_, ext_trace, _, ext_device, _) =
+        ext_program.trace_with_field_reg_events(&inputs, &[], &[]);
+    let ext_n_noop = ext_trace.iter().filter(|c| matches!(c, Cycle::NoOp)).count();
+    let ext_real = ext_trace.len() - ext_n_noop;
+
+    // Cross-check correctness: all three guests must produce the SAME
+    // permutation output — they use identical HorizenLabs-compatible round
+    // constants and `MAT_DIAG_M_1 = [1,1,2]`. If any differs, a constant or
+    // algorithm step is off.
+    let sdk_out: [[u64; 4]; 3] = postcard::from_bytes(&sdk_device.outputs)
+        .expect("decode SDK poseidon2 output");
+    let ark_out: [[u64; 4]; 3] = postcard::from_bytes(&ark_device.outputs)
+        .expect("decode arkworks poseidon2 output");
+    let ext_out: [[u64; 4]; 3] = postcard::from_bytes(&ext_device.outputs)
+        .expect("decode external poseidon2 output");
+
+    // Rough op count per permutation for amortization:
+    //   72 S-boxes × 3 muls = 216 muls
+    //   4 external + 4 external + initial: 3 full MDSes per round × 3 adds =
+    //     8*3*3 + 3 initial + 56 internal (3 adds + 1 double) = ~300 adds
+    //   RC adds: 4*3 + 56*1 + 4*3 = 80 adds
+    // Total ≈ 216 muls + ~380 adds = ~600 Fr ops. Use 600 for amortization.
+    let n_fr_ops_approx: f64 = 600.0;
+
+    eprintln!("\n=== Poseidon2 BN254 t=3 cycle count comparison ===");
+    eprintln!("  Params: d=5, R_F=8, R_P=56 (HorizenLabs reference)");
+    eprintln!(
+        "  SDK (our impl, FieldOp coprocessor) : {sdk_real:>8} real cycles ({} total, {sdk_n_field_op} FieldOps, {} events)",
+        sdk_trace.len(),
+        sdk_events.len()
+    );
+    eprintln!(
+        "  Arkworks (our impl, software Fr)    : {ark_real:>8} real cycles ({} total)",
+        ark_trace.len()
+    );
+    eprintln!(
+        "  External (taceo-poseidon2, sw Fr)   : {ext_real:>8} real cycles ({} total)",
+        ext_trace.len()
+    );
+    if sdk_real > 0 {
+        let ratio_ark = ark_real as f64 / sdk_real as f64;
+        let ratio_ext = ext_real as f64 / sdk_real as f64;
+        eprintln!("  Speedup vs our arkworks             : {ratio_ark:.2}x");
+        eprintln!("  Speedup vs external (taceo)         : {ratio_ext:.2}x");
+    }
+    eprintln!("  Per Fr op (amortized over ~{n_fr_ops_approx:.0} ops):");
+    eprintln!(
+        "    SDK      : {:.2} cycles/op",
+        sdk_real as f64 / n_fr_ops_approx
+    );
+    eprintln!(
+        "    arkworks : {:.2} cycles/op",
+        ark_real as f64 / n_fr_ops_approx
+    );
+    eprintln!(
+        "    external : {:.2} cycles/op",
+        ext_real as f64 / n_fr_ops_approx
+    );
+    eprintln!("  Output state (all three guests must agree):");
+    eprintln!("    SDK      : {sdk_out:?}");
+    eprintln!("    arkworks : {ark_out:?}");
+    eprintln!("    external : {ext_out:?}");
+
+    // Correctness: the whole point of the benchmark is a like-for-like
+    // comparison; if the outputs differ then we're measuring two different
+    // functions.
+    assert_eq!(
+        sdk_out, ark_out,
+        "SDK and arkworks Poseidon2 permutations produced different output states"
+    );
+    assert_eq!(
+        ark_out, ext_out,
+        "arkworks and external (taceo) Poseidon2 permutations differ — \
+         round constants or MDS matrix mismatch"
+    );
+
+    assert!(
+        ark_real > sdk_real,
+        "ark-bn254 should be heavier than SDK; got ark={ark_real}, sdk={sdk_real}"
+    );
+    assert!(
+        ext_real > sdk_real,
+        "external (taceo) should be heavier than SDK; got ext={ext_real}, sdk={sdk_real}"
+    );
+    // Sanity: a Poseidon2 permutation has >= ~200 Fr ops, so the SDK should
+    // emit at least that many FieldOp cycles.
+    assert!(
+        sdk_n_field_op >= 200,
+        "expected >= 200 FieldOp cycles for Poseidon2, got {sdk_n_field_op}"
+    );
 }
