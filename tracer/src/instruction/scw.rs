@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     declare_riscv_instr,
-    emulator::cpu::{Cpu, Xlen},
+    emulator::cpu::{Cpu, ReservationWidth, Xlen},
     utils::inline_helpers::InstrAssembler,
     utils::virtual_registers::VirtualRegisterAllocator,
 };
@@ -39,7 +39,7 @@ impl SCW {
         // Per RISC-V A spec, SC.W succeeds if the reservation set covers the 4
         // bytes being written. An LR.D reservation (8 bytes) at the same
         // address qualifies; an LR.W reservation (4 bytes) does too.
-        if cpu.reservation_covers(address, 4) {
+        if cpu.reservation_covers(address, ReservationWidth::Word) {
             let result = cpu.mmu.store_word(address, value);
 
             match result {
@@ -62,7 +62,7 @@ impl RISCVTrace for SCW {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
         // See SCW::exec — SC.W succeeds for any reservation (word or
         // doubleword) whose set covers the 4 bytes being written.
-        let success = cpu.reservation_covers(address, 4);
+        let success = cpu.reservation_covers(address, ReservationWidth::Word);
 
         let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
 

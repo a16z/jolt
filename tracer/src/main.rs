@@ -70,15 +70,10 @@ fn main() {
         }
     }
 
-    // Propagate the HTIF endcode as the process exit status so the ACT4 shell
-    // runner (tests/arch-tests/run.sh) can detect pass/fail reliably. ACT4
-    // self-checking ELFs set endcode=0 on pass (RVMODEL_HALT_PASS) and non-zero
-    // on fail (RVMODEL_HALT_FAIL, derived from gp). Clamp to i32 range while
-    // preserving the non-zero property.
-    let code: i32 = if endcode == 0 {
-        0
-    } else {
-        i32::try_from(endcode).unwrap_or(1).max(1)
-    };
-    exit(code);
+    // Propagate pass/fail to the shell as the process exit status so the
+    // ACT4 runner (tests/arch-tests/run.sh) can detect it reliably. We
+    // collapse the HTIF endcode to 0 or 1 — on Unix `exit()` truncates to
+    // the low 8 bits, so returning the raw endcode would map any multiple
+    // of 256 to kernel exit 0 and silently look like a pass.
+    exit(if endcode == 0 { 0 } else { 1 });
 }

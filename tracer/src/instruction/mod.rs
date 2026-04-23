@@ -1548,11 +1548,6 @@ pub fn uncompress_instruction(halfword: u32, xlen: Xlen) -> u32 {
                 0 => {
                     // C.SLLI
                     // slli r, r, shamt
-                    //
-                    // Per RISC-V C standard, c.slli with rd=x0 is a HINT (no-op),
-                    // not reserved. Decode it anyway: slli x0, x0, shamt executes
-                    // as a write-to-x0 which is discarded. Only shamt=0 is
-                    // reserved on RV32/RV64; the test generator does not emit it.
                     let r = (halfword >> 7) & 0x1f;
                     let shamt = ((halfword >> 7) & 0x20) | // imm[5] <= [12]
                             ((halfword >> 2) & 0x1f); // imm[4:0] <= [6:2]
