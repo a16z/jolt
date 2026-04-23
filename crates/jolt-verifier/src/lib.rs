@@ -17,7 +17,7 @@ pub use config::{OneHotConfig, OneHotParams, ProverConfig, ReadWriteConfig};
 pub use error::JoltError;
 pub use key::JoltVerifyingKey;
 pub use proof::{JoltProof, StageProof};
-pub use verifier::verify;
+pub use verifier::{verify, verify_with_backend};
 
 /// Domain separation label shared between prover and verifier transcripts.
 ///

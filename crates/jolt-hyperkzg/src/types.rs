@@ -3,6 +3,7 @@
 //! All types are generic over `P: PairingGroup` — no arkworks leakage.
 
 use jolt_crypto::{HomomorphicCommitment, JoltGroup, PairingGroup};
+use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{Deserialize, Serialize};
 
 /// Commitment to a multilinear polynomial: a single G1 element.
@@ -40,6 +41,15 @@ impl<P: PairingGroup> PartialEq for HyperKZGCommitment<P> {
 
 impl<P: PairingGroup> Eq for HyperKZGCommitment<P> {}
 
+impl<P: PairingGroup> AppendToTranscript for HyperKZGCommitment<P>
+where
+    P::G1: AppendToTranscript,
+{
+    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
+        self.point.append_to_transcript(transcript);
+    }
+}
+
 impl<P: PairingGroup, F: jolt_field::Field> HomomorphicCommitment<F> for HyperKZGCommitment<P> {
     #[inline]
     fn linear_combine(c1: &Self, c2: &Self, scalar: &F) -> Self {
@@ -63,7 +73,7 @@ impl<P: PairingGroup> Default for HyperKZGCommitment<P> {
 /// - `w`: KZG witness commitments for the three evaluation points `[r, -r, r^2]`
 /// - `v`: evaluations of all intermediate polynomials at the three points
 ///   (`v[t][k]` = polynomial k evaluated at point t)
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(bound(
     serialize = "P::G1: Serialize, P::ScalarField: Serialize",
     deserialize = "P::G1: for<'a> Deserialize<'a>, P::ScalarField: for<'a> Deserialize<'a>"
@@ -72,6 +82,27 @@ pub struct HyperKZGProof<P: PairingGroup> {
     pub com: Vec<P::G1>,
     pub w: Vec<P::G1>,
     pub v: Vec<Vec<P::ScalarField>>,
+}
+
+// Manual `Debug` impl so the bound only mentions associated types that
+// already implement `Debug` via their trait hierarchies (`P::G1: JoltGroup`
+// and `P::ScalarField: Field` both require `Debug`). The standard
+// `#[derive(Debug)]` would otherwise demand `P: Debug`, which is not
+// implied by `PairingGroup` and would force every consumer to add an
+// extra `P: Debug` bound. Required so `HyperKZGScheme<P>::Proof: Debug`
+// (see `CommitmentScheme::Proof`).
+impl<P: PairingGroup> std::fmt::Debug for HyperKZGProof<P>
+where
+    P::G1: std::fmt::Debug,
+    P::ScalarField: std::fmt::Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HyperKZGProof")
+            .field("com", &self.com)
+            .field("w", &self.w)
+            .field("v", &self.v)
+            .finish()
+    }
 }
 
 /// Prover setup: SRS G1 and G2 powers.

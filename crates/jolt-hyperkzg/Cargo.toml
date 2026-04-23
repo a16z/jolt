@@ -24,6 +24,7 @@ rand_chacha = { workspace = true }
 
 [dev-dependencies]
 jolt-field = { path = "../jolt-field", features = ["bn254"] }
+jolt-verifier-backend = { path = "../jolt-verifier-backend" }
 criterion = { workspace = true }
 rand = { workspace = true }
 

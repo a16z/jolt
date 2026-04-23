@@ -8,7 +8,11 @@ use dory::primitives::arithmetic::{
 use dory::primitives::poly::{MultilinearLagrange, Polynomial as DoryPolynomial};
 use jolt_crypto::{Bn254G1, Bn254GT, Commitment, DeriveSetup, JoltGroup, PedersenSetup};
 use jolt_field::Fr;
-use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError, ZkOpeningScheme};
+use jolt_openings::{
+    homomorphic_prove_batch, homomorphic_verify_batch_with_backend, AdditivelyHomomorphic,
+    CommitmentBackend, CommitmentScheme, OpeningClaim, OpeningVerification, OpeningsError,
+    ProverClaim, ZkOpeningScheme,
+};
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
 
@@ -256,6 +260,38 @@ impl AdditivelyHomomorphic for DoryScheme {
         }
 
         DoryHint(combined)
+    }
+}
+
+impl OpeningVerification for DoryScheme {
+    type BatchProof = Vec<DoryProof>;
+
+    fn prove_batch<T: Transcript<Challenge = Fr>>(
+        claims: Vec<ProverClaim<Fr>>,
+        hints: Vec<Self::OpeningHint>,
+        setup: &Self::ProverSetup,
+        transcript: &mut T,
+    ) -> (Self::BatchProof, Vec<Fr>) {
+        homomorphic_prove_batch::<Self, _>(claims, hints, setup, transcript)
+    }
+
+    fn verify_batch_with_backend<B>(
+        backend: &mut B,
+        vk: &Self::VerifierSetup,
+        claims: Vec<OpeningClaim<B, Self>>,
+        batch_proof: &Self::BatchProof,
+        transcript: &mut B::Transcript,
+    ) -> Result<(), OpeningsError>
+    where
+        B: CommitmentBackend<Self, F = <Self as CommitmentScheme>::Field>,
+    {
+        homomorphic_verify_batch_with_backend::<Self, B>(
+            backend,
+            vk,
+            claims,
+            batch_proof,
+            transcript,
+        )
     }
 }
 

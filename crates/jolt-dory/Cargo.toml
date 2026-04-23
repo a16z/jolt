@@ -20,6 +20,7 @@ tracing.workspace = true
 ark-serialize = { workspace = true }
 
 [dev-dependencies]
+jolt-verifier-backend = { path = "../jolt-verifier-backend" }
 criterion = { workspace = true }
 serde_json = "1"
 rand_core = { workspace = true }

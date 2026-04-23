@@ -10,8 +10,13 @@ use serde::{Deserialize, Serialize};
 
 use jolt_crypto::HomomorphicCommitment;
 
+use crate::backend::CommitmentBackend;
 use crate::error::OpeningsError;
 use crate::schemes::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
+use crate::verification::{
+    homomorphic_prove_batch, homomorphic_verify_batch_with_backend, OpeningVerification,
+};
+use crate::{OpeningClaim, ProverClaim};
 
 #[derive(Clone, Debug)]
 pub struct MockCommitmentScheme<F: Field>(PhantomData<F>);
@@ -145,6 +150,32 @@ impl<F: Field> AdditivelyHomomorphic for MockCommitmentScheme<F> {
     }
 }
 
+impl<F: Field> OpeningVerification for MockCommitmentScheme<F> {
+    type BatchProof = Vec<MockProof<F>>;
+
+    fn prove_batch<T: Transcript<Challenge = F>>(
+        claims: Vec<ProverClaim<F>>,
+        hints: Vec<Self::OpeningHint>,
+        setup: &Self::ProverSetup,
+        transcript: &mut T,
+    ) -> (Self::BatchProof, Vec<F>) {
+        homomorphic_prove_batch::<Self, _>(claims, hints, setup, transcript)
+    }
+
+    fn verify_batch_with_backend<B>(
+        backend: &mut B,
+        vk: &Self::VerifierSetup,
+        claims: Vec<OpeningClaim<B, Self>>,
+        batch_proof: &Self::BatchProof,
+        transcript: &mut B::Transcript,
+    ) -> Result<(), OpeningsError>
+    where
+        B: CommitmentBackend<Self, F = Self::Field>,
+    {
+        homomorphic_verify_batch_with_backend::<Self, B>(backend, vk, claims, batch_proof, transcript)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct MockHidingCommitment<F: Field> {
@@ -204,7 +235,7 @@ impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{OpeningReduction, ProverClaim, VerifierClaim};
+    use crate::{OpeningVerification, ProverClaim};
     use jolt_field::Field;
     use jolt_field::Fr;
     use jolt_poly::Polynomial;
@@ -302,157 +333,74 @@ mod tests {
         assert_eq!(c_sum_direct, c_sum_combined);
     }
 
-    fn prove_and_verify(
+    /// Smoke-tests the prover side of the new fused trait surface:
+    /// `prove_batch` should produce one PCS::Proof per distinct opening
+    /// point and a parallel list of binding evals (the per-group RLC-
+    /// combined evaluations). Verifier-side e2e is covered by per-PCS
+    /// parity tests in `jolt-verifier-backend/tests/verification_parity.rs`.
+    fn prove_batch_groups_match(
         prover_polys: &[(Polynomial<Fr>, Vec<Fr>)],
-        verifier_evals: Option<&[Fr]>,
-    ) -> Result<(), OpeningsError> {
+        expected_groups: usize,
+    ) {
         let mut prover_claims = Vec::new();
-        let mut verifier_claims = Vec::new();
-
-        for (i, (poly, point)) in prover_polys.iter().enumerate() {
+        let mut hints = Vec::new();
+        for (poly, point) in prover_polys {
             let eval = poly.evaluate(point);
             prover_claims.push(ProverClaim {
                 polynomial: Polynomial::new(poly.evaluations().to_vec()),
                 point: point.clone(),
                 eval,
             });
-
-            let (commitment, ()) = MockPCS::commit(poly.evaluations(), &());
-            let v_eval = verifier_evals.map_or(eval, |overrides| overrides[i]);
-            verifier_claims.push(VerifierClaim {
-                commitment,
-                point: point.clone(),
-                eval: v_eval,
-            });
+            hints.push(());
         }
 
-        // Prover: reduce + open
-        let mut transcript_p = Blake2bTranscript::new(b"e2e-test");
-        let reduced_prover = MockPCS::reduce_prover(prover_claims, &mut transcript_p);
-        let proofs: Vec<_> = reduced_prover
-            .iter()
-            .map(|claim| {
-                MockPCS::open(
-                    &claim.polynomial,
-                    &claim.point,
-                    claim.eval,
-                    &(),
-                    None,
-                    &mut transcript_p,
-                )
-            })
-            .collect();
+        let mut transcript = Blake2bTranscript::new(b"prove-batch");
+        let (proofs, binding_evals) =
+            MockPCS::prove_batch(prover_claims, hints, &(), &mut transcript);
 
-        // Verifier: reduce + verify
-        let mut transcript_v = Blake2bTranscript::new(b"e2e-test");
-        let reduced_verifier = MockPCS::reduce_verifier(verifier_claims, &mut transcript_v)?;
-
-        assert_eq!(reduced_verifier.len(), proofs.len());
-
-        for (claim, proof) in reduced_verifier.iter().zip(proofs.iter()) {
-            MockPCS::verify(
-                &claim.commitment,
-                &claim.point,
-                claim.eval,
-                proof,
-                &(),
-                &mut transcript_v,
-            )?;
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn e2e_single_claim_roundtrip() {
-        let mut rng = ChaCha20Rng::seed_from_u64(100);
-        let poly = Polynomial::<Fr>::random(4, &mut rng);
-        let point: Vec<Fr> = (0..4).map(|_| Fr::random(&mut rng)).collect();
-
-        prove_and_verify(&[(poly, point)], None).expect("single claim e2e should verify");
-    }
-
-    #[test]
-    fn e2e_multiple_claims_shared_and_distinct_points() {
-        let mut rng = ChaCha20Rng::seed_from_u64(200);
-        let num_vars = 3;
-
-        let poly_a = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let poly_b = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let poly_c = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let poly_d = Polynomial::<Fr>::random(num_vars, &mut rng);
-
-        let point1: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
-        let point2: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
-
-        let claims = vec![
-            (poly_a, point1.clone()),
-            (poly_b, point1),
-            (poly_c, point2.clone()),
-            (poly_d, point2),
-        ];
-
-        prove_and_verify(&claims, None).expect("multi-claim e2e should verify");
-    }
-
-    #[test]
-    fn e2e_rejects_tampered_evaluation() {
-        let mut rng = ChaCha20Rng::seed_from_u64(300);
-        let num_vars = 3;
-
-        let poly_a = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let poly_b = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let poly_c = Polynomial::<Fr>::random(num_vars, &mut rng);
-
-        let point1: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
-        let point2: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
-
-        let eval_a = poly_a.evaluate(&point1);
-        let eval_b = poly_b.evaluate(&point1);
-        let eval_c = poly_c.evaluate(&point2);
-
-        let tampered_evals = [eval_a, eval_b + Fr::from_u64(1), eval_c];
-
-        let claims = vec![(poly_a, point1.clone()), (poly_b, point1), (poly_c, point2)];
-
-        let result = prove_and_verify(&claims, Some(&tampered_evals));
-        assert!(
-            result.is_err(),
-            "tampered evaluation should cause rejection"
+        assert_eq!(
+            proofs.len(),
+            expected_groups,
+            "expected {expected_groups} per-group proofs, got {}",
+            proofs.len()
+        );
+        assert_eq!(
+            binding_evals.len(),
+            expected_groups,
+            "binding_evals must be parallel to proofs",
         );
     }
 
     #[test]
-    fn reduction_groups_claims_at_same_point() {
+    fn prove_batch_single_claim_one_group() {
+        let mut rng = ChaCha20Rng::seed_from_u64(100);
+        let poly = Polynomial::<Fr>::random(4, &mut rng);
+        let point: Vec<Fr> = (0..4).map(|_| Fr::random(&mut rng)).collect();
+        prove_batch_groups_match(&[(poly, point)], 1);
+    }
+
+    #[test]
+    fn prove_batch_groups_by_point() {
         let mut rng = ChaCha20Rng::seed_from_u64(400);
         let nv = 3;
-        let p1 = Polynomial::<Fr>::random(nv, &mut rng);
-        let p2 = Polynomial::<Fr>::random(nv, &mut rng);
-        let p3 = Polynomial::<Fr>::random(nv, &mut rng);
         let r: Vec<Fr> = (0..nv).map(|_| Fr::random(&mut rng)).collect();
         let s: Vec<Fr> = (0..nv).map(|_| Fr::random(&mut rng)).collect();
 
-        let claims = vec![
-            ProverClaim {
-                polynomial: Polynomial::new(p1.evaluations().to_vec()),
-                point: r.clone(),
-                eval: p1.evaluate(&r),
-            },
-            ProverClaim {
-                polynomial: Polynomial::new(p2.evaluations().to_vec()),
-                point: r.clone(),
-                eval: p2.evaluate(&r),
-            },
-            ProverClaim {
-                polynomial: Polynomial::new(p3.evaluations().to_vec()),
-                point: s.clone(),
-                eval: p3.evaluate(&s),
-            },
-        ];
+        let p1 = Polynomial::<Fr>::random(nv, &mut rng);
+        let p2 = Polynomial::<Fr>::random(nv, &mut rng);
+        let p3 = Polynomial::<Fr>::random(nv, &mut rng);
+        let p4 = Polynomial::<Fr>::random(nv, &mut rng);
 
-        let mut transcript = Blake2bTranscript::new(b"grouping");
-        let reduced = MockPCS::reduce_prover(claims, &mut transcript);
-        assert_eq!(reduced.len(), 2, "two distinct points → two reduced claims");
+        prove_batch_groups_match(&[(p1, r.clone()), (p2, r), (p3, s.clone()), (p4, s)], 2);
+    }
+
+    #[test]
+    fn prove_batch_empty_returns_empty() {
+        let mut transcript = Blake2bTranscript::new(b"empty");
+        let (proofs, evals) =
+            MockPCS::prove_batch(Vec::<ProverClaim<Fr>>::new(), Vec::new(), &(), &mut transcript);
+        assert!(proofs.is_empty());
+        assert!(evals.is_empty());
     }
 
     #[test]

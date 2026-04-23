@@ -10,13 +10,23 @@ use jolt_compiler::module::{
     ClaimFactor, ClaimFormula, PointNormalization, R1CSMatrix, VerifierOp,
 };
 use jolt_compiler::PolynomialId;
-use jolt_crypto::HomomorphicCommitment;
 use jolt_field::Field;
-use jolt_openings::{AdditivelyHomomorphic, OpeningReduction, OpeningsError, VerifierClaim};
+use jolt_openings::{CommitmentBackend, CommitmentOrigin, OpeningClaim, OpeningVerification};
 use jolt_poly::EqPolynomial;
 use jolt_r1cs::R1csKey;
-use jolt_sumcheck::{ClearRoundVerifier, SumcheckClaim, SumcheckVerifier};
-use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Label, LabelWithCount, Transcript};
+use jolt_sumcheck::{SumcheckClaim, SumcheckVerifier};
+use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
+use jolt_verifier_backend::{
+    helpers::{
+        eq_eval as backend_eq_eval, identity_mle as backend_identity_mle,
+        lagrange_basis_eval as backend_lagrange_basis_eval,
+        lagrange_evals as backend_lagrange_evals,
+        lagrange_kernel_eval as backend_lagrange_kernel_eval, lt_mle as backend_lt_mle,
+        sparse_block_eval as backend_sparse_block_eval,
+    },
+    FieldBackend, Native,
+};
+use num_traits::Zero;
 
 use crate::config::ProverConfig;
 use crate::error::JoltError;
@@ -24,11 +34,11 @@ use crate::key::JoltVerifyingKey;
 use crate::proof::{JoltProof, StageProof};
 use crate::TRANSCRIPT_LABEL;
 
-/// End-to-end proof verification.
+/// End-to-end proof verification using the [`Native`] backend.
 ///
-/// Walks the flat [`VerifierOp`] sequence from the verifying key, replaying
-/// the Fiat-Shamir transcript in lockstep with the prover. Returns `Ok(())`
-/// if the proof is valid.
+/// Thin wrapper around [`verify_with_backend`]; identical behavior. Use
+/// [`verify_with_backend`] directly with a [`Tracing`] backend to capture
+/// the verifier's field-arithmetic AST for recursion / Lean export.
 pub fn verify<F, PCS>(
     key: &JoltVerifyingKey<F, PCS>,
     proof: &JoltProof<F, PCS>,
@@ -36,8 +46,50 @@ pub fn verify<F, PCS>(
 ) -> Result<(), JoltError>
 where
     F: Field,
-    PCS: AdditivelyHomomorphic<Field = F>,
-    PCS::Output: AppendToTranscript + HomomorphicCommitment<F>,
+    PCS: OpeningVerification<Field = F>,
+    PCS::Output: AppendToTranscript,
+{
+    let mut backend = Native::<F>::new();
+    verify_with_backend(&mut backend, key, proof, expected_io_hash)
+}
+
+/// Backend-polymorphic proof verification.
+///
+/// Walks the flat [`VerifierOp`] sequence from the verifying key, replaying
+/// the Fiat-Shamir transcript in lockstep with the prover. All field
+/// arithmetic for the verifier's checks (sumcheck round combination, claim
+/// formula evaluation, `CheckOutput` equality) routes through `B`; the
+/// transcript-bytes / PCS surface stays native (it deals with serialized
+/// commitments, not field arithmetic).
+///
+/// State buckets are kept as parallel `(F, B::Scalar)` pairs:
+///
+///   * `_f` slots feed the transcript and `verify_batch_with_backend`
+///     (both of which require concrete field values to hash / commit).
+///   * `_w` slots feed [`evaluate_formula_with_backend`] and
+///     [`SumcheckVerifier::verify_with_backend`] so the AST sees every op.
+///
+/// For `Native<F>` this redundant pair degenerates to two F copies; for
+/// `Tracing<F>` the F side keeps the verifier compatible with the existing
+/// transcript / PCS while the wrapped side records the symbolic graph.
+///
+/// # Errors
+///
+/// Returns the same error variants as [`verify`]. `CheckOutput` mismatches
+/// surface as [`JoltError::EvaluationMismatch`] (Native [`assert_eq`])
+/// or are recorded as AST assertions to be discharged by the outer proof
+/// (Tracing).
+#[allow(clippy::too_many_lines)]
+pub fn verify_with_backend<B, PCS>(
+    backend: &mut B,
+    key: &JoltVerifyingKey<B::F, PCS>,
+    proof: &JoltProof<B::F, PCS>,
+    expected_io_hash: &[u8; 32],
+) -> Result<(), JoltError>
+where
+    B: CommitmentBackend<PCS>,
+    PCS: OpeningVerification<Field = <B as FieldBackend>::F>,
+    PCS::Output: AppendToTranscript,
 {
     if proof.config.io_hash != *expected_io_hash {
         fn fmt_hash(h: &[u8; 32]) -> String {
@@ -56,19 +108,26 @@ where
     proof.config.validate().map_err(JoltError::InvalidProof)?;
 
     let schedule = &key.schedule;
-    let mut transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_LABEL);
+    let mut transcript = backend.new_transcript(TRANSCRIPT_LABEL);
 
-    let mut challenges = vec![F::zero(); schedule.num_challenges];
-    let mut evaluations: HashMap<PolynomialId, F> = HashMap::new();
-    let mut sumcheck_points: Vec<Vec<F>> = vec![Vec::new(); schedule.num_stages];
-    let mut final_evals = vec![F::zero(); schedule.num_stages];
-    let mut commitment_map: HashMap<PolynomialId, PCS::Output> = HashMap::new();
+    let mut challenges_f = vec![B::F::zero(); schedule.num_challenges];
+    let mut challenges_w: Vec<B::Scalar> = (0..schedule.num_challenges)
+        .map(|_| backend.const_zero())
+        .collect();
+    let mut evaluations_f: HashMap<PolynomialId, B::F> = HashMap::new();
+    let mut evaluations_w: HashMap<PolynomialId, B::Scalar> = HashMap::new();
+    let mut sumcheck_points_f: Vec<Vec<B::F>> = vec![Vec::new(); schedule.num_stages];
+    let mut sumcheck_points_w: Vec<Vec<B::Scalar>> = vec![Vec::new(); schedule.num_stages];
+    let mut final_evals_w: Vec<B::Scalar> = (0..schedule.num_stages)
+        .map(|_| backend.const_zero())
+        .collect();
+    let mut commitment_map: HashMap<PolynomialId, B::Commitment> = HashMap::new();
     let mut commitments = proof.commitments.iter();
     let mut stage_proofs = proof.stage_proofs.iter();
-    let mut current_stage: Option<&StageProof<F>> = None;
+    let mut current_stage: Option<&StageProof<B::F>> = None;
     let mut eval_cursor: usize = 0;
     let mut round_poly_cursor: usize = 0;
-    let mut pcs_claims: Vec<VerifierClaim<F, PCS::Output>> = Vec::new();
+    let mut pcs_claims: Vec<OpeningClaim<B, PCS>> = Vec::new();
 
     for op in &schedule.ops {
         match op {
@@ -96,15 +155,20 @@ where
                 // downstream CollectOpeningClaim's `commitment_map.get()`
                 // already handles a missing entry.
                 if let Some(c) = slot {
-                    transcript.append(&LabelWithCount(tag.as_bytes(), c.serialized_len()));
-                    c.append_to_transcript(&mut transcript);
-                    let _ = commitment_map.insert(*poly, c.clone());
+                    let wrapped = backend.wrap_commitment(
+                        c.clone(),
+                        CommitmentOrigin::Proof,
+                        "absorb_commitment",
+                    );
+                    backend.absorb_commitment(&mut transcript, &wrapped, tag.as_bytes());
+                    let _ = commitment_map.insert(*poly, wrapped);
                 }
             }
 
             VerifierOp::Squeeze { challenge } => {
-                let val = transcript.challenge();
-                challenges[challenge.0] = val;
+                let (val, val_w) = backend.squeeze(&mut transcript, "squeeze");
+                challenges_f[challenge.0] = val;
+                challenges_w[challenge.0] = val_w;
             }
 
             VerifierOp::AppendDomainSeparator { tag } => {
@@ -117,6 +181,14 @@ where
             }
 
             VerifierOp::AbsorbRoundPoly { num_coeffs: _, tag } => {
+                // Used for *uniskip* round polynomials that sit before a
+                // VerifySumcheck in the schedule (e.g. the outer
+                // univariate-skip protocol). Their coefficients live in the
+                // same `sp.round_polys` array as the sumcheck rounds, so we
+                // bump the cursor and absorb them into the transcript here.
+                // The corresponding eval is published separately via a
+                // following RecordEvals + AbsorbEvals pair, so the round
+                // poly itself does not need backend wrapping.
                 let sp = current_stage.ok_or_else(|| {
                     JoltError::InvalidProof("no active stage proof for round poly".into())
                 })?;
@@ -151,71 +223,114 @@ where
                 let max_rounds = instances.iter().map(|i| i.num_rounds).max().unwrap_or(0);
                 let max_degree = instances.iter().map(|i| i.degree).max().unwrap_or(0);
 
-                // Evaluate each instance's input claim.
-                let mut instance_claims: Vec<F> = Vec::with_capacity(instances.len());
+                // Evaluate each instance's input claim through both worlds
+                // in parallel. The native value drives the transcript when
+                // the batch is more than one instance; the wrapped value
+                // feeds the sumcheck verifier's running sum.
+                let mut instance_claims_f: Vec<B::F> = Vec::with_capacity(instances.len());
+                let mut instance_claims_w: Vec<B::Scalar> = Vec::with_capacity(instances.len());
                 for inst in instances {
-                    let val = evaluate_formula(
+                    let val_f = evaluate_formula(
                         &inst.input_claim,
-                        &evaluations,
-                        &challenges,
-                        &sumcheck_points,
+                        &evaluations_f,
+                        &challenges_f,
+                        &sumcheck_points_f,
                         None,
                         None,
                         &key.r1cs_key,
                         &proof.config,
                     )?;
-                    instance_claims.push(val);
+                    let val_w = evaluate_formula_with_backend(
+                        backend,
+                        &inst.input_claim,
+                        &evaluations_w,
+                        &challenges_w,
+                        &sumcheck_points_w,
+                        None,
+                        None,
+                        &key.r1cs_key,
+                        &proof.config,
+                    )?;
+                    instance_claims_f.push(val_f);
+                    instance_claims_w.push(val_w);
                 }
 
-                // Batched: absorb claims, squeeze independent coefficients.
-                let combined_claim = if batch_challenges.is_empty() {
-                    // Unbatched: scale by 2^offset only.
-                    instance_claims
-                        .iter()
-                        .zip(instances.iter())
-                        .map(|(&c, inst)| c * F::from_u64(1u64 << (max_rounds - inst.num_rounds)))
-                        .sum()
-                } else {
-                    let tag = claim_tag.as_ref().expect("claim_tag required for batched");
-                    for &claim_val in &instance_claims {
-                        transcript.append(&Label(tag.as_bytes()));
-                        claim_val.append_to_transcript(&mut transcript);
-                    }
-                    for &ch_idx in batch_challenges {
-                        let val = transcript.challenge();
-                        challenges[ch_idx.0] = val;
-                    }
-                    instance_claims
-                        .iter()
-                        .zip(instances.iter())
-                        .zip(batch_challenges.iter())
-                        .map(|((&c, inst), &ch_idx)| {
-                            let coeff = challenges[ch_idx.0];
-                            coeff * c * F::from_u64(1u64 << (max_rounds - inst.num_rounds))
-                        })
-                        .sum()
-                };
+                let (combined_claim_f, combined_claim_w): (B::F, B::Scalar) =
+                    if batch_challenges.is_empty() {
+                        let mut acc_f = B::F::zero();
+                        let mut acc_w = backend.const_zero();
+                        for ((&c_f, c_w), inst) in instance_claims_f
+                            .iter()
+                            .zip(instance_claims_w.iter())
+                            .zip(instances.iter())
+                        {
+                            let scale = 1u64 << (max_rounds - inst.num_rounds);
+                            acc_f += c_f * B::F::from_u64(scale);
+                            let scale_w = backend.const_i128(i128::from(scale));
+                            let scaled = backend.mul(c_w, &scale_w);
+                            acc_w = backend.add(&acc_w, &scaled);
+                        }
+                        (acc_f, acc_w)
+                    } else {
+                        let tag = claim_tag.as_ref().expect("claim_tag required for batched");
+                        for &claim_val in &instance_claims_f {
+                            transcript.append(&Label(tag.as_bytes()));
+                            claim_val.append_to_transcript(&mut transcript);
+                        }
+                        for &ch_idx in batch_challenges {
+                            let (val, val_w) = backend.squeeze(&mut transcript, "batch_squeeze");
+                            challenges_f[ch_idx.0] = val;
+                            challenges_w[ch_idx.0] = val_w;
+                        }
+                        let mut acc_f = B::F::zero();
+                        let mut acc_w = backend.const_zero();
+                        for (((&c_f, c_w), inst), &ch_idx) in instance_claims_f
+                            .iter()
+                            .zip(instance_claims_w.iter())
+                            .zip(instances.iter())
+                            .zip(batch_challenges.iter())
+                        {
+                            let coeff_f = challenges_f[ch_idx.0];
+                            let scale = 1u64 << (max_rounds - inst.num_rounds);
+                            acc_f += coeff_f * c_f * B::F::from_u64(scale);
+                            let coeff_w = &challenges_w[ch_idx.0];
+                            let cw = backend.mul(coeff_w, c_w);
+                            let scale_w = backend.const_i128(i128::from(scale));
+                            let scaled = backend.mul(&cw, &scale_w);
+                            acc_w = backend.add(&acc_w, &scaled);
+                        }
+                        (acc_f, acc_w)
+                    };
+
                 let claim = SumcheckClaim {
                     num_vars: max_rounds,
                     degree: max_degree,
-                    claimed_sum: combined_claim,
+                    claimed_sum: combined_claim_f,
                 };
                 let round_polys = &sp.round_polys.round_polynomials
                     [round_poly_cursor..round_poly_cursor + max_rounds];
-                let round_verifier = ClearRoundVerifier::with_label_compressed(b"sumcheck_poly");
-                let (fe, sc) =
-                    SumcheckVerifier::verify(&claim, round_polys, &mut transcript, &round_verifier)
-                        .map_err(JoltError::Sumcheck)?;
+                let (fe_w, sc_w, sc_f) = SumcheckVerifier::verify_with_backend(
+                    backend,
+                    &claim,
+                    round_polys,
+                    combined_claim_w,
+                    &mut transcript,
+                    Some(b"sumcheck_poly"),
+                    true,
+                )
+                .map_err(JoltError::Sumcheck)?;
                 round_poly_cursor += max_rounds;
 
                 for (i, slot) in sumcheck_challenge_slots.iter().enumerate() {
-                    if i < sc.len() {
-                        challenges[slot.0] = sc[i];
+                    if i < sc_f.len() {
+                        challenges_f[slot.0] = sc_f[i];
+                        challenges_w[slot.0] = sc_w[i].clone();
                     }
                 }
 
-                final_evals[*stage] = fe;
-                sumcheck_points[*stage] = sc;
+                final_evals_w[*stage] = fe_w;
+                sumcheck_points_f[*stage] = sc_f;
+                sumcheck_points_w[*stage] = sc_w;
             }
 
             VerifierOp::RecordEvals { evals } => {
@@ -228,14 +343,16 @@ where
                             "missing eval {eval_cursor} in stage proof"
                         ))
                     })?;
-                    let _ = evaluations.insert(eval_desc.poly, value);
+                    let value_w = backend.wrap_proof(value, "record_eval");
+                    let _ = evaluations_f.insert(eval_desc.poly, value);
+                    let _ = evaluations_w.insert(eval_desc.poly, value_w);
                     eval_cursor += 1;
                 }
             }
 
             VerifierOp::AbsorbEvals { polys, tag } => {
                 for pi in polys {
-                    if let Some(&val) = evaluations.get(pi) {
+                    if let Some(&val) = evaluations_f.get(pi) {
                         transcript.append(&Label(tag.as_bytes()));
                         val.append_to_transcript(&mut transcript);
                     }
@@ -251,53 +368,57 @@ where
                     JoltError::InvalidProof("no active stage for CheckOutput".into())
                 })?;
                 let max_rounds = instances.iter().map(|i| i.num_rounds).max().unwrap_or(0);
-                let raw_point = &sumcheck_points[*stage];
-                let mut combined_output = F::zero();
+                let raw_point_w = &sumcheck_points_w[*stage];
+                let mut combined_output_w = backend.const_zero();
+                let stage_evals_w: Vec<B::Scalar> = sp
+                    .evals
+                    .iter()
+                    .map(|&v| backend.wrap_proof(v, "stage_eval"))
+                    .collect();
 
                 for (i, inst) in instances.iter().enumerate() {
                     let offset = max_rounds - inst.num_rounds;
-                    let normalized =
-                        apply_normalization(&raw_point[offset..], inst.normalize.as_ref());
-                    let output = evaluate_formula(
+                    let normalized_w =
+                        apply_normalization(&raw_point_w[offset..], inst.normalize.as_ref());
+                    let output_w = evaluate_formula_with_backend(
+                        backend,
                         &inst.output_check,
-                        &evaluations,
-                        &challenges,
-                        &sumcheck_points,
-                        Some((*stage, &normalized)),
-                        Some(&sp.evals),
+                        &evaluations_w,
+                        &challenges_w,
+                        &sumcheck_points_w,
+                        Some((*stage, &normalized_w)),
+                        Some(&stage_evals_w),
                         &key.r1cs_key,
                         &proof.config,
                     )?;
-                    let coeff = if batch_challenges.is_empty() {
-                        F::one()
+                    let scaled_w = if batch_challenges.is_empty() {
+                        output_w
                     } else {
-                        challenges[batch_challenges[i].0]
+                        let coeff_w = &challenges_w[batch_challenges[i].0];
+                        backend.mul(coeff_w, &output_w)
                     };
-                    combined_output += coeff * output;
+                    combined_output_w = backend.add(&combined_output_w, &scaled_w);
                 }
 
-                if final_evals[*stage] != combined_output {
-                    return Err(JoltError::EvaluationMismatch {
+                backend
+                    .assert_eq(&final_evals_w[*stage], &combined_output_w, "check_output")
+                    .map_err(|_| JoltError::EvaluationMismatch {
                         stage: *stage,
-                        reason: format!(
-                            "sumcheck final eval ({:?}) does not match batched composition ({:?})",
-                            final_evals[*stage], combined_output
-                        ),
-                    });
-                }
+                        reason: "sumcheck final eval does not match batched composition".into(),
+                    })?;
             }
 
             VerifierOp::CollectOpeningClaim { poly, at_stage } => {
                 if let Some(commitment) = commitment_map.get(poly) {
-                    let eval = evaluations.get(poly).copied().ok_or_else(|| {
+                    let eval_w = evaluations_w.get(poly).cloned().ok_or_else(|| {
                         JoltError::InvalidProof(format!(
                             "evaluation for committed poly {poly:?} not set"
                         ))
                     })?;
-                    pcs_claims.push(VerifierClaim {
+                    pcs_claims.push(OpeningClaim {
                         commitment: commitment.clone(),
-                        point: sumcheck_points[at_stage.0].clone(),
-                        eval,
+                        point: sumcheck_points_w[at_stage.0].clone(),
+                        eval: eval_w,
                     });
                 }
             }
@@ -307,24 +428,14 @@ where
                     continue;
                 }
                 let claims = std::mem::take(&mut pcs_claims);
-                let reduced =
-                    PCS::reduce_verifier(claims, &mut transcript).map_err(JoltError::Opening)?;
-
-                if reduced.len() != proof.opening_proofs.len() {
-                    return Err(JoltError::Opening(OpeningsError::VerificationFailed));
-                }
-
-                for (claim, opening_proof) in reduced.iter().zip(proof.opening_proofs.iter()) {
-                    PCS::verify(
-                        &claim.commitment,
-                        &claim.point,
-                        claim.eval,
-                        opening_proof,
-                        &key.pcs_setup,
-                        &mut transcript,
-                    )
-                    .map_err(JoltError::Opening)?;
-                }
+                PCS::verify_batch_with_backend(
+                    backend,
+                    &key.pcs_setup,
+                    claims,
+                    &proof.opening_proof,
+                    &mut transcript,
+                )
+                .map_err(JoltError::Opening)?;
             }
         }
     }
@@ -355,6 +466,339 @@ fn apply_normalization<F: Clone>(raw: &[F], normalize: Option<&PointNormalizatio
             result
         }
     }
+}
+
+/// Backend-aware claim formula evaluation.
+///
+/// Mirrors [`evaluate_formula`] but routes every field operation through
+/// the [`FieldBackend`] so a Tracing backend can capture the entire
+/// formula (sum-of-products + the inner Lagrange / matrix-MLE / preprocessed
+/// poly subcomputations) into an AST.
+///
+/// Native callers should pass `Native` as the backend and incur zero
+/// overhead.
+///
+/// # Arguments
+///
+/// Same as [`evaluate_formula`], but every state bucket is `B::Scalar`-typed.
+///
+/// `r1cs_matrix_const(coeff)` is invoked for every nonzero entry the
+/// formula touches; backends that want to dedupe constant matrix
+/// coefficients (e.g. `F::one()`, `F::zero()`) should override
+/// [`FieldBackend::wrap_public`] / `const_i128` accordingly.
+///
+/// # Errors
+///
+/// Returns [`JoltError::InvalidProof`] when the formula references an
+/// evaluation that hasn't been recorded yet, when [`ClaimFactor::StagedEval`]
+/// or [`ClaimFactor::LagrangeKernel`] (prover-only / unsupported variants)
+/// appear, or when [`StageEval`] indexes out of bounds. Lagrange
+/// inversions fail with [`BackendError`](jolt_verifier_backend::BackendError),
+/// which is wrapped as [`JoltError::InvalidProof`].
+#[allow(dead_code)]
+#[allow(clippy::too_many_arguments)]
+fn evaluate_formula_with_backend<B>(
+    backend: &mut B,
+    formula: &ClaimFormula,
+    evaluations: &HashMap<PolynomialId, B::Scalar>,
+    challenges: &[B::Scalar],
+    sumcheck_points: &[Vec<B::Scalar>],
+    point_override: Option<(usize, &[B::Scalar])>,
+    stage_evals: Option<&[B::Scalar]>,
+    r1cs_key: &R1csKey<B::F>,
+    config: &ProverConfig,
+) -> Result<B::Scalar, JoltError>
+where
+    B: FieldBackend,
+{
+    let mut sum = backend.const_zero();
+    for term in &formula.terms {
+        let coeff_w = backend.const_i128(term.coeff);
+        let mut product = coeff_w;
+        for factor in &term.factors {
+            let factor_val: B::Scalar = match factor {
+                ClaimFactor::Eval(poly) => evaluations.get(poly).cloned().ok_or_else(|| {
+                    JoltError::InvalidProof(format!(
+                        "evaluation {poly:?} referenced before available"
+                    ))
+                })?,
+                ClaimFactor::Challenge(i) => challenges[i.0].clone(),
+                ClaimFactor::EqChallengePair { a, b } => {
+                    let one_w = backend.const_one();
+                    let ra = challenges[a.0].clone();
+                    let rb = challenges[b.0].clone();
+                    let ab = backend.mul(&ra, &rb);
+                    let one_minus_a = backend.sub(&one_w, &ra);
+                    let one_minus_b = backend.sub(&one_w, &rb);
+                    let cross = backend.mul(&one_minus_a, &one_minus_b);
+                    backend.add(&ab, &cross)
+                }
+                ClaimFactor::EqEval {
+                    challenges: chs,
+                    at_stage,
+                } => {
+                    let r: Vec<B::Scalar> =
+                        chs.iter().map(|&ci| challenges[ci.0].clone()).collect();
+                    let s = resolve_point(sumcheck_points, point_override, at_stage.0);
+                    backend_eq_eval(backend, &r, s)
+                }
+                ClaimFactor::EqEvalSlice {
+                    challenges: chs,
+                    at_stage,
+                    offset,
+                } => {
+                    let r: Vec<B::Scalar> =
+                        chs.iter().map(|&ci| challenges[ci.0].clone()).collect();
+                    let s = resolve_point(sumcheck_points, point_override, at_stage.0);
+                    backend_eq_eval(backend, &r, &s[*offset..*offset + r.len()])
+                }
+                ClaimFactor::LagrangeKernelDomain {
+                    tau_challenge,
+                    at_challenge,
+                    domain_size,
+                    domain_start,
+                } => {
+                    let tau = challenges[tau_challenge.0].clone();
+                    let at = challenges[at_challenge.0].clone();
+                    backend_lagrange_kernel_eval(backend, *domain_start, *domain_size, &tau, &at)
+                        .map_err(|e| JoltError::InvalidProof(e.to_string()))?
+                }
+                ClaimFactor::LagrangeWeight {
+                    challenge,
+                    domain_size,
+                    domain_start,
+                    basis_index,
+                } => {
+                    let r = challenges[challenge.0].clone();
+                    backend_lagrange_basis_eval(
+                        backend,
+                        *domain_start,
+                        *domain_size,
+                        *basis_index,
+                        &r,
+                    )
+                    .map_err(|e| JoltError::InvalidProof(e.to_string()))?
+                }
+                ClaimFactor::UniformR1CSEval {
+                    matrix,
+                    eval_polys,
+                    at_challenge,
+                    num_constraints,
+                    domain_start,
+                } => {
+                    let r0 = challenges[at_challenge.0].clone();
+                    let basis =
+                        backend_lagrange_evals(backend, *domain_start, *num_constraints, &r0)
+                            .map_err(|e| JoltError::InvalidProof(e.to_string()))?;
+                    let mut z: Vec<B::Scalar> = Vec::with_capacity(1 + eval_polys.len());
+                    z.push(backend.const_one());
+                    for p in eval_polys {
+                        z.push(evaluations.get(p).cloned().ok_or_else(|| {
+                            JoltError::InvalidProof(format!("R1CS eval {p:?} not available"))
+                        })?);
+                    }
+                    let rows = match matrix {
+                        R1CSMatrix::A => &r1cs_key.matrices.a,
+                        R1CSMatrix::B => &r1cs_key.matrices.b,
+                    };
+                    let mut acc = backend.const_zero();
+                    for (k, row) in rows[..*num_constraints].iter().enumerate() {
+                        let mut dot = backend.const_zero();
+                        for &(j, coeff) in row {
+                            let coeff_w = backend.wrap_public(coeff, "r1cs_matrix_coeff");
+                            let term = backend.mul(&coeff_w, &z[j]);
+                            dot = backend.add(&dot, &term);
+                        }
+                        let weighted = backend.mul(&basis[k], &dot);
+                        acc = backend.add(&acc, &weighted);
+                    }
+                    acc
+                }
+                ClaimFactor::GroupSplitR1CSEval {
+                    matrix,
+                    eval_polys,
+                    at_r0,
+                    at_r_group,
+                    group0_indices,
+                    group1_indices,
+                    domain_size,
+                    domain_start,
+                } => {
+                    let r0 = challenges[at_r0.0].clone();
+                    let r_group = challenges[at_r_group.0].clone();
+                    let basis = backend_lagrange_evals(backend, *domain_start, *domain_size, &r0)
+                        .map_err(|e| JoltError::InvalidProof(e.to_string()))?;
+                    let mut z: Vec<B::Scalar> = Vec::with_capacity(1 + eval_polys.len());
+                    z.push(backend.const_one());
+                    for p in eval_polys {
+                        z.push(evaluations.get(p).cloned().ok_or_else(|| {
+                            JoltError::InvalidProof(format!("R1CS eval {p:?} not available"))
+                        })?);
+                    }
+                    let rows = match matrix {
+                        R1CSMatrix::A => &r1cs_key.matrices.a,
+                        R1CSMatrix::B => &r1cs_key.matrices.b,
+                    };
+                    // Closure over `&mut backend` requires explicit lifetime
+                    // on the captured slice; inline-expand to keep borrow checker happy.
+                    let mut g0 = backend.const_zero();
+                    for (i, &idx) in group0_indices.iter().enumerate() {
+                        let mut dot = backend.const_zero();
+                        for &(j, coeff) in &rows[idx] {
+                            let coeff_w = backend.wrap_public(coeff, "r1cs_matrix_coeff");
+                            let term = backend.mul(&coeff_w, &z[j]);
+                            dot = backend.add(&dot, &term);
+                        }
+                        let weighted = backend.mul(&basis[i], &dot);
+                        g0 = backend.add(&g0, &weighted);
+                    }
+                    let mut g1 = backend.const_zero();
+                    for (i, &idx) in group1_indices.iter().enumerate() {
+                        let mut dot = backend.const_zero();
+                        for &(j, coeff) in &rows[idx] {
+                            let coeff_w = backend.wrap_public(coeff, "r1cs_matrix_coeff");
+                            let term = backend.mul(&coeff_w, &z[j]);
+                            dot = backend.add(&dot, &term);
+                        }
+                        let weighted = backend.mul(&basis[i], &dot);
+                        g1 = backend.add(&g1, &weighted);
+                    }
+                    // g0 + r_group * (g1 - g0)
+                    let diff = backend.sub(&g1, &g0);
+                    let scaled = backend.mul(&r_group, &diff);
+                    backend.add(&g0, &scaled)
+                }
+                ClaimFactor::StageEval(index) => {
+                    let evals = stage_evals.ok_or_else(|| {
+                        JoltError::InvalidProof("StageEval used but no stage_evals provided".into())
+                    })?;
+                    evals.get(*index).cloned().ok_or_else(|| {
+                        JoltError::InvalidProof(format!(
+                            "StageEval({index}) out of bounds (len={})",
+                            evals.len()
+                        ))
+                    })?
+                }
+                ClaimFactor::PreprocessedPolyEval { poly, at_stage } => {
+                    let point = resolve_point(sumcheck_points, point_override, at_stage.0);
+                    evaluate_preprocessed_poly_with_backend(backend, *poly, point, config)?
+                }
+                ClaimFactor::StagedEval { .. } => {
+                    return Err(JoltError::InvalidProof(
+                        "StagedEval is prover-only; not supported in verifier formulas".into(),
+                    ));
+                }
+                ClaimFactor::LagrangeKernel { .. } => {
+                    return Err(JoltError::InvalidProof(format!(
+                        "unsupported claim factor {factor:?} in compiled schedule"
+                    )));
+                }
+            };
+            product = backend.mul(&product, &factor_val);
+        }
+        sum = backend.add(&sum, &product);
+    }
+    Ok(sum)
+}
+
+/// Backend-aware preprocessed polynomial evaluation.
+///
+/// Mirrors [`evaluate_preprocessed_poly`] but routes through the
+/// [`FieldBackend`]. Used inside [`evaluate_formula_with_backend`] for
+/// [`ClaimFactor::PreprocessedPolyEval`].
+// Wired into the VerifierOp interpreter in step 4c.
+#[allow(dead_code)]
+fn evaluate_preprocessed_poly_with_backend<B>(
+    backend: &mut B,
+    poly: PolynomialId,
+    point: &[B::Scalar],
+    config: &ProverConfig,
+) -> Result<B::Scalar, JoltError>
+where
+    B: FieldBackend,
+{
+    match poly {
+        PolynomialId::IoMask => {
+            let io_start = config.input_word_offset as u128;
+            let io_end = ((config.memory_start - config.ram_lowest_address) / 8) as u128;
+            let lt_end = backend_lt_mle(backend, point, io_end);
+            let lt_start = backend_lt_mle(backend, point, io_start);
+            Ok(backend.sub(&lt_end, &lt_start))
+        }
+        PolynomialId::RamUnmap => {
+            let identity = backend_identity_mle(backend, point);
+            let eight = backend.const_i128(8);
+            let scaled = backend.mul(&identity, &eight);
+            let base = backend.const_i128(i128::from(config.ram_lowest_address));
+            Ok(backend.add(&scaled, &base))
+        }
+        PolynomialId::ValIo => eval_io_mle_with_backend(backend, point, config),
+        _ => Err(JoltError::InvalidProof(format!(
+            "PreprocessedPolyEval({poly:?}) not a known preprocessed polynomial"
+        ))),
+    }
+}
+
+/// Backend-aware [`eval_io_mle`] mirror.
+// Wired into the VerifierOp interpreter in step 4c.
+#[allow(dead_code)]
+fn eval_io_mle_with_backend<B>(
+    backend: &mut B,
+    r: &[B::Scalar],
+    config: &ProverConfig,
+) -> Result<B::Scalar, JoltError>
+where
+    B: FieldBackend,
+{
+    let io_end_words = ((config.memory_start - config.ram_lowest_address) / 8) as usize;
+    let io_len = io_end_words.next_power_of_two().max(1);
+    let num_io_vars = io_len.trailing_zeros() as usize;
+
+    if num_io_vars > r.len() {
+        return Err(JoltError::InvalidProof(format!(
+            "ValIo: num_io_vars ({num_io_vars}) > point len ({})",
+            r.len()
+        )));
+    }
+
+    let (r_hi, r_lo) = r.split_at(r.len() - num_io_vars);
+
+    let one_w = backend.const_one();
+    let mut hi_scale = backend.const_one();
+    for ri in r_hi {
+        let one_minus_ri = backend.sub(&one_w, ri);
+        hi_scale = backend.mul(&hi_scale, &one_minus_ri);
+    }
+
+    let mut acc = backend.const_zero();
+
+    if !config.inputs.is_empty() {
+        let words = bytes_to_words(&config.inputs);
+        let block = backend_sparse_block_eval(backend, config.input_word_offset, &words, r_lo);
+        acc = backend.add(&acc, &block);
+    }
+
+    if !config.outputs.is_empty() {
+        let words = bytes_to_words(&config.outputs);
+        let block = backend_sparse_block_eval(backend, config.output_word_offset, &words, r_lo);
+        acc = backend.add(&acc, &block);
+    }
+
+    let panic_block = backend_sparse_block_eval(
+        backend,
+        config.panic_word_offset,
+        &[config.panic as u64],
+        r_lo,
+    );
+    acc = backend.add(&acc, &panic_block);
+
+    if !config.panic {
+        let term_block =
+            backend_sparse_block_eval(backend, config.termination_word_offset, &[1u64], r_lo);
+        acc = backend.add(&acc, &term_block);
+    }
+
+    Ok(backend.mul(&hi_scale, &acc))
 }
 
 /// Evaluate a symbolic claim formula using accumulated verifier state.
@@ -715,9 +1159,9 @@ mod tests {
     use jolt_compiler::{ChallengeIdx, PolynomialId, VerifierSchedule};
     use jolt_field::Fr;
     use jolt_r1cs::ConstraintMatrices;
-    use jolt_sumcheck::proof::SumcheckProof;
+    use jolt_sumcheck::{proof::SumcheckProof, ClearRoundVerifier};
     use jolt_transcript::Blake2bTranscript;
-    use num_traits::{One, Zero};
+    use num_traits::One;
 
     use crate::proof::StageProof;
 
@@ -1153,5 +1597,479 @@ mod tests {
         assert_eq!(mask(&[zero, one]), Fr::one()); // idx 1 in [1,3)
         assert_eq!(mask(&[one, zero]), Fr::one()); // idx 2 in [1,3)
         assert_eq!(mask(&[one, one]), Fr::zero()); // idx 3 not in [1,3)
+    }
+
+    // -----------------------------------------------------------------------
+    // FieldBackend parity tests: every claim formula and preprocessed-poly
+    // pattern produced by the prover must yield the exact same field value
+    // through the new `evaluate_formula_with_backend` /
+    // `evaluate_preprocessed_poly_with_backend` helpers when run with the
+    // `Native<Fr>` backend, AND the `Tracing<Fr>` AST must replay to the
+    // same value when fed the recorded wrap values.
+    // -----------------------------------------------------------------------
+
+    use jolt_openings::mock::MockCommitmentScheme;
+    use jolt_verifier_backend::{replay_trace, Native, Tracing};
+
+    /// Field-only parity tests pick a concrete (trivial) PCS so the
+    /// `Tracing<PCS>` shape is type-honest. `MockCommitmentScheme<Fr>`
+    /// has `Field = Fr` and `VerifierSetup = ()`, so field-side methods
+    /// take `Fr` directly and `replay_trace` takes `&()`.
+    type TraceMock = MockCommitmentScheme<Fr>;
+
+    /// Adapter: lift a `(challenges, evaluations, sumcheck_points, override)`
+    /// configuration through a `FieldBackend` and call
+    /// `evaluate_formula_with_backend`. Returns the raw `B::Scalar` and the
+    /// concrete `Fr` underneath (via the backend's wrap-value table for
+    /// Tracing, or the value itself for Native).
+    #[allow(clippy::too_many_arguments)]
+    fn run_formula_backend<B>(
+        backend: &mut B,
+        formula: &ClaimFormula,
+        evaluations: &HashMap<PolynomialId, Fr>,
+        challenges: &[Fr],
+        sumcheck_points: &[Vec<Fr>],
+        point_override: Option<(usize, &[Fr])>,
+        stage_evals: Option<&[Fr]>,
+        r1cs_key: &R1csKey<Fr>,
+        config: &ProverConfig,
+    ) -> (B::Scalar, Vec<Vec<B::Scalar>>)
+    where
+        B: FieldBackend<F = Fr>,
+    {
+        let evals_w: HashMap<PolynomialId, B::Scalar> = evaluations
+            .iter()
+            .map(|(p, v)| (*p, backend.wrap_proof(*v, "eval")))
+            .collect();
+        let chs_w: Vec<B::Scalar> = challenges
+            .iter()
+            .map(|v| backend.wrap_challenge(*v, "ch"))
+            .collect();
+        let pts_w: Vec<Vec<B::Scalar>> = sumcheck_points
+            .iter()
+            .map(|p| {
+                p.iter()
+                    .map(|v| backend.wrap_challenge(*v, "sc_pt"))
+                    .collect()
+            })
+            .collect();
+        let override_owned: Option<Vec<B::Scalar>> = point_override.map(|(_, pts)| {
+            pts.iter()
+                .map(|v| backend.wrap_challenge(*v, "ov"))
+                .collect()
+        });
+        let override_ref = point_override.map(|(s, _)| (s, override_owned.as_deref().unwrap()));
+        let stage_w: Option<Vec<B::Scalar>> = stage_evals.map(|s| {
+            s.iter()
+                .map(|v| backend.wrap_proof(*v, "stage_eval"))
+                .collect()
+        });
+        let stage_ref = stage_w.as_deref();
+
+        let result = evaluate_formula_with_backend(
+            backend,
+            formula,
+            &evals_w,
+            &chs_w,
+            &pts_w,
+            override_ref,
+            stage_ref,
+            r1cs_key,
+            config,
+        )
+        .unwrap();
+
+        (result, pts_w)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_formula_parity(
+        formula: &ClaimFormula,
+        evaluations: &HashMap<PolynomialId, Fr>,
+        challenges: &[Fr],
+        sumcheck_points: &[Vec<Fr>],
+        point_override: Option<(usize, &[Fr])>,
+        stage_evals: Option<&[Fr]>,
+        r1cs_key: &R1csKey<Fr>,
+        config: &ProverConfig,
+    ) {
+        let native_concrete = evaluate_formula(
+            formula,
+            evaluations,
+            challenges,
+            sumcheck_points,
+            point_override,
+            stage_evals,
+            r1cs_key,
+            config,
+        )
+        .unwrap();
+
+        let mut nb = Native::<Fr>::new();
+        let (native_backend, _) = run_formula_backend(
+            &mut nb,
+            formula,
+            evaluations,
+            challenges,
+            sumcheck_points,
+            point_override,
+            stage_evals,
+            r1cs_key,
+            config,
+        );
+        assert_eq!(
+            native_backend, native_concrete,
+            "Native FieldBackend must match concrete evaluate_formula"
+        );
+
+        let mut tracer = Tracing::<TraceMock>::new();
+        let (traced, _) = run_formula_backend(
+            &mut tracer,
+            formula,
+            evaluations,
+            challenges,
+            sumcheck_points,
+            point_override,
+            stage_evals,
+            r1cs_key,
+            config,
+        );
+        let graph = tracer.snapshot();
+        let wraps = tracer.wrap_values();
+        let values = replay_trace::<TraceMock>(&graph, &wraps, &()).unwrap();
+        let traced_replayed = values[traced.id.0 as usize];
+        assert_eq!(
+            traced_replayed, native_concrete,
+            "Tracing replay must match concrete evaluate_formula"
+        );
+    }
+
+    #[test]
+    fn formula_backend_parity_eval_and_challenge() {
+        let poly_a = PolynomialId::RdInc;
+        let poly_b = PolynomialId::RamInc;
+        let formula = ClaimFormula {
+            terms: vec![
+                ClaimTerm {
+                    coeff: 2,
+                    factors: vec![
+                        ClaimFactor::Eval(poly_a),
+                        ClaimFactor::Challenge(ChallengeIdx(0)),
+                    ],
+                },
+                ClaimTerm {
+                    coeff: -3,
+                    factors: vec![ClaimFactor::Eval(poly_b)],
+                },
+            ],
+        };
+
+        let mut evaluations = HashMap::new();
+        let _ = evaluations.insert(poly_a, Fr::from_u64(5));
+        let _ = evaluations.insert(poly_b, Fr::from_u64(7));
+        let challenges = vec![Fr::from_u64(11)];
+        let sumcheck_points: Vec<Vec<Fr>> = vec![];
+
+        check_formula_parity(
+            &formula,
+            &evaluations,
+            &challenges,
+            &sumcheck_points,
+            None,
+            None,
+            &dummy_r1cs_key(),
+            &dummy_config(),
+        );
+    }
+
+    #[test]
+    fn formula_backend_parity_eq_eval_and_pair() {
+        let poly_a = PolynomialId::RdInc;
+        let formula = ClaimFormula {
+            terms: vec![ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Eval(poly_a),
+                    ClaimFactor::EqEval {
+                        challenges: vec![ChallengeIdx(0), ChallengeIdx(1)],
+                        at_stage: VerifierStageIndex(0),
+                    },
+                    ClaimFactor::EqChallengePair {
+                        a: ChallengeIdx(0),
+                        b: ChallengeIdx(1),
+                    },
+                ],
+            }],
+        };
+        let mut evaluations = HashMap::new();
+        let _ = evaluations.insert(poly_a, Fr::from_u64(13));
+        let challenges = vec![Fr::from_u64(7), Fr::from_u64(11)];
+        let sumcheck_points = vec![vec![Fr::from_u64(3), Fr::from_u64(5)]];
+
+        check_formula_parity(
+            &formula,
+            &evaluations,
+            &challenges,
+            &sumcheck_points,
+            None,
+            None,
+            &dummy_r1cs_key(),
+            &dummy_config(),
+        );
+    }
+
+    #[test]
+    fn formula_backend_parity_lagrange_kernel_and_weight() {
+        let formula = ClaimFormula {
+            terms: vec![ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::LagrangeKernelDomain {
+                        tau_challenge: ChallengeIdx(0),
+                        at_challenge: ChallengeIdx(1),
+                        domain_size: 4,
+                        domain_start: 0,
+                    },
+                    ClaimFactor::LagrangeWeight {
+                        challenge: ChallengeIdx(1),
+                        domain_size: 4,
+                        domain_start: 0,
+                        basis_index: 2,
+                    },
+                ],
+            }],
+        };
+        let challenges = vec![Fr::from_u64(17), Fr::from_u64(23)];
+        let sumcheck_points: Vec<Vec<Fr>> = vec![];
+
+        check_formula_parity(
+            &formula,
+            &HashMap::new(),
+            &challenges,
+            &sumcheck_points,
+            None,
+            None,
+            &dummy_r1cs_key(),
+            &dummy_config(),
+        );
+    }
+
+    #[test]
+    fn formula_backend_parity_uniform_r1cs() {
+        // Build a 2x3 A matrix (1 free var z[1] + the constant 1; pad to fit
+        // the 3-variable shape via z[2] as a second eval poly):
+        //   row0: 2*z[0] + 3*z[1]
+        //   row1: 5*z[1] - 7*z[2]
+        let two = Fr::from_u64(2);
+        let three = Fr::from_u64(3);
+        let five = Fr::from_u64(5);
+        let neg_seven = -Fr::from_u64(7);
+        let row0: Vec<(usize, Fr)> = vec![(0, two), (1, three)];
+        let row1: Vec<(usize, Fr)> = vec![(1, five), (2, neg_seven)];
+        let m = ConstraintMatrices::new(
+            2,
+            3,
+            vec![row0, row1],
+            vec![vec![], vec![]],
+            vec![vec![], vec![]],
+        );
+        let key = R1csKey::new(m, 1);
+
+        let poly_a = PolynomialId::RdInc;
+        let poly_b = PolynomialId::RamInc;
+        let formula = ClaimFormula {
+            terms: vec![ClaimTerm {
+                coeff: 1,
+                factors: vec![ClaimFactor::UniformR1CSEval {
+                    matrix: R1CSMatrix::A,
+                    eval_polys: vec![poly_a, poly_b],
+                    at_challenge: ChallengeIdx(0),
+                    num_constraints: 2,
+                    domain_start: 0,
+                }],
+            }],
+        };
+        let mut evaluations = HashMap::new();
+        let _ = evaluations.insert(poly_a, Fr::from_u64(11));
+        let _ = evaluations.insert(poly_b, Fr::from_u64(13));
+        let challenges = vec![Fr::from_u64(2)];
+        let sumcheck_points: Vec<Vec<Fr>> = vec![];
+
+        check_formula_parity(
+            &formula,
+            &evaluations,
+            &challenges,
+            &sumcheck_points,
+            None,
+            None,
+            &key,
+            &dummy_config(),
+        );
+    }
+
+    #[test]
+    fn formula_backend_parity_stage_eval() {
+        let formula = ClaimFormula {
+            terms: vec![ClaimTerm {
+                coeff: 4,
+                factors: vec![ClaimFactor::StageEval(0), ClaimFactor::StageEval(1)],
+            }],
+        };
+        let stage_evals = vec![Fr::from_u64(6), Fr::from_u64(9)];
+
+        check_formula_parity(
+            &formula,
+            &HashMap::new(),
+            &[],
+            &[],
+            None,
+            Some(&stage_evals),
+            &dummy_r1cs_key(),
+            &dummy_config(),
+        );
+    }
+
+    fn parity_config_with_io() -> ProverConfig {
+        let mut cfg = dummy_config();
+        cfg.ram_lowest_address = 64;
+        cfg.memory_start = 64 + 8 * 4; // 4-word io region
+        cfg.input_word_offset = 0;
+        cfg.output_word_offset = 1;
+        cfg.panic_word_offset = 2;
+        cfg.termination_word_offset = 3;
+        cfg.inputs = b"abcdefghABCD".to_vec(); // 12 bytes -> 2 words
+        cfg.outputs = b"xyz".to_vec(); // 3 bytes -> 1 word
+        cfg.panic = false;
+        cfg
+    }
+
+    #[test]
+    fn formula_backend_parity_preprocessed_io_mask() {
+        // `lt_mle` requires `threshold < 2^point.len()`. With io_end = 4
+        // (memory_start - ram_lowest_address = 32 bytes = 4 words) we need
+        // a point of length >= 3.
+        let cfg = parity_config_with_io();
+        let formula = ClaimFormula {
+            terms: vec![ClaimTerm {
+                coeff: 1,
+                factors: vec![ClaimFactor::PreprocessedPolyEval {
+                    poly: PolynomialId::IoMask,
+                    at_stage: VerifierStageIndex(0),
+                }],
+            }],
+        };
+        let sumcheck_points = vec![vec![Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(5)]];
+        check_formula_parity(
+            &formula,
+            &HashMap::new(),
+            &[],
+            &sumcheck_points,
+            None,
+            None,
+            &dummy_r1cs_key(),
+            &cfg,
+        );
+    }
+
+    #[test]
+    fn formula_backend_parity_preprocessed_ram_unmap() {
+        let mut cfg = dummy_config();
+        cfg.ram_lowest_address = 128;
+        let formula = ClaimFormula {
+            terms: vec![ClaimTerm {
+                coeff: 1,
+                factors: vec![ClaimFactor::PreprocessedPolyEval {
+                    poly: PolynomialId::RamUnmap,
+                    at_stage: VerifierStageIndex(0),
+                }],
+            }],
+        };
+        let sumcheck_points = vec![vec![Fr::from_u64(7), Fr::from_u64(11), Fr::from_u64(13)]];
+        check_formula_parity(
+            &formula,
+            &HashMap::new(),
+            &[],
+            &sumcheck_points,
+            None,
+            None,
+            &dummy_r1cs_key(),
+            &cfg,
+        );
+    }
+
+    #[test]
+    fn formula_backend_parity_preprocessed_val_io() {
+        let cfg = parity_config_with_io();
+        let formula = ClaimFormula {
+            terms: vec![ClaimTerm {
+                coeff: 1,
+                factors: vec![ClaimFactor::PreprocessedPolyEval {
+                    poly: PolynomialId::ValIo,
+                    at_stage: VerifierStageIndex(0),
+                }],
+            }],
+        };
+        // io_len_words = next_pow2(4) = 4, num_io_vars = 2, plus a
+        // single hi-bit to exercise the hi_scale path.
+        let sumcheck_points = vec![vec![Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(5)]];
+        check_formula_parity(
+            &formula,
+            &HashMap::new(),
+            &[],
+            &sumcheck_points,
+            None,
+            None,
+            &dummy_r1cs_key(),
+            &cfg,
+        );
+    }
+
+    #[test]
+    fn formula_backend_parity_point_override() {
+        // Same shape as the existing `formula_with_point_override` test, but
+        // exercised through the backend.
+        let poly_a = PolynomialId::RdInc;
+        let formula = ClaimFormula {
+            terms: vec![ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Eval(poly_a),
+                    ClaimFactor::EqEval {
+                        challenges: vec![ChallengeIdx(0)],
+                        at_stage: VerifierStageIndex(0),
+                    },
+                ],
+            }],
+        };
+        let one = Fr::one();
+        let zero = Fr::zero();
+        let mut evaluations = HashMap::new();
+        let _ = evaluations.insert(poly_a, Fr::from_u64(5));
+        let challenges = vec![one];
+        let sumcheck_points = vec![vec![zero]];
+        let key = dummy_r1cs_key();
+        let cfg = dummy_config();
+
+        check_formula_parity(
+            &formula,
+            &evaluations,
+            &challenges,
+            &sumcheck_points,
+            None,
+            None,
+            &key,
+            &cfg,
+        );
+        let override_point = vec![one];
+        check_formula_parity(
+            &formula,
+            &evaluations,
+            &challenges,
+            &sumcheck_points,
+            Some((0, &override_point)),
+            None,
+            &key,
+            &cfg,
+        );
     }
 }

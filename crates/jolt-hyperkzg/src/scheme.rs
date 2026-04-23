@@ -7,7 +7,11 @@ use std::marker::PhantomData;
 
 use jolt_crypto::{Commitment, DeriveSetup, JoltGroup, PairingGroup, PedersenSetup};
 use jolt_field::Field;
-use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError};
+use jolt_openings::{
+    homomorphic_prove_batch, homomorphic_verify_batch_with_backend, AdditivelyHomomorphic,
+    CommitmentBackend, CommitmentScheme, OpeningClaim, OpeningVerification, OpeningsError,
+    ProverClaim,
+};
 use jolt_poly::Polynomial;
 use jolt_transcript::{AppendToTranscript, Transcript};
 use num_traits::{One, Zero};
@@ -305,6 +309,42 @@ where
             .map(|(c, s)| c.point.scalar_mul(s))
             .fold(P::G1::identity(), |acc, x| acc + x);
         HyperKZGCommitment { point: combined }
+    }
+}
+
+impl<P: PairingGroup> OpeningVerification for HyperKZGScheme<P>
+where
+    P::ScalarField: AppendToTranscript,
+    P::G1: AppendToTranscript,
+{
+    type BatchProof = Vec<HyperKZGProof<P>>;
+
+    fn prove_batch<T: Transcript<Challenge = P::ScalarField>>(
+        claims: Vec<ProverClaim<P::ScalarField>>,
+        hints: Vec<Self::OpeningHint>,
+        setup: &Self::ProverSetup,
+        transcript: &mut T,
+    ) -> (Self::BatchProof, Vec<P::ScalarField>) {
+        homomorphic_prove_batch::<Self, _>(claims, hints, setup, transcript)
+    }
+
+    fn verify_batch_with_backend<B>(
+        backend: &mut B,
+        vk: &Self::VerifierSetup,
+        claims: Vec<OpeningClaim<B, Self>>,
+        batch_proof: &Self::BatchProof,
+        transcript: &mut B::Transcript,
+    ) -> Result<(), OpeningsError>
+    where
+        B: CommitmentBackend<Self, F = <Self as CommitmentScheme>::Field>,
+    {
+        homomorphic_verify_batch_with_backend::<Self, B>(
+            backend,
+            vk,
+            claims,
+            batch_proof,
+            transcript,
+        )
     }
 }
 

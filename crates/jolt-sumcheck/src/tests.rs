@@ -3,6 +3,7 @@
 use jolt_field::{Field, Fr};
 use jolt_poly::UnivariatePoly;
 use jolt_transcript::{AppendToTranscript, LabelWithCount, MockTranscript, Transcript};
+use jolt_verifier_backend::FieldBackend;
 
 use crate::claim::SumcheckClaim;
 use crate::error::SumcheckError;
@@ -19,11 +20,10 @@ type F = Fr;
 /// This is a minimal reference prover: in each round it computes the
 /// round polynomial by partial evaluation, absorbs it into the
 /// transcript, squeezes a challenge, and binds.
-fn honest_prove(
-    evals: &[F],
-    num_vars: usize,
-    transcript: &mut MockTranscript<F>,
-) -> SumcheckProof<F> {
+fn honest_prove<T>(evals: &[F], num_vars: usize, transcript: &mut T) -> SumcheckProof<F>
+where
+    T: Transcript<Challenge = F>,
+{
     let mut buf = evals.to_vec();
     let mut round_polys = Vec::with_capacity(num_vars);
 
@@ -487,4 +487,148 @@ fn verify_dispatches_through_round_verifier_trait() {
     assert_eq!(challenges.len(), 3);
     // Mock always returns fixed_sum, so final eval should be fixed
     assert_eq!(final_eval, fixed);
+}
+
+/// `verify_with_backend::<Native<F>>` must produce bit-identical
+/// `(final_eval, challenges)` to the concrete `verify` path on the same
+/// proof, with the transcript ending in the same state.
+#[test]
+fn verify_with_backend_native_matches_concrete() {
+    use jolt_transcript::Blake2bTranscript;
+    use jolt_verifier_backend::Native;
+
+    let evals: Vec<F> = (1..=8).map(F::from_u64).collect();
+    let sum = compute_sum(&evals);
+    let num_vars = 3;
+
+    let mut prover_transcript = Blake2bTranscript::<F>::new(b"native_parity");
+    let proof = honest_prove(&evals, num_vars, &mut prover_transcript);
+
+    let claim = SumcheckClaim {
+        num_vars,
+        degree: 1,
+        claimed_sum: sum,
+    };
+
+    let mut concrete_transcript = Blake2bTranscript::<F>::new(b"native_parity");
+    let clear = ClearRoundVerifier::new();
+    let (concrete_eval, concrete_challenges) = SumcheckVerifier::verify(
+        &claim,
+        &proof.round_polynomials,
+        &mut concrete_transcript,
+        &clear,
+    )
+    .unwrap();
+    let concrete_post: F = concrete_transcript.challenge();
+
+    let mut backend = Native::<F>::new();
+    let mut backend_transcript = backend.new_transcript(b"native_parity");
+    let claimed_sum_w = backend.wrap_proof(claim.claimed_sum, "input_claim");
+    let (backend_eval_w, backend_challenges_w, backend_challenges_f) =
+        SumcheckVerifier::verify_with_backend(
+            &mut backend,
+            &claim,
+            &proof.round_polynomials,
+            claimed_sum_w,
+            &mut backend_transcript,
+            None,
+            false,
+        )
+        .unwrap();
+    let backend_post: F = backend_transcript.challenge();
+
+    assert_eq!(backend_eval_w, concrete_eval, "final eval mismatch");
+    assert_eq!(
+        backend_challenges_f, concrete_challenges,
+        "challenges (raw F) mismatch"
+    );
+    assert_eq!(
+        backend_challenges_w, concrete_challenges,
+        "challenges (Native scalar = F) mismatch"
+    );
+    assert_eq!(
+        backend_post, concrete_post,
+        "post-verify transcript challenges diverged"
+    );
+}
+
+/// `verify_with_backend::<Tracing<_>>` must record a graph that, when
+/// replayed against the wrapped values seen during verification,
+/// reproduces the concrete final evaluation and challenges. The
+/// `TracingTranscript` is fed the same Fiat-Shamir bytes as a fresh
+/// `Blake2bTranscript`, so the proof is byte-identical and the verifier
+/// sees the same challenge values on the wire.
+#[test]
+fn verify_with_backend_tracing_replays_correctly() {
+    use jolt_openings::mock::MockCommitmentScheme;
+    use jolt_transcript::Blake2bTranscript;
+    use jolt_verifier_backend::{replay_trace, Tracing};
+
+    type Mock = MockCommitmentScheme<F>;
+
+    let evals: Vec<F> = (1..=8).map(F::from_u64).collect();
+    let sum = compute_sum(&evals);
+    let num_vars = 3;
+
+    let mut prover_transcript = Blake2bTranscript::<F>::new(b"tracing_replay");
+    let proof = honest_prove(&evals, num_vars, &mut prover_transcript);
+
+    let claim = SumcheckClaim {
+        num_vars,
+        degree: 1,
+        claimed_sum: sum,
+    };
+
+    let mut concrete_transcript = Blake2bTranscript::<F>::new(b"tracing_replay");
+    let clear = ClearRoundVerifier::new();
+    let (concrete_eval, _concrete_challenges) = SumcheckVerifier::verify(
+        &claim,
+        &proof.round_polynomials,
+        &mut concrete_transcript,
+        &clear,
+    )
+    .unwrap();
+
+    let mut tracer = Tracing::<Mock>::new();
+    let mut tracer_transcript = tracer.new_transcript(b"tracing_replay");
+    let claimed_sum_w = tracer.wrap_proof(claim.claimed_sum, "input_claim");
+    let (final_eval_w, _challenges_w, _challenges_f) = SumcheckVerifier::verify_with_backend(
+        &mut tracer,
+        &claim,
+        &proof.round_polynomials,
+        claimed_sum_w,
+        &mut tracer_transcript,
+        None,
+        false,
+    )
+    .unwrap();
+    drop(tracer_transcript);
+
+    let graph = tracer.snapshot();
+    let wraps = tracer.wrap_values();
+    let values = replay_trace::<Mock>(&graph, &wraps, &()).unwrap();
+    let final_eval_replayed = values[final_eval_w.id.0 as usize];
+
+    assert_eq!(
+        final_eval_replayed, concrete_eval,
+        "Tracing replay mismatch"
+    );
+    assert!(
+        graph.assertion_count() > 0,
+        "Tracing should have recorded sumcheck round-consistency assertions"
+    );
+    assert!(
+        graph
+            .nodes
+            .iter()
+            .any(|n| matches!(n, jolt_verifier_backend::AstOp::TranscriptInit { .. })),
+        "Tracing should have recorded a TranscriptInit node"
+    );
+    assert!(
+        graph.nodes.iter().any(|n| matches!(
+            n,
+            jolt_verifier_backend::AstOp::TranscriptChallengeValue { .. }
+        )),
+        "Tracing should have recorded TranscriptChallengeValue nodes for sumcheck rounds"
+    );
 }

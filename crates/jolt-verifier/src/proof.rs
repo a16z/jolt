@@ -2,7 +2,7 @@
 
 use crate::config::ProverConfig;
 use jolt_field::Field;
-use jolt_openings::CommitmentScheme;
+use jolt_openings::{CommitmentScheme, OpeningVerification};
 use jolt_sumcheck::SumcheckProof;
 use serde::{Deserialize, Serialize};
 
@@ -26,10 +26,13 @@ pub struct StageProof<F: Field> {
 /// from the transcript — no challenges are stored in the proof.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(bound = "")]
-pub struct JoltProof<F: Field, PCS: CommitmentScheme<Field = F>> {
+pub struct JoltProof<F: Field, PCS: CommitmentScheme<Field = F> + OpeningVerification> {
     pub config: ProverConfig,
     pub stage_proofs: Vec<StageProof<F>>,
-    pub opening_proofs: Vec<PCS::Proof>,
+    /// Single fused batch proof for all opening claims. Schemes that are
+    /// additively homomorphic (Mock, HyperKZG, Dory) use `Vec<PCS::Proof>`;
+    /// lattice-based schemes (Hachi) use a fused batched-proof representation.
+    pub opening_proof: PCS::BatchProof,
     /// One entry per `VerifierOp::AbsorbCommitment` in the schedule.
     /// `None` encodes the prover's runtime decision to skip the commit
     /// (currently only all-zero `UntrustedAdvice`/`TrustedAdvice`, to

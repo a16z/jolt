@@ -2802,6 +2802,7 @@ dependencies = [
  "jolt-openings",
  "jolt-poly",
  "jolt-transcript",
+ "jolt-verifier-backend",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "serde",
@@ -2832,6 +2833,7 @@ dependencies = [
  "jolt-r1cs",
  "jolt-transcript",
  "jolt-verifier",
+ "jolt-verifier-backend",
  "jolt-witness",
  "jolt-zkvm",
  "num-traits",
@@ -2892,6 +2894,7 @@ dependencies = [
  "jolt-openings",
  "jolt-poly",
  "jolt-transcript",
+ "jolt-verifier-backend",
  "num-traits",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
@@ -3139,8 +3142,10 @@ name = "jolt-sumcheck"
 version = "0.1.0"
 dependencies = [
  "jolt-field",
+ "jolt-openings",
  "jolt-poly",
  "jolt-transcript",
+ "jolt-verifier-backend",
  "serde",
  "thiserror 2.0.18",
  "tracing",
@@ -3175,6 +3180,7 @@ dependencies = [
  "jolt-r1cs",
  "jolt-sumcheck",
  "jolt-transcript",
+ "jolt-verifier-backend",
  "num-traits",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
@@ -3182,6 +3188,23 @@ dependencies = [
  "serde",
  "thiserror 2.0.18",
  "tracing",
+]
+
+[[package]]
+name = "jolt-verifier-backend"
+version = "0.1.0"
+dependencies = [
+ "jolt-compiler",
+ "jolt-field",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-r1cs",
+ "jolt-transcript",
+ "num-traits",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

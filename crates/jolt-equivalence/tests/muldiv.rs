@@ -1520,13 +1520,13 @@ fn zkvm_proof_accepted_by_core_verifier() {
         .map(commitment_to_ark)
         .collect();
 
-    // Opening proof: DoryProof(ArkDoryProof) → ArkDoryProof
+    // Opening proof: DoryScheme::BatchProof = Vec<DoryProof>; DoryProof(ArkDoryProof) → ArkDoryProof
     assert_eq!(
-        zkvm_proof.opening_proofs.len(),
+        zkvm_proof.opening_proof.len(),
         1,
         "expected exactly 1 joint opening proof"
     );
-    let joint_opening_proof = zkvm_proof.opening_proofs[0].0.clone();
+    let joint_opening_proof = zkvm_proof.opening_proof[0].0.clone();
 
     let converted_proof = JoltProof {
         // From jolt-zkvm (the data under test):
@@ -1640,10 +1640,10 @@ fn modular_self_verify() {
 ///
 /// Proves that the `Vec<Option<PCS::Output>>` commitment encoding
 /// correctly round-trips through the modular verifier's
-/// `AbsorbCommitment` op — i.e. we no longer see the historical
-/// `InvalidProof("missing commitment")` error when all-zero advice
-/// polys cause the prover to skip the commit. This is a stepping
-/// stone toward full `modular_self_verify`.
+/// `AbsorbCommitment` op — when all-zero advice polys cause the prover
+/// to skip a commit, the verifier must skip the matching transcript
+/// absorb on its side rather than erroring out with
+/// `InvalidProof("missing commitment")`.
 #[test]
 fn modular_self_verify_commit_skip_alignment() {
     use jolt_dory::types::DoryVerifierSetup;
@@ -1667,9 +1667,9 @@ fn modular_self_verify_commit_skip_alignment() {
          got {none} none / {some} some (total {total})"
     );
 
-    // Walk the verifier schedule up to the first op that needs an eval
-    // we don't yet record; until we hit that, AbsorbCommitment must
-    // succeed for every op (previously failed with "missing commitment").
+    // Walk the verifier schedule. `AbsorbCommitment` must succeed for
+    // every op — a `"missing commitment"` failure means commit-skip
+    // alignment is broken between prover and verifier.
     let (
         executable,
         _polys,
@@ -1702,7 +1702,207 @@ fn modular_self_verify_commit_skip_alignment() {
                 !s.contains("missing commitment"),
                 "regression: commit-skip alignment broken — {s}"
             );
-            eprintln!("expected downstream error (pre-full-wiring): {s}");
+            eprintln!("downstream error (not commit-skip): {s}");
+        }
+    }
+}
+
+/// End-to-end Tracing-backend verification.
+///
+/// Runs the full muldiv prove → modular verify pipeline through the
+/// `Tracing<DoryScheme>` backend instead of the `Native<DoryScheme>`
+/// path and proves three properties:
+///
+/// 1. The `Tracing` backend never panics or short-circuits when driven
+///    by the live verifier schedule (i.e. no codepath in
+///    `verify_with_backend` calls `B::unwrap()` or otherwise assumes a
+///    concrete value, which would break recursion / Lean export).
+///
+/// 2. The captured AST is non-trivial — it must record at least one
+///    wrap, one arithmetic op, and one assertion. Empty-graph
+///    regressions silently bypass the abstraction.
+///
+/// 3. Replaying the captured graph against the recorded wrap values
+///    reproduces every node and discharges every assertion. This is the
+///    *faithfulness check*: the symbolic trace is a sound rewrite of
+///    the native execution.
+///
+/// Together with `modular_self_verify` (which exercises the Native
+/// path), this test pins down the multi-backend invariant: any future
+/// change that introduces a divergence between Native and Tracing — a
+/// missing `B::mul`, a stray `unwrap()` in the interpreter, an unsynced
+/// wrap list — fails this test before it can land.
+#[test]
+fn modular_self_verify_via_tracing_backend() {
+    use jolt_dory::types::DoryVerifierSetup;
+    use jolt_verifier_backend::{replay_trace, AstOp, Tracing};
+
+    let (_, params) = jolt_core_state_history();
+    let zkvm_proof = run_jolt_zkvm_prover(params);
+
+    let (
+        executable,
+        _polys,
+        r1cs_key,
+        _r1cs_witness,
+        setup,
+        _initial_ram,
+        _final_ram,
+        _instruction_flag_data,
+        _reg_access,
+        _lookup_trace,
+        _lookup_flags,
+        _bytecode_data,
+    ) = setup_zkvm_muldiv(params);
+
+    let pcs_verifier_setup = DoryVerifierSetup(params.pcs_setup.0.to_verifier_setup());
+    let verifying_key = jolt_verifier::JoltVerifyingKey::<NewFr, DoryScheme>::new(
+        &executable.module,
+        pcs_verifier_setup,
+        r1cs_key,
+    );
+
+    // `Tracing<DoryScheme>::F = DoryScheme::Field = NewFr`, so the backend
+    // is type-compatible with `verify_with_backend<_, DoryScheme>` and the
+    // resulting `AstOp<DoryScheme>` is the artifact downstream consumers
+    // (Lean export, R1CS lower) walk. `replay_trace` uses the supplied
+    // `DoryVerifierSetup` to discharge any `OpeningHolds` obligations.
+    let mut tracing = Tracing::<DoryScheme>::new();
+    jolt_verifier::verify_with_backend(
+        &mut tracing,
+        &verifying_key,
+        &zkvm_proof,
+        &setup.config.io_hash,
+    )
+    .expect("Tracing-backend verify should accept modular proof");
+
+    let graph = tracing.snapshot();
+    let wrap_values = tracing.wrap_values();
+
+    let wrap_count = graph
+        .nodes
+        .iter()
+        .filter(|n| matches!(n, AstOp::Wrap { .. }))
+        .count();
+    assert_eq!(
+        wrap_count,
+        wrap_values.len(),
+        "wrap-node count must match recorded wrap-value count"
+    );
+    assert!(wrap_count > 0, "Tracing graph must record some wraps");
+    assert!(
+        graph.node_count() > wrap_count,
+        "Tracing graph must record arithmetic, not just wraps (got {} nodes, {} wraps)",
+        graph.node_count(),
+        wrap_count
+    );
+    assert!(
+        graph.assertion_count() > 0,
+        "Tracing graph must record CheckOutput / sumcheck-final assertions"
+    );
+
+    let mut by_op = std::collections::BTreeMap::<&'static str, usize>::new();
+    let mut by_wrap_origin = std::collections::BTreeMap::<&'static str, usize>::new();
+    let mut by_wrap_label = std::collections::BTreeMap::<&'static str, usize>::new();
+    for n in &graph.nodes {
+        let kind = match n {
+            AstOp::Wrap { origin, label } => {
+                let origin_str = match origin {
+                    jolt_verifier_backend::ScalarOrigin::Public => "Public",
+                    jolt_verifier_backend::ScalarOrigin::Proof => "Proof",
+                    jolt_verifier_backend::ScalarOrigin::Challenge => "Challenge",
+                };
+                *by_wrap_origin.entry(origin_str).or_default() += 1;
+                *by_wrap_label.entry(*label).or_default() += 1;
+                "Wrap"
+            }
+            AstOp::Constant(_) => "Constant",
+            AstOp::Neg(_) => "Neg",
+            AstOp::Add(_, _) => "Add",
+            AstOp::Sub(_, _) => "Sub",
+            AstOp::Mul(_, _) => "Mul",
+            AstOp::Square(_) => "Square",
+            AstOp::Inverse { .. } => "Inverse",
+            AstOp::TranscriptInit { .. } => "TranscriptInit",
+            AstOp::TranscriptAbsorbBytes { .. } => "TranscriptAbsorbBytes",
+            AstOp::TranscriptChallengeState { .. } => "TranscriptChallengeState",
+            AstOp::TranscriptChallengeValue { .. } => "TranscriptChallengeValue",
+            AstOp::CommitmentWrap { .. } => "CommitmentWrap",
+            AstOp::TranscriptAbsorbCommitment { .. } => "TranscriptAbsorbCommitment",
+            AstOp::OpeningCheck { .. } => "OpeningCheck",
+        };
+        *by_op.entry(kind).or_default() += 1;
+    }
+
+    // The tracing graph captures every Fiat-Shamir interaction the
+    // verifier performs. If a future refactor routes a transcript op
+    // outside the backend, these counts go to zero and this test
+    // catches it before it reaches recursion / Lean export.
+    let transcript_inits = by_op.get("TranscriptInit").copied().unwrap_or_default();
+    let transcript_absorbs = by_op
+        .get("TranscriptAbsorbBytes")
+        .copied()
+        .unwrap_or_default();
+    let transcript_squeezes = by_op
+        .get("TranscriptChallengeValue")
+        .copied()
+        .unwrap_or_default();
+    assert_eq!(
+        transcript_inits, 1,
+        "expected exactly one TranscriptInit at the top of the verifier"
+    );
+    assert!(
+        transcript_absorbs > 0,
+        "Tracing graph must record transcript absorbs (preamble, commitments, evals, …)"
+    );
+    assert!(
+        transcript_squeezes > 0,
+        "Tracing graph must record transcript squeezes (sumcheck rounds, batched challenges, …)"
+    );
+    eprintln!(
+        "Tracing AST: {} nodes ({} wraps, {} arithmetic), {} assertions",
+        graph.node_count(),
+        wrap_count,
+        graph.node_count() - wrap_count,
+        graph.assertion_count()
+    );
+    eprintln!("AST op distribution:");
+    for (k, v) in &by_op {
+        eprintln!("  {k:>10}: {v}");
+    }
+    eprintln!("Wrap-origin distribution (boundary between AST and native):");
+    for (k, v) in &by_wrap_origin {
+        eprintln!("  {k:>10}: {v}");
+    }
+    eprintln!("Wrap-label distribution:");
+    for (k, v) in &by_wrap_label {
+        eprintln!("  {k:>20}: {v}");
+    }
+
+    // `replay_trace` needs the verifier setup to discharge any
+    // `OpeningHolds` assertions (it invokes `<DoryScheme as
+    // CommitmentScheme>::verify` for each `OpeningCheck` node).
+    let dory_verifier_setup = DoryVerifierSetup(params.pcs_setup.0.to_verifier_setup());
+    let values = replay_trace::<DoryScheme>(&graph, &wrap_values, &dory_verifier_setup).expect(
+        "replay must reproduce every node and discharge every assertion in the captured graph",
+    );
+    assert_eq!(values.len(), graph.node_count());
+
+    // Persist the captured AST under target/ast/ so it can be rendered
+    // outside the test (e.g. `dot -Tsvg`) without bloating CI memory.
+    if let Ok(dir) = std::env::var("CARGO_TARGET_DIR")
+        .or_else(|_| std::env::var("CARGO_MANIFEST_DIR").map(|d| format!("{d}/../../target")))
+    {
+        use jolt_verifier_backend::{to_dot, to_mermaid};
+        let out = std::path::Path::new(&dir).join("ast");
+        let _ = std::fs::create_dir_all(&out);
+        let dot_path = out.join("muldiv_verifier.dot");
+        let mmd_path = out.join("muldiv_verifier.mmd");
+        if std::fs::write(&dot_path, to_dot(&graph)).is_ok() {
+            eprintln!("AST DOT written to {}", dot_path.display());
+        }
+        if std::fs::write(&mmd_path, to_mermaid(&graph)).is_ok() {
+            eprintln!("AST Mermaid written to {}", mmd_path.display());
         }
     }
 }

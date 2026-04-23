@@ -18,7 +18,10 @@ use crate::error::OpeningsError;
 /// Commit to f: F^n -> F, then prove f(r) = v for verifier-chosen r.
 pub trait CommitmentScheme: Commitment + Clone + Send + Sync + 'static {
     type Field: Field;
-    type Proof: Clone + Send + Sync + Serialize + DeserializeOwned;
+    /// Opening proof. `Debug` is required so the symbolic-execution AST
+    /// in `jolt-verifier-backend` (which inlines `Self::Proof` on its
+    /// `OpeningCheck` nodes) can derive `Debug`.
+    type Proof: Clone + Debug + Send + Sync + Serialize + DeserializeOwned;
     type ProverSetup: Clone + Send + Sync;
     type VerifierSetup: Clone + Send + Sync + Serialize + DeserializeOwned;
 

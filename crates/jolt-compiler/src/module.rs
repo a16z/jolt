@@ -1402,10 +1402,12 @@ pub enum Op {
         /// Total multilinear variables for the PCS grid.
         num_vars: usize,
     },
-    /// RLC-reduce all accumulated opening claims via transcript challenges.
-    ReduceOpenings,
-    /// Generate PCS opening proofs for all reduced claims.
-    Open,
+    /// Single fused PCS batch-prove call. Drains the prover's pending
+    /// opening claims (and parallel hints), routes them into
+    /// `PCS::prove_batch`, stores the resulting `PCS::BatchProof` in the
+    /// runtime state, and stashes the per-group binding evals for any
+    /// downstream `BindOpeningInputs` op.
+    ProveBatch,
 
     /// Absorb public instance data into the transcript.
     Preamble,
@@ -1492,7 +1494,7 @@ pub enum Op {
     /// Release a device buffer (GPU memory).
     ReleaseDevice { poly: PolynomialId },
     /// Release host-side polynomial data (provider memory).
-    /// Emitted after `ReduceOpenings` when evaluation tables are no longer needed.
+    /// Emitted after `ProveBatch` when evaluation tables are no longer needed.
     ReleaseHost { polys: Vec<PolynomialId> },
     /// Alias one evaluation under another polynomial ID.
     /// Runtime: `state.evaluations[to] = state.evaluations[from]`.
@@ -1561,8 +1563,7 @@ impl Op {
             self,
             Op::Commit { .. }
                 | Op::CommitStreaming { .. }
-                | Op::ReduceOpenings
-                | Op::Open
+                | Op::ProveBatch
                 | Op::BindOpeningInputs { .. }
         )
     }
@@ -1701,12 +1702,20 @@ pub enum VerifierOp {
         /// unbatched sumchecks.
         batch_challenges: Vec<ChallengeIdx>,
     },
-    /// Accumulate a PCS opening claim for a committed polynomial.
+    /// Accumulate a PCS opening claim (`{commitment, point, eval}`) for a
+    /// committed polynomial. The verifier stages these claims into a
+    /// `Vec<OpeningClaim<B, PCS>>` that is consumed by the next
+    /// [`VerifyOpenings`].
     CollectOpeningClaim {
         poly: PolynomialId,
         at_stage: VerifierStageIndex,
     },
-    /// RLC-reduce all collected claims and verify PCS opening proofs.
+    /// Hand the staged opening claims to
+    /// `OpeningVerification::verify_batch_with_backend` as a single fused
+    /// batch verification call. Mirrors the prover's `Op::ProveBatch`. The
+    /// per-PCS impl owns whatever batching strategy it wants (RLC for
+    /// additively homomorphic schemes, native fused batched-verify for
+    /// lattice schemes); the verifier loop is scheme-agnostic.
     VerifyOpenings,
 }
 
