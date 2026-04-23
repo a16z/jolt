@@ -20,7 +20,7 @@ tracing-subscriber = { workspace = true }
 
 arbitrary = { version = "1", features = ["derive"] }
 enumset = "1"
-schemars = "0.8"
+schemars = "1.2"
 tempfile = "3"
 
 rust-code-analysis = "0.0.24"
