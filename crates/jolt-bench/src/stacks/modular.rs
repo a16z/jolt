@@ -208,6 +208,14 @@ impl ModularStack {
             r1cs_key.num_vars_padded,
             &fr_events,
         );
+        // (Plan P, task #65) Populate V_LIMB_SUM_A/B from the register-write
+        // stream so R1CS rows 29/30 can bind FieldOpA/B on FieldOp cycles.
+        jolt_host::r1cs_witness::populate_limb_sum_columns::<ModFr>(
+            &mut r1cs_witness,
+            &reg_access.rd_indices,
+            trace_length,
+            r1cs_key.num_vars_padded,
+        );
 
         let r1cs = R1csSource::new(&r1cs_key, &r1cs_witness);
         let field_reg_config = FieldRegConfig {

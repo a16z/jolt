@@ -13,6 +13,10 @@ pub enum Program {
     Fibonacci,
     Muldiv,
     Btreemap,
+    #[value(name = "poseidon2-sdk")]
+    Poseidon2Sdk,
+    #[value(name = "poseidon2-ark")]
+    Poseidon2Ark,
 }
 
 impl Program {
@@ -25,6 +29,8 @@ impl Program {
             Self::Fibonacci => "fib-guest",
             Self::Muldiv => "muldiv-guest",
             Self::Btreemap => "btreemap-guest",
+            Self::Poseidon2Sdk => "bn254-fr-poseidon2-sdk-guest",
+            Self::Poseidon2Ark => "bn254-fr-poseidon2-arkworks-guest",
         }
     }
 
@@ -37,6 +43,8 @@ impl Program {
             Self::Fibonacci => "fibonacci",
             Self::Muldiv => "muldiv",
             Self::Btreemap => "btreemap",
+            Self::Poseidon2Sdk => "poseidon2-sdk",
+            Self::Poseidon2Ark => "poseidon2-ark",
         }
     }
 
@@ -90,6 +98,14 @@ impl Program {
                 bytes.extend(postcard::to_stdvec(&[5u8; 32]).expect("encode sha3-chain input"));
                 bytes.extend(postcard::to_stdvec(&iters).expect("encode sha3-chain iters"));
                 bytes
+            }
+            Self::Poseidon2Sdk | Self::Poseidon2Ark => {
+                // poseidon2(s0, s1, s2) with 3-element Fr state. Matches the
+                // `poseidon2_cycle_count_vs_arkworks` test input encoding.
+                let s0: [u64; 4] = [1, 0, 0, 0];
+                let s1: [u64; 4] = [2, 0, 0, 0];
+                let s2: [u64; 4] = [3, 0, 0, 0];
+                postcard::to_stdvec(&(s0, s1, s2)).expect("encode poseidon2 inputs")
             }
         }
     }
