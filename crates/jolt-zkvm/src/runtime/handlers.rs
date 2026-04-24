@@ -813,27 +813,11 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                 .instance_config
                 .as_ref()
                 .unwrap();
-            let m = 1usize << config.chunk_bits;
-            let half_m = 1usize << (config.chunk_bits / 2);
-            let cp = |i: usize| {
-                let v = state.challenges[config.registry_checkpoint_slots[i].0];
-                if v != F::zero() {
-                    Some(v)
-                } else {
-                    None
-                }
-            };
-            let id_base = cp(2).unwrap_or(F::zero()) * F::from_u64(m as u64);
-            let p_identity: Vec<F> = (0..m).map(|i| id_base + F::from_u64(i as u64)).collect();
-            let left_base = cp(1).unwrap_or(F::zero()) * F::from_u64(half_m as u64);
-            let right_base = cp(0).unwrap_or(F::zero()) * F::from_u64(half_m as u64);
-            let mut p_left = vec![F::zero(); m];
-            let mut p_right = vec![F::zero(); m];
-            for i in 0..m {
-                let (lo, ro) = uninterleave_u128(i as u128);
-                p_left[i] = left_base + F::from_u64(lo);
-                p_right[i] = right_base + F::from_u64(ro);
-            }
+            let [p_left, p_right, p_identity] = compute_p_buffers(
+                config.chunk_bits,
+                &config.registry_checkpoint_slots,
+                &state.challenges,
+            );
             let _ = device_buffers.insert(
                 PolynomialId::InstanceP(0, 0),
                 DeviceBuffer::Field(backend.upload(&p_left)),
@@ -1263,4 +1247,46 @@ fn compute_suffix_scatter<F: Field>(
         }
     }
     all_polys
+}
+
+/// Compute the 3 P-buffers for `Op::MaterializePBuffers`. Returns
+/// `[p_left, p_right, p_identity]`, each of size `1 << chunk_bits`,
+/// purely a function of `chunk_bits` and the three registry-checkpoint
+/// challenge slots. `cp_slots[0]` = right, `[1]` = left, `[2]` = identity
+/// (original runtime convention — keep aligned to avoid transcript drift):
+///
+/// - `p_identity[i] = challenges[cp_slots[2]] × m + i`
+/// - `p_left[i] = challenges[cp_slots[1]] × half_m + lo(i)`
+/// - `p_right[i] = challenges[cp_slots[0]] × half_m + ro(i)`
+///
+/// where `m = 1 << chunk_bits`, `half_m = 1 << (chunk_bits/2)`, and
+/// `lo/ro` come from `uninterleave_u128`. See OPS.md Group C for the
+/// pending WeightedSum lowering.
+fn compute_p_buffers<F: Field>(
+    chunk_bits: usize,
+    cp_slots: &[ChallengeIdx],
+    challenges: &[F],
+) -> [Vec<F>; 3] {
+    let m = 1usize << chunk_bits;
+    let half_m = 1usize << (chunk_bits / 2);
+    let nonzero = |i: usize| {
+        let v = challenges[cp_slots[i].0];
+        if v != F::zero() {
+            Some(v)
+        } else {
+            None
+        }
+    };
+    let id_base = nonzero(2).unwrap_or(F::zero()) * F::from_u64(m as u64);
+    let left_base = nonzero(1).unwrap_or(F::zero()) * F::from_u64(half_m as u64);
+    let right_base = nonzero(0).unwrap_or(F::zero()) * F::from_u64(half_m as u64);
+    let p_identity: Vec<F> = (0..m).map(|i| id_base + F::from_u64(i as u64)).collect();
+    let mut p_left = vec![F::zero(); m];
+    let mut p_right = vec![F::zero(); m];
+    for i in 0..m {
+        let (lo, ro) = uninterleave_u128(i as u128);
+        p_left[i] = left_base + F::from_u64(lo);
+        p_right[i] = right_base + F::from_u64(ro);
+    }
+    [p_left, p_right, p_identity]
 }
