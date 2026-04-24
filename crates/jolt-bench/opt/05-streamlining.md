@@ -311,14 +311,42 @@ green.
 **Why now**: the big win. Every symptom of "runtime knows about protocols"
 comes from these ops.
 
-**Status snapshot** (updated after the first three S5 sub-phases landed):
+**Status snapshot**:
+
+**Rename + field-slim wave** (no variant removal; field-set hygiene
+that matches the future primitive signatures):
 
 | Sub-phase | Status | Commit |
 |---|---|---|
 | `S5.rename` — `CheckpointEvalBatch` → `InstanceScalarUpdate` | landed | `4d5e36832` |
 | `S5.build_segmented_eq` — `MaterializeSegmentedOuterEq` → `BuildSegmentedEq` (rename + field slim) | landed | `91dc8a2f6` |
 | `S5.field_slim` — `UpdateInstanceWeights {num_phases, phase}` → `{suffix_len}` | landed | `52125c160` |
+| `S5.scatter_field_slim` — `{SuffixScatter, QBufferScatter} phase → suffix_len` | landed | `0b8dd37b7` |
+| `S5.init_weights_slim` — `InitInstanceWeights` drop `num_prefixes` (pre-size `state.instance_scalars` at runtime init) | landed | `51b00b7a3` |
 | Docs refresh — revised S5 targets with accurate blocker classes | landed | `9c4f4d39a` |
+| Docs sync — this file brought current with OPS.md | landed | `d012ed0ae` |
+| Stale-ref cleanup — TASKS.md V9, module.rs, plan docs | landed | `f5186fd57` |
+
+**Handler-extraction wave** (not in the original plan, but part of the
+same rails-before-perf goal — every protocol-specific handler arm now
+≤ 30 LOC per CLAUDE.md / ARCHITECTURE.md invariant). The extracted
+helpers' signatures mirror what the Group A/B/C primitives will need,
+so they become reference implementations for the eventual lowering:
+
+| Handler | Prior | After | Helper | Commit |
+|---|---|---|---|---|
+| `Op::WeightedSum` | ~35 | 11 | `compute_weighted_sum` | `fff334402` |
+| `Op::QBufferScatter` | ~64 | 14 | `compute_q_buffer_scatter` | `04942324d` |
+| `Op::RafReduce` (pass 1) | ~57 | 24 | `compute_raf_reduce` | `9d825057d` |
+| `Op::SuffixScatter` | ~37 | 22 | `compute_suffix_scatter` | `472c95097` |
+| `Op::MaterializePBuffers` | ~40 | 17 | `compute_p_buffers` | `cdc3109a6` |
+| `Op::MaterializeRA` | ~37 | 18 | `compute_ra_chunk` | `42016d772` |
+| `Op::MaterializeCombinedVal` | ~40 | 22 | `compute_combined_val` | `cf1165a8b` |
+| `Op::ReadCheckingReduce` | ~32 | 22 | `download_suffix_polys` | `9db25f266` |
+| `Op::RafReduce` (pass 2) | 34 | 18 | (Q/P downloads absorbed) | `d79579a21` |
+
+Plus `c9452ab54` removed a dead `RuntimeState.current_batch_round`
+field (written but never read).
 
 Three sub-phases remain at the variant-removal level; 9 protocol-specific
 variants still emit. See `crates/jolt-compiler/OPS.md` §"Protocol-specific —
