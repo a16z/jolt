@@ -767,27 +767,15 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                 .as_ref()
                 .unwrap();
             let trace = provider.lookup_trace().unwrap();
-            let m = 1usize << config.chunk_bits;
-            let suffix_len = *suffix_len;
-            let suffix_mask = (1u128 << suffix_len).wrapping_sub(1);
-            let mut all_polys: Vec<Vec<Vec<F>>> = (0..config.num_tables)
-                .map(|t| vec![vec![F::zero(); m]; config.suffixes_per_table[t]])
-                .collect();
-            for (j, &key) in trace.lookup_keys.iter().enumerate() {
-                let Some(t) = trace.table_kind_indices[j] else {
-                    continue;
-                };
-                let idx = ((key >> suffix_len) as usize) & (m - 1);
-                let u = state.instance_weights[j];
-                for (poly, op) in all_polys[t].iter_mut().zip(config.suffix_ops[t].iter()) {
-                    let v = op.eval(key & suffix_mask, suffix_len);
-                    match v {
-                        0 => {}
-                        1 => poly[idx] += u,
-                        _ => poly[idx] += u.mul_u64(v),
-                    }
-                }
-            }
+            let all_polys = compute_suffix_scatter(
+                config.chunk_bits,
+                *suffix_len,
+                config.num_tables,
+                &config.suffixes_per_table,
+                &config.suffix_ops,
+                trace,
+                &state.instance_weights,
+            );
             for (t, table_polys) in all_polys.into_iter().enumerate() {
                 for (s, p) in table_polys.into_iter().enumerate() {
                     let _ = device_buffers.insert(
@@ -1237,4 +1225,42 @@ fn compute_raf_reduce<F: Field>(
     let eval_2 = read_checking_evals[1] + gamma * l2 + gamma_sqr * r2;
     let eval_1 = prev_claim - eval_0;
     [eval_0, eval_1, eval_2]
+}
+
+/// Compute the suffix-scatter output polynomials for `Op::SuffixScatter`.
+/// Returns `all_polys[table][suffix]` — one vec of size `1 << chunk_bits`
+/// per (table_kind, suffix) pair. Walks the trace once: for each cycle
+/// with a non-None `table_kind_indices[j]`, route the weighted suffix_op
+/// value into `all_polys[t][s][idx]`. See OPS.md Group A (→
+/// `Op::TraceScatter`).
+fn compute_suffix_scatter<F: Field>(
+    chunk_bits: usize,
+    suffix_len: usize,
+    num_tables: usize,
+    suffixes_per_table: &[usize],
+    suffix_ops: &[Vec<jolt_compiler::module::SuffixOp>],
+    trace: &jolt_compiler::LookupTraceData,
+    instance_weights: &[F],
+) -> Vec<Vec<Vec<F>>> {
+    let m = 1usize << chunk_bits;
+    let suffix_mask = (1u128 << suffix_len).wrapping_sub(1);
+    let mut all_polys: Vec<Vec<Vec<F>>> = (0..num_tables)
+        .map(|t| vec![vec![F::zero(); m]; suffixes_per_table[t]])
+        .collect();
+    for (j, &key) in trace.lookup_keys.iter().enumerate() {
+        let Some(t) = trace.table_kind_indices[j] else {
+            continue;
+        };
+        let idx = ((key >> suffix_len) as usize) & (m - 1);
+        let u = instance_weights[j];
+        for (poly, op) in all_polys[t].iter_mut().zip(suffix_ops[t].iter()) {
+            let v = op.eval(key & suffix_mask, suffix_len);
+            match v {
+                0 => {}
+                1 => poly[idx] += u,
+                _ => poly[idx] += u.mul_u64(v),
+            }
+        }
+    }
+    all_polys
 }
