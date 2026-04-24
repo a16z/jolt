@@ -245,6 +245,35 @@ impl<'a, F: Field> DerivedSource<'a, F> {
                 let _s = tracing::info_span!("derived::hamming_weight").entered();
                 Cow::Owned(self.hamming_weight())
             }
+            PolynomialId::PBufferScale(cb) => {
+                let _s = tracing::info_span!("derived::p_buffer_scale").entered();
+                let m = 1u64 << cb;
+                Cow::Owned(vec![F::from_u64(m); m as usize])
+            }
+            PolynomialId::PBufferHalfScale(cb) => {
+                let _s = tracing::info_span!("derived::p_buffer_half_scale").entered();
+                let m = 1usize << cb;
+                let half = 1u64 << (cb / 2);
+                Cow::Owned(vec![F::from_u64(half); m])
+            }
+            PolynomialId::PBufferUninterleaveLo(cb) => {
+                let _s = tracing::info_span!("derived::p_buffer_uninterleave_lo").entered();
+                let m = 1usize << cb;
+                Cow::Owned(
+                    (0..m)
+                        .map(|i| F::from_u64(uninterleave_u128(i as u128).0))
+                        .collect(),
+                )
+            }
+            PolynomialId::PBufferUninterleaveRo(cb) => {
+                let _s = tracing::info_span!("derived::p_buffer_uninterleave_ro").entered();
+                let m = 1usize << cb;
+                Cow::Owned(
+                    (0..m)
+                        .map(|i| F::from_u64(uninterleave_u128(i as u128).1))
+                        .collect(),
+                )
+            }
             other => {
                 let _s = tracing::info_span!("derived::extract_column").entered();
                 if let Some(var) = witness_var(other) {
@@ -570,4 +599,17 @@ impl<'a, F: Field> DerivedSource<'a, F> {
         }
         out
     }
+}
+
+/// Separate interleaved x/y bits in a 128-bit value: odd positions → x (lo),
+/// even positions → y (ro). Used by `PBufferUninterleave{Lo,Ro}` compute.
+/// Mirrors `uninterleave_u128` in `jolt-zkvm/src/runtime/handlers.rs`.
+fn uninterleave_u128(bits: u128) -> (u64, u64) {
+    let mut x: u64 = 0;
+    let mut y: u64 = 0;
+    for i in 0..64 {
+        y |= (((bits >> (2 * i)) & 1) as u64) << i;
+        x |= (((bits >> (2 * i + 1)) & 1) as u64) << i;
+    }
+    (x, y)
 }

@@ -172,6 +172,20 @@ pub enum PolynomialId {
     /// The index is a compile-time-allocated `(mask_role, b_len)` id.
     /// Each buffer holds `2^b_len` field-encoded small integers indexed by `b`.
     PrefixMask(usize),
+    /// P-buffer constant-scale poly: `[2^cb; 2^cb]` where `cb = chunk_bits`.
+    /// Used by the read-RAF P-identity construction:
+    /// `p_identity[i] = cp[identity] × 2^cb + i`.
+    PBufferScale(usize),
+    /// P-buffer constant-half-scale poly: `[2^(cb/2); 2^cb]` where `cb = chunk_bits`.
+    /// Used by the read-RAF P-left/right construction:
+    /// `p_left[i] = cp[left] × 2^(cb/2) + lo(i)`.
+    PBufferHalfScale(usize),
+    /// P-buffer bit-uninterleave-low poly: `lo(i)` for `i in 0..2^cb`.
+    /// Extracts odd-position bits of `i` (see `uninterleave_u128`).
+    PBufferUninterleaveLo(usize),
+    /// P-buffer bit-uninterleave-high poly: `ro(i)` for `i in 0..2^cb`.
+    /// Extracts even-position bits of `i`.
+    PBufferUninterleaveRo(usize),
 
     /// Per-bytecode-entry field polynomial (K entries, bytecode-table-indexed).
     /// Flat index into the canonical field extraction order. See
@@ -310,6 +324,18 @@ impl PolynomialId {
             | Self::BytecodeField(_)
             | Self::PrefixMask(_) => PolynomialDescriptor {
                 source: PolySource::Preprocessed,
+                committed: false,
+                storage: StorageHint::Dense,
+                witness_slot: None,
+            },
+
+            // Derived: pure functions of chunk_bits (no witness / config deps).
+            // Computed on-demand by DerivedSource for the P-buffer construction.
+            Self::PBufferScale(_)
+            | Self::PBufferHalfScale(_)
+            | Self::PBufferUninterleaveLo(_)
+            | Self::PBufferUninterleaveRo(_) => PolynomialDescriptor {
+                source: PolySource::Derived,
                 committed: false,
                 storage: StorageHint::Dense,
                 witness_slot: None,

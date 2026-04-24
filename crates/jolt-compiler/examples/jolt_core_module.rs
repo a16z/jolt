@@ -662,16 +662,65 @@ fn emit_scatter_ops(
     phase: usize,
     chunk_bits: usize,
     num_phases: usize,
+    registry_checkpoint_slots: &[ChallengeIdx],
 ) {
     let suffix_len = (num_phases - 1 - phase) * chunk_bits;
     push_op!(ops, Op::SuffixScatter { kernel, suffix_len });
     push_op!(ops, Op::QBufferScatter { kernel, suffix_len });
-    push_op!(ops, Op::MaterializePBuffers { kernel });
+    emit_p_buffer_weighted_sums(ops, chunk_bits, registry_checkpoint_slots);
     push_op!(
         ops,
         Op::InitExpandingTable {
             table: PolynomialId::ExpandingTable(phase),
             size: 1 << chunk_bits,
+        }
+    );
+}
+
+/// Emit the 3 `Op::WeightedSum` ops that build the read-RAF P-buffers —
+/// mirror of the same-name helper in `src/builder.rs`.
+fn emit_p_buffer_weighted_sums(
+    ops: &mut Vec<Op>,
+    chunk_bits: usize,
+    registry_checkpoint_slots: &[ChallengeIdx],
+) {
+    // See src/builder.rs::emit_p_buffer_weighted_sums for the slot-to-component
+    // mapping (crossed relative to component naming in PolynomialId::InstanceP).
+    let slot_0 = registry_checkpoint_slots[0];
+    let slot_1 = registry_checkpoint_slots[1];
+    let slot_2 = registry_checkpoint_slots[2];
+    let zero_pow = slot_0;
+    push_op!(
+        ops,
+        Op::WeightedSum {
+            output: PolynomialId::InstanceP(2, 0),
+            terms: vec![(PolynomialId::PBufferScale(chunk_bits), slot_2, 1)],
+            identity_term: Some((zero_pow, 0)),
+            overall_scale: None,
+        }
+    );
+    push_op!(
+        ops,
+        Op::WeightedSum {
+            output: PolynomialId::InstanceP(0, 0),
+            terms: vec![
+                (PolynomialId::PBufferHalfScale(chunk_bits), slot_1, 1),
+                (PolynomialId::PBufferUninterleaveLo(chunk_bits), zero_pow, 0),
+            ],
+            identity_term: None,
+            overall_scale: None,
+        }
+    );
+    push_op!(
+        ops,
+        Op::WeightedSum {
+            output: PolynomialId::InstanceP(1, 0),
+            terms: vec![
+                (PolynomialId::PBufferHalfScale(chunk_bits), slot_0, 1),
+                (PolynomialId::PBufferUninterleaveRo(chunk_bits), zero_pow, 0),
+            ],
+            identity_term: None,
+            overall_scale: None,
         }
     );
 }
@@ -757,7 +806,14 @@ fn emit_unrolled_batched_rounds(
                             r_reduction: ic.r_reduction.clone(),
                         }
                     );
-                    emit_scatter_ops(ops, kernel, 0, chunk_bits, ic.num_phases);
+                    emit_scatter_ops(
+                        ops,
+                        kernel,
+                        0,
+                        chunk_bits,
+                        ic.num_phases,
+                        &ic.registry_checkpoint_slots,
+                    );
                 } else if round_in_sub == 0 {
                     let ch = bind.unwrap();
                     push_op!(
@@ -816,7 +872,14 @@ fn emit_unrolled_batched_rounds(
                             suffix_len: (ic.num_phases - sub_phase) * chunk_bits,
                         }
                     );
-                    emit_scatter_ops(ops, kernel, sub_phase, chunk_bits, ic.num_phases);
+                    emit_scatter_ops(
+                        ops,
+                        kernel,
+                        sub_phase,
+                        chunk_bits,
+                        ic.num_phases,
+                        &ic.registry_checkpoint_slots,
+                    );
                 } else {
                     let ch = bind.unwrap();
                     push_op!(
@@ -7645,7 +7708,6 @@ fn print_stats(module: &Module, params: &ModuleParams) {
             | Op::UpdateInstanceWeights { .. }
             | Op::SuffixScatter { .. }
             | Op::QBufferScatter { .. }
-            | Op::MaterializePBuffers { .. }
             | Op::InitExpandingTable { .. }
             | Op::ReadCheckingReduce { .. }
             | Op::RafReduce { .. }

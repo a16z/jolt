@@ -1347,8 +1347,6 @@ pub enum Op {
     /// `suffix_len` is precomputed at emission time as
     /// `(num_phases − 1 − phase) × chunk_bits` (S5.scatter_field_slim).
     QBufferScatter { kernel: usize, suffix_len: usize },
-    /// Materialize RAF product (P) buffers from registry checkpoint scalars.
-    MaterializePBuffers { kernel: usize },
     /// Initialize an expanding eq table with a single 1.0 entry.
     InitExpandingTable { table: PolynomialId, size: usize },
     /// Read-checking reduce: evaluate prefix MLEs × suffix polys via combine matrix.
@@ -1674,7 +1672,6 @@ impl Op {
                 | Op::UpdateInstanceWeights { .. }
                 | Op::SuffixScatter { .. }
                 | Op::QBufferScatter { .. }
-                | Op::MaterializePBuffers { .. }
                 | Op::InitExpandingTable { .. }
                 | Op::MaterializeRA { .. }
                 | Op::MaterializeCombinedVal { .. }
@@ -1767,7 +1764,6 @@ impl Op {
             | Op::QBufferScatter { .. }
             | Op::MaterializeRA { .. }
             | Op::MaterializeCombinedVal { .. }
-            | Op::MaterializePBuffers { .. }
             | Op::InitInstanceWeights { .. }
             | Op::UpdateInstanceWeights { .. } => true, // flip to false in O5
         }

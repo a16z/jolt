@@ -464,7 +464,14 @@ impl ModuleBuilder {
                         self.ops.push(Op::InitInstanceWeights {
                             r_reduction: ic.r_reduction.clone(),
                         });
-                        emit_scatter_ops(&mut self.ops, kernel, 0, chunk_bits, ic.num_phases);
+                        emit_scatter_ops(
+                            &mut self.ops,
+                            kernel,
+                            0,
+                            chunk_bits,
+                            ic.num_phases,
+                            &ic.registry_checkpoint_slots,
+                        );
                     } else if round_in_sub == 0 {
                         // Sub-phase boundary: bind + expand + optional CP +
                         // capture registries + scatter next sub-phase.
@@ -514,6 +521,7 @@ impl ModuleBuilder {
                             sub_phase,
                             chunk_bits,
                             ic.num_phases,
+                            &ic.registry_checkpoint_slots,
                         );
                     } else {
                         // Mid sub-phase: bind + expand + optional CP.
@@ -842,14 +850,69 @@ fn emit_scatter_ops(
     phase: usize,
     chunk_bits: usize,
     num_phases: usize,
+    registry_checkpoint_slots: &[ChallengeIdx],
 ) {
     let suffix_len = (num_phases - 1 - phase) * chunk_bits;
     ops.push(Op::SuffixScatter { kernel, suffix_len });
     ops.push(Op::QBufferScatter { kernel, suffix_len });
-    ops.push(Op::MaterializePBuffers { kernel });
+    emit_p_buffer_weighted_sums(ops, chunk_bits, registry_checkpoint_slots);
     ops.push(Op::InitExpandingTable {
         table: PolynomialId::ExpandingTable(phase),
         size: 1 << chunk_bits,
+    });
+}
+
+/// Emit the 3 `Op::WeightedSum` ops that build the read-RAF P-buffers.
+/// Replaces the legacy `Op::MaterializePBuffers` handler. Outputs:
+///
+/// - `InstanceP(2, 0)[i] = cp[identity] × 2^cb + i`
+/// - `InstanceP(1, 0)[i] = cp[left]     × 2^(cb/2) + lo(i)`
+/// - `InstanceP(0, 0)[i] = cp[right]    × 2^(cb/2) + ro(i)`
+///
+/// See `PBufferScale`, `PBufferHalfScale`, `PBufferUninterleave{Lo,Ro}`
+/// for the derived polys the WeightedSum terms pull from.
+fn emit_p_buffer_weighted_sums(
+    ops: &mut Vec<Op>,
+    chunk_bits: usize,
+    registry_checkpoint_slots: &[ChallengeIdx],
+) {
+    // Original handler: InstanceP(0, 0) ← cp[1] × half_m + lo(i),
+    //                   InstanceP(1, 0) ← cp[0] × half_m + ro(i),
+    //                   InstanceP(2, 0) ← cp[2] × m + i.
+    // "left/right" variable naming refers to the component (0=left P buffer,
+    //  1=right P buffer) per PolynomialId::InstanceP docs — slot indices are
+    //  crossed relative to the component (cp[1] for left-component, cp[0] for right).
+    let slot_0 = registry_checkpoint_slots[0];
+    let slot_1 = registry_checkpoint_slots[1];
+    let slot_2 = registry_checkpoint_slots[2];
+    // Any slot works as the "constant 1" with power=0 (challenge^0 = 1).
+    let zero_pow = slot_0;
+    // InstanceP(2, 0)[i] = challenges[cp_slots[2]] × 2^cb + i
+    ops.push(Op::WeightedSum {
+        output: PolynomialId::InstanceP(2, 0),
+        terms: vec![(PolynomialId::PBufferScale(chunk_bits), slot_2, 1)],
+        identity_term: Some((zero_pow, 0)),
+        overall_scale: None,
+    });
+    // InstanceP(0, 0)[i] = challenges[cp_slots[1]] × 2^(cb/2) + lo(i)
+    ops.push(Op::WeightedSum {
+        output: PolynomialId::InstanceP(0, 0),
+        terms: vec![
+            (PolynomialId::PBufferHalfScale(chunk_bits), slot_1, 1),
+            (PolynomialId::PBufferUninterleaveLo(chunk_bits), zero_pow, 0),
+        ],
+        identity_term: None,
+        overall_scale: None,
+    });
+    // InstanceP(1, 0)[i] = challenges[cp_slots[0]] × 2^(cb/2) + ro(i)
+    ops.push(Op::WeightedSum {
+        output: PolynomialId::InstanceP(1, 0),
+        terms: vec![
+            (PolynomialId::PBufferHalfScale(chunk_bits), slot_0, 1),
+            (PolynomialId::PBufferUninterleaveRo(chunk_bits), zero_pow, 0),
+        ],
+        identity_term: None,
+        overall_scale: None,
     });
 }
 

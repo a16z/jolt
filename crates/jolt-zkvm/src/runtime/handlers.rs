@@ -74,7 +74,6 @@ fn op_span(op: &Op) -> tracing::span::EnteredSpan {
         Op::UpdateInstanceWeights { .. } => tracing::info_span!("UpdateInstanceWeights").entered(),
         Op::SuffixScatter { .. } => tracing::info_span!("SuffixScatter").entered(),
         Op::QBufferScatter { .. } => tracing::info_span!("QBufferScatter").entered(),
-        Op::MaterializePBuffers { .. } => tracing::info_span!("MaterializePBuffers").entered(),
         Op::InitExpandingTable { .. } => tracing::info_span!("InitExpandingTable").entered(),
         Op::ReadCheckingReduce { .. } => tracing::info_span!("ReadCheckingReduce").entered(),
         Op::RafReduce { .. } => tracing::info_span!("RafReduce").entered(),
@@ -808,30 +807,6 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             }
         }
 
-        Op::MaterializePBuffers { kernel } => {
-            let config = executable.module.prover.kernels[*kernel]
-                .instance_config
-                .as_ref()
-                .unwrap();
-            let [p_left, p_right, p_identity] = compute_p_buffers(
-                config.chunk_bits,
-                &config.registry_checkpoint_slots,
-                &state.challenges,
-            );
-            let _ = device_buffers.insert(
-                PolynomialId::InstanceP(0, 0),
-                DeviceBuffer::Field(backend.upload(&p_left)),
-            );
-            let _ = device_buffers.insert(
-                PolynomialId::InstanceP(1, 0),
-                DeviceBuffer::Field(backend.upload(&p_right)),
-            );
-            let _ = device_buffers.insert(
-                PolynomialId::InstanceP(2, 0),
-                DeviceBuffer::Field(backend.upload(&p_identity)),
-            );
-        }
-
         Op::InitExpandingTable { table, size } => {
             let mut expanding = vec![F::zero(); *size];
             expanding[0] = F::one();
@@ -1121,7 +1096,8 @@ fn compute_q_buffer_scatter<F: Field>(
 
 /// Compute the 3 round-evaluations `[eval_0, eval_1, eval_2]` for the
 /// `Op::RafReduce` read-RAF final reduce. Downloads the 6 Q-buffers (from
-/// `QBufferScatter`) and optional 6 P-buffers (from `MaterializePBuffers`)
+/// `QBufferScatter`) and optional 6 P-buffers (from the 3× `WeightedSum`
+/// emission that replaced `Op::MaterializePBuffers`)
 /// from `device_buffers`, then walks them accumulating left-component
 /// (scaled by `gamma`) and right-component (scaled by `gamma^2`)
 /// contributions in one pass. The prior `ReadCheckingReduce` evals are
@@ -1215,48 +1191,6 @@ fn compute_suffix_scatter<F: Field>(
         }
     }
     all_polys
-}
-
-/// Compute the 3 P-buffers for `Op::MaterializePBuffers`. Returns
-/// `[p_left, p_right, p_identity]`, each of size `1 << chunk_bits`,
-/// purely a function of `chunk_bits` and the three registry-checkpoint
-/// challenge slots. `cp_slots[0]` = right, `[1]` = left, `[2]` = identity
-/// (original runtime convention — keep aligned to avoid transcript drift):
-///
-/// - `p_identity[i] = challenges[cp_slots[2]] × m + i`
-/// - `p_left[i] = challenges[cp_slots[1]] × half_m + lo(i)`
-/// - `p_right[i] = challenges[cp_slots[0]] × half_m + ro(i)`
-///
-/// where `m = 1 << chunk_bits`, `half_m = 1 << (chunk_bits/2)`, and
-/// `lo/ro` come from `uninterleave_u128`. See OPS.md Group C for the
-/// pending WeightedSum lowering.
-fn compute_p_buffers<F: Field>(
-    chunk_bits: usize,
-    cp_slots: &[ChallengeIdx],
-    challenges: &[F],
-) -> [Vec<F>; 3] {
-    let m = 1usize << chunk_bits;
-    let half_m = 1usize << (chunk_bits / 2);
-    let nonzero = |i: usize| {
-        let v = challenges[cp_slots[i].0];
-        if v != F::zero() {
-            Some(v)
-        } else {
-            None
-        }
-    };
-    let id_base = nonzero(2).unwrap_or(F::zero()) * F::from_u64(m as u64);
-    let left_base = nonzero(1).unwrap_or(F::zero()) * F::from_u64(half_m as u64);
-    let right_base = nonzero(0).unwrap_or(F::zero()) * F::from_u64(half_m as u64);
-    let p_identity: Vec<F> = (0..m).map(|i| id_base + F::from_u64(i as u64)).collect();
-    let mut p_left = vec![F::zero(); m];
-    let mut p_right = vec![F::zero(); m];
-    for i in 0..m {
-        let (lo, ro) = uninterleave_u128(i as u128);
-        p_left[i] = left_base + F::from_u64(lo);
-        p_right[i] = right_base + F::from_u64(ro);
-    }
-    [p_left, p_right, p_identity]
 }
 
 /// Compute one RA poly chunk for `Op::MaterializeRA`. Returns a Vec of

@@ -153,7 +153,7 @@ eq table (segmented reduces) still pull `SegmentedConfig` from
 in `jolt-zkvm/src/runtime/helpers.rs` now takes those two values
 directly instead of a `&SegmentedConfig`.
 
-### Protocol-specific — lower to primitives (9)
+### Protocol-specific — lower to primitives (8)
 
 Protocol-specific both in name and behavior. Each lowers to a sequence of
 primitives. **Resolved in O5** (refined targets below — the original
@@ -195,7 +195,6 @@ landing the first two S5 renames exposed three distinct blocker classes).
 | `QBufferScatter { kernel, suffix_len }` | A | Same primitive family as `SuffixScatter` — 6 Q-buffer outputs with bit-uninterleave and a conditional on `is_interleaved[j]`. Same new primitive applies with richer output set. Field set already slimmed in S5.scatter_field_slim (same as `SuffixScatter`). |
 | `ReadCheckingReduce { kernel, round, r_x_challenge }` | B | `Op::Reduce { specs: [ReduceSpec { axes: Flat, kernel: composed_prefix_suffix, .. }] }`. Compiler lowers the `combine_entries` matrix + `prefix_lowered[round]` into `KernelSpec.formula` at compile time. Substantial `KernelSpec` extension. |
 | `RafReduce { batch, instance, kernel }` | B | `Op::Reduce` with a product-of-sums formula over the Q/P buffers, gamma-weighted. Reads `state.read_checking_evals` + `state.batch_instance_claims[batch][instance]` as implicit inputs; generic `Op::Reduce` doesn't express this state flow yet. |
-| `MaterializePBuffers { kernel }` | C | Feasible with preprocessed polys. Outputs `p_identity[i] = cp × m + i`, `p_left[i] = cp × half_m + lo(i)`, `p_right[i] = cp × half_m + ro(i)`. Needs new preprocessed polys `ChunkSizeConst(chunk_bits)`, `HalfChunkSizeConst(chunk_bits)`, `Identity(chunk_bits)`, `UninterleaveLo(chunk_bits)`, `UninterleaveRo(chunk_bits)` + 3× `Op::WeightedSum`. |
 
 **Graduation order** (revised):
 
@@ -212,9 +211,12 @@ landing the first two S5 renames exposed three distinct blocker classes).
    runtime init from `max(ic.num_prefixes)` across kernels. Handler
    resets via `.fill(None)` instead of re-allocating. Variant persists
    pending Group A. One commit.
-2. **S5.materialize_p_buffers** (Group C): preprocessed-poly
-   infrastructure + 3× `Op::WeightedSum` emission. Local; doesn't
-   depend on Group A or B work. One commit.
+2. **S5.materialize_p_buffers** (landed): Group C lowered.
+   `Op::MaterializePBuffers` removed. Four new derived polys
+   (`PBufferScale`, `PBufferHalfScale`, `PBufferUninterleaveLo`,
+   `PBufferUninterleaveRo`, parameterized by `chunk_bits`) computed
+   on-demand by `DerivedSource::compute()`. Emission replaced with
+   3× `Op::WeightedSum`.
 3. **S5.instance_weights_device** (Group A, prerequisite): relocate
    `state.instance_weights` to a `PolynomialId::InstanceWeights`
    device buffer. Cascades through handlers — every
@@ -240,8 +242,9 @@ landing the first two S5 renames exposed three distinct blocker classes).
 | Redundant (landed O4.a) | 0 (was 3) | — |
 | Conditional (deferred to O6/O7) | 2 | `true` (ratchet unchanged until pass ships) |
 | Protocol-specific: rename (landed S5.rename, S5.build_segmented_eq) | 0 (was 2) | — |
-| Protocol-specific: lower (→ O5) | 9 | `true` (ratchet unchanged until lowered) |
-| **Current total** | **48** | |
+| Protocol-specific: lowered (landed S5.materialize_p_buffers) | 0 (was 1) | — |
+| Protocol-specific: lower (→ O5) | 8 | `true` (ratchet unchanged until lowered) |
+| **Current total** | **47** | |
 
 Post-O5 target: 36 primitive + batch-scaffold variants plus the new
 primitive surface introduced during Group A and Group B lowering —

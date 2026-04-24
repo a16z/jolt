@@ -940,7 +940,6 @@ fn op_poly_refs(op: &Op, kernels: &[KernelDef]) -> Vec<PolynomialId> {
         | Op::UpdateInstanceWeights { .. }
         | Op::SuffixScatter { .. }
         | Op::QBufferScatter { .. }
-        | Op::MaterializePBuffers { .. }
         | Op::InitExpandingTable { .. }
         | Op::ReadCheckingReduce { .. }
         | Op::RafReduce { .. }

@@ -33,7 +33,6 @@ fn op_class_tag(op: &jolt_compiler::module::Op) -> Option<&'static str> {
         Op::MaterializeUnlessFresh { .. } => "MaterializeUnlessFresh",
         Op::MaterializeIfAbsent { .. } => "MaterializeIfAbsent",
         Op::BuildSegmentedEq { .. } => "BuildSegmentedEq",
-        Op::MaterializePBuffers { .. } => "MaterializePBuffers",
         Op::MaterializeRA { .. } => "MaterializeRA",
         Op::MaterializeCombinedVal { .. } => "MaterializeCombinedVal",
         Op::Commit { .. } => "Commit",
