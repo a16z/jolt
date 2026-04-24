@@ -8,7 +8,17 @@ Scope: this document covers only the ISA/R1CS/polynomial-id surface. FR Twist st
 
 ## Section 1 — ISA encoding table
 
-All nine instructions share opcode `0x0B` (custom-0), funct7 `0x40`. funct3 selects. R-type layout throughout: `funct7(25..32) | rs2(20..25) | rs1(15..20) | funct3(12..15) | rd(7..12) | opcode(0..7)`. Field-register slot indices use the low 4 bits of the 5-bit register field (0..=15); the high bit must be 0.
+All nine instructions share opcode `0x0B` (custom-0). They split across two
+funct7 sub-families because funct3 is only 3 bits wide (0..=7), which can't
+hold the original spec's `0x08`–`0x0A` values. R-type layout throughout:
+`funct7(25..32) | rs2(20..25) | rs1(15..20) | funct3(12..15) | rd(7..12) | opcode(0..7)`.
+Field-register slot indices use the low 4 bits of the 5-bit register field
+(0..=15); the high bit must be 0.
+
+- **funct7=0x40 (FR-FR family — 2-input FReg ops + FieldMov):**
+  FMUL / FADD / FSUB / FINV / FieldAssertEq / FieldMov.
+- **funct7=0x41 (SLL family — 1-input XReg→FReg shifts):**
+  FieldSLL64 / FieldSLL128 / FieldSLL192.
 
 Register-type column: `FReg[i]` = slot `i` in `cpu.field_regs` (16 × [u64;4]); `XReg[i]` = integer register `i` in the 32-slot RISC-V register file. Tracer state update column lists the authoritative mutations per cycle.
 
@@ -20,9 +30,14 @@ Register-type column: `FReg[i]` = slot `i` in `cpu.field_regs` (16 × [u64;4]); 
 | 0x05   | `FieldSub`       | FReg[frs1]      | FReg[frs2]      | FReg[frd]       | `FReg[frd] = FReg[frs1] − FReg[frs2]` (mod p)              | Write `FReg[frd]`; emit `FieldRegEvent { slot = frd, new = diff_limbs }`                              |
 | 0x06   | `FieldAssertEq`  | FReg[frs1]      | FReg[frs2]      | (unused)        | `assert FReg[frs1] == FReg[frs2]` (mod p); no write        | No field-register mutation; emit `FieldRegEvent { slot = frs1, new = old }` (no-op write, see §6)     |
 | 0x07   | `FieldMov`       | XReg[rs1]       | (unused)        | FReg[frd]       | `FReg[frd] = (XReg[rs1] as Fr)`; integer embeds into Fr    | Write `FReg[frd] = [rs1, 0, 0, 0]`; emit `FieldRegEvent { slot = frd, new }`; XReg read binds Rs1Value |
-| 0x08   | `FieldSLL64`     | XReg[rs1]       | (unused)        | FReg[frd]       | `FReg[frd] = (XReg[rs1] as Fr) · 2⁶⁴`                      | Write `FReg[frd] = [0, rs1, 0, 0]`; emit `FieldRegEvent { slot = frd, new }`                          |
-| 0x09   | `FieldSLL128`    | XReg[rs1]       | (unused)        | FReg[frd]       | `FReg[frd] = (XReg[rs1] as Fr) · 2¹²⁸`                     | Write `FReg[frd] = [0, 0, rs1, 0]`; emit `FieldRegEvent { slot = frd, new }`                          |
-| 0x0A   | `FieldSLL192`    | XReg[rs1]       | (unused)        | FReg[frd]       | `FReg[frd] = (XReg[rs1] as Fr) · 2¹⁹²` (caller must canonicalize < p) | Write `FReg[frd] = [0, 0, 0, rs1]`; emit `FieldRegEvent { slot = frd, new }`                    |
+
+**Under funct7=0x41 (SLL sub-family):**
+
+| funct3 | Mnemonic         | rs1             | rs2             | rd              | Semantics                                                  | Tracer state update                                                                                   |
+|--------|------------------|-----------------|-----------------|-----------------|------------------------------------------------------------|-------------------------------------------------------------------------------------------------------|
+| 0x00   | `FieldSLL64`     | XReg[rs1]       | (unused)        | FReg[frd]       | `FReg[frd] = (XReg[rs1] as Fr) · 2⁶⁴`                      | Write `FReg[frd] = [0, rs1, 0, 0]`; emit `FieldRegEvent { slot = frd, new }`                          |
+| 0x01   | `FieldSLL128`    | XReg[rs1]       | (unused)        | FReg[frd]       | `FReg[frd] = (XReg[rs1] as Fr) · 2¹²⁸`                     | Write `FReg[frd] = [0, 0, rs1, 0]`; emit `FieldRegEvent { slot = frd, new }`                          |
+| 0x02   | `FieldSLL192`    | XReg[rs1]       | (unused)        | FReg[frd]       | `FReg[frd] = (XReg[rs1] as Fr) · 2¹⁹²` (caller must canonicalize < p) | Write `FReg[frd] = [0, 0, 0, rs1]`; emit `FieldRegEvent { slot = frd, new }`                    |
 
 **Register-field mixing pin-down:** the bytecode `rs1`/`rs2`/`rd` bit-fields are the same 5 bits for every instruction. What differs is interpretation. For field-only ops (FMUL/FADD/FSUB/FINV/FieldAssertEq) the low 4 bits index FReg; the bytecode's `Rs1Value`/`Rs2Value`/`RdWriteValue` columns are treated as zero (no XReg read/write occurs). For bridge ops (FieldMov/FieldSLL*) the `rs1` bits index XReg (5 bits, 0..=31) and the `rd` bits index FReg (low 4 bits, 0..=15); `rs2` is zero. `FieldAssertEq` reads two FRegs and writes nothing — its `rd` bits are ignored (zero).
 
