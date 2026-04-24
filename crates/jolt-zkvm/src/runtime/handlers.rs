@@ -940,34 +940,19 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                 .as_ref()
                 .unwrap();
             let trace = provider.lookup_trace().unwrap();
-            let prefix_vals: Vec<F> = state
-                .instance_scalars
-                .iter()
-                .map(|v| v.unwrap_or(F::zero()))
-                .collect();
-            let mut table_values = vec![F::zero(); config.suffix_at_empty.len()];
-            for e in &config.combine_entries {
-                let p = e.prefix_idx.map_or(F::one(), |i| prefix_vals[i]);
-                let s = F::from_u64(config.suffix_at_empty[e.table_idx][e.suffix_local_idx]);
-                table_values[e.table_idx] += F::from_i128(e.coefficient) * p * s;
-            }
             let gamma = state.challenges[config.gamma.0];
             let gsqr = gamma * gamma;
             let left = state.challenges[config.registry_checkpoint_slots[1].0];
             let right = state.challenges[config.registry_checkpoint_slots[0].0];
             let ident = state.challenges[config.registry_checkpoint_slots[2].0];
-            let raf_inter = gamma * left + gsqr * right;
-            let raf_ident = gsqr * ident;
-            let combined: Vec<F> = (0..trace.lookup_keys.len())
-                .map(|j| {
-                    trace.table_kind_indices[j].map_or(F::zero(), |t| table_values[t])
-                        + if trace.is_interleaved[j] {
-                            raf_inter
-                        } else {
-                            raf_ident
-                        }
-                })
-                .collect();
+            let combined = compute_combined_val(
+                &config.combine_entries,
+                &config.suffix_at_empty,
+                &state.instance_scalars,
+                gamma * left + gsqr * right,
+                gsqr * ident,
+                trace,
+            );
             let _ = device_buffers.insert(
                 config.output_combined_val,
                 DeviceBuffer::Field(backend.upload(&combined)),
@@ -1308,6 +1293,46 @@ fn compute_ra_chunk<F: Field>(
                 acc *= et[((key >> shift) as usize) & m_mask];
             }
             acc
+        })
+        .collect()
+}
+
+/// Compute the combined-val polynomial for `Op::MaterializeCombinedVal`.
+/// Returns a vec of length `trace.lookup_keys.len()`:
+///
+/// `combined[j] = table_values[table_kind[j]] + (interleaved[j] ? raf_inter : raf_ident)`
+///
+/// where `table_values[t]` is the prefix×suffix accumulation of
+/// `combine_entries` at the empty suffix point, using the
+/// `instance_scalars` scalar checkpoints for prefix contributions. See
+/// OPS.md Group A — pending lowering to `Op::TraceGatherIndexed` +
+/// conditional-scalar injection.
+fn compute_combined_val<F: Field>(
+    combine_entries: &[jolt_compiler::module::CombineEntry],
+    suffix_at_empty: &[Vec<u64>],
+    instance_scalars: &[Option<F>],
+    raf_inter: F,
+    raf_ident: F,
+    trace: &jolt_compiler::LookupTraceData,
+) -> Vec<F> {
+    let prefix_vals: Vec<F> = instance_scalars
+        .iter()
+        .map(|v| v.unwrap_or(F::zero()))
+        .collect();
+    let mut table_values = vec![F::zero(); suffix_at_empty.len()];
+    for e in combine_entries {
+        let p = e.prefix_idx.map_or(F::one(), |i| prefix_vals[i]);
+        let s = F::from_u64(suffix_at_empty[e.table_idx][e.suffix_local_idx]);
+        table_values[e.table_idx] += F::from_i128(e.coefficient) * p * s;
+    }
+    (0..trace.lookup_keys.len())
+        .map(|j| {
+            trace.table_kind_indices[j].map_or(F::zero(), |t| table_values[t])
+                + if trace.is_interleaved[j] {
+                    raf_inter
+                } else {
+                    raf_ident
+                }
         })
         .collect()
 }
