@@ -30,6 +30,7 @@ members = [
   "crates/jolt-lookup-tables",
   "crates/jolt-r1cs",
   "crates/jolt-sumcheck",
+  "crates/jolt-openings",
   "crates/jolt-riscv",
   "crates/jolt-riscv-derive",
   "crates/jolt-transcript",
@@ -373,6 +374,7 @@ secp256k1 = { version = "0.31", features = ["recovery", "rand"] }
 common = { path = "./common", default-features = false }
 tracer = { path = "./tracer", default-features = false }
 jolt-core = { path = "./jolt-core", default-features = false }
+jolt-crypto = { path = "./crates/jolt-crypto" }
 jolt-field = { path = "./crates/jolt-field" }
 jolt-poly = { path = "./crates/jolt-poly" }
 jolt-transcript = { path = "./crates/jolt-transcript" }
