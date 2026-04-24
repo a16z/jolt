@@ -25,20 +25,27 @@ pub const NUM_DISTINCT_LOOKUP_TABLES: usize = 41;
 /// log_T < 24 → 16 phases; log_T >= 24 → 8 phases.
 pub const INSTRUCTION_PHASES_THRESHOLD_LOG_T: usize = 24;
 
-/// R1CS column dimension (padded to next power of 2 for Spartan).
+/// R1CS column dimension (padded to next power of 2 for Spartan). After the
+/// v2 BN254 Fr coprocessor expansion this must cover `NUM_VARS_PER_CYCLE = 50`
+/// in `jolt_r1cs::constraints::rv64`; 50.next_power_of_two() = 64.
 pub const NUM_VARS_PADDED: usize = 64;
-/// Number of R1CS constraints.
-pub const NUM_R1CS_CONSTRAINTS: usize = 19;
-/// Number of R1CS input polynomials.
-pub const NUM_R1CS_INPUTS: usize = 35;
+/// Number of R1CS eq constraints (Spartan outer-sumcheck group-split input
+/// count). Matches `jolt_r1cs::constraints::rv64::NUM_EQ_CONSTRAINTS = 32`
+/// (19 RV base + 13 BN254 Fr coprocessor rows).
+pub const NUM_R1CS_CONSTRAINTS: usize = 32;
+/// Number of R1CS input polynomials (slots 1..=47 in `rv64.rs`). Covers the
+/// 21 RV-base inputs + 14 RV-base flags + 9 BN254 Fr flags + 3 virtual
+/// BN254 Fr operand columns. `V_BRANCH` (48) and `V_NEXT_IS_NOOP` (49) are
+/// product factors, not inputs.
+pub const NUM_R1CS_INPUTS: usize = 47;
 
 /// Uniskip domain: constraints split into 2 groups, domain = (C-1)/2 + 1.
-pub const UNISKIP_DOMAIN_SIZE: usize = (NUM_R1CS_CONSTRAINTS - 1) / 2 + 1; // 10
+pub const UNISKIP_DOMAIN_SIZE: usize = (NUM_R1CS_CONSTRAINTS - 1) / 2 + 1; // 16
 /// Group 1 has UNISKIP_DOMAIN_SIZE constraints, group 2 has the rest.
-pub const NUM_GROUP2_CONSTRAINTS: usize = NUM_R1CS_CONSTRAINTS - UNISKIP_DOMAIN_SIZE; // 9
+pub const NUM_GROUP2_CONSTRAINTS: usize = NUM_R1CS_CONSTRAINTS - UNISKIP_DOMAIN_SIZE; // 16
 
-/// Number of circuit flags.
-pub const NUM_CIRCUIT_FLAGS: usize = 14;
+/// Number of circuit flags (14 RV base + 9 BN254 Fr coprocessor).
+pub const NUM_CIRCUIT_FLAGS: usize = 23;
 /// Number of instruction flags.
 pub const NUM_INSTRUCTION_FLAGS: usize = 6;
 /// Number of lookup tables (must match jolt-core's `LookupTables::COUNT` = 41).

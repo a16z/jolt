@@ -87,14 +87,27 @@ fn compare_witness_variables() {
         /* 33 */ "FLAG_IsCompressed",
         /* 34 */ "FLAG_IsFirstInSeq",
         /* 35 */ "FLAG_IsLastInSeq",
-        /* 36 */ "Branch",
-        /* 37 */ "NextIsNoop",
+        /* 36 */ "FLAG_IsFieldMul",
+        /* 37 */ "FLAG_IsFieldAdd",
+        /* 38 */ "FLAG_IsFieldSub",
+        /* 39 */ "FLAG_IsFieldInv",
+        /* 40 */ "FLAG_IsFieldAssertEq",
+        /* 41 */ "FLAG_IsFieldMov",
+        /* 42 */ "FLAG_IsFieldSLL64",
+        /* 43 */ "FLAG_IsFieldSLL128",
+        /* 44 */ "FLAG_IsFieldSLL192",
+        /* 45 */ "FieldRs1Value",
+        /* 46 */ "FieldRs2Value",
+        /* 47 */ "FieldRdValue",
+        /* 48 */ "Branch",
+        /* 49 */ "NextIsNoop",
     ];
 
-    // Compare witness variables for real cycles.
-    // We compare variables 0..=35 (CONST + 35 inputs).
-    // Variables 36 (Branch) and 37 (NextIsNoop) are product factors that
-    // jolt-core doesn't expose directly — we skip them.
+    // Compare witness variables for real cycles. We only compare slots that
+    // exist on the jolt-core side (0..=35: CONST + 35 inputs). Slots 36..=44
+    // (FR flags) and 45..=47 (virtual FR operand openings) have no jolt-core
+    // counterpart (jolt-core predates the BN254 Fr coprocessor); slots 48/49
+    // are product factors jolt-core doesn't expose.
     let compare_range = 0..=35usize;
 
     let mut total_mismatches = 0usize;

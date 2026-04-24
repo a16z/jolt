@@ -24,6 +24,7 @@ use jolt_core::transcripts::Blake2bTranscript;
 use jolt_core::zkvm::instruction::{
     Flags as CoreFlags, InstructionLookup, InterleavedBitsMarker as CoreInterleavedBits,
 };
+use jolt_instructions::InterleavedBitsMarker as ModInterleavedBits;
 use jolt_core::zkvm::lookup_table::LookupTables as CoreLookupTables;
 use jolt_core::zkvm::proof_serialization::JoltProof;
 use jolt_core::zkvm::prover::{JoltCpuProver, JoltProverPreprocessing};
@@ -470,7 +471,7 @@ fn setup_zkvm_muldiv(
         });
         table_indices[t] = InstructionLookup::<64>::lookup_table(cycle)
             .map(|t| CoreLookupTables::<64>::enum_index(&t));
-        is_interleaved[t] = CoreInterleavedBits::is_interleaved_operands(&cycle.circuit_flags());
+        is_interleaved[t] = ModInterleavedBits::is_interleaved_operands(&cycle.circuit_flags());
     }
     let reg_access = RegisterAccessData {
         rd_indices,
@@ -935,6 +936,9 @@ fn hex(b: &[u8]) -> String {
 ///
 /// The first divergence pinpoints the exact operation where the two systems disagree.
 #[test]
+#[ignore = "v2 BN254 Fr coprocessor: modular R1CS has 32 eq + 3 product rows, \
+            jolt-core still has 19 + 3. Cross-stack transcript divergence is \
+            intentional per specs/bn254-fr-coprocessor.md §Acceptance criteria #6."]
 fn transcript_divergence() {
     let (golden, _) = jolt_core_state_history();
     let log = match jolt_zkvm_checkpoint() {
@@ -1472,6 +1476,9 @@ fn run_jolt_zkvm_prover(
 
 /// Prove with jolt-zkvm, convert to jolt-core's proof type, verify with jolt-core verifier.
 #[test]
+#[ignore = "v2 BN254 Fr coprocessor: modular R1CS has 32 eq + 3 product rows, \
+            jolt-core still has 19 + 3. Cross-stack verification is intentionally \
+            broken per specs/bn254-fr-coprocessor.md §Acceptance criteria #6."]
 fn zkvm_proof_accepted_by_core_verifier() {
     // 1. Run jolt-core prover to get proof scaffolding + verifier preprocessing.
     let (core_proof, verifier_preprocessing, io, params) = run_jolt_core_prover();
@@ -1604,6 +1611,11 @@ fn zkvm_proof_accepted_by_core_verifier() {
 /// commitments) is the first of several steps needed; the remaining
 /// work is tracked in PERF_TASKS.md.
 #[test]
+#[ignore = "v2 BN254 Fr coprocessor: prover path runs on jolt-core (19+3 R1CS rows) \
+            but modular verifier expects 32+3 rows. Cross-stack self-verify is \
+            intentionally broken per specs/bn254-fr-coprocessor.md §Acceptance \
+            criteria #6. A follow-up should replace with modular-only prove+verify \
+            once jolt-zkvm's standalone prover pipeline is complete."]
 fn modular_self_verify() {
     use jolt_dory::types::DoryVerifierSetup;
 

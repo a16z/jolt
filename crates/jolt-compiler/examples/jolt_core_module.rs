@@ -168,6 +168,12 @@ struct Polys {
     should_jump: PolynomialId,
     op_flags: Vec<PolynomialId>, // [0..NUM_CIRCUIT_FLAGS)
 
+    // Virtual — BN254 Fr coprocessor operand columns (R1CS slots 45/46/47).
+    // Phase 4 FR Twist will bind these via γ-batched Val·Ra openings.
+    field_rs1_value: PolynomialId,
+    field_rs2_value: PolynomialId,
+    field_rd_value: PolynomialId,
+
     // Virtual — non-R1CS-input trace values
     next_is_noop: PolynomialId,
     rd: PolynomialId,
@@ -231,15 +237,16 @@ struct Polys {
 fn register_polys(pt: &mut PolyTable, p: &ModuleParams) -> Polys {
     use PolyKind::{Committed, Virtual};
     use PolynomialId::{
-        Az, BranchFlag, BytecodeRa, BytecodeReadRafVal, Bz, ExpandedPc, HammingG, HammingWeight,
-        Imm, InstructionRa, InstructionRafFlag, IoMask, LeftInstructionInput, LeftIsPc, LeftIsRs1,
-        LeftLookupOperand, LookupOutput, LookupTableFlag, NextIsFirstInSequence, NextIsNoop,
-        NextIsVirtual, NextPc, NextUnexpandedPc, NoopFlag, OpFlag, OuterUniskipEval, Product,
-        ProductLeft, ProductRight, ProductUniskipEval, RamAddress, RamCombinedRa, RamInc, RamRa,
-        RamRafRa, RamReadValue, RamVal, RamValFinal, RamWriteValue, Rd, RdInc, RdWa, RdWriteValue,
-        RegistersVal, RightInstructionInput, RightIsImm, RightIsRs2, RightLookupOperand, Rs1Ra,
-        Rs1Value, Rs2Ra, Rs2Value, ShouldBranch, ShouldJump, SpartanEq, TrustedAdvice,
-        UnexpandedPc, UntrustedAdvice, ValIo,
+        Az, BranchFlag, BytecodeRa, BytecodeReadRafVal, Bz, ExpandedPc, FieldRdValue,
+        FieldRs1Value, FieldRs2Value, HammingG, HammingWeight, Imm, InstructionRa,
+        InstructionRafFlag, IoMask, LeftInstructionInput, LeftIsPc, LeftIsRs1, LeftLookupOperand,
+        LookupOutput, LookupTableFlag, NextIsFirstInSequence, NextIsNoop, NextIsVirtual, NextPc,
+        NextUnexpandedPc, NoopFlag, OpFlag, OuterUniskipEval, Product, ProductLeft, ProductRight,
+        ProductUniskipEval, RamAddress, RamCombinedRa, RamInc, RamRa, RamRafRa, RamReadValue,
+        RamVal, RamValFinal, RamWriteValue, Rd, RdInc, RdWa, RdWriteValue, RegistersVal,
+        RightInstructionInput, RightIsImm, RightIsRs2, RightLookupOperand, Rs1Ra, Rs1Value, Rs2Ra,
+        Rs2Value, ShouldBranch, ShouldJump, SpartanEq, TrustedAdvice, UnexpandedPc,
+        UntrustedAdvice, ValIo,
     };
 
     // Committed (jolt-core transcript order)
@@ -342,9 +349,17 @@ fn register_polys(pt: &mut PolyTable, p: &ModuleParams) -> Polys {
     );
     let lookup_output = pt.add(LookupOutput, "LookupOutput", Virtual, p.log_t);
     let should_jump = pt.add(ShouldJump, "ShouldJump", Virtual, p.log_t);
-    let op_flags: Vec<_> = (0..14)
+    let op_flags: Vec<_> = (0..NUM_CIRCUIT_FLAGS)
         .map(|i| pt.add(OpFlag(i), &format!("OpFlag_{i}"), Virtual, p.log_t))
         .collect();
+
+    // BN254 Fr virtual operand columns. These live at R1CS slots 45/46/47;
+    // their per-cycle values will be bound by the FR Twist at Phase 4, but
+    // the polynomial IDs must exist at Stage-1 for Spartan Az/Bz/Cz matrix
+    // construction to reference the FR R1CS rows (rv64 rows 19-31).
+    let field_rs1_value = pt.add(FieldRs1Value, "FieldRs1Value", Virtual, p.log_t);
+    let field_rs2_value = pt.add(FieldRs2Value, "FieldRs2Value", Virtual, p.log_t);
+    let field_rd_value = pt.add(FieldRdValue, "FieldRdValue", Virtual, p.log_t);
 
     // Virtual — non-R1CS-input trace values
     let next_is_noop = pt.add(NextIsNoop, "NextIsNoop", Virtual, p.log_t);
@@ -516,6 +531,9 @@ fn register_polys(pt: &mut PolyTable, p: &ModuleParams) -> Polys {
         lookup_output,
         should_jump,
         op_flags,
+        field_rs1_value,
+        field_rs2_value,
+        field_rd_value,
         next_is_noop,
         rd,
         inst_flag_left_is_pc,
@@ -995,6 +1013,20 @@ fn r1cs_input_polys(p: &Polys) -> [PolynomialId; NUM_R1CS_INPUTS] {
         p.op_flags[11],            // 32: OpFlags(IsCompressed)
         p.op_flags[12],            // 33: OpFlags(IsFirstInSequence)
         p.op_flags[13],            // 34: OpFlags(IsLastInSequence)
+        // BN254 Fr coprocessor circuit flags (jolt-r1cs slots 36..=44).
+        p.op_flags[14],            // 35: OpFlags(IsFieldMul)
+        p.op_flags[15],            // 36: OpFlags(IsFieldAdd)
+        p.op_flags[16],            // 37: OpFlags(IsFieldSub)
+        p.op_flags[17],            // 38: OpFlags(IsFieldInv)
+        p.op_flags[18],            // 39: OpFlags(IsFieldAssertEq)
+        p.op_flags[19],            // 40: OpFlags(IsFieldMov)
+        p.op_flags[20],            // 41: OpFlags(IsFieldSLL64)
+        p.op_flags[21],            // 42: OpFlags(IsFieldSLL128)
+        p.op_flags[22],            // 43: OpFlags(IsFieldSLL192)
+        // BN254 Fr virtual operand columns (jolt-r1cs slots 45..=47).
+        p.field_rs1_value,         // 44: FieldRs1Value
+        p.field_rs2_value,         // 45: FieldRs2Value
+        p.field_rd_value,          // 46: FieldRdValue
     ]
 }
 

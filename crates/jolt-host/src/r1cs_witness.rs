@@ -101,6 +101,22 @@ pub fn r1cs_cycle_witness<C: CycleRow, F: Field>(
     w[V_FLAG_IS_FIRST_IN_SEQUENCE] = F::from_u64(cflags[CircuitFlags::IsFirstInSequence] as u64);
     w[V_FLAG_IS_LAST_IN_SEQUENCE] = F::from_u64(cflags[CircuitFlags::IsLastInSequence] as u64);
 
+    // BN254 Fr coprocessor flags. FieldRs1Value/FieldRs2Value/FieldRdValue
+    // (slots 45/46/47) intentionally stay zero here — Phase 4 FR Twist will
+    // populate them from the per-cycle field_regs snapshot and prove the
+    // values consistent with FieldRegInc. Until then, honest-FR programs
+    // can't end-to-end prove (a non-trivial FR value breaks the bridge
+    // rows), which is the documented Phase 3 / Phase 4 boundary.
+    w[V_FLAG_IS_FIELD_MUL] = F::from_u64(cflags[CircuitFlags::IsFieldMul] as u64);
+    w[V_FLAG_IS_FIELD_ADD] = F::from_u64(cflags[CircuitFlags::IsFieldAdd] as u64);
+    w[V_FLAG_IS_FIELD_SUB] = F::from_u64(cflags[CircuitFlags::IsFieldSub] as u64);
+    w[V_FLAG_IS_FIELD_INV] = F::from_u64(cflags[CircuitFlags::IsFieldInv] as u64);
+    w[V_FLAG_IS_FIELD_ASSERT_EQ] = F::from_u64(cflags[CircuitFlags::IsFieldAssertEq] as u64);
+    w[V_FLAG_IS_FIELD_MOV] = F::from_u64(cflags[CircuitFlags::IsFieldMov] as u64);
+    w[V_FLAG_IS_FIELD_SLL64] = F::from_u64(cflags[CircuitFlags::IsFieldSLL64] as u64);
+    w[V_FLAG_IS_FIELD_SLL128] = F::from_u64(cflags[CircuitFlags::IsFieldSLL128] as u64);
+    w[V_FLAG_IS_FIELD_SLL192] = F::from_u64(cflags[CircuitFlags::IsFieldSLL192] as u64);
+
     // Product factors
     w[V_BRANCH] = F::from_u64(iflags[InstructionFlags::Branch] as u64);
     w[V_SHOULD_BRANCH] = w[V_LOOKUP_OUTPUT] * w[V_BRANCH];
