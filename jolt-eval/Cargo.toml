@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 jolt-core = { workspace = true, features = ["host"] }
+jolt-field = { workspace = true }
 common = { workspace = true, features = ["std"] }
 tracer = { workspace = true }
 
@@ -38,11 +39,27 @@ name = "bind_parallel_high_to_low"
 harness = false
 
 [[bench]]
-name = "naive_sort_time"
+name = "bind_parallel_low_to_high"
 harness = false
 
 [[bench]]
-name = "bind_parallel_low_to_high"
+name = "field_mul_i128"
+harness = false
+
+[[bench]]
+name = "field_mul_i64"
+harness = false
+
+[[bench]]
+name = "field_mul_u128"
+harness = false
+
+[[bench]]
+name = "field_mul_u64"
+harness = false
+
+[[bench]]
+name = "naive_sort_time"
 harness = false
 
 [[bench]]

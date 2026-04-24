@@ -377,8 +377,7 @@ fn build_optimize_prompt(
          3. Focus your changes on the paths listed above -- do NOT modify `jolt-eval/` unless \
             it is explicitly listed.\n\
          4. Prefer changes that are safe, correct, and unlikely to break invariants.\n\
-         5. Run `cargo clippy -p jolt-core --features host --message-format=short -q` \
-            to verify your changes compile.\n\
+         5. Run clippy to verify your changes compile.\n\
          6. Summarize what you changed and why you expect improvement.\n\n",
     );
 
