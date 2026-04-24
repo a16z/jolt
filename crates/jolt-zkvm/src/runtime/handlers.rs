@@ -847,25 +847,19 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                 .instance_config
                 .as_ref()
                 .unwrap();
-            let suffix_polys: Vec<Vec<Vec<F>>> = (0..config.num_tables)
-                .map(|t| {
-                    (0..config.suffixes_per_table[t])
-                        .map(|s| {
-                            backend.download(
-                                device_buffers[&PolynomialId::InstanceSuffix(t, s)].as_field(),
-                            )
-                        })
-                        .collect()
-                })
-                .collect();
-            let checkpoints: Vec<Option<F>> = state.instance_scalars.clone();
-            let r_x: Option<F> = r_x_challenge.map(|ci| state.challenges[ci.0]);
+            let suffix_polys = download_suffix_polys(
+                config.num_tables,
+                &config.suffixes_per_table,
+                device_buffers,
+                backend,
+            );
+            let r_x = r_x_challenge.map(|ci| state.challenges[ci.0]);
             state.read_checking_evals =
                 crate::runtime::prefix_suffix::compute_read_checking_from_lowered(
                     &config.prefix_lowered[*round],
                     &config.combine_entries,
                     &suffix_polys,
-                    &checkpoints,
+                    &state.instance_scalars,
                     r_x,
                 );
         }
@@ -1333,6 +1327,25 @@ fn compute_combined_val<F: Field>(
                 } else {
                     raf_ident
                 }
+        })
+        .collect()
+}
+
+/// Download the full `suffix_polys[table][suffix]` buffer grid from
+/// `device_buffers[InstanceSuffix(t, s)]`. Consumed by `compute_read_checking_from_lowered`.
+fn download_suffix_polys<B: ComputeBackend, F: Field>(
+    num_tables: usize,
+    suffixes_per_table: &[usize],
+    device_buffers: &HashMap<PolynomialId, Buf<B, F>>,
+    backend: &B,
+) -> Vec<Vec<Vec<F>>> {
+    (0..num_tables)
+        .map(|t| {
+            (0..suffixes_per_table[t])
+                .map(|s| {
+                    backend.download(device_buffers[&PolynomialId::InstanceSuffix(t, s)].as_field())
+                })
+                .collect()
         })
         .collect()
 }
