@@ -22,6 +22,7 @@ impl JoltInstructionSet {
         use crate::rv::arithmetic_w::*;
         use crate::rv::branch::*;
         use crate::rv::compare::*;
+        use crate::rv::field::*;
         use crate::rv::jump::*;
         use crate::rv::load::*;
         use crate::rv::logic::*;
@@ -168,6 +169,16 @@ impl JoltInstructionSet {
             Box::new(VirtualAdviceLen),
             Box::new(VirtualAdviceLoad),
             Box::new(VirtualHostIO),
+            // BN254 Fr native-field coprocessor (105-113)
+            Box::new(FieldMul),
+            Box::new(FieldAdd),
+            Box::new(FieldSub),
+            Box::new(FieldInv),
+            Box::new(FieldAssertEq),
+            Box::new(FieldMov),
+            Box::new(FieldSLL64),
+            Box::new(FieldSLL128),
+            Box::new(FieldSLL192),
         ];
 
         debug_assert_eq!(all.len(), opcodes::COUNT as usize);

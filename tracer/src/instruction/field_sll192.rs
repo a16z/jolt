@@ -141,7 +141,6 @@ impl From<FieldSLL192> for NormalizedInstruction {
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::emulator::terminal::DummyTerminal;

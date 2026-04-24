@@ -17,7 +17,7 @@ use crate::CycleRow;
 macro_rules! with_isa_struct {
     ($instr:expr, |$i:ident| $body:expr, noop => $noop:expr) => {{
         use jolt_instructions::rv::{
-            arithmetic, branch, compare, jump, load, logic, store, system,
+            arithmetic, branch, compare, field, jump, load, logic, store, system,
         };
         use jolt_instructions::virtual_::{
             advice, arithmetic as varith, assert as vassert, bitwise, byte, division, extension,
@@ -298,6 +298,48 @@ macro_rules! with_isa_struct {
             }
             Instruction::VirtualXORROTW7(_) => {
                 let $i = xor_rotate::VirtualXorRotW7;
+                $body
+            }
+            // BN254 Fr native-field coprocessor. FieldOp bundles four
+            // arithmetic ops behind one tracer struct discriminated by funct3;
+            // the rest each map to their own jolt-instructions struct.
+            Instruction::FieldOp(op) => match op.funct3 {
+                0x02 => {
+                    let $i = field::FieldMul;
+                    $body
+                }
+                0x03 => {
+                    let $i = field::FieldAdd;
+                    $body
+                }
+                0x04 => {
+                    let $i = field::FieldInv;
+                    $body
+                }
+                0x05 => {
+                    let $i = field::FieldSub;
+                    $body
+                }
+                other => panic!("invalid FieldOp funct3: {other:#x}"),
+            },
+            Instruction::FieldAssertEq(_) => {
+                let $i = field::FieldAssertEq;
+                $body
+            }
+            Instruction::FieldMov(_) => {
+                let $i = field::FieldMov;
+                $body
+            }
+            Instruction::FieldSLL64(_) => {
+                let $i = field::FieldSLL64;
+                $body
+            }
+            Instruction::FieldSLL128(_) => {
+                let $i = field::FieldSLL128;
+                $body
+            }
+            Instruction::FieldSLL192(_) => {
+                let $i = field::FieldSLL192;
                 $body
             }
             Instruction::NoOp => $noop,

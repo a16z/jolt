@@ -44,6 +44,14 @@ pub enum PolynomialId {
     RdWa,
     Rd,
 
+    // Virtual: BN254 Fr coprocessor register subsystem (mirrors the integer
+    // register subsystem above, one-for-one). Populated in the Spartan z-vector
+    // per cycle from the FieldRegEvent stream; proven sound against the FR
+    // Twist's γ-batched Val·Ra openings in Stage 4 (see Phase 4 plan).
+    FieldRs1Value,
+    FieldRs2Value,
+    FieldRdValue,
+
     // Virtual: instruction lookups
     LookupOutput,
     LeftLookupOperand,
@@ -359,6 +367,12 @@ impl PolynomialId {
             Self::LookupOutput => Some(20),
             Self::ShouldJump => Some(21),
             Self::OpFlag(i) => Some(22 + i),
+            // BN254 Fr virtual R1CS operand columns — slots freed after the
+            // OpFlag range (22..=44 = 14 RV flags + 9 FR flags). See
+            // crates/jolt-r1cs/src/constraints/rv64.rs V_FIELD_RS1_VALUE etc.
+            Self::FieldRs1Value => Some(45),
+            Self::FieldRs2Value => Some(46),
+            Self::FieldRdValue => Some(47),
             _ => None,
         }
     }

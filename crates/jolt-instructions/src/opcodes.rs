@@ -154,5 +154,16 @@ pub const VIRTUAL_ADVICE_LEN: u32 = 102;
 pub const VIRTUAL_ADVICE_LOAD: u32 = 103;
 pub const VIRTUAL_HOST_IO: u32 = 104;
 
+// BN254 Fr native-field coprocessor
+pub const FIELD_MUL: u32 = 105;
+pub const FIELD_ADD: u32 = 106;
+pub const FIELD_SUB: u32 = 107;
+pub const FIELD_INV: u32 = 108;
+pub const FIELD_ASSERT_EQ: u32 = 109;
+pub const FIELD_MOV: u32 = 110;
+pub const FIELD_SLL64: u32 = 111;
+pub const FIELD_SLL128: u32 = 112;
+pub const FIELD_SLL192: u32 = 113;
+
 /// Total number of opcodes in the instruction set.
-pub const COUNT: u32 = 105;
+pub const COUNT: u32 = 114;
