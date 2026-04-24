@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776988971293,
+  "lastUpdate": 1777061915938,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -88330,6 +88330,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 863468,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "53157953+markosg04@users.noreply.github.com",
+            "name": "Markos",
+            "username": "markosg04"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6573da59f97507d7f250584b065dbba980493e99",
+          "message": "feat(jolt-sumcheck): add sumcheck protocol verifier + domain helpers (#1449)\n\n* feat(jolt-sumcheck): add sumcheck protocol verifier + domain helpers\n\nAdds the verifier side of the sumcheck protocol as a standalone crate so\ndownstream proof systems (openings, dory, zkvm) can depend on a stable\nsurface without pulling in the full prover.\n\nCrate layout:\n\n- `SumcheckClaim` — the public statement being reduced, shape\n  `(num_vars, degree, claimed_sum)`.\n- `SumcheckProof` — a serializable list of per-round `UnivariatePoly`\n  messages plus the final evaluation of the polynomial being summed.\n- `SumcheckVerifier` — verifies a single claim round by round, delegating\n  absorb/consistency-check to a strategy trait.\n- `BatchedSumcheckVerifier` — random linear combination batching\n  multiple claims with matching degree into one sumcheck run.\n- `RoundVerifier` + `ClearRoundVerifier` — strategy trait for how round\n  messages are absorbed and verified. `ClearRoundVerifier` implements\n  the cleartext flow (consistency check `poly(0) + poly(1) == running`);\n  the upcoming `jolt-blindfold` crate will add a committed variant.\n- `SumcheckError` — typed error variants for degree-bound, round check,\n  and batching edge cases.\n\nThe crate's `tests/` directory exercises roundtrip and soundness scenarios\nagainst a matching prover stub, including replayed rounds, swapped round\norder, transcript desync, and batched adversarial claims.\n\nAlongside, `jolt-transcript` gains two small modules that the sumcheck\nverifier and all downstream proof crates (openings, dory, verifier, zkvm)\nalready depend on to stay byte-compatible with jolt-core's Fiat-Shamir\nencoding:\n\n- `jolt_transcript::domain` — `Label`, `LabelWithCount`, `U64Word` mirror\n  jolt-core's `raw_append_label`, `raw_append_label_with_len`, and\n  `raw_append_u64` so the modular stack produces identical transcript\n  states for the same inputs.\n- `jolt_transcript::mock` — `MockTranscript`, a deterministic transcript\n  keyed off a Blake2b seed. Required by sumcheck tests and reused by\n  openings and dory to drive prover/verifier roundtrips without a real\n  Fiat-Shamir run.\n\nThese are the only transcript extensions sumcheck needs and are reused\nby downstream crates in this stack; no other `jolt-transcript` APIs are\ntouched.\n\nLocal tweak to reconcile against the polished `jolt-field` API: the\nbatched verifier's `alpha^j` weighting previously used `F::pow(j)`,\nwhich is not in the polished `Field` trait. Rewrote it as a running\nmultiplication over the claim loop — same result, no new trait method\nrequired.\n\n* refactor(jolt-sumcheck): harden verifier surface from code review\n\n- Promote Label/LabelWithCount debug_assert to assert, matching jolt-core\n  and preventing silent label truncation in release builds.\n- Correct misleading c1 recovery formula on ClearRoundVerifier doc.\n- Add CompressedPolynomialTooShort guard rejecting malformed round polys\n  (< 2 coefficients) before transcript absorption.\n- Mark SumcheckError #[non_exhaustive] so BlindFold/committed-mode\n  variants can land without a semver break downstream.\n- Document the num_vars == 0 contract on SumcheckVerifier::verify.\n- Drop the orphaned FinalEvalMismatch variant (only used in tests) and\n  switch soundness tests to a local OracleCheckError.\n- Delete MockTranscript and move tests to Blake2bTranscript so the test\n  suite exercises real Fiat-Shamir binding.\n- Fold README.md into lib.rs module docs; add tests covering\n  with_label_compressed roundtrip, sum-check binding, and the new guard.\n\n* chore(jolt-sumcheck): use workspace dependencies\n\nRegister jolt-poly, jolt-transcript, and jolt-sumcheck in the root\nworkspace dependency table and switch jolt-sumcheck over to workspace\nreferences for its internal and third-party crates.\n\n* refactor(jolt-sumcheck): return EvaluationClaim from verifier\n\nTypes the verifier output `(F, Vec<F>)` as `EvaluationClaim { point, value }`\nso the oracle query produced by a successful sumcheck reduction composes\ncleanly with downstream opening-proof / claim-reduction layers.\n\n* refactor(jolt-sumcheck): rename batched.rs to batched_verifier.rs\n\nThe module holds only the verifier type, so match the existing\n`verifier.rs` naming pattern rather than the stubby `batched`.\n\n* refactor(jolt-sumcheck): collapse RoundVerifier into RoundProof trait\n\nSingle per-round trait on the round-poly type itself replaces the\nstrategy-object split between absorb_and_check and next_running_sum.\nThe verifier loop owns the degree-bound check; mode-specific behaviour\n(raw vs labeled, full vs compressed, and future committed-mode) is\nencoded by the concrete RoundProof impl. Future ZK support becomes a\nnew impl rather than a new strategy trait.\n\nDrops `RoundVerifier` and `ClearRoundVerifier`; adds `LabeledRoundPoly`\nand `CompressedLabeledRoundPoly` as borrowed wrappers, plus a direct\nimpl on `UnivariatePoly` for the raw, unlabelled case.\n\n* refactor(jolt-sumcheck): typed F in errors + validating claim constructor\n\nTwo local polish items that preserve protocol/transcript parity:\n\n* `SumcheckError` is now generic in `F: Field` so `RoundCheckFailed`\n  stores expected/actual as field elements instead of `String`. Error\n  formatting rides on `Field: Display` — no extra bound needed.\n* `SumcheckClaim::new(num_vars, degree, claimed_sum)` asserts\n  `degree >= 1`. Public fields preserved; new is additive.\n\n---------\n\nCo-authored-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>",
+          "timestamp": "2026-04-24T15:18:26-04:00",
+          "tree_id": "03e73bc8cc11bf10bab7fb2db861c560a6460102",
+          "url": "https://github.com/a16z/jolt/commit/6573da59f97507d7f250584b065dbba980493e99"
+        },
+        "date": 1777061913431,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.7908,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 864976,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3334,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 496536,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 498820,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 498632,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7214,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 498324,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5805,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 496504,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.805,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 500300,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.7529,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 235840,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4147,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 863516,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5688,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 498792,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4597,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 500544,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 20.6634,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 498720,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.736,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 502352,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.4147,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1012356,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.1644,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 658972,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 82.5025,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2127820,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4759,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 502524,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.506,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 498656,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 14.3428,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 864412,
             "unit": "KB",
             "extra": ""
           }
