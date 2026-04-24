@@ -11,7 +11,7 @@
 
 ## Summary
 
-A BN254 Fr coprocessor adds native `Fr::{add,sub,mul,inv}` RISC-V instructions plus a 16×256-bit field-register file to the Jolt zkVM. Guest programs cross the integer/field boundary via per-limb moves (`FMovIntToFieldLimb` / `FMovFieldToIntLimb`). Target: ~17 traced cycles per `Fr::mul`, validated at ~13 cycles on real guests (~190× speedup vs ark-bn254 software baseline).
+A BN254 Fr coprocessor adds native `Fr::{add,sub,mul,inv}` RISC-V instructions plus a 16×256-bit field-register file to the Jolt zkVM. Guest programs cross the integer/field boundary via per-limb moves (`FMovIntToFieldLimb` / `FMovFieldToIntLimb`). Achieves ~13 traced cycles per `Fr::mul` on real guests (validated by `crates/jolt-equivalence/tests/bn254_fr_smoke.rs`), ~190× faster than the ark-bn254 software baseline on identical permutation work.
 
 Design principle: **field-register state is just another read/write memory-checking instance**, structurally identical to RAM or integer registers. The FR Twist is authored as a `Module` in `jolt-compiler`'s `ModuleBuilder` / `Schedule` / `ClaimFormula` API — a sibling to the existing RAM and Registers Twists — then glued into the Jolt protocol as a Stage-2 batched instance. Soundness closure between the FR Twist and the integer Registers Twist is enforced by R1CS rows inside the existing Stage-1 Spartan outer sumcheck.
 
@@ -149,7 +149,7 @@ FR Twist is instance [5] of Stage 2. The limb-sum bridge is **not** a Stage 2 su
 
 **Operand-forgery via omitted FMov-I2F.**
 
-`V_FIELD_OP_A` is populated from `FieldOpPayload.a` (prover-declared in the event record) at `jolt-host/src/r1cs_witness.rs:324-329`. **No R1CS row or sumcheck binds `V_FIELD_OP_A` to the FR Twist's committed `Val_fr(frs1, cycle)`.**
+`V_FIELD_OP_A` is populated from `FieldOpPayload.a` (prover-declared in the event record) at `crates/jolt-host/src/r1cs_witness.rs:328-331` inside `apply_field_op_events_to_r1cs`. **No R1CS row or sumcheck binds `V_FIELD_OP_A` to the FR Twist's committed `Val_fr(frs1, cycle)`.**
 
 Concrete attack:
 
@@ -191,7 +191,9 @@ Row 36 (product, shifted): ShouldJump = Jump × (1 − NextIsNoop)
 
 4. **Cross-check mechanism.** R1CS witness columns (slots 49/50/51) must agree with committed `FieldRegReadValueA/B` + existing `FieldRegWriteValue` at the Stage-1 opening point. Two options:
    - **Option X:** Unified PolynomialId — the R1CS witness column IS the committed poly. Requires a new `PolySource::R1csCommitted` variant in the compiler.
-   - **Option Y:** Separate storage + new `VerifierOp::AssertEqualEvals` asserting the two openings match at `stage1_cycle`.
+   - **Option Y (recommended):** Separate storage + new `VerifierOp::AssertEqualEvals` asserting the two openings match at `stage1_cycle`. Smaller compiler-side diff, no changes to `PolySource` routing.
+   
+   **Decision**: Option Y unless the implementer discovers a blocker. See implementation plan for details.
 
 **Why row 31 alone is insufficient without (1)-(3).** A naive implementation populating `V_FR_READ_VALUE_A` from the same event stream as `V_FIELD_OP_A` makes row 31 tautologically satisfied — both sides equal the prover-declared value. The cross-check to the committed FR Twist state is what makes row 31 meaningful.
 
@@ -225,7 +227,7 @@ Estimated: ~600-900 LOC across 6 files. 1-2 focused sessions.
 
 - **FLOAD / FSTORE / FLoadHorner ISA.** Memory-backed Fr unused with limb-register SDK ABI. Revisit only when a consumer demands it.
 - **Compiler-managed FR-register allocation.** Would drop cycle count from ~13 toward theoretical ~5; depends on Rust-compiler work. Out of scope for current push.
-- **FINV(0) = 0 handling.** R1CS FINV gate doesn't cover zero inversion. Guest must not invert zero.
+- **FINV(0) handling.** The tracer silently returns zero for `0.inverse()` (`tracer/src/instruction/field_op.rs:120`), but row 26 enforces `V_PRODUCT = 1` on FINV cycles — when A=0 this becomes `0 · Result = 1`, which is unsatisfiable. So FINV(0) doesn't crash the guest; it makes the subsequent proof rejectable. Guests must avoid FINV(0) (no runtime guard exists).
 
 ### Rejected (with reasons)
 
@@ -261,6 +263,16 @@ V_FIELD_OP_RESULT    = 44                                   V_BRANCH     = 49
                                                             V_NEXT_IS_NOOP = 50
 NUM_R1CS_INPUTS = 48, NUM_VARS_PER_CYCLE = 51
 NUM_EQ_CONSTRAINTS = 31, NUM_PRODUCT_CONSTRAINTS = 3, total = 34 → pad 64
+```
+
+**Post-fix slot map** (reserved, not yet landed — rows 31-33 addition):
+
+```
+V_FR_READ_VALUE_A    = 49    V_BRANCH         = 52   (shifted from 49)
+V_FR_READ_VALUE_B    = 50    V_NEXT_IS_NOOP   = 53   (shifted from 50)
+V_FR_WRITE_VALUE     = 51
+NUM_R1CS_INPUTS = 51, NUM_VARS_PER_CYCLE = 54
+NUM_EQ_CONSTRAINTS = 34, NUM_PRODUCT_CONSTRAINTS = 3, total = 37 → pad 64
 ```
 
 ## References
@@ -317,8 +329,8 @@ The coprocessor is soundness-complete when all of the following hold:
 
 1. All existing honest tests pass (muldiv, FR self-verify, FMUL/FADD multi-limb).
 2. `audit_poc_compensating_tamper_solved` still rejects — regression gate for the limb-sum bridge.
-3. **New adversarial test**: omitted-FMov-I2F + forged operand attack rejects.
-4. **New adversarial test**: forged FMov limb (read or write) rejects.
-5. `jolt-bench muldiv modular` prove_ms within +10% of the current limb-sum-bridge state.
+3. **New adversarial test** `modular_self_verify_with_fieldreg_omitted_fmov_i2f_forged_operand_rejects` in `crates/jolt-equivalence/tests/muldiv.rs` — constructs the omitted-FMov-I2F attack with `FieldOpPayload.a` forged relative to FR Twist state; must reject at the FR Twist sumcheck or the cross-check opcode.
+4. **New adversarial test** `modular_self_verify_with_fmov_forged_limb_rejects` — analogous attack for FMov I2F / F2I (see FMov limb-value binding).
+5. `jolt-bench muldiv --stack modular` prove_ms ≤ 810 ms (+10% of the current 736 ms measurement — headroom for γ-batched FR Twist extension and three new eq rows).
 6. Clippy clean in both `host` and `host,zk` modes.
 7. This spec's *What is sound* / *What is NOT sound* sections updated; operand-binding moves from *Pending* to *Shipped*.

@@ -100,19 +100,22 @@ FieldRegReadValue(r_cycle) · Ra(r_slot, r_cycle) =
     Σ_s Val_fr(s, r_cycle) · Ra(s, r_cycle)     (one-slot read per cycle)
 ```
 
-Extend to γ-batched form:
+Extend to γ-batched form using the EXISTING `ch_gamma_fr` challenge
+(declared in the pre-sumcheck block at
+`jolt_core_module_with_fieldreg.rs:2129`) with powers 1, γ, γ²:
+
 ```
 input_claim = FieldRegReadValueA(r_cycle) · IsFieldOpAny(r_cycle)
-            + γ_read · FieldRegReadValueB(r_cycle) · IsFieldOpNoInv(r_cycle)
-            + γ_write · FieldRegWriteValue(r_cycle)         [existing]
+            + γ_fr  · FieldRegReadValueB(r_cycle) · IsFieldOpNoInv(r_cycle)
+            + γ_fr² · FieldRegWriteValue(r_cycle)            [existing term]
 
 output_check = [Σ_s Val_fr(s, r_cycle) · Rs1Ra(s, r_cycle)] · IsFieldOpAny
-             + γ_read · [Σ_s Val_fr(s, r_cycle) · Rs2Ra(s, r_cycle)] · IsFieldOpNoInv
-             + γ_write · [existing]
+             + γ_fr  · [Σ_s Val_fr(s, r_cycle) · Rs2Ra(s, r_cycle)] · IsFieldOpNoInv
+             + γ_fr² · [Σ_s Val_fr(s, r_cycle) · Ra(s, r_cycle)]    [existing]
 ```
 
-Mirrors the integer Registers Twist γ-batching of rs1/rs2/rd reads
-(`jolt_core_module_with_fieldreg.rs:3821-3847`).
+Mirrors integer Registers Twist's rs1/rs2/rd γ-batching at
+`jolt_core_module_with_fieldreg.rs:3821-3857`. No new challenge squeeze.
 
 ### Three new R1CS rows
 
@@ -131,22 +134,46 @@ V_NEXT_IS_NOOP to 53). NUM_R1CS_INPUTS: 48 → 51. NUM_EQ_CONSTRAINTS:
 R1CS column slots 49/50/51 must equal committed `FieldRegReadValueA/B` and
 `FieldRegWriteValue` at `stage1_cycle`. Two implementation options:
 
-**Option X (preferred)**: use the SAME PolynomialId for both roles.
-Give `FieldRegReadValueA` an r1cs_variable_index=49, and have the R1CS
+**Option X**: use the SAME PolynomialId for both roles. Give
+`FieldRegReadValueA` an r1cs_variable_index=49, and have the R1CS
 source materialize from the same data buffer that feeds the Dory
 commitment. No duplication, no cross-check needed — one opening serves both
-Stage 1 Spartan and Stage 2 FR Twist.
+Stage 1 Spartan and Stage 2 FR Twist. Blocker: the current
+`PolynomialDescriptor` match in `crates/jolt-compiler/src/polynomial_id.rs:355-362`
+routes committed polys via `PolySource::Witness` (not `R1cs`). Need a new
+descriptor variant like `PolySource::R1csCommitted` — medium compiler-side
+change.
 
-Blocker: the current `PolynomialDescriptor` match in
-`crates/jolt-compiler/src/polynomial_id.rs:355-362` routes committed polys
-via `PolySource::Witness` (not `R1cs`). Need a new descriptor variant like
-`PolySource::R1csCommitted` — small compiler-side change.
+**Option Y (RECOMMENDED — commit to this unless a blocker emerges)**:
+keep R1CS column and committed poly separate, both populated from the
+same source. Add a new `VerifierOp::AssertEqualEvals { a: PolynomialId,
+b: PolynomialId, at_stage: VerifierStageIndex }` that asserts
+`evaluations[a] == evaluations[b]` at the same opening point. ~50 LOC
+for the VerifierOp + matching prover-side `Op::AssertEqualEvals`. Smaller
+diff, no changes to `PolySource` routing, reuses existing opening
+infrastructure.
 
-**Option Y (fallback)**: keep R1CS column and committed poly separate, both
-populated from the same source. Add a new `VerifierOp::AssertEqualEvals {
-a: PolynomialId, b: PolynomialId, at_stage: VerifierStageIndex }` that
-asserts `evaluations[a] == evaluations[b]` at the same opening point.
-~50 LOC for the VerifierOp + matching prover-side `Op::AssertEqualEvals`.
+### Prerequisite: extend `FieldOpPayload` with slot indices
+
+`FieldRegEvent` currently has one `slot` field (= frd). To build
+`FieldRegRs1Ra`/`FieldRegRs2Ra` one-hot polys at frs1/frs2, the event
+stream must carry those indices. Extend `FieldOpPayload`
+(`crates/jolt-witness/src/derived.rs:141-146`) with:
+
+```rust
+pub struct FieldOpPayload {
+    pub a: [u64; 4],
+    pub b: [u64; 4],
+    pub funct3: u8,
+    pub frs1: u8,   // NEW — low 4 bits of bytecode RS1_INDEX
+    pub frs2: u8,   // NEW — low 4 bits of bytecode RS2_INDEX
+}
+```
+
+Populated by the tracer overlay at the FieldOp cycle from `operands.rs1`
+and `operands.rs2`. `DerivedSource::field_reg_rs1_ra` then iterates
+`field_reg().events` and sets `ra[payload.frs1 * T + e.cycle] = 1` on
+events with `op.is_some()` (FieldOp cycles only).
 
 ### Slot-address binding to bytecode
 
@@ -176,10 +203,11 @@ Ordered so each step compiles and tests can run:
 2. [ ] Add R1CS slot constants V_FIELD_REG_READ_VALUE_A=49,
        V_FIELD_REG_READ_VALUE_B=50, V_FIELD_REG_WRITE_VALUE=51 in
        `rv64.rs`. Bump V_BRANCH, V_NEXT_IS_NOOP, NUM_R1CS_INPUTS.
-3. [ ] Decide Option X vs Y for cross-check. If X: add
-       `PolySource::R1csCommitted` variant in polynomial_id.rs and handle in
-       `R1csSource::compute` + `DerivedSource`. If Y: add
-       `Op::AssertEqualEvals` and matching `VerifierOp`.
+3. [ ] Implement Option Y cross-check: add `Op::AssertEqualEvals { a, b, at_stage }`
+       to `crates/jolt-compiler/src/module.rs` and matching
+       `VerifierOp::AssertEqualEvals` handler that asserts
+       `evaluations[a] == evaluations[b]` at the same opening point.
+       (Only switch to Option X if Option Y hits a blocker.)
 4. [ ] Extend `FieldRegConfig::compute_read_value_a/b` in
        `crates/jolt-witness/src/derived.rs` — compute the per-cycle values.
 5. [ ] Populate R1CS witness slots 49/50/51 in
@@ -191,23 +219,35 @@ Ordered so each step compiles and tests can run:
        `crates/jolt-compiler/examples/jolt_core_module_with_fieldreg.rs`.
 8. [ ] Add 3 R1CS rows (31/32/33) in rv64.rs. Bump NUM_EQ_CONSTRAINTS 31 → 34.
 9. [ ] Update group0_indices / group1_indices in the fieldreg module to
-       include new rows. 34 eq split = 17/17. Uniskip domain = 18 (next_pow2
-       = 32, 2× outer uniskip cost — acceptable or further consolidate).
-10. [ ] Update r1cs_input_polys list (46 → 49 entries including LimbSumA/B
-        from Plan P plus the 3 new columns).
+       include new rows. 34 eq → 17/17 split. Uniskip domain = 17
+       (`(34-1)/2+1` per `params.rs:186`), `next_power_of_two(17) = 32`.
+       Pad stride was already 32 under Plan P's 16/15 split (pow2 16 → 16),
+       so going 16 → 32 doubles the Lagrange basis width in outer Spartan —
+       that's the +3-5% prove_ms cost budgeted below.
+10. [ ] Update `NUM_R1CS_INPUTS_FR` + `r1cs_input_polys` list in
+        `jolt_core_module_with_fieldreg.rs:1133-1187`: 48 → 51 entries.
+        Append `p.field_reg_read_value_a` (new, slot 48), `p.field_reg_read_value_b`
+        (new, slot 49), `p.field_reg_write_value` (EXISTING committed poly
+        now exposed as R1CS input column via Option Y cross-check).
 11. [ ] Verifier mirrors: extend output_check ClaimFormula for Stage 1
         Spartan to include the new rows' contributions.
 12. [ ] Write PoC attack test: honest FMov-I2F + FMUL vs. adversarial
         (omitted FMov-I2F + forged operand). Adversarial should reject at
         Stage 1 or Stage 2 FR Twist.
-13. [ ] Extend same pattern to FMov rows 27/28 for task #64 completion —
-        `V_FIELD_REG_READ_LIMB` / `V_FIELD_REG_WRITE_LIMB` bound to FR Twist
-        limb values (less urgent, separate task).
+
+## Out of scope (future task)
+
+- **FMov limb-value binding.** Same root-cause gap for rows 27-28:
+  `V_FIELD_REG_READ_LIMB` / `V_FIELD_REG_WRITE_LIMB` are populated from
+  `FMovPayload.limb` without FR-Twist-state binding. Fix follows the
+  same pattern as this plan but at limb granularity (one limb per FMov
+  cycle rather than three Fr reads per FieldOp cycle) — roughly 1/3 the
+  size. Address after this plan lands.
 
 ## Perf impact estimate
 
-- 3 new R1CS eq rows → NUM_EQ=34. Uniskip domain 16 → 18, `next_power_of_two
-  = 32` — outer Spartan Lagrange basis doubles. Est. +3-5% prove_ms.
+- 3 new R1CS eq rows → NUM_EQ=34. Uniskip domain 16 → 17, `next_power_of_two`
+  goes 16 → 32 — outer Spartan Lagrange basis doubles. Est. +3-5% prove_ms.
 - 2 new Dory commitments (FieldRegReadValueA/B). Commit phase adds ~2
   tier-1 batches. Est. +1-2% prove_ms.
 - FR Twist sumcheck extended with 2 γ-batched terms. Per-round cost ~3×
