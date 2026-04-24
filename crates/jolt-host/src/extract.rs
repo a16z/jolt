@@ -89,11 +89,16 @@ fn cycle_input(
     });
 
     CycleInput {
-        dense: [rd_inc, ram_inc],
+        dense: [rd_inc, ram_inc, 0],
         one_hot: [
             Some(cycle.lookup_index()),
             Some(bytecode.get_pc(cycle) as u128),
             ram_address,
+            // FR write (source index 3). Populated by a follow-up pass that
+            // replays the FieldRegEvent stream through the cycle window; the
+            // extract_trace path produces the zero-field-register-activity
+            // value here and is overwritten downstream. See Phase 4b.
+            None,
         ],
     }
 }

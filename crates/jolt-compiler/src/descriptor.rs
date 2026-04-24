@@ -79,14 +79,19 @@ pub enum WitnessSlot {
 
 impl WitnessSlot {
     /// Number of dense witness slots in per-cycle input data.
-    pub const NUM_DENSE: usize = 2;
+    pub const NUM_DENSE: usize = 3;
     /// Number of one-hot source values in per-cycle input data.
-    pub const NUM_ONE_HOT: usize = 3;
+    pub const NUM_ONE_HOT: usize = 4;
 
     /// Dense slot: register write increment (`rd post − rd pre`).
     pub const RD_INC: usize = 0;
     /// Dense slot: RAM write increment (`ram post − ram pre`).
     pub const RAM_INC: usize = 1;
+    /// Dense slot: BN254 Fr coprocessor register-file write increment (one
+    /// 256-bit element per cycle; stored as the committed `FieldRegInc`
+    /// polynomial, padded from log_t to LOG_K_FR + log_t at materialize
+    /// time).
+    pub const FIELD_REG_INC: usize = 2;
 
     /// One-hot source: instruction lookup (128-bit interleaved encoding).
     pub const INSTRUCTION: usize = 0;
@@ -94,4 +99,7 @@ impl WitnessSlot {
     pub const BYTECODE: usize = 1;
     /// One-hot source: remapped RAM address.
     pub const RAM: usize = 2;
+    /// One-hot source: BN254 Fr coprocessor write address (`frd & 0xF`,
+    /// or sentinel 255 on non-FR cycles).
+    pub const FIELD_REG: usize = 3;
 }

@@ -24,11 +24,21 @@ pub struct PolynomialConfig {
     pub bytecode_d: usize,
     /// Number of one-hot polynomials for RAM addresses.
     pub ram_d: usize,
+    /// Number of one-hot polynomials for the BN254 Fr coprocessor write
+    /// address (mirrors `RamRa`'s chunking). With `LOG_K_FR = 4` and the
+    /// default `log_k_chunk = 4`, `field_reg_d = 1` — no chunking required.
+    pub field_reg_d: usize,
 
     instruction_shifts: Vec<usize>,
     bytecode_shifts: Vec<usize>,
     ram_shifts: Vec<usize>,
+    field_reg_shifts: Vec<usize>,
 }
+
+/// Bit width of the BN254 Fr coprocessor slot index space (16 slots). See
+/// `specs/bn254-fr-coprocessor.md` §ISA for the derivation (low 4 bits of
+/// the 5-bit register field are used as the slot index).
+pub const LOG_K_FR: usize = 4;
 
 impl PolynomialConfig {
     /// Constructs a config from decomposition parameters.
@@ -49,6 +59,7 @@ impl PolynomialConfig {
         let instruction_d = log_k_instruction.div_ceil(log_k_chunk);
         let bytecode_d = log_k_bytecode.div_ceil(log_k_chunk);
         let ram_d = log_k_ram.div_ceil(log_k_chunk);
+        let field_reg_d = LOG_K_FR.div_ceil(log_k_chunk);
 
         Self {
             log_k_chunk,
@@ -56,16 +67,20 @@ impl PolynomialConfig {
             instruction_d,
             bytecode_d,
             ram_d,
+            field_reg_d,
             instruction_shifts: compute_shifts(log_k_chunk, instruction_d),
             bytecode_shifts: compute_shifts(log_k_chunk, bytecode_d),
             ram_shifts: compute_shifts(log_k_chunk, ram_d),
+            field_reg_shifts: compute_shifts(log_k_chunk, field_reg_d),
         }
     }
 
-    /// Total number of committed polynomial buffers (2 dense + all one-hot).
+    /// Total number of committed polynomial buffers (3 dense + all one-hot:
+    /// 3 dense = RdInc, RamInc, FieldRegInc; one-hot = instruction + bytecode
+    /// + RAM + FR register chunks).
     #[inline]
     pub fn num_polynomials(&self) -> usize {
-        2 + self.instruction_d + self.bytecode_d + self.ram_d
+        3 + self.instruction_d + self.bytecode_d + self.ram_d + self.field_reg_d
     }
 
     /// Extract chunk `dim` from one-hot source `source` with value `value`.
@@ -78,6 +93,7 @@ impl PolynomialConfig {
             0 => &self.instruction_shifts,
             1 => &self.bytecode_shifts,
             2 => &self.ram_shifts,
+            3 => &self.field_reg_shifts,
             _ => panic!("unknown one-hot source {source}"),
         };
         ((value >> shifts[dim]) & (self.k_chunk - 1) as u128) as u8
@@ -107,7 +123,11 @@ impl PolynomialConfig {
     /// from [`CycleInput`](crate::CycleInput) data. Other committed polynomials
     /// (SpartanWitness, advice) are inserted separately.
     pub fn witness_polynomial_ids(&self) -> Vec<PolynomialId> {
-        let mut ids = vec![PolynomialId::RdInc, PolynomialId::RamInc];
+        let mut ids = vec![
+            PolynomialId::RdInc,
+            PolynomialId::RamInc,
+            PolynomialId::FieldRegInc,
+        ];
         for i in 0..self.instruction_d {
             ids.push(PolynomialId::InstructionRa(i));
         }
@@ -116,6 +136,9 @@ impl PolynomialConfig {
         }
         for i in 0..self.ram_d {
             ids.push(PolynomialId::RamRa(i));
+        }
+        for i in 0..self.field_reg_d {
+            ids.push(PolynomialId::FieldRegRa(i));
         }
         ids
     }
@@ -177,7 +200,9 @@ mod tests {
     #[test]
     fn num_polynomials() {
         let c = PolynomialConfig::new(4, 128, 16, 24);
-        assert_eq!(c.num_polynomials(), 2 + 32 + 4 + 6);
+        // 3 dense (RdInc, RamInc, FieldRegInc) + 32 instruction + 4 bytecode
+        // + 6 RAM + 1 FR register (LOG_K_FR=4 fits in a single log_k_chunk=4 chunk).
+        assert_eq!(c.num_polynomials(), 3 + 32 + 4 + 6 + 1);
     }
 
     #[test]

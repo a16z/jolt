@@ -52,6 +52,32 @@ pub enum PolynomialId {
     FieldRs2Value,
     FieldRdValue,
 
+    // Committed: per-cycle FR register write delta (new - old). Padded from
+    // log_t to LOG_K_FR + log_t, mirrors RdInc's commit shape. Dory opens
+    // at the Stage-5 FieldRegValEvaluation final point.
+    FieldRegInc,
+    // Committed one-hot: chunk d of the FR write-address indicator. With
+    // LOG_K_FR = 4 and default log_k_chunk = 4, only d=0 is populated
+    // (`fr_d = 1`). Dory opens at the Stage-4 FieldRegReadWriteChecking
+    // final point. Slot index comes from bytecode (rd & 0xF) for the
+    // cycle's instruction; sentinel 255 → all-zero on non-FR cycles.
+    FieldRegRa(usize),
+    // Virtual: running FR register-file state (K_FR × T). Bound by Stage 4
+    // phase-1 (cycle) + phase-2 (address) kernels; final opening equals
+    // sum of increments up to cycle t.
+    FieldRegVal,
+    // Virtual: FR write-address indicator (K_FR × T). Equals 1 at
+    // (k=frd(t), t) on writing cycles, 0 elsewhere. Same shape as RdWa.
+    FieldRegWa,
+    // Virtual: FR read-address indicators for rs1 and rs2 (K_FR × T).
+    // Derived from bytecode rs1 & 0xF / rs2 & 0xF.
+    FieldRegRaRs1,
+    FieldRegRaRs2,
+    // Per-cycle gather index for frd slot — mirrors RdGatherIndex. At each
+    // cycle t, holds `frd(t) ∈ 0..=15` when the cycle is a writing FR op,
+    // else sentinel 255 (eq_gather returns 0 so no FR state advances).
+    FrdGatherIndex,
+
     // Virtual: instruction lookups
     LookupOutput,
     LeftLookupOperand,
@@ -239,6 +265,12 @@ impl PolynomialId {
                 storage: StorageHint::Dense,
                 witness_slot: Some(WitnessSlot::Dense(WitnessSlot::RAM_INC)),
             },
+            Self::FieldRegInc => PolynomialDescriptor {
+                source: PolySource::Witness,
+                committed: true,
+                storage: StorageHint::Dense,
+                witness_slot: Some(WitnessSlot::Dense(WitnessSlot::FIELD_REG_INC)),
+            },
 
             // Committed: inserted separately (not from trace)
             Self::SpartanWitness | Self::TrustedAdvice | Self::UntrustedAdvice => {
@@ -275,6 +307,15 @@ impl PolynomialId {
                 storage: StorageHint::OneHot,
                 witness_slot: Some(WitnessSlot::OneHotChunk {
                     source: WitnessSlot::RAM,
+                    dim: *i,
+                }),
+            },
+            Self::FieldRegRa(i) => PolynomialDescriptor {
+                source: PolySource::Witness,
+                committed: true,
+                storage: StorageHint::OneHot,
+                witness_slot: Some(WitnessSlot::OneHotChunk {
+                    source: WitnessSlot::FIELD_REG,
                     dim: *i,
                 }),
             },

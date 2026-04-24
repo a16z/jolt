@@ -248,12 +248,12 @@ mod tests {
     fn test_cycles() -> Vec<CycleInput> {
         vec![
             CycleInput {
-                dense: [5, -3],
-                one_hot: [Some(0xAB), Some(0xC), Some(0xD)],
+                dense: [5, -3, 0],
+                one_hot: [Some(0xAB), Some(0xC), Some(0xD), None],
             },
             CycleInput {
-                dense: [-1, 0],
-                one_hot: [Some(0x12), Some(0x3), None],
+                dense: [-1, 0, 0],
+                one_hot: [Some(0x12), Some(0x3), None, None],
             },
             CycleInput::PADDING,
             CycleInput::PADDING,
@@ -419,12 +419,13 @@ mod tests {
         // Dense witness slots are pre-allocated
         assert!(polys.try_get(PolynomialId::RdInc).is_some());
         assert!(polys.try_get(PolynomialId::RamInc).is_some());
+        assert!(polys.try_get(PolynomialId::FieldRegInc).is_some());
 
         // Non-trace polynomials are not pre-allocated
         assert!(polys.try_get(PolynomialId::SpartanWitness).is_none());
         assert!(polys.try_get(PolynomialId::TrustedAdvice).is_none());
 
-        // Total pre-allocated = 2 dense (one-hot not in dense until finish)
+        // Total pre-allocated = 3 dense (one-hot not in dense until finish)
         assert_eq!(polys.len(), WitnessSlot::NUM_DENSE);
     }
 }

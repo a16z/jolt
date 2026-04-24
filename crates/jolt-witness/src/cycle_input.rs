@@ -33,10 +33,11 @@ pub struct CycleInput {
 }
 
 impl CycleInput {
-    /// A padding cycle: zero increments, zero indices, no RAM access.
+    /// A padding cycle: zero increments, zero indices, no RAM access, no FR
+    /// access (sentinel `None` for RAM and FR slots indicates no write).
     pub const PADDING: Self = Self {
         dense: [0; WitnessSlot::NUM_DENSE],
-        one_hot: [Some(0), Some(0), None],
+        one_hot: [Some(0), Some(0), None, None],
     };
 }
 
