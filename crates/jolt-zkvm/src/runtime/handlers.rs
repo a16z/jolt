@@ -908,7 +908,6 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                 .as_ref()
                 .unwrap();
             let gamma = state.challenges[config.gamma.0];
-            let gamma_sqr = gamma * gamma;
             let q_bufs: Vec<Vec<F>> = (0..3)
                 .flat_map(|c| (0..2).map(move |h| (c, h)))
                 .map(|(c, h)| {
@@ -923,36 +922,15 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                         .map(|b| backend.download(b.as_field()))
                 })
                 .collect();
-            let half = q_bufs[0].len() / 2;
-            let (mut l0, mut l2, mut r0, mut r2) = (F::zero(), F::zero(), F::zero(), F::zero());
-            for b in 0..half {
-                for (comp, (qb, pb)) in [(0usize, 0usize), (2, 2), (1, 1)].into_iter().enumerate() {
-                    let (mut e0, mut e2l, mut e2r) = (F::zero(), F::zero(), F::zero());
-                    for i in 0..2 {
-                        let (p0, p2) = match p_bufs[pb * 2 + i] {
-                            Some(ref d) => {
-                                let pl = d[b];
-                                (pl, d[b + half] + d[b + half] - pl)
-                            }
-                            None => (F::one(), F::one()),
-                        };
-                        e0 += p0 * q_bufs[qb * 2 + i][b];
-                        e2l += p2 * q_bufs[qb * 2 + i][b];
-                        e2r += p2 * q_bufs[qb * 2 + i][b + half];
-                    }
-                    if comp == 0 {
-                        l0 += e0;
-                        l2 += e2r + e2r - e2l;
-                    } else {
-                        r0 += e0;
-                        r2 += e2r + e2r - e2l;
-                    }
-                }
-            }
-            let eval_0 = state.read_checking_evals[0] + gamma * l0 + gamma_sqr * r0;
-            let eval_2 = state.read_checking_evals[1] + gamma * l2 + gamma_sqr * r2;
-            let eval_1 = state.batch_instance_claims[ps_batch.0][instance.0] - eval_0;
-            state.last_round_instance_evals[instance.0] = vec![eval_0, eval_1, eval_2];
+            let prev_claim = state.batch_instance_claims[ps_batch.0][instance.0];
+            let evals = compute_raf_reduce(
+                &q_bufs,
+                &p_bufs,
+                gamma,
+                state.read_checking_evals,
+                prev_claim,
+            );
+            state.last_round_instance_evals[instance.0] = evals.to_vec();
         }
 
         Op::MaterializeRA { kernel } => {
@@ -1212,4 +1190,51 @@ fn compute_q_buffer_scatter<F: Field>(
         *v *= shift_full_f;
     }
     [[sh.clone(), l], [sh, r], [sf, id]]
+}
+
+/// Compute the 3 round-evaluations `[eval_0, eval_1, eval_2]` for the
+/// `Op::RafReduce` read-RAF final reduce. Walks the 6 Q-buffers (from
+/// `QBufferScatter`) and optional 6 P-buffers (from `MaterializePBuffers`),
+/// accumulating left-component (scaled by `gamma`) and right-component
+/// (scaled by `gamma^2`) contributions in one pass. The prior
+/// `ReadCheckingReduce` evals are added at `eval_0` / `eval_2`, and
+/// `eval_1` is derived as `prev_claim − eval_0`. See OPS.md Group B.
+fn compute_raf_reduce<F: Field>(
+    q_bufs: &[Vec<F>],
+    p_bufs: &[Option<Vec<F>>],
+    gamma: F,
+    read_checking_evals: [F; 2],
+    prev_claim: F,
+) -> [F; 3] {
+    let gamma_sqr = gamma * gamma;
+    let half = q_bufs[0].len() / 2;
+    let (mut l0, mut l2, mut r0, mut r2) = (F::zero(), F::zero(), F::zero(), F::zero());
+    for b in 0..half {
+        for (comp, (qb, pb)) in [(0usize, 0usize), (2, 2), (1, 1)].into_iter().enumerate() {
+            let (mut e0, mut e2l, mut e2r) = (F::zero(), F::zero(), F::zero());
+            for i in 0..2 {
+                let (p0, p2) = match p_bufs[pb * 2 + i] {
+                    Some(ref d) => {
+                        let pl = d[b];
+                        (pl, d[b + half] + d[b + half] - pl)
+                    }
+                    None => (F::one(), F::one()),
+                };
+                e0 += p0 * q_bufs[qb * 2 + i][b];
+                e2l += p2 * q_bufs[qb * 2 + i][b];
+                e2r += p2 * q_bufs[qb * 2 + i][b + half];
+            }
+            if comp == 0 {
+                l0 += e0;
+                l2 += e2r + e2r - e2l;
+            } else {
+                r0 += e0;
+                r2 += e2r + e2r - e2l;
+            }
+        }
+    }
+    let eval_0 = read_checking_evals[0] + gamma * l0 + gamma_sqr * r0;
+    let eval_2 = read_checking_evals[1] + gamma * l2 + gamma_sqr * r2;
+    let eval_1 = prev_claim - eval_0;
+    [eval_0, eval_1, eval_2]
 }
