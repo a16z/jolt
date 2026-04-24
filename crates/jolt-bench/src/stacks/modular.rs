@@ -18,6 +18,7 @@ use jolt_compute::{link, LookupTraceData};
 use jolt_core::zkvm::instruction::{
     Flags as CoreFlags, InstructionLookup, InterleavedBitsMarker as CoreInterleavedBits,
 };
+use jolt_instructions::InterleavedBitsMarker as ModInterleavedBits;
 use jolt_core::zkvm::lookup_table::LookupTables as CoreLookupTables;
 use jolt_cpu::CpuBackend;
 use jolt_dory::DoryScheme;
@@ -445,7 +446,7 @@ fn build_modular_setup(
         });
         table_indices[t] = InstructionLookup::<64>::lookup_table(cycle)
             .map(|t| CoreLookupTables::<64>::enum_index(&t));
-        is_interleaved[t] = CoreInterleavedBits::is_interleaved_operands(&cycle.circuit_flags());
+        is_interleaved[t] = ModInterleavedBits::is_interleaved_operands(&cycle.circuit_flags());
     }
     let reg_access = RegisterAccessData {
         rd_indices,
