@@ -22,7 +22,7 @@
 //! | [`proof`] | [`SumcheckProof`] — serializable proof |
 //! | [`verifier`] | [`SumcheckVerifier`] engine |
 //! | [`batched_verifier`] | [`BatchedSumcheckVerifier`] — batched verification via RLC |
-//! | [`round`] | [`RoundVerifier`] — strategy trait for clear vs. committed mode |
+//! | [`round_proof`] | [`RoundProof`] — per-round trait and concrete wire-format impls |
 //! | [`error`] | [`SumcheckError`] variants |
 //!
 //! # Public API
@@ -42,11 +42,14 @@
 //!   combination. Supports claims with different `num_vars` and `degree` bounds
 //!   via front-loaded padding.
 //!
-//! ## Round verification strategy
-//! - [`RoundVerifier<F>`] — trait controlling how round data is absorbed into the
-//!   transcript and checked. Enables both clear and committed (ZK) verification modes.
-//! - [`ClearRoundVerifier`] — cleartext implementation: checks
-//!   `poly(0) + poly(1) == running_sum` and absorbs coefficients directly.
+//! ## Per-round proof types
+//! - [`RoundProof<F>`] — trait implemented by anything the verifier can step
+//!   through one round at a time: degree bound, sum check, transcript absorb,
+//!   evaluation at challenge.
+//! - [`UnivariatePoly<F>`](jolt_poly::UnivariatePoly) — raw, unlabelled absorb.
+//! - [`LabeledRoundPoly`] — borrowed wrapper adding a `LabelWithCount` prefix.
+//! - [`CompressedLabeledRoundPoly`] — borrowed wrapper using the compressed
+//!   wire format (omits the linear coefficient).
 //!
 //! # Dependency position
 //!
@@ -61,7 +64,7 @@ pub mod batched_verifier;
 pub mod claim;
 pub mod error;
 pub mod proof;
-pub mod round;
+pub mod round_proof;
 pub mod verifier;
 
 #[cfg(test)]
@@ -71,5 +74,5 @@ pub use batched_verifier::BatchedSumcheckVerifier;
 pub use claim::{EvaluationClaim, SumcheckClaim};
 pub use error::SumcheckError;
 pub use proof::SumcheckProof;
-pub use round::{ClearRoundVerifier, RoundVerifier};
+pub use round_proof::{CompressedLabeledRoundPoly, LabeledRoundPoly, RoundProof};
 pub use verifier::SumcheckVerifier;

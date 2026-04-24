@@ -11,7 +11,7 @@ use jolt_poly::{Polynomial, UnivariatePoly};
 use jolt_sumcheck::claim::{EvaluationClaim, SumcheckClaim};
 use jolt_sumcheck::error::SumcheckError;
 use jolt_sumcheck::proof::SumcheckProof;
-use jolt_sumcheck::round::ClearRoundVerifier;
+use jolt_sumcheck::round_proof::RoundProof;
 use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckVerifier};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 
@@ -55,9 +55,7 @@ fn honest_prove(
             eval_1 += buf[i + half];
         }
         let round_poly = UnivariatePoly::new(vec![eval_0, eval_1 - eval_0]);
-        for &coeff in round_poly.coefficients() {
-            coeff.append_to_transcript(transcript);
-        }
+        <UnivariatePoly<F> as RoundProof<F>>::append_to_transcript(&round_poly, transcript);
         let r: F = transcript.challenge();
         round_polys.push(round_poly);
         for i in 0..half {
@@ -85,12 +83,11 @@ fn verify_with_oracle_check(
     proof: &SumcheckProof<F>,
     intended_evals: &[F],
 ) -> Result<Vec<F>, OracleCheckError> {
-    let clear = ClearRoundVerifier::new();
     let mut transcript = new_transcript();
     let EvaluationClaim {
         point: challenges,
         value: final_eval,
-    } = SumcheckVerifier::verify(claim, &proof.round_polynomials, &mut transcript, &clear)?;
+    } = SumcheckVerifier::verify(claim, &proof.round_polynomials, &mut transcript)?;
 
     let expected = Polynomial::new(intended_evals.to_vec()).evaluate_and_consume(&challenges);
     if final_eval != expected {
@@ -142,9 +139,8 @@ fn wrong_polynomial_same_sum_fails_oracle_check() {
     };
 
     // Round checks pass (proof is internally consistent for g)
-    let clear = ClearRoundVerifier::new();
     let mut vt = new_transcript();
-    let round_result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt, &clear);
+    let round_result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt);
     assert!(
         round_result.is_ok(),
         "round checks should pass for honest g proof"
@@ -181,9 +177,8 @@ fn proof_for_different_polynomial_different_sum_fails_round_check() {
         claimed_sum: sum_f,
     };
 
-    let clear = ClearRoundVerifier::new();
     let mut vt = new_transcript();
-    let result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt, &clear);
+    let result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt);
     assert!(matches!(
         result,
         Err(SumcheckError::RoundCheckFailed { round: 0, .. })
@@ -208,9 +203,8 @@ fn corrupted_middle_round_detected() {
         claimed_sum: sum,
     };
 
-    let clear = ClearRoundVerifier::new();
     let mut vt = new_transcript();
-    let result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt, &clear);
+    let result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt);
 
     // Corruption at round 2 may be detected at round 2 (wrong sum) or later
     // (transcript desync from corrupted absorption). Either way, it must fail.
@@ -234,9 +228,8 @@ fn corrupted_last_round_detected() {
         claimed_sum: sum,
     };
 
-    let clear = ClearRoundVerifier::new();
     let mut vt = new_transcript();
-    let result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt, &clear);
+    let result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt);
     assert!(result.is_err(), "corrupted last round must be rejected");
 }
 
@@ -259,9 +252,8 @@ fn swapped_round_order_rejected() {
         claimed_sum: sum,
     };
 
-    let clear = ClearRoundVerifier::new();
     let mut vt = new_transcript();
-    let result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt, &clear);
+    let result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt);
 
     // Round 0 now has the wrong s(0)+s(1) (it was computed for a different running sum).
     // Even if by accident s(0)+s(1) matched, the transcript would desync.
@@ -289,9 +281,8 @@ fn replayed_round_polynomial_rejected() {
         claimed_sum: sum,
     };
 
-    let clear = ClearRoundVerifier::new();
     let mut vt = new_transcript();
-    let result = SumcheckVerifier::verify(&claim, &replayed.round_polynomials, &mut vt, &clear);
+    let result = SumcheckVerifier::verify(&claim, &replayed.round_polynomials, &mut vt);
     assert!(result.is_err(), "replayed rounds must be rejected");
 }
 
@@ -314,9 +305,8 @@ fn all_zero_round_polynomials_rejected_for_nonzero_sum() {
         claimed_sum: sum,
     };
 
-    let clear = ClearRoundVerifier::new();
     let mut vt = new_transcript();
-    let result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt, &clear);
+    let result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt);
     assert!(matches!(
         result,
         Err(SumcheckError::RoundCheckFailed { round: 0, .. })
@@ -368,8 +358,7 @@ fn verifier_transcript_desync_rejected() {
     let mut vt = new_transcript();
     F::from_u64(0xdead).append_to_transcript(&mut vt);
 
-    let clear = ClearRoundVerifier::new();
-    let result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt, &clear);
+    let result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt);
 
     // Round 0's s(0)+s(1) check passes (it doesn't depend on challenges),
     // but the challenge r_0 will differ, so round 1's running sum will be wrong.
@@ -389,9 +378,9 @@ fn num_vars_zero_accepts_any_claimed_sum() {
         claimed_sum: F::from_u64(42),
     };
 
-    let clear = ClearRoundVerifier::new();
+    let round_proofs: &[UnivariatePoly<F>] = &[];
     let mut vt = new_transcript();
-    let result = SumcheckVerifier::verify(&claim, &[], &mut vt, &clear);
+    let result = SumcheckVerifier::verify(&claim, round_proofs, &mut vt);
     assert!(result.is_ok());
 
     let EvaluationClaim {
@@ -414,9 +403,9 @@ fn num_vars_zero_no_oracle_check_possible() {
         claimed_sum: F::from_u64(999), // arbitrary lie
     };
 
-    let clear = ClearRoundVerifier::new();
+    let round_proofs: &[UnivariatePoly<F>] = &[];
     let mut vt = new_transcript();
-    let result = SumcheckVerifier::verify(&claim, &[], &mut vt, &clear);
+    let result = SumcheckVerifier::verify(&claim, round_proofs, &mut vt);
 
     // Passes — the verifier has nothing to check!
     // Only the oracle check (comparing 999 against the actual constant) catches this.
@@ -445,9 +434,8 @@ fn constant_polynomial_all_same_evals() {
 
     // The final eval should be 7 regardless of the challenge point,
     // since f is constant.
-    let clear = ClearRoundVerifier::new();
     let mut vt = new_transcript();
-    let final_eval = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt, &clear)
+    let final_eval = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt)
         .unwrap()
         .value;
     assert_eq!(final_eval, F::from_u64(7));
@@ -489,10 +477,8 @@ fn batched_one_dishonest_claim_rejected() {
         },
     ];
 
-    let clear = ClearRoundVerifier::new();
     let mut vt = new_transcript();
-    let result =
-        BatchedSumcheckVerifier::verify(&claims, &proof.round_polynomials, &mut vt, &clear);
+    let result = BatchedSumcheckVerifier::verify(&claims, &proof.round_polynomials, &mut vt);
     assert!(result.is_err(), "dishonest claim in batch must be rejected");
 }
 
@@ -533,9 +519,8 @@ fn batched_swapped_claim_order_rejected() {
         },
     ];
 
-    let clear = ClearRoundVerifier::new();
     let mut vt = new_transcript();
     let result =
-        BatchedSumcheckVerifier::verify(&claims_swapped, &proof.round_polynomials, &mut vt, &clear);
+        BatchedSumcheckVerifier::verify(&claims_swapped, &proof.round_polynomials, &mut vt);
     assert!(result.is_err(), "swapped claim order must be rejected");
 }
