@@ -377,6 +377,9 @@ common = { path = "./common", default-features = false }
 tracer = { path = "./tracer", default-features = false }
 jolt-core = { path = "./jolt-core", default-features = false }
 jolt-field = { path = "./crates/jolt-field" }
+jolt-poly = { path = "./crates/jolt-poly" }
+jolt-transcript = { path = "./crates/jolt-transcript" }
+jolt-sumcheck = { path = "./crates/jolt-sumcheck" }
 jolt-riscv = { path = "./crates/jolt-riscv" }
 jolt-riscv-derive = { path = "./crates/jolt-riscv-derive" }
 jolt-lookup-tables = { path = "./crates/jolt-lookup-tables" }

@@ -9,9 +9,9 @@ description = "Sumcheck protocol types and verification for the Jolt zkVM"
 workspace = true
 
 [dependencies]
-jolt-field = { path = "../jolt-field" }
-jolt-poly = { path = "../jolt-poly" }
-jolt-transcript = { path = "../jolt-transcript" }
+jolt-field.workspace = true
+jolt-poly.workspace = true
+jolt-transcript.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true
-thiserror = { workspace = true }
+thiserror.workspace = true
