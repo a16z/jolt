@@ -256,7 +256,7 @@ landing the first two S5 renames exposed three distinct blocker classes).
 
 | Category | Count | `is_primitive()` target |
 |---|---|---|
-| Primitive — compute | 14 | `true` |
+| Primitive — compute | 16 | `true` |
 | Primitive — PCS | 7 | `true` |
 | Primitive — orchestration | 9 | `true` |
 | Primitive — resource | 3 | `true` |
@@ -268,14 +268,27 @@ landing the first two S5 renames exposed three distinct blocker classes).
 | Protocol-specific: lower (→ O5) | 5 | `true` (ratchet unchanged until lowered) |
 | **Current total** | **46** | |
 
-Post-O5 target: 36 primitive + batch-scaffold variants plus the new
-primitive surface introduced during Group A and Group B lowering —
-expected additions include `Op::TraceGatherMultiply`,
-`Op::TraceGatherProduct`, `Op::TraceGatherIndexed`, `Op::TraceScatter`
-(Group A); possibly an extended `Op::Reduce` with richer `KernelSpec`
-state inputs (Group B). `Op::BuildSegmentedEq` and
-`Op::InstanceScalarUpdate` already landed via rename. Conservative
-estimated final variant count: ~42.
+Post-O5 target: ~44 primitive + batch-scaffold variants. New primitives
+landed during Group A partial lowering: `Op::TraceGatherMultiply`
+(replaces `UpdateInstanceWeights`) and `Op::TraceGatherProduct`
+(replaces `MaterializeRA`). Outstanding additions expected during
+remaining lowering:
+- `Op::TraceScatter` (Group A) — needs suffix-op / bit-uninterleave
+  subroutines for `SuffixScatter` and `QBufferScatter`. Likely two
+  separate primitives due to per-op protocol math.
+- `Op::TraceGatherIndexed` (Group A) — for `MaterializeCombinedVal`.
+  Also needs a scalar-compute side-channel for `table_values[t]`
+  (probably via `InstanceScalarUpdate` with extended
+  `state.instance_scalars` slots).
+- Extended `Op::Reduce` / new `KernelSpec.formula` shapes
+  (Group B) — for `ReadCheckingReduce` and `RafReduce`.
+
+Landed-via-rename/lowering this session: `Op::BuildSegmentedEq`
+(S5.build_segmented_eq), `Op::InstanceScalarUpdate` (S5.rename),
+`Op::TraceGatherMultiply` (S5.update_instance_weights),
+`Op::TraceGatherProduct` (S5.materialize_ra). `Op::MaterializePBuffers`
+fully removed via 3× `WeightedSum` + 4 new derived polys
+(S5.materialize_p_buffers).
 
 ## Invariant wiring
 
