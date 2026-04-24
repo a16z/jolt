@@ -7,10 +7,15 @@
 //! Requires: `cargo nextest run -p jolt-openings --features test-utils`
 
 #![cfg(feature = "test-utils")]
+#![expect(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    reason = "tests may panic on assertion failures"
+)]
 
 use jolt_field::{Field, Fr};
 use jolt_openings::mock::MockCommitmentScheme;
-use jolt_openings::{CommitmentScheme, OpeningReduction, ProverClaim, VerifierClaim};
+use jolt_openings::{reduce_prover, reduce_verifier, CommitmentScheme, ProverClaim, VerifierClaim};
 use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
@@ -46,7 +51,7 @@ fn reduce_open_verify<T: Transcript<Challenge = Fr>>(
 
     // Prover side
     let mut transcript_p = T::new(label);
-    let reduced_p = MockPCS::reduce_prover(prover_claims, &mut transcript_p);
+    let reduced_p = reduce_prover(prover_claims, &mut transcript_p);
     let proofs: Vec<_> = reduced_p
         .iter()
         .map(|c| {
@@ -63,7 +68,7 @@ fn reduce_open_verify<T: Transcript<Challenge = Fr>>(
 
     // Verifier side
     let mut transcript_v = T::new(label);
-    let reduced_v = MockPCS::reduce_verifier(verifier_claims, &mut transcript_v)
+    let reduced_v = reduce_verifier::<MockPCS, _>(verifier_claims, &mut transcript_v)
         .expect("reduction should succeed");
 
     assert_eq!(reduced_v.len(), proofs.len());
@@ -151,11 +156,11 @@ fn mixed_shared_and_distinct_points() {
 #[test]
 fn empty_claims_is_noop() {
     let mut transcript_p = Blake2bTranscript::new(b"empty");
-    let reduced = MockPCS::reduce_prover(Vec::new(), &mut transcript_p);
+    let reduced = reduce_prover::<Fr, _>(Vec::new(), &mut transcript_p);
     assert!(reduced.is_empty());
 
     let mut transcript_v = Blake2bTranscript::new(b"empty");
-    let reduced_v = MockPCS::reduce_verifier(Vec::new(), &mut transcript_v).unwrap();
+    let reduced_v = reduce_verifier::<MockPCS, _>(Vec::new(), &mut transcript_v).unwrap();
     assert!(reduced_v.is_empty());
 }
 
@@ -200,7 +205,7 @@ fn tampered_eval_detected() {
     ];
 
     let mut transcript_p = Blake2bTranscript::new(b"tampered");
-    let reduced_p = MockPCS::reduce_prover(prover_claims, &mut transcript_p);
+    let reduced_p = reduce_prover(prover_claims, &mut transcript_p);
     let proofs: Vec<_> = reduced_p
         .iter()
         .map(|c| {
@@ -216,7 +221,7 @@ fn tampered_eval_detected() {
         .collect();
 
     let mut transcript_v = Blake2bTranscript::new(b"tampered");
-    let reduced_v = MockPCS::reduce_verifier(verifier_claims, &mut transcript_v)
+    let reduced_v = reduce_verifier::<MockPCS, _>(verifier_claims, &mut transcript_v)
         .expect("reduction itself should succeed");
 
     let mut any_failed = false;

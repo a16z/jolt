@@ -56,17 +56,11 @@ pub trait CommitmentScheme: Commitment + Clone + Send + Sync + 'static {
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<(), OpeningsError>;
 
-    /// Post-proof transcript binding: absorb the opening point and evaluation
-    /// into the Fiat-Shamir transcript. Called after `open`/`verify` to bind
-    /// the opening inputs for subsequent protocol stages.
-    ///
-    /// Default: no-op (PCS that don't require post-proof binding).
     fn bind_opening_inputs(
-        _transcript: &mut impl Transcript<Challenge = Self::Field>,
-        _point: &[Self::Field],
-        _eval: &Self::Field,
-    ) {
-    }
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        point: &[Self::Field],
+        eval: &Self::Field,
+    );
 }
 
 /// C = Σ s_i · C_i.

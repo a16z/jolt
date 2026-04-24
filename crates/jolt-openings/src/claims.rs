@@ -5,8 +5,8 @@ use jolt_poly::Polynomial;
 
 /// Prover-side opening claim: polynomial, evaluation point, and claimed value.
 #[derive(Clone, Debug)]
-pub struct ProverClaim<F: Field> {
-    pub polynomial: Polynomial<F>,
+pub struct ProverClaim<F: Field, P = Polynomial<F>> {
+    pub polynomial: P,
     pub point: Vec<F>,
     pub eval: F,
 }
