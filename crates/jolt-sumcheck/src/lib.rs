@@ -21,7 +21,7 @@
 //! | [`claim`] | [`SumcheckClaim`] (input statement) and [`EvaluationClaim`] (reduction output) |
 //! | [`proof`] | [`SumcheckProof`] — serializable proof |
 //! | [`verifier`] | [`SumcheckVerifier`] engine |
-//! | [`batched`] | [`BatchedSumcheckVerifier`] — batched verification via RLC |
+//! | [`batched_verifier`] | [`BatchedSumcheckVerifier`] — batched verification via RLC |
 //! | [`round`] | [`RoundVerifier`] — strategy trait for clear vs. committed mode |
 //! | [`error`] | [`SumcheckError`] variants |
 //!
@@ -57,7 +57,7 @@
 //! ```
 //!
 
-pub mod batched;
+pub mod batched_verifier;
 pub mod claim;
 pub mod error;
 pub mod proof;
@@ -67,7 +67,7 @@ pub mod verifier;
 #[cfg(test)]
 mod tests;
 
-pub use batched::BatchedSumcheckVerifier;
+pub use batched_verifier::BatchedSumcheckVerifier;
 pub use claim::{EvaluationClaim, SumcheckClaim};
 pub use error::SumcheckError;
 pub use proof::SumcheckProof;
