@@ -18,6 +18,12 @@ pub const LOG_K_INSTRUCTION: usize = 128;
 /// Register address space: 128 registers.
 pub const LOG_K_REG: usize = 7;
 
+/// BN254 Fr coprocessor register-file address space: 16 slots. The low 4 bits
+/// of the 5-bit R-type rs1/rs2/rd fields index field_regs[0..=15]; see
+/// `specs/bn254-fr-coprocessor.md` §ISA and `specs/fr-twist-mirror-plan.md`
+/// for the full derivation.
+pub const LOG_K_FR: usize = 4;
+
 /// Number of distinct lookup table types (LookupTables::COUNT for RV64).
 pub const NUM_DISTINCT_LOOKUP_TABLES: usize = 41;
 
@@ -67,6 +73,10 @@ pub struct ModuleParams {
     pub instruction_d: usize,
     pub bytecode_d: usize,
     pub ram_d: usize,
+    /// One-hot chunk count for the BN254 Fr coprocessor write-address
+    /// indicator. With `LOG_K_FR = 4` and default `log_k_chunk = 4`, this
+    /// is `1`; with `log_k_chunk = 8`, still `1` (FR fits in one chunk).
+    pub field_reg_d: usize,
 
     // -- Committed poly count --
     pub num_committed: usize,
@@ -126,8 +136,10 @@ impl ModuleParams {
         let instruction_d = LOG_K_INSTRUCTION / log_k_chunk;
         let bytecode_d = log_k_bytecode.div_ceil(log_k_chunk);
         let ram_d = log_k_ram.div_ceil(log_k_chunk);
+        let field_reg_d = LOG_K_FR.div_ceil(log_k_chunk);
 
-        let num_committed = 2 + instruction_d + ram_d + bytecode_d;
+        // +1 dense (FieldRegInc) + field_reg_d one-hot chunks.
+        let num_committed = 3 + instruction_d + ram_d + bytecode_d + field_reg_d;
 
         // Outer Spartan — group-split uniskip.
         //
@@ -191,6 +203,7 @@ impl ModuleParams {
             instruction_d,
             bytecode_d,
             ram_d,
+            field_reg_d,
             num_committed,
             outer_uniskip_degree,
             outer_uniskip_domain,

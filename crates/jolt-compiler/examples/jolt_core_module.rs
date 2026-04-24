@@ -33,7 +33,7 @@ use jolt_compiler::module::{
     SuffixOp, SumcheckInstance, VerifierOp, VerifierSchedule, VerifierStageIndex, WeightFn,
 };
 use jolt_compiler::params::{
-    ModuleParams, LOG_K_INSTRUCTION, LOG_K_REG, NUM_CIRCUIT_FLAGS, NUM_LOOKUP_TABLES,
+    ModuleParams, LOG_K_FR, LOG_K_INSTRUCTION, LOG_K_REG, NUM_CIRCUIT_FLAGS, NUM_LOOKUP_TABLES,
     NUM_R1CS_INPUTS,
 };
 use jolt_compiler::KernelSpec;
@@ -192,6 +192,16 @@ struct Polys {
     reg_ra_rs2: PolynomialId,
     reg_val: PolynomialId,
 
+    // Committed — BN254 Fr coprocessor register subsystem
+    field_reg_inc: PolynomialId,
+    field_reg_ra: Vec<PolynomialId>, // d ∈ 0..p.field_reg_d (typically 1)
+
+    // Virtual — BN254 Fr coprocessor derived polys
+    field_reg_wa: PolynomialId,
+    field_reg_ra_rs1: PolynomialId,
+    field_reg_ra_rs2: PolynomialId,
+    field_reg_val: PolynomialId,
+
     // Virtual — RAM
     ram_combined_ra: PolynomialId,
     ram_val: PolynomialId,
@@ -238,6 +248,7 @@ fn register_polys(pt: &mut PolyTable, p: &ModuleParams) -> Polys {
     use PolyKind::{Committed, Virtual};
     use PolynomialId::{
         Az, BranchFlag, BytecodeRa, BytecodeReadRafVal, Bz, ExpandedPc, FieldRdValue,
+        FieldRegInc, FieldRegRa, FieldRegRaRs1, FieldRegRaRs2, FieldRegVal, FieldRegWa,
         FieldRs1Value, FieldRs2Value, HammingG, HammingWeight, Imm, InstructionRa,
         InstructionRafFlag, IoMask, LeftInstructionInput, LeftIsPc, LeftIsRs1, LeftLookupOperand,
         LookupOutput, LookupTableFlag, NextIsFirstInSequence, NextIsNoop, NextIsVirtual, NextPc,
@@ -388,6 +399,46 @@ fn register_polys(pt: &mut PolyTable, p: &ModuleParams) -> Polys {
     let reg_ra_rs1 = pt.add(Rs1Ra, "RegRaRs1", Virtual, LOG_K_REG + p.log_t);
     let reg_ra_rs2 = pt.add(Rs2Ra, "RegRaRs2", Virtual, LOG_K_REG + p.log_t);
     let reg_val = pt.add(RegistersVal, "RegVal", Virtual, LOG_K_REG + p.log_t);
+
+    // Committed — BN254 Fr coprocessor register-file (mirrors integer Rd*).
+    // FieldRegInc: committed dense, padded from log_t to log_k_chunk + log_t
+    // on the main grid (identical to RdInc shape). FieldRegRa(d): committed
+    // one-hot chunks, d ∈ 0..p.field_reg_d (p.field_reg_d = 1 when
+    // log_k_chunk ≥ LOG_K_FR = 4, per the mirror plan).
+    let field_reg_inc = pt.add_committed(
+        FieldRegInc,
+        "FieldRegInc",
+        Committed,
+        p.log_t,
+        p.log_k_chunk + p.log_t,
+    );
+    let field_reg_ra: Vec<_> = (0..p.field_reg_d)
+        .map(|d| {
+            pt.add(
+                FieldRegRa(d),
+                &format!("FieldRegRa_{d}"),
+                Committed,
+                p.log_k_chunk + p.log_t,
+            )
+        })
+        .collect();
+
+    // Virtual — BN254 Fr coprocessor derived polys. Identical shape to
+    // integer `reg_{wa,ra_rs1,ra_rs2,val}`, with LOG_K_REG → LOG_K_FR.
+    let field_reg_wa = pt.add(FieldRegWa, "FieldRegWa", Virtual, LOG_K_FR + p.log_t);
+    let field_reg_ra_rs1 = pt.add(
+        FieldRegRaRs1,
+        "FieldRegRaRs1",
+        Virtual,
+        LOG_K_FR + p.log_t,
+    );
+    let field_reg_ra_rs2 = pt.add(
+        FieldRegRaRs2,
+        "FieldRegRaRs2",
+        Virtual,
+        LOG_K_FR + p.log_t,
+    );
+    let field_reg_val = pt.add(FieldRegVal, "FieldRegVal", Virtual, LOG_K_FR + p.log_t);
 
     // Virtual — RAM
     let ram_combined_ra = pt.add(
@@ -546,6 +597,12 @@ fn register_polys(pt: &mut PolyTable, p: &ModuleParams) -> Polys {
         reg_ra_rs1,
         reg_ra_rs2,
         reg_val,
+        field_reg_inc,
+        field_reg_ra,
+        field_reg_wa,
+        field_reg_ra_rs1,
+        field_reg_ra_rs2,
+        field_reg_val,
         ram_combined_ra,
         ram_val,
         ram_val_final,
@@ -1167,9 +1224,11 @@ fn build_commitment_phase(p: &Polys, params: &ModuleParams, ops: &mut Vec<Op>) {
     let mut main_witness = Vec::with_capacity(params.num_committed);
     main_witness.push(p.rd_inc);
     main_witness.push(p.ram_inc);
+    main_witness.push(p.field_reg_inc);
     main_witness.extend_from_slice(&p.instruction_ra);
     main_witness.extend_from_slice(&p.ram_ra);
     main_witness.extend_from_slice(&p.bytecode_ra);
+    main_witness.extend_from_slice(&p.field_reg_ra);
     // Main witness grid: K_chunk × T (matches DoryGlobals::initialize_context(K, T, Main))
     let main_num_vars = params.log_k_chunk + params.log_t;
     ops.push(Op::Commit {
