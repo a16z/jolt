@@ -743,7 +743,11 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                 .iter()
                 .map(|ci| state.challenges[ci.0])
                 .collect();
-            state.instance_weights = jolt_poly::EqPolynomial::<F>::evals(&point, None);
+            let weights = jolt_poly::EqPolynomial::<F>::evals(&point, None);
+            let _ = device_buffers.insert(
+                PolynomialId::InstanceWeights,
+                DeviceBuffer::Field(backend.upload(&weights)),
+            );
             state.instance_scalars.fill(None);
         }
 
@@ -754,10 +758,16 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
         } => {
             let trace = provider.lookup_trace().unwrap();
             let prev_data = backend.download(device_buffers[expanding_table].as_field());
+            let mut weights =
+                backend.download(device_buffers[&PolynomialId::InstanceWeights].as_field());
             let m_mask = (1usize << chunk_bits) - 1;
             for (j, &key) in trace.lookup_keys.iter().enumerate() {
-                state.instance_weights[j] *= prev_data[((key >> suffix_len) as usize) & m_mask];
+                weights[j] *= prev_data[((key >> suffix_len) as usize) & m_mask];
             }
+            let _ = device_buffers.insert(
+                PolynomialId::InstanceWeights,
+                DeviceBuffer::Field(backend.upload(&weights)),
+            );
         }
 
         Op::SuffixScatter { kernel, suffix_len } => {
@@ -766,6 +776,8 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                 .as_ref()
                 .unwrap();
             let trace = provider.lookup_trace().unwrap();
+            let weights =
+                backend.download(device_buffers[&PolynomialId::InstanceWeights].as_field());
             let all_polys = compute_suffix_scatter(
                 config.chunk_bits,
                 *suffix_len,
@@ -773,7 +785,7 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                 &config.suffixes_per_table,
                 &config.suffix_ops,
                 trace,
-                &state.instance_weights,
+                &weights,
             );
             for (t, table_polys) in all_polys.into_iter().enumerate() {
                 for (s, p) in table_polys.into_iter().enumerate() {
@@ -791,12 +803,10 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                 .as_ref()
                 .unwrap();
             let trace = provider.lookup_trace().unwrap();
-            let q_buffers = compute_q_buffer_scatter(
-                config.chunk_bits,
-                *suffix_len,
-                trace,
-                &state.instance_weights,
-            );
+            let weights =
+                backend.download(device_buffers[&PolynomialId::InstanceWeights].as_field());
+            let q_buffers =
+                compute_q_buffer_scatter(config.chunk_bits, *suffix_len, trace, &weights);
             for (c, pair) in q_buffers.into_iter().enumerate() {
                 for (h, q) in pair.into_iter().enumerate() {
                     let _ = device_buffers.insert(

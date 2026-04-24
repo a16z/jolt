@@ -133,10 +133,6 @@ where
     pub(super) opening_proofs: Vec<PCS::Proof>,
     pub(super) padded_poly_data: HashMap<PolynomialId, Vec<F>>,
 
-    /// Per-cycle eq-weight vector for address-decomposition instance.
-    /// Initialized at phase 0, updated at each phase transition.
-    pub(super) instance_weights: Vec<F>,
-
     /// Scalar checkpoints for address-decomposition instance (None = not yet initialized).
     /// Must preserve None vs Some(F::zero()) distinction because some checkpoints
     /// (e.g. Eq) use `unwrap_or(F::one())` where None means "use default".
@@ -210,7 +206,6 @@ where
         reduced_hints: Vec::new(),
         opening_proofs: Vec::new(),
         padded_poly_data: HashMap::new(),
-        instance_weights: Vec::new(),
         instance_scalars: vec![None; max_num_prefixes],
         read_checking_evals: [F::zero(); 2],
     };
