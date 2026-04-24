@@ -98,8 +98,10 @@ fn compare_witness_variables() {
         /* 44 */ "FieldOpResult",
         /* 45 */ "FieldRegReadLimb",
         /* 46 */ "FieldRegWriteLimb",
-        /* 47 */ "Branch",
-        /* 48 */ "NextIsNoop",
+        /* 47 */ "LimbSumA",
+        /* 48 */ "LimbSumB",
+        /* 49 */ "Branch",
+        /* 50 */ "NextIsNoop",
     ];
 
     // Compare witness variables for real cycles.

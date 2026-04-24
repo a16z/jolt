@@ -50,6 +50,16 @@ pub const NUM_LOOKUP_TABLES: usize = 41;
 /// Number of product constraints (shift, instruction input, output check).
 pub const NUM_PRODUCT_CONSTRAINTS: usize = 3;
 
+/// Padded stride of the shared `rv64_constraints` R1CS matrix.
+///
+/// Matrix has 31 eq (including the 2 limb-sum bridge rows added for
+/// Phase 3 bridge soundness, task #65) + 3 product = 34 rows, padded
+/// to 64. Every module sharing the matrix pads to this value.
+///
+/// Before the bridge-soundness rows were added, the matrix fit in
+/// 32 rows (29+3); the jump to 64 is the cost of the security fix.
+pub const TOTAL_MATRIX_CONSTRAINTS_PADDED: usize = 64;
+
 /// All derived protocol parameters for a given trace.
 #[derive(Debug, Clone)]
 pub struct ModuleParams {
@@ -184,7 +194,12 @@ impl ModuleParams {
         // τ = [τ_cycle (log_t) ‖ τ_streaming (1) ‖ τ_high (Lagrange kernel)]
         // jolt-core squeezes num_cycle_vars + 2 = log_t + 2 total.
         let num_tau = log_t + 2;
-        let num_constraints_padded = num_r1cs_constraints.next_power_of_two();
+        // Must match R1csKey.num_constraints_padded, which pads the TOTAL matrix
+        // rows (eq + product) for the GLOBAL shared `rv64_constraints` matrix.
+        // Matrix has 31 eq + 3 product = 34 rows → pads to 64. Every module shares
+        // the same R1csKey stride, regardless of its per-module `num_r1cs_constraints`
+        // (which controls only the outer uniskip domain sampling, not the stride).
+        let num_constraints_padded = TOTAL_MATRIX_CONSTRAINTS_PADDED;
 
         // Product virtual
         let product_uniskip_degree = NUM_PRODUCT_CONSTRAINTS - 1;

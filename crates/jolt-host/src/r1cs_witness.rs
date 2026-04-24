@@ -194,6 +194,68 @@ pub fn build_r1cs_witness<C: CycleRow, F: Field>(
     witness
 }
 
+/// Populate `V_LIMB_SUM_A` and `V_LIMB_SUM_B` witness columns from the
+/// register-write history (Plan P, task #65).
+///
+/// For every cycle `c`:
+/// ```text
+/// V_LIMB_SUM_A[c] = Σ_{k=0..3} 2^{64k} · reg_val(10+k, c)
+/// V_LIMB_SUM_B[c] = Σ_{k=0..3} 2^{64k} · reg_val(14+k, c)
+/// ```
+/// Pre-access semantics match `jolt_witness::derived::limb_sum_range`:
+/// emit the running sum for cycle `c` BEFORE applying any write on that
+/// same cycle. This ensures R1CS row 29 (`IsFieldOpAny · (V_LIMB_SUM_A −
+/// V_FIELD_OP_A) = 0`) fires against the Fr-operand value the guest loaded
+/// into field_regs via prior FMov-I2F cycles — which captured pre-access
+/// reads of x10..x13.
+///
+/// Must be called AFTER `build_r1cs_witness` (the post-write values are
+/// read from the witness's `V_RD_WRITE_VALUE` column). `rd_indices[c]` is
+/// `Some(reg)` when cycle `c` writes to integer register `reg`.
+pub fn populate_limb_sum_columns<F: Field>(
+    witness: &mut [F],
+    rd_indices: &[Option<usize>],
+    num_cycles: usize,
+    num_vars_padded: usize,
+) {
+    debug_assert_eq!(rd_indices.len(), num_cycles, "rd_indices length mismatch");
+
+    // Four weights: 2^0, 2^64, 2^128, 2^192. Build 2^64 as (1<<63)*2 so we
+    // stay within u128 (mirrors `limb_sum_range` + `preprocessed::populate_bridge`).
+    let two_pow_64 = F::from_u128(1u128 << 63) * F::from_u128(2);
+    let two_pow_128 = two_pow_64 * two_pow_64;
+    let two_pow_192 = two_pow_128 * two_pow_64;
+    let weights = [F::from_u64(1), two_pow_64, two_pow_128, two_pow_192];
+
+    // Running x10..x13 (A side) and x14..x17 (B side) values.
+    let mut current_a: [F; 4] = [F::from_u64(0); 4];
+    let mut current_b: [F; 4] = [F::from_u64(0); 4];
+
+    for c in 0..num_cycles {
+        // Emit pre-access sum for cycle c.
+        let mut sum_a = F::from_u64(0);
+        let mut sum_b = F::from_u64(0);
+        for k in 0..4 {
+            sum_a += weights[k] * current_a[k];
+            sum_b += weights[k] * current_b[k];
+        }
+        let base = c * num_vars_padded;
+        witness[base + V_LIMB_SUM_A] = sum_a;
+        witness[base + V_LIMB_SUM_B] = sum_b;
+
+        // Apply write (if any) AFTER emitting — matches `reg_val` / Val_reg
+        // semantics across the refactor. The post-write value lives in the
+        // witness's V_RD_WRITE_VALUE column, populated by `build_r1cs_witness`.
+        if let Some(rd) = rd_indices[c] {
+            if (10..=13).contains(&rd) {
+                current_a[rd - 10] = witness[base + V_RD_WRITE_VALUE];
+            } else if (14..=17).contains(&rd) {
+                current_b[rd - 14] = witness[base + V_RD_WRITE_VALUE];
+            }
+        }
+    }
+}
+
 /// Write the BN254 Fr coprocessor R1CS columns from a stream of
 /// [`FieldRegEvent`]s. Handles three event classes:
 ///

@@ -509,6 +509,12 @@ impl PolynomialId {
             Self::FieldOpResultValue => Some(44),
             Self::FieldRegReadLimb => Some(45),
             Self::FieldRegWriteLimb => Some(46),
+            // Plan P (task #65): LimbSumA/B promoted to R1CS witness columns
+            // so rows 29/30 can reference them. Populated by
+            // `jolt_host::populate_limb_sum_columns` from the register-write
+            // stream (see `limb_sum_range` logic in jolt-witness).
+            Self::LimbSumA => Some(47),
+            Self::LimbSumB => Some(48),
             _ => None,
         }
     }

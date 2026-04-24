@@ -55,7 +55,7 @@ fn main() {
     // from `jolt_core_module.rs` (which stays at 19 for cross-verify
     // parity with jolt-core); FR-enabled proofs are verified only by the
     // refactor's own verifier.
-    let p = ModuleParams::new_with_constraints(log_t, log_k_bytecode, log_k_ram, 29);
+    let p = ModuleParams::new_with_constraints(log_t, log_k_bytecode, log_k_ram, 31);
     let module = build_module(&p);
 
     if let Some(pos) = args.iter().position(|a| a == "--emit") {
@@ -1126,11 +1126,12 @@ fn emit_unrolled_batched_rounds(
 /// This is the EXACT order jolt-core's outer sumcheck flushes evaluations.
 /// Total R1CS input columns on the FR-extended module: baseline 35 + six
 /// BN254 Fr coprocessor flags (FMUL/FADD/FSUB/FINV + FMov-I2F/F2I) + three
-/// FieldOp operand columns + two FMov limb columns = 46.
+/// FieldOp operand columns + two FMov limb columns + two LimbSum bridge
+/// columns (task #65, Plan P) = 48.
 /// Matches `rv64::NUM_R1CS_INPUTS` so the verifier's `z` vector (length
-/// 1 + `NUM_R1CS_INPUTS_FR` = 47) covers every witness slot referenced by
-/// matrix rows 0-28.
-const NUM_R1CS_INPUTS_FR: usize = 46;
+/// 1 + `NUM_R1CS_INPUTS_FR` = 49) covers every witness slot referenced by
+/// matrix rows 0-30.
+const NUM_R1CS_INPUTS_FR: usize = 48;
 
 fn r1cs_input_polys(p: &Polys) -> [PolynomialId; NUM_R1CS_INPUTS_FR] {
     [
@@ -1180,6 +1181,8 @@ fn r1cs_input_polys(p: &Polys) -> [PolynomialId; NUM_R1CS_INPUTS_FR] {
         p.field_op_result,         // 43: FieldOpResultValue
         p.field_reg_read_limb,     // 44: FieldRegReadLimb
         p.field_reg_write_limb,    // 45: FieldRegWriteLimb
+        p.limb_sum_a,              // 46: LimbSumA (Plan P, task #65)
+        p.limb_sum_b,              // 47: LimbSumB (Plan P, task #65)
     ]
 }
 
@@ -1433,14 +1436,15 @@ fn build_stage1(
     // (matrix rows 19-26) plus the FMov-I2F / FMov-F2I security gates
     // (rows 27-28), and balancing the split to 15 + 14 so both groups
     // still fit inside the widened uniskip domain (`outer_uniskip_domain` =
-    // 15 when `num_r1cs_constraints` = 29).
+    // 16 when `num_r1cs_constraints` = 31).
     //
-    // All 10 new rows have structure `IsFieldX · (linear combo) = 0` — same
+    // All 12 new rows have structure `IsFieldX · (linear combo) = 0` — same
     // shape as the existing arithmetic gates — so they slot into either
-    // group equivalently. Rows 19-22 + 27 extend group 0 (to 15); rows
-    // 23-26 + 28 extend group 1 (to 14).
-    let group0_indices: Vec<usize> = vec![1, 2, 3, 4, 5, 6, 11, 14, 17, 18, 19, 20, 21, 22, 27];
-    let group1_indices: Vec<usize> = vec![0, 7, 8, 9, 10, 12, 13, 15, 16, 23, 24, 25, 26, 28];
+    // group equivalently. Rows 19-22 + 27 + 29 extend group 0 (to 16); rows
+    // 23-26 + 28 + 30 extend group 1 (to 15). Plan P rows 29/30 bind
+    // LimbSumA/B to FieldOpA/B, closing the bridge soundness gap.
+    let group0_indices: Vec<usize> = vec![1, 2, 3, 4, 5, 6, 11, 14, 17, 18, 19, 20, 21, 22, 27, 29];
+    let group1_indices: Vec<usize> = vec![0, 7, 8, 9, 10, 12, 13, 15, 16, 23, 24, 25, 26, 28, 30];
     let regrouped_stride = params.outer_uniskip_domain.next_power_of_two(); // 16
 
     // Regroup Az/Bz from flat T×32 to interleaved 2T×16 layout.
@@ -1771,8 +1775,8 @@ fn build_verifier_stage1_ops(
     // outer sumcheck samples the FADD/FSUB/FMUL/FINV gates at matrix rows
     // 19-26 plus the FMov-I2F / FMov-F2I security gates (rows 27-28).
     // See the prover-side comment at `group0_indices` for rationale.
-    let group0: Vec<usize> = vec![1, 2, 3, 4, 5, 6, 11, 14, 17, 18, 19, 20, 21, 22, 27];
-    let group1: Vec<usize> = vec![0, 7, 8, 9, 10, 12, 13, 15, 16, 23, 24, 25, 26, 28];
+    let group0: Vec<usize> = vec![1, 2, 3, 4, 5, 6, 11, 14, 17, 18, 19, 20, 21, 22, 27, 29];
+    let group1: Vec<usize> = vec![0, 7, 8, 9, 10, 12, 13, 15, 16, 23, 24, 25, 26, 28, 30];
     let output_check = ClaimFormula {
         terms: vec![ClaimTerm {
             coeff: 1,
@@ -2123,14 +2127,9 @@ fn build_stage2(
         challenge: ch_gamma_fr,
     });
 
-    // γ_bridge_side (limb→Fr bridge A/B side mixing challenge)
-    let ch_gamma_bridge_side = ch.add(
-        "gamma_bridge_side",
-        ChallengeSource::FiatShamir { after_stage: 1 },
-    );
-    ops.push(Op::Squeeze {
-        challenge: ch_gamma_bridge_side,
-    });
+    // (Plan P, task #65) Bridge sumcheck removed — limb→Fr binding is now
+    // enforced by R1CS rows 29/30 in Stage 1 outer Spartan. No γ_bridge_side
+    // needed.
 
     // FieldReg RV/WV: materialize + bind at r_cycle LowToHigh + evaluate +
     // record + absorb. This makes field_reg_read_value / field_reg_write_value
@@ -2341,25 +2340,11 @@ fn build_stage2(
         inactive_scale_bits: params.stage2_max_rounds - params.fr_checking_rounds,
     });
 
-    // [6] Limb→Fr bridge: zero-sum identity (input_claim = 0).
-    //   0 ≡ Σ_c eq(τ_bridge, c) · [
-    //         IsFieldOpAny(c) · (LimbSumA(c) − FieldOpA(c))
-    //       + γ_bridge_side · IsFieldOpNoInv(c) · (LimbSumB(c) − FieldOpB(c))
-    //       ]
-    // The LimbSum openings produced here are NOT yet cryptographically bound
-    // to Val_reg — Step 4 extends Stage 5 to reduce LimbSum openings to
-    // Val_reg openings.
-    let bridge_input_claim = ClaimFormula::zero();
-    ops.push(Op::AbsorbInputClaim {
-        formula: bridge_input_claim.clone(),
-        tag: DomainSeparator::SumcheckClaim,
-        batch: batch_idx,
-        instance: InstanceIdx(6),
-        inactive_scale_bits: params.stage2_max_rounds - params.bridge_checking_rounds,
-    });
+    // (Plan P, task #65) Bridge instance [6] removed — identity enforced as
+    // R1CS rows 29/30 in Stage 1 Spartan outer sumcheck.
 
-    // Squeeze batching coefficients (7 instances: base 5 + FieldReg Twist + bridge)
-    const STAGE2_NUM_INSTANCES_FR: usize = 7;
+    // Squeeze batching coefficients (6 instances: base 5 + FieldReg Twist)
+    const STAGE2_NUM_INSTANCES_FR: usize = 6;
     let ch_batch_base = ChallengeIdx(ch.decls.len());
     for i in 0..STAGE2_NUM_INSTANCES_FR {
         let idx = ch.add(
@@ -2640,88 +2625,14 @@ fn build_stage2(
         instance_config: None,
     });
 
-    // [6] Limb→Fr bridge — single 1-D cycle sumcheck, log_t rounds, degree 3.
-    //
-    //   0 = Σ_c eq(τ_bridge, c) · [
-    //         IsFieldOpAny(c) · (LimbSumA(c) − FieldOpA(c))
-    //       + γ_bridge_side · IsFieldOpNoInv(c) · (LimbSumB(c) − FieldOpB(c))
-    //       ]
-    //
-    // Inputs (7):
-    //   0: eq_cycle (from BatchEq(3), τ_bridge = stage1_cycle_challenges)
-    //   1: IsFieldOpAny     T-element Derived
-    //   2: LimbSumA         T-element Derived
-    //   3: FieldOpA         R1CS column V_FIELD_OP_A
-    //   4: IsFieldOpNoInv   T-element Derived
-    //   5: LimbSumB         T-element Derived
-    //   6: FieldOpB         R1CS column V_FIELD_OP_B
-    let bridge_kernel_idx = kernels.len();
-    kernels.push(KernelDef {
-        spec: KernelSpec {
-            formula: Formula::from_terms(vec![
-                // eq · IsFieldOpAny · LimbSumA
-                ProductTerm {
-                    coefficient: 1,
-                    factors: vec![Factor::Input(0), Factor::Input(1), Factor::Input(2)],
-                },
-                // − eq · IsFieldOpAny · FieldOpA
-                ProductTerm {
-                    coefficient: -1,
-                    factors: vec![Factor::Input(0), Factor::Input(1), Factor::Input(3)],
-                },
-                // γ · eq · IsFieldOpNoInv · LimbSumB
-                ProductTerm {
-                    coefficient: 1,
-                    factors: vec![
-                        Factor::Challenge(ch_gamma_bridge_side.0 as u32),
-                        Factor::Input(0),
-                        Factor::Input(4),
-                        Factor::Input(5),
-                    ],
-                },
-                // − γ · eq · IsFieldOpNoInv · FieldOpB
-                ProductTerm {
-                    coefficient: -1,
-                    factors: vec![
-                        Factor::Challenge(ch_gamma_bridge_side.0 as u32),
-                        Factor::Input(0),
-                        Factor::Input(4),
-                        Factor::Input(6),
-                    ],
-                },
-            ]),
-            num_evals: params.bridge_checking_degree + 1,
-            iteration: Iteration::Dense,
-            binding_order: BindingOrder::LowToHigh,
-            gruen_hint: None,
-        },
-        inputs: vec![
-            InputBinding::EqTable {
-                poly: PolynomialId::BatchEq(3),
-                challenges: stage1_cycle_challenges.clone(),
-            },
-            InputBinding::Provided {
-                poly: PolynomialId::IsFieldOpAny,
-            },
-            InputBinding::Provided {
-                poly: PolynomialId::LimbSumA,
-            },
-            InputBinding::Provided {
-                poly: p.field_op_a,
-            },
-            InputBinding::Provided {
-                poly: PolynomialId::IsFieldOpNoInv,
-            },
-            InputBinding::Provided {
-                poly: PolynomialId::LimbSumB,
-            },
-            InputBinding::Provided {
-                poly: p.field_op_b,
-            },
-        ],
-        num_rounds: params.bridge_checking_rounds,
-        instance_config: None,
-    });
+    // (Plan P, task #65) Bridge sumcheck REMOVED. The limb→Fr identity is now
+    // enforced per-cycle by R1CS rows 29/30 in Stage 1's Spartan outer sumcheck:
+    //   row 29: IsFieldOpAny  · (V_LIMB_SUM_A − V_FIELD_OP_A) = 0
+    //   row 30: IsFieldOpNoInv · (V_LIMB_SUM_B − V_FIELD_OP_B) = 0
+    // LimbSumA/B are R1CS witness columns (47/48) populated by
+    // `jolt_host::r1cs_witness::populate_limb_sum_columns` from the register
+    // write stream. Their openings at r_cycle_stage1 flow through Stage 5's
+    // existing LimbSum{A,B}Reduction → committed RdInc chain.
 
     // [1] ProductVirtualRemainder — 25 rounds, degree 3.
     //
@@ -3035,19 +2946,8 @@ fn build_stage2(
                 batch_coeff: ChallengeIdx(ch_batch_base.0 + 5),
                 first_active_round: params.stage2_max_rounds - params.fr_checking_rounds,
             },
-            // [6] Limb→Fr bridge — single phase, log_t rounds, degree 3.
-            BatchedInstance {
-                phases: vec![InstancePhase {
-                    kernel: bridge_kernel_idx,
-                    num_rounds: params.bridge_checking_rounds,
-                    scalar_captures: vec![],
-                    segmented: None,
-                    carry_bindings: vec![],
-                    pre_activation_ops: vec![],
-                }],
-                batch_coeff: ChallengeIdx(ch_batch_base.0 + 6),
-                first_active_round: params.stage2_max_rounds - params.bridge_checking_rounds,
-            },
+            // (Plan P, task #65) Bridge instance [6] removed — identity enforced
+            // as R1CS rows 29/30 in Stage 1 Spartan outer sumcheck.
         ],
         input_claims: vec![
             rw_input_claim,
@@ -3056,7 +2956,6 @@ fn build_stage2(
             raf_input_claim,
             output_check_input_claim,
             fr_input_claim,
-            bridge_input_claim,
         ],
         max_rounds: params.stage2_max_rounds,
         max_degree: params.rw_checking_degree,
@@ -4236,16 +4135,11 @@ fn build_stage5(
 
     // Challenge index vectors for downstream kernels.
 
-    // Bridge reduction: r_cycle_bridge comes from the last `bridge_checking_rounds`
-    // (= log_t) entries of Stage 2 round_challenges, reversed to big-endian.
-    // The bridge instance has first_active_round = stage2_max_rounds - log_t
-    // and normalize: Reverse, so the opening point is the reversed tail.
-    let r_cycle_bridge: Vec<ChallengeIdx> = s2.round_challenges
-        [params.stage2_max_rounds - params.bridge_checking_rounds..]
-        .iter()
-        .rev()
-        .copied()
-        .collect();
+    // (Plan P, task #65) LimbSum reductions run at Stage 1's cycle point.
+    // Under Plan P, LimbSumA/B are R1CS witness columns opened by Stage 1's
+    // outer Spartan at `stage1_cycle_challenges`. Their Stage 5 reductions
+    // to committed RdInc now consume that same point.
+    let r_cycle_bridge: Vec<ChallengeIdx> = s2.stage1_cycle.clone();
     //
     // RegistersValEvaluation uses r_address/r_cycle from Stage 4's
     // RegistersRW sumcheck. RamRaClaimReduction uses r_address from
@@ -7083,7 +6977,7 @@ fn build_verifier_stage2_ops(
     let ch_gamma_instruction = ChallengeIdx(s2_ch_base + 3); // 58
     let ch_r_address_base = ChallengeIdx(s2_ch_base + 4); // 59..78
     let ch_gamma_fr = ChallengeIdx(s2_ch_base + 4 + params.log_k_ram); // after r_address
-    let ch_gamma_bridge_side = ChallengeIdx(s2_ch_base + 4 + params.log_k_ram + 1); // after γ_fr
+    // (Plan P, task #65) γ_bridge_side removed — bridge identity now in R1CS.
 
     // 18 unique openings (duplicates aliased — see prover side comment).
     let stage2_eval_polys = [
@@ -7111,14 +7005,8 @@ fn build_verifier_stage2_ops(
         p.field_reg_ra,
         p.field_reg_val,
         p.field_reg_inc,
-        // Limb→Fr bridge (6): FieldOpA, FieldOpB, IsFieldOpAny, IsFieldOpNoInv,
-        // LimbSumA, LimbSumB. Openings at r_cycle_bridge (log_t-dim).
-        p.field_op_a,
-        p.field_op_b,
-        p.is_field_op_any,
-        p.is_field_op_no_inv,
-        p.limb_sum_a,
-        p.limb_sum_b,
+        // (Plan P, task #65) Bridge openings removed from Stage 2 — identity
+        // enforced by R1CS rows 29/30 in Stage 1.
     ];
     let evaluations: Vec<_> = stage2_eval_polys
         .iter()
@@ -7176,13 +7064,7 @@ fn build_verifier_stage2_ops(
     const SE_FR_RA: usize = SE_BASE + 15;
     const SE_FR_VAL: usize = SE_BASE + 16;
     const SE_FR_INC: usize = SE_BASE + 17;
-    // Limb→Fr bridge (6):
-    const SE_FIELD_OP_A: usize = SE_BASE + 18;
-    const SE_FIELD_OP_B: usize = SE_BASE + 19;
-    const SE_IS_FIELD_OP_ANY: usize = SE_BASE + 20;
-    const SE_IS_FIELD_OP_NO_INV: usize = SE_BASE + 21;
-    const SE_LIMB_SUM_A: usize = SE_BASE + 22;
-    const SE_LIMB_SUM_B: usize = SE_BASE + 23;
+    // (Plan P, task #65) Bridge SE_* slots removed — identity in R1CS.
 
     // Instance 0: RamReadWriteChecking
     //
@@ -7677,65 +7559,9 @@ fn build_verifier_stage2_ops(
         ],
     };
 
-    // Instance 6: Limb→Fr bridge (1-D cycle, log_t rounds, degree 3)
-    //
-    // input_claim = 0 (zero-sum identity)
-    // output_check = eq(τ_bridge, r_cycle) · [
-    //     IsFieldOpAny · (LimbSumA − FieldOpA)
-    //   + γ_bridge_side · IsFieldOpNoInv · (LimbSumB − FieldOpB)
-    // ]
-    //
-    // normalize: Reverse (single 1-D cycle phase, LowToHigh → MSB-first point).
-    let bridge_eq = ClaimFactor::EqEvalSlice {
-        challenges: stage1_cycle_challenges.clone(),
-        at_stage: VerifierStageIndex(1),
-        offset: 0,
-    };
-    let bridge_input_claim = ClaimFormula::zero();
-    let bridge_output_check = ClaimFormula {
-        terms: vec![
-            // +eq · IsFieldOpAny · LimbSumA
-            ClaimTerm {
-                coeff: 1,
-                factors: vec![
-                    bridge_eq.clone(),
-                    ClaimFactor::StageEval(SE_IS_FIELD_OP_ANY),
-                    ClaimFactor::StageEval(SE_LIMB_SUM_A),
-                ],
-            },
-            // −eq · IsFieldOpAny · FieldOpA
-            ClaimTerm {
-                coeff: -1,
-                factors: vec![
-                    bridge_eq.clone(),
-                    ClaimFactor::StageEval(SE_IS_FIELD_OP_ANY),
-                    ClaimFactor::StageEval(SE_FIELD_OP_A),
-                ],
-            },
-            // +γ · eq · IsFieldOpNoInv · LimbSumB
-            ClaimTerm {
-                coeff: 1,
-                factors: vec![
-                    ClaimFactor::Challenge(ch_gamma_bridge_side),
-                    bridge_eq.clone(),
-                    ClaimFactor::StageEval(SE_IS_FIELD_OP_NO_INV),
-                    ClaimFactor::StageEval(SE_LIMB_SUM_B),
-                ],
-            },
-            // −γ · eq · IsFieldOpNoInv · FieldOpB
-            ClaimTerm {
-                coeff: -1,
-                factors: vec![
-                    ClaimFactor::Challenge(ch_gamma_bridge_side),
-                    bridge_eq,
-                    ClaimFactor::StageEval(SE_IS_FIELD_OP_NO_INV),
-                    ClaimFactor::StageEval(SE_FIELD_OP_B),
-                ],
-            },
-        ],
-    };
+    // (Plan P, task #65) Instance 6 bridge removed — identity in R1CS rows 29/30.
 
-    // Assemble all 7 instances
+    // Assemble 6 instances (5 base + FR Twist; bridge moved to R1CS)
     let instances = vec![
         // [0] RamReadWriteChecking — 45 rounds, degree 3
         SumcheckInstance {
@@ -7791,14 +7617,7 @@ fn build_verifier_stage2_ops(
                 output_order: vec![1, 0],
             }),
         },
-        // [6] Limb→Fr bridge — log_t rounds, degree 3
-        SumcheckInstance {
-            input_claim: bridge_input_claim,
-            output_check: bridge_output_check,
-            num_rounds: params.bridge_checking_rounds,
-            degree: params.bridge_checking_degree,
-            normalize: Some(PointNormalization::Reverse),
-        },
+        // (Plan P, task #65) Bridge instance [6] removed.
     ];
 
     let eval_polys: Vec<_> = evaluations.iter().map(|e| e.poly).collect();
@@ -7843,10 +7662,7 @@ fn build_verifier_stage2_ops(
     ops.push(VerifierOp::Squeeze {
         challenge: ch_gamma_fr,
     });
-    // γ_bridge_side (limb→Fr bridge A/B mixing challenge)
-    ops.push(VerifierOp::Squeeze {
-        challenge: ch_gamma_bridge_side,
-    });
+    // (Plan P, task #65) γ_bridge_side removed — bridge identity in R1CS.
     // FieldReg RV/WV record + absorb (mirrors prover's pre-sumcheck binding).
     ops.push(VerifierOp::RecordEvals {
         evals: vec![
@@ -7864,11 +7680,11 @@ fn build_verifier_stage2_ops(
         polys: vec![p.field_reg_read_value, p.field_reg_write_value],
         tag: DomainSeparator::OpeningClaim,
     });
-    // Batch coefficient challenge indices for the 7 instances (FR + bridge).
-    // Layout: τ_high, r0, γ_rw, γ_instruction, r_address(log_k_ram), γ_fr,
-    //         γ_bridge_side.
-    const STAGE2_NUM_INSTANCES_FR: usize = 7;
-    let ch_batch_base = s2_ch_base + 2 + 1 + 1 + params.log_k_ram + 1 + 1;
+    // Batch coefficient challenge indices for the 6 instances (5 base + FR).
+    // (Plan P, task #65) Bridge removed — γ_bridge_side gone.
+    // Layout: τ_high, r0, γ_rw, γ_instruction, r_address(log_k_ram), γ_fr.
+    const STAGE2_NUM_INSTANCES_FR: usize = 6;
+    let ch_batch_base = s2_ch_base + 2 + 1 + 1 + params.log_k_ram + 1;
     let batch_challenges: Vec<ChallengeIdx> = (0..STAGE2_NUM_INSTANCES_FR)
         .map(|i| ChallengeIdx(ch_batch_base + i))
         .collect();

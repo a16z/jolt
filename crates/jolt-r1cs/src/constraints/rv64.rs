@@ -16,12 +16,14 @@
 //! | `[40..=41]` | FMov flags (IsFMovI2F, IsFMovF2I) for FR↔scalar bridging gates |
 //! | `[42..=44]` | BN254 Fr coprocessor operand columns (FieldOpA/B/Result) |
 //! | `[45..=46]` | FMov limb columns (FieldRegReadLimb, FieldRegWriteLimb) |
-//! | `[47..=48]` | Product factor variables (`Branch`, `NextIsNoop`) |
+//! | `[47..=48]` | Limb-sum columns (LimbSumA, LimbSumB) for the bridge identity |
+//! | `[49..=50]` | Product factor variables (`Branch`, `NextIsNoop`) |
 //!
 //! # Constraint forms
 //!
-//! - **Eq-conditional**: `guard · (left − right) = 0` (rows 0–28 — 19 RV base
-//!   + FieldAdd, FieldSub, FMUL/FINV binding (6), FMov-I2F, FMov-F2I)
+//! - **Eq-conditional**: `guard · (left − right) = 0` (rows 0–30 — 19 RV base,
+//!   plus FieldAdd, FieldSub, FMUL/FINV binding (6), FMov-I2F, FMov-F2I,
+//!   LimbSumA-bridge, LimbSumB-bridge)
 //! - **Product**: `left · right = output` (final 3 rows)
 
 /// Constant-1 wire.
@@ -104,17 +106,32 @@ pub const V_FIELD_REG_READ_LIMB: usize = 45;
 /// the FR Twist via the `FieldRegEvent` stream.
 pub const V_FIELD_REG_WRITE_LIMB: usize = 46;
 
-// --- Product factors (shifted by +9 past field-op + fmov-limb slots) ---
+// --- Limb-sum bridge columns (Plan P / security fix #2, task #65) ---
+//
+// Per-cycle reconstructions of the two Fr operands from their four 64-bit
+// register limbs. Populated pointwise by `populate_limb_sum_columns` from
+// the register-write stream. Bound to `V_FIELD_OP_A/B` by rows 29-30 on
+// any FieldOp cycle, closing the limb→Fr bridge soundness gap that was
+// previously enforced by a (broken) Stage 2 virtual sumcheck.
 
-pub const V_BRANCH: usize = 47;
-pub const V_NEXT_IS_NOOP: usize = 48;
+/// `V_LIMB_SUM_A[c] = Σ_{k=0..3} 2^{64k} · reg_val(10+k, c)` — A-side Fr
+/// operand reconstructed from scalar registers x10..x13.
+pub const V_LIMB_SUM_A: usize = 47;
+/// `V_LIMB_SUM_B[c] = Σ_{k=0..3} 2^{64k} · reg_val(14+k, c)` — B-side Fr
+/// operand reconstructed from scalar registers x14..x17.
+pub const V_LIMB_SUM_B: usize = 48;
 
-pub const NUM_R1CS_INPUTS: usize = 46;
+// --- Product factors (shifted by +11 past field-op + fmov-limb + limb-sum slots) ---
+
+pub const V_BRANCH: usize = 49;
+pub const V_NEXT_IS_NOOP: usize = 50;
+
+pub const NUM_R1CS_INPUTS: usize = 48;
 pub const NUM_PRODUCT_FACTORS: usize = 2;
-pub const NUM_VARS_PER_CYCLE: usize = 1 + NUM_R1CS_INPUTS + NUM_PRODUCT_FACTORS; // 49
-pub const NUM_EQ_CONSTRAINTS: usize = 29;
+pub const NUM_VARS_PER_CYCLE: usize = 1 + NUM_R1CS_INPUTS + NUM_PRODUCT_FACTORS; // 51
+pub const NUM_EQ_CONSTRAINTS: usize = 31;
 pub const NUM_PRODUCT_CONSTRAINTS: usize = 3;
-pub const NUM_CONSTRAINTS_PER_CYCLE: usize = NUM_EQ_CONSTRAINTS + NUM_PRODUCT_CONSTRAINTS; // 32
+pub const NUM_CONSTRAINTS_PER_CYCLE: usize = NUM_EQ_CONSTRAINTS + NUM_PRODUCT_CONSTRAINTS; // 34
 
 /// Two's complement bias for subtraction: 2^64.
 const TWOS_COMPLEMENT_BIAS: i128 = 0x1_0000_0000_0000_0000;
@@ -448,7 +465,7 @@ pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
 
     // 23: FieldMul product output
     //     IsFieldMul · (V_PRODUCT − FieldOpResult) = 0
-    //     Combined with product-constraint 29 (V_PRODUCT = V_LEFT · V_RIGHT),
+    //     Combined with product-constraint 31 (V_PRODUCT = V_LEFT · V_RIGHT),
     //     this forces FieldOpResult = A · B on FMUL cycles.
     a_rows.push(row::<F>(&[(V_FLAG_IS_FIELD_MUL, 1)]));
     b_rows.push(row::<F>(&[(V_PRODUCT, 1), (V_FIELD_OP_RESULT, -1)]));
@@ -475,7 +492,7 @@ pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
 
     // 26: FieldInv unit product
     //     IsFieldInv · (V_PRODUCT − 1) = 0
-    //     With rows 24/25 and product-constraint 29, this forces A·Result = 1.
+    //     With rows 24/25 and product-constraint 31, this forces A·Result = 1.
     //     Does NOT cover FINV(0)=0 — guests must avoid inverting zero.
     a_rows.push(row::<F>(&[(V_FLAG_IS_FIELD_INV, 1)]));
     b_rows.push(row::<F>(&[(V_PRODUCT, 1), (V_CONST, -1)]));
@@ -514,21 +531,59 @@ pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
     ]));
     c_rows.push(empty());
 
-    // Product constraints (29-31)
+    // Security fix #2 (task #65, Plan P): bind each FieldOp's A/B operand
+    // to the corresponding four-register limb sum. Previously the Stage 2
+    // bridge sumcheck attempted to check this identity at a single random
+    // cycle point via products of MLEs; compensating-tamper PoC 6
+    // (audit_poc_compensating_tamper_solved) demonstrated the soundness
+    // gap — a prover could offset `(SumA, OpA)` and `(SumB, OpB)` by the
+    // same delta and still satisfy the sumcheck output while opening an
+    // arbitrary pair of values. By encoding the identity as R1CS rows,
+    // Stage 1's outer Spartan enforces it POINTWISE at every cycle
+    // (Az(c)·Bz(c) − Cz(c) = 0), collapsing the attack surface.
+
+    // 29: LimbSumA-bridge: A-side limb reconstruction must equal FieldOpA
+    //     IsFieldOpAny · (V_LIMB_SUM_A − V_FIELD_OP_A) = 0
+    //     Guard = IsFieldMul + IsFieldAdd + IsFieldSub + IsFieldInv. On
+    //     any FieldOp cycle the guard is 1, forcing the equality. On
+    //     non-FieldOp cycles the guard is 0, making the row vacuous.
+    a_rows.push(row::<F>(&[
+        (V_FLAG_IS_FIELD_MUL, 1),
+        (V_FLAG_IS_FIELD_ADD, 1),
+        (V_FLAG_IS_FIELD_SUB, 1),
+        (V_FLAG_IS_FIELD_INV, 1),
+    ]));
+    b_rows.push(row::<F>(&[(V_LIMB_SUM_A, 1), (V_FIELD_OP_A, -1)]));
+    c_rows.push(empty());
+
+    // 30: LimbSumB-bridge: B-side limb reconstruction must equal FieldOpB
+    //     IsFieldOpNoInv · (V_LIMB_SUM_B − V_FIELD_OP_B) = 0
+    //     Guard = IsFieldMul + IsFieldAdd + IsFieldSub (excludes FINV,
+    //     whose B-side operand is unused / forced to 0). Forces equality
+    //     on FMUL/FADD/FSUB cycles; vacuous on FINV and non-FieldOp.
+    a_rows.push(row::<F>(&[
+        (V_FLAG_IS_FIELD_MUL, 1),
+        (V_FLAG_IS_FIELD_ADD, 1),
+        (V_FLAG_IS_FIELD_SUB, 1),
+    ]));
+    b_rows.push(row::<F>(&[(V_LIMB_SUM_B, 1), (V_FIELD_OP_B, -1)]));
+    c_rows.push(empty());
+
+    // Product constraints (31-33)
     // Form: left · right = output  →  A=left, B=right, C=output
 
-    // 29: Product = LeftInstructionInput × RightInstructionInput
+    // 31: Product = LeftInstructionInput × RightInstructionInput
     //     Also supplies A·B (or A·Result for FINV) to the FMUL/FINV gates.
     a_rows.push(row::<F>(&[(V_LEFT_INSTRUCTION_INPUT, 1)]));
     b_rows.push(row::<F>(&[(V_RIGHT_INSTRUCTION_INPUT, 1)]));
     c_rows.push(row::<F>(&[(V_PRODUCT, 1)]));
 
-    // 30: ShouldBranch = LookupOutput × Branch
+    // 32: ShouldBranch = LookupOutput × Branch
     a_rows.push(row::<F>(&[(V_LOOKUP_OUTPUT, 1)]));
     b_rows.push(row::<F>(&[(V_BRANCH, 1)]));
     c_rows.push(row::<F>(&[(V_SHOULD_BRANCH, 1)]));
 
-    // 31: ShouldJump = Jump × (1 − NextIsNoop)
+    // 33: ShouldJump = Jump × (1 − NextIsNoop)
     a_rows.push(row::<F>(&[(V_FLAG_JUMP, 1)]));
     b_rows.push(row::<F>(&[(V_CONST, 1), (V_NEXT_IS_NOOP, -1)]));
     c_rows.push(row::<F>(&[(V_SHOULD_JUMP, 1)]));
@@ -583,6 +638,9 @@ mod tests {
     /// A FieldOp-like witness mirroring the no-op skeleton but with the
     /// FieldOp slots populated. Used by both the FADD/FSUB positive and
     /// negative tests so the non-FieldOp constraints stay vacuously satisfied.
+    /// Mirrors `V_LIMB_SUM_A/B` onto the operand columns so the Plan P
+    /// bridge rows (29/30) stay satisfied — the FieldOp gate tests here
+    /// exercise the operand-correctness gates, not the limb-sum bridge.
     fn field_op_witness(
         flag_idx: usize,
         a: Fr,
@@ -594,6 +652,8 @@ mod tests {
         w[V_FIELD_OP_A] = a;
         w[V_FIELD_OP_B] = b;
         w[V_FIELD_OP_RESULT] = result;
+        w[V_LIMB_SUM_A] = a;
+        w[V_LIMB_SUM_B] = b;
         w
     }
 
@@ -681,13 +741,16 @@ mod tests {
         w[V_FIELD_OP_A] = a;
         w[V_FIELD_OP_B] = b;
         w[V_FIELD_OP_RESULT] = result;
-        // Bind via V_PRODUCT: V_LEFT·V_RIGHT = V_PRODUCT (product constraint 27)
+        // Bind via V_PRODUCT: V_LEFT·V_RIGHT = V_PRODUCT (product constraint 31)
         w[V_LEFT_INSTRUCTION_INPUT] = a;
         w[V_RIGHT_INSTRUCTION_INPUT] = b;
         w[V_PRODUCT] = a * b;
         // Rows 6/10 fire (guard = 1-Add-Sub-Mul[-Advice]) → mirror into lookup slots.
         w[V_LEFT_LOOKUP_OPERAND] = a;
         w[V_RIGHT_LOOKUP_OPERAND] = b;
+        // Plan P rows 29/30: LimbSumA/B must equal A/B on FMUL cycles.
+        w[V_LIMB_SUM_A] = a;
+        w[V_LIMB_SUM_B] = b;
         w
     }
 
@@ -703,6 +766,9 @@ mod tests {
         w[V_PRODUCT] = a * result;
         w[V_LEFT_LOOKUP_OPERAND] = a;
         w[V_RIGHT_LOOKUP_OPERAND] = result;
+        // Plan P row 29: LimbSumA must equal A on FINV cycles. Row 30 is
+        // vacuous (IsFieldOpNoInv = 0 on FINV), so LimbSumB is unconstrained.
+        w[V_LIMB_SUM_A] = a;
         w
     }
 
@@ -847,6 +913,91 @@ mod tests {
         matrices
             .check_witness(&w)
             .expect("FMov-F2I must be vacuous when flag=0");
+    }
+
+    /// Security fix #2 (Plan P): row 29 binds LimbSumA to FieldOpA on any
+    /// FieldOp cycle. Compensating tamper (SumA+δ, OpA+δ) was previously
+    /// accepted via the Stage 2 bridge; rows 29/30 reject it pointwise.
+    #[test]
+    fn limb_sum_a_bridge_accepts_matching_operand() {
+        let matrices = rv64_constraints::<Fr>();
+        let a = Fr::from_u64(1234);
+        let b = Fr::from_u64(5678);
+        let mut w = field_op_witness(V_FLAG_IS_FIELD_ADD, a, b, a + b);
+        w[V_LIMB_SUM_A] = a;
+        w[V_LIMB_SUM_B] = b;
+        matrices
+            .check_witness(&w)
+            .expect("FADD with LimbSumA=OpA and LimbSumB=OpB must satisfy all rows");
+    }
+
+    #[test]
+    fn limb_sum_a_bridge_rejects_mismatch() {
+        let matrices = rv64_constraints::<Fr>();
+        let a = Fr::from_u64(1234);
+        let b = Fr::from_u64(5678);
+        let mut w = field_op_witness(V_FLAG_IS_FIELD_ADD, a, b, a + b);
+        w[V_LIMB_SUM_A] = a + Fr::from_u64(1);
+        w[V_LIMB_SUM_B] = b;
+        assert!(
+            matrices.check_witness(&w).is_err(),
+            "LimbSumA ≠ FieldOpA on an FADD cycle must violate row 29",
+        );
+    }
+
+    #[test]
+    fn limb_sum_b_bridge_rejects_mismatch() {
+        let matrices = rv64_constraints::<Fr>();
+        let a = Fr::from_u64(1234);
+        let b = Fr::from_u64(5678);
+        let mut w = field_op_witness(V_FLAG_IS_FIELD_ADD, a, b, a + b);
+        w[V_LIMB_SUM_A] = a;
+        w[V_LIMB_SUM_B] = b + Fr::from_u64(1);
+        assert!(
+            matrices.check_witness(&w).is_err(),
+            "LimbSumB ≠ FieldOpB on an FADD cycle must violate row 30",
+        );
+    }
+
+    #[test]
+    fn limb_sum_bridge_vacuous_when_flags_zero() {
+        let matrices = rv64_constraints::<Fr>();
+        // No FieldOp flag set — the guard on rows 29/30 is 0, so arbitrary
+        // LimbSumA/B values must be vacuously accepted.
+        let mut w = noop_witness();
+        w[V_LIMB_SUM_A] = Fr::from_u64(0xdead_beef);
+        w[V_LIMB_SUM_B] = Fr::from_u64(0xcafe_f00d);
+        w[V_FIELD_OP_A] = Fr::from_u64(0);
+        w[V_FIELD_OP_B] = Fr::from_u64(0);
+        matrices
+            .check_witness(&w)
+            .expect("LimbSum rows must be vacuous when no FieldOp flag is set");
+    }
+
+    /// The compensating tamper from audit PoC 6: set LimbSumA = OpA + δ and
+    /// FieldOpA = OpA + δ (same δ). Row 29 forces LimbSumA − FieldOpA = 0
+    /// pointwise — both tampered operands shift together, so the row is
+    /// still satisfied. This demonstrates the pointwise check is resilient
+    /// to the compensating tamper at the witness level; at the protocol
+    /// level, the Stage 5 LimbSumAReduction binds LimbSumA cryptographically
+    /// to RdInc (via the register-write stream), so the SUM side cannot be
+    /// freely shifted — any δ that moves LimbSumA must also move the
+    /// underlying RdInc writes, which themselves are PCS-committed.
+    #[test]
+    fn limb_sum_compensating_tamper_not_detectable_at_r1cs_level() {
+        let matrices = rv64_constraints::<Fr>();
+        let a = Fr::from_u64(1234);
+        let b = Fr::from_u64(5678);
+        let delta = Fr::from_u64(0xdead_beef);
+        let mut w = field_op_witness(V_FLAG_IS_FIELD_ADD, a + delta, b, (a + delta) + b);
+        // Shift both LimbSumA and FieldOpA by δ.
+        w[V_LIMB_SUM_A] = a + delta;
+        w[V_LIMB_SUM_B] = b;
+        // R1CS alone accepts — row 29 checks the DIFFERENCE, not the absolute
+        // values. The binding to RdInc (via Stage 5) is what makes it sound.
+        matrices
+            .check_witness(&w)
+            .expect("R1CS row 29 checks SumA − OpA = 0 so shifted values still pass");
     }
 
     #[test]

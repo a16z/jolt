@@ -1970,6 +1970,15 @@ where
         &events,
     );
 
+    // (Plan P, task #65) Populate V_LIMB_SUM_A/B after prologue + events so
+    // the register-write stream is complete. Rows 29/30 need this to fire.
+    jolt_host::r1cs_witness::populate_limb_sum_columns::<NewFr>(
+        &mut r1cs_witness,
+        &reg_access.rd_indices,
+        t,
+        r1cs_key.num_vars_padded,
+    );
+
     // Optional adversarial tamper — applied AFTER the honest prologue + event
     // overlay so the test exercises rejection of a specific post-hoc mutation
     // to the R1CS witness (e.g. only `V_FIELD_OP_A` at the FieldOp cycle).
@@ -2057,6 +2066,14 @@ fn run_jolt_zkvm_prover_with_fieldreg_events(
         t,
         r1cs_key.num_vars_padded,
         &events,
+    );
+
+    // (Plan P, task #65) Populate V_LIMB_SUM_A/B for R1CS rows 29/30.
+    jolt_host::r1cs_witness::populate_limb_sum_columns::<NewFr>(
+        &mut r1cs_witness,
+        &reg_access.rd_indices,
+        t,
+        r1cs_key.num_vars_padded,
     );
 
     // Build the FieldRegConfig, then derive RV/WV from it (single source of truth).
