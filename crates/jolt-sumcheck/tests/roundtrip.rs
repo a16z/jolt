@@ -8,7 +8,7 @@
 
 use jolt_field::{Field, Fr};
 use jolt_poly::{Polynomial, UnivariatePoly};
-use jolt_sumcheck::claim::SumcheckClaim;
+use jolt_sumcheck::claim::{EvaluationClaim, SumcheckClaim};
 use jolt_sumcheck::proof::SumcheckProof;
 use jolt_sumcheck::round::ClearRoundVerifier;
 use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckVerifier};
@@ -171,8 +171,10 @@ fn degree3_final_eval_correct() {
 
     let mut vt = Blake2bTranscript::new(b"sumcheck-roundtrip");
     let clear = ClearRoundVerifier::new();
-    let (final_eval, challenges) =
-        SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt, &clear).unwrap();
+    let EvaluationClaim {
+        point: challenges,
+        value: final_eval,
+    } = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt, &clear).unwrap();
 
     // f(r) * g(r) * h(r) should equal the final_eval
     let f_at_r = Polynomial::new(f_evals).evaluate_and_consume(&challenges);

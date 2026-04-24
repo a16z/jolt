@@ -20,3 +20,18 @@ pub struct SumcheckClaim<F: Field> {
     /// The claimed value of the sum $\sum_{x \in \{0,1\}^n} g(x)$.
     pub claimed_sum: F,
 }
+
+/// Oracle evaluation claim produced by a successful sumcheck reduction.
+///
+/// Sumcheck reduces `∑_{x ∈ {0,1}^n} g(x) = C` to a single query
+/// `g(r) = v` at a Fiat-Shamir-derived point `r`. The caller MUST
+/// discharge this claim against the polynomial oracle (opening proof,
+/// BlindFold, etc.) to retain soundness — sumcheck alone does not
+/// verify `v` against any commitment.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EvaluationClaim<F: Field> {
+    /// Challenge point `r = (r_1, ..., r_n)`.
+    pub point: Vec<F>,
+    /// Claimed evaluation `g(r) = v`.
+    pub value: F,
+}

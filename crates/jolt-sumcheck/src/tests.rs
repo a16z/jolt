@@ -10,7 +10,7 @@ use jolt_field::{Field, Fr};
 use jolt_poly::UnivariatePoly;
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript};
 
-use crate::claim::SumcheckClaim;
+use crate::claim::{EvaluationClaim, SumcheckClaim};
 use crate::error::SumcheckError;
 use crate::proof::SumcheckProof;
 use crate::round::{ClearRoundVerifier, RoundVerifier};
@@ -103,7 +103,10 @@ fn verify_valid_degree1_proof() {
     );
     assert!(result.is_ok(), "verification failed: {:?}", result.err());
 
-    let (final_eval, challenges) = result.unwrap();
+    let EvaluationClaim {
+        point: challenges,
+        value: final_eval,
+    } = result.unwrap();
     assert_eq!(challenges.len(), num_vars);
 
     // Verify the final evaluation matches direct evaluation at the challenge point.
@@ -130,8 +133,10 @@ fn verify_single_variable() {
 
     let mut vt = Blake2bTranscript::new(b"sumcheck-test");
     let clear = ClearRoundVerifier::new();
-    let (final_eval, challenges) =
-        SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt, &clear).unwrap();
+    let EvaluationClaim {
+        point: challenges,
+        value: final_eval,
+    } = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt, &clear).unwrap();
     assert_eq!(challenges.len(), 1);
 
     let poly = jolt_poly::Polynomial::new(evals);
@@ -410,7 +415,7 @@ fn batched_verify_same_size() {
         BatchedSumcheckVerifier::verify(&claims, &proof.round_polynomials, &mut vt, &clear);
     assert!(result.is_ok(), "batched verify failed: {:?}", result.err());
 
-    let (_final_eval, challenges) = result.unwrap();
+    let challenges = result.unwrap().point;
     assert_eq!(challenges.len(), 2);
 }
 
@@ -557,7 +562,10 @@ fn verify_dispatches_through_round_verifier_trait() {
         result.err()
     );
 
-    let (final_eval, challenges) = result.unwrap();
+    let EvaluationClaim {
+        point: challenges,
+        value: final_eval,
+    } = result.unwrap();
     assert_eq!(challenges.len(), 3);
     // Mock always returns fixed_sum, so final eval should be fixed
     assert_eq!(final_eval, fixed);

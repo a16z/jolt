@@ -3,7 +3,7 @@
 use jolt_field::Field;
 use jolt_transcript::Transcript;
 
-use crate::claim::SumcheckClaim;
+use crate::claim::{EvaluationClaim, SumcheckClaim};
 use crate::error::SumcheckError;
 use crate::round::RoundVerifier;
 
@@ -24,8 +24,9 @@ impl SumcheckVerifier {
     /// 2. A challenge $r_i$ is squeezed from the transcript.
     /// 3. The running sum is updated to $s_i(r_i)$.
     ///
-    /// On success, returns `(v, r)` where `v` is the final evaluation
-    /// and `r = (r_1, ..., r_n)` is the challenge vector.
+    /// On success, returns an [`EvaluationClaim`] `{ point: r, value: v }`
+    /// where `v` is the final evaluation and `r = (r_1, ..., r_n)` is the
+    /// challenge vector.
     ///
     /// # Errors
     ///
@@ -35,7 +36,8 @@ impl SumcheckVerifier {
     /// # Soundness
     ///
     /// When `claim.num_vars == 0`, this function performs no transcript
-    /// interaction and no checks: it returns `(claim.claimed_sum, vec![])`.
+    /// interaction and no checks: it returns
+    /// `EvaluationClaim { point: vec![], value: claim.claimed_sum }`.
     /// Sumcheck trivially reduces to a single oracle query at that point,
     /// so the caller MUST verify `claim.claimed_sum` against the
     /// commitment/oracle layer to retain soundness.
@@ -45,7 +47,7 @@ impl SumcheckVerifier {
         round_proofs: &[V::RoundProof],
         transcript: &mut T,
         verifier: &V,
-    ) -> Result<(F, Vec<F>), SumcheckError>
+    ) -> Result<EvaluationClaim<F>, SumcheckError>
     where
         F: Field,
         T: Transcript<Challenge = F>,
@@ -68,6 +70,9 @@ impl SumcheckVerifier {
             challenges.push(r);
         }
 
-        Ok((running_sum, challenges))
+        Ok(EvaluationClaim {
+            point: challenges,
+            value: running_sum,
+        })
     }
 }

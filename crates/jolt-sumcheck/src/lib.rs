@@ -18,7 +18,7 @@
 //!
 //! | Module | Purpose |
 //! |--------|---------|
-//! | [`claim`] | [`SumcheckClaim`] — the public statement |
+//! | [`claim`] | [`SumcheckClaim`] (input statement) and [`EvaluationClaim`] (reduction output) |
 //! | [`proof`] | [`SumcheckProof`] — serializable proof |
 //! | [`verifier`] | [`SumcheckVerifier`] engine |
 //! | [`batched`] | [`BatchedSumcheckVerifier`] — batched verification via RLC |
@@ -29,6 +29,8 @@
 //!
 //! ## Types
 //! - [`SumcheckClaim<F>`] — the public statement: `num_vars`, `degree`, and `claimed_sum`.
+//! - [`EvaluationClaim<F>`] — the oracle evaluation claim `g(r) = v` produced by a
+//!   successful reduction; the caller MUST discharge it against the polynomial oracle.
 //! - [`SumcheckProof<F>`] — a sequence of univariate round polynomials, one per variable.
 //! - [`SumcheckError`] — error variants: `RoundCheckFailed`, `DegreeBoundExceeded`,
 //!   `WrongNumberOfRounds`, `EmptyClaims`.
@@ -66,7 +68,7 @@ pub mod verifier;
 mod tests;
 
 pub use batched::BatchedSumcheckVerifier;
-pub use claim::SumcheckClaim;
+pub use claim::{EvaluationClaim, SumcheckClaim};
 pub use error::SumcheckError;
 pub use proof::SumcheckProof;
 pub use round::{ClearRoundVerifier, RoundVerifier};

@@ -10,7 +10,7 @@
 use jolt_field::Field;
 use jolt_transcript::{AppendToTranscript, Transcript};
 
-use crate::claim::SumcheckClaim;
+use crate::claim::{EvaluationClaim, SumcheckClaim};
 use crate::error::SumcheckError;
 use crate::round::RoundVerifier;
 
@@ -24,9 +24,9 @@ pub struct BatchedSumcheckVerifier;
 impl BatchedSumcheckVerifier {
     /// Verifies a batched sumcheck proof with a pluggable round verifier.
     ///
-    /// Returns `(v, r)` on success, where `v` is the combined final
-    /// evaluation and `r` is the full challenge vector of length
-    /// `max(num_vars)`.
+    /// Returns an [`EvaluationClaim`] `{ point: r, value: v }` on success,
+    /// where `v` is the combined final evaluation and `r` is the full
+    /// challenge vector of length `max(num_vars)`.
     ///
     /// # Errors
     ///
@@ -37,7 +37,7 @@ impl BatchedSumcheckVerifier {
         round_proofs: &[V::RoundProof],
         transcript: &mut T,
         verifier: &V,
-    ) -> Result<(F, Vec<F>), SumcheckError>
+    ) -> Result<EvaluationClaim<F>, SumcheckError>
     where
         F: Field,
         T: Transcript<Challenge = F>,

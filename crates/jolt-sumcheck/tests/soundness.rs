@@ -8,7 +8,7 @@
 
 use jolt_field::{Field, Fr};
 use jolt_poly::{Polynomial, UnivariatePoly};
-use jolt_sumcheck::claim::SumcheckClaim;
+use jolt_sumcheck::claim::{EvaluationClaim, SumcheckClaim};
 use jolt_sumcheck::error::SumcheckError;
 use jolt_sumcheck::proof::SumcheckProof;
 use jolt_sumcheck::round::ClearRoundVerifier;
@@ -87,8 +87,10 @@ fn verify_with_oracle_check(
 ) -> Result<Vec<F>, OracleCheckError> {
     let clear = ClearRoundVerifier::new();
     let mut transcript = new_transcript();
-    let (final_eval, challenges) =
-        SumcheckVerifier::verify(claim, &proof.round_polynomials, &mut transcript, &clear)?;
+    let EvaluationClaim {
+        point: challenges,
+        value: final_eval,
+    } = SumcheckVerifier::verify(claim, &proof.round_polynomials, &mut transcript, &clear)?;
 
     let expected = Polynomial::new(intended_evals.to_vec()).evaluate_and_consume(&challenges);
     if final_eval != expected {
@@ -392,7 +394,10 @@ fn num_vars_zero_accepts_any_claimed_sum() {
     let result = SumcheckVerifier::verify(&claim, &[], &mut vt, &clear);
     assert!(result.is_ok());
 
-    let (final_eval, challenges) = result.unwrap();
+    let EvaluationClaim {
+        point: challenges,
+        value: final_eval,
+    } = result.unwrap();
     assert_eq!(final_eval, F::from_u64(42));
     assert!(challenges.is_empty());
 }
@@ -416,7 +421,7 @@ fn num_vars_zero_no_oracle_check_possible() {
     // Passes — the verifier has nothing to check!
     // Only the oracle check (comparing 999 against the actual constant) catches this.
     assert!(result.is_ok());
-    assert_eq!(result.unwrap().0, F::from_u64(999));
+    assert_eq!(result.unwrap().value, F::from_u64(999));
 }
 
 #[test]
@@ -442,8 +447,9 @@ fn constant_polynomial_all_same_evals() {
     // since f is constant.
     let clear = ClearRoundVerifier::new();
     let mut vt = new_transcript();
-    let (final_eval, _) =
-        SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt, &clear).unwrap();
+    let final_eval = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt, &clear)
+        .unwrap()
+        .value;
     assert_eq!(final_eval, F::from_u64(7));
 }
 
