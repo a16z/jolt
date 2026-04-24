@@ -1,6 +1,6 @@
+pub mod field_mul_scalar;
 #[cfg(test)]
 mod macro_tests;
-pub mod field_mul_scalar;
 pub mod soundness;
 pub mod split_eq_bind;
 pub mod synthesis;
