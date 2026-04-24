@@ -2743,6 +2743,14 @@ fn build_stage3(
         challenge: ch_registers_gamma,
     });
 
+    let ch_fr_cr_gamma = ch.add(
+        "fr_cr_gamma",
+        ChallengeSource::FiatShamir { after_stage: 2 },
+    );
+    ops.push(Op::Squeeze {
+        challenge: ch_fr_cr_gamma,
+    });
+
     // Input claims (absorbed before sumcheck rounds begin).
     let batch_idx = BatchIdx(batched_sumchecks.len());
 
@@ -2865,9 +2873,41 @@ fn build_stage3(
         inactive_scale_bits: 0,
     });
 
-    // Squeeze 3 batching coefficients
+    // [3] FieldRegCR input claim: field_rd_value + γ·field_rs1_value + γ²·field_rs2_value
+    let fr_cr_input_claim = ClaimFormula {
+        terms: vec![
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![ClaimFactor::Eval(p.field_rd_value)],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_fr_cr_gamma),
+                    ClaimFactor::Eval(p.field_rs1_value),
+                ],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_fr_cr_gamma),
+                    ClaimFactor::Challenge(ch_fr_cr_gamma),
+                    ClaimFactor::Eval(p.field_rs2_value),
+                ],
+            },
+        ],
+    };
+    ops.push(Op::AbsorbInputClaim {
+        formula: fr_cr_input_claim.clone(),
+        tag: DomainSeparator::SumcheckClaim,
+        batch: batch_idx,
+        instance: InstanceIdx(3),
+        inactive_scale_bits: 0,
+    });
+
+    // Squeeze 4 batching coefficients (one per instance).
     let ch_batch_base = ChallengeIdx(ch.decls.len());
-    for i in 0..3 {
+    for i in 0..4 {
         let idx = ch.add(
             &format!("s3_batch_{i}"),
             ChallengeSource::FiatShamir { after_stage: 2 },
@@ -3119,6 +3159,62 @@ fn build_stage3(
         instance_config: None,
     });
 
+    // [3] FieldRegClaimReduction kernel — structural mirror of registers_kernel.
+    let g_fr_cr = ch_fr_cr_gamma.0 as u32;
+    let fr_cr_kernel_idx = kernels.len();
+    kernels.push(KernelDef {
+        spec: KernelSpec {
+            formula: Formula::from_terms(vec![
+                ProductTerm {
+                    coefficient: 1,
+                    factors: vec![Factor::Input(0), Factor::Input(1)],
+                },
+                ProductTerm {
+                    coefficient: 1,
+                    factors: vec![
+                        Factor::Challenge(g_fr_cr),
+                        Factor::Input(0),
+                        Factor::Input(2),
+                    ],
+                },
+                ProductTerm {
+                    coefficient: 1,
+                    factors: vec![
+                        Factor::Challenge(g_fr_cr),
+                        Factor::Challenge(g_fr_cr),
+                        Factor::Input(0),
+                        Factor::Input(3),
+                    ],
+                },
+            ]),
+            num_evals: 3, // degree 2
+            iteration: Iteration::Dense,
+            binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
+        },
+        inputs: vec![
+            // BatchEq(200..=203) are reserved for the FR Twist (Stage 3 CR, Stage 4
+            // RW cycle, Stage 5 EqGather, Stage 5 LtTable). Stage 6's
+            // `next_eq` counter starts at 19 and walks upward, so we stay
+            // well clear by using the 200 block.
+            InputBinding::EqTable {
+                poly: PolynomialId::BatchEq(200),
+                challenges: eq_outer_challenges.clone(),
+            },
+            InputBinding::Provided {
+                poly: p.field_rd_value,
+            },
+            InputBinding::Provided {
+                poly: p.field_rs1_value,
+            },
+            InputBinding::Provided {
+                poly: p.field_rs2_value,
+            },
+        ],
+        num_rounds: params.log_t,
+        instance_config: None,
+    });
+
     // BatchedSumcheckDef with real kernel references.
     batched_sumchecks.push(BatchedSumcheckDef {
         instances: vec![
@@ -3158,8 +3254,25 @@ fn build_stage3(
                 batch_coeff: ChallengeIdx(ch_batch_base.0 + 2),
                 first_active_round: 0,
             },
+            BatchedInstance {
+                phases: vec![InstancePhase {
+                    kernel: fr_cr_kernel_idx,
+                    num_rounds: params.log_t,
+                    scalar_captures: vec![],
+                    segmented: None,
+                    carry_bindings: vec![],
+                    pre_activation_ops: vec![],
+                }],
+                batch_coeff: ChallengeIdx(ch_batch_base.0 + 3),
+                first_active_round: 0,
+            },
         ],
-        input_claims: vec![shift_input_claim, inst_input_claim, registers_input_claim],
+        input_claims: vec![
+            shift_input_claim,
+            inst_input_claim,
+            registers_input_claim,
+            fr_cr_input_claim,
+        ],
         max_rounds: params.log_t,
         max_degree: 3,
     });
@@ -3179,16 +3292,19 @@ fn build_stage3(
         None,
     );
 
-    // Flush 13 unique evaluation opening claims.
+    // Flush 16 unique evaluation opening claims.
     //
-    // All 3 instances open at the same cycle point (all log_T rounds,
+    // All 4 instances open at the same cycle point (all log_T rounds,
     // same challenges). Aliasing deduplicates shared polynomials:
-    //   - UnexpandedPC: Shift (#1) aliases with InstructionInput (#9)
-    //   - Rs1Value: InstructionInput (#7) aliases with RegistersCR (#15)
-    //   - Rs2Value: InstructionInput (#11) aliases with RegistersCR (#16)
+    //   - UnexpandedPC: Shift aliases with InstructionInput
+    //   - Rs1Value: InstructionInput aliases with RegistersCR
+    //   - Rs2Value: InstructionInput aliases with RegistersCR
     //
-    // Order = Shift(5) + InstructionInput(8 - 1 alias) + RegistersCR(3 - 2 aliases)
-    // = 5 + 7 + 1 = 13 unique evals.
+    // FieldRegCR's three polys (FieldRs1/Rs2/RdValue) are unique — they
+    // don't appear in any earlier Stage-3 instance.
+    //
+    // Order = Shift(5) + InstructionInput(7 new) + RegistersCR(1 new)
+    //       + FieldRegCR(3 new) = 16 unique evals.
     let stage3_eval_polys = vec![
         // Shift (5)
         p.unexpanded_pc,
@@ -3207,6 +3323,10 @@ fn build_stage3(
         p.imm,
         // RegistersCR (1 new; Rs1Value, Rs2Value aliased above)
         p.rd_write_value,
+        // FieldRegCR (3 new — FR operand columns are unique to this instance).
+        p.field_rd_value,
+        p.field_rs1_value,
+        p.field_rs2_value,
     ];
 
     for &poly in &stage3_eval_polys {
