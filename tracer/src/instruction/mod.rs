@@ -150,7 +150,12 @@ use virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, Virtual
 use virtual_xor_rotw::{VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8};
 use virtual_zero_extend_word::VirtualZeroExtendWord;
 
+use self::field_assert_eq::FieldAssertEq;
+use self::field_mov::FieldMov;
 use self::field_op::FieldOp;
+use self::field_sll128::FieldSLL128;
+use self::field_sll192::FieldSLL192;
+use self::field_sll64::FieldSLL64;
 use self::inline::INLINE;
 
 use crate::emulator::cpu::{Cpu, Xlen};
@@ -209,7 +214,12 @@ pub mod divw;
 pub mod ebreak;
 pub mod ecall;
 pub mod fence;
+pub mod field_assert_eq;
+pub mod field_mov;
 pub mod field_op;
+pub mod field_sll128;
+pub mod field_sll192;
+pub mod field_sll64;
 pub mod inline;
 pub mod jal;
 pub mod jalr;
@@ -784,7 +794,7 @@ define_rv32im_enums! {
         VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
         VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7,
         // BN254 Fr native-field coprocessor
-        FieldOp,
+        FieldOp, FieldAssertEq, FieldMov, FieldSLL64, FieldSLL128, FieldSLL192,
     ]
 }
 
@@ -1087,12 +1097,43 @@ impl Instruction {
             // identified by funct7:
             // - 0x00: SHA256 (INLINE)
             // - 0x01: Keccak256 (INLINE)
-            // - 0x40: BN254 Fr native-field coprocessor (FieldOp) — funct3 selects op
+            // - 0x40: BN254 Fr native-field coprocessor — funct3 selects op:
+            //     0x02/0x03/0x04/0x05 = FMUL/FADD/FINV/FSUB → FieldOp (combined)
+            //     0x06 = FieldAssertEq
+            //     0x07 = FieldMov
+            //     0x08 = FieldSLL64
+            //     0x09 = FieldSLL128
+            //     0x0A = FieldSLL192
             // All other funct7 values fall through to the generic INLINE registry.
             0b0001011 => {
                 let funct7 = (instr >> 25) & 0x7f;
                 if funct7 == 0x40 {
-                    Ok(FieldOp::new(instr, address, true, compressed).into())
+                    let funct3 = (instr >> 12) & 0x7;
+                    match funct3 {
+                        0x02..=0x05 => {
+                            Ok(FieldOp::new(instr, address, true, compressed).into())
+                        }
+                        0x06 => Ok(FieldAssertEq::new(instr, address, true, compressed).into()),
+                        0x07 => Ok(FieldMov::new(instr, address, true, compressed).into()),
+                        // funct3 fits in 3 bits, so 0x08..=0x0A are not
+                        // representable here — the FieldSLL{64,128,192}
+                        // instructions overload the funct7 field instead.
+                        _ => Err("Unsupported BN254 Fr coprocessor funct3"),
+                    }
+                } else if funct7 == 0x41 {
+                    // funct3 3-bit space is exhausted under funct7=0x40
+                    // (0x02..=0x07 assigned). The three SLL bridge ops live
+                    // under funct7=0x41 with funct3 reused:
+                    //     funct3 0x00 = FieldSLL64
+                    //     funct3 0x01 = FieldSLL128
+                    //     funct3 0x02 = FieldSLL192
+                    let funct3 = (instr >> 12) & 0x7;
+                    match funct3 {
+                        0x00 => Ok(FieldSLL64::new(instr, address, true, compressed).into()),
+                        0x01 => Ok(FieldSLL128::new(instr, address, true, compressed).into()),
+                        0x02 => Ok(FieldSLL192::new(instr, address, true, compressed).into()),
+                        _ => Err("Unsupported BN254 Fr SLL funct3"),
+                    }
                 } else {
                     Ok(INLINE::new(instr, address, false, compressed).into())
                 }

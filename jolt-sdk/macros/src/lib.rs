@@ -722,7 +722,7 @@ impl MacroBuilder {
                     };
 
                     // First pass: run compute_advice version to populate advice tape
-                    let (_lazy_trace, _, _, _, advice_tape) = guest_trace(
+                    let (_lazy_trace, _, _, _, advice_tape, _) = guest_trace(
                         &compute_advice_elf_contents,
                         None,
                         &input_bytes,
