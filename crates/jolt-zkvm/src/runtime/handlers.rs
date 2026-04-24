@@ -911,30 +911,22 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                 .as_ref()
                 .unwrap();
             let trace = provider.lookup_trace().unwrap();
-            let (chunk_bits, num_phases) = (config.chunk_bits, config.num_phases);
-            let m_mask = (1usize << chunk_bits) - 1;
-            let tables: Vec<Vec<F>> = (0..num_phases)
+            let tables: Vec<Vec<F>> = (0..config.num_phases)
                 .map(|p| {
                     backend.download(device_buffers[&PolynomialId::ExpandingTable(p)].as_field())
                 })
                 .collect();
             let n_vra = 128 / config.ra_virtual_log_k_chunk;
-            let chunk_size = num_phases / n_vra;
+            let chunk_size = config.num_phases / n_vra;
             for chunk_i in 0..n_vra {
-                let off = chunk_i * chunk_size;
-                let ra: Vec<F> = trace
-                    .lookup_keys
-                    .iter()
-                    .map(|&key| {
-                        let mut shift = (num_phases - 1 - off) * chunk_bits;
-                        let mut acc = tables[off][((key >> shift) as usize) & m_mask];
-                        for et in &tables[(off + 1)..(off + chunk_size)] {
-                            shift -= chunk_bits;
-                            acc *= et[((key >> shift) as usize) & m_mask];
-                        }
-                        acc
-                    })
-                    .collect();
+                let ra = compute_ra_chunk(
+                    &tables,
+                    chunk_i * chunk_size,
+                    chunk_size,
+                    config.chunk_bits,
+                    config.num_phases,
+                    &trace.lookup_keys,
+                );
                 let _ = device_buffers.insert(
                     config.output_ra_polys[chunk_i],
                     DeviceBuffer::Field(backend.upload(&ra)),
@@ -1289,4 +1281,33 @@ fn compute_p_buffers<F: Field>(
         p_right[i] = right_base + F::from_u64(ro);
     }
     [p_left, p_right, p_identity]
+}
+
+/// Compute one RA poly chunk for `Op::MaterializeRA`. Returns a Vec of
+/// length `lookup_keys.len()` where each entry is the product of
+/// `tables[off + k][(key >> shift_k) & mask]` for `k` in `0..chunk_size`,
+/// with `shift_k = (num_phases − 1 − off − k) × chunk_bits`. See OPS.md
+/// Group A — this is the per-chunk gather-product that the eventual
+/// `Op::TraceGatherProduct` primitive will cover.
+fn compute_ra_chunk<F: Field>(
+    tables: &[Vec<F>],
+    off: usize,
+    chunk_size: usize,
+    chunk_bits: usize,
+    num_phases: usize,
+    lookup_keys: &[u128],
+) -> Vec<F> {
+    let m_mask = (1usize << chunk_bits) - 1;
+    lookup_keys
+        .iter()
+        .map(|&key| {
+            let mut shift = (num_phases - 1 - off) * chunk_bits;
+            let mut acc = tables[off][((key >> shift) as usize) & m_mask];
+            for et in &tables[(off + 1)..(off + chunk_size)] {
+                shift -= chunk_bits;
+                acc *= et[((key >> shift) as usize) & m_mask];
+            }
+            acc
+        })
+        .collect()
 }
