@@ -503,7 +503,7 @@ impl RoundProof<F> for MockRoundProof {
         0
     }
 
-    fn check_sum(&self, _running_sum: F, _round: usize) -> Result<(), SumcheckError> {
+    fn check_sum(&self, _running_sum: F, _round: usize) -> Result<(), SumcheckError<F>> {
         Ok(())
     }
 
@@ -547,4 +547,10 @@ fn verify_dispatches_through_round_verifier_trait() {
     assert_eq!(challenges.len(), 3);
     // Mock always returns fixed_sum, so final eval should be fixed
     assert_eq!(final_eval, fixed);
+}
+
+#[test]
+#[should_panic(expected = "degree >= 1")]
+fn sumcheck_claim_new_rejects_degree_zero() {
+    let _ = SumcheckClaim::<Fr>::new(3, 0, Fr::from_u64(0));
 }

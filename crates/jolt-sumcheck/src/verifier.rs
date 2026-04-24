@@ -48,7 +48,7 @@ impl SumcheckVerifier {
         claim: &SumcheckClaim<F>,
         round_proofs: &[P],
         transcript: &mut T,
-    ) -> Result<EvaluationClaim<F>, SumcheckError>
+    ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
         F: Field,
         T: Transcript<Challenge = F>,

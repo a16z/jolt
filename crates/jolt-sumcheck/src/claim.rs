@@ -21,6 +21,26 @@ pub struct SumcheckClaim<F: Field> {
     pub claimed_sum: F,
 }
 
+impl<F: Field> SumcheckClaim<F> {
+    /// Construct a sumcheck claim.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `degree == 0`. Sumcheck round polynomials must have
+    /// degree ≥ 1; a constant round poly is meaningless.
+    pub fn new(num_vars: usize, degree: usize, claimed_sum: F) -> Self {
+        assert!(
+            degree >= 1,
+            "sumcheck round polynomial must have degree >= 1, got {degree}"
+        );
+        Self {
+            num_vars,
+            degree,
+            claimed_sum,
+        }
+    }
+}
+
 /// Oracle evaluation claim produced by a successful sumcheck reduction.
 ///
 /// Sumcheck reduces `∑_{x ∈ {0,1}^n} g(x) = C` to a single query

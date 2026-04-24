@@ -23,12 +23,12 @@ enum OracleCheckError {
         dead_code,
         reason = "inner error shown via Debug in test panic messages"
     )]
-    Sumcheck(SumcheckError),
+    Sumcheck(SumcheckError<F>),
     FinalEvalMismatch,
 }
 
-impl From<SumcheckError> for OracleCheckError {
-    fn from(err: SumcheckError) -> Self {
+impl From<SumcheckError<F>> for OracleCheckError {
+    fn from(err: SumcheckError<F>) -> Self {
         OracleCheckError::Sumcheck(err)
     }
 }

@@ -27,7 +27,7 @@ pub trait RoundProof<F: Field> {
     ///
     /// Clear-mode impls enforce this; a future committed-mode impl returns
     /// `Ok(())` and defers to BlindFold.
-    fn check_sum(&self, running_sum: F, round: usize) -> Result<(), SumcheckError>;
+    fn check_sum(&self, running_sum: F, round: usize) -> Result<(), SumcheckError<F>>;
 
     /// Evaluate at the Fiat-Shamir challenge to compute the next running sum.
     ///
@@ -45,14 +45,14 @@ impl<F: Field> RoundProof<F> for UnivariatePoly<F> {
         UnivariatePolynomial::degree(self)
     }
 
-    fn check_sum(&self, running_sum: F, round: usize) -> Result<(), SumcheckError> {
+    fn check_sum(&self, running_sum: F, round: usize) -> Result<(), SumcheckError<F>> {
         let sum =
             UnivariatePoly::evaluate(self, F::zero()) + UnivariatePoly::evaluate(self, F::one());
         if sum != running_sum {
             return Err(SumcheckError::RoundCheckFailed {
                 round,
-                expected: format!("{running_sum}"),
-                actual: format!("{sum}"),
+                expected: running_sum,
+                actual: sum,
             });
         }
         Ok(())
@@ -90,7 +90,7 @@ impl<F: Field> RoundProof<F> for LabeledRoundPoly<'_, F> {
         <UnivariatePoly<F> as RoundProof<F>>::degree(self.poly)
     }
 
-    fn check_sum(&self, running_sum: F, round: usize) -> Result<(), SumcheckError> {
+    fn check_sum(&self, running_sum: F, round: usize) -> Result<(), SumcheckError<F>> {
         <UnivariatePoly<F> as RoundProof<F>>::check_sum(self.poly, running_sum, round)
     }
 
@@ -132,7 +132,7 @@ impl<F: Field> RoundProof<F> for CompressedLabeledRoundPoly<'_, F> {
         <UnivariatePoly<F> as RoundProof<F>>::degree(self.poly)
     }
 
-    fn check_sum(&self, running_sum: F, round: usize) -> Result<(), SumcheckError> {
+    fn check_sum(&self, running_sum: F, round: usize) -> Result<(), SumcheckError<F>> {
         let coeffs = self.poly.coefficients();
         if coeffs.len() < 2 {
             return Err(SumcheckError::CompressedPolynomialTooShort {
