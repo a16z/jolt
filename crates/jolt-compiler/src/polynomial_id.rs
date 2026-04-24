@@ -187,10 +187,11 @@ pub enum PolynomialId {
     /// Extracts even-position bits of `i`.
     PBufferUninterleaveRo(usize),
     /// Per-cycle eq-weight vector for the address-decomposition instance.
-    /// Runtime-managed (populated by `InitInstanceWeights` +
-    /// `UpdateInstanceWeights`, consumed by `SuffixScatter` / `QBufferScatter`).
-    /// Not materializable via `provider.materialize` — falls through to the
-    /// default Derived descriptor but is only ever read from `device_buffers`.
+    /// Runtime-managed: populated by the `InitExpandingTable` +
+    /// `ExpandingTableUpdate` + `TraceGatherMultiply` op sequence,
+    /// consumed by `SuffixScatter` / `QBufferScatter`. Not materializable
+    /// via `provider.materialize` — falls through to the default Derived
+    /// descriptor but is only ever read from `device_buffers`.
     InstanceWeights,
 
     /// Per-bytecode-entry field polynomial (K entries, bytecode-table-indexed).

@@ -897,10 +897,11 @@ fn emit_unrolled_batched_rounds(
                     );
                     push_op!(
                         ops,
-                        Op::UpdateInstanceWeights {
-                            expanding_table: PolynomialId::ExpandingTable(sub_phase - 1),
-                            chunk_bits,
-                            suffix_len: (ic.num_phases - sub_phase) * chunk_bits,
+                        Op::TraceGatherMultiply {
+                            dst: PolynomialId::InstanceWeights,
+                            source_table: PolynomialId::ExpandingTable(sub_phase - 1),
+                            shift: (ic.num_phases - sub_phase) * chunk_bits,
+                            mask: (1 << chunk_bits) - 1,
                         }
                     );
                     emit_scatter_ops(
@@ -7735,7 +7736,7 @@ fn print_stats(module: &Module, params: &ModuleParams) {
             | Op::BatchRoundFinalize { .. }
             | Op::ExpandingTableUpdate { .. }
             | Op::InstanceScalarUpdate { .. }
-            | Op::UpdateInstanceWeights { .. }
+            | Op::TraceGatherMultiply { .. }
             | Op::SuffixScatter { .. }
             | Op::QBufferScatter { .. }
             | Op::InitExpandingTable { .. }

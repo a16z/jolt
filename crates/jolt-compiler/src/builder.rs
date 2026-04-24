@@ -508,10 +508,11 @@ impl ModuleBuilder {
                             poly: PolynomialId::InstanceP(2, 0),
                             challenge: ic.registry_checkpoint_slots[2],
                         });
-                        self.ops.push(Op::UpdateInstanceWeights {
-                            expanding_table: PolynomialId::ExpandingTable(sub_phase - 1),
-                            chunk_bits,
-                            suffix_len: (ic.num_phases - sub_phase) * chunk_bits,
+                        self.ops.push(Op::TraceGatherMultiply {
+                            dst: PolynomialId::InstanceWeights,
+                            source_table: PolynomialId::ExpandingTable(sub_phase - 1),
+                            shift: (ic.num_phases - sub_phase) * chunk_bits,
+                            mask: (1 << chunk_bits) - 1,
                         });
                         emit_scatter_ops(
                             &mut self.ops,

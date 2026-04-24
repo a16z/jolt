@@ -58,7 +58,7 @@ fn op_class_tag(op: &jolt_compiler::module::Op) -> Option<&'static str> {
         Op::InitExpandingTable { .. } => "InitExpandingTable",
         Op::WeightedSum { .. } => "WeightedSum",
         Op::InstanceScalarUpdate { .. } => "InstanceScalarUpdate",
-        Op::UpdateInstanceWeights { .. } => "UpdateInstanceWeights",
+        Op::TraceGatherMultiply { .. } => "TraceGatherMultiply",
         _ => return None,
     })
 }

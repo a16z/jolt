@@ -1317,17 +1317,21 @@ pub enum Op {
     /// `last_round_coeffs` for subsequent `AbsorbRoundPoly`.
     BatchRoundFinalize { batch: BatchIdx },
 
-    /// Multiply instance weights by expanding-table lookups at a phase boundary.
-    /// Emitted for phase > 0 of address-decomposition instances.
+    /// Trace-driven gather-multiply into a destination buffer.
     ///
-    /// `suffix_len` is the bit shift applied to each lookup key before
-    /// indexing the table — equal to `(num_phases − phase) × chunk_bits`
-    /// at the call site. Collapsed from `{num_phases, phase}` at compile
-    /// time (S5.field_slim).
-    UpdateInstanceWeights {
-        expanding_table: PolynomialId,
-        chunk_bits: usize,
-        suffix_len: usize,
+    /// Semantics: for each cycle `j` in `provider.lookup_trace().lookup_keys`,
+    /// `dst[j] *= source_table[(lookup_keys[j] >> shift) & mask]`. Both `dst`
+    /// and `source_table` are resolved from `device_buffers`; the result is
+    /// written back to `dst` via `device_buffers.insert`.
+    ///
+    /// Generic primitive — carries no protocol-specific state beyond the
+    /// trace reference (which the runtime gets from `BufferProvider`).
+    /// Replaces the former `Op::UpdateInstanceWeights`.
+    TraceGatherMultiply {
+        dst: PolynomialId,
+        source_table: PolynomialId,
+        shift: usize,
+        mask: usize,
     },
     /// Scatter weighted suffix evaluations into per-table polynomial buffers.
     ///
@@ -1660,7 +1664,7 @@ impl Op {
                 | Op::BatchAccumulateInstance { .. }
                 | Op::BatchRoundFinalize { .. }
                 | Op::ExpandingTableUpdate { .. }
-                | Op::UpdateInstanceWeights { .. }
+                | Op::TraceGatherMultiply { .. }
                 | Op::SuffixScatter { .. }
                 | Op::QBufferScatter { .. }
                 | Op::InitExpandingTable { .. }
@@ -1704,6 +1708,7 @@ impl Op {
             | Op::ExpandingTableUpdate { .. }
             | Op::InitExpandingTable { .. }
             | Op::BuildSegmentedEq { .. }
+            | Op::TraceGatherMultiply { .. }
             | Op::ScaleEval { .. }
             | Op::Evaluate { .. }
             | Op::EvaluatePreprocessed { .. }
@@ -1754,8 +1759,7 @@ impl Op {
             | Op::SuffixScatter { .. }
             | Op::QBufferScatter { .. }
             | Op::MaterializeRA { .. }
-            | Op::MaterializeCombinedVal { .. }
-            | Op::UpdateInstanceWeights { .. } => true, // flip to false in O5
+            | Op::MaterializeCombinedVal { .. } => true, // flip to false in O5
         }
     }
 }

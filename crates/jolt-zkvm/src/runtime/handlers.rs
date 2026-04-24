@@ -70,7 +70,7 @@ fn op_span(op: &Op) -> tracing::span::EnteredSpan {
         Op::BatchRoundFinalize { .. } => tracing::info_span!("BatchRoundFinalize").entered(),
         Op::ExpandingTableUpdate { .. } => tracing::info_span!("ExpandingTableUpdate").entered(),
         Op::InstanceScalarUpdate { .. } => tracing::info_span!("InstanceScalarUpdate").entered(),
-        Op::UpdateInstanceWeights { .. } => tracing::info_span!("UpdateInstanceWeights").entered(),
+        Op::TraceGatherMultiply { .. } => tracing::info_span!("TraceGatherMultiply").entered(),
         Op::SuffixScatter { .. } => tracing::info_span!("SuffixScatter").entered(),
         Op::QBufferScatter { .. } => tracing::info_span!("QBufferScatter").entered(),
         Op::InitExpandingTable { .. } => tracing::info_span!("InitExpandingTable").entered(),
@@ -737,23 +737,19 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             }
         }
 
-        Op::UpdateInstanceWeights {
-            expanding_table,
-            chunk_bits,
-            suffix_len,
+        Op::TraceGatherMultiply {
+            dst,
+            source_table,
+            shift,
+            mask,
         } => {
             let trace = provider.lookup_trace().unwrap();
-            let prev_data = backend.download(device_buffers[expanding_table].as_field());
-            let mut weights =
-                backend.download(device_buffers[&PolynomialId::InstanceWeights].as_field());
-            let m_mask = (1usize << chunk_bits) - 1;
+            let source = backend.download(device_buffers[source_table].as_field());
+            let mut data = backend.download(device_buffers[dst].as_field());
             for (j, &key) in trace.lookup_keys.iter().enumerate() {
-                weights[j] *= prev_data[((key >> suffix_len) as usize) & m_mask];
+                data[j] *= source[((key >> shift) as usize) & mask];
             }
-            let _ = device_buffers.insert(
-                PolynomialId::InstanceWeights,
-                DeviceBuffer::Field(backend.upload(&weights)),
-            );
+            let _ = device_buffers.insert(*dst, DeviceBuffer::Field(backend.upload(&data)));
         }
 
         Op::SuffixScatter { kernel, suffix_len } => {

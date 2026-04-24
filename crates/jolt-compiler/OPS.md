@@ -26,7 +26,7 @@ to the old form.
 
 ## Variant catalog
 
-### Primitive — compute (14)
+### Primitive — compute (15)
 
 These ops describe backend-dispatchable compute. They cover the full
 sumcheck inner loop and post-sumcheck evaluation. `is_primitive()` is
@@ -44,6 +44,7 @@ sumcheck inner loop and post-sumcheck evaluation. `is_primitive()` is
 | `ExpandingTableUpdate { table, challenge, current_len }` | Double an eq-table-like buffer by consuming one challenge variable. |
 | `InitExpandingTable { table, size }` | Zero-initialize an expanding-table slot. |
 | `BuildSegmentedEq { batch, instance, outer_challenges, outer_num_vars }` | Build an eq-table from a challenge list (or all-ones vector when empty) and stash under `(batch, instance)` in the runtime's per-instance segmented state. Consumed by segmented reduces. |
+| `TraceGatherMultiply { dst, source_table, shift, mask }` | `dst[j] *= source_table[(lookup_keys[j] >> shift) & mask]` for every cycle. Generic trace-driven gather-multiply; consumed by the runtime via `BufferProvider::lookup_trace`. |
 | `ScaleEval { poly, factor_challenges }` | Multiply an evaluation by `∏(1 − ch[i])`. |
 | `Evaluate { poly, mode }` | Extract an evaluation from a polynomial. |
 | `EvaluatePreprocessed { source, at_challenges, store_as }` | Evaluate a preprocessed polynomial's MLE at a challenge-derived point. |
@@ -153,7 +154,7 @@ eq table (segmented reduces) still pull `SegmentedConfig` from
 in `jolt-zkvm/src/runtime/helpers.rs` now takes those two values
 directly instead of a `&SegmentedConfig`.
 
-### Protocol-specific — lower to primitives (7)
+### Protocol-specific — lower to primitives (6)
 
 Protocol-specific both in name and behavior. Each lowers to a sequence of
 primitives. **Resolved in O5** (refined targets below — the original
@@ -187,7 +188,6 @@ landing the first two S5 renames exposed three distinct blocker classes).
 
 | Variant | Blocker | Refined target |
 |---|---|---|
-| `UpdateInstanceWeights { expanding_table, chunk_bits, suffix_len }` | A | NOT an `ExpandingTableUpdate` — it's a trace-driven gather-multiply on `instance_weights[j]` indexed by `(key >> suffix_len) & mask`. Needs new primitive `Op::TraceGatherMultiply { dst, source_table, index_source, shift, mask }`. Field set already slimmed in S5.field_slim — `{num_phases, phase}` collapsed into `suffix_len` at emission time. |
 | `MaterializeRA { kernel }` | A | NOT a `WeightedSum` — trace-driven product of gathers across `num_phases/n_vra` expanding tables per output. Needs new primitive `Op::TraceGatherProduct { dst, source_tables, index_source, shifts, mask }` (closes over the full product loop), or decomposes into `n_vra` scatter/gather/multiply chains. |
 | `MaterializeCombinedVal { kernel }` | A | NOT a `WeightedSum` — combines a pre-computed `table_values` array (built from `instance_scalars` × `combine_entries`) with a trace-driven gather-by-`table_kind_indices[j]` plus per-cycle conditional from `is_interleaved[j]`. Needs new primitive `Op::TraceGatherIndexed` and conditional-scalar injection. |
 | `SuffixScatter { kernel, suffix_len }` | A | NOT a `WeightedSum` — trace-driven scatter into `num_tables × suffixes_per_table` output polys, weighted by `instance_weights[j]` and `suffix_ops[t].eval(key & suffix_mask)`. Needs new `Op::TraceScatter { outputs, index_source, weight_source, value_fn }`. Field set already slimmed in S5.scatter_field_slim — `phase` collapsed into `suffix_len` at emission time. |
@@ -225,6 +225,13 @@ landing the first two S5 renames exposed three distinct blocker classes).
    an `InstanceScalarUpdate { Clear, ..num_prefixes }` for the
    scalar reset. The eq-table construction matches
    `EqPolynomial::evals` verified by transcript parity.
+5. **S5.update_instance_weights** (landed): `Op::UpdateInstanceWeights`
+   removed. Replaced with new generic primitive
+   `Op::TraceGatherMultiply { dst, source_table, shift, mask }`
+   that does `dst[j] *= source_table[(lookup_keys[j] >> shift) & mask]`
+   for every cycle `j`. The emission sites pass
+   `dst = InstanceWeights`; the primitive is generic over any
+   destination/source pair and carries no protocol-specific fields.
 3. **S5.instance_weights_device** (Group A, prerequisite): relocate
    `state.instance_weights` to a `PolynomialId::InstanceWeights`
    device buffer. Cascades through handlers — every
@@ -250,8 +257,8 @@ landing the first two S5 renames exposed three distinct blocker classes).
 | Redundant (landed O4.a) | 0 (was 3) | — |
 | Conditional (deferred to O6/O7) | 2 | `true` (ratchet unchanged until pass ships) |
 | Protocol-specific: rename (landed S5.rename, S5.build_segmented_eq) | 0 (was 2) | — |
-| Protocol-specific: lowered (landed S5.materialize_p_buffers, S5.init_instance_weights) | 0 (was 2) | — |
-| Protocol-specific: lower (→ O5) | 7 | `true` (ratchet unchanged until lowered) |
+| Protocol-specific: lowered (landed S5.materialize_p_buffers, S5.init_instance_weights, S5.update_instance_weights) | 0 (was 3) | — |
+| Protocol-specific: lower (→ O5) | 6 | `true` (ratchet unchanged until lowered) |
 | **Current total** | **46** | |
 
 Post-O5 target: 36 primitive + batch-scaffold variants plus the new
