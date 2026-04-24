@@ -348,8 +348,21 @@ so they become reference implementations for the eventual lowering:
 Plus `c9452ab54` removed a dead `RuntimeState.current_batch_round`
 field (written but never read).
 
-Three sub-phases remain at the variant-removal level; 9 protocol-specific
-variants still emit. See `crates/jolt-compiler/OPS.md` §"Protocol-specific —
+**Variant-removal wave** — lowered 4 protocol-specific ops (Group A +
+Group C):
+
+| Sub-phase | Status | Commit |
+|---|---|---|
+| Group A prerequisite — `state.instance_weights` → `device_buffers[PolynomialId::InstanceWeights]` | landed | `0b0ca8e10` |
+| `S5.materialize_p_buffers` — `MaterializePBuffers` → 3× `WeightedSum` + 4 derived polys | landed | `0a89be18c` |
+| `S5.init_instance_weights` — `InitInstanceWeights` → `InitExpandingTable` + N × `ExpandingTableUpdate` + `InstanceScalarUpdate` | landed | `795ef8f74` |
+| `S5.update_instance_weights` — `UpdateInstanceWeights` → new `TraceGatherMultiply` primitive | landed | `186a9c4b4` |
+| `S5.materialize_ra` — `MaterializeRA` → new `TraceGatherProduct` primitive | landed | `a97679d43` |
+
+Op count: 48 → 46 (one net variant removed in Group C; three Group A
+renames to new generic primitives keep count but move variants from
+"lower" to "primitive — compute"). Five protocol-specific variants
+still emit. See `crates/jolt-compiler/OPS.md` §"Protocol-specific —
 lower to primitives" for the authoritative target table — this section
 records the plan-level framing.
 
