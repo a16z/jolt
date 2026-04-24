@@ -1,4 +1,8 @@
 pub mod binding;
+pub mod jolt_crypto_g1_msm;
+pub mod jolt_crypto_g1_scalar_mul;
+pub mod jolt_crypto_gt_scalar_mul;
+pub mod jolt_crypto_pedersen_commit;
 pub mod naive_sort;
 pub mod prover_time;
 

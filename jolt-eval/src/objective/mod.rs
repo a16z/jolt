@@ -138,6 +138,12 @@ pub enum PerformanceObjective {
     BindLowToHigh(performance::binding::BindLowToHighObjective),
     BindHighToLow(performance::binding::BindHighToLowObjective),
     NaiveSortTime(performance::naive_sort::NaiveSortObjective),
+    JoltCryptoG1Msm1024(performance::jolt_crypto_g1_msm::JoltCryptoG1Msm1024Objective),
+    JoltCryptoG1ScalarMul(performance::jolt_crypto_g1_scalar_mul::JoltCryptoG1ScalarMulObjective),
+    JoltCryptoGtScalarMul(performance::jolt_crypto_gt_scalar_mul::JoltCryptoGtScalarMulObjective),
+    JoltCryptoPedersenCommit1024(
+        performance::jolt_crypto_pedersen_commit::JoltCryptoPedersenCommit1024Objective,
+    ),
 }
 
 impl PerformanceObjective {
@@ -146,6 +152,18 @@ impl PerformanceObjective {
             Self::BindLowToHigh(performance::binding::BindLowToHighObjective),
             Self::BindHighToLow(performance::binding::BindHighToLowObjective),
             Self::NaiveSortTime(performance::naive_sort::NaiveSortObjective),
+            Self::JoltCryptoG1Msm1024(
+                performance::jolt_crypto_g1_msm::JoltCryptoG1Msm1024Objective,
+            ),
+            Self::JoltCryptoG1ScalarMul(
+                performance::jolt_crypto_g1_scalar_mul::JoltCryptoG1ScalarMulObjective,
+            ),
+            Self::JoltCryptoGtScalarMul(
+                performance::jolt_crypto_gt_scalar_mul::JoltCryptoGtScalarMulObjective,
+            ),
+            Self::JoltCryptoPedersenCommit1024(
+                performance::jolt_crypto_pedersen_commit::JoltCryptoPedersenCommit1024Objective,
+            ),
         ]
     }
 
@@ -154,6 +172,10 @@ impl PerformanceObjective {
             Self::BindLowToHigh(o) => o.name(),
             Self::BindHighToLow(o) => o.name(),
             Self::NaiveSortTime(o) => o.name(),
+            Self::JoltCryptoG1Msm1024(o) => o.name(),
+            Self::JoltCryptoG1ScalarMul(o) => o.name(),
+            Self::JoltCryptoGtScalarMul(o) => o.name(),
+            Self::JoltCryptoPedersenCommit1024(o) => o.name(),
         }
     }
 
@@ -162,6 +184,10 @@ impl PerformanceObjective {
             Self::BindLowToHigh(o) => o.units(),
             Self::BindHighToLow(o) => o.units(),
             Self::NaiveSortTime(o) => o.units(),
+            Self::JoltCryptoG1Msm1024(o) => o.units(),
+            Self::JoltCryptoG1ScalarMul(o) => o.units(),
+            Self::JoltCryptoGtScalarMul(o) => o.units(),
+            Self::JoltCryptoPedersenCommit1024(o) => o.units(),
         }
     }
 
@@ -170,6 +196,10 @@ impl PerformanceObjective {
             Self::BindLowToHigh(o) => o.description(),
             Self::BindHighToLow(o) => o.description(),
             Self::NaiveSortTime(o) => o.description(),
+            Self::JoltCryptoG1Msm1024(o) => o.description(),
+            Self::JoltCryptoG1ScalarMul(o) => o.description(),
+            Self::JoltCryptoGtScalarMul(o) => o.description(),
+            Self::JoltCryptoPedersenCommit1024(o) => o.description(),
         }
     }
 
@@ -177,6 +207,10 @@ impl PerformanceObjective {
         match self {
             Self::BindLowToHigh(_) | Self::BindHighToLow(_) => &["jolt-core/"],
             Self::NaiveSortTime(_) => &["jolt-eval/src/sort_targets.rs"],
+            Self::JoltCryptoG1Msm1024(_)
+            | Self::JoltCryptoG1ScalarMul(_)
+            | Self::JoltCryptoGtScalarMul(_)
+            | Self::JoltCryptoPedersenCommit1024(_) => &["crates/jolt-crypto/"],
         }
     }
 }
@@ -193,6 +227,10 @@ pub use code_quality::cognitive::COGNITIVE_COMPLEXITY;
 pub use code_quality::halstead_bugs::HALSTEAD_BUGS;
 pub use code_quality::lloc::LLOC;
 pub use performance::binding::{BIND_HIGH_TO_LOW, BIND_LOW_TO_HIGH};
+pub use performance::jolt_crypto_g1_msm::JOLT_CRYPTO_G1_MSM_1024;
+pub use performance::jolt_crypto_g1_scalar_mul::JOLT_CRYPTO_G1_SCALAR_MUL;
+pub use performance::jolt_crypto_gt_scalar_mul::JOLT_CRYPTO_GT_SCALAR_MUL;
+pub use performance::jolt_crypto_pedersen_commit::JOLT_CRYPTO_PEDERSEN_COMMIT_1024;
 pub use performance::naive_sort::NAIVE_SORT_TIME;
 
 impl OptimizationObjective {

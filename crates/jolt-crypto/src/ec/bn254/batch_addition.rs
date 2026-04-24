@@ -143,16 +143,20 @@ fn batch_g1_additions_multi_affine_inner(
         }
 
         let mut all_denominators = Vec::with_capacity(total_pairs);
-        let mut pair_info = Vec::with_capacity(total_pairs);
+        // `offsets[set_idx]` = starting index in `all_denominators` / `inverses`
+        // for that set's pairs. Lets the parallel pass below write into each
+        // set's output slice without tracking `(set_idx, pair_idx)` per entry.
+        let mut offsets = Vec::with_capacity(working_sets.len() + 1);
+        offsets.push(0usize);
 
-        for (set_idx, set) in working_sets.iter().enumerate() {
+        for set in &working_sets {
             let pairs_in_set = set.len() / 2;
             for pair_idx in 0..pairs_in_set {
                 let p1 = set[pair_idx * 2];
                 let p2 = set[pair_idx * 2 + 1];
                 all_denominators.push(p2.x - p1.x);
-                pair_info.push((set_idx, pair_idx));
             }
+            offsets.push(offsets.last().copied().unwrap_or(0) + pairs_in_set);
         }
 
         let mut inverses = all_denominators;
@@ -162,26 +166,31 @@ fn batch_g1_additions_multi_affine_inner(
             "batch addition requires distinct x-coordinates per pair",
         );
 
-        let mut new_working_sets: Vec<Vec<G1Affine>> = working_sets
-            .iter()
-            .map(|set| Vec::with_capacity(set.len().div_ceil(2)))
+        // Per-set output buffers, pre-sized so each rayon task writes into
+        // a disjoint Vec without contention. The leftover carry (odd-length
+        // sets) is appended after the parallel pass.
+        let new_working_sets: Vec<Vec<G1Affine>> = working_sets
+            .par_iter()
+            .enumerate()
+            .map(|(set_idx, set)| {
+                let pairs_in_set = set.len() / 2;
+                let slice_start = offsets[set_idx];
+                let inv_slice = &inverses[slice_start..slice_start + pairs_in_set];
+                let mut out = Vec::with_capacity(set.len().div_ceil(2));
+                for (pair_idx, inv) in inv_slice.iter().enumerate() {
+                    let p1 = set[pair_idx * 2];
+                    let p2 = set[pair_idx * 2 + 1];
+                    let lambda = (p2.y - p1.y) * inv;
+                    let x3 = lambda * lambda - p1.x - p2.x;
+                    let y3 = lambda * (p1.x - x3) - p1.y;
+                    out.push(G1Affine::new_unchecked(x3, y3));
+                }
+                if set.len() % 2 == 1 {
+                    out.push(set[set.len() - 1]);
+                }
+                out
+            })
             .collect();
-
-        for ((set_idx, pair_idx), inv) in pair_info.iter().zip(inverses.iter()) {
-            let set = &working_sets[*set_idx];
-            let p1 = set[*pair_idx * 2];
-            let p2 = set[*pair_idx * 2 + 1];
-            let lambda = (p2.y - p1.y) * inv;
-            let x3 = lambda * lambda - p1.x - p2.x;
-            let y3 = lambda * (p1.x - x3) - p1.y;
-            new_working_sets[*set_idx].push(G1Affine::new_unchecked(x3, y3));
-        }
-
-        for (set_idx, set) in working_sets.iter().enumerate() {
-            if set.len() % 2 == 1 {
-                new_working_sets[set_idx].push(set[set.len() - 1]);
-            }
-        }
 
         working_sets = new_working_sets;
     }

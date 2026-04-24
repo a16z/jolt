@@ -5,6 +5,8 @@ edition = "2021"
 
 [dependencies]
 jolt-core = { workspace = true, features = ["host"] }
+jolt-crypto = { path = "../crates/jolt-crypto" }
+jolt-field = { workspace = true }
 common = { workspace = true, features = ["std"] }
 tracer = { workspace = true }
 
@@ -16,6 +18,8 @@ eyre = { workspace = true }
 tracing = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 rand = { workspace = true }
+rand_chacha = { workspace = true }
+rand_core = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 arbitrary = { version = "1", features = ["derive"] }
@@ -38,11 +42,27 @@ name = "bind_parallel_high_to_low"
 harness = false
 
 [[bench]]
-name = "naive_sort_time"
+name = "bind_parallel_low_to_high"
 harness = false
 
 [[bench]]
-name = "bind_parallel_low_to_high"
+name = "jolt_crypto_g1_msm_1024"
+harness = false
+
+[[bench]]
+name = "jolt_crypto_g1_scalar_mul"
+harness = false
+
+[[bench]]
+name = "jolt_crypto_gt_scalar_mul"
+harness = false
+
+[[bench]]
+name = "jolt_crypto_pedersen_commit_1024"
+harness = false
+
+[[bench]]
+name = "naive_sort_time"
 harness = false
 
 [[bench]]

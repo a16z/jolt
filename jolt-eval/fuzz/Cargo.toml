@@ -24,6 +24,34 @@ libfuzzer-sys = "0.4"
 jolt-eval = { path = ".." }
 
 [[bin]]
+name = "jolt_crypto_batch_addition"
+path = "fuzz_targets/jolt_crypto_batch_addition.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "jolt_crypto_glv_vector"
+path = "fuzz_targets/jolt_crypto_glv_vector.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "jolt_crypto_msm"
+path = "fuzz_targets/jolt_crypto_msm.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "jolt_crypto_scalar_decomp"
+path = "fuzz_targets/jolt_crypto_scalar_decomp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "split_eq_bind_high_low"
 path = "fuzz_targets/split_eq_bind_high_low.rs"
 test = false
@@ -36,3 +64,4 @@ path = "fuzz_targets/split_eq_bind_low_high.rs"
 test = false
 doc = false
 bench = false
+

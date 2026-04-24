@@ -12,7 +12,7 @@
 /// module scope — callers can expand the macro multiple times in the same module or
 /// alongside unrelated imports without conflicts.
 macro_rules! impl_jolt_group_wrapper {
-    ($wrapper:ident, $projective:ty, $affine:ty, $doc:literal) => {
+    ($wrapper:ident, $projective:ty, $doc:literal) => {
         #[doc = $doc]
         #[derive(Clone, Copy, Default, Eq, PartialEq)]
         #[repr(transparent)]
@@ -167,10 +167,20 @@ macro_rules! impl_jolt_group_wrapper {
                 use ::ark_ec::{CurveGroup, VariableBaseMSM};
                 use ::ark_ff::PrimeField;
                 debug_assert_eq!(bases.len(), scalars.len());
-                let affines: Vec<$affine> = bases.iter().map(|b| b.0.into_affine()).collect();
-                let fr_scalars: Vec<::ark_bn254::Fr> =
-                    scalars.iter().map(super::field_to_fr).collect();
-                let bigints: Vec<_> = fr_scalars.iter().map(|s| s.into_bigint()).collect();
+                // SAFETY: $wrapper is #[repr(transparent)] over $projective — the
+                // `impl_jolt_group_wrapper!` macro asserts this invariant at compile
+                // time. `normalize_batch` amortizes a single field inversion across
+                // all points, replacing per-point `into_affine` (which inverts z per
+                // point) with one batch inversion — 10–100× cheaper at MSM sizes
+                // used in Dory tier-1 commitment.
+                let projective: &[$projective] = unsafe {
+                    ::std::slice::from_raw_parts(bases.as_ptr().cast::<$projective>(), bases.len())
+                };
+                let affines = <$projective as CurveGroup>::normalize_batch(projective);
+                let bigints: Vec<_> = scalars
+                    .iter()
+                    .map(|s| super::field_to_fr(s).into_bigint())
+                    .collect();
                 Self(<$projective as VariableBaseMSM>::msm_bigint(
                     &affines, &bigints,
                 ))
@@ -255,10 +265,25 @@ impl PairingGroup for Bn254 {
 /// arkworks' concrete scalar type. The conversion goes through little-endian
 /// byte serialization.
 ///
-/// In debug builds, asserts that the source value fits in the BN254 Fr modulus —
-/// catches silent modular reduction when `F` has a larger modulus than BN254 Fr.
+/// When the concrete `F` is `jolt_field::Fr` (itself a `#[repr(transparent)]`
+/// newtype over `ark_bn254::Fr`), the `TypeId` fast path skips the byte
+/// serialization roundtrip entirely — the monomorphized branch is optimized
+/// away by the compiler. See spec: jolt-crypto-perf-optimizations (#1368
+/// follow-up) for details.
+///
+/// In debug builds (generic path only), asserts that the source value fits in
+/// the BN254 Fr modulus — catches silent modular reduction when `F` has a
+/// larger modulus than BN254 Fr.
 #[inline]
 pub(crate) fn field_to_fr<F: Field>(f: &F) -> ark_bn254::Fr {
+    use std::any::TypeId;
+    if TypeId::of::<F>() == TypeId::of::<jolt_field::Fr>() {
+        let ptr = std::ptr::from_ref::<F>(f).cast::<ark_bn254::Fr>();
+        // SAFETY: TypeId equality implies F and jolt_field::Fr are the same
+        // type; jolt_field::Fr is `#[repr(transparent)]` over ark_bn254::Fr,
+        // so the pointer cast preserves layout bit-for-bit.
+        return unsafe { *ptr };
+    }
     let bytes = f.to_bytes();
     #[cfg(debug_assertions)]
     {

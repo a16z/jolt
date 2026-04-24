@@ -3,6 +3,8 @@
 //! Decomposes a scalar `k` into `k = k0 + k1 * lambda (mod n)` where `lambda`
 //! is the GLV endomorphism eigenvalue, halving the bit-length of each component.
 
+use std::sync::LazyLock;
+
 use ark_bn254::{Fq, Fr, G1Projective};
 use ark_ff::{BigInteger, MontFp, PrimeField};
 use num_bigint::{BigInt, BigUint, Sign};
@@ -28,6 +30,38 @@ const SCALAR_DECOMP_COEFFS: [(bool, <Fr as PrimeField>::BigInt); 4] = [
     ),
 ];
 
+// Cached BigInt form of the decomposition coefficients and the subgroup order.
+// Avoids rebuilding identical `BigInt`s on every call to `decompose_scalar_2d`
+// (each call allocated 5 BigInts from fresh byte arrays on the old path).
+struct DecompConstants {
+    n11: BigInt,
+    n12: BigInt,
+    n21: BigInt,
+    n22: BigInt,
+    neg_n12: BigInt,
+    r: BigInt,
+}
+
+static DECOMP_CONSTANTS: LazyLock<DecompConstants> = LazyLock::new(|| {
+    let to_bigint = |x: (bool, <Fr as PrimeField>::BigInt)| {
+        let bytes = x.1.to_bytes_be();
+        let sign = if x.0 { Sign::Plus } else { Sign::Minus };
+        BigInt::from_bytes_be(sign, &bytes)
+    };
+    let [n11, n12, n21, n22] = SCALAR_DECOMP_COEFFS.map(to_bigint);
+    let neg_n12 = -&n12;
+    let r_bytes = Fr::MODULUS.to_bytes_be();
+    let r = BigInt::from_bytes_be(Sign::Plus, &r_bytes);
+    DecompConstants {
+        n11,
+        n12,
+        n21,
+        n22,
+        neg_n12,
+        r,
+    }
+});
+
 /// Decompose a BN254 scalar into two ~128-bit components via GLV lattice reduction.
 /// Returns (coefficients, signs) where `signs[i]` = true means positive.
 #[expect(clippy::unwrap_used)]
@@ -35,36 +69,27 @@ pub fn decompose_scalar_2d(scalar: Fr) -> ([<Fr as PrimeField>::BigInt; 2], [boo
     let scalar_bytes = scalar.into_bigint().to_bytes_be();
     let scalar_bigint = BigInt::from_bytes_be(Sign::Plus, &scalar_bytes);
 
-    let coeff_bigints: [BigInt; 4] = SCALAR_DECOMP_COEFFS.map(|x| {
-        let bytes = x.1.to_bytes_be();
-        let sign = if x.0 { Sign::Plus } else { Sign::Minus };
-        BigInt::from_bytes_be(sign, &bytes)
-    });
-
-    let [n11, n12, n21, n22] = coeff_bigints;
-
-    let r_bytes = Fr::MODULUS.to_bytes_be();
-    let r = BigInt::from_bytes_be(Sign::Plus, &r_bytes);
+    let c = &*DECOMP_CONSTANTS;
 
     // β = (k·n22, -k·n12) / r
     let beta_1 = {
-        let (mut div, rem) = (&scalar_bigint * &n22).div_rem(&r);
-        if (&rem + &rem) > r {
+        let (mut div, rem) = (&scalar_bigint * &c.n22).div_rem(&c.r);
+        if (&rem + &rem) > c.r {
             div.add_assign(BigInt::one());
         }
         div
     };
     let beta_2 = {
-        let (mut div, rem) = (&scalar_bigint * &(-&n12)).div_rem(&r);
-        if (&rem + &rem) > r {
+        let (mut div, rem) = (&scalar_bigint * &c.neg_n12).div_rem(&c.r);
+        if (&rem + &rem) > c.r {
             div.add_assign(BigInt::one());
         }
         div
     };
 
     // b = β · N
-    let b1 = &beta_1 * &n11 + &beta_2 * &n21;
-    let b2 = &beta_1 * &n12 + &beta_2 * &n22;
+    let b1 = &beta_1 * &c.n11 + &beta_2 * &c.n21;
+    let b2 = &beta_1 * &c.n12 + &beta_2 * &c.n22;
 
     let k1 = &scalar_bigint - b1;
     let k1_abs = BigUint::try_from(k1.abs()).unwrap();
