@@ -70,7 +70,6 @@ fn op_span(op: &Op) -> tracing::span::EnteredSpan {
         Op::BatchRoundFinalize { .. } => tracing::info_span!("BatchRoundFinalize").entered(),
         Op::ExpandingTableUpdate { .. } => tracing::info_span!("ExpandingTableUpdate").entered(),
         Op::InstanceScalarUpdate { .. } => tracing::info_span!("InstanceScalarUpdate").entered(),
-        Op::InitInstanceWeights { .. } => tracing::info_span!("InitInstanceWeights").entered(),
         Op::UpdateInstanceWeights { .. } => tracing::info_span!("UpdateInstanceWeights").entered(),
         Op::SuffixScatter { .. } => tracing::info_span!("SuffixScatter").entered(),
         Op::QBufferScatter { .. } => tracing::info_span!("QBufferScatter").entered(),
@@ -736,19 +735,6 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                     }
                 }
             }
-        }
-
-        Op::InitInstanceWeights { r_reduction } => {
-            let point: Vec<F> = r_reduction
-                .iter()
-                .map(|ci| state.challenges[ci.0])
-                .collect();
-            let weights = jolt_poly::EqPolynomial::<F>::evals(&point, None);
-            let _ = device_buffers.insert(
-                PolynomialId::InstanceWeights,
-                DeviceBuffer::Field(backend.upload(&weights)),
-            );
-            state.instance_scalars.fill(None);
         }
 
         Op::UpdateInstanceWeights {

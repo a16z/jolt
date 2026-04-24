@@ -656,6 +656,42 @@ fn build_scalar_update_batch(
         .collect()
 }
 
+/// Mirror of `src/builder.rs::emit_init_instance_weights`.
+fn emit_init_instance_weights(
+    ops: &mut Vec<Op>,
+    r_reduction: &[ChallengeIdx],
+    num_prefixes: usize,
+) {
+    let n = r_reduction.len();
+    push_op!(
+        ops,
+        Op::InitExpandingTable {
+            table: PolynomialId::InstanceWeights,
+            size: 1 << n,
+        }
+    );
+    for (i, &ch) in r_reduction.iter().enumerate() {
+        push_op!(
+            ops,
+            Op::ExpandingTableUpdate {
+                table: PolynomialId::InstanceWeights,
+                challenge: ch,
+                current_len: 1 << i,
+            }
+        );
+    }
+    if num_prefixes > 0 {
+        push_op!(
+            ops,
+            Op::InstanceScalarUpdate {
+                updates: (0..num_prefixes)
+                    .map(|i| (i, ScalarUpdateAction::Clear))
+                    .collect(),
+            }
+        );
+    }
+}
+
 fn emit_scatter_ops(
     ops: &mut Vec<Op>,
     kernel: usize,
@@ -800,12 +836,7 @@ fn emit_unrolled_batched_rounds(
                 let round_in_sub = instance_round % chunk_bits;
 
                 if instance_round == 0 {
-                    push_op!(
-                        ops,
-                        Op::InitInstanceWeights {
-                            r_reduction: ic.r_reduction.clone(),
-                        }
-                    );
+                    emit_init_instance_weights(ops, &ic.r_reduction, ic.num_prefixes);
                     emit_scatter_ops(
                         ops,
                         kernel,
@@ -7704,7 +7735,6 @@ fn print_stats(module: &Module, params: &ModuleParams) {
             | Op::BatchRoundFinalize { .. }
             | Op::ExpandingTableUpdate { .. }
             | Op::InstanceScalarUpdate { .. }
-            | Op::InitInstanceWeights { .. }
             | Op::UpdateInstanceWeights { .. }
             | Op::SuffixScatter { .. }
             | Op::QBufferScatter { .. }

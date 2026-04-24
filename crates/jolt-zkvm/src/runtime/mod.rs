@@ -59,7 +59,6 @@ fn op_class_tag(op: &jolt_compiler::module::Op) -> Option<&'static str> {
         Op::WeightedSum { .. } => "WeightedSum",
         Op::InstanceScalarUpdate { .. } => "InstanceScalarUpdate",
         Op::UpdateInstanceWeights { .. } => "UpdateInstanceWeights",
-        Op::InitInstanceWeights { .. } => "InitInstanceWeights",
         _ => return None,
     })
 }
@@ -172,9 +171,10 @@ where
         .collect();
 
     // Pre-size `instance_scalars` to the max `num_prefixes` across all
-    // address-decomposition kernels. `Op::InitInstanceWeights` then only
-    // needs to reset (fill with None), not resize — lets the op drop its
-    // `num_prefixes` field. Non-decomp workloads get a zero-length vec.
+    // address-decomposition kernels. The compiled `InstanceScalarUpdate
+    // { Clear, ..num_prefixes }` emitted at the start of each decomp
+    // kernel phase then only needs to reset (fill with None), not resize.
+    // Non-decomp workloads get a zero-length vec.
     let max_num_prefixes: usize = module
         .prover
         .kernels

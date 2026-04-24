@@ -1317,14 +1317,6 @@ pub enum Op {
     /// `last_round_coeffs` for subsequent `AbsorbRoundPoly`.
     BatchRoundFinalize { batch: BatchIdx },
 
-    /// Initialize instance weights from the eq polynomial at the r_reduction point.
-    /// Only emitted for phase 0 of address-decomposition instances.
-    ///
-    /// Also resets `state.instance_scalars` to `None` for all slots. The
-    /// vector is pre-sized at runtime init from the module's kernels
-    /// (`max(ic.num_prefixes)` across address-decomposition kernels), so
-    /// the op carries no per-kernel size field (S5.init_weights_slim).
-    InitInstanceWeights { r_reduction: Vec<ChallengeIdx> },
     /// Multiply instance weights by expanding-table lookups at a phase boundary.
     /// Emitted for phase > 0 of address-decomposition instances.
     ///
@@ -1668,7 +1660,6 @@ impl Op {
                 | Op::BatchAccumulateInstance { .. }
                 | Op::BatchRoundFinalize { .. }
                 | Op::ExpandingTableUpdate { .. }
-                | Op::InitInstanceWeights { .. }
                 | Op::UpdateInstanceWeights { .. }
                 | Op::SuffixScatter { .. }
                 | Op::QBufferScatter { .. }
@@ -1764,7 +1755,6 @@ impl Op {
             | Op::QBufferScatter { .. }
             | Op::MaterializeRA { .. }
             | Op::MaterializeCombinedVal { .. }
-            | Op::InitInstanceWeights { .. }
             | Op::UpdateInstanceWeights { .. } => true, // flip to false in O5
         }
     }

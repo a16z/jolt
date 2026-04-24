@@ -461,9 +461,7 @@ impl ModuleBuilder {
 
                     if instance_round == 0 {
                         // First round, first sub-phase: init + scatter.
-                        self.ops.push(Op::InitInstanceWeights {
-                            r_reduction: ic.r_reduction.clone(),
-                        });
+                        emit_init_instance_weights(&mut self.ops, &ic.r_reduction, ic.num_prefixes);
                         emit_scatter_ops(
                             &mut self.ops,
                             kernel,
@@ -841,6 +839,47 @@ impl ModuleBuilder {
                 num_stages: self.stage_count,
             },
         }
+    }
+}
+
+/// Emit the primitive sequence that initializes the `InstanceWeights`
+/// device buffer to the eq polynomial of `r_reduction` and resets the
+/// first `num_prefixes` slots of `state.instance_scalars`. Replaces the
+/// legacy `Op::InitInstanceWeights { r_reduction }` variant.
+///
+/// - `InitExpandingTable { InstanceWeights, 2^|r_reduction| }` zeros the
+///   slot and puts a single 1 at index 0.
+/// - `ExpandingTableUpdate { InstanceWeights, r_reduction[i], 2^i }` for
+///   each `i` in `0..|r_reduction|`: doubles the active region with the
+///   challenge, producing the standard eq polynomial. Challenge order
+///   matches `EqPolynomial::evals` — the first challenge ends up
+///   controlling the MSB of the index (verified by mult-commutativity
+///   trace in the refactor doc).
+/// - `InstanceScalarUpdate { (0..num_prefixes).map(|i| (i, Clear)) }`
+///   resets this kernel's scalar slots.
+fn emit_init_instance_weights(
+    ops: &mut Vec<Op>,
+    r_reduction: &[ChallengeIdx],
+    num_prefixes: usize,
+) {
+    let n = r_reduction.len();
+    ops.push(Op::InitExpandingTable {
+        table: PolynomialId::InstanceWeights,
+        size: 1 << n,
+    });
+    for (i, &ch) in r_reduction.iter().enumerate() {
+        ops.push(Op::ExpandingTableUpdate {
+            table: PolynomialId::InstanceWeights,
+            challenge: ch,
+            current_len: 1 << i,
+        });
+    }
+    if num_prefixes > 0 {
+        ops.push(Op::InstanceScalarUpdate {
+            updates: (0..num_prefixes)
+                .map(|i| (i, ScalarUpdateAction::Clear))
+                .collect(),
+        });
     }
 }
 

@@ -153,7 +153,7 @@ eq table (segmented reduces) still pull `SegmentedConfig` from
 in `jolt-zkvm/src/runtime/helpers.rs` now takes those two values
 directly instead of a `&SegmentedConfig`.
 
-### Protocol-specific — lower to primitives (8)
+### Protocol-specific — lower to primitives (7)
 
 Protocol-specific both in name and behavior. Each lowers to a sequence of
 primitives. **Resolved in O5** (refined targets below — the original
@@ -187,7 +187,6 @@ landing the first two S5 renames exposed three distinct blocker classes).
 
 | Variant | Blocker | Refined target |
 |---|---|---|
-| `InitInstanceWeights { r_reduction }` | A | Build eq-table via `InitExpandingTable` + `ExpandingTableUpdate` ×`\|r_reduction\|` **into a device buffer** (new `PolynomialId::InstanceWeights`). The `instance_scalars` reset is currently a `.fill(None)` on a vec pre-sized at runtime init from `max(ic.num_prefixes)` across kernels. Field set slimmed in S5.init_weights_slim (dropped `num_prefixes`). |
 | `UpdateInstanceWeights { expanding_table, chunk_bits, suffix_len }` | A | NOT an `ExpandingTableUpdate` — it's a trace-driven gather-multiply on `instance_weights[j]` indexed by `(key >> suffix_len) & mask`. Needs new primitive `Op::TraceGatherMultiply { dst, source_table, index_source, shift, mask }`. Field set already slimmed in S5.field_slim — `{num_phases, phase}` collapsed into `suffix_len` at emission time. |
 | `MaterializeRA { kernel }` | A | NOT a `WeightedSum` — trace-driven product of gathers across `num_phases/n_vra` expanding tables per output. Needs new primitive `Op::TraceGatherProduct { dst, source_tables, index_source, shifts, mask }` (closes over the full product loop), or decomposes into `n_vra` scatter/gather/multiply chains. |
 | `MaterializeCombinedVal { kernel }` | A | NOT a `WeightedSum` — combines a pre-computed `table_values` array (built from `instance_scalars` × `combine_entries`) with a trace-driven gather-by-`table_kind_indices[j]` plus per-cycle conditional from `is_interleaved[j]`. Needs new primitive `Op::TraceGatherIndexed` and conditional-scalar injection. |
@@ -217,6 +216,15 @@ landing the first two S5 renames exposed three distinct blocker classes).
    `PBufferUninterleaveRo`, parameterized by `chunk_bits`) computed
    on-demand by `DerivedSource::compute()`. Emission replaced with
    3× `Op::WeightedSum`.
+3. **Group A prerequisite** (landed): `state.instance_weights`
+   relocated to `device_buffers[PolynomialId::InstanceWeights]`.
+   Preparatory for lowering the four host-state + trace-driven ops.
+4. **S5.init_instance_weights** (landed): `Op::InitInstanceWeights`
+   removed. Emission replaced with `InitExpandingTable` +
+   `|r_reduction| × ExpandingTableUpdate` on `InstanceWeights`, plus
+   an `InstanceScalarUpdate { Clear, ..num_prefixes }` for the
+   scalar reset. The eq-table construction matches
+   `EqPolynomial::evals` verified by transcript parity.
 3. **S5.instance_weights_device** (Group A, prerequisite): relocate
    `state.instance_weights` to a `PolynomialId::InstanceWeights`
    device buffer. Cascades through handlers — every
@@ -242,9 +250,9 @@ landing the first two S5 renames exposed three distinct blocker classes).
 | Redundant (landed O4.a) | 0 (was 3) | — |
 | Conditional (deferred to O6/O7) | 2 | `true` (ratchet unchanged until pass ships) |
 | Protocol-specific: rename (landed S5.rename, S5.build_segmented_eq) | 0 (was 2) | — |
-| Protocol-specific: lowered (landed S5.materialize_p_buffers) | 0 (was 1) | — |
-| Protocol-specific: lower (→ O5) | 8 | `true` (ratchet unchanged until lowered) |
-| **Current total** | **47** | |
+| Protocol-specific: lowered (landed S5.materialize_p_buffers, S5.init_instance_weights) | 0 (was 2) | — |
+| Protocol-specific: lower (→ O5) | 7 | `true` (ratchet unchanged until lowered) |
+| **Current total** | **46** | |
 
 Post-O5 target: 36 primitive + batch-scaffold variants plus the new
 primitive surface introduced during Group A and Group B lowering —
