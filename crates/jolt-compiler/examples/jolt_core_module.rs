@@ -656,6 +656,31 @@ fn build_scalar_update_batch(
         .collect()
 }
 
+/// Mirror of `src/builder.rs::emit_materialize_ra`.
+fn emit_materialize_ra(ops: &mut Vec<Op>, ic: &InstanceConfig) {
+    let n_vra = 128 / ic.ra_virtual_log_k_chunk;
+    let chunk_size = ic.num_phases / n_vra;
+    let mask = (1usize << ic.chunk_bits) - 1;
+    for chunk_i in 0..n_vra {
+        let off = chunk_i * chunk_size;
+        let source_tables: Vec<PolynomialId> = (off..off + chunk_size)
+            .map(PolynomialId::ExpandingTable)
+            .collect();
+        let shifts: Vec<usize> = (0..chunk_size)
+            .map(|k| (ic.num_phases - 1 - off - k) * ic.chunk_bits)
+            .collect();
+        push_op!(
+            ops,
+            Op::TraceGatherProduct {
+                dst: ic.output_ra_polys[chunk_i],
+                source_tables,
+                shifts,
+                mask,
+            }
+        );
+    }
+}
+
 /// Mirror of `src/builder.rs::emit_init_instance_weights`.
 fn emit_init_instance_weights(
     ops: &mut Vec<Op>,
@@ -1027,12 +1052,7 @@ fn emit_unrolled_batched_rounds(
                                 challenge: ic.registry_checkpoint_slots[2],
                             }
                         );
-                        push_op!(
-                            ops,
-                            Op::MaterializeRA {
-                                kernel: prev_kernel,
-                            }
-                        );
+                        emit_materialize_ra(ops, ic);
                         push_op!(
                             ops,
                             Op::MaterializeCombinedVal {
@@ -7742,7 +7762,7 @@ fn print_stats(module: &Module, params: &ModuleParams) {
             | Op::InitExpandingTable { .. }
             | Op::ReadCheckingReduce { .. }
             | Op::RafReduce { .. }
-            | Op::MaterializeRA { .. }
+            | Op::TraceGatherProduct { .. }
             | Op::MaterializeCombinedVal { .. }
             | Op::WeightedSum { .. } => counts[14] += 1,
         }

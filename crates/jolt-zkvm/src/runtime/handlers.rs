@@ -76,7 +76,7 @@ fn op_span(op: &Op) -> tracing::span::EnteredSpan {
         Op::InitExpandingTable { .. } => tracing::info_span!("InitExpandingTable").entered(),
         Op::ReadCheckingReduce { .. } => tracing::info_span!("ReadCheckingReduce").entered(),
         Op::RafReduce { .. } => tracing::info_span!("RafReduce").entered(),
-        Op::MaterializeRA { .. } => tracing::info_span!("MaterializeRA").entered(),
+        Op::TraceGatherProduct { .. } => tracing::info_span!("TraceGatherProduct").entered(),
         Op::MaterializeCombinedVal { .. } => {
             tracing::info_span!("MaterializeCombinedVal").entered()
         }
@@ -850,33 +850,29 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
             state.last_round_instance_evals[instance.0] = evals.to_vec();
         }
 
-        Op::MaterializeRA { kernel } => {
-            let config = executable.module.prover.kernels[*kernel]
-                .instance_config
-                .as_ref()
-                .unwrap();
+        Op::TraceGatherProduct {
+            dst,
+            source_tables,
+            shifts,
+            mask,
+        } => {
             let trace = provider.lookup_trace().unwrap();
-            let tables: Vec<Vec<F>> = (0..config.num_phases)
-                .map(|p| {
-                    backend.download(device_buffers[&PolynomialId::ExpandingTable(p)].as_field())
+            let tables: Vec<Vec<F>> = source_tables
+                .iter()
+                .map(|pid| backend.download(device_buffers[pid].as_field()))
+                .collect();
+            let data: Vec<F> = trace
+                .lookup_keys
+                .iter()
+                .map(|&key| {
+                    let mut acc = tables[0][((key >> shifts[0]) as usize) & mask];
+                    for (t, &s) in tables[1..].iter().zip(shifts[1..].iter()) {
+                        acc *= t[((key >> s) as usize) & mask];
+                    }
+                    acc
                 })
                 .collect();
-            let n_vra = 128 / config.ra_virtual_log_k_chunk;
-            let chunk_size = config.num_phases / n_vra;
-            for chunk_i in 0..n_vra {
-                let ra = compute_ra_chunk(
-                    &tables,
-                    chunk_i * chunk_size,
-                    chunk_size,
-                    config.chunk_bits,
-                    config.num_phases,
-                    &trace.lookup_keys,
-                );
-                let _ = device_buffers.insert(
-                    config.output_ra_polys[chunk_i],
-                    DeviceBuffer::Field(backend.upload(&ra)),
-                );
-            }
+            let _ = device_buffers.insert(*dst, DeviceBuffer::Field(backend.upload(&data)));
         }
 
         Op::MaterializeCombinedVal { kernel } => {
@@ -1183,35 +1179,6 @@ fn compute_suffix_scatter<F: Field>(
         }
     }
     all_polys
-}
-
-/// Compute one RA poly chunk for `Op::MaterializeRA`. Returns a Vec of
-/// length `lookup_keys.len()` where each entry is the product of
-/// `tables[off + k][(key >> shift_k) & mask]` for `k` in `0..chunk_size`,
-/// with `shift_k = (num_phases − 1 − off − k) × chunk_bits`. See OPS.md
-/// Group A — this is the per-chunk gather-product that the eventual
-/// `Op::TraceGatherProduct` primitive will cover.
-fn compute_ra_chunk<F: Field>(
-    tables: &[Vec<F>],
-    off: usize,
-    chunk_size: usize,
-    chunk_bits: usize,
-    num_phases: usize,
-    lookup_keys: &[u128],
-) -> Vec<F> {
-    let m_mask = (1usize << chunk_bits) - 1;
-    lookup_keys
-        .iter()
-        .map(|&key| {
-            let mut shift = (num_phases - 1 - off) * chunk_bits;
-            let mut acc = tables[off][((key >> shift) as usize) & m_mask];
-            for et in &tables[(off + 1)..(off + chunk_size)] {
-                shift -= chunk_bits;
-                acc *= et[((key >> shift) as usize) & m_mask];
-            }
-            acc
-        })
-        .collect()
 }
 
 /// Compute the combined-val polynomial for `Op::MaterializeCombinedVal`.

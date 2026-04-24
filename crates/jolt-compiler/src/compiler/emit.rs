@@ -942,7 +942,7 @@ fn op_poly_refs(op: &Op, kernels: &[KernelDef]) -> Vec<PolynomialId> {
         | Op::InitExpandingTable { .. }
         | Op::ReadCheckingReduce { .. }
         | Op::RafReduce { .. }
-        | Op::MaterializeRA { .. }
+        | Op::TraceGatherProduct { .. }
         | Op::MaterializeCombinedVal { .. }
         | Op::WeightedSum { .. } => vec![],
     }

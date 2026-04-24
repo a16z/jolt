@@ -614,9 +614,7 @@ impl ModuleBuilder {
                                 challenge: ic.registry_checkpoint_slots[2],
                             });
                             // Materialize output buffers.
-                            self.ops.push(Op::MaterializeRA {
-                                kernel: prev_kernel,
-                            });
+                            emit_materialize_ra(&mut self.ops, ic);
                             self.ops.push(Op::MaterializeCombinedVal {
                                 kernel: prev_kernel,
                             });
@@ -840,6 +838,32 @@ impl ModuleBuilder {
                 num_stages: self.stage_count,
             },
         }
+    }
+}
+
+/// Emit the `n_vra` `Op::TraceGatherProduct` ops that build the output
+/// RA polynomials for an address-decomposition instance. Each RA poly
+/// is the product of `chunk_size = num_phases / n_vra` consecutive
+/// expanding tables, indexed by trace lookup keys. Replaces the legacy
+/// `Op::MaterializeRA { kernel }` variant.
+fn emit_materialize_ra(ops: &mut Vec<Op>, ic: &InstanceConfig) {
+    let n_vra = 128 / ic.ra_virtual_log_k_chunk;
+    let chunk_size = ic.num_phases / n_vra;
+    let mask = (1usize << ic.chunk_bits) - 1;
+    for chunk_i in 0..n_vra {
+        let off = chunk_i * chunk_size;
+        let source_tables: Vec<PolynomialId> = (off..off + chunk_size)
+            .map(PolynomialId::ExpandingTable)
+            .collect();
+        let shifts: Vec<usize> = (0..chunk_size)
+            .map(|k| (ic.num_phases - 1 - off - k) * ic.chunk_bits)
+            .collect();
+        ops.push(Op::TraceGatherProduct {
+            dst: ic.output_ra_polys[chunk_i],
+            source_tables,
+            shifts,
+            mask,
+        });
     }
 }
 

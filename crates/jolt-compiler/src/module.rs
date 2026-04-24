@@ -1333,6 +1333,22 @@ pub enum Op {
         shift: usize,
         mask: usize,
     },
+    /// Trace-driven gather-product: build a fresh `dst` buffer by taking
+    /// a product across multiple source tables, each indexed by a
+    /// different slice of the lookup key.
+    ///
+    /// Semantics: for each cycle `j`,
+    /// `dst[j] = ∏_k source_tables[k][(lookup_keys[j] >> shifts[k]) & mask]`.
+    /// `shifts` has the same length as `source_tables`. All source tables
+    /// share a common `mask` — they're expected to have the same chunk_bits.
+    ///
+    /// Generic primitive — replaces the former `Op::MaterializeRA`.
+    TraceGatherProduct {
+        dst: PolynomialId,
+        source_tables: Vec<PolynomialId>,
+        shifts: Vec<usize>,
+        mask: usize,
+    },
     /// Scatter weighted suffix evaluations into per-table polynomial buffers.
     ///
     /// `suffix_len` is precomputed at emission time as
@@ -1359,8 +1375,6 @@ pub enum Op {
         instance: InstanceIdx,
         kernel: usize,
     },
-    /// Materialize RA polynomials from expanding tables and lookup keys.
-    MaterializeRA { kernel: usize },
     /// Materialize combined_val polynomial from checkpoints + combine matrix.
     MaterializeCombinedVal { kernel: usize },
 
@@ -1665,10 +1679,10 @@ impl Op {
                 | Op::BatchRoundFinalize { .. }
                 | Op::ExpandingTableUpdate { .. }
                 | Op::TraceGatherMultiply { .. }
+                | Op::TraceGatherProduct { .. }
                 | Op::SuffixScatter { .. }
                 | Op::QBufferScatter { .. }
                 | Op::InitExpandingTable { .. }
-                | Op::MaterializeRA { .. }
                 | Op::MaterializeCombinedVal { .. }
                 | Op::WeightedSum { .. }
         )
@@ -1709,6 +1723,7 @@ impl Op {
             | Op::InitExpandingTable { .. }
             | Op::BuildSegmentedEq { .. }
             | Op::TraceGatherMultiply { .. }
+            | Op::TraceGatherProduct { .. }
             | Op::ScaleEval { .. }
             | Op::Evaluate { .. }
             | Op::EvaluatePreprocessed { .. }
@@ -1758,7 +1773,6 @@ impl Op {
             | Op::RafReduce { .. }
             | Op::SuffixScatter { .. }
             | Op::QBufferScatter { .. }
-            | Op::MaterializeRA { .. }
             | Op::MaterializeCombinedVal { .. } => true, // flip to false in O5
         }
     }
