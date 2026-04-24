@@ -873,28 +873,12 @@ pub(super) fn dispatch_op<B, F, T, PCS>(
                 .instance_config
                 .as_ref()
                 .unwrap();
-            let gamma = state.challenges[config.gamma.0];
-            let q_bufs: Vec<Vec<F>> = (0..3)
-                .flat_map(|c| (0..2).map(move |h| (c, h)))
-                .map(|(c, h)| {
-                    backend.download(device_buffers[&PolynomialId::InstanceQ(c, h)].as_field())
-                })
-                .collect();
-            let p_bufs: Vec<Option<Vec<F>>> = (0..3)
-                .flat_map(|c| (0..2).map(move |h| (c, h)))
-                .map(|(c, h)| {
-                    device_buffers
-                        .get(&PolynomialId::InstanceP(c, h))
-                        .map(|b| backend.download(b.as_field()))
-                })
-                .collect();
-            let prev_claim = state.batch_instance_claims[ps_batch.0][instance.0];
             let evals = compute_raf_reduce(
-                &q_bufs,
-                &p_bufs,
-                gamma,
+                device_buffers,
+                backend,
+                state.challenges[config.gamma.0],
                 state.read_checking_evals,
-                prev_claim,
+                state.batch_instance_claims[ps_batch.0][instance.0],
             );
             state.last_round_instance_evals[instance.0] = evals.to_vec();
         }
@@ -1136,19 +1120,32 @@ fn compute_q_buffer_scatter<F: Field>(
 }
 
 /// Compute the 3 round-evaluations `[eval_0, eval_1, eval_2]` for the
-/// `Op::RafReduce` read-RAF final reduce. Walks the 6 Q-buffers (from
-/// `QBufferScatter`) and optional 6 P-buffers (from `MaterializePBuffers`),
-/// accumulating left-component (scaled by `gamma`) and right-component
-/// (scaled by `gamma^2`) contributions in one pass. The prior
-/// `ReadCheckingReduce` evals are added at `eval_0` / `eval_2`, and
-/// `eval_1` is derived as `prev_claim − eval_0`. See OPS.md Group B.
-fn compute_raf_reduce<F: Field>(
-    q_bufs: &[Vec<F>],
-    p_bufs: &[Option<Vec<F>>],
+/// `Op::RafReduce` read-RAF final reduce. Downloads the 6 Q-buffers (from
+/// `QBufferScatter`) and optional 6 P-buffers (from `MaterializePBuffers`)
+/// from `device_buffers`, then walks them accumulating left-component
+/// (scaled by `gamma`) and right-component (scaled by `gamma^2`)
+/// contributions in one pass. The prior `ReadCheckingReduce` evals are
+/// added at `eval_0` / `eval_2`, and `eval_1` is derived as
+/// `prev_claim − eval_0`. See OPS.md Group B.
+fn compute_raf_reduce<B: ComputeBackend, F: Field>(
+    device_buffers: &HashMap<PolynomialId, Buf<B, F>>,
+    backend: &B,
     gamma: F,
     read_checking_evals: [F; 2],
     prev_claim: F,
 ) -> [F; 3] {
+    let q_bufs: Vec<Vec<F>> = (0..3)
+        .flat_map(|c| (0..2).map(move |h| (c, h)))
+        .map(|(c, h)| backend.download(device_buffers[&PolynomialId::InstanceQ(c, h)].as_field()))
+        .collect();
+    let p_bufs: Vec<Option<Vec<F>>> = (0..3)
+        .flat_map(|c| (0..2).map(move |h| (c, h)))
+        .map(|(c, h)| {
+            device_buffers
+                .get(&PolynomialId::InstanceP(c, h))
+                .map(|b| backend.download(b.as_field()))
+        })
+        .collect();
     let gamma_sqr = gamma * gamma;
     let half = q_bufs[0].len() / 2;
     let (mut l0, mut l2, mut r0, mut r2) = (F::zero(), F::zero(), F::zero(), F::zero());
