@@ -1056,6 +1056,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "bn254-fr-poseidon2-arkworks"
+version = "0.1.0"
+dependencies = [
+ "bn254-fr-poseidon2-arkworks-guest",
+ "jolt-sdk",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "bn254-fr-poseidon2-arkworks-guest"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ff 0.5.0",
+ "jolt-sdk",
+]
+
+[[package]]
+name = "bn254-fr-poseidon2-external"
+version = "0.1.0"
+dependencies = [
+ "bn254-fr-poseidon2-external-guest",
+ "jolt-sdk",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "bn254-fr-poseidon2-external-guest"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ff 0.5.0",
+ "jolt-sdk",
+]
+
+[[package]]
 name = "borsh"
 version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

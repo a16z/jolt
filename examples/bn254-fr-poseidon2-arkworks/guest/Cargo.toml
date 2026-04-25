@@ -1,0 +1,12 @@
+[package]
+name = "bn254-fr-poseidon2-arkworks-guest"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+guest = []
+
+[dependencies]
+jolt = { package = "jolt-sdk", path = "../../../jolt-sdk" }
+ark-bn254 = { workspace = true, features = ["scalar_field"] }
+ark-ff = { workspace = true }
