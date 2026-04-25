@@ -1,6 +1,10 @@
 //! Diagnostic: compare per-cycle R1CS witness variables between jolt-r1cs and
 //! jolt-core to find divergences that cause extended evaluation mismatches.
 #![allow(non_snake_case, clippy::print_stderr)]
+#![expect(
+    unused_imports,
+    reason = "Pre-existing diagnostic test imports kept for optional expansions."
+)]
 
 use jolt_field::{Field, Fr};
 use jolt_host::{extract_trace, BytecodePreprocessing, Program};

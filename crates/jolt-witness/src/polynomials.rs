@@ -235,6 +235,12 @@ fn expand_one_hot<F: Field>(k: usize, indices: &[Option<u8>]) -> Vec<F> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::erasing_op,
+    clippy::identity_op,
+    reason = "literal `0 * t + c` / `1 * t + c` patterns make the K×T layout \
+              structurally clear in tests even when simpler forms are equivalent."
+)]
 mod tests {
     use super::*;
     use jolt_compiler::WitnessSlot;

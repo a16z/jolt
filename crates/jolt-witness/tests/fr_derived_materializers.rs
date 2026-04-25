@@ -21,12 +21,12 @@ const K_FR: usize = 16;
 /// Build a minimal DerivedSource for testing.  We borrow a trivial
 /// witness buffer (all zero) since the FR materializers don't consult
 /// `witness[…]` — they read from the attached `FieldRegConfig`.
-fn make_derived<'a>(
-    witness: &'a [Fr],
+fn make_derived(
+    witness: &[Fr],
     num_cycles: usize,
     vars_padded: usize,
     cfg: Option<FieldRegConfig>,
-) -> jolt_witness::derived::DerivedSource<'a, Fr> {
+) -> jolt_witness::derived::DerivedSource<'_, Fr> {
     let mut d = jolt_witness::derived::DerivedSource::<Fr>::new(witness, num_cycles, vars_padded);
     if let Some(cfg) = cfg {
         d = d.with_field_reg(cfg);

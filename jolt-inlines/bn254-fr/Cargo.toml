@@ -1,0 +1,30 @@
+[package]
+name = "jolt-inlines-bn254-fr"
+version = "0.1.0"
+edition = "2021"
+description = "BN254 Fr native-field coprocessor SDK for Jolt zkVM"
+license = "MIT"
+homepage = "https://github.com/a16z/jolt/README.md"
+repository = "https://github.com/a16z/jolt"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Host feature pulls in ark_bn254 for reference arithmetic (used at
+# trace-generation time + host-side test harnesses).
+host = ["dep:ark-bn254", "dep:ark-ff"]
+
+[dependencies]
+ark-bn254 = { workspace = true, optional = true, features = ["scalar_field"] }
+ark-ff = { workspace = true, optional = true }
+
+[dev-dependencies]
+ark-bn254 = { workspace = true, features = ["scalar_field"] }
+ark-ff.workspace = true
+jolt-field = { path = "../../crates/jolt-field", features = ["bn254"] }
+jolt-r1cs = { path = "../../crates/jolt-r1cs" }
+jolt-witness = { path = "../../crates/jolt-witness" }
+num-traits.workspace = true
+tracer = { workspace = true, features = ["std", "test-utils"] }

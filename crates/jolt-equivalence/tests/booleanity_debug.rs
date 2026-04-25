@@ -1,3 +1,12 @@
+#![expect(
+    clippy::erasing_op,
+    clippy::identity_op,
+    dead_code,
+    unused_imports,
+    unused_variables,
+    reason = "Pre-existing debug test: literal `k * T + c` patterns and optional \
+              diagnostic code are kept verbatim for the K×T access pattern."
+)]
 //! Debug test: verify Booleanity sumcheck round polynomial structure.
 //!
 //! Confirms that Booleanity round polynomials are NOT all-zero even for
