@@ -60,18 +60,21 @@ fn field_mov_then_add_satisfies_r1cs_on_every_cycle() {
         FrCycleBytecode {
             frs1: 0,
             frs2: 0,
+            reads_frs1: false,
             reads_frs2: false,
         },
         // cycle 1: FieldMov — same
         FrCycleBytecode {
             frs1: 0,
             frs2: 0,
+            reads_frs1: false,
             reads_frs2: false,
         },
         // cycle 2: FieldAdd — reads FReg[1] and FReg[2]
         FrCycleBytecode {
             frs1: 1,
             frs2: 2,
+            reads_frs1: true,
             reads_frs2: true,
         },
     ];
@@ -144,6 +147,7 @@ fn tampered_rd_val_breaks_field_add_row() {
         FrCycleBytecode {
             frs1: 1,
             frs2: 2,
+            reads_frs1: true,
             reads_frs2: true,
         },
     ];

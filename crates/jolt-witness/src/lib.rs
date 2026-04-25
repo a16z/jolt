@@ -26,6 +26,7 @@ pub mod provider;
 
 pub use config::{PolynomialConfig, LOG_K_FR};
 pub use cycle_input::CycleInput;
+pub use derived::FieldRegConfig;
 pub use field_reg::{replay_field_regs, FieldRegEvent, FrCycleBytecode, FrCycleData, FrLimbs};
 pub use polynomial_id::PolynomialId;
 pub use polynomials::Polynomials;

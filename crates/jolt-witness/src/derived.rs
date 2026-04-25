@@ -86,6 +86,16 @@ pub struct LookupFlagData {
     pub is_raf: Vec<bool>,
 }
 
+/// Per-cycle BN254 Fr coprocessor access metadata — enough to drive
+/// `replay_field_regs` and the FR Twist materializers.
+#[derive(Clone, Debug, Default)]
+pub struct FieldRegConfig {
+    /// Per-cycle bytecode snapshot (frs1/frs2/reads_frs2). Length = T.
+    pub bytecode: Vec<crate::field_reg::FrCycleBytecode>,
+    /// FieldRegEvent stream emitted by the tracer. Sorted by cycle.
+    pub events: Vec<crate::field_reg::FieldRegEvent>,
+}
+
 pub struct DerivedSource<'a, F> {
     witness: &'a [F],
     num_cycles: usize,
@@ -94,6 +104,7 @@ pub struct DerivedSource<'a, F> {
     iflags: Option<InstructionFlags<F>>,
     reg_access: Option<RegisterAccessData>,
     lookup_flags: Option<LookupFlagData>,
+    field_reg: Option<FieldRegConfig>,
     _marker: std::marker::PhantomData<F>,
 }
 
@@ -107,8 +118,16 @@ impl<'a, F: Field> DerivedSource<'a, F> {
             iflags: None,
             reg_access: None,
             lookup_flags: None,
+            field_reg: None,
             _marker: std::marker::PhantomData,
         }
+    }
+
+    /// Attach BN254 Fr coprocessor replay data. When absent, FR-derived
+    /// polys materialize to all-zero (correct for traces with no FR cycles).
+    pub fn with_field_reg(mut self, config: FieldRegConfig) -> Self {
+        self.field_reg = Some(config);
+        self
     }
 
     /// Attach RAM configuration for building RAM-derived polynomials.
@@ -185,32 +204,32 @@ impl<'a, F: Field> DerivedSource<'a, F> {
                 let _s = tracing::info_span!("derived::reg_val").entered();
                 Cow::Owned(self.reg_val())
             }
-            // BN254 Fr coprocessor derived polys. Materialized as all-zero
-            // vectors when no FR cycles are present in the trace (muldiv,
-            // sha2, etc.) — the full replay-based materializers (using the
-            // FieldRegEvent stream from Phase 4b) will land with Phase 5
-            // SDK integration. All-zero FR state is self-consistent: zero
-            // inc → zero val → zero γ-batched claim, which the FR Twist
-            // sumcheck reduces to 0 = 0 at the final point.
+            // BN254 Fr coprocessor derived polys. When a FieldRegConfig is
+            // attached, we replay the event stream once and cache per-cycle
+            // snapshots; subsequent FR-poly requests materialize from those
+            // snapshots. When no config is attached (traces with no FR
+            // cycles: muldiv, sha2, etc.), all FR polys materialize as the
+            // zero vector — self-consistent: inc=0 → val=0 → γ-batched
+            // claim=0, reducing the FR Twist sumcheck to 0=0 at opening.
             PolynomialId::FieldRegRaRs1 => {
                 let _s = tracing::info_span!("derived::field_reg_ra_rs1").entered();
-                Cow::Owned(self.field_reg_zero_kxt())
+                Cow::Owned(self.field_reg_ra_rs1())
             }
             PolynomialId::FieldRegRaRs2 => {
                 let _s = tracing::info_span!("derived::field_reg_ra_rs2").entered();
-                Cow::Owned(self.field_reg_zero_kxt())
+                Cow::Owned(self.field_reg_ra_rs2())
             }
             PolynomialId::FieldRegWa => {
                 let _s = tracing::info_span!("derived::field_reg_wa").entered();
-                Cow::Owned(self.field_reg_zero_kxt())
+                Cow::Owned(self.field_reg_wa())
             }
             PolynomialId::FieldRegVal => {
                 let _s = tracing::info_span!("derived::field_reg_val").entered();
-                Cow::Owned(self.field_reg_zero_kxt())
+                Cow::Owned(self.field_reg_val())
             }
             PolynomialId::FrdGatherIndex => {
                 let _s = tracing::info_span!("derived::frd_gather_index").entered();
-                Cow::Owned(self.frd_gather_index_zero())
+                Cow::Owned(self.frd_gather_index())
             }
             PolynomialId::NoopFlag => {
                 let _s = tracing::info_span!("derived::iflag_noop").entered();
@@ -554,22 +573,132 @@ impl<'a, F: Field> DerivedSource<'a, F> {
             .collect()
     }
 
-    /// K_FR × T all-zero indicator — shape matches FieldRegVal / FieldRegWa /
-    /// FieldRegRaRs1 / FieldRegRaRs2 when the trace has no FR cycles.
-    ///
-    /// K_FR = 16 (BN254 Fr coprocessor slot count) per
-    /// `specs/bn254-fr-coprocessor.md` §ISA.
+    /// BN254 Fr coprocessor slot count. See `specs/bn254-fr-coprocessor.md`
+    /// §ISA: the low 4 bits of each 5-bit register field index
+    /// `field_regs[0..=15]`.
+    const K_FR: usize = 16;
+
+    /// K_FR × T all-zero vector — used as the materializer fallback when no
+    /// FieldRegConfig is attached.
     fn field_reg_zero_kxt(&self) -> Vec<F> {
-        const K_FR: usize = 16;
-        vec![F::zero(); K_FR * self.num_cycles]
+        vec![F::zero(); Self::K_FR * self.num_cycles]
     }
 
-    /// T-element per-cycle FR write-slot index sentinel (u64::MAX on every
-    /// cycle), so eq_gather returns zero everywhere. Used when no FR
-    /// cycles are present.
-    fn frd_gather_index_zero(&self) -> Vec<F> {
+    /// Lazily compute per-cycle FR snapshots if a config is attached.
+    fn fr_snapshots(&self) -> Option<Vec<crate::field_reg::FrCycleData>> {
+        let cfg = self.field_reg.as_ref()?;
+        debug_assert_eq!(
+            cfg.bytecode.len(),
+            self.num_cycles,
+            "FieldRegConfig.bytecode length must match num_cycles"
+        );
+        Some(crate::field_reg::replay_field_regs(
+            self.num_cycles,
+            &cfg.bytecode,
+            &cfg.events,
+        ))
+    }
+
+    /// K_FR × T one-hot indicator: 1 at `(frs1(t), t)` on cycles where an
+    /// FR instruction reads `frs1`, 0 elsewhere.
+    fn field_reg_ra_rs1(&self) -> Vec<F> {
+        let Some(cfg) = self.field_reg.as_ref() else {
+            return self.field_reg_zero_kxt();
+        };
+        let t = self.num_cycles;
+        let mut out = vec![F::zero(); Self::K_FR * t];
+        for (c, bc) in cfg.bytecode.iter().enumerate().take(t) {
+            if bc.reads_frs1 {
+                let slot = (bc.frs1 as usize) & 0xF;
+                out[slot * t + c] = F::one();
+            }
+        }
+        out
+    }
+
+    /// K_FR × T one-hot for `frs2` reads.
+    fn field_reg_ra_rs2(&self) -> Vec<F> {
+        let Some(cfg) = self.field_reg.as_ref() else {
+            return self.field_reg_zero_kxt();
+        };
+        let t = self.num_cycles;
+        let mut out = vec![F::zero(); Self::K_FR * t];
+        for (c, bc) in cfg.bytecode.iter().enumerate().take(t) {
+            if bc.reads_frs2 {
+                let slot = (bc.frs2 as usize) & 0xF;
+                out[slot * t + c] = F::one();
+            }
+        }
+        out
+    }
+
+    /// K_FR × T one-hot write-address indicator. For writing FR cycles this
+    /// is 1 at `(frd(t), t)` and 0 elsewhere. Sourced from the event
+    /// stream so it matches what `FieldRegInc` commits (single write per
+    /// cycle).
+    fn field_reg_wa(&self) -> Vec<F> {
+        let Some(snaps) = self.fr_snapshots() else {
+            return self.field_reg_zero_kxt();
+        };
+        let t = self.num_cycles;
+        let mut out = vec![F::zero(); Self::K_FR * t];
+        for (c, snap) in snaps.iter().enumerate() {
+            if let Some(slot) = snap.write_slot {
+                out[(slot as usize) * t + c] = F::one();
+            }
+        }
+        out
+    }
+
+    /// K_FR × T running FR register-file state — `val(k, t)` is the value
+    /// of `field_regs[k]` at the START of cycle t (pre-execution). Mirrors
+    /// integer `reg_val`. Values are 256-bit Fr elements encoded from the
+    /// tracer's natural-form `[u64;4]` limbs.
+    fn field_reg_val(&self) -> Vec<F> {
+        let Some(cfg) = self.field_reg.as_ref() else {
+            return self.field_reg_zero_kxt();
+        };
+        let t = self.num_cycles;
+        let mut out = vec![F::zero(); Self::K_FR * t];
+
+        // Running state: 16 slots, each an Fr element. Index by slot.
+        let mut current: [F; 16] = [F::zero(); 16];
+        let mut event_iter = cfg.events.iter().peekable();
+
+        for c in 0..t {
+            // Record pre-execution state of all slots at cycle c.
+            for (k, val) in current.iter().enumerate().take(Self::K_FR) {
+                out[k * t + c] = *val;
+            }
+
+            // Apply the event at cycle c (if any) to advance state.
+            if let Some(ev) = event_iter.peek() {
+                if ev.cycle == c {
+                    let ev = *event_iter.next().unwrap();
+                    let slot = (ev.slot as usize) & 0xF;
+                    current[slot] = limbs_to_field::<F>(ev.new);
+                }
+            }
+        }
+        out
+    }
+
+    /// T-element per-cycle FR write-slot gather index. Non-writing cycles
+    /// use sentinel `u64::MAX` (outside any valid eq range) so
+    /// `eq_gather` returns 0; writing cycles encode the slot as a field
+    /// element.
+    fn frd_gather_index(&self) -> Vec<F> {
         let sentinel = F::from_u64(u64::MAX);
-        vec![sentinel; self.num_cycles]
+        let Some(snaps) = self.fr_snapshots() else {
+            return vec![sentinel; self.num_cycles];
+        };
+        snaps
+            .iter()
+            .map(|s| match s.write_slot {
+                Some(k) => F::from_u64(k as u64),
+                None => sentinel,
+            })
+            .collect()
     }
 
     /// K_reg × T register value polynomial (address-major).
@@ -602,4 +731,13 @@ impl<'a, F: Field> DerivedSource<'a, F> {
         }
         out
     }
+}
+
+/// Convert a natural-form `[u64; 4]` limb array to an Fr field element:
+/// `a[0] + a[1]·2⁶⁴ + a[2]·2¹²⁸ + a[3]·2¹⁹²`. Used by `field_reg_val` to
+/// encode the running FR register state.
+fn limbs_to_field<F: Field>(limbs: [u64; 4]) -> F {
+    let lo = F::from_u128((limbs[0] as u128) | ((limbs[1] as u128) << 64));
+    let hi = F::from_u128((limbs[2] as u128) | ((limbs[3] as u128) << 64));
+    lo + hi * F::one().mul_pow_2(128)
 }

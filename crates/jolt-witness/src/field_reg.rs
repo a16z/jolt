@@ -45,16 +45,18 @@ pub struct FrCycleData {
 /// or directly from the tracer's per-cycle instruction decoding.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FrCycleBytecode {
-    /// Low 4 bits of the 5-bit `rs1` field (0..=15). Ignored when no FR
-    /// instruction reads `rs1` — the caller can set this to any valid
-    /// slot index; the replay only consults it on FR cycles.
+    /// Low 4 bits of the 5-bit `rs1` field (0..=15). Ignored when
+    /// `reads_frs1` is false.
     pub frs1: u8,
-    /// Low 4 bits of `rs2`. Same treatment as `frs1`.
+    /// Low 4 bits of `rs2`. Ignored when `reads_frs2` is false.
     pub frs2: u8,
-    /// True if the cycle's instruction is an FR op that reads `frs2` (i.e.
-    /// FMUL / FADD / FSUB / FieldAssertEq). Controls whether `rs2_val` is
-    /// read from `field_regs`. `FieldInv`, the bridge ops, and non-FR
-    /// cycles set this to `false`.
+    /// True if the cycle's instruction reads `frs1` (i.e. the 2-input FR
+    /// ops FMUL/FADD/FSUB/FAssertEq, plus FINV's single-input read).
+    /// False for non-FR cycles and the bridge ops (FieldMov/FieldSLL*
+    /// which read the integer register file, not FReg).
+    pub reads_frs1: bool,
+    /// True if the cycle reads `frs2` (FMUL/FADD/FSUB/FAssertEq).
+    /// False for FieldInv, all bridge ops, and non-FR cycles.
     pub reads_frs2: bool,
 }
 
@@ -98,8 +100,11 @@ pub fn replay_field_regs(
             _ => None,
         };
 
-        let frs1 = bc.frs1 as usize;
-        let rs1_val = state[frs1 & 0xF];
+        let rs1_val = if bc.reads_frs1 {
+            state[bc.frs1 as usize & 0xF]
+        } else {
+            [0u64; 4]
+        };
         let rs2_val = if bc.reads_frs2 {
             state[bc.frs2 as usize & 0xF]
         } else {
@@ -187,6 +192,7 @@ mod tests {
         let bytecode = vec![FrCycleBytecode {
             frs1: 0,
             frs2: 0,
+            reads_frs1: false,
             reads_frs2: false,
         }];
         let events = vec![FieldRegEvent {
@@ -210,6 +216,7 @@ mod tests {
             FrCycleBytecode {
                 frs1: 1,
                 frs2: 2,
+                reads_frs1: true,
                 reads_frs2: true,
             },
         ];
@@ -251,6 +258,7 @@ mod tests {
             FrCycleBytecode {
                 frs1: 1,
                 frs2: 1,
+                reads_frs1: true,
                 reads_frs2: true,
             },
         ];
