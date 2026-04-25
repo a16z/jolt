@@ -1,0 +1,7 @@
+{
+  "bom": {
+    "include": [
+      {"purl":"pkg:github/a16z/jolt","comment":"Known upstream fork"}
+    ]
+  }
+}

@@ -1,0 +1,128 @@
+name: SCANOSS License Compliance
+
+on:
+  pull_request:
+    branches: [main, master]
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+concurrency:
+  group: scanoss-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scanoss-pr:
+    name: SCANOSS License Scan (PR)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: SCANOSS Delta Scan
+        uses: scanoss/gha-code-scan@v1
+        with:
+          api.key: ${{ secrets.SCANOSS_API_KEY }}
+          github.token: ${{ steps.app-token.outputs.token }}
+          policies: copyleft
+          policies.halt_on_failure: false
+          scanMode: delta
+          dependencies.enabled: false
+          output.filepath: scanoss-results.json
+
+  scanoss-full:
+    name: SCANOSS Full Scan (post-merge)
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Remove non-source files that crash SCANOSS
+        run: |
+          find . -type f \( \
+            -name '*.pcap' -o -name '*.pcapng' -o -name '*.tsv' -o -name '*.csv' \
+            -o -name '*.bin' -o -name '*.png' -o -name '*.jpg' -o -name '*.jpeg' \
+            -o -name '*.gif' -o -name '*.webp' -o -name '*.avif' -o -name '*.svg' \
+            -o -name '*.ico' -o -name '*.pdf' \
+            -o -name '*.mp3' -o -name '*.mp4' -o -name '*.mov' -o -name '*.wav' \
+            -o -name '*.woff' -o -name '*.woff2' -o -name '*.ttf' -o -name '*.otf' \
+            -o -name '*.eot' \
+            -o -name '*.gz' -o -name '*.tar' -o -name '*.zip' -o -name '*.whl' \
+            -o -name '*.7z' -o -name '*.rar' \
+            -o -name '*.o' -o -name '*.a' -o -name '*.so' -o -name '*.dylib' \
+            -o -name '*.dll' -o -name '*.exe' -o -name '*.class' -o -name '*.jar' \
+            -o -name '*.pyc' -o -name '*.pdi' -o -name '*.xsa' -o -name '*.elf' \
+            -o -name '*.hpu' -o -name '*.bcode' -o -name '*.cbor' \
+          \) -delete 2>/dev/null || true
+          rm -rf Datasets assets node_modules __pycache__ .venv bmenv .next dist build 2>/dev/null || true
+
+      - name: SCANOSS Full Scan
+        uses: scanoss/gha-code-scan@v1
+        with:
+          api.key: ${{ secrets.SCANOSS_API_KEY }}
+          github.token: ${{ steps.app-token.outputs.token }}
+          policies: copyleft
+          policies.halt_on_failure: false
+          scanMode: full
+          dependencies.enabled: false
+          output.filepath: scanoss-results.json
+
+  trigger-ort:
+    name: Trigger ORT Scan
+    if: github.event_name == 'push'
+    runs-on: self-hosted
+    steps:
+      - name: Check if ORT scan needed
+        id: check
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+
+      - name: Skip if only NOTICE changed
+        id: filter
+        run: |
+          CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "FORCE_SCAN")
+          if [ "$(echo "$CHANGED" | grep -v '^NOTICE$' | grep -v '^$')" = "" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Trigger ORT scan via webhook
+        if: steps.filter.outputs.skip != 'true'
+        run: |
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          HTTP_CODE=$(curl -s -o /tmp/ort-response.json -w "%{http_code}" -X POST "${{ vars.ORT_WEBHOOK_URL }}/scan" -H "Authorization: Bearer ${{ secrets.ORT_WEBHOOK_TOKEN }}" -H "Content-Type: application/json" -d "{\"repo\": \"${REPO_NAME}\"}")
+          echo "HTTP $HTTP_CODE"
+          cat /tmp/ort-response.json
+          if [ "$HTTP_CODE" = "202" ]; then
+            echo "::notice::ORT scan triggered for $REPO_NAME"
+          else
+            echo "::warning::ORT webhook returned $HTTP_CODE — scan may not have started"
+          fi
