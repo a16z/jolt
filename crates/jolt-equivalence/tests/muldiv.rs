@@ -445,6 +445,7 @@ fn setup_zkvm_muldiv(
         &bytecode,
         memory_layout,
         r1cs_key.num_vars_padded,
+                &[], // fr_events: empty for non-FR programs
     );
 
     // Extract per-cycle register access indices and lookup data from the trace.

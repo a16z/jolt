@@ -421,6 +421,7 @@ fn build_modular_setup(
         bytecode,
         memory_layout,
         r1cs_key.num_vars_padded,
+                &[], // fr_events: empty for non-FR programs
     );
 
     let mut rd_indices = vec![None; trace_length];

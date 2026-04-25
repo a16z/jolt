@@ -37,6 +37,7 @@ fn compare_witness_variables() {
         &bytecode,
         &io_device.memory_layout,
         v_pad,
+        &[], // fr_events: muldiv has no FR cycles
     );
 
     let mut core_program = jolt_core::host::Program::new("muldiv-guest");

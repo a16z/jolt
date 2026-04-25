@@ -203,6 +203,7 @@ fn muldiv_prove_verify() {
         &bytecode,
         memory_layout,
         r1cs_key.num_vars_padded,
+                &[], // fr_events: empty for non-FR programs
     );
 
     let mut polys = Polynomials::<Fr>::new(poly_config);

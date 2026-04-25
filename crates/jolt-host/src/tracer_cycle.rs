@@ -482,6 +482,43 @@ impl CycleRow for Cycle {
         lookup_table_kind(&self.instruction()).map(|k| k as usize)
     }
 
+    fn fr_meta(&self) -> jolt_witness::FrCycleBytecode {
+        // Mirrors `with_isa_struct!` dispatch. For each FR variant we extract
+        // the per-cycle frs1/frs2 indices and which ones are FReg-side reads.
+        // Non-FR cycles use the default (no FR access).
+        match self {
+            // 2-input FReg ops: read frs1 + frs2.
+            Cycle::FieldOp(c) => {
+                let funct3 = c.instruction.funct3;
+                let frs1 = c.instruction.operands.rs1;
+                let frs2 = c.instruction.operands.rs2;
+                // FINV reads frs1 only; FMUL/FADD/FSUB read both.
+                let is_finv = funct3 == 0x04;
+                jolt_witness::FrCycleBytecode {
+                    frs1,
+                    frs2,
+                    reads_frs1: true,
+                    reads_frs2: !is_finv,
+                }
+            }
+            // FieldAssertEq reads frs1 + frs2 (no write).
+            Cycle::FieldAssertEq(c) => jolt_witness::FrCycleBytecode {
+                frs1: c.instruction.operands.rs1,
+                frs2: c.instruction.operands.rs2,
+                reads_frs1: true,
+                reads_frs2: true,
+            },
+            // Bridge ops (FieldMov / FieldSLL{64,128,192}) read XReg, not
+            // FReg — no FR-side reads.
+            Cycle::FieldMov(_)
+            | Cycle::FieldSLL64(_)
+            | Cycle::FieldSLL128(_)
+            | Cycle::FieldSLL192(_) => jolt_witness::FrCycleBytecode::default(),
+            // Non-FR cycle.
+            _ => jolt_witness::FrCycleBytecode::default(),
+        }
+    }
+
     fn lookup_output(&self) -> u64 {
         if self.is_noop() {
             return 0;

@@ -7,6 +7,7 @@
 //! so the prover sees only scalars and boolean arrays.
 
 use jolt_instructions::flags::{NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
+use jolt_witness::FrCycleBytecode;
 
 /// Abstract interface for one execution cycle of a RISC-V trace.
 ///
@@ -81,4 +82,16 @@ pub trait CycleRow: Copy {
     /// that's 1 iff this cycle uses table `i`. Used by BytecodeReadRaf's
     /// multi-stage input claim.
     fn lookup_table_index(&self) -> Option<usize>;
+
+    /// BN254 Fr coprocessor metadata for this cycle: which FR slots the
+    /// instruction reads as `frs1`/`frs2`. Default: no FR access (`reads_frs1
+    /// = reads_frs2 = false`, slots ignored).
+    ///
+    /// Used by the witness layer to build per-cycle FR snapshots
+    /// (`replay_field_regs`) that populate `V_FIELD_RS1/RS2/RD_VALUE` in
+    /// the Spartan witness. See `specs/bn254-fr-coprocessor.md` § Architecture.
+    #[inline]
+    fn fr_meta(&self) -> FrCycleBytecode {
+        FrCycleBytecode::default()
+    }
 }

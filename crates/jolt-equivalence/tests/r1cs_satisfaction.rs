@@ -30,6 +30,7 @@ fn setup() -> (ConstraintMatrices<Fr>, Vec<Fr>, usize, usize) {
         &bytecode,
         &io_device.memory_layout,
         r1cs_key.num_vars_padded,
+                &[], // fr_events: empty for non-FR programs
     );
 
     let num_cycles = trace_length;
