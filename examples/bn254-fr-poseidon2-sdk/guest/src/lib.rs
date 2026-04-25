@@ -1,16 +1,12 @@
 #![cfg_attr(feature = "guest", no_std)]
 
-use ark_bn254::Fr;
-use ark_ff::PrimeField;
+use jolt_inlines_bn254_fr::Fr;
 
-/// Poseidon2 BN254 t=3 permutation benchmark using pure-software ark-bn254 Fr.
+/// Poseidon2 BN254 t=3 permutation benchmark using the native-field coprocessor.
 ///
-/// Parameters (HorizenLabs Poseidon2 BN256 instance, d=5, R_F=8, R_P=56):
-///   t = 3, rounds_f_beginning = 4, rounds_p = 56, rounds_f_end = 4.
-///   External matrix: circ(2,1,1) — `s_i += sum(state)`.
-///   Internal matrix: 3×3 with diagonal [2,2,3] — `s_0+=sum; s_1+=sum; s_2=2*s_2+sum`.
-/// Round constants: `RC3` (64 rows of 3), identical bytes to the
-/// HorizenLabs reference implementation.
+/// Same parameters as `bn254-fr-poseidon2-arkworks-guest` (HorizenLabs Poseidon2
+/// BN256 instance: d=5, R_F=8, R_P=56, t=3, MDS_int diag=[1,1,2]). Every Fr
+/// add/mul dispatches to the FieldOp coprocessor rather than software.
 ///
 /// Takes 3 Fr limbs [[u64; 4]; 3], runs one permutation, returns the 3-element
 /// output state.
@@ -18,55 +14,54 @@ use ark_ff::PrimeField;
     stack_size = 65536,
     heap_size = 131072,
     max_input_size = 8192,
-    max_trace_length = 33554432
+    max_trace_length = 524288
 )]
-fn fr_poseidon2_arkworks(s0: [u64; 4], s1: [u64; 4], s2: [u64; 4]) -> [[u64; 4]; 3] {
+fn fr_poseidon2_sdk(s0: [u64; 4], s1: [u64; 4], s2: [u64; 4]) -> [[u64; 4]; 3] {
     let mut state = [
-        fr_from_limbs(s0[0], s0[1], s0[2], s0[3]),
-        fr_from_limbs(s1[0], s1[1], s1[2], s1[3]),
-        fr_from_limbs(s2[0], s2[1], s2[2], s2[3]),
+        Fr::from_limbs(s0),
+        Fr::from_limbs(s1),
+        Fr::from_limbs(s2),
     ];
     poseidon2_permute(&mut state);
     [
-        fr_to_limbs(&state[0]),
-        fr_to_limbs(&state[1]),
-        fr_to_limbs(&state[2]),
+        state[0].to_limbs(),
+        state[1].to_limbs(),
+        state[2].to_limbs(),
     ]
 }
 
 /// One full Poseidon2 permutation over BN254 Fr with t = 3, d = 5.
 fn poseidon2_permute(state: &mut [Fr; 3]) {
-    // Initial linear layer.
     matmul_external(state);
 
-    // 4 external (full) rounds at the beginning.
-    for r in 0..4usize {
+    let mut r = 0usize;
+    while r < 4 {
         add_rc_full(state, r);
         sbox_full(state);
         matmul_external(state);
+        r += 1;
     }
 
-    // 56 internal (partial) rounds. RC's indices 1 and 2 are all zero here —
-    // only RC[r][0] is added to state[0]. S-box applied to state[0] only.
-    for r in 4..60usize {
-        state[0] += rc_element(r, 0);
+    while r < 60 {
+        state[0] = state[0].add(&rc_element(r, 0));
         state[0] = sbox_p(&state[0]);
         matmul_internal(state);
+        r += 1;
     }
 
-    // 4 external (full) rounds at the end.
-    for r in 60..64usize {
+    while r < 64 {
         add_rc_full(state, r);
         sbox_full(state);
         matmul_external(state);
+        r += 1;
     }
 }
 
 #[inline]
 fn add_rc_full(state: &mut [Fr; 3], round: usize) {
-    state[0] += rc_element(round, 0);
-    state[1] += rc_element(round, 1);
-    state[2] += rc_element(round, 2);
+    state[0] = state[0].add(&rc_element(round, 0));
+    state[1] = state[1].add(&rc_element(round, 1));
+    state[2] = state[2].add(&rc_element(round, 2));
 }
 
 #[inline]
@@ -76,64 +71,36 @@ fn sbox_full(state: &mut [Fr; 3]) {
     state[2] = sbox_p(&state[2]);
 }
 
-/// d = 5: x^5 = (x^2)^2 * x (3 muls).
+/// d = 5: x^5 = (x^2)^2 * x (3 Fr muls).
 #[inline]
 fn sbox_p(x: &Fr) -> Fr {
-    let x2 = *x * x;
-    let x4 = x2 * x2;
-    x4 * x
+    let x2 = x.mul(x);
+    let x4 = x2.mul(&x2);
+    x4.mul(x)
 }
 
-/// External MDS for t=3: circ(2,1,1). Equivalent to `s_i += sum`.
+/// External MDS for t=3: circ(2,1,1). `s_i += sum`.
 #[inline]
 fn matmul_external(s: &mut [Fr; 3]) {
-    let sum = s[0] + s[1] + s[2];
-    s[0] += sum;
-    s[1] += sum;
-    s[2] += sum;
+    let sum = s[0].add(&s[1]).add(&s[2]);
+    s[0] = s[0].add(&sum);
+    s[1] = s[1].add(&sum);
+    s[2] = s[2].add(&sum);
 }
 
-/// Internal MDS for t=3 with diag = [1,1,2] (i.e., diag-1 = [0,0,1]):
-///   [2,1,1; 1,2,1; 1,1,3]. Equivalent to `s0+=sum; s1+=sum; s2 = 2*s2 + sum`.
+/// Internal MDS for t=3 with diag=[1,1,2]: `s0+=sum; s1+=sum; s2 = 2*s2 + sum`.
 #[inline]
 fn matmul_internal(s: &mut [Fr; 3]) {
-    let sum = s[0] + s[1] + s[2];
-    s[0] += sum;
-    s[1] += sum;
-    let s2d = s[2] + s[2];
-    s[2] = s2d + sum;
+    let sum = s[0].add(&s[1]).add(&s[2]);
+    s[0] = s[0].add(&sum);
+    s[1] = s[1].add(&sum);
+    let s2d = s[2].add(&s[2]);
+    s[2] = s2d.add(&sum);
 }
 
 #[inline]
 fn rc_element(round: usize, idx: usize) -> Fr {
-    let limbs = RC3[round][idx];
-    fr_from_limbs(limbs[0], limbs[1], limbs[2], limbs[3])
-}
-
-fn fr_from_limbs(l0: u64, l1: u64, l2: u64, l3: u64) -> Fr {
-    let mut bytes = [0u8; 32];
-    bytes[0..8].copy_from_slice(&l0.to_le_bytes());
-    bytes[8..16].copy_from_slice(&l1.to_le_bytes());
-    bytes[16..24].copy_from_slice(&l2.to_le_bytes());
-    bytes[24..32].copy_from_slice(&l3.to_le_bytes());
-    Fr::from_le_bytes_mod_order(&bytes)
-}
-
-fn fr_to_limbs(fr: &Fr) -> [u64; 4] {
-    use ark_ff::BigInteger;
-    let bi = fr.into_bigint();
-    let bytes = bi.to_bytes_le();
-    let mut limbs = [0u64; 4];
-    for (i, limb) in limbs.iter_mut().enumerate() {
-        let start = i * 8;
-        let end = core::cmp::min(start + 8, bytes.len());
-        if start < bytes.len() {
-            let mut buf = [0u8; 8];
-            buf[..end - start].copy_from_slice(&bytes[start..end]);
-            *limb = u64::from_le_bytes(buf);
-        }
-    }
-    limbs
+    Fr::from_limbs(RC3[round][idx])
 }
 
 // Round constants — transcribed from HorizenLabs Poseidon2 BN256 reference

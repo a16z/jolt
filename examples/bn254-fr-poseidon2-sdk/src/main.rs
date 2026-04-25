@@ -5,19 +5,19 @@ pub fn main() {
     tracing_subscriber::fmt::init();
 
     let target_dir = "/tmp/jolt-guest-targets";
-    let mut program = guest::compile_fr_poseidon2_arkworks(target_dir);
+    let mut program = guest::compile_fr_poseidon2_sdk(target_dir);
 
-    let shared_preprocessing = guest::preprocess_shared_fr_poseidon2_arkworks(&mut program);
+    let shared_preprocessing = guest::preprocess_shared_fr_poseidon2_sdk(&mut program);
     let prover_preprocessing =
-        guest::preprocess_prover_fr_poseidon2_arkworks(shared_preprocessing.clone());
-    let verifier_preprocessing = guest::preprocess_verifier_fr_poseidon2_arkworks(
+        guest::preprocess_prover_fr_poseidon2_sdk(shared_preprocessing.clone());
+    let verifier_preprocessing = guest::preprocess_verifier_fr_poseidon2_sdk(
         shared_preprocessing,
         prover_preprocessing.generators.to_verifier_setup(),
         None,
     );
 
-    let prove = guest::build_prover_fr_poseidon2_arkworks(program, prover_preprocessing);
-    let verify = guest::build_verifier_fr_poseidon2_arkworks(verifier_preprocessing);
+    let prove = guest::build_prover_fr_poseidon2_sdk(program, prover_preprocessing);
+    let verify = guest::build_verifier_fr_poseidon2_sdk(verifier_preprocessing);
 
     // Input state (1, 2, 3) — each Fr fits in a single u64 limb.
     let s0: [u64; 4] = [1, 0, 0, 0];

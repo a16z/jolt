@@ -17,8 +17,7 @@
 #![cfg_attr(not(feature = "host"), no_std)]
 
 pub mod encode;
-
-#[cfg(feature = "host")]
 pub mod sdk;
 
 pub use encode::*;
+pub use sdk::Fr;

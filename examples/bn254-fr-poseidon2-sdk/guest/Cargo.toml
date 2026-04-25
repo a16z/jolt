@@ -1,0 +1,16 @@
+[package]
+name = "bn254-fr-poseidon2-sdk-guest"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+guest = []
+# Forwarded by `#[jolt::provable]`'s macro when building the Pass-1
+# (advice-population) ELF. Inside the SDK Fr ops then compute via
+# ark-bn254 and write 4 result limbs to the advice tape; the Pass-2 ELF
+# (built without this feature) emits FieldOp + reads advice.
+compute_advice = ["jolt-inlines-bn254-fr/compute_advice"]
+
+[dependencies]
+jolt = { package = "jolt-sdk", path = "../../../jolt-sdk" }
+jolt-inlines-bn254-fr.workspace = true

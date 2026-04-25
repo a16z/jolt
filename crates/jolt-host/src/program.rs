@@ -225,6 +225,59 @@ impl Program {
         (lazy_trace, trace_vec, memory, jolt_device)
     }
 
+    /// Two-pass trace for SDKs that need pre-populated advice (BN254 Fr coprocessor).
+    ///
+    /// Builds the `compute_advice` ELF (if the guest opted into the feature),
+    /// runs a Pass-1 trace to populate the advice tape, then runs the normal
+    /// Pass-2 trace with the populated tape. Returns the Pass-2 trace; the
+    /// Pass-1 trace is discarded (it's a separate ELF, not the proof trace).
+    #[tracing::instrument(skip_all, name = "Program::trace_two_pass_advice")]
+    pub fn trace_two_pass_advice(
+        &mut self,
+        inputs: &[u8],
+        untrusted_advice: &[u8],
+        trusted_advice: &[u8],
+    ) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice) {
+        // Pass 1: build + run compute_advice ELF to populate the advice tape.
+        self.build_with_features(DEFAULT_TARGET_DIR, &["compute_advice"]);
+        let advice_tape = if let Some(compute_advice_elf) = self.get_elf_compute_advice_contents() {
+            let program_size = compute_program_size(&compute_advice_elf);
+            let memory_config = self.memory_config(program_size);
+            let (_, _, _, _, tape, _) = tracer::trace(
+                &compute_advice_elf,
+                None,
+                inputs,
+                untrusted_advice,
+                trusted_advice,
+                &memory_config,
+                None,
+            );
+            let mut tape = tape;
+            tape.reset_read_position();
+            Some(tape)
+        } else {
+            None
+        };
+
+        // Pass 2: build + trace the normal ELF, threading the populated tape.
+        self.build(DEFAULT_TARGET_DIR);
+        let elf_contents = self.read_elf();
+        let program_size = compute_program_size(&elf_contents);
+        let memory_config = self.memory_config(program_size);
+
+        let (lazy_trace, trace_vec, memory, jolt_device, _advice_tape, _field_reg_events) =
+            tracer::trace(
+                &elf_contents,
+                self.elf.as_ref().map(|p| p as &PathBuf),
+                inputs,
+                untrusted_advice,
+                trusted_advice,
+                &memory_config,
+                advice_tape,
+            );
+        (lazy_trace, trace_vec, memory, jolt_device)
+    }
+
     /// Compile (if needed) and trace the guest program, writing the trace to a file.
     ///
     /// Returns the final memory state and I/O device (the trace itself is written to `trace_file`).

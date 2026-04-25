@@ -1056,25 +1056,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bn254-fr-poseidon2-arkworks"
-version = "0.1.0"
-dependencies = [
- "bn254-fr-poseidon2-arkworks-guest",
- "jolt-sdk",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "bn254-fr-poseidon2-arkworks-guest"
-version = "0.1.0"
-dependencies = [
- "ark-bn254",
- "ark-ff 0.5.0",
- "jolt-sdk",
-]
-
-[[package]]
 name = "bn254-fr-poseidon2-external"
 version = "0.1.0"
 dependencies = [
@@ -1090,6 +1071,25 @@ version = "0.1.0"
 dependencies = [
  "ark-bn254",
  "ark-ff 0.5.0",
+ "jolt-sdk",
+]
+
+[[package]]
+name = "bn254-fr-poseidon2-sdk"
+version = "0.1.0"
+dependencies = [
+ "bn254-fr-poseidon2-sdk-guest",
+ "jolt-inlines-bn254-fr",
+ "jolt-sdk",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "bn254-fr-poseidon2-sdk-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-inlines-bn254-fr",
  "jolt-sdk",
 ]
 

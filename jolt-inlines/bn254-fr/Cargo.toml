@@ -12,9 +12,14 @@ workspace = true
 
 [features]
 default = []
-# Host feature pulls in ark_bn254 for reference arithmetic (used at
-# trace-generation time + host-side test harnesses).
+# Host feature: pulls in ark_bn254 for reference arithmetic (used during
+# trace-generation emulation + host-side tests).
 host = ["dep:ark-bn254", "dep:ark-ff"]
+# compute_advice feature: enabled by the jolt-sdk macro on the Pass-1
+# (advice-population) ELF. Fr ops compute via ark_bn254 and write limbs
+# to the host's advice tape via VirtualHostIO; the guest is then traced
+# in Pass 2 (without this feature) and reads the advice via ADVICE_LD.
+compute_advice = ["dep:ark-bn254", "dep:ark-ff"]
 
 [dependencies]
 ark-bn254 = { workspace = true, optional = true, features = ["scalar_field"] }
