@@ -1,0 +1,106 @@
+THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
+============================================================
+
+Project: jolt-pqds
+Generated: 2026-04-24
+Tool: SCANOSS (snippet detection with License dataset)
+Components: 5
+
+This file lists all third-party software components detected
+in this repository, along with their licenses and copyright
+notices as required by those licenses.
+
+------------------------------------------------------------
+
+LICENSE SUMMARY
+
+  Apache-2.0: 5 component(s)
+  MIT: 3 component(s)
+
+------------------------------------------------------------
+
+COMPONENT ATTRIBUTIONS
+
+  cedar-spec
+  Version: v4.4.0
+  Source: https://github.com/cedar-policy/cedar-spec
+  PURL: pkg:github/cedar-policy/cedar-spec
+  Copyright:
+    Copyright Amazon.com; Inc. or its affiliates. All Rights Reserved.
+    Copyright copyright owner or entity authorized by
+  License: Apache-2.0
+
+  github.com/arithmic/jolt
+  Version: v0.0.0-20250612165522-e8c245607a4a
+  Source: https://proxy.golang.org/github.com/arithmic/jolt/@v/v0.0.0-20250612165522-e8c245607a4a.zip
+  PURL: pkg:golang/github.com/arithmic/jolt
+  License: Apache-2.0, MIT
+
+  jolt
+  Version: v0.2.0-alpha
+  Source: https://github.com/a16z/jolt
+  PURL: pkg:github/a16z/jolt
+  Copyright:
+    Copyright 2020 Takahiro
+    Copyright 2025 Galois Inc.
+  License: Apache-2.0, MIT
+
+  lasso
+  Version: 2343e36
+  Source: https://github.com/a16z/lasso
+  PURL: pkg:github/a16z/lasso
+  Copyright:
+    Copyright 2020 Takahiro
+    Copyright 2025 Galois Inc.
+    Copyright  c) Microsoft Corporation
+    Copyright (c) Microsoft Corporation
+    Copyright (c) Microsoft Corporation.
+  License: Apache-2.0, MIT
+
+  pb-jelly
+  Version: v0.0.12
+  Source: https://github.com/dropbox/pb-jelly
+  PURL: pkg:github/dropbox/pb-jelly
+  Copyright:
+    Copyright copyright owner or entity authorized by
+  License: Apache-2.0
+
+------------------------------------------------------------
+
+FULL LICENSE TEXTS
+
+--- Apache-2.0 ---
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+
+--- MIT ---
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
