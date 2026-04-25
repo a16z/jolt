@@ -3376,6 +3376,17 @@ fn build_stage4(
         challenge: ch_gamma_reg_rw,
     });
 
+    // γ_fr_rw — BN254 Fr coprocessor Read-Write γ. Mirrors integer
+    // gamma_registers_rw. Consumed by the FieldRegReadWriteChecking
+    // instance [2] batched alongside RegistersRW + RamValCheck.
+    let ch_gamma_fr_rw = ch.add(
+        "gamma_fr_rw",
+        ChallengeSource::FiatShamir { after_stage: 3 },
+    );
+    ops.push(Op::Squeeze {
+        challenge: ch_gamma_fr_rw,
+    });
+
     // Domain separator before RAM val check gamma
     ops.push(Op::AppendDomainSeparator {
         tag: DomainSeparator::RamValCheckGamma,
@@ -3413,6 +3424,7 @@ fn build_stage4(
     let log_k_reg = 7usize; // log2(REGISTER_COUNT=128)
     let reg_rw_rounds = log_k_reg + params.log_t; // 16 for log_t=9
     let ram_vc_rounds = params.log_t; // 9 for log_t=9
+    let fr_rw_rounds = LOG_K_FR + params.log_t; // 4 + log_t — shorter than RegistersRW
     let stage4_max_rounds = reg_rw_rounds; // RegistersRW is the longest
 
     batched_sumchecks.push(BatchedSumcheckDef {
@@ -3428,6 +3440,14 @@ fn build_stage4(
                 phases: vec![],
                 batch_coeff: ChallengeIdx(0), // placeholder, set below after squeezing
                 first_active_round: stage4_max_rounds - ram_vc_rounds,
+            },
+            // [2] FieldRegReadWriteChecking — active from round
+            // (max_rounds - (LOG_K_FR + log_t)) = log_k_reg - LOG_K_FR = 3.
+            // Shorter than RegistersRW because FR uses 16 slots vs 128.
+            BatchedInstance {
+                phases: vec![],
+                batch_coeff: ChallengeIdx(0), // placeholder, set below
+                first_active_round: stage4_max_rounds - fr_rw_rounds,
             },
         ],
         input_claims: vec![], // populated below
@@ -3505,7 +3525,41 @@ fn build_stage4(
         inactive_scale_bits: stage4_max_rounds - ram_vc_rounds,
     });
 
-    // Batching coefficients (2 instances)
+    // [2] FieldRegReadWriteChecking input claim: rebind of Stage 3 FR CR's
+    // γ-batched claim, evaluated at the FR CR final sumcheck point. Same
+    // three-term shape as integer RegistersRW's input claim.
+    let fr_rw_input_claim = ClaimFormula {
+        terms: vec![
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![ClaimFactor::Eval(p.field_rd_value)],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_gamma_fr_rw),
+                    ClaimFactor::Eval(p.field_rs1_value),
+                ],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_gamma_fr_rw),
+                    ClaimFactor::Challenge(ch_gamma_fr_rw),
+                    ClaimFactor::Eval(p.field_rs2_value),
+                ],
+            },
+        ],
+    };
+    ops.push(Op::AbsorbInputClaim {
+        formula: fr_rw_input_claim.clone(),
+        tag: DomainSeparator::SumcheckClaim,
+        batch: batch_idx,
+        instance: InstanceIdx(2),
+        inactive_scale_bits: stage4_max_rounds - fr_rw_rounds,
+    });
+
+    // Batching coefficients (3 instances)
     let ch_batch0 = ch.add(
         "stage4_batch0",
         ChallengeSource::FiatShamir { after_stage: 3 },
@@ -3514,16 +3568,24 @@ fn build_stage4(
         "stage4_batch1",
         ChallengeSource::FiatShamir { after_stage: 3 },
     );
+    let ch_batch2 = ch.add(
+        "stage4_batch2",
+        ChallengeSource::FiatShamir { after_stage: 3 },
+    );
     ops.push(Op::Squeeze {
         challenge: ch_batch0,
     });
     ops.push(Op::Squeeze {
         challenge: ch_batch1,
     });
+    ops.push(Op::Squeeze {
+        challenge: ch_batch2,
+    });
 
     // Wire batching coefficients into the BatchedSumcheckDef
     batched_sumchecks[batch_idx.0].instances[0].batch_coeff = ch_batch0;
     batched_sumchecks[batch_idx.0].instances[1].batch_coeff = ch_batch1;
+    batched_sumchecks[batch_idx.0].instances[2].batch_coeff = ch_batch2;
 
     // Eq table challenge points for RegistersRW.
     //
@@ -3714,6 +3776,163 @@ fn build_stage4(
         instance_config: None,
     });
 
+    // FieldRegReadWriteChecking 2-phase kernels. Structural mirror of the
+    // integer RegistersRW with LOG_K_REG → LOG_K_FR = 4 address rounds.
+    // r_cycle for FR RW comes from the Stage 3 FieldRegCR final point,
+    // which is the same cycle challenges as integer RegistersCR (all
+    // Stage-3 instances share the same log_T rounds → same r_cycle).
+    let fr_rw_cycle_eq: Vec<ChallengeIdx> = s3.round_challenges.iter().rev().copied().collect();
+    let g_fr_rw = ch_gamma_fr_rw.0 as u32;
+
+    // Scalar-capture challenge slots for the phase-1 → phase-2 boundary.
+    let ch_fr_eq_bound = ch.add("fr_eq_cycle_bound", ChallengeSource::External);
+    let ch_fr_inc_bound = ch.add("fr_inc_bound", ChallengeSource::External);
+
+    // FR Phase 1 kernel: cycle binding (segmented, log_T rounds, degree 3).
+    //
+    // Formula: eq * field_reg_wa * field_reg_val
+    //        + eq * field_reg_wa * field_reg_inc
+    //        + γ * eq * field_reg_ra_rs1 * field_reg_val
+    //        + γ² * eq * field_reg_ra_rs2 * field_reg_val
+    let fr_rw_p1_kernel_idx = kernels.len();
+    kernels.push(KernelDef {
+        spec: KernelSpec {
+            formula: Formula::from_terms(vec![
+                // eq * wa * val
+                ProductTerm {
+                    coefficient: 1,
+                    factors: vec![Factor::Input(0), Factor::Input(3), Factor::Input(4)],
+                },
+                // eq * wa * inc
+                ProductTerm {
+                    coefficient: 1,
+                    factors: vec![Factor::Input(0), Factor::Input(3), Factor::Input(5)],
+                },
+                // γ * eq * rs1_ra * val
+                ProductTerm {
+                    coefficient: 1,
+                    factors: vec![
+                        Factor::Challenge(g_fr_rw),
+                        Factor::Input(0),
+                        Factor::Input(1),
+                        Factor::Input(4),
+                    ],
+                },
+                // γ² * eq * rs2_ra * val
+                ProductTerm {
+                    coefficient: 1,
+                    factors: vec![
+                        Factor::Challenge(g_fr_rw),
+                        Factor::Challenge(g_fr_rw),
+                        Factor::Input(0),
+                        Factor::Input(2),
+                        Factor::Input(4),
+                    ],
+                },
+            ]),
+            num_evals: 4, // degree 3
+            iteration: Iteration::Dense,
+            binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
+        },
+        inputs: vec![
+            // BatchEq(201): fresh slot for FR RW cycle-eq (see 4c notes on
+            // BatchEq(200..=203) reservation block).
+            InputBinding::EqTable {
+                poly: PolynomialId::BatchEq(201),
+                challenges: fr_rw_cycle_eq.clone(),
+            },
+            InputBinding::Provided {
+                poly: p.field_reg_ra_rs1,
+            },
+            InputBinding::Provided {
+                poly: p.field_reg_ra_rs2,
+            },
+            InputBinding::Provided {
+                poly: p.field_reg_wa,
+            },
+            InputBinding::Provided {
+                poly: p.field_reg_val,
+            },
+            InputBinding::Provided {
+                poly: p.field_reg_inc,
+            },
+        ],
+        num_rounds: params.log_t,
+        instance_config: None,
+    });
+
+    // FR Phase 2 kernel: address binding (dense, LOG_K_FR=4 rounds, degree 2).
+    //
+    // Formula: ch_eq * wa * val + ch_eq * ch_inc * wa
+    //        + γ * ch_eq * rs1_ra * val + γ² * ch_eq * rs2_ra * val
+    let fr_rw_p2_kernel_idx = kernels.len();
+    kernels.push(KernelDef {
+        spec: KernelSpec {
+            formula: Formula::from_terms(vec![
+                // ch_eq * wa * val
+                ProductTerm {
+                    coefficient: 1,
+                    factors: vec![
+                        Factor::Challenge(ch_fr_eq_bound.0 as u32),
+                        Factor::Input(0),
+                        Factor::Input(1),
+                    ],
+                },
+                // ch_eq * ch_inc * wa
+                ProductTerm {
+                    coefficient: 1,
+                    factors: vec![
+                        Factor::Challenge(ch_fr_eq_bound.0 as u32),
+                        Factor::Challenge(ch_fr_inc_bound.0 as u32),
+                        Factor::Input(0),
+                    ],
+                },
+                // γ * ch_eq * rs1_ra * val
+                ProductTerm {
+                    coefficient: 1,
+                    factors: vec![
+                        Factor::Challenge(g_fr_rw),
+                        Factor::Challenge(ch_fr_eq_bound.0 as u32),
+                        Factor::Input(2),
+                        Factor::Input(1),
+                    ],
+                },
+                // γ² * ch_eq * rs2_ra * val
+                ProductTerm {
+                    coefficient: 1,
+                    factors: vec![
+                        Factor::Challenge(g_fr_rw),
+                        Factor::Challenge(g_fr_rw),
+                        Factor::Challenge(ch_fr_eq_bound.0 as u32),
+                        Factor::Input(3),
+                        Factor::Input(1),
+                    ],
+                },
+            ]),
+            num_evals: 3, // degree 2
+            iteration: Iteration::Dense,
+            binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
+        },
+        inputs: vec![
+            InputBinding::Provided {
+                poly: p.field_reg_wa,
+            },
+            InputBinding::Provided {
+                poly: p.field_reg_val,
+            },
+            InputBinding::Provided {
+                poly: p.field_reg_ra_rs1,
+            },
+            InputBinding::Provided {
+                poly: p.field_reg_ra_rs2,
+            },
+        ],
+        num_rounds: LOG_K_FR,
+        instance_config: None,
+    });
+
     // Update BatchedSumcheckDef with kernel phases.
     batched_sumchecks[batch_idx.0].instances[0] = BatchedInstance {
         phases: vec![
@@ -3764,7 +3983,47 @@ fn build_stage4(
         batch_coeff: ch_batch1,
         first_active_round: stage4_max_rounds - ram_vc_rounds,
     };
-    batched_sumchecks[batch_idx.0].input_claims = vec![reg_rw_input_claim, ram_vc_input_claim];
+    // [2] FieldRegReadWriteChecking — 2-phase (log_T cycle + LOG_K_FR address).
+    batched_sumchecks[batch_idx.0].instances[2] = BatchedInstance {
+        phases: vec![
+            InstancePhase {
+                kernel: fr_rw_p1_kernel_idx,
+                num_rounds: params.log_t,
+                scalar_captures: vec![],
+                segmented: Some(SegmentedConfig {
+                    inner_num_vars: params.log_t,
+                    outer_num_vars: LOG_K_FR,
+                    // [eq: inner, rs1_ra: mixed, rs2_ra: mixed, wa: mixed,
+                    //  val: mixed, inc: inner]
+                    inner_only: vec![true, false, false, false, false, true],
+                    outer_eq_challenges: vec![],
+                }),
+                carry_bindings: vec![],
+                pre_activation_ops: vec![],
+            },
+            InstancePhase {
+                kernel: fr_rw_p2_kernel_idx,
+                num_rounds: LOG_K_FR,
+                scalar_captures: vec![
+                    ScalarCapture {
+                        poly: PolynomialId::BatchEq(201),
+                        challenge: ch_fr_eq_bound,
+                    },
+                    ScalarCapture {
+                        poly: p.field_reg_inc,
+                        challenge: ch_fr_inc_bound,
+                    },
+                ],
+                segmented: None,
+                carry_bindings: vec![],
+                pre_activation_ops: vec![],
+            },
+        ],
+        batch_coeff: ch_batch2,
+        first_active_round: stage4_max_rounds - fr_rw_rounds,
+    };
+    batched_sumchecks[batch_idx.0].input_claims =
+        vec![reg_rw_input_claim, ram_vc_input_claim, fr_rw_input_claim];
 
     // Unrolled batched sumcheck rounds (stage4_max_rounds rounds).
     let round_challenge_indices = emit_unrolled_batched_rounds(
@@ -3783,9 +4042,11 @@ fn build_stage4(
 
     // Eval flush: open polynomials at the final sumcheck point.
     //
-    // Must match jolt-core's cache_openings order:
+    // Stage-4 opens 12 evals in order:
     //   RegistersRW: RegistersVal, Rs1Ra, Rs2Ra, RdWa, RdInc
     //   RamValCheck: RamRa (wa projection), RamInc
+    //   FieldRegRW: FieldRegVal, FieldRegRaRs1, FieldRegRaRs2, FieldRegWa,
+    //               FieldRegInc
     let ram_ra_wa = PolynomialId::BatchEq(10); // wa EqProject buffer from RamValCheck
     let stage4_eval_polys = vec![
         p.reg_val,
@@ -3795,6 +4056,11 @@ fn build_stage4(
         p.rd_inc,
         ram_ra_wa,
         p.ram_inc,
+        p.field_reg_val,
+        p.field_reg_ra_rs1,
+        p.field_reg_ra_rs2,
+        p.field_reg_wa,
+        p.field_reg_inc,
     ];
     for &poly in &stage4_eval_polys {
         ops.push(Op::Evaluate {
@@ -3832,6 +4098,7 @@ fn build_stage5(
     let inst_read_raf_rounds = LOG_K_INSTRUCTION + params.log_t; // 137 for muldiv
     let ram_ra_reduction_rounds = params.log_t; // 9
     let reg_val_eval_rounds = params.log_t; // 9
+    let fr_val_eval_rounds = params.log_t; // log_T — same as RegistersValEvaluation
     let stage5_max_rounds = inst_read_raf_rounds; // 137
 
     // Pre-sumcheck challenge squeezes.
@@ -3874,6 +4141,25 @@ fn build_stage5(
         .copied()
         .collect();
     let reg_val_r_cycle: Vec<ChallengeIdx> = s4.round_challenges[0..params.log_t]
+        .iter()
+        .rev()
+        .copied()
+        .collect();
+
+    // FieldRegValEvaluation: from Stage 4 FieldRegReadWriteChecking opening
+    // point. Stage 4's max_rounds = log_k_reg + log_t (RegistersRW is the
+    // longest); FR RW starts at `first_active = log_k_reg - LOG_K_FR = 3`
+    // and runs `LOG_K_FR + log_t` rounds. Split into cycle (first log_t) +
+    // address (last LOG_K_FR), both reversed to BIG_ENDIAN.
+    let fr_rw_first_active = log_k_reg - LOG_K_FR;
+    let fr_val_r_cycle: Vec<ChallengeIdx> = s4.round_challenges
+        [fr_rw_first_active..fr_rw_first_active + params.log_t]
+        .iter()
+        .rev()
+        .copied()
+        .collect();
+    let fr_val_r_address: Vec<ChallengeIdx> = s4.round_challenges
+        [fr_rw_first_active + params.log_t..fr_rw_first_active + params.log_t + LOG_K_FR]
         .iter()
         .rev()
         .copied()
@@ -3930,6 +4216,43 @@ fn build_stage5(
             },
         ],
         num_rounds: reg_val_eval_rounds,
+        instance_config: None,
+    });
+
+    // Kernel: FieldRegValEvaluation — degree 3, log_T rounds.
+    // Structural mirror of RegistersValEvaluation with RdInc → FieldRegInc,
+    // RdGatherIndex → FrdGatherIndex, LOG_K_REG → LOG_K_FR.
+    //
+    // Formula: field_reg_inc(j) × eq_gather(r_addr_fr, frd[j]) × LT(r_cycle_fr, j)
+    let fr_val_kernel_idx = kernels.len();
+    kernels.push(KernelDef {
+        spec: KernelSpec {
+            formula: Formula::from_terms(vec![ProductTerm {
+                coefficient: 1,
+                factors: vec![Factor::Input(0), Factor::Input(1), Factor::Input(2)],
+            }]),
+            num_evals: 4, // degree 3
+            iteration: Iteration::Dense,
+            binding_order: BindingOrder::LowToHigh,
+            gruen_hint: None,
+        },
+        inputs: vec![
+            InputBinding::Provided {
+                poly: p.field_reg_inc,
+            },
+            // BatchEq(202): FR val eval gather (reserved block).
+            InputBinding::EqGather {
+                poly: PolynomialId::BatchEq(202),
+                eq_challenges: fr_val_r_address,
+                indices: PolynomialId::FrdGatherIndex,
+            },
+            // BatchEq(203): FR val eval LT (reserved block).
+            InputBinding::LtTable {
+                poly: PolynomialId::BatchEq(203),
+                challenges: fr_val_r_cycle,
+            },
+        ],
+        num_rounds: fr_val_eval_rounds,
         instance_config: None,
     });
 
@@ -4166,6 +4489,19 @@ fn build_stage5(
                 batch_coeff: ChallengeIdx(0),
                 first_active_round: stage5_max_rounds - reg_val_eval_rounds,
             },
+            // [3] FieldRegValEvaluation — active from round LOG_K_INSTRUCTION
+            BatchedInstance {
+                phases: vec![InstancePhase {
+                    kernel: fr_val_kernel_idx,
+                    num_rounds: fr_val_eval_rounds,
+                    scalar_captures: vec![],
+                    segmented: None,
+                    carry_bindings: vec![],
+                    pre_activation_ops: vec![],
+                }],
+                batch_coeff: ChallengeIdx(0),
+                first_active_round: stage5_max_rounds - fr_val_eval_rounds,
+            },
         ],
         input_claims: vec![],
         max_rounds: stage5_max_rounds,
@@ -4255,7 +4591,23 @@ fn build_stage5(
         inactive_scale_bits: stage5_max_rounds - reg_val_eval_rounds,
     });
 
-    // Batching coefficients (3 instances)
+    // [3] FieldRegValEvaluation input claim: single term Eval(field_reg_val).
+    // Mirrors integer RegistersValEvaluation's claim.
+    let fr_val_input_claim = ClaimFormula {
+        terms: vec![ClaimTerm {
+            coeff: 1,
+            factors: vec![ClaimFactor::Eval(p.field_reg_val)],
+        }],
+    };
+    ops.push(Op::AbsorbInputClaim {
+        formula: fr_val_input_claim.clone(),
+        tag: DomainSeparator::SumcheckClaim,
+        batch: batch_idx,
+        instance: InstanceIdx(3),
+        inactive_scale_bits: stage5_max_rounds - fr_val_eval_rounds,
+    });
+
+    // Batching coefficients (4 instances)
     let ch_batch0 = ch.add(
         "stage5_batch0",
         ChallengeSource::FiatShamir { after_stage: 4 },
@@ -4268,6 +4620,10 @@ fn build_stage5(
         "stage5_batch2",
         ChallengeSource::FiatShamir { after_stage: 4 },
     );
+    let ch_batch3 = ch.add(
+        "stage5_batch3",
+        ChallengeSource::FiatShamir { after_stage: 4 },
+    );
     ops.push(Op::Squeeze {
         challenge: ch_batch0,
     });
@@ -4277,14 +4633,19 @@ fn build_stage5(
     ops.push(Op::Squeeze {
         challenge: ch_batch2,
     });
+    ops.push(Op::Squeeze {
+        challenge: ch_batch3,
+    });
 
     batched_sumchecks[batch_idx.0].instances[0].batch_coeff = ch_batch0;
     batched_sumchecks[batch_idx.0].instances[1].batch_coeff = ch_batch1;
     batched_sumchecks[batch_idx.0].instances[2].batch_coeff = ch_batch2;
+    batched_sumchecks[batch_idx.0].instances[3].batch_coeff = ch_batch3;
     batched_sumchecks[batch_idx.0].input_claims = vec![
         inst_raf_input_claim,
         ram_ra_input_claim,
         reg_val_input_claim,
+        fr_val_input_claim,
     ];
 
     // Sumcheck rounds: 137 rounds (128 address + 9 cycle)
@@ -4367,6 +4728,14 @@ fn build_stage5(
     // [2] RegistersValEvaluation: RdInc + RdWa
     stage5_eval_polys.push(p.rd_inc);
     stage5_eval_polys.push(rd_wa_gather);
+
+    // [3] FieldRegValEvaluation: FieldRegInc + FieldRegWa (gather).
+    // FieldRegInc is a unique commit (not aliased with RdInc/RamInc).
+    // FieldRegWa gather = BatchEq(202) (the gather buffer our kernel
+    // populates when it fires).
+    let fr_wa_gather = PolynomialId::BatchEq(202);
+    stage5_eval_polys.push(p.field_reg_inc);
+    stage5_eval_polys.push(fr_wa_gather);
 
     for &poly in &stage5_eval_polys {
         ops.push(Op::Evaluate {

@@ -185,6 +185,33 @@ impl<'a, F: Field> DerivedSource<'a, F> {
                 let _s = tracing::info_span!("derived::reg_val").entered();
                 Cow::Owned(self.reg_val())
             }
+            // BN254 Fr coprocessor derived polys. Materialized as all-zero
+            // vectors when no FR cycles are present in the trace (muldiv,
+            // sha2, etc.) — the full replay-based materializers (using the
+            // FieldRegEvent stream from Phase 4b) will land with Phase 5
+            // SDK integration. All-zero FR state is self-consistent: zero
+            // inc → zero val → zero γ-batched claim, which the FR Twist
+            // sumcheck reduces to 0 = 0 at the final point.
+            PolynomialId::FieldRegRaRs1 => {
+                let _s = tracing::info_span!("derived::field_reg_ra_rs1").entered();
+                Cow::Owned(self.field_reg_zero_kxt())
+            }
+            PolynomialId::FieldRegRaRs2 => {
+                let _s = tracing::info_span!("derived::field_reg_ra_rs2").entered();
+                Cow::Owned(self.field_reg_zero_kxt())
+            }
+            PolynomialId::FieldRegWa => {
+                let _s = tracing::info_span!("derived::field_reg_wa").entered();
+                Cow::Owned(self.field_reg_zero_kxt())
+            }
+            PolynomialId::FieldRegVal => {
+                let _s = tracing::info_span!("derived::field_reg_val").entered();
+                Cow::Owned(self.field_reg_zero_kxt())
+            }
+            PolynomialId::FrdGatherIndex => {
+                let _s = tracing::info_span!("derived::frd_gather_index").entered();
+                Cow::Owned(self.frd_gather_index_zero())
+            }
             PolynomialId::NoopFlag => {
                 let _s = tracing::info_span!("derived::iflag_noop").entered();
                 let f = self.iflags.as_ref().expect("InstructionFlags not attached");
@@ -525,6 +552,24 @@ impl<'a, F: Field> DerivedSource<'a, F> {
                 }
             })
             .collect()
+    }
+
+    /// K_FR × T all-zero indicator — shape matches FieldRegVal / FieldRegWa /
+    /// FieldRegRaRs1 / FieldRegRaRs2 when the trace has no FR cycles.
+    ///
+    /// K_FR = 16 (BN254 Fr coprocessor slot count) per
+    /// `specs/bn254-fr-coprocessor.md` §ISA.
+    fn field_reg_zero_kxt(&self) -> Vec<F> {
+        const K_FR: usize = 16;
+        vec![F::zero(); K_FR * self.num_cycles]
+    }
+
+    /// T-element per-cycle FR write-slot index sentinel (u64::MAX on every
+    /// cycle), so eq_gather returns zero everywhere. Used when no FR
+    /// cycles are present.
+    fn frd_gather_index_zero(&self) -> Vec<F> {
+        let sentinel = F::from_u64(u64::MAX);
+        vec![sentinel; self.num_cycles]
     }
 
     /// K_reg × T register value polynomial (address-major).
