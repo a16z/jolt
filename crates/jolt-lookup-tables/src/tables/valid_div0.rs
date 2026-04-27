@@ -7,17 +7,17 @@ use crate::tables::suffixes::{SuffixEval, Suffixes};
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
 use crate::uninterleave_bits;
-use crate::XLEN;
 
 /// (divisor, quotient)
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct ValidDiv0Table;
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct ValidDiv0Table<const XLEN: usize>;
 
-impl LookupTable for ValidDiv0Table {
+impl<const XLEN: usize> LookupTable for ValidDiv0Table<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
         let (divisor, quotient) = uninterleave_bits(index);
         if divisor == 0 {
-            (quotient == u64::MAX).into()
+            let max_val = (1u128 << XLEN).wrapping_sub(1) as u64;
+            (quotient == max_val).into()
         } else {
             1
         }
@@ -42,7 +42,7 @@ impl LookupTable for ValidDiv0Table {
     }
 }
 
-impl PrefixSuffixDecomposition for ValidDiv0Table {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for ValidDiv0Table<XLEN> {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[
             Suffixes::One,
@@ -63,16 +63,22 @@ impl PrefixSuffixDecomposition for ValidDiv0Table {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use crate::tables::test_utils::{mle_full_hypercube_test, mle_random_test, prefix_suffix_test};
+    use crate::XLEN;
     use jolt_field::Fr;
 
     #[test]
+    fn mle_full_hypercube() {
+        mle_full_hypercube_test::<8, Fr, ValidDiv0Table<8>>();
+    }
+
+    #[test]
     fn mle_random() {
-        mle_random_test::<Fr, ValidDiv0Table>();
+        mle_random_test::<XLEN, Fr, ValidDiv0Table<XLEN>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, ValidDiv0Table>();
+        prefix_suffix_test::<XLEN, Fr, ValidDiv0Table<XLEN>>();
     }
 }

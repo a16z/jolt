@@ -11,23 +11,28 @@ use crate::tables::LookupTableKind;
 /// Returns `None` for instructions that don't use lookup tables (loads, stores,
 /// system instructions). The prover uses this to route instruction evaluations
 /// to the correct table during the instruction sumcheck.
-pub trait InstructionLookupTable {
-    fn lookup_table(&self) -> Option<LookupTableKind>;
+///
+/// Generic over `XLEN` so the same instruction can be used at production word
+/// size (XLEN=64) and at test sizes (XLEN=8).
+pub trait InstructionLookupTable<const XLEN: usize> {
+    fn lookup_table(&self) -> Option<LookupTableKind<XLEN>>;
 }
 
 macro_rules! impl_lookup_table {
     ($instr:ty, Some($table:ident)) => {
-        impl $crate::InstructionLookupTable for $instr {
+        impl<const XLEN: usize> $crate::InstructionLookupTable<XLEN> for $instr {
             #[inline]
-            fn lookup_table(&self) -> Option<$crate::LookupTableKind> {
-                Some($crate::LookupTableKind::$table)
+            fn lookup_table(&self) -> Option<$crate::LookupTableKind<XLEN>> {
+                Some($crate::LookupTableKind::$table(
+                    ::core::default::Default::default(),
+                ))
             }
         }
     };
     ($instr:ty, None) => {
-        impl $crate::InstructionLookupTable for $instr {
+        impl<const XLEN: usize> $crate::InstructionLookupTable<XLEN> for $instr {
             #[inline]
-            fn lookup_table(&self) -> Option<$crate::LookupTableKind> {
+            fn lookup_table(&self) -> Option<$crate::LookupTableKind<XLEN>> {
                 None
             }
         }

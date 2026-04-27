@@ -7,15 +7,18 @@ use crate::tables::suffixes::{SuffixEval, Suffixes};
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
 use crate::uninterleave_bits;
-use crate::XLEN;
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct SignedLessThanTable;
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct SignedLessThanTable<const XLEN: usize>;
 
-impl LookupTable for SignedLessThanTable {
+impl<const XLEN: usize> LookupTable for SignedLessThanTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
-        ((x as i64) < y as i64).into()
+        // Sign-extend the lower XLEN bits to a full i64 before comparing.
+        let shift = 64 - XLEN;
+        let x_signed = ((x as i64) << shift) >> shift;
+        let y_signed = ((y as i64) << shift) >> shift;
+        (x_signed < y_signed).into()
     }
 
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
@@ -39,7 +42,7 @@ impl LookupTable for SignedLessThanTable {
     }
 }
 
-impl PrefixSuffixDecomposition for SignedLessThanTable {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for SignedLessThanTable<XLEN> {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::One, Suffixes::LessThan]
     }
@@ -57,16 +60,22 @@ impl PrefixSuffixDecomposition for SignedLessThanTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use crate::tables::test_utils::{mle_full_hypercube_test, mle_random_test, prefix_suffix_test};
+    use crate::XLEN;
     use jolt_field::Fr;
 
     #[test]
     fn mle_random() {
-        mle_random_test::<Fr, SignedLessThanTable>();
+        mle_random_test::<XLEN, Fr, SignedLessThanTable<XLEN>>();
+    }
+
+    #[test]
+    fn mle_full_hypercube() {
+        mle_full_hypercube_test::<8, Fr, SignedLessThanTable<8>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, SignedLessThanTable>();
+        prefix_suffix_test::<XLEN, Fr, SignedLessThanTable<XLEN>>();
     }
 }

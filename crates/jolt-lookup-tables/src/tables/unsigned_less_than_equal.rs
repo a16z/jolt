@@ -7,12 +7,11 @@ use crate::tables::suffixes::{SuffixEval, Suffixes};
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
 use crate::uninterleave_bits;
-use crate::XLEN;
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct UnsignedLessThanEqualTable;
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct UnsignedLessThanEqualTable<const XLEN: usize>;
 
-impl LookupTable for UnsignedLessThanEqualTable {
+impl<const XLEN: usize> LookupTable for UnsignedLessThanEqualTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
         (x <= y).into()
@@ -38,7 +37,7 @@ impl LookupTable for UnsignedLessThanEqualTable {
     }
 }
 
-impl PrefixSuffixDecomposition for UnsignedLessThanEqualTable {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for UnsignedLessThanEqualTable<XLEN> {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::One, Suffixes::LessThan, Suffixes::Eq]
     }
@@ -57,16 +56,22 @@ impl PrefixSuffixDecomposition for UnsignedLessThanEqualTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use crate::tables::test_utils::{mle_full_hypercube_test, mle_random_test, prefix_suffix_test};
+    use crate::XLEN;
     use jolt_field::Fr;
 
     #[test]
+    fn mle_full_hypercube() {
+        mle_full_hypercube_test::<8, Fr, UnsignedLessThanEqualTable<8>>();
+    }
+
+    #[test]
     fn mle_random() {
-        mle_random_test::<Fr, UnsignedLessThanEqualTable>();
+        mle_random_test::<XLEN, Fr, UnsignedLessThanEqualTable<XLEN>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, UnsignedLessThanEqualTable>();
+        prefix_suffix_test::<XLEN, Fr, UnsignedLessThanEqualTable<XLEN>>();
     }
 }

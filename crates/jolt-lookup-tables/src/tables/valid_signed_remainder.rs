@@ -7,16 +7,19 @@ use crate::tables::suffixes::{SuffixEval, Suffixes};
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
 use crate::uninterleave_bits;
-use crate::XLEN;
 
 /// (remainder, divisor)
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct ValidSignedRemainderTable;
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct ValidSignedRemainderTable<const XLEN: usize>;
 
-impl LookupTable for ValidSignedRemainderTable {
+impl<const XLEN: usize> LookupTable for ValidSignedRemainderTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
-        let (remainder, divisor) = (x as i64, y as i64);
+        // Sign-extend the lower XLEN bits to a full i64 so that `unsigned_abs`
+        // and the sign-bit comparison agree with XLEN-bit signed semantics.
+        let shift = 64 - XLEN;
+        let remainder = ((x as i64) << shift) >> shift;
+        let divisor = ((y as i64) << shift) >> shift;
         if remainder == 0 || divisor == 0 {
             1
         } else {
@@ -67,7 +70,7 @@ impl LookupTable for ValidSignedRemainderTable {
     }
 }
 
-impl PrefixSuffixDecomposition for ValidSignedRemainderTable {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for ValidSignedRemainderTable<XLEN> {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[
             Suffixes::One,
@@ -95,16 +98,22 @@ impl PrefixSuffixDecomposition for ValidSignedRemainderTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use crate::tables::test_utils::{mle_full_hypercube_test, mle_random_test, prefix_suffix_test};
+    use crate::XLEN;
     use jolt_field::Fr;
 
     #[test]
+    fn mle_full_hypercube() {
+        mle_full_hypercube_test::<8, Fr, ValidSignedRemainderTable<8>>();
+    }
+
+    #[test]
     fn mle_random() {
-        mle_random_test::<Fr, ValidSignedRemainderTable>();
+        mle_random_test::<XLEN, Fr, ValidSignedRemainderTable<XLEN>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, ValidSignedRemainderTable>();
+        prefix_suffix_test::<XLEN, Fr, ValidSignedRemainderTable<XLEN>>();
     }
 }

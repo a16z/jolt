@@ -7,18 +7,19 @@ use crate::tables::suffixes::{SuffixEval, Suffixes};
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
 use crate::uninterleave_bits;
-use crate::XLEN;
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct VirtualXORROTWTable<const ROTATION: u32>;
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct VirtualXORROTWTable<const XLEN: usize, const ROTATION: u32>;
 
-impl<const ROTATION: u32> LookupTable for VirtualXORROTWTable<ROTATION> {
+impl<const XLEN: usize, const ROTATION: u32> LookupTable for VirtualXORROTWTable<XLEN, ROTATION> {
     fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
-        let x_32 = x as u32;
-        let y_32 = y as u32;
-        let xor_result = x_32 ^ y_32;
-        xor_result.rotate_right(ROTATION) as u64
+        let half = XLEN / 2;
+        let r = (ROTATION as usize) % half;
+        let half_mask = (1u128 << half).wrapping_sub(1) as u64;
+        let xor_result = ((x as u128 ^ y as u128) & half_mask as u128) as u64;
+        let v = xor_result as u128;
+        (((v >> r) | (v << (half - r))) as u64) & half_mask
     }
 
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
@@ -41,7 +42,9 @@ impl<const ROTATION: u32> LookupTable for VirtualXORROTWTable<ROTATION> {
     }
 }
 
-impl<const ROTATION: u32> PrefixSuffixDecomposition for VirtualXORROTWTable<ROTATION> {
+impl<const XLEN: usize, const ROTATION: u32> PrefixSuffixDecomposition<XLEN>
+    for VirtualXORROTWTable<XLEN, ROTATION>
+{
     fn suffixes(&self) -> &'static [Suffixes] {
         debug_assert_eq!(XLEN, 64);
         match ROTATION {
@@ -71,46 +74,67 @@ impl<const ROTATION: u32> PrefixSuffixDecomposition for VirtualXORROTWTable<ROTA
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use crate::tables::test_utils::{mle_full_hypercube_test, mle_random_test, prefix_suffix_test};
+    use crate::XLEN;
     use jolt_field::Fr;
 
     #[test]
     fn mle_random_rotw16() {
-        mle_random_test::<Fr, VirtualXORROTWTable<16>>();
+        mle_random_test::<XLEN, Fr, VirtualXORROTWTable<XLEN, 16>>();
     }
 
     #[test]
     fn prefix_suffix_rotw16() {
-        prefix_suffix_test::<Fr, VirtualXORROTWTable<16>>();
+        prefix_suffix_test::<XLEN, Fr, VirtualXORROTWTable<XLEN, 16>>();
     }
 
     #[test]
     fn mle_random_rotw12() {
-        mle_random_test::<Fr, VirtualXORROTWTable<12>>();
+        mle_random_test::<XLEN, Fr, VirtualXORROTWTable<XLEN, 12>>();
     }
 
     #[test]
     fn prefix_suffix_rotw12() {
-        prefix_suffix_test::<Fr, VirtualXORROTWTable<12>>();
+        prefix_suffix_test::<XLEN, Fr, VirtualXORROTWTable<XLEN, 12>>();
     }
 
     #[test]
     fn mle_random_rotw8() {
-        mle_random_test::<Fr, VirtualXORROTWTable<8>>();
+        mle_random_test::<XLEN, Fr, VirtualXORROTWTable<XLEN, 8>>();
     }
 
     #[test]
     fn prefix_suffix_rotw8() {
-        prefix_suffix_test::<Fr, VirtualXORROTWTable<8>>();
+        prefix_suffix_test::<XLEN, Fr, VirtualXORROTWTable<XLEN, 8>>();
     }
 
     #[test]
     fn mle_random_rotw7() {
-        mle_random_test::<Fr, VirtualXORROTWTable<7>>();
+        mle_random_test::<XLEN, Fr, VirtualXORROTWTable<XLEN, 7>>();
     }
 
     #[test]
     fn prefix_suffix_rotw7() {
-        prefix_suffix_test::<Fr, VirtualXORROTWTable<7>>();
+        prefix_suffix_test::<XLEN, Fr, VirtualXORROTWTable<XLEN, 7>>();
+    }
+
+    #[test]
+    fn mle_full_hypercube_rotw7() {
+        mle_full_hypercube_test::<8, Fr, VirtualXORROTWTable<8, 7>>();
+    }
+
+    #[test]
+    fn mle_full_hypercube_rotw8() {
+        mle_full_hypercube_test::<8, Fr, VirtualXORROTWTable<8, 8>>();
+    }
+
+    #[test]
+    fn mle_full_hypercube_rotw12() {
+        mle_full_hypercube_test::<8, Fr, VirtualXORROTWTable<8, 12>>();
+    }
+
+    #[test]
+    fn mle_full_hypercube_rotw16() {
+        mle_full_hypercube_test::<8, Fr, VirtualXORROTWTable<8, 16>>();
     }
 }
