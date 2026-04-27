@@ -576,7 +576,7 @@ fn instruction_inputs(
     (left, right as u64 as u128)
 }
 
-fn static_circuit_flags(instr: &Instruction) -> [bool; NUM_CIRCUIT_FLAGS] {
+pub fn static_circuit_flags(instr: &Instruction) -> [bool; NUM_CIRCUIT_FLAGS] {
     with_isa_struct!(instr, |i| Flags::circuit_flags(&i), noop => {
         let mut f = [false; NUM_CIRCUIT_FLAGS];
         f[CircuitFlags::DoNotUpdateUnexpandedPC] = true;
@@ -584,7 +584,7 @@ fn static_circuit_flags(instr: &Instruction) -> [bool; NUM_CIRCUIT_FLAGS] {
     })
 }
 
-fn static_instruction_flags(instr: &Instruction) -> [bool; NUM_INSTRUCTION_FLAGS] {
+pub fn static_instruction_flags(instr: &Instruction) -> [bool; NUM_INSTRUCTION_FLAGS] {
     with_isa_struct!(instr, |i| Flags::instruction_flags(&i), noop => {
         let mut f = [false; NUM_INSTRUCTION_FLAGS];
         f[InstructionFlags::IsNoop] = true;
@@ -592,7 +592,7 @@ fn static_instruction_flags(instr: &Instruction) -> [bool; NUM_INSTRUCTION_FLAGS
     })
 }
 
-fn lookup_table_kind(instr: &Instruction) -> Option<LookupTableKind> {
+pub fn lookup_table_kind(instr: &Instruction) -> Option<LookupTableKind> {
     with_isa_struct!(instr, |i| i.lookup_table(), noop => None)
 }
 

@@ -48,7 +48,7 @@ fn poseidon2_cycle_count_sdk_vs_taceo() {
         .set_stack_size(1 << 20)
         .set_heap_size(1 << 20)
         .set_max_input_size(8192);
-    let (_, sdk_trace, _, sdk_device) =
+    let (_, sdk_trace, _, sdk_device, _sdk_fr_events) =
         sdk_program.trace_two_pass_advice(&inputs, &[], &[]);
     let sdk_real = count_real_cycles(&sdk_trace);
     let sdk_field_ops = sdk_trace

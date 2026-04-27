@@ -229,15 +229,23 @@ impl Program {
     ///
     /// Builds the `compute_advice` ELF (if the guest opted into the feature),
     /// runs a Pass-1 trace to populate the advice tape, then runs the normal
-    /// Pass-2 trace with the populated tape. Returns the Pass-2 trace; the
-    /// Pass-1 trace is discarded (it's a separate ELF, not the proof trace).
+    /// Pass-2 trace with the populated tape. Returns the Pass-2 trace + the
+    /// drained `FieldRegEvent` stream from that pass. Pass-1's trace is
+    /// discarded (it's the software-Fr advice computation, not the proof
+    /// trace).
     #[tracing::instrument(skip_all, name = "Program::trace_two_pass_advice")]
     pub fn trace_two_pass_advice(
         &mut self,
         inputs: &[u8],
         untrusted_advice: &[u8],
         trusted_advice: &[u8],
-    ) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice) {
+    ) -> (
+        LazyTraceIterator,
+        Vec<Cycle>,
+        Memory,
+        JoltDevice,
+        Vec<tracer::emulator::cpu::FieldRegEvent>,
+    ) {
         // Pass 1: build + run compute_advice ELF to populate the advice tape.
         self.build_with_features(DEFAULT_TARGET_DIR, &["compute_advice"]);
         let advice_tape = if let Some(compute_advice_elf) = self.get_elf_compute_advice_contents() {
@@ -265,7 +273,7 @@ impl Program {
         let program_size = compute_program_size(&elf_contents);
         let memory_config = self.memory_config(program_size);
 
-        let (lazy_trace, trace_vec, memory, jolt_device, _advice_tape, _field_reg_events) =
+        let (lazy_trace, trace_vec, memory, jolt_device, _advice_tape, field_reg_events) =
             tracer::trace(
                 &elf_contents,
                 self.elf.as_ref().map(|p| p as &PathBuf),
@@ -275,7 +283,7 @@ impl Program {
                 &memory_config,
                 advice_tape,
             );
-        (lazy_trace, trace_vec, memory, jolt_device)
+        (lazy_trace, trace_vec, memory, jolt_device, field_reg_events)
     }
 
     /// Compile (if needed) and trace the guest program, writing the trace to a file.
