@@ -138,6 +138,10 @@ pub enum PerformanceObjective {
     BindLowToHigh(performance::binding::BindLowToHighObjective),
     BindHighToLow(performance::binding::BindHighToLowObjective),
     NaiveSortTime(performance::naive_sort::NaiveSortObjective),
+    MulU64(performance::field_mul::MulU64Objective),
+    MulI64(performance::field_mul::MulI64Objective),
+    MulU128(performance::field_mul::MulU128Objective),
+    MulI128(performance::field_mul::MulI128Objective),
 }
 
 impl PerformanceObjective {
@@ -146,6 +150,10 @@ impl PerformanceObjective {
             Self::BindLowToHigh(performance::binding::BindLowToHighObjective),
             Self::BindHighToLow(performance::binding::BindHighToLowObjective),
             Self::NaiveSortTime(performance::naive_sort::NaiveSortObjective),
+            Self::MulU64(performance::field_mul::MulU64Objective),
+            Self::MulI64(performance::field_mul::MulI64Objective),
+            Self::MulU128(performance::field_mul::MulU128Objective),
+            Self::MulI128(performance::field_mul::MulI128Objective),
         ]
     }
 
@@ -154,6 +162,10 @@ impl PerformanceObjective {
             Self::BindLowToHigh(o) => o.name(),
             Self::BindHighToLow(o) => o.name(),
             Self::NaiveSortTime(o) => o.name(),
+            Self::MulU64(o) => o.name(),
+            Self::MulI64(o) => o.name(),
+            Self::MulU128(o) => o.name(),
+            Self::MulI128(o) => o.name(),
         }
     }
 
@@ -162,6 +174,10 @@ impl PerformanceObjective {
             Self::BindLowToHigh(o) => o.units(),
             Self::BindHighToLow(o) => o.units(),
             Self::NaiveSortTime(o) => o.units(),
+            Self::MulU64(o) => o.units(),
+            Self::MulI64(o) => o.units(),
+            Self::MulU128(o) => o.units(),
+            Self::MulI128(o) => o.units(),
         }
     }
 
@@ -170,6 +186,10 @@ impl PerformanceObjective {
             Self::BindLowToHigh(o) => o.description(),
             Self::BindHighToLow(o) => o.description(),
             Self::NaiveSortTime(o) => o.description(),
+            Self::MulU64(o) => o.description(),
+            Self::MulI64(o) => o.description(),
+            Self::MulU128(o) => o.description(),
+            Self::MulI128(o) => o.description(),
         }
     }
 
@@ -177,6 +197,9 @@ impl PerformanceObjective {
         match self {
             Self::BindLowToHigh(_) | Self::BindHighToLow(_) => &["jolt-core/"],
             Self::NaiveSortTime(_) => &["jolt-eval/src/sort_targets.rs"],
+            Self::MulU64(_) | Self::MulI64(_) | Self::MulU128(_) | Self::MulI128(_) => {
+                &["crates/jolt-field/"]
+            }
         }
     }
 }
@@ -193,6 +216,7 @@ pub use code_quality::cognitive::COGNITIVE_COMPLEXITY;
 pub use code_quality::halstead_bugs::HALSTEAD_BUGS;
 pub use code_quality::lloc::LLOC;
 pub use performance::binding::{BIND_HIGH_TO_LOW, BIND_LOW_TO_HIGH};
+pub use performance::field_mul::{MUL_I128, MUL_I64, MUL_U128, MUL_U64};
 pub use performance::naive_sort::NAIVE_SORT_TIME;
 
 impl OptimizationObjective {

@@ -2776,6 +2776,7 @@ dependencies = [
  "eyre",
  "jolt-core",
  "jolt-eval-macros",
+ "jolt-field",
  "jolt-inlines-secp256k1",
  "jolt-inlines-sha2",
  "postcard",
