@@ -1189,6 +1189,7 @@ fn build_module(params: &ModuleParams) -> Module {
     verifier_ops.extend(build_verifier_stage2_ops(&p, params, &ch));
     verifier_ops.extend(build_verifier_stage3_ops(&p, params, &ch));
     verifier_ops.extend(build_verifier_stage4_ops(&p, params, &ch));
+    verifier_ops.extend(build_verifier_stage5_ops(&p, params, &ch));
     verifier_ops.push(VerifierOp::VerifyOpenings);
 
     let polys = pt.into_vec();
@@ -1208,7 +1209,7 @@ fn build_module(params: &ModuleParams) -> Module {
             ops: verifier_ops,
             num_challenges,
             num_polys,
-            num_stages: 4,
+            num_stages: 5,
         },
     }
 }
@@ -1291,19 +1292,18 @@ fn build_stage1(
         ops.push(Op::Squeeze { challenge: idx });
     }
 
-    // 2. Outer Uniskip: group-split, 1 round producing a degree-27 polynomial.
+    // 2. Outer Uniskip: group-split, 1 round producing a degree-45 polynomial.
     //
-    // jolt-core splits 19 R1CS constraints into 2 groups (10 + 9).
-    // The uniskip domain is 10 (the larger group). The group bit is
-    // encoded as the LOWEST variable of the eq table (interleaved
-    // with cycle positions). This doubles the eq table to 2T entries.
+    // 32 R1CS eq constraints (19 RV + 13 BN254 Fr) split into 2 groups of 16.
+    // The uniskip domain is 16. The group bit is encoded as the LOWEST
+    // variable of the eq table (interleaved with cycle positions),
+    // doubling the eq table to 2T entries.
     //
     //   s1(Y) = L(τ_high, Y) · Σ_{x} eq(τ_low, x) · Az_grouped(x, Y) · Bz_grouped(x, Y)
     //
-    // where x ranges over 2T entries (T cycles × 2 groups, interleaved)
-    // and Y ranges over the 10-point uniskip domain. The Lagrange kernel
-    // L(τ_high, Y) has degree 9, t1(Y) has degree 2×9 = 18, so
-    // s1(Y) has degree 27 with 28 coefficients.
+    // x ranges over 2T entries (T cycles × 2 groups, interleaved); Y
+    // ranges over the 16-point uniskip domain. L(τ_high, Y) has degree 15,
+    // t1(Y) has degree 30, so s1(Y) has degree 45 with 46 coefficients.
     let spartan_formula = Formula::from_terms(vec![ProductTerm {
         coefficient: 1,
         factors: vec![Factor::Input(0), Factor::Input(1), Factor::Input(2)],
@@ -1312,11 +1312,16 @@ fn build_stage1(
     // τ_high is the last tau challenge — the Lagrange kernel argument.
     let tau_high_idx = ChallengeIdx(tau_base + params.num_tau - 1);
 
-    // Group-split constraint indices (matching jolt-core's R1CS_CONSTRAINTS_FIRST_GROUP_LABELS).
-    // Group 0 (10 constraints): boolean guards / small-Bz constraints.
-    // Group 1 (9 constraints): arithmetic / large-Bz constraints, zero-padded to domain_size.
-    let group0_indices: Vec<usize> = vec![1, 2, 3, 4, 5, 6, 11, 14, 17, 18];
-    let group1_indices: Vec<usize> = vec![0, 7, 8, 9, 10, 12, 13, 15, 16];
+    // Group-split constraint indices (extends jolt-core's R1CS_CONSTRAINTS_FIRST_GROUP_LABELS
+    // with the 13 BN254 Fr coprocessor rows from `rv64::FR_ROWS`).
+    // Group 0 (16 constraints): boolean guards / small-Bz + FR equality/bridge rows.
+    // Group 1 (16 constraints): arithmetic / large-Bz + FR mul/inv/SLL rows.
+    // All 32 eq rows must appear in some group; rows outside `group_indices`
+    // are zero-padded by RegroupConstraints and silently unenforced.
+    let group0_indices: Vec<usize> =
+        vec![1, 2, 3, 4, 5, 6, 11, 14, 17, 18, 19, 20, 21, 24, 27, 28];
+    let group1_indices: Vec<usize> =
+        vec![0, 7, 8, 9, 10, 12, 13, 15, 16, 22, 23, 25, 26, 29, 30, 31];
     let regrouped_stride = params.outer_uniskip_domain.next_power_of_two(); // 16
 
     // Regroup Az/Bz from flat T×32 to interleaved 2T×16 layout.
@@ -1360,9 +1365,9 @@ fn build_stage1(
     kernels.push(KernelDef {
         spec: KernelSpec {
             formula: spartan_formula.clone(),
-            num_evals: 2 * params.outer_uniskip_domain - 1, // 2×10−1 = 19
+            num_evals: 2 * params.outer_uniskip_domain - 1, // 2×16−1 = 31
             iteration: Iteration::Domain {
-                domain_size: params.outer_uniskip_domain, // 10
+                domain_size: params.outer_uniskip_domain, // 16
                 stride: regrouped_stride,                 // 16
                 domain_start: -((params.outer_uniskip_domain as i64 - 1) / 2),
                 domain_indexed: vec![false, true, true], // eq=cycle, Az=domain, Bz=domain
@@ -1576,11 +1581,11 @@ fn build_stage1(
 /// Verifier schedule for Stage 1: Outer Spartan.
 ///
 /// Single verifier stage covering the full Stage 1 protocol:
-///   1. Absorb 25 commitments (3 barriers)
-///   2. Squeeze 27 τ challenges
-///   3. Verify uniskip: absorb 28-coeff polynomial, squeeze r0, record s1(r0)
-///   4. Verify remaining: input claim = s1(r0), 26 rounds of degree-3 sumcheck
-///   5. Record 35 R1CS input evaluations
+///   1. Absorb commitments (3 barriers) — count = `params.num_committed + 2`
+///   2. Squeeze τ challenges
+///   3. Verify uniskip: absorb round polynomial, squeeze r0, record s1(r0)
+///   4. Verify remaining: input claim = s1(r0), log_t+1 rounds of degree-3 sumcheck
+///   5. Record R1CS input evaluations
 ///   6. Check output: eq(τ_low, r) × L(τ_high, r0) × Az(r0, evals) × Bz(r0, evals)
 fn build_verifier_stage1_ops(
     p: &Polys,
@@ -1588,14 +1593,18 @@ fn build_verifier_stage1_ops(
     ch: &ChallengeTable,
 ) -> Vec<VerifierOp> {
     // Commitment list: per-barrier (poly, tag) pairs matching the prover's
-    // commitment phase. Tags must be identical for Fiat-Shamir consistency.
-    let mut commit_pairs: Vec<(PolynomialId, DomainSeparator)> = Vec::with_capacity(25);
+    // commitment phase. ORDER MUST MATCH `build_commitment_phase` exactly —
+    // every absorption is sequenced into Fiat-Shamir, so any divergence
+    // (including a missing poly) misaligns every downstream challenge.
+    let mut commit_pairs: Vec<(PolynomialId, DomainSeparator)> =
+        Vec::with_capacity(params.num_committed + 2);
     // Barrier 1: main witness → tag "commitment"
-    for &poly in [p.rd_inc, p.ram_inc]
+    for &poly in [p.rd_inc, p.ram_inc, p.field_reg_inc]
         .iter()
         .chain(p.instruction_ra.iter())
         .chain(p.ram_ra.iter())
         .chain(p.bytecode_ra.iter())
+        .chain(p.field_reg_ra.iter())
     {
         commit_pairs.push((poly, DomainSeparator::Commitment));
     }
@@ -1639,9 +1648,12 @@ fn build_verifier_stage1_ops(
     let r_group_idx = ChallengeIdx(params.num_tau + 2);
     // tau_cycle = τ_low (log_t entries): τ_0..τ_{log_t-1}.
     let tau_cycle: Vec<ChallengeIdx> = (0..params.num_tau - 1).map(ChallengeIdx).collect();
-    // Group split matches jolt-core outer Spartan regrouping: 10 constraints per group.
-    let group0: Vec<usize> = vec![1, 2, 3, 4, 5, 6, 11, 14, 17, 18];
-    let group1: Vec<usize> = vec![0, 7, 8, 9, 10, 12, 13, 15, 16];
+    // Group split: 16 constraints per group (32 eq rows = 19 RV + 13 BN254 Fr).
+    // MUST match the prover-side `group0_indices` / `group1_indices` above —
+    // mismatch here lets the prover skip enforcement on rows the verifier
+    // believes are covered.
+    let group0: Vec<usize> = vec![1, 2, 3, 4, 5, 6, 11, 14, 17, 18, 19, 20, 21, 24, 27, 28];
+    let group1: Vec<usize> = vec![0, 7, 8, 9, 10, 12, 13, 15, 16, 22, 23, 25, 26, 29, 30, 31];
     let output_check = ClaimFormula {
         terms: vec![ClaimTerm {
             coeff: 1,
@@ -4844,8 +4856,13 @@ fn build_stage6(
         challenge: ch_booleanity_gamma,
     });
 
-    // Booleanity γ^{2d} power challenges for each RA polynomial dimension
-    let total_d = params.instruction_d + params.bytecode_d + params.ram_d;
+    // Booleanity γ^{2d} power challenges for each RA polynomial dimension.
+    // Includes FieldRegRa(d) so the BN254 Fr coprocessor's committed write
+    // one-hot is also constrained to {0, 1} per cell. Without this, the
+    // prover could commit a non-Boolean FieldRegRa and FR Twist soundness
+    // would rest entirely on the (separately-checked) cross-binding to
+    // FieldRegInc.
+    let total_d = params.instruction_d + params.bytecode_d + params.ram_d + params.field_reg_d;
     let ch_booleanity_gamma_sq: Vec<ChallengeIdx> = (0..total_d)
         .map(|d| {
             let idx = ch.add(
@@ -5441,6 +5458,7 @@ fn build_stage6(
         .map(PolynomialId::InstructionRa)
         .chain((0..params.bytecode_d).map(PolynomialId::BytecodeRa))
         .chain((0..params.ram_d).map(PolynomialId::RamRa))
+        .chain((0..params.field_reg_d).map(PolynomialId::FieldRegRa))
         .collect();
 
     // Booleanity: single-phase dense kernel over transposed RA polynomials.
@@ -6091,10 +6109,14 @@ fn build_stage6(
         kernel: bool_kernel_idx,
         challenge: s6_round_ch[stage6_max_rounds - 1],
     });
+    // MUST match the `ra_poly_ids` order at the Booleanity kernel input
+    // construction — the AbsorbEvals flush is paired with the kernel's
+    // FullyBound G_d evaluations via AliasEval.
     let bool_ra_poly_ids: Vec<PolynomialId> = (0..params.instruction_d)
         .map(PolynomialId::InstructionRa)
         .chain((0..params.bytecode_d).map(PolynomialId::BytecodeRa))
         .chain((0..params.ram_d).map(PolynomialId::RamRa))
+        .chain((0..params.field_reg_d).map(PolynomialId::FieldRegRa))
         .collect();
     for (d, &ra_pid) in bool_ra_poly_ids.iter().enumerate() {
         ops.push(Op::Evaluate {
@@ -6742,9 +6764,11 @@ fn build_verifier_stage4_ops(
 ) -> Vec<VerifierOp> {
     let mut ops = vec![VerifierOp::BeginStage];
 
-    // Stage 4 pre-sumcheck challenges: 2 gammas + 2 batching = 4.
-    // (Batching + input claims handled by VerifySumcheck when added.)
-    let num_s4_challenges = 4;
+    // Stage 4 pre-sumcheck challenges: 3 gammas + 3 batching = 6.
+    // Order MUST mirror prover (lines 3382, 3393, 3402-separator, 3407, 3574, 3578, 3582):
+    //   gamma_registers_rw, gamma_fr_rw, [domain separator], gamma_ram_val_check,
+    //   stage4_batch0, stage4_batch1, stage4_batch2.
+    let num_s4_challenges = 6;
     let s4_ch_base = ch.decls.len() - num_s4_challenges;
 
     // γ_registers_rw
@@ -6752,15 +6776,71 @@ fn build_verifier_stage4_ops(
         challenge: ChallengeIdx(s4_ch_base),
     });
 
-    // Domain separator
+    // γ_fr_rw — BN254 Fr coprocessor Read-Write gamma. Mirrors integer
+    // gamma_registers_rw; consumed by FieldRegReadWriteChecking instance.
+    ops.push(VerifierOp::Squeeze {
+        challenge: ChallengeIdx(s4_ch_base + 1),
+    });
+
+    // Domain separator before RAM val check gamma
     ops.push(VerifierOp::AppendDomainSeparator {
         tag: DomainSeparator::RamValCheckGamma,
     });
 
     // γ_ram_val_check
     ops.push(VerifierOp::Squeeze {
-        challenge: ChallengeIdx(s4_ch_base + 1),
+        challenge: ChallengeIdx(s4_ch_base + 2),
     });
+
+    // 3 batching coefficients (RegistersRW, RamValCheck, FieldRegRW)
+    ops.push(VerifierOp::Squeeze {
+        challenge: ChallengeIdx(s4_ch_base + 3),
+    });
+    ops.push(VerifierOp::Squeeze {
+        challenge: ChallengeIdx(s4_ch_base + 4),
+    });
+    ops.push(VerifierOp::Squeeze {
+        challenge: ChallengeIdx(s4_ch_base + 5),
+    });
+
+    ops
+}
+
+/// Verifier schedule for Stage 5.
+///
+/// **PLACEHOLDER STUB.** Mirrors the existing Stage 3/4 stub pattern: emits
+/// `BeginStage` plus per-challenge `Squeeze` ops to keep the post-stage
+/// challenge-table indices in sync, but does NOT emit `AbsorbRoundPoly`,
+/// `VerifySumcheck`, `RecordEvals`, `AbsorbEvals`, or `CheckOutput` — so the
+/// Fiat-Shamir transcript is misaligned across the round-poly absorptions and
+/// no actual sumcheck verification happens.
+///
+/// The Stage 3/4 stubs share this limitation; full verifier implementations
+/// for stages 3-5 are a separate workstream (see `specs/fr-v2-audit.md`
+/// findings C2/C3/C4 — pre-existing on refactor-crates).
+///
+/// Stage 5 prover squeezes (counted from `build_stage5`):
+///   - `gamma_instruction_read_raf` + `gamma_ram_ra_reduction` = 2 gammas
+///   - `stage5_batch0..3` = 4 batching coefficients
+///   - `stage5_max_rounds = LOG_K_INSTRUCTION + log_t` round challenges
+fn build_verifier_stage5_ops(
+    _p: &Polys,
+    params: &ModuleParams,
+    ch: &ChallengeTable,
+) -> Vec<VerifierOp> {
+    let mut ops = vec![VerifierOp::BeginStage];
+
+    // 2 gammas + 4 batching + (LOG_K_INSTRUCTION + log_t) round challenges.
+    // MUST match the prover's stage-5 squeezes exactly — any miscount shifts
+    // `s5_ch_base` and misaligns the absorbed challenges.
+    let num_s5_challenges = 2 + 4 + LOG_K_INSTRUCTION + params.log_t;
+    let s5_ch_base = ch.decls.len() - num_s5_challenges;
+
+    for i in 0..num_s5_challenges {
+        ops.push(VerifierOp::Squeeze {
+            challenge: ChallengeIdx(s5_ch_base + i),
+        });
+    }
 
     ops
 }
@@ -6773,11 +6853,14 @@ fn build_verifier_stage3_ops(
 ) -> Vec<VerifierOp> {
     let mut ops = vec![VerifierOp::BeginStage];
 
-    // Stage 3 challenges: 3 gammas + 3 batching + log_t round = 6 + log_t total.
-    let num_s3_challenges = 3 + 3 + params.log_t;
+    // Stage 3 challenges: 4 gammas + 4 batching + log_t round = 8 + log_t total.
+    // Gammas: shift, instruction_input, registers, fr_cr.
+    // Batching: one per instance (Shift, InstructionInput, RegistersCR, FieldRegCR).
+    // MUST match the prover's stage-3 squeezes exactly — any miscount shifts
+    // `s3_ch_base` and misaligns every absorbed challenge.
+    let num_s3_challenges = 4 + 4 + params.log_t;
     let s3_ch_base = ch.decls.len() - num_s3_challenges;
 
-    // 3 gamma squeezes + 3 batching coefficient squeezes + log_t round squeezes
     for i in 0..num_s3_challenges {
         ops.push(VerifierOp::Squeeze {
             challenge: ChallengeIdx(s3_ch_base + i),

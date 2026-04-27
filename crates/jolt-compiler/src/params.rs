@@ -143,14 +143,15 @@ impl ModuleParams {
 
         // Outer Spartan — group-split uniskip.
         //
-        // 19 constraints split into 2 groups (10 + 9). The uniskip domain
-        // covers the larger group. One eq variable selects the group.
+        // 32 eq constraints (19 RV + 13 BN254 Fr) split into 2 groups of 16.
+        // The uniskip domain covers the group size. One eq variable selects
+        // the group.
         //   L(τ_high, Y) · t1(Y) where t1 has degree 2(K-1), L has degree K-1.
         //   s1(Y) = L × t1 has degree 3(K-1), so 3(K-1)+1 coefficients.
-        let outer_uniskip_degree = UNISKIP_DOMAIN_SIZE - 1; // 9
-        let outer_uniskip_domain = UNISKIP_DOMAIN_SIZE; // 10
-        let outer_uniskip_num_coeffs = 3 * outer_uniskip_degree + 1; // 28
-        let outer_uniskip_poly_degree = outer_uniskip_num_coeffs - 1; // 27
+        let outer_uniskip_degree = UNISKIP_DOMAIN_SIZE - 1; // 15
+        let outer_uniskip_domain = UNISKIP_DOMAIN_SIZE; // 16
+        let outer_uniskip_num_coeffs = 3 * outer_uniskip_degree + 1; // 46
+        let outer_uniskip_poly_degree = outer_uniskip_num_coeffs - 1; // 45
         let outer_remaining_degree = 3;
         // 1 streaming round + log_t linear rounds. The streaming round binds
         // the extra streaming variable (Az/Bz are DuplicateInterleaved to 2T).
