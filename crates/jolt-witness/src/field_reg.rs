@@ -85,12 +85,17 @@ pub struct FieldRegEvent {
 
 /// Replays the FieldRegEvent stream to produce per-cycle snapshots.
 ///
-/// Assumes `events` are sorted by `cycle` (the tracer emits them in order)
-/// and that each cycle has at most one event. Non-FR cycles get the all-zero
-/// default snapshot.
+/// Validates the event stream up-front (sorted strictly by cycle, no
+/// duplicates, all in-range), then walks the trace applying each event in
+/// order. Non-FR cycles get the all-zero default snapshot.
 ///
 /// `bytecode` supplies the per-cycle `frs1`/`frs2`/`reads_frs2` metadata;
-/// events drive the write-side state evolution.
+/// events drive the write-side state evolution. Stage 5 FieldRegValEvaluation
+/// cryptographically enforces `events.slot == bytecode.frd` and a consistent
+/// state evolution (any malformed stream causes sumcheck rejection downstream)
+/// — but we still validate at the host layer so production callers get a
+/// clear, immediate error rather than a cryptic deep-prover failure. See
+/// `specs/fr-v2-audit.md` C9 + C10.
 pub fn replay_field_regs(
     trace_len: usize,
     bytecode: &[FrCycleBytecode],
@@ -101,6 +106,25 @@ pub fn replay_field_regs(
         trace_len,
         "bytecode snapshot length must match trace length"
     );
+
+    // Stream-shape validation. Promoted from previous lax handling
+    // (out-of-order/dup/OOB events were silently dropped) per audit C10.
+    for window in events.windows(2) {
+        assert!(
+            window[0].cycle < window[1].cycle,
+            "FieldRegEvent stream not strictly sorted: cycle {} >= cycle {} (no duplicates allowed)",
+            window[0].cycle,
+            window[1].cycle,
+        );
+    }
+    if let Some(last) = events.last() {
+        assert!(
+            last.cycle < trace_len,
+            "FieldRegEvent at cycle {} is past trace_len {}",
+            last.cycle,
+            trace_len,
+        );
+    }
 
     let mut state: [FrLimbs; 16] = [[0u64; 4]; 16];
     let mut snapshots: Vec<FrCycleData> = vec![FrCycleData::default(); trace_len];
@@ -125,7 +149,13 @@ pub fn replay_field_regs(
 
         if let Some(ev) = event_for_cycle {
             let slot = ev.slot as usize & 0xF;
-            debug_assert_eq!(
+            // Promoted from `debug_assert_eq!` (audit C9): in release builds
+            // the previous check was stripped, so a host-side state-tracking
+            // bug would silently produce an inconsistent witness. The witness
+            // would still be caught downstream by Stage 5 ValEvaluation, but
+            // the failure would surface as a cryptic sumcheck error far from
+            // the actual bug. Asserting at the host layer fails loud and near.
+            assert_eq!(
                 state[slot], ev.old,
                 "FieldRegEvent.old disagrees with replayed state at cycle {t}, slot {slot}"
             );
@@ -363,5 +393,61 @@ mod tests {
             new: [2, 2, 2, 2],
         }];
         let _ = replay_field_regs(1, &bytecode, &events);
+    }
+
+    #[test]
+    #[should_panic(expected = "not strictly sorted")]
+    fn out_of_order_events_are_rejected() {
+        let bytecode = vec![FrCycleBytecode::default(); 4];
+        // cycle 2 before cycle 1 → out of order.
+        let events = vec![
+            FieldRegEvent {
+                cycle: 2,
+                slot: 0,
+                old: [0; 4],
+                new: [1, 0, 0, 0],
+            },
+            FieldRegEvent {
+                cycle: 1,
+                slot: 0,
+                old: [0; 4],
+                new: [2, 0, 0, 0],
+            },
+        ];
+        let _ = replay_field_regs(4, &bytecode, &events);
+    }
+
+    #[test]
+    #[should_panic(expected = "not strictly sorted")]
+    fn duplicate_cycle_events_are_rejected() {
+        let bytecode = vec![FrCycleBytecode::default(); 2];
+        let events = vec![
+            FieldRegEvent {
+                cycle: 0,
+                slot: 0,
+                old: [0; 4],
+                new: [1, 0, 0, 0],
+            },
+            FieldRegEvent {
+                cycle: 0, // duplicate
+                slot: 0,
+                old: [0; 4],
+                new: [2, 0, 0, 0],
+            },
+        ];
+        let _ = replay_field_regs(2, &bytecode, &events);
+    }
+
+    #[test]
+    #[should_panic(expected = "past trace_len")]
+    fn out_of_range_event_is_rejected() {
+        let bytecode = vec![FrCycleBytecode::default(); 2];
+        let events = vec![FieldRegEvent {
+            cycle: 5, // > trace_len = 2
+            slot: 0,
+            old: [0; 4],
+            new: [1, 0, 0, 0],
+        }];
+        let _ = replay_field_regs(2, &bytecode, &events);
     }
 }
