@@ -7,12 +7,19 @@
 mod analyze;
 pub mod bytecode;
 mod cycle_row;
+pub mod flags;
+pub mod instructions;
 mod program;
 pub mod ram;
 mod tracer_cycle;
 
 pub use bytecode::BytecodePreprocessing;
 pub use cycle_row::CycleRow;
+pub use flags::{
+    CircuitFlagSet, CircuitFlags, Flags, InstructionFlagSet, InstructionFlags,
+    InterleavedBitsMarker, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
+};
+pub use instructions::JoltInstructions;
 
 use std::path::{Path, PathBuf};
 

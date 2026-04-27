@@ -2,16 +2,12 @@
 //!
 //! [`CycleRow`] is the boundary between the tracer (which produces concrete
 //! `Cycle` values) and the proving system (which consumes per-cycle data to
-//! build witnesses). All ISA-specific logic (instruction dispatch, flag
-//! computation, operand routing) is pushed into the `CycleRow` implementation,
-//! so the prover sees only scalars and flag sets.
-
-use jolt_riscv::flags::{CircuitFlagSet, InstructionFlagSet};
+//! build witnesses). It exposes the structural data of a cycle (PC, register
+//! reads/writes, RAM accesses, immediates). Flag and lookup-table-aware
+//! computations live in `jolt-lookup-tables` since they require lookup-table
+//! types.
 
 /// Abstract interface for one execution cycle of a RISC-V trace.
-///
-/// jolt-zkvm's witness layer is generic over `CycleRow`. The concrete
-/// implementation for `tracer::Cycle` lives in this crate (`jolt-host`).
 pub trait CycleRow: Copy {
     /// A no-op (padding) cycle.
     fn noop() -> Self;
@@ -55,30 +51,4 @@ pub trait CycleRow: Copy {
 
     /// The immediate operand, sign-extended.
     fn imm(&self) -> i128;
-
-    /// R1CS circuit flags (packed bitfield, indexed by `CircuitFlags`).
-    fn circuit_flags(&self) -> CircuitFlagSet;
-
-    /// Non-R1CS instruction flags (packed bitfield, indexed by `InstructionFlags`).
-    fn instruction_flags(&self) -> InstructionFlagSet;
-
-    /// Combined lookup index for RA polynomial construction (128-bit).
-    fn lookup_index(&self) -> u128;
-
-    /// Lookup table evaluation result.
-    ///
-    /// For arithmetic: the computation result (e.g., rs1 + rs2 for ADD).
-    /// For branches: the comparison result (0 or 1).
-    /// For stores: zero.
-    /// For no-ops: zero.
-    ///
-    /// This is the value of V_LOOKUP_OUTPUT in the R1CS witness.
-    fn lookup_output(&self) -> u64;
-
-    /// Index of the lookup table this instruction uses, or `None` for no-ops.
-    ///
-    /// The index corresponds to `LookupTableFlag(i)` — a per-cycle boolean
-    /// that's 1 iff this cycle uses table `i`. Used by BytecodeReadRaf's
-    /// multi-stage input claim.
-    fn lookup_table_index(&self) -> Option<usize>;
 }

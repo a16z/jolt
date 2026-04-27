@@ -14,8 +14,8 @@ workspace = true
 [dependencies]
 bincode.workspace = true
 common = { workspace = true }
-jolt-lookup-tables = { workspace = true }
-jolt-riscv = { workspace = true }
+jolt-riscv-derive = { workspace = true }
 serde.workspace = true
+strum = { workspace = true, features = ["derive"] }
 tracer = { workspace = true, features = ["std"] }
 tracing.workspace = true
