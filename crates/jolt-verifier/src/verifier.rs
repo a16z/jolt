@@ -430,8 +430,12 @@ fn evaluate_formula<F: Field>(
                     at_stage,
                 } => {
                     // LT(x, y) = Σᵢ (1 − xᵢ)·yᵢ · Πⱼ<ᵢ eq(xⱼ, yⱼ).
-                    let x: Vec<F> = chs.iter().map(|&ci| challenges[ci.0]).collect();
-                    let y = resolve_point(sumcheck_points, point_override, at_stage.0);
+                    //
+                    // Per the prover's LtTable construction (table[j] = LT(j, chs)),
+                    // the MLE evaluation at sumcheck point s is LT(s, chs). So
+                    // x = sumcheck point (at_stage), y = challenges values.
+                    let x = resolve_point(sumcheck_points, point_override, at_stage.0);
+                    let y: Vec<F> = chs.iter().map(|&ci| challenges[ci.0]).collect();
                     assert_eq!(x.len(), y.len(), "LtEval challenge/point length mismatch");
                     let one = F::one();
                     let mut lt = F::zero();

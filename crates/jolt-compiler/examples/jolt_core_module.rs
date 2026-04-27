@@ -4160,6 +4160,12 @@ fn build_stage4(
     }
     push_op!(
         ops,
+        Op::RecordEvals {
+            polys: stage4_eval_polys.clone(),
+        }
+    );
+    push_op!(
+        ops,
         Op::AbsorbEvals {
             polys: stage4_eval_polys,
             tag: DomainSeparator::OpeningClaim,
@@ -6918,45 +6924,218 @@ fn build_bytecode_read_raf_claim(
     ClaimFormula { terms }
 }
 
-/// Verifier schedule for Stage 4.
+/// Verifier schedule for Stage 4 (RegistersRWC + RamValCheck).
 ///
-/// **PARTIAL — squeezes pre-sumcheck challenges only, no sumcheck verification.**
-///
-/// The full schedule was attempted in
-/// commit (reverted) but produced an `EvaluationMismatch` at
-/// `CheckOutput`: the prover's batched final_eval didn't match the
-/// composed output_check formula despite the input-claim formulas,
-/// normalization (Segments [log_T, log_K_REG], output_order [1, 0]),
-/// and StageEval indices matching the prover side. Diagnosing the
-/// math discrepancy is non-trivial — likely a subtle issue with the
-/// 2-phase RegistersRWC composition or how the EqEvalSlice resolves
-/// the cycle slice of the normalized point. The infrastructure
-/// (`ClaimFactor::LtEval`, `VerifierOp::EvaluatePreprocessed`,
-/// `Preprocessing.initial_ram_state`, `evaluate_preprocessed_poly_at`)
-/// is in place; finishing wiring is a focused follow-up.
+/// Two batched sumcheck instances:
+///   [0] RegistersReadWriteChecking — log_K_REG + log_T rounds, degree 3
+///   [1] RamValCheck                — log_T rounds, degree 3, first_active = log_K_REG
 fn build_verifier_stage4_ops(
-    _p: &Polys,
+    p: &Polys,
     params: &ModuleParams,
     _ch: &ChallengeTable,
 ) -> Vec<VerifierOp> {
-    // Stub: only emits the pre-sumcheck transcript ops to keep the
-    // Fiat-Shamir state aligned with the prover. Does NOT verify the
-    // batched sumcheck or check the output formula. Tampering a stage 4
-    // round-poly coefficient is therefore invisible to V_mod — tracked
-    // as KNOWN_GAPS entries (T1, T8) for stage 4 in the cross-verifier
-    // soundness suite registry.
     let s2_ch_base = params.num_tau + 1 + 1 + params.outer_remaining_rounds;
     let stage2_pre = 1 + 1 + 1 + 1 + params.log_k_ram;
     let stage2_batch_base = s2_ch_base + stage2_pre;
     let stage2_round_base = stage2_batch_base + params.stage2_num_instances;
     let s3_ch_base = stage2_round_base + params.stage2_max_rounds;
+    let s3_round_base = s3_ch_base + 6;
     let s4_ch_base = s3_ch_base + 6 + params.log_t;
 
     let log_k_reg = 7usize;
     let stage4_max_rounds = log_k_reg + params.log_t;
+    let ram_vc_rounds = params.log_t;
 
     let ch_gamma_reg_rw = ChallengeIdx(s4_ch_base);
     let ch_gamma_ram_vc = ChallengeIdx(s4_ch_base + 1);
+    let s4_batch_challenges: Vec<ChallengeIdx> =
+        (s4_ch_base + 2..s4_ch_base + 4).map(ChallengeIdx).collect();
+    let s4_round_slots: Vec<ChallengeIdx> = (s4_ch_base + 4..s4_ch_base + 4 + stage4_max_rounds)
+        .map(ChallengeIdx)
+        .collect();
+
+    let r_spartan_challenges: Vec<ChallengeIdx> = (s3_round_base..s3_round_base + params.log_t)
+        .rev()
+        .map(ChallengeIdx)
+        .collect();
+    let r_address_challenges: Vec<ChallengeIdx> = (stage2_round_base + params.log_t
+        ..stage2_round_base + params.log_t + params.log_k_ram)
+        .rev()
+        .map(ChallengeIdx)
+        .collect();
+    let r_cycle_rw_challenges: Vec<ChallengeIdx> = (stage2_round_base
+        ..stage2_round_base + params.log_t)
+        .rev()
+        .map(ChallengeIdx)
+        .collect();
+
+    // Input claims.
+    let reg_rw_input_claim = ClaimFormula {
+        terms: vec![
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![ClaimFactor::Eval(p.rd_write_value)],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_gamma_reg_rw),
+                    ClaimFactor::Eval(p.rs1_val),
+                ],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_gamma_reg_rw),
+                    ClaimFactor::Challenge(ch_gamma_reg_rw),
+                    ClaimFactor::Eval(p.rs2_val),
+                ],
+            },
+        ],
+    };
+    let ram_vc_input_claim = ClaimFormula {
+        terms: vec![
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![ClaimFactor::Eval(p.ram_val)],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_gamma_ram_vc),
+                    ClaimFactor::Eval(p.ram_val_final),
+                ],
+            },
+            ClaimTerm {
+                coeff: -1,
+                factors: vec![ClaimFactor::Eval(PolynomialId::RamInit)],
+            },
+            ClaimTerm {
+                coeff: -1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_gamma_ram_vc),
+                    ClaimFactor::Eval(PolynomialId::RamInit),
+                ],
+            },
+        ],
+    };
+
+    // StageEval indices match prover-side stage4_eval_polys order:
+    // [reg_val, reg_ra_rs1, reg_ra_rs2, reg_wa, rd_inc, ram_ra_wa, ram_inc]
+    const SE_VAL: usize = 0;
+    const SE_RS1_RA: usize = 1;
+    const SE_RS2_RA: usize = 2;
+    const SE_RD_WA: usize = 3;
+    const SE_RD_INC: usize = 4;
+    const SE_RAM_RA: usize = 5;
+    const SE_RAM_INC: usize = 6;
+
+    let reg_rw_eq = ClaimFactor::EqEvalSlice {
+        challenges: r_spartan_challenges,
+        at_stage: VerifierStageIndex(3),
+        offset: log_k_reg,
+    };
+    let reg_rw_output_check = ClaimFormula {
+        terms: vec![
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    reg_rw_eq.clone(),
+                    ClaimFactor::StageEval(SE_RD_WA),
+                    ClaimFactor::StageEval(SE_RD_INC),
+                ],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    reg_rw_eq.clone(),
+                    ClaimFactor::StageEval(SE_RD_WA),
+                    ClaimFactor::StageEval(SE_VAL),
+                ],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_gamma_reg_rw),
+                    reg_rw_eq.clone(),
+                    ClaimFactor::StageEval(SE_RS1_RA),
+                    ClaimFactor::StageEval(SE_VAL),
+                ],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_gamma_reg_rw),
+                    ClaimFactor::Challenge(ch_gamma_reg_rw),
+                    reg_rw_eq,
+                    ClaimFactor::StageEval(SE_RS2_RA),
+                    ClaimFactor::StageEval(SE_VAL),
+                ],
+            },
+        ],
+    };
+
+    let ram_vc_lt = ClaimFactor::LtEval {
+        challenges: r_cycle_rw_challenges,
+        at_stage: VerifierStageIndex(3),
+    };
+    let ram_vc_output_check = ClaimFormula {
+        terms: vec![
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::StageEval(SE_RAM_INC),
+                    ClaimFactor::StageEval(SE_RAM_RA),
+                    ram_vc_lt,
+                ],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_gamma_ram_vc),
+                    ClaimFactor::StageEval(SE_RAM_INC),
+                    ClaimFactor::StageEval(SE_RAM_RA),
+                ],
+            },
+        ],
+    };
+
+    let instances = vec![
+        SumcheckInstance {
+            input_claim: reg_rw_input_claim,
+            output_check: reg_rw_output_check,
+            num_rounds: stage4_max_rounds,
+            degree: 3,
+            normalize: Some(PointNormalization::Segments {
+                sizes: vec![params.log_t, log_k_reg],
+                output_order: vec![1, 0],
+            }),
+        },
+        SumcheckInstance {
+            input_claim: ram_vc_input_claim,
+            output_check: ram_vc_output_check,
+            num_rounds: ram_vc_rounds,
+            degree: 3,
+            normalize: Some(PointNormalization::Reverse),
+        },
+    ];
+
+    let stage4_eval_polys = vec![
+        p.reg_val,
+        p.reg_ra_rs1,
+        p.reg_ra_rs2,
+        p.reg_wa,
+        p.rd_inc,
+        PolynomialId::BatchEq(10),
+        p.ram_inc,
+    ];
+    let evaluations: Vec<_> = stage4_eval_polys
+        .iter()
+        .map(|&poly| Evaluation {
+            poly,
+            at_stage: VerifierStageIndex(3),
+        })
+        .collect();
 
     let mut ops = vec![VerifierOp::BeginStage];
     push_verifier_op!(
@@ -6977,26 +7156,40 @@ fn build_verifier_stage4_ops(
             challenge: ch_gamma_ram_vc,
         }
     );
-    // Squeeze the 2 batching coefficients + stage4_max_rounds round
-    // challenges that the prover would consume during batched-sumcheck
-    // execution. These keep the challenge table populated so downstream
-    // stages (5+) read the same Fiat-Shamir values they did before.
-    for i in 0..2usize {
-        push_verifier_op!(
-            ops,
-            VerifierOp::Squeeze {
-                challenge: ChallengeIdx(s4_ch_base + 2 + i),
-            }
-        );
-    }
-    for i in 0..stage4_max_rounds {
-        push_verifier_op!(
-            ops,
-            VerifierOp::Squeeze {
-                challenge: ChallengeIdx(s4_ch_base + 4 + i),
-            }
-        );
-    }
+    push_verifier_op!(
+        ops,
+        VerifierOp::EvaluatePreprocessed {
+            source: PolynomialId::RamInit,
+            at_challenges: r_address_challenges,
+            store_as: PolynomialId::RamInit,
+        }
+    );
+    push_verifier_op!(
+        ops,
+        VerifierOp::VerifySumcheck {
+            instances: instances.clone(),
+            stage: 3,
+            batch_challenges: s4_batch_challenges.clone(),
+            claim_tag: Some(DomainSeparator::SumcheckClaim),
+            sumcheck_challenge_slots: s4_round_slots,
+        }
+    );
+    push_verifier_op!(ops, VerifierOp::RecordEvals { evals: evaluations });
+    push_verifier_op!(
+        ops,
+        VerifierOp::AbsorbEvals {
+            polys: stage4_eval_polys,
+            tag: DomainSeparator::OpeningClaim,
+        }
+    );
+    push_verifier_op!(
+        ops,
+        VerifierOp::CheckOutput {
+            instances,
+            stage: 3,
+            batch_challenges: s4_batch_challenges,
+        }
+    );
     ops
 }
 

@@ -32,20 +32,10 @@ pub struct KnownGap {
 /// Stage 3 closed: build_verifier_stage3_ops now emits the full
 /// VerifySumcheck/CheckOutput schedule for [Shift, InstructionInput,
 /// RegistersClaimReduction] (see `jolt_core_module.rs`).
+///
+/// Stage 4 closed: build_verifier_stage4_ops now emits the full
+/// VerifySumcheck/CheckOutput schedule for [RegistersRWC, RamValCheck].
 pub const KNOWN_GAPS: &[KnownGap] = &[
-    // ── Stage 4 (RegistersRWC / RamValCheck) ──
-    KnownGap {
-        stage: 4,
-        kind: TamperKind::T1RoundPolyCoeff,
-        rationale: "Stage 4 verifier stubbed (squeezes + ram_val_check_gamma only)",
-        owner: "verifier-agent",
-    },
-    KnownGap {
-        stage: 4,
-        kind: TamperKind::T8RoundPolyDegree,
-        rationale: "Stage 4 verifier stubbed (no sumcheck verification)",
-        owner: "verifier-agent",
-    },
     // ── Stage 5 (InstructionReadRaf / RamRaClaimReduction / RegistersValEvaluation) ──
     // Not assembled into build_module's verifier_ops chain at all.
     KnownGap {
