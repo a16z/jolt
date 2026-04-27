@@ -52,18 +52,16 @@ use jolt_witness::derived::{
 };
 use jolt_witness::preprocessed::PreprocessedSource;
 use jolt_witness::provider::ProverData;
-use jolt_witness::{
-    field_reg_inc_polynomial, FieldRegEvent, PolynomialConfig, PolynomialId, Polynomials,
-};
+use jolt_witness::{FieldRegEvent, PolynomialConfig, PolynomialId, Polynomials};
 use jolt_zkvm::prove::prove as modular_prove;
 use jolt_zkvm::runtime::prefix_suffix::LookupTraceData;
 use num_traits::{One, Zero};
 
 type ModFr = jolt_field::Fr;
 
-// `field_reg_inc_polynomial` (re-exported from `jolt_witness::field_reg`) is
-// the canonical helper. Used below post-`polys.finish()` to populate
-// `FieldRegInc`. See specs/fr-v2-audit.md C11.
+// FieldRegInc population is bundled into `Polynomials::finish_with_fr_events`
+// (see jolt-witness/src/polynomials.rs); no separate helper invocation
+// needed.
 
 /// Drop-in copy of the bench's `build_protocol_module` — shells out to the
 /// `jolt_core_module` example to emit the protocol binary, then loads it.
@@ -349,15 +347,10 @@ fn poseidon2_sdk_modular_prove_smoke() {
 
     let mut polys = Polynomials::<ModFr>::new(poly_config);
     polys.push(&cycle_inputs);
-    polys.finish();
-
-    // Overwrite all-zero pre-allocated FieldRegInc with actual deltas.
-    // CycleInput::dense uses i128 (RdInc/RamInc fit), but Fr deltas are
-    // 256-bit so the dense witness slot stays at 0 during push() and is
-    // populated here from the FieldRegEvent stream. Required for any
-    // FR-active program — see audit C11.
-    let field_reg_inc = field_reg_inc_polynomial::<ModFr>(&fr_events, trace_length);
-    let _ = polys.insert(PolynomialId::FieldRegInc, field_reg_inc);
+    // FR-active program: bundles `finish()` + FieldRegInc population from
+    // the event stream. The plain `finish()` would leave FieldRegInc
+    // all-zero, breaking the FR Twist Stage 5 ValEvaluation identity.
+    polys.finish_with_fr_events(&fr_events, trace_length);
 
     // SDK Poseidon2 has no advice consumers — both advice slots stay zero.
     let _ = polys.insert(

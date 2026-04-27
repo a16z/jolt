@@ -106,14 +106,13 @@ fn cycle_input(
     });
 
     // FieldRegRa one-hot index: encode the FR write slot for this cycle.
-    // None for non-writing cycles (preserves all-zero one-hot for non-FR
-    // traces). FieldRegInc dense is left at 0 here — Fr deltas are 256-bit
-    // and don't fit in i128, so the prover-side caller MUST overwrite the
-    // FieldRegInc buffer for any FR-active program by calling
-    // `polys.insert(PolynomialId::FieldRegInc,
-    //               jolt_witness::field_reg_inc_polynomial(events, T))`
-    // after `polys.finish()`. Forgetting this silently commits all-zero
-    // deltas while FieldRegRa is non-zero — see `specs/fr-v2-audit.md` C11.
+    // None for non-writing cycles. FieldRegInc dense is left at 0 here —
+    // Fr deltas are 256-bit and don't fit in i128, so FR-active provers
+    // MUST replace the plain `polys.finish()` call with
+    // `polys.finish_with_fr_events(events, T)`, which bundles `finish()`
+    // + FieldRegInc population. Forgetting this silently commits all-zero
+    // deltas while FieldRegRa is non-zero, breaking the FR Twist Stage 5
+    // ValEvaluation identity.
     let fr_write_slot = fr_snapshot
         .and_then(|s| s.write_slot)
         .map(|k| k as u128);

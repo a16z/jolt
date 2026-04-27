@@ -123,6 +123,12 @@ impl<F: Field> Polynomials<F> {
     /// After this call, all polynomial buffers are available via
     /// [`get`](Self::get) / [`take`](Self::take). No more [`push`](Self::push)
     /// calls are allowed.
+    ///
+    /// **For programs with a non-empty `FieldRegEvent` stream, use
+    /// [`finish_with_fr_events`](Self::finish_with_fr_events) instead.**
+    /// `FieldRegInc` is committed as a 256-bit-per-cycle dense polynomial
+    /// that doesn't fit `CycleInput::dense`'s `i128` slot, so this method
+    /// alone leaves it at the all-zero pre-allocation.
     pub fn finish(&mut self) {
         assert!(!self.finished, "finish() called twice");
         self.finished = true;
@@ -134,6 +140,37 @@ impl<F: Field> Polynomials<F> {
                 .one_hot
                 .insert(id, OneHotPolynomial::new(buf.k, buf.indices));
         }
+    }
+
+    /// Finalizes the polynomial set including the FR-side `FieldRegInc`
+    /// dense polynomial.
+    ///
+    /// Equivalent to:
+    /// ```ignore
+    /// polys.finish();
+    /// polys.insert(
+    ///     PolynomialId::FieldRegInc,
+    ///     field_reg_inc_polynomial(events, trace_length),
+    /// );
+    /// ```
+    /// but bundled so callers can't forget the second step. For programs
+    /// with no FR events pass `&[]`; the resulting FieldRegInc is
+    /// trivially all-zero (matches the pre-allocation). For programs with
+    /// FR events the helper computes per-cycle `new − old` deltas as
+    /// field-element subtraction (mod p), then inserts.
+    ///
+    /// Required for any program with FR events — without it, `FieldRegRa`
+    /// is non-zero (write-slot one-hot) while `FieldRegInc` stays
+    /// all-zero, silently breaking the FR Twist Stage 5 ValEvaluation
+    /// identity.
+    pub fn finish_with_fr_events(
+        &mut self,
+        events: &[crate::field_reg::FieldRegEvent],
+        trace_length: usize,
+    ) {
+        self.finish();
+        let inc = crate::field_reg::field_reg_inc_polynomial::<F>(events, trace_length);
+        let _ = self.insert(PolynomialId::FieldRegInc, inc);
     }
 
     /// Returns the evaluation buffer for a polynomial.
