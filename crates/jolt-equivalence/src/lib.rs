@@ -13,6 +13,7 @@
 //! for the RamRW phase 1 kernel".
 
 pub mod checkpoint;
+pub mod cross_verifier;
 
 use std::fmt;
 
