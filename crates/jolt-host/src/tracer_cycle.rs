@@ -483,20 +483,24 @@ impl CycleRow for Cycle {
     }
 
     fn fr_meta(&self) -> jolt_witness::FrCycleBytecode {
-        // Mirrors `with_isa_struct!` dispatch. For each FR variant we extract
-        // the per-cycle frs1/frs2/frd indices and which ones are FReg-side
-        // reads/writes. The frd field is sourced from the instruction's `rd`
-        // operand so that the FR write-slot indicator (`field_reg_wa` /
-        // `frd_gather_index`) inherits the bytecode-anchored cryptographic
-        // binding — see `specs/fr-v2-audit.md` C7.
+        // For each FR cycle variant extract the per-cycle frs1/frs2/frd
+        // slot indices and which sides (read/write) are active. The frd
+        // field is sourced from the instruction's rd operand so that the
+        // FR write-slot indicator polys (field_reg_wa / frd_gather_index)
+        // inherit a cryptographic anchor in committed bytecode.
+        //
+        // FR has 16 slots; RISC-V R-type register fields are 5 bits. Mask
+        // `& 0xF` at the producer so a single source enforces the
+        // 0..=15 invariant — consumers can rely on the value being in
+        // range without re-masking.
         match self {
             // 2-input FReg ops: read frs1 + frs2 (FINV reads frs1 only),
             // write frd.
             Cycle::FieldOp(c) => {
                 let funct3 = c.instruction.funct3;
-                let frs1 = c.instruction.operands.rs1;
-                let frs2 = c.instruction.operands.rs2;
-                let frd = c.instruction.operands.rd;
+                let frs1 = c.instruction.operands.rs1 & 0xF;
+                let frs2 = c.instruction.operands.rs2 & 0xF;
+                let frd = c.instruction.operands.rd & 0xF;
                 let is_finv = funct3 == 0x04;
                 jolt_witness::FrCycleBytecode {
                     frs1,
@@ -509,8 +513,8 @@ impl CycleRow for Cycle {
             }
             // FieldAssertEq reads frs1 + frs2, no write.
             Cycle::FieldAssertEq(c) => jolt_witness::FrCycleBytecode {
-                frs1: c.instruction.operands.rs1,
-                frs2: c.instruction.operands.rs2,
+                frs1: c.instruction.operands.rs1 & 0xF,
+                frs2: c.instruction.operands.rs2 & 0xF,
                 frd: 0,
                 reads_frs1: true,
                 reads_frs2: true,
@@ -519,22 +523,22 @@ impl CycleRow for Cycle {
             // Bridge ops (FieldMov / FieldSLL{64,128,192}) read XReg, not
             // FReg — no FR-side reads — but DO write frd.
             Cycle::FieldMov(c) => jolt_witness::FrCycleBytecode {
-                frd: c.instruction.operands.rd,
+                frd: c.instruction.operands.rd & 0xF,
                 writes_frd: true,
                 ..Default::default()
             },
             Cycle::FieldSLL64(c) => jolt_witness::FrCycleBytecode {
-                frd: c.instruction.operands.rd,
+                frd: c.instruction.operands.rd & 0xF,
                 writes_frd: true,
                 ..Default::default()
             },
             Cycle::FieldSLL128(c) => jolt_witness::FrCycleBytecode {
-                frd: c.instruction.operands.rd,
+                frd: c.instruction.operands.rd & 0xF,
                 writes_frd: true,
                 ..Default::default()
             },
             Cycle::FieldSLL192(c) => jolt_witness::FrCycleBytecode {
-                frd: c.instruction.operands.rd,
+                frd: c.instruction.operands.rd & 0xF,
                 writes_frd: true,
                 ..Default::default()
             },

@@ -43,21 +43,23 @@ pub struct FrCycleData {
 /// Input snapshot of a single cycle's bytecode fields as consumed by the
 /// FR replay. The caller populates this from the bytecode preprocessing
 /// or directly from the tracer's per-cycle instruction decoding.
+///
+/// **Invariant:** all index fields (`frs1`, `frs2`, `frd`) MUST be in
+/// `0..=15`. Producers mask once at construction; consumers may rely
+/// on the value being in range. The modular pipeline's producer is
+/// `<Cycle as CycleRow>::fr_meta` (in jolt-host).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FrCycleBytecode {
-    /// Low 4 bits of the 5-bit `rs1` field (0..=15). Ignored when
-    /// `reads_frs1` is false.
+    /// FR slot index for `frs1` (0..=15). Ignored when `reads_frs1`
+    /// is false.
     pub frs1: u8,
-    /// Low 4 bits of `rs2`. Ignored when `reads_frs2` is false.
+    /// FR slot index for `frs2` (0..=15). Ignored when `reads_frs2`
+    /// is false.
     pub frs2: u8,
-    /// Low 4 bits of the 5-bit `rd` field (0..=15). Ignored when
-    /// `writes_frd` is false. Sourced from the cycle's instruction (and
-    /// thus from committed bytecode via Spartan), so the FR write-slot
-    /// indicator (`field_reg_wa` / `frd_gather_index`) inherits a
-    /// cryptographic anchor — without this, the prover could supply a
-    /// `field_reg_wa` poly that disagrees with the cycle's actual write
-    /// slot and the verifier would have nothing to cross-check against.
-    /// See `specs/fr-v2-audit.md` C7.
+    /// FR slot index for `frd` (0..=15). Ignored when `writes_frd` is
+    /// false. Sourced from the cycle's instruction (and thus from
+    /// committed bytecode via Spartan), so the FR write-slot indicator
+    /// polys inherit a cryptographic anchor.
     pub frd: u8,
     /// True if the cycle's instruction reads `frs1` (i.e. the 2-input FR
     /// ops FMUL/FADD/FSUB/FAssertEq, plus FINV's single-input read).
