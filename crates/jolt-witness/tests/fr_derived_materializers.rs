@@ -182,9 +182,9 @@ fn field_reg_val_tracks_running_state() {
 
 #[test]
 fn frd_gather_index_marks_writes() {
-    // Per audit C7, `frd_gather_index` is sourced from BYTECODE (not events)
-    // so the FR write-slot indicator inherits a committed-bytecode anchor.
-    // Set writes_frd/frd in the bytecode entries; events provide the values
+    // `frd_gather_index` is sourced from BYTECODE (not events) so the FR
+    // write-slot indicator inherits a committed-bytecode anchor. Set
+    // writes_frd/frd in the bytecode entries; events provide the values
     // (used by other materializers but not by frd_gather_index).
     let bytecode = vec![
         FrCycleBytecode::default(),
@@ -261,11 +261,11 @@ fn no_config_yields_zero_materializers() {
     );
 }
 
-/// The `PolynomialConfig` computes `field_reg_d = 1` for default
-/// log_k_chunk=4 — a basic sanity check exercising the parameter surface
-/// alongside the derived materializers.
+/// FieldRegRa(d) is not committed; `field_reg_d == 0` is the steady-state
+/// expectation since the FR write-slot indicator polys are materialized
+/// from bytecode at proof time.
 #[test]
 fn polynomial_config_has_field_reg_chunk_count() {
     let cfg = PolynomialConfig::new(4, 128, 16, 24);
-    assert_eq!(cfg.field_reg_d, 1);
+    assert_eq!(cfg.field_reg_d, 0);
 }

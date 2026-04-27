@@ -136,7 +136,15 @@ impl ModuleParams {
         let instruction_d = LOG_K_INSTRUCTION / log_k_chunk;
         let bytecode_d = log_k_bytecode.div_ceil(log_k_chunk);
         let ram_d = log_k_ram.div_ceil(log_k_chunk);
-        let field_reg_d = LOG_K_FR.div_ceil(log_k_chunk);
+        // FieldRegRa(d) is not committed: the FR write-slot indicator
+        // (`field_reg_wa` / `frd_gather_index`) is materialized at proof
+        // time from committed bytecode (cfg.bytecode.frd / writes_frd),
+        // which gives it a cryptographic anchor without a separate
+        // commitment. The scaffolding (field_reg_d, FieldRegRa
+        // PolynomialId) stays in place so a future revival via a
+        // Stage-6 reduction sumcheck would be additive rather than a
+        // re-introduction.
+        let field_reg_d = 0;
 
         // +1 dense (FieldRegInc) + field_reg_d one-hot chunks.
         let num_committed = 3 + instruction_d + ram_d + bytecode_d + field_reg_d;

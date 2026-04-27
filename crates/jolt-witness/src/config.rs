@@ -59,7 +59,10 @@ impl PolynomialConfig {
         let instruction_d = log_k_instruction.div_ceil(log_k_chunk);
         let bytecode_d = log_k_bytecode.div_ceil(log_k_chunk);
         let ram_d = log_k_ram.div_ceil(log_k_chunk);
-        let field_reg_d = LOG_K_FR.div_ceil(log_k_chunk);
+        // FieldRegRa(d) is not committed; FR write-slot indicators
+        // are materialized from bytecode at proof time. See
+        // `crates/jolt-compiler/src/params.rs` for the rationale.
+        let field_reg_d = 0;
 
         Self {
             log_k_chunk,
@@ -201,8 +204,9 @@ mod tests {
     fn num_polynomials() {
         let c = PolynomialConfig::new(4, 128, 16, 24);
         // 3 dense (RdInc, RamInc, FieldRegInc) + 32 instruction + 4 bytecode
-        // + 6 RAM + 1 FR register (LOG_K_FR=4 fits in a single log_k_chunk=4 chunk).
-        assert_eq!(c.num_polynomials(), 3 + 32 + 4 + 6 + 1);
+        // + 6 RAM + 0 FR register (FieldRegRa(d) is no longer committed; the
+        // FR write-slot indicator is materialized from committed bytecode).
+        assert_eq!(c.num_polynomials(), 3 + 32 + 4 + 6);
     }
 
     #[test]
