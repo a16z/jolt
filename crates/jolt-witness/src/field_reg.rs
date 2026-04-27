@@ -50,6 +50,15 @@ pub struct FrCycleBytecode {
     pub frs1: u8,
     /// Low 4 bits of `rs2`. Ignored when `reads_frs2` is false.
     pub frs2: u8,
+    /// Low 4 bits of the 5-bit `rd` field (0..=15). Ignored when
+    /// `writes_frd` is false. Sourced from the cycle's instruction (and
+    /// thus from committed bytecode via Spartan), so the FR write-slot
+    /// indicator (`field_reg_wa` / `frd_gather_index`) inherits a
+    /// cryptographic anchor — without this, the prover could supply a
+    /// `field_reg_wa` poly that disagrees with the cycle's actual write
+    /// slot and the verifier would have nothing to cross-check against.
+    /// See `specs/fr-v2-audit.md` C7.
+    pub frd: u8,
     /// True if the cycle's instruction reads `frs1` (i.e. the 2-input FR
     /// ops FMUL/FADD/FSUB/FAssertEq, plus FINV's single-input read).
     /// False for non-FR cycles and the bridge ops (FieldMov/FieldSLL*
@@ -58,6 +67,9 @@ pub struct FrCycleBytecode {
     /// True if the cycle reads `frs2` (FMUL/FADD/FSUB/FAssertEq).
     /// False for FieldInv, all bridge ops, and non-FR cycles.
     pub reads_frs2: bool,
+    /// True if the cycle writes `frd`. FMUL/FADD/FSUB/FINV/FMov/FSLL64/128/192
+    /// all write; FAssertEq does not (it asserts equality, no register write).
+    pub writes_frd: bool,
 }
 
 /// A `FieldRegEvent` as emitted by the tracer. Duplicated here rather than
@@ -192,8 +204,10 @@ mod tests {
         let bytecode = vec![FrCycleBytecode {
             frs1: 0,
             frs2: 0,
+            frd: 3,
             reads_frs1: false,
             reads_frs2: false,
+            writes_frd: true,
         }];
         let events = vec![FieldRegEvent {
             cycle: 0,
@@ -211,13 +225,23 @@ mod tests {
     fn field_add_reads_both_operands_from_running_state() {
         // Cycle 0: set f1 = 10. Cycle 1: set f2 = 20. Cycle 2: FieldAdd f1+f2 → f3.
         let bytecode = vec![
-            FrCycleBytecode::default(), // FieldMov writes f1
-            FrCycleBytecode::default(), // FieldMov writes f2
+            FrCycleBytecode {
+                frd: 1,
+                writes_frd: true,
+                ..Default::default()
+            }, // FieldMov writes f1
+            FrCycleBytecode {
+                frd: 2,
+                writes_frd: true,
+                ..Default::default()
+            }, // FieldMov writes f2
             FrCycleBytecode {
                 frs1: 1,
                 frs2: 2,
+                frd: 3,
                 reads_frs1: true,
                 reads_frs2: true,
+                writes_frd: true,
             },
         ];
         let events = vec![
@@ -254,12 +278,19 @@ mod tests {
         // Cycle 0: FieldMov writes f1 = 7. Cycle 1: FieldAssertEq f1 == f1.
         // FieldAssertEq emits slot=frs1, old=new=current value.
         let bytecode = vec![
-            FrCycleBytecode::default(),
+            FrCycleBytecode {
+                frd: 1,
+                writes_frd: true,
+                ..Default::default()
+            }, // FieldMov writes f1
+            // FieldAssertEq: reads frs1+frs2, no write.
             FrCycleBytecode {
                 frs1: 1,
                 frs2: 1,
+                frd: 0,
                 reads_frs1: true,
                 reads_frs2: true,
+                writes_frd: false,
             },
         ];
         let events = vec![

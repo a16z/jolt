@@ -484,36 +484,60 @@ impl CycleRow for Cycle {
 
     fn fr_meta(&self) -> jolt_witness::FrCycleBytecode {
         // Mirrors `with_isa_struct!` dispatch. For each FR variant we extract
-        // the per-cycle frs1/frs2 indices and which ones are FReg-side reads.
-        // Non-FR cycles use the default (no FR access).
+        // the per-cycle frs1/frs2/frd indices and which ones are FReg-side
+        // reads/writes. The frd field is sourced from the instruction's `rd`
+        // operand so that the FR write-slot indicator (`field_reg_wa` /
+        // `frd_gather_index`) inherits the bytecode-anchored cryptographic
+        // binding — see `specs/fr-v2-audit.md` C7.
         match self {
-            // 2-input FReg ops: read frs1 + frs2.
+            // 2-input FReg ops: read frs1 + frs2 (FINV reads frs1 only),
+            // write frd.
             Cycle::FieldOp(c) => {
                 let funct3 = c.instruction.funct3;
                 let frs1 = c.instruction.operands.rs1;
                 let frs2 = c.instruction.operands.rs2;
-                // FINV reads frs1 only; FMUL/FADD/FSUB read both.
+                let frd = c.instruction.operands.rd;
                 let is_finv = funct3 == 0x04;
                 jolt_witness::FrCycleBytecode {
                     frs1,
                     frs2,
+                    frd,
                     reads_frs1: true,
                     reads_frs2: !is_finv,
+                    writes_frd: true,
                 }
             }
-            // FieldAssertEq reads frs1 + frs2 (no write).
+            // FieldAssertEq reads frs1 + frs2, no write.
             Cycle::FieldAssertEq(c) => jolt_witness::FrCycleBytecode {
                 frs1: c.instruction.operands.rs1,
                 frs2: c.instruction.operands.rs2,
+                frd: 0,
                 reads_frs1: true,
                 reads_frs2: true,
+                writes_frd: false,
             },
             // Bridge ops (FieldMov / FieldSLL{64,128,192}) read XReg, not
-            // FReg — no FR-side reads.
-            Cycle::FieldMov(_)
-            | Cycle::FieldSLL64(_)
-            | Cycle::FieldSLL128(_)
-            | Cycle::FieldSLL192(_) => jolt_witness::FrCycleBytecode::default(),
+            // FReg — no FR-side reads — but DO write frd.
+            Cycle::FieldMov(c) => jolt_witness::FrCycleBytecode {
+                frd: c.instruction.operands.rd,
+                writes_frd: true,
+                ..Default::default()
+            },
+            Cycle::FieldSLL64(c) => jolt_witness::FrCycleBytecode {
+                frd: c.instruction.operands.rd,
+                writes_frd: true,
+                ..Default::default()
+            },
+            Cycle::FieldSLL128(c) => jolt_witness::FrCycleBytecode {
+                frd: c.instruction.operands.rd,
+                writes_frd: true,
+                ..Default::default()
+            },
+            Cycle::FieldSLL192(c) => jolt_witness::FrCycleBytecode {
+                frd: c.instruction.operands.rd,
+                writes_frd: true,
+                ..Default::default()
+            },
             // Non-FR cycle.
             _ => jolt_witness::FrCycleBytecode::default(),
         }

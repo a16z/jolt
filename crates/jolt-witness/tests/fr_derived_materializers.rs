@@ -39,23 +39,32 @@ fn field_reg_ra_and_wa_one_hots_match_events() {
     // 3-cycle trace: FieldMov writes f1=10, FieldMov writes f2=20,
     // FieldAdd reads f1+f2, writes f3=30.
     let bytecode = vec![
+        // FieldMov f1: writes frd=1
         FrCycleBytecode {
             frs1: 0,
             frs2: 0,
+            frd: 1,
             reads_frs1: false,
             reads_frs2: false,
+            writes_frd: true,
         },
+        // FieldMov f2: writes frd=2
         FrCycleBytecode {
             frs1: 0,
             frs2: 0,
+            frd: 2,
             reads_frs1: false,
             reads_frs2: false,
+            writes_frd: true,
         },
+        // FieldAdd: reads frs1=1, frs2=2, writes frd=3
         FrCycleBytecode {
             frs1: 1,
             frs2: 2,
+            frd: 3,
             reads_frs1: true,
             reads_frs2: true,
+            writes_frd: true,
         },
     ];
     let events = vec![
@@ -173,7 +182,24 @@ fn field_reg_val_tracks_running_state() {
 
 #[test]
 fn frd_gather_index_marks_writes() {
-    let bytecode = vec![FrCycleBytecode::default(); 4];
+    // Per audit C7, `frd_gather_index` is sourced from BYTECODE (not events)
+    // so the FR write-slot indicator inherits a committed-bytecode anchor.
+    // Set writes_frd/frd in the bytecode entries; events provide the values
+    // (used by other materializers but not by frd_gather_index).
+    let bytecode = vec![
+        FrCycleBytecode::default(),
+        FrCycleBytecode {
+            frd: 7,
+            writes_frd: true,
+            ..Default::default()
+        },
+        FrCycleBytecode::default(),
+        FrCycleBytecode {
+            frd: 3,
+            writes_frd: true,
+            ..Default::default()
+        },
+    ];
     let events = vec![
         FieldRegEvent {
             cycle: 1,
@@ -200,9 +226,9 @@ fn frd_gather_index_marks_writes() {
 
     let sentinel = Fr::from(u64::MAX);
     assert_eq!(gather[0], sentinel, "cycle 0 no write → sentinel");
-    assert_eq!(gather[1], Fr::from(7u64), "cycle 1 writes slot 7");
+    assert_eq!(gather[1], Fr::from(7u64), "cycle 1 bytecode.frd = 7");
     assert_eq!(gather[2], sentinel, "cycle 2 no write → sentinel");
-    assert_eq!(gather[3], Fr::from(3u64), "cycle 3 writes slot 3");
+    assert_eq!(gather[3], Fr::from(3u64), "cycle 3 bytecode.frd = 3");
 }
 
 #[test]

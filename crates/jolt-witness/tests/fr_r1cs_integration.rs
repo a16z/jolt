@@ -55,27 +55,32 @@ fn field_mov_then_add_satisfies_r1cs_on_every_cycle() {
     let matrices = rv64_constraints::<Fr>();
 
     let bytecode = vec![
-        // cycle 0: FieldMov — bridge op, doesn't read frs2 or frs1 on the
-        // FR side (Rs1Value comes from integer registers).
+        // cycle 0: FieldMov writes f1
         FrCycleBytecode {
             frs1: 0,
             frs2: 0,
+            frd: 1,
             reads_frs1: false,
             reads_frs2: false,
+            writes_frd: true,
         },
-        // cycle 1: FieldMov — same
+        // cycle 1: FieldMov writes f2
         FrCycleBytecode {
             frs1: 0,
             frs2: 0,
+            frd: 2,
             reads_frs1: false,
             reads_frs2: false,
+            writes_frd: true,
         },
-        // cycle 2: FieldAdd — reads FReg[1] and FReg[2]
+        // cycle 2: FieldAdd — reads FReg[1] and FReg[2], writes f3
         FrCycleBytecode {
             frs1: 1,
             frs2: 2,
+            frd: 3,
             reads_frs1: true,
             reads_frs2: true,
+            writes_frd: true,
         },
     ];
     let events = vec![
@@ -142,13 +147,23 @@ fn field_mov_then_add_satisfies_r1cs_on_every_cycle() {
 fn tampered_rd_val_breaks_field_add_row() {
     let matrices = rv64_constraints::<Fr>();
     let bytecode = vec![
-        FrCycleBytecode::default(),
-        FrCycleBytecode::default(),
+        FrCycleBytecode {
+            frd: 1,
+            writes_frd: true,
+            ..Default::default()
+        },
+        FrCycleBytecode {
+            frd: 2,
+            writes_frd: true,
+            ..Default::default()
+        },
         FrCycleBytecode {
             frs1: 1,
             frs2: 2,
+            frd: 3,
             reads_frs1: true,
             reads_frs2: true,
+            writes_frd: true,
         },
     ];
     let events = vec![

@@ -584,21 +584,6 @@ impl<'a, F: Field> DerivedSource<'a, F> {
         vec![F::zero(); Self::K_FR * self.num_cycles]
     }
 
-    /// Lazily compute per-cycle FR snapshots if a config is attached.
-    fn fr_snapshots(&self) -> Option<Vec<crate::field_reg::FrCycleData>> {
-        let cfg = self.field_reg.as_ref()?;
-        debug_assert_eq!(
-            cfg.bytecode.len(),
-            self.num_cycles,
-            "FieldRegConfig.bytecode length must match num_cycles"
-        );
-        Some(crate::field_reg::replay_field_regs(
-            self.num_cycles,
-            &cfg.bytecode,
-            &cfg.events,
-        ))
-    }
-
     /// K_FR × T one-hot indicator: 1 at `(frs1(t), t)` on cycles where an
     /// FR instruction reads `frs1`, 0 elsewhere.
     fn field_reg_ra_rs1(&self) -> Vec<F> {
@@ -633,18 +618,23 @@ impl<'a, F: Field> DerivedSource<'a, F> {
     }
 
     /// K_FR × T one-hot write-address indicator. For writing FR cycles this
-    /// is 1 at `(frd(t), t)` and 0 elsewhere. Sourced from the event
-    /// stream so it matches what `FieldRegInc` commits (single write per
-    /// cycle).
+    /// is 1 at `(frd(t), t)` and 0 elsewhere.
+    ///
+    /// **Sourced from bytecode** (`cfg.bytecode[c].frd` when `writes_frd`),
+    /// NOT from events, so the verifier-recomputable evaluation is anchored
+    /// in committed bytecode (via Spartan). See `specs/fr-v2-audit.md` C7 —
+    /// previously this materialized from `events.write_slot` which had no
+    /// cryptographic anchor.
     fn field_reg_wa(&self) -> Vec<F> {
-        let Some(snaps) = self.fr_snapshots() else {
+        let Some(cfg) = self.field_reg.as_ref() else {
             return self.field_reg_zero_kxt();
         };
         let t = self.num_cycles;
         let mut out = vec![F::zero(); Self::K_FR * t];
-        for (c, snap) in snaps.iter().enumerate() {
-            if let Some(slot) = snap.write_slot {
-                out[(slot as usize) * t + c] = F::one();
+        for (c, bc) in cfg.bytecode.iter().enumerate().take(t) {
+            if bc.writes_frd {
+                let slot = (bc.frd as usize) & 0xF;
+                out[slot * t + c] = F::one();
             }
         }
         out
@@ -687,16 +677,26 @@ impl<'a, F: Field> DerivedSource<'a, F> {
     /// use sentinel `u64::MAX` (outside any valid eq range) so
     /// `eq_gather` returns 0; writing cycles encode the slot as a field
     /// element.
+    ///
+    /// **Sourced from bytecode** (`cfg.bytecode[c].frd` when `writes_frd`)
+    /// to match `field_reg_wa`'s anchor. Stage 5 FieldRegValEvaluation's
+    /// `eq_gather(r_addr_fr, frd[j])` thus evaluates over a verifier-
+    /// recomputable, bytecode-committed source. See `specs/fr-v2-audit.md`
+    /// C7.
     fn frd_gather_index(&self) -> Vec<F> {
         let sentinel = F::from_u64(u64::MAX);
-        let Some(snaps) = self.fr_snapshots() else {
+        let Some(cfg) = self.field_reg.as_ref() else {
             return vec![sentinel; self.num_cycles];
         };
-        snaps
+        cfg.bytecode
             .iter()
-            .map(|s| match s.write_slot {
-                Some(k) => F::from_u64(k as u64),
-                None => sentinel,
+            .take(self.num_cycles)
+            .map(|bc| {
+                if bc.writes_frd {
+                    F::from_u64((bc.frd as u64) & 0xF)
+                } else {
+                    sentinel
+                }
             })
             .collect()
     }
