@@ -57,14 +57,14 @@ pub fn extract_trace<C: CycleRow, F: Field>(
 
         if t < trace.len() {
             let cycle = &trace[t];
+            let snap = fr_snapshots.as_ref().and_then(|s| s.get(t));
 
             if cycle.is_noop() {
                 inputs.push(CycleInput::PADDING);
             } else {
-                inputs.push(cycle_input(cycle, bytecode, memory_layout));
+                inputs.push(cycle_input(cycle, bytecode, memory_layout, snap));
             }
 
-            let snap = fr_snapshots.as_ref().and_then(|s| s.get(t));
             let row = r1cs_cycle_witness::<C, F>(trace, t, bytecode, snap);
             r1cs[offset..offset + NUM_VARS_PER_CYCLE].copy_from_slice(&row);
 
@@ -86,6 +86,7 @@ fn cycle_input(
     cycle: &impl CycleRow,
     bytecode: &BytecodePreprocessing,
     memory_layout: &MemoryLayout,
+    fr_snapshot: Option<&FrCycleData>,
 ) -> CycleInput {
     let rd_inc = match cycle.rd_write() {
         Some((_, pre, post)) => post as i128 - pre as i128,
@@ -104,17 +105,26 @@ fn cycle_input(
         ((addr - lowest) / 8) as u128
     });
 
+    // FieldRegRa one-hot index: encode the FR write slot for this cycle.
+    // None for non-writing cycles (preserves all-zero one-hot for non-FR
+    // traces). FieldRegInc dense is left at 0 here — Fr deltas are 256-bit
+    // and don't fit in i128, so the prover-side caller MUST overwrite the
+    // FieldRegInc buffer for any FR-active program by calling
+    // `polys.insert(PolynomialId::FieldRegInc,
+    //               jolt_witness::field_reg_inc_polynomial(events, T))`
+    // after `polys.finish()`. Forgetting this silently commits all-zero
+    // deltas while FieldRegRa is non-zero — see `specs/fr-v2-audit.md` C11.
+    let fr_write_slot = fr_snapshot
+        .and_then(|s| s.write_slot)
+        .map(|k| k as u128);
+
     CycleInput {
         dense: [rd_inc, ram_inc, 0],
         one_hot: [
             Some(cycle.lookup_index()),
             Some(bytecode.get_pc(cycle) as u128),
             ram_address,
-            // FR write (source index 3). Populated by a follow-up pass that
-            // replays the FieldRegEvent stream through the cycle window; the
-            // extract_trace path produces the zero-field-register-activity
-            // value here and is overwritten downstream. See Phase 4b.
-            None,
+            fr_write_slot,
         ],
     }
 }

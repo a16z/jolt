@@ -160,6 +160,43 @@ pub fn replay_field_regs(
     snapshots
 }
 
+/// Materialize the per-cycle `FieldRegInc` dense polynomial directly from a
+/// `FieldRegEvent` stream. Each event contributes `new - old` (as field
+/// elements, mod p) at its cycle index; non-event cycles stay zero.
+///
+/// Required for any caller that builds a `Polynomials<F>` for a program with
+/// non-empty FR events: the default `Polynomials::push` path leaves
+/// `FieldRegInc` dense at all-zero (because the per-cycle delta is 256-bit
+/// and doesn't fit `CycleInput::dense`'s `i128`). Prover-side callers must
+/// call `polys.insert(PolynomialId::FieldRegInc, field_reg_inc_polynomial(events, T))`
+/// after `polys.finish()`. Forgetting this for an FR-active program silently
+/// commits all-zero deltas while `FieldRegRa` is non-zero — soundness gap
+/// (FR Twist Stage 5 ValEvaluation only satisfies `0 = 0`).
+///
+/// Computes `new - old` as a field subtraction (mod p), NOT the limb-level
+/// `sub_limbs` (which is mod 2^256 and would alias on underflow).
+pub fn field_reg_inc_polynomial<F: jolt_field::Field>(
+    events: &[FieldRegEvent],
+    trace_length: usize,
+) -> Vec<F> {
+    let mut out = vec![F::zero(); trace_length];
+    for ev in events {
+        if ev.cycle < trace_length {
+            out[ev.cycle] = limbs_to_field::<F>(ev.new) - limbs_to_field::<F>(ev.old);
+        }
+    }
+    out
+}
+
+/// Convert a natural-form `[u64; 4]` limb array to an Fr field element:
+/// `a[0] + a[1]·2⁶⁴ + a[2]·2¹²⁸ + a[3]·2¹⁹²`. Mirrors the private helper
+/// in `derived.rs`; kept here so `field_reg_inc_polynomial` is self-contained.
+fn limbs_to_field<F: jolt_field::Field>(limbs: FrLimbs) -> F {
+    let lo = F::from_u128((limbs[0] as u128) | ((limbs[1] as u128) << 64));
+    let hi = F::from_u128((limbs[2] as u128) | ((limbs[3] as u128) << 64));
+    lo + hi * F::one().mul_pow_2(128)
+}
+
 /// Signed subtraction of two BN254 Fr naturally-represented limb arrays. The
 /// prover needs `new - old` to commit into `FieldRegInc`; since values are
 /// already reduced mod p, the caller interprets negative results modulo p
