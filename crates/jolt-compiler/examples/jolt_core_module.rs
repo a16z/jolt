@@ -6919,42 +6919,84 @@ fn build_bytecode_read_raf_claim(
 }
 
 /// Verifier schedule for Stage 4.
+///
+/// **PARTIAL — squeezes pre-sumcheck challenges only, no sumcheck verification.**
+///
+/// The full schedule was attempted in
+/// commit (reverted) but produced an `EvaluationMismatch` at
+/// `CheckOutput`: the prover's batched final_eval didn't match the
+/// composed output_check formula despite the input-claim formulas,
+/// normalization (Segments [log_T, log_K_REG], output_order [1, 0]),
+/// and StageEval indices matching the prover side. Diagnosing the
+/// math discrepancy is non-trivial — likely a subtle issue with the
+/// 2-phase RegistersRWC composition or how the EqEvalSlice resolves
+/// the cycle slice of the normalized point. The infrastructure
+/// (`ClaimFactor::LtEval`, `VerifierOp::EvaluatePreprocessed`,
+/// `Preprocessing.initial_ram_state`, `evaluate_preprocessed_poly_at`)
+/// is in place; finishing wiring is a focused follow-up.
 fn build_verifier_stage4_ops(
     _p: &Polys,
     params: &ModuleParams,
-    ch: &ChallengeTable,
+    _ch: &ChallengeTable,
 ) -> Vec<VerifierOp> {
+    // Stub: only emits the pre-sumcheck transcript ops to keep the
+    // Fiat-Shamir state aligned with the prover. Does NOT verify the
+    // batched sumcheck or check the output formula. Tampering a stage 4
+    // round-poly coefficient is therefore invisible to V_mod — tracked
+    // as KNOWN_GAPS entries (T1, T8) for stage 4 in the cross-verifier
+    // soundness suite registry.
+    let s2_ch_base = params.num_tau + 1 + 1 + params.outer_remaining_rounds;
+    let stage2_pre = 1 + 1 + 1 + 1 + params.log_k_ram;
+    let stage2_batch_base = s2_ch_base + stage2_pre;
+    let stage2_round_base = stage2_batch_base + params.stage2_num_instances;
+    let s3_ch_base = stage2_round_base + params.stage2_max_rounds;
+    let s4_ch_base = s3_ch_base + 6 + params.log_t;
+
+    let log_k_reg = 7usize;
+    let stage4_max_rounds = log_k_reg + params.log_t;
+
+    let ch_gamma_reg_rw = ChallengeIdx(s4_ch_base);
+    let ch_gamma_ram_vc = ChallengeIdx(s4_ch_base + 1);
+
     let mut ops = vec![VerifierOp::BeginStage];
-
-    // Stage 4 pre-sumcheck challenges: 2 gammas + 2 batching = 4.
-    // (Batching + input claims handled by VerifySumcheck when added.)
-    let num_s4_challenges = 4;
-    let s4_ch_base = ch.decls.len() - num_s4_challenges;
-
-    // γ_registers_rw
     push_verifier_op!(
         ops,
         VerifierOp::Squeeze {
-            challenge: ChallengeIdx(s4_ch_base),
+            challenge: ch_gamma_reg_rw,
         }
     );
-
-    // Domain separator
     push_verifier_op!(
         ops,
         VerifierOp::AppendDomainSeparator {
             tag: DomainSeparator::RamValCheckGamma,
         }
     );
-
-    // γ_ram_val_check
     push_verifier_op!(
         ops,
         VerifierOp::Squeeze {
-            challenge: ChallengeIdx(s4_ch_base + 1),
+            challenge: ch_gamma_ram_vc,
         }
     );
-
+    // Squeeze the 2 batching coefficients + stage4_max_rounds round
+    // challenges that the prover would consume during batched-sumcheck
+    // execution. These keep the challenge table populated so downstream
+    // stages (5+) read the same Fiat-Shamir values they did before.
+    for i in 0..2usize {
+        push_verifier_op!(
+            ops,
+            VerifierOp::Squeeze {
+                challenge: ChallengeIdx(s4_ch_base + 2 + i),
+            }
+        );
+    }
+    for i in 0..stage4_max_rounds {
+        push_verifier_op!(
+            ops,
+            VerifierOp::Squeeze {
+                challenge: ChallengeIdx(s4_ch_base + 4 + i),
+            }
+        );
+    }
     ops
 }
 

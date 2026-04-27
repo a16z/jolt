@@ -104,13 +104,17 @@ fn build_honest_fixture() -> HonestFixture {
         jolt_dory::types::DoryVerifierSetup(params.pcs_setup.0.to_verifier_setup());
 
     // Modular setup: rebuild executable + r1cs_key for the verifying key.
-    let (executable, _polys, r1cs_key, _, _setup, _, _, _, _, _, _, _) = setup_muldiv(&params);
-    let modular_verifying_key: &'static _ =
-        Box::leak(Box::new(JoltVerifyingKey::<NewFr, DoryScheme>::new(
+    // initial_ram_state is recovered for the stage 4 RamInit MLE evaluation.
+    let (executable, _polys, r1cs_key, _, _setup, initial_ram_state, _, _, _, _, _, _) =
+        setup_muldiv(&params);
+    let modular_verifying_key: &'static _ = Box::leak(Box::new(
+        JoltVerifyingKey::<NewFr, DoryScheme>::new(
             &executable.module,
             pcs_verifier_setup,
             r1cs_key,
-        )));
+        )
+        .with_preprocessing(jolt_verifier::Preprocessing { initial_ram_state }),
+    ));
 
     HonestFixture {
         modular_proof,

@@ -1616,7 +1616,7 @@ fn modular_self_verify() {
         r1cs_key,
         _r1cs_witness,
         setup,
-        _initial_ram,
+        initial_ram,
         _final_ram,
         _instruction_flag_data,
         _reg_access,
@@ -1630,7 +1630,10 @@ fn modular_self_verify() {
         &executable.module,
         pcs_verifier_setup,
         r1cs_key,
-    );
+    )
+    .with_preprocessing(jolt_verifier::Preprocessing {
+        initial_ram_state: initial_ram,
+    });
 
     jolt_verifier::verify(&verifying_key, &zkvm_proof, &setup.config.io_hash)
         .expect("modular verify should accept modular proof");

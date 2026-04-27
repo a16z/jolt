@@ -15,7 +15,7 @@ pub mod verifier;
 
 pub use config::{OneHotConfig, OneHotParams, ProverConfig, ReadWriteConfig};
 pub use error::JoltError;
-pub use key::JoltVerifyingKey;
+pub use key::{JoltVerifyingKey, Preprocessing};
 pub use proof::{JoltProof, StageProof};
 pub use verifier::verify;
 

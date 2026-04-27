@@ -1852,6 +1852,18 @@ pub enum VerifierOp {
     },
     /// Read polynomial evaluations from current stage proof into the global table.
     RecordEvals { evals: Vec<Evaluation> },
+    /// Evaluate a preprocessed (public) polynomial's MLE at a challenge-derived
+    /// point and store the result under `store_as` in the verifier's
+    /// evaluations table. Mirrors the prover-side
+    /// [`Op::EvaluatePreprocessed`]. Used when an input claim references a
+    /// preprocessed polynomial whose evaluation point isn't a stage's full
+    /// sumcheck point (e.g. `RamInit` at the address slice of stage 2's
+    /// RamRW point).
+    EvaluatePreprocessed {
+        source: PolynomialId,
+        at_challenges: Vec<ChallengeIdx>,
+        store_as: PolynomialId,
+    },
     /// Absorb polynomial evaluations into transcript.
     AbsorbEvals {
         polys: Vec<PolynomialId>,
@@ -2028,6 +2040,21 @@ pub enum ClaimFactor {
     /// `s` is the (normalized) sumcheck point of `at_stage`. Both are
     /// expected in big-endian convention.
     EqPlusOneEval {
+        challenges: Vec<ChallengeIdx>,
+        at_stage: VerifierStageIndex,
+    },
+    /// Multilinear extension of the LT predicate: `LT(x, y) = 1` iff the
+    /// integer represented by `x` is strictly less than that of `y`. Used by
+    /// `RamValCheck`'s output check, which composes the stage 2 RamRW cycle
+    /// challenges (`x`) with the stage 4 ram-val-check sumcheck challenges
+    /// (`y`).
+    ///
+    /// Closed form (big-endian, length `l`):
+    ///   `LT(x, y) = Σᵢ (1 − xᵢ)·yᵢ · Πⱼ<ᵢ eq(xⱼ, yⱼ)`
+    ///
+    /// `r = [challenges[i]]` is the `x` reference point; `s` is the
+    /// (normalized) sumcheck point of `at_stage` (used as `y`).
+    LtEval {
         challenges: Vec<ChallengeIdx>,
         at_stage: VerifierStageIndex,
     },

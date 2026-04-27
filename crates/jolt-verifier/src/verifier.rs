@@ -242,6 +242,16 @@ where
                 }
             }
 
+            VerifierOp::EvaluatePreprocessed {
+                source,
+                at_challenges,
+                store_as,
+            } => {
+                let point: Vec<F> = at_challenges.iter().map(|&ci| challenges[ci.0]).collect();
+                let value = evaluate_preprocessed_poly_at(*source, &point, key, &proof.config)?;
+                let _ = evaluations.insert(*store_as, value);
+            }
+
             VerifierOp::CheckOutput {
                 instances,
                 stage,
@@ -415,6 +425,23 @@ fn evaluate_formula<F: Field>(
                     let s = resolve_point(sumcheck_points, point_override, at_stage.0);
                     jolt_poly::EqPlusOnePolynomial::new(r).evaluate(s)
                 }
+                ClaimFactor::LtEval {
+                    challenges: chs,
+                    at_stage,
+                } => {
+                    // LT(x, y) = Σᵢ (1 − xᵢ)·yᵢ · Πⱼ<ᵢ eq(xⱼ, yⱼ).
+                    let x: Vec<F> = chs.iter().map(|&ci| challenges[ci.0]).collect();
+                    let y = resolve_point(sumcheck_points, point_override, at_stage.0);
+                    assert_eq!(x.len(), y.len(), "LtEval challenge/point length mismatch");
+                    let one = F::one();
+                    let mut lt = F::zero();
+                    let mut eq_prefix = one;
+                    for (xi, yi) in x.iter().zip(y.iter()) {
+                        lt += (one - *xi) * *yi * eq_prefix;
+                        eq_prefix *= *xi * *yi + (one - *xi) * (one - *yi);
+                    }
+                    lt
+                }
                 ClaimFactor::LagrangeKernelDomain {
                     tau_challenge,
                     at_challenge,
@@ -572,6 +599,57 @@ fn evaluate_preprocessed_poly<F: Field>(
             "PreprocessedPolyEval({poly:?}) not a known preprocessed polynomial"
         ))),
     }
+}
+
+/// Like [`evaluate_preprocessed_poly`] but with access to the verifying key's
+/// `Preprocessing` data. Adds support for [`PolynomialId::RamInit`], whose
+/// MLE is computed from `key.preprocessing.initial_ram_state`.
+fn evaluate_preprocessed_poly_at<F: Field, PCS: AdditivelyHomomorphic<Field = F>>(
+    poly: PolynomialId,
+    point: &[F],
+    key: &crate::key::JoltVerifyingKey<F, PCS>,
+    config: &ProverConfig,
+) -> Result<F, JoltError>
+where
+    PCS::Output: AppendToTranscript + HomomorphicCommitment<F>,
+{
+    if poly == PolynomialId::RamInit {
+        let state = &key.preprocessing.initial_ram_state;
+        let expected_len = 1usize << point.len();
+        if state.len() != expected_len {
+            return Err(JoltError::InvalidProof(format!(
+                "RamInit MLE: state.len()={} but point dimension implies {expected_len} entries",
+                state.len()
+            )));
+        }
+        return Ok(eval_dense_u64_mle(state, point));
+    }
+    evaluate_preprocessed_poly(poly, point, config)
+}
+
+/// Multilinear extension evaluation of a dense `Vec<u64>` at a big-endian
+/// challenge point. Used by `RamInit` MLE evaluation.
+///
+/// `MLE(state)(r) = Σ_k state[k] · eq(k, r)`, computed iteratively without
+/// materializing the eq table — O(state.len() · log(state.len())) work,
+/// O(state.len()) auxiliary space.
+fn eval_dense_u64_mle<F: Field>(state: &[u64], r: &[F]) -> F {
+    debug_assert_eq!(state.len(), 1usize << r.len(), "MLE point/state mismatch");
+    // Iteratively bind variables MSB-first by halving the working buffer.
+    // Initial buffer = state lifted to F.
+    let mut current: Vec<F> = state.iter().map(|&v| F::from_u64(v)).collect();
+    for &ri in r {
+        let half = current.len() / 2;
+        let mut next = Vec::with_capacity(half);
+        for j in 0..half {
+            let lo = current[j];
+            let hi = current[j + half];
+            next.push(lo + ri * (hi - lo));
+        }
+        current = next;
+    }
+    debug_assert_eq!(current.len(), 1, "MLE eval did not collapse to scalar");
+    current[0]
 }
 
 /// Evaluate LT(r, threshold): the MLE of the indicator `{x < threshold}`
