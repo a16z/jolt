@@ -117,7 +117,19 @@ impl RISCVInstruction for FieldOp {
             FUNCT3_FMUL => a * b,
             FUNCT3_FADD => a + b,
             FUNCT3_FSUB => a - b,
-            FUNCT3_FINV => a.inverse().unwrap_or(Fr::from(0u64)),
+            FUNCT3_FINV => a.inverse().unwrap_or_else(|| {
+                // FINV(0) is undefined: the R1CS constraint `rs1 · rd = 1` is
+                // unsatisfiable for rs1 = 0. The SDK's `Fr::inverse()` returns
+                // `Option<Fr>` and never emits FINV on zero; reaching this
+                // branch means a caller bypassed the SDK with inline asm.
+                // Fail fast here rather than produce a non-provable trace.
+                panic!(
+                    "FINV(0) is undefined at PC=0x{:x}; use SDK \
+                     `Fr::inverse() -> Option<Fr>` (see jolt-inlines/bn254-fr) \
+                     instead of emitting FieldOp via inline asm",
+                    self.address
+                );
+            }),
             other => panic!("invalid FieldOp funct3: {other:#x}"),
         };
 
@@ -323,6 +335,19 @@ mod tests {
         );
         inv.execute(&mut cpu, &mut ());
         assert_eq!(cpu.field_regs[6], [1, 0, 0, 0]);
+    }
+
+    #[test]
+    #[should_panic(expected = "FINV(0) is undefined")]
+    fn finv_of_zero_panics() {
+        // SDK's `Fr::inverse()` returns Option<Fr> and never emits FINV(0);
+        // reaching this branch implies an inline-asm caller bypassed the SDK.
+        // Tracer must fail fast with an actionable message.
+        let mut cpu = test_cpu();
+        cpu.field_regs[5] = [0, 0, 0, 0];
+        let word = encode_r(FIELD_OP_OPCODE, FUNCT3_FINV as u32, BN254_FR_FUNCT7, 6, 5, 0);
+        let op = FieldOp::new(word, 0x2000, true, false);
+        op.execute(&mut cpu, &mut ());
     }
 
     #[test]

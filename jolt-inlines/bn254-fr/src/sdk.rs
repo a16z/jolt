@@ -97,12 +97,22 @@ impl Fr {
         out
     }
 
-    /// Returns `self⁻¹ mod p`, or `Fr::zero()` when `self == 0`.
+    /// Returns `Some(self⁻¹ mod p)`, or `None` when `self == 0`.
+    ///
+    /// Mirrors `ark_bn254::Fr::inverse()` — zero has no multiplicative inverse,
+    /// so the SDK refuses to emit a `FieldOp(FINV)` cycle for zero. The R1CS
+    /// constraint `rs1 · rd = 1` is unsatisfiable for `rs1 = 0`; guarding here
+    /// keeps the contract that any FieldOp the SDK emits is provable. Inline-asm
+    /// callers that bypass this check produce non-provable traces (the tracer
+    /// will panic on FINV(0); see `tracer/src/instruction/field_op.rs`).
     #[inline]
-    pub fn inv(&self) -> Self {
+    pub fn inverse(&self) -> Option<Self> {
+        if self.limbs == [0, 0, 0, 0] {
+            return None;
+        }
         let mut out = Fr::zero();
         unary_op::<{ crate::FUNCT3_FINV }>(self, &mut out);
-        out
+        Some(out)
     }
 }
 
@@ -315,7 +325,11 @@ fn unary_op<const FUNCT3: u32>(a: &Fr, out: &mut Fr) {
     use ark_ff::Field;
     let af = limbs_to_ark(&a.limbs);
     let r: ArkFr = match FUNCT3 {
-        crate::FUNCT3_FINV => af.inverse().unwrap_or(ArkFr::from(0u64)),
+        // SDK guards against FINV(0) before reaching here (Fr::inverse returns
+        // Option<Fr>); a None here means the SDK invariant was violated.
+        crate::FUNCT3_FINV => af
+            .inverse()
+            .expect("FINV(0) reached unary_op — SDK contract violated"),
         _ => panic!("unary_op: unsupported funct3"),
     };
     let limbs = ark_to_limbs(&r);
@@ -381,7 +395,11 @@ fn unary_op<const FUNCT3: u32>(a: &Fr, out: &mut Fr) {
     use ark_ff::Field;
     let af = limbs_to_ark(&a.limbs);
     let r: ArkFr = match FUNCT3 {
-        crate::FUNCT3_FINV => af.inverse().unwrap_or(ArkFr::from(0u64)),
+        // SDK guards against FINV(0) before reaching here (Fr::inverse returns
+        // Option<Fr>); a None here means the SDK invariant was violated.
+        crate::FUNCT3_FINV => af
+            .inverse()
+            .expect("FINV(0) reached unary_op — SDK contract violated"),
         _ => panic!("unary_op: unsupported funct3 {:#x}", FUNCT3),
     };
     out.limbs = ark_to_limbs(&r);
