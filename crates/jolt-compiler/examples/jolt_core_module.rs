@@ -3653,6 +3653,14 @@ fn build_stage3(
             }
         );
     }
+    // Record evaluations into the stage proof so the verifier can read them
+    // back via `VerifierOp::RecordEvals`.
+    push_op!(
+        ops,
+        Op::RecordEvals {
+            polys: stage3_eval_polys.clone(),
+        }
+    );
     push_op!(
         ops,
         Op::AbsorbEvals {
@@ -6950,28 +6958,411 @@ fn build_verifier_stage4_ops(
     ops
 }
 
-/// Verifier schedule for Stage 3.
+/// Verifier schedule for Stage 3 (Spartan claim virtualization).
+///
+/// Three batched sumcheck instances (matches jolt-core
+/// `verify_stage3` instance order):
+///   [0] ShiftSumcheckVerifier            — log_T rounds, degree 3
+///   [1] InstructionInputSumcheckVerifier — log_T rounds, degree 3
+///   [2] RegistersClaimReductionVerifier  — log_T rounds, degree 2
+///
+/// Pre-sumcheck transcript:
+///   Squeeze γ_shift, γ_instruction_input, γ_registers (3 challenges)
 fn build_verifier_stage3_ops(
-    _p: &Polys,
+    p: &Polys,
     params: &ModuleParams,
-    ch: &ChallengeTable,
+    _ch: &ChallengeTable,
 ) -> Vec<VerifierOp> {
+    // Absolute challenge layout (matches build_stage1 / build_stage2 +
+    // build_stage3 in this file).
+    let s2_ch_base = params.num_tau + 1 + 1 + params.outer_remaining_rounds; // = 55 by construction
+    let stage2_pre = 1 + 1 + 1 + 1 + params.log_k_ram; // τ_high + r0 + γ_rw + γ_inst + r_address
+    let stage2_batch_base = s2_ch_base + stage2_pre;
+    let stage2_round_base = stage2_batch_base + params.stage2_num_instances;
+    let s3_ch_base = stage2_round_base + params.stage2_max_rounds;
+
+    let ch_shift_gamma = ChallengeIdx(s3_ch_base);
+    let ch_inst_input_gamma = ChallengeIdx(s3_ch_base + 1);
+    let ch_registers_gamma = ChallengeIdx(s3_ch_base + 2);
+    let s3_batch_challenges: Vec<ChallengeIdx> =
+        (s3_ch_base + 3..s3_ch_base + 6).map(ChallengeIdx).collect();
+    let s3_round_slots: Vec<ChallengeIdx> = (s3_ch_base + 6..s3_ch_base + 6 + params.log_t)
+        .map(ChallengeIdx)
+        .collect();
+
+    // r_outer = stage 1 cycle point (big-endian). Same construction as
+    // `stage1_cycle_challenges` in build_verifier_stage2_ops.
+    let stage1_round_base = params.num_tau + 2;
+    let stage1_cycle_challenges: Vec<ChallengeIdx> = (stage1_round_base + 1
+        ..stage1_round_base + params.outer_remaining_rounds)
+        .rev()
+        .map(ChallengeIdx)
+        .collect();
+
+    // r_product = stage 2 product-remainder cycle point (big-endian).
+    // ProductRemainder is active for rounds [prod_first_active, +log_t)
+    // of the stage 2 batched sumcheck. Reversed = big-endian cycle.
+    let prod_first_active = params.stage2_max_rounds - params.product_remainder_rounds;
+    let eq_prod_challenges: Vec<ChallengeIdx> = (prod_first_active
+        ..prod_first_active + params.log_t)
+        .rev()
+        .map(|r| ChallengeIdx(stage2_round_base + r))
+        .collect();
+
+    // ── Input-claim formulas (match prover-side build_stage3) ──
+    let shift_input_claim = ClaimFormula {
+        terms: vec![
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![ClaimFactor::Eval(p.next_unexpanded_pc)],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_shift_gamma),
+                    ClaimFactor::Eval(p.next_pc),
+                ],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_shift_gamma),
+                    ClaimFactor::Challenge(ch_shift_gamma),
+                    ClaimFactor::Eval(p.next_is_virtual),
+                ],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_shift_gamma),
+                    ClaimFactor::Challenge(ch_shift_gamma),
+                    ClaimFactor::Challenge(ch_shift_gamma),
+                    ClaimFactor::Eval(p.next_is_first),
+                ],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_shift_gamma),
+                    ClaimFactor::Challenge(ch_shift_gamma),
+                    ClaimFactor::Challenge(ch_shift_gamma),
+                    ClaimFactor::Challenge(ch_shift_gamma),
+                ],
+            },
+            ClaimTerm {
+                coeff: -1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_shift_gamma),
+                    ClaimFactor::Challenge(ch_shift_gamma),
+                    ClaimFactor::Challenge(ch_shift_gamma),
+                    ClaimFactor::Challenge(ch_shift_gamma),
+                    ClaimFactor::Eval(p.next_is_noop),
+                ],
+            },
+        ],
+    };
+
+    let inst_input_input_claim = ClaimFormula {
+        terms: vec![
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![ClaimFactor::Eval(p.right_instruction_input)],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_inst_input_gamma),
+                    ClaimFactor::Eval(p.left_instruction_input),
+                ],
+            },
+        ],
+    };
+
+    let registers_input_claim = ClaimFormula {
+        terms: vec![
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![ClaimFactor::Eval(p.rd_write_value)],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_registers_gamma),
+                    ClaimFactor::Eval(p.rs1_val),
+                ],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_registers_gamma),
+                    ClaimFactor::Challenge(ch_registers_gamma),
+                    ClaimFactor::Eval(p.rs2_val),
+                ],
+            },
+        ],
+    };
+
+    // ── Output-check formulas (mirror jolt-core verifier math) ──
+    //
+    // Stage 3 RecordEvals stores at this stage's challenge point r_shift:
+    //   sp.evals[0..13] = [unexpanded_pc, pc, is_virtual, is_first, is_noop,
+    //                      left_is_rs1, rs1_val, left_is_pc, right_is_rs2,
+    //                      rs2_val, right_is_imm, imm, rd_write_value]
+    // Each output_check uses the StageEval index of the relevant entry.
+
+    // Indices into `stage_proofs[2].evals`.
+    const SE_UNEXPANDED_PC: usize = 0;
+    const SE_PC: usize = 1;
+    const SE_IS_VIRTUAL: usize = 2;
+    const SE_IS_FIRST: usize = 3;
+    const SE_IS_NOOP: usize = 4;
+    const SE_LEFT_IS_RS1: usize = 5;
+    const SE_RS1_VAL: usize = 6;
+    const SE_LEFT_IS_PC: usize = 7;
+    const SE_RIGHT_IS_RS2: usize = 8;
+    const SE_RS2_VAL: usize = 9;
+    const SE_RIGHT_IS_IMM: usize = 10;
+    const SE_IMM: usize = 11;
+    const SE_RD_WRITE_VALUE: usize = 12;
+
+    let eq_plus_one_outer = ClaimFactor::EqPlusOneEval {
+        challenges: stage1_cycle_challenges.clone(),
+        at_stage: VerifierStageIndex(2),
+    };
+    let eq_plus_one_product = ClaimFactor::EqPlusOneEval {
+        challenges: eq_prod_challenges.clone(),
+        at_stage: VerifierStageIndex(2),
+    };
+
+    let shift_output_check = ClaimFormula {
+        terms: vec![
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    eq_plus_one_outer.clone(),
+                    ClaimFactor::StageEval(SE_UNEXPANDED_PC),
+                ],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_shift_gamma),
+                    eq_plus_one_outer.clone(),
+                    ClaimFactor::StageEval(SE_PC),
+                ],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_shift_gamma),
+                    ClaimFactor::Challenge(ch_shift_gamma),
+                    eq_plus_one_outer.clone(),
+                    ClaimFactor::StageEval(SE_IS_VIRTUAL),
+                ],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_shift_gamma),
+                    ClaimFactor::Challenge(ch_shift_gamma),
+                    ClaimFactor::Challenge(ch_shift_gamma),
+                    eq_plus_one_outer,
+                    ClaimFactor::StageEval(SE_IS_FIRST),
+                ],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_shift_gamma),
+                    ClaimFactor::Challenge(ch_shift_gamma),
+                    ClaimFactor::Challenge(ch_shift_gamma),
+                    ClaimFactor::Challenge(ch_shift_gamma),
+                    eq_plus_one_product.clone(),
+                ],
+            },
+            ClaimTerm {
+                coeff: -1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_shift_gamma),
+                    ClaimFactor::Challenge(ch_shift_gamma),
+                    ClaimFactor::Challenge(ch_shift_gamma),
+                    ClaimFactor::Challenge(ch_shift_gamma),
+                    eq_plus_one_product,
+                    ClaimFactor::StageEval(SE_IS_NOOP),
+                ],
+            },
+        ],
+    };
+
+    // InstructionInput: eq(r_cycle_stage_2, r) ×
+    //   (right_is_rs2·rs2_val + right_is_imm·imm + γ·left_is_rs1·rs1_val + γ·left_is_pc·unexpanded_pc)
+    let inst_input_eq = ClaimFactor::EqEval {
+        challenges: eq_prod_challenges,
+        at_stage: VerifierStageIndex(2),
+    };
+    let inst_input_output_check = ClaimFormula {
+        terms: vec![
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    inst_input_eq.clone(),
+                    ClaimFactor::StageEval(SE_RIGHT_IS_RS2),
+                    ClaimFactor::StageEval(SE_RS2_VAL),
+                ],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    inst_input_eq.clone(),
+                    ClaimFactor::StageEval(SE_RIGHT_IS_IMM),
+                    ClaimFactor::StageEval(SE_IMM),
+                ],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_inst_input_gamma),
+                    inst_input_eq.clone(),
+                    ClaimFactor::StageEval(SE_LEFT_IS_RS1),
+                    ClaimFactor::StageEval(SE_RS1_VAL),
+                ],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_inst_input_gamma),
+                    inst_input_eq,
+                    ClaimFactor::StageEval(SE_LEFT_IS_PC),
+                    ClaimFactor::StageEval(SE_UNEXPANDED_PC),
+                ],
+            },
+        ],
+    };
+
+    // RegistersClaimReduction: eq(r_spartan, r) × (rd_write_value + γ·rs1_val + γ²·rs2_val)
+    // r_spartan = stage 1 cycle point.
+    let reg_eq = ClaimFactor::EqEval {
+        challenges: stage1_cycle_challenges,
+        at_stage: VerifierStageIndex(2),
+    };
+    let registers_output_check = ClaimFormula {
+        terms: vec![
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![reg_eq.clone(), ClaimFactor::StageEval(SE_RD_WRITE_VALUE)],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_registers_gamma),
+                    reg_eq.clone(),
+                    ClaimFactor::StageEval(SE_RS1_VAL),
+                ],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_registers_gamma),
+                    ClaimFactor::Challenge(ch_registers_gamma),
+                    reg_eq,
+                    ClaimFactor::StageEval(SE_RS2_VAL),
+                ],
+            },
+        ],
+    };
+
+    let instances = vec![
+        SumcheckInstance {
+            input_claim: shift_input_claim,
+            output_check: shift_output_check,
+            num_rounds: params.log_t,
+            degree: 3,
+            normalize: Some(PointNormalization::Reverse),
+        },
+        SumcheckInstance {
+            input_claim: inst_input_input_claim,
+            output_check: inst_input_output_check,
+            num_rounds: params.log_t,
+            degree: 3,
+            normalize: Some(PointNormalization::Reverse),
+        },
+        SumcheckInstance {
+            input_claim: registers_input_claim,
+            output_check: registers_output_check,
+            num_rounds: params.log_t,
+            degree: 3,
+            normalize: Some(PointNormalization::Reverse),
+        },
+    ];
+
+    let stage3_eval_polys = vec![
+        p.unexpanded_pc,
+        p.pc,
+        p.op_flags[7],  // VirtualInstruction
+        p.op_flags[12], // IsFirstInSequence
+        p.inst_flag_is_noop,
+        p.inst_flag_left_is_rs1,
+        p.rs1_val,
+        p.inst_flag_left_is_pc,
+        p.inst_flag_right_is_rs2,
+        p.rs2_val,
+        p.inst_flag_right_is_imm,
+        p.imm,
+        p.rd_write_value,
+    ];
+    let evaluations: Vec<_> = stage3_eval_polys
+        .iter()
+        .map(|&poly| Evaluation {
+            poly,
+            at_stage: VerifierStageIndex(2),
+        })
+        .collect();
+
     let mut ops = vec![VerifierOp::BeginStage];
-
-    // Stage 3 challenges: 3 gammas + 3 batching + log_t round = 6 + log_t total.
-    let num_s3_challenges = 3 + 3 + params.log_t;
-    let s3_ch_base = ch.decls.len() - num_s3_challenges;
-
-    // 3 gamma squeezes + 3 batching coefficient squeezes + log_t round squeezes
-    for i in 0..num_s3_challenges {
-        push_verifier_op!(
-            ops,
-            VerifierOp::Squeeze {
-                challenge: ChallengeIdx(s3_ch_base + i),
-            }
-        );
-    }
-
+    push_verifier_op!(
+        ops,
+        VerifierOp::Squeeze {
+            challenge: ch_shift_gamma,
+        }
+    );
+    push_verifier_op!(
+        ops,
+        VerifierOp::Squeeze {
+            challenge: ch_inst_input_gamma,
+        }
+    );
+    push_verifier_op!(
+        ops,
+        VerifierOp::Squeeze {
+            challenge: ch_registers_gamma,
+        }
+    );
+    push_verifier_op!(
+        ops,
+        VerifierOp::VerifySumcheck {
+            instances: instances.clone(),
+            stage: 2,
+            batch_challenges: s3_batch_challenges.clone(),
+            claim_tag: Some(DomainSeparator::SumcheckClaim),
+            sumcheck_challenge_slots: s3_round_slots,
+        }
+    );
+    push_verifier_op!(ops, VerifierOp::RecordEvals { evals: evaluations });
+    push_verifier_op!(
+        ops,
+        VerifierOp::AbsorbEvals {
+            polys: stage3_eval_polys,
+            tag: DomainSeparator::OpeningClaim,
+        }
+    );
+    push_verifier_op!(
+        ops,
+        VerifierOp::CheckOutput {
+            instances,
+            stage: 2,
+            batch_challenges: s3_batch_challenges,
+        }
+    );
     ops
 }
 

@@ -26,31 +26,13 @@ pub struct KnownGap {
 /// The literal registry: every (stage, tamper-kind) where modular
 /// currently accepts and core rejects on the muldiv fixture.
 ///
-/// Initial population reflects the post-spec-authoring state: stages
-/// 3 and 4 verifier ops are stubbed (squeezes only, no `VerifySumcheck`
-/// or `CheckOutput`), and stages 5–7 are not assembled into the verifier
-/// schedule at all (`build_module` only chains stages 1–4 — see
-/// `crates/jolt-compiler/examples/jolt_core_module.rs:1406-1411`).
-///
 /// As parity work lands, entries are removed.  An empty registry plus
 /// honest acceptance + KGC + S5' + S7 is the target end state.
+///
+/// Stage 3 closed: build_verifier_stage3_ops now emits the full
+/// VerifySumcheck/CheckOutput schedule for [Shift, InstructionInput,
+/// RegistersClaimReduction] (see `jolt_core_module.rs`).
 pub const KNOWN_GAPS: &[KnownGap] = &[
-    // ── Stage 3 (Shift / InstructionInput / RegistersClaimReduction) ──
-    // Verifier stub at jolt_core_module.rs::build_verifier_stage3_ops
-    // emits squeezes only; tampering any round poly coefficient or
-    // committed-poly evaluation is invisible to V_mod.
-    KnownGap {
-        stage: 3,
-        kind: TamperKind::T1RoundPolyCoeff,
-        rationale: "Stage 3 verifier stubbed (squeezes only)",
-        owner: "verifier-agent",
-    },
-    KnownGap {
-        stage: 3,
-        kind: TamperKind::T8RoundPolyDegree,
-        rationale: "Stage 3 verifier stubbed (no sumcheck verification)",
-        owner: "verifier-agent",
-    },
     // ── Stage 4 (RegistersRWC / RamValCheck) ──
     KnownGap {
         stage: 4,

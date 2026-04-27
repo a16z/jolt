@@ -407,6 +407,14 @@ fn evaluate_formula<F: Field>(
                     let s = resolve_point(sumcheck_points, point_override, at_stage.0);
                     EqPolynomial::<F>::mle(&r, &s[*offset..*offset + r.len()])
                 }
+                ClaimFactor::EqPlusOneEval {
+                    challenges: chs,
+                    at_stage,
+                } => {
+                    let r: Vec<F> = chs.iter().map(|&ci| challenges[ci.0]).collect();
+                    let s = resolve_point(sumcheck_points, point_override, at_stage.0);
+                    jolt_poly::EqPlusOnePolynomial::new(r).evaluate(s)
+                }
                 ClaimFactor::LagrangeKernelDomain {
                     tau_challenge,
                     at_challenge,

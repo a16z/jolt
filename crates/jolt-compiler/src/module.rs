@@ -2018,6 +2018,19 @@ pub enum ClaimFactor {
         /// Starting index within the (normalized) sumcheck point.
         offset: usize,
     },
+    /// Multilinear extension of `eq+1(x, y)`: equals 1 iff `y = x + 1` for
+    /// `x ∈ [0, 2^l - 2]` (zero when `x` is all-ones). Used by the Shift
+    /// sumcheck output check, which composes prior-stage sumcheck challenges
+    /// (representing the `x` register) with the current stage's sumcheck
+    /// challenges (representing `y`).
+    ///
+    /// `r = [challenges[i] for i in challenges]` is the reference point;
+    /// `s` is the (normalized) sumcheck point of `at_stage`. Both are
+    /// expected in big-endian convention.
+    EqPlusOneEval {
+        challenges: Vec<ChallengeIdx>,
+        at_stage: VerifierStageIndex,
+    },
     /// Lagrange kernel `L(τ, r) = Σ_{k=0}^{N-1} L_k(τ) × L_k(r)` over an
     /// explicit domain `{0, 1, ..., domain_size-1}`.
     ///
