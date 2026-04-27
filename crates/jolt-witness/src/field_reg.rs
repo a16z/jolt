@@ -94,10 +94,9 @@ pub struct FieldRegEvent {
 /// `bytecode` supplies the per-cycle `frs1`/`frs2`/`reads_frs2` metadata;
 /// events drive the write-side state evolution. Stage 5 FieldRegValEvaluation
 /// cryptographically enforces `events.slot == bytecode.frd` and a consistent
-/// state evolution (any malformed stream causes sumcheck rejection downstream)
-/// — but we still validate at the host layer so production callers get a
-/// clear, immediate error rather than a cryptic deep-prover failure. See
-/// `specs/fr-v2-audit.md` C9 + C10.
+/// state evolution (any malformed stream causes sumcheck rejection
+/// downstream) — but we still validate at the host layer so callers get a
+/// clear, immediate error rather than a cryptic deep-prover failure.
 pub fn replay_field_regs(
     trace_len: usize,
     bytecode: &[FrCycleBytecode],
@@ -109,8 +108,10 @@ pub fn replay_field_regs(
         "bytecode snapshot length must match trace length"
     );
 
-    // Stream-shape validation. Promoted from previous lax handling
-    // (out-of-order/dup/OOB events were silently dropped) per audit C10.
+    // Stream-shape validation. Out-of-order, duplicate, and out-of-range
+    // events would otherwise be silently dropped by the per-cycle
+    // peekable iteration below, masking host-side bugs as cryptic
+    // downstream sumcheck failures.
     for window in events.windows(2) {
         assert!(
             window[0].cycle < window[1].cycle,
@@ -151,12 +152,12 @@ pub fn replay_field_regs(
 
         if let Some(ev) = event_for_cycle {
             let slot = ev.slot as usize & 0xF;
-            // Promoted from `debug_assert_eq!` (audit C9): in release builds
-            // the previous check was stripped, so a host-side state-tracking
-            // bug would silently produce an inconsistent witness. The witness
-            // would still be caught downstream by Stage 5 ValEvaluation, but
-            // the failure would surface as a cryptic sumcheck error far from
-            // the actual bug. Asserting at the host layer fails loud and near.
+            // Runtime assert (not `debug_assert!`): a host-side state
+            // tracking bug would otherwise produce an inconsistent witness
+            // that fails far from the bug site as a cryptic sumcheck error.
+            // The witness IS caught downstream by Stage 5 ValEvaluation
+            // either way, but failing loud here gives a clear error near
+            // the source.
             assert_eq!(
                 state[slot], ev.old,
                 "FieldRegEvent.old disagrees with replayed state at cycle {t}, slot {slot}"

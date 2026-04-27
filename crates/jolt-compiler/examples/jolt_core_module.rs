@@ -6816,8 +6816,7 @@ fn build_verifier_stage4_ops(
 /// no actual sumcheck verification happens.
 ///
 /// The Stage 3/4 stubs share this limitation; full verifier implementations
-/// for stages 3-5 are a separate workstream (see `specs/fr-v2-audit.md`
-/// findings C2/C3/C4 — pre-existing on refactor-crates).
+/// for stages 3-5 are a separate workstream (pre-existing on refactor-crates).
 ///
 /// Stage 5 prover squeezes (counted from `build_stage5`):
 ///   - `gamma_instruction_read_raf` + `gamma_ram_ra_reduction` = 2 gammas

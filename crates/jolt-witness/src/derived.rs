@@ -621,10 +621,8 @@ impl<'a, F: Field> DerivedSource<'a, F> {
     /// is 1 at `(frd(t), t)` and 0 elsewhere.
     ///
     /// **Sourced from bytecode** (`cfg.bytecode[c].frd` when `writes_frd`),
-    /// NOT from events, so the verifier-recomputable evaluation is anchored
-    /// in committed bytecode (via Spartan). See `specs/fr-v2-audit.md` C7 —
-    /// previously this materialized from `events.write_slot` which had no
-    /// cryptographic anchor.
+    /// not from events, so the verifier-recomputable evaluation is anchored
+    /// in committed bytecode via Spartan.
     fn field_reg_wa(&self) -> Vec<F> {
         let Some(cfg) = self.field_reg.as_ref() else {
             return self.field_reg_zero_kxt();
@@ -681,8 +679,7 @@ impl<'a, F: Field> DerivedSource<'a, F> {
     /// **Sourced from bytecode** (`cfg.bytecode[c].frd` when `writes_frd`)
     /// to match `field_reg_wa`'s anchor. Stage 5 FieldRegValEvaluation's
     /// `eq_gather(r_addr_fr, frd[j])` thus evaluates over a verifier-
-    /// recomputable, bytecode-committed source. See `specs/fr-v2-audit.md`
-    /// C7.
+    /// recomputable, bytecode-committed source.
     fn frd_gather_index(&self) -> Vec<F> {
         let sentinel = F::from_u64(u64::MAX);
         let Some(cfg) = self.field_reg.as_ref() else {
