@@ -279,6 +279,123 @@ fn t2_eval_tampers() {
     );
 }
 
+/// T10 — domain-separator tag tampers. Mutates one `VerifierOp::AbsorbEvals`
+/// in the schedule from `DomainSeparator::OpeningClaim` to a different
+/// tag, then runs the modular verifier with the modified key. The
+/// verifier's transcript diverges from what the prover absorbed, and
+/// downstream sumcheck verification fails.
+///
+/// Tampers schedule (not proof) since transcript tags live in the
+/// verifier's compiled schedule, not in proof bytes. We clone the
+/// verifying key, mutate one op, and call verify with the modified
+/// key.
+#[test]
+fn t10_domain_separator_tag_tampers() {
+    use jolt_compiler::{DomainSeparator, VerifierOp};
+    let f = fixture();
+
+    // Clone the verifying key so we can mutate the schedule.
+    let mut tampered_key = f.modular_verifying_key.clone();
+
+    // Find the first AbsorbEvals op with DomainSeparator::OpeningClaim
+    // and replace its tag with SumcheckClaim. This shifts the
+    // domain-separator label absorbed at that position; the prover's
+    // honest run absorbed `b"opening_claim"`, the tampered verifier
+    // absorbs `b"sumcheck_claim"` instead, diverging the transcripts.
+    let mut mutated = false;
+    for op in &mut tampered_key.schedule.ops {
+        if let VerifierOp::AbsorbEvals { tag, .. } = op {
+            if matches!(tag, DomainSeparator::OpeningClaim) {
+                *tag = DomainSeparator::SumcheckClaim;
+                mutated = true;
+                break;
+            }
+        }
+    }
+    assert!(
+        mutated,
+        "T10 tamper vacuous: no AbsorbEvals with OpeningClaim tag in schedule"
+    );
+
+    let modular = jolt_verifier::verify(&tampered_key, &f.modular_proof, &f.io_hash);
+    eprintln!("T10 report: modular={modular:?}");
+    assert!(
+        modular.is_err(),
+        "T10 must be caught by modular verifier; got {modular:?}",
+    );
+}
+
+/// T7 — cross-stage eval tampers. Specifically targets evals at stage
+/// S whose values flow into stage S+1's `input_claim` formula via
+/// `ClaimFactor::Eval` or `ClaimFactor::StagedEval`. T2/T9 cover idx
+/// 0 / last-idx; T7 picks a MIDDLE index per stage to ensure complete
+/// coverage of evals that propagate downstream.
+///
+/// Pass condition: modular rejects. Stages 1-6 reject via the next
+/// stage's sumcheck verification (combined_claim shifts because the
+/// recorded eval differs); stage 7 rejects via stage-8 PCS opening
+/// verification (the eval drives the AliasEval-aliased PCS claim).
+#[test]
+fn t7_cross_stage_eval_tampers() {
+    let f = fixture();
+    let mut total = 0usize;
+    let mut rejected_by_modular = 0usize;
+    let mut vacuous = 0usize;
+    let mut failures: Vec<String> = Vec::new();
+
+    for stage in 1..=7 {
+        let stage_idx = stage - 1;
+        let n = f
+            .modular_proof
+            .stage_proofs
+            .get(stage_idx)
+            .map(|sp| sp.evals.len())
+            .unwrap_or(0);
+        if n < 2 {
+            // Need at least one eval that's neither idx 0 nor last —
+            // T2 / T9 cover those.
+            vacuous += 1;
+            continue;
+        }
+        let mid = n / 2;
+        let tamper = TamperPoint {
+            kind: TamperKind::T7CrossStage,
+            label: "T7_CrossStage",
+            ..eval_tamper(stage, mid)
+        };
+        total += 1;
+        let Some(result) = run_tampered(f, &tamper) else {
+            vacuous += 1;
+            continue;
+        };
+        if result.modular.is_err() {
+            rejected_by_modular += 1;
+            continue;
+        }
+        if jolt_equivalence::cross_verifier::is_registered(stage, TamperKind::T7CrossStage) {
+            continue;
+        }
+        failures.push(format!(
+            "T7 stage {stage} idx {mid}: outcome={} — core={:?}, modular={:?}",
+            result.outcome_label(),
+            result.core,
+            result.modular,
+        ));
+    }
+
+    eprintln!(
+        "T7 report: total={total}, modular_rejected={rejected_by_modular}, \
+         vacuous={vacuous}, failures={}",
+        failures.len(),
+    );
+
+    assert!(
+        failures.is_empty(),
+        "T7 unexpected outcomes:\n{}",
+        failures.join("\n"),
+    );
+}
+
 /// T4 — opening-proof structural tamper. Drop the last entry from
 /// `proof.opening_proofs`. The verifier's stage-8 length check
 /// (`reduced.len() != opening_proofs.len()`) rejects.

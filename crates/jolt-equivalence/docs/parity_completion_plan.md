@@ -68,8 +68,11 @@ this file, pick the next unchecked task, and start immediately. No
          all 42 swaps caught by stage-8 PCS verification)
 [x] T18  T4 opening-proof truncation test (drop last opening_proof;
          modular returns Opening(VerificationFailed))
-[ ] T14  Soundness suite: T10 domain-separator-tag test (deferred —
-         requires tag-byte tampering infrastructure)
+[x] T14  T10 domain-separator-tag test (clone+mutate verifying_key
+         schedule; tag flip at AbsorbEvals → transcript divergence
+         → sumcheck round-0 expected-sum mismatch)
+[x] T19  T7 cross-stage eval test (middle-idx eval per stage; modular
+         rejects all 7 via downstream sumcheck or PCS mismatch)
 [x] T15  T5 commit-slot SomeToNone test (zero out each Some slot;
          all 42 caught — AbsorbCommitment skip diverges transcript)
 [x] T16  T11 public-IO test (modular rejects via preamble divergence)
@@ -338,8 +341,12 @@ KNOWN_GAPS empty.
 - T5 (commit slot None ↔ Some) — AbsorbCommitment skip diverges
   transcript.
 - T6 (config field tamper) — preamble divergence.
+- T7 (cross-stage eval flowing into downstream input_claim) —
+  same paths as T2.
 - T8 (round-poly degree) — sumcheck structural validation.
 - T9 (batch-claim tamper, last-eval-idx) — same paths as T2.
+- T10 (domain-separator tag flip) — schedule-side mutation; verifier
+  transcript diverges from prover's, sumcheck round-0 fails.
 - T11 (public IO tamper) — preamble divergence.
 
 **Remaining (defense in depth or test-infra extensions)**:
