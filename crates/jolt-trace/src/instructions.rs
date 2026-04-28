@@ -617,7 +617,7 @@ pub struct VirtualHostIO;
 ///
 /// Each variant carries the corresponding unit struct, enabling trait-based
 /// dispatch (e.g. via `Flags` or `InstructionLookupTable`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, strum::EnumIter)]
 pub enum JoltInstructions {
     Add(Add),
     Addi(Addi),
@@ -724,4 +724,111 @@ pub enum JoltInstructions {
     VirtualAdviceLen(VirtualAdviceLen),
     VirtualAdviceLoad(VirtualAdviceLoad),
     VirtualHostIO(VirtualHostIO),
+}
+
+macro_rules! impl_jolt_instructions_flags {
+    ($($variant:ident),* $(,)?) => {
+        impl crate::flags::Flags for JoltInstructions {
+            fn circuit_flags(&self) -> crate::flags::CircuitFlagSet {
+                match self {
+                    $(JoltInstructions::$variant(t) => t.circuit_flags(),)*
+                }
+            }
+
+            fn instruction_flags(&self) -> crate::flags::InstructionFlagSet {
+                match self {
+                    $(JoltInstructions::$variant(t) => t.instruction_flags(),)*
+                }
+            }
+        }
+    };
+}
+
+impl_jolt_instructions_flags! {
+    Add, Addi, Sub, Lui, Auipc,
+    Mul, MulH, MulHSU, MulHU, Div, DivU, Rem, RemU,
+    AddW, AddiW, SubW, MulW, DivW, DivUW, RemW, RemUW,
+    And, AndI, Or, OrI, Xor, XorI, Andn,
+    Sll, SllI, Srl, SrlI, Sra, SraI,
+    SllW, SllIW, SrlW, SrlIW, SraW, SraIW,
+    Slt, SltI, SltU, SltIU,
+    Beq, Bne, Blt, Bge, BltU, BgeU,
+    Lb, Lbu, Lh, Lhu, Lw, Lwu, Ld,
+    Sb, Sh, Sw, Sd,
+    Ecall, Ebreak, Fence, Noop,
+    Jal, Jalr,
+    AssertEq, AssertLte, AssertValidDiv0, AssertValidUnsignedRemainder,
+    AssertMulUNoOverflow, AssertWordAlignment, AssertHalfwordAlignment,
+    Pow2, Pow2I, Pow2W, Pow2IW, MulI,
+    MovSign, VirtualRev8W,
+    VirtualChangeDivisor, VirtualChangeDivisorW,
+    VirtualSignExtendWord, VirtualZeroExtendWord,
+    VirtualSrl, VirtualSrli, VirtualSra, VirtualSrai,
+    VirtualShiftRightBitmask, VirtualShiftRightBitmaski,
+    VirtualRotri, VirtualRotriw,
+    VirtualXorRot32, VirtualXorRot24, VirtualXorRot16, VirtualXorRot63,
+    VirtualXorRotW16, VirtualXorRotW12, VirtualXorRotW8, VirtualXorRotW7,
+    VirtualAdvice, VirtualAdviceLen, VirtualAdviceLoad, VirtualHostIO,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::flags::{CircuitFlags, Flags, InstructionFlags};
+    use strum::IntoEnumIterator;
+
+    #[test]
+    fn left_operand_exclusive() {
+        for instr in JoltInstructions::iter() {
+            let flags = instr.instruction_flags();
+            assert!(
+                !(flags[InstructionFlags::LeftOperandIsPC]
+                    && flags[InstructionFlags::LeftOperandIsRs1Value]),
+                "Left operand flags not exclusive for {instr:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn right_operand_exclusive() {
+        for instr in JoltInstructions::iter() {
+            let flags = instr.instruction_flags();
+            assert!(
+                !(flags[InstructionFlags::RightOperandIsRs2Value]
+                    && flags[InstructionFlags::RightOperandIsImm]),
+                "Right operand flags not exclusive for {instr:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn lookup_shape_exclusive() {
+        for instr in JoltInstructions::iter() {
+            let flags = instr.circuit_flags();
+            let num_true = [
+                flags[CircuitFlags::AddOperands],
+                flags[CircuitFlags::SubtractOperands],
+                flags[CircuitFlags::MultiplyOperands],
+                flags[CircuitFlags::Advice],
+            ]
+            .iter()
+            .filter(|&&b| b)
+            .count();
+            assert!(
+                num_true <= 1,
+                "Lookup shaping flags not exclusive for {instr:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn load_store_exclusive() {
+        for instr in JoltInstructions::iter() {
+            let flags = instr.circuit_flags();
+            assert!(
+                !(flags[CircuitFlags::Load] && flags[CircuitFlags::Store]),
+                "Load/Store flags not exclusive for {instr:?}",
+            );
+        }
+    }
 }

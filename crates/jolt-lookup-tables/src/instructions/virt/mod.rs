@@ -1,0 +1,34 @@
+//! Per-instruction impls for virtual (synthesized) instructions.
+
+pub mod advice;
+pub mod advice_len;
+pub mod advice_load;
+pub mod assert_eq;
+pub mod assert_halfword_alignment;
+pub mod assert_lte;
+pub mod assert_mulu_no_overflow;
+pub mod assert_valid_div0;
+pub mod assert_valid_unsigned_remainder;
+pub mod assert_word_alignment;
+pub mod change_divisor;
+pub mod change_divisor_w;
+pub mod host_io;
+pub mod movsign;
+pub mod muli;
+pub mod pow2;
+pub mod pow2i;
+pub mod pow2iw;
+pub mod pow2w;
+pub mod rev8w;
+pub mod rotri;
+pub mod rotriw;
+pub mod shift_right_bitmask;
+pub mod shift_right_bitmaski;
+pub mod sign_extend_word;
+pub mod sra;
+pub mod srai;
+pub mod srl;
+pub mod srli;
+pub mod xor_rot;
+pub mod xor_rotw;
+pub mod zero_extend_word;
