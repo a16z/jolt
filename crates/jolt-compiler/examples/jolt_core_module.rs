@@ -1408,6 +1408,7 @@ fn build_module(params: &ModuleParams) -> Module {
     verifier_ops.extend(build_verifier_stage2_ops(&p, params, &ch));
     verifier_ops.extend(build_verifier_stage3_ops(&p, params, &ch));
     verifier_ops.extend(build_verifier_stage4_ops(&p, params, &ch));
+    verifier_ops.extend(build_verifier_stage5_ops(&p, params, &ch));
     push_verifier_op!(verifier_ops, VerifierOp::VerifyOpenings);
 
     let polys = pt.into_vec();
@@ -1438,7 +1439,7 @@ fn build_module(params: &ModuleParams) -> Module {
             ops: verifier_ops,
             num_challenges,
             num_polys,
-            num_stages: 4,
+            num_stages: 5,
         },
     }
 }
@@ -4771,6 +4772,12 @@ fn build_stage5(
     }
     push_op!(
         ops,
+        Op::RecordEvals {
+            polys: stage5_eval_polys.clone(),
+        }
+    );
+    push_op!(
+        ops,
         Op::AbsorbEvals {
             polys: stage5_eval_polys,
             tag: DomainSeparator::OpeningClaim,
@@ -7190,6 +7197,229 @@ fn build_verifier_stage4_ops(
             batch_challenges: s4_batch_challenges,
         }
     );
+    ops
+}
+
+/// Verifier schedule for Stage 5 (InstructionReadRaf + RamRaClaimReduction +
+/// RegistersValEvaluation).
+///
+/// Three batched sumcheck instances (matches jolt-core `verify_stage5`
+/// instance order):
+///   [0] InstructionReadRaf       — LOG_K_INSTRUCTION + log_T rounds, 2-phase
+///   [1] RamRaClaimReduction      — log_T rounds, degree 2, first_active = 128
+///   [2] RegistersValEvaluation   — log_T rounds, degree 3, first_active = 128
+///
+/// Pre-sumcheck transcript:
+///   Squeeze γ_instruction_read_raf, γ_ram_ra_reduction (2 challenges)
+///
+/// `output_check` formulas are deferred — InstructionReadRaf's expected
+/// output uses a prefix-suffix combine evaluation that needs a new
+/// `ClaimFactor::CombineEntryEval` variant (multi-day work). Until then,
+/// `CheckOutput` is omitted; `VerifySumcheck` still catches T1/T8 round-poly
+/// tampers, so those entries can be removed from `KNOWN_GAPS`.
+fn build_verifier_stage5_ops(
+    p: &Polys,
+    params: &ModuleParams,
+    _ch: &ChallengeTable,
+) -> Vec<VerifierOp> {
+    // ── Absolute challenge layout ──
+    //
+    // Mirrors the prover-side `build_stage{1..5}` accumulation. The verifier
+    // doesn't write to the prover's `External` (scalar-capture) slots, but
+    // they still occupy positions in the shared challenge table — so each
+    // stage's offset must skip them to land where the prover put gammas.
+    let s2_ch_base = params.num_tau + 1 + 1 + params.outer_remaining_rounds;
+    let stage2_pre = 1 + 1 + 1 + 1 + params.log_k_ram;
+    let stage2_batch_base = s2_ch_base + stage2_pre;
+    let stage2_round_base = stage2_batch_base + params.stage2_num_instances;
+    let s3_ch_base = stage2_round_base + params.stage2_max_rounds;
+    let s4_ch_base = s3_ch_base + 6 + params.log_t;
+
+    let log_k_reg = LOG_K_REG;
+    let stage4_max_rounds = log_k_reg + params.log_t;
+    // Stage 4 prover-side total: 2 gammas + 2 batch + 2 External (scalar
+    // capture) + stage4_max_rounds rounds.
+    let s5_ch_base = s4_ch_base + 6 + stage4_max_rounds;
+
+    let n_vra = params.n_virtual_ra_polys;
+    let inst_read_raf_rounds = LOG_K_INSTRUCTION + params.log_t;
+    let ram_ra_reduction_rounds = params.log_t;
+    let reg_val_eval_rounds = params.log_t;
+    let stage5_max_rounds = inst_read_raf_rounds;
+
+    // Stage 5 verifier-side challenge slot allocation:
+    //   +0 ch_gamma_inst_raf
+    //   +1 ch_gamma_ram_ra
+    //   +2..+5 prover's `ps_registry_p_{right,left,identity}` (External, skipped here)
+    //   +5..+8 batch challenges
+    //   +8..+8+stage5_max_rounds round slots
+    let ch_gamma_inst_raf = ChallengeIdx(s5_ch_base);
+    let ch_gamma_ram_ra = ChallengeIdx(s5_ch_base + 1);
+    let s5_batch_challenges: Vec<ChallengeIdx> =
+        (s5_ch_base + 5..s5_ch_base + 8).map(ChallengeIdx).collect();
+    let s5_round_slots: Vec<ChallengeIdx> = (s5_ch_base + 8..s5_ch_base + 8 + stage5_max_rounds)
+        .map(ChallengeIdx)
+        .collect();
+
+    // ── Input claims ──
+    //
+    // Each formula references evaluations recorded by earlier stages:
+    //   stage 2 RecordEvals → lookup_output, left/right_lookup_operand,
+    //                         ram_combined_ra, ram_raf_ra
+    //   stage 4 RecordEvals → reg_val, BatchEq(10) (ram_ra at RamValCheck)
+
+    // [0] InstructionReadRaf:  rv + γ * left + γ² * right
+    let inst_raf_input_claim = ClaimFormula {
+        terms: vec![
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![ClaimFactor::Eval(p.lookup_output)],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_gamma_inst_raf),
+                    ClaimFactor::Eval(p.left_lookup_operand),
+                ],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_gamma_inst_raf),
+                    ClaimFactor::Challenge(ch_gamma_inst_raf),
+                    ClaimFactor::Eval(p.right_lookup_operand),
+                ],
+            },
+        ],
+    };
+
+    // [1] RamRaClaimReduction:  claim_raf + γ * claim_rw + γ² * claim_val
+    //   claim_raf = RamRa @ RamRafEvaluation (stage 2 ram_raf_ra)
+    //   claim_rw  = RamRa @ RamReadWriteChecking (stage 2 ram_combined_ra)
+    //   claim_val = RamRa @ RamValCheck (stage 4 BatchEq(10) wa projection)
+    let ram_ra_wa = PolynomialId::BatchEq(10);
+    let ram_ra_input_claim = ClaimFormula {
+        terms: vec![
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![ClaimFactor::Eval(p.ram_raf_ra)],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_gamma_ram_ra),
+                    ClaimFactor::Eval(p.ram_combined_ra),
+                ],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_gamma_ram_ra),
+                    ClaimFactor::Challenge(ch_gamma_ram_ra),
+                    ClaimFactor::Eval(ram_ra_wa),
+                ],
+            },
+        ],
+    };
+
+    // [2] RegistersValEvaluation:  RegistersVal eval at stage 4 opening
+    let reg_val_input_claim = ClaimFormula {
+        terms: vec![ClaimTerm {
+            coeff: 1,
+            factors: vec![ClaimFactor::Eval(p.reg_val)],
+        }],
+    };
+
+    let instances = vec![
+        SumcheckInstance {
+            input_claim: inst_raf_input_claim,
+            // Output check deferred: InstructionReadRaf needs a
+            // `ClaimFactor::CombineEntryEval` variant. See doc comment.
+            output_check: ClaimFormula { terms: vec![] },
+            num_rounds: inst_read_raf_rounds,
+            degree: n_vra + 2,
+            normalize: None,
+        },
+        SumcheckInstance {
+            input_claim: ram_ra_input_claim,
+            output_check: ClaimFormula { terms: vec![] },
+            num_rounds: ram_ra_reduction_rounds,
+            degree: 2,
+            normalize: Some(PointNormalization::Reverse),
+        },
+        SumcheckInstance {
+            input_claim: reg_val_input_claim,
+            output_check: ClaimFormula { terms: vec![] },
+            num_rounds: reg_val_eval_rounds,
+            degree: 3,
+            normalize: Some(PointNormalization::Reverse),
+        },
+    ];
+
+    // ── Eval list (matches prover-side stage5_eval_polys ordering) ──
+    let ram_ra_gather = PolynomialId::BatchEq(17);
+    let rd_wa_gather = PolynomialId::BatchEq(12);
+    let mut stage5_eval_polys: Vec<PolynomialId> = Vec::new();
+    for i in 0..NUM_LOOKUP_TABLES {
+        stage5_eval_polys.push(PolynomialId::LookupTableFlag(i));
+    }
+    for i in 0..n_vra {
+        stage5_eval_polys.push(PolynomialId::InstructionRa(i));
+    }
+    stage5_eval_polys.push(PolynomialId::InstructionRafFlag);
+    stage5_eval_polys.push(ram_ra_gather);
+    stage5_eval_polys.push(p.rd_inc);
+    stage5_eval_polys.push(rd_wa_gather);
+
+    let evaluations: Vec<_> = stage5_eval_polys
+        .iter()
+        .map(|&poly| Evaluation {
+            poly,
+            at_stage: VerifierStageIndex(4),
+        })
+        .collect();
+
+    // ── Schedule ──
+    let mut ops = vec![VerifierOp::BeginStage];
+    push_verifier_op!(
+        ops,
+        VerifierOp::Squeeze {
+            challenge: ch_gamma_inst_raf,
+        }
+    );
+    push_verifier_op!(
+        ops,
+        VerifierOp::Squeeze {
+            challenge: ch_gamma_ram_ra,
+        }
+    );
+    push_verifier_op!(
+        ops,
+        VerifierOp::VerifySumcheck {
+            instances: instances.clone(),
+            stage: 4,
+            batch_challenges: s5_batch_challenges,
+            claim_tag: Some(DomainSeparator::SumcheckClaim),
+            sumcheck_challenge_slots: s5_round_slots,
+        }
+    );
+    push_verifier_op!(ops, VerifierOp::RecordEvals { evals: evaluations });
+    push_verifier_op!(
+        ops,
+        VerifierOp::AbsorbEvals {
+            polys: stage5_eval_polys,
+            tag: DomainSeparator::OpeningClaim,
+        }
+    );
+    // CollectOpeningClaim deferred (matches stage 4): RdInc opens at a
+    // log_T point, while InstructionRa(d) opens at the full 137-dim
+    // point — `VerifierOp::CollectOpeningClaim` uses `sumcheck_points[stage]`
+    // for every poly, which is wrong for the cycle-only commitments.
+    // Routing requires `CollectOpeningClaimAt` per-poly with the right
+    // dimension. Bundled with full PCS-opening parity work.
+    //
+    // CheckOutput also omitted; see doc comment at top of function.
+    let _ = instances; // keep named binding alive for clarity
     ops
 }
 

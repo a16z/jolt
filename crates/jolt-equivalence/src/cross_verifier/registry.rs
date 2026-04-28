@@ -35,21 +35,14 @@ pub struct KnownGap {
 ///
 /// Stage 4 closed: build_verifier_stage4_ops now emits the full
 /// VerifySumcheck/CheckOutput schedule for [RegistersRWC, RamValCheck].
+///
+/// Stage 5 partially closed: build_verifier_stage5_ops emits VerifySumcheck
+/// for [InstructionReadRaf, RamRaClaimReduction, RegistersValEvaluation],
+/// catching T1 round-poly-coefficient and T8 degree tampers. CheckOutput
+/// is deferred (output_check formulas pending — InstructionReadRaf needs
+/// a `ClaimFactor::CombineEntryEval` variant for the prefix-suffix
+/// composition).
 pub const KNOWN_GAPS: &[KnownGap] = &[
-    // ── Stage 5 (InstructionReadRaf / RamRaClaimReduction / RegistersValEvaluation) ──
-    // Not assembled into build_module's verifier_ops chain at all.
-    KnownGap {
-        stage: 5,
-        kind: TamperKind::T1RoundPolyCoeff,
-        rationale: "Stage 5 not wired into verifier schedule",
-        owner: "verifier-agent",
-    },
-    KnownGap {
-        stage: 5,
-        kind: TamperKind::T8RoundPolyDegree,
-        rationale: "Stage 5 not wired into verifier schedule",
-        owner: "verifier-agent",
-    },
     // ── Stage 6 (BytecodeReadRaf / Booleanity / HammingBooleanity / RamRa / LookupsRa / IncReduction +advice) ──
     KnownGap {
         stage: 6,

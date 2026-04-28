@@ -173,7 +173,7 @@ where
                     instance_claims
                         .iter()
                         .zip(instances.iter())
-                        .map(|(&c, inst)| c * F::from_u64(1u64 << (max_rounds - inst.num_rounds)))
+                        .map(|(&c, inst)| c * field_pow2::<F>(max_rounds - inst.num_rounds))
                         .sum()
                 } else {
                     let tag = claim_tag.as_ref().expect("claim_tag required for batched");
@@ -191,7 +191,7 @@ where
                         .zip(batch_challenges.iter())
                         .map(|((&c, inst), &ch_idx)| {
                             let coeff = challenges[ch_idx.0];
-                            coeff * c * F::from_u64(1u64 << (max_rounds - inst.num_rounds))
+                            coeff * c * field_pow2::<F>(max_rounds - inst.num_rounds)
                         })
                         .sum()
                 };
@@ -654,6 +654,21 @@ fn eval_dense_u64_mle<F: Field>(state: &[u64], r: &[F]) -> F {
     }
     debug_assert_eq!(current.len(), 1, "MLE eval did not collapse to scalar");
     current[0]
+}
+
+/// Compute 2^k as a field element via repeated doubling.
+///
+/// Used for inactive-instance scaling in batched sumcheck. Mirrors the
+/// prover's `AbsorbInputClaim` handler, which doubles `inactive_scale_bits`
+/// times. Avoids `1u64 << k` overflow when `k ≥ 64` (e.g. stage 5's
+/// max_rounds=137 with a log_T=9 instance scales by 2^128).
+fn field_pow2<F: Field>(k: usize) -> F {
+    let mut acc = F::one();
+    let two = F::from_u64(2);
+    for _ in 0..k {
+        acc *= two;
+    }
+    acc
 }
 
 /// Evaluate LT(r, threshold): the MLE of the indicator `{x < threshold}`
