@@ -116,6 +116,25 @@ where
                 challenges[challenge.0] = val;
             }
 
+            VerifierOp::ComputePower {
+                target,
+                base,
+                exponent,
+            } => {
+                let base_val = challenges[base.0];
+                let mut result = F::one();
+                let mut b = base_val;
+                let mut exp = *exponent;
+                while exp > 0 {
+                    if exp & 1 == 1 {
+                        result *= b;
+                    }
+                    b = b.square();
+                    exp >>= 1;
+                }
+                challenges[target.0] = result;
+            }
+
             VerifierOp::AppendDomainSeparator { tag } => {
                 // Match jolt-core's `append_bytes(label, &[])`: two update_state calls
                 let label = tag.as_bytes();

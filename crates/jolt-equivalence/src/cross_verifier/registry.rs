@@ -49,21 +49,11 @@ pub struct KnownGap {
 /// CheckOutput is deferred (output_check formulas pending — Booleanity /
 /// HammingBooleanity need an `EvalSquared`-style factor for `ra² − ra`,
 /// BytecodeReadRaf needs the bytecode-val composition).
-pub const KNOWN_GAPS: &[KnownGap] = &[
-    // ── Stage 7 (HammingWeightClaimReduction +advice address phase) ──
-    KnownGap {
-        stage: 7,
-        kind: TamperKind::T1RoundPolyCoeff,
-        rationale: "Stage 7 not wired into verifier schedule",
-        owner: "verifier-agent",
-    },
-    KnownGap {
-        stage: 7,
-        kind: TamperKind::T8RoundPolyDegree,
-        rationale: "Stage 7 not wired into verifier schedule",
-        owner: "verifier-agent",
-    },
-];
+///
+/// Stage 7 partially closed: build_verifier_stage7_ops emits VerifySumcheck
+/// for [HammingWeightClaimReduction], catching T1 / T8 tampers. CheckOutput
+/// is deferred (output composition needs `EqProject`-aware factors).
+pub const KNOWN_GAPS: &[KnownGap] = &[];
 
 /// Lookup helper used by the runner: is `(stage, kind)` registered?
 pub fn is_registered(stage: usize, kind: TamperKind) -> bool {

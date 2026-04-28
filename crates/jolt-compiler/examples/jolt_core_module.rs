@@ -1410,6 +1410,7 @@ fn build_module(params: &ModuleParams) -> Module {
     verifier_ops.extend(build_verifier_stage4_ops(&p, params, &ch));
     verifier_ops.extend(build_verifier_stage5_ops(&p, params, &ch));
     verifier_ops.extend(build_verifier_stage6_ops(&p, params, &ch));
+    verifier_ops.extend(build_verifier_stage7_ops(&p, params, &ch));
     push_verifier_op!(verifier_ops, VerifierOp::VerifyOpenings);
 
     let polys = pt.into_vec();
@@ -1440,7 +1441,7 @@ fn build_module(params: &ModuleParams) -> Module {
             ops: verifier_ops,
             num_challenges,
             num_polys,
-            num_stages: 6,
+            num_stages: 7,
         },
     }
 }
@@ -6663,6 +6664,16 @@ fn build_stage7(
         );
     }
 
+    // Snapshot G_i evaluations into the proof so the verifier can append
+    // them via `VerifierOp::AbsorbEvals` (the verifier's evaluations map
+    // is populated only by `VerifierOp::RecordEvals`).
+    push_op!(
+        ops,
+        Op::RecordEvals {
+            polys: g_poly_ids.clone(),
+        }
+    );
+
     // Flush G evaluations to transcript (one per RA polynomial).
     push_op!(
         ops,
@@ -7847,6 +7858,232 @@ fn build_verifier_stage6_ops(
         }
     );
     // CheckOutput + CollectOpeningClaim deferred (see doc comment).
+    let _ = instances;
+    ops
+}
+
+/// Verifier schedule for Stage 7 (HammingWeightClaimReduction).
+///
+/// One batched sumcheck instance:
+///   [0] HammingWeightClaimReduction — log_K_chunk rounds, degree 2
+///
+/// Pre-sumcheck transcript:
+///   Squeeze γ_hw (1 challenge). The prover then emits ComputePower for
+///   3 × total_d derived γ-power challenges (γ⁰…γ^{3·total_d-1}); these
+///   don't touch the transcript but are referenced by the input claim,
+///   so the verifier must mirror them via `VerifierOp::ComputePower`.
+///
+/// Conditional advice instances are absent for muldiv (no advice
+/// commitments → AdviceClaimReduction skipped).
+///
+/// `output_check` is deferred — the HW reduction's output composition
+/// requires `EqProject`-aware factors that aren't yet authored as
+/// `ClaimFactor` variants. `VerifySumcheck` still catches T1/T8 round-poly
+/// tampers.
+fn build_verifier_stage7_ops(
+    p: &Polys,
+    params: &ModuleParams,
+    _ch: &ChallengeTable,
+) -> Vec<VerifierOp> {
+    // ── Absolute challenge layout — accumulate through stages 1–6 ──
+    let s2_ch_base = params.num_tau + 1 + 1 + params.outer_remaining_rounds;
+    let stage2_pre = 1 + 1 + 1 + 1 + params.log_k_ram;
+    let stage2_batch_base = s2_ch_base + stage2_pre;
+    let stage2_round_base = stage2_batch_base + params.stage2_num_instances;
+    let s3_ch_base = stage2_round_base + params.stage2_max_rounds;
+    let s4_ch_base = s3_ch_base + 6 + params.log_t;
+    let log_k_reg = LOG_K_REG;
+    let stage4_max_rounds = log_k_reg + params.log_t;
+    let s5_ch_base = s4_ch_base + 6 + stage4_max_rounds;
+    let stage5_max_rounds = LOG_K_INSTRUCTION + params.log_t;
+    let s6_ch_base = s5_ch_base + 8 + stage5_max_rounds;
+
+    let total_d = params.instruction_d + params.bytecode_d + params.ram_d;
+    let ram_pad_len = if params.log_k_ram.is_multiple_of(params.log_k_chunk) {
+        0
+    } else {
+        params.log_k_chunk - (params.log_k_ram % params.log_k_chunk)
+    };
+    let bc_pad_len = if params.log_k_bytecode.is_multiple_of(params.log_k_chunk) {
+        0
+    } else {
+        params.log_k_chunk - (params.log_k_bytecode % params.log_k_chunk)
+    };
+
+    // Stage 6 challenge total (mirror prover-side accumulation):
+    //   7 squeezed gammas + 2*total_d powers + 1 external + 2 squeezed
+    //   + ram_pad_len externals + stage6_max_rounds rounds
+    //   + 5 cycle_weight + 1 entry_weight + bc_pad_len + log_t entry_eq
+    //   + 6 batch challenges
+    //   = 22 + 2*total_d + ram_pad_len + bc_pad_len + log_k_bytecode + 2*log_t
+    let s7_ch_base = s6_ch_base
+        + 22
+        + 2 * total_d
+        + ram_pad_len
+        + bc_pad_len
+        + params.log_k_bytecode
+        + 2 * params.log_t;
+
+    let hw_rounds = params.log_k_chunk;
+
+    // Stage 7 challenge slot allocation:
+    //   +0                     ch_hw_gamma                  (Squeeze)
+    //   +1..+1+3*total_d       ch_hw_gamma_pow              (Power)
+    //   +1+3*total_d           ch_batch                     (Squeeze inside VerifySumcheck)
+    //   +2+3*total_d..+ ...    s7_round_slots               (SumcheckRound, log_k_chunk)
+    let ch_hw_gamma = ChallengeIdx(s7_ch_base);
+    let ch_hw_gamma_pow: Vec<ChallengeIdx> = (0..3 * total_d)
+        .map(|d| ChallengeIdx(s7_ch_base + 1 + d))
+        .collect();
+    let ch_batch = ChallengeIdx(s7_ch_base + 1 + 3 * total_d);
+    let s7_round_slots: Vec<ChallengeIdx> = (s7_ch_base + 2 + 3 * total_d
+        ..s7_ch_base + 2 + 3 * total_d + hw_rounds)
+        .map(ChallengeIdx)
+        .collect();
+
+    // ── BatchEq IDs reachable by stage 7's input claim
+    // (must match the `next_eq` walk in build_stage6 — see
+    // `build_verifier_stage6_ops` for the full derivation). ──
+    let mut next_eq = 19usize;
+    let bc_raf_proj_ids: Vec<PolynomialId> = (0..params.bytecode_d)
+        .map(|_| {
+            let id = PolynomialId::BatchEq(next_eq);
+            next_eq += 1;
+            id
+        })
+        .collect();
+    next_eq += 5 + 1 + 1 + 1 + 1; // bc per-stage + entry + booleanity + hamming + ram_ra_virt
+    let ram_ra_proj_ids: Vec<PolynomialId> = (0..params.ram_d)
+        .map(|_| {
+            let id = PolynomialId::BatchEq(next_eq);
+            next_eq += 1;
+            id
+        })
+        .collect();
+    next_eq += 1; // inst_ra_virtual eq
+    let inst_ra_proj_ids: Vec<PolynomialId> = (0..params.instruction_d)
+        .map(|_| {
+            let id = PolynomialId::BatchEq(next_eq);
+            next_eq += 1;
+            id
+        })
+        .collect();
+
+    // ── HW reduction input claim
+    //   Σ_i [γ^{3i}·H_i + γ^{3i+1}·ra_i + γ^{3i+2}·virt_i]
+    //   H_i      = 1 for instruction/bytecode rows, hamming_weight for ram
+    //   ra_i     = booleanity-recorded RA eval (set by stage 6 RecordEvals)
+    //   virt_i   = virtualization projection eval (BatchEq id)
+    let ra_poly_ids: Vec<PolynomialId> = (0..params.instruction_d)
+        .map(PolynomialId::InstructionRa)
+        .chain((0..params.bytecode_d).map(PolynomialId::BytecodeRa))
+        .chain((0..params.ram_d).map(PolynomialId::RamRa))
+        .collect();
+
+    let mut hw_input_terms = Vec::with_capacity(3 * total_d);
+    for i in 0..total_d {
+        let ra_pid = ra_poly_ids[i];
+        let is_ram = i >= params.instruction_d + params.bytecode_d;
+
+        if is_ram {
+            hw_input_terms.push(ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_hw_gamma_pow[3 * i]),
+                    ClaimFactor::Eval(p.hamming_weight),
+                ],
+            });
+        } else {
+            hw_input_terms.push(ClaimTerm {
+                coeff: 1,
+                factors: vec![ClaimFactor::Challenge(ch_hw_gamma_pow[3 * i])],
+            });
+        }
+
+        hw_input_terms.push(ClaimTerm {
+            coeff: 1,
+            factors: vec![
+                ClaimFactor::Challenge(ch_hw_gamma_pow[3 * i + 1]),
+                ClaimFactor::Eval(ra_pid),
+            ],
+        });
+
+        let virt_proj_id = if i < params.instruction_d {
+            inst_ra_proj_ids[i]
+        } else if i < params.instruction_d + params.bytecode_d {
+            bc_raf_proj_ids[i - params.instruction_d]
+        } else {
+            ram_ra_proj_ids[i - params.instruction_d - params.bytecode_d]
+        };
+        hw_input_terms.push(ClaimTerm {
+            coeff: 1,
+            factors: vec![
+                ClaimFactor::Challenge(ch_hw_gamma_pow[3 * i + 2]),
+                ClaimFactor::Eval(virt_proj_id),
+            ],
+        });
+    }
+
+    let hw_input_claim = ClaimFormula {
+        terms: hw_input_terms,
+    };
+
+    let instances = vec![SumcheckInstance {
+        input_claim: hw_input_claim,
+        output_check: ClaimFormula { terms: vec![] },
+        num_rounds: hw_rounds,
+        degree: 2,
+        normalize: None,
+    }];
+
+    // ── Eval list: G_0..G_{total_d-1} (only thing stage 7 records) ──
+    let g_poly_ids: Vec<PolynomialId> = (0..total_d).map(|i| p.hw_g[i]).collect();
+    let evaluations: Vec<_> = g_poly_ids
+        .iter()
+        .map(|&poly| Evaluation {
+            poly,
+            at_stage: VerifierStageIndex(6),
+        })
+        .collect();
+
+    // ── Schedule ──
+    let mut ops = vec![VerifierOp::BeginStage];
+    push_verifier_op!(
+        ops,
+        VerifierOp::Squeeze {
+            challenge: ch_hw_gamma,
+        }
+    );
+    // ComputePower for 3*total_d gamma powers — referenced by input claim.
+    for (d, &target) in ch_hw_gamma_pow.iter().enumerate() {
+        push_verifier_op!(
+            ops,
+            VerifierOp::ComputePower {
+                target,
+                base: ch_hw_gamma,
+                exponent: d as u64,
+            }
+        );
+    }
+    push_verifier_op!(
+        ops,
+        VerifierOp::VerifySumcheck {
+            instances: instances.clone(),
+            stage: 6,
+            batch_challenges: vec![ch_batch],
+            claim_tag: Some(DomainSeparator::SumcheckClaim),
+            sumcheck_challenge_slots: s7_round_slots,
+        }
+    );
+    push_verifier_op!(ops, VerifierOp::RecordEvals { evals: evaluations });
+    push_verifier_op!(
+        ops,
+        VerifierOp::AbsorbEvals {
+            polys: g_poly_ids,
+            tag: DomainSeparator::OpeningClaim,
+        }
+    );
+    // CheckOutput + CollectOpeningClaim deferred.
     let _ = instances;
     ops
 }

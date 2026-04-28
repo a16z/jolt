@@ -1813,6 +1813,15 @@ pub enum VerifierOp {
     },
     /// Squeeze a Fiat-Shamir challenge.
     Squeeze { challenge: ChallengeIdx },
+    /// Compute a derived challenge: `challenges[target] = challenges[base]^exponent`.
+    /// Mirrors the prover-side [`Op::ComputePower`]; doesn't touch the
+    /// transcript. Required when an input/output claim formula references
+    /// a `ChallengeSource::Power` slot.
+    ComputePower {
+        target: ChallengeIdx,
+        base: ChallengeIdx,
+        exponent: u64,
+    },
     /// Append a domain separator label (empty payload) to the transcript.
     AppendDomainSeparator { tag: DomainSeparator },
     /// Absorb a round polynomial from the current stage proof into transcript.
