@@ -1,9 +1,11 @@
-//! Per-instruction impls for RV64I/M base ISA and RV64 W-suffix instructions.
+//! Per-instruction impls for RV64I/M base ISA instructions that the prover sees directly.
+//!
+//! Mirrors `jolt-core/src/zkvm/instruction/`. Decomposed instructions
+//! (W-suffix, multi-byte loads/stores, plain shifts, MULH/MULHSU, DIV/REM, NOOP)
+//! live in tracer as virtual sequences and never reach this layer.
 
 pub mod add;
 pub mod addi;
-pub mod addiw;
-pub mod addw;
 pub mod and;
 pub mod andi;
 pub mod andn;
@@ -14,56 +16,22 @@ pub mod bgeu;
 pub mod blt;
 pub mod bltu;
 pub mod bne;
-pub mod div;
-pub mod divu;
-pub mod divuw;
-pub mod divw;
 pub mod ebreak;
 pub mod ecall;
 pub mod fence;
 pub mod jal;
 pub mod jalr;
-pub mod lb;
-pub mod lbu;
 pub mod ld;
-pub mod lh;
-pub mod lhu;
 pub mod lui;
-pub mod lw;
-pub mod lwu;
 pub mod mul;
-pub mod mulh;
-pub mod mulhsu;
 pub mod mulhu;
-pub mod mulw;
-pub mod noop;
 pub mod or;
 pub mod ori;
-pub mod rem;
-pub mod remu;
-pub mod remuw;
-pub mod remw;
-pub mod sb;
 pub mod sd;
-pub mod sh;
-pub mod sll;
-pub mod slli;
-pub mod slliw;
-pub mod sllw;
 pub mod slt;
 pub mod slti;
 pub mod sltiu;
 pub mod sltu;
-pub mod sra;
-pub mod srai;
-pub mod sraiw;
-pub mod sraw;
-pub mod srl;
-pub mod srli;
-pub mod srliw;
-pub mod srlw;
 pub mod sub;
-pub mod subw;
-pub mod sw;
 pub mod xor;
 pub mod xori;
