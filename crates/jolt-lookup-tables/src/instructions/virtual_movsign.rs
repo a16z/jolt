@@ -1,4 +1,26 @@
-use crate::instruction_tables::impl_lookup_table;
+use crate::traits::impl_lookup_table;
+use crate::traits::LookupQuery;
 use jolt_trace::instructions::MovSign;
+use tracer::instruction::{virtual_movsign::VirtualMovsign, RISCVCycle};
 
 impl_lookup_table!(MovSign, Some(SignMask));
+
+impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualMovsign> {
+    fn to_instruction_inputs(&self) -> (u64, i128) {
+        let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
+        (
+            self.register_state.rs1 & mask,
+            (self.instruction.operands.imm as u64 & mask) as i128,
+        )
+    }
+
+    fn to_lookup_output(&self) -> u64 {
+        let (x, _) = LookupQuery::<XLEN>::to_instruction_inputs(self);
+        let msb = 1u64 << (XLEN - 1);
+        if x & msb != 0 {
+            (1u128 << XLEN).wrapping_sub(1) as u64
+        } else {
+            0
+        }
+    }
+}

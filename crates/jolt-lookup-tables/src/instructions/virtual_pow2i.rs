@@ -1,4 +1,27 @@
-use crate::instruction_tables::impl_lookup_table;
+use crate::traits::impl_lookup_table;
+use crate::traits::LookupQuery;
 use jolt_trace::instructions::Pow2I;
+use tracer::instruction::{virtual_pow2i::VirtualPow2I, RISCVCycle};
 
 impl_lookup_table!(Pow2I, Some(Pow2));
+
+impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualPow2I> {
+    fn to_instruction_inputs(&self) -> (u64, i128) {
+        let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
+        (0, (self.instruction.operands.imm & mask) as i128)
+    }
+
+    fn to_lookup_operands(&self) -> (u64, u128) {
+        let (x, y) = LookupQuery::<XLEN>::to_instruction_inputs(self);
+        (0, x as u128 + y as u64 as u128)
+    }
+
+    fn to_lookup_index(&self) -> u128 {
+        LookupQuery::<XLEN>::to_lookup_operands(self).1
+    }
+
+    fn to_lookup_output(&self) -> u64 {
+        let y = LookupQuery::<XLEN>::to_lookup_index(self);
+        1u64 << (y & ((XLEN as u128) - 1))
+    }
+}
