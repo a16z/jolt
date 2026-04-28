@@ -279,6 +279,83 @@ fn t2_eval_tampers() {
     );
 }
 
+/// T11 — public-IO tampers. Mutating the proof's public inputs/outputs
+/// changes the preamble absorption, which both verifiers replay; the
+/// transcript diverges immediately and downstream sumcheck verification
+/// fails.
+#[test]
+fn t11_public_io_tampers() {
+    let f = fixture();
+    let mut total = 0usize;
+    let mut rejected_by_modular = 0usize;
+    let mut vacuous = 0usize;
+    let mut failures: Vec<String> = Vec::new();
+
+    let cases: Vec<(&'static str, TamperPoint)> = vec![
+        (
+            "input_byte[0]_set_0xFF",
+            TamperPoint {
+                stage: 0,
+                location: TamperLocation::Io(
+                    jolt_equivalence::cross_verifier::tamper::IoField::InputByte(0),
+                ),
+                mutate: TamperMutation::SetByte(0xFF),
+                witnesses: vec![Constraint::Preamble],
+                expected: ExpectedResult::BothReject,
+                kind: TamperKind::T11PublicIo,
+                label: "T11_InputByte",
+            },
+        ),
+        (
+            "panic_flag_set_true",
+            TamperPoint {
+                stage: 0,
+                location: TamperLocation::Io(
+                    jolt_equivalence::cross_verifier::tamper::IoField::PanicFlag,
+                ),
+                mutate: TamperMutation::SetBool(true),
+                witnesses: vec![Constraint::Preamble],
+                expected: ExpectedResult::BothReject,
+                kind: TamperKind::T11PublicIo,
+                label: "T11_Panic",
+            },
+        ),
+    ];
+
+    for (name, tamper) in &cases {
+        total += 1;
+        let Some(result) = run_tampered(f, tamper) else {
+            vacuous += 1;
+            continue;
+        };
+        if result.modular.is_err() {
+            rejected_by_modular += 1;
+            continue;
+        }
+        if jolt_equivalence::cross_verifier::is_registered(tamper.stage, TamperKind::T11PublicIo) {
+            continue;
+        }
+        failures.push(format!(
+            "T11 case {name}: outcome={} — core={:?}, modular={:?}",
+            result.outcome_label(),
+            result.core,
+            result.modular,
+        ));
+    }
+
+    eprintln!(
+        "T11 report: total={total}, modular_rejected={rejected_by_modular}, \
+         vacuous={vacuous}, failures={}",
+        failures.len(),
+    );
+
+    assert!(
+        failures.is_empty(),
+        "T11 unexpected outcomes:\n{}",
+        failures.join("\n"),
+    );
+}
+
 /// Narrow S7 — every constraint produced by the in-scope schedule is
 /// covered by at least one tamper kind in `TAMPER_COVERAGE`.
 ///

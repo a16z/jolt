@@ -65,7 +65,7 @@ this file, pick the next unchecked task, and start immediately. No
 [ ] T13  Soundness suite: T3 commitment-swap test
 [ ] T14  Soundness suite: T10 domain-separator-tag test
 [ ] T15  Soundness suite: T5 commit-slot-None↔Some test
-[ ] T16  Soundness suite: T11 public-IO test
+[x] T16  Soundness suite: T11 public-IO test (modular rejects via preamble divergence)
 ```
 
 ## Findings from T11 dry-run (2026-04-28)
