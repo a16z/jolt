@@ -59,12 +59,17 @@ this file, pick the next unchecked task, and start immediately. No
          — author formulas only, defer push until T8
 [ ] T7   Add ClaimFactor::CombineEntryEval variant + verifier arm
 [ ] T8   Stage 5 InstructionReadRaf output_check + push CheckOutput op
-[ ] T9   Add VerifierOp::CollectOpeningClaimAt + verifier handler
-[ ] T10  Wire per-poly CollectOpeningClaim(At) at stages 4–7
+[x] T9   Add VerifierOp::CollectOpeningClaimAt + ScaleEval + AliasEval handlers
+[x] T10  Add build_verifier_stage8_ops mirroring prover-side build_stage8;
+         all committed polys collect against unified [r_address_BE, r_cycle_BE]
+         opening point. PCS opening verification now active (was no-op).
 [x] T12  T9 batch-claim test (last-eval-idx per stage); modular catches all 7
-[ ] T13  Soundness suite: T3 commitment-swap test
-[ ] T14  Soundness suite: T10 domain-separator-tag test
-[ ] T15  Soundness suite: T5 commit-slot-None↔Some test
+[x] T13  T3 commitment-swap test (swap each Some slot with slot 0;
+         all 42 swaps caught by stage-8 PCS verification)
+[ ] T14  Soundness suite: T10 domain-separator-tag test (deferred —
+         requires tag-byte tampering infrastructure)
+[x] T15  T5 commit-slot SomeToNone test (zero out each Some slot;
+         all 42 caught — AbsorbCommitment skip diverges transcript)
 [x] T16  T11 public-IO test (modular rejects via preamble divergence)
 [x] T17  T6 config-field test (TraceLength + RamK doubled / +1; modular rejects)
 ```

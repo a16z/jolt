@@ -1895,6 +1895,30 @@ pub enum VerifierOp {
         poly: PolynomialId,
         at_stage: VerifierStageIndex,
     },
+    /// Accumulate a PCS opening claim with an explicit point built from
+    /// arbitrary challenge slots. Mirrors the prover-side
+    /// [`Op::CollectOpeningClaimAt`]. Used at stage 8 where the opening
+    /// point spans multiple stages (e.g. `[r_address_stage7, r_cycle_stage6]`).
+    CollectOpeningClaimAt {
+        poly: PolynomialId,
+        point_challenges: Vec<ChallengeIdx>,
+    },
+    /// Scale a stored evaluation by `∏(1 − ch[i])` (Lagrange zero
+    /// selector). Mirrors the prover-side [`Op::ScaleEval`]; used for
+    /// dense (cycle-only) polynomials whose Dory matrix embedding
+    /// includes an `eq(r_addr, 0)` factor.
+    ScaleEval {
+        poly: PolynomialId,
+        factor_challenges: Vec<ChallengeIdx>,
+    },
+    /// Copy `evaluations[from]` to `evaluations[to]`. Mirrors the
+    /// prover-side [`Op::AliasEval`]. Used to copy stage-7 HammingG
+    /// evaluations into the matching RA polynomial slots so stage 8's
+    /// `CollectOpeningClaimAt` reads the correct eval.
+    AliasEval {
+        from: PolynomialId,
+        to: PolynomialId,
+    },
     /// RLC-reduce all collected claims and verify PCS opening proofs.
     VerifyOpenings,
 }

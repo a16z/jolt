@@ -343,6 +343,47 @@ where
                 }
             }
 
+            VerifierOp::CollectOpeningClaimAt {
+                poly,
+                point_challenges,
+            } => {
+                if let Some(commitment) = commitment_map.get(poly) {
+                    let eval = evaluations.get(poly).copied().ok_or_else(|| {
+                        JoltError::InvalidProof(format!(
+                            "evaluation for committed poly {poly:?} not set"
+                        ))
+                    })?;
+                    let point: Vec<F> = point_challenges
+                        .iter()
+                        .map(|&ci| challenges[ci.0])
+                        .collect();
+                    pcs_claims.push(VerifierClaim {
+                        commitment: commitment.clone(),
+                        point,
+                        eval,
+                    });
+                }
+            }
+
+            VerifierOp::ScaleEval {
+                poly,
+                factor_challenges,
+            } => {
+                if let Some(eval) = evaluations.get_mut(poly) {
+                    let factor: F = factor_challenges
+                        .iter()
+                        .map(|&ci| F::one() - challenges[ci.0])
+                        .product();
+                    *eval *= factor;
+                }
+            }
+
+            VerifierOp::AliasEval { from, to } => {
+                if let Some(&val) = evaluations.get(from) {
+                    let _ = evaluations.insert(*to, val);
+                }
+            }
+
             VerifierOp::VerifyOpenings => {
                 if pcs_claims.is_empty() {
                     continue;

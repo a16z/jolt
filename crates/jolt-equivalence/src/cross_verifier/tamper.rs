@@ -233,15 +233,67 @@ pub fn apply_tamper(
             }
             TamperOutcome::Applied
         }
-        (
-            TamperLocation::Commitment { .. }
-            | TamperLocation::OpeningProofByte { .. }
-            | TamperLocation::CommitSlot { .. },
-            _,
-        ) => {
-            // T3, T4, T5 — not implemented in this commit. Tracked as
-            // gaps in the known-gap registry until expanded.
-            TamperOutcome::Vacuous("tamper kind not implemented in this commit")
+        (TamperLocation::Commitment { idx }, _) => {
+            // T3 — swap commitments[idx] with commitments[0] in place.
+            // Slot 0 is RdInc (a dense, always-non-zero poly), so the
+            // swap forces an unrelated commitment into slot[idx]'s
+            // position. If both are Some, PCS verification at stage 8
+            // rejects because the commitment_map points the wrong
+            // commitment at slot[idx]'s polynomial type.
+            //
+            // (Adjacent-index swaps like commitments[2] ↔
+            // commitments[3] can be invisible when both polys are
+            // all-zero — common for unused InstructionRa indices in
+            // small workloads. Swapping against slot 0 dodges this.)
+            if *idx == 0 {
+                return TamperOutcome::Vacuous("idx 0 has nothing to swap with");
+            }
+            let Some(slot_idx) = proof.commitments.get(*idx) else {
+                return TamperOutcome::Vacuous("commitment idx out of range");
+            };
+            if slot_idx.is_none() || proof.commitments[0].is_none() {
+                return TamperOutcome::Vacuous("commitment slot is None");
+            }
+            proof.commitments.swap(*idx, 0);
+            TamperOutcome::Applied
+        }
+        (TamperLocation::CommitSlot { idx, op }, _) => {
+            // T5 — toggle a slot between None and Some(<honest>).
+            // SomeToNone: zero out an honest commitment.
+            // NoneToSome: replace a None slot with another slot's
+            // commitment (any non-matching `Some` value will fail
+            // CollectOpeningClaim's commitment_map.get → fail PCS or
+            // simply absorb a different commitment to the transcript).
+            let Some(slot) = proof.commitments.get_mut(*idx) else {
+                return TamperOutcome::Vacuous("commit slot idx out of range");
+            };
+            match (op, &slot) {
+                (CommitSlotOp::SomeToNone, Some(_)) => {
+                    *slot = None;
+                    TamperOutcome::Applied
+                }
+                (CommitSlotOp::NoneToSome, None) => {
+                    // Pull a Some from a sibling slot (idx 0 typically
+                    // committed to RdInc — always non-None for muldiv).
+                    if *idx == 0 {
+                        return TamperOutcome::Vacuous("no sibling slot to copy from at idx 0");
+                    }
+                    let sibling = proof.commitments.first().cloned().flatten();
+                    let Some(c) = sibling else {
+                        return TamperOutcome::Vacuous("sibling slot 0 is None — nothing to copy");
+                    };
+                    proof.commitments[*idx] = Some(c);
+                    TamperOutcome::Applied
+                }
+                _ => TamperOutcome::Vacuous("commit slot op/state mismatch"),
+            }
+        }
+        (TamperLocation::OpeningProofByte { .. }, _) => {
+            // T4 — opening proof byte flip. Requires serializing /
+            // deserializing the proof bytes; deferred to a follow-up
+            // commit. For now, T3 (commitment swap) and T5 (commit
+            // slot toggle) cover the PCS-verification path.
+            TamperOutcome::Vacuous("OpeningProofByte tamper not yet implemented")
         }
     }
 }

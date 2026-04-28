@@ -1411,6 +1411,7 @@ fn build_module(params: &ModuleParams) -> Module {
     verifier_ops.extend(build_verifier_stage5_ops(&p, params, &ch));
     verifier_ops.extend(build_verifier_stage6_ops(&p, params, &ch));
     verifier_ops.extend(build_verifier_stage7_ops(&p, params, &ch));
+    verifier_ops.extend(build_verifier_stage8_ops(&p, params, &ch));
     push_verifier_op!(verifier_ops, VerifierOp::VerifyOpenings);
 
     let polys = pt.into_vec();
@@ -8237,6 +8238,174 @@ fn build_verifier_stage7_ops(
             batch_challenges: vec![ch_batch],
         }
     );
+    ops
+}
+
+/// Verifier schedule for Stage 8 (Dory batch opening proof).
+///
+/// Mirrors the prover-side `build_stage8`. Collects opening claims for
+/// every committed polynomial against the unified opening point
+/// `[r_address_BE, r_cycle_BE]` derived from stage-7 sumcheck challenges
+/// joined with the booleanity cycle. Dense polys RdInc and RamInc are
+/// scaled by the Lagrange-zero factor so the Dory matrix embedding
+/// matches. Closes T3, T4, T5 tampers — each fails PCS verification.
+fn build_verifier_stage8_ops(
+    p: &Polys,
+    params: &ModuleParams,
+    _ch: &ChallengeTable,
+) -> Vec<VerifierOp> {
+    // ── Compute stage-7 / stage-6 challenge slot ranges so we can
+    // build the opening point as a `Vec<ChallengeIdx>`. ──
+    let s2_ch_base = params.num_tau + 1 + 1 + params.outer_remaining_rounds;
+    let stage2_pre = 1 + 1 + 1 + 1 + params.log_k_ram;
+    let stage2_batch_base = s2_ch_base + stage2_pre;
+    let stage2_round_base = stage2_batch_base + params.stage2_num_instances;
+    let s3_ch_base = stage2_round_base + params.stage2_max_rounds;
+    let s4_ch_base = s3_ch_base + 6 + params.log_t;
+    let log_k_reg = LOG_K_REG;
+    let stage4_max_rounds = log_k_reg + params.log_t;
+    let s5_ch_base = s4_ch_base + 6 + stage4_max_rounds;
+    let stage5_max_rounds = LOG_K_INSTRUCTION + params.log_t;
+    let s6_ch_base = s5_ch_base + 8 + stage5_max_rounds;
+
+    let total_d = params.instruction_d + params.bytecode_d + params.ram_d;
+    let ram_pad_len = if params.log_k_ram.is_multiple_of(params.log_k_chunk) {
+        0
+    } else {
+        params.log_k_chunk - (params.log_k_ram % params.log_k_chunk)
+    };
+    let bc_pad_len = if params.log_k_bytecode.is_multiple_of(params.log_k_chunk) {
+        0
+    } else {
+        params.log_k_chunk - (params.log_k_bytecode % params.log_k_chunk)
+    };
+
+    let s7_ch_base = s6_ch_base
+        + 22
+        + 2 * total_d
+        + ram_pad_len
+        + bc_pad_len
+        + params.log_k_bytecode
+        + 2 * params.log_t;
+
+    // r_addr_be = stage-7 round challenges reversed (LE → BE).
+    // s7 round slots layout: 0..log_k_chunk after gamma, gamma_pow, batch.
+    let s7_round_base = s7_ch_base + 2 + 3 * total_d;
+    let r_addr_be: Vec<ChallengeIdx> = (s7_round_base..s7_round_base + params.log_k_chunk)
+        .rev()
+        .map(ChallengeIdx)
+        .collect();
+
+    // r_cycle_be = stage-6 round_challenges[log_k_bytecode..log_k_bytecode+log_t]
+    // reversed (matches stage-7 prover's `cycle_challenges_be`).
+    let s6_round_base = s6_ch_base + 10 + 2 * total_d + ram_pad_len;
+    let r_cycle_be: Vec<ChallengeIdx> = (s6_round_base + params.log_k_bytecode
+        ..s6_round_base + params.log_k_bytecode + params.log_t)
+        .rev()
+        .map(ChallengeIdx)
+        .collect();
+
+    let opening_point: Vec<ChallengeIdx> =
+        r_addr_be.iter().chain(r_cycle_be.iter()).copied().collect();
+
+    let mut ops = vec![VerifierOp::BeginStage];
+
+    // ── Dense polys: scale eval by ∏(1 − r_addr_i) ──
+    push_verifier_op!(
+        ops,
+        VerifierOp::ScaleEval {
+            poly: p.ram_inc,
+            factor_challenges: r_addr_be.clone(),
+        }
+    );
+    push_verifier_op!(
+        ops,
+        VerifierOp::ScaleEval {
+            poly: p.rd_inc,
+            factor_challenges: r_addr_be.clone(),
+        }
+    );
+
+    // ── Collect dense opening claims ──
+    push_verifier_op!(
+        ops,
+        VerifierOp::CollectOpeningClaimAt {
+            poly: p.ram_inc,
+            point_challenges: opening_point.clone(),
+        }
+    );
+    push_verifier_op!(
+        ops,
+        VerifierOp::CollectOpeningClaimAt {
+            poly: p.rd_inc,
+            point_challenges: opening_point.clone(),
+        }
+    );
+
+    // ── Alias HammingG(d) → committed RA poly slots so the PCS
+    // claim eval reads the stage-7 final value (not the stale
+    // booleanity value from stage 6). ──
+    let mut g_idx = 0;
+    for d in 0..params.instruction_d {
+        push_verifier_op!(
+            ops,
+            VerifierOp::AliasEval {
+                from: p.hw_g[g_idx],
+                to: PolynomialId::InstructionRa(d),
+            }
+        );
+        g_idx += 1;
+    }
+    for d in 0..params.bytecode_d {
+        push_verifier_op!(
+            ops,
+            VerifierOp::AliasEval {
+                from: p.hw_g[g_idx],
+                to: PolynomialId::BytecodeRa(d),
+            }
+        );
+        g_idx += 1;
+    }
+    for d in 0..params.ram_d {
+        push_verifier_op!(
+            ops,
+            VerifierOp::AliasEval {
+                from: p.hw_g[g_idx],
+                to: PolynomialId::RamRa(d),
+            }
+        );
+        g_idx += 1;
+    }
+
+    // ── Collect sparse RA opening claims ──
+    for d in 0..params.instruction_d {
+        push_verifier_op!(
+            ops,
+            VerifierOp::CollectOpeningClaimAt {
+                poly: PolynomialId::InstructionRa(d),
+                point_challenges: opening_point.clone(),
+            }
+        );
+    }
+    for d in 0..params.bytecode_d {
+        push_verifier_op!(
+            ops,
+            VerifierOp::CollectOpeningClaimAt {
+                poly: PolynomialId::BytecodeRa(d),
+                point_challenges: opening_point.clone(),
+            }
+        );
+    }
+    for d in 0..params.ram_d {
+        push_verifier_op!(
+            ops,
+            VerifierOp::CollectOpeningClaimAt {
+                poly: PolynomialId::RamRa(d),
+                point_challenges: opening_point.clone(),
+            }
+        );
+    }
+
     ops
 }
 

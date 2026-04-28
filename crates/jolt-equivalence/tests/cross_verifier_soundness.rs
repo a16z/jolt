@@ -279,6 +279,129 @@ fn t2_eval_tampers() {
     );
 }
 
+/// T3 — commitment-swap tampers. Swap commitments[idx] with
+/// commitments[idx+1] in place. Now the commitment associated with
+/// `poly[idx]` is the wrong group element; the modular verifier's
+/// stage-8 PCS opening verification rejects.
+#[test]
+fn t3_commitment_swaps() {
+    let f = fixture();
+    let mut total = 0usize;
+    let mut rejected_by_modular = 0usize;
+    let mut vacuous = 0usize;
+    let mut failures: Vec<String> = Vec::new();
+
+    // For each non-zero slot idx > 0, swap with slot 0 (RdInc — a
+    // dense poly with non-trivial commitment). Adjacent swaps within
+    // the InstructionRa block can be invisible if both polys are
+    // all-zero for the workload (common in muldiv); this against-slot-0
+    // pattern catches every Some slot with a structurally-different
+    // commitment.
+    let n = f.modular_proof.commitments.len();
+    for idx in 1..n {
+        let tamper = TamperPoint {
+            stage: 0,
+            location: TamperLocation::Commitment { idx },
+            mutate: TamperMutation::AddOne, // unused for Commitment
+            witnesses: vec![Constraint::CommitSlot(idx)],
+            expected: ExpectedResult::BothReject,
+            kind: TamperKind::T3CommitmentSwap,
+            label: "T3_CommitmentSwap",
+        };
+        total += 1;
+        let Some(result) = run_tampered(f, &tamper) else {
+            vacuous += 1;
+            continue;
+        };
+        if result.modular.is_err() {
+            rejected_by_modular += 1;
+            continue;
+        }
+        if jolt_equivalence::cross_verifier::is_registered(0, TamperKind::T3CommitmentSwap) {
+            continue;
+        }
+        failures.push(format!(
+            "T3 idx {idx}: outcome={} — core={:?}, modular={:?}",
+            result.outcome_label(),
+            result.core,
+            result.modular,
+        ));
+    }
+
+    eprintln!(
+        "T3 report: total={total}, modular_rejected={rejected_by_modular}, \
+         vacuous={vacuous}, failures={}",
+        failures.len(),
+    );
+
+    assert!(
+        failures.is_empty(),
+        "T3 unexpected outcomes:\n{}",
+        failures.join("\n"),
+    );
+}
+
+/// T5 — commit-slot None ↔ Some tampers. Either zeroing an honest
+/// commitment (SomeToNone) or substituting a different slot's
+/// commitment (NoneToSome) breaks the stage-8 PCS verification.
+#[test]
+fn t5_commit_slot_tampers() {
+    let f = fixture();
+    let mut total = 0usize;
+    let mut rejected_by_modular = 0usize;
+    let mut vacuous = 0usize;
+    let mut failures: Vec<String> = Vec::new();
+
+    // Apply SomeToNone to every Some slot.
+    for (idx, slot) in f.modular_proof.commitments.iter().enumerate() {
+        if slot.is_none() {
+            continue;
+        }
+        let tamper = TamperPoint {
+            stage: 0,
+            location: TamperLocation::CommitSlot {
+                idx,
+                op: jolt_equivalence::cross_verifier::tamper::CommitSlotOp::SomeToNone,
+            },
+            mutate: TamperMutation::AddOne, // unused
+            witnesses: vec![Constraint::CommitSlot(idx)],
+            expected: ExpectedResult::BothReject,
+            kind: TamperKind::T5CommitSlotNoneSome,
+            label: "T5_CommitSlot",
+        };
+        total += 1;
+        let Some(result) = run_tampered(f, &tamper) else {
+            vacuous += 1;
+            continue;
+        };
+        if result.modular.is_err() {
+            rejected_by_modular += 1;
+            continue;
+        }
+        if jolt_equivalence::cross_verifier::is_registered(0, TamperKind::T5CommitSlotNoneSome) {
+            continue;
+        }
+        failures.push(format!(
+            "T5 idx {idx}: outcome={} — core={:?}, modular={:?}",
+            result.outcome_label(),
+            result.core,
+            result.modular,
+        ));
+    }
+
+    eprintln!(
+        "T5 report: total={total}, modular_rejected={rejected_by_modular}, \
+         vacuous={vacuous}, failures={}",
+        failures.len(),
+    );
+
+    assert!(
+        failures.is_empty(),
+        "T5 unexpected outcomes:\n{}",
+        failures.join("\n"),
+    );
+}
+
 /// T9 — batch-claim tampers. Tamper an eval at a non-first index in
 /// `stage_proofs[stage].evals` (T2 covers idx 0; T9 explores other
 /// positions to surface gaps where the first eval happens to be
