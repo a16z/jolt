@@ -240,4 +240,81 @@ commit.
 
 ## Notes (auto-populated when blocked)
 
-(empty)
+### Session 2026-04-28 progress summary
+
+Landed (7 commits this session):
+
+- **T0** (pre-flight): confirmed repeated `Eval(P)` factors compose
+  multiplicatively in `evaluate_formula` — no `EvalSquared` variant
+  needed. Booleanity / HammingBooleanity formulas can use repeated Eval.
+- **T11** (test): added `t2_eval_tampers` covering all 7 stages.
+  Discovered that PCS opening verification is currently a no-op (no
+  `VerifierOp::CollectOpeningClaim` calls anywhere). Pre-stage-7 evals
+  rejected via downstream transcript divergence; stage 7 needed
+  CheckOutput.
+- **T2**: stage 7 CheckOutput authored with full HammingWeight
+  reduction formula `Σ_i G_i · (γ^{3i} + γ^{3i+1}·eq_bool + γ^{3i+2}·eq_virt_i)`
+  using `normalize: Some(Reverse)`. T2@stage 7 gap closed.
+- **T16**: added `t11_public_io_tampers` covering input-byte and
+  panic-flag tampers. All pass via preamble divergence.
+- **T17** (newly numbered): added `t6_config_field_tampers` covering
+  TraceLength and RamK. Both pass via preamble divergence.
+- **T12**: added `t9_batch_claim_tampers` covering last-eval-idx per
+  stage. All 7 stages pass.
+
+Soundness suite is now at 9 tests, 9/9 green:
+honest_acceptance, KGC, taxonomy_coverage, T1, T2, T6, T8, T9, T11.
+
+KNOWN_GAPS empty.
+
+### Remaining gaps & priorities
+
+**Big-ticket gaps (require new infrastructure):**
+
+- Stage 6 CheckOutput (T3+T4+T5) — 6 instances. Easy: RamRaVirt,
+  InstRaVirt, IncReduction. Medium: Booleanity, HammingBooleanity (use
+  repeated Eval per T0). Hard: BytecodeReadRaf (multi-stage gamma
+  composition). All-or-nothing — can't push CheckOutput until all 6
+  authored. Defense in depth only — T2/T7 already caught via
+  transcript divergence into stage 7.
+- Stage 5 CheckOutput (T6+T7+T8) — 3 instances. Two simple, one needs
+  new `ClaimFactor::CombineEntryEval` for InstructionReadRaf. Same
+  defense-in-depth nature.
+- PCS opening claim verification (T9+T10) — `VerifyOpenings` is
+  currently no-op. Adding `VerifierOp::CollectOpeningClaimAt` and
+  wiring at stages 4-7 closes T3/T4 (commitment swap, opening byte).
+  Multi-day; large blast radius.
+- Soundness suite expansion for T3/T4/T5/T10 — needs `apply_tamper`
+  extensions for `TamperLocation::Commitment / OpeningProofByte /
+  CommitSlot` (currently return Vacuous) and a new tag-byte tamper
+  for T10. Mechanical; no verifier changes needed.
+
+**Recommended next pickup order (in priority):**
+
+1. T13 (T3 commitment swap test) — extend `apply_tamper` for
+   `TamperLocation::Commitment` to swap with another fixture's
+   commitment; the modular verifier should reject because... actually
+   it WON'T reject (PCS opening is no-op). So T13 reveals the
+   PCS-opening gap: a registered `KnownGap` entry until T9+T10 land.
+   Adding T13 first quantifies the PCS gap rigorously.
+2. T9+T10 (PCS opening claim wiring) — closes T3/T4/T5 + the latent
+   stage-7 path mentioned in T11 discovery. Highest leverage.
+3. Stage 6 CheckOutput simple instances first (RamRaVirt, InstRaVirt,
+   IncReduction) — author formulas alone (no push). Defer Booleanity /
+   HammingBooleanity to a follow-up commit.
+4. Booleanity + HammingBooleanity via repeated `Eval`. Push stage 6
+   CheckOutput after BytecodeReadRaf is in.
+5. BytecodeReadRaf — most complex stage 6 instance.
+6. Stage 5 CheckOutput simple instances.
+7. `ClaimFactor::CombineEntryEval` design + Stage 5 InstructionReadRaf.
+
+### Tooling notes
+
+- Pre-commit hooks (lefthook) take ~3-5 min per commit (autofix-clippy
+  + check-clippy). Plan for that overhead per task.
+- `JOLT_VERIFIER_DEBUG=1` instrumentation works for output_check
+  debugging — see prior session handoff for the exact eprintln
+  insertions in `crates/jolt-verifier/src/verifier.rs`.
+- The pre-existing red in `crates/jolt-equivalence/tests/booleanity_debug.rs`
+  is grandfathered; clippy `--all-targets` will fail there but it's
+  not blocking per the spec.
