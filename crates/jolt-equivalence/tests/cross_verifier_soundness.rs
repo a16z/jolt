@@ -279,6 +279,155 @@ fn t2_eval_tampers() {
     );
 }
 
+/// T9 — batch-claim tampers. Tamper an eval at a non-first index in
+/// `stage_proofs[stage].evals` (T2 covers idx 0; T9 explores other
+/// positions to surface gaps where the first eval happens to be
+/// trivially boolean). Each tampered eval flows into either an
+/// AbsorbEvals (transcript divergence) or a downstream input_claim,
+/// either way modular must reject.
+#[test]
+fn t9_batch_claim_tampers() {
+    let f = fixture();
+    let mut total = 0usize;
+    let mut rejected_by_modular = 0usize;
+    let mut vacuous = 0usize;
+    let mut failures: Vec<String> = Vec::new();
+
+    // Tamper eval at the LAST recorded index of each stage with non-empty
+    // evals. The last index of each stage typically holds a poly that
+    // flows into a downstream claim, exposing different code paths than
+    // T2's idx=0 tamper.
+    for stage in 1..=7 {
+        let stage_idx = stage - 1;
+        let last_eval_idx = f.modular_proof.stage_proofs.get(stage_idx).and_then(|sp| {
+            if sp.evals.is_empty() {
+                None
+            } else {
+                Some(sp.evals.len() - 1)
+            }
+        });
+        let Some(idx) = last_eval_idx else {
+            vacuous += 1;
+            continue;
+        };
+        let tamper = eval_tamper(stage, idx);
+        // Reuse the eval_tamper helper but flag as T9.
+        let tamper = TamperPoint {
+            kind: TamperKind::T9BatchClaim,
+            label: "T9_BatchClaim",
+            ..tamper
+        };
+        total += 1;
+        let Some(result) = run_tampered(f, &tamper) else {
+            vacuous += 1;
+            continue;
+        };
+        if result.modular.is_err() {
+            rejected_by_modular += 1;
+            continue;
+        }
+        if jolt_equivalence::cross_verifier::is_registered(stage, TamperKind::T9BatchClaim) {
+            continue;
+        }
+        failures.push(format!(
+            "T9 stage {stage} idx {idx}: outcome={} — core={:?}, modular={:?}",
+            result.outcome_label(),
+            result.core,
+            result.modular,
+        ));
+    }
+
+    eprintln!(
+        "T9 report: total={total}, modular_rejected={rejected_by_modular}, \
+         vacuous={vacuous}, failures={}",
+        failures.len(),
+    );
+
+    assert!(
+        failures.is_empty(),
+        "T9 unexpected outcomes:\n{}",
+        failures.join("\n"),
+    );
+}
+
+/// T6 — config-field tampers. Mutating `proof.config.{trace_length,
+/// ram_k}` changes preamble absorption; both verifiers replay the
+/// modified config, transcript diverges from prover's, downstream
+/// sumcheck fails.
+#[test]
+fn t6_config_field_tampers() {
+    let f = fixture();
+    let mut total = 0usize;
+    let mut rejected_by_modular = 0usize;
+    let mut vacuous = 0usize;
+    let mut failures: Vec<String> = Vec::new();
+
+    let cases: Vec<(&'static str, TamperPoint)> = vec![
+        (
+            "trace_length_doubled",
+            TamperPoint {
+                stage: 0,
+                location: TamperLocation::Config(
+                    jolt_equivalence::cross_verifier::tamper::ConfigField::TraceLength,
+                ),
+                mutate: TamperMutation::SetUsize(f.modular_proof.config.trace_length * 2),
+                witnesses: vec![Constraint::Preamble],
+                expected: ExpectedResult::BothReject,
+                kind: TamperKind::T6ConfigField,
+                label: "T6_TraceLength",
+            },
+        ),
+        (
+            "ram_k_plus_one",
+            TamperPoint {
+                stage: 0,
+                location: TamperLocation::Config(
+                    jolt_equivalence::cross_verifier::tamper::ConfigField::RamK,
+                ),
+                mutate: TamperMutation::SetUsize(f.modular_proof.config.ram_k + 1),
+                witnesses: vec![Constraint::Preamble],
+                expected: ExpectedResult::BothReject,
+                kind: TamperKind::T6ConfigField,
+                label: "T6_RamK",
+            },
+        ),
+    ];
+
+    for (name, tamper) in &cases {
+        total += 1;
+        let Some(result) = run_tampered(f, tamper) else {
+            vacuous += 1;
+            continue;
+        };
+        if result.modular.is_err() {
+            rejected_by_modular += 1;
+            continue;
+        }
+        if jolt_equivalence::cross_verifier::is_registered(tamper.stage, TamperKind::T6ConfigField)
+        {
+            continue;
+        }
+        failures.push(format!(
+            "T6 case {name}: outcome={} — core={:?}, modular={:?}",
+            result.outcome_label(),
+            result.core,
+            result.modular,
+        ));
+    }
+
+    eprintln!(
+        "T6 report: total={total}, modular_rejected={rejected_by_modular}, \
+         vacuous={vacuous}, failures={}",
+        failures.len(),
+    );
+
+    assert!(
+        failures.is_empty(),
+        "T6 unexpected outcomes:\n{}",
+        failures.join("\n"),
+    );
+}
+
 /// T11 — public-IO tampers. Mutating the proof's public inputs/outputs
 /// changes the preamble absorption, which both verifiers replay; the
 /// transcript diverges immediately and downstream sumcheck verification

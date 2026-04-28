@@ -61,11 +61,12 @@ this file, pick the next unchecked task, and start immediately. No
 [ ] T8   Stage 5 InstructionReadRaf output_check + push CheckOutput op
 [ ] T9   Add VerifierOp::CollectOpeningClaimAt + verifier handler
 [ ] T10  Wire per-poly CollectOpeningClaim(At) at stages 4–7
-[ ] T12  Soundness suite: T9 batch-claim-tamper test
+[x] T12  T9 batch-claim test (last-eval-idx per stage); modular catches all 7
 [ ] T13  Soundness suite: T3 commitment-swap test
 [ ] T14  Soundness suite: T10 domain-separator-tag test
 [ ] T15  Soundness suite: T5 commit-slot-None↔Some test
-[x] T16  Soundness suite: T11 public-IO test (modular rejects via preamble divergence)
+[x] T16  T11 public-IO test (modular rejects via preamble divergence)
+[x] T17  T6 config-field test (TraceLength + RamK doubled / +1; modular rejects)
 ```
 
 ## Findings from T11 dry-run (2026-04-28)
