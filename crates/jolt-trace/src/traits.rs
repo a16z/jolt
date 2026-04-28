@@ -1,4 +1,4 @@
-//! Abstract instruction and cycle views used by lookup queries.
+//! Abstract instruction and cycle views used by the Jolt proof system.
 //!
 //! `JoltInstruction` exposes static encoding-time data (address, immediate,
 //! register operand indices). `JoltCycle` extends it with dynamic register
@@ -8,24 +8,95 @@
 
 /// Static instruction view: encoding-time data.
 pub trait JoltInstruction {
+    /// True if this cycle is a no-op (padding).
+    fn is_noop(&self) -> bool;
+
     /// Program-counter address where this instruction lives.
     fn address(&self) -> u64;
+
     /// Sign-extended immediate, or `0` if the instruction has none.
     fn imm(&self) -> i128;
+
     /// rs1 register index, or `None` if unused.
     fn rs1(&self) -> Option<u8>;
+
     /// rs2 register index, or `None` if unused.
     fn rs2(&self) -> Option<u8>;
+
     /// rd register index, or `None` if unused.
     fn rd(&self) -> Option<u8>;
+
+    /// Remaining steps in a virtual instruction sequence, or `None` if
+    /// this is a real (non-virtual) instruction.
+    fn virtual_sequence_remaining(&self) -> Option<u16>;
+
+    /// True if this is the first instruction in a virtual sequence.
+    fn is_first_in_sequence(&self) -> bool;
+
+    /// True if this is a virtual (expanded) instruction.
+    fn is_virtual(&self) -> bool;
 }
 
 /// Dynamic cycle view: a populated instruction plus runtime register state.
-pub trait JoltCycle: JoltInstruction {
+pub trait JoltCycle {
+    type Instruction: JoltInstruction;
+
+    /// The instruction executed during this cycle.
+    fn instruction(&self) -> Self::Instruction;
+
     /// Value held in rs1 at the start of the cycle, or `None` if unused.
     fn rs1_val(&self) -> Option<u64>;
+
     /// Value held in rs2 at the start of the cycle, or `None` if unused.
     fn rs2_val(&self) -> Option<u64>;
+
     /// Value held in rd before and after the cycle executes, or `None` if unused.
     fn rd_vals(&self) -> Option<(u64, u64)>;
+
+    /// RAM access address, or `None` if no RAM access this cycle.
+    fn ram_access_address(&self) -> Option<u64>;
+
+    /// RAM read value (pre-access value). `None` if no RAM access.
+    fn ram_read_value(&self) -> Option<u64>;
+
+    /// RAM write value (post-access value). `None` if no RAM access.
+    fn ram_write_value(&self) -> Option<u64>;
+}
+
+impl<I: JoltInstruction, C: JoltCycle<Instruction = I>> JoltInstruction for C {
+    fn is_noop(&self) -> bool {
+        self.instruction().is_noop()
+    }
+
+    fn address(&self) -> u64 {
+        self.instruction().address()
+    }
+
+    fn imm(&self) -> i128 {
+        self.instruction().imm()
+    }
+
+    fn rs1(&self) -> Option<u8> {
+        self.instruction().rs1()
+    }
+
+    fn rs2(&self) -> Option<u8> {
+        self.instruction().rs2()
+    }
+
+    fn rd(&self) -> Option<u8> {
+        self.instruction().rd()
+    }
+
+    fn virtual_sequence_remaining(&self) -> Option<u16> {
+        self.instruction().virtual_sequence_remaining()
+    }
+
+    fn is_first_in_sequence(&self) -> bool {
+        self.instruction().is_first_in_sequence()
+    }
+
+    fn is_virtual(&self) -> bool {
+        self.instruction().is_virtual()
+    }
 }

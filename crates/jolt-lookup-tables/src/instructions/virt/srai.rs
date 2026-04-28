@@ -1,7 +1,7 @@
 use crate::traits::impl_lookup_table;
 use crate::traits::LookupQuery;
 use jolt_trace::instructions::VirtualSrai;
-use jolt_trace::JoltCycle;
+use jolt_trace::{JoltCycle, JoltInstruction};
 
 impl_lookup_table!(VirtualSrai, Some(VirtualSRA));
 

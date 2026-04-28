@@ -12,7 +12,7 @@ use common::constants::{ALIGNMENT_FACTOR_BYTECODE, RAM_START_ADDRESS};
 use serde::{Deserialize, Serialize};
 use tracer::instruction::Instruction;
 
-use crate::CycleRow;
+use crate::JoltInstruction;
 
 /// Preprocessed bytecode table with PC mapper.
 ///
@@ -56,12 +56,12 @@ impl BytecodePreprocessing {
     }
 
     /// Resolve a cycle's PC to a dense bytecode table index.
-    pub fn get_pc(&self, cycle: &impl CycleRow) -> usize {
+    pub fn get_pc(&self, cycle: &impl JoltInstruction) -> usize {
         if cycle.is_noop() {
             return 0;
         }
         self.pc_map.get_pc(
-            cycle.unexpanded_pc() as usize,
+            cycle.address() as usize,
             cycle.virtual_sequence_remaining().unwrap_or(0),
         )
     }
