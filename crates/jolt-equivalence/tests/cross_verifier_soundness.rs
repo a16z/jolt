@@ -66,7 +66,16 @@ fn known_gap_registry_consistency() {
             closed_but_unremoved.push(gap);
             continue;
         };
-        if result.core_rejects_modular_accepts() {
+        // Gap "reproduces" iff modular fails to reject a tamper that
+        // should be rejected. Two manifestations:
+        //   (a) CoreRejectsModularAccepts — core catches it, modular
+        //       doesn't. The classic cross-equivalence gap (T1/T8).
+        //   (b) BothAccept — neither catches it, but modular ought to
+        //       (for tamper kinds where core's view is filtered by
+        //       opening-claim substitution, e.g. T2 eval tampers).
+        let reproduces = result.core_rejects_modular_accepts()
+            || (result.both_accept() && modular_must_reject(gap.kind));
+        if reproduces {
             still_present += 1;
         } else {
             eprintln!(
@@ -201,6 +210,75 @@ fn t8_round_poly_degree() {
     );
 }
 
+/// T2 — evaluation tampers across stages 1–7. For each stage that
+/// records evals (`stage_proofs[stage-1].evals` non-empty), tamper the
+/// first eval. The pass condition is "modular rejects" — soundness is
+/// a modular-side property and cross-equivalence is bypassed for eval
+/// tampers because `modular_to_core` substitutes core's honest
+/// opening_claims (the conversion strips the tamper from core's view).
+///
+/// Modular rejects via two paths today:
+/// - With CheckOutput on the affected stage, `final_eval ≠
+///   output_check(evals, point)` (direct).
+/// - Without CheckOutput, the tampered value gets absorbed by
+///   `AbsorbEvals`, diverging the verifier's transcript from the
+///   prover's. The next stage's sumcheck verification then fails
+///   on a mismatched first-round expected sum.
+///
+/// Stage 7 has no downstream sumcheck, so eval tampers slip through
+/// until either CheckOutput or CollectOpeningClaim is wired
+/// (registered gap).
+#[test]
+fn t2_eval_tampers() {
+    let f = fixture();
+    let mut total = 0usize;
+    let mut rejected_by_modular = 0usize;
+    let mut registered_gap = 0usize;
+    let mut vacuous = 0usize;
+    let mut failures: Vec<String> = Vec::new();
+
+    for stage in 1..=7 {
+        let tamper = eval_tamper(stage, /*idx*/ 0);
+        total += 1;
+        let Some(result) = run_tampered(f, &tamper) else {
+            vacuous += 1;
+            continue;
+        };
+        // Pass condition: modular caught the tamper. Outcome could be
+        // BothReject (CheckOutput stages) or CoreAcceptsModularRejects
+        // (transcript-divergence stages — core's view is filtered by
+        // opening-claim substitution).
+        if result.modular.is_err() {
+            rejected_by_modular += 1;
+            continue;
+        }
+        // Stage where modular accepts → must be registered as known gap.
+        if jolt_equivalence::cross_verifier::is_registered(stage, TamperKind::T2Eval) {
+            registered_gap += 1;
+            continue;
+        }
+        failures.push(format!(
+            "T2 stage {stage}: outcome={} — core={:?}, modular={:?}",
+            result.outcome_label(),
+            result.core,
+            result.modular,
+        ));
+    }
+
+    eprintln!(
+        "T2 report: total={total}, modular_rejected={rejected_by_modular}, \
+         registered_gap={registered_gap}, vacuous={vacuous}, \
+         failures={}",
+        failures.len(),
+    );
+
+    assert!(
+        failures.is_empty(),
+        "T2 unexpected outcomes:\n{}",
+        failures.join("\n"),
+    );
+}
+
 /// Narrow S7 — every constraint produced by the in-scope schedule is
 /// covered by at least one tamper kind in `TAMPER_COVERAGE`.
 ///
@@ -251,6 +329,34 @@ fn round_poly_tamper(stage: usize, round: usize, coeff: usize) -> TamperPoint {
     }
 }
 
+/// Return true if the modular verifier MUST reject this tamper kind
+/// regardless of core's outcome. Used by KGC to recognize "BothAccept"
+/// as a gap manifestation for tamper kinds where the test
+/// infrastructure (proof conversion) bypasses core's view of the
+/// tamper.
+fn modular_must_reject(kind: TamperKind) -> bool {
+    matches!(kind, TamperKind::T2Eval)
+}
+
+fn eval_tamper(stage: usize, idx: usize) -> TamperPoint {
+    TamperPoint {
+        stage,
+        location: TamperLocation::Eval { idx },
+        mutate: TamperMutation::AddOne,
+        witnesses: vec![Constraint::EvalConsistency {
+            stage,
+            eval_idx: idx,
+        }],
+        expected: if jolt_equivalence::cross_verifier::is_registered(stage, TamperKind::T2Eval) {
+            ExpectedResult::CoreRejectsModularAccepts
+        } else {
+            ExpectedResult::BothReject
+        },
+        kind: TamperKind::T2Eval,
+        label: "T2_Eval",
+    }
+}
+
 fn round_poly_degree_tamper(stage: usize, round: usize, kind: DegreeKind) -> TamperPoint {
     TamperPoint {
         stage,
@@ -278,6 +384,7 @@ fn canonical_tamper_for(gap: &KnownGap) -> TamperPoint {
         TamperKind::T8RoundPolyDegree => {
             round_poly_degree_tamper(gap.stage, /*round*/ 1, DegreeKind::Truncate)
         }
+        TamperKind::T2Eval => eval_tamper(gap.stage, /*idx*/ 0),
         // Other tamper kinds: not implemented in this commit — produce a
         // round-poly tamper as a placeholder. The runner will treat the
         // outcome via the registered exemption.

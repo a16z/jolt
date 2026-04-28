@@ -46,9 +46,11 @@ this file, pick the next unchecked task, and start immediately. No
 ## Order of attack — each is one commit, in order
 
 ```
-[x] T0   Pre-flight: confirmed repeated-Eval composes multiplicatively (eval[P]^k); no EvalSquared variant needed
-[ ] T1   Stage 3 CheckOutput (Shift, InstructionInput, RegClaimReduction)
-[ ] T2   Stage 7 CheckOutput (HammingWeightClaimReduction)
+[x] T0   Pre-flight: repeated-Eval composes multiplicatively
+[x] T1   Stage 3 CheckOutput — already wired in commit b360246bc
+[x] T11  T2 eval-tamper test landed; KGC extended to recognize BothAccept-as-gap;
+         T2Eval@stage 7 registered until CheckOutput or CollectOpeningClaim lands
+[ ] T2   Stage 7 CheckOutput (HammingWeightClaimReduction) → closes T2@7
 [ ] T3   Stage 6 simple output_checks (RamRaVirt, InstRaVirt, IncReduction)
          — author formulas only, defer push until T5
 [ ] T4   Stage 6 Booleanity + HammingBooleanity output_check
@@ -59,13 +61,40 @@ this file, pick the next unchecked task, and start immediately. No
 [ ] T8   Stage 5 InstructionReadRaf output_check + push CheckOutput op
 [ ] T9   Add VerifierOp::CollectOpeningClaimAt + verifier handler
 [ ] T10  Wire per-poly CollectOpeningClaim(At) at stages 4–7
-[ ] T11  Soundness suite: T2 eval-tamper test + ratchet KNOWN_GAPS
 [ ] T12  Soundness suite: T9 batch-claim-tamper test
 [ ] T13  Soundness suite: T3 commitment-swap test
 [ ] T14  Soundness suite: T10 domain-separator-tag test
 [ ] T15  Soundness suite: T5 commit-slot-None↔Some test
 [ ] T16  Soundness suite: T11 public-IO test
 ```
+
+## Findings from T11 dry-run (2026-04-28)
+
+**Discovery**: NO `VerifierOp::CollectOpeningClaim` calls exist in the
+modular verifier schedule today. The PCS opening proofs are not
+verified — `VerifyOpenings` is a no-op (`pcs_claims` always empty).
+The existing `modular_self_verify` test passes because it only checks
+sumcheck correctness, not PCS openings.
+
+**T2 results (eval-tamper, sp.evals[0] += 1):**
+| Stage | Outcome | Why |
+|---|---|---|
+| 1 | modular rejects | sumcheck error round 0 (transcript divergence into stage 2) |
+| 2 | modular rejects | sumcheck error round 0 (transcript divergence into stage 3) |
+| 3 | modular rejects | CheckOutput catches it directly |
+| 4 | modular rejects | CheckOutput catches it directly |
+| 5 | modular rejects | sumcheck error (transcript divergence into stage 6) |
+| 6 | modular rejects | sumcheck error (transcript divergence into stage 7) |
+| 7 | **BothAccept** | no downstream sumcheck, no PCS verification → tamper invisible |
+
+**Implication**: closing T2 at stage 7 requires either CheckOutput (T2)
+*or* CollectOpeningClaim parity (T9/T10). Either path closes the gap;
+CheckOutput is smaller in scope.
+
+**Reordering rationale**: T11 (test) is now ahead of T2 (stage-7
+CheckOutput) so we can lock in the ratchet baseline before authoring
+output formulas, then watch T2@stage-7 flip from `KnownGap` to
+`BothReject` when stage-7 CheckOutput lands.
 
 ## Per-task acceptance criteria
 
