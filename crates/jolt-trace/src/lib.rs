@@ -12,6 +12,7 @@ pub mod instructions;
 mod program;
 pub mod ram;
 mod tracer_cycle;
+mod traits;
 
 pub use bytecode::BytecodePreprocessing;
 pub use cycle_row::CycleRow;
@@ -20,6 +21,7 @@ pub use flags::{
     InterleavedBitsMarker, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
 };
 pub use instructions::JoltInstructions;
+pub use traits::{JoltCycle, JoltInstruction};
 
 use std::path::{Path, PathBuf};
 
