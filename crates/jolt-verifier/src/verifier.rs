@@ -1007,6 +1007,69 @@ mod tests {
         assert_eq!(result, Fr::from_u64(51));
     }
 
+    /// T0 pre-flight: repeated `ClaimFactor::Eval(P)` factors must
+    /// evaluate to `eval[P]^k`. Booleanity / HammingBooleanity
+    /// formulas rely on this for the `ra² − ra` term — without it the
+    /// spec must add `ClaimFactor::EvalSquared`.
+    #[test]
+    fn formula_evaluation_repeated_eval_squares() {
+        let poly_a = PolynomialId::RdInc;
+        // Single term: 1 * Eval(P) * Eval(P) — should reduce to eval[P]^2.
+        let squared = ClaimFormula {
+            terms: vec![ClaimTerm {
+                coeff: 1,
+                factors: vec![ClaimFactor::Eval(poly_a), ClaimFactor::Eval(poly_a)],
+            }],
+        };
+        // Reference: 1 * Eval(P) - Eval(P) - should reduce to eval[P] - eval[P] = 0.
+        // Demonstrates that repeated Eval composes multiplicatively, not additively.
+        let booleanity_residual = ClaimFormula {
+            terms: vec![
+                ClaimTerm {
+                    coeff: 1,
+                    factors: vec![ClaimFactor::Eval(poly_a), ClaimFactor::Eval(poly_a)],
+                },
+                ClaimTerm {
+                    coeff: -1,
+                    factors: vec![ClaimFactor::Eval(poly_a)],
+                },
+            ],
+        };
+
+        let mut evaluations = HashMap::new();
+        let _ = evaluations.insert(poly_a, Fr::from_u64(7));
+        let challenges: Vec<Fr> = vec![];
+        let sumcheck_points: Vec<Vec<Fr>> = vec![];
+
+        let squared_val = evaluate_formula(
+            &squared,
+            &evaluations,
+            &challenges,
+            &sumcheck_points,
+            None,
+            None,
+            &[],
+            &dummy_r1cs_key(),
+            &dummy_config(),
+        )
+        .unwrap();
+        assert_eq!(squared_val, Fr::from_u64(49)); // 7² = 49
+
+        let residual_val = evaluate_formula(
+            &booleanity_residual,
+            &evaluations,
+            &challenges,
+            &sumcheck_points,
+            None,
+            None,
+            &[],
+            &dummy_r1cs_key(),
+            &dummy_config(),
+        )
+        .unwrap();
+        assert_eq!(residual_val, Fr::from_u64(42)); // 49 - 7 = 42
+    }
+
     #[test]
     fn eq_eval_correctness() {
         let one = Fr::one();
