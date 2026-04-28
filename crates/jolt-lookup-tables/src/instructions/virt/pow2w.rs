@@ -1,13 +1,13 @@
 use crate::traits::impl_lookup_table;
 use crate::traits::LookupQuery;
 use jolt_trace::instructions::Pow2W;
-use tracer::instruction::{virtual_pow2_w::VirtualPow2W, RISCVCycle};
+use jolt_trace::JoltCycle;
 
 impl_lookup_table!(Pow2W, Some(Pow2W));
 
-impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualPow2W> {
+impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for Pow2W<C> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
-        (self.register_state.rs1, 0)
+        (self.0.rs1_val().unwrap_or(0), 0)
     }
 
     fn to_lookup_operands(&self) -> (u64, u128) {

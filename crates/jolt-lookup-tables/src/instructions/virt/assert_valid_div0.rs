@@ -1,16 +1,16 @@
 use crate::traits::impl_lookup_table;
 use crate::traits::LookupQuery;
 use jolt_trace::instructions::AssertValidDiv0;
-use tracer::instruction::{virtual_assert_valid_div0::VirtualAssertValidDiv0, RISCVCycle};
+use jolt_trace::JoltCycle;
 
 impl_lookup_table!(AssertValidDiv0, Some(ValidDiv0));
 
-impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualAssertValidDiv0> {
+impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for AssertValidDiv0<C> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
         let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
         (
-            self.register_state.rs1 & mask,
-            (self.register_state.rs2 & mask) as i128,
+            self.0.rs1_val().unwrap_or(0) & mask,
+            (self.0.rs2_val().unwrap_or(0) & mask) as i128,
         )
     }
 

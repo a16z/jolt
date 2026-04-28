@@ -24,6 +24,7 @@ pub fn derive_flags(input: TokenStream) -> TokenStream {
 
 fn derive_flags_impl(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let name = &input.ident;
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
     let circuit_flags = extract_flags(&input.attrs, "circuit")?;
     let instruction_flags = extract_flags(&input.attrs, "instruction")?;
@@ -47,7 +48,7 @@ fn derive_flags_impl(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream
     };
 
     Ok(quote! {
-        impl crate::Flags for #name {
+        impl #impl_generics crate::Flags for #name #ty_generics #where_clause {
             #[inline]
             fn circuit_flags(&self) -> crate::CircuitFlagSet {
                 #circuit_body

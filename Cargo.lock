@@ -2926,7 +2926,6 @@ dependencies = [
  "rand 0.8.5",
  "serde",
  "strum 0.28.0",
- "tracer",
 ]
 
 [[package]]
@@ -3019,6 +3018,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-riscv"
+version = "0.1.0"
+dependencies = [
+ "jolt-riscv-derive",
+ "serde",
+ "strum 0.28.0",
+]
+
+[[package]]
 name = "jolt-riscv-derive"
 version = "0.1.0"
 dependencies = [
@@ -3071,9 +3079,8 @@ version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
  "common",
- "jolt-riscv-derive",
+ "jolt-riscv",
  "serde",
- "strum 0.28.0",
  "tracer",
  "tracing",
 ]

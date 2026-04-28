@@ -1,11 +1,11 @@
 use crate::traits::impl_lookup_table;
 use crate::traits::LookupQuery;
 use jolt_trace::instructions::Ecall;
-use tracer::instruction::{ecall::ECALL, RISCVCycle};
+use jolt_trace::JoltCycle;
 
 impl_lookup_table!(Ecall, None);
 
-impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<ECALL> {
+impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for Ecall<C> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
         (0, 0)
     }

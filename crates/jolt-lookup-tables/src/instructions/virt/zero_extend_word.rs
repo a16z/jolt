@@ -1,20 +1,18 @@
 use crate::traits::impl_lookup_table;
 use crate::traits::LookupQuery;
 use jolt_trace::instructions::VirtualZeroExtendWord;
-use tracer::instruction::{
-    virtual_zero_extend_word::VirtualZeroExtendWord as TracerVirtualZeroExtendWord, RISCVCycle,
-};
+use jolt_trace::JoltCycle;
 
 impl_lookup_table!(VirtualZeroExtendWord, Some(RangeCheck));
 
-impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<TracerVirtualZeroExtendWord> {
+impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualZeroExtendWord<C> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
-        (self.register_state.rs1, 0)
+        (self.0.rs1_val().unwrap_or(0), 0)
     }
 
     fn to_lookup_operands(&self) -> (u64, u128) {
         let (x, y) = LookupQuery::<XLEN>::to_instruction_inputs(self);
-        (0, u128::try_from(x as i128 + y).unwrap())
+        (0, x as u128 + y as u64 as u128)
     }
 
     fn to_lookup_index(&self) -> u128 {

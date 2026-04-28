@@ -1,15 +1,13 @@
 use crate::traits::impl_lookup_table;
 use crate::traits::LookupQuery;
 use jolt_trace::instructions::VirtualSignExtendWord;
-use tracer::instruction::{
-    virtual_sign_extend_word::VirtualSignExtendWord as TracerVirtualSignExtendWord, RISCVCycle,
-};
+use jolt_trace::JoltCycle;
 
 impl_lookup_table!(VirtualSignExtendWord, Some(RangeCheck));
 
-impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<TracerVirtualSignExtendWord> {
+impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualSignExtendWord<C> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
-        (self.register_state.rs1, 0)
+        (self.0.rs1_val().unwrap_or(0), 0)
     }
 
     fn to_lookup_operands(&self) -> (u64, u128) {

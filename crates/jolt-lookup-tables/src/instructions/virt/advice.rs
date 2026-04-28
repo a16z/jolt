@@ -1,18 +1,18 @@
 use crate::traits::impl_lookup_table;
 use crate::traits::LookupQuery;
 use jolt_trace::instructions::VirtualAdvice;
-use tracer::instruction::{virtual_advice::VirtualAdvice as TracerVirtualAdvice, RISCVCycle};
+use jolt_trace::JoltCycle;
 
 impl_lookup_table!(VirtualAdvice, Some(RangeCheck));
 
-impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<TracerVirtualAdvice> {
+impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualAdvice<C> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
         (0, 0)
     }
 
     fn to_lookup_operands(&self) -> (u64, u128) {
         let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
-        (0, (self.instruction.advice & mask) as u128)
+        (0, (self.0.rd_vals().map_or(0, |(_, p)| p) & mask) as u128)
     }
 
     fn to_lookup_index(&self) -> u128 {
@@ -21,6 +21,6 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<TracerVirtualAdvice> {
 
     fn to_lookup_output(&self) -> u64 {
         let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
-        self.instruction.advice & mask
+        self.0.rd_vals().map_or(0, |(_, p)| p) & mask
     }
 }

@@ -1,11 +1,11 @@
 use crate::traits::impl_lookup_table;
 use crate::traits::LookupQuery;
 use jolt_trace::instructions::VirtualHostIO;
-use tracer::instruction::{virtual_host_io::VirtualHostIO as TracerVirtualHostIO, RISCVCycle};
+use jolt_trace::JoltCycle;
 
 impl_lookup_table!(VirtualHostIO, None);
 
-impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<TracerVirtualHostIO> {
+impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualHostIO<C> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
         (0, 0)
     }

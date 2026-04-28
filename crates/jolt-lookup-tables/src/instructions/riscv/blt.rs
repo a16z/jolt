@@ -1,15 +1,15 @@
 use crate::traits::impl_lookup_table;
 use crate::traits::LookupQuery;
 use jolt_trace::instructions::Blt;
-use tracer::instruction::{blt::BLT, RISCVCycle};
+use jolt_trace::JoltCycle;
 
 impl_lookup_table!(Blt, Some(SignedLessThan));
 
-impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<BLT> {
+impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for Blt<C> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
         let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
-        let x = self.register_state.rs1 & mask;
-        let y = self.register_state.rs2 & mask;
+        let x = self.0.rs1_val().unwrap_or(0) & mask;
+        let y = self.0.rs2_val().unwrap_or(0) & mask;
         // Sign-extend both operands for signed comparison.
         let shift = 64 - XLEN as u32;
         let x_signed = ((x as i64) << shift) >> shift;

@@ -3,19 +3,19 @@ use crate::traits::LookupQuery;
 use jolt_trace::instructions::{
     VirtualXorRotW12, VirtualXorRotW16, VirtualXorRotW7, VirtualXorRotW8,
 };
-use tracer::instruction::{
-    virtual_xor_rotw::{VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8},
-    RISCVCycle,
-};
+use jolt_trace::JoltCycle;
 
 impl_lookup_table!(VirtualXorRotW16, Some(VirtualXORROTW16));
 impl_lookup_table!(VirtualXorRotW12, Some(VirtualXORROTW12));
 impl_lookup_table!(VirtualXorRotW8, Some(VirtualXORROTW8));
 impl_lookup_table!(VirtualXorRotW7, Some(VirtualXORROTW7));
 
-impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualXORROTW16> {
+impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualXorRotW16<C> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
-        (self.register_state.rs1, self.register_state.rs2 as i128)
+        (
+            self.0.rs1_val().unwrap_or(0),
+            self.0.rs2_val().unwrap_or(0) as i128,
+        )
     }
 
     fn to_lookup_output(&self) -> u64 {
@@ -28,9 +28,12 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualXORROTW16> {
     }
 }
 
-impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualXORROTW12> {
+impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualXorRotW12<C> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
-        (self.register_state.rs1, self.register_state.rs2 as i128)
+        (
+            self.0.rs1_val().unwrap_or(0),
+            self.0.rs2_val().unwrap_or(0) as i128,
+        )
     }
 
     fn to_lookup_output(&self) -> u64 {
@@ -43,9 +46,12 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualXORROTW12> {
     }
 }
 
-impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualXORROTW8> {
+impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualXorRotW8<C> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
-        (self.register_state.rs1, self.register_state.rs2 as i128)
+        (
+            self.0.rs1_val().unwrap_or(0),
+            self.0.rs2_val().unwrap_or(0) as i128,
+        )
     }
 
     fn to_lookup_output(&self) -> u64 {
@@ -58,9 +64,12 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualXORROTW8> {
     }
 }
 
-impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualXORROTW7> {
+impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualXorRotW7<C> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
-        (self.register_state.rs1, self.register_state.rs2 as i128)
+        (
+            self.0.rs1_val().unwrap_or(0),
+            self.0.rs2_val().unwrap_or(0) as i128,
+        )
     }
 
     fn to_lookup_output(&self) -> u64 {

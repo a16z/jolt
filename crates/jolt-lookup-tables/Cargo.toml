@@ -16,7 +16,6 @@ jolt-field = { workspace = true }
 jolt-trace = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 strum = { workspace = true, features = ["derive"] }
-tracer = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 rand = { workspace = true }

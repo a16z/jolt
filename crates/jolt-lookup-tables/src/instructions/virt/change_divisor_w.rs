@@ -1,15 +1,16 @@
 use crate::traits::impl_lookup_table;
 use crate::traits::LookupQuery;
 use jolt_trace::instructions::VirtualChangeDivisorW;
-use tracer::instruction::{
-    virtual_change_divisor_w::VirtualChangeDivisorW as TracerVirtualChangeDivisorW, RISCVCycle,
-};
+use jolt_trace::JoltCycle;
 
 impl_lookup_table!(VirtualChangeDivisorW, Some(VirtualChangeDivisorW));
 
-impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<TracerVirtualChangeDivisorW> {
+impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualChangeDivisorW<C> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
-        (self.register_state.rs1, self.register_state.rs2 as i128)
+        (
+            self.0.rs1_val().unwrap_or(0),
+            self.0.rs2_val().unwrap_or(0) as i128,
+        )
     }
 
     fn to_lookup_output(&self) -> u64 {
