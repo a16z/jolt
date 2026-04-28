@@ -1409,6 +1409,7 @@ fn build_module(params: &ModuleParams) -> Module {
     verifier_ops.extend(build_verifier_stage3_ops(&p, params, &ch));
     verifier_ops.extend(build_verifier_stage4_ops(&p, params, &ch));
     verifier_ops.extend(build_verifier_stage5_ops(&p, params, &ch));
+    verifier_ops.extend(build_verifier_stage6_ops(&p, params, &ch));
     push_verifier_op!(verifier_ops, VerifierOp::VerifyOpenings);
 
     let polys = pt.into_vec();
@@ -1439,7 +1440,7 @@ fn build_module(params: &ModuleParams) -> Module {
             ops: verifier_ops,
             num_challenges,
             num_polys,
-            num_stages: 5,
+            num_stages: 6,
         },
     }
 }
@@ -6304,6 +6305,30 @@ fn build_stage6(
         }
     );
 
+    // Snapshot all stage-6 evaluations into the proof so the verifier can
+    // resolve `ClaimFactor::Eval` / `ClaimFactor::StagedEval` references in
+    // stage 7's input claim. Order must match the verifier-side
+    // `VerifierOp::RecordEvals` exactly.
+    let bool_ra_poly_ids: Vec<PolynomialId> = (0..params.instruction_d)
+        .map(PolynomialId::InstructionRa)
+        .chain((0..params.bytecode_d).map(PolynomialId::BytecodeRa))
+        .chain((0..params.ram_d).map(PolynomialId::RamRa))
+        .collect();
+    let mut stage6_eval_polys: Vec<PolynomialId> = Vec::new();
+    stage6_eval_polys.extend_from_slice(&bc_raf_proj_ids);
+    stage6_eval_polys.extend_from_slice(&bool_ra_poly_ids);
+    stage6_eval_polys.push(p.hamming_weight);
+    stage6_eval_polys.extend_from_slice(&ram_ra_proj_ids);
+    stage6_eval_polys.extend_from_slice(&inst_ra_proj_ids);
+    stage6_eval_polys.push(p.ram_inc);
+    stage6_eval_polys.push(p.rd_inc);
+    push_op!(
+        ops,
+        Op::RecordEvals {
+            polys: stage6_eval_polys,
+        }
+    );
+
     Stage6Challenges {
         round_challenges: s6_round_ch,
         bc_addr_chunks,
@@ -7420,6 +7445,409 @@ fn build_verifier_stage5_ops(
     //
     // CheckOutput also omitted; see doc comment at top of function.
     let _ = instances; // keep named binding alive for clarity
+    ops
+}
+
+/// Verifier schedule for Stage 6 (BytecodeReadRaf + Booleanity + HammingBooleanity
+/// + RamRaVirtual + InstructionRaVirtual + IncClaimReduction).
+///
+/// Six batched sumcheck instances (matches jolt-core `verify_stage6` instance
+/// order):
+///   [0] BytecodeReadRaf       — log_K_BYTECODE + log_T rounds, degree bytecode_d+1
+///   [1] Booleanity            — log_K_chunk + log_T rounds, degree 3
+///   [2] HammingBooleanity     — log_T rounds, degree 3
+///   [3] RamRaVirtual          — log_T rounds, degree ram_d+1
+///   [4] InstructionRaVirtual  — log_T rounds, degree n_committed_per_virtual+1
+///   [5] IncClaimReduction     — log_T rounds, degree 2
+///
+/// Pre-sumcheck transcript:
+///   Squeeze γ_bc, γ_bc_stage1..γ_bc_stage5 (6 challenges), γ_booleanity (1),
+///   γ_inst_ra (1), γ_inc (1) — 9 squeezes total. ComputePower ops for the
+///   booleanity γ-power challenges are skipped on the verifier side because
+///   they don't touch the transcript and aren't referenced by any input
+///   claim authored here.
+///
+/// `output_check` formulas are deferred — Booleanity / HammingBooleanity
+/// reference `ra² − ra` style products and BytecodeReadRaf needs the
+/// bytecode val_at_addr composition; both require `ClaimFactor` extensions.
+/// Until the formulas land, `CheckOutput` is omitted; `VerifySumcheck`
+/// still catches T1/T8 round-poly tampers.
+fn build_verifier_stage6_ops(
+    p: &Polys,
+    params: &ModuleParams,
+    _ch: &ChallengeTable,
+) -> Vec<VerifierOp> {
+    // ── Absolute challenge layout (same accumulation as stage 5) ──
+    let s2_ch_base = params.num_tau + 1 + 1 + params.outer_remaining_rounds;
+    let stage2_pre = 1 + 1 + 1 + 1 + params.log_k_ram;
+    let stage2_batch_base = s2_ch_base + stage2_pre;
+    let stage2_round_base = stage2_batch_base + params.stage2_num_instances;
+    let s3_ch_base = stage2_round_base + params.stage2_max_rounds;
+    let s4_ch_base = s3_ch_base + 6 + params.log_t;
+    let log_k_reg = LOG_K_REG;
+    let stage4_max_rounds = log_k_reg + params.log_t;
+    let s5_ch_base = s4_ch_base + 6 + stage4_max_rounds;
+    let stage5_max_rounds = LOG_K_INSTRUCTION + params.log_t;
+    // s5 prover: 2 gammas + 3 ps_registry (External) + 3 batch + stage5_max_rounds rounds.
+    let s6_ch_base = s5_ch_base + 8 + stage5_max_rounds;
+
+    let total_d = params.instruction_d + params.bytecode_d + params.ram_d;
+    let stage6_max_rounds = params.log_k_bytecode + params.log_t;
+    let booleanity_rounds = params.log_k_chunk + params.log_t;
+
+    let ram_pad_len = if params.log_k_ram.is_multiple_of(params.log_k_chunk) {
+        0
+    } else {
+        params.log_k_chunk - (params.log_k_ram % params.log_k_chunk)
+    };
+    let bc_pad_len = if params.log_k_bytecode.is_multiple_of(params.log_k_chunk) {
+        0
+    } else {
+        params.log_k_chunk - (params.log_k_bytecode % params.log_k_chunk)
+    };
+
+    // Stage 6 challenge slot allocation (mirrors prover-side
+    // `build_stage6` accumulation):
+    //   +0       ch_bc_gamma                                (Squeeze)
+    //   +1..+6   ch_bc_stage{1..5}_gamma                    (5 × Squeeze)
+    //   +6       ch_booleanity_gamma                        (Squeeze)
+    //   +7..+7+total_d         booleanity_gamma_sq          (Power, skipped)
+    //   +7+total_d..+7+2td     booleanity_gamma_pow         (Power, skipped)
+    //   +7+2*total_d           ch_bool_eq_r_r               (External, skipped)
+    //   +8+2*total_d           ch_inst_ra_gamma             (Squeeze)
+    //   +9+2*total_d           ch_inc_gamma                 (Squeeze)
+    //   +10+2td..+10+2td+pad   ram_ra_pad                   (External, skipped)
+    //   +round_base..          stage6_max_rounds round slots
+    //   ... + 5 cycle_weight + 1 entry_weight + bc_pad + log_t entry_eq    (External, skipped)
+    //   ... + 6 batch challenges                            (Squeeze inside VerifySumcheck)
+    let ch_bc_gamma = ChallengeIdx(s6_ch_base);
+    let ch_bc_stage1_gamma = ChallengeIdx(s6_ch_base + 1);
+    let ch_bc_stage2_gamma = ChallengeIdx(s6_ch_base + 2);
+    let ch_bc_stage3_gamma = ChallengeIdx(s6_ch_base + 3);
+    let ch_bc_stage4_gamma = ChallengeIdx(s6_ch_base + 4);
+    let ch_bc_stage5_gamma = ChallengeIdx(s6_ch_base + 5);
+    let ch_booleanity_gamma = ChallengeIdx(s6_ch_base + 6);
+    let ch_inst_ra_gamma = ChallengeIdx(s6_ch_base + 8 + 2 * total_d);
+    let ch_inc_gamma = ChallengeIdx(s6_ch_base + 9 + 2 * total_d);
+
+    let s6_round_base = s6_ch_base + 10 + 2 * total_d + ram_pad_len;
+    let s6_round_slots: Vec<ChallengeIdx> = (s6_round_base..s6_round_base + stage6_max_rounds)
+        .map(ChallengeIdx)
+        .collect();
+
+    let s6_post_round_base = s6_round_base + stage6_max_rounds;
+    // Externals between rounds and batch challenges:
+    //   5 cycle_weight + 1 entry_weight + bc_pad_len + log_t entry_eq
+    let s6_batch_base = s6_post_round_base + 5 + 1 + bc_pad_len + params.log_t;
+    let s6_batch_challenges: Vec<ChallengeIdx> = (s6_batch_base..s6_batch_base + 6)
+        .map(ChallengeIdx)
+        .collect();
+
+    // ── BatchEq IDs (mirror prover-side `next_eq` walk in build_stage6) ──
+    let mut next_eq = 19usize;
+    let bc_raf_proj_ids: Vec<PolynomialId> = (0..params.bytecode_d)
+        .map(|_| {
+            let id = PolynomialId::BatchEq(next_eq);
+            next_eq += 1;
+            id
+        })
+        .collect();
+    next_eq += 5; // 5 per-stage eq tables in BC cycle phase
+    next_eq += 1; // bc entry_eq
+    next_eq += 1; // booleanity eq
+    next_eq += 1; // hamming eq
+    next_eq += 1; // ram_ra_virtual eq
+    let ram_ra_proj_ids: Vec<PolynomialId> = (0..params.ram_d)
+        .map(|_| {
+            let id = PolynomialId::BatchEq(next_eq);
+            next_eq += 1;
+            id
+        })
+        .collect();
+    next_eq += 1; // inst_ra_virtual eq
+    let inst_ra_proj_ids: Vec<PolynomialId> = (0..params.instruction_d)
+        .map(|_| {
+            let id = PolynomialId::BatchEq(next_eq);
+            next_eq += 1;
+            id
+        })
+        .collect();
+
+    // ── Input claims ──
+
+    // [0] BytecodeReadRaf — multi-stage γ-polynomial (uses StagedEval for
+    // polys overwritten by later stages). Helper is shared with prover.
+    let bc_raf_input_claim = build_bytecode_read_raf_claim(
+        p,
+        ch_bc_gamma,
+        ch_bc_stage1_gamma,
+        ch_bc_stage2_gamma,
+        ch_bc_stage3_gamma,
+        ch_bc_stage4_gamma,
+        ch_bc_stage5_gamma,
+    );
+
+    // [1] Booleanity: Σ γ²^d × (ra_d² − ra_d) — input claim is identically 0.
+    let booleanity_input_claim = ClaimFormula::zero();
+
+    // [2] HammingBooleanity: similar boolean residual — input claim is 0.
+    let hamming_input_claim = ClaimFormula::zero();
+
+    // [3] RamRaVirtual: input_claim = ram_combined_ra (Stage 5 BatchEq(17)
+    // — RamRaClaimReduction's gathered wa value).
+    let ram_ra_virtual_input_claim = ClaimFormula {
+        terms: vec![ClaimTerm {
+            coeff: 1,
+            factors: vec![ClaimFactor::Eval(PolynomialId::BatchEq(17))],
+        }],
+    };
+
+    // [4] InstructionRaVirtual: Σ_{i<n_vra} γⁱ · InstructionRa(i)
+    // (evaluations from Stage 5's PrefixSuffix). State at the moment
+    // VerifySumcheck runs: evaluations[InstructionRa(i)] still holds the
+    // stage-5 value because the booleanity AliasEval overwrites them
+    // *after* this input claim is absorbed. On the verifier side, stage 6
+    // RecordEvals also runs after VerifySumcheck, so the same invariant
+    // holds.
+    let n_vra = params.n_virtual_ra_polys;
+    let mut inst_ra_terms = Vec::with_capacity(n_vra);
+    for i in 0..n_vra {
+        let mut factors: Vec<ClaimFactor> = (0..i)
+            .map(|_| ClaimFactor::Challenge(ch_inst_ra_gamma))
+            .collect();
+        factors.push(ClaimFactor::Eval(PolynomialId::InstructionRa(i)));
+        inst_ra_terms.push(ClaimTerm { coeff: 1, factors });
+    }
+    let inst_ra_virtual_input_claim = ClaimFormula {
+        terms: inst_ra_terms,
+    };
+
+    // [5] IncClaimReduction: v₁ + γ·v₂ + γ²·w₁ + γ³·w₂
+    //   v₁ = RamInc @ Stage 2  (StagedEval, stage idx 1)
+    //   v₂ = RamInc @ Stage 4  (current Eval — Stage 4 is the latest writer)
+    //   w₁ = RdInc  @ Stage 4  (StagedEval, stage idx 3)
+    //   w₂ = RdInc  @ Stage 5  (current Eval — Stage 5 is the latest writer)
+    let inc_input_claim = ClaimFormula {
+        terms: vec![
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![ClaimFactor::StagedEval {
+                    poly: p.ram_inc,
+                    stage: 1,
+                }],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_inc_gamma),
+                    ClaimFactor::Eval(p.ram_inc),
+                ],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_inc_gamma),
+                    ClaimFactor::Challenge(ch_inc_gamma),
+                    ClaimFactor::StagedEval {
+                        poly: p.rd_inc,
+                        stage: 3,
+                    },
+                ],
+            },
+            ClaimTerm {
+                coeff: 1,
+                factors: vec![
+                    ClaimFactor::Challenge(ch_inc_gamma),
+                    ClaimFactor::Challenge(ch_inc_gamma),
+                    ClaimFactor::Challenge(ch_inc_gamma),
+                    ClaimFactor::Eval(p.rd_inc),
+                ],
+            },
+        ],
+    };
+
+    let n_committed_per_virtual = params.ra_virtual_log_k_chunk / params.log_k_chunk;
+    let instances = vec![
+        SumcheckInstance {
+            input_claim: bc_raf_input_claim,
+            output_check: ClaimFormula { terms: vec![] },
+            num_rounds: stage6_max_rounds,
+            degree: params.bytecode_d + 1,
+            normalize: None,
+        },
+        SumcheckInstance {
+            input_claim: booleanity_input_claim,
+            output_check: ClaimFormula { terms: vec![] },
+            num_rounds: booleanity_rounds,
+            degree: 3,
+            normalize: None,
+        },
+        SumcheckInstance {
+            input_claim: hamming_input_claim,
+            output_check: ClaimFormula { terms: vec![] },
+            num_rounds: params.log_t,
+            degree: 3,
+            normalize: None,
+        },
+        SumcheckInstance {
+            input_claim: ram_ra_virtual_input_claim,
+            output_check: ClaimFormula { terms: vec![] },
+            num_rounds: params.log_t,
+            degree: params.ram_d + 1,
+            normalize: None,
+        },
+        SumcheckInstance {
+            input_claim: inst_ra_virtual_input_claim,
+            output_check: ClaimFormula { terms: vec![] },
+            num_rounds: params.log_t,
+            degree: n_committed_per_virtual + 1,
+            normalize: None,
+        },
+        SumcheckInstance {
+            input_claim: inc_input_claim,
+            output_check: ClaimFormula { terms: vec![] },
+            num_rounds: params.log_t,
+            degree: 2,
+            normalize: None,
+        },
+    ];
+
+    // ── Eval list (matches prover-side stage6 RecordEvals ordering) ──
+    let bool_ra_poly_ids: Vec<PolynomialId> = (0..params.instruction_d)
+        .map(PolynomialId::InstructionRa)
+        .chain((0..params.bytecode_d).map(PolynomialId::BytecodeRa))
+        .chain((0..params.ram_d).map(PolynomialId::RamRa))
+        .collect();
+    let mut stage6_eval_polys: Vec<PolynomialId> = Vec::new();
+    stage6_eval_polys.extend_from_slice(&bc_raf_proj_ids);
+    stage6_eval_polys.extend_from_slice(&bool_ra_poly_ids);
+    stage6_eval_polys.push(p.hamming_weight);
+    stage6_eval_polys.extend_from_slice(&ram_ra_proj_ids);
+    stage6_eval_polys.extend_from_slice(&inst_ra_proj_ids);
+    stage6_eval_polys.push(p.ram_inc);
+    stage6_eval_polys.push(p.rd_inc);
+
+    let evaluations: Vec<_> = stage6_eval_polys
+        .iter()
+        .map(|&poly| Evaluation {
+            poly,
+            at_stage: VerifierStageIndex(5),
+        })
+        .collect();
+
+    // ── Schedule ──
+    let mut ops = vec![VerifierOp::BeginStage];
+    push_verifier_op!(
+        ops,
+        VerifierOp::Squeeze {
+            challenge: ch_bc_gamma,
+        }
+    );
+    push_verifier_op!(
+        ops,
+        VerifierOp::Squeeze {
+            challenge: ch_bc_stage1_gamma,
+        }
+    );
+    push_verifier_op!(
+        ops,
+        VerifierOp::Squeeze {
+            challenge: ch_bc_stage2_gamma,
+        }
+    );
+    push_verifier_op!(
+        ops,
+        VerifierOp::Squeeze {
+            challenge: ch_bc_stage3_gamma,
+        }
+    );
+    push_verifier_op!(
+        ops,
+        VerifierOp::Squeeze {
+            challenge: ch_bc_stage4_gamma,
+        }
+    );
+    push_verifier_op!(
+        ops,
+        VerifierOp::Squeeze {
+            challenge: ch_bc_stage5_gamma,
+        }
+    );
+    push_verifier_op!(
+        ops,
+        VerifierOp::Squeeze {
+            challenge: ch_booleanity_gamma,
+        }
+    );
+    push_verifier_op!(
+        ops,
+        VerifierOp::Squeeze {
+            challenge: ch_inst_ra_gamma,
+        }
+    );
+    push_verifier_op!(
+        ops,
+        VerifierOp::Squeeze {
+            challenge: ch_inc_gamma,
+        }
+    );
+    push_verifier_op!(
+        ops,
+        VerifierOp::VerifySumcheck {
+            instances: instances.clone(),
+            stage: 5,
+            batch_challenges: s6_batch_challenges,
+            claim_tag: Some(DomainSeparator::SumcheckClaim),
+            sumcheck_challenge_slots: s6_round_slots,
+        }
+    );
+    push_verifier_op!(ops, VerifierOp::RecordEvals { evals: evaluations });
+    // Six AbsorbEvals — must mirror prover's six per-instance AbsorbEvals
+    // calls in order.
+    push_verifier_op!(
+        ops,
+        VerifierOp::AbsorbEvals {
+            polys: bc_raf_proj_ids,
+            tag: DomainSeparator::OpeningClaim,
+        }
+    );
+    push_verifier_op!(
+        ops,
+        VerifierOp::AbsorbEvals {
+            polys: bool_ra_poly_ids,
+            tag: DomainSeparator::OpeningClaim,
+        }
+    );
+    push_verifier_op!(
+        ops,
+        VerifierOp::AbsorbEvals {
+            polys: vec![p.hamming_weight],
+            tag: DomainSeparator::OpeningClaim,
+        }
+    );
+    push_verifier_op!(
+        ops,
+        VerifierOp::AbsorbEvals {
+            polys: ram_ra_proj_ids,
+            tag: DomainSeparator::OpeningClaim,
+        }
+    );
+    push_verifier_op!(
+        ops,
+        VerifierOp::AbsorbEvals {
+            polys: inst_ra_proj_ids,
+            tag: DomainSeparator::OpeningClaim,
+        }
+    );
+    push_verifier_op!(
+        ops,
+        VerifierOp::AbsorbEvals {
+            polys: vec![p.ram_inc, p.rd_inc],
+            tag: DomainSeparator::OpeningClaim,
+        }
+    );
+    // CheckOutput + CollectOpeningClaim deferred (see doc comment).
+    let _ = instances;
     ops
 }
 

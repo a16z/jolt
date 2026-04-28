@@ -42,20 +42,14 @@ pub struct KnownGap {
 /// is deferred (output_check formulas pending — InstructionReadRaf needs
 /// a `ClaimFactor::CombineEntryEval` variant for the prefix-suffix
 /// composition).
+///
+/// Stage 6 partially closed: build_verifier_stage6_ops emits VerifySumcheck
+/// for [BytecodeReadRaf, Booleanity, HammingBooleanity, RamRaVirtual,
+/// InstructionRaVirtual, IncClaimReduction], catching T1 / T8 tampers.
+/// CheckOutput is deferred (output_check formulas pending — Booleanity /
+/// HammingBooleanity need an `EvalSquared`-style factor for `ra² − ra`,
+/// BytecodeReadRaf needs the bytecode-val composition).
 pub const KNOWN_GAPS: &[KnownGap] = &[
-    // ── Stage 6 (BytecodeReadRaf / Booleanity / HammingBooleanity / RamRa / LookupsRa / IncReduction +advice) ──
-    KnownGap {
-        stage: 6,
-        kind: TamperKind::T1RoundPolyCoeff,
-        rationale: "Stage 6 not wired into verifier schedule",
-        owner: "verifier-agent",
-    },
-    KnownGap {
-        stage: 6,
-        kind: TamperKind::T8RoundPolyDegree,
-        rationale: "Stage 6 not wired into verifier schedule",
-        owner: "verifier-agent",
-    },
     // ── Stage 7 (HammingWeightClaimReduction +advice address phase) ──
     KnownGap {
         stage: 7,
