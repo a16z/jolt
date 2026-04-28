@@ -125,6 +125,40 @@ pub use virt::VirtualZeroExtendWord;
 pub use i::Xor;
 pub use i::XorI;
 
+
+// Atomic + system + advice-load + virtual lw/sw additions
+pub use virt::AdviceLb;
+pub use virt::AdviceLd;
+pub use virt::AdviceLh;
+pub use virt::AdviceLw;
+pub use a::AmoAddD;
+pub use a::AmoAddW;
+pub use a::AmoAndD;
+pub use a::AmoAndW;
+pub use a::AmoMaxD;
+pub use a::AmoMaxUD;
+pub use a::AmoMaxUW;
+pub use a::AmoMaxW;
+pub use a::AmoMinD;
+pub use a::AmoMinUD;
+pub use a::AmoMinUW;
+pub use a::AmoMinW;
+pub use a::AmoOrD;
+pub use a::AmoOrW;
+pub use a::AmoSwapD;
+pub use a::AmoSwapW;
+pub use a::AmoXorD;
+pub use a::AmoXorW;
+pub use i::Csrrs;
+pub use i::Csrrw;
+pub use a::LrD;
+pub use a::LrW;
+pub use i::Mret;
+pub use a::ScD;
+pub use a::ScW;
+pub use virt::VirtualLw;
+pub use virt::VirtualSw;
+
 /// Enum with one variant per Jolt instruction.
 ///
 /// Each variant carries the corresponding unit struct, enabling trait-based
@@ -281,6 +315,159 @@ impl_jolt_instructions_flags! {
     VirtualXorRot32, VirtualXorRot24, VirtualXorRot16, VirtualXorRot63,
     VirtualXorRotW16, VirtualXorRotW12, VirtualXorRotW8, VirtualXorRotW7,
     VirtualAdvice, VirtualAdviceLen, VirtualAdviceLoad, VirtualHostIO,
+}
+
+/// Enum spanning every RISC-V instruction kind defined in this crate.
+///
+/// [`JoltInstructions`] covers only the variants Jolt currently proves (each
+/// with circuit/instruction flags). `RISCVInstructions` adds Zicsr, machine-
+/// mode return, RV32A/RV64A atomics, advice-load helpers, and virtual lw/sw
+/// so consumers can enumerate the full ISA.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, strum::EnumIter)]
+pub enum RISCVInstructions {
+    // RV32I base + Zicsr + system + Jolt's NOOP pseudo-op
+    Add(Add),
+    Addi(Addi),
+    And(And),
+    AndI(AndI),
+    Andn(Andn),
+    Auipc(Auipc),
+    Beq(Beq),
+    Bge(Bge),
+    BgeU(BgeU),
+    Blt(Blt),
+    BltU(BltU),
+    Bne(Bne),
+    Csrrs(Csrrs),
+    Csrrw(Csrrw),
+    Div(Div),
+    DivU(DivU),
+    Ebreak(Ebreak),
+    Ecall(Ecall),
+    Fence(Fence),
+    Noop(Noop),
+    Jal(Jal),
+    Jalr(Jalr),
+    Lb(Lb),
+    Lbu(Lbu),
+    Ld(Ld),
+    Lh(Lh),
+    Lhu(Lhu),
+    Lui(Lui),
+    Lw(Lw),
+    Mret(Mret),
+    Mul(Mul),
+    MulH(MulH),
+    MulHSU(MulHSU),
+    MulHU(MulHU),
+    Or(Or),
+    OrI(OrI),
+    Rem(Rem),
+    RemU(RemU),
+    Sb(Sb),
+    Sd(Sd),
+    Sh(Sh),
+    Sll(Sll),
+    SllI(SllI),
+    Slt(Slt),
+    SltI(SltI),
+    SltIU(SltIU),
+    SltU(SltU),
+    Sra(Sra),
+    SraI(SraI),
+    Srl(Srl),
+    SrlI(SrlI),
+    Sub(Sub),
+    Sw(Sw),
+    Xor(Xor),
+    XorI(XorI),
+    // RV64I
+    AddiW(AddiW),
+    SllIW(SllIW),
+    SrlIW(SrlIW),
+    SraIW(SraIW),
+    AddW(AddW),
+    SubW(SubW),
+    SllW(SllW),
+    SrlW(SrlW),
+    SraW(SraW),
+    Lwu(Lwu),
+    // RV64M
+    DivUW(DivUW),
+    DivW(DivW),
+    MulW(MulW),
+    RemUW(RemUW),
+    RemW(RemW),
+    // RV32A (Atomic Memory Operations)
+    LrW(LrW),
+    ScW(ScW),
+    AmoSwapW(AmoSwapW),
+    AmoAddW(AmoAddW),
+    AmoAndW(AmoAndW),
+    AmoOrW(AmoOrW),
+    AmoXorW(AmoXorW),
+    AmoMinW(AmoMinW),
+    AmoMaxW(AmoMaxW),
+    AmoMinUW(AmoMinUW),
+    AmoMaxUW(AmoMaxUW),
+    // RV64A (Atomic Memory Operations)
+    LrD(LrD),
+    ScD(ScD),
+    AmoSwapD(AmoSwapD),
+    AmoAddD(AmoAddD),
+    AmoAndD(AmoAndD),
+    AmoOrD(AmoOrD),
+    AmoXorD(AmoXorD),
+    AmoMinD(AmoMinD),
+    AmoMaxD(AmoMaxD),
+    AmoMinUD(AmoMinUD),
+    AmoMaxUD(AmoMaxUD),
+    // Virtual
+    AdviceLb(AdviceLb),
+    AdviceLd(AdviceLd),
+    AdviceLh(AdviceLh),
+    AdviceLw(AdviceLw),
+    VirtualAdvice(VirtualAdvice),
+    VirtualAdviceLen(VirtualAdviceLen),
+    VirtualAdviceLoad(VirtualAdviceLoad),
+    AssertEq(AssertEq),
+    AssertHalfwordAlignment(AssertHalfwordAlignment),
+    AssertWordAlignment(AssertWordAlignment),
+    AssertLte(AssertLte),
+    VirtualHostIO(VirtualHostIO),
+    AssertValidDiv0(AssertValidDiv0),
+    AssertValidUnsignedRemainder(AssertValidUnsignedRemainder),
+    AssertMulUNoOverflow(AssertMulUNoOverflow),
+    VirtualChangeDivisor(VirtualChangeDivisor),
+    VirtualChangeDivisorW(VirtualChangeDivisorW),
+    VirtualLw(VirtualLw),
+    VirtualSw(VirtualSw),
+    VirtualZeroExtendWord(VirtualZeroExtendWord),
+    VirtualSignExtendWord(VirtualSignExtendWord),
+    Pow2W(Pow2W),
+    Pow2IW(Pow2IW),
+    MovSign(MovSign),
+    MulI(MulI),
+    Pow2(Pow2),
+    Pow2I(Pow2I),
+    VirtualRev8W(VirtualRev8W),
+    VirtualRotri(VirtualRotri),
+    VirtualRotriw(VirtualRotriw),
+    VirtualShiftRightBitmask(VirtualShiftRightBitmask),
+    VirtualShiftRightBitmaski(VirtualShiftRightBitmaski),
+    VirtualSra(VirtualSra),
+    VirtualSrai(VirtualSrai),
+    VirtualSrl(VirtualSrl),
+    VirtualSrli(VirtualSrli),
+    // XOR-ROT virtuals
+    VirtualXorRot32(VirtualXorRot32),
+    VirtualXorRot24(VirtualXorRot24),
+    VirtualXorRot16(VirtualXorRot16),
+    VirtualXorRot63(VirtualXorRot63),
+    VirtualXorRotW16(VirtualXorRotW16),
+    VirtualXorRotW12(VirtualXorRotW12),
+    VirtualXorRotW8(VirtualXorRotW8),
+    VirtualXorRotW7(VirtualXorRotW7),
 }
 
 #[cfg(test)]

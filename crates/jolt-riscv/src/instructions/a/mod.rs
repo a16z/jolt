@@ -1,1 +1,47 @@
-//! RV64A atomic instructions (none defined yet).
+//! RV32A and RV64A atomic memory operations.
+
+pub mod amoaddd;
+pub mod amoaddw;
+pub mod amoandd;
+pub mod amoandw;
+pub mod amomaxd;
+pub mod amomaxud;
+pub mod amomaxuw;
+pub mod amomaxw;
+pub mod amomind;
+pub mod amominud;
+pub mod amominuw;
+pub mod amominw;
+pub mod amoord;
+pub mod amoorw;
+pub mod amoswapd;
+pub mod amoswapw;
+pub mod amoxord;
+pub mod amoxorw;
+pub mod lrd;
+pub mod lrw;
+pub mod scd;
+pub mod scw;
+
+pub use amoaddd::AmoAddD;
+pub use amoaddw::AmoAddW;
+pub use amoandd::AmoAndD;
+pub use amoandw::AmoAndW;
+pub use amomaxd::AmoMaxD;
+pub use amomaxud::AmoMaxUD;
+pub use amomaxuw::AmoMaxUW;
+pub use amomaxw::AmoMaxW;
+pub use amomind::AmoMinD;
+pub use amominud::AmoMinUD;
+pub use amominuw::AmoMinUW;
+pub use amominw::AmoMinW;
+pub use amoord::AmoOrD;
+pub use amoorw::AmoOrW;
+pub use amoswapd::AmoSwapD;
+pub use amoswapw::AmoSwapW;
+pub use amoxord::AmoXorD;
+pub use amoxorw::AmoXorW;
+pub use lrd::LrD;
+pub use lrw::LrW;
+pub use scd::ScD;
+pub use scw::ScW;
