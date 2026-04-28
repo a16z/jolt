@@ -19,18 +19,49 @@ impl StreamingCommitment for crate::DoryScheme {
         }
     }
 
+    /// Commits one full row of the polynomial as `MSM(g1_bases[..chunk.len()], chunk)`,
+    /// matching the per-row work in [`DoryScheme::commit`](crate::DoryScheme::commit)'s
+    /// dense path. Caller must feed every row at the same chunk width.
     #[tracing::instrument(skip_all, name = "DoryScheme::stream_feed")]
     fn feed(partial: &mut Self::PartialCommitment, chunk: &[Fr], setup: &Self::ProverSetup) {
+        assert!(
+            chunk.len().is_power_of_two(),
+            "streaming: chunk length ({}) must be a power of two",
+            chunk.len(),
+        );
+        assert!(
+            chunk.len() <= setup.0.g1_vec.len(),
+            "streaming: chunk length ({}) exceeds Dory SRS size ({})",
+            chunk.len(),
+            setup.0.g1_vec.len(),
+        );
+
         let g1_bases = &setup.0.g1_vec[..chunk.len()];
         let scalars: Vec<ArkFr> = chunk.iter().map(jolt_fr_to_ark).collect();
         let row_commitment = G1Routines::msm(g1_bases, &scalars);
         partial.row_commitments.push(ark_to_jolt_g1(row_commitment));
     }
 
+    /// Aggregates row commitments into the final tier-2 commitment, matching
+    /// [`DoryScheme::commit`](crate::DoryScheme::commit). Asserts that the
+    /// streamed row count is a power of two (the layout `DoryScheme::commit`
+    /// produces).
     #[tracing::instrument(skip_all, name = "DoryScheme::stream_finish")]
     fn finish(partial: Self::PartialCommitment, setup: &Self::ProverSetup) -> Self::Output {
+        let num_rows = partial.row_commitments.len();
+        assert!(
+            num_rows.is_power_of_two(),
+            "streaming: row count ({num_rows}) must be a power of two",
+        );
+        assert!(
+            num_rows <= setup.0.g2_vec.len(),
+            "streaming: row count ({}) exceeds Dory SRS size ({})",
+            num_rows,
+            setup.0.g2_vec.len(),
+        );
+
         let ark_rows = jolt_g1_vec_to_ark(partial.row_commitments);
-        let g2_bases = &setup.0.g2_vec[..ark_rows.len()];
+        let g2_bases = &setup.0.g2_vec[..num_rows];
         let tier_2 = <InnerBN254 as PairingCurve>::multi_pair_g2_setup(&ark_rows, g2_bases);
         DoryCommitment(ark_to_jolt_gt(&tier_2))
     }
