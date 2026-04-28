@@ -8028,12 +8028,158 @@ fn build_verifier_stage7_ops(
         terms: hw_input_terms,
     };
 
+    // ── Output check formula
+    //
+    // jolt-core's expected_output_claim:
+    //   Σ_i G_i(ρ) · (γ^{3i} + γ^{3i+1}·eq(r_addr_bool, ρ) + γ^{3i+2}·eq(r_addr_virt[i], ρ))
+    //
+    // The verifier evaluates this against the stage-7 sumcheck point in the
+    // squeezed (LE) order. ClaimFactor::EqEval at stage 6 (index for stage 7)
+    // resolves the ChallengeIdx vector to field elements and computes
+    // EqPolynomial::mle(challenges_resolved, sumcheck_points[6]). Both vectors
+    // are in the *kernel's* binding order, which matches the prover-side
+    // EqTable's ChallengeIdx ordering.
+    //
+    // r_addr_bool: stage-6 round challenges [log_k_bytecode-log_k_chunk..log_k_bytecode]
+    //   reversed (BE) — same ordering as prover-side `addr_bool_challenges_be`.
+    let s6_round_base = s6_ch_base + 10 + 2 * total_d + ram_pad_len;
+    let r_addr_bool_idx: Vec<ChallengeIdx> = (s6_round_base + params.log_k_bytecode
+        - params.log_k_chunk
+        ..s6_round_base + params.log_k_bytecode)
+        .rev()
+        .map(ChallengeIdx)
+        .collect();
+
+    // r_addr_virt[d] per polynomial type — match prover-side construction.
+    let s5_round_base = s5_ch_base + 8;
+    let stage2_round_base_for_ram = stage2_batch_base + params.stage2_num_instances;
+
+    // Stage 6 prover-side bc_addr_chunks construction (lines 5382-5401):
+    //   bc_addr_be = s6.round_challenges[0..log_k_bytecode] reversed
+    //   bc_pad_chs = bc_pad_len externals (allocated AFTER s6 round + cycle weights + entry weight)
+    //   bc_addr_padded = bc_pad_chs ++ bc_addr_be
+    //   bc_addr_chunks[i] = bc_addr_padded[i*log_k_chunk..(i+1)*log_k_chunk]
+    //
+    // For muldiv (bc_pad_len = 0), bc_addr_chunks[i] = chunks of bc_addr_be.
+    //
+    // The bc_pad_chs are at: s6_post_round_base + 5 + 1 + ... wait, looking at
+    // stage 6 prover allocation order:
+    //   s6_round_ch (allocated first, at s6_round_base)
+    //   bc_cycle_weight[5] (allocated AFTER the address-phase kernel's first
+    //   external block — which on muldiv is empty since no externals between).
+    // The pad chs land right after cycle_weight (5) and entry_weight (1):
+    //   pad_base = s6_round_base + stage6_max_rounds + 5 + 1
+    let bc_addr_be: Vec<ChallengeIdx> = (s6_round_base..s6_round_base + params.log_k_bytecode)
+        .rev()
+        .map(ChallengeIdx)
+        .collect();
+    let bc_pad_base = s6_round_base + params.log_k_bytecode + params.log_t + 5 + 1;
+    let bc_pad_chs: Vec<ChallengeIdx> = (0..bc_pad_len)
+        .map(|i| ChallengeIdx(bc_pad_base + i))
+        .collect();
+    let bc_addr_padded: Vec<ChallengeIdx> = bc_pad_chs.into_iter().chain(bc_addr_be).collect();
+    let bc_addr_chunks_be: Vec<Vec<ChallengeIdx>> = (0..params.bytecode_d)
+        .map(|i| {
+            let start = i * params.log_k_chunk;
+            bc_addr_padded[start..start + params.log_k_chunk].to_vec()
+        })
+        .collect();
+
+    // ram_addr_chunks: from stage 2 round challenges, reversed (BE).
+    let ram_ra_full_addr_be: Vec<ChallengeIdx> = (stage2_round_base_for_ram + params.log_t
+        ..stage2_round_base_for_ram + params.log_t + params.log_k_ram)
+        .rev()
+        .map(ChallengeIdx)
+        .collect();
+    // ram_pad_chs: stage 6 prover allocates these BEFORE s6_round_ch (the
+    // address pads come right after ch_inc_gamma at offset s6_ch_base
+    // + 10 + 2*total_d). Reuse that offset directly:
+    let ram_pad_chs: Vec<ChallengeIdx> = (0..ram_pad_len)
+        .map(|i| ChallengeIdx(s6_ch_base + 10 + 2 * total_d + i))
+        .collect();
+    let ram_ra_padded: Vec<ChallengeIdx> =
+        ram_pad_chs.into_iter().chain(ram_ra_full_addr_be).collect();
+    let ram_addr_chunks_be: Vec<Vec<ChallengeIdx>> = (0..params.ram_d)
+        .map(|i| {
+            let start = i * params.log_k_chunk;
+            ram_ra_padded[start..start + params.log_k_chunk].to_vec()
+        })
+        .collect();
+
+    // inst_addr_chunks: LE order from stage 5 round_challenges[0..LOG_K_INSTRUCTION].
+    let inst_addr_chunks_le: Vec<Vec<ChallengeIdx>> = (0..params.instruction_d)
+        .map(|d| {
+            let start = s5_round_base + d * params.log_k_chunk;
+            (start..start + params.log_k_chunk)
+                .map(ChallengeIdx)
+                .collect()
+        })
+        .collect();
+
+    // Build per-poly EqEval factors.
+    let eq_bool = ClaimFactor::EqEval {
+        challenges: r_addr_bool_idx,
+        at_stage: VerifierStageIndex(6),
+    };
+    let eq_virt: Vec<ClaimFactor> = (0..total_d)
+        .map(|i| {
+            let chs = if i < params.instruction_d {
+                inst_addr_chunks_le[i].clone()
+            } else if i < params.instruction_d + params.bytecode_d {
+                bc_addr_chunks_be[i - params.instruction_d].clone()
+            } else {
+                ram_addr_chunks_be[i - params.instruction_d - params.bytecode_d].clone()
+            };
+            ClaimFactor::EqEval {
+                challenges: chs,
+                at_stage: VerifierStageIndex(6),
+            }
+        })
+        .collect();
+
+    // hw_g[i] = HammingG(i). Build the output check formula.
+    let mut hw_output_terms = Vec::with_capacity(3 * total_d);
+    for i in 0..total_d {
+        let g_pid = p.hw_g[i];
+        // γ^{3i} · G_i
+        hw_output_terms.push(ClaimTerm {
+            coeff: 1,
+            factors: vec![
+                ClaimFactor::Challenge(ch_hw_gamma_pow[3 * i]),
+                ClaimFactor::Eval(g_pid),
+            ],
+        });
+        // γ^{3i+1} · G_i · eq_bool
+        hw_output_terms.push(ClaimTerm {
+            coeff: 1,
+            factors: vec![
+                ClaimFactor::Challenge(ch_hw_gamma_pow[3 * i + 1]),
+                ClaimFactor::Eval(g_pid),
+                eq_bool.clone(),
+            ],
+        });
+        // γ^{3i+2} · G_i · eq_virt_i
+        hw_output_terms.push(ClaimTerm {
+            coeff: 1,
+            factors: vec![
+                ClaimFactor::Challenge(ch_hw_gamma_pow[3 * i + 2]),
+                ClaimFactor::Eval(g_pid),
+                eq_virt[i].clone(),
+            ],
+        });
+    }
+    let hw_output_check = ClaimFormula {
+        terms: hw_output_terms,
+    };
+
     let instances = vec![SumcheckInstance {
         input_claim: hw_input_claim,
-        output_check: ClaimFormula { terms: vec![] },
+        output_check: hw_output_check,
         num_rounds: hw_rounds,
         degree: 2,
-        normalize: None,
+        // normalize: Reverse — jolt-core's expected_output_claim reverses
+        // sumcheck challenges (LE → BE) before evaluating eq factors.
+        normalize: Some(PointNormalization::Reverse),
     }];
 
     // ── Eval list: G_0..G_{total_d-1} (only thing stage 7 records) ──
@@ -8083,8 +8229,14 @@ fn build_verifier_stage7_ops(
             tag: DomainSeparator::OpeningClaim,
         }
     );
-    // CheckOutput + CollectOpeningClaim deferred.
-    let _ = instances;
+    push_verifier_op!(
+        ops,
+        VerifierOp::CheckOutput {
+            instances,
+            stage: 6,
+            batch_challenges: vec![ch_batch],
+        }
+    );
     ops
 }
 

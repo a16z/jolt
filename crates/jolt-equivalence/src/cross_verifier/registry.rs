@@ -50,27 +50,11 @@ pub struct KnownGap {
 /// HammingBooleanity need an `EvalSquared`-style factor for `ra² − ra`,
 /// BytecodeReadRaf needs the bytecode-val composition).
 ///
-/// Stage 7 partially closed: build_verifier_stage7_ops emits VerifySumcheck
-/// for [HammingWeightClaimReduction], catching T1 / T8 tampers. CheckOutput
-/// is deferred (output composition needs `EqProject`-aware factors).
-///
-/// Stage 7 T2 (eval tamper) gap (2026-04-28): stages 1-6 catch eval
-/// tampers via downstream transcript divergence (the next stage's
-/// sumcheck verification fails on a mismatched first-round expected
-/// sum). Stage 7's only downstream op is `VerifyOpenings`, which is
-/// currently a no-op because no `VerifierOp::CollectOpeningClaim`
-/// calls exist anywhere in the schedule (PCS opening verification is
-/// entirely deferred). Closing this gap requires either authoring
-/// stage-7 CheckOutput (next task) or wiring CollectOpeningClaim
-/// parity at stages 4-7.
-pub const KNOWN_GAPS: &[KnownGap] = &[
-    KnownGap {
-        stage: 7,
-        kind: TamperKind::T2Eval,
-        rationale: "Stage 7 has no downstream sumcheck and no PCS opening verification; eval tampers slip through until CheckOutput or CollectOpeningClaim lands",
-        owner: "verifier-agent",
-    },
-];
+/// Stage 7 closed (2026-04-28): build_verifier_stage7_ops now emits
+/// CheckOutput with the full HammingWeight reduction formula
+/// (`Σ_i G_i · (γ^{3i} + γ^{3i+1}·eq_bool + γ^{3i+2}·eq_virt_i)`),
+/// catching T2 eval tampers directly via the final-eval composition.
+pub const KNOWN_GAPS: &[KnownGap] = &[];
 
 /// Lookup helper used by the runner: is `(stage, kind)` registered?
 pub fn is_registered(stage: usize, kind: TamperKind) -> bool {

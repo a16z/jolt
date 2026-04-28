@@ -50,7 +50,7 @@ this file, pick the next unchecked task, and start immediately. No
 [x] T1   Stage 3 CheckOutput — already wired in commit b360246bc
 [x] T11  T2 eval-tamper test landed; KGC extended to recognize BothAccept-as-gap;
          T2Eval@stage 7 registered until CheckOutput or CollectOpeningClaim lands
-[ ] T2   Stage 7 CheckOutput (HammingWeightClaimReduction) → closes T2@7
+[x] T2   Stage 7 CheckOutput landed; T2@7 gap closed (modular catches via final_eval mismatch)
 [ ] T3   Stage 6 simple output_checks (RamRaVirt, InstRaVirt, IncReduction)
          — author formulas only, defer push until T5
 [ ] T4   Stage 6 Booleanity + HammingBooleanity output_check
