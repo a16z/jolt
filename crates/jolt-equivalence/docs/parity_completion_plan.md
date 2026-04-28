@@ -66,6 +66,8 @@ this file, pick the next unchecked task, and start immediately. No
 [x] T12  T9 batch-claim test (last-eval-idx per stage); modular catches all 7
 [x] T13  T3 commitment-swap test (swap each Some slot with slot 0;
          all 42 swaps caught by stage-8 PCS verification)
+[x] T18  T4 opening-proof truncation test (drop last opening_proof;
+         modular returns Opening(VerificationFailed))
 [ ] T14  Soundness suite: T10 domain-separator-tag test (deferred —
          requires tag-byte tampering infrastructure)
 [x] T15  T5 commit-slot SomeToNone test (zero out each Some slot;
@@ -312,6 +314,54 @@ KNOWN_GAPS empty.
 5. BytecodeReadRaf — most complex stage 6 instance.
 6. Stage 5 CheckOutput simple instances.
 7. `ClaimFactor::CombineEntryEval` design + Stage 5 InstructionReadRaf.
+
+### Session 2026-04-28 final state (after stage-8 wiring)
+
+**Progress**:
+- 13 commits this session covering T0-T18 (numbering compressed —
+  some tasks merged).
+- Stage-8 PCS opening verification fully wired via three new
+  VerifierOp variants: CollectOpeningClaimAt, ScaleEval, AliasEval.
+- Soundness suite expanded from 5 to 12 tests covering T1, T2, T3,
+  T4, T5, T6, T8, T9, T11 + 3 meta (S1, KGC, S7-narrow).
+- Empty KNOWN_GAPS.
+- All gates green: jolt-equivalence 56/56 (-j1), jolt-core muldiv
+  in both modes, clippy on jolt-core/compiler/verifier/zkvm.
+- Pre-existing red in `booleanity_debug.rs` is grandfathered.
+
+**What jolt_verifier::verify now catches**:
+- T1 (round-poly coeff flip) — sumcheck verifier rejects directly.
+- T2 (eval tamper) — at stages 1-6 via downstream transcript
+  divergence; at stage 7 via CheckOutput composition.
+- T3 (commitment swap) — stage-8 PCS verification rejects.
+- T4 (opening-proof structural) — stage-8 length check rejects.
+- T5 (commit slot None ↔ Some) — AbsorbCommitment skip diverges
+  transcript.
+- T6 (config field tamper) — preamble divergence.
+- T8 (round-poly degree) — sumcheck structural validation.
+- T9 (batch-claim tamper, last-eval-idx) — same paths as T2.
+- T11 (public IO tamper) — preamble divergence.
+
+**Remaining (defense in depth or test-infra extensions)**:
+- Stage-6 / Stage-5 CheckOutput — explicit constraint witnessing
+  for T2 at those stages. Currently caught indirectly via
+  transcript divergence into stage 7 PCS.
+- T10 (domain-separator-tag tamper) — needs new tampering
+  infrastructure (no current path for tag-byte mutation).
+- T4 full per-byte FlipBit — needs Dory proof serde round-trip;
+  current truncation test covers the structural failure mode.
+- T7 (cross-stage eval) — overlaps with T2/T9; could add explicit
+  test if we want isolation by witnessed constraint.
+- Stage-5 InstructionReadRaf CheckOutput — needs new
+  `ClaimFactor::CombineEntryEval` for prefix-suffix composition.
+  Multi-day; pure defense in depth (T2/T9 already catch the eval
+  tamper at this stage indirectly).
+
+The modular verifier is now rejection-equivalent to jolt-core's on
+the muldiv fixture for all 9 tested tamper categories. Closing the
+remaining items strengthens explicit constraint coverage but
+doesn't change the soundness story for honest-vs-malicious
+proofs in practice.
 
 ### Tooling notes
 

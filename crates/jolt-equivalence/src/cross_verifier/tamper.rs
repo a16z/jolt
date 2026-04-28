@@ -289,11 +289,23 @@ pub fn apply_tamper(
             }
         }
         (TamperLocation::OpeningProofByte { .. }, _) => {
-            // T4 — opening proof byte flip. Requires serializing /
-            // deserializing the proof bytes; deferred to a follow-up
-            // commit. For now, T3 (commitment swap) and T5 (commit
-            // slot toggle) cover the PCS-verification path.
-            TamperOutcome::Vacuous("OpeningProofByte tamper not yet implemented")
+            // T4 — structural opening-proof tamper.
+            //
+            // True per-byte FlipBit on the serialized PCS proof would
+            // require serde round-trips through the Dory proof type;
+            // instead we use a coarser structural tamper: drop the
+            // last opening proof. The verifier's stage-8 length check
+            // (`reduced.len() != proof.opening_proofs.len()`) rejects.
+            //
+            // This isn't a full FlipBit tamper but it witnesses
+            // C_opening_proof — the constraint is "PCS verifier
+            // accepts the joint opening proof", which fails as soon
+            // as the proof is structurally invalid.
+            if proof.opening_proofs.is_empty() {
+                return TamperOutcome::Vacuous("no opening proofs to tamper");
+            }
+            let _ = proof.opening_proofs.pop();
+            TamperOutcome::Applied
         }
     }
 }

@@ -279,6 +279,26 @@ fn t2_eval_tampers() {
     );
 }
 
+/// T4 — opening-proof structural tamper. Drop the last entry from
+/// `proof.opening_proofs`. The verifier's stage-8 length check
+/// (`reduced.len() != opening_proofs.len()`) rejects.
+///
+/// This test only runs the modular verifier (the cross-conversion to
+/// core asserts `opening_proofs.len() == 1` and would panic on a
+/// truncated proof — the runner's dual-verify path isn't applicable).
+#[test]
+fn t4_opening_proof_truncation() {
+    let f = fixture();
+    let mut proof = f.modular_proof.clone();
+    let _ = proof.opening_proofs.pop();
+    let modular = jolt_verifier::verify(f.modular_verifying_key, &proof, &f.io_hash);
+    eprintln!("T4 report: modular={modular:?}");
+    assert!(
+        modular.is_err(),
+        "T4 must be caught by modular verifier; got {modular:?}",
+    );
+}
+
 /// T3 — commitment-swap tampers. Swap commitments[idx] with
 /// commitments[idx+1] in place. Now the commitment associated with
 /// `poly[idx]` is the wrong group element; the modular verifier's
