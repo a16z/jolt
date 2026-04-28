@@ -7,7 +7,9 @@
 
 use jolt_dory::DoryScheme;
 use jolt_field::{Field, Fr};
-use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, StreamingCommitment};
+use jolt_openings::{
+    AdditivelyHomomorphic, CommitmentScheme, StreamingCommitment, ZkOpeningScheme,
+};
 use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
@@ -257,4 +259,92 @@ fn property_based_round_trip() {
         let num_vars = 2 + (seed as usize % 4); // 2..5
         round_trip::<Blake2bTranscript>(num_vars, 800 + seed, b"prop-rt");
     }
+}
+
+fn zk_round_trip<T: Transcript<Challenge = Fr>>(num_vars: usize, seed: u64, label: &'static [u8]) {
+    let mut rng = ChaCha20Rng::seed_from_u64(seed);
+    let prover_setup = DoryScheme::setup_prover(num_vars);
+    let verifier_setup = DoryScheme::setup_verifier(num_vars);
+    let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
+    let point: Vec<Fr> = (0..num_vars)
+        .map(|_| <Fr as Field>::random(&mut rng))
+        .collect();
+    let eval = poly.evaluate(&point);
+    let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
+
+    let mut pt = T::new(label);
+    let (proof, _eval_com, _blind) =
+        DoryScheme::open_zk(&poly, &point, eval, &prover_setup, Some(hint), &mut pt);
+
+    let mut vt = T::new(label);
+    DoryScheme::verify_zk(&commitment, &point, &proof, &verifier_setup, &mut vt)
+        .expect("ZK round-trip verification must succeed");
+}
+
+#[test]
+fn zk_round_trip_various_sizes() {
+    for num_vars in [2, 3, 4, 6] {
+        zk_round_trip::<Blake2bTranscript>(num_vars, 1100 + num_vars as u64, b"zk-cov-sizes");
+    }
+}
+
+#[test]
+fn zk_round_trip_both_transcripts() {
+    let num_vars = 4;
+    zk_round_trip::<Blake2bTranscript>(num_vars, 1200, b"zk-blake2b-rt");
+    zk_round_trip::<KeccakTranscript>(num_vars, 1200, b"zk-keccak-rt");
+}
+
+#[test]
+fn zk_wrong_commitment_rejected() {
+    let num_vars = 3;
+    let mut rng = ChaCha20Rng::seed_from_u64(1400);
+
+    let prover_setup = DoryScheme::setup_prover(num_vars);
+    let verifier_setup = DoryScheme::setup_verifier(num_vars);
+
+    let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
+    let point: Vec<Fr> = (0..num_vars)
+        .map(|_| <Fr as Field>::random(&mut rng))
+        .collect();
+    let eval = poly.evaluate(&point);
+    let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
+
+    let mut pt = Blake2bTranscript::new(b"zk-wrong-commit");
+    let (proof, _eval_com, _blind) =
+        DoryScheme::open_zk(&poly, &point, eval, &prover_setup, Some(hint), &mut pt);
+
+    let wrong_poly = Polynomial::<Fr>::random(num_vars, &mut rng);
+    let (wrong_commitment, _) = DoryScheme::commit(wrong_poly.evaluations(), &prover_setup);
+    assert_ne!(commitment, wrong_commitment);
+
+    let mut vt = Blake2bTranscript::new(b"zk-wrong-commit");
+    let result = DoryScheme::verify_zk(&wrong_commitment, &point, &proof, &verifier_setup, &mut vt);
+    assert!(result.is_err(), "ZK: wrong commitment must be rejected");
+}
+
+#[test]
+fn zk_wrong_transcript_domain_rejected() {
+    let num_vars = 3;
+    let mut rng = ChaCha20Rng::seed_from_u64(1500);
+
+    let prover_setup = DoryScheme::setup_prover(num_vars);
+    let verifier_setup = DoryScheme::setup_verifier(num_vars);
+    let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
+    let point: Vec<Fr> = (0..num_vars)
+        .map(|_| <Fr as Field>::random(&mut rng))
+        .collect();
+    let eval = poly.evaluate(&point);
+    let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
+
+    let mut pt = Blake2bTranscript::new(b"zk-correct-domain");
+    let (proof, _eval_com, _blind) =
+        DoryScheme::open_zk(&poly, &point, eval, &prover_setup, Some(hint), &mut pt);
+
+    let mut vt = Blake2bTranscript::new(b"zk-wrong-domain");
+    let result = DoryScheme::verify_zk(&commitment, &point, &proof, &verifier_setup, &mut vt);
+    assert!(
+        result.is_err(),
+        "ZK: wrong transcript domain must be rejected"
+    );
 }

@@ -2,7 +2,9 @@
 
 #![expect(
     clippy::expect_used,
-    reason = "Dory prove/verify surface returns Result<_, Infallible>-class errors that never occur on well-formed inputs; an unwind here is the correct contract-violation signal"
+    clippy::panic,
+    clippy::unimplemented,
+    reason = "ZK proof y_com/y_blinding are Dory-mode invariants; dory::prove/verify errors are caller-precondition violations surfaced via panic; the dory adapter's commit is unreachable because DoryScheme pre-computes row commitments"
 )]
 
 use dory::backends::arkworks::{ArkworksProverSetup, G1Routines, G2Routines};
@@ -16,6 +18,7 @@ use jolt_field::Fr;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError, ZkOpeningScheme};
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
+use rayon::prelude::*;
 
 use crate::transcript::JoltToDoryTranscript;
 use crate::types::{DoryCommitment, DoryHint, DoryProof, DoryProverSetup, DoryVerifierSetup};
@@ -84,7 +87,6 @@ pub(crate) fn ark_to_jolt_g1(ark: ArkG1) -> Bn254G1 {
 pub struct DoryScheme;
 
 impl DoryScheme {
-    /// Generates prover SRS from a deterministic SHA3-seeded RNG.
     #[tracing::instrument(skip_all, name = "DoryScheme::setup_prover", fields(max_num_vars))]
     pub fn setup_prover(max_num_vars: usize) -> DoryProverSetup {
         DoryProverSetup(ArkworksProverSetup::new_from_urs(max_num_vars))
@@ -100,8 +102,13 @@ impl DoryScheme {
 
 impl DeriveSetup<DoryProverSetup> for PedersenSetup<Bn254G1> {
     fn derive(source: &DoryProverSetup, capacity: usize) -> Self {
-        let len = capacity.min(source.0.g1_vec.len());
-        let generators = ark_to_jolt_g1_vec(source.0.g1_vec[..len].to_vec());
+        assert!(
+            capacity <= source.0.g1_vec.len(),
+            "Pedersen capacity ({}) exceeds Dory SRS size ({})",
+            capacity,
+            source.0.g1_vec.len(),
+        );
+        let generators = ark_to_jolt_g1_vec(source.0.g1_vec[..capacity].to_vec());
         let blinding = ark_to_jolt_g1(source.0.h1);
         PedersenSetup::new(generators, blinding)
     }
@@ -168,9 +175,12 @@ impl CommitmentScheme for DoryScheme {
         let adapter = DorySourceAdapter::new(poly);
         let sigma = num_vars.div_ceil(2);
         let nu = num_vars - sigma;
+        let num_cols = 1usize << sigma;
+        let num_rows = 1usize << nu;
 
         let row_commitments = match hint {
             Some(h) => jolt_g1_vec_to_ark(h.0),
+            None if poly.is_sparse() => commit_rows_sparse(poly, num_rows, num_cols, &setup.0),
             None => commit_rows_dense(poly, sigma, &setup.0),
         };
 
@@ -188,7 +198,7 @@ impl CommitmentScheme for DoryScheme {
                 &setup.0,
                 &mut dory_transcript,
             )
-            .expect("Dory proof generation should not fail");
+            .unwrap_or_else(|e| panic!("dory::prove failed: {e:?}"));
 
         DoryProof(proof)
     }
@@ -233,32 +243,40 @@ impl CommitmentScheme for DoryScheme {
 }
 
 impl AdditivelyHomomorphic for DoryScheme {
+    #[tracing::instrument(skip_all, name = "DoryScheme::combine")]
     fn combine(commitments: &[Self::Output], scalars: &[Self::Field]) -> Self::Output {
         assert_eq!(commitments.len(), scalars.len());
 
         let combined = commitments
-            .iter()
-            .zip(scalars.iter())
+            .par_iter()
+            .zip(scalars.par_iter())
             .map(|(c, s)| jolt_fr_to_ark(s) * jolt_gt_to_ark(&c.0))
-            .fold(ArkGT::identity(), |acc, x| acc + x);
+            .reduce(ArkGT::identity, |acc, x| acc + x);
 
         DoryCommitment(ark_to_jolt_gt(&combined))
     }
 
+    #[tracing::instrument(skip_all, name = "DoryScheme::combine_hints")]
     fn combine_hints(hints: Vec<Self::OpeningHint>, scalars: &[Self::Field]) -> Self::OpeningHint {
         assert_eq!(hints.len(), scalars.len());
-        if hints.is_empty() {
-            return DoryHint::default();
-        }
+        assert!(!hints.is_empty(), "combine_hints: empty hint set");
 
         let num_rows = hints[0].0.len();
-        let mut combined = vec![Bn254G1::default(); num_rows];
+        assert!(
+            hints.iter().all(|h| h.0.len() == num_rows),
+            "combine_hints: ragged hint lengths",
+        );
 
-        for (hint, &scalar) in hints.iter().zip(scalars.iter()) {
-            for (dst, src) in combined.iter_mut().zip(hint.0.iter()) {
-                *dst += src.scalar_mul(&scalar);
-            }
-        }
+        let combined: Vec<Bn254G1> = (0..num_rows)
+            .into_par_iter()
+            .map(|row| {
+                let mut acc = Bn254G1::default();
+                for (hint, &scalar) in hints.iter().zip(scalars.iter()) {
+                    acc += hint.0[row].scalar_mul(&scalar);
+                }
+                acc
+            })
+            .collect();
 
         DoryHint(combined)
     }
@@ -281,9 +299,12 @@ impl ZkOpeningScheme for DoryScheme {
         let adapter = DorySourceAdapter::new(poly);
         let sigma = num_vars.div_ceil(2);
         let nu = num_vars - sigma;
+        let num_cols = 1usize << sigma;
+        let num_rows = 1usize << nu;
 
         let row_commitments = match hint {
             Some(h) => jolt_g1_vec_to_ark(h.0),
+            None if poly.is_sparse() => commit_rows_sparse(poly, num_rows, num_cols, &setup.0),
             None => commit_rows_dense(poly, sigma, &setup.0),
         };
 
@@ -301,7 +322,7 @@ impl ZkOpeningScheme for DoryScheme {
                 &setup.0,
                 &mut dory_transcript,
             )
-            .expect("Dory ZK proof generation should not fail");
+            .unwrap_or_else(|e| panic!("dory::prove (ZK) failed: {e:?}"));
 
         let y_com = ark_to_jolt_g1(proof.y_com.expect("ZK proof must contain y_com"));
         let blinding = ark_to_jolt_fr(&y_blinding.expect("ZK proof must return y_blinding"));
@@ -313,13 +334,13 @@ impl ZkOpeningScheme for DoryScheme {
     fn verify_zk(
         commitment: &Self::Output,
         point: &[Fr],
-        _eval_commitment: &Self::HidingCommitment,
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<(), OpeningsError> {
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
-        // In ZK mode, dory::verify uses proof's y_com/e2 instead of evaluation.
+        // In ZK mode dory::verify reads the evaluation commitment from `proof.y_com`,
+        // so the caller-side eval is unused here.
         let dummy_eval = <ArkFr as DoryField>::zero();
         let ark_commitment = jolt_gt_to_ark(&commitment.0);
         let mut dory_transcript = JoltToDoryTranscript::new(transcript);
@@ -336,7 +357,7 @@ impl ZkOpeningScheme for DoryScheme {
     }
 }
 
-/// Dense commit: full MSM per row.
+/// Dense commit: full MSM per row, parallel over rows.
 fn commit_rows_dense<P: MultilinearPoly<Fr> + ?Sized>(
     poly: &P,
     sigma: usize,
@@ -345,15 +366,18 @@ fn commit_rows_dense<P: MultilinearPoly<Fr> + ?Sized>(
     let num_cols = 1usize << sigma;
     let g1_bases = &setup.g1_vec[..num_cols];
 
-    let mut rows = Vec::new();
-    poly.for_each_row(sigma, &mut |_, row| {
-        let scalars: Vec<ArkFr> = row.iter().map(jolt_fr_to_ark).collect();
-        rows.push(G1Routines::msm(&g1_bases[..scalars.len()], &scalars));
-    });
-    rows
+    let mut rows: Vec<Vec<Fr>> = Vec::new();
+    poly.for_each_row(sigma, &mut |_, row| rows.push(row.to_vec()));
+
+    rows.par_iter()
+        .map(|row| {
+            let scalars: Vec<ArkFr> = row.iter().map(jolt_fr_to_ark).collect();
+            G1Routines::msm(&g1_bases[..scalars.len()], &scalars)
+        })
+        .collect()
 }
 
-/// Sparse commit: O(T) group additions for one-hot polynomials.
+/// Sparse commit: O(T) group additions for one-hot polynomials, parallel over rows.
 fn commit_rows_sparse<P: MultilinearPoly<Fr> + ?Sized>(
     poly: &P,
     num_rows: usize,
@@ -361,16 +385,27 @@ fn commit_rows_sparse<P: MultilinearPoly<Fr> + ?Sized>(
     setup: &ArkworksProverSetup,
 ) -> Vec<ArkG1> {
     let g1_bases = &setup.g1_vec[..num_cols];
-    let identity = <InnerBN254 as PairingCurve>::G1::identity();
 
-    let mut row_commitments = vec![identity; num_rows];
+    let mut cols_per_row: Vec<Vec<usize>> = vec![Vec::new(); num_rows];
     poly.for_each_nonzero(&mut |flat_idx, _val| {
         let row = flat_idx / num_cols;
         let col = flat_idx % num_cols;
-        row_commitments[row] =
-            <InnerBN254 as PairingCurve>::G1::add(&row_commitments[row], &g1_bases[col]);
+        debug_assert!(
+            row < num_rows && col < num_cols,
+            "for_each_nonzero out-of-bounds flat_idx: row={row} num_rows={num_rows} col={col} num_cols={num_cols}",
+        );
+        cols_per_row[row].push(col);
     });
-    row_commitments
+
+    cols_per_row
+        .par_iter()
+        .map(|cols| {
+            cols.iter()
+                .fold(<InnerBN254 as PairingCurve>::G1::identity(), |acc, &col| {
+                    <InnerBN254 as PairingCurve>::G1::add(&acc, &g1_bases[col])
+                })
+        })
+        .collect()
 }
 
 /// Bridges [`MultilinearPoly<Fr>`] to dory-pcs's polynomial traits
@@ -398,8 +433,8 @@ impl<S: MultilinearPoly<Fr>> DoryPolynomial<ArkFr> for DorySourceAdapter<'_, S> 
     fn commit<E, Mo, M1>(
         &self,
         _nu: usize,
-        sigma: usize,
-        setup: &dory::setup::ProverSetup<E>,
+        _sigma: usize,
+        _setup: &dory::setup::ProverSetup<E>,
     ) -> Result<(E::GT, Vec<E::G1>, ArkFr), dory::error::DoryError>
     where
         E: PairingCurve,
@@ -407,16 +442,10 @@ impl<S: MultilinearPoly<Fr>> DoryPolynomial<ArkFr> for DorySourceAdapter<'_, S> 
         M1: DoryRoutines<E::G1>,
         E::G1: DoryGroup<Scalar = ArkFr>,
     {
-        let mut row_commitments: Vec<E::G1> = Vec::new();
-        self.source.for_each_row(sigma, &mut |_idx, row| {
-            let scalars: Vec<ArkFr> = row.iter().map(jolt_fr_to_ark).collect();
-            row_commitments.push(M1::msm(&setup.g1_vec[..scalars.len()], &scalars));
-        });
-
-        let g2_bases = &setup.g2_vec[..row_commitments.len()];
-        let tier_2 = E::multi_pair_g2_setup(&row_commitments, g2_bases);
-
-        Ok((tier_2, row_commitments, <ArkFr as DoryField>::zero()))
+        unimplemented!(
+            "DoryScheme pre-computes row commitments before invoking dory::prove; \
+             dory::Polynomial::commit on this adapter is not exercised"
+        )
     }
 }
 
@@ -524,7 +553,7 @@ mod tests {
         let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
 
         let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"zk-test");
-        let (proof, eval_com, _blinding) = DoryScheme::open_zk(
+        let (proof, _eval_com, _blinding) = DoryScheme::open_zk(
             &poly,
             &point,
             eval,
@@ -537,7 +566,6 @@ mod tests {
         let result = DoryScheme::verify_zk(
             &commitment,
             &point,
-            &eval_com,
             &proof,
             &verifier_setup,
             &mut verify_transcript,

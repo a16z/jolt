@@ -55,19 +55,8 @@ impl<'de> Deserialize<'de> for DoryProof {
 #[derive(Clone)]
 pub struct DoryProverSetup(pub ArkworksProverSetup);
 
-// SAFETY: ArkworksProverSetup contains only group element vectors (plain data).
-// Missing auto-traits come from arkworks type-level plumbing, not interior mutability.
-unsafe impl Send for DoryProverSetup {}
-// SAFETY: same rationale.
-unsafe impl Sync for DoryProverSetup {}
-
 #[derive(Clone)]
 pub struct DoryVerifierSetup(pub ArkworksVerifierSetup);
-
-// SAFETY: ArkworksVerifierSetup contains only group/field elements (plain data).
-unsafe impl Send for DoryVerifierSetup {}
-// SAFETY: same rationale.
-unsafe impl Sync for DoryVerifierSetup {}
 
 impl Serialize for DoryVerifierSetup {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
