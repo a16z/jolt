@@ -60,12 +60,18 @@ where
 
     let mut challenges = vec![F::zero(); schedule.num_challenges];
     let mut evaluations: HashMap<PolynomialId, F> = HashMap::new();
+    // Per-stage eval snapshots. Populated alongside `evaluations` at every
+    // RecordEvals; lets `StagedEval { poly, stage }` resolve a poly's value
+    // at an earlier stage even after a later stage has overwritten it.
+    let mut staged_evaluations: Vec<HashMap<PolynomialId, F>> =
+        vec![HashMap::new(); schedule.num_stages];
     let mut sumcheck_points: Vec<Vec<F>> = vec![Vec::new(); schedule.num_stages];
     let mut final_evals = vec![F::zero(); schedule.num_stages];
     let mut commitment_map: HashMap<PolynomialId, PCS::Output> = HashMap::new();
     let mut commitments = proof.commitments.iter();
     let mut stage_proofs = proof.stage_proofs.iter();
     let mut current_stage: Option<&StageProof<F>> = None;
+    let mut current_stage_idx: usize = 0;
     let mut eval_cursor: usize = 0;
     let mut round_poly_cursor: usize = 0;
     let mut pcs_claims: Vec<VerifierClaim<F, PCS::Output>> = Vec::new();
@@ -79,6 +85,9 @@ where
             VerifierOp::BeginStage => {
                 eval_cursor = 0;
                 round_poly_cursor = 0;
+                if current_stage.is_some() {
+                    current_stage_idx += 1;
+                }
                 current_stage = Some(
                     stage_proofs
                         .next()
@@ -161,6 +170,7 @@ where
                         &sumcheck_points,
                         None,
                         None,
+                        &staged_evaluations,
                         &key.r1cs_key,
                         &proof.config,
                     )?;
@@ -229,6 +239,7 @@ where
                         ))
                     })?;
                     let _ = evaluations.insert(eval_desc.poly, value);
+                    let _ = staged_evaluations[current_stage_idx].insert(eval_desc.poly, value);
                     eval_cursor += 1;
                 }
             }
@@ -275,6 +286,7 @@ where
                         &sumcheck_points,
                         Some((*stage, &normalized)),
                         Some(&sp.evals),
+                        &staged_evaluations,
                         &key.r1cs_key,
                         &proof.config,
                     )?;
@@ -374,6 +386,13 @@ fn apply_normalization<F: Clone>(raw: &[F], normalize: Option<&PointNormalizatio
 ///
 /// `stage_evals`: when `Some(evals)`, `StageEval(i)` resolves to `evals[i]`.
 /// Required for output-check formulas in batched stages.
+///
+/// `staged_evaluations`: per-stage snapshots of `evaluations` taken at each
+/// `RecordEvals` boundary. Resolves `StagedEval { poly, stage }` factors,
+/// which reference a poly's value at a specific earlier stage. Required
+/// for stage-6+ input claim formulas where stage 1/2/3/4 snapshots have
+/// been overwritten in `evaluations` by later stages re-recording the
+/// same poly.
 #[allow(clippy::too_many_arguments)]
 fn evaluate_formula<F: Field>(
     formula: &ClaimFormula,
@@ -382,6 +401,7 @@ fn evaluate_formula<F: Field>(
     sumcheck_points: &[Vec<F>],
     point_override: Option<(usize, &[F])>,
     stage_evals: Option<&[F]>,
+    staged_evaluations: &[HashMap<PolynomialId, F>],
     r1cs_key: &R1csKey<F>,
     config: &ProverConfig,
 ) -> Result<F, JoltError> {
@@ -554,11 +574,14 @@ fn evaluate_formula<F: Field>(
                     let point = resolve_point(sumcheck_points, point_override, at_stage.0);
                     evaluate_preprocessed_poly(*poly, point, config)?
                 }
-                ClaimFactor::StagedEval { .. } => {
-                    return Err(JoltError::InvalidProof(
-                        "StagedEval is prover-only; not supported in verifier formulas".into(),
-                    ));
-                }
+                ClaimFactor::StagedEval { poly, stage } => staged_evaluations
+                    .get(*stage)
+                    .and_then(|m| m.get(poly).copied())
+                    .ok_or_else(|| {
+                        JoltError::InvalidProof(format!(
+                            "StagedEval({poly:?}, stage={stage}) not recorded"
+                        ))
+                    })?,
                 ClaimFactor::LagrangeKernel { .. } => {
                     return Err(JoltError::InvalidProof(format!(
                         "unsupported claim factor {factor:?} in compiled schedule"
@@ -956,6 +979,7 @@ mod tests {
             &sumcheck_points,
             None,
             None,
+            &[],
             &dummy_r1cs_key(),
             &dummy_config(),
         )
@@ -1071,6 +1095,7 @@ mod tests {
 
                     let mut combined_claim = Fr::zero();
                     let key = dummy_r1cs_key();
+                    let staged_evaluations: Vec<HashMap<PolynomialId, Fr>> = vec![HashMap::new()];
                     for inst in instances {
                         let val = evaluate_formula(
                             &inst.input_claim,
@@ -1079,6 +1104,7 @@ mod tests {
                             &sumcheck_points,
                             None,
                             None,
+                            &staged_evaluations,
                             &key,
                             &dummy_config(),
                         )
@@ -1141,6 +1167,7 @@ mod tests {
             &sumcheck_points,
             None,
             None,
+            &[],
             &dummy_r1cs_key(),
             &cfg,
         )
@@ -1155,6 +1182,7 @@ mod tests {
             &sumcheck_points2,
             None,
             None,
+            &[],
             &dummy_r1cs_key(),
             &cfg,
         )
@@ -1195,6 +1223,7 @@ mod tests {
             &sumcheck_points,
             None,
             None,
+            &[],
             &key,
             &cfg,
         )
@@ -1209,6 +1238,7 @@ mod tests {
             &sumcheck_points,
             Some((0, &override_point)),
             None,
+            &[],
             &key,
             &cfg,
         )
