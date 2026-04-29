@@ -7,12 +7,11 @@ use crate::tables::suffixes::{SuffixEval, Suffixes};
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
 use crate::uninterleave_bits;
-use crate::XLEN;
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct OrTable;
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct OrTable<const XLEN: usize>;
 
-impl LookupTable for OrTable {
+impl<const XLEN: usize> LookupTable for OrTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
         x | y
@@ -34,7 +33,7 @@ impl LookupTable for OrTable {
     }
 }
 
-impl PrefixSuffixDecomposition for OrTable {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for OrTable<XLEN> {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::One, Suffixes::Or]
     }
@@ -49,16 +48,22 @@ impl PrefixSuffixDecomposition for OrTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use crate::tables::test_utils::{mle_full_hypercube_test, mle_random_test, prefix_suffix_test};
+    use crate::XLEN;
     use jolt_field::Fr;
 
     #[test]
     fn mle_random() {
-        mle_random_test::<Fr, OrTable>();
+        mle_random_test::<XLEN, Fr, OrTable<XLEN>>();
+    }
+
+    #[test]
+    fn mle_full_hypercube() {
+        mle_full_hypercube_test::<8, Fr, OrTable<8>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, OrTable>();
+        prefix_suffix_test::<XLEN, Fr, OrTable<XLEN>>();
     }
 }

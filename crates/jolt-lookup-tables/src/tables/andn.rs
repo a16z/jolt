@@ -7,12 +7,11 @@ use crate::tables::suffixes::{SuffixEval, Suffixes};
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
 use crate::uninterleave_bits;
-use crate::XLEN;
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct AndnTable;
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct AndnTable<const XLEN: usize>;
 
-impl LookupTable for AndnTable {
+impl<const XLEN: usize> LookupTable for AndnTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
         x & !y
@@ -34,7 +33,7 @@ impl LookupTable for AndnTable {
     }
 }
 
-impl PrefixSuffixDecomposition for AndnTable {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for AndnTable<XLEN> {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::One, Suffixes::AndNot]
     }
@@ -49,16 +48,22 @@ impl PrefixSuffixDecomposition for AndnTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use crate::tables::test_utils::{mle_full_hypercube_test, mle_random_test, prefix_suffix_test};
+    use crate::XLEN;
     use jolt_field::Fr;
 
     #[test]
     fn mle_random() {
-        mle_random_test::<Fr, AndnTable>();
+        mle_random_test::<XLEN, Fr, AndnTable<XLEN>>();
+    }
+
+    #[test]
+    fn mle_full_hypercube() {
+        mle_full_hypercube_test::<8, Fr, AndnTable<8>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, AndnTable>();
+        prefix_suffix_test::<XLEN, Fr, AndnTable<XLEN>>();
     }
 }
