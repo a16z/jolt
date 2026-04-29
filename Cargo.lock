@@ -2764,6 +2764,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-dory"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ff 0.5.0",
+ "ark-serialize 0.5.0",
+ "criterion",
+ "dory-pcs",
+ "jolt-crypto",
+ "jolt-field",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-transcript",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "rayon",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "jolt-eval"
 version = "0.1.0"
 dependencies = [

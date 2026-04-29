@@ -1,0 +1,36 @@
+[package]
+name = "jolt-dory"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Dory commitment scheme implementation for the Jolt zkVM"
+
+[lints]
+workspace = true
+
+[dependencies]
+jolt-crypto = { workspace = true }
+jolt-field = { workspace = true }
+jolt-openings = { workspace = true }
+jolt-poly = { workspace = true }
+jolt-transcript = { workspace = true }
+dory = { workspace = true }
+rayon = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+tracing.workspace = true
+ark-bn254 = { workspace = true }
+ark-ff = { workspace = true }
+ark-serialize = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+serde_json = { workspace = true }
+rand_core = { workspace = true }
+rand_chacha = { workspace = true }
+
+[[bench]]
+name = "dory"
+harness = false
+
+[package.metadata.cargo-machete]
+ignored = ["rand_core", "rand_chacha"]

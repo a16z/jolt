@@ -1,0 +1,32 @@
+[workspace]
+
+[package]
+name = "jolt-dory-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+jolt-dory = { path = ".." }
+jolt-field = { path = "../../jolt-field" }
+jolt-openings = { path = "../../jolt-openings" }
+jolt-poly = { path = "../../jolt-poly" }
+jolt-transcript = { path = "../../jolt-transcript" }
+serde_json = "1"
+bincode = { version = "2", features = ["serde"] }
+rand_core = "0.6"
+rand_chacha = "0.3"
+
+[[bin]]
+name = "deser_commitment"
+path = "fuzz_targets/deser_commitment.rs"
+doc = false
+
+[[bin]]
+name = "verify_tampered"
+path = "fuzz_targets/verify_tampered.rs"
+doc = false

@@ -119,7 +119,6 @@ pub trait ZkOpeningScheme: CommitmentScheme {
     fn verify_zk(
         commitment: &Self::Output,
         point: &[Self::Field],
-        eval_commitment: &Self::HidingCommitment,
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
