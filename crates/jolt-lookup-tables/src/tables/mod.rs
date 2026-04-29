@@ -144,6 +144,58 @@ pub enum LookupTableKind<const XLEN: usize> {
     VirtualXORROTW7(VirtualXORROTWTable<XLEN, 7>),
 }
 
+/// Dispatches a method call to the inner table for every
+/// [`LookupTableKind`] variant, binding the inner table to `$t` and
+/// evaluating `$expr`. Variants are listed once here so that
+/// [`LookupTableKind`]'s dispatch methods stay a single line each.
+macro_rules! dispatch {
+    ($self:expr, $t:ident => $expr:expr) => {
+        match $self {
+            Self::RangeCheck($t) => $expr,
+            Self::RangeCheckAligned($t) => $expr,
+            Self::And($t) => $expr,
+            Self::Andn($t) => $expr,
+            Self::Or($t) => $expr,
+            Self::Xor($t) => $expr,
+            Self::Equal($t) => $expr,
+            Self::NotEqual($t) => $expr,
+            Self::SignedLessThan($t) => $expr,
+            Self::UnsignedLessThan($t) => $expr,
+            Self::SignedGreaterThanEqual($t) => $expr,
+            Self::UnsignedGreaterThanEqual($t) => $expr,
+            Self::UnsignedLessThanEqual($t) => $expr,
+            Self::UpperWord($t) => $expr,
+            Self::LowerHalfWord($t) => $expr,
+            Self::SignExtendHalfWord($t) => $expr,
+            Self::SignMask($t) => $expr,
+            Self::Pow2($t) => $expr,
+            Self::Pow2W($t) => $expr,
+            Self::ShiftRightBitmask($t) => $expr,
+            Self::VirtualSRL($t) => $expr,
+            Self::VirtualSRA($t) => $expr,
+            Self::VirtualROTR($t) => $expr,
+            Self::VirtualROTRW($t) => $expr,
+            Self::ValidDiv0($t) => $expr,
+            Self::ValidUnsignedRemainder($t) => $expr,
+            Self::ValidSignedRemainder($t) => $expr,
+            Self::VirtualChangeDivisor($t) => $expr,
+            Self::VirtualChangeDivisorW($t) => $expr,
+            Self::HalfwordAlignment($t) => $expr,
+            Self::WordAlignment($t) => $expr,
+            Self::MulUNoOverflow($t) => $expr,
+            Self::VirtualRev8W($t) => $expr,
+            Self::VirtualXORROT32($t) => $expr,
+            Self::VirtualXORROT24($t) => $expr,
+            Self::VirtualXORROT16($t) => $expr,
+            Self::VirtualXORROT63($t) => $expr,
+            Self::VirtualXORROTW16($t) => $expr,
+            Self::VirtualXORROTW12($t) => $expr,
+            Self::VirtualXORROTW8($t) => $expr,
+            Self::VirtualXORROTW7($t) => $expr,
+        }
+    };
+}
+
 impl<const XLEN: usize> LookupTableKind<XLEN> {
     /// Returns the discriminant as a `usize`, suitable for array indexing.
     #[inline]
@@ -156,49 +208,7 @@ impl<const XLEN: usize> LookupTableKind<XLEN> {
     }
 
     pub fn materialize_entry(&self, index: u128) -> u64 {
-        match self {
-            Self::RangeCheck(t) => t.materialize_entry(index),
-            Self::RangeCheckAligned(t) => t.materialize_entry(index),
-            Self::And(t) => t.materialize_entry(index),
-            Self::Andn(t) => t.materialize_entry(index),
-            Self::Or(t) => t.materialize_entry(index),
-            Self::Xor(t) => t.materialize_entry(index),
-            Self::Equal(t) => t.materialize_entry(index),
-            Self::NotEqual(t) => t.materialize_entry(index),
-            Self::SignedLessThan(t) => t.materialize_entry(index),
-            Self::UnsignedLessThan(t) => t.materialize_entry(index),
-            Self::SignedGreaterThanEqual(t) => t.materialize_entry(index),
-            Self::UnsignedGreaterThanEqual(t) => t.materialize_entry(index),
-            Self::UnsignedLessThanEqual(t) => t.materialize_entry(index),
-            Self::UpperWord(t) => t.materialize_entry(index),
-            Self::LowerHalfWord(t) => t.materialize_entry(index),
-            Self::SignExtendHalfWord(t) => t.materialize_entry(index),
-            Self::SignMask(t) => t.materialize_entry(index),
-            Self::Pow2(t) => t.materialize_entry(index),
-            Self::Pow2W(t) => t.materialize_entry(index),
-            Self::ShiftRightBitmask(t) => t.materialize_entry(index),
-            Self::VirtualSRL(t) => t.materialize_entry(index),
-            Self::VirtualSRA(t) => t.materialize_entry(index),
-            Self::VirtualROTR(t) => t.materialize_entry(index),
-            Self::VirtualROTRW(t) => t.materialize_entry(index),
-            Self::ValidDiv0(t) => t.materialize_entry(index),
-            Self::ValidUnsignedRemainder(t) => t.materialize_entry(index),
-            Self::ValidSignedRemainder(t) => t.materialize_entry(index),
-            Self::VirtualChangeDivisor(t) => t.materialize_entry(index),
-            Self::VirtualChangeDivisorW(t) => t.materialize_entry(index),
-            Self::HalfwordAlignment(t) => t.materialize_entry(index),
-            Self::WordAlignment(t) => t.materialize_entry(index),
-            Self::MulUNoOverflow(t) => t.materialize_entry(index),
-            Self::VirtualRev8W(t) => t.materialize_entry(index),
-            Self::VirtualXORROT32(t) => t.materialize_entry(index),
-            Self::VirtualXORROT24(t) => t.materialize_entry(index),
-            Self::VirtualXORROT16(t) => t.materialize_entry(index),
-            Self::VirtualXORROT63(t) => t.materialize_entry(index),
-            Self::VirtualXORROTW16(t) => t.materialize_entry(index),
-            Self::VirtualXORROTW12(t) => t.materialize_entry(index),
-            Self::VirtualXORROTW8(t) => t.materialize_entry(index),
-            Self::VirtualXORROTW7(t) => t.materialize_entry(index),
-        }
+        dispatch!(self, t => t.materialize_entry(index))
     }
 
     pub fn evaluate_mle<F, C>(&self, r: &[C]) -> F
@@ -206,157 +216,15 @@ impl<const XLEN: usize> LookupTableKind<XLEN> {
         C: ChallengeOps<F>,
         F: Field + FieldOps<C>,
     {
-        match self {
-            Self::RangeCheck(t) => t.evaluate_mle(r),
-            Self::RangeCheckAligned(t) => t.evaluate_mle(r),
-            Self::And(t) => t.evaluate_mle(r),
-            Self::Andn(t) => t.evaluate_mle(r),
-            Self::Or(t) => t.evaluate_mle(r),
-            Self::Xor(t) => t.evaluate_mle(r),
-            Self::Equal(t) => t.evaluate_mle(r),
-            Self::NotEqual(t) => t.evaluate_mle(r),
-            Self::SignedLessThan(t) => t.evaluate_mle(r),
-            Self::UnsignedLessThan(t) => t.evaluate_mle(r),
-            Self::SignedGreaterThanEqual(t) => t.evaluate_mle(r),
-            Self::UnsignedGreaterThanEqual(t) => t.evaluate_mle(r),
-            Self::UnsignedLessThanEqual(t) => t.evaluate_mle(r),
-            Self::UpperWord(t) => t.evaluate_mle(r),
-            Self::LowerHalfWord(t) => t.evaluate_mle(r),
-            Self::SignExtendHalfWord(t) => t.evaluate_mle(r),
-            Self::SignMask(t) => t.evaluate_mle(r),
-            Self::Pow2(t) => t.evaluate_mle(r),
-            Self::Pow2W(t) => t.evaluate_mle(r),
-            Self::ShiftRightBitmask(t) => t.evaluate_mle(r),
-            Self::VirtualSRL(t) => t.evaluate_mle(r),
-            Self::VirtualSRA(t) => t.evaluate_mle(r),
-            Self::VirtualROTR(t) => t.evaluate_mle(r),
-            Self::VirtualROTRW(t) => t.evaluate_mle(r),
-            Self::ValidDiv0(t) => t.evaluate_mle(r),
-            Self::ValidUnsignedRemainder(t) => t.evaluate_mle(r),
-            Self::ValidSignedRemainder(t) => t.evaluate_mle(r),
-            Self::VirtualChangeDivisor(t) => t.evaluate_mle(r),
-            Self::VirtualChangeDivisorW(t) => t.evaluate_mle(r),
-            Self::HalfwordAlignment(t) => t.evaluate_mle(r),
-            Self::WordAlignment(t) => t.evaluate_mle(r),
-            Self::MulUNoOverflow(t) => t.evaluate_mle(r),
-            Self::VirtualRev8W(t) => t.evaluate_mle(r),
-            Self::VirtualXORROT32(t) => t.evaluate_mle(r),
-            Self::VirtualXORROT24(t) => t.evaluate_mle(r),
-            Self::VirtualXORROT16(t) => t.evaluate_mle(r),
-            Self::VirtualXORROT63(t) => t.evaluate_mle(r),
-            Self::VirtualXORROTW16(t) => t.evaluate_mle(r),
-            Self::VirtualXORROTW12(t) => t.evaluate_mle(r),
-            Self::VirtualXORROTW8(t) => t.evaluate_mle(r),
-            Self::VirtualXORROTW7(t) => t.evaluate_mle(r),
-        }
+        dispatch!(self, t => t.evaluate_mle(r))
     }
 
     pub fn suffixes(&self) -> &'static [Suffixes] {
-        match self {
-            Self::RangeCheck(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::RangeCheckAligned(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::And(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::Andn(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::Or(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::Xor(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::Equal(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::NotEqual(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::SignedLessThan(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::UnsignedLessThan(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::SignedGreaterThanEqual(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::UnsignedGreaterThanEqual(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::UnsignedLessThanEqual(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::UpperWord(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::LowerHalfWord(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::SignExtendHalfWord(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::SignMask(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::Pow2(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::Pow2W(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::ShiftRightBitmask(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::VirtualSRL(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::VirtualSRA(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::VirtualROTR(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::VirtualROTRW(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::ValidDiv0(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::ValidUnsignedRemainder(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::ValidSignedRemainder(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::VirtualChangeDivisor(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::VirtualChangeDivisorW(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::HalfwordAlignment(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::WordAlignment(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::MulUNoOverflow(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::VirtualRev8W(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::VirtualXORROT32(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::VirtualXORROT24(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::VirtualXORROT16(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::VirtualXORROT63(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::VirtualXORROTW16(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::VirtualXORROTW12(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::VirtualXORROTW8(t) => PrefixSuffixDecomposition::suffixes(t),
-            Self::VirtualXORROTW7(t) => PrefixSuffixDecomposition::suffixes(t),
-        }
+        dispatch!(self, t => PrefixSuffixDecomposition::suffixes(t))
     }
 
     pub fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
-        match self {
-            Self::RangeCheck(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-            Self::RangeCheckAligned(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-            Self::And(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-            Self::Andn(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-            Self::Or(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-            Self::Xor(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-            Self::Equal(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-            Self::NotEqual(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-            Self::SignedLessThan(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-            Self::UnsignedLessThan(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-            Self::SignedGreaterThanEqual(t) => {
-                PrefixSuffixDecomposition::combine(t, prefixes, suffixes)
-            }
-            Self::UnsignedGreaterThanEqual(t) => {
-                PrefixSuffixDecomposition::combine(t, prefixes, suffixes)
-            }
-            Self::UnsignedLessThanEqual(t) => {
-                PrefixSuffixDecomposition::combine(t, prefixes, suffixes)
-            }
-            Self::UpperWord(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-            Self::LowerHalfWord(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-            Self::SignExtendHalfWord(t) => {
-                PrefixSuffixDecomposition::combine(t, prefixes, suffixes)
-            }
-            Self::SignMask(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-            Self::Pow2(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-            Self::Pow2W(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-            Self::ShiftRightBitmask(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-            Self::VirtualSRL(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-            Self::VirtualSRA(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-            Self::VirtualROTR(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-            Self::VirtualROTRW(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-            Self::ValidDiv0(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-            Self::ValidUnsignedRemainder(t) => {
-                PrefixSuffixDecomposition::combine(t, prefixes, suffixes)
-            }
-            Self::ValidSignedRemainder(t) => {
-                PrefixSuffixDecomposition::combine(t, prefixes, suffixes)
-            }
-            Self::VirtualChangeDivisor(t) => {
-                PrefixSuffixDecomposition::combine(t, prefixes, suffixes)
-            }
-            Self::VirtualChangeDivisorW(t) => {
-                PrefixSuffixDecomposition::combine(t, prefixes, suffixes)
-            }
-            Self::HalfwordAlignment(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-            Self::WordAlignment(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-            Self::MulUNoOverflow(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-            Self::VirtualRev8W(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-            Self::VirtualXORROT32(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-            Self::VirtualXORROT24(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-            Self::VirtualXORROT16(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-            Self::VirtualXORROT63(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-            Self::VirtualXORROTW16(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-            Self::VirtualXORROTW12(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-            Self::VirtualXORROTW8(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-            Self::VirtualXORROTW7(t) => PrefixSuffixDecomposition::combine(t, prefixes, suffixes),
-        }
+        dispatch!(self, t => PrefixSuffixDecomposition::combine(t, prefixes, suffixes))
     }
 }
 
