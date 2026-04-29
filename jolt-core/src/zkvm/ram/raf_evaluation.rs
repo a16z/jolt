@@ -1,3 +1,64 @@
+//! # RafEvaluation (Stage 2)
+//!
+//! Source: `jolt-core/src/zkvm/ram/raf_evaluation.rs`
+//!
+//!
+//! ## Schwartz–Zippel randomness
+//!
+//! - Re-uses `r^(1)_cycle ∈ F^{log₂ T}` from Stage 1 (SpartanOuter)
+//!
+//!
+//! ## Sumcheck
+//!
+//! `unmap(X_k)` is the MLE of the identity function over `{0,1}^{log₂ K_RAM}`:
+//! it maps a boolean hypercube point to the integer it encodes.
+//! Definition: `jolt-core/src/poly/identity_poly.rs` (`UnmapRamAddressPolynomial`).
+//!
+//! ```text
+//! unmap(X_k) = Σ_{i=0}^{log₂ K_RAM - 1} 2^i · X_{k,i}
+//! ```
+//!
+//! The prover pre-computes
+//! `ra(X_k) := Σ_j eq(r^(1)_cycle, j) · 1[address(j) = k]`,
+//! aggregating access counts per remapped address `k`.
+//!
+//! ```text
+//! LHS := Σ_{X_k}  ra(X_k) · unmap(X_k)
+//!
+//! RHS := RamAddress(r^(1)_cycle)
+//!
+//! where  X_k ∈ {0,1}^{log₂ K_RAM}
+//! ```
+//!
+//! Dimensions: `log₂ K_RAM` rounds (address only).
+//!
+//! - `ra(X_k)`: `RamRa` partially evaluated at `r^(1)_cycle` (virtual).
+//! - `unmap(X_k)`: identity polynomial. Verifier-computable.
+//! - `RamAddress(r^(1)_cycle)`: opened in Stage 1 (SpartanOuter).
+//!
+//!
+//! ## Opening point
+//!
+//! After sumcheck: `r^(2)_{K_RAM} ∈ F^{log₂ K_RAM}`.
+//!
+//!
+//! ## Verifier opening claim
+//!
+//! The verifier checks that the final sumcheck message equals:
+//!
+//! ```text
+//! unmap(r^(2)_{K_RAM}) · RamRa(r^(2)_{K_RAM}, r^(1)_cycle)
+//! ```
+//!
+//! `unmap` is computable by the verifier.
+//! The prover supplies the opening for `RamRa`.
+//!
+//!
+//! ## VirtualPolynomials opened at `(r^(2)_{K_RAM}, r^(1)_cycle)`
+//!
+//! ```text
+//! RamRa
+//! ```
 use common::jolt_device::MemoryLayout;
 use num_traits::Zero;
 
