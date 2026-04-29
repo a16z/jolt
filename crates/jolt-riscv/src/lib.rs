@@ -88,5 +88,17 @@ macro_rules! jolt_instruction {
             ::serde::Deserialize,
         )]
         pub struct $name<T = ()>(pub T);
+
+        impl<T> $crate::Flags for $name<T> {
+            #[inline]
+            fn circuit_flags(&self) -> $crate::CircuitFlagSet {
+                $crate::CircuitFlagSet::default()
+            }
+
+            #[inline]
+            fn instruction_flags(&self) -> $crate::InstructionFlagSet {
+                $crate::InstructionFlagSet::default()
+            }
+        }
     };
 }
