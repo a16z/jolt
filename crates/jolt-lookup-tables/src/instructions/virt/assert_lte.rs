@@ -23,14 +23,10 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for AssertLte<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::instructions::test::materialize_entry_test;
-    use tracer::instruction::RISCVCycle;
+    use crate::materialize_entry_test;
 
     #[test]
     fn materialize_entry_virtualassertlte() {
-        materialize_entry_test::<
-            AssertLte<RISCVCycle<tracer::instruction::virtual_assert_lte::VirtualAssertLTE>>,
-            RISCVCycle<tracer::instruction::virtual_assert_lte::VirtualAssertLTE>,
-        >();
+        materialize_entry_test!(AssertLte, tracer::instruction::virtual_assert_lte::VirtualAssertLTE);
     }
 }

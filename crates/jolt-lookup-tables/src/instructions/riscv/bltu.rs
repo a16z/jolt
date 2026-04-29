@@ -23,14 +23,10 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for BltU<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::instructions::test::materialize_entry_test;
-    use tracer::instruction::RISCVCycle;
+    use crate::materialize_entry_test;
 
     #[test]
     fn materialize_entry_bltu() {
-        materialize_entry_test::<
-            BltU<RISCVCycle<tracer::instruction::bltu::BLTU>>,
-            RISCVCycle<tracer::instruction::bltu::BLTU>,
-        >();
+        materialize_entry_test!(BltU, tracer::instruction::bltu::BLTU);
     }
 }

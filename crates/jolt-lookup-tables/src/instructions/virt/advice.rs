@@ -28,14 +28,10 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualAdvice<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::instructions::test::materialize_entry_test;
-    use tracer::instruction::RISCVCycle;
+    use crate::materialize_entry_test;
 
     #[test]
     fn materialize_entry_virtualadvice() {
-        materialize_entry_test::<
-            VirtualAdvice<RISCVCycle<tracer::instruction::virtual_advice::VirtualAdvice>>,
-            RISCVCycle<tracer::instruction::virtual_advice::VirtualAdvice>,
-        >();
+        materialize_entry_test!(VirtualAdvice, tracer::instruction::virtual_advice::VirtualAdvice);
     }
 }

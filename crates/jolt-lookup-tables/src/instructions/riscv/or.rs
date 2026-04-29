@@ -23,14 +23,10 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for Or<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::instructions::test::materialize_entry_test;
-    use tracer::instruction::RISCVCycle;
+    use crate::materialize_entry_test;
 
     #[test]
     fn materialize_entry_or() {
-        materialize_entry_test::<
-            Or<RISCVCycle<tracer::instruction::or::OR>>,
-            RISCVCycle<tracer::instruction::or::OR>,
-        >();
+        materialize_entry_test!(Or, tracer::instruction::or::OR);
     }
 }

@@ -28,14 +28,10 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualAdviceLen<C> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::instructions::test::materialize_entry_test;
-    use tracer::instruction::RISCVCycle;
+    use crate::materialize_entry_test;
 
     #[test]
     fn materialize_entry_virtualadvicelen() {
-        materialize_entry_test::<
-            VirtualAdviceLen<RISCVCycle<tracer::instruction::virtual_advice_len::VirtualAdviceLen>>,
-            RISCVCycle<tracer::instruction::virtual_advice_len::VirtualAdviceLen>,
-        >();
+        materialize_entry_test!(VirtualAdviceLen, tracer::instruction::virtual_advice_len::VirtualAdviceLen);
     }
 }

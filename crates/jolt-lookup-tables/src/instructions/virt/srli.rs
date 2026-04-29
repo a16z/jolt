@@ -21,14 +21,10 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualSrli<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::instructions::test::materialize_entry_test;
-    use tracer::instruction::RISCVCycle;
+    use crate::materialize_entry_test;
 
     #[test]
     fn materialize_entry_virtualsrli() {
-        materialize_entry_test::<
-            VirtualSrli<RISCVCycle<tracer::instruction::virtual_srli::VirtualSRLI>>,
-            RISCVCycle<tracer::instruction::virtual_srli::VirtualSRLI>,
-        >();
+        materialize_entry_test!(VirtualSrli, tracer::instruction::virtual_srli::VirtualSRLI);
     }
 }

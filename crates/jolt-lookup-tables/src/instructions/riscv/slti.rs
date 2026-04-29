@@ -25,14 +25,10 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for SltI<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::instructions::test::materialize_entry_test;
-    use tracer::instruction::RISCVCycle;
+    use crate::materialize_entry_test;
 
     #[test]
     fn materialize_entry_slti() {
-        materialize_entry_test::<
-            SltI<RISCVCycle<tracer::instruction::slti::SLTI>>,
-            RISCVCycle<tracer::instruction::slti::SLTI>,
-        >();
+        materialize_entry_test!(SltI, tracer::instruction::slti::SLTI);
     }
 }

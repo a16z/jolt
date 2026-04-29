@@ -36,14 +36,10 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for MulI<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::instructions::test::materialize_entry_test;
-    use tracer::instruction::RISCVCycle;
+    use crate::materialize_entry_test;
 
     #[test]
     fn materialize_entry_virtualmuli() {
-        materialize_entry_test::<
-            MulI<RISCVCycle<tracer::instruction::virtual_muli::VirtualMULI>>,
-            RISCVCycle<tracer::instruction::virtual_muli::VirtualMULI>,
-        >();
+        materialize_entry_test!(MulI, tracer::instruction::virtual_muli::VirtualMULI);
     }
 }

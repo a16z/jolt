@@ -23,14 +23,10 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for Xor<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::instructions::test::materialize_entry_test;
-    use tracer::instruction::RISCVCycle;
+    use crate::materialize_entry_test;
 
     #[test]
     fn materialize_entry_xor() {
-        materialize_entry_test::<
-            Xor<RISCVCycle<tracer::instruction::xor::XOR>>,
-            RISCVCycle<tracer::instruction::xor::XOR>,
-        >();
+        materialize_entry_test!(Xor, tracer::instruction::xor::XOR);
     }
 }

@@ -33,14 +33,10 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for AssertHalfwordAlignm
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::instructions::test::materialize_entry_test;
-    use tracer::instruction::RISCVCycle;
+    use crate::materialize_entry_test;
 
     #[test]
     fn materialize_entry_virtualasserthalfwordalignment() {
-        materialize_entry_test::<
-            AssertHalfwordAlignment<RISCVCycle<tracer::instruction::virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment>>,
-            RISCVCycle<tracer::instruction::virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment>,
-        >();
+        materialize_entry_test!(AssertHalfwordAlignment, tracer::instruction::virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment);
     }
 }

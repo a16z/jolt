@@ -29,14 +29,10 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualZeroExtendWor
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::instructions::test::materialize_entry_test;
-    use tracer::instruction::RISCVCycle;
+    use crate::materialize_entry_test;
 
     #[test]
     fn materialize_entry_virtualzeroextendword() {
-        materialize_entry_test::<
-            VirtualZeroExtendWord<RISCVCycle<tracer::instruction::virtual_zero_extend_word::VirtualZeroExtendWord>>,
-            RISCVCycle<tracer::instruction::virtual_zero_extend_word::VirtualZeroExtendWord>,
-        >();
+        materialize_entry_test!(VirtualZeroExtendWord, tracer::instruction::virtual_zero_extend_word::VirtualZeroExtendWord);
     }
 }

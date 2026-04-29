@@ -5,11 +5,12 @@ use rand::prelude::*;
 
 use crate::{InstructionLookupTable, LookupQuery, XLEN};
 
-/// Fuzz-check that an instruction's `to_lookup_output` agrees with the
-/// corresponding lookup table's `materialize_entry(to_lookup_index)`
-/// across a batch of random cycles.
+/// Internal helper for [`materialize_entry_test!`]. Use the macro at call sites
+/// — it picks up the verbose `Foo<RISCVCycle<TracerType>>` / `RISCVCycle<TracerType>`
+/// type pair from a Jolt struct ident and a tracer instruction path.
+#[doc(hidden)]
 #[expect(clippy::unwrap_used)]
-pub fn materialize_entry_test<
+pub fn materialize_entry_test_fn<
     T: InstructionLookupTable<XLEN> + LookupQuery<XLEN> + From<C> + core::fmt::Debug,
     C: JoltCycle,
 >() {
@@ -23,4 +24,23 @@ pub fn materialize_entry_test<
             "{cycle:?}",
         );
     }
+}
+
+/// Fuzz-check that an instruction's `to_lookup_output` agrees with the
+/// corresponding lookup table's `materialize_entry(to_lookup_index)` across a
+/// batch of random cycles. Pass the Jolt instruction newtype and the tracer
+/// instruction path; the macro builds the `Foo<RISCVCycle<TracerType>>` /
+/// `RISCVCycle<TracerType>` type pair.
+///
+/// ```ignore
+/// materialize_entry_test!(Add, tracer::instruction::add::ADD);
+/// ```
+#[macro_export]
+macro_rules! materialize_entry_test {
+    ($jolt:ident, $tracer:path $(,)?) => {
+        $crate::instructions::test::materialize_entry_test_fn::<
+            $jolt<tracer::instruction::RISCVCycle<$tracer>>,
+            tracer::instruction::RISCVCycle<$tracer>,
+        >()
+    };
 }

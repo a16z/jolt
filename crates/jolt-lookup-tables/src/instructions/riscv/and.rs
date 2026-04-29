@@ -24,14 +24,10 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for And<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::instructions::test::materialize_entry_test;
-    use tracer::instruction::RISCVCycle;
+    use crate::materialize_entry_test;
 
     #[test]
     fn materialize_entry_and() {
-        materialize_entry_test::<
-            And<RISCVCycle<tracer::instruction::and::AND>>,
-            RISCVCycle<tracer::instruction::and::AND>,
-        >();
+        materialize_entry_test!(And, tracer::instruction::and::AND);
     }
 }

@@ -85,38 +85,25 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualXorRotW7<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::instructions::test::materialize_entry_test;
-    use tracer::instruction::RISCVCycle;
+    use crate::materialize_entry_test;
 
     #[test]
     fn materialize_entry_virtualxorrotw16() {
-        materialize_entry_test::<
-            VirtualXorRotW16<RISCVCycle<tracer::instruction::virtual_xor_rotw::VirtualXORROTW16>>,
-            RISCVCycle<tracer::instruction::virtual_xor_rotw::VirtualXORROTW16>,
-        >();
+        materialize_entry_test!(VirtualXorRotW16, tracer::instruction::virtual_xor_rotw::VirtualXORROTW16);
     }
 
     #[test]
     fn materialize_entry_virtualxorrotw12() {
-        materialize_entry_test::<
-            VirtualXorRotW12<RISCVCycle<tracer::instruction::virtual_xor_rotw::VirtualXORROTW12>>,
-            RISCVCycle<tracer::instruction::virtual_xor_rotw::VirtualXORROTW12>,
-        >();
+        materialize_entry_test!(VirtualXorRotW12, tracer::instruction::virtual_xor_rotw::VirtualXORROTW12);
     }
 
     #[test]
     fn materialize_entry_virtualxorrotw8() {
-        materialize_entry_test::<
-            VirtualXorRotW8<RISCVCycle<tracer::instruction::virtual_xor_rotw::VirtualXORROTW8>>,
-            RISCVCycle<tracer::instruction::virtual_xor_rotw::VirtualXORROTW8>,
-        >();
+        materialize_entry_test!(VirtualXorRotW8, tracer::instruction::virtual_xor_rotw::VirtualXORROTW8);
     }
 
     #[test]
     fn materialize_entry_virtualxorrotw7() {
-        materialize_entry_test::<
-            VirtualXorRotW7<RISCVCycle<tracer::instruction::virtual_xor_rotw::VirtualXORROTW7>>,
-            RISCVCycle<tracer::instruction::virtual_xor_rotw::VirtualXORROTW7>,
-        >();
+        materialize_entry_test!(VirtualXorRotW7, tracer::instruction::virtual_xor_rotw::VirtualXORROTW7);
     }
 }

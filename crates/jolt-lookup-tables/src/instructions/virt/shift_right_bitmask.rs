@@ -30,14 +30,10 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualShiftRightBit
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::instructions::test::materialize_entry_test;
-    use tracer::instruction::RISCVCycle;
+    use crate::materialize_entry_test;
 
     #[test]
     fn materialize_entry_virtualshiftrightbitmask() {
-        materialize_entry_test::<
-            VirtualShiftRightBitmask<RISCVCycle<tracer::instruction::virtual_shift_right_bitmask::VirtualShiftRightBitmask>>,
-            RISCVCycle<tracer::instruction::virtual_shift_right_bitmask::VirtualShiftRightBitmask>,
-        >();
+        materialize_entry_test!(VirtualShiftRightBitmask, tracer::instruction::virtual_shift_right_bitmask::VirtualShiftRightBitmask);
     }
 }

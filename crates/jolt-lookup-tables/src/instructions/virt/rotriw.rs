@@ -30,14 +30,10 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualRotriw<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::instructions::test::materialize_entry_test;
-    use tracer::instruction::RISCVCycle;
+    use crate::materialize_entry_test;
 
     #[test]
     fn materialize_entry_virtualrotriw() {
-        materialize_entry_test::<
-            VirtualRotriw<RISCVCycle<tracer::instruction::virtual_rotriw::VirtualROTRIW>>,
-            RISCVCycle<tracer::instruction::virtual_rotriw::VirtualROTRIW>,
-        >();
+        materialize_entry_test!(VirtualRotriw, tracer::instruction::virtual_rotriw::VirtualROTRIW);
     }
 }
