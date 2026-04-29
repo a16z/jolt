@@ -22,6 +22,7 @@ common = { path = "../../common" }
 jolt-field = { path = "../jolt-field", features = ["bn254"] }
 jolt-transcript = { path = "../jolt-transcript" }
 jolt-compiler = { path = "../jolt-compiler" }
+jolt-compiler-v2 = { path = "../jolt-compiler-v2" }
 jolt-compute = { path = "../jolt-compute" }
 jolt-cpu = { path = "../jolt-cpu" }
 jolt-host = { path = "../jolt-host" }
@@ -32,6 +33,7 @@ jolt-poly = { path = "../jolt-poly" }
 jolt-r1cs = { path = "../jolt-r1cs" }
 jolt-verifier = { path = "../jolt-verifier" }
 jolt-witness = { path = "../jolt-witness" }
+jolt-witness-v2 = { path = "../jolt-witness-v2" }
 jolt-zkvm = { path = "../jolt-zkvm" }
 tracer = { path = "../../tracer" }
 num-traits.workspace = true

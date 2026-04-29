@@ -181,15 +181,19 @@ pub fn find_divergence(
     let min_len = reference.len().min(candidate.len());
 
     for i in 0..min_len {
-        let states_match = match (&reference[i], &candidate[i]) {
+        let events_match = match (&reference[i], &candidate[i]) {
             (
                 TranscriptEvent::Append {
-                    state_after: sa, ..
+                    bytes: bytes_a,
+                    state_after: sa,
+                    ..
                 },
                 TranscriptEvent::Append {
-                    state_after: sb, ..
+                    bytes: bytes_b,
+                    state_after: sb,
+                    ..
                 },
-            ) => sa == sb,
+            ) => bytes_a == bytes_b && sa == sb,
             (
                 TranscriptEvent::Squeeze { state_after: sa },
                 TranscriptEvent::Squeeze { state_after: sb },
@@ -197,7 +201,7 @@ pub fn find_divergence(
             _ => false, // Different event kinds
         };
 
-        if !states_match {
+        if !events_match {
             return Err(TranscriptDivergence {
                 op_index: i,
                 expected: format!("{:?}", reference[i]),

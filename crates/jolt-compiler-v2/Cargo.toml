@@ -1,0 +1,16 @@
+[package]
+name = "jolt-compiler-v2"
+version = "0.1.0"
+authors = ["Jolt Contributors"]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Bolt-shaped compiler prototype for the Jolt zkVM"
+repository = "https://github.com/a16z/jolt"
+keywords = ["SNARK", "compiler", "mlir", "protocol"]
+categories = ["cryptography"]
+
+[lints]
+workspace = true
+
+[dependencies]
+melior = "0.27"
