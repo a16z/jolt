@@ -5,6 +5,7 @@
 
 #![expect(clippy::expect_used, reason = "tests may panic on assertion failures")]
 
+use dory::backends::arkworks::ArkG1;
 use jolt_dory::DoryScheme;
 use jolt_field::{Field, Fr};
 use jolt_openings::{
@@ -321,6 +322,34 @@ fn zk_wrong_commitment_rejected() {
     let mut vt = Blake2bTranscript::new(b"zk-wrong-commit");
     let result = DoryScheme::verify_zk(&wrong_commitment, &point, &proof, &verifier_setup, &mut vt);
     assert!(result.is_err(), "ZK: wrong commitment must be rejected");
+}
+
+#[test]
+fn wrong_eval_commitment_rejected_zk() {
+    let num_vars = 3;
+    let mut rng = ChaCha20Rng::seed_from_u64(1600);
+
+    let prover_setup = DoryScheme::setup_prover(num_vars);
+    let verifier_setup = DoryScheme::setup_verifier(num_vars);
+    let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
+    let point: Vec<Fr> = (0..num_vars)
+        .map(|_| <Fr as Field>::random(&mut rng))
+        .collect();
+    let eval = poly.evaluate(&point);
+    let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
+
+    let mut pt = Blake2bTranscript::new(b"zk-tampered-y-com");
+    let (mut proof, _eval_com, _blind) =
+        DoryScheme::open_zk(&poly, &point, eval, &prover_setup, Some(hint), &mut pt);
+
+    // Replace proof.y_com (the hiding commitment to the evaluation) with a
+    // different valid G1. dory::verify must reject because the Σ₁/Σ₂ sub-proofs
+    // bind y_com cryptographically to the rest of the proof.
+    proof.0.y_com = Some(ArkG1::default());
+
+    let mut vt = Blake2bTranscript::new(b"zk-tampered-y-com");
+    let result = DoryScheme::verify_zk(&commitment, &point, &proof, &verifier_setup, &mut vt);
+    assert!(result.is_err(), "tampered proof.y_com must be rejected");
 }
 
 #[test]
