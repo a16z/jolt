@@ -1,6 +1,6 @@
 use std::fs::File;
 
-use crate::zkvm::config::{OneHotConfig, OneHotParams, ReadWriteConfig};
+use crate::zkvm::config::{OneHotConfig, OneHotParams, ProgramMode, ReadWriteConfig};
 use crate::zkvm::witness::CommittedPolynomial;
 use crate::{
     curve::Bn254Curve,
@@ -52,6 +52,7 @@ pub mod config;
 pub mod instruction;
 pub mod instruction_lookups;
 pub mod lookup_table;
+pub mod program;
 pub mod proof_serialization;
 #[cfg(feature = "prover")]
 pub mod prover;
@@ -67,6 +68,8 @@ pub(crate) fn stage8_opening_ids(
     one_hot_params: &OneHotParams,
     include_trusted_advice: bool,
     include_untrusted_advice: bool,
+    program_mode: ProgramMode,
+    bytecode_chunk_count: usize,
 ) -> Vec<OpeningId> {
     let mut opening_ids = Vec::new();
 
@@ -103,6 +106,20 @@ pub(crate) fn stage8_opening_ids(
     }
     if include_untrusted_advice {
         opening_ids.push(OpeningId::UntrustedAdvice(SumcheckId::AdviceClaimReduction));
+    }
+    if program_mode == ProgramMode::Committed {
+        for i in 0..bytecode_chunk_count {
+            opening_ids.push(OpeningId::committed(
+                CommittedPolynomial::BytecodeChunk(i),
+                SumcheckId::BytecodeClaimReduction,
+            ));
+        }
+    }
+    if program_mode == ProgramMode::Committed {
+        opening_ids.push(OpeningId::committed(
+            CommittedPolynomial::ProgramImageInit,
+            SumcheckId::ProgramImageClaimReduction,
+        ));
     }
 
     opening_ids

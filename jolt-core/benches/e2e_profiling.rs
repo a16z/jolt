@@ -1,5 +1,6 @@
 use ark_serialize::CanonicalSerialize;
 use jolt_core::host;
+use jolt_core::zkvm::program::ProgramPreprocessing;
 use jolt_core::zkvm::prover::JoltProverPreprocessing;
 use jolt_core::zkvm::verifier::{JoltSharedPreprocessing, JoltVerifierPreprocessing};
 use jolt_core::zkvm::{RV64IMACProver, RV64IMACVerifier};
@@ -201,20 +202,18 @@ fn prove_example(
 ) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     let mut tasks = Vec::new();
     let mut program = host::Program::new(example_name);
-    let (bytecode, init_memory_state, _, e_entry) = program.decode();
+    let (bytecode, init_memory_state, _, _) = program.decode();
     let (_lazy_trace, trace, _, program_io) = program.trace(&serialized_input, &[], &[]);
     let padded_trace_len = (trace.len() + 1).next_power_of_two();
     drop(trace);
 
     let task = move || {
+        let program_data = ProgramPreprocessing::preprocess(bytecode, init_memory_state).unwrap();
         let shared_preprocessing = JoltSharedPreprocessing::new(
-            bytecode,
+            program_data,
             program_io.memory_layout.clone(),
-            init_memory_state,
             padded_trace_len,
-            e_entry,
-        )
-        .unwrap();
+        );
         let preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
 
         let elf_contents_opt = program.get_elf_contents();
@@ -255,7 +254,7 @@ fn prove_example_with_trace(
     _scale: usize,
 ) -> (std::time::Duration, usize, usize, usize) {
     let mut program = host::Program::new(example_name);
-    let (bytecode, init_memory_state, _, e_entry) = program.decode();
+    let (bytecode, init_memory_state, _, _) = program.decode();
     let (_, trace, _, program_io) = program.trace(&serialized_input, &[], &[]);
 
     assert!(
@@ -263,14 +262,12 @@ fn prove_example_with_trace(
         "Trace is longer than expected"
     );
 
+    let program_data = ProgramPreprocessing::preprocess(bytecode, init_memory_state).unwrap();
     let shared_preprocessing = JoltSharedPreprocessing::new(
-        bytecode.clone(),
+        program_data,
         program_io.memory_layout.clone(),
-        init_memory_state,
         trace.len().next_power_of_two(),
-        e_entry,
-    )
-    .unwrap();
+    );
     let preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
 
     let elf_contents_opt = program.get_elf_contents();

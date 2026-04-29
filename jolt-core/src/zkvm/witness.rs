@@ -6,11 +6,11 @@ use common::jolt_device::MemoryLayout;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
 
+use crate::curve::JoltCurve;
 use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
-use crate::zkvm::bytecode::BytecodePreprocessing;
-use crate::zkvm::config::OneHotParams;
+use crate::zkvm::config::{OneHotParams, ProgramMode};
 use crate::zkvm::instruction::InstructionFlags;
-use crate::zkvm::verifier::JoltSharedPreprocessing;
+use crate::zkvm::prover::JoltProverPreprocessing;
 use crate::{
     field::JoltField,
     poly::{multilinear_polynomial::MultilinearPolynomial, one_hot_polynomial::OneHotPolynomial},
@@ -31,6 +31,8 @@ pub enum CommittedPolynomial {
     InstructionRa(usize),
     /// One-hot ra polynomial for the bytecode instance of Shout
     BytecodeRa(usize),
+    /// Dense committed bytecode chunk polynomial for committed program mode.
+    BytecodeChunk(usize),
     /// One-hot ra/wa polynomial for the RAM instance of Twist
     /// Note that for RAM, ra and wa are the same polynomial because
     /// there is at most one load or store per cycle.
@@ -41,6 +43,8 @@ pub enum CommittedPolynomial {
     /// Untrusted advice polynomial - committed during proving, commitment in proof.
     /// Length cannot exceed max_trace_length.
     UntrustedAdvice,
+    /// Program image (initial RAM image) polynomial for committed program mode.
+    ProgramImageInit,
 }
 
 /// Returns a list of symbols representing all committed polynomials.
@@ -58,17 +62,33 @@ pub fn all_committed_polynomials(one_hot_params: &OneHotParams) -> Vec<Committed
     polynomials
 }
 
+/// Returns all committed polynomials expected in the proof commitments vector.
+pub fn all_proof_commitment_polynomials(
+    one_hot_params: &OneHotParams,
+    program_mode: ProgramMode,
+    bytecode_chunk_count: usize,
+) -> Vec<CommittedPolynomial> {
+    let mut polynomials = all_committed_polynomials(one_hot_params);
+    if program_mode == ProgramMode::Committed {
+        for i in 0..bytecode_chunk_count {
+            polynomials.push(CommittedPolynomial::BytecodeChunk(i));
+        }
+        polynomials.push(CommittedPolynomial::ProgramImageInit);
+    }
+    polynomials
+}
+
 impl CommittedPolynomial {
     /// Generate witness data and compute tier 1 commitment for a single row
-    pub fn stream_witness_and_commit_rows<F, PCS>(
+    pub fn stream_witness_and_commit_rows<F, C, PCS>(
         &self,
-        setup: &PCS::ProverSetup,
-        preprocessing: &JoltSharedPreprocessing,
+        preprocessing: &JoltProverPreprocessing<F, C, PCS>,
         row_cycles: &[tracer::instruction::Cycle],
         one_hot_params: &OneHotParams,
     ) -> <PCS as StreamingCommitmentScheme>::ChunkState
     where
         F: JoltField,
+        C: JoltCurve<F = F>,
         PCS: StreamingCommitmentScheme<Field = F>,
     {
         match self {
@@ -80,7 +100,7 @@ impl CommittedPolynomial {
                         post_value as i128 - pre_value as i128
                     })
                     .collect();
-                PCS::process_chunk(setup, &row)
+                PCS::process_chunk(&preprocessing.generators, &row)
             }
             CommittedPolynomial::RamInc => {
                 let row: Vec<i128> = row_cycles
@@ -92,7 +112,7 @@ impl CommittedPolynomial {
                         _ => 0,
                     })
                     .collect();
-                PCS::process_chunk(setup, &row)
+                PCS::process_chunk(&preprocessing.generators, &row)
             }
             CommittedPolynomial::InstructionRa(idx) => {
                 let row: Vec<Option<usize>> = row_cycles
@@ -102,17 +122,17 @@ impl CommittedPolynomial {
                         Some(one_hot_params.lookup_index_chunk(lookup_index, *idx) as usize)
                     })
                     .collect();
-                PCS::process_chunk_onehot(setup, one_hot_params.k_chunk, &row)
+                PCS::process_chunk_onehot(&preprocessing.generators, one_hot_params.k_chunk, &row)
             }
             CommittedPolynomial::BytecodeRa(idx) => {
                 let row: Vec<Option<usize>> = row_cycles
                     .iter()
                     .map(|cycle| {
-                        let pc = preprocessing.bytecode.get_pc(cycle);
+                        let pc = preprocessing.materialized_program().get_pc(cycle);
                         Some(one_hot_params.bytecode_pc_chunk(pc, *idx) as usize)
                     })
                     .collect();
-                PCS::process_chunk_onehot(setup, one_hot_params.k_chunk, &row)
+                PCS::process_chunk_onehot(&preprocessing.generators, one_hot_params.k_chunk, &row)
             }
             CommittedPolynomial::RamRa(idx) => {
                 let row: Vec<Option<usize>> = row_cycles
@@ -120,15 +140,18 @@ impl CommittedPolynomial {
                     .map(|cycle| {
                         remap_address(
                             cycle.ram_access().address() as u64,
-                            &preprocessing.memory_layout,
+                            &preprocessing.shared.memory_layout,
                         )
                         .map(|address| one_hot_params.ram_address_chunk(address, *idx) as usize)
                     })
                     .collect();
-                PCS::process_chunk_onehot(setup, one_hot_params.k_chunk, &row)
+                PCS::process_chunk_onehot(&preprocessing.generators, one_hot_params.k_chunk, &row)
             }
-            CommittedPolynomial::TrustedAdvice | CommittedPolynomial::UntrustedAdvice => {
-                panic!("Advice polynomials should not use streaming witness generation")
+            CommittedPolynomial::TrustedAdvice
+            | CommittedPolynomial::UntrustedAdvice
+            | CommittedPolynomial::ProgramImageInit
+            | CommittedPolynomial::BytecodeChunk(_) => {
+                panic!("Precommitted polynomials should not use streaming witness generation")
             }
         }
     }
@@ -136,7 +159,7 @@ impl CommittedPolynomial {
     #[tracing::instrument(skip_all, name = "CommittedPolynomial::generate_witness")]
     pub fn generate_witness<F>(
         &self,
-        bytecode_preprocessing: &BytecodePreprocessing,
+        bytecode_preprocessing: &crate::zkvm::bytecode::BytecodePreprocessing,
         memory_layout: &MemoryLayout,
         trace: &[Cycle],
         one_hot_params: Option<&OneHotParams>,
@@ -212,8 +235,11 @@ impl CommittedPolynomial {
                     one_hot_params.k_chunk,
                 ))
             }
-            CommittedPolynomial::TrustedAdvice | CommittedPolynomial::UntrustedAdvice => {
-                panic!("Advice polynomials should not use generate_witness")
+            CommittedPolynomial::TrustedAdvice
+            | CommittedPolynomial::UntrustedAdvice
+            | CommittedPolynomial::ProgramImageInit
+            | CommittedPolynomial::BytecodeChunk(_) => {
+                panic!("Precommitted polynomials should not use generate_witness")
             }
         }
     }
@@ -269,4 +295,10 @@ pub enum VirtualPolynomial {
     OpFlags(CircuitFlags),
     InstructionFlags(InstructionFlags),
     LookupTableFlag(usize),
+    BytecodeValStage(usize),
+    BytecodeReadRafAddrClaim,
+    BooleanityAddrClaim,
+    BytecodeClaimReductionIntermediate,
+    ProgramImageInitContributionRw,
+    ProgramImageInitContributionRaf,
 }

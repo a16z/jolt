@@ -8,6 +8,7 @@ mod tests {
     use crate::poly::dense_mlpoly::DensePolynomial;
     use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
     use crate::transcripts::{Blake2bTranscript, Transcript};
+    use crate::utils::math::Math;
     use ark_ff::biginteger::S128;
     use ark_std::rand::{thread_rng, Rng};
     use ark_std::{UniformRand, Zero};
@@ -879,19 +880,26 @@ mod tests {
         let num_vars = one_hot_poly.get_num_vars();
         let poly = MultilinearPolynomial::OneHot(one_hot_poly);
 
-        let opening_point: Vec<<Fr as JoltField>::Challenge> = (0..num_vars)
+        // AddressMajor Dory opening points are consumed as [cycle vars || address vars],
+        // while OneHotPolynomial::evaluate expects [address vars || cycle vars].
+        let log_t = T.log_2();
+        let log_k = num_vars - log_t;
+        let r_cycle: Vec<<Fr as JoltField>::Challenge> = (0..log_t)
             .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
             .collect();
+        let r_address: Vec<<Fr as JoltField>::Challenge> = (0..log_k)
+            .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
+            .collect();
+        let opening_point = [r_cycle.clone(), r_address.clone()].concat();
+        let eval_point = [r_address, r_cycle].concat();
 
         let prover_setup = DoryCommitmentScheme::setup_prover(num_vars);
         let verifier_setup = DoryCommitmentScheme::setup_verifier(&prover_setup);
 
         let (commitment, row_commitments) = DoryCommitmentScheme::commit(&poly, &prover_setup);
 
-        let evaluation = <MultilinearPolynomial<Fr> as PolynomialEvaluation<Fr>>::evaluate(
-            &poly,
-            &opening_point,
-        );
+        let evaluation =
+            <MultilinearPolynomial<Fr> as PolynomialEvaluation<Fr>>::evaluate(&poly, &eval_point);
 
         let mut prove_transcript = Blake2bTranscript::new(b"dory_test");
         bind_opening_inputs::<Fr, _>(&mut prove_transcript, &opening_point, &evaluation);
@@ -975,16 +983,26 @@ mod tests {
         let vmp_result = rlc_poly.vector_matrix_product(&left_vec);
 
         let mut expected = vec![Fr::zero(); num_columns];
-        let cycles_per_row = DoryGlobals::address_major_cycles_per_row();
+        let dense_stride = DoryGlobals::dense_stride();
+        let cycles_per_row = num_columns / dense_stride;
 
         // Dense contribution for AddressMajor layout:
         // Dense coefficients occupy evenly-spaced columns (every K-th column).
         // Coefficient i maps to: row = i / cycles_per_row, col = (i % cycles_per_row) * K
         for (i, &coeff) in rlc_dense.iter().enumerate() {
-            let row = i / cycles_per_row;
-            let col = (i % cycles_per_row) * K;
-            if row < num_rows && col < num_columns {
-                expected[col] += left_vec[row] * coeff;
+            if cycles_per_row == 0 {
+                let scaled_index = i * dense_stride;
+                let row = scaled_index / num_columns;
+                let col = scaled_index % num_columns;
+                if row < num_rows && col < num_columns {
+                    expected[col] += left_vec[row] * coeff;
+                }
+            } else {
+                let row = i / cycles_per_row;
+                let col = (i % cycles_per_row) * K;
+                if row < num_rows && col < num_columns {
+                    expected[col] += left_vec[row] * coeff;
+                }
             }
         }
 

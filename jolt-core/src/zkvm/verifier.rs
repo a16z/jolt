@@ -1,14 +1,8 @@
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::{Read, Write};
-use std::path::Path;
-use std::sync::Arc;
-
 use crate::curve::JoltCurve;
 use crate::poly::commitment::commitment_scheme::{CommitmentScheme, ZkEvalCommitment};
 #[cfg(feature = "zk")]
 use crate::poly::commitment::dory::bind_opening_inputs_zk;
-use crate::poly::commitment::dory::{bind_opening_inputs, DoryContext, DoryGlobals};
+use crate::poly::commitment::dory::{bind_opening_inputs, DoryContext, DoryGlobals, DoryLayout};
 use crate::poly::commitment::pedersen::PedersenGenerators;
 #[cfg(feature = "zk")]
 use crate::poly::lagrange_poly::LagrangeHelper;
@@ -27,10 +21,11 @@ use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceParams;
 #[cfg(feature = "zk")]
 use crate::subprotocols::univariate_skip::UniSkipFirstRoundProofVariant;
-use crate::zkvm::bytecode::{BytecodePreprocessing, PreprocessingError};
-use crate::zkvm::claim_reductions::advice::ReductionPhase;
+use crate::zkvm::bytecode::chunks::DEFAULT_COMMITTED_BYTECODE_CHUNK_COUNT;
+use crate::zkvm::bytecode::chunks::{committed_lanes, validate_committed_bytecode_chunk_count};
 use crate::zkvm::claim_reductions::RegistersClaimReductionSumcheckVerifier;
-use crate::zkvm::config::OneHotParams;
+use crate::zkvm::config::{OneHotParams, ProgramMode};
+use crate::zkvm::program::{ProgramMetadata, ProgramPreprocessing};
 #[cfg(feature = "prover")]
 use crate::zkvm::prover::JoltProverPreprocessing;
 #[cfg(feature = "zk")]
@@ -38,15 +33,19 @@ use crate::zkvm::r1cs::constraints::{
     OUTER_FIRST_ROUND_POLY_NUM_COEFFS, OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
     PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS, PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
 };
-use crate::zkvm::ram::RAMPreprocessing;
 use crate::zkvm::witness::all_committed_polynomials;
 use crate::zkvm::Serializable;
 use crate::zkvm::{
-    bytecode::read_raf_checking::BytecodeReadRafSumcheckVerifier,
+    bytecode::read_raf_checking::{
+        BytecodeReadRafAddressSumcheckVerifier, BytecodeReadRafCycleSumcheckVerifier,
+        BytecodeReadRafSumcheckParams,
+    },
     claim_reductions::{
-        AdviceClaimReductionVerifier, AdviceKind, HammingWeightClaimReductionVerifier,
+        AdviceClaimReductionVerifier, AdviceKind, BytecodeClaimReductionParams,
+        BytecodeClaimReductionVerifier, HammingWeightClaimReductionVerifier,
         IncClaimReductionSumcheckVerifier, InstructionLookupsClaimReductionSumcheckVerifier,
-        RamRaClaimReductionSumcheckVerifier,
+        PrecommittedClaimReduction, ProgramImageClaimReductionParams,
+        ProgramImageClaimReductionVerifier, RamRaClaimReductionSumcheckVerifier,
     },
     fiat_shamir_preamble,
     instruction_lookups::{
@@ -60,7 +59,7 @@ use crate::zkvm::{
         output_check::OutputSumcheckVerifier, ra_virtual::RamRaVirtualSumcheckVerifier,
         raf_evaluation::RafEvaluationSumcheckVerifier as RamRafEvaluationSumcheckVerifier,
         read_write_checking::RamReadWriteCheckingVerifier, val_check::RamValCheckSumcheckVerifier,
-        verifier_accumulate_advice,
+        verifier_accumulate_advice, verifier_accumulate_program_image,
     },
     registers::{
         read_write_checking::RegistersReadWriteCheckingVerifier,
@@ -75,22 +74,27 @@ use crate::zkvm::{
 };
 use crate::{
     field::JoltField,
-    poly::{
-        eq_poly::EqPolynomial,
-        opening_proof::{
-            compute_advice_lagrange_factor, DoryOpeningState, OpeningAccumulator, OpeningId,
-            SumcheckId, VerifierOpeningAccumulator,
-        },
+    poly::opening_proof::{
+        compute_lagrange_factor, DoryOpeningState, OpeningAccumulator, OpeningId, OpeningPoint,
+        SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
     },
     pprof_scope,
     subprotocols::{
-        booleanity::{BooleanitySumcheckParams, BooleanitySumcheckVerifier},
+        booleanity::{
+            BooleanityAddressSumcheckVerifier, BooleanityCycleSumcheckVerifier,
+            BooleanitySumcheckParams,
+        },
         sumcheck_verifier::SumcheckInstanceVerifier,
     },
     transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math},
     zkvm::witness::CommittedPolynomial,
 };
+use common::constants::BYTES_PER_INSTRUCTION;
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::{Read, Write};
+use std::path::Path;
 
 #[cfg(feature = "zk")]
 struct StageVerifyResult<F: JoltField> {
@@ -111,6 +115,12 @@ struct StageVerifyResult<F: JoltField> {
     #[allow(dead_code)]
     challenges: Vec<F::Challenge>,
 }
+
+type Stage6aVerifyResult<F> = (
+    BytecodeReadRafSumcheckParams<F>,
+    BooleanitySumcheckParams<F>,
+    StageVerifyResult<F>,
+);
 
 #[cfg(feature = "zk")]
 impl<F: JoltField> StageVerifyResult<F> {
@@ -215,7 +225,6 @@ fn scale_batching_coefficients<
 }
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
-use tracer::instruction::Instruction;
 use tracer::JoltDevice;
 
 pub struct JoltVerifier<
@@ -237,6 +246,10 @@ pub struct JoltVerifier<
     /// The advice claim reduction sumcheck effectively spans two stages (6 and 7).
     /// Cache the verifier state here between stages.
     advice_reduction_verifier_untrusted: Option<AdviceClaimReductionVerifier<F>>,
+    /// Bytecode claim reduction spans stages 6b and 7 in committed mode.
+    bytecode_reduction_verifier: Option<BytecodeClaimReductionVerifier<F>>,
+    /// Program-image claim reduction spans stages 6b and 7 in committed mode.
+    program_image_reduction_verifier: Option<ProgramImageClaimReductionVerifier<F>>,
     pub spartan_key: UniformSpartanKey<F>,
     pub one_hot_params: OneHotParams,
 }
@@ -256,6 +269,118 @@ impl<
         ProofTranscript: Transcript,
     > JoltVerifier<'a, F, C, PCS, ProofTranscript>
 {
+    #[inline]
+    fn main_total_vars(&self) -> usize {
+        let trace_log_t = self.proof.trace_length.log_2();
+        let log_k_chunk = self.one_hot_params.log_k_chunk;
+        JoltSharedPreprocessing::<PCS>::max_total_vars_from_candidates(
+            trace_log_t + log_k_chunk,
+            self.preprocessing.shared.precommitted_candidate_total_vars(
+                self.preprocessing.shared.program.is_committed(),
+                self.trusted_advice_commitment.is_some(),
+                self.proof.untrusted_advice_commitment.is_some(),
+            ),
+        )
+    }
+
+    fn stage8_opening_point(&self) -> Result<OpeningPoint<BIG_ENDIAN, F>, ProofVerifyError> {
+        let native_main_vars = self.proof.trace_length.log_2() + self.one_hot_params.log_k_chunk;
+        let mut opening_candidates: Vec<(&str, OpeningPoint<BIG_ENDIAN, F>)> = Vec::new();
+        if let Some((point, _)) = self
+            .opening_accumulator
+            .get_advice_opening(AdviceKind::Trusted, SumcheckId::AdviceClaimReduction)
+        {
+            opening_candidates.push(("trusted_advice", point));
+        }
+        if let Some((point, _)) = self
+            .opening_accumulator
+            .get_advice_opening(AdviceKind::Untrusted, SumcheckId::AdviceClaimReduction)
+        {
+            opening_candidates.push(("untrusted_advice", point));
+        }
+        if self.preprocessing.shared.program.is_committed() {
+            for chunk_idx in 0..self.preprocessing.shared.bytecode_chunk_count {
+                let (point, _) = self.opening_accumulator.get_committed_polynomial_opening(
+                    CommittedPolynomial::BytecodeChunk(chunk_idx),
+                    SumcheckId::BytecodeClaimReduction,
+                );
+                opening_candidates.push(("bytecode_chunk", point));
+            }
+        }
+        if self.preprocessing.shared.program.is_committed() {
+            let (program_image_point, _) =
+                self.opening_accumulator.get_committed_polynomial_opening(
+                    CommittedPolynomial::ProgramImageInit,
+                    SumcheckId::ProgramImageClaimReduction,
+                );
+            opening_candidates.push(("program_image", program_image_point));
+        }
+
+        let max_len = opening_candidates
+            .iter()
+            .map(|(_, p)| p.r.len())
+            .max()
+            .unwrap_or(0);
+        if max_len > native_main_vars {
+            let dominant = opening_candidates
+                .iter()
+                .find(|(_, p)| p.r.len() == max_len)
+                .expect("at least one dominant precommitted candidate expected");
+            for (name, point) in opening_candidates
+                .iter()
+                .filter(|(_, p)| p.r.len() == max_len)
+            {
+                if point.r != dominant.1.r {
+                    return Err(ProofVerifyError::DoryError(format!(
+                        "incompatible dominant precommitted anchors: {} and {} have equal dimensionality {} but different opening points",
+                        dominant.0, name, max_len
+                    )));
+                }
+            }
+            Ok(OpeningPoint::<BIG_ENDIAN, F>::new(dominant.1.r.clone()))
+        } else {
+            let (hamming_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::InstructionRa(0),
+                SumcheckId::HammingWeightClaimReduction,
+            );
+            let r_address_stage7 = hamming_point.r[..self.one_hot_params.log_k_chunk].to_vec();
+            let r_cycle_stage6 = self
+                .opening_accumulator
+                .get_committed_polynomial_opening(
+                    CommittedPolynomial::RamInc,
+                    SumcheckId::IncClaimReduction,
+                )
+                .0
+                .r;
+
+            match self.proof.dory_layout {
+                DoryLayout::AddressMajor => Ok(OpeningPoint::<BIG_ENDIAN, F>::new(
+                    [r_cycle_stage6.as_slice(), r_address_stage7.as_slice()].concat(),
+                )),
+                DoryLayout::CycleMajor => {
+                    let native_cycle = &hamming_point.r[self.one_hot_params.log_k_chunk..];
+                    if r_cycle_stage6.len() < native_cycle.len() {
+                        return Err(ProofVerifyError::DoryError(
+                            "stage6 cycle challenges shorter than native cycle vars".to_string(),
+                        ));
+                    }
+                    if r_cycle_stage6[..native_cycle.len()] != *native_cycle {
+                        return Err(ProofVerifyError::DoryError(format!(
+                            "cycle-major Stage-8 expects stage6 cycle prefix to equal native cycle vars \
+                             (cycle_full_len={}, native_len={})",
+                            r_cycle_stage6.len(),
+                            native_cycle.len()
+                        )));
+                    }
+                    let cycle_extra = &r_cycle_stage6[native_cycle.len()..];
+                    let cycle_extra_and_anchor =
+                        [cycle_extra, r_address_stage7.as_slice(), native_cycle].concat();
+                    Ok(OpeningPoint::<BIG_ENDIAN, F>::new(cycle_extra_and_anchor))
+                }
+            }
+        }
+    }
+
     pub fn new(
         preprocessing: &'a JoltVerifierPreprocessing<F, C, PCS>,
         proof: JoltProof<F, C, PCS, ProofTranscript>,
@@ -339,10 +464,11 @@ impl<
             .validate()
             .map_err(ProofVerifyError::InvalidOneHotConfig)?;
 
-        let min_ram_K = compute_min_ram_K(
-            &preprocessing.shared.ram,
-            &preprocessing.shared.memory_layout,
-        );
+        let ram_preprocessing = crate::zkvm::ram::RAMPreprocessing {
+            min_bytecode_address: preprocessing.shared.program_meta.min_bytecode_address,
+            bytecode_words: vec![0; preprocessing.shared.program_meta.program_image_len_words],
+        };
+        let min_ram_K = compute_min_ram_K(&ram_preprocessing, &preprocessing.shared.memory_layout);
         if !proof.ram_K.is_power_of_two() || proof.ram_K < min_ram_K {
             return Err(ProofVerifyError::InvalidRamK(proof.ram_K, min_ram_K));
         }
@@ -353,7 +479,7 @@ impl<
             .map_err(ProofVerifyError::InvalidReadWriteConfig)?;
 
         // Construct full params from the validated config.
-        let bytecode_K = preprocessing.shared.bytecode.code_size;
+        let bytecode_K = preprocessing.shared.bytecode_size();
         let one_hot_params =
             OneHotParams::from_config(&proof.one_hot_config, bytecode_K, proof.ram_K);
 
@@ -366,6 +492,8 @@ impl<
             opening_accumulator,
             advice_reduction_verifier_trusted: None,
             advice_reduction_verifier_untrusted: None,
+            bytecode_reduction_verifier: None,
+            program_image_reduction_verifier: None,
             spartan_key,
             one_hot_params,
         })
@@ -405,7 +533,7 @@ impl<
             &self.program_io,
             self.proof.ram_K,
             self.proof.trace_length,
-            self.preprocessing.shared.bytecode.entry_address,
+            self.preprocessing.shared.program_meta.entry_address,
             &self.proof.rw_config,
             &self.proof.one_hot_config,
             self.proof.dory_layout,
@@ -437,6 +565,19 @@ impl<
             self.transcript
                 .append_serializable(b"trusted_advice", trusted_advice_commitment);
         }
+        if let Some(trusted_bytecode) = self.preprocessing.shared.program.bytecode_commitments() {
+            for commitment in &trusted_bytecode.commitments {
+                self.transcript
+                    .append_serializable(b"bytecode_chunk_commit", commitment);
+            }
+        }
+        if self.preprocessing.shared.program.is_committed() {
+            let trusted = self.preprocessing.shared.program.as_committed()?;
+            self.transcript.append_serializable(
+                b"program_image_commitment",
+                &trusted.program_image_commitment,
+            );
+        }
 
         let (stage1_result, uniskip_challenge1) = self
             .verify_stage1()
@@ -453,7 +594,7 @@ impl<
         let stage5_result = self
             .verify_stage5()
             .inspect_err(|e| tracing::error!("Stage 5: {e}"))?;
-        let stage6_result = self
+        let (stage6a_result, stage6b_result) = self
             .verify_stage6()
             .inspect_err(|e| tracing::error!("Stage 6: {e}"))?;
         let stage7_result = self
@@ -472,7 +613,8 @@ impl<
                     stage3_result.challenges.clone(),
                     stage4_result.challenges.clone(),
                     stage5_result.challenges.clone(),
-                    stage6_result.challenges.clone(),
+                    stage6a_result.challenges.clone(),
+                    stage6b_result.challenges.clone(),
                     stage7_result.challenges.clone(),
                 ];
                 let uniskip_challenges = [uniskip_challenge1, uniskip_challenge2];
@@ -483,7 +625,8 @@ impl<
                     stage3_result.batched_output_constraint,
                     stage4_result.batched_output_constraint,
                     stage5_result.batched_output_constraint,
-                    stage6_result.batched_output_constraint,
+                    stage6a_result.batched_output_constraint,
+                    stage6b_result.batched_output_constraint,
                     stage7_result.batched_output_constraint,
                 ];
 
@@ -493,7 +636,8 @@ impl<
                     stage3_result.batched_input_constraint.clone(),
                     stage4_result.batched_input_constraint.clone(),
                     stage5_result.batched_input_constraint.clone(),
-                    stage6_result.batched_input_constraint.clone(),
+                    stage6a_result.batched_input_constraint.clone(),
+                    stage6b_result.batched_input_constraint.clone(),
                     stage7_result.batched_input_constraint.clone(),
                 ];
 
@@ -507,17 +651,19 @@ impl<
                     stage3_result.input_constraint_challenge_values.clone(),
                     stage4_result.input_constraint_challenge_values.clone(),
                     stage5_result.input_constraint_challenge_values.clone(),
-                    stage6_result.input_constraint_challenge_values.clone(),
+                    stage6a_result.input_constraint_challenge_values.clone(),
+                    stage6b_result.input_constraint_challenge_values.clone(),
                     stage7_result.input_constraint_challenge_values.clone(),
                 ];
 
-                let output_constraint_challenge_values: [Vec<F>; 7] = [
+                let output_constraint_challenge_values: [Vec<F>; 8] = [
                     stage1_result.output_constraint_challenge_values.clone(),
                     stage2_result.output_constraint_challenge_values.clone(),
                     stage3_result.output_constraint_challenge_values.clone(),
                     stage4_result.output_constraint_challenge_values.clone(),
                     stage5_result.output_constraint_challenge_values.clone(),
-                    stage6_result.output_constraint_challenge_values.clone(),
+                    stage6a_result.output_constraint_challenge_values.clone(),
+                    stage6b_result.output_constraint_challenge_values.clone(),
                     stage7_result.output_constraint_challenge_values.clone(),
                 ];
 
@@ -527,7 +673,8 @@ impl<
                 oc_blocks.extend(stage3_result.oc_block_ids);
                 oc_blocks.extend(stage4_result.oc_block_ids);
                 oc_blocks.extend(stage5_result.oc_block_ids);
-                oc_blocks.extend(stage6_result.oc_block_ids);
+                oc_blocks.extend(stage6a_result.oc_block_ids);
+                oc_blocks.extend(stage6b_result.oc_block_ids);
                 oc_blocks.extend(stage7_result.oc_block_ids);
 
                 let uniskip_output_constraints = [
@@ -871,23 +1018,45 @@ impl<
             self.trusted_advice_commitment.is_some(),
             &mut self.opening_accumulator,
         );
+        if self.preprocessing.shared.program.is_committed() {
+            verifier_accumulate_program_image::<F>(self.proof.ram_K, &mut self.opening_accumulator);
+        }
         // Domain-separate the batching challenge.
         self.transcript.append_bytes(b"ram_val_check_gamma", &[]);
         let ram_val_check_gamma: F = self.transcript.challenge_scalar::<F>();
-        let initial_ram_state = crate::zkvm::ram::gen_ram_initial_memory_state::<F>(
-            self.proof.ram_K,
-            &self.preprocessing.shared.ram,
-            &self.program_io,
-        );
+        let initial_ram_state = if self.preprocessing.shared.program.is_full() {
+            crate::zkvm::ram::gen_ram_initial_memory_state::<F>(
+                self.proof.ram_K,
+                &self.preprocessing.shared.program.as_full()?.ram,
+                &self.program_io,
+            )
+        } else {
+            vec![0u64; self.proof.ram_K]
+        };
+        let ram_preprocessing = if self.preprocessing.shared.program.is_full() {
+            self.preprocessing.shared.program.as_full()?.ram.clone()
+        } else {
+            crate::zkvm::ram::RAMPreprocessing {
+                min_bytecode_address: self.preprocessing.shared.program_meta.min_bytecode_address,
+                bytecode_words: vec![
+                    0;
+                    self.preprocessing
+                        .shared
+                        .program_meta
+                        .program_image_len_words
+                ],
+            }
+        };
         let ram_val_check = RamValCheckSumcheckVerifier::new(
             &initial_ram_state,
             &self.program_io,
-            &self.preprocessing.shared.ram,
+            &ram_preprocessing,
             self.proof.trace_length,
             self.proof.ram_K,
             &self.proof.rw_config,
             ram_val_check_gamma,
             &self.opening_accumulator,
+            self.preprocessing.shared.program.is_committed(),
         );
 
         let instances: Vec<
@@ -1014,26 +1183,125 @@ impl<
     }
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
-    fn verify_stage6(&mut self) -> Result<StageVerifyResult<F>, ProofVerifyError> {
+    fn verify_stage6(
+        &mut self,
+    ) -> Result<(StageVerifyResult<F>, StageVerifyResult<F>), ProofVerifyError> {
+        let _ = DoryGlobals::initialize_main_with_log_embedding(
+            self.one_hot_params.k_chunk,
+            self.proof.trace_length,
+            self.main_total_vars(),
+            Some(self.proof.dory_layout),
+        );
+        let (bytecode_read_raf_params, booleanity_params, stage6a_result) =
+            self.verify_stage6a()?;
+        let stage6b_result = self.verify_stage6b(bytecode_read_raf_params, booleanity_params)?;
+        Ok((stage6a_result, stage6b_result))
+    }
+
+    fn verify_stage6a(&mut self) -> Result<Stage6aVerifyResult<F>, ProofVerifyError> {
         let n_cycle_vars = self.proof.trace_length.log_2();
-        let bytecode_read_raf = BytecodeReadRafSumcheckVerifier::gen(
-            &self.preprocessing.shared.bytecode,
+        let program_preprocessing = Some(&self.preprocessing.shared.program);
+        let entry_bytecode_index = self
+            .preprocessing
+            .shared
+            .program_meta
+            .entry_address
+            .saturating_sub(self.preprocessing.shared.program_meta.min_bytecode_address)
+            as usize
+            / BYTES_PER_INSTRUCTION
+            + 1;
+        let bytecode_read_raf = BytecodeReadRafAddressSumcheckVerifier::new(
+            program_preprocessing,
             n_cycle_vars,
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
-        );
+            if self.preprocessing.shared.program.is_committed() {
+                ProgramMode::Committed
+            } else {
+                ProgramMode::Full
+            },
+            entry_bytecode_index,
+        )?;
+        let booleanity = BooleanityAddressSumcheckVerifier::new(BooleanitySumcheckParams::new(
+            n_cycle_vars,
+            &self.one_hot_params,
+            &self.opening_accumulator,
+            &mut self.transcript,
+        ));
+        let instances: Vec<
+            &dyn SumcheckInstanceVerifier<F, ProofTranscript, VerifierOpeningAccumulator<F>>,
+        > = vec![&bytecode_read_raf, &booleanity];
+        let (_batching_coefficients, r_stage6a) = BatchedSumcheck::verify(
+            &self.proof.stage6a_sumcheck_proof,
+            instances.clone(),
+            &mut self.opening_accumulator,
+            &mut self.transcript,
+        )
+        .inspect_err(|err| tracing::error!("Stage 6a: {err}"))?;
+        #[cfg(feature = "zk")]
+        {
+            let regular_oc_ids = self.opening_accumulator.take_pending_claim_ids();
+            let batched_output_constraint = batch_output_constraints(&instances);
+            let batched_input_constraint = batch_input_constraints(&instances);
+            let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
+            let mut output_constraint_challenge_values: Vec<F> = _batching_coefficients.clone();
+            let mut input_constraint_challenge_values: Vec<F> =
+                scale_batching_coefficients(&_batching_coefficients, &instances);
+            for instance in &instances {
+                let num_rounds = instance.num_rounds();
+                let offset = instance.round_offset(max_num_rounds);
+                let r_slice = &r_stage6a[offset..offset + num_rounds];
+                output_constraint_challenge_values.extend(
+                    instance
+                        .get_params()
+                        .output_constraint_challenge_values(r_slice),
+                );
+                input_constraint_challenge_values.extend(
+                    instance
+                        .get_params()
+                        .input_constraint_challenge_values(&self.opening_accumulator),
+                );
+            }
+            let stage_result = StageVerifyResult::new(
+                r_stage6a,
+                batched_output_constraint,
+                output_constraint_challenge_values,
+                batched_input_constraint,
+                input_constraint_challenge_values,
+                vec![regular_oc_ids],
+            );
+            Ok((
+                bytecode_read_raf.into_params(),
+                booleanity.into_params(),
+                stage_result,
+            ))
+        }
+        #[cfg(not(feature = "zk"))]
+        Ok((
+            bytecode_read_raf.into_params(),
+            booleanity.into_params(),
+            StageVerifyResult {
+                challenges: r_stage6a,
+            },
+        ))
+    }
 
+    #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
+    fn verify_stage6b(
+        &mut self,
+        bytecode_read_raf_params: BytecodeReadRafSumcheckParams<F>,
+        booleanity_params: BooleanitySumcheckParams<F>,
+    ) -> Result<StageVerifyResult<F>, ProofVerifyError> {
+        let bytecode_reduction_seed_params = bytecode_read_raf_params.clone();
+        let bytecode_read_raf = BytecodeReadRafCycleSumcheckVerifier::new(
+            bytecode_read_raf_params,
+            &self.opening_accumulator,
+        );
         let ram_hamming_booleanity =
             HammingBooleanitySumcheckVerifier::new(&self.opening_accumulator);
-        let booleanity_params = BooleanitySumcheckParams::new(
-            n_cycle_vars,
-            &self.one_hot_params,
-            &self.opening_accumulator,
-            &mut self.transcript,
-        );
-
-        let booleanity = BooleanitySumcheckVerifier::new(booleanity_params);
+        let booleanity =
+            BooleanityCycleSumcheckVerifier::new(booleanity_params, &self.opening_accumulator);
         let ram_ra_virtual = RamRaVirtualSumcheckVerifier::new(
             self.proof.trace_length,
             &self.one_hot_params,
@@ -1051,21 +1319,65 @@ impl<
             &mut self.transcript,
         );
 
-        // Advice claim reduction (Phase 1 in Stage 6): trusted and untrusted are separate instances.
+        let main_total_vars = self.proof.trace_length.log_2() + self.one_hot_params.log_k_chunk;
+        let precommitted_candidates = self.preprocessing.shared.precommitted_candidate_total_vars(
+            self.preprocessing.shared.program.is_committed(),
+            self.trusted_advice_commitment.is_some(),
+            self.proof.untrusted_advice_commitment.is_some(),
+        );
+        let precommitted_scheduling_reference =
+            PrecommittedClaimReduction::<F>::scheduling_reference(
+                main_total_vars,
+                &precommitted_candidates,
+            );
+
+        // Advice claim reduction (Phase 1 in Stage 6b): trusted and untrusted are separate instances.
         if self.trusted_advice_commitment.is_some() {
             self.advice_reduction_verifier_trusted = Some(AdviceClaimReductionVerifier::new(
                 AdviceKind::Trusted,
-                &self.program_io.memory_layout,
-                self.proof.trace_length,
+                self.program_io.memory_layout.max_trusted_advice_size as usize,
+                precommitted_scheduling_reference,
                 &self.opening_accumulator,
             ));
         }
         if self.proof.untrusted_advice_commitment.is_some() {
             self.advice_reduction_verifier_untrusted = Some(AdviceClaimReductionVerifier::new(
                 AdviceKind::Untrusted,
-                &self.program_io.memory_layout,
-                self.proof.trace_length,
+                self.program_io.memory_layout.max_untrusted_advice_size as usize,
+                precommitted_scheduling_reference,
                 &self.opening_accumulator,
+            ));
+        }
+        if self.preprocessing.shared.program.is_committed() {
+            let bytecode_chunk_count = self.preprocessing.shared.bytecode_chunk_count;
+            let bytecode_reduction_params = BytecodeClaimReductionParams::new(
+                &bytecode_reduction_seed_params,
+                self.preprocessing.shared.bytecode_size(),
+                bytecode_chunk_count,
+                precommitted_scheduling_reference,
+                &self.opening_accumulator,
+                &mut self.transcript,
+            );
+            self.bytecode_reduction_verifier = Some(BytecodeClaimReductionVerifier::new(
+                bytecode_reduction_params,
+            ));
+
+            let padded_len_words = self
+                .preprocessing
+                .shared
+                .program_meta
+                .committed_program_image_num_words(&self.program_io.memory_layout);
+            let program_image_reduction_params = ProgramImageClaimReductionParams::new(
+                &self.program_io,
+                self.preprocessing.shared.program_meta.min_bytecode_address,
+                padded_len_words,
+                self.proof.ram_K,
+                precommitted_scheduling_reference,
+                &self.opening_accumulator,
+                &mut self.transcript,
+            );
+            self.program_image_reduction_verifier = Some(ProgramImageClaimReductionVerifier::new(
+                program_image_reduction_params,
             ));
         }
 
@@ -1085,13 +1397,20 @@ impl<
         if let Some(ref advice) = self.advice_reduction_verifier_untrusted {
             instances.push(advice);
         }
+        if let Some(ref reduction) = self.bytecode_reduction_verifier {
+            instances.push(reduction);
+        }
+        if let Some(ref reduction) = self.program_image_reduction_verifier {
+            instances.push(reduction);
+        }
 
-        let (batching_coefficients, r_stage6) = BatchedSumcheck::verify(
-            &self.proof.stage6_sumcheck_proof,
+        let (batching_coefficients, r_stage6b) = BatchedSumcheck::verify(
+            &self.proof.stage6b_sumcheck_proof,
             instances.clone(),
             &mut self.opening_accumulator,
             &mut self.transcript,
-        )?;
+        )
+        .inspect_err(|err| tracing::error!("Stage 6b: {err}"))?;
 
         #[cfg(feature = "zk")]
         {
@@ -1105,7 +1424,7 @@ impl<
             for instance in &instances {
                 let num_rounds = instance.num_rounds();
                 let offset = instance.round_offset(max_num_rounds);
-                let r_slice = &r_stage6[offset..offset + num_rounds];
+                let r_slice = &r_stage6b[offset..offset + num_rounds];
                 output_constraint_challenge_values.extend(
                     instance
                         .get_params()
@@ -1118,7 +1437,7 @@ impl<
                 );
             }
             Ok(StageVerifyResult::new(
-                r_stage6,
+                r_stage6b,
                 batched_output_constraint,
                 output_constraint_challenge_values,
                 batched_input_constraint,
@@ -1128,7 +1447,7 @@ impl<
         }
         #[cfg(not(feature = "zk"))]
         Ok(StageVerifyResult {
-            challenges: r_stage6,
+            challenges: r_stage6b,
         })
     }
 
@@ -1136,12 +1455,12 @@ impl<
     #[allow(clippy::too_many_arguments)]
     fn verify_blindfold(
         &mut self,
-        sumcheck_challenges: &[Vec<F::Challenge>; 7],
+        sumcheck_challenges: &[Vec<F::Challenge>; 8],
         uniskip_challenges: [F::Challenge; 2],
-        stage_output_constraints: &[Option<OutputClaimConstraint>; 7],
-        output_constraint_challenge_values: &[Vec<F>; 7],
-        stage_input_constraints: &[InputClaimConstraint; 7],
-        input_constraint_challenge_values: &[Vec<F>; 7],
+        stage_output_constraints: &[Option<OutputClaimConstraint>; 8],
+        output_constraint_challenge_values: &[Vec<F>; 8],
+        stage_input_constraints: &[InputClaimConstraint; 8],
+        input_constraint_challenge_values: &[Vec<F>; 8],
         // For stages 0-1: batched input constraint for regular rounds (different from uni-skip)
         stage1_batched_input: &InputClaimConstraint,
         stage2_batched_input: &InputClaimConstraint,
@@ -1160,7 +1479,8 @@ impl<
             &self.proof.stage3_sumcheck_proof,
             &self.proof.stage4_sumcheck_proof,
             &self.proof.stage5_sumcheck_proof,
-            &self.proof.stage6_sumcheck_proof,
+            &self.proof.stage6a_sumcheck_proof,
+            &self.proof.stage6b_sumcheck_proof,
             &self.proof.stage7_sumcheck_proof,
         ];
 
@@ -1177,7 +1497,7 @@ impl<
         let mut stage_configs = Vec::new();
         // Track which stage_config index corresponds to uni-skip and regular first rounds
         let mut uniskip_indices: Vec<usize> = Vec::new(); // Only 2 elements for stages 0-1
-        let mut regular_first_round_indices: Vec<usize> = Vec::new(); // 7 elements for all stages
+        let mut regular_first_round_indices: Vec<usize> = Vec::new(); // 8 elements for all stages
         let mut last_round_indices: Vec<usize> = Vec::new();
 
         for (stage_idx, proof) in stage_proofs.iter().enumerate() {
@@ -1268,7 +1588,7 @@ impl<
             }
         }
 
-        // Add initial_input configurations for regular first rounds (all 7 stages)
+        // Add initial_input configurations for regular first rounds (all 8 stages)
         // These use the batched input constraints from the stage results
         let regular_constraints = [
             stage1_batched_input.clone(),       // Stage 0 regular
@@ -1276,8 +1596,9 @@ impl<
             stage_input_constraints[2].clone(), // Stage 2
             stage_input_constraints[3].clone(), // Stage 3
             stage_input_constraints[4].clone(), // Stage 4
-            stage_input_constraints[5].clone(), // Stage 5
-            stage_input_constraints[6].clone(), // Stage 6
+            stage_input_constraints[5].clone(), // Stage 5 (6a)
+            stage_input_constraints[6].clone(), // Stage 6 (6b)
+            stage_input_constraints[7].clone(), // Stage 7
         ];
         for (i, constraint) in regular_constraints.iter().enumerate() {
             let idx = regular_first_round_indices[i];
@@ -1305,7 +1626,7 @@ impl<
             }
         }
 
-        let all_input_challenge_values: [&[F]; 9] = [
+        let all_input_challenge_values: [&[F]; 10] = [
             &input_constraint_challenge_values[0],
             stage1_batched_input_values,
             &input_constraint_challenge_values[1],
@@ -1315,6 +1636,7 @@ impl<
             &input_constraint_challenge_values[4],
             &input_constraint_challenge_values[5],
             &input_constraint_challenge_values[6],
+            &input_constraint_challenge_values[7],
         ];
         let mut baked_input_challenges: Vec<F> = Vec::new();
         for expected_values in all_input_challenge_values.iter() {
@@ -1431,7 +1753,7 @@ impl<
             let mut params = advice_reduction_verifier_trusted.params.borrow_mut();
             if params.num_address_phase_rounds() > 0 {
                 // Transition phase
-                params.phase = ReductionPhase::AddressVariables;
+                params.transition_to_address_phase();
                 instances.push(advice_reduction_verifier_trusted);
             }
         }
@@ -1441,8 +1763,24 @@ impl<
             let mut params = advice_reduction_verifier_untrusted.params.borrow_mut();
             if params.num_address_phase_rounds() > 0 {
                 // Transition phase
-                params.phase = ReductionPhase::AddressVariables;
+                params.transition_to_address_phase();
                 instances.push(advice_reduction_verifier_untrusted);
+            }
+        }
+        if let Some(bytecode_reduction_verifier) = self.bytecode_reduction_verifier.as_mut() {
+            let mut params = bytecode_reduction_verifier.params.borrow_mut();
+            if params.num_address_phase_rounds() > 0 {
+                params.transition_to_address_phase();
+                instances.push(bytecode_reduction_verifier);
+            }
+        }
+        if let Some(program_image_reduction_verifier) =
+            self.program_image_reduction_verifier.as_mut()
+        {
+            let mut params = program_image_reduction_verifier.params.borrow_mut();
+            if params.num_address_phase_rounds() > 0 {
+                params.transition_to_address_phase();
+                instances.push(program_image_reduction_verifier);
             }
         }
 
@@ -1492,63 +1830,61 @@ impl<
         })
     }
 
-    /// Stage 8: Dory batch opening verification.
     fn verify_stage8(&mut self) -> Result<Stage8VerifyData<F>, ProofVerifyError> {
-        // Get the unified opening point from HammingWeightClaimReduction
-        // This contains (r_address_stage7 || r_cycle_stage6) in big-endian
-        let (opening_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
-            CommittedPolynomial::InstructionRa(0),
-            SumcheckId::HammingWeightClaimReduction,
-        );
-        let log_k_chunk = self.one_hot_params.log_k_chunk;
-        let r_address_stage7 = &opening_point.r[..log_k_chunk];
+        let opening_point = self.stage8_opening_point()?;
 
         // 1. Collect all (polynomial, claim) pairs
         let mut polynomial_claims = Vec::new();
         let mut scaling_factors = Vec::new();
 
         // Dense polynomials: RamInc and RdInc (from IncClaimReduction in Stage 6)
-        let (_, ram_inc_claim) = self.opening_accumulator.get_committed_polynomial_opening(
+        let (ram_inc_point, ram_inc_claim) =
+            self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::RamInc,
+                SumcheckId::IncClaimReduction,
+            );
+        let (rd_inc_point, rd_inc_claim) =
+            self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::RdInc,
+                SumcheckId::IncClaimReduction,
+            );
+        let ram_inc_lagrange = compute_lagrange_factor::<F>(&opening_point.r, &ram_inc_point.r);
+        let rd_inc_lagrange = compute_lagrange_factor::<F>(&opening_point.r, &rd_inc_point.r);
+        polynomial_claims.push((
             CommittedPolynomial::RamInc,
-            SumcheckId::IncClaimReduction,
-        );
-        let (_, rd_inc_claim) = self.opening_accumulator.get_committed_polynomial_opening(
-            CommittedPolynomial::RdInc,
-            SumcheckId::IncClaimReduction,
-        );
-
-        // Dense polynomials are zero-padded in the Dory matrix, so their evaluation
-        // includes a factor eq(r_addr, 0) = ∏(1 − r_addr_i).
-        let lagrange_factor: F = EqPolynomial::zero_selector(r_address_stage7);
-        polynomial_claims.push((CommittedPolynomial::RamInc, ram_inc_claim * lagrange_factor));
-        scaling_factors.push(lagrange_factor);
-        polynomial_claims.push((CommittedPolynomial::RdInc, rd_inc_claim * lagrange_factor));
-        scaling_factors.push(lagrange_factor);
+            ram_inc_claim * ram_inc_lagrange,
+        ));
+        scaling_factors.push(ram_inc_lagrange);
+        polynomial_claims.push((CommittedPolynomial::RdInc, rd_inc_claim * rd_inc_lagrange));
+        scaling_factors.push(rd_inc_lagrange);
 
         // Sparse polynomials: all RA polys (from HammingWeightClaimReduction)
         for i in 0..self.one_hot_params.instruction_d {
-            let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
+            let (ra_point, claim) = self.opening_accumulator.get_committed_polynomial_opening(
                 CommittedPolynomial::InstructionRa(i),
                 SumcheckId::HammingWeightClaimReduction,
             );
-            polynomial_claims.push((CommittedPolynomial::InstructionRa(i), claim));
-            scaling_factors.push(F::one());
+            let lagrange = compute_lagrange_factor::<F>(&opening_point.r, &ra_point.r);
+            polynomial_claims.push((CommittedPolynomial::InstructionRa(i), claim * lagrange));
+            scaling_factors.push(lagrange);
         }
         for i in 0..self.one_hot_params.bytecode_d {
-            let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
+            let (ra_point, claim) = self.opening_accumulator.get_committed_polynomial_opening(
                 CommittedPolynomial::BytecodeRa(i),
                 SumcheckId::HammingWeightClaimReduction,
             );
-            polynomial_claims.push((CommittedPolynomial::BytecodeRa(i), claim));
-            scaling_factors.push(F::one());
+            let lagrange = compute_lagrange_factor::<F>(&opening_point.r, &ra_point.r);
+            polynomial_claims.push((CommittedPolynomial::BytecodeRa(i), claim * lagrange));
+            scaling_factors.push(lagrange);
         }
         for i in 0..self.one_hot_params.ram_d {
-            let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
+            let (ra_point, claim) = self.opening_accumulator.get_committed_polynomial_opening(
                 CommittedPolynomial::RamRa(i),
                 SumcheckId::HammingWeightClaimReduction,
             );
-            polynomial_claims.push((CommittedPolynomial::RamRa(i), claim));
-            scaling_factors.push(F::one());
+            let lagrange = compute_lagrange_factor::<F>(&opening_point.r, &ra_point.r);
+            polynomial_claims.push((CommittedPolynomial::RamRa(i), claim * lagrange));
+            scaling_factors.push(lagrange);
         }
 
         // Advice polynomials: TrustedAdvice and UntrustedAdvice (from AdviceClaimReduction in Stage 6)
@@ -1561,8 +1897,7 @@ impl<
             .opening_accumulator
             .get_advice_opening(AdviceKind::Trusted, SumcheckId::AdviceClaimReduction)
         {
-            let lagrange_factor =
-                compute_advice_lagrange_factor::<F>(&opening_point.r, &advice_point.r);
+            let lagrange_factor = compute_lagrange_factor::<F>(&opening_point.r, &advice_point.r);
             polynomial_claims.push((
                 CommittedPolynomial::TrustedAdvice,
                 advice_claim * lagrange_factor,
@@ -1575,14 +1910,44 @@ impl<
             .opening_accumulator
             .get_advice_opening(AdviceKind::Untrusted, SumcheckId::AdviceClaimReduction)
         {
-            let lagrange_factor =
-                compute_advice_lagrange_factor::<F>(&opening_point.r, &advice_point.r);
+            let lagrange_factor = compute_lagrange_factor::<F>(&opening_point.r, &advice_point.r);
             polynomial_claims.push((
                 CommittedPolynomial::UntrustedAdvice,
                 advice_claim * lagrange_factor,
             ));
             scaling_factors.push(lagrange_factor);
             include_untrusted_advice = true;
+        }
+
+        if self.preprocessing.shared.program.is_committed() {
+            let chunk_count = self.preprocessing.shared.bytecode_chunk_count;
+            for chunk_idx in 0..chunk_count {
+                let (chunk_point, chunk_claim) =
+                    self.opening_accumulator.get_committed_polynomial_opening(
+                        CommittedPolynomial::BytecodeChunk(chunk_idx),
+                        SumcheckId::BytecodeClaimReduction,
+                    );
+                let lagrange_factor =
+                    compute_lagrange_factor::<F>(&opening_point.r, &chunk_point.r);
+                polynomial_claims.push((
+                    CommittedPolynomial::BytecodeChunk(chunk_idx),
+                    chunk_claim * lagrange_factor,
+                ));
+                scaling_factors.push(lagrange_factor);
+            }
+        }
+        if self.preprocessing.shared.program.is_committed() {
+            let (program_point, program_claim) =
+                self.opening_accumulator.get_committed_polynomial_opening(
+                    CommittedPolynomial::ProgramImageInit,
+                    SumcheckId::ProgramImageClaimReduction,
+                );
+            let lagrange_factor = compute_lagrange_factor::<F>(&opening_point.r, &program_point.r);
+            polynomial_claims.push((
+                CommittedPolynomial::ProgramImageInit,
+                program_claim * lagrange_factor,
+            ));
+            scaling_factors.push(lagrange_factor);
         }
 
         // 2. Sample gamma and compute powers for RLC
@@ -1604,6 +1969,12 @@ impl<
             &self.one_hot_params,
             include_trusted_advice,
             include_untrusted_advice,
+            if self.preprocessing.shared.program.is_committed() {
+                ProgramMode::Committed
+            } else {
+                ProgramMode::Full
+            },
+            self.preprocessing.shared.bytecode_chunk_count,
         );
         let joint_claim: F = gamma_powers
             .iter()
@@ -1651,6 +2022,32 @@ impl<
                 .any(|(p, _)| *p == CommittedPolynomial::UntrustedAdvice)
             {
                 commitments_map.insert(CommittedPolynomial::UntrustedAdvice, commitment.clone());
+            }
+        }
+        if let Some(trusted_bytecode) = self.preprocessing.shared.program.bytecode_commitments() {
+            for (chunk_idx, commitment) in trusted_bytecode.commitments.iter().enumerate() {
+                if state
+                    .polynomial_claims
+                    .iter()
+                    .any(|(p, _)| *p == CommittedPolynomial::BytecodeChunk(chunk_idx))
+                {
+                    commitments_map.insert(
+                        CommittedPolynomial::BytecodeChunk(chunk_idx),
+                        commitment.clone(),
+                    );
+                }
+            }
+        }
+        if let Ok(trusted_program) = self.preprocessing.shared.program.as_committed() {
+            if state
+                .polynomial_claims
+                .iter()
+                .any(|(p, _)| *p == CommittedPolynomial::ProgramImageInit)
+            {
+                commitments_map.insert(
+                    CommittedPolynomial::ProgramImageInit,
+                    trusted_program.program_image_commitment.clone(),
+                );
             }
         }
 
@@ -1714,10 +2111,12 @@ impl<
         let (coeffs, commitments): (Vec<F>, Vec<PCS::Commitment>) = rlc_map
             .into_iter()
             .map(|(k, v)| {
-                commitment_map
-                    .remove(&k)
-                    .map(|c| (v, c))
-                    .ok_or(ProofVerifyError::InternalError)
+                commitment_map.remove(&k).map(|c| (v, c)).ok_or_else(|| {
+                    ProofVerifyError::DoryError(format!(
+                        "missing commitment for Stage 8 polynomial {:?}",
+                        k
+                    ))
+                })
             })
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
@@ -1728,14 +2127,20 @@ impl<
 }
 
 #[derive(Debug, Clone)]
-pub struct JoltSharedPreprocessing {
-    pub bytecode: Arc<BytecodePreprocessing>,
-    pub ram: RAMPreprocessing,
+pub struct JoltSharedPreprocessing<
+    PCS: CommitmentScheme = crate::poly::commitment::dory::DoryCommitmentScheme,
+> {
+    pub program: ProgramPreprocessing<PCS>,
+    pub program_meta: ProgramMetadata,
     pub memory_layout: MemoryLayout,
     pub max_padded_trace_length: usize,
+    pub bytecode_chunk_count: usize,
 }
 
-impl JoltSharedPreprocessing {
+impl<PCS: CommitmentScheme> JoltSharedPreprocessing<PCS>
+where
+    PCS::Commitment: CanonicalSerialize,
+{
     /// Blake2b-256 digest of the serialized preprocessing, used to bind
     /// the program identity to the Fiat-Shamir transcript.
     pub fn digest(&self) -> [u8; 32] {
@@ -1748,78 +2153,202 @@ impl JoltSharedPreprocessing {
     }
 }
 
-impl CanonicalSerialize for JoltSharedPreprocessing {
+impl<PCS: CommitmentScheme> CanonicalSerialize for JoltSharedPreprocessing<PCS>
+where
+    PCS::Commitment: CanonicalSerialize,
+{
     fn serialize_with_mode<W: std::io::Write>(
         &self,
         mut writer: W,
         compress: ark_serialize::Compress,
     ) -> Result<(), ark_serialize::SerializationError> {
-        self.bytecode
-            .as_ref()
+        self.program.serialize_with_mode(&mut writer, compress)?;
+        self.program_meta
             .serialize_with_mode(&mut writer, compress)?;
-        self.ram.serialize_with_mode(&mut writer, compress)?;
         self.memory_layout
             .serialize_with_mode(&mut writer, compress)?;
         self.max_padded_trace_length
+            .serialize_with_mode(&mut writer, compress)?;
+        self.bytecode_chunk_count
             .serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
 
     fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
-        self.bytecode.serialized_size(compress)
-            + self.ram.serialized_size(compress)
+        self.program.serialized_size(compress)
+            + self.program_meta.serialized_size(compress)
             + self.memory_layout.serialized_size(compress)
             + self.max_padded_trace_length.serialized_size(compress)
+            + self.bytecode_chunk_count.serialized_size(compress)
     }
 }
 
-impl CanonicalDeserialize for JoltSharedPreprocessing {
+impl<PCS: CommitmentScheme> CanonicalDeserialize for JoltSharedPreprocessing<PCS>
+where
+    PCS::Commitment: CanonicalDeserialize,
+{
     fn deserialize_with_mode<R: std::io::Read>(
         mut reader: R,
         compress: ark_serialize::Compress,
         validate: ark_serialize::Validate,
     ) -> Result<Self, ark_serialize::SerializationError> {
-        let bytecode =
-            BytecodePreprocessing::deserialize_with_mode(&mut reader, compress, validate)?;
-        let ram = RAMPreprocessing::deserialize_with_mode(&mut reader, compress, validate)?;
+        let program = ProgramPreprocessing::deserialize_with_mode(&mut reader, compress, validate)?;
+        let program_meta = ProgramMetadata::deserialize_with_mode(&mut reader, compress, validate)?;
         let memory_layout = MemoryLayout::deserialize_with_mode(&mut reader, compress, validate)?;
         let max_padded_trace_length =
             usize::deserialize_with_mode(&mut reader, compress, validate)?;
+        let bytecode_chunk_count = usize::deserialize_with_mode(&mut reader, compress, validate)?;
         Ok(Self {
-            bytecode: Arc::new(bytecode),
-            ram,
+            program,
+            program_meta,
             memory_layout,
             max_padded_trace_length,
+            bytecode_chunk_count,
         })
     }
 }
 
-impl ark_serialize::Valid for JoltSharedPreprocessing {
+impl<PCS: CommitmentScheme> ark_serialize::Valid for JoltSharedPreprocessing<PCS>
+where
+    PCS::Commitment: ark_serialize::Valid,
+{
     fn check(&self) -> Result<(), ark_serialize::SerializationError> {
-        self.bytecode.check()?;
-        self.ram.check()?;
+        self.program.check()?;
+        self.program_meta.check()?;
         self.memory_layout.check()?;
         Ok(())
     }
 }
 
-impl JoltSharedPreprocessing {
+impl<PCS: CommitmentScheme> JoltSharedPreprocessing<PCS> {
     #[tracing::instrument(skip_all, name = "JoltSharedPreprocessing::new")]
     pub fn new(
-        bytecode: Vec<Instruction>,
+        program: ProgramPreprocessing<PCS>,
         memory_layout: MemoryLayout,
-        memory_init: Vec<(u64, u8)>,
         max_padded_trace_length: usize,
-        entry_address: u64,
-    ) -> Result<JoltSharedPreprocessing, PreprocessingError> {
-        let bytecode = Arc::new(BytecodePreprocessing::preprocess(bytecode, entry_address)?);
-        let ram = RAMPreprocessing::preprocess(memory_init);
-        Ok(Self {
-            bytecode,
-            ram,
+    ) -> JoltSharedPreprocessing<PCS> {
+        Self {
+            program_meta: program.meta(),
+            program,
             memory_layout,
             max_padded_trace_length,
-        })
+            bytecode_chunk_count: DEFAULT_COMMITTED_BYTECODE_CHUNK_COUNT,
+        }
+    }
+
+    #[tracing::instrument(skip_all, name = "JoltSharedPreprocessing::new_committed")]
+    pub fn new_committed(
+        program: ProgramPreprocessing<PCS>,
+        memory_layout: MemoryLayout,
+        max_padded_trace_length: usize,
+        bytecode_chunk_count: usize,
+    ) -> JoltSharedPreprocessing<PCS> {
+        validate_committed_bytecode_chunk_count(bytecode_chunk_count);
+        assert!(
+            program.bytecode_len().is_multiple_of(bytecode_chunk_count),
+            "bytecode chunk count ({bytecode_chunk_count}) must divide bytecode size ({})",
+            program.bytecode_len()
+        );
+        let mut shared = Self {
+            program_meta: program.meta(),
+            program,
+            memory_layout,
+            max_padded_trace_length,
+            bytecode_chunk_count,
+        };
+        let (max_total_vars, max_log_k_chunk) = shared.compute_max_total_vars(true);
+        let generators = PCS::setup_prover(max_total_vars);
+        shared.program = shared.program.commit(
+            &shared.memory_layout,
+            &generators,
+            shared.bytecode_chunk_count,
+            max_log_k_chunk,
+        );
+        shared.program_meta = shared.program.meta();
+        shared
+    }
+
+    pub fn is_committed_mode(&self) -> bool {
+        self.program.is_committed()
+    }
+
+    pub fn bytecode_size(&self) -> usize {
+        self.program_meta.bytecode_len
+    }
+
+    #[inline]
+    pub fn committed_program_image_num_words(&self) -> usize {
+        self.program_meta
+            .committed_program_image_num_words(&self.memory_layout)
+    }
+
+    #[inline]
+    pub(crate) fn precommitted_candidate_total_vars(
+        &self,
+        include_committed: bool,
+        include_trusted_advice: bool,
+        include_untrusted_advice: bool,
+    ) -> Vec<usize> {
+        let mut candidates = Vec::with_capacity(
+            include_committed as usize * 2
+                + include_trusted_advice as usize
+                + include_untrusted_advice as usize,
+        );
+
+        if include_trusted_advice {
+            let (trusted_sigma, trusted_nu) = DoryGlobals::advice_sigma_nu_from_max_bytes(
+                self.memory_layout.max_trusted_advice_size as usize,
+            );
+            candidates.push(trusted_sigma + trusted_nu);
+        }
+
+        if include_untrusted_advice {
+            let (untrusted_sigma, untrusted_nu) = DoryGlobals::advice_sigma_nu_from_max_bytes(
+                self.memory_layout.max_untrusted_advice_size as usize,
+            );
+            candidates.push(untrusted_sigma + untrusted_nu);
+        }
+
+        if include_committed {
+            let chunk_cycle_log_t = (self.bytecode_size() / self.bytecode_chunk_count)
+                .next_power_of_two()
+                .log_2();
+            candidates.push(committed_lanes().log_2() + chunk_cycle_log_t);
+            candidates.push(self.committed_program_image_num_words().log_2());
+        }
+
+        candidates
+    }
+
+    #[inline]
+    pub(crate) fn max_total_vars_from_candidates(
+        main_total_vars: usize,
+        candidates: impl IntoIterator<Item = usize>,
+    ) -> usize {
+        let mut max_total_vars = main_total_vars;
+        for total_vars in candidates {
+            max_total_vars = max_total_vars.max(total_vars);
+        }
+        max_total_vars
+    }
+
+    #[inline]
+    pub(crate) fn compute_max_total_vars(&self, include_committed: bool) -> (usize, usize) {
+        use common::constants::ONEHOT_CHUNK_THRESHOLD_LOG_T;
+        let max_t_any = self.max_padded_trace_length.next_power_of_two();
+        let max_log_t = max_t_any.log_2();
+        let max_log_k_chunk = if max_log_t < ONEHOT_CHUNK_THRESHOLD_LOG_T {
+            4
+        } else {
+            8
+        };
+
+        let max_total_vars = Self::max_total_vars_from_candidates(
+            max_log_k_chunk + max_log_t,
+            self.precommitted_candidate_total_vars(include_committed, true, true),
+        );
+
+        (max_total_vars, max_log_k_chunk)
     }
 }
 
@@ -1840,16 +2369,90 @@ impl<C: JoltCurve> From<BlindfoldSetup<C>> for PedersenGenerators<C> {
     }
 }
 
-#[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Debug, Clone)]
 pub struct JoltVerifierPreprocessing<F, C, PCS>
 where
     F: JoltField,
     C: JoltCurve<F = F>,
     PCS: CommitmentScheme<Field = F>,
 {
+    _curve: std::marker::PhantomData<C>,
     pub generators: PCS::VerifierSetup,
-    pub shared: JoltSharedPreprocessing,
+    pub shared: JoltSharedPreprocessing<PCS>,
     pub blindfold_setup: Option<BlindfoldSetup<C>>,
+}
+
+impl<F, C, PCS> CanonicalSerialize for JoltVerifierPreprocessing<F, C, PCS>
+where
+    F: JoltField,
+    C: JoltCurve<F = F>,
+    PCS: CommitmentScheme<Field = F>,
+    PCS::VerifierSetup: CanonicalSerialize,
+    PCS::Commitment: CanonicalSerialize,
+{
+    fn serialize_with_mode<W: std::io::Write>(
+        &self,
+        mut writer: W,
+        compress: ark_serialize::Compress,
+    ) -> Result<(), ark_serialize::SerializationError> {
+        self.generators.serialize_with_mode(&mut writer, compress)?;
+        self.shared.serialize_with_mode(&mut writer, compress)?;
+        self.blindfold_setup
+            .serialize_with_mode(&mut writer, compress)?;
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
+        self.generators.serialized_size(compress)
+            + self.shared.serialized_size(compress)
+            + self.blindfold_setup.serialized_size(compress)
+    }
+}
+
+impl<F, C, PCS> CanonicalDeserialize for JoltVerifierPreprocessing<F, C, PCS>
+where
+    F: JoltField,
+    C: JoltCurve<F = F>,
+    PCS: CommitmentScheme<Field = F>,
+    PCS::VerifierSetup: CanonicalDeserialize,
+    PCS::Commitment: CanonicalDeserialize,
+{
+    fn deserialize_with_mode<R: std::io::Read>(
+        mut reader: R,
+        compress: ark_serialize::Compress,
+        validate: ark_serialize::Validate,
+    ) -> Result<Self, ark_serialize::SerializationError> {
+        Ok(Self {
+            _curve: std::marker::PhantomData,
+            generators: PCS::VerifierSetup::deserialize_with_mode(&mut reader, compress, validate)?,
+            shared: JoltSharedPreprocessing::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            blindfold_setup: Option::<BlindfoldSetup<C>>::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+        })
+    }
+}
+
+impl<F, C, PCS> ark_serialize::Valid for JoltVerifierPreprocessing<F, C, PCS>
+where
+    F: JoltField,
+    C: JoltCurve<F = F>,
+    PCS: CommitmentScheme<Field = F>,
+    PCS::VerifierSetup: ark_serialize::Valid,
+    PCS::Commitment: ark_serialize::Valid,
+{
+    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
+        self.generators.check()?;
+        self.shared.check()?;
+        self.blindfold_setup.check()?;
+        Ok(())
+    }
 }
 
 impl<F, C, PCS> Serializable for JoltVerifierPreprocessing<F, C, PCS>
@@ -1857,6 +2460,8 @@ where
     F: JoltField,
     C: JoltCurve<F = F>,
     PCS: CommitmentScheme<Field = F>,
+    PCS::VerifierSetup: CanonicalSerialize + CanonicalDeserialize,
+    PCS::Commitment: CanonicalSerialize + CanonicalDeserialize,
 {
 }
 
@@ -1865,6 +2470,8 @@ where
     F: JoltField,
     C: JoltCurve<F = F>,
     PCS: CommitmentScheme<Field = F>,
+    PCS::VerifierSetup: CanonicalSerialize + CanonicalDeserialize,
+    PCS::Commitment: CanonicalSerialize + CanonicalDeserialize,
 {
     pub fn save_to_target_dir(&self, target_dir: &str) -> std::io::Result<()> {
         let filename = Path::new(target_dir).join("jolt_verifier_preprocessing.dat");
@@ -1889,11 +2496,13 @@ impl<F: JoltField, C: JoltCurve<F = F>, PCS: CommitmentScheme<Field = F>>
 {
     #[tracing::instrument(skip_all, name = "JoltVerifierPreprocessing::new")]
     pub fn new(
-        shared: JoltSharedPreprocessing,
+        mut shared: JoltSharedPreprocessing<PCS>,
         generators: PCS::VerifierSetup,
         blindfold_setup: Option<BlindfoldSetup<C>>,
     ) -> Self {
+        shared.program = shared.program.to_verifier_program();
         Self {
+            _curve: std::marker::PhantomData,
             generators,
             shared,
             blindfold_setup,

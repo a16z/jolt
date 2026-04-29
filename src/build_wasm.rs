@@ -14,6 +14,7 @@ use jolt_core::{
     host::Program,
     poly::commitment::dory::DoryCommitmentScheme,
     zkvm::{
+        program::ProgramPreprocessing,
         prover::JoltProverPreprocessing,
         verifier::{JoltSharedPreprocessing, JoltVerifierPreprocessing},
         Serializable,
@@ -28,16 +29,16 @@ struct FunctionAttributes {
 }
 
 fn preprocess_and_save(func_name: &str, attributes: &Attributes, is_std: bool) -> Result<()> {
-    let mut program = Program::new("guest");
+    let mut host_program = Program::new("guest");
 
-    program.set_func(func_name);
-    program.set_std(is_std);
-    program.set_heap_size(attributes.heap_size);
-    program.set_stack_size(attributes.stack_size);
-    program.set_max_input_size(attributes.max_input_size);
-    program.set_max_output_size(attributes.max_output_size);
+    host_program.set_func(func_name);
+    host_program.set_std(is_std);
+    host_program.set_heap_size(attributes.heap_size);
+    host_program.set_stack_size(attributes.stack_size);
+    host_program.set_max_input_size(attributes.max_input_size);
+    host_program.set_max_output_size(attributes.max_output_size);
 
-    let (bytecode, memory_init, program_size, e_entry) = program.decode();
+    let (bytecode, memory_init, program_size, _e_entry) = host_program.decode();
 
     let memory_config = MemoryConfig {
         max_input_size: attributes.max_input_size,
@@ -50,13 +51,12 @@ fn preprocess_and_save(func_name: &str, attributes: &Attributes, is_std: bool) -
     };
     let memory_layout = MemoryLayout::new(&memory_config);
 
+    let preprocessed_program = ProgramPreprocessing::preprocess(bytecode, memory_init)?;
     let shared = JoltSharedPreprocessing::new(
-        bytecode,
+        preprocessed_program,
         memory_layout,
-        memory_init,
         attributes.max_trace_length as usize,
-        e_entry,
-    )?;
+    );
 
     let prover_preprocessing =
         JoltProverPreprocessing::<Fr, Bn254Curve, DoryCommitmentScheme>::new(shared);
@@ -71,7 +71,7 @@ fn preprocess_and_save(func_name: &str, attributes: &Attributes, is_std: bool) -
     let mut file = File::create(verifier_path)?;
     file.write_all(&verifier_bytes)?;
 
-    let elf_bytes = program
+    let elf_bytes = host_program
         .get_elf_contents()
         .expect("ELF not found after decode");
     let elf_path = target_dir.join(format!("{func_name}.elf"));

@@ -6,6 +6,7 @@ use crate::poly::commitment::commitment_scheme::{StreamingCommitmentScheme, ZkEv
 use crate::poly::commitment::dory::DoryCommitmentScheme;
 use crate::transcripts::Transcript;
 use crate::zkvm::bytecode::PreprocessingError;
+use crate::zkvm::program::ProgramPreprocessing;
 use crate::zkvm::proof_serialization::JoltProof;
 use crate::zkvm::prover::JoltProverPreprocessing;
 use crate::zkvm::ProverDebugInfo;
@@ -23,18 +24,14 @@ pub fn preprocess(
 > {
     use crate::zkvm::verifier::JoltSharedPreprocessing;
 
-    let (bytecode, memory_init, program_size, e_entry) = guest.decode();
+    let (bytecode, memory_init, program_size, _e_entry) = guest.decode();
 
     let mut memory_config = guest.memory_config;
     memory_config.program_size = Some(program_size);
     let memory_layout = MemoryLayout::new(&memory_config);
-    let shared_preprocessing = JoltSharedPreprocessing::new(
-        bytecode,
-        memory_layout,
-        memory_init,
-        max_trace_length,
-        e_entry,
-    )?;
+    let program = ProgramPreprocessing::preprocess(bytecode, memory_init)?;
+    let shared_preprocessing =
+        JoltSharedPreprocessing::new(program, memory_layout, max_trace_length);
     Ok(JoltProverPreprocessing::new(shared_preprocessing))
 }
 

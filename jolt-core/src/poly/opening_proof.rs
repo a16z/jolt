@@ -7,7 +7,10 @@
 
 use crate::{
     poly::rlc_polynomial::{RLCPolynomial, RLCStreamingData, TraceSource},
-    zkvm::{claim_reductions::AdviceKind, config::OneHotParams},
+    zkvm::{
+        claim_reductions::{AdviceKind, PrecommittedPolynomial},
+        config::OneHotParams,
+    },
 };
 use allocative::Allocative;
 use num_derive::FromPrimitive;
@@ -151,10 +154,16 @@ pub enum SumcheckId {
     RegistersClaimReduction,
     RegistersReadWriteChecking,
     RegistersValEvaluation,
+    BytecodeReadRafAddressPhase,
     BytecodeReadRaf,
+    BooleanityAddressPhase,
     Booleanity,
     AdviceClaimReductionCyclePhase,
     AdviceClaimReduction,
+    BytecodeClaimReductionCyclePhase,
+    BytecodeClaimReduction,
+    ProgramImageClaimReductionCyclePhase,
+    ProgramImageClaimReduction,
     IncClaimReduction,
     HammingWeightClaimReduction,
 }
@@ -327,7 +336,7 @@ pub struct DoryOpeningState<F: JoltField> {
 impl<F: JoltField> DoryOpeningState<F> {
     /// Build streaming RLC polynomial from this state.
     /// Streams directly from trace - no witness regeneration needed.
-    /// Advice polynomials are passed separately (not streamed from trace).
+    /// Precommitted polynomials are passed separately (not streamed from trace).
     #[tracing::instrument(skip_all)]
     pub fn build_streaming_rlc<PCS: CommitmentScheme<Field = F>>(
         &self,
@@ -335,7 +344,7 @@ impl<F: JoltField> DoryOpeningState<F> {
         trace_source: TraceSource,
         rlc_streaming_data: Arc<RLCStreamingData>,
         mut opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
-        advice_polys: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
+        precommitted_polys: HashMap<CommittedPolynomial, PrecommittedPolynomial<F>>,
     ) -> (MultilinearPolynomial<F>, PCS::OpeningProofHint) {
         // Accumulate gamma coefficients per polynomial
         let mut rlc_map = BTreeMap::new();
@@ -352,7 +361,7 @@ impl<F: JoltField> DoryOpeningState<F> {
             trace_source,
             poly_ids.clone(),
             &coeffs,
-            advice_polys,
+            precommitted_polys,
         ));
 
         let hints: Vec<PCS::OpeningProofHint> = rlc_map
@@ -621,6 +630,10 @@ where
     pub fn take_pending_claim_ids(&mut self) -> Vec<OpeningId> {
         std::mem::take(&mut self.pending_claim_ids)
     }
+
+    pub fn pending_claim_ids_debug(&self) -> &[OpeningId] {
+        &self.pending_claim_ids
+    }
 }
 
 impl<F> Default for VerifierOpeningAccumulator<F>
@@ -851,39 +864,43 @@ where
     pub fn take_pending_claim_ids(&mut self) -> Vec<OpeningId> {
         std::mem::take(&mut self.pending_claim_ids)
     }
+
+    pub fn pending_claim_ids_debug(&self) -> &[OpeningId] {
+        &self.pending_claim_ids
+    }
 }
 
-/// Computes the Lagrange factor for embedding a smaller "advice" polynomial into the top-left
-/// block of the main Dory matrix.
+/// Computes the Lagrange factor for embedding a smaller polynomial into the top-left block of
+/// the main Dory matrix.
 ///
-/// Advice polynomials have fewer variables than main polynomials. To batch them together,
-/// we embed advice in the top-left corner of the larger matrix and multiply by a Lagrange
+/// Embedded polynomials can have fewer variables than main polynomials. To batch them together,
+/// we embed them in the top-left corner of the larger matrix and multiply by a Lagrange
 /// selector that is 1 on that block and 0 elsewhere:
 ///
 /// ```text
-/// Lagrange factor = ∏_{r ∈ opening_point, r ∉ advice_opening_point} (1 - r)
+/// Lagrange factor = ∏_{r ∈ opening_point, r ∉ embedded_opening_point} (1 - r)
 /// ```
 ///
 /// # Arguments
 /// - `opening_point`: The unified opening point for the Dory opening proof
-/// - `advice_opening_point`: The opening point for the advice polynomial
+/// - `embedded_opening_point`: The opening point for the embedded polynomial
 ///
 /// # Returns
 /// The Lagrange factor as a field element
-pub fn compute_advice_lagrange_factor<F: JoltField>(
+pub fn compute_lagrange_factor<F: JoltField>(
     opening_point: &[F::Challenge],
-    advice_opening_point: &[F::Challenge],
+    embedded_opening_point: &[F::Challenge],
 ) -> F {
     #[cfg(test)]
     {
-        for r in advice_opening_point.iter() {
+        for r in embedded_opening_point.iter() {
             assert!(opening_point.contains(r));
         }
     }
     opening_point
         .iter()
         .map(|r| {
-            if advice_opening_point.contains(r) {
+            if embedded_opening_point.contains(r) {
                 F::one()
             } else {
                 F::one() - r

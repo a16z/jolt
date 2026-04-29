@@ -3,17 +3,31 @@ use tracing::info;
 
 pub fn main() {
     tracing_subscriber::fmt::init();
+    let bytecode_chunk = std::env::args()
+        .skip_while(|arg| arg != "--committed-bytecode")
+        .nth(1)
+        .map(|arg| arg.parse().unwrap());
 
     let target_dir = "/tmp/jolt-guest-targets";
     let mut program = guest::compile_sha2_chain(target_dir);
 
-    let shared_preprocessing = guest::preprocess_shared_sha2_chain(&mut program).unwrap();
-    let prover_preprocessing = guest::preprocess_prover_sha2_chain(shared_preprocessing.clone());
-    let verifier_preprocessing = guest::preprocess_verifier_sha2_chain(
-        shared_preprocessing,
-        prover_preprocessing.generators.to_verifier_setup(),
-        None,
-    );
+    let (prover_preprocessing, verifier_preprocessing) = if let Some(chunk_count) = bytecode_chunk {
+        let prover_preprocessing =
+            guest::preprocess_committed_sha2_chain(&mut program, chunk_count).unwrap();
+        let verifier_preprocessing =
+            guest::verifier_preprocessing_from_prover_sha2_chain(&prover_preprocessing);
+        (prover_preprocessing, verifier_preprocessing)
+    } else {
+        let shared_preprocessing = guest::preprocess_shared_sha2_chain(&mut program).unwrap();
+        let prover_preprocessing =
+            guest::preprocess_prover_sha2_chain(shared_preprocessing.clone());
+        let verifier_preprocessing = guest::preprocess_verifier_sha2_chain(
+            shared_preprocessing,
+            prover_preprocessing.generators.to_verifier_setup(),
+            None,
+        );
+        (prover_preprocessing, verifier_preprocessing)
+    };
 
     let prove_sha2_chain = guest::build_prover_sha2_chain(program, prover_preprocessing);
     let verify_sha2_chain = guest::build_verifier_sha2_chain(verifier_preprocessing);
