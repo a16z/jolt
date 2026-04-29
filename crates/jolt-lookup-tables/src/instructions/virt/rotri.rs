@@ -7,7 +7,7 @@ impl_lookup_table!(VirtualRotri, Some(VirtualROTR));
 
 impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualRotri<C> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
-        (self.0.rs1_val().unwrap_or(0), self.0.imm())
+        (self.0.rs1_val().unwrap_or(0), self.0.instruction().imm())
     }
 
     fn to_lookup_output(&self) -> u64 {

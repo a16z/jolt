@@ -18,8 +18,8 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for Auipc<C> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
         let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
         (
-            self.0.address() & mask,
-            self.0.imm(),
+            self.0.instruction().address() & mask,
+            self.0.instruction().imm(),
         )
     }
 

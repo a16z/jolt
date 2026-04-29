@@ -19,7 +19,7 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for Addi<C> {
         let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
         (
             self.0.rs1_val().unwrap_or(0) & mask,
-            self.0.imm() & mask as i128,
+            self.0.instruction().imm() & mask as i128,
         )
     }
 

@@ -7,7 +7,7 @@ impl_lookup_table!(Pow2IW, Some(Pow2W));
 
 impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for Pow2IW<C> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
-        (0, self.0.imm())
+        (0, self.0.instruction().imm())
     }
 
     fn to_lookup_operands(&self) -> (u64, u128) {

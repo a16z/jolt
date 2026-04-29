@@ -12,11 +12,11 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for Lui<C> {
 
     fn to_instruction_inputs(&self) -> (u64, i128) {
         let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
-        (0, self.0.imm() & mask as i128)
+        (0, self.0.instruction().imm() & mask as i128)
     }
 
     fn to_lookup_output(&self) -> u64 {
         let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
-        self.0.imm() as u64 & mask
+        self.0.instruction().imm() as u64 & mask
     }
 }

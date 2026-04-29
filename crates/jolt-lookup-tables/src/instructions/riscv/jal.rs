@@ -18,8 +18,8 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for Jal<C> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
         let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
         (
-            self.0.address() & mask,
-            self.0.imm() & mask as i128,
+            self.0.instruction().address() & mask,
+            self.0.instruction().imm() & mask as i128,
         )
     }
 
