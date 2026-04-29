@@ -138,6 +138,16 @@ pub struct ConstraintCse {
     pub bindings: Vec<NodeId>,
 }
 
+/// Global CSE bindings: nodes shared across ≥2 constraints, hoisted to a single
+/// computation block. Avoids re-computing expensive nodes (especially TranscriptHash
+/// chains) independently in each constraint function.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GlobalCse {
+    /// NodeIds hoisted globally, in topological (post-order) order.
+    /// These become `gcse[i]` in generated code.
+    pub bindings: Vec<NodeId>,
+}
+
 /// Complete bundle of AST data for transpilation.
 ///
 /// This structure contains everything needed to:
@@ -162,6 +172,10 @@ pub struct ConstraintCse {
 pub struct AstBundle {
     /// The node arena - all nodes in the AST(s).
     pub nodes: Vec<Node>,
+    /// Global CSE bindings: nodes shared across ≥2 constraints.
+    /// Computed by `run_global_cse()` before `run_cse()`.
+    #[serde(default)]
+    pub global_cse: GlobalCse,
     /// Per-constraint CSE bindings, indexed by constraint index.
     /// Each constraint has its own isolated CSE context.
     #[serde(default)]
@@ -177,6 +191,7 @@ impl AstBundle {
     pub fn new() -> Self {
         Self {
             nodes: Vec::new(),
+            global_cse: GlobalCse::default(),
             constraint_cse: Vec::new(),
             constraints: Vec::new(),
             inputs: Vec::new(),
@@ -279,42 +294,162 @@ impl AstBundle {
         self.nodes = guard.clone();
     }
 
+    /// Run global CSE: identify nodes shared across ≥2 constraints and hoist them.
+    ///
+    /// This finds `TranscriptHash` nodes (and their dependencies) that appear in
+    /// multiple constraint subtrees. These are computed once in a global block
+    /// instead of being duplicated in each constraint function.
+    ///
+    /// Call this after `snapshot_arena()` and before `run_cse()`.
+    pub fn run_global_cse(&mut self) {
+        // Phase 1: For each constraint, collect the set of reachable NodeIds
+        let mut node_to_constraints: HashMap<NodeId, Vec<usize>> = HashMap::new();
+        for (idx, constraint) in self.constraints.iter().enumerate() {
+            let refs = self.count_refs(constraint.root);
+            for node_id in refs.keys() {
+                node_to_constraints.entry(*node_id).or_default().push(idx);
+            }
+            // Also include EqualNode targets
+            if let Assertion::EqualNode(other_id) = &constraint.assertion {
+                let other_refs = self.count_refs(*other_id);
+                for node_id in other_refs.keys() {
+                    node_to_constraints.entry(*node_id).or_default().push(idx);
+                }
+            }
+        }
+
+        // Phase 2: Find TranscriptHash nodes that appear in ≥2 distinct constraints
+        let mut global_nodes: HashSet<NodeId> = HashSet::new();
+        for (&node_id, constraints) in &node_to_constraints {
+            // Deduplicate constraint indices
+            let mut unique: Vec<usize> = constraints.clone();
+            unique.sort_unstable();
+            unique.dedup();
+            if unique.len() >= 2 && matches!(self.nodes[node_id], Node::TranscriptHash(..)) {
+                global_nodes.insert(node_id);
+            }
+        }
+
+        if global_nodes.is_empty() {
+            self.global_cse = GlobalCse::default();
+            return;
+        }
+
+        // Phase 3: Include dependencies of global nodes that are also multi-constraint.
+        // Walk children of each global node; if a child is in ≥2 constraints and is
+        // non-trivial (not an atom), include it too. This captures the full chain.
+        let mut expanded = global_nodes.clone();
+        let mut worklist: Vec<NodeId> = global_nodes.into_iter().collect();
+        while let Some(node_id) = worklist.pop() {
+            for child_id in self.node_children(node_id) {
+                if expanded.contains(&child_id) {
+                    continue;
+                }
+                if matches!(self.nodes[child_id], Node::Atom(_)) {
+                    continue;
+                }
+                // Check if child is in ≥2 distinct constraints
+                if let Some(constraints) = node_to_constraints.get(&child_id) {
+                    let mut unique: Vec<usize> = constraints.clone();
+                    unique.sort_unstable();
+                    unique.dedup();
+                    if unique.len() >= 2 {
+                        expanded.insert(child_id);
+                        worklist.push(child_id);
+                    }
+                }
+            }
+        }
+
+        // Phase 4: Topological sort (post-order) of the expanded set
+        // We need a post-order that respects dependencies within the global set.
+        // Use a multi-root post-order traversal restricted to the expanded set.
+        let bindings = self.topological_sort_subset(&expanded);
+
+        self.global_cse = GlobalCse { bindings };
+    }
+
+    /// Topological sort a subset of nodes in post-order (children before parents).
+    fn topological_sort_subset(&self, subset: &HashSet<NodeId>) -> Vec<NodeId> {
+        let mut result = Vec::new();
+        let mut visited: HashSet<NodeId> = HashSet::new();
+        let mut stack: Vec<(NodeId, bool)> = Vec::new();
+
+        // Start from all nodes in the subset
+        for &node_id in subset {
+            if visited.contains(&node_id) {
+                continue;
+            }
+            stack.push((node_id, false));
+
+            while let Some((nid, children_processed)) = stack.pop() {
+                if children_processed {
+                    if subset.contains(&nid) {
+                        result.push(nid);
+                    }
+                    continue;
+                }
+
+                if visited.contains(&nid) {
+                    continue;
+                }
+                visited.insert(nid);
+
+                stack.push((nid, true));
+
+                // Only traverse children that are in the subset
+                for child_id in self.node_children(nid).into_iter().rev() {
+                    if subset.contains(&child_id) && !visited.contains(&child_id) {
+                        stack.push((child_id, false));
+                    }
+                }
+            }
+        }
+
+        result
+    }
+
     /// Run CSE (Common Subexpression Elimination) on all constraints.
     ///
     /// This performs ref-counting CSE: any node referenced more than once
     /// within a constraint's expression tree is hoisted to a named variable.
     ///
-    /// Each constraint gets isolated CSE bindings (stored in `constraint_cse`).
-    /// This prevents aliasing bugs where structurally identical nodes from
-    /// different constraints would incorrectly share variables.
+    /// Nodes already in `global_cse` are excluded (they're computed globally).
     ///
-    /// Call this after `snapshot_arena()` and before code generation.
+    /// Call this after `run_global_cse()` and before code generation.
     ///
     /// # Example
     /// ```ignore
     /// bundle.snapshot_arena();
+    /// bundle.run_global_cse();
     /// bundle.run_cse();
     /// // Now generate code. CSE bindings are pre-computed
     /// ```
     pub fn run_cse(&mut self) {
+        let global_set: HashSet<NodeId> = self.global_cse.bindings.iter().copied().collect();
         self.constraint_cse = self
             .constraints
             .iter()
-            .map(|constraint| self.compute_cse_for_constraint(constraint.root))
+            .map(|constraint| self.compute_cse_for_constraint(constraint.root, &global_set))
             .collect();
     }
 
     /// Compute CSE bindings for a single constraint.
     ///
     /// Uses ref-counting: nodes with ref_count > 1 are hoisted.
-    fn compute_cse_for_constraint(&self, root: NodeId) -> ConstraintCse {
+    /// Nodes in `global_set` are excluded (already hoisted globally).
+    fn compute_cse_for_constraint(
+        &self,
+        root: NodeId,
+        global_set: &HashSet<NodeId>,
+    ) -> ConstraintCse {
         // Phase 1: Count references to each node
         let ref_counts = self.count_refs(root);
 
         // Phase 2: Build post-order traversal and collect hoisted nodes
         let post_order = self.build_post_order(root);
 
-        // Phase 3: Collect nodes that should be hoisted (ref_count > 1, not atoms)
+        // Phase 3: Collect nodes that should be hoisted (ref_count > 1, not atoms, not global)
         let mut bindings = Vec::new();
 
         for node_id in post_order {
@@ -322,6 +457,11 @@ impl AstBundle {
 
             // Skip atoms, since they're always inlined
             if matches!(self.nodes[node_id], Node::Atom(_)) {
+                continue;
+            }
+
+            // Skip nodes already in global CSE
+            if global_set.contains(&node_id) {
                 continue;
             }
 
