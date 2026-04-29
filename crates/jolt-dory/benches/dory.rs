@@ -5,10 +5,10 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use jolt_dory::{DoryScheme, DoryVerifierSetup};
 use jolt_field::{Field, Fr};
 use jolt_openings::{CommitmentScheme, StreamingCommitment, ZkOpeningScheme};
-use jolt_poly::Polynomial;
+use jolt_poly::{OneHotPolynomial, Polynomial};
 use jolt_transcript::Transcript;
 use rand_chacha::ChaCha20Rng;
-use rand_core::SeedableRng;
+use rand_core::{RngCore, SeedableRng};
 
 fn bench_setup_prover(c: &mut Criterion) {
     let mut group = c.benchmark_group("setup_prover");
@@ -281,10 +281,34 @@ fn bench_verify_zk(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_commit_one_hot(c: &mut Criterion) {
+    let mut group = c.benchmark_group("commit_one_hot");
+    for num_vars in [4, 8, 12] {
+        let setup = DoryScheme::setup_prover(num_vars);
+        let k = 1usize << (num_vars / 2);
+        let num_rows = 1usize << (num_vars - num_vars / 2);
+        group.bench_with_input(BenchmarkId::from_parameter(num_vars), &num_vars, |b, _| {
+            b.iter_batched(
+                || {
+                    let mut rng = ChaCha20Rng::seed_from_u64(0);
+                    let indices: Vec<Option<u8>> = (0..num_rows)
+                        .map(|_| Some((rng.next_u32() as usize % k) as u8))
+                        .collect();
+                    OneHotPolynomial::new(k, indices)
+                },
+                |poly| DoryScheme::commit(&poly, &setup),
+                criterion::BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_setup_prover,
     bench_commit,
+    bench_commit_one_hot,
     bench_open,
     bench_verify,
     bench_streaming_commit,
