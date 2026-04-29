@@ -10,7 +10,7 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for AssertHalfwordAlignm
         let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
         (
             self.0.rs1_val().unwrap_or(0) & mask,
-            (self.0.instruction().imm() as u64 & mask) as i128,
+            self.0.instruction().imm(),
         )
     }
 
@@ -33,10 +33,15 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for AssertHalfwordAlignm
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::materialize_entry_test;
+    use crate::{instruction_inputs_match_constraint_test, materialize_entry_test};
 
     #[test]
     fn materialize_entry_virtualasserthalfwordalignment() {
         materialize_entry_test!(AssertHalfwordAlignment, tracer::instruction::virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment);
+    }
+
+    #[test]
+    fn instruction_inputs_match_constraint_virtualasserthalfwordalignment() {
+        instruction_inputs_match_constraint_test!(AssertHalfwordAlignment, tracer::instruction::virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment);
     }
 }

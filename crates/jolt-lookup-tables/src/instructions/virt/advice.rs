@@ -28,10 +28,15 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualAdvice<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::materialize_entry_test;
+    use crate::{instruction_inputs_match_constraint_test, materialize_entry_test};
 
     #[test]
     fn materialize_entry_virtualadvice() {
         materialize_entry_test!(VirtualAdvice, tracer::instruction::virtual_advice::VirtualAdvice);
+    }
+
+    #[test]
+    fn instruction_inputs_match_constraint_virtualadvice() {
+        instruction_inputs_match_constraint_test!(VirtualAdvice, tracer::instruction::virtual_advice::VirtualAdvice);
     }
 }

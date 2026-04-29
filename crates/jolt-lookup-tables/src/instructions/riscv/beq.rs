@@ -23,10 +23,15 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for Beq<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::materialize_entry_test;
+    use crate::{instruction_inputs_match_constraint_test, materialize_entry_test};
 
     #[test]
     fn materialize_entry_beq() {
         materialize_entry_test!(Beq, tracer::instruction::beq::BEQ);
+    }
+
+    #[test]
+    fn instruction_inputs_match_constraint_beq() {
+        instruction_inputs_match_constraint_test!(Beq, tracer::instruction::beq::BEQ);
     }
 }

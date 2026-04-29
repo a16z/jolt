@@ -34,10 +34,15 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for AssertMulUNoOverflow
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::materialize_entry_test;
+    use crate::{instruction_inputs_match_constraint_test, materialize_entry_test};
 
     #[test]
     fn materialize_entry_virtualassertmulunooverflow() {
         materialize_entry_test!(AssertMulUNoOverflow, tracer::instruction::virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow);
+    }
+
+    #[test]
+    fn instruction_inputs_match_constraint_virtualassertmulunooverflow() {
+        instruction_inputs_match_constraint_test!(AssertMulUNoOverflow, tracer::instruction::virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow);
     }
 }

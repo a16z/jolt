@@ -28,10 +28,15 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualChangeDivisor
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::materialize_entry_test;
+    use crate::{instruction_inputs_match_constraint_test, materialize_entry_test};
 
     #[test]
     fn materialize_entry_virtualchangedivisorw() {
         materialize_entry_test!(VirtualChangeDivisorW, tracer::instruction::virtual_change_divisor_w::VirtualChangeDivisorW);
+    }
+
+    #[test]
+    fn instruction_inputs_match_constraint_virtualchangedivisorw() {
+        instruction_inputs_match_constraint_test!(VirtualChangeDivisorW, tracer::instruction::virtual_change_divisor_w::VirtualChangeDivisorW);
     }
 }

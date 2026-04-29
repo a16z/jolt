@@ -23,10 +23,15 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for SltU<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::materialize_entry_test;
+    use crate::{instruction_inputs_match_constraint_test, materialize_entry_test};
 
     #[test]
     fn materialize_entry_sltu() {
         materialize_entry_test!(SltU, tracer::instruction::sltu::SLTU);
+    }
+
+    #[test]
+    fn instruction_inputs_match_constraint_sltu() {
+        instruction_inputs_match_constraint_test!(SltU, tracer::instruction::sltu::SLTU);
     }
 }

@@ -33,10 +33,15 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for Jal<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::materialize_entry_test;
+    use crate::{instruction_inputs_match_constraint_test, materialize_entry_test};
 
     #[test]
     fn materialize_entry_jal() {
         materialize_entry_test!(Jal, tracer::instruction::jal::JAL);
+    }
+
+    #[test]
+    fn instruction_inputs_match_constraint_jal() {
+        instruction_inputs_match_constraint_test!(Jal, tracer::instruction::jal::JAL);
     }
 }

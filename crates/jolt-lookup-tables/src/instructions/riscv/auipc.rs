@@ -33,10 +33,15 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for Auipc<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::materialize_entry_test;
+    use crate::{instruction_inputs_match_constraint_test, materialize_entry_test};
 
     #[test]
     fn materialize_entry_auipc() {
         materialize_entry_test!(Auipc, tracer::instruction::auipc::AUIPC);
+    }
+
+    #[test]
+    fn instruction_inputs_match_constraint_auipc() {
+        instruction_inputs_match_constraint_test!(Auipc, tracer::instruction::auipc::AUIPC);
     }
 }

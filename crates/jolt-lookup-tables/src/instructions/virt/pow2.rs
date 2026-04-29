@@ -29,10 +29,15 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for Pow2<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::materialize_entry_test;
+    use crate::{instruction_inputs_match_constraint_test, materialize_entry_test};
 
     #[test]
     fn materialize_entry_virtualpow2() {
         materialize_entry_test!(Pow2, tracer::instruction::virtual_pow2::VirtualPow2);
+    }
+
+    #[test]
+    fn instruction_inputs_match_constraint_virtualpow2() {
+        instruction_inputs_match_constraint_test!(Pow2, tracer::instruction::virtual_pow2::VirtualPow2);
     }
 }

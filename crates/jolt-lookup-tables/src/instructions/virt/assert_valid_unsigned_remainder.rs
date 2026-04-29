@@ -23,10 +23,15 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for AssertValidUnsignedR
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::materialize_entry_test;
+    use crate::{instruction_inputs_match_constraint_test, materialize_entry_test};
 
     #[test]
     fn materialize_entry_virtualassertvalidunsignedremainder() {
         materialize_entry_test!(AssertValidUnsignedRemainder, tracer::instruction::virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder);
+    }
+
+    #[test]
+    fn instruction_inputs_match_constraint_virtualassertvalidunsignedremainder() {
+        instruction_inputs_match_constraint_test!(AssertValidUnsignedRemainder, tracer::instruction::virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder);
     }
 }

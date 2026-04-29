@@ -24,10 +24,15 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for AndI<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::materialize_entry_test;
+    use crate::{instruction_inputs_match_constraint_test, materialize_entry_test};
 
     #[test]
     fn materialize_entry_andi() {
         materialize_entry_test!(AndI, tracer::instruction::andi::ANDI);
+    }
+
+    #[test]
+    fn instruction_inputs_match_constraint_andi() {
+        instruction_inputs_match_constraint_test!(AndI, tracer::instruction::andi::ANDI);
     }
 }

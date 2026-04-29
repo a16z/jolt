@@ -25,10 +25,15 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualSra<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::materialize_entry_test;
+    use crate::{instruction_inputs_match_constraint_test, materialize_entry_test};
 
     #[test]
     fn materialize_entry_virtualsra() {
         materialize_entry_test!(VirtualSra, tracer::instruction::virtual_sra::VirtualSRA);
+    }
+
+    #[test]
+    fn instruction_inputs_match_constraint_virtualsra() {
+        instruction_inputs_match_constraint_test!(VirtualSra, tracer::instruction::virtual_sra::VirtualSRA);
     }
 }

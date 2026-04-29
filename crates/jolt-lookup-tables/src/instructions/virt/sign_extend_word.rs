@@ -35,10 +35,15 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualSignExtendWor
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::materialize_entry_test;
+    use crate::{instruction_inputs_match_constraint_test, materialize_entry_test};
 
     #[test]
     fn materialize_entry_virtualsignextendword() {
         materialize_entry_test!(VirtualSignExtendWord, tracer::instruction::virtual_sign_extend_word::VirtualSignExtendWord);
+    }
+
+    #[test]
+    fn instruction_inputs_match_constraint_virtualsignextendword() {
+        instruction_inputs_match_constraint_test!(VirtualSignExtendWord, tracer::instruction::virtual_sign_extend_word::VirtualSignExtendWord);
     }
 }

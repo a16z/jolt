@@ -10,7 +10,7 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for AssertWordAlignment<
         let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
         (
             self.0.rs1_val().unwrap_or(0) & mask,
-            (self.0.instruction().imm() as u64 & mask) as i128,
+            self.0.instruction().imm(),
         )
     }
 
@@ -33,10 +33,15 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for AssertWordAlignment<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::materialize_entry_test;
+    use crate::{instruction_inputs_match_constraint_test, materialize_entry_test};
 
     #[test]
     fn materialize_entry_virtualassertwordalignment() {
         materialize_entry_test!(AssertWordAlignment, tracer::instruction::virtual_assert_word_alignment::VirtualAssertWordAlignment);
+    }
+
+    #[test]
+    fn instruction_inputs_match_constraint_virtualassertwordalignment() {
+        instruction_inputs_match_constraint_test!(AssertWordAlignment, tracer::instruction::virtual_assert_word_alignment::VirtualAssertWordAlignment);
     }
 }

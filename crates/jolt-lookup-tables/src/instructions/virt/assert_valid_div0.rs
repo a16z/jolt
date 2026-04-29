@@ -28,10 +28,15 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for AssertValidDiv0<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::materialize_entry_test;
+    use crate::{instruction_inputs_match_constraint_test, materialize_entry_test};
 
     #[test]
     fn materialize_entry_virtualassertvaliddiv0() {
         materialize_entry_test!(AssertValidDiv0, tracer::instruction::virtual_assert_valid_div0::VirtualAssertValidDiv0);
+    }
+
+    #[test]
+    fn instruction_inputs_match_constraint_virtualassertvaliddiv0() {
+        instruction_inputs_match_constraint_test!(AssertValidDiv0, tracer::instruction::virtual_assert_valid_div0::VirtualAssertValidDiv0);
     }
 }
