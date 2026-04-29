@@ -49,39 +49,53 @@ $$
 Write $f = a_0 + a_1\sigma$, where $a_i \in \mathbb{F}_{q^6}$, we have 
 
 $$
-f^{q^6 - 1} = \frac{(a_0 + a_1\sigma)^{q^6}}{a_0 + a_1\sigma} = \frac{(a_0 - a_1\sigma)}{a_0 + a_1\sigma} = \frac{\tilde{a} - \sigma}{\tilde{a} + \sigma}, 
+f^{q^6 - 1} = \frac{(a_0 + a_1\sigma)^{q^6}}{a_0 + a_1\sigma} = \frac{(a_0 - a_1\sigma)}{a_0 + a_1\sigma} = \frac{\hat{a} - \sigma}{\hat{a} + \sigma}, 
 $$
 
-where $\tilde{a} = \frac{a_0}{a_1}$ and the second equality follows since the $q^2$-power map generates the Galois group of the quadratic extension $\mathbb{F}_{q^{2}}(\sigma)/\mathbb{F}_{q^2}$ inside $\mathbb{F}_{q^{12}}$, so in particular $\sigma^{q^6} = -\sigma$. Hence
+where $\hat{a} = \frac{a_0}{a_1}$ and the second equality follows since the $q^2$-power map generates the Galois group of the quadratic extension $\mathbb{F}_{q^{2}}(\sigma)/\mathbb{F}_{q^2}$ inside $\mathbb{F}_{q^{12}}$, so in particular $\sigma^{q^6} = -\sigma$. Hence
 
 $$
-(f^{q^6 - 1})^{q^2 + 1} = \frac{\tilde{a} - \sigma}{\tilde{a} + \sigma}(\frac{\tilde{a} - \sigma}{\tilde{a} + \sigma})^{q^2} = \frac{\tilde{a} - \sigma}{\tilde{a}^{q^2} + \sigma}\cdot\frac{\tilde{a} + \sigma}{\tilde{a}^{q^2} - \sigma} = \frac{\tilde{a} - \sigma}{\tilde{a} + \sigma}\cdot\frac{-\tilde{a}^{q^2} - \sigma}{-\tilde{a}^{q^2} + \sigma},
+(f^{q^6 - 1})^{q^2 + 1} = \frac{\hat{a} - \sigma}{\hat{a} + \sigma}(\frac{\hat{a} - \sigma}{\hat{a} + \sigma})^{q^2} = \frac{\hat{a} - \sigma}{\hat{a}^{q^2} + \sigma}\cdot\frac{\hat{a} + \sigma}{\hat{a}^{q^2} - \sigma} = \frac{\hat{a} - \sigma}{\hat{a} + \sigma}\cdot\frac{-\hat{a}^{q^2} - \sigma}{-\hat{a}^{q^2} + \sigma},
 $$
 which simplifies to 
 $$
-(f^{q^6 - 1})^{q^2 + 1} = \frac{\tilde{\beta} - \sigma}{\tilde{\beta} + \sigma},
+(f^{q^6 - 1})^{q^2 + 1} = \frac{\hat{\beta} - \sigma}{\hat{\beta} + \sigma},
 $$
 where 
 $$
-\tilde{\beta} = \frac{-\tilde{a}^{q+1} + \xi}{-\tilde{a}^q + \tilde{a}} \in \mathbb{F}_{q^6}.
+\hat{\beta} = \frac{-\hat{a}^{q+1} + \xi}{-\hat{a}^q + \hat{a}} \in \mathbb{F}_{q^6}.
 $$
 
+## Homomorphic compression to $\mathbb{F}_{q^6}$
+
+For an element $x$ in $\mathbb{F}_{q^{12}}$ such that $x = \frac{\hat{x} - \sigma}{\hat{x} + \sigma}$, we have
+$$
+ab = \frac{\hat{ab} - \sigma}{\hat{ab} + \sigma} = \frac{\hat{a} - \sigma}{\hat{a} + \sigma}\frac{\hat{b} - \sigma}{\hat{b} + \sigma}
+$$
+where
+$$
+\widehat{\alpha\beta} = \frac{\hat{\alpha}\hat{\beta} + \xi}{\hat{\alpha} + \hat{\beta}}.
+$$
+
+> ⚠️ Note: $\widehat{\alpha\beta} \neq \hat{\alpha}\cdot\hat{\beta}$ in $\mathbb{F}_{q^6}$.
 
 ## Compression to two elements in $\mathbb{F}_{q^2}$
 
-We can write $\tilde{\beta} = c_0 + c_1\tau + c_2\tau^2$, where recall $\tau = \xi^{\frac{1}{3}}$, then we have
+We can write $\hat{\beta} = c_0 + c_1\tau + c_2\tau^2$, where recall $\tau = \xi^{\frac{1}{3}}$, then we have
 
 $$
 c_2 = \frac{3c_0^2 + \xi}{3c_1\xi},
 $$
-so we can drop $c_2$ to only use $c_0$ and $c_1$ to represent $\tilde{\beta}$.
+so we can drop $c_2$ to only use $c_0$ and $c_1$ to represent $\hat{\beta}$.
+
+For homomorphic compression to $\mathbb{F}_{q^2}$, one can combine the previous homomorphic compression step to $\mathbb{F}_{q^6}$ before compressing the final $\mathbb{F}_{q^6}$ value to a single $\mathbb{F}_{q^2}$ value. 
 
 ## Compression and decompression
 For compressing a pairing value $a^{\frac{q^{12} - 1}{r}}$, first compute $f = a^{\Phi_6(q^2)}$, then compress $f^{\Psi_6(q^2)}$ to two $\mathbb{F}_{q^2}$ elements as in the previous section. 
 
-For decompression, first compute $\tilde{\beta} \in \mathbb{F}_{q^6}$ from two coefficients $c_0$ and $c_1$ in $\mathbb{F}_{q^2}$, where $\tilde{\beta} = c_0 + c_1\tau + c_2\tau^2$ as in the previous section. Then, compute  
+For decompression, first compute $\hat{\beta} \in \mathbb{F}_{q^6}$ from two coefficients $c_0$ and $c_1$ in $\mathbb{F}_{q^2}$, where $\hat{\beta} = c_0 + c_1\tau + c_2\tau^2$ as in the previous section. Then, compute  
 $$
-a^{\frac{q^{12} - 1}{r}} = \frac{\tilde{\beta} - \sigma}{\tilde{\beta} + \sigma}
+a^{\frac{q^{12} - 1}{r}} = \frac{\hat{\beta} - \sigma}{\hat{\beta} + \sigma}
 $$to recover the original pairing value.
 
 # Implementation Detail
