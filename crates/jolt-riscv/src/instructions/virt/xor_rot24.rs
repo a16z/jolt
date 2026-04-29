@@ -1,8 +1,8 @@
-use jolt_riscv_derive::Flags;
-use serde::{Deserialize, Serialize};
+use crate::jolt_instruction;
 
-/// Virtual XOR then rotate right by 24 bits.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
-#[circuit(WriteLookupOutputToRD)]
-#[instruction(LeftOperandIsRs1Value, RightOperandIsRs2Value)]
-pub struct VirtualXorRot24<T = ()>(pub T);
+jolt_instruction!(
+    /// Virtual XOR then rotate right by 24 bits.
+    VirtualXorRot24,
+    circuit flags: [WriteLookupOutputToRD],
+    instruction flags: [LeftOperandIsRs1Value, RightOperandIsRs2Value]
+);

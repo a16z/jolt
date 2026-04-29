@@ -11,10 +11,14 @@ categories = ["cryptography"]
 [lints]
 workspace = true
 
+[features]
+test-utils = []
+
 [dependencies]
 bincode.workspace = true
 common = { workspace = true }
 jolt-riscv = { workspace = true }
+rand = { workspace = true }
 serde.workspace = true
-tracer = { workspace = true, features = ["std"] }
+tracer = { workspace = true, features = ["std", "test-utils"] }
 tracing.workspace = true

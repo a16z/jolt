@@ -1,6 +1,8 @@
-use jolt_riscv_derive::Flags;
-use serde::{Deserialize, Serialize};
+use crate::jolt_instruction;
 
-/// RV64I FENCE: memory ordering fence.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
-pub struct Fence<T = ()>(pub T);
+jolt_instruction!(
+    /// RV64I FENCE: memory ordering fence.
+    Fence,
+    circuit flags: [],
+    instruction flags: []
+);

@@ -3,16 +3,19 @@
 //! `JoltInstruction` for `Cycle` automatically by delegating through
 //! `Cycle::instruction()`.
 
+#[cfg(any(feature = "test-utils", test))]
+use tracer::instruction::format::InstructionFormat;
+
 use tracer::instruction::{
-    format::InstructionRegisterState, NormalizedInstruction, RAMAccess, RISCVCycle,
+    format::InstructionRegisterState, Instruction, NormalizedInstruction, RAMAccess, RISCVCycle,
     RISCVInstruction,
 };
 
-use crate::traits::{JoltCycle, JoltInstruction};
+use crate::{JoltCycle, JoltInstruction};
 
 impl<T: RISCVInstruction> JoltInstruction for T {
     fn is_noop(&self) -> bool {
-        todo!()
+        matches!((*self).into(), Instruction::NoOp)
     }
 
     fn address(&self) -> u64 {
@@ -98,6 +101,22 @@ impl<T: RISCVInstruction> JoltCycle for RISCVCycle<T> {
             RAMAccess::Read(r) => Some(r.value),
             RAMAccess::Write(w) => Some(w.post_value),
             RAMAccess::NoOp => None,
+        }
+    }
+
+    #[cfg(any(feature = "test-utils", test))]
+    fn random(rng: &mut rand::rngs::StdRng) -> Self {
+        let instruction = T::random(rng);
+        let normalized: NormalizedInstruction = instruction.into();
+        let register_state =
+            <<T::Format as InstructionFormat>::RegisterState as InstructionRegisterState>::random(
+                rng,
+                &normalized.operands,
+            );
+        Self {
+            instruction,
+            register_state,
+            ram_access: T::RAMAccess::default(),
         }
     }
 }

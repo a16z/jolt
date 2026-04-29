@@ -29,3 +29,18 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for Mul<C> {
         x.wrapping_mul(y as u64) & mask
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::instructions::test::materialize_entry_test;
+    use tracer::instruction::RISCVCycle;
+
+    #[test]
+    fn materialize_entry_mul() {
+        materialize_entry_test::<
+            Mul<RISCVCycle<tracer::instruction::mul::MUL>>,
+            RISCVCycle<tracer::instruction::mul::MUL>,
+        >();
+    }
+}

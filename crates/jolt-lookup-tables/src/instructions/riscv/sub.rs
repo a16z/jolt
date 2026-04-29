@@ -31,3 +31,18 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for Sub<C> {
         x.wrapping_sub(y as u64) & mask
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::instructions::test::materialize_entry_test;
+    use tracer::instruction::RISCVCycle;
+
+    #[test]
+    fn materialize_entry_sub() {
+        materialize_entry_test::<
+            Sub<RISCVCycle<tracer::instruction::sub::SUB>>,
+            RISCVCycle<tracer::instruction::sub::SUB>,
+        >();
+    }
+}

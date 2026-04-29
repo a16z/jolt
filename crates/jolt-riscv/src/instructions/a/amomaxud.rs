@@ -1,5 +1,6 @@
-use serde::{Deserialize, Serialize};
+use crate::jolt_instruction;
 
-/// RV64A AMOMAXU.D: atomic unsigned max doubleword.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct AmoMaxUD<T = ()>(pub T);
+jolt_instruction!(
+    /// RV64A AMOMAXU.D: atomic unsigned max doubleword.
+    AmoMaxUD
+);

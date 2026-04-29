@@ -24,3 +24,18 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualAdviceLoad<C>
         self.0.rd_vals().map_or(0, |(_, p)| p) & mask
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::instructions::test::materialize_entry_test;
+    use tracer::instruction::RISCVCycle;
+
+    #[test]
+    fn materialize_entry_virtualadviceload() {
+        materialize_entry_test::<
+            VirtualAdviceLoad<RISCVCycle<tracer::instruction::virtual_advice_load::VirtualAdviceLoad>>,
+            RISCVCycle<tracer::instruction::virtual_advice_load::VirtualAdviceLoad>,
+        >();
+    }
+}

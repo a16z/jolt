@@ -19,3 +19,18 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for AssertValidUnsignedR
         (divisor == 0 || remainder < divisor as u64).into()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::instructions::test::materialize_entry_test;
+    use tracer::instruction::RISCVCycle;
+
+    #[test]
+    fn materialize_entry_virtualassertvalidunsignedremainder() {
+        materialize_entry_test::<
+            AssertValidUnsignedRemainder<RISCVCycle<tracer::instruction::virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder>>,
+            RISCVCycle<tracer::instruction::virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder>,
+        >();
+    }
+}

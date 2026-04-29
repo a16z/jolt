@@ -6,3 +6,6 @@
 
 pub mod riscv;
 pub mod virt;
+
+#[cfg(test)]
+pub mod test;

@@ -24,3 +24,18 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualChangeDivisor
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::instructions::test::materialize_entry_test;
+    use tracer::instruction::RISCVCycle;
+
+    #[test]
+    fn materialize_entry_virtualchangedivisorw() {
+        materialize_entry_test::<
+            VirtualChangeDivisorW<RISCVCycle<tracer::instruction::virtual_change_divisor_w::VirtualChangeDivisorW>>,
+            RISCVCycle<tracer::instruction::virtual_change_divisor_w::VirtualChangeDivisorW>,
+        >();
+    }
+}

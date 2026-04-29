@@ -1,5 +1,6 @@
-use serde::{Deserialize, Serialize};
+use crate::jolt_instruction;
 
-/// RV32A AMOMAX.W: atomic signed max word.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct AmoMaxW<T = ()>(pub T);
+jolt_instruction!(
+    /// RV32A AMOMAX.W: atomic signed max word.
+    AmoMaxW
+);

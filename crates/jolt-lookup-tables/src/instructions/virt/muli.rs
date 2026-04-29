@@ -32,3 +32,18 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for MulI<C> {
         signed_x.wrapping_mul(signed_y) as u64 & mask
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::instructions::test::materialize_entry_test;
+    use tracer::instruction::RISCVCycle;
+
+    #[test]
+    fn materialize_entry_virtualmuli() {
+        materialize_entry_test::<
+            MulI<RISCVCycle<tracer::instruction::virtual_muli::VirtualMULI>>,
+            RISCVCycle<tracer::instruction::virtual_muli::VirtualMULI>,
+        >();
+    }
+}

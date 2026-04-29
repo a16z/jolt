@@ -24,3 +24,18 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for MovSign<C> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::instructions::test::materialize_entry_test;
+    use tracer::instruction::RISCVCycle;
+
+    #[test]
+    fn materialize_entry_virtualmovsign() {
+        materialize_entry_test::<
+            MovSign<RISCVCycle<tracer::instruction::virtual_movsign::VirtualMovsign>>,
+            RISCVCycle<tracer::instruction::virtual_movsign::VirtualMovsign>,
+        >();
+    }
+}

@@ -20,3 +20,18 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for Andn<C> {
         x & !(y as u64) & mask
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::instructions::test::materialize_entry_test;
+    use tracer::instruction::RISCVCycle;
+
+    #[test]
+    fn materialize_entry_andn() {
+        materialize_entry_test::<
+            Andn<RISCVCycle<tracer::instruction::andn::ANDN>>,
+            RISCVCycle<tracer::instruction::andn::ANDN>,
+        >();
+    }
+}

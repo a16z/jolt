@@ -20,3 +20,18 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for Lui<C> {
         self.0.instruction().imm() as u64 & mask
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::instructions::test::materialize_entry_test;
+    use tracer::instruction::RISCVCycle;
+
+    #[test]
+    fn materialize_entry_lui() {
+        materialize_entry_test::<
+            Lui<RISCVCycle<tracer::instruction::lui::LUI>>,
+            RISCVCycle<tracer::instruction::lui::LUI>,
+        >();
+    }
+}

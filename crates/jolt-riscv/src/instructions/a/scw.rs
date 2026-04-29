@@ -1,5 +1,6 @@
-use serde::{Deserialize, Serialize};
+use crate::jolt_instruction;
 
-/// RV32A SC.W: store-conditional word.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct ScW<T = ()>(pub T);
+jolt_instruction!(
+    /// RV32A SC.W: store-conditional word.
+    ScW
+);

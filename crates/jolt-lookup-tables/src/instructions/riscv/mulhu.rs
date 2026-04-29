@@ -28,3 +28,18 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for MulHU<C> {
         ((x as u128 * y as u64 as u128) >> XLEN) as u64
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::instructions::test::materialize_entry_test;
+    use tracer::instruction::RISCVCycle;
+
+    #[test]
+    fn materialize_entry_mulhu() {
+        materialize_entry_test::<
+            MulHU<RISCVCycle<tracer::instruction::mulhu::MULHU>>,
+            RISCVCycle<tracer::instruction::mulhu::MULHU>,
+        >();
+    }
+}

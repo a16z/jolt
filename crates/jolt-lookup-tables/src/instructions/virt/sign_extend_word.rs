@@ -3,7 +3,7 @@ use crate::traits::LookupQuery;
 use jolt_trace::instructions::VirtualSignExtendWord;
 use jolt_trace::JoltCycle;
 
-impl_lookup_table!(VirtualSignExtendWord, Some(RangeCheck));
+impl_lookup_table!(VirtualSignExtendWord, Some(SignExtendHalfWord));
 
 impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualSignExtendWord<C> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
@@ -29,5 +29,20 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualSignExtendWor
         } else {
             lower_half
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::instructions::test::materialize_entry_test;
+    use tracer::instruction::RISCVCycle;
+
+    #[test]
+    fn materialize_entry_virtualsignextendword() {
+        materialize_entry_test::<
+            VirtualSignExtendWord<RISCVCycle<tracer::instruction::virtual_sign_extend_word::VirtualSignExtendWord>>,
+            RISCVCycle<tracer::instruction::virtual_sign_extend_word::VirtualSignExtendWord>,
+        >();
     }
 }

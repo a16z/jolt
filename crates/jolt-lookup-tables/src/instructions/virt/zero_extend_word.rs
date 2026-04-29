@@ -3,7 +3,7 @@ use crate::traits::LookupQuery;
 use jolt_trace::instructions::VirtualZeroExtendWord;
 use jolt_trace::JoltCycle;
 
-impl_lookup_table!(VirtualZeroExtendWord, Some(RangeCheck));
+impl_lookup_table!(VirtualZeroExtendWord, Some(LowerHalfWord));
 
 impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualZeroExtendWord<C> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
@@ -23,5 +23,20 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualZeroExtendWor
         let (_, y) = LookupQuery::<XLEN>::to_lookup_operands(self);
         let half_word_size = XLEN / 2;
         y as u64 & ((1u64 << half_word_size) - 1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::instructions::test::materialize_entry_test;
+    use tracer::instruction::RISCVCycle;
+
+    #[test]
+    fn materialize_entry_virtualzeroextendword() {
+        materialize_entry_test::<
+            VirtualZeroExtendWord<RISCVCycle<tracer::instruction::virtual_zero_extend_word::VirtualZeroExtendWord>>,
+            RISCVCycle<tracer::instruction::virtual_zero_extend_word::VirtualZeroExtendWord>,
+        >();
     }
 }

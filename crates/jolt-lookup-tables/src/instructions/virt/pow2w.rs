@@ -24,3 +24,18 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for Pow2W<C> {
         1u64 << (y & ((XLEN as u128 / 2) - 1))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::instructions::test::materialize_entry_test;
+    use tracer::instruction::RISCVCycle;
+
+    #[test]
+    fn materialize_entry_virtualpow2w() {
+        materialize_entry_test::<
+            Pow2W<RISCVCycle<tracer::instruction::virtual_pow2_w::VirtualPow2W>>,
+            RISCVCycle<tracer::instruction::virtual_pow2_w::VirtualPow2W>,
+        >();
+    }
+}

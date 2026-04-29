@@ -1,5 +1,6 @@
-use serde::{Deserialize, Serialize};
+use crate::jolt_instruction;
 
-/// Virtual ADVICE_LW: advice tape value for load word.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct AdviceLw<T = ()>(pub T);
+jolt_instruction!(
+    /// Virtual ADVICE_LW: advice tape value for load word.
+    AdviceLw
+);

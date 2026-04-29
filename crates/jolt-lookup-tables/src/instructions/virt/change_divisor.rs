@@ -19,12 +19,29 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualChangeDivisor
         let shift = 64 - XLEN;
         let signed_dividend = ((dividend as i64) << shift) >> shift;
         let signed_divisor = ((divisor as i64) << shift) >> shift;
-        let min_val = 1i64 << (XLEN - 1);
-        if signed_dividend == -min_val && signed_divisor == -1 {
+        // Sign-extended XLEN-bit minimum (e.g. `i64::MIN` at XLEN=64,
+        // `-128` at XLEN=8). Avoids `1 << (XLEN-1)` overflowing at XLEN=64.
+        let signed_min = i64::MIN >> shift;
+        if signed_dividend == signed_min && signed_divisor == -1 {
             1
         } else {
             let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
             signed_divisor as u64 & mask
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::instructions::test::materialize_entry_test;
+    use tracer::instruction::RISCVCycle;
+
+    #[test]
+    fn materialize_entry_virtualchangedivisor() {
+        materialize_entry_test::<
+            VirtualChangeDivisor<RISCVCycle<tracer::instruction::virtual_change_divisor::VirtualChangeDivisor>>,
+            RISCVCycle<tracer::instruction::virtual_change_divisor::VirtualChangeDivisor>,
+        >();
     }
 }

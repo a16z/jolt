@@ -1,7 +1,8 @@
-use jolt_riscv_derive::Flags;
-use serde::{Deserialize, Serialize};
+use crate::jolt_instruction;
 
-/// RV64I SW: store word (lowest 32 bits).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
-#[circuit(Store)]
-pub struct Sw<T = ()>(pub T);
+jolt_instruction!(
+    /// RV64I SW: store word (lowest 32 bits).
+    Sw,
+    circuit flags: [Store],
+    instruction flags: []
+);

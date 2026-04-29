@@ -8,11 +8,10 @@
 //! - [`BytecodePCMapper::get_pc`] — resolves `(address, virtual_sequence_remaining)`
 //!   to a dense bytecode table index, accounting for virtual instruction expansion.
 
+use crate::JoltInstruction;
 use common::constants::{ALIGNMENT_FACTOR_BYTECODE, RAM_START_ADDRESS};
 use serde::{Deserialize, Serialize};
 use tracer::instruction::Instruction;
-
-use crate::JoltInstruction;
 
 /// Preprocessed bytecode table with PC mapper.
 ///

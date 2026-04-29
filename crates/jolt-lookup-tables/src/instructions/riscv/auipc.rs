@@ -29,3 +29,18 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for Auipc<C> {
         pc.wrapping_add(imm as u64) & mask
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::instructions::test::materialize_entry_test;
+    use tracer::instruction::RISCVCycle;
+
+    #[test]
+    fn materialize_entry_auipc() {
+        materialize_entry_test::<
+            Auipc<RISCVCycle<tracer::instruction::auipc::AUIPC>>,
+            RISCVCycle<tracer::instruction::auipc::AUIPC>,
+        >();
+    }
+}

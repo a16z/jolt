@@ -1,5 +1,6 @@
-use serde::{Deserialize, Serialize};
+use crate::jolt_instruction;
 
-/// RV64A AMOSWAP.D: atomic swap doubleword.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct AmoSwapD<T = ()>(pub T);
+jolt_instruction!(
+    /// RV64A AMOSWAP.D: atomic swap doubleword.
+    AmoSwapD
+);

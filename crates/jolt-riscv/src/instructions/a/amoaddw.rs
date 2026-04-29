@@ -1,5 +1,6 @@
-use serde::{Deserialize, Serialize};
+use crate::jolt_instruction;
 
-/// RV32A AMOADD.W: atomic add word.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct AmoAddW<T = ()>(pub T);
+jolt_instruction!(
+    /// RV32A AMOADD.W: atomic add word.
+    AmoAddW
+);

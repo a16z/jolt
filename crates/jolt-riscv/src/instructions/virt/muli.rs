@@ -1,8 +1,8 @@
-use jolt_riscv_derive::Flags;
-use serde::{Deserialize, Serialize};
+use crate::jolt_instruction;
 
-/// Virtual MULI: multiply by immediate. `rd = rs1 * imm`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
-#[circuit(MultiplyOperands, WriteLookupOutputToRD)]
-#[instruction(LeftOperandIsRs1Value, RightOperandIsImm)]
-pub struct MulI<T = ()>(pub T);
+jolt_instruction!(
+    /// Virtual MULI: multiply by immediate. `rd = rs1 * imm`.
+    MulI,
+    circuit flags: [MultiplyOperands, WriteLookupOutputToRD],
+    instruction flags: [LeftOperandIsRs1Value, RightOperandIsImm]
+);

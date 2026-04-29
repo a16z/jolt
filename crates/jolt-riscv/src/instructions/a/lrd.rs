@@ -1,5 +1,6 @@
-use serde::{Deserialize, Serialize};
+use crate::jolt_instruction;
 
-/// RV64A LR.D: load-reserved doubleword.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct LrD<T = ()>(pub T);
+jolt_instruction!(
+    /// RV64A LR.D: load-reserved doubleword.
+    LrD
+);

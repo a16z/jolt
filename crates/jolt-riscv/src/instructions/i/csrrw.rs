@@ -1,5 +1,6 @@
-use serde::{Deserialize, Serialize};
+use crate::jolt_instruction;
 
-/// RV32I (Zicsr) CSRRW: atomic CSR read+write.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Csrrw<T = ()>(pub T);
+jolt_instruction!(
+    /// RV32I (Zicsr) CSRRW: atomic CSR read+write.
+    Csrrw
+);

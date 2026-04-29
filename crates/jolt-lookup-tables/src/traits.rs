@@ -30,8 +30,8 @@ pub trait InstructionLookupTable<const XLEN: usize> {
 }
 
 macro_rules! impl_lookup_table {
-    ($instr:ty, Some($table:ident)) => {
-        impl<const XLEN: usize> $crate::traits::InstructionLookupTable<XLEN> for $instr {
+    ($instr:ident, Some($table:ident)) => {
+        impl<const XLEN: usize, T> $crate::traits::InstructionLookupTable<XLEN> for $instr<T> {
             #[inline]
             fn lookup_table(&self) -> Option<$crate::tables::LookupTableKind<XLEN>> {
                 Some($crate::tables::LookupTableKind::$table(
@@ -40,8 +40,8 @@ macro_rules! impl_lookup_table {
             }
         }
     };
-    ($instr:ty, None) => {
-        impl<const XLEN: usize> $crate::traits::InstructionLookupTable<XLEN> for $instr {
+    ($instr:ident, None) => {
+        impl<const XLEN: usize, T> $crate::traits::InstructionLookupTable<XLEN> for $instr<T> {
             #[inline]
             fn lookup_table(&self) -> Option<$crate::tables::LookupTableKind<XLEN>> {
                 None

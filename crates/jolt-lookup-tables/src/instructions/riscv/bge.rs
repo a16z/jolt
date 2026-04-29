@@ -21,3 +21,18 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for Bge<C> {
         ((x as i64) >= (y as i64)).into()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::instructions::test::materialize_entry_test;
+    use tracer::instruction::RISCVCycle;
+
+    #[test]
+    fn materialize_entry_bge() {
+        materialize_entry_test::<
+            Bge<RISCVCycle<tracer::instruction::bge::BGE>>,
+            RISCVCycle<tracer::instruction::bge::BGE>,
+        >();
+    }
+}

@@ -19,3 +19,18 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for SltIU<C> {
         (x < y as u64) as u64
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::instructions::test::materialize_entry_test;
+    use tracer::instruction::RISCVCycle;
+
+    #[test]
+    fn materialize_entry_sltiu() {
+        materialize_entry_test::<
+            SltIU<RISCVCycle<tracer::instruction::sltiu::SLTIU>>,
+            RISCVCycle<tracer::instruction::sltiu::SLTIU>,
+        >();
+    }
+}

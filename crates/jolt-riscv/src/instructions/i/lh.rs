@@ -1,7 +1,8 @@
-use jolt_riscv_derive::Flags;
-use serde::{Deserialize, Serialize};
+use crate::jolt_instruction;
 
-/// RV64I LH: load halfword (16 bits), sign-extended to 64 bits.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
-#[circuit(Load)]
-pub struct Lh<T = ()>(pub T);
+jolt_instruction!(
+    /// RV64I LH: load halfword (16 bits), sign-extended to 64 bits.
+    Lh,
+    circuit flags: [Load],
+    instruction flags: []
+);

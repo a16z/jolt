@@ -29,3 +29,18 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for Jalr<C> {
         x.wrapping_add(y as u64) & mask & !1
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::instructions::test::materialize_entry_test;
+    use tracer::instruction::RISCVCycle;
+
+    #[test]
+    fn materialize_entry_jalr() {
+        materialize_entry_test::<
+            Jalr<RISCVCycle<tracer::instruction::jalr::JALR>>,
+            RISCVCycle<tracer::instruction::jalr::JALR>,
+        >();
+    }
+}

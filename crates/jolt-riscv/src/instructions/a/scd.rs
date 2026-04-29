@@ -1,5 +1,6 @@
-use serde::{Deserialize, Serialize};
+use crate::jolt_instruction;
 
-/// RV64A SC.D: store-conditional doubleword.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct ScD<T = ()>(pub T);
+jolt_instruction!(
+    /// RV64A SC.D: store-conditional doubleword.
+    ScD
+);

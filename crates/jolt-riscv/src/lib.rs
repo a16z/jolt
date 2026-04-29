@@ -14,3 +14,79 @@ pub use flags::{
     InterleavedBitsMarker, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
 };
 pub use instructions::JoltInstructions;
+
+/// Declares a Jolt RISC-V instruction kind and (optionally) its `Flags` impl.
+///
+/// Two forms:
+///
+/// ```ignore
+/// // With circuit + instruction flag config — emits a `Flags` impl:
+/// jolt_instruction!(
+///     /// RV64I ADD: `rd = rs1 + rs2` (wrapping).
+///     Add,
+///     circuit flags: [AddOperands, WriteLookupOutputToRD],
+///     instruction flags: [LeftOperandIsRs1Value, RightOperandIsRs2Value]
+/// );
+///
+/// // No flag config — struct only, no `Flags` impl:
+/// jolt_instruction!(
+///     /// RV32I (Zicsr) CSRRS: atomic CSR read+set bits.
+///     Csrrs
+/// );
+/// ```
+#[macro_export]
+macro_rules! jolt_instruction {
+    (
+        $(#[$attr:meta])*
+        $name:ident,
+        circuit flags: [$($circuit:ident),* $(,)?],
+        instruction flags: [$($instruction:ident),* $(,)?] $(,)?
+    ) => {
+        $(#[$attr])*
+        #[derive(
+            Clone,
+            Copy,
+            Debug,
+            Default,
+            PartialEq,
+            Eq,
+            Hash,
+            ::serde::Serialize,
+            ::serde::Deserialize,
+        )]
+        pub struct $name<T = ()>(pub T);
+
+        impl<T> $crate::Flags for $name<T> {
+            #[inline]
+            fn circuit_flags(&self) -> $crate::CircuitFlagSet {
+                $crate::CircuitFlagSet::default()
+                    $(.set($crate::CircuitFlags::$circuit))*
+            }
+
+            #[inline]
+            fn instruction_flags(&self) -> $crate::InstructionFlagSet {
+                $crate::InstructionFlagSet::default()
+                    $(.set($crate::InstructionFlags::$instruction))*
+            }
+        }
+    };
+
+    (
+        $(#[$attr:meta])*
+        $name:ident $(,)?
+    ) => {
+        $(#[$attr])*
+        #[derive(
+            Clone,
+            Copy,
+            Debug,
+            Default,
+            PartialEq,
+            Eq,
+            Hash,
+            ::serde::Serialize,
+            ::serde::Deserialize,
+        )]
+        pub struct $name<T = ()>(pub T);
+    };
+}

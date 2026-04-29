@@ -61,4 +61,10 @@ pub trait JoltCycle {
 
     /// RAM write value (post-access value). `None` if no RAM access.
     fn ram_write_value(&self) -> Option<u64>;
+
+    /// Generate a random cycle. Useful for fuzz testing.
+    ///
+    /// `where Self: Sized` keeps the trait dyn-compatible.
+    #[cfg(any(feature = "test-utils", test))]
+    fn random(rng: &mut rand::rngs::StdRng) -> Self;
 }

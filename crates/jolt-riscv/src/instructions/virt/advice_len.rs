@@ -1,7 +1,8 @@
-use jolt_riscv_derive::Flags;
-use serde::{Deserialize, Serialize};
+use crate::jolt_instruction;
 
-/// Virtual ADVICE_LEN: advice-tape length query.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
-#[circuit(Advice, WriteLookupOutputToRD)]
-pub struct VirtualAdviceLen<T = ()>(pub T);
+jolt_instruction!(
+    /// Virtual ADVICE_LEN: advice-tape length query.
+    VirtualAdviceLen,
+    circuit flags: [Advice, WriteLookupOutputToRD],
+    instruction flags: []
+);

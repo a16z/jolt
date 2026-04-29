@@ -1,5 +1,6 @@
-use serde::{Deserialize, Serialize};
+use crate::jolt_instruction;
 
-/// RV32A AMOMAXU.W: atomic unsigned max word.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct AmoMaxUW<T = ()>(pub T);
+jolt_instruction!(
+    /// RV32A AMOMAXU.W: atomic unsigned max word.
+    AmoMaxUW
+);

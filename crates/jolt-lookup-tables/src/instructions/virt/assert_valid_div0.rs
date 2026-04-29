@@ -24,3 +24,18 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for AssertValidDiv0<C> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::instructions::test::materialize_entry_test;
+    use tracer::instruction::RISCVCycle;
+
+    #[test]
+    fn materialize_entry_virtualassertvaliddiv0() {
+        materialize_entry_test::<
+            AssertValidDiv0<RISCVCycle<tracer::instruction::virtual_assert_valid_div0::VirtualAssertValidDiv0>>,
+            RISCVCycle<tracer::instruction::virtual_assert_valid_div0::VirtualAssertValidDiv0>,
+        >();
+    }
+}

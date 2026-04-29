@@ -1,5 +1,6 @@
-use serde::{Deserialize, Serialize};
+use crate::jolt_instruction;
 
-/// RV64A AMOADD.D: atomic add doubleword.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct AmoAddD<T = ()>(pub T);
+jolt_instruction!(
+    /// RV64A AMOADD.D: atomic add doubleword.
+    AmoAddD
+);

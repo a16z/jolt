@@ -81,3 +81,42 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualXorRotW7<C> {
         (((v >> 7) | (v << (half - 7))) as u64) & mask
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::instructions::test::materialize_entry_test;
+    use tracer::instruction::RISCVCycle;
+
+    #[test]
+    fn materialize_entry_virtualxorrotw16() {
+        materialize_entry_test::<
+            VirtualXorRotW16<RISCVCycle<tracer::instruction::virtual_xor_rotw::VirtualXORROTW16>>,
+            RISCVCycle<tracer::instruction::virtual_xor_rotw::VirtualXORROTW16>,
+        >();
+    }
+
+    #[test]
+    fn materialize_entry_virtualxorrotw12() {
+        materialize_entry_test::<
+            VirtualXorRotW12<RISCVCycle<tracer::instruction::virtual_xor_rotw::VirtualXORROTW12>>,
+            RISCVCycle<tracer::instruction::virtual_xor_rotw::VirtualXORROTW12>,
+        >();
+    }
+
+    #[test]
+    fn materialize_entry_virtualxorrotw8() {
+        materialize_entry_test::<
+            VirtualXorRotW8<RISCVCycle<tracer::instruction::virtual_xor_rotw::VirtualXORROTW8>>,
+            RISCVCycle<tracer::instruction::virtual_xor_rotw::VirtualXORROTW8>,
+        >();
+    }
+
+    #[test]
+    fn materialize_entry_virtualxorrotw7() {
+        materialize_entry_test::<
+            VirtualXorRotW7<RISCVCycle<tracer::instruction::virtual_xor_rotw::VirtualXORROTW7>>,
+            RISCVCycle<tracer::instruction::virtual_xor_rotw::VirtualXORROTW7>,
+        >();
+    }
+}

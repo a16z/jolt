@@ -1,8 +1,8 @@
-use jolt_riscv_derive::Flags;
-use serde::{Deserialize, Serialize};
+use crate::jolt_instruction;
 
-/// Virtual POW2I: computes `2^imm` with immediate exponent.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
-#[circuit(AddOperands, WriteLookupOutputToRD)]
-#[instruction(RightOperandIsImm)]
-pub struct Pow2I<T = ()>(pub T);
+jolt_instruction!(
+    /// Virtual POW2I: computes `2^imm` with immediate exponent.
+    Pow2I,
+    circuit flags: [AddOperands, WriteLookupOutputToRD],
+    instruction flags: [RightOperandIsImm]
+);

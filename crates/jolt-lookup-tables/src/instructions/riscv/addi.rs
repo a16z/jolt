@@ -29,3 +29,18 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for Addi<C> {
         x.wrapping_add(y as u64) & mask
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::instructions::test::materialize_entry_test;
+    use tracer::instruction::RISCVCycle;
+
+    #[test]
+    fn materialize_entry_addi() {
+        materialize_entry_test::<
+            Addi<RISCVCycle<tracer::instruction::addi::ADDI>>,
+            RISCVCycle<tracer::instruction::addi::ADDI>,
+        >();
+    }
+}

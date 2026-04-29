@@ -12,6 +12,6 @@ categories = ["cryptography"]
 workspace = true
 
 [dependencies]
-jolt-riscv-derive = { workspace = true }
+rand = { workspace = true }
 serde.workspace = true
 strum = { workspace = true, features = ["derive"] }

@@ -1,5 +1,6 @@
-use serde::{Deserialize, Serialize};
+use crate::jolt_instruction;
 
-/// RV64A AMOAND.D: atomic AND doubleword.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct AmoAndD<T = ()>(pub T);
+jolt_instruction!(
+    /// RV64A AMOAND.D: atomic AND doubleword.
+    AmoAndD
+);

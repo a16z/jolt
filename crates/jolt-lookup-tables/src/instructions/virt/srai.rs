@@ -18,3 +18,18 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualSrai<C> {
         ((signed >> shift) as u64) & mask
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::instructions::test::materialize_entry_test;
+    use tracer::instruction::RISCVCycle;
+
+    #[test]
+    fn materialize_entry_virtualsrai() {
+        materialize_entry_test::<
+            VirtualSrai<RISCVCycle<tracer::instruction::virtual_srai::VirtualSRAI>>,
+            RISCVCycle<tracer::instruction::virtual_srai::VirtualSRAI>,
+        >();
+    }
+}

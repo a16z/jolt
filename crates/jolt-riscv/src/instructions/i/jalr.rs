@@ -1,8 +1,8 @@
-use jolt_riscv_derive::Flags;
-use serde::{Deserialize, Serialize};
+use crate::jolt_instruction;
 
-/// RV64I JALR: jump and link register. `rd = PC + 4; PC = (rs1 + imm) & !1`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Flags)]
-#[circuit(AddOperands, Jump)]
-#[instruction(LeftOperandIsRs1Value, RightOperandIsImm)]
-pub struct Jalr<T = ()>(pub T);
+jolt_instruction!(
+    /// RV64I JALR: jump and link register. `rd = PC + 4; PC = (rs1 + imm) & !1`.
+    Jalr,
+    circuit flags: [AddOperands, Jump],
+    instruction flags: [LeftOperandIsRs1Value, RightOperandIsImm]
+);
