@@ -2767,6 +2767,8 @@ dependencies = [
 name = "jolt-dory"
 version = "0.1.0"
 dependencies = [
+ "ark-bn254",
+ "ark-ff 0.5.0",
  "ark-serialize 0.5.0",
  "criterion",
  "dory-pcs",
