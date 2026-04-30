@@ -5,7 +5,7 @@ use melior::ir::operation::OperationRef;
 use melior::ir::operation::{OperationLike, OperationResult};
 use melior::ir::Value;
 
-use crate::ir::{string_attribute_value, BoltModule, Compute, Party, Protocol};
+use crate::ir::{string_attribute_value, BoltModule, Compute, Party, Protocol, Role};
 use crate::mlir::{verify_module, MeliorContext, MlirError};
 use crate::schema::{
     operation_name, symbol_attr, verify_compute_schema, verify_party_schema,
@@ -129,7 +129,7 @@ pub fn lower_stage1_to_compute<'c>(
         .role()
         .ok_or_else(|| schema_error("stage1 lowering requires party role"))?;
     let params = stage_params(module)?;
-    let compute = context.new_module::<Compute>(&module.name(), Some(role));
+    let compute = context.new_module::<Compute>(&module.name(), Some(role.clone()));
     context.append_op_with_owned_attrs(
         &compute,
         "compute.params",
@@ -207,9 +207,13 @@ pub fn lower_stage1_to_compute<'c>(
                         "relation",
                     ],
                 )?;
+                let target_op = match &role {
+                    Role::Prover => "compute.sumcheck_claim",
+                    Role::Verifier => "compute.sumcheck_verify_claim",
+                };
                 let operation = context.append_typed_op_with_owned_attrs(
                     &compute,
-                    "compute.sumcheck_claim",
+                    target_op,
                     Some(&symbol),
                     &attrs,
                     &operands,
@@ -260,9 +264,13 @@ pub fn lower_stage1_to_compute<'c>(
                         "degree",
                     ],
                 )?;
+                let target_op = match &role {
+                    Role::Prover => "compute.sumcheck_driver",
+                    Role::Verifier => "compute.sumcheck_verify",
+                };
                 let operation = context.append_typed_op_with_owned_attrs(
                     &compute,
-                    "compute.sumcheck_driver",
+                    target_op,
                     Some(&symbol),
                     &attrs,
                     &operands,
@@ -290,6 +298,32 @@ pub fn lower_stage1_to_compute<'c>(
                     &["!compute.field_value"],
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "piop.sumcheck_instance_result" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(
+                    op,
+                    &[
+                        "source",
+                        "claim",
+                        "relation",
+                        "index",
+                        "point_arity",
+                        "num_rounds",
+                        "degree",
+                    ],
+                )?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &compute,
+                    "compute.sumcheck_instance_result",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!compute.point", "!compute.sumcheck_result_type"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+                insert_result_mapping(&mut value_map, op, operation, 1, 1)?;
             }
             "piop.opening_claim" => {
                 let operands = lowered_operands(op, &value_map, 0)?;
@@ -425,6 +459,30 @@ pub fn resolve_compute_kernels<'c>(
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
             }
+            "compute.sumcheck_verify_claim" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let attrs = copy_attrs(
+                    op,
+                    &[
+                        "stage",
+                        "domain",
+                        "num_rounds",
+                        "degree",
+                        "claim",
+                        "relation",
+                    ],
+                )?;
+                let symbol = string_attr(op, "sym_name")?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &kernelized,
+                    "compute.sumcheck_verify_claim",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!compute.sumcheck_claim_type"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
             "compute.sumcheck_batch" => {
                 let operands = lowered_operands(op, &value_map, 0)?;
                 let attrs = copy_attrs(
@@ -487,6 +545,40 @@ pub fn resolve_compute_kernels<'c>(
                     insert_result_mapping(&mut value_map, op, operation, index, index)?;
                 }
             }
+            "compute.sumcheck_verify" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let attrs = copy_attrs(
+                    op,
+                    &[
+                        "stage",
+                        "proof_slot",
+                        "relation",
+                        "policy",
+                        "round_schedule",
+                        "claim_label",
+                        "round_label",
+                        "num_rounds",
+                        "degree",
+                    ],
+                )?;
+                let symbol = string_attr(op, "sym_name")?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &kernelized,
+                    "compute.sumcheck_verify",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &[
+                        "!compute.transcript_state",
+                        "!compute.point",
+                        "!compute.sumcheck_result_type",
+                        "!compute.sumcheck_proof_type",
+                    ],
+                )?;
+                for index in 0..4 {
+                    insert_result_mapping(&mut value_map, op, operation, index, index)?;
+                }
+            }
             "compute.sumcheck_eval" => {
                 let operands = lowered_operands(op, &value_map, 0)?;
                 let attrs = copy_attrs(op, &["source", "name", "index", "oracle"])?;
@@ -500,6 +592,32 @@ pub fn resolve_compute_kernels<'c>(
                     &["!compute.field_value"],
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "compute.sumcheck_instance_result" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let attrs = copy_attrs(
+                    op,
+                    &[
+                        "source",
+                        "claim",
+                        "relation",
+                        "index",
+                        "point_arity",
+                        "num_rounds",
+                        "degree",
+                    ],
+                )?;
+                let symbol = string_attr(op, "sym_name")?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &kernelized,
+                    "compute.sumcheck_instance_result",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!compute.point", "!compute.sumcheck_result_type"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+                insert_result_mapping(&mut value_map, op, operation, 1, 1)?;
             }
             "compute.opening_claim" => {
                 let operands = lowered_operands(op, &value_map, 0)?;
@@ -735,6 +853,22 @@ fn append_uniskip_sumcheck<'c, 'a>(
     let state = result(sumcheck, 0, "piop.sumcheck")?;
     let point = result(sumcheck, 1, "piop.sumcheck")?;
     let result_value = result(sumcheck, 2, "piop.sumcheck")?;
+    let (point, result_value) = append_sumcheck_instance_result(
+        context,
+        module,
+        SumcheckInstanceResultSpec {
+            symbol: "stage1.uniskip.instance",
+            source: "stage1.uniskip.sumcheck",
+            claim: "stage1.uniskip.input",
+            relation: "jolt.stage1.outer.uniskip",
+            index: 0,
+            point_arity: 1,
+            num_rounds: 1,
+            degree: OUTER_UNISKIP_FIRST_ROUND_DEGREE_BOUND,
+        },
+        point,
+        result_value,
+    )?;
     let eval = append_sumcheck_eval(
         context,
         module,
@@ -829,6 +963,22 @@ fn append_remaining_sumcheck<'c, 'a>(
     let state = result(sumcheck, 0, "piop.sumcheck")?;
     let point = result(sumcheck, 1, "piop.sumcheck")?;
     let result_value = result(sumcheck, 2, "piop.sumcheck")?;
+    let (point, result_value) = append_sumcheck_instance_result(
+        context,
+        module,
+        SumcheckInstanceResultSpec {
+            symbol: "stage1.outer_remaining.instance",
+            source: "stage1.outer_remaining.sumcheck",
+            claim: "stage1.outer_remaining.input",
+            relation: "jolt.stage1.outer.remaining",
+            index: 0,
+            point_arity: params.log_t,
+            num_rounds,
+            degree: 3,
+        },
+        point,
+        result_value,
+    )?;
     let mut claims = Vec::with_capacity(R1CS_INPUT_ORACLES.len());
     for (index, oracle) in R1CS_INPUT_ORACLES.iter().enumerate() {
         let eval = append_sumcheck_eval(
@@ -895,6 +1045,35 @@ fn append_sumcheck_eval<'c, 'a>(
     first_result(op, "piop.sumcheck_eval")
 }
 
+fn append_sumcheck_instance_result<'c, 'a>(
+    context: &'c MeliorContext,
+    module: &'a BoltModule<'c, Protocol>,
+    spec: SumcheckInstanceResultSpec<'_>,
+    point: Value<'c, 'a>,
+    result_value: Value<'c, 'a>,
+) -> Result<(Value<'c, 'a>, Value<'c, 'a>), MlirError> {
+    let op = context.append_typed_op(
+        module,
+        "piop.sumcheck_instance_result",
+        Some(spec.symbol),
+        &[
+            ("source", &format!("@{}", spec.source)),
+            ("claim", &format!("@{}", spec.claim)),
+            ("relation", &format!("@{}", spec.relation)),
+            ("index", &int_attr(spec.index)),
+            ("point_arity", &int_attr(spec.point_arity)),
+            ("num_rounds", &int_attr(spec.num_rounds)),
+            ("degree", &int_attr(spec.degree)),
+        ],
+        &[point, result_value],
+        &["!poly.point", "!piop.sumcheck_result_type"],
+    )?;
+    Ok((
+        result(op, 0, "piop.sumcheck_instance_result")?,
+        result(op, 1, "piop.sumcheck_instance_result")?,
+    ))
+}
+
 fn append_piop_opening_claim<'c, 'a>(
     context: &'c MeliorContext,
     module: &'a BoltModule<'c, Protocol>,
@@ -923,6 +1102,17 @@ struct OpeningClaimSpec<'a> {
     oracle: &'a str,
     domain: &'a str,
     point_arity: usize,
+}
+
+struct SumcheckInstanceResultSpec<'a> {
+    symbol: &'a str,
+    source: &'a str,
+    claim: &'a str,
+    relation: &'a str,
+    index: usize,
+    point_arity: usize,
+    num_rounds: usize,
+    degree: usize,
 }
 
 fn first_result<'c, 'a>(

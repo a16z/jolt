@@ -631,6 +631,30 @@ pub fn lower_compute_to_cpu<'c>(
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
             }
+            "compute.sumcheck_verify_claim" => {
+                let operands = lowered_operands(op, &value_map)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(
+                    op,
+                    &[
+                        "stage",
+                        "domain",
+                        "num_rounds",
+                        "degree",
+                        "claim",
+                        "relation",
+                    ],
+                )?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &cpu,
+                    "cpu.sumcheck_verify_claim",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!cpu.sumcheck_claim_type"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
             "compute.sumcheck_batch" => {
                 let operands = lowered_operands(op, &value_map)?;
                 let symbol = string_attr(op, "sym_name")?;
@@ -691,6 +715,40 @@ pub fn lower_compute_to_cpu<'c>(
                     insert_result_mapping(&mut value_map, op, operation, index, index)?;
                 }
             }
+            "compute.sumcheck_verify" => {
+                let operands = lowered_operands(op, &value_map)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(
+                    op,
+                    &[
+                        "stage",
+                        "proof_slot",
+                        "relation",
+                        "policy",
+                        "round_schedule",
+                        "claim_label",
+                        "round_label",
+                        "num_rounds",
+                        "degree",
+                    ],
+                )?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &cpu,
+                    "cpu.sumcheck_verify",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &[
+                        "!cpu.transcript_state",
+                        "!cpu.point",
+                        "!cpu.sumcheck_result_type",
+                        "!cpu.sumcheck_proof_type",
+                    ],
+                )?;
+                for index in 0..4 {
+                    insert_result_mapping(&mut value_map, op, operation, index, index)?;
+                }
+            }
             "compute.sumcheck_eval" => {
                 let operands = lowered_operands(op, &value_map)?;
                 let symbol = string_attr(op, "sym_name")?;
@@ -704,6 +762,32 @@ pub fn lower_compute_to_cpu<'c>(
                     &["!cpu.field_value"],
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "compute.sumcheck_instance_result" => {
+                let operands = lowered_operands(op, &value_map)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(
+                    op,
+                    &[
+                        "source",
+                        "claim",
+                        "relation",
+                        "index",
+                        "point_arity",
+                        "num_rounds",
+                        "degree",
+                    ],
+                )?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &cpu,
+                    "cpu.sumcheck_instance_result",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!cpu.point", "!cpu.sumcheck_result_type"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+                insert_result_mapping(&mut value_map, op, operation, 1, 1)?;
             }
             "compute.opening_claim" => {
                 let operands = lowered_operands(op, &value_map)?;

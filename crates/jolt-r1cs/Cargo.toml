@@ -12,6 +12,7 @@ workspace = true
 jolt-compiler = { path = "../jolt-compiler" }
 jolt-field = { path = "../jolt-field" }
 jolt-poly = { path = "../jolt-poly" }
+rayon = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 tracing = { workspace = true }
 

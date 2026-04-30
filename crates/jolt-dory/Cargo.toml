@@ -15,6 +15,7 @@ jolt-poly = { path = "../jolt-poly" }
 jolt-transcript = { path = "../jolt-transcript" }
 jolt-openings = { path = "../jolt-openings" }
 dory = { workspace = true }
+rayon = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true
 ark-serialize = { workspace = true }

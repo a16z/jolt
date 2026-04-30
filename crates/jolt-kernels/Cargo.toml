@@ -19,3 +19,4 @@ jolt-r1cs = { path = "../jolt-r1cs" }
 jolt-sumcheck = { path = "../jolt-sumcheck" }
 jolt-transcript = { path = "../jolt-transcript" }
 rayon = { workspace = true }
+tracing = { workspace = true }

@@ -1,3 +1,5 @@
+#![allow(clippy::print_stderr, clippy::print_stdout)]
+
 pub mod baseline;
 pub mod cli;
 pub mod measure;

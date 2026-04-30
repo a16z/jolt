@@ -1,3 +1,9 @@
+use melior::ir::OperationRef;
+
+use crate::schema::{
+    int_attr as mlir_int_attr, require_attrs, symbol_attr as mlir_symbol_attr, SchemaError,
+};
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JoltProtocolParams {
     pub field: &'static str,
@@ -95,4 +101,151 @@ fn symbol_attr(name: &str, value: &str) -> (String, String) {
 
 fn int_attr(name: &str, value: usize) -> (String, String) {
     (name.to_owned(), format!("{value} : i64"))
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ParsedJoltProtocolParams {
+    pub(crate) field: String,
+    pub(crate) pcs: String,
+    pub(crate) transcript: String,
+    pub(crate) log_t: usize,
+    pub(crate) trace_length: usize,
+    pub(crate) log_k_bytecode: usize,
+    pub(crate) bytecode_k: usize,
+    pub(crate) log_k_ram: usize,
+    pub(crate) ram_k: usize,
+    pub(crate) log_k_chunk: usize,
+    pub(crate) k_chunk: usize,
+    pub(crate) instruction_log_k: usize,
+    pub(crate) instruction_d: usize,
+    pub(crate) bytecode_d: usize,
+    pub(crate) ram_d: usize,
+    pub(crate) num_committed: usize,
+}
+
+impl ParsedJoltProtocolParams {
+    pub(crate) fn from_op(operation: OperationRef<'_, '_>) -> Result<Self, SchemaError> {
+        require_jolt_params_attrs(operation)?;
+        Ok(Self {
+            field: mlir_symbol_attr(operation, "field")?,
+            pcs: mlir_symbol_attr(operation, "pcs")?,
+            transcript: mlir_symbol_attr(operation, "transcript")?,
+            log_t: mlir_int_attr(operation, "log_t")?,
+            trace_length: mlir_int_attr(operation, "trace_length")?,
+            log_k_bytecode: mlir_int_attr(operation, "log_k_bytecode")?,
+            bytecode_k: mlir_int_attr(operation, "bytecode_k")?,
+            log_k_ram: mlir_int_attr(operation, "log_k_ram")?,
+            ram_k: mlir_int_attr(operation, "ram_k")?,
+            log_k_chunk: mlir_int_attr(operation, "log_k_chunk")?,
+            k_chunk: mlir_int_attr(operation, "k_chunk")?,
+            instruction_log_k: mlir_int_attr(operation, "instruction_log_k")?,
+            instruction_d: mlir_int_attr(operation, "instruction_d")?,
+            bytecode_d: mlir_int_attr(operation, "bytecode_d")?,
+            ram_d: mlir_int_attr(operation, "ram_d")?,
+            num_committed: mlir_int_attr(operation, "num_committed")?,
+        })
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), SchemaError> {
+        require_power_relation("trace_length", self.trace_length, "log_t", self.log_t)?;
+        require_power_relation(
+            "bytecode_k",
+            self.bytecode_k,
+            "log_k_bytecode",
+            self.log_k_bytecode,
+        )?;
+        require_power_relation("ram_k", self.ram_k, "log_k_ram", self.log_k_ram)?;
+        require_power_relation("k_chunk", self.k_chunk, "log_k_chunk", self.log_k_chunk)?;
+
+        if self.log_k_chunk != 4 && self.log_k_chunk != 8 {
+            return Err(SchemaError::new(format!(
+                "log_k_chunk must be 4 or 8, got {}",
+                self.log_k_chunk
+            )));
+        }
+        if self.instruction_log_k != 128 {
+            return Err(SchemaError::new(format!(
+                "instruction_log_k must be 128, got {}",
+                self.instruction_log_k
+            )));
+        }
+
+        let instruction_d = self.instruction_log_k / self.log_k_chunk;
+        let bytecode_d = self.log_k_bytecode.div_ceil(self.log_k_chunk);
+        let ram_d = self.log_k_ram.div_ceil(self.log_k_chunk);
+        require_eq("instruction_d", self.instruction_d, instruction_d)?;
+        require_eq("bytecode_d", self.bytecode_d, bytecode_d)?;
+        require_eq("ram_d", self.ram_d, ram_d)?;
+        require_eq(
+            "num_committed",
+            self.num_committed,
+            2 + instruction_d + bytecode_d + ram_d,
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn main_witness_oracles(&self) -> Vec<String> {
+        let mut oracles = vec!["RdInc".to_owned(), "RamInc".to_owned()];
+        oracles.extend((0..self.instruction_d).map(|index| format!("InstructionRa_{index}")));
+        oracles.extend((0..self.ram_d).map(|index| format!("RamRa_{index}")));
+        oracles.extend((0..self.bytecode_d).map(|index| format!("BytecodeRa_{index}")));
+        oracles
+    }
+}
+
+fn require_jolt_params_attrs(operation: OperationRef<'_, '_>) -> Result<(), SchemaError> {
+    require_attrs(
+        operation,
+        &[
+            "sym_name",
+            "field",
+            "pcs",
+            "transcript",
+            "xlen",
+            "log_t",
+            "trace_length",
+            "log_k_bytecode",
+            "bytecode_k",
+            "log_k_ram",
+            "ram_k",
+            "log_k_chunk",
+            "k_chunk",
+            "instruction_log_k",
+            "register_log_k",
+            "lookup_table_count",
+            "instruction_d",
+            "bytecode_d",
+            "ram_d",
+            "num_committed",
+            "num_r1cs_constraints",
+            "num_r1cs_inputs",
+            "num_vars_padded",
+        ],
+    )
+}
+
+fn require_power_relation(
+    value_name: &str,
+    value: usize,
+    log_name: &str,
+    log_value: usize,
+) -> Result<(), SchemaError> {
+    let expected = 1usize << log_value;
+    if value == expected {
+        Ok(())
+    } else {
+        Err(SchemaError::new(format!(
+            "{value_name} must equal 2^{log_name}; got {value}, expected {expected}"
+        )))
+    }
+}
+
+fn require_eq(name: &str, actual: usize, expected: usize) -> Result<(), SchemaError> {
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(SchemaError::new(format!(
+            "{name} must be {expected}, got {actual}"
+        )))
+    }
 }

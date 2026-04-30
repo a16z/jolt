@@ -15,9 +15,9 @@ bridge into `jolt-equivalence` for jolt-core parity.
    commitment coverage includes `generated_commitment_prover_verifier_self_parity_runs`
    for a tiny CPU fixture and `pipeline_generated_commitment_prover_verifier_self_parity_runs`
    for the full protocol→party→compute→CPU pipeline at small domain sizes.
-   Stage 1 coverage includes shape-kernel parity, synthetic remaining-sumcheck
-   parity, and real R1CS-backed data parity through the generated prover and
-   verifier.
+   Stage 1 coverage includes shape-proof verifier acceptance, synthetic
+   remaining-sumcheck parity, and real R1CS-backed data parity through the
+   generated prover and kernel-free generated verifier.
 3. **Modular self-verify**: once v2 output is wired into the modular stack, run
    `cargo nextest run -p jolt-equivalence modular_self_verify --cargo-quiet`.
    This proves the generated prover output is accepted by the modular verifier.

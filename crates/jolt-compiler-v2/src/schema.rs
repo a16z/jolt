@@ -9,7 +9,7 @@ use melior::ir::{Attribute, OperationRef};
 
 use crate::ir::{
     string_attribute_value, symbol_attribute_value, BoltModule, Compute, Concrete, Cpu, Party,
-    Protocol,
+    Protocol, Role,
 };
 use crate::mlir::MlirError;
 use crate::pass::{verify_concrete_transcript, VerifyError};
@@ -102,10 +102,16 @@ where
 
     let mut kernel_symbols = BTreeSet::new();
     let mut kernel_refs = Vec::new();
+    let role = module.role();
     let mut operation = module.as_mlir_module().body().first_operation();
     while let Some(op) = operation {
         operation = op.next_in_block();
         validate_op(op, phase)?;
+        if matches!(role, Some(Role::Verifier))
+            && matches!(phase, ModulePhase::Compute | ModulePhase::Cpu)
+        {
+            validate_verifier_lowering_op(op)?;
+        }
         match operation_name(op).as_str() {
             "compute.kernel" | "cpu.kernel" => {
                 let _ = kernel_symbols.insert(string_attr(op, "sym_name")?);
@@ -131,6 +137,25 @@ where
     }
 
     Ok(())
+}
+
+fn validate_verifier_lowering_op(operation: OperationRef<'_, '_>) -> Result<(), SchemaError> {
+    let name = operation_name(operation);
+    match name.as_str() {
+        "compute.kernel"
+        | "compute.sumcheck_claim"
+        | "compute.sumcheck_driver"
+        | "compute.sumcheck_kernel_claim"
+        | "compute.sumcheck_kernel_driver"
+        | "compute.generate_oracle"
+        | "compute.generate_oracle_family"
+        | "cpu.kernel"
+        | "cpu.sumcheck_claim"
+        | "cpu.sumcheck_driver" => Err(SchemaError::new(format!(
+            "verifier lowering must use verifier-specific ops, got `{name}`"
+        ))),
+        _ => Ok(()),
+    }
 }
 
 fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(), SchemaError> {
@@ -260,6 +285,22 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
                 &["sym_name", "source", "name", "index", "oracle"],
             )?;
             require_shape(operation, 1, 1)
+        }
+        "piop.sumcheck_instance_result" => {
+            require_attrs(
+                operation,
+                &[
+                    "sym_name",
+                    "source",
+                    "claim",
+                    "relation",
+                    "index",
+                    "point_arity",
+                    "num_rounds",
+                    "degree",
+                ],
+            )?;
+            require_shape(operation, 2, 2)
         }
         "piop.opening_claim" => {
             require_attrs(
@@ -430,6 +471,21 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             )?;
             require_min_shape(operation, 0, 1)
         }
+        "compute.sumcheck_verify_claim" => {
+            require_attrs(
+                operation,
+                &[
+                    "sym_name",
+                    "stage",
+                    "domain",
+                    "num_rounds",
+                    "degree",
+                    "claim",
+                    "relation",
+                ],
+            )?;
+            require_min_shape(operation, 0, 1)
+        }
         "compute.sumcheck_batch" => {
             require_attrs(
                 operation,
@@ -484,12 +540,46 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             )?;
             require_shape(operation, 2, 4)
         }
+        "compute.sumcheck_verify" => {
+            require_attrs(
+                operation,
+                &[
+                    "sym_name",
+                    "stage",
+                    "proof_slot",
+                    "relation",
+                    "policy",
+                    "round_schedule",
+                    "claim_label",
+                    "round_label",
+                    "num_rounds",
+                    "degree",
+                ],
+            )?;
+            require_shape(operation, 2, 4)
+        }
         "compute.sumcheck_eval" => {
             require_attrs(
                 operation,
                 &["sym_name", "source", "name", "index", "oracle"],
             )?;
             require_shape(operation, 1, 1)
+        }
+        "compute.sumcheck_instance_result" => {
+            require_attrs(
+                operation,
+                &[
+                    "sym_name",
+                    "source",
+                    "claim",
+                    "relation",
+                    "index",
+                    "point_arity",
+                    "num_rounds",
+                    "degree",
+                ],
+            )?;
+            require_shape(operation, 2, 2)
         }
         "compute.opening_claim" => {
             require_attrs(
@@ -661,6 +751,21 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             )?;
             require_min_shape(operation, 0, 1)
         }
+        "cpu.sumcheck_verify_claim" => {
+            require_attrs(
+                operation,
+                &[
+                    "sym_name",
+                    "stage",
+                    "domain",
+                    "num_rounds",
+                    "degree",
+                    "claim",
+                    "relation",
+                ],
+            )?;
+            require_min_shape(operation, 0, 1)
+        }
         "cpu.sumcheck_batch" => {
             require_attrs(
                 operation,
@@ -697,12 +802,46 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             )?;
             require_shape(operation, 2, 4)
         }
+        "cpu.sumcheck_verify" => {
+            require_attrs(
+                operation,
+                &[
+                    "sym_name",
+                    "stage",
+                    "proof_slot",
+                    "relation",
+                    "policy",
+                    "round_schedule",
+                    "claim_label",
+                    "round_label",
+                    "num_rounds",
+                    "degree",
+                ],
+            )?;
+            require_shape(operation, 2, 4)
+        }
         "cpu.sumcheck_eval" => {
             require_attrs(
                 operation,
                 &["sym_name", "source", "name", "index", "oracle"],
             )?;
             require_shape(operation, 1, 1)
+        }
+        "cpu.sumcheck_instance_result" => {
+            require_attrs(
+                operation,
+                &[
+                    "sym_name",
+                    "source",
+                    "claim",
+                    "relation",
+                    "index",
+                    "point_arity",
+                    "num_rounds",
+                    "degree",
+                ],
+            )?;
+            require_shape(operation, 2, 2)
         }
         "cpu.opening_claim" => {
             require_attrs(

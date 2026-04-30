@@ -3,12 +3,13 @@ use melior::ir::OperationRef;
 
 use crate::ir::{string_attribute_value, BoltModule, Concrete, Party, Protocol};
 use crate::schema::{
-    find_symbol, int_attr, missing_module_op, missing_symbol, require_attrs,
-    require_symbol_attr_eq, symbol_array_attr, symbol_attr, verify_concrete_schema,
-    verify_party_schema, verify_protocol_schema, SchemaError,
+    find_symbol, int_attr, missing_module_op, missing_symbol, require_symbol_attr_eq,
+    symbol_array_attr, symbol_attr, verify_concrete_schema, verify_party_schema,
+    verify_protocol_schema, SchemaError,
 };
 
 use super::oracles::{MAIN_WITNESS_FAMILY_SYMBOL, PCS_SYMBOL};
+use super::params::ParsedJoltProtocolParams;
 
 pub fn verify_jolt_protocol_schema(module: &BoltModule<'_, Protocol>) -> Result<(), SchemaError> {
     verify_protocol_schema(module)?;
@@ -31,8 +32,7 @@ where
 {
     let params_op =
         find_symbol(module, "jolt.params").ok_or_else(|| missing_module_op("protocol.params"))?;
-    require_jolt_params_attrs(params_op)?;
-    let params = ParsedJoltParams::from_op(params_op)?;
+    let params = ParsedJoltProtocolParams::from_op(params_op)?;
     params.validate()?;
 
     require_symbol(module, &params.field)?;
@@ -131,150 +131,4 @@ where
     find_symbol(module, symbol)
         .map(|_| ())
         .ok_or_else(|| missing_symbol(symbol))
-}
-
-fn require_jolt_params_attrs(operation: OperationRef<'_, '_>) -> Result<(), SchemaError> {
-    require_attrs(
-        operation,
-        &[
-            "sym_name",
-            "field",
-            "pcs",
-            "transcript",
-            "xlen",
-            "log_t",
-            "trace_length",
-            "log_k_bytecode",
-            "bytecode_k",
-            "log_k_ram",
-            "ram_k",
-            "log_k_chunk",
-            "k_chunk",
-            "instruction_log_k",
-            "register_log_k",
-            "lookup_table_count",
-            "instruction_d",
-            "bytecode_d",
-            "ram_d",
-            "num_committed",
-            "num_r1cs_constraints",
-            "num_r1cs_inputs",
-            "num_vars_padded",
-        ],
-    )
-}
-
-#[derive(Clone, Debug)]
-struct ParsedJoltParams {
-    field: String,
-    pcs: String,
-    transcript: String,
-    log_t: usize,
-    trace_length: usize,
-    log_k_bytecode: usize,
-    bytecode_k: usize,
-    log_k_ram: usize,
-    ram_k: usize,
-    log_k_chunk: usize,
-    k_chunk: usize,
-    instruction_log_k: usize,
-    instruction_d: usize,
-    bytecode_d: usize,
-    ram_d: usize,
-    num_committed: usize,
-}
-
-impl ParsedJoltParams {
-    fn from_op(operation: OperationRef<'_, '_>) -> Result<Self, SchemaError> {
-        Ok(Self {
-            field: symbol_attr(operation, "field")?,
-            pcs: symbol_attr(operation, "pcs")?,
-            transcript: symbol_attr(operation, "transcript")?,
-            log_t: int_attr(operation, "log_t")?,
-            trace_length: int_attr(operation, "trace_length")?,
-            log_k_bytecode: int_attr(operation, "log_k_bytecode")?,
-            bytecode_k: int_attr(operation, "bytecode_k")?,
-            log_k_ram: int_attr(operation, "log_k_ram")?,
-            ram_k: int_attr(operation, "ram_k")?,
-            log_k_chunk: int_attr(operation, "log_k_chunk")?,
-            k_chunk: int_attr(operation, "k_chunk")?,
-            instruction_log_k: int_attr(operation, "instruction_log_k")?,
-            instruction_d: int_attr(operation, "instruction_d")?,
-            bytecode_d: int_attr(operation, "bytecode_d")?,
-            ram_d: int_attr(operation, "ram_d")?,
-            num_committed: int_attr(operation, "num_committed")?,
-        })
-    }
-
-    fn validate(&self) -> Result<(), SchemaError> {
-        require_power_relation("trace_length", self.trace_length, "log_t", self.log_t)?;
-        require_power_relation(
-            "bytecode_k",
-            self.bytecode_k,
-            "log_k_bytecode",
-            self.log_k_bytecode,
-        )?;
-        require_power_relation("ram_k", self.ram_k, "log_k_ram", self.log_k_ram)?;
-        require_power_relation("k_chunk", self.k_chunk, "log_k_chunk", self.log_k_chunk)?;
-
-        if self.log_k_chunk != 4 && self.log_k_chunk != 8 {
-            return Err(SchemaError::new(format!(
-                "log_k_chunk must be 4 or 8, got {}",
-                self.log_k_chunk
-            )));
-        }
-        if self.instruction_log_k != 128 {
-            return Err(SchemaError::new(format!(
-                "instruction_log_k must be 128, got {}",
-                self.instruction_log_k
-            )));
-        }
-
-        let instruction_d = self.instruction_log_k / self.log_k_chunk;
-        let bytecode_d = self.log_k_bytecode.div_ceil(self.log_k_chunk);
-        let ram_d = self.log_k_ram.div_ceil(self.log_k_chunk);
-        require_eq("instruction_d", self.instruction_d, instruction_d)?;
-        require_eq("bytecode_d", self.bytecode_d, bytecode_d)?;
-        require_eq("ram_d", self.ram_d, ram_d)?;
-        require_eq(
-            "num_committed",
-            self.num_committed,
-            2 + instruction_d + bytecode_d + ram_d,
-        )?;
-        Ok(())
-    }
-
-    fn main_witness_oracles(&self) -> Vec<String> {
-        let mut oracles = vec!["RdInc".to_owned(), "RamInc".to_owned()];
-        oracles.extend((0..self.instruction_d).map(|index| format!("InstructionRa_{index}")));
-        oracles.extend((0..self.ram_d).map(|index| format!("RamRa_{index}")));
-        oracles.extend((0..self.bytecode_d).map(|index| format!("BytecodeRa_{index}")));
-        oracles
-    }
-}
-
-fn require_power_relation(
-    value_name: &str,
-    value: usize,
-    log_name: &str,
-    log_value: usize,
-) -> Result<(), SchemaError> {
-    let expected = 1usize << log_value;
-    if value == expected {
-        Ok(())
-    } else {
-        Err(SchemaError::new(format!(
-            "{value_name} must equal 2^{log_name}; got {value}, expected {expected}"
-        )))
-    }
-}
-
-fn require_eq(name: &str, actual: usize, expected: usize) -> Result<(), SchemaError> {
-    if actual == expected {
-        Ok(())
-    } else {
-        Err(SchemaError::new(format!(
-            "{name} must be {expected}, got {actual}"
-        )))
-    }
 }

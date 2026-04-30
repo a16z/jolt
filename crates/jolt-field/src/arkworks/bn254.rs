@@ -294,6 +294,18 @@ impl Fr {
         Some(Fr(bn254_ops::from_bigint_unchecked(limbs.to_bigint())))
     }
 
+    /// Reduces an unreduced Montgomery product into a field element.
+    #[inline(always)]
+    pub fn from_montgomery_reduced_limbs<const L: usize>(limbs: Limbs<L>) -> Self {
+        Fr(bn254_ops::from_montgomery_reduce(limbs.into()))
+    }
+
+    /// Barrett-reduces an unreduced internal-representation integer.
+    #[inline(always)]
+    pub fn from_barrett_reduced_limbs<const L: usize>(limbs: Limbs<L>) -> Self {
+        Fr(bn254_ops::from_barrett_reduce(limbs.into()))
+    }
+
     /// Access the internal Montgomery-form limbs.
     ///
     /// Used by [`WideAccumulator`](super::wide_accumulator::WideAccumulator)

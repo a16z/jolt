@@ -165,6 +165,32 @@ irdl.dialect @piop {
     irdl.operands(result: %result)
     irdl.results(eval: %eval)
   }
+  irdl.operation @sumcheck_instance_result {
+    %input_point = irdl.parametric @poly::@point<>
+    %output_point = irdl.parametric @poly::@point<>
+    %input_result = irdl.parametric @piop::@sumcheck_result_type<>
+    %output_result = irdl.parametric @piop::@sumcheck_result_type<>
+    %sym = irdl.any
+    %source = irdl.any
+    %claim = irdl.any
+    %relation = irdl.any
+    %index = irdl.any
+    %point_arity = irdl.any
+    %num_rounds = irdl.any
+    %degree = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "source" = %source,
+      "claim" = %claim,
+      "relation" = %relation,
+      "index" = %index,
+      "point_arity" = %point_arity,
+      "num_rounds" = %num_rounds,
+      "degree" = %degree
+    }
+    irdl.operands(input_point: %input_point, input_result: %input_result)
+    irdl.results(instance_point: %output_point, instance_result: %output_result)
+  }
   irdl.operation @opening_claim {
     %point = irdl.parametric @poly::@point<>
     %eval = irdl.parametric @field::@scalar<>

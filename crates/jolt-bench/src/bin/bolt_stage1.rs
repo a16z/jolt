@@ -1,4 +1,4 @@
-#![allow(clippy::print_stdout)]
+#![allow(clippy::print_stderr, clippy::print_stdout)]
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -30,23 +30,24 @@ use jolt_core::zkvm::proof_serialization::{Claims as CoreClaims, JoltProof as Co
 use jolt_core::zkvm::prover::{JoltCpuProver, JoltProverPreprocessing};
 use jolt_core::zkvm::verifier::{JoltSharedPreprocessing, JoltVerifier, JoltVerifierPreprocessing};
 use jolt_dory::{DoryCommitment, DoryHint, DoryProverSetup, DoryScheme};
+use jolt_field::signed::{S128, S64};
 use jolt_field::{Field, Fr};
-use jolt_host::{extract_trace, BytecodePreprocessing, Program as HostProgram};
+use jolt_host::{extract_trace, BytecodePreprocessing, CycleRow, Program as HostProgram};
 use jolt_inlines_keccak256 as _;
 use jolt_inlines_sha2 as _;
+use jolt_instructions::flags::{CircuitFlags, InstructionFlags};
 use jolt_kernels::stage1::{
     execute_stage1_program, Stage1CpuProgramPlan as KernelStage1CpuProgramPlan,
     Stage1ExecutionArtifacts, Stage1ExecutionMode, Stage1KernelPlan as KernelStage1KernelPlan,
     Stage1OpeningBatchPlan as KernelStage1OpeningBatchPlan,
-    Stage1OpeningClaimPlan as KernelStage1OpeningClaimPlan, Stage1OuterR1csData, Stage1Params,
-    Stage1Proof, Stage1ProverInputs, Stage1ProverKernelExecutor,
-    Stage1SumcheckBatchPlan as KernelStage1SumcheckBatchPlan,
+    Stage1OpeningClaimPlan as KernelStage1OpeningClaimPlan, Stage1OuterRemainingEvaluator,
+    Stage1OuterRv64Data, Stage1Params, Stage1Proof, Stage1ProverInputs, Stage1ProverKernelExecutor,
+    Stage1Rv64Cycle, Stage1SumcheckBatchPlan as KernelStage1SumcheckBatchPlan,
     Stage1SumcheckClaimPlan as KernelStage1SumcheckClaimPlan,
     Stage1SumcheckDriverPlan as KernelStage1SumcheckDriverPlan,
     Stage1SumcheckEvalPlan as KernelStage1SumcheckEvalPlan, Stage1TranscriptSqueezePlan,
     Stage1VerifierKernelExecutor,
 };
-use jolt_openings::StreamingCommitment;
 use jolt_r1cs::{constraints::rv64, R1csKey};
 use jolt_transcript::{
     AppendToTranscript, Blake2bTranscript, Label, LabelWithCount, Transcript, U64Word,
@@ -94,6 +95,9 @@ struct Cli {
 
     #[arg(long)]
     json: Option<PathBuf>,
+
+    #[arg(long, value_name = "NAME")]
+    trace_chrome: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -179,6 +183,7 @@ struct CoreStage1Fixture {
     entry_address: u64,
     cycle_inputs: Vec<CycleInput>,
     r1cs_witness: Vec<Fr>,
+    rv64_cycles: Vec<Stage1Rv64Cycle>,
     commitments: Vec<CoreCommitment>,
 }
 
@@ -220,7 +225,12 @@ struct Stage1Run {
 }
 
 fn main() {
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
+    let _tracing_guards = cli.trace_chrome.as_deref().map(|name| {
+        cli.iters = 1;
+        cli.warmup = 0;
+        jolt_profiling::setup_tracing(&[jolt_profiling::TracingFormat::Chrome], name)
+    });
     assert!(cli.iters > 0, "--iters must be positive");
     assert!(
         cli.bolt_timeout_multiplier > 0.0,
@@ -235,8 +245,10 @@ fn main() {
     let core_samples =
         measure_core_stage1(cli.program, cli.log_t, cli.num_iters, cli.iters, cli.warmup);
     let core_ms = median(&core_samples);
-    let bolt_timeout_ms = core_ms * cli.bolt_timeout_multiplier;
-    let bolt_result = run_bolt_with_timeout(
+    let measured_bolt_runs = cli.iters + cli.warmup;
+    let bolt_timeout_ms = core_ms * cli.bolt_timeout_multiplier * measured_bolt_runs as f64;
+    let correctness = assert_stage1_correctness(&fixture, &stage1_context);
+    let bolt_result = run_bolt_measurement_with_timeout(
         fixture,
         stage1_context,
         cli.iters,
@@ -244,11 +256,10 @@ fn main() {
         Duration::from_secs_f64(bolt_timeout_ms / 1000.0),
     );
 
-    let (correctness, bolt_run, timed_out) = match bolt_result {
-        Ok((correctness, bolt_samples)) => {
+    let (bolt_run, timed_out) = match bolt_result {
+        Ok(bolt_samples) => {
             let bolt_ms = median(&bolt_samples);
             (
-                Some(correctness),
                 Stage1Run {
                     stack: "bolt",
                     stage: "stage1",
@@ -264,7 +275,6 @@ fn main() {
         Err(reason) => {
             eprintln!("{reason}");
             (
-                None,
                 Stage1Run {
                     stack: "bolt",
                     stage: "stage1",
@@ -287,7 +297,7 @@ fn main() {
         num_iters: cli.num_iters,
         iters: cli.iters,
         warmup: cli.warmup,
-        correctness,
+        correctness: Some(correctness),
         runs: vec![
             Stage1Run {
                 stack: "core",
@@ -324,21 +334,18 @@ struct BoltStage1Context {
     num_cycle_vars: usize,
 }
 
-fn run_bolt_with_timeout(
+fn run_bolt_measurement_with_timeout(
     fixture: CoreStage1Fixture,
     context: BoltStage1Context,
     iters: usize,
     warmup: usize,
     timeout: Duration,
-) -> Result<(CorrectnessReport, Vec<f64>), String> {
+) -> Result<Vec<f64>, String> {
     let (sender, receiver) = mpsc::channel();
     let timeout_ms = timeout.as_secs_f64() * 1000.0;
-    std::thread::spawn(move || {
-        let result = std::panic::catch_unwind(|| {
-            let correctness = assert_stage1_correctness(&fixture, &context);
-            let samples = measure_bolt_stage1(&fixture, &context, iters, warmup);
-            (correctness, samples)
-        });
+    let _worker = std::thread::spawn(move || {
+        let result =
+            std::panic::catch_unwind(|| measure_bolt_stage1(&fixture, &context, iters, warmup));
         let _ = sender.send(result);
     });
 
@@ -346,7 +353,7 @@ fn run_bolt_with_timeout(
         Ok(Ok(result)) => Ok(result),
         Ok(Err(_panic)) => Err("Bolt Stage 1 worker panicked".to_string()),
         Err(mpsc::RecvTimeoutError::Timeout) => Err(format!(
-            "Bolt Stage 1 exceeded 10x core timeout budget ({timeout_ms:.3}ms)"
+            "Bolt Stage 1 exceeded timeout budget ({timeout_ms:.3}ms)"
         )),
         Err(mpsc::RecvTimeoutError::Disconnected) => {
             Err("Bolt Stage 1 worker disconnected".to_string())
@@ -400,6 +407,7 @@ fn core_stage1_fixture(program: Program, log_t: usize, num_iters: u32) -> CoreSt
         &host_io_device.memory_layout,
         r1cs_key.num_vars_padded,
     );
+    let rv64_cycles = stage1_rv64_cycles(&trace, proof.trace_length, &bytecode);
 
     let log_t = proof.trace_length.trailing_zeros() as usize;
     let log_k_bytecode = prover_preprocessing
@@ -419,7 +427,124 @@ fn core_stage1_fixture(program: Program, log_t: usize, num_iters: u32) -> CoreSt
         entry_address,
         cycle_inputs,
         r1cs_witness,
+        rv64_cycles,
         commitments,
+    }
+}
+
+fn stage1_rv64_cycles<C: CycleRow>(
+    trace: &[C],
+    size: usize,
+    bytecode: &BytecodePreprocessing,
+) -> Vec<Stage1Rv64Cycle> {
+    (0..size)
+        .map(|cycle| stage1_rv64_cycle(trace, cycle, bytecode))
+        .collect()
+}
+
+fn stage1_rv64_cycle<C: CycleRow>(
+    trace: &[C],
+    cycle_index: usize,
+    bytecode: &BytecodePreprocessing,
+) -> Stage1Rv64Cycle {
+    let Some(cycle) = trace.get(cycle_index) else {
+        return Stage1Rv64Cycle::padding();
+    };
+    let next = trace.get(cycle_index + 1);
+    if cycle.is_noop() {
+        let mut row = Stage1Rv64Cycle::padding();
+        fill_next_rv64_fields(&mut row, next, bytecode);
+        return row;
+    }
+
+    let flags = cycle.circuit_flags();
+    let instruction_flags = cycle.instruction_flags();
+    let left_input = if instruction_flags[InstructionFlags::LeftOperandIsPC] {
+        cycle.unexpanded_pc()
+    } else if instruction_flags[InstructionFlags::LeftOperandIsRs1Value] {
+        cycle.rs1_read().map_or(0, |(_, value)| value)
+    } else {
+        0
+    };
+    let right_i128 = if instruction_flags[InstructionFlags::RightOperandIsImm] {
+        cycle.imm()
+    } else if instruction_flags[InstructionFlags::RightOperandIsRs2Value] {
+        cycle.rs2_read().map_or(0, |(_, value)| value as i128)
+    } else {
+        0
+    };
+    let right_input = s64_from_i128(right_i128);
+    let product = S64::from_u64(left_input).mul_trunc::<2, 2>(&S128::from_i128(right_i128));
+    let lookup_output = cycle.lookup_output();
+    let (left_lookup, right_lookup) =
+        lookup_operands_raw(left_input, right_i128, product, &flags, lookup_output);
+    let next_is_noop = next.is_none_or(CycleRow::is_noop);
+
+    let mut row = Stage1Rv64Cycle {
+        left_input,
+        right_input,
+        product,
+        left_lookup,
+        right_lookup,
+        lookup_output,
+        rs1_read_value: cycle.rs1_read().map_or(0, |(_, value)| value),
+        rs2_read_value: cycle.rs2_read().map_or(0, |(_, value)| value),
+        rd_write_value: cycle.rd_write().map_or(0, |(_, _, post)| post),
+        ram_addr: cycle.ram_access_address().unwrap_or(0),
+        ram_read_value: cycle.ram_read_value().unwrap_or(0),
+        ram_write_value: cycle.ram_write_value().unwrap_or(0),
+        pc: bytecode.get_pc(cycle) as u64,
+        next_pc: 0,
+        unexpanded_pc: cycle.unexpanded_pc(),
+        next_unexpanded_pc: 0,
+        imm: s64_from_i128(cycle.imm()),
+        flags,
+        should_jump: flags[CircuitFlags::Jump] && !next_is_noop,
+        should_branch: instruction_flags[InstructionFlags::Branch] && lookup_output == 1,
+        next_is_virtual: false,
+        next_is_first_in_sequence: false,
+    };
+    fill_next_rv64_fields(&mut row, next, bytecode);
+    row
+}
+
+fn fill_next_rv64_fields<C: CycleRow>(
+    row: &mut Stage1Rv64Cycle,
+    next: Option<&C>,
+    bytecode: &BytecodePreprocessing,
+) {
+    if let Some(next_cycle) = next {
+        row.next_pc = bytecode.get_pc(next_cycle) as u64;
+        row.next_unexpanded_pc = next_cycle.unexpanded_pc();
+        let next_flags = next_cycle.circuit_flags();
+        row.next_is_virtual = next_flags[CircuitFlags::VirtualInstruction];
+        row.next_is_first_in_sequence = next_flags[CircuitFlags::IsFirstInSequence];
+    }
+}
+
+fn s64_from_i128(value: i128) -> S64 {
+    let magnitude = value.unsigned_abs();
+    assert!(magnitude <= u64::MAX as u128, "S64 input overflow");
+    S64::from_u64_with_sign(magnitude as u64, value >= 0)
+}
+
+fn lookup_operands_raw(
+    left: u64,
+    right: i128,
+    product: S128,
+    flags: &[bool; jolt_instructions::NUM_CIRCUIT_FLAGS],
+    lookup_output: u64,
+) -> (u64, u128) {
+    if flags[CircuitFlags::AddOperands] {
+        (0, (left as i128 + right) as u128)
+    } else if flags[CircuitFlags::SubtractOperands] {
+        (0, (left as i128 - right + (1i128 << 64)) as u128)
+    } else if flags[CircuitFlags::MultiplyOperands] {
+        (0, product.magnitude_as_u128())
+    } else if flags[CircuitFlags::Advice] {
+        (0, lookup_output as u128)
+    } else {
+        (left, right as u128)
     }
 }
 
@@ -500,7 +625,7 @@ fn assert_stage1_correctness(
     context: &BoltStage1Context,
 ) -> CorrectnessReport {
     let r1cs_key = R1csKey::new(rv64::rv64_constraints::<Fr>(), fixture.proof.trace_length);
-    let data = Stage1OuterR1csData::new(&r1cs_key, &fixture.r1cs_witness)
+    let data = Stage1OuterRv64Data::new(&r1cs_key, &fixture.r1cs_witness, &fixture.rv64_cycles)
         .expect("valid R1CS witness shape");
     let mut prover_transcript = RecordingTranscript::<Blake2bTranscript<Fr>>::new(TRANSCRIPT_LABEL);
     append_bolt_prefix(
@@ -560,7 +685,7 @@ fn measure_bolt_stage1(
     warmup: usize,
 ) -> Vec<f64> {
     let r1cs_key = R1csKey::new(rv64::rv64_constraints::<Fr>(), fixture.proof.trace_length);
-    let data = Stage1OuterR1csData::new(&r1cs_key, &fixture.r1cs_witness)
+    let data = Stage1OuterRv64Data::new(&r1cs_key, &fixture.r1cs_witness, &fixture.rv64_cycles)
         .expect("valid R1CS witness shape");
     let mut prefix = Blake2bTranscript::<Fr>::new(TRANSCRIPT_LABEL);
     append_bolt_prefix(
@@ -594,14 +719,15 @@ fn measure_bolt_stage1(
         .collect()
 }
 
-fn run_bolt_stage1_prover<T>(
+fn run_bolt_stage1_prover<T, E>(
     plan: &'static KernelStage1CpuProgramPlan,
     num_cycle_vars: usize,
-    data: &Stage1OuterR1csData<'_, Fr>,
+    data: &E,
     mut transcript: T,
 ) -> (T, Stage1ExecutionArtifacts<Fr>)
 where
     T: Transcript<Challenge = Fr>,
+    E: Stage1OuterRemainingEvaluator<Fr>,
 {
     let inputs = Stage1ProverInputs::empty(num_cycle_vars).with_outer_remaining_evaluator(data);
     let mut prover = Stage1ProverKernelExecutor::new(inputs);
@@ -1033,6 +1159,8 @@ fn to_ark(value: Fr) -> CoreFr {
 }
 
 fn commitment_to_ark(commitment: &DoryCommitment) -> CoreCommitment {
+    // SAFETY: both commitment types wrap the same arkworks G1 type; this oracle only
+    // compares transcript-equivalent commitments across the modular and core crates.
     unsafe { std::mem::transmute_copy(&commitment.0) }
 }
 
@@ -1097,13 +1225,7 @@ fn commit_with_layout(
     setup: &DoryProverSetup,
 ) -> (DoryCommitment, DoryHint) {
     let row_len = target_len(layout_num_vars.div_ceil(2));
-    let mut partial = DoryScheme::begin(setup);
-    for row in data.chunks(row_len) {
-        DoryScheme::feed(&mut partial, row, setup);
-    }
-    let hint = DoryHint(partial.row_commitments.clone());
-    let commitment = DoryScheme::finish(partial, setup);
-    (commitment, hint)
+    DoryScheme::commit_evaluations_with_row_len(data, row_len, setup)
 }
 
 fn target_len(num_vars: usize) -> usize {

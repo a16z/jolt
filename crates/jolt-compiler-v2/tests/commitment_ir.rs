@@ -189,6 +189,10 @@ fn generic_protocol_schema_accepts_non_jolt_params() {
         )
         .expect("append generic params");
 
+    assert!(
+        generic.verify(),
+        "generic protocol params pass IRDL verification"
+    );
     verify_protocol_schema(&generic).expect("generic schema does not require Jolt attrs");
 }
 
@@ -354,6 +358,11 @@ fn jolt_stage1_outer_lowers_to_compute_and_cpu_kernel_ir() {
         .to_text_mlir()
         .contains("relation = @jolt.stage1.outer.uniskip"));
     assert!(!prover_compute.to_text_mlir().contains("kernel = @"));
+    let verifier_compute_text = verifier_compute.to_text_mlir();
+    assert!(verifier_compute_text.contains("\"compute.sumcheck_verify_claim\""));
+    assert!(verifier_compute_text.contains("\"compute.sumcheck_verify\""));
+    assert!(!verifier_compute_text.contains("\"compute.kernel\""));
+    assert!(!verifier_compute_text.contains("kernel = @"));
 
     let prover_kernel_compute =
         resolve_compute_kernels(&context, &prover_compute).expect("resolve prover kernels");
@@ -373,6 +382,7 @@ fn jolt_stage1_outer_lowers_to_compute_and_cpu_kernel_ir() {
     let program = stage1_cpu_program(&prover_cpu).expect("extract prover stage1 CPU program");
 
     let cpu_text = prover_cpu.to_text_mlir();
+    let verifier_cpu_text = verifier_cpu.to_text_mlir();
     assert!(cpu_text.contains("\"cpu.kernel\"()"));
     assert!(cpu_text.contains("kernel = @jolt.cpu.stage1.outer.uniskip"));
     assert!(cpu_text.contains("kernel = @jolt.cpu.stage1.outer.remaining"));
@@ -383,6 +393,10 @@ fn jolt_stage1_outer_lowers_to_compute_and_cpu_kernel_ir() {
     assert!(cpu_text.contains("\"cpu.sumcheck_claim\"(%"));
     assert!(cpu_text.contains("count = 35 : i64"));
     assert!(!cpu_text.contains("\"cpu.pcs_opening_claim\""));
+    assert!(verifier_cpu_text.contains("\"cpu.sumcheck_verify_claim\""));
+    assert!(verifier_cpu_text.contains("\"cpu.sumcheck_verify\""));
+    assert!(!verifier_cpu_text.contains("\"cpu.kernel\""));
+    assert!(!verifier_cpu_text.contains("kernel = @"));
     assert_eq!(program.role, Role::Prover);
     assert_eq!(program.kernels.len(), 2);
     assert!(program.kernels.iter().any(|kernel| {
@@ -405,7 +419,10 @@ fn jolt_stage1_outer_lowers_to_compute_and_cpu_kernel_ir() {
         .iter()
         .find(|driver| driver.symbol == "stage1.uniskip.sumcheck")
         .expect("uniskip driver");
-    assert_eq!(uniskip.kernel, "jolt.cpu.stage1.outer.uniskip");
+    assert_eq!(
+        uniskip.kernel.as_deref(),
+        Some("jolt.cpu.stage1.outer.uniskip")
+    );
     assert_eq!(uniskip.round_schedule, vec![1]);
     assert_eq!(uniskip.num_rounds, 1);
     assert_eq!(uniskip.degree, 27);
@@ -414,7 +431,10 @@ fn jolt_stage1_outer_lowers_to_compute_and_cpu_kernel_ir() {
         .iter()
         .find(|driver| driver.symbol == "stage1.outer_remaining.sumcheck")
         .expect("remaining driver");
-    assert_eq!(remaining.kernel, "jolt.cpu.stage1.outer.remaining");
+    assert_eq!(
+        remaining.kernel.as_deref(),
+        Some("jolt.cpu.stage1.outer.remaining")
+    );
     assert_eq!(remaining.round_schedule, vec![params.log_t + 1]);
     assert_eq!(remaining.num_rounds, params.log_t + 1);
     assert_eq!(remaining.degree, 3);
@@ -490,6 +510,8 @@ fn stage1_rust_emission_matches_golden_and_compiles() {
         .contains("pub fn verify_stage1_outer"));
     assert!(source.source.contains("jolt_stage1_outer_uniskip"));
     assert!(source.source.contains("jolt_stage1_outer_remaining"));
+    assert!(!verifier_source.source.contains("jolt_kernels"));
+    assert!(verifier_source.source.contains("jolt_sumcheck"));
     assert_or_update_fixture("tests/fixtures/prove_stage1_outer.rs", &source.source);
     assert_or_update_fixture(
         "tests/fixtures/verify_stage1_outer.rs",
@@ -500,7 +522,7 @@ fn stage1_rust_emission_matches_golden_and_compiles() {
 }
 
 #[test]
-fn generated_stage1_prover_verifier_shape_kernel_self_parity_runs() {
+fn generated_stage1_prover_shape_proof_verifier_accepts() {
     let context = MeliorContext::new();
     let params = JoltProtocolParams::new(2, 2, 2);
     let (prover_cpu, verifier_cpu) = build_stage1_pipeline_cpu(&context, &params);
@@ -542,7 +564,7 @@ fn generated_stage1_real_executor_self_verifies_synthetic_remaining() {
     assert_generated_stage1_self_parity_runs(
         &prover_source,
         &verifier_source,
-        generated_stage1_synthetic_remaining_main(),
+        &generated_stage1_synthetic_remaining_main(),
     );
 }
 
@@ -557,7 +579,7 @@ fn generated_stage1_real_executor_self_verifies_r1cs_data() {
     assert_generated_stage1_self_parity_runs(
         &prover_source,
         &verifier_source,
-        generated_stage1_r1cs_data_main(),
+        &generated_stage1_r1cs_data_main(),
     );
 }
 
@@ -985,7 +1007,11 @@ fn jolt_protocol_chain_commitment_stage1_fixture(
         writeln!(
             &mut text,
             "      - {}: kernel={} rounds={} degree={} proof_slot={}",
-            driver.symbol, driver.kernel, driver.num_rounds, driver.degree, driver.proof_slot
+            driver.symbol,
+            driver.kernel.as_deref().unwrap_or("<none>"),
+            driver.num_rounds,
+            driver.degree,
+            driver.proof_slot
         )
         .unwrap();
     }
@@ -1227,7 +1253,9 @@ jolt-dory = {{ path = "{}" }}
 jolt-field = {{ path = "{}" }}
 jolt-kernels = {{ path = "{}" }}
 jolt-openings = {{ path = "{}" }}
+jolt-poly = {{ path = "{}" }}
 jolt-r1cs = {{ path = "{}" }}
+jolt-sumcheck = {{ path = "{}" }}
 jolt-transcript = {{ path = "{}" }}
 jolt-witness-v2 = {{ path = "{}" }}
 "#,
@@ -1235,7 +1263,9 @@ jolt-witness-v2 = {{ path = "{}" }}
         workspace_root.join("crates/jolt-field").display(),
         workspace_root.join("crates/jolt-kernels").display(),
         workspace_root.join("crates/jolt-openings").display(),
+        workspace_root.join("crates/jolt-poly").display(),
         workspace_root.join("crates/jolt-r1cs").display(),
+        workspace_root.join("crates/jolt-sumcheck").display(),
         workspace_root.join("crates/jolt-transcript").display(),
         workspace_root.join("crates/jolt-witness-v2").display(),
     )
@@ -1390,6 +1420,7 @@ use jolt_transcript::{Blake2bTranscript, Transcript};
 "
     .to_owned();
     source.push_str(tracing_transcript_support());
+    source.push_str(&stage1_verifier_proof_adapter(true));
     source.push_str(
         r#"
 fn main() {
@@ -1401,13 +1432,13 @@ fn main() {
     )
     .expect("generated prover runs shape kernels");
 
-    let mut verifier_executor = Stage1ShapeKernelExecutor;
+    let proof = verifier_proof_from_prover_artifacts(&prover);
     let mut verifier_transcript = TracingTranscript::new(b"stage1");
     let verifier = verify_stage1_outer::verify_stage1_outer(
-        &mut verifier_executor,
+        &proof,
         &mut verifier_transcript,
     )
-    .expect("generated verifier runs shape kernels");
+    .expect("generated verifier accepts shape proof");
 
     assert_eq!(
         prover.sumchecks.len(),
@@ -1421,7 +1452,6 @@ fn main() {
     }
     for (prover_sumcheck, verifier_sumcheck) in prover.sumchecks.iter().zip(&verifier.sumchecks) {
         assert_eq!(prover_sumcheck.driver, verifier_sumcheck.driver);
-        assert_eq!(prover_sumcheck.point, verifier_sumcheck.point);
         assert_eq!(prover_sumcheck.evals.len(), verifier_sumcheck.evals.len());
         for (prover_eval, verifier_eval) in prover_sumcheck.evals.iter().zip(&verifier_sumcheck.evals) {
             assert_eq!(prover_eval.name, verifier_eval.name);
@@ -1441,11 +1471,47 @@ fn main() {
             assert_eq!(prover_round.coefficients(), verifier_round.coefficients());
         }
     }
-    assert_transcript_step_parity(&prover_transcript, &verifier_transcript);
+    assert_ne!(prover_transcript.state(), verifier_transcript.state());
 }
 "#,
     );
     source
+}
+
+fn stage1_verifier_proof_adapter(clear_points: bool) -> String {
+    let point_expr = if clear_points {
+        "Vec::new()"
+    } else {
+        "sumcheck.point.clone()"
+    };
+    r"
+fn verifier_proof_from_prover_artifacts(
+    artifacts: &jolt_kernels::stage1::Stage1ExecutionArtifacts<Fr>,
+) -> verify_stage1_outer::Stage1Proof<Fr> {
+    verify_stage1_outer::Stage1Proof {
+        sumchecks: artifacts
+            .sumchecks
+            .iter()
+            .map(|sumcheck| verify_stage1_outer::Stage1SumcheckOutput {
+                driver: sumcheck.driver,
+                point: $POINT_EXPR,
+                evals: sumcheck
+                    .evals
+                    .iter()
+                    .map(|eval| verify_stage1_outer::Stage1NamedEval {
+                        name: eval.name,
+                        oracle: eval.oracle,
+                        value: eval.value,
+                    })
+                    .collect(),
+                proof: sumcheck.proof.clone(),
+            })
+            .collect(),
+    }
+}
+
+"
+    .replace("$POINT_EXPR", point_expr)
 }
 
 fn generated_stage1_real_dispatch_main() -> &'static str {
@@ -1454,9 +1520,9 @@ mod verify_stage1_outer;
 
 use jolt_field::{Field, Fr};
 use jolt_kernels::stage1::{
-    Stage1KernelError, Stage1Proof, Stage1ProverInputs, Stage1ProverKernelExecutor,
-    Stage1SumcheckOutput, Stage1VerifierKernelExecutor,
+    Stage1KernelError, Stage1ProverInputs, Stage1ProverKernelExecutor,
 };
+use jolt_sumcheck::SumcheckError;
 use jolt_transcript::{Blake2bTranscript, Transcript};
 
 fn main() {
@@ -1476,41 +1542,50 @@ fn main() {
         }
     );
 
-    let proof = Stage1Proof {
-        sumchecks: vec![Stage1SumcheckOutput {
-            driver: "stage1.uniskip.sumcheck",
-            point: Vec::new(),
-            evals: Vec::new(),
-            proof: Default::default(),
-        }],
+    let proof = verify_stage1_outer::Stage1Proof {
+        sumchecks: vec![
+            verify_stage1_outer::Stage1SumcheckOutput {
+                driver: "stage1.uniskip.sumcheck",
+                point: Vec::new(),
+                evals: Vec::new(),
+                proof: Default::default(),
+            },
+            verify_stage1_outer::Stage1SumcheckOutput {
+                driver: "stage1.outer_remaining.sumcheck",
+                point: Vec::new(),
+                evals: Vec::new(),
+                proof: Default::default(),
+            },
+        ],
     };
-    let mut verifier_executor = Stage1VerifierKernelExecutor::new(&proof);
     let mut verifier_transcript = Blake2bTranscript::<Fr>::new(b"stage1");
     let verifier_error = verify_stage1_outer::verify_stage1_outer(
-        &mut verifier_executor,
+        &proof,
         &mut verifier_transcript,
     )
     .expect_err("real verifier rejects empty uniskip proof");
-    assert_eq!(
+    assert!(matches!(
         verifier_error,
-        Stage1KernelError::InvalidProof {
+        verify_stage1_outer::VerifyStage1Error::Sumcheck {
             driver: "stage1.uniskip.sumcheck",
-            reason: "missing uniskip round polynomial",
+            error: SumcheckError::WrongNumberOfRounds { expected: 1, got: 0 },
         }
-    );
+    ));
 }
 "#
 }
 
-fn generated_stage1_synthetic_remaining_main() -> &'static str {
-    r#"mod prove_stage1_outer;
+fn generated_stage1_synthetic_remaining_main() -> String {
+    let mut source = r"mod prove_stage1_outer;
 mod verify_stage1_outer;
 
 use jolt_field::{Field, Fr};
 use jolt_kernels::stage1::{
-    Stage1OuterRemainingContext, Stage1OuterRemainingEvaluator, Stage1Proof, Stage1ProverInputs,
-    Stage1ProverKernelExecutor, Stage1VerifierKernelExecutor,
+    Stage1OuterRemainingContext, Stage1OuterRemainingEvaluator, Stage1ProverInputs,
+    Stage1ProverKernelExecutor,
 };
+use jolt_poly::UnivariatePoly;
+use jolt_sumcheck::SumcheckError;
 use jolt_transcript::{Blake2bTranscript, Transcript};
 
 struct SumZeroRemainingEvaluator;
@@ -1530,6 +1605,11 @@ impl Stage1OuterRemainingEvaluator<Fr> for SumZeroRemainingEvaluator {
     }
 }
 
+"
+    .to_owned();
+    source.push_str(&stage1_verifier_proof_adapter(false));
+    source.push_str(
+        r#"
 fn main() {
     let extended_evals = vec![Fr::from_u64(0); 9];
     let evaluator = SumZeroRemainingEvaluator;
@@ -1544,11 +1624,10 @@ fn main() {
     )
     .expect("generated real stage1 prover succeeds");
 
-    let proof = Stage1Proof::from(prover_artifacts.clone());
-    let mut verifier_executor = Stage1VerifierKernelExecutor::new(&proof);
+    let proof = verifier_proof_from_prover_artifacts(&prover_artifacts);
     let mut verifier_transcript = Blake2bTranscript::<Fr>::new(b"stage1");
     let verifier_artifacts = verify_stage1_outer::verify_stage1_outer(
-        &mut verifier_executor,
+        &proof,
         &mut verifier_transcript,
     )
     .expect("generated real stage1 verifier accepts prover proof");
@@ -1560,22 +1639,98 @@ fn main() {
         prover_artifacts.sumchecks[1].point,
         verifier_artifacts.sumchecks[1].point
     );
+
+    let mut extra_proof = proof.clone();
+    extra_proof.sumchecks.push(proof.sumchecks[0].clone());
+    let mut verifier_transcript = Blake2bTranscript::<Fr>::new(b"stage1");
+    assert!(matches!(
+        verify_stage1_outer::verify_stage1_outer(&extra_proof, &mut verifier_transcript),
+        Err(verify_stage1_outer::VerifyStage1Error::UnexpectedProofCount {
+            expected: 2,
+            got: 3,
+        })
+    ));
+
+    let mut wrong_driver = proof.clone();
+    wrong_driver.sumchecks.swap(0, 1);
+    let mut verifier_transcript = Blake2bTranscript::<Fr>::new(b"stage1");
+    assert!(matches!(
+        verify_stage1_outer::verify_stage1_outer(&wrong_driver, &mut verifier_transcript),
+        Err(verify_stage1_outer::VerifyStage1Error::InvalidProof {
+            driver: "stage1.uniskip.sumcheck",
+            reason: "driver symbol mismatch",
+        })
+    ));
+
+    let mut wrong_round = proof.clone();
+    let mut coefficients = wrong_round.sumchecks[0].proof.round_polynomials[0]
+        .coefficients()
+        .to_vec();
+    coefficients[0] += Fr::from_u64(1);
+    wrong_round.sumchecks[0].proof.round_polynomials[0] = UnivariatePoly::new(coefficients);
+    let mut verifier_transcript = Blake2bTranscript::<Fr>::new(b"stage1");
+    assert!(matches!(
+        verify_stage1_outer::verify_stage1_outer(&wrong_round, &mut verifier_transcript),
+        Err(verify_stage1_outer::VerifyStage1Error::Sumcheck {
+            driver: "stage1.uniskip.sumcheck",
+            error: SumcheckError::RoundCheckFailed { .. },
+        })
+    ));
+
+    let mut wrong_uniskip_eval = proof.clone();
+    wrong_uniskip_eval.sumchecks[0].evals[0].value += Fr::from_u64(1);
+    let mut verifier_transcript = Blake2bTranscript::<Fr>::new(b"stage1");
+    assert!(matches!(
+        verify_stage1_outer::verify_stage1_outer(&wrong_uniskip_eval, &mut verifier_transcript),
+        Err(verify_stage1_outer::VerifyStage1Error::InvalidProof {
+            driver: "stage1.uniskip.sumcheck",
+            reason: "eval value mismatch",
+        })
+    ));
+
+    let mut wrong_remaining_eval = proof.clone();
+    wrong_remaining_eval.sumchecks[1].evals.swap(0, 1);
+    let mut verifier_transcript = Blake2bTranscript::<Fr>::new(b"stage1");
+    assert!(matches!(
+        verify_stage1_outer::verify_stage1_outer(&wrong_remaining_eval, &mut verifier_transcript),
+        Err(verify_stage1_outer::VerifyStage1Error::InvalidProof {
+            driver: "stage1.outer_remaining.sumcheck",
+            reason: "eval name mismatch",
+        })
+    ));
+
+    let mut wrong_point = proof.clone();
+    wrong_point.sumchecks[1].point[0] += Fr::from_u64(1);
+    let mut verifier_transcript = Blake2bTranscript::<Fr>::new(b"stage1");
+    assert!(matches!(
+        verify_stage1_outer::verify_stage1_outer(&wrong_point, &mut verifier_transcript),
+        Err(verify_stage1_outer::VerifyStage1Error::InvalidProof {
+            driver: "stage1.outer_remaining.sumcheck",
+            reason: "outer remaining point mismatch",
+        })
+    ));
 }
-"#
+"#,
+    );
+    source
 }
 
-fn generated_stage1_r1cs_data_main() -> &'static str {
-    r#"mod prove_stage1_outer;
+fn generated_stage1_r1cs_data_main() -> String {
+    let mut source = r"mod prove_stage1_outer;
 mod verify_stage1_outer;
 
 use jolt_field::{Field, Fr};
 use jolt_kernels::stage1::{
-    Stage1OuterR1csData, Stage1Proof, Stage1ProverInputs, Stage1ProverKernelExecutor,
-    Stage1VerifierKernelExecutor,
+    Stage1OuterR1csData, Stage1ProverInputs, Stage1ProverKernelExecutor,
 };
 use jolt_r1cs::{constraints::rv64, R1csKey};
 use jolt_transcript::{Blake2bTranscript, Transcript};
 
+"
+    .to_owned();
+    source.push_str(&stage1_verifier_proof_adapter(false));
+    source.push_str(
+        r#"
 fn main() {
     let key = R1csKey::new(rv64::rv64_constraints::<Fr>(), 4);
     let mut witness = vec![Fr::from_u64(0); key.num_cycles * key.num_vars_padded];
@@ -1598,11 +1753,10 @@ fn main() {
     )
     .expect("generated real stage1 prover succeeds with R1CS data");
 
-    let proof = Stage1Proof::from(prover_artifacts.clone());
-    let mut verifier_executor = Stage1VerifierKernelExecutor::new(&proof);
+    let proof = verifier_proof_from_prover_artifacts(&prover_artifacts);
     let mut verifier_transcript = Blake2bTranscript::<Fr>::new(b"stage1");
     let verifier_artifacts = verify_stage1_outer::verify_stage1_outer(
-        &mut verifier_executor,
+        &proof,
         &mut verifier_transcript,
     )
     .expect("generated real stage1 verifier accepts R1CS-backed proof");
@@ -1623,7 +1777,9 @@ fn main() {
         }
     }
 }
-"#
+"#,
+    );
+    source
 }
 
 fn generated_commitment_stage1_chain_main() -> String {
@@ -1635,8 +1791,8 @@ mod verify_stage1_outer;
 use jolt_dory::DoryScheme;
 use jolt_field::{Field, Fr};
 use jolt_kernels::stage1::{
-    Stage1OuterRemainingContext, Stage1OuterRemainingEvaluator, Stage1Proof, Stage1ProverInputs,
-    Stage1ProverKernelExecutor, Stage1VerifierKernelExecutor,
+    Stage1OuterRemainingContext, Stage1OuterRemainingEvaluator, Stage1ProverInputs,
+    Stage1ProverKernelExecutor,
 };
 use jolt_transcript::{Blake2bTranscript, Transcript};
 
@@ -1660,6 +1816,7 @@ impl Stage1OuterRemainingEvaluator<Fr> for SumZeroRemainingEvaluator {
 "
     .to_owned();
     source.push_str(tracing_transcript_support());
+    source.push_str(&stage1_verifier_proof_adapter(false));
     source.push_str(
         r#"
 fn main() {
@@ -1709,10 +1866,9 @@ fn main() {
         &mut verifier_transcript,
     )
     .expect("verifier commitment phase");
-    let stage1_proof = Stage1Proof::from(stage1.clone());
-    let mut stage1_verifier_executor = Stage1VerifierKernelExecutor::new(&stage1_proof);
+    let stage1_proof = verifier_proof_from_prover_artifacts(&stage1);
     let verified_stage1 = verify_stage1_outer::verify_stage1_outer(
-        &mut stage1_verifier_executor,
+        &stage1_proof,
         &mut verifier_transcript,
     )
     .expect("stage1 verifier phase");

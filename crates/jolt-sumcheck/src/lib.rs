@@ -26,6 +26,7 @@
 
 pub mod batched;
 pub mod claim;
+pub mod clear;
 pub mod error;
 pub mod proof;
 pub mod round;
@@ -36,6 +37,7 @@ mod tests;
 
 pub use batched::BatchedSumcheckVerifier;
 pub use claim::SumcheckClaim;
+pub use clear::{ClearRoundEncoding, ClearSumcheckOutput, ClearSumcheckPlan};
 pub use error::SumcheckError;
 pub use proof::SumcheckProof;
 pub use round::{ClearRoundVerifier, RoundVerifier};

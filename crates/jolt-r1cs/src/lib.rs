@@ -11,7 +11,9 @@ pub mod constraint;
 pub mod constraints;
 pub mod key;
 pub mod provider;
+pub mod row_dots;
 
 pub use constraint::ConstraintMatrices;
 pub use key::R1csKey;
 pub use provider::{R1csSource, SpartanChallenges};
+pub use row_dots::{R1csRowDotSlice, R1csRowDotTable};

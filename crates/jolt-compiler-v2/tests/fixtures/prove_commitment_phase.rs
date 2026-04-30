@@ -4,7 +4,6 @@ use std::borrow::Cow;
 
 use jolt_dory::{DoryCommitment, DoryHint, DoryProverSetup, DoryScheme};
 use jolt_field::{Field, Fr};
-use jolt_openings::StreamingCommitment;
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript};
 use jolt_witness_v2::{dense_i128_column_to_field, one_hot_chunk_address_major, optional_field_oracle};
 
@@ -499,13 +498,11 @@ fn commit_with_layout(
     prover_setup: &DoryProverSetup,
 ) -> Result<(DoryCommitment, DoryHint), CommitmentPhaseError> {
     let row_len = target_len(layout_num_vars.div_ceil(2))?;
-    let mut partial = DoryScheme::begin(prover_setup);
-    for row in data.chunks(row_len) {
-        DoryScheme::feed(&mut partial, row, prover_setup);
-    }
-    let hint = DoryHint(partial.row_commitments.clone());
-    let commitment = DoryScheme::finish(partial, prover_setup);
-    Ok((commitment, hint))
+    Ok(DoryScheme::commit_evaluations_with_row_len(
+        data,
+        row_len,
+        prover_setup,
+    ))
 }
 
 fn target_len(num_vars: usize) -> Result<usize, CommitmentPhaseError> {
