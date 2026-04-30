@@ -44,8 +44,6 @@ pub enum CircuitFlags {
     IsCompressed,
     /// First instruction in a virtual sequence.
     IsFirstInSequence,
-    /// Last instruction in a virtual sequence.
-    IsLastInSequence,
 }
 
 /// Number of circuit flags.

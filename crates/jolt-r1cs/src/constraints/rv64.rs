@@ -10,8 +10,8 @@
 //! | Range | Description |
 //! |-------|-------------|
 //! | `[0]` | Constant 1 |
-//! | `[1..=35]` | R1CS inputs (registers, flags, PC, lookups) |
-//! | `[36..=37]` | Product factor variables (`Branch`, `NextIsNoop`) |
+//! | `[1..=34]` | R1CS inputs (registers, flags, PC, lookups) |
+//! | `[35..=36]` | Product factor variables (`Branch`, `NextIsNoop`) |
 //!
 //! # Constraint forms
 //!
@@ -56,12 +56,11 @@ pub const V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC: usize = 31;
 pub const V_FLAG_ADVICE: usize = 32;
 pub const V_FLAG_IS_COMPRESSED: usize = 33;
 pub const V_FLAG_IS_FIRST_IN_SEQUENCE: usize = 34;
-pub const V_FLAG_IS_LAST_IN_SEQUENCE: usize = 35;
 
-pub const V_BRANCH: usize = 36;
-pub const V_NEXT_IS_NOOP: usize = 37;
+pub const V_BRANCH: usize = 35;
+pub const V_NEXT_IS_NOOP: usize = 36;
 
-pub const NUM_R1CS_INPUTS: usize = 35;
+pub const NUM_R1CS_INPUTS: usize = 34;
 pub const NUM_PRODUCT_FACTORS: usize = 2;
 pub const NUM_VARS_PER_CYCLE: usize = 1 + NUM_R1CS_INPUTS + NUM_PRODUCT_FACTORS; // 38
 pub const NUM_EQ_CONSTRAINTS: usize = 19;
@@ -319,12 +318,12 @@ pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
     c_rows.push(empty());
 
     // 17: NextPCEqPCPlusOneIfInline
-    //     guard = VirtualInstruction − IsLastInSequence
+    //     guard = VirtualInstruction − Jump
     //     left  = NextPC
     //     right = PC + 1
     a_rows.push(row::<F>(&[
         (V_FLAG_VIRTUAL_INSTRUCTION, 1),
-        (V_FLAG_IS_LAST_IN_SEQUENCE, -1),
+        (V_FLAG_JUMP, -1),
     ]));
     b_rows.push(row::<F>(&[(V_NEXT_PC, 1), (V_PC, -1), (V_CONST, -1)]));
     c_rows.push(empty());
