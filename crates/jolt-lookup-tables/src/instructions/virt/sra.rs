@@ -34,6 +34,9 @@ mod tests {
 
     #[test]
     fn instruction_inputs_match_constraint_virtualsra() {
-        instruction_inputs_match_constraint_test!(VirtualSra, tracer::instruction::virtual_sra::VirtualSRA);
+        instruction_inputs_match_constraint_test!(
+            VirtualSra,
+            tracer::instruction::virtual_sra::VirtualSRA
+        );
     }
 }

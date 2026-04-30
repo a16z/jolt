@@ -32,11 +32,17 @@ mod tests {
 
     #[test]
     fn materialize_entry_virtualmovsign() {
-        materialize_entry_test!(MovSign, tracer::instruction::virtual_movsign::VirtualMovsign);
+        materialize_entry_test!(
+            MovSign,
+            tracer::instruction::virtual_movsign::VirtualMovsign
+        );
     }
 
     #[test]
     fn instruction_inputs_match_constraint_virtualmovsign() {
-        instruction_inputs_match_constraint_test!(MovSign, tracer::instruction::virtual_movsign::VirtualMovsign);
+        instruction_inputs_match_constraint_test!(
+            MovSign,
+            tracer::instruction::virtual_movsign::VirtualMovsign
+        );
     }
 }

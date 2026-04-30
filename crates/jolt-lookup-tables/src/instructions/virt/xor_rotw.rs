@@ -89,26 +89,41 @@ mod tests {
 
     #[test]
     fn materialize_entry_virtualxorrotw16() {
-        materialize_entry_test!(VirtualXorRotW16, tracer::instruction::virtual_xor_rotw::VirtualXORROTW16);
+        materialize_entry_test!(
+            VirtualXorRotW16,
+            tracer::instruction::virtual_xor_rotw::VirtualXORROTW16
+        );
     }
 
     #[test]
     fn instruction_inputs_match_constraint_virtualxorrotw16() {
-        instruction_inputs_match_constraint_test!(VirtualXorRotW16, tracer::instruction::virtual_xor_rotw::VirtualXORROTW16);
+        instruction_inputs_match_constraint_test!(
+            VirtualXorRotW16,
+            tracer::instruction::virtual_xor_rotw::VirtualXORROTW16
+        );
     }
 
     #[test]
     fn materialize_entry_virtualxorrotw12() {
-        materialize_entry_test!(VirtualXorRotW12, tracer::instruction::virtual_xor_rotw::VirtualXORROTW12);
+        materialize_entry_test!(
+            VirtualXorRotW12,
+            tracer::instruction::virtual_xor_rotw::VirtualXORROTW12
+        );
     }
 
     #[test]
     fn materialize_entry_virtualxorrotw8() {
-        materialize_entry_test!(VirtualXorRotW8, tracer::instruction::virtual_xor_rotw::VirtualXORROTW8);
+        materialize_entry_test!(
+            VirtualXorRotW8,
+            tracer::instruction::virtual_xor_rotw::VirtualXORROTW8
+        );
     }
 
     #[test]
     fn materialize_entry_virtualxorrotw7() {
-        materialize_entry_test!(VirtualXorRotW7, tracer::instruction::virtual_xor_rotw::VirtualXORROTW7);
+        materialize_entry_test!(
+            VirtualXorRotW7,
+            tracer::instruction::virtual_xor_rotw::VirtualXORROTW7
+        );
     }
 }

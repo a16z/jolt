@@ -39,11 +39,17 @@ mod tests {
 
     #[test]
     fn materialize_entry_virtualsignextendword() {
-        materialize_entry_test!(VirtualSignExtendWord, tracer::instruction::virtual_sign_extend_word::VirtualSignExtendWord);
+        materialize_entry_test!(
+            VirtualSignExtendWord,
+            tracer::instruction::virtual_sign_extend_word::VirtualSignExtendWord
+        );
     }
 
     #[test]
     fn instruction_inputs_match_constraint_virtualsignextendword() {
-        instruction_inputs_match_constraint_test!(VirtualSignExtendWord, tracer::instruction::virtual_sign_extend_word::VirtualSignExtendWord);
+        instruction_inputs_match_constraint_test!(
+            VirtualSignExtendWord,
+            tracer::instruction::virtual_sign_extend_word::VirtualSignExtendWord
+        );
     }
 }

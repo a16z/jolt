@@ -32,11 +32,17 @@ mod tests {
 
     #[test]
     fn materialize_entry_virtualadvicelen() {
-        materialize_entry_test!(VirtualAdviceLen, tracer::instruction::virtual_advice_len::VirtualAdviceLen);
+        materialize_entry_test!(
+            VirtualAdviceLen,
+            tracer::instruction::virtual_advice_len::VirtualAdviceLen
+        );
     }
 
     #[test]
     fn instruction_inputs_match_constraint_virtualadvicelen() {
-        instruction_inputs_match_constraint_test!(VirtualAdviceLen, tracer::instruction::virtual_advice_len::VirtualAdviceLen);
+        instruction_inputs_match_constraint_test!(
+            VirtualAdviceLen,
+            tracer::instruction::virtual_advice_len::VirtualAdviceLen
+        );
     }
 }

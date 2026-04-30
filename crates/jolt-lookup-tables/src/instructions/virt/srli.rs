@@ -30,6 +30,9 @@ mod tests {
 
     #[test]
     fn instruction_inputs_match_constraint_virtualsrli() {
-        instruction_inputs_match_constraint_test!(VirtualSrli, tracer::instruction::virtual_srli::VirtualSRLI);
+        instruction_inputs_match_constraint_test!(
+            VirtualSrli,
+            tracer::instruction::virtual_srli::VirtualSRLI
+        );
     }
 }

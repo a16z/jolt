@@ -32,11 +32,17 @@ mod tests {
 
     #[test]
     fn materialize_entry_virtualadvice() {
-        materialize_entry_test!(VirtualAdvice, tracer::instruction::virtual_advice::VirtualAdvice);
+        materialize_entry_test!(
+            VirtualAdvice,
+            tracer::instruction::virtual_advice::VirtualAdvice
+        );
     }
 
     #[test]
     fn instruction_inputs_match_constraint_virtualadvice() {
-        instruction_inputs_match_constraint_test!(VirtualAdvice, tracer::instruction::virtual_advice::VirtualAdvice);
+        instruction_inputs_match_constraint_test!(
+            VirtualAdvice,
+            tracer::instruction::virtual_advice::VirtualAdvice
+        );
     }
 }

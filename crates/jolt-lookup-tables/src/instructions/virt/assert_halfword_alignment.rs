@@ -37,11 +37,17 @@ mod tests {
 
     #[test]
     fn materialize_entry_virtualasserthalfwordalignment() {
-        materialize_entry_test!(AssertHalfwordAlignment, tracer::instruction::virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment);
+        materialize_entry_test!(
+            AssertHalfwordAlignment,
+            tracer::instruction::virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment
+        );
     }
 
     #[test]
     fn instruction_inputs_match_constraint_virtualasserthalfwordalignment() {
-        instruction_inputs_match_constraint_test!(AssertHalfwordAlignment, tracer::instruction::virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment);
+        instruction_inputs_match_constraint_test!(
+            AssertHalfwordAlignment,
+            tracer::instruction::virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment
+        );
     }
 }

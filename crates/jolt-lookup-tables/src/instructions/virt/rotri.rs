@@ -30,11 +30,17 @@ mod tests {
 
     #[test]
     fn materialize_entry_virtualrotri() {
-        materialize_entry_test!(VirtualRotri, tracer::instruction::virtual_rotri::VirtualROTRI);
+        materialize_entry_test!(
+            VirtualRotri,
+            tracer::instruction::virtual_rotri::VirtualROTRI
+        );
     }
 
     #[test]
     fn instruction_inputs_match_constraint_virtualrotri() {
-        instruction_inputs_match_constraint_test!(VirtualRotri, tracer::instruction::virtual_rotri::VirtualROTRI);
+        instruction_inputs_match_constraint_test!(
+            VirtualRotri,
+            tracer::instruction::virtual_rotri::VirtualROTRI
+        );
     }
 }

@@ -33,11 +33,17 @@ mod tests {
 
     #[test]
     fn materialize_entry_virtualzeroextendword() {
-        materialize_entry_test!(VirtualZeroExtendWord, tracer::instruction::virtual_zero_extend_word::VirtualZeroExtendWord);
+        materialize_entry_test!(
+            VirtualZeroExtendWord,
+            tracer::instruction::virtual_zero_extend_word::VirtualZeroExtendWord
+        );
     }
 
     #[test]
     fn instruction_inputs_match_constraint_virtualzeroextendword() {
-        instruction_inputs_match_constraint_test!(VirtualZeroExtendWord, tracer::instruction::virtual_zero_extend_word::VirtualZeroExtendWord);
+        instruction_inputs_match_constraint_test!(
+            VirtualZeroExtendWord,
+            tracer::instruction::virtual_zero_extend_word::VirtualZeroExtendWord
+        );
     }
 }

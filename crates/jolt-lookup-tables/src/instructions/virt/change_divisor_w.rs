@@ -32,11 +32,17 @@ mod tests {
 
     #[test]
     fn materialize_entry_virtualchangedivisorw() {
-        materialize_entry_test!(VirtualChangeDivisorW, tracer::instruction::virtual_change_divisor_w::VirtualChangeDivisorW);
+        materialize_entry_test!(
+            VirtualChangeDivisorW,
+            tracer::instruction::virtual_change_divisor_w::VirtualChangeDivisorW
+        );
     }
 
     #[test]
     fn instruction_inputs_match_constraint_virtualchangedivisorw() {
-        instruction_inputs_match_constraint_test!(VirtualChangeDivisorW, tracer::instruction::virtual_change_divisor_w::VirtualChangeDivisorW);
+        instruction_inputs_match_constraint_test!(
+            VirtualChangeDivisorW,
+            tracer::instruction::virtual_change_divisor_w::VirtualChangeDivisorW
+        );
     }
 }

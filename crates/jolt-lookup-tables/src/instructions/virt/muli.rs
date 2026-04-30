@@ -45,6 +45,9 @@ mod tests {
 
     #[test]
     fn instruction_inputs_match_constraint_virtualmuli() {
-        instruction_inputs_match_constraint_test!(MulI, tracer::instruction::virtual_muli::VirtualMULI);
+        instruction_inputs_match_constraint_test!(
+            MulI,
+            tracer::instruction::virtual_muli::VirtualMULI
+        );
     }
 }

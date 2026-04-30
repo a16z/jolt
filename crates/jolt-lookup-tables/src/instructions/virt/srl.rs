@@ -33,6 +33,9 @@ mod tests {
 
     #[test]
     fn instruction_inputs_match_constraint_virtualsrl() {
-        instruction_inputs_match_constraint_test!(VirtualSrl, tracer::instruction::virtual_srl::VirtualSRL);
+        instruction_inputs_match_constraint_test!(
+            VirtualSrl,
+            tracer::instruction::virtual_srl::VirtualSRL
+        );
     }
 }

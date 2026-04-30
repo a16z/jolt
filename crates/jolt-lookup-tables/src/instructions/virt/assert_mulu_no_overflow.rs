@@ -38,11 +38,17 @@ mod tests {
 
     #[test]
     fn materialize_entry_virtualassertmulunooverflow() {
-        materialize_entry_test!(AssertMulUNoOverflow, tracer::instruction::virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow);
+        materialize_entry_test!(
+            AssertMulUNoOverflow,
+            tracer::instruction::virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow
+        );
     }
 
     #[test]
     fn instruction_inputs_match_constraint_virtualassertmulunooverflow() {
-        instruction_inputs_match_constraint_test!(AssertMulUNoOverflow, tracer::instruction::virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow);
+        instruction_inputs_match_constraint_test!(
+            AssertMulUNoOverflow,
+            tracer::instruction::virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow
+        );
     }
 }

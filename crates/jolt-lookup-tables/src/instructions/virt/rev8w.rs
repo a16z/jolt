@@ -31,11 +31,17 @@ mod tests {
 
     #[test]
     fn materialize_entry_virtualrev8w() {
-        materialize_entry_test!(VirtualRev8W, tracer::instruction::virtual_rev8w::VirtualRev8W);
+        materialize_entry_test!(
+            VirtualRev8W,
+            tracer::instruction::virtual_rev8w::VirtualRev8W
+        );
     }
 
     #[test]
     fn instruction_inputs_match_constraint_virtualrev8w() {
-        instruction_inputs_match_constraint_test!(VirtualRev8W, tracer::instruction::virtual_rev8w::VirtualRev8W);
+        instruction_inputs_match_constraint_test!(
+            VirtualRev8W,
+            tracer::instruction::virtual_rev8w::VirtualRev8W
+        );
     }
 }

@@ -37,6 +37,9 @@ mod tests {
 
     #[test]
     fn instruction_inputs_match_constraint_virtualpow2w() {
-        instruction_inputs_match_constraint_test!(Pow2W, tracer::instruction::virtual_pow2_w::VirtualPow2W);
+        instruction_inputs_match_constraint_test!(
+            Pow2W,
+            tracer::instruction::virtual_pow2_w::VirtualPow2W
+        );
     }
 }

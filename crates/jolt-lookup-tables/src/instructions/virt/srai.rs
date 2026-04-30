@@ -31,6 +31,9 @@ mod tests {
 
     #[test]
     fn instruction_inputs_match_constraint_virtualsrai() {
-        instruction_inputs_match_constraint_test!(VirtualSrai, tracer::instruction::virtual_srai::VirtualSRAI);
+        instruction_inputs_match_constraint_test!(
+            VirtualSrai,
+            tracer::instruction::virtual_srai::VirtualSRAI
+        );
     }
 }

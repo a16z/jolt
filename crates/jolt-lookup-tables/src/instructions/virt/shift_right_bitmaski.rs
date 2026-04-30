@@ -34,11 +34,17 @@ mod tests {
 
     #[test]
     fn materialize_entry_virtualshiftrightbitmaski() {
-        materialize_entry_test!(VirtualShiftRightBitmaski, tracer::instruction::virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI);
+        materialize_entry_test!(
+            VirtualShiftRightBitmaski,
+            tracer::instruction::virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI
+        );
     }
 
     #[test]
     fn instruction_inputs_match_constraint_virtualshiftrightbitmaski() {
-        instruction_inputs_match_constraint_test!(VirtualShiftRightBitmaski, tracer::instruction::virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI);
+        instruction_inputs_match_constraint_test!(
+            VirtualShiftRightBitmaski,
+            tracer::instruction::virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI
+        );
     }
 }

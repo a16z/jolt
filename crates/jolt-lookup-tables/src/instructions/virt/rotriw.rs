@@ -34,11 +34,17 @@ mod tests {
 
     #[test]
     fn materialize_entry_virtualrotriw() {
-        materialize_entry_test!(VirtualRotriw, tracer::instruction::virtual_rotriw::VirtualROTRIW);
+        materialize_entry_test!(
+            VirtualRotriw,
+            tracer::instruction::virtual_rotriw::VirtualROTRIW
+        );
     }
 
     #[test]
     fn instruction_inputs_match_constraint_virtualrotriw() {
-        instruction_inputs_match_constraint_test!(VirtualRotriw, tracer::instruction::virtual_rotriw::VirtualROTRIW);
+        instruction_inputs_match_constraint_test!(
+            VirtualRotriw,
+            tracer::instruction::virtual_rotriw::VirtualROTRIW
+        );
     }
 }

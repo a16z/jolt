@@ -27,11 +27,17 @@ mod tests {
 
     #[test]
     fn materialize_entry_virtualassertlte() {
-        materialize_entry_test!(AssertLte, tracer::instruction::virtual_assert_lte::VirtualAssertLTE);
+        materialize_entry_test!(
+            AssertLte,
+            tracer::instruction::virtual_assert_lte::VirtualAssertLTE
+        );
     }
 
     #[test]
     fn instruction_inputs_match_constraint_virtualassertlte() {
-        instruction_inputs_match_constraint_test!(AssertLte, tracer::instruction::virtual_assert_lte::VirtualAssertLTE);
+        instruction_inputs_match_constraint_test!(
+            AssertLte,
+            tracer::instruction::virtual_assert_lte::VirtualAssertLTE
+        );
     }
 }

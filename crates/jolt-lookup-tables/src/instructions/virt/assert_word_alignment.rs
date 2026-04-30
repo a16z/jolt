@@ -37,11 +37,17 @@ mod tests {
 
     #[test]
     fn materialize_entry_virtualassertwordalignment() {
-        materialize_entry_test!(AssertWordAlignment, tracer::instruction::virtual_assert_word_alignment::VirtualAssertWordAlignment);
+        materialize_entry_test!(
+            AssertWordAlignment,
+            tracer::instruction::virtual_assert_word_alignment::VirtualAssertWordAlignment
+        );
     }
 
     #[test]
     fn instruction_inputs_match_constraint_virtualassertwordalignment() {
-        instruction_inputs_match_constraint_test!(AssertWordAlignment, tracer::instruction::virtual_assert_word_alignment::VirtualAssertWordAlignment);
+        instruction_inputs_match_constraint_test!(
+            AssertWordAlignment,
+            tracer::instruction::virtual_assert_word_alignment::VirtualAssertWordAlignment
+        );
     }
 }
