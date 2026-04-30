@@ -33,7 +33,10 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for Addi<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{instruction_inputs_match_constraint_test, materialize_entry_test};
+    use crate::{
+        instruction_inputs_match_constraint_test, lookup_output_matches_trace_test,
+        materialize_entry_test,
+    };
 
     #[test]
     fn materialize_entry_addi() {
@@ -43,5 +46,10 @@ mod tests {
     #[test]
     fn instruction_inputs_match_constraint_addi() {
         instruction_inputs_match_constraint_test!(Addi, tracer::instruction::addi::ADDI);
+    }
+
+    #[test]
+    fn lookup_output_matches_trace_addi() {
+        lookup_output_matches_trace_test!(Addi, tracer::instruction::addi::ADDI);
     }
 }

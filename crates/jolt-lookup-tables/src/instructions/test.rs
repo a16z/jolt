@@ -1,7 +1,11 @@
 //! Per-instruction test helpers.
 
+use std::any::TypeId;
+
 use jolt_trace::{Flags, InstructionFlags, JoltCycle, JoltInstruction};
 use rand::prelude::*;
+use tracer::emulator::{cpu::Cpu, terminal::DummyTerminal};
+use tracer::instruction::{jal::JAL, jalr::JALR, Cycle, RISCVCycle, RISCVTrace};
 
 use crate::{InstructionLookupTable, LookupQuery, XLEN};
 
@@ -89,6 +93,62 @@ pub fn instruction_inputs_match_constraint_fn<C, T, I>(
     }
 }
 
+/// Internal helper for [`lookup_output_matches_trace_test!`].
+///
+/// Fuzz-checks that an instruction's `LookupQuery::to_lookup_output` agrees
+/// with the value tracer's CPU emulator writes (to `rd`, or to PC for
+/// `JAL`/`JALR`) after executing the instruction. Catches divergences
+/// between the lookup-table semantics and the RISC-V semantics implemented
+/// by `tracer`.
+///
+/// `C: Copy` lets us print the failing cycle in the assert message after it
+/// has been moved into the wrapper.
+#[doc(hidden)]
+#[expect(clippy::unwrap_used)]
+pub fn lookup_output_matches_trace_test_fn<C, T>(cycle_wrapper: impl Fn(C) -> T)
+where
+    C: JoltCycle + Copy + core::fmt::Debug,
+    C::Instruction: RISCVTrace + 'static,
+    RISCVCycle<C::Instruction>: Into<Cycle>,
+    T: LookupQuery<XLEN>,
+{
+    let mut rng = StdRng::seed_from_u64(12345);
+    for _ in 0..10_000 {
+        let raw: C = C::random(&mut rng);
+        let instr = raw.instruction();
+        let rs1_idx = JoltInstruction::rs1(&instr);
+        let rs2_idx = JoltInstruction::rs2(&instr);
+        let rd_idx = JoltInstruction::rd(&instr);
+
+        let mut cpu = Cpu::new(Box::new(DummyTerminal::default()));
+        if let Some(rs1_val) = raw.rs1_val() {
+            cpu.write_register(rs1_idx.unwrap() as usize, rs1_val as i64);
+        }
+        if let Some(rs2_val) = raw.rs2_val() {
+            cpu.write_register(rs2_idx.unwrap() as usize, rs2_val as i64);
+        }
+
+        instr.trace(&mut cpu, None);
+
+        let wrapped: T = cycle_wrapper(raw);
+        let lookup_result = LookupQuery::<XLEN>::to_lookup_output(&wrapped);
+
+        let is_jal = TypeId::of::<C::Instruction>() == TypeId::of::<JAL>();
+        let is_jalr = TypeId::of::<C::Instruction>() == TypeId::of::<JALR>();
+        if is_jal || is_jalr {
+            let cpu_pc = cpu.read_pc();
+            assert_eq!(cpu_pc, lookup_result, "{raw:?}");
+        } else if let Some(rd) = rd_idx {
+            // x0 is hardwired to zero; writes are discarded so the CPU
+            // result is always 0 regardless of the lookup output.
+            if rd != 0 {
+                let cpu_result = cpu.x[rd as usize] as u64;
+                assert_eq!(cpu_result, lookup_result, "{raw:?}");
+            }
+        }
+    }
+}
+
 /// Fuzz-check that an instruction's `to_lookup_output` agrees with the
 /// corresponding lookup table's `materialize_entry(to_lookup_index)` across a
 /// batch of random cycles. Pass the Jolt instruction newtype and the tracer
@@ -123,5 +183,24 @@ macro_rules! instruction_inputs_match_constraint_test {
             $jolt<tracer::instruction::RISCVCycle<$tracer>>,
             $jolt<$tracer>,
         >($jolt, $jolt)
+    };
+}
+
+/// Fuzz-check that an instruction's `to_lookup_output` agrees with the value
+/// tracer's CPU emulator writes to `rd` (or PC, for `JAL`/`JALR`) after
+/// executing the instruction. Pass the Jolt instruction newtype and the
+/// tracer instruction path; the macro builds the
+/// `Foo<RISCVCycle<TracerType>>` / `RISCVCycle<TracerType>` type pair.
+///
+/// ```ignore
+/// lookup_output_matches_trace_test!(Add, tracer::instruction::add::ADD);
+/// ```
+#[macro_export]
+macro_rules! lookup_output_matches_trace_test {
+    ($jolt:ident, $tracer:path $(,)?) => {
+        $crate::instructions::test::lookup_output_matches_trace_test_fn::<
+            tracer::instruction::RISCVCycle<$tracer>,
+            $jolt<tracer::instruction::RISCVCycle<$tracer>>,
+        >($jolt)
     };
 }

@@ -27,7 +27,10 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualRev8W<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{instruction_inputs_match_constraint_test, materialize_entry_test};
+    use crate::{
+        instruction_inputs_match_constraint_test, lookup_output_matches_trace_test,
+        materialize_entry_test,
+    };
 
     #[test]
     fn materialize_entry_virtualrev8w() {
@@ -40,6 +43,14 @@ mod tests {
     #[test]
     fn instruction_inputs_match_constraint_virtualrev8w() {
         instruction_inputs_match_constraint_test!(
+            VirtualRev8W,
+            tracer::instruction::virtual_rev8w::VirtualRev8W
+        );
+    }
+
+    #[test]
+    fn lookup_output_matches_trace_virtualrev8w() {
+        lookup_output_matches_trace_test!(
             VirtualRev8W,
             tracer::instruction::virtual_rev8w::VirtualRev8W
         );

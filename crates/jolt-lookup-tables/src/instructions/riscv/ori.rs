@@ -23,7 +23,10 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for OrI<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{instruction_inputs_match_constraint_test, materialize_entry_test};
+    use crate::{
+        instruction_inputs_match_constraint_test, lookup_output_matches_trace_test,
+        materialize_entry_test,
+    };
 
     #[test]
     fn materialize_entry_ori() {
@@ -33,5 +36,10 @@ mod tests {
     #[test]
     fn instruction_inputs_match_constraint_ori() {
         instruction_inputs_match_constraint_test!(OrI, tracer::instruction::ori::ORI);
+    }
+
+    #[test]
+    fn lookup_output_matches_trace_ori() {
+        lookup_output_matches_trace_test!(OrI, tracer::instruction::ori::ORI);
     }
 }

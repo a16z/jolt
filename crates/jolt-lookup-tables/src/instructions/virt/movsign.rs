@@ -28,7 +28,10 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for MovSign<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{instruction_inputs_match_constraint_test, materialize_entry_test};
+    use crate::{
+        instruction_inputs_match_constraint_test, lookup_output_matches_trace_test,
+        materialize_entry_test,
+    };
 
     #[test]
     fn materialize_entry_virtualmovsign() {
@@ -41,6 +44,14 @@ mod tests {
     #[test]
     fn instruction_inputs_match_constraint_virtualmovsign() {
         instruction_inputs_match_constraint_test!(
+            MovSign,
+            tracer::instruction::virtual_movsign::VirtualMovsign
+        );
+    }
+
+    #[test]
+    fn lookup_output_matches_trace_virtualmovsign() {
+        lookup_output_matches_trace_test!(
             MovSign,
             tracer::instruction::virtual_movsign::VirtualMovsign
         );

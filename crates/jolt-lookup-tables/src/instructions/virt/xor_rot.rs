@@ -81,7 +81,10 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualXorRot63<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{instruction_inputs_match_constraint_test, materialize_entry_test};
+    use crate::{
+        instruction_inputs_match_constraint_test, lookup_output_matches_trace_test,
+        materialize_entry_test,
+    };
 
     #[test]
     fn materialize_entry_virtualxorrot32() {
@@ -100,8 +103,24 @@ mod tests {
     }
 
     #[test]
+    fn lookup_output_matches_trace_virtualxorrot32() {
+        lookup_output_matches_trace_test!(
+            VirtualXorRot32,
+            tracer::instruction::virtual_xor_rot::VirtualXORROT32
+        );
+    }
+
+    #[test]
     fn materialize_entry_virtualxorrot24() {
         materialize_entry_test!(
+            VirtualXorRot24,
+            tracer::instruction::virtual_xor_rot::VirtualXORROT24
+        );
+    }
+
+    #[test]
+    fn lookup_output_matches_trace_virtualxorrot24() {
+        lookup_output_matches_trace_test!(
             VirtualXorRot24,
             tracer::instruction::virtual_xor_rot::VirtualXORROT24
         );
@@ -116,8 +135,24 @@ mod tests {
     }
 
     #[test]
+    fn lookup_output_matches_trace_virtualxorrot16() {
+        lookup_output_matches_trace_test!(
+            VirtualXorRot16,
+            tracer::instruction::virtual_xor_rot::VirtualXORROT16
+        );
+    }
+
+    #[test]
     fn materialize_entry_virtualxorrot63() {
         materialize_entry_test!(
+            VirtualXorRot63,
+            tracer::instruction::virtual_xor_rot::VirtualXORROT63
+        );
+    }
+
+    #[test]
+    fn lookup_output_matches_trace_virtualxorrot63() {
+        lookup_output_matches_trace_test!(
             VirtualXorRot63,
             tracer::instruction::virtual_xor_rot::VirtualXORROT63
         );

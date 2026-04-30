@@ -30,7 +30,10 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualShiftRightBit
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{instruction_inputs_match_constraint_test, materialize_entry_test};
+    use crate::{
+        instruction_inputs_match_constraint_test, lookup_output_matches_trace_test,
+        materialize_entry_test,
+    };
 
     #[test]
     fn materialize_entry_virtualshiftrightbitmaski() {
@@ -43,6 +46,14 @@ mod tests {
     #[test]
     fn instruction_inputs_match_constraint_virtualshiftrightbitmaski() {
         instruction_inputs_match_constraint_test!(
+            VirtualShiftRightBitmaski,
+            tracer::instruction::virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI
+        );
+    }
+
+    #[test]
+    fn lookup_output_matches_trace_virtualshiftrightbitmaski() {
+        lookup_output_matches_trace_test!(
             VirtualShiftRightBitmaski,
             tracer::instruction::virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI
         );

@@ -29,7 +29,10 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualZeroExtendWor
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{instruction_inputs_match_constraint_test, materialize_entry_test};
+    use crate::{
+        instruction_inputs_match_constraint_test, lookup_output_matches_trace_test,
+        materialize_entry_test,
+    };
 
     #[test]
     fn materialize_entry_virtualzeroextendword() {
@@ -42,6 +45,14 @@ mod tests {
     #[test]
     fn instruction_inputs_match_constraint_virtualzeroextendword() {
         instruction_inputs_match_constraint_test!(
+            VirtualZeroExtendWord,
+            tracer::instruction::virtual_zero_extend_word::VirtualZeroExtendWord
+        );
+    }
+
+    #[test]
+    fn lookup_output_matches_trace_virtualzeroextendword() {
+        lookup_output_matches_trace_test!(
             VirtualZeroExtendWord,
             tracer::instruction::virtual_zero_extend_word::VirtualZeroExtendWord
         );
