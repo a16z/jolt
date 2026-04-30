@@ -49,6 +49,8 @@ use verifier::JoltVerifier;
 pub mod bytecode;
 pub mod claim_reductions;
 pub mod config;
+#[cfg(all(test, feature = "host"))]
+mod e2e_tests;
 pub mod instruction;
 pub mod instruction_lookups;
 pub mod lookup_table;
