@@ -1,3 +1,4 @@
+use common::constants::RAM_START_ADDRESS;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -11,6 +12,7 @@ use super::add::ADD;
 use super::addi::ADDI;
 use super::format::format_r::FormatR;
 use super::ld::LD;
+use super::lui::LUI;
 use super::mul::MUL;
 use super::sd::SD;
 use super::sub::SUB;
@@ -62,10 +64,17 @@ impl RISCVTrace for SCD {
 
         let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
 
-        // VirtualAdvice is at index 0 — advise v_success (1=success, 0=failure)
-        if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
-            instr.advice = success as u64;
-        }
+        // Patch v_success (1=success, 0=failure) into the first VirtualAdvice
+        // in the sequence. Locating it by type avoids fragility against
+        // changes to the sequence's prelude.
+        let advice = inline_sequence
+            .iter_mut()
+            .find_map(|i| match i {
+                Instruction::VirtualAdvice(v) => Some(v),
+                _ => None,
+            })
+            .expect("SC.D inline sequence must contain a VirtualAdvice");
+        advice.advice = success as u64;
 
         let mut trace = trace;
         for instr in inline_sequence {
@@ -90,6 +99,18 @@ impl RISCVTrace for SCD {
         let v_reservation = allocator.reservation_d_register();
         let v_reservation_w = allocator.reservation_w_register();
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
+
+        // Restrict SC.D to the RAM region (rs1 >= RAM_START_ADDRESS). The
+        // failure path of the inline sequence still emits a store of the
+        // loaded value back to rs1; for I/O addresses below RAM, the device
+        // store handler has value-independent side effects (flips the panic
+        // flag, extends the output buffer), so a failed SC into the I/O
+        // region would diverge from native SC semantics and let a malicious
+        // prover mutate the proof's public I/O.
+        let v_ram_start = allocator.allocate();
+        asm.emit_u::<LUI>(*v_ram_start, RAM_START_ADDRESS);
+        asm.emit_b::<VirtualAssertLTE>(*v_ram_start, self.operands.rs1, 0);
+        drop(v_ram_start);
 
         // 0: Prover supplies success flag (1=success, 0=failure)
         let v_success = allocator.allocate();
@@ -273,6 +294,32 @@ mod tests {
             cleared_regs.contains(&33),
             "SC.D inline sequence must clear reservation_d (vr33)"
         );
+    }
+
+    /// FJ-ACT-H-03: SC.D to a non-RAM (I/O) address must be rejected by the
+    /// inline-sequence RAM-range constraint. Same rationale as SC.W.
+    #[test]
+    #[should_panic(expected = "assertion failed")]
+    fn test_scd_to_io_rejected() {
+        let mut cpu = setup_cpu();
+        let panic_addr = cpu
+            .get_mut_mmu()
+            .jolt_device
+            .as_ref()
+            .unwrap()
+            .memory_layout
+            .panic;
+
+        cpu.x[11] = panic_addr as i64;
+        cpu.x[12] = 0x1234_5678_9ABC_DEF0u64 as i64;
+
+        let decoded = Instruction::decode(encode_scd(13, 11, 12), 0x1000, false).unwrap();
+        let Instruction::SCD(scd) = decoded else {
+            panic!("Expected SCD");
+        };
+
+        let mut trace = Vec::new();
+        scd.trace(&mut cpu, Some(&mut trace));
     }
 
     #[test]
