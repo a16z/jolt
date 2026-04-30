@@ -1,9 +1,13 @@
 use jolt_compiler_v2::{
-    build_commitment_protocol, emit_commitment_rust, lower_commitment_to_compute,
-    lower_compute_to_cpu, lower_piop_and_fiat_shamir, project_prover_party, project_verifier_party,
-    verify_concrete_transcript, verify_jolt_protocol_schema, verify_protocol_schema, Concrete, Cpu,
-    JoltProtocolParams, MeliorContext, Role, RustSourceFile, TextMlir,
+    build_commitment_protocol, build_stage1_outer_protocol, commitment_cpu_program,
+    emit_commitment_rust, emit_stage1_rust, lower_commitment_to_compute, lower_compute_to_cpu,
+    lower_piop_and_fiat_shamir, lower_stage1_to_compute, project_prover_party,
+    project_verifier_party, resolve_compute_kernels, stage1_cpu_program, verify_compute_schema,
+    verify_concrete_transcript, verify_cpu_schema, verify_jolt_protocol_schema,
+    verify_protocol_schema, Concrete, Cpu, JoltProtocolParams, MeliorContext, Role, RustSourceFile,
+    TextMlir,
 };
+use std::fmt::Write as _;
 use std::path::Path;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -245,6 +249,357 @@ fn concrete_verifier_rejects_unthreaded_transcript_absorb() {
 }
 
 #[test]
+fn protocol_schema_accepts_explicit_sumcheck_and_opening_flow() {
+    let context = MeliorContext::new();
+    let protocol = context
+        .parse_module::<jolt_compiler_v2::Protocol>(explicit_sumcheck_protocol())
+        .expect("parse explicit sumcheck protocol");
+
+    verify_protocol_schema(&protocol).expect("explicit sumcheck protocol schema is valid");
+    let concrete =
+        lower_piop_and_fiat_shamir(&context, &protocol).expect("lower protocol copy to concrete");
+    verify_concrete_transcript(&concrete).expect("sumcheck/opening ops thread transcript state");
+
+    let text = concrete.to_text_mlir();
+    assert!(text.contains("\"piop.sumcheck_batch\"(%"));
+    assert!(text.contains("round_schedule = [2, 1, 1]"));
+    assert!(text.contains("\"pcs.opening_claim\"(%"));
+    assert!(text.contains("\"pcs.opening_batch\"(%"));
+    assert!(text.contains("\"pcs.batch_open\"(%"));
+}
+
+#[test]
+fn opening_batch_schema_rejects_hidden_or_reordered_claims() {
+    let context = MeliorContext::new();
+    let protocol = context
+        .parse_module::<jolt_compiler_v2::Protocol>(&explicit_sumcheck_protocol().replace(
+            "ordered_claims = [@stage1.outer.opening]",
+            "ordered_claims = [@wrong.opening]",
+        ))
+        .expect("parse explicit sumcheck protocol");
+
+    let error = verify_protocol_schema(&protocol).expect_err("opening batch order mismatch");
+    assert!(error
+        .to_string()
+        .contains("expected @wrong.opening, got @stage1.outer.opening"));
+}
+
+#[test]
+fn sumcheck_compute_lowers_to_cpu_kernel_ir() {
+    let context = MeliorContext::new();
+    let compute = context
+        .parse_module::<jolt_compiler_v2::Compute>(explicit_sumcheck_compute())
+        .expect("parse explicit sumcheck compute");
+
+    verify_compute_schema(&compute).expect("compute sumcheck schema is valid");
+    let kernelized =
+        resolve_compute_kernels(&context, &compute).expect("resolve sumcheck compute kernels");
+    verify_compute_schema(&kernelized).expect("kernelized sumcheck schema is valid");
+    let cpu = lower_compute_to_cpu(&context, &kernelized).expect("lower sumcheck compute to CPU");
+    verify_cpu_schema(&cpu).expect("CPU sumcheck schema is valid");
+
+    let text = cpu.to_text_mlir();
+    assert!(text.contains("\"cpu.transcript_squeeze\"(%"));
+    assert!(text.contains("\"cpu.sumcheck_batch\"(%"));
+    assert!(text.contains("\"cpu.sumcheck_driver\"(%"));
+    assert!(text.contains("\"cpu.sumcheck_eval\"(%"));
+    assert!(text.contains("\"cpu.pcs_opening_claim\"(%"));
+    assert!(text.contains("\"cpu.pcs_batch_open\"(%"));
+    assert!(text.contains("!cpu.sumcheck_claim_type"));
+}
+
+#[test]
+fn jolt_stage1_outer_protocol_defines_virtual_claim_flow() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::fixture();
+    let protocol =
+        build_stage1_outer_protocol(&context, &params).expect("build stage1 outer protocol");
+    verify_protocol_schema(&protocol).expect("stage1 protocol schema is valid");
+    let concrete =
+        lower_piop_and_fiat_shamir(&context, &protocol).expect("lower stage1 to concrete");
+    verify_concrete_transcript(&concrete).expect("stage1 transcript is threaded");
+
+    let text = protocol.to_text_mlir();
+    assert!(text.contains("sym_name = \"stage1.uniskip.sumcheck\""));
+    assert!(text.contains("sym_name = \"stage1.outer_remaining.sumcheck\""));
+    assert!(text.contains("relation = @jolt.stage1.outer.uniskip"));
+    assert!(!text.contains("kernel = @"));
+    assert!(text.contains("\"piop.sumcheck_claim\"(%"));
+    assert!(text.contains("\"piop.sumcheck_eval\"(%"));
+    assert!(text.contains("\"piop.opening_claim\"(%"));
+    assert!(text.contains("\"piop.opening_batch\"(%"));
+    assert!(text.contains("count = 35 : i64"));
+    assert!(text.contains("ordered_claims = [@stage1.outer_remaining.opening.LeftInstructionInput"));
+    assert!(text.contains("oracle = @OpFlagIsLastInSequence"));
+    assert!(!text.contains("\"pcs.opening_claim\""));
+    assert_or_update_fixture("tests/fixtures/stage1_outer_protocol.mlir", &text);
+}
+
+#[test]
+fn jolt_stage1_outer_lowers_to_compute_and_cpu_kernel_ir() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::fixture();
+    let protocol =
+        build_stage1_outer_protocol(&context, &params).expect("build stage1 outer protocol");
+    let concrete =
+        lower_piop_and_fiat_shamir(&context, &protocol).expect("lower stage1 to concrete");
+    let prover = project_prover_party(&context, &concrete).expect("project prover party");
+    let verifier = project_verifier_party(&context, &concrete).expect("project verifier party");
+    let prover_compute = lower_stage1_to_compute(&context, &prover).expect("lower prover stage1");
+    let verifier_compute =
+        lower_stage1_to_compute(&context, &verifier).expect("lower verifier stage1");
+    verify_compute_schema(&prover_compute).expect("prover stage1 compute schema is valid");
+    verify_compute_schema(&verifier_compute).expect("verifier stage1 compute schema is valid");
+    assert!(prover_compute
+        .to_text_mlir()
+        .contains("relation = @jolt.stage1.outer.uniskip"));
+    assert!(!prover_compute.to_text_mlir().contains("kernel = @"));
+
+    let prover_kernel_compute =
+        resolve_compute_kernels(&context, &prover_compute).expect("resolve prover kernels");
+    let verifier_kernel_compute =
+        resolve_compute_kernels(&context, &verifier_compute).expect("resolve verifier kernels");
+    verify_compute_schema(&prover_kernel_compute)
+        .expect("prover kernelized stage1 compute schema is valid");
+    verify_compute_schema(&verifier_kernel_compute)
+        .expect("verifier kernelized stage1 compute schema is valid");
+
+    let prover_cpu =
+        lower_compute_to_cpu(&context, &prover_kernel_compute).expect("lower prover CPU");
+    let verifier_cpu =
+        lower_compute_to_cpu(&context, &verifier_kernel_compute).expect("lower verifier CPU");
+    verify_cpu_schema(&prover_cpu).expect("prover stage1 CPU schema is valid");
+    verify_cpu_schema(&verifier_cpu).expect("verifier stage1 CPU schema is valid");
+    let program = stage1_cpu_program(&prover_cpu).expect("extract prover stage1 CPU program");
+
+    let cpu_text = prover_cpu.to_text_mlir();
+    assert!(cpu_text.contains("\"cpu.kernel\"()"));
+    assert!(cpu_text.contains("kernel = @jolt.cpu.stage1.outer.uniskip"));
+    assert!(cpu_text.contains("kernel = @jolt.cpu.stage1.outer.remaining"));
+    assert!(cpu_text.contains("\"cpu.sumcheck_driver\"(%"));
+    assert!(cpu_text.contains("\"cpu.sumcheck_eval\"(%"));
+    assert!(cpu_text.contains("\"cpu.opening_claim\"(%"));
+    assert!(cpu_text.contains("\"cpu.opening_batch\"(%"));
+    assert!(cpu_text.contains("\"cpu.sumcheck_claim\"(%"));
+    assert!(cpu_text.contains("count = 35 : i64"));
+    assert!(!cpu_text.contains("\"cpu.pcs_opening_claim\""));
+    assert_eq!(program.role, Role::Prover);
+    assert_eq!(program.kernels.len(), 2);
+    assert!(program.kernels.iter().any(|kernel| {
+        kernel.symbol == "jolt.cpu.stage1.outer.uniskip"
+            && kernel.relation == "jolt.stage1.outer.uniskip"
+            && kernel.abi == "jolt_stage1_outer_uniskip"
+    }));
+    assert!(program.kernels.iter().any(|kernel| {
+        kernel.symbol == "jolt.cpu.stage1.outer.remaining"
+            && kernel.relation == "jolt.stage1.outer.remaining"
+            && kernel.abi == "jolt_stage1_outer_remaining"
+    }));
+    assert_eq!(program.claims.len(), 2);
+    assert_eq!(program.batches.len(), 2);
+    assert_eq!(program.drivers.len(), 2);
+    assert_eq!(program.opening_claims.len(), 36);
+    assert_eq!(program.opening_batches.len(), 1);
+    let uniskip = program
+        .drivers
+        .iter()
+        .find(|driver| driver.symbol == "stage1.uniskip.sumcheck")
+        .expect("uniskip driver");
+    assert_eq!(uniskip.kernel, "jolt.cpu.stage1.outer.uniskip");
+    assert_eq!(uniskip.round_schedule, vec![1]);
+    assert_eq!(uniskip.num_rounds, 1);
+    assert_eq!(uniskip.degree, 27);
+    let remaining = program
+        .drivers
+        .iter()
+        .find(|driver| driver.symbol == "stage1.outer_remaining.sumcheck")
+        .expect("remaining driver");
+    assert_eq!(remaining.kernel, "jolt.cpu.stage1.outer.remaining");
+    assert_eq!(remaining.round_schedule, vec![params.log_t + 1]);
+    assert_eq!(remaining.num_rounds, params.log_t + 1);
+    assert_eq!(remaining.degree, 3);
+    assert_eq!(
+        program
+            .evals
+            .iter()
+            .filter(|eval| eval.source == "stage1.outer_remaining.sumcheck")
+            .count(),
+        35
+    );
+    assert_eq!(program.opening_batches[0].count, 35);
+    assert_eq!(
+        program.opening_batches[0].ordered_claims,
+        program.opening_batches[0].claim_operands
+    );
+
+    assert_or_update_fixture(
+        "tests/fixtures/stage1_outer_prover_compute.mlir",
+        &prover_compute.to_text_mlir(),
+    );
+    assert_or_update_fixture(
+        "tests/fixtures/stage1_outer_verifier_compute.mlir",
+        &verifier_compute.to_text_mlir(),
+    );
+    assert_or_update_fixture(
+        "tests/fixtures/stage1_outer_prover_kernel_compute.mlir",
+        &prover_kernel_compute.to_text_mlir(),
+    );
+    assert_or_update_fixture(
+        "tests/fixtures/stage1_outer_verifier_kernel_compute.mlir",
+        &verifier_kernel_compute.to_text_mlir(),
+    );
+    assert_or_update_fixture(
+        "tests/fixtures/stage1_outer_prover_cpu.mlir",
+        &prover_cpu.to_text_mlir(),
+    );
+    assert_or_update_fixture(
+        "tests/fixtures/stage1_outer_verifier_cpu.mlir",
+        &verifier_cpu.to_text_mlir(),
+    );
+}
+
+#[test]
+fn stage1_rust_emission_matches_golden_and_compiles() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::fixture();
+    let protocol =
+        build_stage1_outer_protocol(&context, &params).expect("build stage1 outer protocol");
+    let concrete =
+        lower_piop_and_fiat_shamir(&context, &protocol).expect("lower stage1 to concrete");
+    let prover = project_prover_party(&context, &concrete).expect("project prover party");
+    let verifier = project_verifier_party(&context, &concrete).expect("project verifier party");
+    let prover_compute = lower_stage1_to_compute(&context, &prover).expect("lower prover stage1");
+    let verifier_compute =
+        lower_stage1_to_compute(&context, &verifier).expect("lower verifier stage1");
+    let prover_kernel_compute =
+        resolve_compute_kernels(&context, &prover_compute).expect("resolve prover kernels");
+    let verifier_kernel_compute =
+        resolve_compute_kernels(&context, &verifier_compute).expect("resolve verifier kernels");
+    let prover_cpu =
+        lower_compute_to_cpu(&context, &prover_kernel_compute).expect("lower prover CPU");
+    let verifier_cpu =
+        lower_compute_to_cpu(&context, &verifier_kernel_compute).expect("lower verifier CPU");
+    let source = emit_stage1_rust(&prover_cpu).expect("emit prover stage1 rust");
+    let verifier_source = emit_stage1_rust(&verifier_cpu).expect("emit verifier stage1 rust");
+
+    assert_eq!(source.filename, "prove_stage1_outer.rs");
+    assert_eq!(verifier_source.filename, "verify_stage1_outer.rs");
+    assert!(source.source.contains("pub fn prove_stage1_outer"));
+    assert!(verifier_source
+        .source
+        .contains("pub fn verify_stage1_outer"));
+    assert!(source.source.contains("jolt_stage1_outer_uniskip"));
+    assert!(source.source.contains("jolt_stage1_outer_remaining"));
+    assert_or_update_fixture("tests/fixtures/prove_stage1_outer.rs", &source.source);
+    assert_or_update_fixture(
+        "tests/fixtures/verify_stage1_outer.rs",
+        &verifier_source.source,
+    );
+    assert_rust_source_compiles(&source.filename, &source.source);
+    assert_rust_source_compiles(&verifier_source.filename, &verifier_source.source);
+}
+
+#[test]
+fn generated_stage1_prover_verifier_shape_kernel_self_parity_runs() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::new(2, 2, 2);
+    let (prover_cpu, verifier_cpu) = build_stage1_pipeline_cpu(&context, &params);
+    let prover_source = emit_stage1_rust(&prover_cpu).expect("emit stage1 prover rust");
+    let verifier_source = emit_stage1_rust(&verifier_cpu).expect("emit stage1 verifier rust");
+
+    assert_eq!(prover_source.filename, "prove_stage1_outer.rs");
+    assert_eq!(verifier_source.filename, "verify_stage1_outer.rs");
+    assert_generated_stage1_self_parity_runs(
+        &prover_source,
+        &verifier_source,
+        &generated_stage1_shape_self_parity_main(),
+    );
+}
+
+#[test]
+fn generated_stage1_real_executor_reaches_kernel_dispatch() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::new(2, 2, 2);
+    let (prover_cpu, verifier_cpu) = build_stage1_pipeline_cpu(&context, &params);
+    let prover_source = emit_stage1_rust(&prover_cpu).expect("emit stage1 prover rust");
+    let verifier_source = emit_stage1_rust(&verifier_cpu).expect("emit stage1 verifier rust");
+
+    assert_generated_stage1_self_parity_runs(
+        &prover_source,
+        &verifier_source,
+        generated_stage1_real_dispatch_main(),
+    );
+}
+
+#[test]
+fn generated_stage1_real_executor_self_verifies_synthetic_remaining() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::new(2, 2, 2);
+    let (prover_cpu, verifier_cpu) = build_stage1_pipeline_cpu(&context, &params);
+    let prover_source = emit_stage1_rust(&prover_cpu).expect("emit stage1 prover rust");
+    let verifier_source = emit_stage1_rust(&verifier_cpu).expect("emit stage1 verifier rust");
+
+    assert_generated_stage1_self_parity_runs(
+        &prover_source,
+        &verifier_source,
+        generated_stage1_synthetic_remaining_main(),
+    );
+}
+
+#[test]
+fn generated_stage1_real_executor_self_verifies_r1cs_data() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::new(2, 2, 2);
+    let (prover_cpu, verifier_cpu) = build_stage1_pipeline_cpu(&context, &params);
+    let prover_source = emit_stage1_rust(&prover_cpu).expect("emit stage1 prover rust");
+    let verifier_source = emit_stage1_rust(&verifier_cpu).expect("emit stage1 verifier rust");
+
+    assert_generated_stage1_self_parity_runs(
+        &prover_source,
+        &verifier_source,
+        generated_stage1_r1cs_data_main(),
+    );
+}
+
+#[test]
+fn jolt_protocol_chain_commitment_stage1_fixture_tracks_phase_order() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::fixture();
+    let chain = jolt_protocol_chain_commitment_stage1_fixture(&context, &params);
+
+    assert_or_update_fixture(
+        "tests/fixtures/jolt_protocol_chain_commitment_stage1.yaml",
+        &chain,
+    );
+}
+
+#[test]
+fn generated_jolt_chain_commitment_then_stage1_self_parity_runs() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::new(2, 2, 2);
+    let (commitment_prover_cpu, commitment_verifier_cpu) =
+        build_commitment_pipeline_cpu(&context, &params);
+    let (stage1_prover_cpu, stage1_verifier_cpu) = build_stage1_pipeline_cpu(&context, &params);
+    let commitment_prover =
+        emit_commitment_rust(&commitment_prover_cpu).expect("emit commitment prover rust");
+    let commitment_verifier =
+        emit_commitment_rust(&commitment_verifier_cpu).expect("emit commitment verifier rust");
+    let stage1_prover = emit_stage1_rust(&stage1_prover_cpu).expect("emit stage1 prover rust");
+    let stage1_verifier =
+        emit_stage1_rust(&stage1_verifier_cpu).expect("emit stage1 verifier rust");
+
+    assert_generated_jolt_chain_self_parity_runs(
+        &[
+            &commitment_prover,
+            &commitment_verifier,
+            &stage1_prover,
+            &stage1_verifier,
+        ],
+        &generated_commitment_stage1_chain_main(),
+    );
+}
+
+#[test]
 fn commitment_pipeline_matches_golden_mlir_fixtures() {
     let context = MeliorContext::new();
     let params = JoltProtocolParams::fixture();
@@ -435,6 +790,266 @@ fn build_commitment_pipeline_cpu<'c>(
     (prover_cpu, verifier_cpu)
 }
 
+fn build_stage1_pipeline_cpu<'c>(
+    context: &'c MeliorContext,
+    params: &JoltProtocolParams,
+) -> (
+    jolt_compiler_v2::BoltModule<'c, Cpu>,
+    jolt_compiler_v2::BoltModule<'c, Cpu>,
+) {
+    let protocol = build_stage1_outer_protocol(context, params).expect("build stage1 protocol");
+    let concrete = lower_piop_and_fiat_shamir(context, &protocol).expect("lower stage1 protocol");
+    let prover = project_prover_party(context, &concrete).expect("project prover party");
+    let verifier = project_verifier_party(context, &concrete).expect("project verifier party");
+    let prover_compute = lower_stage1_to_compute(context, &prover).expect("lower prover stage1");
+    let verifier_compute =
+        lower_stage1_to_compute(context, &verifier).expect("lower verifier stage1");
+    let prover_compute =
+        resolve_compute_kernels(context, &prover_compute).expect("resolve prover kernels");
+    let verifier_compute =
+        resolve_compute_kernels(context, &verifier_compute).expect("resolve verifier kernels");
+    let prover_cpu = lower_compute_to_cpu(context, &prover_compute).expect("lower prover CPU");
+    let verifier_cpu =
+        lower_compute_to_cpu(context, &verifier_compute).expect("lower verifier CPU");
+    (prover_cpu, verifier_cpu)
+}
+
+fn jolt_protocol_chain_commitment_stage1_fixture(
+    context: &MeliorContext,
+    params: &JoltProtocolParams,
+) -> String {
+    let (commitment_prover_cpu, commitment_verifier_cpu) =
+        build_commitment_pipeline_cpu(context, params);
+    let (stage1_prover_cpu, stage1_verifier_cpu) = build_stage1_pipeline_cpu(context, params);
+    let commitment_prover =
+        commitment_cpu_program(&commitment_prover_cpu).expect("extract commitment prover program");
+    let commitment_verifier = commitment_cpu_program(&commitment_verifier_cpu)
+        .expect("extract commitment verifier program");
+    let stage1_prover = stage1_cpu_program(&stage1_prover_cpu).expect("extract stage1 prover");
+    let stage1_verifier =
+        stage1_cpu_program(&stage1_verifier_cpu).expect("extract stage1 verifier");
+    let commitment_prover_source =
+        emit_commitment_rust(&commitment_prover_cpu).expect("emit commitment prover");
+    let commitment_verifier_source =
+        emit_commitment_rust(&commitment_verifier_cpu).expect("emit commitment verifier");
+    let stage1_prover_source = emit_stage1_rust(&stage1_prover_cpu).expect("emit stage1 prover");
+    let stage1_verifier_source =
+        emit_stage1_rust(&stage1_verifier_cpu).expect("emit stage1 verifier");
+
+    let mut text = String::new();
+    writeln!(&mut text, "# Jolt protocol chain fixture").unwrap();
+    writeln!(&mut text, "params:").unwrap();
+    writeln!(&mut text, "  log_t: {}", params.log_t).unwrap();
+    writeln!(&mut text, "  log_k_bytecode: {}", params.log_k_bytecode).unwrap();
+    writeln!(&mut text, "  log_k_ram: {}", params.log_k_ram).unwrap();
+    writeln!(&mut text, "  trace_length: {}", params.trace_length).unwrap();
+    writeln!(&mut text, "phases:").unwrap();
+    writeln!(&mut text, "  - name: commitment").unwrap();
+    writeln!(
+        &mut text,
+        "    protocol_fixture: tests/fixtures/commitment_protocol.mlir"
+    )
+    .unwrap();
+    writeln!(
+        &mut text,
+        "    concrete_fixture: tests/fixtures/commitment_concrete.mlir"
+    )
+    .unwrap();
+    writeln!(
+        &mut text,
+        "    prover_cpu_fixture: tests/fixtures/commitment_prover_cpu.mlir"
+    )
+    .unwrap();
+    writeln!(
+        &mut text,
+        "    verifier_cpu_fixture: tests/fixtures/commitment_verifier_cpu.mlir"
+    )
+    .unwrap();
+    writeln!(
+        &mut text,
+        "    prover_rust_fixture: tests/fixtures/{}",
+        commitment_prover_source.filename
+    )
+    .unwrap();
+    writeln!(
+        &mut text,
+        "    verifier_rust_fixture: tests/fixtures/{}",
+        commitment_verifier_source.filename
+    )
+    .unwrap();
+    writeln!(
+        &mut text,
+        "    prover_batches: {}",
+        commitment_prover.batch_plans.len()
+    )
+    .unwrap();
+    writeln!(
+        &mut text,
+        "    verifier_batches: {}",
+        commitment_verifier.batch_plans.len()
+    )
+    .unwrap();
+    writeln!(
+        &mut text,
+        "    optional_commitments: {}",
+        commitment_prover.optional_plans.len()
+    )
+    .unwrap();
+    writeln!(
+        &mut text,
+        "    transcript_steps: {}",
+        commitment_prover.transcript_steps.len()
+    )
+    .unwrap();
+    writeln!(&mut text, "  - name: stage1_outer").unwrap();
+    writeln!(&mut text, "    consumes_transcript_from: commitment").unwrap();
+    writeln!(
+        &mut text,
+        "    protocol_fixture: tests/fixtures/stage1_outer_protocol.mlir"
+    )
+    .unwrap();
+    writeln!(
+        &mut text,
+        "    prover_compute_fixture: tests/fixtures/stage1_outer_prover_compute.mlir"
+    )
+    .unwrap();
+    writeln!(
+        &mut text,
+        "    verifier_compute_fixture: tests/fixtures/stage1_outer_verifier_compute.mlir"
+    )
+    .unwrap();
+    writeln!(
+        &mut text,
+        "    prover_kernel_compute_fixture: tests/fixtures/stage1_outer_prover_kernel_compute.mlir"
+    )
+    .unwrap();
+    writeln!(
+        &mut text,
+        "    verifier_kernel_compute_fixture: tests/fixtures/stage1_outer_verifier_kernel_compute.mlir"
+    )
+    .unwrap();
+    writeln!(
+        &mut text,
+        "    prover_cpu_fixture: tests/fixtures/stage1_outer_prover_cpu.mlir"
+    )
+    .unwrap();
+    writeln!(
+        &mut text,
+        "    verifier_cpu_fixture: tests/fixtures/stage1_outer_verifier_cpu.mlir"
+    )
+    .unwrap();
+    writeln!(
+        &mut text,
+        "    prover_rust_fixture: tests/fixtures/{}",
+        stage1_prover_source.filename
+    )
+    .unwrap();
+    writeln!(
+        &mut text,
+        "    verifier_rust_fixture: tests/fixtures/{}",
+        stage1_verifier_source.filename
+    )
+    .unwrap();
+    writeln!(
+        &mut text,
+        "    transcript_squeezes: {}",
+        stage1_prover.transcript_squeezes.len()
+    )
+    .unwrap();
+    writeln!(
+        &mut text,
+        "    prover_sumcheck_drivers: {}",
+        stage1_prover.drivers.len()
+    )
+    .unwrap();
+    writeln!(
+        &mut text,
+        "    verifier_sumcheck_drivers: {}",
+        stage1_verifier.drivers.len()
+    )
+    .unwrap();
+    writeln!(
+        &mut text,
+        "    opening_claims: {}",
+        stage1_prover.opening_claims.len()
+    )
+    .unwrap();
+    writeln!(
+        &mut text,
+        "    opening_batches: {}",
+        stage1_prover.opening_batches.len()
+    )
+    .unwrap();
+    writeln!(&mut text, "    drivers:").unwrap();
+    for driver in &stage1_prover.drivers {
+        writeln!(
+            &mut text,
+            "      - {}: kernel={} rounds={} degree={} proof_slot={}",
+            driver.symbol, driver.kernel, driver.num_rounds, driver.degree, driver.proof_slot
+        )
+        .unwrap();
+    }
+    writeln!(&mut text, "parity_gates:").unwrap();
+    writeln!(
+        &mut text,
+        "  - pipeline_generated_commitment_prover_verifier_self_parity_runs"
+    )
+    .unwrap();
+    writeln!(
+        &mut text,
+        "  - generated_stage1_real_executor_self_verifies_synthetic_remaining"
+    )
+    .unwrap();
+    writeln!(
+        &mut text,
+        "  - generated_jolt_chain_commitment_then_stage1_self_parity_runs"
+    )
+    .unwrap();
+    text
+}
+
+fn explicit_sumcheck_protocol() -> &'static str {
+    r#"
+module @explicit.sumcheck attributes {bolt.phase = "protocol"} {
+  "field.define"() {modulus_bits = 254 : i64, role = "scalar", sym_name = "bn254_fr"} : () -> ()
+  "hash.function"() {algorithm = "blake2b", sym_name = "blake2b"} : () -> ()
+  "transcript.scheme"() {hash = @blake2b, sym_name = "blake2b_transcript"} : () -> ()
+  "pcs.scheme"() {field = @bn254_fr, sym_name = "dory"} : () -> ()
+  "poly.domain"() {field = @bn254_fr, log_size = 16 : i64, sym_name = "trace"} : () -> ()
+  "piop.relation"() {degree = 3 : i64, domain = @trace, kind = "sumcheck", num_rounds = 4 : i64, output_count = 1 : i64, sym_name = "jolt.stage1.outer.remaining"} : () -> ()
+  %0 = "transcript.state"() {scheme = @blake2b_transcript, sym_name = "fs0"} : () -> !transcript.state_type
+  %1, %alpha = "transcript.squeeze"(%0) {count = 1 : i64, kind = "scalar", label = "sumcheck_claim", sym_name = "stage1.alpha"} : (!transcript.state_type) -> (!transcript.state_type, !field.challenge)
+  %stage = "piop.stage"() {name = "stage1", order = 1 : i64, roles = ["prover", "verifier"], sym_name = "stage1"} : () -> !piop.stage_type
+  %claim = "piop.sumcheck_claim"() {claim = @stage1.outer.claim, degree = 3 : i64, domain = @trace, num_rounds = 4 : i64, relation = @jolt.stage1.outer.remaining, stage = @stage1, sym_name = "stage1.outer.claim"} : () -> !piop.sumcheck_claim_type
+  %batch = "piop.sumcheck_batch"(%stage, %claim) {claim_label = "sumcheck_claim", count = 1 : i64, ordered_claims = [@stage1.outer.claim], policy = "jolt_core_front_loaded", proof_slot = @stage1.sumcheck, round_label = "sumcheck_poly", round_schedule = [2, 1, 1], stage = @stage1, sym_name = "stage1.outer.batch"} : (!piop.stage_type, !piop.sumcheck_claim_type) -> !piop.sumcheck_batch_type
+  %2, %point, %result, %proof = "piop.sumcheck"(%1, %batch) {claim_label = "sumcheck_claim", degree = 3 : i64, num_rounds = 4 : i64, policy = "jolt_core_front_loaded", proof_slot = @stage1.sumcheck, relation = @jolt.stage1.outer.remaining, round_label = "sumcheck_poly", round_schedule = [2, 1, 1], stage = @stage1, sym_name = "stage1.outer.sumcheck"} : (!transcript.state_type, !piop.sumcheck_batch_type) -> (!transcript.state_type, !poly.point, !piop.sumcheck_result_type, !piop.sumcheck_proof_type)
+  %eval = "piop.sumcheck_eval"(%result) {index = 0 : i64, name = @stage1.outer.eval, oracle = @RdInc, source = @stage1.outer.sumcheck, sym_name = "stage1.outer.eval"} : (!piop.sumcheck_result_type) -> !field.scalar
+  %opening = "pcs.opening_claim"(%point, %eval) {domain = @trace, family = @jolt.main_witness_polys, oracle = @RdInc, point_arity = 4 : i64, sym_name = "stage1.outer.opening"} : (!poly.point, !field.scalar) -> !pcs.opening_claim_type
+  %openings = "pcs.opening_batch"(%opening) {count = 1 : i64, ordered_claims = [@stage1.outer.opening], policy = "jolt_core_order", proof_slot = @stage1.openings, sym_name = "stage1.opening_batch"} : (!pcs.opening_claim_type) -> !pcs.opening_batch_type
+  %3, %opening_proof = "pcs.batch_open"(%2, %openings) {pcs = @dory, proof_slot = @stage1.openings, sym_name = "stage1.open", transcript_label = "opening_proof"} : (!transcript.state_type, !pcs.opening_batch_type) -> (!transcript.state_type, !pcs.opening_proof_type)
+}
+"#
+}
+
+fn explicit_sumcheck_compute() -> &'static str {
+    r#"
+module @explicit.sumcheck attributes {bolt.phase = "compute", bolt.role = "prover"} {
+  "compute.params"() {field = @bn254_fr, pcs = @dory, sym_name = "params", transcript = @blake2b_transcript} : () -> ()
+  "compute.function"() {source = @explicit.sumcheck, sym_name = "explicit.sumcheck"} : () -> ()
+  "compute.relation"() {degree = 3 : i64, domain = @trace, kind = "sumcheck", num_rounds = 4 : i64, output_count = 1 : i64, sym_name = "jolt.stage1.outer.remaining"} : () -> ()
+  %0 = "compute.transcript_init"() {scheme = @blake2b_transcript, sym_name = "fs0"} : () -> !compute.transcript_state
+  %1, %alpha = "compute.transcript_squeeze"(%0) {count = 1 : i64, kind = "scalar", label = "sumcheck_claim", sym_name = "stage1.alpha"} : (!compute.transcript_state) -> (!compute.transcript_state, !compute.challenge)
+  %claim = "compute.sumcheck_claim"() {claim = @stage1.outer.claim, degree = 3 : i64, domain = @trace, num_rounds = 4 : i64, relation = @jolt.stage1.outer.remaining, stage = @stage1, sym_name = "stage1.outer.claim"} : () -> !compute.sumcheck_claim_type
+  %batch = "compute.sumcheck_batch"(%claim) {claim_label = "sumcheck_claim", count = 1 : i64, ordered_claims = [@stage1.outer.claim], policy = "jolt_core_front_loaded", proof_slot = @stage1.sumcheck, round_label = "sumcheck_poly", round_schedule = [2, 1, 1], stage = @stage1, sym_name = "stage1.outer.batch"} : (!compute.sumcheck_claim_type) -> !compute.sumcheck_batch_type
+  %2, %point, %result, %proof = "compute.sumcheck_driver"(%1, %batch) {claim_label = "sumcheck_claim", degree = 3 : i64, num_rounds = 4 : i64, policy = "jolt_core_front_loaded", proof_slot = @stage1.sumcheck, relation = @jolt.stage1.outer.remaining, round_label = "sumcheck_poly", round_schedule = [2, 1, 1], stage = @stage1, sym_name = "stage1.outer.sumcheck"} : (!compute.transcript_state, !compute.sumcheck_batch_type) -> (!compute.transcript_state, !compute.point, !compute.sumcheck_result_type, !compute.sumcheck_proof_type)
+  %eval = "compute.sumcheck_eval"(%result) {index = 0 : i64, name = @stage1.outer.eval, oracle = @RdInc, source = @stage1.outer.sumcheck, sym_name = "stage1.outer.eval"} : (!compute.sumcheck_result_type) -> !compute.field_value
+  %opening = "compute.pcs_opening_claim"(%point, %eval) {domain = @trace, family = @jolt.main_witness_polys, oracle = @RdInc, point_arity = 4 : i64, sym_name = "stage1.outer.opening"} : (!compute.point, !compute.field_value) -> !compute.opening_claim_type
+  %openings = "compute.pcs_opening_batch"(%opening) {count = 1 : i64, ordered_claims = [@stage1.outer.opening], policy = "jolt_core_order", proof_slot = @stage1.openings, sym_name = "stage1.opening_batch"} : (!compute.opening_claim_type) -> !compute.opening_batch_type
+  %3, %opening_proof = "compute.pcs_batch_open"(%2, %openings) {pcs = @dory, proof_slot = @stage1.openings, sym_name = "stage1.open", transcript_label = "opening_proof"} : (!compute.transcript_state, !compute.opening_batch_type) -> (!compute.transcript_state, !compute.opening_proof_type)
+}
+"#
+}
+
 fn assert_or_update_fixture(path: &str, actual: &str) {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(path);
     if std::env::var_os("JOLT_UPDATE_GOLDENS").is_some() {
@@ -461,10 +1076,7 @@ fn assert_rust_source_compiles(_filename: &str, source: &str) {
         .arg("--manifest-path")
         .arg(dir.join("Cargo.toml"))
         .arg("-q")
-        .env(
-            "CARGO_TARGET_DIR",
-            workspace_root.join("target/jolt-compiler-v2-generated"),
-        )
+        .env("CARGO_TARGET_DIR", dir.join("target"))
         .output()
         .expect("run cargo check");
     assert!(
@@ -506,15 +1118,89 @@ fn assert_generated_commitment_self_parity_runs(
         .arg("--manifest-path")
         .arg(dir.join("Cargo.toml"))
         .arg("-q")
-        .env(
-            "CARGO_TARGET_DIR",
-            workspace_root.join("target/jolt-compiler-v2-generated"),
-        )
+        .env("CARGO_TARGET_DIR", dir.join("target"))
         .output()
         .expect("run generated self-parity crate");
     assert!(
         output.status.success(),
         "generated commitment self-parity failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+fn assert_generated_stage1_self_parity_runs(
+    prover_source: &RustSourceFile,
+    verifier_source: &RustSourceFile,
+    main_source: &str,
+) {
+    let dir = new_temp_dir("jolt_compiler_v2_stage1_self_parity");
+    let workspace_root = workspace_root();
+    std::fs::write(
+        dir.join("Cargo.toml"),
+        generated_crate_manifest(&workspace_root),
+    )
+    .expect("write generated cargo manifest");
+    let src_dir = dir.join("src");
+    std::fs::create_dir_all(&src_dir).expect("create generated src dir");
+    std::fs::write(src_dir.join(&prover_source.filename), &prover_source.source)
+        .expect("write generated stage1 prover source");
+    std::fs::write(
+        src_dir.join(&verifier_source.filename),
+        &verifier_source.source,
+    )
+    .expect("write generated stage1 verifier source");
+    std::fs::write(src_dir.join("main.rs"), main_source)
+        .expect("write generated stage1 self-parity harness");
+
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
+    let output = Command::new(cargo)
+        .arg("run")
+        .arg("--manifest-path")
+        .arg(dir.join("Cargo.toml"))
+        .arg("-q")
+        .env("CARGO_TARGET_DIR", dir.join("target"))
+        .output()
+        .expect("run generated stage1 self-parity crate");
+    assert!(
+        output.status.success(),
+        "generated stage1 self-parity failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+fn assert_generated_jolt_chain_self_parity_runs(files: &[&RustSourceFile], main_source: &str) {
+    let dir = new_temp_dir("jolt_compiler_v2_chain_self_parity");
+    let workspace_root = workspace_root();
+    std::fs::write(
+        dir.join("Cargo.toml"),
+        generated_crate_manifest(&workspace_root),
+    )
+    .expect("write generated cargo manifest");
+    let src_dir = dir.join("src");
+    std::fs::create_dir_all(&src_dir).expect("create generated src dir");
+    for file in files {
+        std::fs::write(src_dir.join(&file.filename), &file.source)
+            .expect("write generated chain source");
+    }
+    std::fs::write(src_dir.join("main.rs"), main_source)
+        .expect("write generated chain self-parity harness");
+
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
+    let output = Command::new(cargo)
+        .arg("run")
+        .arg("--manifest-path")
+        .arg(dir.join("Cargo.toml"))
+        .arg("-q")
+        .env("CARGO_TARGET_DIR", dir.join("target"))
+        .output()
+        .expect("run generated chain self-parity crate");
+    assert!(
+        output.status.success(),
+        "generated commitment+stage1 self-parity failed\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
@@ -539,13 +1225,17 @@ edition = "2021"
 [dependencies]
 jolt-dory = {{ path = "{}" }}
 jolt-field = {{ path = "{}" }}
+jolt-kernels = {{ path = "{}" }}
 jolt-openings = {{ path = "{}" }}
+jolt-r1cs = {{ path = "{}" }}
 jolt-transcript = {{ path = "{}" }}
 jolt-witness-v2 = {{ path = "{}" }}
 "#,
         workspace_root.join("crates/jolt-dory").display(),
         workspace_root.join("crates/jolt-field").display(),
+        workspace_root.join("crates/jolt-kernels").display(),
         workspace_root.join("crates/jolt-openings").display(),
+        workspace_root.join("crates/jolt-r1cs").display(),
         workspace_root.join("crates/jolt-transcript").display(),
         workspace_root.join("crates/jolt-witness-v2").display(),
     )
@@ -682,6 +1372,355 @@ fn main() {
         assert_eq!(prover_record.label, verifier_record.label);
         assert_eq!(prover_record.num_vars, verifier_record.num_vars);
     }
+    assert_transcript_step_parity(&prover_transcript, &verifier_transcript);
+}
+"#,
+    );
+    source
+}
+
+fn generated_stage1_shape_self_parity_main() -> String {
+    let mut source = r"mod prove_stage1_outer;
+mod verify_stage1_outer;
+
+use jolt_field::{Field, Fr};
+use jolt_kernels::stage1::Stage1ShapeKernelExecutor;
+use jolt_transcript::{Blake2bTranscript, Transcript};
+
+"
+    .to_owned();
+    source.push_str(tracing_transcript_support());
+    source.push_str(
+        r#"
+fn main() {
+    let mut prover_executor = Stage1ShapeKernelExecutor;
+    let mut prover_transcript = TracingTranscript::new(b"stage1");
+    let prover = prove_stage1_outer::prove_stage1_outer(
+        &mut prover_executor,
+        &mut prover_transcript,
+    )
+    .expect("generated prover runs shape kernels");
+
+    let mut verifier_executor = Stage1ShapeKernelExecutor;
+    let mut verifier_transcript = TracingTranscript::new(b"stage1");
+    let verifier = verify_stage1_outer::verify_stage1_outer(
+        &mut verifier_executor,
+        &mut verifier_transcript,
+    )
+    .expect("generated verifier runs shape kernels");
+
+    assert_eq!(
+        prover.sumchecks.len(),
+        prove_stage1_outer::STAGE1_SUMCHECK_DRIVERS.len()
+    );
+    assert_eq!(prover.sumchecks.len(), verifier.sumchecks.len());
+    assert_eq!(prover.opening_batches.len(), verifier.opening_batches.len());
+    for (prover_batch, verifier_batch) in prover.opening_batches.iter().zip(&verifier.opening_batches) {
+        assert_eq!(prover_batch.symbol, verifier_batch.symbol);
+        assert_eq!(prover_batch.count, verifier_batch.count);
+    }
+    for (prover_sumcheck, verifier_sumcheck) in prover.sumchecks.iter().zip(&verifier.sumchecks) {
+        assert_eq!(prover_sumcheck.driver, verifier_sumcheck.driver);
+        assert_eq!(prover_sumcheck.point, verifier_sumcheck.point);
+        assert_eq!(prover_sumcheck.evals.len(), verifier_sumcheck.evals.len());
+        for (prover_eval, verifier_eval) in prover_sumcheck.evals.iter().zip(&verifier_sumcheck.evals) {
+            assert_eq!(prover_eval.name, verifier_eval.name);
+            assert_eq!(prover_eval.oracle, verifier_eval.oracle);
+            assert_eq!(prover_eval.value, verifier_eval.value);
+        }
+        assert_eq!(
+            prover_sumcheck.proof.round_polynomials.len(),
+            verifier_sumcheck.proof.round_polynomials.len()
+        );
+        for (prover_round, verifier_round) in prover_sumcheck
+            .proof
+            .round_polynomials
+            .iter()
+            .zip(&verifier_sumcheck.proof.round_polynomials)
+        {
+            assert_eq!(prover_round.coefficients(), verifier_round.coefficients());
+        }
+    }
+    assert_transcript_step_parity(&prover_transcript, &verifier_transcript);
+}
+"#,
+    );
+    source
+}
+
+fn generated_stage1_real_dispatch_main() -> &'static str {
+    r#"mod prove_stage1_outer;
+mod verify_stage1_outer;
+
+use jolt_field::{Field, Fr};
+use jolt_kernels::stage1::{
+    Stage1KernelError, Stage1Proof, Stage1ProverInputs, Stage1ProverKernelExecutor,
+    Stage1SumcheckOutput, Stage1VerifierKernelExecutor,
+};
+use jolt_transcript::{Blake2bTranscript, Transcript};
+
+fn main() {
+    let inputs = Stage1ProverInputs::<Fr>::empty(2);
+    let mut prover_executor = Stage1ProverKernelExecutor::new(inputs);
+    let mut prover_transcript = Blake2bTranscript::<Fr>::new(b"stage1");
+    let prover_error = prove_stage1_outer::prove_stage1_outer(
+        &mut prover_executor,
+        &mut prover_transcript,
+    )
+    .expect_err("real prover requires uniskip extended evaluations");
+    assert_eq!(
+        prover_error,
+        Stage1KernelError::MissingKernelInput {
+            kernel: "jolt_stage1_outer_uniskip",
+            input: "uniskip_extended_evals",
+        }
+    );
+
+    let proof = Stage1Proof {
+        sumchecks: vec![Stage1SumcheckOutput {
+            driver: "stage1.uniskip.sumcheck",
+            point: Vec::new(),
+            evals: Vec::new(),
+            proof: Default::default(),
+        }],
+    };
+    let mut verifier_executor = Stage1VerifierKernelExecutor::new(&proof);
+    let mut verifier_transcript = Blake2bTranscript::<Fr>::new(b"stage1");
+    let verifier_error = verify_stage1_outer::verify_stage1_outer(
+        &mut verifier_executor,
+        &mut verifier_transcript,
+    )
+    .expect_err("real verifier rejects empty uniskip proof");
+    assert_eq!(
+        verifier_error,
+        Stage1KernelError::InvalidProof {
+            driver: "stage1.uniskip.sumcheck",
+            reason: "missing uniskip round polynomial",
+        }
+    );
+}
+"#
+}
+
+fn generated_stage1_synthetic_remaining_main() -> &'static str {
+    r#"mod prove_stage1_outer;
+mod verify_stage1_outer;
+
+use jolt_field::{Field, Fr};
+use jolt_kernels::stage1::{
+    Stage1OuterRemainingContext, Stage1OuterRemainingEvaluator, Stage1Proof, Stage1ProverInputs,
+    Stage1ProverKernelExecutor, Stage1VerifierKernelExecutor,
+};
+use jolt_transcript::{Blake2bTranscript, Transcript};
+
+struct SumZeroRemainingEvaluator;
+
+impl Stage1OuterRemainingEvaluator<Fr> for SumZeroRemainingEvaluator {
+    fn evaluate(&self, _context: Stage1OuterRemainingContext<'_, Fr>, point: &[Fr]) -> Fr {
+        point[0] + point[0] - Fr::from_u64(1)
+    }
+
+    fn evaluate_virtual_oracle(
+        &self,
+        _context: Stage1OuterRemainingContext<'_, Fr>,
+        _oracle: &str,
+        point: &[Fr],
+    ) -> Option<Fr> {
+        Some(point.iter().copied().sum())
+    }
+}
+
+fn main() {
+    let extended_evals = vec![Fr::from_u64(0); 9];
+    let evaluator = SumZeroRemainingEvaluator;
+    let inputs = Stage1ProverInputs::<Fr>::empty(2)
+        .with_uniskip_extended_evals(&extended_evals)
+        .with_outer_remaining_evaluator(&evaluator);
+    let mut prover_executor = Stage1ProverKernelExecutor::new(inputs);
+    let mut prover_transcript = Blake2bTranscript::<Fr>::new(b"stage1");
+    let prover_artifacts = prove_stage1_outer::prove_stage1_outer(
+        &mut prover_executor,
+        &mut prover_transcript,
+    )
+    .expect("generated real stage1 prover succeeds");
+
+    let proof = Stage1Proof::from(prover_artifacts.clone());
+    let mut verifier_executor = Stage1VerifierKernelExecutor::new(&proof);
+    let mut verifier_transcript = Blake2bTranscript::<Fr>::new(b"stage1");
+    let verifier_artifacts = verify_stage1_outer::verify_stage1_outer(
+        &mut verifier_executor,
+        &mut verifier_transcript,
+    )
+    .expect("generated real stage1 verifier accepts prover proof");
+
+    assert_eq!(prover_transcript.state(), verifier_transcript.state());
+    assert_eq!(prover_artifacts.sumchecks.len(), 2);
+    assert_eq!(verifier_artifacts.sumchecks.len(), 2);
+    assert_eq!(
+        prover_artifacts.sumchecks[1].point,
+        verifier_artifacts.sumchecks[1].point
+    );
+}
+"#
+}
+
+fn generated_stage1_r1cs_data_main() -> &'static str {
+    r#"mod prove_stage1_outer;
+mod verify_stage1_outer;
+
+use jolt_field::{Field, Fr};
+use jolt_kernels::stage1::{
+    Stage1OuterR1csData, Stage1Proof, Stage1ProverInputs, Stage1ProverKernelExecutor,
+    Stage1VerifierKernelExecutor,
+};
+use jolt_r1cs::{constraints::rv64, R1csKey};
+use jolt_transcript::{Blake2bTranscript, Transcript};
+
+fn main() {
+    let key = R1csKey::new(rv64::rv64_constraints::<Fr>(), 4);
+    let mut witness = vec![Fr::from_u64(0); key.num_cycles * key.num_vars_padded];
+    for cycle in 0..key.num_cycles {
+        let base = cycle * key.num_vars_padded;
+        witness[base + rv64::V_CONST] = Fr::from_u64(1);
+        witness[base + rv64::V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC] = Fr::from_u64(1);
+        key.matrices
+            .check_witness(&witness[base..base + rv64::NUM_VARS_PER_CYCLE])
+            .expect("noop cycle satisfies RV64 constraints");
+    }
+    let data = Stage1OuterR1csData::new(&key, &witness).expect("valid R1CS witness shape");
+    let inputs = Stage1ProverInputs::<Fr>::empty(key.num_cycle_vars())
+        .with_outer_remaining_evaluator(&data);
+    let mut prover_executor = Stage1ProverKernelExecutor::new(inputs);
+    let mut prover_transcript = Blake2bTranscript::<Fr>::new(b"stage1");
+    let prover_artifacts = prove_stage1_outer::prove_stage1_outer(
+        &mut prover_executor,
+        &mut prover_transcript,
+    )
+    .expect("generated real stage1 prover succeeds with R1CS data");
+
+    let proof = Stage1Proof::from(prover_artifacts.clone());
+    let mut verifier_executor = Stage1VerifierKernelExecutor::new(&proof);
+    let mut verifier_transcript = Blake2bTranscript::<Fr>::new(b"stage1");
+    let verifier_artifacts = verify_stage1_outer::verify_stage1_outer(
+        &mut verifier_executor,
+        &mut verifier_transcript,
+    )
+    .expect("generated real stage1 verifier accepts R1CS-backed proof");
+
+    assert_eq!(prover_transcript.state(), verifier_transcript.state());
+    assert_eq!(prover_artifacts.sumchecks.len(), 2);
+    assert_eq!(verifier_artifacts.sumchecks.len(), 2);
+    for (prover_sumcheck, verifier_sumcheck) in prover_artifacts
+        .sumchecks
+        .iter()
+        .zip(verifier_artifacts.sumchecks.iter())
+    {
+        assert_eq!(prover_sumcheck.point, verifier_sumcheck.point);
+        assert_eq!(prover_sumcheck.evals.len(), verifier_sumcheck.evals.len());
+        for (prover_eval, verifier_eval) in prover_sumcheck.evals.iter().zip(&verifier_sumcheck.evals) {
+            assert_eq!(prover_eval.oracle, verifier_eval.oracle);
+            assert_eq!(prover_eval.value, verifier_eval.value);
+        }
+    }
+}
+"#
+}
+
+fn generated_commitment_stage1_chain_main() -> String {
+    let mut source = r"mod prove_commitment_phase;
+mod prove_stage1_outer;
+mod verify_commitment_phase;
+mod verify_stage1_outer;
+
+use jolt_dory::DoryScheme;
+use jolt_field::{Field, Fr};
+use jolt_kernels::stage1::{
+    Stage1OuterRemainingContext, Stage1OuterRemainingEvaluator, Stage1Proof, Stage1ProverInputs,
+    Stage1ProverKernelExecutor, Stage1VerifierKernelExecutor,
+};
+use jolt_transcript::{Blake2bTranscript, Transcript};
+
+struct SumZeroRemainingEvaluator;
+
+impl Stage1OuterRemainingEvaluator<Fr> for SumZeroRemainingEvaluator {
+    fn evaluate(&self, _context: Stage1OuterRemainingContext<'_, Fr>, point: &[Fr]) -> Fr {
+        point[0] + point[0] - Fr::from_u64(1)
+    }
+
+    fn evaluate_virtual_oracle(
+        &self,
+        _context: Stage1OuterRemainingContext<'_, Fr>,
+        _oracle: &str,
+        point: &[Fr],
+    ) -> Option<Fr> {
+        Some(point.iter().copied().sum())
+    }
+}
+
+"
+    .to_owned();
+    source.push_str(tracing_transcript_support());
+    source.push_str(
+        r#"
+fn main() {
+    let prover_setup =
+        DoryScheme::setup_prover(prove_commitment_phase::COMMITMENT_BATCH_PLANS[0].num_vars);
+    let commitment_inputs = prove_commitment_phase::CommitmentOracleInputs {
+        rd_inc: &[1, 0, 0, 0],
+        ram_inc: &[2, 0, 0, 0],
+        instruction_keys: &[
+            Some(0x1234_5678_9abc_def0_0123_4567_89ab_cdefu128),
+            Some(0),
+            Some(0),
+            Some(0),
+        ],
+        ram_addresses: &[Some(0), Some(1), Some(2), Some(3)],
+        bytecode_indices: &[Some(0), Some(1), Some(2), Some(3)],
+        untrusted_advice: None,
+        trusted_advice: None,
+    };
+    let mut commitment_oracles = prove_commitment_phase::build_commitment_oracles(
+        &commitment_inputs,
+    )
+    .expect("build commitment oracles");
+    let mut prover_transcript = TracingTranscript::new(b"jolt-chain");
+    let commitment = prove_commitment_phase::prove_commitment_phase(
+        &mut commitment_oracles,
+        &prover_setup,
+        &mut prover_transcript,
+    )
+    .expect("prover commitment phase");
+
+    let extended_evals = vec![Fr::from_u64(0); 9];
+    let evaluator = SumZeroRemainingEvaluator;
+    let stage1_inputs = Stage1ProverInputs::<Fr>::empty(2)
+        .with_uniskip_extended_evals(&extended_evals)
+        .with_outer_remaining_evaluator(&evaluator);
+    let mut stage1_prover_executor = Stage1ProverKernelExecutor::new(stage1_inputs);
+    let stage1 = prove_stage1_outer::prove_stage1_outer(
+        &mut stage1_prover_executor,
+        &mut prover_transcript,
+    )
+    .expect("stage1 prover phase");
+
+    let mut verifier_transcript = TracingTranscript::new(b"jolt-chain");
+    let verified_commitment = verify_commitment_phase::verify_commitment_phase(
+        &commitment.commitments,
+        &mut verifier_transcript,
+    )
+    .expect("verifier commitment phase");
+    let stage1_proof = Stage1Proof::from(stage1.clone());
+    let mut stage1_verifier_executor = Stage1VerifierKernelExecutor::new(&stage1_proof);
+    let verified_stage1 = verify_stage1_outer::verify_stage1_outer(
+        &mut stage1_verifier_executor,
+        &mut verifier_transcript,
+    )
+    .expect("stage1 verifier phase");
+
+    assert_eq!(commitment.commitments, verified_commitment.commitments);
+    assert_eq!(stage1.sumchecks.len(), 2);
+    assert_eq!(verified_stage1.sumchecks.len(), 2);
+    assert_eq!(stage1.sumchecks[1].point, verified_stage1.sumchecks[1].point);
     assert_transcript_step_parity(&prover_transcript, &verifier_transcript);
 }
 "#,

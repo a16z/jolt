@@ -382,6 +382,11 @@ pub fn lower_compute_to_cpu<'c>(
                     ],
                 )?;
             }
+            "compute.kernel" => {
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["relation", "kind", "backend", "abi"])?;
+                context.append_op_with_owned_attrs(&cpu, "cpu.kernel", Some(&symbol), &attrs)?;
+            }
             "compute.transcript_init" => {
                 let attrs = vec![("scheme".to_owned(), symbol_ref(&symbol_attr(op, "scheme")?))];
                 let symbol = string_attr(op, "sym_name")?;
@@ -593,6 +598,191 @@ pub fn lower_compute_to_cpu<'c>(
                 let output = first_result(operation, "cpu.transcript_absorb")?;
                 let inserted = value_map.insert(operation_result_key(op)?, output);
                 debug_assert!(inserted.is_none());
+            }
+            "compute.transcript_squeeze" => {
+                let operands = lowered_operands(op, &value_map)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["label", "kind", "count"])?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &cpu,
+                    "cpu.transcript_squeeze",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!cpu.transcript_state", "!cpu.challenge"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+                insert_result_mapping(&mut value_map, op, operation, 1, 1)?;
+            }
+            "compute.sumcheck_kernel_claim" => {
+                let operands = lowered_operands(op, &value_map)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(
+                    op,
+                    &["stage", "domain", "num_rounds", "degree", "claim", "kernel"],
+                )?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &cpu,
+                    "cpu.sumcheck_claim",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!cpu.sumcheck_claim_type"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "compute.sumcheck_batch" => {
+                let operands = lowered_operands(op, &value_map)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(
+                    op,
+                    &[
+                        "stage",
+                        "proof_slot",
+                        "policy",
+                        "count",
+                        "ordered_claims",
+                        "claim_label",
+                        "round_label",
+                        "round_schedule",
+                    ],
+                )?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &cpu,
+                    "cpu.sumcheck_batch",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!cpu.sumcheck_batch_type"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "compute.sumcheck_kernel_driver" => {
+                let operands = lowered_operands(op, &value_map)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(
+                    op,
+                    &[
+                        "stage",
+                        "proof_slot",
+                        "kernel",
+                        "policy",
+                        "round_schedule",
+                        "claim_label",
+                        "round_label",
+                        "num_rounds",
+                        "degree",
+                    ],
+                )?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &cpu,
+                    "cpu.sumcheck_driver",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &[
+                        "!cpu.transcript_state",
+                        "!cpu.point",
+                        "!cpu.sumcheck_result_type",
+                        "!cpu.sumcheck_proof_type",
+                    ],
+                )?;
+                for index in 0..4 {
+                    insert_result_mapping(&mut value_map, op, operation, index, index)?;
+                }
+            }
+            "compute.sumcheck_eval" => {
+                let operands = lowered_operands(op, &value_map)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["source", "name", "index", "oracle"])?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &cpu,
+                    "cpu.sumcheck_eval",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!cpu.field_value"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "compute.opening_claim" => {
+                let operands = lowered_operands(op, &value_map)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["oracle", "domain", "point_arity", "claim_kind"])?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &cpu,
+                    "cpu.opening_claim",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!cpu.opening_claim_type"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "compute.opening_batch" => {
+                let operands = lowered_operands(op, &value_map)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(
+                    op,
+                    &["stage", "proof_slot", "policy", "count", "ordered_claims"],
+                )?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &cpu,
+                    "cpu.opening_batch",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!cpu.opening_batch_type"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "compute.pcs_opening_claim" => {
+                let operands = lowered_operands(op, &value_map)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["oracle", "family", "domain", "point_arity"])?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &cpu,
+                    "cpu.pcs_opening_claim",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!cpu.opening_claim_type"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "compute.pcs_opening_batch" => {
+                let operands = lowered_operands(op, &value_map)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["proof_slot", "policy", "count", "ordered_claims"])?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &cpu,
+                    "cpu.pcs_opening_batch",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!cpu.opening_batch_type"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "compute.pcs_batch_open" | "compute.pcs_batch_verify" => {
+                let target_op = match operation_name(op).as_str() {
+                    "compute.pcs_batch_open" => "cpu.pcs_batch_open",
+                    "compute.pcs_batch_verify" => "cpu.pcs_batch_verify",
+                    _ => unreachable!(),
+                };
+                let operands = lowered_operands(op, &value_map)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["pcs", "proof_slot", "transcript_label"])?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &cpu,
+                    target_op,
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!cpu.transcript_state", "!cpu.opening_proof_type"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+                insert_result_mapping(&mut value_map, op, operation, 1, 1)?;
             }
             _ => {}
         }
@@ -1111,22 +1301,84 @@ fn bool_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<bool, MlirEr
 }
 
 fn operation_result_key(operation: OperationRef<'_, '_>) -> Result<String, MlirError> {
-    operation
-        .result(0)
-        .map(|result| result.to_string())
-        .map_err(|_| schema_error(format!("{} requires one result", operation_name(operation))))
+    operation_result_key_at(operation, 0)
+}
+
+fn operation_result_key_at(
+    operation: OperationRef<'_, '_>,
+    index: usize,
+) -> Result<String, MlirError> {
+    let result = operation.result(index).map_err(|_| {
+        schema_error(format!(
+            "{} requires result {index}",
+            operation_name(operation)
+        ))
+    })?;
+    result_key(result.owner(), result.result_number())
+}
+
+fn result_key(operation: OperationRef<'_, '_>, result_number: usize) -> Result<String, MlirError> {
+    Ok(format!(
+        "{}#{result_number}",
+        string_attr(operation, "sym_name")?
+    ))
 }
 
 fn operand_key(operation: OperationRef<'_, '_>, index: usize) -> Result<String, MlirError> {
-    operation
-        .operand(index)
-        .map(|operand| operand.to_string())
-        .map_err(|_| {
-            schema_error(format!(
-                "{} requires operand {index}",
-                operation_name(operation)
-            ))
+    let operand = operation.operand(index).map_err(|_| {
+        schema_error(format!(
+            "{} requires operand {index}",
+            operation_name(operation)
+        ))
+    })?;
+    let owner = OperationResult::try_from(operand).map_err(|_| {
+        schema_error(format!(
+            "{} operand {index} must be an op result",
+            operation_name(operation)
+        ))
+    })?;
+    result_key(owner.owner(), owner.result_number()).map_err(|_| {
+        schema_error(format!(
+            "{} operand {index} owner missing sym_name",
+            operation_name(operation)
+        ))
+    })
+}
+
+fn lowered_operands<'c, 'a>(
+    operation: OperationRef<'_, '_>,
+    value_map: &BTreeMap<String, Value<'c, 'a>>,
+) -> Result<Vec<Value<'c, 'a>>, MlirError> {
+    (0..operation.operand_count())
+        .map(|index| {
+            let key = operand_key(operation, index)?;
+            value_map.get(&key).copied().ok_or_else(|| {
+                schema_error(format!(
+                    "{} operand {index} was not lowered",
+                    operation_name(operation)
+                ))
+            })
         })
+        .collect()
+}
+
+fn insert_result_mapping<'c, 'a>(
+    value_map: &mut BTreeMap<String, Value<'c, 'a>>,
+    source: OperationRef<'_, '_>,
+    target: OperationRef<'c, 'a>,
+    source_index: usize,
+    target_index: usize,
+) -> Result<(), MlirError> {
+    let key = operation_result_key_at(source, source_index)?;
+    let value = target.result(target_index).map(Into::into).map_err(|_| {
+        schema_error(format!(
+            "{} requires result {target_index}",
+            operation_name(target)
+        ))
+    })?;
+    let inserted = value_map.insert(key, value);
+    debug_assert!(inserted.is_none());
+    Ok(())
 }
 
 fn first_result<'c, 'a>(

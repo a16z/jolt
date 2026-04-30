@@ -6,6 +6,20 @@ Protocol-specific facts live under `src/protocols/`. The generic compiler layers
 
 The commitment pipeline uses SSA values for commitment artifacts and transcript state from protocol/concrete IR through party, compute, and CPU IR. Metadata remains in attributes, but execution dataflow is carried by operands/results so MLIR verifies def-use structure before Rust emission.
 
+Sumcheck and PCS opening rails follow the same rule. `piop.sumcheck` models the protocol contract, including grouped-round schedules for uniskip-style first rounds. `pcs.opening_claim` and `pcs.opening_batch` keep opening obligations as typed SSA values with explicit ordering; any mutable opening accumulator is only a later CPU/Rust implementation detail.
+
+The first CPU target is intentionally coarse. Protocol IR names sumcheck relations; a compute-to-compute kernel-resolution pass maps those relations to CPU kernel symbols. Only after that pass does `cpu.sumcheck_driver` carry `kernel = @...`. The IR still owns stage order, transcript labels, batching policy, proof slots, and PCS opening obligations.
+
+Stage 1 CPU kernel extraction is typed in `emit::rust::stage1_cpu_program`. It does not infer Jolt protocol semantics from Rust code; it checks that `cpu.kernel`, `cpu.sumcheck_claim`, `cpu.sumcheck_batch`, `cpu.sumcheck_driver`, `cpu.sumcheck_eval`, and virtual opening ops form the explicit SSA contract that real CPU kernels will implement.
+
+Stage 1 Rust emission serializes that checked CPU contract into static plan constants and a thin prover/verifier entrypoint. The generated code calls `jolt_kernels::stage1::execute_stage1_program`; `jolt-kernels` owns the temporary coarse CPU ABI until those kernels are progressively replaced by finer compute lowerings.
+
+`Stage1ShapeKernelExecutor` remains the lightweight structural runner. It dispatches only the known Stage 1 kernel ABI symbols, consumes transcript challenges according to the MLIR-derived plan, and returns proof/evaluation artifacts with the expected shape so generated prover/verifier self-parity can run independently of arithmetic kernels.
+
+`Stage1ProverKernelExecutor` and `Stage1VerifierKernelExecutor` are the real-arithmetic dispatch rails. The uniskip ABI builds and verifies the Jolt-core-shaped first-round polynomial from explicit prover evaluations or an R1CS-backed data source, and the remaining outer sumcheck ABI runs the generic degree-3 transcript/proof mechanics over the same typed evaluator boundary. The current coarse CPU data source consumes the modular `jolt-r1cs` witness layout; replacing its temporary evaluator ABI with a stricter Stage 1 data object is the next hardening slice.
+
+`tests/fixtures/jolt_protocol_chain_commitment_stage1.yaml` tracks the current full-protocol chain from commitment into Stage 1. It sits next to the per-component MLIR/Rust fixtures so internal prover/verifier parity and later jolt-core parity can grow as one ordered phase chain rather than isolated tests.
+
 Commitment compute and CPU lowerings build IR with `melior` operation builders rather than formatting full MLIR modules as strings. Textual MLIR remains only where the prototype intentionally phase-casts whole modules while preserving existing SSA bodies.
 
 See `TESTING.md` for the compiler-v2 parity gates: IR/golden checks, generated prover/verifier self-parity, modular self-verify, transcript parity against jolt-core, and jolt-core proof acceptance.

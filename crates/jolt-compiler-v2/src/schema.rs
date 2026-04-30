@@ -1,8 +1,10 @@
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
 use melior::ir::block::BlockLike;
 use melior::ir::operation::OperationLike;
+use melior::ir::operation::OperationResult;
 use melior::ir::{Attribute, OperationRef};
 
 use crate::ir::{
@@ -98,10 +100,34 @@ where
         )));
     }
 
+    let mut kernel_symbols = BTreeSet::new();
+    let mut kernel_refs = Vec::new();
     let mut operation = module.as_mlir_module().body().first_operation();
     while let Some(op) = operation {
         operation = op.next_in_block();
         validate_op(op, phase)?;
+        match operation_name(op).as_str() {
+            "compute.kernel" | "cpu.kernel" => {
+                let _ = kernel_symbols.insert(string_attr(op, "sym_name")?);
+            }
+            "compute.sumcheck_kernel_claim"
+            | "compute.sumcheck_kernel_driver"
+            | "cpu.sumcheck_claim"
+            | "cpu.sumcheck_driver" => {
+                kernel_refs.push(symbol_attr(op, "kernel")?);
+            }
+            _ => {}
+        }
+    }
+
+    if matches!(phase, ModulePhase::Compute | ModulePhase::Cpu) {
+        for kernel in kernel_refs {
+            if !kernel_symbols.contains(&kernel) {
+                return Err(SchemaError::new(format!(
+                    "kernel reference @{kernel} has no matching kernel definition"
+                )));
+            }
+        }
     }
 
     Ok(())
@@ -154,13 +180,127 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             require_attrs(operation, &["sym_name", "label"])?;
             require_shape(operation, 2, 1)
         }
+        "transcript.squeeze" => {
+            require_attrs(operation, &["sym_name", "label", "kind", "count"])?;
+            require_shape(operation, 1, 2)
+        }
         "transcript.state" => {
             require_attrs(operation, &["sym_name", "scheme"])?;
             require_shape(operation, 0, 1)
         }
+        "piop.stage" => {
+            require_attrs(operation, &["sym_name", "name", "order", "roles"])?;
+            require_shape(operation, 0, 1)
+        }
+        "piop.relation" => require_attrs(
+            operation,
+            &[
+                "sym_name",
+                "kind",
+                "domain",
+                "num_rounds",
+                "degree",
+                "output_count",
+            ],
+        ),
+        "piop.sumcheck_claim" => {
+            require_attrs(
+                operation,
+                &[
+                    "sym_name",
+                    "stage",
+                    "domain",
+                    "num_rounds",
+                    "degree",
+                    "claim",
+                    "relation",
+                ],
+            )?;
+            require_min_shape(operation, 0, 1)
+        }
+        "piop.sumcheck_batch" => {
+            require_attrs(
+                operation,
+                &[
+                    "sym_name",
+                    "stage",
+                    "proof_slot",
+                    "policy",
+                    "count",
+                    "ordered_claims",
+                    "claim_label",
+                    "round_label",
+                    "round_schedule",
+                ],
+            )?;
+            require_min_shape(operation, 1, 1)?;
+            require_counted_operands(operation, 1, "ordered_claims")
+        }
+        "piop.sumcheck" => {
+            require_attrs(
+                operation,
+                &[
+                    "sym_name",
+                    "stage",
+                    "proof_slot",
+                    "relation",
+                    "policy",
+                    "round_schedule",
+                    "claim_label",
+                    "round_label",
+                    "num_rounds",
+                    "degree",
+                ],
+            )?;
+            require_shape(operation, 2, 4)
+        }
+        "piop.sumcheck_eval" => {
+            require_attrs(
+                operation,
+                &["sym_name", "source", "name", "index", "oracle"],
+            )?;
+            require_shape(operation, 1, 1)
+        }
+        "piop.opening_claim" => {
+            require_attrs(
+                operation,
+                &["sym_name", "oracle", "domain", "point_arity", "claim_kind"],
+            )?;
+            require_shape(operation, 2, 1)
+        }
+        "piop.opening_batch" => {
+            require_attrs(
+                operation,
+                &[
+                    "sym_name",
+                    "stage",
+                    "proof_slot",
+                    "policy",
+                    "count",
+                    "ordered_claims",
+                ],
+            )?;
+            require_min_shape(operation, 0, 1)?;
+            require_counted_operands(operation, 0, "ordered_claims")
+        }
         "party.function" => require_attrs(operation, &["sym_name", "source", "role"]),
         "compute.params" => require_attrs(operation, &["sym_name", "field", "pcs", "transcript"]),
         "compute.function" => require_attrs(operation, &["sym_name", "source"]),
+        "compute.relation" => require_attrs(
+            operation,
+            &[
+                "sym_name",
+                "kind",
+                "domain",
+                "num_rounds",
+                "degree",
+                "output_count",
+            ],
+        ),
+        "compute.kernel" => require_attrs(
+            operation,
+            &["sym_name", "relation", "kind", "backend", "abi"],
+        ),
         "compute.oracle_dense_trace" => {
             require_attrs(
                 operation,
@@ -255,6 +395,151 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
         "compute.transcript_absorb" => {
             require_attrs(operation, &["sym_name", "label", "optional"])?;
             require_shape(operation, 2, 1)
+        }
+        "compute.transcript_squeeze" => {
+            require_attrs(operation, &["sym_name", "label", "kind", "count"])?;
+            require_shape(operation, 1, 2)
+        }
+        "compute.sumcheck_claim" => {
+            require_attrs(
+                operation,
+                &[
+                    "sym_name",
+                    "stage",
+                    "domain",
+                    "num_rounds",
+                    "degree",
+                    "claim",
+                    "relation",
+                ],
+            )?;
+            require_min_shape(operation, 0, 1)
+        }
+        "compute.sumcheck_kernel_claim" => {
+            require_attrs(
+                operation,
+                &[
+                    "sym_name",
+                    "stage",
+                    "domain",
+                    "num_rounds",
+                    "degree",
+                    "claim",
+                    "kernel",
+                ],
+            )?;
+            require_min_shape(operation, 0, 1)
+        }
+        "compute.sumcheck_batch" => {
+            require_attrs(
+                operation,
+                &[
+                    "sym_name",
+                    "stage",
+                    "proof_slot",
+                    "policy",
+                    "count",
+                    "ordered_claims",
+                    "claim_label",
+                    "round_label",
+                    "round_schedule",
+                ],
+            )?;
+            require_min_shape(operation, 0, 1)?;
+            require_counted_operands(operation, 0, "ordered_claims")
+        }
+        "compute.sumcheck_driver" => {
+            require_attrs(
+                operation,
+                &[
+                    "sym_name",
+                    "stage",
+                    "proof_slot",
+                    "relation",
+                    "policy",
+                    "round_schedule",
+                    "claim_label",
+                    "round_label",
+                    "num_rounds",
+                    "degree",
+                ],
+            )?;
+            require_shape(operation, 2, 4)
+        }
+        "compute.sumcheck_kernel_driver" => {
+            require_attrs(
+                operation,
+                &[
+                    "sym_name",
+                    "stage",
+                    "proof_slot",
+                    "kernel",
+                    "policy",
+                    "round_schedule",
+                    "claim_label",
+                    "round_label",
+                    "num_rounds",
+                    "degree",
+                ],
+            )?;
+            require_shape(operation, 2, 4)
+        }
+        "compute.sumcheck_eval" => {
+            require_attrs(
+                operation,
+                &["sym_name", "source", "name", "index", "oracle"],
+            )?;
+            require_shape(operation, 1, 1)
+        }
+        "compute.opening_claim" => {
+            require_attrs(
+                operation,
+                &["sym_name", "oracle", "domain", "point_arity", "claim_kind"],
+            )?;
+            require_shape(operation, 2, 1)
+        }
+        "compute.opening_batch" => {
+            require_attrs(
+                operation,
+                &[
+                    "sym_name",
+                    "stage",
+                    "proof_slot",
+                    "policy",
+                    "count",
+                    "ordered_claims",
+                ],
+            )?;
+            require_min_shape(operation, 0, 1)?;
+            require_counted_operands(operation, 0, "ordered_claims")
+        }
+        "compute.pcs_opening_claim" => {
+            require_attrs(
+                operation,
+                &["sym_name", "oracle", "family", "domain", "point_arity"],
+            )?;
+            require_shape(operation, 2, 1)
+        }
+        "compute.pcs_opening_batch" => {
+            require_attrs(
+                operation,
+                &[
+                    "sym_name",
+                    "proof_slot",
+                    "policy",
+                    "count",
+                    "ordered_claims",
+                ],
+            )?;
+            require_min_shape(operation, 0, 1)?;
+            require_counted_operands(operation, 0, "ordered_claims")
+        }
+        "compute.pcs_batch_open" | "compute.pcs_batch_verify" => {
+            require_attrs(
+                operation,
+                &["sym_name", "pcs", "proof_slot", "transcript_label"],
+            )?;
+            require_shape(operation, 2, 2)
         }
         "cpu.params" => require_attrs(operation, &["sym_name", "field", "pcs", "transcript"]),
         "cpu.function" => require_attrs(operation, &["sym_name", "source"]),
@@ -353,6 +638,150 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             require_attrs(operation, &["sym_name", "label", "optional"])?;
             require_shape(operation, 2, 1)
         }
+        "cpu.transcript_squeeze" => {
+            require_attrs(operation, &["sym_name", "label", "kind", "count"])?;
+            require_shape(operation, 1, 2)
+        }
+        "cpu.kernel" => require_attrs(
+            operation,
+            &["sym_name", "relation", "kind", "backend", "abi"],
+        ),
+        "cpu.sumcheck_claim" => {
+            require_attrs(
+                operation,
+                &[
+                    "sym_name",
+                    "stage",
+                    "domain",
+                    "num_rounds",
+                    "degree",
+                    "claim",
+                    "kernel",
+                ],
+            )?;
+            require_min_shape(operation, 0, 1)
+        }
+        "cpu.sumcheck_batch" => {
+            require_attrs(
+                operation,
+                &[
+                    "sym_name",
+                    "stage",
+                    "proof_slot",
+                    "policy",
+                    "count",
+                    "ordered_claims",
+                    "claim_label",
+                    "round_label",
+                    "round_schedule",
+                ],
+            )?;
+            require_min_shape(operation, 0, 1)?;
+            require_counted_operands(operation, 0, "ordered_claims")
+        }
+        "cpu.sumcheck_driver" => {
+            require_attrs(
+                operation,
+                &[
+                    "sym_name",
+                    "stage",
+                    "proof_slot",
+                    "kernel",
+                    "policy",
+                    "round_schedule",
+                    "claim_label",
+                    "round_label",
+                    "num_rounds",
+                    "degree",
+                ],
+            )?;
+            require_shape(operation, 2, 4)
+        }
+        "cpu.sumcheck_eval" => {
+            require_attrs(
+                operation,
+                &["sym_name", "source", "name", "index", "oracle"],
+            )?;
+            require_shape(operation, 1, 1)
+        }
+        "cpu.opening_claim" => {
+            require_attrs(
+                operation,
+                &["sym_name", "oracle", "domain", "point_arity", "claim_kind"],
+            )?;
+            require_shape(operation, 2, 1)
+        }
+        "cpu.opening_batch" => {
+            require_attrs(
+                operation,
+                &[
+                    "sym_name",
+                    "stage",
+                    "proof_slot",
+                    "policy",
+                    "count",
+                    "ordered_claims",
+                ],
+            )?;
+            require_min_shape(operation, 0, 1)?;
+            require_counted_operands(operation, 0, "ordered_claims")
+        }
+        "cpu.pcs_opening_claim" => {
+            require_attrs(
+                operation,
+                &["sym_name", "oracle", "family", "domain", "point_arity"],
+            )?;
+            require_shape(operation, 2, 1)
+        }
+        "cpu.pcs_opening_batch" => {
+            require_attrs(
+                operation,
+                &[
+                    "sym_name",
+                    "proof_slot",
+                    "policy",
+                    "count",
+                    "ordered_claims",
+                ],
+            )?;
+            require_min_shape(operation, 0, 1)?;
+            require_counted_operands(operation, 0, "ordered_claims")
+        }
+        "cpu.pcs_batch_open" | "cpu.pcs_batch_verify" => {
+            require_attrs(
+                operation,
+                &["sym_name", "pcs", "proof_slot", "transcript_label"],
+            )?;
+            require_shape(operation, 2, 2)
+        }
+        "pcs.opening_claim" => {
+            require_attrs(
+                operation,
+                &["sym_name", "oracle", "family", "domain", "point_arity"],
+            )?;
+            require_shape(operation, 2, 1)
+        }
+        "pcs.opening_batch" => {
+            require_attrs(
+                operation,
+                &[
+                    "sym_name",
+                    "proof_slot",
+                    "policy",
+                    "count",
+                    "ordered_claims",
+                ],
+            )?;
+            require_min_shape(operation, 0, 1)?;
+            require_counted_operands(operation, 0, "ordered_claims")
+        }
+        "pcs.batch_open" | "pcs.batch_verify" => {
+            require_attrs(
+                operation,
+                &["sym_name", "pcs", "proof_slot", "transcript_label"],
+            )?;
+            require_shape(operation, 2, 2)
+        }
         _ if is_bolt_dialect_op(&name) => Err(SchemaError::new(format!(
             "unknown Bolt op `{name}` in schema verifier"
         ))),
@@ -382,6 +811,62 @@ fn require_shape(
     Ok(())
 }
 
+fn require_min_shape(
+    operation: OperationRef<'_, '_>,
+    min_operands: usize,
+    results: usize,
+) -> Result<(), SchemaError> {
+    if operation.operand_count() < min_operands {
+        return Err(SchemaError::new(format!(
+            "{} expected at least {min_operands} operands, got {}",
+            operation_name(operation),
+            operation.operand_count()
+        )));
+    }
+    if operation.result_count() != results {
+        return Err(SchemaError::new(format!(
+            "{} expected {results} results, got {}",
+            operation_name(operation),
+            operation.result_count()
+        )));
+    }
+    Ok(())
+}
+
+fn require_counted_operands(
+    operation: OperationRef<'_, '_>,
+    fixed_operands: usize,
+    ordered_attr: &str,
+) -> Result<(), SchemaError> {
+    let count = int_attr(operation, "count")?;
+    let dynamic_count = operation.operand_count().saturating_sub(fixed_operands);
+    if count != dynamic_count {
+        return Err(SchemaError::new(format!(
+            "{} attr `count` expected {dynamic_count}, got {count}",
+            operation_name(operation)
+        )));
+    }
+    let ordered = symbol_array_attr(operation, ordered_attr)?;
+    if ordered.len() != count {
+        return Err(SchemaError::new(format!(
+            "{} attr `{ordered_attr}` length {} does not match count {count}",
+            operation_name(operation),
+            ordered.len()
+        )));
+    }
+    for (index, expected) in ordered.iter().enumerate() {
+        let operand_index = fixed_operands + index;
+        let actual = operand_owner_symbol(operation, operand_index)?;
+        if &actual != expected {
+            return Err(SchemaError::new(format!(
+                "{} operand {operand_index} expected @{expected}, got @{actual}",
+                operation_name(operation)
+            )));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn require_attrs(
     operation: OperationRef<'_, '_>,
     attrs: &[&str],
@@ -395,6 +880,35 @@ pub(crate) fn require_attrs(
         }
     }
     Ok(())
+}
+
+pub(crate) fn operand_owner_symbol(
+    operation: OperationRef<'_, '_>,
+    index: usize,
+) -> Result<String, SchemaError> {
+    let operand = operation.operand(index).map_err(|_| {
+        SchemaError::new(format!(
+            "{} missing required operand {index}",
+            operation_name(operation)
+        ))
+    })?;
+    let owner = OperationResult::try_from(operand).map_err(|_| {
+        SchemaError::new(format!(
+            "{} operand {index} must be an op result",
+            operation_name(operation)
+        ))
+    })?;
+    owner
+        .owner()
+        .attribute("sym_name")
+        .ok()
+        .and_then(string_attribute_value)
+        .ok_or_else(|| {
+            SchemaError::new(format!(
+                "{} operand {index} owner missing sym_name",
+                operation_name(operation)
+            ))
+        })
 }
 
 pub(crate) fn require_symbol_attr_eq(
@@ -445,6 +959,14 @@ pub(crate) fn symbol_attr(
         .ok()
         .and_then(symbol_attribute_value)
         .ok_or_else(|| attr_error(operation, attr, "symbol"))
+}
+
+fn string_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<String, SchemaError> {
+    operation
+        .attribute(attr)
+        .ok()
+        .and_then(string_attribute_value)
+        .ok_or_else(|| attr_error(operation, attr, "string"))
 }
 
 pub(crate) fn symbol_array_attr(

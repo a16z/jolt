@@ -149,6 +149,38 @@ where
                 };
                 current_state = Some(result.to_string());
             }
+            "transcript.squeeze" | "piop.sumcheck" | "pcs.batch_open" | "pcs.batch_verify" => {
+                let Some(expected_input) = current_state.as_deref() else {
+                    error = Some(VerifyError::new(format!(
+                        "{} requires a prior transcript.state result",
+                        operation_name(op)
+                    )));
+                    break;
+                };
+                let Ok(input) = op.operand(0) else {
+                    error = Some(VerifyError::new(format!(
+                        "{} requires transcript-state operand 0",
+                        operation_name(op)
+                    )));
+                    break;
+                };
+                let input = input.to_string();
+                if input != expected_input {
+                    error = Some(VerifyError::new(format!(
+                        "{} consumed transcript state {input}, expected {expected_input}",
+                        operation_name(op)
+                    )));
+                    break;
+                }
+                let Ok(result) = op.result(0) else {
+                    error = Some(VerifyError::new(format!(
+                        "{} requires transcript-state result 0",
+                        operation_name(op)
+                    )));
+                    break;
+                };
+                current_state = Some(result.to_string());
+            }
             _ => {}
         }
     }

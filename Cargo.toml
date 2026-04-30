@@ -30,6 +30,7 @@ members = [
   "crates/jolt-openings",
   "crates/jolt-sumcheck",
   "crates/jolt-r1cs",
+  "crates/jolt-kernels",
   "crates/jolt-instructions",
   "crates/jolt-dory",
   "crates/jolt-hyperkzg",

@@ -3,6 +3,16 @@ irdl.dialect @compute {
   irdl.type @transcript_state
   irdl.type @oracle_buffer
   irdl.type @oracle_family
+  irdl.type @challenge
+  irdl.type @field_value
+  irdl.type @point
+  irdl.type @sumcheck_claim_type
+  irdl.type @sumcheck_batch_type
+  irdl.type @sumcheck_result_type
+  irdl.type @sumcheck_proof_type
+  irdl.type @opening_claim_type
+  irdl.type @opening_batch_type
+  irdl.type @opening_proof_type
 
   irdl.operation @params {
     %sym = irdl.any
@@ -15,6 +25,36 @@ irdl.dialect @compute {
     %sym = irdl.any
     %source = irdl.any
     irdl.attributes {"sym_name" = %sym, "source" = %source}
+  }
+  irdl.operation @relation {
+    %sym = irdl.any
+    %kind = irdl.any
+    %domain = irdl.any
+    %num_rounds = irdl.any
+    %degree = irdl.any
+    %output_count = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "kind" = %kind,
+      "domain" = %domain,
+      "num_rounds" = %num_rounds,
+      "degree" = %degree,
+      "output_count" = %output_count
+    }
+  }
+  irdl.operation @kernel {
+    %sym = irdl.any
+    %relation = irdl.any
+    %kind = irdl.any
+    %backend = irdl.any
+    %abi = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "relation" = %relation,
+      "kind" = %kind,
+      "backend" = %backend,
+      "abi" = %abi
+    }
   }
   irdl.operation @oracle_dense_trace {
     %buffer = irdl.parametric @compute::@oracle_buffer<>
@@ -228,6 +268,282 @@ irdl.dialect @compute {
     }
     irdl.operands(input: %state, artifact: %artifact)
     irdl.results(output: %state)
+  }
+  irdl.operation @transcript_squeeze {
+    %state = irdl.parametric @compute::@transcript_state<>
+    %challenge = irdl.parametric @compute::@challenge<>
+    %sym = irdl.any
+    %label = irdl.any
+    %kind = irdl.any
+    %count = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "label" = %label,
+      "kind" = %kind,
+      "count" = %count
+    }
+    irdl.operands(input: %state)
+    irdl.results(output: %state, challenge: %challenge)
+  }
+  irdl.operation @sumcheck_claim {
+    %opening_claim = irdl.parametric @compute::@opening_claim_type<>
+    %claim_type = irdl.parametric @compute::@sumcheck_claim_type<>
+    %sym = irdl.any
+    %stage = irdl.any
+    %domain = irdl.any
+    %num_rounds = irdl.any
+    %degree = irdl.any
+    %claim = irdl.any
+    %relation = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "stage" = %stage,
+      "domain" = %domain,
+      "num_rounds" = %num_rounds,
+      "degree" = %degree,
+      "claim" = %claim,
+      "relation" = %relation
+    }
+    irdl.operands(inputs: variadic %opening_claim)
+    irdl.results(claim: %claim_type)
+  }
+  irdl.operation @sumcheck_kernel_claim {
+    %opening_claim = irdl.parametric @compute::@opening_claim_type<>
+    %claim_type = irdl.parametric @compute::@sumcheck_claim_type<>
+    %sym = irdl.any
+    %stage = irdl.any
+    %domain = irdl.any
+    %num_rounds = irdl.any
+    %degree = irdl.any
+    %claim = irdl.any
+    %kernel = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "stage" = %stage,
+      "domain" = %domain,
+      "num_rounds" = %num_rounds,
+      "degree" = %degree,
+      "claim" = %claim,
+      "kernel" = %kernel
+    }
+    irdl.operands(inputs: variadic %opening_claim)
+    irdl.results(claim: %claim_type)
+  }
+  irdl.operation @sumcheck_batch {
+    %claim_type = irdl.parametric @compute::@sumcheck_claim_type<>
+    %batch_type = irdl.parametric @compute::@sumcheck_batch_type<>
+    %sym = irdl.any
+    %stage = irdl.any
+    %proof_slot = irdl.any
+    %policy = irdl.any
+    %count = irdl.any
+    %ordered_claims = irdl.any
+    %claim_label = irdl.any
+    %round_label = irdl.any
+    %round_schedule = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "stage" = %stage,
+      "proof_slot" = %proof_slot,
+      "policy" = %policy,
+      "count" = %count,
+      "ordered_claims" = %ordered_claims,
+      "claim_label" = %claim_label,
+      "round_label" = %round_label,
+      "round_schedule" = %round_schedule
+    }
+    irdl.operands(claims: variadic %claim_type)
+    irdl.results(batch: %batch_type)
+  }
+  irdl.operation @sumcheck_driver {
+    %state = irdl.parametric @compute::@transcript_state<>
+    %batch_type = irdl.parametric @compute::@sumcheck_batch_type<>
+    %point = irdl.parametric @compute::@point<>
+    %result = irdl.parametric @compute::@sumcheck_result_type<>
+    %proof = irdl.parametric @compute::@sumcheck_proof_type<>
+    %sym = irdl.any
+    %stage = irdl.any
+    %proof_slot = irdl.any
+    %relation = irdl.any
+    %policy = irdl.any
+    %round_schedule = irdl.any
+    %claim_label = irdl.any
+    %round_label = irdl.any
+    %num_rounds = irdl.any
+    %degree = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "stage" = %stage,
+      "proof_slot" = %proof_slot,
+      "relation" = %relation,
+      "policy" = %policy,
+      "round_schedule" = %round_schedule,
+      "claim_label" = %claim_label,
+      "round_label" = %round_label,
+      "num_rounds" = %num_rounds,
+      "degree" = %degree
+    }
+    irdl.operands(input: %state, batch: %batch_type)
+    irdl.results(output: %state, point: %point, result: %result, proof: %proof)
+  }
+  irdl.operation @sumcheck_kernel_driver {
+    %state = irdl.parametric @compute::@transcript_state<>
+    %batch_type = irdl.parametric @compute::@sumcheck_batch_type<>
+    %point = irdl.parametric @compute::@point<>
+    %result = irdl.parametric @compute::@sumcheck_result_type<>
+    %proof = irdl.parametric @compute::@sumcheck_proof_type<>
+    %sym = irdl.any
+    %stage = irdl.any
+    %proof_slot = irdl.any
+    %kernel = irdl.any
+    %policy = irdl.any
+    %round_schedule = irdl.any
+    %claim_label = irdl.any
+    %round_label = irdl.any
+    %num_rounds = irdl.any
+    %degree = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "stage" = %stage,
+      "proof_slot" = %proof_slot,
+      "kernel" = %kernel,
+      "policy" = %policy,
+      "round_schedule" = %round_schedule,
+      "claim_label" = %claim_label,
+      "round_label" = %round_label,
+      "num_rounds" = %num_rounds,
+      "degree" = %degree
+    }
+    irdl.operands(input: %state, batch: %batch_type)
+    irdl.results(output: %state, point: %point, result: %result, proof: %proof)
+  }
+  irdl.operation @sumcheck_eval {
+    %result = irdl.parametric @compute::@sumcheck_result_type<>
+    %eval = irdl.parametric @compute::@field_value<>
+    %sym = irdl.any
+    %source = irdl.any
+    %name = irdl.any
+    %index = irdl.any
+    %oracle = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "source" = %source,
+      "name" = %name,
+      "index" = %index,
+      "oracle" = %oracle
+    }
+    irdl.operands(result: %result)
+    irdl.results(eval: %eval)
+  }
+  irdl.operation @opening_claim {
+    %point = irdl.parametric @compute::@point<>
+    %eval = irdl.parametric @compute::@field_value<>
+    %claim = irdl.parametric @compute::@opening_claim_type<>
+    %sym = irdl.any
+    %oracle = irdl.any
+    %domain = irdl.any
+    %point_arity = irdl.any
+    %claim_kind = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "oracle" = %oracle,
+      "domain" = %domain,
+      "point_arity" = %point_arity,
+      "claim_kind" = %claim_kind
+    }
+    irdl.operands(point: %point, eval: %eval)
+    irdl.results(claim: %claim)
+  }
+  irdl.operation @opening_batch {
+    %claim = irdl.parametric @compute::@opening_claim_type<>
+    %batch = irdl.parametric @compute::@opening_batch_type<>
+    %sym = irdl.any
+    %stage = irdl.any
+    %proof_slot = irdl.any
+    %policy = irdl.any
+    %count = irdl.any
+    %ordered_claims = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "stage" = %stage,
+      "proof_slot" = %proof_slot,
+      "policy" = %policy,
+      "count" = %count,
+      "ordered_claims" = %ordered_claims
+    }
+    irdl.operands(claims: variadic %claim)
+    irdl.results(batch: %batch)
+  }
+  irdl.operation @pcs_opening_claim {
+    %point = irdl.parametric @compute::@point<>
+    %eval = irdl.parametric @compute::@field_value<>
+    %claim = irdl.parametric @compute::@opening_claim_type<>
+    %sym = irdl.any
+    %oracle = irdl.any
+    %family = irdl.any
+    %domain = irdl.any
+    %point_arity = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "oracle" = %oracle,
+      "family" = %family,
+      "domain" = %domain,
+      "point_arity" = %point_arity
+    }
+    irdl.operands(point: %point, eval: %eval)
+    irdl.results(claim: %claim)
+  }
+  irdl.operation @pcs_opening_batch {
+    %claim = irdl.parametric @compute::@opening_claim_type<>
+    %batch = irdl.parametric @compute::@opening_batch_type<>
+    %sym = irdl.any
+    %proof_slot = irdl.any
+    %policy = irdl.any
+    %count = irdl.any
+    %ordered_claims = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "proof_slot" = %proof_slot,
+      "policy" = %policy,
+      "count" = %count,
+      "ordered_claims" = %ordered_claims
+    }
+    irdl.operands(claims: variadic %claim)
+    irdl.results(batch: %batch)
+  }
+  irdl.operation @pcs_batch_open {
+    %state = irdl.parametric @compute::@transcript_state<>
+    %batch = irdl.parametric @compute::@opening_batch_type<>
+    %proof = irdl.parametric @compute::@opening_proof_type<>
+    %sym = irdl.any
+    %pcs = irdl.any
+    %proof_slot = irdl.any
+    %transcript_label = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "pcs" = %pcs,
+      "proof_slot" = %proof_slot,
+      "transcript_label" = %transcript_label
+    }
+    irdl.operands(input: %state, batch: %batch)
+    irdl.results(output: %state, proof: %proof)
+  }
+  irdl.operation @pcs_batch_verify {
+    %state = irdl.parametric @compute::@transcript_state<>
+    %batch = irdl.parametric @compute::@opening_batch_type<>
+    %proof = irdl.parametric @compute::@opening_proof_type<>
+    %sym = irdl.any
+    %pcs = irdl.any
+    %proof_slot = irdl.any
+    %transcript_label = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "pcs" = %pcs,
+      "proof_slot" = %proof_slot,
+      "transcript_label" = %transcript_label
+    }
+    irdl.operands(input: %state, batch: %batch)
+    irdl.results(output: %state, proof: %proof)
   }
   irdl.operation @generate_oracle {
     %sym = irdl.any

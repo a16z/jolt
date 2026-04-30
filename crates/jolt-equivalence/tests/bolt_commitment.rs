@@ -7,30 +7,53 @@
 use std::collections::BTreeMap;
 
 use ark_serialize::CanonicalSerialize;
+use common::jolt_device::JoltDevice;
+use jolt_compiler_v2::Stage1CpuProgram as CompilerStage1CpuProgram;
 use jolt_compiler_v2::{
-    build_commitment_protocol, commitment_cpu_program, lower_commitment_to_compute,
-    lower_compute_to_cpu, lower_piop_and_fiat_shamir, project_prover_party, project_verifier_party,
-    CommitmentCpuProgram, JoltProtocolParams, MeliorContext, OptionalSkipPolicy, OracleGeneration,
-    Role, TranscriptStep,
+    build_commitment_protocol, build_stage1_outer_protocol, commitment_cpu_program,
+    lower_commitment_to_compute, lower_compute_to_cpu, lower_piop_and_fiat_shamir,
+    lower_stage1_to_compute, project_prover_party, project_verifier_party, resolve_compute_kernels,
+    stage1_cpu_program, CommitmentCpuProgram, JoltProtocolParams, MeliorContext,
+    OptionalSkipPolicy, OracleGeneration, Role, TranscriptStep,
 };
 use jolt_core::curve::Bn254Curve;
 use jolt_core::host;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme as CoreCommitmentScheme;
 use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
+use jolt_core::poly::unipoly::UniPoly;
+use jolt_core::subprotocols::univariate_skip::{
+    UniSkipFirstRoundProof, UniSkipFirstRoundProofVariant,
+};
 use jolt_core::transcripts::{Blake2bTranscript as CoreBlake2bTranscript, Transcript as _};
-use jolt_core::zkvm::proof_serialization::JoltProof as CoreJoltProof;
+use jolt_core::zkvm::proof_serialization::{Claims as CoreClaims, JoltProof as CoreJoltProof};
 use jolt_core::zkvm::prover::{JoltCpuProver, JoltProverPreprocessing};
-use jolt_core::zkvm::verifier::JoltSharedPreprocessing;
+use jolt_core::zkvm::verifier::{JoltSharedPreprocessing, JoltVerifier, JoltVerifierPreprocessing};
 use jolt_dory::{DoryCommitment, DoryHint, DoryProverSetup, DoryScheme};
 use jolt_equivalence::checkpoint::{
     assert_transcripts_match, CheckpointTranscript, TranscriptEvent,
 };
-use jolt_equivalence::cross_verifier::conversion::commitment_to_ark;
+use jolt_equivalence::cross_verifier::conversion::{
+    commitment_to_ark, to_ark, to_core_sumcheck_proof,
+};
 use jolt_field::{Field, Fr};
 use jolt_host::{extract_trace, BytecodePreprocessing, Program};
+use jolt_kernels::stage1::{
+    execute_stage1_program, Stage1CpuProgramPlan as KernelStage1CpuProgramPlan,
+    Stage1ExecutionArtifacts, Stage1ExecutionMode, Stage1KernelError,
+    Stage1KernelPlan as KernelStage1KernelPlan,
+    Stage1OpeningBatchPlan as KernelStage1OpeningBatchPlan,
+    Stage1OpeningClaimPlan as KernelStage1OpeningClaimPlan, Stage1OuterR1csData, Stage1Params,
+    Stage1Proof, Stage1ProverInputs, Stage1ProverKernelExecutor,
+    Stage1SumcheckBatchPlan as KernelStage1SumcheckBatchPlan,
+    Stage1SumcheckClaimPlan as KernelStage1SumcheckClaimPlan,
+    Stage1SumcheckDriverPlan as KernelStage1SumcheckDriverPlan,
+    Stage1SumcheckEvalPlan as KernelStage1SumcheckEvalPlan, Stage1TranscriptSqueezePlan,
+    Stage1VerifierKernelExecutor,
+};
 use jolt_openings::StreamingCommitment;
+use jolt_poly::UnivariatePoly;
 use jolt_r1cs::{constraints::rv64, R1csKey};
-use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
+use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 use jolt_verifier::TRANSCRIPT_LABEL;
 use jolt_witness::CycleInput;
 use jolt_witness_v2::{
@@ -42,6 +65,10 @@ type CoreCommitment = <DoryCommitmentScheme as CoreCommitmentScheme>::Commitment
 type CoreProver<'a> =
     JoltCpuProver<'a, CoreFr, Bn254Curve, DoryCommitmentScheme, CoreBlake2bTranscript>;
 type CoreProof = CoreJoltProof<CoreFr, Bn254Curve, DoryCommitmentScheme, CoreBlake2bTranscript>;
+type CoreVerifier<'a> =
+    JoltVerifier<'a, CoreFr, Bn254Curve, DoryCommitmentScheme, CoreBlake2bTranscript>;
+type CoreVerifierPreprocessing =
+    JoltVerifierPreprocessing<CoreFr, Bn254Curve, DoryCommitmentScheme>;
 
 #[test]
 fn bolt_commitment_transcript_matches_jolt_core_append_serializable() {
@@ -84,6 +111,99 @@ fn bolt_commitment_real_muldiv_trace_matches_jolt_core() {
     assert_transcripts_match(&core_log, &prover_trace.log);
 }
 
+#[test]
+fn bolt_commitment_stage1_real_muldiv_parity_checks() {
+    let fixture = core_muldiv_commitment_fixture();
+    let (commitment_prover_program, commitment_verifier_program) =
+        bolt_commitment_programs_with_params(&fixture.params);
+    let (stage1_prover_program, stage1_verifier_program) =
+        bolt_stage1_programs_with_params(&fixture.params);
+    let oracle_data = real_muldiv_oracle_data(&commitment_prover_program, &fixture.cycle_inputs);
+
+    let commitment_prover_trace = run_bolt_commitment_prover_with(
+        &commitment_prover_program,
+        &fixture.pcs_setup,
+        |oracle, _num_vars| oracle_data.get(oracle).cloned().flatten(),
+    );
+    let commitment_verifier_trace = run_bolt_commitment_verifier(
+        &commitment_verifier_program,
+        &commitment_prover_trace.commitments,
+    );
+
+    let stage1_prover_plan = leak_stage1_program(&stage1_prover_program);
+    let stage1_verifier_plan = leak_stage1_program(&stage1_verifier_program);
+    let r1cs_key = R1csKey::new(rv64::rv64_constraints::<Fr>(), fixture.proof.trace_length);
+    let data = Stage1OuterR1csData::new(&r1cs_key, &fixture.r1cs_witness)
+        .expect("valid R1CS witness shape");
+
+    let mut prover_transcript =
+        CheckpointTranscript::<jolt_transcript::Blake2bTranscript<Fr>>::new(TRANSCRIPT_LABEL);
+    append_bolt_preamble(
+        &mut prover_transcript,
+        &fixture.io,
+        fixture.proof.ram_K,
+        fixture.proof.trace_length,
+        fixture.entry_address,
+    );
+    append_bolt_commitments_to_transcript(
+        &mut prover_transcript,
+        &commitment_prover_trace.records,
+        &commitment_prover_trace.commitments,
+        &commitment_prover_program.transcript_steps,
+    );
+    let stage1_inputs =
+        Stage1ProverInputs::empty(r1cs_key.num_cycle_vars()).with_outer_remaining_evaluator(&data);
+    let mut stage1_prover = Stage1ProverKernelExecutor::new(stage1_inputs);
+    let stage1_artifacts = execute_stage1_program(
+        stage1_prover_plan,
+        Stage1ExecutionMode::Prover,
+        &mut stage1_prover,
+        &mut prover_transcript,
+    )
+    .expect("Bolt Stage 1 prover succeeds");
+
+    let stage1_proof = Stage1Proof::from(stage1_artifacts.clone());
+    let mut verifier_transcript =
+        CheckpointTranscript::<jolt_transcript::Blake2bTranscript<Fr>>::new(TRANSCRIPT_LABEL);
+    append_bolt_preamble(
+        &mut verifier_transcript,
+        &fixture.io,
+        fixture.proof.ram_K,
+        fixture.proof.trace_length,
+        fixture.entry_address,
+    );
+    append_bolt_commitments_to_transcript(
+        &mut verifier_transcript,
+        &commitment_verifier_trace.records,
+        &commitment_verifier_trace.commitments,
+        &commitment_verifier_program.transcript_steps,
+    );
+    let mut stage1_verifier = Stage1VerifierKernelExecutor::new(&stage1_proof);
+    let verified_stage1 = execute_stage1_program(
+        stage1_verifier_plan,
+        Stage1ExecutionMode::Verifier,
+        &mut stage1_verifier,
+        &mut verifier_transcript,
+    )
+    .expect("Bolt Stage 1 verifier accepts prover proof");
+
+    assert_eq!(
+        stage1_artifacts.sumchecks.len(),
+        verified_stage1.sumchecks.len()
+    );
+    assert_transcripts_match(prover_transcript.log(), verifier_transcript.log());
+
+    assert_core_accepts_bolt_stage1(&fixture, &stage1_artifacts);
+    assert_core_states_match_bolt_stage1(&fixture, prover_transcript.log());
+    assert_bolt_stage1_tamper_rejected(
+        stage1_verifier_plan,
+        &stage1_proof,
+        &fixture,
+        &commitment_verifier_trace,
+        &commitment_verifier_program.transcript_steps,
+    );
+}
+
 #[derive(Clone, Debug)]
 struct CommitmentRecord {
     artifact: String,
@@ -96,11 +216,15 @@ struct BoltCommitmentTrace {
     log: Vec<TranscriptEvent>,
 }
 
-#[derive(Clone)]
 struct CoreMuldivCommitmentFixture {
     params: JoltProtocolParams,
     pcs_setup: DoryProverSetup,
+    proof: CoreProof,
+    verifier_preprocessing: &'static CoreVerifierPreprocessing,
+    io: JoltDevice,
+    entry_address: u64,
     cycle_inputs: Vec<CycleInput>,
+    r1cs_witness: Vec<Fr>,
     commitments: Vec<CoreCommitment>,
 }
 
@@ -131,6 +255,190 @@ fn bolt_commitment_programs_with_params(
     (prover_program, verifier_program)
 }
 
+fn bolt_stage1_programs_with_params(
+    params: &JoltProtocolParams,
+) -> (CompilerStage1CpuProgram, CompilerStage1CpuProgram) {
+    let context = MeliorContext::new();
+    let protocol = build_stage1_outer_protocol(&context, params).expect("build stage1 protocol");
+    let concrete = lower_piop_and_fiat_shamir(&context, &protocol).expect("lower Stage 1 protocol");
+    let prover_party = project_prover_party(&context, &concrete).expect("project prover");
+    let verifier_party = project_verifier_party(&context, &concrete).expect("project verifier");
+    let prover_compute =
+        lower_stage1_to_compute(&context, &prover_party).expect("lower prover Stage 1");
+    let verifier_compute =
+        lower_stage1_to_compute(&context, &verifier_party).expect("lower verifier Stage 1");
+    let prover_compute =
+        resolve_compute_kernels(&context, &prover_compute).expect("resolve prover kernels");
+    let verifier_compute =
+        resolve_compute_kernels(&context, &verifier_compute).expect("resolve verifier kernels");
+    let prover_cpu = lower_compute_to_cpu(&context, &prover_compute).expect("lower prover CPU");
+    let verifier_cpu =
+        lower_compute_to_cpu(&context, &verifier_compute).expect("lower verifier CPU");
+    let prover_program = stage1_cpu_program(&prover_cpu).expect("extract prover Stage 1 CPU");
+    let verifier_program = stage1_cpu_program(&verifier_cpu).expect("extract verifier Stage 1 CPU");
+    (prover_program, verifier_program)
+}
+
+fn leak_stage1_program(program: &CompilerStage1CpuProgram) -> &'static KernelStage1CpuProgramPlan {
+    let transcript_squeezes = leak_slice(
+        program
+            .transcript_squeezes
+            .iter()
+            .map(|plan| Stage1TranscriptSqueezePlan {
+                symbol: leak_str(&plan.symbol),
+                label: leak_str(&plan.label),
+                kind: leak_str(&plan.kind),
+                count: plan.count,
+            })
+            .collect(),
+    );
+    let kernels = leak_slice(
+        program
+            .kernels
+            .iter()
+            .map(|plan| KernelStage1KernelPlan {
+                symbol: leak_str(&plan.symbol),
+                relation: leak_str(&plan.relation),
+                kind: leak_str(&plan.kind),
+                backend: leak_str(&plan.backend),
+                abi: leak_str(&plan.abi),
+            })
+            .collect(),
+    );
+    let claims = leak_slice(
+        program
+            .claims
+            .iter()
+            .map(|plan| KernelStage1SumcheckClaimPlan {
+                symbol: leak_str(&plan.symbol),
+                stage: leak_str(&plan.stage),
+                domain: leak_str(&plan.domain),
+                num_rounds: plan.num_rounds,
+                degree: plan.degree,
+                claim: leak_str(&plan.claim),
+                kernel: leak_str(&plan.kernel),
+                input_openings: leak_str_slice(&plan.input_openings),
+            })
+            .collect(),
+    );
+    let batches = leak_slice(
+        program
+            .batches
+            .iter()
+            .map(|plan| KernelStage1SumcheckBatchPlan {
+                symbol: leak_str(&plan.symbol),
+                stage: leak_str(&plan.stage),
+                proof_slot: leak_str(&plan.proof_slot),
+                policy: leak_str(&plan.policy),
+                count: plan.count,
+                ordered_claims: leak_str_slice(&plan.ordered_claims),
+                claim_operands: leak_str_slice(&plan.claim_operands),
+                claim_label: leak_str(&plan.claim_label),
+                round_label: leak_str(&plan.round_label),
+                round_schedule: leak_usize_slice(&plan.round_schedule),
+            })
+            .collect(),
+    );
+    let drivers = leak_slice(
+        program
+            .drivers
+            .iter()
+            .map(|plan| KernelStage1SumcheckDriverPlan {
+                symbol: leak_str(&plan.symbol),
+                stage: leak_str(&plan.stage),
+                proof_slot: leak_str(&plan.proof_slot),
+                kernel: leak_str(&plan.kernel),
+                batch: leak_str(&plan.batch),
+                policy: leak_str(&plan.policy),
+                round_schedule: leak_usize_slice(&plan.round_schedule),
+                claim_label: leak_str(&plan.claim_label),
+                round_label: leak_str(&plan.round_label),
+                num_rounds: plan.num_rounds,
+                degree: plan.degree,
+            })
+            .collect(),
+    );
+    let evals = leak_slice(
+        program
+            .evals
+            .iter()
+            .map(|plan| KernelStage1SumcheckEvalPlan {
+                symbol: leak_str(&plan.symbol),
+                source: leak_str(&plan.source),
+                name: leak_str(&plan.name),
+                index: plan.index,
+                oracle: leak_str(&plan.oracle),
+            })
+            .collect(),
+    );
+    let opening_claims = leak_slice(
+        program
+            .opening_claims
+            .iter()
+            .map(|plan| KernelStage1OpeningClaimPlan {
+                symbol: leak_str(&plan.symbol),
+                oracle: leak_str(&plan.oracle),
+                domain: leak_str(&plan.domain),
+                point_arity: plan.point_arity,
+                claim_kind: leak_str(&plan.claim_kind),
+                point_source: leak_str(&plan.point_source),
+                eval_source: leak_str(&plan.eval_source),
+            })
+            .collect(),
+    );
+    let opening_batches = leak_slice(
+        program
+            .opening_batches
+            .iter()
+            .map(|plan| KernelStage1OpeningBatchPlan {
+                symbol: leak_str(&plan.symbol),
+                stage: leak_str(&plan.stage),
+                proof_slot: leak_str(&plan.proof_slot),
+                policy: leak_str(&plan.policy),
+                count: plan.count,
+                ordered_claims: leak_str_slice(&plan.ordered_claims),
+                claim_operands: leak_str_slice(&plan.claim_operands),
+            })
+            .collect(),
+    );
+
+    Box::leak(Box::new(KernelStage1CpuProgramPlan {
+        params: Stage1Params {
+            field: leak_str(&program.params.field),
+            pcs: leak_str(&program.params.pcs),
+            transcript: leak_str(&program.params.transcript),
+        },
+        transcript_squeezes,
+        kernels,
+        claims,
+        batches,
+        drivers,
+        evals,
+        opening_claims,
+        opening_batches,
+    }))
+}
+
+fn leak_str(value: &str) -> &'static str {
+    Box::leak(value.to_owned().into_boxed_str())
+}
+
+fn leak_str_slice(values: &[String]) -> &'static [&'static str] {
+    let leaked = values
+        .iter()
+        .map(|value| leak_str(value))
+        .collect::<Vec<_>>();
+    Box::leak(leaked.into_boxed_slice())
+}
+
+fn leak_usize_slice(values: &[usize]) -> &'static [usize] {
+    Box::leak(values.to_vec().into_boxed_slice())
+}
+
+fn leak_slice<T>(values: Vec<T>) -> &'static [T] {
+    Box::leak(values.into_boxed_slice())
+}
+
 fn core_muldiv_commitment_fixture() -> CoreMuldivCommitmentFixture {
     DoryGlobals::reset();
 
@@ -157,14 +465,18 @@ fn core_muldiv_commitment_fixture() -> CoreMuldivCommitmentFixture {
         None,
         None,
     );
+    let io = prover.program_io.clone();
     let (proof, _debug): (CoreProof, _) = prover.prove();
+    let verifier_preprocessing: &'static _ = Box::leak(Box::new(JoltVerifierPreprocessing::from(
+        &prover_preprocessing,
+    )));
 
     let mut host_program = Program::new("muldiv-guest");
     let (bytecode_raw, _, _, host_entry_address) = host_program.decode();
     let (_, trace, _, host_io_device) = host_program.trace(&inputs, &[], &[]);
     let bytecode = BytecodePreprocessing::preprocess(bytecode_raw, host_entry_address);
     let r1cs_key = R1csKey::new(rv64::rv64_constraints::<Fr>(), proof.trace_length);
-    let (cycle_inputs, _, _) = extract_trace::<_, Fr>(
+    let (cycle_inputs, r1cs_witness, _) = extract_trace::<_, Fr>(
         &trace,
         proof.trace_length,
         &bytecode,
@@ -181,11 +493,18 @@ fn core_muldiv_commitment_fixture() -> CoreMuldivCommitmentFixture {
     let log_k_ram = proof.ram_K.trailing_zeros() as usize;
     let params = JoltProtocolParams::new(log_t, log_k_bytecode, log_k_ram);
 
+    let commitments = proof.commitments.clone();
+
     CoreMuldivCommitmentFixture {
         params,
         pcs_setup: DoryProverSetup(prover_preprocessing.generators.clone()),
+        proof,
+        verifier_preprocessing,
+        io,
+        entry_address,
         cycle_inputs,
-        commitments: proof.commitments,
+        r1cs_witness,
+        commitments,
     }
 }
 
@@ -359,6 +678,225 @@ fn bolt_transcript_log(
     }
 
     transcript.into_log()
+}
+
+fn append_bolt_preamble<T>(
+    transcript: &mut T,
+    program_io: &JoltDevice,
+    ram_k: usize,
+    trace_length: usize,
+    entry_address: u64,
+) where
+    T: Transcript<Challenge = Fr>,
+{
+    append_u64(
+        transcript,
+        b"max_input_size",
+        program_io.memory_layout.max_input_size,
+    );
+    append_u64(
+        transcript,
+        b"max_output_size",
+        program_io.memory_layout.max_output_size,
+    );
+    append_u64(transcript, b"heap_size", program_io.memory_layout.heap_size);
+    append_bytes(transcript, b"inputs", &program_io.inputs);
+    append_bytes(transcript, b"outputs", &program_io.outputs);
+    append_u64(transcript, b"panic", program_io.panic as u64);
+    append_u64(transcript, b"ram_K", ram_k as u64);
+    append_u64(transcript, b"trace_length", trace_length as u64);
+    append_u64(transcript, b"entry_address", entry_address);
+}
+
+fn append_u64<T>(transcript: &mut T, label: &'static [u8], value: u64)
+where
+    T: Transcript<Challenge = Fr>,
+{
+    transcript.append(&Label(label));
+    transcript.append(&U64Word(value));
+}
+
+fn append_bytes<T>(transcript: &mut T, label: &'static [u8], bytes: &[u8])
+where
+    T: Transcript<Challenge = Fr>,
+{
+    transcript.append(&LabelWithCount(label, bytes.len() as u64));
+    transcript.append_bytes(bytes);
+}
+
+fn append_bolt_commitments_to_transcript<T>(
+    transcript: &mut T,
+    records: &[CommitmentRecord],
+    commitments: &[Option<DoryCommitment>],
+    transcript_steps: &[TranscriptStep],
+) where
+    T: Transcript<Challenge = Fr>,
+{
+    for step in transcript_steps {
+        let mut appended = false;
+        for (record, commitment) in records.iter().zip(commitments) {
+            if record.artifact != step.source {
+                continue;
+            }
+            if let Some(commitment) = commitment {
+                transcript.append(&LabelWithCount(
+                    static_transcript_label(&step.label),
+                    commitment.serialized_len(),
+                ));
+                commitment.append_to_transcript(transcript);
+                appended = true;
+            }
+        }
+        assert!(step.optional || appended, "missing transcript source");
+    }
+}
+
+fn assert_core_accepts_bolt_stage1(
+    fixture: &CoreMuldivCommitmentFixture,
+    artifacts: &Stage1ExecutionArtifacts<Fr>,
+) {
+    let mut proof = clone_core_proof(&fixture.proof);
+    proof.stage1_uni_skip_first_round_proof = to_core_uniskip_proof(&artifacts.sumchecks[0]);
+    proof.stage1_sumcheck_proof =
+        to_core_sumcheck_proof(&artifacts.sumchecks[1].proof.round_polynomials);
+
+    let mut verifier = CoreVerifier::new(
+        fixture.verifier_preprocessing,
+        proof,
+        fixture.io.clone(),
+        None,
+        None,
+    )
+    .expect("construct core verifier");
+    verifier.run_preamble();
+    let _ = verifier
+        .verify_stage1()
+        .expect("jolt-core accepts Bolt Stage 1 proof");
+}
+
+fn assert_core_states_match_bolt_stage1(
+    fixture: &CoreMuldivCommitmentFixture,
+    bolt_log: &[TranscriptEvent],
+) {
+    let mut verifier = CoreVerifier::new(
+        fixture.verifier_preprocessing,
+        clone_core_proof(&fixture.proof),
+        fixture.io.clone(),
+        None,
+        None,
+    )
+    .expect("construct core verifier");
+    verifier.run_preamble();
+    let _ = verifier.verify_stage1().expect("core Stage 1 verifies");
+
+    let core_states = verifier.transcript.state_history[1..].to_vec();
+    let bolt_states = transcript_states(bolt_log);
+    assert_state_history_match(&core_states, &bolt_states);
+}
+
+fn assert_bolt_stage1_tamper_rejected(
+    stage1_verifier_plan: &'static KernelStage1CpuProgramPlan,
+    proof: &Stage1Proof<Fr>,
+    fixture: &CoreMuldivCommitmentFixture,
+    commitment_verifier_trace: &BoltCommitmentTrace,
+    transcript_steps: &[TranscriptStep],
+) {
+    let mut tampered = proof.clone();
+    let round_poly = &mut tampered.sumchecks[1].proof.round_polynomials[0];
+    let mut coefficients = round_poly.coefficients().to_vec();
+    coefficients[0] += Fr::from_u64(1);
+    *round_poly = UnivariatePoly::new(coefficients);
+
+    let mut transcript =
+        CheckpointTranscript::<jolt_transcript::Blake2bTranscript<Fr>>::new(TRANSCRIPT_LABEL);
+    append_bolt_preamble(
+        &mut transcript,
+        &fixture.io,
+        fixture.proof.ram_K,
+        fixture.proof.trace_length,
+        fixture.entry_address,
+    );
+    append_bolt_commitments_to_transcript(
+        &mut transcript,
+        &commitment_verifier_trace.records,
+        &commitment_verifier_trace.commitments,
+        transcript_steps,
+    );
+
+    let mut verifier = Stage1VerifierKernelExecutor::new(&tampered);
+    let error = execute_stage1_program(
+        stage1_verifier_plan,
+        Stage1ExecutionMode::Verifier,
+        &mut verifier,
+        &mut transcript,
+    )
+    .expect_err("tampered Bolt Stage 1 proof must be rejected");
+    assert!(
+        matches!(error, Stage1KernelError::InvalidProof { .. }),
+        "unexpected tamper rejection: {error}"
+    );
+}
+
+fn to_core_uniskip_proof(
+    output: &jolt_kernels::stage1::Stage1SumcheckOutput<Fr>,
+) -> UniSkipFirstRoundProofVariant<CoreFr, Bn254Curve, CoreBlake2bTranscript> {
+    assert_eq!(output.proof.round_polynomials.len(), 1);
+    let coefficients = output.proof.round_polynomials[0]
+        .coefficients()
+        .iter()
+        .copied()
+        .map(to_ark)
+        .collect();
+    UniSkipFirstRoundProofVariant::Standard(UniSkipFirstRoundProof::new(UniPoly::from_coeff(
+        coefficients,
+    )))
+}
+
+fn clone_core_proof(proof: &CoreProof) -> CoreProof {
+    CoreJoltProof {
+        commitments: proof.commitments.clone(),
+        stage1_uni_skip_first_round_proof: proof.stage1_uni_skip_first_round_proof.clone(),
+        stage1_sumcheck_proof: proof.stage1_sumcheck_proof.clone(),
+        stage2_uni_skip_first_round_proof: proof.stage2_uni_skip_first_round_proof.clone(),
+        stage2_sumcheck_proof: proof.stage2_sumcheck_proof.clone(),
+        stage3_sumcheck_proof: proof.stage3_sumcheck_proof.clone(),
+        stage4_sumcheck_proof: proof.stage4_sumcheck_proof.clone(),
+        stage5_sumcheck_proof: proof.stage5_sumcheck_proof.clone(),
+        stage6_sumcheck_proof: proof.stage6_sumcheck_proof.clone(),
+        stage7_sumcheck_proof: proof.stage7_sumcheck_proof.clone(),
+        joint_opening_proof: proof.joint_opening_proof.clone(),
+        untrusted_advice_commitment: proof.untrusted_advice_commitment,
+        opening_claims: CoreClaims(proof.opening_claims.0.clone()),
+        trace_length: proof.trace_length,
+        ram_K: proof.ram_K,
+        rw_config: proof.rw_config.clone(),
+        one_hot_config: proof.one_hot_config.clone(),
+        dory_layout: proof.dory_layout,
+    }
+}
+
+fn transcript_states(log: &[TranscriptEvent]) -> Vec<[u8; 32]> {
+    log.iter()
+        .map(|event| match event {
+            TranscriptEvent::Append { state_after, .. }
+            | TranscriptEvent::Squeeze { state_after } => *state_after,
+        })
+        .collect()
+}
+
+fn assert_state_history_match(expected: &[[u8; 32]], actual: &[[u8; 32]]) {
+    let min_len = expected.len().min(actual.len());
+    for index in 0..min_len {
+        assert_eq!(
+            expected[index], actual[index],
+            "transcript state mismatch at op #{index}"
+        );
+    }
+    assert_eq!(
+        expected.len(),
+        actual.len(),
+        "transcript state count mismatch"
+    );
 }
 
 fn core_commitment_log(

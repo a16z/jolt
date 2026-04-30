@@ -28,6 +28,7 @@ jolt-cpu = { path = "../jolt-cpu" }
 jolt-host = { path = "../jolt-host" }
 jolt-instructions = { path = "../jolt-instructions" }
 jolt-dory = { path = "../jolt-dory" }
+jolt-kernels = { path = "../jolt-kernels" }
 jolt-openings = { path = "../jolt-openings", features = ["test-utils"] }
 jolt-poly = { path = "../jolt-poly" }
 jolt-r1cs = { path = "../jolt-r1cs" }

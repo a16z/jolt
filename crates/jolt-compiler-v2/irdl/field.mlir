@@ -1,5 +1,6 @@
 irdl.dialect @field {
   irdl.type @scalar
+  irdl.type @challenge
   irdl.operation @define {
     %sym = irdl.any
     %modulus_bits = irdl.any

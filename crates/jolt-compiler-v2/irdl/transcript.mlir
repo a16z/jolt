@@ -30,4 +30,20 @@ irdl.dialect @transcript {
     irdl.operands(input: %state, artifact: %artifact)
     irdl.results(output: %state)
   }
+  irdl.operation @squeeze {
+    %state = irdl.parametric @transcript::@state_type<>
+    %challenge = irdl.parametric @field::@challenge<>
+    %sym = irdl.any
+    %label = irdl.any
+    %kind = irdl.any
+    %count = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "label" = %label,
+      "kind" = %kind,
+      "count" = %count
+    }
+    irdl.operands(input: %state)
+    irdl.results(output: %state, challenge: %challenge)
+  }
 }

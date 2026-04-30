@@ -41,6 +41,7 @@ jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
 
 # Modular stack (muldiv-only runner)
 jolt-compiler = { path = "../jolt-compiler" }
+jolt-compiler-v2 = { path = "../jolt-compiler-v2" }
 jolt-compute = { path = "../jolt-compute" }
 jolt-cpu = { path = "../jolt-cpu" }
 jolt-dory = { path = "../jolt-dory" }
@@ -50,9 +51,15 @@ jolt-instructions = { path = "../jolt-instructions" }
 jolt-openings = { path = "../jolt-openings" }
 jolt-poly = { path = "../jolt-poly" }
 jolt-r1cs = { path = "../jolt-r1cs" }
+jolt-kernels = { path = "../jolt-kernels" }
 jolt-transcript = { path = "../jolt-transcript" }
 jolt-verifier = { path = "../jolt-verifier" }
 jolt-profiling = { path = "../jolt-profiling" }
 jolt-witness = { path = "../jolt-witness" }
+jolt-witness-v2 = { path = "../jolt-witness-v2" }
 jolt-zkvm = { path = "../jolt-zkvm" }
 num-traits = { workspace = true }
+
+[[bin]]
+name = "bolt-stage1"
+path = "src/bin/bolt_stage1.rs"

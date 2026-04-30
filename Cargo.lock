@@ -2734,6 +2734,7 @@ dependencies = [
  "clap",
  "common",
  "jolt-compiler",
+ "jolt-compiler-v2",
  "jolt-compute",
  "jolt-core",
  "jolt-cpu",
@@ -2743,6 +2744,7 @@ dependencies = [
  "jolt-inlines-keccak256",
  "jolt-inlines-sha2",
  "jolt-instructions",
+ "jolt-kernels",
  "jolt-openings",
  "jolt-poly",
  "jolt-profiling",
@@ -2750,6 +2752,7 @@ dependencies = [
  "jolt-transcript",
  "jolt-verifier",
  "jolt-witness",
+ "jolt-witness-v2",
  "jolt-zkvm",
  "memory-stats",
  "mimalloc",
@@ -2929,6 +2932,7 @@ dependencies = [
  "jolt-field",
  "jolt-host",
  "jolt-instructions",
+ "jolt-kernels",
  "jolt-openings",
  "jolt-poly",
  "jolt-r1cs",
@@ -3095,6 +3099,18 @@ dependencies = [
  "jolt-field",
  "rand 0.8.5",
  "serde",
+]
+
+[[package]]
+name = "jolt-kernels"
+version = "0.1.0"
+dependencies = [
+ "jolt-field",
+ "jolt-poly",
+ "jolt-r1cs",
+ "jolt-sumcheck",
+ "jolt-transcript",
+ "rayon",
 ]
 
 [[package]]

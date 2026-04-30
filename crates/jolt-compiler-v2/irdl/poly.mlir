@@ -1,6 +1,7 @@
 irdl.dialect @poly {
   irdl.type @domain_type
   irdl.type @oracle
+  irdl.type @point
   irdl.operation @domain {
     %sym = irdl.any
     %field = irdl.any

@@ -7,13 +7,6 @@ use std::process::ExitCode;
 
 use clap::Parser;
 
-mod baseline;
-mod cli;
-mod measure;
-mod output;
-mod programs;
-mod stacks;
-
 // Force-link the inline crates so their `#[ctor::ctor]` startup functions run
 // and register SHA2/Keccak inline instruction sequence builders in the tracer.
 // Without these, tracing `sha2-ex` / `sha3-ex` panics in
@@ -21,12 +14,12 @@ mod stacks;
 use jolt_inlines_keccak256 as _;
 use jolt_inlines_sha2 as _;
 
-use cli::{Cli, StackSelection};
-use measure::{median, median_u64};
-use output::{BenchReport, Run, StackLabel};
-use stacks::core::CoreStack;
-use stacks::modular::ModularStack;
-use stacks::{IterMetrics, StackOutcome, StackRunner};
+use jolt_bench::cli::{Cli, StackSelection};
+use jolt_bench::measure::{median, median_u64};
+use jolt_bench::output::{BenchReport, Run, StackLabel};
+use jolt_bench::stacks::core::CoreStack;
+use jolt_bench::stacks::modular::ModularStack;
+use jolt_bench::stacks::{IterMetrics, StackOutcome, StackRunner};
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
