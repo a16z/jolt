@@ -44,10 +44,13 @@ where
 /// sumcheck verification failure whenever any high-order bits of a register
 /// value or PC are set.
 #[doc(hidden)]
-pub fn instruction_inputs_match_constraint_fn<T, C>(construct: impl Fn(C) -> T)
-where
-    T: LookupQuery<XLEN> + Flags + core::fmt::Debug,
+pub fn instruction_inputs_match_constraint_fn<C, T, I>(
+    cycle_wrapper: impl Fn(C) -> T,
+    instr_wrapper: impl Fn(C::Instruction) -> I,
+) where
     C: JoltCycle,
+    T: LookupQuery<XLEN> + core::fmt::Debug,
+    I: JoltInstruction + Flags,
 {
     let mut rng = StdRng::seed_from_u64(12345);
     for _ in 0..10_000 {
@@ -55,11 +58,11 @@ where
         let instr = raw.instruction();
         let unexpanded_pc = instr.address();
         let imm = instr.imm();
+        let flags = instr_wrapper(instr).instruction_flags();
         let rs1 = raw.rs1_val().unwrap_or(0);
         let rs2 = raw.rs2_val().unwrap_or(0);
 
-        let cycle: T = construct(raw);
-        let flags = cycle.instruction_flags();
+        let cycle: T = cycle_wrapper(raw);
 
         let left_expected: u64 = if flags[InstructionFlags::LeftOperandIsRs1Value] {
             rs1
@@ -116,8 +119,9 @@ macro_rules! materialize_entry_test {
 macro_rules! instruction_inputs_match_constraint_test {
     ($jolt:ident, $tracer:path $(,)?) => {
         $crate::instructions::test::instruction_inputs_match_constraint_fn::<
-            $jolt<tracer::instruction::RISCVCycle<$tracer>>,
             tracer::instruction::RISCVCycle<$tracer>,
-        >($jolt)
+            $jolt<tracer::instruction::RISCVCycle<$tracer>>,
+            $jolt<$tracer>,
+        >($jolt, $jolt)
     };
 }

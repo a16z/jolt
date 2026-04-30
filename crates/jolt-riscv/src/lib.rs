@@ -44,21 +44,9 @@ macro_rules! jolt_instruction {
         circuit flags: [$($circuit:ident),* $(,)?],
         instruction flags: [$($instruction:ident),* $(,)?] $(,)?
     ) => {
-        $(#[$attr])*
-        #[derive(
-            Clone,
-            Copy,
-            Debug,
-            Default,
-            PartialEq,
-            Eq,
-            Hash,
-            ::serde::Serialize,
-            ::serde::Deserialize,
-        )]
-        pub struct $name<T = ()>(pub T);
+        $crate::jolt_instruction!(@struct $(#[$attr])* $name);
 
-        impl<T> $crate::Flags for $name<T> {
+        impl<T: $crate::JoltInstruction> $crate::Flags for $name<T> {
             #[inline]
             fn circuit_flags(&self) -> $crate::CircuitFlagSet {
                 $crate::CircuitFlagSet::default()
@@ -71,12 +59,46 @@ macro_rules! jolt_instruction {
                     $(.set($crate::InstructionFlags::$instruction))*
             }
         }
+
+        $crate::jolt_instruction!(@jolt_instruction_impl $name);
     };
 
     (
         $(#[$attr:meta])*
         $name:ident $(,)?
     ) => {
+        $crate::jolt_instruction!(@struct $(#[$attr])* $name);
+
+        impl<T: $crate::JoltInstruction> $crate::Flags for $name<T> {
+            #[inline]
+            fn circuit_flags(&self) -> $crate::CircuitFlagSet {
+                let mut flags = $crate::CircuitFlagSet::default();
+                if self.0.virtual_sequence_remaining().is_some() {
+                    flags = flags.set($crate::CircuitFlags::VirtualInstruction);
+                }
+                if self.0.virtual_sequence_remaining().unwrap_or(0) != 0 {
+                    flags = flags.set($crate::CircuitFlags::DoNotUpdateUnexpandedPC);
+                }
+                if self.0.is_first_in_sequence() {
+                    flags = flags.set($crate::CircuitFlags::IsFirstInSequence);
+                }
+                if self.0.is_compressed() {
+                    flags = flags.set($crate::CircuitFlags::IsCompressed);
+                }
+                flags
+            }
+
+            #[inline]
+            fn instruction_flags(&self) -> $crate::InstructionFlagSet {
+                $crate::InstructionFlagSet::default()
+            }
+        }
+
+        $crate::jolt_instruction!(@jolt_instruction_impl $name);
+    };
+
+    // Internal: emit the struct definition.
+    (@struct $(#[$attr:meta])* $name:ident) => {
         $(#[$attr])*
         #[derive(
             Clone,
@@ -90,16 +112,61 @@ macro_rules! jolt_instruction {
             ::serde::Deserialize,
         )]
         pub struct $name<T = ()>(pub T);
+    };
 
-        impl<T> $crate::Flags for $name<T> {
+    // Internal: emit `JoltInstruction` for `$name<T>` whenever `T` is itself a
+    // `RISCVInstruction`. Lets call sites treat the wrapper newtype as a Jolt
+    // instruction directly without unwrapping `self.0`.
+    (@jolt_instruction_impl $name:ident) => {
+        impl<T: ::tracer::instruction::RISCVInstruction> $crate::JoltInstruction for $name<T> {
             #[inline]
-            fn circuit_flags(&self) -> $crate::CircuitFlagSet {
-                $crate::CircuitFlagSet::default()
+            fn is_noop(&self) -> bool {
+                $crate::JoltInstruction::is_noop(&self.0)
             }
 
             #[inline]
-            fn instruction_flags(&self) -> $crate::InstructionFlagSet {
-                $crate::InstructionFlagSet::default()
+            fn address(&self) -> u64 {
+                $crate::JoltInstruction::address(&self.0)
+            }
+
+            #[inline]
+            fn imm(&self) -> i128 {
+                $crate::JoltInstruction::imm(&self.0)
+            }
+
+            #[inline]
+            fn rs1(&self) -> Option<u8> {
+                $crate::JoltInstruction::rs1(&self.0)
+            }
+
+            #[inline]
+            fn rs2(&self) -> Option<u8> {
+                $crate::JoltInstruction::rs2(&self.0)
+            }
+
+            #[inline]
+            fn rd(&self) -> Option<u8> {
+                $crate::JoltInstruction::rd(&self.0)
+            }
+
+            #[inline]
+            fn virtual_sequence_remaining(&self) -> Option<u16> {
+                $crate::JoltInstruction::virtual_sequence_remaining(&self.0)
+            }
+
+            #[inline]
+            fn is_first_in_sequence(&self) -> bool {
+                $crate::JoltInstruction::is_first_in_sequence(&self.0)
+            }
+
+            #[inline]
+            fn is_virtual(&self) -> bool {
+                $crate::JoltInstruction::is_virtual(&self.0)
+            }
+
+            #[inline]
+            fn is_compressed(&self) -> bool {
+                $crate::JoltInstruction::is_compressed(&self.0)
             }
         }
     };

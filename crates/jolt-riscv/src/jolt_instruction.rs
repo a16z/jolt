@@ -36,6 +36,9 @@ pub trait JoltInstruction {
 
     /// True if this is a virtual (expanded) instruction.
     fn is_virtual(&self) -> bool;
+
+    /// True if this is a compressed (C-extension) instruction.
+    fn is_compressed(&self) -> bool;
 }
 
 impl<T: RISCVInstruction> JoltInstruction for T {
@@ -80,5 +83,10 @@ impl<T: RISCVInstruction> JoltInstruction for T {
 
     fn is_virtual(&self) -> bool {
         JoltInstruction::virtual_sequence_remaining(self).is_some()
+    }
+
+    fn is_compressed(&self) -> bool {
+        let normalized: NormalizedInstruction = (*self).into();
+        normalized.is_compressed
     }
 }
