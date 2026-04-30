@@ -333,7 +333,7 @@ object = { version = "0.39.0", features = [
   "build_core",
   "elf",
 ], default-features = false }
-addr2line = "0.26.0"
+addr2line = "0.26.1"
 getrandom = { version = "0.2.16", default-features = false }
 getrandom_v02 = { version = "0.2.16", package = "getrandom", default-features = false }
 getrandom_v03 = { version = "0.3.3", package = "getrandom", default-features = false }
