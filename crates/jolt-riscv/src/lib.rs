@@ -8,12 +8,14 @@
 
 mod flags;
 pub mod instructions;
+mod jolt_instruction;
 
 pub use flags::{
     CircuitFlagSet, CircuitFlags, Flags, InstructionFlagSet, InstructionFlags,
     InterleavedBitsMarker, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
 };
 pub use instructions::JoltInstructions;
+pub use jolt_instruction::JoltInstruction;
 
 /// Declares a Jolt RISC-V instruction kind and (optionally) its `Flags` impl.
 ///

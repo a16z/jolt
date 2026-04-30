@@ -1,61 +1,55 @@
-//! `JoltInstruction` and `JoltCycle` adapters for tracer's `Instruction` and
-//! `Cycle` enums. The blanket impl in `traits.rs` then provides
-//! `JoltInstruction` for `Cycle` automatically by delegating through
-//! `Cycle::instruction()`.
+//! `JoltCycle`: dynamic, runtime view of a single executed instruction.
+//!
+//! Pairs the static [`JoltInstruction`] (defined in `jolt-riscv`) with
+//! register and RAM state captured during tracing, so `LookupQuery` impls in
+//! `jolt-lookup-tables` can operate on any concrete cycle representation
+//! without depending on tracer's types directly.
+//!
+//! The blanket impl below adapts tracer's `RISCVCycle<T>` to this trait. The
+//! matching `JoltInstruction` blanket impl lives in `jolt-riscv`.
+
+use jolt_riscv::JoltInstruction;
 
 #[cfg(any(feature = "test-utils", test))]
 use tracer::instruction::format::InstructionFormat;
 
 use tracer::instruction::{
-    format::InstructionRegisterState, Instruction, NormalizedInstruction, RAMAccess, RISCVCycle,
-    RISCVInstruction,
+    format::InstructionRegisterState, RAMAccess, RISCVCycle, RISCVInstruction,
 };
 
-use crate::{JoltCycle, JoltInstruction};
+#[cfg(any(feature = "test-utils", test))]
+use tracer::instruction::NormalizedInstruction;
 
-impl<T: RISCVInstruction> JoltInstruction for T {
-    fn is_noop(&self) -> bool {
-        matches!((*self).into(), Instruction::NoOp)
-    }
+/// Dynamic cycle view: a populated instruction plus runtime register state.
+pub trait JoltCycle {
+    type Instruction: JoltInstruction;
 
-    fn address(&self) -> u64 {
-        let normalized: NormalizedInstruction = (*self).into();
-        normalized.address as u64
-    }
+    /// The instruction executed during this cycle.
+    fn instruction(&self) -> Self::Instruction;
 
-    fn imm(&self) -> i128 {
-        let normalized: NormalizedInstruction = (*self).into();
-        normalized.operands.imm
-    }
+    /// Value held in rs1 at the start of the cycle, or `None` if unused.
+    fn rs1_val(&self) -> Option<u64>;
 
-    fn rs1(&self) -> Option<u8> {
-        let normalized: NormalizedInstruction = (*self).into();
-        normalized.operands.rs1
-    }
+    /// Value held in rs2 at the start of the cycle, or `None` if unused.
+    fn rs2_val(&self) -> Option<u64>;
 
-    fn rs2(&self) -> Option<u8> {
-        let normalized: NormalizedInstruction = (*self).into();
-        normalized.operands.rs2
-    }
+    /// Value held in rd before and after the cycle executes, or `None` if unused.
+    fn rd_vals(&self) -> Option<(u64, u64)>;
 
-    fn rd(&self) -> Option<u8> {
-        let normalized: NormalizedInstruction = (*self).into();
-        normalized.operands.rd
-    }
+    /// RAM access address, or `None` if no RAM access this cycle.
+    fn ram_access_address(&self) -> Option<u64>;
 
-    fn virtual_sequence_remaining(&self) -> Option<u16> {
-        let normalized: NormalizedInstruction = (*self).into();
-        normalized.virtual_sequence_remaining
-    }
+    /// RAM read value (pre-access value). `None` if no RAM access.
+    fn ram_read_value(&self) -> Option<u64>;
 
-    fn is_first_in_sequence(&self) -> bool {
-        let normalized: NormalizedInstruction = (*self).into();
-        normalized.is_first_in_sequence
-    }
+    /// RAM write value (post-access value). `None` if no RAM access.
+    fn ram_write_value(&self) -> Option<u64>;
 
-    fn is_virtual(&self) -> bool {
-        JoltInstruction::virtual_sequence_remaining(self).is_some()
-    }
+    /// Generate a random cycle. Useful for fuzz testing.
+    ///
+    /// `where Self: Sized` keeps the trait dyn-compatible.
+    #[cfg(any(feature = "test-utils", test))]
+    fn random(rng: &mut rand::rngs::StdRng) -> Self;
 }
 
 impl<T: RISCVInstruction> JoltCycle for RISCVCycle<T> {

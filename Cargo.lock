@@ -3025,6 +3025,7 @@ dependencies = [
  "rand 0.8.5",
  "serde",
  "strum 0.28.0",
+ "tracer",
 ]
 
 [[package]]
