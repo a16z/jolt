@@ -3022,7 +3022,6 @@ dependencies = [
 name = "jolt-riscv"
 version = "0.1.0"
 dependencies = [
- "rand 0.8.5",
  "serde",
  "strum 0.28.0",
  "tracer",
