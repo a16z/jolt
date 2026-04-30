@@ -107,6 +107,15 @@ impl<T: RISCVInstruction> JoltCycle for RISCVCycle<T> {
                 rng,
                 &normalized.operands,
             );
+        // RAM access is left at the default (no-op) state. Coverage gap:
+        // any `LookupQuery` that depends on `ram_access_address` /
+        // `ram_read_value` / `ram_write_value` will be fuzzed against
+        // all-zero RAM. None of the current `jolt-lookup-tables` impls do —
+        // loads/stores have `lookup_table = None` and trivial `LookupQuery`,
+        // and AMOs don't implement `LookupQuery` at all — so this is safe
+        // today. Adding RAM-dependent lookup logic will require a
+        // `RAMAccess::random` helper in tracer (or a per-instruction gate
+        // that opts out of this generator).
         Self {
             instruction,
             register_state,

@@ -49,8 +49,24 @@ macro_rules! jolt_instruction {
         impl<T: $crate::JoltInstruction> $crate::Flags for $name<T> {
             #[inline]
             fn circuit_flags(&self) -> $crate::CircuitFlagSet {
-                $crate::CircuitFlagSet::default()
-                    $(.set($crate::CircuitFlags::$circuit))*
+                let mut flags = $crate::CircuitFlagSet::default()
+                    $(.set($crate::CircuitFlags::$circuit))*;
+                if let Some(virtual_sequence_remaining) = self.0.virtual_sequence_remaining() {
+                    flags = flags.set($crate::CircuitFlags::VirtualInstruction);
+                    if virtual_sequence_remaining == 0 {
+                        flags = flags.set($crate::CircuitFlags::IsLastInSequence);
+                    }
+                }
+                if self.0.virtual_sequence_remaining().unwrap_or(0) != 0 {
+                    flags = flags.set($crate::CircuitFlags::DoNotUpdateUnexpandedPC);
+                }
+                if self.0.is_compressed() {
+                    flags = flags.set($crate::CircuitFlags::IsCompressed);
+                }
+                if self.0.is_first_in_sequence() {
+                    flags = flags.set($crate::CircuitFlags::IsFirstInSequence);
+                }
+                flags
             }
 
             #[inline]
@@ -73,17 +89,20 @@ macro_rules! jolt_instruction {
             #[inline]
             fn circuit_flags(&self) -> $crate::CircuitFlagSet {
                 let mut flags = $crate::CircuitFlagSet::default();
-                if self.0.virtual_sequence_remaining().is_some() {
+                if let Some(virtual_sequence_remaining) = self.0.virtual_sequence_remaining() {
                     flags = flags.set($crate::CircuitFlags::VirtualInstruction);
+                    if virtual_sequence_remaining == 0 {
+                        flags = flags.set($crate::CircuitFlags::IsLastInSequence);
+                    }
                 }
                 if self.0.virtual_sequence_remaining().unwrap_or(0) != 0 {
                     flags = flags.set($crate::CircuitFlags::DoNotUpdateUnexpandedPC);
                 }
-                if self.0.is_first_in_sequence() {
-                    flags = flags.set($crate::CircuitFlags::IsFirstInSequence);
-                }
                 if self.0.is_compressed() {
                     flags = flags.set($crate::CircuitFlags::IsCompressed);
+                }
+                if self.0.is_first_in_sequence() {
+                    flags = flags.set($crate::CircuitFlags::IsFirstInSequence);
                 }
                 flags
             }

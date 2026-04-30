@@ -56,11 +56,12 @@ pub const V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC: usize = 31;
 pub const V_FLAG_ADVICE: usize = 32;
 pub const V_FLAG_IS_COMPRESSED: usize = 33;
 pub const V_FLAG_IS_FIRST_IN_SEQUENCE: usize = 34;
+pub const V_FLAG_IS_LAST_IN_SEQUENCE: usize = 35;
 
-pub const V_BRANCH: usize = 35;
-pub const V_NEXT_IS_NOOP: usize = 36;
+pub const V_BRANCH: usize = 36;
+pub const V_NEXT_IS_NOOP: usize = 37;
 
-pub const NUM_R1CS_INPUTS: usize = 34;
+pub const NUM_R1CS_INPUTS: usize = 35;
 pub const NUM_PRODUCT_FACTORS: usize = 2;
 pub const NUM_VARS_PER_CYCLE: usize = 1 + NUM_R1CS_INPUTS + NUM_PRODUCT_FACTORS; // 38
 pub const NUM_EQ_CONSTRAINTS: usize = 19;
@@ -318,12 +319,26 @@ pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
     c_rows.push(empty());
 
     // 17: NextPCEqPCPlusOneIfInline
-    //     guard = VirtualInstruction − Jump
+    //     guard = VirtualInstruction − IsLastInSequence
     //     left  = NextPC
     //     right = PC + 1
+    //
+    // NOTE: `IsLastInSequence` fires for every cycle whose
+    // `virtual_sequence_remaining == Some(0)`, not just `JALR`. That
+    // looks lax — at a non-`JALR` terminal step the guard zeros out and
+    // `NextPC` isn't pinned to `PC + 1` here — but `NextPC` is still
+    // uniquely determined by the rest of the system: #14
+    // (`NextUnexpPCEqLookupIfShouldJump`) / #16
+    // (`NextUnexpPCUpdateOtherwise`) constrain `NextUnexpandedPC`, #18
+    // (`MustStartSequenceFromBeginning`) forces the next row to be
+    // non-virtual or the first step of a new sequence, and the
+    // bytecode-row commitment ties `NextPC` to a unique row matching both
+    // properties. If any of those are ever removed or weakened, tighten
+    // `IsLastInSequence` back to `JALR`-only (see jolt-core's
+    // `instruction/jalr.rs`) to avoid an unconstrained-`NextPC` exploit.
     a_rows.push(row::<F>(&[
         (V_FLAG_VIRTUAL_INSTRUCTION, 1),
-        (V_FLAG_JUMP, -1),
+        (V_FLAG_IS_LAST_IN_SEQUENCE, -1),
     ]));
     b_rows.push(row::<F>(&[(V_NEXT_PC, 1), (V_PC, -1), (V_CONST, -1)]));
     c_rows.push(empty());

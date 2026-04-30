@@ -105,6 +105,7 @@ pub fn instruction_inputs_match_constraint_fn<C, T, I>(
 /// has been moved into the wrapper.
 #[doc(hidden)]
 #[expect(clippy::unwrap_used)]
+#[expect(clippy::panic, reason = "deliberate guard against silent passes; see body")]
 pub fn lookup_output_matches_trace_test_fn<C, T>(cycle_wrapper: impl Fn(C) -> T)
 where
     C: JoltCycle + Copy + core::fmt::Debug,
@@ -145,6 +146,19 @@ where
                 let cpu_result = cpu.x[rd as usize] as u64;
                 assert_eq!(cpu_result, lookup_result, "{raw:?}");
             }
+        } else {
+            // Instruction has no `rd` and isn't `JAL`/`JALR`: the oracle
+            // here doesn't apply (e.g. asserts, branches, stores, fence,
+            // ecall/ebreak). Without an explicit panic the loop would run
+            // 10k iterations and silently pass, hiding a coverage gap.
+            // Either restrict the macro's call sites to instructions that
+            // write `rd` or jump, or extend the oracle to handle the new
+            // case (asserts → 1, branches → taken-bit, etc.).
+            panic!(
+                "lookup_output_matches_trace_test_fn invoked for an instruction \
+                 without `rd` and not `JAL`/`JALR`; extend the oracle or skip \
+                 this instruction. cycle = {raw:?}"
+            );
         }
     }
 }

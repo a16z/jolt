@@ -264,6 +264,13 @@ pub use virt::VirtualSw;
 /// instruction (not just a marker). Static-flag dispatch and the
 /// flag-exclusivity tests rely on this concretization to satisfy
 /// `T: JoltInstruction` on the `Flags` impls.
+///
+/// Deliberately omitted instruction kinds (declared and re-exported above
+/// but not proven by Jolt): the Zicsr ops (`Csrrs`, `Csrrw`), `Mret`,
+/// the entire RV32A/RV64A atomic family (`Amo*`, `Lr*`, `Sc*`),
+/// the advice-load helpers (`AdviceLb`/`Ld`/`Lh`/`Lw`), and `VirtualLw` /
+/// `VirtualSw`. These are intentionally absent from `JoltInstructions` and
+/// from the flag-exclusivity tests below.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, strum::EnumIter)]
 pub enum JoltInstructions {
     Noop,
