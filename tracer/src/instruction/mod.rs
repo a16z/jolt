@@ -153,7 +153,7 @@ use virtual_zero_extend_word::VirtualZeroExtendWord;
 use self::inline::INLINE;
 
 use crate::emulator::cpu::{Cpu, Xlen};
-use crate::utils::virtual_registers::VirtualRegisterAllocator;
+use crate::utils::virtual_registers::{is_supported_csr, VirtualRegisterAllocator};
 use derive_more::From;
 use format::{InstructionFormat, InstructionRegisterState, NormalizedOperands};
 
@@ -1095,10 +1095,24 @@ impl Instruction {
                     (0, 0x18, 2) if instr == 0x30200073 => {
                         Ok(MRET::new(instr, address, true, compressed).into())
                     }
-                    // CSRRW: funct3=1
-                    (1, _, _) => Ok(CSRRW::new(instr, address, true, compressed).into()),
-                    // CSRRS: funct3=2
-                    (2, _, _) => Ok(CSRRS::new(instr, address, true, compressed).into()),
+                    // CSRRW: funct3=1. Reject unsupported CSRs at decode time
+                    // so the trace path never reaches an unmodelled CSR — the
+                    // inline_sequence path would otherwise panic the prover.
+                    (1, _, _) => {
+                        let csr_addr = ((instr >> 20) & 0xFFF) as u16;
+                        if !is_supported_csr(csr_addr) {
+                            return Err("Unsupported CSR in CSRRW");
+                        }
+                        Ok(CSRRW::new(instr, address, true, compressed).into())
+                    }
+                    // CSRRS: funct3=2. Same rationale as CSRRW above.
+                    (2, _, _) => {
+                        let csr_addr = ((instr >> 20) & 0xFFF) as u16;
+                        if !is_supported_csr(csr_addr) {
+                            return Err("Unsupported CSR in CSRRS");
+                        }
+                        Ok(CSRRS::new(instr, address, true, compressed).into())
+                    }
                     _ => Err("Unsupported SYSTEM instruction"),
                 }
             }
