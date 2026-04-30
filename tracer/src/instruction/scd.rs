@@ -296,7 +296,7 @@ mod tests {
         );
     }
 
-    /// FJ-ACT-H-03: SC.D to a non-RAM (I/O) address must be rejected by the
+    /// SC.D to a non-RAM (I/O) address must be rejected by the
     /// inline-sequence RAM-range constraint. Same rationale as SC.W.
     #[test]
     #[should_panic(expected = "assertion failed")]

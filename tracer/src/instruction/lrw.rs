@@ -139,9 +139,8 @@ mod tests {
         (0b00010 << 27) | ((rs1 as u32) << 15) | (0b010 << 12) | ((rd as u32) << 7) | 0x2F
     }
 
-    /// FJ-ACT-H-03: LR.W to a non-RAM (I/O) address is rejected by the
-    /// RAM-range constraint. Mirrors SC.W coverage so the LR/SC pair is
-    /// consistent.
+    /// LR.W to a non-RAM (I/O) address is rejected by the RAM-range
+    /// constraint. Mirrors SC.W coverage so the LR/SC pair is consistent.
     #[test]
     #[should_panic(expected = "assertion failed")]
     fn test_lrw_to_io_rejected() {

@@ -119,8 +119,8 @@ mod tests {
         (0b00010 << 27) | ((rs1 as u32) << 15) | (0b011 << 12) | ((rd as u32) << 7) | 0x2F
     }
 
-    /// FJ-ACT-H-03: LR.D to a non-RAM (I/O) address is rejected by the
-    /// RAM-range constraint. Mirrors SC.D coverage.
+    /// LR.D to a non-RAM (I/O) address is rejected by the RAM-range
+    /// constraint. Mirrors SC.D coverage.
     #[test]
     #[should_panic(expected = "assertion failed")]
     fn test_lrd_to_io_rejected() {

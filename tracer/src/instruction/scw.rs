@@ -479,7 +479,7 @@ mod tests {
         );
     }
 
-    /// FJ-ACT-H-03: SC.W to a non-RAM (I/O) address must be rejected by the
+    /// SC.W to a non-RAM (I/O) address must be rejected by the
     /// inline-sequence RAM-range constraint. Without this constraint, the
     /// failure-path store would flip the device's panic flag via the
     /// byte-level store handler, mutating the proof's public I/O.
