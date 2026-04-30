@@ -105,7 +105,10 @@ pub fn instruction_inputs_match_constraint_fn<C, T, I>(
 /// has been moved into the wrapper.
 #[doc(hidden)]
 #[expect(clippy::unwrap_used)]
-#[expect(clippy::panic, reason = "deliberate guard against silent passes; see body")]
+#[expect(
+    clippy::panic,
+    reason = "deliberate guard against silent passes; see body"
+)]
 pub fn lookup_output_matches_trace_test_fn<C, T>(cycle_wrapper: impl Fn(C) -> T)
 where
     C: JoltCycle + Copy + core::fmt::Debug,
