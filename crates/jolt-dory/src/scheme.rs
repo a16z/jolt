@@ -59,12 +59,6 @@ pub(crate) fn ark_to_jolt_gt(ark: &ArkGT) -> Bn254GT {
 }
 
 #[inline]
-pub(crate) fn jolt_gt_ref_to_ark(gt: &Bn254GT) -> &ArkGT {
-    // SAFETY: Bn254GT and ArkGT are both repr(transparent) over Fq12.
-    unsafe { &*(std::ptr::from_ref(gt).cast::<ArkGT>()) }
-}
-
-#[inline]
 pub(crate) fn jolt_g1_vec_to_ark(v: Vec<Bn254G1>) -> Vec<ArkG1> {
     // SAFETY: Bn254G1 and ArkG1 have identical size/align (repr(transparent)
     // over G1Projective), so Vec layout is identical.
