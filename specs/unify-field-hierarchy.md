@@ -24,7 +24,7 @@ The extension-field API (`LiftBase`, `ExtField`, `Fp2`, `Fp4`) is explicitly **d
 
 ### Goal
 
-Refactor `jolt-field` so its public trait surface is a layered algebraic hierarchy (`AdditiveGroup`, `RingCore`, `FieldCore`, `Invertible`, `HasTwoInverse`, `MulPow2`, `MulPrimitiveInt`) plus orthogonal capabilities (`FromPrimitiveInt`, `Sampleable`, `CanonicalBytes`, `ReducingBytes`, `TranscriptChallenge`, `WithAccumulator`, `FixedBytes<const N: usize>`, `FixedByteSize`, `CanonicalBitLength`, `CanonicalU64`).
+Refactor `jolt-field` so its public trait surface is a layered algebraic hierarchy (`AdditiveGroup`, `RingCore`, `FieldCore`, `Invertible`, `MulPow2`, `MulPrimitiveInt`) plus orthogonal capabilities (`FromPrimitiveInt`, `RandomSampling`, `CanonicalBytes`, `ReducingBytes`, `TranscriptChallenge`, `WithAccumulator`, `FixedBytes<const N: usize>`, `FixedByteSize`, `CanonicalBitLength`, `CanonicalU64`).
 The existing `Field` trait name remains as the Jolt compatibility umbrella: it includes the algebraic field operators plus the BN254/Jolt capabilities current callsites expect, but those capability traits themselves are not modeled as children of `FieldCore`.
 Decompose `Fr`'s impls per layer; relax the bounds on the shared verifier-side code (transcript absorption, transcript challenge generation, sumcheck verifier, multilinear poly traits, RLC reduction) from `F: Field` to the needed slim layers (`CanonicalBytes`, `TranscriptChallenge`, `FromPrimitiveInt`, or finer) so a non-BN254 field can substitute; gate `light-poseidon`/`ark-bn254`/`ark-ff`/`ark-serialize` in `jolt-transcript` behind a `poseidon` feature.
 
@@ -38,7 +38,7 @@ The long-term direction is that shared verifier/protocol crates can be parameter
 This PR intentionally takes the narrow first step:
 
 1. Introduce the slim hierarchy in `jolt-field`.
-2. Keep the existing `Field` trait name, but narrow it to algebraic field operators and add explicit capability bounds where callsites need serialization, sampling, accumulators, halving, or canonical bytes.
+2. Keep the existing `Field` trait name, but narrow it to algebraic field operators and add explicit capability bounds where callsites need serialization, sampling, accumulators, integer scaling, or canonical bytes.
 3. Relax only the shared verifier/protocol bounds needed to demonstrate a non-BN254 field.
 4. Use Hachi's `Fp32`/`Fp64`/`Fp128` needs as the concrete design target, validated by a `Mersenne61` compat test, while keeping the trait names and semantics compatible with the audited Binius and Plonky field APIs.
 
@@ -54,10 +54,10 @@ The implementation must additionally preserve:
 
 1. End-to-end `Fr` behavior is identical: same Fiat-Shamir state stream, same proof bytes for `muldiv` and other end-to-end tests, same verifier outcomes. Wire format unchanged.
 2. Every operation currently callable on `F: jolt_field::Field` remains available post-refactor, either under the same name through a named capability or under a clearer capability-specific name, except panicking infix `Div`, which is intentionally removed from the trait bound and migrated to explicit inversion at generic callsites.
-   `square` moves to `RingCore`; `inverse` and `inv_or_zero` move to `Invertible`; `FieldCore` becomes the algebraic field marker `RingCore + Invertible`; `TWO_INV` moves to `HasTwoInverse`; `mul_pow_2` moves to `MulPow2`; `mul_u64`/`mul_i64`/`mul_u128`/`mul_i128` move to `MulPrimitiveInt`; `to_bytes` moves to `FixedBytes<32>::to_bytes_array`; `from_bytes` moves to `ReducingBytes::from_le_bytes_mod_order`; transcript challenge construction moves to `TranscriptChallenge`; `random` moves to `Sampleable::random`; `from_bool` and the integer constructors move to `FromPrimitiveInt`; `NUM_BYTES`, `Accumulator`, `num_bits`, and `to_u64` move to `FixedByteSize`, `WithAccumulator`, `CanonicalBitLength`, and `CanonicalU64` respectively.
+   `square` moves to `RingCore`; `inverse` and `inv_or_zero` move to `Invertible`; `FieldCore` becomes the algebraic field marker `RingCore + Invertible`; `mul_pow_2` moves to `MulPow2`; `mul_u64`/`mul_i64`/`mul_u128`/`mul_i128` move to `MulPrimitiveInt`; `to_bytes` moves to `FixedBytes<32>::to_bytes_array`; `from_bytes` moves to `ReducingBytes::from_le_bytes_mod_order`; transcript challenge construction moves to `TranscriptChallenge`; `random` moves to `RandomSampling::random`; `from_bool` and the integer constructors move to `FromPrimitiveInt`; `NUM_BYTES`, `Accumulator`, `num_bits`, and `to_u64` move to `FixedByteSize`, `WithAccumulator`, `CanonicalBitLength`, and `CanonicalU64` respectively.
    `WithAccumulator` is scoped at the additive layer because redundant accumulator representations only require an additive result type; multiply-add helpers are an additional ring-level accumulator capability. Some callsites use the names from the capability trait rather than the old `Field` body, but no behavior changes.
 3. The slim hierarchy (`AdditiveGroup` … `RingCore` … byte-oriented `CanonicalBytes`/`ReducingBytes` plus `TranscriptChallenge`/`CanonicalU64`/`WithAccumulator`/`FixedBytes`/`FixedByteSize`/`CanonicalBitLength`) is implementable by a non-BN254 field with no arkworks dependency. Demonstrated by a `Mersenne61` (the prime $2^{61} - 1$) compat test that compiles and passes against `jolt-field --no-default-features` and `jolt-transcript --no-default-features`.
-4. `Invertible` is the inversion capability over rings: it owns `inverse() -> Option<Self>` and the overridable convenience `inv_or_zero(self) -> Self`, whose default is `self.inverse().unwrap_or_else(Self::zero)`. Constant-time implementations override `inv_or_zero` case by case. `FieldCore` is just `RingCore + Invertible`; `TWO_INV` lives on `HasTwoInverse`, not `FieldCore`, so binary fields can implement `FieldCore`. The `Div` operator is not required by `Field`, `RingCore`, or `FieldCore`; shared code must spell zero handling through `Invertible`.
+4. `Invertible` is the inversion capability over rings: it owns `inverse() -> Option<Self>` and the convenience `inv_or_zero(self) -> Self`, whose default is `self.inverse().unwrap_or_else(Self::zero)`. `FieldCore` is just `RingCore + Invertible`; it does not claim that 2 is invertible, so binary fields can implement `FieldCore`. The `Div` operator is not required by `Field`, `RingCore`, or `FieldCore`; shared code must spell zero handling through `Invertible`.
 5. `jolt-transcript --no-default-features` builds with no arkworks dependency and exposes `DigestTranscript`, `Blake2bTranscript`, `KeccakTranscript`, `AppendToTranscript`, and the `domain::`* helpers. Poseidon is feature-gated.
 6. The shared verifier/protocol code touched by the `Mersenne61` compatibility test bounds on the slim layer: `F: RingCore`, `F: TranscriptChallenge`, `F: CanonicalBytes + FixedByteSize`, `F: RingCore + MulPow2`, etc., not on `F: Field`.
    Demonstrated by the `Mersenne61` test driving `SumcheckVerifier::verify` to completion.
@@ -70,26 +70,24 @@ The implementation must additionally preserve:
 3. Extracting any of this into a new crate. The refactor stays within `jolt-field`, `jolt-transcript`, and downstream callsite-bound-relaxation sweeps.
 4. Adopting Hachi's lattice-specific traits (`PseudoMersenneField`, `SmoothFftField`, `Module`) or Hachi's exact `u128` canonical-representation trait into `jolt-field`. They stay in Hachi as further refinements above `RingCore` / `CanonicalBytes`.
 5. **Adopting Hachi's extension-field API (`LiftBase`, `ExtField`, `Fp2`, `Fp4`, `Fp2Config`, `Fp4Config`, `NegOneNr`, `TwoNr`).** Cleanly portable from Hachi (verbatim) but adds blast radius to the PR. Tracked in "Follow-Up Work" below; lands as a separate PR after this one.
-6. Migrating Jolt callsites from `inverse().unwrap()` to constant-time `inv_or_zero` everywhere. The trait makes the operation available; per-callsite migration is deferred.
-7. Removing BN254-specific capabilities from the existing top-of-hierarchy trait entirely. This PR moves method families to named capability traits: ring-core methods (`square`) to `RingCore`, inversion (`inverse`, `inv_or_zero`) to `Invertible`, halving support to `HasTwoInverse`, primitive integer embedding to `FromPrimitiveInt`, byte encoding to `CanonicalBytes`/`ReducingBytes`/`FixedBytes`, transcript challenge decoding to `TranscriptChallenge`, sampling to `Sampleable`, fixed byte-size metadata to `FixedByteSize`, canonical bit-length introspection to `CanonicalBitLength`, checked `u64` extraction to `CanonicalU64`, accumulator support to `WithAccumulator`, power-of-two multiplication to `MulPow2`, and primitive-scalar multiplication to `MulPrimitiveInt`. The Jolt `Field` umbrella still includes the compatibility capabilities; smaller shared code can ask for only the capabilities it uses.
-8. Touching `jolt-poly`, `jolt-sumcheck`, `jolt-openings`, `jolt-r1cs`, `jolt-crypto`, `jolt-core` semantics. Their bounds get relaxed where possible to enable Hachi reuse, but no behavioral changes.
+6. Removing BN254-specific capabilities from the existing top-of-hierarchy trait entirely. This PR moves method families to named capability traits: ring-core methods (`square`) to `RingCore`, inversion (`inverse`, `inv_or_zero`) to `Invertible`, primitive integer embedding to `FromPrimitiveInt`, byte encoding to `CanonicalBytes`/`ReducingBytes`/`FixedBytes`, transcript challenge decoding to `TranscriptChallenge`, random sampling to `RandomSampling`, fixed byte-size metadata to `FixedByteSize`, canonical bit-length introspection to `CanonicalBitLength`, checked `u64` extraction to `CanonicalU64`, accumulator support to `WithAccumulator`, power-of-two multiplication to `MulPow2`, and primitive-scalar multiplication to `MulPrimitiveInt`. The Jolt `Field` umbrella still includes the compatibility capabilities; smaller shared code can ask for only the capabilities it uses.
+7. Touching `jolt-poly`, `jolt-sumcheck`, `jolt-openings`, `jolt-r1cs`, `jolt-crypto`, `jolt-core` semantics. Their bounds get relaxed where possible to enable Hachi reuse, but no behavioral changes.
 
 ## Evaluation
 
 ### Acceptance Criteria
 
-- `crates/jolt-field/src/lib.rs` exports the slim hierarchy: `AdditiveGroup`, `RingCore`, `FieldCore`, `Invertible`, `HasTwoInverse`, `FromPrimitiveInt`, `Sampleable`, `CanonicalBytes`, `ReducingBytes`, `TranscriptChallenge`, `CanonicalU64`, `WithAccumulator`, `FixedBytes`, `FixedByteSize`, `CanonicalBitLength`, `MulPow2`, `MulPrimitiveInt`. Plus the existing `Field` name as the Jolt compatibility umbrella, and the existing helper traits `OptimizedMul`, `MaybeAllocative`.
-- The `Field` trait remains the Jolt compatibility umbrella. It supertraits `FieldCore + HasTwoInverse + FromPrimitiveInt + CanonicalBytes + ReducingBytes + TranscriptChallenge + FixedBytes<32> + FixedByteSize + CanonicalBitLength + CanonicalU64 + Sampleable + WithAccumulator + MulPow2 + MulPrimitiveInt + Serialize + DeserializeOwned + MaybeAllocative` plus structural Rust bounds (`'static + Sized + Copy + Send + Sync + Default + Eq + Hash + Debug + Display`) and has an empty body. The key point is that `FromPrimitiveInt`, `Sampleable`, serde, `WithAccumulator`, byte-encoding traits, fixed byte-size metadata, canonical bit-length introspection, transcript challenge decoding, and checked canonical-integer extraction are orthogonal capabilities; they are included by the Jolt `Field` umbrella but are not algebraic descendants of `FieldCore`.
+- `crates/jolt-field/src/lib.rs` exports the slim hierarchy: `AdditiveGroup`, `RingCore`, `FieldCore`, `Invertible`, `FromPrimitiveInt`, `RandomSampling`, `CanonicalBytes`, `ReducingBytes`, `TranscriptChallenge`, `CanonicalU64`, `WithAccumulator`, `FixedBytes`, `FixedByteSize`, `CanonicalBitLength`, `MulPow2`, `MulPrimitiveInt`. Plus the existing `Field` name as the Jolt compatibility umbrella, and the existing helper traits `OptimizedMul`, `MaybeAllocative`.
+- The `Field` trait remains the Jolt compatibility umbrella. It supertraits `FieldCore + FromPrimitiveInt + CanonicalBytes + ReducingBytes + TranscriptChallenge + FixedBytes<32> + FixedByteSize + CanonicalBitLength + CanonicalU64 + RandomSampling + WithAccumulator + MulPow2 + MulPrimitiveInt + Serialize + DeserializeOwned + MaybeAllocative` plus structural Rust bounds (`'static + Sized + Copy + Send + Sync + Default + Eq + Hash + Debug + Display`) and has an empty body. The key point is that `FromPrimitiveInt`, `RandomSampling`, serde, `WithAccumulator`, byte-encoding traits, fixed byte-size metadata, canonical bit-length introspection, transcript challenge decoding, and checked canonical-integer extraction are orthogonal capabilities; they are included by the Jolt `Field` umbrella but are not algebraic descendants of `FieldCore`.
 - `Fr` implements every leaf trait in the slim hierarchy in sibling modules. The `impl Field for Fr` and `impl FieldCore for Fr` become empty: the supertraits now carry the whole surface.
 - `RingCore` exists between `AdditiveGroup` and `FieldCore`. It owns `One`, multiplication, `Sum`/`Product`, and `square`, but not inversion. `AdditiveGroup` owns `Zero`, so additive-only accumulator types and ring types share the same zero API without a duplicate `ZERO` associated const. `CyclotomicRing<F, D>` can implement this in a follow-up without pretending to be a field.
-- `Invertible: RingCore` owns both `inverse() -> Option<Self>` and `inv_or_zero(self) -> Self`. `inv_or_zero` has the default `self.inverse().unwrap_or_else(Self::zero)`, and constant-time implementations override it where needed.
-- `FieldCore` is the algebraic field marker `RingCore + Invertible`; it does not require `TWO_INV`. Binary fields can therefore implement `FieldCore`.
-- `HasTwoInverse: FieldCore` owns `const TWO_INV: Self`. BN254 Fr implements it, binary fields do not. If a future ring type needs halving without field inversion, add a separate ring-level capability rather than widening this one preemptively.
+- `Invertible: RingCore` owns both `inverse() -> Option<Self>` and `inv_or_zero(self) -> Self`. `inv_or_zero` has the default `self.inverse().unwrap_or_else(Self::zero)`.
+- `FieldCore` is the algebraic field marker `RingCore + Invertible`; it does not require an inverse of 2. Binary fields can therefore implement `FieldCore`.
 - `FromPrimitiveInt` is an orthogonal primitive-integer embedding capability. It means "reduce or embed this primitive integer into the implementor's scalar object," not "interpret raw field bytes" or "pack tower-basis coordinates." Signed constructors are retained for Jolt compatibility but should not be used as a shared verifier bound unless the callsite really needs signed embedding. `MulPow2` and `MulPrimitiveInt` are ring-level capabilities that depend on `RingCore + FromPrimitiveInt`, so primitive-scalar multiplication is available to rings as well as fields without making integer embedding an algebraic child of `RingCore`.
 - `Field`, `RingCore`, and `FieldCore` do NOT supertrait `Div`. Concrete `Fr` may keep its existing operator impls, but generic code must use `inverse()` or `inv_or_zero()` explicitly.
 - `AdditiveGroup` keeps Jolt's existing `num_traits::Zero` expectations, while `RingCore` adds `One`, so current helpers like zero-vector allocation and `OptimizedMul::mul_1_optimized` keep compiling under relaxed slim bounds. The blanket `OptimizedMul` impl relaxes from `F: Field` to `F: RingCore`.
 - `CanonicalBytes` is byte-oriented and does not require exact `u128` canonical conversion; `Fr` can implement it because BN254 Fr has a canonical 32-byte encoding. Reducing byte parsing is deliberately split into `ReducingBytes`, matching the current `Field::from_bytes` behavior without making every canonical encoder claim a strict or reducing decoder. Exact `u128` canonical conversion remains Hachi-only for now.
-- `TranscriptChallenge` is distinct from `Sampleable`. `Sampleable::random` is RNG sampling for tests and witnesses, while `TranscriptChallenge::from_challenge_bytes` is Fiat-Shamir challenge decoding from squeezed bytes. BN254 and `Mersenne61` can implement `TranscriptChallenge` by reducing bytes; binary fields and Plonky-style challengers may use field-specific deserialization, rejection sampling, or native sponge elements instead.
+- `TranscriptChallenge` is distinct from `RandomSampling`. `RandomSampling::random` is RNG-backed random field element generation for tests and witnesses, while `TranscriptChallenge::from_challenge_bytes` is Fiat-Shamir challenge decoding from squeezed bytes. Future non-uniform sampling APIs, such as sparse challenges over Hachi rings, should use separate capability traits rather than widening `RandomSampling`. BN254 and `Mersenne61` can implement `TranscriptChallenge` by reducing bytes; binary fields and Plonky-style challengers may use field-specific deserialization, rejection sampling, or native sponge elements instead.
 - `FixedByteSize` is standalone and owns fixed-size encoding metadata: `const NUM_BYTES: usize`.
 - `CanonicalBitLength` is standalone and owns element-dependent canonical bit-length introspection: `fn num_bits(&self) -> u32`. This remains a method, not a const, because it reports significant bits of the specific canonical representative, not the field modulus width.
 - `FixedBytes<const N: usize>` extends `CanonicalBytes + ReducingBytes + FixedByteSize`; it owns only the fixed-array convenience API `fn to_bytes_array(&self) -> [u8; N]` and `fn from_bytes_array(bytes: &[u8; N]) -> Self`, with default implementations that delegate to `to_bytes_le` and `from_le_bytes_mod_order`. Non-field fixed byte blobs should use a separate future trait such as `FixedEncoding<N>` rather than this canonical field/value encoding trait.
@@ -103,11 +101,11 @@ The implementation must additionally preserve:
 - `cargo nextest run --workspace --features host,zk` passes.
 - `cargo nextest run -p jolt-core muldiv --features host` and `--features host,zk` pass.
 - `cargo clippy --all --features host --all-targets -- -D warnings` passes. Same for `host,zk`.
-- `crates/jolt-sumcheck/tests/mersenne61_compat.rs`: a `Mersenne61` struct (modulus $2^{61} - 1$, no arkworks dep) implements `AdditiveGroup + RingCore + FieldCore + HasTwoInverse + FromPrimitiveInt + Sampleable + CanonicalBytes + ReducingBytes + TranscriptChallenge + CanonicalU64 + WithAccumulator + FixedByteSize + CanonicalBitLength + FixedBytes<8>` (using `NaiveAccumulator<Mersenne61>`). The test lives downstream of `jolt-field` so `jolt-field` remains a leaf crate. The test:
+- `crates/jolt-sumcheck/tests/mersenne61_compat.rs`: a `Mersenne61` struct (modulus $2^{61} - 1$, no arkworks dep) implements `AdditiveGroup + RingCore + FieldCore + FromPrimitiveInt + RandomSampling + CanonicalBytes + ReducingBytes + TranscriptChallenge + CanonicalU64 + WithAccumulator + FixedByteSize + CanonicalBitLength + FixedBytes<8>` (using `NaiveAccumulator<Mersenne61>`). The test lives downstream of `jolt-field` so `jolt-field` remains a leaf crate. The test:
   - Substitutes `Mersenne61` into `Blake2bTranscript<Mersenne61>` and `KeccakTranscript<Mersenne61>` from `jolt-transcript --no-default-features`.
   - Drives a hand-rolled 4-round `RoundProof<Mersenne61>` impl through `SumcheckVerifier::verify` to completion.
   - Compiles and passes without the `bn254` feature on `jolt-field` and without `poseidon` on `jolt-transcript`.
-- `crates/jolt-field/tests/binary_field_core_compat.rs`: a tiny characteristic-2 field or GF(2) wrapper implements `AdditiveGroup + RingCore + FieldCore + Invertible + CanonicalBytes + ReducingBytes + FixedByteSize` but not `HasTwoInverse`, `MulPow2`, or the Jolt `Field` umbrella. The test is compile-oriented: it proves the algebraic layer admits binary fields, and it prevents future verifier-bound relaxations from accidentally smuggling halving or odd-prime integer-scaling assumptions back into `FieldCore`.
+- `crates/jolt-field/tests/binary_field_core_compat.rs`: a tiny characteristic-2 field or GF(2) wrapper implements `AdditiveGroup + RingCore + FieldCore + Invertible + CanonicalBytes + ReducingBytes + FixedByteSize` but not `MulPow2` or the Jolt `Field` umbrella. The test is compile-oriented: it proves the algebraic layer admits binary fields, and it prevents future verifier-bound relaxations from accidentally smuggling odd-prime integer-scaling assumptions back into `FieldCore`.
 - Wire-format roundtrip test (in `crates/jolt-field/tests/` or `crates/jolt-sumcheck/tests/`): bincode-encode a deterministic `SumcheckProof<Fr>` (10 rounds, degree 3) and a `Vec<Fr>` of length 32 with a fixed RNG seed; assert the byte blob matches a hardcoded expected value captured before the refactor.
 - Transcript-determinism test: replay a fixed sequence of `append`/`challenge` calls on `Blake2bTranscript<Fr>`, `KeccakTranscript<Fr>`, and `PoseidonTranscript`; assert each `state()` snapshot matches a hardcoded expected value captured before the refactor.
 
@@ -164,14 +162,13 @@ AdditiveGroup                       // Zero + Add/Sub/Neg + AddAssign/SubAssign
        │                            // inv_or_zero(self) -> Self (default via inverse)
        ├── MulPow2                  // mul_pow_2
        ├── MulPrimitiveInt          // mul_u64/i64/u128/i128
-       └── FieldCore                // RingCore + Invertible. NO TWO_INV, NO Div.
-              ├── HasTwoInverse     // const TWO_INV. Not implemented by binary fields.
+       └── FieldCore                // RingCore + Invertible. NO Div.
 ```
 
 Orthogonal capability traits (not algebraic children of `FieldCore`):
 
 ```
-Sampleable                          // random<R: RngCore>(rng) -> Self
+RandomSampling                      // random<R: RngCore>(rng) -> Self
 WithAccumulator: AdditiveGroup      // type Accumulator: AdditiveAccumulator<Element = Self>
 FromPrimitiveInt                    // reducing primitive integer embedding;
                                     // signed constructors are compatibility surface
@@ -186,28 +183,8 @@ CanonicalBitLength                  // num_bits() -> u32
 CanonicalU64                        // to_canonical_u64_checked() -> Option<u64>
 (PseudoMersenneField → SmoothFftField stays in hachi)
 
-External capability bounds used by the Jolt umbrella:
+External capability bounds used by the Jolt compatibility umbrella:
 Serialize + DeserializeOwned + MaybeAllocative
-```
-
-(Jolt compatibility umbrella. Name intentionally remains `Field`.
- Capability traits remain orthogonal, even though this umbrella includes them:)
-
-```
-Field:
-       FieldCore + HasTwoInverse
-       + FromPrimitiveInt
-       + CanonicalBytes + ReducingBytes + TranscriptChallenge
-       + FixedBytes<32> + FixedByteSize + CanonicalBitLength
-       + CanonicalU64 + Sampleable + WithAccumulator
-       + MulPow2 + MulPrimitiveInt
-       + 'static + Sized + Copy + Send + Sync + Default + Eq + Hash + Debug + Display
-       + Serialize + DeserializeOwned + MaybeAllocative
-{
-    // Empty compatibility marker bundle. Methods and associated items live on
-    // the named capability traits above.
-}
-
 ```
 
 Trait signatures (stable shape; adapted from `hachi/src/primitives/arithmetic.rs`, with `num_traits::Zero + One` retained for Jolt callsites):
@@ -241,8 +218,7 @@ pub trait Invertible: RingCore {
 
     /// Inverse with zero-mapping behavior.
     ///
-    /// Default may branch through `inverse`; constant-time implementations
-    /// override this method where needed.
+    /// Default may branch through `inverse`.
     fn inv_or_zero(self) -> Self {
         self.inverse().unwrap_or_else(Self::zero)
     }
@@ -257,15 +233,6 @@ pub trait Invertible: RingCore {
 /// Generic code should use `inverse()` or `inv_or_zero()` so zero handling is
 /// visible at the callsite.
 pub trait FieldCore: RingCore + Invertible {}
-
-// crates/jolt-field/src/has_two_inverse.rs
-pub trait HasTwoInverse: FieldCore {
-    /// Multiplicative inverse of 2.
-    ///
-    /// This trait is intentionally separate from `FieldCore` so binary fields
-    /// can implement field inversion without claiming that 2 is invertible.
-    const TWO_INV: Self;
-}
 
 // crates/jolt-field/src/from_primitive_int.rs
 /// Embed primitive integer values into a type.
@@ -293,8 +260,8 @@ pub trait FromPrimitiveInt: Sized {
     fn from_i128(v: i128) -> Self;
 }
 
-// crates/jolt-field/src/sampleable.rs
-pub trait Sampleable {
+// crates/jolt-field/src/random_sampling.rs
+pub trait RandomSampling {
     fn random<R: RngCore>(rng: &mut R) -> Self;
 }
 
@@ -304,7 +271,7 @@ pub trait MulPow2: RingCore + FromPrimitiveInt {
     ///
     /// In characteristic two, this is zero for `pow > 0`. Protocol code that
     /// expects nonzero powers of two must keep an explicit odd-characteristic
-    /// capability bound such as `HasTwoInverse`.
+    /// assumption rather than relying on `RingCore`.
     /// Default: 63-bit-chunked path. `Fr` overrides with the existing implementation.
     fn mul_pow_2(&self, pow: usize) -> Self {
         assert!(pow <= 255);
@@ -420,11 +387,11 @@ The existing trait keeps the `Field` name as Jolt's compatibility umbrella:
 pub trait Field:
     'static + Sized + Copy + Send + Sync + Default
     + Eq + Hash + Debug + Display
-    + FieldCore + HasTwoInverse
+    + FieldCore
     + FromPrimitiveInt
     + CanonicalBytes + ReducingBytes + TranscriptChallenge
     + FixedBytes<32> + FixedByteSize + CanonicalBitLength
-    + CanonicalU64 + Sampleable + WithAccumulator
+    + CanonicalU64 + RandomSampling + WithAccumulator
     + MulPow2 + MulPrimitiveInt
     + Serialize + DeserializeOwned + MaybeAllocative
 {
@@ -433,13 +400,13 @@ pub trait Field:
 }
 ```
 
-The universal `square` method lives on `RingCore`; inversion lives on `Invertible`; `FieldCore` is the marker combining `RingCore + Invertible`; `TWO_INV` lives on `HasTwoInverse`.
+The universal `square` method lives on `RingCore`; inversion lives on `Invertible`; `FieldCore` is the marker combining `RingCore + Invertible`.
 None are duplicated on `Field`.
 The multiplication helper families live on `MulPow2` and `MulPrimitiveInt`; they are not duplicated on `Field`.
-The serialization, sampling, accumulator, halving, fixed byte-size metadata, canonical bit-length introspection, transcript challenge decoding, and checked canonical-integer entry points live only on `CanonicalBytes`, `ReducingBytes`, `TranscriptChallenge`, `FixedBytes<32>`, `FixedByteSize`, `CanonicalBitLength`, `CanonicalU64`, `Sampleable`, `WithAccumulator`, and `HasTwoInverse`; `Field` inherits those capability traits for compatibility but does not duplicate `to_bytes`/`from_bytes`/`random`/`to_u64`/`num_bits` wrapper methods in its body.
+The serialization, random sampling, accumulator, fixed byte-size metadata, canonical bit-length introspection, transcript challenge decoding, and checked canonical-integer entry points live only on `CanonicalBytes`, `ReducingBytes`, `TranscriptChallenge`, `FixedBytes<32>`, `FixedByteSize`, `CanonicalBitLength`, `CanonicalU64`, `RandomSampling`, and `WithAccumulator`; `Field` inherits those capability traits for compatibility but does not duplicate `to_bytes`/`from_bytes`/`random`/`to_u64`/`num_bits` wrapper methods in its body.
 `Fr` keeps its `mul_pow_2` override verbatim.
-Code that relaxes away from `F: Field` and uses non-algebraic operations gains explicit capability bounds, e.g. `F: CanonicalBytes + FixedByteSize`, `F: ReducingBytes`, `F: TranscriptChallenge`, `F: CanonicalBitLength + CanonicalU64`, or `F: Sampleable`.
-Callsites that specifically invoke the old wrapper names migrate mechanically: `x.to_bytes()` becomes `<F as FixedBytes<32>>::to_bytes_array(&x)` (or `x.to_bytes_array()` when the bound is visible), `F::from_bytes(bytes)` becomes `<F as ReducingBytes>::from_le_bytes_mod_order(bytes)`, `F::random(rng)` becomes `<F as Sampleable>::random(rng)`, and `x.to_u64()` becomes `x.to_canonical_u64_checked()`.
+Code that relaxes away from `F: Field` and uses non-algebraic operations gains explicit capability bounds, e.g. `F: CanonicalBytes + FixedByteSize`, `F: ReducingBytes`, `F: TranscriptChallenge`, `F: CanonicalBitLength + CanonicalU64`, or `F: RandomSampling`.
+Callsites that specifically invoke the old wrapper names migrate mechanically: `x.to_bytes()` becomes `<F as FixedBytes<32>>::to_bytes_array(&x)` (or `x.to_bytes_array()` when the bound is visible), `F::from_bytes(bytes)` becomes `<F as ReducingBytes>::from_le_bytes_mod_order(bytes)`, `F::random(rng)` becomes `<F as RandomSampling>::random(rng)`, and `x.to_u64()` becomes `x.to_canonical_u64_checked()`.
 Existing `x.num_bits()` callsites keep the same method name but get it from `CanonicalBitLength` rather than `Field`.
 
 Usage audit before the refactor: `to_u64` is only exercised by field tests and concrete field impls, not by Jolt protocol logic.
@@ -469,22 +436,19 @@ Cyclotomic rings like Hachi's `CyclotomicRing<F, D> = F[X]/(X^D + 1)` have addit
 They should therefore implement `RingCore`, not `FieldCore`.
 
 `Invertible` is a ring-level capability because some rings or ring-like representations may have a usable inversion operation without being the default field scalar type.
-It owns both `inverse` and `inv_or_zero`; the default `inv_or_zero` is intentionally simple and not constant-time, while secret-bearing implementations can override it.
-
-`HasTwoInverse` is the separate capability for fields where 2 is invertible.
-BN254, Mersenne61, and small odd-prime fields can implement it; binary fields cannot, because `2 = 0`.
-This keeps binary fields compatible with `FieldCore` while letting code that needs halving ask for `F: HasTwoInverse` explicitly.
-The name alternatives considered were `OddCharacteristic`, `TwoInvertible`, and `Halving`; `HasTwoInverse` is the clearest Rust trait name for the required operation.
+It owns both `inverse` and `inv_or_zero`; the default `inv_or_zero` is intentionally simple and delegates to `inverse`.
+The first implementation PR should not introduce a separate inverse-of-two capability.
+Jolt currently computes halving at the few relevant callsites with `F::from_u64(2).inverse().unwrap()`, and this PR leaves those `jolt-core` callsites under the existing `F: Field` umbrella.
 
 Current `Fr` division implementations may stay as concrete operator impls: they are already centralized by the existing `delegate_binop!(Div, div)` macro in `crates/jolt-field/src/arkworks/bn254.rs`.
 This PR does not add a new division trait, and `Field` no longer requires `Div`.
-`Div` intentionally stays off `Field`, `RingCore`, and `FieldCore` because the Rust operator cannot express zero-handling in its type: arkworks `Fp` division computes `other.inverse().unwrap()`, so BN254 division by zero panics, while secret-bearing code often wants a constant-time `inv_or_zero` path and verifier/protocol code often wants explicit branching via `inverse() -> Option<Self>`.
+`Div` intentionally stays off `Field`, `RingCore`, and `FieldCore` because the Rust operator cannot express zero-handling in its type: arkworks `Fp` division computes `other.inverse().unwrap()`, so BN254 division by zero panics, while verifier/protocol code often wants explicit branching via `inverse() -> Option<Self>`.
 The one current generic field infix-division callsite in `jolt-core/src/subprotocols/mles_product_sum.rs` should migrate mechanically from `(claim - eq_eval_at_1 * eval_at_1) / eq_eval_at_0` to multiplication by `eq_eval_at_0.inverse().expect(...)`, preserving the same partial-operation behavior while making the zero case explicit.
 Dropping `Div` from the top `Field` bundle prevents newly relaxed shared code (`F: RingCore`, `F: FieldCore`, `F: CanonicalBytes`, etc.) from accidentally depending on panicking infix division.
-Secret-bearing or explicit zero-handling code should use `Invertible::inv_or_zero` or `Invertible::inverse`, not infix `Div`.
+Code that needs explicit zero handling should use `Invertible::inv_or_zero` or `Invertible::inverse`, not infix `Div`.
 
 In mathematical terms, `FieldCore` is the field-like algebraic layer (`RingCore` plus `Invertible`), while the existing `Field` trait is Jolt's compatibility umbrella.
-Serialization, sampling, canonical bytes, accumulator support, and `TWO_INV` are intentionally orthogonal capabilities even when the `Field` umbrella includes them.
+Serialization, sampling, canonical bytes, and accumulator support are intentionally orthogonal capabilities even when the `Field` umbrella includes them.
 
 `OptimizedMul` keeps the same API but its blanket impl moves down from `F: Field` to `F: RingCore`.
 The methods only need multiplication plus `Zero`/`One` checks, and keeping the impl tied to the compatibility umbrella would make relaxed `RingCore` callsites lose the fast-path helpers.
@@ -565,13 +529,16 @@ This is the only knob needed to make the `Mersenne61` test pass; it is also the 
 Initial relaxation list:
 
 - `jolt_sumcheck::SumcheckClaim` / `EvaluationClaim` / `SumcheckError`: relax from `F: Field` to structural bounds required by derives and formatting, e.g. `F: Clone + Debug + PartialEq + Eq + Display` where applicable.
-- `jolt_sumcheck::SumcheckVerifier::verify`: relax from `F: Field` to the bounds implied by `SumcheckClaim<F>`, `EvaluationClaim<F>`, `SumcheckError<F>`, `T: Transcript<Challenge = F>`, and `P: RoundProof<F>`. The verifier loop itself should not add `CanonicalBytes` or accumulator bounds.
-- `jolt_sumcheck::BatchedSumcheckVerifier::verify`: relax from `F: Field` to `F: RingCore + MulPow2 + CanonicalBytes + FixedByteSize` plus the structural bounds required by claims/errors and `P: RoundProof<F>`. The `CanonicalBytes + FixedByteSize` part is for absorbing claimed sums before drawing `alpha`; `RingCore + MulPow2` covers `zero`, `one`, `+`, `*`, `*=`, and claim scaling. Because `MulPow2` is integer multiplication by `2^k`, any future binary-field version of this verifier must either avoid that scaling path or keep an explicit odd-characteristic capability bound.
+- Add `jolt_sumcheck::SumcheckScalar` as a local marker trait bundling the scalar capabilities used across the sumcheck verifier, batched verifier, round proof, and proof types:
+  `RingCore + MulPow2 + CanonicalBytes + FixedByteSize + TranscriptChallenge + FromPrimitiveInt + Clone + Debug + Display + Eq`.
+  This is intentionally a little stricter than each individual function needs, because the named marker keeps downstream signatures readable while still avoiding the old BN254-shaped `Field` umbrella.
+- `jolt_sumcheck::SumcheckVerifier::verify`: relax from `F: Field` to the bounds implied by `SumcheckClaim<F>`, `EvaluationClaim<F>`, `SumcheckError<F>`, `T: Transcript<Challenge = F>`, and `P: RoundProof<F>`. Where these bounds become noisy, use `F: SumcheckScalar`.
+- `jolt_sumcheck::BatchedSumcheckVerifier::verify`: relax from `F: Field` to `F: SumcheckScalar` plus the structural bounds required by claims/errors and `P: RoundProof<F>`. `SumcheckScalar` covers absorbing claimed sums before drawing `alpha`, `zero`, `one`, `+`, `*`, `*=`, and claim scaling. Because `MulPow2` is integer multiplication by `2^k`, any future binary-field version of this verifier must either avoid that scaling path or keep an explicit odd-characteristic assumption.
 - `jolt_sumcheck::RoundProof` trait and impls: relax where the body permits. The clear `UnivariatePoly<F>` impl needs enough ring arithmetic for `evaluate`, `zero`, `one`, and equality; labeled impls additionally need `AppendToTranscript`, which is supplied by `CanonicalBytes + FixedByteSize`.
 - `jolt_transcript::DigestTranscript` / hash transcript challenge generation: from `F: Field` to `F: TranscriptChallenge`, because challenges are derived from squeezed bytes but the reducing strategy is field-family-specific.
 - `jolt_transcript::AppendToTranscript` blanket impl: from `F: Field` to `F: CanonicalBytes + FixedByteSize`, because transcript absorption needs canonical bytes and the fixed byte length. Preserve today's little-endian-to-big-endian reversal before absorption.
 - `jolt_poly` multilinear traits (`MultilinearPoly`, `MultilinearBinding`, `RlcSource`): `F: Field` → `F: FieldCore + WithAccumulator` (or finer, per body).
-- `jolt_openings::reduce_`* and `rlc_combine*`: `F: Field` → `F: FieldCore` (or `+ Sampleable` if the body samples).
+- `jolt_openings::reduce_`* and `rlc_combine*`: `F: Field` → `F: FieldCore` (or `+ RandomSampling` if the body samples random elements).
 
 Every other `F: Field` bound in the workspace stays as `F: Field`.
 
@@ -580,7 +547,7 @@ Every other `F: Field` bound in the workspace stays as `F: Field`.
 The trait split above is based on Hachi's small-prime hierarchy, then checked against the sibling `../binius64`, `../plonky2`, and `../plonky3` field APIs.
 Those crates agree with the high-level goal, but they expose a few portability traps that this spec now accounts for.
 
-- **Binius binary fields.** Binius has characteristic-2 fields and tower fields with field-specific `SerializeBytes` / `DeserializeBytes` and transcript `CanSample<F>` paths. Integer embedding is not a substitute for tower-basis packing, and `2 = 0`, so `FieldCore` must stay independent from `HasTwoInverse` and protocol code must not infer odd-characteristic behavior from `RingCore`.
+- **Binius binary fields.** Binius has characteristic-2 fields and tower fields with field-specific `SerializeBytes` / `DeserializeBytes` and transcript `CanSample<F>` paths. Integer embedding is not a substitute for tower-basis packing, and `2 = 0`, so `FieldCore` must not imply halving or odd-characteristic behavior.
 - **Plonky2 fields.** Plonky2 distinguishes canonical constructors (`from_canonical_u64`) from reducing constructors (`from_noncanonical_u128`) and serializes extension elements as base-field coefficient arrays. Jolt should not conflate canonical encoding, reducing byte decoding, and transcript challenge sampling in one trait.
 - **Plonky3 fields.** Plonky3 separates canonical representatives, unique hashing encodings, quotient maps, raw byte streams, and challenger-specific rejection sampling. `TranscriptChallenge` is therefore a separate capability rather than a blanket `FromPrimitiveInt` or `CanonicalBytes` consequence.
 - **Extension fields.** Plonky2 and Plonky3 both represent extension elements by ordered base-field coordinates. The extension-field follow-up must specify coefficient order and transcript byte order explicitly rather than borrowing an unstable implementation basis from another crate.
@@ -591,7 +558,7 @@ Those crates agree with the high-level goal, but they expose a few portability t
 2. **Keep `Field` monolithic, add a `BackendField: Field` extension.** Rejected — keeps every BN254-shaped method directly on the trait body, which is exactly what Hachi cannot satisfy. The right direction is to keep `Field` as a compatibility umbrella with an empty body while moving the surface into named capabilities that can also be requested independently.
 3. **Extract a new `iop-core` crate containing the slim trait surface.** Rejected — extra crate boundary with no compile-time benefit. Hachi-Jolt sharing works as long as both implement the same traits, regardless of which crate owns them.
 4. **Drop `jolt_field::Field` entirely; force every callsite to bound exactly what it needs.** Rejected for now — too much downstream churn in one PR. Granular tightening can happen incrementally in follow-up PRs once the hierarchy is in place. The minimal bound-relaxation sweep (above) is the only change to existing bounds in this PR.
-5. **Put `Div` on `FieldCore`, `Field`, or anywhere reachable by shared verifier code.** Rejected — conflates panicking and constant-time inversion behind one infix operator. Arkworks BN254 division by zero panics through `inverse().unwrap()`, and the only current generic field infix-division callsite in `jolt-core` is migrated to explicit inversion instead.
+5. **Put `Div` on `FieldCore`, `Field`, or anywhere reachable by shared verifier code.** Rejected — hides the zero-denominator case behind one infix operator. Arkworks BN254 division by zero panics through `inverse().unwrap()`, and the only current generic field infix-division callsite in `jolt-core` is migrated to explicit inversion instead.
 6. **Don't separate `AdditiveGroup` from `FieldCore`.** Rejected — `AdditiveGroup` is the right home for wide accumulators which need `+`/`-` but not multiplication. Hachi already exploits this for `Fp128x8i32` and the wide-cyclotomic-ring shift-accumulate kernels; Jolt's `WideAccumulator` benefits similarly.
 7. **Adopt all of Hachi's lattice-specific traits (`PseudoMersenneField`, `SmoothFftField`, `Module`) into `jolt-field`.** Rejected — these only make sense for lattice/post-quantum constructions; BN254 doesn't satisfy them. Stay in Hachi.
 8. **Adopt the extension-field API (`LiftBase`, `ExtField`, `Fp2`, `Fp4`, non-residue configs) in this PR.** Rejected for blast-radius reasons — adopting it is cheap (verbatim port from Hachi, ~5 new files, no new logic), but it extends the surface that needs review and the `Mersenne61` test gates that need writing. Tracked in "Follow-Up Work" so the design reasoning isn't lost.
@@ -602,8 +569,7 @@ Those crates agree with the high-level goal, but they expose a few portability t
 13. **Put exact `u128` canonical conversion on `CanonicalBytes` or in this Jolt PR.** Rejected — BN254 Fr can implement canonical byte encoding but its canonical element representation is 254 bits and cannot fit in `u128`. Exact small-field canonical representation is useful for Hachi, but not needed by the Jolt shared verifier/protocol sweep in this PR.
 14. **Leave `mul_pow_2` and primitive-scalar multiplication directly on `Field`.** Rejected — these are separate capabilities from the BN254-shaped top bundle. `MulPow2` and `MulPrimitiveInt` keep the operations available to `F: Field` while allowing future code to request only the multiplication helper it actually needs.
 15. **Name the ring layer `Ring` or `AdditiveRing`.** Rejected — `Ring` is too broad and likely to collide conceptually with concrete polynomial/cyclotomic ring types, while `AdditiveRing` is mathematically odd because rings are already additive groups with multiplication. `RingCore` matches `FieldCore`: it is the minimal algebraic API for ring arithmetic, not a concrete ring object.
-16. **Keep `TWO_INV` on `FieldCore`.** Rejected — binary fields are still fields but cannot supply an inverse of 2. `HasTwoInverse` factors out the exact capability needed by odd-characteristic code.
-17. **Name the `TWO_INV` capability `OddCharacteristic`, `TwoInvertible`, or `Halving`.** Rejected — `OddCharacteristic` communicates the field-family split, but `HasTwoInverse` states the operation in Rust trait style. `TwoInvertible` is mathematically precise but less idiomatic, and `Halving` would fit better if the trait exposed a `halve()` method rather than a constant.
+16. **Add a `TWO_INV` / halving capability in this PR.** Rejected — Jolt does not currently expose a `TWO_INV` trait or constant. The few existing halving callsites are in `jolt-core`, stay under the existing `F: Field` umbrella in this PR, and can be revisited when Jolt is ready to make those paths binary-field-aware.
 
 ## Decisions and Open Questions
 
@@ -636,11 +602,10 @@ The next agent should confirm by running the `field_arith` bench against `Fr` po
 
 - `crates/jolt-field/src/additive_group.rs` (port `hachi::AdditiveGroup`)
 - `crates/jolt-field/src/ring_core.rs` (new; algebraic ring layer between additive groups and fields)
-- `crates/jolt-field/src/field_core.rs` (port `hachi::FieldCore`, minus ring-level operations moved to `RingCore` and `TWO_INV` moved to `HasTwoInverse`)
-- `crates/jolt-field/src/has_two_inverse.rs` (new; `HasTwoInverse: FieldCore` with `const TWO_INV`)
+- `crates/jolt-field/src/field_core.rs` (port `hachi::FieldCore`, minus ring-level operations moved to `RingCore` and without Hachi's `TWO_INV` constant)
 - `crates/jolt-field/src/invertible.rs` (port `hachi::Invertible`)
 - `crates/jolt-field/src/from_primitive_int.rs` (rename Hachi's `FromSmallInt` to `FromPrimitiveInt`, omitting Hachi's `digit_lut` helper)
-- `crates/jolt-field/src/sampleable.rs` (new orthogonal sampling capability; method name remains `random`)
+- `crates/jolt-field/src/random_sampling.rs` (new orthogonal random sampling capability; method name remains `random`)
 - `crates/jolt-field/src/transcript_challenge.rs` (new Fiat-Shamir challenge decoding capability; keeps transcript sampling distinct from RNG sampling and primitive integer embedding)
 - `crates/jolt-field/src/mul_pow_2.rs` (new; `MulPow2` capability with current default body)
 - `crates/jolt-field/src/mul_primitive_int.rs` (new; `MulPrimitiveInt` capability with current default bodies)
@@ -652,15 +617,16 @@ The next agent should confirm by running the `field_arith` bench against `Fr` po
 - `crates/jolt-field/src/canonical_bit_length.rs` (new; standalone `CanonicalBitLength` with `num_bits`)
 - `crates/jolt-field/src/with_accumulator.rs` (new; `WithAccumulator: AdditiveGroup`)
 - `crates/jolt-sumcheck/tests/mersenne61_compat.rs` (the BN254-free odd-prime compat test; downstream of `jolt-field`)
-- `crates/jolt-field/tests/binary_field_core_compat.rs` (the characteristic-2 algebraic-layer compat test; verifies no `HasTwoInverse` or odd-prime scaling leaks into `FieldCore`)
+- `crates/jolt-field/tests/binary_field_core_compat.rs` (the characteristic-2 algebraic-layer compat test; verifies no odd-prime scaling leaks into `FieldCore`)
 
 ### Files to modify
 
 - `crates/jolt-field/src/field.rs` — keep `trait Field { ... }` as the Jolt compatibility umbrella; restructure the supertrait list to include the named algebraic and orthogonal capabilities; make the trait body empty. Do not rename it in this PR.
 - `crates/jolt-field/src/accumulator.rs` — rename `FieldAccumulator` to `RingAccumulator` and relax its element bound and `NaiveAccumulator<R>` from `F: Field` to the ring-level bounds they actually use.
 - `crates/jolt-field/src/lib.rs` — module reorg, re-exports of every public trait.
-- `crates/jolt-field/src/arkworks/bn254.rs` — decompose `impl Field for Fr` into per-trait `impl AdditiveGroup`, `impl RingCore`, `impl Invertible`, `impl FieldCore`, `impl HasTwoInverse`, `impl FromPrimitiveInt`, `impl Sampleable`, `impl CanonicalBytes`, `impl ReducingBytes`, `impl TranscriptChallenge`, `impl FixedBytes<32>`, `impl FixedByteSize`, `impl CanonicalBitLength`, `impl CanonicalU64`, `impl WithAccumulator`, `impl MulPow2`, `impl MulPrimitiveInt` for `Fr`. The existing concrete `Div` impls may remain centralized by `delegate_binop!(Div, div)`, but they are not required by `Field`. The `impl Field for Fr` and `impl FieldCore for Fr` become empty. `square` moves into `impl RingCore for Fr`; `inverse` and the optimized `inv_or_zero` move into `impl Invertible for Fr`; `TWO_INV` moves into `impl HasTwoInverse for Fr`; `random` moves into `impl Sampleable for Fr`; byte serialization moves into `impl CanonicalBytes`/`impl ReducingBytes`/`impl FixedBytes<32>`; challenge decoding moves into `impl TranscriptChallenge`; `NUM_BYTES` moves into `impl FixedByteSize`; `num_bits` moves into `impl CanonicalBitLength`; checked canonical `u64` extraction moves into `impl CanonicalU64`; `mul_pow_2` moves into `impl MulPow2 for Fr`; `mul_u64`/`mul_i64`/`mul_u128`/`mul_i128` move into `impl MulPrimitiveInt for Fr`. Audit `#[inline]` on every moved method.
+- `crates/jolt-field/src/arkworks/bn254.rs` — decompose `impl Field for Fr` into per-trait `impl AdditiveGroup`, `impl RingCore`, `impl Invertible`, `impl FieldCore`, `impl FromPrimitiveInt`, `impl RandomSampling`, `impl CanonicalBytes`, `impl ReducingBytes`, `impl TranscriptChallenge`, `impl FixedBytes<32>`, `impl FixedByteSize`, `impl CanonicalBitLength`, `impl CanonicalU64`, `impl WithAccumulator`, `impl MulPow2`, `impl MulPrimitiveInt` for `Fr`. The existing concrete `Div` impls may remain centralized by `delegate_binop!(Div, div)`, but they are not required by `Field`. The `impl Field for Fr` and `impl FieldCore for Fr` become empty. `square` moves into `impl RingCore for Fr`; `inverse` and `inv_or_zero` move into `impl Invertible for Fr`; `random` moves into `impl RandomSampling for Fr`; byte serialization moves into `impl CanonicalBytes`/`impl ReducingBytes`/`impl FixedBytes<32>`; challenge decoding moves into `impl TranscriptChallenge`; `NUM_BYTES` moves into `impl FixedByteSize`; `num_bits` moves into `impl CanonicalBitLength`; checked canonical `u64` extraction moves into `impl CanonicalU64`; `mul_pow_2` moves into `impl MulPow2 for Fr`; `mul_u64`/`mul_i64`/`mul_u128`/`mul_i128` move into `impl MulPrimitiveInt for Fr`. Audit `#[inline]` on every moved method.
 - `crates/jolt-field/src/arkworks/wide_accumulator.rs` — update `WideAccumulator` to implement `RingAccumulator<Element = Fr>` and confirm `WithAccumulator::Accumulator = WideAccumulator` for `Fr`.
+- `crates/jolt-sumcheck/src/scalar.rs` (or `traits.rs`) — add the `SumcheckScalar` marker trait and blanket impl for types satisfying the bundled sumcheck capabilities.
 - `crates/jolt-transcript/Cargo.toml` — make `light-poseidon`, `ark-bn254`, `ark-ff`, `ark-serialize` optional; add `poseidon` feature; `default = ["poseidon"]`; depend on `jolt-field` with `default-features = false`.
 - `crates/jolt-transcript/src/lib.rs` — gate `pub use poseidon::*;` on `#[cfg(feature = "poseidon")]`.
 - `crates/jolt-transcript/src/poseidon.rs` — file-level `#![cfg(feature = "poseidon")]`.
@@ -670,10 +636,10 @@ The next agent should confirm by running the `field_arith` bench against `Fr` po
 
 The crates touched are limited to those needed to make `crates/jolt-sumcheck/tests/mersenne61_compat.rs` compile and pass:
 
-- `crates/jolt-sumcheck/src/{verifier.rs, batched_verifier.rs, round_proof.rs, claim.rs, proof.rs}`: `F: Field` → the per-body bounds listed in "Bound relaxation (minimal sweep)" above.
+- `crates/jolt-sumcheck/src/{verifier.rs, batched_verifier.rs, round_proof.rs, claim.rs, proof.rs}`: `F: Field` → `F: SumcheckScalar` where a named sumcheck scalar bundle is clearer, or to the narrower structural bounds listed in "Bound relaxation (minimal sweep)" where the type truly does not need arithmetic.
 - `crates/jolt-transcript/src/{transcript.rs, blanket.rs, digest.rs}`: challenge generation bounds move from `F: Field` to `F: TranscriptChallenge`; the blanket `AppendToTranscript` impl moves from `F: Field` to `F: CanonicalBytes + FixedByteSize`.
 - `crates/jolt-poly/src/{multilinear.rs, binding.rs, dense.rs, eq.rs, eq_plus_one.rs, lt.rs, lagrange.rs, univariate.rs, compressed_univariate.rs}`: `F: Field` → `F: FieldCore + WithAccumulator` (or finer).
-- `crates/jolt-openings/src/{claims.rs, reduction.rs}`: `F: Field` → `F: FieldCore + Sampleable` where applicable.
+- `crates/jolt-openings/src/{claims.rs, reduction.rs}`: `F: Field` → `F: FieldCore + RandomSampling` where applicable.
 
 `jolt-core`, `jolt-r1cs`, `jolt-crypto`, `jolt-eval` keep their `F: Field` bounds unchanged.
 Use clippy errors during step 6 (below) to verify the relaxation is consistent.
@@ -682,11 +648,11 @@ Use clippy errors during step 6 (below) to verify the relaxation is consistent.
 
 1. Add the new trait modules in `crates/jolt-field/src/`. The crate compiles standalone with empty-of-impls traits.
 2. Rename `FieldAccumulator` to `RingAccumulator` and relax `NaiveAccumulator` to slim ring bounds so non-`Field` rings can use the fallback accumulator.
-3. Decompose `Fr`'s monolithic `Field` impl into per-trait impls in `arkworks/bn254.rs`. The top-bundle trait preserves Jolt compatibility through inherited named capabilities; ring-core methods (`square`) live only in `RingCore`, inversion methods (`inverse`, `inv_or_zero`) live only in `Invertible`, `FieldCore` is an empty marker impl, halving constants (`TWO_INV`) live only in `HasTwoInverse`, serialization/sampling/introspection live only in `CanonicalBytes`/`ReducingBytes`/`TranscriptChallenge`/`FixedBytes<32>`/`FixedByteSize`/`CanonicalBitLength`/`CanonicalU64`/`Sampleable`, accumulator support lives only in `WithAccumulator`, and multiplication helper methods live only in `MulPow2` / `MulPrimitiveInt`. `cargo build -p jolt-field --features bn254` green.
+3. Decompose `Fr`'s monolithic `Field` impl into per-trait impls in `arkworks/bn254.rs`. The top-bundle trait preserves Jolt compatibility through inherited named capabilities; ring-core methods (`square`) live only in `RingCore`, inversion methods (`inverse`, `inv_or_zero`) live only in `Invertible`, `FieldCore` is an empty marker impl, serialization/random-sampling/introspection live only in `CanonicalBytes`/`ReducingBytes`/`TranscriptChallenge`/`FixedBytes<32>`/`FixedByteSize`/`CanonicalBitLength`/`CanonicalU64`/`RandomSampling`, accumulator support lives only in `WithAccumulator`, and multiplication helper methods live only in `MulPow2` / `MulPrimitiveInt`. `cargo build -p jolt-field --features bn254` green.
 4. Snapshot the wire-format and transcript-determinism golden blobs against `main` (capture them in a one-off test, paste expected values into `tests/`).
 5. Add the `poseidon` feature in `jolt-transcript`. Verify `cargo build -p jolt-transcript --no-default-features` green.
 6. Write `crates/jolt-sumcheck/tests/mersenne61_compat.rs`, including `Mersenne61` impls for every slim-hierarchy trait and the sumcheck verifier walkthrough. Run it and watch which `F: Field` bounds in shared code make it fail to compile.
-7. Write `crates/jolt-field/tests/binary_field_core_compat.rs`, including a minimal characteristic-2 field that implements the algebraic layer and explicitly does not implement `HasTwoInverse`, `MulPow2`, or the Jolt `Field` umbrella. This is a guardrail from the Binius audit, not a claim that Jolt protocols are binary-field-ready in this PR.
+7. Write `crates/jolt-field/tests/binary_field_core_compat.rs`, including a minimal characteristic-2 field that implements the algebraic layer and explicitly does not implement `MulPow2` or the Jolt `Field` umbrella. This is a guardrail from the Binius audit, not a claim that Jolt protocols are binary-field-ready in this PR.
 8. Run the bound-relaxation sweep guided by step-6 errors. Use `cargo clippy --workspace --features host` and `--features host,zk` as the worklist. Iterate until the `Mersenne61` test compiles and clippy is clean in both modes.
 9. Run the full gate: `cargo nextest run --workspace --features host`, `--features host,zk`, the explicit `muldiv` checks in both, and all listed benches.
 10. Open the Hachi PR consuming `jolt-field` once this lands.
@@ -699,13 +665,12 @@ File one separate spec/PR per item once this lands.
 1. **Extension-field API port.** Add `LiftBase<F>` and `ExtField<F: FieldCore>: FieldCore + LiftBase<F> + FromPrimitiveInt`, plus concrete `Fp2<F, C>`/`Fp4<F, C2, C4>` types, `Fp2Config<F>`/`Fp4Config<F, C2>`, and pre-canned non-residue configs `NegOneNr` (for $p \equiv 3 \pmod 4$) and `TwoNr` (for $p \equiv 5 \pmod 8$). Verbatim port from `hachi/src/algebra/fields/{lift,ext}.rs`. Add `Fp2<Mersenne61, NegOneNr>` round-trip tests (add/mul/square/inverse, conjugate, norm). Needed for any future Jolt FRI / recursive verification / non-BN254 work. The Binius and Plonky audits show this follow-up must explicitly specify coefficient order, base-field byte order, and transcript absorption for extension elements.
 2. **Hachi adoption of `jolt-field`.** Land in `LayerZero-Labs/hachi`. Implement the slim hierarchy for `Fp32`/`Fp64`/`Fp128`; implement `RingCore` for `CyclotomicRing<F, D>` where the coefficient type supports the needed field arithmetic. Delete `hachi/src/primitives/{arithmetic,transcript}.rs`, `hachi/src/algebra/uni_poly.rs`, and the verifier half of `hachi/src/protocol/sumcheck/`. Replace with re-exports from the slim hierarchy. Keep `PseudoMersenneField`/`SmoothFftField`/`Module` as hachi-only refinements.
 3. **Granular bound tightening across `jolt-core`.** Audit every `F: Field` bound in `jolt-core` and relax to the minimum required (e.g. `F: RingCore + CanonicalBytes + FixedByteSize`). Mechanical, but blast radius is workspace-wide. Optional follow-up; no behavioral change.
-4. **Constant-time `inv_or_zero` migration.** Audit Jolt callsites that currently use `inverse().unwrap()` or `a / b` on secret-bearing values; replace with `inv_or_zero`. Soundness/CT review needed per site.
-5. **Transcript challenge sampling.** Once a second non-BN254 protocol uses the transcript crate, consider replacing the simple `TranscriptChallenge::from_challenge_bytes` hook with a challenger-side trait closer to Binius `CanSample<F>` or Plonky3 `CanSampleUniformBits<F>`, especially if uniform rejection sampling or native-sponge field elements matter.
-6. **`Field` naming finalization.** If maintainers want a more precise name after this lands, file a rename-only PR.
+4. **Transcript challenge sampling.** Once a second non-BN254 protocol uses the transcript crate, consider replacing the simple `TranscriptChallenge::from_challenge_bytes` hook with a challenger-side trait closer to Binius `CanSample<F>` or Plonky3 `CanSampleUniformBits<F>`, especially if uniform rejection sampling or native-sponge field elements matter.
+5. **`Field` naming finalization.** If maintainers want a more precise name after this lands, file a rename-only PR.
 
 ## References
 
-- `hachi/src/primitives/arithmetic.rs`: source of the slim hierarchy. `AdditiveGroup` (lines 11-25), `FieldCore` (lines 28-65, split here into `RingCore`, field-only inversion, and `HasTwoInverse` for `TWO_INV`), `Invertible` (lines 71-74), `FromSmallInt` (lines 84-159, renamed to `FromPrimitiveInt` here and slimmed by omitting `digit_lut`), and `FieldSampling` (lines 180-183, generalized here to `Sampleable`). Hachi's current `CanonicalField` (lines 166-175), `PseudoMersenneField` (lines 186-192), `SmoothFftField` (lines 212-220), and `Module` (lines 227-257) stay in Hachi.
+- `hachi/src/primitives/arithmetic.rs`: source of the slim hierarchy. `AdditiveGroup` (lines 11-25), `FieldCore` (lines 28-65, split here into `RingCore` plus field-only inversion, without carrying over Hachi's `TWO_INV` constant), `Invertible` (lines 71-74), `FromSmallInt` (lines 84-159, renamed to `FromPrimitiveInt` here and slimmed by omitting `digit_lut`), and `FieldSampling` (lines 180-183, renamed here to `RandomSampling`). Hachi's current `CanonicalField` (lines 166-175), `PseudoMersenneField` (lines 186-192), `SmoothFftField` (lines 212-220), and `Module` stay in Hachi.
 - `hachi/src/algebra/fields/lift.rs` and `hachi/src/algebra/fields/ext.rs`: source of the deferred extension-field API (Follow-Up Work item 1).
 - `crates/jolt-field/src/field.rs`: current monolithic trait, source of every method to relocate or keep.
 - `crates/jolt-field/src/accumulator.rs`: current `FieldAccumulator` / `NaiveAccumulator` bound on the top `Field` trait; rename to `RingAccumulator` and move down to slim ring bounds.
@@ -713,7 +678,7 @@ File one separate spec/PR per item once this lands.
 - `crates/jolt-field/src/arkworks/wide_accumulator.rs`: existing accumulator implementation; updates to `RingAccumulator<Element = Fr>` and remains `WithAccumulator::Accumulator` for `Fr`.
 - `crates/jolt-transcript/Cargo.toml` lines 14-22: source of the unconditional `light-poseidon` / `ark-`* deps that the `poseidon` feature gates, and the `jolt-field` dependency edge that must use `default-features = false`.
 - `hachi/src/protocol/sumcheck/mod.rs` lines 11-17: Hachi's standing duplication notice naming the shared-trait adoption as the planned fix.
-- `binius64/crates/field/src/field.rs` and `binius64/crates/field/src/binary_field.rs`: binary-field audit source. Binius keeps characteristic-2 fields, inversion, serialization, and transcript sampling separate enough that Jolt must not put `TWO_INV`, halving, or integer-pow2 assumptions on `FieldCore`.
+- `binius64/crates/field/src/field.rs` and `binius64/crates/field/src/binary_field.rs`: binary-field audit source. Binius keeps characteristic-2 fields, inversion, serialization, and transcript sampling separate enough that Jolt must not put halving or integer-pow2 assumptions on `FieldCore`.
 - `binius64/crates/transcript/src/transcript.rs` and `binius64/crates/utils/src/serialization.rs`: source for the distinction between field-specific byte deserialization and RNG sampling.
 - `plonky2/field/src/types.rs` and `plonky2/plonky2/src/util/serialization/mod.rs`: source for canonical vs noncanonical constructors and base-field-coordinate extension serialization.
 - `plonky3/field/src/field.rs`, `plonky3/field/src/integers.rs`, and `plonky3/challenger/src/serializing_challenger.rs`: source for `QuotientMap`, canonical vs unique encodings, raw byte streams, and challenger-specific sampling.
