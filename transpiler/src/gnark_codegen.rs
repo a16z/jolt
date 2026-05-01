@@ -629,6 +629,14 @@ pub fn generate_circuit_from_bundle_with_stats(
         .map(|(idx, &node_id)| (node_id, idx))
         .collect();
     let has_global_cse = !global_node_map.is_empty();
+    if bundle
+        .global_cse
+        .bindings
+        .iter()
+        .any(|&node_id| node_requires_poseidon_import(&bundle.nodes, node_id))
+    {
+        stats.uses_poseidon = true;
+    }
 
     for (constraint_idx, c) in bundle.constraints.iter().enumerate() {
         // Use pre-computed CSE bindings from AstBundle
@@ -1243,6 +1251,29 @@ fn evaluate_constant_edge_in(nodes: &[Node], edge: Edge) -> Scalar {
     }
 }
 
+fn node_requires_poseidon_import(nodes: &[Node], root: usize) -> bool {
+    let mut stack = vec![root];
+    let mut visited = HashSet::new();
+
+    while let Some(node_id) = stack.pop() {
+        if !visited.insert(node_id) {
+            continue;
+        }
+
+        match &nodes[node_id] {
+            Node::Atom(_) => {}
+            Node::TranscriptHash(TranscriptHashData::Poseidon(_), _, _)
+            | Node::ByteReverse(_)
+            | Node::Truncate128Reverse(_)
+            | Node::Truncate128(_)
+            | Node::AppendU64Transform(_) => return true,
+            node => stack.extend(node_children(node)),
+        }
+    }
+
+    false
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -1250,7 +1281,9 @@ fn evaluate_constant_edge_in(nodes: &[Node], edge: Edge) -> Scalar {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zklean_extractor::ast_bundle::{Constraint, ConstraintCse, GlobalCse};
     use zklean_extractor::mle_ast::{AstBundle, TargetField, WitnessType};
+    use zklean_extractor::Assertion;
 
     /// Verifies that codegen panics with a clear error when non-native field variables are present.
     ///
@@ -1299,6 +1332,46 @@ mod tests {
             panic_msg.contains("Fq"),
             "Panic message should mention the field type, got: {panic_msg}"
         );
+    }
+
+    #[test]
+    fn test_global_poseidon_cse_adds_import() {
+        let hash = Node::TranscriptHash(
+            TranscriptHashData::Poseidon(Edge::Atom(Atom::Var(2))),
+            Edge::Atom(Atom::Var(0)),
+            Edge::Atom(Atom::Var(1)),
+        );
+        let assertion_0 = Node::Sub(Edge::NodeRef(0), Edge::Atom(Atom::Var(3)));
+        let assertion_1 = Node::Sub(Edge::NodeRef(0), Edge::Atom(Atom::Var(4)));
+
+        let mut bundle = AstBundle::new();
+        bundle.nodes = vec![hash, assertion_0, assertion_1];
+        bundle.global_cse = GlobalCse { bindings: vec![0] };
+        bundle.constraint_cse = vec![ConstraintCse::default(), ConstraintCse::default()];
+        for (idx, name) in ["state", "rounds", "data", "expected_0", "expected_1"]
+            .iter()
+            .enumerate()
+        {
+            bundle.add_input(idx as u16, *name, WitnessType::ProofData);
+        }
+        bundle.constraints = vec![
+            Constraint {
+                name: "assertion_0".to_string(),
+                root: 1,
+                assertion: Assertion::EqualZero,
+            },
+            Constraint {
+                name: "assertion_1".to_string(),
+                root: 2,
+                assertion: Assertion::EqualZero,
+            },
+        ];
+
+        let (code, stats) = generate_circuit_from_bundle_with_stats(&bundle, "TestCircuit", false);
+
+        assert!(stats.uses_poseidon);
+        assert!(code.contains("\"jolt_verifier/poseidon\""));
+        assert!(code.contains("poseidon.Hash(api,"));
     }
 
     // =========================================================================
