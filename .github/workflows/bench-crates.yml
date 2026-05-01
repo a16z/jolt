@@ -83,6 +83,7 @@ jobs:
 
       - name: Post benchmark comparison
         if: github.event_name == 'pull_request' && steps.critcmp.outputs.comparison != ''
+        continue-on-error: true
         uses: actions/github-script@v9
         with:
           script: |
