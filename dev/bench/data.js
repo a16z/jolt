@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1777654636190,
+  "lastUpdate": 1777662843306,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -92110,6 +92110,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 864192,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "8365992+moodlezoup@users.noreply.github.com",
+            "name": "Michael Zhu",
+            "username": "moodlezoup"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ffc43517a2f187ec7b79f6ef56687e99ee299e3d",
+          "message": "refactor(jolt-lookup-tables): port jolt-core's per-instruction fuzz tests (#1475)\n\n* refactor: fold jolt-riscv into jolt-trace, invert lookup-tables dep\n\nConsolidates the ~80 RISC-V instruction unit structs (previously split across\njolt-riscv/src/{rv,virt}/*.rs) into a single jolt-trace/src/instructions.rs\nfile alongside a new JoltInstructions enum, and moves flags.rs into jolt-trace.\nThe redundant pure-function Instruction::execute trait is dropped — the tracer\nalready owns execution semantics.\n\nInverts the jolt-trace ↔ jolt-lookup-tables dependency: jolt-lookup-tables now\ndepends on jolt-trace (for instruction structs) instead of the reverse. To\nbreak the cycle, the flag/lookup-aware CycleRow methods (circuit_flags,\ninstruction_flags, lookup_index, lookup_output, lookup_table_index) move to a\nnew CycleAnalysis extension trait in jolt-lookup-tables; CycleRow keeps only\nthe structural data accessors. The InstructionLookupTable impls move with\nthem, leaving jolt-trace free of any lookup-tables types.\n\nDeletes the jolt-riscv crate. jolt-riscv-derive stays (proc-macros require\ntheir own crate) and now generates impl crate::Flags against jolt-trace.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n* refactor(jolt-lookup-tables): split InstructionLookupTable impls into per-instruction files\n\nIntroduces crates/jolt-lookup-tables/src/instructions/ with one file per\ninstruction (97 single-instruction + virtual_xor_rot.rs / virtual_xor_rotw.rs\ngrouping the 4 variants each, mirroring jolt-core/src/zkvm/instruction/).\nEach file is just three lines: import the macro, import the struct, invoke\nimpl_lookup_table!.\n\nThe macro now uses $crate:: paths and is re-exported via pub(crate) use, so\ninstruction_tables.rs holds only the trait definition and macro definition.\n\nAlso drops cycle_analysis.rs and the CycleAnalysis trait + Cycle impl. The\nflag/lookup-aware Cycle methods are no longer provided by this crate; the\nunused tracer dep is removed.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n* refactor(jolt-lookup-tables): parametrize tables and LookupTableKind by const XLEN\n\nAll 38 lookup tables in `tables/` are now generic over `const XLEN: usize`\n(supported word sizes: 8 for full-hypercube tests, 64 for production).\nUniform formulas replace XLEN-conditional branches:\n\n* range_check / range_check_aligned: `(index & (1u128 << XLEN).wrapping_sub(1)) as u64`\n* valid_div0: `quotient == ((1u128 << XLEN).wrapping_sub(1) as u64)` for the all-ones check\n* virtual_change_divisor{,_w}: mask-based signed-MIN / -1 detection (no `i64::MIN`/`i32::MIN`)\n* virtual_xor_rot{,w}: XLEN-bit rotation via `((v >> r) | (v << (XLEN - r))) & mask` in u128\n* pow2_w: `XLEN/2`-driven rather than hardcoded 32/5\n\n`LookupTableKind` becomes `LookupTableKind<const XLEN: usize>` with table-typed\npayload variants (zero-sized, so no memory cost). The `InstructionLookupTable`\ntrait and `impl_lookup_table!` macro both gain `<XLEN>`, so per-instruction\nfiles in `instructions/` work unchanged.\n\nBug fixes uncovered by the new XLEN=8 hypercube tests:\n* signed_less_than / signed_greater_than_equal / valid_signed_remainder:\n  `materialize_entry` was reinterpreting the lower XLEN bits as a full i64\n  instead of sign-extending. Fixed via `((v as i64) << (64-XLEN)) >> (64-XLEN)`.\n\nAdds `mle_full_hypercube_test::<XLEN, F, T>()` to test_utils.rs and wires up\none (or four, for rotation tables) hypercube test per table at XLEN=8 — 135\ntable-level tests in total, all passing.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n* refactor(jolt-lookup-tables): merge instruction_tables into traits.rs, add LookupQuery\n\nMerges `instruction_tables.rs` into `traits.rs` so all lookup-table-related\ntraits live in one place: `LookupTable`, `InstructionLookupTable<XLEN>`, the\nnew `LookupQuery<XLEN>`, and the `impl_lookup_table!` macro.\n\n`LookupQuery<const XLEN: usize>` is ported from jolt-core. Defaults assume\nthe lookup operands match the instruction inputs and the lookup index is the\nbit-interleaving of the two operands; combined-operand tables (ADD, MUL,\nadvice, etc.) override `to_lookup_operands` / `to_lookup_index`.\n\nAdds `LookupQuery<XLEN>` impls on `tracer::instruction::<...>::RISCVCycle<XX>`\nto 63 of the per-instruction files in `instructions/` — one per RV64I/M base\ninstruction supported by jolt-core, plus all the virtual ones (with the four\nXOR-rotate variants getting four impls per file). The W-suffix instructions,\nmulti-byte loads/stores, plain 64-bit shifts, MULH/MULHSU, DIV/REM, and NOOP\nkeep just `InstructionLookupTable` — matching jolt-core's design where those\nopcodes are decomposed via virtual sequences.\n\n`match XLEN` / `if XLEN == 8` blocks from the jolt-core originals are\nreplaced with uniform formulas: `(1u128 << XLEN).wrapping_sub(1) as u64` for\nunsigned masks, `((v as i64) << (64 - XLEN)) >> (64 - XLEN)` for sign\nextension, u128 arithmetic for XLEN-bit rotations.\n\nRe-adds `tracer` (with `std` feature) to `jolt-lookup-tables/Cargo.toml`.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n* refactor: organize instructions/ into riscv/ + virt/, add JoltInstructions flag tests\n\nSplits `crates/jolt-lookup-tables/src/instructions/` into:\n- `riscv/` — 67 RV64I/M base + W-suffix instruction files (names unchanged)\n- `virt/`  — 32 virtual instruction files, with the redundant `virtual_` prefix\n  stripped (e.g. `virtual_advice.rs` → `virt/advice.rs`)\n\n`JoltInstructions` (in `jolt-trace`) now derives `strum::EnumIter` and gets an\n`impl Flags for JoltInstructions` dispatcher, enabling iteration-based tests.\nPorts the four flag-exclusivity tests from\n`jolt-core/src/zkvm/instruction/test.rs::flags`:\n  - `left_operand_exclusive`\n  - `right_operand_exclusive`\n  - `lookup_shape_exclusive`\n  - `load_store_exclusive`\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n* refactor(jolt-lookup-tables): align riscv/ instructions with jolt-core\n\nRemove instruction files for opcodes that the prover never sees directly:\nW-suffix arithmetic, multi-byte loads/stores, plain shifts, MULH/MULHSU,\nDIV/REM, and NOOP — all of which the tracer expands into virtual sequences.\nThe 31 remaining files now mirror jolt-core/src/zkvm/instruction/ exactly.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n* refactor(jolt-trace): add JoltInstruction and JoltCycle traits\n\nIntroduce two abstract views over RISC-V cycles: JoltInstruction exposes\nencoding-time data (address, immediate, register operand indices), and\nJoltCycle extends it with runtime register state. These will let LookupQuery\nimpls in jolt-lookup-tables operate on any concrete cycle representation,\ndecoupling them from tracer's RISCVCycle/Instruction types.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n* refactor: extract jolt-riscv crate; LookupQuery on JoltCycle\n\nSplit jolt-trace's flags.rs and instructions.rs out into a new jolt-riscv\ncrate, parametrize every instruction struct over a payload `T` (defaulting\nto `()`), and rewrite jolt-lookup-tables's LookupQuery impls against the\nabstract JoltCycle trait so the crate no longer depends on tracer.\n\n- new jolt-riscv crate owns flags + 105 instruction kinds; jolt-trace\n  re-exports them for back-compat\n- instructions/ organized by ISA extension (i, m, virt, assert, plus a/c\n  placeholders), one file per kind\n- struct shape changed from `pub struct Foo;` to `pub struct Foo<T = ()>(pub T);`\n  so cycle/instruction payloads can be carried into LookupQuery impls\n- jolt-riscv-derive::Flags now honors struct generics\n- LookupQuery impls switched from `RISCVCycle<XXX>` to `Foo<C: JoltCycle>`,\n  reading operands via `self.0.{rs1_val, rs2_val, rd_vals, imm, address}()`\n- tracer dropped from jolt-lookup-tables's deps\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n* refactor(jolt-riscv): add RISCVInstructions enum spanning the full ISA\n\nAdd 31 instruction kinds the prover doesn't yet need: Zicsr (CSRRS, CSRRW),\nMRET, the full RV32A and RV64A atomic memory ops, the four AdviceL{B,D,H,W}\nload-advice helpers, and Virtual{Lw,Sw}. They live alongside the existing\nJolt-supported variants but are kept out of `JoltInstructions` since they\nhave no flag configuration and aren't dispatched through `Flags`.\n\nIntroduce `RISCVInstructions`, a separate enum holding all 136 kinds, so\nconsumers can enumerate the entire ISA without conflating it with the\nprover-supported subset.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n* refactor(jolt-trace): replace CycleRow with JoltCycle + JoltInstruction\n\nDrop the standalone `CycleRow` trait and route every consumer through the\nnew `JoltInstruction` / `JoltCycle` traits. `JoltCycle` now uses an\nassociated `Instruction` type, and a blanket `impl<C: JoltCycle> JoltInstruction for C`\ndelegates static accessors through `self.instruction()` so a cycle is\nautomatically usable wherever an instruction view is expected.\n\nConcretely:\n- delete `cycle_row.rs`; rewrite `tracer_cycle.rs` to provide\n  `JoltInstruction for tracer::Instruction` and `JoltCycle for tracer::Cycle`\n- expand `JoltInstruction` with `is_noop`, `virtual_sequence_remaining`,\n  `is_first_in_sequence`, `is_virtual` so the bytecode-PC mapper can use it\n- `BytecodePreprocessing::get_pc` now takes `&impl JoltInstruction`\n  (`unexpanded_pc` becomes `address()`)\n- 21 `LookupQuery` impls in jolt-lookup-tables import `JoltInstruction`\n  alongside `JoltCycle` so blanket-provided accessors resolve\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n* refactor(jolt-trace): impl JoltInstruction/JoltCycle directly for tracer types\n\nDrop the blanket `impl<C: JoltCycle> JoltInstruction for C` and instead\nimplement the traits directly on tracer's `RISCVInstruction`-bounded\ntypes: `impl<T: RISCVInstruction> JoltInstruction for T` and\n`impl<T: RISCVInstruction> JoltCycle for RISCVCycle<T>`. This makes the\ntracer-side data sources concrete (a `RISCVCycle<T>` is now a `JoltCycle`\nwhose `Instruction` is the per-opcode struct itself) and removes the\ncoherence constraint the blanket impl imposed.\n\nUpdate the 21 affected `LookupQuery` impls in `jolt-lookup-tables` to\nroute through `self.0.instruction()` before calling `JoltInstruction`\nmethods (`imm`, `address`), since those accessors no longer flow through\na blanket impl on the cycle.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n* refactor: replace jolt-riscv-derive with declarative jolt_instruction! macro\n\nDrop the proc-macro crate and the `#[derive(Flags)]` / `#[circuit(...)]` /\n`#[instruction(...)]` attribute pipeline in favour of a single declarative\nmacro. Each instruction file is now a one-call `jolt_instruction!(...)`\nthat emits the struct, derives, `From<T>` and `Deref<Target = T>` impls,\nand (for variants with flag config) the `Flags` impl. The 31 instructions\nwithout flag config use a flagless arm of the same macro.\n\nAlso add a `JoltCycle::random` method gated by `cfg(any(feature = \"test-utils\", test))`\nplus a `test-utils` feature on `jolt-trace` that propagates through to\ntracer's existing `test-utils`. Make `impl_lookup_table!` generic over `T`\nso `Foo<C>` carries the `InstructionLookupTable` impl alongside its\nexisting `LookupQuery` impl.\n\nAdd `materialize_entry_test` plus per-instruction tests for every\nLookupQuery impl in jolt-lookup-tables (63 tests across riscv/ and virt/).\nThe fuzzer surfaced four pre-existing bugs which are also fixed:\n\n- virt/change_divisor.rs: `1i64 << (XLEN-1)` overflows at XLEN=64; replaced\n  with `i64::MIN >> (64 - XLEN)` for the sign-extended XLEN-bit minimum.\n- virt/sign_extend_word.rs: wrong table (`RangeCheck` → `SignExtendHalfWord`).\n- virt/zero_extend_word.rs: wrong table (`RangeCheck` → `LowerHalfWord`).\n- virt/rotriw.rs: `% half` produced wrong rotations when the imm bitmask had\n  set bits in [half, 2*half); switched to `.min(half)` to match jolt-core.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n* refactor: replace jolt-riscv-derive with declarative macro; add lookup table tests\n\nRemove the proc-macro crate jolt-riscv-derive in favor of a declarative\njolt_instruction! macro in jolt-riscv. Gate JoltCycle::random behind a\ntest-utils feature on jolt-trace so jolt-lookup-tables can use it as a\ndev-dependency, then add a materialize_entry_test macro that fuzz-checks\nevery instruction's LookupQuery against its lookup table. Also fix a few\nLookupQuery bugs surfaced by the new tests (change_divisor i64::MIN\noverflow, sign/zero-extend table choice, rotriw rotation amount).\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n* test(jolt-lookup-tables): port instruction_inputs_match_constraint fuzz test\n\nAdd a per-instruction fuzz test that checks `LookupQuery::to_instruction_inputs`\nmatches the operand-routing R1CS constraint\n(left = LeftOperandIsRs1Value · rs1 + LeftOperandIsPC · pc; right analogous).\nSurfaces three pre-existing bugs:\n\n- BGE/BLT sign-extended `rs2` in `to_instruction_inputs`; moved the\n  sign-extension into `to_lookup_output` so the inputs match the constraint.\n- Halfword/word alignment asserts masked the immediate via `as u64`, zero-\n  extending negative offsets; now passes raw `imm()` through.\n- Pow2 and ShiftRightBitmask declared a spurious `RightOperandIsImm` flag.\n\nAlso fixes the `From` bound in `materialize_entry_test_fn` (the constructor is\nnow passed in as a closure) so the existing tests compile.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n* refactor(jolt-lookup-tables): collapse LookupTableKind dispatch with a macro\n\nReplace four ~40-line match expressions in `materialize_entry`, `evaluate_mle`,\n`suffixes`, and `combine` with a shared `dispatch!` helper macro that lists\nthe variants once. Each method body becomes a single line, so adding a new\nmethod or a new variant only requires one edit per axis instead of N×M.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n* Human intervention\n\n* refactor(jolt-trace): move JoltInstruction to jolt-riscv, consolidate JoltCycle\n\nMove the `JoltInstruction` trait and its blanket `impl<T: RISCVInstruction>` to\n`jolt-riscv/src/jolt_instruction.rs`, where it sits next to the instruction\nkinds that satisfy it. `jolt-trace` re-exports it for source compatibility.\n\nFold the remaining `JoltCycle` trait + `RISCVCycle<T>` impl into a single\n`jolt-trace/src/jolt_cycle.rs`, replacing the previous split between\n`traits.rs` and `tracer_cycle.rs`.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n* refactor(jolt-riscv): wrap concrete tracer instruction structs in JoltInstructions\n\nEach `JoltInstructions` variant now carries the corresponding tracer struct\n(`Add(Add<ADD>)`, `Addi(Addi<ADDI>)`, …) instead of the unit-marker form, so\nvalues are populated rather than just labels. `Noop` becomes a payload-less\nvariant since it has no tracer counterpart, with its flags wired up directly\nin the dispatch macro. Drops `RISCVInstructions` (no longer needed for any\nremaining caller).\n\nAdds `JoltInstruction::is_compressed` and uses it (along with the existing\nvirtual/sequence predicates) in the no-flags arm of `jolt_instruction!` to\nderive the structural circuit flags directly from the wrapped instruction.\nRemoves the `IsRdNotZero` instruction flag that no longer corresponds to any\nconstraint.\n\nSplits `instruction_inputs_match_constraint_test!` to take a separate\n`Foo<TracerInstr>` wrapper for the flag lookup, keeping `Foo<RISCVCycle<…>>`\nfor the LookupQuery side — so both halves can satisfy the macro's\n`T: JoltInstruction` Flags bound.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n* Use (VirtualInstruction − Jump) instead of (VirtualInstruction − IsLastInSequence) for NextPCEqPCPlusOneIfInline constraint\n\n* fmt\n\n* machete\n\n* test(jolt-lookup-tables): port lookup_output_matches_trace_test from jolt-core\n\nAdds a per-instruction fuzz test that runs tracer's CPU emulator on a random\ncycle and asserts the resulting register write (or PC, for `JAL`/`JALR`)\nmatches `LookupQuery::to_lookup_output`. Catches divergences between the\nlookup-table semantics and the RISC-V semantics implemented by `tracer`.\n\nWired up across the 41 instruction files where jolt-core also runs this\ncheck (arithmetic/logic/jumps/the populated virtual instructions; skipped on\nbranches, asserts, advice, host-IO, loads, and stores where the test would\nbe a no-op or compare against the wrong piece of state).\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n* review feedback: revert constraint swap, tighten test guard, document gaps\n\nAddress the inline review on PR #1475:\n\n- Revert the `NextPCEqPCPlusOneIfInline` guard back to\n  `(VirtualInstruction − IsLastInSequence)`. The earlier swap to\n  `(VirtualInstruction − Jump)` was incorrect — for real `JAL`/`JALR`\n  the guard would evaluate to −1 and force `NextPC = PC + 1`, breaking\n  every program with a real jump. Reinstate `IsLastInSequence` and the\n  `V_FLAG_IS_LAST_IN_SEQUENCE` slot, restore `NUM_R1CS_INPUTS = 35`,\n  and add a SAFETY note to constraint 17 explaining why the macro can\n  set the flag broadly (any cycle with `virtual_sequence_remaining\n  == Some(0)`) rather than `JALR`-only as jolt-core does — `NextPC`\n  remains pinned by #14/#16/#18 + the bytecode commitment.\n\n- Move the structural circuit-flag derivation\n  (`VirtualInstruction`, `IsLastInSequence`, `DoNotUpdateUnexpandedPC`,\n  `IsCompressed`, `IsFirstInSequence`) into both arms of\n  `jolt_instruction!`, so each instruction picks them up automatically\n  from the underlying `JoltInstruction` methods instead of declaring\n  them per-opcode.\n\n- Convert the silent-pass branch in\n  `lookup_output_matches_trace_test_fn` (no `rd`, not `JAL`/`JALR`)\n  into an explicit panic so future call sites for asserts/branches/\n  stores fail loudly instead of running 10k iters with no assertion.\n\n- Document the deliberately-omitted instruction kinds on\n  `JoltInstructions` (Zicsr/MRET/A-extension/advice-loads/virtual\n  lw/sw) so the absence of those variants and exclusivity-test\n  coverage is visible.\n\n- Add a comment in `JoltCycle::random` flagging the all-zero\n  `RAMAccess` coverage gap, with a pointer to what would need to\n  change before any `LookupQuery` could legitimately depend on RAM\n  state.\n\n- Add the six missing\n  `instruction_inputs_match_constraint_test!` invocations across\n  `xor_rot.rs` / `xor_rotw.rs` so all 8 variants get all 3 fuzz\n  tests (308 → 314 tests; previous asymmetry was an oversight).\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>\n\n* fmt\n\n---------\n\nCo-authored-by: Claude Opus 4.7 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-05-01T14:14:15-04:00",
+          "tree_id": "0cbdf9250300cd3bca0db918ef242000a2972b6c",
+          "url": "https://github.com/a16z/jolt/commit/ffc43517a2f187ec7b79f6ef56687e99ee299e3d"
+        },
+        "date": 1777662840821,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.5888,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 864404,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.4108,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 498712,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 498692,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 503076,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7672,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 502644,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.6149,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 498824,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.3392,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 500532,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.5,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 230272,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.5613,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 864248,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.6117,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 498528,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4769,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 500720,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 23.2451,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 498396,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.2187,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 500784,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 34.1616,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1002036,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 15.6132,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 650008,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 92.9563,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2123788,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.5899,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 496552,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.6195,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 498588,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 16.0896,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 865476,
             "unit": "KB",
             "extra": ""
           }
