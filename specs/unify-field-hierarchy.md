@@ -6,7 +6,7 @@
 | Author(s) | @quangvdao |
 | Created   | 2026-04-30 |
 | Status    | proposed   |
-| PR        |            |
+| PR        | #1484      |
 
 
 ## Summary
