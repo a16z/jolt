@@ -1,6 +1,6 @@
 #![no_main]
 use jolt_crypto::{Bn254, Bn254G1, VectorCommitment, JoltGroup, Pedersen, PedersenSetup};
-use jolt_field::{Fr, FromPrimitiveInt, RandomSampling, ReducingBytes};
+use jolt_field::{Fr, FromPrimitiveInt, ReducingBytes};
 use libfuzzer_sys::fuzz_target;
 
 /// Fixed small setup (4 generators) — deterministic so we don't waste fuzzer

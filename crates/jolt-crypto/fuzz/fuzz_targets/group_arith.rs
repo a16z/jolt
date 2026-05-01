@@ -1,6 +1,6 @@
 #![no_main]
 use jolt_crypto::{Bn254, Bn254G1, JoltGroup};
-use jolt_field::{Fr, FromPrimitiveInt, RandomSampling, ReducingBytes};
+use jolt_field::{Fr, ReducingBytes};
 use libfuzzer_sys::fuzz_target;
 
 fn parse_input(data: &[u8]) -> Option<(Fr, Fr, Bn254G1)> {
