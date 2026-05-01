@@ -1,0 +1,23 @@
+{
+  "program": "muldiv",
+  "iters": 1,
+  "warmup": 1,
+  "runs": [
+    {
+      "stack": "core",
+      "prove_ms": 449.907959,
+      "verify_ms": 57.817042,
+      "peak_rss_mb": 111,
+      "proof_bytes": 66924,
+      "proof_encoding": "ark-compressed"
+    },
+    {
+      "stack": "modular",
+      "prove_ms": 5785.186958,
+      "verify_ms": 0.143417,
+      "peak_rss_mb": 3510,
+      "proof_bytes": 68796,
+      "proof_encoding": "bincode-serde"
+    }
+  ]
+}

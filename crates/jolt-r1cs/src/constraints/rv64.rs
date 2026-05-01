@@ -10,8 +10,8 @@
 //! | Range | Description |
 //! |-------|-------------|
 //! | `[0]` | Constant 1 |
-//! | `[1..=35]` | R1CS inputs (registers, flags, PC, lookups) |
-//! | `[36..=37]` | Product factor variables (`Branch`, `NextIsNoop`) |
+//! | `[1..=34]` | R1CS inputs (registers, flags, PC, lookups) |
+//! | `[35..=36]` | Product factor variables (`Branch`, `NextIsNoop`) |
 //!
 //! # Constraint forms
 //!
@@ -75,11 +75,22 @@ use crate::constraint::SparseRow;
 use jolt_field::Field;
 
 /// Helper: sparse row from `[(variable_index, coefficient)]` pairs.
+///
+/// Panics at compile-time constant initialization if any coefficient does not
+/// fit in `i64`; callers with wider constants (e.g. `2^64`) must use
+/// [`row_wide`].
+#[expect(
+    clippy::expect_used,
+    reason = "compile-time constant table; silent i128→i64 truncation would be a correctness bug"
+)]
 fn row<F: Field>(entries: &[(usize, i128)]) -> SparseRow<F> {
     entries
         .iter()
         .filter(|(_, c)| *c != 0)
-        .map(|&(idx, c)| (idx, F::from_i64(c as i64)))
+        .map(|&(idx, c)| {
+            let narrow = i64::try_from(c).expect("coefficient out of i64 range; use row_wide");
+            (idx, F::from_i64(narrow))
+        })
         .collect()
 }
 
@@ -311,6 +322,20 @@ pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
     //     guard = VirtualInstruction − IsLastInSequence
     //     left  = NextPC
     //     right = PC + 1
+    //
+    // NOTE: `IsLastInSequence` fires for every cycle whose
+    // `virtual_sequence_remaining == Some(0)`, not just `JALR`. That
+    // looks lax — at a non-`JALR` terminal step the guard zeros out and
+    // `NextPC` isn't pinned to `PC + 1` here — but `NextPC` is still
+    // uniquely determined by the rest of the system: #14
+    // (`NextUnexpPCEqLookupIfShouldJump`) / #16
+    // (`NextUnexpPCUpdateOtherwise`) constrain `NextUnexpandedPC`, #18
+    // (`MustStartSequenceFromBeginning`) forces the next row to be
+    // non-virtual or the first step of a new sequence, and the
+    // bytecode-row commitment ties `NextPC` to a unique row matching both
+    // properties. If any of those are ever removed or weakened, tighten
+    // `IsLastInSequence` back to `JALR`-only (see jolt-core's
+    // `instruction/jalr.rs`) to avoid an unconstrained-`NextPC` exploit.
     a_rows.push(row::<F>(&[
         (V_FLAG_VIRTUAL_INSTRUCTION, 1),
         (V_FLAG_IS_LAST_IN_SEQUENCE, -1),
@@ -360,6 +385,7 @@ pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "tests may unwind via panic")]
 mod tests {
     use super::*;
     use jolt_field::Fr;

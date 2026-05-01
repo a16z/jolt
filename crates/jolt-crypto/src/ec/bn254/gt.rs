@@ -1,8 +1,8 @@
 use std::fmt::Debug;
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-use ark_bn254::Fq12;
-use ark_ff::{Field as ArkField, PrimeField};
+use ark_bn254::{Fq12, Fr};
+use ark_ff::{AdditiveGroup, Field as ArkField, PrimeField};
 use jolt_field::Field;
 
 use jolt_transcript::{AppendToTranscript, Transcript};
@@ -37,13 +37,6 @@ impl Debug for Bn254GT {
     }
 }
 
-impl From<Fq12> for Bn254GT {
-    #[inline(always)]
-    fn from(inner: Fq12) -> Self {
-        Self(inner)
-    }
-}
-
 impl From<Bn254GT> for Fq12 {
     #[inline(always)]
     fn from(w: Bn254GT) -> Self {
@@ -59,7 +52,11 @@ impl Default for Bn254GT {
 }
 
 // GT's additive notation maps to Fq12 multiplication by design.
-#[allow(clippy::suspicious_arithmetic_impl, clippy::suspicious_op_assign_impl)]
+#[expect(
+    clippy::suspicious_arithmetic_impl,
+    clippy::suspicious_op_assign_impl,
+    clippy::expect_used
+)]
 const _: () = {
     impl Add for Bn254GT {
         type Output = Self;
@@ -131,20 +128,16 @@ impl MulAssign for Bn254GT {
     }
 }
 
+#[expect(clippy::expect_used)]
 impl AppendToTranscript for Bn254GT {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
         use ark_serialize::CanonicalSerialize;
-        let mut buf = Vec::new();
+        let mut buf = Vec::with_capacity(self.0.uncompressed_size());
         self.0
             .serialize_uncompressed(&mut buf)
             .expect("GT serialization cannot fail");
         buf.reverse();
         transcript.append_bytes(&buf);
-    }
-
-    fn serialized_len(&self) -> u64 {
-        use ark_serialize::CanonicalSerialize;
-        self.0.uncompressed_size() as u64
     }
 }
 
@@ -187,7 +180,7 @@ impl JoltGroup for Bn254GT {
 impl serde::Serialize for Bn254GT {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use ark_serialize::CanonicalSerialize;
-        let mut buf = Vec::new();
+        let mut buf = Vec::with_capacity(self.0.compressed_size());
         self.0
             .serialize_compressed(&mut buf)
             .map_err(serde::ser::Error::custom)?;
@@ -200,6 +193,19 @@ impl<'de> serde::Deserialize<'de> for Bn254GT {
         use ark_serialize::CanonicalDeserialize;
         let buf = <Vec<u8>>::deserialize(deserializer)?;
         let inner = Fq12::deserialize_compressed(&buf[..]).map_err(serde::de::Error::custom)?;
+        // Reject Fq12::ZERO: not in any multiplicative subgroup, and later
+        // Neg/Sub/SubAssign would call .inverse().expect(...) and panic.
+        if inner == Fq12::ZERO {
+            return Err(serde::de::Error::custom(
+                "GT element is zero (not in r-torsion subgroup)",
+            ));
+        }
+        // Subgroup membership: GT is the r-torsion subgroup, so x^r == 1.
+        if inner.pow(Fr::MODULUS) != Fq12::ONE {
+            return Err(serde::de::Error::custom(
+                "GT element is not in the r-torsion subgroup",
+            ));
+        }
         Ok(Self(inner))
     }
 }

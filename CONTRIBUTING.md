@@ -1,153 +1,98 @@
 # Contributing to Jolt
 
-Jolt is a security-critical zkVM. Every change to this codebase has the potential to compromise soundness, leak private inputs, or introduce exploits. We hold all contributions — whether written by humans or AI — to the same high standard.
+We welcome contributions! Jolt uses a **spec-driven development** workflow for major features, and standard PRs for everything else.
 
-## Getting Started
+## Quick Start
+
+- **Bug fixes, small improvements, documentation**: Open a PR directly. No spec needed.
+- **Major features, architectural changes**: Start with a spec (see below).
+
+The rule of thumb: if the implementation will be hard to review (500+ lines of non-trivial changes), write a spec first. The spec is small and reviewable; the implementation follows mechanically from it.
+
+## Spec-Driven Workflow
+
+Large PRs are expensive to review. Code generation is cheap — human verification time is the scarce resource. We optimize for that by front-loading review onto small, readable specs.
+
+### How It Works
+
+A single PR carries a feature from spec to implementation:
+
+1. **Create a spec** using `/new-spec <feature-name>` in Claude Code, or copy [`specs/TEMPLATE.md`](specs/TEMPLATE.md) manually.
+2. **Open a PR** with just the spec file. A GitHub Action will add the `spec` label.
+3. **Spec analysis**: Adding the `claude-spec-review-request` label triggers an external analysis. Claude performs a single-pass analysis, posting all questions at once — ambiguities, missing invariants, unclear evaluation criteria. When satisfied, Claude adds the `claude-spec-approved` label.
+4. **Spec review**: Maintainers review and approve the spec.
+5. **Implementation**: Run `/implement-spec` in [Claude Code cloud](https://claude.ai/code) or locally. Claude generates a one-shot implementation from the approved spec.
+6. **Merge**: Maintainers review the implementation and merge.
+
+### Writing a Good Spec
+
+A spec has these sections (see [`specs/TEMPLATE.md`](specs/TEMPLATE.md)):
+
+- **Summary**: One paragraph — what is this feature and why does it matter?
+- **Intent**: Goal (one sentence), Invariants (correctness properties), Non-Goals (explicit scope boundaries)
+- **Evaluation**: Acceptance Criteria (checkboxes), Testing Strategy (host + zk modes), Performance expectations
+- **Design**: Architecture (how it fits the existing system), Alternatives Considered (what was rejected and why)
+- **Documentation**: What changes to the Jolt book (`book/`) are required?
+- **Execution** (optional): Implementation direction, algorithmic approach
+- **References**: Papers, related specs, prior art
+
+Focus on **intent and evaluation**. Execution is downstream — the implementer should be able to derive most of it from what you want (intent) and how you'll verify it (evaluation).
+
+### Labels
+
+| Label | Meaning | Applied by |
+|-------|---------|------------|
+| `spec` | PR contains a spec file | GitHub Action (auto) |
+| `no-spec` | PR has no spec file | GitHub Action (auto) |
+| `implementation` | PR contains code alongside a spec | GitHub Action (auto) |
+| `claude-spec-review-request` | Triggers external Claude spec analysis | Maintainer (manual) |
+| `claude-spec-approved` | Claude's analysis found no ambiguities | Claude |
+
+### Soft Guardrails
+
+PRs exceeding 500 changed lines without a spec file get an automated warning comment. This is a suggestion, not a gate — use your judgment.
+
+## Claude Skills
+
+These Claude Code skills are available in this repo:
+
+| Skill | Description |
+|-------|-------------|
+| `/new-spec <name>` | Create a new spec file from the template |
+| `/analyze-spec` | Interactive Socratic analysis of a spec (local) |
+| `/implement-spec` | Autonomous implementation from an approved spec (local/cloud) |
+| `/ci-code-review` | Deep PR code review with parallel analysis agents |
+
+Spec analysis can also be triggered externally by adding the `claude-spec-review-request` label to a PR.
+
+## Development Setup
 
 ### Prerequisites
 
-- **Rust toolchain**: Pinned in `rust-toolchain.toml` (currently 1.88)
-- **cargo-nextest**: Required for running tests (`cargo install cargo-nextest`)
-- **taplo**: TOML formatter (`cargo install taplo-cli`)
-- **typos**: Spell checker (`cargo install typos-cli`)
+- Rust toolchain (see `rust-toolchain.toml`)
+- [cargo-nextest](https://nexte.st/) for running tests
 
-### Git Hooks
-
-We use [lefthook](https://github.com/evilmartians/lefthook) for local git hooks. Install it and activate:
+### Key Commands
 
 ```bash
-brew install lefthook   # or: cargo install lefthook
-lefthook install
+# Lint (must pass in both modes)
+cargo clippy -p jolt-core --features host --message-format=short -q --all-targets -- -D warnings
+cargo clippy -p jolt-core --features host,zk --message-format=short -q --all-targets -- -D warnings
+
+# Format
+cargo fmt -q
+
+# Test (always use nextest)
+cargo nextest run --cargo-quiet
+
+# Primary correctness check
+cargo nextest run -p jolt-core muldiv --cargo-quiet --features host
+cargo nextest run -p jolt-core muldiv --cargo-quiet --features host,zk
 ```
 
-This sets up:
+## Code Style
 
-| Hook | What Runs | Parallel |
-|------|-----------|----------|
-| **pre-commit** | `cargo fmt`, `clippy`, `taplo`, `typos`, `machete` | Yes |
-| **commit-msg** | Conventional commits format validation | No |
-
-To skip hooks: `git commit --no-verify` (do not make this a habit).
-
-### Building
-
-```bash
-cargo clippy --all --message-format=short -q --all-targets --features allocative,host -- -D warnings
-
-cargo build -p jolt-core --message-format=short -q
-```
-
-### Testing
-
-Always use `cargo nextest`.
-
-```bash
-# Run all core tests
-cargo nextest run --cargo-quiet -p jolt-core
-
-# Primary correctness check — run this before every PR
-cargo nextest run -p jolt-core muldiv --cargo-quiet
-
-# Run a specific test
-cargo nextest run -p [package_name] [test_name] --cargo-quiet
-```
-
-### Formatting and Linting
-
-```bash
-cargo fmt --all --check
-cargo clippy --all --message-format=short -q --all-targets --features allocative,host -- -D warnings
-cargo clippy --all --message-format=short -q --all-targets --no-default-features -- -D warnings
-taplo fmt --check
-typos
-```
-
-### Dependency DAG
-
-The `crates/` directory enforces a strict dependency hierarchy. Do **not** introduce upward or circular dependencies:
-
-```
-jolt-field          (no internal deps)
-jolt-transcript     (no internal deps)
-jolt-poly           → jolt-field
-jolt-openings       → jolt-field, jolt-poly, jolt-transcript
-jolt-sumcheck       → jolt-field, jolt-poly, jolt-transcript
-jolt-instructions   → jolt-field
-jolt-spartan        → jolt-field, jolt-poly, jolt-transcript, jolt-sumcheck, jolt-openings
-jolt-dory           → jolt-field, jolt-poly, jolt-transcript, jolt-openings
-jolt-zkvm           → all of the above
-```
-
-## Code Standards
-
-### Lint Configuration
-
-All crates inherit workspace-level lints. Clippy runs in **pedantic mode**.
-
-### Unsafe Code
-
-This codebase uses `unsafe` in performance-critical paths. Every `unsafe` block **must** have a `// SAFETY:` comment explaining invariants:
-
-```rust
-// SAFETY: `len` was computed from `num_vars` which is validated at construction,
-// guaranteeing `index < self.evaluations.len()`.
-unsafe { *self.evaluations.get_unchecked(index) }
-```
-
-### Comments
-
-**Delete these:**
-- Section separators (`// ==========`, `// ----------`)
-- Doc comments that restate the item name
-- Obvious comments (`/// Returns the count` on `get_count()`)
-- Commented-out code
-- TODOs without issue links
-
-**Keep these:**
-- WHY something is done (when not obvious)
-- WARNING comments for non-obvious gotchas
-- SAFETY comments for unsafe blocks
-- Complex algorithm explanations with paper references
-- Public API docs that explain behavior, constraints, or invariants
-
-### Error Handling
-
-- Use `thiserror` for library error types, `eyre`/`anyhow` for application code
-- Do **not** use `.unwrap()` or `.expect()` in library code — propagate errors with `?`
-- Panics are acceptable only in cases that represent invariant violations.
-
-### Performance
-
-Performance is a top priority. This is a proving system where every nanosecond in the inner loop multiplies across millions of sumcheck rounds.
-
-- Profile before optimizing — don't guess
-- Pre-allocate vectors when size is known
-- Avoid clones
-
-### Dependencies
-
-- Do **not** add new dependencies without justification in the PR description
-- Prefer crates from the Rust standard library or already in the dependency tree
-- All dependencies must have compatible licenses (MIT, Apache-2.0, BSD)
-- Workspace dependencies are defined in the root `Cargo.toml` — use `workspace = true` in crate manifests
-
-## Pull Requests
-
-PR title must follow conventional commits: `feat(core): ...`, `fix(tracer): ...`, `refactor(poly): ...`
-
-Valid scopes: `core`, `tracer`, `sdk`, `poly`, `spartan`, `dory`, `sumcheck`, `field`, `transcript`, `openings`, `instructions`, `zkvm`, `deps`, `ci`
-
-A [PR template](/.github/pull_request_template.md) is provided — fill out every section.
-
-## AI-Assisted Contributions
-
-We welcome AI-assisted contributions, but they are held to the same standard as human-written code. AI-generated code is more likely to:
-
-- Introduce `.unwrap()` calls and silent panics
-- Add unnecessary dependencies
-- Produce large, unfocused PRs
-- Generate superficial comments and documentation
-- Miss edge cases
-- Introduce subtle correctness bugs that pass basic tests
-
-Our CI is specifically designed to catch these patterns. The pedantic clippy configuration, mandatory `SAFETY` comments on `unsafe` blocks, and PR size limits exist specifically to maintain code quality regardless of authorship.
+- `cargo fmt` + `cargo clippy` with zero warnings
+- Performance is critical — profile before optimizing, benchmark changes to hot paths
+- The codebase uses `non_snake_case` for math variables: `log_T`, `ram_K`, etc.
+- See `CLAUDE.md` for full development guidelines

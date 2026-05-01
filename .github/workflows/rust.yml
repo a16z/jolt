@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
     branches: ["**", main]
+    paths-ignore:
+      - "specs/**"
+      - "*.md"
+      - ".claude/**"
 
 env:
   RUSTFLAGS: -D warnings
@@ -25,37 +29,16 @@ jobs:
       - name: cargo fmt
         run: cargo fmt --all --check
 
-  doc:
+  taplo:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-      - name: Check crate READMEs exist
-        run: |
-          missing=()
-          for crate in jolt-field jolt-poly jolt-sumcheck jolt-openings jolt-spartan jolt-instructions jolt-transcript jolt-dory jolt-zkvm; do
-            if [ ! -f "crates/$crate/README.md" ]; then
-              missing+=("crates/$crate/README.md")
-            fi
-          done
-          if [ ${#missing[@]} -gt 0 ]; then
-            echo "::error::Missing crate READMEs: ${missing[*]}"
-            exit 1
-          fi
-      - name: Check docs for crates/
-        run: |
-          cargo doc --no-deps --document-private-items \
-            -p jolt-field \
-            -p jolt-transcript \
-            -p jolt-poly \
-            -p jolt-openings \
-            -p jolt-sumcheck \
-            -p jolt-spartan \
-            -p jolt-instructions \
-            -p jolt-dory \
-            -p jolt-zkvm
-        env:
-          RUSTDOCFLAGS: -D warnings
+      - name: Install taplo
+        uses: taiki-e/install-action@v2
+        with:
+          tool: taplo-cli
+      - name: taplo fmt --check
+        run: taplo fmt --check
 
   clippy:
     runs-on: ubuntu-latest
@@ -131,7 +114,7 @@ jobs:
           components: rust-src
           cache-directories: ~/.cache/dory
       - name: Build and install jolt CLI
-        run: cargo install --path . --locked
+        run: cargo install --path . --locked --force
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Run jolt-core tests
@@ -147,7 +130,7 @@ jobs:
           components: rust-src
           cache-directories: ~/.cache/dory
       - name: Build and install jolt CLI
-        run: cargo install --path . --locked
+        run: cargo install --path . --locked --force
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Run jolt-core tests with zk feature
@@ -157,7 +140,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: crate-ci/typos@v1.44.0
+      - uses: crate-ci/typos@v1.45.2
         with:
           files: .
 
@@ -170,7 +153,7 @@ jobs:
         with:
           cache-directories: ~/.cache/dory
       - name: Build and install jolt CLI
-        run: cargo install --path . --locked
+        run: cargo install --path . --locked --force
 
       - name: Use the `jolt` binary to generate code
         run: jolt new sample_project
@@ -199,12 +182,19 @@ jobs:
         with:
           node-version: '22'
       - name: Build and install jolt CLI
-        run: cargo install --path . --locked
+        run: cargo install --path . --locked --force
 
-      - name: Install wasm-pack and wasm32 target
-        run: |
-          curl https://drager.github.io/wasm-pack/installer/init.sh -sSf | bash
-          rustup target add wasm32-unknown-unknown
+      - name: Cache wasm-pack
+        id: cache-wasm-pack
+        uses: actions/cache@v5
+        with:
+          path: ~/.cargo/bin/wasm-pack
+          key: wasm-pack-0.13.1
+      - name: Install wasm-pack
+        if: steps.cache-wasm-pack.outputs.cache-hit != 'true'
+        run: curl -sSL https://github.com/rustwasm/wasm-pack/releases/download/v0.13.1/wasm-pack-v0.13.1-x86_64-unknown-linux-musl.tar.gz | tar -xz --strip-components=1 -C ~/.cargo/bin
+      - name: Add wasm32 target
+        run: rustup target add wasm32-unknown-unknown
 
       - name: Generate sample project
         run: jolt new sample_project
@@ -232,6 +222,32 @@ jobs:
         working-directory: ./sample_project
         run: node verify.mjs
 
+  test-crates:
+    name: Test modular crates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Discover modular crates
+        id: discover
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkgs=$(cargo metadata --format-version=1 --no-deps \
+                   | jq -r '.packages[] | select(.manifest_path | startswith("'"$(pwd)"'/crates/")) | .name' \
+                   | tr '\n' ' ')
+          echo "Found crates: $pkgs"
+          echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
+      - name: Test each crate
+        shell: bash
+        run: |
+          set -euo pipefail
+          for pkg in ${{ steps.discover.outputs.pkgs }}; do
+            cargo nextest run -p "$pkg" --no-tests=pass
+          done
+
   test-inlines:
     name: Test inlines
     runs-on: ubuntu-latest
@@ -256,7 +272,7 @@ jobs:
         run: |
           set -euo pipefail
           for pkg in ${{ steps.discover_inlines.outputs.pkgs }}; do
-            cargo nextest run --features host -p "$pkg"
+            cargo nextest run --features host -p "$pkg" --no-tests=pass
           done
 
   test-sdk-verifier:
@@ -268,7 +284,7 @@ jobs:
         with:
           cache-directories: ~/.cache/dory
       - name: Build and install jolt CLI
-        run: cargo install --path . --locked
+        run: cargo install --path . --locked --force
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Generate test fixtures
@@ -283,7 +299,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Build and install jolt CLI
-        run: cargo install --path . --locked
+        run: cargo install --path . --locked --force
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Run tracer tests

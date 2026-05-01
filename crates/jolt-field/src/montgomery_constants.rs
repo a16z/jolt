@@ -22,16 +22,17 @@ pub trait MontgomeryConstants: 'static {
     /// Byte size of a single field element: `NUM_U32_LIMBS * 4`.
     const FIELD_BYTE_SIZE: usize;
 
-    /// The field modulus `r` as little-endian u32 limbs.
+    /// The field modulus `r` as little-endian u32 limbs (`NUM_U32_LIMBS` elements).
     fn modulus_u32() -> &'static [u32];
 
     /// `-r^{-1} mod 2^{32}` — the Montgomery reduction constant.
     fn inv32() -> u32;
 
-    /// `R^2 mod r` as little-endian u32 limbs, where `R = 2^(32 * NUM_U32_LIMBS)`.
-    /// Used for converting standard-form integers to Montgomery form.
+    /// `R^2 mod r` as little-endian u32 limbs (`NUM_U32_LIMBS` elements),
+    /// where `R = 2^(32 * NUM_U32_LIMBS)`.
     fn r2_u32() -> &'static [u32];
 
-    /// `R mod r` as little-endian u32 limbs — the Montgomery representation of 1.
+    /// `R mod r` as little-endian u32 limbs (`NUM_U32_LIMBS` elements) —
+    /// the Montgomery representation of 1.
     fn one_u32() -> &'static [u32];
 }

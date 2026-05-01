@@ -18,9 +18,7 @@ fn recover(sig: &[u8], msg: [u8; 32]) -> PublicKey {
     )
     .unwrap();
     let secp = Secp256k1::new();
-    let public = secp
-        .recover_ecdsa(&Message::from_digest(msg), &sig)
-        .unwrap();
+    let public = secp.recover_ecdsa(Message::from_digest(msg), &sig).unwrap();
     end_cycle_tracking("recover");
 
     public

@@ -5,7 +5,7 @@ use std::{fs::File, io::Cursor, path::Path};
 use allocative::{Allocative, FlameGraphBuilder};
 use inferno::flamegraph::Options;
 
-use crate::units::{format_memory_size, BYTES_PER_GIB};
+use crate::units::{format_memory_size, BYTES_PER_GIB, BYTES_PER_MIB};
 
 /// Logs the heap allocation size of an `Allocative`-instrumented value.
 pub fn print_data_structure_heap_usage<T: Allocative>(label: &str, data: &T) {
@@ -27,7 +27,7 @@ pub fn write_flamegraph_svg<P: AsRef<Path>>(flamegraph: FlameGraphBuilder, path:
     let mut opts = Options::default();
     opts.color_diffusion = true;
     opts.count_name = String::from("MiB");
-    opts.factor = 1.0 / BYTES_PER_GIB * 1024.0;
+    opts.factor = 1.0 / BYTES_PER_MIB;
     opts.flame_chart = true;
 
     let flamegraph_src = flamegraph.finish_and_write_flame_graph();

@@ -7,21 +7,12 @@
 /// Generates a `#[repr(transparent)]` wrapper over an arkworks projective curve type,
 /// with all operator impls, serde, `AppendToTranscript`, `JoltGroup`, compile-time
 /// size assertions, and a safe `into_inner` accessor.
+///
+/// Paths are fully qualified so the macro does not inject `use` items into the caller's
+/// module scope — callers can expand the macro multiple times in the same module or
+/// alongside unrelated imports without conflicts.
 macro_rules! impl_jolt_group_wrapper {
     ($wrapper:ident, $projective:ty, $affine:ty, $doc:literal) => {
-        use std::fmt::Debug;
-        use std::ops::{Add, AddAssign, Neg, Sub, SubAssign};
-
-        use ark_ec::{AdditiveGroup, CurveGroup, VariableBaseMSM};
-        use ark_ff::{PrimeField, Zero};
-        use jolt_field::Field;
-
-        use jolt_transcript::{AppendToTranscript, Transcript};
-
-        use crate::JoltGroup;
-
-        use super::field_to_fr;
-
         #[doc = $doc]
         #[derive(Clone, Copy, Default, Eq, PartialEq)]
         #[repr(transparent)]
@@ -30,7 +21,7 @@ macro_rules! impl_jolt_group_wrapper {
         // SAFETY: $wrapper is #[repr(transparent)] over $projective.
         // Unsafe pointer casts in batch_addition and glv rely on this.
         const _: () =
-            assert!(std::mem::size_of::<$wrapper>() == std::mem::size_of::<$projective>());
+            assert!(::std::mem::size_of::<$wrapper>() == ::std::mem::size_of::<$projective>());
 
         impl $wrapper {
             /// Unwraps into the inner arkworks projective type.
@@ -40,9 +31,9 @@ macro_rules! impl_jolt_group_wrapper {
             }
         }
 
-        impl Debug for $wrapper {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                let affine = self.0.into_affine();
+        impl ::std::fmt::Debug for $wrapper {
+            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                let affine = <$projective as ::ark_ec::CurveGroup>::into_affine(self.0);
                 f.debug_tuple(stringify!($wrapper)).field(&affine).finish()
             }
         }
@@ -61,7 +52,7 @@ macro_rules! impl_jolt_group_wrapper {
             }
         }
 
-        impl Add for $wrapper {
+        impl ::std::ops::Add for $wrapper {
             type Output = Self;
             #[inline(always)]
             fn add(self, rhs: Self) -> Self {
@@ -69,7 +60,7 @@ macro_rules! impl_jolt_group_wrapper {
             }
         }
 
-        impl<'a> Add<&'a $wrapper> for $wrapper {
+        impl<'a> ::std::ops::Add<&'a $wrapper> for $wrapper {
             type Output = Self;
             #[inline(always)]
             fn add(self, rhs: &'a $wrapper) -> Self {
@@ -77,7 +68,7 @@ macro_rules! impl_jolt_group_wrapper {
             }
         }
 
-        impl Sub for $wrapper {
+        impl ::std::ops::Sub for $wrapper {
             type Output = Self;
             #[inline(always)]
             fn sub(self, rhs: Self) -> Self {
@@ -85,7 +76,7 @@ macro_rules! impl_jolt_group_wrapper {
             }
         }
 
-        impl<'a> Sub<&'a $wrapper> for $wrapper {
+        impl<'a> ::std::ops::Sub<&'a $wrapper> for $wrapper {
             type Output = Self;
             #[inline(always)]
             fn sub(self, rhs: &'a $wrapper) -> Self {
@@ -93,7 +84,7 @@ macro_rules! impl_jolt_group_wrapper {
             }
         }
 
-        impl Neg for $wrapper {
+        impl ::std::ops::Neg for $wrapper {
             type Output = Self;
             #[inline(always)]
             fn neg(self) -> Self {
@@ -101,45 +92,47 @@ macro_rules! impl_jolt_group_wrapper {
             }
         }
 
-        impl AddAssign for $wrapper {
+        impl ::std::ops::AddAssign for $wrapper {
             #[inline(always)]
             fn add_assign(&mut self, rhs: Self) {
                 self.0 += rhs.0;
             }
         }
 
-        impl SubAssign for $wrapper {
+        impl ::std::ops::SubAssign for $wrapper {
             #[inline(always)]
             fn sub_assign(&mut self, rhs: Self) {
                 self.0 -= rhs.0;
             }
         }
 
-        impl serde::Serialize for $wrapper {
-            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-                use ark_serialize::CanonicalSerialize;
-                let mut buf = Vec::new();
+        impl ::serde::Serialize for $wrapper {
+            fn serialize<S: ::serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                use ::ark_serialize::CanonicalSerialize;
+                let mut buf = Vec::with_capacity(self.0.compressed_size());
                 self.0
                     .serialize_compressed(&mut buf)
-                    .map_err(serde::ser::Error::custom)?;
+                    .map_err(::serde::ser::Error::custom)?;
                 serializer.serialize_bytes(&buf)
             }
         }
 
-        impl<'de> serde::Deserialize<'de> for $wrapper {
-            fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-                use ark_serialize::CanonicalDeserialize;
+        impl<'de> ::serde::Deserialize<'de> for $wrapper {
+            fn deserialize<D: ::serde::Deserializer<'de>>(
+                deserializer: D,
+            ) -> Result<Self, D::Error> {
+                use ::ark_serialize::CanonicalDeserialize;
                 let buf = <Vec<u8>>::deserialize(deserializer)?;
                 let inner = <$projective>::deserialize_compressed(&buf[..])
-                    .map_err(serde::de::Error::custom)?;
+                    .map_err(::serde::de::Error::custom)?;
                 Ok(Self(inner))
             }
         }
 
-        impl AppendToTranscript for $wrapper {
-            fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-                use ark_serialize::CanonicalSerialize;
-                let mut buf = Vec::new();
+        impl ::jolt_transcript::AppendToTranscript for $wrapper {
+            fn append_to_transcript<T: ::jolt_transcript::Transcript>(&self, transcript: &mut T) {
+                use ::ark_serialize::CanonicalSerialize;
+                let mut buf = Vec::with_capacity(self.0.uncompressed_size());
                 self.0
                     .serialize_uncompressed(&mut buf)
                     .expect(concat!(stringify!($wrapper), " serialization cannot fail"));
@@ -148,34 +141,39 @@ macro_rules! impl_jolt_group_wrapper {
             }
         }
 
-        impl JoltGroup for $wrapper {
+        impl $crate::JoltGroup for $wrapper {
             #[inline(always)]
             fn identity() -> Self {
-                Self(<$projective>::zero())
+                Self(<$projective as ::ark_ff::Zero>::zero())
             }
 
             #[inline(always)]
             fn is_identity(&self) -> bool {
-                self.0.is_zero()
+                <$projective as ::ark_ff::Zero>::is_zero(&self.0)
             }
 
             #[inline(always)]
             fn double(&self) -> Self {
-                Self(AdditiveGroup::double(&self.0))
+                Self(<$projective as ::ark_ec::AdditiveGroup>::double(&self.0))
             }
 
             #[inline]
-            fn scalar_mul<F: Field>(&self, scalar: &F) -> Self {
-                Self(self.0 * field_to_fr(scalar))
+            fn scalar_mul<F: ::jolt_field::Field>(&self, scalar: &F) -> Self {
+                Self(self.0 * super::field_to_fr(scalar))
             }
 
             #[inline]
-            fn msm<F: Field>(bases: &[Self], scalars: &[F]) -> Self {
+            fn msm<F: ::jolt_field::Field>(bases: &[Self], scalars: &[F]) -> Self {
+                use ::ark_ec::{CurveGroup, VariableBaseMSM};
+                use ::ark_ff::PrimeField;
                 debug_assert_eq!(bases.len(), scalars.len());
                 let affines: Vec<$affine> = bases.iter().map(|b| b.0.into_affine()).collect();
-                let fr_scalars: Vec<ark_bn254::Fr> = scalars.iter().map(field_to_fr).collect();
+                let fr_scalars: Vec<::ark_bn254::Fr> =
+                    scalars.iter().map(super::field_to_fr).collect();
                 let bigints: Vec<_> = fr_scalars.iter().map(|s| s.into_bigint()).collect();
-                Self(<$projective>::msm_bigint(&affines, &bigints))
+                Self(<$projective as VariableBaseMSM>::msm_bigint(
+                    &affines, &bigints,
+                ))
             }
         }
     };
@@ -240,8 +238,13 @@ impl PairingGroup for Bn254 {
 
     fn multi_pairing(g1s: &[Self::G1], g2s: &[Self::G2]) -> Self::GT {
         debug_assert_eq!(g1s.len(), g2s.len());
-        let g1_affines: Vec<ark_bn254::G1Affine> = g1s.iter().map(|g| g.0.into_affine()).collect();
-        let g2_affines: Vec<ark_bn254::G2Affine> = g2s.iter().map(|g| g.0.into_affine()).collect();
+        // Batched projective → affine normalization (one inversion for all points)
+        // is 10-100× faster than per-point `into_affine` for typical Dory/KZG verifier
+        // sizes.
+        let g1_projs: Vec<ark_bn254::G1Projective> = g1s.iter().map(|g| g.0).collect();
+        let g2_projs: Vec<ark_bn254::G2Projective> = g2s.iter().map(|g| g.0).collect();
+        let g1_affines = ark_bn254::G1Projective::normalize_batch(&g1_projs);
+        let g2_affines = ark_bn254::G2Projective::normalize_batch(&g2_projs);
         Bn254GT(ArkBn254::multi_pairing(&g1_affines, &g2_affines).0)
     }
 }
@@ -251,8 +254,21 @@ impl PairingGroup for Bn254 {
 /// This is the bridge between jolt-field's backend-agnostic `Field` trait and
 /// arkworks' concrete scalar type. The conversion goes through little-endian
 /// byte serialization.
+///
+/// In debug builds, asserts that the source value fits in the BN254 Fr modulus —
+/// catches silent modular reduction when `F` has a larger modulus than BN254 Fr.
 #[inline]
 pub(crate) fn field_to_fr<F: Field>(f: &F) -> ark_bn254::Fr {
     let bytes = f.to_bytes();
+    #[cfg(debug_assertions)]
+    {
+        use ark_ff::{BigInteger, PrimeField as _};
+        let value = num_bigint::BigUint::from_bytes_le(&bytes);
+        let modulus = num_bigint::BigUint::from_bytes_le(&ark_bn254::Fr::MODULUS.to_bytes_le());
+        debug_assert!(
+            value < modulus,
+            "field_to_fr: source value >= BN254 Fr modulus (silent reduction)",
+        );
+    }
     ark_bn254::Fr::from_le_bytes_mod_order(&bytes)
 }

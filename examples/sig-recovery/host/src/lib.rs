@@ -6,12 +6,12 @@ use alloy_consensus::SignableTransaction;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, U256};
 use reth_ethereum_primitives::{Transaction, TransactionSigned};
-use secp256k1::{Keypair, Message, Secp256k1, SecretKey};
+use secp256k1::{rand, Keypair, Message, Secp256k1, SecretKey};
 
 /// Generate a batch of signed transactions for testing
 pub fn generate_test_transactions(count: usize) -> Vec<TransactionSigned> {
     let secp = Secp256k1::new();
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
 
     (0..count)
         .map(|i| {
@@ -30,7 +30,7 @@ pub fn generate_test_transactions(count: usize) -> Vec<TransactionSigned> {
 
             let signature_hash = tx.signature_hash();
             let msg = Message::from_digest(signature_hash.0);
-            let sig = secp.sign_ecdsa_recoverable(&msg, &secret_key);
+            let sig = secp.sign_ecdsa_recoverable(msg, &secret_key);
             let (recovery_id, sig_bytes) = sig.serialize_compact();
 
             let signature = alloy_primitives::Signature::new(

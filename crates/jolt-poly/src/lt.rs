@@ -143,7 +143,7 @@ impl<F: Field> LtPolynomial<F> {
 /// Time: O(n·2^n). Space: O(2^n).
 fn lt_evals<F: Field>(r: &[F]) -> Vec<F> {
     let n = r.len();
-    let mut evals = vec![F::zero(); 1usize << n];
+    let mut evals = crate::thread::unsafe_allocate_zero_vec(1usize << n);
     for (i, &ri) in r.iter().rev().enumerate() {
         let (left, right) = evals.split_at_mut(1 << i);
         left.iter_mut().zip(right.iter_mut()).for_each(|(x, y)| {

@@ -2,6 +2,7 @@
 
 use ark_bn254::G1Affine;
 use ark_ec::CurveGroup;
+use ark_ff::Zero;
 use rayon::prelude::*;
 
 use super::Bn254G1;
@@ -36,6 +37,10 @@ fn batch_g1_additions_affine(bases: &[G1Affine], indices: &[usize]) -> G1Affine 
 
         let mut inverses = denominators;
         ark_ff::fields::batch_inversion(&mut inverses);
+        debug_assert!(
+            inverses.iter().all(|inv| !inv.is_zero()),
+            "batch addition requires distinct x-coordinates per pair",
+        );
 
         let mut new_points: Vec<G1Affine> = (0..pairs_count)
             .into_par_iter()
@@ -96,6 +101,12 @@ pub fn batch_g1_additions_multi(bases: &[Bn254G1], indices_sets: &[Vec<usize>]) 
 ///
 /// Avoids the projective → affine normalization when callers already have affine bases.
 /// Returns one `G1Affine` per index set.
+///
+/// Same precondition as [`batch_g1_additions_multi`]: indices must be in-bounds
+/// (`< bases.len()`), and no two points in the same pair may share an x-coordinate
+/// (i.e., must not be equal or inverse). Violations produce silently garbage
+/// off-curve results — the batch-inversion denominator becomes zero and the
+/// resulting unchecked affine point has no error signal.
 pub fn batch_g1_additions_multi_affine(
     bases: &[G1Affine],
     indices_sets: &[Vec<usize>],
@@ -146,6 +157,10 @@ fn batch_g1_additions_multi_affine_inner(
 
         let mut inverses = all_denominators;
         ark_ff::fields::batch_inversion(&mut inverses);
+        debug_assert!(
+            inverses.iter().all(|inv| !inv.is_zero()),
+            "batch addition requires distinct x-coordinates per pair",
+        );
 
         let mut new_working_sets: Vec<Vec<G1Affine>> = working_sets
             .iter()
@@ -213,6 +228,8 @@ mod tests {
 
     #[test]
     fn test_batch_additions_multi() {
+        use std::collections::HashSet;
+
         let mut rng = ark_std::test_rng();
         let base_size = 1000;
         let num_batches = 10;
@@ -220,18 +237,27 @@ mod tests {
         let projectiles: Vec<ark_bn254::G1Projective> = (0..base_size)
             .map(|_| ark_bn254::G1Projective::rand(&mut rng))
             .collect();
-        let jolt_bases: Vec<Bn254G1> = projectiles.into_iter().map(Bn254G1::from).collect();
+        let jolt_bases: Vec<Bn254G1> = projectiles.clone().into_iter().map(Bn254G1::from).collect();
 
+        // Draw unique indices per set so the batch addition never hits the
+        // equal-x precondition violation.
         let indices_sets: Vec<Vec<usize>> = (0..num_batches)
             .map(|_| {
                 let size = (rng.next_u64() as usize) % 50 + 1;
-                (0..size)
-                    .map(|_| (rng.next_u64() as usize) % base_size)
-                    .collect()
+                let mut picked: HashSet<usize> = HashSet::new();
+                while picked.len() < size {
+                    let _ = picked.insert((rng.next_u64() as usize) % base_size);
+                }
+                picked.into_iter().collect()
             })
             .collect();
 
         let results = batch_g1_additions_multi(&jolt_bases, &indices_sets);
         assert_eq!(results.len(), num_batches);
+
+        for (indices, got) in indices_sets.iter().zip(results.iter()) {
+            let expected: ark_bn254::G1Projective = indices.iter().map(|&i| projectiles[i]).sum();
+            assert_eq!(ark_bn254::G1Projective::from(*got), expected);
+        }
     }
 }

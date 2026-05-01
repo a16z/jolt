@@ -35,7 +35,6 @@ bn254 = [
 [dependencies]
 jolt-field = { path = "../jolt-field" }
 jolt-transcript = { path = "../jolt-transcript" }
-tracing.workspace = true
 serde = { workspace = true, features = ["derive", "alloc"] }
 rand_core = { workspace = true }
 
@@ -57,6 +56,27 @@ serde_json = { workspace = true, features = ["std"] }
 bincode = { workspace = true }
 criterion = { workspace = true }
 
+[[test]]
+name = "coverage"
+required-features = ["bn254"]
+
+[[test]]
+name = "group_laws"
+required-features = ["bn254"]
+
+[[test]]
+name = "pairing"
+required-features = ["bn254"]
+
+[[test]]
+name = "pedersen"
+required-features = ["bn254"]
+
+[[test]]
+name = "serialization"
+required-features = ["bn254"]
+
 [[bench]]
 name = "crypto"
 harness = false
+required-features = ["bn254"]

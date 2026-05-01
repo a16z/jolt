@@ -7,7 +7,7 @@
 #![allow(non_snake_case, clippy::print_stderr)]
 
 use jolt_field::Fr;
-use jolt_host::{extract_trace, BytecodePreprocessing, Program};
+use jolt_trace::{extract_trace, BytecodePreprocessing, Program};
 use jolt_r1cs::constraint::ConstraintMatrices;
 use jolt_r1cs::constraints::rv64::{self, *};
 use jolt_r1cs::R1csKey;
@@ -193,7 +193,7 @@ fn r1cs_check_suspect_constraints() {
     }
 }
 
-/// Compare initial/final RAM states between jolt-core and jolt-host construction.
+/// Compare initial/final RAM states between jolt-core and jolt-trace construction.
 #[test]
 fn compare_ram_states() {
     use jolt_core::host;
@@ -221,7 +221,7 @@ fn compare_ram_states() {
     let (_, _, host_memory, host_io) = host_program.trace(&inputs, &[], &[]);
 
     let (host_initial, host_final) =
-        jolt_host::ram::build_ram_states(&host_init_mem, &host_memory, &host_io, ram_k);
+        jolt_trace::ram::build_ram_states(&host_init_mem, &host_memory, &host_io, ram_k);
 
     // Compare initial
     let mut init_diffs = 0;

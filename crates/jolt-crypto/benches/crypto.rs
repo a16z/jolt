@@ -1,4 +1,4 @@
-#![allow(unused_results)]
+#![expect(unused_results, clippy::unwrap_used)]
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 

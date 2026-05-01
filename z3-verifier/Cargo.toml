@@ -1,3 +1,11 @@
 [package]
 name = "z3-verifier"
 edition = "2021"
+
+[dependencies]
+paste.workspace = true
+
+jolt-core = { path = "../jolt-core" }
+common = { path = "../common" }
+tracer = { path = "../tracer" }
+z3 = "0.20.0"

@@ -58,7 +58,14 @@ impl RISCVTrace for LRD {
 
     /// LR.D: Load Reserved Doubleword
     /// Loads a 64-bit doubleword from memory at address rs1, stores it in rd,
-    /// and sets a reservation on the address for use by SC.D.
+    /// and sets a reservation on the address.
+    ///
+    /// The 8-byte reservation covers both the 4-byte and 8-byte reservation
+    /// sets used by subsequent SC.W and SC.D respectively — per the RISC-V A
+    /// spec, SC succeeds if the reservation set contains the bytes being
+    /// written, so SC.W after LR.D should succeed. We record the address in
+    /// both `v_reservation_w` and `v_reservation_d` so the SC.W-after-LR.D
+    /// constraint check (reservation == rs1) passes.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
@@ -72,7 +79,7 @@ impl RISCVTrace for LRD {
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
         asm.emit_i::<ADDI>(v_reservation_d, self.operands.rs1, 0);
-        asm.emit_i::<ADDI>(v_reservation_w, 0, 0); // clear W reservation
+        asm.emit_i::<ADDI>(v_reservation_w, self.operands.rs1, 0);
         asm.emit_ld::<LD>(self.operands.rd, self.operands.rs1, 0);
 
         asm.finalize()

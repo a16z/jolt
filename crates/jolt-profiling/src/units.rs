@@ -10,7 +10,7 @@ pub const BYTES_PER_MIB: f64 = 1_048_576.0;
 ///
 /// Uses GiB for values >= 1.0, otherwise MiB.
 pub fn format_memory_size(gib: f64) -> String {
-    if gib >= 1.0 {
+    if gib.abs() >= 1.0 {
         format!("{gib:.2} GiB")
     } else {
         format!("{:.2} MiB", gib * 1024.0)

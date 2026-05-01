@@ -3,7 +3,8 @@
 pub trait Math {
     /// Returns `2^self`.
     fn pow2(self) -> usize;
-    /// Returns `floor(log2(self))`.
+    /// Returns the number of bits needed to represent `self`.
+    /// Equals `log2(self)` for powers of two, `ceil(log2(self))` otherwise.
     fn log_2(self) -> usize;
 }
 

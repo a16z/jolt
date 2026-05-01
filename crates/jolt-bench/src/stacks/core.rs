@@ -39,7 +39,8 @@ impl CoreStack {
             init_memory_state,
             max_trace_length,
             e_entry,
-        );
+        )
+        .expect("shared preprocessing");
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
         let elf_contents = host_program
             .get_elf_contents()

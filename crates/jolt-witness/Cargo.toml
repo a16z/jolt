@@ -2,23 +2,11 @@
 name = "jolt-witness"
 version = "0.1.0"
 edition = "2021"
-license = "MIT"
-description = "Polynomial data providers and witness buffers for the Jolt zkVM"
+license = "MIT OR Apache-2.0"
+description = "Primitive oracle construction kernels for Bolt-generated Jolt code"
 
 [lints]
 workspace = true
 
 [dependencies]
-jolt-compiler = { path = "../jolt-compiler" }
-jolt-compute = { path = "../jolt-compute" }
 jolt-field = { path = "../jolt-field" }
-jolt-poly = { path = "../jolt-poly" }
-jolt-r1cs = { path = "../jolt-r1cs" }
-jolt-verifier = { path = "../jolt-verifier" }
-rayon = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
-tracing = { workspace = true }
-
-[dev-dependencies]
-jolt-field = { path = "../jolt-field", features = ["bn254"] }
-num-traits = { workspace = true }

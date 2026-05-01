@@ -24,39 +24,32 @@ keywords = ["SNARK", "cryptography", "proofs"]
 
 [workspace]
 members = [
-  "crates/jolt-transcript",
-  "crates/jolt-field",
+  "crates/jolt-crypto",
+  "crates/jolt-trace",
   "crates/jolt-poly",
-  "crates/jolt-openings",
-  "crates/jolt-sumcheck",
+  "crates/jolt-lookup-tables",
   "crates/jolt-r1cs",
   "crates/jolt-kernels",
-  "crates/jolt-instructions",
   "crates/jolt-dory",
   "crates/jolt-hyperkzg",
-  "crates/jolt-crypto",
-  "crates/jolt-compiler",
-  "crates/jolt-compiler-v2",
-  "crates/jolt-compute",
-  "crates/jolt-hybrid",
-  "crates/jolt-cpu",
+  "crates/jolt-sumcheck",
+  "crates/jolt-openings",
+  "crates/jolt-riscv",
+  "crates/jolt-transcript",
+  "crates/bolt",
   "crates/jolt-wrapper",
   "crates/jolt-profiling",
-  "crates/jolt-bench",
   "crates/jolt-blindfold",
-  "crates/jolt-verifier",
   "crates/jolt-witness",
-  "crates/jolt-witness-v2",
-  "crates/jolt-zkvm",
   "crates/jolt-equivalence",
-  "crates/jolt-metal",
-  "crates/jolt-host",
+  "crates/jolt-field",
   "jolt-core",
   "tracer",
   "common",
   "jolt-platform",
   "jolt-sdk",
   "jolt-sdk/macros",
+  "jolt-inlines/sdk",
   "jolt-inlines/sha2",
   "jolt-inlines/keccak256",
   "jolt-inlines/blake2",
@@ -64,6 +57,7 @@ members = [
   "jolt-inlines/bigint",
   "jolt-inlines/secp256k1",
   "jolt-inlines/grumpkin",
+  "jolt-inlines/p256",
   "examples/btreemap/host",
   "examples/btreemap/guest",
   "examples/collatz",
@@ -72,6 +66,8 @@ members = [
   "examples/fibonacci/guest",
   "examples/secp256k1-ecdsa-verify",
   "examples/secp256k1-ecdsa-verify/guest",
+  "examples/p256-ecdsa-verify",
+  "examples/p256-ecdsa-verify/guest",
   "examples/sha2-ex",
   "examples/sha2-ex/guest",
   "examples/sha3-ex",
@@ -105,6 +101,7 @@ members = [
   "examples/malloc/guest",
   "examples/merkle-tree",
   "examples/merkle-tree/guest",
+  "examples/merkle-tree-save",
   "examples/hash-bench",
   "examples/hash-bench/guest",
   "examples/modinv",
@@ -115,7 +112,12 @@ members = [
   "examples/sig-recovery/guest",
   "zklean-extractor",
   "z3-verifier",
+  "transpiler",
+  "jolt-eval",
+  "jolt-eval/macros",
+  "jolt-eval/guest-sandbox",
 ]
+exclude = ["jolt-eval/fuzz"]
 
 [features]
 host = ["jolt-sdk/host"]
@@ -130,7 +132,6 @@ path = "./src/main.rs"
 [dependencies]
 clap.workspace = true
 eyre.workspace = true
-mimalloc.workspace = true
 rand.workspace = true
 sysinfo.workspace = true
 syn.workspace = true
@@ -177,6 +178,7 @@ allocative = { git = "https://github.com/facebookexperimental/allocative", rev =
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]
 
+
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 
@@ -218,6 +220,12 @@ cast_precision_loss = "allow"
 cast_possible_wrap = "allow"
 cast_lossless = "allow"
 
+# Pedantic overrides — noisy for generic/math code
+implicit_hasher = "allow"
+ref_option_ref = "allow"
+significant_drop_tightening = "allow"
+result_large_err = "allow"
+
 # Code quality — hard denies to catch AI-generated slop
 dbg_macro = "deny"
 todo = "deny"
@@ -225,27 +233,34 @@ unimplemented = "deny"
 print_stdout = "deny"
 print_stderr = "deny"
 undocumented_unsafe_blocks = "deny"
+allow_attributes = "deny"
+panic = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
 
 [workspace.lints.rust]
 unused_results = "warn"
 
 [workspace.dependencies]
 # Cryptography and Math
-ark-bn254 = { version = "0.5.0", default-features = false }
-ark-grumpkin = { version = "0.5.0", default-features = false }
-ark-ec = { version = "0.5.0", default-features = false }
-ark-ff = { version = "0.5.0", default-features = false }
-ark-serialize = { version = "0.5.0", default-features = false, features = [
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
+ark-grumpkin = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false, features = [
   "derive",
 ] }
-ark-secp256k1 = { version = "0.5.0", default-features = false }
+ark-secp256k1 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
+ark-secp256r1 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
 ark-serialize-derive = { version = "0.5.0", default-features = false }
 ark-std = { version = "0.5.0", default-features = false }
-jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-sha2 = "0.10"
-sha3 = "0.10.8"
-blake2 = "0.10"
+sha2 = "0.11"
+sha3 = "0.11"
+blake2 = "0.11.0-rc.6"
 blake3 = { version = "1.5.0" }
+light-poseidon = "0.4"
+digest = "0.11"
+jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 dory = { package = "dory-pcs", version = "0.3.0", features = [
   "backends",
   "cache",
@@ -255,7 +270,7 @@ dory = { package = "dory-pcs", version = "0.3.0", features = [
 ] }
 
 # Core Utilities
-clap = { version = "4.5.4", features = ["derive"] }
+clap = { version = "4.6.1", features = ["derive"] }
 eyre = "0.6.12"
 anyhow = "1.0.97"
 thiserror = "2.0.18"
@@ -300,7 +315,7 @@ memory-stats = { version = "1.0.0", features = ["always_use_statm"] }
 mimalloc = "0.1"
 
 # Parallel Processing
-rayon = { version = "^1.8.0" }
+rayon = { version = "^1.12.0" }
 
 # Tracing and Profiling
 tracing = { version = "0.1.37", default-features = false, features = [
@@ -310,6 +325,12 @@ tracing-chrome = "0.7.1"
 tracing-subscriber = { version = "0.3.20", features = ["fmt", "env-filter"] }
 inferno = { version = "0.12.3" }
 allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
+pprof = { version = "0.15", features = [
+  "prost-codec",
+  "flamegraph",
+  "frame-pointer",
+] }
+prost = "0.14"
 
 # Parsing
 syn = { version = "2", features = ["full"] }
@@ -318,23 +339,24 @@ proc-macro2 = "1.0.79"
 
 # Platform-specific
 fnv = { version = "1.0.7", default-features = false }
-object = { version = "0.38.1", features = [
+object = { version = "0.39.1", features = [
   "build_core",
   "elf",
 ], default-features = false }
-addr2line = "0.26.0"
+addr2line = "0.26.1"
 getrandom = { version = "0.2.16", default-features = false }
 getrandom_v02 = { version = "0.2.16", package = "getrandom", default-features = false }
 getrandom_v03 = { version = "0.3.3", package = "getrandom", default-features = false }
 
 # Build and Development
 ctor = { version = "0.6" }
-hex-literal = "0.4.1"
+hex-literal = "1.1.0"
+inventory = "0.3"
 hex = "0.4.3"
 spinners = { version = "4.2.0", default-features = false }
 
 # Testing
-criterion = { version = "0.5.1", features = ["html_reports"] }
+criterion = { version = "0.8.2", features = ["html_reports"] }
 iai-callgrind = "0.16.1"
 serial_test = "3.4.0"
 
@@ -350,24 +372,40 @@ riscv = { version = "0.16", default-features = false }
 
 # Ethereum/Crypto (for sig-recovery example)
 alloy-primitives = "1"
-alloy-consensus = "1"
-alloy-eips = "1"
-reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", features = [
-  "rayon",
-  "serde",
-] }
+alloy-consensus = "2"
+alloy-eips = "2"
+reth-primitives-traits = { version = "0.3", features = ["rayon", "serde"] }
 reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", features = [
   "serde",
 ] }
-secp256k1 = { version = "0.30", features = ["recovery", "rand"] }
+secp256k1 = { version = "0.31", features = ["recovery", "rand"] }
 
 # Internal dependencies
 common = { path = "./common", default-features = false }
 tracer = { path = "./tracer", default-features = false }
 jolt-core = { path = "./jolt-core", default-features = false }
+jolt-crypto = { path = "./crates/jolt-crypto" }
+jolt-field = { path = "./crates/jolt-field" }
+jolt-poly = { path = "./crates/jolt-poly" }
+jolt-transcript = { path = "./crates/jolt-transcript" }
+jolt-sumcheck = { path = "./crates/jolt-sumcheck" }
+jolt-r1cs = { path = "./crates/jolt-r1cs" }
+jolt-openings = { path = "./crates/jolt-openings" }
+jolt-kernels = { path = "./crates/jolt-kernels" }
+jolt-dory = { path = "./crates/jolt-dory" }
+jolt-hyperkzg = { path = "./crates/jolt-hyperkzg" }
+bolt = { path = "./crates/bolt" }
+jolt-wrapper = { path = "./crates/jolt-wrapper" }
+jolt-blindfold = { path = "./crates/jolt-blindfold" }
+jolt-witness = { path = "./crates/jolt-witness" }
+jolt-equivalence = { path = "./crates/jolt-equivalence" }
+jolt-riscv = { path = "./crates/jolt-riscv" }
+jolt-trace = { path = "./crates/jolt-trace" }
+jolt-lookup-tables = { path = "./crates/jolt-lookup-tables" }
 jolt-platform = { path = "./jolt-platform", default-features = false }
 jolt-sdk = { path = "./jolt-sdk", default-features = false }
 jolt-sdk-macros = { path = "./jolt-sdk/macros" }
+jolt-inlines-sdk = { path = "./jolt-inlines/sdk", default-features = false }
 jolt-inlines-sha2 = { path = "./jolt-inlines/sha2", default-features = false }
 jolt-inlines-keccak256 = { path = "./jolt-inlines/keccak256", default-features = false }
 jolt-inlines-blake2 = { path = "./jolt-inlines/blake2", default-features = false }
@@ -375,3 +413,4 @@ jolt-inlines-blake3 = { path = "./jolt-inlines/blake3", default-features = false
 jolt-inlines-bigint = { path = "./jolt-inlines/bigint", default-features = false }
 jolt-inlines-secp256k1 = { path = "./jolt-inlines/secp256k1", default-features = false }
 jolt-inlines-grumpkin = { path = "./jolt-inlines/grumpkin", default-features = false }
+jolt-inlines-p256 = { path = "./jolt-inlines/p256", default-features = false }

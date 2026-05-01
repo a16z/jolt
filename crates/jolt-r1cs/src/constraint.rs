@@ -16,8 +16,12 @@ pub type SparseRow<F> = Vec<(usize, F)>;
 /// Each matrix is stored as a list of sparse rows, one per constraint.
 /// Entry `a[k] = [(v, α), ...]` means constraint k's A side has
 /// coefficient α at variable index v.
+///
+/// Deserialization routes through [`RawConstraintMatrices`] and revalidates
+/// the same invariants as [`ConstraintMatrices::new`]; malformed input is
+/// rejected before any consumer sees the struct.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound = "", try_from = "RawConstraintMatrices<F>")]
 pub struct ConstraintMatrices<F: Field> {
     pub num_constraints: usize,
     pub num_vars: usize,
@@ -26,12 +30,78 @@ pub struct ConstraintMatrices<F: Field> {
     pub c: Vec<SparseRow<F>>,
 }
 
+/// Deserialization helper; never exposed directly.
+#[derive(Deserialize)]
+#[serde(bound = "")]
+struct RawConstraintMatrices<F: Field> {
+    num_constraints: usize,
+    num_vars: usize,
+    a: Vec<SparseRow<F>>,
+    b: Vec<SparseRow<F>>,
+    c: Vec<SparseRow<F>>,
+}
+
+impl<F: Field> TryFrom<RawConstraintMatrices<F>> for ConstraintMatrices<F> {
+    type Error = String;
+
+    fn try_from(raw: RawConstraintMatrices<F>) -> Result<Self, Self::Error> {
+        let RawConstraintMatrices {
+            num_constraints,
+            num_vars,
+            a,
+            b,
+            c,
+        } = raw;
+        check_invariants(num_constraints, num_vars, &a, &b, &c)?;
+        Ok(Self {
+            num_constraints,
+            num_vars,
+            a,
+            b,
+            c,
+        })
+    }
+}
+
+fn check_invariants<F: Field>(
+    num_constraints: usize,
+    num_vars: usize,
+    a: &[SparseRow<F>],
+    b: &[SparseRow<F>],
+    c: &[SparseRow<F>],
+) -> Result<(), String> {
+    for (label, rows) in [("a", a), ("b", b), ("c", c)] {
+        if rows.len() != num_constraints {
+            return Err(format!(
+                "ConstraintMatrices.{label}.len() = {}, expected num_constraints = {num_constraints}",
+                rows.len(),
+            ));
+        }
+        for (k, row) in rows.iter().enumerate() {
+            for &(col, _) in row {
+                if col >= num_vars {
+                    return Err(format!(
+                        "ConstraintMatrices.{label}[{k}] references variable {col} >= num_vars = {num_vars}"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 impl<F: Field> ConstraintMatrices<F> {
     /// Builds constraint matrices from sparse rows.
     ///
     /// # Panics
     ///
-    /// Panics if any matrix has a different number of rows than `num_constraints`.
+    /// Panics if any matrix has a different number of rows than
+    /// `num_constraints`, or if any row references a variable index
+    /// `>= num_vars`.
+    #[expect(
+        clippy::expect_used,
+        reason = "constructor invariant violation indicates a programmer error"
+    )]
     pub fn new(
         num_constraints: usize,
         num_vars: usize,
@@ -39,9 +109,8 @@ impl<F: Field> ConstraintMatrices<F> {
         b: Vec<SparseRow<F>>,
         c: Vec<SparseRow<F>>,
     ) -> Self {
-        assert_eq!(a.len(), num_constraints);
-        assert_eq!(b.len(), num_constraints);
-        assert_eq!(c.len(), num_constraints);
+        check_invariants(num_constraints, num_vars, &a, &b, &c)
+            .expect("ConstraintMatrices::new invariant violated");
         Self {
             num_constraints,
             num_vars,
@@ -107,5 +176,29 @@ mod tests {
         );
         let w = vec![Fr::from_u64(1), Fr::from_u64(3), Fr::from_u64(10)];
         assert_eq!(m.check_witness(&w), Err(0));
+    }
+
+    #[test]
+    #[should_panic(expected = "num_constraints")]
+    fn new_rejects_row_count_mismatch() {
+        let _ = ConstraintMatrices::new(
+            2,
+            3,
+            vec![vec![(1, Fr::from_u64(1))]],
+            vec![vec![(1, Fr::from_u64(1))]],
+            vec![vec![(2, Fr::from_u64(1))]],
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "num_vars")]
+    fn new_rejects_oob_column() {
+        let _ = ConstraintMatrices::new(
+            1,
+            3,
+            vec![vec![(99, Fr::from_u64(1))]],
+            vec![vec![(1, Fr::from_u64(1))]],
+            vec![vec![(2, Fr::from_u64(1))]],
+        );
     }
 }

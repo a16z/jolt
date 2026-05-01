@@ -297,7 +297,8 @@ impl<F: JoltField> BlindFoldWitness<F> {
                         for (opening_id, val) in
                             constraint.required_openings.iter().zip(opening_values)
                         {
-                            if assigned_openings.insert(*opening_id) {
+                            let resolved = r1cs.resolve_alias(*opening_id);
+                            if assigned_openings.insert(resolved) {
                                 z[noncoeff_idx] = *val;
                                 noncoeff_idx += 1;
                             }
@@ -370,7 +371,8 @@ impl<F: JoltField> BlindFoldWitness<F> {
                             .iter()
                             .zip(&witness.opening_values)
                         {
-                            if assigned_openings.insert(*opening_id) {
+                            let resolved = r1cs.resolve_alias(*opening_id);
+                            if assigned_openings.insert(resolved) {
                                 z[noncoeff_idx] = *val;
                                 noncoeff_idx += 1;
                             }

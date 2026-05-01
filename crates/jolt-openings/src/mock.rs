@@ -38,10 +38,6 @@ impl<F: Field> AppendToTranscript for MockCommitment<F> {
         buf.reverse();
         transcript.append_bytes(&buf);
     }
-
-    fn serialized_len(&self) -> u64 {
-        (self.evaluations.len() * 32) as u64
-    }
 }
 
 impl<F: Field> Commitment for MockCommitmentScheme<F> {
@@ -109,6 +105,13 @@ impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
         }
 
         Ok(())
+    }
+
+    fn bind_opening_inputs(
+        _transcript: &mut impl Transcript<Challenge = Self::Field>,
+        _point: &[Self::Field],
+        _eval: &Self::Field,
+    ) {
     }
 }
 
@@ -202,9 +205,10 @@ impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "tests may panic on assertion failures")]
 mod tests {
     use super::*;
-    use crate::{OpeningReduction, ProverClaim, VerifierClaim};
+    use crate::{reduce_prover, reduce_verifier, ProverClaim, VerifierClaim};
     use jolt_field::Field;
     use jolt_field::Fr;
     use jolt_poly::Polynomial;
@@ -328,7 +332,7 @@ mod tests {
 
         // Prover: reduce + open
         let mut transcript_p = Blake2bTranscript::new(b"e2e-test");
-        let reduced_prover = MockPCS::reduce_prover(prover_claims, &mut transcript_p);
+        let reduced_prover = reduce_prover(prover_claims, &mut transcript_p);
         let proofs: Vec<_> = reduced_prover
             .iter()
             .map(|claim| {
@@ -345,7 +349,7 @@ mod tests {
 
         // Verifier: reduce + verify
         let mut transcript_v = Blake2bTranscript::new(b"e2e-test");
-        let reduced_verifier = MockPCS::reduce_verifier(verifier_claims, &mut transcript_v)?;
+        let reduced_verifier = reduce_verifier::<MockPCS, _>(verifier_claims, &mut transcript_v)?;
 
         assert_eq!(reduced_verifier.len(), proofs.len());
 
@@ -451,7 +455,7 @@ mod tests {
         ];
 
         let mut transcript = Blake2bTranscript::new(b"grouping");
-        let reduced = MockPCS::reduce_prover(claims, &mut transcript);
+        let reduced = reduce_prover(claims, &mut transcript);
         assert_eq!(reduced.len(), 2, "two distinct points → two reduced claims");
     }
 

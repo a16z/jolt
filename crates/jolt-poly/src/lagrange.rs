@@ -14,6 +14,7 @@ use jolt_field::Field;
 ///
 /// # Panics
 /// Panics if `domain_size` is zero.
+#[expect(clippy::expect_used)]
 pub fn lagrange_evals<F: Field>(domain_start: i64, domain_size: usize, r: F) -> Vec<F> {
     assert!(domain_size > 0, "domain_size must be positive");
 
@@ -109,6 +110,7 @@ pub fn poly_mul<F: Field>(a: &[F], b: &[F]) -> Vec<F> {
 ///
 /// # Panics
 /// Panics if `values` is empty.
+#[expect(clippy::expect_used)]
 pub fn interpolate_to_coeffs<F: Field>(domain_start: i64, values: &[F]) -> Vec<F> {
     let n = values.len();
     assert!(n > 0, "cannot interpolate zero values");
@@ -152,13 +154,7 @@ pub fn interpolate_to_coeffs<F: Field>(domain_start: i64, values: &[F]) -> Vec<F
     coeffs
 }
 
-/// Evaluates the $k$-th Lagrange basis polynomial $L_k(r)$ over the
-/// domain $\{s, s{+}1, \ldots, s{+}N{-}1\}$ where $s$ = `domain_start`.
-///
-/// $$L_k(r) = \prod_{j \neq k} \frac{r - (s+j)}{(s+k) - (s+j)}$$
-///
-/// Time: $O(N)$. For evaluating all $N$ basis values at once, prefer
-/// [`lagrange_evals`] which amortizes the weight computation.
+/// Evaluates the `k`-th Lagrange basis polynomial over a consecutive integer domain.
 pub fn lagrange_basis_eval<F: Field>(domain_start: i64, domain_size: usize, k: usize, r: F) -> F {
     let mut numer = F::one();
     let mut denom = F::one();
@@ -172,11 +168,7 @@ pub fn lagrange_basis_eval<F: Field>(domain_start: i64, domain_size: usize, k: u
     numer / denom
 }
 
-/// Evaluates the Lagrange kernel $L(\tau, r) = \sum_{k=0}^{N-1} L_k(\tau) \cdot L_k(r)$
-/// over the domain $\{s, s{+}1, \ldots, s{+}N{-}1\}$ where $s$ = `domain_start`.
-///
-/// Uses [`lagrange_evals`] to compute all basis values at both points,
-/// then dot-products. Time: $O(N)$ (dominated by two barycentric evaluations).
+/// Evaluates `sum_k L_k(tau) * L_k(r)` over a consecutive integer domain.
 pub fn lagrange_kernel_eval<F: Field>(domain_start: i64, domain_size: usize, tau: F, r: F) -> F {
     let tau_evals = lagrange_evals(domain_start, domain_size, tau);
     let r_evals = lagrange_evals(domain_start, domain_size, r);
@@ -184,7 +176,7 @@ pub fn lagrange_kernel_eval<F: Field>(domain_start: i64, domain_size: usize, tau
         .iter()
         .zip(r_evals.iter())
         .map(|(&a, &b)| a * b)
-        .fold(F::zero(), |acc, v| acc + v)
+        .fold(F::zero(), |acc, value| acc + value)
 }
 
 #[cfg(test)]

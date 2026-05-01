@@ -1,0 +1,53 @@
+name: Fuzz crates
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/*/fuzz/**"
+      - "crates/*/src/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - "crates/*/fuzz/**"
+      - "crates/*/src/**"
+
+env:
+  CARGO_TERM_COLOR: always
+  FUZZ_DURATION: 60
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        crate:
+          - jolt-crypto
+          - jolt-field
+          - jolt-poly
+          - jolt-transcript
+    name: Fuzz ${{ matrix.crate }}
+    concurrency:
+      group: fuzz-crates-${{ github.head_ref || github.ref }}-${{ matrix.crate }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Fuzz all targets
+        working-directory: crates/${{ matrix.crate }}
+        run: |
+          set -euo pipefail
+          targets=$(cargo +nightly fuzz list)
+          if [ -z "$targets" ]; then
+            echo "No fuzz targets found for ${{ matrix.crate }}"
+            exit 1
+          fi
+          for target in $targets; do
+            echo "--- Fuzzing $target for ${FUZZ_DURATION}s ---"
+            cargo +nightly fuzz run "$target" -- -max_total_time=$FUZZ_DURATION
+          done

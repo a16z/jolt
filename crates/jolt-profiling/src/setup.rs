@@ -30,7 +30,7 @@ pub enum TracingFormat {
 /// Must be held alive for the duration of profiling. Dropping this flushes
 /// all pending trace data and stops background monitors.
 #[must_use = "guards must be held alive for the duration of profiling"]
-pub struct TracingGuards(#[allow(dead_code)] Vec<Box<dyn Any>>);
+pub struct TracingGuards(#[expect(dead_code)] Vec<Box<dyn Any>>);
 
 /// Initializes the global tracing subscriber with the requested output formats.
 ///
@@ -49,7 +49,7 @@ pub struct TracingGuards(#[allow(dead_code)] Vec<Box<dyn Any>>);
 ///
 /// Panics if called more than once (the global subscriber can only be set once).
 pub fn setup_tracing(formats: &[TracingFormat], trace_name: &str) -> TracingGuards {
-    PPROF_PREFIX.get_or_init(|| {
+    let _ = PPROF_PREFIX.get_or_init(|| {
         std::env::var("PPROF_PREFIX")
             .unwrap_or_else(|_| format!("benchmark-runs/pprof/{trace_name}_"))
     });
@@ -83,7 +83,7 @@ pub fn setup_tracing(formats: &[TracingFormat], trace_name: &str) -> TracingGuar
     }
     if formats.contains(&TracingFormat::Chrome) {
         let trace_file = format!("benchmark-runs/perfetto_traces/{trace_name}.json");
-        std::fs::create_dir_all("benchmark-runs/perfetto_traces").ok();
+        let _ = std::fs::create_dir_all("benchmark-runs/perfetto_traces");
         let (chrome_layer, guard) = ChromeLayerBuilder::new()
             .include_args(true)
             .file(trace_file)

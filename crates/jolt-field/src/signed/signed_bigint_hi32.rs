@@ -3,10 +3,6 @@
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
 
-use ark_serialize::{
-    CanonicalDeserialize, CanonicalSerialize, Compress, Read, SerializationError, Valid, Validate,
-    Write,
-};
 use core::cmp::Ordering;
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
@@ -20,10 +16,7 @@ use crate::Limbs;
 /// full 64-bit limbs, which matters when millions of these are stored
 /// in witness polynomials.
 ///
-/// Zero is not normalized: a zero magnitude can have either sign.
-/// Structural equality distinguishes `+0` and `-0`, but ordering treats
-/// them as equal.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "allocative", derive(Allocative))]
 pub struct SignedBigIntHi32<const N: usize> {
     magnitude_lo: [u64; N],
@@ -130,8 +123,25 @@ impl<const N: usize> SignedBigIntHi32<N> {
 
     #[inline(always)]
     fn sub_assign_in_place(&mut self, rhs: &Self) {
-        let neg_rhs = -*rhs;
-        self.add_assign_in_place(&neg_rhs);
+        if self.is_positive != rhs.is_positive {
+            let (lo, hi, _carry) = self.add_magnitudes_with_carry(rhs);
+            self.magnitude_lo = lo;
+            self.magnitude_hi = hi;
+        } else {
+            match self.compare_magnitudes(rhs) {
+                Ordering::Greater | Ordering::Equal => {
+                    let (lo, hi, _borrow) = self.sub_magnitudes_with_borrow(rhs);
+                    self.magnitude_lo = lo;
+                    self.magnitude_hi = hi;
+                }
+                Ordering::Less => {
+                    let (lo, hi, _borrow) = rhs.sub_magnitudes_with_borrow(self);
+                    self.magnitude_lo = lo;
+                    self.magnitude_hi = hi;
+                    self.is_positive = !self.is_positive;
+                }
+            }
+        }
     }
 
     #[inline(always)]
@@ -276,7 +286,7 @@ impl<const N: usize> SignedBigIntHi32<N> {
     /// Debug-asserts `NPLUS1 == N + 1`.
     #[inline]
     pub fn magnitude_as_limbs_nplus1<const NPLUS1: usize>(&self) -> Limbs<NPLUS1> {
-        debug_assert!(
+        assert!(
             NPLUS1 == N + 1,
             "NPLUS1 must be N+1 for SignedBigIntHi32 magnitude pack"
         );
@@ -314,7 +324,7 @@ impl<const N: usize> SignedBigIntHi32<N> {
     /// Debug-asserts `NPLUS1 == N + 1`.
     #[inline]
     pub fn to_signed_bigint_nplus1<const NPLUS1: usize>(&self) -> SignedBigInt<NPLUS1> {
-        debug_assert!(
+        assert!(
             NPLUS1 == N + 1,
             "to_signed_bigint_nplus1 requires NPLUS1 = N + 1"
         );
@@ -347,6 +357,19 @@ super::impl_signed_assign_ops!(SignedBigIntHi32 {
     Mul, MulAssign, mul, mul_assign => mul_assign_in_place;
 });
 
+impl<const N: usize> PartialEq for SignedBigIntHi32<N> {
+    fn eq(&self, other: &Self) -> bool {
+        if self.is_zero() && other.is_zero() {
+            return true;
+        }
+        self.is_positive == other.is_positive
+            && self.magnitude_hi == other.magnitude_hi
+            && self.magnitude_lo == other.magnitude_lo
+    }
+}
+
+impl<const N: usize> Eq for SignedBigIntHi32<N> {}
+
 impl<const N: usize> PartialOrd for SignedBigIntHi32<N> {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
@@ -375,57 +398,10 @@ impl<const N: usize> Ord for SignedBigIntHi32<N> {
     }
 }
 
-impl<const N: usize> CanonicalSerialize for SignedBigIntHi32<N> {
-    #[inline]
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut w: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        (self.is_positive as u8).serialize_with_mode(&mut w, compress)?;
-        self.magnitude_hi.serialize_with_mode(&mut w, compress)?;
-        for i in 0..N {
-            self.magnitude_lo[i].serialize_with_mode(&mut w, compress)?;
-        }
-        Ok(())
-    }
-
-    #[inline]
-    fn serialized_size(&self, compress: Compress) -> usize {
-        (self.is_positive as u8).serialized_size(compress)
-            + self.magnitude_hi.serialized_size(compress)
-            + (0u64).serialized_size(compress) * N
-    }
-}
-
-impl<const N: usize> CanonicalDeserialize for SignedBigIntHi32<N> {
-    #[inline]
-    fn deserialize_with_mode<R: Read>(
-        mut r: R,
-        compress: Compress,
-        validate: Validate,
-    ) -> Result<Self, SerializationError> {
-        let sign_u8 = u8::deserialize_with_mode(&mut r, compress, validate)?;
-        let hi = u32::deserialize_with_mode(&mut r, compress, validate)?;
-        let mut lo = [0u64; N];
-        for limb in &mut lo {
-            *limb = u64::deserialize_with_mode(&mut r, compress, validate)?;
-        }
-        Ok(SignedBigIntHi32::new(lo, hi, sign_u8 != 0))
-    }
-}
-
-impl<const N: usize> Valid for SignedBigIntHi32<N> {
-    #[inline]
-    fn check(&self) -> Result<(), SerializationError> {
-        Ok(())
-    }
-}
-
 impl From<i64> for S96 {
     #[inline]
     fn from(val: i64) -> Self {
-        Self::new([val.unsigned_abs()], 0, val.is_positive())
+        Self::new([val.unsigned_abs()], 0, val >= 0)
     }
 }
 
@@ -446,7 +422,7 @@ impl From<S64> for S96 {
 impl From<i64> for S160 {
     #[inline]
     fn from(val: i64) -> Self {
-        Self::new([val.unsigned_abs(), 0], 0, val.is_positive())
+        Self::new([val.unsigned_abs(), 0], 0, val >= 0)
     }
 }
 
@@ -476,7 +452,7 @@ impl From<u128> for S160 {
 impl From<i128> for S160 {
     #[inline]
     fn from(val: i128) -> Self {
-        let is_positive = val.is_positive();
+        let is_positive = val >= 0;
         let mag = val.unsigned_abs();
         let lo = mag as u64;
         let hi = (mag >> 64) as u64;
@@ -491,21 +467,13 @@ impl From<S128> for S160 {
     }
 }
 
-impl<const N: usize> From<S224> for Limbs<N> {
+impl From<S224> for Limbs<4> {
     #[inline]
-    #[allow(unsafe_code)]
     fn from(val: S224) -> Self {
-        assert!(
-            N == 4,
-            "From<S224> for Limbs<N> only supports N=4, got N={N}"
-        );
+        debug_assert!(val.is_positive(), "From<S224> for Limbs<4> discards sign");
         let lo = val.magnitude_lo();
         let hi = val.magnitude_hi() as u64;
-        let limbs4 = Limbs::<4>([lo[0], lo[1], lo[2], hi]);
-
-        // SAFETY: Limbs<4> and Limbs<N> have identical layout when N=4
-        // (asserted above).
-        unsafe { (&raw const limbs4).cast::<Limbs<N>>().read() }
+        Limbs([lo[0], lo[1], lo[2], hi])
     }
 }
 
@@ -609,15 +577,6 @@ mod tests {
         assert_eq!(sb.magnitude.0[0], 42);
         assert_eq!(sb.magnitude.0[1], 0);
         assert_eq!(sb.magnitude.0[2], 7);
-    }
-
-    #[test]
-    fn serialization_roundtrip() {
-        let val = S160::new([123_456_789, 987_654_321], 42, false);
-        let mut bytes = Vec::new();
-        val.serialize_compressed(&mut bytes).unwrap();
-        let restored = S160::deserialize_compressed(&bytes[..]).unwrap();
-        assert_eq!(val, restored);
     }
 
     #[test]

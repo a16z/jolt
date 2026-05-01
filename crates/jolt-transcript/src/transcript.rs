@@ -21,13 +21,13 @@ pub trait Transcript: Default + Clone + Sync + Send + 'static {
     ///
     /// For hash-based transcripts this is `F` (the field type), so challenges
     /// can be used directly in polynomial operations without conversion.
-    type Challenge: Copy + Default;
+    type Challenge: Copy + Default + PartialEq + Eq + std::fmt::Debug + std::hash::Hash;
 
     /// Creates a new transcript with the given domain separation label.
     ///
     /// # Panics
     ///
-    /// Panics if `label.len() >= 33`.
+    /// Panics if `label.len() > 32`.
     fn new(label: &'static [u8]) -> Self;
 
     /// Absorbs raw bytes into the transcript.
@@ -47,8 +47,6 @@ pub trait Transcript: Default + Clone + Sync + Send + 'static {
     /// Squeezes a challenge from the transcript.
     ///
     /// Each call produces a new challenge and advances the transcript state.
-    /// Squeezes 16 bytes, reverses them, then interprets as little-endian
-    /// (equivalent to big-endian interpretation of raw bytes).
     #[must_use]
     fn challenge(&mut self) -> Self::Challenge;
 
@@ -82,14 +80,7 @@ pub trait AppendToTranscript {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T);
 
     /// Number of raw bytes that [`append_to_transcript`](Self::append_to_transcript)
-    /// will feed to [`Transcript::append_bytes`].
-    ///
-    /// Used by the prover runtime to construct `LabelWithCount` headers that
-    /// match jolt-core's `append_serializable(label, data)` pattern.
-    ///
-    /// Implementors **must** return the exact byte count that `append_to_transcript`
-    /// passes to `transcript.append_bytes()`. The default panics — override for
-    /// any type absorbed with a label-with-count header (e.g., PCS commitments).
+    /// feeds to [`Transcript::append_bytes`].
     fn serialized_len(&self) -> u64 {
         panic!(
             "serialized_len not implemented for {}",

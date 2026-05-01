@@ -1,7 +1,11 @@
-#![allow(unused_results)]
+#![expect(unused_results)]
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use std::hint::black_box;
+
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use jolt_field::Fr;
+#[cfg(feature = "poseidon")]
+use jolt_transcript::PoseidonTranscript;
 use jolt_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
 
 fn bench_append_bytes(c: &mut Criterion) {
@@ -23,6 +27,17 @@ fn bench_append_bytes(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("Keccak", label), data, |bench, data| {
             bench.iter_batched(
                 || KeccakTranscript::<Fr>::new(b"bench"),
+                |mut t| {
+                    t.append_bytes(black_box(data));
+                    t
+                },
+                criterion::BatchSize::SmallInput,
+            );
+        });
+        #[cfg(feature = "poseidon")]
+        group.bench_with_input(BenchmarkId::new("Poseidon", label), data, |bench, data| {
+            bench.iter_batched(
+                || PoseidonTranscript::<Fr>::new(b"bench"),
                 |mut t| {
                     t.append_bytes(black_box(data));
                     t
@@ -53,6 +68,19 @@ fn bench_challenge(c: &mut Criterion) {
         bench.iter_batched(
             || {
                 let mut t = KeccakTranscript::<Fr>::new(b"bench");
+                t.append_bytes(&[42u8; 32]);
+                t
+            },
+            |mut t| t.challenge(),
+            criterion::BatchSize::SmallInput,
+        );
+    });
+
+    #[cfg(feature = "poseidon")]
+    group.bench_function("Poseidon", |bench| {
+        bench.iter_batched(
+            || {
+                let mut t = PoseidonTranscript::<Fr>::new(b"bench");
                 t.append_bytes(&[42u8; 32]);
                 t
             },

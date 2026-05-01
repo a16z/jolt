@@ -124,6 +124,8 @@ fn prove_verify_roundtrip() {
         memory_start: 0x8000_0000,
         memory_end: 0x8001_0000,
         entry_address: 0x8000_0000,
+        preprocessing_digest: [0u8; 32],
+        dory_layout: 0,
         io_hash: [0u8; 32],
         max_input_size: 0,
         max_output_size: 0,

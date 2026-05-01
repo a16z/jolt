@@ -6,16 +6,24 @@ The compiler lowers ALL protocol knowledge into data carried by Ops.
 The runtime is a flat dispatcher — every handler is mechanical, ≤ 30 LOC, zero interpretation of protocol-specific data structures.
 If the runtime needs to "interpret" rules, the compiler hasn't lowered far enough.
 
+## Status
+
+The legacy `jolt-compiler` / `jolt-zkvm` / `jolt-verifier` stack and the old
+`jolt-compute` / `jolt-cpu` / `jolt-metal` backend crates have been retired
+from the active workspace. `jolt-host` is also retired in favor of the upstream
+`jolt-trace` name. The V1–V9 list below is historical reference for the old
+compiler path; new equivalence work should target the Bolt pipeline in
+`crates/bolt`, `crates/jolt-kernels`, `crates/jolt-witness`,
+`crates/jolt-trace`, and the modular primitive crates.
+
 ## Test Gate
 
 ```bash
-# Correctness: byte-identical Fiat-Shamir transcripts + proof acceptance
-cargo nextest run -p jolt-equivalence transcript_divergence --cargo-quiet
-cargo nextest run -p jolt-equivalence zkvm_proof_accepted --cargo-quiet
-# All equivalence tests (includes any dual-path validation tests you add)
+# Bolt equivalence and generated-artifact checks
+cargo check -p jolt-equivalence --tests --quiet
 cargo nextest run -p jolt-equivalence --cargo-quiet
-# Lint
-cargo clippy -p jolt-compiler -p jolt-compute -p jolt-cpu -p jolt-zkvm -p jolt-dory -p jolt-openings -p jolt-verifier --message-format=short -q --all-targets -- -D warnings
+cargo nextest run -p bolt --cargo-quiet
+cargo nextest run -p jolt-kernels --cargo-quiet
 ```
 
 ## Approach

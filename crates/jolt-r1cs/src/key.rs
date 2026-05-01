@@ -210,15 +210,9 @@ impl<F: Field> R1csKey<F> {
     ///
     /// $$M(r_x, y) = \rho_A A(r_x, y) + \rho_B B(r_x, y) + \rho_C C(r_x, y)$$
     ///
-    /// Returns a dense polynomial over `total_cols_padded` column indices.
-    pub fn combined_row(
-        &self,
-        r_x: &[F],
-        rho_a: F,
-        rho_b: F,
-        rho_c: F,
-        total_cols_padded: usize,
-    ) -> Vec<F> {
+    /// Returns a dense polynomial over `total_cols() = num_cycles · num_vars_padded`
+    /// column indices (already a power of two by construction).
+    pub fn combined_row(&self, r_x: &[F], rho_a: F, rho_b: F, rho_c: F) -> Vec<F> {
         let cv = self.num_cycle_vars();
         let (rx_cycle, rx_con) = r_x.split_at(cv);
 
@@ -250,18 +244,32 @@ impl<F: Field> R1csKey<F> {
             }
         }
 
-        // Expand: M(r_x, y) = eq(r_cycle, y_cycle) · local_row[y_var]
-        let mut combined = vec![F::zero(); total_cols_padded];
-        for (c, &eq_c) in eq_cycle.iter().enumerate() {
+        let v_pad = self.num_vars_padded;
+        let mut combined = vec![F::zero(); self.total_cols()];
+
+        let fill_cycle = |(c, chunk): (usize, &mut [F])| {
+            let eq_c = eq_cycle[c];
             if eq_c.is_zero() {
-                continue;
+                return;
             }
-            let base = c * self.num_vars_padded;
             for (v, &local_val) in local_row.iter().enumerate() {
                 if !local_val.is_zero() {
-                    combined[base + v] = eq_c * local_val;
+                    chunk[v] = eq_c * local_val;
                 }
             }
+        };
+
+        #[cfg(feature = "parallel")]
+        {
+            use rayon::prelude::*;
+            combined
+                .par_chunks_mut(v_pad)
+                .enumerate()
+                .for_each(fill_cycle);
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            combined.chunks_mut(v_pad).enumerate().for_each(fill_cycle);
         }
 
         combined
@@ -378,8 +386,7 @@ mod tests {
         let rho_b = Fr::random(&mut rng);
         let rho_c = Fr::random(&mut rng);
 
-        let total_cols_padded = key.total_cols().next_power_of_two();
-        let combined = key.combined_row(&r_x, rho_a, rho_b, rho_c, total_cols_padded);
+        let combined = key.combined_row(&r_x, rho_a, rho_b, rho_c);
 
         // Evaluate the dense combined row polynomial at r_y
         let eq_y = EqPolynomial::new(r_y.clone()).evaluations();

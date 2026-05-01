@@ -112,7 +112,7 @@ fn g1_commutativity() {
 }
 
 #[test]
-#[allow(clippy::op_ref)]
+#[expect(clippy::op_ref)]
 fn g1_add_ref() {
     let mut rng = ChaCha20Rng::seed_from_u64(12);
     let a = random_g1(&mut rng);
@@ -122,7 +122,7 @@ fn g1_add_ref() {
 }
 
 #[test]
-#[allow(clippy::op_ref)]
+#[expect(clippy::op_ref)]
 fn g1_sub_ref() {
     let mut rng = ChaCha20Rng::seed_from_u64(13);
     let a = random_g1(&mut rng);

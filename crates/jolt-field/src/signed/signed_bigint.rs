@@ -1,9 +1,5 @@
 //! Sign-magnitude big integer with `N * 64`-bit width.
 
-use ark_serialize::{
-    CanonicalDeserialize, CanonicalSerialize, Compress, Read, SerializationError, Valid, Validate,
-    Write,
-};
 use core::cmp::Ordering;
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use num_traits::Zero;
@@ -15,11 +11,23 @@ use crate::Limbs;
 /// Zero is not canonicalized: a zero magnitude can be paired with either sign.
 /// Structural equality distinguishes `+0` and `-0`, but ordering treats them
 /// as equal.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 pub struct SignedBigInt<const N: usize> {
     pub magnitude: Limbs<N>,
     pub is_positive: bool,
 }
+
+impl<const N: usize> PartialEq for SignedBigInt<N> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        if self.magnitude.is_zero() && other.magnitude.is_zero() {
+            return true;
+        }
+        self.is_positive == other.is_positive && self.magnitude == other.magnitude
+    }
+}
+
+impl<const N: usize> Eq for SignedBigInt<N> {}
 
 #[cfg(feature = "allocative")]
 impl<const N: usize> allocative::Allocative for SignedBigInt<N> {
@@ -552,47 +560,6 @@ impl<const N: usize> Ord for SignedBigInt<N> {
     }
 }
 
-impl<const N: usize> CanonicalSerialize for SignedBigInt<N> {
-    #[inline]
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut w: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        (self.is_positive as u8).serialize_with_mode(&mut w, compress)?;
-        self.magnitude.serialize_with_mode(w, compress)
-    }
-
-    #[inline]
-    fn serialized_size(&self, compress: Compress) -> usize {
-        (self.is_positive as u8).serialized_size(compress)
-            + self.magnitude.serialized_size(compress)
-    }
-}
-
-impl<const N: usize> CanonicalDeserialize for SignedBigInt<N> {
-    #[inline]
-    fn deserialize_with_mode<R: Read>(
-        mut r: R,
-        compress: Compress,
-        validate: Validate,
-    ) -> Result<Self, SerializationError> {
-        let sign_u8 = u8::deserialize_with_mode(&mut r, compress, validate)?;
-        let mag = Limbs::<N>::deserialize_with_mode(r, compress, validate)?;
-        Ok(SignedBigInt {
-            magnitude: mag,
-            is_positive: sign_u8 != 0,
-        })
-    }
-}
-
-impl<const N: usize> Valid for SignedBigInt<N> {
-    #[inline]
-    fn check(&self) -> Result<(), SerializationError> {
-        self.magnitude.check()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -651,6 +618,7 @@ mod tests {
         let z2 = S64::new([0], false); // negative zero
         assert!(a > b);
         assert_eq!(z1.cmp(&z2), Ordering::Equal);
+        assert_eq!(z1, z2);
     }
 
     #[test]
@@ -677,30 +645,6 @@ mod tests {
         let mut acc = S128::from_i128(10);
         a.fmadd_trunc::<1, 2>(&b, &mut acc);
         assert_eq!(acc.to_i128(), Some(22)); // 10 + 3*4
-    }
-
-    #[test]
-    fn serialization_roundtrip() {
-        use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-
-        let val = S128::from_i128(-999_999);
-        let mut bytes = Vec::new();
-        val.serialize_compressed(&mut bytes).unwrap();
-        let restored = S128::deserialize_compressed(&bytes[..]).unwrap();
-        assert_eq!(val, restored);
-    }
-
-    #[test]
-    fn s64_serialization_roundtrip() {
-        use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-
-        for &v in &[0i64, 1, -1, i64::MAX, i64::MIN] {
-            let val = S64::from_i64(v);
-            let mut bytes = Vec::new();
-            val.serialize_compressed(&mut bytes).unwrap();
-            let restored = S64::deserialize_compressed(&bytes[..]).unwrap();
-            assert_eq!(val, restored);
-        }
     }
 
     #[test]

@@ -1,6 +1,8 @@
 #![allow(unused_results)]
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use std::hint::black_box;
+
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use jolt_field::{Field, Fr};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;

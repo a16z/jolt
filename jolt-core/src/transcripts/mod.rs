@@ -1,9 +1,11 @@
 mod blake2b;
 mod keccak;
-pub mod mock;
+#[cfg(feature = "transcript-poseidon")]
+mod poseidon;
 mod transcript;
 
 pub use blake2b::Blake2bTranscript;
 pub use keccak::KeccakTranscript;
-pub use mock::MockTranscript;
+#[cfg(feature = "transcript-poseidon")]
+pub use poseidon::PoseidonTranscript;
 pub use transcript::Transcript;

@@ -1,5 +1,6 @@
 //! Wrapper types bridging dory-pcs to jolt-openings.
 
+use ark_serialize::CanonicalSerialize;
 use dory::backends::arkworks::{ArkDoryProof, ArkworksProverSetup, ArkworksVerifierSetup};
 use dory::primitives::serialization::{DoryDeserialize, DorySerialize};
 use jolt_crypto::{Bn254G1, Bn254GT, HomomorphicCommitment};
@@ -30,7 +31,13 @@ impl AppendToTranscript for DoryCommitment {
     }
 
     fn serialized_len(&self) -> u64 {
-        self.0.serialized_len()
+        CanonicalSerialize::uncompressed_size(jolt_gt_ref_to_ark(&self.0)) as u64
+    }
+}
+
+impl DoryCommitment {
+    pub fn serialized_len(&self) -> u64 {
+        <Self as AppendToTranscript>::serialized_len(self)
     }
 }
 

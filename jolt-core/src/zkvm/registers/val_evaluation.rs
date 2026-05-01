@@ -15,8 +15,8 @@ use crate::{
         lt_poly::LtPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+            AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningPoint,
+            ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN,
         },
         ra_poly::RaPolynomial,
         unipoly::UniPoly,
@@ -287,24 +287,20 @@ pub struct ValEvaluationSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> ValEvaluationSumcheckVerifier<F> {
-    pub fn new(opening_accumulator: &VerifierOpeningAccumulator<F>) -> Self {
+    pub fn new<A: AbstractVerifierOpeningAccumulator<F>>(opening_accumulator: &A) -> Self {
         let params = RegistersValEvaluationSumcheckParams::new(opening_accumulator);
         Self { params }
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
-    for ValEvaluationSumcheckVerifier<F>
+impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
+    SumcheckInstanceVerifier<F, T, A> for ValEvaluationSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &VerifierOpeningAccumulator<F>,
-        sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, accumulator: &A, sumcheck_challenges: &[F::Challenge]) -> F {
         let registers_val_input_sample = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RegistersVal,
             SumcheckId::RegistersReadWriteChecking,
@@ -335,11 +331,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         inc_claim * wa_claim * lt_eval
     }
 
-    fn cache_openings(
-        &self,
-        accumulator: &mut VerifierOpeningAccumulator<F>,
-        sumcheck_challenges: &[F::Challenge],
-    ) {
+    fn cache_openings(&self, accumulator: &mut A, sumcheck_challenges: &[F::Challenge]) {
         let r_cycle: OpeningPoint<BIG_ENDIAN, F> =
             self.params.normalize_opening_point(sumcheck_challenges);
         let registers_val_input_sample = accumulator.get_virtual_polynomial_opening(

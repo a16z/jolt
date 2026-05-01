@@ -32,7 +32,7 @@ fn g2_commutativity() {
 }
 
 #[test]
-#[allow(clippy::op_ref)]
+#[expect(clippy::op_ref)]
 fn g2_add_ref() {
     let g = Bn254::g2_generator();
     let a = g.scalar_mul(&Fr::from_u64(3));
@@ -42,7 +42,7 @@ fn g2_add_ref() {
 }
 
 #[test]
-#[allow(clippy::op_ref)]
+#[expect(clippy::op_ref)]
 fn g2_sub_ref() {
     let g = Bn254::g2_generator();
     let a = g.scalar_mul(&Fr::from_u64(7));
@@ -147,7 +147,7 @@ fn gt_sub_assign() {
 }
 
 #[test]
-#[allow(clippy::op_ref)]
+#[expect(clippy::op_ref)]
 fn gt_add_ref() {
     let e = gt_element();
     let e2 = e.scalar_mul(&Fr::from_u64(2));
@@ -156,7 +156,7 @@ fn gt_add_ref() {
 }
 
 #[test]
-#[allow(clippy::op_ref)]
+#[expect(clippy::op_ref)]
 fn gt_sub_ref() {
     let e = gt_element();
     let e2 = e.scalar_mul(&Fr::from_u64(2));

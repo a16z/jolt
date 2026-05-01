@@ -66,6 +66,9 @@ For advanced use cases, you can invoke inlines directly through inline assembly.
 | BLAKE3        | 0x0B   | 0x03   | 0x00   | BLAKE3 compression                         |
 | BLAKE3KEYED64 | 0x0B   | 0x03   | 0x01   | BLAKE3 compression keyed                   |
 | BIGINT256_MUL | 0x0B   | 0x04   | 0x00   | 256-bit bigint multiplication              |
+| SECP256K1_*   | 0x0B   | 0x05   | 0x00–0x07 | secp256k1 field ops + GLV advice        |
+| GRUMPKIN_*    | 0x0B   | 0x06   | 0x00–0x01 | grumpkin field division advice           |
+| P256_*        | 0x0B   | 0x07   | 0x00–0x07 | P-256 field ops + Fake GLV advice       |
 
 ```rust
 unsafe {
@@ -89,7 +92,7 @@ unsafe {
 }
 ```
 
-Additional inlines for Secp256k1 operations are available but wrapped in a higher-level API. See `jolt-inlines/secp256k1` for details and `examples/secp256k1-ecdsa-verify` for an example of a higher-level ECDSA verification function using the Secp256k1 inlines.
+Secp256k1 and P-256 inlines are wrapped in higher-level SDKs that provide field element types and ECDSA verification. See `jolt-inlines/secp256k1`, `jolt-inlines/p256`, and the corresponding examples in `examples/secp256k1-ecdsa-verify` and `examples/p256-ecdsa-verify`.
 
 ## Error Handling in Secp256k1
 

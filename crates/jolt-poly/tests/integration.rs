@@ -1,3 +1,4 @@
+#![expect(clippy::expect_used)]
 //! Cross-type integration tests for jolt-poly.
 //!
 //! These tests verify composition patterns between polynomial types
@@ -243,8 +244,8 @@ fn polynomial_addition_commutative() {
     let b = Polynomial::<Fr>::random(nv, &mut rng);
 
     let ab = a.clone() + b.clone();
-    let ba = b + a;
-    assert_eq!(ab.evaluations(), ba.evaluations());
+    let b_plus_a = b + a;
+    assert_eq!(ab.evaluations(), b_plus_a.evaluations());
 }
 
 /// Scalar multiplication distributes over addition: s*(a+b) == s*a + s*b.

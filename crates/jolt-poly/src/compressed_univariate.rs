@@ -92,6 +92,7 @@ impl<F: Field> CompressedPoly<F> {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use jolt_field::Fr;

@@ -327,7 +327,10 @@ impl Default for Sha256 {
 /// - `state` must be a valid pointer to at least 32 bytes of readable and writable memory
 /// - Both pointers must be 8-byte aligned (required for doubleword loads on 64-bit targets)
 /// - The memory regions must not overlap
-#[cfg(not(feature = "host"))]
+#[cfg(all(
+    not(feature = "host"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
 pub(crate) unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
     use crate::{INLINE_OPCODE, SHA256_FUNCT3, SHA256_FUNCT7};
     core::arch::asm!(
@@ -361,6 +364,14 @@ pub(crate) unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
     std::ptr::copy_nonoverlapping(result.as_ptr(), state, 8)
 }
 
+#[cfg(all(
+    not(feature = "host"),
+    not(any(target_arch = "riscv32", target_arch = "riscv64"))
+))]
+pub(crate) unsafe fn sha256_compression(_input: *const u32, _state: *mut u32) {
+    panic!("sha256_compression requires RISC-V target or host feature");
+}
+
 /// Calls the SHA256 compression custom instruction with initial block
 ///
 /// # Arguments
@@ -374,7 +385,10 @@ pub(crate) unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
 /// - `state` must be a valid pointer to at least 32 bytes of writable memory
 /// - Both pointers must be 8-byte aligned (required for doubleword loads on 64-bit targets)
 /// - The memory regions must not overlap
-#[cfg(not(feature = "host"))]
+#[cfg(all(
+    not(feature = "host"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
 pub(crate) unsafe fn sha256_compression_initial(input: *const u32, state: *mut u32) {
     use crate::{INLINE_OPCODE, SHA256_INIT_FUNCT3, SHA256_INIT_FUNCT7};
     core::arch::asm!(
@@ -410,8 +424,19 @@ pub(crate) unsafe fn sha256_compression_initial(input: *const u32, state: *mut u
     std::ptr::copy_nonoverlapping(result.as_ptr(), state, 8)
 }
 
+#[cfg(all(
+    not(feature = "host"),
+    not(any(target_arch = "riscv32", target_arch = "riscv64"))
+))]
+pub(crate) unsafe fn sha256_compression_initial(_input: *const u32, _state: *mut u32) {
+    panic!("sha256_compression_initial requires RISC-V target or host feature");
+}
+
 /// Swap bytes of a u32 - uses virtual instruction on RISC-V, fallback on host
-#[cfg(not(feature = "host"))]
+#[cfg(all(
+    not(feature = "host"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
 fn swap_bytes(mut v: u32) -> u32 {
     unsafe {
         core::arch::asm!(
@@ -425,7 +450,7 @@ fn swap_bytes(mut v: u32) -> u32 {
     v
 }
 
-#[cfg(feature = "host")]
+#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
 fn swap_bytes(v: u32) -> u32 {
     v.swap_bytes()
 }

@@ -51,10 +51,9 @@ pub(crate) fn shamir_glv_mul_4d(
         for (i, (coeff, &base)) in coeffs.iter().zip(bases.iter()).enumerate() {
             if coeff.get_bit(bit_idx) {
                 if signs[i] {
-                    // signs[i] = true means negative in 4D decomposition
-                    result -= base;
-                } else {
                     result += base;
+                } else {
+                    result -= base;
                 }
             }
         }

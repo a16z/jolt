@@ -1,13 +1,19 @@
 //! Unit tests for sumcheck verification.
 
+#![expect(
+    clippy::unwrap_used,
+    clippy::panic,
+    reason = "tests may panic on assertion failures"
+)]
+
 use jolt_field::{Field, Fr};
 use jolt_poly::UnivariatePoly;
-use jolt_transcript::{AppendToTranscript, LabelWithCount, MockTranscript, Transcript};
+use jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript};
 
-use crate::claim::SumcheckClaim;
+use crate::claim::{EvaluationClaim, SumcheckClaim};
 use crate::error::SumcheckError;
 use crate::proof::SumcheckProof;
-use crate::round::{ClearRoundVerifier, RoundVerifier};
+use crate::round_proof::{CompressedLabeledRoundPoly, LabeledRoundPoly, RoundProof};
 use crate::verifier::SumcheckVerifier;
 use crate::BatchedSumcheckVerifier;
 
@@ -22,7 +28,7 @@ type F = Fr;
 fn honest_prove(
     evals: &[F],
     num_vars: usize,
-    transcript: &mut MockTranscript<F>,
+    transcript: &mut Blake2bTranscript,
 ) -> SumcheckProof<F> {
     let mut buf = evals.to_vec();
     let mut round_polys = Vec::with_capacity(num_vars);
@@ -44,10 +50,8 @@ fn honest_prove(
         let c1 = eval_1 - eval_0;
         let round_poly = UnivariatePoly::new(vec![c0, c1]);
 
-        // Absorb (matching ClearRoundVerifier::new() — no label)
-        for &coeff in round_poly.coefficients() {
-            coeff.append_to_transcript(transcript);
-        }
+        // Absorb through the same path the unlabelled verifier uses.
+        <UnivariatePoly<F> as RoundProof<F>>::append_to_transcript(&round_poly, transcript);
 
         let r: F = transcript.challenge();
         round_polys.push(round_poly);
@@ -78,7 +82,7 @@ fn verify_valid_degree1_proof() {
     let sum = compute_sum(&evals);
     let num_vars = 3;
 
-    let mut prover_transcript = MockTranscript::<F>::default();
+    let mut prover_transcript = Blake2bTranscript::new(b"sumcheck-test");
     let proof = honest_prove(&evals, num_vars, &mut prover_transcript);
 
     let claim = SumcheckClaim {
@@ -87,17 +91,15 @@ fn verify_valid_degree1_proof() {
         claimed_sum: sum,
     };
 
-    let mut verifier_transcript = MockTranscript::<F>::default();
-    let clear = ClearRoundVerifier::new();
-    let result = SumcheckVerifier::verify(
-        &claim,
-        &proof.round_polynomials,
-        &mut verifier_transcript,
-        &clear,
-    );
+    let mut verifier_transcript = Blake2bTranscript::new(b"sumcheck-test");
+    let result =
+        SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut verifier_transcript);
     assert!(result.is_ok(), "verification failed: {:?}", result.err());
 
-    let (final_eval, challenges) = result.unwrap();
+    let EvaluationClaim {
+        point: challenges,
+        value: final_eval,
+    } = result.unwrap();
     assert_eq!(challenges.len(), num_vars);
 
     // Verify the final evaluation matches direct evaluation at the challenge point.
@@ -113,7 +115,7 @@ fn verify_single_variable() {
     let evals = vec![F::from_u64(3), F::from_u64(10)];
     let sum = compute_sum(&evals); // 13
 
-    let mut pt = MockTranscript::<F>::default();
+    let mut pt = Blake2bTranscript::new(b"sumcheck-test");
     let proof = honest_prove(&evals, 1, &mut pt);
 
     let claim = SumcheckClaim {
@@ -122,10 +124,11 @@ fn verify_single_variable() {
         claimed_sum: sum,
     };
 
-    let mut vt = MockTranscript::<F>::default();
-    let clear = ClearRoundVerifier::new();
-    let (final_eval, challenges) =
-        SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt, &clear).unwrap();
+    let mut vt = Blake2bTranscript::new(b"sumcheck-test");
+    let EvaluationClaim {
+        point: challenges,
+        value: final_eval,
+    } = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt).unwrap();
     assert_eq!(challenges.len(), 1);
 
     let poly = jolt_poly::Polynomial::new(evals);
@@ -137,7 +140,7 @@ fn verify_round_check_failure() {
     let evals: Vec<F> = (1..=8).map(F::from_u64).collect();
     let sum = compute_sum(&evals);
 
-    let mut pt = MockTranscript::<F>::default();
+    let mut pt = Blake2bTranscript::new(b"sumcheck-test");
     let mut proof = honest_prove(&evals, 3, &mut pt);
 
     // Corrupt the first round polynomial
@@ -150,9 +153,8 @@ fn verify_round_check_failure() {
         claimed_sum: sum,
     };
 
-    let mut vt = MockTranscript::<F>::default();
-    let clear = ClearRoundVerifier::new();
-    let result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt, &clear);
+    let mut vt = Blake2bTranscript::new(b"sumcheck-test");
+    let result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt);
     assert!(result.is_err());
     match result.unwrap_err() {
         SumcheckError::RoundCheckFailed { round, .. } => assert_eq!(round, 0),
@@ -165,7 +167,7 @@ fn verify_wrong_num_rounds() {
     let evals: Vec<F> = (1..=8).map(F::from_u64).collect();
     let sum = compute_sum(&evals);
 
-    let mut pt = MockTranscript::<F>::default();
+    let mut pt = Blake2bTranscript::new(b"sumcheck-test");
     let mut proof = honest_prove(&evals, 3, &mut pt);
 
     // Remove the last round
@@ -177,9 +179,8 @@ fn verify_wrong_num_rounds() {
         claimed_sum: sum,
     };
 
-    let mut vt = MockTranscript::<F>::default();
-    let clear = ClearRoundVerifier::new();
-    let result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt, &clear);
+    let mut vt = Blake2bTranscript::new(b"sumcheck-test");
+    let result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt);
     match result.unwrap_err() {
         SumcheckError::WrongNumberOfRounds { expected, got } => {
             assert_eq!(expected, 3);
@@ -194,7 +195,7 @@ fn verify_degree_exceeded() {
     let evals: Vec<F> = (1..=4).map(F::from_u64).collect();
     let sum = compute_sum(&evals);
 
-    let mut pt = MockTranscript::<F>::default();
+    let mut pt = Blake2bTranscript::new(b"sumcheck-test");
     let mut proof = honest_prove(&evals, 2, &mut pt);
 
     // Replace first round poly with a degree-3 polynomial (4 coefficients)
@@ -207,9 +208,8 @@ fn verify_degree_exceeded() {
         claimed_sum: sum,
     };
 
-    let mut vt = MockTranscript::<F>::default();
-    let clear = ClearRoundVerifier::new();
-    let result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt, &clear);
+    let mut vt = Blake2bTranscript::new(b"sumcheck-test");
+    let result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt);
     match result.unwrap_err() {
         SumcheckError::DegreeBoundExceeded { got, max } => {
             assert_eq!(max, 1);
@@ -224,7 +224,7 @@ fn verify_wrong_claimed_sum() {
     let evals: Vec<F> = (1..=4).map(F::from_u64).collect();
     let real_sum = compute_sum(&evals);
 
-    let mut pt = MockTranscript::<F>::default();
+    let mut pt = Blake2bTranscript::new(b"sumcheck-test");
     let proof = honest_prove(&evals, 2, &mut pt);
 
     // Claim a different sum
@@ -234,9 +234,8 @@ fn verify_wrong_claimed_sum() {
         claimed_sum: real_sum + F::from_u64(1),
     };
 
-    let mut vt = MockTranscript::<F>::default();
-    let clear = ClearRoundVerifier::new();
-    let result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt, &clear);
+    let mut vt = Blake2bTranscript::new(b"sumcheck-test");
+    let result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt);
     assert!(result.is_err());
     assert!(matches!(
         result.unwrap_err(),
@@ -248,19 +247,15 @@ fn verify_wrong_claimed_sum() {
 fn clear_round_verifier_with_label_absorbs_label() {
     // poly(0) = 5, poly(1) = 5 + 3 = 8, sum = 13
     let poly = UnivariatePoly::new(vec![F::from_u64(5), F::from_u64(3)]);
-    let running_sum = F::from_u64(13);
-    let label = b"test_label";
-    let round_verifier = ClearRoundVerifier::with_label(label);
+    let label: &[u8; 10] = b"test_label";
+    let labeled = LabeledRoundPoly::new(&poly, label);
 
-    let mut t1 = MockTranscript::<F>::default();
-
-    round_verifier
-        .absorb_and_check(&poly, running_sum, 1, 0, &mut t1)
-        .unwrap();
+    let mut t1 = Blake2bTranscript::<F>::new(b"sumcheck-test");
+    <LabeledRoundPoly<'_, F> as RoundProof<F>>::append_to_transcript(&labeled, &mut t1);
     let c1: F = t1.challenge();
 
     // Absorb manually (should match)
-    let mut t2 = MockTranscript::<F>::default();
+    let mut t2 = Blake2bTranscript::new(b"sumcheck-test");
     t2.append(&LabelWithCount(label, 2));
     for coeff in poly.coefficients() {
         coeff.append_to_transcript(&mut t2);
@@ -273,25 +268,93 @@ fn clear_round_verifier_with_label_absorbs_label() {
 #[test]
 fn clear_round_verifier_no_label() {
     let poly = UnivariatePoly::new(vec![F::from_u64(5), F::from_u64(3)]);
-    let running_sum = F::from_u64(13); // 5 + 8
 
-    let round_verifier = ClearRoundVerifier::new();
-
-    let mut t1 = MockTranscript::<F>::default();
-
-    round_verifier
-        .absorb_and_check(&poly, running_sum, 1, 0, &mut t1)
-        .unwrap();
+    let mut t1 = Blake2bTranscript::<F>::new(b"sumcheck-test");
+    <UnivariatePoly<F> as RoundProof<F>>::append_to_transcript(&poly, &mut t1);
     let c1: F = t1.challenge();
 
     // Manual: just coefficients, no label
-    let mut t2 = MockTranscript::<F>::default();
+    let mut t2 = Blake2bTranscript::new(b"sumcheck-test");
     for coeff in poly.coefficients() {
         coeff.append_to_transcript(&mut t2);
     }
     let c2: F = t2.challenge();
 
     assert_eq!(c1, c2, "unlabeled absorption must match manual absorption");
+}
+
+#[test]
+fn clear_round_verifier_compressed_matches_manual_absorption() {
+    // s(X) = 2 + 3*X + 5*X^2  ⇒  s(0) = 2, s(1) = 10, running_sum = 12.
+    // Sanity: 2*c0 + c1 + c2 = 2*2 + 3 + 5 = 12.
+    let poly = UnivariatePoly::new(vec![F::from_u64(2), F::from_u64(3), F::from_u64(5)]);
+    let label: &[u8; 15] = b"compressed_test";
+    let compressed = CompressedLabeledRoundPoly::new(&poly, label);
+
+    let mut t1 = Blake2bTranscript::<F>::new(b"sumcheck-test");
+    <CompressedLabeledRoundPoly<'_, F> as RoundProof<F>>::append_to_transcript(
+        &compressed,
+        &mut t1,
+    );
+    let ch1: F = t1.challenge();
+
+    // Manual absorb matching the compressed wire format: label_with_count(d), c0, c2..cd.
+    let mut t2 = Blake2bTranscript::new(b"sumcheck-test");
+    let coeffs = poly.coefficients();
+    t2.append(&LabelWithCount(label, (coeffs.len() - 1) as u64));
+    coeffs[0].append_to_transcript(&mut t2);
+    for c in coeffs.iter().skip(2) {
+        c.append_to_transcript(&mut t2);
+    }
+    let ch2: F = t2.challenge();
+
+    assert_eq!(
+        ch1, ch2,
+        "compressed absorption must omit c1 and match manual c0+c2..cd absorption"
+    );
+}
+
+#[test]
+fn clear_round_verifier_compressed_rejects_wrong_running_sum() {
+    // Even when the linear term is omitted from absorption, the sum check
+    // (s(0) + s(1) == running_sum) still binds every coefficient.
+    let poly = UnivariatePoly::new(vec![F::from_u64(2), F::from_u64(3), F::from_u64(5)]);
+    let wrong_running_sum = F::from_u64(999);
+    let compressed = CompressedLabeledRoundPoly::new(&poly, b"compressed_test");
+
+    let result = <CompressedLabeledRoundPoly<'_, F> as RoundProof<F>>::check_sum(
+        &compressed,
+        wrong_running_sum,
+        0,
+    );
+    assert!(
+        matches!(
+            result,
+            Err(SumcheckError::RoundCheckFailed { round: 0, .. })
+        ),
+        "compressed verifier must enforce s(0)+s(1)==running_sum: {result:?}"
+    );
+}
+
+#[test]
+fn clear_round_verifier_compressed_rejects_short_polynomial() {
+    // Compressed encoding omits the linear term; a polynomial with fewer than
+    // two coefficients has no linear term to recover and is malformed.
+    let degree_zero = UnivariatePoly::new(vec![F::from_u64(7)]);
+    let compressed = CompressedLabeledRoundPoly::new(&degree_zero, b"compressed_test");
+
+    let result = <CompressedLabeledRoundPoly<'_, F> as RoundProof<F>>::check_sum(
+        &compressed,
+        F::from_u64(14),
+        3,
+    );
+    assert!(
+        matches!(
+            result,
+            Err(SumcheckError::CompressedPolynomialTooShort { round: 3, got: 1 })
+        ),
+        "compressed verifier must reject degree-0 polynomials: {result:?}"
+    );
 }
 
 #[test]
@@ -303,7 +366,7 @@ fn batched_verify_same_size() {
     let sum_b = compute_sum(&evals_b);
 
     // Prove: absorb claims, squeeze alpha, combine, prove combined
-    let mut pt = MockTranscript::<F>::default();
+    let mut pt = Blake2bTranscript::new(b"sumcheck-test");
 
     sum_a.append_to_transcript(&mut pt);
     sum_b.append_to_transcript(&mut pt);
@@ -330,13 +393,11 @@ fn batched_verify_same_size() {
         },
     ];
 
-    let mut vt = MockTranscript::<F>::default();
-    let clear = ClearRoundVerifier::new();
-    let result =
-        BatchedSumcheckVerifier::verify(&claims, &proof.round_polynomials, &mut vt, &clear);
+    let mut vt = Blake2bTranscript::new(b"sumcheck-test");
+    let result = BatchedSumcheckVerifier::verify(&claims, &proof.round_polynomials, &mut vt);
     assert!(result.is_ok(), "batched verify failed: {:?}", result.err());
 
-    let (_final_eval, challenges) = result.unwrap();
+    let challenges = result.unwrap().point;
     assert_eq!(challenges.len(), 2);
 }
 
@@ -350,7 +411,7 @@ fn batched_verify_different_sizes() {
 
     let max_vars = 3;
 
-    let mut pt = MockTranscript::<F>::default();
+    let mut pt = Blake2bTranscript::new(b"sumcheck-test");
 
     sum_a.append_to_transcript(&mut pt);
     sum_b.append_to_transcript(&mut pt);
@@ -386,10 +447,8 @@ fn batched_verify_different_sizes() {
         },
     ];
 
-    let mut vt = MockTranscript::<F>::default();
-    let clear = ClearRoundVerifier::new();
-    let result =
-        BatchedSumcheckVerifier::verify(&claims, &proof.round_polynomials, &mut vt, &clear);
+    let mut vt = Blake2bTranscript::new(b"sumcheck-test");
+    let result = BatchedSumcheckVerifier::verify(&claims, &proof.round_polynomials, &mut vt);
     assert!(result.is_ok(), "batched verify failed: {:?}", result.err());
 }
 
@@ -407,7 +466,7 @@ fn batched_single_claim_matches_single_verify() {
     // The batched verifier absorbs the claim and squeezes alpha even for a
     // single claim, so the transcript diverges from the single verifier.
     // But internally it should still produce a valid verification.
-    let mut pt = MockTranscript::<F>::default();
+    let mut pt = Blake2bTranscript::new(b"sumcheck-test");
 
     sum.append_to_transcript(&mut pt);
     let _alpha: F = pt.challenge();
@@ -415,10 +474,8 @@ fn batched_single_claim_matches_single_verify() {
     // alpha^0 = 1, so combined polynomial = evals (single claim)
     let proof = honest_prove(&evals, 3, &mut pt);
 
-    let mut vt = MockTranscript::<F>::default();
-    let clear = ClearRoundVerifier::new();
-    let result =
-        BatchedSumcheckVerifier::verify(&[claim], &proof.round_polynomials, &mut vt, &clear);
+    let mut vt = Blake2bTranscript::new(b"sumcheck-test");
+    let result = BatchedSumcheckVerifier::verify(&[claim], &proof.round_polynomials, &mut vt);
     assert!(
         result.is_ok(),
         "single-claim batch failed: {:?}",
@@ -430,61 +487,70 @@ fn batched_single_claim_matches_single_verify() {
 fn batched_empty_claims_returns_error() {
     let claims: &[SumcheckClaim<F>] = &[];
     let round_proofs: &[UnivariatePoly<F>] = &[];
-    let mut vt = MockTranscript::<F>::default();
-    let clear = ClearRoundVerifier::new();
-    let result = BatchedSumcheckVerifier::verify(claims, round_proofs, &mut vt, &clear);
+    let mut vt = Blake2bTranscript::new(b"sumcheck-test");
+    let result = BatchedSumcheckVerifier::verify(claims, round_proofs, &mut vt);
     assert!(matches!(result, Err(SumcheckError::EmptyClaims)));
 }
 
-/// A mock round verifier that always accepts and returns a fixed running sum.
+/// A mock round proof that always accepts and returns a fixed evaluation.
 /// Used to verify that `SumcheckVerifier` dispatches through the trait correctly.
-struct MockRoundVerifier {
+struct MockRoundProof {
     fixed_sum: F,
 }
 
-impl crate::round::RoundVerifier<F> for MockRoundVerifier {
-    type RoundProof = ();
+impl RoundProof<F> for MockRoundProof {
+    fn degree(&self) -> usize {
+        0
+    }
 
-    fn absorb_and_check(
-        &self,
-        _proof: &(),
-        _running_sum: F,
-        _degree_bound: usize,
-        _round: usize,
-        transcript: &mut impl jolt_transcript::Transcript,
-    ) -> Result<(), SumcheckError> {
-        // Absorb a deterministic byte so challenges are well-defined
-        F::from_u64(42).append_to_transcript(transcript);
+    fn check_sum(&self, _running_sum: F, _round: usize) -> Result<(), SumcheckError<F>> {
         Ok(())
     }
 
-    fn next_running_sum(&self, _proof: &(), _challenge: F) -> F {
+    fn evaluate(&self, _challenge: F) -> F {
         self.fixed_sum
+    }
+
+    fn append_to_transcript(&self, transcript: &mut impl Transcript) {
+        // Absorb a deterministic byte so challenges are well-defined.
+        F::from_u64(42).append_to_transcript(transcript);
     }
 }
 
 #[test]
 fn verify_dispatches_through_round_verifier_trait() {
     let fixed = F::from_u64(99);
-    let mock = MockRoundVerifier { fixed_sum: fixed };
+    let round_proofs = [
+        MockRoundProof { fixed_sum: fixed },
+        MockRoundProof { fixed_sum: fixed },
+        MockRoundProof { fixed_sum: fixed },
+    ];
 
     let claim = SumcheckClaim {
         num_vars: 3,
         degree: 1,
         claimed_sum: F::from_u64(0), // doesn't matter — mock always accepts
     };
-    let round_proofs = [(), (), ()];
 
-    let mut vt = MockTranscript::<F>::default();
-    let result = SumcheckVerifier::verify(&claim, &round_proofs, &mut vt, &mock);
+    let mut vt = Blake2bTranscript::new(b"sumcheck-test");
+    let result = SumcheckVerifier::verify(&claim, &round_proofs, &mut vt);
     assert!(
         result.is_ok(),
         "mock verifier should accept: {:?}",
         result.err()
     );
 
-    let (final_eval, challenges) = result.unwrap();
+    let EvaluationClaim {
+        point: challenges,
+        value: final_eval,
+    } = result.unwrap();
     assert_eq!(challenges.len(), 3);
     // Mock always returns fixed_sum, so final eval should be fixed
     assert_eq!(final_eval, fixed);
+}
+
+#[test]
+#[should_panic(expected = "degree >= 1")]
+fn sumcheck_claim_new_rejects_degree_zero() {
+    let _ = SumcheckClaim::<Fr>::new(3, 0, Fr::from_u64(0));
 }

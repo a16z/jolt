@@ -1,4 +1,4 @@
-//! Cross-system equivalence testing between jolt-core and jolt-zkvm.
+//! Cross-system equivalence testing between jolt-core and Bolt-generated Jolt artifacts.
 //!
 //! Provides two complementary comparison strategies:
 //!
@@ -13,7 +13,7 @@
 //! for the RamRW phase 1 kernel".
 
 pub mod checkpoint;
-pub mod cross_verifier;
+pub mod core_conversion;
 
 use std::fmt;
 
@@ -25,7 +25,7 @@ pub use checkpoint::{
 /// Per-stage comparison data extracted from either proving system.
 ///
 /// With identical mock-transcript challenges and identical witnesses,
-/// every field here must match between jolt-core and jolt-zkvm.
+/// every field here must match between jolt-core and the generated protocol.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StageTrace<F: fmt::Debug + Clone + PartialEq + Eq> {
     /// Number of sumcheck rounds in this stage.

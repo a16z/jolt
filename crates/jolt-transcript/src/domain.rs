@@ -16,19 +16,19 @@ use crate::transcript::{AppendToTranscript, Transcript};
 ///
 /// # Panics
 ///
-/// Debug-asserts that the label fits within 32 bytes.
+/// Panics if the label exceeds 32 bytes. Silent truncation would allow two
+/// distinct labels sharing a 32-byte prefix to collide in Fiat-Shamir.
 pub struct Label(pub &'static [u8]);
 
 impl AppendToTranscript for Label {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        debug_assert!(
+        assert!(
             self.0.len() <= 32,
             "label {:?} exceeds 32 bytes",
             core::str::from_utf8(self.0)
         );
         let mut padded = [0u8; 32];
-        let len = self.0.len().min(32);
-        padded[..len].copy_from_slice(&self.0[..len]);
+        padded[..self.0.len()].copy_from_slice(self.0);
         transcript.append_bytes(&padded);
     }
 }
@@ -40,19 +40,19 @@ impl AppendToTranscript for Label {
 ///
 /// # Panics
 ///
-/// Debug-asserts that the label fits within 24 bytes.
+/// Panics if the label exceeds 24 bytes. Silent truncation would allow two
+/// distinct labels sharing a 24-byte prefix to collide in Fiat-Shamir.
 pub struct LabelWithCount(pub &'static [u8], pub u64);
 
 impl AppendToTranscript for LabelWithCount {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        debug_assert!(
+        assert!(
             self.0.len() <= 24,
             "label {:?} exceeds 24 bytes",
             core::str::from_utf8(self.0)
         );
         let mut packed = [0u8; 32];
-        let len = self.0.len().min(24);
-        packed[..len].copy_from_slice(&self.0[..len]);
+        packed[..self.0.len()].copy_from_slice(self.0);
         packed[24..32].copy_from_slice(&self.1.to_be_bytes());
         transcript.append_bytes(&packed);
     }

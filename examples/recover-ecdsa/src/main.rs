@@ -14,11 +14,11 @@ pub fn main() {
 
     let secp = Secp256k1::new();
 
-    let seckey = SecretKey::from_slice(&SECRET_KEY).unwrap();
+    let seckey = SecretKey::from_byte_array(SECRET_KEY).unwrap();
     let _pubkey = PublicKey::from_secret_key(&secp, &seckey);
     let msg_digest = *b"this must be secure hash output.";
 
-    let signature = secp.sign_ecdsa_recoverable(&Message::from_digest(msg_digest), &seckey);
+    let signature = secp.sign_ecdsa_recoverable(Message::from_digest(msg_digest), &seckey);
     let (recovery_id, sig_bytes_array) = signature.serialize_compact();
 
     let sig_bytes = [&sig_bytes_array[..], &[recovery_id as u8]].concat();
@@ -31,7 +31,7 @@ pub fn main() {
     let target_dir = "/tmp/jolt-guest-targets";
     let mut program = guest::compile_recover(target_dir);
 
-    let shared_preprocessing = guest::preprocess_shared_recover(&mut program);
+    let shared_preprocessing = guest::preprocess_shared_recover(&mut program).unwrap();
     let prover_preprocessing = guest::preprocess_prover_recover(shared_preprocessing.clone());
     let verifier_preprocessing = guest::preprocess_verifier_recover(
         shared_preprocessing,

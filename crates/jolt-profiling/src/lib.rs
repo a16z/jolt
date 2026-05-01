@@ -28,6 +28,19 @@
 //! );
 //! // All tracing spans from any Jolt crate now flow to Perfetto JSON output.
 //! ```
+//!
+//! # Feature Flags
+//!
+//! | Flag | Description |
+//! |------|-------------|
+//! | `monitor` | Background system metrics sampling (CPU, memory, cores) |
+//! | `pprof` | Scoped CPU profiling via `pprof` with `.pb` output |
+//! | `allocative` | Heap flamegraph generation from `allocative`-instrumented types |
+//!
+//! # Dependency Position
+//!
+//! This is a leaf crate — imported by host binaries and benchmarks.
+//! Library crates depend only on `tracing` for instrumentation.
 
 pub mod setup;
 
@@ -41,6 +54,8 @@ mod pprof_guard;
 
 #[cfg(feature = "allocative")]
 pub mod flamegraph;
+#[cfg(feature = "allocative")]
+pub use flamegraph::{print_data_structure_heap_usage, write_flamegraph_svg};
 
 mod units;
 
@@ -53,7 +68,30 @@ pub use memory::{
     start_memory_tracing_span,
 };
 
+#[cfg(target_arch = "wasm32")]
+pub fn start_memory_tracing_span(_label: &'static str) {}
+
+#[cfg(target_arch = "wasm32")]
+pub fn end_memory_tracing_span(_label: &'static str) {}
+
+#[cfg(target_arch = "wasm32")]
+pub fn report_memory_usage() {}
+
+#[cfg(target_arch = "wasm32")]
+pub fn print_current_memory_usage(_label: &str) {}
+
 #[cfg(all(not(target_arch = "wasm32"), feature = "monitor"))]
 pub use monitor::MetricsMonitor;
+
+#[cfg(all(target_arch = "wasm32", feature = "monitor"))]
+#[must_use = "monitor stops when dropped"]
+pub struct MetricsMonitor;
+
+#[cfg(all(target_arch = "wasm32", feature = "monitor"))]
+impl MetricsMonitor {
+    pub fn start(_interval_secs: f64) -> Self {
+        Self
+    }
+}
 
 pub use pprof_guard::PprofGuard;

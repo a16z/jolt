@@ -1,5 +1,5 @@
 #![no_main]
-use jolt_crypto::{Bn254G1, JoltGroup};
+use jolt_crypto::{Bn254, Bn254G1, JoltGroup};
 use jolt_field::{Field, Fr};
 use libfuzzer_sys::fuzz_target;
 
@@ -9,7 +9,7 @@ fn parse_input(data: &[u8]) -> Option<(Fr, Fr, Bn254G1)> {
     }
     let s1 = Fr::from_bytes(&data[..32]);
     let s2 = Fr::from_bytes(&data[32..64]);
-    let g = Bn254G1::identity().scalar_mul(&Fr::from_u64(1));
+    let g = Bn254::g1_generator();
     let p = g.scalar_mul(&s1);
     Some((s1, s2, p))
 }

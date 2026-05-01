@@ -10,7 +10,7 @@ use common::constants::{RAM_START_ADDRESS, XLEN};
 use common::jolt_device::JoltDevice;
 use jolt_bench::measure::{median, time_it};
 use jolt_bench::programs::Program;
-use jolt_compiler_v2::{
+use bolt::{
     build_commitment_protocol, build_stage1_outer_protocol, build_stage2_protocol,
     commitment_cpu_program, lower_commitment_to_compute, lower_compute_to_cpu,
     lower_piop_and_fiat_shamir, lower_stage1_to_compute, lower_stage2_to_compute,
@@ -18,7 +18,7 @@ use jolt_compiler_v2::{
     stage2_cpu_program, CommitmentCpuProgram, JoltProtocolParams, MeliorContext,
     OptionalSkipPolicy, OracleGeneration, Role, TranscriptStep,
 };
-use jolt_compiler_v2::{
+use bolt::{
     Stage1CpuProgram as CompilerStage1CpuProgram, Stage2CpuProgram as CompilerStage2CpuProgram,
 };
 use jolt_core::curve::Bn254Curve;
@@ -83,7 +83,7 @@ use jolt_transcript::{
 };
 use jolt_verifier::TRANSCRIPT_LABEL;
 use jolt_witness::CycleInput;
-use jolt_witness_v2::{
+use jolt_witness::{
     dense_i128_column_to_field, one_hot_chunk_address_major, optional_field_oracle,
 };
 use serde::Serialize;
@@ -443,7 +443,8 @@ fn core_stage1_fixture(program: Program, log_t: usize, num_iters: u32) -> CoreSt
         init_memory_state,
         max_trace_length,
         entry_address,
-    );
+    )
+    .expect("shared preprocessing");
     let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
     let elf_contents = core_program.get_elf_contents().expect("guest ELF");
     let prover: CoreProver<'_> = CoreProver::gen_from_elf(
@@ -717,7 +718,8 @@ fn core_stage_once(stage: BenchStage, program: Program, log_t: usize, num_iters:
         init_memory_state,
         max_trace_length,
         entry_address,
-    );
+    )
+    .expect("shared preprocessing");
     let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
     let elf_contents = core_program.get_elf_contents().expect("guest ELF");
     let prover: CoreProver<'_> = CoreProver::gen_from_elf(

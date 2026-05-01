@@ -53,6 +53,7 @@ impl<F: Field> UnivariatePoly<F> {
     ///
     /// Computes $c_d + x(c_{d-1} + x(c_{d-2} + \cdots))$ in $O(d)$ multiplications.
     #[inline]
+    #[expect(clippy::unwrap_used)]
     pub fn evaluate(&self, point: F) -> F {
         if self.coefficients.is_empty() {
             return F::zero();
@@ -72,6 +73,7 @@ impl<F: Field> UnivariatePoly<F> {
     ///
     /// # Panics
     /// Panics if `points` is empty.
+    #[expect(clippy::expect_used)]
     pub fn interpolate(points: &[(F, F)]) -> Self {
         assert!(!points.is_empty(), "cannot interpolate zero points");
 
@@ -130,6 +132,7 @@ impl<F: Field> UnivariatePoly<F> {
     ///
     /// # Panics
     /// Panics if `index >= domain_size`.
+    #[expect(clippy::expect_used)]
     pub fn evaluate_basis(domain_size: usize, index: usize, point: F) -> F {
         assert!(
             index < domain_size,
@@ -262,6 +265,10 @@ impl<F: Field> UnivariatePoly<F> {
         // l(1) = l(0) + l(∞) = linear_eval_one
         // q(1) = q(0) + q(1_coeff) + q(2_coeff)
         // Solve for the linear coefficient of q:
+        assert!(
+            !linear_eval_one.is_zero(),
+            "linear polynomial vanishes at x=1"
+        );
         let quadratic_coeff_1 =
             (hint - cubic_coeff_0) / linear_eval_one - quadratic_coeff_0 - quadratic_coeff_2;
 
@@ -289,6 +296,7 @@ impl<F: Field> UnivariatePoly<F> {
     ///
     /// Returns `Some((quotient, remainder))`, or `None` if `divisor` is the
     /// zero polynomial.
+    #[expect(clippy::unwrap_used, clippy::expect_used)]
     pub fn divide_with_remainder(&self, divisor: &Self) -> Option<(Self, Self)> {
         if self.is_zero() {
             return Some((Self::zero(), Self::zero()));
@@ -463,36 +471,50 @@ fn gaussian_elimination_vandermonde<F: Field>(evals: &[F]) -> Vec<F> {
     gaussian_elimination_augmented(&mut matrix)
 }
 
-/// Gaussian elimination on an augmented matrix `[A | b]` where `A` is `n × n`.
+/// Gaussian elimination with partial pivoting on an augmented matrix `[A | b]`
+/// where `A` is `n × n`.
 ///
 /// Returns the solution vector `x` such that `A x = b`.
+///
+/// # Panics
+///
+/// Panics if the matrix is singular (no nonzero pivot in some column).
+#[expect(clippy::expect_used)]
 fn gaussian_elimination_augmented<F: Field>(matrix: &mut [Vec<F>]) -> Vec<F> {
     let size = matrix.len();
     debug_assert_eq!(size, matrix[0].len() - 1);
 
-    // Forward elimination (row echelon form)
+    // Forward elimination with partial pivoting
     for i in 0..size.saturating_sub(1) {
-        for j in i..size - 1 {
-            if matrix[i][i] != F::zero() {
-                let factor = matrix[j + 1][i] / matrix[i][i];
-                #[allow(clippy::needless_range_loop)]
-                for k in i..=size {
-                    let tmp = matrix[i][k];
-                    matrix[j + 1][k] -= factor * tmp;
-                }
+        // Find a row with a nonzero pivot in column i
+        let pivot_row = (i..size)
+            .find(|&r| matrix[r][i] != F::zero())
+            .expect("singular matrix in gaussian_elimination_augmented");
+        if pivot_row != i {
+            matrix.swap(i, pivot_row);
+        }
+
+        for j in (i + 1)..size {
+            let factor = matrix[j][i] / matrix[i][i];
+            #[expect(clippy::needless_range_loop)]
+            for k in i..=size {
+                let tmp = matrix[i][k];
+                matrix[j][k] -= factor * tmp;
             }
         }
     }
 
     // Back substitution
     for i in (1..size).rev() {
-        if matrix[i][i] != F::zero() {
-            for j in (1..=i).rev() {
-                let factor = matrix[j - 1][i] / matrix[i][i];
-                for k in (0..=size).rev() {
-                    let tmp = matrix[i][k];
-                    matrix[j - 1][k] -= factor * tmp;
-                }
+        assert!(
+            matrix[i][i] != F::zero(),
+            "singular matrix in gaussian_elimination_augmented"
+        );
+        for j in (0..i).rev() {
+            let factor = matrix[j][i] / matrix[i][i];
+            for k in (0..=size).rev() {
+                let tmp = matrix[i][k];
+                matrix[j][k] -= factor * tmp;
             }
         }
     }
@@ -505,6 +527,7 @@ fn gaussian_elimination_augmented<F: Field>(matrix: &mut [Vec<F>]) -> Vec<F> {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use jolt_field::Field;

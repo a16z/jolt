@@ -4,13 +4,15 @@
 //! degree and verify them, exercising the complete protocol flow including
 //! transcript synchronization.
 
+#![expect(clippy::unwrap_used, reason = "tests may panic on assertion failures")]
+
 use jolt_field::{Field, Fr};
 use jolt_poly::{Polynomial, UnivariatePoly};
-use jolt_sumcheck::claim::SumcheckClaim;
+use jolt_sumcheck::claim::{EvaluationClaim, SumcheckClaim};
 use jolt_sumcheck::proof::SumcheckProof;
-use jolt_sumcheck::round::ClearRoundVerifier;
+use jolt_sumcheck::round_proof::{CompressedLabeledRoundPoly, LabeledRoundPoly, RoundProof};
 use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckVerifier};
-use jolt_transcript::{AppendToTranscript, LabelWithCount, MockTranscript, Transcript};
+use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 
 type F = Fr;
 
@@ -24,7 +26,7 @@ type F = Fr;
 fn prove_product(
     polys: &[Vec<F>],
     num_vars: usize,
-    transcript: &mut MockTranscript<F>,
+    transcript: &mut Blake2bTranscript,
 ) -> (SumcheckProof<F>, F) {
     let degree = polys.len();
     let n = 1 << num_vars;
@@ -70,10 +72,8 @@ fn prove_product(
             .collect();
         let round_poly = UnivariatePoly::interpolate(&points);
 
-        // Absorb coefficients (matching ClearRoundVerifier::new())
-        for &coeff in round_poly.coefficients() {
-            coeff.append_to_transcript(transcript);
-        }
+        // Absorb through the same path the unlabelled verifier uses.
+        <UnivariatePoly<F> as RoundProof<F>>::append_to_transcript(&round_poly, transcript);
 
         let r: F = transcript.challenge();
         round_polys.push(round_poly);
@@ -104,7 +104,7 @@ fn degree2_product_roundtrip() {
     let f: Vec<F> = (0..n).map(|i| F::from_u64(i as u64 + 1)).collect();
     let g: Vec<F> = (0..n).map(|i| F::from_u64((i * 3 + 7) as u64)).collect();
 
-    let mut pt = MockTranscript::<F>::default();
+    let mut pt = Blake2bTranscript::new(b"sumcheck-roundtrip");
     let (proof, claimed_sum) = prove_product(&[f, g], num_vars, &mut pt);
 
     let claim = SumcheckClaim {
@@ -113,9 +113,8 @@ fn degree2_product_roundtrip() {
         claimed_sum,
     };
 
-    let mut vt = MockTranscript::<F>::default();
-    let clear = ClearRoundVerifier::new();
-    let result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt, &clear);
+    let mut vt = Blake2bTranscript::new(b"sumcheck-roundtrip");
+    let result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt);
     assert!(result.is_ok(), "degree-2 verify failed: {:?}", result.err());
 }
 
@@ -129,7 +128,7 @@ fn degree3_product_roundtrip() {
     let g: Vec<F> = (0..n).map(|i| F::from_u64((i * 2 + 3) as u64)).collect();
     let h: Vec<F> = (0..n).map(|i| F::from_u64((i + 10) as u64)).collect();
 
-    let mut pt = MockTranscript::<F>::default();
+    let mut pt = Blake2bTranscript::new(b"sumcheck-roundtrip");
     let (proof, claimed_sum) = prove_product(&[f, g, h], num_vars, &mut pt);
 
     let claim = SumcheckClaim {
@@ -138,9 +137,8 @@ fn degree3_product_roundtrip() {
         claimed_sum,
     };
 
-    let mut vt = MockTranscript::<F>::default();
-    let clear = ClearRoundVerifier::new();
-    let result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt, &clear);
+    let mut vt = Blake2bTranscript::new(b"sumcheck-roundtrip");
+    let result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt);
     assert!(result.is_ok(), "degree-3 verify failed: {:?}", result.err());
 }
 
@@ -154,7 +152,7 @@ fn degree3_final_eval_correct() {
     let g_evals: Vec<F> = (0..n).map(|i| F::from_u64((i * 5 + 2) as u64)).collect();
     let h_evals: Vec<F> = (0..n).map(|i| F::from_u64((i + 7) as u64)).collect();
 
-    let mut pt = MockTranscript::<F>::default();
+    let mut pt = Blake2bTranscript::new(b"sumcheck-roundtrip");
     let (proof, claimed_sum) = prove_product(
         &[f_evals.clone(), g_evals.clone(), h_evals.clone()],
         num_vars,
@@ -167,10 +165,11 @@ fn degree3_final_eval_correct() {
         claimed_sum,
     };
 
-    let mut vt = MockTranscript::<F>::default();
-    let clear = ClearRoundVerifier::new();
-    let (final_eval, challenges) =
-        SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt, &clear).unwrap();
+    let mut vt = Blake2bTranscript::new(b"sumcheck-roundtrip");
+    let EvaluationClaim {
+        point: challenges,
+        value: final_eval,
+    } = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt).unwrap();
 
     // f(r) * g(r) * h(r) should equal the final_eval
     let f_at_r = Polynomial::new(f_evals).evaluate_and_consume(&challenges);
@@ -194,7 +193,7 @@ fn eq_weighted_sumcheck() {
         .collect();
 
     // Compute eq(r, x) for all x in {0,1}^n
-    let eq_evals = jolt_poly::EqPolynomial::evals_serial::<F>(&r, None);
+    let eq_evals = jolt_poly::EqPolynomial::evals::<F>(&r, None);
 
     // Product: eq(r, x) * f(x)
     let product: Vec<F> = eq_evals.iter().zip(&f).map(|(&e, &fi)| e * fi).collect();
@@ -202,7 +201,7 @@ fn eq_weighted_sumcheck() {
     let claimed_sum: F = product.iter().copied().sum();
 
     // Prove as degree-2 (eq * f, both multilinear)
-    let mut pt = MockTranscript::<F>::default();
+    let mut pt = Blake2bTranscript::new(b"sumcheck-roundtrip");
     let (proof, sum) = prove_product(&[eq_evals, f], num_vars, &mut pt);
     assert_eq!(sum, claimed_sum);
 
@@ -212,9 +211,8 @@ fn eq_weighted_sumcheck() {
         claimed_sum,
     };
 
-    let mut vt = MockTranscript::<F>::default();
-    let clear = ClearRoundVerifier::new();
-    let result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt, &clear);
+    let mut vt = Blake2bTranscript::new(b"sumcheck-roundtrip");
+    let result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt);
     assert!(
         result.is_ok(),
         "eq-weighted verify failed: {:?}",
@@ -246,7 +244,7 @@ fn batched_heterogeneous_degrees() {
     ];
 
     // Build combined polynomial for honest proof
-    let mut pt = MockTranscript::<F>::default();
+    let mut pt = Blake2bTranscript::new(b"sumcheck-roundtrip");
     sum_fg.append_to_transcript(&mut pt);
     sum_h.append_to_transcript(&mut pt);
     let alpha: F = pt.challenge();
@@ -298,9 +296,7 @@ fn batched_heterogeneous_degrees() {
             .collect();
         let round_poly = UnivariatePoly::interpolate(&points);
 
-        for &coeff in round_poly.coefficients() {
-            coeff.append_to_transcript(&mut pt);
-        }
+        <UnivariatePoly<F> as RoundProof<F>>::append_to_transcript(&round_poly, &mut pt);
         let r: F = pt.challenge();
         round_polys.push(round_poly);
 
@@ -314,10 +310,8 @@ fn batched_heterogeneous_degrees() {
         round_polynomials: round_polys,
     };
 
-    let mut vt = MockTranscript::<F>::default();
-    let clear = ClearRoundVerifier::new();
-    let result =
-        BatchedSumcheckVerifier::verify(&claims, &proof.round_polynomials, &mut vt, &clear);
+    let mut vt = Blake2bTranscript::new(b"sumcheck-roundtrip");
+    let result = BatchedSumcheckVerifier::verify(&claims, &proof.round_polynomials, &mut vt);
     assert!(
         result.is_ok(),
         "batched heterogeneous verify failed: {:?}",
@@ -334,7 +328,7 @@ fn large_num_vars_roundtrip() {
     let f: Vec<F> = (0..n).map(|i| F::from_u64(i as u64 + 1)).collect();
     let g: Vec<F> = (0..n).map(|i| F::from_u64((i * 7 + 3) as u64)).collect();
 
-    let mut pt = MockTranscript::<F>::default();
+    let mut pt = Blake2bTranscript::new(b"sumcheck-roundtrip");
     let (proof, claimed_sum) = prove_product(&[f, g], num_vars, &mut pt);
 
     let claim = SumcheckClaim {
@@ -343,10 +337,94 @@ fn large_num_vars_roundtrip() {
         claimed_sum,
     };
 
-    let mut vt = MockTranscript::<F>::default();
-    let clear = ClearRoundVerifier::new();
-    let result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt, &clear);
+    let mut vt = Blake2bTranscript::new(b"sumcheck-roundtrip");
+    let result = SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt);
     assert!(result.is_ok(), "large roundtrip failed: {:?}", result.err());
+}
+
+#[test]
+fn compressed_round_verifier_roundtrip() {
+    // Full prover-verifier roundtrip where both the prover and the verifier
+    // absorb through `CompressedLabeledRoundPoly` — the wrapper is the
+    // single source of truth for the compressed wire format.
+    let num_vars = 3;
+    let n = 1 << num_vars;
+    let label: &[u8; 13] = b"sumcheck_poly";
+    let degree = 2;
+
+    let f: Vec<F> = (0..n).map(|i| F::from_u64(i as u64 + 1)).collect();
+    let g: Vec<F> = (0..n).map(|i| F::from_u64(i as u64 * 2 + 3)).collect();
+
+    let mut pt = Blake2bTranscript::new(b"sumcheck-roundtrip");
+    let mut bufs = vec![f.clone(), g.clone()];
+    let claimed_sum: F = (0..n).map(|i| bufs[0][i] * bufs[1][i]).sum();
+    let mut round_polys = Vec::with_capacity(num_vars);
+
+    for _round in 0..num_vars {
+        let half = bufs[0].len() / 2;
+        let evals: Vec<F> = (0..=degree)
+            .map(|t| {
+                let ft = F::from_u64(t as u64);
+                let mut sum = F::from_u64(0);
+                for i in 0..half {
+                    let mut prod = F::from_u64(1);
+                    for buf in &bufs {
+                        let lo = buf[i];
+                        let hi = buf[i + half];
+                        prod *= lo + ft * (hi - lo);
+                    }
+                    sum += prod;
+                }
+                sum
+            })
+            .collect();
+
+        let points: Vec<(F, F)> = evals
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| (F::from_u64(i as u64), v))
+            .collect();
+        let round_poly = UnivariatePoly::interpolate(&points);
+
+        let compressed = CompressedLabeledRoundPoly::new(&round_poly, label);
+        <CompressedLabeledRoundPoly<'_, F> as RoundProof<F>>::append_to_transcript(
+            &compressed,
+            &mut pt,
+        );
+
+        let r: F = pt.challenge();
+        round_polys.push(round_poly);
+
+        for buf in &mut bufs {
+            for i in 0..half {
+                buf[i] = buf[i] + r * (buf[i + half] - buf[i]);
+            }
+            buf.truncate(half);
+        }
+    }
+
+    let proof = SumcheckProof {
+        round_polynomials: round_polys,
+    };
+    let claim = SumcheckClaim {
+        num_vars,
+        degree,
+        claimed_sum,
+    };
+
+    let wrapped: Vec<CompressedLabeledRoundPoly<'_, F>> = proof
+        .round_polynomials
+        .iter()
+        .map(|p| CompressedLabeledRoundPoly::new(p, label))
+        .collect();
+
+    let mut vt = Blake2bTranscript::new(b"sumcheck-roundtrip");
+    let result = SumcheckVerifier::verify(&claim, &wrapped, &mut vt);
+    assert!(
+        result.is_ok(),
+        "compressed round verifier roundtrip failed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -358,10 +436,10 @@ fn labeled_round_verifier_roundtrip() {
     let f: Vec<F> = (0..n).map(|i| F::from_u64(i as u64 + 1)).collect();
     let g: Vec<F> = (0..n).map(|i| F::from_u64((i + 5) as u64)).collect();
 
-    let label = b"sumcheck_poly";
+    let label: &[u8; 13] = b"sumcheck_poly";
 
     // Prove with labeled absorption
-    let mut pt = MockTranscript::<F>::default();
+    let mut pt = Blake2bTranscript::new(b"sumcheck-roundtrip");
     let degree = 2;
     let mut bufs = vec![f.clone(), g.clone()];
     let claimed_sum: F = (0..n).map(|i| bufs[0][i] * bufs[1][i]).sum();
@@ -393,12 +471,8 @@ fn labeled_round_verifier_roundtrip() {
             .collect();
         let round_poly = UnivariatePoly::interpolate(&points);
 
-        // Absorb WITH label
-        let coeffs = round_poly.coefficients();
-        pt.append(&LabelWithCount(label, coeffs.len() as u64));
-        for &coeff in coeffs {
-            coeff.append_to_transcript(&mut pt);
-        }
+        let labeled = LabeledRoundPoly::new(&round_poly, label);
+        <LabeledRoundPoly<'_, F> as RoundProof<F>>::append_to_transcript(&labeled, &mut pt);
 
         let r: F = pt.challenge();
         round_polys.push(round_poly);
@@ -421,11 +495,14 @@ fn labeled_round_verifier_roundtrip() {
         claimed_sum,
     };
 
-    // Verify with labeled round verifier
-    let mut vt = MockTranscript::<F>::default();
-    let round_verifier = ClearRoundVerifier::with_label(label);
-    let result =
-        SumcheckVerifier::verify(&claim, &proof.round_polynomials, &mut vt, &round_verifier);
+    let wrapped: Vec<LabeledRoundPoly<'_, F>> = proof
+        .round_polynomials
+        .iter()
+        .map(|p| LabeledRoundPoly::new(p, label))
+        .collect();
+
+    let mut vt = Blake2bTranscript::new(b"sumcheck-roundtrip");
+    let result = SumcheckVerifier::verify(&claim, &wrapped, &mut vt);
     assert!(
         result.is_ok(),
         "labeled round verifier roundtrip failed: {:?}",

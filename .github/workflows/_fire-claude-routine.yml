@@ -1,0 +1,101 @@
+name: Fire Claude Routine
+
+# Reusable workflow that POSTs to the Claude Code routines fire endpoint and
+# posts a PR comment with the returned session URL. Called by
+# `claude-routines.yml` for each label/routine pairing.
+
+on:
+  workflow_call:
+    inputs:
+      routine_id:
+        description: Anthropic routine id (`trig_...`)
+        required: true
+        type: string
+      session_kind:
+        description: Human-readable session kind used in logs and PR comments
+        required: true
+        type: string
+    secrets:
+      routine_token:
+        description: Anthropic per-routine bearer token (`sk-ant-oat01-...`)
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  fire:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fire routine
+        env:
+          ROUTINE_ID: ${{ inputs.routine_id }}
+          ROUTINE_TOKEN: ${{ secrets.routine_token }}
+          SESSION_KIND: ${{ inputs.session_kind }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+        run: |
+          set -euo pipefail
+
+          # Strip control chars and encode `%` so a hostile API response
+          # can't inject `::set-output`/`::add-mask`/etc. into workflow
+          # logs or sneak extra markdown past the PR comment body.
+          sanitize() {
+            printf '%s' "$1" | tr -d '\000-\037' | sed -e 's/%/%25/g'
+          }
+
+          payload=$(jq -n \
+            --arg num "$PR_NUMBER" \
+            --arg title "$PR_TITLE" \
+            --arg url "$PR_URL" \
+            --arg sha "$PR_HEAD_SHA" \
+            --arg head "$PR_HEAD_REF" \
+            --arg base "$PR_BASE_REF" \
+            --arg author "$PR_AUTHOR" \
+            --arg source_repo "$PR_REPO" \
+            --arg base_repo "$BASE_REPO" \
+            --arg kind "$SESSION_KIND" \
+            '{text: "Claude \($kind) requested for PR #\($num): \($title)\nRepository: \($base_repo)\nURL: \($url)\nAuthor: @\($author)\nHead: \($source_repo) \($head) @ \($sha)\nBase: \($base)"}')
+
+          http=$(curl -sS \
+            --max-time 30 --connect-timeout 10 \
+            --retry 2 --retry-all-errors --retry-delay 5 \
+            -o response.json -w "%{http_code}" \
+            -X POST "https://api.anthropic.com/v1/claude_code/routines/${ROUTINE_ID}/fire" \
+            -H "Authorization: Bearer ${ROUTINE_TOKEN}" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "anthropic-beta: experimental-cc-routine-2026-04-01" \
+            -H "Content-Type: application/json" \
+            -d "$payload")
+
+          echo "HTTP $http"
+
+          if [ "$http" != "200" ]; then
+            err=$(jq -r '.error.message // "unparseable response"' response.json 2>/dev/null || echo "unparseable response")
+            echo "::error::Routine fire failed (HTTP $http): $(sanitize "$err")"
+            exit 1
+          fi
+
+          session_id=$(jq -r 'select(.claude_code_session_id|type=="string") | .claude_code_session_id // empty' response.json)
+          session_url=$(jq -r 'select(.claude_code_session_url|type=="string") | .claude_code_session_url // empty' response.json)
+
+          if [ -n "$session_id" ]; then
+            echo "::notice::Started Claude $SESSION_KIND session $(sanitize "$session_id")"
+          fi
+
+          if [[ "$session_url" =~ ^https://[A-Za-z0-9._/-]+$ ]]; then
+            gh pr comment "$PR_NUMBER" --repo "$BASE_REPO" \
+              --body "Claude $SESSION_KIND session started: <$session_url>"
+          else
+            echo "::warning::Routine fired but session URL missing or malformed"
+          fi

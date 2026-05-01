@@ -23,16 +23,16 @@ use crate::{
     utils::{errors::ProofVerifyError, small_scalar::SmallScalar},
 };
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
 use ark_std::{One, Zero};
-use rand_chacha::ChaCha20Rng;
-use rand_core::{CryptoRng, RngCore, SeedableRng};
+use rand::rngs::OsRng;
+use rand_core::{CryptoRng, RngCore};
 use rayon::iter::{
     IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
     IntoParallelRefMutIterator, ParallelIterator,
 };
 use std::borrow::Borrow;
-use std::{marker::PhantomData, sync::Arc};
+use std::{io::Cursor, marker::PhantomData, sync::Arc};
 
 pub struct HyperKZGSRS<P: Pairing>(Arc<SRS<P>>);
 
@@ -127,6 +127,36 @@ where
     h
 }
 
+fn absorb_hyperkzg_witness_commitments<P: Pairing, ProofTranscript: Transcript>(
+    transcript: &mut ProofTranscript,
+    witness_commitments: &[P::G1Affine],
+) -> P::ScalarField
+where
+    <P as Pairing>::ScalarField: JoltField,
+{
+    transcript.append_commitments_serializable(b"hyperkzg_witness", witness_commitments);
+    transcript.challenge_scalar()
+}
+
+fn validate_hyperkzg_g1_point<P: Pairing>(point: &P::G1Affine) -> Result<(), ProofVerifyError>
+where
+    P::G1Affine: CanonicalSerialize + CanonicalDeserialize,
+{
+    if point.is_zero() {
+        return Err(ProofVerifyError::InternalError);
+    }
+
+    let mut encoded = Vec::new();
+    point
+        .serialize_with_mode(&mut encoded, Compress::No)
+        .map_err(|_| ProofVerifyError::InternalError)?;
+    let cursor = Cursor::new(encoded);
+    P::G1Affine::deserialize_with_mode(cursor, Compress::No, Validate::Yes)
+        .map_err(|_| ProofVerifyError::InternalError)?;
+
+    Ok(())
+}
+
 fn kzg_open_batch<P: Pairing, ProofTranscript: Transcript>(
     f: &[MultilinearPolynomial<P::ScalarField>],
     u: &[P::ScalarField],
@@ -177,10 +207,10 @@ where
     // Now open B at u0, ..., u_{t-1}
     let w = kzg_batch_open_no_rem(&B, u, pk);
 
-    // The prover computes the challenge to keep the transcript in the same
-    // state as that of the verifier
-    transcript.append_commitments_serializable(b"hyperkzg_witness", &w);
-    let _d_0: P::ScalarField = transcript.challenge_scalar();
+    // The prover and verifier must absorb the witness commitments identically
+    // so they derive the same Fiat-Shamir challenge.
+    let _d_0: P::ScalarField =
+        absorb_hyperkzg_witness_commitments::<P, ProofTranscript>(transcript, &w);
 
     (w, v)
 }
@@ -204,8 +234,8 @@ where
     transcript.append_scalars(b"hyperkzg_evals", &scalars);
     let q_powers: Vec<P::ScalarField> = transcript.challenge_scalar_powers(k);
 
-    transcript.append_commitments_serializable(b"hyperkzg_witness", W);
-    let d_0: P::ScalarField = transcript.challenge_scalar();
+    let d_0: P::ScalarField =
+        absorb_hyperkzg_witness_commitments::<P, ProofTranscript>(transcript, W);
     let d_1 = d_0 * d_0;
 
     assert_eq!(t, 3);
@@ -357,6 +387,14 @@ where
 
         let ell = point.len();
 
+        validate_hyperkzg_g1_point::<P>(&C.0)?;
+        for commitment in &pi.com {
+            validate_hyperkzg_g1_point::<P>(commitment)?;
+        }
+        for witness in &pi.w {
+            validate_hyperkzg_g1_point::<P>(witness)?;
+        }
+
         let mut com = pi.com.clone();
 
         // we do not need to add x to the transcript, because in our context x was
@@ -364,7 +402,7 @@ where
         transcript.append_commitments_serializable(b"hyperkzg_com", &com);
         let r: <P as Pairing>::ScalarField = transcript.challenge_scalar();
 
-        if r == P::ScalarField::zero() || C.0 == P::G1Affine::zero() {
+        if r == P::ScalarField::zero() {
             return Err(ProofVerifyError::InternalError);
         }
         com.insert(0, C.0); // set com_0 = C, shifts other commitments to the right
@@ -420,13 +458,10 @@ where
     type OpeningProofHint = ();
 
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
-        HyperKZGSRS(Arc::new(SRS::setup(
-            &mut ChaCha20Rng::from_seed(*b"HyperKZG_POLY_COMMITMENT_SCHEMEE"),
-            1 << max_num_vars,
-            2,
-        )))
-        .trim(1 << max_num_vars)
-        .0
+        let mut rng = OsRng;
+        HyperKZGSRS(Arc::new(SRS::setup(&mut rng, 1 << max_num_vars, 2)))
+            .trim(1 << max_num_vars)
+            .0
     }
 
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup {
@@ -535,9 +570,12 @@ where
 mod tests {
     use super::*;
     use crate::transcripts::{Blake2bTranscript, Transcript};
-    use ark_bn254::Bn254;
+    use ark_bn254::{Bn254, Fq};
+    use ark_ec::AffineRepr;
     use ark_std::UniformRand;
+    use ark_std::Zero;
     use rand::Rng;
+    use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
     //#[test]
@@ -652,7 +690,7 @@ mod tests {
     fn test_hyperkzg_large() {
         // test the hyperkzg prover and verifier with random instances (derived from a seed)
         for ell in [8, 9, 10] {
-            let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(ell as u64);
+            let mut rng = ChaCha20Rng::seed_from_u64(ell as u64);
 
             let n = 1 << ell; // n = 2^ell
 
@@ -671,6 +709,8 @@ mod tests {
 
             let srs = HyperKZGSRS::setup(&mut rng, n);
             let (pk, vk): (HyperKZGProverKey<Bn254>, HyperKZGVerifierKey<Bn254>) = srs.trim(n);
+            assert_eq!(vk.kzg_vk.g1, pk.kzg_pk.g1_powers()[0]);
+            assert_eq!(vk.kzg_vk.alpha_g1, pk.kzg_pk.g1_powers()[1]);
 
             // make a commitment
             let C = HyperKZG::commit(&pk, &poly).unwrap();
@@ -683,6 +723,9 @@ mod tests {
             // verify the evaluation
             let mut verifier_tr = Blake2bTranscript::new(b"TestEval");
             assert!(HyperKZG::verify(&vk, &C, &point, &eval, &proof, &mut verifier_tr,).is_ok());
+            let post_c_p = prover_transcript.challenge_scalar::<ark_bn254::Fr>();
+            let post_c_v = verifier_tr.challenge_scalar::<ark_bn254::Fr>();
+            assert_eq!(post_c_p, post_c_v);
 
             // Change the proof and expect verification to fail
             let mut bad_proof = proof.clone();
@@ -692,6 +735,33 @@ mod tests {
             assert!(
                 HyperKZG::verify(&vk, &C, &point, &eval, &bad_proof, &mut verifier_tr2,).is_err()
             );
+
+            let mut bad_identity_commitment = C.clone();
+            bad_identity_commitment.0 = <Bn254 as Pairing>::G1Affine::zero();
+            let mut verifier_tr3 = Blake2bTranscript::new(b"TestEval");
+            assert!(HyperKZG::verify(
+                &vk,
+                &bad_identity_commitment,
+                &point,
+                &eval,
+                &proof,
+                &mut verifier_tr3,
+            )
+            .is_err());
+
+            let mut bad_offcurve_proof = proof.clone();
+            bad_offcurve_proof.w[0] =
+                <Bn254 as Pairing>::G1Affine::new_unchecked(Fq::zero(), Fq::zero());
+            let mut verifier_tr4 = Blake2bTranscript::new(b"TestEval");
+            assert!(HyperKZG::verify(
+                &vk,
+                &C,
+                &point,
+                &eval,
+                &bad_offcurve_proof,
+                &mut verifier_tr4,
+            )
+            .is_err());
         }
     }
 }

@@ -7,7 +7,7 @@ pub fn main() {
     let target_dir = "/tmp/jolt-guest-targets";
     let mut program = guest::compile_memory_ops(target_dir);
 
-    let shared_preprocessing = guest::preprocess_shared_memory_ops(&mut program);
+    let shared_preprocessing = guest::preprocess_shared_memory_ops(&mut program).unwrap();
     let prover_preprocessing = guest::preprocess_prover_memory_ops(shared_preprocessing.clone());
     let verifier_preprocessing = guest::preprocess_verifier_memory_ops(
         shared_preprocessing,

@@ -1,4 +1,4 @@
-#[allow(
+#[expect(
     clippy::unreadable_literal,
     clippy::type_complexity,
     clippy::large_const_arrays
@@ -20,7 +20,7 @@ pub struct FrobeniusCoefficients {
     pub psi3_coef3: Fq2,
 }
 
-pub fn get_frobenius_coefficients() -> FrobeniusCoefficients {
+pub const fn get_frobenius_coefficients() -> FrobeniusCoefficients {
     FrobeniusCoefficients {
         psi1_coef2: Fq2::new(
             MontFp!(

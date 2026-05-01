@@ -4,6 +4,34 @@ Jolt's [RISC-V](../appendix/risc-v.md) emulator is implemented within the `trace
 It originated as a fork of the [`riscv-rust`](https://github.com/takahirox/riscv-rust) project and has since evolved significantly to support Jolt’s unique requirements.
 The bulk of the emulator's logic resides in the `instruction` subdirectory of the `tracer` crate, which defines the behavior of individual RISC-V instructions.
 
+## Privilege and Trap Model
+
+Jolt's RISC-V implementation targets **M-mode-only** execution with **no interrupt hardware**.
+All guest programs run under [ZeroOS](https://github.com/a16z/zeroos), a minimal runtime that operates exclusively in Machine mode.
+There are no S-mode or U-mode privilege levels, no timer, no CLINT, no PLIC, and no external interrupt sources.
+
+This model has the following consequences for privileged instructions:
+
+- **ECALL** writes `mepc`, `mcause`, `mtval`, and `mstatus` to their virtual registers, then jumps to `mtvec`.
+  `mstatus` is set to `0x1800` (MPP = M-mode, MIE = 0, MPIE = 0) unconditionally rather than via read-modify-write.
+  This is correct because the privilege mode is always M-mode, and interrupt-enable bits are unused —
+  the MIE CSR (0x304) is not in the supported CSR whitelist and cannot be accessed by guest code.
+
+- **MRET** jumps to `mepc` and does not modify `mstatus`.
+  The full RISC-V spec requires restoring `MIE` from `MPIE` and resetting `MPP`,
+  but these fields are inert in the M-mode-only model.
+  The ZeroOS trap trampoline restores `mstatus` via `csrw` before executing `mret`,
+  so the virtual register always holds the correct value.
+
+- **CSR access** is restricted to a fixed whitelist: `mstatus` (0x300), `mtvec` (0x305),
+  `mscratch` (0x340), `mepc` (0x341), `mcause` (0x342), `mtval` (0x343).
+  Accessing any other CSR panics the tracer. Only `CSRRW` and `CSRRS` are implemented;
+  `CSRRC` and the immediate CSR variants are not supported.
+
+- **The R1CS constraint system has no privilege-mode or interrupt semantics.**
+  CSR virtual registers (vr34–vr39) are treated as ordinary registers by the memory-checking circuit.
+  The circuit verifies read/write consistency, not the architectural meaning of individual bits.
+
 ## Core traits
 
 Two key traits form the backbone of the RISC-V emulator:

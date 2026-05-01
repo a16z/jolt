@@ -37,16 +37,16 @@ impl MetricsMonitor {
         let stop_flag = Arc::new(AtomicBool::new(false));
         let stop = stop_flag.clone();
 
-        let handle = thread::Builder::new()
+        let spawn_result = thread::Builder::new()
             .name("metrics-monitor".to_string())
             .spawn(move || {
-                let interval = Duration::from_millis((interval_secs * 1000.0) as u64);
-                let mut system = System::new_all();
+                let interval = Duration::from_millis(((interval_secs * 1000.0) as u64).max(50));
+                let mut system = System::new();
 
                 thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
 
-                while !stop.load(Ordering::Relaxed) {
-                    system.refresh_all();
+                while !stop.load(Ordering::Acquire) {
+                    system.refresh_cpu_all();
 
                     let memory_gib = memory_stats()
                         .map(|s| s.physical_mem as f64 / BYTES_PER_GIB)
@@ -79,19 +79,23 @@ impl MetricsMonitor {
                 }
 
                 tracing::info!("MetricsMonitor stopping");
-            })
-            .expect("Failed to spawn metrics monitor thread");
+            });
 
-        MetricsMonitor {
-            handle: Some(handle),
-            stop_flag,
-        }
+        let handle = match spawn_result {
+            Ok(h) => Some(h),
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to spawn metrics monitor thread");
+                None
+            }
+        };
+
+        MetricsMonitor { handle, stop_flag }
     }
 }
 
 impl Drop for MetricsMonitor {
     fn drop(&mut self) {
-        self.stop_flag.store(true, Ordering::Relaxed);
+        self.stop_flag.store(true, Ordering::Release);
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }

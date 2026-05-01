@@ -1,0 +1,1999 @@
+{
+  "total_self_ms": 23515.174390999957,
+  "distinct_spans": 210,
+  "spans": [
+    {
+      "name": "multi_pair_g2_setup_parallel",
+      "count": 146,
+      "total_ms": 12545.221333000001,
+      "self_ms": 10902.848622999996,
+      "mean_total_us": 85926.17351369864
+    },
+    {
+      "name": "DoryCommitmentScheme::compute_tier1_commitment_onehot",
+      "count": 5120,
+      "total_ms": 2386.5435339999876,
+      "self_ms": 2375.806282999988,
+      "mean_total_us": 466.12178398437254
+    },
+    {
+      "name": "G1::msm",
+      "count": 41088,
+      "total_ms": 2645.6786659999498,
+      "self_ms": 2349.3339369999767,
+      "mean_total_us": 64.390543857086
+    },
+    {
+      "name": "generate_and_commit_witness_polynomials",
+      "count": 2,
+      "total_ms": 1677.4202080000011,
+      "self_ms": 1677.4202080000011,
+      "mean_total_us": 838710.1040000005
+    },
+    {
+      "name": "Program::build_with_features",
+      "count": 6,
+      "total_ms": 1302.22521,
+      "self_ms": 1302.22521,
+      "mean_total_us": 217037.535
+    },
+    {
+      "name": "BooleanitySumcheckProver::ingest_challenge",
+      "count": 20,
+      "total_ms": 978.7648379999986,
+      "self_ms": 978.7648379999986,
+      "mean_total_us": 48938.24189999993
+    },
+    {
+      "name": "BooleanitySumcheckProver::compute_message",
+      "count": 20,
+      "total_ms": 902.728542,
+      "self_ms": 902.728542,
+      "mean_total_us": 45136.42709999999
+    },
+    {
+      "name": "DoryCommitmentScheme::setup_prover",
+      "count": 2,
+      "total_ms": 592.690542,
+      "self_ms": 592.690542,
+      "mean_total_us": 296345.271
+    },
+    {
+      "name": "DoryScheme::commit_evaluations_with_row_len",
+      "count": 42,
+      "total_ms": 1144.2804980000024,
+      "self_ms": 398.28533100000305,
+      "mean_total_us": 27244.77376190482
+    },
+    {
+      "name": "msm_i128",
+      "count": 256,
+      "total_ms": 393.7307490000005,
+      "self_ms": 393.7307490000005,
+      "mean_total_us": 1538.010738281252
+    },
+    {
+      "name": "vector_scalar_mul_add_gamma_g1_online",
+      "count": 42,
+      "total_ms": 353.2382099999981,
+      "self_ms": 353.2382099999981,
+      "mean_total_us": 8410.433571428526
+    },
+    {
+      "name": "multi_pair_parallel",
+      "count": 50,
+      "total_ms": 266.8104209999973,
+      "self_ms": 266.8104209999973,
+      "mean_total_us": 5336.208419999946
+    },
+    {
+      "name": "BooleanitySumcheckProver::initialize",
+      "count": 1,
+      "total_ms": 135.47250000000022,
+      "self_ms": 128.85754200000014,
+      "mean_total_us": 135472.50000000023
+    },
+    {
+      "name": "msm_field_elements",
+      "count": 65,
+      "total_ms": 87.94457999999635,
+      "self_ms": 87.94457999999635,
+      "mean_total_us": 1352.9935384614823
+    },
+    {
+      "name": "DoryProverState::apply_first_challenge",
+      "count": 10,
+      "total_ms": 72.9649560000021,
+      "self_ms": 72.9649560000021,
+      "mean_total_us": 7296.49560000021
+    },
+    {
+      "name": "multi_pair_g1_setup_parallel",
+      "count": 18,
+      "total_ms": 66.68341899999976,
+      "self_ms": 66.68341899999976,
+      "mean_total_us": 3704.6343888888755
+    },
+    {
+      "name": "InstructionReadRafSumcheckProver::compute_message",
+      "count": 144,
+      "total_ms": 43.91963200000068,
+      "self_ms": 43.91963200000068,
+      "mean_total_us": 304.9974444444492
+    },
+    {
+      "name": "DoryProverState::apply_second_challenge",
+      "count": 10,
+      "total_ms": 41.4769160000002,
+      "self_ms": 41.4769160000002,
+      "mean_total_us": 4147.69160000002
+    },
+    {
+      "name": "R1csRowDotTable::compute_ab_prefix",
+      "count": 2,
+      "total_ms": 39.11225,
+      "self_ms": 39.11225,
+      "mean_total_us": 19556.125
+    },
+    {
+      "name": "create_evaluation_proof",
+      "count": 1,
+      "total_ms": 496.06025,
+      "self_ms": 32.891669999997134,
+      "mean_total_us": 496060.25
+    },
+    {
+      "name": "InstructionRaSumcheckProver::compute_message",
+      "count": 16,
+      "total_ms": 30.4660830000001,
+      "self_ms": 30.4660830000001,
+      "mean_total_us": 1904.1301875000063
+    },
+    {
+      "name": "MultilinearPolynomial::bind_parallel",
+      "count": 2271,
+      "total_ms": 34.47529099999368,
+      "self_ms": 24.9882070000004,
+      "mean_total_us": 15.180665345659921
+    },
+    {
+      "name": "trace",
+      "count": 5,
+      "total_ms": 25.486416999999083,
+      "self_ms": 23.76349999999907,
+      "mean_total_us": 5097.2833999998165
+    },
+    {
+      "name": "bound_poly_var_top_zero_optimized",
+      "count": 13056,
+      "total_ms": 17.48862699999381,
+      "self_ms": 17.48862699999381,
+      "mean_total_us": 1.3395088082103102
+    },
+    {
+      "name": "RaPolynomialRound3::bind",
+      "count": 42,
+      "total_ms": 16.615370000001278,
+      "self_ms": 16.615370000001278,
+      "mean_total_us": 395.604047619078
+    },
+    {
+      "name": "InstructionReadRafSumcheckProver::ingest_challenge",
+      "count": 144,
+      "total_ms": 56.211454999997514,
+      "self_ms": 16.058208999998868,
+      "mean_total_us": 390.3573263888716
+    },
+    {
+      "name": "BytecodeReadRafSumcheckProver::compute_message",
+      "count": 30,
+      "total_ms": 15.821292999999597,
+      "self_ms": 15.821292999999597,
+      "mean_total_us": 527.3764333333199
+    },
+    {
+      "name": "EqPolynomial::evals",
+      "count": 149,
+      "total_ms": 22.308704999997282,
+      "self_ms": 15.71095499999728,
+      "mean_total_us": 149.72285234897504
+    },
+    {
+      "name": "Stage1OuterRv64Data::uniskip_extended_evals",
+      "count": 2,
+      "total_ms": 15.904123999999836,
+      "self_ms": 12.822666000001133,
+      "mean_total_us": 7952.061999999918
+    },
+    {
+      "name": "OuterUniSkipInstanceProver::initialize",
+      "count": 2,
+      "total_ms": 12.815540999998571,
+      "self_ms": 12.7082919999992,
+      "mean_total_us": 6407.770499999286
+    },
+    {
+      "name": "DenseOuterState::round_poly",
+      "count": 34,
+      "total_ms": 11.906708000002428,
+      "self_ms": 11.906708000002428,
+      "mean_total_us": 350.1972941177185
+    },
+    {
+      "name": "ReadWriteMatrixCycleMajor::bind",
+      "count": 48,
+      "total_ms": 11.305166999999667,
+      "self_ms": 11.305166999999667,
+      "mean_total_us": 235.52431249999304
+    },
+    {
+      "name": "OuterLinearStage::fused_materialise_polynomials_round_zero",
+      "count": 2,
+      "total_ms": 11.148291999999433,
+      "self_ms": 11.148291999999433,
+      "mean_total_us": 5574.145999999717
+    },
+    {
+      "name": "IncClaimReductionSumcheckProver::compute_message",
+      "count": 16,
+      "total_ms": 10.760083000000101,
+      "self_ms": 10.760083000000101,
+      "mean_total_us": 672.5051875000063
+    },
+    {
+      "name": "RamReadWriteState::cycle_round_poly",
+      "count": 32,
+      "total_ms": 9.826834000004455,
+      "self_ms": 9.826834000004455,
+      "mean_total_us": 307.08856250013923
+    },
+    {
+      "name": "RamRaClaimReductionSumcheckProver::compute_message",
+      "count": 16,
+      "total_ms": 9.110165000000503,
+      "self_ms": 9.110165000000503,
+      "mean_total_us": 569.3853125000314
+    },
+    {
+      "name": "CompactPolynomial::bind",
+      "count": 302,
+      "total_ms": 8.934996999994619,
+      "self_ms": 8.934996999994619,
+      "mean_total_us": 29.586082781439135
+    },
+    {
+      "name": "PrefixSuffix::init_Q_raf",
+      "count": 16,
+      "total_ms": 8.914168999999761,
+      "self_ms": 8.914168999999761,
+      "mean_total_us": 557.1355624999851
+    },
+    {
+      "name": "InstructionReadRafProver::init_suffix_polys",
+      "count": 16,
+      "total_ms": 8.509915999999736,
+      "self_ms": 8.509915999999736,
+      "mean_total_us": 531.8697499999835
+    },
+    {
+      "name": "Stage1OuterRv64Data::dense_outer_state",
+      "count": 2,
+      "total_ms": 11.075417000001297,
+      "self_ms": 8.13279300000146,
+      "mean_total_us": 5537.708500000648
+    },
+    {
+      "name": "EqPolynomial::evaluations",
+      "count": 6,
+      "total_ms": 7.7747909999992695,
+      "self_ms": 7.7747909999992695,
+      "mean_total_us": 1295.7984999998782
+    },
+    {
+      "name": "DenseOuterState::bind",
+      "count": 34,
+      "total_ms": 7.499078999994323,
+      "self_ms": 7.499078999994323,
+      "mean_total_us": 220.56114705865656
+    },
+    {
+      "name": "RamReadWriteState::bind_cycle",
+      "count": 32,
+      "total_ms": 7.435539999999106,
+      "self_ms": 7.435539999999106,
+      "mean_total_us": 232.36062499997206
+    },
+    {
+      "name": "OuterLinearStage::compute_evaluation_grid_from_polynomials_parallel",
+      "count": 32,
+      "total_ms": 7.160456999998307,
+      "self_ms": 7.160456999998307,
+      "mean_total_us": 223.7642812499471
+    },
+    {
+      "name": "EqPolynomial::evals_parallel",
+      "count": 7,
+      "total_ms": 7.120624999999767,
+      "self_ms": 7.120624999999767,
+      "mean_total_us": 1017.2321428571096
+    },
+    {
+      "name": "Stage2::prove_batched",
+      "count": 2,
+      "total_ms": 59.674373999997975,
+      "self_ms": 6.695957999976351,
+      "mean_total_us": 29837.186999998987
+    },
+    {
+      "name": "Update u_evals",
+      "count": 15,
+      "total_ms": 6.044623999999836,
+      "self_ms": 6.044623999999836,
+      "mean_total_us": 402.9749333333224
+    },
+    {
+      "name": "ProductRemainderState::round_poly",
+      "count": 32,
+      "total_ms": 5.901332000000402,
+      "self_ms": 5.901332000000402,
+      "mean_total_us": 184.41662500001257
+    },
+    {
+      "name": "DoryProverState::compute_first_message",
+      "count": 10,
+      "total_ms": 172.3494170000013,
+      "self_ms": 5.858213999999687,
+      "mean_total_us": 17234.94170000013
+    },
+    {
+      "name": "RegistersReadWriteCheckingProver::compute_message",
+      "count": 23,
+      "total_ms": 5.794455999999773,
+      "self_ms": 5.794455999999773,
+      "mean_total_us": 251.9328695652075
+    },
+    {
+      "name": "DoryCommitmentScheme::compute_tier2_commitment",
+      "count": 84,
+      "total_ms": 11743.11341599999,
+      "self_ms": 5.763790999995079,
+      "mean_total_us": 139798.96923809513
+    },
+    {
+      "name": "shared_ra_polys::compute_all_G",
+      "count": 1,
+      "total_ms": 5.345375,
+      "self_ms": 5.345375,
+      "mean_total_us": 5345.375
+    },
+    {
+      "name": "ProductVirtualRemainderProver::initialize",
+      "count": 2,
+      "total_ms": 5.16204099999927,
+      "self_ms": 5.087583000000101,
+      "mean_total_us": 2581.020499999635
+    },
+    {
+      "name": "RamRaVirtualSumcheckProver::compute_message",
+      "count": 16,
+      "total_ms": 5.0732480000006035,
+      "self_ms": 5.0732480000006035,
+      "mean_total_us": 317.0780000000377
+    },
+    {
+      "name": "BytecodeReadRafSumcheckProver::initialize",
+      "count": 1,
+      "total_ms": 5.084334000000032,
+      "self_ms": 4.897168000000064,
+      "mean_total_us": 5084.334000000032
+    },
+    {
+      "name": "InstructionRaSumcheckProver::initialize",
+      "count": 1,
+      "total_ms": 4.721041999999899,
+      "self_ms": 4.6874169999999,
+      "mean_total_us": 4721.041999999899
+    },
+    {
+      "name": "InstructionInputSumcheckProver::compute_message",
+      "count": 16,
+      "total_ms": 4.601834000000265,
+      "self_ms": 4.601834000000265,
+      "mean_total_us": 287.61462500001653
+    },
+    {
+      "name": "EqPlusOnePolynomial::evals",
+      "count": 8,
+      "total_ms": 4.438708999999566,
+      "self_ms": 4.438708999999566,
+      "mean_total_us": 554.8386249999458
+    },
+    {
+      "name": "RamValCheckSumcheckProver::compute_message",
+      "count": 16,
+      "total_ms": 4.420541999999666,
+      "self_ms": 4.420541999999666,
+      "mean_total_us": 276.28387499997916
+    },
+    {
+      "name": "OuterLinearStage::ingest_challenge",
+      "count": 34,
+      "total_ms": 4.010042000001296,
+      "self_ms": 3.976920000002952,
+      "mean_total_us": 117.94241176474401
+    },
+    {
+      "name": "RamReadWriteCheckingProver::compute_message",
+      "count": 58,
+      "total_ms": 3.94966999999783,
+      "self_ms": 3.94966999999783,
+      "mean_total_us": 68.09775862065224
+    },
+    {
+      "name": "DoryProverState::compute_second_message",
+      "count": 10,
+      "total_ms": 164.06229099999928,
+      "self_ms": 3.9379170000068844,
+      "mean_total_us": 16406.229099999928
+    },
+    {
+      "name": "materialized_vector_matrix_product",
+      "count": 1,
+      "total_ms": 3.864125,
+      "self_ms": 3.864125,
+      "mean_total_us": 3864.125
+    },
+    {
+      "name": "RegistersValEvaluationSumcheckProver::compute_message",
+      "count": 16,
+      "total_ms": 3.774542000000132,
+      "self_ms": 3.774542000000132,
+      "mean_total_us": 235.90887500000827
+    },
+    {
+      "name": "ProductRemainderState::bind",
+      "count": 32,
+      "total_ms": 3.5137899999972433,
+      "self_ms": 3.5137899999972433,
+      "mean_total_us": 109.80593749991385
+    },
+    {
+      "name": "Stage2::instruction_lookup_state",
+      "count": 2,
+      "total_ms": 3.4340829999987035,
+      "self_ms": 3.4102510000020265,
+      "mean_total_us": 1717.0414999993518
+    },
+    {
+      "name": "Materialize ra polynomials",
+      "count": 1,
+      "total_ms": 3.4095840000000317,
+      "self_ms": 3.4095840000000317,
+      "mean_total_us": 3409.5840000000317
+    },
+    {
+      "name": "RaPolynomialRound2::bind",
+      "count": 42,
+      "total_ms": 3.3457930000000635,
+      "self_ms": 3.3457930000000635,
+      "mean_total_us": 79.6617380952396
+    },
+    {
+      "name": "DoryCommitmentScheme::compute_tier1_commitment",
+      "count": 256,
+      "total_ms": 396.71936900000475,
+      "self_ms": 2.9886200000041865,
+      "mean_total_us": 1549.6850351562684
+    },
+    {
+      "name": "Stage1OuterRv64Data::evaluate_virtual_oracles",
+      "count": 2,
+      "total_ms": 4.71279099999927,
+      "self_ms": 2.9620819999985395,
+      "mean_total_us": 2356.395499999635
+    },
+    {
+      "name": "ProductVirtualRemainderProver::compute_message",
+      "count": 32,
+      "total_ms": 2.9146230000003706,
+      "self_ms": 2.9146230000003706,
+      "mean_total_us": 91.08196875001158
+    },
+    {
+      "name": "InstructionLookupPhase2::new",
+      "count": 2,
+      "total_ms": 2.8499579999987037,
+      "self_ms": 2.8178329999987035,
+      "mean_total_us": 1424.9789999993518
+    },
+    {
+      "name": "R1CSEval::compute_claimed_inputs",
+      "count": 2,
+      "total_ms": 2.632874999998836,
+      "self_ms": 2.632874999998836,
+      "mean_total_us": 1316.437499999418
+    },
+    {
+      "name": "RamRafEvaluationSumcheckProver::compute_message",
+      "count": 26,
+      "total_ms": 2.4354999999995344,
+      "self_ms": 2.4354999999995344,
+      "mean_total_us": 93.67307692305901
+    },
+    {
+      "name": "update_checkpoints",
+      "count": 64,
+      "total_ms": 2.4330440000009257,
+      "self_ms": 2.4330440000009257,
+      "mean_total_us": 38.016312500014465
+    },
+    {
+      "name": "Stage2DenseState::bind",
+      "count": 52,
+      "total_ms": 2.422541000002995,
+      "self_ms": 2.422541000002995,
+      "mean_total_us": 46.58732692313452
+    },
+    {
+      "name": "Stage2DenseState::round_poly",
+      "count": 52,
+      "total_ms": 2.1331640000026675,
+      "self_ms": 2.1331640000026675,
+      "mean_total_us": 41.02238461543591
+    },
+    {
+      "name": "ProductVirtualRemainderProver::ingest_challenge",
+      "count": 32,
+      "total_ms": 2.235370999998413,
+      "self_ms": 2.130871999999508,
+      "mean_total_us": 69.8553437499504
+    },
+    {
+      "name": "prove_stage5",
+      "count": 1,
+      "total_ms": 122.8305,
+      "self_ms": 2.0350350000003816,
+      "mean_total_us": 122830.5
+    },
+    {
+      "name": "RamHammingBooleanitySumcheckProver::compute_message",
+      "count": 16,
+      "total_ms": 2.0325410000002013,
+      "self_ms": 2.0325410000002013,
+      "mean_total_us": 127.03381250001257
+    },
+    {
+      "name": "SparseMatrixPolynomial::bind",
+      "count": 33,
+      "total_ms": 2.371129000001121,
+      "self_ms": 1.9705060000026133,
+      "mean_total_us": 71.85239393942791
+    },
+    {
+      "name": "setup_emulator_with_backtraces",
+      "count": 5,
+      "total_ms": 1.6918340000000316,
+      "self_ms": 1.6918340000000316,
+      "mean_total_us": 338.3668000000063
+    },
+    {
+      "name": "OutputSumcheckProver::compute_message",
+      "count": 26,
+      "total_ms": 1.5594590000018944,
+      "self_ms": 1.5594590000018944,
+      "mean_total_us": 59.97919230776517
+    },
+    {
+      "name": "ReadWriteMatrixCycleMajor::new",
+      "count": 3,
+      "total_ms": 1.5225419999998995,
+      "self_ms": 1.5225419999998995,
+      "mean_total_us": 507.5139999999665
+    },
+    {
+      "name": "prove_stage6",
+      "count": 1,
+      "total_ms": 2125.295709,
+      "self_ms": 1.439792999999132,
+      "mean_total_us": 2125295.709
+    },
+    {
+      "name": "prove_stage2",
+      "count": 2,
+      "total_ms": 36.5731669999999,
+      "self_ms": 1.403128000006778,
+      "mean_total_us": 18286.58349999995
+    },
+    {
+      "name": "Stage2::product_remainder_state",
+      "count": 2,
+      "total_ms": 1.3367080000005662,
+      "self_ms": 1.3041670000012964,
+      "mean_total_us": 668.3540000002831
+    },
+    {
+      "name": "ShiftSumcheckProver::initialize",
+      "count": 1,
+      "total_ms": 3.454,
+      "self_ms": 1.1912490000000688,
+      "mean_total_us": 3454.0
+    },
+    {
+      "name": "RamRafEvaluationSumcheckProver::initialize",
+      "count": 2,
+      "total_ms": 1.1758330000005663,
+      "self_ms": 1.1758330000005663,
+      "mean_total_us": 587.9165000002831
+    },
+    {
+      "name": "BytecodeReadRafSumcheckProver::ingest_challenge",
+      "count": 30,
+      "total_ms": 6.198458999999799,
+      "self_ms": 1.1223330000001006,
+      "mean_total_us": 206.61529999999328
+    },
+    {
+      "name": "BN254::multi_pair_g2_setup",
+      "count": 146,
+      "total_ms": 12546.327083,
+      "self_ms": 1.10575,
+      "mean_total_us": 85933.74714383562
+    },
+    {
+      "name": "ProductVirtualUniSkipInstanceProver::initialize",
+      "count": 2,
+      "total_ms": 1.1765,
+      "self_ms": 1.0946239999991376,
+      "mean_total_us": 588.25
+    },
+    {
+      "name": "stage2_product_virtual_uniskip_extended_evals",
+      "count": 2,
+      "total_ms": 4.067582999998703,
+      "self_ms": 1.0418329999987035,
+      "mean_total_us": 2033.7914999993518
+    },
+    {
+      "name": "Stage2DenseState::output_evals",
+      "count": 2,
+      "total_ms": 1.4408340000025928,
+      "self_ms": 1.0415010000020266,
+      "mean_total_us": 720.4170000012964
+    },
+    {
+      "name": "RamReadWriteState::address_round_poly",
+      "count": 26,
+      "total_ms": 0.9956270000021905,
+      "self_ms": 0.9956270000021905,
+      "mean_total_us": 38.2933461539304
+    },
+    {
+      "name": "GruenSplitEqPolynomial::new_with_scaling",
+      "count": 24,
+      "total_ms": 0.9884989999996032,
+      "self_ms": 0.9884989999996032,
+      "mean_total_us": 41.187458333316805
+    },
+    {
+      "name": "InstructionClaimReductionSumcheckProver::initialize",
+      "count": 2,
+      "total_ms": 1.0137500000006985,
+      "self_ms": 0.9847920000008308,
+      "mean_total_us": 506.87500000034925
+    },
+    {
+      "name": "ProductVirtualEval::compute_claimed_factors",
+      "count": 2,
+      "total_ms": 0.9473749999995343,
+      "self_ms": 0.9473749999995343,
+      "mean_total_us": 473.68749999976717
+    },
+    {
+      "name": "RamReadWriteState::new",
+      "count": 2,
+      "total_ms": 4.066958000000566,
+      "self_ms": 0.93325,
+      "mean_total_us": 2033.4790000002831
+    },
+    {
+      "name": "prove_stage1",
+      "count": 2,
+      "total_ms": 40.0602499999993,
+      "self_ms": 0.8655049999905751,
+      "mean_total_us": 20030.12499999965
+    },
+    {
+      "name": "UniPoly::evaluate",
+      "count": 1218,
+      "total_ms": 1.1989190000176895,
+      "self_ms": 0.8623620000262745,
+      "mean_total_us": 0.9843341543659192
+    },
+    {
+      "name": "DoryCommitmentScheme::setup_verifier",
+      "count": 1,
+      "total_ms": 150.8235410000002,
+      "self_ms": 0.8022489999970421,
+      "mean_total_us": 150823.5410000002
+    },
+    {
+      "name": "InstructionClaimReductionSumcheckProver::ingest_challenge",
+      "count": 32,
+      "total_ms": 1.3092069999985396,
+      "self_ms": 0.7968769999993965,
+      "mean_total_us": 40.912718749954365
+    },
+    {
+      "name": "CommittedPolynomial::generate_witness",
+      "count": 5,
+      "total_ms": 0.7567500000006985,
+      "self_ms": 0.7567500000006985,
+      "mean_total_us": 151.3500000001397
+    },
+    {
+      "name": "InstructionRaSumcheckProver::ingest_challenge",
+      "count": 16,
+      "total_ms": 21.044706000000705,
+      "self_ms": 0.7064659999976866,
+      "mean_total_us": 1315.294125000044
+    },
+    {
+      "name": "IncClaimReductionPhase1State::initialize",
+      "count": 1,
+      "total_ms": 0.6195830000001006,
+      "self_ms": 0.56675,
+      "mean_total_us": 619.5830000001006
+    },
+    {
+      "name": "ShiftSumcheckProver::ingest_challenge",
+      "count": 16,
+      "total_ms": 3.0513749999995343,
+      "self_ms": 0.5396260000001639,
+      "mean_total_us": 190.7109374999709
+    },
+    {
+      "name": "BytecodeReadRafSumcheckParams::gen",
+      "count": 1,
+      "total_ms": 0.5220420000001322,
+      "self_ms": 0.5141670000001323,
+      "mean_total_us": 522.0420000001322
+    },
+    {
+      "name": "prove_stage4",
+      "count": 1,
+      "total_ms": 24.41220799999987,
+      "self_ms": 0.4837859999993816,
+      "mean_total_us": 24412.207999999868
+    },
+    {
+      "name": "HammingWeightClaimReductionProver::ingest_challenge",
+      "count": 4,
+      "total_ms": 0.46891600000020117,
+      "self_ms": 0.46891600000020117,
+      "mean_total_us": 117.22900000005029
+    },
+    {
+      "name": "ExpandingTable::new",
+      "count": 18,
+      "total_ms": 0.4456240000003017,
+      "self_ms": 0.4456240000003017,
+      "mean_total_us": 24.756888888905653
+    },
+    {
+      "name": "EqPolynomial::evals_cached",
+      "count": 48,
+      "total_ms": 0.43233800000045447,
+      "self_ms": 0.43233800000045447,
+      "mean_total_us": 9.007041666676136
+    },
+    {
+      "name": "ReadRafSumcheckProver::compute_flag_claims",
+      "count": 1,
+      "total_ms": 0.42825,
+      "self_ms": 0.42825,
+      "mean_total_us": 428.25
+    },
+    {
+      "name": "Extract vectors",
+      "count": 1,
+      "total_ms": 0.662625,
+      "self_ms": 0.427625,
+      "mean_total_us": 662.625
+    },
+    {
+      "name": "IncClaimReductionPhase2State::gen",
+      "count": 1,
+      "total_ms": 0.43966699999989944,
+      "self_ms": 0.426625,
+      "mean_total_us": 439.6669999998994
+    },
+    {
+      "name": "decode",
+      "count": 6,
+      "total_ms": 0.426208000000217,
+      "self_ms": 0.426208000000217,
+      "mean_total_us": 71.03466666670283
+    },
+    {
+      "name": "Stage2::ram_raf_state",
+      "count": 2,
+      "total_ms": 3.4086669999994337,
+      "self_ms": 0.42279199999943373,
+      "mean_total_us": 1704.3334999997169
+    },
+    {
+      "name": "BytecodePreprocessing::preprocess",
+      "count": 3,
+      "total_ms": 0.4182079999996349,
+      "self_ms": 0.4182079999996349,
+      "mean_total_us": 139.40266666654497
+    },
+    {
+      "name": "prove_stage3",
+      "count": 1,
+      "total_ms": 17.86154200000013,
+      "self_ms": 0.40787099999957716,
+      "mean_total_us": 17861.542000000132
+    },
+    {
+      "name": "prove_outer_uniskip",
+      "count": 2,
+      "total_ms": 16.300291999999434,
+      "self_ms": 0.3961679999995977,
+      "mean_total_us": 8150.145999999717
+    },
+    {
+      "name": "RegistersReadWriteCheckingProver::ingest_challenge",
+      "count": 23,
+      "total_ms": 8.704086000000126,
+      "self_ms": 0.39508299999916924,
+      "mean_total_us": 378.4385217391359
+    },
+    {
+      "name": "RamReadWriteState::bind_address",
+      "count": 26,
+      "total_ms": 0.38404400000162425,
+      "self_ms": 0.38404400000162425,
+      "mean_total_us": 14.770923076985547
+    },
+    {
+      "name": "RamReadWriteCheckingProver::ingest_challenge",
+      "count": 58,
+      "total_ms": 7.55457999998983,
+      "self_ms": 0.37253399998741227,
+      "mean_total_us": 130.25137931016948
+    },
+    {
+      "name": "ShiftSumcheckProver::compute_message",
+      "count": 16,
+      "total_ms": 0.365377000000095,
+      "self_ms": 0.365377000000095,
+      "mean_total_us": 22.836062500005937
+    },
+    {
+      "name": "RaPolynomialRound1::bind",
+      "count": 42,
+      "total_ms": 0.3550439999992959,
+      "self_ms": 0.3550439999992959,
+      "mean_total_us": 8.453428571411807
+    },
+    {
+      "name": "DoryProverState::compute_final_message",
+      "count": 1,
+      "total_ms": 0.35504100000020117,
+      "self_ms": 0.35504100000020117,
+      "mean_total_us": 355.04100000020117
+    },
+    {
+      "name": "OuterLinearStage::compute_message",
+      "count": 34,
+      "total_ms": 0.38141800000402143,
+      "self_ms": 0.34245900000189433,
+      "mean_total_us": 11.218176470706513
+    },
+    {
+      "name": "UniPoly::eval_with_coeffs",
+      "count": 1218,
+      "total_ms": 0.3365569999914151,
+      "self_ms": 0.3365569999914151,
+      "mean_total_us": 0.2763193760192242
+    },
+    {
+      "name": "ExpandingTable::update",
+      "count": 128,
+      "total_ms": 0.31849599999911155,
+      "self_ms": 0.31849599999911155,
+      "mean_total_us": 2.4882499999930587
+    },
+    {
+      "name": "InstructionClaimReductionSumcheckProver::compute_message",
+      "count": 32,
+      "total_ms": 0.31325099999504163,
+      "self_ms": 0.31325099999504163,
+      "mean_total_us": 9.789093749845051
+    },
+    {
+      "name": "RegistersClaimReductionSumcheckProver::initialize",
+      "count": 1,
+      "total_ms": 0.3310419999998994,
+      "self_ms": 0.3129159999997355,
+      "mean_total_us": 331.0419999998994
+    },
+    {
+      "name": "RamRaVirtualSumcheckProver::initialize",
+      "count": 1,
+      "total_ms": 0.3734580000001006,
+      "self_ms": 0.30866600000020117,
+      "mean_total_us": 373.4580000001006
+    },
+    {
+      "name": "InstructionInputSumcheckProver::initialize",
+      "count": 1,
+      "total_ms": 0.329625,
+      "self_ms": 0.29929200000013223,
+      "mean_total_us": 329.625
+    },
+    {
+      "name": "OuterSharedState::new",
+      "count": 2,
+      "total_ms": 0.5719159999999683,
+      "self_ms": 0.2928329999980051,
+      "mean_total_us": 285.95799999998417
+    },
+    {
+      "name": "RamHammingBooleanitySumcheckProver::initialize",
+      "count": 1,
+      "total_ms": 0.3152080000001006,
+      "self_ms": 0.284,
+      "mean_total_us": 315.2080000001006
+    },
+    {
+      "name": "DoryCommitmentScheme::combine_hints",
+      "count": 1,
+      "total_ms": 353.514625,
+      "self_ms": 0.2764150000018999,
+      "mean_total_us": 353514.625
+    },
+    {
+      "name": "RegistersReadWriteCheckingProver::compute_rs2_ra_claim",
+      "count": 1,
+      "total_ms": 0.2730830000001006,
+      "self_ms": 0.2730830000001006,
+      "mean_total_us": 273.0830000001006
+    },
+    {
+      "name": "prove_outer_remaining",
+      "count": 2,
+      "total_ms": 35.465,
+      "self_ms": 0.2710050000026822,
+      "mean_total_us": 17732.5
+    },
+    {
+      "name": "Materialize combined_val_poly",
+      "count": 1,
+      "total_ms": 0.27075,
+      "self_ms": 0.27075,
+      "mean_total_us": 270.75
+    },
+    {
+      "name": "RegistersClaimReductionSumcheckProver::ingest_challenge",
+      "count": 16,
+      "total_ms": 0.5397919999998995,
+      "self_ms": 0.2533350000004284,
+      "mean_total_us": 33.736999999993714
+    },
+    {
+      "name": "OuterUniSkipInstanceProver::compute_poly",
+      "count": 2,
+      "total_ms": 0.2520829999987036,
+      "self_ms": 0.2520829999987036,
+      "mean_total_us": 126.0414999993518
+    },
+    {
+      "name": "GruenSplitEqPolynomial::bind",
+      "count": 316,
+      "total_ms": 0.24995900000771507,
+      "self_ms": 0.24995900000771507,
+      "mean_total_us": 0.7910094936953008
+    },
+    {
+      "name": "BN254::multi_pair",
+      "count": 50,
+      "total_ms": 267.0472920000013,
+      "self_ms": 0.23687100000400096,
+      "mean_total_us": 5340.945840000026
+    },
+    {
+      "name": "Build cycle_data",
+      "count": 1,
+      "total_ms": 0.23525,
+      "self_ms": 0.23525,
+      "mean_total_us": 235.25
+    },
+    {
+      "name": "par_extend basic vectors",
+      "count": 1,
+      "total_ms": 0.235,
+      "self_ms": 0.235,
+      "mean_total_us": 235.0
+    },
+    {
+      "name": "MultilinearPolynomial::evaluate",
+      "count": 5,
+      "total_ms": 0.22183400000003167,
+      "self_ms": 0.22183400000003167,
+      "mean_total_us": 44.366800000006336
+    },
+    {
+      "name": "OutputSumcheckProver::initialize",
+      "count": 2,
+      "total_ms": 0.30254099999926987,
+      "self_ms": 0.22095799999940208,
+      "mean_total_us": 151.27049999963492
+    },
+    {
+      "name": "RamReadWriteCheckingProver::initialize",
+      "count": 2,
+      "total_ms": 1.0730420000012963,
+      "self_ms": 0.2008739999998361,
+      "mean_total_us": 536.5210000006482
+    },
+    {
+      "name": "prove",
+      "count": 2,
+      "total_ms": 4525.596875,
+      "self_ms": 0.19916600000066684,
+      "mean_total_us": 2262798.4375
+    },
+    {
+      "name": "InstructionReadRafProver::init_phase",
+      "count": 16,
+      "total_ms": 23.79624899999937,
+      "self_ms": 0.17791899999976157,
+      "mean_total_us": 1487.2655624999607
+    },
+    {
+      "name": "bound_poly_var_bot",
+      "count": 154,
+      "total_ms": 0.17742200000141747,
+      "self_ms": 0.17742200000141747,
+      "mean_total_us": 1.1520909091001135
+    },
+    {
+      "name": "RegistersValEvaluationSumcheckProver::initialize",
+      "count": 1,
+      "total_ms": 0.3367080000001006,
+      "self_ms": 0.17212400000030176,
+      "mean_total_us": 336.7080000001006
+    },
+    {
+      "name": "Phase1State::initialize_from_aligned_address",
+      "count": 1,
+      "total_ms": 0.5169170000001323,
+      "self_ms": 0.1715840000002645,
+      "mean_total_us": 516.9170000001322
+    },
+    {
+      "name": "RamValCheckSumcheckProver::initialize",
+      "count": 1,
+      "total_ms": 0.46595800000010057,
+      "self_ms": 0.1645830000001006,
+      "mean_total_us": 465.9580000001006
+    },
+    {
+      "name": "InstructionReadRafSumcheckProver::initialize",
+      "count": 1,
+      "total_ms": 4.246459000000032,
+      "self_ms": 0.1572090000002645,
+      "mean_total_us": 4246.459000000032
+    },
+    {
+      "name": "Program::trace",
+      "count": 3,
+      "total_ms": 16.009583999999798,
+      "self_ms": 0.15566799999936484,
+      "mean_total_us": 5336.527999999933
+    },
+    {
+      "name": "PrefixSuffix::init_P",
+      "count": 48,
+      "total_ms": 0.14962100000027567,
+      "self_ms": 0.14962100000027567,
+      "mean_total_us": 3.11710416667241
+    },
+    {
+      "name": "MultilinearPolynomial::bind",
+      "count": 154,
+      "total_ms": 0.30875100000342354,
+      "self_ms": 0.13132900000200606,
+      "mean_total_us": 2.004876623398854
+    },
+    {
+      "name": "prove_stage7",
+      "count": 1,
+      "total_ms": 6.1728330000001,
+      "self_ms": 0.12962599999969826,
+      "mean_total_us": 6172.833000000101
+    },
+    {
+      "name": "run_preamble",
+      "count": 2,
+      "total_ms": 0.12741699999943376,
+      "self_ms": 0.12741699999943376,
+      "mean_total_us": 63.70849999971688
+    },
+    {
+      "name": "HammingWeightClaimReductionProver::compute_message",
+      "count": 4,
+      "total_ms": 0.12504199999989943,
+      "self_ms": 0.12504199999989943,
+      "mean_total_us": 31.260499999974854
+    },
+    {
+      "name": "RegistersClaimReductionSumcheckProver::compute_message",
+      "count": 16,
+      "total_ms": 0.12029500000062399,
+      "self_ms": 0.12029500000062399,
+      "mean_total_us": 7.518437500038999
+    },
+    {
+      "name": "Phase1State::compute_Q_arrays",
+      "count": 1,
+      "total_ms": 0.118625,
+      "self_ms": 0.118625,
+      "mean_total_us": 118.625
+    },
+    {
+      "name": "OuterLinearStage::next_window",
+      "count": 32,
+      "total_ms": 7.274791000003926,
+      "self_ms": 0.11433400000561961,
+      "mean_total_us": 227.3372187501227
+    },
+    {
+      "name": "RamRaVirtualSumcheckProver::ingest_challenge",
+      "count": 16,
+      "total_ms": 2.214125,
+      "self_ms": 0.11033100000070407,
+      "mean_total_us": 138.3828125
+    },
+    {
+      "name": "Stage2::ram_output_state",
+      "count": 2,
+      "total_ms": 0.48666599999926985,
+      "self_ms": 0.10949899999983609,
+      "mean_total_us": 243.33299999963492
+    },
+    {
+      "name": "InstructionLookupPhase2::bind",
+      "count": 16,
+      "total_ms": 0.10621000000089408,
+      "self_ms": 0.10621000000089408,
+      "mean_total_us": 6.638125000055879
+    },
+    {
+      "name": "prove_stage8",
+      "count": 1,
+      "total_ms": 849.7354589999998,
+      "self_ms": 0.10600099999969825,
+      "mean_total_us": 849735.4589999998
+    },
+    {
+      "name": "Phase2State::compute_H_prime",
+      "count": 1,
+      "total_ms": 0.10445900000003167,
+      "self_ms": 0.10445900000003167,
+      "mean_total_us": 104.45900000003166
+    },
+    {
+      "name": "InstructionInputSumcheckProver::ingest_challenge",
+      "count": 16,
+      "total_ms": 4.5894980000001375,
+      "self_ms": 0.0982490000007674,
+      "mean_total_us": 286.8436250000086
+    },
+    {
+      "name": "Stage2::prove_product_virtual_uniskip",
+      "count": 2,
+      "total_ms": 0.0944170000012964,
+      "self_ms": 0.0944170000012964,
+      "mean_total_us": 47.2085000006482
+    },
+    {
+      "name": "ProverOpeningAccumulator::append_sparse",
+      "count": 81,
+      "total_ms": 0.07912400000030174,
+      "self_ms": 0.07912400000030174,
+      "mean_total_us": 0.9768395061765648
+    },
+    {
+      "name": "GruenSplitEqPolynomial::new",
+      "count": 16,
+      "total_ms": 0.6733330000005663,
+      "self_ms": 0.07329200000176206,
+      "mean_total_us": 42.08331250003539
+    },
+    {
+      "name": "Init PrefixSuffixDecomposition",
+      "count": 1,
+      "total_ms": 0.07279199999989942,
+      "self_ms": 0.07279199999989942,
+      "mean_total_us": 72.79199999989942
+    },
+    {
+      "name": "Phase2State::gen",
+      "count": 1,
+      "total_ms": 0.204125,
+      "self_ms": 0.07162399999983608,
+      "mean_total_us": 204.125
+    },
+    {
+      "name": "BN254::multi_pair_g1_setup",
+      "count": 18,
+      "total_ms": 66.74949799999968,
+      "self_ms": 0.0660789999999106,
+      "mean_total_us": 3708.305444444426
+    },
+    {
+      "name": "OutputSumcheckProver::ingest_challenge",
+      "count": 26,
+      "total_ms": 1.3396689999985973,
+      "self_ms": 0.06604299999098294,
+      "mean_total_us": 51.525730769176825
+    },
+    {
+      "name": "RamValCheckSumcheckProver::ingest_challenge",
+      "count": 16,
+      "total_ms": 2.721043000000296,
+      "self_ms": 0.0587929999998305,
+      "mean_total_us": 170.0651875000185
+    },
+    {
+      "name": "ProductVirtualUniSkipInstanceProver::compute_message",
+      "count": 2,
+      "total_ms": 0.05304200000059791,
+      "self_ms": 0.05304200000059791,
+      "mean_total_us": 26.521000000298955
+    },
+    {
+      "name": "IncClaimReductionSumcheckProver::ingest_challenge",
+      "count": 16,
+      "total_ms": 0.6000009999996982,
+      "self_ms": 0.04725099999969825,
+      "mean_total_us": 37.50006249998114
+    },
+    {
+      "name": "OuterLinearStage::cache_openings",
+      "count": 2,
+      "total_ms": 2.6792080000005662,
+      "self_ms": 0.0463330000017304,
+      "mean_total_us": 1339.6040000002831
+    },
+    {
+      "name": "RegistersValEvaluationSumcheckProver::ingest_challenge",
+      "count": 16,
+      "total_ms": 1.4908759999996983,
+      "self_ms": 0.045084999999264255,
+      "mean_total_us": 93.17974999998114
+    },
+    {
+      "name": "InstructionLookupPhase1::round_poly",
+      "count": 16,
+      "total_ms": 0.0439590000025928,
+      "self_ms": 0.0439590000025928,
+      "mean_total_us": 2.74743750016205
+    },
+    {
+      "name": "RamRafEvaluationSumcheckProver::ingest_challenge",
+      "count": 26,
+      "total_ms": 0.41745899999863467,
+      "self_ms": 0.04279200000152923,
+      "mean_total_us": 16.056115384562872
+    },
+    {
+      "name": "InstructionLookupPhase1::bind",
+      "count": 14,
+      "total_ms": 0.040793000003322956,
+      "self_ms": 0.040793000003322956,
+      "mean_total_us": 2.9137857145230686
+    },
+    {
+      "name": "RamRaClaimReductionSumcheckProver::ingest_challenge",
+      "count": 16,
+      "total_ms": 0.33853899999987336,
+      "self_ms": 0.039578000000445174,
+      "mean_total_us": 21.158687499992084
+    },
+    {
+      "name": "JoltSharedPreprocessing::new",
+      "count": 2,
+      "total_ms": 0.19987500000034925,
+      "self_ms": 0.039417000000714325,
+      "mean_total_us": 99.93750000017462
+    },
+    {
+      "name": "ReadWriteMatrixAddressMajor::materialize",
+      "count": 3,
+      "total_ms": 0.03933199999923818,
+      "self_ms": 0.03933199999923818,
+      "mean_total_us": 13.110666666412726
+    },
+    {
+      "name": "OuterSharedState::compute_t_evals",
+      "count": 34,
+      "total_ms": 0.03895900000212714,
+      "self_ms": 0.03895900000212714,
+      "mean_total_us": 1.1458529412390335
+    },
+    {
+      "name": "InstructionLookupPhase2::round_poly",
+      "count": 16,
+      "total_ms": 0.03745900000445545,
+      "self_ms": 0.03745900000445545,
+      "mean_total_us": 2.3411875002784654
+    },
+    {
+      "name": "HammingWeightClaimReductionProver::initialize",
+      "count": 1,
+      "total_ms": 5.41125,
+      "self_ms": 0.033499000000301746,
+      "mean_total_us": 5411.25
+    },
+    {
+      "name": "trace_lazy",
+      "count": 5,
+      "total_ms": 1.7229170000000158,
+      "self_ms": 0.03108299999998417,
+      "mean_total_us": 344.58340000000317
+    },
+    {
+      "name": "ReadRafSumcheckProver::cache_openings",
+      "count": 1,
+      "total_ms": 0.45408299999986773,
+      "self_ms": 0.025832999999867753,
+      "mean_total_us": 454.08299999986775
+    },
+    {
+      "name": "RamHammingBooleanitySumcheckProver::ingest_challenge",
+      "count": 16,
+      "total_ms": 0.760959999999497,
+      "self_ms": 0.020128999998793005,
+      "mean_total_us": 47.55999999996857
+    },
+    {
+      "name": "Stage1OuterR1csData::new",
+      "count": 2,
+      "total_ms": 39.1315,
+      "self_ms": 0.01925,
+      "mean_total_us": 19565.75
+    },
+    {
+      "name": "InstructionReadRafProver::init_log_t_rounds",
+      "count": 1,
+      "total_ms": 3.6995829999998677,
+      "self_ms": 0.019248999999836088,
+      "mean_total_us": 3699.5829999998678
+    },
+    {
+      "name": "MultiquadraticPolynomial::bind",
+      "count": 34,
+      "total_ms": 0.013454999996116384,
+      "self_ms": 0.013454999996116384,
+      "mean_total_us": 0.3957352940034231
+    },
+    {
+      "name": "RegistersReadWriteCheckingProver::cache_openings",
+      "count": 1,
+      "total_ms": 0.291,
+      "self_ms": 0.013083999999798835,
+      "mean_total_us": 291.0
+    },
+    {
+      "name": "RegistersReadWriteCheckingProver::initialize",
+      "count": 1,
+      "total_ms": 1.3785829999998678,
+      "self_ms": 0.012457999999867752,
+      "mean_total_us": 1378.5829999998678
+    },
+    {
+      "name": "OuterLinearStage::initialize",
+      "count": 2,
+      "total_ms": 11.159583000000566,
+      "self_ms": 0.011291000001132489,
+      "mean_total_us": 5579.791500000283
+    },
+    {
+      "name": "JoltProverPreprocessing::gen",
+      "count": 2,
+      "total_ms": 592.7012919999997,
+      "self_ms": 0.01074999999976717,
+      "mean_total_us": 296350.6459999999
+    },
+    {
+      "name": "build_streaming_rlc",
+      "count": 1,
+      "total_ms": 353.5263749999995,
+      "self_ms": 0.010666999999433756,
+      "mean_total_us": 353526.37499999953
+    },
+    {
+      "name": "ProverOpeningAccumulator::append_dense",
+      "count": 7,
+      "total_ms": 0.009666000000201166,
+      "self_ms": 0.009666000000201166,
+      "mean_total_us": 1.380857142885881
+    },
+    {
+      "name": "RLCPolynomial::vector_matrix_product",
+      "count": 1,
+      "total_ms": 3.873167000000365,
+      "self_ms": 0.00904200000036508,
+      "mean_total_us": 3873.167000000365
+    },
+    {
+      "name": "Compute u_evals",
+      "count": 1,
+      "total_ms": 1.5470420000001321,
+      "self_ms": 0.006625000000232831,
+      "mean_total_us": 1547.0420000001322
+    },
+    {
+      "name": "IncClaimReductionSumcheckProver::initialize",
+      "count": 1,
+      "total_ms": 0.6250830000001005,
+      "self_ms": 0.0055,
+      "mean_total_us": 625.0830000001006
+    },
+    {
+      "name": "DoryCommitmentScheme::prove",
+      "count": 1,
+      "total_ms": 496.10308300000054,
+      "self_ms": 0.00449900000076741,
+      "mean_total_us": 496103.08300000057
+    },
+    {
+      "name": "JoltVerifierPreprocessing::new",
+      "count": 1,
+      "total_ms": 0.003125,
+      "self_ms": 0.003125,
+      "mean_total_us": 3.125
+    },
+    {
+      "name": "new_streaming",
+      "count": 1,
+      "total_ms": 0.001083000000100583,
+      "self_ms": 0.001083000000100583,
+      "mean_total_us": 1.0830000001005828
+    },
+    {
+      "name": "RamRaClaimReductionSumcheckProver::initialize",
+      "count": 1,
+      "total_ms": 0.517625,
+      "self_ms": 0.0007079999998677522,
+      "mean_total_us": 517.625
+    }
+  ],
+  "parent_children": {
+    "Program::trace": {
+      "Program::build_with_features": 3,
+      "decode": 3,
+      "trace": 3
+    },
+    "trace_lazy": {
+      "setup_emulator_with_backtraces": 5
+    },
+    "trace": {
+      "trace_lazy": 5
+    },
+    "JoltSharedPreprocessing::new": {
+      "BytecodePreprocessing::preprocess": 2
+    },
+    "JoltProverPreprocessing::gen": {
+      "DoryCommitmentScheme::setup_prover": 2
+    },
+    "DoryCommitmentScheme::compute_tier1_commitment": {
+      "msm_i128": 256
+    },
+    "BN254::multi_pair_g2_setup": {
+      "multi_pair_g2_setup_parallel": 146
+    },
+    "DoryCommitmentScheme::compute_tier2_commitment": {
+      "BN254::multi_pair_g2_setup": 84
+    },
+    "multi_pair_g2_setup_parallel": {
+      "DoryCommitmentScheme::compute_tier2_commitment": 15
+    },
+    "prove": {
+      "generate_and_commit_witness_polynomials": 1,
+      "prove_stage1": 1,
+      "prove_stage2": 1,
+      "prove_stage3": 1,
+      "prove_stage4": 1,
+      "prove_stage5": 1,
+      "prove_stage6": 1,
+      "prove_stage7": 1,
+      "create_evaluation_proof": 1,
+      "prove_stage8": 1
+    },
+    "OuterUniSkipInstanceProver::initialize": {
+      "GruenSplitEqPolynomial::new_with_scaling": 2
+    },
+    "prove_stage1": {
+      "OuterUniSkipInstanceProver::initialize": 2,
+      "OuterUniSkipInstanceProver::compute_poly": 2,
+      "UniPoly::evaluate": 36,
+      "OuterSharedState::new": 2,
+      "OuterLinearStage::initialize": 2,
+      "OuterLinearStage::compute_message": 34,
+      "OuterLinearStage::ingest_challenge": 34,
+      "OuterLinearStage::next_window": 32,
+      "OuterLinearStage::cache_openings": 2
+    },
+    "UniPoly::evaluate": {
+      "UniPoly::eval_with_coeffs": 1218
+    },
+    "OuterSharedState::new": {
+      "GruenSplitEqPolynomial::new_with_scaling": 2,
+      "ExpandingTable::new": 2
+    },
+    "OuterLinearStage::initialize": {
+      "OuterLinearStage::fused_materialise_polynomials_round_zero": 2
+    },
+    "OuterLinearStage::compute_message": {
+      "OuterSharedState::compute_t_evals": 34
+    },
+    "OuterLinearStage::ingest_challenge": {
+      "GruenSplitEqPolynomial::bind": 34,
+      "MultiquadraticPolynomial::bind": 34
+    },
+    "OuterLinearStage::next_window": {
+      "OuterLinearStage::compute_evaluation_grid_from_polynomials_parallel": 32
+    },
+    "OuterLinearStage::cache_openings": {
+      "R1CSEval::compute_claimed_inputs": 2
+    },
+    "ProductVirtualUniSkipInstanceProver::initialize": {
+      "GruenSplitEqPolynomial::new_with_scaling": 2
+    },
+    "prove_stage2": {
+      "ProductVirtualUniSkipInstanceProver::initialize": 2,
+      "ProductVirtualUniSkipInstanceProver::compute_message": 2,
+      "UniPoly::evaluate": 292,
+      "RamReadWriteCheckingProver::initialize": 2,
+      "ProductVirtualRemainderProver::initialize": 2,
+      "InstructionClaimReductionSumcheckProver::initialize": 2,
+      "RamRafEvaluationSumcheckProver::initialize": 2,
+      "OutputSumcheckProver::initialize": 2,
+      "RamReadWriteCheckingProver::compute_message": 58,
+      "RamReadWriteCheckingProver::ingest_challenge": 58,
+      "ProductVirtualRemainderProver::compute_message": 32,
+      "InstructionClaimReductionSumcheckProver::compute_message": 32,
+      "ProductVirtualRemainderProver::ingest_challenge": 32,
+      "InstructionClaimReductionSumcheckProver::ingest_challenge": 32,
+      "RamRafEvaluationSumcheckProver::compute_message": 26,
+      "OutputSumcheckProver::compute_message": 26,
+      "RamRafEvaluationSumcheckProver::ingest_challenge": 26,
+      "OutputSumcheckProver::ingest_challenge": 26,
+      "ProverOpeningAccumulator::append_dense": 2,
+      "ProductVirtualEval::compute_claimed_factors": 2
+    },
+    "GruenSplitEqPolynomial::new": {
+      "GruenSplitEqPolynomial::new_with_scaling": 16
+    },
+    "RamReadWriteCheckingProver::initialize": {
+      "GruenSplitEqPolynomial::new": 2,
+      "CommittedPolynomial::generate_witness": 2,
+      "ReadWriteMatrixCycleMajor::new": 2
+    },
+    "ProductVirtualRemainderProver::initialize": {
+      "GruenSplitEqPolynomial::new_with_scaling": 2
+    },
+    "InstructionClaimReductionSumcheckProver::initialize": {
+      "EqPolynomial::evals": 4
+    },
+    "OutputSumcheckProver::initialize": {
+      "GruenSplitEqPolynomial::new": 2
+    },
+    "RamReadWriteCheckingProver::ingest_challenge": {
+      "ReadWriteMatrixCycleMajor::bind": 32,
+      "GruenSplitEqPolynomial::bind": 32,
+      "MultilinearPolynomial::bind_parallel": 32,
+      "EqPolynomial::evals_parallel": 2,
+      "SparseMatrixPolynomial::bind": 26,
+      "ReadWriteMatrixAddressMajor::materialize": 2
+    },
+    "MultilinearPolynomial::bind_parallel": {
+      "CompactPolynomial::bind": 302,
+      "bound_poly_var_top_zero_optimized": 384
+    },
+    "ProductVirtualRemainderProver::ingest_challenge": {
+      "GruenSplitEqPolynomial::bind": 32
+    },
+    "MultilinearPolynomial::bind": {
+      "bound_poly_var_bot": 154
+    },
+    "InstructionClaimReductionSumcheckProver::ingest_challenge": {
+      "MultilinearPolynomial::bind": 28,
+      "EqPolynomial::evals": 2,
+      "EqPolynomial::evals_parallel": 2,
+      "MultilinearPolynomial::bind_parallel": 96
+    },
+    "SparseMatrixPolynomial::bind": {
+      "MultilinearPolynomial::bind_parallel": 33
+    },
+    "RamRafEvaluationSumcheckProver::ingest_challenge": {
+      "MultilinearPolynomial::bind_parallel": 26
+    },
+    "OutputSumcheckProver::ingest_challenge": {
+      "MultilinearPolynomial::bind_parallel": 78,
+      "GruenSplitEqPolynomial::bind": 26
+    },
+    "ShiftSumcheckProver::initialize": {
+      "EqPlusOnePolynomial::evals": 4
+    },
+    "prove_stage3": {
+      "ShiftSumcheckProver::initialize": 1,
+      "InstructionInputSumcheckProver::initialize": 1,
+      "RegistersClaimReductionSumcheckProver::initialize": 1,
+      "ShiftSumcheckProver::compute_message": 16,
+      "InstructionInputSumcheckProver::compute_message": 16,
+      "RegistersClaimReductionSumcheckProver::compute_message": 16,
+      "UniPoly::evaluate": 48,
+      "ShiftSumcheckProver::ingest_challenge": 16,
+      "InstructionInputSumcheckProver::ingest_challenge": 16,
+      "RegistersClaimReductionSumcheckProver::ingest_challenge": 16
+    },
+    "InstructionInputSumcheckProver::initialize": {
+      "GruenSplitEqPolynomial::new": 1
+    },
+    "RegistersClaimReductionSumcheckProver::initialize": {
+      "EqPolynomial::evals": 2
+    },
+    "ShiftSumcheckProver::ingest_challenge": {
+      "MultilinearPolynomial::bind": 112,
+      "EqPlusOnePolynomial::evals": 4,
+      "MultilinearPolynomial::evaluate": 4,
+      "EqPolynomial::evals": 1
+    },
+    "InstructionInputSumcheckProver::ingest_challenge": {
+      "MultilinearPolynomial::bind_parallel": 128,
+      "GruenSplitEqPolynomial::bind": 16
+    },
+    "RegistersClaimReductionSumcheckProver::ingest_challenge": {
+      "MultilinearPolynomial::bind": 14,
+      "EqPolynomial::evals": 1,
+      "EqPolynomial::evals_parallel": 1,
+      "MultilinearPolynomial::bind_parallel": 32
+    },
+    "prove_stage4": {
+      "MultilinearPolynomial::evaluate": 1,
+      "RegistersReadWriteCheckingProver::initialize": 1,
+      "RamValCheckSumcheckProver::initialize": 1,
+      "RegistersReadWriteCheckingProver::compute_message": 23,
+      "UniPoly::evaluate": 46,
+      "RegistersReadWriteCheckingProver::ingest_challenge": 23,
+      "RamValCheckSumcheckProver::compute_message": 16,
+      "RamValCheckSumcheckProver::ingest_challenge": 16,
+      "RegistersReadWriteCheckingProver::cache_openings": 1,
+      "ProverOpeningAccumulator::append_dense": 1
+    },
+    "RegistersReadWriteCheckingProver::initialize": {
+      "GruenSplitEqPolynomial::new": 1,
+      "CommittedPolynomial::generate_witness": 1,
+      "ReadWriteMatrixCycleMajor::new": 1
+    },
+    "RamValCheckSumcheckProver::initialize": {
+      "EqPolynomial::evals": 2,
+      "CommittedPolynomial::generate_witness": 1
+    },
+    "RegistersReadWriteCheckingProver::ingest_challenge": {
+      "GruenSplitEqPolynomial::bind": 16,
+      "MultilinearPolynomial::bind_parallel": 16,
+      "ReadWriteMatrixCycleMajor::bind": 16,
+      "EqPolynomial::evals_parallel": 1,
+      "SparseMatrixPolynomial::bind": 7,
+      "ReadWriteMatrixAddressMajor::materialize": 1
+    },
+    "RamValCheckSumcheckProver::ingest_challenge": {
+      "MultilinearPolynomial::bind_parallel": 53,
+      "RaPolynomialRound1::bind": 1,
+      "RaPolynomialRound2::bind": 1,
+      "RaPolynomialRound3::bind": 1
+    },
+    "RegistersReadWriteCheckingProver::cache_openings": {
+      "RegistersReadWriteCheckingProver::compute_rs2_ra_claim": 1,
+      "ProverOpeningAccumulator::append_dense": 1
+    },
+    "InstructionReadRafSumcheckProver::initialize": {
+      "Init PrefixSuffixDecomposition": 1,
+      "Build cycle_data": 1,
+      "Extract vectors": 1,
+      "Compute u_evals": 1,
+      "ExpandingTable::new": 16,
+      "InstructionReadRafProver::init_phase": 1
+    },
+    "Extract vectors": {
+      "par_extend basic vectors": 1
+    },
+    "Compute u_evals": {
+      "GruenSplitEqPolynomial::new": 1,
+      "EqPolynomial::evals": 1
+    },
+    "InstructionReadRafProver::init_phase": {
+      "PrefixSuffix::init_Q_raf": 16,
+      "InstructionReadRafProver::init_suffix_polys": 16,
+      "PrefixSuffix::init_P": 48,
+      "Update u_evals": 15
+    },
+    "prove_stage5": {
+      "InstructionReadRafSumcheckProver::initialize": 1,
+      "RamRaClaimReductionSumcheckProver::initialize": 1,
+      "RegistersValEvaluationSumcheckProver::initialize": 1,
+      "InstructionReadRafSumcheckProver::compute_message": 144,
+      "UniPoly::evaluate": 432,
+      "InstructionReadRafSumcheckProver::ingest_challenge": 144,
+      "RamRaClaimReductionSumcheckProver::compute_message": 16,
+      "RegistersValEvaluationSumcheckProver::compute_message": 16,
+      "RamRaClaimReductionSumcheckProver::ingest_challenge": 16,
+      "RegistersValEvaluationSumcheckProver::ingest_challenge": 16,
+      "ReadRafSumcheckProver::cache_openings": 1,
+      "ProverOpeningAccumulator::append_dense": 1
+    },
+    "Phase1State::initialize_from_aligned_address": {
+      "EqPolynomial::evals": 7,
+      "Phase1State::compute_Q_arrays": 1
+    },
+    "RamRaClaimReductionSumcheckProver::initialize": {
+      "Phase1State::initialize_from_aligned_address": 1
+    },
+    "RegistersValEvaluationSumcheckProver::initialize": {
+      "CommittedPolynomial::generate_witness": 1,
+      "EqPolynomial::evals": 2
+    },
+    "InstructionReadRafSumcheckProver::ingest_challenge": {
+      "update_checkpoints": 64,
+      "InstructionReadRafProver::init_phase": 15,
+      "InstructionReadRafProver::init_log_t_rounds": 1,
+      "GruenSplitEqPolynomial::bind": 16,
+      "MultilinearPolynomial::bind_parallel": 144
+    },
+    "InstructionReadRafProver::init_log_t_rounds": {
+      "Materialize ra polynomials": 1,
+      "Materialize combined_val_poly": 1
+    },
+    "RamRaClaimReductionSumcheckProver::ingest_challenge": {
+      "MultilinearPolynomial::bind_parallel": 80,
+      "Phase2State::gen": 1
+    },
+    "RegistersValEvaluationSumcheckProver::ingest_challenge": {
+      "MultilinearPolynomial::bind_parallel": 53,
+      "RaPolynomialRound1::bind": 1,
+      "RaPolynomialRound2::bind": 1,
+      "RaPolynomialRound3::bind": 1
+    },
+    "Phase2State::gen": {
+      "EqPolynomial::evals": 4,
+      "Phase2State::compute_H_prime": 1
+    },
+    "ReadRafSumcheckProver::cache_openings": {
+      "ReadRafSumcheckProver::compute_flag_claims": 1
+    },
+    "BytecodeReadRafSumcheckParams::gen": {
+      "EqPolynomial::evals": 2
+    },
+    "prove_stage6": {
+      "BytecodeReadRafSumcheckParams::gen": 1,
+      "BytecodeReadRafSumcheckProver::initialize": 1,
+      "RamHammingBooleanitySumcheckProver::initialize": 1,
+      "BooleanitySumcheckProver::initialize": 1,
+      "RamRaVirtualSumcheckProver::initialize": 1,
+      "InstructionRaSumcheckProver::initialize": 1,
+      "IncClaimReductionSumcheckProver::initialize": 1,
+      "BytecodeReadRafSumcheckProver::compute_message": 30,
+      "UniPoly::evaluate": 180,
+      "BytecodeReadRafSumcheckProver::ingest_challenge": 30,
+      "BooleanitySumcheckProver::compute_message": 20,
+      "BooleanitySumcheckProver::ingest_challenge": 20,
+      "RamHammingBooleanitySumcheckProver::compute_message": 16,
+      "RamRaVirtualSumcheckProver::compute_message": 16,
+      "InstructionRaSumcheckProver::compute_message": 16,
+      "IncClaimReductionSumcheckProver::compute_message": 16,
+      "RamHammingBooleanitySumcheckProver::ingest_challenge": 16,
+      "RamRaVirtualSumcheckProver::ingest_challenge": 16,
+      "InstructionRaSumcheckProver::ingest_challenge": 16,
+      "IncClaimReductionSumcheckProver::ingest_challenge": 16,
+      "ProverOpeningAccumulator::append_sparse": 41,
+      "ProverOpeningAccumulator::append_dense": 2
+    },
+    "BytecodeReadRafSumcheckProver::initialize": {
+      "GruenSplitEqPolynomial::new": 6
+    },
+    "RamHammingBooleanitySumcheckProver::initialize": {
+      "GruenSplitEqPolynomial::new": 1
+    },
+    "EqPolynomial::evals": {
+      "EqPolynomial::evals_parallel": 1
+    },
+    "BooleanitySumcheckProver::initialize": {
+      "EqPolynomial::evals": 1
+    },
+    "RamRaVirtualSumcheckProver::initialize": {
+      "EqPolynomial::evals": 4,
+      "GruenSplitEqPolynomial::new": 1
+    },
+    "InstructionRaSumcheckProver::initialize": {
+      "GruenSplitEqPolynomial::new": 1
+    },
+    "IncClaimReductionPhase1State::initialize": {
+      "EqPolynomial::evals": 8
+    },
+    "IncClaimReductionSumcheckProver::initialize": {
+      "IncClaimReductionPhase1State::initialize": 1
+    },
+    "BytecodeReadRafSumcheckProver::ingest_challenge": {
+      "UniPoly::evaluate": 180,
+      "MultilinearPolynomial::bind_parallel": 220,
+      "EqPolynomial::evals": 4,
+      "RaPolynomialRound1::bind": 4,
+      "GruenSplitEqPolynomial::bind": 96,
+      "RaPolynomialRound2::bind": 4,
+      "RaPolynomialRound3::bind": 4
+    },
+    "RamHammingBooleanitySumcheckProver::ingest_challenge": {
+      "GruenSplitEqPolynomial::bind": 16,
+      "MultilinearPolynomial::bind_parallel": 16
+    },
+    "RamRaVirtualSumcheckProver::ingest_challenge": {
+      "RaPolynomialRound1::bind": 4,
+      "GruenSplitEqPolynomial::bind": 16,
+      "RaPolynomialRound2::bind": 4,
+      "RaPolynomialRound3::bind": 4,
+      "MultilinearPolynomial::bind_parallel": 52
+    },
+    "InstructionRaSumcheckProver::ingest_challenge": {
+      "RaPolynomialRound1::bind": 32,
+      "GruenSplitEqPolynomial::bind": 16,
+      "RaPolynomialRound2::bind": 32,
+      "RaPolynomialRound3::bind": 32,
+      "MultilinearPolynomial::bind_parallel": 416
+    },
+    "IncClaimReductionSumcheckProver::ingest_challenge": {
+      "MultilinearPolynomial::bind_parallel": 88,
+      "IncClaimReductionPhase2State::gen": 1
+    },
+    "IncClaimReductionPhase2State::gen": {
+      "EqPolynomial::evals": 1
+    },
+    "HammingWeightClaimReductionProver::initialize": {
+      "shared_ra_polys::compute_all_G": 1,
+      "EqPolynomial::evals": 41
+    },
+    "prove_stage7": {
+      "HammingWeightClaimReductionProver::initialize": 1,
+      "HammingWeightClaimReductionProver::compute_message": 4,
+      "UniPoly::evaluate": 4,
+      "HammingWeightClaimReductionProver::ingest_challenge": 4,
+      "ProverOpeningAccumulator::append_sparse": 40
+    },
+    "build_streaming_rlc": {
+      "new_streaming": 1,
+      "DoryCommitmentScheme::combine_hints": 1
+    },
+    "DoryCommitmentScheme::combine_hints": {
+      "vector_scalar_mul_add_gamma_g1_online": 42
+    },
+    "prove_stage8": {
+      "build_streaming_rlc": 1,
+      "DoryCommitmentScheme::prove": 1
+    },
+    "RLCPolynomial::vector_matrix_product": {
+      "materialized_vector_matrix_product": 1
+    },
+    "create_evaluation_proof": {
+      "RLCPolynomial::vector_matrix_product": 1,
+      "msm_field_elements": 3,
+      "DoryProverState::compute_first_message": 10,
+      "DoryProverState::apply_first_challenge": 10,
+      "DoryProverState::compute_second_message": 10,
+      "DoryProverState::apply_second_challenge": 10,
+      "DoryProverState::compute_final_message": 1
+    },
+    "DoryProverState::compute_first_message": {
+      "BN254::multi_pair_g2_setup": 20,
+      "msm_field_elements": 22,
+      "BN254::multi_pair_g1_setup": 18
+    },
+    "BN254::multi_pair": {
+      "multi_pair_parallel": 50
+    },
+    "DoryProverState::compute_second_message": {
+      "BN254::multi_pair": 20,
+      "msm_field_elements": 40
+    },
+    "BN254::multi_pair_g1_setup": {
+      "multi_pair_g1_setup_parallel": 18
+    },
+    "DoryCommitmentScheme::prove": {
+      "prove": 1
+    },
+    "DoryCommitmentScheme::setup_verifier": {
+      "BN254::multi_pair": 30
+    },
+    "G1::msm": {
+      "G1::msm": 2602
+    },
+    "DoryScheme::commit_evaluations_with_row_len": {
+      "BN254::multi_pair_g2_setup": 42
+    },
+    "DoryCommitmentScheme::compute_tier1_commitment_onehot": {
+      "DoryCommitmentScheme::compute_tier1_commitment_onehot": 23
+    },
+    "Stage1OuterR1csData::new": {
+      "R1csRowDotTable::compute_ab_prefix": 2
+    },
+    "Stage1OuterRv64Data::uniskip_extended_evals": {
+      "EqPolynomial::evaluations": 2
+    },
+    "prove_outer_uniskip": {
+      "Stage1OuterRv64Data::uniskip_extended_evals": 2
+    },
+    "Stage1OuterRv64Data::dense_outer_state": {
+      "EqPolynomial::evaluations": 2
+    },
+    "prove_outer_remaining": {
+      "Stage1OuterRv64Data::dense_outer_state": 2,
+      "DenseOuterState::round_poly": 34,
+      "DenseOuterState::bind": 34,
+      "Stage1OuterRv64Data::evaluate_virtual_oracles": 2
+    },
+    "Stage1OuterRv64Data::evaluate_virtual_oracles": {
+      "EqPolynomial::evaluations": 2
+    },
+    "stage2_product_virtual_uniskip_extended_evals": {
+      "EqPolynomial::evals": 2
+    },
+    "RamReadWriteState::new": {
+      "EqPolynomial::evals": 2
+    },
+    "Stage2::prove_batched": {
+      "RamReadWriteState::new": 2,
+      "Stage2::product_remainder_state": 2,
+      "Stage2::instruction_lookup_state": 2,
+      "Stage2::ram_raf_state": 2,
+      "Stage2::ram_output_state": 2,
+      "RamReadWriteState::cycle_round_poly": 32,
+      "RamReadWriteState::bind_cycle": 32,
+      "ProductRemainderState::round_poly": 32,
+      "InstructionLookupPhase1::round_poly": 16,
+      "ProductRemainderState::bind": 32,
+      "InstructionLookupPhase1::bind": 14,
+      "RamReadWriteState::address_round_poly": 26,
+      "Stage2DenseState::round_poly": 52,
+      "RamReadWriteState::bind_address": 26,
+      "Stage2DenseState::bind": 52,
+      "InstructionLookupPhase2::new": 2,
+      "InstructionLookupPhase2::round_poly": 16,
+      "InstructionLookupPhase2::bind": 16,
+      "EqPolynomial::evals": 2,
+      "Stage2DenseState::output_evals": 2
+    },
+    "Stage2::product_remainder_state": {
+      "EqPolynomial::evals": 4
+    },
+    "Stage2::instruction_lookup_state": {
+      "EqPolynomial::evals": 4
+    },
+    "Stage2::ram_raf_state": {
+      "EqPolynomial::evals": 2
+    },
+    "Stage2::ram_output_state": {
+      "EqPolynomial::evals": 2
+    },
+    "InstructionLookupPhase2::new": {
+      "EqPolynomial::evals": 4
+    },
+    "Stage2DenseState::output_evals": {
+      "EqPolynomial::evals": 2
+    }
+  }
+}

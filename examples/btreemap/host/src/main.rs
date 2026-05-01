@@ -18,7 +18,7 @@ pub fn btreemap() {
     });
 
     let shared_preprocessing = step!("Preprocessing shared", {
-        guest::preprocess_shared_btreemap(&mut program)
+        guest::preprocess_shared_btreemap(&mut program).unwrap()
     });
 
     let prover_preprocessing = step!("Preprocessing prover", {

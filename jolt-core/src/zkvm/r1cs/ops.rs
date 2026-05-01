@@ -42,7 +42,7 @@ impl Term {
     }
 }
 
-/// Const-friendly linear combination enum that can hold 0-5 terms with an optional constant
+/// Const-friendly linear combination enum that can hold 0-5 variable terms with an optional constant
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LC {
     Zero,
@@ -187,38 +187,6 @@ impl LC {
     /// Capacity-checked add-constant from i128. Returns None if term capacity would be exceeded.
     pub const fn checked_add_const_i128(self, k: i128) -> Option<LC> {
         self.checked_add(LC::Const(k))
-    }
-
-    /// Addition that falls back to zero LC if capacity would be exceeded.
-    pub const fn add_or_zero(self, other: LC) -> LC {
-        match self.checked_add(other) {
-            Some(lc) => lc,
-            None => LC::zero(),
-        }
-    }
-
-    /// Subtraction that falls back to zero LC if capacity would be exceeded.
-    pub const fn sub_or_zero(self, other: LC) -> LC {
-        match self.checked_sub(other) {
-            Some(lc) => lc,
-            None => LC::zero(),
-        }
-    }
-
-    /// Add constant that falls back to zero LC if capacity would be exceeded.
-    pub const fn add_const_or_zero(self, k: i128) -> LC {
-        match self.checked_add_const(k) {
-            Some(lc) => lc,
-            None => LC::zero(),
-        }
-    }
-
-    /// Add i128 constant that falls back to zero LC if capacity would be exceeded.
-    pub const fn add_const_or_zero_i128(self, k: i128) -> LC {
-        match self.checked_add_const_i128(k) {
-            Some(lc) => lc,
-            None => LC::zero(),
-        }
     }
 
     /// Negate this LC (multiply by -1).
@@ -688,24 +656,60 @@ macro_rules! lc {
 
 	// Accumulator folding rules
 	(@acc $acc:expr ; + { $k:literal * $e:expr } $( $rest:tt )* ) => {
-		$crate::lc!(@acc $acc.add_or_zero($crate::zkvm::r1cs::ops::LC::from_input_with_coeff_i128($e, $k)) ; $($rest)* )
+		$crate::lc!(@acc $acc.checked_add($crate::zkvm::r1cs::ops::LC::from_input_with_coeff_i128($e, $k)).expect("LC capacity overflow") ; $($rest)* )
 	};
 	(@acc $acc:expr ; - { $k:literal * $e:expr } $( $rest:tt )* ) => {
-		$crate::lc!(@acc $acc.sub_or_zero($crate::zkvm::r1cs::ops::LC::from_input_with_coeff_i128($e, $k)) ; $($rest)* )
+		$crate::lc!(@acc $acc.checked_sub($crate::zkvm::r1cs::ops::LC::from_input_with_coeff_i128($e, $k)).expect("LC capacity overflow") ; $($rest)* )
 	};
 	(@acc $acc:expr ; + { $k:literal } $( $rest:tt )* ) => {
-		$crate::lc!(@acc $acc.add_const_or_zero_i128($k) ; $($rest)* )
+		$crate::lc!(@acc $acc.checked_add_const_i128($k).expect("LC capacity overflow") ; $($rest)* )
 	};
 	(@acc $acc:expr ; - { $k:literal } $( $rest:tt )* ) => {
-		$crate::lc!(@acc $acc.add_const_or_zero_i128(-$k) ; $($rest)* )
+		$crate::lc!(@acc $acc.checked_add_const_i128(-$k).expect("LC capacity overflow") ; $($rest)* )
 	};
 	(@acc $acc:expr ; + { $e:expr } $( $rest:tt )* ) => {
-		$crate::lc!(@acc $acc.add_or_zero($crate::zkvm::r1cs::ops::LC::from_input($e)) ; $($rest)* )
+		$crate::lc!(@acc $acc.checked_add($crate::zkvm::r1cs::ops::LC::from_input($e)).expect("LC capacity overflow") ; $($rest)* )
 	};
 	(@acc $acc:expr ; - { $e:expr } $( $rest:tt )* ) => {
-		$crate::lc!(@acc $acc.sub_or_zero($crate::zkvm::r1cs::ops::LC::from_input($e)) ; $($rest)* )
+		$crate::lc!(@acc $acc.checked_sub($crate::zkvm::r1cs::ops::LC::from_input($e)).expect("LC capacity overflow") ; $($rest)* )
 	};
 
 	// End of input
 	(@acc $acc:expr ; ) => { $acc };
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::zkvm::r1cs::inputs::JoltR1CSInputs::{
+        LeftInstructionInput, Product, RightInstructionInput, ShouldBranch, UnexpandedPC, PC,
+    };
+
+    #[test]
+    fn lc_supports_max_variable_terms_and_constant() {
+        let lc = crate::lc!(
+            { LeftInstructionInput }
+                + { RightInstructionInput }
+                + { Product }
+                + { ShouldBranch }
+                + { PC }
+                + { 7i128 }
+        );
+
+        assert_eq!(lc.num_terms(), 5);
+        assert_eq!(lc.const_term(), Some(7));
+        lc.assert_no_duplicate_terms();
+    }
+
+    #[test]
+    #[should_panic(expected = "LC capacity overflow")]
+    fn lc_overflow_panics() {
+        let _ = crate::lc!(
+            { LeftInstructionInput }
+                + { RightInstructionInput }
+                + { Product }
+                + { ShouldBranch }
+                + { PC }
+                + { UnexpandedPC }
+        );
+    }
 }

@@ -90,6 +90,17 @@ impl Program {
     }
 }
 
+#[cfg(feature = "host")]
+impl crate::host::JoltProgramSource for Program {
+    fn get_elf_contents(&self) -> Option<Vec<u8>> {
+        Some(self.elf_contents.clone())
+    }
+
+    fn get_elf_compute_advice_contents(&self) -> Option<Vec<u8>> {
+        self.elf_compute_advice_contents.clone()
+    }
+}
+
 pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64, u64) {
     let (mut instructions, raw_bytes, program_end, e_entry, xlen) = tracer::decode(elf);
     let program_size = program_end - RAM_START_ADDRESS;

@@ -293,7 +293,7 @@ fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) 
 
     info!("Preprocessing guest prover...");
     let guest_prover_preprocessing =
-        jolt_sdk::guest::prover::preprocess(&guest_prog, max_trace_length);
+        jolt_sdk::guest::prover::preprocess(&guest_prog, max_trace_length).unwrap();
     info!("Preprocessing guest verifier...");
     let guest_verifier_preprocessing =
         jolt_sdk::JoltVerifierPreprocessing::from(&guest_prover_preprocessing);
@@ -486,7 +486,7 @@ fn run_recursion_proof(
         max_trace_length = 0;
     }
     let recursion_prover_preprocessing =
-        jolt_sdk::guest::prover::preprocess(&recursion, max_trace_length);
+        jolt_sdk::guest::prover::preprocess(&recursion, max_trace_length).unwrap();
     let recursion_verifier_preprocessing =
         jolt_sdk::JoltVerifierPreprocessing::from(&recursion_prover_preprocessing);
 

@@ -35,3 +35,23 @@ pub fn main() {
     println!("valid: {is_valid}");
 }
 ```
+
+## Memory management
+
+To reduce peak memory usage during proving, replace the default system allocator with [jemalloc](https://github.com/jemalloc/jemalloc). The default system allocator retains freed pages in the process's address space for reuse, which inflates RSS beyond actual live memory. jemalloc returns freed pages to the OS more aggressively via `madvise`, keeping RSS close to true usage at a modest proving time cost.
+
+```toml
+# your-host/Cargo.toml
+[dependencies]
+tikv-jemallocator = "0.6"
+```
+
+```rust
+// your-host/src/main.rs
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+```
+
+`#[global_allocator]` must be declared in your final binary crate — Jolt SDK is a library and cannot set it for you.
+
+This is most useful in containers, on shared machines where RSS determines whether you get OOM-killed, or for client-side proving where the prover runs on consumer hardware with limited memory. If you have plenty of memory and want the fastest possible proving, stick with the default allocator.

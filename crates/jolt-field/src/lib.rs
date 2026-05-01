@@ -1,7 +1,24 @@
-//! Field abstractions for the Jolt zkVM
+//! Field abstractions for the Jolt zkVM.
 //!
-//! This crate provides the core field trait (`Field`) and associated types
-//! used throughout the Jolt zkVM ecosystem.
+//! Backend-agnostic interface over prime-order scalar fields, currently
+//! implemented for BN254 Fr. Leaf crate with no internal Jolt dependencies.
+//!
+//! # Core traits
+//!
+//! - [`Field`] — prime field element (`Copy`, thread-safe, serializable)
+//! - [`FieldAccumulator`] — deferred-reduction fused multiply-add
+//! - [`OptimizedMul`] — fast-path short-circuits for zero/one
+//! - [`MontgomeryConstants`] — Montgomery form constants for GPU backends
+//!
+//! # BN254 types (feature `bn254`)
+//!
+//! - [`Fr`] — BN254 scalar field element
+//! - [`WideAccumulator`] — 9-limb deferred Montgomery reduction
+//!
+//! # Multi-precision arithmetic
+//!
+//! - [`Limbs<N>`] — fixed-width limb array for unreduced arithmetic
+//! - [`signed`] module — `S64`, `S128`, `S192`, `S256` and half-limb variants
 
 mod field;
 pub use field::{Field, MaybeAllocative, OptimizedMul};

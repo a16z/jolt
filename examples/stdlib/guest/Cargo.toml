@@ -12,4 +12,4 @@ jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [
   "thread",
   "stdout",
 ] }
-rayon = "1.10"
+rayon = "1.12"

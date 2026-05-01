@@ -9,16 +9,18 @@ description = "R1CS constraint data structures for the Jolt proving system"
 workspace = true
 
 [dependencies]
-jolt-compiler = { path = "../jolt-compiler" }
 jolt-field = { path = "../jolt-field" }
 jolt-poly = { path = "../jolt-poly" }
-rayon = { workspace = true }
+rayon = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 tracing = { workspace = true }
 
 [dev-dependencies]
 jolt-field = { path = "../jolt-field", features = ["bn254"] }
 num-traits = { workspace = true }
-rand = { workspace = true }
 rand_chacha = { workspace = true }
 rand_core = { workspace = true }
+
+[features]
+default = ["parallel"]
+parallel = ["rayon", "jolt-poly/parallel"]

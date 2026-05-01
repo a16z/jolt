@@ -22,8 +22,8 @@ use crate::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+            AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningPoint,
+            ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN,
         },
         unipoly::UniPoly,
     },
@@ -152,7 +152,14 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RafEvaluationSumcheckParams<F> 
     #[cfg(feature = "zk")]
     fn input_claim_constraint(&self) -> InputClaimConstraint {
         let opening = OpeningId::virt(VirtualPolynomial::RamAddress, SumcheckId::SpartanOuter);
-        InputClaimConstraint::direct(opening)
+        let scale = 1i128 << self.phase3_cycle_rounds();
+        InputClaimConstraint::new(
+            vec![ProductTerm::scaled(
+                ValueSource::Constant(scale),
+                vec![ValueSource::Opening(opening)],
+            )],
+            vec![opening],
+        )
     }
 
     #[cfg(feature = "zk")]
@@ -299,7 +306,17 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RafEvaluation
             )
             .map(F::reduce_product_accum);
 
-        UniPoly::from_evals_and_hint(previous_claim, &evals)
+        // When phase1_num_rounds < log_T, the input_claim is pre-scaled by
+        // 2^(phase3_cycle_rounds) to compensate for the gap-round halvings that follow.
+        // The raw polynomial evals sum to the unscaled claim, so we must scale them
+        // by the same factor to satisfy poly(0) + poly(1) == previous_claim.
+        let gap = self.params.phase3_cycle_rounds();
+        if gap > 0 {
+            let scaled: Vec<F> = evals.iter().map(|e| e.mul_pow_2(gap)).collect();
+            UniPoly::from_evals_and_hint(previous_claim, &scaled)
+        } else {
+            UniPoly::from_evals_and_hint(previous_claim, &evals)
+        }
     }
 
     #[tracing::instrument(skip_all, name = "RamRafEvaluationSumcheckProver::ingest_challenge")]
@@ -346,12 +363,12 @@ pub struct RafEvaluationSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> RafEvaluationSumcheckVerifier<F> {
-    pub fn new(
+    pub fn new<A: AbstractVerifierOpeningAccumulator<F>>(
         memory_layout: &MemoryLayout,
         one_hot_params: &OneHotParams,
         trace_len: usize,
         rw_config: &ReadWriteConfig,
-        opening_accumulator: &VerifierOpeningAccumulator<F>,
+        opening_accumulator: &A,
     ) -> Self {
         let params = RafEvaluationSumcheckParams::new(
             memory_layout,
@@ -364,10 +381,10 @@ impl<F: JoltField> RafEvaluationSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
-    for RafEvaluationSumcheckVerifier<F>
+impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
+    SumcheckInstanceVerifier<F, T, A> for RafEvaluationSumcheckVerifier<F>
 {
-    fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
+    fn input_claim(&self, accumulator: &A) -> F {
         let result = self.params.input_claim(accumulator);
 
         #[cfg(test)]
@@ -388,11 +405,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         &self.params
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &VerifierOpeningAccumulator<F>,
-        sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, accumulator: &A, sumcheck_challenges: &[F::Challenge]) -> F {
         let r = self.params.normalize_opening_point(sumcheck_challenges);
 
         // Compute unmap evaluation at r
@@ -426,11 +439,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         result
     }
 
-    fn cache_openings(
-        &self,
-        accumulator: &mut VerifierOpeningAccumulator<F>,
-        sumcheck_challenges: &[F::Challenge],
-    ) {
+    fn cache_openings(&self, accumulator: &mut A, sumcheck_challenges: &[F::Challenge]) {
         let r_address = self.params.normalize_opening_point(sumcheck_challenges);
         let r_cycle = &self.params.r_cycle;
         let ra_opening_point = OpeningPoint::new([&*r_address.r, &*r_cycle.r].concat());

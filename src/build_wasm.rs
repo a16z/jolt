@@ -56,7 +56,7 @@ fn preprocess_and_save(func_name: &str, attributes: &Attributes, is_std: bool) -
         memory_init,
         attributes.max_trace_length as usize,
         e_entry,
-    );
+    )?;
 
     let prover_preprocessing =
         JoltProverPreprocessing::<Fr, Bn254Curve, DoryCommitmentScheme>::new(shared);

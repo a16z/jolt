@@ -48,6 +48,17 @@ jolt new <project-name> --zk   # with PrivateInput + BlindFold support
 
 This generates a workspace with a `fib` example — replace it by renaming `fib` → `<fn>` throughout `src/main.rs` and `guest/src/lib.rs`. Preserve the `[patch.crates-io]` block in the root `Cargo.toml` (required arkworks patches).
 
+**Critical**: always use `jolt new` to scaffold. The generated `guest/src/main.rs` (`#![no_main]` binary stub that re-exports the lib) is required for Jolt to produce a RISC-V ELF binary. Without it, `cargo` builds only a `.rlib` and the host panics with "Built ELF not found." If creating the guest manually, always include:
+
+```rust
+// guest/src/main.rs
+#![cfg_attr(feature = "guest", no_std)]
+#![no_main]
+
+#[allow(unused_imports)]
+use guest::*;
+```
+
 #### Step 5 — Write the guest (`guest/src/lib.rs`)
 
 **no_std mode** (default):
@@ -95,7 +106,20 @@ For `PrivateInput<T>`, enable `zk` on the host only (see Step 7). The macro enfo
 
 **Multiple functions** — each `#[jolt::provable]` generates independent `compile_*`, `preprocess_*`, `build_prover_*`, `build_verifier_*` APIs.
 
-**Advice functions** — for expensive witness computation that should run outside the proof, use `#[jolt::advice]` in the guest. The function runs on the host/prover; the guest verifies the result cheaply with `jolt::check_advice_eq!(computed, expected)`.
+**Advice functions** — for expensive witness computation that should run outside the proof, use `#[jolt::advice]` in the guest. The function runs on the host/prover; the guest verifies the result cheaply with `jolt::check_advice!(bool_expr)` or `jolt::check_advice_eq!(a, b)`.
+
+**Advice-based modular exponentiation** — for RSA/bigint modexp, the host computes `(quotient, remainder)` for each modular multiply via `#[jolt::advice]`; the guest only verifies `a*b == q*n + r` (two schoolbook wide multiplies + equality check) and `r < n`. This drops RSA-2048 verify from ~12M to ~461K cycles (26x). For e=65537 (2^16+1): 16 squarings + 1 multiply = 17 advice-verified steps. This pattern works for any modular exponentiation.
+
+**Hash inline performance** — cycle counts at 64-byte input (with inline acceleration):
+
+| Hash | Cycles | vs SHA-256 | Max input |
+|------|--------|-----------|-----------|
+| BLAKE3 | 863 | 8.2x faster | 64 bytes (single block only) |
+| Blake2b | 1,264 | 5.6x faster | unlimited |
+| Keccak-256 | 3,680 | 1.9x faster | unlimited |
+| SHA-256 | 7,134 | baseline | unlimited |
+
+BLAKE3 is fastest but capped at 64 bytes. For variable-length hashing, Blake2b is the best choice. SHA-256 must be used when the hash is dictated by an external protocol (e.g., JWT RSA-SHA256 signatures).
 
 **Cycle tracking** — instrument sections of the guest to measure per-section cycle counts (visible in the prover log):
 ```rust

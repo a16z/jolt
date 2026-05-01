@@ -3,25 +3,14 @@
 
 use std::path::PathBuf;
 
-mod constants;
-use crate::constants::*;
-mod mle_ast;
-use crate::mle_ast::*;
-mod lookups;
-mod util;
-use crate::lookups::*;
-mod instruction;
-use crate::instruction::*;
-mod r1cs;
-use crate::r1cs::*;
-mod sumchecks;
-use crate::sumchecks::*;
-mod lookup_table_flags;
-use crate::lookup_table_flags::*;
-mod lean_tests;
-use crate::lean_tests::*;
-mod modules;
-use crate::modules::*;
+use zklean_extractor::constants::*;
+use zklean_extractor::instruction::*;
+use zklean_extractor::lean_tests::*;
+use zklean_extractor::lookup_table_flags::*;
+use zklean_extractor::lookups::*;
+use zklean_extractor::modules::*;
+use zklean_extractor::r1cs::*;
+use zklean_extractor::sumchecks::*;
 
 use build_fs_tree::{Build, MergeableFileSystemTree};
 use clap::Parser;

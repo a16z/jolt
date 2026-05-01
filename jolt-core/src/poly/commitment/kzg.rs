@@ -148,6 +148,9 @@ pub struct KZGVerifierKey<P: Pairing> {
 
 impl<P: Pairing> From<&KZGProverKey<P>> for KZGVerifierKey<P> {
     fn from(pk: &KZGProverKey<P>) -> Self {
+        // HyperKZG and the rest of Jolt intentionally treat the trimmed SRS
+        // as a basis where the first two G1 powers are the verifier's public
+        // generators. Keep this convention aligned with SRS::trim.
         let g1 = pk.g1_powers()[0];
         let g2 = pk.g2_powers()[0];
         let alpha_g1 = pk.g1_powers()[1];

@@ -14,6 +14,7 @@ use clap::Parser;
 use jolt_inlines_keccak256 as _;
 use jolt_inlines_sha2 as _;
 
+use jolt_bench::baseline;
 use jolt_bench::cli::{Cli, StackSelection};
 use jolt_bench::measure::{median, median_u64};
 use jolt_bench::output::{BenchReport, Run, StackLabel};

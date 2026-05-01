@@ -25,7 +25,8 @@ declare_riscv_instr!(
     mask   = 0x0000707f,
     match  = 0x00004003,
     format = FormatLoad,
-    ram    = RAMRead
+    ram    = RAMRead,
+    side_effects = true
 );
 
 impl LBU {

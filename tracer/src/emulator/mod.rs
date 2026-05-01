@@ -131,7 +131,16 @@ impl Emulator {
     /// * Disassembles every instruction and dumps to terminal
     /// * The emulator stops when the test finishes
     /// * Displays the result message (pass/fail) to terminal
-    pub fn run_test(&mut self, trace: bool, disassemble: bool) {
+    ///
+    /// Returns the HTIF termination code extracted from the `tohost` write:
+    /// * `0` — clean exit (RVMODEL_HALT_PASS, or PC-stall termination used by
+    ///   Jolt guests that call `jolt_exit()`)
+    /// * non-zero — `tohost payload >> 1` from RVMODEL_HALT_FAIL (gp-derived,
+    ///   ACT4 uses this for signature-mismatch failures)
+    ///
+    /// Callers typically collapse this to 0/1 for the OS exit status; see
+    /// `tracer/src/main.rs`.
+    pub fn run_test(&mut self, trace: bool, disassemble: bool) -> u64 {
         // @TODO: Send this message to terminal?
         #[cfg(feature = "std")]
         tracing::info!("This elf file seems like a riscv-tests elf file. Running in test mode.");
@@ -151,7 +160,7 @@ impl Emulator {
             let pc = self.cpu.read_pc();
             if prev_pc == pc {
                 tracing::info!("Program exited successfully (code 0) after {cycle_count} cycles");
-                break;
+                return 0;
             }
             prev_pc = pc;
 
@@ -180,7 +189,7 @@ impl Emulator {
                         0 => tracing::info!("Test Passed with {endcode:X}\n"),
                         _ => tracing::error!("Test Failed with {endcode:X}\n"),
                     };
-                    break;
+                    return endcode;
                 }
             }
         }

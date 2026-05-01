@@ -1,11 +1,10 @@
-//! Cache-friendly row-dot tables for repeated uniform-R1CS matvecs.
-
 use jolt_field::Field;
-use rayon::prelude::*;
 
 use crate::R1csKey;
 
-/// Dense SoA table of `A[row]·z_cycle` and `B[row]·z_cycle` values.
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
 #[derive(Clone, Debug)]
 pub struct R1csRowDotTable<F: Field> {
     row_count: usize,
@@ -37,17 +36,7 @@ impl<F: Field> R1csRowDotTable<F> {
         let total = key.num_cycles * row_count;
         let mut a = vec![F::zero(); total];
         let mut b = vec![F::zero(); total];
-        a.par_chunks_mut(row_count)
-            .zip(b.par_chunks_mut(row_count))
-            .enumerate()
-            .for_each(|(cycle, (a_chunk, b_chunk))| {
-                let start = cycle * key.num_vars_padded;
-                let witness_row = &witness[start..start + key.matrices.num_vars];
-                for row in 0..row_count {
-                    a_chunk[row] = row_dot(&key.matrices.a[row], witness_row);
-                    b_chunk[row] = row_dot(&key.matrices.b[row], witness_row);
-                }
-            });
+        compute_row_dots(key, witness, row_count, &mut a, &mut b);
 
         Self {
             row_count,
@@ -75,6 +64,46 @@ impl<F: Field> R1csRowDotTable<F> {
         R1csRowDotSlice {
             a: &self.a[start..end],
             b: &self.b[start..end],
+        }
+    }
+}
+
+#[cfg(feature = "parallel")]
+fn compute_row_dots<F: Field>(
+    key: &R1csKey<F>,
+    witness: &[F],
+    row_count: usize,
+    a: &mut [F],
+    b: &mut [F],
+) {
+    a.par_chunks_mut(row_count)
+        .zip(b.par_chunks_mut(row_count))
+        .enumerate()
+        .for_each(|(cycle, (a_chunk, b_chunk))| {
+            let start = cycle * key.num_vars_padded;
+            let witness_row = &witness[start..start + key.matrices.num_vars];
+            for row in 0..row_count {
+                a_chunk[row] = row_dot(&key.matrices.a[row], witness_row);
+                b_chunk[row] = row_dot(&key.matrices.b[row], witness_row);
+            }
+        });
+}
+
+#[cfg(not(feature = "parallel"))]
+fn compute_row_dots<F: Field>(
+    key: &R1csKey<F>,
+    witness: &[F],
+    row_count: usize,
+    a: &mut [F],
+    b: &mut [F],
+) {
+    for cycle in 0..key.num_cycles {
+        let witness_start = cycle * key.num_vars_padded;
+        let row_start = cycle * row_count;
+        let witness_row = &witness[witness_start..witness_start + key.matrices.num_vars];
+        for row in 0..row_count {
+            a[row_start + row] = row_dot(&key.matrices.a[row], witness_row);
+            b[row_start + row] = row_dot(&key.matrices.b[row], witness_row);
         }
     }
 }

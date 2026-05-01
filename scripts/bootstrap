@@ -1,17 +1,100 @@
 #!/bin/bash
+#
+# ACT4 prerequisites for the Jolt architectural-test suite.
+#
+# Installs:
+#   - The riscv-none-elf GCC toolchain (GCC 15+; ACT4 enforces this) via
+#     xpack-dev-tools prebuilts.
+#   - sail_riscv_sim — reference model, invoked at ELF-build time to compute
+#     and bake expected signatures into each self-checking ELF.
+#   - mise — tool manager for ACT4's declared Python (uv) and Ruby versions.
+#
+# Unlike the prior RISCOF bootstrap, this script does NOT install riscof,
+# riscv-ctg, riscv-isac, or Spike — ACT4 is declarative and Sail-only.
 
+set -eu
+
+# `git submodule sync` applies any .gitmodules URL changes to existing
+# checkouts (the ACT4 migration re-pointed riscv-arch-test from
+# riscv-non-isa/... to riscv/...). Without it, a stale checkout keeps
+# pointing at the old remote and submodule update silently leaves the
+# directory empty — surfacing later as "No targets specified and no
+# makefile found" when the ACT4 Make driver runs.
+git submodule sync --recursive
 git submodule update --init --recursive
 
-apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3 python3-pip python3-dev build-essential device-tree-compiler gcc-riscv64-unknown-elf binutils-riscv64-unknown-elf
+apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    ca-certificates curl tar make git build-essential xz-utils
 
-mkdir -p ~/.config/pip && printf "[global]\nbreak-system-packages = true\n" > ~/.config/pip/pip.conf
-python3 -m pip install --force-reinstall --upgrade pip
+# riscv-none-elf GCC toolchain from xpack-dev-tools. ACT4 requires GCC 15+,
+# which Ubuntu 24.04's apt (gcc-riscv64-unknown-elf @ 13.2) does not ship.
+# xpack's v15.2.0-1 build covers both Linux-x64 and Linux-arm64. The binary
+# prefix is riscv-none-elf- (newer convention, aligned with arm-none-eabi-);
+# test_config.yaml and the smoke-test recipe reference that name directly.
+# Version pinned; bump TOOLCHAIN_TAG when picking up a newer GCC.
+TOOLCHAIN_TAG="v15.2.0-1"
+case "$(uname -m)" in
+    x86_64)  TOOLCHAIN_ARCH="linux-x64" ;;
+    aarch64) TOOLCHAIN_ARCH="linux-arm64" ;;
+    *) echo "unsupported architecture for xpack toolchain: $(uname -m)" >&2; exit 1 ;;
+esac
+TOOLCHAIN_ASSET="xpack-riscv-none-elf-gcc-${TOOLCHAIN_TAG#v}-${TOOLCHAIN_ARCH}.tar.gz"
+TOOLCHAIN_URL="https://github.com/xpack-dev-tools/riscv-none-elf-gcc-xpack/releases/download/${TOOLCHAIN_TAG}/${TOOLCHAIN_ASSET}"
+
+# mise — tool manager for Python (uv) and Ruby (bundler) versions declared
+# in third-party/riscv-arch-test/.mise.toml (Ruby 3.4.9, uv 0.11.6). The
+# ACT4 top-level Makefile prefers mise over raw uv/bundle detection.
+# The installer lands at ~/.local/bin/mise.
+if ! command -v mise >/dev/null 2>&1; then
+    curl -fL https://mise.run | sh
+fi
+export PATH="$HOME/.local/bin:$PATH"
+mise --version
+
+# mise's .mise.toml trust prompt hangs non-interactively (CI, scripts).
+# Accept declared config globally so `mise install` and subsequent
+# `mise exec` calls from the ACT4 Makefile don't stall.
+export MISE_YES=1
+mise trust third-party/riscv-arch-test/.mise.toml
+
+# Install ACT4's declared tool versions (Ruby + uv). Must run from the
+# submodule directory so mise reads .mise.toml there.
+(cd third-party/riscv-arch-test && mise install)
 
 mkdir -p /opt/riscv/
-curl -L "https://github.com/a16z/jolt/releases/download/spike-v1.1.1/spike-1.1.1-$(uname -s)-$(uname -m).tar.gz" -o /tmp/spike.tar.gz && tar -xzf /tmp/spike.tar.gz -C /opt/riscv/
 
-pushd third-party/riscv-arch-test/riscv-ctg && pip3 install -e . && popd
-pushd third-party/riscv-arch-test/riscv-isac && pip3 install -e . && popd
-pip3 install git+https://github.com/riscv/riscof.git@dev
+# Download and install the xpack riscv-none-elf GCC toolchain. The tarball
+# wraps everything in xpack-riscv-none-elf-gcc-<ver>-<arch>/; --strip-components=1
+# flattens it so bin/riscv-none-elf-gcc lands at /opt/riscv/bin/riscv-none-elf-gcc.
+echo "downloading toolchain from ${TOOLCHAIN_URL}"
+curl -fL "${TOOLCHAIN_URL}" -o /tmp/riscv-toolchain.tar.gz
+tar -xzf /tmp/riscv-toolchain.tar.gz -C /opt/riscv/ --strip-components=1
+rm -f /tmp/riscv-toolchain.tar.gz
 
-riscof --version
+# sail_riscv_sim — fetched from the upstream riscv/sail-riscv weekly release.
+# The tag is pinned explicitly; bump SAIL_TAG when picking up a newer Sail.
+# Upstream naming matches `uname -s`-`uname -m` on Linux:
+#   Linux  x86_64   → sail-riscv-Linux-x86_64.tar.gz
+#   Linux  aarch64  → sail-riscv-Linux-aarch64.tar.gz
+# Each tarball wraps everything in a top-level sail-riscv-<...>/ directory
+# (bin/sail_riscv_sim, share/sail-riscv/...), hence --strip-components=1
+# so `sail_riscv_sim` lands at /opt/riscv/bin/sail_riscv_sim.
+SAIL_TAG="2026-04-20-40d25df"
+SAIL_ASSET="sail-riscv-$(uname -s)-$(uname -m).tar.gz"
+SAIL_URL="https://github.com/riscv/sail-riscv/releases/download/${SAIL_TAG}/${SAIL_ASSET}"
+
+echo "downloading sail from ${SAIL_URL}"
+curl -fL "${SAIL_URL}" -o /tmp/sail-riscv.tar.gz
+tar -xzf /tmp/sail-riscv.tar.gz -C /opt/riscv/ --strip-components=1
+rm -f /tmp/sail-riscv.tar.gz
+
+# Sanity checks — the ACT4 generate step needs both sail_riscv_sim and
+# the riscv-none-elf toolchain on PATH.
+export PATH="/opt/riscv/bin:${PATH}"
+riscv-none-elf-gcc --version | head -1
+sail_riscv_sim --help >/dev/null 2>&1 || {
+    echo "sail_riscv_sim not runnable after install from ${SAIL_URL}" >&2
+    echo "expected at /opt/riscv/bin/sail_riscv_sim" >&2
+    exit 1
+}
+echo "sail_riscv_sim installed from ${SAIL_URL}"

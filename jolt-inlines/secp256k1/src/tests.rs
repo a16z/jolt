@@ -1,9 +1,9 @@
 mod sequence_tests {
-    use crate::sdk::Secp256k1Point;
+    use crate::sdk::{decode_glv_sign_word, Secp256k1Point, Secp256k1PointExt};
     use crate::{
-        Secp256k1Fq, Secp256k1Fr, INLINE_OPCODE, SECP256K1_DIVQ_FUNCT3, SECP256K1_DIVR_FUNCT3,
-        SECP256K1_FUNCT7, SECP256K1_MULQ_FUNCT3, SECP256K1_MULR_FUNCT3, SECP256K1_SQUAREQ_FUNCT3,
-        SECP256K1_SQUARER_FUNCT3,
+        Secp256k1Error, Secp256k1Fq, Secp256k1Fr, INLINE_OPCODE, SECP256K1_DIVQ_FUNCT3,
+        SECP256K1_DIVR_FUNCT3, SECP256K1_FUNCT7, SECP256K1_MULQ_FUNCT3, SECP256K1_MULR_FUNCT3,
+        SECP256K1_SQUAREQ_FUNCT3, SECP256K1_SQUARER_FUNCT3,
     };
     use ark_ff::{BigInt, Field, PrimeField};
     use ark_secp256k1::{Fq, Fr};
@@ -21,6 +21,7 @@ mod sequence_tests {
         .0;
         // rs1=input1 (32 bytes), rs2=input2 (32 bytes), rs3=output (32 bytes)
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
+
         let mut harness = InlineTestHarness::new(layout, Xlen::Bit64);
         harness.setup_registers();
         harness.load_input64(a);
@@ -66,6 +67,7 @@ mod sequence_tests {
         let expected = (arr_to_fq(a) * arr_to_fq(b)).into_bigint().0;
         // rs1=input1 (32 bytes), rs2=input2 (32 bytes), rs3=output (32 bytes)
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
+
         let mut harness = InlineTestHarness::new(layout, Xlen::Bit64);
         harness.setup_registers();
         harness.load_input64(a);
@@ -114,6 +116,7 @@ mod sequence_tests {
         let expected = (arr_to_fq(a) * arr_to_fq(a)).into_bigint().0;
         // rs1=input1 (32 bytes), rs2=input2 (32 bytes), rs3=output (32 bytes)
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
+
         let mut harness = InlineTestHarness::new(layout, Xlen::Bit64);
         harness.setup_registers();
         harness.load_input64(a);
@@ -157,6 +160,7 @@ mod sequence_tests {
         .0;
         // rs1=input1 (32 bytes), rs2=input2 (32 bytes), rs3=output (32 bytes)
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
+
         let mut harness = InlineTestHarness::new(layout, Xlen::Bit64);
         harness.setup_registers();
         harness.load_input64(a);
@@ -202,6 +206,7 @@ mod sequence_tests {
         let expected = (arr_to_fr(a) * arr_to_fr(b)).into_bigint().0;
         // rs1=input1 (32 bytes), rs2=input2 (32 bytes), rs3=output (32 bytes)
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
+
         let mut harness = InlineTestHarness::new(layout, Xlen::Bit64);
         harness.setup_registers();
         harness.load_input64(a);
@@ -250,6 +255,7 @@ mod sequence_tests {
         let expected = (arr_to_fr(a) * arr_to_fr(a)).into_bigint().0;
         // rs1=input1 (32 bytes), rs2=input2 (32 bytes), rs3=output (32 bytes)
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
+
         let mut harness = InlineTestHarness::new(layout, Xlen::Bit64);
         harness.setup_registers();
         harness.load_input64(a);
@@ -372,7 +378,7 @@ mod sequence_tests {
         .unwrap();
         // check that k * q == k1 * q + k2 * endo_q
         let expected = fr_point_mul(&k, &q);
-        let decomp = Secp256k1Point::decompose_scalar(&k);
+        let decomp = k.glv_decompose();
         let sq = if decomp[0].0 { q.neg() } else { q.clone() };
         let sq_endo = if decomp[1].0 {
             endo_q.neg()
@@ -384,6 +390,16 @@ mod sequence_tests {
         let combined = p1.add(&p2);
         assert_eq!(combined.x().e(), expected.x().e());
         assert_eq!(combined.y().e(), expected.y().e());
+    }
+
+    #[test]
+    fn test_decode_glv_sign_word() {
+        assert!(!decode_glv_sign_word(0).unwrap());
+        assert!(decode_glv_sign_word(1).unwrap());
+        assert!(matches!(
+            decode_glv_sign_word(2),
+            Err(Secp256k1Error::InvalidGlvSignWord(2))
+        ));
     }
 
     #[test]
@@ -421,6 +437,63 @@ mod sequence_tests {
         ])
         .unwrap();
         assert!(crate::sdk::ecdsa_verify(z, r, s, q).is_ok());
+    }
+
+    #[test]
+    fn test_ecdsa_verify_rejects_invalid() {
+        use crate::sdk::{ecdsa_verify, Secp256k1Error};
+
+        let g = Secp256k1Point::generator();
+        let z = Secp256k1Fr::from_u64_arr(&[1, 0, 0, 0]).unwrap();
+        let r = Secp256k1Fr::from_u64_arr(&[1, 0, 0, 0]).unwrap();
+        let s = Secp256k1Fr::from_u64_arr(&[1, 0, 0, 0]).unwrap();
+
+        // Q = infinity → QAtInfinity
+        let result = ecdsa_verify(z.clone(), r.clone(), s.clone(), Secp256k1Point::infinity());
+        assert!(matches!(result, Err(Secp256k1Error::QAtInfinity)));
+
+        // r = 0 → ROrSZero
+        let zero = Secp256k1Fr::from_u64_arr(&[0, 0, 0, 0]).unwrap();
+        let result = ecdsa_verify(z.clone(), zero.clone(), s.clone(), g.clone());
+        assert!(matches!(result, Err(Secp256k1Error::ROrSZero)));
+
+        // s = 0 → ROrSZero
+        let result = ecdsa_verify(z.clone(), r.clone(), zero, g.clone());
+        assert!(matches!(result, Err(Secp256k1Error::ROrSZero)));
+
+        // Non-canonical scalar (z >= n) → InvalidFrElement
+        let bad_z = Secp256k1Fr::from_u64_arr_unchecked(&[u64::MAX; 4]);
+        let result = ecdsa_verify(bad_z, r.clone(), s.clone(), g.clone());
+        assert!(matches!(result, Err(Secp256k1Error::InvalidFrElement)));
+
+        // Non-canonical scalar (r >= n) → InvalidFrElement
+        let bad_r = Secp256k1Fr::from_u64_arr_unchecked(&[u64::MAX; 4]);
+        let result = ecdsa_verify(z.clone(), bad_r, s.clone(), g.clone());
+        assert!(matches!(result, Err(Secp256k1Error::InvalidFrElement)));
+
+        // Non-canonical scalar (s >= n) → InvalidFrElement
+        let bad_s = Secp256k1Fr::from_u64_arr_unchecked(&[u64::MAX; 4]);
+        let result = ecdsa_verify(z.clone(), r.clone(), bad_s, g.clone());
+        assert!(matches!(result, Err(Secp256k1Error::InvalidFrElement)));
+
+        // Non-canonical coordinate (q.x >= p) → InvalidFqElement
+        let bad_x = Secp256k1Fq::from_u64_arr_unchecked(&[u64::MAX; 4]);
+        let bad_q = Secp256k1Point::new_unchecked(bad_x, g.y());
+        let result = ecdsa_verify(z.clone(), r.clone(), s.clone(), bad_q);
+        assert!(matches!(result, Err(Secp256k1Error::InvalidFqElement)));
+
+        // Non-canonical coordinate (q.y >= p) → InvalidFqElement
+        let bad_y = Secp256k1Fq::from_u64_arr_unchecked(&[u64::MAX; 4]);
+        let bad_q = Secp256k1Point::new_unchecked(g.x(), bad_y);
+        let result = ecdsa_verify(z.clone(), r.clone(), s.clone(), bad_q);
+        assert!(matches!(result, Err(Secp256k1Error::InvalidFqElement)));
+
+        // Off-curve point → NotOnCurve
+        // Take a valid x-coordinate and set y to a different valid value
+        let off_curve_y = Secp256k1Fq::from_u64_arr(&[1, 0, 0, 0]).unwrap();
+        let bad_q = Secp256k1Point::new_unchecked(g.x(), off_curve_y);
+        let result = ecdsa_verify(z.clone(), r.clone(), s.clone(), bad_q);
+        assert!(matches!(result, Err(Secp256k1Error::NotOnCurve)));
     }
 
     /// Verify assumptions about Fq and Fr modulus limb structure used in

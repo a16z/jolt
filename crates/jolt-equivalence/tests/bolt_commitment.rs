@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use ark_serialize::CanonicalSerialize;
 use common::constants::{RAM_START_ADDRESS, XLEN};
 use common::jolt_device::JoltDevice;
-use jolt_compiler_v2::{
+use bolt::{
     build_commitment_protocol, build_stage1_outer_protocol, build_stage2_protocol,
     commitment_cpu_program, lower_commitment_to_compute, lower_compute_to_cpu,
     lower_piop_and_fiat_shamir, lower_stage1_to_compute, lower_stage2_to_compute,
@@ -17,7 +17,7 @@ use jolt_compiler_v2::{
     stage2_cpu_program, CommitmentCpuProgram, JoltProtocolParams, MeliorContext,
     OptionalSkipPolicy, OracleGeneration, Role, TranscriptStep,
 };
-use jolt_compiler_v2::{
+use bolt::{
     Stage1CpuProgram as CompilerStage1CpuProgram, Stage2CpuProgram as CompilerStage2CpuProgram,
 };
 use jolt_core::curve::Bn254Curve;
@@ -42,11 +42,9 @@ use jolt_dory::{DoryCommitment, DoryHint, DoryProverSetup, DoryScheme};
 use jolt_equivalence::checkpoint::{
     assert_transcripts_match, CheckpointTranscript, TranscriptEvent,
 };
-use jolt_equivalence::cross_verifier::conversion::{
-    commitment_to_ark, to_ark, to_core_sumcheck_proof,
-};
+use jolt_equivalence::core_conversion::{commitment_to_ark, to_ark, to_core_sumcheck_proof};
 use jolt_field::{Field, Fr};
-use jolt_host::{extract_trace, BytecodePreprocessing, Program};
+use jolt_trace::{extract_trace, BytecodePreprocessing, Program};
 use jolt_kernels::stage1::{
     execute_stage1_program, Stage1CpuProgramPlan as KernelStage1CpuProgramPlan,
     Stage1ExecutionArtifacts, Stage1ExecutionMode, Stage1KernelError,
@@ -82,10 +80,8 @@ use jolt_openings::StreamingCommitment;
 use jolt_poly::UnivariatePoly;
 use jolt_r1cs::{constraints::rv64, R1csKey};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
-use jolt_verifier::TRANSCRIPT_LABEL;
-use jolt_witness::CycleInput;
-use jolt_witness_v2::{
-    dense_i128_column_to_field, one_hot_chunk_address_major, optional_field_oracle,
+use jolt_witness::{
+    dense_i128_column_to_field, one_hot_chunk_address_major, optional_field_oracle, CycleInput,
 };
 use tracer::instruction::RAMAccess;
 
@@ -98,6 +94,8 @@ type CoreVerifier<'a> =
     JoltVerifier<'a, CoreFr, Bn254Curve, DoryCommitmentScheme, CoreBlake2bTranscript>;
 type CoreVerifierPreprocessing =
     JoltVerifierPreprocessing<CoreFr, Bn254Curve, DoryCommitmentScheme>;
+
+const TRANSCRIPT_LABEL: &[u8] = b"Jolt";
 
 #[test]
 fn bolt_commitment_transcript_matches_jolt_core_append_serializable() {
@@ -1258,7 +1256,8 @@ fn core_muldiv_commitment_fixture() -> CoreMuldivCommitmentFixture {
         init_memory_state,
         1 << 16,
         entry_address,
-    );
+    )
+    .expect("shared preprocessing");
     let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
     let elf_contents = core_program.get_elf_contents().expect("muldiv elf");
     let prover: CoreProver<'_> = CoreProver::gen_from_elf(
@@ -1283,7 +1282,7 @@ fn core_muldiv_commitment_fixture() -> CoreMuldivCommitmentFixture {
     let (bytecode_raw, _, _, host_entry_address) = host_program.decode();
     let (_, trace, _, host_io_device) = host_program.trace(&inputs, &[], &[]);
     let mut padded_trace = trace.clone();
-    padded_trace.resize(proof.trace_length, jolt_host::Cycle::NoOp);
+    padded_trace.resize(proof.trace_length, jolt_trace::Cycle::NoOp);
     let product_virtual_cycles = (0..proof.trace_length)
         .map(|index| {
             let row = CoreProductCycleInputs::from_trace::<CoreFr>(&padded_trace, index);

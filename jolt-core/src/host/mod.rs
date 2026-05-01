@@ -7,6 +7,43 @@ pub mod analyze;
 #[cfg(feature = "host")]
 pub mod program;
 
+pub trait JoltProgramSource {
+    fn get_elf_contents(&self) -> Option<Vec<u8>>;
+    fn get_elf_compute_advice_contents(&self) -> Option<Vec<u8>>;
+    fn decode(
+        &mut self,
+    ) -> (
+        Vec<tracer::instruction::Instruction>,
+        Vec<(u64, u8)>,
+        u64,
+        u64,
+    ) {
+        let elf = self.get_elf_contents().expect("ELF contents not available");
+        crate::guest::program::decode(&elf)
+    }
+}
+
+impl JoltProgramSource for Program {
+    fn get_elf_contents(&self) -> Option<Vec<u8>> {
+        Program::get_elf_contents(self)
+    }
+
+    fn get_elf_compute_advice_contents(&self) -> Option<Vec<u8>> {
+        Program::get_elf_compute_advice_contents(self)
+    }
+
+    fn decode(
+        &mut self,
+    ) -> (
+        Vec<tracer::instruction::Instruction>,
+        Vec<(u64, u8)>,
+        u64,
+        u64,
+    ) {
+        Program::decode(self)
+    }
+}
+
 #[derive(Clone)]
 pub struct Program {
     guest: String,

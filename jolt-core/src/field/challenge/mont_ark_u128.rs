@@ -226,3 +226,15 @@ impl OptimizedMul<TrackedFr, TrackedFr> for MontU128Challenge<TrackedFr> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn masks_high_three_bits_in_default_challenge_width() {
+        let challenge = MontU128Challenge::<ark_bn254::Fr>::new(u128::MAX);
+        assert_eq!(challenge.low, u64::MAX);
+        assert_eq!(challenge.high, (u64::MAX >> 3));
+    }
+}

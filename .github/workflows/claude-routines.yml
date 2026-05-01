@@ -1,0 +1,40 @@
+name: Claude Routines
+
+# Fires Claude Code routines when specific labels are added to a PR.
+# Uses `pull_request_target` so secrets are available on PRs from forks
+# (label application itself is already gated on write/triage permission).
+
+on:
+  pull_request_target:
+    types: [labeled]
+
+jobs:
+  code-review:
+    name: Claude code review
+    if: github.event.label.name == 'claude-review-request'
+    uses: ./.github/workflows/_fire-claude-routine.yml
+    with:
+      routine_id: trig_0184QxNSKDj7Y9akvnEmo3s2
+      session_kind: code review
+    secrets:
+      routine_token: ${{ secrets.ANTHROPIC_REVIEW_AUTHORIZATION }}
+
+  spec-review:
+    name: Claude spec review
+    if: github.event.label.name == 'claude-spec-review-request'
+    uses: ./.github/workflows/_fire-claude-routine.yml
+    with:
+      routine_id: trig_01JBnYKwfoAgiruS15s3CcP7
+      session_kind: spec review
+    secrets:
+      routine_token: ${{ secrets.ANTHROPIC_SPEC_REVIEW_AUTHORIZATION }}
+
+  implement:
+    name: Claude implement spec
+    if: github.event.label.name == 'claude-implement-spec'
+    uses: ./.github/workflows/_fire-claude-routine.yml
+    with:
+      routine_id: trig_01CzBwCbrD2q5m8QHCWU16r5
+      session_kind: implement-spec
+    secrets:
+      routine_token: ${{ secrets.ANTHROPIC_IMPLEMENT_AUTHORIZATION }}

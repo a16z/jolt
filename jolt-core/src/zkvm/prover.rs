@@ -360,7 +360,9 @@ impl<
         trusted_advice_hint: Option<PCS::OpeningProofHint>,
         final_memory_state: Memory,
     ) -> Self {
-        // truncate trailing zeros on device outputs
+        // Truncate trailing zero bytes from outputs. Both prover and verifier
+        // apply the same truncation so the proof is internally consistent.
+        // See the corresponding comment in JoltVerifier::new().
         program_io.outputs.truncate(
             program_io
                 .outputs
@@ -490,11 +492,16 @@ impl<
 
         #[cfg(not(target_arch = "wasm32"))]
         let start = Instant::now();
+        let preprocessing_digest = self.preprocessing.shared.digest();
         fiat_shamir_preamble(
             &self.program_io,
             self.one_hot_params.ram_k,
             self.trace.len(),
             self.preprocessing.shared.bytecode.entry_address,
+            &self.rw_config,
+            &self.one_hot_params.to_config(),
+            DoryGlobals::get_layout(),
+            &preprocessing_digest,
             &mut self.transcript,
         );
 
@@ -600,11 +607,16 @@ impl<
     #[doc(hidden)]
     #[cfg(not(target_arch = "wasm32"))]
     pub fn benchmark_stage1_ms(mut self) -> f64 {
+        let preprocessing_digest = self.preprocessing.shared.digest();
         fiat_shamir_preamble(
             &self.program_io,
             self.one_hot_params.ram_k,
             self.trace.len(),
             self.preprocessing.shared.bytecode.entry_address,
+            &self.rw_config,
+            &self.one_hot_params.to_config(),
+            DoryGlobals::get_layout(),
+            &preprocessing_digest,
             &mut self.transcript,
         );
 
@@ -620,11 +632,16 @@ impl<
     #[doc(hidden)]
     #[cfg(not(target_arch = "wasm32"))]
     pub fn benchmark_stage2_ms(mut self) -> f64 {
+        let preprocessing_digest = self.preprocessing.shared.digest();
         fiat_shamir_preamble(
             &self.program_io,
             self.one_hot_params.ram_k,
             self.trace.len(),
             self.preprocessing.shared.bytecode.entry_address,
+            &self.rw_config,
+            &self.one_hot_params.to_config(),
+            DoryGlobals::get_layout(),
+            &preprocessing_digest,
             &mut self.transcript,
         );
 
@@ -1493,22 +1510,38 @@ impl<
                     FinalOutputWitness::general(input_challenge_values, input_opening_values);
 
                 // Uni-skip config with its input constraint
-                let config = if stage_idx == 0 {
+                let mut config = if stage_idx == 0 {
                     StageConfig::new_uniskip(poly_degree, power_sums)
                         .with_input_constraint(input_constraint)
                 } else {
                     StageConfig::new_uniskip_chain(poly_degree, power_sums)
                         .with_input_constraint(input_constraint)
                 };
+
+                // Attach output constraint to link NextClaim to OC region
+                let final_output = if let Some(oc) = uniskip.output_constraint.clone() {
+                    let opening_values: Vec<F> = oc
+                        .required_openings
+                        .iter()
+                        .map(|id| self.opening_accumulator.get_opening(*id))
+                        .collect();
+                    let fout = FinalOutputWitness::general(
+                        uniskip.output_constraint_challenge_values.clone(),
+                        opening_values,
+                    );
+                    config = config.with_constraint(oc);
+                    Some(fout)
+                } else {
+                    None
+                };
+
                 stage_configs.push(config);
-                stage_witnesses.push(StageWitness::with_initial_input(
-                    vec![RoundWitness::with_claimed_sum(
-                        coeffs.clone(),
-                        challenge,
-                        claimed_sum,
-                    )],
-                    initial_input,
-                ));
+                let round = RoundWitness::with_claimed_sum(coeffs.clone(), challenge, claimed_sum);
+                let stage_witness = match final_output {
+                    Some(fout) => StageWitness::with_both(vec![round], initial_input, fout),
+                    None => StageWitness::with_initial_input(vec![round], initial_input),
+                };
+                stage_witnesses.push(stage_witness);
             } else {
                 // Stages 2-6: no uni-skip, push initial claim for regular rounds
                 initial_claims.push(zk_data.initial_claim);
@@ -1645,6 +1678,11 @@ impl<
                 // Uni-skip input constraint challenges
                 baked_input_challenges
                     .extend(uniskip.input_constraint_challenge_values.iter().cloned());
+                // Uni-skip output constraint challenges
+                if uniskip.output_constraint.is_some() {
+                    baked_output_challenges
+                        .extend(uniskip.output_constraint_challenge_values.iter().cloned());
+                }
                 // Uni-skip round challenge
                 baked_challenges.push(uniskip.challenge.into());
             }
@@ -1683,7 +1721,7 @@ impl<
 
         let baked = BakedPublicInputs {
             challenges: baked_challenges,
-            initial_claims: Vec::new(),
+            initial_claims: initial_claims.clone(),
             batching_coefficients: Vec::new(),
             output_constraint_challenges: baked_output_challenges,
             input_constraint_challenges: baked_input_challenges,
@@ -1711,6 +1749,7 @@ impl<
             &extra_constraints,
             &baked,
             oc_blocks.clone(),
+            self.opening_accumulator.aliases.clone(),
         );
         let r1cs = builder.build();
 
@@ -2261,6 +2300,10 @@ impl<F: JoltField, C: JoltCurve<F = F>, PCS: CommitmentScheme<Field = F>> Serial
 
 #[cfg(test)]
 mod tests {
+    // Force-link inline crates so their `inventory::submit!` entries are retained by the linker.
+    extern crate jolt_inlines_keccak256;
+    extern crate jolt_inlines_sha2;
+
     use std::sync::Arc;
 
     use ark_bn254::Fr;
@@ -2354,7 +2397,8 @@ mod tests {
             init_memory_state,
             1 << 16,
             e_entry,
-        );
+        )
+        .unwrap();
 
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
         let elf_contents_opt = program.get_elf_contents();
@@ -2399,7 +2443,8 @@ mod tests {
             init_memory_state,
             8192,
             e_entry,
-        );
+        )
+        .unwrap();
 
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         let elf_contents_opt = program.get_elf_contents();
@@ -2442,11 +2487,6 @@ mod tests {
     #[serial]
     fn sha3_e2e_dory() {
         DoryGlobals::reset();
-        // Ensure SHA3 inline library is linked and auto-registered
-        #[cfg(feature = "host")]
-        use jolt_inlines_keccak256 as _;
-        // SHA3 inlines are automatically registered via #[ctor::ctor]
-        // when the jolt-inlines-keccak256 crate is linked (see lib.rs)
 
         let mut program = host::Program::new("sha3-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
@@ -2459,7 +2499,8 @@ mod tests {
             init_memory_state,
             1 << 16,
             e_entry,
-        );
+        )
+        .unwrap();
 
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         let elf_contents_opt = program.get_elf_contents();
@@ -2504,11 +2545,7 @@ mod tests {
     #[serial]
     fn sha2_e2e_dory() {
         DoryGlobals::reset();
-        // Ensure SHA2 inline library is linked and auto-registered
-        #[cfg(feature = "host")]
-        use jolt_inlines_sha2 as _;
-        // SHA2 inlines are automatically registered via #[ctor::ctor]
-        // when the jolt-inlines-sha2 crate is linked (see lib.rs)
+
         let mut program = host::Program::new("sha2-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
@@ -2520,7 +2557,8 @@ mod tests {
             init_memory_state,
             1 << 16,
             e_entry,
-        );
+        )
+        .unwrap();
 
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         let elf_contents_opt = program.get_elf_contents();
@@ -2564,6 +2602,7 @@ mod tests {
     #[serial]
     fn sha2_e2e_dory_with_unused_advice() {
         DoryGlobals::reset();
+
         // SHA2 guest does not consume advice, but providing both trusted and untrusted advice
         // should still work correctly through the full pipeline:
         // - Trusted: commit in preprocessing-only context, reduce in Stage 6, batch in Stage 8
@@ -2582,7 +2621,8 @@ mod tests {
             init_memory_state,
             1 << 16,
             e_entry,
-        );
+        )
+        .unwrap();
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         let elf_contents = program.get_elf_contents().expect("elf contents is None");
 
@@ -2645,7 +2685,8 @@ mod tests {
             init_memory_state,
             4096,
             e_entry,
-        );
+        )
+        .unwrap();
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         tracing::info!(
             "preprocessing.memory_layout.max_trusted_advice_size: {}",
@@ -2689,6 +2730,7 @@ mod tests {
     #[serial]
     fn advice_e2e_dory() {
         DoryGlobals::reset();
+
         // Tests a guest (merkle-tree) that actually consumes both trusted and untrusted advice.
         let mut program = host::Program::new("merkle-tree-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
@@ -2706,7 +2748,8 @@ mod tests {
             init_memory_state,
             1 << 16,
             e_entry,
-        );
+        )
+        .unwrap();
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         let elf_contents = program.get_elf_contents().expect("elf contents is None");
 
@@ -2771,7 +2814,8 @@ mod tests {
             init_memory_state,
             1 << 16,
             e_entry,
-        );
+        )
+        .unwrap();
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         let (trusted_commitment, trusted_hint) =
             commit_trusted_advice_preprocessing_only(&prover_preprocessing, &trusted_advice);
@@ -2861,7 +2905,8 @@ mod tests {
             init_memory_state,
             1 << 16,
             e_entry,
-        );
+        )
+        .unwrap();
 
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         let elf_contents_opt = program.get_elf_contents();
@@ -2906,7 +2951,8 @@ mod tests {
             init_memory_state,
             1 << 16,
             e_entry,
-        );
+        )
+        .unwrap();
 
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         let elf_contents_opt = program.get_elf_contents();
@@ -2951,7 +2997,8 @@ mod tests {
             init_memory_state,
             1 << 16,
             e_entry,
-        );
+        )
+        .unwrap();
 
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         let elf_contents_opt = program.get_elf_contents();
@@ -3000,7 +3047,8 @@ mod tests {
             init_memory_state,
             1 << 16,
             e_entry,
-        );
+        )
+        .unwrap();
 
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         let elf_contents_opt = program.get_elf_contents();
@@ -3041,6 +3089,8 @@ mod tests {
     #[test]
     #[serial]
     fn blindfold_r1cs_satisfaction() {
+        DoryGlobals::reset();
+
         use crate::curve::Bn254Curve;
         use crate::subprotocols::blindfold::{
             BakedPublicInputs, BlindFoldWitness, RoundWitness, StageConfig, StageWitness,
@@ -3152,7 +3202,8 @@ mod tests {
             init_memory_state,
             1 << 16,
             e_entry,
-        );
+        )
+        .unwrap();
         let preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
@@ -3275,7 +3326,8 @@ mod tests {
             init_memory_state,
             1 << 16,
             e_entry,
-        );
+        )
+        .unwrap();
 
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
 
@@ -3314,7 +3366,8 @@ mod tests {
             init_memory_state,
             1 << 16,
             e_entry,
-        );
+        )
+        .unwrap();
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
 
         // change memory address of output & termination bit to the same address as input
@@ -3361,7 +3414,8 @@ mod tests {
             init_memory_state,
             1 << 16,
             e_entry,
-        );
+        )
+        .unwrap();
         let prover_preprocessing = JoltProverPreprocessing::new(shared.clone());
         let prover = RV64IMACProver::gen_from_trace(
             &prover_preprocessing,
@@ -3534,7 +3588,8 @@ mod tests {
             init_memory_state,
             1 << 16,
             e_entry,
-        );
+        )
+        .unwrap();
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
         let elf_contents = program.get_elf_contents().expect("elf contents is None");
         let prover = RV64IMACProver::gen_from_elf(
@@ -3582,7 +3637,8 @@ mod tests {
             init_memory_state,
             1 << 16,
             e_entry,
-        );
+        )
+        .unwrap();
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         let elf_contents = program.get_elf_contents().expect("elf contents is None");
 

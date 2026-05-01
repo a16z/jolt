@@ -1,60 +1,8 @@
-//! Host-side implementation and registration.
-pub use crate::sequence_builder;
+use crate::sequence_builder::Keccak256Permutation;
 
-use crate::{INLINE_OPCODE, KECCAK256_FUNCT3, KECCAK256_FUNCT7, KECCAK256_NAME};
-use tracer::register_inline;
-
-use tracer::utils::inline_sequence_writer::{
-    write_inline_trace, AppendMode, InlineDescriptor, SequenceInputs,
-};
-
-pub fn init_inlines() -> Result<(), String> {
-    register_inline(
-        INLINE_OPCODE,
-        KECCAK256_FUNCT3,
-        KECCAK256_FUNCT7,
-        KECCAK256_NAME,
-        std::boxed::Box::new(sequence_builder::keccak256_inline_sequence_builder),
-        None,
-    )?;
-
-    Ok(())
-}
-
-pub fn store_inlines() -> Result<(), String> {
-    let inline_info = InlineDescriptor::new(
-        KECCAK256_NAME.to_string(),
-        INLINE_OPCODE,
-        KECCAK256_FUNCT3,
-        KECCAK256_FUNCT7,
-    );
-    let inputs = SequenceInputs::default();
-    let instructions =
-        sequence_builder::keccak256_inline_sequence_builder((&inputs).into(), (&inputs).into());
-    write_inline_trace(
-        "keccak256_trace.joltinline",
-        &inline_info,
-        &inputs,
-        &instructions,
-        AppendMode::Overwrite,
-    )
-    .map_err(|e| e.to_string())?;
-
-    Ok(())
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[ctor::ctor]
-fn auto_register() {
-    if let Err(e) = init_inlines() {
-        tracing::error!("Failed to register Keccak256 inlines: {e}");
-    }
-
-    if std::env::var("STORE_INLINE").unwrap_or_default() == "true" {
-        if let Err(e) = store_inlines() {
-            tracing::error!("Failed to store Keccak256 inline traces: {e}");
-        }
-    }
+jolt_inlines_sdk::register_inlines! {
+    trace_file: "keccak256_trace.joltinline",
+    ops: [Keccak256Permutation],
 }
 
 #[cfg(test)]
@@ -63,11 +11,12 @@ mod tests {
     use std::io::{BufRead, BufReader};
     use std::path::Path;
 
+    use jolt_inlines_sdk::host::InlineOp;
     use tracer::utils::inline_sequence_writer::{
         DEFAULT_RAM_START_ADDRESS, DEFAULT_RS1, DEFAULT_RS2, DEFAULT_RS3,
     };
 
-    use crate::sequence_builder::keccak256_inline_sequence_builder;
+    use crate::sequence_builder::Keccak256Permutation;
 
     #[test]
     fn test_keccak256_trace_file_matches_generated() {
@@ -76,9 +25,8 @@ mod tests {
         };
 
         let inputs = SequenceInputs::default();
-        // Generate the instructions
         let generated_instructions =
-            keccak256_inline_sequence_builder((&inputs).into(), (&inputs).into());
+            Keccak256Permutation::build_sequence((&inputs).into(), (&inputs).into());
 
         let test_file_name = format!("keccak256_trace_test_{}.joltinline", std::process::id());
         let trace_file_path = Path::new(&test_file_name);

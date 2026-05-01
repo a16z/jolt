@@ -180,6 +180,8 @@ fn muldiv_prove_verify() {
         memory_start: RAM_START_ADDRESS,
         memory_end: highest_addr,
         entry_address,
+        preprocessing_digest: [0u8; 32],
+        dory_layout: 0,
         io_hash: [0u8; 32],
         max_input_size: memory_layout.max_input_size,
         max_output_size: memory_layout.max_output_size,

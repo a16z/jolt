@@ -3,7 +3,7 @@
 #![allow(non_snake_case, clippy::print_stderr)]
 
 use jolt_field::{Field, Fr};
-use jolt_host::{extract_trace, BytecodePreprocessing, Program};
+use jolt_trace::{extract_trace, BytecodePreprocessing, Program};
 use jolt_r1cs::constraints::rv64::{self, *};
 use jolt_r1cs::R1csKey;
 
@@ -38,7 +38,8 @@ fn compare_witness_variables() {
     let (core_bytecode_raw, _core_init_mem, _core_prog_size, core_entry) = core_program.decode();
     let core_inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
     let (_, core_trace, _, _core_io) = core_program.trace(&core_inputs, &[], &[]);
-    let core_bytecode = CoreBytecodePP::preprocess(core_bytecode_raw, core_entry);
+    let core_bytecode =
+        CoreBytecodePP::preprocess(core_bytecode_raw, core_entry).expect("core bytecode");
 
     let real_len = trace.len();
     eprintln!("trace len={real_len}, padded={trace_length}");

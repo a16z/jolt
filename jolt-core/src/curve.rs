@@ -104,7 +104,7 @@ pub trait JoltCurve: Clone + Sync + Send + 'static {
 
 use ark_bn254::{Bn254, Fq12, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
 use ark_ec::{pairing::Pairing, AdditiveGroup, AffineRepr, CurveGroup, VariableBaseMSM};
-use ark_ff::Zero;
+use ark_ff::{One, Zero};
 use ark_std::UniformRand;
 use dory::backends::arkworks::ArkG1;
 use std::ops::MulAssign;
@@ -206,24 +206,43 @@ pub struct Bn254G2(pub G2Projective);
 impl_group_ops!(Bn254G2, G2Projective, Fr);
 impl_group_element!(Bn254G2, G2Projective, Fr);
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Bn254GT(pub Fq12);
 
+impl Default for Bn254GT {
+    fn default() -> Self {
+        // `Add` models the GT group law, which is multiplicative in Fq12.
+        Self(Fq12::one())
+    }
+}
+
+#[expect(
+    clippy::suspicious_arithmetic_impl,
+    reason = "GT uses additive syntax for its multiplicative group law"
+)]
 impl Add for Bn254GT {
     type Output = Self;
     fn add(self, rhs: Self) -> Self {
-        Bn254GT(self.0 + rhs.0)
+        Bn254GT(self.0 * rhs.0)
     }
 }
+#[expect(
+    clippy::suspicious_arithmetic_impl,
+    reason = "GT uses additive syntax for its multiplicative group law"
+)]
 impl<'a> Add<&'a Bn254GT> for Bn254GT {
     type Output = Self;
     fn add(self, rhs: &'a Bn254GT) -> Self {
-        Bn254GT(self.0 + rhs.0)
+        Bn254GT(self.0 * rhs.0)
     }
 }
+#[expect(
+    clippy::suspicious_op_assign_impl,
+    reason = "GT uses additive syntax for its multiplicative group law"
+)]
 impl AddAssign for Bn254GT {
     fn add_assign(&mut self, rhs: Self) {
-        self.0 += rhs.0;
+        self.0 *= rhs.0;
     }
 }
 
@@ -335,6 +354,26 @@ mod tests {
         let pairing2 = Bn254Curve::pairing(&g1.scalar_mul(&(a * b)), &g2);
 
         assert_eq!(pairing1, pairing2);
+    }
+
+    #[test]
+    fn test_gt_add_matches_pairing_group_law() {
+        let mut rng = thread_rng();
+        let a = Fr::rand(&mut rng);
+        let b = Fr::rand(&mut rng);
+
+        let g1 = Bn254Curve::g1_generator();
+        let g2 = Bn254Curve::g2_generator();
+
+        let left = Bn254Curve::pairing(&g1.scalar_mul(&a), &g2)
+            + Bn254Curve::pairing(&g1.scalar_mul(&b), &g2);
+        let right = Bn254Curve::pairing(&g1.scalar_mul(&(a + b)), &g2);
+
+        assert_eq!(left, right);
+
+        let mut acc = Bn254GT::default();
+        acc += Bn254Curve::pairing(&g1.scalar_mul(&a), &g2);
+        assert_eq!(acc, Bn254Curve::pairing(&g1.scalar_mul(&a), &g2));
     }
 
     #[test]

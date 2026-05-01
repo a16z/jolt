@@ -1,5 +1,7 @@
 //! Tests for PoseidonTranscript implementation.
 
+#![cfg(feature = "poseidon")]
+
 mod common;
 
 use jolt_field::Fr;
