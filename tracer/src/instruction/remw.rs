@@ -146,8 +146,8 @@ impl RISCVTrace for REMW {
         asm.emit_i::<VirtualSignExtendWord>(*t1, *a2, 0); // Sign-extend quotient to 64-bit
         asm.emit_b::<VirtualAssertEQ>(*t1, *a2, 0); // Assert quotient was valid 32-bit
 
-        asm.emit_i::<SRAI>(*t2, *a3, 31); // Sign bit of remainder
-        asm.emit_b::<VirtualAssertEQ>(*t2, 0, 0); // sign bit of remainder advice should be 0
+        asm.emit_i::<SRAI>(*t2, *a3, 32); // Remainder advice fits in u32
+        asm.emit_b::<VirtualAssertEQ>(*t2, 0, 0);
 
         asm.emit_i::<SRAI>(*t2, *t4, 31); // Sign bit of dividend
         asm.emit_r::<XOR>(*t3, *a3, *t2); // XOR with |remainder|
