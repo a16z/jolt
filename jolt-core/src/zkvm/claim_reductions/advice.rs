@@ -282,56 +282,63 @@ impl<F: JoltField> SumcheckInstanceParams<F> for AdviceClaimReductionParams<F> {
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
         match self.phase {
             ReductionPhase::CycleVariables => {
-                let advice_opening = match self.kind {
-                    AdviceKind::Trusted => {
-                        OpeningId::TrustedAdvice(SumcheckId::AdviceClaimReductionCyclePhase)
-                    }
-                    AdviceKind::Untrusted => {
-                        OpeningId::UntrustedAdvice(SumcheckId::AdviceClaimReductionCyclePhase)
-                    }
-                };
-                Some(OutputClaimConstraint::direct(advice_opening))
+                if self.num_address_phase_rounds() > 0 {
+                    let advice_opening = match self.kind {
+                        AdviceKind::Trusted => {
+                            OpeningId::TrustedAdvice(SumcheckId::AdviceClaimReductionCyclePhase)
+                        }
+                        AdviceKind::Untrusted => {
+                            OpeningId::UntrustedAdvice(SumcheckId::AdviceClaimReductionCyclePhase)
+                        }
+                    };
+                    return Some(OutputClaimConstraint::direct(advice_opening));
+                }
+                self.final_advice_output_claim_constraint()
             }
-            ReductionPhase::AddressVariables => {
-                let advice_opening = match self.kind {
-                    AdviceKind::Trusted => {
-                        OpeningId::TrustedAdvice(SumcheckId::AdviceClaimReduction)
-                    }
-                    AdviceKind::Untrusted => {
-                        OpeningId::UntrustedAdvice(SumcheckId::AdviceClaimReduction)
-                    }
-                };
-                // output = (eq_combined * scale) * advice_claim
-                // Challenge(0) holds eq_combined * scale (computed in output_constraint_challenge_values)
-                Some(OutputClaimConstraint::linear(vec![(
-                    ValueSource::Challenge(0),
-                    ValueSource::Opening(advice_opening),
-                )]))
-            }
+            ReductionPhase::AddressVariables => self.final_advice_output_claim_constraint(),
         }
     }
 
     #[cfg(feature = "zk")]
     fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
         match self.phase {
-            ReductionPhase::CycleVariables => vec![],
-            ReductionPhase::AddressVariables => {
-                let opening_point = self.normalize_opening_point(sumcheck_challenges);
-                let eq_eval = EqPolynomial::mle(&opening_point.r, &self.r_val.r);
-
-                let gap_len = if self.cycle_phase_row_rounds.is_empty()
-                    || self.cycle_phase_col_rounds.is_empty()
-                {
-                    0
-                } else {
-                    self.cycle_phase_row_rounds.start - self.cycle_phase_col_rounds.end
-                };
-                let two_inv = F::from_u64(2).inverse().unwrap();
-                let scale = (0..gap_len).fold(F::one(), |acc, _| acc * two_inv);
-
-                vec![eq_eval * scale]
+            ReductionPhase::CycleVariables if self.num_address_phase_rounds() > 0 => vec![],
+            ReductionPhase::CycleVariables | ReductionPhase::AddressVariables => {
+                vec![self.final_advice_output_scale(sumcheck_challenges)]
             }
         }
+    }
+}
+
+impl<F: JoltField> AdviceClaimReductionParams<F> {
+    #[cfg(feature = "zk")]
+    fn final_advice_output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        let advice_opening = match self.kind {
+            AdviceKind::Trusted => OpeningId::TrustedAdvice(SumcheckId::AdviceClaimReduction),
+            AdviceKind::Untrusted => OpeningId::UntrustedAdvice(SumcheckId::AdviceClaimReduction),
+        };
+        // output = (eq_combined * scale) * advice_claim
+        // Challenge(0) holds eq_combined * scale (computed in output_constraint_challenge_values)
+        Some(OutputClaimConstraint::linear(vec![(
+            ValueSource::Challenge(0),
+            ValueSource::Opening(advice_opening),
+        )]))
+    }
+
+    fn final_advice_output_scale(&self, sumcheck_challenges: &[F::Challenge]) -> F {
+        let opening_point = self.normalize_opening_point(sumcheck_challenges);
+        let eq_eval = EqPolynomial::mle(&opening_point.r, &self.r_val.r);
+
+        let gap_len =
+            if self.cycle_phase_row_rounds.is_empty() || self.cycle_phase_col_rounds.is_empty() {
+                0
+            } else {
+                self.cycle_phase_row_rounds.start - self.cycle_phase_col_rounds.end
+            };
+        let two_inv = F::from_u64(2).inverse().unwrap();
+        let scale = (0..gap_len).fold(F::one(), |acc, _| acc * two_inv);
+
+        eq_eval * scale
     }
 }
 
@@ -607,33 +614,20 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
     fn expected_output_claim(&self, accumulator: &A, sumcheck_challenges: &[F::Challenge]) -> F {
         let params = self.params.borrow();
         match params.phase {
-            ReductionPhase::CycleVariables => {
+            ReductionPhase::CycleVariables if params.num_address_phase_rounds() > 0 => {
                 accumulator
                     .get_advice_opening(params.kind, SumcheckId::AdviceClaimReductionCyclePhase)
                     .unwrap_or_else(|| panic!("Cycle phase intermediate claim not found",))
                     .1
             }
-            ReductionPhase::AddressVariables => {
-                let opening_point = params.normalize_opening_point(sumcheck_challenges);
+            ReductionPhase::CycleVariables | ReductionPhase::AddressVariables => {
                 let advice_claim = accumulator
                     .get_advice_opening(params.kind, SumcheckId::AdviceClaimReduction)
                     .expect("Final advice claim not found")
                     .1;
 
-                let eq_eval = EqPolynomial::mle(&opening_point.r, &params.r_val.r);
-
-                let gap_len = if params.cycle_phase_row_rounds.is_empty()
-                    || params.cycle_phase_col_rounds.is_empty()
-                {
-                    0
-                } else {
-                    params.cycle_phase_row_rounds.start - params.cycle_phase_col_rounds.end
-                };
-                let two_inv = F::from_u64(2).inverse().unwrap();
-                let scale = (0..gap_len).fold(F::one(), |acc, _| acc * two_inv);
-
                 // Account for Phase 1's internal dummy-gap traversal via constant scaling.
-                advice_claim * eq_eval * scale
+                advice_claim * params.final_advice_output_scale(sumcheck_challenges)
             }
         }
     }
