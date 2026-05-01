@@ -259,7 +259,8 @@ impl PairingGroup for Bn254 {
 /// catches silent modular reduction when `F` has a larger modulus than BN254 Fr.
 #[inline]
 pub(crate) fn field_to_fr<F: Field>(f: &F) -> ark_bn254::Fr {
-    let bytes = f.to_bytes();
+    let mut bytes = vec![0u8; F::NUM_BYTES];
+    f.to_bytes_le(&mut bytes);
     #[cfg(debug_assertions)]
     {
         use ark_ff::{BigInteger, PrimeField as _};

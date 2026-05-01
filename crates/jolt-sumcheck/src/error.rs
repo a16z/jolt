@@ -1,7 +1,5 @@
 //! Error types for sumcheck protocol verification failures.
 
-use jolt_field::Field;
-
 /// Errors that can occur during sumcheck verification.
 ///
 /// Each variant corresponds to a distinct failure mode in the sumcheck
@@ -9,7 +7,7 @@ use jolt_field::Field;
 /// diverged.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
-pub enum SumcheckError<F: Field> {
+pub enum SumcheckError<F> {
     /// Round check failed: the sum $s_i(0) + s_i(1)$ did not match the
     /// expected value carried forward from the previous round.
     #[error("round {round}: expected sum {expected}, got {actual}")]

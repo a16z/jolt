@@ -1,14 +1,14 @@
 #![no_main]
 use jolt_crypto::{Bn254, Bn254G1, JoltGroup};
-use jolt_field::{Field, Fr};
+use jolt_field::{Fr, FromPrimitiveInt, RandomSampling, ReducingBytes};
 use libfuzzer_sys::fuzz_target;
 
 fn parse_input(data: &[u8]) -> Option<(Fr, Fr, Bn254G1)> {
     if data.len() < 64 {
         return None;
     }
-    let s1 = Fr::from_bytes(&data[..32]);
-    let s2 = Fr::from_bytes(&data[32..64]);
+    let s1 = <Fr as ReducingBytes>::from_le_bytes_mod_order(&data[..32]);
+    let s2 = <Fr as ReducingBytes>::from_le_bytes_mod_order(&data[32..64]);
     let g = Bn254::g1_generator();
     let p = g.scalar_mul(&s1);
     Some((s1, s2, p))

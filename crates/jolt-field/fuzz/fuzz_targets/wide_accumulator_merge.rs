@@ -1,5 +1,5 @@
 #![no_main]
-use jolt_field::{Field, FieldAccumulator, Fr, WideAccumulator};
+use jolt_field::{AdditiveAccumulator, Fr, ReducingBytes, RingAccumulator, WideAccumulator};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
@@ -17,8 +17,9 @@ fuzz_target!(|data: &[u8]| {
 
     for i in 0..pairs {
         let offset = i * 64;
-        let a = <Fr as Field>::from_bytes(&data[offset..offset + 32]);
-        let b = <Fr as Field>::from_bytes(&data[offset + 32..offset + 64]);
+        let a = <Fr as ReducingBytes>::from_le_bytes_mod_order(&data[offset..offset + 32]);
+        let b =
+            <Fr as ReducingBytes>::from_le_bytes_mod_order(&data[offset + 32..offset + 64]);
 
         if i < split {
             acc1.fmadd(a, b);

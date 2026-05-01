@@ -71,7 +71,7 @@ impl AppendToTranscript for U64Word {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "poseidon"))]
 mod tests {
     use super::*;
     use crate::Blake2bTranscript;

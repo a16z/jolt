@@ -13,24 +13,23 @@
 //!
 //! # Implementations
 //!
-//! Three hash backends are provided. All produce 128-bit challenges (drawn
-//! from `u128`) and use a `state || round_counter` domain separation scheme.
+//! Hash backends use a `state || round_counter` domain separation scheme and
+//! delegate field-family challenge decoding to `TranscriptChallenge`.
 //!
 //! - [`Blake2bTranscript`]: Uses Blake2b-256. Default choice for Jolt proofs.
 //! - [`KeccakTranscript`]: Uses Keccak-256. EVM-compatible for on-chain verification.
-//! - [`PoseidonTranscript`]: Uses Poseidon over BN254. SNARK-friendly for recursive verification.
+//! - [`PoseidonTranscript`]: Uses Poseidon over BN254 when the `poseidon` feature is enabled.
 //!
 //! # Dependency position
 //!
-//! Depends on `jolt-field` (for the blanket [`AppendToTranscript`] impl on
-//! [`Field`](jolt_field::Field) types). Used by `jolt-crypto`, `jolt-sumcheck`,
-//! `jolt-openings`, `jolt-dory`, `jolt-blindfold`, and `jolt-zkvm`.
+//! Depends on `jolt-field` for field challenge decoding and transcript
+//! absorption. The `poseidon` feature enables BN254/Poseidon dependencies.
 //!
 //! # Example
 //!
-//! ```
+//! ```ignore
 //! use jolt_transcript::{Transcript, Blake2bTranscript};
-//! use jolt_field::{Field, Fr};
+//! use jolt_field::{FromPrimitiveInt, Fr};
 //!
 //! let mut transcript = Blake2bTranscript::<Fr>::new(b"my_protocol");
 //!
@@ -52,6 +51,7 @@ mod blanket;
 mod digest;
 pub mod domain;
 mod keccak;
+#[cfg(feature = "poseidon")]
 mod poseidon;
 mod transcript;
 
@@ -59,5 +59,6 @@ pub use blake2b::Blake2bTranscript;
 pub use digest::DigestTranscript;
 pub use domain::{Label, LabelWithCount, U64Word};
 pub use keccak::KeccakTranscript;
+#[cfg(feature = "poseidon")]
 pub use poseidon::PoseidonTranscript;
 pub use transcript::{AppendToTranscript, Transcript};
