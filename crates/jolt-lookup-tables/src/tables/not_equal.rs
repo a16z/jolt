@@ -9,10 +9,10 @@ use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
 use crate::uninterleave_bits;
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct NotEqualTable;
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct NotEqualTable<const XLEN: usize>;
 
-impl LookupTable for NotEqualTable {
+impl<const XLEN: usize> LookupTable for NotEqualTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
         (x != y).into()
@@ -23,11 +23,11 @@ impl LookupTable for NotEqualTable {
         C: ChallengeOps<F>,
         F: Field + FieldOps<C>,
     {
-        F::one() - EqualTable.evaluate_mle::<F, C>(r)
+        F::one() - EqualTable::<XLEN>.evaluate_mle::<F, C>(r)
     }
 }
 
-impl PrefixSuffixDecomposition for NotEqualTable {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for NotEqualTable<XLEN> {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::One, Suffixes::Eq]
     }
@@ -43,16 +43,22 @@ impl PrefixSuffixDecomposition for NotEqualTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use crate::tables::test_utils::{mle_full_hypercube_test, mle_random_test, prefix_suffix_test};
+    use crate::XLEN;
     use jolt_field::Fr;
 
     #[test]
     fn mle_random() {
-        mle_random_test::<Fr, NotEqualTable>();
+        mle_random_test::<XLEN, Fr, NotEqualTable<XLEN>>();
+    }
+
+    #[test]
+    fn mle_full_hypercube() {
+        mle_full_hypercube_test::<8, Fr, NotEqualTable<8>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, NotEqualTable>();
+        prefix_suffix_test::<XLEN, Fr, NotEqualTable<XLEN>>();
     }
 }

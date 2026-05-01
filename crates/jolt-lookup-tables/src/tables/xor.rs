@@ -7,12 +7,11 @@ use crate::tables::suffixes::{SuffixEval, Suffixes};
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
 use crate::uninterleave_bits;
-use crate::XLEN;
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct XorTable;
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct XorTable<const XLEN: usize>;
 
-impl LookupTable for XorTable {
+impl<const XLEN: usize> LookupTable for XorTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
         x ^ y
@@ -35,7 +34,7 @@ impl LookupTable for XorTable {
     }
 }
 
-impl PrefixSuffixDecomposition for XorTable {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for XorTable<XLEN> {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::One, Suffixes::Xor]
     }
@@ -50,16 +49,22 @@ impl PrefixSuffixDecomposition for XorTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use crate::tables::test_utils::{mle_full_hypercube_test, mle_random_test, prefix_suffix_test};
+    use crate::XLEN;
     use jolt_field::Fr;
 
     #[test]
     fn mle_random() {
-        mle_random_test::<Fr, XorTable>();
+        mle_random_test::<XLEN, Fr, XorTable<XLEN>>();
+    }
+
+    #[test]
+    fn mle_full_hypercube() {
+        mle_full_hypercube_test::<8, Fr, XorTable<8>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, XorTable>();
+        prefix_suffix_test::<XLEN, Fr, XorTable<XLEN>>();
     }
 }

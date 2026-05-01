@@ -13,9 +13,11 @@ workspace = true
 
 [dependencies]
 jolt-field = { workspace = true }
-jolt-riscv = { workspace = true }
+jolt-trace = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 strum = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
+jolt-trace = { workspace = true, features = ["test-utils"] }
 rand = { workspace = true }
+tracer = { workspace = true, features = ["std", "test-utils"] }

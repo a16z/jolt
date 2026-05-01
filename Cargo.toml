@@ -31,8 +31,8 @@ members = [
   "crates/jolt-r1cs",
   "crates/jolt-sumcheck",
   "crates/jolt-openings",
+  "crates/jolt-dory",
   "crates/jolt-riscv",
-  "crates/jolt-riscv-derive",
   "crates/jolt-transcript",
   "crates/jolt-profiling",
   "crates/jolt-field",
@@ -258,6 +258,7 @@ dory = { package = "dory-pcs", version = "0.3.0", features = [
   "backends",
   "cache",
   "disk-persistence",
+  "zk",
 ] }
 
 # Core Utilities
@@ -376,11 +377,12 @@ tracer = { path = "./tracer", default-features = false }
 jolt-core = { path = "./jolt-core", default-features = false }
 jolt-crypto = { path = "./crates/jolt-crypto" }
 jolt-field = { path = "./crates/jolt-field" }
+jolt-openings = { path = "./crates/jolt-openings" }
 jolt-poly = { path = "./crates/jolt-poly" }
 jolt-transcript = { path = "./crates/jolt-transcript" }
 jolt-sumcheck = { path = "./crates/jolt-sumcheck" }
 jolt-riscv = { path = "./crates/jolt-riscv" }
-jolt-riscv-derive = { path = "./crates/jolt-riscv-derive" }
+jolt-trace = { path = "./crates/jolt-trace" }
 jolt-lookup-tables = { path = "./crates/jolt-lookup-tables" }
 jolt-platform = { path = "./jolt-platform", default-features = false }
 jolt-sdk = { path = "./jolt-sdk", default-features = false }

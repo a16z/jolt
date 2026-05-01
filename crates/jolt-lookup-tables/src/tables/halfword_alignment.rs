@@ -7,10 +7,10 @@ use crate::tables::suffixes::{SuffixEval, Suffixes};
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct HalfwordAlignmentTable;
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct HalfwordAlignmentTable<const XLEN: usize>;
 
-impl LookupTable for HalfwordAlignmentTable {
+impl<const XLEN: usize> LookupTable for HalfwordAlignmentTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
         (index.is_multiple_of(2)).into()
     }
@@ -25,7 +25,7 @@ impl LookupTable for HalfwordAlignmentTable {
     }
 }
 
-impl PrefixSuffixDecomposition for HalfwordAlignmentTable {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for HalfwordAlignmentTable<XLEN> {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::One, Suffixes::Lsb]
     }
@@ -41,16 +41,22 @@ impl PrefixSuffixDecomposition for HalfwordAlignmentTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use crate::tables::test_utils::{mle_full_hypercube_test, mle_random_test, prefix_suffix_test};
+    use crate::XLEN;
     use jolt_field::Fr;
 
     #[test]
     fn mle_random() {
-        mle_random_test::<Fr, HalfwordAlignmentTable>();
+        mle_random_test::<XLEN, Fr, HalfwordAlignmentTable<XLEN>>();
+    }
+
+    #[test]
+    fn mle_full_hypercube() {
+        mle_full_hypercube_test::<8, Fr, HalfwordAlignmentTable<8>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, HalfwordAlignmentTable>();
+        prefix_suffix_test::<XLEN, Fr, HalfwordAlignmentTable<XLEN>>();
     }
 }

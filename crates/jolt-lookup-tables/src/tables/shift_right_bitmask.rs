@@ -6,12 +6,11 @@ use crate::tables::prefixes::{PrefixEval, Prefixes};
 use crate::tables::suffixes::{SuffixEval, Suffixes};
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
-use crate::XLEN;
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct ShiftRightBitmaskTable;
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct ShiftRightBitmaskTable<const XLEN: usize>;
 
-impl LookupTable for ShiftRightBitmaskTable {
+impl<const XLEN: usize> LookupTable for ShiftRightBitmaskTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
         let shift = (index % XLEN as u128) as usize;
         let ones = ((1u128 << (XLEN - shift)) - 1) as u64;
@@ -45,7 +44,7 @@ impl LookupTable for ShiftRightBitmaskTable {
     }
 }
 
-impl PrefixSuffixDecomposition for ShiftRightBitmaskTable {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for ShiftRightBitmaskTable<XLEN> {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::One, Suffixes::Pow2]
     }
@@ -61,16 +60,22 @@ impl PrefixSuffixDecomposition for ShiftRightBitmaskTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use crate::tables::test_utils::{mle_full_hypercube_test, mle_random_test, prefix_suffix_test};
+    use crate::XLEN;
     use jolt_field::Fr;
 
     #[test]
     fn mle_random() {
-        mle_random_test::<Fr, ShiftRightBitmaskTable>();
+        mle_random_test::<XLEN, Fr, ShiftRightBitmaskTable<XLEN>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, ShiftRightBitmaskTable>();
+        prefix_suffix_test::<XLEN, Fr, ShiftRightBitmaskTable<XLEN>>();
+    }
+
+    #[test]
+    fn mle_full_hypercube() {
+        mle_full_hypercube_test::<8, Fr, ShiftRightBitmaskTable<8>>();
     }
 }
