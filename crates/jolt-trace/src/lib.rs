@@ -6,13 +6,18 @@
 
 mod analyze;
 pub mod bytecode;
-mod cycle_row;
+mod jolt_cycle;
 mod program;
 pub mod ram;
-mod tracer_cycle;
 
 pub use bytecode::BytecodePreprocessing;
-pub use cycle_row::CycleRow;
+pub use jolt_cycle::JoltCycle;
+pub use jolt_riscv::instructions;
+pub use jolt_riscv::{
+    CircuitFlagSet, CircuitFlags, Flags, InstructionFlagSet, InstructionFlags,
+    InterleavedBitsMarker, JoltInstruction, JoltInstructions, NUM_CIRCUIT_FLAGS,
+    NUM_INSTRUCTION_FLAGS,
+};
 
 use std::path::{Path, PathBuf};
 

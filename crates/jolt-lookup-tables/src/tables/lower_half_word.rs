@@ -6,14 +6,13 @@ use crate::tables::prefixes::{PrefixEval, Prefixes};
 use crate::tables::suffixes::{SuffixEval, Suffixes};
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
-use crate::XLEN;
 
 /// Extracts the lower half of a word.
 /// For XLEN=64 this extracts the lower 32 bits; for XLEN=32, the lower 16 bits.
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct LowerHalfWordTable;
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct LowerHalfWordTable<const XLEN: usize>;
 
-impl LookupTable for LowerHalfWordTable {
+impl<const XLEN: usize> LookupTable for LowerHalfWordTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
         let half_word_size = XLEN / 2;
         (index % (1u128 << half_word_size)) as u64
@@ -34,7 +33,7 @@ impl LookupTable for LowerHalfWordTable {
     }
 }
 
-impl PrefixSuffixDecomposition for LowerHalfWordTable {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for LowerHalfWordTable<XLEN> {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::One, Suffixes::LowerHalfWord]
     }
@@ -49,16 +48,22 @@ impl PrefixSuffixDecomposition for LowerHalfWordTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use crate::tables::test_utils::{mle_full_hypercube_test, mle_random_test, prefix_suffix_test};
+    use crate::XLEN;
     use jolt_field::Fr;
 
     #[test]
+    fn mle_full_hypercube() {
+        mle_full_hypercube_test::<8, Fr, LowerHalfWordTable<8>>();
+    }
+
+    #[test]
     fn mle_random() {
-        mle_random_test::<Fr, LowerHalfWordTable>();
+        mle_random_test::<XLEN, Fr, LowerHalfWordTable<XLEN>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, LowerHalfWordTable>();
+        prefix_suffix_test::<XLEN, Fr, LowerHalfWordTable<XLEN>>();
     }
 }

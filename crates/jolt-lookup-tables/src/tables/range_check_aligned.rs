@@ -6,18 +6,13 @@ use crate::tables::prefixes::{PrefixEval, Prefixes};
 use crate::tables::suffixes::{SuffixEval, Suffixes};
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
-use crate::XLEN;
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct RangeCheckAlignedTable;
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct RangeCheckAlignedTable<const XLEN: usize>;
 
-impl LookupTable for RangeCheckAlignedTable {
+impl<const XLEN: usize> LookupTable for RangeCheckAlignedTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
-        if XLEN == 64 {
-            (index as u64) & !1
-        } else {
-            ((index % (1u128 << XLEN)) as u64) & !1
-        }
+        ((index & (1u128 << XLEN).wrapping_sub(1)) as u64) & !1
     }
 
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
@@ -36,7 +31,7 @@ impl LookupTable for RangeCheckAlignedTable {
     }
 }
 
-impl PrefixSuffixDecomposition for RangeCheckAlignedTable {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for RangeCheckAlignedTable<XLEN> {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::One, Suffixes::LowerWord, Suffixes::Lsb]
     }
@@ -53,16 +48,22 @@ impl PrefixSuffixDecomposition for RangeCheckAlignedTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use crate::tables::test_utils::{mle_full_hypercube_test, mle_random_test, prefix_suffix_test};
+    use crate::XLEN;
     use jolt_field::Fr;
 
     #[test]
+    fn mle_full_hypercube() {
+        mle_full_hypercube_test::<8, Fr, RangeCheckAlignedTable<8>>();
+    }
+
+    #[test]
     fn mle_random() {
-        mle_random_test::<Fr, RangeCheckAlignedTable>();
+        mle_random_test::<XLEN, Fr, RangeCheckAlignedTable<XLEN>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, RangeCheckAlignedTable>();
+        prefix_suffix_test::<XLEN, Fr, RangeCheckAlignedTable<XLEN>>();
     }
 }

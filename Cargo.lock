@@ -2932,10 +2932,11 @@ name = "jolt-lookup-tables"
 version = "0.1.0"
 dependencies = [
  "jolt-field",
- "jolt-riscv",
+ "jolt-trace",
  "rand 0.8.5",
  "serde",
  "strum 0.28.0",
+ "tracer",
 ]
 
 [[package]]
@@ -3031,18 +3032,9 @@ dependencies = [
 name = "jolt-riscv"
 version = "0.1.0"
 dependencies = [
- "jolt-riscv-derive",
  "serde",
  "strum 0.28.0",
-]
-
-[[package]]
-name = "jolt-riscv-derive"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
+ "tracer",
 ]
 
 [[package]]
@@ -3089,8 +3081,8 @@ version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
  "common",
- "jolt-lookup-tables",
  "jolt-riscv",
+ "rand 0.8.5",
  "serde",
  "tracer",
  "tracing",

@@ -7,20 +7,29 @@ use crate::tables::suffixes::{SuffixEval, Suffixes};
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
 use crate::uninterleave_bits;
-use crate::XLEN;
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct VirtualChangeDivisorWTable;
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct VirtualChangeDivisorWTable<const XLEN: usize>;
 
-impl LookupTable for VirtualChangeDivisorWTable {
+impl<const XLEN: usize> LookupTable for VirtualChangeDivisorWTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
         let (dividend, divisor) = uninterleave_bits(index);
-        let dividend = dividend as u32 as i32;
-        let divisor = divisor as u32 as i32;
-        if dividend == i32::MIN && divisor == -1 {
+        let half = XLEN / 2;
+        let half_mask = (1u128 << half).wrapping_sub(1) as u64;
+        let dividend_lo = dividend & half_mask;
+        let divisor_lo = divisor & half_mask;
+        let signed_min = 1u64 << (half - 1);
+        let neg_one_half = half_mask;
+        if dividend_lo == signed_min && divisor_lo == neg_one_half {
             1
         } else {
-            divisor as i64 as u64
+            let sign_bit = (divisor_lo >> (half - 1)) & 1;
+            if sign_bit == 1 {
+                let upper = ((1u128 << XLEN).wrapping_sub(1) as u64) ^ half_mask;
+                divisor_lo | upper
+            } else {
+                divisor_lo
+            }
         }
     }
 
@@ -57,7 +66,7 @@ impl LookupTable for VirtualChangeDivisorWTable {
     }
 }
 
-impl PrefixSuffixDecomposition for VirtualChangeDivisorWTable {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for VirtualChangeDivisorWTable<XLEN> {
     fn suffixes(&self) -> &'static [Suffixes] {
         &[
             Suffixes::One,
@@ -81,16 +90,22 @@ impl PrefixSuffixDecomposition for VirtualChangeDivisorWTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tables::test_utils::{mle_random_test, prefix_suffix_test};
+    use crate::tables::test_utils::{mle_full_hypercube_test, mle_random_test, prefix_suffix_test};
+    use crate::XLEN;
     use jolt_field::Fr;
 
     #[test]
+    fn mle_full_hypercube() {
+        mle_full_hypercube_test::<8, Fr, VirtualChangeDivisorWTable<8>>();
+    }
+
+    #[test]
     fn mle_random() {
-        mle_random_test::<Fr, VirtualChangeDivisorWTable>();
+        mle_random_test::<XLEN, Fr, VirtualChangeDivisorWTable<XLEN>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, VirtualChangeDivisorWTable>();
+        prefix_suffix_test::<XLEN, Fr, VirtualChangeDivisorWTable<XLEN>>();
     }
 }
