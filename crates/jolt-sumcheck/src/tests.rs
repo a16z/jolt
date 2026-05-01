@@ -554,3 +554,11 @@ fn verify_dispatches_through_round_verifier_trait() {
 fn sumcheck_claim_new_rejects_degree_zero() {
     let _ = SumcheckClaim::<Fr>::new(3, 0, Fr::from_u64(0));
 }
+
+#[test]
+fn sumcheck_claim_new_allows_zero_round_zero_degree() {
+    let claim = SumcheckClaim::<Fr>::new(0, 0, Fr::from_u64(7));
+    assert_eq!(claim.num_vars, 0);
+    assert_eq!(claim.degree, 0);
+    assert_eq!(claim.claimed_sum, Fr::from_u64(7));
+}

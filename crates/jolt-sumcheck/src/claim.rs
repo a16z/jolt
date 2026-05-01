@@ -26,12 +26,13 @@ impl<F: Field> SumcheckClaim<F> {
     ///
     /// # Panics
     ///
-    /// Panics if `degree == 0`. Sumcheck round polynomials must have
-    /// degree ≥ 1; a constant round poly is meaningless.
+    /// Panics if `degree == 0 && num_vars > 0`. Sumcheck round polynomials
+    /// must have degree ≥ 1 once a round exists; the zero-round `num_vars == 0`
+    /// case is allowed and reduces directly to an oracle check.
     pub fn new(num_vars: usize, degree: usize, claimed_sum: F) -> Self {
         assert!(
-            degree >= 1,
-            "sumcheck round polynomial must have degree >= 1, got {degree}"
+            degree >= 1 || num_vars == 0,
+            "sumcheck round polynomial must have degree >= 1 when num_vars > 0, got degree={degree}, num_vars={num_vars}"
         );
         Self {
             num_vars,
