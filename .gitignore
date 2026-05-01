@@ -64,6 +64,7 @@ benchmark-runs/
 
 # Perf-loop ephemerals (per-iteration artifacts; tracked baselines/history are explicit)
 /perf/iter*.json
+/perf/bolt-stage2-*.json
 /perf/report-*.json
 /perf/last-iter.json
 /perf/report_tools/perf_report.aux

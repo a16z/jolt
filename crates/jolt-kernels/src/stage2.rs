@@ -1,7 +1,10 @@
 use std::cmp::Ordering;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
+use std::mem::MaybeUninit;
 
+use crate::dense::{bind_dense_evals_reuse, DENSE_BIND_PAR_THRESHOLD};
+use crate::split_eq::SplitEqState;
 use jolt_field::signed::{S128, S256};
 use jolt_field::{Field, FieldAccumulator, Fr, Limbs};
 use jolt_poly::lagrange::{interpolate_to_coeffs, lagrange_evals, lagrange_kernel_eval};
@@ -19,8 +22,6 @@ const PRODUCT_VIRTUAL_UNISKIP_EXTENDED_SIZE: usize = 2 * PRODUCT_VIRTUAL_UNISKIP
 const PRODUCT_VIRTUAL_UNISKIP_NUM_COEFFS: usize = 3 * PRODUCT_VIRTUAL_UNISKIP_DEGREE + 1;
 const PRODUCT_VIRTUAL_UNISKIP_TARGET_COEFFS: [[i32; PRODUCT_VIRTUAL_UNISKIP_DOMAIN_SIZE];
     PRODUCT_VIRTUAL_UNISKIP_DEGREE] = [[3, -3, 1], [1, -3, 3]];
-const DENSE_BIND_PAR_THRESHOLD: usize = 1024;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stage2ExecutionMode {
     Prover,
@@ -1701,7 +1702,7 @@ struct Stage2BatchedInstance<'a, F: Field> {
     relation: Stage2Relation,
     offset: usize,
     previous_claim: F,
-    state: Stage2ProverInstanceState<F>,
+    state: Stage2ProverInstanceState<'a, F>,
 }
 
 impl<F: Field> Stage2BatchedInstance<'_, F> {
@@ -1710,19 +1711,19 @@ impl<F: Field> Stage2BatchedInstance<'_, F> {
     }
 }
 
-enum Stage2ProverInstanceState<F: Field> {
+enum Stage2ProverInstanceState<'a, F: Field> {
     RamReadWrite(RamReadWriteState<F>),
-    ProductVirtualRemainder(DenseInstanceState<F>),
-    InstructionLookupClaimReduction(DenseInstanceState<F>),
+    ProductVirtualRemainder(ProductRemainderState<'a, F>),
+    InstructionLookupClaimReduction(InstructionLookupState<'a, F>),
     RamRafEvaluation(DenseInstanceState<F>),
-    RamOutputCheck(DenseInstanceState<F>),
+    RamOutputCheck(RamOutputState<'a, F>),
 }
 
-impl<F: Field> Stage2ProverInstanceState<F> {
+impl<'a, F: Field> Stage2ProverInstanceState<'a, F> {
     fn new(
         program: &'static Stage2CpuProgramPlan,
         claim: &Stage2SumcheckClaimPlan,
-        inputs: &Stage2ProverInputs<'_, F>,
+        inputs: &Stage2ProverInputs<'a, F>,
         store: &Stage2ValueStore<F>,
     ) -> Result<Self, Stage2KernelError> {
         match claim_relation(program, claim)? {
@@ -1756,20 +1757,29 @@ impl<F: Field> Stage2ProverInstanceState<F> {
     ) -> Result<UnivariatePoly<F>, Stage2KernelError> {
         match self {
             Self::RamReadWrite(state) => state.round_poly(round, previous_claim),
-            Self::ProductVirtualRemainder(state)
-            | Self::InstructionLookupClaimReduction(state)
-            | Self::RamRafEvaluation(state)
-            | Self::RamOutputCheck(state) => Ok(state.round_poly(previous_claim)),
+            Self::ProductVirtualRemainder(state) => Ok(state.round_poly(previous_claim)),
+            Self::InstructionLookupClaimReduction(state) => Ok(state.round_poly(previous_claim)),
+            Self::RamRafEvaluation(state) => Ok(state.round_poly(previous_claim)),
+            Self::RamOutputCheck(state) => Ok(state.round_poly(previous_claim)),
         }
     }
 
     fn ingest_challenge(&mut self, challenge: F) -> Result<(), Stage2KernelError> {
         match self {
             Self::RamReadWrite(state) => state.ingest_challenge(challenge),
-            Self::ProductVirtualRemainder(state)
-            | Self::InstructionLookupClaimReduction(state)
-            | Self::RamRafEvaluation(state)
-            | Self::RamOutputCheck(state) => {
+            Self::ProductVirtualRemainder(state) => {
+                state.bind(challenge);
+                Ok(())
+            }
+            Self::InstructionLookupClaimReduction(state) => {
+                state.bind(challenge);
+                Ok(())
+            }
+            Self::RamRafEvaluation(state) => {
+                state.bind(challenge);
+                Ok(())
+            }
+            Self::RamOutputCheck(state) => {
                 state.bind(challenge);
                 Ok(())
             }
@@ -1798,9 +1808,9 @@ impl<F: Field> Stage2ProverInstanceState<F> {
                     state.inc_eval()?,
                 ),
             ]),
-            Self::ProductVirtualRemainder(state)
-            | Self::InstructionLookupClaimReduction(state)
-            | Self::RamOutputCheck(state) => state.final_evals(relation),
+            Self::ProductVirtualRemainder(state) => state.final_evals(relation),
+            Self::InstructionLookupClaimReduction(state) => state.final_evals(relation),
+            Self::RamOutputCheck(state) => state.final_evals(relation),
             Self::RamRafEvaluation(state) => Ok(vec![named_eval(
                 "stage2.ram_raf.eval.RamRa",
                 "RamRa",
@@ -1810,21 +1820,434 @@ impl<F: Field> Stage2ProverInstanceState<F> {
     }
 }
 
+struct ProductRemainderState<'a, F: Field> {
+    cycles: &'a [Stage2ProductVirtualCycle],
+    left: Vec<F>,
+    right: Vec<F>,
+    left_scratch: Vec<F>,
+    right_scratch: Vec<F>,
+    split_eq: SplitEqState<F>,
+    point: Vec<F>,
+}
+
+impl<F: Field> ProductRemainderState<'_, F> {
+    fn round_poly(&self, previous_claim: F) -> UnivariatePoly<F> {
+        product_remainder_split_round_poly(&self.left, &self.right, &self.split_eq, previous_claim)
+    }
+
+    #[tracing::instrument(skip_all, name = "ProductRemainderState::bind")]
+    fn bind(&mut self, challenge: F) {
+        let left = &mut self.left;
+        let left_scratch = &mut self.left_scratch;
+        let right = &mut self.right;
+        let right_scratch = &mut self.right_scratch;
+        rayon::join(
+            || bind_dense_evals_reuse(left, left_scratch, challenge),
+            || bind_dense_evals_reuse(right, right_scratch, challenge),
+        );
+        self.split_eq.bind(challenge);
+        self.point.push(challenge);
+    }
+
+    fn final_evals(
+        &self,
+        relation: Stage2Relation,
+    ) -> Result<Vec<Stage2NamedEval<F>>, Stage2KernelError> {
+        product_remainder_final_evals(self.cycles, &self.point, relation)
+    }
+}
+
+#[tracing::instrument(skip_all, name = "ProductRemainderState::round_poly")]
+fn product_remainder_split_round_poly<F: Field>(
+    left: &[F],
+    right: &[F],
+    split_eq: &SplitEqState<F>,
+    previous_claim: F,
+) -> UnivariatePoly<F> {
+    let e_in = split_eq.e_in();
+    let e_out = split_eq.e_out();
+    let (q_constant, q_quadratic) = if e_in.len() > 1 {
+        product_remainder_low_round_coefficients(left, right, e_in, e_out)
+    } else {
+        product_remainder_high_round_coefficients(left, right, e_in[0], e_out)
+    };
+    gruen_cubic_poly(
+        split_eq.current_target(),
+        q_constant,
+        q_quadratic,
+        previous_claim,
+    )
+}
+
+fn product_remainder_low_round_coefficients<F: Field>(
+    left: &[F],
+    right: &[F],
+    e_in: &[F],
+    e_out: &[F],
+) -> (F, F) {
+    let in_len = e_in.len();
+    let in_pairs = in_len / 2;
+    if left.len() / 2 >= DENSE_BIND_PAR_THRESHOLD {
+        let accumulators = (0..e_out.len())
+            .into_par_iter()
+            .map(|x_out| {
+                let mut local = [F::Accumulator::default(); 2];
+                let base = x_out * in_len;
+                let out_weight = e_out[x_out];
+                for pair in 0..in_pairs {
+                    accumulate_product_remainder_quadratic_pair(
+                        &mut local,
+                        out_weight * (e_in[2 * pair] + e_in[2 * pair + 1]),
+                        left[base + 2 * pair],
+                        left[base + 2 * pair + 1],
+                        right[base + 2 * pair],
+                        right[base + 2 * pair + 1],
+                    );
+                }
+                local
+            })
+            .reduce(
+                || [F::Accumulator::default(); 2],
+                |mut left, right| {
+                    for (left, right) in left.iter_mut().zip(right) {
+                        left.merge(right);
+                    }
+                    left
+                },
+            );
+        (accumulators[0].reduce(), accumulators[1].reduce())
+    } else {
+        let mut total = [F::Accumulator::default(); 2];
+        for (x_out, &out_weight) in e_out.iter().enumerate() {
+            let base = x_out * in_len;
+            for pair in 0..in_pairs {
+                accumulate_product_remainder_quadratic_pair(
+                    &mut total,
+                    out_weight * (e_in[2 * pair] + e_in[2 * pair + 1]),
+                    left[base + 2 * pair],
+                    left[base + 2 * pair + 1],
+                    right[base + 2 * pair],
+                    right[base + 2 * pair + 1],
+                );
+            }
+        }
+        (total[0].reduce(), total[1].reduce())
+    }
+}
+
+fn product_remainder_high_round_coefficients<F: Field>(
+    left: &[F],
+    right: &[F],
+    in_weight: F,
+    e_out: &[F],
+) -> (F, F) {
+    let pairs = e_out.len() / 2;
+    if pairs >= DENSE_BIND_PAR_THRESHOLD {
+        let accumulators = (0..pairs)
+            .into_par_iter()
+            .map(|pair| {
+                let mut local = [F::Accumulator::default(); 2];
+                accumulate_product_remainder_quadratic_pair(
+                    &mut local,
+                    in_weight * (e_out[2 * pair] + e_out[2 * pair + 1]),
+                    left[2 * pair],
+                    left[2 * pair + 1],
+                    right[2 * pair],
+                    right[2 * pair + 1],
+                );
+                local
+            })
+            .reduce(
+                || [F::Accumulator::default(); 2],
+                |mut left, right| {
+                    for (left, right) in left.iter_mut().zip(right) {
+                        left.merge(right);
+                    }
+                    left
+                },
+            );
+        (accumulators[0].reduce(), accumulators[1].reduce())
+    } else {
+        let mut total = [F::Accumulator::default(); 2];
+        for pair in 0..pairs {
+            accumulate_product_remainder_quadratic_pair(
+                &mut total,
+                in_weight * (e_out[2 * pair] + e_out[2 * pair + 1]),
+                left[2 * pair],
+                left[2 * pair + 1],
+                right[2 * pair],
+                right[2 * pair + 1],
+            );
+        }
+        (total[0].reduce(), total[1].reduce())
+    }
+}
+
+fn accumulate_product_remainder_quadratic_pair<F: Field>(
+    accumulators: &mut [F::Accumulator; 2],
+    weight: F,
+    left0: F,
+    left1: F,
+    right0: F,
+    right1: F,
+) {
+    accumulators[0].fmadd(weight * left0, right0);
+    accumulators[1].fmadd(weight * (left1 - left0), right1 - right0);
+}
+
+fn gruen_cubic_poly<F: Field>(
+    target: F,
+    q_constant: F,
+    q_quadratic_coeff: F,
+    previous_claim: F,
+) -> UnivariatePoly<F> {
+    let eq_eval_1 = target;
+    let eq_eval_0 = F::one() - target;
+    let eq_delta = eq_eval_1 - eq_eval_0;
+    let eq_eval_2 = eq_eval_1 + eq_delta;
+    let eq_eval_3 = eq_eval_2 + eq_delta;
+    let cubic_eval_0 = eq_eval_0 * q_constant;
+    let cubic_eval_1 = previous_claim - cubic_eval_0;
+    let quadratic_eval_1 = cubic_eval_1 / eq_eval_1;
+    let e_times_2 = q_quadratic_coeff + q_quadratic_coeff;
+    let quadratic_eval_2 = quadratic_eval_1 + quadratic_eval_1 - q_constant + e_times_2;
+    let quadratic_eval_3 = quadratic_eval_2 + quadratic_eval_1 - q_constant + e_times_2 + e_times_2;
+    UnivariatePoly::from_evals(&[
+        cubic_eval_0,
+        cubic_eval_1,
+        eq_eval_2 * quadratic_eval_2,
+        eq_eval_3 * quadratic_eval_3,
+    ])
+}
+
+struct InstructionLookupState<'a, F: Field> {
+    cycles: &'a [Stage2InstructionLookupCycle],
+    r_spartan: Vec<F>,
+    gamma: F,
+    gamma_sqr: F,
+    gamma_cub: F,
+    gamma_quart: F,
+    phase: InstructionLookupPhase<F>,
+}
+
+impl<F: Field> InstructionLookupState<'_, F> {
+    fn round_poly(&self, previous_claim: F) -> UnivariatePoly<F> {
+        self.phase.round_poly(previous_claim)
+    }
+
+    fn bind(&mut self, challenge: F) {
+        if let InstructionLookupPhase::Phase1(phase1) = &self.phase {
+            if phase1.should_transition_to_phase2() {
+                let mut challenges = phase1.challenges.clone();
+                challenges.push(challenge);
+                self.phase = InstructionLookupPhase::Phase2(InstructionLookupPhase2::new(
+                    self.cycles,
+                    &self.r_spartan,
+                    &challenges,
+                    [self.gamma, self.gamma_sqr, self.gamma_cub, self.gamma_quart],
+                ));
+                return;
+            }
+        }
+        self.phase.bind(challenge);
+    }
+
+    fn final_evals(
+        &self,
+        _relation: Stage2Relation,
+    ) -> Result<Vec<Stage2NamedEval<F>>, Stage2KernelError> {
+        let InstructionLookupPhase::Phase2(phase2) = &self.phase else {
+            return Err(Stage2KernelError::InvalidProof {
+                driver: Stage2Relation::InstructionLookupClaimReduction.symbol(),
+                reason: "instruction lookup did not reach phase 2",
+            });
+        };
+        phase2.final_evals()
+    }
+}
+
+enum InstructionLookupPhase<F: Field> {
+    Phase1(InstructionLookupPhase1<F>),
+    Phase2(InstructionLookupPhase2<F>),
+}
+
+impl<F: Field> InstructionLookupPhase<F> {
+    fn round_poly(&self, previous_claim: F) -> UnivariatePoly<F> {
+        match self {
+            Self::Phase1(state) => state.round_poly(previous_claim),
+            Self::Phase2(state) => state.round_poly(previous_claim),
+        }
+    }
+
+    fn bind(&mut self, challenge: F) {
+        match self {
+            Self::Phase1(state) => state.bind(challenge),
+            Self::Phase2(state) => state.bind(challenge),
+        }
+    }
+}
+
+struct InstructionLookupPhase1<F: Field> {
+    p: Vec<F>,
+    q: Vec<F>,
+    challenges: Vec<F>,
+}
+
+impl<F: Field> InstructionLookupPhase1<F> {
+    fn new(cycles: &[Stage2InstructionLookupCycle], r_spartan: &[F], gamma_powers: [F; 4]) -> Self {
+        let (r_hi, r_lo) = r_spartan.split_at(r_spartan.len() / 2);
+        let p = EqPolynomial::<F>::evals(r_lo, None);
+        let eq_suffix = EqPolynomial::<F>::evals(r_hi, None);
+        let prefix_len = p.len();
+        let q = (0..prefix_len)
+            .into_par_iter()
+            .map(|x_lo| {
+                let mut accumulators = [F::Accumulator::default(); 5];
+                for (x_hi, &weight) in eq_suffix.iter().enumerate() {
+                    let index = x_lo + (x_hi * prefix_len);
+                    accumulate_instruction_lookup_outputs(
+                        &mut accumulators,
+                        &cycles[index],
+                        weight,
+                    );
+                }
+                combine_instruction_lookup_values(
+                    accumulators.map(FieldAccumulator::reduce),
+                    gamma_powers,
+                )
+            })
+            .collect();
+        Self {
+            p,
+            q,
+            challenges: Vec::new(),
+        }
+    }
+
+    #[tracing::instrument(skip_all, name = "InstructionLookupPhase1::round_poly")]
+    fn round_poly(&self, _previous_claim: F) -> UnivariatePoly<F> {
+        round_poly_from_factor_slices(&[&self.p, &self.q], 2)
+    }
+
+    #[tracing::instrument(skip_all, name = "InstructionLookupPhase1::bind")]
+    fn bind(&mut self, challenge: F) {
+        self.challenges.push(challenge);
+        let mut scratch = Vec::new();
+        bind_dense_evals_reuse(&mut self.p, &mut scratch, challenge);
+        bind_dense_evals_reuse(&mut self.q, &mut scratch, challenge);
+    }
+
+    fn should_transition_to_phase2(&self) -> bool {
+        self.p.len() == 2
+    }
+}
+
+struct InstructionLookupPhase2<F: Field> {
+    eq: Vec<F>,
+    combined: Vec<F>,
+    outputs: [Vec<F>; 5],
+}
+
+impl<F: Field> InstructionLookupPhase2<F> {
+    #[tracing::instrument(skip_all, name = "InstructionLookupPhase2::new")]
+    fn new(
+        cycles: &[Stage2InstructionLookupCycle],
+        r_spartan: &[F],
+        challenges: &[F],
+        gamma_powers: [F; 4],
+    ) -> Self {
+        let n_remaining_rounds = r_spartan.len() - challenges.len();
+        let remaining_len = 1usize << n_remaining_rounds;
+        let prefix_point = reverse_slice(challenges);
+        let (r_hi, r_lo) = r_spartan.split_at(r_spartan.len() / 2);
+        let eq_prefix = EqPolynomial::<F>::mle(&prefix_point, r_lo);
+        let prefix_eq_evals = EqPolynomial::<F>::evals(&prefix_point, None);
+        let rows = (0..remaining_len)
+            .into_par_iter()
+            .map(|x_hi| {
+                let start = x_hi * prefix_eq_evals.len();
+                let mut accumulators = [F::Accumulator::default(); 5];
+                for (x_lo, &weight) in prefix_eq_evals.iter().enumerate() {
+                    accumulate_instruction_lookup_outputs(
+                        &mut accumulators,
+                        &cycles[start + x_lo],
+                        weight,
+                    );
+                }
+                let outputs = accumulators.map(FieldAccumulator::reduce);
+                let combined = combine_instruction_lookup_values(outputs, gamma_powers);
+                (outputs, combined)
+            })
+            .collect::<Vec<_>>();
+        let mut outputs = core::array::from_fn(|_| Vec::with_capacity(remaining_len));
+        let mut combined = Vec::with_capacity(remaining_len);
+        for (row_outputs, row_combined) in rows {
+            for (output, value) in outputs.iter_mut().zip(row_outputs) {
+                output.push(value);
+            }
+            combined.push(row_combined);
+        }
+        Self {
+            eq: EqPolynomial::<F>::evals(r_hi, Some(eq_prefix)),
+            combined,
+            outputs,
+        }
+    }
+
+    #[tracing::instrument(skip_all, name = "InstructionLookupPhase2::round_poly")]
+    fn round_poly(&self, _previous_claim: F) -> UnivariatePoly<F> {
+        round_poly_from_factor_slices(&[&self.eq, &self.combined], 2)
+    }
+
+    #[tracing::instrument(skip_all, name = "InstructionLookupPhase2::bind")]
+    fn bind(&mut self, challenge: F) {
+        let mut scratch = Vec::new();
+        bind_dense_evals_reuse(&mut self.eq, &mut scratch, challenge);
+        bind_dense_evals_reuse(&mut self.combined, &mut scratch, challenge);
+        for output in &mut self.outputs {
+            bind_dense_evals_reuse(output, &mut scratch, challenge);
+        }
+    }
+
+    fn final_evals(&self) -> Result<Vec<Stage2NamedEval<F>>, Stage2KernelError> {
+        INSTRUCTION_LOOKUP_EVAL_NAMES
+            .iter()
+            .zip(&self.outputs)
+            .map(|(&(name, oracle), output)| {
+                output
+                    .first()
+                    .copied()
+                    .map(|value| named_eval(name, oracle, value))
+                    .ok_or(Stage2KernelError::InvalidProof {
+                        driver: Stage2Relation::InstructionLookupClaimReduction.symbol(),
+                        reason: "empty instruction lookup output",
+                    })
+            })
+            .collect()
+    }
+}
+
+fn combine_instruction_lookup_values<F: Field>(values: [F; 5], gamma_powers: [F; 4]) -> F {
+    values[0]
+        + gamma_powers[0] * values[1]
+        + gamma_powers[1] * values[2]
+        + gamma_powers[2] * values[3]
+        + gamma_powers[3] * values[4]
+}
+
 #[derive(Clone)]
 struct DenseInstanceState<F: Field> {
     factors: Vec<Vec<F>>,
     factor_scratch: Vec<Vec<F>>,
-    outputs: Vec<(&'static str, &'static str, Vec<F>)>,
     point: Vec<F>,
 }
 
 impl<F: Field> DenseInstanceState<F> {
-    fn new(factors: Vec<Vec<F>>, outputs: Vec<(&'static str, &'static str, Vec<F>)>) -> Self {
+    fn new(factors: Vec<Vec<F>>) -> Self {
         let factor_scratch = (0..factors.len()).map(|_| Vec::new()).collect();
         Self {
             factors,
             factor_scratch,
-            outputs,
             point: Vec::new(),
         }
     }
@@ -1846,18 +2269,6 @@ impl<F: Field> DenseInstanceState<F> {
         self.point.push(challenge);
     }
 
-    fn final_evals(
-        &self,
-        relation: Stage2Relation,
-    ) -> Result<Vec<Stage2NamedEval<F>>, Stage2KernelError> {
-        let values = dense_output_evals(&self.outputs, &self.point, relation)?;
-        self.outputs
-            .iter()
-            .zip(values)
-            .map(|((name, oracle, _), value)| Ok(named_eval(name, oracle, value)))
-            .collect()
-    }
-
     fn factor_eval(&self, index: usize, relation: Stage2Relation) -> Result<F, Stage2KernelError> {
         self.factors
             .get(index)
@@ -1870,12 +2281,40 @@ impl<F: Field> DenseInstanceState<F> {
     }
 }
 
+#[derive(Clone)]
+struct RamOutputState<'a, F: Field> {
+    dense: DenseInstanceState<F>,
+    final_ram: &'a [u64],
+    nonzero_final_ram: Vec<(usize, u64)>,
+}
+
+impl<F: Field> RamOutputState<'_, F> {
+    fn round_poly(&self, previous_claim: F) -> UnivariatePoly<F> {
+        self.dense.round_poly(previous_claim)
+    }
+
+    fn bind(&mut self, challenge: F) {
+        self.dense.bind(challenge);
+    }
+
+    fn final_evals(
+        &self,
+        _relation: Stage2Relation,
+    ) -> Result<Vec<Stage2NamedEval<F>>, Stage2KernelError> {
+        Ok(vec![named_eval(
+            "stage2.ram_output.eval.RamValFinal",
+            "RamValFinal",
+            ram_eval_reversed(self.final_ram, &self.nonzero_final_ram, &self.dense.point),
+        )])
+    }
+}
+
 #[tracing::instrument(skip_all, name = "Stage2::product_remainder_state")]
-fn product_remainder_state<F: Field>(
+fn product_remainder_state<'a, F: Field>(
     _claim: &Stage2SumcheckClaimPlan,
-    inputs: &Stage2ProverInputs<'_, F>,
+    inputs: &Stage2ProverInputs<'a, F>,
     store: &Stage2ValueStore<F>,
-) -> Result<DenseInstanceState<F>, Stage2KernelError> {
+) -> Result<ProductRemainderState<'a, F>, Stage2KernelError> {
     let cycles = inputs
         .product_virtual_cycles
         .ok_or(Stage2KernelError::MissingKernelInput {
@@ -1905,7 +2344,6 @@ fn product_remainder_state<F: Field>(
         .ok_or(Stage2KernelError::MissingValue {
             symbol: "stage2.product_virtual.uniskip.sumcheck",
         })?;
-    let eq = EqPolynomial::new(tau_low.to_vec()).evaluations();
     let lagrange_tau_r0 = lagrange_kernel_eval(
         PRODUCT_VIRTUAL_UNISKIP_DOMAIN_START,
         PRODUCT_VIRTUAL_UNISKIP_DOMAIN_SIZE,
@@ -1917,71 +2355,48 @@ fn product_remainder_state<F: Field>(
         PRODUCT_VIRTUAL_UNISKIP_DOMAIN_SIZE,
         r0,
     );
-    let rows = cycles
-        .par_iter()
-        .zip(eq.par_iter())
-        .map(|(cycle, &eq_value)| {
-            let left_instruction = F::from_u64(cycle.instruction_left_input);
-            let right_instruction = F::from_i128(cycle.instruction_right_input);
-            let op_flag_jump = F::from_bool(cycle.jump_flag);
-            let op_flag_write_lookup_output_to_rd =
-                F::from_bool(cycle.write_lookup_output_to_rd_flag);
-            let lookup_output = F::from_u64(cycle.should_branch_lookup_output);
-            let instruction_flag_branch = F::from_bool(cycle.should_branch_flag);
-            let next_is_noop = F::from_bool(!cycle.not_next_noop);
-            let op_flag_virtual_instruction = F::from_bool(cycle.virtual_instruction_flag);
-            ProductRemainderRow {
-                eq_scaled: eq_value * lagrange_tau_r0,
-                left: weights[0] * left_instruction
-                    + weights[1] * lookup_output
-                    + weights[2] * op_flag_jump,
-                right: weights[0] * right_instruction
-                    + weights[1] * instruction_flag_branch
-                    + weights[2] * F::from_bool(cycle.not_next_noop),
-                outputs: [
-                    left_instruction,
-                    right_instruction,
-                    op_flag_jump,
-                    op_flag_write_lookup_output_to_rd,
-                    lookup_output,
-                    instruction_flag_branch,
-                    next_is_noop,
-                    op_flag_virtual_instruction,
-                ],
-            }
-        })
-        .collect::<Vec<_>>();
-    let mut eq_scaled = Vec::with_capacity(cycles.len());
-    let mut left = Vec::with_capacity(cycles.len());
-    let mut right = Vec::with_capacity(cycles.len());
-    let mut outputs = product_remainder_output_buffers(cycles.len());
-    for row in rows {
-        eq_scaled.push(row.eq_scaled);
-        left.push(row.left);
-        right.push(row.right);
-        for (output, value) in outputs.iter_mut().zip(row.outputs) {
-            output.2.push(value);
-        }
-    }
-    Ok(DenseInstanceState::new(
-        vec![eq_scaled, left, right],
-        outputs,
-    ))
-}
-
-struct ProductRemainderRow<F: Field> {
-    eq_scaled: F,
-    left: F,
-    right: F,
-    outputs: [F; 8],
+    let mut left = vec![F::zero(); cycles.len()];
+    let mut right = vec![F::zero(); cycles.len()];
+    left.par_iter_mut()
+        .zip(right.par_iter_mut())
+        .zip(cycles.par_iter())
+        .for_each(|((left, right), cycle)| {
+            *left = weights[0].mul_u64(cycle.instruction_left_input)
+                + weights[1].mul_u64(cycle.should_branch_lookup_output)
+                + if cycle.jump_flag {
+                    weights[2]
+                } else {
+                    F::zero()
+                };
+            *right = weights[0].mul_i128(cycle.instruction_right_input)
+                + if cycle.should_branch_flag {
+                    weights[1]
+                } else {
+                    F::zero()
+                }
+                + if cycle.not_next_noop {
+                    weights[2]
+                } else {
+                    F::zero()
+                };
+        });
+    Ok(ProductRemainderState {
+        cycles,
+        left,
+        right,
+        left_scratch: Vec::new(),
+        right_scratch: Vec::new(),
+        split_eq: SplitEqState::new_low_to_high(tau_low, Some(lagrange_tau_r0)),
+        point: Vec::new(),
+    })
 }
 
 #[tracing::instrument(skip_all, name = "Stage2::instruction_lookup_state")]
-fn instruction_lookup_state<F: Field>(
+fn instruction_lookup_state<'a, F: Field>(
     _claim: &Stage2SumcheckClaimPlan,
-    inputs: &Stage2ProverInputs<'_, F>,
+    inputs: &Stage2ProverInputs<'a, F>,
     store: &Stage2ValueStore<F>,
-) -> Result<DenseInstanceState<F>, Stage2KernelError> {
+) -> Result<InstructionLookupState<'a, F>, Stage2KernelError> {
     let cycles = inputs
         .instruction_lookup_cycles
         .ok_or(Stage2KernelError::MissingKernelInput {
@@ -2007,45 +2422,19 @@ fn instruction_lookup_state<F: Field>(
     let gamma_sqr = gamma.square();
     let gamma_cub = gamma_sqr * gamma;
     let gamma_quart = gamma_sqr.square();
-    let eq = EqPolynomial::new(r_spartan.to_vec()).evaluations();
-    let mut combined = Vec::with_capacity(cycles.len());
-    let mut outputs = instruction_lookup_output_buffers(cycles.len());
-    let rows = cycles
-        .par_iter()
-        .map(|cycle| {
-            let lookup_output = F::from_u64(cycle.lookup_output);
-            let left_lookup = F::from_u64(cycle.left_lookup_operand);
-            let right_lookup = F::from_u128(cycle.right_lookup_operand);
-            let left_instruction = F::from_u64(cycle.left_instruction_input);
-            let right_instruction = F::from_i128(cycle.right_instruction_input);
-            InstructionLookupRow {
-                combined: lookup_output
-                    + gamma * left_lookup
-                    + gamma_sqr * right_lookup
-                    + gamma_cub * left_instruction
-                    + gamma_quart * right_instruction,
-                outputs: [
-                    lookup_output,
-                    left_lookup,
-                    right_lookup,
-                    left_instruction,
-                    right_instruction,
-                ],
-            }
-        })
-        .collect::<Vec<_>>();
-    for row in rows {
-        combined.push(row.combined);
-        for (output, value) in outputs.iter_mut().zip(row.outputs) {
-            output.2.push(value);
-        }
-    }
-    Ok(DenseInstanceState::new(vec![eq, combined], outputs))
-}
-
-struct InstructionLookupRow<F: Field> {
-    combined: F,
-    outputs: [F; 5],
+    Ok(InstructionLookupState {
+        cycles,
+        r_spartan: r_spartan.to_vec(),
+        gamma,
+        gamma_sqr,
+        gamma_cub,
+        gamma_quart,
+        phase: InstructionLookupPhase::Phase1(InstructionLookupPhase1::new(
+            cycles,
+            r_spartan,
+            [gamma, gamma_sqr, gamma_cub, gamma_quart],
+        )),
+    })
 }
 
 #[tracing::instrument(skip_all, name = "Stage2::ram_raf_state")]
@@ -2060,7 +2449,7 @@ fn ram_raf_state<F: Field>(
     })?;
     require_operand_count("stage2.ram_raf.num_rounds", ram.log_k, claim.num_rounds)?;
     let r_cycle = store.point("stage2.input.stage1.RamAddress")?;
-    let eq_cycle = EqPolynomial::new(r_cycle.to_vec()).evaluations();
+    let eq_cycle = EqPolynomial::<F>::evals(r_cycle, None);
     if ram.accesses.len() != eq_cycle.len() {
         return Err(Stage2KernelError::InvalidInputLength {
             input: "stage2.ram.accesses",
@@ -2075,21 +2464,22 @@ fn ram_raf_state<F: Field>(
             ra[address] += weight;
         }
     }
-    let unmap = (0..k)
-        .map(|index| F::from_u64(ram.start_address) + F::from_u64((8 * index) as u64))
-        .collect::<Vec<_>>();
-    Ok(DenseInstanceState::new(
-        vec![ra.clone(), unmap],
-        vec![("stage2.ram_raf.eval.RamRa", "RamRa", ra)],
-    ))
+    let mut next_address = F::from_u64(ram.start_address);
+    let address_step = F::from_u64(8);
+    let mut unmap = Vec::with_capacity(k);
+    for _ in 0..k {
+        unmap.push(next_address);
+        next_address += address_step;
+    }
+    Ok(DenseInstanceState::new(vec![ra, unmap]))
 }
 
 #[tracing::instrument(skip_all, name = "Stage2::ram_output_state")]
-fn ram_output_state<F: Field>(
+fn ram_output_state<'a, F: Field>(
     claim: &Stage2SumcheckClaimPlan,
-    inputs: &Stage2ProverInputs<'_, F>,
+    inputs: &Stage2ProverInputs<'a, F>,
     store: &Stage2ValueStore<F>,
-) -> Result<DenseInstanceState<F>, Stage2KernelError> {
+) -> Result<RamOutputState<'a, F>, Stage2KernelError> {
     let ram = inputs.ram.ok_or(Stage2KernelError::MissingKernelInput {
         kernel: "jolt_stage2_ram_output_check",
         input: "ram",
@@ -2104,28 +2494,26 @@ fn ram_output_state<F: Field>(
     let k = 1usize << ram.log_k;
     require_operand_count("stage2.ram.final_ram", k, ram.final_ram.len())?;
     let r_address = store.point("stage2.ram_output.r_address")?;
-    let eq = EqPolynomial::new(r_address.to_vec()).evaluations();
+    let eq = EqPolynomial::<F>::evals(r_address, None);
     let mut io_mask = vec![F::zero(); k];
     let mut diff = vec![F::zero(); k];
-    let mut val_final = Vec::with_capacity(k);
+    let mut nonzero_final_ram = Vec::new();
     for index in 0..k {
-        let final_value = F::from_u64(ram.final_ram[index]);
-        val_final.push(final_value);
+        let final_value = ram.final_ram[index];
+        if final_value != 0 {
+            nonzero_final_ram.push((index, final_value));
+        }
         if index >= layout.io_start && index < layout.io_end {
             io_mask[index] = F::one();
-            diff[index] = F::zero();
-        } else {
-            diff[index] = final_value;
+        } else if final_value != 0 {
+            diff[index] = F::from_u64(final_value);
         }
     }
-    Ok(DenseInstanceState::new(
-        vec![eq, io_mask, diff],
-        vec![(
-            "stage2.ram_output.eval.RamValFinal",
-            "RamValFinal",
-            val_final,
-        )],
-    ))
+    Ok(RamOutputState {
+        dense: DenseInstanceState::new(vec![eq, io_mask, diff]),
+        final_ram: ram.final_ram,
+        nonzero_final_ram,
+    })
 }
 
 #[derive(Clone, Debug)]
@@ -2153,13 +2541,14 @@ struct RamReadWriteState<F: Field> {
     gamma: F,
     log_t: usize,
     round: usize,
+    cycle_eq: SplitEqState<F>,
     cycle_entries: Vec<RamCycleEntry<F>>,
     address_entries: Vec<RamAddressEntry<F>>,
-    cycle_scratch: Vec<RamCycleEntry<F>>,
     address_scratch: Vec<RamAddressEntry<F>>,
     inc: Vec<F>,
-    eq: Vec<F>,
+    inc_scratch: Vec<F>,
     val_init: Vec<F>,
+    val_init_scratch: Vec<F>,
 }
 
 impl<F: Field> RamReadWriteState<F> {
@@ -2180,10 +2569,14 @@ impl<F: Field> RamReadWriteState<F> {
         require_operand_count("stage2.ram.accesses", t, ram.accesses.len())?;
         require_operand_count("stage2.ram.initial_ram", k, ram.initial_ram.len())?;
         let gamma = store.scalar("stage2.ram_read_write.gamma.scalar")?;
-        let mut cycle_entries = Vec::new();
+        let mut cycle_entries = Vec::with_capacity(ram.accesses.len());
         let mut inc = Vec::with_capacity(t);
         for (row, access) in ram.accesses.iter().enumerate() {
-            inc.push(F::from_u64(access.write_value) - F::from_u64(access.read_value));
+            inc.push(if access.write_value == access.read_value {
+                F::zero()
+            } else {
+                F::from_u64(access.write_value) - F::from_u64(access.read_value)
+            });
             if let Some(col) = access.remapped_address {
                 cycle_entries.push(RamCycleEntry {
                     row,
@@ -2195,22 +2588,28 @@ impl<F: Field> RamReadWriteState<F> {
                 });
             }
         }
-        cycle_entries.sort_by_key(|entry| (entry.row, entry.col));
         Ok(Self {
             gamma,
             log_t,
             round: 0,
+            cycle_eq: SplitEqState::new_low_to_high(r_cycle, None),
             cycle_entries,
             address_entries: Vec::new(),
-            cycle_scratch: Vec::new(),
             address_scratch: Vec::new(),
             inc,
-            eq: EqPolynomial::new(r_cycle.to_vec()).evaluations(),
+            inc_scratch: Vec::new(),
             val_init: ram
                 .initial_ram
                 .iter()
-                .map(|&value| F::from_u64(value))
+                .map(|&value| {
+                    if value == 0 {
+                        F::zero()
+                    } else {
+                        F::from_u64(value)
+                    }
+                })
                 .collect(),
+            val_init_scratch: Vec::new(),
         })
     }
 
@@ -2220,7 +2619,7 @@ impl<F: Field> RamReadWriteState<F> {
         _previous_claim: F,
     ) -> Result<UnivariatePoly<F>, Stage2KernelError> {
         if self.round < self.log_t {
-            Ok(self.cycle_round_poly())
+            Ok(self.cycle_round_poly(_previous_claim))
         } else {
             Ok(self.address_round_poly())
         }
@@ -2253,61 +2652,32 @@ impl<F: Field> RamReadWriteState<F> {
     }
 
     #[tracing::instrument(skip_all, name = "RamReadWriteState::cycle_round_poly")]
-    fn cycle_round_poly(&self) -> UnivariatePoly<F> {
-        let ranges = grouped_cycle_pair_ranges(&self.cycle_entries);
-        let xs = [F::zero(), F::one(), F::from_u64(2), F::from_u64(3)];
-        let accumulators = if ranges.len() >= DENSE_BIND_PAR_THRESHOLD {
-            ranges
-                .par_iter()
-                .fold(
-                    || [F::Accumulator::default(); 4],
-                    |mut local, &(start, end)| {
-                        accumulate_cycle_pair_range(
-                            &mut local,
-                            &self.cycle_entries[start..end],
-                            &self.inc,
-                            &self.eq,
-                            self.gamma,
-                            xs,
-                        );
-                        local
-                    },
-                )
-                .reduce(
-                    || [F::Accumulator::default(); 4],
-                    |mut left, right| {
-                        for index in 0..left.len() {
-                            left[index].merge(right[index]);
-                        }
-                        left
-                    },
-                )
+    fn cycle_round_poly(&self, previous_claim: F) -> UnivariatePoly<F> {
+        let e_in = self.cycle_eq.e_in();
+        let e_out = self.cycle_eq.e_out();
+        let (q_constant, q_quadratic) = if e_in.len() > 1 {
+            cycle_low_round_coefficients(&self.cycle_entries, &self.inc, e_in, e_out, self.gamma)
         } else {
-            ranges.iter().fold(
-                [F::Accumulator::default(); 4],
-                |mut local, &(start, end)| {
-                    accumulate_cycle_pair_range(
-                        &mut local,
-                        &self.cycle_entries[start..end],
-                        &self.inc,
-                        &self.eq,
-                        self.gamma,
-                        xs,
-                    );
-                    local
-                },
+            cycle_high_round_coefficients(
+                &self.cycle_entries,
+                &self.inc,
+                e_in[0],
+                e_out,
+                self.gamma,
             )
         };
-        let evals = accumulators
-            .into_iter()
-            .map(FieldAccumulator::reduce)
-            .collect::<Vec<_>>();
-        UnivariatePoly::from_evals(&evals)
+        gruen_cubic_poly(
+            self.cycle_eq.current_target(),
+            q_constant,
+            q_quadratic,
+            previous_claim,
+        )
     }
 
     #[tracing::instrument(skip_all, name = "RamReadWriteState::address_round_poly")]
     fn address_round_poly(&self) -> UnivariatePoly<F> {
         let mut evals = vec![F::zero(); 4];
+        let cycle_eq = self.cycle_eq_eval();
         let mut cursor = 0;
         while cursor < self.address_entries.len() {
             let pair = self.address_entries[cursor].col / 2;
@@ -2331,7 +2701,7 @@ impl<F: Field> RamReadWriteState<F> {
                     odd_checkpoint,
                     RamEvalWeights {
                         inc: self.inc[0],
-                        eq: self.eq[0],
+                        eq: cycle_eq,
                         gamma: self.gamma,
                         x: F::from_u64(x as u64),
                     },
@@ -2343,29 +2713,11 @@ impl<F: Field> RamReadWriteState<F> {
 
     #[tracing::instrument(skip_all, name = "RamReadWriteState::bind_cycle")]
     fn bind_cycle(&mut self, challenge: F) {
-        let mut bound = std::mem::take(&mut self.cycle_scratch);
-        bound.clear();
-        bound.reserve(self.cycle_entries.len());
-        let mut cursor = 0;
-        while cursor < self.cycle_entries.len() {
-            let pair = self.cycle_entries[cursor].row / 2;
-            let start = cursor;
-            while cursor < self.cycle_entries.len() && self.cycle_entries[cursor].row / 2 == pair {
-                cursor += 1;
-            }
-            let entries = &self.cycle_entries[start..cursor];
-            let odd_start = entries.partition_point(|entry| entry.row % 2 == 0);
-            bind_cycle_rows(
-                &entries[..odd_start],
-                &entries[odd_start..],
-                challenge,
-                &mut bound,
-            );
-        }
-        std::mem::swap(&mut self.cycle_entries, &mut bound);
-        self.cycle_scratch = bound;
-        bind_low_to_high(&mut self.inc, challenge);
-        bind_low_to_high(&mut self.eq, challenge);
+        self.cycle_entries = bind_cycle_entries_parallel(&self.cycle_entries, challenge);
+        let inc = &mut self.inc;
+        let inc_scratch = &mut self.inc_scratch;
+        bind_dense_evals_reuse(inc, inc_scratch, challenge);
+        self.cycle_eq.bind(challenge);
     }
 
     #[tracing::instrument(skip_all, name = "RamReadWriteState::bind_address")]
@@ -2395,7 +2747,7 @@ impl<F: Field> RamReadWriteState<F> {
         }
         std::mem::swap(&mut self.address_entries, &mut bound);
         self.address_scratch = bound;
-        bind_low_to_high(&mut self.val_init, challenge);
+        bind_dense_evals_reuse(&mut self.val_init, &mut self.val_init_scratch, challenge);
     }
 
     fn ra_eval(&self) -> Result<F, Stage2KernelError> {
@@ -2417,29 +2769,116 @@ impl<F: Field> RamReadWriteState<F> {
     fn inc_eval(&self) -> Result<F, Stage2KernelError> {
         Ok(self.inc[0])
     }
-}
 
-fn grouped_cycle_pair_ranges<F: Field>(entries: &[RamCycleEntry<F>]) -> Vec<(usize, usize)> {
-    let mut ranges = Vec::new();
-    let mut cursor = 0;
-    while cursor < entries.len() {
-        let pair = entries[cursor].row / 2;
-        let start = cursor;
-        while cursor < entries.len() && entries[cursor].row / 2 == pair {
-            cursor += 1;
-        }
-        ranges.push((start, cursor));
+    fn cycle_eq_eval(&self) -> F {
+        self.cycle_eq.eval()
     }
-    ranges
 }
 
-fn accumulate_cycle_pair_range<F: Field>(
-    accumulators: &mut [F::Accumulator; 4],
+fn cycle_low_round_coefficients<F: Field>(
     entries: &[RamCycleEntry<F>],
     inc: &[F],
-    eq: &[F],
+    e_in: &[F],
+    e_out: &[F],
     gamma: F,
-    xs: [F; 4],
+) -> (F, F) {
+    let in_pairs = e_in.len() / 2;
+    let accumulators = if entries.len() >= DENSE_BIND_PAR_THRESHOLD {
+        entries
+            .par_chunk_by(|left, right| (left.row / 2) / in_pairs == (right.row / 2) / in_pairs)
+            .map(|entries| {
+                let mut local = [F::Accumulator::default(); 2];
+                accumulate_cycle_outer_chunk(
+                    &mut local, entries, inc, e_in, e_out, in_pairs, gamma,
+                );
+                local
+            })
+            .reduce(
+                || [F::Accumulator::default(); 2],
+                |mut left, right| {
+                    for index in 0..left.len() {
+                        left[index].merge(right[index]);
+                    }
+                    left
+                },
+            )
+    } else {
+        entries
+            .chunk_by(|left, right| (left.row / 2) / in_pairs == (right.row / 2) / in_pairs)
+            .fold([F::Accumulator::default(); 2], |mut local, entries| {
+                accumulate_cycle_outer_chunk(
+                    &mut local, entries, inc, e_in, e_out, in_pairs, gamma,
+                );
+                local
+            })
+    };
+    (accumulators[0].reduce(), accumulators[1].reduce())
+}
+
+fn cycle_high_round_coefficients<F: Field>(
+    entries: &[RamCycleEntry<F>],
+    inc: &[F],
+    in_weight: F,
+    e_out: &[F],
+    gamma: F,
+) -> (F, F) {
+    let accumulators = if entries.len() >= DENSE_BIND_PAR_THRESHOLD {
+        entries
+            .par_chunk_by(|left, right| left.row / 2 == right.row / 2)
+            .map(|entries| {
+                let mut local = [F::Accumulator::default(); 2];
+                let pair = entries[0].row / 2;
+                let weight = in_weight * (e_out[2 * pair] + e_out[2 * pair + 1]);
+                accumulate_cycle_row_pair(&mut local, entries, inc, weight, gamma);
+                local
+            })
+            .reduce(
+                || [F::Accumulator::default(); 2],
+                |mut left, right| {
+                    for index in 0..left.len() {
+                        left[index].merge(right[index]);
+                    }
+                    left
+                },
+            )
+    } else {
+        entries
+            .chunk_by(|left, right| left.row / 2 == right.row / 2)
+            .fold([F::Accumulator::default(); 2], |mut local, entries| {
+                let pair = entries[0].row / 2;
+                let weight = in_weight * (e_out[2 * pair] + e_out[2 * pair + 1]);
+                accumulate_cycle_row_pair(&mut local, entries, inc, weight, gamma);
+                local
+            })
+    };
+    (accumulators[0].reduce(), accumulators[1].reduce())
+}
+
+fn accumulate_cycle_outer_chunk<F: Field>(
+    accumulators: &mut [F::Accumulator; 2],
+    entries: &[RamCycleEntry<F>],
+    inc: &[F],
+    e_in: &[F],
+    e_out: &[F],
+    in_pairs: usize,
+    gamma: F,
+) {
+    let x_out = (entries[0].row / 2) / in_pairs;
+    let out_weight = e_out[x_out];
+    for entries in entries.chunk_by(|left, right| left.row / 2 == right.row / 2) {
+        let pair = entries[0].row / 2;
+        let x_in = pair % in_pairs;
+        let weight = out_weight * (e_in[2 * x_in] + e_in[2 * x_in + 1]);
+        accumulate_cycle_row_pair(accumulators, entries, inc, weight, gamma);
+    }
+}
+
+fn accumulate_cycle_row_pair<F: Field>(
+    accumulators: &mut [F::Accumulator; 2],
+    entries: &[RamCycleEntry<F>],
+    inc: &[F],
+    weight: F,
+    gamma: F,
 ) {
     let pair = entries[0].row / 2;
     let odd_start = entries.partition_point(|entry| entry.row % 2 == 0);
@@ -2447,59 +2886,73 @@ fn accumulate_cycle_pair_range<F: Field>(
     let odd = &entries[odd_start..];
     let row = pair * 2;
     let inc_pair = [inc[row], inc[row + 1]];
-    let eq_pair = [eq[row], eq[row + 1]];
-    for (x, accumulator) in xs.into_iter().zip(accumulators) {
-        accumulator.acc_add(cycle_pair_eval(even, odd, inc_pair, eq_pair, gamma, x));
-    }
+    accumulate_cycle_pair_body(accumulators, even, odd, inc_pair, weight, gamma);
 }
 
-fn cycle_pair_eval<F: Field>(
+fn accumulate_cycle_pair_body<F: Field>(
+    accumulators: &mut [F::Accumulator; 2],
     even: &[RamCycleEntry<F>],
     odd: &[RamCycleEntry<F>],
     inc_pair: [F; 2],
-    eq_pair: [F; 2],
+    weight: F,
     gamma: F,
-    x: F,
-) -> F {
-    let inc = line(inc_pair[0], inc_pair[1], x);
-    let eq = line(eq_pair[0], eq_pair[1], x);
-    let mut total = F::zero();
+) {
     let mut i = 0;
     let mut j = 0;
     while i < even.len() && j < odd.len() {
         match even[i].col.cmp(&odd[j].col) {
             Ordering::Equal => {
-                total += cycle_entry_eval(Some(&even[i]), Some(&odd[j]), inc, eq, gamma, x);
+                accumulate_cycle_entry_quadratic(
+                    accumulators,
+                    Some(&even[i]),
+                    Some(&odd[j]),
+                    inc_pair,
+                    weight,
+                    gamma,
+                );
                 i += 1;
                 j += 1;
             }
             Ordering::Less => {
-                total += cycle_entry_eval(Some(&even[i]), None, inc, eq, gamma, x);
+                accumulate_cycle_entry_quadratic(
+                    accumulators,
+                    Some(&even[i]),
+                    None,
+                    inc_pair,
+                    weight,
+                    gamma,
+                );
                 i += 1;
             }
             Ordering::Greater => {
-                total += cycle_entry_eval(None, Some(&odd[j]), inc, eq, gamma, x);
+                accumulate_cycle_entry_quadratic(
+                    accumulators,
+                    None,
+                    Some(&odd[j]),
+                    inc_pair,
+                    weight,
+                    gamma,
+                );
                 j += 1;
             }
         }
     }
     for entry in &even[i..] {
-        total += cycle_entry_eval(Some(entry), None, inc, eq, gamma, x);
+        accumulate_cycle_entry_quadratic(accumulators, Some(entry), None, inc_pair, weight, gamma);
     }
     for entry in &odd[j..] {
-        total += cycle_entry_eval(None, Some(entry), inc, eq, gamma, x);
+        accumulate_cycle_entry_quadratic(accumulators, None, Some(entry), inc_pair, weight, gamma);
     }
-    total
 }
 
-fn cycle_entry_eval<F: Field>(
+fn accumulate_cycle_entry_quadratic<F: Field>(
+    accumulators: &mut [F::Accumulator; 2],
     even: Option<&RamCycleEntry<F>>,
     odd: Option<&RamCycleEntry<F>>,
-    inc: F,
-    eq: F,
+    inc_pair: [F; 2],
+    weight: F,
     gamma: F,
-    x: F,
-) -> F {
+) {
     let (ra0, ra1, val0, val1) = match (even, odd) {
         (Some(even), Some(odd)) => (even.ra_coeff, odd.ra_coeff, even.val_coeff, odd.val_coeff),
         (Some(even), None) => (
@@ -2516,9 +2969,12 @@ fn cycle_entry_eval<F: Field>(
         ),
         (None, None) => unreachable!(),
     };
-    let ra = line(ra0, ra1, x);
-    let val = line(val0, val1, x);
-    eq * ra * (val + gamma * (val + inc))
+    let one_plus_gamma = F::one() + gamma;
+    let inc_delta = inc_pair[1] - inc_pair[0];
+    let body0 = one_plus_gamma * val0 + gamma * inc_pair[0];
+    let body_delta = one_plus_gamma * (val1 - val0) + gamma * inc_delta;
+    accumulators[0].fmadd(weight * ra0, body0);
+    accumulators[1].fmadd(weight * (ra1 - ra0), body_delta);
 }
 
 fn address_pair_eval<F: Field>(
@@ -2607,37 +3063,106 @@ fn address_entry_eval<F: Field>(
     weights.eq * ra * (val + weights.gamma * (val + weights.inc))
 }
 
+fn bind_cycle_entries_parallel<F: Field>(
+    entries: &[RamCycleEntry<F>],
+    challenge: F,
+) -> Vec<RamCycleEntry<F>> {
+    let row_lengths = entries
+        .par_chunk_by(|left, right| left.row / 2 == right.row / 2)
+        .map(|entries| {
+            let odd_start = entries.partition_point(|entry| entry.row % 2 == 0);
+            let bound_len = bind_cycle_rows_len(&entries[..odd_start], &entries[odd_start..]);
+            (entries.len(), bound_len)
+        })
+        .collect::<Vec<_>>();
+    let bound_len = row_lengths.iter().map(|(_, bound_len)| *bound_len).sum();
+    let mut bound = Vec::with_capacity(bound_len);
+    let mut output_remainder = bound.spare_capacity_mut();
+    let mut input_remainder = entries;
+    let mut input_slices = Vec::with_capacity(row_lengths.len());
+    let mut output_slices = Vec::with_capacity(row_lengths.len());
+    for (input_len, output_len) in row_lengths {
+        let (output, rest_output) = output_remainder.split_at_mut(output_len);
+        output_remainder = rest_output;
+        output_slices.push(output);
+        let (input, rest_input) = input_remainder.split_at(input_len);
+        input_remainder = rest_input;
+        input_slices.push(input);
+    }
+    input_slices
+        .par_iter()
+        .zip(output_slices.into_par_iter())
+        .for_each(|(input, output)| {
+            let odd_start = input.partition_point(|entry| entry.row % 2 == 0);
+            let written =
+                bind_cycle_rows(&input[..odd_start], &input[odd_start..], challenge, output);
+            debug_assert_eq!(written, output.len());
+        });
+    // SAFETY: every output slice is disjoint, and `bind_cycle_rows` writes exactly the
+    // precomputed number of initialized entries into each slice before `set_len`.
+    unsafe {
+        bound.set_len(bound_len);
+    }
+    bound
+}
+
+fn bind_cycle_rows_len<F: Field>(even: &[RamCycleEntry<F>], odd: &[RamCycleEntry<F>]) -> usize {
+    let mut i = 0;
+    let mut j = 0;
+    let mut len = 0;
+    while i < even.len() && j < odd.len() {
+        len += 1;
+        match even[i].col.cmp(&odd[j].col) {
+            Ordering::Equal => {
+                i += 1;
+                j += 1;
+            }
+            Ordering::Less => i += 1,
+            Ordering::Greater => j += 1,
+        }
+    }
+    len + even.len() - i + odd.len() - j
+}
+
 fn bind_cycle_rows<F: Field>(
     even: &[RamCycleEntry<F>],
     odd: &[RamCycleEntry<F>],
     challenge: F,
-    out: &mut Vec<RamCycleEntry<F>>,
-) {
+    out: &mut [MaybeUninit<RamCycleEntry<F>>],
+) -> usize {
     let mut i = 0;
     let mut j = 0;
+    let mut written = 0;
     while i < even.len() && j < odd.len() {
         match even[i].col.cmp(&odd[j].col) {
             Ordering::Equal => {
-                out.push(bind_cycle_entry(Some(&even[i]), Some(&odd[j]), challenge));
+                let _ =
+                    out[written].write(bind_cycle_entry(Some(&even[i]), Some(&odd[j]), challenge));
+                written += 1;
                 i += 1;
                 j += 1;
             }
             Ordering::Less => {
-                out.push(bind_cycle_entry(Some(&even[i]), None, challenge));
+                let _ = out[written].write(bind_cycle_entry(Some(&even[i]), None, challenge));
+                written += 1;
                 i += 1;
             }
             Ordering::Greater => {
-                out.push(bind_cycle_entry(None, Some(&odd[j]), challenge));
+                let _ = out[written].write(bind_cycle_entry(None, Some(&odd[j]), challenge));
+                written += 1;
                 j += 1;
             }
         }
     }
     for entry in &even[i..] {
-        out.push(bind_cycle_entry(Some(entry), None, challenge));
+        let _ = out[written].write(bind_cycle_entry(Some(entry), None, challenge));
+        written += 1;
     }
     for entry in &odd[j..] {
-        out.push(bind_cycle_entry(None, Some(entry), challenge));
+        let _ = out[written].write(bind_cycle_entry(None, Some(entry), challenge));
+        written += 1;
     }
+    written
 }
 
 fn bind_cycle_entry<F: Field>(
@@ -3006,15 +3531,62 @@ fn unmap_eval<F: Field>(log_k: usize, start_address: u64, point: &[F]) -> F {
 }
 
 fn range_mask_eval<F: Field>(start: usize, end: usize, point: &[F]) -> F {
-    (start..end)
-        .map(|index| eq_eval_at_index(index, point))
-        .sum()
+    eq_prefix_sum(end, point) - eq_prefix_sum(start, point)
 }
 
 fn sparse_final_ram_eval<F: Field>(values: &[u64], start: usize, end: usize, point: &[F]) -> F {
-    (start..end)
-        .map(|index| F::from_u64(values[index]) * eq_eval_at_index(index, point))
-        .sum()
+    let mut total = F::zero();
+    for (offset, &value) in values[start..end].iter().enumerate() {
+        if value != 0 {
+            total += F::from_u64(value) * eq_eval_at_index(start + offset, point);
+        }
+    }
+    total
+}
+
+fn ram_eval_reversed<F: Field>(values: &[u64], nonzero_values: &[(usize, u64)], point: &[F]) -> F {
+    let opening_point = reverse_slice(point);
+    if nonzero_values.len() * opening_point.len() <= values.len() {
+        nonzero_values
+            .iter()
+            .map(|&(index, value)| F::from_u64(value) * eq_eval_at_index(index, &opening_point))
+            .sum()
+    } else {
+        let eq = EqPolynomial::<F>::evals(&opening_point, None);
+        values
+            .par_iter()
+            .zip(eq.par_iter())
+            .fold(F::Accumulator::default, |mut total, (&value, &weight)| {
+                if value != 0 {
+                    total.fmadd(F::from_u64(value), weight);
+                }
+                total
+            })
+            .reduce(F::Accumulator::default, |mut left, right| {
+                left.merge(right);
+                left
+            })
+            .reduce()
+    }
+}
+
+fn eq_prefix_sum<F: Field>(end: usize, point: &[F]) -> F {
+    let domain_len = 1usize << point.len();
+    if end >= domain_len {
+        return F::one();
+    }
+    let mut sum = F::zero();
+    let mut prefix = F::one();
+    for (bit, &r) in point.iter().enumerate() {
+        let mask = 1usize << (point.len() - 1 - bit);
+        if end & mask == 0 {
+            prefix *= F::one() - r;
+        } else {
+            sum += prefix * (F::one() - r);
+            prefix *= r;
+        }
+    }
+    sum
 }
 
 fn eq_eval_at_index<F: Field>(index: usize, point: &[F]) -> F {
@@ -3028,76 +3600,154 @@ fn eq_eval_at_index<F: Field>(index: usize, point: &[F]) -> F {
     })
 }
 
-fn product_remainder_output_buffers<F: Field>(
-    capacity: usize,
-) -> Vec<(&'static str, &'static str, Vec<F>)> {
-    [
-        (
-            "stage2.product_virtual.remainder.eval.LeftInstructionInput",
-            "LeftInstructionInput",
-        ),
-        (
-            "stage2.product_virtual.remainder.eval.RightInstructionInput",
-            "RightInstructionInput",
-        ),
-        (
-            "stage2.product_virtual.remainder.eval.OpFlagJump",
-            "OpFlagJump",
-        ),
-        (
-            "stage2.product_virtual.remainder.eval.OpFlagWriteLookupOutputToRD",
-            "OpFlagWriteLookupOutputToRD",
-        ),
-        (
-            "stage2.product_virtual.remainder.eval.LookupOutput",
-            "LookupOutput",
-        ),
-        (
-            "stage2.product_virtual.remainder.eval.InstructionFlagBranch",
-            "InstructionFlagBranch",
-        ),
-        (
-            "stage2.product_virtual.remainder.eval.NextIsNoop",
-            "NextIsNoop",
-        ),
-        (
-            "stage2.product_virtual.remainder.eval.OpFlagVirtualInstruction",
-            "OpFlagVirtualInstruction",
-        ),
-    ]
-    .into_iter()
-    .map(|(name, oracle)| (name, oracle, Vec::with_capacity(capacity)))
-    .collect()
+const PRODUCT_REMAINDER_EVAL_NAMES: [(&str, &str); 8] = [
+    (
+        "stage2.product_virtual.remainder.eval.LeftInstructionInput",
+        "LeftInstructionInput",
+    ),
+    (
+        "stage2.product_virtual.remainder.eval.RightInstructionInput",
+        "RightInstructionInput",
+    ),
+    (
+        "stage2.product_virtual.remainder.eval.OpFlagJump",
+        "OpFlagJump",
+    ),
+    (
+        "stage2.product_virtual.remainder.eval.OpFlagWriteLookupOutputToRD",
+        "OpFlagWriteLookupOutputToRD",
+    ),
+    (
+        "stage2.product_virtual.remainder.eval.LookupOutput",
+        "LookupOutput",
+    ),
+    (
+        "stage2.product_virtual.remainder.eval.InstructionFlagBranch",
+        "InstructionFlagBranch",
+    ),
+    (
+        "stage2.product_virtual.remainder.eval.NextIsNoop",
+        "NextIsNoop",
+    ),
+    (
+        "stage2.product_virtual.remainder.eval.OpFlagVirtualInstruction",
+        "OpFlagVirtualInstruction",
+    ),
+];
+
+const INSTRUCTION_LOOKUP_EVAL_NAMES: [(&str, &str); 5] = [
+    (
+        "stage2.instruction_lookup.claim_reduction.eval.LookupOutput",
+        "LookupOutput",
+    ),
+    (
+        "stage2.instruction_lookup.claim_reduction.eval.LeftLookupOperand",
+        "LeftLookupOperand",
+    ),
+    (
+        "stage2.instruction_lookup.claim_reduction.eval.RightLookupOperand",
+        "RightLookupOperand",
+    ),
+    (
+        "stage2.instruction_lookup.claim_reduction.eval.LeftInstructionInput",
+        "LeftInstructionInput",
+    ),
+    (
+        "stage2.instruction_lookup.claim_reduction.eval.RightInstructionInput",
+        "RightInstructionInput",
+    ),
+];
+
+fn product_remainder_final_evals<F: Field>(
+    cycles: &[Stage2ProductVirtualCycle],
+    point: &[F],
+    relation: Stage2Relation,
+) -> Result<Vec<Stage2NamedEval<F>>, Stage2KernelError> {
+    let values = product_remainder_output_evals(cycles, point, relation)?;
+    Ok(PRODUCT_REMAINDER_EVAL_NAMES
+        .iter()
+        .zip(values)
+        .map(|(&(name, oracle), value)| named_eval(name, oracle, value))
+        .collect())
 }
 
-fn instruction_lookup_output_buffers<F: Field>(
-    capacity: usize,
-) -> Vec<(&'static str, &'static str, Vec<F>)> {
-    [
-        (
-            "stage2.instruction_lookup.claim_reduction.eval.LookupOutput",
-            "LookupOutput",
-        ),
-        (
-            "stage2.instruction_lookup.claim_reduction.eval.LeftLookupOperand",
-            "LeftLookupOperand",
-        ),
-        (
-            "stage2.instruction_lookup.claim_reduction.eval.RightLookupOperand",
-            "RightLookupOperand",
-        ),
-        (
-            "stage2.instruction_lookup.claim_reduction.eval.LeftInstructionInput",
-            "LeftInstructionInput",
-        ),
-        (
-            "stage2.instruction_lookup.claim_reduction.eval.RightInstructionInput",
-            "RightInstructionInput",
-        ),
-    ]
-    .into_iter()
-    .map(|(name, oracle)| (name, oracle, Vec::with_capacity(capacity)))
-    .collect()
+fn product_remainder_output_evals<F: Field>(
+    cycles: &[Stage2ProductVirtualCycle],
+    point: &[F],
+    relation: Stage2Relation,
+) -> Result<[F; 8], Stage2KernelError> {
+    let expected =
+        1usize
+            .checked_shl(point.len() as u32)
+            .ok_or(Stage2KernelError::InvalidInputLength {
+                input: "stage2.product_remainder_output.point",
+                expected: usize::BITS as usize,
+                actual: point.len(),
+            })?;
+    if cycles.len() != expected {
+        return Err(Stage2KernelError::InvalidInputLength {
+            input: relation.symbol(),
+            expected,
+            actual: cycles.len(),
+        });
+    }
+    let opening_point = reverse_slice(point);
+    let (r_hi, r_lo) = opening_point.split_at(opening_point.len() / 2);
+    let (eq_out, eq_in) = rayon::join(
+        || EqPolynomial::<F>::evals(r_hi, None),
+        || EqPolynomial::<F>::evals(r_lo, None),
+    );
+    let accumulators = (0..eq_out.len())
+        .into_par_iter()
+        .map(|x_out| {
+            let start = x_out * eq_in.len();
+            let mut inner = [F::Accumulator::default(); 8];
+            for (x_in, &weight) in eq_in.iter().enumerate() {
+                accumulate_product_remainder_outputs(&mut inner, &cycles[start + x_in], weight);
+            }
+            let mut outer = [F::Accumulator::default(); 8];
+            for (outer, inner) in outer.iter_mut().zip(inner) {
+                outer.fmadd(inner.reduce(), eq_out[x_out]);
+            }
+            outer
+        })
+        .reduce(
+            || [F::Accumulator::default(); 8],
+            |mut left, right| {
+                for (left, right) in left.iter_mut().zip(right) {
+                    left.merge(right);
+                }
+                left
+            },
+        );
+    Ok(accumulators.map(FieldAccumulator::reduce))
+}
+
+fn accumulate_product_remainder_outputs<F: Field>(
+    accumulators: &mut [F::Accumulator; 8],
+    cycle: &Stage2ProductVirtualCycle,
+    weight: F,
+) {
+    accumulators[0].fmadd_u64(weight, cycle.instruction_left_input);
+    accumulators[1].fmadd(weight, F::from_i128(cycle.instruction_right_input));
+    accumulators[2].fmadd_bool(weight, cycle.jump_flag);
+    accumulators[3].fmadd_bool(weight, cycle.write_lookup_output_to_rd_flag);
+    accumulators[4].fmadd_u64(weight, cycle.should_branch_lookup_output);
+    accumulators[5].fmadd_bool(weight, cycle.should_branch_flag);
+    accumulators[6].fmadd_bool(weight, !cycle.not_next_noop);
+    accumulators[7].fmadd_bool(weight, cycle.virtual_instruction_flag);
+}
+
+fn accumulate_instruction_lookup_outputs<F: Field>(
+    accumulators: &mut [F::Accumulator; 5],
+    cycle: &Stage2InstructionLookupCycle,
+    weight: F,
+) {
+    accumulators[0].fmadd_u64(weight, cycle.lookup_output);
+    accumulators[1].fmadd_u64(weight, cycle.left_lookup_operand);
+    accumulators[2].fmadd(weight, F::from_u128(cycle.right_lookup_operand));
+    accumulators[3].fmadd_u64(weight, cycle.left_instruction_input);
+    accumulators[4].fmadd(weight, F::from_i128(cycle.right_instruction_input));
 }
 
 fn named_eval<F: Field>(name: &'static str, oracle: &'static str, value: F) -> Stage2NamedEval<F> {
@@ -3139,16 +3789,26 @@ fn combine_univariate_polys<F: Field>(
     polynomials: &[UnivariatePoly<F>],
     coefficients: &[F],
 ) -> UnivariatePoly<F> {
-    polynomials.iter().zip(coefficients).fold(
-        UnivariatePoly::zero(),
-        |mut combined, (poly, &coefficient)| {
-            combined += &(poly * coefficient);
-            combined
-        },
-    )
+    let max_len = polynomials
+        .iter()
+        .map(|poly| poly.coefficients().len())
+        .max()
+        .unwrap_or(0);
+    let mut combined = vec![F::zero(); max_len];
+    for (poly, &coefficient) in polynomials.iter().zip(coefficients) {
+        for (combined, &term) in combined.iter_mut().zip(poly.coefficients()) {
+            *combined += term * coefficient;
+        }
+    }
+    UnivariatePoly::new(combined)
 }
 
 fn round_poly_from_factors<F: Field>(factors: &[Vec<F>], degree: usize) -> UnivariatePoly<F> {
+    let factor_slices = factors.iter().map(Vec::as_slice).collect::<Vec<&[F]>>();
+    round_poly_from_factor_slices(&factor_slices, degree)
+}
+
+fn round_poly_from_factor_slices<F: Field>(factors: &[&[F]], degree: usize) -> UnivariatePoly<F> {
     if factors.is_empty() {
         return UnivariatePoly::zero();
     }
@@ -3184,7 +3844,7 @@ fn round_poly_from_factors<F: Field>(factors: &[Vec<F>], degree: usize) -> Univa
     )
 }
 
-fn dense_product_coefficients<F: Field>(factors: &[Vec<F>], row: usize) -> [F::Accumulator; 4] {
+fn dense_product_coefficients<F: Field>(factors: &[&[F]], row: usize) -> [F::Accumulator; 4] {
     if factors.len() == 2 {
         let left0 = factors[0][2 * row];
         let left_delta = factors[0][2 * row + 1] - left0;
@@ -3219,15 +3879,13 @@ fn dense_product_coefficients<F: Field>(factors: &[Vec<F>], row: usize) -> [F::A
 
     let mut coefficients = [F::zero(); 4];
     coefficients[0] = F::one();
-    let mut degree = 0;
-    for factor in factors {
+    for (degree, factor) in factors.iter().enumerate() {
         let low = factor[2 * row];
         let delta = factor[2 * row + 1] - low;
         for index in (0..=degree).rev() {
             coefficients[index + 1] += coefficients[index] * delta;
             coefficients[index] *= low;
         }
-        degree += 1;
     }
     let mut accumulators = [F::Accumulator::default(); 4];
     for (accumulator, coefficient) in accumulators.iter_mut().zip(coefficients) {
@@ -3258,101 +3916,6 @@ fn accumulate_cubic_product_coefficients<F: Field>(
     coefficients[2].fmadd(first_delta, second0_third_delta);
     coefficients[2].fmadd(first0, second_delta_third_delta);
     coefficients[3].fmadd(first_delta, second_delta_third_delta);
-}
-
-#[tracing::instrument(skip_all, name = "Stage2DenseState::output_evals")]
-fn dense_output_evals<F: Field>(
-    outputs: &[(&'static str, &'static str, Vec<F>)],
-    point: &[F],
-    relation: Stage2Relation,
-) -> Result<Vec<F>, Stage2KernelError> {
-    let expected =
-        1usize
-            .checked_shl(point.len() as u32)
-            .ok_or(Stage2KernelError::InvalidInputLength {
-                input: "stage2.dense_output.point",
-                expected: usize::BITS as usize,
-                actual: point.len(),
-            })?;
-    for (_, _, values) in outputs {
-        if values.len() != expected {
-            return Err(Stage2KernelError::InvalidInputLength {
-                input: relation.symbol(),
-                expected,
-                actual: values.len(),
-            });
-        }
-    }
-    let eq = EqPolynomial::new(point.iter().rev().copied().collect()).evaluations();
-    let accumulators = if expected >= DENSE_BIND_PAR_THRESHOLD {
-        (0..expected)
-            .into_par_iter()
-            .fold(
-                || vec![F::Accumulator::default(); outputs.len()],
-                |mut local, index| {
-                    let weight = eq[index];
-                    for (accumulator, (_, _, values)) in local.iter_mut().zip(outputs) {
-                        accumulator.fmadd(values[index], weight);
-                    }
-                    local
-                },
-            )
-            .reduce(
-                || vec![F::Accumulator::default(); outputs.len()],
-                |mut left, right| {
-                    for (left, right) in left.iter_mut().zip(right) {
-                        left.merge(right);
-                    }
-                    left
-                },
-            )
-    } else {
-        (0..expected).fold(
-            vec![F::Accumulator::default(); outputs.len()],
-            |mut local, index| {
-                let weight = eq[index];
-                for (accumulator, (_, _, values)) in local.iter_mut().zip(outputs) {
-                    accumulator.fmadd(values[index], weight);
-                }
-                local
-            },
-        )
-    };
-    Ok(accumulators
-        .into_iter()
-        .map(FieldAccumulator::reduce)
-        .collect())
-}
-
-fn bind_low_to_high<F: Field>(values: &mut Vec<F>, challenge: F) {
-    let half = values.len() / 2;
-    for index in 0..half {
-        values[index] = line(values[2 * index], values[2 * index + 1], challenge);
-    }
-    values.truncate(half);
-}
-
-fn bind_dense_evals_reuse<F: Field>(values: &mut Vec<F>, scratch: &mut Vec<F>, challenge: F) {
-    let half = values.len() / 2;
-    scratch.resize(half, F::zero());
-    if half >= DENSE_BIND_PAR_THRESHOLD {
-        scratch
-            .par_iter_mut()
-            .enumerate()
-            .for_each(|(index, output)| {
-                let low = values[index << 1];
-                let high = values[(index << 1) + 1];
-                *output = line(low, high, challenge);
-            });
-    } else {
-        for (index, output) in scratch.iter_mut().enumerate() {
-            let low = values[index << 1];
-            let high = values[(index << 1) + 1];
-            *output = line(low, high, challenge);
-        }
-    }
-    std::mem::swap(values, scratch);
-    scratch.clear();
 }
 
 fn line<F: Field>(lo: F, hi: F, x: F) -> F {
@@ -3390,7 +3953,7 @@ pub fn product_virtual_uniskip_extended_evals(
         });
     }
 
-    let eq_evals = EqPolynomial::new(tau_low.to_vec()).evaluations();
+    let eq_evals = EqPolynomial::<Fr>::evals(tau_low, None);
     let accumulators = eq_evals
         .par_iter()
         .zip(cycles.par_iter())
@@ -4247,7 +4810,7 @@ mod tests {
         let evals = product_virtual_uniskip_extended_evals(&cycles, &tau_low)
             .expect("extended evals compute");
 
-        let eq = EqPolynomial::new(tau_low.to_vec()).evaluations();
+        let eq = EqPolynomial::<Fr>::evals(&tau_low, None);
         let expected = core::array::from_fn(|target| {
             eq.iter()
                 .zip(&cycles)

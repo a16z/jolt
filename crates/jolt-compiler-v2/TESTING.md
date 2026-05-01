@@ -75,3 +75,12 @@ fixture. It records the ordered commitment→Stage 1 components and the parity
 gates that must keep passing as each new protocol phase is appended. The
 generated chain test `generated_jolt_chain_commitment_then_stage1_self_parity_runs`
 runs commitment and Stage 1 on the same transcript for prover and verifier.
+
+Stage 2 currently has focused compiler and equivalence gates rather than a
+longer chain fixture. The compiler gate
+`cargo nextest run -p jolt-compiler-v2 stage2 --cargo-quiet` checks protocol,
+concrete, party, compute, kernelized compute, CPU, and generated Rust fixtures,
+including that verifier Rust does not import `jolt-kernels`. The equivalence
+gate `cargo nextest run -p jolt-equivalence bolt_stage2 --cargo-quiet --no-fail-fast`
+checks the four parity axes for the wired Stage 2 slice. The perf oracle is
+`cargo run --release -p jolt-bench --bin bolt-stage1 -- --program sha2-chain --stage stage2 --log-t 16 --num-iters 16 --iters 3 --warmup 1 --json perf/bolt-stage2-last.json`.

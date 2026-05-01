@@ -4,5 +4,8 @@
 //! generated code. It owns the temporary coarse CPU ABI while the compiler
 //! grows finer compute lowerings.
 
+mod dense;
+mod split_eq;
+
 pub mod stage1;
 pub mod stage2;
