@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1777662843306,
+  "lastUpdate": 1777672379284,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -92362,6 +92362,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 865476,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6f801b09ac6c27310fd74f21ccf2d273346287ab",
+          "message": "feat(jolt-dory): add Dory polynomial commitment scheme (#1487)\n\n* feat(jolt-dory): add Dory polynomial commitment scheme\n\nIntroduces jolt-dory, wiring the upstream dory-pcs crate into the\njolt-openings trait surface (CommitmentScheme, AdditivelyHomomorphic,\nStreamingCommitment, ZkOpeningScheme).\n\nContents:\n- scheme.rs: DoryScheme implementing all PCS traits; adapts Jolt↔Arkworks\n  field/curve types\n- types.rs: DoryCommitment, DoryProof, DoryProverSetup, DoryVerifierSetup\n  with manual Serde bridging dory's canonical serialization\n- transcript.rs: JoltToDoryTranscript bridging jolt-transcript to\n  dory::Transcript; matches the domain-separation headers produced by\n  jolt-core for byte-identical transcripts\n- streaming.rs: StreamingCommitment hooks for incremental tier-1/tier-2\n  commit pipelines\n\nEnables the `zk` feature on dory-pcs at the workspace level; required\nfor ZkOpeningScheme::open_zk / verify_zk.\n\n* fix(jolt-dory): address PR #1451 review comments\n\nTrait change:\n- ZkOpeningScheme::verify_zk: drop eval_commitment param (verifier\n  trusts proof.y_com); update Mock impl + tests accordingly\n\njolt-dory:\n- Use workspace deps for jolt-* crates; add jolt-crypto, jolt-openings\n  to root workspace deps; add rayon dep\n- Merge README into lib.rs module-level docs; delete README.md\n- Make scheme/streaming/types modules private with curated re-exports\n- Restore parallelism on commit_rows_dense, commit_rows_sparse,\n  combine, combine_hints\n- Dispatch commit_rows_sparse in open/open_zk when poly.is_sparse()\n  and hint is None\n- DeriveSetup::derive: assert capacity within SRS size\n- combine_hints: assert non-empty + uniform row counts\n- commit_rows_sparse: debug_assert flat_idx in bounds\n- Streaming feed/finish: assert power-of-two chunk length and total\n  row count, matching DoryScheme::commit\n- DorySourceAdapter::commit -> unimplemented! (dead code; row\n  commitments are pre-computed before dory::prove)\n- Surface DoryError via panic message instead of opaque expect\n- Remove vestigial Default impl on JoltToDoryTranscript and\n  unsafe impl Send/Sync on setups (auto-derive works)\n- Drop misleading SHA3 doc claim and \"byte-for-byte parity\" claim\n- Add ZK round-trip + negative tests (wrong commitment, wrong\n  transcript domain) across both transcript backends\n- Add benches: combine_hints, open_zk, verify_zk\n- Add tampered-proof fuzz target asserting verify rejects\n  attacker-controlled proof bytes against a fixed fixture\n\n* fix(jolt-dory): address remaining PR #1451 review feedback\n\n- Cargo.toml: serde_json now uses workspace dep\n- benches: add bench_commit_one_hot for sparse-path commit coverage\n- tests: add wrong_eval_commitment_rejected_zk — tampers proof.y_com\n  with a different valid G1 and asserts verify_zk rejects (covers\n  Σ₁/Σ₂ binding regression detection)\n\n* fix(jolt-dory): harden serde validation\n\nDoryCommitment deserialization now goes through Bn254GT, which enforces\nthe GT subgroup check (zero + r-torsion) the previous ArkGT round-trip\nskipped.\n\nDoryProof deserialization pre-validates the round count from the wire\nprefix before invoking the upstream CanonicalDeserialize, capping\nattacker-controlled num_rounds at MAX_SERIALIZED_PROOF_ROUNDS = 64 to\nprevent OOM via Vec::with_capacity(u32::MAX).\n\n---------\n\nCo-authored-by: markosg04 <mgeorghiades@a16z.com>",
+          "timestamp": "2026-05-01T16:50:09-04:00",
+          "tree_id": "f1a4587e348e20eb3122b117621e4471196ee216",
+          "url": "https://github.com/a16z/jolt/commit/6f801b09ac6c27310fd74f21ccf2d273346287ab"
+        },
+        "date": 1777672377560,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.6274,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 862556,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.39,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 498632,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 500696,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 498472,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7705,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 500740,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.6171,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 500720,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.6054,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 500592,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 6.1023,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 230100,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.5134,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 864756,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.6046,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 498884,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4893,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 498484,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 22.103,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 496508,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.0251,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 500464,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 32.2714,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1000864,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.3104,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 666520,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 87.333,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2115268,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.5602,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 496664,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.6055,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 496676,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.244,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 863380,
             "unit": "KB",
             "extra": ""
           }
