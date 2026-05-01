@@ -10,6 +10,7 @@ pub use phases::commitment::{
 pub use phases::stage1::{
     build_stage1_outer_protocol, lower_stage1_to_compute, resolve_compute_kernels,
 };
+pub use phases::stage2::{build_stage2_protocol, lower_stage2_to_compute};
 pub use validate::{
     verify_jolt_concrete_schema, verify_jolt_party_schema, verify_jolt_protocol_schema,
 };

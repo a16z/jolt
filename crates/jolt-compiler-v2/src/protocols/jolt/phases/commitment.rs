@@ -614,6 +614,100 @@ pub fn lower_compute_to_cpu<'c>(
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
                 insert_result_mapping(&mut value_map, op, operation, 1, 1)?;
             }
+            "compute.opening_input" => {
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(
+                    op,
+                    &[
+                        "source_stage",
+                        "source_claim",
+                        "oracle",
+                        "domain",
+                        "point_arity",
+                        "claim_kind",
+                    ],
+                )?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &cpu,
+                    "cpu.opening_input",
+                    Some(&symbol),
+                    &attrs,
+                    &[],
+                    &["!cpu.point", "!cpu.field_value", "!cpu.opening_claim_type"],
+                )?;
+                for index in 0..3 {
+                    insert_result_mapping(&mut value_map, op, operation, index, index)?;
+                }
+            }
+            "compute.point_slice" => {
+                let operands = lowered_operands(op, &value_map)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["source", "offset", "length"])?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &cpu,
+                    "cpu.point_slice",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!cpu.point"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "compute.point_concat" => {
+                let operands = lowered_operands(op, &value_map)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["layout", "arity"])?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &cpu,
+                    "cpu.point_concat",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!cpu.point"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "compute.field_constant" => {
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["field", "value"])?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &cpu,
+                    "cpu.field_constant",
+                    Some(&symbol),
+                    &attrs,
+                    &[],
+                    &["!cpu.field_value"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "compute.challenge_extract" => {
+                let operands = lowered_operands(op, &value_map)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["source", "index"])?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &cpu,
+                    "cpu.challenge_extract",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!cpu.field_value"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "compute.field_expr" => {
+                let operands = lowered_operands(op, &value_map)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["kind", "formula", "operands"])?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &cpu,
+                    "cpu.field_expr",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!cpu.field_value"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
             "compute.sumcheck_kernel_claim" => {
                 let operands = lowered_operands(op, &value_map)?;
                 let symbol = string_attr(op, "sym_name")?;
@@ -775,6 +869,8 @@ pub fn lower_compute_to_cpu<'c>(
                         "index",
                         "point_arity",
                         "num_rounds",
+                        "round_offset",
+                        "point_order",
                         "degree",
                     ],
                 )?;

@@ -7,27 +7,37 @@
 use std::collections::BTreeMap;
 
 use ark_serialize::CanonicalSerialize;
+use common::constants::{RAM_START_ADDRESS, XLEN};
 use common::jolt_device::JoltDevice;
-use jolt_compiler_v2::Stage1CpuProgram as CompilerStage1CpuProgram;
 use jolt_compiler_v2::{
-    build_commitment_protocol, build_stage1_outer_protocol, commitment_cpu_program,
-    lower_commitment_to_compute, lower_compute_to_cpu, lower_piop_and_fiat_shamir,
-    lower_stage1_to_compute, project_prover_party, project_verifier_party, resolve_compute_kernels,
-    stage1_cpu_program, CommitmentCpuProgram, JoltProtocolParams, MeliorContext,
+    build_commitment_protocol, build_stage1_outer_protocol, build_stage2_protocol,
+    commitment_cpu_program, lower_commitment_to_compute, lower_compute_to_cpu,
+    lower_piop_and_fiat_shamir, lower_stage1_to_compute, lower_stage2_to_compute,
+    project_prover_party, project_verifier_party, resolve_compute_kernels, stage1_cpu_program,
+    stage2_cpu_program, CommitmentCpuProgram, JoltProtocolParams, MeliorContext,
     OptionalSkipPolicy, OracleGeneration, Role, TranscriptStep,
+};
+use jolt_compiler_v2::{
+    Stage1CpuProgram as CompilerStage1CpuProgram, Stage2CpuProgram as CompilerStage2CpuProgram,
 };
 use jolt_core::curve::Bn254Curve;
 use jolt_core::host;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme as CoreCommitmentScheme;
 use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
+use jolt_core::poly::opening_proof::{OpeningId, SumcheckId};
 use jolt_core::poly::unipoly::UniPoly;
 use jolt_core::subprotocols::univariate_skip::{
     UniSkipFirstRoundProof, UniSkipFirstRoundProofVariant,
 };
 use jolt_core::transcripts::{Blake2bTranscript as CoreBlake2bTranscript, Transcript as _};
+use jolt_core::zkvm::instruction::{CircuitFlags, InstructionFlags, LookupQuery};
 use jolt_core::zkvm::proof_serialization::{Claims as CoreClaims, JoltProof as CoreJoltProof};
 use jolt_core::zkvm::prover::{JoltCpuProver, JoltProverPreprocessing};
+use jolt_core::zkvm::r1cs::inputs::ProductCycleInputs as CoreProductCycleInputs;
+use jolt_core::zkvm::ram::remap_address;
+use jolt_core::zkvm::spartan::verify_stage2_uni_skip;
 use jolt_core::zkvm::verifier::{JoltSharedPreprocessing, JoltVerifier, JoltVerifierPreprocessing};
+use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use jolt_dory::{DoryCommitment, DoryHint, DoryProverSetup, DoryScheme};
 use jolt_equivalence::checkpoint::{
     assert_transcripts_match, CheckpointTranscript, TranscriptEvent,
@@ -47,8 +57,26 @@ use jolt_kernels::stage1::{
     Stage1SumcheckBatchPlan as KernelStage1SumcheckBatchPlan,
     Stage1SumcheckClaimPlan as KernelStage1SumcheckClaimPlan,
     Stage1SumcheckDriverPlan as KernelStage1SumcheckDriverPlan,
-    Stage1SumcheckEvalPlan as KernelStage1SumcheckEvalPlan, Stage1TranscriptSqueezePlan,
-    Stage1VerifierKernelExecutor,
+    Stage1SumcheckEvalPlan as KernelStage1SumcheckEvalPlan,
+    Stage1SumcheckInstanceResultPlan as KernelStage1SumcheckInstanceResultPlan,
+    Stage1TranscriptSqueezePlan, Stage1VerifierKernelExecutor,
+};
+use jolt_kernels::stage2::{
+    execute_stage2_program, product_virtual_uniskip_extended_evals,
+    Stage2ChallengeExtractPlan as KernelStage2ChallengeExtractPlan,
+    Stage2CpuProgramPlan as KernelStage2CpuProgramPlan, Stage2ExecutionArtifacts,
+    Stage2ExecutionMode, Stage2FieldConstantPlan as KernelStage2FieldConstantPlan,
+    Stage2FieldExprPlan as KernelStage2FieldExprPlan, Stage2InstructionLookupCycle,
+    Stage2KernelPlan as KernelStage2KernelPlan, Stage2OpeningBatchPlan, Stage2OpeningClaimPlan,
+    Stage2OpeningInputPlan, Stage2OpeningInputValue, Stage2Params, Stage2PointConcatPlan,
+    Stage2PointSlicePlan, Stage2ProductVirtualCycle,
+    Stage2ProgramStepPlan as KernelStage2ProgramStepPlan, Stage2Proof, Stage2ProverInputs,
+    Stage2ProverKernelExecutor, Stage2RamAccess, Stage2RamData, Stage2RamOutputLayout,
+    Stage2SumcheckBatchPlan as KernelStage2SumcheckBatchPlan,
+    Stage2SumcheckClaimPlan as KernelStage2SumcheckClaimPlan,
+    Stage2SumcheckDriverPlan as KernelStage2SumcheckDriverPlan,
+    Stage2SumcheckEvalPlan as KernelStage2SumcheckEvalPlan, Stage2SumcheckInstanceResultPlan,
+    Stage2TranscriptSqueezePlan as KernelStage2TranscriptSqueezePlan, Stage2VerifierKernelExecutor,
 };
 use jolt_openings::StreamingCommitment;
 use jolt_poly::UnivariatePoly;
@@ -59,6 +87,7 @@ use jolt_witness::CycleInput;
 use jolt_witness_v2::{
     dense_i128_column_to_field, one_hot_chunk_address_major, optional_field_oracle,
 };
+use tracer::instruction::RAMAccess;
 
 type CoreFr = ark_bn254::Fr;
 type CoreCommitment = <DoryCommitmentScheme as CoreCommitmentScheme>::Commitment;
@@ -204,6 +233,251 @@ fn bolt_commitment_stage1_real_muldiv_parity_checks() {
     );
 }
 
+#[test]
+fn bolt_stage2_product_uniskip_real_muldiv_matches_jolt_core() {
+    let fixture = core_muldiv_commitment_fixture();
+    let (commitment_prover_program, commitment_verifier_program) =
+        bolt_commitment_programs_with_params(&fixture.params);
+    let (stage1_prover_program, _) = bolt_stage1_programs_with_params(&fixture.params);
+    let (stage2_prover_program, _) = bolt_stage2_programs_with_params(&fixture.params);
+    let oracle_data = real_muldiv_oracle_data(&commitment_prover_program, &fixture.cycle_inputs);
+
+    let commitment_prover_trace = run_bolt_commitment_prover_with(
+        &commitment_prover_program,
+        &fixture.pcs_setup,
+        |oracle, _num_vars| oracle_data.get(oracle).cloned().flatten(),
+    );
+    let commitment_verifier_trace = run_bolt_commitment_verifier(
+        &commitment_verifier_program,
+        &commitment_prover_trace.commitments,
+    );
+
+    let stage1_prover_plan = leak_stage1_program(&stage1_prover_program);
+    let r1cs_key = R1csKey::new(rv64::rv64_constraints::<Fr>(), fixture.proof.trace_length);
+    let data = Stage1OuterR1csData::new(&r1cs_key, &fixture.r1cs_witness)
+        .expect("valid R1CS witness shape");
+
+    let mut bolt_transcript =
+        CheckpointTranscript::<jolt_transcript::Blake2bTranscript<Fr>>::new(TRANSCRIPT_LABEL);
+    append_bolt_preamble(
+        &mut bolt_transcript,
+        &fixture.io,
+        fixture.proof.ram_K,
+        fixture.proof.trace_length,
+        fixture.entry_address,
+    );
+    append_bolt_commitments_to_transcript(
+        &mut bolt_transcript,
+        &commitment_prover_trace.records,
+        &commitment_prover_trace.commitments,
+        &commitment_prover_program.transcript_steps,
+    );
+    let stage1_inputs =
+        Stage1ProverInputs::empty(r1cs_key.num_cycle_vars()).with_outer_remaining_evaluator(&data);
+    let mut stage1_prover = Stage1ProverKernelExecutor::new(stage1_inputs);
+    let stage1_artifacts = execute_stage1_program(
+        stage1_prover_plan,
+        Stage1ExecutionMode::Prover,
+        &mut stage1_prover,
+        &mut bolt_transcript,
+    )
+    .expect("Bolt Stage 1 prover succeeds");
+
+    let stage2_openings = stage2_product_opening_inputs(&stage1_artifacts);
+    let tau_low = &stage2_openings[0].point;
+    let extended_evals =
+        product_virtual_uniskip_extended_evals(&fixture.product_virtual_cycles, tau_low)
+            .expect("product virtual extended evals");
+    let stage2_inputs = Stage2ProverInputs::new(&stage2_openings)
+        .with_product_uniskip_extended_evals(&extended_evals);
+    let stage2_prover_plan = leak_stage2_product_uniskip_program(&stage2_prover_program);
+    let mut stage2_prover = Stage2ProverKernelExecutor::new(stage2_inputs);
+    let stage2_artifacts = execute_stage2_program(
+        stage2_prover_plan,
+        Stage2ExecutionMode::Prover,
+        &mut stage2_prover,
+        &mut bolt_transcript,
+    )
+    .expect("Bolt Stage 2 product uni-skip succeeds");
+
+    assert_eq!(stage2_artifacts.sumchecks.len(), 1);
+    assert_core_stage2_uniskip_proof_matches_bolt(&fixture.proof, &stage2_artifacts.sumchecks[0]);
+    assert_bolt_chain_verifier_accepts_stage2_product_uniskip(BoltStage2ChainVerifierInput {
+        fixture: &fixture,
+        commitment_verifier_program: &commitment_verifier_program,
+        commitment_verifier_trace: &commitment_verifier_trace,
+        stage1_prover_plan,
+        stage2_prover_plan,
+        stage1_artifacts: &stage1_artifacts,
+        stage2_artifacts: &stage2_artifacts,
+        prover_transcript: &bolt_transcript,
+    });
+
+    let mut core_verifier = CoreVerifier::new(
+        fixture.verifier_preprocessing,
+        clone_core_proof(&fixture.proof),
+        fixture.io.clone(),
+        None,
+        None,
+    )
+    .expect("construct core verifier");
+    core_verifier.run_preamble();
+    let _ = core_verifier
+        .verify_stage1()
+        .expect("core Stage 1 verifies before Stage 2");
+    let stage2_uniskip_proof = core_verifier
+        .proof
+        .stage2_uni_skip_first_round_proof
+        .clone();
+    let _ = verify_stage2_uni_skip(
+        &stage2_uniskip_proof,
+        &mut core_verifier.opening_accumulator,
+        &mut core_verifier.transcript,
+    )
+    .expect("core Stage 2 uni-skip verifies");
+
+    let core_states = core_verifier.transcript.state_history[1..].to_vec();
+    let bolt_states = transcript_states(bolt_transcript.log());
+    assert_state_history_match(&core_states, &bolt_states);
+
+    assert_eq!(
+        commitment_prover_trace.commitments,
+        commitment_verifier_trace.commitments
+    );
+}
+
+#[test]
+fn bolt_stage2_batched_real_muldiv_self_parity() {
+    let fixture = core_muldiv_commitment_fixture();
+    let (commitment_prover_program, commitment_verifier_program) =
+        bolt_commitment_programs_with_params(&fixture.params);
+    let (stage1_prover_program, _) = bolt_stage1_programs_with_params(&fixture.params);
+    let (stage2_prover_program, _) = bolt_stage2_programs_with_params(&fixture.params);
+    let oracle_data = real_muldiv_oracle_data(&commitment_prover_program, &fixture.cycle_inputs);
+
+    let commitment_prover_trace = run_bolt_commitment_prover_with(
+        &commitment_prover_program,
+        &fixture.pcs_setup,
+        |oracle, _num_vars| oracle_data.get(oracle).cloned().flatten(),
+    );
+    let commitment_verifier_trace = run_bolt_commitment_verifier(
+        &commitment_verifier_program,
+        &commitment_prover_trace.commitments,
+    );
+
+    let stage1_prover_plan = leak_stage1_program(&stage1_prover_program);
+    let r1cs_key = R1csKey::new(rv64::rv64_constraints::<Fr>(), fixture.proof.trace_length);
+    let data = Stage1OuterR1csData::new(&r1cs_key, &fixture.r1cs_witness)
+        .expect("valid R1CS witness shape");
+
+    let mut prover_transcript =
+        CheckpointTranscript::<jolt_transcript::Blake2bTranscript<Fr>>::new(TRANSCRIPT_LABEL);
+    append_bolt_preamble(
+        &mut prover_transcript,
+        &fixture.io,
+        fixture.proof.ram_K,
+        fixture.proof.trace_length,
+        fixture.entry_address,
+    );
+    append_bolt_commitments_to_transcript(
+        &mut prover_transcript,
+        &commitment_prover_trace.records,
+        &commitment_prover_trace.commitments,
+        &commitment_prover_program.transcript_steps,
+    );
+    let stage1_inputs =
+        Stage1ProverInputs::empty(r1cs_key.num_cycle_vars()).with_outer_remaining_evaluator(&data);
+    let mut stage1_prover = Stage1ProverKernelExecutor::new(stage1_inputs);
+    let stage1_artifacts = execute_stage1_program(
+        stage1_prover_plan,
+        Stage1ExecutionMode::Prover,
+        &mut stage1_prover,
+        &mut prover_transcript,
+    )
+    .expect("Bolt Stage 1 prover succeeds");
+
+    let stage2_openings = stage2_opening_inputs(&stage1_artifacts);
+    let tau_low = stage2_openings
+        .iter()
+        .find(|input| input.symbol == "stage2.input.stage1.Product")
+        .expect("product opening")
+        .point
+        .as_slice();
+    let extended_evals =
+        product_virtual_uniskip_extended_evals(&fixture.product_virtual_cycles, tau_low)
+            .expect("product virtual extended evals");
+    let ram_data = Stage2RamData {
+        log_k: fixture.params.log_k_ram,
+        start_address: fixture.ram_start_address,
+        initial_ram: &fixture.initial_ram_state,
+        final_ram: &fixture.final_ram_state,
+        accesses: &fixture.ram_accesses,
+        output_layout: Some(fixture.ram_output_layout),
+    };
+    let stage2_inputs = Stage2ProverInputs::new(&stage2_openings)
+        .with_product_uniskip_extended_evals(&extended_evals)
+        .with_product_virtual_cycles(&fixture.product_virtual_cycles)
+        .with_instruction_lookup_cycles(&fixture.instruction_lookup_cycles)
+        .with_ram_data(&ram_data);
+    let stage2_prover_plan = leak_stage2_program(&stage2_prover_program);
+    let mut stage2_prover = Stage2ProverKernelExecutor::new(stage2_inputs);
+    let stage2_artifacts = execute_stage2_program(
+        stage2_prover_plan,
+        Stage2ExecutionMode::Prover,
+        &mut stage2_prover,
+        &mut prover_transcript,
+    )
+    .expect("Bolt Stage 2 prover succeeds");
+
+    let mut verifier_transcript =
+        CheckpointTranscript::<jolt_transcript::Blake2bTranscript<Fr>>::new(TRANSCRIPT_LABEL);
+    append_bolt_preamble(
+        &mut verifier_transcript,
+        &fixture.io,
+        fixture.proof.ram_K,
+        fixture.proof.trace_length,
+        fixture.entry_address,
+    );
+    append_bolt_commitments_to_transcript(
+        &mut verifier_transcript,
+        &commitment_verifier_trace.records,
+        &commitment_verifier_trace.commitments,
+        &commitment_verifier_program.transcript_steps,
+    );
+    let stage1_proof = Stage1Proof::from(stage1_artifacts.clone());
+    let mut stage1_verifier = Stage1VerifierKernelExecutor::new(&stage1_proof);
+    let verified_stage1 = execute_stage1_program(
+        stage1_prover_plan,
+        Stage1ExecutionMode::Verifier,
+        &mut stage1_verifier,
+        &mut verifier_transcript,
+    )
+    .expect("Bolt Stage 1 verifier accepts");
+    let stage2_verifier_openings = stage2_opening_inputs(&verified_stage1);
+    let stage2_proof = Stage2Proof::from(stage2_artifacts.clone());
+    let mut stage2_verifier =
+        Stage2VerifierKernelExecutor::new(&stage2_proof, &stage2_verifier_openings)
+            .with_ram_data(&ram_data);
+    let verified_stage2 = execute_stage2_program(
+        stage2_prover_plan,
+        Stage2ExecutionMode::Verifier,
+        &mut stage2_verifier,
+        &mut verifier_transcript,
+    )
+    .expect("Bolt Stage 2 verifier accepts");
+
+    assert_eq!(
+        stage2_artifacts.sumchecks.len(),
+        verified_stage2.sumchecks.len()
+    );
+    assert_state_history_match(
+        &transcript_states(prover_transcript.log()),
+        &transcript_states(verifier_transcript.log()),
+    );
+    assert_core_accepts_bolt_stage2(&fixture, &stage1_artifacts, &stage2_artifacts);
+    assert_core_states_match_bolt_stage2(&fixture, prover_transcript.log());
+}
+
 #[derive(Clone, Debug)]
 struct CommitmentRecord {
     artifact: String,
@@ -225,6 +499,13 @@ struct CoreMuldivCommitmentFixture {
     entry_address: u64,
     cycle_inputs: Vec<CycleInput>,
     r1cs_witness: Vec<Fr>,
+    product_virtual_cycles: Vec<Stage2ProductVirtualCycle>,
+    instruction_lookup_cycles: Vec<Stage2InstructionLookupCycle>,
+    ram_accesses: Vec<Stage2RamAccess>,
+    initial_ram_state: Vec<u64>,
+    final_ram_state: Vec<u64>,
+    ram_start_address: u64,
+    ram_output_layout: Stage2RamOutputLayout,
     commitments: Vec<CoreCommitment>,
 }
 
@@ -279,6 +560,30 @@ fn bolt_stage1_programs_with_params(
     (prover_program, verifier_program)
 }
 
+fn bolt_stage2_programs_with_params(
+    params: &JoltProtocolParams,
+) -> (CompilerStage2CpuProgram, CompilerStage2CpuProgram) {
+    let context = MeliorContext::new();
+    let protocol = build_stage2_protocol(&context, params).expect("build stage2 protocol");
+    let concrete = lower_piop_and_fiat_shamir(&context, &protocol).expect("lower Stage 2 protocol");
+    let prover_party = project_prover_party(&context, &concrete).expect("project prover");
+    let verifier_party = project_verifier_party(&context, &concrete).expect("project verifier");
+    let prover_compute =
+        lower_stage2_to_compute(&context, &prover_party).expect("lower prover Stage 2");
+    let verifier_compute =
+        lower_stage2_to_compute(&context, &verifier_party).expect("lower verifier Stage 2");
+    let prover_compute =
+        resolve_compute_kernels(&context, &prover_compute).expect("resolve prover kernels");
+    let verifier_compute =
+        resolve_compute_kernels(&context, &verifier_compute).expect("resolve verifier kernels");
+    let prover_cpu = lower_compute_to_cpu(&context, &prover_compute).expect("lower prover CPU");
+    let verifier_cpu =
+        lower_compute_to_cpu(&context, &verifier_compute).expect("lower verifier CPU");
+    let prover_program = stage2_cpu_program(&prover_cpu).expect("extract prover Stage 2 CPU");
+    let verifier_program = stage2_cpu_program(&verifier_cpu).expect("extract verifier Stage 2 CPU");
+    (prover_program, verifier_program)
+}
+
 fn leak_stage1_program(program: &CompilerStage1CpuProgram) -> &'static KernelStage1CpuProgramPlan {
     let transcript_squeezes = leak_slice(
         program
@@ -292,19 +597,23 @@ fn leak_stage1_program(program: &CompilerStage1CpuProgram) -> &'static KernelSta
             })
             .collect(),
     );
-    let kernels = leak_slice(
-        program
-            .kernels
-            .iter()
-            .map(|plan| KernelStage1KernelPlan {
-                symbol: leak_str(&plan.symbol),
-                relation: leak_str(&plan.relation),
-                kind: leak_str(&plan.kind),
-                backend: leak_str(&plan.backend),
-                abi: leak_str(&plan.abi),
-            })
-            .collect(),
-    );
+    let kernels = if program.kernels.is_empty() {
+        leak_slice(synthetic_stage1_kernels(program))
+    } else {
+        leak_slice(
+            program
+                .kernels
+                .iter()
+                .map(|plan| KernelStage1KernelPlan {
+                    symbol: leak_str(&plan.symbol),
+                    relation: leak_str(&plan.relation),
+                    kind: leak_str(&plan.kind),
+                    backend: leak_str(&plan.backend),
+                    abi: leak_str(&plan.abi),
+                })
+                .collect(),
+        )
+    };
     let claims = leak_slice(
         program
             .claims
@@ -316,7 +625,11 @@ fn leak_stage1_program(program: &CompilerStage1CpuProgram) -> &'static KernelSta
                 num_rounds: plan.num_rounds,
                 degree: plan.degree,
                 claim: leak_str(&plan.claim),
-                kernel: leak_str(&plan.kernel),
+                kernel: leak_str(stage1_kernel_symbol(
+                    plan.kernel.as_deref(),
+                    plan.relation.as_deref(),
+                )),
+                claim_value: leak_str(&plan.claim_value),
                 input_openings: leak_str_slice(&plan.input_openings),
             })
             .collect(),
@@ -347,7 +660,10 @@ fn leak_stage1_program(program: &CompilerStage1CpuProgram) -> &'static KernelSta
                 symbol: leak_str(&plan.symbol),
                 stage: leak_str(&plan.stage),
                 proof_slot: leak_str(&plan.proof_slot),
-                kernel: leak_str(&plan.kernel),
+                kernel: leak_str(stage1_kernel_symbol(
+                    plan.kernel.as_deref(),
+                    plan.relation.as_deref(),
+                )),
                 batch: leak_str(&plan.batch),
                 policy: leak_str(&plan.policy),
                 round_schedule: leak_usize_slice(&plan.round_schedule),
@@ -368,6 +684,24 @@ fn leak_stage1_program(program: &CompilerStage1CpuProgram) -> &'static KernelSta
                 name: leak_str(&plan.name),
                 index: plan.index,
                 oracle: leak_str(&plan.oracle),
+            })
+            .collect(),
+    );
+    let instance_results = leak_slice(
+        program
+            .instance_results
+            .iter()
+            .map(|plan| KernelStage1SumcheckInstanceResultPlan {
+                symbol: leak_str(&plan.symbol),
+                source: leak_str(&plan.source),
+                claim: leak_str(&plan.claim),
+                relation: leak_str(&plan.relation),
+                index: plan.index,
+                point_arity: plan.point_arity,
+                num_rounds: plan.num_rounds,
+                round_offset: plan.round_offset,
+                point_order: leak_str(&plan.point_order),
+                degree: plan.degree,
             })
             .collect(),
     );
@@ -413,9 +747,481 @@ fn leak_stage1_program(program: &CompilerStage1CpuProgram) -> &'static KernelSta
         claims,
         batches,
         drivers,
+        instance_results,
         evals,
         opening_claims,
         opening_batches,
+    }))
+}
+
+fn synthetic_stage1_kernels(program: &CompilerStage1CpuProgram) -> Vec<KernelStage1KernelPlan> {
+    let mut kernels: Vec<KernelStage1KernelPlan> = Vec::new();
+    for driver in &program.drivers {
+        let relation = driver
+            .relation
+            .as_deref()
+            .expect("verifier driver relation");
+        let kernel = synthetic_stage1_kernel(relation);
+        if !kernels
+            .iter()
+            .any(|existing| existing.symbol == kernel.symbol)
+        {
+            kernels.push(kernel);
+        }
+    }
+    kernels
+}
+
+fn stage1_kernel_symbol<'a>(kernel: Option<&'a str>, relation: Option<&str>) -> &'a str {
+    if let Some(kernel) = kernel {
+        return kernel;
+    }
+    synthetic_stage1_kernel(relation.expect("verifier relation")).symbol
+}
+
+fn synthetic_stage1_kernel(relation: &str) -> KernelStage1KernelPlan {
+    match relation {
+        "jolt.stage1.outer.uniskip" => KernelStage1KernelPlan {
+            symbol: "jolt.cpu.stage1.outer.uniskip",
+            relation: "jolt.stage1.outer.uniskip",
+            kind: "sumcheck",
+            backend: "cpu",
+            abi: "jolt_stage1_outer_uniskip",
+        },
+        "jolt.stage1.outer.remaining" => KernelStage1KernelPlan {
+            symbol: "jolt.cpu.stage1.outer.remaining",
+            relation: "jolt.stage1.outer.remaining",
+            kind: "sumcheck",
+            backend: "cpu",
+            abi: "jolt_stage1_outer_remaining",
+        },
+        relation => panic!("unsupported Stage1 verifier relation `{relation}`"),
+    }
+}
+
+fn leak_stage2_product_uniskip_program(
+    program: &CompilerStage2CpuProgram,
+) -> &'static KernelStage2CpuProgramPlan {
+    let transcript_squeeze = program
+        .transcript_squeezes
+        .iter()
+        .find(|plan| plan.symbol == "stage2.product_virtual.tau_high")
+        .expect("product tau squeeze");
+    let challenge_extract = program
+        .challenge_extracts
+        .iter()
+        .find(|plan| plan.symbol == "stage2.product_virtual.tau_high.scalar")
+        .expect("product tau extract");
+    let field_expr = program
+        .field_exprs
+        .iter()
+        .find(|plan| plan.symbol == "stage2.product_virtual.uniskip.claim_expr")
+        .expect("product claim expr");
+    let kernel = program
+        .kernels
+        .iter()
+        .find(|plan| plan.symbol == "jolt.cpu.stage2.product_virtual.uniskip")
+        .expect("product kernel");
+    let claim = program
+        .claims
+        .iter()
+        .find(|plan| plan.symbol == "stage2.product_virtual.uniskip.input")
+        .expect("product claim");
+    let batch = program
+        .batches
+        .iter()
+        .find(|plan| plan.symbol == "stage2.product_virtual.uniskip.batch")
+        .expect("product batch");
+    let driver = program
+        .drivers
+        .iter()
+        .find(|plan| plan.symbol == "stage2.product_virtual.uniskip.sumcheck")
+        .expect("product driver");
+    let instance = program
+        .instance_results
+        .iter()
+        .find(|plan| plan.symbol == "stage2.product_virtual.uniskip.instance")
+        .expect("product instance");
+    let eval = program
+        .evals
+        .iter()
+        .find(|plan| plan.symbol == "stage2.product_virtual.uniskip.eval.UnivariateSkip")
+        .expect("product eval");
+    let opening_claim = program
+        .opening_claims
+        .iter()
+        .find(|plan| plan.symbol == "stage2.product_virtual.uniskip.opening.UnivariateSkip")
+        .expect("product opening");
+
+    Box::leak(Box::new(KernelStage2CpuProgramPlan {
+        params: Stage2Params {
+            field: leak_str(&program.params.field),
+            pcs: leak_str(&program.params.pcs),
+            transcript: leak_str(&program.params.transcript),
+        },
+        steps: leak_slice(vec![
+            KernelStage2ProgramStepPlan {
+                kind: "transcript_squeeze",
+                symbol: leak_str(&transcript_squeeze.symbol),
+            },
+            KernelStage2ProgramStepPlan {
+                kind: "sumcheck_driver",
+                symbol: leak_str(&driver.symbol),
+            },
+        ]),
+        transcript_squeezes: leak_slice(vec![KernelStage2TranscriptSqueezePlan {
+            symbol: leak_str(&transcript_squeeze.symbol),
+            label: leak_str(&transcript_squeeze.label),
+            kind: leak_str(&transcript_squeeze.kind),
+            count: transcript_squeeze.count,
+        }]),
+        opening_inputs: leak_slice(
+            program
+                .opening_inputs
+                .iter()
+                .filter(|plan| {
+                    matches!(
+                        plan.symbol.as_str(),
+                        "stage2.input.stage1.Product"
+                            | "stage2.input.stage1.ShouldBranch"
+                            | "stage2.input.stage1.ShouldJump"
+                    )
+                })
+                .map(|plan| Stage2OpeningInputPlan {
+                    symbol: leak_str(&plan.symbol),
+                    source_stage: leak_str(&plan.source_stage),
+                    source_claim: leak_str(&plan.source_claim),
+                    oracle: leak_str(&plan.oracle),
+                    domain: leak_str(&plan.domain),
+                    point_arity: plan.point_arity,
+                    claim_kind: leak_str(&plan.claim_kind),
+                })
+                .collect(),
+        ),
+        field_constants: &[] as &[KernelStage2FieldConstantPlan],
+        challenge_extracts: leak_slice(vec![KernelStage2ChallengeExtractPlan {
+            symbol: leak_str(&challenge_extract.symbol),
+            source: leak_str(&challenge_extract.source),
+            index: challenge_extract.index,
+            challenge_source: leak_str(&challenge_extract.challenge_source),
+        }]),
+        field_exprs: leak_slice(vec![KernelStage2FieldExprPlan {
+            symbol: leak_str(&field_expr.symbol),
+            kind: leak_str(&field_expr.kind),
+            formula: leak_str(&field_expr.formula),
+            operand_names: leak_str_slice(&field_expr.operand_names),
+            operands: leak_str_slice(&field_expr.operands),
+        }]),
+        kernels: leak_slice(vec![KernelStage2KernelPlan {
+            symbol: leak_str(&kernel.symbol),
+            relation: leak_str(&kernel.relation),
+            kind: leak_str(&kernel.kind),
+            backend: leak_str(&kernel.backend),
+            abi: leak_str(&kernel.abi),
+        }]),
+        claims: leak_slice(vec![KernelStage2SumcheckClaimPlan {
+            symbol: leak_str(&claim.symbol),
+            stage: leak_str(&claim.stage),
+            domain: leak_str(&claim.domain),
+            num_rounds: claim.num_rounds,
+            degree: claim.degree,
+            claim: leak_str(&claim.claim),
+            kernel: leak_str(claim.kernel.as_deref().expect("prover claim kernel")),
+            claim_value: leak_str(&claim.claim_value),
+            input_openings: leak_str_slice(&claim.input_openings),
+        }]),
+        batches: leak_slice(vec![KernelStage2SumcheckBatchPlan {
+            symbol: leak_str(&batch.symbol),
+            stage: leak_str(&batch.stage),
+            proof_slot: leak_str(&batch.proof_slot),
+            policy: leak_str(&batch.policy),
+            count: batch.count,
+            ordered_claims: leak_str_slice(&batch.ordered_claims),
+            claim_operands: leak_str_slice(&batch.claim_operands),
+            claim_label: leak_str(&batch.claim_label),
+            round_label: leak_str(&batch.round_label),
+            round_schedule: leak_usize_slice(&batch.round_schedule),
+        }]),
+        drivers: leak_slice(vec![KernelStage2SumcheckDriverPlan {
+            symbol: leak_str(&driver.symbol),
+            stage: leak_str(&driver.stage),
+            proof_slot: leak_str(&driver.proof_slot),
+            kernel: leak_str(driver.kernel.as_deref().expect("prover driver kernel")),
+            batch: leak_str(&driver.batch),
+            policy: leak_str(&driver.policy),
+            round_schedule: leak_usize_slice(&driver.round_schedule),
+            claim_label: leak_str(&driver.claim_label),
+            round_label: leak_str(&driver.round_label),
+            num_rounds: driver.num_rounds,
+            degree: driver.degree,
+        }]),
+        instance_results: leak_slice(vec![Stage2SumcheckInstanceResultPlan {
+            symbol: leak_str(&instance.symbol),
+            source: leak_str(&instance.source),
+            claim: leak_str(&instance.claim),
+            relation: leak_str(&instance.relation),
+            index: instance.index,
+            point_arity: instance.point_arity,
+            num_rounds: instance.num_rounds,
+            round_offset: instance.round_offset,
+            point_order: leak_str(&instance.point_order),
+            degree: instance.degree,
+        }]),
+        evals: leak_slice(vec![KernelStage2SumcheckEvalPlan {
+            symbol: leak_str(&eval.symbol),
+            source: leak_str(&eval.source),
+            name: leak_str(&eval.name),
+            index: eval.index,
+            oracle: leak_str(&eval.oracle),
+        }]),
+        point_slices: &[] as &[Stage2PointSlicePlan],
+        point_concats: &[] as &[Stage2PointConcatPlan],
+        opening_claims: leak_slice(vec![Stage2OpeningClaimPlan {
+            symbol: leak_str(&opening_claim.symbol),
+            oracle: leak_str(&opening_claim.oracle),
+            domain: leak_str(&opening_claim.domain),
+            point_arity: opening_claim.point_arity,
+            claim_kind: leak_str(&opening_claim.claim_kind),
+            point_source: leak_str(&opening_claim.point_source),
+            eval_source: leak_str(&opening_claim.eval_source),
+        }]),
+        opening_batches: &[] as &[Stage2OpeningBatchPlan],
+    }))
+}
+
+fn leak_stage2_program(program: &CompilerStage2CpuProgram) -> &'static KernelStage2CpuProgramPlan {
+    Box::leak(Box::new(KernelStage2CpuProgramPlan {
+        params: Stage2Params {
+            field: leak_str(&program.params.field),
+            pcs: leak_str(&program.params.pcs),
+            transcript: leak_str(&program.params.transcript),
+        },
+        steps: leak_slice(
+            program
+                .steps
+                .iter()
+                .map(|plan| KernelStage2ProgramStepPlan {
+                    kind: leak_str(&plan.kind),
+                    symbol: leak_str(&plan.symbol),
+                })
+                .collect(),
+        ),
+        transcript_squeezes: leak_slice(
+            program
+                .transcript_squeezes
+                .iter()
+                .map(|plan| KernelStage2TranscriptSqueezePlan {
+                    symbol: leak_str(&plan.symbol),
+                    label: leak_str(&plan.label),
+                    kind: leak_str(&plan.kind),
+                    count: plan.count,
+                })
+                .collect(),
+        ),
+        opening_inputs: leak_slice(
+            program
+                .opening_inputs
+                .iter()
+                .map(|plan| Stage2OpeningInputPlan {
+                    symbol: leak_str(&plan.symbol),
+                    source_stage: leak_str(&plan.source_stage),
+                    source_claim: leak_str(&plan.source_claim),
+                    oracle: leak_str(&plan.oracle),
+                    domain: leak_str(&plan.domain),
+                    point_arity: plan.point_arity,
+                    claim_kind: leak_str(&plan.claim_kind),
+                })
+                .collect(),
+        ),
+        field_constants: leak_slice(
+            program
+                .field_constants
+                .iter()
+                .map(|plan| KernelStage2FieldConstantPlan {
+                    symbol: leak_str(&plan.symbol),
+                    field: leak_str(&plan.field),
+                    value: plan.value,
+                })
+                .collect(),
+        ),
+        challenge_extracts: leak_slice(
+            program
+                .challenge_extracts
+                .iter()
+                .map(|plan| KernelStage2ChallengeExtractPlan {
+                    symbol: leak_str(&plan.symbol),
+                    source: leak_str(&plan.source),
+                    index: plan.index,
+                    challenge_source: leak_str(&plan.challenge_source),
+                })
+                .collect(),
+        ),
+        field_exprs: leak_slice(
+            program
+                .field_exprs
+                .iter()
+                .map(|plan| KernelStage2FieldExprPlan {
+                    symbol: leak_str(&plan.symbol),
+                    kind: leak_str(&plan.kind),
+                    formula: leak_str(&plan.formula),
+                    operand_names: leak_str_slice(&plan.operand_names),
+                    operands: leak_str_slice(&plan.operands),
+                })
+                .collect(),
+        ),
+        kernels: leak_slice(
+            program
+                .kernels
+                .iter()
+                .map(|plan| KernelStage2KernelPlan {
+                    symbol: leak_str(&plan.symbol),
+                    relation: leak_str(&plan.relation),
+                    kind: leak_str(&plan.kind),
+                    backend: leak_str(&plan.backend),
+                    abi: leak_str(&plan.abi),
+                })
+                .collect(),
+        ),
+        claims: leak_slice(
+            program
+                .claims
+                .iter()
+                .map(|plan| KernelStage2SumcheckClaimPlan {
+                    symbol: leak_str(&plan.symbol),
+                    stage: leak_str(&plan.stage),
+                    domain: leak_str(&plan.domain),
+                    num_rounds: plan.num_rounds,
+                    degree: plan.degree,
+                    claim: leak_str(&plan.claim),
+                    kernel: leak_str(plan.kernel.as_deref().expect("Stage2 claim kernel")),
+                    claim_value: leak_str(&plan.claim_value),
+                    input_openings: leak_str_slice(&plan.input_openings),
+                })
+                .collect(),
+        ),
+        batches: leak_slice(
+            program
+                .batches
+                .iter()
+                .map(|plan| KernelStage2SumcheckBatchPlan {
+                    symbol: leak_str(&plan.symbol),
+                    stage: leak_str(&plan.stage),
+                    proof_slot: leak_str(&plan.proof_slot),
+                    policy: leak_str(&plan.policy),
+                    count: plan.count,
+                    ordered_claims: leak_str_slice(&plan.ordered_claims),
+                    claim_operands: leak_str_slice(&plan.claim_operands),
+                    claim_label: leak_str(&plan.claim_label),
+                    round_label: leak_str(&plan.round_label),
+                    round_schedule: leak_usize_slice(&plan.round_schedule),
+                })
+                .collect(),
+        ),
+        drivers: leak_slice(
+            program
+                .drivers
+                .iter()
+                .map(|plan| KernelStage2SumcheckDriverPlan {
+                    symbol: leak_str(&plan.symbol),
+                    stage: leak_str(&plan.stage),
+                    proof_slot: leak_str(&plan.proof_slot),
+                    kernel: leak_str(plan.kernel.as_deref().expect("Stage2 driver kernel")),
+                    batch: leak_str(&plan.batch),
+                    policy: leak_str(&plan.policy),
+                    round_schedule: leak_usize_slice(&plan.round_schedule),
+                    claim_label: leak_str(&plan.claim_label),
+                    round_label: leak_str(&plan.round_label),
+                    num_rounds: plan.num_rounds,
+                    degree: plan.degree,
+                })
+                .collect(),
+        ),
+        instance_results: leak_slice(
+            program
+                .instance_results
+                .iter()
+                .map(|plan| Stage2SumcheckInstanceResultPlan {
+                    symbol: leak_str(&plan.symbol),
+                    source: leak_str(&plan.source),
+                    claim: leak_str(&plan.claim),
+                    relation: leak_str(&plan.relation),
+                    index: plan.index,
+                    point_arity: plan.point_arity,
+                    num_rounds: plan.num_rounds,
+                    round_offset: plan.round_offset,
+                    point_order: leak_str(&plan.point_order),
+                    degree: plan.degree,
+                })
+                .collect(),
+        ),
+        evals: leak_slice(
+            program
+                .evals
+                .iter()
+                .map(|plan| KernelStage2SumcheckEvalPlan {
+                    symbol: leak_str(&plan.symbol),
+                    source: leak_str(&plan.source),
+                    name: leak_str(&plan.name),
+                    index: plan.index,
+                    oracle: leak_str(&plan.oracle),
+                })
+                .collect(),
+        ),
+        point_slices: leak_slice(
+            program
+                .point_slices
+                .iter()
+                .map(|plan| Stage2PointSlicePlan {
+                    symbol: leak_str(&plan.symbol),
+                    source: leak_str(&plan.source),
+                    offset: plan.offset,
+                    length: plan.length,
+                    input: leak_str(&plan.input),
+                })
+                .collect(),
+        ),
+        point_concats: leak_slice(
+            program
+                .point_concats
+                .iter()
+                .map(|plan| Stage2PointConcatPlan {
+                    symbol: leak_str(&plan.symbol),
+                    layout: leak_str(&plan.layout),
+                    arity: plan.arity,
+                    inputs: leak_str_slice(&plan.inputs),
+                })
+                .collect(),
+        ),
+        opening_claims: leak_slice(
+            program
+                .opening_claims
+                .iter()
+                .map(|plan| Stage2OpeningClaimPlan {
+                    symbol: leak_str(&plan.symbol),
+                    oracle: leak_str(&plan.oracle),
+                    domain: leak_str(&plan.domain),
+                    point_arity: plan.point_arity,
+                    claim_kind: leak_str(&plan.claim_kind),
+                    point_source: leak_str(&plan.point_source),
+                    eval_source: leak_str(&plan.eval_source),
+                })
+                .collect(),
+        ),
+        opening_batches: leak_slice(
+            program
+                .opening_batches
+                .iter()
+                .map(|plan| Stage2OpeningBatchPlan {
+                    symbol: leak_str(&plan.symbol),
+                    stage: leak_str(&plan.stage),
+                    proof_slot: leak_str(&plan.proof_slot),
+                    policy: leak_str(&plan.policy),
+                    count: plan.count,
+                    ordered_claims: leak_str_slice(&plan.ordered_claims),
+                    claim_operands: leak_str_slice(&plan.claim_operands),
+                })
+                .collect(),
+        ),
     }))
 }
 
@@ -466,6 +1272,8 @@ fn core_muldiv_commitment_fixture() -> CoreMuldivCommitmentFixture {
         None,
     );
     let io = prover.program_io.clone();
+    let initial_ram_state = prover.initial_ram_state.clone();
+    let final_ram_state = prover.final_ram_state.clone();
     let (proof, _debug): (CoreProof, _) = prover.prove();
     let verifier_preprocessing: &'static _ = Box::leak(Box::new(JoltVerifierPreprocessing::from(
         &prover_preprocessing,
@@ -474,6 +1282,68 @@ fn core_muldiv_commitment_fixture() -> CoreMuldivCommitmentFixture {
     let mut host_program = Program::new("muldiv-guest");
     let (bytecode_raw, _, _, host_entry_address) = host_program.decode();
     let (_, trace, _, host_io_device) = host_program.trace(&inputs, &[], &[]);
+    let mut padded_trace = trace.clone();
+    padded_trace.resize(proof.trace_length, jolt_host::Cycle::NoOp);
+    let product_virtual_cycles = (0..proof.trace_length)
+        .map(|index| {
+            let row = CoreProductCycleInputs::from_trace::<CoreFr>(&padded_trace, index);
+            Stage2ProductVirtualCycle {
+                instruction_left_input: row.instruction_left_input,
+                instruction_right_input: row.instruction_right_input,
+                should_branch_lookup_output: row.should_branch_lookup_output,
+                write_lookup_output_to_rd_flag: row.write_lookup_output_to_rd_flag,
+                jump_flag: row.jump_flag,
+                should_branch_flag: row.should_branch_flag,
+                not_next_noop: row.not_next_noop,
+                virtual_instruction_flag: row.virtual_instruction_flag,
+            }
+        })
+        .collect();
+    let instruction_lookup_cycles = padded_trace
+        .iter()
+        .map(|cycle| {
+            let (left_instruction_input, right_instruction_input) =
+                LookupQuery::<XLEN>::to_instruction_inputs(cycle);
+            let (left_lookup_operand, right_lookup_operand) =
+                LookupQuery::<XLEN>::to_lookup_operands(cycle);
+            let lookup_output = LookupQuery::<XLEN>::to_lookup_output(cycle);
+            Stage2InstructionLookupCycle {
+                lookup_output,
+                left_lookup_operand,
+                right_lookup_operand,
+                left_instruction_input,
+                right_instruction_input,
+            }
+        })
+        .collect();
+    let ram_accesses = padded_trace
+        .iter()
+        .map(|cycle| match cycle.ram_access() {
+            RAMAccess::Read(read) => Stage2RamAccess {
+                remapped_address: remap_address(read.address, &host_io_device.memory_layout)
+                    .map(|address| address as usize),
+                read_value: read.value,
+                write_value: read.value,
+            },
+            RAMAccess::Write(write) => Stage2RamAccess {
+                remapped_address: remap_address(write.address, &host_io_device.memory_layout)
+                    .map(|address| address as usize),
+                read_value: write.pre_value,
+                write_value: write.post_value,
+            },
+            RAMAccess::NoOp => Stage2RamAccess::noop(),
+        })
+        .collect();
+    let ram_start_address = host_io_device.memory_layout.get_lowest_address();
+    let ram_output_layout = Stage2RamOutputLayout {
+        io_start: remap_address(
+            host_io_device.memory_layout.input_start,
+            &host_io_device.memory_layout,
+        )
+        .expect("input start remaps") as usize,
+        io_end: remap_address(RAM_START_ADDRESS, &host_io_device.memory_layout)
+            .expect("RAM start remaps") as usize,
+    };
     let bytecode = BytecodePreprocessing::preprocess(bytecode_raw, host_entry_address);
     let r1cs_key = R1csKey::new(rv64::rv64_constraints::<Fr>(), proof.trace_length);
     let (cycle_inputs, r1cs_witness, _) = extract_trace::<_, Fr>(
@@ -504,6 +1374,13 @@ fn core_muldiv_commitment_fixture() -> CoreMuldivCommitmentFixture {
         entry_address,
         cycle_inputs,
         r1cs_witness,
+        product_virtual_cycles,
+        instruction_lookup_cycles,
+        ram_accesses,
+        initial_ram_state,
+        final_ram_state,
+        ram_start_address,
+        ram_output_layout,
         commitments,
     }
 }
@@ -774,6 +1651,376 @@ fn assert_core_accepts_bolt_stage1(
         .expect("jolt-core accepts Bolt Stage 1 proof");
 }
 
+fn assert_core_accepts_bolt_stage2(
+    fixture: &CoreMuldivCommitmentFixture,
+    stage1_artifacts: &Stage1ExecutionArtifacts<Fr>,
+    stage2_artifacts: &Stage2ExecutionArtifacts<Fr>,
+) {
+    let mut proof = clone_core_proof(&fixture.proof);
+    proof.stage1_uni_skip_first_round_proof = to_core_uniskip_proof(&stage1_artifacts.sumchecks[0]);
+    proof.stage1_sumcheck_proof =
+        to_core_sumcheck_proof(&stage1_artifacts.sumchecks[1].proof.round_polynomials);
+    proof.stage2_uni_skip_first_round_proof =
+        to_core_stage2_uniskip_proof(&stage2_artifacts.sumchecks[0]);
+    proof.stage2_sumcheck_proof =
+        to_core_sumcheck_proof(&stage2_artifacts.sumchecks[1].proof.round_polynomials);
+    assert_core_stage2_opening_claims_match_bolt(&fixture.proof, stage2_artifacts);
+    assert_core_stage2_sumcheck_proof_matches_bolt(&fixture.proof, &stage2_artifacts.sumchecks[1]);
+
+    let mut verifier = CoreVerifier::new(
+        fixture.verifier_preprocessing,
+        proof,
+        fixture.io.clone(),
+        None,
+        None,
+    )
+    .expect("construct core verifier");
+    verifier.run_preamble();
+    let _ = verifier.verify_stage1().expect("core accepts Bolt Stage 1");
+    let _ = verifier.verify_stage2().expect("core accepts Bolt Stage 2");
+}
+
+fn assert_core_stage2_opening_claims_match_bolt(
+    proof: &CoreProof,
+    artifacts: &Stage2ExecutionArtifacts<Fr>,
+) {
+    let expected = [
+        (
+            "stage2.product_virtual.uniskip.eval.UnivariateSkip",
+            OpeningId::virt(
+                VirtualPolynomial::UnivariateSkip,
+                SumcheckId::SpartanProductVirtualization,
+            ),
+        ),
+        (
+            "stage2.ram_read_write.eval.RamVal",
+            OpeningId::virt(VirtualPolynomial::RamVal, SumcheckId::RamReadWriteChecking),
+        ),
+        (
+            "stage2.ram_read_write.eval.RamRa",
+            OpeningId::virt(VirtualPolynomial::RamRa, SumcheckId::RamReadWriteChecking),
+        ),
+        (
+            "stage2.ram_read_write.eval.RamInc",
+            OpeningId::committed(
+                CommittedPolynomial::RamInc,
+                SumcheckId::RamReadWriteChecking,
+            ),
+        ),
+        (
+            "stage2.product_virtual.remainder.eval.LeftInstructionInput",
+            OpeningId::virt(
+                VirtualPolynomial::LeftInstructionInput,
+                SumcheckId::SpartanProductVirtualization,
+            ),
+        ),
+        (
+            "stage2.product_virtual.remainder.eval.RightInstructionInput",
+            OpeningId::virt(
+                VirtualPolynomial::RightInstructionInput,
+                SumcheckId::SpartanProductVirtualization,
+            ),
+        ),
+        (
+            "stage2.product_virtual.remainder.eval.OpFlagJump",
+            OpeningId::virt(
+                VirtualPolynomial::OpFlags(CircuitFlags::Jump),
+                SumcheckId::SpartanProductVirtualization,
+            ),
+        ),
+        (
+            "stage2.product_virtual.remainder.eval.OpFlagWriteLookupOutputToRD",
+            OpeningId::virt(
+                VirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD),
+                SumcheckId::SpartanProductVirtualization,
+            ),
+        ),
+        (
+            "stage2.product_virtual.remainder.eval.LookupOutput",
+            OpeningId::virt(
+                VirtualPolynomial::LookupOutput,
+                SumcheckId::SpartanProductVirtualization,
+            ),
+        ),
+        (
+            "stage2.product_virtual.remainder.eval.InstructionFlagBranch",
+            OpeningId::virt(
+                VirtualPolynomial::InstructionFlags(InstructionFlags::Branch),
+                SumcheckId::SpartanProductVirtualization,
+            ),
+        ),
+        (
+            "stage2.product_virtual.remainder.eval.NextIsNoop",
+            OpeningId::virt(
+                VirtualPolynomial::NextIsNoop,
+                SumcheckId::SpartanProductVirtualization,
+            ),
+        ),
+        (
+            "stage2.product_virtual.remainder.eval.OpFlagVirtualInstruction",
+            OpeningId::virt(
+                VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
+                SumcheckId::SpartanProductVirtualization,
+            ),
+        ),
+        (
+            "stage2.instruction_lookup.claim_reduction.eval.LookupOutput",
+            OpeningId::virt(
+                VirtualPolynomial::LookupOutput,
+                SumcheckId::InstructionClaimReduction,
+            ),
+        ),
+        (
+            "stage2.instruction_lookup.claim_reduction.eval.LeftLookupOperand",
+            OpeningId::virt(
+                VirtualPolynomial::LeftLookupOperand,
+                SumcheckId::InstructionClaimReduction,
+            ),
+        ),
+        (
+            "stage2.instruction_lookup.claim_reduction.eval.RightLookupOperand",
+            OpeningId::virt(
+                VirtualPolynomial::RightLookupOperand,
+                SumcheckId::InstructionClaimReduction,
+            ),
+        ),
+        (
+            "stage2.instruction_lookup.claim_reduction.eval.LeftInstructionInput",
+            OpeningId::virt(
+                VirtualPolynomial::LeftInstructionInput,
+                SumcheckId::InstructionClaimReduction,
+            ),
+        ),
+        (
+            "stage2.instruction_lookup.claim_reduction.eval.RightInstructionInput",
+            OpeningId::virt(
+                VirtualPolynomial::RightInstructionInput,
+                SumcheckId::InstructionClaimReduction,
+            ),
+        ),
+        (
+            "stage2.ram_raf.eval.RamRa",
+            OpeningId::virt(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation),
+        ),
+        (
+            "stage2.ram_output.eval.RamValFinal",
+            OpeningId::virt(VirtualPolynomial::RamValFinal, SumcheckId::RamOutputCheck),
+        ),
+    ]
+    .into_iter()
+    .collect::<BTreeMap<_, _>>();
+
+    for output in &artifacts.sumchecks {
+        for eval in &output.evals {
+            let Some(opening_id) = expected.get(eval.name) else {
+                continue;
+            };
+            if let Some((_, core_claim)) = proof.opening_claims.0.get(opening_id) {
+                assert_eq!(
+                    eval.value,
+                    Fr::from(*core_claim),
+                    "Stage 2 opening claim mismatch for {}",
+                    eval.name
+                );
+            }
+        }
+    }
+}
+
+struct BoltStage2ChainVerifierInput<'a> {
+    fixture: &'a CoreMuldivCommitmentFixture,
+    commitment_verifier_program: &'a CommitmentCpuProgram,
+    commitment_verifier_trace: &'a BoltCommitmentTrace,
+    stage1_prover_plan: &'static KernelStage1CpuProgramPlan,
+    stage2_prover_plan: &'static KernelStage2CpuProgramPlan,
+    stage1_artifacts: &'a Stage1ExecutionArtifacts<Fr>,
+    stage2_artifacts: &'a Stage2ExecutionArtifacts<Fr>,
+    prover_transcript: &'a CheckpointTranscript<jolt_transcript::Blake2bTranscript<Fr>>,
+}
+
+fn assert_bolt_chain_verifier_accepts_stage2_product_uniskip(
+    input: BoltStage2ChainVerifierInput<'_>,
+) {
+    let mut verifier_transcript =
+        CheckpointTranscript::<jolt_transcript::Blake2bTranscript<Fr>>::new(TRANSCRIPT_LABEL);
+    append_bolt_preamble(
+        &mut verifier_transcript,
+        &input.fixture.io,
+        input.fixture.proof.ram_K,
+        input.fixture.proof.trace_length,
+        input.fixture.entry_address,
+    );
+    append_bolt_commitments_to_transcript(
+        &mut verifier_transcript,
+        &input.commitment_verifier_trace.records,
+        &input.commitment_verifier_trace.commitments,
+        &input.commitment_verifier_program.transcript_steps,
+    );
+
+    let stage1_proof = Stage1Proof::from(input.stage1_artifacts.clone());
+    let mut stage1_verifier = Stage1VerifierKernelExecutor::new(&stage1_proof);
+    let verified_stage1 = execute_stage1_program(
+        input.stage1_prover_plan,
+        Stage1ExecutionMode::Verifier,
+        &mut stage1_verifier,
+        &mut verifier_transcript,
+    )
+    .expect("Bolt Stage 1 verifier accepts Bolt prover proof");
+    assert_eq!(
+        input.stage1_artifacts.sumchecks.len(),
+        verified_stage1.sumchecks.len()
+    );
+    assert_eq!(
+        input.stage1_artifacts.opening_values.len(),
+        verified_stage1.opening_values.len()
+    );
+
+    let stage2_openings = stage2_product_opening_inputs(&verified_stage1);
+    let stage2_proof = Stage2Proof::from(input.stage2_artifacts.clone());
+    let mut stage2_verifier = Stage2VerifierKernelExecutor::new(&stage2_proof, &stage2_openings);
+    let verified_stage2 = execute_stage2_program(
+        input.stage2_prover_plan,
+        Stage2ExecutionMode::Verifier,
+        &mut stage2_verifier,
+        &mut verifier_transcript,
+    )
+    .expect("Bolt Stage 2 verifier accepts Bolt prover proof");
+
+    assert_eq!(
+        input.stage2_artifacts.sumchecks.len(),
+        verified_stage2.sumchecks.len()
+    );
+    assert_eq!(
+        input.stage2_artifacts.sumchecks[0].point,
+        verified_stage2.sumchecks[0].point
+    );
+    assert_eq!(
+        input.stage2_artifacts.sumchecks[0].evals[0].value,
+        verified_stage2.sumchecks[0].evals[0].value
+    );
+    assert_state_history_match(
+        &transcript_states(input.prover_transcript.log()),
+        &transcript_states(verifier_transcript.log()),
+    );
+}
+
+fn stage2_product_opening_inputs(
+    stage1_artifacts: &Stage1ExecutionArtifacts<Fr>,
+) -> Vec<Stage2OpeningInputValue<Fr>> {
+    ["Product", "ShouldBranch", "ShouldJump"]
+        .into_iter()
+        .map(|oracle| {
+            let source_claim = match oracle {
+                "Product" => "stage1.outer_remaining.opening.Product",
+                "ShouldBranch" => "stage1.outer_remaining.opening.ShouldBranch",
+                "ShouldJump" => "stage1.outer_remaining.opening.ShouldJump",
+                _ => unreachable!(),
+            };
+            let opening = stage1_artifacts
+                .opening_value(source_claim)
+                .unwrap_or_else(|| panic!("missing Stage 1 opening {source_claim}"));
+            Stage2OpeningInputValue {
+                symbol: match oracle {
+                    "Product" => "stage2.input.stage1.Product",
+                    "ShouldBranch" => "stage2.input.stage1.ShouldBranch",
+                    "ShouldJump" => "stage2.input.stage1.ShouldJump",
+                    _ => unreachable!(),
+                },
+                point: opening.point.clone(),
+                eval: opening.eval,
+            }
+        })
+        .collect()
+}
+
+fn stage2_opening_inputs(
+    stage1_artifacts: &Stage1ExecutionArtifacts<Fr>,
+) -> Vec<Stage2OpeningInputValue<Fr>> {
+    [
+        "Product",
+        "ShouldBranch",
+        "ShouldJump",
+        "RamReadValue",
+        "RamWriteValue",
+        "LookupOutput",
+        "LeftLookupOperand",
+        "RightLookupOperand",
+        "LeftInstructionInput",
+        "RightInstructionInput",
+        "RamAddress",
+    ]
+    .into_iter()
+    .map(|oracle| {
+        let source_claim = format!("stage1.outer_remaining.opening.{oracle}");
+        let opening = stage1_artifacts
+            .opening_value(&source_claim)
+            .unwrap_or_else(|| panic!("missing Stage 1 opening {source_claim}"));
+        Stage2OpeningInputValue {
+            symbol: leak_str(&format!("stage2.input.stage1.{oracle}")),
+            point: opening.point.clone(),
+            eval: opening.eval,
+        }
+    })
+    .collect()
+}
+
+fn assert_core_stage2_uniskip_proof_matches_bolt(
+    proof: &CoreProof,
+    output: &jolt_kernels::stage2::Stage2SumcheckOutput<Fr>,
+) {
+    let core_coefficients = match &proof.stage2_uni_skip_first_round_proof {
+        UniSkipFirstRoundProofVariant::Standard(proof) => proof
+            .uni_poly
+            .coeffs
+            .iter()
+            .copied()
+            .map(Fr::from)
+            .collect::<Vec<_>>(),
+        UniSkipFirstRoundProofVariant::Zk(_) => panic!("standard Stage 2 proof expected"),
+    };
+    assert_eq!(output.proof.round_polynomials.len(), 1);
+    assert_eq!(
+        output.proof.round_polynomials[0].coefficients(),
+        core_coefficients.as_slice()
+    );
+}
+
+fn assert_core_stage2_sumcheck_proof_matches_bolt(
+    proof: &CoreProof,
+    output: &jolt_kernels::stage2::Stage2SumcheckOutput<Fr>,
+) {
+    let core_polys = match &proof.stage2_sumcheck_proof {
+        jolt_core::subprotocols::sumcheck::SumcheckInstanceProof::Clear(proof) => {
+            &proof.compressed_polys
+        }
+        jolt_core::subprotocols::sumcheck::SumcheckInstanceProof::Zk(_) => {
+            panic!("standard Stage 2 proof expected")
+        }
+    };
+    assert_eq!(
+        core_polys.len(),
+        output.proof.round_polynomials.len(),
+        "Stage 2 round count mismatch"
+    );
+    for (round, (core, bolt)) in core_polys
+        .iter()
+        .zip(&output.proof.round_polynomials)
+        .enumerate()
+    {
+        let bolt_coeffs = bolt.compress();
+        let bolt_coeffs = bolt_coeffs
+            .coeffs_except_linear_term()
+            .iter()
+            .copied()
+            .map(to_ark)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            core.coeffs_except_linear_term, bolt_coeffs,
+            "Stage 2 compressed coefficient mismatch at round {round}"
+        );
+    }
+}
+
 fn assert_core_states_match_bolt_stage1(
     fixture: &CoreMuldivCommitmentFixture,
     bolt_log: &[TranscriptEvent],
@@ -788,6 +2035,27 @@ fn assert_core_states_match_bolt_stage1(
     .expect("construct core verifier");
     verifier.run_preamble();
     let _ = verifier.verify_stage1().expect("core Stage 1 verifies");
+
+    let core_states = verifier.transcript.state_history[1..].to_vec();
+    let bolt_states = transcript_states(bolt_log);
+    assert_state_history_match(&core_states, &bolt_states);
+}
+
+fn assert_core_states_match_bolt_stage2(
+    fixture: &CoreMuldivCommitmentFixture,
+    bolt_log: &[TranscriptEvent],
+) {
+    let mut verifier = CoreVerifier::new(
+        fixture.verifier_preprocessing,
+        clone_core_proof(&fixture.proof),
+        fixture.io.clone(),
+        None,
+        None,
+    )
+    .expect("construct core verifier");
+    verifier.run_preamble();
+    let _ = verifier.verify_stage1().expect("core Stage 1 verifies");
+    let _ = verifier.verify_stage2().expect("core Stage 2 verifies");
 
     let core_states = verifier.transcript.state_history[1..].to_vec();
     let bolt_states = transcript_states(bolt_log);
@@ -839,6 +2107,21 @@ fn assert_bolt_stage1_tamper_rejected(
 
 fn to_core_uniskip_proof(
     output: &jolt_kernels::stage1::Stage1SumcheckOutput<Fr>,
+) -> UniSkipFirstRoundProofVariant<CoreFr, Bn254Curve, CoreBlake2bTranscript> {
+    assert_eq!(output.proof.round_polynomials.len(), 1);
+    let coefficients = output.proof.round_polynomials[0]
+        .coefficients()
+        .iter()
+        .copied()
+        .map(to_ark)
+        .collect();
+    UniSkipFirstRoundProofVariant::Standard(UniSkipFirstRoundProof::new(UniPoly::from_coeff(
+        coefficients,
+    )))
+}
+
+fn to_core_stage2_uniskip_proof(
+    output: &jolt_kernels::stage2::Stage2SumcheckOutput<Fr>,
 ) -> UniSkipFirstRoundProofVariant<CoreFr, Bn254Curve, CoreBlake2bTranscript> {
     assert_eq!(output.proof.round_polynomials.len(), 1);
     let coefficients = output.proof.round_polynomials[0]

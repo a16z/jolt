@@ -1,0 +1,36 @@
+{
+  "program": "sha2-chain",
+  "stage": "stage2",
+  "max_log_t": 16,
+  "actual_log_t": 16,
+  "trace_length": 65536,
+  "num_iters": 16,
+  "iters": 1,
+  "warmup": 0,
+  "correctness": {
+    "bolt_prover_verifier_transcript": true,
+    "core_accepts_bolt_stage1": true,
+    "core_bolt_transcript_states": true,
+    "commitment_parity": true
+  },
+  "runs": [
+    {
+      "stack": "core",
+      "stage": "stage2",
+      "stage_ms": 15.906416,
+      "samples_ms": [
+        15.906416
+      ]
+    },
+    {
+      "stack": "bolt",
+      "stage": "stage2",
+      "stage_ms": 45.499208,
+      "samples_ms": [
+        45.499208
+      ],
+      "ratio_vs_core": 2.860431161865753,
+      "timeout_ms": 15906.416
+    }
+  ]
+}

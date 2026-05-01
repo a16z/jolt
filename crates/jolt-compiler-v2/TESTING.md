@@ -33,6 +33,26 @@ bridge into `jolt-equivalence` for jolt-core parity.
    `cargo nextest run -p jolt-equivalence zkvm_proof_accepted --cargo-quiet`.
    This bootstraps soundness against the existing core verifier.
 
+## Four per-stage parity oracles
+
+Every wired protocol stage must pass the same four checks before the next stage
+is considered unblocked:
+
+1. **Bolt proof acceptance**: the generated/Bolt verifier accepts the proof
+   objects produced by the generated/Bolt prover for that stage.
+2. **Bolt transcript parity**: Bolt prover and Bolt verifier transcript states
+   match step-for-step for the stage-local transcript operations.
+3. **jolt-core proof acceptance**: jolt-core accepts a proof whose wired stage
+   artifacts were produced by Bolt and spliced into the matching core proof
+   prefix.
+4. **jolt-core transcript/artifact parity**: Bolt matches jolt-core transcript
+   states and observable stage artifacts through the stage boundary, including
+   sumcheck polynomials, opening claims, commitments, and normalized opening
+   points when those artifacts exist for the stage.
+
+The first version applies this matrix to standard-mode stages. ZK/BlindFold
+should reuse the same matrix when those dialects and proof objects are wired.
+
 ## Per-phase rule
 
 For a new phase, add both party projections before treating the phase as done:

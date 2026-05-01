@@ -63,3 +63,7 @@ num-traits = { workspace = true }
 [[bin]]
 name = "bolt-stage1"
 path = "src/bin/bolt_stage1.rs"
+
+[[bin]]
+name = "bolt-stage"
+path = "src/bin/bolt_stage1.rs"

@@ -8,4 +8,34 @@ irdl.dialect @poly {
     %log_size = irdl.any
     irdl.attributes {"sym_name" = %sym, "field" = %field, "log_size" = %log_size}
   }
+  irdl.operation @point_slice {
+    %input = irdl.parametric @poly::@point<>
+    %output = irdl.parametric @poly::@point<>
+    %sym = irdl.any
+    %source = irdl.any
+    %offset = irdl.any
+    %length = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "source" = %source,
+      "offset" = %offset,
+      "length" = %length
+    }
+    irdl.operands(input: %input)
+    irdl.results(output: %output)
+  }
+  irdl.operation @point_concat {
+    %input = irdl.parametric @poly::@point<>
+    %output = irdl.parametric @poly::@point<>
+    %sym = irdl.any
+    %layout = irdl.any
+    %arity = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "layout" = %layout,
+      "arity" = %arity
+    }
+    irdl.operands(inputs: variadic %input)
+    irdl.results(output: %output)
+  }
 }

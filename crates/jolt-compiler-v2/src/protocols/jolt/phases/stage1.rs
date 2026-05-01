@@ -111,9 +111,19 @@ pub fn build_stage1_outer_protocol<'c>(
         &["!piop.stage_type"],
     )?;
     let stage = first_result(stage, "piop.stage")?;
+    let zero_claim = append_field_constant(context, &module, "stage1.zero", 0)?;
 
-    let (state, uniskip_claim) = append_uniskip_sumcheck(context, &module, params, state, stage)?;
-    let _state = append_remaining_sumcheck(context, &module, params, state, stage, uniskip_claim)?;
+    let (state, uniskip_opening, uniskip_eval) =
+        append_uniskip_sumcheck(context, &module, params, state, stage, zero_claim)?;
+    let _state = append_remaining_sumcheck(
+        context,
+        &module,
+        params,
+        state,
+        stage,
+        uniskip_eval,
+        uniskip_opening,
+    )?;
 
     verify_module(&module)?;
     verify_protocol_schema(&module)?;
@@ -192,6 +202,47 @@ pub fn lower_stage1_to_compute<'c>(
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
                 insert_result_mapping(&mut value_map, op, operation, 1, 1)?;
+            }
+            "field.constant" => {
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["field", "value"])?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &compute,
+                    "compute.field_constant",
+                    Some(&symbol),
+                    &attrs,
+                    &[],
+                    &["!compute.field_value"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "field.challenge_extract" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["source", "index"])?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &compute,
+                    "compute.challenge_extract",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!compute.field_value"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "field.expr" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["kind", "formula", "operands"])?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &compute,
+                    "compute.field_expr",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!compute.field_value"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
             }
             "piop.sumcheck_claim" => {
                 let operands = lowered_operands(op, &value_map, 0)?;
@@ -311,6 +362,8 @@ pub fn lower_stage1_to_compute<'c>(
                         "index",
                         "point_arity",
                         "num_rounds",
+                        "round_offset",
+                        "point_order",
                         "degree",
                     ],
                 )?;
@@ -440,6 +493,104 @@ pub fn resolve_compute_kernels<'c>(
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
                 insert_result_mapping(&mut value_map, op, operation, 1, 1)?;
+            }
+            "compute.opening_input" => {
+                let attrs = copy_attrs(
+                    op,
+                    &[
+                        "source_stage",
+                        "source_claim",
+                        "oracle",
+                        "domain",
+                        "point_arity",
+                        "claim_kind",
+                    ],
+                )?;
+                let symbol = string_attr(op, "sym_name")?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &kernelized,
+                    "compute.opening_input",
+                    Some(&symbol),
+                    &attrs,
+                    &[],
+                    &[
+                        "!compute.point",
+                        "!compute.field_value",
+                        "!compute.opening_claim_type",
+                    ],
+                )?;
+                for index in 0..3 {
+                    insert_result_mapping(&mut value_map, op, operation, index, index)?;
+                }
+            }
+            "compute.point_slice" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let attrs = copy_attrs(op, &["source", "offset", "length"])?;
+                let symbol = string_attr(op, "sym_name")?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &kernelized,
+                    "compute.point_slice",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!compute.point"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "compute.point_concat" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let attrs = copy_attrs(op, &["layout", "arity"])?;
+                let symbol = string_attr(op, "sym_name")?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &kernelized,
+                    "compute.point_concat",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!compute.point"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "compute.field_constant" => {
+                let attrs = copy_attrs(op, &["field", "value"])?;
+                let symbol = string_attr(op, "sym_name")?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &kernelized,
+                    "compute.field_constant",
+                    Some(&symbol),
+                    &attrs,
+                    &[],
+                    &["!compute.field_value"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "compute.challenge_extract" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let attrs = copy_attrs(op, &["source", "index"])?;
+                let symbol = string_attr(op, "sym_name")?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &kernelized,
+                    "compute.challenge_extract",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!compute.field_value"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "compute.field_expr" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let attrs = copy_attrs(op, &["kind", "formula", "operands"])?;
+                let symbol = string_attr(op, "sym_name")?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &kernelized,
+                    "compute.field_expr",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!compute.field_value"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
             }
             "compute.sumcheck_claim" => {
                 let relation = symbol_attr(op, "relation")?;
@@ -604,6 +755,8 @@ pub fn resolve_compute_kernels<'c>(
                         "index",
                         "point_arity",
                         "num_rounds",
+                        "round_offset",
+                        "point_order",
                         "degree",
                     ],
                 )?;
@@ -786,13 +939,31 @@ fn append_stage1_relations<'c>(
     )
 }
 
+fn append_field_constant<'c, 'a>(
+    context: &'c MeliorContext,
+    module: &'a BoltModule<'c, Protocol>,
+    symbol: &str,
+    value: usize,
+) -> Result<Value<'c, 'a>, MlirError> {
+    let op = context.append_typed_op(
+        module,
+        "field.constant",
+        Some(symbol),
+        &[("field", "@bn254_fr"), ("value", &int_attr(value))],
+        &[],
+        &["!field.scalar"],
+    )?;
+    first_result(op, "field.constant")
+}
+
 fn append_uniskip_sumcheck<'c, 'a>(
     context: &'c MeliorContext,
     module: &'a BoltModule<'c, Protocol>,
     params: &JoltProtocolParams,
     state: Value<'c, 'a>,
     stage: Value<'c, 'a>,
-) -> Result<(Value<'c, 'a>, Value<'c, 'a>), MlirError> {
+    zero_claim: Value<'c, 'a>,
+) -> Result<(Value<'c, 'a>, Value<'c, 'a>, Value<'c, 'a>), MlirError> {
     let claim = context.append_typed_op(
         module,
         "piop.sumcheck_claim",
@@ -802,10 +973,10 @@ fn append_uniskip_sumcheck<'c, 'a>(
             ("domain", "@jolt.stage1_uniskip_domain"),
             ("num_rounds", "1 : i64"),
             ("degree", &int_attr(OUTER_UNISKIP_FIRST_ROUND_DEGREE_BOUND)),
-            ("claim", "@zero"),
+            ("claim", "@stage1.zero"),
             ("relation", "@jolt.stage1.outer.uniskip"),
         ],
-        &[],
+        &[zero_claim],
         &["!piop.sumcheck_claim_type"],
     )?;
     let claim = first_result(claim, "piop.sumcheck_claim")?;
@@ -864,6 +1035,8 @@ fn append_uniskip_sumcheck<'c, 'a>(
             index: 0,
             point_arity: 1,
             num_rounds: 1,
+            round_offset: 0,
+            point_order: "as_is",
             degree: OUTER_UNISKIP_FIRST_ROUND_DEGREE_BOUND,
         },
         point,
@@ -891,7 +1064,7 @@ fn append_uniskip_sumcheck<'c, 'a>(
         },
     )?;
     let _ = params;
-    Ok((state, opening))
+    Ok((state, opening, eval))
 }
 
 fn append_remaining_sumcheck<'c, 'a>(
@@ -900,7 +1073,8 @@ fn append_remaining_sumcheck<'c, 'a>(
     params: &JoltProtocolParams,
     state: Value<'c, 'a>,
     stage: Value<'c, 'a>,
-    uniskip_claim: Value<'c, 'a>,
+    input_claim: Value<'c, 'a>,
+    uniskip_opening: Value<'c, 'a>,
 ) -> Result<Value<'c, 'a>, MlirError> {
     let num_rounds = params.log_t + 1;
     let claim = context.append_typed_op(
@@ -912,10 +1086,10 @@ fn append_remaining_sumcheck<'c, 'a>(
             ("domain", "@jolt.trace_domain"),
             ("num_rounds", &int_attr(num_rounds)),
             ("degree", "3 : i64"),
-            ("claim", "@stage1.uniskip.opening"),
+            ("claim", "@stage1.uniskip.eval"),
             ("relation", "@jolt.stage1.outer.remaining"),
         ],
-        &[uniskip_claim],
+        &[input_claim, uniskip_opening],
         &["!piop.sumcheck_claim_type"],
     )?;
     let claim = first_result(claim, "piop.sumcheck_claim")?;
@@ -974,6 +1148,8 @@ fn append_remaining_sumcheck<'c, 'a>(
             index: 0,
             point_arity: params.log_t,
             num_rounds,
+            round_offset: 1,
+            point_order: "reverse",
             degree: 3,
         },
         point,
@@ -1063,6 +1239,8 @@ fn append_sumcheck_instance_result<'c, 'a>(
             ("index", &int_attr(spec.index)),
             ("point_arity", &int_attr(spec.point_arity)),
             ("num_rounds", &int_attr(spec.num_rounds)),
+            ("round_offset", &int_attr(spec.round_offset)),
+            ("point_order", &format!("\"{}\"", spec.point_order)),
             ("degree", &int_attr(spec.degree)),
         ],
         &[point, result_value],
@@ -1112,6 +1290,8 @@ struct SumcheckInstanceResultSpec<'a> {
     index: usize,
     point_arity: usize,
     num_rounds: usize,
+    round_offset: usize,
+    point_order: &'a str,
     degree: usize,
 }
 
@@ -1298,6 +1478,41 @@ fn kernel_spec(relation: &str) -> Result<KernelSpec, MlirError> {
             symbol: "jolt.cpu.stage1.outer.remaining",
             kind: "sumcheck",
             abi: "jolt_stage1_outer_remaining",
+        }),
+        "jolt.stage2.product_virtual.uniskip" => Ok(KernelSpec {
+            symbol: "jolt.cpu.stage2.product_virtual.uniskip",
+            kind: "sumcheck",
+            abi: "jolt_stage2_product_virtual_uniskip",
+        }),
+        "jolt.stage2.ram.read_write" => Ok(KernelSpec {
+            symbol: "jolt.cpu.stage2.ram.read_write",
+            kind: "sumcheck",
+            abi: "jolt_stage2_ram_read_write",
+        }),
+        "jolt.stage2.product_virtual.remainder" => Ok(KernelSpec {
+            symbol: "jolt.cpu.stage2.product_virtual.remainder",
+            kind: "sumcheck",
+            abi: "jolt_stage2_product_virtual_remainder",
+        }),
+        "jolt.stage2.instruction_lookup.claim_reduction" => Ok(KernelSpec {
+            symbol: "jolt.cpu.stage2.instruction_lookup.claim_reduction",
+            kind: "sumcheck",
+            abi: "jolt_stage2_instruction_lookup_claim_reduction",
+        }),
+        "jolt.stage2.ram.raf_evaluation" => Ok(KernelSpec {
+            symbol: "jolt.cpu.stage2.ram.raf_evaluation",
+            kind: "sumcheck",
+            abi: "jolt_stage2_ram_raf_evaluation",
+        }),
+        "jolt.stage2.ram.output_check" => Ok(KernelSpec {
+            symbol: "jolt.cpu.stage2.ram.output_check",
+            kind: "sumcheck",
+            abi: "jolt_stage2_ram_output_check",
+        }),
+        "jolt.stage2.batched" => Ok(KernelSpec {
+            symbol: "jolt.cpu.stage2.batched",
+            kind: "sumcheck",
+            abi: "jolt_stage2_batched",
         }),
         _ => Err(schema_error(format!(
             "unsupported compute relation @{relation}"

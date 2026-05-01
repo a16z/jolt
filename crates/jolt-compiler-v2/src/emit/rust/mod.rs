@@ -1,5 +1,6 @@
 mod commitment;
 mod stage1;
+mod stage2;
 
 pub use commitment::{
     commitment_cpu_program, emit_commitment_rust, CommitmentBatchPlan, CommitmentCpuProgram,
@@ -11,3 +12,4 @@ pub use stage1::{
     Stage1OpeningBatchPlan, Stage1OpeningClaimPlan, Stage1Params, Stage1SumcheckBatchPlan,
     Stage1SumcheckClaimPlan, Stage1SumcheckDriverPlan, Stage1SumcheckEvalPlan,
 };
+pub use stage2::{emit_stage2_rust, stage2_cpu_program, Stage2CpuProgram};

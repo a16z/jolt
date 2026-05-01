@@ -58,6 +58,7 @@ pub struct Stage1SumcheckClaimPlan {
     pub claim: String,
     pub kernel: Option<String>,
     pub relation: Option<String>,
+    pub claim_value: String,
     pub input_openings: Vec<String>,
 }
 
@@ -100,6 +101,8 @@ pub struct Stage1SumcheckInstanceResultPlan {
     pub index: usize,
     pub point_arity: usize,
     pub num_rounds: usize,
+    pub round_offset: usize,
+    pub point_order: String,
     pub degree: usize,
 }
 
@@ -201,7 +204,8 @@ impl Stage1CpuProgram {
                         claim: symbol_attr(op, "claim")?,
                         kernel: Some(symbol_attr(op, "kernel")?),
                         relation: None,
-                        input_openings: operand_symbols(op, 0)?,
+                        claim_value: operand_symbol(op, 0)?,
+                        input_openings: operand_symbols(op, 1)?,
                     });
                 }
                 "cpu.sumcheck_verify_claim" => {
@@ -214,7 +218,8 @@ impl Stage1CpuProgram {
                         claim: symbol_attr(op, "claim")?,
                         kernel: None,
                         relation: Some(symbol_attr(op, "relation")?),
-                        input_openings: operand_symbols(op, 0)?,
+                        claim_value: operand_symbol(op, 0)?,
+                        input_openings: operand_symbols(op, 1)?,
                     });
                 }
                 "cpu.sumcheck_batch" => {
@@ -281,6 +286,8 @@ impl Stage1CpuProgram {
                         index: int_attr(op, "index")?,
                         point_arity: int_attr(op, "point_arity")?,
                         num_rounds: int_attr(op, "num_rounds")?,
+                        round_offset: int_attr(op, "round_offset")?,
+                        point_order: string_attr(op, "point_order")?,
                         degree: int_attr(op, "degree")?,
                     });
                 }
@@ -690,7 +697,7 @@ impl Stage1CpuProgram {
 
     fn emit_prover_imports() -> &'static str {
         "use jolt_field::Fr;\n\
-         use jolt_kernels::stage1::{execute_stage1_program, Stage1CpuProgramPlan, Stage1ExecutionArtifacts, Stage1ExecutionMode, Stage1KernelError, Stage1KernelExecutor, Stage1KernelPlan, Stage1OpeningBatchPlan, Stage1OpeningClaimPlan, Stage1Params, Stage1SumcheckBatchPlan, Stage1SumcheckClaimPlan, Stage1SumcheckDriverPlan, Stage1SumcheckEvalPlan, Stage1TranscriptSqueezePlan};\n\
+         use jolt_kernels::stage1::{execute_stage1_program, Stage1CpuProgramPlan, Stage1ExecutionArtifacts, Stage1ExecutionMode, Stage1KernelError, Stage1KernelExecutor, Stage1KernelPlan, Stage1OpeningBatchPlan, Stage1OpeningClaimPlan, Stage1Params, Stage1SumcheckBatchPlan, Stage1SumcheckClaimPlan, Stage1SumcheckDriverPlan, Stage1SumcheckEvalPlan, Stage1SumcheckInstanceResultPlan, Stage1TranscriptSqueezePlan};\n\
          use jolt_transcript::{Blake2bTranscript, Transcript};"
     }
 
@@ -718,6 +725,7 @@ impl Stage1CpuProgram {
         source.push_str(&self.emit_sumcheck_claim_constants());
         source.push_str(&self.emit_sumcheck_batch_constants());
         source.push_str(&self.emit_sumcheck_driver_constants());
+        source.push_str(&self.emit_sumcheck_instance_result_constants());
         source.push_str(&self.emit_sumcheck_eval_constants());
         source.push_str(&self.emit_opening_claim_constants());
         source.push_str(&self.emit_opening_batch_constants());
@@ -729,12 +737,39 @@ impl Stage1CpuProgram {
              \x20   claims: STAGE1_SUMCHECK_CLAIMS,\n\
              \x20   batches: STAGE1_SUMCHECK_BATCHES,\n\
              \x20   drivers: STAGE1_SUMCHECK_DRIVERS,\n\
+             \x20   instance_results: STAGE1_SUMCHECK_INSTANCE_RESULTS,\n\
              \x20   evals: STAGE1_SUMCHECK_EVALS,\n\
              \x20   opening_claims: STAGE1_OPENING_CLAIMS,\n\
              \x20   opening_batches: STAGE1_OPENING_BATCHES,\n\
              };\n",
         );
         source
+    }
+
+    fn emit_sumcheck_instance_result_constants(&self) -> String {
+        let instances = self
+            .instance_results
+            .iter()
+            .map(|instance| {
+                format!(
+                    "    Stage1SumcheckInstanceResultPlan {{ symbol: {}, source: {}, claim: {}, relation: {}, index: {}, point_arity: {}, num_rounds: {}, round_offset: {}, point_order: {}, degree: {} }},",
+                    rust_str(&instance.symbol),
+                    rust_str(&instance.source),
+                    rust_str(&instance.claim),
+                    rust_str(&instance.relation),
+                    instance.index,
+                    instance.point_arity,
+                    instance.num_rounds,
+                    instance.round_offset,
+                    rust_str(&instance.point_order),
+                    instance.degree
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "pub const STAGE1_SUMCHECK_INSTANCE_RESULTS: &[Stage1SumcheckInstanceResultPlan] = &[\n{instances}\n];\n\n"
+        )
     }
 
     fn emit_transcript_squeeze_constants(&self) -> String {
@@ -794,14 +829,15 @@ impl Stage1CpuProgram {
                     .as_deref()
                     .expect("prover sumcheck claim kernel verified");
                 format!(
-                    "    Stage1SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, kernel: {}, input_openings: STAGE1_SUMCHECK_CLAIM_{index}_INPUT_OPENINGS }},",
+                    "    Stage1SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, kernel: {}, claim_value: {}, input_openings: STAGE1_SUMCHECK_CLAIM_{index}_INPUT_OPENINGS }},",
                     rust_str(&claim.symbol),
                     rust_str(&claim.stage),
                     rust_str(&claim.domain),
                     claim.num_rounds,
                     claim.degree,
                     rust_str(&claim.claim),
-                    rust_str(kernel)
+                    rust_str(kernel),
+                    rust_str(&claim.claim_value)
                 )
             })
             .collect::<Vec<_>>()
@@ -998,6 +1034,7 @@ pub struct Stage1SumcheckClaimPlan {
     pub degree: usize,
     pub claim: &'static str,
     pub relation: &'static str,
+    pub claim_value: &'static str,
     pub input_openings: &'static [&'static str],
 }
 
@@ -1027,6 +1064,20 @@ pub struct Stage1SumcheckDriverPlan {
     pub claim_label: &'static str,
     pub round_label: &'static str,
     pub num_rounds: usize,
+    pub degree: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Stage1SumcheckInstanceResultPlan {
+    pub symbol: &'static str,
+    pub source: &'static str,
+    pub claim: &'static str,
+    pub relation: &'static str,
+    pub index: usize,
+    pub point_arity: usize,
+    pub num_rounds: usize,
+    pub round_offset: usize,
+    pub point_order: &'static str,
     pub degree: usize,
 }
 
@@ -1076,6 +1127,7 @@ pub struct Stage1VerifierProgramPlan {
     pub claims: &'static [Stage1SumcheckClaimPlan],
     pub batches: &'static [Stage1SumcheckBatchPlan],
     pub drivers: &'static [Stage1SumcheckDriverPlan],
+    pub instance_results: &'static [Stage1SumcheckInstanceResultPlan],
     pub evals: &'static [Stage1SumcheckEvalPlan],
     pub opening_claims: &'static [Stage1OpeningClaimPlan],
     pub opening_batches: &'static [Stage1OpeningBatchPlan],
@@ -1157,6 +1209,7 @@ pub enum VerifyStage1Error {
         source.push_str(&self.emit_verifier_sumcheck_claim_constants());
         source.push_str(&self.emit_sumcheck_batch_constants());
         source.push_str(&self.emit_verifier_sumcheck_driver_constants());
+        source.push_str(&self.emit_sumcheck_instance_result_constants());
         source.push_str(&self.emit_sumcheck_eval_constants());
         source.push_str(&self.emit_opening_claim_constants());
         source.push_str(&self.emit_opening_batch_constants());
@@ -1167,6 +1220,7 @@ pub enum VerifyStage1Error {
              \x20   claims: STAGE1_SUMCHECK_CLAIMS,\n\
              \x20   batches: STAGE1_SUMCHECK_BATCHES,\n\
              \x20   drivers: STAGE1_SUMCHECK_DRIVERS,\n\
+             \x20   instance_results: STAGE1_SUMCHECK_INSTANCE_RESULTS,\n\
              \x20   evals: STAGE1_SUMCHECK_EVALS,\n\
              \x20   opening_claims: STAGE1_OPENING_CLAIMS,\n\
              \x20   opening_batches: STAGE1_OPENING_BATCHES,\n\
@@ -1193,14 +1247,15 @@ pub enum VerifyStage1Error {
                     .as_deref()
                     .expect("verifier sumcheck claim relation verified");
                 format!(
-                    "    Stage1SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, relation: {}, input_openings: STAGE1_SUMCHECK_CLAIM_{index}_INPUT_OPENINGS }},",
+                    "    Stage1SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, relation: {}, claim_value: {}, input_openings: STAGE1_SUMCHECK_CLAIM_{index}_INPUT_OPENINGS }},",
                     rust_str(&claim.symbol),
                     rust_str(&claim.stage),
                     rust_str(&claim.domain),
                     claim.num_rounds,
                     claim.degree,
                     rust_str(&claim.claim),
-                    rust_str(relation)
+                    rust_str(relation),
+                    rust_str(&claim.claim_value)
                 )
             })
             .collect::<Vec<_>>()

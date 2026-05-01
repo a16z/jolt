@@ -68,6 +68,7 @@ irdl.dialect @piop {
     }
   }
   irdl.operation @sumcheck_claim {
+    %input_claim = irdl.parametric @field::@scalar<>
     %opening_claim = irdl.parametric @piop::@opening_claim_type<>
     %claim_type = irdl.parametric @piop::@sumcheck_claim_type<>
     %sym = irdl.any
@@ -86,8 +87,30 @@ irdl.dialect @piop {
       "claim" = %claim,
       "relation" = %relation
     }
-    irdl.operands(inputs: variadic %opening_claim)
+    irdl.operands(input_claim: %input_claim, inputs: variadic %opening_claim)
     irdl.results(claim: %claim_type)
+  }
+  irdl.operation @opening_input {
+    %point = irdl.parametric @poly::@point<>
+    %eval = irdl.parametric @field::@scalar<>
+    %claim = irdl.parametric @piop::@opening_claim_type<>
+    %sym = irdl.any
+    %source_stage = irdl.any
+    %source_claim = irdl.any
+    %oracle = irdl.any
+    %domain = irdl.any
+    %point_arity = irdl.any
+    %claim_kind = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "source_stage" = %source_stage,
+      "source_claim" = %source_claim,
+      "oracle" = %oracle,
+      "domain" = %domain,
+      "point_arity" = %point_arity,
+      "claim_kind" = %claim_kind
+    }
+    irdl.results(point: %point, eval: %eval, claim: %claim)
   }
   irdl.operation @sumcheck_batch {
     %stage_type = irdl.parametric @piop::@stage_type<>
@@ -177,6 +200,8 @@ irdl.dialect @piop {
     %index = irdl.any
     %point_arity = irdl.any
     %num_rounds = irdl.any
+    %round_offset = irdl.any
+    %point_order = irdl.any
     %degree = irdl.any
     irdl.attributes {
       "sym_name" = %sym,
@@ -186,6 +211,8 @@ irdl.dialect @piop {
       "index" = %index,
       "point_arity" = %point_arity,
       "num_rounds" = %num_rounds,
+      "round_offset" = %round_offset,
+      "point_order" = %point_order,
       "degree" = %degree
     }
     irdl.operands(input_point: %input_point, input_result: %input_result)

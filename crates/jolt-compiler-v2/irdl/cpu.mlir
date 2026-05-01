@@ -269,7 +269,93 @@ irdl.dialect @cpu {
     irdl.operands(input: %state)
     irdl.results(output: %state, challenge: %challenge)
   }
+  irdl.operation @opening_input {
+    %point = irdl.parametric @cpu::@point<>
+    %eval = irdl.parametric @cpu::@field_value<>
+    %claim = irdl.parametric @cpu::@opening_claim_type<>
+    %sym = irdl.any
+    %source_stage = irdl.any
+    %source_claim = irdl.any
+    %oracle = irdl.any
+    %domain = irdl.any
+    %point_arity = irdl.any
+    %claim_kind = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "source_stage" = %source_stage,
+      "source_claim" = %source_claim,
+      "oracle" = %oracle,
+      "domain" = %domain,
+      "point_arity" = %point_arity,
+      "claim_kind" = %claim_kind
+    }
+    irdl.results(point: %point, eval: %eval, claim: %claim)
+  }
+  irdl.operation @point_slice {
+    %input = irdl.parametric @cpu::@point<>
+    %output = irdl.parametric @cpu::@point<>
+    %sym = irdl.any
+    %source = irdl.any
+    %offset = irdl.any
+    %length = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "source" = %source,
+      "offset" = %offset,
+      "length" = %length
+    }
+    irdl.operands(input: %input)
+    irdl.results(output: %output)
+  }
+  irdl.operation @point_concat {
+    %input = irdl.parametric @cpu::@point<>
+    %output = irdl.parametric @cpu::@point<>
+    %sym = irdl.any
+    %layout = irdl.any
+    %arity = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "layout" = %layout,
+      "arity" = %arity
+    }
+    irdl.operands(inputs: variadic %input)
+    irdl.results(output: %output)
+  }
+  irdl.operation @field_constant {
+    %value_type = irdl.parametric @cpu::@field_value<>
+    %sym = irdl.any
+    %field = irdl.any
+    %value = irdl.any
+    irdl.attributes {"sym_name" = %sym, "field" = %field, "value" = %value}
+    irdl.results(value: %value_type)
+  }
+  irdl.operation @challenge_extract {
+    %challenge = irdl.parametric @cpu::@challenge<>
+    %value_type = irdl.parametric @cpu::@field_value<>
+    %sym = irdl.any
+    %source = irdl.any
+    %index = irdl.any
+    irdl.attributes {"sym_name" = %sym, "source" = %source, "index" = %index}
+    irdl.operands(challenge: %challenge)
+    irdl.results(value: %value_type)
+  }
+  irdl.operation @field_expr {
+    %value_type = irdl.parametric @cpu::@field_value<>
+    %sym = irdl.any
+    %kind = irdl.any
+    %formula = irdl.any
+    %operands = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "kind" = %kind,
+      "formula" = %formula,
+      "operands" = %operands
+    }
+    irdl.operands(inputs: variadic %value_type)
+    irdl.results(value: %value_type)
+  }
   irdl.operation @sumcheck_claim {
+    %input_claim = irdl.parametric @cpu::@field_value<>
     %opening_claim = irdl.parametric @cpu::@opening_claim_type<>
     %claim_type = irdl.parametric @cpu::@sumcheck_claim_type<>
     %sym = irdl.any
@@ -288,10 +374,11 @@ irdl.dialect @cpu {
       "claim" = %claim,
       "kernel" = %kernel
     }
-    irdl.operands(inputs: variadic %opening_claim)
+    irdl.operands(input_claim: %input_claim, inputs: variadic %opening_claim)
     irdl.results(claim: %claim_type)
   }
   irdl.operation @sumcheck_verify_claim {
+    %input_claim = irdl.parametric @cpu::@field_value<>
     %opening_claim = irdl.parametric @cpu::@opening_claim_type<>
     %claim_type = irdl.parametric @cpu::@sumcheck_claim_type<>
     %sym = irdl.any
@@ -310,7 +397,7 @@ irdl.dialect @cpu {
       "claim" = %claim,
       "relation" = %relation
     }
-    irdl.operands(inputs: variadic %opening_claim)
+    irdl.operands(input_claim: %input_claim, inputs: variadic %opening_claim)
     irdl.results(claim: %claim_type)
   }
   irdl.operation @sumcheck_batch {
@@ -431,6 +518,8 @@ irdl.dialect @cpu {
     %index = irdl.any
     %point_arity = irdl.any
     %num_rounds = irdl.any
+    %round_offset = irdl.any
+    %point_order = irdl.any
     %degree = irdl.any
     irdl.attributes {
       "sym_name" = %sym,
@@ -440,6 +529,8 @@ irdl.dialect @cpu {
       "index" = %index,
       "point_arity" = %point_arity,
       "num_rounds" = %num_rounds,
+      "round_offset" = %round_offset,
+      "point_order" = %point_order,
       "degree" = %degree
     }
     irdl.operands(input_point: %input_point, input_result: %input_result)

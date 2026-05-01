@@ -617,6 +617,27 @@ impl<
         start.elapsed().as_secs_f64() * 1000.0
     }
 
+    #[doc(hidden)]
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn benchmark_stage2_ms(mut self) -> f64 {
+        fiat_shamir_preamble(
+            &self.program_io,
+            self.one_hot_params.ram_k,
+            self.trace.len(),
+            self.preprocessing.shared.bytecode.entry_address,
+            &mut self.transcript,
+        );
+
+        let (_commitments, _opening_proof_hints) = self.generate_and_commit_witness_polynomials();
+        let _untrusted_advice_commitment = self.generate_and_commit_untrusted_advice();
+        self.generate_and_commit_trusted_advice();
+        let _stage1 = self.prove_stage1();
+
+        let start = Instant::now();
+        let _stage2 = self.prove_stage2();
+        start.elapsed().as_secs_f64() * 1000.0
+    }
+
     fn prove_batched_sumcheck(
         &mut self,
         instances: Vec<&mut dyn SumcheckInstanceProver<F, ProofTranscript>>,

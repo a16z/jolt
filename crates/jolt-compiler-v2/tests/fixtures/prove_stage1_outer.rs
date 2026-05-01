@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use jolt_field::Fr;
-use jolt_kernels::stage1::{execute_stage1_program, Stage1CpuProgramPlan, Stage1ExecutionArtifacts, Stage1ExecutionMode, Stage1KernelError, Stage1KernelExecutor, Stage1KernelPlan, Stage1OpeningBatchPlan, Stage1OpeningClaimPlan, Stage1Params, Stage1SumcheckBatchPlan, Stage1SumcheckClaimPlan, Stage1SumcheckDriverPlan, Stage1SumcheckEvalPlan, Stage1TranscriptSqueezePlan};
+use jolt_kernels::stage1::{execute_stage1_program, Stage1CpuProgramPlan, Stage1ExecutionArtifacts, Stage1ExecutionMode, Stage1KernelError, Stage1KernelExecutor, Stage1KernelPlan, Stage1OpeningBatchPlan, Stage1OpeningClaimPlan, Stage1Params, Stage1SumcheckBatchPlan, Stage1SumcheckClaimPlan, Stage1SumcheckDriverPlan, Stage1SumcheckEvalPlan, Stage1SumcheckInstanceResultPlan, Stage1TranscriptSqueezePlan};
 use jolt_transcript::{Blake2bTranscript, Transcript};
 
 pub type DefaultStage1Transcript = Blake2bTranscript<Fr>;
@@ -30,8 +30,8 @@ pub const STAGE1_SUMCHECK_CLAIM_1_INPUT_OPENINGS: &[&str] = &[
 ];
 
 pub const STAGE1_SUMCHECK_CLAIMS: &[Stage1SumcheckClaimPlan] = &[
-    Stage1SumcheckClaimPlan { symbol: "stage1.uniskip.input", stage: "stage1", domain: "jolt.stage1_uniskip_domain", num_rounds: 1, degree: 27, claim: "zero", kernel: "jolt.cpu.stage1.outer.uniskip", input_openings: STAGE1_SUMCHECK_CLAIM_0_INPUT_OPENINGS },
-    Stage1SumcheckClaimPlan { symbol: "stage1.outer_remaining.input", stage: "stage1", domain: "jolt.trace_domain", num_rounds: 17, degree: 3, claim: "stage1.uniskip.opening", kernel: "jolt.cpu.stage1.outer.remaining", input_openings: STAGE1_SUMCHECK_CLAIM_1_INPUT_OPENINGS },
+    Stage1SumcheckClaimPlan { symbol: "stage1.uniskip.input", stage: "stage1", domain: "jolt.stage1_uniskip_domain", num_rounds: 1, degree: 27, claim: "stage1.zero", kernel: "jolt.cpu.stage1.outer.uniskip", claim_value: "stage1.zero", input_openings: STAGE1_SUMCHECK_CLAIM_0_INPUT_OPENINGS },
+    Stage1SumcheckClaimPlan { symbol: "stage1.outer_remaining.input", stage: "stage1", domain: "jolt.trace_domain", num_rounds: 17, degree: 3, claim: "stage1.uniskip.eval", kernel: "jolt.cpu.stage1.outer.remaining", claim_value: "stage1.uniskip.eval", input_openings: STAGE1_SUMCHECK_CLAIM_1_INPUT_OPENINGS },
 ];
 
 pub const STAGE1_SUMCHECK_BATCH_0_ORDERED_CLAIMS: &[&str] = &[
@@ -74,6 +74,11 @@ pub const STAGE1_SUMCHECK_DRIVER_1_ROUND_SCHEDULE: &[usize] = &[
 pub const STAGE1_SUMCHECK_DRIVERS: &[Stage1SumcheckDriverPlan] = &[
     Stage1SumcheckDriverPlan { symbol: "stage1.uniskip.sumcheck", stage: "stage1", proof_slot: "stage1.uni_skip_first_round", kernel: "jolt.cpu.stage1.outer.uniskip", batch: "stage1.uniskip.batch", policy: "univariate_skip", round_schedule: STAGE1_SUMCHECK_DRIVER_0_ROUND_SCHEDULE, claim_label: "uniskip_claim", round_label: "uniskip_poly", num_rounds: 1, degree: 27 },
     Stage1SumcheckDriverPlan { symbol: "stage1.outer_remaining.sumcheck", stage: "stage1", proof_slot: "stage1.sumcheck", kernel: "jolt.cpu.stage1.outer.remaining", batch: "stage1.outer_remaining.batch", policy: "jolt_core_front_loaded", round_schedule: STAGE1_SUMCHECK_DRIVER_1_ROUND_SCHEDULE, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", num_rounds: 17, degree: 3 },
+];
+
+pub const STAGE1_SUMCHECK_INSTANCE_RESULTS: &[Stage1SumcheckInstanceResultPlan] = &[
+    Stage1SumcheckInstanceResultPlan { symbol: "stage1.uniskip.instance", source: "stage1.uniskip.sumcheck", claim: "stage1.uniskip.input", relation: "jolt.stage1.outer.uniskip", index: 0, point_arity: 1, num_rounds: 1, round_offset: 0, point_order: "as_is", degree: 27 },
+    Stage1SumcheckInstanceResultPlan { symbol: "stage1.outer_remaining.instance", source: "stage1.outer_remaining.sumcheck", claim: "stage1.outer_remaining.input", relation: "jolt.stage1.outer.remaining", index: 0, point_arity: 16, num_rounds: 17, round_offset: 1, point_order: "reverse", degree: 3 },
 ];
 
 pub const STAGE1_SUMCHECK_EVALS: &[Stage1SumcheckEvalPlan] = &[
@@ -241,6 +246,7 @@ pub const STAGE1_PROGRAM: Stage1CpuProgramPlan = Stage1CpuProgramPlan {
     claims: STAGE1_SUMCHECK_CLAIMS,
     batches: STAGE1_SUMCHECK_BATCHES,
     drivers: STAGE1_SUMCHECK_DRIVERS,
+    instance_results: STAGE1_SUMCHECK_INSTANCE_RESULTS,
     evals: STAGE1_SUMCHECK_EVALS,
     opening_claims: STAGE1_OPENING_CLAIMS,
     opening_batches: STAGE1_OPENING_BATCHES,

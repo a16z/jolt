@@ -22,7 +22,14 @@ Stage 1 Rust emission serializes that checked CPU contract into static plan cons
 
 Commitment compute and CPU lowerings build IR with `melior` operation builders rather than formatting full MLIR modules as strings. Textual MLIR remains only where the prototype intentionally phase-casts whole modules while preserving existing SSA bodies.
 
-See `TESTING.md` for the compiler-v2 parity gates: IR/golden checks, generated prover/verifier self-parity, modular self-verify, transcript parity against jolt-core, and jolt-core proof acceptance.
+See `TESTING.md` for the compiler-v2 parity gates. Each implemented protocol
+stage must keep four stage-local oracles green before it is treated as done:
+Bolt prover output accepted by the Bolt verifier, Bolt prover/verifier
+transcript-state equality, Bolt artifacts accepted by the jolt-core verifier
+when spliced into the matching core proof prefix, and Bolt transcript/artifact
+parity against jolt-core through that stage. This matrix is intentionally
+per-stage so commitment, Stage 1, Stage 2, and later phases can be added without
+waiting for a full end-to-end prover before finding semantic drift.
 
 ## Local MLIR Toolchain
 

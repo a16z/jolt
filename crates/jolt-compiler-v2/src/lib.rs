@@ -7,12 +7,12 @@ pub mod protocols;
 pub mod schema;
 
 pub use emit::rust::{
-    commitment_cpu_program, emit_commitment_rust, emit_stage1_rust, stage1_cpu_program,
-    CommitmentBatchPlan, CommitmentCpuProgram, CommitmentParams, EmitError, OptionalCommitmentPlan,
-    OptionalSkipPolicy, OracleGeneration, OraclePlan, RustSourceFile, Stage1CpuProgram,
-    Stage1KernelPlan, Stage1OpeningBatchPlan, Stage1OpeningClaimPlan, Stage1Params,
-    Stage1SumcheckBatchPlan, Stage1SumcheckClaimPlan, Stage1SumcheckDriverPlan,
-    Stage1SumcheckEvalPlan, TranscriptStep,
+    commitment_cpu_program, emit_commitment_rust, emit_stage1_rust, emit_stage2_rust,
+    stage1_cpu_program, stage2_cpu_program, CommitmentBatchPlan, CommitmentCpuProgram,
+    CommitmentParams, EmitError, OptionalCommitmentPlan, OptionalSkipPolicy, OracleGeneration,
+    OraclePlan, RustSourceFile, Stage1CpuProgram, Stage1KernelPlan, Stage1OpeningBatchPlan,
+    Stage1OpeningClaimPlan, Stage1Params, Stage1SumcheckBatchPlan, Stage1SumcheckClaimPlan,
+    Stage1SumcheckDriverPlan, Stage1SumcheckEvalPlan, Stage2CpuProgram, TranscriptStep,
 };
 pub use ir::{
     BoltModule, Compute, Concrete, Cpu, Diagnostic, Party, Phase, Protocol, Role, TextMlir,
@@ -23,10 +23,10 @@ pub use pass::{
     project_prover_party, project_verifier_party, verify_concrete_transcript, VerifyError,
 };
 pub use protocols::jolt::{
-    build_commitment_protocol, build_stage1_outer_protocol, lower_commitment_to_compute,
-    lower_compute_to_cpu, lower_stage1_to_compute, resolve_compute_kernels,
-    verify_jolt_concrete_schema, verify_jolt_party_schema, verify_jolt_protocol_schema,
-    JoltProtocolParams,
+    build_commitment_protocol, build_stage1_outer_protocol, build_stage2_protocol,
+    lower_commitment_to_compute, lower_compute_to_cpu, lower_stage1_to_compute,
+    lower_stage2_to_compute, resolve_compute_kernels, verify_jolt_concrete_schema,
+    verify_jolt_party_schema, verify_jolt_protocol_schema, JoltProtocolParams,
 };
 pub use schema::{
     verify_compute_schema, verify_concrete_schema, verify_cpu_schema, verify_party_schema,

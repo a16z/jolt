@@ -5,3 +5,4 @@
 //! grows finer compute lowerings.
 
 pub mod stage1;
+pub mod stage2;

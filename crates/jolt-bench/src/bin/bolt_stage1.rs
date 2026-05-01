@@ -6,16 +6,20 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use clap::Parser;
+use common::constants::{RAM_START_ADDRESS, XLEN};
 use common::jolt_device::JoltDevice;
 use jolt_bench::measure::{median, time_it};
 use jolt_bench::programs::Program;
-use jolt_compiler_v2::Stage1CpuProgram as CompilerStage1CpuProgram;
 use jolt_compiler_v2::{
-    build_commitment_protocol, build_stage1_outer_protocol, commitment_cpu_program,
-    lower_commitment_to_compute, lower_compute_to_cpu, lower_piop_and_fiat_shamir,
-    lower_stage1_to_compute, project_prover_party, project_verifier_party, resolve_compute_kernels,
-    stage1_cpu_program, CommitmentCpuProgram, JoltProtocolParams, MeliorContext,
+    build_commitment_protocol, build_stage1_outer_protocol, build_stage2_protocol,
+    commitment_cpu_program, lower_commitment_to_compute, lower_compute_to_cpu,
+    lower_piop_and_fiat_shamir, lower_stage1_to_compute, lower_stage2_to_compute,
+    project_prover_party, project_verifier_party, resolve_compute_kernels, stage1_cpu_program,
+    stage2_cpu_program, CommitmentCpuProgram, JoltProtocolParams, MeliorContext,
     OptionalSkipPolicy, OracleGeneration, Role, TranscriptStep,
+};
+use jolt_compiler_v2::{
+    Stage1CpuProgram as CompilerStage1CpuProgram, Stage2CpuProgram as CompilerStage2CpuProgram,
 };
 use jolt_core::curve::Bn254Curve;
 use jolt_core::host;
@@ -26,8 +30,11 @@ use jolt_core::subprotocols::univariate_skip::{
     UniSkipFirstRoundProof, UniSkipFirstRoundProofVariant,
 };
 use jolt_core::transcripts::Blake2bTranscript as CoreBlake2bTranscript;
+use jolt_core::zkvm::instruction::LookupQuery;
 use jolt_core::zkvm::proof_serialization::{Claims as CoreClaims, JoltProof as CoreJoltProof};
 use jolt_core::zkvm::prover::{JoltCpuProver, JoltProverPreprocessing};
+use jolt_core::zkvm::r1cs::inputs::ProductCycleInputs as CoreProductCycleInputs;
+use jolt_core::zkvm::ram::remap_address;
 use jolt_core::zkvm::verifier::{JoltSharedPreprocessing, JoltVerifier, JoltVerifierPreprocessing};
 use jolt_dory::{DoryCommitment, DoryHint, DoryProverSetup, DoryScheme};
 use jolt_field::signed::{S128, S64};
@@ -45,8 +52,30 @@ use jolt_kernels::stage1::{
     Stage1Rv64Cycle, Stage1SumcheckBatchPlan as KernelStage1SumcheckBatchPlan,
     Stage1SumcheckClaimPlan as KernelStage1SumcheckClaimPlan,
     Stage1SumcheckDriverPlan as KernelStage1SumcheckDriverPlan,
-    Stage1SumcheckEvalPlan as KernelStage1SumcheckEvalPlan, Stage1TranscriptSqueezePlan,
-    Stage1VerifierKernelExecutor,
+    Stage1SumcheckEvalPlan as KernelStage1SumcheckEvalPlan,
+    Stage1SumcheckInstanceResultPlan as KernelStage1SumcheckInstanceResultPlan,
+    Stage1TranscriptSqueezePlan, Stage1VerifierKernelExecutor,
+};
+use jolt_kernels::stage2::{
+    execute_stage2_program, product_virtual_uniskip_extended_evals,
+    Stage2ChallengeExtractPlan as KernelStage2ChallengeExtractPlan,
+    Stage2CpuProgramPlan as KernelStage2CpuProgramPlan, Stage2ExecutionArtifacts,
+    Stage2ExecutionMode, Stage2FieldConstantPlan as KernelStage2FieldConstantPlan,
+    Stage2FieldExprPlan as KernelStage2FieldExprPlan, Stage2InstructionLookupCycle,
+    Stage2KernelPlan as KernelStage2KernelPlan,
+    Stage2OpeningBatchPlan as KernelStage2OpeningBatchPlan,
+    Stage2OpeningClaimPlan as KernelStage2OpeningClaimPlan,
+    Stage2OpeningInputPlan as KernelStage2OpeningInputPlan, Stage2OpeningInputValue, Stage2Params,
+    Stage2PointConcatPlan as KernelStage2PointConcatPlan,
+    Stage2PointSlicePlan as KernelStage2PointSlicePlan, Stage2ProductVirtualCycle,
+    Stage2ProgramStepPlan as KernelStage2ProgramStepPlan, Stage2Proof, Stage2ProverInputs,
+    Stage2ProverKernelExecutor, Stage2RamAccess, Stage2RamData, Stage2RamOutputLayout,
+    Stage2SumcheckBatchPlan as KernelStage2SumcheckBatchPlan,
+    Stage2SumcheckClaimPlan as KernelStage2SumcheckClaimPlan,
+    Stage2SumcheckDriverPlan as KernelStage2SumcheckDriverPlan,
+    Stage2SumcheckEvalPlan as KernelStage2SumcheckEvalPlan,
+    Stage2SumcheckInstanceResultPlan as KernelStage2SumcheckInstanceResultPlan,
+    Stage2TranscriptSqueezePlan as KernelStage2TranscriptSqueezePlan, Stage2VerifierKernelExecutor,
 };
 use jolt_r1cs::{constraints::rv64, R1csKey};
 use jolt_transcript::{
@@ -58,6 +87,7 @@ use jolt_witness_v2::{
     dense_i128_column_to_field, one_hot_chunk_address_major, optional_field_oracle,
 };
 use serde::Serialize;
+use tracer::instruction::RAMAccess;
 
 type CoreFr = ark_bn254::Fr;
 type CoreCommitment = <DoryCommitmentScheme as CoreCommitmentScheme>::Commitment;
@@ -71,12 +101,15 @@ type CoreVerifierPreprocessing =
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "bolt-stage1",
-    about = "Correctness-gated Stage 1 perf oracle for jolt-core vs Bolt"
+    name = "bolt-stage",
+    about = "Correctness-gated stage perf oracle for jolt-core vs Bolt"
 )]
 struct Cli {
     #[arg(long, default_value_t = Program::Sha2Chain)]
     program: Program,
+
+    #[arg(long, value_enum, default_value_t = BenchStage::Stage1)]
+    stage: BenchStage,
 
     #[arg(long, default_value_t = 16)]
     log_t: usize,
@@ -98,6 +131,21 @@ struct Cli {
 
     #[arg(long, value_name = "NAME")]
     trace_chrome: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+enum BenchStage {
+    Stage1,
+    Stage2,
+}
+
+impl BenchStage {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Stage1 => "stage1",
+            Self::Stage2 => "stage2",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -184,12 +232,20 @@ struct CoreStage1Fixture {
     cycle_inputs: Vec<CycleInput>,
     r1cs_witness: Vec<Fr>,
     rv64_cycles: Vec<Stage1Rv64Cycle>,
+    product_virtual_cycles: Vec<Stage2ProductVirtualCycle>,
+    instruction_lookup_cycles: Vec<Stage2InstructionLookupCycle>,
+    ram_accesses: Vec<Stage2RamAccess>,
+    initial_ram_state: Vec<u64>,
+    final_ram_state: Vec<u64>,
+    ram_start_address: u64,
+    ram_output_layout: Stage2RamOutputLayout,
     commitments: Vec<CoreCommitment>,
 }
 
 #[derive(Serialize)]
 struct Stage1BenchReport {
     program: String,
+    stage: &'static str,
     max_log_t: usize,
     actual_log_t: usize,
     trace_length: usize,
@@ -204,8 +260,8 @@ struct Stage1BenchReport {
 #[derive(Serialize)]
 struct CorrectnessReport {
     bolt_prover_verifier_transcript: bool,
-    core_accepts_bolt_stage1: bool,
-    core_bolt_transcript_states: bool,
+    core_accepts_bolt_stage: bool,
+    core_bolt_stage_transcript_states: bool,
     commitment_parity: bool,
 }
 
@@ -214,7 +270,7 @@ struct Stage1Run {
     stack: &'static str,
     stage: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    stage1_ms: Option<f64>,
+    stage_ms: Option<f64>,
     samples_ms: Vec<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ratio_vs_core: Option<f64>,
@@ -242,13 +298,20 @@ fn main() {
     let actual_log_t = fixture.proof.trace_length.trailing_zeros() as usize;
     let trace_length = fixture.proof.trace_length;
 
-    let core_samples =
-        measure_core_stage1(cli.program, cli.log_t, cli.num_iters, cli.iters, cli.warmup);
+    let core_samples = measure_core_stage(
+        cli.stage,
+        cli.program,
+        cli.log_t,
+        cli.num_iters,
+        cli.iters,
+        cli.warmup,
+    );
     let core_ms = median(&core_samples);
     let measured_bolt_runs = cli.iters + cli.warmup;
     let bolt_timeout_ms = core_ms * cli.bolt_timeout_multiplier * measured_bolt_runs as f64;
-    let correctness = assert_stage1_correctness(&fixture, &stage1_context);
+    let correctness = assert_stage_correctness(cli.stage, &fixture, &stage1_context);
     let bolt_result = run_bolt_measurement_with_timeout(
+        cli.stage,
         fixture,
         stage1_context,
         cli.iters,
@@ -262,8 +325,8 @@ fn main() {
             (
                 Stage1Run {
                     stack: "bolt",
-                    stage: "stage1",
-                    stage1_ms: Some(bolt_ms),
+                    stage: cli.stage.name(),
+                    stage_ms: Some(bolt_ms),
                     samples_ms: bolt_samples,
                     ratio_vs_core: Some(bolt_ms / core_ms),
                     timed_out: false,
@@ -277,8 +340,8 @@ fn main() {
             (
                 Stage1Run {
                     stack: "bolt",
-                    stage: "stage1",
-                    stage1_ms: None,
+                    stage: cli.stage.name(),
+                    stage_ms: None,
                     samples_ms: Vec::new(),
                     ratio_vs_core: None,
                     timed_out: true,
@@ -291,6 +354,7 @@ fn main() {
 
     let report = Stage1BenchReport {
         program: cli.program.cli_name().to_string(),
+        stage: cli.stage.name(),
         max_log_t: cli.log_t,
         actual_log_t,
         trace_length,
@@ -301,8 +365,8 @@ fn main() {
         runs: vec![
             Stage1Run {
                 stack: "core",
-                stage: "stage1",
-                stage1_ms: Some(core_ms),
+                stage: cli.stage.name(),
+                stage_ms: Some(core_ms),
                 samples_ms: core_samples,
                 ratio_vs_core: None,
                 timed_out: false,
@@ -331,10 +395,12 @@ struct BoltStage1Context {
     commitment_verifier_trace: BoltCommitmentTrace,
     stage1_prover_plan: &'static KernelStage1CpuProgramPlan,
     stage1_verifier_plan: &'static KernelStage1CpuProgramPlan,
+    stage2_prover_plan: &'static KernelStage2CpuProgramPlan,
     num_cycle_vars: usize,
 }
 
 fn run_bolt_measurement_with_timeout(
+    stage: BenchStage,
     fixture: CoreStage1Fixture,
     context: BoltStage1Context,
     iters: usize,
@@ -344,16 +410,18 @@ fn run_bolt_measurement_with_timeout(
     let (sender, receiver) = mpsc::channel();
     let timeout_ms = timeout.as_secs_f64() * 1000.0;
     let _worker = std::thread::spawn(move || {
-        let result =
-            std::panic::catch_unwind(|| measure_bolt_stage1(&fixture, &context, iters, warmup));
+        let result = std::panic::catch_unwind(|| {
+            measure_bolt_stage(stage, &fixture, &context, iters, warmup)
+        });
         let _ = sender.send(result);
     });
 
     match receiver.recv_timeout(timeout) {
         Ok(Ok(result)) => Ok(result),
-        Ok(Err(_panic)) => Err("Bolt Stage 1 worker panicked".to_string()),
+        Ok(Err(_panic)) => Err(format!("Bolt {} worker panicked", stage.name())),
         Err(mpsc::RecvTimeoutError::Timeout) => Err(format!(
-            "Bolt Stage 1 exceeded timeout budget ({timeout_ms:.3}ms)"
+            "Bolt {} exceeded timeout budget ({timeout_ms:.3}ms)",
+            stage.name()
         )),
         Err(mpsc::RecvTimeoutError::Disconnected) => {
             Err("Bolt Stage 1 worker disconnected".to_string())
@@ -389,6 +457,8 @@ fn core_stage1_fixture(program: Program, log_t: usize, num_iters: u32) -> CoreSt
         None,
     );
     let io = prover.program_io.clone();
+    let initial_ram_state = prover.initial_ram_state.clone();
+    let final_ram_state = prover.final_ram_state.clone();
     let (proof, _debug): (CoreProof, _) = prover.prove();
     let commitments = proof.commitments.clone();
     let verifier_preprocessing: &'static _ = Box::leak(Box::new(JoltVerifierPreprocessing::from(
@@ -398,6 +468,68 @@ fn core_stage1_fixture(program: Program, log_t: usize, num_iters: u32) -> CoreSt
     let mut host_program = HostProgram::new(program.guest_name());
     let (bytecode_raw, _, _, host_entry_address) = host_program.decode();
     let (_, trace, _, host_io_device) = host_program.trace(&inputs, &[], &[]);
+    let mut padded_trace = trace.clone();
+    padded_trace.resize(proof.trace_length, jolt_host::Cycle::NoOp);
+    let product_virtual_cycles = (0..proof.trace_length)
+        .map(|index| {
+            let row = CoreProductCycleInputs::from_trace::<CoreFr>(&padded_trace, index);
+            Stage2ProductVirtualCycle {
+                instruction_left_input: row.instruction_left_input,
+                instruction_right_input: row.instruction_right_input,
+                should_branch_lookup_output: row.should_branch_lookup_output,
+                write_lookup_output_to_rd_flag: row.write_lookup_output_to_rd_flag,
+                jump_flag: row.jump_flag,
+                should_branch_flag: row.should_branch_flag,
+                not_next_noop: row.not_next_noop,
+                virtual_instruction_flag: row.virtual_instruction_flag,
+            }
+        })
+        .collect();
+    let instruction_lookup_cycles = padded_trace
+        .iter()
+        .map(|cycle| {
+            let (left_instruction_input, right_instruction_input) =
+                LookupQuery::<XLEN>::to_instruction_inputs(cycle);
+            let (left_lookup_operand, right_lookup_operand) =
+                LookupQuery::<XLEN>::to_lookup_operands(cycle);
+            let lookup_output = LookupQuery::<XLEN>::to_lookup_output(cycle);
+            Stage2InstructionLookupCycle {
+                lookup_output,
+                left_lookup_operand,
+                right_lookup_operand,
+                left_instruction_input,
+                right_instruction_input,
+            }
+        })
+        .collect();
+    let ram_accesses = padded_trace
+        .iter()
+        .map(|cycle| match cycle.ram_access() {
+            RAMAccess::Read(read) => Stage2RamAccess {
+                remapped_address: remap_address(read.address, &host_io_device.memory_layout)
+                    .map(|address| address as usize),
+                read_value: read.value,
+                write_value: read.value,
+            },
+            RAMAccess::Write(write) => Stage2RamAccess {
+                remapped_address: remap_address(write.address, &host_io_device.memory_layout)
+                    .map(|address| address as usize),
+                read_value: write.pre_value,
+                write_value: write.post_value,
+            },
+            RAMAccess::NoOp => Stage2RamAccess::noop(),
+        })
+        .collect();
+    let ram_start_address = host_io_device.memory_layout.get_lowest_address();
+    let ram_output_layout = Stage2RamOutputLayout {
+        io_start: remap_address(
+            host_io_device.memory_layout.input_start,
+            &host_io_device.memory_layout,
+        )
+        .expect("input start remaps") as usize,
+        io_end: remap_address(RAM_START_ADDRESS, &host_io_device.memory_layout)
+            .expect("RAM start remaps") as usize,
+    };
     let bytecode = BytecodePreprocessing::preprocess(bytecode_raw, host_entry_address);
     let r1cs_key = R1csKey::new(rv64::rv64_constraints::<Fr>(), proof.trace_length);
     let (cycle_inputs, r1cs_witness, _) = extract_trace::<_, Fr>(
@@ -428,6 +560,13 @@ fn core_stage1_fixture(program: Program, log_t: usize, num_iters: u32) -> CoreSt
         cycle_inputs,
         r1cs_witness,
         rv64_cycles,
+        product_virtual_cycles,
+        instruction_lookup_cycles,
+        ram_accesses,
+        initial_ram_state,
+        final_ram_state,
+        ram_start_address,
+        ram_output_layout,
         commitments,
     }
 }
@@ -548,7 +687,8 @@ fn lookup_operands_raw(
     }
 }
 
-fn measure_core_stage1(
+fn measure_core_stage(
+    stage: BenchStage,
     program: Program,
     log_t: usize,
     num_iters: u32,
@@ -556,14 +696,14 @@ fn measure_core_stage1(
     warmup: usize,
 ) -> Vec<f64> {
     for _ in 0..warmup {
-        let _ = core_stage1_once(program, log_t, num_iters);
+        let _ = core_stage_once(stage, program, log_t, num_iters);
     }
     (0..iters)
-        .map(|_| core_stage1_once(program, log_t, num_iters))
+        .map(|_| core_stage_once(stage, program, log_t, num_iters))
         .collect()
 }
 
-fn core_stage1_once(program: Program, log_t: usize, num_iters: u32) -> f64 {
+fn core_stage_once(stage: BenchStage, program: Program, log_t: usize, num_iters: u32) -> f64 {
     DoryGlobals::reset();
 
     let max_trace_length = 1usize << log_t;
@@ -590,7 +730,10 @@ fn core_stage1_once(program: Program, log_t: usize, num_iters: u32) -> f64 {
         None,
         None,
     );
-    prover.benchmark_stage1_ms()
+    match stage {
+        BenchStage::Stage1 => prover.benchmark_stage1_ms(),
+        BenchStage::Stage2 => prover.benchmark_stage2_ms(),
+    }
 }
 
 fn bolt_stage1_context(fixture: &CoreStage1Fixture) -> BoltStage1Context {
@@ -598,6 +741,7 @@ fn bolt_stage1_context(fixture: &CoreStage1Fixture) -> BoltStage1Context {
         bolt_commitment_programs_with_params(&fixture.params);
     let (stage1_prover_program, stage1_verifier_program) =
         bolt_stage1_programs_with_params(&fixture.params);
+    let (stage2_prover_program, _) = bolt_stage2_programs_with_params(&fixture.params);
     let oracle_data = real_oracle_data(&commitment_prover_program, &fixture.cycle_inputs);
     let commitment_prover_trace = run_bolt_commitment_prover_with(
         &commitment_prover_program,
@@ -616,7 +760,19 @@ fn bolt_stage1_context(fixture: &CoreStage1Fixture) -> BoltStage1Context {
         commitment_verifier_trace,
         stage1_prover_plan: leak_stage1_program(&stage1_prover_program),
         stage1_verifier_plan: leak_stage1_program(&stage1_verifier_program),
+        stage2_prover_plan: leak_stage2_program(&stage2_prover_program),
         num_cycle_vars: fixture.proof.trace_length.trailing_zeros() as usize,
+    }
+}
+
+fn assert_stage_correctness(
+    stage: BenchStage,
+    fixture: &CoreStage1Fixture,
+    context: &BoltStage1Context,
+) -> CorrectnessReport {
+    match stage {
+        BenchStage::Stage1 => assert_stage1_correctness(fixture, context),
+        BenchStage::Stage2 => assert_stage2_correctness(fixture, context),
     }
 }
 
@@ -672,9 +828,106 @@ fn assert_stage1_correctness(
 
     CorrectnessReport {
         bolt_prover_verifier_transcript: true,
-        core_accepts_bolt_stage1: true,
-        core_bolt_transcript_states: true,
+        core_accepts_bolt_stage: true,
+        core_bolt_stage_transcript_states: true,
         commitment_parity: true,
+    }
+}
+
+fn assert_stage2_correctness(
+    fixture: &CoreStage1Fixture,
+    context: &BoltStage1Context,
+) -> CorrectnessReport {
+    let r1cs_key = R1csKey::new(rv64::rv64_constraints::<Fr>(), fixture.proof.trace_length);
+    let data = Stage1OuterRv64Data::new(&r1cs_key, &fixture.r1cs_witness, &fixture.rv64_cycles)
+        .expect("valid R1CS witness shape");
+    let mut prover_transcript = RecordingTranscript::<Blake2bTranscript<Fr>>::new(TRANSCRIPT_LABEL);
+    append_bolt_prefix(
+        &mut prover_transcript,
+        fixture,
+        &context.commitment_prover_trace,
+        &context.commitment_prover_program.transcript_steps,
+    );
+    let (prover_transcript, stage1_artifacts) = run_bolt_stage1_prover(
+        context.stage1_prover_plan,
+        context.num_cycle_vars,
+        &data,
+        prover_transcript,
+    );
+    let ram_data = stage2_ram_data(fixture);
+    let (prover_transcript, stage2_artifacts) = run_bolt_stage2_prover(
+        context.stage2_prover_plan,
+        fixture,
+        &stage1_artifacts,
+        &ram_data,
+        prover_transcript,
+    );
+
+    let stage1_proof = Stage1Proof::from(stage1_artifacts.clone());
+    let stage2_proof = Stage2Proof::from(stage2_artifacts.clone());
+    let mut verifier_transcript =
+        RecordingTranscript::<Blake2bTranscript<Fr>>::new(TRANSCRIPT_LABEL);
+    append_bolt_prefix(
+        &mut verifier_transcript,
+        fixture,
+        &context.commitment_verifier_trace,
+        &context.commitment_verifier_program.transcript_steps,
+    );
+    let mut stage1_verifier = Stage1VerifierKernelExecutor::new(&stage1_proof);
+    let verified_stage1 = execute_stage1_program(
+        context.stage1_verifier_plan,
+        Stage1ExecutionMode::Verifier,
+        &mut stage1_verifier,
+        &mut verifier_transcript,
+    )
+    .expect("Bolt Stage 1 verifier accepts prover proof");
+    let stage2_openings = stage2_opening_inputs(&verified_stage1);
+    let mut stage2_verifier =
+        Stage2VerifierKernelExecutor::new(&stage2_proof, &stage2_openings).with_ram_data(&ram_data);
+    let verified_stage2 = execute_stage2_program(
+        context.stage2_prover_plan,
+        Stage2ExecutionMode::Verifier,
+        &mut stage2_verifier,
+        &mut verifier_transcript,
+    )
+    .expect("Bolt Stage 2 verifier accepts prover proof");
+
+    assert_eq!(
+        stage2_artifacts.sumchecks.len(),
+        verified_stage2.sumchecks.len()
+    );
+    assert_eq!(prover_transcript.log(), verifier_transcript.log());
+    assert_core_accepts_bolt_stage2(fixture, &stage1_artifacts, &stage2_artifacts);
+    assert_core_states_match_bolt_stage2(fixture, prover_transcript.log());
+
+    let bolt_core_commitments = context
+        .commitment_prover_trace
+        .commitments
+        .iter()
+        .filter_map(|commitment| commitment.as_ref())
+        .take(fixture.commitments.len())
+        .map(commitment_to_ark)
+        .collect::<Vec<_>>();
+    assert_eq!(bolt_core_commitments, fixture.commitments);
+
+    CorrectnessReport {
+        bolt_prover_verifier_transcript: true,
+        core_accepts_bolt_stage: true,
+        core_bolt_stage_transcript_states: true,
+        commitment_parity: true,
+    }
+}
+
+fn measure_bolt_stage(
+    stage: BenchStage,
+    fixture: &CoreStage1Fixture,
+    context: &BoltStage1Context,
+    iters: usize,
+    warmup: usize,
+) -> Vec<f64> {
+    match stage {
+        BenchStage::Stage1 => measure_bolt_stage1(fixture, context, iters, warmup),
+        BenchStage::Stage2 => measure_bolt_stage2(fixture, context, iters, warmup),
     }
 }
 
@@ -719,6 +972,56 @@ fn measure_bolt_stage1(
         .collect()
 }
 
+fn measure_bolt_stage2(
+    fixture: &CoreStage1Fixture,
+    context: &BoltStage1Context,
+    iters: usize,
+    warmup: usize,
+) -> Vec<f64> {
+    let r1cs_key = R1csKey::new(rv64::rv64_constraints::<Fr>(), fixture.proof.trace_length);
+    let data = Stage1OuterRv64Data::new(&r1cs_key, &fixture.r1cs_witness, &fixture.rv64_cycles)
+        .expect("valid R1CS witness shape");
+    let mut prefix = Blake2bTranscript::<Fr>::new(TRANSCRIPT_LABEL);
+    append_bolt_prefix(
+        &mut prefix,
+        fixture,
+        &context.commitment_prover_trace,
+        &context.commitment_prover_program.transcript_steps,
+    );
+    let (stage2_prefix, stage1_artifacts) = run_bolt_stage1_prover(
+        context.stage1_prover_plan,
+        context.num_cycle_vars,
+        &data,
+        prefix,
+    );
+    let ram_data = stage2_ram_data(fixture);
+
+    for _ in 0..warmup {
+        let _ = run_bolt_stage2_prover(
+            context.stage2_prover_plan,
+            fixture,
+            &stage1_artifacts,
+            &ram_data,
+            stage2_prefix.clone(),
+        );
+    }
+
+    (0..iters)
+        .map(|_| {
+            time_it(|| {
+                run_bolt_stage2_prover(
+                    context.stage2_prover_plan,
+                    fixture,
+                    &stage1_artifacts,
+                    &ram_data,
+                    stage2_prefix.clone(),
+                )
+            })
+            .0
+        })
+        .collect()
+}
+
 fn run_bolt_stage1_prover<T, E>(
     plan: &'static KernelStage1CpuProgramPlan,
     num_cycle_vars: usize,
@@ -739,6 +1042,84 @@ where
     )
     .expect("Bolt Stage 1 prover succeeds");
     (transcript, artifacts)
+}
+
+fn run_bolt_stage2_prover<T>(
+    plan: &'static KernelStage2CpuProgramPlan,
+    fixture: &CoreStage1Fixture,
+    stage1_artifacts: &Stage1ExecutionArtifacts<Fr>,
+    ram_data: &Stage2RamData<'_>,
+    mut transcript: T,
+) -> (T, Stage2ExecutionArtifacts<Fr>)
+where
+    T: Transcript<Challenge = Fr>,
+{
+    let opening_inputs = stage2_opening_inputs(stage1_artifacts);
+    let tau_low = opening_inputs
+        .iter()
+        .find(|input| input.symbol == "stage2.input.stage1.Product")
+        .expect("product opening")
+        .point
+        .as_slice();
+    let extended_evals =
+        product_virtual_uniskip_extended_evals(&fixture.product_virtual_cycles, tau_low)
+            .expect("product virtual extended evals");
+    let inputs = Stage2ProverInputs::new(&opening_inputs)
+        .with_product_uniskip_extended_evals(&extended_evals)
+        .with_product_virtual_cycles(&fixture.product_virtual_cycles)
+        .with_instruction_lookup_cycles(&fixture.instruction_lookup_cycles)
+        .with_ram_data(ram_data);
+    let mut prover = Stage2ProverKernelExecutor::new(inputs);
+    let artifacts = execute_stage2_program(
+        plan,
+        Stage2ExecutionMode::Prover,
+        &mut prover,
+        &mut transcript,
+    )
+    .expect("Bolt Stage 2 prover succeeds");
+    (transcript, artifacts)
+}
+
+fn stage2_ram_data(fixture: &CoreStage1Fixture) -> Stage2RamData<'_> {
+    Stage2RamData {
+        log_k: fixture.params.log_k_ram,
+        start_address: fixture.ram_start_address,
+        initial_ram: &fixture.initial_ram_state,
+        final_ram: &fixture.final_ram_state,
+        accesses: &fixture.ram_accesses,
+        output_layout: Some(fixture.ram_output_layout),
+    }
+}
+
+fn stage2_opening_inputs(
+    stage1_artifacts: &Stage1ExecutionArtifacts<Fr>,
+) -> Vec<Stage2OpeningInputValue<Fr>> {
+    [
+        "Product",
+        "ShouldBranch",
+        "ShouldJump",
+        "RamReadValue",
+        "RamWriteValue",
+        "LookupOutput",
+        "LeftLookupOperand",
+        "RightLookupOperand",
+        "LeftInstructionInput",
+        "RightInstructionInput",
+        "RamAddress",
+    ]
+    .into_iter()
+    .map(|oracle| {
+        let source_claim = format!("stage1.outer_remaining.opening.{oracle}");
+        let opening = stage1_artifacts
+            .opening_value(&source_claim)
+            .unwrap_or_else(|| panic!("missing Stage 1 opening {source_claim}"));
+        Stage2OpeningInputValue {
+            symbol: leak_str(&format!("stage2.input.stage1.{oracle}")),
+            point: opening.point.clone(),
+            eval: opening.eval,
+        }
+    })
+    .collect()
 }
 
 fn run_bolt_stage1_verifier<T>(
@@ -836,6 +1217,30 @@ fn bolt_stage1_programs_with_params(
         lower_compute_to_cpu(&context, &verifier_compute).expect("lower verifier CPU");
     let prover_program = stage1_cpu_program(&prover_cpu).expect("extract prover Stage 1 CPU");
     let verifier_program = stage1_cpu_program(&verifier_cpu).expect("extract verifier Stage 1 CPU");
+    (prover_program, verifier_program)
+}
+
+fn bolt_stage2_programs_with_params(
+    params: &JoltProtocolParams,
+) -> (CompilerStage2CpuProgram, CompilerStage2CpuProgram) {
+    let context = MeliorContext::new();
+    let protocol = build_stage2_protocol(&context, params).expect("build stage2 protocol");
+    let concrete = lower_piop_and_fiat_shamir(&context, &protocol).expect("lower Stage 2 protocol");
+    let prover_party = project_prover_party(&context, &concrete).expect("project prover");
+    let verifier_party = project_verifier_party(&context, &concrete).expect("project verifier");
+    let prover_compute =
+        lower_stage2_to_compute(&context, &prover_party).expect("lower prover Stage 2");
+    let verifier_compute =
+        lower_stage2_to_compute(&context, &verifier_party).expect("lower verifier Stage 2");
+    let prover_compute =
+        resolve_compute_kernels(&context, &prover_compute).expect("resolve prover kernels");
+    let verifier_compute =
+        resolve_compute_kernels(&context, &verifier_compute).expect("resolve verifier kernels");
+    let prover_cpu = lower_compute_to_cpu(&context, &prover_compute).expect("lower prover CPU");
+    let verifier_cpu =
+        lower_compute_to_cpu(&context, &verifier_compute).expect("lower verifier CPU");
+    let prover_program = stage2_cpu_program(&prover_cpu).expect("extract prover Stage 2 CPU");
+    let verifier_program = stage2_cpu_program(&verifier_cpu).expect("extract verifier Stage 2 CPU");
     (prover_program, verifier_program)
 }
 
@@ -1064,6 +1469,33 @@ fn assert_core_accepts_bolt_stage1(
         .expect("jolt-core accepts Bolt Stage 1 proof");
 }
 
+fn assert_core_accepts_bolt_stage2(
+    fixture: &CoreStage1Fixture,
+    stage1_artifacts: &Stage1ExecutionArtifacts<Fr>,
+    stage2_artifacts: &Stage2ExecutionArtifacts<Fr>,
+) {
+    let mut proof = clone_core_proof(&fixture.proof);
+    proof.stage1_uni_skip_first_round_proof = to_core_uniskip_proof(&stage1_artifacts.sumchecks[0]);
+    proof.stage1_sumcheck_proof =
+        to_core_sumcheck_proof(&stage1_artifacts.sumchecks[1].proof.round_polynomials);
+    proof.stage2_uni_skip_first_round_proof =
+        to_core_stage2_uniskip_proof(&stage2_artifacts.sumchecks[0]);
+    proof.stage2_sumcheck_proof =
+        to_core_sumcheck_proof(&stage2_artifacts.sumchecks[1].proof.round_polynomials);
+
+    let mut verifier = CoreVerifier::new(
+        fixture.verifier_preprocessing,
+        proof,
+        fixture.io.clone(),
+        None,
+        None,
+    )
+    .expect("construct core verifier");
+    verifier.run_preamble();
+    let _ = verifier.verify_stage1().expect("core accepts Bolt Stage 1");
+    let _ = verifier.verify_stage2().expect("core accepts Bolt Stage 2");
+}
+
 fn assert_core_states_match_bolt_stage1(fixture: &CoreStage1Fixture, bolt_log: &[TranscriptEvent]) {
     let mut verifier = CoreVerifier::new(
         fixture.verifier_preprocessing,
@@ -1081,8 +1513,41 @@ fn assert_core_states_match_bolt_stage1(fixture: &CoreStage1Fixture, bolt_log: &
     assert_eq!(core_states, bolt_states);
 }
 
+fn assert_core_states_match_bolt_stage2(fixture: &CoreStage1Fixture, bolt_log: &[TranscriptEvent]) {
+    let mut verifier = CoreVerifier::new(
+        fixture.verifier_preprocessing,
+        clone_core_proof(&fixture.proof),
+        fixture.io.clone(),
+        None,
+        None,
+    )
+    .expect("construct core verifier");
+    verifier.run_preamble();
+    let _ = verifier.verify_stage1().expect("core Stage 1 verifies");
+    let _ = verifier.verify_stage2().expect("core Stage 2 verifies");
+
+    let core_states = verifier.transcript.state_history[1..].to_vec();
+    let bolt_states = transcript_states(bolt_log);
+    assert_eq!(core_states, bolt_states);
+}
+
 fn to_core_uniskip_proof(
     output: &jolt_kernels::stage1::Stage1SumcheckOutput<Fr>,
+) -> UniSkipFirstRoundProofVariant<CoreFr, Bn254Curve, CoreBlake2bTranscript> {
+    assert_eq!(output.proof.round_polynomials.len(), 1);
+    let coefficients = output.proof.round_polynomials[0]
+        .coefficients()
+        .iter()
+        .copied()
+        .map(to_ark)
+        .collect();
+    UniSkipFirstRoundProofVariant::Standard(UniSkipFirstRoundProof::new(UniPoly::from_coeff(
+        coefficients,
+    )))
+}
+
+fn to_core_stage2_uniskip_proof(
+    output: &jolt_kernels::stage2::Stage2SumcheckOutput<Fr>,
 ) -> UniSkipFirstRoundProofVariant<CoreFr, Bn254Curve, CoreBlake2bTranscript> {
     assert_eq!(output.proof.round_polynomials.len(), 1);
     let coefficients = output.proof.round_polynomials[0]
@@ -1254,19 +1719,23 @@ fn leak_stage1_program(program: &CompilerStage1CpuProgram) -> &'static KernelSta
             })
             .collect(),
     );
-    let kernels = leak_slice(
-        program
-            .kernels
-            .iter()
-            .map(|plan| KernelStage1KernelPlan {
-                symbol: leak_str(&plan.symbol),
-                relation: leak_str(&plan.relation),
-                kind: leak_str(&plan.kind),
-                backend: leak_str(&plan.backend),
-                abi: leak_str(&plan.abi),
-            })
-            .collect(),
-    );
+    let kernels = if program.kernels.is_empty() {
+        leak_slice(synthetic_stage1_kernels(program))
+    } else {
+        leak_slice(
+            program
+                .kernels
+                .iter()
+                .map(|plan| KernelStage1KernelPlan {
+                    symbol: leak_str(&plan.symbol),
+                    relation: leak_str(&plan.relation),
+                    kind: leak_str(&plan.kind),
+                    backend: leak_str(&plan.backend),
+                    abi: leak_str(&plan.abi),
+                })
+                .collect(),
+        )
+    };
     let claims = leak_slice(
         program
             .claims
@@ -1278,7 +1747,11 @@ fn leak_stage1_program(program: &CompilerStage1CpuProgram) -> &'static KernelSta
                 num_rounds: plan.num_rounds,
                 degree: plan.degree,
                 claim: leak_str(&plan.claim),
-                kernel: leak_str(&plan.kernel),
+                kernel: leak_str(stage1_kernel_symbol(
+                    plan.kernel.as_deref(),
+                    plan.relation.as_deref(),
+                )),
+                claim_value: leak_str(&plan.claim_value),
                 input_openings: leak_str_slice(&plan.input_openings),
             })
             .collect(),
@@ -1309,13 +1782,34 @@ fn leak_stage1_program(program: &CompilerStage1CpuProgram) -> &'static KernelSta
                 symbol: leak_str(&plan.symbol),
                 stage: leak_str(&plan.stage),
                 proof_slot: leak_str(&plan.proof_slot),
-                kernel: leak_str(&plan.kernel),
+                kernel: leak_str(stage1_kernel_symbol(
+                    plan.kernel.as_deref(),
+                    plan.relation.as_deref(),
+                )),
                 batch: leak_str(&plan.batch),
                 policy: leak_str(&plan.policy),
                 round_schedule: leak_usize_slice(&plan.round_schedule),
                 claim_label: leak_str(&plan.claim_label),
                 round_label: leak_str(&plan.round_label),
                 num_rounds: plan.num_rounds,
+                degree: plan.degree,
+            })
+            .collect(),
+    );
+    let instance_results = leak_slice(
+        program
+            .instance_results
+            .iter()
+            .map(|plan| KernelStage1SumcheckInstanceResultPlan {
+                symbol: leak_str(&plan.symbol),
+                source: leak_str(&plan.source),
+                claim: leak_str(&plan.claim),
+                relation: leak_str(&plan.relation),
+                index: plan.index,
+                point_arity: plan.point_arity,
+                num_rounds: plan.num_rounds,
+                round_offset: plan.round_offset,
+                point_order: leak_str(&plan.point_order),
                 degree: plan.degree,
             })
             .collect(),
@@ -1375,9 +1869,291 @@ fn leak_stage1_program(program: &CompilerStage1CpuProgram) -> &'static KernelSta
         claims,
         batches,
         drivers,
+        instance_results,
         evals,
         opening_claims,
         opening_batches,
+    }))
+}
+
+fn synthetic_stage1_kernels(program: &CompilerStage1CpuProgram) -> Vec<KernelStage1KernelPlan> {
+    let mut kernels: Vec<KernelStage1KernelPlan> = Vec::new();
+    for driver in &program.drivers {
+        let relation = driver
+            .relation
+            .as_deref()
+            .expect("verifier driver relation");
+        let kernel = synthetic_stage1_kernel(relation);
+        if !kernels
+            .iter()
+            .any(|existing| existing.symbol == kernel.symbol)
+        {
+            kernels.push(kernel);
+        }
+    }
+    kernels
+}
+
+fn stage1_kernel_symbol<'a>(kernel: Option<&'a str>, relation: Option<&str>) -> &'a str {
+    if let Some(kernel) = kernel {
+        return kernel;
+    }
+    synthetic_stage1_kernel(relation.expect("verifier relation")).symbol
+}
+
+fn synthetic_stage1_kernel(relation: &str) -> KernelStage1KernelPlan {
+    match relation {
+        "jolt.stage1.outer.uniskip" => KernelStage1KernelPlan {
+            symbol: "jolt.cpu.stage1.outer.uniskip",
+            relation: "jolt.stage1.outer.uniskip",
+            kind: "sumcheck",
+            backend: "cpu",
+            abi: "jolt_stage1_outer_uniskip",
+        },
+        "jolt.stage1.outer.remaining" => KernelStage1KernelPlan {
+            symbol: "jolt.cpu.stage1.outer.remaining",
+            relation: "jolt.stage1.outer.remaining",
+            kind: "sumcheck",
+            backend: "cpu",
+            abi: "jolt_stage1_outer_remaining",
+        },
+        relation => panic!("unsupported Stage 1 verifier relation `{relation}`"),
+    }
+}
+
+fn leak_stage2_program(program: &CompilerStage2CpuProgram) -> &'static KernelStage2CpuProgramPlan {
+    Box::leak(Box::new(KernelStage2CpuProgramPlan {
+        params: Stage2Params {
+            field: leak_str(&program.params.field),
+            pcs: leak_str(&program.params.pcs),
+            transcript: leak_str(&program.params.transcript),
+        },
+        steps: leak_slice(
+            program
+                .steps
+                .iter()
+                .map(|plan| KernelStage2ProgramStepPlan {
+                    kind: leak_str(&plan.kind),
+                    symbol: leak_str(&plan.symbol),
+                })
+                .collect(),
+        ),
+        transcript_squeezes: leak_slice(
+            program
+                .transcript_squeezes
+                .iter()
+                .map(|plan| KernelStage2TranscriptSqueezePlan {
+                    symbol: leak_str(&plan.symbol),
+                    label: leak_str(&plan.label),
+                    kind: leak_str(&plan.kind),
+                    count: plan.count,
+                })
+                .collect(),
+        ),
+        opening_inputs: leak_slice(
+            program
+                .opening_inputs
+                .iter()
+                .map(|plan| KernelStage2OpeningInputPlan {
+                    symbol: leak_str(&plan.symbol),
+                    source_stage: leak_str(&plan.source_stage),
+                    source_claim: leak_str(&plan.source_claim),
+                    oracle: leak_str(&plan.oracle),
+                    domain: leak_str(&plan.domain),
+                    point_arity: plan.point_arity,
+                    claim_kind: leak_str(&plan.claim_kind),
+                })
+                .collect(),
+        ),
+        field_constants: leak_slice(
+            program
+                .field_constants
+                .iter()
+                .map(|plan| KernelStage2FieldConstantPlan {
+                    symbol: leak_str(&plan.symbol),
+                    field: leak_str(&plan.field),
+                    value: plan.value,
+                })
+                .collect(),
+        ),
+        challenge_extracts: leak_slice(
+            program
+                .challenge_extracts
+                .iter()
+                .map(|plan| KernelStage2ChallengeExtractPlan {
+                    symbol: leak_str(&plan.symbol),
+                    source: leak_str(&plan.source),
+                    index: plan.index,
+                    challenge_source: leak_str(&plan.challenge_source),
+                })
+                .collect(),
+        ),
+        field_exprs: leak_slice(
+            program
+                .field_exprs
+                .iter()
+                .map(|plan| KernelStage2FieldExprPlan {
+                    symbol: leak_str(&plan.symbol),
+                    kind: leak_str(&plan.kind),
+                    formula: leak_str(&plan.formula),
+                    operand_names: leak_str_slice(&plan.operand_names),
+                    operands: leak_str_slice(&plan.operands),
+                })
+                .collect(),
+        ),
+        kernels: leak_slice(
+            program
+                .kernels
+                .iter()
+                .map(|plan| KernelStage2KernelPlan {
+                    symbol: leak_str(&plan.symbol),
+                    relation: leak_str(&plan.relation),
+                    kind: leak_str(&plan.kind),
+                    backend: leak_str(&plan.backend),
+                    abi: leak_str(&plan.abi),
+                })
+                .collect(),
+        ),
+        claims: leak_slice(
+            program
+                .claims
+                .iter()
+                .map(|plan| KernelStage2SumcheckClaimPlan {
+                    symbol: leak_str(&plan.symbol),
+                    stage: leak_str(&plan.stage),
+                    domain: leak_str(&plan.domain),
+                    num_rounds: plan.num_rounds,
+                    degree: plan.degree,
+                    claim: leak_str(&plan.claim),
+                    kernel: leak_str(plan.kernel.as_deref().expect("Stage 2 claim kernel")),
+                    claim_value: leak_str(&plan.claim_value),
+                    input_openings: leak_str_slice(&plan.input_openings),
+                })
+                .collect(),
+        ),
+        batches: leak_slice(
+            program
+                .batches
+                .iter()
+                .map(|plan| KernelStage2SumcheckBatchPlan {
+                    symbol: leak_str(&plan.symbol),
+                    stage: leak_str(&plan.stage),
+                    proof_slot: leak_str(&plan.proof_slot),
+                    policy: leak_str(&plan.policy),
+                    count: plan.count,
+                    ordered_claims: leak_str_slice(&plan.ordered_claims),
+                    claim_operands: leak_str_slice(&plan.claim_operands),
+                    claim_label: leak_str(&plan.claim_label),
+                    round_label: leak_str(&plan.round_label),
+                    round_schedule: leak_usize_slice(&plan.round_schedule),
+                })
+                .collect(),
+        ),
+        drivers: leak_slice(
+            program
+                .drivers
+                .iter()
+                .map(|plan| KernelStage2SumcheckDriverPlan {
+                    symbol: leak_str(&plan.symbol),
+                    stage: leak_str(&plan.stage),
+                    proof_slot: leak_str(&plan.proof_slot),
+                    kernel: leak_str(plan.kernel.as_deref().expect("Stage 2 driver kernel")),
+                    batch: leak_str(&plan.batch),
+                    policy: leak_str(&plan.policy),
+                    round_schedule: leak_usize_slice(&plan.round_schedule),
+                    claim_label: leak_str(&plan.claim_label),
+                    round_label: leak_str(&plan.round_label),
+                    num_rounds: plan.num_rounds,
+                    degree: plan.degree,
+                })
+                .collect(),
+        ),
+        instance_results: leak_slice(
+            program
+                .instance_results
+                .iter()
+                .map(|plan| KernelStage2SumcheckInstanceResultPlan {
+                    symbol: leak_str(&plan.symbol),
+                    source: leak_str(&plan.source),
+                    claim: leak_str(&plan.claim),
+                    relation: leak_str(&plan.relation),
+                    index: plan.index,
+                    point_arity: plan.point_arity,
+                    num_rounds: plan.num_rounds,
+                    round_offset: plan.round_offset,
+                    point_order: leak_str(&plan.point_order),
+                    degree: plan.degree,
+                })
+                .collect(),
+        ),
+        evals: leak_slice(
+            program
+                .evals
+                .iter()
+                .map(|plan| KernelStage2SumcheckEvalPlan {
+                    symbol: leak_str(&plan.symbol),
+                    source: leak_str(&plan.source),
+                    name: leak_str(&plan.name),
+                    index: plan.index,
+                    oracle: leak_str(&plan.oracle),
+                })
+                .collect(),
+        ),
+        point_slices: leak_slice(
+            program
+                .point_slices
+                .iter()
+                .map(|plan| KernelStage2PointSlicePlan {
+                    symbol: leak_str(&plan.symbol),
+                    source: leak_str(&plan.source),
+                    offset: plan.offset,
+                    length: plan.length,
+                    input: leak_str(&plan.input),
+                })
+                .collect(),
+        ),
+        point_concats: leak_slice(
+            program
+                .point_concats
+                .iter()
+                .map(|plan| KernelStage2PointConcatPlan {
+                    symbol: leak_str(&plan.symbol),
+                    layout: leak_str(&plan.layout),
+                    arity: plan.arity,
+                    inputs: leak_str_slice(&plan.inputs),
+                })
+                .collect(),
+        ),
+        opening_claims: leak_slice(
+            program
+                .opening_claims
+                .iter()
+                .map(|plan| KernelStage2OpeningClaimPlan {
+                    symbol: leak_str(&plan.symbol),
+                    oracle: leak_str(&plan.oracle),
+                    domain: leak_str(&plan.domain),
+                    point_arity: plan.point_arity,
+                    claim_kind: leak_str(&plan.claim_kind),
+                    point_source: leak_str(&plan.point_source),
+                    eval_source: leak_str(&plan.eval_source),
+                })
+                .collect(),
+        ),
+        opening_batches: leak_slice(
+            program
+                .opening_batches
+                .iter()
+                .map(|plan| KernelStage2OpeningBatchPlan {
+                    symbol: leak_str(&plan.symbol),
+                    stage: leak_str(&plan.stage),
+                    proof_slot: leak_str(&plan.proof_slot),
+                    policy: leak_str(&plan.policy),
+                    count: plan.count,
+                    ordered_claims: leak_str_slice(&plan.ordered_claims),
+                    claim_operands: leak_str_slice(&plan.claim_operands),
+                })
+                .collect(),
+        ),
     }))
 }
 

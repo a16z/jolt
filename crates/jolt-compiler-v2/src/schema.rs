@@ -162,10 +162,30 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
     let name = operation_name(operation);
     match name.as_str() {
         "field.define" => require_attrs(operation, &["sym_name", "modulus_bits", "role"]),
+        "field.constant" => {
+            require_attrs(operation, &["sym_name", "field", "value"])?;
+            require_shape(operation, 0, 1)
+        }
+        "field.challenge_extract" => {
+            require_attrs(operation, &["sym_name", "source", "index"])?;
+            require_shape(operation, 1, 1)
+        }
+        "field.expr" => {
+            require_attrs(operation, &["sym_name", "kind", "formula", "operands"])?;
+            require_min_shape(operation, 0, 1)
+        }
         "hash.function" => require_attrs(operation, &["sym_name", "algorithm"]),
         "transcript.scheme" => require_attrs(operation, &["sym_name", "hash"]),
         "pcs.scheme" => require_attrs(operation, &["sym_name", "field"]),
         "poly.domain" => require_attrs(operation, &["sym_name", "field", "log_size"]),
+        "poly.point_slice" => {
+            require_attrs(operation, &["sym_name", "source", "offset", "length"])?;
+            require_shape(operation, 1, 1)
+        }
+        "poly.point_concat" => {
+            require_attrs(operation, &["sym_name", "layout", "arity"])?;
+            require_min_shape(operation, 1, 1)
+        }
         "protocol.params" => require_attrs(operation, &["sym_name", "field", "pcs", "transcript"]),
         "protocol.boundary" => require_attrs(operation, &["sym_name", "roles"]),
         "piop.oracle" => require_attrs(
@@ -241,7 +261,22 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
                     "relation",
                 ],
             )?;
-            require_min_shape(operation, 0, 1)
+            require_min_shape(operation, 1, 1)
+        }
+        "piop.opening_input" => {
+            require_attrs(
+                operation,
+                &[
+                    "sym_name",
+                    "source_stage",
+                    "source_claim",
+                    "oracle",
+                    "domain",
+                    "point_arity",
+                    "claim_kind",
+                ],
+            )?;
+            require_shape(operation, 0, 3)
         }
         "piop.sumcheck_batch" => {
             require_attrs(
@@ -297,6 +332,8 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
                     "index",
                     "point_arity",
                     "num_rounds",
+                    "round_offset",
+                    "point_order",
                     "degree",
                 ],
             )?;
@@ -441,6 +478,41 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             require_attrs(operation, &["sym_name", "label", "kind", "count"])?;
             require_shape(operation, 1, 2)
         }
+        "compute.opening_input" => {
+            require_attrs(
+                operation,
+                &[
+                    "sym_name",
+                    "source_stage",
+                    "source_claim",
+                    "oracle",
+                    "domain",
+                    "point_arity",
+                    "claim_kind",
+                ],
+            )?;
+            require_shape(operation, 0, 3)
+        }
+        "compute.point_slice" => {
+            require_attrs(operation, &["sym_name", "source", "offset", "length"])?;
+            require_shape(operation, 1, 1)
+        }
+        "compute.point_concat" => {
+            require_attrs(operation, &["sym_name", "layout", "arity"])?;
+            require_min_shape(operation, 1, 1)
+        }
+        "compute.field_constant" => {
+            require_attrs(operation, &["sym_name", "field", "value"])?;
+            require_shape(operation, 0, 1)
+        }
+        "compute.challenge_extract" => {
+            require_attrs(operation, &["sym_name", "source", "index"])?;
+            require_shape(operation, 1, 1)
+        }
+        "compute.field_expr" => {
+            require_attrs(operation, &["sym_name", "kind", "formula", "operands"])?;
+            require_min_shape(operation, 0, 1)
+        }
         "compute.sumcheck_claim" => {
             require_attrs(
                 operation,
@@ -454,7 +526,7 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
                     "relation",
                 ],
             )?;
-            require_min_shape(operation, 0, 1)
+            require_min_shape(operation, 1, 1)
         }
         "compute.sumcheck_kernel_claim" => {
             require_attrs(
@@ -469,7 +541,7 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
                     "kernel",
                 ],
             )?;
-            require_min_shape(operation, 0, 1)
+            require_min_shape(operation, 1, 1)
         }
         "compute.sumcheck_verify_claim" => {
             require_attrs(
@@ -484,7 +556,7 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
                     "relation",
                 ],
             )?;
-            require_min_shape(operation, 0, 1)
+            require_min_shape(operation, 1, 1)
         }
         "compute.sumcheck_batch" => {
             require_attrs(
@@ -576,6 +648,8 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
                     "index",
                     "point_arity",
                     "num_rounds",
+                    "round_offset",
+                    "point_order",
                     "degree",
                 ],
             )?;
@@ -732,6 +806,41 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             require_attrs(operation, &["sym_name", "label", "kind", "count"])?;
             require_shape(operation, 1, 2)
         }
+        "cpu.opening_input" => {
+            require_attrs(
+                operation,
+                &[
+                    "sym_name",
+                    "source_stage",
+                    "source_claim",
+                    "oracle",
+                    "domain",
+                    "point_arity",
+                    "claim_kind",
+                ],
+            )?;
+            require_shape(operation, 0, 3)
+        }
+        "cpu.point_slice" => {
+            require_attrs(operation, &["sym_name", "source", "offset", "length"])?;
+            require_shape(operation, 1, 1)
+        }
+        "cpu.point_concat" => {
+            require_attrs(operation, &["sym_name", "layout", "arity"])?;
+            require_min_shape(operation, 1, 1)
+        }
+        "cpu.field_constant" => {
+            require_attrs(operation, &["sym_name", "field", "value"])?;
+            require_shape(operation, 0, 1)
+        }
+        "cpu.challenge_extract" => {
+            require_attrs(operation, &["sym_name", "source", "index"])?;
+            require_shape(operation, 1, 1)
+        }
+        "cpu.field_expr" => {
+            require_attrs(operation, &["sym_name", "kind", "formula", "operands"])?;
+            require_min_shape(operation, 0, 1)
+        }
         "cpu.kernel" => require_attrs(
             operation,
             &["sym_name", "relation", "kind", "backend", "abi"],
@@ -749,7 +858,7 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
                     "kernel",
                 ],
             )?;
-            require_min_shape(operation, 0, 1)
+            require_min_shape(operation, 1, 1)
         }
         "cpu.sumcheck_verify_claim" => {
             require_attrs(
@@ -764,7 +873,7 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
                     "relation",
                 ],
             )?;
-            require_min_shape(operation, 0, 1)
+            require_min_shape(operation, 1, 1)
         }
         "cpu.sumcheck_batch" => {
             require_attrs(
@@ -838,6 +947,8 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
                     "index",
                     "point_arity",
                     "num_rounds",
+                    "round_offset",
+                    "point_order",
                     "degree",
                 ],
             )?;

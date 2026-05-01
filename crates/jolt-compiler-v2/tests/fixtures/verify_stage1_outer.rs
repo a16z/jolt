@@ -22,6 +22,7 @@ pub struct Stage1SumcheckClaimPlan {
     pub degree: usize,
     pub claim: &'static str,
     pub relation: &'static str,
+    pub claim_value: &'static str,
     pub input_openings: &'static [&'static str],
 }
 
@@ -51,6 +52,20 @@ pub struct Stage1SumcheckDriverPlan {
     pub claim_label: &'static str,
     pub round_label: &'static str,
     pub num_rounds: usize,
+    pub degree: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Stage1SumcheckInstanceResultPlan {
+    pub symbol: &'static str,
+    pub source: &'static str,
+    pub claim: &'static str,
+    pub relation: &'static str,
+    pub index: usize,
+    pub point_arity: usize,
+    pub num_rounds: usize,
+    pub round_offset: usize,
+    pub point_order: &'static str,
     pub degree: usize,
 }
 
@@ -100,6 +115,7 @@ pub struct Stage1VerifierProgramPlan {
     pub claims: &'static [Stage1SumcheckClaimPlan],
     pub batches: &'static [Stage1SumcheckBatchPlan],
     pub drivers: &'static [Stage1SumcheckDriverPlan],
+    pub instance_results: &'static [Stage1SumcheckInstanceResultPlan],
     pub evals: &'static [Stage1SumcheckEvalPlan],
     pub opening_claims: &'static [Stage1OpeningClaimPlan],
     pub opening_batches: &'static [Stage1OpeningBatchPlan],
@@ -179,8 +195,8 @@ pub const STAGE1_SUMCHECK_CLAIM_1_INPUT_OPENINGS: &[&str] = &[
 ];
 
 pub const STAGE1_SUMCHECK_CLAIMS: &[Stage1SumcheckClaimPlan] = &[
-    Stage1SumcheckClaimPlan { symbol: "stage1.uniskip.input", stage: "stage1", domain: "jolt.stage1_uniskip_domain", num_rounds: 1, degree: 27, claim: "zero", relation: "jolt.stage1.outer.uniskip", input_openings: STAGE1_SUMCHECK_CLAIM_0_INPUT_OPENINGS },
-    Stage1SumcheckClaimPlan { symbol: "stage1.outer_remaining.input", stage: "stage1", domain: "jolt.trace_domain", num_rounds: 17, degree: 3, claim: "stage1.uniskip.opening", relation: "jolt.stage1.outer.remaining", input_openings: STAGE1_SUMCHECK_CLAIM_1_INPUT_OPENINGS },
+    Stage1SumcheckClaimPlan { symbol: "stage1.uniskip.input", stage: "stage1", domain: "jolt.stage1_uniskip_domain", num_rounds: 1, degree: 27, claim: "stage1.zero", relation: "jolt.stage1.outer.uniskip", claim_value: "stage1.zero", input_openings: STAGE1_SUMCHECK_CLAIM_0_INPUT_OPENINGS },
+    Stage1SumcheckClaimPlan { symbol: "stage1.outer_remaining.input", stage: "stage1", domain: "jolt.trace_domain", num_rounds: 17, degree: 3, claim: "stage1.uniskip.eval", relation: "jolt.stage1.outer.remaining", claim_value: "stage1.uniskip.eval", input_openings: STAGE1_SUMCHECK_CLAIM_1_INPUT_OPENINGS },
 ];
 
 pub const STAGE1_SUMCHECK_BATCH_0_ORDERED_CLAIMS: &[&str] = &[
@@ -223,6 +239,11 @@ pub const STAGE1_SUMCHECK_DRIVER_1_ROUND_SCHEDULE: &[usize] = &[
 pub const STAGE1_SUMCHECK_DRIVERS: &[Stage1SumcheckDriverPlan] = &[
     Stage1SumcheckDriverPlan { symbol: "stage1.uniskip.sumcheck", stage: "stage1", proof_slot: "stage1.uni_skip_first_round", relation: "jolt.stage1.outer.uniskip", batch: "stage1.uniskip.batch", policy: "univariate_skip", round_schedule: STAGE1_SUMCHECK_DRIVER_0_ROUND_SCHEDULE, claim_label: "uniskip_claim", round_label: "uniskip_poly", num_rounds: 1, degree: 27 },
     Stage1SumcheckDriverPlan { symbol: "stage1.outer_remaining.sumcheck", stage: "stage1", proof_slot: "stage1.sumcheck", relation: "jolt.stage1.outer.remaining", batch: "stage1.outer_remaining.batch", policy: "jolt_core_front_loaded", round_schedule: STAGE1_SUMCHECK_DRIVER_1_ROUND_SCHEDULE, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", num_rounds: 17, degree: 3 },
+];
+
+pub const STAGE1_SUMCHECK_INSTANCE_RESULTS: &[Stage1SumcheckInstanceResultPlan] = &[
+    Stage1SumcheckInstanceResultPlan { symbol: "stage1.uniskip.instance", source: "stage1.uniskip.sumcheck", claim: "stage1.uniskip.input", relation: "jolt.stage1.outer.uniskip", index: 0, point_arity: 1, num_rounds: 1, round_offset: 0, point_order: "as_is", degree: 27 },
+    Stage1SumcheckInstanceResultPlan { symbol: "stage1.outer_remaining.instance", source: "stage1.outer_remaining.sumcheck", claim: "stage1.outer_remaining.input", relation: "jolt.stage1.outer.remaining", index: 0, point_arity: 16, num_rounds: 17, round_offset: 1, point_order: "reverse", degree: 3 },
 ];
 
 pub const STAGE1_SUMCHECK_EVALS: &[Stage1SumcheckEvalPlan] = &[
@@ -389,6 +410,7 @@ pub const STAGE1_PROGRAM: Stage1VerifierProgramPlan = Stage1VerifierProgramPlan 
     claims: STAGE1_SUMCHECK_CLAIMS,
     batches: STAGE1_SUMCHECK_BATCHES,
     drivers: STAGE1_SUMCHECK_DRIVERS,
+    instance_results: STAGE1_SUMCHECK_INSTANCE_RESULTS,
     evals: STAGE1_SUMCHECK_EVALS,
     opening_claims: STAGE1_OPENING_CLAIMS,
     opening_batches: STAGE1_OPENING_BATCHES,

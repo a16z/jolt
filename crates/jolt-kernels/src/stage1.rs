@@ -80,6 +80,7 @@ pub struct Stage1SumcheckClaimPlan {
     pub degree: usize,
     pub claim: &'static str,
     pub kernel: &'static str,
+    pub claim_value: &'static str,
     pub input_openings: &'static [&'static str],
 }
 
@@ -109,6 +110,20 @@ pub struct Stage1SumcheckDriverPlan {
     pub claim_label: &'static str,
     pub round_label: &'static str,
     pub num_rounds: usize,
+    pub degree: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Stage1SumcheckInstanceResultPlan {
+    pub symbol: &'static str,
+    pub source: &'static str,
+    pub claim: &'static str,
+    pub relation: &'static str,
+    pub index: usize,
+    pub point_arity: usize,
+    pub num_rounds: usize,
+    pub round_offset: usize,
+    pub point_order: &'static str,
     pub degree: usize,
 }
 
@@ -159,9 +174,28 @@ pub struct Stage1CpuProgramPlan {
     pub claims: &'static [Stage1SumcheckClaimPlan],
     pub batches: &'static [Stage1SumcheckBatchPlan],
     pub drivers: &'static [Stage1SumcheckDriverPlan],
+    pub instance_results: &'static [Stage1SumcheckInstanceResultPlan],
     pub evals: &'static [Stage1SumcheckEvalPlan],
     pub opening_claims: &'static [Stage1OpeningClaimPlan],
     pub opening_batches: &'static [Stage1OpeningBatchPlan],
+}
+
+impl Stage1CpuProgramPlan {
+    pub fn evals_for_driver<'a>(
+        &'a self,
+        driver: &'a str,
+    ) -> impl Iterator<Item = &'a Stage1SumcheckEvalPlan> + 'a {
+        self.evals.iter().filter(move |eval| eval.source == driver)
+    }
+
+    pub fn instance_results_for_driver<'a>(
+        &'a self,
+        driver: &'a str,
+    ) -> impl Iterator<Item = &'a Stage1SumcheckInstanceResultPlan> + 'a {
+        self.instance_results
+            .iter()
+            .filter(move |instance| instance.source == driver)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -186,9 +220,18 @@ pub struct Stage1ChallengeVector<F: Field> {
 }
 
 #[derive(Clone, Debug)]
+pub struct Stage1OpeningValue<F: Field> {
+    pub symbol: &'static str,
+    pub oracle: &'static str,
+    pub point: Vec<F>,
+    pub eval: F,
+}
+
+#[derive(Clone, Debug)]
 pub struct Stage1ExecutionArtifacts<F: Field> {
     pub challenge_vectors: Vec<Stage1ChallengeVector<F>>,
     pub sumchecks: Vec<Stage1SumcheckOutput<F>>,
+    pub opening_values: Vec<Stage1OpeningValue<F>>,
     pub opening_batches: Vec<&'static Stage1OpeningBatchPlan>,
 }
 
@@ -197,8 +240,17 @@ impl<F: Field> Default for Stage1ExecutionArtifacts<F> {
         Self {
             challenge_vectors: Vec::new(),
             sumchecks: Vec::new(),
+            opening_values: Vec::new(),
             opening_batches: Vec::new(),
         }
+    }
+}
+
+impl<F: Field> Stage1ExecutionArtifacts<F> {
+    pub fn opening_value(&self, symbol: &str) -> Option<&Stage1OpeningValue<F>> {
+        self.opening_values
+            .iter()
+            .find(|opening| opening.symbol == symbol)
     }
 }
 
@@ -987,6 +1039,10 @@ pub enum Stage1KernelError {
         expected: usize,
         actual: usize,
     },
+    UnsupportedPointOrder {
+        symbol: &'static str,
+        point_order: &'static str,
+    },
     InvalidProof {
         driver: &'static str,
         reason: &'static str,
@@ -1046,6 +1102,13 @@ impl Display for Stage1KernelError {
             } => write!(
                 formatter,
                 "stage1 input `{input}` length mismatch: expected {expected}, got {actual}"
+            ),
+            Self::UnsupportedPointOrder {
+                symbol,
+                point_order,
+            } => write!(
+                formatter,
+                "stage1 instance @{symbol} uses unsupported point order `{point_order}`"
             ),
             Self::InvalidProof { driver, reason } => {
                 write!(
@@ -1107,7 +1170,115 @@ where
     artifacts
         .opening_batches
         .extend(program.opening_batches.iter());
+    artifacts.opening_values = stage1_opening_values(program, &artifacts.sumchecks)?;
     Ok(artifacts)
+}
+
+fn stage1_opening_values<F: Field>(
+    program: &'static Stage1CpuProgramPlan,
+    sumchecks: &[Stage1SumcheckOutput<F>],
+) -> Result<Vec<Stage1OpeningValue<F>>, Stage1KernelError> {
+    let mut points = Vec::<Stage1PointValue<F>>::new();
+    let mut scalars = Vec::<Stage1ScalarValue<F>>::new();
+    for output in sumchecks {
+        points.push(Stage1PointValue {
+            symbol: output.driver,
+            point: output.point.clone(),
+        });
+        for instance in program.instance_results_for_driver(output.driver) {
+            points.push(Stage1PointValue {
+                symbol: instance.symbol,
+                point: stage1_instance_point(instance, &output.point)?,
+            });
+        }
+        for eval in program.evals_for_driver(output.driver) {
+            let value = output
+                .evals
+                .iter()
+                .find(|value| value.name == eval.name)
+                .or_else(|| output.evals.get(eval.index))
+                .ok_or(Stage1KernelError::MissingKernelInput {
+                    kernel: output.driver,
+                    input: eval.symbol,
+                })?
+                .value;
+            scalars.push(Stage1ScalarValue {
+                symbol: eval.symbol,
+                value,
+            });
+            scalars.push(Stage1ScalarValue {
+                symbol: eval.name,
+                value,
+            });
+        }
+    }
+    program
+        .opening_claims
+        .iter()
+        .map(|claim| {
+            let point = points
+                .iter()
+                .find(|point| point.symbol == claim.point_source)
+                .ok_or(Stage1KernelError::MissingKernelInput {
+                    kernel: claim.symbol,
+                    input: claim.point_source,
+                })?
+                .point
+                .clone();
+            let eval = scalars
+                .iter()
+                .find(|scalar| scalar.symbol == claim.eval_source)
+                .ok_or(Stage1KernelError::MissingKernelInput {
+                    kernel: claim.symbol,
+                    input: claim.eval_source,
+                })?
+                .value;
+            Ok(Stage1OpeningValue {
+                symbol: claim.symbol,
+                oracle: claim.oracle,
+                point,
+                eval,
+            })
+        })
+        .collect()
+}
+
+fn stage1_instance_point<F: Field>(
+    instance: &Stage1SumcheckInstanceResultPlan,
+    point: &[F],
+) -> Result<Vec<F>, Stage1KernelError> {
+    let end = instance.round_offset + instance.point_arity;
+    let mut point = point
+        .get(instance.round_offset..end)
+        .ok_or(Stage1KernelError::InvalidInputLength {
+            input: instance.symbol,
+            expected: end,
+            actual: point.len(),
+        })?
+        .to_vec();
+    match instance.point_order {
+        "as_is" => Ok(point),
+        "reverse" => {
+            point.reverse();
+            Ok(point)
+        }
+        point_order => Err(Stage1KernelError::UnsupportedPointOrder {
+            symbol: instance.symbol,
+            point_order,
+        }),
+    }
+}
+
+#[derive(Clone, Debug)]
+struct Stage1PointValue<F: Field> {
+    symbol: &'static str,
+    point: Vec<F>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Stage1ScalarValue<F: Field> {
+    symbol: &'static str,
+    value: F,
 }
 
 fn verify_static_program_shape(
@@ -2026,6 +2197,7 @@ mod tests {
         degree: OUTER_UNISKIP_DEGREE_BOUND,
         claim: "zero",
         kernel: "kernel",
+        claim_value: "zero",
         input_openings: &[],
     }];
     static BATCHES: &[Stage1SumcheckBatchPlan] = &[Stage1SumcheckBatchPlan {
@@ -2140,6 +2312,7 @@ mod tests {
             degree: OUTER_UNISKIP_DEGREE_BOUND,
             claim: "zero",
             kernel: "uniskip_kernel",
+            claim_value: "zero",
             input_openings: &[],
         },
         Stage1SumcheckClaimPlan {
@@ -2150,6 +2323,7 @@ mod tests {
             degree: OUTER_REMAINING_DEGREE_BOUND,
             claim: "stage1.uniskip.opening",
             kernel: "remaining_kernel",
+            claim_value: "stage1.uniskip.eval",
             input_openings: &["stage1.uniskip.opening"],
         },
     ];
@@ -2259,6 +2433,7 @@ mod tests {
         claims: CLAIMS,
         batches: BATCHES,
         drivers: DRIVERS,
+        instance_results: &[],
         evals: &[],
         opening_claims: &[],
         opening_batches: &[],
@@ -2274,6 +2449,7 @@ mod tests {
         claims: CLAIMS,
         batches: BAD_BATCHES,
         drivers: DRIVERS,
+        instance_results: &[],
         evals: &[],
         opening_claims: &[],
         opening_batches: &[],
@@ -2289,6 +2465,7 @@ mod tests {
         claims: FULL_CLAIMS,
         batches: FULL_BATCHES,
         drivers: FULL_DRIVERS,
+        instance_results: &[],
         evals: FULL_EVALS,
         opening_claims: &[],
         opening_batches: &[],
@@ -2320,6 +2497,7 @@ mod tests {
         claims: FULL_CLAIMS,
         batches: FULL_BATCHES,
         drivers: FULL_DRIVERS,
+        instance_results: &[],
         evals: REAL_EVALS,
         opening_claims: &[],
         opening_batches: &[],

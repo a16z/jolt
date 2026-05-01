@@ -1,8 +1,9 @@
 use jolt_compiler_v2::{
-    build_commitment_protocol, build_stage1_outer_protocol, commitment_cpu_program,
-    emit_commitment_rust, emit_stage1_rust, lower_commitment_to_compute, lower_compute_to_cpu,
-    lower_piop_and_fiat_shamir, lower_stage1_to_compute, project_prover_party,
-    project_verifier_party, resolve_compute_kernels, stage1_cpu_program, verify_compute_schema,
+    build_commitment_protocol, build_stage1_outer_protocol, build_stage2_protocol,
+    commitment_cpu_program, emit_commitment_rust, emit_stage1_rust, emit_stage2_rust,
+    lower_commitment_to_compute, lower_compute_to_cpu, lower_piop_and_fiat_shamir,
+    lower_stage1_to_compute, lower_stage2_to_compute, project_prover_party, project_verifier_party,
+    resolve_compute_kernels, stage1_cpu_program, stage2_cpu_program, verify_compute_schema,
     verify_concrete_transcript, verify_cpu_schema, verify_jolt_protocol_schema,
     verify_protocol_schema, Concrete, Cpu, JoltProtocolParams, MeliorContext, Role, RustSourceFile,
     TextMlir,
@@ -337,6 +338,173 @@ fn jolt_stage1_outer_protocol_defines_virtual_claim_flow() {
     assert!(text.contains("oracle = @OpFlagIsLastInSequence"));
     assert!(!text.contains("\"pcs.opening_claim\""));
     assert_or_update_fixture("tests/fixtures/stage1_outer_protocol.mlir", &text);
+}
+
+#[test]
+fn jolt_stage2_protocol_defines_product_ram_claim_flow() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::fixture();
+    let protocol = build_stage2_protocol(&context, &params).expect("build stage2 protocol");
+    verify_protocol_schema(&protocol).expect("stage2 protocol schema is valid");
+    let concrete =
+        lower_piop_and_fiat_shamir(&context, &protocol).expect("lower stage2 to concrete");
+    verify_concrete_transcript(&concrete).expect("stage2 transcript is threaded");
+
+    let text = protocol.to_text_mlir();
+    assert!(text.contains("sym_name = \"stage2.product_virtual.uniskip.sumcheck\""));
+    assert!(text.contains("sym_name = \"stage2.sumcheck\""));
+    assert!(text.contains("relation = @jolt.stage2.product_virtual.uniskip"));
+    assert!(text.contains("relation = @jolt.stage2.batched"));
+    assert!(text.contains("\"piop.opening_input\"()"));
+    assert!(text.contains("\"field.expr\"(%"));
+    assert!(text.contains("sym_name = \"stage2.ram_read_write.claim_expr\""));
+    assert!(text.contains("\"piop.sumcheck_instance_result\"(%"));
+    assert!(text.contains("round_offset = 16 : i64"));
+    assert!(text.contains("\"poly.point_slice\"(%"));
+    assert!(text.contains("\"poly.point_concat\"(%"));
+    assert!(text.contains(
+        "ordered_claims = [@stage2.ram_read_write.input, @stage2.product_virtual.remainder.input"
+    ));
+    assert!(text.contains("ordered_claims = [@stage2.ram_read_write.opening.RamVal, @stage2.ram_read_write.opening.RamRa, @stage2.ram_read_write.opening.RamInc"));
+    assert!(text.contains("claim_kind = \"committed\""));
+    assert!(text.contains("source_claim = @stage1.outer_remaining.opening.RamAddress"));
+    assert!(!text.contains("kernel = @"));
+    assert!(!text.contains("\"compute."));
+    assert_or_update_fixture("tests/fixtures/stage2_protocol.mlir", &text);
+}
+
+#[test]
+fn jolt_stage2_lowers_to_compute_and_cpu_role_ir() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::fixture();
+    let protocol = build_stage2_protocol(&context, &params).expect("build stage2 protocol");
+    let concrete =
+        lower_piop_and_fiat_shamir(&context, &protocol).expect("lower stage2 to concrete");
+    let prover = project_prover_party(&context, &concrete).expect("project prover party");
+    let verifier = project_verifier_party(&context, &concrete).expect("project verifier party");
+    let prover_compute = lower_stage2_to_compute(&context, &prover).expect("lower prover stage2");
+    let verifier_compute =
+        lower_stage2_to_compute(&context, &verifier).expect("lower verifier stage2");
+    verify_compute_schema(&prover_compute).expect("prover stage2 compute schema is valid");
+    verify_compute_schema(&verifier_compute).expect("verifier stage2 compute schema is valid");
+
+    let prover_compute_text = prover_compute.to_text_mlir();
+    let verifier_compute_text = verifier_compute.to_text_mlir();
+    assert!(prover_compute_text.contains("\"compute.opening_input\"()"));
+    assert!(prover_compute_text.contains("\"compute.field_expr\"(%"));
+    assert!(prover_compute_text.contains("\"compute.point_slice\"(%"));
+    assert!(prover_compute_text.contains("\"compute.point_concat\"(%"));
+    assert!(prover_compute_text.contains("\"compute.sumcheck_claim\"(%"));
+    assert!(prover_compute_text.contains("\"compute.sumcheck_driver\"(%"));
+    assert!(!prover_compute_text.contains("kernel = @"));
+    assert!(verifier_compute_text.contains("\"compute.sumcheck_verify_claim\""));
+    assert!(verifier_compute_text.contains("\"compute.sumcheck_verify\""));
+    assert!(!verifier_compute_text.contains("\"compute.kernel\""));
+    assert!(!verifier_compute_text.contains("kernel = @"));
+
+    let prover_kernel_compute =
+        resolve_compute_kernels(&context, &prover_compute).expect("resolve prover kernels");
+    let verifier_kernel_compute =
+        resolve_compute_kernels(&context, &verifier_compute).expect("resolve verifier kernels");
+    verify_compute_schema(&prover_kernel_compute)
+        .expect("prover kernelized stage2 compute schema is valid");
+    verify_compute_schema(&verifier_kernel_compute)
+        .expect("verifier kernelized stage2 compute schema is valid");
+
+    let prover_cpu =
+        lower_compute_to_cpu(&context, &prover_kernel_compute).expect("lower prover CPU");
+    let verifier_cpu =
+        lower_compute_to_cpu(&context, &verifier_kernel_compute).expect("lower verifier CPU");
+    verify_cpu_schema(&prover_cpu).expect("prover stage2 CPU schema is valid");
+    verify_cpu_schema(&verifier_cpu).expect("verifier stage2 CPU schema is valid");
+
+    let prover_cpu_text = prover_cpu.to_text_mlir();
+    let verifier_cpu_text = verifier_cpu.to_text_mlir();
+    assert!(prover_cpu_text.contains("\"cpu.opening_input\"()"));
+    assert!(prover_cpu_text.contains("\"cpu.field_expr\"(%"));
+    assert!(prover_cpu_text.contains("\"cpu.point_slice\"(%"));
+    assert!(prover_cpu_text.contains("\"cpu.point_concat\"(%"));
+    assert!(prover_cpu_text.contains("\"cpu.kernel\"()"));
+    assert!(prover_cpu_text.contains("kernel = @jolt.cpu.stage2.batched"));
+    assert!(verifier_cpu_text.contains("\"cpu.opening_input\"()"));
+    assert!(verifier_cpu_text.contains("\"cpu.sumcheck_verify_claim\""));
+    assert!(verifier_cpu_text.contains("\"cpu.sumcheck_verify\""));
+    assert!(!verifier_cpu_text.contains("\"cpu.kernel\""));
+    assert!(!verifier_cpu_text.contains("kernel = @"));
+
+    assert_or_update_fixture(
+        "tests/fixtures/stage2_prover_compute.mlir",
+        &prover_compute.to_text_mlir(),
+    );
+    assert_or_update_fixture(
+        "tests/fixtures/stage2_verifier_compute.mlir",
+        &verifier_compute.to_text_mlir(),
+    );
+    assert_or_update_fixture(
+        "tests/fixtures/stage2_prover_kernel_compute.mlir",
+        &prover_kernel_compute.to_text_mlir(),
+    );
+    assert_or_update_fixture(
+        "tests/fixtures/stage2_verifier_kernel_compute.mlir",
+        &verifier_kernel_compute.to_text_mlir(),
+    );
+    assert_or_update_fixture("tests/fixtures/stage2_prover_cpu.mlir", &prover_cpu_text);
+    assert_or_update_fixture(
+        "tests/fixtures/stage2_verifier_cpu.mlir",
+        &verifier_cpu_text,
+    );
+}
+
+#[test]
+fn stage2_rust_targets_extract_and_compile() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::fixture();
+    let (prover_cpu, verifier_cpu) = build_stage2_pipeline_cpu(&context, &params);
+    let prover_program = stage2_cpu_program(&prover_cpu).expect("extract prover stage2 program");
+    let verifier_program =
+        stage2_cpu_program(&verifier_cpu).expect("extract verifier stage2 program");
+
+    assert_eq!(prover_program.role, Role::Prover);
+    assert_eq!(verifier_program.role, Role::Verifier);
+    assert_eq!(prover_program.kernels.len(), 7);
+    assert!(verifier_program.kernels.is_empty());
+    assert_eq!(prover_program.opening_inputs.len(), 11);
+    assert_eq!(prover_program.challenge_extracts.len(), 3);
+    assert_eq!(prover_program.field_exprs.len(), 5);
+    assert_eq!(prover_program.field_constants.len(), 1);
+    assert_eq!(prover_program.claims.len(), 6);
+    assert_eq!(prover_program.drivers.len(), 2);
+    assert_eq!(prover_program.point_slices.len(), 1);
+    assert_eq!(prover_program.point_concats.len(), 1);
+    assert!(prover_program
+        .claims
+        .iter()
+        .any(|claim| claim.claim_value == "stage2.ram_read_write.claim_expr"));
+    assert!(prover_program
+        .drivers
+        .iter()
+        .any(|driver| driver.kernel.as_deref() == Some("jolt.cpu.stage2.batched")));
+    assert!(verifier_program
+        .claims
+        .iter()
+        .all(|claim| claim.kernel.is_none() && claim.relation.is_some()));
+    assert!(verifier_program
+        .drivers
+        .iter()
+        .all(|driver| driver.kernel.is_none() && driver.relation.is_some()));
+
+    let prover_source = emit_stage2_rust(&prover_cpu).expect("emit stage2 prover rust");
+    let verifier_source = emit_stage2_rust(&verifier_cpu).expect("emit stage2 verifier rust");
+    assert_eq!(prover_source.filename, "prove_stage2.rs");
+    assert_eq!(verifier_source.filename, "verify_stage2.rs");
+    assert!(prover_source.source.contains("jolt_stage2_ram_read_write"));
+    assert!(prover_source.source.contains("Stage2KernelExecutor"));
+    assert!(!verifier_source.source.contains("jolt_kernels"));
+    assert!(verifier_source.source.contains("Stage2VerifierProgramPlan"));
+    assert_or_update_fixture("tests/fixtures/prove_stage2.rs", &prover_source.source);
+    assert_or_update_fixture("tests/fixtures/verify_stage2.rs", &verifier_source.source);
+    assert_rust_source_compiles(&prover_source.filename, &prover_source.source);
+    assert_rust_source_compiles(&verifier_source.filename, &verifier_source.source);
 }
 
 #[test]
@@ -836,6 +1004,30 @@ fn build_stage1_pipeline_cpu<'c>(
     (prover_cpu, verifier_cpu)
 }
 
+fn build_stage2_pipeline_cpu<'c>(
+    context: &'c MeliorContext,
+    params: &JoltProtocolParams,
+) -> (
+    jolt_compiler_v2::BoltModule<'c, Cpu>,
+    jolt_compiler_v2::BoltModule<'c, Cpu>,
+) {
+    let protocol = build_stage2_protocol(context, params).expect("build stage2 protocol");
+    let concrete = lower_piop_and_fiat_shamir(context, &protocol).expect("lower stage2 protocol");
+    let prover = project_prover_party(context, &concrete).expect("project prover party");
+    let verifier = project_verifier_party(context, &concrete).expect("project verifier party");
+    let prover_compute = lower_stage2_to_compute(context, &prover).expect("lower prover stage2");
+    let verifier_compute =
+        lower_stage2_to_compute(context, &verifier).expect("lower verifier stage2");
+    let prover_compute =
+        resolve_compute_kernels(context, &prover_compute).expect("resolve prover kernels");
+    let verifier_compute =
+        resolve_compute_kernels(context, &verifier_compute).expect("resolve verifier kernels");
+    let prover_cpu = lower_compute_to_cpu(context, &prover_compute).expect("lower prover CPU");
+    let verifier_cpu =
+        lower_compute_to_cpu(context, &verifier_compute).expect("lower verifier CPU");
+    (prover_cpu, verifier_cpu)
+}
+
 fn jolt_protocol_chain_commitment_stage1_fixture(
     context: &MeliorContext,
     params: &JoltProtocolParams,
@@ -1046,7 +1238,8 @@ module @explicit.sumcheck attributes {bolt.phase = "protocol"} {
   %0 = "transcript.state"() {scheme = @blake2b_transcript, sym_name = "fs0"} : () -> !transcript.state_type
   %1, %alpha = "transcript.squeeze"(%0) {count = 1 : i64, kind = "scalar", label = "sumcheck_claim", sym_name = "stage1.alpha"} : (!transcript.state_type) -> (!transcript.state_type, !field.challenge)
   %stage = "piop.stage"() {name = "stage1", order = 1 : i64, roles = ["prover", "verifier"], sym_name = "stage1"} : () -> !piop.stage_type
-  %claim = "piop.sumcheck_claim"() {claim = @stage1.outer.claim, degree = 3 : i64, domain = @trace, num_rounds = 4 : i64, relation = @jolt.stage1.outer.remaining, stage = @stage1, sym_name = "stage1.outer.claim"} : () -> !piop.sumcheck_claim_type
+  %claim_value = "field.constant"() {field = @bn254_fr, value = 0 : i64, sym_name = "stage1.outer.claim_value"} : () -> !field.scalar
+  %claim = "piop.sumcheck_claim"(%claim_value) {claim = @stage1.outer.claim, degree = 3 : i64, domain = @trace, num_rounds = 4 : i64, relation = @jolt.stage1.outer.remaining, stage = @stage1, sym_name = "stage1.outer.claim"} : (!field.scalar) -> !piop.sumcheck_claim_type
   %batch = "piop.sumcheck_batch"(%stage, %claim) {claim_label = "sumcheck_claim", count = 1 : i64, ordered_claims = [@stage1.outer.claim], policy = "jolt_core_front_loaded", proof_slot = @stage1.sumcheck, round_label = "sumcheck_poly", round_schedule = [2, 1, 1], stage = @stage1, sym_name = "stage1.outer.batch"} : (!piop.stage_type, !piop.sumcheck_claim_type) -> !piop.sumcheck_batch_type
   %2, %point, %result, %proof = "piop.sumcheck"(%1, %batch) {claim_label = "sumcheck_claim", degree = 3 : i64, num_rounds = 4 : i64, policy = "jolt_core_front_loaded", proof_slot = @stage1.sumcheck, relation = @jolt.stage1.outer.remaining, round_label = "sumcheck_poly", round_schedule = [2, 1, 1], stage = @stage1, sym_name = "stage1.outer.sumcheck"} : (!transcript.state_type, !piop.sumcheck_batch_type) -> (!transcript.state_type, !poly.point, !piop.sumcheck_result_type, !piop.sumcheck_proof_type)
   %eval = "piop.sumcheck_eval"(%result) {index = 0 : i64, name = @stage1.outer.eval, oracle = @RdInc, source = @stage1.outer.sumcheck, sym_name = "stage1.outer.eval"} : (!piop.sumcheck_result_type) -> !field.scalar
@@ -1065,7 +1258,8 @@ module @explicit.sumcheck attributes {bolt.phase = "compute", bolt.role = "prove
   "compute.relation"() {degree = 3 : i64, domain = @trace, kind = "sumcheck", num_rounds = 4 : i64, output_count = 1 : i64, sym_name = "jolt.stage1.outer.remaining"} : () -> ()
   %0 = "compute.transcript_init"() {scheme = @blake2b_transcript, sym_name = "fs0"} : () -> !compute.transcript_state
   %1, %alpha = "compute.transcript_squeeze"(%0) {count = 1 : i64, kind = "scalar", label = "sumcheck_claim", sym_name = "stage1.alpha"} : (!compute.transcript_state) -> (!compute.transcript_state, !compute.challenge)
-  %claim = "compute.sumcheck_claim"() {claim = @stage1.outer.claim, degree = 3 : i64, domain = @trace, num_rounds = 4 : i64, relation = @jolt.stage1.outer.remaining, stage = @stage1, sym_name = "stage1.outer.claim"} : () -> !compute.sumcheck_claim_type
+  %claim_value = "compute.field_constant"() {field = @bn254_fr, value = 0 : i64, sym_name = "stage1.outer.claim_value"} : () -> !compute.field_value
+  %claim = "compute.sumcheck_claim"(%claim_value) {claim = @stage1.outer.claim, degree = 3 : i64, domain = @trace, num_rounds = 4 : i64, relation = @jolt.stage1.outer.remaining, stage = @stage1, sym_name = "stage1.outer.claim"} : (!compute.field_value) -> !compute.sumcheck_claim_type
   %batch = "compute.sumcheck_batch"(%claim) {claim_label = "sumcheck_claim", count = 1 : i64, ordered_claims = [@stage1.outer.claim], policy = "jolt_core_front_loaded", proof_slot = @stage1.sumcheck, round_label = "sumcheck_poly", round_schedule = [2, 1, 1], stage = @stage1, sym_name = "stage1.outer.batch"} : (!compute.sumcheck_claim_type) -> !compute.sumcheck_batch_type
   %2, %point, %result, %proof = "compute.sumcheck_driver"(%1, %batch) {claim_label = "sumcheck_claim", degree = 3 : i64, num_rounds = 4 : i64, policy = "jolt_core_front_loaded", proof_slot = @stage1.sumcheck, relation = @jolt.stage1.outer.remaining, round_label = "sumcheck_poly", round_schedule = [2, 1, 1], stage = @stage1, sym_name = "stage1.outer.sumcheck"} : (!compute.transcript_state, !compute.sumcheck_batch_type) -> (!compute.transcript_state, !compute.point, !compute.sumcheck_result_type, !compute.sumcheck_proof_type)
   %eval = "compute.sumcheck_eval"(%result) {index = 0 : i64, name = @stage1.outer.eval, oracle = @RdInc, source = @stage1.outer.sumcheck, sym_name = "stage1.outer.eval"} : (!compute.sumcheck_result_type) -> !compute.field_value
