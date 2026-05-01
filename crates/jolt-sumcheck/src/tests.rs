@@ -110,6 +110,36 @@ fn verify_valid_degree1_proof() {
 }
 
 #[test]
+fn verify_valid_degree_zero_proof() {
+    let c = F::from_u64(7);
+    let round_polys = vec![
+        UnivariatePoly::new(vec![F::from_u64(28)]),
+        UnivariatePoly::new(vec![F::from_u64(14)]),
+        UnivariatePoly::new(vec![c]),
+    ];
+    let claim = SumcheckClaim {
+        num_vars: 3,
+        degree: 0,
+        claimed_sum: F::from_u64(56),
+    };
+
+    let mut vt = Blake2bTranscript::new(b"sumcheck-test");
+    let result = SumcheckVerifier::verify(&claim, &round_polys, &mut vt);
+    assert!(
+        result.is_ok(),
+        "degree-zero verification failed: {:?}",
+        result.err()
+    );
+
+    let EvaluationClaim {
+        point: challenges,
+        value: final_eval,
+    } = result.unwrap();
+    assert_eq!(challenges.len(), 3);
+    assert_eq!(final_eval, c);
+}
+
+#[test]
 fn verify_single_variable() {
     // f(x) = 3 + 7x, evals = [3, 10]
     let evals = vec![F::from_u64(3), F::from_u64(10)];
@@ -550,9 +580,11 @@ fn verify_dispatches_through_round_verifier_trait() {
 }
 
 #[test]
-#[should_panic(expected = "degree >= 1")]
-fn sumcheck_claim_new_rejects_degree_zero() {
-    let _ = SumcheckClaim::<Fr>::new(3, 0, Fr::from_u64(0));
+fn sumcheck_claim_new_allows_degree_zero() {
+    let claim = SumcheckClaim::<Fr>::new(3, 0, Fr::from_u64(7));
+    assert_eq!(claim.num_vars, 3);
+    assert_eq!(claim.degree, 0);
+    assert_eq!(claim.claimed_sum, Fr::from_u64(7));
 }
 
 #[test]
