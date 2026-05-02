@@ -14,7 +14,7 @@ use dory::primitives::arithmetic::{
 };
 use dory::primitives::poly::{MultilinearLagrange, Polynomial as DoryPolynomial};
 use jolt_crypto::{Bn254G1, Bn254GT, Commitment, DeriveSetup, JoltGroup, PedersenSetup};
-use jolt_field::Fr;
+use jolt_field::{Field, Fr};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError, ZkOpeningScheme};
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
@@ -380,24 +380,31 @@ fn commit_rows_sparse<P: MultilinearPoly<Fr> + ?Sized>(
 ) -> Vec<ArkG1> {
     let g1_bases = &setup.g1_vec[..num_cols];
 
-    let mut cols_per_row: Vec<Vec<usize>> = vec![Vec::new(); num_rows];
-    poly.for_each_nonzero(&mut |flat_idx, _val| {
+    let mut entries_per_row: Vec<Vec<(usize, Fr)>> = vec![Vec::new(); num_rows];
+    poly.for_each_nonzero(&mut |flat_idx, val| {
         let row = flat_idx / num_cols;
         let col = flat_idx % num_cols;
         debug_assert!(
             row < num_rows && col < num_cols,
             "for_each_nonzero out-of-bounds flat_idx: row={row} num_rows={num_rows} col={col} num_cols={num_cols}",
         );
-        cols_per_row[row].push(col);
+        entries_per_row[row].push((col, val));
     });
 
-    cols_per_row
+    entries_per_row
         .par_iter()
-        .map(|cols| {
-            cols.iter()
-                .fold(<InnerBN254 as PairingCurve>::G1::identity(), |acc, &col| {
-                    <InnerBN254 as PairingCurve>::G1::add(&acc, &g1_bases[col])
-                })
+        .map(|entries| {
+            if entries.iter().all(|(_, val)| *val == Fr::from_u64(1)) {
+                entries.iter().fold(
+                    <InnerBN254 as PairingCurve>::G1::identity(),
+                    |acc, &(col, _)| <InnerBN254 as PairingCurve>::G1::add(&acc, &g1_bases[col]),
+                )
+            } else {
+                let bases: Vec<ArkG1> = entries.iter().map(|(col, _)| g1_bases[*col]).collect();
+                let scalars: Vec<ArkFr> =
+                    entries.iter().map(|(_, val)| jolt_fr_to_ark(val)).collect();
+                G1Routines::msm(&bases, &scalars)
+            }
         })
         .collect()
 }

@@ -11,7 +11,7 @@ use jolt_field::{Field, Fr};
 use jolt_openings::{
     AdditivelyHomomorphic, CommitmentScheme, StreamingCommitment, ZkOpeningScheme,
 };
-use jolt_poly::Polynomial;
+use jolt_poly::{MultilinearPoly, Polynomial};
 use jolt_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -51,6 +51,50 @@ fn round_trip<T: Transcript<Challenge = Fr>>(num_vars: usize, seed: u64, label: 
     .expect("round-trip verification (without hint) must succeed");
 }
 
+struct WeightedSparsePoly {
+    evals: Vec<Fr>,
+    num_vars: usize,
+}
+
+impl WeightedSparsePoly {
+    fn new(evals: Vec<Fr>) -> Self {
+        assert!(evals.len().is_power_of_two());
+        Self {
+            num_vars: evals.len().trailing_zeros() as usize,
+            evals,
+        }
+    }
+}
+
+impl MultilinearPoly<Fr> for WeightedSparsePoly {
+    fn num_vars(&self) -> usize {
+        self.num_vars
+    }
+
+    fn evaluate(&self, point: &[Fr]) -> Fr {
+        Polynomial::new(self.evals.clone()).evaluate(point)
+    }
+
+    fn for_each_row(&self, sigma: usize, f: &mut dyn FnMut(usize, &[Fr])) {
+        let num_cols = 1usize << sigma;
+        for (row_idx, row) in self.evals.chunks(num_cols).enumerate() {
+            f(row_idx, row);
+        }
+    }
+
+    fn is_sparse(&self) -> bool {
+        true
+    }
+
+    fn for_each_nonzero(&self, f: &mut dyn FnMut(usize, Fr)) {
+        for (idx, &val) in self.evals.iter().enumerate() {
+            if val != Fr::from_u64(0) {
+                f(idx, val);
+            }
+        }
+    }
+}
+
 #[test]
 fn commit_open_verify_various_sizes() {
     for num_vars in [2, 3, 4, 6] {
@@ -88,6 +132,27 @@ fn streaming_equals_direct_various_sizes() {
             "streaming and direct must match for num_vars={num_vars}"
         );
     }
+}
+
+#[test]
+fn sparse_commit_respects_non_unit_values() {
+    let num_vars = 4;
+    let mut evals = vec![Fr::from_u64(0); 1 << num_vars];
+    evals[1] = Fr::from_u64(2);
+    evals[6] = Fr::from_u64(5);
+    evals[12] = Fr::from_u64(9);
+
+    let sparse = WeightedSparsePoly::new(evals.clone());
+    let dense = Polynomial::new(evals);
+    let prover_setup = DoryScheme::setup_prover(num_vars);
+
+    let (sparse_commitment, _) = DoryScheme::commit(&sparse, &prover_setup);
+    let (dense_commitment, _) = DoryScheme::commit(dense.evaluations(), &prover_setup);
+
+    assert_eq!(
+        sparse_commitment, dense_commitment,
+        "sparse commitment must use nonzero entry values, not only indices"
+    );
 }
 
 #[test]
