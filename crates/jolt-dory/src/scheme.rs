@@ -14,7 +14,7 @@ use dory::primitives::arithmetic::{
 };
 use dory::primitives::poly::{MultilinearLagrange, Polynomial as DoryPolynomial};
 use jolt_crypto::{Bn254G1, Bn254GT, Commitment, DeriveSetup, JoltGroup, PedersenSetup};
-use jolt_field::{Field, Fr};
+use jolt_field::Fr;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError, ZkOpeningScheme};
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
@@ -141,8 +141,8 @@ impl CommitmentScheme for DoryScheme {
         let num_cols = 1usize << sigma;
         let num_rows = 1usize << (num_vars - sigma);
 
-        let row_commitments = if poly.is_sparse() {
-            commit_rows_sparse(poly, num_rows, num_cols, &setup.0)
+        let row_commitments = if poly.is_one_hot() {
+            commit_rows_one_hot(poly, num_rows, num_cols, &setup.0)
         } else {
             commit_rows_dense(poly, sigma, &setup.0)
         };
@@ -174,7 +174,7 @@ impl CommitmentScheme for DoryScheme {
 
         let row_commitments = match hint {
             Some(h) => jolt_g1_vec_to_ark(h.0),
-            None if poly.is_sparse() => commit_rows_sparse(poly, num_rows, num_cols, &setup.0),
+            None if poly.is_one_hot() => commit_rows_one_hot(poly, num_rows, num_cols, &setup.0),
             None => commit_rows_dense(poly, sigma, &setup.0),
         };
 
@@ -298,7 +298,7 @@ impl ZkOpeningScheme for DoryScheme {
 
         let row_commitments = match hint {
             Some(h) => jolt_g1_vec_to_ark(h.0),
-            None if poly.is_sparse() => commit_rows_sparse(poly, num_rows, num_cols, &setup.0),
+            None if poly.is_one_hot() => commit_rows_one_hot(poly, num_rows, num_cols, &setup.0),
             None => commit_rows_dense(poly, sigma, &setup.0),
         };
 
@@ -371,8 +371,8 @@ fn commit_rows_dense<P: MultilinearPoly<Fr> + ?Sized>(
         .collect()
 }
 
-/// Sparse commit: O(T) group additions for one-hot polynomials, parallel over rows.
-fn commit_rows_sparse<P: MultilinearPoly<Fr> + ?Sized>(
+/// One-hot commit: O(T) group additions for unit-valued one-hot polynomials.
+fn commit_rows_one_hot<P: MultilinearPoly<Fr> + ?Sized>(
     poly: &P,
     num_rows: usize,
     num_cols: usize,
@@ -380,31 +380,24 @@ fn commit_rows_sparse<P: MultilinearPoly<Fr> + ?Sized>(
 ) -> Vec<ArkG1> {
     let g1_bases = &setup.g1_vec[..num_cols];
 
-    let mut entries_per_row: Vec<Vec<(usize, Fr)>> = vec![Vec::new(); num_rows];
-    poly.for_each_nonzero(&mut |flat_idx, val| {
+    let mut cols_per_row: Vec<Vec<usize>> = vec![Vec::new(); num_rows];
+    poly.for_each_one(&mut |flat_idx| {
         let row = flat_idx / num_cols;
         let col = flat_idx % num_cols;
         debug_assert!(
             row < num_rows && col < num_cols,
-            "for_each_nonzero out-of-bounds flat_idx: row={row} num_rows={num_rows} col={col} num_cols={num_cols}",
+            "for_each_one out-of-bounds flat_idx: row={row} num_rows={num_rows} col={col} num_cols={num_cols}",
         );
-        entries_per_row[row].push((col, val));
+        cols_per_row[row].push(col);
     });
 
-    entries_per_row
+    cols_per_row
         .par_iter()
-        .map(|entries| {
-            if entries.iter().all(|(_, val)| *val == Fr::from_u64(1)) {
-                entries.iter().fold(
-                    <InnerBN254 as PairingCurve>::G1::identity(),
-                    |acc, &(col, _)| <InnerBN254 as PairingCurve>::G1::add(&acc, &g1_bases[col]),
-                )
-            } else {
-                let bases: Vec<ArkG1> = entries.iter().map(|(col, _)| g1_bases[*col]).collect();
-                let scalars: Vec<ArkFr> =
-                    entries.iter().map(|(_, val)| jolt_fr_to_ark(val)).collect();
-                G1Routines::msm(&bases, &scalars)
-            }
+        .map(|cols| {
+            cols.iter()
+                .fold(<InnerBN254 as PairingCurve>::G1::identity(), |acc, &col| {
+                    <InnerBN254 as PairingCurve>::G1::add(&acc, &g1_bases[col])
+                })
         })
         .collect()
 }
