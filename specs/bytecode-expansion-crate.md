@@ -75,6 +75,17 @@ Add parity tests that compare the current implementation and the new crate durin
 - tests that assert exact `virtual_sequence_remaining` and `is_first_in_sequence` values,
 - tests that build `BytecodePCMapper` from expanded output and verify stable PC indices.
 
+The parity process should be:
+
+1. Before deleting the old production expansion entry points, add tests that call both the current `tracer` expansion path and the new `jolt-bytecode-expand` path on the same decoded instruction corpus.
+2. Use those dual-run tests to fix the new implementation until it matches old output exactly for instruction variant, normalized operands, address, compressed metadata, `is_first_in_sequence`, and `virtual_sequence_remaining`.
+3. Generate checked-in golden fixtures from the old behavior for a curated corpus of decoded instructions and small ELF programs. The fixtures should serialize normalized expanded bytecode rows, not raw debug strings.
+4. Cut all production call sites over to the new crate.
+5. Delete the old production expansion implementation from `tracer`.
+6. Keep the golden fixture tests and property/invariant tests after deletion so CI continues to guard the new implementation without requiring the old implementation to remain in production.
+
+Do not leave the old expansion implementation as a compatibility shim. A small test-only reference module may be used during implementation if it makes the transition safer, but the final merged production code should have one canonical expansion implementation.
+
 Add `jolt-eval` invariants:
 
 - `bytecode_expansion_parity`: for generated or fixture decoded instructions, compare the old expansion path to the new crate output, including instruction variants, normalized operands, flags, addresses, compressed metadata, `is_first_in_sequence`, and `virtual_sequence_remaining`.
