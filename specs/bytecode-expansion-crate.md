@@ -61,6 +61,7 @@ Add concrete `jolt-eval` invariants for bytecode expansion parity and verifier p
 - [ ] Golden tests prove byte-for-byte or structure-for-structure parity with the current expansion output for supported RV32 and RV64 instruction families.
 - [ ] Tests cover recursive expansion, `rd = x0`, virtual-register clearing, compressed source instructions, and bytecode PC mapping.
 - [ ] The crate dependency surface is suitable for future formal verification and extraction work: no CPU, memory-device, prover, transcript, or ELF parser dependency in `jolt-bytecode-expand`.
+- [ ] Verifier-facing crates document any deliberate choices that make Hax/Aeneas/Lean extraction harder, so those choices can be revisited in a follow-up rather than discovered after the split.
 
 ### Testing Strategy
 
@@ -474,6 +475,30 @@ The implementation should also isolate formal-verification-friendly logic:
 - keep macro-generated dispatch behind a narrow boundary, or generate simple first-order functions that tools can inspect,
 - avoid concurrency primitives in allocator state unless they are needed by the API,
 - document every invariant needed by Lean/Hax/Aeneas models, especially recursion and metadata assignment.
+
+#### Formal Verification Readiness
+
+Hax/Aeneas/Lean extraction is a reach goal for follow-up work, not a required deliverable for the crate-split PR. The implementation should nevertheless index on extraction strongly enough that the new boundaries do not need to be redesigned later.
+
+For this PR, "extractable or close to extractable" means:
+
+- `jolt-bytecode-expand` core logic uses explicit input/output state and total functions where practical;
+- allocator state is plain owned Rust data, not hidden behind `Arc<Mutex<_>>`, global state, interior mutability, or thread-local state;
+- core expansion does not depend on file I/O, ELF parsing, logging, tracing spans, CPU execution, memory emulation, advice tapes, prover code, or transcript code;
+- errors are represented with small enums instead of panics in normal control flow;
+- recursive expansion has an explicit termination argument in comments and tests, such as "each recursive step expands into instructions from a strictly lower expansion class" or another reviewable measure;
+- metadata assignment is centralized in one module so the Lean model can state and prove one theorem about `virtual_sequence_remaining` and `is_first_in_sequence`;
+- APIs avoid trait objects, dynamic dispatch, async, macros that hide core semantics, and callback-heavy designs in the extraction-critical modules;
+- any necessary macro-generated instruction dispatch expands to simple first-order functions that can be audited or extracted after expansion.
+
+The right indexing is therefore medium-high:
+
+- High for `jolt-bytecode-expand`, because bytecode expansion is the main formalization target.
+- Medium for `jolt-program-image`, because ELF parsing is verifier-facing when preprocessing from ELF, but it may be acceptable to trust or separately validate object-file parsing before formalizing expansion.
+- Medium for `jolt-verifier-preprocess`, because bytecode/RAM preprocessing and digest binding are verifier-critical, but some serialization and cryptographic setup boundaries may remain trusted.
+- Low for `jolt-trace` and `tracer` execution internals in this PR, because they should become consumers of the verifier-facing crates rather than extraction targets.
+
+This PR should not contort the code to satisfy a specific extractor immediately. It should keep the extraction-critical core small, pure, dependency-light, and well-specified so a follow-up PR can run Hax/Aeneas and then address concrete tool feedback without reopening the architecture.
 
 ### Alternatives Considered
 
