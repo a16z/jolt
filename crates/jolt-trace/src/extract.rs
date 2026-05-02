@@ -6,8 +6,8 @@
 
 use common::jolt_device::MemoryLayout;
 use jolt_field::Field;
-use jolt_riscv::{InstructionFlagSet, InstructionFlags};
 use jolt_r1cs::constraints::rv64::*;
+use jolt_riscv::{InstructionFlagSet, InstructionFlags};
 use jolt_witness::CycleInput;
 
 use crate::bytecode::BytecodePreprocessing;

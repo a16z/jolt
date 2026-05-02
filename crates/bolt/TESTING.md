@@ -1,86 +1,123 @@
-# bolt testing pattern
+# Bolt Testing Pattern
 
-The v2 compiler should earn correctness incrementally. Every new protocol phase
-needs a local compiler test, generated prover/verifier self-parity, and then a
-bridge into `jolt-equivalence` for jolt-core parity.
+The Bolt compiler earns correctness one protocol stage at a time. The full
+stage-addition algorithm lives in `JOLT_PROTOCOL_IMPLEMENTATION.md`; this file
+defines the concrete gates that make a stage acceptable.
 
-## Gates
+## Stage Done Means
 
-1. **IR/golden/schema tests**: run `cargo nextest run -p bolt --cargo-quiet`.
-   These tests verify registered dialect parsing, schema validation, pass output,
-   golden MLIR, SSA dataflow, and generated Rust compilation.
-2. **Generated self-parity**: each phase emits prover and verifier Rust, runs
-   them against the same proof object, and asserts transcript event streams
-   match step-for-step, including absorbed bytes and post-event states. The
-   commitment coverage includes `generated_commitment_prover_verifier_self_parity_runs`
-   for a tiny CPU fixture and `pipeline_generated_commitment_prover_verifier_self_parity_runs`
-   for the full protocol→party→compute→CPU pipeline at small domain sizes.
-   Stage 1 coverage includes shape-proof verifier acceptance, synthetic
-   remaining-sumcheck parity, and real R1CS-backed data parity through the
-   generated prover and kernel-free generated verifier.
-3. **Modular self-verify**: once v2 output is wired into the modular stack, run
-   `cargo nextest run -p jolt-equivalence modular_self_verify --cargo-quiet`.
-   This proves the generated prover output is accepted by the modular verifier.
-4. **Transcript parity vs jolt-core**: run
-   `cargo nextest run -p jolt-equivalence transcript_divergence --cargo-quiet`.
-   This is the byte-identical Fiat-Shamir oracle.
-   The v2 commitment slice also has a focused bridge:
-   `cargo nextest run -p jolt-equivalence bolt_commitment_transcript_matches_jolt_core_append_serializable --cargo-quiet`.
-   It extracts the Bolt CPU commitment program, runs prover/verifier commitment
-   replay, and compares the transcript append bytes plus post-state sequence
-   against jolt-core's `append_serializable` semantics.
-5. **Proof acceptance by jolt-core**: run
-   `cargo nextest run -p jolt-equivalence zkvm_proof_accepted --cargo-quiet`.
-   This bootstraps soundness against the existing core verifier.
+A stage is complete only when all of these are true on real trace data:
 
-## Four per-stage parity oracles
+- **Bolt acceptance**: generated/Bolt prover artifacts are accepted by the
+  generated/Bolt verifier.
+- **Bolt transcript parity**: prover and verifier transcript states match
+  step-for-step through the stage boundary.
+- **Core acceptance**: `jolt-core` accepts the proof prefix after Bolt-produced
+  artifacts are spliced into the matching core proof fields.
+- **Core transcript/artifact parity**: Bolt matches `jolt-core` transcript
+  states and observable proof components through the stage boundary.
+- **Tamper rejection**: generated verifier rejects representative mutations for
+  every new soundness obligation introduced by the stage.
+- **Perf parity**: Bolt prover time for the newly added stage is within 20% of
+  `jolt-core` on the agreed `sha2-chain` workload, with perf gates capped at
+  three iterations.
 
-Every wired protocol stage must pass the same four checks before the next stage
-is considered unblocked:
+Synthetic fixtures are allowed for early unit tests, but they do not count as
+stage acceptance.
 
-1. **Bolt proof acceptance**: the generated/Bolt verifier accepts the proof
-   objects produced by the generated/Bolt prover for that stage.
-2. **Bolt transcript parity**: Bolt prover and Bolt verifier transcript states
-   match step-for-step for the stage-local transcript operations.
-3. **jolt-core proof acceptance**: jolt-core accepts a proof whose wired stage
-   artifacts were produced by Bolt and spliced into the matching core proof
-   prefix.
-4. **jolt-core transcript/artifact parity**: Bolt matches jolt-core transcript
-   states and observable stage artifacts through the stage boundary, including
-   sumcheck polynomials, opening claims, commitments, and normalized opening
-   points when those artifacts exist for the stage.
+## Local Compiler Gates
 
-The first version applies this matrix to standard-mode stages. ZK/BlindFold
-should reuse the same matrix when those dialects and proof objects are wired.
+Run:
 
-## Per-phase rule
+```bash
+cargo nextest run -p bolt --cargo-quiet
+```
 
-For a new phase, add both party projections before treating the phase as done:
+This verifies:
 
-1. Define or extend protocol/concrete IR for the formal Bolt operation.
-2. Project concrete IR into prover and verifier party IR.
-3. Lower both parties through `compute` and `cpu`, carrying phase dataflow as
-   SSA operands/results instead of symbol-token attributes.
-4. Emit both Rust targets from `cpu`.
-5. Add generated self-parity with transcript-state equality.
-6. Wire the phase into `jolt-equivalence` as a dual path against the current
-   modular/core implementation.
+- IRDL dialect registration and parsing.
+- Jolt protocol schema validation.
+- Concrete transcript threading.
+- Prover/verifier role projection.
+- `compute` and `cpu` schema validation.
+- Kernel resolution only on prover IR.
+- Golden MLIR fixtures for every implemented stage.
+- Generated Rust compilation.
+- Canonical generated artifact layout:
+  `crates/jolt-prover/src/stages/<stage>.rs` and
+  `crates/jolt-verifier/src/stages/<stage>.rs`.
+- Whole generated role-crate assembly and `cargo check` for `jolt-prover` and
+  `jolt-verifier`.
+- Checked-in generated crate source stays synchronized with
+  `assemble_jolt_workspace_generated_crates` and the artifact writer can
+  materialize the same layout under a `crates/` root.
+- Top-level generated `prover.rs`/`verifier.rs` APIs are emitted by the same
+  artifact rail. `jolt-verifier` owns proof types and must not import
+  `jolt-prover`; `jolt-prover` may import verifier-owned proof types but not
+  verifier stage internals.
+- Generated stage registries match between prover and verifier so
+  `jolt-equivalence` and `jolt-bench` can discover the implemented prefix.
+- Generated verifier import policy: no `jolt-kernels`, `jolt-core`,
+  `jolt-equivalence`, `jolt-bench`, or tracer internals.
 
-The commitment phase currently has executable generated self-parity on both a
-small CPU fixture and the full generated compiler pipeline at small domain
-sizes, plus a focused jolt-core transcript bridge in `jolt-equivalence`.
+## Equivalence Gates
 
-`tests/fixtures/jolt_protocol_chain_commitment_stage1.yaml` is the chain-level
-fixture. It records the ordered commitment→Stage 1 components and the parity
-gates that must keep passing as each new protocol phase is appended. The
-generated chain test `generated_jolt_chain_commitment_then_stage1_self_parity_runs`
-runs commitment and Stage 1 on the same transcript for prover and verifier.
+Run:
 
-Stage 2 currently has focused compiler and equivalence gates rather than a
-longer chain fixture. The compiler gate
-`cargo nextest run -p bolt stage2 --cargo-quiet` checks protocol,
-concrete, party, compute, kernelized compute, CPU, and generated Rust fixtures,
-including that verifier Rust does not import `jolt-kernels`. The equivalence
-gate `cargo nextest run -p jolt-equivalence bolt_stage2 --cargo-quiet --no-fail-fast`
-checks the four parity axes for the wired Stage 2 slice. The perf oracle is
-`cargo run --release -p jolt-bench --bin bolt-stage1 -- --program sha2-chain --stage stage2 --log-t 16 --num-iters 16 --iters 3 --warmup 1 --json perf/bolt-stage2-last.json`.
+```bash
+cargo check -p jolt-equivalence --tests --quiet
+cargo nextest run -p jolt-equivalence --cargo-quiet
+```
+
+`jolt-equivalence` is the real-data oracle. Stage tests should be named by stage
+and should check both internal Bolt parity and Bolt-vs-core parity. Each newly
+wired stage should add or extend tests that:
+
+- Generate the same real trace data for Bolt and core.
+- Run Bolt prover and Bolt verifier through the complete implemented prefix.
+- Assert Bolt proof acceptance and transcript-state parity.
+- Splice Bolt artifacts into the corresponding `jolt-core` proof prefix.
+- Assert `jolt-core` accepts through the same prefix.
+- Assert transcript states and proof components match core through the stage.
+- Mutate representative proof components and assert the generated verifier
+  rejects them.
+
+## Kernel Gates
+
+Run:
+
+```bash
+cargo nextest run -p jolt-kernels --cargo-quiet
+```
+
+Kernel tests can use synthetic data for arithmetic-local coverage, but stage
+completion still requires real-data `jolt-equivalence` coverage.
+
+## Perf Gate
+
+Run the stage perf oracle after correctness is green:
+
+```bash
+cargo run --release -p jolt-bench --bin bolt-stage -- \
+  --program sha2-chain --stage <stage> --log-t 16 \
+  --num-iters 16 --iters 3 --warmup 1 \
+  --json perf/bolt-<stage>-last.json
+```
+
+Run core first for a fair timeout baseline. If Bolt exceeds 10x the core time,
+stop and profile rather than waiting for a full timing run. Adding the stage to
+the `bolt-stage` bench selector is part of the stage implementation if the
+selector does not support it yet.
+
+## Current Stage Status
+
+- **Commitment**: active compiler/equivalence rails are green.
+- **Stage 1**: compiler/generated-artifact rails are green; the real-data
+  equivalence gate currently fails on core acceptance with
+  `UniSkipVerificationError` and must be repaired before Stage 1 is marked
+  complete again.
+- **Stage 2**: compiler/generated-artifact rails are green; the real-data
+  equivalence gate currently fails on product-uniskip/sumcheck coefficient
+  parity and must be repaired before Stage 2 is marked complete again.
+- **Stage 3**: protocol/codegen/arithmetic work exists; current work is
+  optimization plus real-data parity, tamper hardening, and perf closure.

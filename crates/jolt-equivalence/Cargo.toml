@@ -22,6 +22,8 @@ common = { path = "../../common" }
 jolt-field = { path = "../jolt-field", features = ["bn254"] }
 jolt-transcript = { path = "../jolt-transcript" }
 bolt = { path = "../bolt" }
+jolt-prover = { path = "../jolt-prover" }
+jolt-verifier = { path = "../jolt-verifier" }
 jolt-trace = { path = "../jolt-trace" }
 jolt-dory = { path = "../jolt-dory" }
 jolt-kernels = { path = "../jolt-kernels" }

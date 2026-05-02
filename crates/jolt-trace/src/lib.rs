@@ -18,13 +18,13 @@ pub use bytecode::BytecodePreprocessing;
 pub use cycle_row::CycleRow;
 pub use extract::{extract_trace, InstructionFlagData};
 pub use jolt_cycle::JoltCycle;
-pub use r1cs_witness::{build_r1cs_witness, r1cs_cycle_witness};
 pub use jolt_riscv::instructions;
 pub use jolt_riscv::{
     CircuitFlagSet, CircuitFlags, Flags, InstructionFlagSet, InstructionFlags,
     InterleavedBitsMarker, JoltInstruction, JoltInstructions, NUM_CIRCUIT_FLAGS,
     NUM_INSTRUCTION_FLAGS,
 };
+pub use r1cs_witness::{build_r1cs_witness, r1cs_cycle_witness};
 
 use std::path::{Path, PathBuf};
 

@@ -3,9 +3,7 @@
 //! Maps `Instruction` variants to ISA structs via [`with_isa_struct!`], then
 //! derives circuit flags and instruction flags.
 
-use jolt_riscv::{
-    CircuitFlagSet, CircuitFlags, Flags, InstructionFlagSet, InstructionFlags,
-};
+use jolt_riscv::{CircuitFlagSet, CircuitFlags, Flags, InstructionFlagSet, InstructionFlags};
 use tracer::instruction::{Cycle, Instruction, RAMAccess};
 
 use crate::CycleRow;
@@ -448,10 +446,7 @@ impl CycleRow for Cycle {
     }
 }
 
-fn instruction_inputs(
-    cycle: &impl CycleRow,
-    iflags: InstructionFlagSet,
-) -> (u64, u128) {
+fn instruction_inputs(cycle: &impl CycleRow, iflags: InstructionFlagSet) -> (u64, u128) {
     let left = if iflags[InstructionFlags::LeftOperandIsPC] {
         cycle.unexpanded_pc()
     } else if iflags[InstructionFlags::LeftOperandIsRs1Value] {

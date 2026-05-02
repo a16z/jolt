@@ -4,7 +4,7 @@ use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
 use crate::dense::{bind_dense_evals_reuse, DENSE_BIND_PAR_THRESHOLD};
-use jolt_field::Field;
+use jolt_field::{Field, FieldAccumulator};
 use jolt_poly::{EqPlusOnePolynomial, EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{Label, LabelWithCount, Transcript};
@@ -1072,7 +1072,12 @@ impl<F: Field> Stage3KernelExecutor<F> for Stage3VerifierKernelExecutor<'_, F> {
                     driver: context.driver.symbol,
                 })?;
         self.cursor += 1;
-        verify_stage3_kernel(context, self.value_store(context.program)?, proof, transcript)
+        verify_stage3_kernel(
+            context,
+            self.value_store(context.program)?,
+            proof,
+            transcript,
+        )
     }
 }
 
@@ -1245,6 +1250,985 @@ impl Display for Stage3KernelError {
 }
 
 impl Error for Stage3KernelError {}
+
+fn prove_stage3_kernel<F, T>(
+    context: Stage3KernelContext<'_>,
+    inputs: &Stage3ProverInputs<'_, F>,
+    store: Stage3ValueStore<F>,
+    transcript: &mut T,
+) -> Result<Stage3SumcheckOutput<F>, Stage3KernelError>
+where
+    F: Field,
+    T: Transcript<Challenge = F>,
+{
+    match context.abi_kind()? {
+        Stage3KernelAbi::Batched => prove_batched_stage3(context, inputs, store, transcript),
+        abi => Err(Stage3KernelError::KernelNotImplemented { abi: abi.name() }),
+    }
+}
+
+fn verify_stage3_kernel<F, T>(
+    context: Stage3KernelContext<'_>,
+    store: Stage3ValueStore<F>,
+    proof: &Stage3SumcheckOutput<F>,
+    transcript: &mut T,
+) -> Result<Stage3SumcheckOutput<F>, Stage3KernelError>
+where
+    F: Field,
+    T: Transcript<Challenge = F>,
+{
+    match context.abi_kind()? {
+        Stage3KernelAbi::Batched => verify_batched_stage3(context, store, proof, transcript),
+        abi => Err(Stage3KernelError::KernelNotImplemented { abi: abi.name() }),
+    }
+}
+
+#[tracing::instrument(skip_all, name = "Stage3::prove_batched")]
+fn prove_batched_stage3<F, T>(
+    context: Stage3KernelContext<'_>,
+    inputs: &Stage3ProverInputs<'_, F>,
+    mut store: Stage3ValueStore<F>,
+    transcript: &mut T,
+) -> Result<Stage3SumcheckOutput<F>, Stage3KernelError>
+where
+    F: Field,
+    T: Transcript<Challenge = F>,
+{
+    let claims = context.batch_claims()?;
+    let input_claims = store.batch_claim_values(context.program, context.batch)?;
+    for claim in &input_claims {
+        append_labeled_scalar(transcript, context.batch.claim_label, claim);
+    }
+    let batching_coeffs = transcript.challenge_vector(claims.len());
+    let max_rounds = context.driver.num_rounds;
+    let two_inv = F::from_u64(2)
+        .inverse()
+        .ok_or(Stage3KernelError::InvalidProof {
+            driver: context.driver.symbol,
+            reason: "field element 2 is not invertible",
+        })?;
+    let mut instances = Vec::with_capacity(claims.len());
+    for (index, claim) in claims.iter().enumerate() {
+        instances.push(Stage3BatchedInstance {
+            claim,
+            relation: claim_relation(context.program, claim)?,
+            offset: instance_round_offset(context.program, context.driver.symbol, claim.symbol)?,
+            previous_claim: input_claims[index].mul_pow_2(max_rounds - claim.num_rounds),
+            state: Stage3ProverInstanceState::new(context.program, claim, inputs, &store)?,
+        });
+    }
+
+    let mut point = Vec::with_capacity(max_rounds);
+    let mut round_polynomials = Vec::with_capacity(max_rounds);
+    let mut batched_claim = instances
+        .iter()
+        .zip(&batching_coeffs)
+        .map(|(instance, &coefficient)| instance.previous_claim * coefficient)
+        .sum::<F>();
+    for round in 0..max_rounds {
+        let mut individual_polys = Vec::with_capacity(instances.len());
+        for instance in &mut instances {
+            let poly = if instance.is_active(round) {
+                instance
+                    .state
+                    .round_poly(round - instance.offset, instance.previous_claim)?
+            } else {
+                UnivariatePoly::new(vec![instance.previous_claim * two_inv])
+            };
+            if poly.evaluate(F::zero()) + poly.evaluate(F::one()) != instance.previous_claim {
+                return Err(Stage3KernelError::InvalidProof {
+                    driver: context.driver.symbol,
+                    reason: "batched instance round claim mismatch",
+                });
+            }
+            individual_polys.push(poly);
+        }
+        let batched_poly = combine_univariate_polys(&individual_polys, &batching_coeffs);
+        if batched_poly.evaluate(F::zero()) + batched_poly.evaluate(F::one()) != batched_claim {
+            return Err(Stage3KernelError::InvalidProof {
+                driver: context.driver.symbol,
+                reason: "batched round claim mismatch",
+            });
+        }
+        append_compressed_univariate_poly(transcript, context.driver.round_label, &batched_poly);
+        let challenge = transcript.challenge();
+        point.push(challenge);
+        batched_claim = batched_poly.evaluate(challenge);
+        for (instance, poly) in instances.iter_mut().zip(individual_polys) {
+            instance.previous_claim = poly.evaluate(challenge);
+            if instance.is_active(round) {
+                instance.state.ingest_challenge(challenge);
+            }
+        }
+        round_polynomials.push(batched_poly);
+    }
+
+    let mut evals = Vec::new();
+    for instance in &instances {
+        evals.extend(instance.state.final_evals(instance.relation)?);
+    }
+    let expected =
+        expected_batched_output_claim(context, &store, &evals, &point, &batching_coeffs)?;
+    if batched_claim != expected {
+        return Err(Stage3KernelError::InvalidProof {
+            driver: context.driver.symbol,
+            reason: "batched output claim mismatch",
+        });
+    }
+    store.observe_sumcheck_values(context.program, context.driver.symbol, &point, &evals)?;
+    append_opening_claims(context.program, &mut store, transcript, &evals)?;
+    Ok(Stage3SumcheckOutput {
+        driver: context.driver.symbol,
+        point,
+        evals,
+        proof: SumcheckProof { round_polynomials },
+    })
+}
+
+fn verify_batched_stage3<F, T>(
+    context: Stage3KernelContext<'_>,
+    mut store: Stage3ValueStore<F>,
+    proof: &Stage3SumcheckOutput<F>,
+    transcript: &mut T,
+) -> Result<Stage3SumcheckOutput<F>, Stage3KernelError>
+where
+    F: Field,
+    T: Transcript<Challenge = F>,
+{
+    if proof.driver != context.driver.symbol {
+        return Err(Stage3KernelError::InvalidProof {
+            driver: context.driver.symbol,
+            reason: "driver symbol mismatch",
+        });
+    }
+    if proof.proof.round_polynomials.len() != context.driver.num_rounds {
+        return Err(Stage3KernelError::InvalidProof {
+            driver: context.driver.symbol,
+            reason: "unexpected batched round count",
+        });
+    }
+    let claims = context.batch_claims()?;
+    let input_claims = store.batch_claim_values(context.program, context.batch)?;
+    for claim in &input_claims {
+        append_labeled_scalar(transcript, context.batch.claim_label, claim);
+    }
+    let batching_coeffs = transcript.challenge_vector(claims.len());
+    let max_rounds = context.driver.num_rounds;
+    let mut running_claim = input_claims
+        .iter()
+        .zip(claims.iter())
+        .zip(&batching_coeffs)
+        .map(|((claim, plan), &coefficient)| {
+            claim.mul_pow_2(max_rounds - plan.num_rounds) * coefficient
+        })
+        .sum::<F>();
+    let mut point = Vec::with_capacity(max_rounds);
+    for poly in &proof.proof.round_polynomials {
+        if polynomial_degree(poly) > context.driver.degree {
+            return Err(Stage3KernelError::InvalidProof {
+                driver: context.driver.symbol,
+                reason: "batched polynomial exceeds degree bound",
+            });
+        }
+        if poly.evaluate(F::zero()) + poly.evaluate(F::one()) != running_claim {
+            return Err(Stage3KernelError::InvalidProof {
+                driver: context.driver.symbol,
+                reason: "batched round check failed",
+            });
+        }
+        append_compressed_univariate_poly(transcript, context.driver.round_label, poly);
+        let challenge = transcript.challenge();
+        running_claim = poly.evaluate(challenge);
+        point.push(challenge);
+    }
+    if !proof.point.is_empty() && proof.point != point {
+        return Err(Stage3KernelError::InvalidProof {
+            driver: context.driver.symbol,
+            reason: "batched point mismatch",
+        });
+    }
+    let expected =
+        expected_batched_output_claim(context, &store, &proof.evals, &point, &batching_coeffs)?;
+    if running_claim != expected {
+        return Err(Stage3KernelError::InvalidProof {
+            driver: context.driver.symbol,
+            reason: "batched output claim mismatch",
+        });
+    }
+    store.observe_sumcheck_values(context.program, context.driver.symbol, &point, &proof.evals)?;
+    append_opening_claims(context.program, &mut store, transcript, &proof.evals)?;
+    Ok(Stage3SumcheckOutput {
+        driver: context.driver.symbol,
+        point,
+        evals: proof.evals.clone(),
+        proof: proof.proof.clone(),
+    })
+}
+
+struct Stage3BatchedInstance<'a, F: Field> {
+    claim: &'a Stage3SumcheckClaimPlan,
+    relation: Stage3Relation,
+    offset: usize,
+    previous_claim: F,
+    state: Stage3ProverInstanceState<F>,
+}
+
+impl<F: Field> Stage3BatchedInstance<'_, F> {
+    fn is_active(&self, round: usize) -> bool {
+        round >= self.offset && round < self.offset + self.claim.num_rounds
+    }
+}
+
+enum Stage3ProverInstanceState<F: Field> {
+    SumOfProducts(SumOfProductsState<F>),
+}
+
+impl<F: Field> Stage3ProverInstanceState<F> {
+    fn new(
+        program: &'static Stage3CpuProgramPlan,
+        claim: &Stage3SumcheckClaimPlan,
+        inputs: &Stage3ProverInputs<'_, F>,
+        store: &Stage3ValueStore<F>,
+    ) -> Result<Self, Stage3KernelError> {
+        match claim_relation(program, claim)? {
+            Stage3Relation::SpartanShift => spartan_shift_state(claim, inputs, store),
+            Stage3Relation::InstructionInput => instruction_input_state(claim, inputs, store),
+            Stage3Relation::RegistersClaimReduction => registers_state(claim, inputs, store),
+            relation @ Stage3Relation::Batched => Err(Stage3KernelError::KernelNotImplemented {
+                abi: relation.symbol(),
+            }),
+        }
+        .map(Self::SumOfProducts)
+    }
+
+    fn round_poly(
+        &self,
+        _round: usize,
+        _previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, Stage3KernelError> {
+        match self {
+            Self::SumOfProducts(state) => Ok(state.round_poly()),
+        }
+    }
+
+    fn ingest_challenge(&mut self, challenge: F) {
+        match self {
+            Self::SumOfProducts(state) => state.bind(challenge),
+        }
+    }
+
+    fn final_evals(
+        &self,
+        relation: Stage3Relation,
+    ) -> Result<Vec<Stage3NamedEval<F>>, Stage3KernelError> {
+        match self {
+            Self::SumOfProducts(state) => state.final_evals(relation),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct SumOfProductsState<F: Field> {
+    factors: Vec<Vec<F>>,
+    factor_scratch: Vec<Vec<F>>,
+    terms: Vec<ProductTerm<F>>,
+    outputs: Vec<FactorOutput>,
+    degree: usize,
+    point: Vec<F>,
+}
+
+#[derive(Clone)]
+struct ProductTerm<F: Field> {
+    coefficient: F,
+    factors: Vec<usize>,
+}
+
+#[derive(Clone, Copy)]
+struct FactorOutput {
+    name: &'static str,
+    oracle: &'static str,
+    factor: usize,
+}
+
+impl<F: Field> SumOfProductsState<F> {
+    fn new(
+        factors: Vec<Vec<F>>,
+        terms: Vec<ProductTerm<F>>,
+        outputs: Vec<FactorOutput>,
+        degree: usize,
+    ) -> Self {
+        let factor_scratch = (0..factors.len()).map(|_| Vec::new()).collect();
+        Self {
+            factors,
+            factor_scratch,
+            terms,
+            outputs,
+            degree,
+            point: Vec::new(),
+        }
+    }
+
+    fn round_poly(&self) -> UnivariatePoly<F> {
+        round_poly_from_sum_of_products(&self.factors, &self.terms, self.degree)
+    }
+
+    fn bind(&mut self, challenge: F) {
+        for (factor, scratch) in self.factors.iter_mut().zip(&mut self.factor_scratch) {
+            bind_dense_evals_reuse(factor, scratch, challenge);
+        }
+        self.point.push(challenge);
+    }
+
+    fn factor_eval(&self, index: usize, relation: Stage3Relation) -> Result<F, Stage3KernelError> {
+        self.factors
+            .get(index)
+            .and_then(|values| values.first())
+            .copied()
+            .ok_or(Stage3KernelError::InvalidProof {
+                driver: relation.symbol(),
+                reason: "empty stage3 factor",
+            })
+    }
+
+    fn final_evals(
+        &self,
+        relation: Stage3Relation,
+    ) -> Result<Vec<Stage3NamedEval<F>>, Stage3KernelError> {
+        self.outputs
+            .iter()
+            .map(|output| {
+                Ok(named_eval(
+                    output.name,
+                    output.oracle,
+                    self.factor_eval(output.factor, relation)?,
+                ))
+            })
+            .collect()
+    }
+}
+
+fn spartan_shift_state<F: Field>(
+    claim: &Stage3SumcheckClaimPlan,
+    inputs: &Stage3ProverInputs<'_, F>,
+    store: &Stage3ValueStore<F>,
+) -> Result<SumOfProductsState<F>, Stage3KernelError> {
+    let cycles = stage3_cycles(inputs, claim.num_rounds)?;
+    let (_, eq_outer) =
+        EqPlusOnePolynomial::<F>::evals(store.point("stage3.input.stage1.NextPC")?, None);
+    let (_, eq_product) = EqPlusOnePolynomial::<F>::evals(
+        store.point("stage3.input.stage2.product_virtual.NextIsNoop")?,
+        None,
+    );
+    let one = F::one();
+    let gamma = store.scalar("stage3.spartan_shift.gamma")?;
+    let gamma2 = store.scalar("stage3.spartan_shift.gamma2")?;
+    let gamma3 = store.scalar("stage3.spartan_shift.gamma3")?;
+    let gamma4 = store.scalar("stage3.spartan_shift.gamma4")?;
+    let factors = vec![
+        eq_outer,
+        eq_product,
+        map_cycles(cycles, |cycle| F::from_u64(cycle.unexpanded_pc)),
+        map_cycles(cycles, |cycle| F::from_u64(cycle.pc)),
+        map_cycles(cycles, |cycle| F::from_bool(cycle.is_virtual)),
+        map_cycles(cycles, |cycle| F::from_bool(cycle.is_first_in_sequence)),
+        map_cycles(cycles, |cycle| one - F::from_bool(cycle.is_noop)),
+        map_cycles(cycles, |cycle| F::from_bool(cycle.is_noop)),
+    ];
+    Ok(SumOfProductsState::new(
+        factors,
+        vec![
+            ProductTerm {
+                coefficient: F::one(),
+                factors: vec![0, 2],
+            },
+            ProductTerm {
+                coefficient: gamma,
+                factors: vec![0, 3],
+            },
+            ProductTerm {
+                coefficient: gamma2,
+                factors: vec![0, 4],
+            },
+            ProductTerm {
+                coefficient: gamma3,
+                factors: vec![0, 5],
+            },
+            ProductTerm {
+                coefficient: gamma4,
+                factors: vec![1, 6],
+            },
+        ],
+        vec![
+            FactorOutput {
+                name: "stage3.spartan_shift.eval.UnexpandedPC",
+                oracle: "UnexpandedPC",
+                factor: 2,
+            },
+            FactorOutput {
+                name: "stage3.spartan_shift.eval.PC",
+                oracle: "PC",
+                factor: 3,
+            },
+            FactorOutput {
+                name: "stage3.spartan_shift.eval.OpFlagVirtualInstruction",
+                oracle: "OpFlagVirtualInstruction",
+                factor: 4,
+            },
+            FactorOutput {
+                name: "stage3.spartan_shift.eval.OpFlagIsFirstInSequence",
+                oracle: "OpFlagIsFirstInSequence",
+                factor: 5,
+            },
+            FactorOutput {
+                name: "stage3.spartan_shift.eval.InstructionFlagIsNoop",
+                oracle: "InstructionFlagIsNoop",
+                factor: 7,
+            },
+        ],
+        claim.degree,
+    ))
+}
+
+fn instruction_input_state<F: Field>(
+    claim: &Stage3SumcheckClaimPlan,
+    inputs: &Stage3ProverInputs<'_, F>,
+    store: &Stage3ValueStore<F>,
+) -> Result<SumOfProductsState<F>, Stage3KernelError> {
+    let cycles = stage3_cycles(inputs, claim.num_rounds)?;
+    let eq = EqPolynomial::<F>::evals(
+        store.point("stage3.input.stage2.product_virtual.LeftInstructionInput")?,
+        None,
+    );
+    let gamma = store.scalar("stage3.instruction_input.gamma")?;
+    let factors = vec![
+        eq,
+        map_cycles(cycles, |cycle| F::from_bool(cycle.right_operand_is_rs2)),
+        map_cycles(cycles, |cycle| F::from_u64(cycle.rs2_value)),
+        map_cycles(cycles, |cycle| F::from_bool(cycle.right_operand_is_imm)),
+        map_cycles(cycles, |cycle| F::from_i128(cycle.imm)),
+        map_cycles(cycles, |cycle| F::from_bool(cycle.left_operand_is_rs1)),
+        map_cycles(cycles, |cycle| F::from_u64(cycle.rs1_value)),
+        map_cycles(cycles, |cycle| F::from_bool(cycle.left_operand_is_pc)),
+        map_cycles(cycles, |cycle| F::from_u64(cycle.unexpanded_pc)),
+    ];
+    Ok(SumOfProductsState::new(
+        factors,
+        vec![
+            ProductTerm {
+                coefficient: F::one(),
+                factors: vec![0, 1, 2],
+            },
+            ProductTerm {
+                coefficient: F::one(),
+                factors: vec![0, 3, 4],
+            },
+            ProductTerm {
+                coefficient: gamma,
+                factors: vec![0, 5, 6],
+            },
+            ProductTerm {
+                coefficient: gamma,
+                factors: vec![0, 7, 8],
+            },
+        ],
+        vec![
+            FactorOutput {
+                name: "stage3.instruction_input.eval.InstructionFlagLeftOperandIsRs1Value",
+                oracle: "InstructionFlagLeftOperandIsRs1Value",
+                factor: 5,
+            },
+            FactorOutput {
+                name: "stage3.instruction_input.eval.Rs1Value",
+                oracle: "Rs1Value",
+                factor: 6,
+            },
+            FactorOutput {
+                name: "stage3.instruction_input.eval.InstructionFlagLeftOperandIsPC",
+                oracle: "InstructionFlagLeftOperandIsPC",
+                factor: 7,
+            },
+            FactorOutput {
+                name: "stage3.instruction_input.eval.UnexpandedPC",
+                oracle: "UnexpandedPC",
+                factor: 8,
+            },
+            FactorOutput {
+                name: "stage3.instruction_input.eval.InstructionFlagRightOperandIsRs2Value",
+                oracle: "InstructionFlagRightOperandIsRs2Value",
+                factor: 1,
+            },
+            FactorOutput {
+                name: "stage3.instruction_input.eval.Rs2Value",
+                oracle: "Rs2Value",
+                factor: 2,
+            },
+            FactorOutput {
+                name: "stage3.instruction_input.eval.InstructionFlagRightOperandIsImm",
+                oracle: "InstructionFlagRightOperandIsImm",
+                factor: 3,
+            },
+            FactorOutput {
+                name: "stage3.instruction_input.eval.Imm",
+                oracle: "Imm",
+                factor: 4,
+            },
+        ],
+        claim.degree,
+    ))
+}
+
+fn registers_state<F: Field>(
+    claim: &Stage3SumcheckClaimPlan,
+    inputs: &Stage3ProverInputs<'_, F>,
+    store: &Stage3ValueStore<F>,
+) -> Result<SumOfProductsState<F>, Stage3KernelError> {
+    let cycles = stage3_cycles(inputs, claim.num_rounds)?;
+    let eq = EqPolynomial::<F>::evals(store.point("stage3.input.stage1.RdWriteValue")?, None);
+    let gamma = store.scalar("stage3.registers.gamma")?;
+    let gamma2 = store.scalar("stage3.registers.gamma2")?;
+    let factors = vec![
+        eq,
+        map_cycles(cycles, |cycle| F::from_u64(cycle.rd_write_value)),
+        map_cycles(cycles, |cycle| F::from_u64(cycle.rs1_value)),
+        map_cycles(cycles, |cycle| F::from_u64(cycle.rs2_value)),
+    ];
+    Ok(SumOfProductsState::new(
+        factors,
+        vec![
+            ProductTerm {
+                coefficient: F::one(),
+                factors: vec![0, 1],
+            },
+            ProductTerm {
+                coefficient: gamma,
+                factors: vec![0, 2],
+            },
+            ProductTerm {
+                coefficient: gamma2,
+                factors: vec![0, 3],
+            },
+        ],
+        vec![
+            FactorOutput {
+                name: "stage3.registers_claim_reduction.eval.RdWriteValue",
+                oracle: "RdWriteValue",
+                factor: 1,
+            },
+            FactorOutput {
+                name: "stage3.registers_claim_reduction.eval.Rs1Value",
+                oracle: "Rs1Value",
+                factor: 2,
+            },
+            FactorOutput {
+                name: "stage3.registers_claim_reduction.eval.Rs2Value",
+                oracle: "Rs2Value",
+                factor: 3,
+            },
+        ],
+        claim.degree,
+    ))
+}
+
+fn stage3_cycles<'a, F: Field>(
+    inputs: &'a Stage3ProverInputs<'_, F>,
+    num_rounds: usize,
+) -> Result<&'a [Stage3Cycle], Stage3KernelError> {
+    let cycles = inputs.cycles.ok_or(Stage3KernelError::MissingKernelInput {
+        kernel: "jolt_stage3_batched",
+        input: "cycles",
+    })?;
+    let expected =
+        1usize
+            .checked_shl(num_rounds as u32)
+            .ok_or(Stage3KernelError::InvalidInputLength {
+                input: "stage3.cycles",
+                expected: usize::BITS as usize,
+                actual: num_rounds,
+            })?;
+    require_operand_count("stage3.cycles", expected, cycles.len())?;
+    Ok(cycles)
+}
+
+fn map_cycles<F: Field>(
+    cycles: &[Stage3Cycle],
+    f: impl Fn(&Stage3Cycle) -> F + Sync + Send,
+) -> Vec<F> {
+    cycles.par_iter().map(f).collect()
+}
+
+fn expected_batched_output_claim<F: Field>(
+    context: Stage3KernelContext<'_>,
+    store: &Stage3ValueStore<F>,
+    evals: &[Stage3NamedEval<F>],
+    point: &[F],
+    batching_coeffs: &[F],
+) -> Result<F, Stage3KernelError> {
+    let mut expected = F::zero();
+    for (claim, &coefficient) in context.batch_claims()?.iter().zip(batching_coeffs) {
+        let instance = context
+            .program
+            .instance_results
+            .iter()
+            .find(|instance| {
+                instance.claim == claim.symbol && instance.source == context.driver.symbol
+            })
+            .ok_or(Stage3KernelError::MissingClaim {
+                batch: context.batch.symbol,
+                claim: claim.symbol,
+            })?;
+        let local_point = point
+            .get(instance.round_offset..instance.round_offset + instance.num_rounds)
+            .ok_or(Stage3KernelError::InvalidInputLength {
+                input: instance.symbol,
+                expected: instance.round_offset + instance.num_rounds,
+                actual: point.len(),
+            })?;
+        let claim_value = match Stage3Relation::from_symbol(instance.relation).ok_or(
+            Stage3KernelError::UnknownRelation {
+                relation: instance.relation,
+            },
+        )? {
+            Stage3Relation::SpartanShift => expected_spartan_shift(store, evals, local_point)?,
+            Stage3Relation::InstructionInput => {
+                expected_instruction_input(store, evals, local_point)?
+            }
+            Stage3Relation::RegistersClaimReduction => {
+                expected_registers(store, evals, local_point)?
+            }
+            relation @ Stage3Relation::Batched => {
+                return Err(Stage3KernelError::KernelNotImplemented {
+                    abi: relation.symbol(),
+                })
+            }
+        };
+        expected += coefficient * claim_value;
+    }
+    Ok(expected)
+}
+
+fn expected_spartan_shift<F: Field>(
+    store: &Stage3ValueStore<F>,
+    evals: &[Stage3NamedEval<F>],
+    local_point: &[F],
+) -> Result<F, Stage3KernelError> {
+    let opening_point = reverse_slice(local_point);
+    let eq_outer =
+        EqPlusOnePolynomial::<F>::new(store.point("stage3.input.stage1.NextPC")?.to_vec())
+            .evaluate(&opening_point);
+    let eq_product = EqPlusOnePolynomial::<F>::new(
+        store
+            .point("stage3.input.stage2.product_virtual.NextIsNoop")?
+            .to_vec(),
+    )
+    .evaluate(&opening_point);
+    let gamma = store.scalar("stage3.spartan_shift.gamma")?;
+    let gamma2 = store.scalar("stage3.spartan_shift.gamma2")?;
+    let gamma3 = store.scalar("stage3.spartan_shift.gamma3")?;
+    let gamma4 = store.scalar("stage3.spartan_shift.gamma4")?;
+    let weighted_outer = eval_by_name(evals, "stage3.spartan_shift.eval.UnexpandedPC")?
+        + gamma * eval_by_name(evals, "stage3.spartan_shift.eval.PC")?
+        + gamma2 * eval_by_name(evals, "stage3.spartan_shift.eval.OpFlagVirtualInstruction")?
+        + gamma3 * eval_by_name(evals, "stage3.spartan_shift.eval.OpFlagIsFirstInSequence")?;
+    Ok(eq_outer * weighted_outer
+        + gamma4
+            * eq_product
+            * (F::one() - eval_by_name(evals, "stage3.spartan_shift.eval.InstructionFlagIsNoop")?))
+}
+
+fn expected_instruction_input<F: Field>(
+    store: &Stage3ValueStore<F>,
+    evals: &[Stage3NamedEval<F>],
+    local_point: &[F],
+) -> Result<F, Stage3KernelError> {
+    let opening_point = reverse_slice(local_point);
+    let eq_eval = EqPolynomial::<F>::mle(
+        &opening_point,
+        store.point("stage3.input.stage2.product_virtual.LeftInstructionInput")?,
+    );
+    let left = eval_by_name(
+        evals,
+        "stage3.instruction_input.eval.InstructionFlagLeftOperandIsRs1Value",
+    )? * eval_by_name(evals, "stage3.instruction_input.eval.Rs1Value")?
+        + eval_by_name(
+            evals,
+            "stage3.instruction_input.eval.InstructionFlagLeftOperandIsPC",
+        )? * eval_by_name(evals, "stage3.instruction_input.eval.UnexpandedPC")?;
+    let right = eval_by_name(
+        evals,
+        "stage3.instruction_input.eval.InstructionFlagRightOperandIsRs2Value",
+    )? * eval_by_name(evals, "stage3.instruction_input.eval.Rs2Value")?
+        + eval_by_name(
+            evals,
+            "stage3.instruction_input.eval.InstructionFlagRightOperandIsImm",
+        )? * eval_by_name(evals, "stage3.instruction_input.eval.Imm")?;
+    Ok(eq_eval * (right + store.scalar("stage3.instruction_input.gamma")? * left))
+}
+
+fn expected_registers<F: Field>(
+    store: &Stage3ValueStore<F>,
+    evals: &[Stage3NamedEval<F>],
+    local_point: &[F],
+) -> Result<F, Stage3KernelError> {
+    let opening_point = reverse_slice(local_point);
+    let eq_eval = EqPolynomial::<F>::mle(
+        &opening_point,
+        store.point("stage3.input.stage1.RdWriteValue")?,
+    );
+    Ok(eq_eval
+        * (eval_by_name(evals, "stage3.registers_claim_reduction.eval.RdWriteValue")?
+            + store.scalar("stage3.registers.gamma")?
+                * eval_by_name(evals, "stage3.registers_claim_reduction.eval.Rs1Value")?
+            + store.scalar("stage3.registers.gamma2")?
+                * eval_by_name(evals, "stage3.registers_claim_reduction.eval.Rs2Value")?))
+}
+
+fn eval_by_name<F: Field>(
+    evals: &[Stage3NamedEval<F>],
+    name: &'static str,
+) -> Result<F, Stage3KernelError> {
+    evals
+        .iter()
+        .find(|eval| eval.name == name)
+        .map(|eval| eval.value)
+        .ok_or(Stage3KernelError::MissingValue { symbol: name })
+}
+
+fn reverse_slice<F: Field>(values: &[F]) -> Vec<F> {
+    values.iter().rev().copied().collect()
+}
+
+fn named_eval<F: Field>(name: &'static str, oracle: &'static str, value: F) -> Stage3NamedEval<F> {
+    Stage3NamedEval {
+        name,
+        oracle,
+        value,
+    }
+}
+
+fn claim_relation(
+    program: &'static Stage3CpuProgramPlan,
+    claim: &Stage3SumcheckClaimPlan,
+) -> Result<Stage3Relation, Stage3KernelError> {
+    let kernel = find_kernel(program, claim.kernel).ok_or(Stage3KernelError::MissingKernel {
+        driver: claim.symbol,
+        kernel: claim.kernel,
+    })?;
+    kernel.relation_kind()
+}
+
+fn instance_round_offset(
+    program: &'static Stage3CpuProgramPlan,
+    driver: &'static str,
+    claim: &'static str,
+) -> Result<usize, Stage3KernelError> {
+    program
+        .instance_results
+        .iter()
+        .find(|instance| instance.source == driver && instance.claim == claim)
+        .map(|instance| instance.round_offset)
+        .ok_or(Stage3KernelError::MissingClaim {
+            batch: driver,
+            claim,
+        })
+}
+
+fn combine_univariate_polys<F: Field>(
+    polynomials: &[UnivariatePoly<F>],
+    coefficients: &[F],
+) -> UnivariatePoly<F> {
+    let max_len = polynomials
+        .iter()
+        .map(|poly| poly.coefficients().len())
+        .max()
+        .unwrap_or(0);
+    let mut combined = vec![F::zero(); max_len];
+    for (poly, &coefficient) in polynomials.iter().zip(coefficients) {
+        for (combined, &term) in combined.iter_mut().zip(poly.coefficients()) {
+            *combined += term * coefficient;
+        }
+    }
+    UnivariatePoly::new(combined)
+}
+
+fn round_poly_from_sum_of_products<F: Field>(
+    factors: &[Vec<F>],
+    terms: &[ProductTerm<F>],
+    degree: usize,
+) -> UnivariatePoly<F> {
+    if factors.is_empty() {
+        return UnivariatePoly::zero();
+    }
+    let half = factors[0].len() / 2;
+    let accumulators = if half >= DENSE_BIND_PAR_THRESHOLD {
+        (0..half)
+            .into_par_iter()
+            .map(|row| sum_of_products_coefficients(factors, terms, row))
+            .reduce(
+                || [F::Accumulator::default(); 4],
+                |mut left, right| {
+                    for index in 0..left.len() {
+                        left[index].merge(right[index]);
+                    }
+                    left
+                },
+            )
+    } else {
+        (0..half).fold([F::Accumulator::default(); 4], |mut total, row| {
+            let row_coeffs = sum_of_products_coefficients(factors, terms, row);
+            for index in 0..total.len() {
+                total[index].merge(row_coeffs[index]);
+            }
+            total
+        })
+    };
+    UnivariatePoly::new(
+        accumulators[..=degree]
+            .iter()
+            .copied()
+            .map(FieldAccumulator::reduce)
+            .collect(),
+    )
+}
+
+fn sum_of_products_coefficients<F: Field>(
+    factors: &[Vec<F>],
+    terms: &[ProductTerm<F>],
+    row: usize,
+) -> [F::Accumulator; 4] {
+    let mut accumulators = [F::Accumulator::default(); 4];
+    for term in terms {
+        let coefficients = product_term_coefficients(factors, &term.factors, row);
+        for (accumulator, coefficient) in accumulators.iter_mut().zip(coefficients) {
+            accumulator.fmadd(term.coefficient, coefficient);
+        }
+    }
+    accumulators
+}
+
+fn product_term_coefficients<F: Field>(
+    factors: &[Vec<F>],
+    term_factors: &[usize],
+    row: usize,
+) -> [F; 4] {
+    let mut coefficients = [F::zero(); 4];
+    coefficients[0] = F::one();
+    for (degree, &factor_index) in term_factors.iter().enumerate() {
+        let low = factors[factor_index][2 * row];
+        let delta = factors[factor_index][2 * row + 1] - low;
+        for index in (0..=degree).rev() {
+            coefficients[index + 1] += coefficients[index] * delta;
+            coefficients[index] *= low;
+        }
+    }
+    coefficients
+}
+
+fn polynomial_degree<F: Field>(poly: &UnivariatePoly<F>) -> usize {
+    poly.coefficients()
+        .iter()
+        .rposition(|coefficient| *coefficient != F::zero())
+        .unwrap_or(0)
+}
+
+fn append_compressed_univariate_poly<F, T>(
+    transcript: &mut T,
+    label: &'static str,
+    poly: &UnivariatePoly<F>,
+) where
+    F: Field,
+    T: Transcript<Challenge = F>,
+{
+    let compressed = poly.compress();
+    transcript.append(&LabelWithCount(
+        label.as_bytes(),
+        compressed.coeffs_except_linear_term().len() as u64,
+    ));
+    for coefficient in compressed.coeffs_except_linear_term() {
+        transcript.append(coefficient);
+    }
+}
+
+fn append_labeled_scalar<F, T>(transcript: &mut T, label: &'static str, scalar: &F)
+where
+    F: Field,
+    T: Transcript<Challenge = F>,
+{
+    transcript.append(&Label(label.as_bytes()));
+    transcript.append(scalar);
+}
+
+fn append_opening_claims<F, T>(
+    program: &'static Stage3CpuProgramPlan,
+    store: &mut Stage3ValueStore<F>,
+    transcript: &mut T,
+    evals: &[Stage3NamedEval<F>],
+) -> Result<(), Stage3KernelError>
+where
+    F: Field,
+    T: Transcript<Challenge = F>,
+{
+    if program.opening_batches.is_empty() {
+        for eval in evals {
+            append_labeled_scalar(transcript, "opening_claim", &eval.value);
+        }
+        return Ok(());
+    }
+    let _ = store.evaluate_available_points(program)?;
+    let mut seen = seed_stage3_opening_aliases(store, program);
+    for batch in program.opening_batches {
+        for symbol in batch.claim_operands {
+            let claim =
+                find_opening_claim(program, symbol).ok_or(Stage3KernelError::MissingClaim {
+                    batch: batch.symbol,
+                    claim: symbol,
+                })?;
+            let point = store.point(claim.point_source)?.to_vec();
+            if has_seen_opening(&seen, claim.claim_kind, claim.oracle, &point) {
+                continue;
+            }
+            let value = store.scalar(claim.eval_source)?;
+            append_labeled_scalar(transcript, "opening_claim", &value);
+            seen.push((claim.claim_kind, claim.oracle, point));
+        }
+    }
+    Ok(())
+}
+
+fn seed_stage3_opening_aliases<F: Field>(
+    store: &Stage3ValueStore<F>,
+    program: &'static Stage3CpuProgramPlan,
+) -> Vec<(&'static str, &'static str, Vec<F>)> {
+    program
+        .opening_inputs
+        .iter()
+        .filter_map(|input| {
+            store
+                .try_point(input.symbol)
+                .map(|point| (input.claim_kind, input.oracle, point.to_vec()))
+        })
+        .collect()
+}
+
+fn has_seen_opening<F: Field>(
+    seen: &[(&'static str, &'static str, Vec<F>)],
+    claim_kind: &'static str,
+    oracle: &'static str,
+    point: &[F],
+) -> bool {
+    seen.iter().any(|(seen_kind, seen_oracle, seen_point)| {
+        *seen_kind == claim_kind && *seen_oracle == oracle && seen_point.as_slice() == point
+    })
+}
+
+fn find_opening_claim<'a>(
+    program: &'a Stage3CpuProgramPlan,
+    symbol: &str,
+) -> Option<&'a Stage3OpeningClaimPlan> {
+    program
+        .opening_claims
+        .iter()
+        .find(|claim| claim.symbol == symbol)
+}
 
 pub fn execute_stage3_program<F, E, T>(
     program: &'static Stage3CpuProgramPlan,
@@ -1434,8 +2418,11 @@ fn find_transcript_squeeze<'a>(
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "stage3 kernel tests fail fast")]
 mod tests {
     use super::*;
+    use jolt_field::Fr;
+    use jolt_transcript::Blake2bTranscript;
 
     #[test]
     fn stage3_relation_and_abi_registry_is_complete() {
@@ -1461,5 +2448,823 @@ mod tests {
         for abi in abis {
             assert_eq!(Stage3KernelAbi::from_name(abi.name()), Some(abi));
         }
+    }
+
+    #[test]
+    fn stage3_batched_kernel_proves_and_verifies_synthetic_trace() {
+        let program = synthetic_stage3_program();
+        let cycles = synthetic_cycles();
+        let opening_inputs = synthetic_opening_inputs(&cycles);
+        let prover_inputs = Stage3ProverInputs::new(&opening_inputs).with_cycles(&cycles);
+        let mut prover = Stage3ProverKernelExecutor::new(prover_inputs);
+        let mut prover_transcript = Blake2bTranscript::<Fr>::new(b"stage3_test");
+
+        let artifacts = execute_stage3_program(
+            program,
+            Stage3ExecutionMode::Prover,
+            &mut prover,
+            &mut prover_transcript,
+        )
+        .expect("stage3 prover succeeds");
+
+        assert_eq!(artifacts.sumchecks.len(), 1);
+        assert_eq!(artifacts.sumchecks[0].proof.round_polynomials.len(), 2);
+        let proof = Stage3Proof::from(artifacts);
+        let mut verifier = Stage3VerifierKernelExecutor::new(&proof, &opening_inputs);
+        let mut verifier_transcript = Blake2bTranscript::<Fr>::new(b"stage3_test");
+        let verified = execute_stage3_program(
+            program,
+            Stage3ExecutionMode::Verifier,
+            &mut verifier,
+            &mut verifier_transcript,
+        )
+        .expect("stage3 verifier accepts prover proof");
+
+        assert_eq!(verified.sumchecks.len(), 1);
+        assert_eq!(prover_transcript.state(), verifier_transcript.state());
+    }
+
+    #[test]
+    fn stage3_batched_kernel_rejects_tampered_eval() {
+        let program = synthetic_stage3_program();
+        let cycles = synthetic_cycles();
+        let opening_inputs = synthetic_opening_inputs(&cycles);
+        let mut prover = Stage3ProverKernelExecutor::new(
+            Stage3ProverInputs::new(&opening_inputs).with_cycles(&cycles),
+        );
+        let mut prover_transcript = Blake2bTranscript::<Fr>::new(b"stage3_test");
+        let mut proof = Stage3Proof::from(
+            execute_stage3_program(
+                program,
+                Stage3ExecutionMode::Prover,
+                &mut prover,
+                &mut prover_transcript,
+            )
+            .expect("stage3 prover succeeds"),
+        );
+        proof.sumchecks[0].evals[0].value += Fr::from_u64(1);
+
+        let mut verifier = Stage3VerifierKernelExecutor::new(&proof, &opening_inputs);
+        let mut verifier_transcript = Blake2bTranscript::<Fr>::new(b"stage3_test");
+        let error = execute_stage3_program(
+            program,
+            Stage3ExecutionMode::Verifier,
+            &mut verifier,
+            &mut verifier_transcript,
+        )
+        .expect_err("tampered proof is rejected");
+
+        assert!(matches!(error, Stage3KernelError::InvalidProof { .. }));
+    }
+
+    fn synthetic_stage3_program() -> &'static Stage3CpuProgramPlan {
+        let exprs = leak_slice(vec![
+            field_expr(
+                "stage3.spartan_shift.gamma2",
+                "field.pow:2",
+                vec!["stage3.spartan_shift.gamma"],
+            ),
+            field_expr(
+                "stage3.spartan_shift.gamma3",
+                "field.mul",
+                vec!["stage3.spartan_shift.gamma2", "stage3.spartan_shift.gamma"],
+            ),
+            field_expr(
+                "stage3.spartan_shift.gamma4",
+                "field.mul",
+                vec!["stage3.spartan_shift.gamma2", "stage3.spartan_shift.gamma2"],
+            ),
+            field_expr(
+                "stage3.spartan_shift.term.NextPC",
+                "field.mul",
+                vec!["stage3.spartan_shift.gamma", "stage3.input.stage1.NextPC"],
+            ),
+            field_expr(
+                "stage3.spartan_shift.term.NextIsVirtual",
+                "field.mul",
+                vec![
+                    "stage3.spartan_shift.gamma2",
+                    "stage3.input.stage1.NextIsVirtual",
+                ],
+            ),
+            field_expr(
+                "stage3.spartan_shift.term.NextIsFirstInSequence",
+                "field.mul",
+                vec![
+                    "stage3.spartan_shift.gamma3",
+                    "stage3.input.stage1.NextIsFirstInSequence",
+                ],
+            ),
+            field_expr(
+                "stage3.spartan_shift.one_minus.NextIsNoop",
+                "field.sub",
+                vec![
+                    "stage3.field.one",
+                    "stage3.input.stage2.product_virtual.NextIsNoop",
+                ],
+            ),
+            field_expr(
+                "stage3.spartan_shift.term.NextIsNoop",
+                "field.mul",
+                vec![
+                    "stage3.spartan_shift.gamma4",
+                    "stage3.spartan_shift.one_minus.NextIsNoop",
+                ],
+            ),
+            field_expr(
+                "stage3.spartan_shift.partial.NextUnexpandedPCNextPC",
+                "field.add",
+                vec![
+                    "stage3.input.stage1.NextUnexpandedPC",
+                    "stage3.spartan_shift.term.NextPC",
+                ],
+            ),
+            field_expr(
+                "stage3.spartan_shift.partial.NextIsVirtual",
+                "field.add",
+                vec![
+                    "stage3.spartan_shift.partial.NextUnexpandedPCNextPC",
+                    "stage3.spartan_shift.term.NextIsVirtual",
+                ],
+            ),
+            field_expr(
+                "stage3.spartan_shift.partial.NextIsFirstInSequence",
+                "field.add",
+                vec![
+                    "stage3.spartan_shift.partial.NextIsVirtual",
+                    "stage3.spartan_shift.term.NextIsFirstInSequence",
+                ],
+            ),
+            field_expr(
+                "stage3.spartan_shift.claim_expr",
+                "field.add",
+                vec![
+                    "stage3.spartan_shift.partial.NextIsFirstInSequence",
+                    "stage3.spartan_shift.term.NextIsNoop",
+                ],
+            ),
+            field_expr(
+                "stage3.instruction_input.term.LeftInstructionInput",
+                "field.mul",
+                vec![
+                    "stage3.instruction_input.gamma",
+                    "stage3.input.stage2.product_virtual.LeftInstructionInput",
+                ],
+            ),
+            field_expr(
+                "stage3.instruction_input.claim_expr",
+                "field.add",
+                vec![
+                    "stage3.input.stage2.product_virtual.RightInstructionInput",
+                    "stage3.instruction_input.term.LeftInstructionInput",
+                ],
+            ),
+            field_expr(
+                "stage3.registers.gamma2",
+                "field.pow:2",
+                vec!["stage3.registers.gamma"],
+            ),
+            field_expr(
+                "stage3.registers.term.Rs1Value",
+                "field.mul",
+                vec!["stage3.registers.gamma", "stage3.input.stage1.Rs1Value"],
+            ),
+            field_expr(
+                "stage3.registers.term.Rs2Value",
+                "field.mul",
+                vec!["stage3.registers.gamma2", "stage3.input.stage1.Rs2Value"],
+            ),
+            field_expr(
+                "stage3.registers.partial.RdWriteValueRs1Value",
+                "field.add",
+                vec![
+                    "stage3.input.stage1.RdWriteValue",
+                    "stage3.registers.term.Rs1Value",
+                ],
+            ),
+            field_expr(
+                "stage3.registers.claim_expr",
+                "field.add",
+                vec![
+                    "stage3.registers.partial.RdWriteValueRs1Value",
+                    "stage3.registers.term.Rs2Value",
+                ],
+            ),
+        ]);
+
+        Box::leak(Box::new(Stage3CpuProgramPlan {
+            params: Stage3Params {
+                field: "bn254_fr",
+                pcs: "dory",
+                transcript: "blake2b_transcript",
+            },
+            steps: leak_slice(vec![
+                Stage3ProgramStepPlan {
+                    kind: "transcript_squeeze",
+                    symbol: "stage3.spartan_shift.gamma",
+                },
+                Stage3ProgramStepPlan {
+                    kind: "transcript_squeeze",
+                    symbol: "stage3.instruction_input.gamma",
+                },
+                Stage3ProgramStepPlan {
+                    kind: "transcript_squeeze",
+                    symbol: "stage3.registers.gamma",
+                },
+                Stage3ProgramStepPlan {
+                    kind: "sumcheck_driver",
+                    symbol: "stage3.sumcheck",
+                },
+            ]),
+            transcript_squeezes: leak_slice(vec![
+                Stage3TranscriptSqueezePlan {
+                    symbol: "stage3.spartan_shift.gamma",
+                    label: "spartan_shift_gamma",
+                    kind: "challenge_scalar",
+                    count: 1,
+                },
+                Stage3TranscriptSqueezePlan {
+                    symbol: "stage3.instruction_input.gamma",
+                    label: "instruction_input_gamma",
+                    kind: "challenge_scalar",
+                    count: 1,
+                },
+                Stage3TranscriptSqueezePlan {
+                    symbol: "stage3.registers.gamma",
+                    label: "registers_gamma",
+                    kind: "challenge_scalar",
+                    count: 1,
+                },
+            ]),
+            opening_inputs: leak_slice(stage3_opening_input_plans()),
+            field_constants: leak_slice(vec![Stage3FieldConstantPlan {
+                symbol: "stage3.field.one",
+                field: "bn254_fr",
+                value: 1,
+            }]),
+            field_exprs: exprs,
+            kernels: leak_slice(vec![
+                kernel(
+                    "jolt.cpu.stage3.spartan_shift",
+                    "jolt.stage3.spartan_shift",
+                    "jolt_stage3_spartan_shift",
+                ),
+                kernel(
+                    "jolt.cpu.stage3.instruction_input",
+                    "jolt.stage3.instruction_input",
+                    "jolt_stage3_instruction_input",
+                ),
+                kernel(
+                    "jolt.cpu.stage3.registers_claim_reduction",
+                    "jolt.stage3.registers_claim_reduction",
+                    "jolt_stage3_registers_claim_reduction",
+                ),
+                kernel(
+                    "jolt.cpu.stage3.batched",
+                    "jolt.stage3.batched",
+                    "jolt_stage3_batched",
+                ),
+            ]),
+            claims: leak_slice(vec![
+                claim(
+                    "stage3.spartan_shift.input",
+                    "jolt.cpu.stage3.spartan_shift",
+                    "stage3.spartan_shift.claim_expr",
+                    2,
+                    vec![
+                        "stage3.input.stage1.NextUnexpandedPC",
+                        "stage3.input.stage1.NextPC",
+                        "stage3.input.stage1.NextIsVirtual",
+                        "stage3.input.stage1.NextIsFirstInSequence",
+                        "stage3.input.stage2.product_virtual.NextIsNoop",
+                    ],
+                ),
+                claim(
+                    "stage3.instruction_input.input",
+                    "jolt.cpu.stage3.instruction_input",
+                    "stage3.instruction_input.claim_expr",
+                    3,
+                    vec![
+                        "stage3.input.stage2.product_virtual.RightInstructionInput",
+                        "stage3.input.stage2.product_virtual.LeftInstructionInput",
+                    ],
+                ),
+                claim(
+                    "stage3.registers_claim_reduction.input",
+                    "jolt.cpu.stage3.registers_claim_reduction",
+                    "stage3.registers.claim_expr",
+                    2,
+                    vec![
+                        "stage3.input.stage1.RdWriteValue",
+                        "stage3.input.stage1.Rs1Value",
+                        "stage3.input.stage1.Rs2Value",
+                    ],
+                ),
+            ]),
+            batches: leak_slice(vec![Stage3SumcheckBatchPlan {
+                symbol: "stage3.batch",
+                stage: "stage3",
+                proof_slot: "stage3.sumcheck",
+                policy: "jolt_core_stage3_aligned",
+                count: 3,
+                ordered_claims: leak_slice(vec![
+                    "stage3.spartan_shift.input",
+                    "stage3.instruction_input.input",
+                    "stage3.registers_claim_reduction.input",
+                ]),
+                claim_operands: leak_slice(vec![
+                    "stage3.spartan_shift.input",
+                    "stage3.instruction_input.input",
+                    "stage3.registers_claim_reduction.input",
+                ]),
+                claim_label: "sumcheck_claim",
+                round_label: "sumcheck_poly",
+                round_schedule: leak_slice(vec![2]),
+            }]),
+            drivers: leak_slice(vec![Stage3SumcheckDriverPlan {
+                symbol: "stage3.sumcheck",
+                stage: "stage3",
+                proof_slot: "stage3.sumcheck",
+                kernel: "jolt.cpu.stage3.batched",
+                batch: "stage3.batch",
+                policy: "jolt_core_stage3_aligned",
+                round_schedule: leak_slice(vec![2]),
+                claim_label: "sumcheck_claim",
+                round_label: "sumcheck_poly",
+                num_rounds: 2,
+                degree: 3,
+            }]),
+            instance_results: leak_slice(vec![
+                instance(
+                    "stage3.spartan_shift.instance",
+                    "stage3.spartan_shift.input",
+                    "jolt.stage3.spartan_shift",
+                    0,
+                    2,
+                ),
+                instance(
+                    "stage3.instruction_input.instance",
+                    "stage3.instruction_input.input",
+                    "jolt.stage3.instruction_input",
+                    1,
+                    3,
+                ),
+                instance(
+                    "stage3.registers_claim_reduction.instance",
+                    "stage3.registers_claim_reduction.input",
+                    "jolt.stage3.registers_claim_reduction",
+                    2,
+                    2,
+                ),
+            ]),
+            evals: leak_slice(stage3_eval_plans()),
+            point_slices: &[],
+            point_concats: &[],
+            opening_claims: leak_slice(stage3_opening_claim_plans()),
+            opening_equalities: leak_slice(vec![
+                Stage3OpeningClaimEqualityPlan {
+                    symbol: "stage3.instruction_input.left_claim_consistency",
+                    mode: "point_and_eval",
+                    lhs: "stage3.input.stage2.product_virtual.LeftInstructionInput",
+                    rhs: "stage3.input.stage2.instruction_lookup.LeftInstructionInput",
+                },
+                Stage3OpeningClaimEqualityPlan {
+                    symbol: "stage3.instruction_input.right_claim_consistency",
+                    mode: "point_and_eval",
+                    lhs: "stage3.input.stage2.product_virtual.RightInstructionInput",
+                    rhs: "stage3.input.stage2.instruction_lookup.RightInstructionInput",
+                },
+            ]),
+            opening_batches: leak_slice(vec![Stage3OpeningBatchPlan {
+                symbol: "stage3.openings",
+                stage: "stage3",
+                proof_slot: "stage3.openings",
+                policy: "jolt_stage3_output_order",
+                count: 16,
+                ordered_claims: leak_slice(
+                    stage3_opening_claim_plans()
+                        .iter()
+                        .map(|claim| claim.symbol)
+                        .collect(),
+                ),
+                claim_operands: leak_slice(
+                    stage3_opening_claim_plans()
+                        .iter()
+                        .map(|claim| claim.symbol)
+                        .collect(),
+                ),
+            }]),
+        }))
+    }
+
+    fn synthetic_cycles() -> [Stage3Cycle; 4] {
+        [
+            Stage3Cycle {
+                unexpanded_pc: 10,
+                pc: 0,
+                is_virtual: false,
+                is_first_in_sequence: false,
+                is_noop: false,
+                left_operand_is_rs1: true,
+                rs1_value: 3,
+                left_operand_is_pc: false,
+                right_operand_is_rs2: true,
+                rs2_value: 5,
+                right_operand_is_imm: false,
+                imm: 0,
+                rd_write_value: 8,
+            },
+            Stage3Cycle {
+                unexpanded_pc: 14,
+                pc: 1,
+                is_virtual: true,
+                is_first_in_sequence: true,
+                is_noop: false,
+                left_operand_is_rs1: false,
+                rs1_value: 0,
+                left_operand_is_pc: true,
+                right_operand_is_rs2: false,
+                rs2_value: 0,
+                right_operand_is_imm: true,
+                imm: -7,
+                rd_write_value: 21,
+            },
+            Stage3Cycle {
+                unexpanded_pc: 18,
+                pc: 2,
+                is_virtual: false,
+                is_first_in_sequence: false,
+                is_noop: true,
+                left_operand_is_rs1: false,
+                rs1_value: 0,
+                left_operand_is_pc: false,
+                right_operand_is_rs2: false,
+                rs2_value: 0,
+                right_operand_is_imm: false,
+                imm: 0,
+                rd_write_value: 0,
+            },
+            Stage3Cycle {
+                unexpanded_pc: 22,
+                pc: 3,
+                is_virtual: true,
+                is_first_in_sequence: false,
+                is_noop: false,
+                left_operand_is_rs1: true,
+                rs1_value: 9,
+                left_operand_is_pc: false,
+                right_operand_is_rs2: false,
+                rs2_value: 0,
+                right_operand_is_imm: true,
+                imm: 11,
+                rd_write_value: 20,
+            },
+        ]
+    }
+
+    fn synthetic_opening_inputs(cycles: &[Stage3Cycle]) -> Vec<Stage3OpeningInputValue<Fr>> {
+        let r_outer = vec![Fr::from_u64(2), Fr::from_u64(3)];
+        let r_product = vec![Fr::from_u64(5), Fr::from_u64(7)];
+        let r_instruction = vec![Fr::from_u64(11), Fr::from_u64(13)];
+        let r_registers = vec![Fr::from_u64(17), Fr::from_u64(19)];
+        vec![
+            opening(
+                "stage3.input.stage1.NextUnexpandedPC",
+                &r_outer,
+                eq_plus_one_eval(cycles, &r_outer, |cycle| Fr::from_u64(cycle.unexpanded_pc)),
+            ),
+            opening(
+                "stage3.input.stage1.NextPC",
+                &r_outer,
+                eq_plus_one_eval(cycles, &r_outer, |cycle| Fr::from_u64(cycle.pc)),
+            ),
+            opening(
+                "stage3.input.stage1.NextIsVirtual",
+                &r_outer,
+                eq_plus_one_eval(cycles, &r_outer, |cycle| Fr::from_bool(cycle.is_virtual)),
+            ),
+            opening(
+                "stage3.input.stage1.NextIsFirstInSequence",
+                &r_outer,
+                eq_plus_one_eval(cycles, &r_outer, |cycle| {
+                    Fr::from_bool(cycle.is_first_in_sequence)
+                }),
+            ),
+            opening(
+                "stage3.input.stage2.product_virtual.NextIsNoop",
+                &r_product,
+                eq_plus_one_eval(cycles, &r_product, |cycle| Fr::from_bool(cycle.is_noop))
+                    + r_product.iter().copied().product::<Fr>(),
+            ),
+            opening(
+                "stage3.input.stage2.product_virtual.LeftInstructionInput",
+                &r_instruction,
+                mle_eval(cycles, &r_instruction, left_instruction_input),
+            ),
+            opening(
+                "stage3.input.stage2.product_virtual.RightInstructionInput",
+                &r_instruction,
+                mle_eval(cycles, &r_instruction, right_instruction_input),
+            ),
+            opening(
+                "stage3.input.stage2.instruction_lookup.LeftInstructionInput",
+                &r_instruction,
+                mle_eval(cycles, &r_instruction, left_instruction_input),
+            ),
+            opening(
+                "stage3.input.stage2.instruction_lookup.RightInstructionInput",
+                &r_instruction,
+                mle_eval(cycles, &r_instruction, right_instruction_input),
+            ),
+            opening(
+                "stage3.input.stage1.RdWriteValue",
+                &r_registers,
+                mle_eval(cycles, &r_registers, |cycle| {
+                    Fr::from_u64(cycle.rd_write_value)
+                }),
+            ),
+            opening(
+                "stage3.input.stage1.Rs1Value",
+                &r_registers,
+                mle_eval(cycles, &r_registers, |cycle| Fr::from_u64(cycle.rs1_value)),
+            ),
+            opening(
+                "stage3.input.stage1.Rs2Value",
+                &r_registers,
+                mle_eval(cycles, &r_registers, |cycle| Fr::from_u64(cycle.rs2_value)),
+            ),
+        ]
+    }
+
+    fn field_expr(
+        symbol: &'static str,
+        formula: &'static str,
+        operands: Vec<&'static str>,
+    ) -> Stage3FieldExprPlan {
+        let operands = leak_slice(operands);
+        Stage3FieldExprPlan {
+            symbol,
+            kind: "op",
+            formula,
+            operand_names: operands,
+            operands,
+        }
+    }
+
+    fn kernel(symbol: &'static str, relation: &'static str, abi: &'static str) -> Stage3KernelPlan {
+        Stage3KernelPlan {
+            symbol,
+            relation,
+            kind: "sumcheck",
+            backend: "cpu",
+            abi,
+        }
+    }
+
+    fn claim(
+        symbol: &'static str,
+        kernel: &'static str,
+        claim_value: &'static str,
+        degree: usize,
+        input_openings: Vec<&'static str>,
+    ) -> Stage3SumcheckClaimPlan {
+        Stage3SumcheckClaimPlan {
+            symbol,
+            stage: "stage3",
+            domain: "jolt.trace_domain",
+            num_rounds: 2,
+            degree,
+            claim: symbol,
+            kernel,
+            claim_value,
+            input_openings: leak_slice(input_openings),
+        }
+    }
+
+    fn instance(
+        symbol: &'static str,
+        claim: &'static str,
+        relation: &'static str,
+        index: usize,
+        degree: usize,
+    ) -> Stage3SumcheckInstanceResultPlan {
+        Stage3SumcheckInstanceResultPlan {
+            symbol,
+            source: "stage3.sumcheck",
+            claim,
+            relation,
+            index,
+            point_arity: 2,
+            num_rounds: 2,
+            round_offset: 0,
+            point_order: "reverse",
+            degree,
+        }
+    }
+
+    fn opening(symbol: &'static str, point: &[Fr], eval: Fr) -> Stage3OpeningInputValue<Fr> {
+        Stage3OpeningInputValue {
+            symbol,
+            point: point.to_vec(),
+            eval,
+        }
+    }
+
+    fn mle_eval(cycles: &[Stage3Cycle], point: &[Fr], f: impl Fn(&Stage3Cycle) -> Fr) -> Fr {
+        EqPolynomial::<Fr>::evals(point, None)
+            .iter()
+            .zip(cycles)
+            .map(|(&weight, cycle)| weight * f(cycle))
+            .sum()
+    }
+
+    fn eq_plus_one_eval(
+        cycles: &[Stage3Cycle],
+        point: &[Fr],
+        f: impl Fn(&Stage3Cycle) -> Fr,
+    ) -> Fr {
+        EqPlusOnePolynomial::<Fr>::evals(point, None)
+            .1
+            .iter()
+            .zip(cycles)
+            .map(|(&weight, cycle)| weight * f(cycle))
+            .sum()
+    }
+
+    fn left_instruction_input(cycle: &Stage3Cycle) -> Fr {
+        Fr::from_bool(cycle.left_operand_is_rs1) * Fr::from_u64(cycle.rs1_value)
+            + Fr::from_bool(cycle.left_operand_is_pc) * Fr::from_u64(cycle.unexpanded_pc)
+    }
+
+    fn right_instruction_input(cycle: &Stage3Cycle) -> Fr {
+        Fr::from_bool(cycle.right_operand_is_rs2) * Fr::from_u64(cycle.rs2_value)
+            + Fr::from_bool(cycle.right_operand_is_imm) * Fr::from_i128(cycle.imm)
+    }
+
+    fn stage3_opening_input_plans() -> Vec<Stage3OpeningInputPlan> {
+        vec![
+            opening_input_plan(
+                "stage3.input.stage1.NextUnexpandedPC",
+                "stage1",
+                "NextUnexpandedPC",
+            ),
+            opening_input_plan("stage3.input.stage1.NextPC", "stage1", "NextPC"),
+            opening_input_plan(
+                "stage3.input.stage1.NextIsVirtual",
+                "stage1",
+                "NextIsVirtual",
+            ),
+            opening_input_plan(
+                "stage3.input.stage1.NextIsFirstInSequence",
+                "stage1",
+                "NextIsFirstInSequence",
+            ),
+            opening_input_plan(
+                "stage3.input.stage2.product_virtual.NextIsNoop",
+                "stage2",
+                "NextIsNoop",
+            ),
+            opening_input_plan(
+                "stage3.input.stage2.product_virtual.LeftInstructionInput",
+                "stage2",
+                "LeftInstructionInput",
+            ),
+            opening_input_plan(
+                "stage3.input.stage2.product_virtual.RightInstructionInput",
+                "stage2",
+                "RightInstructionInput",
+            ),
+            opening_input_plan(
+                "stage3.input.stage2.instruction_lookup.LeftInstructionInput",
+                "stage2",
+                "LeftInstructionInput",
+            ),
+            opening_input_plan(
+                "stage3.input.stage2.instruction_lookup.RightInstructionInput",
+                "stage2",
+                "RightInstructionInput",
+            ),
+            opening_input_plan("stage3.input.stage1.RdWriteValue", "stage1", "RdWriteValue"),
+            opening_input_plan("stage3.input.stage1.Rs1Value", "stage1", "Rs1Value"),
+            opening_input_plan("stage3.input.stage1.Rs2Value", "stage1", "Rs2Value"),
+        ]
+    }
+
+    fn opening_input_plan(
+        symbol: &'static str,
+        source_stage: &'static str,
+        oracle: &'static str,
+    ) -> Stage3OpeningInputPlan {
+        Stage3OpeningInputPlan {
+            symbol,
+            source_stage,
+            source_claim: symbol,
+            oracle,
+            domain: "jolt.trace_domain",
+            point_arity: 2,
+            claim_kind: "virtual",
+        }
+    }
+
+    fn stage3_eval_plans() -> Vec<Stage3SumcheckEvalPlan> {
+        vec![
+            eval("stage3.spartan_shift.eval.UnexpandedPC", "UnexpandedPC", 0),
+            eval("stage3.spartan_shift.eval.PC", "PC", 1),
+            eval(
+                "stage3.spartan_shift.eval.OpFlagVirtualInstruction",
+                "OpFlagVirtualInstruction",
+                2,
+            ),
+            eval(
+                "stage3.spartan_shift.eval.OpFlagIsFirstInSequence",
+                "OpFlagIsFirstInSequence",
+                3,
+            ),
+            eval(
+                "stage3.spartan_shift.eval.InstructionFlagIsNoop",
+                "InstructionFlagIsNoop",
+                4,
+            ),
+            eval(
+                "stage3.instruction_input.eval.InstructionFlagLeftOperandIsRs1Value",
+                "InstructionFlagLeftOperandIsRs1Value",
+                5,
+            ),
+            eval("stage3.instruction_input.eval.Rs1Value", "Rs1Value", 6),
+            eval(
+                "stage3.instruction_input.eval.InstructionFlagLeftOperandIsPC",
+                "InstructionFlagLeftOperandIsPC",
+                7,
+            ),
+            eval(
+                "stage3.instruction_input.eval.UnexpandedPC",
+                "UnexpandedPC",
+                8,
+            ),
+            eval(
+                "stage3.instruction_input.eval.InstructionFlagRightOperandIsRs2Value",
+                "InstructionFlagRightOperandIsRs2Value",
+                9,
+            ),
+            eval("stage3.instruction_input.eval.Rs2Value", "Rs2Value", 10),
+            eval(
+                "stage3.instruction_input.eval.InstructionFlagRightOperandIsImm",
+                "InstructionFlagRightOperandIsImm",
+                11,
+            ),
+            eval("stage3.instruction_input.eval.Imm", "Imm", 12),
+            eval(
+                "stage3.registers_claim_reduction.eval.RdWriteValue",
+                "RdWriteValue",
+                13,
+            ),
+            eval(
+                "stage3.registers_claim_reduction.eval.Rs1Value",
+                "Rs1Value",
+                14,
+            ),
+            eval(
+                "stage3.registers_claim_reduction.eval.Rs2Value",
+                "Rs2Value",
+                15,
+            ),
+        ]
+    }
+
+    fn eval(symbol: &'static str, oracle: &'static str, index: usize) -> Stage3SumcheckEvalPlan {
+        Stage3SumcheckEvalPlan {
+            symbol,
+            source: "stage3.sumcheck",
+            name: symbol,
+            index,
+            oracle,
+        }
+    }
+
+    fn stage3_opening_claim_plans() -> Vec<Stage3OpeningClaimPlan> {
+        stage3_eval_plans()
+            .into_iter()
+            .map(|eval| Stage3OpeningClaimPlan {
+                symbol: eval.symbol.replace(".eval.", ".opening.").leak(),
+                oracle: eval.oracle,
+                domain: "jolt.trace_domain",
+                point_arity: 2,
+                claim_kind: "virtual",
+                point_source: match eval.symbol {
+                    name if name.starts_with("stage3.spartan_shift.") => {
+                        "stage3.spartan_shift.instance"
+                    }
+                    name if name.starts_with("stage3.instruction_input.") => {
+                        "stage3.instruction_input.instance"
+                    }
+                    _ => "stage3.registers_claim_reduction.instance",
+                },
+                eval_source: eval.symbol,
+            })
+            .collect()
+    }
+
+    fn leak_slice<T: 'static>(values: Vec<T>) -> &'static [T] {
+        Box::leak(values.into_boxed_slice())
     }
 }

@@ -53,6 +53,7 @@ jolt-poly = { path = "../jolt-poly" }
 jolt-r1cs = { path = "../jolt-r1cs" }
 jolt-kernels = { path = "../jolt-kernels" }
 jolt-transcript = { path = "../jolt-transcript" }
+jolt-prover = { path = "../jolt-prover" }
 jolt-verifier = { path = "../jolt-verifier" }
 jolt-profiling = { path = "../jolt-profiling" }
 jolt-witness = { path = "../jolt-witness" }

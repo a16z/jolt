@@ -5,15 +5,17 @@
 )]
 
 use bolt::{
+    assemble_jolt_generated_crates, assemble_jolt_workspace_generated_crates,
     build_commitment_protocol, build_stage1_outer_protocol, build_stage2_protocol,
     build_stage3_protocol, commitment_cpu_program, emit_commitment_rust, emit_stage1_rust,
-    emit_stage2_rust, emit_stage3_rust, lower_commitment_to_compute, lower_compute_to_cpu,
-    lower_piop_and_fiat_shamir, lower_stage1_to_compute, lower_stage2_to_compute,
-    lower_stage3_to_compute, project_prover_party, project_verifier_party, resolve_compute_kernels,
-    stage1_cpu_program, stage2_cpu_program, stage3_cpu_program, verify_compute_schema,
-    verify_concrete_transcript, verify_cpu_schema, verify_jolt_protocol_schema,
-    verify_protocol_schema, Concrete, Cpu, JoltProtocolParams, MeliorContext, Role, RustSourceFile,
-    TextMlir,
+    emit_stage2_rust, emit_stage3_rust, jolt_rust_artifact, lower_commitment_to_compute,
+    lower_compute_to_cpu, lower_piop_and_fiat_shamir, lower_stage1_to_compute,
+    lower_stage2_to_compute, lower_stage3_to_compute, project_prover_party, project_verifier_party,
+    resolve_compute_kernels, stage1_cpu_program, stage2_cpu_program, stage3_cpu_program,
+    validate_jolt_rust_artifact_imports, verify_compute_schema, verify_concrete_transcript,
+    verify_cpu_schema, verify_jolt_protocol_schema, verify_protocol_schema,
+    write_jolt_generated_crates, Concrete, Cpu, JoltProtocolParams, JoltProtocolStage,
+    MeliorContext, Role, RustSourceFile, TextMlir,
 };
 use std::fmt::Write as _;
 use std::path::Path;
@@ -680,6 +682,8 @@ fn stage2_rust_targets_extract_and_compile() {
     assert!(prover_source.source.contains("Stage2KernelExecutor"));
     assert!(!verifier_source.source.contains("jolt_kernels"));
     assert!(verifier_source.source.contains("Stage2VerifierProgramPlan"));
+    assert!(verifier_source.source.contains("pub fn verify_stage2"));
+    assert!(verifier_source.source.contains("SumcheckVerifier::verify"));
     assert_or_update_fixture("tests/fixtures/prove_stage2.rs", &prover_source.source);
     assert_or_update_fixture("tests/fixtures/verify_stage2.rs", &verifier_source.source);
     assert_rust_source_compiles(&prover_source.filename, &prover_source.source);
@@ -730,6 +734,8 @@ fn stage3_rust_targets_extract_and_compile() {
         .contains("Stage3OpeningClaimEqualityPlan"));
     assert!(!verifier_source.source.contains("jolt_kernels"));
     assert!(verifier_source.source.contains("Stage3VerifierProgramPlan"));
+    assert!(verifier_source.source.contains("pub fn verify_stage3"));
+    assert!(verifier_source.source.contains("SumcheckVerifier::verify"));
     assert!(verifier_source
         .source
         .contains("Stage3OpeningClaimEqualityPlan"));
@@ -737,6 +743,128 @@ fn stage3_rust_targets_extract_and_compile() {
     assert_or_update_fixture("tests/fixtures/verify_stage3.rs", &verifier_source.source);
     assert_rust_source_compiles(&prover_source.filename, &prover_source.source);
     assert_rust_source_compiles(&verifier_source.filename, &verifier_source.source);
+}
+
+#[test]
+fn generated_jolt_artifacts_have_uniform_crate_layout_and_import_rules() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::fixture();
+    let (commitment_prover_cpu, commitment_verifier_cpu) =
+        build_commitment_pipeline_cpu(&context, &params);
+    let (stage1_prover_cpu, stage1_verifier_cpu) = build_stage1_pipeline_cpu(&context, &params);
+    let (stage2_prover_cpu, stage2_verifier_cpu) = build_stage2_pipeline_cpu(&context, &params);
+    let (stage3_prover_cpu, stage3_verifier_cpu) = build_stage3_pipeline_cpu(&context, &params);
+
+    let emitted = [
+        (
+            JoltProtocolStage::Commitment,
+            Role::Prover,
+            emit_commitment_rust(&commitment_prover_cpu).expect("emit commitment prover"),
+        ),
+        (
+            JoltProtocolStage::Commitment,
+            Role::Verifier,
+            emit_commitment_rust(&commitment_verifier_cpu).expect("emit commitment verifier"),
+        ),
+        (
+            JoltProtocolStage::Stage1Outer,
+            Role::Prover,
+            emit_stage1_rust(&stage1_prover_cpu).expect("emit stage1 prover"),
+        ),
+        (
+            JoltProtocolStage::Stage1Outer,
+            Role::Verifier,
+            emit_stage1_rust(&stage1_verifier_cpu).expect("emit stage1 verifier"),
+        ),
+        (
+            JoltProtocolStage::Stage2,
+            Role::Prover,
+            emit_stage2_rust(&stage2_prover_cpu).expect("emit stage2 prover"),
+        ),
+        (
+            JoltProtocolStage::Stage2,
+            Role::Verifier,
+            emit_stage2_rust(&stage2_verifier_cpu).expect("emit stage2 verifier"),
+        ),
+        (
+            JoltProtocolStage::Stage3,
+            Role::Prover,
+            emit_stage3_rust(&stage3_prover_cpu).expect("emit stage3 prover"),
+        ),
+        (
+            JoltProtocolStage::Stage3,
+            Role::Verifier,
+            emit_stage3_rust(&stage3_verifier_cpu).expect("emit stage3 verifier"),
+        ),
+    ];
+    let artifacts = emitted
+        .into_iter()
+        .map(|(stage, role, source)| {
+            let artifact = jolt_rust_artifact(stage, role, source).expect("canonical artifact");
+            validate_jolt_rust_artifact_imports(&artifact).expect("artifact import policy");
+            artifact
+        })
+        .collect::<Vec<_>>();
+
+    let paths = artifacts
+        .iter()
+        .map(|artifact| artifact.path.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        paths,
+        vec![
+            "jolt-prover/src/stages/commitment.rs",
+            "jolt-verifier/src/stages/commitment.rs",
+            "jolt-prover/src/stages/stage1_outer.rs",
+            "jolt-verifier/src/stages/stage1_outer.rs",
+            "jolt-prover/src/stages/stage2.rs",
+            "jolt-verifier/src/stages/stage2.rs",
+            "jolt-prover/src/stages/stage3.rs",
+            "jolt-verifier/src/stages/stage3.rs",
+        ]
+    );
+    assert!(artifacts
+        .iter()
+        .filter(|artifact| artifact.crate_name == "jolt-verifier")
+        .all(|artifact| !artifact.source.source.contains("jolt_kernels")));
+    assert!(artifacts
+        .iter()
+        .filter(|artifact| {
+            artifact.crate_name == "jolt-prover" && artifact.stage != JoltProtocolStage::Commitment
+        })
+        .all(|artifact| artifact.source.source.contains("jolt_kernels")));
+    let workspace_generated_crates = assemble_jolt_workspace_generated_crates(artifacts.clone())
+        .expect("assemble workspace generated role crates");
+    if std::env::var_os("JOLT_UPDATE_GOLDENS").is_some() {
+        write_jolt_generated_crates(&workspace_generated_crates, workspace_root().join("crates"))
+            .expect("update checked-in generated role crates");
+    }
+    assert_checked_in_generated_role_crate_sources_match(&workspace_generated_crates);
+    let dependency_root = workspace_root().join("crates").display().to_string();
+    let generated_crates = assemble_jolt_generated_crates(artifacts, &dependency_root)
+        .expect("assemble generated role crates");
+    assert_eq!(
+        generated_crates
+            .iter()
+            .map(|generated| generated.crate_name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["jolt-prover", "jolt-verifier"]
+    );
+    for generated in &generated_crates {
+        assert_generated_role_crate_compiles(generated);
+    }
+    let output_root = new_temp_dir("bolt_generated_crates");
+    write_jolt_generated_crates(&workspace_generated_crates, &output_root)
+        .expect("write generated role crates");
+    for generated in &workspace_generated_crates {
+        for file in &generated.files {
+            assert!(output_root
+                .join(&generated.crate_name)
+                .join(&file.path)
+                .exists());
+        }
+    }
+    let _ = std::fs::remove_dir_all(output_root);
 }
 
 #[test]
@@ -1576,6 +1704,72 @@ fn assert_rust_source_compiles(_filename: &str, source: &str) {
         String::from_utf8_lossy(&output.stderr)
     );
     let _ = std::fs::remove_dir_all(dir);
+}
+
+fn assert_generated_role_crate_compiles(generated: &bolt::JoltGeneratedCrate) {
+    let dir = new_temp_dir(&generated.crate_name);
+    for file in &generated.files {
+        let path = dir.join(&file.path);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create generated crate dir");
+        }
+        std::fs::write(path, &file.source).expect("write generated crate file");
+    }
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
+    let output = Command::new(cargo)
+        .arg("check")
+        .arg("--manifest-path")
+        .arg(dir.join("Cargo.toml"))
+        .arg("-q")
+        .env("CARGO_TARGET_DIR", dir.join("target"))
+        .output()
+        .expect("run generated role crate check");
+    assert!(
+        output.status.success(),
+        "generated role crate `{}` did not compile\nstdout:\n{}\nstderr:\n{}",
+        generated.crate_name,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+fn assert_checked_in_generated_role_crate_sources_match(
+    generated_crates: &[bolt::JoltGeneratedCrate],
+) {
+    let crates_root = workspace_root().join("crates");
+    for generated in generated_crates {
+        for file in &generated.files {
+            let checked_in_path = crates_root.join(&generated.crate_name).join(&file.path);
+            let checked_in =
+                std::fs::read_to_string(&checked_in_path).expect("read checked-in generated file");
+            assert_eq!(
+                checked_in,
+                file.source,
+                "checked-in generated crate file `{}` is stale; regenerate with the Bolt artifact writer",
+                checked_in_path.display()
+            );
+            if generated.crate_name == "jolt-verifier" {
+                assert!(
+                    !checked_in.contains("use jolt_prover")
+                        && !checked_in.contains("jolt_prover::")
+                        && !checked_in.contains("use jolt_kernels")
+                        && !checked_in.contains("jolt_kernels::")
+                        && !checked_in.contains("use jolt_core")
+                        && !checked_in.contains("jolt_core::"),
+                    "generated verifier file `{}` imports non-audit role/runtime code",
+                    checked_in_path.display()
+                );
+            }
+            if generated.crate_name == "jolt-prover" {
+                assert!(
+                    !checked_in.contains("jolt_verifier::stages"),
+                    "generated prover file `{}` imports verifier stage internals instead of only verifier-owned proof types",
+                    checked_in_path.display()
+                );
+            }
+        }
+    }
 }
 
 fn assert_generated_commitment_self_parity_runs(

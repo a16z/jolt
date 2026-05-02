@@ -1,3 +1,4 @@
+mod artifacts;
 mod commitment;
 mod stage1;
 mod stage2;
@@ -11,6 +12,16 @@ pub(crate) fn push_format(source: &mut String, args: std::fmt::Arguments<'_>) {
     }
 }
 
+pub use artifacts::{
+    assemble_generated_crates, assemble_jolt_generated_crates,
+    assemble_jolt_workspace_generated_crates, assemble_workspace_generated_crates,
+    jolt_artifact_config, jolt_rust_artifact, protocol_rust_artifact,
+    validate_jolt_rust_artifact_imports, validate_rust_artifact_imports, write_generated_crates,
+    write_jolt_generated_crates, ArtifactCrateRole, GeneratedCrate, GeneratedFile,
+    JoltArtifactCrate, JoltGeneratedCrate, JoltGeneratedFile, JoltProtocolStage, JoltRustArtifact,
+    ProtocolArtifactConfig, ProtocolCrateRef, ProtocolRustArtifact, ProtocolStage,
+    ProtocolStageKind, RustTypeRef,
+};
 pub use commitment::{
     commitment_cpu_program, emit_commitment_rust, CommitmentBatchPlan, CommitmentCpuProgram,
     CommitmentParams, EmitError, OptionalCommitmentPlan, OptionalSkipPolicy, OracleGeneration,

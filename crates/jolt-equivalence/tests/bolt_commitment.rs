@@ -7,8 +7,6 @@
 use std::collections::BTreeMap;
 
 use ark_serialize::CanonicalSerialize;
-use common::constants::{RAM_START_ADDRESS, XLEN};
-use common::jolt_device::JoltDevice;
 use bolt::{
     build_commitment_protocol, build_stage1_outer_protocol, build_stage2_protocol,
     commitment_cpu_program, lower_commitment_to_compute, lower_compute_to_cpu,
@@ -20,6 +18,8 @@ use bolt::{
 use bolt::{
     Stage1CpuProgram as CompilerStage1CpuProgram, Stage2CpuProgram as CompilerStage2CpuProgram,
 };
+use common::constants::{RAM_START_ADDRESS, XLEN};
+use common::jolt_device::JoltDevice;
 use jolt_core::curve::Bn254Curve;
 use jolt_core::host;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme as CoreCommitmentScheme;
@@ -44,7 +44,6 @@ use jolt_equivalence::checkpoint::{
 };
 use jolt_equivalence::core_conversion::{commitment_to_ark, to_ark, to_core_sumcheck_proof};
 use jolt_field::{Field, Fr};
-use jolt_trace::{extract_trace, BytecodePreprocessing, Program};
 use jolt_kernels::stage1::{
     execute_stage1_program, Stage1CpuProgramPlan as KernelStage1CpuProgramPlan,
     Stage1ExecutionArtifacts, Stage1ExecutionMode, Stage1KernelError,
@@ -61,7 +60,6 @@ use jolt_kernels::stage1::{
 };
 use jolt_kernels::stage2::{
     execute_stage2_program, product_virtual_uniskip_extended_evals,
-    Stage2ChallengeExtractPlan as KernelStage2ChallengeExtractPlan,
     Stage2CpuProgramPlan as KernelStage2CpuProgramPlan, Stage2ExecutionArtifacts,
     Stage2ExecutionMode, Stage2FieldConstantPlan as KernelStage2FieldConstantPlan,
     Stage2FieldExprPlan as KernelStage2FieldExprPlan, Stage2InstructionLookupCycle,
@@ -79,6 +77,7 @@ use jolt_kernels::stage2::{
 use jolt_openings::StreamingCommitment;
 use jolt_poly::UnivariatePoly;
 use jolt_r1cs::{constraints::rv64, R1csKey};
+use jolt_trace::{extract_trace, BytecodePreprocessing, Program};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 use jolt_witness::{
     dense_i128_column_to_field, one_hot_chunk_address_major, optional_field_oracle, CycleInput,
@@ -805,16 +804,6 @@ fn leak_stage2_product_uniskip_program(
         .iter()
         .find(|plan| plan.symbol == "stage2.product_virtual.tau_high")
         .expect("product tau squeeze");
-    let challenge_extract = program
-        .challenge_extracts
-        .iter()
-        .find(|plan| plan.symbol == "stage2.product_virtual.tau_high.scalar")
-        .expect("product tau extract");
-    let field_expr = program
-        .field_exprs
-        .iter()
-        .find(|plan| plan.symbol == "stage2.product_virtual.uniskip.claim_expr")
-        .expect("product claim expr");
     let kernel = program
         .kernels
         .iter()
@@ -897,19 +886,20 @@ fn leak_stage2_product_uniskip_program(
                 .collect(),
         ),
         field_constants: &[] as &[KernelStage2FieldConstantPlan],
-        challenge_extracts: leak_slice(vec![KernelStage2ChallengeExtractPlan {
-            symbol: leak_str(&challenge_extract.symbol),
-            source: leak_str(&challenge_extract.source),
-            index: challenge_extract.index,
-            challenge_source: leak_str(&challenge_extract.challenge_source),
-        }]),
-        field_exprs: leak_slice(vec![KernelStage2FieldExprPlan {
-            symbol: leak_str(&field_expr.symbol),
-            kind: leak_str(&field_expr.kind),
-            formula: leak_str(&field_expr.formula),
-            operand_names: leak_str_slice(&field_expr.operand_names),
-            operands: leak_str_slice(&field_expr.operands),
-        }]),
+        field_exprs: leak_slice(
+            program
+                .field_exprs
+                .iter()
+                .filter(|plan| plan.symbol.starts_with("stage2.product_virtual.uniskip."))
+                .map(|plan| KernelStage2FieldExprPlan {
+                    symbol: leak_str(&plan.symbol),
+                    kind: leak_str(&plan.kind),
+                    formula: leak_str(&plan.formula),
+                    operand_names: leak_str_slice(&plan.operand_names),
+                    operands: leak_str_slice(&plan.operands),
+                })
+                .collect(),
+        ),
         kernels: leak_slice(vec![KernelStage2KernelPlan {
             symbol: leak_str(&kernel.symbol),
             relation: leak_str(&kernel.relation),
@@ -1039,18 +1029,6 @@ fn leak_stage2_program(program: &CompilerStage2CpuProgram) -> &'static KernelSta
                     symbol: leak_str(&plan.symbol),
                     field: leak_str(&plan.field),
                     value: plan.value,
-                })
-                .collect(),
-        ),
-        challenge_extracts: leak_slice(
-            program
-                .challenge_extracts
-                .iter()
-                .map(|plan| KernelStage2ChallengeExtractPlan {
-                    symbol: leak_str(&plan.symbol),
-                    source: leak_str(&plan.source),
-                    index: plan.index,
-                    challenge_source: leak_str(&plan.challenge_source),
                 })
                 .collect(),
         ),

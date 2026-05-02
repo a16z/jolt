@@ -2,6 +2,7 @@
 
 pub mod baseline;
 pub mod cli;
+pub mod generated;
 pub mod measure;
 pub mod output;
 pub mod programs;

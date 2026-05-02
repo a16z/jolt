@@ -37,6 +37,8 @@ members = [
   "crates/jolt-riscv",
   "crates/jolt-transcript",
   "crates/bolt",
+  "crates/jolt-prover",
+  "crates/jolt-verifier",
   "crates/jolt-wrapper",
   "crates/jolt-profiling",
   "crates/jolt-blindfold",
@@ -395,6 +397,8 @@ jolt-kernels = { path = "./crates/jolt-kernels" }
 jolt-dory = { path = "./crates/jolt-dory" }
 jolt-hyperkzg = { path = "./crates/jolt-hyperkzg" }
 bolt = { path = "./crates/bolt" }
+jolt-prover = { path = "./crates/jolt-prover" }
+jolt-verifier = { path = "./crates/jolt-verifier" }
 jolt-wrapper = { path = "./crates/jolt-wrapper" }
 jolt-blindfold = { path = "./crates/jolt-blindfold" }
 jolt-witness = { path = "./crates/jolt-witness" }

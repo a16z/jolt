@@ -4,8 +4,8 @@
 //! layout in [`jolt_r1cs::constraints::rv64`].
 
 use jolt_field::Field;
-use jolt_riscv::{CircuitFlagSet, CircuitFlags, InstructionFlags};
 use jolt_r1cs::constraints::rv64::*;
+use jolt_riscv::{CircuitFlagSet, CircuitFlags, InstructionFlags};
 
 use crate::bytecode::BytecodePreprocessing;
 use crate::CycleRow;
@@ -58,13 +58,8 @@ pub fn r1cs_cycle_witness<C: CycleRow, F: Field>(
     w[V_LOOKUP_OUTPUT] = F::from_u64(lookup_output);
 
     // Lookup operands — must match R1CS constraints
-    let (left_lookup, right_lookup) = lookup_operands(
-        left_input,
-        right_input,
-        w[V_PRODUCT],
-        cflags,
-        lookup_output,
-    );
+    let (left_lookup, right_lookup) =
+        lookup_operands(left_input, right_input, w[V_PRODUCT], cflags, lookup_output);
     w[V_LEFT_LOOKUP_OPERAND] = left_lookup;
     w[V_RIGHT_LOOKUP_OPERAND] = right_lookup;
 

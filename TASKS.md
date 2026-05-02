@@ -52,6 +52,11 @@ Each violation is a place where the runtime interprets protocol-specific data in
 
 Space for recording design decisions, dead ends, and insights during execution.
 
+- Bolt stage implementation now follows `crates/bolt/JOLT_PROTOCOL_IMPLEMENTATION.md`:
+  protocol MLIR first, then role/compute/CPU lowering, generated
+  `jolt-prover`/`jolt-verifier` artifacts, arithmetic, real-data equivalence,
+  tamper checks, and sub-20% stage perf before a stage is marked complete.
+
 ## Done
 
 (completed items move here with one-line summary of what changed)

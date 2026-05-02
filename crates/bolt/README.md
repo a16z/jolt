@@ -26,14 +26,35 @@ The Stage 2 coarse kernels are deliberately below the dialect boundary. `jolt-ke
 
 Commitment compute and CPU lowerings build IR with `melior` operation builders rather than formatting full MLIR modules as strings. Textual MLIR remains only where the prototype intentionally phase-casts whole modules while preserving existing SSA bodies.
 
-See `TESTING.md` for the compiler-v2 parity gates. Each implemented protocol
-stage must keep four stage-local oracles green before it is treated as done:
-Bolt prover output accepted by the Bolt verifier, Bolt prover/verifier
-transcript-state equality, Bolt artifacts accepted by the jolt-core verifier
-when spliced into the matching core proof prefix, and Bolt transcript/artifact
-parity against jolt-core through that stage. This matrix is intentionally
-per-stage so commitment, Stage 1, Stage 2, and later phases can be added without
-waiting for a full end-to-end prover before finding semantic drift.
+See `GOAL.md` for the end-to-end Jolt-on-Bolt target,
+`JOLT_PROTOCOL_IMPLEMENTATION.md` for the stage-addition playbook, and
+`TESTING.md` for the compiler-v2 parity gates. Each implemented protocol stage
+must keep the same stage-local oracles green before it is treated as done: Bolt
+prover output accepted by the Bolt verifier on real trace data, Bolt
+prover/verifier transcript-state equality, Bolt artifacts accepted by the
+jolt-core verifier when spliced into the matching proof prefix, Bolt
+transcript/artifact parity against jolt-core through that stage, generated
+verifier tamper rejection, and the stage prover within 20% of jolt-core. This
+matrix is intentionally per-stage so commitment, Stage 1, Stage 2, Stage 3, and
+later phases can be added without waiting for a full end-to-end prover before
+finding semantic drift.
+
+Generated Jolt Rust artifacts are organized as two role crates. Prover modules
+target `crates/jolt-prover/src/stages/<stage>.rs` and may import coarse CPU
+kernels from `jolt-kernels`; verifier modules target
+`crates/jolt-verifier/src/stages/<stage>.rs` and must stay kernel-free, using
+only audit-scope modular crates and local generated modules. The artifact rail
+now assembles full generated crates, including manifests, stage registries, and
+stage module graphs. Compiler tests check both temp standalone crates and the
+checked-in workspace crates so `jolt-equivalence` and `jolt-bench` can import
+the same generated prefix.
+
+The checked-in role crates are generated artifacts, not hand-maintained code.
+Regenerate them through the Rust artifact rail with
+`JOLT_UPDATE_GOLDENS=1 cargo nextest run -p bolt generated_jolt_artifacts_have_uniform_crate_layout_and_import_rules --cargo-quiet`.
+The same generator emits `prover.rs` and `verifier.rs` from role artifacts:
+`jolt-verifier` owns `JoltProof` and verification, while `jolt-prover` may only
+import verifier-owned proof types and never verifier stage internals.
 
 ## Local MLIR Toolchain
 

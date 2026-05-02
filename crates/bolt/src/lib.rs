@@ -7,13 +7,21 @@ pub mod protocols;
 pub mod schema;
 
 pub use emit::rust::{
+    assemble_generated_crates, assemble_jolt_generated_crates,
+    assemble_jolt_workspace_generated_crates, assemble_workspace_generated_crates,
     commitment_cpu_program, emit_commitment_rust, emit_stage1_rust, emit_stage2_rust,
-    emit_stage3_rust, stage1_cpu_program, stage2_cpu_program, stage3_cpu_program,
-    CommitmentBatchPlan, CommitmentCpuProgram, CommitmentParams, EmitError, OptionalCommitmentPlan,
-    OptionalSkipPolicy, OracleGeneration, OraclePlan, RustSourceFile, Stage1CpuProgram,
-    Stage1KernelPlan, Stage1OpeningBatchPlan, Stage1OpeningClaimPlan, Stage1Params,
-    Stage1SumcheckBatchPlan, Stage1SumcheckClaimPlan, Stage1SumcheckDriverPlan,
-    Stage1SumcheckEvalPlan, Stage2CpuProgram, Stage3CpuProgram, TranscriptStep,
+    emit_stage3_rust, jolt_artifact_config, jolt_rust_artifact, protocol_rust_artifact,
+    stage1_cpu_program, stage2_cpu_program, stage3_cpu_program,
+    validate_jolt_rust_artifact_imports, validate_rust_artifact_imports, write_generated_crates,
+    write_jolt_generated_crates, ArtifactCrateRole, CommitmentBatchPlan, CommitmentCpuProgram,
+    CommitmentParams, EmitError, GeneratedCrate, GeneratedFile, JoltArtifactCrate,
+    JoltGeneratedCrate, JoltGeneratedFile, JoltProtocolStage, JoltRustArtifact,
+    OptionalCommitmentPlan, OptionalSkipPolicy, OracleGeneration, OraclePlan,
+    ProtocolArtifactConfig, ProtocolCrateRef, ProtocolRustArtifact, ProtocolStage,
+    ProtocolStageKind, RustSourceFile, RustTypeRef, Stage1CpuProgram, Stage1KernelPlan,
+    Stage1OpeningBatchPlan, Stage1OpeningClaimPlan, Stage1Params, Stage1SumcheckBatchPlan,
+    Stage1SumcheckClaimPlan, Stage1SumcheckDriverPlan, Stage1SumcheckEvalPlan, Stage2CpuProgram,
+    Stage3CpuProgram, TranscriptStep,
 };
 pub use ir::{
     BoltModule, Compute, Concrete, Cpu, Diagnostic, Party, Phase, Protocol, Role, TextMlir,

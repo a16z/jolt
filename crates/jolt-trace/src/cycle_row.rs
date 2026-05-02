@@ -74,5 +74,4 @@ pub trait CycleRow: Copy {
     ///
     /// This is the value of V_LOOKUP_OUTPUT in the R1CS witness.
     fn lookup_output(&self) -> u64;
-
 }

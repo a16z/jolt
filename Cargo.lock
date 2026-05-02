@@ -2946,9 +2946,11 @@ dependencies = [
  "jolt-kernels",
  "jolt-openings",
  "jolt-poly",
+ "jolt-prover",
  "jolt-r1cs",
  "jolt-trace",
  "jolt-transcript",
+ "jolt-verifier",
  "jolt-witness",
  "num-traits",
  "postcard",
@@ -3232,6 +3234,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-prover"
+version = "0.0.0"
+dependencies = [
+ "jolt-dory",
+ "jolt-field",
+ "jolt-kernels",
+ "jolt-transcript",
+ "jolt-verifier",
+ "jolt-witness",
+]
+
+[[package]]
 name = "jolt-r1cs"
 version = "0.1.0"
 dependencies = [
@@ -3322,6 +3336,17 @@ dependencies = [
  "light-poseidon",
  "num-traits",
  "sha3 0.11.0",
+]
+
+[[package]]
+name = "jolt-verifier"
+version = "0.0.0"
+dependencies = [
+ "jolt-dory",
+ "jolt-field",
+ "jolt-poly",
+ "jolt-sumcheck",
+ "jolt-transcript",
 ]
 
 [[package]]
