@@ -4,7 +4,6 @@ use melior::ir::block::BlockLike;
 use melior::ir::operation::{OperationLike, OperationResult};
 use melior::ir::{OperationRef, Value};
 
-use crate::ir::string_attribute_value;
 use crate::ir::{BoltModule, Compute, Cpu, Party, Protocol, Role};
 use crate::mlir::{verify_module, MeliorContext, MlirError};
 use crate::schema::{
@@ -15,6 +14,10 @@ use crate::schema::{
 use super::super::oracles::{self, ADVICE_FAMILY_SYMBOL, MAIN_WITNESS_FAMILY_SYMBOL, PCS_SYMBOL};
 use super::super::params::JoltProtocolParams;
 use super::super::validate::{verify_jolt_party_schema, verify_jolt_protocol_schema};
+use super::lowering::{
+    copy_attrs, field_lowering_attrs as compute_field_attrs, string_attr,
+    transcript_squeeze_cpu_result_types,
+};
 
 pub fn build_commitment_protocol<'c>(
     context: &'c MeliorContext,
@@ -603,13 +606,14 @@ pub fn lower_compute_to_cpu<'c>(
                 let operands = lowered_operands(op, &value_map)?;
                 let symbol = string_attr(op, "sym_name")?;
                 let attrs = copy_attrs(op, &["label", "kind", "count"])?;
+                let result_types = transcript_squeeze_cpu_result_types(op)?;
                 let operation = context.append_typed_op_with_owned_attrs(
                     &cpu,
                     "cpu.transcript_squeeze",
                     Some(&symbol),
                     &attrs,
                     &operands,
-                    &["!cpu.transcript_state", "!cpu.challenge"],
+                    &result_types,
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
                 insert_result_mapping(&mut value_map, op, operation, 1, 1)?;
@@ -667,12 +671,12 @@ pub fn lower_compute_to_cpu<'c>(
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
             }
-            "compute.field_constant" => {
+            "compute.field_const" => {
                 let symbol = string_attr(op, "sym_name")?;
                 let attrs = copy_attrs(op, &["field", "value"])?;
                 let operation = context.append_typed_op_with_owned_attrs(
                     &cpu,
-                    "cpu.field_constant",
+                    "cpu.field_const",
                     Some(&symbol),
                     &attrs,
                     &[],
@@ -680,27 +684,31 @@ pub fn lower_compute_to_cpu<'c>(
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
             }
-            "compute.challenge_extract" => {
-                let operands = lowered_operands(op, &value_map)?;
+            "compute.field_zero" | "compute.field_one" => {
                 let symbol = string_attr(op, "sym_name")?;
-                let attrs = copy_attrs(op, &["source", "index"])?;
+                let attrs = copy_attrs(op, &["field"])?;
                 let operation = context.append_typed_op_with_owned_attrs(
                     &cpu,
-                    "cpu.challenge_extract",
+                    &operation_name(op).replace("compute.", "cpu."),
                     Some(&symbol),
                     &attrs,
-                    &operands,
+                    &[],
                     &["!cpu.field_value"],
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
             }
-            "compute.field_expr" => {
+            "compute.field_add"
+            | "compute.field_sub"
+            | "compute.field_mul"
+            | "compute.field_neg"
+            | "compute.field_pow"
+            | "compute.poly_lagrange_basis_eval" => {
                 let operands = lowered_operands(op, &value_map)?;
                 let symbol = string_attr(op, "sym_name")?;
-                let attrs = copy_attrs(op, &["kind", "formula", "operands"])?;
+                let attrs = compute_field_attrs(op)?;
                 let operation = context.append_typed_op_with_owned_attrs(
                     &cpu,
-                    "cpu.field_expr",
+                    &operation_name(op).replace("compute.", "cpu."),
                     Some(&symbol),
                     &attrs,
                     &operands,
@@ -898,6 +906,19 @@ pub fn lower_compute_to_cpu<'c>(
                     &["!cpu.opening_claim_type"],
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "compute.opening_claim_equal" => {
+                let operands = lowered_operands(op, &value_map)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["mode"])?;
+                let _operation = context.append_typed_op_with_owned_attrs(
+                    &cpu,
+                    "cpu.opening_claim_equal",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &[],
+                )?;
             }
             "compute.opening_batch" => {
                 let operands = lowered_operands(op, &value_map)?;
@@ -1432,34 +1453,6 @@ fn optional_advice_source(oracle: &str) -> Result<String, MlirError> {
             "unsupported optional advice oracle @{oracle}"
         ))),
     }
-}
-
-fn copy_attrs(
-    operation: OperationRef<'_, '_>,
-    attrs: &[&str],
-) -> Result<Vec<(String, String)>, MlirError> {
-    attrs
-        .iter()
-        .filter_map(|attr| {
-            operation
-                .attribute(attr)
-                .ok()
-                .map(|value| Ok(((*attr).to_owned(), value.to_string())))
-        })
-        .collect()
-}
-
-fn string_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<String, MlirError> {
-    operation
-        .attribute(attr)
-        .ok()
-        .and_then(string_attribute_value)
-        .ok_or_else(|| {
-            schema_error(format!(
-                "{} attr `{attr}` is not a string",
-                operation_name(operation)
-            ))
-        })
 }
 
 fn bool_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<bool, MlirError> {

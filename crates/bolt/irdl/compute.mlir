@@ -3,7 +3,6 @@ irdl.dialect @compute {
   irdl.type @transcript_state
   irdl.type @oracle_buffer
   irdl.type @oracle_family
-  irdl.type @challenge
   irdl.type @field_value
   irdl.type @point
   irdl.type @sumcheck_claim_type
@@ -271,7 +270,7 @@ irdl.dialect @compute {
   }
   irdl.operation @transcript_squeeze {
     %state = irdl.parametric @compute::@transcript_state<>
-    %challenge = irdl.parametric @compute::@challenge<>
+    %challenge = irdl.any
     %sym = irdl.any
     %label = irdl.any
     %kind = irdl.any
@@ -337,7 +336,7 @@ irdl.dialect @compute {
     irdl.operands(inputs: variadic %input)
     irdl.results(output: %output)
   }
-  irdl.operation @field_constant {
+  irdl.operation @field_const {
     %value_type = irdl.parametric @compute::@field_value<>
     %sym = irdl.any
     %field = irdl.any
@@ -345,29 +344,69 @@ irdl.dialect @compute {
     irdl.attributes {"sym_name" = %sym, "field" = %field, "value" = %value}
     irdl.results(value: %value_type)
   }
-  irdl.operation @challenge_extract {
-    %challenge = irdl.parametric @compute::@challenge<>
+  irdl.operation @field_zero {
     %value_type = irdl.parametric @compute::@field_value<>
     %sym = irdl.any
-    %source = irdl.any
-    %index = irdl.any
-    irdl.attributes {"sym_name" = %sym, "source" = %source, "index" = %index}
-    irdl.operands(challenge: %challenge)
+    %field = irdl.any
+    irdl.attributes {"sym_name" = %sym, "field" = %field}
     irdl.results(value: %value_type)
   }
-  irdl.operation @field_expr {
+  irdl.operation @field_one {
     %value_type = irdl.parametric @compute::@field_value<>
     %sym = irdl.any
-    %kind = irdl.any
-    %formula = irdl.any
-    %operands = irdl.any
+    %field = irdl.any
+    irdl.attributes {"sym_name" = %sym, "field" = %field}
+    irdl.results(value: %value_type)
+  }
+  irdl.operation @field_add {
+    %value_type = irdl.parametric @compute::@field_value<>
+    %sym = irdl.any
+    irdl.attributes {"sym_name" = %sym}
+    irdl.operands(lhs: %value_type, rhs: %value_type)
+    irdl.results(value: %value_type)
+  }
+  irdl.operation @field_sub {
+    %value_type = irdl.parametric @compute::@field_value<>
+    %sym = irdl.any
+    irdl.attributes {"sym_name" = %sym}
+    irdl.operands(lhs: %value_type, rhs: %value_type)
+    irdl.results(value: %value_type)
+  }
+  irdl.operation @field_neg {
+    %value_type = irdl.parametric @compute::@field_value<>
+    %sym = irdl.any
+    irdl.attributes {"sym_name" = %sym}
+    irdl.operands(input: %value_type)
+    irdl.results(value: %value_type)
+  }
+  irdl.operation @field_mul {
+    %value_type = irdl.parametric @compute::@field_value<>
+    %sym = irdl.any
+    irdl.attributes {"sym_name" = %sym}
+    irdl.operands(lhs: %value_type, rhs: %value_type)
+    irdl.results(value: %value_type)
+  }
+  irdl.operation @field_pow {
+    %value_type = irdl.parametric @compute::@field_value<>
+    %sym = irdl.any
+    %exponent = irdl.any
+    irdl.attributes {"sym_name" = %sym, "exponent" = %exponent}
+    irdl.operands(input: %value_type)
+    irdl.results(value: %value_type)
+  }
+  irdl.operation @poly_lagrange_basis_eval {
+    %value_type = irdl.parametric @compute::@field_value<>
+    %sym = irdl.any
+    %domain_start = irdl.any
+    %domain_size = irdl.any
+    %index = irdl.any
     irdl.attributes {
       "sym_name" = %sym,
-      "kind" = %kind,
-      "formula" = %formula,
-      "operands" = %operands
+      "domain_start" = %domain_start,
+      "domain_size" = %domain_size,
+      "index" = %index
     }
-    irdl.operands(inputs: variadic %value_type)
+    irdl.operands(point: %value_type)
     irdl.results(value: %value_type)
   }
   irdl.operation @sumcheck_claim {
@@ -624,6 +663,16 @@ irdl.dialect @compute {
     }
     irdl.operands(point: %point, eval: %eval)
     irdl.results(claim: %claim)
+  }
+  irdl.operation @opening_claim_equal {
+    %claim = irdl.parametric @compute::@opening_claim_type<>
+    %sym = irdl.any
+    %mode = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "mode" = %mode
+    }
+    irdl.operands(left: %claim, right: %claim)
   }
   irdl.operation @opening_batch {
     %claim = irdl.parametric @compute::@opening_claim_type<>

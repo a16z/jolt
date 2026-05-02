@@ -1,11 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Write as _;
 
 use melior::ir::block::BlockLike;
 use melior::ir::operation::{OperationLike, OperationResult};
 use melior::ir::{Attribute, OperationRef};
 
-use crate::emit::rust::{EmitError, RustSourceFile};
+use crate::emit::rust::{push_format, EmitError, RustSourceFile};
 use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
 use crate::schema::verify_cpu_schema;
 
@@ -149,7 +148,7 @@ pub fn emit_stage1_rust(module: &BoltModule<'_, Cpu>) -> Result<RustSourceFile, 
 
     Ok(RustSourceFile {
         filename: program.filename().to_owned(),
-        source: program.emit_source(),
+        source: program.emit_source()?,
     })
 }
 
@@ -655,37 +654,37 @@ impl Stage1CpuProgram {
         Ok(())
     }
 
-    fn emit_source(&self) -> String {
+    fn emit_source(&self) -> Result<String, EmitError> {
         match self.role {
             Role::Prover => self.emit_prover_source(),
             Role::Verifier => self.emit_verifier_source(),
         }
     }
 
-    fn emit_prover_source(&self) -> String {
+    fn emit_prover_source(&self) -> Result<String, EmitError> {
         let mut source = String::new();
         source.push_str("#![allow(dead_code)]\n\n");
         source.push_str(Self::emit_prover_imports());
         source.push_str("\n\n");
         source.push_str(Self::emit_prover_types());
         source.push('\n');
-        source.push_str(&self.emit_prover_constants());
+        source.push_str(&self.emit_prover_constants()?);
         source.push('\n');
         source.push_str(Self::emit_prover_entrypoint());
-        source
+        Ok(source)
     }
 
-    fn emit_verifier_source(&self) -> String {
+    fn emit_verifier_source(&self) -> Result<String, EmitError> {
         let mut source = String::new();
         source.push_str("#![allow(dead_code)]\n\n");
         source.push_str(Self::emit_verifier_imports());
         source.push_str("\n\n");
         source.push_str(Self::emit_verifier_types());
         source.push('\n');
-        source.push_str(&self.emit_verifier_constants());
+        source.push_str(&self.emit_verifier_constants()?);
         source.push('\n');
         source.push_str(Self::emit_verifier_entrypoint());
-        source
+        Ok(source)
     }
 
     fn filename(&self) -> &'static str {
@@ -705,26 +704,27 @@ impl Stage1CpuProgram {
         "pub type DefaultStage1Transcript = Blake2bTranscript<Fr>;\n"
     }
 
-    fn emit_prover_constants(&self) -> String {
+    fn emit_prover_constants(&self) -> Result<String, EmitError> {
         let mut source = String::new();
-        writeln!(
-            source,
-            "pub const STAGE1_PARAMS: Stage1Params = Stage1Params {{\n\
+        push_format(
+            &mut source,
+            format_args!(
+                "pub const STAGE1_PARAMS: Stage1Params = Stage1Params {{\n\
              \x20   field: {},\n\
              \x20   pcs: {},\n\
              \x20   transcript: {},\n\
              }};\n",
-            rust_str(&self.params.field),
-            rust_str(&self.params.pcs),
-            rust_str(&self.params.transcript)
-        )
-        .expect("write generated Stage1 params");
+                rust_str(&self.params.field),
+                rust_str(&self.params.pcs),
+                rust_str(&self.params.transcript)
+            ),
+        );
 
         source.push_str(&self.emit_transcript_squeeze_constants());
         source.push_str(&self.emit_kernel_constants());
-        source.push_str(&self.emit_sumcheck_claim_constants());
+        source.push_str(&self.emit_sumcheck_claim_constants()?);
         source.push_str(&self.emit_sumcheck_batch_constants());
-        source.push_str(&self.emit_sumcheck_driver_constants());
+        source.push_str(&self.emit_sumcheck_driver_constants()?);
         source.push_str(&self.emit_sumcheck_instance_result_constants());
         source.push_str(&self.emit_sumcheck_eval_constants());
         source.push_str(&self.emit_opening_claim_constants());
@@ -743,7 +743,7 @@ impl Stage1CpuProgram {
              \x20   opening_batches: STAGE1_OPENING_BATCHES,\n\
              };\n",
         );
-        source
+        Ok(source)
     }
 
     fn emit_sumcheck_instance_result_constants(&self) -> String {
@@ -811,7 +811,7 @@ impl Stage1CpuProgram {
         format!("pub const STAGE1_KERNELS: &[Stage1KernelPlan] = &[\n{kernels}\n];\n\n")
     }
 
-    fn emit_sumcheck_claim_constants(&self) -> String {
+    fn emit_sumcheck_claim_constants(&self) -> Result<String, EmitError> {
         let mut source = String::new();
         for (index, claim) in self.claims.iter().enumerate() {
             source.push_str(&emit_str_array(
@@ -819,16 +819,13 @@ impl Stage1CpuProgram {
                 &claim.input_openings,
             ));
         }
-        let claims = self
-            .claims
-            .iter()
-            .enumerate()
-            .map(|(index, claim)| {
-                let kernel = claim
-                    .kernel
-                    .as_deref()
-                    .expect("prover sumcheck claim kernel verified");
-                format!(
+        let mut claims = Vec::new();
+        for (index, claim) in self.claims.iter().enumerate() {
+            let kernel = claim
+                .kernel
+                .as_deref()
+                .ok_or_else(|| missing_role_binding("prover claim kernel", &claim.symbol))?;
+            claims.push(format!(
                     "    Stage1SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, kernel: {}, claim_value: {}, input_openings: STAGE1_SUMCHECK_CLAIM_{index}_INPUT_OPENINGS }},",
                     rust_str(&claim.symbol),
                     rust_str(&claim.stage),
@@ -838,16 +835,16 @@ impl Stage1CpuProgram {
                     rust_str(&claim.claim),
                     rust_str(kernel),
                     rust_str(&claim.claim_value)
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        writeln!(
-            source,
-            "pub const STAGE1_SUMCHECK_CLAIMS: &[Stage1SumcheckClaimPlan] = &[\n{claims}\n];\n"
-        )
-        .expect("write generated Stage1 sumcheck claims");
-        source
+                ));
+        }
+        let claims = claims.join("\n");
+        push_format(
+            &mut source,
+            format_args!(
+                "pub const STAGE1_SUMCHECK_CLAIMS: &[Stage1SumcheckClaimPlan] = &[\n{claims}\n];\n"
+            ),
+        );
+        Ok(source)
     }
 
     fn emit_sumcheck_batch_constants(&self) -> String {
@@ -884,15 +881,16 @@ impl Stage1CpuProgram {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        writeln!(
-            source,
-            "pub const STAGE1_SUMCHECK_BATCHES: &[Stage1SumcheckBatchPlan] = &[\n{batches}\n];\n"
-        )
-        .expect("write generated Stage1 sumcheck batches");
+        push_format(
+            &mut source,
+            format_args!(
+                "pub const STAGE1_SUMCHECK_BATCHES: &[Stage1SumcheckBatchPlan] = &[\n{batches}\n];\n"
+            ),
+        );
         source
     }
 
-    fn emit_sumcheck_driver_constants(&self) -> String {
+    fn emit_sumcheck_driver_constants(&self) -> Result<String, EmitError> {
         let mut source = String::new();
         for (index, driver) in self.drivers.iter().enumerate() {
             source.push_str(&emit_usize_array(
@@ -900,16 +898,13 @@ impl Stage1CpuProgram {
                 &driver.round_schedule,
             ));
         }
-        let drivers = self
-            .drivers
-            .iter()
-            .enumerate()
-            .map(|(index, driver)| {
-                let kernel = driver
-                    .kernel
-                    .as_deref()
-                    .expect("prover sumcheck driver kernel verified");
-                format!(
+        let mut drivers = Vec::new();
+        for (index, driver) in self.drivers.iter().enumerate() {
+            let kernel = driver
+                .kernel
+                .as_deref()
+                .ok_or_else(|| missing_role_binding("prover driver kernel", &driver.symbol))?;
+            drivers.push(format!(
                     "    Stage1SumcheckDriverPlan {{ symbol: {}, stage: {}, proof_slot: {}, kernel: {}, batch: {}, policy: {}, round_schedule: STAGE1_SUMCHECK_DRIVER_{index}_ROUND_SCHEDULE, claim_label: {}, round_label: {}, num_rounds: {}, degree: {} }},",
                     rust_str(&driver.symbol),
                     rust_str(&driver.stage),
@@ -921,16 +916,16 @@ impl Stage1CpuProgram {
                     rust_str(&driver.round_label),
                     driver.num_rounds,
                     driver.degree
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        writeln!(
-            source,
-            "pub const STAGE1_SUMCHECK_DRIVERS: &[Stage1SumcheckDriverPlan] = &[\n{drivers}\n];\n"
-        )
-        .expect("write generated Stage1 sumcheck drivers");
-        source
+                ));
+        }
+        let drivers = drivers.join("\n");
+        push_format(
+            &mut source,
+            format_args!(
+                "pub const STAGE1_SUMCHECK_DRIVERS: &[Stage1SumcheckDriverPlan] = &[\n{drivers}\n];\n"
+            ),
+        );
+        Ok(source)
     }
 
     fn emit_sumcheck_eval_constants(&self) -> String {
@@ -1001,11 +996,12 @@ impl Stage1CpuProgram {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        writeln!(
-            source,
-            "pub const STAGE1_OPENING_BATCHES: &[Stage1OpeningBatchPlan] = &[\n{batches}\n];\n"
-        )
-        .expect("write generated Stage1 opening batches");
+        push_format(
+            &mut source,
+            format_args!(
+                "pub const STAGE1_OPENING_BATCHES: &[Stage1OpeningBatchPlan] = &[\n{batches}\n];\n"
+            ),
+        );
         source
     }
 
@@ -1190,25 +1186,26 @@ pub enum VerifyStage1Error {
 "
     }
 
-    fn emit_verifier_constants(&self) -> String {
+    fn emit_verifier_constants(&self) -> Result<String, EmitError> {
         let mut source = String::new();
-        writeln!(
-            source,
-            "pub const STAGE1_PARAMS: Stage1Params = Stage1Params {{\n\
+        push_format(
+            &mut source,
+            format_args!(
+                "pub const STAGE1_PARAMS: Stage1Params = Stage1Params {{\n\
              \x20   field: {},\n\
              \x20   pcs: {},\n\
              \x20   transcript: {},\n\
              }};\n",
-            rust_str(&self.params.field),
-            rust_str(&self.params.pcs),
-            rust_str(&self.params.transcript)
-        )
-        .expect("write generated Stage1 verifier params");
+                rust_str(&self.params.field),
+                rust_str(&self.params.pcs),
+                rust_str(&self.params.transcript)
+            ),
+        );
 
         source.push_str(&self.emit_transcript_squeeze_constants());
-        source.push_str(&self.emit_verifier_sumcheck_claim_constants());
+        source.push_str(&self.emit_verifier_sumcheck_claim_constants()?);
         source.push_str(&self.emit_sumcheck_batch_constants());
-        source.push_str(&self.emit_verifier_sumcheck_driver_constants());
+        source.push_str(&self.emit_verifier_sumcheck_driver_constants()?);
         source.push_str(&self.emit_sumcheck_instance_result_constants());
         source.push_str(&self.emit_sumcheck_eval_constants());
         source.push_str(&self.emit_opening_claim_constants());
@@ -1226,10 +1223,10 @@ pub enum VerifyStage1Error {
              \x20   opening_batches: STAGE1_OPENING_BATCHES,\n\
              };\n",
         );
-        source
+        Ok(source)
     }
 
-    fn emit_verifier_sumcheck_claim_constants(&self) -> String {
+    fn emit_verifier_sumcheck_claim_constants(&self) -> Result<String, EmitError> {
         let mut source = String::new();
         for (index, claim) in self.claims.iter().enumerate() {
             source.push_str(&emit_str_array(
@@ -1237,16 +1234,13 @@ pub enum VerifyStage1Error {
                 &claim.input_openings,
             ));
         }
-        let claims = self
-            .claims
-            .iter()
-            .enumerate()
-            .map(|(index, claim)| {
-                let relation = claim
-                    .relation
-                    .as_deref()
-                    .expect("verifier sumcheck claim relation verified");
-                format!(
+        let mut claims = Vec::new();
+        for (index, claim) in self.claims.iter().enumerate() {
+            let relation = claim
+                .relation
+                .as_deref()
+                .ok_or_else(|| missing_role_binding("verifier claim relation", &claim.symbol))?;
+            claims.push(format!(
                     "    Stage1SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, relation: {}, claim_value: {}, input_openings: STAGE1_SUMCHECK_CLAIM_{index}_INPUT_OPENINGS }},",
                     rust_str(&claim.symbol),
                     rust_str(&claim.stage),
@@ -1256,19 +1250,19 @@ pub enum VerifyStage1Error {
                     rust_str(&claim.claim),
                     rust_str(relation),
                     rust_str(&claim.claim_value)
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        writeln!(
-            source,
-            "pub const STAGE1_SUMCHECK_CLAIMS: &[Stage1SumcheckClaimPlan] = &[\n{claims}\n];\n"
-        )
-        .expect("write generated Stage1 verifier sumcheck claims");
-        source
+                ));
+        }
+        let claims = claims.join("\n");
+        push_format(
+            &mut source,
+            format_args!(
+                "pub const STAGE1_SUMCHECK_CLAIMS: &[Stage1SumcheckClaimPlan] = &[\n{claims}\n];\n"
+            ),
+        );
+        Ok(source)
     }
 
-    fn emit_verifier_sumcheck_driver_constants(&self) -> String {
+    fn emit_verifier_sumcheck_driver_constants(&self) -> Result<String, EmitError> {
         let mut source = String::new();
         for (index, driver) in self.drivers.iter().enumerate() {
             source.push_str(&emit_usize_array(
@@ -1276,16 +1270,13 @@ pub enum VerifyStage1Error {
                 &driver.round_schedule,
             ));
         }
-        let drivers = self
-            .drivers
-            .iter()
-            .enumerate()
-            .map(|(index, driver)| {
-                let relation = driver
-                    .relation
-                    .as_deref()
-                    .expect("verifier sumcheck driver relation verified");
-                format!(
+        let mut drivers = Vec::new();
+        for (index, driver) in self.drivers.iter().enumerate() {
+            let relation = driver
+                .relation
+                .as_deref()
+                .ok_or_else(|| missing_role_binding("verifier driver relation", &driver.symbol))?;
+            drivers.push(format!(
                     "    Stage1SumcheckDriverPlan {{ symbol: {}, stage: {}, proof_slot: {}, relation: {}, batch: {}, policy: {}, round_schedule: STAGE1_SUMCHECK_DRIVER_{index}_ROUND_SCHEDULE, claim_label: {}, round_label: {}, num_rounds: {}, degree: {} }},",
                     rust_str(&driver.symbol),
                     rust_str(&driver.stage),
@@ -1297,16 +1288,16 @@ pub enum VerifyStage1Error {
                     rust_str(&driver.round_label),
                     driver.num_rounds,
                     driver.degree
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        writeln!(
-            source,
-            "pub const STAGE1_SUMCHECK_DRIVERS: &[Stage1SumcheckDriverPlan] = &[\n{drivers}\n];\n"
-        )
-        .expect("write generated Stage1 verifier sumcheck drivers");
-        source
+                ));
+        }
+        let drivers = drivers.join("\n");
+        push_format(
+            &mut source,
+            format_args!(
+                "pub const STAGE1_SUMCHECK_DRIVERS: &[Stage1SumcheckDriverPlan] = &[\n{drivers}\n];\n"
+            ),
+        );
+        Ok(source)
     }
 
     fn emit_prover_entrypoint() -> &'static str {
@@ -1580,6 +1571,10 @@ fn verify_count(kind: &str, symbol: &str, expected: usize, actual: usize) -> Res
             "{kind} @{symbol} count mismatch: expected {expected}, got {actual}"
         )))
     }
+}
+
+fn missing_role_binding(kind: &str, symbol: &str) -> EmitError {
+    EmitError::new(format!("missing {kind} for `{symbol}`"))
 }
 
 fn symbols<'a>(values: impl Iterator<Item = &'a String>) -> BTreeSet<String> {

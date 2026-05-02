@@ -12,4 +12,8 @@ impl<F: Field> AppendToTranscript for F {
         buf.reverse();
         transcript.append_bytes(&buf);
     }
+
+    fn serialized_len(&self) -> u64 {
+        32
+    }
 }

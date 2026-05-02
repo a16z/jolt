@@ -2,8 +2,8 @@ module @jolt.stage1_outer attributes {bolt.phase = "cpu", bolt.role = "verifier"
   "cpu.params"() {field = @bn254_fr, pcs = @dory, sym_name = "jolt.compute_params", transcript = @blake2b_transcript} : () -> ()
   "cpu.function"() {source = @jolt.stage1_outer, sym_name = "jolt.stage1_outer"} : () -> ()
   %0 = "cpu.transcript_init"() {scheme = @blake2b_transcript, sym_name = "fs0"} : () -> !cpu.transcript_state
-  %1:2 = "cpu.transcript_squeeze"(%0) {count = 18 : i64, kind = "challenge_vector", label = "outer_tau", sym_name = "stage1.tau"} : (!cpu.transcript_state) -> (!cpu.transcript_state, !cpu.challenge)
-  %2 = "cpu.field_constant"() {field = @bn254_fr, sym_name = "stage1.zero", value = 0 : i64} : () -> !cpu.field_value
+  %1:2 = "cpu.transcript_squeeze"(%0) {count = 18 : i64, kind = "challenge_vector", label = "outer_tau", sym_name = "stage1.tau"} : (!cpu.transcript_state) -> (!cpu.transcript_state, !cpu.point)
+  %2 = "cpu.field_zero"() {field = @bn254_fr, sym_name = "stage1.zero"} : () -> !cpu.field_value
   %3 = "cpu.sumcheck_verify_claim"(%2) {claim = @stage1.zero, degree = 27 : i64, domain = @jolt.stage1_uniskip_domain, num_rounds = 1 : i64, relation = @jolt.stage1.outer.uniskip, stage = @stage1, sym_name = "stage1.uniskip.input"} : (!cpu.field_value) -> !cpu.sumcheck_claim_type
   %4 = "cpu.sumcheck_batch"(%3) {claim_label = "uniskip_claim", count = 1 : i64, ordered_claims = [@stage1.uniskip.input], policy = "single_instance", proof_slot = @stage1.uni_skip_first_round, round_label = "uniskip_poly", round_schedule = [1], stage = @stage1, sym_name = "stage1.uniskip.batch"} : (!cpu.sumcheck_claim_type) -> !cpu.sumcheck_batch_type
   %5:4 = "cpu.sumcheck_verify"(%1#0, %4) {claim_label = "uniskip_claim", degree = 27 : i64, num_rounds = 1 : i64, policy = "univariate_skip", proof_slot = @stage1.uni_skip_first_round, relation = @jolt.stage1.outer.uniskip, round_label = "uniskip_poly", round_schedule = [1], stage = @stage1, sym_name = "stage1.uniskip.sumcheck"} : (!cpu.transcript_state, !cpu.sumcheck_batch_type) -> (!cpu.transcript_state, !cpu.point, !cpu.sumcheck_result_type, !cpu.sumcheck_proof_type)

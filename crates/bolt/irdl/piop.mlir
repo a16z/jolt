@@ -237,6 +237,16 @@ irdl.dialect @piop {
     irdl.operands(point: %point, eval: %eval)
     irdl.results(claim: %claim)
   }
+  irdl.operation @opening_claim_equal {
+    %claim = irdl.parametric @piop::@opening_claim_type<>
+    %sym = irdl.any
+    %mode = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "mode" = %mode
+    }
+    irdl.operands(left: %claim, right: %claim)
+  }
   irdl.operation @opening_batch {
     %claim = irdl.parametric @piop::@opening_claim_type<>
     %batch = irdl.parametric @piop::@opening_batch_type<>

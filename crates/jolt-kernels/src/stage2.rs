@@ -168,14 +168,6 @@ pub struct Stage2FieldConstantPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2ChallengeExtractPlan {
-    pub symbol: &'static str,
-    pub source: &'static str,
-    pub index: usize,
-    pub challenge_source: &'static str,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Stage2FieldExprPlan {
     pub symbol: &'static str,
     pub kind: &'static str,
@@ -301,7 +293,6 @@ pub struct Stage2CpuProgramPlan {
     pub transcript_squeezes: &'static [Stage2TranscriptSqueezePlan],
     pub opening_inputs: &'static [Stage2OpeningInputPlan],
     pub field_constants: &'static [Stage2FieldConstantPlan],
-    pub challenge_extracts: &'static [Stage2ChallengeExtractPlan],
     pub field_exprs: &'static [Stage2FieldExprPlan],
     pub kernels: &'static [Stage2KernelPlan],
     pub claims: &'static [Stage2SumcheckClaimPlan],
@@ -580,23 +571,19 @@ impl<F: Field> Stage2ValueStore<F> {
 
     pub fn observe_challenge_vector(
         &mut self,
-        program: &'static Stage2CpuProgramPlan,
+        _program: &'static Stage2CpuProgramPlan,
         plan: &'static Stage2TranscriptSqueezePlan,
         values: &[F],
     ) -> Result<(), Stage2KernelError> {
-        for extract in program
-            .challenge_extracts
-            .iter()
-            .filter(|extract| extract.challenge_source == plan.symbol)
-        {
-            let value = values.get(extract.index).copied().ok_or(
-                Stage2KernelError::InvalidInputLength {
-                    input: extract.symbol,
-                    expected: extract.index + 1,
+        if matches!(plan.kind, "challenge_scalar" | "scalar") {
+            if values.len() != 1 {
+                return Err(Stage2KernelError::InvalidInputLength {
+                    input: plan.symbol,
+                    expected: 1,
                     actual: values.len(),
-                },
-            )?;
-            self.insert_scalar(extract.symbol, value);
+                });
+            }
+            self.insert_scalar(plan.symbol, values[0]);
         }
         Ok(())
     }
@@ -772,6 +759,9 @@ pub fn evaluate_stage2_field_expr<F: Field>(
     expr: &Stage2FieldExprPlan,
     operands: &[F],
 ) -> Result<F, Stage2KernelError> {
+    if let Some(value) = evaluate_stage2_field_op(expr, operands)? {
+        return Ok(value);
+    }
     match expr.formula {
         "opening_eval" => single_operand(expr.symbol, operands),
         "jolt_stage2_product_virtual_uniskip_input" => {
@@ -804,6 +794,105 @@ pub fn evaluate_stage2_field_expr<F: Field>(
             formula,
         }),
     }
+}
+
+fn evaluate_stage2_field_op<F: Field>(
+    expr: &Stage2FieldExprPlan,
+    operands: &[F],
+) -> Result<Option<F>, Stage2KernelError> {
+    match expr.formula {
+        "field.add" => {
+            require_operand_count(expr.symbol, 2, operands.len())?;
+            Ok(Some(operands[0] + operands[1]))
+        }
+        "field.sub" => {
+            require_operand_count(expr.symbol, 2, operands.len())?;
+            Ok(Some(operands[0] - operands[1]))
+        }
+        "field.mul" => {
+            require_operand_count(expr.symbol, 2, operands.len())?;
+            Ok(Some(operands[0] * operands[1]))
+        }
+        "field.neg" => {
+            require_operand_count(expr.symbol, 1, operands.len())?;
+            Ok(Some(-operands[0]))
+        }
+        _ => {
+            if let Some(exponent) = expr.formula.strip_prefix("field.pow:") {
+                require_operand_count(expr.symbol, 1, operands.len())?;
+                let exponent = exponent.parse::<usize>().map_err(|_| {
+                    Stage2KernelError::UnsupportedFieldExpr {
+                        symbol: expr.symbol,
+                        formula: expr.formula,
+                    }
+                })?;
+                return Ok(Some(pow_field(operands[0], exponent)));
+            }
+            if let Some(spec) = expr.formula.strip_prefix("poly.lagrange_basis_eval:") {
+                require_operand_count(expr.symbol, 1, operands.len())?;
+                let (domain_start, domain_size, index) = parse_lagrange_basis_spec(expr, spec)?;
+                let weights = lagrange_evals(domain_start, domain_size, operands[0]);
+                let value =
+                    weights
+                        .get(index)
+                        .copied()
+                        .ok_or(Stage2KernelError::InvalidInputLength {
+                            input: expr.symbol,
+                            expected: index + 1,
+                            actual: weights.len(),
+                        })?;
+                return Ok(Some(value));
+            }
+            Ok(None)
+        }
+    }
+}
+
+fn parse_lagrange_basis_spec(
+    expr: &Stage2FieldExprPlan,
+    spec: &str,
+) -> Result<(i64, usize, usize), Stage2KernelError> {
+    let parts = spec.split(':').collect::<Vec<_>>();
+    if parts.len() != 3 {
+        return Err(Stage2KernelError::UnsupportedFieldExpr {
+            symbol: expr.symbol,
+            formula: expr.formula,
+        });
+    }
+    let domain_start =
+        parts[0]
+            .parse::<i64>()
+            .map_err(|_| Stage2KernelError::UnsupportedFieldExpr {
+                symbol: expr.symbol,
+                formula: expr.formula,
+            })?;
+    let domain_size =
+        parts[1]
+            .parse::<usize>()
+            .map_err(|_| Stage2KernelError::UnsupportedFieldExpr {
+                symbol: expr.symbol,
+                formula: expr.formula,
+            })?;
+    let index = parts[2]
+        .parse::<usize>()
+        .map_err(|_| Stage2KernelError::UnsupportedFieldExpr {
+            symbol: expr.symbol,
+            formula: expr.formula,
+        })?;
+    Ok((domain_start, domain_size, index))
+}
+
+fn pow_field<F: Field>(base: F, mut exponent: usize) -> F {
+    let mut result = F::one();
+    let mut power = base;
+    while exponent != 0 {
+        if exponent & 1 == 1 {
+            result *= power;
+        }
+        power = power.square();
+        exponent >>= 1;
+    }
+    result
 }
 
 fn single_operand<F: Field>(symbol: &'static str, operands: &[F]) -> Result<F, Stage2KernelError> {
@@ -1003,19 +1092,20 @@ impl<'a, F: Field> Stage2ProverKernelExecutor<'a, F> {
         store.seed_constants(program)?;
         for challenge in &self.challenge_vectors {
             store.insert_point(challenge.symbol, challenge.values.clone());
-            for extract in program
-                .challenge_extracts
+            if let Some(plan) = program
+                .transcript_squeezes
                 .iter()
-                .filter(|extract| extract.challenge_source == challenge.symbol)
+                .find(|plan| plan.symbol == challenge.symbol)
+                .filter(|plan| matches!(plan.kind, "challenge_scalar" | "scalar"))
             {
-                let value = challenge.values.get(extract.index).copied().ok_or(
-                    Stage2KernelError::InvalidInputLength {
-                        input: extract.symbol,
-                        expected: extract.index + 1,
+                if challenge.values.len() != 1 {
+                    return Err(Stage2KernelError::InvalidInputLength {
+                        input: plan.symbol,
+                        expected: 1,
                         actual: challenge.values.len(),
-                    },
-                )?;
-                store.insert_scalar(extract.symbol, value);
+                    });
+                }
+                store.insert_scalar(plan.symbol, challenge.values[0]);
             }
         }
         for output in &self.completed_sumchecks {
@@ -1118,19 +1208,20 @@ impl<'a, F: Field> Stage2VerifierKernelExecutor<'a, F> {
         store.seed_constants(program)?;
         for challenge in &self.challenge_vectors {
             store.insert_point(challenge.symbol, challenge.values.clone());
-            for extract in program
-                .challenge_extracts
+            if let Some(plan) = program
+                .transcript_squeezes
                 .iter()
-                .filter(|extract| extract.challenge_source == challenge.symbol)
+                .find(|plan| plan.symbol == challenge.symbol)
+                .filter(|plan| matches!(plan.kind, "challenge_scalar" | "scalar"))
             {
-                let value = challenge.values.get(extract.index).copied().ok_or(
-                    Stage2KernelError::InvalidInputLength {
-                        input: extract.symbol,
-                        expected: extract.index + 1,
+                if challenge.values.len() != 1 {
+                    return Err(Stage2KernelError::InvalidInputLength {
+                        input: plan.symbol,
+                        expected: 1,
                         actual: challenge.values.len(),
-                    },
-                )?;
-                store.insert_scalar(extract.symbol, value);
+                    });
+                }
+                store.insert_scalar(plan.symbol, challenge.values[0]);
             }
         }
         for output in &self.completed_sumchecks {
@@ -1418,7 +1509,7 @@ where
     let poly = build_product_uniskip_poly(
         &base_evals,
         extended_evals,
-        store.scalar("stage2.product_virtual.tau_high.scalar")?,
+        store.scalar("stage2.product_virtual.tau_high")?,
     )?;
     if !product_uniskip_sum_matches(&poly, input_claim) {
         return Err(Stage2KernelError::InvalidProof {
@@ -1540,7 +1631,12 @@ where
         .zip(&batching_coeffs)
         .map(|(instance, &coefficient)| instance.previous_claim * coefficient)
         .sum::<F>();
-    let two_inv = F::from_u64(2).inverse().expect("2 is non-zero");
+    let two_inv = F::from_u64(2)
+        .inverse()
+        .ok_or(Stage2KernelError::InvalidProof {
+            driver: context.driver.symbol,
+            reason: "field element 2 is not invertible",
+        })?;
 
     for round in 0..max_rounds {
         let mut individual_polys = Vec::with_capacity(instances.len());
@@ -2337,7 +2433,7 @@ fn product_remainder_state<'a, F: Field>(
             actual: cycles.len(),
         });
     }
-    let tau_high = store.scalar("stage2.product_virtual.tau_high.scalar")?;
+    let tau_high = store.scalar("stage2.product_virtual.tau_high")?;
     let r0 = *store
         .point("stage2.product_virtual.uniskip.sumcheck")?
         .first()
@@ -3381,7 +3477,7 @@ fn expected_product_remainder<F: Field>(
     local_point: &[F],
 ) -> Result<F, Stage2KernelError> {
     let tau_low = store.point("stage2.input.stage1.Product")?;
-    let tau_high = store.scalar("stage2.product_virtual.tau_high.scalar")?;
+    let tau_high = store.scalar("stage2.product_virtual.tau_high")?;
     let r0 = *store
         .point("stage2.product_virtual.uniskip.sumcheck")?
         .first()
@@ -4471,6 +4567,7 @@ fn find_opening_claim<'a>(
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "tests use explicit panic messages")]
 mod tests {
     use super::*;
     use jolt_field::Fr;
@@ -4563,24 +4660,40 @@ mod tests {
         )
         .expect("instruction expression evaluates");
         assert_eq!(instruction, Fr::from_u64(259));
+
+        let add_expr = Stage2FieldExprPlan {
+            symbol: "add_expr",
+            kind: "op",
+            formula: "field.add",
+            operand_names: &[],
+            operands: &[],
+        };
+        let add = evaluate_stage2_field_expr(&add_expr, &[Fr::from_u64(5), Fr::from_u64(8)])
+            .expect("field add evaluates");
+        assert_eq!(add, Fr::from_u64(13));
+
+        let lagrange_expr = Stage2FieldExprPlan {
+            symbol: "lagrange_expr",
+            kind: "op",
+            formula: "poly.lagrange_basis_eval:-1:3:1",
+            operand_names: &[],
+            operands: &[],
+        };
+        let weight = evaluate_stage2_field_expr(&lagrange_expr, &[Fr::from_u64(0)])
+            .expect("lagrange basis evaluates");
+        assert_eq!(weight, Fr::from_u64(1));
     }
 
     #[test]
     fn value_store_resolves_challenges_openings_and_claims() {
         let program = minimal_program(
             vec![Stage2TranscriptSqueezePlan {
-                symbol: "gamma_vec",
+                symbol: "gamma",
                 label: "gamma",
                 kind: "challenge_scalar",
                 count: 1,
             }],
             Vec::new(),
-            vec![Stage2ChallengeExtractPlan {
-                symbol: "gamma",
-                source: "gamma_vec",
-                index: 0,
-                challenge_source: "gamma_vec",
-            }],
             vec![Stage2FieldExprPlan {
                 symbol: "ram_expr",
                 kind: "weighted_sum",
@@ -4629,7 +4742,6 @@ mod tests {
     #[test]
     fn value_store_records_sumcheck_instance_points_and_evals() {
         let program = minimal_program(
-            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -4828,7 +4940,6 @@ mod tests {
     fn minimal_program(
         transcript_squeezes: Vec<Stage2TranscriptSqueezePlan>,
         field_constants: Vec<Stage2FieldConstantPlan>,
-        challenge_extracts: Vec<Stage2ChallengeExtractPlan>,
         field_exprs: Vec<Stage2FieldExprPlan>,
         claims: Vec<Stage2SumcheckClaimPlan>,
         instance_results: Vec<Stage2SumcheckInstanceResultPlan>,
@@ -4844,7 +4955,6 @@ mod tests {
             transcript_squeezes: leak_slice(transcript_squeezes),
             opening_inputs: &[],
             field_constants: leak_slice(field_constants),
-            challenge_extracts: leak_slice(challenge_extracts),
             field_exprs: leak_slice(field_exprs),
             kernels: &[],
             claims: leak_slice(claims),
@@ -4879,24 +4989,18 @@ mod tests {
             }]),
             opening_inputs: &[],
             field_constants: &[],
-            challenge_extracts: leak_slice(vec![Stage2ChallengeExtractPlan {
-                symbol: "stage2.product_virtual.tau_high.scalar",
-                source: "stage2.product_virtual.tau_high",
-                index: 0,
-                challenge_source: "stage2.product_virtual.tau_high",
-            }]),
             field_exprs: leak_slice(vec![Stage2FieldExprPlan {
                 symbol: "stage2.product_virtual.uniskip.claim_expr",
                 kind: "weighted_sum",
                 formula: "jolt_stage2_product_virtual_uniskip_input",
                 operand_names: &[
-                    "stage2.product_virtual.tau_high.scalar",
+                    "stage2.product_virtual.tau_high",
                     "stage2.input.stage1.Product",
                     "stage2.input.stage1.ShouldBranch",
                     "stage2.input.stage1.ShouldJump",
                 ],
                 operands: &[
-                    "stage2.product_virtual.tau_high.scalar",
+                    "stage2.product_virtual.tau_high",
                     "stage2.input.stage1.Product",
                     "stage2.input.stage1.ShouldBranch",
                     "stage2.input.stage1.ShouldJump",

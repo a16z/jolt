@@ -1,5 +1,5 @@
 use std::error::Error;
-use std::fmt::{self, Display, Formatter, Write as _};
+use std::fmt::{self, Display, Formatter};
 
 use melior::ir::block::BlockLike;
 use melior::ir::operation::{OperationLike, OperationResult};
@@ -7,6 +7,8 @@ use melior::ir::{Attribute, OperationRef};
 
 use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu, Role};
 use crate::schema::{verify_cpu_schema, SchemaError};
+
+use super::push_format;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RustSourceFile {
@@ -126,7 +128,7 @@ pub fn emit_commitment_rust(module: &BoltModule<'_, Cpu>) -> Result<RustSourceFi
 
     Ok(RustSourceFile {
         filename: program.filename().to_owned(),
-        source: program.emit_source(),
+        source: program.emit_source()?,
     })
 }
 
@@ -264,17 +266,17 @@ impl CommitmentCpuProgram {
         Ok(())
     }
 
-    fn emit_source(&self) -> String {
+    fn emit_source(&self) -> Result<String, EmitError> {
         let mut source = String::new();
         source.push_str("#![allow(dead_code)]\n\n");
         source.push_str(self.emit_imports());
         source.push_str("\n\n");
-        source.push_str(&self.emit_types());
+        source.push_str(&self.emit_types()?);
         source.push('\n');
         source.push_str(&self.emit_constants());
         source.push('\n');
         source.push_str(self.emit_entrypoint());
-        source
+        Ok(source)
     }
 
     fn filename(&self) -> &'static str {
@@ -302,15 +304,15 @@ impl CommitmentCpuProgram {
         }
     }
 
-    fn emit_types(&self) -> String {
+    fn emit_types(&self) -> Result<String, EmitError> {
         match self.role {
             Role::Prover => {
                 let mut types = Self::emit_prover_types().to_owned();
                 types.push('\n');
-                types.push_str(&self.emit_oracle_store_types());
-                types
+                types.push_str(&self.emit_oracle_store_types()?);
+                Ok(types)
             }
-            Role::Verifier => Self::emit_verifier_types().to_owned(),
+            Role::Verifier => Ok(Self::emit_verifier_types().to_owned()),
         }
     }
 
@@ -401,7 +403,7 @@ pub enum CommitmentPhaseError {
 }"
     }
 
-    fn emit_oracle_store_types(&self) -> String {
+    fn emit_oracle_store_types(&self) -> Result<String, EmitError> {
         let input_type = r"
 pub struct CommitmentOracleInputs<'a> {
     pub rd_inc: &'a [i128],
@@ -413,54 +415,43 @@ pub struct CommitmentOracleInputs<'a> {
     pub trusted_advice: Option<&'a [Fr]>,
 }
 ";
-        let fields = self
-            .oracle_plans
-            .iter()
-            .filter(|plan| !matches!(plan.generation, OracleGeneration::Reference))
-            .map(|plan| {
-                let field = rust_field_name(&plan.oracle);
-                let ty = match &plan.generation {
-                    OracleGeneration::Reference => unreachable!("reference oracles are filtered"),
-                    OracleGeneration::OptionalAdvice { .. } => "Option<Vec<Fr>>",
-                    _ => "Vec<Fr>",
-                };
-                format!("    pub {field}: {ty},")
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        let provider_arms = self
-            .oracle_plans
-            .iter()
-            .filter(|plan| !matches!(plan.generation, OracleGeneration::Reference))
-            .map(|plan| {
-                let field = rust_field_name(&plan.oracle);
-                match &plan.generation {
-                    OracleGeneration::Reference => unreachable!("reference oracles are filtered"),
-                    OracleGeneration::OptionalAdvice { .. } => format!(
+        let mut fields = Vec::new();
+        let mut provider_arms = Vec::new();
+        let mut initializers = Vec::new();
+        for plan in &self.oracle_plans {
+            match &plan.generation {
+                OracleGeneration::Reference => {}
+                OracleGeneration::OptionalAdvice { .. } => {
+                    let field = rust_field_name(&plan.oracle);
+                    fields.push(format!("    pub {field}: Option<Vec<Fr>>,"));
+                    provider_arms.push(format!(
                         "            {} => self.{field}.as_deref().map(Cow::Borrowed),",
                         rust_str(&plan.oracle)
-                    ),
-                    _ => format!(
+                    ));
+                    initializers.push(format!(
+                        "        {field}: {},",
+                        Self::oracle_initializer(plan)?
+                    ));
+                }
+                _ => {
+                    let field = rust_field_name(&plan.oracle);
+                    fields.push(format!("    pub {field}: Vec<Fr>,"));
+                    provider_arms.push(format!(
                         "            {} => Some(Cow::Borrowed(&self.{field})),",
                         rust_str(&plan.oracle)
-                    ),
+                    ));
+                    initializers.push(format!(
+                        "        {field}: {},",
+                        Self::oracle_initializer(plan)?
+                    ));
                 }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        let initializers = self
-            .oracle_plans
-            .iter()
-            .filter(|plan| !matches!(plan.generation, OracleGeneration::Reference))
-            .map(|plan| {
-                let field = rust_field_name(&plan.oracle);
-                let expr = Self::oracle_initializer(plan);
-                format!("        {field}: {expr},")
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+            }
+        }
+        let fields = fields.join("\n");
+        let provider_arms = provider_arms.join("\n");
+        let initializers = initializers.join("\n");
 
-        format!(
+        Ok(format!(
             "{input_type}
 #[derive(Clone, Debug, Default)]
 pub struct CommitmentOracles {{
@@ -484,19 +475,20 @@ pub fn build_commitment_oracles(
     }})
 }}
 "
-        )
+        ))
     }
 
-    fn oracle_initializer(plan: &OraclePlan) -> String {
+    fn oracle_initializer(plan: &OraclePlan) -> Result<String, EmitError> {
         match &plan.generation {
-            OracleGeneration::Reference => {
-                panic!("reference oracle @{} has no prover initializer", plan.oracle)
-            }
-            OracleGeneration::DenseTrace { .. } => format!(
+            OracleGeneration::Reference => Err(EmitError::new(format!(
+                "reference oracle @{} has no prover initializer",
+                plan.oracle
+            ))),
+            OracleGeneration::DenseTrace { .. } => Ok(format!(
                 "dense_i128_column_to_field(inputs.{}, target_len({})?)",
-                rust_input_field(&plan.source),
+                rust_input_field(&plan.source)?,
                 plan.num_vars
-            ),
+            )),
             OracleGeneration::OneHotChunk {
                 trace_num_vars,
                 chunk,
@@ -504,16 +496,16 @@ pub fn build_commitment_oracles(
                 chunk_bits,
                 padding,
                 ..
-            } => format!(
+            } => Ok(format!(
                 "one_hot_chunk_address_major(inputs.{}, {chunk}, {num_chunks}, {chunk_bits}, target_len({trace_num_vars})?, {})",
-                rust_input_field(&plan.source),
-                rust_padding_value(padding)
-            ),
-            OracleGeneration::OptionalAdvice { .. } => format!(
+                rust_input_field(&plan.source)?,
+                rust_padding_value(padding)?
+            )),
+            OracleGeneration::OptionalAdvice { .. } => Ok(format!(
                 "optional_field_oracle(inputs.{}, target_len({})?)",
-                rust_input_field(&plan.source),
+                rust_input_field(&plan.source)?,
                 plan.num_vars
-            ),
+            )),
         }
     }
 
@@ -595,18 +587,19 @@ pub enum CommitmentPhaseError {
 
     fn emit_constants(&self) -> String {
         let mut source = String::new();
-        writeln!(
-            source,
-            "pub const COMMITMENT_PARAMS: CommitmentParams = CommitmentParams {{\n\
+        push_format(
+            &mut source,
+            format_args!(
+                "pub const COMMITMENT_PARAMS: CommitmentParams = CommitmentParams {{\n\
              \x20   field: {},\n\
              \x20   pcs: {},\n\
              \x20   transcript: {},\n\
              }};\n",
-            rust_str(&self.params.field),
-            rust_str(&self.params.pcs),
-            rust_str(&self.params.transcript)
-        )
-        .expect("write generated Rust params");
+                rust_str(&self.params.field),
+                rust_str(&self.params.pcs),
+                rust_str(&self.params.transcript)
+            ),
+        );
 
         let oracle_plans = self
             .oracle_plans
@@ -621,11 +614,10 @@ pub enum CommitmentPhaseError {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        writeln!(
-            source,
-            "pub const ORACLE_PLANS: &[OraclePlan] = &[\n{oracle_plans}\n];\n"
-        )
-        .expect("write generated Rust oracle plans");
+        push_format(
+            &mut source,
+            format_args!("pub const ORACLE_PLANS: &[OraclePlan] = &[\n{oracle_plans}\n];\n"),
+        );
 
         for (index, plan) in self.batch_plans.iter().enumerate() {
             let oracles = plan
@@ -634,11 +626,12 @@ pub enum CommitmentPhaseError {
                 .map(|oracle| format!("    {},", rust_str(oracle)))
                 .collect::<Vec<_>>()
                 .join("\n");
-            writeln!(
-                source,
-                "pub const COMMITMENT_BATCH_{index}_ORACLES: &[&str] = &[\n{oracles}\n];\n"
-            )
-            .expect("write generated Rust oracle constants");
+            push_format(
+                &mut source,
+                format_args!(
+                    "pub const COMMITMENT_BATCH_{index}_ORACLES: &[&str] = &[\n{oracles}\n];\n"
+                ),
+            );
         }
 
         let batch_plans = self
@@ -659,11 +652,12 @@ pub enum CommitmentPhaseError {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        writeln!(
-            source,
-            "pub const COMMITMENT_BATCH_PLANS: &[CommitmentBatchPlan] = &[\n{batch_plans}\n];\n"
-        )
-        .expect("write generated Rust batch plans");
+        push_format(
+            &mut source,
+            format_args!(
+                "pub const COMMITMENT_BATCH_PLANS: &[CommitmentBatchPlan] = &[\n{batch_plans}\n];\n"
+            ),
+        );
 
         let optional_plans = self
             .optional_plans
@@ -682,11 +676,12 @@ pub enum CommitmentPhaseError {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        writeln!(
-            source,
-            "pub const OPTIONAL_COMMITMENT_PLANS: &[OptionalCommitmentPlan] = &[\n{optional_plans}\n];\n"
-        )
-        .expect("write generated Rust optional plans");
+        push_format(
+            &mut source,
+            format_args!(
+                "pub const OPTIONAL_COMMITMENT_PLANS: &[OptionalCommitmentPlan] = &[\n{optional_plans}\n];\n"
+            ),
+        );
 
         let steps = self
             .transcript_steps
@@ -701,11 +696,10 @@ pub enum CommitmentPhaseError {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        writeln!(
-            source,
-            "pub const TRANSCRIPT_PLAN: &[TranscriptStep] = &[\n{steps}\n];"
-        )
-        .expect("write generated Rust transcript plan");
+        push_format(
+            &mut source,
+            format_args!("pub const TRANSCRIPT_PLAN: &[TranscriptStep] = &[\n{steps}\n];"),
+        );
 
         source
     }
@@ -1168,24 +1162,28 @@ fn rust_field_name(value: &str) -> String {
     output
 }
 
-fn rust_input_field(source: &str) -> &'static str {
+fn rust_input_field(source: &str) -> Result<&'static str, EmitError> {
     match source {
-        "trace.rd_inc" => "rd_inc",
-        "trace.ram_inc" => "ram_inc",
-        "trace.instruction_keys" => "instruction_keys",
-        "trace.ram_addresses" => "ram_addresses",
-        "trace.bytecode_indices" => "bytecode_indices",
-        "advice.untrusted" => "untrusted_advice",
-        "advice.trusted" => "trusted_advice",
-        _ => panic!("unsupported oracle source `{source}`"),
+        "trace.rd_inc" => Ok("rd_inc"),
+        "trace.ram_inc" => Ok("ram_inc"),
+        "trace.instruction_keys" => Ok("instruction_keys"),
+        "trace.ram_addresses" => Ok("ram_addresses"),
+        "trace.bytecode_indices" => Ok("bytecode_indices"),
+        "advice.untrusted" => Ok("untrusted_advice"),
+        "advice.trusted" => Ok("trusted_advice"),
+        _ => Err(EmitError::new(format!(
+            "unsupported oracle source `{source}`"
+        ))),
     }
 }
 
-fn rust_padding_value(padding: &str) -> &'static str {
+fn rust_padding_value(padding: &str) -> Result<&'static str, EmitError> {
     match padding {
-        "zero" => "Some(0)",
-        "none" => "None",
-        _ => panic!("unsupported oracle padding `{padding}`"),
+        "zero" => Ok("Some(0)"),
+        "none" => Ok("None"),
+        _ => Err(EmitError::new(format!(
+            "unsupported oracle padding `{padding}`"
+        ))),
     }
 }
 

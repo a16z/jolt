@@ -1,9 +1,16 @@
+#![expect(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    reason = "integration tests use explicit panic messages"
+)]
+
 use bolt::{
     build_commitment_protocol, build_stage1_outer_protocol, build_stage2_protocol,
-    commitment_cpu_program, emit_commitment_rust, emit_stage1_rust, emit_stage2_rust,
-    lower_commitment_to_compute, lower_compute_to_cpu, lower_piop_and_fiat_shamir,
-    lower_stage1_to_compute, lower_stage2_to_compute, project_prover_party, project_verifier_party,
-    resolve_compute_kernels, stage1_cpu_program, stage2_cpu_program, verify_compute_schema,
+    build_stage3_protocol, commitment_cpu_program, emit_commitment_rust, emit_stage1_rust,
+    emit_stage2_rust, emit_stage3_rust, lower_commitment_to_compute, lower_compute_to_cpu,
+    lower_piop_and_fiat_shamir, lower_stage1_to_compute, lower_stage2_to_compute,
+    lower_stage3_to_compute, project_prover_party, project_verifier_party, resolve_compute_kernels,
+    stage1_cpu_program, stage2_cpu_program, stage3_cpu_program, verify_compute_schema,
     verify_concrete_transcript, verify_cpu_schema, verify_jolt_protocol_schema,
     verify_protocol_schema, Concrete, Cpu, JoltProtocolParams, MeliorContext, Role, RustSourceFile,
     TextMlir,
@@ -290,6 +297,65 @@ fn opening_batch_schema_rejects_hidden_or_reordered_claims() {
 }
 
 #[test]
+fn opening_claim_equal_lowers_through_ssa_pipeline() {
+    let context = MeliorContext::new();
+    let protocol = context
+        .parse_module::<bolt::Protocol>(&opening_claim_equal_protocol(
+            "LeftInstructionInput",
+            "LeftInstructionInput",
+            "point_and_eval",
+        ))
+        .expect("parse opening equality protocol");
+    verify_protocol_schema(&protocol).expect("opening equality protocol schema is valid");
+    let concrete =
+        lower_piop_and_fiat_shamir(&context, &protocol).expect("lower protocol to concrete");
+    let prover = project_prover_party(&context, &concrete).expect("project prover party");
+    let compute = lower_stage2_to_compute(&context, &prover).expect("lower equality to compute");
+    verify_compute_schema(&compute).expect("compute equality schema is valid");
+    let kernelized =
+        resolve_compute_kernels(&context, &compute).expect("preserve equality through kernels");
+    let cpu = lower_compute_to_cpu(&context, &kernelized).expect("lower equality to CPU");
+    verify_cpu_schema(&cpu).expect("CPU equality schema is valid");
+
+    let compute_text = kernelized.to_text_mlir();
+    let cpu_text = cpu.to_text_mlir();
+    assert!(compute_text.contains("\"compute.opening_claim_equal\"(%"));
+    assert!(compute_text.contains("mode = \"point_and_eval\""));
+    assert!(cpu_text.contains("\"cpu.opening_claim_equal\"(%"));
+    assert!(cpu_text.contains("mode = \"point_and_eval\""));
+}
+
+#[test]
+fn opening_claim_equal_rejects_incompatible_claim_metadata() {
+    let context = MeliorContext::new();
+    let protocol = context
+        .parse_module::<bolt::Protocol>(&opening_claim_equal_protocol(
+            "LeftInstructionInput",
+            "RightInstructionInput",
+            "point_and_eval",
+        ))
+        .expect("parse bad opening equality protocol");
+
+    let error = verify_protocol_schema(&protocol).expect_err("mismatched claims are rejected");
+    assert!(error.to_string().contains("compares incompatible claims"));
+}
+
+#[test]
+fn opening_claim_equal_rejects_unsupported_mode() {
+    let context = MeliorContext::new();
+    let protocol = context
+        .parse_module::<bolt::Protocol>(&opening_claim_equal_protocol(
+            "LeftInstructionInput",
+            "LeftInstructionInput",
+            "eval_only",
+        ))
+        .expect("parse bad opening equality mode");
+
+    let error = verify_protocol_schema(&protocol).expect_err("unsupported equality mode rejected");
+    assert!(error.to_string().contains("expected \"point_and_eval\""));
+}
+
+#[test]
 fn sumcheck_compute_lowers_to_cpu_kernel_ir() {
     let context = MeliorContext::new();
     let compute = context
@@ -356,7 +422,8 @@ fn jolt_stage2_protocol_defines_product_ram_claim_flow() {
     assert!(text.contains("relation = @jolt.stage2.product_virtual.uniskip"));
     assert!(text.contains("relation = @jolt.stage2.batched"));
     assert!(text.contains("\"piop.opening_input\"()"));
-    assert!(text.contains("\"field.expr\"(%"));
+    assert!(text.contains("\"field.add\"(%"));
+    assert!(text.contains("\"poly.lagrange_basis_eval\"(%"));
     assert!(text.contains("sym_name = \"stage2.ram_read_write.claim_expr\""));
     assert!(text.contains("\"piop.sumcheck_instance_result\"(%"));
     assert!(text.contains("round_offset = 16 : i64"));
@@ -391,7 +458,8 @@ fn jolt_stage2_lowers_to_compute_and_cpu_role_ir() {
     let prover_compute_text = prover_compute.to_text_mlir();
     let verifier_compute_text = verifier_compute.to_text_mlir();
     assert!(prover_compute_text.contains("\"compute.opening_input\"()"));
-    assert!(prover_compute_text.contains("\"compute.field_expr\"(%"));
+    assert!(prover_compute_text.contains("\"compute.field_add\"(%"));
+    assert!(prover_compute_text.contains("\"compute.poly_lagrange_basis_eval\"(%"));
     assert!(prover_compute_text.contains("\"compute.point_slice\"(%"));
     assert!(prover_compute_text.contains("\"compute.point_concat\"(%"));
     assert!(prover_compute_text.contains("\"compute.sumcheck_claim\"(%"));
@@ -421,7 +489,8 @@ fn jolt_stage2_lowers_to_compute_and_cpu_role_ir() {
     let prover_cpu_text = prover_cpu.to_text_mlir();
     let verifier_cpu_text = verifier_cpu.to_text_mlir();
     assert!(prover_cpu_text.contains("\"cpu.opening_input\"()"));
-    assert!(prover_cpu_text.contains("\"cpu.field_expr\"(%"));
+    assert!(prover_cpu_text.contains("\"cpu.field_add\"(%"));
+    assert!(prover_cpu_text.contains("\"cpu.poly_lagrange_basis_eval\"(%"));
     assert!(prover_cpu_text.contains("\"cpu.point_slice\"(%"));
     assert!(prover_cpu_text.contains("\"cpu.point_concat\"(%"));
     assert!(prover_cpu_text.contains("\"cpu.kernel\"()"));
@@ -456,6 +525,117 @@ fn jolt_stage2_lowers_to_compute_and_cpu_role_ir() {
 }
 
 #[test]
+fn jolt_stage3_protocol_defines_shift_instruction_register_flow() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::fixture();
+    let protocol = build_stage3_protocol(&context, &params).expect("build stage3 protocol");
+    verify_protocol_schema(&protocol).expect("stage3 protocol schema is valid");
+    let concrete =
+        lower_piop_and_fiat_shamir(&context, &protocol).expect("lower stage3 to concrete");
+    verify_concrete_transcript(&concrete).expect("stage3 transcript is threaded");
+
+    let text = protocol.to_text_mlir();
+    assert!(text.contains("sym_name = \"stage3.spartan_shift.input\""));
+    assert!(text.contains("sym_name = \"stage3.instruction_input.input\""));
+    assert!(text.contains("sym_name = \"stage3.registers_claim_reduction.input\""));
+    assert!(text.contains("\"piop.opening_claim_equal\"(%"));
+    assert!(text.contains("\"field.add\"(%"));
+    assert!(text.contains("\"field.mul\"(%"));
+    assert!(text.contains("\"field.sub\"(%"));
+    assert!(text.contains("policy = \"jolt_core_stage3_aligned\""));
+    assert!(text.contains("point_order = \"reverse\""));
+    assert!(text.contains("ordered_claims = [@stage3.spartan_shift.input, @stage3.instruction_input.input, @stage3.registers_claim_reduction.input]"));
+    assert!(text.contains("ordered_claims = [@stage3.spartan_shift.opening.UnexpandedPC, @stage3.spartan_shift.opening.PC"));
+    assert!(!text.contains("kernel = @"));
+    assert!(!text.contains("\"compute."));
+    assert_or_update_fixture("tests/fixtures/stage3_protocol.mlir", &text);
+}
+
+#[test]
+fn jolt_stage3_lowers_to_compute_and_cpu_role_ir() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::fixture();
+    let protocol = build_stage3_protocol(&context, &params).expect("build stage3 protocol");
+    let concrete =
+        lower_piop_and_fiat_shamir(&context, &protocol).expect("lower stage3 to concrete");
+    let prover = project_prover_party(&context, &concrete).expect("project prover party");
+    let verifier = project_verifier_party(&context, &concrete).expect("project verifier party");
+    let prover_compute = lower_stage3_to_compute(&context, &prover).expect("lower prover stage3");
+    let verifier_compute =
+        lower_stage3_to_compute(&context, &verifier).expect("lower verifier stage3");
+    verify_compute_schema(&prover_compute).expect("prover stage3 compute schema is valid");
+    verify_compute_schema(&verifier_compute).expect("verifier stage3 compute schema is valid");
+
+    let prover_compute_text = prover_compute.to_text_mlir();
+    let verifier_compute_text = verifier_compute.to_text_mlir();
+    assert!(prover_compute_text.contains("\"compute.opening_input\"()"));
+    assert!(prover_compute_text.contains("\"compute.opening_claim_equal\"(%"));
+    assert!(prover_compute_text.contains("\"compute.field_add\"(%"));
+    assert!(prover_compute_text.contains("\"compute.field_mul\"(%"));
+    assert!(prover_compute_text.contains("\"compute.sumcheck_claim\"(%"));
+    assert!(prover_compute_text.contains("\"compute.sumcheck_driver\"(%"));
+    assert!(!prover_compute_text.contains("kernel = @"));
+    assert!(verifier_compute_text.contains("\"compute.opening_claim_equal\"(%"));
+    assert!(verifier_compute_text.contains("\"compute.sumcheck_verify_claim\""));
+    assert!(verifier_compute_text.contains("\"compute.sumcheck_verify\""));
+    assert!(!verifier_compute_text.contains("\"compute.kernel\""));
+    assert!(!verifier_compute_text.contains("kernel = @"));
+
+    let prover_kernel_compute =
+        resolve_compute_kernels(&context, &prover_compute).expect("resolve prover kernels");
+    let verifier_kernel_compute =
+        resolve_compute_kernels(&context, &verifier_compute).expect("resolve verifier kernels");
+    verify_compute_schema(&prover_kernel_compute)
+        .expect("prover kernelized stage3 compute schema is valid");
+    verify_compute_schema(&verifier_kernel_compute)
+        .expect("verifier kernelized stage3 compute schema is valid");
+
+    let prover_cpu =
+        lower_compute_to_cpu(&context, &prover_kernel_compute).expect("lower prover CPU");
+    let verifier_cpu =
+        lower_compute_to_cpu(&context, &verifier_kernel_compute).expect("lower verifier CPU");
+    verify_cpu_schema(&prover_cpu).expect("prover stage3 CPU schema is valid");
+    verify_cpu_schema(&verifier_cpu).expect("verifier stage3 CPU schema is valid");
+
+    let prover_kernel_text = prover_kernel_compute.to_text_mlir();
+    let verifier_kernel_text = verifier_kernel_compute.to_text_mlir();
+    let prover_cpu_text = prover_cpu.to_text_mlir();
+    let verifier_cpu_text = verifier_cpu.to_text_mlir();
+    assert!(prover_kernel_text.contains("kernel = @jolt.cpu.stage3.batched"));
+    assert!(!verifier_kernel_text.contains("kernel = @"));
+    assert!(prover_cpu_text.contains("\"cpu.opening_claim_equal\"(%"));
+    assert!(prover_cpu_text.contains("\"cpu.kernel\"()"));
+    assert!(prover_cpu_text.contains("kernel = @jolt.cpu.stage3.batched"));
+    assert!(verifier_cpu_text.contains("\"cpu.opening_claim_equal\"(%"));
+    assert!(verifier_cpu_text.contains("\"cpu.sumcheck_verify_claim\""));
+    assert!(verifier_cpu_text.contains("\"cpu.sumcheck_verify\""));
+    assert!(!verifier_cpu_text.contains("\"cpu.kernel\""));
+    assert!(!verifier_cpu_text.contains("kernel = @"));
+
+    assert_or_update_fixture(
+        "tests/fixtures/stage3_prover_compute.mlir",
+        &prover_compute_text,
+    );
+    assert_or_update_fixture(
+        "tests/fixtures/stage3_verifier_compute.mlir",
+        &verifier_compute_text,
+    );
+    assert_or_update_fixture(
+        "tests/fixtures/stage3_prover_kernel_compute.mlir",
+        &prover_kernel_text,
+    );
+    assert_or_update_fixture(
+        "tests/fixtures/stage3_verifier_kernel_compute.mlir",
+        &verifier_kernel_text,
+    );
+    assert_or_update_fixture("tests/fixtures/stage3_prover_cpu.mlir", &prover_cpu_text);
+    assert_or_update_fixture(
+        "tests/fixtures/stage3_verifier_cpu.mlir",
+        &verifier_cpu_text,
+    );
+}
+
+#[test]
 fn stage2_rust_targets_extract_and_compile() {
     let context = MeliorContext::new();
     let params = JoltProtocolParams::fixture();
@@ -469,8 +649,7 @@ fn stage2_rust_targets_extract_and_compile() {
     assert_eq!(prover_program.kernels.len(), 7);
     assert!(verifier_program.kernels.is_empty());
     assert_eq!(prover_program.opening_inputs.len(), 11);
-    assert_eq!(prover_program.challenge_extracts.len(), 3);
-    assert_eq!(prover_program.field_exprs.len(), 5);
+    assert_eq!(prover_program.field_exprs.len(), 21);
     assert_eq!(prover_program.field_constants.len(), 1);
     assert_eq!(prover_program.claims.len(), 6);
     assert_eq!(prover_program.drivers.len(), 2);
@@ -503,6 +682,59 @@ fn stage2_rust_targets_extract_and_compile() {
     assert!(verifier_source.source.contains("Stage2VerifierProgramPlan"));
     assert_or_update_fixture("tests/fixtures/prove_stage2.rs", &prover_source.source);
     assert_or_update_fixture("tests/fixtures/verify_stage2.rs", &verifier_source.source);
+    assert_rust_source_compiles(&prover_source.filename, &prover_source.source);
+    assert_rust_source_compiles(&verifier_source.filename, &verifier_source.source);
+}
+
+#[test]
+fn stage3_rust_targets_extract_and_compile() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::fixture();
+    let (prover_cpu, verifier_cpu) = build_stage3_pipeline_cpu(&context, &params);
+    let prover_program = stage3_cpu_program(&prover_cpu).expect("extract prover stage3 program");
+    let verifier_program =
+        stage3_cpu_program(&verifier_cpu).expect("extract verifier stage3 program");
+
+    assert_eq!(prover_program.role, Role::Prover);
+    assert_eq!(verifier_program.role, Role::Verifier);
+    assert_eq!(prover_program.kernels.len(), 4);
+    assert!(verifier_program.kernels.is_empty());
+    assert_eq!(prover_program.opening_inputs.len(), 12);
+    assert_eq!(prover_program.field_exprs.len(), 19);
+    assert_eq!(prover_program.field_constants.len(), 1);
+    assert_eq!(prover_program.opening_equalities.len(), 2);
+    assert_eq!(prover_program.claims.len(), 3);
+    assert_eq!(prover_program.drivers.len(), 1);
+    assert_eq!(prover_program.opening_claims.len(), 16);
+    assert!(prover_program
+        .drivers
+        .iter()
+        .any(|driver| driver.kernel.as_deref() == Some("jolt.cpu.stage3.batched")));
+    assert!(verifier_program
+        .claims
+        .iter()
+        .all(|claim| claim.kernel.is_none() && claim.relation.is_some()));
+    assert!(verifier_program
+        .drivers
+        .iter()
+        .all(|driver| driver.kernel.is_none() && driver.relation.is_some()));
+
+    let prover_source = emit_stage3_rust(&prover_cpu).expect("emit stage3 prover rust");
+    let verifier_source = emit_stage3_rust(&verifier_cpu).expect("emit stage3 verifier rust");
+    assert_eq!(prover_source.filename, "prove_stage3.rs");
+    assert_eq!(verifier_source.filename, "verify_stage3.rs");
+    assert!(prover_source.source.contains("jolt_stage3_spartan_shift"));
+    assert!(prover_source.source.contains("Stage3KernelExecutor"));
+    assert!(prover_source
+        .source
+        .contains("Stage3OpeningClaimEqualityPlan"));
+    assert!(!verifier_source.source.contains("jolt_kernels"));
+    assert!(verifier_source.source.contains("Stage3VerifierProgramPlan"));
+    assert!(verifier_source
+        .source
+        .contains("Stage3OpeningClaimEqualityPlan"));
+    assert_or_update_fixture("tests/fixtures/prove_stage3.rs", &prover_source.source);
+    assert_or_update_fixture("tests/fixtures/verify_stage3.rs", &verifier_source.source);
     assert_rust_source_compiles(&prover_source.filename, &prover_source.source);
     assert_rust_source_compiles(&verifier_source.filename, &verifier_source.source);
 }
@@ -927,10 +1159,7 @@ module @bad attributes {bolt.phase = "cpu", bolt.role = "prover"} {
     assert!(error.to_string().contains("missing cpu.params"));
 }
 
-fn build_small_commitment_cpu(
-    context: &MeliorContext,
-    role: Role,
-) -> bolt::BoltModule<'_, Cpu> {
+fn build_small_commitment_cpu(context: &MeliorContext, role: Role) -> bolt::BoltModule<'_, Cpu> {
     let (batch_op, optional_op) = match role {
         Role::Prover => ("cpu.pcs_commit_batch", "cpu.pcs_commit_optional"),
         Role::Verifier => ("cpu.pcs_receive_batch", "cpu.pcs_receive_optional"),
@@ -962,10 +1191,7 @@ module @small.commitment_phase attributes {{bolt.phase = "cpu", bolt.role = "{}"
 fn build_commitment_pipeline_cpu<'c>(
     context: &'c MeliorContext,
     params: &JoltProtocolParams,
-) -> (
-    bolt::BoltModule<'c, Cpu>,
-    bolt::BoltModule<'c, Cpu>,
-) {
+) -> (bolt::BoltModule<'c, Cpu>, bolt::BoltModule<'c, Cpu>) {
     let protocol = build_commitment_protocol(context, params).expect("build protocol");
     let concrete = lower_piop_and_fiat_shamir(context, &protocol).expect("lower Fiat-Shamir state");
     let prover = project_prover_party(context, &concrete).expect("project prover party");
@@ -983,10 +1209,7 @@ fn build_commitment_pipeline_cpu<'c>(
 fn build_stage1_pipeline_cpu<'c>(
     context: &'c MeliorContext,
     params: &JoltProtocolParams,
-) -> (
-    bolt::BoltModule<'c, Cpu>,
-    bolt::BoltModule<'c, Cpu>,
-) {
+) -> (bolt::BoltModule<'c, Cpu>, bolt::BoltModule<'c, Cpu>) {
     let protocol = build_stage1_outer_protocol(context, params).expect("build stage1 protocol");
     let concrete = lower_piop_and_fiat_shamir(context, &protocol).expect("lower stage1 protocol");
     let prover = project_prover_party(context, &concrete).expect("project prover party");
@@ -1007,10 +1230,7 @@ fn build_stage1_pipeline_cpu<'c>(
 fn build_stage2_pipeline_cpu<'c>(
     context: &'c MeliorContext,
     params: &JoltProtocolParams,
-) -> (
-    bolt::BoltModule<'c, Cpu>,
-    bolt::BoltModule<'c, Cpu>,
-) {
+) -> (bolt::BoltModule<'c, Cpu>, bolt::BoltModule<'c, Cpu>) {
     let protocol = build_stage2_protocol(context, params).expect("build stage2 protocol");
     let concrete = lower_piop_and_fiat_shamir(context, &protocol).expect("lower stage2 protocol");
     let prover = project_prover_party(context, &concrete).expect("project prover party");
@@ -1018,6 +1238,27 @@ fn build_stage2_pipeline_cpu<'c>(
     let prover_compute = lower_stage2_to_compute(context, &prover).expect("lower prover stage2");
     let verifier_compute =
         lower_stage2_to_compute(context, &verifier).expect("lower verifier stage2");
+    let prover_compute =
+        resolve_compute_kernels(context, &prover_compute).expect("resolve prover kernels");
+    let verifier_compute =
+        resolve_compute_kernels(context, &verifier_compute).expect("resolve verifier kernels");
+    let prover_cpu = lower_compute_to_cpu(context, &prover_compute).expect("lower prover CPU");
+    let verifier_cpu =
+        lower_compute_to_cpu(context, &verifier_compute).expect("lower verifier CPU");
+    (prover_cpu, verifier_cpu)
+}
+
+fn build_stage3_pipeline_cpu<'c>(
+    context: &'c MeliorContext,
+    params: &JoltProtocolParams,
+) -> (bolt::BoltModule<'c, Cpu>, bolt::BoltModule<'c, Cpu>) {
+    let protocol = build_stage3_protocol(context, params).expect("build stage3 protocol");
+    let concrete = lower_piop_and_fiat_shamir(context, &protocol).expect("lower stage3 protocol");
+    let prover = project_prover_party(context, &concrete).expect("project prover party");
+    let verifier = project_verifier_party(context, &concrete).expect("project verifier party");
+    let prover_compute = lower_stage3_to_compute(context, &prover).expect("lower prover stage3");
+    let verifier_compute =
+        lower_stage3_to_compute(context, &verifier).expect("lower verifier stage3");
     let prover_compute =
         resolve_compute_kernels(context, &prover_compute).expect("resolve prover kernels");
     let verifier_compute =
@@ -1226,6 +1467,35 @@ fn jolt_protocol_chain_commitment_stage1_fixture(
     text
 }
 
+fn opening_claim_equal_protocol(left_oracle: &str, right_oracle: &str, mode: &str) -> String {
+    let right_oracle_def = if left_oracle == right_oracle {
+        String::new()
+    } else {
+        format!(
+            r#"  "piop.oracle"() {{commit_domain = @trace, domain = @trace, field = @bn254_fr, layout = "virtual", sym_name = "{right_oracle}", visibility = "virtual"}} : () -> ()
+"#
+        )
+    };
+    format!(
+        r#"
+module @opening.claim.equal attributes {{bolt.phase = "protocol"}} {{
+  "field.define"() {{modulus_bits = 254 : i64, role = "scalar", sym_name = "bn254_fr"}} : () -> ()
+  "hash.function"() {{algorithm = "blake2b", sym_name = "blake2b"}} : () -> ()
+  "transcript.scheme"() {{hash = @blake2b, sym_name = "blake2b_transcript"}} : () -> ()
+  "pcs.scheme"() {{field = @bn254_fr, sym_name = "dory"}} : () -> ()
+  "poly.domain"() {{field = @bn254_fr, log_size = 16 : i64, sym_name = "trace"}} : () -> ()
+  "protocol.params"() {{field = @bn254_fr, pcs = @dory, sym_name = "params", transcript = @blake2b_transcript}} : () -> ()
+  "protocol.boundary"() {{roles = ["prover", "verifier"], sym_name = "opening.claim.equal"}} : () -> ()
+  "piop.oracle"() {{commit_domain = @trace, domain = @trace, field = @bn254_fr, layout = "virtual", sym_name = "{left_oracle}", visibility = "virtual"}} : () -> ()
+{right_oracle_def}
+  %left:3 = "piop.opening_input"() {{claim_kind = "virtual", domain = @trace, oracle = @{left_oracle}, point_arity = 16 : i64, source_claim = @stage2.product_virtual.remainder.opening.{left_oracle}, source_stage = @stage2, sym_name = "stage3.input.stage2_left.{left_oracle}"}} : () -> (!poly.point, !field.scalar, !piop.opening_claim_type)
+  %right:3 = "piop.opening_input"() {{claim_kind = "virtual", domain = @trace, oracle = @{right_oracle}, point_arity = 16 : i64, source_claim = @stage2.instruction_lookup.claim_reduction.opening.{right_oracle}, source_stage = @stage2, sym_name = "stage3.input.stage2_right.{right_oracle}"}} : () -> (!poly.point, !field.scalar, !piop.opening_claim_type)
+  "piop.opening_claim_equal"(%left#2, %right#2) {{mode = "{mode}", sym_name = "stage3.instruction_input.left_claim_consistency"}} : (!piop.opening_claim_type, !piop.opening_claim_type) -> ()
+}}
+"#
+    )
+}
+
 fn explicit_sumcheck_protocol() -> &'static str {
     r#"
 module @explicit.sumcheck attributes {bolt.phase = "protocol"} {
@@ -1236,9 +1506,9 @@ module @explicit.sumcheck attributes {bolt.phase = "protocol"} {
   "poly.domain"() {field = @bn254_fr, log_size = 16 : i64, sym_name = "trace"} : () -> ()
   "piop.relation"() {degree = 3 : i64, domain = @trace, kind = "sumcheck", num_rounds = 4 : i64, output_count = 1 : i64, sym_name = "jolt.stage1.outer.remaining"} : () -> ()
   %0 = "transcript.state"() {scheme = @blake2b_transcript, sym_name = "fs0"} : () -> !transcript.state_type
-  %1, %alpha = "transcript.squeeze"(%0) {count = 1 : i64, kind = "scalar", label = "sumcheck_claim", sym_name = "stage1.alpha"} : (!transcript.state_type) -> (!transcript.state_type, !field.challenge)
+  %1, %alpha = "transcript.squeeze"(%0) {count = 1 : i64, kind = "scalar", label = "sumcheck_claim", sym_name = "stage1.alpha"} : (!transcript.state_type) -> (!transcript.state_type, !field.scalar)
   %stage = "piop.stage"() {name = "stage1", order = 1 : i64, roles = ["prover", "verifier"], sym_name = "stage1"} : () -> !piop.stage_type
-  %claim_value = "field.constant"() {field = @bn254_fr, value = 0 : i64, sym_name = "stage1.outer.claim_value"} : () -> !field.scalar
+  %claim_value = "field.const"() {field = @bn254_fr, value = 0 : i64, sym_name = "stage1.outer.claim_value"} : () -> !field.scalar
   %claim = "piop.sumcheck_claim"(%claim_value) {claim = @stage1.outer.claim, degree = 3 : i64, domain = @trace, num_rounds = 4 : i64, relation = @jolt.stage1.outer.remaining, stage = @stage1, sym_name = "stage1.outer.claim"} : (!field.scalar) -> !piop.sumcheck_claim_type
   %batch = "piop.sumcheck_batch"(%stage, %claim) {claim_label = "sumcheck_claim", count = 1 : i64, ordered_claims = [@stage1.outer.claim], policy = "jolt_core_front_loaded", proof_slot = @stage1.sumcheck, round_label = "sumcheck_poly", round_schedule = [2, 1, 1], stage = @stage1, sym_name = "stage1.outer.batch"} : (!piop.stage_type, !piop.sumcheck_claim_type) -> !piop.sumcheck_batch_type
   %2, %point, %result, %proof = "piop.sumcheck"(%1, %batch) {claim_label = "sumcheck_claim", degree = 3 : i64, num_rounds = 4 : i64, policy = "jolt_core_front_loaded", proof_slot = @stage1.sumcheck, relation = @jolt.stage1.outer.remaining, round_label = "sumcheck_poly", round_schedule = [2, 1, 1], stage = @stage1, sym_name = "stage1.outer.sumcheck"} : (!transcript.state_type, !piop.sumcheck_batch_type) -> (!transcript.state_type, !poly.point, !piop.sumcheck_result_type, !piop.sumcheck_proof_type)
@@ -1257,8 +1527,8 @@ module @explicit.sumcheck attributes {bolt.phase = "compute", bolt.role = "prove
   "compute.function"() {source = @explicit.sumcheck, sym_name = "explicit.sumcheck"} : () -> ()
   "compute.relation"() {degree = 3 : i64, domain = @trace, kind = "sumcheck", num_rounds = 4 : i64, output_count = 1 : i64, sym_name = "jolt.stage1.outer.remaining"} : () -> ()
   %0 = "compute.transcript_init"() {scheme = @blake2b_transcript, sym_name = "fs0"} : () -> !compute.transcript_state
-  %1, %alpha = "compute.transcript_squeeze"(%0) {count = 1 : i64, kind = "scalar", label = "sumcheck_claim", sym_name = "stage1.alpha"} : (!compute.transcript_state) -> (!compute.transcript_state, !compute.challenge)
-  %claim_value = "compute.field_constant"() {field = @bn254_fr, value = 0 : i64, sym_name = "stage1.outer.claim_value"} : () -> !compute.field_value
+  %1, %alpha = "compute.transcript_squeeze"(%0) {count = 1 : i64, kind = "scalar", label = "sumcheck_claim", sym_name = "stage1.alpha"} : (!compute.transcript_state) -> (!compute.transcript_state, !compute.field_value)
+  %claim_value = "compute.field_const"() {field = @bn254_fr, value = 0 : i64, sym_name = "stage1.outer.claim_value"} : () -> !compute.field_value
   %claim = "compute.sumcheck_claim"(%claim_value) {claim = @stage1.outer.claim, degree = 3 : i64, domain = @trace, num_rounds = 4 : i64, relation = @jolt.stage1.outer.remaining, stage = @stage1, sym_name = "stage1.outer.claim"} : (!compute.field_value) -> !compute.sumcheck_claim_type
   %batch = "compute.sumcheck_batch"(%claim) {claim_label = "sumcheck_claim", count = 1 : i64, ordered_claims = [@stage1.outer.claim], policy = "jolt_core_front_loaded", proof_slot = @stage1.sumcheck, round_label = "sumcheck_poly", round_schedule = [2, 1, 1], stage = @stage1, sym_name = "stage1.outer.batch"} : (!compute.sumcheck_claim_type) -> !compute.sumcheck_batch_type
   %2, %point, %result, %proof = "compute.sumcheck_driver"(%1, %batch) {claim_label = "sumcheck_claim", degree = 3 : i64, num_rounds = 4 : i64, policy = "jolt_core_front_loaded", proof_slot = @stage1.sumcheck, relation = @jolt.stage1.outer.remaining, round_label = "sumcheck_poly", round_schedule = [2, 1, 1], stage = @stage1, sym_name = "stage1.outer.sumcheck"} : (!compute.transcript_state, !compute.sumcheck_batch_type) -> (!compute.transcript_state, !compute.point, !compute.sumcheck_result_type, !compute.sumcheck_proof_type)

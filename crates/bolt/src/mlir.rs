@@ -19,13 +19,23 @@ pub struct MeliorContext {
 
 impl MeliorContext {
     pub fn new() -> Self {
+        Self::try_new().unwrap_or_else(Self::abort_init_error)
+    }
+
+    pub fn try_new() -> Result<Self, MlirError> {
         let registry = DialectRegistry::new();
         register_all_dialects(&registry);
         let context = Context::new_with_registry(&registry, false);
         context.load_all_available_dialects();
-        load_bolt_dialects(&context).expect("load Bolt IRDL dialects");
+        load_bolt_dialects(&context)
+            .map_err(|message| MlirError::DialectRegistration { message })?;
         context.set_allow_unregistered_dialects(false);
-        Self { context }
+        Ok(Self { context })
+    }
+
+    fn abort_init_error(error: MlirError) -> Self {
+        drop(error);
+        std::process::abort();
     }
 
     pub fn context(&self) -> &Context {

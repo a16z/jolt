@@ -5,7 +5,7 @@ use melior::ir::operation::OperationRef;
 use melior::ir::operation::{OperationLike, OperationResult};
 use melior::ir::Value;
 
-use crate::ir::{string_attribute_value, BoltModule, Compute, Party, Protocol, Role};
+use crate::ir::{BoltModule, Compute, Party, Protocol, Role};
 use crate::mlir::{verify_module, MeliorContext, MlirError};
 use crate::schema::{
     operation_name, symbol_attr, verify_compute_schema, verify_party_schema,
@@ -14,6 +14,10 @@ use crate::schema::{
 
 use super::super::oracles;
 use super::super::params::JoltProtocolParams;
+use super::lowering::{
+    copy_attrs, field_lowering_attrs as field_compute_attrs, string_attr,
+    transcript_squeeze_compute_result_types,
+};
 
 const R1CS_INPUT_ORACLES: [&str; 35] = [
     "LeftInstructionInput",
@@ -94,7 +98,7 @@ pub fn build_stage1_outer_protocol<'c>(
             ("count", &int_attr(params.log_t + 2)),
         ],
         &[state],
-        &["!transcript.state_type", "!field.challenge"],
+        &["!transcript.state_type", "!poly.point"],
     )?;
     let state = first_result(tau, "transcript.squeeze")?;
 
@@ -111,7 +115,7 @@ pub fn build_stage1_outer_protocol<'c>(
         &["!piop.stage_type"],
     )?;
     let stage = first_result(stage, "piop.stage")?;
-    let zero_claim = append_field_constant(context, &module, "stage1.zero", 0)?;
+    let zero_claim = append_field_zero(context, &module, "stage1.zero")?;
 
     let (state, uniskip_opening, uniskip_eval) =
         append_uniskip_sumcheck(context, &module, params, state, stage, zero_claim)?;
@@ -192,23 +196,24 @@ pub fn lower_stage1_to_compute<'c>(
                 let operands = lowered_operands(op, &value_map, 0)?;
                 let symbol = string_attr(op, "sym_name")?;
                 let attrs = copy_attrs(op, &["label", "kind", "count"])?;
+                let result_types = transcript_squeeze_compute_result_types(op)?;
                 let operation = context.append_typed_op_with_owned_attrs(
                     &compute,
                     "compute.transcript_squeeze",
                     Some(&symbol),
                     &attrs,
                     &operands,
-                    &["!compute.transcript_state", "!compute.challenge"],
+                    &result_types,
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
                 insert_result_mapping(&mut value_map, op, operation, 1, 1)?;
             }
-            "field.constant" => {
+            "field.const" => {
                 let symbol = string_attr(op, "sym_name")?;
                 let attrs = copy_attrs(op, &["field", "value"])?;
                 let operation = context.append_typed_op_with_owned_attrs(
                     &compute,
-                    "compute.field_constant",
+                    "compute.field_const",
                     Some(&symbol),
                     &attrs,
                     &[],
@@ -216,13 +221,26 @@ pub fn lower_stage1_to_compute<'c>(
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
             }
-            "field.challenge_extract" => {
-                let operands = lowered_operands(op, &value_map, 0)?;
+            "field.zero" | "field.one" => {
                 let symbol = string_attr(op, "sym_name")?;
-                let attrs = copy_attrs(op, &["source", "index"])?;
+                let attrs = copy_attrs(op, &["field"])?;
                 let operation = context.append_typed_op_with_owned_attrs(
                     &compute,
-                    "compute.challenge_extract",
+                    &format!("compute.{}", operation_name(op).replace('.', "_")),
+                    Some(&symbol),
+                    &attrs,
+                    &[],
+                    &["!compute.field_value"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "field.add" | "field.sub" | "field.mul" | "field.neg" | "field.pow" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = field_compute_attrs(op)?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &compute,
+                    &format!("compute.{}", operation_name(op).replace('.', "_")),
                     Some(&symbol),
                     &attrs,
                     &operands,
@@ -230,13 +248,13 @@ pub fn lower_stage1_to_compute<'c>(
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
             }
-            "field.expr" => {
+            "poly.lagrange_basis_eval" => {
                 let operands = lowered_operands(op, &value_map, 0)?;
                 let symbol = string_attr(op, "sym_name")?;
-                let attrs = copy_attrs(op, &["kind", "formula", "operands"])?;
+                let attrs = copy_attrs(op, &["domain_start", "domain_size", "index"])?;
                 let operation = context.append_typed_op_with_owned_attrs(
                     &compute,
-                    "compute.field_expr",
+                    "compute.poly_lagrange_basis_eval",
                     Some(&symbol),
                     &attrs,
                     &operands,
@@ -392,6 +410,19 @@ pub fn lower_stage1_to_compute<'c>(
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
             }
+            "piop.opening_claim_equal" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["mode"])?;
+                let _operation = context.append_typed_op_with_owned_attrs(
+                    &compute,
+                    "compute.opening_claim_equal",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &[],
+                )?;
+            }
             "piop.opening_batch" => {
                 let operands = lowered_operands(op, &value_map, 0)?;
                 let symbol = string_attr(op, "sym_name")?;
@@ -483,13 +514,14 @@ pub fn resolve_compute_kernels<'c>(
                 let operands = lowered_operands(op, &value_map, 0)?;
                 let attrs = copy_attrs(op, &["label", "kind", "count"])?;
                 let symbol = string_attr(op, "sym_name")?;
+                let result_types = transcript_squeeze_compute_result_types(op)?;
                 let operation = context.append_typed_op_with_owned_attrs(
                     &kernelized,
                     "compute.transcript_squeeze",
                     Some(&symbol),
                     &attrs,
                     &operands,
-                    &["!compute.transcript_state", "!compute.challenge"],
+                    &result_types,
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
                 insert_result_mapping(&mut value_map, op, operation, 1, 1)?;
@@ -551,12 +583,12 @@ pub fn resolve_compute_kernels<'c>(
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
             }
-            "compute.field_constant" => {
+            "compute.field_const" => {
                 let attrs = copy_attrs(op, &["field", "value"])?;
                 let symbol = string_attr(op, "sym_name")?;
                 let operation = context.append_typed_op_with_owned_attrs(
                     &kernelized,
-                    "compute.field_constant",
+                    "compute.field_const",
                     Some(&symbol),
                     &attrs,
                     &[],
@@ -564,27 +596,31 @@ pub fn resolve_compute_kernels<'c>(
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
             }
-            "compute.challenge_extract" => {
-                let operands = lowered_operands(op, &value_map, 0)?;
-                let attrs = copy_attrs(op, &["source", "index"])?;
+            "compute.field_zero" | "compute.field_one" => {
+                let attrs = copy_attrs(op, &["field"])?;
                 let symbol = string_attr(op, "sym_name")?;
                 let operation = context.append_typed_op_with_owned_attrs(
                     &kernelized,
-                    "compute.challenge_extract",
+                    &operation_name(op),
                     Some(&symbol),
                     &attrs,
-                    &operands,
+                    &[],
                     &["!compute.field_value"],
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
             }
-            "compute.field_expr" => {
+            "compute.field_add"
+            | "compute.field_sub"
+            | "compute.field_mul"
+            | "compute.field_neg"
+            | "compute.field_pow"
+            | "compute.poly_lagrange_basis_eval" => {
                 let operands = lowered_operands(op, &value_map, 0)?;
-                let attrs = copy_attrs(op, &["kind", "formula", "operands"])?;
+                let attrs = field_compute_attrs(op)?;
                 let symbol = string_attr(op, "sym_name")?;
                 let operation = context.append_typed_op_with_owned_attrs(
                     &kernelized,
-                    "compute.field_expr",
+                    &operation_name(op),
                     Some(&symbol),
                     &attrs,
                     &operands,
@@ -786,6 +822,19 @@ pub fn resolve_compute_kernels<'c>(
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
             }
+            "compute.opening_claim_equal" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let attrs = copy_attrs(op, &["mode"])?;
+                let symbol = string_attr(op, "sym_name")?;
+                let _operation = context.append_typed_op_with_owned_attrs(
+                    &kernelized,
+                    "compute.opening_claim_equal",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &[],
+                )?;
+            }
             "compute.opening_batch" => {
                 let operands = lowered_operands(op, &value_map, 0)?;
                 let attrs = copy_attrs(
@@ -939,21 +988,20 @@ fn append_stage1_relations<'c>(
     )
 }
 
-fn append_field_constant<'c, 'a>(
+fn append_field_zero<'c, 'a>(
     context: &'c MeliorContext,
     module: &'a BoltModule<'c, Protocol>,
     symbol: &str,
-    value: usize,
 ) -> Result<Value<'c, 'a>, MlirError> {
     let op = context.append_typed_op(
         module,
-        "field.constant",
+        "field.zero",
         Some(symbol),
-        &[("field", "@bn254_fr"), ("value", &int_attr(value))],
+        &[("field", "@bn254_fr")],
         &[],
         &["!field.scalar"],
     )?;
-    first_result(op, "field.constant")
+    first_result(op, "field.zero")
 }
 
 fn append_uniskip_sumcheck<'c, 'a>(
@@ -1335,34 +1383,6 @@ fn stage_params(module: &BoltModule<'_, Party>) -> Result<StageParamsAst, MlirEr
     Err(schema_error("stage1 lowering requires protocol.params"))
 }
 
-fn copy_attrs(
-    operation: OperationRef<'_, '_>,
-    attrs: &[&str],
-) -> Result<Vec<(String, String)>, MlirError> {
-    attrs
-        .iter()
-        .filter_map(|attr| {
-            operation
-                .attribute(attr)
-                .ok()
-                .map(|value| Ok(((*attr).to_owned(), value.to_string())))
-        })
-        .collect()
-}
-
-fn string_attr(operation: OperationRef<'_, '_>, attr: &str) -> Result<String, MlirError> {
-    operation
-        .attribute(attr)
-        .ok()
-        .and_then(string_attribute_value)
-        .ok_or_else(|| {
-            schema_error(format!(
-                "{} attr `{attr}` is not a string",
-                operation_name(operation)
-            ))
-        })
-}
-
 fn operation_result_key_at(
     operation: OperationRef<'_, '_>,
     index: usize,
@@ -1513,6 +1533,26 @@ fn kernel_spec(relation: &str) -> Result<KernelSpec, MlirError> {
             symbol: "jolt.cpu.stage2.batched",
             kind: "sumcheck",
             abi: "jolt_stage2_batched",
+        }),
+        "jolt.stage3.spartan_shift" => Ok(KernelSpec {
+            symbol: "jolt.cpu.stage3.spartan_shift",
+            kind: "sumcheck",
+            abi: "jolt_stage3_spartan_shift",
+        }),
+        "jolt.stage3.instruction_input" => Ok(KernelSpec {
+            symbol: "jolt.cpu.stage3.instruction_input",
+            kind: "sumcheck",
+            abi: "jolt_stage3_instruction_input",
+        }),
+        "jolt.stage3.registers_claim_reduction" => Ok(KernelSpec {
+            symbol: "jolt.cpu.stage3.registers_claim_reduction",
+            kind: "sumcheck",
+            abi: "jolt_stage3_registers_claim_reduction",
+        }),
+        "jolt.stage3.batched" => Ok(KernelSpec {
+            symbol: "jolt.cpu.stage3.batched",
+            kind: "sumcheck",
+            abi: "jolt_stage3_batched",
         }),
         _ => Err(schema_error(format!(
             "unsupported compute relation @{relation}"

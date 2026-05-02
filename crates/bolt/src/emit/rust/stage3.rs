@@ -9,35 +9,36 @@ use crate::ir::{string_attribute_value, symbol_attribute_value, BoltModule, Cpu,
 use crate::schema::verify_cpu_schema;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2CpuProgram {
+pub struct Stage3CpuProgram {
     pub role: Role,
-    pub params: Stage2Params,
-    pub steps: Vec<Stage2ProgramStepPlan>,
-    pub transcript_squeezes: Vec<Stage2TranscriptSqueezePlan>,
-    pub opening_inputs: Vec<Stage2OpeningInputPlan>,
-    pub field_constants: Vec<Stage2FieldConstantPlan>,
-    pub field_exprs: Vec<Stage2FieldExprPlan>,
-    pub kernels: Vec<Stage2KernelPlan>,
-    pub claims: Vec<Stage2SumcheckClaimPlan>,
-    pub batches: Vec<Stage2SumcheckBatchPlan>,
-    pub drivers: Vec<Stage2SumcheckDriverPlan>,
-    pub instance_results: Vec<Stage2SumcheckInstanceResultPlan>,
-    pub evals: Vec<Stage2SumcheckEvalPlan>,
-    pub point_slices: Vec<Stage2PointSlicePlan>,
-    pub point_concats: Vec<Stage2PointConcatPlan>,
-    pub opening_claims: Vec<Stage2OpeningClaimPlan>,
-    pub opening_batches: Vec<Stage2OpeningBatchPlan>,
+    pub params: Stage3Params,
+    pub steps: Vec<Stage3ProgramStepPlan>,
+    pub transcript_squeezes: Vec<Stage3TranscriptSqueezePlan>,
+    pub opening_inputs: Vec<Stage3OpeningInputPlan>,
+    pub field_constants: Vec<Stage3FieldConstantPlan>,
+    pub field_exprs: Vec<Stage3FieldExprPlan>,
+    pub kernels: Vec<Stage3KernelPlan>,
+    pub claims: Vec<Stage3SumcheckClaimPlan>,
+    pub batches: Vec<Stage3SumcheckBatchPlan>,
+    pub drivers: Vec<Stage3SumcheckDriverPlan>,
+    pub instance_results: Vec<Stage3SumcheckInstanceResultPlan>,
+    pub evals: Vec<Stage3SumcheckEvalPlan>,
+    pub point_slices: Vec<Stage3PointSlicePlan>,
+    pub point_concats: Vec<Stage3PointConcatPlan>,
+    pub opening_claims: Vec<Stage3OpeningClaimPlan>,
+    pub opening_equalities: Vec<Stage3OpeningClaimEqualityPlan>,
+    pub opening_batches: Vec<Stage3OpeningBatchPlan>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2Params {
+pub struct Stage3Params {
     pub field: String,
     pub pcs: String,
     pub transcript: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2KernelPlan {
+pub struct Stage3KernelPlan {
     pub symbol: String,
     pub relation: String,
     pub kind: String,
@@ -46,7 +47,7 @@ pub struct Stage2KernelPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2TranscriptSqueezePlan {
+pub struct Stage3TranscriptSqueezePlan {
     pub symbol: String,
     pub label: String,
     pub kind: String,
@@ -54,13 +55,13 @@ pub struct Stage2TranscriptSqueezePlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2ProgramStepPlan {
+pub struct Stage3ProgramStepPlan {
     pub kind: String,
     pub symbol: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2OpeningInputPlan {
+pub struct Stage3OpeningInputPlan {
     pub symbol: String,
     pub source_stage: String,
     pub source_claim: String,
@@ -71,14 +72,14 @@ pub struct Stage2OpeningInputPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2FieldConstantPlan {
+pub struct Stage3FieldConstantPlan {
     pub symbol: String,
     pub field: String,
     pub value: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2FieldExprPlan {
+pub struct Stage3FieldExprPlan {
     pub symbol: String,
     pub kind: String,
     pub formula: String,
@@ -87,7 +88,7 @@ pub struct Stage2FieldExprPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2SumcheckClaimPlan {
+pub struct Stage3SumcheckClaimPlan {
     pub symbol: String,
     pub stage: String,
     pub domain: String,
@@ -101,7 +102,7 @@ pub struct Stage2SumcheckClaimPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2SumcheckBatchPlan {
+pub struct Stage3SumcheckBatchPlan {
     pub symbol: String,
     pub stage: String,
     pub proof_slot: String,
@@ -115,7 +116,7 @@ pub struct Stage2SumcheckBatchPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2SumcheckDriverPlan {
+pub struct Stage3SumcheckDriverPlan {
     pub symbol: String,
     pub stage: String,
     pub proof_slot: String,
@@ -131,7 +132,7 @@ pub struct Stage2SumcheckDriverPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2SumcheckInstanceResultPlan {
+pub struct Stage3SumcheckInstanceResultPlan {
     pub symbol: String,
     pub source: String,
     pub claim: String,
@@ -145,7 +146,7 @@ pub struct Stage2SumcheckInstanceResultPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2SumcheckEvalPlan {
+pub struct Stage3SumcheckEvalPlan {
     pub symbol: String,
     pub source: String,
     pub name: String,
@@ -154,7 +155,7 @@ pub struct Stage2SumcheckEvalPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2PointSlicePlan {
+pub struct Stage3PointSlicePlan {
     pub symbol: String,
     pub source: String,
     pub offset: usize,
@@ -163,7 +164,7 @@ pub struct Stage2PointSlicePlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2PointConcatPlan {
+pub struct Stage3PointConcatPlan {
     pub symbol: String,
     pub layout: String,
     pub arity: usize,
@@ -171,7 +172,7 @@ pub struct Stage2PointConcatPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2OpeningClaimPlan {
+pub struct Stage3OpeningClaimPlan {
     pub symbol: String,
     pub oracle: String,
     pub domain: String,
@@ -182,7 +183,15 @@ pub struct Stage2OpeningClaimPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2OpeningBatchPlan {
+pub struct Stage3OpeningClaimEqualityPlan {
+    pub symbol: String,
+    pub mode: String,
+    pub lhs: String,
+    pub rhs: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stage3OpeningBatchPlan {
     pub symbol: String,
     pub stage: String,
     pub proof_slot: String,
@@ -192,15 +201,15 @@ pub struct Stage2OpeningBatchPlan {
     pub claim_operands: Vec<String>,
 }
 
-pub fn stage2_cpu_program(module: &BoltModule<'_, Cpu>) -> Result<Stage2CpuProgram, EmitError> {
+pub fn stage3_cpu_program(module: &BoltModule<'_, Cpu>) -> Result<Stage3CpuProgram, EmitError> {
     verify_cpu_schema(module)?;
-    let program = Stage2CpuProgram::from_module(module)?;
+    let program = Stage3CpuProgram::from_module(module)?;
     program.verify_supported_target()?;
     Ok(program)
 }
 
-pub fn emit_stage2_rust(module: &BoltModule<'_, Cpu>) -> Result<RustSourceFile, EmitError> {
-    let program = stage2_cpu_program(module)?;
+pub fn emit_stage3_rust(module: &BoltModule<'_, Cpu>) -> Result<RustSourceFile, EmitError> {
+    let program = stage3_cpu_program(module)?;
 
     Ok(RustSourceFile {
         filename: program.filename().to_owned(),
@@ -208,7 +217,7 @@ pub fn emit_stage2_rust(module: &BoltModule<'_, Cpu>) -> Result<RustSourceFile, 
     })
 }
 
-impl Stage2CpuProgram {
+impl Stage3CpuProgram {
     fn from_module(module: &BoltModule<'_, Cpu>) -> Result<Self, EmitError> {
         let mut params = None;
         let mut steps = Vec::new();
@@ -225,6 +234,7 @@ impl Stage2CpuProgram {
         let mut point_slices = Vec::new();
         let mut point_concats = Vec::new();
         let mut opening_claims = Vec::new();
+        let mut opening_equalities = Vec::new();
         let mut opening_batches = Vec::new();
 
         let mut operation = module.as_mlir_module().body().first_operation();
@@ -232,14 +242,14 @@ impl Stage2CpuProgram {
             operation = op.next_in_block();
             match operation_name(op).as_str() {
                 "cpu.params" => {
-                    params = Some(Stage2Params {
+                    params = Some(Stage3Params {
                         field: symbol_attr(op, "field")?,
                         pcs: symbol_attr(op, "pcs")?,
                         transcript: symbol_attr(op, "transcript")?,
                     });
                 }
                 "cpu.kernel" => {
-                    kernels.push(Stage2KernelPlan {
+                    kernels.push(Stage3KernelPlan {
                         symbol: string_attr(op, "sym_name")?,
                         relation: symbol_attr(op, "relation")?,
                         kind: string_attr(op, "kind")?,
@@ -249,11 +259,11 @@ impl Stage2CpuProgram {
                 }
                 "cpu.transcript_squeeze" => {
                     let symbol = string_attr(op, "sym_name")?;
-                    steps.push(Stage2ProgramStepPlan {
+                    steps.push(Stage3ProgramStepPlan {
                         kind: "transcript_squeeze".to_owned(),
                         symbol: symbol.clone(),
                     });
-                    transcript_squeezes.push(Stage2TranscriptSqueezePlan {
+                    transcript_squeezes.push(Stage3TranscriptSqueezePlan {
                         symbol,
                         label: string_attr(op, "label")?,
                         kind: string_attr(op, "kind")?,
@@ -261,7 +271,7 @@ impl Stage2CpuProgram {
                     });
                 }
                 "cpu.opening_input" => {
-                    opening_inputs.push(Stage2OpeningInputPlan {
+                    opening_inputs.push(Stage3OpeningInputPlan {
                         symbol: string_attr(op, "sym_name")?,
                         source_stage: symbol_attr(op, "source_stage")?,
                         source_claim: symbol_attr(op, "source_claim")?,
@@ -272,21 +282,21 @@ impl Stage2CpuProgram {
                     });
                 }
                 "cpu.field_const" => {
-                    field_constants.push(Stage2FieldConstantPlan {
+                    field_constants.push(Stage3FieldConstantPlan {
                         symbol: string_attr(op, "sym_name")?,
                         field: symbol_attr(op, "field")?,
                         value: int_attr(op, "value")?,
                     });
                 }
                 "cpu.field_zero" => {
-                    field_constants.push(Stage2FieldConstantPlan {
+                    field_constants.push(Stage3FieldConstantPlan {
                         symbol: string_attr(op, "sym_name")?,
                         field: symbol_attr(op, "field")?,
                         value: 0,
                     });
                 }
                 "cpu.field_one" => {
-                    field_constants.push(Stage2FieldConstantPlan {
+                    field_constants.push(Stage3FieldConstantPlan {
                         symbol: string_attr(op, "sym_name")?,
                         field: symbol_attr(op, "field")?,
                         value: 1,
@@ -294,7 +304,7 @@ impl Stage2CpuProgram {
                 }
                 "cpu.field_add" | "cpu.field_sub" | "cpu.field_mul" | "cpu.field_neg" => {
                     let operands = operand_symbols(op, 0)?;
-                    field_exprs.push(Stage2FieldExprPlan {
+                    field_exprs.push(Stage3FieldExprPlan {
                         symbol: string_attr(op, "sym_name")?,
                         kind: "op".to_owned(),
                         formula: operation_name(op).replace("cpu.field_", "field."),
@@ -305,7 +315,7 @@ impl Stage2CpuProgram {
                 "cpu.field_pow" => {
                     let exponent = int_attr(op, "exponent")?;
                     let operands = operand_symbols(op, 0)?;
-                    field_exprs.push(Stage2FieldExprPlan {
+                    field_exprs.push(Stage3FieldExprPlan {
                         symbol: string_attr(op, "sym_name")?,
                         kind: "op".to_owned(),
                         formula: format!("field.pow:{exponent}"),
@@ -318,7 +328,7 @@ impl Stage2CpuProgram {
                     let domain_size = int_attr(op, "domain_size")?;
                     let index = int_attr(op, "index")?;
                     let operands = operand_symbols(op, 0)?;
-                    field_exprs.push(Stage2FieldExprPlan {
+                    field_exprs.push(Stage3FieldExprPlan {
                         symbol: string_attr(op, "sym_name")?,
                         kind: "op".to_owned(),
                         formula: format!(
@@ -329,7 +339,7 @@ impl Stage2CpuProgram {
                     });
                 }
                 "cpu.sumcheck_claim" => {
-                    claims.push(Stage2SumcheckClaimPlan {
+                    claims.push(Stage3SumcheckClaimPlan {
                         symbol: string_attr(op, "sym_name")?,
                         stage: symbol_attr(op, "stage")?,
                         domain: symbol_attr(op, "domain")?,
@@ -343,7 +353,7 @@ impl Stage2CpuProgram {
                     });
                 }
                 "cpu.sumcheck_verify_claim" => {
-                    claims.push(Stage2SumcheckClaimPlan {
+                    claims.push(Stage3SumcheckClaimPlan {
                         symbol: string_attr(op, "sym_name")?,
                         stage: symbol_attr(op, "stage")?,
                         domain: symbol_attr(op, "domain")?,
@@ -357,7 +367,7 @@ impl Stage2CpuProgram {
                     });
                 }
                 "cpu.sumcheck_batch" => {
-                    batches.push(Stage2SumcheckBatchPlan {
+                    batches.push(Stage3SumcheckBatchPlan {
                         symbol: string_attr(op, "sym_name")?,
                         stage: symbol_attr(op, "stage")?,
                         proof_slot: symbol_attr(op, "proof_slot")?,
@@ -372,11 +382,11 @@ impl Stage2CpuProgram {
                 }
                 "cpu.sumcheck_driver" => {
                     let symbol = string_attr(op, "sym_name")?;
-                    steps.push(Stage2ProgramStepPlan {
+                    steps.push(Stage3ProgramStepPlan {
                         kind: "sumcheck_driver".to_owned(),
                         symbol: symbol.clone(),
                     });
-                    drivers.push(Stage2SumcheckDriverPlan {
+                    drivers.push(Stage3SumcheckDriverPlan {
                         symbol,
                         stage: symbol_attr(op, "stage")?,
                         proof_slot: symbol_attr(op, "proof_slot")?,
@@ -393,11 +403,11 @@ impl Stage2CpuProgram {
                 }
                 "cpu.sumcheck_verify" => {
                     let symbol = string_attr(op, "sym_name")?;
-                    steps.push(Stage2ProgramStepPlan {
+                    steps.push(Stage3ProgramStepPlan {
                         kind: "sumcheck_driver".to_owned(),
                         symbol: symbol.clone(),
                     });
-                    drivers.push(Stage2SumcheckDriverPlan {
+                    drivers.push(Stage3SumcheckDriverPlan {
                         symbol,
                         stage: symbol_attr(op, "stage")?,
                         proof_slot: symbol_attr(op, "proof_slot")?,
@@ -413,7 +423,7 @@ impl Stage2CpuProgram {
                     });
                 }
                 "cpu.sumcheck_instance_result" => {
-                    instance_results.push(Stage2SumcheckInstanceResultPlan {
+                    instance_results.push(Stage3SumcheckInstanceResultPlan {
                         symbol: string_attr(op, "sym_name")?,
                         source: symbol_attr(op, "source")?,
                         claim: symbol_attr(op, "claim")?,
@@ -427,7 +437,7 @@ impl Stage2CpuProgram {
                     });
                 }
                 "cpu.sumcheck_eval" => {
-                    evals.push(Stage2SumcheckEvalPlan {
+                    evals.push(Stage3SumcheckEvalPlan {
                         symbol: string_attr(op, "sym_name")?,
                         source: symbol_attr(op, "source")?,
                         name: symbol_attr(op, "name")?,
@@ -436,7 +446,7 @@ impl Stage2CpuProgram {
                     });
                 }
                 "cpu.point_slice" => {
-                    point_slices.push(Stage2PointSlicePlan {
+                    point_slices.push(Stage3PointSlicePlan {
                         symbol: string_attr(op, "sym_name")?,
                         source: symbol_attr(op, "source")?,
                         offset: int_attr(op, "offset")?,
@@ -445,7 +455,7 @@ impl Stage2CpuProgram {
                     });
                 }
                 "cpu.point_concat" => {
-                    point_concats.push(Stage2PointConcatPlan {
+                    point_concats.push(Stage3PointConcatPlan {
                         symbol: string_attr(op, "sym_name")?,
                         layout: string_attr(op, "layout")?,
                         arity: int_attr(op, "arity")?,
@@ -453,7 +463,7 @@ impl Stage2CpuProgram {
                     });
                 }
                 "cpu.opening_claim" => {
-                    opening_claims.push(Stage2OpeningClaimPlan {
+                    opening_claims.push(Stage3OpeningClaimPlan {
                         symbol: string_attr(op, "sym_name")?,
                         oracle: symbol_attr(op, "oracle")?,
                         domain: symbol_attr(op, "domain")?,
@@ -463,8 +473,16 @@ impl Stage2CpuProgram {
                         eval_source: operand_symbol(op, 1)?,
                     });
                 }
+                "cpu.opening_claim_equal" => {
+                    opening_equalities.push(Stage3OpeningClaimEqualityPlan {
+                        symbol: string_attr(op, "sym_name")?,
+                        mode: string_attr(op, "mode")?,
+                        lhs: operand_symbol(op, 0)?,
+                        rhs: operand_symbol(op, 1)?,
+                    });
+                }
                 "cpu.opening_batch" => {
-                    opening_batches.push(Stage2OpeningBatchPlan {
+                    opening_batches.push(Stage3OpeningBatchPlan {
                         symbol: string_attr(op, "sym_name")?,
                         stage: symbol_attr(op, "stage")?,
                         proof_slot: symbol_attr(op, "proof_slot")?,
@@ -497,6 +515,7 @@ impl Stage2CpuProgram {
             point_slices,
             point_concats,
             opening_claims,
+            opening_equalities,
             opening_batches,
         })
     }
@@ -525,13 +544,13 @@ impl Stage2CpuProgram {
                 "challenge_scalar" | "challenge_vector"
             ) {
                 return Err(EmitError::new(format!(
-                    "stage2 transcript squeeze @{} has unsupported kind `{}`",
+                    "stage3 transcript squeeze @{} has unsupported kind `{}`",
                     squeeze.symbol, squeeze.kind
                 )));
             }
             if squeeze.count == 0 {
                 return Err(EmitError::new(format!(
-                    "stage2 transcript squeeze @{} has zero count",
+                    "stage3 transcript squeeze @{} has zero count",
                     squeeze.symbol
                 )));
             }
@@ -591,36 +610,31 @@ impl Stage2CpuProgram {
         for kernel in &self.kernels {
             if kernel.backend != "cpu" {
                 return Err(EmitError::new(format!(
-                    "stage2 kernel @{} targets unsupported backend `{}`",
+                    "stage3 kernel @{} targets unsupported backend `{}`",
                     kernel.symbol, kernel.backend
                 )));
             }
             if kernel.kind != "sumcheck" {
                 return Err(EmitError::new(format!(
-                    "stage2 kernel @{} has unsupported kind `{}`",
+                    "stage3 kernel @{} has unsupported kind `{}`",
                     kernel.symbol, kernel.kind
                 )));
             }
             let expected_abi = match kernel.relation.as_str() {
-                "jolt.stage2.product_virtual.uniskip" => "jolt_stage2_product_virtual_uniskip",
-                "jolt.stage2.ram.read_write" => "jolt_stage2_ram_read_write",
-                "jolt.stage2.product_virtual.remainder" => "jolt_stage2_product_virtual_remainder",
-                "jolt.stage2.instruction_lookup.claim_reduction" => {
-                    "jolt_stage2_instruction_lookup_claim_reduction"
-                }
-                "jolt.stage2.ram.raf_evaluation" => "jolt_stage2_ram_raf_evaluation",
-                "jolt.stage2.ram.output_check" => "jolt_stage2_ram_output_check",
-                "jolt.stage2.batched" => "jolt_stage2_batched",
+                "jolt.stage3.spartan_shift" => "jolt_stage3_spartan_shift",
+                "jolt.stage3.instruction_input" => "jolt_stage3_instruction_input",
+                "jolt.stage3.registers_claim_reduction" => "jolt_stage3_registers_claim_reduction",
+                "jolt.stage3.batched" => "jolt_stage3_batched",
                 _ => {
                     return Err(EmitError::new(format!(
-                        "unsupported stage2 kernel relation @{}",
+                        "unsupported stage3 kernel relation @{}",
                         kernel.relation
                     )));
                 }
             };
             if kernel.abi != expected_abi {
                 return Err(EmitError::new(format!(
-                    "stage2 kernel @{} ABI `{}` does not match relation @{}",
+                    "stage3 kernel @{} ABI `{}` does not match relation @{}",
                     kernel.symbol, kernel.abi, kernel.relation
                 )));
             }
@@ -720,7 +734,7 @@ impl Stage2CpuProgram {
     fn verify_verifier_driver_bindings(&self) -> Result<(), EmitError> {
         if !self.kernels.is_empty() {
             return Err(EmitError::new(
-                "verifier stage2 program must not contain kernels",
+                "verifier stage3 program must not contain kernels",
             ));
         }
         let batches: BTreeMap<_, _> = self
@@ -802,6 +816,20 @@ impl Stage2CpuProgram {
         opening_sources.extend(symbols(
             self.opening_claims.iter().map(|claim| &claim.symbol),
         ));
+        for equality in &self.opening_equalities {
+            if !opening_sources.contains(&equality.lhs) {
+                return Err(EmitError::new(format!(
+                    "opening equality @{} uses missing lhs opening @{}",
+                    equality.symbol, equality.lhs
+                )));
+            }
+            if !opening_sources.contains(&equality.rhs) {
+                return Err(EmitError::new(format!(
+                    "opening equality @{} uses missing rhs opening @{}",
+                    equality.symbol, equality.rhs
+                )));
+            }
+        }
         for claim in &self.claims {
             for input in &claim.input_openings {
                 if !opening_sources.contains(input) {
@@ -910,19 +938,19 @@ impl Stage2CpuProgram {
 
     fn filename(&self) -> &'static str {
         match self.role {
-            Role::Prover => "prove_stage2.rs",
-            Role::Verifier => "verify_stage2.rs",
+            Role::Prover => "prove_stage3.rs",
+            Role::Verifier => "verify_stage3.rs",
         }
     }
 
     fn emit_prover_imports() -> &'static str {
         "use jolt_field::Fr;\n\
-         use jolt_kernels::stage2::{execute_stage2_program, Stage2CpuProgramPlan, Stage2ExecutionArtifacts, Stage2ExecutionMode, Stage2FieldConstantPlan, Stage2FieldExprPlan, Stage2KernelError, Stage2KernelExecutor, Stage2KernelPlan, Stage2OpeningBatchPlan, Stage2OpeningClaimPlan, Stage2OpeningInputPlan, Stage2Params, Stage2PointConcatPlan, Stage2PointSlicePlan, Stage2ProgramStepPlan, Stage2SumcheckBatchPlan, Stage2SumcheckClaimPlan, Stage2SumcheckDriverPlan, Stage2SumcheckEvalPlan, Stage2SumcheckInstanceResultPlan, Stage2TranscriptSqueezePlan};\n\
+         use jolt_kernels::stage3::{execute_stage3_program, Stage3CpuProgramPlan, Stage3ExecutionArtifacts, Stage3ExecutionMode, Stage3FieldConstantPlan, Stage3FieldExprPlan, Stage3KernelError, Stage3KernelExecutor, Stage3KernelPlan, Stage3OpeningBatchPlan, Stage3OpeningClaimEqualityPlan, Stage3OpeningClaimPlan, Stage3OpeningInputPlan, Stage3Params, Stage3PointConcatPlan, Stage3PointSlicePlan, Stage3ProgramStepPlan, Stage3SumcheckBatchPlan, Stage3SumcheckClaimPlan, Stage3SumcheckDriverPlan, Stage3SumcheckEvalPlan, Stage3SumcheckInstanceResultPlan, Stage3TranscriptSqueezePlan};\n\
          use jolt_transcript::Blake2bTranscript;"
     }
 
     fn emit_prover_types() -> &'static str {
-        "pub type DefaultStage2Transcript = Blake2bTranscript<Fr>;\n"
+        "pub type DefaultStage3Transcript = Blake2bTranscript<Fr>;\n"
     }
 
     fn emit_verifier_imports() -> &'static str {
@@ -930,17 +958,17 @@ impl Stage2CpuProgram {
     }
 
     fn emit_verifier_types() -> &'static str {
-        r"pub type DefaultStage2Transcript = Blake2bTranscript<Fr>;
+        r"pub type DefaultStage3Transcript = Blake2bTranscript<Fr>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2Params {
+pub struct Stage3Params {
     pub field: &'static str,
     pub pcs: &'static str,
     pub transcript: &'static str,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2TranscriptSqueezePlan {
+pub struct Stage3TranscriptSqueezePlan {
     pub symbol: &'static str,
     pub label: &'static str,
     pub kind: &'static str,
@@ -948,13 +976,13 @@ pub struct Stage2TranscriptSqueezePlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2ProgramStepPlan {
+pub struct Stage3ProgramStepPlan {
     pub kind: &'static str,
     pub symbol: &'static str,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2OpeningInputPlan {
+pub struct Stage3OpeningInputPlan {
     pub symbol: &'static str,
     pub source_stage: &'static str,
     pub source_claim: &'static str,
@@ -965,14 +993,14 @@ pub struct Stage2OpeningInputPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2FieldConstantPlan {
+pub struct Stage3FieldConstantPlan {
     pub symbol: &'static str,
     pub field: &'static str,
     pub value: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2FieldExprPlan {
+pub struct Stage3FieldExprPlan {
     pub symbol: &'static str,
     pub kind: &'static str,
     pub formula: &'static str,
@@ -981,7 +1009,7 @@ pub struct Stage2FieldExprPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2SumcheckClaimPlan {
+pub struct Stage3SumcheckClaimPlan {
     pub symbol: &'static str,
     pub stage: &'static str,
     pub domain: &'static str,
@@ -994,7 +1022,7 @@ pub struct Stage2SumcheckClaimPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2SumcheckBatchPlan {
+pub struct Stage3SumcheckBatchPlan {
     pub symbol: &'static str,
     pub stage: &'static str,
     pub proof_slot: &'static str,
@@ -1008,7 +1036,7 @@ pub struct Stage2SumcheckBatchPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2SumcheckDriverPlan {
+pub struct Stage3SumcheckDriverPlan {
     pub symbol: &'static str,
     pub stage: &'static str,
     pub proof_slot: &'static str,
@@ -1023,7 +1051,7 @@ pub struct Stage2SumcheckDriverPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2SumcheckInstanceResultPlan {
+pub struct Stage3SumcheckInstanceResultPlan {
     pub symbol: &'static str,
     pub source: &'static str,
     pub claim: &'static str,
@@ -1037,7 +1065,7 @@ pub struct Stage2SumcheckInstanceResultPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2SumcheckEvalPlan {
+pub struct Stage3SumcheckEvalPlan {
     pub symbol: &'static str,
     pub source: &'static str,
     pub name: &'static str,
@@ -1046,7 +1074,7 @@ pub struct Stage2SumcheckEvalPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2PointSlicePlan {
+pub struct Stage3PointSlicePlan {
     pub symbol: &'static str,
     pub source: &'static str,
     pub offset: usize,
@@ -1055,7 +1083,7 @@ pub struct Stage2PointSlicePlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2PointConcatPlan {
+pub struct Stage3PointConcatPlan {
     pub symbol: &'static str,
     pub layout: &'static str,
     pub arity: usize,
@@ -1063,7 +1091,7 @@ pub struct Stage2PointConcatPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2OpeningClaimPlan {
+pub struct Stage3OpeningClaimPlan {
     pub symbol: &'static str,
     pub oracle: &'static str,
     pub domain: &'static str,
@@ -1074,7 +1102,15 @@ pub struct Stage2OpeningClaimPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2OpeningBatchPlan {
+pub struct Stage3OpeningClaimEqualityPlan {
+    pub symbol: &'static str,
+    pub mode: &'static str,
+    pub lhs: &'static str,
+    pub rhs: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Stage3OpeningBatchPlan {
     pub symbol: &'static str,
     pub stage: &'static str,
     pub proof_slot: &'static str,
@@ -1085,22 +1121,23 @@ pub struct Stage2OpeningBatchPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2VerifierProgramPlan {
-    pub params: Stage2Params,
-    pub steps: &'static [Stage2ProgramStepPlan],
-    pub transcript_squeezes: &'static [Stage2TranscriptSqueezePlan],
-    pub opening_inputs: &'static [Stage2OpeningInputPlan],
-    pub field_constants: &'static [Stage2FieldConstantPlan],
-    pub field_exprs: &'static [Stage2FieldExprPlan],
-    pub claims: &'static [Stage2SumcheckClaimPlan],
-    pub batches: &'static [Stage2SumcheckBatchPlan],
-    pub drivers: &'static [Stage2SumcheckDriverPlan],
-    pub instance_results: &'static [Stage2SumcheckInstanceResultPlan],
-    pub evals: &'static [Stage2SumcheckEvalPlan],
-    pub point_slices: &'static [Stage2PointSlicePlan],
-    pub point_concats: &'static [Stage2PointConcatPlan],
-    pub opening_claims: &'static [Stage2OpeningClaimPlan],
-    pub opening_batches: &'static [Stage2OpeningBatchPlan],
+pub struct Stage3VerifierProgramPlan {
+    pub params: Stage3Params,
+    pub steps: &'static [Stage3ProgramStepPlan],
+    pub transcript_squeezes: &'static [Stage3TranscriptSqueezePlan],
+    pub opening_inputs: &'static [Stage3OpeningInputPlan],
+    pub field_constants: &'static [Stage3FieldConstantPlan],
+    pub field_exprs: &'static [Stage3FieldExprPlan],
+    pub claims: &'static [Stage3SumcheckClaimPlan],
+    pub batches: &'static [Stage3SumcheckBatchPlan],
+    pub drivers: &'static [Stage3SumcheckDriverPlan],
+    pub instance_results: &'static [Stage3SumcheckInstanceResultPlan],
+    pub evals: &'static [Stage3SumcheckEvalPlan],
+    pub point_slices: &'static [Stage3PointSlicePlan],
+    pub point_concats: &'static [Stage3PointConcatPlan],
+    pub opening_claims: &'static [Stage3OpeningClaimPlan],
+    pub opening_equalities: &'static [Stage3OpeningClaimEqualityPlan],
+    pub opening_batches: &'static [Stage3OpeningBatchPlan],
 }
 "
     }
@@ -1113,23 +1150,24 @@ pub struct Stage2VerifierProgramPlan {
         source.push_str(&self.emit_prover_sumcheck_driver_constants()?);
         source.push_str(&self.emit_tail_constants());
         source.push_str(
-            "pub const STAGE2_PROGRAM: Stage2CpuProgramPlan = Stage2CpuProgramPlan {\n\
-             \x20   params: STAGE2_PARAMS,\n\
-             \x20   steps: STAGE2_PROGRAM_STEPS,\n\
-             \x20   transcript_squeezes: STAGE2_TRANSCRIPT_SQUEEZES,\n\
-             \x20   opening_inputs: STAGE2_OPENING_INPUTS,\n\
-             \x20   field_constants: STAGE2_FIELD_CONSTANTS,\n\
-             \x20   field_exprs: STAGE2_FIELD_EXPRS,\n\
-             \x20   kernels: STAGE2_KERNELS,\n\
-             \x20   claims: STAGE2_SUMCHECK_CLAIMS,\n\
-             \x20   batches: STAGE2_SUMCHECK_BATCHES,\n\
-             \x20   drivers: STAGE2_SUMCHECK_DRIVERS,\n\
-             \x20   instance_results: STAGE2_SUMCHECK_INSTANCE_RESULTS,\n\
-             \x20   evals: STAGE2_SUMCHECK_EVALS,\n\
-             \x20   point_slices: STAGE2_POINT_SLICES,\n\
-             \x20   point_concats: STAGE2_POINT_CONCATS,\n\
-             \x20   opening_claims: STAGE2_OPENING_CLAIMS,\n\
-             \x20   opening_batches: STAGE2_OPENING_BATCHES,\n\
+            "pub const STAGE3_PROGRAM: Stage3CpuProgramPlan = Stage3CpuProgramPlan {\n\
+             \x20   params: STAGE3_PARAMS,\n\
+             \x20   steps: STAGE3_PROGRAM_STEPS,\n\
+             \x20   transcript_squeezes: STAGE3_TRANSCRIPT_SQUEEZES,\n\
+             \x20   opening_inputs: STAGE3_OPENING_INPUTS,\n\
+             \x20   field_constants: STAGE3_FIELD_CONSTANTS,\n\
+             \x20   field_exprs: STAGE3_FIELD_EXPRS,\n\
+             \x20   kernels: STAGE3_KERNELS,\n\
+             \x20   claims: STAGE3_SUMCHECK_CLAIMS,\n\
+             \x20   batches: STAGE3_SUMCHECK_BATCHES,\n\
+             \x20   drivers: STAGE3_SUMCHECK_DRIVERS,\n\
+             \x20   instance_results: STAGE3_SUMCHECK_INSTANCE_RESULTS,\n\
+             \x20   evals: STAGE3_SUMCHECK_EVALS,\n\
+             \x20   point_slices: STAGE3_POINT_SLICES,\n\
+             \x20   point_concats: STAGE3_POINT_CONCATS,\n\
+             \x20   opening_claims: STAGE3_OPENING_CLAIMS,\n\
+             \x20   opening_equalities: STAGE3_OPENING_EQUALITIES,\n\
+             \x20   opening_batches: STAGE3_OPENING_BATCHES,\n\
              };\n",
         );
         Ok(source)
@@ -1142,22 +1180,23 @@ pub struct Stage2VerifierProgramPlan {
         source.push_str(&self.emit_verifier_sumcheck_driver_constants()?);
         source.push_str(&self.emit_tail_constants());
         source.push_str(
-            "pub const STAGE2_PROGRAM: Stage2VerifierProgramPlan = Stage2VerifierProgramPlan {\n\
-             \x20   params: STAGE2_PARAMS,\n\
-             \x20   steps: STAGE2_PROGRAM_STEPS,\n\
-             \x20   transcript_squeezes: STAGE2_TRANSCRIPT_SQUEEZES,\n\
-             \x20   opening_inputs: STAGE2_OPENING_INPUTS,\n\
-             \x20   field_constants: STAGE2_FIELD_CONSTANTS,\n\
-             \x20   field_exprs: STAGE2_FIELD_EXPRS,\n\
-             \x20   claims: STAGE2_SUMCHECK_CLAIMS,\n\
-             \x20   batches: STAGE2_SUMCHECK_BATCHES,\n\
-             \x20   drivers: STAGE2_SUMCHECK_DRIVERS,\n\
-             \x20   instance_results: STAGE2_SUMCHECK_INSTANCE_RESULTS,\n\
-             \x20   evals: STAGE2_SUMCHECK_EVALS,\n\
-             \x20   point_slices: STAGE2_POINT_SLICES,\n\
-             \x20   point_concats: STAGE2_POINT_CONCATS,\n\
-             \x20   opening_claims: STAGE2_OPENING_CLAIMS,\n\
-             \x20   opening_batches: STAGE2_OPENING_BATCHES,\n\
+            "pub const STAGE3_PROGRAM: Stage3VerifierProgramPlan = Stage3VerifierProgramPlan {\n\
+             \x20   params: STAGE3_PARAMS,\n\
+             \x20   steps: STAGE3_PROGRAM_STEPS,\n\
+             \x20   transcript_squeezes: STAGE3_TRANSCRIPT_SQUEEZES,\n\
+             \x20   opening_inputs: STAGE3_OPENING_INPUTS,\n\
+             \x20   field_constants: STAGE3_FIELD_CONSTANTS,\n\
+             \x20   field_exprs: STAGE3_FIELD_EXPRS,\n\
+             \x20   claims: STAGE3_SUMCHECK_CLAIMS,\n\
+             \x20   batches: STAGE3_SUMCHECK_BATCHES,\n\
+             \x20   drivers: STAGE3_SUMCHECK_DRIVERS,\n\
+             \x20   instance_results: STAGE3_SUMCHECK_INSTANCE_RESULTS,\n\
+             \x20   evals: STAGE3_SUMCHECK_EVALS,\n\
+             \x20   point_slices: STAGE3_POINT_SLICES,\n\
+             \x20   point_concats: STAGE3_POINT_CONCATS,\n\
+             \x20   opening_claims: STAGE3_OPENING_CLAIMS,\n\
+             \x20   opening_equalities: STAGE3_OPENING_EQUALITIES,\n\
+             \x20   opening_batches: STAGE3_OPENING_BATCHES,\n\
              };\n",
         );
         Ok(source)
@@ -1168,7 +1207,7 @@ pub struct Stage2VerifierProgramPlan {
         push_format(
             &mut source,
             format_args!(
-                "pub const STAGE2_PARAMS: Stage2Params = Stage2Params {{\n\
+                "pub const STAGE3_PARAMS: Stage3Params = Stage3Params {{\n\
              \x20   field: {},\n\
              \x20   pcs: {},\n\
              \x20   transcript: {},\n\
@@ -1192,14 +1231,14 @@ pub struct Stage2VerifierProgramPlan {
             .iter()
             .map(|step| {
                 format!(
-                    "    Stage2ProgramStepPlan {{ kind: {}, symbol: {} }},",
+                    "    Stage3ProgramStepPlan {{ kind: {}, symbol: {} }},",
                     rust_str(&step.kind),
                     rust_str(&step.symbol),
                 )
             })
             .collect::<Vec<_>>()
             .join("\n");
-        format!("pub const STAGE2_PROGRAM_STEPS: &[Stage2ProgramStepPlan] = &[\n{steps}\n];\n\n")
+        format!("pub const STAGE3_PROGRAM_STEPS: &[Stage3ProgramStepPlan] = &[\n{steps}\n];\n\n")
     }
 
     fn emit_transcript_squeeze_constants(&self) -> String {
@@ -1208,7 +1247,7 @@ pub struct Stage2VerifierProgramPlan {
             .iter()
             .map(|squeeze| {
                 format!(
-                    "    Stage2TranscriptSqueezePlan {{ symbol: {}, label: {}, kind: {}, count: {} }},",
+                    "    Stage3TranscriptSqueezePlan {{ symbol: {}, label: {}, kind: {}, count: {} }},",
                     rust_str(&squeeze.symbol),
                     rust_str(&squeeze.label),
                     rust_str(&squeeze.kind),
@@ -1218,7 +1257,7 @@ pub struct Stage2VerifierProgramPlan {
             .collect::<Vec<_>>()
             .join("\n");
         format!(
-            "pub const STAGE2_TRANSCRIPT_SQUEEZES: &[Stage2TranscriptSqueezePlan] = &[\n{squeezes}\n];\n\n"
+            "pub const STAGE3_TRANSCRIPT_SQUEEZES: &[Stage3TranscriptSqueezePlan] = &[\n{squeezes}\n];\n\n"
         )
     }
 
@@ -1228,7 +1267,7 @@ pub struct Stage2VerifierProgramPlan {
             .iter()
             .map(|input| {
                 format!(
-                    "    Stage2OpeningInputPlan {{ symbol: {}, source_stage: {}, source_claim: {}, oracle: {}, domain: {}, point_arity: {}, claim_kind: {} }},",
+                    "    Stage3OpeningInputPlan {{ symbol: {}, source_stage: {}, source_claim: {}, oracle: {}, domain: {}, point_arity: {}, claim_kind: {} }},",
                     rust_str(&input.symbol),
                     rust_str(&input.source_stage),
                     rust_str(&input.source_claim),
@@ -1240,7 +1279,7 @@ pub struct Stage2VerifierProgramPlan {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        format!("pub const STAGE2_OPENING_INPUTS: &[Stage2OpeningInputPlan] = &[\n{inputs}\n];\n\n")
+        format!("pub const STAGE3_OPENING_INPUTS: &[Stage3OpeningInputPlan] = &[\n{inputs}\n];\n\n")
     }
 
     fn emit_field_constant_constants(&self) -> String {
@@ -1249,7 +1288,7 @@ pub struct Stage2VerifierProgramPlan {
             .iter()
             .map(|constant| {
                 format!(
-                    "    Stage2FieldConstantPlan {{ symbol: {}, field: {}, value: {} }},",
+                    "    Stage3FieldConstantPlan {{ symbol: {}, field: {}, value: {} }},",
                     rust_str(&constant.symbol),
                     rust_str(&constant.field),
                     constant.value
@@ -1258,7 +1297,7 @@ pub struct Stage2VerifierProgramPlan {
             .collect::<Vec<_>>()
             .join("\n");
         format!(
-            "pub const STAGE2_FIELD_CONSTANTS: &[Stage2FieldConstantPlan] = &[\n{constants}\n];\n\n"
+            "pub const STAGE3_FIELD_CONSTANTS: &[Stage3FieldConstantPlan] = &[\n{constants}\n];\n\n"
         )
     }
 
@@ -1266,11 +1305,11 @@ pub struct Stage2VerifierProgramPlan {
         let mut source = String::new();
         for (index, expr) in self.field_exprs.iter().enumerate() {
             source.push_str(&emit_str_array(
-                &format!("STAGE2_FIELD_EXPR_{index}_OPERAND_NAMES"),
+                &format!("STAGE3_FIELD_EXPR_{index}_OPERAND_NAMES"),
                 &expr.operand_names,
             ));
             source.push_str(&emit_str_array(
-                &format!("STAGE2_FIELD_EXPR_{index}_OPERANDS"),
+                &format!("STAGE3_FIELD_EXPR_{index}_OPERANDS"),
                 &expr.operands,
             ));
         }
@@ -1280,7 +1319,7 @@ pub struct Stage2VerifierProgramPlan {
             .enumerate()
             .map(|(index, expr)| {
                 format!(
-                    "    Stage2FieldExprPlan {{ symbol: {}, kind: {}, formula: {}, operand_names: STAGE2_FIELD_EXPR_{index}_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_{index}_OPERANDS }},",
+                    "    Stage3FieldExprPlan {{ symbol: {}, kind: {}, formula: {}, operand_names: STAGE3_FIELD_EXPR_{index}_OPERAND_NAMES, operands: STAGE3_FIELD_EXPR_{index}_OPERANDS }},",
                     rust_str(&expr.symbol),
                     rust_str(&expr.kind),
                     rust_str(&expr.formula)
@@ -1291,7 +1330,7 @@ pub struct Stage2VerifierProgramPlan {
         push_format(
             &mut source,
             format_args!(
-                "pub const STAGE2_FIELD_EXPRS: &[Stage2FieldExprPlan] = &[\n{exprs}\n];\n"
+                "pub const STAGE3_FIELD_EXPRS: &[Stage3FieldExprPlan] = &[\n{exprs}\n];\n"
             ),
         );
         source
@@ -1303,7 +1342,7 @@ pub struct Stage2VerifierProgramPlan {
             .iter()
             .map(|kernel| {
                 format!(
-                    "    Stage2KernelPlan {{ symbol: {}, relation: {}, kind: {}, backend: {}, abi: {} }},",
+                    "    Stage3KernelPlan {{ symbol: {}, relation: {}, kind: {}, backend: {}, abi: {} }},",
                     rust_str(&kernel.symbol),
                     rust_str(&kernel.relation),
                     rust_str(&kernel.kind),
@@ -1313,7 +1352,7 @@ pub struct Stage2VerifierProgramPlan {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        format!("pub const STAGE2_KERNELS: &[Stage2KernelPlan] = &[\n{kernels}\n];\n\n")
+        format!("pub const STAGE3_KERNELS: &[Stage3KernelPlan] = &[\n{kernels}\n];\n\n")
     }
 
     fn emit_prover_sumcheck_claim_constants(&self) -> Result<String, EmitError> {
@@ -1328,7 +1367,7 @@ pub struct Stage2VerifierProgramPlan {
         let mut source = String::new();
         for (index, claim) in self.claims.iter().enumerate() {
             source.push_str(&emit_str_array(
-                &format!("STAGE2_SUMCHECK_CLAIM_{index}_INPUT_OPENINGS"),
+                &format!("STAGE3_SUMCHECK_CLAIM_{index}_INPUT_OPENINGS"),
                 &claim.input_openings,
             ));
         }
@@ -1340,7 +1379,7 @@ pub struct Stage2VerifierProgramPlan {
                     .as_deref()
                     .ok_or_else(|| missing_role_binding("prover claim kernel", &claim.symbol))?;
                 claims.push(format!(
-                        "    Stage2SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, kernel: {}, claim_value: {}, input_openings: STAGE2_SUMCHECK_CLAIM_{index}_INPUT_OPENINGS }},",
+                        "    Stage3SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, kernel: {}, claim_value: {}, input_openings: STAGE3_SUMCHECK_CLAIM_{index}_INPUT_OPENINGS }},",
                         rust_str(&claim.symbol),
                         rust_str(&claim.stage),
                         rust_str(&claim.domain),
@@ -1355,7 +1394,7 @@ pub struct Stage2VerifierProgramPlan {
                     missing_role_binding("verifier claim relation", &claim.symbol)
                 })?;
                 claims.push(format!(
-                        "    Stage2SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, relation: {}, claim_value: {}, input_openings: STAGE2_SUMCHECK_CLAIM_{index}_INPUT_OPENINGS }},",
+                        "    Stage3SumcheckClaimPlan {{ symbol: {}, stage: {}, domain: {}, num_rounds: {}, degree: {}, claim: {}, relation: {}, claim_value: {}, input_openings: STAGE3_SUMCHECK_CLAIM_{index}_INPUT_OPENINGS }},",
                         rust_str(&claim.symbol),
                         rust_str(&claim.stage),
                         rust_str(&claim.domain),
@@ -1371,7 +1410,7 @@ pub struct Stage2VerifierProgramPlan {
         push_format(
             &mut source,
             format_args!(
-                "pub const STAGE2_SUMCHECK_CLAIMS: &[Stage2SumcheckClaimPlan] = &[\n{claims}\n];\n"
+                "pub const STAGE3_SUMCHECK_CLAIMS: &[Stage3SumcheckClaimPlan] = &[\n{claims}\n];\n"
             ),
         );
         Ok(source)
@@ -1381,15 +1420,15 @@ pub struct Stage2VerifierProgramPlan {
         let mut source = String::new();
         for (index, batch) in self.batches.iter().enumerate() {
             source.push_str(&emit_str_array(
-                &format!("STAGE2_SUMCHECK_BATCH_{index}_ORDERED_CLAIMS"),
+                &format!("STAGE3_SUMCHECK_BATCH_{index}_ORDERED_CLAIMS"),
                 &batch.ordered_claims,
             ));
             source.push_str(&emit_str_array(
-                &format!("STAGE2_SUMCHECK_BATCH_{index}_CLAIM_OPERANDS"),
+                &format!("STAGE3_SUMCHECK_BATCH_{index}_CLAIM_OPERANDS"),
                 &batch.claim_operands,
             ));
             source.push_str(&emit_usize_array(
-                &format!("STAGE2_SUMCHECK_BATCH_{index}_ROUND_SCHEDULE"),
+                &format!("STAGE3_SUMCHECK_BATCH_{index}_ROUND_SCHEDULE"),
                 &batch.round_schedule,
             ));
         }
@@ -1399,7 +1438,7 @@ pub struct Stage2VerifierProgramPlan {
             .enumerate()
             .map(|(index, batch)| {
                 format!(
-                    "    Stage2SumcheckBatchPlan {{ symbol: {}, stage: {}, proof_slot: {}, policy: {}, count: {}, ordered_claims: STAGE2_SUMCHECK_BATCH_{index}_ORDERED_CLAIMS, claim_operands: STAGE2_SUMCHECK_BATCH_{index}_CLAIM_OPERANDS, claim_label: {}, round_label: {}, round_schedule: STAGE2_SUMCHECK_BATCH_{index}_ROUND_SCHEDULE }},",
+                    "    Stage3SumcheckBatchPlan {{ symbol: {}, stage: {}, proof_slot: {}, policy: {}, count: {}, ordered_claims: STAGE3_SUMCHECK_BATCH_{index}_ORDERED_CLAIMS, claim_operands: STAGE3_SUMCHECK_BATCH_{index}_CLAIM_OPERANDS, claim_label: {}, round_label: {}, round_schedule: STAGE3_SUMCHECK_BATCH_{index}_ROUND_SCHEDULE }},",
                     rust_str(&batch.symbol),
                     rust_str(&batch.stage),
                     rust_str(&batch.proof_slot),
@@ -1414,7 +1453,7 @@ pub struct Stage2VerifierProgramPlan {
         push_format(
             &mut source,
             format_args!(
-                "pub const STAGE2_SUMCHECK_BATCHES: &[Stage2SumcheckBatchPlan] = &[\n{batches}\n];\n"
+                "pub const STAGE3_SUMCHECK_BATCHES: &[Stage3SumcheckBatchPlan] = &[\n{batches}\n];\n"
             ),
         );
         source
@@ -1432,7 +1471,7 @@ pub struct Stage2VerifierProgramPlan {
         let mut source = String::new();
         for (index, driver) in self.drivers.iter().enumerate() {
             source.push_str(&emit_usize_array(
-                &format!("STAGE2_SUMCHECK_DRIVER_{index}_ROUND_SCHEDULE"),
+                &format!("STAGE3_SUMCHECK_DRIVER_{index}_ROUND_SCHEDULE"),
                 &driver.round_schedule,
             ));
         }
@@ -1444,7 +1483,7 @@ pub struct Stage2VerifierProgramPlan {
                     .as_deref()
                     .ok_or_else(|| missing_role_binding("prover driver kernel", &driver.symbol))?;
                 drivers.push(format!(
-                        "    Stage2SumcheckDriverPlan {{ symbol: {}, stage: {}, proof_slot: {}, kernel: {}, batch: {}, policy: {}, round_schedule: STAGE2_SUMCHECK_DRIVER_{index}_ROUND_SCHEDULE, claim_label: {}, round_label: {}, num_rounds: {}, degree: {} }},",
+                        "    Stage3SumcheckDriverPlan {{ symbol: {}, stage: {}, proof_slot: {}, kernel: {}, batch: {}, policy: {}, round_schedule: STAGE3_SUMCHECK_DRIVER_{index}_ROUND_SCHEDULE, claim_label: {}, round_label: {}, num_rounds: {}, degree: {} }},",
                         rust_str(&driver.symbol),
                         rust_str(&driver.stage),
                         rust_str(&driver.proof_slot),
@@ -1461,7 +1500,7 @@ pub struct Stage2VerifierProgramPlan {
                     missing_role_binding("verifier driver relation", &driver.symbol)
                 })?;
                 drivers.push(format!(
-                        "    Stage2SumcheckDriverPlan {{ symbol: {}, stage: {}, proof_slot: {}, relation: {}, batch: {}, policy: {}, round_schedule: STAGE2_SUMCHECK_DRIVER_{index}_ROUND_SCHEDULE, claim_label: {}, round_label: {}, num_rounds: {}, degree: {} }},",
+                        "    Stage3SumcheckDriverPlan {{ symbol: {}, stage: {}, proof_slot: {}, relation: {}, batch: {}, policy: {}, round_schedule: STAGE3_SUMCHECK_DRIVER_{index}_ROUND_SCHEDULE, claim_label: {}, round_label: {}, num_rounds: {}, degree: {} }},",
                         rust_str(&driver.symbol),
                         rust_str(&driver.stage),
                         rust_str(&driver.proof_slot),
@@ -1479,7 +1518,7 @@ pub struct Stage2VerifierProgramPlan {
         push_format(
             &mut source,
             format_args!(
-                "pub const STAGE2_SUMCHECK_DRIVERS: &[Stage2SumcheckDriverPlan] = &[\n{drivers}\n];\n"
+                "pub const STAGE3_SUMCHECK_DRIVERS: &[Stage3SumcheckDriverPlan] = &[\n{drivers}\n];\n"
             ),
         );
         Ok(source)
@@ -1492,6 +1531,7 @@ pub struct Stage2VerifierProgramPlan {
         source.push_str(&self.emit_point_slice_constants());
         source.push_str(&self.emit_point_concat_constants());
         source.push_str(&self.emit_opening_claim_constants());
+        source.push_str(&self.emit_opening_claim_equality_constants());
         source.push_str(&self.emit_opening_batch_constants());
         source
     }
@@ -1502,7 +1542,7 @@ pub struct Stage2VerifierProgramPlan {
             .iter()
             .map(|instance| {
                 format!(
-                    "    Stage2SumcheckInstanceResultPlan {{ symbol: {}, source: {}, claim: {}, relation: {}, index: {}, point_arity: {}, num_rounds: {}, round_offset: {}, point_order: {}, degree: {} }},",
+                    "    Stage3SumcheckInstanceResultPlan {{ symbol: {}, source: {}, claim: {}, relation: {}, index: {}, point_arity: {}, num_rounds: {}, round_offset: {}, point_order: {}, degree: {} }},",
                     rust_str(&instance.symbol),
                     rust_str(&instance.source),
                     rust_str(&instance.claim),
@@ -1518,7 +1558,7 @@ pub struct Stage2VerifierProgramPlan {
             .collect::<Vec<_>>()
             .join("\n");
         format!(
-            "pub const STAGE2_SUMCHECK_INSTANCE_RESULTS: &[Stage2SumcheckInstanceResultPlan] = &[\n{instances}\n];\n\n"
+            "pub const STAGE3_SUMCHECK_INSTANCE_RESULTS: &[Stage3SumcheckInstanceResultPlan] = &[\n{instances}\n];\n\n"
         )
     }
 
@@ -1528,7 +1568,7 @@ pub struct Stage2VerifierProgramPlan {
             .iter()
             .map(|eval| {
                 format!(
-                    "    Stage2SumcheckEvalPlan {{ symbol: {}, source: {}, name: {}, index: {}, oracle: {} }},",
+                    "    Stage3SumcheckEvalPlan {{ symbol: {}, source: {}, name: {}, index: {}, oracle: {} }},",
                     rust_str(&eval.symbol),
                     rust_str(&eval.source),
                     rust_str(&eval.name),
@@ -1538,7 +1578,7 @@ pub struct Stage2VerifierProgramPlan {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        format!("pub const STAGE2_SUMCHECK_EVALS: &[Stage2SumcheckEvalPlan] = &[\n{evals}\n];\n\n")
+        format!("pub const STAGE3_SUMCHECK_EVALS: &[Stage3SumcheckEvalPlan] = &[\n{evals}\n];\n\n")
     }
 
     fn emit_point_slice_constants(&self) -> String {
@@ -1547,7 +1587,7 @@ pub struct Stage2VerifierProgramPlan {
             .iter()
             .map(|slice| {
                 format!(
-                    "    Stage2PointSlicePlan {{ symbol: {}, source: {}, offset: {}, length: {}, input: {} }},",
+                    "    Stage3PointSlicePlan {{ symbol: {}, source: {}, offset: {}, length: {}, input: {} }},",
                     rust_str(&slice.symbol),
                     rust_str(&slice.source),
                     slice.offset,
@@ -1557,14 +1597,14 @@ pub struct Stage2VerifierProgramPlan {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        format!("pub const STAGE2_POINT_SLICES: &[Stage2PointSlicePlan] = &[\n{slices}\n];\n\n")
+        format!("pub const STAGE3_POINT_SLICES: &[Stage3PointSlicePlan] = &[\n{slices}\n];\n\n")
     }
 
     fn emit_point_concat_constants(&self) -> String {
         let mut source = String::new();
         for (index, concat) in self.point_concats.iter().enumerate() {
             source.push_str(&emit_str_array(
-                &format!("STAGE2_POINT_CONCAT_{index}_INPUTS"),
+                &format!("STAGE3_POINT_CONCAT_{index}_INPUTS"),
                 &concat.inputs,
             ));
         }
@@ -1574,7 +1614,7 @@ pub struct Stage2VerifierProgramPlan {
             .enumerate()
             .map(|(index, concat)| {
                 format!(
-                    "    Stage2PointConcatPlan {{ symbol: {}, layout: {}, arity: {}, inputs: STAGE2_POINT_CONCAT_{index}_INPUTS }},",
+                    "    Stage3PointConcatPlan {{ symbol: {}, layout: {}, arity: {}, inputs: STAGE3_POINT_CONCAT_{index}_INPUTS }},",
                     rust_str(&concat.symbol),
                     rust_str(&concat.layout),
                     concat.arity
@@ -1585,7 +1625,7 @@ pub struct Stage2VerifierProgramPlan {
         push_format(
             &mut source,
             format_args!(
-                "pub const STAGE2_POINT_CONCATS: &[Stage2PointConcatPlan] = &[\n{concats}\n];\n"
+                "pub const STAGE3_POINT_CONCATS: &[Stage3PointConcatPlan] = &[\n{concats}\n];\n"
             ),
         );
         source
@@ -1597,7 +1637,7 @@ pub struct Stage2VerifierProgramPlan {
             .iter()
             .map(|claim| {
                 format!(
-                    "    Stage2OpeningClaimPlan {{ symbol: {}, oracle: {}, domain: {}, point_arity: {}, claim_kind: {}, point_source: {}, eval_source: {} }},",
+                    "    Stage3OpeningClaimPlan {{ symbol: {}, oracle: {}, domain: {}, point_arity: {}, claim_kind: {}, point_source: {}, eval_source: {} }},",
                     rust_str(&claim.symbol),
                     rust_str(&claim.oracle),
                     rust_str(&claim.domain),
@@ -1609,18 +1649,38 @@ pub struct Stage2VerifierProgramPlan {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        format!("pub const STAGE2_OPENING_CLAIMS: &[Stage2OpeningClaimPlan] = &[\n{claims}\n];\n\n")
+        format!("pub const STAGE3_OPENING_CLAIMS: &[Stage3OpeningClaimPlan] = &[\n{claims}\n];\n\n")
+    }
+
+    fn emit_opening_claim_equality_constants(&self) -> String {
+        let equalities = self
+            .opening_equalities
+            .iter()
+            .map(|equality| {
+                format!(
+                    "    Stage3OpeningClaimEqualityPlan {{ symbol: {}, mode: {}, lhs: {}, rhs: {} }},",
+                    rust_str(&equality.symbol),
+                    rust_str(&equality.mode),
+                    rust_str(&equality.lhs),
+                    rust_str(&equality.rhs)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "pub const STAGE3_OPENING_EQUALITIES: &[Stage3OpeningClaimEqualityPlan] = &[\n{equalities}\n];\n\n"
+        )
     }
 
     fn emit_opening_batch_constants(&self) -> String {
         let mut source = String::new();
         for (index, batch) in self.opening_batches.iter().enumerate() {
             source.push_str(&emit_str_array(
-                &format!("STAGE2_OPENING_BATCH_{index}_ORDERED_CLAIMS"),
+                &format!("STAGE3_OPENING_BATCH_{index}_ORDERED_CLAIMS"),
                 &batch.ordered_claims,
             ));
             source.push_str(&emit_str_array(
-                &format!("STAGE2_OPENING_BATCH_{index}_CLAIM_OPERANDS"),
+                &format!("STAGE3_OPENING_BATCH_{index}_CLAIM_OPERANDS"),
                 &batch.claim_operands,
             ));
         }
@@ -1630,7 +1690,7 @@ pub struct Stage2VerifierProgramPlan {
             .enumerate()
             .map(|(index, batch)| {
                 format!(
-                    "    Stage2OpeningBatchPlan {{ symbol: {}, stage: {}, proof_slot: {}, policy: {}, count: {}, ordered_claims: STAGE2_OPENING_BATCH_{index}_ORDERED_CLAIMS, claim_operands: STAGE2_OPENING_BATCH_{index}_CLAIM_OPERANDS }},",
+                    "    Stage3OpeningBatchPlan {{ symbol: {}, stage: {}, proof_slot: {}, policy: {}, count: {}, ordered_claims: STAGE3_OPENING_BATCH_{index}_ORDERED_CLAIMS, claim_operands: STAGE3_OPENING_BATCH_{index}_CLAIM_OPERANDS }},",
                     rust_str(&batch.symbol),
                     rust_str(&batch.stage),
                     rust_str(&batch.proof_slot),
@@ -1643,27 +1703,27 @@ pub struct Stage2VerifierProgramPlan {
         push_format(
             &mut source,
             format_args!(
-                "pub const STAGE2_OPENING_BATCHES: &[Stage2OpeningBatchPlan] = &[\n{batches}\n];\n"
+                "pub const STAGE3_OPENING_BATCHES: &[Stage3OpeningBatchPlan] = &[\n{batches}\n];\n"
             ),
         );
         source
     }
 
     fn emit_prover_entrypoint() -> &'static str {
-        "pub fn execute_stage2_prover<E>(\n\
+        "pub fn execute_stage3_prover<E>(\n\
          \x20   executor: &mut E,\n\
-         \x20   transcript: &mut DefaultStage2Transcript,\n\
-         ) -> Result<Stage2ExecutionArtifacts<Fr>, Stage2KernelError>\n\
+         \x20   transcript: &mut DefaultStage3Transcript,\n\
+         ) -> Result<Stage3ExecutionArtifacts<Fr>, Stage3KernelError>\n\
          where\n\
-         \x20   E: Stage2KernelExecutor<Fr>,\n\
+         \x20   E: Stage3KernelExecutor<Fr>,\n\
          {\n\
-         \x20   execute_stage2_program(&STAGE2_PROGRAM, Stage2ExecutionMode::Prover, executor, transcript)\n\
+         \x20   execute_stage3_program(&STAGE3_PROGRAM, Stage3ExecutionMode::Prover, executor, transcript)\n\
          }\n"
     }
 
     fn emit_verifier_entrypoint() -> &'static str {
-        "pub fn stage2_verifier_program() -> &'static Stage2VerifierProgramPlan {\n\
-         \x20   &STAGE2_PROGRAM\n\
+        "pub fn stage3_verifier_program() -> &'static Stage3VerifierProgramPlan {\n\
+         \x20   &STAGE3_PROGRAM\n\
          }\n"
     }
 }

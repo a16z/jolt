@@ -1,5 +1,5 @@
 use std::error::Error;
-use std::fmt::{self, Display, Formatter, Write as _};
+use std::fmt::{self, Display, Formatter};
 
 use melior::ir::block::BlockLike;
 use melior::ir::operation::OperationLike;
@@ -44,14 +44,14 @@ pub fn lower_piop_and_fiat_shamir<'c>(
 pub fn derive_prover_role<'c>(
     context: &'c MeliorContext,
     module: &BoltModule<'c, Concrete>,
-) -> BoltModule<'c, Concrete> {
+) -> Result<BoltModule<'c, Concrete>, MlirError> {
     derive_role(context, module, Role::Prover)
 }
 
 pub fn derive_verifier_role<'c>(
     context: &'c MeliorContext,
     module: &BoltModule<'c, Concrete>,
-) -> BoltModule<'c, Concrete> {
+) -> Result<BoltModule<'c, Concrete>, MlirError> {
     derive_role(context, module, Role::Verifier)
 }
 
@@ -195,11 +195,9 @@ fn derive_role<'c>(
     context: &'c MeliorContext,
     module: &BoltModule<'c, Concrete>,
     role: Role,
-) -> BoltModule<'c, Concrete> {
+) -> Result<BoltModule<'c, Concrete>, MlirError> {
     let source = phase_copy_source(module, Concrete::NAME, Some(&role), &[]);
-    context
-        .parse_module::<Concrete>(&source)
-        .expect("derive role preserves valid concrete MLIR")
+    context.parse_module::<Concrete>(&source)
 }
 
 fn phase_copy_source<P: Phase>(
@@ -208,15 +206,14 @@ fn phase_copy_source<P: Phase>(
     role: Option<&Role>,
     prefix_ops: &[String],
 ) -> String {
-    let mut source = String::new();
-    write!(
-        source,
+    let mut source = format!(
         "module @{} attributes {{bolt.phase = \"{target_phase}\"",
         module.name()
-    )
-    .expect("write module header");
+    );
     if let Some(role) = role {
-        write!(source, ", bolt.role = \"{}\"", role.as_str()).expect("write module role");
+        source.push_str(", bolt.role = \"");
+        source.push_str(role.as_str());
+        source.push('"');
     }
     source.push_str("} {\n");
     for op in prefix_ops {
@@ -284,6 +281,8 @@ fn append_body_text<P: Phase>(module_source: &mut String, module: &BoltModule<'_
     let mut operation = module.as_mlir_module().body().first_operation();
     while let Some(op) = operation {
         operation = op.next_in_block();
-        writeln!(module_source, "  {}", op).expect("write operation text");
+        module_source.push_str("  ");
+        module_source.push_str(&op.to_string());
+        module_source.push('\n');
     }
 }

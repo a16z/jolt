@@ -2,8 +2,8 @@ module @jolt.stage1_outer attributes {bolt.phase = "cpu", bolt.role = "prover"} 
   "cpu.params"() {field = @bn254_fr, pcs = @dory, sym_name = "jolt.compute_params", transcript = @blake2b_transcript} : () -> ()
   "cpu.function"() {source = @jolt.stage1_outer, sym_name = "jolt.stage1_outer"} : () -> ()
   %0 = "cpu.transcript_init"() {scheme = @blake2b_transcript, sym_name = "fs0"} : () -> !cpu.transcript_state
-  %1:2 = "cpu.transcript_squeeze"(%0) {count = 18 : i64, kind = "challenge_vector", label = "outer_tau", sym_name = "stage1.tau"} : (!cpu.transcript_state) -> (!cpu.transcript_state, !cpu.challenge)
-  %2 = "cpu.field_constant"() {field = @bn254_fr, sym_name = "stage1.zero", value = 0 : i64} : () -> !cpu.field_value
+  %1:2 = "cpu.transcript_squeeze"(%0) {count = 18 : i64, kind = "challenge_vector", label = "outer_tau", sym_name = "stage1.tau"} : (!cpu.transcript_state) -> (!cpu.transcript_state, !cpu.point)
+  %2 = "cpu.field_zero"() {field = @bn254_fr, sym_name = "stage1.zero"} : () -> !cpu.field_value
   "cpu.kernel"() {abi = "jolt_stage1_outer_uniskip", backend = "cpu", kind = "sumcheck", relation = @jolt.stage1.outer.uniskip, sym_name = "jolt.cpu.stage1.outer.uniskip"} : () -> ()
   %3 = "cpu.sumcheck_claim"(%2) {claim = @stage1.zero, degree = 27 : i64, domain = @jolt.stage1_uniskip_domain, kernel = @jolt.cpu.stage1.outer.uniskip, num_rounds = 1 : i64, stage = @stage1, sym_name = "stage1.uniskip.input"} : (!cpu.field_value) -> !cpu.sumcheck_claim_type
   %4 = "cpu.sumcheck_batch"(%3) {claim_label = "uniskip_claim", count = 1 : i64, ordered_claims = [@stage1.uniskip.input], policy = "single_instance", proof_slot = @stage1.uni_skip_first_round, round_label = "uniskip_poly", round_schedule = [1], stage = @stage1, sym_name = "stage1.uniskip.batch"} : (!cpu.sumcheck_claim_type) -> !cpu.sumcheck_batch_type

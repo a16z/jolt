@@ -4,8 +4,8 @@ module @jolt.stage1_outer attributes {bolt.phase = "compute", bolt.role = "prove
   "compute.relation"() {degree = 27 : i64, domain = @jolt.stage1_uniskip_domain, kind = "sumcheck", num_rounds = 1 : i64, output_count = 1 : i64, sym_name = "jolt.stage1.outer.uniskip"} : () -> ()
   "compute.relation"() {degree = 3 : i64, domain = @jolt.trace_domain, kind = "sumcheck", num_rounds = 17 : i64, output_count = 35 : i64, sym_name = "jolt.stage1.outer.remaining"} : () -> ()
   %0 = "compute.transcript_init"() {scheme = @blake2b_transcript, sym_name = "fs0"} : () -> !compute.transcript_state
-  %1:2 = "compute.transcript_squeeze"(%0) {count = 18 : i64, kind = "challenge_vector", label = "outer_tau", sym_name = "stage1.tau"} : (!compute.transcript_state) -> (!compute.transcript_state, !compute.challenge)
-  %2 = "compute.field_constant"() {field = @bn254_fr, sym_name = "stage1.zero", value = 0 : i64} : () -> !compute.field_value
+  %1:2 = "compute.transcript_squeeze"(%0) {count = 18 : i64, kind = "challenge_vector", label = "outer_tau", sym_name = "stage1.tau"} : (!compute.transcript_state) -> (!compute.transcript_state, !compute.point)
+  %2 = "compute.field_zero"() {field = @bn254_fr, sym_name = "stage1.zero"} : () -> !compute.field_value
   "compute.kernel"() {abi = "jolt_stage1_outer_uniskip", backend = "cpu", kind = "sumcheck", relation = @jolt.stage1.outer.uniskip, sym_name = "jolt.cpu.stage1.outer.uniskip"} : () -> ()
   %3 = "compute.sumcheck_kernel_claim"(%2) {claim = @stage1.zero, degree = 27 : i64, domain = @jolt.stage1_uniskip_domain, kernel = @jolt.cpu.stage1.outer.uniskip, num_rounds = 1 : i64, stage = @stage1, sym_name = "stage1.uniskip.input"} : (!compute.field_value) -> !compute.sumcheck_claim_type
   %4 = "compute.sumcheck_batch"(%3) {claim_label = "uniskip_claim", count = 1 : i64, ordered_claims = [@stage1.uniskip.input], policy = "single_instance", proof_slot = @stage1.uni_skip_first_round, round_label = "uniskip_poly", round_schedule = [1], stage = @stage1, sym_name = "stage1.uniskip.batch"} : (!compute.sumcheck_claim_type) -> !compute.sumcheck_batch_type

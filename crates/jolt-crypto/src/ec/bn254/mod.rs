@@ -139,6 +139,11 @@ macro_rules! impl_jolt_group_wrapper {
                 buf.reverse();
                 transcript.append_bytes(&buf);
             }
+
+            fn serialized_len(&self) -> u64 {
+                use ::ark_serialize::CanonicalSerialize;
+                self.0.uncompressed_size() as u64
+            }
         }
 
         impl $crate::JoltGroup for $wrapper {

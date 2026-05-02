@@ -65,6 +65,15 @@ benchmark-runs/
 optimize-history
 redteam-history
 
+# Perf run artifacts are local scratch.
+/perf/
+
+# Local agent/planning scratch.
+/.claude/
+/follow-ups/
+/memory_copy/
+/specs/
+
 # verifier test fixtures
 jolt-sdk/tests/fixtures
 jolt-sdk/tests/fib_io_device_bytes.rs

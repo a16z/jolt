@@ -1067,6 +1067,7 @@ fn fmadd_i32_s192(sum: &mut S192, coefficient: i32, term: S192) {
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "tests use explicit panic messages")]
 mod tests {
     use jolt_field::{Field, Fr};
     use jolt_r1cs::{constraints::rv64, R1csKey};

@@ -32,7 +32,7 @@ irdl.dialect @transcript {
   }
   irdl.operation @squeeze {
     %state = irdl.parametric @transcript::@state_type<>
-    %challenge = irdl.parametric @field::@challenge<>
+    %challenge = irdl.any
     %sym = irdl.any
     %label = irdl.any
     %kind = irdl.any

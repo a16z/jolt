@@ -162,17 +162,25 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
     let name = operation_name(operation);
     match name.as_str() {
         "field.define" => require_attrs(operation, &["sym_name", "modulus_bits", "role"]),
-        "field.constant" => {
+        "field.const" => {
             require_attrs(operation, &["sym_name", "field", "value"])?;
             require_shape(operation, 0, 1)
         }
-        "field.challenge_extract" => {
-            require_attrs(operation, &["sym_name", "source", "index"])?;
+        "field.zero" | "field.one" => {
+            require_attrs(operation, &["sym_name", "field"])?;
+            require_shape(operation, 0, 1)
+        }
+        "field.add" | "field.sub" | "field.mul" => {
+            require_attrs(operation, &["sym_name"])?;
+            require_shape(operation, 2, 1)
+        }
+        "field.neg" => {
+            require_attrs(operation, &["sym_name"])?;
             require_shape(operation, 1, 1)
         }
-        "field.expr" => {
-            require_attrs(operation, &["sym_name", "kind", "formula", "operands"])?;
-            require_min_shape(operation, 0, 1)
+        "field.pow" => {
+            require_attrs(operation, &["sym_name", "exponent"])?;
+            require_shape(operation, 1, 1)
         }
         "hash.function" => require_attrs(operation, &["sym_name", "algorithm"]),
         "transcript.scheme" => require_attrs(operation, &["sym_name", "hash"]),
@@ -185,6 +193,13 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
         "poly.point_concat" => {
             require_attrs(operation, &["sym_name", "layout", "arity"])?;
             require_min_shape(operation, 1, 1)
+        }
+        "poly.lagrange_basis_eval" => {
+            require_attrs(
+                operation,
+                &["sym_name", "domain_start", "domain_size", "index"],
+            )?;
+            require_shape(operation, 1, 1)
         }
         "protocol.params" => require_attrs(operation, &["sym_name", "field", "pcs", "transcript"]),
         "protocol.boundary" => require_attrs(operation, &["sym_name", "roles"]),
@@ -346,6 +361,11 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             )?;
             require_shape(operation, 2, 1)
         }
+        "piop.opening_claim_equal" => {
+            require_attrs(operation, &["sym_name", "mode"])?;
+            require_shape(operation, 2, 0)?;
+            require_opening_claim_equality(operation)
+        }
         "piop.opening_batch" => {
             require_attrs(
                 operation,
@@ -501,17 +521,32 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             require_attrs(operation, &["sym_name", "layout", "arity"])?;
             require_min_shape(operation, 1, 1)
         }
-        "compute.field_constant" => {
+        "compute.field_const" => {
             require_attrs(operation, &["sym_name", "field", "value"])?;
             require_shape(operation, 0, 1)
         }
-        "compute.challenge_extract" => {
-            require_attrs(operation, &["sym_name", "source", "index"])?;
+        "compute.field_zero" | "compute.field_one" => {
+            require_attrs(operation, &["sym_name", "field"])?;
+            require_shape(operation, 0, 1)
+        }
+        "compute.field_add" | "compute.field_sub" | "compute.field_mul" => {
+            require_attrs(operation, &["sym_name"])?;
+            require_shape(operation, 2, 1)
+        }
+        "compute.field_neg" => {
+            require_attrs(operation, &["sym_name"])?;
             require_shape(operation, 1, 1)
         }
-        "compute.field_expr" => {
-            require_attrs(operation, &["sym_name", "kind", "formula", "operands"])?;
-            require_min_shape(operation, 0, 1)
+        "compute.field_pow" => {
+            require_attrs(operation, &["sym_name", "exponent"])?;
+            require_shape(operation, 1, 1)
+        }
+        "compute.poly_lagrange_basis_eval" => {
+            require_attrs(
+                operation,
+                &["sym_name", "domain_start", "domain_size", "index"],
+            )?;
+            require_shape(operation, 1, 1)
         }
         "compute.sumcheck_claim" => {
             require_attrs(
@@ -661,6 +696,11 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
                 &["sym_name", "oracle", "domain", "point_arity", "claim_kind"],
             )?;
             require_shape(operation, 2, 1)
+        }
+        "compute.opening_claim_equal" => {
+            require_attrs(operation, &["sym_name", "mode"])?;
+            require_shape(operation, 2, 0)?;
+            require_opening_claim_equality(operation)
         }
         "compute.opening_batch" => {
             require_attrs(
@@ -829,17 +869,32 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             require_attrs(operation, &["sym_name", "layout", "arity"])?;
             require_min_shape(operation, 1, 1)
         }
-        "cpu.field_constant" => {
+        "cpu.field_const" => {
             require_attrs(operation, &["sym_name", "field", "value"])?;
             require_shape(operation, 0, 1)
         }
-        "cpu.challenge_extract" => {
-            require_attrs(operation, &["sym_name", "source", "index"])?;
+        "cpu.field_zero" | "cpu.field_one" => {
+            require_attrs(operation, &["sym_name", "field"])?;
+            require_shape(operation, 0, 1)
+        }
+        "cpu.field_add" | "cpu.field_sub" | "cpu.field_mul" => {
+            require_attrs(operation, &["sym_name"])?;
+            require_shape(operation, 2, 1)
+        }
+        "cpu.field_neg" => {
+            require_attrs(operation, &["sym_name"])?;
             require_shape(operation, 1, 1)
         }
-        "cpu.field_expr" => {
-            require_attrs(operation, &["sym_name", "kind", "formula", "operands"])?;
-            require_min_shape(operation, 0, 1)
+        "cpu.field_pow" => {
+            require_attrs(operation, &["sym_name", "exponent"])?;
+            require_shape(operation, 1, 1)
+        }
+        "cpu.poly_lagrange_basis_eval" => {
+            require_attrs(
+                operation,
+                &["sym_name", "domain_start", "domain_size", "index"],
+            )?;
+            require_shape(operation, 1, 1)
         }
         "cpu.kernel" => require_attrs(
             operation,
@@ -961,6 +1016,11 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             )?;
             require_shape(operation, 2, 1)
         }
+        "cpu.opening_claim_equal" => {
+            require_attrs(operation, &["sym_name", "mode"])?;
+            require_shape(operation, 2, 0)?;
+            require_opening_claim_equality(operation)
+        }
         "cpu.opening_batch" => {
             require_attrs(
                 operation,
@@ -1037,6 +1097,85 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
         ))),
         _ => Ok(()),
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct OpeningClaimMetadata {
+    owner: String,
+    oracle: String,
+    domain: String,
+    point_arity: usize,
+    claim_kind: String,
+}
+
+fn require_opening_claim_equality(operation: OperationRef<'_, '_>) -> Result<(), SchemaError> {
+    let mode = string_attr(operation, "mode")?;
+    if mode != "point_and_eval" {
+        return Err(SchemaError::new(format!(
+            "{} attr `mode` expected \"point_and_eval\", got \"{mode}\"",
+            operation_name(operation)
+        )));
+    }
+
+    let left = opening_claim_metadata(operation, 0)?;
+    let right = opening_claim_metadata(operation, 1)?;
+    if left.oracle != right.oracle
+        || left.domain != right.domain
+        || left.point_arity != right.point_arity
+        || left.claim_kind != right.claim_kind
+    {
+        return Err(SchemaError::new(format!(
+            "{} compares incompatible claims @{} and @{}",
+            operation_name(operation),
+            left.owner,
+            right.owner
+        )));
+    }
+    Ok(())
+}
+
+fn opening_claim_metadata(
+    equality_op: OperationRef<'_, '_>,
+    operand_index: usize,
+) -> Result<OpeningClaimMetadata, SchemaError> {
+    let operand = equality_op.operand(operand_index).map_err(|_| {
+        SchemaError::new(format!(
+            "{} missing required operand {operand_index}",
+            operation_name(equality_op)
+        ))
+    })?;
+    let owner = OperationResult::try_from(operand).map_err(|_| {
+        SchemaError::new(format!(
+            "{} operand {operand_index} must be an op result",
+            operation_name(equality_op)
+        ))
+    })?;
+    let operation = owner.owner();
+    let result_number = owner.result_number();
+    let expected_result = match operation_name(operation).as_str() {
+        "piop.opening_input" | "compute.opening_input" | "cpu.opening_input" => 2,
+        "piop.opening_claim" | "compute.opening_claim" | "cpu.opening_claim" => 0,
+        name => {
+            return Err(SchemaError::new(format!(
+                "{} operand {operand_index} must be an opening claim, got result from `{name}`",
+                operation_name(equality_op)
+            )));
+        }
+    };
+    if result_number != expected_result {
+        return Err(SchemaError::new(format!(
+            "{} operand {operand_index} must use opening claim result {expected_result}, got result {result_number}",
+            operation_name(equality_op)
+        )));
+    }
+
+    Ok(OpeningClaimMetadata {
+        owner: string_attr(operation, "sym_name")?,
+        oracle: symbol_attr(operation, "oracle")?,
+        domain: symbol_attr(operation, "domain")?,
+        point_arity: int_attr(operation, "point_arity")?,
+        claim_kind: string_attr(operation, "claim_kind")?,
+    })
 }
 
 fn require_shape(

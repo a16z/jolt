@@ -54,7 +54,9 @@ impl<F: Field> MockTranscript<F> {
             .finalize()
             .into();
         self.counter += 1;
-        u128::from_le_bytes(hash[..16].try_into().unwrap())
+        let mut bytes = [0u8; 16];
+        bytes.copy_from_slice(&hash[..16]);
+        u128::from_le_bytes(bytes)
     }
 }
 

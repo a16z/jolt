@@ -38,4 +38,19 @@ irdl.dialect @poly {
     irdl.operands(inputs: variadic %input)
     irdl.results(output: %output)
   }
+  irdl.operation @lagrange_basis_eval {
+    %scalar = irdl.parametric @field::@scalar<>
+    %sym = irdl.any
+    %domain_start = irdl.any
+    %domain_size = irdl.any
+    %index = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "domain_start" = %domain_start,
+      "domain_size" = %domain_size,
+      "index" = %index
+    }
+    irdl.operands(point: %scalar)
+    irdl.results(value: %scalar)
+  }
 }

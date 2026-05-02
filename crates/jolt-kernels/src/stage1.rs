@@ -2160,6 +2160,7 @@ fn shape_sumcheck_proof<F: Field>(driver: &Stage1SumcheckDriverPlan) -> Sumcheck
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "tests use explicit panic messages")]
 mod tests {
     use jolt_field::{Field, Fr};
     use jolt_transcript::{MockTranscript, Transcript};

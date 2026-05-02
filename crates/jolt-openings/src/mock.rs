@@ -38,6 +38,12 @@ impl<F: Field> AppendToTranscript for MockCommitment<F> {
         buf.reverse();
         transcript.append_bytes(&buf);
     }
+
+    fn serialized_len(&self) -> u64 {
+        u64::try_from(self.evaluations.len())
+            .unwrap_or(u64::MAX / 32)
+            .saturating_mul(32)
+    }
 }
 
 impl<F: Field> Commitment for MockCommitmentScheme<F> {
@@ -157,6 +163,10 @@ pub struct MockHidingCommitment<F: Field> {
 impl<F: Field> AppendToTranscript for MockHidingCommitment<F> {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
         self.eval.append_to_transcript(transcript);
+    }
+
+    fn serialized_len(&self) -> u64 {
+        self.eval.serialized_len()
     }
 }
 

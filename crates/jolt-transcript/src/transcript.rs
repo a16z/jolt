@@ -81,10 +81,5 @@ pub trait AppendToTranscript {
 
     /// Number of raw bytes that [`append_to_transcript`](Self::append_to_transcript)
     /// feeds to [`Transcript::append_bytes`].
-    fn serialized_len(&self) -> u64 {
-        panic!(
-            "serialized_len not implemented for {}",
-            std::any::type_name::<Self>()
-        )
-    }
+    fn serialized_len(&self) -> u64;
 }

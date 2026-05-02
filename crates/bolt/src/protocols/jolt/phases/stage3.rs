@@ -19,40 +19,41 @@ use super::lowering::{
     transcript_squeeze_compute_result_types, transcript_squeeze_protocol_result_type,
 };
 
-const PRODUCT_UNISKIP_DEGREE_BOUND: usize = 6;
-const PRODUCT_UNISKIP_DOMAIN_START: isize = -1;
-const PRODUCT_UNISKIP_DOMAIN_SIZE: usize = 3;
-const RAM_RW_DEGREE: usize = 3;
-const PRODUCT_REMAINDER_DEGREE: usize = 3;
-const INSTRUCTION_CLAIM_REDUCTION_DEGREE: usize = 2;
-const RAM_RAF_DEGREE: usize = 2;
-const RAM_OUTPUT_DEGREE: usize = 3;
+const SPARTAN_SHIFT_DEGREE: usize = 2;
+const INSTRUCTION_INPUT_DEGREE: usize = 3;
+const REGISTERS_CLAIM_REDUCTION_DEGREE: usize = 2;
+const STAGE3_BATCHED_DEGREE: usize = 3;
 
-const STAGE1_PRODUCT_OPENINGS: [&str; 3] = ["Product", "ShouldBranch", "ShouldJump"];
-const STAGE2_RAM_RW_INPUTS: [&str; 2] = ["RamReadValue", "RamWriteValue"];
-const STAGE2_INSTRUCTION_INPUTS: [&str; 5] = [
-    "LookupOutput",
-    "LeftLookupOperand",
-    "RightLookupOperand",
-    "LeftInstructionInput",
-    "RightInstructionInput",
+const STAGE3_SHIFT_INPUTS: [&str; 4] = [
+    "NextUnexpandedPC",
+    "NextPC",
+    "NextIsVirtual",
+    "NextIsFirstInSequence",
 ];
-const PRODUCT_REMAINDER_OUTPUTS: [&str; 8] = [
-    "LeftInstructionInput",
-    "RightInstructionInput",
-    "OpFlagJump",
-    "OpFlagWriteLookupOutputToRD",
-    "LookupOutput",
-    "InstructionFlagBranch",
-    "NextIsNoop",
+const STAGE3_SHIFT_OUTPUTS: [&str; 5] = [
+    "UnexpandedPC",
+    "PC",
     "OpFlagVirtualInstruction",
+    "OpFlagIsFirstInSequence",
+    "InstructionFlagIsNoop",
 ];
+const STAGE3_INSTRUCTION_INPUT_OUTPUTS: [&str; 8] = [
+    "InstructionFlagLeftOperandIsRs1Value",
+    "Rs1Value",
+    "InstructionFlagLeftOperandIsPC",
+    "UnexpandedPC",
+    "InstructionFlagRightOperandIsRs2Value",
+    "Rs2Value",
+    "InstructionFlagRightOperandIsImm",
+    "Imm",
+];
+const STAGE3_REGISTER_INPUTS: [&str; 3] = ["RdWriteValue", "Rs1Value", "Rs2Value"];
 
-pub fn build_stage2_protocol<'c>(
+pub fn build_stage3_protocol<'c>(
     context: &'c MeliorContext,
     params: &JoltProtocolParams,
 ) -> Result<BoltModule<'c, Protocol>, MlirError> {
-    let module = context.new_module::<Protocol>("jolt.stage2", None);
+    let module = context.new_module::<Protocol>("jolt.stage3", None);
     oracles::append_foundation_ops(context, &module, params)?;
     context.append_op_with_owned_attrs(
         &module,
@@ -63,18 +64,17 @@ pub fn build_stage2_protocol<'c>(
     context.append_op(
         &module,
         "protocol.boundary",
-        Some("jolt.stage2"),
+        Some("jolt.stage3"),
         &[("roles", r#"["prover", "verifier"]"#)],
     )?;
-    append_stage2_domains(context, &module, params)?;
-    append_stage2_oracles(context, &module)?;
-    append_stage2_relations(context, &module, params)?;
-    let inputs = append_stage2_opening_inputs(context, &module, params)?;
+    append_stage3_oracles(context, &module)?;
+    append_stage3_relations(context, &module, params)?;
+    let inputs = append_stage3_opening_inputs(context, &module, params)?;
 
     let fs = context.append_typed_op(
         &module,
         "transcript.state",
-        Some("fs_after_stage1"),
+        Some("fs_after_stage2"),
         &[("scheme", "@blake2b_transcript")],
         &[],
         &["!transcript.state_type"],
@@ -83,65 +83,55 @@ pub fn build_stage2_protocol<'c>(
     let stage = context.append_typed_op(
         &module,
         "piop.stage",
-        Some("stage2"),
+        Some("stage3"),
         &[
-            ("name", r#""product_virtual_and_ram""#),
-            ("order", "2 : i64"),
+            ("name", r#""shift_instruction_input_and_registers""#),
+            ("order", "3 : i64"),
             ("roles", r#"["prover", "verifier"]"#),
         ],
         &[],
         &["!piop.stage_type"],
     )?;
     let stage = first_result(stage, "piop.stage")?;
-    let (state, tau_high) = append_transcript_squeeze(
+
+    let (state, shift_gamma) = append_transcript_squeeze(
         context,
         &module,
         state,
-        "stage2.product_virtual.tau_high",
-        "product_virtual_tau_high",
+        "stage3.spartan_shift.gamma",
+        "spartan_shift_gamma",
         "challenge_scalar",
         1,
     )?;
-    let (state, uniskip) =
-        append_product_uniskip(context, &module, params, state, stage, &inputs, tau_high)?;
-    let (state, ram_read_write_gamma) = append_transcript_squeeze(
+    let (state, instruction_gamma) = append_transcript_squeeze(
         context,
         &module,
         state,
-        "stage2.ram_read_write.gamma",
-        "ram_read_write_gamma",
+        "stage3.instruction_input.gamma",
+        "instruction_input_gamma",
         "challenge_scalar",
         1,
     )?;
-    let (state, instruction_lookup_gamma) = append_transcript_squeeze(
+    let (state, registers_gamma) = append_transcript_squeeze(
         context,
         &module,
         state,
-        "stage2.instruction_lookup.gamma",
-        "instruction_lookup_gamma",
+        "stage3.registers.gamma",
+        "registers_gamma",
         "challenge_scalar",
         1,
     )?;
-    let (state, _ram_output_address) = append_transcript_squeeze(
-        context,
-        &module,
-        state,
-        "stage2.ram_output.r_address",
-        "ram_output_r_address",
-        "challenge_vector",
-        params.log_k_ram,
-    )?;
-    let _state = append_stage2_batched_sumcheck(
+    let _state = append_stage3_batched_sumcheck(
         context,
         &module,
         params,
-        Stage2BatchedSumcheckInputs {
+        Stage3BatchedSumcheckInputs {
             state,
             stage,
             openings: &inputs,
-            uniskip,
-            ram_read_write_gamma,
-            instruction_lookup_gamma,
+            shift_gamma,
+            instruction_gamma,
+            registers_gamma,
         },
     )?;
 
@@ -150,14 +140,14 @@ pub fn build_stage2_protocol<'c>(
     Ok(module)
 }
 
-pub fn lower_stage2_to_compute<'c>(
+pub fn lower_stage3_to_compute<'c>(
     context: &'c MeliorContext,
     module: &BoltModule<'c, Party>,
 ) -> Result<BoltModule<'c, Compute>, MlirError> {
     verify_party_schema(module)?;
     let role = module
         .role()
-        .ok_or_else(|| schema_error("stage2 lowering requires party role"))?;
+        .ok_or_else(|| schema_error("stage3 lowering requires party role"))?;
     let params = stage_params(module)?;
     let compute = context.new_module::<Compute>(&module.name(), Some(role.clone()));
     context.append_op_with_owned_attrs(
@@ -173,8 +163,8 @@ pub fn lower_stage2_to_compute<'c>(
     context.append_op(
         &compute,
         "compute.function",
-        Some("jolt.stage2"),
-        &[("source", "@jolt.stage2")],
+        Some("jolt.stage3"),
+        &[("source", "@jolt.stage3")],
     )?;
 
     let mut value_map = BTreeMap::new();
@@ -522,71 +512,24 @@ pub fn lower_stage2_to_compute<'c>(
     Ok(compute)
 }
 
-fn append_stage2_domains<'c>(
-    context: &'c MeliorContext,
-    module: &BoltModule<'c, Protocol>,
-    params: &JoltProtocolParams,
-) -> Result<(), MlirError> {
-    context.append_op(
-        module,
-        "poly.domain",
-        Some("jolt.stage2_uniskip_domain"),
-        &[("field", "@bn254_fr"), ("log_size", "1 : i64")],
-    )?;
-    context.append_op(
-        module,
-        "poly.domain",
-        Some("jolt.stage2_ram_rw_domain"),
-        &[
-            ("field", "@bn254_fr"),
-            ("log_size", &int_attr(stage2_max_rounds(params))),
-        ],
-    )?;
-    context.append_op(
-        module,
-        "poly.domain",
-        Some("jolt.ram_address_domain"),
-        &[
-            ("field", "@bn254_fr"),
-            ("log_size", &int_attr(params.log_k_ram)),
-        ],
-    )
-}
-
-fn append_stage2_oracles<'c>(
+fn append_stage3_oracles<'c>(
     context: &'c MeliorContext,
     module: &BoltModule<'c, Protocol>,
 ) -> Result<(), MlirError> {
     let mut trace_oracles = BTreeSet::new();
-    trace_oracles.extend(STAGE1_PRODUCT_OPENINGS);
-    trace_oracles.extend(STAGE2_RAM_RW_INPUTS);
-    trace_oracles.extend(STAGE2_INSTRUCTION_INPUTS);
-    trace_oracles.extend(PRODUCT_REMAINDER_OUTPUTS);
-    let _ = trace_oracles.insert("RamAddress");
+    trace_oracles.extend(STAGE3_SHIFT_INPUTS);
+    trace_oracles.extend(STAGE3_SHIFT_OUTPUTS);
+    trace_oracles.extend(STAGE3_INSTRUCTION_INPUT_OUTPUTS);
+    trace_oracles.extend(STAGE3_REGISTER_INPUTS);
+    trace_oracles.extend([
+        "LeftInstructionInput",
+        "RightInstructionInput",
+        "NextIsNoop",
+    ]);
     for oracle in trace_oracles {
         append_virtual_oracle(context, module, oracle, "jolt.trace_domain")?;
     }
-    append_virtual_oracle(
-        context,
-        module,
-        "UnivariateSkip",
-        "jolt.stage2_uniskip_domain",
-    )?;
-    append_virtual_oracle(context, module, "RamVal", "jolt.stage2_ram_rw_domain")?;
-    append_virtual_oracle(context, module, "RamRa", "jolt.stage2_ram_rw_domain")?;
-    append_virtual_oracle(context, module, "RamValFinal", "jolt.ram_address_domain")?;
-    context.append_op(
-        module,
-        "piop.oracle",
-        Some("RamInc"),
-        &[
-            ("field", "@bn254_fr"),
-            ("domain", "@jolt.trace_domain"),
-            ("commit_domain", "@jolt.main_witness_commit_domain"),
-            ("visibility", r#""committed""#),
-            ("layout", r#""dense_trace""#),
-        ],
-    )
+    Ok(())
 }
 
 fn append_virtual_oracle<'c>(
@@ -609,94 +552,57 @@ fn append_virtual_oracle<'c>(
     )
 }
 
-fn append_stage2_relations<'c>(
+fn append_stage3_relations<'c>(
     context: &'c MeliorContext,
     module: &BoltModule<'c, Protocol>,
     params: &JoltProtocolParams,
 ) -> Result<(), MlirError> {
-    let max_rounds = stage2_max_rounds(params);
     append_relation(
         context,
         module,
         RelationSpec {
-            symbol: "jolt.stage2.product_virtual.uniskip",
-            kind: "sumcheck",
-            domain: "jolt.stage2_uniskip_domain",
-            num_rounds: 1,
-            degree: PRODUCT_UNISKIP_DEGREE_BOUND,
-            output_count: 1,
-        },
-    )?;
-    append_relation(
-        context,
-        module,
-        RelationSpec {
-            symbol: "jolt.stage2.ram.read_write",
-            kind: "sumcheck",
-            domain: "jolt.stage2_ram_rw_domain",
-            num_rounds: max_rounds,
-            degree: RAM_RW_DEGREE,
-            output_count: 3,
-        },
-    )?;
-    append_relation(
-        context,
-        module,
-        RelationSpec {
-            symbol: "jolt.stage2.product_virtual.remainder",
+            symbol: "jolt.stage3.spartan_shift",
             kind: "sumcheck",
             domain: "jolt.trace_domain",
             num_rounds: params.log_t,
-            degree: PRODUCT_REMAINDER_DEGREE,
-            output_count: PRODUCT_REMAINDER_OUTPUTS.len(),
+            degree: SPARTAN_SHIFT_DEGREE,
+            output_count: STAGE3_SHIFT_OUTPUTS.len(),
         },
     )?;
     append_relation(
         context,
         module,
         RelationSpec {
-            symbol: "jolt.stage2.instruction_lookup.claim_reduction",
+            symbol: "jolt.stage3.instruction_input",
             kind: "sumcheck",
             domain: "jolt.trace_domain",
             num_rounds: params.log_t,
-            degree: INSTRUCTION_CLAIM_REDUCTION_DEGREE,
-            output_count: STAGE2_INSTRUCTION_INPUTS.len(),
+            degree: INSTRUCTION_INPUT_DEGREE,
+            output_count: STAGE3_INSTRUCTION_INPUT_OUTPUTS.len(),
         },
     )?;
     append_relation(
         context,
         module,
         RelationSpec {
-            symbol: "jolt.stage2.ram.raf_evaluation",
+            symbol: "jolt.stage3.registers_claim_reduction",
             kind: "sumcheck",
-            domain: "jolt.ram_address_domain",
-            num_rounds: params.log_k_ram,
-            degree: RAM_RAF_DEGREE,
-            output_count: 1,
+            domain: "jolt.trace_domain",
+            num_rounds: params.log_t,
+            degree: REGISTERS_CLAIM_REDUCTION_DEGREE,
+            output_count: STAGE3_REGISTER_INPUTS.len(),
         },
     )?;
     append_relation(
         context,
         module,
         RelationSpec {
-            symbol: "jolt.stage2.ram.output_check",
-            kind: "sumcheck",
-            domain: "jolt.ram_address_domain",
-            num_rounds: params.log_k_ram,
-            degree: RAM_OUTPUT_DEGREE,
-            output_count: 1,
-        },
-    )?;
-    append_relation(
-        context,
-        module,
-        RelationSpec {
-            symbol: "jolt.stage2.batched",
+            symbol: "jolt.stage3.batched",
             kind: "batched_sumcheck",
-            domain: "jolt.stage2_ram_rw_domain",
-            num_rounds: max_rounds,
-            degree: RAM_RW_DEGREE,
-            output_count: 18,
+            domain: "jolt.trace_domain",
+            num_rounds: params.log_t,
+            degree: STAGE3_BATCHED_DEGREE,
+            output_count: stage3_output_count(),
         },
     )
 }
@@ -720,59 +626,163 @@ fn append_relation<'c>(
     )
 }
 
-fn append_stage2_opening_inputs<'c, 'a>(
+fn append_stage3_opening_inputs<'c, 'a>(
     context: &'c MeliorContext,
     module: &'a BoltModule<'c, Protocol>,
     params: &JoltProtocolParams,
-) -> Result<Stage2OpeningInputs<'c, 'a>, MlirError> {
-    let product = append_stage1_opening_input(context, module, params, "Product")?;
-    let should_branch = append_stage1_opening_input(context, module, params, "ShouldBranch")?;
-    let should_jump = append_stage1_opening_input(context, module, params, "ShouldJump")?;
-    let ram_read_value = append_stage1_opening_input(context, module, params, "RamReadValue")?;
-    let ram_write_value = append_stage1_opening_input(context, module, params, "RamWriteValue")?;
-    let lookup_output = append_stage1_opening_input(context, module, params, "LookupOutput")?;
-    let left_lookup_operand =
-        append_stage1_opening_input(context, module, params, "LeftLookupOperand")?;
-    let right_lookup_operand =
-        append_stage1_opening_input(context, module, params, "RightLookupOperand")?;
-    let left_instruction_input =
-        append_stage1_opening_input(context, module, params, "LeftInstructionInput")?;
-    let right_instruction_input =
-        append_stage1_opening_input(context, module, params, "RightInstructionInput")?;
-    let ram_address = append_stage1_opening_input(context, module, params, "RamAddress")?;
-
-    Ok(Stage2OpeningInputs {
-        product,
-        should_branch,
-        should_jump,
-        ram_read_value,
-        ram_write_value,
-        lookup_output,
-        left_lookup_operand,
-        right_lookup_operand,
-        left_instruction_input,
-        right_instruction_input,
-        ram_address,
+) -> Result<Stage3OpeningInputs<'c, 'a>, MlirError> {
+    Ok(Stage3OpeningInputs {
+        next_unexpanded_pc: append_stage_input(
+            context,
+            module,
+            params,
+            StageOpeningInputSpec {
+                symbol: "stage3.input.stage1.NextUnexpandedPC",
+                source_stage: "stage1",
+                source_claim: "stage1.outer_remaining.opening.NextUnexpandedPC",
+                oracle: "NextUnexpandedPC",
+            },
+        )?,
+        next_pc: append_stage_input(
+            context,
+            module,
+            params,
+            StageOpeningInputSpec {
+                symbol: "stage3.input.stage1.NextPC",
+                source_stage: "stage1",
+                source_claim: "stage1.outer_remaining.opening.NextPC",
+                oracle: "NextPC",
+            },
+        )?,
+        next_is_virtual: append_stage_input(
+            context,
+            module,
+            params,
+            StageOpeningInputSpec {
+                symbol: "stage3.input.stage1.NextIsVirtual",
+                source_stage: "stage1",
+                source_claim: "stage1.outer_remaining.opening.NextIsVirtual",
+                oracle: "NextIsVirtual",
+            },
+        )?,
+        next_is_first_in_sequence: append_stage_input(
+            context,
+            module,
+            params,
+            StageOpeningInputSpec {
+                symbol: "stage3.input.stage1.NextIsFirstInSequence",
+                source_stage: "stage1",
+                source_claim: "stage1.outer_remaining.opening.NextIsFirstInSequence",
+                oracle: "NextIsFirstInSequence",
+            },
+        )?,
+        product_next_is_noop: append_stage_input(
+            context,
+            module,
+            params,
+            StageOpeningInputSpec {
+                symbol: "stage3.input.stage2.product_virtual.NextIsNoop",
+                source_stage: "stage2",
+                source_claim: "stage2.product_virtual.remainder.opening.NextIsNoop",
+                oracle: "NextIsNoop",
+            },
+        )?,
+        product_left_instruction_input: append_stage_input(
+            context,
+            module,
+            params,
+            StageOpeningInputSpec {
+                symbol: "stage3.input.stage2.product_virtual.LeftInstructionInput",
+                source_stage: "stage2",
+                source_claim: "stage2.product_virtual.remainder.opening.LeftInstructionInput",
+                oracle: "LeftInstructionInput",
+            },
+        )?,
+        product_right_instruction_input: append_stage_input(
+            context,
+            module,
+            params,
+            StageOpeningInputSpec {
+                symbol: "stage3.input.stage2.product_virtual.RightInstructionInput",
+                source_stage: "stage2",
+                source_claim: "stage2.product_virtual.remainder.opening.RightInstructionInput",
+                oracle: "RightInstructionInput",
+            },
+        )?,
+        instruction_left_instruction_input: append_stage_input(
+            context,
+            module,
+            params,
+            StageOpeningInputSpec {
+                symbol: "stage3.input.stage2.instruction_lookup.LeftInstructionInput",
+                source_stage: "stage2",
+                source_claim:
+                    "stage2.instruction_lookup.claim_reduction.opening.LeftInstructionInput",
+                oracle: "LeftInstructionInput",
+            },
+        )?,
+        instruction_right_instruction_input: append_stage_input(
+            context,
+            module,
+            params,
+            StageOpeningInputSpec {
+                symbol: "stage3.input.stage2.instruction_lookup.RightInstructionInput",
+                source_stage: "stage2",
+                source_claim:
+                    "stage2.instruction_lookup.claim_reduction.opening.RightInstructionInput",
+                oracle: "RightInstructionInput",
+            },
+        )?,
+        rd_write_value: append_stage_input(
+            context,
+            module,
+            params,
+            StageOpeningInputSpec {
+                symbol: "stage3.input.stage1.RdWriteValue",
+                source_stage: "stage1",
+                source_claim: "stage1.outer_remaining.opening.RdWriteValue",
+                oracle: "RdWriteValue",
+            },
+        )?,
+        rs1_value: append_stage_input(
+            context,
+            module,
+            params,
+            StageOpeningInputSpec {
+                symbol: "stage3.input.stage1.Rs1Value",
+                source_stage: "stage1",
+                source_claim: "stage1.outer_remaining.opening.Rs1Value",
+                oracle: "Rs1Value",
+            },
+        )?,
+        rs2_value: append_stage_input(
+            context,
+            module,
+            params,
+            StageOpeningInputSpec {
+                symbol: "stage3.input.stage1.Rs2Value",
+                source_stage: "stage1",
+                source_claim: "stage1.outer_remaining.opening.Rs2Value",
+                oracle: "Rs2Value",
+            },
+        )?,
     })
 }
 
-fn append_stage1_opening_input<'c, 'a>(
+fn append_stage_input<'c, 'a>(
     context: &'c MeliorContext,
     module: &'a BoltModule<'c, Protocol>,
     params: &JoltProtocolParams,
-    oracle: &str,
-) -> Result<Stage2OpeningInput<'c, 'a>, MlirError> {
+    spec: StageOpeningInputSpec<'_>,
+) -> Result<Stage3OpeningInput<'c, 'a>, MlirError> {
     let op = context.append_typed_op(
         module,
         "piop.opening_input",
-        Some(&format!("stage2.input.stage1.{oracle}")),
+        Some(spec.symbol),
         &[
-            ("source_stage", "@stage1"),
-            (
-                "source_claim",
-                &format!("@stage1.outer_remaining.opening.{oracle}"),
-            ),
-            ("oracle", &format!("@{oracle}")),
+            ("source_stage", &format!("@{}", spec.source_stage)),
+            ("source_claim", &format!("@{}", spec.source_claim)),
+            ("oracle", &format!("@{}", spec.oracle)),
             ("domain", "@jolt.trace_domain"),
             ("point_arity", &int_attr(params.log_t)),
             ("claim_kind", r#""virtual""#),
@@ -780,8 +790,7 @@ fn append_stage1_opening_input<'c, 'a>(
         &[],
         &["!poly.point", "!field.scalar", "!piop.opening_claim_type"],
     )?;
-    Ok(Stage2OpeningInput {
-        point: result(op, 0, "piop.opening_input")?,
+    Ok(Stage3OpeningInput {
         eval: result(op, 1, "piop.opening_input")?,
         claim: result(op, 2, "piop.opening_input")?,
     })
@@ -817,21 +826,20 @@ fn append_transcript_squeeze<'c, 'a>(
     ))
 }
 
-fn append_field_const<'c, 'a>(
+fn append_field_one<'c, 'a>(
     context: &'c MeliorContext,
     module: &'a BoltModule<'c, Protocol>,
     symbol: &str,
-    value: usize,
 ) -> Result<Value<'c, 'a>, MlirError> {
     let op = context.append_typed_op(
         module,
-        "field.const",
+        "field.one",
         Some(symbol),
-        &[("field", "@bn254_fr"), ("value", &int_attr(value))],
+        &[("field", "@bn254_fr")],
         &[],
         &["!field.scalar"],
     )?;
-    first_result(op, "field.const")
+    first_result(op, "field.one")
 }
 
 fn append_field_binary<'c, 'a>(
@@ -863,6 +871,16 @@ fn append_field_add<'c, 'a>(
     append_field_binary(context, module, "field.add", symbol, lhs, rhs)
 }
 
+fn append_field_sub<'c, 'a>(
+    context: &'c MeliorContext,
+    module: &'a BoltModule<'c, Protocol>,
+    symbol: &str,
+    lhs: Value<'c, 'a>,
+    rhs: Value<'c, 'a>,
+) -> Result<Value<'c, 'a>, MlirError> {
+    append_field_binary(context, module, "field.sub", symbol, lhs, rhs)
+}
+
 fn append_field_mul<'c, 'a>(
     context: &'c MeliorContext,
     module: &'a BoltModule<'c, Protocol>,
@@ -873,378 +891,256 @@ fn append_field_mul<'c, 'a>(
     append_field_binary(context, module, "field.mul", symbol, lhs, rhs)
 }
 
-fn append_lagrange_basis_eval<'c, 'a>(
+fn append_field_pow<'c, 'a>(
     context: &'c MeliorContext,
     module: &'a BoltModule<'c, Protocol>,
     symbol: &str,
-    point: Value<'c, 'a>,
-    index: usize,
+    base: Value<'c, 'a>,
+    exponent: usize,
 ) -> Result<Value<'c, 'a>, MlirError> {
     let op = context.append_typed_op(
         module,
-        "poly.lagrange_basis_eval",
+        "field.pow",
         Some(symbol),
-        &[
-            (
-                "domain_start",
-                &int_attr_signed(PRODUCT_UNISKIP_DOMAIN_START),
-            ),
-            ("domain_size", &int_attr(PRODUCT_UNISKIP_DOMAIN_SIZE)),
-            ("index", &int_attr(index)),
-        ],
-        &[point],
+        &[("exponent", &int_attr(exponent))],
+        &[base],
         &["!field.scalar"],
     )?;
-    first_result(op, "poly.lagrange_basis_eval")
+    first_result(op, "field.pow")
 }
 
-fn append_product_uniskip<'c, 'a>(
+fn append_opening_claim_equal<'c>(
     context: &'c MeliorContext,
-    module: &'a BoltModule<'c, Protocol>,
-    _params: &JoltProtocolParams,
-    state: Value<'c, 'a>,
-    stage: Value<'c, 'a>,
-    inputs: &Stage2OpeningInputs<'c, 'a>,
-    tau_high: Value<'c, 'a>,
-) -> Result<(Value<'c, 'a>, Stage2UniskipOutput<'c, 'a>), MlirError> {
-    let product_weight = append_lagrange_basis_eval(
-        context,
+    module: &BoltModule<'c, Protocol>,
+    symbol: &str,
+    left: Value<'c, '_>,
+    right: Value<'c, '_>,
+) -> Result<(), MlirError> {
+    let _operation = context.append_typed_op(
         module,
-        "stage2.product_virtual.uniskip.weight.Product",
-        tau_high,
-        0,
+        "piop.opening_claim_equal",
+        Some(symbol),
+        &[("mode", r#""point_and_eval""#)],
+        &[left, right],
+        &[],
     )?;
-    let branch_weight = append_lagrange_basis_eval(
-        context,
-        module,
-        "stage2.product_virtual.uniskip.weight.ShouldBranch",
-        tau_high,
-        1,
-    )?;
-    let jump_weight = append_lagrange_basis_eval(
-        context,
-        module,
-        "stage2.product_virtual.uniskip.weight.ShouldJump",
-        tau_high,
-        2,
-    )?;
-    let product_term = append_field_mul(
-        context,
-        module,
-        "stage2.product_virtual.uniskip.term.Product",
-        product_weight,
-        inputs.product.eval,
-    )?;
-    let branch_term = append_field_mul(
-        context,
-        module,
-        "stage2.product_virtual.uniskip.term.ShouldBranch",
-        branch_weight,
-        inputs.should_branch.eval,
-    )?;
-    let jump_term = append_field_mul(
-        context,
-        module,
-        "stage2.product_virtual.uniskip.term.ShouldJump",
-        jump_weight,
-        inputs.should_jump.eval,
-    )?;
-    let product_branch_sum = append_field_add(
-        context,
-        module,
-        "stage2.product_virtual.uniskip.partial.ProductShouldBranch",
-        product_term,
-        branch_term,
-    )?;
-    let input_claim = append_field_add(
-        context,
-        module,
-        "stage2.product_virtual.uniskip.claim_expr",
-        product_branch_sum,
-        jump_term,
-    )?;
-    let claim = append_sumcheck_claim(
-        context,
-        module,
-        SumcheckClaimSpec {
-            symbol: "stage2.product_virtual.uniskip.input",
-            stage: "stage2",
-            domain: "jolt.stage2_uniskip_domain",
-            num_rounds: 1,
-            degree: PRODUCT_UNISKIP_DEGREE_BOUND,
-            claim: "stage2.product_virtual.weighted_stage1_outputs",
-            relation: "jolt.stage2.product_virtual.uniskip",
-        },
-        input_claim,
-        &[
-            inputs.product.claim,
-            inputs.should_branch.claim,
-            inputs.should_jump.claim,
-        ],
-    )?;
-    let batch = append_sumcheck_batch(
-        context,
-        module,
-        stage,
-        &[claim],
-        SumcheckBatchSpec {
-            symbol: "stage2.product_virtual.uniskip.batch",
-            stage: "stage2",
-            proof_slot: "stage2.product_virtual.uni_skip_first_round",
-            policy: "single_instance",
-            ordered_claims: &["stage2.product_virtual.uniskip.input"],
-            claim_label: "uniskip_claim",
-            round_label: "uniskip_poly",
-            round_schedule: "[1]".to_owned(),
-        },
-    )?;
-    let (state, point, result_value) = append_sumcheck(
-        context,
-        module,
-        state,
-        batch,
-        SumcheckDriverSpec {
-            symbol: "stage2.product_virtual.uniskip.sumcheck",
-            stage: "stage2",
-            proof_slot: "stage2.product_virtual.uni_skip_first_round",
-            relation: "jolt.stage2.product_virtual.uniskip",
-            policy: "univariate_skip",
-            round_schedule: "[1]".to_owned(),
-            claim_label: "uniskip_claim",
-            round_label: "uniskip_poly",
-            num_rounds: 1,
-            degree: PRODUCT_UNISKIP_DEGREE_BOUND,
-        },
-    )?;
-    let (point, result_value) = append_sumcheck_instance_result(
-        context,
-        module,
-        SumcheckInstanceResultSpec {
-            symbol: "stage2.product_virtual.uniskip.instance",
-            source: "stage2.product_virtual.uniskip.sumcheck",
-            claim: "stage2.product_virtual.uniskip.input",
-            relation: "jolt.stage2.product_virtual.uniskip",
-            index: 0,
-            point_arity: 1,
-            num_rounds: 1,
-            round_offset: 0,
-            point_order: "as_is",
-            degree: PRODUCT_UNISKIP_DEGREE_BOUND,
-        },
-        point,
-        result_value,
-    )?;
-    let eval = append_sumcheck_eval(
-        context,
-        module,
-        "stage2.product_virtual.uniskip.eval.UnivariateSkip",
-        "stage2.product_virtual.uniskip.sumcheck",
-        "UnivariateSkip",
-        0,
-        result_value,
-    )?;
-    let opening = append_opening_claim(
-        context,
-        module,
-        point,
-        eval,
-        OpeningClaimSpec {
-            symbol: "stage2.product_virtual.uniskip.opening.UnivariateSkip",
-            oracle: "UnivariateSkip",
-            domain: "jolt.stage2_uniskip_domain",
-            point_arity: 1,
-            claim_kind: "virtual",
-        },
-    )?;
-    Ok((state, Stage2UniskipOutput { opening, eval }))
+    Ok(())
 }
 
-fn append_stage2_batched_sumcheck<'c, 'a>(
+fn append_stage3_batched_sumcheck<'c, 'a>(
     context: &'c MeliorContext,
     module: &'a BoltModule<'c, Protocol>,
     params: &JoltProtocolParams,
-    spec: Stage2BatchedSumcheckInputs<'c, 'a, '_>,
+    spec: Stage3BatchedSumcheckInputs<'c, 'a, '_>,
 ) -> Result<Value<'c, 'a>, MlirError> {
     let inputs = spec.openings;
-    let uniskip = spec.uniskip;
-    let max_rounds = stage2_max_rounds(params);
-    let product_offset = max_rounds - params.log_t;
-    let ram_offset = params.log_t;
-    let ram_write_term = append_field_mul(
+    let shift_gamma2 = append_field_pow(
         context,
         module,
-        "stage2.ram_read_write.term.RamWriteValue",
-        spec.ram_read_write_gamma,
-        inputs.ram_write_value.eval,
+        "stage3.spartan_shift.gamma2",
+        spec.shift_gamma,
+        2,
     )?;
-    let ram_read_write_claim = append_field_add(
+    let shift_gamma3 = append_field_mul(
         context,
         module,
-        "stage2.ram_read_write.claim_expr",
-        inputs.ram_read_value.eval,
-        ram_write_term,
+        "stage3.spartan_shift.gamma3",
+        shift_gamma2,
+        spec.shift_gamma,
     )?;
-    let product_remainder_claim = uniskip.eval;
-    let gamma2 = append_field_mul(
+    let shift_gamma4 = append_field_mul(
         context,
         module,
-        "stage2.instruction_lookup.gamma2",
-        spec.instruction_lookup_gamma,
-        spec.instruction_lookup_gamma,
+        "stage3.spartan_shift.gamma4",
+        shift_gamma2,
+        shift_gamma2,
     )?;
-    let gamma3 = append_field_mul(
+    let one = append_field_one(context, module, "stage3.field.one")?;
+    let next_pc_term = append_field_mul(
         context,
         module,
-        "stage2.instruction_lookup.gamma3",
-        gamma2,
-        spec.instruction_lookup_gamma,
+        "stage3.spartan_shift.term.NextPC",
+        spec.shift_gamma,
+        inputs.next_pc.eval,
     )?;
-    let gamma4 = append_field_mul(
+    let next_virtual_term = append_field_mul(
         context,
         module,
-        "stage2.instruction_lookup.gamma4",
-        gamma2,
-        gamma2,
+        "stage3.spartan_shift.term.NextIsVirtual",
+        shift_gamma2,
+        inputs.next_is_virtual.eval,
     )?;
-    let left_lookup_term = append_field_mul(
+    let next_first_term = append_field_mul(
         context,
         module,
-        "stage2.instruction_lookup.term.LeftLookupOperand",
-        spec.instruction_lookup_gamma,
-        inputs.left_lookup_operand.eval,
+        "stage3.spartan_shift.term.NextIsFirstInSequence",
+        shift_gamma3,
+        inputs.next_is_first_in_sequence.eval,
     )?;
-    let right_lookup_term = append_field_mul(
+    let one_minus_noop = append_field_sub(
         context,
         module,
-        "stage2.instruction_lookup.term.RightLookupOperand",
-        gamma2,
-        inputs.right_lookup_operand.eval,
+        "stage3.spartan_shift.one_minus.NextIsNoop",
+        one,
+        inputs.product_next_is_noop.eval,
     )?;
-    let left_input_term = append_field_mul(
+    let next_noop_term = append_field_mul(
         context,
         module,
-        "stage2.instruction_lookup.term.LeftInstructionInput",
-        gamma3,
-        inputs.left_instruction_input.eval,
+        "stage3.spartan_shift.term.NextIsNoop",
+        shift_gamma4,
+        one_minus_noop,
     )?;
-    let right_input_term = append_field_mul(
+    let shift_sum0 = append_field_add(
         context,
         module,
-        "stage2.instruction_lookup.term.RightInstructionInput",
-        gamma4,
-        inputs.right_instruction_input.eval,
+        "stage3.spartan_shift.partial.NextUnexpandedPCNextPC",
+        inputs.next_unexpanded_pc.eval,
+        next_pc_term,
     )?;
-    let instruction_sum_0 = append_field_add(
+    let shift_sum1 = append_field_add(
         context,
         module,
-        "stage2.instruction_lookup.partial.LookupOutputLeftOperand",
-        inputs.lookup_output.eval,
-        left_lookup_term,
+        "stage3.spartan_shift.partial.NextIsVirtual",
+        shift_sum0,
+        next_virtual_term,
     )?;
-    let instruction_sum_1 = append_field_add(
+    let shift_sum2 = append_field_add(
         context,
         module,
-        "stage2.instruction_lookup.partial.RightOperand",
-        instruction_sum_0,
-        right_lookup_term,
+        "stage3.spartan_shift.partial.NextIsFirstInSequence",
+        shift_sum1,
+        next_first_term,
     )?;
-    let instruction_sum_2 = append_field_add(
+    let shift_claim = append_field_add(
         context,
         module,
-        "stage2.instruction_lookup.partial.LeftInstructionInput",
-        instruction_sum_1,
-        left_input_term,
+        "stage3.spartan_shift.claim_expr",
+        shift_sum2,
+        next_noop_term,
+    )?;
+    append_opening_claim_equal(
+        context,
+        module,
+        "stage3.instruction_input.left_claim_consistency",
+        inputs.product_left_instruction_input.claim,
+        inputs.instruction_left_instruction_input.claim,
+    )?;
+    append_opening_claim_equal(
+        context,
+        module,
+        "stage3.instruction_input.right_claim_consistency",
+        inputs.product_right_instruction_input.claim,
+        inputs.instruction_right_instruction_input.claim,
+    )?;
+    let instruction_left_term = append_field_mul(
+        context,
+        module,
+        "stage3.instruction_input.term.LeftInstructionInput",
+        spec.instruction_gamma,
+        inputs.product_left_instruction_input.eval,
     )?;
     let instruction_claim = append_field_add(
         context,
         module,
-        "stage2.instruction_lookup.claim_reduction.claim_expr",
-        instruction_sum_2,
-        right_input_term,
+        "stage3.instruction_input.claim_expr",
+        inputs.product_right_instruction_input.eval,
+        instruction_left_term,
     )?;
-    let ram_raf_claim = inputs.ram_address.eval;
-    let ram_output_claim = append_field_const(context, module, "stage2.ram_output.zero", 0)?;
+    let registers_gamma2 = append_field_pow(
+        context,
+        module,
+        "stage3.registers.gamma2",
+        spec.registers_gamma,
+        2,
+    )?;
+    let rs1_term = append_field_mul(
+        context,
+        module,
+        "stage3.registers.term.Rs1Value",
+        spec.registers_gamma,
+        inputs.rs1_value.eval,
+    )?;
+    let rs2_term = append_field_mul(
+        context,
+        module,
+        "stage3.registers.term.Rs2Value",
+        registers_gamma2,
+        inputs.rs2_value.eval,
+    )?;
+    let registers_sum = append_field_add(
+        context,
+        module,
+        "stage3.registers.partial.RdWriteValueRs1Value",
+        inputs.rd_write_value.eval,
+        rs1_term,
+    )?;
+    let registers_claim = append_field_add(
+        context,
+        module,
+        "stage3.registers.claim_expr",
+        registers_sum,
+        rs2_term,
+    )?;
+
     let claims = [
         append_sumcheck_claim(
             context,
             module,
             SumcheckClaimSpec {
-                symbol: "stage2.ram_read_write.input",
-                stage: "stage2",
-                domain: "jolt.stage2_ram_rw_domain",
-                num_rounds: max_rounds,
-                degree: RAM_RW_DEGREE,
-                claim: "stage2.ram_read_write.weighted_values",
-                relation: "jolt.stage2.ram.read_write",
-            },
-            ram_read_write_claim,
-            &[inputs.ram_read_value.claim, inputs.ram_write_value.claim],
-        )?,
-        append_sumcheck_claim(
-            context,
-            module,
-            SumcheckClaimSpec {
-                symbol: "stage2.product_virtual.remainder.input",
-                stage: "stage2",
+                symbol: "stage3.spartan_shift.input",
+                stage: "stage3",
                 domain: "jolt.trace_domain",
                 num_rounds: params.log_t,
-                degree: PRODUCT_REMAINDER_DEGREE,
-                claim: "stage2.product_virtual.uniskip.opening",
-                relation: "jolt.stage2.product_virtual.remainder",
+                degree: SPARTAN_SHIFT_DEGREE,
+                claim: "stage3.spartan_shift.weighted_next_values",
+                relation: "jolt.stage3.spartan_shift",
             },
-            product_remainder_claim,
-            &[uniskip.opening],
-        )?,
-        append_sumcheck_claim(
-            context,
-            module,
-            SumcheckClaimSpec {
-                symbol: "stage2.instruction_lookup.claim_reduction.input",
-                stage: "stage2",
-                domain: "jolt.trace_domain",
-                num_rounds: params.log_t,
-                degree: INSTRUCTION_CLAIM_REDUCTION_DEGREE,
-                claim: "stage2.instruction_lookup.weighted_operands",
-                relation: "jolt.stage2.instruction_lookup.claim_reduction",
-            },
-            instruction_claim,
+            shift_claim,
             &[
-                inputs.lookup_output.claim,
-                inputs.left_lookup_operand.claim,
-                inputs.right_lookup_operand.claim,
-                inputs.left_instruction_input.claim,
-                inputs.right_instruction_input.claim,
+                inputs.next_unexpanded_pc.claim,
+                inputs.next_pc.claim,
+                inputs.next_is_virtual.claim,
+                inputs.next_is_first_in_sequence.claim,
+                inputs.product_next_is_noop.claim,
             ],
         )?,
         append_sumcheck_claim(
             context,
             module,
             SumcheckClaimSpec {
-                symbol: "stage2.ram_raf.input",
-                stage: "stage2",
-                domain: "jolt.ram_address_domain",
-                num_rounds: params.log_k_ram,
-                degree: RAM_RAF_DEGREE,
-                claim: "stage2.ram_raf.ram_address",
-                relation: "jolt.stage2.ram.raf_evaluation",
+                symbol: "stage3.instruction_input.input",
+                stage: "stage3",
+                domain: "jolt.trace_domain",
+                num_rounds: params.log_t,
+                degree: INSTRUCTION_INPUT_DEGREE,
+                claim: "stage3.instruction_input.weighted_inputs",
+                relation: "jolt.stage3.instruction_input",
             },
-            ram_raf_claim,
-            &[inputs.ram_address.claim],
+            instruction_claim,
+            &[
+                inputs.product_right_instruction_input.claim,
+                inputs.product_left_instruction_input.claim,
+            ],
         )?,
         append_sumcheck_claim(
             context,
             module,
             SumcheckClaimSpec {
-                symbol: "stage2.ram_output.input",
-                stage: "stage2",
-                domain: "jolt.ram_address_domain",
-                num_rounds: params.log_k_ram,
-                degree: RAM_OUTPUT_DEGREE,
-                claim: "zero",
-                relation: "jolt.stage2.ram.output_check",
+                symbol: "stage3.registers_claim_reduction.input",
+                stage: "stage3",
+                domain: "jolt.trace_domain",
+                num_rounds: params.log_t,
+                degree: REGISTERS_CLAIM_REDUCTION_DEGREE,
+                claim: "stage3.registers.weighted_register_values",
+                relation: "jolt.stage3.registers_claim_reduction",
             },
-            ram_output_claim,
-            &[],
+            registers_claim,
+            &[
+                inputs.rd_write_value.claim,
+                inputs.rs1_value.claim,
+                inputs.rs2_value.claim,
+            ],
         )?,
     ];
     let batch = append_sumcheck_batch(
@@ -1253,20 +1149,18 @@ fn append_stage2_batched_sumcheck<'c, 'a>(
         spec.stage,
         &claims,
         SumcheckBatchSpec {
-            symbol: "stage2.batch",
-            stage: "stage2",
-            proof_slot: "stage2.sumcheck",
-            policy: "jolt_core_stage2_aligned",
+            symbol: "stage3.batch",
+            stage: "stage3",
+            proof_slot: "stage3.sumcheck",
+            policy: "jolt_core_stage3_aligned",
             ordered_claims: &[
-                "stage2.ram_read_write.input",
-                "stage2.product_virtual.remainder.input",
-                "stage2.instruction_lookup.claim_reduction.input",
-                "stage2.ram_raf.input",
-                "stage2.ram_output.input",
+                "stage3.spartan_shift.input",
+                "stage3.instruction_input.input",
+                "stage3.registers_claim_reduction.input",
             ],
             claim_label: "sumcheck_claim",
             round_label: "sumcheck_poly",
-            round_schedule: format!("[{}, {}]", params.log_t, params.log_k_ram),
+            round_schedule: format!("[{}]", params.log_t),
         },
     )?;
     let (state, point, result_value) = append_sumcheck(
@@ -1275,50 +1169,33 @@ fn append_stage2_batched_sumcheck<'c, 'a>(
         spec.state,
         batch,
         SumcheckDriverSpec {
-            symbol: "stage2.sumcheck",
-            stage: "stage2",
-            proof_slot: "stage2.sumcheck",
-            relation: "jolt.stage2.batched",
-            policy: "jolt_core_stage2_aligned",
-            round_schedule: format!("[{}, {}]", params.log_t, params.log_k_ram),
+            symbol: "stage3.sumcheck",
+            stage: "stage3",
+            proof_slot: "stage3.sumcheck",
+            relation: "jolt.stage3.batched",
+            policy: "jolt_core_stage3_aligned",
+            round_schedule: format!("[{}]", params.log_t),
             claim_label: "sumcheck_claim",
             round_label: "sumcheck_poly",
-            num_rounds: max_rounds,
-            degree: RAM_RW_DEGREE,
+            num_rounds: params.log_t,
+            degree: STAGE3_BATCHED_DEGREE,
         },
     )?;
-    let ram_rw = append_sumcheck_instance_result(
+
+    let shift = append_sumcheck_instance_result(
         context,
         module,
         SumcheckInstanceResultSpec {
-            symbol: "stage2.ram_read_write.instance",
-            source: "stage2.sumcheck",
-            claim: "stage2.ram_read_write.input",
-            relation: "jolt.stage2.ram.read_write",
+            symbol: "stage3.spartan_shift.instance",
+            source: "stage3.sumcheck",
+            claim: "stage3.spartan_shift.input",
+            relation: "jolt.stage3.spartan_shift",
             index: 0,
-            point_arity: max_rounds,
-            num_rounds: max_rounds,
-            round_offset: 0,
-            point_order: "as_is",
-            degree: RAM_RW_DEGREE,
-        },
-        point,
-        result_value,
-    )?;
-    let product = append_sumcheck_instance_result(
-        context,
-        module,
-        SumcheckInstanceResultSpec {
-            symbol: "stage2.product_virtual.remainder.instance",
-            source: "stage2.sumcheck",
-            claim: "stage2.product_virtual.remainder.input",
-            relation: "jolt.stage2.product_virtual.remainder",
-            index: 1,
             point_arity: params.log_t,
             num_rounds: params.log_t,
-            round_offset: product_offset,
-            point_order: "as_is",
-            degree: PRODUCT_REMAINDER_DEGREE,
+            round_offset: 0,
+            point_order: "reverse",
+            degree: SPARTAN_SHIFT_DEGREE,
         },
         point,
         result_value,
@@ -1327,168 +1204,85 @@ fn append_stage2_batched_sumcheck<'c, 'a>(
         context,
         module,
         SumcheckInstanceResultSpec {
-            symbol: "stage2.instruction_lookup.claim_reduction.instance",
-            source: "stage2.sumcheck",
-            claim: "stage2.instruction_lookup.claim_reduction.input",
-            relation: "jolt.stage2.instruction_lookup.claim_reduction",
+            symbol: "stage3.instruction_input.instance",
+            source: "stage3.sumcheck",
+            claim: "stage3.instruction_input.input",
+            relation: "jolt.stage3.instruction_input",
+            index: 1,
+            point_arity: params.log_t,
+            num_rounds: params.log_t,
+            round_offset: 0,
+            point_order: "reverse",
+            degree: INSTRUCTION_INPUT_DEGREE,
+        },
+        point,
+        result_value,
+    )?;
+    let registers = append_sumcheck_instance_result(
+        context,
+        module,
+        SumcheckInstanceResultSpec {
+            symbol: "stage3.registers_claim_reduction.instance",
+            source: "stage3.sumcheck",
+            claim: "stage3.registers_claim_reduction.input",
+            relation: "jolt.stage3.registers_claim_reduction",
             index: 2,
             point_arity: params.log_t,
             num_rounds: params.log_t,
-            round_offset: product_offset,
-            point_order: "as_is",
-            degree: INSTRUCTION_CLAIM_REDUCTION_DEGREE,
+            round_offset: 0,
+            point_order: "reverse",
+            degree: REGISTERS_CLAIM_REDUCTION_DEGREE,
         },
         point,
         result_value,
     )?;
-    let ram_raf = append_sumcheck_instance_result(
+    append_stage3_output_openings(
         context,
         module,
-        SumcheckInstanceResultSpec {
-            symbol: "stage2.ram_raf.instance",
-            source: "stage2.sumcheck",
-            claim: "stage2.ram_raf.input",
-            relation: "jolt.stage2.ram.raf_evaluation",
-            index: 3,
-            point_arity: params.log_k_ram,
-            num_rounds: params.log_k_ram,
-            round_offset: ram_offset,
-            point_order: "as_is",
-            degree: RAM_RAF_DEGREE,
-        },
-        point,
-        result_value,
-    )?;
-    let ram_output = append_sumcheck_instance_result(
-        context,
-        module,
-        SumcheckInstanceResultSpec {
-            symbol: "stage2.ram_output.instance",
-            source: "stage2.sumcheck",
-            claim: "stage2.ram_output.input",
-            relation: "jolt.stage2.ram.output_check",
-            index: 4,
-            point_arity: params.log_k_ram,
-            num_rounds: params.log_k_ram,
-            round_offset: ram_offset,
-            point_order: "as_is",
-            degree: RAM_OUTPUT_DEGREE,
-        },
-        point,
-        result_value,
-    )?;
-    append_stage2_output_openings(
-        context,
-        module,
-        params,
-        Stage2OutputOpeningSpec {
-            outputs: &[
-                InstanceOutput {
-                    prefix: "stage2.product_virtual.remainder",
-                    instance: product,
-                    eval_source: "stage2.sumcheck",
-                    outputs: &PRODUCT_REMAINDER_OUTPUTS,
-                    domain: "jolt.trace_domain",
-                    point_arity: params.log_t,
-                    claim_kind: "virtual",
-                },
-                InstanceOutput {
-                    prefix: "stage2.instruction_lookup.claim_reduction",
-                    instance: instruction,
-                    eval_source: "stage2.sumcheck",
-                    outputs: &STAGE2_INSTRUCTION_INPUTS,
-                    domain: "jolt.trace_domain",
-                    point_arity: params.log_t,
-                    claim_kind: "virtual",
-                },
-            ],
-            ram_rw,
-            ram_raf,
-            ram_output,
-            stage1_ram_address_point: inputs.ram_address.point,
-        },
+        &[
+            InstanceOutput {
+                prefix: "stage3.spartan_shift",
+                instance: shift,
+                outputs: &STAGE3_SHIFT_OUTPUTS,
+                degree_offset: 0,
+            },
+            InstanceOutput {
+                prefix: "stage3.instruction_input",
+                instance: instruction,
+                outputs: &STAGE3_INSTRUCTION_INPUT_OUTPUTS,
+                degree_offset: STAGE3_SHIFT_OUTPUTS.len(),
+            },
+            InstanceOutput {
+                prefix: "stage3.registers_claim_reduction",
+                instance: registers,
+                outputs: &STAGE3_REGISTER_INPUTS,
+                degree_offset: STAGE3_SHIFT_OUTPUTS.len() + STAGE3_INSTRUCTION_INPUT_OUTPUTS.len(),
+            },
+        ],
+        params.log_t,
     )?;
     Ok(state)
 }
 
-fn append_stage2_output_openings<'c, 'a>(
+fn append_stage3_output_openings<'c, 'a>(
     context: &'c MeliorContext,
     module: &'a BoltModule<'c, Protocol>,
-    params: &JoltProtocolParams,
-    spec: Stage2OutputOpeningSpec<'c, 'a, '_>,
+    outputs: &[InstanceOutput<'c, 'a, '_>],
+    point_arity: usize,
 ) -> Result<(), MlirError> {
     let mut claims = Vec::new();
     let mut claim_symbols = Vec::new();
 
-    for (index, &oracle) in ["RamVal", "RamRa"].iter().enumerate() {
-        let symbol = format!("stage2.ram_read_write.opening.{oracle}");
-        let eval = append_sumcheck_eval(
-            context,
-            module,
-            &format!("stage2.ram_read_write.eval.{oracle}"),
-            "stage2.sumcheck",
-            oracle,
-            index,
-            spec.ram_rw.1,
-        )?;
-        claim_symbols.push(symbol.clone());
-        claims.push(append_opening_claim(
-            context,
-            module,
-            spec.ram_rw.0,
-            eval,
-            OpeningClaimSpec {
-                symbol: &symbol,
-                oracle,
-                domain: "jolt.stage2_ram_rw_domain",
-                point_arity: stage2_max_rounds(params),
-                claim_kind: "virtual",
-            },
-        )?);
-    }
-    let ram_inc_point = append_point_slice(
-        context,
-        module,
-        "stage2.ram_read_write.point.RamInc",
-        "stage2.ram_read_write.instance",
-        params.log_k_ram,
-        params.log_t,
-        spec.ram_rw.0,
-    )?;
-    let ram_inc_eval = append_sumcheck_eval(
-        context,
-        module,
-        "stage2.ram_read_write.eval.RamInc",
-        "stage2.sumcheck",
-        "RamInc",
-        2,
-        spec.ram_rw.1,
-    )?;
-    claim_symbols.push("stage2.ram_read_write.opening.RamInc".to_owned());
-    claims.push(append_opening_claim(
-        context,
-        module,
-        ram_inc_point,
-        ram_inc_eval,
-        OpeningClaimSpec {
-            symbol: "stage2.ram_read_write.opening.RamInc",
-            oracle: "RamInc",
-            domain: "jolt.trace_domain",
-            point_arity: params.log_t,
-            claim_kind: "committed",
-        },
-    )?);
-
-    for output in spec.outputs {
+    for output in outputs {
         for (index, &oracle) in output.outputs.iter().enumerate() {
             let symbol = format!("{}.opening.{oracle}", output.prefix);
             let eval = append_sumcheck_eval(
                 context,
                 module,
                 &format!("{}.eval.{oracle}", output.prefix),
-                output.eval_source,
+                "stage3.sumcheck",
                 oracle,
-                index,
+                output.degree_offset + index,
                 output.instance.1,
             )?;
             claim_symbols.push(symbol.clone());
@@ -1500,79 +1294,23 @@ fn append_stage2_output_openings<'c, 'a>(
                 OpeningClaimSpec {
                     symbol: &symbol,
                     oracle,
-                    domain: output.domain,
-                    point_arity: output.point_arity,
-                    claim_kind: output.claim_kind,
+                    domain: "jolt.trace_domain",
+                    point_arity,
+                    claim_kind: "virtual",
                 },
             )?);
         }
     }
 
-    let ram_raf_point = append_point_concat(
-        context,
-        module,
-        "stage2.ram_raf.point.RamRa",
-        "address_then_cycle",
-        params.log_k_ram + params.log_t,
-        &[spec.ram_raf.0, spec.stage1_ram_address_point],
-    )?;
-    let ram_raf_eval = append_sumcheck_eval(
-        context,
-        module,
-        "stage2.ram_raf.eval.RamRa",
-        "stage2.sumcheck",
-        "RamRa",
-        0,
-        spec.ram_raf.1,
-    )?;
-    claim_symbols.push("stage2.ram_raf.opening.RamRa".to_owned());
-    claims.push(append_opening_claim(
-        context,
-        module,
-        ram_raf_point,
-        ram_raf_eval,
-        OpeningClaimSpec {
-            symbol: "stage2.ram_raf.opening.RamRa",
-            oracle: "RamRa",
-            domain: "jolt.stage2_ram_rw_domain",
-            point_arity: params.log_k_ram + params.log_t,
-            claim_kind: "virtual",
-        },
-    )?);
-
-    let ram_output_eval = append_sumcheck_eval(
-        context,
-        module,
-        "stage2.ram_output.eval.RamValFinal",
-        "stage2.sumcheck",
-        "RamValFinal",
-        0,
-        spec.ram_output.1,
-    )?;
-    claim_symbols.push("stage2.ram_output.opening.RamValFinal".to_owned());
-    claims.push(append_opening_claim(
-        context,
-        module,
-        spec.ram_output.0,
-        ram_output_eval,
-        OpeningClaimSpec {
-            symbol: "stage2.ram_output.opening.RamValFinal",
-            oracle: "RamValFinal",
-            domain: "jolt.ram_address_domain",
-            point_arity: params.log_k_ram,
-            claim_kind: "virtual",
-        },
-    )?);
-
     let claim_names = claim_symbols.iter().map(String::as_str).collect::<Vec<_>>();
     let _batch = context.append_typed_op(
         module,
         "piop.opening_batch",
-        Some("stage2.openings"),
+        Some("stage3.openings"),
         &[
-            ("stage", "@stage2"),
-            ("proof_slot", "@stage2.openings"),
-            ("policy", r#""jolt_stage2_output_order""#),
+            ("stage", "@stage3"),
+            ("proof_slot", "@stage3.openings"),
+            ("policy", r#""jolt_stage3_output_order""#),
             ("count", &int_attr(claims.len())),
             ("ordered_claims", &symbol_array_attr(&claim_names)),
         ],
@@ -1756,52 +1494,6 @@ fn append_opening_claim<'c, 'a>(
     first_result(op, "piop.opening_claim")
 }
 
-fn append_point_slice<'c, 'a>(
-    context: &'c MeliorContext,
-    module: &'a BoltModule<'c, Protocol>,
-    symbol: &str,
-    source: &str,
-    offset: usize,
-    length: usize,
-    point: Value<'c, 'a>,
-) -> Result<Value<'c, 'a>, MlirError> {
-    let op = context.append_typed_op(
-        module,
-        "poly.point_slice",
-        Some(symbol),
-        &[
-            ("source", &format!("@{source}")),
-            ("offset", &int_attr(offset)),
-            ("length", &int_attr(length)),
-        ],
-        &[point],
-        &["!poly.point"],
-    )?;
-    first_result(op, "poly.point_slice")
-}
-
-fn append_point_concat<'c, 'a>(
-    context: &'c MeliorContext,
-    module: &'a BoltModule<'c, Protocol>,
-    symbol: &str,
-    layout: &str,
-    arity: usize,
-    points: &[Value<'c, 'a>],
-) -> Result<Value<'c, 'a>, MlirError> {
-    let op = context.append_typed_op(
-        module,
-        "poly.point_concat",
-        Some(symbol),
-        &[
-            ("layout", &format!("\"{layout}\"")),
-            ("arity", &int_attr(arity)),
-        ],
-        points,
-        &["!poly.point"],
-    )?;
-    first_result(op, "poly.point_concat")
-}
-
 fn first_result<'c, 'a>(
     operation: OperationRef<'c, 'a>,
     operation_name: &str,
@@ -1839,7 +1531,7 @@ fn stage_params(module: &BoltModule<'_, Party>) -> Result<StageParamsAst, MlirEr
             });
         }
     }
-    Err(schema_error("stage2 lowering requires protocol.params"))
+    Err(schema_error("stage3 lowering requires protocol.params"))
 }
 
 fn operation_result_key_at(
@@ -1924,15 +1616,13 @@ fn symbol_ref(symbol: &str) -> String {
     format!("@{symbol}")
 }
 
-fn stage2_max_rounds(params: &JoltProtocolParams) -> usize {
-    params.log_t + params.log_k_ram
+fn stage3_output_count() -> usize {
+    STAGE3_SHIFT_OUTPUTS.len()
+        + STAGE3_INSTRUCTION_INPUT_OUTPUTS.len()
+        + STAGE3_REGISTER_INPUTS.len()
 }
 
 fn int_attr(value: usize) -> String {
-    format!("{value} : i64")
-}
-
-fn int_attr_signed(value: isize) -> String {
     format!("{value} : i64")
 }
 
@@ -1950,39 +1640,40 @@ fn schema_error(message: impl Into<String>) -> MlirError {
 }
 
 #[derive(Clone, Copy)]
-struct Stage2OpeningInput<'c, 'a> {
-    point: Value<'c, 'a>,
+struct Stage3OpeningInput<'c, 'a> {
     eval: Value<'c, 'a>,
     claim: Value<'c, 'a>,
 }
 
-struct Stage2OpeningInputs<'c, 'a> {
-    product: Stage2OpeningInput<'c, 'a>,
-    should_branch: Stage2OpeningInput<'c, 'a>,
-    should_jump: Stage2OpeningInput<'c, 'a>,
-    ram_read_value: Stage2OpeningInput<'c, 'a>,
-    ram_write_value: Stage2OpeningInput<'c, 'a>,
-    lookup_output: Stage2OpeningInput<'c, 'a>,
-    left_lookup_operand: Stage2OpeningInput<'c, 'a>,
-    right_lookup_operand: Stage2OpeningInput<'c, 'a>,
-    left_instruction_input: Stage2OpeningInput<'c, 'a>,
-    right_instruction_input: Stage2OpeningInput<'c, 'a>,
-    ram_address: Stage2OpeningInput<'c, 'a>,
+struct Stage3OpeningInputs<'c, 'a> {
+    next_unexpanded_pc: Stage3OpeningInput<'c, 'a>,
+    next_pc: Stage3OpeningInput<'c, 'a>,
+    next_is_virtual: Stage3OpeningInput<'c, 'a>,
+    next_is_first_in_sequence: Stage3OpeningInput<'c, 'a>,
+    product_next_is_noop: Stage3OpeningInput<'c, 'a>,
+    product_left_instruction_input: Stage3OpeningInput<'c, 'a>,
+    product_right_instruction_input: Stage3OpeningInput<'c, 'a>,
+    instruction_left_instruction_input: Stage3OpeningInput<'c, 'a>,
+    instruction_right_instruction_input: Stage3OpeningInput<'c, 'a>,
+    rd_write_value: Stage3OpeningInput<'c, 'a>,
+    rs1_value: Stage3OpeningInput<'c, 'a>,
+    rs2_value: Stage3OpeningInput<'c, 'a>,
 }
 
-#[derive(Clone, Copy)]
-struct Stage2UniskipOutput<'c, 'a> {
-    opening: Value<'c, 'a>,
-    eval: Value<'c, 'a>,
+struct StageOpeningInputSpec<'a> {
+    symbol: &'a str,
+    source_stage: &'a str,
+    source_claim: &'a str,
+    oracle: &'a str,
 }
 
-struct Stage2BatchedSumcheckInputs<'c, 'a, 'b> {
+struct Stage3BatchedSumcheckInputs<'c, 'a, 'b> {
     state: Value<'c, 'a>,
     stage: Value<'c, 'a>,
-    openings: &'b Stage2OpeningInputs<'c, 'a>,
-    uniskip: Stage2UniskipOutput<'c, 'a>,
-    ram_read_write_gamma: Value<'c, 'a>,
-    instruction_lookup_gamma: Value<'c, 'a>,
+    openings: &'b Stage3OpeningInputs<'c, 'a>,
+    shift_gamma: Value<'c, 'a>,
+    instruction_gamma: Value<'c, 'a>,
+    registers_gamma: Value<'c, 'a>,
 }
 
 struct RelationSpec<'a> {
@@ -2049,20 +1740,9 @@ struct OpeningClaimSpec<'a> {
     claim_kind: &'a str,
 }
 
-struct Stage2OutputOpeningSpec<'c, 'a, 'b> {
-    outputs: &'b [InstanceOutput<'c, 'a, 'b>],
-    ram_rw: (Value<'c, 'a>, Value<'c, 'a>),
-    ram_raf: (Value<'c, 'a>, Value<'c, 'a>),
-    ram_output: (Value<'c, 'a>, Value<'c, 'a>),
-    stage1_ram_address_point: Value<'c, 'a>,
-}
-
 struct InstanceOutput<'c, 'a, 'b> {
     prefix: &'b str,
     instance: (Value<'c, 'a>, Value<'c, 'a>),
-    eval_source: &'b str,
     outputs: &'b [&'b str],
-    domain: &'b str,
-    point_arity: usize,
-    claim_kind: &'b str,
+    degree_offset: usize,
 }
