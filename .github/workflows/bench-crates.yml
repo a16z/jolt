@@ -82,9 +82,8 @@ jobs:
           fi
 
       - name: Post benchmark comparison
-        if: github.event_name == 'pull_request' && steps.critcmp.outputs.comparison != ''
+        if: github.event_name == 'pull_request' && steps.critcmp.outputs.comparison != '' && github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/github-script@v9
-        continue-on-error: true
         with:
           script: |
             const marker = '<!-- bench-crates -->';
