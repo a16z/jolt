@@ -252,8 +252,54 @@ impl<F: Field> EqPolynomial<F> {
         let mut evals: Vec<F> = unsafe_allocate_zero_vec(final_size);
         let mut size = 1;
         evals[0] = scaling_factor.unwrap_or(F::one());
+        let mut i = r.len();
 
-        for r in r.iter().rev() {
+        while i >= 2 {
+            let r_lo = r[i - 1];
+            let r_hi = r[i - 2];
+            i -= 2;
+
+            let (q0, rest) = evals.split_at_mut(size);
+            let (q1, rest) = rest.split_at_mut(size);
+            let (q2, rest) = rest.split_at_mut(size);
+            let (q3, _) = rest.split_at_mut(size);
+
+            #[cfg(feature = "parallel")]
+            {
+                use rayon::prelude::*;
+                q0.par_iter_mut()
+                    .zip(q1.par_iter_mut())
+                    .zip(q2.par_iter_mut())
+                    .zip(q3.par_iter_mut())
+                    .for_each(|(((x, q1_out), q2_out), q3_out)| {
+                        let with_lo = *x * r_lo;
+                        let without_lo = *x - with_lo;
+
+                        *q2_out = without_lo * r_hi;
+                        *x = without_lo - *q2_out;
+                        *q3_out = with_lo * r_hi;
+                        *q1_out = with_lo - *q3_out;
+                    });
+            }
+
+            #[cfg(not(feature = "parallel"))]
+            {
+                for j in 0..size {
+                    let x_val = q0[j];
+                    let with_lo = x_val * r_lo;
+                    let without_lo = x_val - with_lo;
+
+                    q2[j] = without_lo * r_hi;
+                    q0[j] = without_lo - q2[j];
+                    q3[j] = with_lo * r_hi;
+                    q1[j] = with_lo - q3[j];
+                }
+            }
+
+            size *= 4;
+        }
+
+        for r in r[..i].iter().rev() {
             let (evals_left, evals_right) = evals.split_at_mut(size);
             let (evals_right, _) = evals_right.split_at_mut(size);
 
