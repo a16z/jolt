@@ -9,7 +9,7 @@
 
 ## Summary
 
-Jolt's bytecode expansion logic is still owned by the `tracer` crate even though `jolt-trace` now exposes host-facing program decoding, tracing, and bytecode preprocessing APIs. This spec proposes strengthening the existing `jolt-riscv` crate as the shared instruction vocabulary and trait crate, plus one new `jolt-program` crate that owns program-image decoding, bytecode expansion, and materialized Jolt program preprocessing behind separate internal modules.
+Jolt's bytecode expansion logic is still owned by the `tracer` crate even though `jolt-trace` now exposes host-facing program decoding, tracing, and bytecode preprocessing APIs. This spec proposes strengthening the existing `jolt-riscv` crate as the shared instruction vocabulary and normalized-row crate, plus one new `jolt-program` crate that owns program-image decoding, bytecode expansion, and materialized Jolt program preprocessing behind separate internal modules.
 
 The target is a modular pipeline from ELF bytes to expanded bytecode and program preprocessing, while keeping CPU execution, memory-device emulation, advice I/O, trace production, PCS setup, and commitment derivation out of the verifier-facing program dependency graph.
 
@@ -67,17 +67,17 @@ Add concrete `jolt-eval` invariants for bytecode expansion fixture consistency a
 
 ### Acceptance Criteria
 
-- [ ] The existing `crates/jolt-riscv` crate owns the shared instruction vocabulary, `JoltInstruction` trait, and static metadata required by decoding, expansion, tracing, bytecode preprocessing, and verifier checks.
+- [ ] The existing `crates/jolt-riscv` crate owns the shared instruction vocabulary, canonical `NormalizedInstruction` row, `JoltInstruction` conversion marker trait, and static metadata required by decoding, expansion, tracing, bytecode preprocessing, and verifier checks.
 - [ ] `crates/jolt-riscv` no longer depends on `tracer`; `tracer` depends on `jolt-riscv` for static instruction data instead.
 - [ ] `crates/jolt-program` exists and is a workspace member.
 - [ ] `jolt-program::image` exposes deterministic ELF decoding into a `DecodedProgramImage` without depending on `tracer`.
-- [ ] `jolt-program::expand` provides a pure RV64 expansion API over decoded `ProgramInstruction` values.
+- [ ] `jolt-program::expand` provides a pure RV64 expansion API over decoded `NormalizedInstruction` values.
 - [ ] `jolt-program::image` rejects ELF32/RV32 inputs with an explicit unsupported-architecture error.
-- [ ] `jolt-program` owns the concrete `ProgramInstruction` row type returned by expansion and consumed by preprocessing.
+- [ ] `NormalizedInstruction` includes an `instruction_kind: InstructionKind` field plus normalized operands, address, virtual sequence metadata, and compressed-instruction metadata.
 - [ ] `jolt-program::preprocess` owns materialized bytecode/RAM/program preprocessing artifacts consumed by both prover and verifier setup.
-- [ ] `jolt-riscv` defines `JoltInstruction` but does not own a concrete instruction row type and does not retain a blanket `impl<T: tracer::instruction::RISCVInstruction> JoltInstruction for T`.
-- [ ] `jolt-program` implements `JoltInstruction` for `ProgramInstruction`.
+- [ ] `JoltInstruction` is a marker/conversion trait equivalent to `Into<NormalizedInstruction> + TryFrom<NormalizedInstruction>`, not a second accessor abstraction over the same fields.
 - [ ] Any `JoltInstruction` impls for tracer's concrete instruction structs live in `tracer` as adapter impls, generated from the shared instruction-kind list where practical.
+- [ ] `jolt-riscv` does not retain a blanket `impl<T: tracer::instruction::RISCVInstruction> JoltInstruction for T`.
 - [ ] `jolt-program` does not depend on PCS implementations, Dory setup, commitment derivation, bytecode/program-image opening hints, BlindFold setup, or prover-only witness generation.
 - [ ] The expansion-critical `jolt-program::expand` module does not depend on CPU execution, lazy tracing, memory-device emulation, advice I/O, prover-only witness generation, transcripts, or ELF/object parsing.
 - [ ] Any ELF/object parsing dependency is feature-gated and isolated to `jolt-program::image` so `jolt-program::expand` and `jolt-program::preprocess` remain usable without an object-file parser dependency.
@@ -207,7 +207,7 @@ jolt-core verifier
   -> depends on program preprocessing artifacts, not on tracer execution
 ```
 
-`jolt-riscv` should own the instruction vocabulary and trait surface, while `jolt-program` should own expansion and materialized program-preprocessing abstractions. Neither boundary should depend on the full tracer. The implementation PR should produce this dependency direction:
+`jolt-riscv` should own the instruction vocabulary and canonical normalized row, while `jolt-program` should own expansion and materialized program-preprocessing abstractions. Neither boundary should depend on the full tracer. The implementation PR should produce this dependency direction:
 
 ```text
 common / jolt-platform
@@ -249,30 +249,17 @@ New library code should live under `crates/jolt-program` and be added to the roo
 
 It is acceptable for `tracer` to import `jolt-program`, but only if `jolt-program` does not depend back on `tracer`. The current code does not yet satisfy that shape: the concrete `Instruction`, `Cycle`, `RISCVInstruction`, `NormalizedInstruction`, and per-instruction structs live in `tracer`, and `crates/jolt-riscv/Cargo.toml` has a direct `tracer = { workspace = true, features = ["std"] }` dependency for those types. Therefore `jolt-program::expand` cannot both depend on `tracer::instruction::*` and be imported by `tracer` without creating a dependency cycle.
 
-The implementation should resolve this by moving the shared instruction vocabulary, normalized operand view, instruction flags, and decode helpers into the existing `jolt-riscv` crate. This crate already owns Jolt's RISC-V instruction kinds and circuit/instruction flag metadata; the cutover should make it the lower catalog/trait crate that `tracer` and `jolt-program` consume, not a wrapper around either crate's row types.
+The implementation should resolve this by moving the shared instruction vocabulary, normalized instruction row, normalized operand view, instruction flags, and decode helpers into the existing `jolt-riscv` crate. This crate already owns Jolt's RISC-V instruction kinds and circuit/instruction flag metadata; the cutover should make it the lower catalog/row crate that `tracer` and `jolt-program` consume, not a wrapper around tracer execution types.
 
-The concrete execution data structures should remain in `tracer` unless implementation work proves that moving a small piece is clearly better. In particular, `tracer::instruction::Instruction`, `Cycle`, `RISCVCycle<T>`, per-instruction structs such as `ADD`/`LW`, register-state types, RAM-access types, and execution traits stay in `tracer`. `jolt-riscv` should likewise avoid owning a concrete bytecode/program row type. It should expose the shared vocabulary:
+The concrete execution data structures should remain in `tracer` unless implementation work proves that moving a small piece is clearly better. In particular, `tracer::instruction::Instruction`, `Cycle`, `RISCVCycle<T>`, per-instruction structs such as `ADD`/`LW`, register-state types, RAM-access types, and execution traits stay in `tracer`. `jolt-riscv` should own the canonical bytecode/program row type:
 
 ```rust
 pub enum InstructionKind { Add, Lw, /* ... */ }
 
 pub struct NormalizedOperands { /* rs1, rs2, rd, imm */ }
 
-pub trait JoltInstruction {
-    fn kind(&self) -> InstructionKind;
-    fn operands(&self) -> NormalizedOperands;
-    fn address(&self) -> u64;
-    fn virtual_sequence_remaining(&self) -> Option<u16>;
-    fn is_first_in_sequence(&self) -> bool;
-    fn is_compressed(&self) -> bool;
-}
-```
-
-`jolt-program` should own the concrete program row type used by image decoding, expansion, and preprocessing:
-
-```rust
-pub struct ProgramInstruction {
-    pub kind: InstructionKind,
+pub struct NormalizedInstruction {
+    pub instruction_kind: InstructionKind,
     pub operands: NormalizedOperands,
     pub address: u64,
     pub virtual_sequence_remaining: Option<u16>,
@@ -281,11 +268,19 @@ pub struct ProgramInstruction {
 }
 ```
 
-`jolt-program::image`, `jolt-program::expand`, and `jolt-program::preprocess` should use `ProgramInstruction`, not tracer's concrete instruction structs. `tracer` should provide conversion at its boundary, such as `From<&tracer::instruction::Instruction> for ProgramInstruction` and `TryFrom<ProgramInstruction> for tracer::instruction::Instruction`, so execution can keep concrete structs while verifier-facing program preprocessing stays independent of `tracer`.
+`jolt-program::image`, `jolt-program::expand`, and `jolt-program::preprocess` should use `NormalizedInstruction`, not tracer's concrete instruction structs. `tracer` should provide conversion at its boundary, such as `From<&tracer::instruction::Instruction> for NormalizedInstruction` and `TryFrom<NormalizedInstruction> for tracer::instruction::Instruction`, so execution can keep concrete structs while verifier-facing program preprocessing stays independent of `tracer`.
 
-Expansion APIs should return concrete `ProgramInstruction` rows rather than something parameterized as `Vec<I: JoltInstruction>`. Expansion is a heterogeneous row-producing operation: one source instruction may emit different real and virtual instruction kinds, plus sequence metadata. `JoltInstruction` is the read-only vocabulary trait used by consumers and metadata helpers, not an output factory for constructing arbitrary downstream instruction types.
+Expansion APIs should return concrete `NormalizedInstruction` rows rather than something parameterized as `Vec<I: JoltInstruction>`. Expansion is a heterogeneous row-producing operation: one source instruction may emit different real and virtual instruction kinds, plus sequence metadata. `NormalizedInstruction` is the canonical representation of those rows.
 
-`JoltInstruction` follows the same ownership rule. `jolt-riscv` defines the trait but should not implement it for downstream row types. `jolt-program` should implement `JoltInstruction` for its local `ProgramInstruction`. It must remove the current blanket implementation over `tracer::instruction::RISCVInstruction`, because that implementation forces `jolt-riscv` to name `tracer`. If tracer's concrete instruction structs still need to satisfy `JoltInstruction`, those impls belong in `tracer` because the concrete types are local there. They should be adapter impls, preferably generated by reusing `jolt_riscv::for_each_instruction_kind!`, and can delegate through conversion to `ProgramInstruction`.
+`JoltInstruction` should not duplicate the field-access API of `NormalizedInstruction`. If it remains, it should be only a narrow marker/conversion trait:
+
+```rust
+pub trait JoltInstruction:
+    Into<NormalizedInstruction> + TryFrom<NormalizedInstruction>
+{}
+```
+
+That trait says a concrete instruction type can round-trip through the canonical normalized row when the conversion is supported. It must not become the primary bytecode row abstraction, and `jolt-program::expand` should not be generic over it. `TryFrom<NormalizedInstruction>` is intentionally weaker than `From<NormalizedInstruction>` because tracer may have execution-only variants or unsupported rows that cannot be reconstructed infallibly. Any `JoltInstruction` impls for tracer's concrete instruction structs belong in `tracer` because the concrete types are local there. They should be adapter impls, preferably generated by reusing `jolt_riscv::for_each_instruction_kind!`.
 
 After that, the intended dependency direction is:
 
@@ -332,7 +327,6 @@ crates/
     src/
       lib.rs
       error.rs
-      instruction.rs
       image/
         mod.rs
         elf.rs
@@ -365,13 +359,13 @@ The file list is intentionally concrete. Implementers may split individual instr
 
 #### Crate Responsibilities
 
-`crates/jolt-riscv` owns the data model that must be shared by decoding, expansion, tracing, bytecode preprocessing, and verifier checks. It already contains Jolt instruction kind wrappers, `JoltInstruction`, `JoltInstructions`, and circuit/instruction flag metadata; this PR should remove its current `tracer` dependency by making it own the abstract instruction vocabulary and trait surface rather than any crate's concrete instruction rows:
+`crates/jolt-riscv` owns the data model that must be shared by decoding, expansion, tracing, bytecode preprocessing, and verifier checks. It already contains Jolt instruction kind wrappers, `JoltInstruction`, `JoltInstructions`, and circuit/instruction flag metadata; this PR should remove its current `tracer` dependency by making it own the abstract instruction vocabulary, normalized row, and conversion marker rather than any tracer execution types:
 
 - `src/kind.rs`: own `InstructionKind`, the canonical names of real and virtual Jolt instructions, plus static metadata such as side-effect classification.
 - `src/operands.rs`: own `NormalizedOperands` and operand accessors.
-- `src/normalized.rs`: own any normalized instruction view needed by existing flag and lookup code, or fold that view into `JoltInstruction` methods if the implementation can do so cleanly.
-- `src/jolt_instruction.rs`: define `JoltInstruction`; do not implement it blanket-style for `tracer::instruction::RISCVInstruction` or for downstream row types.
-- `src/instructions/*.rs`: keep the existing Jolt instruction kind wrappers and flag declarations; do not move tracer's concrete execution structs into this crate as the default design. These local wrapper structs may continue implementing `JoltInstruction` for static metadata and lookup code; they are not decoded bytecode/program rows.
+- `src/normalized.rs`: own `NormalizedInstruction`, including `instruction_kind`, normalized operands, address, virtual sequence metadata, and compressed-instruction metadata.
+- `src/jolt_instruction.rs`: define the marker trait as `Into<NormalizedInstruction> + TryFrom<NormalizedInstruction>`; do not implement it blanket-style for `tracer::instruction::RISCVInstruction`.
+- `src/instructions/*.rs`: keep the existing Jolt instruction kind wrappers and flag declarations; do not move tracer's concrete execution structs into this crate as the default design.
 - `src/uncompress.rs`: own RV64 compressed RISC-V decompression helpers used by ELF decode.
 - `src/traits.rs`: define pure traits needed by instruction metadata. Execution-specific traits must remain outside this crate.
 
@@ -379,14 +373,10 @@ The shared instruction list and macro input should move into `jolt-riscv`. Today
 
 `crates/jolt-program` owns program image decoding, bytecode expansion, and materialized program preprocessing. These are one package because they are one program-construction pipeline, but the internal modules should remain separate enough that dependency and formalization boundaries are still visible.
 
-`jolt-program` owns the concrete program instruction row:
-
-- `instruction.rs`: define `ProgramInstruction` and implement `JoltInstruction` for it.
-
 `jolt-program::image` owns deterministic ELF parsing:
 
-- `image/elf.rs`: move the non-execution part of `tracer::decode`: parse ELF, reject ELF32/RV32, compute entry address, collect RAM image bytes, decode `.text` into RV64 `ProgramInstruction` values, and compute `program_end`.
-- `image/decode.rs` or an equivalent module: own RV64 opcode decoding into `ProgramInstruction` using `jolt-riscv`'s `InstructionKind`, `NormalizedOperands`, and decode helpers.
+- `image/elf.rs`: move the non-execution part of `tracer::decode`: parse ELF, reject ELF32/RV32, compute entry address, collect RAM image bytes, decode `.text` into RV64 `NormalizedInstruction` values, and compute `program_end`.
+- `image/decode.rs` or an equivalent module: own RV64 opcode decoding into `NormalizedInstruction` using `jolt-riscv`'s `InstructionKind`, `NormalizedOperands`, and decode helpers.
 - `image/mod.rs`: expose `DecodedProgramImage` and `decode_elf`.
 - `error.rs`: replace warnings/panics in decode with explicit `ProgramError` or `DecodeError` values where possible. If current behavior must preserve `UNIMPL` insertion for invalid words, encode that policy explicitly.
 
@@ -474,13 +464,13 @@ The crate should provide explicit APIs along these lines:
 
 ```rust
 pub fn expand_instruction(
-    instruction: &ProgramInstruction,
+    instruction: &NormalizedInstruction,
     allocator: &mut ExpansionAllocator,
-) -> Result<Vec<ProgramInstruction>, ExpansionError>;
+) -> Result<Vec<NormalizedInstruction>, ExpansionError>;
 
 pub fn expand_program(
-    instructions: impl IntoIterator<Item = ProgramInstruction>,
-) -> Result<Vec<ProgramInstruction>, ExpansionError>;
+    instructions: impl IntoIterator<Item = NormalizedInstruction>,
+) -> Result<Vec<NormalizedInstruction>, ExpansionError>;
 ```
 
 The exact type names can change during implementation, but the API should make state flow explicit. In particular, virtual-register allocation state should be visible as expansion state rather than hidden inside the tracer CPU.
@@ -489,14 +479,14 @@ The program-image and preprocessing APIs should be explicit about their inputs:
 
 ```rust
 pub struct DecodedProgramImage {
-    pub instructions: Vec<ProgramInstruction>,
+    pub instructions: Vec<NormalizedInstruction>,
     pub memory_init: Vec<(u64, u8)>,
     pub program_end: u64,
     pub entry_address: u64,
 }
 
 pub fn preprocess_program(
-    expanded_bytecode: Vec<ProgramInstruction>,
+    expanded_bytecode: Vec<NormalizedInstruction>,
     memory_init: Vec<(u64, u8)>,
     memory_layout: MemoryLayout,
     max_padded_trace_length: usize,
@@ -597,7 +587,6 @@ Update the Jolt book only if the crate is exposed to users or changes contributo
 - `crates/jolt-program/Cargo.toml`
 - `crates/jolt-program/src/lib.rs`
 - `crates/jolt-program/src/error.rs`
-- `crates/jolt-program/src/instruction.rs`
 - `crates/jolt-program/src/image/mod.rs`
 - `crates/jolt-program/src/image/decode.rs`
 - `crates/jolt-program/src/image/elf.rs`
@@ -621,15 +610,15 @@ Update the Jolt book only if the crate is exposed to users or changes contributo
 - `Cargo.lock`: update after adding the workspace crate.
 - `tracer/Cargo.toml`: depend on `jolt-riscv` and `jolt-program`.
 - `tracer/src/lib.rs`: remove ELF decode ownership; tracer-specific ELF entry points should call `jolt_program::image::decode_elf` internally only when they also perform tracing/execution work.
-- `tracer/src/emulator/cpu.rs`: keep tracer-local `Xlen` and concrete execution structs; call expansion APIs through conversion to/from `ProgramInstruction` where trace length or trace-time `rd = x0` expansion is needed.
-- `tracer/src/instruction/**`: keep concrete instruction structs and execution-only methods in `tracer`; convert to/from `jolt-program`'s `ProgramInstruction` at the crate boundary; implement `JoltInstruction` for concrete tracer instruction types here if callers still need that trait on those types.
+- `tracer/src/emulator/cpu.rs`: keep tracer-local `Xlen` and concrete execution structs; call expansion APIs through conversion to/from `NormalizedInstruction` where trace length or trace-time `rd = x0` expansion is needed.
+- `tracer/src/instruction/**`: keep concrete instruction structs and execution-only methods in `tracer`; convert to/from `jolt-riscv`'s `NormalizedInstruction` at the crate boundary; implement `JoltInstruction` for concrete tracer instruction types here if callers still need that trait on those types.
 - `tracer/src/utils/inline_helpers.rs`: move expansion helpers to `jolt-program::expand`; delete or replace with imports during the same full cutover.
 - `tracer/src/utils/virtual_registers.rs`: move allocator to `jolt-program::expand`; delete or replace imports.
 - `crates/jolt-riscv/Cargo.toml`: remove `tracer` and add any lower-level dependencies needed by moved instruction data.
-- `crates/jolt-riscv/src/lib.rs`: expose the canonical instruction-kind list, `InstructionKind`, `NormalizedOperands`, `JoltInstruction`, pure traits, and flags without referencing `tracer` or `jolt-program`.
+- `crates/jolt-riscv/src/lib.rs`: expose the canonical instruction-kind list, `InstructionKind`, `NormalizedInstruction`, `NormalizedOperands`, `JoltInstruction`, pure traits, and flags without referencing `tracer` or `jolt-program`.
 - `crates/jolt-riscv/src/instructions/**`: keep existing Jolt instruction kind wrappers and pure instruction metadata; do not import tracer concrete instruction structs.
-- `crates/jolt-riscv/src/jolt_instruction.rs`: remove the blanket impl over `tracer::instruction::RISCVInstruction`; define the trait without depending on tracer or jolt-program row types.
-- `crates/jolt-program/src/instruction.rs`: define `ProgramInstruction` and implement `JoltInstruction` for it.
+- `crates/jolt-riscv/src/normalized.rs`: define `NormalizedInstruction` with an `instruction_kind` field.
+- `crates/jolt-riscv/src/jolt_instruction.rs`: remove the blanket impl over `tracer::instruction::RISCVInstruction`; define only the marker/conversion trait without depending on tracer.
 - `crates/jolt-trace/Cargo.toml`: add `jolt-program`; keep `tracer` only for execution.
 - `crates/jolt-trace/src/program.rs`: call `jolt_program::image` and `jolt_program::expand` in `decode`.
 - `crates/jolt-trace/src/bytecode.rs`: remove or delegate to `jolt-program::preprocess` if duplicate with `jolt-core` bytecode preprocessing.
@@ -638,7 +627,7 @@ Update the Jolt book only if the crate is exposed to users or changes contributo
 - `jolt-core/src/zkvm/ram/mod.rs`: move or reexport pure RAM preprocessing from `jolt-program::preprocess`; leave prover/verifier sumcheck modules in `jolt-core`.
 - `jolt-core/src/zkvm/verifier.rs`: use program preprocessing types from `jolt-program::preprocess`, while keeping `JoltVerifierPreprocessing` if PCS setup remains in `jolt-core`.
 - `jolt-core/src/zkvm/prover.rs`: update imports for program preprocessing, bytecode preprocessing, RAM preprocessing, and program instruction types.
-- `jolt-core/src/poly/**`, `jolt-core/src/subprotocols/**`, `jolt-core/src/zkvm/**`: update imports from `tracer::instruction` to `jolt-program` where the code needs `ProgramInstruction`, and to `jolt-riscv` where the code only needs `InstructionKind`, `JoltInstruction`, or static instruction data.
+- `jolt-core/src/poly/**`, `jolt-core/src/subprotocols/**`, `jolt-core/src/zkvm/**`: update imports from `tracer::instruction` to `jolt-riscv` where the code needs `NormalizedInstruction`, `InstructionKind`, `JoltInstruction`, or static instruction data.
 - `jolt-sdk/macros/src/lib.rs`: generated preprocessing functions should call the modular decode/expand/program-preprocess path.
 - `jolt-eval/src/invariant/mod.rs`: register bytecode expansion invariants.
 - `jolt-eval/src/objective/mod.rs`: add `decode_expand` objective only if the benchmark is promoted to a measured objective in this PR.
@@ -650,7 +639,7 @@ Remove these only after all call sites are cut over:
 
 - `tracer/src/utils/inline_helpers.rs`
 - `tracer/src/utils/virtual_registers.rs`
-- decode/uncompress helpers under `tracer/src/instruction/` once `jolt-program::image` owns RV64 decode into `ProgramInstruction`
+- decode/uncompress helpers under `tracer/src/instruction/` once `jolt-program::image` owns RV64 decode into `NormalizedInstruction`
 
 Do not delete tracer's concrete instruction structs, instruction-format structs, execution-specific trace implementations, or RV32 cleanup code in this PR.
 
@@ -658,12 +647,12 @@ Do not delete tracer's concrete instruction structs, instruction-format structs,
 
 1. Add empty `jolt-program` crate under `crates/`, workspace member, workspace dependency, and minimal module skeletons.
 2. Refactor existing `jolt-riscv` so it no longer depends on `tracer`.
-3. Add `InstructionKind`, normalized operands, `JoltInstruction`, and local static instruction metadata to `jolt-riscv` while keeping concrete row types out of `jolt-riscv`.
-4. Add `ProgramInstruction` to `jolt-program` and implement `JoltInstruction` for it.
+3. Add `InstructionKind`, `NormalizedInstruction`, normalized operands, marker `JoltInstruction`, and local static instruction metadata to `jolt-riscv` while keeping tracer execution types out of `jolt-riscv`.
+4. Add an `instruction_kind: InstructionKind` field to `NormalizedInstruction` and use it as the row type returned by decode/expansion and consumed by preprocessing.
 5. Move RV64 opcode decode into `jolt-program::image` and RV64 compressed-instruction decompression helpers into `jolt-riscv`; reject RV32/ELF32 in the new program pipeline.
 6. Export the canonical instruction-kind list from `jolt-riscv` as a macro such as `jolt_riscv::for_each_instruction_kind!`, and use it from `tracer` to generate its concrete `Instruction`, `Cycle`, and `RISCVCycle<T>`.
 7. Remove the `JoltInstruction` blanket impl over `tracer::instruction::RISCVInstruction`; add concrete tracer adapter impls only in `tracer` if needed.
-8. Update `tracer`, `jolt-core`, and `jolt-trace` imports to compile against the strengthened `jolt-riscv` and new `jolt-program` row type.
+8. Update `tracer`, `jolt-core`, and `jolt-trace` imports to compile against the strengthened `jolt-riscv` normalized row and `jolt-program` pipeline.
 9. Add `jolt_program::image::decode_elf` by moving the non-execution logic from `tracer::decode`.
 10. Update all call sites of `tracer::decode` that only need ELF decoding to call `jolt_program::image::decode_elf`; keep `tracer::decode` only if it remains a tracer-specific execution API rather than a compatibility shim.
 11. Move `VirtualRegisterAllocator`, `InstrAssembler`, recursive `add_to_sequence`, and per-instruction inline expansion logic into `jolt-program::expand`, with `InstrAssembler` borrowing `&mut ExpansionAllocator`.
