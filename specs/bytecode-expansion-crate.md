@@ -57,7 +57,7 @@ Add concrete `jolt-eval` invariants for bytecode expansion fixture consistency a
 - [ ] `jolt-trace::decode` no longer performs expansion by directly calling `Instruction::inline_sequence` from `tracer`; it calls `jolt-program-image` and `jolt-bytecode-expand`.
 - [ ] `InstrAssembler`, `VirtualRegisterAllocator`, or their minimal expansion-facing equivalents live behind the `jolt-bytecode-expand` crate boundary.
 - [ ] Expansion APIs return explicit errors for allocation or malformed-expansion failures instead of introducing new panics in the core expansion path.
-- [ ] A program-preprocessing path is implemented as `ELF bytes -> DecodedProgramImage -> expanded bytecode -> JoltProgramPreprocessing` or the renamed equivalent of the current shared layer, and prover/verifier setup wraps that program preprocessing without re-decoding or re-expanding the program.
+- [ ] A program-preprocessing path is implemented as `ELF bytes -> DecodedProgramImage -> expanded bytecode -> JoltProgramPreprocessing`, and prover/verifier setup wraps that program preprocessing without re-decoding or re-expanding the program.
 - [ ] The verifier-facing path does not depend on CPU execution, lazy tracing, memory-device emulation, advice I/O, or prover-only witness generation.
 - [ ] `cargo tree -p tracer` shows `tracer` depending on the new lower-level crates, but none of those lower-level crates depending back on `tracer`.
 - [ ] `cargo tree -p jolt-core --features host` does not require `tracer` solely to name program preprocessing or bytecode rows.
@@ -130,14 +130,14 @@ program.decode()
   -> program_size
   -> ELF entry address
 
-JoltSharedPreprocessing::new(...) or the renamed JoltProgramPreprocessing constructor
+JoltProgramPreprocessing::new(...)
   -> BytecodePreprocessing::preprocess(expanded bytecode, entry address)
   -> RAMPreprocessing::preprocess(memory_init)
   -> MemoryLayout
   -> max_padded_trace_length
 
 JoltVerifierPreprocessing::new(...)
-  -> JoltSharedPreprocessing / JoltProgramPreprocessing
+  -> JoltProgramPreprocessing
   -> PCS verifier setup
   -> optional BlindFold setup
 ```
@@ -160,7 +160,7 @@ jolt-program-preprocess
   -> BytecodePreprocessing
   -> BytecodePCMapper
   -> RAMPreprocessing
-  -> JoltProgramPreprocessing or the renamed current shared-preprocessing layer
+  -> JoltProgramPreprocessing
 
 jolt-trace
   -> builds guest ELFs
@@ -352,13 +352,13 @@ The shared instruction list and macro input should move with this crate. Today `
 - `src/sequences/*.rs`: move per-instruction inline expansion logic out of `tracer/src/instruction/*.rs`, grouped by instruction family.
 - `src/error.rs`: define `ExpansionError` for virtual register exhaustion, invalid inline write targets, malformed sequence metadata, and unsupported instructions.
 
-`ExpansionAllocator` should be single-owner mutable state passed as `&mut ExpansionAllocator` through expansion. The current `VirtualRegisterAllocator` uses `Arc<Mutex<_>>` because the old API exposes only `&VirtualRegisterAllocator`, clones that allocator into `InstrAssembler` and `VirtualRegisterGuard`, and relies on guards deallocating through shared state on `Drop`. The new crate should make that state flow explicit instead: recursive expansion and inline finalization should borrow one allocator mutably, and any current per-CPU or per-thread allocator sharing should become per-expansion ownership unless an implementation can name a real cross-thread requirement.
+`ExpansionAllocator` should be single-owner mutable state passed as `&mut ExpansionAllocator` through expansion. The current `VirtualRegisterAllocator` uses `Arc<Mutex<_>>` because the old API exposes only `&VirtualRegisterAllocator`, clones that allocator into `InstrAssembler` and `VirtualRegisterGuard`, and relies on guards deallocating through shared state on `Drop`. The new crate should make that state flow explicit instead: recursive expansion and inline finalization should borrow one allocator mutably, and any current per-CPU or per-thread allocator sharing should become per-expansion ownership unless an implementation can name a real cross-thread requirement. `InstrAssembler` should therefore borrow `&mut ExpansionAllocator` for the duration of emission rather than owning or cloning allocator state.
 
 `crates/jolt-program-preprocess` owns materialized program preprocessing artifacts used by both prover and verifier:
 
 - `src/bytecode.rs`: move `BytecodePreprocessing`, `BytecodePCMapper`, and bytecode preprocessing errors from `jolt-core/src/zkvm/bytecode/mod.rs`.
-- `src/ram.rs`: move `RAMPreprocessing`, `compute_min_ram_K`, and pure RAM initialization helpers from `jolt-core/src/zkvm/ram/mod.rs` if doing so does not drag prover-only modules with it.
-- `src/program.rs`: move or rename the current shared layer into `JoltProgramPreprocessing`, including canonical serialization and `digest()`.
+- `src/ram.rs`: move `RAMPreprocessing` and pure RAM initialization helpers from `jolt-core/src/zkvm/ram/mod.rs`. Move `compute_min_ram_K` only if it stays dependency-light; if it would drag prover-only modules into this crate, leave `compute_min_ram_K` in `jolt-core` and have it consume the pure RAM preprocessing surface from `jolt-program-preprocess`.
+- `src/program.rs`: move the current shared layer into the final `JoltProgramPreprocessing` type, including canonical serialization and `digest()`.
 - `src/error.rs`: consolidate bytecode/RAM/program preprocessing errors.
 
 This crate is intentionally program-level rather than verifier-only. The current code already has a `JoltSharedPreprocessing` layer containing `Arc<BytecodePreprocessing>`, `RAMPreprocessing`, `MemoryLayout`, and `max_padded_trace_length`; both `JoltProverPreprocessing` and `JoltVerifierPreprocessing` wrap that shared layer. This PR should cut over that layer to `JoltProgramPreprocessing` or an equivalent program-preprocessing name in `jolt-program-preprocess`. `JoltProverPreprocessing` and `JoltVerifierPreprocessing` should remain in `jolt-core` unless a later proof-system setup refactor moves them, because they add PCS prover/verifier setup and optional BlindFold setup rather than program preprocessing semantics.
@@ -631,7 +631,7 @@ Do not delete execution-specific instruction trace implementations unless they h
 8. Implement `expand_instruction` and `expand_program`.
 9. Update `tracer` trace-time expansion and trace length accounting to use `jolt-bytecode-expand`.
 10. Update `jolt-trace::decode` to call `jolt-program-image::decode_elf` followed by `jolt-bytecode-expand::expand_program`.
-11. Move `BytecodePreprocessing`, `BytecodePCMapper`, pure `RAMPreprocessing`, and `JoltProgramPreprocessing` or the renamed current shared layer into `jolt-program-preprocess`.
+11. Move `BytecodePreprocessing`, `BytecodePCMapper`, pure `RAMPreprocessing`, and `JoltProgramPreprocessing` into `jolt-program-preprocess`.
 12. Update `jolt-core` prover/verifier code to consume the moved preprocessing types.
 13. Update SDK macro-generated preprocessing to use the modular path.
 14. Add expansion parity tests before removing old expansion entry points.
@@ -668,7 +668,7 @@ The dependency checks should confirm that `jolt-bytecode-expand`, `jolt-program-
 - `jolt-core/src/zkvm/verifier.rs`: current home of `JoltSharedPreprocessing` and `JoltVerifierPreprocessing`; the program/shared layer should move to `jolt-program-preprocess`, while proof-system setup can remain in `jolt-core`.
 - `jolt-core/src/zkvm/bytecode/mod.rs`: bytecode preprocessing and PC mapping consume expanded `Instruction` rows.
 - `jolt-core/src/zkvm/ram/mod.rs`: RAM preprocessing consumes ELF memory initialization bytes.
-- `jolt-sdk/macros/src/lib.rs`: generated preprocessing calls `program.decode()` before constructing the current `JoltSharedPreprocessing`; after this PR they should construct `JoltProgramPreprocessing` or the renamed equivalent through the modular path.
+- `jolt-sdk/macros/src/lib.rs`: generated preprocessing calls `program.decode()` before constructing the current `JoltSharedPreprocessing`; after this PR they should construct `JoltProgramPreprocessing` through the modular path.
 - `tracer/src/instruction/mod.rs`: `Instruction::inline_sequence` handles `rd = x0`, dispatch, and recursive expansion entry points.
 - `tracer/src/utils/inline_helpers.rs`: `InstrAssembler` recursively expands helper-emitted instructions through `add_to_sequence`.
 - `tracer/src/utils/virtual_registers.rs`: virtual register layout, allocator state, and inline clearing behavior.
