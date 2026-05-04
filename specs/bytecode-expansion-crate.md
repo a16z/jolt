@@ -77,6 +77,7 @@ Add concrete `jolt-eval` invariants for bytecode expansion fixture consistency a
 - [ ] `tracer` no longer owns the canonical recursive bytecode expansion algorithm; it calls `jolt-program::expand` for expansion during trace execution and trace length accounting.
 - [ ] `jolt-trace::decode` no longer performs expansion by directly calling `Instruction::inline_sequence` from `tracer`; it calls `jolt-program::image` and `jolt-program::expand`.
 - [ ] `InstrAssembler`, `VirtualRegisterAllocator`, or their minimal expansion-facing equivalents live behind the `jolt-program::expand` module boundary.
+- [ ] `InstrAssembler` borrows `&mut ExpansionAllocator` during emission and does not own, clone, or hide allocator state behind shared ownership.
 - [ ] Expansion APIs return explicit errors for allocation or malformed-expansion failures instead of introducing new panics in the core expansion path.
 - [ ] A program-preprocessing path is implemented as `ELF bytes -> DecodedProgramImage -> expanded bytecode -> JoltProgramPreprocessing`, and prover/verifier setup wraps that program preprocessing without re-decoding or re-expanding the program.
 - [ ] The verifier-facing path does not depend on CPU execution, lazy tracing, memory-device emulation, advice I/O, or prover-only witness generation.
@@ -347,7 +348,7 @@ The file list is intentionally concrete. Implementers may split individual instr
 - `src/uncompress.rs`: move compressed RISC-V decompression used by ELF decode.
 - `src/traits.rs`: define pure traits such as `RiscvInstruction`, `Normalize`, `HasSideEffects`, and metadata mutation traits. Execution-specific traits must remain outside this crate.
 
-The shared instruction list and macro input should move into `jolt-riscv`. Today `tracer/src/instruction/mod.rs` generates `Instruction` and `Cycle` from the same instruction list. After the split, `jolt-riscv` should own the canonical list and use it to generate `Instruction` plus pure instruction dispatch. `tracer` should reuse that same list, via an exported macro or generated table, to define `Cycle`, `RISCVCycle<T>`, and execution/trace dispatch. The implementation must not duplicate the long instruction list across crates.
+The shared instruction list and macro input should move into `jolt-riscv`. Today `tracer/src/instruction/mod.rs` generates `Instruction` and `Cycle` from the same instruction list. After the split, `jolt-riscv` should own the canonical list and use it to generate `Instruction` plus pure instruction dispatch. `tracer` should reuse that same list by invoking an exported `macro_rules!` token tree from `jolt-riscv`, for example `jolt_riscv::for_each_instruction!`, to define `Cycle`, `RISCVCycle<T>`, and execution/trace dispatch. The implementation must not duplicate the long instruction list across crates.
 
 `crates/jolt-program` owns program image decoding, bytecode expansion, and materialized program preprocessing. These are one package because they are one program-construction pipeline, but the internal modules should remain separate enough that dependency and formalization boundaries are still visible.
 
@@ -368,12 +369,12 @@ The `object` dependency should be feature-gated and used only by `jolt-program::
 - `expand/sequences/*.rs`: move per-instruction inline expansion logic out of `tracer/src/instruction/*.rs`, grouped by instruction family.
 - `expand/error.rs`: define `ExpansionError` for virtual register exhaustion, invalid inline write targets, malformed sequence metadata, and unsupported instructions.
 
-`ExpansionAllocator` should be single-owner mutable state passed as `&mut ExpansionAllocator` through expansion. The current `VirtualRegisterAllocator` uses `Arc<Mutex<_>>` because the old API exposes only `&VirtualRegisterAllocator`, clones that allocator into `InstrAssembler` and `VirtualRegisterGuard`, and relies on guards deallocating through shared state on `Drop`. The new crate should make that state flow explicit instead: recursive expansion and inline finalization should borrow one allocator mutably, and any current per-CPU or per-thread allocator sharing should become per-expansion ownership unless an implementation can name a real cross-thread requirement. `InstrAssembler` should therefore borrow `&mut ExpansionAllocator` for the duration of emission rather than owning or cloning allocator state.
+`ExpansionAllocator` should be single-owner mutable state passed as `&mut ExpansionAllocator` through expansion. The current `VirtualRegisterAllocator` uses `Arc<Mutex<_>>` because the old API exposes only `&VirtualRegisterAllocator`, clones that allocator into `InstrAssembler` and `VirtualRegisterGuard`, and relies on guards deallocating through shared state on `Drop`. The new crate should make that state flow explicit instead: recursive expansion and inline finalization should borrow one allocator mutably, and any current per-CPU or per-thread allocator sharing should become per-expansion ownership unless an implementation can name a real cross-thread requirement. `InstrAssembler` should therefore borrow `&mut ExpansionAllocator` for the duration of emission rather than owning or cloning allocator state. Its field shape should make the borrow visible, for example an `InstrAssembler<'a>` containing an `&'a mut ExpansionAllocator` plus only the emission buffers and metadata needed for the active inline sequence.
 
 `jolt-program::preprocess` owns materialized program preprocessing artifacts used by both prover and verifier:
 
 - `preprocess/bytecode.rs`: move `BytecodePreprocessing`, `BytecodePCMapper`, and bytecode preprocessing errors from `jolt-core/src/zkvm/bytecode/mod.rs`.
-- `preprocess/ram.rs`: move `RAMPreprocessing` and pure RAM initialization helpers from `jolt-core/src/zkvm/ram/mod.rs`. Move `compute_min_ram_K` only if it stays dependency-light; if it would drag prover-only modules into this module, leave `compute_min_ram_K` in `jolt-core` and have it consume the pure RAM preprocessing surface from `jolt-program::preprocess`.
+- `preprocess/ram.rs`: move `RAMPreprocessing` and pure RAM initialization helpers from `jolt-core/src/zkvm/ram/mod.rs`. Dependency purity is binding for `compute_min_ram_K`: move it only if it stays dependency-light. If relocating it would drag `jolt-core`, PCS setup, prover-only modules, or proof-system configuration into `jolt-program::preprocess`, leave `compute_min_ram_K` in `jolt-core` and have it consume the pure RAM preprocessing surface from `jolt-program::preprocess`.
 - `preprocess/program.rs`: move the current shared layer into the final `JoltProgramPreprocessing` type, including canonical serialization and `digest()`.
 - `preprocess/error.rs`: consolidate bytecode/RAM/program preprocessing errors.
 
@@ -480,7 +481,7 @@ The implementation should also isolate formal-verification-friendly logic:
 
 - prefer total functions returning `Result` over panics in core expansion paths,
 - keep CPU, memory, ELF, prover, transcript, and device dependencies out of `jolt-program::expand`,
-- keep macro-generated dispatch behind a narrow boundary owned by `jolt-riscv`, with `tracer` reusing the same source list for `Cycle` generation,
+- keep macro-generated dispatch behind a narrow boundary owned by `jolt-riscv`, with `tracer` reusing `jolt_riscv::for_each_instruction!` or the final exported macro name for `Cycle` generation,
 - avoid concurrency primitives in allocator state unless they are needed by the API,
 - document every invariant needed by Lean/Hax/Aeneas models, especially recursion and metadata assignment.
 
@@ -631,21 +632,23 @@ Do not delete execution-specific instruction trace implementations unless they h
 2. Refactor existing `jolt-riscv` so it no longer depends on `tracer`.
 3. Move `Xlen`, normalized operands, instruction formats, `NormalizedInstruction`, and the `Instruction` enum into `jolt-riscv`.
 4. Move opcode decode and compressed-instruction decompression into `jolt-riscv`.
-5. Update `tracer`, `jolt-core`, and `jolt-trace` imports to compile against the strengthened `jolt-riscv`.
-6. Add `jolt_program::image::decode_elf` by moving the non-execution logic from `tracer::decode`.
-7. Update all call sites of `tracer::decode` that only need ELF decoding to call `jolt_program::image::decode_elf`; keep `tracer::decode` only if it remains a tracer-specific execution API rather than a compatibility shim.
-8. Move `VirtualRegisterAllocator`, `InstrAssembler`, recursive `add_to_sequence`, and per-instruction inline expansion logic into `jolt-program::expand`.
-9. Implement `expand_instruction` and `expand_program`.
-10. Update `tracer` trace-time expansion and trace length accounting to use `jolt-program::expand`.
-11. Update `jolt-trace::decode` to call `jolt_program::image::decode_elf` followed by `jolt_program::expand::expand_program`.
-12. Move `BytecodePreprocessing`, `BytecodePCMapper`, pure `RAMPreprocessing`, and `JoltProgramPreprocessing` into `jolt-program::preprocess`.
-13. Update `jolt-core` prover/verifier code to consume the moved preprocessing types.
-14. Update SDK macro-generated preprocessing to use the modular path.
-15. Add expansion parity tests before removing old expansion entry points.
-16. Add `jolt-eval` invariants for expansion fixture consistency, PC mapping consistency, and program preprocessing determinism.
-17. Add the decode-plus-expansion Criterion benchmark under `jolt-eval`.
-18. Remove old canonical expansion ownership from `tracer`.
-19. Run formatting, clippy, host tests, ZK tests, and targeted crate dependency checks.
+5. Export the canonical instruction list from `jolt-riscv` as a macro such as `jolt_riscv::for_each_instruction!`, and use it from `tracer` to generate `Cycle` and `RISCVCycle<T>`.
+6. Update `tracer`, `jolt-core`, and `jolt-trace` imports to compile against the strengthened `jolt-riscv`.
+7. Add `jolt_program::image::decode_elf` by moving the non-execution logic from `tracer::decode`.
+8. Update all call sites of `tracer::decode` that only need ELF decoding to call `jolt_program::image::decode_elf`; keep `tracer::decode` only if it remains a tracer-specific execution API rather than a compatibility shim.
+9. Move `VirtualRegisterAllocator`, `InstrAssembler`, recursive `add_to_sequence`, and per-instruction inline expansion logic into `jolt-program::expand`, with `InstrAssembler` borrowing `&mut ExpansionAllocator`.
+10. Implement `expand_instruction` and `expand_program`.
+11. Update `tracer` trace-time expansion and trace length accounting to use `jolt-program::expand`.
+12. Update `jolt-trace::decode` to call `jolt_program::image::decode_elf` followed by `jolt_program::expand::expand_program`.
+13. Move `BytecodePreprocessing`, `BytecodePCMapper`, pure `RAMPreprocessing`, and `JoltProgramPreprocessing` into `jolt-program::preprocess`.
+14. Keep `compute_min_ram_K` in `jolt-core` if moving it would pull prover-only or proof-system dependencies into `jolt-program::preprocess`.
+15. Update `jolt-core` prover/verifier code to consume the moved preprocessing types.
+16. Update SDK macro-generated preprocessing to use the modular path.
+17. Add expansion parity tests before removing old expansion entry points.
+18. Add `jolt-eval` invariants for expansion fixture consistency, PC mapping consistency, and program preprocessing determinism.
+19. Add the decode-plus-expansion Criterion benchmark under `jolt-eval`.
+20. Remove old canonical expansion ownership from `tracer`.
+21. Run formatting, clippy, host tests, ZK tests, and targeted crate dependency checks.
 
 ### Verification Commands
 
