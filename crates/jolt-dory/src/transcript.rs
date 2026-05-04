@@ -75,7 +75,7 @@ impl<T: Transcript<Challenge = Fr>> DoryTranscript for JoltToDoryTranscript<'_, 
 
     fn challenge_scalar(&mut self, _label: &[u8]) -> ArkFr {
         // Matches jolt-core: transcript.challenge_scalar::<Fr>()
-        // Both squeeze 16 bytes, reverse, interpret as field element.
+        // Both squeeze a full-width field challenge.
         let challenge: Fr = self.transcript.challenge();
         jolt_fr_to_ark(&challenge)
     }

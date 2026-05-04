@@ -148,16 +148,15 @@ impl Transcript for Blake2bTranscript {
     }
 
     fn challenge_scalar<F: JoltField>(&mut self) -> F {
-        // Under the hood all Fr are 128 bits for performance
-        self.challenge_scalar_128_bits()
+        let mut buf = vec![0u8; F::NUM_BYTES];
+        self.challenge_bytes(&mut buf);
+        F::from_bytes(&buf)
     }
 
     fn challenge_scalar_128_bits<F: JoltField>(&mut self) -> F {
-        let mut buf = vec![0u8; 16];
+        let mut buf = [0u8; 16];
         self.challenge_bytes(&mut buf);
-
-        buf = buf.into_iter().rev().collect();
-        F::from_bytes(&buf)
+        F::from_u128(u128::from_le_bytes(buf))
     }
 
     fn challenge_vector<F: JoltField>(&mut self, len: usize) -> Vec<F> {
@@ -177,10 +176,7 @@ impl Transcript for Blake2bTranscript {
     }
 
     fn challenge_scalar_optimized<F: JoltField>(&mut self) -> F::Challenge {
-        let mut buf = [0u8; 16];
-        self.challenge_bytes(&mut buf);
-        buf.reverse();
-        F::Challenge::from(u128::from_le_bytes(buf))
+        F::Challenge::from(self.challenge_scalar::<F>())
     }
 
     fn challenge_vector_optimized<F: JoltField>(&mut self, len: usize) -> Vec<F::Challenge> {

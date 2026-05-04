@@ -42,8 +42,8 @@ const BYTES_PER_CHUNK: usize = 32;
 
 /// Fiat-Shamir transcript using Poseidon hash over BN254.
 ///
-/// Generic over the field type `F`. Challenges are produced as field
-/// elements directly via `F::from_u128()`.
+/// Generic over the field type `F`. Challenges are produced as full-width
+/// field elements directly via `F::from_bytes()`.
 pub struct PoseidonTranscript<F: jolt_field::Field = jolt_field::Fr> {
     /// 256-bit running state (canonical LE serialization of Fr).
     state: [u8; 32],
@@ -232,9 +232,9 @@ impl<F: jolt_field::Field> Transcript for PoseidonTranscript<F> {
     }
 
     fn challenge(&mut self) -> F {
-        let mut buf = [0u8; 16];
+        let mut buf = vec![0u8; F::NUM_BYTES];
         self.challenge_bytes(&mut buf);
-        F::from_u128(u128::from_le_bytes(buf))
+        F::from_bytes(&buf)
     }
 
     #[inline]

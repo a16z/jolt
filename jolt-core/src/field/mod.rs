@@ -205,6 +205,7 @@ pub trait JoltField:
         + CanonicalDeserialize
         + Allocative
         + From<u128>
+        + From<Self>
         + Into<Self>
         + ChallengeFieldOps<Self>
         + UniformRand

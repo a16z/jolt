@@ -3,7 +3,7 @@ use crate::traits::LookupQuery;
 use jolt_trace::instructions::AssertLte;
 use jolt_trace::JoltCycle;
 
-impl_lookup_table!(AssertLte, Some(UnsignedLessThanEqual));
+impl_lookup_table!(AssertLte, Some(LessThanEqual));
 
 impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for AssertLte<C> {
     fn to_instruction_inputs(&self) -> (u64, i128) {

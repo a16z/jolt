@@ -88,6 +88,12 @@ impl<F> From<F> for PrefixEval<F> {
     }
 }
 
+impl<F> PrefixEval<F> {
+    pub fn into_inner(self) -> F {
+        self.0
+    }
+}
+
 impl<F> Index<Prefixes> for &[PrefixEval<F>] {
     type Output = F;
 

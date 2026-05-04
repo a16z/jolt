@@ -1309,8 +1309,20 @@ where
     E: Stage1KernelExecutor<Fr>,
     T: Transcript<Challenge = Fr>,
 {
+    prove_stage1_outer_with_program(&STAGE1_PROGRAM, executor, transcript)
+}
+
+pub fn prove_stage1_outer_with_program<E, T>(
+    program: &'static Stage1CpuProgramPlan,
+    executor: &mut E,
+    transcript: &mut T,
+) -> Result<Stage1ExecutionArtifacts<Fr>, Stage1KernelError>
+where
+    E: Stage1KernelExecutor<Fr>,
+    T: Transcript<Challenge = Fr>,
+{
     execute_stage1_program(
-        &STAGE1_PROGRAM,
+        program,
         Stage1ExecutionMode::Prover,
         executor,
         transcript,
@@ -1327,34 +1339,50 @@ where
 where
     T: Transcript<Challenge = Fr>,
 {
-    if proof.sumchecks.len() != STAGE1_PROGRAM.drivers.len() {
+    verify_stage1_outer_with_program(&STAGE1_PROGRAM, proof, transcript)
+}
+
+pub fn verify_stage1_outer_with_program<T>(
+    program: &'static Stage1VerifierProgramPlan,
+    proof: &Stage1Proof<Fr>,
+    transcript: &mut T,
+) -> Result<Stage1ExecutionArtifacts<Fr>, VerifyStage1Error>
+where
+    T: Transcript<Challenge = Fr>,
+{
+    if proof.sumchecks.len() != program.drivers.len() {
         return Err(VerifyStage1Error::UnexpectedProofCount {
-            expected: STAGE1_PROGRAM.drivers.len(),
+            expected: program.drivers.len(),
             got: proof.sumchecks.len(),
         });
     }
     let mut artifacts = Stage1ExecutionArtifacts::default();
-    for squeeze in STAGE1_PROGRAM.transcript_squeezes {
+    for squeeze in program.transcript_squeezes {
         let values = transcript.challenge_vector(squeeze.count);
         artifacts.challenge_vectors.push(Stage1ChallengeVector {
             symbol: squeeze.symbol,
             values,
         });
     }
-    for (index, driver) in STAGE1_PROGRAM.drivers.iter().enumerate() {
+    for (index, driver) in program.drivers.iter().enumerate() {
         let proof = proof.sumchecks.get(index).ok_or(VerifyStage1Error::MissingProof {
             driver: driver.symbol,
         })?;
-        let output = verify_stage1_driver(driver, proof, &artifacts.sumchecks, transcript)?;
+        let output = verify_stage1_driver(program, driver, proof, &artifacts.sumchecks, transcript)?;
         artifacts.sumchecks.push(output);
     }
     artifacts
         .opening_batches
-        .extend(STAGE1_PROGRAM.opening_batches.iter());
+        .extend(program.opening_batches.iter());
     Ok(artifacts)
 }
 
+pub fn stage1_outer_verifier_program() -> &'static Stage1VerifierProgramPlan {
+    &STAGE1_PROGRAM
+}
+
 fn verify_stage1_driver<T>(
+    program: &'static Stage1VerifierProgramPlan,
     driver: &'static Stage1SumcheckDriverPlan,
     proof: &Stage1SumcheckOutput<Fr>,
     completed: &[Stage1SumcheckOutput<Fr>],
@@ -1370,15 +1398,16 @@ where
         });
     }
     match driver.relation {
-        "jolt.stage1.outer.uniskip" => verify_outer_uniskip(driver, proof, transcript),
+        "jolt.stage1.outer.uniskip" => verify_outer_uniskip(program, driver, proof, transcript),
         "jolt.stage1.outer.remaining" => {
-            verify_outer_remaining(driver, proof, completed, transcript)
+            verify_outer_remaining(program, driver, proof, completed, transcript)
         }
         relation => Err(VerifyStage1Error::UnsupportedRelation { relation }),
     }
 }
 
 fn verify_outer_uniskip<T>(
+    program: &'static Stage1VerifierProgramPlan,
     driver: &'static Stage1SumcheckDriverPlan,
     proof: &Stage1SumcheckOutput<Fr>,
     transcript: &mut T,
@@ -1406,17 +1435,18 @@ where
             reason: "uniskip point mismatch",
         });
     }
-    validate_eval_shape(driver, &proof.evals, Some(eval))?;
+    validate_eval_shape(program, driver, &proof.evals, Some(eval))?;
     append_labeled_scalar(transcript, "opening_claim", &eval);
     Ok(Stage1SumcheckOutput {
         driver: driver.symbol,
         point,
-        evals: driver_evals(driver.symbol, eval),
+        evals: driver_evals(program, driver.symbol, eval),
         proof: proof.proof.clone(),
     })
 }
 
 fn verify_outer_remaining<T>(
+    program: &'static Stage1VerifierProgramPlan,
     driver: &'static Stage1SumcheckDriverPlan,
     proof: &Stage1SumcheckOutput<Fr>,
     completed: &[Stage1SumcheckOutput<Fr>],
@@ -1459,7 +1489,7 @@ where
             reason: "outer remaining point mismatch",
         });
     }
-    validate_eval_shape(driver, &proof.evals, None)?;
+    validate_eval_shape(program, driver, &proof.evals, None)?;
     append_opening_claims(transcript, &proof.evals);
     Ok(Stage1SumcheckOutput {
         driver: driver.symbol,
@@ -1469,8 +1499,12 @@ where
     })
 }
 
-fn driver_evals(driver: &'static str, value: Fr) -> Vec<Stage1NamedEval<Fr>> {
-    STAGE1_PROGRAM
+fn driver_evals(
+    program: &'static Stage1VerifierProgramPlan,
+    driver: &'static str,
+    value: Fr,
+) -> Vec<Stage1NamedEval<Fr>> {
+    program
         .evals
         .iter()
         .filter(|eval| eval.source == driver)
@@ -1483,11 +1517,12 @@ fn driver_evals(driver: &'static str, value: Fr) -> Vec<Stage1NamedEval<Fr>> {
 }
 
 fn validate_eval_shape(
+    program: &'static Stage1VerifierProgramPlan,
     driver: &'static Stage1SumcheckDriverPlan,
     actual: &[Stage1NamedEval<Fr>],
     expected_value: Option<Fr>,
 ) -> Result<(), VerifyStage1Error> {
-    let expected = STAGE1_PROGRAM
+    let expected = program
         .evals
         .iter()
         .filter(|eval| eval.source == driver.symbol)

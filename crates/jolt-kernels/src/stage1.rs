@@ -1551,6 +1551,13 @@ where
         });
     }
     let eval = poly.evaluate(r0);
+    if !proof.point.is_empty() && (proof.point.len() != 1 || proof.point[0] != r0) {
+        return Err(Stage1KernelError::InvalidProof {
+            driver: context.driver.symbol,
+            reason: "uniskip point mismatch",
+        });
+    }
+    validate_eval_shape(context, &proof.evals, Some(eval))?;
     append_labeled_scalar(transcript, "opening_claim", &eval);
     Ok(Stage1SumcheckOutput {
         driver: context.driver.symbol,
@@ -1621,6 +1628,7 @@ where
             reason: "outer remaining point mismatch",
         });
     }
+    validate_eval_shape(context, &proof.evals, None)?;
     append_opening_claims(transcript, &proof.evals);
     Ok(Stage1SumcheckOutput {
         driver: context.driver.symbol,
@@ -2102,6 +2110,49 @@ fn driver_evals<F: Field>(context: Stage1KernelContext<'_>, value: F) -> Vec<Sta
             value,
         })
         .collect()
+}
+
+fn validate_eval_shape<F: Field>(
+    context: Stage1KernelContext<'_>,
+    actual: &[Stage1NamedEval<F>],
+    expected_value: Option<F>,
+) -> Result<(), Stage1KernelError> {
+    let expected = context
+        .program
+        .evals
+        .iter()
+        .filter(|eval| eval.source == context.driver.symbol)
+        .collect::<Vec<_>>();
+    if actual.len() != expected.len() {
+        return Err(Stage1KernelError::InvalidProof {
+            driver: context.driver.symbol,
+            reason: "eval count mismatch",
+        });
+    }
+    for (actual, expected) in actual.iter().zip(expected) {
+        if actual.name != expected.name {
+            return Err(Stage1KernelError::InvalidProof {
+                driver: context.driver.symbol,
+                reason: "eval name mismatch",
+            });
+        }
+        if actual.oracle != expected.oracle {
+            return Err(Stage1KernelError::InvalidProof {
+                driver: context.driver.symbol,
+                reason: "eval oracle mismatch",
+            });
+        }
+        if expected_value
+            .as_ref()
+            .is_some_and(|expected_value| actual.value != *expected_value)
+        {
+            return Err(Stage1KernelError::InvalidProof {
+                driver: context.driver.symbol,
+                reason: "eval value mismatch",
+            });
+        }
+    }
+    Ok(())
 }
 
 fn run_shape_kernel<F, T>(

@@ -13,7 +13,7 @@
 //!
 //! # Implementations
 //!
-//! Hash backends produce 128-bit challenges (drawn from `u128`) and use a
+//! Hash backends produce full-width field challenges and use a
 //! `state || round_counter` domain separation scheme.
 //!
 //! - [`Blake2bTranscript`]: Uses Blake2b-256. Default choice for Jolt proofs.

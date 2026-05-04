@@ -54,6 +54,9 @@ pub trait Field:
     /// reduction. For other fields, use [`NaiveAccumulator`](crate::NaiveAccumulator).
     type Accumulator: crate::FieldAccumulator<Field = Self>;
 
+    /// Accumulator for deferred-reduction field × raw-integer additions.
+    type ScalarAccumulator: crate::FieldScalarAccumulator<Field = Self>;
+
     /// Byte length of a canonical (compressed) serialized element.
     const NUM_BYTES: usize;
 

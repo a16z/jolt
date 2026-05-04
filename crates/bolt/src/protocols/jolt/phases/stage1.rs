@@ -192,6 +192,20 @@ pub fn lower_stage1_to_compute<'c>(
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
             }
+            "transcript.absorb_bytes" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["label", "payload"])?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &compute,
+                    "compute.transcript_absorb_bytes",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!compute.transcript_state"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
             "transcript.squeeze" => {
                 let operands = lowered_operands(op, &value_map, 0)?;
                 let symbol = string_attr(op, "sym_name")?;
@@ -510,6 +524,20 @@ pub fn resolve_compute_kernels<'c>(
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
             }
+            "compute.transcript_absorb_bytes" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let attrs = copy_attrs(op, &["label", "payload"])?;
+                let symbol = string_attr(op, "sym_name")?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &kernelized,
+                    "compute.transcript_absorb_bytes",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!compute.transcript_state"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
             "compute.transcript_squeeze" => {
                 let operands = lowered_operands(op, &value_map, 0)?;
                 let attrs = copy_attrs(op, &["label", "kind", "count"])?;
@@ -565,6 +593,19 @@ pub fn resolve_compute_kernels<'c>(
                     Some(&symbol),
                     &attrs,
                     &operands,
+                    &["!compute.point"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "compute.point_zero" => {
+                let attrs = copy_attrs(op, &["field", "arity"])?;
+                let symbol = string_attr(op, "sym_name")?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &kernelized,
+                    "compute.point_zero",
+                    Some(&symbol),
+                    &attrs,
+                    &[],
                     &["!compute.point"],
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
@@ -1553,6 +1594,86 @@ fn kernel_spec(relation: &str) -> Result<KernelSpec, MlirError> {
             symbol: "jolt.cpu.stage3.batched",
             kind: "sumcheck",
             abi: "jolt_stage3_batched",
+        }),
+        "jolt.stage4.registers_read_write" => Ok(KernelSpec {
+            symbol: "jolt.cpu.stage4.registers_read_write",
+            kind: "sumcheck",
+            abi: "jolt_stage4_registers_read_write",
+        }),
+        "jolt.stage4.ram_val_check" => Ok(KernelSpec {
+            symbol: "jolt.cpu.stage4.ram_val_check",
+            kind: "sumcheck",
+            abi: "jolt_stage4_ram_val_check",
+        }),
+        "jolt.stage4.batched" => Ok(KernelSpec {
+            symbol: "jolt.cpu.stage4.batched",
+            kind: "sumcheck",
+            abi: "jolt_stage4_batched",
+        }),
+        "jolt.stage5.instruction_read_raf" => Ok(KernelSpec {
+            symbol: "jolt.cpu.stage5.instruction_read_raf",
+            kind: "sumcheck",
+            abi: "jolt_stage5_instruction_read_raf",
+        }),
+        "jolt.stage5.ram_ra_claim_reduction" => Ok(KernelSpec {
+            symbol: "jolt.cpu.stage5.ram_ra_claim_reduction",
+            kind: "sumcheck",
+            abi: "jolt_stage5_ram_ra_claim_reduction",
+        }),
+        "jolt.stage5.registers_val_evaluation" => Ok(KernelSpec {
+            symbol: "jolt.cpu.stage5.registers_val_evaluation",
+            kind: "sumcheck",
+            abi: "jolt_stage5_registers_val_evaluation",
+        }),
+        "jolt.stage5.batched" => Ok(KernelSpec {
+            symbol: "jolt.cpu.stage5.batched",
+            kind: "sumcheck",
+            abi: "jolt_stage5_batched",
+        }),
+        "jolt.stage6.bytecode_read_raf" => Ok(KernelSpec {
+            symbol: "jolt.cpu.stage6.bytecode_read_raf",
+            kind: "sumcheck",
+            abi: "jolt_stage6_bytecode_read_raf",
+        }),
+        "jolt.stage6.booleanity" => Ok(KernelSpec {
+            symbol: "jolt.cpu.stage6.booleanity",
+            kind: "sumcheck",
+            abi: "jolt_stage6_booleanity",
+        }),
+        "jolt.stage6.hamming_booleanity" => Ok(KernelSpec {
+            symbol: "jolt.cpu.stage6.hamming_booleanity",
+            kind: "sumcheck",
+            abi: "jolt_stage6_hamming_booleanity",
+        }),
+        "jolt.stage6.ram_ra_virtual" => Ok(KernelSpec {
+            symbol: "jolt.cpu.stage6.ram_ra_virtual",
+            kind: "sumcheck",
+            abi: "jolt_stage6_ram_ra_virtual",
+        }),
+        "jolt.stage6.instruction_ra_virtual" => Ok(KernelSpec {
+            symbol: "jolt.cpu.stage6.instruction_ra_virtual",
+            kind: "sumcheck",
+            abi: "jolt_stage6_instruction_ra_virtual",
+        }),
+        "jolt.stage6.inc_claim_reduction" => Ok(KernelSpec {
+            symbol: "jolt.cpu.stage6.inc_claim_reduction",
+            kind: "sumcheck",
+            abi: "jolt_stage6_inc_claim_reduction",
+        }),
+        "jolt.stage6.batched" => Ok(KernelSpec {
+            symbol: "jolt.cpu.stage6.batched",
+            kind: "sumcheck",
+            abi: "jolt_stage6_batched",
+        }),
+        "jolt.stage7.hamming_weight_claim_reduction" => Ok(KernelSpec {
+            symbol: "jolt.cpu.stage7.hamming_weight_claim_reduction",
+            kind: "sumcheck",
+            abi: "jolt_stage7_hamming_weight_claim_reduction",
+        }),
+        "jolt.stage7.batched" => Ok(KernelSpec {
+            symbol: "jolt.cpu.stage7.batched",
+            kind: "sumcheck",
+            abi: "jolt_stage7_batched",
         }),
         _ => Err(schema_error(format!(
             "unsupported compute relation @{relation}"

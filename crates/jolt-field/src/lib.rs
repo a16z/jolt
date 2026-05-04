@@ -23,7 +23,9 @@
 mod field;
 pub use field::{Field, MaybeAllocative, OptimizedMul};
 mod accumulator;
-pub use accumulator::{FieldAccumulator, NaiveAccumulator};
+pub use accumulator::{
+    FieldAccumulator, FieldScalarAccumulator, NaiveAccumulator, NaiveScalarAccumulator,
+};
 mod montgomery_constants;
 pub use montgomery_constants::MontgomeryConstants;
 

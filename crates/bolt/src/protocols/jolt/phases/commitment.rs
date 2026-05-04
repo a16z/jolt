@@ -602,6 +602,22 @@ pub fn lower_compute_to_cpu<'c>(
                 let inserted = value_map.insert(operation_result_key(op)?, output);
                 debug_assert!(inserted.is_none());
             }
+            "compute.transcript_absorb_bytes" => {
+                let operands = lowered_operands(op, &value_map)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["label", "payload"])?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &cpu,
+                    "cpu.transcript_absorb_bytes",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!cpu.transcript_state"],
+                )?;
+                let output = first_result(operation, "cpu.transcript_absorb_bytes")?;
+                let inserted = value_map.insert(operation_result_key(op)?, output);
+                debug_assert!(inserted.is_none());
+            }
             "compute.transcript_squeeze" => {
                 let operands = lowered_operands(op, &value_map)?;
                 let symbol = string_attr(op, "sym_name")?;
@@ -653,6 +669,19 @@ pub fn lower_compute_to_cpu<'c>(
                     Some(&symbol),
                     &attrs,
                     &operands,
+                    &["!cpu.point"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
+            "compute.point_zero" => {
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["field", "arity"])?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &cpu,
+                    "cpu.point_zero",
+                    Some(&symbol),
+                    &attrs,
+                    &[],
                     &["!cpu.point"],
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;

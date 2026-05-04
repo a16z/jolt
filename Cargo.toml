@@ -44,6 +44,7 @@ members = [
   "crates/jolt-blindfold",
   "crates/jolt-witness",
   "crates/jolt-equivalence",
+  "crates/jolt-bench",
   "crates/jolt-field",
   "jolt-core",
   "tracer",

@@ -47,16 +47,14 @@ impl<F: Field> MockTranscript<F> {
         }
     }
 
-    fn next_u128(&mut self) -> u128 {
+    fn next_bytes32(&mut self) -> [u8; 32] {
         let hash: [u8; 32] = Blake2b256::new()
             .chain_update(self.seed)
             .chain_update(self.counter.to_le_bytes())
             .finalize()
             .into();
         self.counter += 1;
-        let mut bytes = [0u8; 16];
-        bytes.copy_from_slice(&hash[..16]);
-        u128::from_le_bytes(bytes)
+        hash
     }
 }
 
@@ -72,7 +70,7 @@ impl<F: Field> Transcript for MockTranscript<F> {
     fn append<A: AppendToTranscript>(&mut self, _value: &A) {}
 
     fn challenge(&mut self) -> F {
-        F::from_u128(self.next_u128())
+        F::from_bytes(&self.next_bytes32())
     }
 
     fn state(&self) -> &[u8; 32] {

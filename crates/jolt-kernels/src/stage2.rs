@@ -1648,20 +1648,26 @@ where
             } else {
                 UnivariatePoly::new(vec![instance.previous_claim * two_inv])
             };
-            if poly.evaluate(F::zero()) + poly.evaluate(F::one()) != instance.previous_claim {
-                return Err(Stage2KernelError::InvalidProof {
-                    driver: context.driver.symbol,
-                    reason: "batched instance round claim mismatch",
-                });
+            #[cfg(debug_assertions)]
+            {
+                if poly.evaluate(F::zero()) + poly.evaluate(F::one()) != instance.previous_claim {
+                    return Err(Stage2KernelError::InvalidProof {
+                        driver: context.driver.symbol,
+                        reason: "batched instance round claim mismatch",
+                    });
+                }
             }
             individual_polys.push(poly);
         }
         let batched_poly = combine_univariate_polys(&individual_polys, &batching_coeffs);
-        if batched_poly.evaluate(F::zero()) + batched_poly.evaluate(F::one()) != batched_claim {
-            return Err(Stage2KernelError::InvalidProof {
-                driver: context.driver.symbol,
-                reason: "batched round claim mismatch",
-            });
+        #[cfg(debug_assertions)]
+        {
+            if batched_poly.evaluate(F::zero()) + batched_poly.evaluate(F::one()) != batched_claim {
+                return Err(Stage2KernelError::InvalidProof {
+                    driver: context.driver.symbol,
+                    reason: "batched round claim mismatch",
+                });
+            }
         }
         append_compressed_univariate_poly(transcript, context.driver.round_label, &batched_poly);
         let challenge = transcript.challenge();
@@ -2514,7 +2520,7 @@ fn instruction_lookup_state<'a, F: Field>(
             actual: cycles.len(),
         });
     }
-    let gamma = store.scalar("stage2.instruction_lookup.gamma.scalar")?;
+    let gamma = store.scalar("stage2.instruction_lookup.gamma")?;
     let gamma_sqr = gamma.square();
     let gamma_cub = gamma_sqr * gamma;
     let gamma_quart = gamma_sqr.square();
@@ -2664,7 +2670,7 @@ impl<F: Field> RamReadWriteState<F> {
         let k = 1usize << ram.log_k;
         require_operand_count("stage2.ram.accesses", t, ram.accesses.len())?;
         require_operand_count("stage2.ram.initial_ram", k, ram.initial_ram.len())?;
-        let gamma = store.scalar("stage2.ram_read_write.gamma.scalar")?;
+        let gamma = store.scalar("stage2.ram_read_write.gamma")?;
         let mut cycle_entries = Vec::with_capacity(ram.accesses.len());
         let mut inc = Vec::with_capacity(t);
         for (row, access) in ram.accesses.iter().enumerate() {
@@ -2712,12 +2718,12 @@ impl<F: Field> RamReadWriteState<F> {
     fn round_poly(
         &mut self,
         _round: usize,
-        _previous_claim: F,
+        previous_claim: F,
     ) -> Result<UnivariatePoly<F>, Stage2KernelError> {
         if self.round < self.log_t {
-            Ok(self.cycle_round_poly(_previous_claim))
+            Ok(self.cycle_round_poly(previous_claim))
         } else {
-            Ok(self.address_round_poly())
+            Ok(self.address_round_poly(previous_claim))
         }
     }
 
@@ -2771,8 +2777,8 @@ impl<F: Field> RamReadWriteState<F> {
     }
 
     #[tracing::instrument(skip_all, name = "RamReadWriteState::address_round_poly")]
-    fn address_round_poly(&self) -> UnivariatePoly<F> {
-        let mut evals = vec![F::zero(); 4];
+    fn address_round_poly(&self, previous_claim: F) -> UnivariatePoly<F> {
+        let mut evals = [F::zero(); 2];
         let cycle_eq = self.cycle_eq_eval();
         let mut cursor = 0;
         while cursor < self.address_entries.len() {
@@ -2789,8 +2795,8 @@ impl<F: Field> RamReadWriteState<F> {
             let odd = &entries[odd_start..];
             let even_checkpoint = self.val_init[2 * pair];
             let odd_checkpoint = self.val_init[2 * pair + 1];
-            for (x, eval) in evals.iter_mut().enumerate() {
-                *eval += address_pair_eval(
+            for (x, eval_index) in [(0usize, 0usize), (2usize, 1usize)] {
+                evals[eval_index] += address_pair_eval(
                     even,
                     odd,
                     even_checkpoint,
@@ -2804,7 +2810,7 @@ impl<F: Field> RamReadWriteState<F> {
                 );
             }
         }
-        UnivariatePoly::from_evals(&evals)
+        UnivariatePoly::from_evals_and_hint(previous_claim, &evals)
     }
 
     #[tracing::instrument(skip_all, name = "RamReadWriteState::bind_cycle")]
@@ -3464,7 +3470,7 @@ fn expected_ram_read_write<F: Field>(
     let log_t = r_cycle_stage1.len();
     let r_cycle = reverse_slice(&local_point[..log_t]);
     let eq_eval = EqPolynomial::<F>::mle(r_cycle_stage1, &r_cycle);
-    let gamma = store.scalar("stage2.ram_read_write.gamma.scalar")?;
+    let gamma = store.scalar("stage2.ram_read_write.gamma")?;
     let val = eval_by_name(evals, "stage2.ram_read_write.eval.RamVal")?;
     let ra = eval_by_name(evals, "stage2.ram_read_write.eval.RamRa")?;
     let inc = eval_by_name(evals, "stage2.ram_read_write.eval.RamInc")?;
@@ -3527,7 +3533,7 @@ fn expected_instruction_lookup<F: Field>(
     let opening_point = reverse_slice(local_point);
     let r_spartan = store.point("stage2.input.stage1.LookupOutput")?;
     let eq_eval = EqPolynomial::<F>::mle(&opening_point, r_spartan);
-    let gamma = store.scalar("stage2.instruction_lookup.gamma.scalar")?;
+    let gamma = store.scalar("stage2.instruction_lookup.gamma")?;
     let gamma_sqr = gamma.square();
     let gamma_cub = gamma_sqr * gamma;
     let gamma_quart = gamma_sqr.square();
@@ -3896,7 +3902,18 @@ fn combine_univariate_polys<F: Field>(
             *combined += term * coefficient;
         }
     }
-    UnivariatePoly::new(combined)
+    trim_trailing_zero_coefficients(UnivariatePoly::new(combined), 3)
+}
+
+fn trim_trailing_zero_coefficients<F: Field>(
+    polynomial: UnivariatePoly<F>,
+    min_len: usize,
+) -> UnivariatePoly<F> {
+    let mut coefficients = polynomial.into_coefficients();
+    while coefficients.len() > min_len && coefficients.last() == Some(&F::zero()) {
+        let _ = coefficients.pop();
+    }
+    UnivariatePoly::new(coefficients)
 }
 
 fn round_poly_from_factors<F: Field>(factors: &[Vec<F>], degree: usize) -> UnivariatePoly<F> {

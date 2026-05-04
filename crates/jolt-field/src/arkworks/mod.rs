@@ -9,6 +9,7 @@ use ark_ff::BigInt;
 pub mod bn254;
 pub(crate) mod bn254_ops;
 pub mod montgomery_impl;
+pub mod scalar_accumulator;
 pub mod wide_accumulator;
 
 impl<const N: usize> From<Limbs<N>> for BigInt<N> {

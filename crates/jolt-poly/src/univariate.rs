@@ -195,8 +195,12 @@ impl<F: Field> UnivariatePoly<F> {
     /// on the Vandermonde system. Equivalent to `interpolate_over_integers` but uses a
     /// direct matrix solve instead of the Lagrange formula.
     pub fn from_evals(evals: &[F]) -> Self {
-        Self {
-            coefficients: gaussian_elimination_vandermonde(evals),
+        match evals {
+            [e0, e1, e2] => Self::from_evals_degree2(*e0, *e1, *e2),
+            [e0, e1, e2, e3] => Self::from_evals_degree3(*e0, *e1, *e2, *e3),
+            _ => Self {
+                coefficients: gaussian_elimination_vandermonde(evals),
+            },
         }
     }
 
@@ -204,10 +208,16 @@ impl<F: Field> UnivariatePoly<F> {
     ///
     /// Recovers `p(1) = hint - p(0)` and then interpolates over the full set `{0, 1, ..., n-1}`.
     pub fn from_evals_and_hint(hint: F, evals: &[F]) -> Self {
-        let mut full = evals.to_vec();
-        let eval_at_1 = hint - full[0];
-        full.insert(1, eval_at_1);
-        Self::from_evals(&full)
+        match evals {
+            [e0, e2] => Self::from_evals_degree2(*e0, hint - *e0, *e2),
+            [e0, e2, e3] => Self::from_evals_degree3(*e0, hint - *e0, *e2, *e3),
+            _ => {
+                let mut full = evals.to_vec();
+                let eval_at_1 = hint - full[0];
+                full.insert(1, eval_at_1);
+                Self::from_evals(&full)
+            }
+        }
     }
 
     /// Interpolates from evaluations at `[0, 1, ..., degree-1, ∞]`.
@@ -280,6 +290,25 @@ impl<F: Field> UnivariatePoly<F> {
             linear_coeffs[1] * quadratic_coeff_2,
         ];
         Self { coefficients }
+    }
+
+    fn from_evals_degree2(e0: F, e1: F, e2: F) -> Self {
+        let c0 = e0;
+        let c2 = (e0 - e1 - e1 + e2) / F::from_u64(2);
+        let c1 = e1 - e0 - c2;
+        Self {
+            coefficients: vec![c0, c1, c2],
+        }
+    }
+
+    fn from_evals_degree3(e0: F, e1: F, e2: F, e3: F) -> Self {
+        let c0 = e0;
+        let c3 = (e3 - e0 + (e1 - e2) * F::from_u64(3)) / F::from_u64(6);
+        let c2 = (e0 - e1 - e1 + e2) / F::from_u64(2) - c3 - c3 - c3;
+        let c1 = e1 - e0 - c2 - c3;
+        Self {
+            coefficients: vec![c0, c1, c2, c3],
+        }
     }
 
     /// Returns `true` if all coefficients are zero (or the vector is empty).

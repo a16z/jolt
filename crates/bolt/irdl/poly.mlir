@@ -24,6 +24,18 @@ irdl.dialect @poly {
     irdl.operands(input: %input)
     irdl.results(output: %output)
   }
+  irdl.operation @point_zero {
+    %output = irdl.parametric @poly::@point<>
+    %sym = irdl.any
+    %field = irdl.any
+    %arity = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "field" = %field,
+      "arity" = %arity
+    }
+    irdl.results(output: %output)
+  }
   irdl.operation @point_concat {
     %input = irdl.parametric @poly::@point<>
     %output = irdl.parametric @poly::@point<>

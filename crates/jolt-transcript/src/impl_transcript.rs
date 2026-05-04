@@ -2,8 +2,8 @@
 
 /// Implements the `Transcript` trait for a hash-based transcript.
 ///
-/// The generated struct is generic over `F: Field`, producing field-element
-/// challenges directly via `F::from_u128()`.
+/// The generated struct is generic over `F: Field`, producing full-width
+/// field-element challenges directly via `F::from_bytes()`.
 macro_rules! impl_transcript {
     ($name:ident, $hasher:ty, $new_hasher:expr) => {
         use $crate::transcript::Transcript;
@@ -18,8 +18,8 @@ macro_rules! impl_transcript {
 
         #[doc = concat!("Fiat-Shamir transcript backed by ", stringify!($hasher), ".")]
         ///
-        /// Generic over the field type `F`. Challenges are produced as field
-        /// elements directly via `F::from_u128()`.
+        /// Generic over the field type `F`. Challenges are produced as
+        /// full-width field elements directly via `F::from_bytes()`.
         #[derive(Clone)]
         pub struct $name<F: jolt_field::Field = jolt_field::Fr> {
             /// 256-bit running state.
@@ -144,10 +144,9 @@ macro_rules! impl_transcript {
             }
 
             fn challenge(&mut self) -> F {
-                let mut buf = [0u8; 16];
+                let mut buf = vec![0u8; F::NUM_BYTES];
                 self.challenge_bytes(&mut buf);
-                buf.reverse();
-                F::from_u128(u128::from_le_bytes(buf))
+                F::from_bytes(&buf)
             }
 
             #[inline]

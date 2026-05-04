@@ -120,8 +120,40 @@ stage completion criterion.
 
 ## Current Position
 
-Commitment, Stage 1, Stage 2, and Stage 3 have compiler/codegen rails in
-progress. Before adding further stages, keep the generated crates, verifier
-pipeline, equivalence hooks, and bench hooks aligned with the completion
-criteria above so every subsequent stage lands through the same repeatable
-process.
+Commitment through Stage 7 and the evaluation proof have compiler/codegen rails
+and real-data correctness gates. The generated crates and monolithic generated
+prover/verifier now run on the full-field transcript path
+(`Transcript<Challenge = Fr>`), matching `jolt-core` after core's
+`JoltField::Challenge` was changed to the full field for both `ark_bn254::Fr`
+and `TrackedFr`. The Stage 7 equivalence harness runs Bolt-produced Stage 7
+prover output on real trace data, compares proof artifacts and transcript
+states against `jolt-core`, verifies the proof with the generated standalone and
+monolithic verifier paths, runs the top-level generated prover through Stage 7,
+replays the `jolt-core` proof through the proof-carrying Stage 7 kernel bridge,
+and rejects representative Stage 7 tampering.
+
+The `bolt-stage` selector has correctness-gated timing support through Stage 7.
+Stage 6 remains comfortably perf-green:
+`perf/bolt-stage6-last.json` records core at `2011.115ms`, Bolt at
+`1266.910ms`, and `ratio_vs_core ~= 0.63`. Stage 7 is also perf-green on the
+`sha2-chain` smoke gate at `log_t = 13`: `perf/bolt-stage7-smoke.json` records
+core at `2.551ms`, Bolt at `2.701ms`, `ratio_vs_core ~= 1.06`, and a passing
+`--max-ratio 1.2` gate. Bolt Stage 7 reaches that path by passing compact RA
+index witnesses into the hamming-weight claim-reduction kernel rather than
+materializing the dense one-hot pushforward used during initial bring-up. The
+evaluation proof is now wired into the generated monolithic prover/verifier on
+the full-field transcript path. The monolithic program tables carry the
+compiler-owned Stage 8 evaluation plan, so real-trace plans are used for the
+Dory joint-opening claim order instead of falling back to the checked-in fixture
+`STAGE8_PROGRAM`. The `muldiv` equivalence gate covers generated Stage 8
+acceptance, core acceptance of the Bolt joint opening proof, full Stage 8
+transcript parity, missing-proof/setup rejection, and tampered evaluation proof
+rejection. The `bolt-stage` selector has a `stage8` correctness-gated timing
+path, and Stage 8 is perf-green after optimizing joint-polynomial
+materialization and modular Dory's homomorphic hint/opening routines with the
+same GLV vector operations used by core. The current `muldiv` smoke at
+`log_t = 10` in `perf/bolt-stage8-smoke.json` records core at `152.451ms`,
+Bolt at `162.147ms`, and `ratio_vs_core ~= 1.06`. The documented
+`sha2-chain` three-iteration release gate is also green:
+`perf/bolt-stage8-last.json` records core at `796.183ms`, Bolt at `922.799ms`,
+and `ratio_vs_core ~= 1.16`.

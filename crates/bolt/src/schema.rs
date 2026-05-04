@@ -190,6 +190,10 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             require_attrs(operation, &["sym_name", "source", "offset", "length"])?;
             require_shape(operation, 1, 1)
         }
+        "poly.point_zero" => {
+            require_attrs(operation, &["sym_name", "field", "arity"])?;
+            require_shape(operation, 0, 1)
+        }
         "poly.point_concat" => {
             require_attrs(operation, &["sym_name", "layout", "arity"])?;
             require_min_shape(operation, 1, 1)
@@ -239,6 +243,10 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
         "transcript.absorb" | "transcript.absorb_optional" => {
             require_attrs(operation, &["sym_name", "label"])?;
             require_shape(operation, 2, 1)
+        }
+        "transcript.absorb_bytes" => {
+            require_attrs(operation, &["sym_name", "label", "payload"])?;
+            require_shape(operation, 1, 1)
         }
         "transcript.squeeze" => {
             require_attrs(operation, &["sym_name", "label", "kind", "count"])?;
@@ -494,6 +502,10 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             require_attrs(operation, &["sym_name", "label", "optional"])?;
             require_shape(operation, 2, 1)
         }
+        "compute.transcript_absorb_bytes" => {
+            require_attrs(operation, &["sym_name", "label", "payload"])?;
+            require_shape(operation, 1, 1)
+        }
         "compute.transcript_squeeze" => {
             require_attrs(operation, &["sym_name", "label", "kind", "count"])?;
             require_shape(operation, 1, 2)
@@ -516,6 +528,10 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
         "compute.point_slice" => {
             require_attrs(operation, &["sym_name", "source", "offset", "length"])?;
             require_shape(operation, 1, 1)
+        }
+        "compute.point_zero" => {
+            require_attrs(operation, &["sym_name", "field", "arity"])?;
+            require_shape(operation, 0, 1)
         }
         "compute.point_concat" => {
             require_attrs(operation, &["sym_name", "layout", "arity"])?;
@@ -842,6 +858,10 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
             require_attrs(operation, &["sym_name", "label", "optional"])?;
             require_shape(operation, 2, 1)
         }
+        "cpu.transcript_absorb_bytes" => {
+            require_attrs(operation, &["sym_name", "label", "payload"])?;
+            require_shape(operation, 1, 1)
+        }
         "cpu.transcript_squeeze" => {
             require_attrs(operation, &["sym_name", "label", "kind", "count"])?;
             require_shape(operation, 1, 2)
@@ -864,6 +884,10 @@ fn validate_op(operation: OperationRef<'_, '_>, _phase: ModulePhase) -> Result<(
         "cpu.point_slice" => {
             require_attrs(operation, &["sym_name", "source", "offset", "length"])?;
             require_shape(operation, 1, 1)
+        }
+        "cpu.point_zero" => {
+            require_attrs(operation, &["sym_name", "field", "arity"])?;
+            require_shape(operation, 0, 1)
         }
         "cpu.point_concat" => {
             require_attrs(operation, &["sym_name", "layout", "arity"])?;

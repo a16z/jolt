@@ -2,7 +2,7 @@
 
 use jolt_field::Fr;
 use jolt_kernels::stage3::{execute_stage3_program, Stage3CpuProgramPlan, Stage3ExecutionArtifacts, Stage3ExecutionMode, Stage3FieldConstantPlan, Stage3FieldExprPlan, Stage3KernelError, Stage3KernelExecutor, Stage3KernelPlan, Stage3OpeningBatchPlan, Stage3OpeningClaimEqualityPlan, Stage3OpeningClaimPlan, Stage3OpeningInputPlan, Stage3Params, Stage3PointConcatPlan, Stage3PointSlicePlan, Stage3ProgramStepPlan, Stage3SumcheckBatchPlan, Stage3SumcheckClaimPlan, Stage3SumcheckDriverPlan, Stage3SumcheckEvalPlan, Stage3SumcheckInstanceResultPlan, Stage3TranscriptSqueezePlan};
-use jolt_transcript::Blake2bTranscript;
+use jolt_transcript::{Blake2bTranscript, Transcript};
 
 pub type DefaultStage3Transcript = Blake2bTranscript<Fr>;
 
@@ -424,12 +424,25 @@ pub const STAGE3_PROGRAM: Stage3CpuProgramPlan = Stage3CpuProgramPlan {
     opening_batches: STAGE3_OPENING_BATCHES,
 };
 
-pub fn execute_stage3_prover<E>(
+pub fn execute_stage3_prover<E, T>(
     executor: &mut E,
-    transcript: &mut DefaultStage3Transcript,
+    transcript: &mut T,
 ) -> Result<Stage3ExecutionArtifacts<Fr>, Stage3KernelError>
 where
     E: Stage3KernelExecutor<Fr>,
+    T: Transcript<Challenge = Fr>,
 {
-    execute_stage3_program(&STAGE3_PROGRAM, Stage3ExecutionMode::Prover, executor, transcript)
+    execute_stage3_prover_with_program(&STAGE3_PROGRAM, executor, transcript)
+}
+
+pub fn execute_stage3_prover_with_program<E, T>(
+    program: &'static Stage3CpuProgramPlan,
+    executor: &mut E,
+    transcript: &mut T,
+) -> Result<Stage3ExecutionArtifacts<Fr>, Stage3KernelError>
+where
+    E: Stage3KernelExecutor<Fr>,
+    T: Transcript<Challenge = Fr>,
+{
+    execute_stage3_program(program, Stage3ExecutionMode::Prover, executor, transcript)
 }

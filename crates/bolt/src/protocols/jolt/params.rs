@@ -18,10 +18,12 @@ pub struct JoltProtocolParams {
     pub ram_k: usize,
     pub log_k_chunk: usize,
     pub k_chunk: usize,
+    pub lookups_ra_virtual_log_k_chunk: usize,
     pub instruction_log_k: usize,
     pub register_log_k: usize,
     pub lookup_table_count: usize,
     pub instruction_d: usize,
+    pub instruction_ra_virtual_d: usize,
     pub bytecode_d: usize,
     pub ram_d: usize,
     pub num_committed: usize,
@@ -34,7 +36,13 @@ impl JoltProtocolParams {
     pub fn new(log_t: usize, log_k_bytecode: usize, log_k_ram: usize) -> Self {
         let log_k_chunk = if log_t < 25 { 4 } else { 8 };
         let instruction_log_k = 128;
+        let lookups_ra_virtual_log_k_chunk = if log_t < 25 {
+            instruction_log_k / 8
+        } else {
+            instruction_log_k / 4
+        };
         let instruction_d = instruction_log_k / log_k_chunk;
+        let instruction_ra_virtual_d = instruction_log_k / lookups_ra_virtual_log_k_chunk;
         let bytecode_d = log_k_bytecode.div_ceil(log_k_chunk);
         let ram_d = log_k_ram.div_ceil(log_k_chunk);
         Self {
@@ -50,10 +58,12 @@ impl JoltProtocolParams {
             ram_k: 1usize << log_k_ram,
             log_k_chunk,
             k_chunk: 1usize << log_k_chunk,
+            lookups_ra_virtual_log_k_chunk,
             instruction_log_k,
             register_log_k: 7,
-            lookup_table_count: 41,
+            lookup_table_count: 40,
             instruction_d,
+            instruction_ra_virtual_d,
             bytecode_d,
             ram_d,
             num_committed: 2 + instruction_d + bytecode_d + ram_d,
@@ -81,10 +91,15 @@ impl JoltProtocolParams {
             int_attr("ram_k", self.ram_k),
             int_attr("log_k_chunk", self.log_k_chunk),
             int_attr("k_chunk", self.k_chunk),
+            int_attr(
+                "lookups_ra_virtual_log_k_chunk",
+                self.lookups_ra_virtual_log_k_chunk,
+            ),
             int_attr("instruction_log_k", self.instruction_log_k),
             int_attr("register_log_k", self.register_log_k),
             int_attr("lookup_table_count", self.lookup_table_count),
             int_attr("instruction_d", self.instruction_d),
+            int_attr("instruction_ra_virtual_d", self.instruction_ra_virtual_d),
             int_attr("bytecode_d", self.bytecode_d),
             int_attr("ram_d", self.ram_d),
             int_attr("num_committed", self.num_committed),
@@ -116,8 +131,10 @@ pub(crate) struct ParsedJoltProtocolParams {
     pub(crate) ram_k: usize,
     pub(crate) log_k_chunk: usize,
     pub(crate) k_chunk: usize,
+    pub(crate) lookups_ra_virtual_log_k_chunk: usize,
     pub(crate) instruction_log_k: usize,
     pub(crate) instruction_d: usize,
+    pub(crate) instruction_ra_virtual_d: usize,
     pub(crate) bytecode_d: usize,
     pub(crate) ram_d: usize,
     pub(crate) num_committed: usize,
@@ -138,8 +155,13 @@ impl ParsedJoltProtocolParams {
             ram_k: mlir_int_attr(operation, "ram_k")?,
             log_k_chunk: mlir_int_attr(operation, "log_k_chunk")?,
             k_chunk: mlir_int_attr(operation, "k_chunk")?,
+            lookups_ra_virtual_log_k_chunk: mlir_int_attr(
+                operation,
+                "lookups_ra_virtual_log_k_chunk",
+            )?,
             instruction_log_k: mlir_int_attr(operation, "instruction_log_k")?,
             instruction_d: mlir_int_attr(operation, "instruction_d")?,
+            instruction_ra_virtual_d: mlir_int_attr(operation, "instruction_ra_virtual_d")?,
             bytecode_d: mlir_int_attr(operation, "bytecode_d")?,
             ram_d: mlir_int_attr(operation, "ram_d")?,
             num_committed: mlir_int_attr(operation, "num_committed")?,
@@ -169,11 +191,41 @@ impl ParsedJoltProtocolParams {
                 self.instruction_log_k
             )));
         }
+        if self.lookups_ra_virtual_log_k_chunk < self.log_k_chunk {
+            return Err(SchemaError::new(format!(
+                "lookups_ra_virtual_log_k_chunk must be >= log_k_chunk; got {} < {}",
+                self.lookups_ra_virtual_log_k_chunk, self.log_k_chunk
+            )));
+        }
+        if !self
+            .lookups_ra_virtual_log_k_chunk
+            .is_multiple_of(self.log_k_chunk)
+        {
+            return Err(SchemaError::new(format!(
+                "lookups_ra_virtual_log_k_chunk must be a multiple of log_k_chunk; got {} and {}",
+                self.lookups_ra_virtual_log_k_chunk, self.log_k_chunk
+            )));
+        }
+        if !self
+            .instruction_log_k
+            .is_multiple_of(self.lookups_ra_virtual_log_k_chunk)
+        {
+            return Err(SchemaError::new(format!(
+                "instruction_log_k must be divisible by lookups_ra_virtual_log_k_chunk; got {} and {}",
+                self.instruction_log_k, self.lookups_ra_virtual_log_k_chunk
+            )));
+        }
 
         let instruction_d = self.instruction_log_k / self.log_k_chunk;
+        let instruction_ra_virtual_d = self.instruction_log_k / self.lookups_ra_virtual_log_k_chunk;
         let bytecode_d = self.log_k_bytecode.div_ceil(self.log_k_chunk);
         let ram_d = self.log_k_ram.div_ceil(self.log_k_chunk);
         require_eq("instruction_d", self.instruction_d, instruction_d)?;
+        require_eq(
+            "instruction_ra_virtual_d",
+            self.instruction_ra_virtual_d,
+            instruction_ra_virtual_d,
+        )?;
         require_eq("bytecode_d", self.bytecode_d, bytecode_d)?;
         require_eq("ram_d", self.ram_d, ram_d)?;
         require_eq(
@@ -210,10 +262,12 @@ fn require_jolt_params_attrs(operation: OperationRef<'_, '_>) -> Result<(), Sche
             "ram_k",
             "log_k_chunk",
             "k_chunk",
+            "lookups_ra_virtual_log_k_chunk",
             "instruction_log_k",
             "register_log_k",
             "lookup_table_count",
             "instruction_d",
+            "instruction_ra_virtual_d",
             "bytecode_d",
             "ram_d",
             "num_committed",

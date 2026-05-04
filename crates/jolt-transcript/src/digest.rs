@@ -18,7 +18,7 @@ struct TestState {
 /// Fiat-Shamir transcript backed by a 256-bit digest.
 ///
 /// Generic over the hash function `D` and field type `F`. Challenges are
-/// produced as field elements directly via `F::from_u128()`.
+/// produced as full-width field elements via `F::from_bytes()`.
 pub struct DigestTranscript<
     D: Digest<OutputSize = U32> + 'static,
     F: jolt_field::Field = jolt_field::Fr,
@@ -139,9 +139,9 @@ impl<D: Digest<OutputSize = U32>, F: jolt_field::Field> Transcript for DigestTra
     }
 
     fn challenge(&mut self) -> F {
-        let mut buf = [0u8; 16];
+        let mut buf = vec![0u8; F::NUM_BYTES];
         self.challenge_bytes(&mut buf);
-        F::from_u128(u128::from_le_bytes(buf))
+        F::from_bytes(&buf)
     }
 
     #[inline]

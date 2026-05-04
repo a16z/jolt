@@ -8,15 +8,128 @@ performance gates.
 
 ## Current State
 
-Commitment, Stage 1, and Stage 2 have the active compiler rails: protocol MLIR,
+Commitment, Stage 1, Stage 2, and Stage 3 have the active compiler rails: protocol MLIR,
 per-party lowering, compute/CPU lowering, generated Rust fixtures, and real-data
-equivalence tests against `jolt-core`. After the upstream sync, the generated
-crate and verifier rails are green, but the real-data equivalence gates expose
-Stage 1/2 proof-coefficient divergence that must be repaired before either
-stage is treated as complete. Stage 3 has protocol/codegen/arithmetic work in
-progress and is in the optimization/equivalence-hardening phase; it is not
-considered complete until the real-data internal/core parity gates, tamper
-checks, and sub-20% stage perf gate are green.
+equivalence tests against `jolt-core`. After the full-field challenge repair,
+the focused Stage 1/2/3 real-data equivalence gates pass on the current
+`muldiv` fixture, including Bolt verifier acceptance, transcript parity, core
+acceptance, core proof-component parity, and generated verifier tamper
+coverage. The `jolt-bench` `bolt-stage` selector supports Stage 1 through Stage
+5 as correctness-gated perf runs, and their `sha2-chain` release perf gates are
+green (`ratio_vs_core ~= 0.79` for Stage 1, `~= 1.19` for Stage 2, `~= 0.89`
+for Stage 3, `~= 1.06` for Stage 4, and `~= 0.97` for Stage 5). Stage 3 also
+has monolithic generated verifier `verify_jolt_with_programs`
+acceptance/tamper coverage and core acceptance/parity on `muldiv`. The default
+checked-in verifier programs still describe the synthetic fixture shape, but
+the generated top-level verifier can take real program plans for the `muldiv`
+path.
+
+Stage 4 now has protocol/lowering/generated Rust rails for register read/write
+checking and RAM value checking. The MLIR includes the core transcript shape,
+including `transcript.absorb_bytes` for the `ram_val_check_gamma` domain
+separator, and lowers through concrete, party, compute, kernelized compute, and
+CPU IR fixtures. The focused `muldiv` equivalence gate now runs real
+Bolt-produced Stage 4 prover output and checks Bolt verifier acceptance,
+transcript parity, core acceptance of the spliced Stage 4 proof, core/Bolt
+artifact parity, generated Stage 4 verifier tamper rejection, and monolithic
+generated verifier acceptance/tamper rejection. The `bolt-stage` selector
+supports Stage 4 as a correctness-gated perf run. After the linear-time RAM LT
+materialization, sparse register parallelization, split-eq/Gruen register cycle
+rounds, reusable sparse bind buffers, and sparse read-selector optimizations,
+the standard three-iteration gate passes the 1.2x target:
+`perf/bolt-stage4-last.json` records core at `23.236ms`, Bolt at `24.522ms`,
+and `ratio_vs_core ~= 1.06`.
+
+Stage 5 now has protocol/lowering/generated Rust rails for instruction read
+RAF, RAM RA claim reduction, and register value evaluation. The focused
+`muldiv` equivalence gate runs real Bolt-produced Stage 5 prover output using
+full-field opening inputs derived from Bolt Stage 2/4 artifacts, checks kernel
+and generated verifier acceptance, compares the Stage 5 opening inputs and
+observable proof artifacts against `jolt-core`, verifies transcript-state
+parity through Stage 5, and covers representative generated verifier and
+monolithic tamper rejection for Stage 5 sumcheck coefficients, output evals,
+and points. The `bolt-stage` selector supports Stage 5 as a correctness-gated
+perf run, and the Stage 5 `sha2-chain` perf gate is green. After grouping
+duplicate instruction lookup keys and moving instruction-read table evaluation
+onto the same prefix/suffix address-phase path used by core, adding full-field
+small-scalar accumulation for suffix buckets, flattening RAF Q bucket
+materialization, hoisting RAF shift scaling, avoiding Rayon overhead on late
+address binds, and avoiding intermediate read-table message allocation, the
+latest permissive-timeout three-iteration run in
+`perf/bolt-stage5-last.json` records core at `100.891ms`, Bolt at `98.196ms`,
+and `ratio_vs_core ~= 0.97`.
+
+Stage 6 has the first compiler-owned IR/lowering slice for the six batched
+instances: bytecode read RAF, booleanity, hamming booleanity, RAM RA
+virtualization, instruction RA virtualization, and increment claim reduction.
+The protocol MLIR models the nine pre-sumcheck transcript squeezes, the
+cross-stage full-field input-claim wiring from Stages 1 through 5, booleanity
+power placeholders, ordered sumcheck claims, output-opening obligations, and
+the shared `jolt_core_stage6_aligned` batched driver. The focused
+`commitment_ir` Stage 6 tests cover protocol schema validation, concrete
+Fiat-Shamir threading, prover/verifier party projection, compute lowering,
+prover-only kernel resolution, CPU lowering, compileable generated
+prover/verifier Rust for the Stage 6 CPU plans, and checked-in full-prefix
+generated prover/verifier crates. The generated verifier now checks Stage 6
+output claims for booleanity, hamming booleanity, RAM RA virtualization,
+instruction RA virtualization, increment claim reduction, and bytecode read RAF
+when callers provide `Stage6VerifierData` with the bytecode preprocessing table
+and entry bytecode index. The generated verifier derives the five bytecode Val
+evaluations internally at the sumcheck address point. For correctness, the
+`muldiv` equivalence gate now derives and passes that bytecode
+verifier data, produces a Bolt Stage 6 proof from real trace witnesses, compares
+its proof artifacts and transcript state against `jolt-core`, verifies it with
+the standalone generated verifier, verifies it through the monolithic generated
+verifier after the generated Stage 5 prefix, replays the `jolt-core` proof
+through the generated Stage 6 prover CPU plan's proof-carrying kernel bridge,
+runs the top-level generated prover `prove_jolt_with_programs` with real
+commitment and Stage 1-6 CPU plans, verifies that monolithic prover proof with
+the monolithic generated verifier, and rejects representative standalone and
+monolithic Stage 6 sumcheck tampering. `jolt-kernels` now includes real Stage 6
+prover executor slices for bytecode read RAF, booleanity, hamming booleanity,
+RAM RA virtualization, instruction RA virtualization, and increment claim
+reduction, plus final-claim tamper gates for those single-relation batches. The
+Stage 6 prover path now avoids the earlier full `K*T` dense bytecode read RAF
+construction by using a core-aligned address/cycle split, and booleanity uses a
+specialized sparse degree-3 evaluator. The `bolt-stage` selector supports Stage
+6 as a correctness-gated timing run; the release `muldiv` smoke passes the 1.2x
+gate, and the documented `sha2-chain` three-iteration release perf gate is
+green. `perf/bolt-stage6-last.json` records core at `2011.115ms`, Bolt at
+`1266.910ms`, and `ratio_vs_core ~= 0.63`.
+
+Stage 7 has generated prefix rails, standalone verifier coverage, and
+monolithic generated prover/verifier coverage on real `muldiv` traces. The
+equivalence gate compares Bolt-produced Stage 7 artifacts and transcript state
+against `jolt-core`, verifies the spliced core proof prefix, replays the core
+proof through the proof-carrying Stage 7 kernel bridge, runs the top-level
+generated prover through Stage 7, and rejects representative Stage 7 tampering.
+The generated crates and monolithic APIs now use the full-field transcript path
+(`Transcript<Challenge = Fr>`), matching `jolt-core` after its
+`JoltField::Challenge` aliases were changed to the full field for
+`ark_bn254::Fr` and `TrackedFr`. The `bolt-stage` selector supports Stage 7,
+and the `sha2-chain` smoke perf gate is green:
+`perf/bolt-stage7-smoke.json` records core at `2.551ms`, Bolt at `2.701ms`,
+and `ratio_vs_core ~= 1.06`.
+
+The evaluation proof is wired into the generated monolithic prover/verifier on
+that same full-field transcript path. The generated prover emits a Dory joint
+opening proof when Stage 7 opening inputs are supplied, and the generated
+verifier checks it when an `evaluation_setup` is present. The generated
+monolithic program tables now pass the compiler-owned Stage 8 evaluation plan
+into the prover and verifier helpers, so Dory batching uses the real trace's
+opening-claim shape instead of a static fixture-shaped `STAGE8_PROGRAM`. The
+`muldiv` equivalence gate covers generated Stage 8 acceptance, core acceptance
+after substituting Bolt's joint opening proof, full Stage 8 transcript parity,
+missing-proof/setup rejection, and unrelated Dory proof rejection. The
+`bolt-stage` selector has a correctness-gated `stage8` timing path. Stage 8 is
+correctness-green and perf-green after skipping zero one-hot cells during joint
+polynomial materialization and moving modular Dory hint/opening routines onto
+the same GLV vector operations used by core. `perf/bolt-stage8-smoke.json`
+records the current `muldiv` `log_t = 10` smoke with core at `152.451ms`, Bolt
+at `162.147ms`, and `ratio_vs_core ~= 1.06`. The documented `sha2-chain`
+three-iteration release gate is also green: `perf/bolt-stage8-last.json`
+records core at `796.183ms`, Bolt at `922.799ms`, and
+`ratio_vs_core ~= 1.16`.
 
 ## Stage Algorithm
 
@@ -104,7 +217,9 @@ acceptance gate; they are only unit scaffolding before real trace data is wired.
      `jolt-core`/Bolt kernels to isolate gaps.
    - Add the stage to the `bolt-stage` bench selector before claiming perf
      parity.
-   - Perf gates use at most three timing iterations for iteration speed.
+   - Perf gates use at most three timing iterations for iteration speed; the
+     selector exits nonzero when Bolt exceeds the ratio gate (`--max-ratio`,
+     default `1.2`).
    - A stage is performance-complete only when Bolt prover time for the newly
      wired stage is within 20% of the corresponding `jolt-core` stage on the
      agreed workload. Re-run correctness after any accepted optimization.

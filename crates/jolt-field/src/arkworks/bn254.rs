@@ -318,6 +318,7 @@ impl Fr {
 
 impl Field for Fr {
     type Accumulator = super::wide_accumulator::WideAccumulator;
+    type ScalarAccumulator = super::scalar_accumulator::ScalarAccumulator;
 
     const NUM_BYTES: usize = 32;
 

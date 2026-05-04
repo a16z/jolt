@@ -675,28 +675,42 @@ pub fn verify_stage3<T>(
 where
     T: Transcript<Challenge = Fr>,
 {
-    if proof.sumchecks.len() != STAGE3_PROGRAM.drivers.len() {
+    verify_stage3_with_program(&STAGE3_PROGRAM, proof, opening_inputs, transcript)
+}
+
+pub fn verify_stage3_with_program<T>(
+    program: &'static Stage3VerifierProgramPlan,
+    proof: &Stage3Proof<Fr>,
+    opening_inputs: &[Stage3OpeningInputValue<Fr>],
+    transcript: &mut T,
+) -> Result<Stage3ExecutionArtifacts<Fr>, VerifyStage3Error>
+where
+    T: Transcript<Challenge = Fr>,
+{
+    if proof.sumchecks.len() != program.drivers.len() {
         return Err(VerifyStage3Error::UnexpectedProofCount {
-            expected: STAGE3_PROGRAM.drivers.len(),
+            expected: program.drivers.len(),
             got: proof.sumchecks.len(),
         });
     }
     let mut store = Stage3ValueStore::with_opening_inputs(opening_inputs);
-    store.seed_constants();
+    store.seed_constants(program);
     let mut artifacts = Stage3ExecutionArtifacts::default();
-    for step in STAGE3_PROGRAM.steps {
+    for step in program.steps {
         match step.kind {
             "transcript_squeeze" => {
-                let squeeze = find_squeeze(step.symbol).ok_or(VerifyStage3Error::MissingValue {
-                    symbol: step.symbol,
-                })?;
-                verify_stage3_squeeze(squeeze, &mut store, transcript, &mut artifacts)?;
+                let squeeze =
+                    find_squeeze(program, step.symbol).ok_or(VerifyStage3Error::MissingValue {
+                        symbol: step.symbol,
+                    })?;
+                verify_stage3_squeeze(program, squeeze, &mut store, transcript, &mut artifacts)?;
             }
             "sumcheck_driver" => {
-                let driver = find_driver(step.symbol).ok_or(VerifyStage3Error::MissingProof {
-                    driver: step.symbol,
-                })?;
-                verify_stage3_driver(driver, proof, &mut store, transcript, &mut artifacts)?;
+                let driver =
+                    find_driver(program, step.symbol).ok_or(VerifyStage3Error::MissingProof {
+                        driver: step.symbol,
+                    })?;
+                verify_stage3_driver(program, driver, proof, &mut store, transcript, &mut artifacts)?;
             }
             _ => {
                 return Err(VerifyStage3Error::InvalidProof {
@@ -708,7 +722,7 @@ where
     }
     artifacts
         .opening_batches
-        .extend(STAGE3_PROGRAM.opening_batches.iter());
+        .extend(program.opening_batches.iter());
     Ok(artifacts)
 }
 
@@ -717,6 +731,7 @@ pub fn stage3_verifier_program() -> &'static Stage3VerifierProgramPlan {
 }
 
 fn verify_stage3_squeeze<T>(
+    program: &'static Stage3VerifierProgramPlan,
     squeeze: &'static Stage3TranscriptSqueezePlan,
     store: &mut Stage3ValueStore<Fr>,
     transcript: &mut T,
@@ -726,7 +741,7 @@ where
     T: Transcript<Challenge = Fr>,
 {
     let values = transcript.challenge_vector(squeeze.count);
-    store.observe_challenge_vector(squeeze, &values)?;
+    store.observe_challenge_vector(program, squeeze, &values)?;
     artifacts.challenge_vectors.push(Stage3ChallengeVector {
         symbol: squeeze.symbol,
         values,
@@ -735,6 +750,7 @@ where
 }
 
 fn verify_stage3_driver<T>(
+    program: &'static Stage3VerifierProgramPlan,
     driver: &'static Stage3SumcheckDriverPlan,
     proof: &Stage3Proof<Fr>,
     store: &mut Stage3ValueStore<Fr>,
@@ -751,7 +767,7 @@ where
             driver: driver.symbol,
         })?;
     let output = match driver.relation {
-        "jolt.stage3.batched" => verify_batched_stage3(driver, proof, store, transcript)?,
+        "jolt.stage3.batched" => verify_batched_stage3(program, driver, proof, store, transcript)?,
         relation => return Err(VerifyStage3Error::UnsupportedRelation { relation }),
     };
     artifacts.sumchecks.push(output);
@@ -759,6 +775,7 @@ where
 }
 
 fn verify_batched_stage3<T>(
+    program: &'static Stage3VerifierProgramPlan,
     driver: &'static Stage3SumcheckDriverPlan,
     proof: &Stage3SumcheckOutput<Fr>,
     store: &mut Stage3ValueStore<Fr>,
@@ -773,9 +790,9 @@ where
             reason: "driver symbol mismatch",
         });
     }
-    let batch = find_batch(driver.batch)?;
-    let claims = batch_claims(batch)?;
-    let input_claims = store.batch_claim_values(batch)?;
+    let batch = find_batch(program, driver.batch)?;
+    let claims = batch_claims(program, batch)?;
+    let input_claims = store.batch_claim_values(program, batch)?;
     for claim in &input_claims {
         append_labeled_scalar(transcript, batch.claim_label, claim);
     }
@@ -806,8 +823,14 @@ where
             reason: "batched point mismatch",
         });
     }
-    let expected =
-        expected_batched_output_claim(driver, &*store, &proof.evals, &output.point, &batching_coeffs)?;
+    let expected = expected_batched_output_claim(
+        program,
+        driver,
+        &*store,
+        &proof.evals,
+        &output.point,
+        &batching_coeffs,
+    )?;
     if output.value != expected {
         return Err(VerifyStage3Error::InvalidProof {
             driver: driver.symbol,
@@ -820,8 +843,8 @@ where
         evals: proof.evals.clone(),
         proof: proof.proof.clone(),
     };
-    store.observe_sumcheck_output(&verified)?;
-    append_opening_claims(store, transcript, &verified.evals)?;
+    store.observe_sumcheck_output(program, &verified)?;
+    append_opening_claims(program, store, transcript, &verified.evals)?;
     Ok(verified)
 }
 
@@ -835,14 +858,15 @@ impl<F: Field> Stage3ValueStore<F> {
         store
     }
 
-    fn seed_constants(&mut self) {
-        for constant in STAGE3_PROGRAM.field_constants {
+    fn seed_constants(&mut self, program: &'static Stage3VerifierProgramPlan) {
+        for constant in program.field_constants {
             self.insert_scalar(constant.symbol, F::from_u64(constant.value as u64));
         }
     }
 
     fn observe_challenge_vector(
         &mut self,
+        program: &'static Stage3VerifierProgramPlan,
         plan: &'static Stage3TranscriptSqueezePlan,
         values: &[F],
     ) -> Result<(), VerifyStage3Error> {
@@ -857,16 +881,17 @@ impl<F: Field> Stage3ValueStore<F> {
             }
             self.insert_scalar(plan.symbol, values[0]);
         }
-        self.evaluate_available_field_exprs()?;
+        self.evaluate_available_field_exprs(program)?;
         Ok(())
     }
 
     fn observe_sumcheck_output(
         &mut self,
+        program: &'static Stage3VerifierProgramPlan,
         output: &Stage3SumcheckOutput<F>,
     ) -> Result<(), VerifyStage3Error> {
         self.insert_point(output.driver, output.point.clone());
-        for instance in STAGE3_PROGRAM
+        for instance in program
             .instance_results
             .iter()
             .filter(|instance| instance.source == output.driver)
@@ -893,7 +918,7 @@ impl<F: Field> Stage3ValueStore<F> {
             }
             self.insert_point(instance.symbol, point);
         }
-        for eval in STAGE3_PROGRAM
+        for eval in program
             .evals
             .iter()
             .filter(|eval| eval.source == output.driver)
@@ -910,38 +935,46 @@ impl<F: Field> Stage3ValueStore<F> {
             self.insert_scalar(eval.symbol, value);
             self.insert_scalar(eval.name, value);
         }
-        self.evaluate_available_points()?;
-        self.evaluate_available_field_exprs()?;
-        self.verify_opening_equalities()?;
+        self.evaluate_available_points(program)?;
+        self.evaluate_available_field_exprs(program)?;
+        self.verify_opening_equalities(program)?;
         Ok(())
     }
 
-    fn claim_value(&mut self, claim: &Stage3SumcheckClaimPlan) -> Result<F, VerifyStage3Error> {
-        self.evaluate_available_field_exprs()?;
+    fn claim_value(
+        &mut self,
+        program: &'static Stage3VerifierProgramPlan,
+        claim: &Stage3SumcheckClaimPlan,
+    ) -> Result<F, VerifyStage3Error> {
+        self.evaluate_available_field_exprs(program)?;
         self.scalar(claim.claim_value)
     }
 
     fn batch_claim_values(
         &mut self,
+        program: &'static Stage3VerifierProgramPlan,
         batch: &Stage3SumcheckBatchPlan,
     ) -> Result<Vec<F>, VerifyStage3Error> {
         batch
             .claim_operands
             .iter()
             .map(|symbol| {
-                let claim = find_claim(symbol).ok_or(VerifyStage3Error::MissingClaim {
+                let claim = find_claim(program, symbol).ok_or(VerifyStage3Error::MissingClaim {
                     batch: batch.symbol,
                     claim: symbol,
                 })?;
-                self.claim_value(claim)
+                self.claim_value(program, claim)
             })
             .collect()
     }
 
-    fn evaluate_available_points(&mut self) -> Result<(), VerifyStage3Error> {
+    fn evaluate_available_points(
+        &mut self,
+        program: &'static Stage3VerifierProgramPlan,
+    ) -> Result<(), VerifyStage3Error> {
         loop {
             let mut progress = 0usize;
-            for slice in STAGE3_PROGRAM.point_slices {
+            for slice in program.point_slices {
                 if self.try_point(slice.symbol).is_some() {
                     continue;
                 }
@@ -958,7 +991,7 @@ impl<F: Field> Stage3ValueStore<F> {
                 self.insert_point(slice.symbol, point);
                 progress += 1;
             }
-            for concat in STAGE3_PROGRAM.point_concats {
+            for concat in program.point_concats {
                 if self.try_point(concat.symbol).is_some() {
                     continue;
                 }
@@ -979,10 +1012,13 @@ impl<F: Field> Stage3ValueStore<F> {
         }
     }
 
-    fn evaluate_available_field_exprs(&mut self) -> Result<(), VerifyStage3Error> {
+    fn evaluate_available_field_exprs(
+        &mut self,
+        program: &'static Stage3VerifierProgramPlan,
+    ) -> Result<(), VerifyStage3Error> {
         loop {
             let mut progress = 0usize;
-            for expr in STAGE3_PROGRAM.field_exprs {
+            for expr in program.field_exprs {
                 if self.try_scalar(expr.symbol).is_some() {
                     continue;
                 }
@@ -996,8 +1032,11 @@ impl<F: Field> Stage3ValueStore<F> {
         }
     }
 
-    fn verify_opening_equalities(&self) -> Result<(), VerifyStage3Error> {
-        for equality in STAGE3_PROGRAM.opening_equalities {
+    fn verify_opening_equalities(
+        &self,
+        program: &'static Stage3VerifierProgramPlan,
+    ) -> Result<(), VerifyStage3Error> {
+        for equality in program.opening_equalities {
             match equality.mode {
                 "point_and_eval" => {
                     if self.point(equality.lhs)? != self.point(equality.rhs)?
@@ -1118,17 +1157,18 @@ fn evaluate_stage3_field_expr<F: Field>(
 }
 
 fn expected_batched_output_claim(
+    program: &'static Stage3VerifierProgramPlan,
     driver: &'static Stage3SumcheckDriverPlan,
     store: &Stage3ValueStore<Fr>,
     evals: &[Stage3NamedEval<Fr>],
     point: &[Fr],
     batching_coeffs: &[Fr],
 ) -> Result<Fr, VerifyStage3Error> {
-    let batch = find_batch(driver.batch)?;
-    let claims = batch_claims(batch)?;
+    let batch = find_batch(program, driver.batch)?;
+    let claims = batch_claims(program, batch)?;
     let mut expected = Fr::from_u64(0);
     for (claim, coefficient) in claims.iter().zip(batching_coeffs) {
-        let instance = STAGE3_PROGRAM
+        let instance = program
             .instance_results
             .iter()
             .find(|instance| instance.claim == claim.symbol && instance.source == driver.symbol)
@@ -1231,6 +1271,7 @@ fn expected_registers(
 }
 
 fn append_opening_claims<T>(
+    program: &'static Stage3VerifierProgramPlan,
     store: &mut Stage3ValueStore<Fr>,
     transcript: &mut T,
     evals: &[Stage3NamedEval<Fr>],
@@ -1238,14 +1279,14 @@ fn append_opening_claims<T>(
 where
     T: Transcript<Challenge = Fr>,
 {
-    if STAGE3_PROGRAM.opening_batches.is_empty() {
+    if program.opening_batches.is_empty() {
         for eval in evals {
             append_labeled_scalar(transcript, "opening_claim", &eval.value);
         }
         return Ok(());
     }
-    store.evaluate_available_points()?;
-    let mut seen = STAGE3_PROGRAM
+    store.evaluate_available_points(program)?;
+    let mut seen = program
         .opening_inputs
         .iter()
         .filter_map(|input| {
@@ -1254,9 +1295,9 @@ where
                 .map(|point| (input.claim_kind, input.oracle, point.to_vec()))
         })
         .collect::<Vec<_>>();
-    for batch in STAGE3_PROGRAM.opening_batches {
+    for batch in program.opening_batches {
         for symbol in batch.claim_operands {
-            let claim = find_opening_claim(symbol).ok_or(VerifyStage3Error::MissingClaim {
+            let claim = find_opening_claim(program, symbol).ok_or(VerifyStage3Error::MissingClaim {
                 batch: batch.symbol,
                 claim: symbol,
             })?;
@@ -1274,22 +1315,31 @@ where
     Ok(())
 }
 
-fn find_squeeze(symbol: &str) -> Option<&'static Stage3TranscriptSqueezePlan> {
-    STAGE3_PROGRAM
+fn find_squeeze(
+    program: &'static Stage3VerifierProgramPlan,
+    symbol: &str,
+) -> Option<&'static Stage3TranscriptSqueezePlan> {
+    program
         .transcript_squeezes
         .iter()
         .find(|squeeze| squeeze.symbol == symbol)
 }
 
-fn find_driver(symbol: &str) -> Option<&'static Stage3SumcheckDriverPlan> {
-    STAGE3_PROGRAM
+fn find_driver(
+    program: &'static Stage3VerifierProgramPlan,
+    symbol: &str,
+) -> Option<&'static Stage3SumcheckDriverPlan> {
+    program
         .drivers
         .iter()
         .find(|driver| driver.symbol == symbol)
 }
 
-fn find_batch(symbol: &'static str) -> Result<&'static Stage3SumcheckBatchPlan, VerifyStage3Error> {
-    STAGE3_PROGRAM
+fn find_batch(
+    program: &'static Stage3VerifierProgramPlan,
+    symbol: &'static str,
+) -> Result<&'static Stage3SumcheckBatchPlan, VerifyStage3Error> {
+    program
         .batches
         .iter()
         .find(|batch| batch.symbol == symbol)
@@ -1299,28 +1349,35 @@ fn find_batch(symbol: &'static str) -> Result<&'static Stage3SumcheckBatchPlan, 
         })
 }
 
-fn find_claim(symbol: &str) -> Option<&'static Stage3SumcheckClaimPlan> {
-    STAGE3_PROGRAM
+fn find_claim(
+    program: &'static Stage3VerifierProgramPlan,
+    symbol: &str,
+) -> Option<&'static Stage3SumcheckClaimPlan> {
+    program
         .claims
         .iter()
         .find(|claim| claim.symbol == symbol)
 }
 
-fn find_opening_claim(symbol: &str) -> Option<&'static Stage3OpeningClaimPlan> {
-    STAGE3_PROGRAM
+fn find_opening_claim(
+    program: &'static Stage3VerifierProgramPlan,
+    symbol: &str,
+) -> Option<&'static Stage3OpeningClaimPlan> {
+    program
         .opening_claims
         .iter()
         .find(|claim| claim.symbol == symbol)
 }
 
 fn batch_claims(
+    program: &'static Stage3VerifierProgramPlan,
     batch: &Stage3SumcheckBatchPlan,
 ) -> Result<Vec<&'static Stage3SumcheckClaimPlan>, VerifyStage3Error> {
     batch
         .claim_operands
         .iter()
         .map(|symbol| {
-            find_claim(symbol).ok_or(VerifyStage3Error::MissingClaim {
+            find_claim(program, symbol).ok_or(VerifyStage3Error::MissingClaim {
                 batch: batch.symbol,
                 claim: symbol,
             })

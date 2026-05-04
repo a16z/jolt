@@ -369,6 +369,15 @@ pub struct TranscriptStep {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CommitmentProverProgramPlan {
+    pub params: CommitmentParams,
+    pub oracle_plans: &'static [OraclePlan],
+    pub batch_plans: &'static [CommitmentBatchPlan],
+    pub optional_plans: &'static [OptionalCommitmentPlan],
+    pub transcript_steps: &'static [TranscriptStep],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CommitmentRecord {
     pub artifact: &'static str,
     pub oracle: &'static str,
@@ -562,6 +571,15 @@ pub struct TranscriptStep {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CommitmentVerifierProgramPlan {
+    pub params: CommitmentParams,
+    pub oracle_plans: &'static [OraclePlan],
+    pub batch_plans: &'static [CommitmentBatchPlan],
+    pub optional_plans: &'static [OptionalCommitmentPlan],
+    pub transcript_steps: &'static [TranscriptStep],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CommitmentRecord {
     pub artifact: &'static str,
     pub oracle: &'static str,
@@ -700,6 +718,20 @@ pub enum CommitmentPhaseError {
             &mut source,
             format_args!("pub const TRANSCRIPT_PLAN: &[TranscriptStep] = &[\n{steps}\n];"),
         );
+        source.push_str("\n");
+        let program_type = match self.role {
+            Role::Prover => "CommitmentProverProgramPlan",
+            Role::Verifier => "CommitmentVerifierProgramPlan",
+        };
+        source.push_str(&format!(
+            "pub const COMMITMENT_PROGRAM: {program_type} = {program_type} {{\n\
+             \x20   params: COMMITMENT_PARAMS,\n\
+             \x20   oracle_plans: ORACLE_PLANS,\n\
+             \x20   batch_plans: COMMITMENT_BATCH_PLANS,\n\
+             \x20   optional_plans: OPTIONAL_COMMITMENT_PLANS,\n\
+             \x20   transcript_steps: TRANSCRIPT_PLAN,\n\
+             }};\n"
+        ));
 
         source
     }
@@ -721,18 +753,32 @@ where
     I: CommitmentInputProvider,
     T: Transcript<Challenge = Fr>,
 {
+    prove_commitment_phase_with_program(&COMMITMENT_PROGRAM, inputs, prover_setup, transcript)
+}
+
+pub fn prove_commitment_phase_with_program<I, T>(
+    program: &'static CommitmentProverProgramPlan,
+    inputs: &mut I,
+    prover_setup: &DoryProverSetup,
+    transcript: &mut T,
+) -> Result<CommitmentArtifacts, CommitmentPhaseError>
+where
+    I: CommitmentInputProvider,
+    T: Transcript<Challenge = Fr>,
+{
     let mut artifacts = CommitmentArtifacts::default();
-    for plan in COMMITMENT_BATCH_PLANS {
-        commit_batch(inputs, prover_setup, &mut artifacts, plan)?;
+    for plan in program.batch_plans {
+        commit_batch(program, inputs, prover_setup, &mut artifacts, plan)?;
     }
-    for plan in OPTIONAL_COMMITMENT_PLANS {
-        commit_optional(inputs, prover_setup, &mut artifacts, plan)?;
+    for plan in program.optional_plans {
+        commit_optional(program, inputs, prover_setup, &mut artifacts, plan)?;
     }
-    absorb_transcript(&artifacts, transcript)?;
+    absorb_transcript(program, &artifacts, transcript)?;
     Ok(artifacts)
 }
 
 fn commit_batch<I>(
+    program: &CommitmentProverProgramPlan,
     inputs: &mut I,
     prover_setup: &DoryProverSetup,
     artifacts: &mut CommitmentArtifacts,
@@ -752,7 +798,7 @@ where
         let data = inputs
             .materialize(oracle)
             .ok_or(CommitmentPhaseError::MissingOracle { oracle })?;
-        let oracle_num_vars = oracle_num_vars(oracle, plan.num_vars);
+        let oracle_num_vars = oracle_num_vars(program, oracle, plan.num_vars);
         let data = into_padded_oracle(oracle, oracle_num_vars, data)?;
         let (commitment, hint) = commit_with_layout(&data, plan.num_vars, prover_setup)?;
         artifacts.records.push(CommitmentRecord {
@@ -768,6 +814,7 @@ where
 }
 
 fn commit_optional<I>(
+    program: &CommitmentProverProgramPlan,
     inputs: &mut I,
     prover_setup: &DoryProverSetup,
     artifacts: &mut CommitmentArtifacts,
@@ -777,10 +824,10 @@ where
     I: CommitmentInputProvider,
 {
     let Some(data) = inputs.materialize(plan.oracle) else {
-        return push_skipped_optional(artifacts, plan);
+        return push_skipped_optional(program, artifacts, plan);
     };
     if should_skip_optional(plan.skip_policy, data.as_ref()) {
-        return push_skipped_optional(artifacts, plan);
+        return push_skipped_optional(program, artifacts, plan);
     }
     let data = into_padded_oracle(plan.oracle, plan.num_vars, data)?;
     let (commitment, hint) = commit_with_layout(&data, plan.num_vars, prover_setup)?;
@@ -788,7 +835,7 @@ where
         artifact: plan.artifact,
         oracle: plan.oracle,
         label: plan.label,
-        num_vars: oracle_num_vars(plan.oracle, plan.num_vars),
+        num_vars: oracle_num_vars(program, plan.oracle, plan.num_vars),
     });
     artifacts.commitments.push(Some(commitment));
     artifacts.hints.push(OracleOpeningHint {
@@ -799,6 +846,7 @@ where
 }
 
 fn push_skipped_optional(
+    program: &CommitmentProverProgramPlan,
     artifacts: &mut CommitmentArtifacts,
     plan: &OptionalCommitmentPlan,
 ) -> Result<(), CommitmentPhaseError> {
@@ -806,7 +854,7 @@ fn push_skipped_optional(
         artifact: plan.artifact,
         oracle: plan.oracle,
         label: plan.label,
-        num_vars: oracle_num_vars(plan.oracle, plan.num_vars),
+        num_vars: oracle_num_vars(program, plan.oracle, plan.num_vars),
     });
     artifacts.commitments.push(None);
     Ok(())
@@ -836,8 +884,13 @@ fn into_padded_oracle(
     Ok(data)
 }
 
-fn oracle_num_vars(oracle: &'static str, fallback: usize) -> usize {
-    ORACLE_PLANS
+fn oracle_num_vars(
+    program: &CommitmentProverProgramPlan,
+    oracle: &'static str,
+    fallback: usize,
+) -> usize {
+    program
+        .oracle_plans
         .iter()
         .find(|plan| plan.oracle == oracle)
         .map_or(fallback, |plan| plan.num_vars)
@@ -864,13 +917,14 @@ fn target_len(num_vars: usize) -> Result<usize, CommitmentPhaseError> {
 }
 
 fn absorb_transcript<T>(
+    program: &CommitmentProverProgramPlan,
     artifacts: &CommitmentArtifacts,
     transcript: &mut T,
 ) -> Result<(), CommitmentPhaseError>
 where
     T: Transcript<Challenge = Fr>,
 {
-    for step in TRANSCRIPT_PLAN {
+    for step in program.transcript_steps {
         let mut appended = false;
         for (record, commitment) in artifacts.records.iter().zip(&artifacts.commitments) {
             if record.artifact != step.source {
@@ -901,13 +955,24 @@ where
 where
     T: Transcript<Challenge = Fr>,
 {
+    verify_commitment_phase_with_program(&COMMITMENT_PROGRAM, proof_commitments, transcript)
+}
+
+pub fn verify_commitment_phase_with_program<T>(
+    program: &'static CommitmentVerifierProgramPlan,
+    proof_commitments: &[Option<DoryCommitment>],
+    transcript: &mut T,
+) -> Result<CommitmentArtifacts, CommitmentPhaseError>
+where
+    T: Transcript<Challenge = Fr>,
+{
     let mut artifacts = CommitmentArtifacts::default();
     let mut cursor = 0usize;
-    for plan in COMMITMENT_BATCH_PLANS {
-        receive_batch(proof_commitments, &mut cursor, &mut artifacts, plan)?;
+    for plan in program.batch_plans {
+        receive_batch(program, proof_commitments, &mut cursor, &mut artifacts, plan)?;
     }
-    for plan in OPTIONAL_COMMITMENT_PLANS {
-        receive_optional(proof_commitments, &mut cursor, &mut artifacts, plan)?;
+    for plan in program.optional_plans {
+        receive_optional(program, proof_commitments, &mut cursor, &mut artifacts, plan)?;
     }
     if cursor != proof_commitments.len() {
         return Err(CommitmentPhaseError::ProofCommitmentCountMismatch {
@@ -915,11 +980,12 @@ where
             actual: proof_commitments.len(),
         });
     }
-    absorb_transcript(&artifacts, transcript)?;
+    absorb_transcript(program, &artifacts, transcript)?;
     Ok(artifacts)
 }
 
 fn receive_batch(
+    program: &'static CommitmentVerifierProgramPlan,
     proof_commitments: &[Option<DoryCommitment>],
     cursor: &mut usize,
     artifacts: &mut CommitmentArtifacts,
@@ -943,7 +1009,7 @@ fn receive_batch(
             .ok_or(CommitmentPhaseError::MissingProofCommitment { oracle })?
             .clone();
         *cursor += 1;
-        let oracle_num_vars = oracle_num_vars(oracle, plan.num_vars);
+        let oracle_num_vars = oracle_num_vars(program, oracle, plan.num_vars);
         artifacts.records.push(CommitmentRecord {
             artifact: plan.artifact,
             oracle,
@@ -956,6 +1022,7 @@ fn receive_batch(
 }
 
 fn receive_optional(
+    program: &'static CommitmentVerifierProgramPlan,
     proof_commitments: &[Option<DoryCommitment>],
     cursor: &mut usize,
     artifacts: &mut CommitmentArtifacts,
@@ -973,27 +1040,37 @@ fn receive_optional(
         artifact: plan.artifact,
         oracle: plan.oracle,
         label: plan.label,
-        num_vars: oracle_num_vars(plan.oracle, plan.num_vars),
+        num_vars: oracle_num_vars(program, plan.oracle, plan.num_vars),
     });
     artifacts.commitments.push(commitment);
     Ok(())
 }
 
-fn oracle_num_vars(oracle: &'static str, fallback: usize) -> usize {
-    ORACLE_PLANS
+pub fn commitment_verifier_program() -> &'static CommitmentVerifierProgramPlan {
+    &COMMITMENT_PROGRAM
+}
+
+fn oracle_num_vars(
+    program: &'static CommitmentVerifierProgramPlan,
+    oracle: &'static str,
+    fallback: usize,
+) -> usize {
+    program
+        .oracle_plans
         .iter()
         .find(|plan| plan.oracle == oracle)
         .map_or(fallback, |plan| plan.num_vars)
 }
 
 fn absorb_transcript<T>(
+    program: &'static CommitmentVerifierProgramPlan,
     artifacts: &CommitmentArtifacts,
     transcript: &mut T,
 ) -> Result<(), CommitmentPhaseError>
 where
     T: Transcript<Challenge = Fr>,
 {
-    for step in TRANSCRIPT_PLAN {
+    for step in program.transcript_steps {
         let mut appended = false;
         for (record, commitment) in artifacts.records.iter().zip(&artifacts.commitments) {
             if record.artifact != step.source {

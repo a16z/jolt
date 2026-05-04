@@ -103,7 +103,8 @@ fn generate_golden_fixture() {
         init_memory_state,
         1 << 16,
         e_entry,
-    );
+    )
+    .expect("build shared preprocessing");
 
     let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
     let elf_contents_opt = program.get_elf_contents();

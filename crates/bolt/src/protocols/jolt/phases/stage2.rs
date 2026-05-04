@@ -208,6 +208,20 @@ pub fn lower_stage2_to_compute<'c>(
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
             }
+            "transcript.absorb_bytes" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["label", "payload"])?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &compute,
+                    "compute.transcript_absorb_bytes",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!compute.transcript_state"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
             "transcript.squeeze" => {
                 let operands = lowered_operands(op, &value_map, 0)?;
                 let symbol = string_attr(op, "sym_name")?;
@@ -1317,7 +1331,7 @@ fn append_stage2_batched_sumcheck<'c, 'a>(
             point_arity: params.log_t,
             num_rounds: params.log_t,
             round_offset: product_offset,
-            point_order: "as_is",
+            point_order: "reverse",
             degree: PRODUCT_REMAINDER_DEGREE,
         },
         point,
@@ -1335,7 +1349,7 @@ fn append_stage2_batched_sumcheck<'c, 'a>(
             point_arity: params.log_t,
             num_rounds: params.log_t,
             round_offset: product_offset,
-            point_order: "as_is",
+            point_order: "reverse",
             degree: INSTRUCTION_CLAIM_REDUCTION_DEGREE,
         },
         point,
@@ -1353,7 +1367,7 @@ fn append_stage2_batched_sumcheck<'c, 'a>(
             point_arity: params.log_k_ram,
             num_rounds: params.log_k_ram,
             round_offset: ram_offset,
-            point_order: "as_is",
+            point_order: "reverse",
             degree: RAM_RAF_DEGREE,
         },
         point,
@@ -1371,7 +1385,7 @@ fn append_stage2_batched_sumcheck<'c, 'a>(
             point_arity: params.log_k_ram,
             num_rounds: params.log_k_ram,
             round_offset: ram_offset,
-            point_order: "as_is",
+            point_order: "reverse",
             degree: RAM_OUTPUT_DEGREE,
         },
         point,

@@ -1,6 +1,6 @@
 //! Dory PCS implementing the `jolt-openings` trait hierarchy.
 
-use dory::backends::arkworks::{ArkworksProverSetup, G1Routines, G2Routines};
+use dory::backends::arkworks::{ArkworksProverSetup, G1Routines};
 use dory::mode::Transparent;
 use dory::primitives::arithmetic::{
     DoryRoutines, Field as DoryField, Group as DoryGroup, PairingCurve,
@@ -12,6 +12,7 @@ use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError, ZkOp
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
 
+use crate::routines::{JoltG1Routines, JoltG2Routines};
 use crate::transcript::JoltToDoryTranscript;
 use crate::types::{DoryCommitment, DoryHint, DoryProof, DoryProverSetup, DoryVerifierSetup};
 
@@ -20,6 +21,7 @@ use crate::types::{DoryCommitment, DoryHint, DoryProof, DoryProverSetup, DoryVer
 
 pub(crate) type ArkFr = dory::backends::arkworks::ArkFr;
 pub(crate) type ArkG1 = dory::backends::arkworks::ArkG1;
+pub(crate) type ArkG2 = dory::backends::arkworks::ArkG2;
 pub(crate) type ArkGT = dory::backends::arkworks::ArkGT;
 type InnerBN254 = dory::backends::arkworks::BN254;
 
@@ -173,7 +175,7 @@ impl CommitmentScheme for DoryScheme {
         let mut dory_transcript = JoltToDoryTranscript::new(transcript);
 
         let (proof, _blind) =
-            dory::prove::<ArkFr, InnerBN254, G1Routines, G2Routines, _, _, Transparent>(
+            dory::prove::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _, _, Transparent>(
                 &adapter,
                 &ark_point,
                 row_commitments,
@@ -202,7 +204,7 @@ impl CommitmentScheme for DoryScheme {
         let ark_commitment = jolt_gt_to_ark(&commitment.0);
         let mut dory_transcript = JoltToDoryTranscript::new(transcript);
 
-        dory::verify::<ArkFr, InnerBN254, G1Routines, G2Routines, _>(
+        dory::verify::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _>(
             ark_commitment,
             ark_eval,
             &ark_point,
@@ -246,13 +248,17 @@ impl AdditivelyHomomorphic for DoryScheme {
             return DoryHint::default();
         }
 
-        let num_rows = hints[0].0.len();
-        let mut combined = vec![Bn254G1::default(); num_rows];
+        let num_rows = hints.iter().map(|hint| hint.0.len()).max().unwrap_or(0);
+        let mut combined = vec![Bn254G1::identity(); num_rows];
 
-        for (hint, &scalar) in hints.iter().zip(scalars.iter()) {
-            for (dst, src) in combined.iter_mut().zip(hint.0.iter()) {
-                *dst += src.scalar_mul(&scalar);
-            }
+        for (mut hint, &scalar) in hints.into_iter().zip(scalars.iter()) {
+            hint.0.resize(num_rows, Bn254G1::identity());
+            jolt_crypto::ec::bn254::glv::vector_scalar_mul_add_gamma_g1(
+                &mut hint.0,
+                scalar,
+                &combined,
+            );
+            combined = hint.0;
         }
 
         DoryHint(combined)
@@ -286,7 +292,7 @@ impl ZkOpeningScheme for DoryScheme {
         let mut dory_transcript = JoltToDoryTranscript::new(transcript);
 
         let (proof, y_blinding) =
-            dory::prove::<ArkFr, InnerBN254, G1Routines, G2Routines, _, _, dory::mode::ZK>(
+            dory::prove::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _, _, dory::mode::ZK>(
                 &adapter,
                 &ark_point,
                 row_commitments,
@@ -319,7 +325,7 @@ impl ZkOpeningScheme for DoryScheme {
         let ark_commitment = jolt_gt_to_ark(&commitment.0);
         let mut dory_transcript = JoltToDoryTranscript::new(transcript);
 
-        dory::verify::<ArkFr, InnerBN254, G1Routines, G2Routines, _>(
+        dory::verify::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _>(
             ark_commitment,
             dummy_eval,
             &ark_point,
@@ -386,7 +392,9 @@ impl<S: MultilinearPoly<Fr>> DoryPolynomial<ArkFr> for DorySourceAdapter<'_, S> 
     }
 
     fn evaluate(&self, point: &[ArkFr]) -> ArkFr {
-        let native_point: Vec<Fr> = point.iter().map(ark_to_jolt_fr).collect();
+        // Dory calls this with its little-endian point. Jolt polynomials are
+        // evaluated with the original high-to-low variable order.
+        let native_point: Vec<Fr> = point.iter().rev().map(ark_to_jolt_fr).collect();
         jolt_fr_to_ark(&self.source.evaluate(&native_point))
     }
 

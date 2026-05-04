@@ -252,6 +252,19 @@ irdl.dialect @cpu {
     irdl.operands(input: %state, artifact: %artifact)
     irdl.results(output: %state)
   }
+  irdl.operation @transcript_absorb_bytes {
+    %state = irdl.parametric @cpu::@transcript_state<>
+    %sym = irdl.any
+    %label = irdl.any
+    %payload = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "label" = %label,
+      "payload" = %payload
+    }
+    irdl.operands(input: %state)
+    irdl.results(output: %state)
+  }
   irdl.operation @transcript_squeeze {
     %state = irdl.parametric @cpu::@transcript_state<>
     %challenge = irdl.any
@@ -304,6 +317,18 @@ irdl.dialect @cpu {
       "length" = %length
     }
     irdl.operands(input: %input)
+    irdl.results(output: %output)
+  }
+  irdl.operation @point_zero {
+    %output = irdl.parametric @cpu::@point<>
+    %sym = irdl.any
+    %field = irdl.any
+    %arity = irdl.any
+    irdl.attributes {
+      "sym_name" = %sym,
+      "field" = %field,
+      "arity" = %arity
+    }
     irdl.results(output: %output)
   }
   irdl.operation @point_concat {

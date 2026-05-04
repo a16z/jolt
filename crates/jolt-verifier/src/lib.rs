@@ -3,8 +3,10 @@ pub mod stages;
 pub mod verifier;
 
 pub use verifier::{
-    verify_jolt, JoltNamedEval, JoltProof, JoltStageProof, JoltSumcheckOutput,
-    JoltVerificationArtifacts, JoltVerifierInputs, JoltVerifyError,
+    default_verifier_programs, verify_jolt, verify_jolt_evaluation_proof,
+    verify_jolt_with_programs, JoltEvaluationProof, JoltEvaluationProofError, JoltNamedEval,
+    JoltProof, JoltStageProof, JoltSumcheckOutput, JoltVerificationArtifacts, JoltVerifierInputs,
+    JoltVerifierPrograms, JoltVerifyError,
 };
 
 pub const TRANSCRIPT_LABEL: &[u8] = b"Jolt";
@@ -36,6 +38,31 @@ pub const GENERATED_STAGES: &[GeneratedStage] = &[
         name: "stage3",
         module: "stage3",
         ordinal: 3,
+    },
+    GeneratedStage {
+        name: "stage4",
+        module: "stage4",
+        ordinal: 4,
+    },
+    GeneratedStage {
+        name: "stage5",
+        module: "stage5",
+        ordinal: 5,
+    },
+    GeneratedStage {
+        name: "stage6",
+        module: "stage6",
+        ordinal: 6,
+    },
+    GeneratedStage {
+        name: "stage7",
+        module: "stage7",
+        ordinal: 7,
+    },
+    GeneratedStage {
+        name: "stage8",
+        module: "stage8",
+        ordinal: 8,
     },
 ];
 

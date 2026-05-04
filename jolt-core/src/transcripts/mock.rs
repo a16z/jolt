@@ -1,8 +1,8 @@
 //! Deterministic mock transcript for testing.
 //!
 //! All absorb operations are no-ops. Challenges come from a seeded Blake2b
-//! counter, producing the same u128 sequence as jolt-transcript's MockTranscript
-//! when given the same seed.
+//! counter, producing the same full-width field sequence as
+//! jolt-transcript's MockTranscript when given the same seed.
 
 use super::transcript::Transcript;
 use crate::field::JoltField;
@@ -14,7 +14,7 @@ type Blake2b256 = Blake2b<U32>;
 /// Mock transcript that ignores absorbs and produces deterministic challenges.
 ///
 /// Use the same seed as `jolt_transcript::MockTranscript` to get identical
-/// u128 values, enabling cross-system comparison of protocol arithmetic.
+/// field values, enabling cross-system comparison of protocol arithmetic.
 #[derive(Clone, Default)]
 pub struct MockTranscript {
     seed: [u8; 32],
@@ -31,13 +31,17 @@ impl MockTranscript {
     }
 
     fn next_u128(&mut self) -> u128 {
+        u128::from_le_bytes(self.next_bytes32()[..16].try_into().unwrap())
+    }
+
+    fn next_bytes32(&mut self) -> [u8; 32] {
         let hash: [u8; 32] = Blake2b256::new()
             .chain_update(self.seed)
             .chain_update(self.counter.to_le_bytes())
             .finalize()
             .into();
         self.counter += 1;
-        u128::from_le_bytes(hash[..16].try_into().unwrap())
+        hash
     }
 }
 
@@ -59,7 +63,7 @@ impl Transcript for MockTranscript {
     }
 
     fn challenge_scalar<F: JoltField>(&mut self) -> F {
-        F::from_u128(self.next_u128())
+        F::from_bytes(&self.next_bytes32())
     }
 
     fn challenge_scalar_128_bits<F: JoltField>(&mut self) -> F {
@@ -80,7 +84,7 @@ impl Transcript for MockTranscript {
     }
 
     fn challenge_scalar_optimized<F: JoltField>(&mut self) -> F::Challenge {
-        F::Challenge::from(self.next_u128())
+        F::Challenge::from(self.challenge_scalar::<F>())
     }
 
     fn challenge_vector_optimized<F: JoltField>(&mut self, len: usize) -> Vec<F::Challenge> {
@@ -121,7 +125,7 @@ mod tests {
 
     #[test]
     fn matches_jolt_transcript_mock_sequence() {
-        // Verify the u128 sequence matches what jolt-transcript's mock produces.
+        // Verify the u128 helper keeps producing a deterministic sequence.
         // Both use: H(H(seed) || counter.to_le_bytes())[..16] as u128 LE
         let mut t = MockTranscript::with_seed(b"cross_system_test");
         let u128_0 = t.challenge_u128();

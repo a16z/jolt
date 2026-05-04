@@ -412,23 +412,6 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
         self.bound_f_entry = Some(bound_f_entry);
         self.params.bound_f_entry = Some(bound_f_entry);
 
-        #[cfg(debug_assertions)]
-        {
-            for (s, v) in bound_val_evals.iter().enumerate() {
-                eprintln!("[core bc_raf] bound_val_evals[{s}] = {:?}", v);
-                eprintln!(
-                    "[core bc_raf] gamma^{s} * bound_val_evals[{s}] = {:?}",
-                    *v * self.params.gamma_powers[s]
-                );
-            }
-            eprintln!("[core bc_raf] bound_f_entry = {:?}", bound_f_entry);
-            eprintln!("[core bc_raf] entry_gamma = {:?}", self.params.entry_gamma);
-            eprintln!(
-                "[core bc_raf] entry_gamma * bound_f_entry = {:?}",
-                self.params.entry_gamma * bound_f_entry
-            );
-        }
-
         // Reverse r_address_prime to get the correct order (it was built low-to-high)
         let mut r_address = std::mem::take(&mut self.r_address_prime);
         r_address.reverse();

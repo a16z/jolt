@@ -6,6 +6,7 @@
 //! [`StreamingCommitment`](jolt_openings::StreamingCommitment),
 //! [`ZkOpeningScheme`](jolt_openings::ZkOpeningScheme).
 
+mod routines;
 pub mod scheme;
 pub mod streaming;
 pub mod types;

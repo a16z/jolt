@@ -149,6 +149,34 @@ where
                 };
                 current_state = Some(result.to_string());
             }
+            "transcript.absorb_bytes" => {
+                let Some(expected_input) = current_state.as_deref() else {
+                    error = Some(VerifyError::new(
+                        "transcript absorb_bytes requires a prior transcript.state result",
+                    ));
+                    break;
+                };
+                let Ok(input) = op.operand(0) else {
+                    error = Some(VerifyError::new(
+                        "transcript.absorb_bytes requires transcript-state operand 0",
+                    ));
+                    break;
+                };
+                let input = input.to_string();
+                if input != expected_input {
+                    error = Some(VerifyError::new(format!(
+                        "transcript.absorb_bytes consumed transcript state {input}, expected {expected_input}",
+                    )));
+                    break;
+                }
+                let Ok(result) = op.result(0) else {
+                    error = Some(VerifyError::new(
+                        "transcript.absorb_bytes requires one transcript-state result",
+                    ));
+                    break;
+                };
+                current_state = Some(result.to_string());
+            }
             "transcript.squeeze" | "piop.sumcheck" | "pcs.batch_open" | "pcs.batch_verify" => {
                 let Some(expected_input) = current_state.as_deref() else {
                     error = Some(VerifyError::new(format!(

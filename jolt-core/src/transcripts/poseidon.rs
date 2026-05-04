@@ -273,10 +273,7 @@ impl Transcript for PoseidonTranscript {
     }
 
     fn challenge_scalar_optimized<JF: JoltField>(&mut self) -> JF::Challenge {
-        // Full Fr challenge via challenge_scalar, then wrap in Challenge type.
-        // Mont254BitChallenge<F> is a newtype of F → same memory layout → transmute is safe.
-        let scalar: JF = self.challenge_scalar();
-        unsafe { std::mem::transmute_copy::<JF, JF::Challenge>(&scalar) }
+        JF::Challenge::from(self.challenge_scalar::<JF>())
     }
 
     fn challenge_vector_optimized<JF: JoltField>(&mut self, len: usize) -> Vec<JF::Challenge> {
@@ -581,8 +578,8 @@ mod tests {
 
     #[test]
     fn test_challenge_optimized_arithmetic_equivalence() {
-        // Verify that challenge_scalar_optimized produces a Truncate128 type
-        // that is arithmetically equivalent to a full Fr element via transmute
+        // Verify that challenge_scalar_optimized stays arithmetically
+        // equivalent to the full Fr challenge.
         use ark_std::UniformRand;
         let mut rng = ark_std::test_rng();
         let mut transcript1 = TestTranscript::new(b"test_trivial_challenge");

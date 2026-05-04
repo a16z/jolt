@@ -3,7 +3,9 @@ pub mod prover;
 pub mod stages;
 
 pub use prover::{
-    prove_jolt, DefaultJoltTranscript, JoltProveError, JoltProverArtifacts, JoltProverInputs,
+    default_prover_programs, prove_jolt, prove_jolt_evaluation_proof, prove_jolt_with_programs,
+    DefaultJoltTranscript, JoltEvaluationProveError, JoltProveError, JoltProverArtifacts,
+    JoltProverInputs, JoltProverPrograms,
 };
 
 pub const TRANSCRIPT_LABEL: &[u8] = b"Jolt";
@@ -35,6 +37,31 @@ pub const GENERATED_STAGES: &[GeneratedStage] = &[
         name: "stage3",
         module: "stage3",
         ordinal: 3,
+    },
+    GeneratedStage {
+        name: "stage4",
+        module: "stage4",
+        ordinal: 4,
+    },
+    GeneratedStage {
+        name: "stage5",
+        module: "stage5",
+        ordinal: 5,
+    },
+    GeneratedStage {
+        name: "stage6",
+        module: "stage6",
+        ordinal: 6,
+    },
+    GeneratedStage {
+        name: "stage7",
+        module: "stage7",
+        ordinal: 7,
+    },
+    GeneratedStage {
+        name: "stage8",
+        module: "stage8",
+        ordinal: 8,
     },
 ];
 

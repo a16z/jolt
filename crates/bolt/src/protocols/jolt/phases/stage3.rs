@@ -198,6 +198,20 @@ pub fn lower_stage3_to_compute<'c>(
                 )?;
                 insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
             }
+            "transcript.absorb_bytes" => {
+                let operands = lowered_operands(op, &value_map, 0)?;
+                let symbol = string_attr(op, "sym_name")?;
+                let attrs = copy_attrs(op, &["label", "payload"])?;
+                let operation = context.append_typed_op_with_owned_attrs(
+                    &compute,
+                    "compute.transcript_absorb_bytes",
+                    Some(&symbol),
+                    &attrs,
+                    &operands,
+                    &["!compute.transcript_state"],
+                )?;
+                insert_result_mapping(&mut value_map, op, operation, 0, 0)?;
+            }
             "transcript.squeeze" => {
                 let operands = lowered_operands(op, &value_map, 0)?;
                 let symbol = string_attr(op, "sym_name")?;

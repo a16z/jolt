@@ -255,8 +255,20 @@ where
     E: Stage1KernelExecutor<Fr>,
     T: Transcript<Challenge = Fr>,
 {
+    prove_stage1_outer_with_program(&STAGE1_PROGRAM, executor, transcript)
+}
+
+pub fn prove_stage1_outer_with_program<E, T>(
+    program: &'static Stage1CpuProgramPlan,
+    executor: &mut E,
+    transcript: &mut T,
+) -> Result<Stage1ExecutionArtifacts<Fr>, Stage1KernelError>
+where
+    E: Stage1KernelExecutor<Fr>,
+    T: Transcript<Challenge = Fr>,
+{
     execute_stage1_program(
-        &STAGE1_PROGRAM,
+        program,
         Stage1ExecutionMode::Prover,
         executor,
         transcript,

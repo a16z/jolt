@@ -7,15 +7,21 @@
 use bolt::{
     assemble_jolt_generated_crates, assemble_jolt_workspace_generated_crates,
     build_commitment_protocol, build_stage1_outer_protocol, build_stage2_protocol,
-    build_stage3_protocol, commitment_cpu_program, emit_commitment_rust, emit_stage1_rust,
-    emit_stage2_rust, emit_stage3_rust, jolt_rust_artifact, lower_commitment_to_compute,
-    lower_compute_to_cpu, lower_piop_and_fiat_shamir, lower_stage1_to_compute,
-    lower_stage2_to_compute, lower_stage3_to_compute, project_prover_party, project_verifier_party,
-    resolve_compute_kernels, stage1_cpu_program, stage2_cpu_program, stage3_cpu_program,
-    validate_jolt_rust_artifact_imports, verify_compute_schema, verify_concrete_transcript,
-    verify_cpu_schema, verify_jolt_protocol_schema, verify_protocol_schema,
-    write_jolt_generated_crates, Concrete, Cpu, JoltProtocolParams, JoltProtocolStage,
-    MeliorContext, Role, RustSourceFile, TextMlir,
+    build_stage3_protocol, build_stage4_protocol, build_stage5_protocol, build_stage6_protocol,
+    build_stage7_protocol, build_stage8_protocol, commitment_cpu_program, emit_commitment_rust,
+    emit_stage1_rust, emit_stage2_rust, emit_stage3_rust, emit_stage4_rust, emit_stage5_rust,
+    emit_stage6_rust, emit_stage7_rust, emit_stage8_rust, jolt_artifact_config, jolt_rust_artifact,
+    lower_commitment_to_compute, lower_compute_to_cpu, lower_piop_and_fiat_shamir,
+    lower_stage1_to_compute, lower_stage2_to_compute, lower_stage3_to_compute,
+    lower_stage4_to_compute, lower_stage5_to_compute, lower_stage6_to_compute,
+    lower_stage7_to_compute, lower_stage8_to_compute, project_prover_party, project_verifier_party,
+    protocol_rust_artifact, resolve_compute_kernels, stage1_cpu_program, stage2_cpu_program,
+    stage3_cpu_program, stage4_cpu_program, stage5_cpu_program, stage6_cpu_program,
+    stage7_cpu_program, stage8_cpu_program, validate_jolt_rust_artifact_imports,
+    verify_compute_schema, verify_concrete_transcript, verify_cpu_schema,
+    verify_jolt_protocol_schema, verify_protocol_schema, write_jolt_generated_crates, Concrete,
+    Cpu, JoltProtocolParams, JoltProtocolStage, MeliorContext, ProtocolStage, ProtocolStageKind,
+    Role, RustSourceFile, TextMlir,
 };
 use std::fmt::Write as _;
 use std::path::Path;
@@ -96,6 +102,41 @@ fn concrete_commitment_phase_threads_transcript_state() {
     assert!(text.contains("\"transcript.absorb_optional\"(%"));
     assert!(!text.contains("in = @fs"));
     assert!(!text.contains("out = @fs"));
+}
+
+#[test]
+fn transcript_absorb_bytes_threads_and_lowers_to_cpu() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::fixture();
+    let protocol = context
+        .parse_module::<bolt::Protocol>(&transcript_absorb_bytes_protocol(&params))
+        .expect("parse absorb-bytes protocol");
+    verify_protocol_schema(&protocol).expect("absorb-bytes protocol schema is valid");
+
+    let concrete =
+        lower_piop_and_fiat_shamir(&context, &protocol).expect("lower absorb-bytes protocol");
+    verify_concrete_transcript(&concrete).expect("absorb-bytes threads transcript state");
+
+    let prover = project_prover_party(&context, &concrete).expect("project prover party");
+    // Stage4 does not have its own lowering entrypoint yet; this exercises the
+    // shared operation mapping that each stage lowering uses.
+    let compute = lower_stage3_to_compute(&context, &prover).expect("lower to compute");
+    verify_compute_schema(&compute).expect("compute schema accepts absorb-bytes");
+    assert!(compute
+        .to_text_mlir()
+        .contains("\"compute.transcript_absorb_bytes\"(%"));
+
+    let kernelized = resolve_compute_kernels(&context, &compute).expect("kernelize compute");
+    assert!(kernelized
+        .to_text_mlir()
+        .contains("\"compute.transcript_absorb_bytes\"(%"));
+
+    let cpu = lower_compute_to_cpu(&context, &kernelized).expect("lower to CPU");
+    verify_cpu_schema(&cpu).expect("CPU schema accepts absorb-bytes");
+    let cpu_text = cpu.to_text_mlir();
+    assert!(cpu_text.contains("\"cpu.transcript_absorb_bytes\"(%"));
+    assert!(cpu_text.contains("label = \"ram_val_check_gamma\""));
+    assert!(cpu_text.contains("payload = \"\""));
 }
 
 #[test]
@@ -638,6 +679,450 @@ fn jolt_stage3_lowers_to_compute_and_cpu_role_ir() {
 }
 
 #[test]
+fn jolt_stage4_protocol_defines_registers_and_ram_val_flow() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::fixture();
+    let protocol = build_stage4_protocol(&context, &params).expect("build stage4 protocol");
+    verify_protocol_schema(&protocol).expect("stage4 protocol schema is valid");
+    let concrete =
+        lower_piop_and_fiat_shamir(&context, &protocol).expect("lower stage4 to concrete");
+    verify_concrete_transcript(&concrete).expect("stage4 transcript is threaded");
+
+    let text = protocol.to_text_mlir();
+    assert!(text.contains("sym_name = \"stage4.registers_read_write.input\""));
+    assert!(text.contains("sym_name = \"stage4.ram_val_check.input\""));
+    assert!(text.contains("\"transcript.absorb_bytes\"(%"));
+    assert!(text.contains("label = \"ram_val_check_gamma\""));
+    assert!(text.contains("payload = \"\""));
+    assert!(text.contains("sym_name = \"stage4.input.initial_ram.RamValInit\""));
+    assert!(text.contains("sym_name = \"stage4.registers.rs1_claim_consistency\""));
+    assert!(text.contains("sym_name = \"stage4.registers.rs2_claim_consistency\""));
+    assert!(text.contains(
+        "ordered_claims = [@stage4.registers_read_write.input, @stage4.ram_val_check.input]"
+    ));
+    assert!(text.contains("ordered_claims = [@stage4.registers_read_write.opening.RegistersVal"));
+    assert!(text.contains("@stage4.ram_val_check.opening.RamRa"));
+    assert!(text.contains("@stage4.ram_val_check.opening.RamInc"));
+    assert!(!text.contains("kernel = @"));
+    assert!(!text.contains("\"compute."));
+    assert_or_update_fixture("tests/fixtures/stage4_protocol.mlir", &text);
+}
+
+#[test]
+fn jolt_stage4_lowers_to_compute_and_cpu_role_ir() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::fixture();
+    let protocol = build_stage4_protocol(&context, &params).expect("build stage4 protocol");
+    let concrete =
+        lower_piop_and_fiat_shamir(&context, &protocol).expect("lower stage4 to concrete");
+    let prover = project_prover_party(&context, &concrete).expect("project prover party");
+    let verifier = project_verifier_party(&context, &concrete).expect("project verifier party");
+    let prover_compute = lower_stage4_to_compute(&context, &prover).expect("lower prover stage4");
+    let verifier_compute =
+        lower_stage4_to_compute(&context, &verifier).expect("lower verifier stage4");
+    verify_compute_schema(&prover_compute).expect("prover stage4 compute schema is valid");
+    verify_compute_schema(&verifier_compute).expect("verifier stage4 compute schema is valid");
+
+    let prover_compute_text = prover_compute.to_text_mlir();
+    let verifier_compute_text = verifier_compute.to_text_mlir();
+    assert!(prover_compute_text.contains("\"compute.transcript_absorb_bytes\"(%"));
+    assert!(prover_compute_text.contains("\"compute.opening_claim_equal\"(%"));
+    assert!(prover_compute_text.contains("\"compute.field_sub\"(%"));
+    assert!(prover_compute_text.contains("\"compute.sumcheck_claim\"(%"));
+    assert!(prover_compute_text.contains("\"compute.sumcheck_driver\"(%"));
+    assert!(verifier_compute_text.contains("\"compute.transcript_absorb_bytes\"(%"));
+    assert!(verifier_compute_text.contains("\"compute.sumcheck_verify_claim\""));
+    assert!(verifier_compute_text.contains("\"compute.sumcheck_verify\""));
+    assert!(!verifier_compute_text.contains("kernel = @"));
+
+    let prover_kernel_compute =
+        resolve_compute_kernels(&context, &prover_compute).expect("resolve prover kernels");
+    let verifier_kernel_compute =
+        resolve_compute_kernels(&context, &verifier_compute).expect("resolve verifier kernels");
+    verify_compute_schema(&prover_kernel_compute)
+        .expect("prover kernelized stage4 compute schema is valid");
+    verify_compute_schema(&verifier_kernel_compute)
+        .expect("verifier kernelized stage4 compute schema is valid");
+
+    let prover_cpu =
+        lower_compute_to_cpu(&context, &prover_kernel_compute).expect("lower prover CPU");
+    let verifier_cpu =
+        lower_compute_to_cpu(&context, &verifier_kernel_compute).expect("lower verifier CPU");
+    verify_cpu_schema(&prover_cpu).expect("prover stage4 CPU schema is valid");
+    verify_cpu_schema(&verifier_cpu).expect("verifier stage4 CPU schema is valid");
+
+    let prover_kernel_text = prover_kernel_compute.to_text_mlir();
+    let verifier_kernel_text = verifier_kernel_compute.to_text_mlir();
+    let prover_cpu_text = prover_cpu.to_text_mlir();
+    let verifier_cpu_text = verifier_cpu.to_text_mlir();
+    assert!(prover_kernel_text.contains("kernel = @jolt.cpu.stage4.batched"));
+    assert!(prover_cpu_text.contains("\"cpu.transcript_absorb_bytes\"(%"));
+    assert!(prover_cpu_text.contains("kernel = @jolt.cpu.stage4.batched"));
+    assert!(verifier_cpu_text.contains("\"cpu.transcript_absorb_bytes\"(%"));
+    assert!(verifier_cpu_text.contains("\"cpu.sumcheck_verify_claim\""));
+    assert!(!verifier_kernel_text.contains("kernel = @"));
+    assert!(!verifier_cpu_text.contains("kernel = @"));
+
+    assert_or_update_fixture(
+        "tests/fixtures/stage4_prover_compute.mlir",
+        &prover_compute_text,
+    );
+    assert_or_update_fixture(
+        "tests/fixtures/stage4_verifier_compute.mlir",
+        &verifier_compute_text,
+    );
+    assert_or_update_fixture(
+        "tests/fixtures/stage4_prover_kernel_compute.mlir",
+        &prover_kernel_text,
+    );
+    assert_or_update_fixture(
+        "tests/fixtures/stage4_verifier_kernel_compute.mlir",
+        &verifier_kernel_text,
+    );
+    assert_or_update_fixture("tests/fixtures/stage4_prover_cpu.mlir", &prover_cpu_text);
+    assert_or_update_fixture(
+        "tests/fixtures/stage4_verifier_cpu.mlir",
+        &verifier_cpu_text,
+    );
+}
+
+#[test]
+fn jolt_stage5_protocol_defines_value_lookup_reduction_flow() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::fixture();
+    let protocol = build_stage5_protocol(&context, &params).expect("build stage5 protocol");
+    verify_protocol_schema(&protocol).expect("stage5 protocol schema is valid");
+    let concrete =
+        lower_piop_and_fiat_shamir(&context, &protocol).expect("lower stage5 to concrete");
+    verify_concrete_transcript(&concrete).expect("stage5 transcript is threaded");
+
+    let text = protocol.to_text_mlir();
+    assert!(text.contains("sym_name = \"stage5.instruction_read_raf.input\""));
+    assert!(text.contains("sym_name = \"stage5.ram_ra_claim_reduction.input\""));
+    assert!(text.contains("sym_name = \"stage5.registers_val_evaluation.input\""));
+    assert!(text.contains("sym_name = \"stage5.instruction_read_raf.gamma\""));
+    assert!(text.contains("sym_name = \"stage5.ram_ra_claim_reduction.gamma\""));
+    assert!(text.contains("sym_name = \"stage5.instruction.lookup_output_claim_consistency\""));
+    assert!(text.contains("round_schedule = [128, 16]"));
+    assert!(text.contains("ordered_claims = [@stage5.instruction_read_raf.input, @stage5.ram_ra_claim_reduction.input, @stage5.registers_val_evaluation.input]"));
+    assert!(text.contains("@stage5.instruction_read_raf.opening.LookupTableFlag_0"));
+    assert!(text.contains("@stage5.instruction_read_raf.opening.InstructionRa_0"));
+    assert!(text.contains("@stage5.instruction_read_raf.opening.InstructionRafFlag"));
+    assert!(text.contains("@stage5.ram_ra_claim_reduction.opening.RamRa"));
+    assert!(text.contains("@stage5.registers_val_evaluation.opening.RdInc"));
+    assert!(text.contains("@stage5.registers_val_evaluation.opening.RdWa"));
+    assert!(!text.contains("kernel = @"));
+    assert!(!text.contains("\"compute."));
+}
+
+#[test]
+fn jolt_stage5_lowers_to_compute_and_cpu_role_ir() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::fixture();
+    let protocol = build_stage5_protocol(&context, &params).expect("build stage5 protocol");
+    let concrete =
+        lower_piop_and_fiat_shamir(&context, &protocol).expect("lower stage5 to concrete");
+    let prover = project_prover_party(&context, &concrete).expect("project prover party");
+    let verifier = project_verifier_party(&context, &concrete).expect("project verifier party");
+    let prover_compute = lower_stage5_to_compute(&context, &prover).expect("lower prover stage5");
+    let verifier_compute =
+        lower_stage5_to_compute(&context, &verifier).expect("lower verifier stage5");
+    verify_compute_schema(&prover_compute).expect("prover stage5 compute schema is valid");
+    verify_compute_schema(&verifier_compute).expect("verifier stage5 compute schema is valid");
+
+    let prover_compute_text = prover_compute.to_text_mlir();
+    let verifier_compute_text = verifier_compute.to_text_mlir();
+    assert!(prover_compute_text.contains("\"compute.opening_claim_equal\"(%"));
+    assert!(prover_compute_text.contains("\"compute.field_pow\"(%"));
+    assert!(prover_compute_text.contains("\"compute.sumcheck_claim\"(%"));
+    assert!(prover_compute_text.contains("\"compute.sumcheck_driver\"(%"));
+    assert!(verifier_compute_text.contains("\"compute.sumcheck_verify_claim\""));
+    assert!(verifier_compute_text.contains("\"compute.sumcheck_verify\""));
+    assert!(!verifier_compute_text.contains("kernel = @"));
+
+    let prover_kernel_compute =
+        resolve_compute_kernels(&context, &prover_compute).expect("resolve prover kernels");
+    let verifier_kernel_compute =
+        resolve_compute_kernels(&context, &verifier_compute).expect("resolve verifier kernels");
+    verify_compute_schema(&prover_kernel_compute)
+        .expect("prover kernelized stage5 compute schema is valid");
+    verify_compute_schema(&verifier_kernel_compute)
+        .expect("verifier kernelized stage5 compute schema is valid");
+
+    let prover_cpu =
+        lower_compute_to_cpu(&context, &prover_kernel_compute).expect("lower prover CPU");
+    let verifier_cpu =
+        lower_compute_to_cpu(&context, &verifier_kernel_compute).expect("lower verifier CPU");
+    verify_cpu_schema(&prover_cpu).expect("prover stage5 CPU schema is valid");
+    verify_cpu_schema(&verifier_cpu).expect("verifier stage5 CPU schema is valid");
+
+    let prover_kernel_text = prover_kernel_compute.to_text_mlir();
+    let verifier_kernel_text = verifier_kernel_compute.to_text_mlir();
+    let prover_cpu_text = prover_cpu.to_text_mlir();
+    let verifier_cpu_text = verifier_cpu.to_text_mlir();
+    assert!(prover_kernel_text.contains("kernel = @jolt.cpu.stage5.batched"));
+    assert!(prover_cpu_text.contains("kernel = @jolt.cpu.stage5.batched"));
+    assert!(prover_cpu_text.contains("point_order = \"instruction_read_raf\""));
+    assert!(verifier_cpu_text.contains("\"cpu.sumcheck_verify_claim\""));
+    assert!(!verifier_kernel_text.contains("kernel = @"));
+    assert!(!verifier_cpu_text.contains("kernel = @"));
+}
+
+#[test]
+fn jolt_stage6_protocol_defines_bytecode_booleanity_and_virtualization_flow() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::fixture();
+    let protocol = build_stage6_protocol(&context, &params).expect("build stage6 protocol");
+    verify_protocol_schema(&protocol).expect("stage6 protocol schema is valid");
+    let concrete =
+        lower_piop_and_fiat_shamir(&context, &protocol).expect("lower stage6 to concrete");
+    verify_concrete_transcript(&concrete).expect("stage6 transcript is threaded");
+
+    let text = protocol.to_text_mlir();
+    assert!(text.contains("sym_name = \"stage6.bytecode_read_raf.input\""));
+    assert!(text.contains("sym_name = \"stage6.booleanity.input\""));
+    assert!(text.contains("sym_name = \"stage6.hamming_booleanity.input\""));
+    assert!(text.contains("sym_name = \"stage6.ram_ra_virtual.input\""));
+    assert!(text.contains("sym_name = \"stage6.instruction_ra_virtual.input\""));
+    assert!(text.contains("sym_name = \"stage6.inc_claim_reduction.input\""));
+    assert!(text.contains("sym_name = \"stage6.bytecode_read_raf.gamma\""));
+    assert!(text.contains("sym_name = \"stage6.bytecode_read_raf.stage5_gamma\""));
+    assert!(text.contains("sym_name = \"stage6.booleanity.gamma\""));
+    assert!(text.contains("sym_name = \"stage6.instruction_ra_virtual.gamma\""));
+    assert!(text.contains("sym_name = \"stage6.inc_claim_reduction.gamma\""));
+    assert!(text.contains("sym_name = \"stage6.booleanity.gamma_sq_0\""));
+    assert!(text.contains("source_claim = @stage2.ram_read_write.opening.RamInc"));
+    assert!(text.contains("source_claim = @stage4.registers_read_write.opening.RdInc"));
+    assert!(text.contains("source_claim = @stage5.registers_val_evaluation.opening.RdInc"));
+    assert!(text.contains("round_schedule = [10, 16]"));
+    assert!(text.contains("ordered_claims = [@stage6.bytecode_read_raf.input, @stage6.booleanity.input, @stage6.hamming_booleanity.input, @stage6.ram_ra_virtual.input, @stage6.instruction_ra_virtual.input, @stage6.inc_claim_reduction.input]"));
+    assert!(text.contains("@stage6.bytecode_read_raf.opening.BytecodeRa_0"));
+    assert!(text.contains("@stage6.booleanity.opening.InstructionRa_0"));
+    assert!(text.contains("@stage6.hamming_booleanity.opening.HammingWeight"));
+    assert!(text.contains("@stage6.ram_ra_virtual.opening.RamRa_0"));
+    assert!(text.contains("@stage6.instruction_ra_virtual.opening.InstructionRa_0"));
+    assert!(text.contains("@stage6.inc_claim_reduction.opening.RamInc"));
+    assert!(text.contains("@stage6.inc_claim_reduction.opening.RdInc"));
+    assert!(!text.contains("kernel = @"));
+    assert!(!text.contains("\"compute."));
+}
+
+#[test]
+fn jolt_stage6_lowers_to_compute_and_cpu_role_ir() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::fixture();
+    let protocol = build_stage6_protocol(&context, &params).expect("build stage6 protocol");
+    let concrete =
+        lower_piop_and_fiat_shamir(&context, &protocol).expect("lower stage6 to concrete");
+    let prover = project_prover_party(&context, &concrete).expect("project prover party");
+    let verifier = project_verifier_party(&context, &concrete).expect("project verifier party");
+    let prover_compute = lower_stage6_to_compute(&context, &prover).expect("lower prover stage6");
+    let verifier_compute =
+        lower_stage6_to_compute(&context, &verifier).expect("lower verifier stage6");
+    verify_compute_schema(&prover_compute).expect("prover stage6 compute schema is valid");
+    verify_compute_schema(&verifier_compute).expect("verifier stage6 compute schema is valid");
+
+    let prover_compute_text = prover_compute.to_text_mlir();
+    let verifier_compute_text = verifier_compute.to_text_mlir();
+    assert!(prover_compute_text.contains("\"compute.field_pow\"(%"));
+    assert!(prover_compute_text.contains("\"compute.field_zero\"()"));
+    assert!(prover_compute_text.contains("\"compute.sumcheck_claim\"(%"));
+    assert!(prover_compute_text.contains("\"compute.sumcheck_driver\"(%"));
+    assert!(verifier_compute_text.contains("\"compute.sumcheck_verify_claim\""));
+    assert!(verifier_compute_text.contains("\"compute.sumcheck_verify\""));
+    assert!(!verifier_compute_text.contains("kernel = @"));
+
+    let prover_kernel_compute =
+        resolve_compute_kernels(&context, &prover_compute).expect("resolve prover kernels");
+    let verifier_kernel_compute =
+        resolve_compute_kernels(&context, &verifier_compute).expect("resolve verifier kernels");
+    verify_compute_schema(&prover_kernel_compute)
+        .expect("prover kernelized stage6 compute schema is valid");
+    verify_compute_schema(&verifier_kernel_compute)
+        .expect("verifier kernelized stage6 compute schema is valid");
+
+    let prover_cpu =
+        lower_compute_to_cpu(&context, &prover_kernel_compute).expect("lower prover CPU");
+    let verifier_cpu =
+        lower_compute_to_cpu(&context, &verifier_kernel_compute).expect("lower verifier CPU");
+    verify_cpu_schema(&prover_cpu).expect("prover stage6 CPU schema is valid");
+    verify_cpu_schema(&verifier_cpu).expect("verifier stage6 CPU schema is valid");
+
+    let prover_kernel_text = prover_kernel_compute.to_text_mlir();
+    let verifier_kernel_text = verifier_kernel_compute.to_text_mlir();
+    let prover_cpu_text = prover_cpu.to_text_mlir();
+    let verifier_cpu_text = verifier_cpu.to_text_mlir();
+    assert!(prover_kernel_text.contains("kernel = @jolt.cpu.stage6.batched"));
+    assert!(prover_cpu_text.contains("kernel = @jolt.cpu.stage6.batched"));
+    assert!(prover_cpu_text.contains("point_order = \"bytecode_read_raf\""));
+    assert!(verifier_cpu_text.contains("\"cpu.sumcheck_verify_claim\""));
+    assert!(!verifier_kernel_text.contains("kernel = @"));
+    assert!(!verifier_cpu_text.contains("kernel = @"));
+}
+
+#[test]
+fn jolt_stage7_protocol_defines_hamming_weight_claim_reduction_flow() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::fixture();
+    let protocol = build_stage7_protocol(&context, &params).expect("build stage7 protocol");
+    verify_protocol_schema(&protocol).expect("stage7 protocol schema is valid");
+    let concrete =
+        lower_piop_and_fiat_shamir(&context, &protocol).expect("lower stage7 to concrete");
+    verify_concrete_transcript(&concrete).expect("stage7 transcript is threaded");
+
+    let text = protocol.to_text_mlir();
+    assert!(text.contains("sym_name = \"jolt.stage7_hamming_weight_claim_reduction_domain\""));
+    assert!(text.contains("sym_name = \"jolt.stage7.hamming_weight_claim_reduction\""));
+    assert!(text.contains("sym_name = \"jolt.stage7.batched\""));
+    assert!(text.contains("sym_name = \"stage7.hamming_weight_claim_reduction.gamma\""));
+    assert!(text.contains("sym_name = \"stage7.field.one\""));
+    assert!(text.contains("sym_name = \"stage7.hamming_weight_claim_reduction.input\""));
+    assert!(text.contains("round_schedule = [4]"));
+    assert!(text.contains("ordered_claims = [@stage7.hamming_weight_claim_reduction.input]"));
+    assert!(text.contains("source_claim = @stage6.booleanity.opening.InstructionRa_0"));
+    assert!(text.contains("source_claim = @stage6.instruction_ra_virtual.opening.InstructionRa_0"));
+    assert!(text.contains("source_claim = @stage6.bytecode_read_raf.opening.BytecodeRa_0"));
+    assert!(text.contains("source_claim = @stage6.ram_ra_virtual.opening.RamRa_0"));
+    assert!(text.contains("source_claim = @stage6.hamming_booleanity.opening.HammingWeight"));
+    assert!(text.contains("sym_name = \"stage7.hamming_weight_claim_reduction.point.cycle\""));
+    assert!(text.contains("sym_name = \"stage7.hamming_weight_claim_reduction.point\""));
+    assert!(text.contains("@stage7.hamming_weight_claim_reduction.opening.InstructionRa_0"));
+    assert!(text.contains("@stage7.hamming_weight_claim_reduction.opening.BytecodeRa_0"));
+    assert!(text.contains("@stage7.hamming_weight_claim_reduction.opening.RamRa_0"));
+    assert!(!text.contains("kernel = @"));
+    assert!(!text.contains("\"compute."));
+}
+
+#[test]
+fn jolt_stage7_lowers_to_compute_and_cpu_role_ir() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::fixture();
+    let protocol = build_stage7_protocol(&context, &params).expect("build stage7 protocol");
+    let concrete =
+        lower_piop_and_fiat_shamir(&context, &protocol).expect("lower stage7 to concrete");
+    let prover = project_prover_party(&context, &concrete).expect("project prover party");
+    let verifier = project_verifier_party(&context, &concrete).expect("project verifier party");
+    let prover_compute = lower_stage7_to_compute(&context, &prover).expect("lower prover stage7");
+    let verifier_compute =
+        lower_stage7_to_compute(&context, &verifier).expect("lower verifier stage7");
+    verify_compute_schema(&prover_compute).expect("prover stage7 compute schema is valid");
+    verify_compute_schema(&verifier_compute).expect("verifier stage7 compute schema is valid");
+
+    let prover_compute_text = prover_compute.to_text_mlir();
+    let verifier_compute_text = verifier_compute.to_text_mlir();
+    assert!(prover_compute_text.contains("\"compute.field_one\"()"));
+    assert!(prover_compute_text.contains("\"compute.field_pow\"(%"));
+    assert!(prover_compute_text.contains("\"compute.sumcheck_claim\"(%"));
+    assert!(prover_compute_text.contains("\"compute.sumcheck_driver\"(%"));
+    assert!(prover_compute_text.contains("\"compute.point_concat\"(%"));
+    assert!(verifier_compute_text.contains("\"compute.sumcheck_verify_claim\""));
+    assert!(verifier_compute_text.contains("\"compute.sumcheck_verify\""));
+    assert!(!verifier_compute_text.contains("kernel = @"));
+
+    let prover_kernel_compute =
+        resolve_compute_kernels(&context, &prover_compute).expect("resolve prover kernels");
+    let verifier_kernel_compute =
+        resolve_compute_kernels(&context, &verifier_compute).expect("resolve verifier kernels");
+    verify_compute_schema(&prover_kernel_compute)
+        .expect("prover kernelized stage7 compute schema is valid");
+    verify_compute_schema(&verifier_kernel_compute)
+        .expect("verifier kernelized stage7 compute schema is valid");
+
+    let prover_cpu =
+        lower_compute_to_cpu(&context, &prover_kernel_compute).expect("lower prover CPU");
+    let verifier_cpu =
+        lower_compute_to_cpu(&context, &verifier_kernel_compute).expect("lower verifier CPU");
+    verify_cpu_schema(&prover_cpu).expect("prover stage7 CPU schema is valid");
+    verify_cpu_schema(&verifier_cpu).expect("verifier stage7 CPU schema is valid");
+
+    let prover_kernel_text = prover_kernel_compute.to_text_mlir();
+    let verifier_kernel_text = verifier_kernel_compute.to_text_mlir();
+    let prover_cpu_text = prover_cpu.to_text_mlir();
+    let verifier_cpu_text = verifier_cpu.to_text_mlir();
+    assert!(prover_kernel_text.contains("kernel = @jolt.cpu.stage7.batched"));
+    assert!(prover_cpu_text.contains("kernel = @jolt.cpu.stage7.batched"));
+    assert!(prover_cpu_text.contains("point_order = \"reverse\""));
+    assert!(verifier_cpu_text.contains("\"cpu.sumcheck_verify_claim\""));
+    assert!(!verifier_kernel_text.contains("kernel = @"));
+    assert!(!verifier_cpu_text.contains("kernel = @"));
+}
+
+#[test]
+fn jolt_stage8_protocol_defines_evaluation_proof_flow() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::fixture();
+    let protocol = build_stage8_protocol(&context, &params).expect("build stage8 protocol");
+    verify_protocol_schema(&protocol).expect("stage8 protocol schema is valid");
+    let concrete =
+        lower_piop_and_fiat_shamir(&context, &protocol).expect("lower stage8 to concrete");
+    verify_concrete_transcript(&concrete).expect("stage8 transcript is threaded");
+
+    let text = protocol.to_text_mlir();
+    assert!(text.contains("sym_name = \"jolt.stage8\""));
+    assert!(text.contains("name = \"evaluation_proof\""));
+    assert!(text.contains("sym_name = \"stage8.evaluation.point_source\""));
+    assert!(text.contains("source_claim = @stage7.input.stage6.booleanity.InstructionRa_0"));
+    assert!(text.contains("sym_name = \"stage8.evaluation.opening.RamInc\""));
+    assert!(text.contains("source_claim = @stage6.inc_claim_reduction.eval.RamInc"));
+    assert!(text.contains("sym_name = \"stage8.evaluation.opening.InstructionRa_0\""));
+    assert!(
+        text.contains("source_claim = @stage7.hamming_weight_claim_reduction.eval.InstructionRa_0")
+    );
+    assert!(text.contains("\"pcs.opening_batch\"(%"));
+    assert!(text.contains("policy = \"jolt_stage8_joint_rlc\""));
+    assert!(text.contains("transcript_label = \"rlc_claims\""));
+    assert!(text.contains("ordered_claims = [@stage8.evaluation.opening.RamInc, @stage8.evaluation.opening.RdInc, @stage8.evaluation.opening.InstructionRa_0"));
+}
+
+#[test]
+fn jolt_stage8_lowers_to_compute_and_cpu_role_ir() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::fixture();
+    let protocol = build_stage8_protocol(&context, &params).expect("build stage8 protocol");
+    let concrete =
+        lower_piop_and_fiat_shamir(&context, &protocol).expect("lower stage8 to concrete");
+    let prover = project_prover_party(&context, &concrete).expect("project prover party");
+    let verifier = project_verifier_party(&context, &concrete).expect("project verifier party");
+    let prover_compute = lower_stage8_to_compute(&context, &prover).expect("lower prover stage8");
+    let verifier_compute =
+        lower_stage8_to_compute(&context, &verifier).expect("lower verifier stage8");
+    verify_compute_schema(&prover_compute).expect("prover stage8 compute schema is valid");
+    verify_compute_schema(&verifier_compute).expect("verifier stage8 compute schema is valid");
+
+    let prover_compute_text = prover_compute.to_text_mlir();
+    let verifier_compute_text = verifier_compute.to_text_mlir();
+    assert!(prover_compute_text.contains("\"compute.pcs_opening_claim\"(%"));
+    assert!(prover_compute_text.contains("\"compute.pcs_opening_batch\"(%"));
+    assert!(prover_compute_text.contains("\"compute.pcs_batch_open\"(%"));
+    assert!(!prover_compute_text.contains("\"compute.pcs_batch_verify\"(%"));
+    assert!(verifier_compute_text.contains("\"compute.pcs_batch_verify\"(%"));
+    assert!(!verifier_compute_text.contains("\"compute.pcs_batch_open\"(%"));
+
+    let prover_kernel_compute =
+        resolve_compute_kernels(&context, &prover_compute).expect("resolve prover kernels");
+    let verifier_kernel_compute =
+        resolve_compute_kernels(&context, &verifier_compute).expect("resolve verifier kernels");
+    verify_compute_schema(&prover_kernel_compute)
+        .expect("prover kernelized stage8 compute schema is valid");
+    verify_compute_schema(&verifier_kernel_compute)
+        .expect("verifier kernelized stage8 compute schema is valid");
+
+    let prover_cpu =
+        lower_compute_to_cpu(&context, &prover_kernel_compute).expect("lower prover CPU");
+    let verifier_cpu =
+        lower_compute_to_cpu(&context, &verifier_kernel_compute).expect("lower verifier CPU");
+    verify_cpu_schema(&prover_cpu).expect("prover stage8 CPU schema is valid");
+    verify_cpu_schema(&verifier_cpu).expect("verifier stage8 CPU schema is valid");
+
+    let prover_cpu_text = prover_cpu.to_text_mlir();
+    let verifier_cpu_text = verifier_cpu.to_text_mlir();
+    assert!(prover_cpu_text.contains("\"cpu.pcs_batch_open\"(%"));
+    assert!(verifier_cpu_text.contains("\"cpu.pcs_batch_verify\"(%"));
+    assert!(!prover_cpu_text.contains("kernel = @"));
+    assert!(!verifier_cpu_text.contains("kernel = @"));
+}
+
+#[test]
 fn stage2_rust_targets_extract_and_compile() {
     let context = MeliorContext::new();
     let params = JoltProtocolParams::fixture();
@@ -746,6 +1231,523 @@ fn stage3_rust_targets_extract_and_compile() {
 }
 
 #[test]
+fn stage4_rust_targets_extract_and_compile() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::fixture();
+    let (prover_cpu, verifier_cpu) = build_stage4_pipeline_cpu(&context, &params);
+    let prover_program = stage4_cpu_program(&prover_cpu).expect("extract prover stage4 program");
+    let verifier_program =
+        stage4_cpu_program(&verifier_cpu).expect("extract verifier stage4 program");
+
+    assert_eq!(prover_program.role, Role::Prover);
+    assert_eq!(verifier_program.role, Role::Verifier);
+    assert_eq!(prover_program.kernels.len(), 3);
+    assert!(verifier_program.kernels.is_empty());
+    assert_eq!(prover_program.steps.len(), 4);
+    assert_eq!(prover_program.transcript_squeezes.len(), 2);
+    assert_eq!(prover_program.transcript_absorb_bytes.len(), 1);
+    assert_eq!(prover_program.opening_inputs.len(), 8);
+    assert_eq!(prover_program.field_exprs.len(), 9);
+    assert!(prover_program.field_constants.is_empty());
+    assert_eq!(prover_program.opening_equalities.len(), 2);
+    assert_eq!(prover_program.claims.len(), 2);
+    assert_eq!(prover_program.drivers.len(), 1);
+    assert_eq!(prover_program.instance_results.len(), 2);
+    assert_eq!(prover_program.evals.len(), 7);
+    assert_eq!(prover_program.point_slices.len(), 2);
+    assert_eq!(prover_program.point_concats.len(), 1);
+    assert_eq!(prover_program.opening_claims.len(), 7);
+    assert_eq!(prover_program.opening_batches.len(), 1);
+    assert!(prover_program
+        .transcript_absorb_bytes
+        .iter()
+        .any(
+            |absorb| absorb.symbol == "stage4.ram_val_check.domain_separator"
+                && absorb.label == "ram_val_check_gamma"
+                && absorb.payload.is_empty()
+        ));
+    assert!(prover_program
+        .drivers
+        .iter()
+        .any(|driver| driver.kernel.as_deref() == Some("jolt.cpu.stage4.batched")));
+    assert!(verifier_program
+        .claims
+        .iter()
+        .all(|claim| claim.kernel.is_none() && claim.relation.is_some()));
+    assert!(verifier_program
+        .drivers
+        .iter()
+        .all(|driver| driver.kernel.is_none() && driver.relation.is_some()));
+
+    let prover_source = emit_stage4_rust(&prover_cpu).expect("emit stage4 prover rust");
+    let verifier_source = emit_stage4_rust(&verifier_cpu).expect("emit stage4 verifier rust");
+    assert_eq!(prover_source.filename, "prove_stage4.rs");
+    assert_eq!(verifier_source.filename, "verify_stage4.rs");
+    assert!(prover_source.source.contains("jolt_stage4_ram_val_check"));
+    assert!(prover_source
+        .source
+        .contains("Stage4TranscriptAbsorbBytesPlan"));
+    assert!(prover_source
+        .source
+        .contains("STAGE4_TRANSCRIPT_ABSORB_BYTES"));
+    assert!(prover_source.source.contains("Stage4KernelExecutor"));
+    assert!(prover_source.source.contains("execute_stage4_program"));
+    assert!(prover_source.source.contains("execute_stage4_prover"));
+    assert!(!verifier_source.source.contains("jolt_kernels"));
+    assert!(verifier_source
+        .source
+        .contains("Stage4TranscriptAbsorbBytesPlan"));
+    assert!(verifier_source
+        .source
+        .contains("relation: Some(\"jolt.stage4.batched\")"));
+    assert!(verifier_source.source.contains("Stage4VerifierProgramPlan"));
+    assert!(verifier_source.source.contains("pub fn verify_stage4"));
+    assert!(verifier_source.source.contains("LabelWithCount"));
+    assert!(verifier_source.source.contains("SumcheckVerifier::verify"));
+    assert!(verifier_source.source.contains("stage4_verifier_program"));
+    assert_or_update_fixture("tests/fixtures/prove_stage4.rs", &prover_source.source);
+    assert_or_update_fixture("tests/fixtures/verify_stage4.rs", &verifier_source.source);
+    assert_rust_source_compiles(&prover_source.filename, &prover_source.source);
+    assert_rust_source_compiles(&verifier_source.filename, &verifier_source.source);
+}
+
+#[test]
+fn stage5_rust_targets_extract_and_compile() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::fixture();
+    let (prover_cpu, verifier_cpu) = build_stage5_pipeline_cpu(&context, &params);
+    let prover_program = stage5_cpu_program(&prover_cpu).expect("extract prover stage5 program");
+    let verifier_program =
+        stage5_cpu_program(&verifier_cpu).expect("extract verifier stage5 program");
+
+    assert_eq!(prover_program.role, Role::Prover);
+    assert_eq!(verifier_program.role, Role::Verifier);
+    assert_eq!(prover_program.kernels.len(), 4);
+    assert!(verifier_program.kernels.is_empty());
+    assert_eq!(prover_program.steps.len(), 3);
+    assert_eq!(prover_program.transcript_squeezes.len(), 2);
+    assert!(prover_program.transcript_absorb_bytes.is_empty());
+    assert_eq!(prover_program.opening_inputs.len(), 8);
+    assert_eq!(prover_program.field_exprs.len(), 10);
+    assert!(prover_program.field_constants.is_empty());
+    assert_eq!(prover_program.opening_equalities.len(), 1);
+    assert_eq!(prover_program.claims.len(), 3);
+    assert_eq!(prover_program.drivers.len(), 1);
+    assert_eq!(prover_program.instance_results.len(), 3);
+    assert_eq!(
+        prover_program.evals.len(),
+        params.lookup_table_count + params.instruction_ra_virtual_d + 4
+    );
+    assert_eq!(
+        prover_program.point_slices.len(),
+        params.instruction_ra_virtual_d + 3
+    );
+    assert_eq!(
+        prover_program.point_concats.len(),
+        params.instruction_ra_virtual_d + 2
+    );
+    assert_eq!(
+        prover_program.opening_claims.len(),
+        params.lookup_table_count + params.instruction_ra_virtual_d + 4
+    );
+    assert_eq!(prover_program.opening_batches.len(), 1);
+    assert!(prover_program
+        .drivers
+        .iter()
+        .any(|driver| driver.kernel.as_deref() == Some("jolt.cpu.stage5.batched")));
+    assert!(prover_program.instance_results.iter().any(|instance| {
+        instance.symbol == "stage5.instruction_read_raf.instance"
+            && instance.point_order == "instruction_read_raf"
+    }));
+    assert!(verifier_program
+        .claims
+        .iter()
+        .all(|claim| claim.kernel.is_none() && claim.relation.is_some()));
+    assert!(verifier_program
+        .drivers
+        .iter()
+        .all(|driver| driver.kernel.is_none() && driver.relation.is_some()));
+
+    let prover_source = emit_stage5_rust(&prover_cpu).expect("emit stage5 prover rust");
+    let verifier_source = emit_stage5_rust(&verifier_cpu).expect("emit stage5 verifier rust");
+    assert_eq!(prover_source.filename, "prove_stage5.rs");
+    assert_eq!(verifier_source.filename, "verify_stage5.rs");
+    assert!(prover_source
+        .source
+        .contains("jolt_stage5_instruction_read_raf"));
+    assert!(prover_source.source.contains("Stage5KernelExecutor"));
+    assert!(prover_source.source.contains("execute_stage5_program"));
+    assert!(prover_source.source.contains("execute_stage5_prover"));
+    assert!(!verifier_source.source.contains("jolt_kernels"));
+    assert!(verifier_source.source.contains("Stage5VerifierProgramPlan"));
+    assert!(verifier_source.source.contains("pub fn verify_stage5"));
+    assert!(verifier_source
+        .source
+        .contains("relation: Some(\"jolt.stage5.batched\")"));
+    assert!(verifier_source
+        .source
+        .contains("expected_instruction_read_raf"));
+    assert!(verifier_source
+        .source
+        .contains("jolt.stage5.instruction_read_raf"));
+    assert!(verifier_source
+        .source
+        .contains("LookupTableKind::<XLEN>::all"));
+    assert!(verifier_source
+        .source
+        .contains("use jolt_lookup_tables::LookupTableKind"));
+    assert!(verifier_source
+        .source
+        .contains("expected_ram_ra_claim_reduction"));
+    assert!(verifier_source
+        .source
+        .contains("expected_registers_val_evaluation"));
+    assert!(verifier_source
+        .source
+        .contains("jolt.stage5.ram_ra_claim_reduction"));
+    assert!(verifier_source
+        .source
+        .contains("jolt.stage5.registers_val_evaluation"));
+    assert!(verifier_source.source.contains("LookupTableFlag_39"));
+    assert!(!verifier_source.source.contains("LookupTableFlag_40"));
+    assert!(verifier_source
+        .source
+        .contains("stage5.instruction_read_raf.eval.InstructionRa_7"));
+    assert!(!verifier_source
+        .source
+        .contains("stage5.instruction_read_raf.eval.InstructionRa_8"));
+    assert!(!verifier_source
+        .source
+        .contains("jolt.stage5.registers_read_write"));
+    assert!(!verifier_source.source.contains("jolt.stage5.ram_val_check"));
+    assert!(verifier_source.source.contains("SumcheckVerifier::verify"));
+    assert!(verifier_source.source.contains("stage5_verifier_program"));
+    assert_rust_source_compiles(&prover_source.filename, &prover_source.source);
+    assert_rust_source_compiles(&verifier_source.filename, &verifier_source.source);
+}
+
+#[test]
+fn stage6_rust_targets_extract_and_compile() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::fixture();
+    let (prover_cpu, verifier_cpu) = build_stage6_pipeline_cpu(&context, &params);
+    let prover_program = stage6_cpu_program(&prover_cpu).expect("extract prover stage6 program");
+    let verifier_program =
+        stage6_cpu_program(&verifier_cpu).expect("extract verifier stage6 program");
+
+    assert_eq!(prover_program.role, Role::Prover);
+    assert_eq!(verifier_program.role, Role::Verifier);
+    assert_eq!(prover_program.kernels.len(), 7);
+    assert!(verifier_program.kernels.is_empty());
+    assert_eq!(prover_program.steps.len(), 10);
+    assert_eq!(prover_program.transcript_squeezes.len(), 9);
+    assert!(prover_program.transcript_absorb_bytes.is_empty());
+    assert_eq!(prover_program.opening_inputs.len(), 90);
+    assert!(prover_program.field_exprs.len() > 150);
+    assert_eq!(prover_program.field_constants.len(), 1);
+    assert!(prover_program.opening_equalities.is_empty());
+    assert_eq!(prover_program.claims.len(), 6);
+    assert_eq!(prover_program.drivers.len(), 1);
+    assert_eq!(prover_program.instance_results.len(), 6);
+    assert_eq!(
+        prover_program.evals.len(),
+        params.bytecode_d
+            + params.instruction_d
+            + params.bytecode_d
+            + params.ram_d
+            + 1
+            + params.ram_d
+            + params.instruction_d
+            + 2
+    );
+    assert_eq!(prover_program.point_zeros.len(), 1);
+    assert_eq!(
+        prover_program.point_slices.len(),
+        params.bytecode_d + 1 + params.ram_d + params.instruction_d
+    );
+    assert_eq!(
+        prover_program.point_concats.len(),
+        params.bytecode_d + 1 + params.ram_d + params.instruction_d
+    );
+    assert_eq!(
+        prover_program.opening_claims.len(),
+        prover_program.evals.len()
+    );
+    assert_eq!(prover_program.opening_batches.len(), 1);
+    assert!(prover_program
+        .drivers
+        .iter()
+        .any(|driver| driver.kernel.as_deref() == Some("jolt.cpu.stage6.batched")));
+    assert!(prover_program.instance_results.iter().any(|instance| {
+        instance.symbol == "stage6.bytecode_read_raf.instance"
+            && instance.point_order == "bytecode_read_raf"
+    }));
+    assert!(prover_program.instance_results.iter().any(|instance| {
+        instance.symbol == "stage6.booleanity.instance"
+            && instance.point_order == "stage6_booleanity"
+    }));
+    assert!(verifier_program.opening_inputs.iter().any(|input| {
+        input.symbol == "stage6.input.stage1.LookupOutput"
+            && input.source_stage == "stage1"
+            && input.source_claim == "stage1.outer_remaining.opening.LookupOutput"
+    }));
+    assert!(verifier_program.claims.iter().any(|claim| {
+        claim.symbol == "stage6.hamming_booleanity.input"
+            && claim
+                .input_openings
+                .contains(&"stage6.input.stage1.LookupOutput".to_owned())
+    }));
+    assert!(verifier_program.claims.iter().any(|claim| {
+        claim.symbol == "stage6.booleanity.input" && claim.input_openings.is_empty()
+    }));
+    assert!(verifier_program
+        .claims
+        .iter()
+        .all(|claim| claim.kernel.is_none() && claim.relation.is_some()));
+    assert!(verifier_program
+        .drivers
+        .iter()
+        .all(|driver| driver.kernel.is_none() && driver.relation.is_some()));
+
+    let prover_source = emit_stage6_rust(&prover_cpu).expect("emit stage6 prover rust");
+    let verifier_source = emit_stage6_rust(&verifier_cpu).expect("emit stage6 verifier rust");
+    assert_eq!(prover_source.filename, "prove_stage6.rs");
+    assert_eq!(verifier_source.filename, "verify_stage6.rs");
+    assert!(prover_source
+        .source
+        .contains("jolt_stage6_bytecode_read_raf"));
+    assert!(prover_source.source.contains("Stage6KernelExecutor"));
+    assert!(prover_source.source.contains("execute_stage6_program"));
+    assert!(prover_source.source.contains("execute_stage6_prover"));
+    assert!(!verifier_source.source.contains("jolt_kernels"));
+    assert!(verifier_source.source.contains("Stage6VerifierProgramPlan"));
+    assert!(verifier_source.source.contains("pub fn verify_stage6"));
+    assert!(verifier_source
+        .source
+        .contains("relation: Some(\"jolt.stage6.batched\")"));
+    assert!(verifier_source
+        .source
+        .contains("jolt.stage6.bytecode_read_raf"));
+    assert!(verifier_source.source.contains("Stage6VerifierData"));
+    assert!(verifier_source.source.contains("Stage6BytecodeReadRafData"));
+    assert!(verifier_source.source.contains("Stage6BytecodeEntry"));
+    assert!(verifier_source
+        .source
+        .contains("expected_bytecode_read_raf"));
+    assert!(verifier_source
+        .source
+        .contains("stage6.bytecode_read_raf.data"));
+    assert!(verifier_source.source.contains("expected_booleanity"));
+    assert!(verifier_source
+        .source
+        .contains("expected_hamming_booleanity"));
+    assert!(verifier_source
+        .source
+        .contains("jolt.stage6.inc_claim_reduction"));
+    assert!(verifier_source
+        .source
+        .contains("stage6.input.stage1.LookupOutput"));
+    assert!(verifier_source
+        .source
+        .contains("stage6.input.stage2.instruction.LookupOutput"));
+    assert!(verifier_source.source.contains("expected_ram_ra_virtual"));
+    assert!(verifier_source
+        .source
+        .contains("expected_instruction_ra_virtual"));
+    assert!(verifier_source
+        .source
+        .contains("expected_inc_claim_reduction"));
+    assert!(verifier_source
+        .source
+        .contains("stage6.bytecode_read_raf.eval.BytecodeRa_0"));
+    assert!(verifier_source
+        .source
+        .contains("stage6.booleanity.eval.InstructionRa_31"));
+    assert!(verifier_source
+        .source
+        .contains("stage6.inc_claim_reduction.eval.RdInc"));
+    assert!(verifier_source.source.contains("SumcheckVerifier::verify"));
+    assert!(verifier_source.source.contains("stage6_verifier_program"));
+    assert_rust_source_compiles(&prover_source.filename, &prover_source.source);
+    assert_rust_source_compiles(&verifier_source.filename, &verifier_source.source);
+}
+
+#[test]
+fn stage7_rust_targets_extract_and_compile() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::fixture();
+    let total_ra = params.instruction_d + params.bytecode_d + params.ram_d;
+    let (prover_cpu, verifier_cpu) = build_stage7_pipeline_cpu(&context, &params);
+    let prover_program = stage7_cpu_program(&prover_cpu).expect("extract prover stage7 program");
+    let verifier_program =
+        stage7_cpu_program(&verifier_cpu).expect("extract verifier stage7 program");
+
+    assert_eq!(prover_program.role, Role::Prover);
+    assert_eq!(verifier_program.role, Role::Verifier);
+    assert_eq!(prover_program.kernels.len(), 2);
+    assert!(verifier_program.kernels.is_empty());
+    assert_eq!(prover_program.steps.len(), 2);
+    assert_eq!(prover_program.transcript_squeezes.len(), 1);
+    assert!(prover_program.transcript_absorb_bytes.is_empty());
+    assert_eq!(prover_program.opening_inputs.len(), 1 + 2 * total_ra);
+    assert_eq!(prover_program.field_constants.len(), 1);
+    assert!(prover_program.field_exprs.len() >= 3 * total_ra);
+    assert_eq!(prover_program.claims.len(), 1);
+    assert_eq!(prover_program.batches.len(), 1);
+    assert_eq!(prover_program.drivers.len(), 1);
+    assert_eq!(prover_program.instance_results.len(), 1);
+    assert_eq!(prover_program.evals.len(), total_ra);
+    assert!(prover_program.point_zeros.is_empty());
+    assert_eq!(prover_program.point_slices.len(), 1);
+    assert_eq!(prover_program.point_concats.len(), 1);
+    assert_eq!(prover_program.opening_claims.len(), total_ra);
+    assert_eq!(prover_program.opening_batches.len(), 1);
+    assert!(prover_program
+        .drivers
+        .iter()
+        .any(|driver| driver.kernel.as_deref() == Some("jolt.cpu.stage7.batched")));
+    assert!(prover_program.claims.iter().any(|claim| {
+        claim.symbol == "stage7.hamming_weight_claim_reduction.input"
+            && claim.kernel.as_deref() == Some("jolt.cpu.stage7.hamming_weight_claim_reduction")
+    }));
+    assert!(prover_program.opening_claims.iter().any(|claim| {
+        claim.symbol == "stage7.hamming_weight_claim_reduction.opening.InstructionRa_0"
+            && claim.point_source == "stage7.hamming_weight_claim_reduction.point"
+    }));
+    assert!(verifier_program
+        .claims
+        .iter()
+        .all(|claim| claim.kernel.is_none() && claim.relation.is_some()));
+    assert!(verifier_program
+        .drivers
+        .iter()
+        .all(|driver| driver.kernel.is_none() && driver.relation.is_some()));
+
+    let prover_source = emit_stage7_rust(&prover_cpu).expect("emit stage7 prover rust");
+    let verifier_source = emit_stage7_rust(&verifier_cpu).expect("emit stage7 verifier rust");
+    assert_eq!(prover_source.filename, "prove_stage7.rs");
+    assert_eq!(verifier_source.filename, "verify_stage7.rs");
+    assert!(prover_source
+        .source
+        .contains("jolt_stage7_hamming_weight_claim_reduction"));
+    assert!(prover_source.source.contains("Stage7KernelExecutor"));
+    assert!(prover_source.source.contains("execute_stage7_program"));
+    assert!(prover_source.source.contains("execute_stage7_prover"));
+    assert!(!verifier_source.source.contains("jolt_kernels"));
+    assert!(verifier_source.source.contains("Stage7VerifierProgramPlan"));
+    assert!(verifier_source.source.contains("pub fn verify_stage7"));
+    assert!(verifier_source
+        .source
+        .contains("relation: Some(\"jolt.stage7.batched\")"));
+    assert!(verifier_source
+        .source
+        .contains("jolt.stage7.hamming_weight_claim_reduction"));
+    assert!(verifier_source
+        .source
+        .contains("expected_hamming_weight_claim_reduction"));
+    assert!(verifier_source
+        .source
+        .contains("stage7.input.stage6.booleanity.InstructionRa_0"));
+    assert!(verifier_source
+        .source
+        .contains("stage7.hamming_weight_claim_reduction.eval.InstructionRa_0"));
+    assert!(verifier_source.source.contains("SumcheckVerifier::verify"));
+    assert!(verifier_source.source.contains("stage7_verifier_program"));
+    assert_rust_source_compiles(&prover_source.filename, &prover_source.source);
+    assert_rust_source_compiles(&verifier_source.filename, &verifier_source.source);
+}
+
+#[test]
+fn stage8_rust_targets_extract_and_compile() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::fixture();
+    let expected_claims = params.num_committed;
+    let (prover_cpu, verifier_cpu) = build_stage8_pipeline_cpu(&context, &params);
+    let prover_program = stage8_cpu_program(&prover_cpu).expect("extract prover stage8 program");
+    let verifier_program =
+        stage8_cpu_program(&verifier_cpu).expect("extract verifier stage8 program");
+
+    assert_eq!(prover_program.role, Role::Prover);
+    assert_eq!(verifier_program.role, Role::Verifier);
+    assert_eq!(prover_program.opening_inputs.len(), expected_claims + 1);
+    assert_eq!(prover_program.opening_claims.len(), expected_claims);
+    assert_eq!(prover_program.opening_batches.len(), 1);
+    assert_eq!(prover_program.pcs_proofs.len(), 1);
+    assert_eq!(prover_program.pcs_proofs[0].mode, "open");
+    assert_eq!(verifier_program.pcs_proofs[0].mode, "verify");
+    assert_eq!(
+        prover_program.opening_batches[0].ordered_claims,
+        prover_program.opening_batches[0].claim_operands
+    );
+    assert!(prover_program.opening_claims.iter().any(|claim| {
+        claim.symbol == "stage8.evaluation.opening.RamInc"
+            && claim.source_claim == "stage6.inc_claim_reduction.eval.RamInc"
+    }));
+    assert!(prover_program.opening_claims.iter().any(|claim| {
+        claim.symbol == "stage8.evaluation.opening.InstructionRa_0"
+            && claim.source_claim == "stage7.hamming_weight_claim_reduction.eval.InstructionRa_0"
+    }));
+
+    let prover_source = emit_stage8_rust(&prover_cpu).expect("emit stage8 prover rust");
+    let verifier_source = emit_stage8_rust(&verifier_cpu).expect("emit stage8 verifier rust");
+    assert_eq!(prover_source.filename, "prove_stage8.rs");
+    assert_eq!(verifier_source.filename, "verify_stage8.rs");
+    assert!(prover_source.source.contains("pub const STAGE8_PROGRAM"));
+    assert!(prover_source
+        .source
+        .contains("stage8.evaluation.point_source"));
+    assert!(prover_source.source.contains("jolt_stage8_joint_rlc"));
+    assert!(prover_source
+        .source
+        .contains("stage6.inc_claim_reduction.eval.RamInc"));
+    assert!(prover_source
+        .source
+        .contains("stage7.hamming_weight_claim_reduction.eval.InstructionRa_0"));
+    assert!(verifier_source.source.contains("mode: \"verify\""));
+    assert_rust_source_compiles(&prover_source.filename, &prover_source.source);
+    assert_rust_source_compiles(&verifier_source.filename, &verifier_source.source);
+}
+
+#[test]
+fn stage4_generated_artifact_crates_compile_in_isolation() {
+    let context = MeliorContext::new();
+    let params = JoltProtocolParams::fixture();
+    let (prover_cpu, verifier_cpu) = build_stage4_pipeline_cpu(&context, &params);
+    let stage = ProtocolStage::new("stage4", "stage4", 4, ProtocolStageKind::Proof);
+    let config = jolt_artifact_config();
+    let artifacts = vec![
+        protocol_rust_artifact(
+            &config,
+            stage.clone(),
+            Role::Prover,
+            emit_stage4_rust(&prover_cpu).expect("emit stage4 prover"),
+        ),
+        protocol_rust_artifact(
+            &config,
+            stage,
+            Role::Verifier,
+            emit_stage4_rust(&verifier_cpu).expect("emit stage4 verifier"),
+        ),
+    ];
+    for artifact in &artifacts {
+        validate_jolt_rust_artifact_imports(artifact).expect("stage4 import policy");
+    }
+
+    let output_root = new_temp_dir("bolt_stage4_generated_crates");
+    let dependency_root = workspace_root().join("crates");
+    let generated_crates =
+        assemble_jolt_generated_crates(artifacts, &dependency_root.display().to_string())
+            .expect("assemble stage4 crates");
+    write_jolt_generated_crates(&generated_crates, &output_root)
+        .expect("write stage4 generated crates");
+    redirect_generated_prover_to_generated_verifier(&output_root, &dependency_root);
+    for generated in &generated_crates {
+        assert_generated_crate_manifest_compiles(&output_root, &generated.crate_name);
+    }
+    let _ = std::fs::remove_dir_all(output_root);
+}
+
+#[test]
 fn generated_jolt_artifacts_have_uniform_crate_layout_and_import_rules() {
     let context = MeliorContext::new();
     let params = JoltProtocolParams::fixture();
@@ -754,6 +1756,11 @@ fn generated_jolt_artifacts_have_uniform_crate_layout_and_import_rules() {
     let (stage1_prover_cpu, stage1_verifier_cpu) = build_stage1_pipeline_cpu(&context, &params);
     let (stage2_prover_cpu, stage2_verifier_cpu) = build_stage2_pipeline_cpu(&context, &params);
     let (stage3_prover_cpu, stage3_verifier_cpu) = build_stage3_pipeline_cpu(&context, &params);
+    let (stage4_prover_cpu, stage4_verifier_cpu) = build_stage4_pipeline_cpu(&context, &params);
+    let (stage5_prover_cpu, stage5_verifier_cpu) = build_stage5_pipeline_cpu(&context, &params);
+    let (stage6_prover_cpu, stage6_verifier_cpu) = build_stage6_pipeline_cpu(&context, &params);
+    let (stage7_prover_cpu, stage7_verifier_cpu) = build_stage7_pipeline_cpu(&context, &params);
+    let (stage8_prover_cpu, stage8_verifier_cpu) = build_stage8_pipeline_cpu(&context, &params);
 
     let emitted = [
         (
@@ -796,6 +1803,56 @@ fn generated_jolt_artifacts_have_uniform_crate_layout_and_import_rules() {
             Role::Verifier,
             emit_stage3_rust(&stage3_verifier_cpu).expect("emit stage3 verifier"),
         ),
+        (
+            JoltProtocolStage::Stage4,
+            Role::Prover,
+            emit_stage4_rust(&stage4_prover_cpu).expect("emit stage4 prover"),
+        ),
+        (
+            JoltProtocolStage::Stage4,
+            Role::Verifier,
+            emit_stage4_rust(&stage4_verifier_cpu).expect("emit stage4 verifier"),
+        ),
+        (
+            JoltProtocolStage::Stage5,
+            Role::Prover,
+            emit_stage5_rust(&stage5_prover_cpu).expect("emit stage5 prover"),
+        ),
+        (
+            JoltProtocolStage::Stage5,
+            Role::Verifier,
+            emit_stage5_rust(&stage5_verifier_cpu).expect("emit stage5 verifier"),
+        ),
+        (
+            JoltProtocolStage::Stage6,
+            Role::Prover,
+            emit_stage6_rust(&stage6_prover_cpu).expect("emit stage6 prover"),
+        ),
+        (
+            JoltProtocolStage::Stage6,
+            Role::Verifier,
+            emit_stage6_rust(&stage6_verifier_cpu).expect("emit stage6 verifier"),
+        ),
+        (
+            JoltProtocolStage::Stage7,
+            Role::Prover,
+            emit_stage7_rust(&stage7_prover_cpu).expect("emit stage7 prover"),
+        ),
+        (
+            JoltProtocolStage::Stage7,
+            Role::Verifier,
+            emit_stage7_rust(&stage7_verifier_cpu).expect("emit stage7 verifier"),
+        ),
+        (
+            JoltProtocolStage::Stage8,
+            Role::Prover,
+            emit_stage8_rust(&stage8_prover_cpu).expect("emit stage8 prover"),
+        ),
+        (
+            JoltProtocolStage::Stage8,
+            Role::Verifier,
+            emit_stage8_rust(&stage8_verifier_cpu).expect("emit stage8 verifier"),
+        ),
     ];
     let artifacts = emitted
         .into_iter()
@@ -821,6 +1878,16 @@ fn generated_jolt_artifacts_have_uniform_crate_layout_and_import_rules() {
             "jolt-verifier/src/stages/stage2.rs",
             "jolt-prover/src/stages/stage3.rs",
             "jolt-verifier/src/stages/stage3.rs",
+            "jolt-prover/src/stages/stage4.rs",
+            "jolt-verifier/src/stages/stage4.rs",
+            "jolt-prover/src/stages/stage5.rs",
+            "jolt-verifier/src/stages/stage5.rs",
+            "jolt-prover/src/stages/stage6.rs",
+            "jolt-verifier/src/stages/stage6.rs",
+            "jolt-prover/src/stages/stage7.rs",
+            "jolt-verifier/src/stages/stage7.rs",
+            "jolt-prover/src/stages/stage8.rs",
+            "jolt-verifier/src/stages/stage8.rs",
         ]
     );
     assert!(artifacts
@@ -829,9 +1896,7 @@ fn generated_jolt_artifacts_have_uniform_crate_layout_and_import_rules() {
         .all(|artifact| !artifact.source.source.contains("jolt_kernels")));
     assert!(artifacts
         .iter()
-        .filter(|artifact| {
-            artifact.crate_name == "jolt-prover" && artifact.stage != JoltProtocolStage::Commitment
-        })
+        .filter(|artifact| { artifact.crate_name == "jolt-prover" && artifact.stage.is_proof() })
         .all(|artifact| artifact.source.source.contains("jolt_kernels")));
     let workspace_generated_crates = assemble_jolt_workspace_generated_crates(artifacts.clone())
         .expect("assemble workspace generated role crates");
@@ -1397,6 +2462,111 @@ fn build_stage3_pipeline_cpu<'c>(
     (prover_cpu, verifier_cpu)
 }
 
+fn build_stage4_pipeline_cpu<'c>(
+    context: &'c MeliorContext,
+    params: &JoltProtocolParams,
+) -> (bolt::BoltModule<'c, Cpu>, bolt::BoltModule<'c, Cpu>) {
+    let protocol = build_stage4_protocol(context, params).expect("build stage4 protocol");
+    let concrete = lower_piop_and_fiat_shamir(context, &protocol).expect("lower stage4 protocol");
+    let prover = project_prover_party(context, &concrete).expect("project prover party");
+    let verifier = project_verifier_party(context, &concrete).expect("project verifier party");
+    let prover_compute = lower_stage4_to_compute(context, &prover).expect("lower prover stage4");
+    let verifier_compute =
+        lower_stage4_to_compute(context, &verifier).expect("lower verifier stage4");
+    let prover_compute =
+        resolve_compute_kernels(context, &prover_compute).expect("resolve prover kernels");
+    let verifier_compute =
+        resolve_compute_kernels(context, &verifier_compute).expect("resolve verifier kernels");
+    let prover_cpu = lower_compute_to_cpu(context, &prover_compute).expect("lower prover CPU");
+    let verifier_cpu =
+        lower_compute_to_cpu(context, &verifier_compute).expect("lower verifier CPU");
+    (prover_cpu, verifier_cpu)
+}
+
+fn build_stage5_pipeline_cpu<'c>(
+    context: &'c MeliorContext,
+    params: &JoltProtocolParams,
+) -> (bolt::BoltModule<'c, Cpu>, bolt::BoltModule<'c, Cpu>) {
+    let protocol = build_stage5_protocol(context, params).expect("build stage5 protocol");
+    let concrete = lower_piop_and_fiat_shamir(context, &protocol).expect("lower stage5 protocol");
+    let prover = project_prover_party(context, &concrete).expect("project prover party");
+    let verifier = project_verifier_party(context, &concrete).expect("project verifier party");
+    let prover_compute = lower_stage5_to_compute(context, &prover).expect("lower prover stage5");
+    let verifier_compute =
+        lower_stage5_to_compute(context, &verifier).expect("lower verifier stage5");
+    let prover_compute =
+        resolve_compute_kernels(context, &prover_compute).expect("resolve prover kernels");
+    let verifier_compute =
+        resolve_compute_kernels(context, &verifier_compute).expect("resolve verifier kernels");
+    let prover_cpu = lower_compute_to_cpu(context, &prover_compute).expect("lower prover CPU");
+    let verifier_cpu =
+        lower_compute_to_cpu(context, &verifier_compute).expect("lower verifier CPU");
+    (prover_cpu, verifier_cpu)
+}
+
+fn build_stage6_pipeline_cpu<'c>(
+    context: &'c MeliorContext,
+    params: &JoltProtocolParams,
+) -> (bolt::BoltModule<'c, Cpu>, bolt::BoltModule<'c, Cpu>) {
+    let protocol = build_stage6_protocol(context, params).expect("build stage6 protocol");
+    let concrete = lower_piop_and_fiat_shamir(context, &protocol).expect("lower stage6 protocol");
+    let prover = project_prover_party(context, &concrete).expect("project prover party");
+    let verifier = project_verifier_party(context, &concrete).expect("project verifier party");
+    let prover_compute = lower_stage6_to_compute(context, &prover).expect("lower prover stage6");
+    let verifier_compute =
+        lower_stage6_to_compute(context, &verifier).expect("lower verifier stage6");
+    let prover_compute =
+        resolve_compute_kernels(context, &prover_compute).expect("resolve prover kernels");
+    let verifier_compute =
+        resolve_compute_kernels(context, &verifier_compute).expect("resolve verifier kernels");
+    let prover_cpu = lower_compute_to_cpu(context, &prover_compute).expect("lower prover CPU");
+    let verifier_cpu =
+        lower_compute_to_cpu(context, &verifier_compute).expect("lower verifier CPU");
+    (prover_cpu, verifier_cpu)
+}
+
+fn build_stage7_pipeline_cpu<'c>(
+    context: &'c MeliorContext,
+    params: &JoltProtocolParams,
+) -> (bolt::BoltModule<'c, Cpu>, bolt::BoltModule<'c, Cpu>) {
+    let protocol = build_stage7_protocol(context, params).expect("build stage7 protocol");
+    let concrete = lower_piop_and_fiat_shamir(context, &protocol).expect("lower stage7 protocol");
+    let prover = project_prover_party(context, &concrete).expect("project prover party");
+    let verifier = project_verifier_party(context, &concrete).expect("project verifier party");
+    let prover_compute = lower_stage7_to_compute(context, &prover).expect("lower prover stage7");
+    let verifier_compute =
+        lower_stage7_to_compute(context, &verifier).expect("lower verifier stage7");
+    let prover_compute =
+        resolve_compute_kernels(context, &prover_compute).expect("resolve prover kernels");
+    let verifier_compute =
+        resolve_compute_kernels(context, &verifier_compute).expect("resolve verifier kernels");
+    let prover_cpu = lower_compute_to_cpu(context, &prover_compute).expect("lower prover CPU");
+    let verifier_cpu =
+        lower_compute_to_cpu(context, &verifier_compute).expect("lower verifier CPU");
+    (prover_cpu, verifier_cpu)
+}
+
+fn build_stage8_pipeline_cpu<'c>(
+    context: &'c MeliorContext,
+    params: &JoltProtocolParams,
+) -> (bolt::BoltModule<'c, Cpu>, bolt::BoltModule<'c, Cpu>) {
+    let protocol = build_stage8_protocol(context, params).expect("build stage8 protocol");
+    let concrete = lower_piop_and_fiat_shamir(context, &protocol).expect("lower stage8 protocol");
+    let prover = project_prover_party(context, &concrete).expect("project prover party");
+    let verifier = project_verifier_party(context, &concrete).expect("project verifier party");
+    let prover_compute = lower_stage8_to_compute(context, &prover).expect("lower prover stage8");
+    let verifier_compute =
+        lower_stage8_to_compute(context, &verifier).expect("lower verifier stage8");
+    let prover_compute =
+        resolve_compute_kernels(context, &prover_compute).expect("resolve prover kernels");
+    let verifier_compute =
+        resolve_compute_kernels(context, &verifier_compute).expect("resolve verifier kernels");
+    let prover_cpu = lower_compute_to_cpu(context, &prover_compute).expect("lower prover CPU");
+    let verifier_cpu =
+        lower_compute_to_cpu(context, &verifier_compute).expect("lower verifier CPU");
+    (prover_cpu, verifier_cpu)
+}
+
 fn jolt_protocol_chain_commitment_stage1_fixture(
     context: &MeliorContext,
     params: &JoltProtocolParams,
@@ -1624,6 +2794,34 @@ module @opening.claim.equal attributes {{bolt.phase = "protocol"}} {{
     )
 }
 
+fn transcript_absorb_bytes_protocol(params: &JoltProtocolParams) -> String {
+    format!(
+        r#"
+module @transcript.absorb.bytes attributes {{bolt.phase = "protocol"}} {{
+  "field.define"() {{modulus_bits = 254 : i64, role = "scalar", sym_name = "bn254_fr"}} : () -> ()
+  "hash.function"() {{algorithm = "blake2b", sym_name = "blake2b"}} : () -> ()
+  "transcript.scheme"() {{hash = @blake2b, sym_name = "blake2b_transcript"}} : () -> ()
+  "pcs.scheme"() {{field = @bn254_fr, sym_name = "dory"}} : () -> ()
+  "protocol.params"() {{{params_attrs}, sym_name = "jolt.params"}} : () -> ()
+  "protocol.boundary"() {{roles = ["prover", "verifier"], sym_name = "transcript.absorb.bytes"}} : () -> ()
+  %0 = "transcript.state"() {{scheme = @blake2b_transcript, sym_name = "fs_after_stage3"}} : () -> !transcript.state_type
+  %1 = "transcript.absorb_bytes"(%0) {{label = "ram_val_check_gamma", payload = "", sym_name = "stage4.ram_val_check.domain_separator"}} : (!transcript.state_type) -> !transcript.state_type
+  %2:2 = "transcript.squeeze"(%1) {{count = 1 : i64, kind = "challenge_scalar", label = "ram_val_check_gamma", sym_name = "stage4.ram_val_check.gamma"}} : (!transcript.state_type) -> (!transcript.state_type, !field.scalar)
+}}
+"#,
+        params_attrs = jolt_params_attrs_source(params)
+    )
+}
+
+fn jolt_params_attrs_source(params: &JoltProtocolParams) -> String {
+    params
+        .attrs()
+        .into_iter()
+        .map(|(name, value)| format!("{name} = {value}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn explicit_sumcheck_protocol() -> &'static str {
     r#"
 module @explicit.sumcheck attributes {bolt.phase = "protocol"} {
@@ -1732,6 +2930,42 @@ fn assert_generated_role_crate_compiles(generated: &bolt::JoltGeneratedCrate) {
         String::from_utf8_lossy(&output.stderr)
     );
     let _ = std::fs::remove_dir_all(dir);
+}
+
+fn assert_generated_crate_manifest_compiles(output_root: &Path, crate_name: &str) {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
+    let output = Command::new(cargo)
+        .arg("check")
+        .arg("--manifest-path")
+        .arg(output_root.join(crate_name).join("Cargo.toml"))
+        .arg("-q")
+        .env(
+            "CARGO_TARGET_DIR",
+            output_root.join("target").join(crate_name),
+        )
+        .output()
+        .expect("run generated crate check");
+    assert!(
+        output.status.success(),
+        "generated crate `{crate_name}` did not compile\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn redirect_generated_prover_to_generated_verifier(output_root: &Path, dependency_root: &Path) {
+    let manifest_path = output_root.join("jolt-prover").join("Cargo.toml");
+    let workspace_verifier = format!(
+        "jolt-verifier = {{ path = \"{}/jolt-verifier\" }}",
+        dependency_root.display()
+    );
+    let generated_verifier = format!(
+        "jolt-verifier = {{ path = \"{}\" }}",
+        output_root.join("jolt-verifier").display()
+    );
+    let manifest = std::fs::read_to_string(&manifest_path).expect("read generated prover manifest");
+    let manifest = manifest.replace(&workspace_verifier, &generated_verifier);
+    std::fs::write(&manifest_path, manifest).expect("rewrite generated prover manifest");
 }
 
 fn assert_checked_in_generated_role_crate_sources_match(
@@ -1916,6 +3150,7 @@ ark-serialize = {{ git = "https://github.com/a16z/arkworks-algebra", branch = "d
 jolt-dory = {{ path = "{}" }}
 jolt-field = {{ path = "{}" }}
 jolt-kernels = {{ path = "{}" }}
+jolt-lookup-tables = {{ path = "{}" }}
 jolt-openings = {{ path = "{}" }}
 jolt-poly = {{ path = "{}" }}
 jolt-r1cs = {{ path = "{}" }}
@@ -1926,6 +3161,7 @@ jolt-witness = {{ path = "{}" }}
         workspace_root.join("crates/jolt-dory").display(),
         workspace_root.join("crates/jolt-field").display(),
         workspace_root.join("crates/jolt-kernels").display(),
+        workspace_root.join("crates/jolt-lookup-tables").display(),
         workspace_root.join("crates/jolt-openings").display(),
         workspace_root.join("crates/jolt-poly").display(),
         workspace_root.join("crates/jolt-r1cs").display(),

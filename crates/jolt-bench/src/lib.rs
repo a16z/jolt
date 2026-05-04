@@ -6,4 +6,5 @@ pub mod generated;
 pub mod measure;
 pub mod output;
 pub mod programs;
+#[cfg(feature = "legacy-stack-bench")]
 pub mod stacks;

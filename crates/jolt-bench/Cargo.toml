@@ -9,6 +9,12 @@ repository = "https://github.com/a16z/jolt"
 [lints]
 workspace = true
 
+[features]
+default = []
+# The older full-stack `src/main.rs` benchmark is kept out of default builds
+# while its modular-stack path is brought up to the current crate layout.
+legacy-stack-bench = []
+
 [dependencies]
 # CLI and JSON
 clap = { workspace = true }
@@ -17,6 +23,7 @@ serde = { workspace = true, default-features = false, features = [
   "std",
 ] }
 serde_json = { workspace = true, features = ["std"] }
+strum.workspace = true
 
 # Measurement
 memory-stats = { workspace = true }
@@ -40,14 +47,11 @@ jolt-inlines-sha2 = { workspace = true, features = ["host"] }
 jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
 
 # Modular stack (muldiv-only runner)
-jolt-compiler = { path = "../jolt-compiler" }
 bolt = { path = "../bolt" }
-jolt-compute = { path = "../jolt-compute" }
-jolt-cpu = { path = "../jolt-cpu" }
 jolt-dory = { path = "../jolt-dory" }
 jolt-field = { path = "../jolt-field", features = ["bn254"] }
-jolt-host = { path = "../jolt-host" }
-jolt-instructions = { path = "../jolt-instructions" }
+jolt-host = { package = "jolt-trace", path = "../jolt-trace" }
+jolt-instructions = { package = "jolt-riscv", path = "../jolt-riscv" }
 jolt-openings = { path = "../jolt-openings" }
 jolt-poly = { path = "../jolt-poly" }
 jolt-r1cs = { path = "../jolt-r1cs" }
@@ -57,8 +61,12 @@ jolt-prover = { path = "../jolt-prover" }
 jolt-verifier = { path = "../jolt-verifier" }
 jolt-profiling = { path = "../jolt-profiling" }
 jolt-witness = { path = "../jolt-witness" }
-jolt-zkvm = { path = "../jolt-zkvm" }
 num-traits = { workspace = true }
+
+[[bin]]
+name = "jolt-bench"
+path = "src/main.rs"
+required-features = ["legacy-stack-bench"]
 
 [[bin]]
 name = "bolt-stage1"
@@ -66,4 +74,4 @@ path = "src/bin/bolt_stage1.rs"
 
 [[bin]]
 name = "bolt-stage"
-path = "src/bin/bolt_stage1.rs"
+path = "src/bin/bolt_stage.rs"

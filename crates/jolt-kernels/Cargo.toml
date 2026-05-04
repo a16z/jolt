@@ -14,6 +14,7 @@ workspace = true
 
 [dependencies]
 jolt-field = { path = "../jolt-field" }
+jolt-lookup-tables = { path = "../jolt-lookup-tables" }
 jolt-poly = { path = "../jolt-poly" }
 jolt-r1cs = { path = "../jolt-r1cs" }
 jolt-sumcheck = { path = "../jolt-sumcheck" }

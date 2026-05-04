@@ -2,7 +2,7 @@
 
 use jolt_field::Fr;
 use jolt_kernels::stage2::{execute_stage2_program, Stage2CpuProgramPlan, Stage2ExecutionArtifacts, Stage2ExecutionMode, Stage2FieldConstantPlan, Stage2FieldExprPlan, Stage2KernelError, Stage2KernelExecutor, Stage2KernelPlan, Stage2OpeningBatchPlan, Stage2OpeningClaimPlan, Stage2OpeningInputPlan, Stage2Params, Stage2PointConcatPlan, Stage2PointSlicePlan, Stage2ProgramStepPlan, Stage2SumcheckBatchPlan, Stage2SumcheckClaimPlan, Stage2SumcheckDriverPlan, Stage2SumcheckEvalPlan, Stage2SumcheckInstanceResultPlan, Stage2TranscriptSqueezePlan};
-use jolt_transcript::Blake2bTranscript;
+use jolt_transcript::{Blake2bTranscript, Transcript};
 
 pub type DefaultStage2Transcript = Blake2bTranscript<Fr>;
 
@@ -374,10 +374,10 @@ pub const STAGE2_SUMCHECK_DRIVERS: &[Stage2SumcheckDriverPlan] = &[
 pub const STAGE2_SUMCHECK_INSTANCE_RESULTS: &[Stage2SumcheckInstanceResultPlan] = &[
     Stage2SumcheckInstanceResultPlan { symbol: "stage2.product_virtual.uniskip.instance", source: "stage2.product_virtual.uniskip.sumcheck", claim: "stage2.product_virtual.uniskip.input", relation: "jolt.stage2.product_virtual.uniskip", index: 0, point_arity: 1, num_rounds: 1, round_offset: 0, point_order: "as_is", degree: 6 },
     Stage2SumcheckInstanceResultPlan { symbol: "stage2.ram_read_write.instance", source: "stage2.sumcheck", claim: "stage2.ram_read_write.input", relation: "jolt.stage2.ram.read_write", index: 0, point_arity: 32, num_rounds: 32, round_offset: 0, point_order: "as_is", degree: 3 },
-    Stage2SumcheckInstanceResultPlan { symbol: "stage2.product_virtual.remainder.instance", source: "stage2.sumcheck", claim: "stage2.product_virtual.remainder.input", relation: "jolt.stage2.product_virtual.remainder", index: 1, point_arity: 16, num_rounds: 16, round_offset: 16, point_order: "as_is", degree: 3 },
-    Stage2SumcheckInstanceResultPlan { symbol: "stage2.instruction_lookup.claim_reduction.instance", source: "stage2.sumcheck", claim: "stage2.instruction_lookup.claim_reduction.input", relation: "jolt.stage2.instruction_lookup.claim_reduction", index: 2, point_arity: 16, num_rounds: 16, round_offset: 16, point_order: "as_is", degree: 2 },
-    Stage2SumcheckInstanceResultPlan { symbol: "stage2.ram_raf.instance", source: "stage2.sumcheck", claim: "stage2.ram_raf.input", relation: "jolt.stage2.ram.raf_evaluation", index: 3, point_arity: 16, num_rounds: 16, round_offset: 16, point_order: "as_is", degree: 2 },
-    Stage2SumcheckInstanceResultPlan { symbol: "stage2.ram_output.instance", source: "stage2.sumcheck", claim: "stage2.ram_output.input", relation: "jolt.stage2.ram.output_check", index: 4, point_arity: 16, num_rounds: 16, round_offset: 16, point_order: "as_is", degree: 3 },
+    Stage2SumcheckInstanceResultPlan { symbol: "stage2.product_virtual.remainder.instance", source: "stage2.sumcheck", claim: "stage2.product_virtual.remainder.input", relation: "jolt.stage2.product_virtual.remainder", index: 1, point_arity: 16, num_rounds: 16, round_offset: 16, point_order: "reverse", degree: 3 },
+    Stage2SumcheckInstanceResultPlan { symbol: "stage2.instruction_lookup.claim_reduction.instance", source: "stage2.sumcheck", claim: "stage2.instruction_lookup.claim_reduction.input", relation: "jolt.stage2.instruction_lookup.claim_reduction", index: 2, point_arity: 16, num_rounds: 16, round_offset: 16, point_order: "reverse", degree: 2 },
+    Stage2SumcheckInstanceResultPlan { symbol: "stage2.ram_raf.instance", source: "stage2.sumcheck", claim: "stage2.ram_raf.input", relation: "jolt.stage2.ram.raf_evaluation", index: 3, point_arity: 16, num_rounds: 16, round_offset: 16, point_order: "reverse", degree: 2 },
+    Stage2SumcheckInstanceResultPlan { symbol: "stage2.ram_output.instance", source: "stage2.sumcheck", claim: "stage2.ram_output.input", relation: "jolt.stage2.ram.output_check", index: 4, point_arity: 16, num_rounds: 16, round_offset: 16, point_order: "reverse", degree: 3 },
 ];
 
 pub const STAGE2_SUMCHECK_EVALS: &[Stage2SumcheckEvalPlan] = &[
@@ -500,12 +500,25 @@ pub const STAGE2_PROGRAM: Stage2CpuProgramPlan = Stage2CpuProgramPlan {
     opening_batches: STAGE2_OPENING_BATCHES,
 };
 
-pub fn execute_stage2_prover<E>(
+pub fn execute_stage2_prover<E, T>(
     executor: &mut E,
-    transcript: &mut DefaultStage2Transcript,
+    transcript: &mut T,
 ) -> Result<Stage2ExecutionArtifacts<Fr>, Stage2KernelError>
 where
     E: Stage2KernelExecutor<Fr>,
+    T: Transcript<Challenge = Fr>,
 {
-    execute_stage2_program(&STAGE2_PROGRAM, Stage2ExecutionMode::Prover, executor, transcript)
+    execute_stage2_prover_with_program(&STAGE2_PROGRAM, executor, transcript)
+}
+
+pub fn execute_stage2_prover_with_program<E, T>(
+    program: &'static Stage2CpuProgramPlan,
+    executor: &mut E,
+    transcript: &mut T,
+) -> Result<Stage2ExecutionArtifacts<Fr>, Stage2KernelError>
+where
+    E: Stage2KernelExecutor<Fr>,
+    T: Transcript<Challenge = Fr>,
+{
+    execute_stage2_program(program, Stage2ExecutionMode::Prover, executor, transcript)
 }

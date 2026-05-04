@@ -79,6 +79,32 @@ pub trait FieldAccumulator: Default + Copy + Send + Sync {
     fn reduce(self) -> Self::Field;
 }
 
+/// Accumulates products of field elements with small integer scalars.
+///
+/// This is the raw-scalar analogue of [`FieldAccumulator`]. It is useful when a
+/// hot loop repeatedly adds terms of the form `a * n`, where `n` is a `u64` or
+/// `u128` known outside the field. Implementations may defer the modular
+/// reduction across many bucketed additions.
+pub trait FieldScalarAccumulator: Default + Copy + Send + Sync {
+    /// The field type this accumulator operates over.
+    type Field: crate::Field;
+
+    /// Accumulate a field element with unit scalar.
+    fn add(&mut self, value: Self::Field);
+
+    /// Fused multiply-add with a `u64` scalar: `self += value * scalar`.
+    fn add_mul_u64(&mut self, value: Self::Field, scalar: u64);
+
+    /// Fused multiply-add with a `u128` scalar: `self += value * scalar`.
+    fn add_mul_u128(&mut self, value: Self::Field, scalar: u128);
+
+    /// Merge another accumulator's partial sum into this one.
+    fn merge(&mut self, other: Self);
+
+    /// Finalize to a field element.
+    fn reduce(self) -> Self::Field;
+}
+
 /// Naive accumulator using standard field arithmetic.
 ///
 /// Every [`fmadd`](FieldAccumulator::fmadd) performs a full modular multiply
@@ -99,6 +125,46 @@ impl<F: Field> FieldAccumulator for NaiveAccumulator<F> {
     #[inline]
     fn fmadd(&mut self, a: F, b: F) {
         self.0 += a * b;
+    }
+
+    #[inline]
+    fn merge(&mut self, other: Self) {
+        self.0 += other.0;
+    }
+
+    #[inline]
+    fn reduce(self) -> F {
+        self.0
+    }
+}
+
+/// Naive raw-scalar accumulator using ordinary field arithmetic.
+#[derive(Clone, Copy)]
+pub struct NaiveScalarAccumulator<F: Field>(F);
+
+impl<F: Field> Default for NaiveScalarAccumulator<F> {
+    #[inline]
+    fn default() -> Self {
+        Self(F::zero())
+    }
+}
+
+impl<F: Field> FieldScalarAccumulator for NaiveScalarAccumulator<F> {
+    type Field = F;
+
+    #[inline]
+    fn add(&mut self, value: F) {
+        self.0 += value;
+    }
+
+    #[inline]
+    fn add_mul_u64(&mut self, value: F, scalar: u64) {
+        self.0 += value.mul_u64(scalar);
+    }
+
+    #[inline]
+    fn add_mul_u128(&mut self, value: F, scalar: u128) {
+        self.0 += value.mul_u128(scalar);
     }
 
     #[inline]
