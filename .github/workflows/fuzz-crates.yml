@@ -37,7 +37,9 @@ jobs:
         with:
           toolchain: nightly
       - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --locked
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
       - name: Fuzz all targets
         working-directory: crates/${{ matrix.crate }}
         run: |
