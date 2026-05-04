@@ -1,5 +1,5 @@
 use jolt_field::arkworks::bn254::Fr;
-use jolt_field::Field;
+use jolt_field::{MulPrimitiveInt, RandomSampling};
 
 use crate::objective::{Objective, OptimizationObjective, PerformanceObjective};
 

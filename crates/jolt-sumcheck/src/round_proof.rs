@@ -11,6 +11,7 @@ use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
 use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
 
 use crate::error::SumcheckError;
+use crate::scalar::SumcheckScalar;
 
 /// Per-round proof operations used by the sumcheck verifier.
 ///
@@ -19,7 +20,7 @@ use crate::error::SumcheckError;
 /// transcript labelling and compression choices. The single verifier loop
 /// in [`crate::SumcheckVerifier::verify`] drives any impl uniformly; future
 /// ZK support is a new impl, not a new strategy trait.
-pub trait RoundProof<F: Field> {
+pub trait RoundProof<F: SumcheckScalar> {
     /// Degree of this round polynomial (for the degree-bound check).
     fn degree(&self) -> usize;
 

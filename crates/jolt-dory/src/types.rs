@@ -135,7 +135,7 @@ fn validate_proof_round_count(buf: &[u8]) -> Result<(), String> {
 #[expect(clippy::expect_used, reason = "tests may panic on assertion failures")]
 mod tests {
     use super::*;
-    use jolt_field::Field;
+    use jolt_field::RandomSampling;
     use jolt_openings::CommitmentScheme;
     use jolt_poly::Polynomial;
     use jolt_transcript::Transcript;
@@ -174,7 +174,7 @@ mod tests {
 
         let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
         let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as Field>::random(&mut rng))
+            .map(|_| <Fr as RandomSampling>::random(&mut rng))
             .collect();
         let eval = poly.evaluate(&point);
         let (commitment, hint) = crate::DoryScheme::commit(poly.evaluations(), &prover_setup);
@@ -213,7 +213,7 @@ mod tests {
 
         let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
         let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as Field>::random(&mut rng))
+            .map(|_| <Fr as RandomSampling>::random(&mut rng))
             .collect();
         let eval = poly.evaluate(&point);
 
@@ -248,7 +248,7 @@ mod tests {
         let prover_setup = crate::DoryScheme::setup_prover(num_vars);
         let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
         let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as Field>::random(&mut rng))
+            .map(|_| <Fr as RandomSampling>::random(&mut rng))
             .collect();
         let eval = poly.evaluate(&point);
 

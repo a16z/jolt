@@ -69,7 +69,7 @@ impl StreamingCommitment for crate::DoryScheme {
 
 #[cfg(test)]
 mod tests {
-    use jolt_field::Field;
+    use jolt_field::RandomSampling;
     use jolt_openings::{CommitmentScheme, StreamingCommitment};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
@@ -88,7 +88,7 @@ mod tests {
         let prover_setup = DoryScheme::setup_prover(num_vars);
 
         let evals: Vec<Fr> = (0..num_rows * num_cols)
-            .map(|_| <Fr as Field>::random(&mut rng))
+            .map(|_| <Fr as RandomSampling>::random(&mut rng))
             .collect();
 
         let poly = jolt_poly::Polynomial::new(evals.clone());
