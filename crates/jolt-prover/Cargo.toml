@@ -18,3 +18,4 @@ jolt-poly.workspace = true
 jolt-transcript.workspace = true
 jolt-verifier.workspace = true
 jolt-witness.workspace = true
+rayon.workspace = true

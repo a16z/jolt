@@ -1,26 +1,29 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use bolt::{
     build_commitment_protocol, build_stage1_outer_protocol, build_stage2_protocol,
     build_stage3_protocol, build_stage4_protocol, build_stage5_protocol, build_stage6_protocol,
-    build_stage7_protocol, commitment_cpu_program, lower_commitment_to_compute,
-    lower_compute_to_cpu, lower_piop_and_fiat_shamir, lower_stage1_to_compute,
-    lower_stage2_to_compute, lower_stage3_to_compute, lower_stage4_to_compute,
-    lower_stage5_to_compute, lower_stage6_to_compute, lower_stage7_to_compute,
-    project_prover_party, project_verifier_party, resolve_compute_kernels, stage1_cpu_program,
-    stage2_cpu_program, stage3_cpu_program, stage4_cpu_program, stage5_cpu_program,
-    stage6_cpu_program, stage7_cpu_program, CommitmentCpuProgram, JoltProtocolParams,
-    MeliorContext, OptionalSkipPolicy, OracleGeneration, Role, TranscriptStep,
+    build_stage7_protocol, build_stage8_protocol, commitment_cpu_program,
+    lower_commitment_to_compute, lower_compute_to_cpu, lower_piop_and_fiat_shamir,
+    lower_stage1_to_compute, lower_stage2_to_compute, lower_stage3_to_compute,
+    lower_stage4_to_compute, lower_stage5_to_compute, lower_stage6_to_compute,
+    lower_stage7_to_compute, lower_stage8_to_compute, project_prover_party, project_verifier_party,
+    resolve_compute_kernels, stage1_cpu_program, stage2_cpu_program, stage3_cpu_program,
+    stage4_cpu_program, stage5_cpu_program, stage6_cpu_program, stage7_cpu_program,
+    stage8_cpu_program, CommitmentCpuProgram, JoltProtocolParams, MeliorContext,
+    OptionalSkipPolicy, OracleGeneration, OraclePlan, Role, TranscriptStep,
 };
 use bolt::{
     Stage1CpuProgram as CompilerStage1CpuProgram, Stage2CpuProgram as CompilerStage2CpuProgram,
     Stage3CpuProgram as CompilerStage3CpuProgram, Stage4CpuProgram as CompilerStage4CpuProgram,
     Stage5CpuProgram as CompilerStage5CpuProgram, Stage6CpuProgram as CompilerStage6CpuProgram,
-    Stage7CpuProgram as CompilerStage7CpuProgram,
+    Stage7CpuProgram as CompilerStage7CpuProgram, Stage8CpuProgram as CompilerStage8CpuProgram,
 };
 use clap::Parser;
 use common::constants::{RAM_START_ADDRESS, XLEN};
@@ -130,10 +133,12 @@ use jolt_kernels::stage6 as kernel_stage6;
 use jolt_kernels::stage7 as kernel_stage7;
 use jolt_openings::CommitmentScheme as _;
 use jolt_poly::EqPolynomial;
+use jolt_prover::stages::stage8 as generated_prover_stage8;
 use jolt_r1cs::{constraints::rv64, R1csKey};
 use jolt_transcript::{
     AppendToTranscript, Blake2bTranscript, Label, LabelWithCount, Transcript, U64Word,
 };
+use jolt_verifier::stages::stage8 as generated_stage8;
 use jolt_verifier::TRANSCRIPT_LABEL;
 use jolt_witness::CycleInput;
 use jolt_witness::{
@@ -188,6 +193,12 @@ struct Cli {
 
     #[arg(long, value_name = "NAME")]
     trace_chrome: Option<String>,
+
+    #[arg(long)]
+    e2e: bool,
+
+    #[arg(long, value_enum, default_value_t = E2eStack::Both)]
+    e2e_stack: E2eStack,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
@@ -200,6 +211,13 @@ enum BenchStage {
     Stage6,
     Stage7,
     Stage8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+enum E2eStack {
+    Both,
+    Core,
+    Bolt,
 }
 
 impl BenchStage {
@@ -410,6 +428,35 @@ struct Stage1Run {
     timeout_ms: Option<f64>,
 }
 
+#[derive(Serialize)]
+struct E2eBenchReport {
+    program: String,
+    max_log_t: usize,
+    actual_log_t: usize,
+    trace_length: usize,
+    num_iters: u32,
+    ratio_vs_core_prove: Option<f64>,
+    core: Option<E2eRun>,
+    bolt: Option<E2eRun>,
+    setup: Option<E2eSetupReport>,
+}
+
+#[derive(Serialize)]
+struct E2eRun {
+    stack: &'static str,
+    total_ms: f64,
+    prove_ms: f64,
+    verify_ms: f64,
+    trace_length: usize,
+}
+
+#[derive(Serialize)]
+struct E2eSetupReport {
+    fixture_ms: f64,
+    program_context_ms: f64,
+    reference_openings_ms: f64,
+}
+
 fn main() {
     let mut cli = Cli::parse();
     let _tracing_guards = cli.trace_chrome.as_deref().map(|name| {
@@ -423,6 +470,17 @@ fn main() {
         "--bolt-timeout-multiplier must be positive"
     );
     assert!(cli.max_ratio > 0.0, "--max-ratio must be positive");
+
+    if cli.e2e {
+        let report = run_e2e_trace(&cli);
+        let json = serde_json::to_string_pretty(&report).expect("serialize E2E bench report");
+        if let Some(path) = cli.json {
+            std::fs::write(&path, json).expect("write E2E bench JSON");
+        } else {
+            println!("{json}");
+        }
+        return;
+    }
 
     let fixture = core_stage1_fixture(cli.program, cli.log_t, cli.num_iters);
     let stage1_context = bolt_stage1_context(&fixture);
@@ -545,6 +603,21 @@ struct BoltStage1Context {
     stage5_prover_plan: &'static kernel_stage5::Stage5CpuProgramPlan,
     stage6_prover_plan: &'static kernel_stage6::Stage6CpuProgramPlan,
     stage7_prover_plan: &'static kernel_stage7::Stage7CpuProgramPlan,
+    stage8_prover_plan: &'static generated_prover_stage8::Stage8EvaluationProgramPlan,
+    stage8_verifier_plan: &'static generated_stage8::Stage8EvaluationProgramPlan,
+    num_cycle_vars: usize,
+}
+
+struct BoltE2eContext {
+    commitment_prover_plan: &'static jolt_prover::stages::commitment::CommitmentProverProgramPlan,
+    stage1_prover_plan: &'static KernelStage1CpuProgramPlan,
+    stage2_prover_plan: &'static KernelStage2CpuProgramPlan,
+    stage3_prover_plan: &'static KernelStage3CpuProgramPlan,
+    stage4_prover_plan: &'static KernelStage4CpuProgramPlan,
+    stage5_prover_plan: &'static kernel_stage5::Stage5CpuProgramPlan,
+    stage6_prover_plan: &'static kernel_stage6::Stage6CpuProgramPlan,
+    stage7_prover_plan: &'static kernel_stage7::Stage7CpuProgramPlan,
+    stage8_prover_plan: &'static generated_prover_stage8::Stage8EvaluationProgramPlan,
     num_cycle_vars: usize,
 }
 
@@ -1008,6 +1081,412 @@ fn core_stage_once(stage: BenchStage, program: Program, log_t: usize, num_iters:
     }
 }
 
+fn e2e_progress(label: &str) {
+    let Some(path) = std::env::var_os("JOLT_E2E_PROGRESS") else {
+        return;
+    };
+    let rss = memory_stats::memory_stats()
+        .map(|stats| stats.physical_mem)
+        .unwrap_or(0);
+    let timestamp_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs_f64() * 1000.0)
+        .unwrap_or(0.0);
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "{timestamp_ms:.3}\t{rss}\t{label}");
+    }
+}
+
+fn run_e2e_trace(cli: &Cli) -> E2eBenchReport {
+    let core = if matches!(cli.e2e_stack, E2eStack::Both | E2eStack::Core) {
+        Some(run_core_e2e_once(cli.program, cli.log_t, cli.num_iters))
+    } else {
+        None
+    };
+
+    let (bolt, setup) = if matches!(cli.e2e_stack, E2eStack::Both | E2eStack::Bolt) {
+        e2e_progress("bolt.fixture_setup_for_inputs.begin");
+        let fixture_span =
+            tracing::info_span!(target: "jolt_bench_e2e", "bolt.fixture_setup_for_inputs")
+                .entered();
+        let (fixture_ms, fixture) =
+            time_it(|| core_stage1_fixture(cli.program, cli.log_t, cli.num_iters));
+        drop(fixture_span);
+        e2e_progress("bolt.fixture_setup_for_inputs.end");
+
+        e2e_progress("bolt.compile_programs.begin");
+        let context_span =
+            tracing::info_span!(target: "jolt_bench_e2e", "bolt.compile_programs").entered();
+        let (program_context_ms, context) = time_it(|| bolt_e2e_context(&fixture));
+        drop(context_span);
+        e2e_progress("bolt.compile_programs.end");
+
+        e2e_progress("bolt.reference_opening_inputs.begin");
+        let openings_span =
+            tracing::info_span!(target: "jolt_bench_e2e", "bolt.reference_opening_inputs")
+                .entered();
+        let (reference_openings_ms, (core_stage6, core_stage7)) =
+            time_it(|| (core_stage6_data(&fixture), core_stage7_data(&fixture)));
+        drop(openings_span);
+        e2e_progress("bolt.reference_opening_inputs.end");
+
+        (
+            Some(run_bolt_e2e_once(
+                &fixture,
+                &context,
+                &core_stage6,
+                &core_stage7,
+            )),
+            Some(E2eSetupReport {
+                fixture_ms,
+                program_context_ms,
+                reference_openings_ms,
+            }),
+        )
+    } else {
+        (None, None)
+    };
+
+    let trace_length = core
+        .as_ref()
+        .map_or(0, |run| run.trace_length)
+        .max(bolt.as_ref().map_or(0, |run| run.trace_length));
+    E2eBenchReport {
+        program: cli.program.cli_name().to_string(),
+        max_log_t: cli.log_t,
+        actual_log_t: trace_length.trailing_zeros() as usize,
+        trace_length,
+        num_iters: cli.num_iters,
+        ratio_vs_core_prove: core
+            .as_ref()
+            .zip(bolt.as_ref())
+            .map(|(core, bolt)| bolt.prove_ms / core.prove_ms),
+        core,
+        bolt,
+        setup,
+    }
+}
+
+fn run_core_e2e_once(program: Program, log_t: usize, num_iters: u32) -> E2eRun {
+    e2e_progress("core.e2e.begin");
+    let root_span = tracing::info_span!(
+        target: "jolt_bench_e2e",
+        "core.e2e",
+        stack = "core",
+        program = program.cli_name(),
+        log_t,
+        num_iters
+    )
+    .entered();
+    DoryGlobals::reset();
+    let total_start = Instant::now();
+    let max_trace_length = 1usize << log_t;
+    let inputs = program.canonical_inputs_with(Some(num_iters));
+
+    e2e_progress("core.decode_and_trace.begin");
+    let decode_span =
+        tracing::info_span!(target: "jolt_bench_e2e", "core.decode_and_trace").entered();
+    let mut core_program = host::Program::new(program.guest_name());
+    let (core_bytecode, init_memory_state, _, entry_address) = core_program.decode();
+    let (_, trace, _, core_io_device) = core_program.trace(&inputs, &[], &[]);
+    assert!(
+        trace.len().next_power_of_two() <= max_trace_length,
+        "trace length {} exceeds requested 2^{log_t} capacity",
+        trace.len()
+    );
+    drop(decode_span);
+    e2e_progress("core.decode_and_trace.end");
+
+    e2e_progress("core.preprocessing.begin");
+    let preprocessing_span =
+        tracing::info_span!(target: "jolt_bench_e2e", "core.preprocessing").entered();
+    let shared_preprocessing = JoltSharedPreprocessing::new(
+        core_bytecode,
+        core_io_device.memory_layout.clone(),
+        init_memory_state,
+        max_trace_length,
+        entry_address,
+    )
+    .expect("shared preprocessing");
+    let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
+    drop(preprocessing_span);
+    e2e_progress("core.preprocessing.end");
+
+    e2e_progress("core.gen_from_elf.begin");
+    let gen_span = tracing::info_span!(target: "jolt_bench_e2e", "core.gen_from_elf").entered();
+    let elf_contents = core_program.get_elf_contents().expect("guest ELF");
+    let prover: CoreProver<'_> = CoreProver::gen_from_elf(
+        &prover_preprocessing,
+        &elf_contents,
+        &inputs,
+        &[],
+        &[],
+        None,
+        None,
+        None,
+    );
+    let program_io = prover.program_io.clone();
+    drop(gen_span);
+    e2e_progress("core.gen_from_elf.end");
+
+    e2e_progress("core.prove.begin");
+    let prove_span = tracing::info_span!(target: "jolt_bench_e2e", "core.prove").entered();
+    let prove_start = Instant::now();
+    let (proof, _debug): (CoreProof, _) = prover.prove();
+    let prove_ms = prove_start.elapsed().as_secs_f64() * 1000.0;
+    let trace_length = proof.trace_length;
+    drop(prove_span);
+    e2e_progress("core.prove.end");
+    let total_ms = total_start.elapsed().as_secs_f64() * 1000.0;
+
+    e2e_progress("core.verify.begin");
+    let verify_span = tracing::info_span!(target: "jolt_bench_e2e", "core.verify").entered();
+    let verify_start = Instant::now();
+    let verifier_preprocessing = CoreVerifierPreprocessing::from(&prover_preprocessing);
+    let verifier: CoreVerifier<'_> =
+        CoreVerifier::new(&verifier_preprocessing, proof, program_io, None, None)
+            .expect("construct core verifier");
+    verifier.verify().expect("core verifier accepts core proof");
+    let verify_ms = verify_start.elapsed().as_secs_f64() * 1000.0;
+    drop(verify_span);
+    e2e_progress("core.verify.end");
+    drop(root_span);
+    e2e_progress("core.e2e.end");
+
+    E2eRun {
+        stack: "core",
+        total_ms,
+        prove_ms,
+        verify_ms,
+        trace_length,
+    }
+}
+
+fn run_bolt_e2e_once(
+    fixture: &CoreStage1Fixture,
+    context: &BoltE2eContext,
+    core_stage6: &CoreStage6Data,
+    core_stage7: &CoreStage7Data,
+) -> E2eRun {
+    e2e_progress("bolt.e2e.begin");
+    let root_span = tracing::info_span!(
+        target: "jolt_bench_e2e",
+        "bolt.e2e",
+        stack = "bolt",
+        log_t = fixture.params.log_t,
+        trace_length = fixture.proof.trace_length
+    )
+    .entered();
+    let total_start = Instant::now();
+
+    let mut transcript = Blake2bTranscript::<Fr>::new(TRANSCRIPT_LABEL);
+    let rd_inc_values = dense_source(&fixture.cycle_inputs, "trace.rd_inc");
+    let ram_inc_values = dense_source(&fixture.cycle_inputs, "trace.ram_inc");
+    let instruction_keys = one_hot_source(&fixture.cycle_inputs, "trace.instruction_keys");
+    let ram_addresses = one_hot_source(&fixture.cycle_inputs, "trace.ram_addresses");
+    let bytecode_indices = one_hot_source(&fixture.cycle_inputs, "trace.bytecode_indices");
+    let mut commitment_inputs = jolt_prover::stages::commitment::SparseCommitmentInputs::new(
+        jolt_prover::stages::commitment::CommitmentOracleInputs {
+            rd_inc: &rd_inc_values,
+            ram_inc: &ram_inc_values,
+            instruction_keys: &instruction_keys,
+            ram_addresses: &ram_addresses,
+            bytecode_indices: &bytecode_indices,
+            untrusted_advice: None,
+            trusted_advice: None,
+        },
+    );
+    e2e_progress("bolt.preamble.begin");
+    let preamble_span = tracing::info_span!(target: "jolt_bench_e2e", "bolt.preamble").entered();
+    append_bolt_preamble(&mut transcript, fixture);
+    drop(preamble_span);
+    e2e_progress("bolt.preamble.end");
+
+    e2e_progress("bolt.commitment.begin");
+    let commitment_span =
+        tracing::info_span!(target: "jolt_bench_e2e", "bolt.commitment").entered();
+    let commitment_artifacts =
+        jolt_prover::stages::commitment::prove_commitment_phase_with_program(
+            context.commitment_prover_plan,
+            &mut commitment_inputs,
+            &fixture.pcs_setup,
+            &mut transcript,
+        )
+        .expect("Bolt commitment prover succeeds");
+    drop(commitment_span);
+    e2e_progress("bolt.commitment.end");
+
+    e2e_progress("bolt.stage1.begin");
+    let stage1_span = tracing::info_span!(target: "jolt_bench_e2e", "bolt.stage1").entered();
+    let r1cs_key = R1csKey::new(rv64::rv64_constraints::<Fr>(), fixture.proof.trace_length);
+    let data = Stage1OuterRv64Data::new(&r1cs_key, &fixture.r1cs_witness, &fixture.rv64_cycles)
+        .expect("valid R1CS witness shape");
+    let (transcript_after_stage1, stage1_artifacts) = run_bolt_stage1_prover(
+        context.stage1_prover_plan,
+        context.num_cycle_vars,
+        &data,
+        transcript,
+    );
+    let mut transcript = transcript_after_stage1;
+    drop(data);
+    drop(r1cs_key);
+    drop(stage1_span);
+    e2e_progress("bolt.stage1.end");
+
+    e2e_progress("bolt.stage2.begin");
+    let stage2_span = tracing::info_span!(target: "jolt_bench_e2e", "bolt.stage2").entered();
+    let ram_data = stage2_ram_data(fixture);
+    let stage2_openings = stage2_opening_inputs(&stage1_artifacts);
+    let (transcript_after_stage2, stage2_artifacts) = run_bolt_stage2_prover(
+        context.stage2_prover_plan,
+        fixture,
+        &stage1_artifacts,
+        &ram_data,
+        transcript,
+    );
+    transcript = transcript_after_stage2;
+    drop(stage2_span);
+    e2e_progress("bolt.stage2.end");
+
+    e2e_progress("bolt.stage3.begin");
+    let stage3_span = tracing::info_span!(target: "jolt_bench_e2e", "bolt.stage3").entered();
+    let stage3_openings = stage3_opening_inputs(&stage1_artifacts, &stage2_artifacts);
+    let (transcript_after_stage3, stage3_artifacts) = run_bolt_stage3_prover(
+        context.stage3_prover_plan,
+        fixture,
+        &stage3_openings,
+        transcript,
+    );
+    let mut transcript = transcript_after_stage3;
+    drop(stage3_span);
+    e2e_progress("bolt.stage3.end");
+
+    e2e_progress("bolt.stage4.begin");
+    let stage4_span = tracing::info_span!(target: "jolt_bench_e2e", "bolt.stage4").entered();
+    let stage4_openings = stage4_opening_inputs(
+        &fixture.params,
+        &fixture.initial_ram_state,
+        &stage2_artifacts,
+        &stage3_artifacts,
+    );
+    let stage4_rd_inc = stage4_rd_inc(&fixture.stage4_register_accesses);
+    let stage4_ram_addresses = stage4_ram_address_indices(&fixture.ram_accesses);
+    let stage4_ram_inc = stage2_ram_inc(&fixture.ram_accesses);
+    let stage4_artifacts = run_bolt_stage4_prover(
+        context.stage4_prover_plan,
+        fixture,
+        &stage4_openings,
+        &stage4_rd_inc,
+        &stage4_ram_addresses,
+        &stage4_ram_inc,
+        &mut transcript,
+    );
+    drop(stage4_span);
+    e2e_progress("bolt.stage4.end");
+
+    e2e_progress("bolt.stage5.begin");
+    let stage5_span = tracing::info_span!(target: "jolt_bench_e2e", "bolt.stage5").entered();
+    let stage5_openings = stage5_opening_inputs(
+        &fixture.params,
+        &stage2_openings,
+        &stage2_artifacts,
+        &stage4_artifacts,
+    );
+    let stage5_rd_write_addresses = stage4_rd_write_addresses(&fixture.stage4_register_accesses);
+    let _stage5_artifacts = run_bolt_stage5_prover(
+        context.stage5_prover_plan,
+        fixture,
+        &stage5_openings,
+        &stage4_rd_inc,
+        &stage4_ram_addresses,
+        &stage5_rd_write_addresses,
+        &mut transcript,
+    );
+    drop(_stage5_artifacts);
+    drop(stage5_rd_write_addresses);
+    drop(stage5_openings);
+    drop(stage4_ram_inc);
+    drop(stage4_ram_addresses);
+    drop(stage4_rd_inc);
+    drop(stage4_openings);
+    drop(stage4_artifacts);
+    drop(stage3_openings);
+    drop(stage3_artifacts);
+    drop(stage2_openings);
+    drop(stage2_artifacts);
+    drop(stage1_artifacts);
+    drop(stage5_span);
+    e2e_progress("bolt.stage5.end");
+
+    e2e_progress("bolt.stage6.begin");
+    let stage6_span = tracing::info_span!(target: "jolt_bench_e2e", "bolt.stage6").entered();
+    e2e_progress("bolt.stage6_witness.begin");
+    let stage6_witness = stage6_witness_polynomials(fixture, &core_stage6.opening_inputs);
+    e2e_progress("bolt.stage6_witness.end");
+    e2e_progress("bolt.stage6_prover.begin");
+    let stage6_artifacts = run_bolt_stage6_prover(
+        context.stage6_prover_plan,
+        fixture,
+        &core_stage6.opening_inputs,
+        &stage6_witness,
+        &mut transcript,
+    );
+    e2e_progress("bolt.stage6_prover.end");
+    drop(stage6_span);
+    e2e_progress("bolt.stage6.end");
+
+    e2e_progress("bolt.stage7.begin");
+    let stage7_span = tracing::info_span!(target: "jolt_bench_e2e", "bolt.stage7").entered();
+    let stage7_artifacts = run_bolt_stage7_prover(
+        context.stage7_prover_plan,
+        &core_stage7.opening_inputs,
+        &stage6_witness,
+        &mut transcript,
+    );
+    drop(stage7_span);
+    drop(stage6_witness);
+    e2e_progress("bolt.stage7.end");
+
+    e2e_progress("bolt.stage8.begin");
+    let stage8_span = tracing::info_span!(target: "jolt_bench_e2e", "bolt.stage8").entered();
+    let evaluation = jolt_prover::prove_jolt_evaluation_proof(
+        context.stage8_prover_plan,
+        &mut commitment_inputs,
+        &fixture.pcs_setup,
+        &commitment_artifacts,
+        &stage6_artifacts,
+        &stage7_artifacts,
+        &core_stage7.opening_inputs,
+        &mut transcript,
+    )
+    .expect("Bolt Stage 8 prover succeeds");
+    drop(stage8_span);
+    drop(stage6_artifacts);
+    drop(stage7_artifacts);
+    drop(commitment_artifacts);
+    e2e_progress("bolt.stage8.end");
+
+    let total_ms = total_start.elapsed().as_secs_f64() * 1000.0;
+    e2e_progress("bolt.core_acceptance_check.begin");
+    let verify_span =
+        tracing::info_span!(target: "jolt_bench_e2e", "bolt.core_acceptance_check").entered();
+    let verify_start = Instant::now();
+    assert_core_accepts_bolt_stage8(fixture, &evaluation);
+    let verify_ms = verify_start.elapsed().as_secs_f64() * 1000.0;
+    drop(verify_span);
+    e2e_progress("bolt.core_acceptance_check.end");
+    drop(root_span);
+    e2e_progress("bolt.e2e.end");
+
+    E2eRun {
+        stack: "bolt",
+        total_ms,
+        prove_ms: total_ms,
+        verify_ms,
+        trace_length: fixture.proof.trace_length,
+    }
+}
+
 fn bolt_stage1_context(fixture: &CoreStage1Fixture) -> BoltStage1Context {
     let (commitment_prover_program, commitment_verifier_program) =
         bolt_commitment_programs_with_params(&fixture.params);
@@ -1019,6 +1498,8 @@ fn bolt_stage1_context(fixture: &CoreStage1Fixture) -> BoltStage1Context {
     let (stage5_prover_program, _) = bolt_stage5_programs_with_params(&fixture.params);
     let (stage6_prover_program, _) = bolt_stage6_programs_with_params(&fixture.params);
     let (stage7_prover_program, _) = bolt_stage7_programs_with_params(&fixture.params);
+    let (stage8_prover_program, stage8_verifier_program) =
+        bolt_stage8_programs_with_params(&fixture.params);
     let oracle_data = real_oracle_data(&commitment_prover_program, &fixture.cycle_inputs);
     let commitment_prover_trace = run_bolt_commitment_prover_with(
         &commitment_prover_program,
@@ -1043,6 +1524,35 @@ fn bolt_stage1_context(fixture: &CoreStage1Fixture) -> BoltStage1Context {
         stage5_prover_plan: leak_stage5_program(&stage5_prover_program),
         stage6_prover_plan: leak_stage6_program(&stage6_prover_program),
         stage7_prover_plan: leak_stage7_program(&stage7_prover_program),
+        stage8_prover_plan: leak_generated_stage8_prover_program(&stage8_prover_program),
+        stage8_verifier_plan: leak_generated_stage8_verifier_program(&stage8_verifier_program),
+        num_cycle_vars: fixture.proof.trace_length.trailing_zeros() as usize,
+    }
+}
+
+fn bolt_e2e_context(fixture: &CoreStage1Fixture) -> BoltE2eContext {
+    let (commitment_prover_program, _) = bolt_commitment_programs_with_params(&fixture.params);
+    let (stage1_prover_program, _) = bolt_stage1_programs_with_params(&fixture.params);
+    let (stage2_prover_program, _) = bolt_stage2_programs_with_params(&fixture.params);
+    let (stage3_prover_program, _) = bolt_stage3_programs_with_params(&fixture.params);
+    let (stage4_prover_program, _) = bolt_stage4_programs_with_params(&fixture.params);
+    let (stage5_prover_program, _) = bolt_stage5_programs_with_params(&fixture.params);
+    let (stage6_prover_program, _) = bolt_stage6_programs_with_params(&fixture.params);
+    let (stage7_prover_program, _) = bolt_stage7_programs_with_params(&fixture.params);
+    let (stage8_prover_program, _) = bolt_stage8_programs_with_params(&fixture.params);
+
+    BoltE2eContext {
+        commitment_prover_plan: leak_generated_commitment_prover_program(
+            &commitment_prover_program,
+        ),
+        stage1_prover_plan: leak_stage1_program(&stage1_prover_program),
+        stage2_prover_plan: leak_stage2_program(&stage2_prover_program),
+        stage3_prover_plan: leak_stage3_program(&stage3_prover_program),
+        stage4_prover_plan: leak_stage4_program(&stage4_prover_program),
+        stage5_prover_plan: leak_stage5_program(&stage5_prover_program),
+        stage6_prover_plan: leak_stage6_program(&stage6_prover_program),
+        stage7_prover_plan: leak_stage7_program(&stage7_prover_program),
+        stage8_prover_plan: leak_generated_stage8_prover_program(&stage8_prover_program),
         num_cycle_vars: fixture.proof.trace_length.trailing_zeros() as usize,
     }
 }
@@ -2043,7 +2553,7 @@ fn assert_stage8_correctness(
         data: &prefix.oracle_data,
     };
     let evaluation = jolt_prover::prove_jolt_evaluation_proof(
-        &jolt_prover::stages::stage8::STAGE8_PROGRAM,
+        context.stage8_prover_plan,
         &mut commitment_inputs,
         &fixture.pcs_setup,
         &prefix.commitment_artifacts,
@@ -2064,7 +2574,7 @@ fn assert_stage8_correctness(
     let verifier_setup = DoryScheme::verifier_setup(&fixture.pcs_setup);
     let mut verifier_transcript = stage8_start;
     jolt_verifier::verify_jolt_evaluation_proof(
-        &jolt_verifier::stages::stage8::STAGE8_PROGRAM,
+        context.stage8_verifier_plan,
         &evaluation,
         &commitment_artifacts,
         &stage6_proof,
@@ -2653,7 +3163,7 @@ fn measure_bolt_stage8(
             data: &prefix.oracle_data,
         };
         let _ = jolt_prover::prove_jolt_evaluation_proof(
-            &jolt_prover::stages::stage8::STAGE8_PROGRAM,
+            context.stage8_prover_plan,
             &mut commitment_inputs,
             &fixture.pcs_setup,
             &prefix.commitment_artifacts,
@@ -2673,7 +3183,7 @@ fn measure_bolt_stage8(
                     data: &prefix.oracle_data,
                 };
                 jolt_prover::prove_jolt_evaluation_proof(
-                    &jolt_prover::stages::stage8::STAGE8_PROGRAM,
+                    context.stage8_prover_plan,
                     &mut commitment_inputs,
                     &fixture.pcs_setup,
                     &prefix.commitment_artifacts,
@@ -4045,46 +4555,76 @@ fn bolt_stage7_programs_with_params(
     (prover_program, verifier_program)
 }
 
+fn bolt_stage8_programs_with_params(
+    params: &JoltProtocolParams,
+) -> (CompilerStage8CpuProgram, CompilerStage8CpuProgram) {
+    let context = MeliorContext::new();
+    let protocol = build_stage8_protocol(&context, params).expect("build stage8 protocol");
+    let concrete = lower_piop_and_fiat_shamir(&context, &protocol).expect("lower Stage 8 protocol");
+    let prover_party = project_prover_party(&context, &concrete).expect("project prover");
+    let verifier_party = project_verifier_party(&context, &concrete).expect("project verifier");
+    let prover_compute =
+        lower_stage8_to_compute(&context, &prover_party).expect("lower prover Stage 8");
+    let verifier_compute =
+        lower_stage8_to_compute(&context, &verifier_party).expect("lower verifier Stage 8");
+    let prover_cpu = lower_compute_to_cpu(&context, &prover_compute).expect("lower prover CPU");
+    let verifier_cpu =
+        lower_compute_to_cpu(&context, &verifier_compute).expect("lower verifier CPU");
+    let prover_program = stage8_cpu_program(&prover_cpu).expect("extract prover Stage 8 CPU");
+    let verifier_program = stage8_cpu_program(&verifier_cpu).expect("extract verifier Stage 8 CPU");
+    (prover_program, verifier_program)
+}
+
 fn real_oracle_data(
     program: &CommitmentCpuProgram,
     cycle_inputs: &[CycleInput],
 ) -> BTreeMap<String, Option<Vec<Fr>>> {
     let mut data = BTreeMap::new();
     for plan in &program.oracle_plans {
-        let materialized = match &plan.generation {
-            OracleGeneration::Reference => continue,
-            OracleGeneration::DenseTrace { .. } => {
-                let values = dense_source(cycle_inputs, &plan.source);
-                Some(dense_i128_column_to_field(
-                    &values,
-                    target_len(plan.num_vars),
-                ))
-            }
-            OracleGeneration::OneHotChunk {
-                trace_num_vars,
-                chunk,
-                num_chunks,
-                chunk_bits,
-                padding,
-                ..
-            } => {
-                let values = one_hot_source(cycle_inputs, &plan.source);
-                Some(one_hot_chunk_address_major(
-                    &values,
-                    *chunk,
-                    *num_chunks,
-                    *chunk_bits,
-                    target_len(*trace_num_vars),
-                    padding_value(padding),
-                ))
-            }
-            OracleGeneration::OptionalAdvice { .. } => {
-                optional_field_oracle::<Fr>(None, target_len(plan.num_vars))
-            }
+        let Some(materialized) = materialize_oracle_plan(plan, cycle_inputs) else {
+            continue;
         };
         let _ = data.insert(plan.oracle.clone(), materialized);
     }
     data
+}
+
+fn materialize_oracle_plan(
+    plan: &OraclePlan,
+    cycle_inputs: &[CycleInput],
+) -> Option<Option<Vec<Fr>>> {
+    let materialized = match &plan.generation {
+        OracleGeneration::Reference => return None,
+        OracleGeneration::DenseTrace { .. } => {
+            let values = dense_source(cycle_inputs, &plan.source);
+            Some(dense_i128_column_to_field(
+                &values,
+                target_len(plan.num_vars),
+            ))
+        }
+        OracleGeneration::OneHotChunk {
+            trace_num_vars,
+            chunk,
+            num_chunks,
+            chunk_bits,
+            padding,
+            ..
+        } => {
+            let values = one_hot_source(cycle_inputs, &plan.source);
+            Some(one_hot_chunk_address_major(
+                &values,
+                *chunk,
+                *num_chunks,
+                *chunk_bits,
+                target_len(*trace_num_vars),
+                padding_value(padding),
+            ))
+        }
+        OracleGeneration::OptionalAdvice { .. } => {
+            optional_field_oracle::<Fr>(None, target_len(plan.num_vars))
+        }
+    };
+    Some(materialized)
 }
 
 fn run_bolt_commitment_prover_with<F>(
@@ -5377,16 +5917,20 @@ fn dense_source(cycle_inputs: &[CycleInput], source: &str) -> Vec<i128> {
 }
 
 fn one_hot_source(cycle_inputs: &[CycleInput], source: &str) -> Vec<Option<u128>> {
-    let slot = match source {
-        "trace.instruction_keys" => 0,
-        "trace.bytecode_indices" => 1,
-        "trace.ram_addresses" => 2,
-        _ => panic!("unsupported one-hot source `{source}`"),
-    };
+    let slot = one_hot_source_slot(source);
     cycle_inputs
         .iter()
         .map(|cycle| cycle.one_hot[slot])
         .collect()
+}
+
+fn one_hot_source_slot(source: &str) -> usize {
+    match source {
+        "trace.instruction_keys" => 0,
+        "trace.bytecode_indices" => 1,
+        "trace.ram_addresses" => 2,
+        _ => panic!("unsupported one-hot source `{source}`"),
+    }
 }
 
 fn padding_value(padding: &str) -> Option<u128> {
@@ -7145,6 +7689,242 @@ fn leak_stage7_program(
                 .collect(),
         ),
     }))
+}
+
+fn leak_generated_commitment_prover_program(
+    program: &CommitmentCpuProgram,
+) -> &'static jolt_prover::stages::commitment::CommitmentProverProgramPlan {
+    Box::leak(Box::new(
+        jolt_prover::stages::commitment::CommitmentProverProgramPlan {
+            params: jolt_prover::stages::commitment::CommitmentParams {
+                field: leak_str(&program.params.field),
+                pcs: leak_str(&program.params.pcs),
+                transcript: leak_str(&program.params.transcript),
+            },
+            oracle_plans: leak_slice(
+                program
+                    .oracle_plans
+                    .iter()
+                    .map(|plan| jolt_prover::stages::commitment::OraclePlan {
+                        oracle: leak_str(&plan.oracle),
+                        domain: leak_str(&plan.domain),
+                        num_vars: plan.num_vars,
+                    })
+                    .collect(),
+            ),
+            batch_plans: leak_slice(
+                program
+                    .batch_plans
+                    .iter()
+                    .map(
+                        |plan| jolt_prover::stages::commitment::CommitmentBatchPlan {
+                            artifact: leak_str(&plan.artifact),
+                            pcs: leak_str(&plan.pcs),
+                            oracle_family: leak_str(&plan.oracle_family),
+                            label: leak_str(&plan.label),
+                            oracles: leak_str_slice(&plan.oracles),
+                            count: plan.count,
+                            domain: leak_str(&plan.domain),
+                            num_vars: plan.num_vars,
+                        },
+                    )
+                    .collect(),
+            ),
+            optional_plans: leak_slice(
+                program
+                    .optional_plans
+                    .iter()
+                    .map(
+                        |plan| {
+                            jolt_prover::stages::commitment::OptionalCommitmentPlan {
+                        artifact: leak_str(&plan.artifact),
+                        pcs: leak_str(&plan.pcs),
+                        oracle: leak_str(&plan.oracle),
+                        label: leak_str(&plan.label),
+                        domain: leak_str(&plan.domain),
+                        num_vars: plan.num_vars,
+                        skip_policy: match plan.skip_policy {
+                            OptionalSkipPolicy::MissingOrZero => {
+                                jolt_prover::stages::commitment::OptionalSkipPolicy::MissingOrZero
+                            }
+                        },
+                    }
+                        },
+                    )
+                    .collect(),
+            ),
+            transcript_steps: leak_slice(
+                program
+                    .transcript_steps
+                    .iter()
+                    .map(|step| jolt_prover::stages::commitment::TranscriptStep {
+                        label: leak_str(&step.label),
+                        source: leak_str(&step.source),
+                        optional: step.optional,
+                    })
+                    .collect(),
+            ),
+        },
+    ))
+}
+
+fn leak_generated_stage8_prover_program(
+    program: &CompilerStage8CpuProgram,
+) -> &'static generated_prover_stage8::Stage8EvaluationProgramPlan {
+    let evaluation_point_source = program
+        .opening_inputs
+        .iter()
+        .find(|input| input.symbol == "stage8.evaluation.point_source")
+        .expect("stage8 evaluation point source exists");
+    Box::leak(Box::new(
+        generated_prover_stage8::Stage8EvaluationProgramPlan {
+            role: role_name(&program.role),
+            function: leak_str(&program.function),
+            params: generated_prover_stage8::Stage8Params {
+                field: leak_str(&program.params.field),
+                pcs: leak_str(&program.params.pcs),
+                transcript: leak_str(&program.params.transcript),
+            },
+            evaluation_point_source: generated_prover_stage8::Stage8OpeningInputPlan {
+                symbol: leak_str(&evaluation_point_source.symbol),
+                source_stage: leak_str(&evaluation_point_source.source_stage),
+                source_claim: leak_str(&evaluation_point_source.source_claim),
+                oracle: leak_str(&evaluation_point_source.oracle),
+                domain: leak_str(&evaluation_point_source.domain),
+                point_arity: evaluation_point_source.point_arity,
+                claim_kind: leak_str(&evaluation_point_source.claim_kind),
+            },
+            opening_inputs: leak_slice(
+                program
+                    .opening_inputs
+                    .iter()
+                    .map(|plan| generated_prover_stage8::Stage8OpeningInputPlan {
+                        symbol: leak_str(&plan.symbol),
+                        source_stage: leak_str(&plan.source_stage),
+                        source_claim: leak_str(&plan.source_claim),
+                        oracle: leak_str(&plan.oracle),
+                        domain: leak_str(&plan.domain),
+                        point_arity: plan.point_arity,
+                        claim_kind: leak_str(&plan.claim_kind),
+                    })
+                    .collect(),
+            ),
+            opening_claims: leak_slice(
+                program
+                    .opening_claims
+                    .iter()
+                    .map(|plan| generated_prover_stage8::Stage8OpeningClaimPlan {
+                        symbol: leak_str(&plan.symbol),
+                        oracle: leak_str(&plan.oracle),
+                        family: leak_str(&plan.family),
+                        domain: leak_str(&plan.domain),
+                        point_arity: plan.point_arity,
+                        point_source: leak_str(&plan.point_source),
+                        eval_source: leak_str(&plan.eval_source),
+                        source_stage: leak_str(&plan.source_stage),
+                        source_claim: leak_str(&plan.source_claim),
+                    })
+                    .collect(),
+            ),
+            opening_batch: generated_prover_stage8::Stage8OpeningBatchPlan {
+                symbol: leak_str(&program.opening_batches[0].symbol),
+                proof_slot: leak_str(&program.opening_batches[0].proof_slot),
+                policy: leak_str(&program.opening_batches[0].policy),
+                count: program.opening_batches[0].count,
+                ordered_claims: leak_str_slice(&program.opening_batches[0].ordered_claims),
+            },
+            pcs_proof: generated_prover_stage8::Stage8PcsProofPlan {
+                symbol: leak_str(&program.pcs_proofs[0].symbol),
+                mode: leak_str(&program.pcs_proofs[0].mode),
+                pcs: leak_str(&program.pcs_proofs[0].pcs),
+                proof_slot: leak_str(&program.pcs_proofs[0].proof_slot),
+                transcript_label: leak_str(&program.pcs_proofs[0].transcript_label),
+                batch: leak_str(&program.pcs_proofs[0].batch),
+            },
+        },
+    ))
+}
+
+fn leak_generated_stage8_verifier_program(
+    program: &CompilerStage8CpuProgram,
+) -> &'static generated_stage8::Stage8EvaluationProgramPlan {
+    let evaluation_point_source = program
+        .opening_inputs
+        .iter()
+        .find(|input| input.symbol == "stage8.evaluation.point_source")
+        .expect("stage8 evaluation point source exists");
+    Box::leak(Box::new(generated_stage8::Stage8EvaluationProgramPlan {
+        role: role_name(&program.role),
+        function: leak_str(&program.function),
+        params: generated_stage8::Stage8Params {
+            field: leak_str(&program.params.field),
+            pcs: leak_str(&program.params.pcs),
+            transcript: leak_str(&program.params.transcript),
+        },
+        evaluation_point_source: generated_stage8::Stage8OpeningInputPlan {
+            symbol: leak_str(&evaluation_point_source.symbol),
+            source_stage: leak_str(&evaluation_point_source.source_stage),
+            source_claim: leak_str(&evaluation_point_source.source_claim),
+            oracle: leak_str(&evaluation_point_source.oracle),
+            domain: leak_str(&evaluation_point_source.domain),
+            point_arity: evaluation_point_source.point_arity,
+            claim_kind: leak_str(&evaluation_point_source.claim_kind),
+        },
+        opening_inputs: leak_slice(
+            program
+                .opening_inputs
+                .iter()
+                .map(|plan| generated_stage8::Stage8OpeningInputPlan {
+                    symbol: leak_str(&plan.symbol),
+                    source_stage: leak_str(&plan.source_stage),
+                    source_claim: leak_str(&plan.source_claim),
+                    oracle: leak_str(&plan.oracle),
+                    domain: leak_str(&plan.domain),
+                    point_arity: plan.point_arity,
+                    claim_kind: leak_str(&plan.claim_kind),
+                })
+                .collect(),
+        ),
+        opening_claims: leak_slice(
+            program
+                .opening_claims
+                .iter()
+                .map(|plan| generated_stage8::Stage8OpeningClaimPlan {
+                    symbol: leak_str(&plan.symbol),
+                    oracle: leak_str(&plan.oracle),
+                    family: leak_str(&plan.family),
+                    domain: leak_str(&plan.domain),
+                    point_arity: plan.point_arity,
+                    point_source: leak_str(&plan.point_source),
+                    eval_source: leak_str(&plan.eval_source),
+                    source_stage: leak_str(&plan.source_stage),
+                    source_claim: leak_str(&plan.source_claim),
+                })
+                .collect(),
+        ),
+        opening_batch: generated_stage8::Stage8OpeningBatchPlan {
+            symbol: leak_str(&program.opening_batches[0].symbol),
+            proof_slot: leak_str(&program.opening_batches[0].proof_slot),
+            policy: leak_str(&program.opening_batches[0].policy),
+            count: program.opening_batches[0].count,
+            ordered_claims: leak_str_slice(&program.opening_batches[0].ordered_claims),
+        },
+        pcs_proof: generated_stage8::Stage8PcsProofPlan {
+            symbol: leak_str(&program.pcs_proofs[0].symbol),
+            mode: leak_str(&program.pcs_proofs[0].mode),
+            pcs: leak_str(&program.pcs_proofs[0].pcs),
+            proof_slot: leak_str(&program.pcs_proofs[0].proof_slot),
+            transcript_label: leak_str(&program.pcs_proofs[0].transcript_label),
+            batch: leak_str(&program.pcs_proofs[0].batch),
+        },
+    }))
+}
+
+fn role_name(role: &Role) -> &'static str {
+    match role {
+        Role::Prover => "prover",
+        Role::Verifier => "verifier",
+    }
 }
 
 fn leak_str(value: &str) -> &'static str {

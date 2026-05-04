@@ -3157,6 +3157,7 @@ jolt-r1cs = {{ path = "{}" }}
 jolt-sumcheck = {{ path = "{}" }}
 jolt-transcript = {{ path = "{}" }}
 jolt-witness = {{ path = "{}" }}
+rayon = "1.12.0"
 "#,
         workspace_root.join("crates/jolt-dory").display(),
         workspace_root.join("crates/jolt-field").display(),

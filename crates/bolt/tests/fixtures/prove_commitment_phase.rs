@@ -4,8 +4,11 @@ use std::borrow::Cow;
 
 use jolt_dory::{DoryCommitment, DoryHint, DoryProverSetup, DoryScheme};
 use jolt_field::{Field, Fr};
+use jolt_openings::CommitmentScheme as _;
+use jolt_poly::{EqPolynomial, MultilinearPoly};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript};
 use jolt_witness::{dense_i128_column_to_field, one_hot_chunk_address_major, optional_field_oracle};
+use rayon::prelude::*;
 
 pub type DefaultCommitmentTranscript = Blake2bTranscript<Fr>;
 
@@ -81,6 +84,13 @@ pub struct OracleOpeningHint {
     pub hint: DoryHint,
 }
 
+#[derive(Clone, Debug)]
+pub struct CommittedOracle {
+    pub commitment: Option<DoryCommitment>,
+    pub record: CommitmentRecord,
+    pub hint: Option<OracleOpeningHint>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct CommitmentArtifacts {
     pub commitments: Vec<Option<DoryCommitment>>,
@@ -90,6 +100,34 @@ pub struct CommitmentArtifacts {
 
 pub trait CommitmentInputProvider {
     fn materialize(&mut self, oracle: &'static str) -> Option<Cow<'_, [Fr]>>;
+
+    fn materialize_with_num_vars(
+        &mut self,
+        oracle: &'static str,
+        _num_vars: usize,
+    ) -> Option<Cow<'_, [Fr]>> {
+        self.materialize(oracle)
+    }
+
+    fn commit_batch(
+        &mut self,
+        _program: &CommitmentProverProgramPlan,
+        _plan: &CommitmentBatchPlan,
+        _prover_setup: &DoryProverSetup,
+    ) -> Option<Result<Vec<CommittedOracle>, CommitmentPhaseError>> {
+        None
+    }
+
+    fn add_scaled_to_joint(
+        &mut self,
+        _oracle: &'static str,
+        _joint: &mut [Fr],
+        _num_vars: usize,
+        _limit: usize,
+        _scalar: Fr,
+    ) -> bool {
+        false
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -109,6 +147,434 @@ pub struct CommitmentOracleInputs<'a> {
     pub bytecode_indices: &'a [Option<u128>],
     pub untrusted_advice: Option<&'a [Fr]>,
     pub trusted_advice: Option<&'a [Fr]>,
+}
+
+
+struct AddressMajorOneHotPolynomial {
+    trace_len: usize,
+    chunk_domain: usize,
+    indices: Vec<Option<u8>>,
+    num_vars: usize,
+}
+
+impl AddressMajorOneHotPolynomial {
+    fn new(
+        trace_len: usize,
+        chunk_domain: usize,
+        indices: Vec<Option<u8>>,
+        num_vars: usize,
+    ) -> Result<Self, CommitmentPhaseError> {
+        let active_len = trace_len
+            .checked_mul(chunk_domain)
+            .ok_or(CommitmentPhaseError::TargetSizeOverflow { num_vars })?;
+        let target_len = target_len(num_vars)?;
+        if active_len > target_len {
+            return Err(CommitmentPhaseError::OracleTooLarge {
+                oracle: "one_hot",
+                len: active_len,
+                target_len,
+            });
+        }
+        Ok(Self {
+            trace_len,
+            chunk_domain,
+            indices,
+            num_vars,
+        })
+    }
+
+    fn nonzero_flat_indices(&self) -> impl Iterator<Item = usize> + '_ {
+        self.indices
+            .iter()
+            .enumerate()
+            .filter_map(|(cycle, &index)| {
+                index.map(|index| {
+                    let index = index as usize;
+                    assert!(
+                        index < self.chunk_domain,
+                        "one-hot index {index} exceeds domain {}",
+                        self.chunk_domain
+                    );
+                    index * self.trace_len + cycle
+                })
+            })
+    }
+}
+
+impl MultilinearPoly<Fr> for AddressMajorOneHotPolynomial {
+    fn num_vars(&self) -> usize {
+        self.num_vars
+    }
+
+    fn evaluate(&self, point: &[Fr]) -> Fr {
+        assert_eq!(point.len(), self.num_vars);
+        let eq_evals = EqPolynomial::new(point.to_vec()).evaluations();
+        self.nonzero_flat_indices()
+            .fold(Fr::from_u64(0), |acc, flat| acc + eq_evals[flat])
+    }
+
+    fn for_each_row(&self, sigma: usize, f: &mut dyn FnMut(usize, &[Fr])) {
+        let num_cols = 1usize << sigma;
+        let num_rows = 1usize << (self.num_vars - sigma);
+        let mut entries = Vec::with_capacity(self.indices.len());
+        for flat in self.nonzero_flat_indices() {
+            entries.push((flat / num_cols, flat % num_cols));
+        }
+        entries.sort_unstable_by_key(|(row, _)| *row);
+
+        let mut cursor = 0;
+        let mut row = vec![Fr::from_u64(0); num_cols];
+        for row_index in 0..num_rows {
+            row.fill(Fr::from_u64(0));
+            while cursor < entries.len() && entries[cursor].0 == row_index {
+                row[entries[cursor].1] = Fr::from_u64(1);
+                cursor += 1;
+            }
+            f(row_index, &row);
+        }
+    }
+
+    fn fold_rows(&self, left: &[Fr], sigma: usize) -> Vec<Fr> {
+        let num_cols = 1usize << sigma;
+        let num_rows = 1usize << (self.num_vars - sigma);
+        assert_eq!(left.len(), num_rows);
+        let mut result = vec![Fr::from_u64(0); num_cols];
+        for flat in self.nonzero_flat_indices() {
+            result[flat % num_cols] += left[flat / num_cols];
+        }
+        result
+    }
+
+    fn is_sparse(&self) -> bool {
+        true
+    }
+
+    fn for_each_nonzero(&self, f: &mut dyn FnMut(usize, Fr)) {
+        for flat in self.nonzero_flat_indices() {
+            f(flat, Fr::from_u64(1));
+        }
+    }
+}
+
+pub struct SparseCommitmentInputs<'a> {
+    pub inputs: CommitmentOracleInputs<'a>,
+    cache: std::collections::BTreeMap<(&'static str, usize), Option<Vec<Fr>>>,
+    chunk_counts: OneHotChunkCounts,
+}
+
+impl<'a> SparseCommitmentInputs<'a> {
+    pub fn new(inputs: CommitmentOracleInputs<'a>) -> Self {
+        Self {
+            inputs,
+            cache: std::collections::BTreeMap::new(),
+            chunk_counts: OneHotChunkCounts::default(),
+        }
+    }
+
+    fn update_chunk_counts(&mut self, program: &CommitmentProverProgramPlan) {
+        let mut counts = OneHotChunkCounts::default();
+        let mut instruction = 0;
+        let mut ram = 0;
+        let mut bytecode = 0;
+        for plan in program.oracle_plans {
+            if plan.oracle.strip_prefix("InstructionRa_").is_some() {
+                instruction += 1;
+            } else if plan.oracle.strip_prefix("RamRa_").is_some() {
+                ram += 1;
+            } else if plan.oracle.strip_prefix("BytecodeRa_").is_some() {
+                bytecode += 1;
+            }
+        }
+        if instruction > 0 {
+            counts.instruction = instruction;
+        }
+        if ram > 0 {
+            counts.ram = ram;
+        }
+        if bytecode > 0 {
+            counts.bytecode = bytecode;
+        }
+        self.chunk_counts = counts;
+    }
+
+    fn one_hot_spec(&self, oracle: &'static str) -> Option<OneHotSpec> {
+        let (prefix, num_chunks, values, padding) =
+            if let Some(suffix) = oracle.strip_prefix("InstructionRa_") {
+                (
+                    suffix,
+                    self.chunk_counts.instruction,
+                    OneHotSource::InstructionKeys,
+                    Some(0),
+                )
+            } else if let Some(suffix) = oracle.strip_prefix("RamRa_") {
+                (
+                    suffix,
+                    self.chunk_counts.ram,
+                    OneHotSource::RamAddresses,
+                    None,
+                )
+            } else if let Some(suffix) = oracle.strip_prefix("BytecodeRa_") {
+                (
+                    suffix,
+                    self.chunk_counts.bytecode,
+                    OneHotSource::BytecodeIndices,
+                    Some(0),
+                )
+            } else {
+                return None;
+            };
+        let chunk = prefix.parse::<usize>().ok()?;
+        if chunk >= num_chunks {
+            return None;
+        }
+        Some(OneHotSpec {
+            source: values,
+            chunk,
+            num_chunks,
+            chunk_bits: 4,
+            padding,
+        })
+    }
+
+    fn source_values(&self, source: OneHotSource) -> &'a [Option<u128>] {
+        match source {
+            OneHotSource::InstructionKeys => self.inputs.instruction_keys,
+            OneHotSource::RamAddresses => self.inputs.ram_addresses,
+            OneHotSource::BytecodeIndices => self.inputs.bytecode_indices,
+        }
+    }
+
+    fn one_hot_indices(
+        &self,
+        oracle: &'static str,
+        trace_len: usize,
+    ) -> Option<Vec<Option<u8>>> {
+        let spec = self.one_hot_spec(oracle)?;
+        let values = self.source_values(spec.source);
+        let chunk_domain = 1usize << spec.chunk_bits;
+        let shift = spec.chunk_bits * (spec.num_chunks - 1 - spec.chunk);
+        let mask = (chunk_domain - 1) as u128;
+        let mut indices = Vec::with_capacity(trace_len);
+        for cycle in 0..trace_len {
+            let value = values.get(cycle).copied().flatten().or(spec.padding);
+            indices.push(value.map(|value| ((value >> shift) & mask) as u8));
+        }
+        Some(indices)
+    }
+
+    fn materialize_oracle(
+        &self,
+        oracle: &'static str,
+        num_vars: usize,
+    ) -> Option<Option<Vec<Fr>>> {
+        let materialized = match oracle {
+            "RdInc" => Some(dense_i128_column_to_field(
+                self.inputs.rd_inc,
+                target_len(num_vars).ok()?,
+            )),
+            "RamInc" => Some(dense_i128_column_to_field(
+                self.inputs.ram_inc,
+                target_len(num_vars).ok()?,
+            )),
+            "UntrustedAdvice" => optional_field_oracle(
+                self.inputs.untrusted_advice,
+                target_len(num_vars).ok()?,
+            ),
+            "TrustedAdvice" => {
+                optional_field_oracle(self.inputs.trusted_advice, target_len(num_vars).ok()?)
+            }
+            _ => {
+                let spec = self.one_hot_spec(oracle)?;
+                let trace_len = target_len(num_vars.checked_sub(spec.chunk_bits)?).ok()?;
+                let values = self.source_values(spec.source);
+                Some(one_hot_chunk_address_major(
+                    values,
+                    spec.chunk,
+                    spec.num_chunks,
+                    spec.chunk_bits,
+                    trace_len,
+                    spec.padding,
+                ))
+            }
+        };
+        Some(materialized)
+    }
+
+    fn commit_oracle(
+        &self,
+        program: &CommitmentProverProgramPlan,
+        oracle: &'static str,
+        layout_num_vars: usize,
+        prover_setup: &DoryProverSetup,
+    ) -> Result<(DoryCommitment, DoryHint), CommitmentPhaseError> {
+        let oracle_num_vars = oracle_num_vars(program, oracle, layout_num_vars);
+        if let Some(spec) = self.one_hot_spec(oracle) {
+            let trace_len = target_len(oracle_num_vars - spec.chunk_bits)?;
+            let chunk_domain = target_len(spec.chunk_bits)?;
+            let indices = self
+                .one_hot_indices(oracle, trace_len)
+                .ok_or(CommitmentPhaseError::MissingOracle { oracle })?;
+            let poly = AddressMajorOneHotPolynomial::new(
+                trace_len,
+                chunk_domain,
+                indices,
+                layout_num_vars,
+            )?;
+            Ok(DoryScheme::commit(&poly, prover_setup))
+        } else {
+            let data = self
+                .materialize_oracle(oracle, oracle_num_vars)
+                .flatten()
+                .ok_or(CommitmentPhaseError::MissingOracle { oracle })?;
+            let data = into_padded_oracle(oracle, oracle_num_vars, Cow::Owned(data))?;
+            commit_with_layout(&data, layout_num_vars, prover_setup)
+        }
+    }
+}
+
+impl CommitmentInputProvider for SparseCommitmentInputs<'_> {
+    fn materialize(&mut self, oracle: &'static str) -> Option<Cow<'_, [Fr]>> {
+        let num_vars = match oracle {
+            "RdInc" | "RamInc" | "UntrustedAdvice" | "TrustedAdvice" => 16,
+            _ if self.one_hot_spec(oracle).is_some() => 20,
+            _ => return None,
+        };
+        self.materialize_with_num_vars(oracle, num_vars)
+    }
+
+    fn materialize_with_num_vars(
+        &mut self,
+        oracle: &'static str,
+        num_vars: usize,
+    ) -> Option<Cow<'_, [Fr]>> {
+        if !self.cache.contains_key(&(oracle, num_vars)) {
+            let materialized = self.materialize_oracle(oracle, num_vars).flatten();
+            let _ = self.cache.insert((oracle, num_vars), materialized);
+        }
+        self.cache
+            .get(&(oracle, num_vars))
+            .and_then(|values| values.as_ref())
+            .map(|values| Cow::Borrowed(values.as_slice()))
+    }
+
+    fn commit_batch(
+        &mut self,
+        program: &CommitmentProverProgramPlan,
+        plan: &CommitmentBatchPlan,
+        prover_setup: &DoryProverSetup,
+    ) -> Option<Result<Vec<CommittedOracle>, CommitmentPhaseError>> {
+        self.update_chunk_counts(program);
+        Some(
+            plan.oracles
+                .par_iter()
+                .map(|&oracle| {
+                    let oracle_num_vars = oracle_num_vars(program, oracle, plan.num_vars);
+                    let (commitment, hint) =
+                        self.commit_oracle(program, oracle, plan.num_vars, prover_setup)?;
+                    Ok(CommittedOracle {
+                        commitment: Some(commitment),
+                        record: CommitmentRecord {
+                            artifact: plan.artifact,
+                            oracle,
+                            label: plan.label,
+                            num_vars: oracle_num_vars,
+                        },
+                        hint: Some(OracleOpeningHint { oracle, hint }),
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    fn add_scaled_to_joint(
+        &mut self,
+        oracle: &'static str,
+        joint: &mut [Fr],
+        num_vars: usize,
+        limit: usize,
+        scalar: Fr,
+    ) -> bool {
+        let dense = match oracle {
+            "RdInc" => Some(self.inputs.rd_inc),
+            "RamInc" => Some(self.inputs.ram_inc),
+            _ => None,
+        };
+        if let Some(values) = dense {
+            let Ok(target_len) = target_len(num_vars) else {
+                return false;
+            };
+            let len = limit.min(joint.len()).min(values.len()).min(target_len);
+            for (dst, &value) in joint.iter_mut().take(len).zip(values.iter()) {
+                if value != 0 {
+                    *dst += Fr::from_i128(value) * scalar;
+                }
+            }
+            return true;
+        }
+
+        let Some(spec) = self.one_hot_spec(oracle) else {
+            return false;
+        };
+        let Some(trace_num_vars) = num_vars.checked_sub(spec.chunk_bits) else {
+            return false;
+        };
+        let Ok(trace_len) = target_len(trace_num_vars) else {
+            return false;
+        };
+        let Ok(chunk_domain) = target_len(spec.chunk_bits) else {
+            return false;
+        };
+        let Some(active_len) = trace_len.checked_mul(chunk_domain) else {
+            return false;
+        };
+        let max_flat = limit.min(joint.len()).min(active_len);
+        let Some(indices) = self.one_hot_indices(oracle, trace_len) else {
+            return false;
+        };
+        for (cycle, index) in indices.into_iter().enumerate() {
+            let Some(index) = index else {
+                continue;
+            };
+            let flat = index as usize * trace_len + cycle;
+            if flat < max_flat {
+                joint[flat] += scalar;
+            }
+        }
+        true
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OneHotSource {
+    InstructionKeys,
+    RamAddresses,
+    BytecodeIndices,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct OneHotSpec {
+    source: OneHotSource,
+    chunk: usize,
+    num_chunks: usize,
+    chunk_bits: usize,
+    padding: Option<u128>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct OneHotChunkCounts {
+    instruction: usize,
+    ram: usize,
+    bytecode: usize,
+}
+
+impl Default for OneHotChunkCounts {
+    fn default() -> Self {
+        Self {
+            instruction: 32,
+            ram: 4,
+            bytecode: 3,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -422,9 +888,19 @@ where
             actual: plan.oracles.len(),
         });
     }
+    if let Some(committed) = inputs.commit_batch(program, plan, prover_setup) {
+        for committed in committed? {
+            artifacts.records.push(committed.record);
+            artifacts.commitments.push(committed.commitment);
+            if let Some(hint) = committed.hint {
+                artifacts.hints.push(hint);
+            }
+        }
+        return Ok(());
+    }
     for &oracle in plan.oracles {
         let data = inputs
-            .materialize(oracle)
+            .materialize_with_num_vars(oracle, oracle_num_vars(program, oracle, plan.num_vars))
             .ok_or(CommitmentPhaseError::MissingOracle { oracle })?;
         let oracle_num_vars = oracle_num_vars(program, oracle, plan.num_vars);
         let data = into_padded_oracle(oracle, oracle_num_vars, data)?;
@@ -451,7 +927,7 @@ fn commit_optional<I>(
 where
     I: CommitmentInputProvider,
 {
-    let Some(data) = inputs.materialize(plan.oracle) else {
+    let Some(data) = inputs.materialize_with_num_vars(plan.oracle, plan.num_vars) else {
         return push_skipped_optional(program, artifacts, plan);
     };
     if should_skip_optional(plan.skip_policy, data.as_ref()) {

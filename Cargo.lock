@@ -2862,10 +2862,12 @@ dependencies = [
  "mimalloc",
  "num-traits",
  "postcard",
+ "rayon",
  "serde",
  "serde_json",
  "strum 0.28.0",
  "tracer",
+ "tracing",
 ]
 
 [[package]]
@@ -3287,6 +3289,7 @@ dependencies = [
  "jolt-transcript",
  "jolt-verifier",
  "jolt-witness",
+ "rayon",
 ]
 
 [[package]]

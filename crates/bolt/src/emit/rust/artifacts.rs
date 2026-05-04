@@ -527,7 +527,10 @@ fn generated_manifest(
         ManifestMode::Standalone { dependency_root } => {
             let dependencies = dependencies
                 .into_iter()
-                .map(|name| format!("{name} = {{ path = \"{dependency_root}/{name}\" }}"))
+                .map(|name| match name.as_str() {
+                    "rayon" => "rayon = \"1.12.0\"".to_owned(),
+                    _ => format!("{name} = {{ path = \"{dependency_root}/{name}\" }}"),
+                })
                 .collect::<Vec<_>>()
                 .join("\n");
             format!(
@@ -1063,8 +1066,9 @@ fn generated_prover_api(
             "use jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript};\n",
         );
         source.push_str(&format!(
-            "use {verifier_import}::{{JoltEvaluationProof, {named_eval_type}, {proof_type}, {stage_proof_type}, {sumcheck_output_type}}};\n\n",
+            "use {verifier_import}::{{JoltEvaluationProof, {named_eval_type}, {proof_type}, {stage_proof_type}, {sumcheck_output_type}}};\n",
         ));
+        source.push_str("use rayon::prelude::*;\n\n");
     } else {
         if has_commitment {
             source.push_str(&config.prover_setup_type.use_line());
@@ -1892,9 +1896,12 @@ fn add_oracle_scaled<I>(
 where
     I: commitment_stage::CommitmentInputProvider,
 {{
+    if commitment_inputs.add_scaled_to_joint(oracle, joint, num_vars, limit, scalar) {{
+        return Ok(());
+    }}
     let target_len = target_len(num_vars)?;
     let data = commitment_inputs
-        .materialize(oracle)
+        .materialize_with_num_vars(oracle, num_vars)
         .ok_or(JoltEvaluationProveError::MissingOracle {{ oracle }})?;
     if data.len() > target_len {{
         return Err(JoltEvaluationProveError::InvalidPointLength {{
@@ -1905,14 +1912,31 @@ where
     }}
     let zero = {field_type}::from_u64(0);
     let one = {field_type}::from_u64(1);
-    for (dst, value) in joint.iter_mut().take(limit).zip(data.iter()) {{
-        if *value == zero {{
-            continue;
-        }}
-        if *value == one {{
-            *dst += scalar;
-        }} else {{
-            *dst += *value * scalar;
+    let len = limit.min(joint.len()).min(data.len());
+    if len >= 1 << 15 {{
+        joint[..len]
+            .par_iter_mut()
+            .zip(data[..len].par_iter())
+            .for_each(|(dst, value)| {{
+                if *value == zero {{
+                    return;
+                }}
+                if *value == one {{
+                    *dst += scalar;
+                }} else {{
+                    *dst += *value * scalar;
+                }}
+            }});
+    }} else {{
+        for (dst, value) in joint.iter_mut().take(len).zip(data.iter()) {{
+            if *value == zero {{
+                continue;
+            }}
+            if *value == one {{
+                *dst += scalar;
+            }} else {{
+                *dst += *value * scalar;
+            }}
         }}
     }}
     Ok(())
@@ -2270,6 +2294,7 @@ pub fn jolt_artifact_config() -> ProtocolArtifactConfig {
             "jolt-dory".to_owned(),
             "jolt-kernels".to_owned(),
             "jolt-witness".to_owned(),
+            "rayon".to_owned(),
         ],
         verifier_dependencies: vec![
             "jolt-dory".to_owned(),

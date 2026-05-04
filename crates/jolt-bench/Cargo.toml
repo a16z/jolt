@@ -24,10 +24,12 @@ serde = { workspace = true, default-features = false, features = [
 ] }
 serde_json = { workspace = true, features = ["std"] }
 strum.workspace = true
+tracing.workspace = true
 
 # Measurement
 memory-stats = { workspace = true }
 mimalloc = { workspace = true }
+rayon.workspace = true
 
 # Serialization
 ark-serialize = { workspace = true, features = ["std"] }

@@ -4,7 +4,7 @@
 //! ordering through its CPU IR, while jolt-core owns the reference
 //! `append_serializable` transcript semantics for the same Dory commitments.
 
-use std::{borrow::Cow, collections::BTreeMap};
+use std::collections::BTreeMap;
 
 use ark_serialize::CanonicalSerialize;
 use bolt::{
@@ -1512,9 +1512,24 @@ fn bolt_stage3_batched_real_muldiv_self_parity() {
         stage7: stage7_prover_plan,
         stage8: stage8_prover_plan,
     };
-    let mut monolithic_commitment_inputs = GeneratedCommitmentOracleMap {
-        data: oracle_data.clone(),
-    };
+    let monolithic_rd_inc = dense_source(&fixture.cycle_inputs, "trace.rd_inc");
+    let monolithic_ram_inc = dense_source(&fixture.cycle_inputs, "trace.ram_inc");
+    let monolithic_instruction_keys =
+        one_hot_source(&fixture.cycle_inputs, "trace.instruction_keys");
+    let monolithic_ram_addresses = one_hot_source(&fixture.cycle_inputs, "trace.ram_addresses");
+    let monolithic_bytecode_indices =
+        one_hot_source(&fixture.cycle_inputs, "trace.bytecode_indices");
+    let mut monolithic_commitment_inputs = generated_prover_commitment::SparseCommitmentInputs::new(
+        generated_prover_commitment::CommitmentOracleInputs {
+            rd_inc: &monolithic_rd_inc,
+            ram_inc: &monolithic_ram_inc,
+            instruction_keys: &monolithic_instruction_keys,
+            ram_addresses: &monolithic_ram_addresses,
+            bytecode_indices: &monolithic_bytecode_indices,
+            untrusted_advice: None,
+            trusted_advice: None,
+        },
+    );
     let monolithic_stage1_inputs =
         Stage1ProverInputs::empty(r1cs_key.num_cycle_vars()).with_outer_remaining_evaluator(&data);
     let mut monolithic_stage1_prover = Stage1ProverKernelExecutor::new(monolithic_stage1_inputs);
@@ -1630,6 +1645,7 @@ fn bolt_stage3_batched_real_muldiv_self_parity() {
         &monolithic_evaluation.joint_opening_proof,
     );
     assert_core_accepts_bolt_evaluation_proof(&fixture, monolithic_evaluation);
+    assert_core_accepts_full_bolt_proof(&fixture, &monolithic_proof, &monolithic_artifacts);
     assert_commitments_match(
         &commitment_prover_trace.commitments,
         &monolithic_artifacts.commitment.commitments,
@@ -2265,19 +2281,6 @@ struct BoltCommitmentTrace {
     commitments: Vec<Option<DoryCommitment>>,
     records: Vec<CommitmentRecord>,
     log: Vec<TranscriptEvent>,
-}
-
-struct GeneratedCommitmentOracleMap {
-    data: BTreeMap<String, Option<Vec<Fr>>>,
-}
-
-impl generated_prover_commitment::CommitmentInputProvider for GeneratedCommitmentOracleMap {
-    fn materialize(&mut self, oracle: &'static str) -> Option<Cow<'_, [Fr]>> {
-        self.data
-            .get(oracle)
-            .and_then(|values| values.as_ref())
-            .map(|values| Cow::Borrowed(values.as_slice()))
-    }
 }
 
 struct CoreMuldivCommitmentFixture {
@@ -8905,6 +8908,64 @@ fn assert_core_accepts_bolt_evaluation_proof(
     let _ = verifier
         .verify_stage8()
         .expect("core accepts Bolt evaluation proof");
+}
+
+fn assert_core_accepts_full_bolt_proof(
+    fixture: &CoreMuldivCommitmentFixture,
+    proof: &jolt_verifier::JoltProof,
+    artifacts: &jolt_prover::JoltProverArtifacts,
+) {
+    let mut core_proof = clone_core_proof(&fixture.proof);
+    core_proof.commitments = proof
+        .commitments
+        .iter()
+        .filter_map(|commitment| commitment.as_ref().map(commitment_to_ark))
+        .collect();
+    core_proof.stage1_uni_skip_first_round_proof =
+        to_core_uniskip_proof(&artifacts.stage1_outer.sumchecks[0]);
+    core_proof.stage1_sumcheck_proof =
+        to_core_sumcheck_proof(&artifacts.stage1_outer.sumchecks[1].proof.round_polynomials);
+    core_proof.stage2_uni_skip_first_round_proof =
+        to_core_stage2_uniskip_proof(&artifacts.stage2.sumchecks[0]);
+    core_proof.stage2_sumcheck_proof =
+        to_core_sumcheck_proof(&artifacts.stage2.sumchecks[1].proof.round_polynomials);
+    core_proof.stage3_sumcheck_proof =
+        to_core_sumcheck_proof(&artifacts.stage3.sumchecks[0].proof.round_polynomials);
+    core_proof.stage4_sumcheck_proof =
+        to_core_sumcheck_proof(&artifacts.stage4.sumchecks[0].proof.round_polynomials);
+    core_proof.stage5_sumcheck_proof =
+        to_core_sumcheck_proof(&artifacts.stage5.sumchecks[0].proof.round_polynomials);
+    core_proof.stage6_sumcheck_proof =
+        to_core_sumcheck_proof(&artifacts.stage6.sumchecks[0].proof.round_polynomials);
+    core_proof.stage7_sumcheck_proof =
+        to_core_sumcheck_proof(&artifacts.stage7.sumchecks[0].proof.round_polynomials);
+    core_proof.joint_opening_proof = proof
+        .evaluation
+        .as_ref()
+        .expect("Bolt proof includes evaluation proof")
+        .joint_opening_proof
+        .0
+        .clone();
+
+    let mut verifier = CoreVerifier::new(
+        fixture.verifier_preprocessing,
+        core_proof,
+        fixture.io.clone(),
+        None,
+        None,
+    )
+    .expect("construct core verifier");
+    verifier.run_preamble();
+    let _ = verifier.verify_stage1().expect("core accepts Bolt Stage 1");
+    let _ = verifier.verify_stage2().expect("core accepts Bolt Stage 2");
+    let _ = verifier.verify_stage3().expect("core accepts Bolt Stage 3");
+    let _ = verifier.verify_stage4().expect("core accepts Bolt Stage 4");
+    let _ = verifier.verify_stage5().expect("core accepts Bolt Stage 5");
+    let _ = verifier.verify_stage6().expect("core accepts Bolt Stage 6");
+    let _ = verifier.verify_stage7().expect("core accepts Bolt Stage 7");
+    let _ = verifier
+        .verify_stage8()
+        .expect("core accepts full Bolt proof");
 }
 
 fn assert_dory_proofs_match(expected: &DoryProof, actual: &DoryProof) {

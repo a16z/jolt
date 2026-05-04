@@ -88,7 +88,14 @@ pub fn setup_tracing(formats: &[TracingFormat], trace_name: &str) -> TracingGuar
             .include_args(true)
             .file(trace_file)
             .build();
-        layers.push(chrome_layer.boxed());
+        if let Some(filter) = std::env::var("JOLT_CHROME_FILTER")
+            .ok()
+            .and_then(|filter| EnvFilter::try_new(filter).ok())
+        {
+            layers.push(chrome_layer.with_filter(filter).boxed());
+        } else {
+            layers.push(chrome_layer.boxed());
+        }
         guards.push(Box::new(guard));
         tracing::info!(
             "Chrome tracing enabled. Output: benchmark-runs/perfetto_traces/{trace_name}.json"
