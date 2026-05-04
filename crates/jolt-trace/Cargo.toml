@@ -3,9 +3,9 @@ name = "jolt-trace"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-description = "Host-side guest program compilation, decoding, and tracing for Jolt"
+description = "Tracer-free instruction and cycle traits for Jolt"
 repository = "https://github.com/a16z/jolt"
-keywords = ["SNARK", "zkvm", "risc-v", "compilation"]
+keywords = ["SNARK", "zkvm", "risc-v", "trace"]
 categories = ["cryptography"]
 
 [lints]
@@ -15,10 +15,5 @@ workspace = true
 test-utils = []
 
 [dependencies]
-bincode.workspace = true
-common = { workspace = true }
 jolt-riscv = { workspace = true }
 rand = { workspace = true }
-serde.workspace = true
-tracer = { workspace = true, features = ["std", "test-utils"] }
-tracing.workspace = true

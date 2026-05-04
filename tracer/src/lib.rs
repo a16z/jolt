@@ -21,11 +21,14 @@ use instruction::{Cycle, Instruction};
 use object::{Object, ObjectSection, SectionKind};
 
 pub mod emulator;
+pub mod execution_backend;
 pub mod instruction;
+mod jolt_trace_adapter;
 pub mod utils;
 
 pub use common::jolt_device::JoltDevice;
 pub use cpu::{advice_tape_read, advice_tape_remaining, advice_tape_write, AdviceTape};
+pub use execution_backend::TracerBackend;
 pub use instruction::inline::{list_registered_inlines, InlineRegistration};
 
 use crate::{

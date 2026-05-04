@@ -3110,13 +3110,8 @@ dependencies = [
 name = "jolt-trace"
 version = "0.1.0"
 dependencies = [
- "bincode 2.0.1",
- "common",
  "jolt-riscv",
  "rand 0.8.5",
- "serde",
- "tracer",
- "tracing",
 ]
 
 [[package]]
@@ -5743,7 +5738,9 @@ dependencies = [
  "inventory",
  "itertools 0.14.0",
  "jolt-platform",
+ "jolt-program",
  "jolt-riscv",
+ "jolt-trace",
  "object 0.39.1",
  "paste",
  "postcard",

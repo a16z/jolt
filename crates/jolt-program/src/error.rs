@@ -4,4 +4,6 @@ pub enum ProgramError {
     UnsupportedArchitecture(&'static str),
     #[error("malformed program image: {0}")]
     MalformedImage(&'static str),
+    #[error(transparent)]
+    Expansion(#[from] crate::expand::ExpansionError),
 }
