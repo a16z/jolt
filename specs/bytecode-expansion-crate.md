@@ -4,8 +4,8 @@
 |-------------|--------------------------------|
 | Author(s)   | Quang Dao                      |
 | Created     | 2026-05-01                     |
-| Status      | proposed                       |
-| PR          |                                |
+| Status      | in review                      |
+| PR          | [#1490](https://github.com/a16z/jolt/pull/1490) |
 
 ## Summary
 
@@ -40,7 +40,7 @@ Add concrete `jolt-eval` invariants for bytecode expansion fixture consistency a
 - This spec does not require completing Lean, Hax, or Aeneas extraction in the same implementation PR.
 - This spec does not require redesigning the bytecode commitment, lookup tables, or prover constraints.
 - This spec does not require moving PCS setup, commitment derivation, bytecode/program-image opening hints, BlindFold setup, `JoltProverPreprocessing`, or `JoltVerifierPreprocessing` out of `jolt-core`.
-- This spec does not require integrating the open bytecode-commitment PR. That work is a future integration constraint, not part of this implementation scope.
+- This spec does not require integrating bytecode-commitment PR [#1344](https://github.com/a16z/jolt/pull/1344). That work is a future integration constraint, not part of this implementation scope.
 - This spec does not require exposing a stable public API for third-party consumers outside the Jolt workspace.
 - This spec does not require moving CPU execution, lazy trace iteration, advice tapes, or memory-device emulation into verifier-facing crates.
 
@@ -517,7 +517,7 @@ This spec was checked against two ongoing branches, but neither branch expands t
 
 The `refactor/crates` branch is useful as a point of comparison for proof-system setup boundaries. Its `jolt-zkvm::preprocessing` work computes module/protocol shape and PCS setup for compiled modules; it does not extract ELF/program bytecode or RAM preprocessing out of `jolt-core`. This supports keeping `jolt-program-preprocess` focused on materialized program artifacts while leaving PCS setup and prover/verifier keys in `jolt-core` or a later proof-system setup crate.
 
-The bytecode-commitment PR (#1344, branch `amir/bytecode-commitment-merged`) is useful as a point of comparison for future committed-program integration. That branch distinguishes full program preprocessing from committed program preprocessing: the prover still needs full bytecode, RAM/program image data, and opening hints, while the verifier should only need metadata plus trusted bytecode and program-image commitments. This PR should not absorb that committed path. Instead, `jolt-program-preprocess` should provide the materialized input that committed-program preprocessing can consume later. Commitment derivation, trusted commitments, Dory geometry, and opening hints remain outside this crate.
+The bytecode-commitment PR [#1344](https://github.com/a16z/jolt/pull/1344), branch `amir/bytecode-commitment-merged`, is useful as a point of comparison for future committed-program integration. That branch distinguishes full program preprocessing from committed program preprocessing: the prover still needs full bytecode, RAM/program image data, and opening hints, while the verifier should only need metadata plus trusted bytecode and program-image commitments. This PR should not absorb that committed path. Instead, `jolt-program-preprocess` should provide the materialized input that committed-program preprocessing can consume later. Commitment derivation, trusted commitments, Dory geometry, and opening hints remain outside this crate.
 
 The future-compatible shape is therefore:
 
@@ -674,5 +674,5 @@ The dependency checks should confirm that `jolt-bytecode-expand`, `jolt-program-
 - `tracer/src/utils/virtual_registers.rs`: virtual register layout, allocator state, and inline clearing behavior.
 - `tracer/src/lib.rs`: current ELF decode extracts instructions, memory bytes, program end, entry address, and `Xlen`.
 - `jolt-eval/README.md`: describes invariant and objective hooks to add for this refactor.
-- PR #1369: added `jolt-trace`, which is useful host-facing trace structure but does not by itself isolate bytecode expansion.
-- PR #1260: broader crate refactor discussion relevant to dependency direction and crate boundaries.
+- PR [#1369](https://github.com/a16z/jolt/pull/1369): added `jolt-trace`, which is useful host-facing trace structure but does not by itself isolate bytecode expansion.
+- PR [#1260](https://github.com/a16z/jolt/pull/1260): broader crate refactor discussion relevant to dependency direction and crate boundaries.
