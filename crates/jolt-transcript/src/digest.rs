@@ -46,16 +46,7 @@ where
 impl<D, F> Default for DigestTranscript<D, F>
 where
     D: Digest<OutputSize = U32>,
-    F: jolt_field::TranscriptChallenge
-        + Copy
-        + Default
-        + PartialEq
-        + Eq
-        + std::fmt::Debug
-        + std::hash::Hash
-        + Sync
-        + Send
-        + 'static,
+    F: jolt_field::TranscriptChallenge,
 {
     fn default() -> Self {
         Self::new(b"")
@@ -136,16 +127,7 @@ where
 impl<D, F> Transcript for DigestTranscript<D, F>
 where
     D: Digest<OutputSize = U32>,
-    F: jolt_field::TranscriptChallenge
-        + Copy
-        + Default
-        + PartialEq
-        + Eq
-        + std::fmt::Debug
-        + std::hash::Hash
-        + Sync
-        + Send
-        + 'static,
+    F: jolt_field::TranscriptChallenge,
 {
     type Challenge = F;
 

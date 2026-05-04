@@ -32,6 +32,7 @@ poseidon = [
 ]
 
 [dev-dependencies]
+jolt-field = { path = "../jolt-field", features = ["bn254"] }
 num-traits = { workspace = true }
 criterion = { workspace = true }
 
