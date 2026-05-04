@@ -38,15 +38,18 @@ fn hash_op112_direct() {
     let state = from_hex("b14c4cefd0d915ad188a656b0c782a0fada66db863a197777c63e87a0e549c79");
     let core_expected =
         from_hex("1bcf4b272ac94a8556251ed31264ef5b25965512c54b998262dfb40af02e203e");
-    let zkvm_expected =
+    let candidate_expected =
         from_hex("f625bb6055493fcbaa0d6ff1d8087f1a949ad9380875353c70b42aa650d4b1a7");
 
-    // What jolt-zkvm appends: LabelWithCount("uniskip_poly", 55)
+    // What the generated path appends: LabelWithCount("uniskip_poly", 55)
     let data = from_hex("756e69736b69705f706f6c790000000000000000000000000000000000000037");
 
     let hash = try_hash(&state, 112, &data);
     eprintln!("Direct hash (n=112, data=LabelWithCount): {}", hex(&hash));
-    eprintln!("  matches jolt-zkvm: {}", hash[..] == zkvm_expected[..]);
+    eprintln!(
+        "  matches generated path: {}",
+        hash[..] == candidate_expected[..]
+    );
     eprintln!("  matches jolt-core: {}", hash[..] == core_expected[..]);
 
     // Scan for what n_rounds jolt-core used with the same data

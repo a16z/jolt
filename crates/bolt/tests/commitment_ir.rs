@@ -2691,6 +2691,7 @@ fn non_jolt_artifact_config() -> ProtocolArtifactConfig {
         common_dependencies: vec!["serde".to_owned()],
         prover_dependencies: Vec::new(),
         verifier_dependencies: Vec::new(),
+        instrumentation_prefix: None,
         prover_forbidden_imports: vec!["forbidden_prover".to_owned()],
         verifier_forbidden_imports: vec!["forbidden_verifier".to_owned()],
         kernel_crate: None,

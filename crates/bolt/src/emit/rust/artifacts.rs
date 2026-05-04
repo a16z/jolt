@@ -17,6 +17,7 @@ pub struct ProtocolArtifactConfig {
     pub common_dependencies: Vec<String>,
     pub prover_dependencies: Vec<String>,
     pub verifier_dependencies: Vec<String>,
+    pub instrumentation_prefix: Option<String>,
     pub prover_forbidden_imports: Vec<String>,
     pub verifier_forbidden_imports: Vec<String>,
     pub kernel_crate: Option<ProtocolCrateRef>,
@@ -828,6 +829,11 @@ fn generated_verifier_api(
     if let Some(extension) = extension {
         source.push_str(&extension.verifier.with_programs_body_intro);
     }
+    if let Some(prefix) = &config.instrumentation_prefix {
+        source.push_str(&format!(
+            "    let _verify_span = tracing::info_span!(\"{prefix}.verify\").entered();\n"
+        ));
+    }
     if let Some(commitment) = &commitment {
         let verifier_fn = commitment
             .with_program_verifier_fn
@@ -1183,6 +1189,11 @@ fn generated_prover_api(
         "    T: {transcript_trait}<Challenge = {field_type}>,\n"
     ));
     source.push_str("{\n");
+    if let Some(prefix) = &config.instrumentation_prefix {
+        source.push_str(&format!(
+            "    let _prove_span = tracing::info_span!(\"{prefix}.prove\").entered();\n"
+        ));
+    }
     if let Some(commitment) = &commitment {
         let prover_fn = commitment
             .with_program_prover_fn
@@ -1197,11 +1208,20 @@ fn generated_prover_api(
         } else {
             String::new()
         };
+        if let Some(prefix) = &config.instrumentation_prefix {
+            source.push_str(&format!(
+                "    let _{field}_span = tracing::info_span!(\"{prefix}.{field}\").entered();\n",
+                field = commitment.field_name
+            ));
+        }
         source.push_str(&format!(
             "    let {field} = {module}::{prover_fn}(\n        {program_arg}inputs.commitment_inputs,\n        inputs.prover_setup,\n        transcript,\n    )?;\n",
             field = commitment.field_name,
             module = commitment.module_alias
         ));
+        if config.instrumentation_prefix.is_some() {
+            source.push_str(&format!("    drop(_{}_span);\n", commitment.field_name));
+        }
     }
     for stage in &stages {
         let prover_fn = stage
@@ -1217,10 +1237,20 @@ fn generated_prover_api(
         } else {
             String::new()
         };
+        if let Some(prefix) = &config.instrumentation_prefix {
+            source.push_str(&format!(
+                "    let _{field}_span = tracing::info_span!(\"{prefix}.{span}\").entered();\n",
+                field = stage.field_name,
+                span = generated_stage_span_name(&stage.field_name)
+            ));
+        }
         source.push_str(&format!(
             "    let {} = {}::{}({program_arg}inputs.{}_executor, transcript)?;\n",
             stage.field_name, stage.module_alias, prover_fn, stage.field_name
         ));
+        if config.instrumentation_prefix.is_some() {
+            source.push_str(&format!("    drop(_{}_span);\n", stage.field_name));
+        }
     }
     if let Some(extension) = extension {
         source.push_str(&extension.prover.after_stage_execution);
@@ -1347,6 +1377,10 @@ fn stage_api(config: &ProtocolArtifactConfig, artifact: &ProtocolRustArtifact) -
         verifier_data_type: has_public_type_name(source, &verifier_data_name)
             .then_some(verifier_data_name),
     }
+}
+
+fn generated_stage_span_name(field_name: &str) -> &str {
+    field_name.strip_suffix("_outer").unwrap_or(field_name)
 }
 
 fn commitment_api(artifacts: &[ProtocolRustArtifact]) -> Option<CommitmentRustApi> {

@@ -200,12 +200,16 @@ pub fn jolt_artifact_config() -> ProtocolArtifactConfig {
         standalone_dependency_overrides: vec![ProtocolStandaloneDependency::new(
             "rayon",
             "rayon = \"1.12.0\"",
+        ), ProtocolStandaloneDependency::new(
+            "tracing",
+            "tracing = { version = \"0.1.37\", default-features = false, features = [\"attributes\"] }",
         )],
         common_dependencies: vec![
             "jolt-field".to_owned(),
             "jolt-openings".to_owned(),
             "jolt-poly".to_owned(),
             "jolt-transcript".to_owned(),
+            "tracing".to_owned(),
         ],
         prover_dependencies: vec![
             "jolt-dory".to_owned(),
@@ -218,6 +222,7 @@ pub fn jolt_artifact_config() -> ProtocolArtifactConfig {
             "jolt-lookup-tables".to_owned(),
             "jolt-sumcheck".to_owned(),
         ],
+        instrumentation_prefix: Some("bolt".to_owned()),
         prover_forbidden_imports: PROVER_FORBIDDEN_IMPORTS
             .iter()
             .map(ToString::to_string)
@@ -265,7 +270,7 @@ fn jolt_evaluation_role_api_extension() -> ProtocolArtifactExtension {
             error_variants: "    Evaluation(JoltEvaluationProveError),\n".to_owned(),
             error_items: "#[derive(Debug)]\npub enum JoltEvaluationProveError {\n    MissingOracle { oracle: &'static str },\n    MissingOpeningHint { oracle: &'static str },\n    MissingStageEval { stage: &'static str, eval: &'static str },\n    MissingStage7RaEval,\n    MissingStage7EvaluationPoint,\n    InvalidPointLength {\n        artifact: &'static str,\n        expected: usize,\n        actual: usize,\n    },\n    TargetSizeOverflow { num_vars: usize },\n}\n\n".to_owned(),
             error_conversions: "impl From<JoltEvaluationProveError> for JoltProveError {\n    fn from(error: JoltEvaluationProveError) -> Self {\n        Self::Evaluation(error)\n    }\n}\n\n".to_owned(),
-            after_stage_execution: "    let evaluation = if let Some(stage7_openings) = inputs.stage7_openings {\n        Some(prove_jolt_evaluation_proof(\n            programs.stage8,\n            inputs.commitment_inputs,\n            inputs.prover_setup,\n            &commitment,\n            &stage6,\n            &stage7,\n            stage7_openings,\n            transcript,\n        )?)\n    } else {\n        None\n    };\n".to_owned(),
+            after_stage_execution: "    let evaluation = if let Some(stage7_openings) = inputs.stage7_openings {\n        let _stage8_span = tracing::info_span!(\"bolt.stage8\").entered();\n        let _evaluate_span = tracing::info_span!(\"bolt.evaluate\").entered();\n        Some(prove_jolt_evaluation_proof(\n            programs.stage8,\n            inputs.commitment_inputs,\n            inputs.prover_setup,\n            &commitment,\n            &stage6,\n            &stage7,\n            stage7_openings,\n            transcript,\n        )?)\n    } else {\n        None\n    };\n".to_owned(),
             proof_fields: "        evaluation,\n".to_owned(),
             helper_items: jolt_prover_evaluation_helpers("Fr"),
         },
@@ -851,8 +856,8 @@ const PROVER_FORBIDDEN_IMPORTS: &[&str] = &[
     "jolt_verifier::stages::",
     "use jolt_equivalence",
     "jolt_equivalence::",
-    "use jolt_bench",
-    "jolt_bench::",
+    "use jolt_profiling",
+    "jolt_profiling::",
 ];
 
 const VERIFIER_FORBIDDEN_IMPORTS: &[&str] = &[
@@ -864,7 +869,7 @@ const VERIFIER_FORBIDDEN_IMPORTS: &[&str] = &[
     "jolt_core::",
     "use jolt_equivalence",
     "jolt_equivalence::",
-    "use jolt_bench",
-    "jolt_bench::",
+    "use jolt_profiling",
+    "jolt_profiling::",
     "tracer::",
 ];

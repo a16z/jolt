@@ -5,8 +5,10 @@
 //! `append_serializable` transcript semantics for the same Dory commitments.
 
 use std::collections::BTreeMap;
+use std::sync::Once;
+use std::time::Instant;
 
-use ark_serialize::CanonicalSerialize;
+use ark_serialize::{CanonicalSerialize, Compress};
 use bolt::protocols::jolt::{
     build_commitment_protocol, build_stage1_outer_protocol, build_stage2_protocol,
     build_stage3_protocol, build_stage4_protocol, build_stage5_protocol, build_stage6_protocol,
@@ -59,6 +61,7 @@ use jolt_equivalence::checkpoint::{
 use jolt_equivalence::core_conversion::{commitment_to_ark, to_ark, to_core_sumcheck_proof};
 use jolt_field::signed::{S128, S64};
 use jolt_field::{Field, Fr};
+use jolt_inlines_sha2 as _;
 use jolt_kernels::stage1::{
     execute_stage1_program, Stage1CpuProgramPlan as KernelStage1CpuProgramPlan,
     Stage1ExecutionArtifacts, Stage1ExecutionMode, Stage1KernelPlan as KernelStage1KernelPlan,
@@ -129,6 +132,10 @@ use jolt_kernels::stage6 as kernel_stage6;
 use jolt_openings::{CommitmentScheme as _, StreamingCommitment};
 use jolt_poly::lagrange::lagrange_kernel_eval;
 use jolt_poly::{EqPolynomial, Polynomial, UnivariatePoly};
+use jolt_profiling::{
+    check_core_vs_bolt_gate, setup_tracing, time_it, PeakRssSampler, PerfGateThresholds,
+    PerfMetrics, TracingFormat,
+};
 use jolt_prover::stages::{
     commitment as generated_prover_commitment, stage8 as generated_prover_stage8,
 };
@@ -161,6 +168,7 @@ type CoreVerifierPreprocessing =
     JoltVerifierPreprocessing<CoreFr, Bn254Curve, DoryCommitmentScheme>;
 
 const TRANSCRIPT_LABEL: &[u8] = b"Jolt";
+static PERF_TRACING: Once = Once::new();
 
 // Keep older monolithic verifier gates scoped to the stage prefix under test.
 fn empty_generated_stage6_verifier_program() -> &'static generated_stage6::Stage6VerifierProgramPlan
@@ -689,7 +697,40 @@ fn bolt_stage2_batched_real_muldiv_self_parity() {
 
 #[test]
 fn bolt_stage3_batched_real_muldiv_self_parity() {
-    let fixture = core_muldiv_commitment_fixture();
+    assert_bolt_full_real_trace_self_parity(core_muldiv_commitment_fixture(), false);
+}
+
+#[test]
+#[ignore = "run by the Bolt perf-oracle CI workflow"]
+fn bolt_sha2_chain_2_16_core_vs_bolt_perf_oracle() {
+    maybe_setup_perf_trace("bolt_sha2_chain_2_16_core_vs_bolt");
+    assert_bolt_full_real_trace_self_parity(core_sha2_chain_commitment_fixture(16), true);
+}
+
+#[test]
+#[ignore = "run by the Bolt perf-oracle CI workflow"]
+fn bolt_sha2_chain_2_20_core_vs_bolt_perf_oracle() {
+    maybe_setup_perf_trace("bolt_sha2_chain_2_20_core_vs_bolt");
+    assert_bolt_full_real_trace_self_parity(core_sha2_chain_commitment_fixture(20), true);
+}
+
+fn maybe_setup_perf_trace(trace_name: &'static str) {
+    if std::env::var_os("JOLT_BOLT_PERF_TRACE").is_some() {
+        PERF_TRACING.call_once(|| {
+            let _ = Box::leak(Box::new(setup_tracing(
+                &[TracingFormat::Chrome],
+                trace_name,
+            )));
+        });
+    }
+}
+
+fn assert_bolt_full_real_trace_self_parity(
+    fixture: CoreMuldivCommitmentFixture,
+    enforce_perf_gate: bool,
+) {
+    let bolt_setup_start = Instant::now();
+    let _bolt_setup_span = tracing::info_span!("bolt.setup").entered();
     let (commitment_prover_program, commitment_verifier_program) =
         bolt_commitment_programs_with_params(&fixture.params);
     let (stage1_prover_program, stage1_verifier_program) =
@@ -762,6 +803,8 @@ fn bolt_stage3_batched_real_muldiv_self_parity() {
     let r1cs_key = R1csKey::new(rv64::rv64_constraints::<Fr>(), fixture.proof.trace_length);
     let data = Stage1OuterRv64Data::new(&r1cs_key, &fixture.r1cs_witness, &fixture.rv64_cycles)
         .expect("valid RV64-backed stage1 data");
+    let bolt_setup_ms = bolt_setup_start.elapsed().as_secs_f64() * 1_000.0;
+    drop(_bolt_setup_span);
 
     let mut prover_transcript =
         CheckpointTranscript::<jolt_transcript::Blake2bTranscript<Fr>>::new(TRANSCRIPT_LABEL);
@@ -1615,23 +1658,28 @@ fn bolt_stage3_batched_real_muldiv_self_parity() {
     let mut monolithic_prover_transcript =
         CheckpointTranscript::<jolt_transcript::Blake2bTranscript<Fr>>::new(TRANSCRIPT_LABEL);
     append_bolt_preamble(&mut monolithic_prover_transcript, &fixture);
-    let (monolithic_proof, monolithic_artifacts) = jolt_prover::prove_jolt_with_programs(
-        jolt_prover::JoltProverInputs {
-            commitment_inputs: &mut monolithic_commitment_inputs,
-            prover_setup: &fixture.pcs_setup,
-            stage1_outer_executor: &mut monolithic_stage1_prover,
-            stage2_executor: &mut monolithic_stage2_prover,
-            stage3_executor: &mut monolithic_stage3_prover,
-            stage4_executor: &mut monolithic_stage4_prover,
-            stage5_executor: &mut monolithic_stage5_prover,
-            stage6_executor: &mut monolithic_stage6_prover,
-            stage7_executor: &mut monolithic_stage7_prover,
-            stage7_openings: Some(&kernel_stage7_openings),
-        },
-        monolithic_prover_programs,
-        &mut monolithic_prover_transcript,
-    )
-    .expect("generated monolithic prover produces real muldiv proof");
+    let bolt_rss_sampler = PeakRssSampler::start().expect("start Bolt RSS sampler");
+    let (bolt_prove_ms, monolithic_prove_result) = time_it(|| {
+        jolt_prover::prove_jolt_with_programs(
+            jolt_prover::JoltProverInputs {
+                commitment_inputs: &mut monolithic_commitment_inputs,
+                prover_setup: &fixture.pcs_setup,
+                stage1_outer_executor: &mut monolithic_stage1_prover,
+                stage2_executor: &mut monolithic_stage2_prover,
+                stage3_executor: &mut monolithic_stage3_prover,
+                stage4_executor: &mut monolithic_stage4_prover,
+                stage5_executor: &mut monolithic_stage5_prover,
+                stage6_executor: &mut monolithic_stage6_prover,
+                stage7_executor: &mut monolithic_stage7_prover,
+                stage7_openings: Some(&kernel_stage7_openings),
+            },
+            monolithic_prover_programs,
+            &mut monolithic_prover_transcript,
+        )
+    });
+    let bolt_peak_rss_mb = bolt_rss_sampler.finish();
+    let (monolithic_proof, monolithic_artifacts) =
+        monolithic_prove_result.expect("generated monolithic prover produces real trace proof");
     let monolithic_evaluation = monolithic_proof
         .evaluation
         .as_ref()
@@ -1670,23 +1718,50 @@ fn bolt_stage3_batched_real_muldiv_self_parity() {
         CheckpointTranscript::<jolt_transcript::Blake2bTranscript<Fr>>::new(TRANSCRIPT_LABEL);
     append_bolt_preamble(&mut monolithic_verify_transcript, &fixture);
     let evaluation_setup = DoryScheme::verifier_setup(&fixture.pcs_setup);
-    let monolithic_verified_artifacts = jolt_verifier::verify_jolt_with_programs(
-        &monolithic_proof,
-        jolt_verifier::JoltVerifierInputs {
-            stage2_openings: &generated_jolt_stage2_openings,
-            stage2_ram: Some(&generated_ram_data),
-            stage3_openings: &generated_jolt_stage3_openings,
-            stage4_openings: &generated_jolt_stage4_openings,
-            stage5_openings: &generated_jolt_stage5_openings,
-            stage6_openings: &core_stage6.opening_inputs,
-            stage6_data: Some(&generated_stage6_data),
-            stage7_openings: &core_stage7.opening_inputs,
-            evaluation_setup: Some(&evaluation_setup),
-        },
-        generated_stage7_programs,
-        &mut monolithic_verify_transcript,
-    )
-    .expect("generated monolithic verifier accepts generated monolithic prover proof");
+    let (bolt_verify_ms, monolithic_verify_result) = time_it(|| {
+        jolt_verifier::verify_jolt_with_programs(
+            &monolithic_proof,
+            jolt_verifier::JoltVerifierInputs {
+                stage2_openings: &generated_jolt_stage2_openings,
+                stage2_ram: Some(&generated_ram_data),
+                stage3_openings: &generated_jolt_stage3_openings,
+                stage4_openings: &generated_jolt_stage4_openings,
+                stage5_openings: &generated_jolt_stage5_openings,
+                stage6_openings: &core_stage6.opening_inputs,
+                stage6_data: Some(&generated_stage6_data),
+                stage7_openings: &core_stage7.opening_inputs,
+                evaluation_setup: Some(&evaluation_setup),
+            },
+            generated_stage7_programs,
+            &mut monolithic_verify_transcript,
+        )
+    });
+    let monolithic_verified_artifacts = monolithic_verify_result
+        .expect("generated monolithic verifier accepts generated monolithic prover proof");
+    let bolt_metrics = PerfMetrics {
+        setup_ms: Some(bolt_setup_ms),
+        prove_ms: Some(bolt_prove_ms),
+        verify_ms: Some(bolt_verify_ms),
+        proof_bytes: None,
+        peak_rss_mb: Some(bolt_peak_rss_mb),
+        span_names: jolt_profiling::CORE_VS_BOLT_REQUIRED_SPANS
+            .iter()
+            .filter(|span| span.starts_with("bolt."))
+            .map(|span| (*span).to_owned())
+            .collect(),
+    };
+    let perf_thresholds = PerfGateThresholds {
+        max_setup_ratio: None,
+        max_prove_ratio: Some(100.0),
+        max_verify_ratio: Some(100.0),
+        max_proof_size_ratio: None,
+        max_peak_rss_ratio: Some(100.0),
+    };
+    if enforce_perf_gate {
+        let _report =
+            check_core_vs_bolt_gate(&fixture.core_metrics, &bolt_metrics, perf_thresholds)
+                .expect("core-vs-Bolt perf oracle gate");
+    }
     assert_eq!(
         monolithic_artifacts.stage6.sumchecks.len(),
         monolithic_verified_artifacts.stage6.sumchecks.len()
@@ -2375,6 +2450,7 @@ struct BoltCommitmentTrace {
 
 struct CoreMuldivCommitmentFixture {
     params: JoltProtocolParams,
+    core_metrics: PerfMetrics,
     pcs_setup: DoryProverSetup,
     proof: CoreProof,
     verifier_preprocessing: &'static CoreVerifierPreprocessing,
@@ -6680,10 +6756,29 @@ fn leak_slice<T>(values: Vec<T>) -> &'static [T] {
 }
 
 fn core_muldiv_commitment_fixture() -> CoreMuldivCommitmentFixture {
+    let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("muldiv inputs");
+    core_guest_commitment_fixture("muldiv-guest", inputs, 1 << 16)
+}
+
+fn core_sha2_chain_commitment_fixture(log_t: usize) -> CoreMuldivCommitmentFixture {
+    let target_cycles = ((1usize << log_t) as f64 * 0.9) as usize;
+    let num_iters = std::cmp::max(1, (target_cycles as f64 / 3396.0) as u32);
+    let mut inputs = Vec::new();
+    inputs.extend(postcard::to_stdvec(&[5u8; 32]).expect("sha2-chain input"));
+    inputs.extend(postcard::to_stdvec(&num_iters).expect("sha2-chain iterations"));
+    core_guest_commitment_fixture("sha2-chain-guest", inputs, 1usize << log_t)
+}
+
+fn core_guest_commitment_fixture(
+    guest_name: &str,
+    inputs: Vec<u8>,
+    max_trace_length: usize,
+) -> CoreMuldivCommitmentFixture {
+    let setup_start = Instant::now();
+    let _core_setup_span = tracing::info_span!("core.setup").entered();
     DoryGlobals::reset();
 
-    let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("muldiv inputs");
-    let mut core_program = host::Program::new("muldiv-guest");
+    let mut core_program = host::Program::new(guest_name);
     let (core_bytecode, init_memory_state, _, entry_address) = core_program.decode();
     let core_bytecode_for_bolt = core_bytecode.clone();
     let (_, trace, _, host_io_device) = core_program.trace(&inputs, &[], &[]);
@@ -6691,12 +6786,12 @@ fn core_muldiv_commitment_fixture() -> CoreMuldivCommitmentFixture {
         core_bytecode,
         host_io_device.memory_layout.clone(),
         init_memory_state,
-        1 << 16,
+        max_trace_length,
         entry_address,
     )
     .expect("shared preprocessing");
     let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
-    let elf_contents = core_program.get_elf_contents().expect("muldiv elf");
+    let elf_contents = core_program.get_elf_contents().expect("guest elf");
     let prover: CoreProver<'_> = CoreProver::gen_from_elf(
         &prover_preprocessing,
         &elf_contents,
@@ -6707,13 +6802,44 @@ fn core_muldiv_commitment_fixture() -> CoreMuldivCommitmentFixture {
         None,
         None,
     );
+    let setup_ms = setup_start.elapsed().as_secs_f64() * 1_000.0;
+    drop(_core_setup_span);
     let io = prover.program_io.clone();
     let initial_ram_state = prover.initial_ram_state.clone();
     let final_ram_state = prover.final_ram_state.clone();
-    let (proof, _debug): (CoreProof, _) = prover.prove();
+    let core_rss_sampler = PeakRssSampler::start().expect("start core RSS sampler");
+    let _core_prove_span = tracing::info_span!("core.prove").entered();
+    let (prove_ms, (proof, _debug)) = time_it(|| prover.prove());
+    drop(_core_prove_span);
+    let peak_rss_mb = core_rss_sampler.finish();
+    let proof_bytes = proof.serialized_size(Compress::Yes) as u64;
     let verifier_preprocessing: &'static _ = Box::leak(Box::new(JoltVerifierPreprocessing::from(
         &prover_preprocessing,
     )));
+    let core_verifier = CoreVerifier::new(
+        verifier_preprocessing,
+        clone_core_proof(&proof),
+        io.clone(),
+        None,
+        None,
+    )
+    .expect("construct core verifier");
+    let _core_verify_span = tracing::info_span!("core.verify").entered();
+    let (verify_ms, verify_result) = time_it(|| core_verifier.verify());
+    drop(_core_verify_span);
+    verify_result.expect("core verifier accepts proof");
+    let core_metrics = PerfMetrics {
+        setup_ms: Some(setup_ms),
+        prove_ms: Some(prove_ms),
+        verify_ms: Some(verify_ms),
+        proof_bytes: Some(proof_bytes),
+        peak_rss_mb: Some(peak_rss_mb),
+        span_names: vec![
+            "core.setup".to_owned(),
+            "core.prove".to_owned(),
+            "core.verify".to_owned(),
+        ],
+    };
 
     let mut padded_trace = trace.clone();
     padded_trace.resize(proof.trace_length, jolt_trace::Cycle::NoOp);
@@ -6835,6 +6961,7 @@ fn core_muldiv_commitment_fixture() -> CoreMuldivCommitmentFixture {
 
     CoreMuldivCommitmentFixture {
         params,
+        core_metrics,
         pcs_setup: DoryProverSetup(prover_preprocessing.generators.clone()),
         proof,
         verifier_preprocessing,

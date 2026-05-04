@@ -213,7 +213,7 @@ fn checked_in_generated_verifier_respects_boundary_hygiene() {
         "jolt-kernels",
         "jolt-core",
         "jolt-equivalence",
-        "jolt-bench",
+        "jolt-profiling",
         "tracer",
     ] {
         assert!(
@@ -233,8 +233,8 @@ fn checked_in_generated_verifier_respects_boundary_hygiene() {
             "jolt_core::",
             "use jolt_equivalence",
             "jolt_equivalence::",
-            "use jolt_bench",
-            "jolt_bench::",
+            "use jolt_profiling",
+            "jolt_profiling::",
             "use tracer",
             "tracer::",
         ] {

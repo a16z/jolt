@@ -1,7 +1,3 @@
-//! Verifier wrapping infrastructure for Jolt.
+//! Stub crate reserved for future Jolt verifier wrapping work.
 //!
-//! Provides symbolic execution, AST capture, and pluggable codegen backends for
-//! transpiling the Jolt verifier into external proof systems (gnark/Groth16, etc.).
-//!
-//! **Status: pending rewrite against jolt-compiler.**
-//! See README.md for the target design.
+//! Wrapping is deferred until the generated verifier API is stable and audited.

@@ -3,7 +3,7 @@ name = "jolt-wrapper"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "Verifier wrapping infrastructure for Jolt — symbolic execution, AST capture, and pluggable codegen backends"
+description = "Stub crate reserved for future Jolt verifier wrapping work"
 
 [lints]
 workspace = true

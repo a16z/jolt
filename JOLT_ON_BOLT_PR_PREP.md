@@ -37,27 +37,62 @@ foundation crates:
 
 If these land first, rebase the stack and remove duplicated work.
 
-## Stack Order
+## Concrete PR Stack
 
-1. Restore repo workflow/spec/docs files that were removed or ignored in the
-   working branch. The crate PRs should not delete `.claude`, `agent-skills`,
-   `specs`, root workflow docs, or other non-Bolt process files unless that is
-   the explicit PR scope.
-2. Delete stale experimental crates and paths from the working branch. See
-   "Stale Path And Code Removal" below for the concrete checklist.
-3. Keep `crates/jolt-wrapper` and `crates/jolt-blindfold` as minimal stubs
-   only. They can land as tiny placeholder PRs if useful, but implementation
-   belongs in later stacks.
-4. Land `jolt-witness`.
-5. Land `jolt-kernels`.
-6. Land `bolt`.
-7. Land generated `jolt-prover`.
-8. Land generated `jolt-verifier`.
-9. Land `jolt-equivalence` as the e2e sandbox against `jolt-core`.
-10. Fold useful `jolt-bench` pieces into `jolt-profiling` instead of landing a
-    permanent standalone benchmark crate.
+Use small review branches cut from `origin/main`, rebased over their prerequisite
+branches only. Each PR should be understandable without reading the integration
+branch.
 
-Each PR should be understandable without reading the whole integration branch.
+| Review | Branch | Scope | Depends on |
+| --- | --- | --- | --- |
+| 1 | `prep/restore-process-docs` | Restore process/spec/agent files that disappeared from `origin/main`; no crate code changes. | `origin/main` |
+| 2 | `prep/remove-stale-experimental-crates` | Delete `crates/jolt-compiler/` and `crates/jolt-zkvm/`; remove stale active references. | `prep/restore-process-docs` |
+| 3 | `prep/stub-deferred-crates` | Keep `crates/jolt-wrapper/` and `crates/jolt-blindfold/` as buildable stubs with explicit deferred status. | cleanup PRs |
+| 4 | `stack/jolt-witness` | Witness/oracle materialization crate for the full-`Fr`, non-zk path; prover-side only. | cleanup PRs |
+| 5 | `stack/jolt-kernels` | Shared prover kernels used below generated prover code; no verifier dependency. | cleanup PRs |
+| 6 | `stack/bolt` | Bolt compiler, Jolt protocol package, generation command, schema/version headers, local gates, README updates. | `jolt-witness`, `jolt-kernels` as needed |
+| 7 | `stack/generated-jolt-verifier` | Generated verifier crate, verifier-owned proof/output types, negative gates, boundary checks. | `bolt` |
+| 8 | `stack/generated-jolt-prover` | Generated prover crate; may construct verifier-owned proof/output types; no tracer internals. | `bolt`, `jolt-verifier`, `jolt-witness`, `jolt-kernels` |
+| 9 | `stack/jolt-equivalence` | E2E semantic oracle comparing the generated path to `jolt-core`. | generated prover/verifier |
+| 10 | `stack/jolt-profiling` | Land reusable core-vs-Bolt measurement primitives and perf-oracle gates; keep protocol-specific harnesses near their owning semantic oracle or CI job. | generated path, `jolt-equivalence` |
+
+If the generated verifier and prover cannot be separated cleanly at first,
+collapse reviews 7 and 8 into one generated-artifact PR, but keep the dependency
+direction explicit: verifier code must remain witness/prover/trace/core-free,
+and prover code may depend on verifier-owned proof/output types only.
+
+## Origin/Main Restoration Audit
+
+Current comparison command:
+
+```bash
+git diff --name-status --diff-filter=D origin/main HEAD -- .github .claude agent-skills specs book docs CLAUDE.md AGENTS.md README.md
+```
+
+Restore these process/spec files before crate PRs:
+
+```text
+.claude/skills/analyze-spec/SKILL.md
+.claude/skills/ci-code-review/SKILL.md
+.claude/skills/implement-spec/SKILL.md
+.claude/skills/new-invariant/SKILL.md
+.claude/skills/new-objective/SKILL.md
+.claude/skills/new-spec/SKILL.md
+.claude/skills/update-docs/SKILL.md
+CLAUDE.md
+agent-skills/jolt/SKILL.md
+agent-skills/jolt/install.sh
+specs/1370-spec-driven-workflow.md
+specs/1402-ecdsa-inputs-sanitation.md
+specs/TEMPLATE.md
+specs/act4-tests.md
+specs/unify-field-hierarchy.md
+```
+
+No `.github/workflows/**`, book, README, or `AGENTS.md` deletions showed up in
+that scoped comparison. Source-code deletions outside the process/spec scope
+should be reviewed by their owning crate PRs rather than restored in the prep
+hygiene branch.
 
 ## Generated Artifact Policy
 
@@ -80,6 +115,15 @@ Suggested CI shape:
 run Bolt artifact generation
 git diff --exit-code crates/jolt-prover crates/jolt-verifier
 ```
+
+The current local regeneration command documented in `crates/bolt/README.md` is:
+
+```bash
+JOLT_UPDATE_GOLDENS=1 cargo nextest run -p bolt generated_jolt_artifacts_have_uniform_crate_layout_and_import_rules --cargo-quiet
+```
+
+The generated-artifact PR should either keep that command as the source of truth
+or replace it with a smaller public command, then wire the same command into CI.
 
 Generated files should also carry an obvious generated header and artifact
 schema/version marker so reviewers know which files are source of truth and
@@ -171,6 +215,19 @@ excluded or separately linted:
 Add a CI job that runs the Semgrep rules before the generated-artifact diff
 check. Boundary failures should be treated as architecture regressions, not
 style nits.
+
+Current status:
+
+- `.semgrep/jolt-rules.yaml` already contains general production-code hygiene
+  checks for panic/debug macros, unwrap/expect, transmute, println/eprintln,
+  broad `#[allow(...)]`, expensive clones, ark dependency leaks, and HashMap
+  review prompts.
+- Add the crate-boundary inventory above as named rules before landing the
+  generated role crates. The existing generic hygiene rules are useful but do
+  not yet prove the verifier/prover/witness/Bolt dependency boundaries.
+- CI should run the boundary rules on the explicit prod-source scope above, then
+  run the broader hygiene rules either as warnings or as hard errors per crate
+  once each crate has documented its remaining debt.
 
 ## Error And Clippy Hardening
 
@@ -295,6 +352,31 @@ crates/jolt-compiler/
 crates/jolt-zkvm/
 ```
 
+Current stale rationale:
+
+- Both directories are additions relative to `origin/main`.
+- Neither directory is a root workspace member in `Cargo.toml`.
+- `Cargo.lock` and active crate manifests do not require `jolt-compiler` or
+  `jolt-zkvm`; the only manifest references are inside the stale directories
+  themselves.
+- `jolt-compiler` is superseded in this stack by `crates/bolt/`.
+- `jolt-zkvm` is an old top-level runtime/prover shape that overlaps with the
+  current split through `jolt-trace`, `jolt-witness`, generated `jolt-prover`,
+  generated `jolt-verifier`, and `jolt-equivalence`.
+- Remaining references in active files should be removed, renamed, or marked as
+  historical context in the stale-cleanup PR.
+
+Prep cleanup status:
+
+- `crates/jolt-compiler/` and `crates/jolt-zkvm/` have been removed from this
+  prep branch.
+- Active docs/comments have been moved to current terminology: generated path,
+  `jolt-trace`, and current prover/verifier crates.
+- The old legacy modular-stack runner and bespoke Bolt stage
+  benchmark were removed. The reusable timing, median, and peak RSS pieces are
+  folded into `jolt-profiling`; future perf gates should use those primitives
+  instead of a standalone benchmark crate.
+
 Keep these only as minimal stubs unless a later PR explicitly implements them:
 
 ```text
@@ -411,7 +493,8 @@ semantic oracle gate:
   compare generated path outputs against jolt-core reference outputs
 
 perf oracle gate:
-  after folding jolt-bench into jolt-profiling, run small perf smoke gates
+  use jolt-profiling to instrument core-vs-Bolt runs with matching spans
+  run small perf smoke gates on every relevant PR
   run larger/nightly perf gates for realistic traces
   fail on configured proof-size, prove-time, verify-time, or memory regressions
 ```
@@ -430,9 +513,9 @@ Keep `jolt-equivalence` for now. It is the e2e sandbox proving the generated
 path matches `jolt-core`, and `jolt-core` remains the reference until the Bolt
 path is mature enough to replace it confidently.
 
-Do not treat `jolt-bench` as a long-term separate crate unless that decision is
-made explicitly. Fold useful harness code into `jolt-profiling`, expand tracing
-coverage in generated/codegen paths, and define perf gates there.
+The old separate benchmark crate is gone. Keep reusable measurement primitives
+in `jolt-profiling`, expand tracing coverage in generated/codegen paths, and
+define perf gates around paired core-vs-Bolt runs.
 
 Tracing/profiling cleanup:
 
@@ -442,17 +525,30 @@ Tracing/profiling cleanup:
   timings separable.
 - Define at least one small perf smoke program and one realistic perf program.
 - Track proof size, peak memory, prove time, verify time, and stage breakdowns.
+- Require the same named span families for the `jolt-core` reference path and
+  the generated Bolt path, including:
 
-After folding `jolt-bench` into `jolt-profiling`, add named gates for:
+```text
+core.setup
+core.prove
+core.verify
+bolt.setup
+bolt.commitment
+bolt.stage1 ... bolt.stage8
+bolt.evaluate
+bolt.verify
+```
+
+After folding benchmark primitives into `jolt-profiling`, add named gates for:
 
 ```text
 semantic oracle:
   generated trace/proof/verifier behavior matches jolt-core for selected cases
 
 perf oracle:
-  generated prover stage timing stays within configured thresholds
-  generated verifier timing stays within configured thresholds
-  proof size and memory do not regress unexpectedly
+  generated prover stage timing stays within configured thresholds versus core
+  generated verifier timing stays within configured thresholds versus core
+  proof size and memory do not regress unexpectedly versus core
 
 observability oracle:
   required tracing spans are present for stage, kernel, oracle, and PCS work

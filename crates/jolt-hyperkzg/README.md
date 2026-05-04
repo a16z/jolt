@@ -38,7 +38,7 @@ jolt-transcript ─┤
 jolt-openings ─┘
 ```
 
-Used by `jolt-zkvm`.
+Intended as a PCS backend for the generated Jolt prover/verifier path.
 
 ## Feature Flags
 

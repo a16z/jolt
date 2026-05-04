@@ -12,9 +12,9 @@
 //! // ...run jolt-core prover with `golden` as the transcript...
 //! let golden_log = golden.into_log();
 //!
-//! // 2. Record the candidate from jolt-zkvm.
+//! // 2. Record the candidate from the generated Jolt path.
 //! let mut candidate = CheckpointTranscript::<Blake2bTranscript<Fr>>::new(LABEL);
-//! // ...run jolt-zkvm prover with `candidate` as the transcript...
+//! // ...run the generated prover with `candidate` as the transcript...
 //! let candidate_log = candidate.into_log();
 //!
 //! // 3. Compare.

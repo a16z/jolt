@@ -54,7 +54,7 @@ no jolt-prover dependency
 no jolt-kernels dependency
 no jolt-core dependency
 no jolt-equivalence dependency
-no jolt-bench dependency
+no jolt-profiling dependency
 no tracer internals
 ```
 
@@ -89,6 +89,16 @@ not import verifier stage internals.
 
 ## Local MLIR Toolchain
 
+The easiest setup path on macOS is:
+
+```bash
+make bolt-dev-setup
+source .bolt-dev-env
+```
+
+The helper installs Homebrew LLVM, Rust components used by CI, and writes the
+local environment required by `mlir-sys`.
+
 On macOS with Homebrew LLVM:
 
 ```bash
@@ -96,7 +106,7 @@ brew install llvm
 export MLIR_SYS_220_PREFIX=/opt/homebrew/opt/llvm
 export PATH="/opt/homebrew/opt/llvm/bin:$PATH"
 export SDKROOT="$(xcrun --show-sdk-path)"
-export BINDGEN_EXTRA_CLANG_ARGS="-isysroot $(xcrun --show-sdk-path)"
+export BINDGEN_EXTRA_CLANG_ARGS="-isysroot$(xcrun --show-sdk-path)"
 ```
 
 Do not set `MLIR_SYS_LINK_SHARED=1` with the Homebrew LLVM 22 bottle; it does

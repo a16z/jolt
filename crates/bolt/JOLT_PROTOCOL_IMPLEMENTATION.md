@@ -55,7 +55,7 @@ For every verifier cleanup iteration:
 
 - Verifier CPU IR must not contain kernel attrs or prover-only ops.
 - Generated verifier Rust must not import `jolt-kernels`, `jolt-core`,
-  `jolt-prover`, `jolt-equivalence`, `jolt-bench`, or tracer internals.
+  `jolt-prover`, `jolt-equivalence`, `jolt-profiling`, or tracer internals.
 - Transcript state must be explicitly threaded through MLIR.
 - Opening batches must preserve ordered claim lists.
 - Opening equality checks must reject incompatible claim metadata.

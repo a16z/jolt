@@ -68,7 +68,8 @@ jolt-openings
   +-- jolt-transcript (Fiat-Shamir transcript trait)
 ```
 
-Consumed by `jolt-dory`, `jolt-spartan`, and `jolt-zkvm`.
+Consumed by PCS implementations such as `jolt-dory` and by the generated Jolt
+prover/verifier path.
 
 ## License
 

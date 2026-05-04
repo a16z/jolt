@@ -26,10 +26,12 @@ jolt-prover = { path = "../jolt-prover" }
 jolt-verifier = { path = "../jolt-verifier" }
 jolt-trace = { path = "../jolt-trace" }
 jolt-dory = { path = "../jolt-dory" }
+jolt-inlines-sha2.workspace = true
 jolt-kernels = { path = "../jolt-kernels" }
 jolt-lookup-tables = { path = "../jolt-lookup-tables" }
 jolt-openings = { path = "../jolt-openings", features = ["test-utils"] }
 jolt-poly = { path = "../jolt-poly" }
+jolt-profiling = { path = "../jolt-profiling" }
 jolt-r1cs = { path = "../jolt-r1cs" }
 jolt-sumcheck = { path = "../jolt-sumcheck" }
 jolt-witness = { path = "../jolt-witness" }
@@ -38,3 +40,4 @@ num-traits.workspace = true
 blake2.workspace = true
 rayon.workspace = true
 strum.workspace = true
+tracing.workspace = true

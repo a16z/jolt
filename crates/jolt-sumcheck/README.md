@@ -14,7 +14,7 @@ sum_{x in {0,1}^n} g(x) = C
 
 the sumcheck protocol reduces it to a single evaluation query `g(r_1, ..., r_n) = v` via `n` rounds of interaction. In each round the prover sends a univariate polynomial `s_i(X)` and the verifier checks `s_i(0) + s_i(1)` against the running sum, then derives a challenge `r_i` via Fiat-Shamir.
 
-This crate is **verifier-only and backend-agnostic**: any field and transcript can be plugged in. Proving is handled by `jolt-zkvm`'s runtime, which drives sumcheck rounds via `ComputeBackend` primitives.
+This crate is **verifier-side and backend-agnostic**: any field and transcript can be plugged in. Prover-side code drives sumcheck rounds and emits proof data that these verifier primitives check.
 
 ## Public API
 

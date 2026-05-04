@@ -21,6 +21,36 @@ Provides a unified interface for performance analysis across all Jolt crates. In
 - **`report_memory_usage()`** — Logs all collected memory deltas and warns about unclosed spans.
 - **`print_current_memory_usage(label)`** — Logs current physical memory at point of call.
 
+### Measurement Helpers
+
+- **`time_it(f)`** — Measures closure runtime in milliseconds and returns the closure result.
+- **`median_f64(values)` / `median_u64(values)`** — Computes medians for benchmark reports without panicking on empty input.
+- **`PeakRssSampler::start()`** — Samples peak resident memory for perf gates on non-wasm targets.
+
+## Core-vs-Bolt Perf Oracles
+
+Jolt-on-Bolt perf gates should use this crate as the shared instrumentation
+layer for both the `jolt-core` reference path and the generated Bolt path. A
+gate should run matching inputs through both paths, capture the same named spans,
+and compare at least prove time, verify time, proof size, and peak RSS.
+
+Required span families:
+
+```
+core.setup
+core.prove
+core.verify
+bolt.setup
+bolt.commitment
+bolt.stage1 ... bolt.stage8
+bolt.evaluate
+bolt.verify
+```
+
+Perf harnesses should live near the semantic oracle or CI job that owns their
+protocol details. This crate owns the reusable measurement and tracing
+primitives, not a protocol-specific benchmark runner.
+
 ### System Metrics (`monitor` feature)
 
 - **`MetricsMonitor::start(interval_secs)`** — Spawns a background thread sampling CPU usage, memory, active cores, and thread count. Outputs structured `counters.*` fields for Perfetto postprocessing.

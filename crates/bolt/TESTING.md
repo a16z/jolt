@@ -128,17 +128,42 @@ JOLT_UPDATE_GOLDENS=1 cargo nextest run -p bolt generated_jolt_artifacts_have_un
 After regenerating, rerun the fast local gates and the real-data equivalence
 gate.
 
-## Perf Regression Guard
+## Perf Oracle Guard
 
-Verifier cleanup should not move prover performance, but keep the e2e
-`sha2-chain` gate available as a regression check:
+New Jolt-on-Bolt changes should preserve a core-vs-Bolt perf oracle that uses
+`jolt-profiling` as the shared instrumentation layer. The gate should run the
+same program, inputs, trace length, PCS setup size, and transcript mode through:
 
-```bash
-cargo run --release -p jolt-bench --bin bolt-stage -- \
-  --program sha2-chain --stage stage8 --log-t 20 \
-  --num-iters 1 --iters 1 --warmup 0 \
-  --trace-output benchmark-runs/perfetto_traces/sha2_chain_e2e_2p20_bolt.json
+```text
+core reference path:
+  setup, prove, verify, proof size, peak RSS
+
+Bolt generated path:
+  setup, prove, verify, proof size, peak RSS
 ```
 
-Use the existing core-vs-Bolt Perfetto traces for inspection when cleanup
-changes touch shared prover/verifier orchestration.
+Both paths must emit the same named tracing spans through `jolt-profiling`, at
+minimum:
+
+```text
+core.setup
+core.prove
+core.verify
+bolt.setup
+bolt.commitment
+bolt.stage1 ... bolt.stage8
+bolt.evaluate
+bolt.verify
+```
+
+The checked-in CI smoke programs are:
+
+```text
+PR gate:          bolt_sha2_chain_2_16_core_vs_bolt_perf_oracle
+scheduled/manual: bolt_sha2_chain_2_20_core_vs_bolt_perf_oracle
+```
+
+Both tests live in `jolt-equivalence` because they reuse the real semantic
+oracle fixture and pass paired `PerfMetrics` into `jolt-profiling`'s
+`check_core_vs_bolt_gate`. The workflow sets `JOLT_BOLT_PERF_TRACE=1` so the
+same run writes Perfetto JSON traces under `benchmark-runs/perfetto_traces/`.

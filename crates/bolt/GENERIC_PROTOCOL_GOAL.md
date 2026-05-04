@@ -168,7 +168,6 @@ crates/jolt-prover/**
 crates/jolt-verifier/**
 crates/jolt-kernels/**
 crates/jolt-equivalence/**
-crates/jolt-bench/**
 ```
 
 Generic Bolt modules should have a hygiene gate rejecting `jolt`, `Jolt`,

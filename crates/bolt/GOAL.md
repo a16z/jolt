@@ -93,7 +93,7 @@ Required steps:
    `GeneratedCrate`, `assemble_generated_crates`, `write_generated_crates`, and
    `validate_rust_artifact_imports` in the generic artifact layer.
 3. Stop re-exporting Jolt APIs from `crates/bolt/src/lib.rs`; update callers in
-   Bolt tests, `jolt-equivalence`, and `jolt-bench` to import from
+   Bolt tests, `jolt-equivalence`, and perf harnesses to import from
    `bolt::protocols::jolt`.
 4. Add the first genericity hygiene test that rejects new Jolt protocol strings
    in generic compiler modules, using a small documented allowlist only for
@@ -118,7 +118,7 @@ existing generated-artifact and verifier-boundary gates pass
 - Preserve the current full-field non-zk Jolt protocol path:
   `Transcript<Challenge = Fr>`.
 - `jolt-verifier` must not depend on `jolt-prover`, `jolt-kernels`,
-  `jolt-core`, `jolt-equivalence`, `jolt-bench`, or tracer internals.
+  `jolt-core`, `jolt-equivalence`, `jolt-profiling`, or tracer internals.
 - Bolt compiler boundaries remain:
   `protocol -> concrete -> party -> compute -> cpu -> Rust`.
 - Verifier CPU IR must remain kernel-free. Prover kernels are temporary

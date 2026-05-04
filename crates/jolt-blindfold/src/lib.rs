@@ -1,4 +1,4 @@
-//! ZK layer for Jolt sumcheck: committed round handlers and BlindFold accumulator.
+//! Stub crate reserved for future Jolt zero-knowledge sumcheck work.
 //!
-//! Makes sumcheck proofs zero-knowledge by replacing cleartext polynomial
-//! absorption with commitment-based absorption.
+//! BlindFold and related zk wrapping are deferred until the non-zk generated
+//! prover/verifier path is stable.

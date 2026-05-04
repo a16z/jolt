@@ -179,19 +179,38 @@ where
     Stage7Executor: stage7::Stage7KernelExecutor<Fr>,
     T: Transcript<Challenge = Fr>,
 {
+    let _prove_span = tracing::info_span!("bolt.prove").entered();
+    let _commitment_span = tracing::info_span!("bolt.commitment").entered();
     let commitment = commitment_stage::prove_commitment_phase_with_program(
         programs.commitment, inputs.commitment_inputs,
         inputs.prover_setup,
         transcript,
     )?;
+    drop(_commitment_span);
+    let _stage1_outer_span = tracing::info_span!("bolt.stage1").entered();
     let stage1_outer = stage1_outer_stage::prove_stage1_outer_with_program(programs.stage1_outer, inputs.stage1_outer_executor, transcript)?;
+    drop(_stage1_outer_span);
+    let _stage2_span = tracing::info_span!("bolt.stage2").entered();
     let stage2 = stage2_stage::execute_stage2_prover_with_program(programs.stage2, inputs.stage2_executor, transcript)?;
+    drop(_stage2_span);
+    let _stage3_span = tracing::info_span!("bolt.stage3").entered();
     let stage3 = stage3_stage::execute_stage3_prover_with_program(programs.stage3, inputs.stage3_executor, transcript)?;
+    drop(_stage3_span);
+    let _stage4_span = tracing::info_span!("bolt.stage4").entered();
     let stage4 = stage4_stage::execute_stage4_prover_with_program(programs.stage4, inputs.stage4_executor, transcript)?;
+    drop(_stage4_span);
+    let _stage5_span = tracing::info_span!("bolt.stage5").entered();
     let stage5 = stage5_stage::execute_stage5_prover_with_program(programs.stage5, inputs.stage5_executor, transcript)?;
+    drop(_stage5_span);
+    let _stage6_span = tracing::info_span!("bolt.stage6").entered();
     let stage6 = stage6_stage::execute_stage6_prover_with_program(programs.stage6, inputs.stage6_executor, transcript)?;
+    drop(_stage6_span);
+    let _stage7_span = tracing::info_span!("bolt.stage7").entered();
     let stage7 = stage7_stage::execute_stage7_prover_with_program(programs.stage7, inputs.stage7_executor, transcript)?;
+    drop(_stage7_span);
     let evaluation = if let Some(stage7_openings) = inputs.stage7_openings {
+        let _stage8_span = tracing::info_span!("bolt.stage8").entered();
+        let _evaluate_span = tracing::info_span!("bolt.evaluate").entered();
         Some(prove_jolt_evaluation_proof(
             programs.stage8,
             inputs.commitment_inputs,

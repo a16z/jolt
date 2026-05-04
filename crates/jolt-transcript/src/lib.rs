@@ -24,7 +24,8 @@
 //!
 //! Depends on `jolt-field` (for the blanket [`AppendToTranscript`] impl on
 //! [`Field`](jolt_field::Field) types). Used by `jolt-crypto`, `jolt-sumcheck`,
-//! `jolt-openings`, `jolt-dory`, `jolt-blindfold`, and `jolt-zkvm`.
+//! `jolt-openings`, `jolt-dory`, `jolt-blindfold`, and generated Jolt protocol
+//! crates.
 //!
 //! # Example
 //!

@@ -198,6 +198,7 @@ fn verify_jolt_with_programs_inner<T>(
 where
     T: Transcript<Challenge = Fr>,
 {
+    let _verify_span = tracing::info_span!("bolt.verify").entered();
     let commitment = commitment_stage::verify_commitment_phase_with_program(programs.commitment, &proof.commitments, transcript)?;
     let stage1_outer = stage1_outer_stage::verify_stage1_outer_with_program(programs.stage1_outer, &proof.stage1_outer, transcript)?;
     let stage2 = stage2_stage::verify_stage2_with_program(programs.stage2, &proof.stage2, inputs.stage2_openings, inputs.stage2_ram, transcript)?;
