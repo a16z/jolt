@@ -8,9 +8,6 @@
 #   - sail_riscv_sim — reference model, invoked at ELF-build time to compute
 #     and bake expected signatures into each self-checking ELF.
 #   - mise — tool manager for ACT4's declared Python (uv) and Ruby versions.
-#
-# Unlike the prior RISCOF bootstrap, this script does NOT install riscof,
-# riscv-ctg, riscv-isac, or Spike — ACT4 is declarative and Sail-only.
 
 set -eu
 
