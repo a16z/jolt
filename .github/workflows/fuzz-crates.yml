@@ -53,5 +53,5 @@ jobs:
           fi
           for target in $targets; do
             echo "--- Fuzzing $target for ${FUZZ_DURATION}s ---"
-            cargo +nightly fuzz run "$target" -- -max_total_time=$FUZZ_DURATION
+            cargo +nightly fuzz run --target x86_64-unknown-linux-gnu "$target" -- -max_total_time=$FUZZ_DURATION
           done
