@@ -1,0 +1,24 @@
+[package]
+name = "jolt-program"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Program image, bytecode expansion, and preprocessing pipeline for Jolt"
+repository = "https://github.com/a16z/jolt"
+keywords = ["SNARK", "zkvm", "risc-v"]
+categories = ["cryptography"]
+
+[lints]
+workspace = true
+
+[features]
+default = ["std"]
+std = ["common/std"]
+image = ["dep:object"]
+
+[dependencies]
+common = { workspace = true, default-features = false }
+jolt-riscv = { workspace = true }
+object = { workspace = true, optional = true }
+serde.workspace = true
+thiserror.workspace = true

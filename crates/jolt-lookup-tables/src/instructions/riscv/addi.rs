@@ -1,7 +1,7 @@
 use crate::traits::impl_lookup_table;
 use crate::traits::LookupQuery;
 use jolt_trace::instructions::Addi;
-use jolt_trace::{JoltCycle, JoltInstruction};
+use jolt_trace::JoltCycle;
 
 impl_lookup_table!(Addi, Some(RangeCheck));
 
@@ -19,7 +19,10 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for Addi<C> {
         let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
         (
             self.0.rs1_val().unwrap_or(0) & mask,
-            self.0.instruction().imm() & mask as i128,
+            Into::<jolt_riscv::NormalizedInstruction>::into(self.0.instruction())
+                .operands
+                .imm
+                & mask as i128,
         )
     }
 

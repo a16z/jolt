@@ -206,9 +206,12 @@ impl From<NormalizedInstruction> for INLINE {
     }
 }
 
+impl jolt_riscv::JoltInstruction for INLINE {}
+
 impl From<INLINE> for NormalizedInstruction {
     fn from(instr: INLINE) -> Self {
         NormalizedInstruction {
+            instruction_kind: jolt_riscv::InstructionKind::Inline,
             address: instr.address as usize,
             operands: instr.operands.into(),
             virtual_sequence_remaining: instr.virtual_sequence_remaining,

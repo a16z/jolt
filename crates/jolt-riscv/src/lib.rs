@@ -9,6 +9,44 @@
 mod flags;
 pub mod instructions;
 mod jolt_instruction;
+mod kind;
+mod normalized;
+mod operands;
+
+#[macro_export]
+macro_rules! for_each_instruction_kind {
+    ($callback:ident) => {
+        $callback! {
+            instructions: [
+                ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE,
+                CSRRS, CSRRW, DIV, DIVU,
+                EBREAK, ECALL, FENCE, JAL, JALR, LB, LBU, LD, LH, LHU, LUI, LW, MRET, MUL,
+                MULH, MULHSU, MULHU, OR, ORI, REM, REMU, SB, SD, SH, SLL, SLLI, SLT,
+                SLTI, SLTIU, SLTU, SRA, SRAI, SRL, SRLI, SUB, SW, XOR, XORI,
+                ADDIW, SLLIW, SRLIW, SRAIW, ADDW, SUBW, SLLW, SRLW, SRAW, LWU,
+                DIVUW, DIVW, MULW, REMUW, REMW,
+                LRW, SCW, AMOSWAPW, AMOADDW, AMOANDW, AMOORW, AMOXORW, AMOMINW,
+                AMOMAXW, AMOMINUW, AMOMAXUW,
+                LRD, SCD, AMOSWAPD, AMOADDD, AMOANDD, AMOORD, AMOXORD, AMOMIND,
+                AMOMAXD, AMOMINUD, AMOMAXUD,
+                AdviceLB, AdviceLD, AdviceLH, AdviceLW,
+                VirtualAdvice, VirtualAdviceLen, VirtualAdviceLoad,
+                VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertWordAlignment,
+                VirtualAssertLTE, VirtualHostIO,
+                VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder,
+                VirtualAssertMulUNoOverflow,
+                VirtualChangeDivisor, VirtualChangeDivisorW, VirtualLW, VirtualSW,
+                VirtualZeroExtendWord, VirtualSignExtendWord, VirtualPow2W, VirtualPow2IW,
+                VirtualMovsign, VirtualMULI, VirtualPow2, VirtualPow2I, VirtualRev8W,
+                VirtualROTRI, VirtualROTRIW,
+                VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
+                VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
+                VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
+                VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7,
+            ]
+        }
+    };
+}
 
 pub use flags::{
     CircuitFlagSet, CircuitFlags, Flags, InstructionFlagSet, InstructionFlags,
@@ -16,6 +54,9 @@ pub use flags::{
 };
 pub use instructions::JoltInstructions;
 pub use jolt_instruction::JoltInstruction;
+pub use kind::InstructionKind;
+pub use normalized::NormalizedInstruction;
+pub use operands::NormalizedOperands;
 
 /// Declares a Jolt RISC-V instruction kind and (optionally) its `Flags` impl.
 ///
@@ -49,21 +90,22 @@ macro_rules! jolt_instruction {
         impl<T: $crate::JoltInstruction> $crate::Flags for $name<T> {
             #[inline]
             fn circuit_flags(&self) -> $crate::CircuitFlagSet {
+                let instruction: $crate::NormalizedInstruction = self.0.into();
                 let mut flags = $crate::CircuitFlagSet::default()
                     $(.set($crate::CircuitFlags::$circuit))*;
-                if let Some(virtual_sequence_remaining) = self.0.virtual_sequence_remaining() {
+                if let Some(virtual_sequence_remaining) = instruction.virtual_sequence_remaining {
                     flags = flags.set($crate::CircuitFlags::VirtualInstruction);
                     if virtual_sequence_remaining == 0 {
                         flags = flags.set($crate::CircuitFlags::IsLastInSequence);
                     }
                 }
-                if self.0.virtual_sequence_remaining().unwrap_or(0) != 0 {
+                if instruction.virtual_sequence_remaining.unwrap_or(0) != 0 {
                     flags = flags.set($crate::CircuitFlags::DoNotUpdateUnexpandedPC);
                 }
-                if self.0.is_compressed() {
+                if instruction.is_compressed {
                     flags = flags.set($crate::CircuitFlags::IsCompressed);
                 }
-                if self.0.is_first_in_sequence() {
+                if instruction.is_first_in_sequence {
                     flags = flags.set($crate::CircuitFlags::IsFirstInSequence);
                 }
                 flags
@@ -88,20 +130,21 @@ macro_rules! jolt_instruction {
         impl<T: $crate::JoltInstruction> $crate::Flags for $name<T> {
             #[inline]
             fn circuit_flags(&self) -> $crate::CircuitFlagSet {
+                let instruction: $crate::NormalizedInstruction = self.0.into();
                 let mut flags = $crate::CircuitFlagSet::default();
-                if let Some(virtual_sequence_remaining) = self.0.virtual_sequence_remaining() {
+                if let Some(virtual_sequence_remaining) = instruction.virtual_sequence_remaining {
                     flags = flags.set($crate::CircuitFlags::VirtualInstruction);
                     if virtual_sequence_remaining == 0 {
                         flags = flags.set($crate::CircuitFlags::IsLastInSequence);
                     }
                 }
-                if self.0.virtual_sequence_remaining().unwrap_or(0) != 0 {
+                if instruction.virtual_sequence_remaining.unwrap_or(0) != 0 {
                     flags = flags.set($crate::CircuitFlags::DoNotUpdateUnexpandedPC);
                 }
-                if self.0.is_compressed() {
+                if instruction.is_compressed {
                     flags = flags.set($crate::CircuitFlags::IsCompressed);
                 }
-                if self.0.is_first_in_sequence() {
+                if instruction.is_first_in_sequence {
                     flags = flags.set($crate::CircuitFlags::IsFirstInSequence);
                 }
                 flags
@@ -133,60 +176,26 @@ macro_rules! jolt_instruction {
         pub struct $name<T = ()>(pub T);
     };
 
-    // Internal: emit `JoltInstruction` for `$name<T>` whenever `T` is itself a
-    // `RISCVInstruction`. Lets call sites treat the wrapper newtype as a Jolt
-    // instruction directly without unwrapping `self.0`.
+    // Internal: make the wrapper newtype participate in the normalized-row
+    // conversion marker by delegating through its payload.
     (@jolt_instruction_impl $name:ident) => {
-        impl<T: ::tracer::instruction::RISCVInstruction> $crate::JoltInstruction for $name<T> {
+        impl<T: $crate::JoltInstruction> From<$name<T>> for $crate::NormalizedInstruction {
             #[inline]
-            fn is_noop(&self) -> bool {
-                $crate::JoltInstruction::is_noop(&self.0)
+            fn from(instruction: $name<T>) -> Self {
+                instruction.0.into()
             }
+        }
+
+        impl<T: $crate::JoltInstruction> TryFrom<$crate::NormalizedInstruction> for $name<T> {
+            type Error = <T as TryFrom<$crate::NormalizedInstruction>>::Error;
 
             #[inline]
-            fn address(&self) -> u64 {
-                $crate::JoltInstruction::address(&self.0)
+            fn try_from(instruction: $crate::NormalizedInstruction) -> Result<Self, Self::Error> {
+                T::try_from(instruction).map($name)
             }
+        }
 
-            #[inline]
-            fn imm(&self) -> i128 {
-                $crate::JoltInstruction::imm(&self.0)
-            }
-
-            #[inline]
-            fn rs1(&self) -> Option<u8> {
-                $crate::JoltInstruction::rs1(&self.0)
-            }
-
-            #[inline]
-            fn rs2(&self) -> Option<u8> {
-                $crate::JoltInstruction::rs2(&self.0)
-            }
-
-            #[inline]
-            fn rd(&self) -> Option<u8> {
-                $crate::JoltInstruction::rd(&self.0)
-            }
-
-            #[inline]
-            fn virtual_sequence_remaining(&self) -> Option<u16> {
-                $crate::JoltInstruction::virtual_sequence_remaining(&self.0)
-            }
-
-            #[inline]
-            fn is_first_in_sequence(&self) -> bool {
-                $crate::JoltInstruction::is_first_in_sequence(&self.0)
-            }
-
-            #[inline]
-            fn is_virtual(&self) -> bool {
-                $crate::JoltInstruction::is_virtual(&self.0)
-            }
-
-            #[inline]
-            fn is_compressed(&self) -> bool {
-                $crate::JoltInstruction::is_compressed(&self.0)
-            }
+        impl<T: $crate::JoltInstruction> $crate::JoltInstruction for $name<T> {
         }
     };
 }

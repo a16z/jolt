@@ -2952,6 +2952,7 @@ name = "jolt-lookup-tables"
 version = "0.1.0"
 dependencies = [
  "jolt-field",
+ "jolt-riscv",
  "jolt-trace",
  "rand 0.8.5",
  "serde",
@@ -3035,6 +3036,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-program"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "jolt-riscv",
+ "object 0.39.1",
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "jolt-r1cs"
 version = "0.1.0"
 dependencies = [
@@ -3054,7 +3066,6 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "strum 0.28.0",
- "tracer",
 ]
 
 [[package]]
@@ -5732,6 +5743,7 @@ dependencies = [
  "inventory",
  "itertools 0.14.0",
  "jolt-platform",
+ "jolt-riscv",
  "object 0.39.1",
  "paste",
  "postcard",

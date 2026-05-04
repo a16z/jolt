@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 jolt-field = { workspace = true }
+jolt-riscv = { workspace = true }
 jolt-trace = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 strum = { workspace = true, features = ["derive"] }

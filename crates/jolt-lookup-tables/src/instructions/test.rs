@@ -2,6 +2,7 @@
 
 use std::any::TypeId;
 
+use jolt_riscv::NormalizedInstruction;
 use jolt_trace::{Flags, InstructionFlags, JoltCycle, JoltInstruction};
 use rand::prelude::*;
 use tracer::emulator::{cpu::Cpu, terminal::DummyTerminal};
@@ -60,8 +61,9 @@ pub fn instruction_inputs_match_constraint_fn<C, T, I>(
     for _ in 0..10_000 {
         let raw: C = C::random(&mut rng);
         let instr = raw.instruction();
-        let unexpanded_pc = instr.address();
-        let imm = instr.imm();
+        let normalized: NormalizedInstruction = instr.into();
+        let unexpanded_pc = normalized.address as u64;
+        let imm = normalized.operands.imm;
         let flags = instr_wrapper(instr).instruction_flags();
         let rs1 = raw.rs1_val().unwrap_or(0);
         let rs2 = raw.rs2_val().unwrap_or(0);
@@ -120,9 +122,10 @@ where
     for _ in 0..10_000 {
         let raw: C = C::random(&mut rng);
         let instr = raw.instruction();
-        let rs1_idx = JoltInstruction::rs1(&instr);
-        let rs2_idx = JoltInstruction::rs2(&instr);
-        let rd_idx = JoltInstruction::rd(&instr);
+        let normalized: NormalizedInstruction = instr.into();
+        let rs1_idx = normalized.operands.rs1;
+        let rs2_idx = normalized.operands.rs2;
+        let rd_idx = normalized.operands.rd;
 
         let mut cpu = Cpu::new(Box::new(DummyTerminal::default()));
         if let Some(rs1_val) = raw.rs1_val() {

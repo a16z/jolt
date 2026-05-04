@@ -35,6 +35,7 @@ std = [
 test-utils = ["dep:rand"]
 
 [dependencies]
+jolt-riscv.workspace = true
 jolt-platform.workspace = true
 fnv.workspace = true
 object.workspace = true

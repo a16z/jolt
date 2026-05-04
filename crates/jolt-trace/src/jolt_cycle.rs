@@ -52,7 +52,7 @@ pub trait JoltCycle {
     fn random(rng: &mut rand::rngs::StdRng) -> Self;
 }
 
-impl<T: RISCVInstruction> JoltCycle for RISCVCycle<T> {
+impl<T: RISCVInstruction + JoltInstruction> JoltCycle for RISCVCycle<T> {
     type Instruction = T;
 
     fn instruction(&self) -> T {

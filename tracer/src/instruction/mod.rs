@@ -156,6 +156,8 @@ use crate::emulator::cpu::{Cpu, Xlen};
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use derive_more::From;
 use format::{InstructionFormat, InstructionRegisterState, NormalizedOperands};
+use jolt_riscv::InstructionKind;
+pub use jolt_riscv::NormalizedInstruction;
 
 pub mod format;
 
@@ -342,15 +344,6 @@ impl From<()> for RAMAccess {
     fn from(_: ()) -> Self {
         Self::NoOp
     }
-}
-
-#[derive(Default)]
-pub struct NormalizedInstruction {
-    pub address: usize,
-    pub operands: NormalizedOperands,
-    pub virtual_sequence_remaining: Option<u16>,
-    pub is_first_in_sequence: bool,
-    pub is_compressed: bool,
 }
 
 pub trait RISCVInstruction:
@@ -686,6 +679,7 @@ macro_rules! define_rv32im_enums {
                     }
                     // No side effects beyond writing rd: replace with NOP
                     let addi = ADDI::from(NormalizedInstruction {
+                        instruction_kind: InstructionKind::ADDI,
                         address: normalized.address,
                         operands: NormalizedOperands {
                             rd: Some(0),
@@ -754,6 +748,7 @@ macro_rules! define_rv32im_enums {
                     Instruction::UNIMPL => Default::default(),
                     $(
                         Instruction::$instr(instr) => NormalizedInstruction {
+                            instruction_kind: InstructionKind::$instr,
                             address: instr.address as usize,
                             operands: instr.operands.into(),
                             virtual_sequence_remaining: instr.virtual_sequence_remaining,
@@ -762,6 +757,7 @@ macro_rules! define_rv32im_enums {
                         },
                     )*
                     Instruction::INLINE(instr) => NormalizedInstruction {
+                        instruction_kind: InstructionKind::Inline,
                         address: instr.address as usize,
                         operands: instr.operands.into(),
                         virtual_sequence_remaining: instr.virtual_sequence_remaining,
@@ -774,38 +770,7 @@ macro_rules! define_rv32im_enums {
     };
 }
 
-define_rv32im_enums! {
-    instructions: [
-        ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE,
-        CSRRS, CSRRW, DIV, DIVU,
-        EBREAK, ECALL, FENCE, JAL, JALR, LB, LBU, LD, LH, LHU, LUI, LW, MRET, MUL, MULH, MULHSU,
-        MULHU, OR, ORI, REM, REMU, SB, SD, SH, SLL, SLLI, SLT, SLTI, SLTIU, SLTU,
-        SRA, SRAI, SRL, SRLI, SUB, SW, XOR, XORI,
-        // RV64I
-        ADDIW, SLLIW, SRLIW, SRAIW, ADDW, SUBW, SLLW, SRLW, SRAW, LWU,
-        // RV64M
-        DIVUW, DIVW, MULW, REMUW, REMW,
-        // RV32A (Atomic Memory Operations)
-        LRW, SCW, AMOSWAPW, AMOADDW, AMOANDW, AMOORW, AMOXORW, AMOMINW, AMOMAXW, AMOMINUW, AMOMAXUW,
-        // RV64A (Atomic Memory Operations)
-        LRD, SCD, AMOSWAPD, AMOADDD, AMOANDD, AMOORD, AMOXORD, AMOMIND, AMOMAXD, AMOMINUD, AMOMAXUD,
-        // Virtual
-        AdviceLB, AdviceLD, AdviceLH, AdviceLW,
-        VirtualAdvice, VirtualAdviceLen, VirtualAdviceLoad,
-        VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertWordAlignment, VirtualAssertLTE,
-        VirtualHostIO,
-        VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder, VirtualAssertMulUNoOverflow,
-        VirtualChangeDivisor, VirtualChangeDivisorW, VirtualLW,VirtualSW, VirtualZeroExtendWord,
-        VirtualSignExtendWord,VirtualPow2W, VirtualPow2IW,
-        VirtualMovsign, VirtualMULI, VirtualPow2, VirtualPow2I, VirtualRev8W, VirtualROTRI,
-        VirtualROTRIW,
-        VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
-        VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
-        // XORROT
-        VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
-        VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7,
-    ]
-}
+jolt_riscv::for_each_instruction_kind!(define_rv32im_enums);
 
 impl CanonicalSerialize for Instruction {
     fn serialize_with_mode<W: ark_serialize::Write>(
