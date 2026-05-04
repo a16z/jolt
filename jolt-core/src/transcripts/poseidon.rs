@@ -578,8 +578,8 @@ mod tests {
 
     #[test]
     fn test_challenge_optimized_arithmetic_equivalence() {
-        // Verify that challenge_scalar_optimized stays arithmetically
-        // equivalent to the full Fr challenge.
+        // Verify that challenge_scalar_optimized is arithmetically equivalent
+        // to the full Fr challenge.
         use ark_std::UniformRand;
         let mut rng = ark_std::test_rng();
         let mut transcript1 = TestTranscript::new(b"test_trivial_challenge");

@@ -104,11 +104,11 @@ fn monolithic_transcript_challenges_match_core_full_field_path() {
     let mut core = <CoreBlake2bTranscript as CoreTranscript>::new(b"Jolt");
     let mut generated = <Blake2bTranscript<Fr> as GeneratedTranscript>::new(b"Jolt");
 
-    let core_challenge: ark_bn254::Fr = core.challenge_scalar_optimized::<ark_bn254::Fr>();
+    let core_challenge: ark_bn254::Fr = core.challenge_scalar_optimized::<ark_bn254::Fr>().into();
     let generated_challenge: ark_bn254::Fr = generated.challenge().into();
 
     assert_eq!(core_challenge, generated_challenge);
-    assert_eq!(core.state_history[1], *generated.state());
+    assert_eq!(core.state, *generated.state());
 }
 
 #[test]

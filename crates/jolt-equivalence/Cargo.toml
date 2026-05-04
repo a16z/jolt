@@ -9,8 +9,9 @@ description = "Cross-system equivalence testing between jolt-core and Bolt-gener
 workspace = true
 
 [dependencies]
-# jolt-core reference prover/verifier.
-jolt-core = { path = "../../jolt-core", features = ["host"] }
+# jolt-core reference prover/verifier. Equivalence tests compare against the
+# generated full-field Fiat-Shamir path.
+jolt-core = { path = "../../jolt-core", features = ["host", "challenge-254-bit"] }
 ark-bn254.workspace = true
 ark-ff.workspace = true
 ark-serialize.workspace = true

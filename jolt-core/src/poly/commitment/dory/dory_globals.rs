@@ -469,8 +469,8 @@ impl DoryGlobals {
     }
 
     /// Reset global state
+    #[cfg(test)]
     pub fn reset() {
-        #[cfg(test)]
         Self::configure_test_cache_root();
 
         // Reset main globals

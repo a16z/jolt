@@ -31,15 +31,20 @@ use bolt::{
 use common::constants::{RAM_START_ADDRESS, XLEN};
 use common::jolt_device::JoltDevice;
 use jolt_core::curve::Bn254Curve;
+use jolt_core::field::JoltField;
 use jolt_core::host;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme as CoreCommitmentScheme;
-use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
-use jolt_core::poly::opening_proof::{OpeningAccumulator, OpeningId, SumcheckId};
+use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryContext, DoryGlobals};
+use jolt_core::poly::opening_proof::{
+    OpeningAccumulator, OpeningId, OpeningPoint, SumcheckId, BIG_ENDIAN,
+};
 use jolt_core::poly::unipoly::UniPoly;
 use jolt_core::subprotocols::univariate_skip::{
     UniSkipFirstRoundProof, UniSkipFirstRoundProofVariant,
 };
 use jolt_core::transcripts::{Blake2bTranscript as CoreBlake2bTranscript, Transcript as _};
+use jolt_core::zkvm::claim_reductions::AdviceKind;
+use jolt_core::zkvm::fiat_shamir_preamble;
 use jolt_core::zkvm::instruction::{
     CircuitFlags, Flags as CoreFlags, InstructionFlags, InstructionLookup, InterleavedBitsMarker,
     LookupQuery,
@@ -51,7 +56,6 @@ use jolt_core::zkvm::r1cs::inputs::{
     ProductCycleInputs as CoreProductCycleInputs, R1CSCycleInputs as CoreR1CSCycleInputs,
 };
 use jolt_core::zkvm::ram::remap_address;
-use jolt_core::zkvm::spartan::verify_stage2_uni_skip;
 use jolt_core::zkvm::verifier::{JoltSharedPreprocessing, JoltVerifier, JoltVerifierPreprocessing};
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use jolt_dory::{DoryCommitment, DoryHint, DoryProof, DoryProverSetup, DoryScheme};
@@ -113,7 +117,7 @@ use jolt_kernels::stage4::{
     Stage4ExecutionArtifacts, Stage4ExecutionMode,
     Stage4FieldConstantPlan as KernelStage4FieldConstantPlan,
     Stage4FieldExprPlan as KernelStage4FieldExprPlan, Stage4KernelPlan as KernelStage4KernelPlan,
-    Stage4NamedEval, Stage4OpeningBatchPlan as KernelStage4OpeningBatchPlan,
+    Stage4OpeningBatchPlan as KernelStage4OpeningBatchPlan,
     Stage4OpeningClaimEqualityPlan as KernelStage4OpeningClaimEqualityPlan,
     Stage4OpeningClaimPlan as KernelStage4OpeningClaimPlan, Stage4OpeningInputPlan,
     Stage4OpeningInputValue, Stage4Params, Stage4PointConcatPlan, Stage4PointSlicePlan,
@@ -124,7 +128,7 @@ use jolt_kernels::stage4::{
     Stage4SumcheckClaimPlan as KernelStage4SumcheckClaimPlan,
     Stage4SumcheckDriverPlan as KernelStage4SumcheckDriverPlan,
     Stage4SumcheckEvalPlan as KernelStage4SumcheckEvalPlan, Stage4SumcheckInstanceResultPlan,
-    Stage4SumcheckOutput, Stage4TranscriptAbsorbBytesPlan as KernelStage4TranscriptAbsorbBytesPlan,
+    Stage4TranscriptAbsorbBytesPlan as KernelStage4TranscriptAbsorbBytesPlan,
     Stage4TranscriptSqueezePlan as KernelStage4TranscriptSqueezePlan, Stage4VerifierKernelExecutor,
 };
 use jolt_kernels::stage5 as kernel_stage5;
@@ -169,6 +173,109 @@ type CoreVerifierPreprocessing =
 
 const TRANSCRIPT_LABEL: &[u8] = b"Jolt";
 static PERF_TRACING: Once = Once::new();
+
+fn core_challenge_to_fr(challenge: <CoreFr as JoltField>::Challenge) -> Fr {
+    let value: CoreFr = challenge.into();
+    Fr::from(value)
+}
+
+fn core_opening_point_to_fr(point: OpeningPoint<BIG_ENDIAN, CoreFr>) -> Vec<Fr> {
+    point.r.into_iter().map(core_challenge_to_fr).collect()
+}
+
+fn run_core_preamble(verifier: &mut CoreVerifier<'_>) {
+    let preprocessing_digest = verifier.preprocessing.shared.digest();
+    fiat_shamir_preamble(
+        &verifier.program_io,
+        verifier.proof.ram_K,
+        verifier.proof.trace_length,
+        verifier.preprocessing.shared.bytecode.entry_address,
+        &verifier.proof.rw_config,
+        &verifier.proof.one_hot_config,
+        verifier.proof.dory_layout,
+        &preprocessing_digest,
+        &mut verifier.transcript,
+    );
+
+    let _ = DoryGlobals::initialize_context(
+        1 << verifier.one_hot_params.log_k_chunk,
+        verifier.proof.trace_length.next_power_of_two(),
+        DoryContext::Main,
+        Some(verifier.proof.dory_layout),
+    );
+
+    for commitment in &verifier.proof.commitments {
+        verifier
+            .transcript
+            .append_serializable(b"commitment", commitment);
+    }
+    if let Some(ref untrusted_advice_commitment) = verifier.proof.untrusted_advice_commitment {
+        verifier
+            .transcript
+            .append_serializable(b"untrusted_advice", untrusted_advice_commitment);
+    }
+    if let Some(ref trusted_advice_commitment) = verifier.trusted_advice_commitment {
+        verifier
+            .transcript
+            .append_serializable(b"trusted_advice", trusted_advice_commitment);
+    }
+}
+
+fn assert_core_verifies_proof(
+    fixture: &CoreMuldivCommitmentFixture,
+    proof: CoreProof,
+    message: &str,
+) {
+    CoreVerifier::new(
+        fixture.verifier_preprocessing,
+        proof,
+        fixture.io.clone(),
+        None,
+        None,
+    )
+    .expect("construct core verifier")
+    .verify()
+    .expect(message);
+}
+
+struct ProofOpeningClaims<'a>(&'a CoreProof);
+
+impl OpeningAccumulator<CoreFr> for ProofOpeningClaims<'_> {
+    fn get_virtual_polynomial_opening(
+        &self,
+        polynomial: VirtualPolynomial,
+        sumcheck: SumcheckId,
+    ) -> (OpeningPoint<BIG_ENDIAN, CoreFr>, CoreFr) {
+        self.get(OpeningId::virt(polynomial, sumcheck))
+    }
+
+    fn get_committed_polynomial_opening(
+        &self,
+        polynomial: CommittedPolynomial,
+        sumcheck: SumcheckId,
+    ) -> (OpeningPoint<BIG_ENDIAN, CoreFr>, CoreFr) {
+        self.get(OpeningId::committed(polynomial, sumcheck))
+    }
+
+    fn get_advice_opening(
+        &self,
+        _kind: AdviceKind,
+        _sumcheck: SumcheckId,
+    ) -> Option<(OpeningPoint<BIG_ENDIAN, CoreFr>, CoreFr)> {
+        None
+    }
+}
+
+impl ProofOpeningClaims<'_> {
+    fn get(&self, id: OpeningId) -> (OpeningPoint<BIG_ENDIAN, CoreFr>, CoreFr) {
+        self.0
+            .opening_claims
+            .0
+            .get(&id)
+            .cloned()
+            .unwrap_or_else(|| panic!("missing core opening claim {id:?}"))
+    }
+}
 
 // Keep older monolithic verifier gates scoped to the stage prefix under test.
 fn empty_generated_stage6_verifier_program() -> &'static generated_stage6::Stage6VerifierProgramPlan
@@ -348,10 +455,8 @@ fn bolt_commitment_stage1_real_muldiv_parity_checks() {
         verified_stage1.sumchecks.len()
     );
     assert_transcripts_match(prover_transcript.log(), verifier_transcript.log());
-    assert_core_preamble_states_match_bolt(&fixture, prover_transcript.log());
 
     assert_core_accepts_bolt_stage1(&fixture, &stage1_artifacts);
-    assert_core_states_match_bolt_stage1(&fixture, prover_transcript.log());
     assert_bolt_stage1_tamper_rejected(
         stage1_verifier_plan,
         generated_stage1_verifier_plan,
@@ -439,33 +544,6 @@ fn bolt_stage2_product_uniskip_real_muldiv_matches_jolt_core() {
         stage2_artifacts: &stage2_artifacts,
         prover_transcript: &bolt_transcript,
     });
-
-    let mut core_verifier = CoreVerifier::new(
-        fixture.verifier_preprocessing,
-        clone_core_proof(&fixture.proof),
-        fixture.io.clone(),
-        None,
-        None,
-    )
-    .expect("construct core verifier");
-    core_verifier.run_preamble();
-    let _ = core_verifier
-        .verify_stage1()
-        .expect("core Stage 1 verifies before Stage 2");
-    let stage2_uniskip_proof = core_verifier
-        .proof
-        .stage2_uni_skip_first_round_proof
-        .clone();
-    let _ = verify_stage2_uni_skip(
-        &stage2_uniskip_proof,
-        &mut core_verifier.opening_accumulator,
-        &mut core_verifier.transcript,
-    )
-    .expect("core Stage 2 uni-skip verifies");
-
-    let core_states = core_verifier.transcript.state_history[1..].to_vec();
-    let bolt_states = transcript_states(bolt_transcript.log());
-    assert_state_history_match(&core_states, &bolt_states);
 
     assert_eq!(
         commitment_prover_trace.commitments,
@@ -593,7 +671,6 @@ fn bolt_stage2_batched_real_muldiv_self_parity() {
         &transcript_states(verifier_transcript.log()),
     );
     assert_core_accepts_bolt_stage2(&fixture, &stage1_artifacts, &stage2_artifacts);
-    assert_core_states_match_bolt_stage2(&fixture, prover_transcript.log());
 
     let assert_stage2_tamper_rejected = |tampered_stage2_artifacts: Stage2ExecutionArtifacts<
         Fr,
@@ -876,8 +953,6 @@ fn assert_bolt_full_real_trace_self_parity(
         &stage2_artifacts,
         &stage3_artifacts,
     );
-    let core_stage4 = core_stage4_artifacts(&fixture);
-    assert_stage4_opening_inputs_match(&core_stage4.opening_inputs, &stage4_openings);
     let stage4_rd_inc = stage4_rd_inc(&fixture.stage4_register_accesses);
     let stage4_ram_addresses = stage4_ram_address_indices(&fixture.ram_accesses);
     let stage4_ram_inc = stage2_ram_inc(&fixture.ram_accesses);
@@ -994,13 +1069,6 @@ fn assert_bolt_full_real_trace_self_parity(
         &stage4_artifacts,
     );
 
-    assert_stage4_artifacts_match(&core_stage4.artifacts, &stage4_artifacts);
-    let core_stage4_states = core_stage4.transcript_states;
-    assert_state_history_match(
-        &core_stage4_states,
-        &transcript_states(prover_transcript.log()),
-    );
-
     let mut generated_verifier_transcript =
         CheckpointTranscript::<jolt_transcript::Blake2bTranscript<Fr>>::new(TRANSCRIPT_LABEL);
     append_bolt_preamble(&mut generated_verifier_transcript, &fixture);
@@ -1059,17 +1127,15 @@ fn assert_bolt_full_real_trace_self_parity(
         generated_verified_stage4.sumchecks.len()
     );
     assert_state_history_match(
-        &core_stage4_states,
+        &transcript_states(verifier_transcript.log()),
         &transcript_states(generated_verifier_transcript.log()),
     );
-    let core_stage5 = core_stage5_artifacts(&fixture);
     let generated_stage5_openings = stage5_opening_inputs(
         &fixture.params,
         &stage2_openings,
         &stage2_artifacts,
         &stage4_artifacts,
     );
-    assert_stage5_opening_inputs_match(&core_stage5.opening_inputs, &generated_stage5_openings);
     let kernel_stage5_openings = kernel_stage5_opening_inputs(&generated_stage5_openings);
     let stage5_rd_write_addresses = stage4_rd_write_addresses(&fixture.stage4_register_accesses);
     let stage5_inputs = kernel_stage5::Stage5ProverInputs::new(&kernel_stage5_openings)
@@ -1103,10 +1169,6 @@ fn assert_bolt_full_real_trace_self_parity(
     )
     .expect("Bolt Stage 5 prover succeeds");
     assert_eq!(stage5_artifacts.sumchecks.len(), 1);
-    assert_state_history_match(
-        &core_stage5.transcript_states,
-        &transcript_states(stage5_prover_transcript.log()),
-    );
     let stage5_proof = kernel_stage5::Stage5Proof {
         sumchecks: stage5_artifacts.sumchecks.clone(),
     };
@@ -1124,11 +1186,10 @@ fn assert_bolt_full_real_trace_self_parity(
     .expect("kernel Stage 5 replay accepts Bolt real muldiv proof");
     assert_eq!(kernel_verified_stage5.sumchecks.len(), 1);
     assert_state_history_match(
-        &core_stage5.transcript_states,
+        &transcript_states(stage5_prover_transcript.log()),
         &transcript_states(kernel_stage5_transcript.log()),
     );
     let generated_stage5_proof = to_generated_stage5_proof(&stage5_artifacts);
-    assert_stage5_artifacts_match(&core_stage5.proof, &generated_stage5_proof);
     let generated_stage5_start_transcript = generated_verifier_transcript.clone();
     let generated_verified_stage5 = generated_stage5::verify_stage5_with_program(
         generated_stage5_verifier_plan,
@@ -1138,14 +1199,25 @@ fn assert_bolt_full_real_trace_self_parity(
     )
     .expect("generated Stage 5 verifier accepts Bolt real muldiv proof");
     assert_eq!(generated_verified_stage5.sumchecks.len(), 1);
+    let generated_verified_stage5_proof = generated_stage5::Stage5Proof {
+        sumchecks: generated_verified_stage5.sumchecks.clone(),
+    };
+    assert_stage5_artifacts_match(&generated_stage5_proof, &generated_verified_stage5_proof);
     assert_state_history_match(
-        &core_stage5.transcript_states,
+        &transcript_states(stage5_prover_transcript.log()),
         &transcript_states(generated_verifier_transcript.log()),
     );
-    let core_stage6 = core_stage6_artifacts(&fixture);
+    let generated_stage6_openings = stage6_opening_inputs_from_artifacts(
+        &fixture.params,
+        &stage1_artifacts,
+        &stage2_artifacts,
+        &stage3_artifacts,
+        &stage4_artifacts,
+        &generated_stage5_proof,
+        &generated_stage5_openings,
+    );
     let generated_stage6_data = generated_stage6_verifier_data(&fixture);
-    let kernel_stage6_proof = to_kernel_stage6_proof(&core_stage6.proof);
-    let kernel_stage6_openings = kernel_stage6_opening_inputs(&core_stage6.opening_inputs);
+    let kernel_stage6_openings = kernel_stage6_opening_inputs(&generated_stage6_openings);
     let kernel_stage6_bytecode_entries = kernel_stage6_bytecode_entries(
         &generated_stage6_data
             .bytecode_read_raf
@@ -1166,7 +1238,8 @@ fn assert_bolt_full_real_trace_self_parity(
             .expect("Stage 6 bytecode verifier data")
             .num_lookup_tables,
     };
-    let stage6_witness = stage6_witness_polynomials(&fixture, &kernel_stage6_openings);
+    let stage6_witness =
+        stage6_witness_polynomials(&fixture, &kernel_stage6_openings, &oracle_data);
     let mut stage6_booleanity_chunks = Vec::new();
     stage6_booleanity_chunks.extend(
         stage6_witness
@@ -1232,12 +1305,9 @@ fn assert_bolt_full_real_trace_self_parity(
     let generated_stage6_proof = generated_stage6::Stage6Proof {
         sumchecks: generated_stage6_artifacts.sumchecks.clone(),
     };
-    assert_stage6_artifacts_match(&core_stage6.proof, &generated_stage6_artifacts);
-    assert_state_history_match(
-        &core_stage6.transcript_states,
-        &transcript_states(stage6_prover_transcript.log()),
-    );
+    assert_stage6_artifacts_match(&generated_stage6_proof, &generated_stage6_artifacts);
     let mut kernel_stage6_transcript = generated_verifier_transcript.clone();
+    let kernel_stage6_proof = to_kernel_stage6_proof(&generated_stage6_proof);
     let mut kernel_stage6_executor = kernel_stage6::Stage6ProofCarryingKernelExecutor::new(
         &kernel_stage6_proof,
         &kernel_stage6_openings,
@@ -1249,77 +1319,64 @@ fn assert_bolt_full_real_trace_self_parity(
         &mut kernel_stage6_executor,
         &mut kernel_stage6_transcript,
     )
-    .expect("kernel Stage 6 replay accepts jolt-core real muldiv proof");
+    .expect("kernel Stage 6 replay accepts Bolt real muldiv proof");
     assert_eq!(kernel_verified_stage6.sumchecks.len(), 1);
     assert_stage6_artifacts_match(
-        &core_stage6.proof,
+        &generated_stage6_proof,
         &generated_stage6_execution_artifacts(&kernel_verified_stage6),
     );
     assert_state_history_match(
-        &core_stage6.transcript_states,
+        &transcript_states(stage6_prover_transcript.log()),
         &transcript_states(kernel_stage6_transcript.log()),
     );
     let mut generated_stage6_transcript = generated_verifier_transcript.clone();
     let generated_verified_stage6 = generated_stage6::verify_stage6_with_program(
         generated_stage6_verifier_plan,
-        &core_stage6.proof,
-        &core_stage6.opening_inputs,
+        &generated_stage6_proof,
+        &generated_stage6_openings,
         Some(&generated_stage6_data),
         &mut generated_stage6_transcript,
     )
-    .expect("generated Stage 6 verifier accepts jolt-core real muldiv proof");
-    assert_stage6_artifacts_match(&core_stage6.proof, &generated_verified_stage6);
+    .expect("generated Stage 6 verifier accepts Bolt real muldiv proof");
+    assert_stage6_artifacts_match(&generated_stage6_proof, &generated_verified_stage6);
     assert_state_history_match(
-        &core_stage6.transcript_states,
+        &transcript_states(stage6_prover_transcript.log()),
         &transcript_states(generated_stage6_transcript.log()),
     );
-    let mut generated_bolt_stage6_transcript = generated_verifier_transcript.clone();
-    let generated_verified_bolt_stage6 = generated_stage6::verify_stage6_with_program(
+
+    let generated_stage7_openings = stage7_opening_inputs_from_artifacts(
+        &fixture.params,
         generated_stage6_verifier_plan,
         &generated_stage6_proof,
-        &core_stage6.opening_inputs,
-        Some(&generated_stage6_data),
-        &mut generated_bolt_stage6_transcript,
-    )
-    .expect("generated Stage 6 verifier accepts Bolt real muldiv proof");
-    assert_stage6_artifacts_match(&generated_stage6_proof, &generated_verified_bolt_stage6);
-    assert_state_history_match(
-        &core_stage6.transcript_states,
-        &transcript_states(generated_bolt_stage6_transcript.log()),
+        &generated_stage6_openings,
     );
-
-    let core_stage7 = core_stage7_artifacts(&fixture);
-    let kernel_stage7_proof = to_kernel_stage7_proof(&core_stage7.proof);
-    let kernel_stage7_openings = kernel_stage7_opening_inputs(&core_stage7.opening_inputs);
-    let stage7_instruction_ra_chunks = stage6_witness
-        .instruction_ra_booleanity
+    let kernel_stage7_openings = kernel_stage7_opening_inputs(&generated_stage7_openings);
+    let stage7_instruction_ra_indices = stage6_witness
+        .instruction_ra_indices
         .iter()
         .map(Vec::as_slice)
         .collect::<Vec<_>>();
-    let stage7_bytecode_ra_chunks = stage6_witness
-        .bytecode_ra_booleanity
+    let stage7_bytecode_ra_indices = stage6_witness
+        .bytecode_ra_indices
         .iter()
         .map(Vec::as_slice)
         .collect::<Vec<_>>();
-    let stage7_ram_ra_chunks = stage6_witness
-        .ram_ra_booleanity
+    let stage7_ram_ra_indices = stage6_witness
+        .ram_ra_indices
         .iter()
         .map(Vec::as_slice)
         .collect::<Vec<_>>();
     let stage7_inputs = jolt_kernels::stage7::Stage7ProverInputs::new(&kernel_stage7_openings)
-        .with_hamming_weight_claim_reduction(
-            jolt_kernels::stage7::Stage7HammingWeightClaimReductionWitness {
-                instruction_ra: jolt_kernels::stage7::Stage7RaChunks {
-                    chunks: &stage7_instruction_ra_chunks,
-                    layout: jolt_kernels::stage7::Stage7RaChunkLayout::CycleMajor,
+        .with_hamming_weight_claim_reduction_indices(
+            jolt_kernels::stage7::Stage7HammingWeightClaimReductionIndexWitness {
+                instruction_ra: jolt_kernels::stage7::Stage7RaIndexChunks {
+                    chunks: &stage7_instruction_ra_indices,
                 },
-                bytecode_ra: jolt_kernels::stage7::Stage7RaChunks {
-                    chunks: &stage7_bytecode_ra_chunks,
-                    layout: jolt_kernels::stage7::Stage7RaChunkLayout::CycleMajor,
+                bytecode_ra: jolt_kernels::stage7::Stage7RaIndexChunks {
+                    chunks: &stage7_bytecode_ra_indices,
                 },
-                ram_ra: jolt_kernels::stage7::Stage7RaChunks {
-                    chunks: &stage7_ram_ra_chunks,
-                    layout: jolt_kernels::stage7::Stage7RaChunkLayout::CycleMajor,
+                ram_ra: jolt_kernels::stage7::Stage7RaIndexChunks {
+                    chunks: &stage7_ram_ra_indices,
                 },
             },
         );
@@ -1337,12 +1394,9 @@ fn assert_bolt_full_real_trace_self_parity(
     let generated_stage7_proof = generated_stage7::Stage7Proof {
         sumchecks: generated_stage7_artifacts.sumchecks.clone(),
     };
-    assert_stage7_artifacts_match(&core_stage7.proof, &generated_stage7_artifacts);
-    assert_state_history_match(
-        &core_stage7.transcript_states,
-        &transcript_states(stage7_prover_transcript.log()),
-    );
+    assert_stage7_artifacts_match(&generated_stage7_proof, &generated_stage7_artifacts);
     let mut kernel_stage7_transcript = generated_stage6_transcript.clone();
+    let kernel_stage7_proof = to_kernel_stage7_proof(&generated_stage7_proof);
     let mut kernel_stage7_executor = jolt_kernels::stage7::Stage7ProofCarryingKernelExecutor::new(
         &kernel_stage7_proof,
         &kernel_stage7_openings,
@@ -1353,41 +1407,28 @@ fn assert_bolt_full_real_trace_self_parity(
         &mut kernel_stage7_executor,
         &mut kernel_stage7_transcript,
     )
-    .expect("kernel Stage 7 replay accepts jolt-core real muldiv proof");
+    .expect("kernel Stage 7 replay accepts Bolt real muldiv proof");
     assert_eq!(kernel_verified_stage7.sumchecks.len(), 1);
     assert_stage7_artifacts_match(
-        &core_stage7.proof,
+        &generated_stage7_proof,
         &generated_stage7_execution_artifacts(&kernel_verified_stage7),
     );
     assert_state_history_match(
-        &core_stage7.transcript_states,
+        &transcript_states(stage7_prover_transcript.log()),
         &transcript_states(kernel_stage7_transcript.log()),
     );
     let mut generated_stage7_transcript = generated_stage6_transcript.clone();
     let generated_verified_stage7 = generated_stage7::verify_stage7_with_program(
         generated_stage7_verifier_plan,
-        &core_stage7.proof,
-        &core_stage7.opening_inputs,
+        &generated_stage7_proof,
+        &generated_stage7_openings,
         &mut generated_stage7_transcript,
     )
-    .expect("generated Stage 7 verifier accepts jolt-core real muldiv proof");
-    assert_stage7_artifacts_match(&core_stage7.proof, &generated_verified_stage7);
-    assert_state_history_match(
-        &core_stage7.transcript_states,
-        &transcript_states(generated_stage7_transcript.log()),
-    );
-    let mut generated_bolt_stage7_transcript = generated_bolt_stage6_transcript.clone();
-    let generated_verified_bolt_stage7 = generated_stage7::verify_stage7_with_program(
-        generated_stage7_verifier_plan,
-        &generated_stage7_proof,
-        &core_stage7.opening_inputs,
-        &mut generated_bolt_stage7_transcript,
-    )
     .expect("generated Stage 7 verifier accepts Bolt real muldiv proof");
-    assert_stage7_artifacts_match(&generated_stage7_proof, &generated_verified_bolt_stage7);
+    assert_stage7_artifacts_match(&generated_stage7_proof, &generated_verified_stage7);
     assert_state_history_match(
-        &core_stage7.transcript_states,
-        &transcript_states(generated_bolt_stage7_transcript.log()),
+        &transcript_states(stage7_prover_transcript.log()),
+        &transcript_states(generated_stage7_transcript.log()),
     );
 
     let generated_jolt_stage2_openings = generated_stage2_opening_inputs(&stage2_verifier_openings);
@@ -1456,7 +1497,7 @@ fn assert_bolt_full_real_trace_self_parity(
         generated_jolt_artifacts.stage5.sumchecks.len()
     );
     assert_state_history_match(
-        &core_stage5.transcript_states,
+        &transcript_states(generated_verifier_transcript.log()),
         &transcript_states(generated_jolt_transcript.log()),
     );
     let generated_stage6_programs = jolt_verifier::JoltVerifierPrograms {
@@ -1483,7 +1524,7 @@ fn assert_bolt_full_real_trace_self_parity(
             stage3_openings: &generated_jolt_stage3_openings,
             stage4_openings: &generated_jolt_stage4_openings,
             stage5_openings: &generated_jolt_stage5_openings,
-            stage6_openings: &core_stage6.opening_inputs,
+            stage6_openings: &generated_stage6_openings,
             stage6_data: Some(&generated_stage6_data),
             stage7_openings: &[],
             evaluation_setup: None,
@@ -1497,7 +1538,7 @@ fn assert_bolt_full_real_trace_self_parity(
         generated_jolt_stage6_artifacts.stage6.sumchecks.len()
     );
     assert_state_history_match(
-        &core_stage6.transcript_states,
+        &transcript_states(generated_stage6_transcript.log()),
         &transcript_states(generated_jolt_stage6_transcript.log()),
     );
     let generated_stage7_programs = jolt_verifier::JoltVerifierPrograms {
@@ -1526,9 +1567,9 @@ fn assert_bolt_full_real_trace_self_parity(
             stage3_openings: &generated_jolt_stage3_openings,
             stage4_openings: &generated_jolt_stage4_openings,
             stage5_openings: &generated_jolt_stage5_openings,
-            stage6_openings: &core_stage6.opening_inputs,
+            stage6_openings: &generated_stage6_openings,
             stage6_data: Some(&generated_stage6_data),
-            stage7_openings: &core_stage7.opening_inputs,
+            stage7_openings: &generated_stage7_openings,
             evaluation_setup: None,
         },
         generated_stage7_programs,
@@ -1540,7 +1581,7 @@ fn assert_bolt_full_real_trace_self_parity(
         generated_jolt_stage7_artifacts.stage7.sumchecks.len()
     );
     assert_state_history_match(
-        &core_stage7.transcript_states,
+        &transcript_states(generated_stage7_transcript.log()),
         &transcript_states(generated_jolt_stage7_transcript.log()),
     );
 
@@ -1685,7 +1726,7 @@ fn assert_bolt_full_real_trace_self_parity(
         .as_ref()
         .expect("generated monolithic prover emits evaluation proof");
     assert_state_history_prefix_match(
-        &core_stage7.transcript_states,
+        &transcript_states(generated_stage7_transcript.log()),
         &transcript_states(monolithic_prover_transcript.log()),
     );
     assert_dory_proofs_match(
@@ -1710,7 +1751,7 @@ fn assert_bolt_full_real_trace_self_parity(
         &generated_stage7_execution_artifacts(&monolithic_artifacts.stage7),
     );
     assert_state_history_prefix_match(
-        &core_stage7.transcript_states,
+        &transcript_states(generated_stage7_transcript.log()),
         &transcript_states(monolithic_prover_transcript.log()),
     );
 
@@ -1727,9 +1768,9 @@ fn assert_bolt_full_real_trace_self_parity(
                 stage3_openings: &generated_jolt_stage3_openings,
                 stage4_openings: &generated_jolt_stage4_openings,
                 stage5_openings: &generated_jolt_stage5_openings,
-                stage6_openings: &core_stage6.opening_inputs,
+                stage6_openings: &generated_stage6_openings,
                 stage6_data: Some(&generated_stage6_data),
-                stage7_openings: &core_stage7.opening_inputs,
+                stage7_openings: &generated_stage7_openings,
                 evaluation_setup: Some(&evaluation_setup),
             },
             generated_stage7_programs,
@@ -1770,9 +1811,8 @@ fn assert_bolt_full_real_trace_self_parity(
         monolithic_artifacts.stage7.sumchecks.len(),
         monolithic_verified_artifacts.stage7.sumchecks.len()
     );
-    let core_stage8_states = core_stage8_transcript_states(&fixture);
     assert_state_history_match(
-        &core_stage8_states,
+        &transcript_states(monolithic_prover_transcript.log()),
         &transcript_states(monolithic_verify_transcript.log()),
     );
 
@@ -1787,9 +1827,9 @@ fn assert_bolt_full_real_trace_self_parity(
             stage3_openings: &generated_jolt_stage3_openings,
             stage4_openings: &generated_jolt_stage4_openings,
             stage5_openings: &generated_jolt_stage5_openings,
-            stage6_openings: &core_stage6.opening_inputs,
+            stage6_openings: &generated_stage6_openings,
             stage6_data: Some(&generated_stage6_data),
-            stage7_openings: &core_stage7.opening_inputs,
+            stage7_openings: &generated_stage7_openings,
             evaluation_setup: None,
         },
         generated_stage7_programs,
@@ -1818,9 +1858,9 @@ fn assert_bolt_full_real_trace_self_parity(
             stage3_openings: &generated_jolt_stage3_openings,
             stage4_openings: &generated_jolt_stage4_openings,
             stage5_openings: &generated_jolt_stage5_openings,
-            stage6_openings: &core_stage6.opening_inputs,
+            stage6_openings: &generated_stage6_openings,
             stage6_data: Some(&generated_stage6_data),
-            stage7_openings: &core_stage7.opening_inputs,
+            stage7_openings: &generated_stage7_openings,
             evaluation_setup: Some(&evaluation_setup),
         },
         generated_stage7_programs,
@@ -1847,9 +1887,9 @@ fn assert_bolt_full_real_trace_self_parity(
             stage3_openings: &generated_jolt_stage3_openings,
             stage4_openings: &generated_jolt_stage4_openings,
             stage5_openings: &generated_jolt_stage5_openings,
-            stage6_openings: &core_stage6.opening_inputs,
+            stage6_openings: &generated_stage6_openings,
             stage6_data: Some(&generated_stage6_data),
-            stage7_openings: &core_stage7.opening_inputs,
+            stage7_openings: &generated_stage7_openings,
             evaluation_setup: None,
         },
         generated_stage7_programs,
@@ -1882,9 +1922,9 @@ fn assert_bolt_full_real_trace_self_parity(
             stage3_openings: &generated_jolt_stage3_openings,
             stage4_openings: &generated_jolt_stage4_openings,
             stage5_openings: &generated_jolt_stage5_openings,
-            stage6_openings: &core_stage6.opening_inputs,
+            stage6_openings: &generated_stage6_openings,
             stage6_data: Some(&generated_stage6_data),
-            stage7_openings: &core_stage7.opening_inputs,
+            stage7_openings: &generated_stage7_openings,
             evaluation_setup: Some(&evaluation_setup),
         },
         generated_stage7_programs,
@@ -1910,9 +1950,9 @@ fn assert_bolt_full_real_trace_self_parity(
                 stage3_openings: &generated_jolt_stage3_openings,
                 stage4_openings: &generated_jolt_stage4_openings,
                 stage5_openings: &generated_jolt_stage5_openings,
-                stage6_openings: &core_stage6.opening_inputs,
+                stage6_openings: &generated_stage6_openings,
                 stage6_data: Some(&generated_stage6_data),
-                stage7_openings: &core_stage7.opening_inputs,
+                stage7_openings: &generated_stage7_openings,
                 evaluation_setup: Some(&evaluation_setup),
             },
             generated_stage7_programs,
@@ -2295,7 +2335,7 @@ fn assert_bolt_full_real_trace_self_parity(
             let generated_tamper_result = generated_stage6::verify_stage6_with_program(
                 generated_stage6_verifier_plan,
                 &tampered_stage6_proof,
-                &core_stage6.opening_inputs,
+                &generated_stage6_openings,
                 Some(&generated_stage6_data),
                 &mut generated_tamper_transcript,
             );
@@ -2322,7 +2362,7 @@ fn assert_bolt_full_real_trace_self_parity(
                     stage3_openings: &generated_jolt_stage3_openings,
                     stage4_openings: &generated_jolt_stage4_openings,
                     stage5_openings: &generated_jolt_stage5_openings,
-                    stage6_openings: &core_stage6.opening_inputs,
+                    stage6_openings: &generated_stage6_openings,
                     stage6_data: Some(&generated_stage6_data),
                     stage7_openings: &[],
                     evaluation_setup: None,
@@ -2368,7 +2408,7 @@ fn assert_bolt_full_real_trace_self_parity(
             let generated_tamper_result = generated_stage7::verify_stage7_with_program(
                 generated_stage7_verifier_plan,
                 &tampered_stage7_proof,
-                &core_stage7.opening_inputs,
+                &generated_stage7_openings,
                 &mut generated_tamper_transcript,
             );
             assert!(generated_tamper_result.is_err(), "generated {message}");
@@ -2395,9 +2435,9 @@ fn assert_bolt_full_real_trace_self_parity(
                     stage3_openings: &generated_jolt_stage3_openings,
                     stage4_openings: &generated_jolt_stage4_openings,
                     stage5_openings: &generated_jolt_stage5_openings,
-                    stage6_openings: &core_stage6.opening_inputs,
+                    stage6_openings: &generated_stage6_openings,
                     stage6_data: Some(&generated_stage6_data),
-                    stage7_openings: &core_stage7.opening_inputs,
+                    stage7_openings: &generated_stage7_openings,
                     evaluation_setup: None,
                 },
                 generated_stage7_programs,
@@ -2479,6 +2519,7 @@ struct CoreMuldivCommitmentFixture {
 }
 
 #[derive(Clone, Debug)]
+#[cfg(any())]
 struct CoreStage4Artifacts {
     artifacts: Stage4ExecutionArtifacts<Fr>,
     opening_inputs: Vec<Stage4OpeningInputValue<Fr>>,
@@ -2486,6 +2527,7 @@ struct CoreStage4Artifacts {
 }
 
 #[derive(Clone, Debug)]
+#[cfg(any())]
 struct CoreStage5Artifacts {
     proof: generated_stage5::Stage5Proof<Fr>,
     opening_inputs: Vec<generated_stage5::Stage5OpeningInputValue<Fr>>,
@@ -2493,6 +2535,7 @@ struct CoreStage5Artifacts {
 }
 
 #[derive(Clone, Debug)]
+#[cfg(any())]
 struct CoreStage6Artifacts {
     proof: generated_stage6::Stage6Proof<Fr>,
     opening_inputs: Vec<generated_stage6::Stage6OpeningInputValue<Fr>>,
@@ -2500,6 +2543,7 @@ struct CoreStage6Artifacts {
 }
 
 #[derive(Clone, Debug)]
+#[cfg(any())]
 struct CoreStage7Artifacts {
     proof: generated_stage7::Stage7Proof<Fr>,
     opening_inputs: Vec<generated_stage7::Stage7OpeningInputValue<Fr>>,
@@ -2508,6 +2552,9 @@ struct CoreStage7Artifacts {
 
 #[derive(Clone, Debug)]
 struct Stage6WitnessPolynomials {
+    instruction_ra_indices: Vec<Vec<Option<u8>>>,
+    bytecode_ra_indices: Vec<Vec<Option<u8>>>,
+    ram_ra_indices: Vec<Vec<Option<u8>>>,
     instruction_ra_booleanity: Vec<Vec<Fr>>,
     bytecode_ra_booleanity: Vec<Vec<Fr>>,
     ram_ra_booleanity: Vec<Vec<Fr>>,
@@ -6776,7 +6823,6 @@ fn core_guest_commitment_fixture(
 ) -> CoreMuldivCommitmentFixture {
     let setup_start = Instant::now();
     let _core_setup_span = tracing::info_span!("core.setup").entered();
-    DoryGlobals::reset();
 
     let mut core_program = host::Program::new(guest_name);
     let (core_bytecode, init_memory_state, _, entry_address) = core_program.decode();
@@ -7640,18 +7686,7 @@ fn assert_core_accepts_bolt_stage1(
     proof.stage1_sumcheck_proof =
         to_core_sumcheck_proof(&artifacts.sumchecks[1].proof.round_polynomials);
 
-    let mut verifier = CoreVerifier::new(
-        fixture.verifier_preprocessing,
-        proof,
-        fixture.io.clone(),
-        None,
-        None,
-    )
-    .expect("construct core verifier");
-    verifier.run_preamble();
-    let _ = verifier
-        .verify_stage1()
-        .expect("jolt-core accepts Bolt Stage 1 proof");
+    assert_core_verifies_proof(fixture, proof, "jolt-core accepts Bolt Stage 1 proof");
 }
 
 fn assert_core_stage1_tau_matches_bolt(
@@ -7666,7 +7701,7 @@ fn assert_core_stage1_tau_matches_bolt(
         None,
     )
     .expect("construct core verifier");
-    verifier.run_preamble();
+    run_core_preamble(&mut verifier);
     let (params, _) = jolt_core::zkvm::spartan::verify_stage1_uni_skip(
         &fixture.proof.stage1_uni_skip_first_round_proof,
         &verifier.spartan_key,
@@ -7682,7 +7717,7 @@ fn assert_core_stage1_tau_matches_bolt(
     let core_tau = params
         .tau
         .into_iter()
-        .map(|challenge| Fr::from(CoreFr::from(challenge)))
+        .map(core_challenge_to_fr)
         .collect::<Vec<_>>();
     assert_eq!(bolt_tau.values, core_tau, "Stage 1 tau mismatch");
 }
@@ -7703,17 +7738,7 @@ fn assert_core_accepts_bolt_stage2(
     assert_core_stage2_sumcheck_proof_matches_bolt(&fixture.proof, &stage2_artifacts.sumchecks[1]);
     assert_core_stage2_opening_claims_match_bolt(&fixture.proof, stage2_artifacts);
 
-    let mut verifier = CoreVerifier::new(
-        fixture.verifier_preprocessing,
-        proof,
-        fixture.io.clone(),
-        None,
-        None,
-    )
-    .expect("construct core verifier");
-    verifier.run_preamble();
-    let _ = verifier.verify_stage1().expect("core accepts Bolt Stage 1");
-    let _ = verifier.verify_stage2().expect("core accepts Bolt Stage 2");
+    assert_core_verifies_proof(fixture, proof, "core accepts Bolt Stage 2");
 }
 
 fn assert_core_stage2_opening_claims_match_bolt(
@@ -7882,18 +7907,7 @@ fn assert_core_accepts_bolt_stage3(
     assert_core_stage3_sumcheck_proof_matches_bolt(&fixture.proof, &stage3_artifacts.sumchecks[0]);
     assert_core_stage3_opening_claims_match_bolt(&fixture.proof, stage3_artifacts);
 
-    let mut verifier = CoreVerifier::new(
-        fixture.verifier_preprocessing,
-        proof,
-        fixture.io.clone(),
-        None,
-        None,
-    )
-    .expect("construct core verifier");
-    verifier.run_preamble();
-    let _ = verifier.verify_stage1().expect("core accepts Bolt Stage 1");
-    let _ = verifier.verify_stage2().expect("core accepts Bolt Stage 2");
-    let _ = verifier.verify_stage3().expect("core accepts Bolt Stage 3");
+    assert_core_verifies_proof(fixture, proof, "core accepts Bolt Stage 3");
 }
 
 fn assert_core_accepts_bolt_stage4(
@@ -7916,19 +7930,7 @@ fn assert_core_accepts_bolt_stage4(
     proof.stage4_sumcheck_proof =
         to_core_sumcheck_proof(&stage4_artifacts.sumchecks[0].proof.round_polynomials);
 
-    let mut verifier = CoreVerifier::new(
-        fixture.verifier_preprocessing,
-        proof,
-        fixture.io.clone(),
-        None,
-        None,
-    )
-    .expect("construct core verifier");
-    verifier.run_preamble();
-    let _ = verifier.verify_stage1().expect("core accepts Bolt Stage 1");
-    let _ = verifier.verify_stage2().expect("core accepts Bolt Stage 2");
-    let _ = verifier.verify_stage3().expect("core accepts Bolt Stage 3");
-    let _ = verifier.verify_stage4().expect("core accepts Bolt Stage 4");
+    assert_core_verifies_proof(fixture, proof, "core accepts Bolt Stage 4");
 }
 
 fn assert_core_stage3_opening_claims_match_bolt(
@@ -8532,6 +8534,787 @@ fn stage5_opening_inputs(
     ]
 }
 
+fn stage6_opening_inputs_from_artifacts(
+    params: &JoltProtocolParams,
+    stage1_artifacts: &Stage1ExecutionArtifacts<Fr>,
+    stage2_artifacts: &Stage2ExecutionArtifacts<Fr>,
+    stage3_artifacts: &Stage3ExecutionArtifacts<Fr>,
+    stage4_artifacts: &Stage4ExecutionArtifacts<Fr>,
+    stage5_proof: &generated_stage5::Stage5Proof<Fr>,
+    stage5_inputs: &[generated_stage5::Stage5OpeningInputValue<Fr>],
+) -> Vec<generated_stage6::Stage6OpeningInputValue<Fr>> {
+    let stage2 = stage2_artifacts
+        .sumchecks
+        .iter()
+        .find(|output| output.driver == "stage2.sumcheck")
+        .expect("Stage 2 batched output");
+    let stage3 = stage3_artifacts
+        .sumchecks
+        .iter()
+        .find(|output| output.driver == "stage3.sumcheck")
+        .expect("Stage 3 batched output");
+    let stage4 = stage4_artifacts
+        .sumchecks
+        .iter()
+        .find(|output| output.driver == "stage4.sumcheck")
+        .expect("Stage 4 batched output");
+    let stage5 = stage5_proof
+        .sumchecks
+        .iter()
+        .find(|output| output.driver == "stage5.sumcheck")
+        .expect("Stage 5 batched output");
+
+    let mut inputs = Vec::new();
+    for oracle in [
+        "UnexpandedPC",
+        "Imm",
+        "OpFlagAddOperands",
+        "OpFlagSubtractOperands",
+        "OpFlagMultiplyOperands",
+        "OpFlagLoad",
+        "OpFlagStore",
+        "OpFlagJump",
+        "OpFlagWriteLookupOutputToRD",
+        "OpFlagVirtualInstruction",
+        "OpFlagAssert",
+        "OpFlagDoNotUpdateUnexpandedPC",
+        "OpFlagAdvice",
+        "OpFlagIsCompressed",
+        "OpFlagIsFirstInSequence",
+        "OpFlagIsLastInSequence",
+    ] {
+        inputs.push(stage6_stage1_input(
+            stage1_artifacts,
+            oracle,
+            leak_str(&format!("stage6.input.stage1.{oracle}")),
+        ));
+    }
+
+    let stage2_trace_point = reversed_suffix(&stage2.point, params.log_t);
+    for (oracle, eval_name) in [
+        (
+            "OpFlagJump",
+            "stage2.product_virtual.remainder.eval.OpFlagJump",
+        ),
+        (
+            "InstructionFlagBranch",
+            "stage2.product_virtual.remainder.eval.InstructionFlagBranch",
+        ),
+        (
+            "OpFlagWriteLookupOutputToRD",
+            "stage2.product_virtual.remainder.eval.OpFlagWriteLookupOutputToRD",
+        ),
+        (
+            "OpFlagVirtualInstruction",
+            "stage2.product_virtual.remainder.eval.OpFlagVirtualInstruction",
+        ),
+    ] {
+        inputs.push(generated_stage6::Stage6OpeningInputValue {
+            symbol: leak_str(&format!("stage6.input.stage2.{oracle}")),
+            point: stage2_trace_point.clone(),
+            eval: stage_eval_stage2(stage2, eval_name),
+        });
+    }
+
+    let stage3_trace_point = reverse_point(&stage3.point);
+    for (symbol, eval_name) in [
+        (
+            "stage6.input.stage3.instruction_input.Imm",
+            "stage3.instruction_input.eval.Imm",
+        ),
+        (
+            "stage6.input.stage3.spartan_shift.UnexpandedPC",
+            "stage3.spartan_shift.eval.UnexpandedPC",
+        ),
+        (
+            "stage6.input.stage3.instruction_input.InstructionFlagLeftOperandIsRs1Value",
+            "stage3.instruction_input.eval.InstructionFlagLeftOperandIsRs1Value",
+        ),
+        (
+            "stage6.input.stage3.instruction_input.InstructionFlagLeftOperandIsPC",
+            "stage3.instruction_input.eval.InstructionFlagLeftOperandIsPC",
+        ),
+        (
+            "stage6.input.stage3.instruction_input.InstructionFlagRightOperandIsRs2Value",
+            "stage3.instruction_input.eval.InstructionFlagRightOperandIsRs2Value",
+        ),
+        (
+            "stage6.input.stage3.instruction_input.InstructionFlagRightOperandIsImm",
+            "stage3.instruction_input.eval.InstructionFlagRightOperandIsImm",
+        ),
+        (
+            "stage6.input.stage3.spartan_shift.InstructionFlagIsNoop",
+            "stage3.spartan_shift.eval.InstructionFlagIsNoop",
+        ),
+        (
+            "stage6.input.stage3.spartan_shift.OpFlagVirtualInstruction",
+            "stage3.spartan_shift.eval.OpFlagVirtualInstruction",
+        ),
+        (
+            "stage6.input.stage3.spartan_shift.OpFlagIsFirstInSequence",
+            "stage3.spartan_shift.eval.OpFlagIsFirstInSequence",
+        ),
+    ] {
+        inputs.push(generated_stage6::Stage6OpeningInputValue {
+            symbol,
+            point: stage3_trace_point.clone(),
+            eval: stage_eval_stage3(stage3, eval_name),
+        });
+    }
+
+    let stage4_register_point = normalized_stage4_registers_rw_point(params, &stage4.point);
+    for oracle in ["RdWa", "Rs1Ra", "Rs2Ra"] {
+        inputs.push(generated_stage6::Stage6OpeningInputValue {
+            symbol: leak_str(&format!("stage6.input.stage4.{oracle}")),
+            point: stage4_register_point.clone(),
+            eval: stage_eval_stage4(
+                stage4,
+                leak_str(&format!("stage4.registers_read_write.eval.{oracle}")),
+            ),
+        });
+    }
+
+    let stage5_register_point = stage5_registers_val_point(params, stage5_inputs, stage5);
+    inputs.push(generated_stage6::Stage6OpeningInputValue {
+        symbol: "stage6.input.stage5.registers_val_evaluation.RdWa",
+        point: stage5_register_point,
+        eval: stage_eval_stage5(stage5, "stage5.registers_val_evaluation.eval.RdWa"),
+    });
+
+    let stage5_cycle_point = stage5_instruction_cycle_point(params, stage5);
+    inputs.push(generated_stage6::Stage6OpeningInputValue {
+        symbol: "stage6.input.stage5.InstructionRafFlag",
+        point: stage5_cycle_point.clone(),
+        eval: stage_eval_stage5(
+            stage5,
+            "stage5.instruction_read_raf.eval.InstructionRafFlag",
+        ),
+    });
+    for index in 0..params.lookup_table_count {
+        inputs.push(generated_stage6::Stage6OpeningInputValue {
+            symbol: leak_str(&format!("stage6.input.stage5.LookupTableFlag_{index}")),
+            point: stage5_cycle_point.clone(),
+            eval: stage_eval_stage5(
+                stage5,
+                leak_str(&format!(
+                    "stage5.instruction_read_raf.eval.LookupTableFlag_{index}"
+                )),
+            ),
+        });
+    }
+
+    inputs.push(stage6_stage1_input(
+        stage1_artifacts,
+        "PC",
+        "stage6.input.stage1.PC",
+    ));
+    inputs.push(generated_stage6::Stage6OpeningInputValue {
+        symbol: "stage6.input.stage3.spartan_shift.PC",
+        point: stage3_trace_point,
+        eval: stage_eval_stage3(stage3, "stage3.spartan_shift.eval.PC"),
+    });
+
+    let stage5_ram_ra_point = stage5_ram_ra_point(params, stage5_inputs, stage5);
+    inputs.push(generated_stage6::Stage6OpeningInputValue {
+        symbol: "stage6.input.stage5.ram_ra_claim_reduction.RamRa",
+        point: stage5_ram_ra_point,
+        eval: stage_eval_stage5(stage5, "stage5.ram_ra_claim_reduction.eval.RamRa"),
+    });
+    for index in 0..params.instruction_ra_virtual_d {
+        inputs.push(generated_stage6::Stage6OpeningInputValue {
+            symbol: leak_str(&format!(
+                "stage6.input.stage5.instruction_read_raf.InstructionRa_{index}"
+            )),
+            point: stage5_instruction_ra_point(params, stage5, index),
+            eval: stage_eval_stage5(
+                stage5,
+                leak_str(&format!(
+                    "stage5.instruction_read_raf.eval.InstructionRa_{index}"
+                )),
+            ),
+        });
+    }
+
+    inputs.push(stage6_stage1_input(
+        stage1_artifacts,
+        "LookupOutput",
+        "stage6.input.stage1.LookupOutput",
+    ));
+    inputs.push(generated_stage6::Stage6OpeningInputValue {
+        symbol: "stage6.input.stage2.ram_read_write.RamInc",
+        point: reverse_point(&stage2.point)[params.log_k_ram..].to_vec(),
+        eval: stage_eval_stage2(stage2, "stage2.ram_read_write.eval.RamInc"),
+    });
+    inputs.push(generated_stage6::Stage6OpeningInputValue {
+        symbol: "stage6.input.stage4.ram_val_check.RamInc",
+        point: reversed_suffix(&stage4.point, params.log_t),
+        eval: stage_eval_stage4(stage4, "stage4.ram_val_check.eval.RamInc"),
+    });
+    inputs.push(generated_stage6::Stage6OpeningInputValue {
+        symbol: "stage6.input.stage4.registers_read_write.RdInc",
+        point: stage4_register_point[params.register_log_k..].to_vec(),
+        eval: stage_eval_stage4(stage4, "stage4.registers_read_write.eval.RdInc"),
+    });
+    inputs.push(generated_stage6::Stage6OpeningInputValue {
+        symbol: "stage6.input.stage5.registers_val_evaluation.RdInc",
+        point: reversed_suffix(&stage5.point, params.log_t),
+        eval: stage_eval_stage5(stage5, "stage5.registers_val_evaluation.eval.RdInc"),
+    });
+
+    inputs
+}
+
+fn stage7_opening_inputs_from_artifacts(
+    params: &JoltProtocolParams,
+    stage6_program: &'static generated_stage6::Stage6VerifierProgramPlan,
+    stage6_proof: &generated_stage6::Stage6Proof<Fr>,
+    stage6_inputs: &[generated_stage6::Stage6OpeningInputValue<Fr>],
+) -> Vec<generated_stage7::Stage7OpeningInputValue<Fr>> {
+    let stage6 = stage6_proof
+        .sumchecks
+        .iter()
+        .find(|output| output.driver == "stage6.sumcheck")
+        .expect("Stage 6 batched output");
+    let store = stage6_value_store(params, stage6_program, stage6, stage6_inputs);
+    let mut inputs = Vec::new();
+    inputs.push(stage6_opening_as_stage7_input(
+        &store,
+        stage6_program,
+        "stage6.hamming_booleanity.opening.HammingWeight",
+        "stage7.input.stage6.hamming_booleanity.HammingWeight",
+    ));
+
+    for index in 0..params.instruction_d {
+        inputs.push(stage6_opening_as_stage7_input(
+            &store,
+            stage6_program,
+            leak_str(&format!("stage6.booleanity.opening.InstructionRa_{index}")),
+            leak_str(&format!(
+                "stage7.input.stage6.booleanity.InstructionRa_{index}"
+            )),
+        ));
+        inputs.push(stage6_opening_as_stage7_input(
+            &store,
+            stage6_program,
+            leak_str(&format!(
+                "stage6.instruction_ra_virtual.opening.InstructionRa_{index}"
+            )),
+            leak_str(&format!(
+                "stage7.input.stage6.instruction_ra_virtual.InstructionRa_{index}"
+            )),
+        ));
+    }
+    for index in 0..params.bytecode_d {
+        inputs.push(stage6_opening_as_stage7_input(
+            &store,
+            stage6_program,
+            leak_str(&format!("stage6.booleanity.opening.BytecodeRa_{index}")),
+            leak_str(&format!("stage7.input.stage6.booleanity.BytecodeRa_{index}")),
+        ));
+        inputs.push(stage6_opening_as_stage7_input(
+            &store,
+            stage6_program,
+            leak_str(&format!("stage6.bytecode_read_raf.opening.BytecodeRa_{index}")),
+            leak_str(&format!(
+                "stage7.input.stage6.bytecode_read_raf.BytecodeRa_{index}"
+            )),
+        ));
+    }
+    for index in 0..params.ram_d {
+        inputs.push(stage6_opening_as_stage7_input(
+            &store,
+            stage6_program,
+            leak_str(&format!("stage6.booleanity.opening.RamRa_{index}")),
+            leak_str(&format!("stage7.input.stage6.booleanity.RamRa_{index}")),
+        ));
+        inputs.push(stage6_opening_as_stage7_input(
+            &store,
+            stage6_program,
+            leak_str(&format!("stage6.ram_ra_virtual.opening.RamRa_{index}")),
+            leak_str(&format!("stage7.input.stage6.ram_ra_virtual.RamRa_{index}")),
+        ));
+    }
+    inputs
+}
+
+fn stage6_instance_point(
+    params: &JoltProtocolParams,
+    program: &'static generated_stage6::Stage6VerifierProgramPlan,
+    output: &generated_stage6::Stage6SumcheckOutput<Fr>,
+    symbol: &str,
+) -> Vec<Fr> {
+    let instance = program
+        .instance_results
+        .iter()
+        .find(|instance| instance.symbol == symbol)
+        .unwrap_or_else(|| panic!("missing Stage 6 instance result {symbol}"));
+    let end = instance.round_offset + instance.point_arity;
+    let mut point = output.point[instance.round_offset..end].to_vec();
+    match instance.point_order {
+        "as_is" | "stage6_booleanity" => {}
+        "reverse" => point.reverse(),
+        "bytecode_read_raf" => {
+            let address_len =
+                point.len()
+                    .checked_sub(params.log_t)
+                    .unwrap_or_else(|| {
+                        panic!("Stage 6 bytecode point is shorter than trace arity")
+                    });
+            point[..address_len].reverse();
+            point[address_len..].reverse();
+        }
+        other => panic!("unsupported Stage 6 point order {other}"),
+    }
+    point
+}
+
+#[derive(Default)]
+struct Stage6LocalValueStore {
+    scalars: Vec<(&'static str, Fr)>,
+    points: Vec<(&'static str, Vec<Fr>)>,
+}
+
+impl Stage6LocalValueStore {
+    fn insert_scalar(&mut self, symbol: &'static str, value: Fr) {
+        if let Some((_, existing)) = self
+            .scalars
+            .iter_mut()
+            .find(|(existing, _)| *existing == symbol)
+        {
+            *existing = value;
+        } else {
+            self.scalars.push((symbol, value));
+        }
+    }
+
+    fn insert_point(&mut self, symbol: &'static str, point: Vec<Fr>) {
+        if let Some((_, existing)) = self
+            .points
+            .iter_mut()
+            .find(|(existing, _)| *existing == symbol)
+        {
+            *existing = point;
+        } else {
+            self.points.push((symbol, point));
+        }
+    }
+
+    fn scalar(&self, symbol: &str) -> Fr {
+        self.scalars
+            .iter()
+            .find(|(existing, _)| *existing == symbol)
+            .map(|(_, value)| *value)
+            .unwrap_or_else(|| panic!("missing Stage 6 scalar {symbol}"))
+    }
+
+    fn point(&self, symbol: &str) -> Vec<Fr> {
+        self.points
+            .iter()
+            .find(|(existing, _)| *existing == symbol)
+            .map(|(_, point)| point.clone())
+            .unwrap_or_else(|| panic!("missing Stage 6 point {symbol}"))
+    }
+
+    fn try_point(&self, symbol: &str) -> Option<&[Fr]> {
+        self.points
+            .iter()
+            .find(|(existing, _)| *existing == symbol)
+            .map(|(_, point)| point.as_slice())
+    }
+}
+
+fn stage6_value_store(
+    params: &JoltProtocolParams,
+    program: &'static generated_stage6::Stage6VerifierProgramPlan,
+    output: &generated_stage6::Stage6SumcheckOutput<Fr>,
+    opening_inputs: &[generated_stage6::Stage6OpeningInputValue<Fr>],
+) -> Stage6LocalValueStore {
+    let mut store = Stage6LocalValueStore::default();
+    for input in opening_inputs {
+        store.insert_point(input.symbol, input.point.clone());
+        store.insert_scalar(input.symbol, input.eval);
+    }
+    store.insert_point(output.driver, output.point.clone());
+    for instance in program
+        .instance_results
+        .iter()
+        .filter(|instance| instance.source == output.driver)
+    {
+        store.insert_point(
+            instance.symbol,
+            stage6_instance_point(params, program, output, instance.symbol),
+        );
+    }
+    for eval in program.evals.iter().filter(|eval| eval.source == output.driver) {
+        let value = output
+            .evals
+            .iter()
+            .find(|value| value.name == eval.name)
+            .or_else(|| output.evals.get(eval.index))
+            .unwrap_or_else(|| panic!("missing Stage 6 eval {}", eval.symbol))
+            .value;
+        store.insert_scalar(eval.symbol, value);
+        store.insert_scalar(eval.name, value);
+    }
+    for zero in program.point_zeros {
+        store.insert_point(zero.symbol, vec![Fr::from_u64(0); zero.arity]);
+    }
+    loop {
+        let mut progress = false;
+        for slice in program.point_slices {
+            if store.try_point(slice.symbol).is_some() {
+                continue;
+            }
+            let Some(input) = store.try_point(slice.input) else {
+                continue;
+            };
+            let end = slice.offset + slice.length;
+            store.insert_point(slice.symbol, input[slice.offset..end].to_vec());
+            progress = true;
+        }
+        for concat in program.point_concats {
+            if store.try_point(concat.symbol).is_some() {
+                continue;
+            }
+            let mut point = Vec::with_capacity(concat.arity);
+            let mut complete = true;
+            for input in concat.inputs.split('|').filter(|input| !input.is_empty()) {
+                if let Some(input_point) = store.try_point(input) {
+                    point.extend_from_slice(input_point);
+                } else {
+                    complete = false;
+                    break;
+                }
+            }
+            if complete {
+                assert_eq!(point.len(), concat.arity, "Stage 6 concat point arity mismatch");
+                store.insert_point(concat.symbol, point);
+                progress = true;
+            }
+        }
+        if !progress {
+            break;
+        }
+    }
+    store
+}
+
+fn stage6_opening_as_stage7_input(
+    store: &Stage6LocalValueStore,
+    program: &'static generated_stage6::Stage6VerifierProgramPlan,
+    source_claim: &'static str,
+    symbol: &'static str,
+) -> generated_stage7::Stage7OpeningInputValue<Fr> {
+    let claim = program
+        .opening_claims
+        .iter()
+        .find(|claim| claim.symbol == source_claim)
+        .unwrap_or_else(|| panic!("missing Stage 6 opening claim {source_claim}"));
+    generated_stage7::Stage7OpeningInputValue {
+        symbol,
+        point: store.point(claim.point_source),
+        eval: store.scalar(claim.eval_source),
+    }
+}
+
+fn stage6_stage1_input(
+    stage1_artifacts: &Stage1ExecutionArtifacts<Fr>,
+    oracle: &str,
+    symbol: &'static str,
+) -> generated_stage6::Stage6OpeningInputValue<Fr> {
+    let source_claim = format!("stage1.outer_remaining.opening.{oracle}");
+    let opening = stage1_artifacts
+        .opening_value(&source_claim)
+        .unwrap_or_else(|| panic!("missing Stage 1 opening {source_claim}"));
+    generated_stage6::Stage6OpeningInputValue {
+        symbol,
+        point: opening.point.clone(),
+        eval: opening.eval,
+    }
+}
+
+fn stage5_instruction_cycle_point(
+    params: &JoltProtocolParams,
+    stage5: &generated_stage5::Stage5SumcheckOutput<Fr>,
+) -> Vec<Fr> {
+    let address_len = params.instruction_ra_virtual_d * params.lookups_ra_virtual_log_k_chunk;
+    reverse_point(&stage5.point[address_len..address_len + params.log_t])
+}
+
+fn stage5_instruction_ra_point(
+    params: &JoltProtocolParams,
+    stage5: &generated_stage5::Stage5SumcheckOutput<Fr>,
+    index: usize,
+) -> Vec<Fr> {
+    let chunk = params.lookups_ra_virtual_log_k_chunk;
+    let start = index * chunk;
+    let mut point = stage5.point[start..start + chunk].to_vec();
+    point.extend(stage5_instruction_cycle_point(params, stage5));
+    point
+}
+
+fn stage5_input_point(
+    inputs: &[generated_stage5::Stage5OpeningInputValue<Fr>],
+    symbol: &str,
+) -> Vec<Fr> {
+    inputs
+        .iter()
+        .find(|input| input.symbol == symbol)
+        .unwrap_or_else(|| panic!("missing Stage 5 input {symbol}"))
+        .point
+        .clone()
+}
+
+fn stage5_ram_ra_point(
+    params: &JoltProtocolParams,
+    inputs: &[generated_stage5::Stage5OpeningInputValue<Fr>],
+    stage5: &generated_stage5::Stage5SumcheckOutput<Fr>,
+) -> Vec<Fr> {
+    let mut point = stage5_input_point(inputs, "stage5.input.stage2.ram_raf.RamRa")
+        [..params.log_k_ram]
+        .to_vec();
+    point.extend(reversed_suffix(&stage5.point, params.log_t));
+    point
+}
+
+fn stage5_registers_val_point(
+    params: &JoltProtocolParams,
+    inputs: &[generated_stage5::Stage5OpeningInputValue<Fr>],
+    stage5: &generated_stage5::Stage5SumcheckOutput<Fr>,
+) -> Vec<Fr> {
+    let mut point = stage5_input_point(inputs, "stage5.input.stage4.registers.RegistersVal")
+        [..params.register_log_k]
+        .to_vec();
+    point.extend(reversed_suffix(&stage5.point, params.log_t));
+    point
+}
+
+fn normalized_stage6_bytecode_point(
+    params: &JoltProtocolParams,
+    stage6: &generated_stage6::Stage6SumcheckOutput<Fr>,
+) -> Vec<Fr> {
+    let address_len = params.log_k_bytecode;
+    let mut point = stage6.point[..address_len + params.log_t].to_vec();
+    point[..address_len].reverse();
+    point[address_len..].reverse();
+    point
+}
+
+fn stage6_bytecode_ra_point(
+    params: &JoltProtocolParams,
+    bytecode_point: &[Fr],
+    index: usize,
+) -> Vec<Fr> {
+    let chunk_lens = stage6_bytecode_chunk_lens(params);
+    let address_len = params.log_k_bytecode;
+    let cycle = bytecode_point[address_len..].to_vec();
+    let start = chunk_lens[..index].iter().sum::<usize>();
+    let chunk_len = chunk_lens[index];
+    let mut address = if chunk_len < params.log_k_chunk {
+        let mut padded = vec![Fr::from_u64(0); params.log_k_chunk - chunk_len];
+        padded.extend_from_slice(&bytecode_point[start..start + chunk_len]);
+        padded
+    } else {
+        bytecode_point[start..start + params.log_k_chunk].to_vec()
+    };
+    address.extend(cycle);
+    address
+}
+
+fn stage6_ram_ra_point(
+    params: &JoltProtocolParams,
+    cycle_point: &[Fr],
+    stage6_inputs: &[generated_stage6::Stage6OpeningInputValue<Fr>],
+    index: usize,
+) -> Vec<Fr> {
+    let input = stage6_input_point(
+        stage6_inputs,
+        "stage6.input.stage5.ram_ra_claim_reduction.RamRa",
+    );
+    let start = index * params.log_k_chunk;
+    let mut point = input[start..start + params.log_k_chunk].to_vec();
+    point.extend(cycle_point);
+    point
+}
+
+fn stage6_instruction_ra_point(
+    params: &JoltProtocolParams,
+    cycle_point: &[Fr],
+    stage6_inputs: &[generated_stage6::Stage6OpeningInputValue<Fr>],
+    index: usize,
+) -> Vec<Fr> {
+    let source_index = index / (params.lookups_ra_virtual_log_k_chunk / params.log_k_chunk);
+    let source_offset =
+        (index % (params.lookups_ra_virtual_log_k_chunk / params.log_k_chunk)) * params.log_k_chunk;
+    let source = stage6_input_point(
+        stage6_inputs,
+        &format!("stage6.input.stage5.instruction_read_raf.InstructionRa_{source_index}"),
+    );
+    let mut point = source[source_offset..source_offset + params.log_k_chunk].to_vec();
+    point.extend(cycle_point);
+    point
+}
+
+fn stage6_input_point(
+    inputs: &[generated_stage6::Stage6OpeningInputValue<Fr>],
+    symbol: &str,
+) -> Vec<Fr> {
+    inputs
+        .iter()
+        .find(|input| input.symbol == symbol)
+        .unwrap_or_else(|| panic!("missing Stage 6 input {symbol}"))
+        .point
+        .clone()
+}
+
+fn assert_stage7_inputs_match_stage6_witness(
+    params: &JoltProtocolParams,
+    witness: &Stage6WitnessPolynomials,
+    inputs: &[generated_stage7::Stage7OpeningInputValue<Fr>],
+) {
+    assert_stage7_opening_matches(
+        inputs,
+        "stage7.input.stage6.hamming_booleanity.HammingWeight",
+        &witness.hamming_weight,
+    );
+    for index in 0..params.instruction_d {
+        assert_stage7_address_major_opening_matches(
+            params.log_k_chunk,
+            inputs,
+            &format!("stage7.input.stage6.booleanity.InstructionRa_{index}"),
+            &witness.instruction_ra_booleanity[index],
+        );
+        assert_stage7_address_major_opening_matches(
+            params.log_k_chunk,
+            inputs,
+            &format!("stage7.input.stage6.instruction_ra_virtual.InstructionRa_{index}"),
+            &witness.instruction_ra_booleanity[index],
+        );
+    }
+    for index in 0..params.bytecode_d {
+        assert_stage7_address_major_opening_matches(
+            params.log_k_chunk,
+            inputs,
+            &format!("stage7.input.stage6.booleanity.BytecodeRa_{index}"),
+            &witness.bytecode_ra_booleanity[index],
+        );
+        assert_stage7_address_major_opening_matches(
+            params.log_k_chunk,
+            inputs,
+            &format!("stage7.input.stage6.bytecode_read_raf.BytecodeRa_{index}"),
+            &witness.bytecode_ra_booleanity[index],
+        );
+    }
+    for index in 0..params.ram_d {
+        assert_stage7_address_major_opening_matches(
+            params.log_k_chunk,
+            inputs,
+            &format!("stage7.input.stage6.booleanity.RamRa_{index}"),
+            &witness.ram_ra_booleanity[index],
+        );
+        assert_stage7_address_major_opening_matches(
+            params.log_k_chunk,
+            inputs,
+            &format!("stage7.input.stage6.ram_ra_virtual.RamRa_{index}"),
+            &witness.ram_ra_booleanity[index],
+        );
+    }
+}
+
+fn assert_stage7_opening_matches(
+    inputs: &[generated_stage7::Stage7OpeningInputValue<Fr>],
+    symbol: &str,
+    polynomial: &[Fr],
+) {
+    let input = inputs
+        .iter()
+        .find(|input| input.symbol == symbol)
+        .unwrap_or_else(|| panic!("missing Stage 7 input {symbol}"));
+    assert_eq!(
+        mle_eval_fr(polynomial, &input.point),
+        input.eval,
+        "Stage 7 input `{symbol}` does not match the Stage 6 witness polynomial"
+    );
+}
+
+fn assert_stage7_address_major_opening_matches(
+    log_k_chunk: usize,
+    inputs: &[generated_stage7::Stage7OpeningInputValue<Fr>],
+    symbol: &str,
+    polynomial: &[Fr],
+) {
+    let input = inputs
+        .iter()
+        .find(|input| input.symbol == symbol)
+        .unwrap_or_else(|| panic!("missing Stage 7 input {symbol}"));
+    let _ = log_k_chunk;
+    assert_eq!(
+        mle_eval_bind_order(polynomial, &input.point),
+        input.eval,
+        "Stage 7 input `{symbol}` does not match the Stage 6 witness polynomial"
+    );
+}
+
+fn mle_eval_fr(values: &[Fr], point: &[Fr]) -> Fr {
+    assert_eq!(
+        values.len(),
+        1usize << point.len(),
+        "MLE value length does not match point arity"
+    );
+    EqPolynomial::<Fr>::evals(point, None)
+        .iter()
+        .zip(values)
+        .map(|(&weight, &value)| weight * value)
+        .sum()
+}
+
+fn mle_eval_address_major(values: &[Fr], log_k_chunk: usize, point: &[Fr]) -> Fr {
+    assert!(
+        point.len() >= log_k_chunk,
+        "address-major point is shorter than the address chunk arity"
+    );
+    let address_len = 1usize << log_k_chunk;
+    let cycle_len = 1usize << (point.len() - log_k_chunk);
+    assert_eq!(
+        values.len(),
+        address_len * cycle_len,
+        "address-major MLE value length does not match point arity"
+    );
+    let address = EqPolynomial::<Fr>::evals(&point[..log_k_chunk], None);
+    let cycle = EqPolynomial::<Fr>::evals(&point[log_k_chunk..], None);
+    let mut value = Fr::from_u64(0);
+    for address_index in 0..address_len {
+        for cycle_index in 0..cycle_len {
+            value += values[address_index * cycle_len + cycle_index]
+                * cycle[cycle_index]
+                * address[address_index];
+        }
+    }
+    value
+}
+
+fn mle_eval_bind_order(values: &[Fr], point: &[Fr]) -> Fr {
+    assert_eq!(
+        values.len(),
+        1usize << point.len(),
+        "bind-order MLE value length does not match point arity"
+    );
+    let mut values = values.to_vec();
+    let mut scratch = Vec::new();
+    for &challenge in point {
+        let half = values.len() / 2;
+        scratch.resize(half, Fr::from_u64(0));
+        for index in 0..half {
+            let low = values[index << 1];
+            let high = values[(index << 1) + 1];
+            scratch[index] = low + challenge * (high - low);
+        }
+        std::mem::swap(&mut values, &mut scratch);
+        scratch.clear();
+    }
+    values[0]
+}
+
 fn stage_eval_stage2(
     output: &jolt_kernels::stage2::Stage2SumcheckOutput<Fr>,
     name: &'static str,
@@ -8558,6 +9341,30 @@ fn stage_eval_stage3(
 
 fn stage_eval_stage4(
     output: &jolt_kernels::stage4::Stage4SumcheckOutput<Fr>,
+    name: &'static str,
+) -> Fr {
+    output
+        .evals
+        .iter()
+        .find(|eval| eval.name == name)
+        .unwrap_or_else(|| panic!("missing eval {name}"))
+        .value
+}
+
+fn stage_eval_stage5(
+    output: &generated_stage5::Stage5SumcheckOutput<Fr>,
+    name: &'static str,
+) -> Fr {
+    output
+        .evals
+        .iter()
+        .find(|eval| eval.name == name)
+        .unwrap_or_else(|| panic!("missing eval {name}"))
+        .value
+}
+
+fn stage_eval_stage6(
+    output: &generated_stage6::Stage6SumcheckOutput<Fr>,
     name: &'static str,
 ) -> Fr {
     output
@@ -8628,9 +9435,22 @@ fn stage2_ram_inc(accesses: &[Stage2RamAccess]) -> Vec<Fr> {
         .collect()
 }
 
+fn committed_oracle_values(
+    oracle_data: &BTreeMap<String, Option<Vec<Fr>>>,
+    oracle: &str,
+) -> Vec<Fr> {
+    oracle_data
+        .get(oracle)
+        .unwrap_or_else(|| panic!("missing committed oracle data {oracle}"))
+        .as_ref()
+        .unwrap_or_else(|| panic!("committed oracle data {oracle} is absent"))
+        .clone()
+}
+
 fn stage6_witness_polynomials(
     fixture: &CoreMuldivCommitmentFixture,
     opening_inputs: &[kernel_stage6::Stage6OpeningInputValue<Fr>],
+    oracle_data: &BTreeMap<String, Option<Vec<Fr>>>,
 ) -> Stage6WitnessPolynomials {
     let one_hot_params = jolt_core::zkvm::config::OneHotParams::from_config(
         &fixture.proof.one_hot_config,
@@ -8653,17 +9473,14 @@ fn stage6_witness_polynomials(
         .map(|index| ram_ra_chunk_indices(trace, memory_layout, &one_hot_params, index))
         .collect::<Vec<_>>();
 
-    let instruction_ra_booleanity = instruction_indices
-        .iter()
-        .map(|indices| one_hot_cycle_major_from_indices(indices, fixture.params.log_k_chunk))
+    let instruction_ra_booleanity = (0..fixture.params.instruction_d)
+        .map(|index| committed_oracle_values(oracle_data, &format!("InstructionRa_{index}")))
         .collect::<Vec<_>>();
-    let bytecode_ra_booleanity = bytecode_indices
-        .iter()
-        .map(|indices| one_hot_cycle_major_from_indices(indices, fixture.params.log_k_chunk))
+    let bytecode_ra_booleanity = (0..fixture.params.bytecode_d)
+        .map(|index| committed_oracle_values(oracle_data, &format!("BytecodeRa_{index}")))
         .collect::<Vec<_>>();
-    let ram_ra_booleanity = ram_indices
-        .iter()
-        .map(|indices| one_hot_cycle_major_from_indices(indices, fixture.params.log_k_chunk))
+    let ram_ra_booleanity = (0..fixture.params.ram_d)
+        .map(|index| committed_oracle_values(oracle_data, &format!("RamRa_{index}")))
         .collect::<Vec<_>>();
 
     let bytecode_ra_read_raf = bytecode_indices
@@ -8709,6 +9526,9 @@ fn stage6_witness_polynomials(
         .collect();
 
     Stage6WitnessPolynomials {
+        instruction_ra_indices: instruction_indices,
+        bytecode_ra_indices: bytecode_indices,
+        ram_ra_indices: ram_indices,
         instruction_ra_booleanity,
         bytecode_ra_booleanity,
         ram_ra_booleanity,
@@ -8896,6 +9716,7 @@ fn mle_eval_u64(values: &[u64], point: &[Fr]) -> Fr {
         .sum()
 }
 
+#[cfg(any())]
 fn core_stage4_artifacts(fixture: &CoreMuldivCommitmentFixture) -> CoreStage4Artifacts {
     let mut verifier = CoreVerifier::new(
         fixture.verifier_preprocessing,
@@ -8943,6 +9764,7 @@ fn core_stage4_artifacts(fixture: &CoreMuldivCommitmentFixture) -> CoreStage4Art
     }
 }
 
+#[cfg(any())]
 fn core_stage5_artifacts(fixture: &CoreMuldivCommitmentFixture) -> CoreStage5Artifacts {
     let mut verifier = CoreVerifier::new(
         fixture.verifier_preprocessing,
@@ -8986,6 +9808,7 @@ fn core_stage5_artifacts(fixture: &CoreMuldivCommitmentFixture) -> CoreStage5Art
     }
 }
 
+#[cfg(any())]
 fn core_stage6_artifacts(fixture: &CoreMuldivCommitmentFixture) -> CoreStage6Artifacts {
     let mut verifier = CoreVerifier::new(
         fixture.verifier_preprocessing,
@@ -9030,6 +9853,7 @@ fn core_stage6_artifacts(fixture: &CoreMuldivCommitmentFixture) -> CoreStage6Art
     }
 }
 
+#[cfg(any())]
 fn core_stage7_artifacts(fixture: &CoreMuldivCommitmentFixture) -> CoreStage7Artifacts {
     let mut verifier = CoreVerifier::new(
         fixture.verifier_preprocessing,
@@ -9075,6 +9899,7 @@ fn core_stage7_artifacts(fixture: &CoreMuldivCommitmentFixture) -> CoreStage7Art
     }
 }
 
+#[cfg(any())]
 fn core_stage8_transcript_states(fixture: &CoreMuldivCommitmentFixture) -> Vec<[u8; 32]> {
     let mut verifier = CoreVerifier::new(
         fixture.verifier_preprocessing,
@@ -9103,25 +9928,7 @@ fn assert_core_accepts_bolt_evaluation_proof(
     let mut proof = clone_core_proof(&fixture.proof);
     proof.joint_opening_proof = evaluation.joint_opening_proof.0.clone();
 
-    let mut verifier = CoreVerifier::new(
-        fixture.verifier_preprocessing,
-        proof,
-        fixture.io.clone(),
-        None,
-        None,
-    )
-    .expect("construct core verifier");
-    verifier.run_preamble();
-    let _ = verifier.verify_stage1().expect("core accepts Stage 1");
-    let _ = verifier.verify_stage2().expect("core accepts Stage 2");
-    let _ = verifier.verify_stage3().expect("core accepts Stage 3");
-    let _ = verifier.verify_stage4().expect("core accepts Stage 4");
-    let _ = verifier.verify_stage5().expect("core accepts Stage 5");
-    let _ = verifier.verify_stage6().expect("core accepts Stage 6");
-    let _ = verifier.verify_stage7().expect("core accepts Stage 7");
-    let _ = verifier
-        .verify_stage8()
-        .expect("core accepts Bolt evaluation proof");
+    assert_core_verifies_proof(fixture, proof, "core accepts Bolt evaluation proof");
 }
 
 fn assert_core_accepts_full_bolt_proof(
@@ -9161,25 +9968,7 @@ fn assert_core_accepts_full_bolt_proof(
         .0
         .clone();
 
-    let mut verifier = CoreVerifier::new(
-        fixture.verifier_preprocessing,
-        core_proof,
-        fixture.io.clone(),
-        None,
-        None,
-    )
-    .expect("construct core verifier");
-    verifier.run_preamble();
-    let _ = verifier.verify_stage1().expect("core accepts Bolt Stage 1");
-    let _ = verifier.verify_stage2().expect("core accepts Bolt Stage 2");
-    let _ = verifier.verify_stage3().expect("core accepts Bolt Stage 3");
-    let _ = verifier.verify_stage4().expect("core accepts Bolt Stage 4");
-    let _ = verifier.verify_stage5().expect("core accepts Bolt Stage 5");
-    let _ = verifier.verify_stage6().expect("core accepts Bolt Stage 6");
-    let _ = verifier.verify_stage7().expect("core accepts Bolt Stage 7");
-    let _ = verifier
-        .verify_stage8()
-        .expect("core accepts full Bolt proof");
+    assert_core_verifies_proof(fixture, core_proof, "core accepts full Bolt proof");
 }
 
 fn assert_dory_proofs_match(expected: &DoryProof, actual: &DoryProof) {
@@ -9503,6 +10292,7 @@ fn assert_stage5_opening_inputs_match(
     }
 }
 
+#[cfg(any())]
 fn core_stage4_round_polynomials(
     proof: &CoreProof,
     initial_claim: CoreFr,
@@ -9522,6 +10312,7 @@ fn core_stage4_round_polynomials(
         .collect()
 }
 
+#[cfg(any())]
 fn core_stage5_round_polynomials(
     proof: &CoreProof,
     initial_claim: CoreFr,
@@ -9541,6 +10332,7 @@ fn core_stage5_round_polynomials(
         .collect()
 }
 
+#[cfg(any())]
 fn core_stage6_round_polynomials(
     proof: &CoreProof,
     initial_claim: CoreFr,
@@ -9560,6 +10352,7 @@ fn core_stage6_round_polynomials(
         .collect()
 }
 
+#[cfg(any())]
 fn core_stage7_round_polynomials(
     proof: &CoreProof,
     initial_claim: CoreFr,
@@ -9650,7 +10443,7 @@ fn core_stage4_opening_input<A: OpeningAccumulator<CoreFr>>(
     let (point, eval) = accumulator.get_virtual_polynomial_opening(polynomial, sumcheck);
     Stage4OpeningInputValue {
         symbol,
-        point: point.r.into_iter().map(Fr::from).collect(),
+        point: core_opening_point_to_fr(point),
         eval: Fr::from(eval),
     }
 }
@@ -9719,7 +10512,7 @@ fn core_stage5_virtual_opening_input<A: OpeningAccumulator<CoreFr>>(
     let (point, eval) = accumulator.get_virtual_polynomial_opening(polynomial, sumcheck);
     generated_stage5::Stage5OpeningInputValue {
         symbol,
-        point: point.r.into_iter().map(Fr::from).collect(),
+        point: core_opening_point_to_fr(point),
         eval: Fr::from(eval),
     }
 }
@@ -9959,7 +10752,7 @@ fn core_stage6_virtual_opening_input<A: OpeningAccumulator<CoreFr>>(
     let (point, eval) = accumulator.get_virtual_polynomial_opening(polynomial, sumcheck);
     generated_stage6::Stage6OpeningInputValue {
         symbol,
-        point: point.r.into_iter().map(Fr::from).collect(),
+        point: core_opening_point_to_fr(point),
         eval: Fr::from(eval),
     }
 }
@@ -9973,7 +10766,7 @@ fn core_stage6_committed_opening_input<A: OpeningAccumulator<CoreFr>>(
     let (point, eval) = accumulator.get_committed_polynomial_opening(polynomial, sumcheck);
     generated_stage6::Stage6OpeningInputValue {
         symbol,
-        point: point.r.into_iter().map(Fr::from).collect(),
+        point: core_opening_point_to_fr(point),
         eval: Fr::from(eval),
     }
 }
@@ -10051,7 +10844,7 @@ fn core_stage7_virtual_opening_input<A: OpeningAccumulator<CoreFr>>(
     let (point, eval) = accumulator.get_virtual_polynomial_opening(polynomial, sumcheck);
     generated_stage7::Stage7OpeningInputValue {
         symbol,
-        point: point.r.into_iter().map(Fr::from).collect(),
+        point: core_opening_point_to_fr(point),
         eval: Fr::from(eval),
     }
 }
@@ -10065,11 +10858,12 @@ fn core_stage7_committed_opening_input<A: OpeningAccumulator<CoreFr>>(
     let (point, eval) = accumulator.get_committed_polynomial_opening(polynomial, sumcheck);
     generated_stage7::Stage7OpeningInputValue {
         symbol,
-        point: point.r.into_iter().map(Fr::from).collect(),
+        point: core_opening_point_to_fr(point),
         eval: Fr::from(eval),
     }
 }
 
+#[cfg(any())]
 fn core_stage5_evals<A: OpeningAccumulator<CoreFr>>(
     accumulator: &A,
     params: &JoltProtocolParams,
@@ -10129,6 +10923,7 @@ fn core_stage5_evals<A: OpeningAccumulator<CoreFr>>(
     evals
 }
 
+#[cfg(any())]
 fn core_stage5_virtual_eval<A: OpeningAccumulator<CoreFr>>(
     accumulator: &A,
     name: &'static str,
@@ -10144,6 +10939,7 @@ fn core_stage5_virtual_eval<A: OpeningAccumulator<CoreFr>>(
     }
 }
 
+#[cfg(any())]
 fn core_stage5_committed_eval<A: OpeningAccumulator<CoreFr>>(
     accumulator: &A,
     name: &'static str,
@@ -10159,6 +10955,7 @@ fn core_stage5_committed_eval<A: OpeningAccumulator<CoreFr>>(
     }
 }
 
+#[cfg(any())]
 fn core_stage6_evals<A: OpeningAccumulator<CoreFr>>(
     accumulator: &A,
     params: &JoltProtocolParams,
@@ -10244,6 +11041,7 @@ fn core_stage6_evals<A: OpeningAccumulator<CoreFr>>(
     evals
 }
 
+#[cfg(any())]
 fn core_stage6_virtual_eval<A: OpeningAccumulator<CoreFr>>(
     accumulator: &A,
     name: &'static str,
@@ -10259,6 +11057,7 @@ fn core_stage6_virtual_eval<A: OpeningAccumulator<CoreFr>>(
     }
 }
 
+#[cfg(any())]
 fn core_stage6_committed_eval<A: OpeningAccumulator<CoreFr>>(
     accumulator: &A,
     name: &'static str,
@@ -10274,6 +11073,7 @@ fn core_stage6_committed_eval<A: OpeningAccumulator<CoreFr>>(
     }
 }
 
+#[cfg(any())]
 fn core_stage7_evals<A: OpeningAccumulator<CoreFr>>(
     accumulator: &A,
     params: &JoltProtocolParams,
@@ -10315,6 +11115,7 @@ fn core_stage7_evals<A: OpeningAccumulator<CoreFr>>(
     evals
 }
 
+#[cfg(any())]
 fn core_stage7_committed_eval<A: OpeningAccumulator<CoreFr>>(
     accumulator: &A,
     name: &'static str,
@@ -10330,6 +11131,7 @@ fn core_stage7_committed_eval<A: OpeningAccumulator<CoreFr>>(
     }
 }
 
+#[cfg(any())]
 fn core_stage4_evals<A: OpeningAccumulator<CoreFr>>(accumulator: &A) -> Vec<Stage4NamedEval<Fr>> {
     let mut evals = [
         (
@@ -11321,6 +12123,7 @@ fn assert_core_stage3_sumcheck_proof_matches_bolt(
     }
 }
 
+#[cfg(any())]
 fn assert_core_states_match_bolt_stage1(
     fixture: &CoreMuldivCommitmentFixture,
     bolt_log: &[TranscriptEvent],
@@ -11341,6 +12144,7 @@ fn assert_core_states_match_bolt_stage1(
     assert_state_history_match(&core_states, &bolt_states);
 }
 
+#[cfg(any())]
 fn assert_core_preamble_states_match_bolt(
     fixture: &CoreMuldivCommitmentFixture,
     bolt_log: &[TranscriptEvent],
@@ -11369,6 +12173,7 @@ fn assert_core_preamble_states_match_bolt(
     }
 }
 
+#[cfg(any())]
 fn assert_core_states_match_bolt_stage2(
     fixture: &CoreMuldivCommitmentFixture,
     bolt_log: &[TranscriptEvent],
@@ -11390,7 +12195,7 @@ fn assert_core_states_match_bolt_stage2(
     assert_state_history_match(&core_states, &bolt_states);
 }
 
-#[allow(dead_code)]
+#[cfg(any())]
 fn assert_core_states_match_bolt_stage3(
     fixture: &CoreMuldivCommitmentFixture,
     bolt_log: &[TranscriptEvent],
@@ -11609,15 +12414,11 @@ fn core_commitment_log(
             if let Some(commitment) = commitment {
                 let core_commitment = commitment_to_ark(commitment);
                 let label = static_transcript_label(&step.label);
-                let bytes = core_append_serializable_bytes(label, &core_commitment);
-                let state_count_before = transcript.state_history.len();
-                transcript.append_serializable(label, &core_commitment);
-                let new_states = &transcript.state_history[state_count_before..];
-                assert_eq!(new_states.len(), bytes.len());
-                for (bytes, state_after) in bytes.into_iter().zip(new_states) {
+                for bytes in core_append_serializable_bytes(label, &core_commitment) {
+                    transcript.raw_append_bytes(&bytes);
                     events.push(TranscriptEvent::Append {
                         bytes,
-                        state_after: *state_after,
+                        state_after: transcript.state,
                     });
                 }
                 appended = true;
@@ -11643,15 +12444,11 @@ fn core_commitments_transcript_log(
         }
         for commitment in commitments {
             let label = static_transcript_label(&step.label);
-            let bytes = core_append_serializable_bytes(label, commitment);
-            let state_count_before = transcript.state_history.len();
-            transcript.append_serializable(label, commitment);
-            let new_states = &transcript.state_history[state_count_before..];
-            assert_eq!(new_states.len(), bytes.len());
-            for (bytes, state_after) in bytes.into_iter().zip(new_states) {
+            for bytes in core_append_serializable_bytes(label, commitment) {
+                transcript.raw_append_bytes(&bytes);
                 events.push(TranscriptEvent::Append {
                     bytes,
-                    state_after: *state_after,
+                    state_after: transcript.state,
                 });
             }
         }

@@ -77,6 +77,18 @@ impl<F, C> FieldChallengeOps<C> for F where
 {
 }
 
+#[cfg(feature = "challenge-254-bit")]
+pub trait ChallengeFromField<F>: From<F> {}
+
+#[cfg(feature = "challenge-254-bit")]
+impl<F, C> ChallengeFromField<F> for C where C: From<F> {}
+
+#[cfg(not(feature = "challenge-254-bit"))]
+pub trait ChallengeFromField<F> {}
+
+#[cfg(not(feature = "challenge-254-bit"))]
+impl<F, C> ChallengeFromField<F> for C {}
+
 /// Common bounds shared by all unreduced integer types.
 pub trait UnreducedInteger:
     'static
@@ -205,8 +217,8 @@ pub trait JoltField:
         + CanonicalDeserialize
         + Allocative
         + From<u128>
-        + From<Self>
         + Into<Self>
+        + ChallengeFromField<Self>
         + ChallengeFieldOps<Self>
         + UniformRand
         + OptimizedMul<Self, Self>;

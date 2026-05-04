@@ -12,9 +12,14 @@ pub struct Blake2bTranscript {
     pub state: [u8; 32],
     /// We append an ordinal to each invocation of the hash
     n_rounds: u32,
-    /// A complete history of the transcript's `state`; used for equivalence testing.
-    pub state_history: Vec<[u8; 32]>,
     #[cfg(test)]
+    /// A complete history of the transcript's `state`; used for testing.
+    state_history: Vec<[u8; 32]>,
+    #[cfg(test)]
+    /// For a proof to be valid, the verifier's `state_history` should always match
+    /// the prover's. In testing, the Jolt verifier may be provided the prover's
+    /// `state_history` so that we can detect any deviations and the backtrace can
+    /// tell us where it happened.
     expected_state_history: Option<Vec<[u8; 32]>>,
 }
 
@@ -57,7 +62,6 @@ impl Blake2bTranscript {
     fn update_state(&mut self, new_state: [u8; 32]) {
         self.state = new_state;
         self.n_rounds += 1;
-        self.state_history.push(new_state);
         #[cfg(test)]
         {
             if let Some(expected_state_history) = &self.expected_state_history {
@@ -66,6 +70,7 @@ impl Blake2bTranscript {
                     "Fiat-Shamir transcript mismatch"
                 );
             }
+            self.state_history.push(new_state);
         }
     }
 }
@@ -85,6 +90,7 @@ impl Transcript for Blake2bTranscript {
         Self {
             state: out.into(),
             n_rounds: 0,
+            #[cfg(test)]
             state_history: vec![out.into()],
             #[cfg(test)]
             expected_state_history: None,
@@ -148,15 +154,25 @@ impl Transcript for Blake2bTranscript {
     }
 
     fn challenge_scalar<F: JoltField>(&mut self) -> F {
-        let mut buf = vec![0u8; F::NUM_BYTES];
-        self.challenge_bytes(&mut buf);
-        F::from_bytes(&buf)
+        #[cfg(feature = "challenge-254-bit")]
+        {
+            let mut buf = vec![0u8; F::NUM_BYTES];
+            self.challenge_bytes(&mut buf);
+            F::from_bytes(&buf)
+        }
+        #[cfg(not(feature = "challenge-254-bit"))]
+        {
+            // Under the hood all Fr are 128 bits for performance
+            self.challenge_scalar_128_bits()
+        }
     }
 
     fn challenge_scalar_128_bits<F: JoltField>(&mut self) -> F {
-        let mut buf = [0u8; 16];
+        let mut buf = vec![0u8; 16];
         self.challenge_bytes(&mut buf);
-        F::from_u128(u128::from_le_bytes(buf))
+
+        buf = buf.into_iter().rev().collect();
+        F::from_bytes(&buf)
     }
 
     fn challenge_vector<F: JoltField>(&mut self, len: usize) -> Vec<F> {
@@ -176,7 +192,17 @@ impl Transcript for Blake2bTranscript {
     }
 
     fn challenge_scalar_optimized<F: JoltField>(&mut self) -> F::Challenge {
-        F::Challenge::from(self.challenge_scalar::<F>())
+        #[cfg(feature = "challenge-254-bit")]
+        {
+            F::Challenge::from(self.challenge_scalar::<F>())
+        }
+        #[cfg(not(feature = "challenge-254-bit"))]
+        {
+            // The smaller challenge which is then converted into a
+            // MontU128Challenge
+            let challenge_scalar: u128 = self.challenge_u128();
+            F::Challenge::from(challenge_scalar)
+        }
     }
 
     fn challenge_vector_optimized<F: JoltField>(&mut self, len: usize) -> Vec<F::Challenge> {
