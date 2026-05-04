@@ -43,212 +43,115 @@ pub const STAGE3_FIELD_CONSTANTS: &[Stage3FieldConstantPlan] = &[
     Stage3FieldConstantPlan { symbol: "stage3.field.one", field: "bn254_fr", value: 1 },
 ];
 
-pub const STAGE3_FIELD_EXPR_0_OPERAND_NAMES: &[&str] = &[
-    "stage3.spartan_shift.gamma",
-];
+pub const STAGE3_FIELD_EXPR_OPERANDS_0: &[&str] = &["stage3.spartan_shift.gamma"];
 
-pub const STAGE3_FIELD_EXPR_0_OPERANDS: &[&str] = &[
-    "stage3.spartan_shift.gamma",
-];
-
-pub const STAGE3_FIELD_EXPR_1_OPERAND_NAMES: &[&str] = &[
+pub const STAGE3_FIELD_EXPR_OPERANDS_1: &[&str] = &[
     "stage3.spartan_shift.gamma2",
     "stage3.spartan_shift.gamma",
 ];
 
-pub const STAGE3_FIELD_EXPR_1_OPERANDS: &[&str] = &[
-    "stage3.spartan_shift.gamma2",
-    "stage3.spartan_shift.gamma",
-];
-
-pub const STAGE3_FIELD_EXPR_2_OPERAND_NAMES: &[&str] = &[
+pub const STAGE3_FIELD_EXPR_OPERANDS_2: &[&str] = &[
     "stage3.spartan_shift.gamma2",
     "stage3.spartan_shift.gamma2",
 ];
 
-pub const STAGE3_FIELD_EXPR_2_OPERANDS: &[&str] = &[
-    "stage3.spartan_shift.gamma2",
-    "stage3.spartan_shift.gamma2",
-];
-
-pub const STAGE3_FIELD_EXPR_3_OPERAND_NAMES: &[&str] = &[
+pub const STAGE3_FIELD_EXPR_OPERANDS_3: &[&str] = &[
     "stage3.spartan_shift.gamma",
     "stage3.input.stage1.NextPC",
 ];
 
-pub const STAGE3_FIELD_EXPR_3_OPERANDS: &[&str] = &[
-    "stage3.spartan_shift.gamma",
-    "stage3.input.stage1.NextPC",
-];
-
-pub const STAGE3_FIELD_EXPR_4_OPERAND_NAMES: &[&str] = &[
+pub const STAGE3_FIELD_EXPR_OPERANDS_4: &[&str] = &[
     "stage3.spartan_shift.gamma2",
     "stage3.input.stage1.NextIsVirtual",
 ];
 
-pub const STAGE3_FIELD_EXPR_4_OPERANDS: &[&str] = &[
-    "stage3.spartan_shift.gamma2",
-    "stage3.input.stage1.NextIsVirtual",
-];
-
-pub const STAGE3_FIELD_EXPR_5_OPERAND_NAMES: &[&str] = &[
+pub const STAGE3_FIELD_EXPR_OPERANDS_5: &[&str] = &[
     "stage3.spartan_shift.gamma3",
     "stage3.input.stage1.NextIsFirstInSequence",
 ];
 
-pub const STAGE3_FIELD_EXPR_5_OPERANDS: &[&str] = &[
-    "stage3.spartan_shift.gamma3",
-    "stage3.input.stage1.NextIsFirstInSequence",
-];
-
-pub const STAGE3_FIELD_EXPR_6_OPERAND_NAMES: &[&str] = &[
+pub const STAGE3_FIELD_EXPR_OPERANDS_6: &[&str] = &[
     "stage3.field.one",
     "stage3.input.stage2.product_virtual.NextIsNoop",
 ];
 
-pub const STAGE3_FIELD_EXPR_6_OPERANDS: &[&str] = &[
-    "stage3.field.one",
-    "stage3.input.stage2.product_virtual.NextIsNoop",
-];
-
-pub const STAGE3_FIELD_EXPR_7_OPERAND_NAMES: &[&str] = &[
+pub const STAGE3_FIELD_EXPR_OPERANDS_7: &[&str] = &[
     "stage3.spartan_shift.gamma4",
     "stage3.spartan_shift.one_minus.NextIsNoop",
 ];
 
-pub const STAGE3_FIELD_EXPR_7_OPERANDS: &[&str] = &[
-    "stage3.spartan_shift.gamma4",
-    "stage3.spartan_shift.one_minus.NextIsNoop",
-];
-
-pub const STAGE3_FIELD_EXPR_8_OPERAND_NAMES: &[&str] = &[
+pub const STAGE3_FIELD_EXPR_OPERANDS_8: &[&str] = &[
     "stage3.input.stage1.NextUnexpandedPC",
     "stage3.spartan_shift.term.NextPC",
 ];
 
-pub const STAGE3_FIELD_EXPR_8_OPERANDS: &[&str] = &[
-    "stage3.input.stage1.NextUnexpandedPC",
-    "stage3.spartan_shift.term.NextPC",
-];
-
-pub const STAGE3_FIELD_EXPR_9_OPERAND_NAMES: &[&str] = &[
+pub const STAGE3_FIELD_EXPR_OPERANDS_9: &[&str] = &[
     "stage3.spartan_shift.partial.NextUnexpandedPCNextPC",
     "stage3.spartan_shift.term.NextIsVirtual",
 ];
 
-pub const STAGE3_FIELD_EXPR_9_OPERANDS: &[&str] = &[
-    "stage3.spartan_shift.partial.NextUnexpandedPCNextPC",
-    "stage3.spartan_shift.term.NextIsVirtual",
-];
-
-pub const STAGE3_FIELD_EXPR_10_OPERAND_NAMES: &[&str] = &[
+pub const STAGE3_FIELD_EXPR_OPERANDS_10: &[&str] = &[
     "stage3.spartan_shift.partial.NextIsVirtual",
     "stage3.spartan_shift.term.NextIsFirstInSequence",
 ];
 
-pub const STAGE3_FIELD_EXPR_10_OPERANDS: &[&str] = &[
-    "stage3.spartan_shift.partial.NextIsVirtual",
-    "stage3.spartan_shift.term.NextIsFirstInSequence",
-];
-
-pub const STAGE3_FIELD_EXPR_11_OPERAND_NAMES: &[&str] = &[
+pub const STAGE3_FIELD_EXPR_OPERANDS_11: &[&str] = &[
     "stage3.spartan_shift.partial.NextIsFirstInSequence",
     "stage3.spartan_shift.term.NextIsNoop",
 ];
 
-pub const STAGE3_FIELD_EXPR_11_OPERANDS: &[&str] = &[
-    "stage3.spartan_shift.partial.NextIsFirstInSequence",
-    "stage3.spartan_shift.term.NextIsNoop",
-];
-
-pub const STAGE3_FIELD_EXPR_12_OPERAND_NAMES: &[&str] = &[
+pub const STAGE3_FIELD_EXPR_OPERANDS_12: &[&str] = &[
     "stage3.instruction_input.gamma",
     "stage3.input.stage2.product_virtual.LeftInstructionInput",
 ];
 
-pub const STAGE3_FIELD_EXPR_12_OPERANDS: &[&str] = &[
-    "stage3.instruction_input.gamma",
-    "stage3.input.stage2.product_virtual.LeftInstructionInput",
-];
-
-pub const STAGE3_FIELD_EXPR_13_OPERAND_NAMES: &[&str] = &[
+pub const STAGE3_FIELD_EXPR_OPERANDS_13: &[&str] = &[
     "stage3.input.stage2.product_virtual.RightInstructionInput",
     "stage3.instruction_input.term.LeftInstructionInput",
 ];
 
-pub const STAGE3_FIELD_EXPR_13_OPERANDS: &[&str] = &[
-    "stage3.input.stage2.product_virtual.RightInstructionInput",
-    "stage3.instruction_input.term.LeftInstructionInput",
-];
+pub const STAGE3_FIELD_EXPR_OPERANDS_14: &[&str] = &["stage3.registers.gamma"];
 
-pub const STAGE3_FIELD_EXPR_14_OPERAND_NAMES: &[&str] = &[
-    "stage3.registers.gamma",
-];
-
-pub const STAGE3_FIELD_EXPR_14_OPERANDS: &[&str] = &[
-    "stage3.registers.gamma",
-];
-
-pub const STAGE3_FIELD_EXPR_15_OPERAND_NAMES: &[&str] = &[
+pub const STAGE3_FIELD_EXPR_OPERANDS_15: &[&str] = &[
     "stage3.registers.gamma",
     "stage3.input.stage1.Rs1Value",
 ];
 
-pub const STAGE3_FIELD_EXPR_15_OPERANDS: &[&str] = &[
-    "stage3.registers.gamma",
-    "stage3.input.stage1.Rs1Value",
-];
-
-pub const STAGE3_FIELD_EXPR_16_OPERAND_NAMES: &[&str] = &[
+pub const STAGE3_FIELD_EXPR_OPERANDS_16: &[&str] = &[
     "stage3.registers.gamma2",
     "stage3.input.stage1.Rs2Value",
 ];
 
-pub const STAGE3_FIELD_EXPR_16_OPERANDS: &[&str] = &[
-    "stage3.registers.gamma2",
-    "stage3.input.stage1.Rs2Value",
-];
-
-pub const STAGE3_FIELD_EXPR_17_OPERAND_NAMES: &[&str] = &[
+pub const STAGE3_FIELD_EXPR_OPERANDS_17: &[&str] = &[
     "stage3.input.stage1.RdWriteValue",
     "stage3.registers.term.Rs1Value",
 ];
 
-pub const STAGE3_FIELD_EXPR_17_OPERANDS: &[&str] = &[
-    "stage3.input.stage1.RdWriteValue",
-    "stage3.registers.term.Rs1Value",
-];
-
-pub const STAGE3_FIELD_EXPR_18_OPERAND_NAMES: &[&str] = &[
-    "stage3.registers.partial.RdWriteValueRs1Value",
-    "stage3.registers.term.Rs2Value",
-];
-
-pub const STAGE3_FIELD_EXPR_18_OPERANDS: &[&str] = &[
+pub const STAGE3_FIELD_EXPR_OPERANDS_18: &[&str] = &[
     "stage3.registers.partial.RdWriteValueRs1Value",
     "stage3.registers.term.Rs2Value",
 ];
 
 pub const STAGE3_FIELD_EXPRS: &[Stage3FieldExprPlan] = &[
-    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.gamma2", kind: "op", formula: "field.pow:2", operand_names: STAGE3_FIELD_EXPR_0_OPERAND_NAMES, operands: STAGE3_FIELD_EXPR_0_OPERANDS },
-    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.gamma3", kind: "op", formula: "field.mul", operand_names: STAGE3_FIELD_EXPR_1_OPERAND_NAMES, operands: STAGE3_FIELD_EXPR_1_OPERANDS },
-    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.gamma4", kind: "op", formula: "field.mul", operand_names: STAGE3_FIELD_EXPR_2_OPERAND_NAMES, operands: STAGE3_FIELD_EXPR_2_OPERANDS },
-    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.term.NextPC", kind: "op", formula: "field.mul", operand_names: STAGE3_FIELD_EXPR_3_OPERAND_NAMES, operands: STAGE3_FIELD_EXPR_3_OPERANDS },
-    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.term.NextIsVirtual", kind: "op", formula: "field.mul", operand_names: STAGE3_FIELD_EXPR_4_OPERAND_NAMES, operands: STAGE3_FIELD_EXPR_4_OPERANDS },
-    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.term.NextIsFirstInSequence", kind: "op", formula: "field.mul", operand_names: STAGE3_FIELD_EXPR_5_OPERAND_NAMES, operands: STAGE3_FIELD_EXPR_5_OPERANDS },
-    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.one_minus.NextIsNoop", kind: "op", formula: "field.sub", operand_names: STAGE3_FIELD_EXPR_6_OPERAND_NAMES, operands: STAGE3_FIELD_EXPR_6_OPERANDS },
-    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.term.NextIsNoop", kind: "op", formula: "field.mul", operand_names: STAGE3_FIELD_EXPR_7_OPERAND_NAMES, operands: STAGE3_FIELD_EXPR_7_OPERANDS },
-    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.partial.NextUnexpandedPCNextPC", kind: "op", formula: "field.add", operand_names: STAGE3_FIELD_EXPR_8_OPERAND_NAMES, operands: STAGE3_FIELD_EXPR_8_OPERANDS },
-    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.partial.NextIsVirtual", kind: "op", formula: "field.add", operand_names: STAGE3_FIELD_EXPR_9_OPERAND_NAMES, operands: STAGE3_FIELD_EXPR_9_OPERANDS },
-    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.partial.NextIsFirstInSequence", kind: "op", formula: "field.add", operand_names: STAGE3_FIELD_EXPR_10_OPERAND_NAMES, operands: STAGE3_FIELD_EXPR_10_OPERANDS },
-    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.claim_expr", kind: "op", formula: "field.add", operand_names: STAGE3_FIELD_EXPR_11_OPERAND_NAMES, operands: STAGE3_FIELD_EXPR_11_OPERANDS },
-    Stage3FieldExprPlan { symbol: "stage3.instruction_input.term.LeftInstructionInput", kind: "op", formula: "field.mul", operand_names: STAGE3_FIELD_EXPR_12_OPERAND_NAMES, operands: STAGE3_FIELD_EXPR_12_OPERANDS },
-    Stage3FieldExprPlan { symbol: "stage3.instruction_input.claim_expr", kind: "op", formula: "field.add", operand_names: STAGE3_FIELD_EXPR_13_OPERAND_NAMES, operands: STAGE3_FIELD_EXPR_13_OPERANDS },
-    Stage3FieldExprPlan { symbol: "stage3.registers.gamma2", kind: "op", formula: "field.pow:2", operand_names: STAGE3_FIELD_EXPR_14_OPERAND_NAMES, operands: STAGE3_FIELD_EXPR_14_OPERANDS },
-    Stage3FieldExprPlan { symbol: "stage3.registers.term.Rs1Value", kind: "op", formula: "field.mul", operand_names: STAGE3_FIELD_EXPR_15_OPERAND_NAMES, operands: STAGE3_FIELD_EXPR_15_OPERANDS },
-    Stage3FieldExprPlan { symbol: "stage3.registers.term.Rs2Value", kind: "op", formula: "field.mul", operand_names: STAGE3_FIELD_EXPR_16_OPERAND_NAMES, operands: STAGE3_FIELD_EXPR_16_OPERANDS },
-    Stage3FieldExprPlan { symbol: "stage3.registers.partial.RdWriteValueRs1Value", kind: "op", formula: "field.add", operand_names: STAGE3_FIELD_EXPR_17_OPERAND_NAMES, operands: STAGE3_FIELD_EXPR_17_OPERANDS },
-    Stage3FieldExprPlan { symbol: "stage3.registers.claim_expr", kind: "op", formula: "field.add", operand_names: STAGE3_FIELD_EXPR_18_OPERAND_NAMES, operands: STAGE3_FIELD_EXPR_18_OPERANDS },
+    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.gamma2", kind: "op", formula: "field.pow:2", operand_names: STAGE3_FIELD_EXPR_OPERANDS_0, operands: STAGE3_FIELD_EXPR_OPERANDS_0 },
+    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.gamma3", kind: "op", formula: "field.mul", operand_names: STAGE3_FIELD_EXPR_OPERANDS_1, operands: STAGE3_FIELD_EXPR_OPERANDS_1 },
+    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.gamma4", kind: "op", formula: "field.mul", operand_names: STAGE3_FIELD_EXPR_OPERANDS_2, operands: STAGE3_FIELD_EXPR_OPERANDS_2 },
+    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.term.NextPC", kind: "op", formula: "field.mul", operand_names: STAGE3_FIELD_EXPR_OPERANDS_3, operands: STAGE3_FIELD_EXPR_OPERANDS_3 },
+    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.term.NextIsVirtual", kind: "op", formula: "field.mul", operand_names: STAGE3_FIELD_EXPR_OPERANDS_4, operands: STAGE3_FIELD_EXPR_OPERANDS_4 },
+    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.term.NextIsFirstInSequence", kind: "op", formula: "field.mul", operand_names: STAGE3_FIELD_EXPR_OPERANDS_5, operands: STAGE3_FIELD_EXPR_OPERANDS_5 },
+    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.one_minus.NextIsNoop", kind: "op", formula: "field.sub", operand_names: STAGE3_FIELD_EXPR_OPERANDS_6, operands: STAGE3_FIELD_EXPR_OPERANDS_6 },
+    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.term.NextIsNoop", kind: "op", formula: "field.mul", operand_names: STAGE3_FIELD_EXPR_OPERANDS_7, operands: STAGE3_FIELD_EXPR_OPERANDS_7 },
+    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.partial.NextUnexpandedPCNextPC", kind: "op", formula: "field.add", operand_names: STAGE3_FIELD_EXPR_OPERANDS_8, operands: STAGE3_FIELD_EXPR_OPERANDS_8 },
+    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.partial.NextIsVirtual", kind: "op", formula: "field.add", operand_names: STAGE3_FIELD_EXPR_OPERANDS_9, operands: STAGE3_FIELD_EXPR_OPERANDS_9 },
+    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.partial.NextIsFirstInSequence", kind: "op", formula: "field.add", operand_names: STAGE3_FIELD_EXPR_OPERANDS_10, operands: STAGE3_FIELD_EXPR_OPERANDS_10 },
+    Stage3FieldExprPlan { symbol: "stage3.spartan_shift.claim_expr", kind: "op", formula: "field.add", operand_names: STAGE3_FIELD_EXPR_OPERANDS_11, operands: STAGE3_FIELD_EXPR_OPERANDS_11 },
+    Stage3FieldExprPlan { symbol: "stage3.instruction_input.term.LeftInstructionInput", kind: "op", formula: "field.mul", operand_names: STAGE3_FIELD_EXPR_OPERANDS_12, operands: STAGE3_FIELD_EXPR_OPERANDS_12 },
+    Stage3FieldExprPlan { symbol: "stage3.instruction_input.claim_expr", kind: "op", formula: "field.add", operand_names: STAGE3_FIELD_EXPR_OPERANDS_13, operands: STAGE3_FIELD_EXPR_OPERANDS_13 },
+    Stage3FieldExprPlan { symbol: "stage3.registers.gamma2", kind: "op", formula: "field.pow:2", operand_names: STAGE3_FIELD_EXPR_OPERANDS_14, operands: STAGE3_FIELD_EXPR_OPERANDS_14 },
+    Stage3FieldExprPlan { symbol: "stage3.registers.term.Rs1Value", kind: "op", formula: "field.mul", operand_names: STAGE3_FIELD_EXPR_OPERANDS_15, operands: STAGE3_FIELD_EXPR_OPERANDS_15 },
+    Stage3FieldExprPlan { symbol: "stage3.registers.term.Rs2Value", kind: "op", formula: "field.mul", operand_names: STAGE3_FIELD_EXPR_OPERANDS_16, operands: STAGE3_FIELD_EXPR_OPERANDS_16 },
+    Stage3FieldExprPlan { symbol: "stage3.registers.partial.RdWriteValueRs1Value", kind: "op", formula: "field.add", operand_names: STAGE3_FIELD_EXPR_OPERANDS_17, operands: STAGE3_FIELD_EXPR_OPERANDS_17 },
+    Stage3FieldExprPlan { symbol: "stage3.registers.claim_expr", kind: "op", formula: "field.add", operand_names: STAGE3_FIELD_EXPR_OPERANDS_18, operands: STAGE3_FIELD_EXPR_OPERANDS_18 },
 ];
 pub const STAGE3_KERNELS: &[Stage3KernelPlan] = &[
     Stage3KernelPlan { symbol: "jolt.cpu.stage3.spartan_shift", relation: "jolt.stage3.spartan_shift", kind: "sumcheck", backend: "cpu", abi: "jolt_stage3_spartan_shift" },

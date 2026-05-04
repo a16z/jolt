@@ -20,37 +20,25 @@ pub const STAGE1_KERNELS: &[Stage1KernelPlan] = &[
     Stage1KernelPlan { symbol: "jolt.cpu.stage1.outer.remaining", relation: "jolt.stage1.outer.remaining", kind: "sumcheck", backend: "cpu", abi: "jolt_stage1_outer_remaining" },
 ];
 
-pub const STAGE1_SUMCHECK_CLAIM_0_INPUT_OPENINGS: &[&str] = &[
+pub const STAGE1_SUMCHECK_CLAIM_0_INPUT_OPENINGS: &[&str] = &[];
 
-];
-
-pub const STAGE1_SUMCHECK_CLAIM_1_INPUT_OPENINGS: &[&str] = &[
-    "stage1.uniskip.opening",
-];
+pub const STAGE1_SUMCHECK_CLAIM_1_INPUT_OPENINGS: &[&str] = &["stage1.uniskip.opening"];
 
 pub const STAGE1_SUMCHECK_CLAIMS: &[Stage1SumcheckClaimPlan] = &[
     Stage1SumcheckClaimPlan { symbol: "stage1.uniskip.input", stage: "stage1", domain: "jolt.stage1_uniskip_domain", num_rounds: 1, degree: 27, claim: "stage1.zero", kernel: "jolt.cpu.stage1.outer.uniskip", claim_value: "stage1.zero", input_openings: STAGE1_SUMCHECK_CLAIM_0_INPUT_OPENINGS },
     Stage1SumcheckClaimPlan { symbol: "stage1.outer_remaining.input", stage: "stage1", domain: "jolt.trace_domain", num_rounds: 17, degree: 3, claim: "stage1.uniskip.eval", kernel: "jolt.cpu.stage1.outer.remaining", claim_value: "stage1.uniskip.eval", input_openings: STAGE1_SUMCHECK_CLAIM_1_INPUT_OPENINGS },
 ];
-pub const STAGE1_SUMCHECK_BATCH_0_ORDERED_CLAIMS: &[&str] = &[
-    "stage1.uniskip.input",
-];
+pub const STAGE1_SUMCHECK_BATCH_0_ORDERED_CLAIMS: &[&str] = &["stage1.uniskip.input"];
 
-pub const STAGE1_SUMCHECK_BATCH_0_CLAIM_OPERANDS: &[&str] = &[
-    "stage1.uniskip.input",
-];
+pub const STAGE1_SUMCHECK_BATCH_0_CLAIM_OPERANDS: &[&str] = &["stage1.uniskip.input"];
 
 pub const STAGE1_SUMCHECK_BATCH_0_ROUND_SCHEDULE: &[usize] = &[
     1,
 ];
 
-pub const STAGE1_SUMCHECK_BATCH_1_ORDERED_CLAIMS: &[&str] = &[
-    "stage1.outer_remaining.input",
-];
+pub const STAGE1_SUMCHECK_BATCH_1_ORDERED_CLAIMS: &[&str] = &["stage1.outer_remaining.input"];
 
-pub const STAGE1_SUMCHECK_BATCH_1_CLAIM_OPERANDS: &[&str] = &[
-    "stage1.outer_remaining.input",
-];
+pub const STAGE1_SUMCHECK_BATCH_1_CLAIM_OPERANDS: &[&str] = &["stage1.outer_remaining.input"];
 
 pub const STAGE1_SUMCHECK_BATCH_1_ROUND_SCHEDULE: &[usize] = &[
     17,

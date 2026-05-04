@@ -1,233 +1,34 @@
 #![allow(dead_code)]
 
+use super::common::{append_labeled_scalar, batch_claims, eval_by_name, find_batch, find_plan, pow_field, require_operand_count, reverse_slice, single_operand};
 use jolt_field::{Field, Fr};
 use jolt_poly::lagrange::{lagrange_evals, lagrange_kernel_eval};
 use jolt_poly::{EqPolynomial, UnivariatePoly};
-use jolt_sumcheck::{CompressedLabeledRoundPoly, SumcheckClaim, SumcheckError, SumcheckProof, SumcheckVerifier};
-use jolt_transcript::{Blake2bTranscript, Label, LabelWithCount, Transcript};
+use jolt_sumcheck::{CompressedLabeledRoundPoly, SumcheckClaim, SumcheckError, SumcheckVerifier};
+use jolt_transcript::{Blake2bTranscript, LabelWithCount, Transcript};
 
 pub type DefaultStage2Transcript = Blake2bTranscript<Fr>;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2Params {
-    pub field: &'static str,
-    pub pcs: &'static str,
-    pub transcript: &'static str,
-}
+pub type Stage2NamedEval<F> = super::common::StageNamedEval<F>;
+pub type Stage2SumcheckOutput<F> = super::common::StageSumcheckOutput<F>;
+pub type Stage2ChallengeVector<F> = super::common::StageChallengeVector<F>;
+pub type Stage2ExecutionArtifacts<F> = super::common::StageExecutionArtifacts<F>;
+pub type Stage2Proof<F> = super::common::StageProof<F>;
+pub type Stage2OpeningInputValue<F> = super::common::StageOpeningInputValue<F>;
+pub type Stage2VerifierProgramPlan = super::common::StageVerifierProgramPlanNoEqualities;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2TranscriptSqueezePlan {
-    pub symbol: &'static str,
-    pub label: &'static str,
-    pub kind: &'static str,
-    pub count: usize,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2ProgramStepPlan {
-    pub kind: &'static str,
-    pub symbol: &'static str,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2OpeningInputPlan {
-    pub symbol: &'static str,
-    pub source_stage: &'static str,
-    pub source_claim: &'static str,
-    pub oracle: &'static str,
-    pub domain: &'static str,
-    pub point_arity: usize,
-    pub claim_kind: &'static str,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2FieldConstantPlan {
-    pub symbol: &'static str,
-    pub field: &'static str,
-    pub value: usize,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2FieldExprPlan {
-    pub symbol: &'static str,
-    pub kind: &'static str,
-    pub formula: &'static str,
-    pub operand_names: &'static [&'static str],
-    pub operands: &'static [&'static str],
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2SumcheckClaimPlan {
-    pub symbol: &'static str,
-    pub stage: &'static str,
-    pub domain: &'static str,
-    pub num_rounds: usize,
-    pub degree: usize,
-    pub claim: &'static str,
-    pub relation: &'static str,
-    pub claim_value: &'static str,
-    pub input_openings: &'static [&'static str],
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2SumcheckBatchPlan {
-    pub symbol: &'static str,
-    pub stage: &'static str,
-    pub proof_slot: &'static str,
-    pub policy: &'static str,
-    pub count: usize,
-    pub ordered_claims: &'static [&'static str],
-    pub claim_operands: &'static [&'static str],
-    pub claim_label: &'static str,
-    pub round_label: &'static str,
-    pub round_schedule: &'static [usize],
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2SumcheckDriverPlan {
-    pub symbol: &'static str,
-    pub stage: &'static str,
-    pub proof_slot: &'static str,
-    pub relation: &'static str,
-    pub batch: &'static str,
-    pub policy: &'static str,
-    pub round_schedule: &'static [usize],
-    pub claim_label: &'static str,
-    pub round_label: &'static str,
-    pub num_rounds: usize,
-    pub degree: usize,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2SumcheckInstanceResultPlan {
-    pub symbol: &'static str,
-    pub source: &'static str,
-    pub claim: &'static str,
-    pub relation: &'static str,
-    pub index: usize,
-    pub point_arity: usize,
-    pub num_rounds: usize,
-    pub round_offset: usize,
-    pub point_order: &'static str,
-    pub degree: usize,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2SumcheckEvalPlan {
-    pub symbol: &'static str,
-    pub source: &'static str,
-    pub name: &'static str,
-    pub index: usize,
-    pub oracle: &'static str,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2PointSlicePlan {
-    pub symbol: &'static str,
-    pub source: &'static str,
-    pub offset: usize,
-    pub length: usize,
-    pub input: &'static str,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2PointConcatPlan {
-    pub symbol: &'static str,
-    pub layout: &'static str,
-    pub arity: usize,
-    pub inputs: &'static [&'static str],
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2OpeningClaimPlan {
-    pub symbol: &'static str,
-    pub oracle: &'static str,
-    pub domain: &'static str,
-    pub point_arity: usize,
-    pub claim_kind: &'static str,
-    pub point_source: &'static str,
-    pub eval_source: &'static str,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2OpeningBatchPlan {
-    pub symbol: &'static str,
-    pub stage: &'static str,
-    pub proof_slot: &'static str,
-    pub policy: &'static str,
-    pub count: usize,
-    pub ordered_claims: &'static [&'static str],
-    pub claim_operands: &'static [&'static str],
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2VerifierProgramPlan {
-    pub params: Stage2Params,
-    pub steps: &'static [Stage2ProgramStepPlan],
-    pub transcript_squeezes: &'static [Stage2TranscriptSqueezePlan],
-    pub opening_inputs: &'static [Stage2OpeningInputPlan],
-    pub field_constants: &'static [Stage2FieldConstantPlan],
-    pub field_exprs: &'static [Stage2FieldExprPlan],
-    pub claims: &'static [Stage2SumcheckClaimPlan],
-    pub batches: &'static [Stage2SumcheckBatchPlan],
-    pub drivers: &'static [Stage2SumcheckDriverPlan],
-    pub instance_results: &'static [Stage2SumcheckInstanceResultPlan],
-    pub evals: &'static [Stage2SumcheckEvalPlan],
-    pub point_slices: &'static [Stage2PointSlicePlan],
-    pub point_concats: &'static [Stage2PointConcatPlan],
-    pub opening_claims: &'static [Stage2OpeningClaimPlan],
-    pub opening_batches: &'static [Stage2OpeningBatchPlan],
-}
-
-#[derive(Clone, Debug)]
-pub struct Stage2NamedEval<F: Field> {
-    pub name: &'static str,
-    pub oracle: &'static str,
-    pub value: F,
-}
-
-#[derive(Clone, Debug)]
-pub struct Stage2SumcheckOutput<F: Field> {
-    pub driver: &'static str,
-    pub point: Vec<F>,
-    pub evals: Vec<Stage2NamedEval<F>>,
-    pub proof: SumcheckProof<F>,
-}
-
-#[derive(Clone, Debug)]
-pub struct Stage2ChallengeVector<F: Field> {
-    pub symbol: &'static str,
-    pub values: Vec<F>,
-}
-
-#[derive(Clone, Debug)]
-pub struct Stage2ExecutionArtifacts<F: Field> {
-    pub challenge_vectors: Vec<Stage2ChallengeVector<F>>,
-    pub sumchecks: Vec<Stage2SumcheckOutput<F>>,
-    pub opening_batches: Vec<&'static Stage2OpeningBatchPlan>,
-}
-
-impl<F: Field> Default for Stage2ExecutionArtifacts<F> {
-    fn default() -> Self {
-        Self {
-            challenge_vectors: Vec::new(),
-            sumchecks: Vec::new(),
-            opening_batches: Vec::new(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct Stage2Proof<F: Field> {
-    pub sumchecks: Vec<Stage2SumcheckOutput<F>>,
-}
-
-#[derive(Clone, Debug)]
-pub struct Stage2OpeningInputValue<F: Field> {
-    pub symbol: &'static str,
-    pub point: Vec<F>,
-    pub eval: F,
-}
+pub use super::common::{
+    FieldConstantPlan as Stage2FieldConstantPlan, FieldExprPlan as Stage2FieldExprPlan,
+    OpeningBatchPlan as Stage2OpeningBatchPlan, OpeningClaimPlan as Stage2OpeningClaimPlan,
+    OpeningInputPlan as Stage2OpeningInputPlan, PointConcatPlan as Stage2PointConcatPlan,
+    PointSlicePlan as Stage2PointSlicePlan, ProgramStepPlan as Stage2ProgramStepPlan,
+    StageParams as Stage2Params, SumcheckBatchPlan as Stage2SumcheckBatchPlan,
+    SumcheckEvalPlan as Stage2SumcheckEvalPlan,
+    SumcheckInstanceResultPlan as Stage2SumcheckInstanceResultPlan,
+    TranscriptSqueezePlan as Stage2TranscriptSqueezePlan,
+    VerifierSumcheckClaimPlan as Stage2SumcheckClaimPlan,
+    VerifierSumcheckDriverPlan as Stage2SumcheckDriverPlan,
+};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Stage2RamAccess {
@@ -253,10 +54,7 @@ pub struct Stage2RamData<'a> {
 }
 
 #[derive(Clone, Debug, Default)]
-struct Stage2ValueStore<F: Field> {
-    scalars: Vec<(&'static str, F)>,
-    points: Vec<(&'static str, Vec<F>)>,
-}
+struct Stage2ValueStore<F: Field>(super::common::ValueStore<F>);
 
 #[derive(Debug)]
 pub enum VerifyStage2Error {
@@ -272,6 +70,8 @@ pub enum VerifyStage2Error {
     MissingRam { relation: &'static str },
     Sumcheck { driver: &'static str, error: SumcheckError<Fr> },
 }
+
+super::common::impl_runtime_plan_error_conversion!(VerifyStage2Error);
 
 pub const STAGE2_PARAMS: Stage2Params = Stage2Params {
     field: "bn254_fr",
@@ -312,298 +112,39 @@ pub const STAGE2_FIELD_CONSTANTS: &[Stage2FieldConstantPlan] = &[
     Stage2FieldConstantPlan { symbol: "stage2.ram_output.zero", field: "bn254_fr", value: 0 },
 ];
 
-pub const STAGE2_FIELD_EXPR_0_OPERAND_NAMES: &[&str] = &[
-    "stage2.product_virtual.tau_high",
-];
-
-pub const STAGE2_FIELD_EXPR_0_OPERANDS: &[&str] = &[
-    "stage2.product_virtual.tau_high",
-];
-
-pub const STAGE2_FIELD_EXPR_1_OPERAND_NAMES: &[&str] = &[
-    "stage2.product_virtual.tau_high",
-];
-
-pub const STAGE2_FIELD_EXPR_1_OPERANDS: &[&str] = &[
-    "stage2.product_virtual.tau_high",
-];
-
-pub const STAGE2_FIELD_EXPR_2_OPERAND_NAMES: &[&str] = &[
-    "stage2.product_virtual.tau_high",
-];
-
-pub const STAGE2_FIELD_EXPR_2_OPERANDS: &[&str] = &[
-    "stage2.product_virtual.tau_high",
-];
-
-pub const STAGE2_FIELD_EXPR_3_OPERAND_NAMES: &[&str] = &[
-    "stage2.product_virtual.uniskip.weight.Product",
-    "stage2.input.stage1.Product",
-];
-
-pub const STAGE2_FIELD_EXPR_3_OPERANDS: &[&str] = &[
-    "stage2.product_virtual.uniskip.weight.Product",
-    "stage2.input.stage1.Product",
-];
-
-pub const STAGE2_FIELD_EXPR_4_OPERAND_NAMES: &[&str] = &[
-    "stage2.product_virtual.uniskip.weight.ShouldBranch",
-    "stage2.input.stage1.ShouldBranch",
-];
-
-pub const STAGE2_FIELD_EXPR_4_OPERANDS: &[&str] = &[
-    "stage2.product_virtual.uniskip.weight.ShouldBranch",
-    "stage2.input.stage1.ShouldBranch",
-];
-
-pub const STAGE2_FIELD_EXPR_5_OPERAND_NAMES: &[&str] = &[
-    "stage2.product_virtual.uniskip.weight.ShouldJump",
-    "stage2.input.stage1.ShouldJump",
-];
-
-pub const STAGE2_FIELD_EXPR_5_OPERANDS: &[&str] = &[
-    "stage2.product_virtual.uniskip.weight.ShouldJump",
-    "stage2.input.stage1.ShouldJump",
-];
-
-pub const STAGE2_FIELD_EXPR_6_OPERAND_NAMES: &[&str] = &[
-    "stage2.product_virtual.uniskip.term.Product",
-    "stage2.product_virtual.uniskip.term.ShouldBranch",
-];
-
-pub const STAGE2_FIELD_EXPR_6_OPERANDS: &[&str] = &[
-    "stage2.product_virtual.uniskip.term.Product",
-    "stage2.product_virtual.uniskip.term.ShouldBranch",
-];
-
-pub const STAGE2_FIELD_EXPR_7_OPERAND_NAMES: &[&str] = &[
-    "stage2.product_virtual.uniskip.partial.ProductShouldBranch",
-    "stage2.product_virtual.uniskip.term.ShouldJump",
-];
-
-pub const STAGE2_FIELD_EXPR_7_OPERANDS: &[&str] = &[
-    "stage2.product_virtual.uniskip.partial.ProductShouldBranch",
-    "stage2.product_virtual.uniskip.term.ShouldJump",
-];
-
-pub const STAGE2_FIELD_EXPR_8_OPERAND_NAMES: &[&str] = &[
-    "stage2.ram_read_write.gamma",
-    "stage2.input.stage1.RamWriteValue",
-];
-
-pub const STAGE2_FIELD_EXPR_8_OPERANDS: &[&str] = &[
-    "stage2.ram_read_write.gamma",
-    "stage2.input.stage1.RamWriteValue",
-];
-
-pub const STAGE2_FIELD_EXPR_9_OPERAND_NAMES: &[&str] = &[
-    "stage2.input.stage1.RamReadValue",
-    "stage2.ram_read_write.term.RamWriteValue",
-];
-
-pub const STAGE2_FIELD_EXPR_9_OPERANDS: &[&str] = &[
-    "stage2.input.stage1.RamReadValue",
-    "stage2.ram_read_write.term.RamWriteValue",
-];
-
-pub const STAGE2_FIELD_EXPR_10_OPERAND_NAMES: &[&str] = &[
-    "stage2.instruction_lookup.gamma",
-    "stage2.instruction_lookup.gamma",
-];
-
-pub const STAGE2_FIELD_EXPR_10_OPERANDS: &[&str] = &[
-    "stage2.instruction_lookup.gamma",
-    "stage2.instruction_lookup.gamma",
-];
-
-pub const STAGE2_FIELD_EXPR_11_OPERAND_NAMES: &[&str] = &[
-    "stage2.instruction_lookup.gamma2",
-    "stage2.instruction_lookup.gamma",
-];
-
-pub const STAGE2_FIELD_EXPR_11_OPERANDS: &[&str] = &[
-    "stage2.instruction_lookup.gamma2",
-    "stage2.instruction_lookup.gamma",
-];
-
-pub const STAGE2_FIELD_EXPR_12_OPERAND_NAMES: &[&str] = &[
-    "stage2.instruction_lookup.gamma2",
-    "stage2.instruction_lookup.gamma2",
-];
-
-pub const STAGE2_FIELD_EXPR_12_OPERANDS: &[&str] = &[
-    "stage2.instruction_lookup.gamma2",
-    "stage2.instruction_lookup.gamma2",
-];
-
-pub const STAGE2_FIELD_EXPR_13_OPERAND_NAMES: &[&str] = &[
-    "stage2.instruction_lookup.gamma",
-    "stage2.input.stage1.LeftLookupOperand",
-];
-
-pub const STAGE2_FIELD_EXPR_13_OPERANDS: &[&str] = &[
-    "stage2.instruction_lookup.gamma",
-    "stage2.input.stage1.LeftLookupOperand",
-];
-
-pub const STAGE2_FIELD_EXPR_14_OPERAND_NAMES: &[&str] = &[
-    "stage2.instruction_lookup.gamma2",
-    "stage2.input.stage1.RightLookupOperand",
-];
-
-pub const STAGE2_FIELD_EXPR_14_OPERANDS: &[&str] = &[
-    "stage2.instruction_lookup.gamma2",
-    "stage2.input.stage1.RightLookupOperand",
-];
-
-pub const STAGE2_FIELD_EXPR_15_OPERAND_NAMES: &[&str] = &[
-    "stage2.instruction_lookup.gamma3",
-    "stage2.input.stage1.LeftInstructionInput",
-];
-
-pub const STAGE2_FIELD_EXPR_15_OPERANDS: &[&str] = &[
-    "stage2.instruction_lookup.gamma3",
-    "stage2.input.stage1.LeftInstructionInput",
-];
-
-pub const STAGE2_FIELD_EXPR_16_OPERAND_NAMES: &[&str] = &[
-    "stage2.instruction_lookup.gamma4",
-    "stage2.input.stage1.RightInstructionInput",
-];
-
-pub const STAGE2_FIELD_EXPR_16_OPERANDS: &[&str] = &[
-    "stage2.instruction_lookup.gamma4",
-    "stage2.input.stage1.RightInstructionInput",
-];
-
-pub const STAGE2_FIELD_EXPR_17_OPERAND_NAMES: &[&str] = &[
-    "stage2.input.stage1.LookupOutput",
-    "stage2.instruction_lookup.term.LeftLookupOperand",
-];
-
-pub const STAGE2_FIELD_EXPR_17_OPERANDS: &[&str] = &[
-    "stage2.input.stage1.LookupOutput",
-    "stage2.instruction_lookup.term.LeftLookupOperand",
-];
-
-pub const STAGE2_FIELD_EXPR_18_OPERAND_NAMES: &[&str] = &[
-    "stage2.instruction_lookup.partial.LookupOutputLeftOperand",
-    "stage2.instruction_lookup.term.RightLookupOperand",
-];
-
-pub const STAGE2_FIELD_EXPR_18_OPERANDS: &[&str] = &[
-    "stage2.instruction_lookup.partial.LookupOutputLeftOperand",
-    "stage2.instruction_lookup.term.RightLookupOperand",
-];
-
-pub const STAGE2_FIELD_EXPR_19_OPERAND_NAMES: &[&str] = &[
-    "stage2.instruction_lookup.partial.RightOperand",
-    "stage2.instruction_lookup.term.LeftInstructionInput",
-];
-
-pub const STAGE2_FIELD_EXPR_19_OPERANDS: &[&str] = &[
-    "stage2.instruction_lookup.partial.RightOperand",
-    "stage2.instruction_lookup.term.LeftInstructionInput",
-];
-
-pub const STAGE2_FIELD_EXPR_20_OPERAND_NAMES: &[&str] = &[
-    "stage2.instruction_lookup.partial.LeftInstructionInput",
-    "stage2.instruction_lookup.term.RightInstructionInput",
-];
-
-pub const STAGE2_FIELD_EXPR_20_OPERANDS: &[&str] = &[
-    "stage2.instruction_lookup.partial.LeftInstructionInput",
-    "stage2.instruction_lookup.term.RightInstructionInput",
-];
-
 pub const STAGE2_FIELD_EXPRS: &[Stage2FieldExprPlan] = &[
-    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.weight.Product", kind: "op", formula: "poly.lagrange_basis_eval:-1:3:0", operand_names: STAGE2_FIELD_EXPR_0_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_0_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.weight.ShouldBranch", kind: "op", formula: "poly.lagrange_basis_eval:-1:3:1", operand_names: STAGE2_FIELD_EXPR_1_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_1_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.weight.ShouldJump", kind: "op", formula: "poly.lagrange_basis_eval:-1:3:2", operand_names: STAGE2_FIELD_EXPR_2_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_2_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.term.Product", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_3_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_3_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.term.ShouldBranch", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_4_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_4_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.term.ShouldJump", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_5_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_5_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.partial.ProductShouldBranch", kind: "op", formula: "field.add", operand_names: STAGE2_FIELD_EXPR_6_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_6_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.claim_expr", kind: "op", formula: "field.add", operand_names: STAGE2_FIELD_EXPR_7_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_7_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.ram_read_write.term.RamWriteValue", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_8_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_8_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.ram_read_write.claim_expr", kind: "op", formula: "field.add", operand_names: STAGE2_FIELD_EXPR_9_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_9_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.gamma2", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_10_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_10_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.gamma3", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_11_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_11_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.gamma4", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_12_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_12_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.term.LeftLookupOperand", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_13_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_13_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.term.RightLookupOperand", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_14_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_14_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.term.LeftInstructionInput", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_15_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_15_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.term.RightInstructionInput", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_16_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_16_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.partial.LookupOutputLeftOperand", kind: "op", formula: "field.add", operand_names: STAGE2_FIELD_EXPR_17_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_17_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.partial.RightOperand", kind: "op", formula: "field.add", operand_names: STAGE2_FIELD_EXPR_18_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_18_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.partial.LeftInstructionInput", kind: "op", formula: "field.add", operand_names: STAGE2_FIELD_EXPR_19_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_19_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.claim_reduction.claim_expr", kind: "op", formula: "field.add", operand_names: STAGE2_FIELD_EXPR_20_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_20_OPERANDS },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.weight.Product", kind: "op", formula: "poly.lagrange_basis_eval:-1:3:0", operands: "stage2.product_virtual.tau_high" },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.weight.ShouldBranch", kind: "op", formula: "poly.lagrange_basis_eval:-1:3:1", operands: "stage2.product_virtual.tau_high" },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.weight.ShouldJump", kind: "op", formula: "poly.lagrange_basis_eval:-1:3:2", operands: "stage2.product_virtual.tau_high" },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.term.Product", kind: "op", formula: "field.mul", operands: "stage2.product_virtual.uniskip.weight.Product|stage2.input.stage1.Product" },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.term.ShouldBranch", kind: "op", formula: "field.mul", operands: "stage2.product_virtual.uniskip.weight.ShouldBranch|stage2.input.stage1.ShouldBranch" },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.term.ShouldJump", kind: "op", formula: "field.mul", operands: "stage2.product_virtual.uniskip.weight.ShouldJump|stage2.input.stage1.ShouldJump" },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.partial.ProductShouldBranch", kind: "op", formula: "field.add", operands: "stage2.product_virtual.uniskip.term.Product|stage2.product_virtual.uniskip.term.ShouldBranch" },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.claim_expr", kind: "op", formula: "field.add", operands: "stage2.product_virtual.uniskip.partial.ProductShouldBranch|stage2.product_virtual.uniskip.term.ShouldJump" },
+    Stage2FieldExprPlan { symbol: "stage2.ram_read_write.term.RamWriteValue", kind: "op", formula: "field.mul", operands: "stage2.ram_read_write.gamma|stage2.input.stage1.RamWriteValue" },
+    Stage2FieldExprPlan { symbol: "stage2.ram_read_write.claim_expr", kind: "op", formula: "field.add", operands: "stage2.input.stage1.RamReadValue|stage2.ram_read_write.term.RamWriteValue" },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.gamma2", kind: "op", formula: "field.mul", operands: "stage2.instruction_lookup.gamma|stage2.instruction_lookup.gamma" },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.gamma3", kind: "op", formula: "field.mul", operands: "stage2.instruction_lookup.gamma2|stage2.instruction_lookup.gamma" },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.gamma4", kind: "op", formula: "field.mul", operands: "stage2.instruction_lookup.gamma2|stage2.instruction_lookup.gamma2" },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.term.LeftLookupOperand", kind: "op", formula: "field.mul", operands: "stage2.instruction_lookup.gamma|stage2.input.stage1.LeftLookupOperand" },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.term.RightLookupOperand", kind: "op", formula: "field.mul", operands: "stage2.instruction_lookup.gamma2|stage2.input.stage1.RightLookupOperand" },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.term.LeftInstructionInput", kind: "op", formula: "field.mul", operands: "stage2.instruction_lookup.gamma3|stage2.input.stage1.LeftInstructionInput" },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.term.RightInstructionInput", kind: "op", formula: "field.mul", operands: "stage2.instruction_lookup.gamma4|stage2.input.stage1.RightInstructionInput" },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.partial.LookupOutputLeftOperand", kind: "op", formula: "field.add", operands: "stage2.input.stage1.LookupOutput|stage2.instruction_lookup.term.LeftLookupOperand" },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.partial.RightOperand", kind: "op", formula: "field.add", operands: "stage2.instruction_lookup.partial.LookupOutputLeftOperand|stage2.instruction_lookup.term.RightLookupOperand" },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.partial.LeftInstructionInput", kind: "op", formula: "field.add", operands: "stage2.instruction_lookup.partial.RightOperand|stage2.instruction_lookup.term.LeftInstructionInput" },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.claim_reduction.claim_expr", kind: "op", formula: "field.add", operands: "stage2.instruction_lookup.partial.LeftInstructionInput|stage2.instruction_lookup.term.RightInstructionInput" },
 ];
-pub const STAGE2_SUMCHECK_CLAIM_0_INPUT_OPENINGS: &[&str] = &[
-    "stage2.input.stage1.Product",
-    "stage2.input.stage1.ShouldBranch",
-    "stage2.input.stage1.ShouldJump",
-];
-
-pub const STAGE2_SUMCHECK_CLAIM_1_INPUT_OPENINGS: &[&str] = &[
-    "stage2.input.stage1.RamReadValue",
-    "stage2.input.stage1.RamWriteValue",
-];
-
-pub const STAGE2_SUMCHECK_CLAIM_2_INPUT_OPENINGS: &[&str] = &[
-    "stage2.product_virtual.uniskip.opening.UnivariateSkip",
-];
-
-pub const STAGE2_SUMCHECK_CLAIM_3_INPUT_OPENINGS: &[&str] = &[
-    "stage2.input.stage1.LookupOutput",
-    "stage2.input.stage1.LeftLookupOperand",
-    "stage2.input.stage1.RightLookupOperand",
-    "stage2.input.stage1.LeftInstructionInput",
-    "stage2.input.stage1.RightInstructionInput",
-];
-
-pub const STAGE2_SUMCHECK_CLAIM_4_INPUT_OPENINGS: &[&str] = &[
-    "stage2.input.stage1.RamAddress",
-];
-
-pub const STAGE2_SUMCHECK_CLAIM_5_INPUT_OPENINGS: &[&str] = &[
-
-];
-
 pub const STAGE2_SUMCHECK_CLAIMS: &[Stage2SumcheckClaimPlan] = &[
-    Stage2SumcheckClaimPlan { symbol: "stage2.product_virtual.uniskip.input", stage: "stage2", domain: "jolt.stage2_uniskip_domain", num_rounds: 1, degree: 6, claim: "stage2.product_virtual.weighted_stage1_outputs", relation: "jolt.stage2.product_virtual.uniskip", claim_value: "stage2.product_virtual.uniskip.claim_expr", input_openings: STAGE2_SUMCHECK_CLAIM_0_INPUT_OPENINGS },
-    Stage2SumcheckClaimPlan { symbol: "stage2.ram_read_write.input", stage: "stage2", domain: "jolt.stage2_ram_rw_domain", num_rounds: 32, degree: 3, claim: "stage2.ram_read_write.weighted_values", relation: "jolt.stage2.ram.read_write", claim_value: "stage2.ram_read_write.claim_expr", input_openings: STAGE2_SUMCHECK_CLAIM_1_INPUT_OPENINGS },
-    Stage2SumcheckClaimPlan { symbol: "stage2.product_virtual.remainder.input", stage: "stage2", domain: "jolt.trace_domain", num_rounds: 16, degree: 3, claim: "stage2.product_virtual.uniskip.opening", relation: "jolt.stage2.product_virtual.remainder", claim_value: "stage2.product_virtual.uniskip.eval.UnivariateSkip", input_openings: STAGE2_SUMCHECK_CLAIM_2_INPUT_OPENINGS },
-    Stage2SumcheckClaimPlan { symbol: "stage2.instruction_lookup.claim_reduction.input", stage: "stage2", domain: "jolt.trace_domain", num_rounds: 16, degree: 2, claim: "stage2.instruction_lookup.weighted_operands", relation: "jolt.stage2.instruction_lookup.claim_reduction", claim_value: "stage2.instruction_lookup.claim_reduction.claim_expr", input_openings: STAGE2_SUMCHECK_CLAIM_3_INPUT_OPENINGS },
-    Stage2SumcheckClaimPlan { symbol: "stage2.ram_raf.input", stage: "stage2", domain: "jolt.ram_address_domain", num_rounds: 16, degree: 2, claim: "stage2.ram_raf.ram_address", relation: "jolt.stage2.ram.raf_evaluation", claim_value: "stage2.input.stage1.RamAddress", input_openings: STAGE2_SUMCHECK_CLAIM_4_INPUT_OPENINGS },
-    Stage2SumcheckClaimPlan { symbol: "stage2.ram_output.input", stage: "stage2", domain: "jolt.ram_address_domain", num_rounds: 16, degree: 3, claim: "zero", relation: "jolt.stage2.ram.output_check", claim_value: "stage2.ram_output.zero", input_openings: STAGE2_SUMCHECK_CLAIM_5_INPUT_OPENINGS },
+    Stage2SumcheckClaimPlan { symbol: "stage2.product_virtual.uniskip.input", stage: "stage2", domain: "jolt.stage2_uniskip_domain", num_rounds: 1, degree: 6, claim: "stage2.product_virtual.weighted_stage1_outputs", relation: "jolt.stage2.product_virtual.uniskip", claim_value: "stage2.product_virtual.uniskip.claim_expr", input_openings: "stage2.input.stage1.Product|stage2.input.stage1.ShouldBranch|stage2.input.stage1.ShouldJump" },
+    Stage2SumcheckClaimPlan { symbol: "stage2.ram_read_write.input", stage: "stage2", domain: "jolt.stage2_ram_rw_domain", num_rounds: 32, degree: 3, claim: "stage2.ram_read_write.weighted_values", relation: "jolt.stage2.ram.read_write", claim_value: "stage2.ram_read_write.claim_expr", input_openings: "stage2.input.stage1.RamReadValue|stage2.input.stage1.RamWriteValue" },
+    Stage2SumcheckClaimPlan { symbol: "stage2.product_virtual.remainder.input", stage: "stage2", domain: "jolt.trace_domain", num_rounds: 16, degree: 3, claim: "stage2.product_virtual.uniskip.opening", relation: "jolt.stage2.product_virtual.remainder", claim_value: "stage2.product_virtual.uniskip.eval.UnivariateSkip", input_openings: "stage2.product_virtual.uniskip.opening.UnivariateSkip" },
+    Stage2SumcheckClaimPlan { symbol: "stage2.instruction_lookup.claim_reduction.input", stage: "stage2", domain: "jolt.trace_domain", num_rounds: 16, degree: 2, claim: "stage2.instruction_lookup.weighted_operands", relation: "jolt.stage2.instruction_lookup.claim_reduction", claim_value: "stage2.instruction_lookup.claim_reduction.claim_expr", input_openings: "stage2.input.stage1.LookupOutput|stage2.input.stage1.LeftLookupOperand|stage2.input.stage1.RightLookupOperand|stage2.input.stage1.LeftInstructionInput|stage2.input.stage1.RightInstructionInput" },
+    Stage2SumcheckClaimPlan { symbol: "stage2.ram_raf.input", stage: "stage2", domain: "jolt.ram_address_domain", num_rounds: 16, degree: 2, claim: "stage2.ram_raf.ram_address", relation: "jolt.stage2.ram.raf_evaluation", claim_value: "stage2.input.stage1.RamAddress", input_openings: "stage2.input.stage1.RamAddress" },
+    Stage2SumcheckClaimPlan { symbol: "stage2.ram_output.input", stage: "stage2", domain: "jolt.ram_address_domain", num_rounds: 16, degree: 3, claim: "zero", relation: "jolt.stage2.ram.output_check", claim_value: "stage2.ram_output.zero", input_openings: "" },
 ];
-pub const STAGE2_SUMCHECK_BATCH_0_ORDERED_CLAIMS: &[&str] = &[
-    "stage2.product_virtual.uniskip.input",
-];
-
-pub const STAGE2_SUMCHECK_BATCH_0_CLAIM_OPERANDS: &[&str] = &[
-    "stage2.product_virtual.uniskip.input",
-];
-
 pub const STAGE2_SUMCHECK_BATCH_0_ROUND_SCHEDULE: &[usize] = &[
     1,
-];
-
-pub const STAGE2_SUMCHECK_BATCH_1_ORDERED_CLAIMS: &[&str] = &[
-    "stage2.ram_read_write.input",
-    "stage2.product_virtual.remainder.input",
-    "stage2.instruction_lookup.claim_reduction.input",
-    "stage2.ram_raf.input",
-    "stage2.ram_output.input",
-];
-
-pub const STAGE2_SUMCHECK_BATCH_1_CLAIM_OPERANDS: &[&str] = &[
-    "stage2.ram_read_write.input",
-    "stage2.product_virtual.remainder.input",
-    "stage2.instruction_lookup.claim_reduction.input",
-    "stage2.ram_raf.input",
-    "stage2.ram_output.input",
 ];
 
 pub const STAGE2_SUMCHECK_BATCH_1_ROUND_SCHEDULE: &[usize] = &[
@@ -612,8 +153,8 @@ pub const STAGE2_SUMCHECK_BATCH_1_ROUND_SCHEDULE: &[usize] = &[
 ];
 
 pub const STAGE2_SUMCHECK_BATCHES: &[Stage2SumcheckBatchPlan] = &[
-    Stage2SumcheckBatchPlan { symbol: "stage2.product_virtual.uniskip.batch", stage: "stage2", proof_slot: "stage2.product_virtual.uni_skip_first_round", policy: "single_instance", count: 1, ordered_claims: STAGE2_SUMCHECK_BATCH_0_ORDERED_CLAIMS, claim_operands: STAGE2_SUMCHECK_BATCH_0_CLAIM_OPERANDS, claim_label: "uniskip_claim", round_label: "uniskip_poly", round_schedule: STAGE2_SUMCHECK_BATCH_0_ROUND_SCHEDULE },
-    Stage2SumcheckBatchPlan { symbol: "stage2.batch", stage: "stage2", proof_slot: "stage2.sumcheck", policy: "jolt_core_stage2_aligned", count: 5, ordered_claims: STAGE2_SUMCHECK_BATCH_1_ORDERED_CLAIMS, claim_operands: STAGE2_SUMCHECK_BATCH_1_CLAIM_OPERANDS, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", round_schedule: STAGE2_SUMCHECK_BATCH_1_ROUND_SCHEDULE },
+    Stage2SumcheckBatchPlan { symbol: "stage2.product_virtual.uniskip.batch", stage: "stage2", proof_slot: "stage2.product_virtual.uni_skip_first_round", policy: "single_instance", count: 1, ordered_claims: "stage2.product_virtual.uniskip.input", claim_operands: "stage2.product_virtual.uniskip.input", claim_label: "uniskip_claim", round_label: "uniskip_poly", round_schedule: STAGE2_SUMCHECK_BATCH_0_ROUND_SCHEDULE },
+    Stage2SumcheckBatchPlan { symbol: "stage2.batch", stage: "stage2", proof_slot: "stage2.sumcheck", policy: "jolt_core_stage2_aligned", count: 5, ordered_claims: "stage2.ram_read_write.input|stage2.product_virtual.remainder.input|stage2.instruction_lookup.claim_reduction.input|stage2.ram_raf.input|stage2.ram_output.input", claim_operands: "stage2.ram_read_write.input|stage2.product_virtual.remainder.input|stage2.instruction_lookup.claim_reduction.input|stage2.ram_raf.input|stage2.ram_output.input", claim_label: "sumcheck_claim", round_label: "sumcheck_poly", round_schedule: STAGE2_SUMCHECK_BATCH_1_ROUND_SCHEDULE },
 ];
 pub const STAGE2_SUMCHECK_DRIVER_0_ROUND_SCHEDULE: &[usize] = &[
     1,
@@ -663,13 +204,8 @@ pub const STAGE2_POINT_SLICES: &[Stage2PointSlicePlan] = &[
     Stage2PointSlicePlan { symbol: "stage2.ram_read_write.point.RamInc", source: "stage2.ram_read_write.instance", offset: 16, length: 16, input: "stage2.ram_read_write.instance" },
 ];
 
-pub const STAGE2_POINT_CONCAT_0_INPUTS: &[&str] = &[
-    "stage2.ram_raf.instance",
-    "stage2.input.stage1.RamAddress",
-];
-
 pub const STAGE2_POINT_CONCATS: &[Stage2PointConcatPlan] = &[
-    Stage2PointConcatPlan { symbol: "stage2.ram_raf.point.RamRa", layout: "address_then_cycle", arity: 32, inputs: STAGE2_POINT_CONCAT_0_INPUTS },
+    Stage2PointConcatPlan { symbol: "stage2.ram_raf.point.RamRa", layout: "address_then_cycle", arity: 32, inputs: "stage2.ram_raf.instance|stage2.input.stage1.RamAddress" },
 ];
 pub const STAGE2_OPENING_CLAIMS: &[Stage2OpeningClaimPlan] = &[
     Stage2OpeningClaimPlan { symbol: "stage2.product_virtual.uniskip.opening.UnivariateSkip", oracle: "UnivariateSkip", domain: "jolt.stage2_uniskip_domain", point_arity: 1, claim_kind: "virtual", point_source: "stage2.product_virtual.uniskip.instance", eval_source: "stage2.product_virtual.uniskip.eval.UnivariateSkip" },
@@ -693,50 +229,8 @@ pub const STAGE2_OPENING_CLAIMS: &[Stage2OpeningClaimPlan] = &[
     Stage2OpeningClaimPlan { symbol: "stage2.ram_output.opening.RamValFinal", oracle: "RamValFinal", domain: "jolt.ram_address_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage2.ram_output.instance", eval_source: "stage2.ram_output.eval.RamValFinal" },
 ];
 
-pub const STAGE2_OPENING_BATCH_0_ORDERED_CLAIMS: &[&str] = &[
-    "stage2.ram_read_write.opening.RamVal",
-    "stage2.ram_read_write.opening.RamRa",
-    "stage2.ram_read_write.opening.RamInc",
-    "stage2.product_virtual.remainder.opening.LeftInstructionInput",
-    "stage2.product_virtual.remainder.opening.RightInstructionInput",
-    "stage2.product_virtual.remainder.opening.OpFlagJump",
-    "stage2.product_virtual.remainder.opening.OpFlagWriteLookupOutputToRD",
-    "stage2.product_virtual.remainder.opening.LookupOutput",
-    "stage2.product_virtual.remainder.opening.InstructionFlagBranch",
-    "stage2.product_virtual.remainder.opening.NextIsNoop",
-    "stage2.product_virtual.remainder.opening.OpFlagVirtualInstruction",
-    "stage2.instruction_lookup.claim_reduction.opening.LookupOutput",
-    "stage2.instruction_lookup.claim_reduction.opening.LeftLookupOperand",
-    "stage2.instruction_lookup.claim_reduction.opening.RightLookupOperand",
-    "stage2.instruction_lookup.claim_reduction.opening.LeftInstructionInput",
-    "stage2.instruction_lookup.claim_reduction.opening.RightInstructionInput",
-    "stage2.ram_raf.opening.RamRa",
-    "stage2.ram_output.opening.RamValFinal",
-];
-
-pub const STAGE2_OPENING_BATCH_0_CLAIM_OPERANDS: &[&str] = &[
-    "stage2.ram_read_write.opening.RamVal",
-    "stage2.ram_read_write.opening.RamRa",
-    "stage2.ram_read_write.opening.RamInc",
-    "stage2.product_virtual.remainder.opening.LeftInstructionInput",
-    "stage2.product_virtual.remainder.opening.RightInstructionInput",
-    "stage2.product_virtual.remainder.opening.OpFlagJump",
-    "stage2.product_virtual.remainder.opening.OpFlagWriteLookupOutputToRD",
-    "stage2.product_virtual.remainder.opening.LookupOutput",
-    "stage2.product_virtual.remainder.opening.InstructionFlagBranch",
-    "stage2.product_virtual.remainder.opening.NextIsNoop",
-    "stage2.product_virtual.remainder.opening.OpFlagVirtualInstruction",
-    "stage2.instruction_lookup.claim_reduction.opening.LookupOutput",
-    "stage2.instruction_lookup.claim_reduction.opening.LeftLookupOperand",
-    "stage2.instruction_lookup.claim_reduction.opening.RightLookupOperand",
-    "stage2.instruction_lookup.claim_reduction.opening.LeftInstructionInput",
-    "stage2.instruction_lookup.claim_reduction.opening.RightInstructionInput",
-    "stage2.ram_raf.opening.RamRa",
-    "stage2.ram_output.opening.RamValFinal",
-];
-
 pub const STAGE2_OPENING_BATCHES: &[Stage2OpeningBatchPlan] = &[
-    Stage2OpeningBatchPlan { symbol: "stage2.openings", stage: "stage2", proof_slot: "stage2.openings", policy: "jolt_stage2_output_order", count: 18, ordered_claims: STAGE2_OPENING_BATCH_0_ORDERED_CLAIMS, claim_operands: STAGE2_OPENING_BATCH_0_CLAIM_OPERANDS },
+    Stage2OpeningBatchPlan { symbol: "stage2.openings", stage: "stage2", proof_slot: "stage2.openings", policy: "jolt_stage2_output_order", count: 18, ordered_claims: "stage2.ram_read_write.opening.RamVal|stage2.ram_read_write.opening.RamRa|stage2.ram_read_write.opening.RamInc|stage2.product_virtual.remainder.opening.LeftInstructionInput|stage2.product_virtual.remainder.opening.RightInstructionInput|stage2.product_virtual.remainder.opening.OpFlagJump|stage2.product_virtual.remainder.opening.OpFlagWriteLookupOutputToRD|stage2.product_virtual.remainder.opening.LookupOutput|stage2.product_virtual.remainder.opening.InstructionFlagBranch|stage2.product_virtual.remainder.opening.NextIsNoop|stage2.product_virtual.remainder.opening.OpFlagVirtualInstruction|stage2.instruction_lookup.claim_reduction.opening.LookupOutput|stage2.instruction_lookup.claim_reduction.opening.LeftLookupOperand|stage2.instruction_lookup.claim_reduction.opening.RightLookupOperand|stage2.instruction_lookup.claim_reduction.opening.LeftInstructionInput|stage2.instruction_lookup.claim_reduction.opening.RightInstructionInput|stage2.ram_raf.opening.RamRa|stage2.ram_output.opening.RamValFinal", claim_operands: "stage2.ram_read_write.opening.RamVal|stage2.ram_read_write.opening.RamRa|stage2.ram_read_write.opening.RamInc|stage2.product_virtual.remainder.opening.LeftInstructionInput|stage2.product_virtual.remainder.opening.RightInstructionInput|stage2.product_virtual.remainder.opening.OpFlagJump|stage2.product_virtual.remainder.opening.OpFlagWriteLookupOutputToRD|stage2.product_virtual.remainder.opening.LookupOutput|stage2.product_virtual.remainder.opening.InstructionFlagBranch|stage2.product_virtual.remainder.opening.NextIsNoop|stage2.product_virtual.remainder.opening.OpFlagVirtualInstruction|stage2.instruction_lookup.claim_reduction.opening.LookupOutput|stage2.instruction_lookup.claim_reduction.opening.LeftLookupOperand|stage2.instruction_lookup.claim_reduction.opening.RightLookupOperand|stage2.instruction_lookup.claim_reduction.opening.LeftInstructionInput|stage2.instruction_lookup.claim_reduction.opening.RightInstructionInput|stage2.ram_raf.opening.RamRa|stage2.ram_output.opening.RamValFinal" },
 ];
 pub const STAGE2_PROGRAM: Stage2VerifierProgramPlan = Stage2VerifierProgramPlan {
     params: STAGE2_PARAMS,
@@ -801,13 +295,13 @@ where
         for step in program.steps {
             match step.kind {
                 "transcript_squeeze" => {
-                    let squeeze = find_squeeze(program, step.symbol).ok_or(VerifyStage2Error::MissingValue {
+                    let squeeze = find_plan(program.transcript_squeezes, step.symbol).ok_or(VerifyStage2Error::MissingValue {
                         symbol: step.symbol,
                     })?;
                     verify_stage2_squeeze(program, squeeze, &mut store, transcript, &mut artifacts)?;
                 }
                 "sumcheck_driver" => {
-                    let driver = find_driver(program, step.symbol).ok_or(VerifyStage2Error::MissingProof {
+                    let driver = find_plan(program.drivers, step.symbol).ok_or(VerifyStage2Error::MissingProof {
                         driver: step.symbol,
                     })?;
                     verify_stage2_driver(program, driver, proof, ram, &mut store, transcript, &mut artifacts)?;
@@ -902,8 +396,8 @@ where
             reason: "product uniskip polynomial exceeds degree bound",
         });
     }
-    let batch = find_batch(program, driver.batch)?;
-    let claim = batch_claims(program, batch)?
+    let batch = find_batch(program.batches, driver.symbol, driver.batch)?;
+    let claim = batch_claims(program.claims, batch)?
         .into_iter()
         .next()
         .ok_or(VerifyStage2Error::MissingClaim {
@@ -950,8 +444,8 @@ where
     T: Transcript<Challenge = Fr>,
 {
     validate_driver_symbol(driver, proof)?;
-    let batch = find_batch(program, driver.batch)?;
-    let claims = batch_claims(program, batch)?;
+    let batch = find_batch(program.batches, driver.symbol, driver.batch)?;
+    let claims = batch_claims(program.claims, batch)?;
     let input_claims = store.batch_claim_values(program, batch)?;
     for claim in &input_claims {
         append_labeled_scalar(transcript, batch.claim_label, claim);
@@ -998,24 +492,26 @@ where
         proof: proof.proof.clone(),
     };
     store.observe_sumcheck_output(program, &verified)?;
-    append_opening_claims(program, store, transcript, &verified.evals)?;
+    super::common::append_opening_claims(
+        program.opening_inputs,
+        program.opening_claims,
+        program.opening_batches,
+        &mut store.0,
+        transcript,
+        &verified.evals,
+        |batch, claim| VerifyStage2Error::MissingClaim { batch, claim },
+        |symbol| VerifyStage2Error::MissingValue { symbol },
+    )?;
     Ok(verified)
 }
 
 impl<F: Field> Stage2ValueStore<F> {
     fn with_opening_inputs(inputs: &[Stage2OpeningInputValue<F>]) -> Self {
-        let mut store = Self::default();
-        for input in inputs {
-            store.insert_scalar(input.symbol, input.eval);
-            store.insert_point(input.symbol, input.point.clone());
-        }
-        store
+        Self(super::common::ValueStore::with_opening_inputs(inputs))
     }
 
     fn seed_constants(&mut self, program: &'static Stage2VerifierProgramPlan) {
-        for constant in program.field_constants {
-            self.insert_scalar(constant.symbol, F::from_u64(constant.value as u64));
-        }
+        self.0.seed_constants(program.field_constants);
     }
 
     fn observe_challenge_vector(
@@ -1024,17 +520,9 @@ impl<F: Field> Stage2ValueStore<F> {
         plan: &'static Stage2TranscriptSqueezePlan,
         values: &[F],
     ) -> Result<(), VerifyStage2Error> {
-        self.insert_point(plan.symbol, values.to_vec());
-        if matches!(plan.kind, "challenge_scalar" | "scalar") {
-            if values.len() != 1 {
-                return Err(VerifyStage2Error::InvalidInputLength {
-                    input: plan.symbol,
-                    expected: 1,
-                    actual: values.len(),
-                });
-            }
-            self.insert_scalar(plan.symbol, values[0]);
-        }
+        self.0.observe_challenge_vector(plan, values, |input, expected, actual| {
+            VerifyStage2Error::InvalidInputLength { input, expected, actual }
+        })?;
         self.evaluate_available_points(program)?;
         self.evaluate_available_field_exprs(program)?;
         Ok(())
@@ -1045,51 +533,30 @@ impl<F: Field> Stage2ValueStore<F> {
         program: &'static Stage2VerifierProgramPlan,
         output: &Stage2SumcheckOutput<F>,
     ) -> Result<(), VerifyStage2Error> {
-        self.insert_point(output.driver, output.point.clone());
-        for instance in program
-            .instance_results
-            .iter()
-            .filter(|instance| instance.source == output.driver)
-        {
-            let end = instance.round_offset + instance.point_arity;
-            let mut point = output
-                .point
-                .get(instance.round_offset..end)
-                .ok_or(VerifyStage2Error::InvalidInputLength {
-                    input: instance.symbol,
-                    expected: end,
-                    actual: output.point.len(),
-                })?
-                .to_vec();
-            match instance.point_order {
-                "as_is" => {}
-                "reverse" => point.reverse(),
-                _ => {
-                    return Err(VerifyStage2Error::InvalidProof {
-                        driver: output.driver,
-                        reason: "unsupported point order",
-                    });
+        self.0.observe_sumcheck_output(
+            program.instance_results,
+            program.evals,
+            output,
+            |instance, mut point| {
+                match instance.point_order {
+                    "as_is" => {}
+                    "reverse" => point.reverse(),
+                    _ => {
+                        return Err(VerifyStage2Error::InvalidProof {
+                            driver: output.driver,
+                            reason: "unsupported point order",
+                        });
+                    }
                 }
-            }
-            self.insert_point(instance.symbol, point);
-        }
-        for eval in program
-            .evals
-            .iter()
-            .filter(|eval| eval.source == output.driver)
-        {
-            let value = output
-                .evals
-                .iter()
-                .find(|value| value.name == eval.name)
-                .or_else(|| output.evals.get(eval.index))
-                .ok_or(VerifyStage2Error::MissingValue {
-                    symbol: eval.symbol,
-                })?
-                .value;
-            self.insert_scalar(eval.symbol, value);
-            self.insert_scalar(eval.name, value);
-        }
+                Ok(point)
+            },
+            |input, expected, actual| VerifyStage2Error::InvalidInputLength {
+                input,
+                expected,
+                actual,
+            },
+            |symbol| VerifyStage2Error::MissingValue { symbol },
+        )?;
         self.evaluate_available_points(program)?;
         self.evaluate_available_field_exprs(program)?;
         Ok(())
@@ -1109,11 +576,9 @@ impl<F: Field> Stage2ValueStore<F> {
         program: &'static Stage2VerifierProgramPlan,
         batch: &Stage2SumcheckBatchPlan,
     ) -> Result<Vec<F>, VerifyStage2Error> {
-        batch
-            .claim_operands
-            .iter()
+        super::common::symbol_list(batch.claim_operands)
             .map(|symbol| {
-                let claim = find_claim(program, symbol).ok_or(VerifyStage2Error::MissingClaim {
+                let claim = find_plan(program.claims, symbol).ok_or(VerifyStage2Error::MissingClaim {
                     batch: batch.symbol,
                     claim: symbol,
                 })?;
@@ -1126,120 +591,37 @@ impl<F: Field> Stage2ValueStore<F> {
         &mut self,
         program: &'static Stage2VerifierProgramPlan,
     ) -> Result<(), VerifyStage2Error> {
-        loop {
-            let mut progress = 0usize;
-            for slice in program.point_slices {
-                if self.try_point(slice.symbol).is_some() {
-                    continue;
-                }
-                let Some(input) = self.try_point(slice.input) else { continue };
-                let end = slice.offset + slice.length;
-                let point = input
-                    .get(slice.offset..end)
-                    .ok_or(VerifyStage2Error::InvalidInputLength {
-                        input: slice.symbol,
-                        expected: end,
-                        actual: input.len(),
-                    })?
-                    .to_vec();
-                self.insert_point(slice.symbol, point);
-                progress += 1;
-            }
-            for concat in program.point_concats {
-                if self.try_point(concat.symbol).is_some() {
-                    continue;
-                }
-                let Some(point) = self.try_concat_point(concat) else { continue };
-                if point.len() != concat.arity {
-                    return Err(VerifyStage2Error::InvalidInputLength {
-                        input: concat.symbol,
-                        expected: concat.arity,
-                        actual: point.len(),
-                    });
-                }
-                self.insert_point(concat.symbol, point);
-                progress += 1;
-            }
-            if progress == 0 {
-                return Ok(());
-            }
-        }
+        self.0.evaluate_available_points(
+            program.point_slices,
+            program.point_concats,
+            |input, expected, actual| VerifyStage2Error::InvalidInputLength {
+                input,
+                expected,
+                actual,
+            },
+        )
     }
 
     fn evaluate_available_field_exprs(
         &mut self,
         program: &'static Stage2VerifierProgramPlan,
     ) -> Result<(), VerifyStage2Error> {
-        loop {
-            let mut progress = 0usize;
-            for expr in program.field_exprs {
-                if self.try_scalar(expr.symbol).is_some() {
-                    continue;
-                }
-                let Some(operands) = self.try_expr_operands(expr) else { continue };
-                let value = evaluate_stage2_field_expr(expr, &operands)?;
-                self.insert_scalar(expr.symbol, value);
-                progress += 1;
-            }
-            if progress == 0 {
-                return Ok(());
-            }
-        }
-    }
-
-    fn insert_scalar(&mut self, symbol: &'static str, value: F) {
-        if let Some((_, existing)) = self.scalars.iter_mut().find(|(name, _)| *name == symbol) {
-            *existing = value;
-        } else {
-            self.scalars.push((symbol, value));
-        }
-    }
-
-    fn insert_point(&mut self, symbol: &'static str, point: Vec<F>) {
-        if let Some((_, existing)) = self.points.iter_mut().find(|(name, _)| *name == symbol) {
-            *existing = point;
-        } else {
-            self.points.push((symbol, point));
-        }
+        self.0
+            .evaluate_available_field_exprs(program.field_exprs, evaluate_stage2_field_expr)
     }
 
     fn scalar(&self, symbol: &'static str) -> Result<F, VerifyStage2Error> {
-        self.try_scalar(symbol)
-            .ok_or(VerifyStage2Error::MissingValue { symbol })
-    }
-
-    fn try_scalar(&self, symbol: &str) -> Option<F> {
-        self.scalars
-            .iter()
-            .find(|(name, _)| *name == symbol)
-            .map(|(_, value)| *value)
+        self.0
+            .scalar_or(symbol, |symbol| VerifyStage2Error::MissingValue { symbol })
     }
 
     fn point(&self, symbol: &'static str) -> Result<&[F], VerifyStage2Error> {
-        self.try_point(symbol)
-            .ok_or(VerifyStage2Error::MissingValue { symbol })
+        self.0
+            .point_or(symbol, |symbol| VerifyStage2Error::MissingValue { symbol })
     }
 
     fn try_point(&self, symbol: &str) -> Option<&[F]> {
-        self.points
-            .iter()
-            .find(|(name, _)| *name == symbol)
-            .map(|(_, point)| point.as_slice())
-    }
-
-    fn try_expr_operands(&self, expr: &Stage2FieldExprPlan) -> Option<Vec<F>> {
-        expr.operands
-            .iter()
-            .map(|operand| self.try_scalar(operand))
-            .collect()
-    }
-
-    fn try_concat_point(&self, concat: &Stage2PointConcatPlan) -> Option<Vec<F>> {
-        let mut point = Vec::with_capacity(concat.arity);
-        for input in concat.inputs {
-            point.extend_from_slice(self.try_point(input)?);
-        }
-        Some(point)
+        self.0.try_point(symbol)
     }
 }
 
@@ -1248,7 +630,7 @@ fn evaluate_stage2_field_expr<F: Field>(
     operands: &[F],
 ) -> Result<F, VerifyStage2Error> {
     match expr.formula {
-        "opening_eval" => single_operand(expr.symbol, operands),
+        "opening_eval" => Ok(single_operand(expr.symbol, operands)?),
         "jolt_stage2_product_virtual_uniskip_input" => {
             require_operand_count(expr.symbol, 4, operands.len())?;
             let weights = lagrange_evals(
@@ -1355,8 +737,8 @@ fn expected_batched_output_claim(
     batching_coeffs: &[Fr],
     ram: Option<&Stage2RamData<'_>>,
 ) -> Result<Fr, VerifyStage2Error> {
-    let batch = find_batch(program, driver.batch)?;
-    let claims = batch_claims(program, batch)?;
+    let batch = find_batch(program.batches, driver.symbol, driver.batch)?;
+    let claims = batch_claims(program.claims, batch)?;
     let mut expected = Fr::from_u64(0);
     for (claim, coefficient) in claims.iter().zip(batching_coeffs) {
         let instance = program
@@ -1524,121 +906,6 @@ fn expected_ram_output(
     Ok(eq_eval * io_mask * (val_final - val_io))
 }
 
-fn append_opening_claims<T>(
-    program: &'static Stage2VerifierProgramPlan,
-    store: &mut Stage2ValueStore<Fr>,
-    transcript: &mut T,
-    evals: &[Stage2NamedEval<Fr>],
-) -> Result<(), VerifyStage2Error>
-where
-    T: Transcript<Challenge = Fr>,
-{
-    if program.opening_batches.is_empty() {
-        for eval in evals {
-            append_labeled_scalar(transcript, "opening_claim", &eval.value);
-        }
-        return Ok(());
-    }
-    store.evaluate_available_points(program)?;
-    let mut seen = program
-        .opening_inputs
-        .iter()
-        .filter_map(|input| {
-            store
-                .try_point(input.symbol)
-                .map(|point| (input.claim_kind, input.oracle, point.to_vec()))
-        })
-        .collect::<Vec<_>>();
-    for batch in program.opening_batches {
-        for symbol in batch.claim_operands {
-            let claim = find_opening_claim(program, symbol).ok_or(VerifyStage2Error::MissingClaim {
-                batch: batch.symbol,
-                claim: symbol,
-            })?;
-            let point = store.point(claim.point_source)?.to_vec();
-            if seen.iter().any(|(kind, oracle, seen_point)| {
-                *kind == claim.claim_kind && *oracle == claim.oracle && seen_point == &point
-            }) {
-                continue;
-            }
-            let value = store.scalar(claim.eval_source)?;
-            append_labeled_scalar(transcript, "opening_claim", &value);
-            seen.push((claim.claim_kind, claim.oracle, point));
-        }
-    }
-    Ok(())
-}
-
-fn find_squeeze(
-    program: &'static Stage2VerifierProgramPlan,
-    symbol: &str,
-) -> Option<&'static Stage2TranscriptSqueezePlan> {
-    program
-        .transcript_squeezes
-        .iter()
-        .find(|squeeze| squeeze.symbol == symbol)
-}
-
-fn find_driver(
-    program: &'static Stage2VerifierProgramPlan,
-    symbol: &str,
-) -> Option<&'static Stage2SumcheckDriverPlan> {
-    program
-        .drivers
-        .iter()
-        .find(|driver| driver.symbol == symbol)
-}
-
-fn find_batch(
-    program: &'static Stage2VerifierProgramPlan,
-    symbol: &'static str,
-) -> Result<&'static Stage2SumcheckBatchPlan, VerifyStage2Error> {
-    program
-        .batches
-        .iter()
-        .find(|batch| batch.symbol == symbol)
-        .ok_or(VerifyStage2Error::MissingBatch {
-            driver: symbol,
-            batch: symbol,
-        })
-}
-
-fn find_claim(
-    program: &'static Stage2VerifierProgramPlan,
-    symbol: &str,
-) -> Option<&'static Stage2SumcheckClaimPlan> {
-    program
-        .claims
-        .iter()
-        .find(|claim| claim.symbol == symbol)
-}
-
-fn find_opening_claim(
-    program: &'static Stage2VerifierProgramPlan,
-    symbol: &str,
-) -> Option<&'static Stage2OpeningClaimPlan> {
-    program
-        .opening_claims
-        .iter()
-        .find(|claim| claim.symbol == symbol)
-}
-
-fn batch_claims(
-    program: &'static Stage2VerifierProgramPlan,
-    batch: &Stage2SumcheckBatchPlan,
-) -> Result<Vec<&'static Stage2SumcheckClaimPlan>, VerifyStage2Error> {
-    batch
-        .claim_operands
-        .iter()
-        .map(|symbol| {
-            find_claim(program, symbol).ok_or(VerifyStage2Error::MissingClaim {
-                batch: batch.symbol,
-                claim: symbol,
-            })
-        })
-        .collect()
-}
-
 fn driver_evals(
     program: &'static Stage2VerifierProgramPlan,
     driver: &'static str,
@@ -1692,14 +959,6 @@ fn validate_driver_symbol(
     }
 }
 
-fn eval_by_name(evals: &[Stage2NamedEval<Fr>], name: &'static str) -> Result<Fr, VerifyStage2Error> {
-    evals
-        .iter()
-        .find(|eval| eval.name == name)
-        .map(|eval| eval.value)
-        .ok_or(VerifyStage2Error::MissingValue { symbol: name })
-}
-
 fn append_univariate_poly<T>(transcript: &mut T, label: &'static str, poly: &UnivariatePoly<Fr>)
 where
     T: Transcript<Challenge = Fr>,
@@ -1711,14 +970,6 @@ where
     for coefficient in poly.coefficients() {
         transcript.append(coefficient);
     }
-}
-
-fn append_labeled_scalar<T>(transcript: &mut T, label: &'static str, scalar: &Fr)
-where
-    T: Transcript<Challenge = Fr>,
-{
-    transcript.append(&Label(label.as_bytes()));
-    transcript.append(scalar);
 }
 
 fn product_uniskip_sum_matches(poly: &UnivariatePoly<Fr>, claim: Fr) -> bool {
@@ -1737,44 +988,6 @@ fn polynomial_degree(poly: &UnivariatePoly<Fr>) -> usize {
         .iter()
         .rposition(|coefficient| *coefficient != Fr::from_u64(0))
         .unwrap_or(0)
-}
-
-fn pow_field<F: Field>(base: F, mut exponent: usize) -> F {
-    let mut result = F::one();
-    let mut power = base;
-    while exponent != 0 {
-        if exponent & 1 == 1 {
-            result *= power;
-        }
-        power = power.square();
-        exponent >>= 1;
-    }
-    result
-}
-
-fn single_operand<F: Field>(symbol: &'static str, operands: &[F]) -> Result<F, VerifyStage2Error> {
-    require_operand_count(symbol, 1, operands.len())?;
-    Ok(operands[0])
-}
-
-fn require_operand_count(
-    input: &'static str,
-    expected: usize,
-    actual: usize,
-) -> Result<(), VerifyStage2Error> {
-    if expected == actual {
-        Ok(())
-    } else {
-        Err(VerifyStage2Error::InvalidInputLength {
-            input,
-            expected,
-            actual,
-        })
-    }
-}
-
-fn reverse_slice(values: &[Fr]) -> Vec<Fr> {
-    values.iter().rev().copied().collect()
 }
 
 fn unmap_eval(log_k: usize, start_address: u64, point: &[Fr]) -> Fr {

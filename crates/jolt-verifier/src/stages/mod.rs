@@ -1,3 +1,4 @@
+pub mod common;
 #[rustfmt::skip]
 pub mod commitment;
 #[rustfmt::skip]

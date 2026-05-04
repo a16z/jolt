@@ -42,104 +42,58 @@ pub const STAGE4_FIELD_CONSTANTS: &[Stage4FieldConstantPlan] = &[
 
 ];
 
-pub const STAGE4_FIELD_EXPR_0_OPERAND_NAMES: &[&str] = &[
-    "stage4.registers_read_write.gamma",
-];
+pub const STAGE4_FIELD_EXPR_OPERANDS_0: &[&str] = &["stage4.registers_read_write.gamma"];
 
-pub const STAGE4_FIELD_EXPR_0_OPERANDS: &[&str] = &[
-    "stage4.registers_read_write.gamma",
-];
-
-pub const STAGE4_FIELD_EXPR_1_OPERAND_NAMES: &[&str] = &[
+pub const STAGE4_FIELD_EXPR_OPERANDS_1: &[&str] = &[
     "stage4.registers_read_write.gamma",
     "stage4.input.stage3.registers.Rs1Value",
 ];
 
-pub const STAGE4_FIELD_EXPR_1_OPERANDS: &[&str] = &[
-    "stage4.registers_read_write.gamma",
-    "stage4.input.stage3.registers.Rs1Value",
-];
-
-pub const STAGE4_FIELD_EXPR_2_OPERAND_NAMES: &[&str] = &[
+pub const STAGE4_FIELD_EXPR_OPERANDS_2: &[&str] = &[
     "stage4.registers_read_write.gamma2",
     "stage4.input.stage3.registers.Rs2Value",
 ];
 
-pub const STAGE4_FIELD_EXPR_2_OPERANDS: &[&str] = &[
-    "stage4.registers_read_write.gamma2",
-    "stage4.input.stage3.registers.Rs2Value",
-];
-
-pub const STAGE4_FIELD_EXPR_3_OPERAND_NAMES: &[&str] = &[
+pub const STAGE4_FIELD_EXPR_OPERANDS_3: &[&str] = &[
     "stage4.input.stage3.registers.RdWriteValue",
     "stage4.registers_read_write.term.Rs1Value",
 ];
 
-pub const STAGE4_FIELD_EXPR_3_OPERANDS: &[&str] = &[
-    "stage4.input.stage3.registers.RdWriteValue",
-    "stage4.registers_read_write.term.Rs1Value",
-];
-
-pub const STAGE4_FIELD_EXPR_4_OPERAND_NAMES: &[&str] = &[
+pub const STAGE4_FIELD_EXPR_OPERANDS_4: &[&str] = &[
     "stage4.registers_read_write.partial.RdWriteValueRs1Value",
     "stage4.registers_read_write.term.Rs2Value",
 ];
 
-pub const STAGE4_FIELD_EXPR_4_OPERANDS: &[&str] = &[
-    "stage4.registers_read_write.partial.RdWriteValueRs1Value",
-    "stage4.registers_read_write.term.Rs2Value",
-];
-
-pub const STAGE4_FIELD_EXPR_5_OPERAND_NAMES: &[&str] = &[
+pub const STAGE4_FIELD_EXPR_OPERANDS_5: &[&str] = &[
     "stage4.input.stage2.RamVal",
     "stage4.input.initial_ram.RamValInit",
 ];
 
-pub const STAGE4_FIELD_EXPR_5_OPERANDS: &[&str] = &[
-    "stage4.input.stage2.RamVal",
-    "stage4.input.initial_ram.RamValInit",
-];
-
-pub const STAGE4_FIELD_EXPR_6_OPERAND_NAMES: &[&str] = &[
+pub const STAGE4_FIELD_EXPR_OPERANDS_6: &[&str] = &[
     "stage4.input.stage2.RamValFinal",
     "stage4.input.initial_ram.RamValInit",
 ];
 
-pub const STAGE4_FIELD_EXPR_6_OPERANDS: &[&str] = &[
-    "stage4.input.stage2.RamValFinal",
-    "stage4.input.initial_ram.RamValInit",
-];
-
-pub const STAGE4_FIELD_EXPR_7_OPERAND_NAMES: &[&str] = &[
+pub const STAGE4_FIELD_EXPR_OPERANDS_7: &[&str] = &[
     "stage4.ram_val_check.gamma",
     "stage4.ram_val_check.delta.RamValFinal",
 ];
 
-pub const STAGE4_FIELD_EXPR_7_OPERANDS: &[&str] = &[
-    "stage4.ram_val_check.gamma",
-    "stage4.ram_val_check.delta.RamValFinal",
-];
-
-pub const STAGE4_FIELD_EXPR_8_OPERAND_NAMES: &[&str] = &[
-    "stage4.ram_val_check.delta.RamVal",
-    "stage4.ram_val_check.term.RamValFinal",
-];
-
-pub const STAGE4_FIELD_EXPR_8_OPERANDS: &[&str] = &[
+pub const STAGE4_FIELD_EXPR_OPERANDS_8: &[&str] = &[
     "stage4.ram_val_check.delta.RamVal",
     "stage4.ram_val_check.term.RamValFinal",
 ];
 
 pub const STAGE4_FIELD_EXPRS: &[Stage4FieldExprPlan] = &[
-    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.gamma2", kind: "op", formula: "field.pow:2", operand_names: STAGE4_FIELD_EXPR_0_OPERAND_NAMES, operands: STAGE4_FIELD_EXPR_0_OPERANDS },
-    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.term.Rs1Value", kind: "op", formula: "field.mul", operand_names: STAGE4_FIELD_EXPR_1_OPERAND_NAMES, operands: STAGE4_FIELD_EXPR_1_OPERANDS },
-    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.term.Rs2Value", kind: "op", formula: "field.mul", operand_names: STAGE4_FIELD_EXPR_2_OPERAND_NAMES, operands: STAGE4_FIELD_EXPR_2_OPERANDS },
-    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.partial.RdWriteValueRs1Value", kind: "op", formula: "field.add", operand_names: STAGE4_FIELD_EXPR_3_OPERAND_NAMES, operands: STAGE4_FIELD_EXPR_3_OPERANDS },
-    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.claim_expr", kind: "op", formula: "field.add", operand_names: STAGE4_FIELD_EXPR_4_OPERAND_NAMES, operands: STAGE4_FIELD_EXPR_4_OPERANDS },
-    Stage4FieldExprPlan { symbol: "stage4.ram_val_check.delta.RamVal", kind: "op", formula: "field.sub", operand_names: STAGE4_FIELD_EXPR_5_OPERAND_NAMES, operands: STAGE4_FIELD_EXPR_5_OPERANDS },
-    Stage4FieldExprPlan { symbol: "stage4.ram_val_check.delta.RamValFinal", kind: "op", formula: "field.sub", operand_names: STAGE4_FIELD_EXPR_6_OPERAND_NAMES, operands: STAGE4_FIELD_EXPR_6_OPERANDS },
-    Stage4FieldExprPlan { symbol: "stage4.ram_val_check.term.RamValFinal", kind: "op", formula: "field.mul", operand_names: STAGE4_FIELD_EXPR_7_OPERAND_NAMES, operands: STAGE4_FIELD_EXPR_7_OPERANDS },
-    Stage4FieldExprPlan { symbol: "stage4.ram_val_check.claim_expr", kind: "op", formula: "field.add", operand_names: STAGE4_FIELD_EXPR_8_OPERAND_NAMES, operands: STAGE4_FIELD_EXPR_8_OPERANDS },
+    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.gamma2", kind: "op", formula: "field.pow:2", operand_names: STAGE4_FIELD_EXPR_OPERANDS_0, operands: STAGE4_FIELD_EXPR_OPERANDS_0 },
+    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.term.Rs1Value", kind: "op", formula: "field.mul", operand_names: STAGE4_FIELD_EXPR_OPERANDS_1, operands: STAGE4_FIELD_EXPR_OPERANDS_1 },
+    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.term.Rs2Value", kind: "op", formula: "field.mul", operand_names: STAGE4_FIELD_EXPR_OPERANDS_2, operands: STAGE4_FIELD_EXPR_OPERANDS_2 },
+    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.partial.RdWriteValueRs1Value", kind: "op", formula: "field.add", operand_names: STAGE4_FIELD_EXPR_OPERANDS_3, operands: STAGE4_FIELD_EXPR_OPERANDS_3 },
+    Stage4FieldExprPlan { symbol: "stage4.registers_read_write.claim_expr", kind: "op", formula: "field.add", operand_names: STAGE4_FIELD_EXPR_OPERANDS_4, operands: STAGE4_FIELD_EXPR_OPERANDS_4 },
+    Stage4FieldExprPlan { symbol: "stage4.ram_val_check.delta.RamVal", kind: "op", formula: "field.sub", operand_names: STAGE4_FIELD_EXPR_OPERANDS_5, operands: STAGE4_FIELD_EXPR_OPERANDS_5 },
+    Stage4FieldExprPlan { symbol: "stage4.ram_val_check.delta.RamValFinal", kind: "op", formula: "field.sub", operand_names: STAGE4_FIELD_EXPR_OPERANDS_6, operands: STAGE4_FIELD_EXPR_OPERANDS_6 },
+    Stage4FieldExprPlan { symbol: "stage4.ram_val_check.term.RamValFinal", kind: "op", formula: "field.mul", operand_names: STAGE4_FIELD_EXPR_OPERANDS_7, operands: STAGE4_FIELD_EXPR_OPERANDS_7 },
+    Stage4FieldExprPlan { symbol: "stage4.ram_val_check.claim_expr", kind: "op", formula: "field.add", operand_names: STAGE4_FIELD_EXPR_OPERANDS_8, operands: STAGE4_FIELD_EXPR_OPERANDS_8 },
 ];
 pub const STAGE4_KERNELS: &[Stage4KernelPlan] = &[
     Stage4KernelPlan { symbol: "jolt.cpu.stage4.registers_read_write", relation: "jolt.stage4.registers_read_write", kind: "sumcheck", backend: "cpu", abi: "jolt_stage4_registers_read_write" },

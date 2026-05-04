@@ -80,6 +80,11 @@ jolt-sdk/tests/fib_io_device_bytes.rs
 jolt-sdk/tests/fib_proof_bytes.rs
 jolt-sdk/tests/jolt_verifier_preprocessing_bytes.rs
 
+# Bolt compiler-generated fixture scratch. Intentional golden fixtures should
+# stay checked in outside these generated directories.
+crates/bolt/tests/fixtures/
+crates/bolt/tests/generated/
+
 # transpiler test output
 transpiler/go/groth16_results.json
 transpiler/go/*_crossval_values.json

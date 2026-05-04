@@ -7,24 +7,24 @@
 use std::collections::BTreeMap;
 
 use ark_serialize::CanonicalSerialize;
-use bolt::{
+use bolt::protocols::jolt::{
     build_commitment_protocol, build_stage1_outer_protocol, build_stage2_protocol,
     build_stage3_protocol, build_stage4_protocol, build_stage5_protocol, build_stage6_protocol,
     build_stage7_protocol, build_stage8_protocol, commitment_cpu_program,
-    lower_commitment_to_compute, lower_compute_to_cpu, lower_piop_and_fiat_shamir,
-    lower_stage1_to_compute, lower_stage2_to_compute, lower_stage3_to_compute,
-    lower_stage4_to_compute, lower_stage5_to_compute, lower_stage6_to_compute,
-    lower_stage7_to_compute, lower_stage8_to_compute, project_prover_party, project_verifier_party,
-    resolve_compute_kernels, stage1_cpu_program, stage2_cpu_program, stage3_cpu_program,
-    stage4_cpu_program, stage5_cpu_program, stage6_cpu_program, stage7_cpu_program,
-    stage8_cpu_program, CommitmentCpuProgram, JoltProtocolParams, MeliorContext,
-    OptionalSkipPolicy, OracleGeneration, Role, TranscriptStep,
+    lower_commitment_to_compute, lower_compute_to_cpu, lower_stage1_to_compute,
+    lower_stage2_to_compute, lower_stage3_to_compute, lower_stage4_to_compute,
+    lower_stage5_to_compute, lower_stage6_to_compute, lower_stage7_to_compute,
+    lower_stage8_to_compute, resolve_compute_kernels, stage1_cpu_program, stage2_cpu_program,
+    stage3_cpu_program, stage4_cpu_program, stage5_cpu_program, stage6_cpu_program,
+    stage7_cpu_program, stage8_cpu_program, CommitmentCpuProgram, JoltProtocolParams,
+    OptionalSkipPolicy, OracleGeneration, Stage1CpuProgram as CompilerStage1CpuProgram,
+    Stage2CpuProgram as CompilerStage2CpuProgram, Stage3CpuProgram as CompilerStage3CpuProgram,
+    Stage4CpuProgram as CompilerStage4CpuProgram, Stage5CpuProgram as CompilerStage5CpuProgram,
+    Stage6CpuProgram as CompilerStage6CpuProgram, Stage7CpuProgram as CompilerStage7CpuProgram,
+    Stage8CpuProgram as CompilerStage8CpuProgram, TranscriptStep,
 };
 use bolt::{
-    Stage1CpuProgram as CompilerStage1CpuProgram, Stage2CpuProgram as CompilerStage2CpuProgram,
-    Stage3CpuProgram as CompilerStage3CpuProgram, Stage4CpuProgram as CompilerStage4CpuProgram,
-    Stage5CpuProgram as CompilerStage5CpuProgram, Stage6CpuProgram as CompilerStage6CpuProgram,
-    Stage7CpuProgram as CompilerStage7CpuProgram, Stage8CpuProgram as CompilerStage8CpuProgram,
+    lower_piop_and_fiat_shamir, project_prover_party, project_verifier_party, MeliorContext, Role,
 };
 use common::constants::{RAM_START_ADDRESS, XLEN};
 use common::jolt_device::JoltDevice;
@@ -1383,7 +1383,7 @@ fn bolt_stage3_batched_real_muldiv_self_parity() {
     let mut generated_jolt_transcript =
         CheckpointTranscript::<jolt_transcript::Blake2bTranscript<Fr>>::new(TRANSCRIPT_LABEL);
     append_bolt_preamble(&mut generated_jolt_transcript, &fixture);
-    let generated_jolt_artifacts = jolt_verifier::verify_jolt_with_programs(
+    let generated_jolt_artifacts = jolt_verifier::verify_jolt_prefix_with_programs(
         &generated_jolt_proof,
         jolt_verifier::JoltVerifierInputs {
             stage2_openings: &generated_jolt_stage2_openings,
@@ -1432,7 +1432,7 @@ fn bolt_stage3_batched_real_muldiv_self_parity() {
     let mut generated_jolt_stage6_transcript =
         CheckpointTranscript::<jolt_transcript::Blake2bTranscript<Fr>>::new(TRANSCRIPT_LABEL);
     append_bolt_preamble(&mut generated_jolt_stage6_transcript, &fixture);
-    let generated_jolt_stage6_artifacts = jolt_verifier::verify_jolt_with_programs(
+    let generated_jolt_stage6_artifacts = jolt_verifier::verify_jolt_prefix_with_programs(
         &generated_jolt_proof_with_stage6,
         jolt_verifier::JoltVerifierInputs {
             stage2_openings: &generated_jolt_stage2_openings,
@@ -1475,7 +1475,7 @@ fn bolt_stage3_batched_real_muldiv_self_parity() {
     let mut generated_jolt_stage7_transcript =
         CheckpointTranscript::<jolt_transcript::Blake2bTranscript<Fr>>::new(TRANSCRIPT_LABEL);
     append_bolt_preamble(&mut generated_jolt_stage7_transcript, &fixture);
-    let generated_jolt_stage7_artifacts = jolt_verifier::verify_jolt_with_programs(
+    let generated_jolt_stage7_artifacts = jolt_verifier::verify_jolt_prefix_with_programs(
         &generated_jolt_proof_with_stage7,
         jolt_verifier::JoltVerifierInputs {
             stage2_openings: &generated_jolt_stage2_openings,
@@ -1761,6 +1761,35 @@ fn bolt_stage3_batched_real_muldiv_self_parity() {
         "generated monolithic verifier accepted missing evaluation proof with verifier setup"
     );
 
+    let mut missing_evaluation_and_setup_transcript =
+        CheckpointTranscript::<jolt_transcript::Blake2bTranscript<Fr>>::new(TRANSCRIPT_LABEL);
+    append_bolt_preamble(&mut missing_evaluation_and_setup_transcript, &fixture);
+    let missing_evaluation_and_setup_result = jolt_verifier::verify_jolt_with_programs(
+        &missing_evaluation_proof,
+        jolt_verifier::JoltVerifierInputs {
+            stage2_openings: &generated_jolt_stage2_openings,
+            stage2_ram: Some(&generated_ram_data),
+            stage3_openings: &generated_jolt_stage3_openings,
+            stage4_openings: &generated_jolt_stage4_openings,
+            stage5_openings: &generated_jolt_stage5_openings,
+            stage6_openings: &core_stage6.opening_inputs,
+            stage6_data: Some(&generated_stage6_data),
+            stage7_openings: &core_stage7.opening_inputs,
+            evaluation_setup: None,
+        },
+        generated_stage7_programs,
+        &mut missing_evaluation_and_setup_transcript,
+    );
+    assert!(
+        matches!(
+            missing_evaluation_and_setup_result,
+            Err(jolt_verifier::JoltVerifyError::Evaluation(
+                jolt_verifier::JoltEvaluationProofError::MissingProof
+            ))
+        ),
+        "generated monolithic verifier accepted missing evaluation proof without verifier setup"
+    );
+
     let mut tampered_evaluation_proof = monolithic_proof.clone();
     tampered_evaluation_proof
         .evaluation
@@ -1792,6 +1821,67 @@ fn bolt_stage3_batched_real_muldiv_self_parity() {
             Err(jolt_verifier::JoltVerifyError::Evaluation(_))
         ),
         "generated monolithic verifier accepted a tampered evaluation proof"
+    );
+
+    let verify_monolithic_tamper = |proof: &jolt_verifier::JoltProof| {
+        let mut transcript =
+            CheckpointTranscript::<jolt_transcript::Blake2bTranscript<Fr>>::new(TRANSCRIPT_LABEL);
+        append_bolt_preamble(&mut transcript, &fixture);
+        jolt_verifier::verify_jolt_with_programs(
+            proof,
+            jolt_verifier::JoltVerifierInputs {
+                stage2_openings: &generated_jolt_stage2_openings,
+                stage2_ram: Some(&generated_ram_data),
+                stage3_openings: &generated_jolt_stage3_openings,
+                stage4_openings: &generated_jolt_stage4_openings,
+                stage5_openings: &generated_jolt_stage5_openings,
+                stage6_openings: &core_stage6.opening_inputs,
+                stage6_data: Some(&generated_stage6_data),
+                stage7_openings: &core_stage7.opening_inputs,
+                evaluation_setup: Some(&evaluation_setup),
+            },
+            generated_stage7_programs,
+            &mut transcript,
+        )
+    };
+
+    let mut missing_commitment_proof = monolithic_proof.clone();
+    *missing_commitment_proof
+        .commitments
+        .get_mut(0)
+        .expect("monolithic proof has a main commitment") = None;
+    let missing_commitment_result = verify_monolithic_tamper(&missing_commitment_proof);
+    assert!(
+        matches!(
+            missing_commitment_result,
+            Err(jolt_verifier::JoltVerifyError::Commitment(_))
+        ),
+        "generated monolithic verifier accepted a missing required commitment"
+    );
+
+    let mut missing_stage6_proof = monolithic_proof.clone();
+    missing_stage6_proof.stage6.sumchecks.clear();
+    let missing_stage6_result = verify_monolithic_tamper(&missing_stage6_proof);
+    assert!(
+        matches!(
+            missing_stage6_result,
+            Err(jolt_verifier::JoltVerifyError::Stage6(_))
+        ),
+        "generated monolithic verifier accepted a missing Stage 6 proof"
+    );
+
+    let mut wrong_stage_slot_proof = monolithic_proof.clone();
+    std::mem::swap(
+        &mut wrong_stage_slot_proof.stage6,
+        &mut wrong_stage_slot_proof.stage7,
+    );
+    let wrong_stage_slot_result = verify_monolithic_tamper(&wrong_stage_slot_proof);
+    assert!(
+        matches!(
+            wrong_stage_slot_result,
+            Err(jolt_verifier::JoltVerifyError::Stage6(_))
+        ),
+        "generated monolithic verifier accepted a stage proof in the wrong slot"
     );
 
     let assert_stage3_tamper_rejected = |tampered_stage3_artifacts: Stage3ExecutionArtifacts<
@@ -1893,7 +1983,7 @@ fn bolt_stage3_batched_real_muldiv_self_parity() {
         let mut generated_jolt_tamper_transcript =
             CheckpointTranscript::<jolt_transcript::Blake2bTranscript<Fr>>::new(TRANSCRIPT_LABEL);
         append_bolt_preamble(&mut generated_jolt_tamper_transcript, &fixture);
-        let generated_jolt_tamper_result = jolt_verifier::verify_jolt_with_programs(
+        let generated_jolt_tamper_result = jolt_verifier::verify_jolt_prefix_with_programs(
             &generated_tampered_jolt_proof,
             jolt_verifier::JoltVerifierInputs {
                 stage2_openings: &generated_jolt_stage2_openings,
@@ -2005,7 +2095,7 @@ fn bolt_stage3_batched_real_muldiv_self_parity() {
         let mut generated_jolt_tamper_transcript =
             CheckpointTranscript::<jolt_transcript::Blake2bTranscript<Fr>>::new(TRANSCRIPT_LABEL);
         append_bolt_preamble(&mut generated_jolt_tamper_transcript, &fixture);
-        let generated_jolt_tamper_result = jolt_verifier::verify_jolt_with_programs(
+        let generated_jolt_tamper_result = jolt_verifier::verify_jolt_prefix_with_programs(
             &generated_tampered_jolt_proof,
             jolt_verifier::JoltVerifierInputs {
                 stage2_openings: &generated_jolt_stage2_openings,
@@ -2076,7 +2166,7 @@ fn bolt_stage3_batched_real_muldiv_self_parity() {
                 jolt_transcript::Blake2bTranscript<Fr>,
             >::new(TRANSCRIPT_LABEL);
             append_bolt_preamble(&mut generated_jolt_tamper_transcript, &fixture);
-            let generated_jolt_tamper_result = jolt_verifier::verify_jolt_with_programs(
+            let generated_jolt_tamper_result = jolt_verifier::verify_jolt_prefix_with_programs(
                 &generated_tampered_jolt_proof,
                 jolt_verifier::JoltVerifierInputs {
                     stage2_openings: &generated_jolt_stage2_openings,
@@ -2149,7 +2239,7 @@ fn bolt_stage3_batched_real_muldiv_self_parity() {
                 jolt_transcript::Blake2bTranscript<Fr>,
             >::new(TRANSCRIPT_LABEL);
             append_bolt_preamble(&mut generated_jolt_tamper_transcript, &fixture);
-            let generated_jolt_tamper_result = jolt_verifier::verify_jolt_with_programs(
+            let generated_jolt_tamper_result = jolt_verifier::verify_jolt_prefix_with_programs(
                 &generated_tampered_jolt_proof,
                 jolt_verifier::JoltVerifierInputs {
                     stage2_openings: &generated_jolt_stage2_openings,
@@ -2222,7 +2312,7 @@ fn bolt_stage3_batched_real_muldiv_self_parity() {
                 jolt_transcript::Blake2bTranscript<Fr>,
             >::new(TRANSCRIPT_LABEL);
             append_bolt_preamble(&mut generated_jolt_tamper_transcript, &fixture);
-            let generated_jolt_tamper_result = jolt_verifier::verify_jolt_with_programs(
+            let generated_jolt_tamper_result = jolt_verifier::verify_jolt_prefix_with_programs(
                 &generated_tampered_jolt_proof,
                 jolt_verifier::JoltVerifierInputs {
                     stage2_openings: &generated_jolt_stage2_openings,
@@ -4641,7 +4731,7 @@ fn leak_generated_stage1_verifier_program(
                             .expect("Stage1 verifier claim relation"),
                     ),
                     claim_value: leak_str(&plan.claim_value),
-                    input_openings: leak_str_slice(&plan.input_openings),
+                    input_openings: leak_symbol_list(&plan.input_openings),
                 })
                 .collect(),
         ),
@@ -4655,8 +4745,8 @@ fn leak_generated_stage1_verifier_program(
                     proof_slot: leak_str(&plan.proof_slot),
                     policy: leak_str(&plan.policy),
                     count: plan.count,
-                    ordered_claims: leak_str_slice(&plan.ordered_claims),
-                    claim_operands: leak_str_slice(&plan.claim_operands),
+                    ordered_claims: leak_symbol_list(&plan.ordered_claims),
+                    claim_operands: leak_symbol_list(&plan.claim_operands),
                     claim_label: leak_str(&plan.claim_label),
                     round_label: leak_str(&plan.round_label),
                     round_schedule: leak_usize_slice(&plan.round_schedule),
@@ -4742,8 +4832,8 @@ fn leak_generated_stage1_verifier_program(
                     proof_slot: leak_str(&plan.proof_slot),
                     policy: leak_str(&plan.policy),
                     count: plan.count,
-                    ordered_claims: leak_str_slice(&plan.ordered_claims),
-                    claim_operands: leak_str_slice(&plan.claim_operands),
+                    ordered_claims: leak_symbol_list(&plan.ordered_claims),
+                    claim_operands: leak_symbol_list(&plan.claim_operands),
                 })
                 .collect(),
         ),
@@ -4815,8 +4905,7 @@ fn leak_generated_stage2_verifier_program(
                     symbol: leak_str(&plan.symbol),
                     kind: leak_str(&plan.kind),
                     formula: leak_str(&plan.formula),
-                    operand_names: leak_str_slice(&plan.operand_names),
-                    operands: leak_str_slice(&plan.operands),
+                    operands: leak_symbol_list(&plan.operands),
                 })
                 .collect(),
         ),
@@ -4837,7 +4926,7 @@ fn leak_generated_stage2_verifier_program(
                             .expect("Stage2 verifier claim relation"),
                     ),
                     claim_value: leak_str(&plan.claim_value),
-                    input_openings: leak_str_slice(&plan.input_openings),
+                    input_openings: leak_symbol_list(&plan.input_openings),
                 })
                 .collect(),
         ),
@@ -4851,8 +4940,8 @@ fn leak_generated_stage2_verifier_program(
                     proof_slot: leak_str(&plan.proof_slot),
                     policy: leak_str(&plan.policy),
                     count: plan.count,
-                    ordered_claims: leak_str_slice(&plan.ordered_claims),
-                    claim_operands: leak_str_slice(&plan.claim_operands),
+                    ordered_claims: leak_symbol_list(&plan.ordered_claims),
+                    claim_operands: leak_symbol_list(&plan.claim_operands),
                     claim_label: leak_str(&plan.claim_label),
                     round_label: leak_str(&plan.round_label),
                     round_schedule: leak_usize_slice(&plan.round_schedule),
@@ -4934,7 +5023,7 @@ fn leak_generated_stage2_verifier_program(
                     symbol: leak_str(&plan.symbol),
                     layout: leak_str(&plan.layout),
                     arity: plan.arity,
-                    inputs: leak_str_slice(&plan.inputs),
+                    inputs: leak_symbol_list(&plan.inputs),
                 })
                 .collect(),
         ),
@@ -4963,8 +5052,8 @@ fn leak_generated_stage2_verifier_program(
                     proof_slot: leak_str(&plan.proof_slot),
                     policy: leak_str(&plan.policy),
                     count: plan.count,
-                    ordered_claims: leak_str_slice(&plan.ordered_claims),
-                    claim_operands: leak_str_slice(&plan.claim_operands),
+                    ordered_claims: leak_symbol_list(&plan.ordered_claims),
+                    claim_operands: leak_symbol_list(&plan.claim_operands),
                 })
                 .collect(),
         ),
@@ -5065,8 +5154,7 @@ fn leak_generated_stage2_product_uniskip_verifier_program(
                     symbol: leak_str(&plan.symbol),
                     kind: leak_str(&plan.kind),
                     formula: leak_str(&plan.formula),
-                    operand_names: leak_str_slice(&plan.operand_names),
-                    operands: leak_str_slice(&plan.operands),
+                    operands: leak_symbol_list(&plan.operands),
                 })
                 .collect(),
         ),
@@ -5084,7 +5172,7 @@ fn leak_generated_stage2_product_uniskip_verifier_program(
                     .expect("Stage2 product claim relation"),
             ),
             claim_value: leak_str(&claim.claim_value),
-            input_openings: leak_str_slice(&claim.input_openings),
+            input_openings: leak_symbol_list(&claim.input_openings),
         }]),
         batches: leak_slice(vec![generated_stage2::Stage2SumcheckBatchPlan {
             symbol: leak_str(&batch.symbol),
@@ -5092,8 +5180,8 @@ fn leak_generated_stage2_product_uniskip_verifier_program(
             proof_slot: leak_str(&batch.proof_slot),
             policy: leak_str(&batch.policy),
             count: batch.count,
-            ordered_claims: leak_str_slice(&batch.ordered_claims),
-            claim_operands: leak_str_slice(&batch.claim_operands),
+            ordered_claims: leak_symbol_list(&batch.ordered_claims),
+            claim_operands: leak_symbol_list(&batch.claim_operands),
             claim_label: leak_str(&batch.claim_label),
             round_label: leak_str(&batch.round_label),
             round_schedule: leak_usize_slice(&batch.round_schedule),
@@ -5215,8 +5303,7 @@ fn leak_generated_stage3_verifier_program(
                     symbol: leak_str(&plan.symbol),
                     kind: leak_str(&plan.kind),
                     formula: leak_str(&plan.formula),
-                    operand_names: leak_str_slice(&plan.operand_names),
-                    operands: leak_str_slice(&plan.operands),
+                    operands: leak_symbol_list(&plan.operands),
                 })
                 .collect(),
         ),
@@ -5237,7 +5324,7 @@ fn leak_generated_stage3_verifier_program(
                             .expect("Stage3 verifier claim relation"),
                     ),
                     claim_value: leak_str(&plan.claim_value),
-                    input_openings: leak_str_slice(&plan.input_openings),
+                    input_openings: leak_symbol_list(&plan.input_openings),
                 })
                 .collect(),
         ),
@@ -5251,8 +5338,8 @@ fn leak_generated_stage3_verifier_program(
                     proof_slot: leak_str(&plan.proof_slot),
                     policy: leak_str(&plan.policy),
                     count: plan.count,
-                    ordered_claims: leak_str_slice(&plan.ordered_claims),
-                    claim_operands: leak_str_slice(&plan.claim_operands),
+                    ordered_claims: leak_symbol_list(&plan.ordered_claims),
+                    claim_operands: leak_symbol_list(&plan.claim_operands),
                     claim_label: leak_str(&plan.claim_label),
                     round_label: leak_str(&plan.round_label),
                     round_schedule: leak_usize_slice(&plan.round_schedule),
@@ -5334,7 +5421,7 @@ fn leak_generated_stage3_verifier_program(
                     symbol: leak_str(&plan.symbol),
                     layout: leak_str(&plan.layout),
                     arity: plan.arity,
-                    inputs: leak_str_slice(&plan.inputs),
+                    inputs: leak_symbol_list(&plan.inputs),
                 })
                 .collect(),
         ),
@@ -5375,8 +5462,8 @@ fn leak_generated_stage3_verifier_program(
                     proof_slot: leak_str(&plan.proof_slot),
                     policy: leak_str(&plan.policy),
                     count: plan.count,
-                    ordered_claims: leak_str_slice(&plan.ordered_claims),
-                    claim_operands: leak_str_slice(&plan.claim_operands),
+                    ordered_claims: leak_symbol_list(&plan.ordered_claims),
+                    claim_operands: leak_symbol_list(&plan.claim_operands),
                 })
                 .collect(),
         ),
@@ -5460,8 +5547,7 @@ fn leak_generated_stage4_verifier_program(
                     symbol: leak_str(&plan.symbol),
                     kind: leak_str(&plan.kind),
                     formula: leak_str(&plan.formula),
-                    operand_names: leak_str_slice(&plan.operand_names),
-                    operands: leak_str_slice(&plan.operands),
+                    operands: leak_symbol_list(&plan.operands),
                 })
                 .collect(),
         ),
@@ -5492,7 +5578,7 @@ fn leak_generated_stage4_verifier_program(
                     kernel: plan.kernel.as_deref().map(leak_str),
                     relation: plan.relation.as_deref().map(leak_str),
                     claim_value: leak_str(&plan.claim_value),
-                    input_openings: leak_str_slice(&plan.input_openings),
+                    input_openings: leak_symbol_list(&plan.input_openings),
                 })
                 .collect(),
         ),
@@ -5506,8 +5592,8 @@ fn leak_generated_stage4_verifier_program(
                     proof_slot: leak_str(&plan.proof_slot),
                     policy: leak_str(&plan.policy),
                     count: plan.count,
-                    ordered_claims: leak_str_slice(&plan.ordered_claims),
-                    claim_operands: leak_str_slice(&plan.claim_operands),
+                    ordered_claims: leak_symbol_list(&plan.ordered_claims),
+                    claim_operands: leak_symbol_list(&plan.claim_operands),
                     claim_label: leak_str(&plan.claim_label),
                     round_label: leak_str(&plan.round_label),
                     round_schedule: leak_usize_slice(&plan.round_schedule),
@@ -5586,7 +5672,7 @@ fn leak_generated_stage4_verifier_program(
                     symbol: leak_str(&plan.symbol),
                     layout: leak_str(&plan.layout),
                     arity: plan.arity,
-                    inputs: leak_str_slice(&plan.inputs),
+                    inputs: leak_symbol_list(&plan.inputs),
                 })
                 .collect(),
         ),
@@ -5627,8 +5713,8 @@ fn leak_generated_stage4_verifier_program(
                     proof_slot: leak_str(&plan.proof_slot),
                     policy: leak_str(&plan.policy),
                     count: plan.count,
-                    ordered_claims: leak_str_slice(&plan.ordered_claims),
-                    claim_operands: leak_str_slice(&plan.claim_operands),
+                    ordered_claims: leak_symbol_list(&plan.ordered_claims),
+                    claim_operands: leak_symbol_list(&plan.claim_operands),
                 })
                 .collect(),
         ),
@@ -5712,8 +5798,7 @@ fn leak_generated_stage5_verifier_program(
                     symbol: leak_str(&plan.symbol),
                     kind: leak_str(&plan.kind),
                     formula: leak_str(&plan.formula),
-                    operand_names: leak_str_slice(&plan.operand_names),
-                    operands: leak_str_slice(&plan.operands),
+                    operands: leak_symbol_list(&plan.operands),
                 })
                 .collect(),
         ),
@@ -5744,7 +5829,7 @@ fn leak_generated_stage5_verifier_program(
                     kernel: plan.kernel.as_deref().map(leak_str),
                     relation: plan.relation.as_deref().map(leak_str),
                     claim_value: leak_str(&plan.claim_value),
-                    input_openings: leak_str_slice(&plan.input_openings),
+                    input_openings: leak_symbol_list(&plan.input_openings),
                 })
                 .collect(),
         ),
@@ -5758,8 +5843,8 @@ fn leak_generated_stage5_verifier_program(
                     proof_slot: leak_str(&plan.proof_slot),
                     policy: leak_str(&plan.policy),
                     count: plan.count,
-                    ordered_claims: leak_str_slice(&plan.ordered_claims),
-                    claim_operands: leak_str_slice(&plan.claim_operands),
+                    ordered_claims: leak_symbol_list(&plan.ordered_claims),
+                    claim_operands: leak_symbol_list(&plan.claim_operands),
                     claim_label: leak_str(&plan.claim_label),
                     round_label: leak_str(&plan.round_label),
                     round_schedule: leak_usize_slice(&plan.round_schedule),
@@ -5838,7 +5923,7 @@ fn leak_generated_stage5_verifier_program(
                     symbol: leak_str(&plan.symbol),
                     layout: leak_str(&plan.layout),
                     arity: plan.arity,
-                    inputs: leak_str_slice(&plan.inputs),
+                    inputs: leak_symbol_list(&plan.inputs),
                 })
                 .collect(),
         ),
@@ -5879,8 +5964,8 @@ fn leak_generated_stage5_verifier_program(
                     proof_slot: leak_str(&plan.proof_slot),
                     policy: leak_str(&plan.policy),
                     count: plan.count,
-                    ordered_claims: leak_str_slice(&plan.ordered_claims),
-                    claim_operands: leak_str_slice(&plan.claim_operands),
+                    ordered_claims: leak_symbol_list(&plan.ordered_claims),
+                    claim_operands: leak_symbol_list(&plan.claim_operands),
                 })
                 .collect(),
         ),
@@ -5964,8 +6049,7 @@ fn leak_generated_stage6_verifier_program(
                     symbol: leak_str(&plan.symbol),
                     kind: leak_str(&plan.kind),
                     formula: leak_str(&plan.formula),
-                    operand_names: leak_str_slice(&plan.operand_names),
-                    operands: leak_str_slice(&plan.operands),
+                    operands: leak_symbol_list(&plan.operands),
                 })
                 .collect(),
         ),
@@ -5996,7 +6080,7 @@ fn leak_generated_stage6_verifier_program(
                     kernel: plan.kernel.as_deref().map(leak_str),
                     relation: plan.relation.as_deref().map(leak_str),
                     claim_value: leak_str(&plan.claim_value),
-                    input_openings: leak_str_slice(&plan.input_openings),
+                    input_openings: leak_symbol_list(&plan.input_openings),
                 })
                 .collect(),
         ),
@@ -6010,8 +6094,8 @@ fn leak_generated_stage6_verifier_program(
                     proof_slot: leak_str(&plan.proof_slot),
                     policy: leak_str(&plan.policy),
                     count: plan.count,
-                    ordered_claims: leak_str_slice(&plan.ordered_claims),
-                    claim_operands: leak_str_slice(&plan.claim_operands),
+                    ordered_claims: leak_symbol_list(&plan.ordered_claims),
+                    claim_operands: leak_symbol_list(&plan.claim_operands),
                     claim_label: leak_str(&plan.claim_label),
                     round_label: leak_str(&plan.round_label),
                     round_schedule: leak_usize_slice(&plan.round_schedule),
@@ -6101,7 +6185,7 @@ fn leak_generated_stage6_verifier_program(
                     symbol: leak_str(&plan.symbol),
                     layout: leak_str(&plan.layout),
                     arity: plan.arity,
-                    inputs: leak_str_slice(&plan.inputs),
+                    inputs: leak_symbol_list(&plan.inputs),
                 })
                 .collect(),
         ),
@@ -6142,8 +6226,8 @@ fn leak_generated_stage6_verifier_program(
                     proof_slot: leak_str(&plan.proof_slot),
                     policy: leak_str(&plan.policy),
                     count: plan.count,
-                    ordered_claims: leak_str_slice(&plan.ordered_claims),
-                    claim_operands: leak_str_slice(&plan.claim_operands),
+                    ordered_claims: leak_symbol_list(&plan.ordered_claims),
+                    claim_operands: leak_symbol_list(&plan.claim_operands),
                 })
                 .collect(),
         ),
@@ -6227,8 +6311,7 @@ fn leak_generated_stage7_verifier_program(
                     symbol: leak_str(&plan.symbol),
                     kind: leak_str(&plan.kind),
                     formula: leak_str(&plan.formula),
-                    operand_names: leak_str_slice(&plan.operand_names),
-                    operands: leak_str_slice(&plan.operands),
+                    operands: leak_symbol_list(&plan.operands),
                 })
                 .collect(),
         ),
@@ -6259,7 +6342,7 @@ fn leak_generated_stage7_verifier_program(
                     kernel: plan.kernel.as_deref().map(leak_str),
                     relation: plan.relation.as_deref().map(leak_str),
                     claim_value: leak_str(&plan.claim_value),
-                    input_openings: leak_str_slice(&plan.input_openings),
+                    input_openings: leak_symbol_list(&plan.input_openings),
                 })
                 .collect(),
         ),
@@ -6273,8 +6356,8 @@ fn leak_generated_stage7_verifier_program(
                     proof_slot: leak_str(&plan.proof_slot),
                     policy: leak_str(&plan.policy),
                     count: plan.count,
-                    ordered_claims: leak_str_slice(&plan.ordered_claims),
-                    claim_operands: leak_str_slice(&plan.claim_operands),
+                    ordered_claims: leak_symbol_list(&plan.ordered_claims),
+                    claim_operands: leak_symbol_list(&plan.claim_operands),
                     claim_label: leak_str(&plan.claim_label),
                     round_label: leak_str(&plan.round_label),
                     round_schedule: leak_usize_slice(&plan.round_schedule),
@@ -6364,7 +6447,7 @@ fn leak_generated_stage7_verifier_program(
                     symbol: leak_str(&plan.symbol),
                     layout: leak_str(&plan.layout),
                     arity: plan.arity,
-                    inputs: leak_str_slice(&plan.inputs),
+                    inputs: leak_symbol_list(&plan.inputs),
                 })
                 .collect(),
         ),
@@ -6405,8 +6488,8 @@ fn leak_generated_stage7_verifier_program(
                     proof_slot: leak_str(&plan.proof_slot),
                     policy: leak_str(&plan.policy),
                     count: plan.count,
-                    ordered_claims: leak_str_slice(&plan.ordered_claims),
-                    claim_operands: leak_str_slice(&plan.claim_operands),
+                    ordered_claims: leak_symbol_list(&plan.ordered_claims),
+                    claim_operands: leak_symbol_list(&plan.claim_operands),
                 })
                 .collect(),
         ),
@@ -6582,6 +6665,10 @@ fn leak_str_slice(values: &[String]) -> &'static [&'static str] {
         .map(|value| leak_str(value))
         .collect::<Vec<_>>();
     Box::leak(leaked.into_boxed_slice())
+}
+
+fn leak_symbol_list(values: &[String]) -> &'static str {
+    leak_str(&values.join("|"))
 }
 
 fn leak_usize_slice(values: &[usize]) -> &'static [usize] {

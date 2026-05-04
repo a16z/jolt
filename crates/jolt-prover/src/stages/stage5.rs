@@ -41,113 +41,61 @@ pub const STAGE5_FIELD_CONSTANTS: &[Stage5FieldConstantPlan] = &[
 
 ];
 
-pub const STAGE5_FIELD_EXPR_0_OPERAND_NAMES: &[&str] = &[
-    "stage5.instruction_read_raf.gamma",
-];
+pub const STAGE5_FIELD_EXPR_OPERANDS_0: &[&str] = &["stage5.instruction_read_raf.gamma"];
 
-pub const STAGE5_FIELD_EXPR_0_OPERANDS: &[&str] = &[
-    "stage5.instruction_read_raf.gamma",
-];
-
-pub const STAGE5_FIELD_EXPR_1_OPERAND_NAMES: &[&str] = &[
+pub const STAGE5_FIELD_EXPR_OPERANDS_1: &[&str] = &[
     "stage5.instruction_read_raf.gamma",
     "stage5.input.stage2.instruction.LeftLookupOperand",
 ];
 
-pub const STAGE5_FIELD_EXPR_1_OPERANDS: &[&str] = &[
-    "stage5.instruction_read_raf.gamma",
-    "stage5.input.stage2.instruction.LeftLookupOperand",
-];
-
-pub const STAGE5_FIELD_EXPR_2_OPERAND_NAMES: &[&str] = &[
+pub const STAGE5_FIELD_EXPR_OPERANDS_2: &[&str] = &[
     "stage5.instruction_read_raf.gamma2",
     "stage5.input.stage2.instruction.RightLookupOperand",
 ];
 
-pub const STAGE5_FIELD_EXPR_2_OPERANDS: &[&str] = &[
-    "stage5.instruction_read_raf.gamma2",
-    "stage5.input.stage2.instruction.RightLookupOperand",
-];
-
-pub const STAGE5_FIELD_EXPR_3_OPERAND_NAMES: &[&str] = &[
+pub const STAGE5_FIELD_EXPR_OPERANDS_3: &[&str] = &[
     "stage5.input.stage2.instruction.LookupOutput",
     "stage5.instruction_read_raf.term.LeftLookupOperand",
 ];
 
-pub const STAGE5_FIELD_EXPR_3_OPERANDS: &[&str] = &[
-    "stage5.input.stage2.instruction.LookupOutput",
-    "stage5.instruction_read_raf.term.LeftLookupOperand",
-];
-
-pub const STAGE5_FIELD_EXPR_4_OPERAND_NAMES: &[&str] = &[
+pub const STAGE5_FIELD_EXPR_OPERANDS_4: &[&str] = &[
     "stage5.instruction_read_raf.partial.LookupOutputLeftOperand",
     "stage5.instruction_read_raf.term.RightLookupOperand",
 ];
 
-pub const STAGE5_FIELD_EXPR_4_OPERANDS: &[&str] = &[
-    "stage5.instruction_read_raf.partial.LookupOutputLeftOperand",
-    "stage5.instruction_read_raf.term.RightLookupOperand",
-];
+pub const STAGE5_FIELD_EXPR_OPERANDS_5: &[&str] = &["stage5.ram_ra_claim_reduction.gamma"];
 
-pub const STAGE5_FIELD_EXPR_5_OPERAND_NAMES: &[&str] = &[
-    "stage5.ram_ra_claim_reduction.gamma",
-];
-
-pub const STAGE5_FIELD_EXPR_5_OPERANDS: &[&str] = &[
-    "stage5.ram_ra_claim_reduction.gamma",
-];
-
-pub const STAGE5_FIELD_EXPR_6_OPERAND_NAMES: &[&str] = &[
+pub const STAGE5_FIELD_EXPR_OPERANDS_6: &[&str] = &[
     "stage5.ram_ra_claim_reduction.gamma",
     "stage5.input.stage2.ram_read_write.RamRa",
 ];
 
-pub const STAGE5_FIELD_EXPR_6_OPERANDS: &[&str] = &[
-    "stage5.ram_ra_claim_reduction.gamma",
-    "stage5.input.stage2.ram_read_write.RamRa",
-];
-
-pub const STAGE5_FIELD_EXPR_7_OPERAND_NAMES: &[&str] = &[
+pub const STAGE5_FIELD_EXPR_OPERANDS_7: &[&str] = &[
     "stage5.ram_ra_claim_reduction.gamma2",
     "stage5.input.stage4.ram_val_check.RamRa",
 ];
 
-pub const STAGE5_FIELD_EXPR_7_OPERANDS: &[&str] = &[
-    "stage5.ram_ra_claim_reduction.gamma2",
-    "stage5.input.stage4.ram_val_check.RamRa",
-];
-
-pub const STAGE5_FIELD_EXPR_8_OPERAND_NAMES: &[&str] = &[
+pub const STAGE5_FIELD_EXPR_OPERANDS_8: &[&str] = &[
     "stage5.input.stage2.ram_raf.RamRa",
     "stage5.ram_ra_claim_reduction.term.RamRaReadWrite",
 ];
 
-pub const STAGE5_FIELD_EXPR_8_OPERANDS: &[&str] = &[
-    "stage5.input.stage2.ram_raf.RamRa",
-    "stage5.ram_ra_claim_reduction.term.RamRaReadWrite",
-];
-
-pub const STAGE5_FIELD_EXPR_9_OPERAND_NAMES: &[&str] = &[
-    "stage5.ram_ra_claim_reduction.partial.RafReadWrite",
-    "stage5.ram_ra_claim_reduction.term.RamRaValCheck",
-];
-
-pub const STAGE5_FIELD_EXPR_9_OPERANDS: &[&str] = &[
+pub const STAGE5_FIELD_EXPR_OPERANDS_9: &[&str] = &[
     "stage5.ram_ra_claim_reduction.partial.RafReadWrite",
     "stage5.ram_ra_claim_reduction.term.RamRaValCheck",
 ];
 
 pub const STAGE5_FIELD_EXPRS: &[Stage5FieldExprPlan] = &[
-    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.gamma2", kind: "op", formula: "field.pow:2", operand_names: STAGE5_FIELD_EXPR_0_OPERAND_NAMES, operands: STAGE5_FIELD_EXPR_0_OPERANDS },
-    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.term.LeftLookupOperand", kind: "op", formula: "field.mul", operand_names: STAGE5_FIELD_EXPR_1_OPERAND_NAMES, operands: STAGE5_FIELD_EXPR_1_OPERANDS },
-    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.term.RightLookupOperand", kind: "op", formula: "field.mul", operand_names: STAGE5_FIELD_EXPR_2_OPERAND_NAMES, operands: STAGE5_FIELD_EXPR_2_OPERANDS },
-    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.partial.LookupOutputLeftOperand", kind: "op", formula: "field.add", operand_names: STAGE5_FIELD_EXPR_3_OPERAND_NAMES, operands: STAGE5_FIELD_EXPR_3_OPERANDS },
-    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.claim_expr", kind: "op", formula: "field.add", operand_names: STAGE5_FIELD_EXPR_4_OPERAND_NAMES, operands: STAGE5_FIELD_EXPR_4_OPERANDS },
-    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.gamma2", kind: "op", formula: "field.pow:2", operand_names: STAGE5_FIELD_EXPR_5_OPERAND_NAMES, operands: STAGE5_FIELD_EXPR_5_OPERANDS },
-    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.term.RamRaReadWrite", kind: "op", formula: "field.mul", operand_names: STAGE5_FIELD_EXPR_6_OPERAND_NAMES, operands: STAGE5_FIELD_EXPR_6_OPERANDS },
-    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.term.RamRaValCheck", kind: "op", formula: "field.mul", operand_names: STAGE5_FIELD_EXPR_7_OPERAND_NAMES, operands: STAGE5_FIELD_EXPR_7_OPERANDS },
-    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.partial.RafReadWrite", kind: "op", formula: "field.add", operand_names: STAGE5_FIELD_EXPR_8_OPERAND_NAMES, operands: STAGE5_FIELD_EXPR_8_OPERANDS },
-    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.claim_expr", kind: "op", formula: "field.add", operand_names: STAGE5_FIELD_EXPR_9_OPERAND_NAMES, operands: STAGE5_FIELD_EXPR_9_OPERANDS },
+    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.gamma2", kind: "op", formula: "field.pow:2", operand_names: STAGE5_FIELD_EXPR_OPERANDS_0, operands: STAGE5_FIELD_EXPR_OPERANDS_0 },
+    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.term.LeftLookupOperand", kind: "op", formula: "field.mul", operand_names: STAGE5_FIELD_EXPR_OPERANDS_1, operands: STAGE5_FIELD_EXPR_OPERANDS_1 },
+    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.term.RightLookupOperand", kind: "op", formula: "field.mul", operand_names: STAGE5_FIELD_EXPR_OPERANDS_2, operands: STAGE5_FIELD_EXPR_OPERANDS_2 },
+    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.partial.LookupOutputLeftOperand", kind: "op", formula: "field.add", operand_names: STAGE5_FIELD_EXPR_OPERANDS_3, operands: STAGE5_FIELD_EXPR_OPERANDS_3 },
+    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.claim_expr", kind: "op", formula: "field.add", operand_names: STAGE5_FIELD_EXPR_OPERANDS_4, operands: STAGE5_FIELD_EXPR_OPERANDS_4 },
+    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.gamma2", kind: "op", formula: "field.pow:2", operand_names: STAGE5_FIELD_EXPR_OPERANDS_5, operands: STAGE5_FIELD_EXPR_OPERANDS_5 },
+    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.term.RamRaReadWrite", kind: "op", formula: "field.mul", operand_names: STAGE5_FIELD_EXPR_OPERANDS_6, operands: STAGE5_FIELD_EXPR_OPERANDS_6 },
+    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.term.RamRaValCheck", kind: "op", formula: "field.mul", operand_names: STAGE5_FIELD_EXPR_OPERANDS_7, operands: STAGE5_FIELD_EXPR_OPERANDS_7 },
+    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.partial.RafReadWrite", kind: "op", formula: "field.add", operand_names: STAGE5_FIELD_EXPR_OPERANDS_8, operands: STAGE5_FIELD_EXPR_OPERANDS_8 },
+    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.claim_expr", kind: "op", formula: "field.add", operand_names: STAGE5_FIELD_EXPR_OPERANDS_9, operands: STAGE5_FIELD_EXPR_OPERANDS_9 },
 ];
 pub const STAGE5_KERNELS: &[Stage5KernelPlan] = &[
     Stage5KernelPlan { symbol: "jolt.cpu.stage5.instruction_read_raf", relation: "jolt.stage5.instruction_read_raf", kind: "sumcheck", backend: "cpu", abi: "jolt_stage5_instruction_read_raf" },
@@ -168,9 +116,7 @@ pub const STAGE5_SUMCHECK_CLAIM_1_INPUT_OPENINGS: &[&str] = &[
     "stage5.input.stage4.ram_val_check.RamRa",
 ];
 
-pub const STAGE5_SUMCHECK_CLAIM_2_INPUT_OPENINGS: &[&str] = &[
-    "stage5.input.stage4.registers.RegistersVal",
-];
+pub const STAGE5_SUMCHECK_CLAIM_2_INPUT_OPENINGS: &[&str] = &["stage5.input.stage4.registers.RegistersVal"];
 
 pub const STAGE5_SUMCHECK_CLAIMS: &[Stage5SumcheckClaimPlan] = &[
     Stage5SumcheckClaimPlan { symbol: "stage5.instruction_read_raf.input", stage: "stage5", domain: "jolt.stage5_instruction_read_raf_domain", num_rounds: 144, degree: 10, claim: "stage5.instruction_read_raf.weighted_lookup_values", kernel: Some("jolt.cpu.stage5.instruction_read_raf"), relation: None, claim_value: "stage5.instruction_read_raf.claim_expr", input_openings: STAGE5_SUMCHECK_CLAIM_0_INPUT_OPENINGS },

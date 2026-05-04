@@ -1,168 +1,28 @@
 #![allow(dead_code)]
 
+use super::common::append_labeled_scalar;
 use jolt_field::{Field, Fr};
-use jolt_sumcheck::{CompressedLabeledRoundPoly, LabeledRoundPoly, SumcheckClaim, SumcheckError, SumcheckProof, SumcheckVerifier};
-use jolt_transcript::{Blake2bTranscript, Label, Transcript};
+use jolt_sumcheck::{CompressedLabeledRoundPoly, LabeledRoundPoly, SumcheckClaim, SumcheckError, SumcheckVerifier};
+use jolt_transcript::{Blake2bTranscript, Transcript};
 
 pub type DefaultStage1Transcript = Blake2bTranscript<Fr>;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage1Params {
-    pub field: &'static str,
-    pub pcs: &'static str,
-    pub transcript: &'static str,
-}
+pub type Stage1Params = super::common::StageParams;
+pub type Stage1NamedEval<F> = super::common::StageNamedEval<F>;
+pub type Stage1SumcheckOutput<F> = super::common::StageSumcheckOutput<F>;
+pub type Stage1ChallengeVector<F> = super::common::StageChallengeVector<F>;
+pub type Stage1ExecutionArtifacts<F> = super::common::StageExecutionArtifacts<F>;
+pub type Stage1Proof<F> = super::common::StageProof<F>;
+pub type Stage1VerifierProgramPlan = super::common::VerifierProgramPlanMinimal;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage1SumcheckClaimPlan {
-    pub symbol: &'static str,
-    pub stage: &'static str,
-    pub domain: &'static str,
-    pub num_rounds: usize,
-    pub degree: usize,
-    pub claim: &'static str,
-    pub relation: &'static str,
-    pub claim_value: &'static str,
-    pub input_openings: &'static [&'static str],
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage1SumcheckBatchPlan {
-    pub symbol: &'static str,
-    pub stage: &'static str,
-    pub proof_slot: &'static str,
-    pub policy: &'static str,
-    pub count: usize,
-    pub ordered_claims: &'static [&'static str],
-    pub claim_operands: &'static [&'static str],
-    pub claim_label: &'static str,
-    pub round_label: &'static str,
-    pub round_schedule: &'static [usize],
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage1SumcheckDriverPlan {
-    pub symbol: &'static str,
-    pub stage: &'static str,
-    pub proof_slot: &'static str,
-    pub relation: &'static str,
-    pub batch: &'static str,
-    pub policy: &'static str,
-    pub round_schedule: &'static [usize],
-    pub claim_label: &'static str,
-    pub round_label: &'static str,
-    pub num_rounds: usize,
-    pub degree: usize,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage1SumcheckInstanceResultPlan {
-    pub symbol: &'static str,
-    pub source: &'static str,
-    pub claim: &'static str,
-    pub relation: &'static str,
-    pub index: usize,
-    pub point_arity: usize,
-    pub num_rounds: usize,
-    pub round_offset: usize,
-    pub point_order: &'static str,
-    pub degree: usize,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage1SumcheckEvalPlan {
-    pub symbol: &'static str,
-    pub source: &'static str,
-    pub name: &'static str,
-    pub index: usize,
-    pub oracle: &'static str,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage1OpeningClaimPlan {
-    pub symbol: &'static str,
-    pub oracle: &'static str,
-    pub domain: &'static str,
-    pub point_arity: usize,
-    pub claim_kind: &'static str,
-    pub point_source: &'static str,
-    pub eval_source: &'static str,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage1OpeningBatchPlan {
-    pub symbol: &'static str,
-    pub stage: &'static str,
-    pub proof_slot: &'static str,
-    pub policy: &'static str,
-    pub count: usize,
-    pub ordered_claims: &'static [&'static str],
-    pub claim_operands: &'static [&'static str],
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage1TranscriptSqueezePlan {
-    pub symbol: &'static str,
-    pub label: &'static str,
-    pub kind: &'static str,
-    pub count: usize,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage1VerifierProgramPlan {
-    pub params: Stage1Params,
-    pub transcript_squeezes: &'static [Stage1TranscriptSqueezePlan],
-    pub claims: &'static [Stage1SumcheckClaimPlan],
-    pub batches: &'static [Stage1SumcheckBatchPlan],
-    pub drivers: &'static [Stage1SumcheckDriverPlan],
-    pub instance_results: &'static [Stage1SumcheckInstanceResultPlan],
-    pub evals: &'static [Stage1SumcheckEvalPlan],
-    pub opening_claims: &'static [Stage1OpeningClaimPlan],
-    pub opening_batches: &'static [Stage1OpeningBatchPlan],
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage1NamedEval<F: Field> {
-    pub name: &'static str,
-    pub oracle: &'static str,
-    pub value: F,
-}
-
-#[derive(Clone, Debug)]
-pub struct Stage1SumcheckOutput<F: Field> {
-    pub driver: &'static str,
-    pub point: Vec<F>,
-    pub evals: Vec<Stage1NamedEval<F>>,
-    pub proof: SumcheckProof<F>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage1ChallengeVector<F: Field> {
-    pub symbol: &'static str,
-    pub values: Vec<F>,
-}
-
-#[derive(Clone, Debug)]
-pub struct Stage1ExecutionArtifacts<F: Field> {
-    pub challenge_vectors: Vec<Stage1ChallengeVector<F>>,
-    pub sumchecks: Vec<Stage1SumcheckOutput<F>>,
-    pub opening_batches: Vec<&'static Stage1OpeningBatchPlan>,
-}
-
-impl<F: Field> Default for Stage1ExecutionArtifacts<F> {
-    fn default() -> Self {
-        Self {
-            challenge_vectors: Vec::new(),
-            sumchecks: Vec::new(),
-            opening_batches: Vec::new(),
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct Stage1Proof<F: Field> {
-    pub sumchecks: Vec<Stage1SumcheckOutput<F>>,
-}
+pub use super::common::{
+    OpeningBatchPlan as Stage1OpeningBatchPlan, OpeningClaimPlan as Stage1OpeningClaimPlan,
+    SumcheckBatchPlan as Stage1SumcheckBatchPlan, SumcheckEvalPlan as Stage1SumcheckEvalPlan,
+    SumcheckInstanceResultPlan as Stage1SumcheckInstanceResultPlan,
+    TranscriptSqueezePlan as Stage1TranscriptSqueezePlan,
+    VerifierSumcheckClaimPlan as Stage1SumcheckClaimPlan,
+    VerifierSumcheckDriverPlan as Stage1SumcheckDriverPlan,
+};
 
 #[derive(Debug)]
 pub enum VerifyStage1Error {
@@ -185,36 +45,12 @@ pub const STAGE1_TRANSCRIPT_SQUEEZES: &[Stage1TranscriptSqueezePlan] = &[
     Stage1TranscriptSqueezePlan { symbol: "stage1.tau", label: "outer_tau", kind: "challenge_vector", count: 18 },
 ];
 
-pub const STAGE1_SUMCHECK_CLAIM_0_INPUT_OPENINGS: &[&str] = &[
-
-];
-
-pub const STAGE1_SUMCHECK_CLAIM_1_INPUT_OPENINGS: &[&str] = &[
-    "stage1.uniskip.opening",
-];
-
 pub const STAGE1_SUMCHECK_CLAIMS: &[Stage1SumcheckClaimPlan] = &[
-    Stage1SumcheckClaimPlan { symbol: "stage1.uniskip.input", stage: "stage1", domain: "jolt.stage1_uniskip_domain", num_rounds: 1, degree: 27, claim: "stage1.zero", relation: "jolt.stage1.outer.uniskip", claim_value: "stage1.zero", input_openings: STAGE1_SUMCHECK_CLAIM_0_INPUT_OPENINGS },
-    Stage1SumcheckClaimPlan { symbol: "stage1.outer_remaining.input", stage: "stage1", domain: "jolt.trace_domain", num_rounds: 17, degree: 3, claim: "stage1.uniskip.eval", relation: "jolt.stage1.outer.remaining", claim_value: "stage1.uniskip.eval", input_openings: STAGE1_SUMCHECK_CLAIM_1_INPUT_OPENINGS },
+    Stage1SumcheckClaimPlan { symbol: "stage1.uniskip.input", stage: "stage1", domain: "jolt.stage1_uniskip_domain", num_rounds: 1, degree: 27, claim: "stage1.zero", relation: "jolt.stage1.outer.uniskip", claim_value: "stage1.zero", input_openings: "" },
+    Stage1SumcheckClaimPlan { symbol: "stage1.outer_remaining.input", stage: "stage1", domain: "jolt.trace_domain", num_rounds: 17, degree: 3, claim: "stage1.uniskip.eval", relation: "jolt.stage1.outer.remaining", claim_value: "stage1.uniskip.eval", input_openings: "stage1.uniskip.opening" },
 ];
-pub const STAGE1_SUMCHECK_BATCH_0_ORDERED_CLAIMS: &[&str] = &[
-    "stage1.uniskip.input",
-];
-
-pub const STAGE1_SUMCHECK_BATCH_0_CLAIM_OPERANDS: &[&str] = &[
-    "stage1.uniskip.input",
-];
-
 pub const STAGE1_SUMCHECK_BATCH_0_ROUND_SCHEDULE: &[usize] = &[
     1,
-];
-
-pub const STAGE1_SUMCHECK_BATCH_1_ORDERED_CLAIMS: &[&str] = &[
-    "stage1.outer_remaining.input",
-];
-
-pub const STAGE1_SUMCHECK_BATCH_1_CLAIM_OPERANDS: &[&str] = &[
-    "stage1.outer_remaining.input",
 ];
 
 pub const STAGE1_SUMCHECK_BATCH_1_ROUND_SCHEDULE: &[usize] = &[
@@ -222,8 +58,8 @@ pub const STAGE1_SUMCHECK_BATCH_1_ROUND_SCHEDULE: &[usize] = &[
 ];
 
 pub const STAGE1_SUMCHECK_BATCHES: &[Stage1SumcheckBatchPlan] = &[
-    Stage1SumcheckBatchPlan { symbol: "stage1.uniskip.batch", stage: "stage1", proof_slot: "stage1.uni_skip_first_round", policy: "single_instance", count: 1, ordered_claims: STAGE1_SUMCHECK_BATCH_0_ORDERED_CLAIMS, claim_operands: STAGE1_SUMCHECK_BATCH_0_CLAIM_OPERANDS, claim_label: "uniskip_claim", round_label: "uniskip_poly", round_schedule: STAGE1_SUMCHECK_BATCH_0_ROUND_SCHEDULE },
-    Stage1SumcheckBatchPlan { symbol: "stage1.outer_remaining.batch", stage: "stage1", proof_slot: "stage1.sumcheck", policy: "jolt_core_front_loaded", count: 1, ordered_claims: STAGE1_SUMCHECK_BATCH_1_ORDERED_CLAIMS, claim_operands: STAGE1_SUMCHECK_BATCH_1_CLAIM_OPERANDS, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", round_schedule: STAGE1_SUMCHECK_BATCH_1_ROUND_SCHEDULE },
+    Stage1SumcheckBatchPlan { symbol: "stage1.uniskip.batch", stage: "stage1", proof_slot: "stage1.uni_skip_first_round", policy: "single_instance", count: 1, ordered_claims: "stage1.uniskip.input", claim_operands: "stage1.uniskip.input", claim_label: "uniskip_claim", round_label: "uniskip_poly", round_schedule: STAGE1_SUMCHECK_BATCH_0_ROUND_SCHEDULE },
+    Stage1SumcheckBatchPlan { symbol: "stage1.outer_remaining.batch", stage: "stage1", proof_slot: "stage1.sumcheck", policy: "jolt_core_front_loaded", count: 1, ordered_claims: "stage1.outer_remaining.input", claim_operands: "stage1.outer_remaining.input", claim_label: "sumcheck_claim", round_label: "sumcheck_poly", round_schedule: STAGE1_SUMCHECK_BATCH_1_ROUND_SCHEDULE },
 ];
 pub const STAGE1_SUMCHECK_DRIVER_0_ROUND_SCHEDULE: &[usize] = &[
     1,
@@ -320,84 +156,8 @@ pub const STAGE1_OPENING_CLAIMS: &[Stage1OpeningClaimPlan] = &[
     Stage1OpeningClaimPlan { symbol: "stage1.outer_remaining.opening.OpFlagIsLastInSequence", oracle: "OpFlagIsLastInSequence", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage1.outer_remaining.instance", eval_source: "stage1.outer_remaining.eval.OpFlagIsLastInSequence" },
 ];
 
-pub const STAGE1_OPENING_BATCH_0_ORDERED_CLAIMS: &[&str] = &[
-    "stage1.outer_remaining.opening.LeftInstructionInput",
-    "stage1.outer_remaining.opening.RightInstructionInput",
-    "stage1.outer_remaining.opening.Product",
-    "stage1.outer_remaining.opening.ShouldBranch",
-    "stage1.outer_remaining.opening.PC",
-    "stage1.outer_remaining.opening.UnexpandedPC",
-    "stage1.outer_remaining.opening.Imm",
-    "stage1.outer_remaining.opening.RamAddress",
-    "stage1.outer_remaining.opening.Rs1Value",
-    "stage1.outer_remaining.opening.Rs2Value",
-    "stage1.outer_remaining.opening.RdWriteValue",
-    "stage1.outer_remaining.opening.RamReadValue",
-    "stage1.outer_remaining.opening.RamWriteValue",
-    "stage1.outer_remaining.opening.LeftLookupOperand",
-    "stage1.outer_remaining.opening.RightLookupOperand",
-    "stage1.outer_remaining.opening.NextUnexpandedPC",
-    "stage1.outer_remaining.opening.NextPC",
-    "stage1.outer_remaining.opening.NextIsVirtual",
-    "stage1.outer_remaining.opening.NextIsFirstInSequence",
-    "stage1.outer_remaining.opening.LookupOutput",
-    "stage1.outer_remaining.opening.ShouldJump",
-    "stage1.outer_remaining.opening.OpFlagAddOperands",
-    "stage1.outer_remaining.opening.OpFlagSubtractOperands",
-    "stage1.outer_remaining.opening.OpFlagMultiplyOperands",
-    "stage1.outer_remaining.opening.OpFlagLoad",
-    "stage1.outer_remaining.opening.OpFlagStore",
-    "stage1.outer_remaining.opening.OpFlagJump",
-    "stage1.outer_remaining.opening.OpFlagWriteLookupOutputToRD",
-    "stage1.outer_remaining.opening.OpFlagVirtualInstruction",
-    "stage1.outer_remaining.opening.OpFlagAssert",
-    "stage1.outer_remaining.opening.OpFlagDoNotUpdateUnexpandedPC",
-    "stage1.outer_remaining.opening.OpFlagAdvice",
-    "stage1.outer_remaining.opening.OpFlagIsCompressed",
-    "stage1.outer_remaining.opening.OpFlagIsFirstInSequence",
-    "stage1.outer_remaining.opening.OpFlagIsLastInSequence",
-];
-
-pub const STAGE1_OPENING_BATCH_0_CLAIM_OPERANDS: &[&str] = &[
-    "stage1.outer_remaining.opening.LeftInstructionInput",
-    "stage1.outer_remaining.opening.RightInstructionInput",
-    "stage1.outer_remaining.opening.Product",
-    "stage1.outer_remaining.opening.ShouldBranch",
-    "stage1.outer_remaining.opening.PC",
-    "stage1.outer_remaining.opening.UnexpandedPC",
-    "stage1.outer_remaining.opening.Imm",
-    "stage1.outer_remaining.opening.RamAddress",
-    "stage1.outer_remaining.opening.Rs1Value",
-    "stage1.outer_remaining.opening.Rs2Value",
-    "stage1.outer_remaining.opening.RdWriteValue",
-    "stage1.outer_remaining.opening.RamReadValue",
-    "stage1.outer_remaining.opening.RamWriteValue",
-    "stage1.outer_remaining.opening.LeftLookupOperand",
-    "stage1.outer_remaining.opening.RightLookupOperand",
-    "stage1.outer_remaining.opening.NextUnexpandedPC",
-    "stage1.outer_remaining.opening.NextPC",
-    "stage1.outer_remaining.opening.NextIsVirtual",
-    "stage1.outer_remaining.opening.NextIsFirstInSequence",
-    "stage1.outer_remaining.opening.LookupOutput",
-    "stage1.outer_remaining.opening.ShouldJump",
-    "stage1.outer_remaining.opening.OpFlagAddOperands",
-    "stage1.outer_remaining.opening.OpFlagSubtractOperands",
-    "stage1.outer_remaining.opening.OpFlagMultiplyOperands",
-    "stage1.outer_remaining.opening.OpFlagLoad",
-    "stage1.outer_remaining.opening.OpFlagStore",
-    "stage1.outer_remaining.opening.OpFlagJump",
-    "stage1.outer_remaining.opening.OpFlagWriteLookupOutputToRD",
-    "stage1.outer_remaining.opening.OpFlagVirtualInstruction",
-    "stage1.outer_remaining.opening.OpFlagAssert",
-    "stage1.outer_remaining.opening.OpFlagDoNotUpdateUnexpandedPC",
-    "stage1.outer_remaining.opening.OpFlagAdvice",
-    "stage1.outer_remaining.opening.OpFlagIsCompressed",
-    "stage1.outer_remaining.opening.OpFlagIsFirstInSequence",
-    "stage1.outer_remaining.opening.OpFlagIsLastInSequence",
-];
-
 pub const STAGE1_OPENING_BATCHES: &[Stage1OpeningBatchPlan] = &[
-    Stage1OpeningBatchPlan { symbol: "stage1.outer_remaining.openings", stage: "stage1", proof_slot: "stage1.virtual_openings", policy: "jolt_r1cs_input_order", count: 35, ordered_claims: STAGE1_OPENING_BATCH_0_ORDERED_CLAIMS, claim_operands: STAGE1_OPENING_BATCH_0_CLAIM_OPERANDS },
+    Stage1OpeningBatchPlan { symbol: "stage1.outer_remaining.openings", stage: "stage1", proof_slot: "stage1.virtual_openings", policy: "jolt_r1cs_input_order", count: 35, ordered_claims: "stage1.outer_remaining.opening.LeftInstructionInput|stage1.outer_remaining.opening.RightInstructionInput|stage1.outer_remaining.opening.Product|stage1.outer_remaining.opening.ShouldBranch|stage1.outer_remaining.opening.PC|stage1.outer_remaining.opening.UnexpandedPC|stage1.outer_remaining.opening.Imm|stage1.outer_remaining.opening.RamAddress|stage1.outer_remaining.opening.Rs1Value|stage1.outer_remaining.opening.Rs2Value|stage1.outer_remaining.opening.RdWriteValue|stage1.outer_remaining.opening.RamReadValue|stage1.outer_remaining.opening.RamWriteValue|stage1.outer_remaining.opening.LeftLookupOperand|stage1.outer_remaining.opening.RightLookupOperand|stage1.outer_remaining.opening.NextUnexpandedPC|stage1.outer_remaining.opening.NextPC|stage1.outer_remaining.opening.NextIsVirtual|stage1.outer_remaining.opening.NextIsFirstInSequence|stage1.outer_remaining.opening.LookupOutput|stage1.outer_remaining.opening.ShouldJump|stage1.outer_remaining.opening.OpFlagAddOperands|stage1.outer_remaining.opening.OpFlagSubtractOperands|stage1.outer_remaining.opening.OpFlagMultiplyOperands|stage1.outer_remaining.opening.OpFlagLoad|stage1.outer_remaining.opening.OpFlagStore|stage1.outer_remaining.opening.OpFlagJump|stage1.outer_remaining.opening.OpFlagWriteLookupOutputToRD|stage1.outer_remaining.opening.OpFlagVirtualInstruction|stage1.outer_remaining.opening.OpFlagAssert|stage1.outer_remaining.opening.OpFlagDoNotUpdateUnexpandedPC|stage1.outer_remaining.opening.OpFlagAdvice|stage1.outer_remaining.opening.OpFlagIsCompressed|stage1.outer_remaining.opening.OpFlagIsFirstInSequence|stage1.outer_remaining.opening.OpFlagIsLastInSequence", claim_operands: "stage1.outer_remaining.opening.LeftInstructionInput|stage1.outer_remaining.opening.RightInstructionInput|stage1.outer_remaining.opening.Product|stage1.outer_remaining.opening.ShouldBranch|stage1.outer_remaining.opening.PC|stage1.outer_remaining.opening.UnexpandedPC|stage1.outer_remaining.opening.Imm|stage1.outer_remaining.opening.RamAddress|stage1.outer_remaining.opening.Rs1Value|stage1.outer_remaining.opening.Rs2Value|stage1.outer_remaining.opening.RdWriteValue|stage1.outer_remaining.opening.RamReadValue|stage1.outer_remaining.opening.RamWriteValue|stage1.outer_remaining.opening.LeftLookupOperand|stage1.outer_remaining.opening.RightLookupOperand|stage1.outer_remaining.opening.NextUnexpandedPC|stage1.outer_remaining.opening.NextPC|stage1.outer_remaining.opening.NextIsVirtual|stage1.outer_remaining.opening.NextIsFirstInSequence|stage1.outer_remaining.opening.LookupOutput|stage1.outer_remaining.opening.ShouldJump|stage1.outer_remaining.opening.OpFlagAddOperands|stage1.outer_remaining.opening.OpFlagSubtractOperands|stage1.outer_remaining.opening.OpFlagMultiplyOperands|stage1.outer_remaining.opening.OpFlagLoad|stage1.outer_remaining.opening.OpFlagStore|stage1.outer_remaining.opening.OpFlagJump|stage1.outer_remaining.opening.OpFlagWriteLookupOutputToRD|stage1.outer_remaining.opening.OpFlagVirtualInstruction|stage1.outer_remaining.opening.OpFlagAssert|stage1.outer_remaining.opening.OpFlagDoNotUpdateUnexpandedPC|stage1.outer_remaining.opening.OpFlagAdvice|stage1.outer_remaining.opening.OpFlagIsCompressed|stage1.outer_remaining.opening.OpFlagIsFirstInSequence|stage1.outer_remaining.opening.OpFlagIsLastInSequence" },
 ];
 pub const STAGE1_PROGRAM: Stage1VerifierProgramPlan = Stage1VerifierProgramPlan {
     params: STAGE1_PARAMS,
@@ -633,14 +393,6 @@ fn validate_eval_shape(
         }
     }
     Ok(())
-}
-
-fn append_labeled_scalar<T>(transcript: &mut T, label: &'static str, scalar: &Fr)
-where
-    T: Transcript<Challenge = Fr>,
-{
-    transcript.append(&Label(label.as_bytes()));
-    transcript.append(scalar);
 }
 
 fn append_opening_claims<T>(transcript: &mut T, evals: &[Stage1NamedEval<Fr>])

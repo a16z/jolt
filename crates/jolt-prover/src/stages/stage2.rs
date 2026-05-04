@@ -45,232 +45,120 @@ pub const STAGE2_FIELD_CONSTANTS: &[Stage2FieldConstantPlan] = &[
     Stage2FieldConstantPlan { symbol: "stage2.ram_output.zero", field: "bn254_fr", value: 0 },
 ];
 
-pub const STAGE2_FIELD_EXPR_0_OPERAND_NAMES: &[&str] = &[
-    "stage2.product_virtual.tau_high",
-];
+pub const STAGE2_FIELD_EXPR_OPERANDS_0: &[&str] = &["stage2.product_virtual.tau_high"];
 
-pub const STAGE2_FIELD_EXPR_0_OPERANDS: &[&str] = &[
-    "stage2.product_virtual.tau_high",
-];
-
-pub const STAGE2_FIELD_EXPR_1_OPERAND_NAMES: &[&str] = &[
-    "stage2.product_virtual.tau_high",
-];
-
-pub const STAGE2_FIELD_EXPR_1_OPERANDS: &[&str] = &[
-    "stage2.product_virtual.tau_high",
-];
-
-pub const STAGE2_FIELD_EXPR_2_OPERAND_NAMES: &[&str] = &[
-    "stage2.product_virtual.tau_high",
-];
-
-pub const STAGE2_FIELD_EXPR_2_OPERANDS: &[&str] = &[
-    "stage2.product_virtual.tau_high",
-];
-
-pub const STAGE2_FIELD_EXPR_3_OPERAND_NAMES: &[&str] = &[
+pub const STAGE2_FIELD_EXPR_OPERANDS_1: &[&str] = &[
     "stage2.product_virtual.uniskip.weight.Product",
     "stage2.input.stage1.Product",
 ];
 
-pub const STAGE2_FIELD_EXPR_3_OPERANDS: &[&str] = &[
-    "stage2.product_virtual.uniskip.weight.Product",
-    "stage2.input.stage1.Product",
-];
-
-pub const STAGE2_FIELD_EXPR_4_OPERAND_NAMES: &[&str] = &[
+pub const STAGE2_FIELD_EXPR_OPERANDS_2: &[&str] = &[
     "stage2.product_virtual.uniskip.weight.ShouldBranch",
     "stage2.input.stage1.ShouldBranch",
 ];
 
-pub const STAGE2_FIELD_EXPR_4_OPERANDS: &[&str] = &[
-    "stage2.product_virtual.uniskip.weight.ShouldBranch",
-    "stage2.input.stage1.ShouldBranch",
-];
-
-pub const STAGE2_FIELD_EXPR_5_OPERAND_NAMES: &[&str] = &[
+pub const STAGE2_FIELD_EXPR_OPERANDS_3: &[&str] = &[
     "stage2.product_virtual.uniskip.weight.ShouldJump",
     "stage2.input.stage1.ShouldJump",
 ];
 
-pub const STAGE2_FIELD_EXPR_5_OPERANDS: &[&str] = &[
-    "stage2.product_virtual.uniskip.weight.ShouldJump",
-    "stage2.input.stage1.ShouldJump",
-];
-
-pub const STAGE2_FIELD_EXPR_6_OPERAND_NAMES: &[&str] = &[
+pub const STAGE2_FIELD_EXPR_OPERANDS_4: &[&str] = &[
     "stage2.product_virtual.uniskip.term.Product",
     "stage2.product_virtual.uniskip.term.ShouldBranch",
 ];
 
-pub const STAGE2_FIELD_EXPR_6_OPERANDS: &[&str] = &[
-    "stage2.product_virtual.uniskip.term.Product",
-    "stage2.product_virtual.uniskip.term.ShouldBranch",
-];
-
-pub const STAGE2_FIELD_EXPR_7_OPERAND_NAMES: &[&str] = &[
+pub const STAGE2_FIELD_EXPR_OPERANDS_5: &[&str] = &[
     "stage2.product_virtual.uniskip.partial.ProductShouldBranch",
     "stage2.product_virtual.uniskip.term.ShouldJump",
 ];
 
-pub const STAGE2_FIELD_EXPR_7_OPERANDS: &[&str] = &[
-    "stage2.product_virtual.uniskip.partial.ProductShouldBranch",
-    "stage2.product_virtual.uniskip.term.ShouldJump",
-];
-
-pub const STAGE2_FIELD_EXPR_8_OPERAND_NAMES: &[&str] = &[
+pub const STAGE2_FIELD_EXPR_OPERANDS_6: &[&str] = &[
     "stage2.ram_read_write.gamma",
     "stage2.input.stage1.RamWriteValue",
 ];
 
-pub const STAGE2_FIELD_EXPR_8_OPERANDS: &[&str] = &[
-    "stage2.ram_read_write.gamma",
-    "stage2.input.stage1.RamWriteValue",
-];
-
-pub const STAGE2_FIELD_EXPR_9_OPERAND_NAMES: &[&str] = &[
+pub const STAGE2_FIELD_EXPR_OPERANDS_7: &[&str] = &[
     "stage2.input.stage1.RamReadValue",
     "stage2.ram_read_write.term.RamWriteValue",
 ];
 
-pub const STAGE2_FIELD_EXPR_9_OPERANDS: &[&str] = &[
-    "stage2.input.stage1.RamReadValue",
-    "stage2.ram_read_write.term.RamWriteValue",
-];
-
-pub const STAGE2_FIELD_EXPR_10_OPERAND_NAMES: &[&str] = &[
+pub const STAGE2_FIELD_EXPR_OPERANDS_8: &[&str] = &[
     "stage2.instruction_lookup.gamma",
     "stage2.instruction_lookup.gamma",
 ];
 
-pub const STAGE2_FIELD_EXPR_10_OPERANDS: &[&str] = &[
-    "stage2.instruction_lookup.gamma",
-    "stage2.instruction_lookup.gamma",
-];
-
-pub const STAGE2_FIELD_EXPR_11_OPERAND_NAMES: &[&str] = &[
+pub const STAGE2_FIELD_EXPR_OPERANDS_9: &[&str] = &[
     "stage2.instruction_lookup.gamma2",
     "stage2.instruction_lookup.gamma",
 ];
 
-pub const STAGE2_FIELD_EXPR_11_OPERANDS: &[&str] = &[
-    "stage2.instruction_lookup.gamma2",
-    "stage2.instruction_lookup.gamma",
-];
-
-pub const STAGE2_FIELD_EXPR_12_OPERAND_NAMES: &[&str] = &[
+pub const STAGE2_FIELD_EXPR_OPERANDS_10: &[&str] = &[
     "stage2.instruction_lookup.gamma2",
     "stage2.instruction_lookup.gamma2",
 ];
 
-pub const STAGE2_FIELD_EXPR_12_OPERANDS: &[&str] = &[
-    "stage2.instruction_lookup.gamma2",
-    "stage2.instruction_lookup.gamma2",
-];
-
-pub const STAGE2_FIELD_EXPR_13_OPERAND_NAMES: &[&str] = &[
+pub const STAGE2_FIELD_EXPR_OPERANDS_11: &[&str] = &[
     "stage2.instruction_lookup.gamma",
     "stage2.input.stage1.LeftLookupOperand",
 ];
 
-pub const STAGE2_FIELD_EXPR_13_OPERANDS: &[&str] = &[
-    "stage2.instruction_lookup.gamma",
-    "stage2.input.stage1.LeftLookupOperand",
-];
-
-pub const STAGE2_FIELD_EXPR_14_OPERAND_NAMES: &[&str] = &[
+pub const STAGE2_FIELD_EXPR_OPERANDS_12: &[&str] = &[
     "stage2.instruction_lookup.gamma2",
     "stage2.input.stage1.RightLookupOperand",
 ];
 
-pub const STAGE2_FIELD_EXPR_14_OPERANDS: &[&str] = &[
-    "stage2.instruction_lookup.gamma2",
-    "stage2.input.stage1.RightLookupOperand",
-];
-
-pub const STAGE2_FIELD_EXPR_15_OPERAND_NAMES: &[&str] = &[
+pub const STAGE2_FIELD_EXPR_OPERANDS_13: &[&str] = &[
     "stage2.instruction_lookup.gamma3",
     "stage2.input.stage1.LeftInstructionInput",
 ];
 
-pub const STAGE2_FIELD_EXPR_15_OPERANDS: &[&str] = &[
-    "stage2.instruction_lookup.gamma3",
-    "stage2.input.stage1.LeftInstructionInput",
-];
-
-pub const STAGE2_FIELD_EXPR_16_OPERAND_NAMES: &[&str] = &[
+pub const STAGE2_FIELD_EXPR_OPERANDS_14: &[&str] = &[
     "stage2.instruction_lookup.gamma4",
     "stage2.input.stage1.RightInstructionInput",
 ];
 
-pub const STAGE2_FIELD_EXPR_16_OPERANDS: &[&str] = &[
-    "stage2.instruction_lookup.gamma4",
-    "stage2.input.stage1.RightInstructionInput",
-];
-
-pub const STAGE2_FIELD_EXPR_17_OPERAND_NAMES: &[&str] = &[
+pub const STAGE2_FIELD_EXPR_OPERANDS_15: &[&str] = &[
     "stage2.input.stage1.LookupOutput",
     "stage2.instruction_lookup.term.LeftLookupOperand",
 ];
 
-pub const STAGE2_FIELD_EXPR_17_OPERANDS: &[&str] = &[
-    "stage2.input.stage1.LookupOutput",
-    "stage2.instruction_lookup.term.LeftLookupOperand",
-];
-
-pub const STAGE2_FIELD_EXPR_18_OPERAND_NAMES: &[&str] = &[
+pub const STAGE2_FIELD_EXPR_OPERANDS_16: &[&str] = &[
     "stage2.instruction_lookup.partial.LookupOutputLeftOperand",
     "stage2.instruction_lookup.term.RightLookupOperand",
 ];
 
-pub const STAGE2_FIELD_EXPR_18_OPERANDS: &[&str] = &[
-    "stage2.instruction_lookup.partial.LookupOutputLeftOperand",
-    "stage2.instruction_lookup.term.RightLookupOperand",
-];
-
-pub const STAGE2_FIELD_EXPR_19_OPERAND_NAMES: &[&str] = &[
+pub const STAGE2_FIELD_EXPR_OPERANDS_17: &[&str] = &[
     "stage2.instruction_lookup.partial.RightOperand",
     "stage2.instruction_lookup.term.LeftInstructionInput",
 ];
 
-pub const STAGE2_FIELD_EXPR_19_OPERANDS: &[&str] = &[
-    "stage2.instruction_lookup.partial.RightOperand",
-    "stage2.instruction_lookup.term.LeftInstructionInput",
-];
-
-pub const STAGE2_FIELD_EXPR_20_OPERAND_NAMES: &[&str] = &[
-    "stage2.instruction_lookup.partial.LeftInstructionInput",
-    "stage2.instruction_lookup.term.RightInstructionInput",
-];
-
-pub const STAGE2_FIELD_EXPR_20_OPERANDS: &[&str] = &[
+pub const STAGE2_FIELD_EXPR_OPERANDS_18: &[&str] = &[
     "stage2.instruction_lookup.partial.LeftInstructionInput",
     "stage2.instruction_lookup.term.RightInstructionInput",
 ];
 
 pub const STAGE2_FIELD_EXPRS: &[Stage2FieldExprPlan] = &[
-    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.weight.Product", kind: "op", formula: "poly.lagrange_basis_eval:-1:3:0", operand_names: STAGE2_FIELD_EXPR_0_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_0_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.weight.ShouldBranch", kind: "op", formula: "poly.lagrange_basis_eval:-1:3:1", operand_names: STAGE2_FIELD_EXPR_1_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_1_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.weight.ShouldJump", kind: "op", formula: "poly.lagrange_basis_eval:-1:3:2", operand_names: STAGE2_FIELD_EXPR_2_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_2_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.term.Product", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_3_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_3_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.term.ShouldBranch", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_4_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_4_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.term.ShouldJump", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_5_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_5_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.partial.ProductShouldBranch", kind: "op", formula: "field.add", operand_names: STAGE2_FIELD_EXPR_6_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_6_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.claim_expr", kind: "op", formula: "field.add", operand_names: STAGE2_FIELD_EXPR_7_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_7_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.ram_read_write.term.RamWriteValue", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_8_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_8_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.ram_read_write.claim_expr", kind: "op", formula: "field.add", operand_names: STAGE2_FIELD_EXPR_9_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_9_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.gamma2", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_10_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_10_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.gamma3", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_11_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_11_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.gamma4", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_12_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_12_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.term.LeftLookupOperand", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_13_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_13_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.term.RightLookupOperand", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_14_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_14_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.term.LeftInstructionInput", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_15_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_15_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.term.RightInstructionInput", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_16_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_16_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.partial.LookupOutputLeftOperand", kind: "op", formula: "field.add", operand_names: STAGE2_FIELD_EXPR_17_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_17_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.partial.RightOperand", kind: "op", formula: "field.add", operand_names: STAGE2_FIELD_EXPR_18_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_18_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.partial.LeftInstructionInput", kind: "op", formula: "field.add", operand_names: STAGE2_FIELD_EXPR_19_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_19_OPERANDS },
-    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.claim_reduction.claim_expr", kind: "op", formula: "field.add", operand_names: STAGE2_FIELD_EXPR_20_OPERAND_NAMES, operands: STAGE2_FIELD_EXPR_20_OPERANDS },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.weight.Product", kind: "op", formula: "poly.lagrange_basis_eval:-1:3:0", operand_names: STAGE2_FIELD_EXPR_OPERANDS_0, operands: STAGE2_FIELD_EXPR_OPERANDS_0 },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.weight.ShouldBranch", kind: "op", formula: "poly.lagrange_basis_eval:-1:3:1", operand_names: STAGE2_FIELD_EXPR_OPERANDS_0, operands: STAGE2_FIELD_EXPR_OPERANDS_0 },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.weight.ShouldJump", kind: "op", formula: "poly.lagrange_basis_eval:-1:3:2", operand_names: STAGE2_FIELD_EXPR_OPERANDS_0, operands: STAGE2_FIELD_EXPR_OPERANDS_0 },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.term.Product", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_OPERANDS_1, operands: STAGE2_FIELD_EXPR_OPERANDS_1 },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.term.ShouldBranch", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_OPERANDS_2, operands: STAGE2_FIELD_EXPR_OPERANDS_2 },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.term.ShouldJump", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_OPERANDS_3, operands: STAGE2_FIELD_EXPR_OPERANDS_3 },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.partial.ProductShouldBranch", kind: "op", formula: "field.add", operand_names: STAGE2_FIELD_EXPR_OPERANDS_4, operands: STAGE2_FIELD_EXPR_OPERANDS_4 },
+    Stage2FieldExprPlan { symbol: "stage2.product_virtual.uniskip.claim_expr", kind: "op", formula: "field.add", operand_names: STAGE2_FIELD_EXPR_OPERANDS_5, operands: STAGE2_FIELD_EXPR_OPERANDS_5 },
+    Stage2FieldExprPlan { symbol: "stage2.ram_read_write.term.RamWriteValue", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_OPERANDS_6, operands: STAGE2_FIELD_EXPR_OPERANDS_6 },
+    Stage2FieldExprPlan { symbol: "stage2.ram_read_write.claim_expr", kind: "op", formula: "field.add", operand_names: STAGE2_FIELD_EXPR_OPERANDS_7, operands: STAGE2_FIELD_EXPR_OPERANDS_7 },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.gamma2", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_OPERANDS_8, operands: STAGE2_FIELD_EXPR_OPERANDS_8 },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.gamma3", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_OPERANDS_9, operands: STAGE2_FIELD_EXPR_OPERANDS_9 },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.gamma4", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_OPERANDS_10, operands: STAGE2_FIELD_EXPR_OPERANDS_10 },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.term.LeftLookupOperand", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_OPERANDS_11, operands: STAGE2_FIELD_EXPR_OPERANDS_11 },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.term.RightLookupOperand", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_OPERANDS_12, operands: STAGE2_FIELD_EXPR_OPERANDS_12 },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.term.LeftInstructionInput", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_OPERANDS_13, operands: STAGE2_FIELD_EXPR_OPERANDS_13 },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.term.RightInstructionInput", kind: "op", formula: "field.mul", operand_names: STAGE2_FIELD_EXPR_OPERANDS_14, operands: STAGE2_FIELD_EXPR_OPERANDS_14 },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.partial.LookupOutputLeftOperand", kind: "op", formula: "field.add", operand_names: STAGE2_FIELD_EXPR_OPERANDS_15, operands: STAGE2_FIELD_EXPR_OPERANDS_15 },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.partial.RightOperand", kind: "op", formula: "field.add", operand_names: STAGE2_FIELD_EXPR_OPERANDS_16, operands: STAGE2_FIELD_EXPR_OPERANDS_16 },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.partial.LeftInstructionInput", kind: "op", formula: "field.add", operand_names: STAGE2_FIELD_EXPR_OPERANDS_17, operands: STAGE2_FIELD_EXPR_OPERANDS_17 },
+    Stage2FieldExprPlan { symbol: "stage2.instruction_lookup.claim_reduction.claim_expr", kind: "op", formula: "field.add", operand_names: STAGE2_FIELD_EXPR_OPERANDS_18, operands: STAGE2_FIELD_EXPR_OPERANDS_18 },
 ];
 pub const STAGE2_KERNELS: &[Stage2KernelPlan] = &[
     Stage2KernelPlan { symbol: "jolt.cpu.stage2.product_virtual.uniskip", relation: "jolt.stage2.product_virtual.uniskip", kind: "sumcheck", backend: "cpu", abi: "jolt_stage2_product_virtual_uniskip" },
@@ -293,9 +181,7 @@ pub const STAGE2_SUMCHECK_CLAIM_1_INPUT_OPENINGS: &[&str] = &[
     "stage2.input.stage1.RamWriteValue",
 ];
 
-pub const STAGE2_SUMCHECK_CLAIM_2_INPUT_OPENINGS: &[&str] = &[
-    "stage2.product_virtual.uniskip.opening.UnivariateSkip",
-];
+pub const STAGE2_SUMCHECK_CLAIM_2_INPUT_OPENINGS: &[&str] = &["stage2.product_virtual.uniskip.opening.UnivariateSkip"];
 
 pub const STAGE2_SUMCHECK_CLAIM_3_INPUT_OPENINGS: &[&str] = &[
     "stage2.input.stage1.LookupOutput",
@@ -305,13 +191,9 @@ pub const STAGE2_SUMCHECK_CLAIM_3_INPUT_OPENINGS: &[&str] = &[
     "stage2.input.stage1.RightInstructionInput",
 ];
 
-pub const STAGE2_SUMCHECK_CLAIM_4_INPUT_OPENINGS: &[&str] = &[
-    "stage2.input.stage1.RamAddress",
-];
+pub const STAGE2_SUMCHECK_CLAIM_4_INPUT_OPENINGS: &[&str] = &["stage2.input.stage1.RamAddress"];
 
-pub const STAGE2_SUMCHECK_CLAIM_5_INPUT_OPENINGS: &[&str] = &[
-
-];
+pub const STAGE2_SUMCHECK_CLAIM_5_INPUT_OPENINGS: &[&str] = &[];
 
 pub const STAGE2_SUMCHECK_CLAIMS: &[Stage2SumcheckClaimPlan] = &[
     Stage2SumcheckClaimPlan { symbol: "stage2.product_virtual.uniskip.input", stage: "stage2", domain: "jolt.stage2_uniskip_domain", num_rounds: 1, degree: 6, claim: "stage2.product_virtual.weighted_stage1_outputs", kernel: "jolt.cpu.stage2.product_virtual.uniskip", claim_value: "stage2.product_virtual.uniskip.claim_expr", input_openings: STAGE2_SUMCHECK_CLAIM_0_INPUT_OPENINGS },
@@ -321,13 +203,9 @@ pub const STAGE2_SUMCHECK_CLAIMS: &[Stage2SumcheckClaimPlan] = &[
     Stage2SumcheckClaimPlan { symbol: "stage2.ram_raf.input", stage: "stage2", domain: "jolt.ram_address_domain", num_rounds: 16, degree: 2, claim: "stage2.ram_raf.ram_address", kernel: "jolt.cpu.stage2.ram.raf_evaluation", claim_value: "stage2.input.stage1.RamAddress", input_openings: STAGE2_SUMCHECK_CLAIM_4_INPUT_OPENINGS },
     Stage2SumcheckClaimPlan { symbol: "stage2.ram_output.input", stage: "stage2", domain: "jolt.ram_address_domain", num_rounds: 16, degree: 3, claim: "zero", kernel: "jolt.cpu.stage2.ram.output_check", claim_value: "stage2.ram_output.zero", input_openings: STAGE2_SUMCHECK_CLAIM_5_INPUT_OPENINGS },
 ];
-pub const STAGE2_SUMCHECK_BATCH_0_ORDERED_CLAIMS: &[&str] = &[
-    "stage2.product_virtual.uniskip.input",
-];
+pub const STAGE2_SUMCHECK_BATCH_0_ORDERED_CLAIMS: &[&str] = &["stage2.product_virtual.uniskip.input"];
 
-pub const STAGE2_SUMCHECK_BATCH_0_CLAIM_OPERANDS: &[&str] = &[
-    "stage2.product_virtual.uniskip.input",
-];
+pub const STAGE2_SUMCHECK_BATCH_0_CLAIM_OPERANDS: &[&str] = &["stage2.product_virtual.uniskip.input"];
 
 pub const STAGE2_SUMCHECK_BATCH_0_ROUND_SCHEDULE: &[usize] = &[
     1,

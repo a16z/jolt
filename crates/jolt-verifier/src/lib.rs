@@ -3,10 +3,10 @@ pub mod stages;
 pub mod verifier;
 
 pub use verifier::{
-    default_verifier_programs, verify_jolt, verify_jolt_evaluation_proof,
-    verify_jolt_with_programs, JoltEvaluationProof, JoltEvaluationProofError, JoltNamedEval,
-    JoltProof, JoltStageProof, JoltSumcheckOutput, JoltVerificationArtifacts, JoltVerifierInputs,
-    JoltVerifierPrograms, JoltVerifyError,
+    default_verifier_programs, verify_jolt, verify_jolt_evaluation_proof, verify_jolt_prefix,
+    verify_jolt_prefix_with_programs, verify_jolt_with_programs, JoltEvaluationProof,
+    JoltEvaluationProofError, JoltNamedEval, JoltProof, JoltStageProof, JoltSumcheckOutput,
+    JoltVerificationArtifacts, JoltVerifierInputs, JoltVerifierPrograms, JoltVerifyError,
 };
 
 pub const TRANSCRIPT_LABEL: &[u8] = b"Jolt";

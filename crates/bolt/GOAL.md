@@ -1,159 +1,393 @@
-# Bolt Jolt Goal
+# Bolt Jolt Verifier Goal
 
-Bolt should produce a full Jolt implementation from compiler-owned protocol
-IR. The final checked-in artifacts are generated Rust role crates under
-`crates/jolt-prover` and `crates/jolt-verifier`; they must faithfully match
-`jolt-core` semantics while using the modular primitive crates and preserving
-the MLIR/Bolt boundaries from the paper.
+Bolt's first full-field, non-zk Jolt implementation is semantically complete
+enough to move the active goal from stage bring-up to verifier-pipeline
+hardening. The next long-haul objective is to make the Bolt-generated Jolt
+verifier compact, human-readable, auditable, and security-hardened while
+preserving the existing full-`Fr` Jolt semantics.
 
-## Source Of Truth
+## Objective
 
-- `../bolt/paper.pdf` and `../bolt/mlir/paper-alignment.md`: formal Bolt
-  design and dialect philosophy. Treat these as the oracle for compiler
-  structure, updating implementation details only when Jolt protocol needs
-  force a defensible refinement.
-- `crates/bolt/JOLT_PROTOCOL_IMPLEMENTATION.md`: stage implementation
-  algorithm and acceptance criteria. New work should follow this playbook
-  exactly unless the file is deliberately updated first.
-- `crates/bolt/README.md`: current compiler architecture, dialect boundaries,
-  and generated-artifact shape.
-- `crates/bolt/TESTING.md`: concrete correctness, generated-artifact,
-  equivalence, tamper, and perf gates.
-- `TASKS.md` and `PERF_TASKS.md`: repository-level correctness/performance
-  program counters.
+Refactor the Bolt-generated Jolt verifier pipeline so the generated verifier is
+a small orchestration layer plus declarative verifier plans, backed by reusable
+verifier runtime modules. The compiler should continue to own protocol facts
+through MLIR and typed plan data; generated Rust should not rediscover Jolt
+semantics late through ad hoc string matching or repeated stage-local helper
+code.
 
-## Target Protocol Scope
+Starting baseline:
 
-Implement Jolt on Bolt cumulatively:
+```text
+generated jolt-verifier: ~21.5k LOC
+stage6 + stage7:        ~13.2k LOC
+verifier.rs:              649 LOC
+```
 
-1. Commitment phase.
-2. Stages 1 through 7.
-3. Evaluation proof.
+Current locked cleanup baseline:
 
-Each stage must extend the same end-to-end chain. The prover/verifier artifacts
-should not be isolated examples; after every stage, `crates/jolt-prover` and
-`crates/jolt-verifier` should represent the complete implemented prefix.
+```text
+generated jolt-verifier: 14,092 LOC
+stage6 + stage7:         7,346 LOC
+verifier.rs:               492 LOC
+```
 
-## Compiler Boundaries
+Target:
 
-- Protocol knowledge lives in `crates/bolt/src/protocols/jolt` and MLIR
-  dialects/passes, not in generated Rust control flow.
-- Generic dialects (`protocol`, `piop`, `poly`, `field`, `transcript`,
-  `commit`, `pcs`, `party`, `compute`, `cpu`) must stay generic; Jolt-only
-  names and parameters should not leak into their schemas except as ordinary
-  attributes or SSA values carried by the Jolt protocol definition.
-- Lowering order remains `protocol -> concrete -> party -> compute -> cpu ->
-  Rust`.
-- Rust emission is the final non-MLIR target. Anything before emission is a
-  dialect op, validation pass, analysis, rewrite, or lowering.
-- Prover code may call coarse CPU kernels in `crates/jolt-kernels` while we
-  bootstrap performance. Those kernels are below the dialect boundary and can
-  be refined into smaller compute/cpu ops later.
-- Verifier code must stay audit-stable: no `jolt-kernels`, no `jolt-core`, no
-  equivalence-only imports, and no tracer internals. It should be readable glue
-  over modular audit-scope crates such as `jolt-sumcheck`, `jolt-openings`,
-  `jolt-dory`, `jolt-poly`, `jolt-field`, and `jolt-transcript`.
+```text
+generated verifier surface:        <= 4k-6k LOC
+stretch generated surface:         <= 2k-3k LOC
+verifier.rs orchestration:         <= 350-500 LOC
+stage6 + stage7 generated surface: <= 2k-3k LOC
+shared runtime/helpers:            allowed when generic, named, and reviewed
+```
 
-## Generated Artifacts
+The goal is to reduce the human-facing generated verifier surface by roughly an
+order of magnitude. Shared runtime code may exist, but it must be modular,
+boring to audit, and driven by explicit MLIR-derived plan data.
 
-- `crates/jolt-prover`: canonical generated prover crate for the implemented
-  Jolt prefix. Stage modules live in `src/stages/<stage>.rs`.
-- `crates/jolt-verifier`: canonical generated verifier crate for the same
-  implemented prefix. Stage modules mirror the prover stage names.
-- `bolt::assemble_jolt_workspace_generated_crates` and
-  `bolt::write_jolt_generated_crates` are the compiler rails for materializing
-  these crates under `crates/`.
-- The generated crates expose a stage registry plus top-level `prover.rs` and
-  `verifier.rs` APIs synthesized by the Rust artifact emitter. These files are
-  not hand-maintained.
-- The top-level API generator derives stage fields, proof conversion, executor
-  bounds, verifier inputs, and module wiring from emitted role artifacts and
-  generated Rust item names. Avoid adding hand-coded Jolt-stage branches here.
-- `jolt-verifier` owns `JoltProof` and all verification structure. It must not
-  depend on `jolt-prover`. `jolt-prover` may import verifier-owned proof types
-  to construct a proof, but it must not import verifier stage internals.
-- `crates/jolt-equivalence` and `crates/jolt-bench` should discover the
-  implemented prefix from the generated stage registry rather than temp files
-  or hand-written artifact lists.
-- Regenerate the checked-in crates through the compiler artifact rail with
-  `JOLT_UPDATE_GOLDENS=1 cargo nextest run -p bolt generated_jolt_artifacts_have_uniform_crate_layout_and_import_rules --cargo-quiet`.
+This verifier cleanup is coupled to the generic protocol cleanup in
+`GENERIC_PROTOCOL_GOAL.md`: shrinking the generated verifier should move generic
+mechanics into Bolt IR/typed plans and shared runtime, not into Jolt-specific
+emitter special cases.
 
-## Stage Completion Criteria
+## Locked Genericity Decisions
 
-A stage is done only when all criteria below pass cumulatively through that
-stage boundary on real trace data:
+The next cleanup track should make Jolt a quarantined protocol package over
+generic Bolt compiler infrastructure:
 
-- MLIR schemas pass for protocol, concrete, party, compute, kernelized compute,
-  and CPU IR for both roles.
-- Generated `jolt-prover` and `jolt-verifier` crates compile and expose the
-  full implemented prefix.
-- Bolt prover output is accepted by the Bolt verifier.
-- Bolt prover and verifier transcript states match step-for-step.
-- Bolt proof components can be spliced into the matching `jolt-core` proof
-  prefix and accepted by `jolt-core`.
-- Bolt and `jolt-core` transcript states and observable proof components match
-  through the stage boundary.
-- Generated verifier tamper tests reject representative mutations for every
-  new soundness obligation introduced by the stage.
-- Prover performance for the newly added stage is within 20% of `jolt-core` on
-  the agreed `sha2-chain` workload, with perf gates capped at three timing
-  iterations.
+- Root `bolt::*` exports should be generic-only. Jolt APIs should be imported
+  from `bolt::protocols::jolt::*`.
+- Jolt-specific emitters are not the long-term target. Quarantine them first so
+  leakage is explicit, then progressively lift stage emission into a generic
+  `cpu -> Rust` backend driven by typed MLIR-derived plans.
+- Replace the current Jolt evaluation-proof special case with either a generic
+  protocol extension hook or generic PCS/evaluation IR. Start with the minimal
+  extension hook if that keeps the cleanup mechanical.
+- Add hygiene gates for generic compiler modules, initially targeting
+  `crates/bolt/src/{schema.rs,pass.rs,emit/rust}`. Any temporary Jolt allowlist
+  must be explicit and shrink over time.
+- Namespace and file-layout refactors should preserve generated
+  `jolt-prover`/`jolt-verifier` output byte-for-byte unless the change
+  intentionally updates artifact structure.
+- At the end of each goal-mode slice, report which quarantined Jolt emitters are
+  still genuinely protocol-specific and which are ready to lift into generic
+  typed-plan emission.
 
-Synthetic fixtures are useful while building a stage, but they never satisfy a
-stage completion criterion.
+## Immediate Goal-Mode Slice
 
-## Harnesses
+First objective for another agent:
 
-- `crates/jolt-equivalence`: real-data correctness oracle. It should import
-  `jolt-prover` and `jolt-verifier` and grow one cumulative stage gate per
-  implemented prefix.
-- `crates/jolt-bench`: perf oracle. It should benchmark the same generated
-  prover stage prefix against `jolt-core`, using the generated stage registry
-  rather than hard-coded temp artifacts.
-- `crates/jolt-kernels`: temporary coarse prover kernels. Optimize here for
-  performance parity without moving protocol semantics out of MLIR.
-- `crates/jolt-witness`: primitive witness/oracle construction helpers for
-  generated prover code.
-- `jolt-core`: reference implementation and semantic oracle. It is not a code
-  quality template for Bolt, but it is the ground truth for transcript/proof
-  parity until Bolt is independently audited.
+```text
+Quarantine Jolt-specific artifact APIs out of generic Rust artifact assembly
+while preserving generated output and all current gates.
+```
 
-## Current Position
+Required steps:
 
-Commitment through Stage 7 and the evaluation proof have compiler/codegen rails
-and real-data correctness gates. The generated crates and monolithic generated
-prover/verifier now run on the full-field transcript path
-(`Transcript<Challenge = Fr>`), matching `jolt-core` after core's
-`JoltField::Challenge` was changed to the full field for both `ark_bn254::Fr`
-and `TrackedFr`. The Stage 7 equivalence harness runs Bolt-produced Stage 7
-prover output on real trace data, compares proof artifacts and transcript
-states against `jolt-core`, verifies the proof with the generated standalone and
-monolithic verifier paths, runs the top-level generated prover through Stage 7,
-replays the `jolt-core` proof through the proof-carrying Stage 7 kernel bridge,
-and rejects representative Stage 7 tampering.
+1. Move `JoltProtocolStage`, `jolt_artifact_config`, `jolt_rust_artifact`,
+   `assemble_jolt_*`, `write_jolt_generated_crates`, and
+   `validate_jolt_rust_artifact_imports` out of generic
+   `crates/bolt/src/emit/rust/artifacts.rs` into a Jolt-owned module such as
+   `crates/bolt/src/protocols/jolt/artifacts.rs`.
+2. Keep `ProtocolArtifactConfig`, `ProtocolStage`, `ProtocolRustArtifact`,
+   `GeneratedCrate`, `assemble_generated_crates`, `write_generated_crates`, and
+   `validate_rust_artifact_imports` in the generic artifact layer.
+3. Stop re-exporting Jolt APIs from `crates/bolt/src/lib.rs`; update callers in
+   Bolt tests, `jolt-equivalence`, and `jolt-bench` to import from
+   `bolt::protocols::jolt`.
+4. Add the first genericity hygiene test that rejects new Jolt protocol strings
+   in generic compiler modules, using a small documented allowlist only for
+   migration leftovers.
+5. Run focused generation/import gates and confirm checked-in generated role
+   crates are unchanged unless an intentional artifact-structure change is
+   documented.
 
-The `bolt-stage` selector has correctness-gated timing support through Stage 7.
-Stage 6 remains comfortably perf-green:
-`perf/bolt-stage6-last.json` records core at `2011.115ms`, Bolt at
-`1266.910ms`, and `ratio_vs_core ~= 0.63`. Stage 7 is also perf-green on the
-`sha2-chain` smoke gate at `log_t = 13`: `perf/bolt-stage7-smoke.json` records
-core at `2.551ms`, Bolt at `2.701ms`, `ratio_vs_core ~= 1.06`, and a passing
-`--max-ratio 1.2` gate. Bolt Stage 7 reaches that path by passing compact RA
-index witnesses into the hamming-weight claim-reduction kernel rather than
-materializing the dense one-hot pushforward used during initial bring-up. The
-evaluation proof is now wired into the generated monolithic prover/verifier on
-the full-field transcript path. The monolithic program tables carry the
-compiler-owned Stage 8 evaluation plan, so real-trace plans are used for the
-Dory joint-opening claim order instead of falling back to the checked-in fixture
-`STAGE8_PROGRAM`. The `muldiv` equivalence gate covers generated Stage 8
-acceptance, core acceptance of the Bolt joint opening proof, full Stage 8
-transcript parity, missing-proof/setup rejection, and tampered evaluation proof
-rejection. The `bolt-stage` selector has a `stage8` correctness-gated timing
-path, and Stage 8 is perf-green after optimizing joint-polynomial
-materialization and modular Dory's homomorphic hint/opening routines with the
-same GLV vector operations used by core. The current `muldiv` smoke at
-`log_t = 10` in `perf/bolt-stage8-smoke.json` records core at `152.451ms`,
-Bolt at `162.147ms`, and `ratio_vs_core ~= 1.06`. The documented
-`sha2-chain` three-iteration release gate is also green:
-`perf/bolt-stage8-last.json` records core at `796.183ms`, Bolt at `922.799ms`,
-and `ratio_vs_core ~= 1.16`.
+Acceptance criteria:
+
+```text
+generic artifact assembly has no Jolt stage enum or Jolt artifact config
+root bolt exports are generic-only
+Jolt artifact helpers are namespaced under protocols::jolt
+generated jolt-prover/jolt-verifier are byte-for-byte unchanged, or changes are intentional
+genericity hygiene gate exists
+existing generated-artifact and verifier-boundary gates pass
+```
+
+## Non-Negotiables
+
+- Preserve the current full-field non-zk Jolt protocol path:
+  `Transcript<Challenge = Fr>`.
+- `jolt-verifier` must not depend on `jolt-prover`, `jolt-kernels`,
+  `jolt-core`, `jolt-equivalence`, `jolt-bench`, or tracer internals.
+- Bolt compiler boundaries remain:
+  `protocol -> concrete -> party -> compute -> cpu -> Rust`.
+- Verifier CPU IR must remain kernel-free. Prover kernels are temporary
+  implementation details below the dialect boundary.
+- Jolt semantics should be represented in protocol builders, dialect ops,
+  validators, lowering passes, or typed verifier plans. The Rust emitter should
+  not infer protocol meaning from loose strings when a typed enum, attr, op, or
+  plan field can carry it.
+- Generated verifier files should be mostly declarative:
+
+```rust
+pub const STAGE_PLAN: StagePlan = ...;
+
+pub fn verify_stage(...) -> Result<StageArtifacts, VerifyError> {
+    runtime::verify_stage(&STAGE_PLAN, ...)
+}
+```
+
+## Target Architecture
+
+The final verifier shape should read like this:
+
+```text
+crates/jolt-verifier
+  src/lib.rs
+  src/verifier.rs
+    public API
+    proof shape
+    stage ordering
+    error mapping
+
+  src/stages/
+    commitment.rs
+    stage1_outer.rs
+    stage2.rs
+    ...
+    mostly declarative generated plans
+
+  src/runtime/ or shared verifier crate
+    generic stage verifier
+    generic field expression evaluator
+    generic opening-claim machinery
+    generic sumcheck/eval proof conversion
+    transcript helpers
+    typed relation evaluators
+```
+
+Generated stage files should answer:
+
+```text
+What claims exist?
+What expressions are evaluated?
+What transcript events happen?
+What openings are checked?
+What relations are verified?
+```
+
+Runtime modules should answer:
+
+```text
+How is a field expression plan evaluated?
+How is a stage plan verified?
+How are opening/eval consistency checks performed?
+How are proof records converted into runtime verifier inputs?
+```
+
+## Main Refactor Tracks
+
+1. **Verifier runtime extraction**
+
+   Move duplicated stage-local machinery into one runtime:
+
+   ```text
+   field expression evaluation
+   opening claim lookup and equality checks
+   sumcheck driver verification
+   transcript squeeze/absorb helpers
+   stage proof conversion
+   stage plan execution
+   ```
+
+2. **Shared verifier plan types**
+
+   Replace stage-specific copies such as `Stage6FieldExprPlan` and
+   `Stage7OpeningClaimPlan` with shared plan structs:
+
+   ```text
+   FieldExprPlan
+   OpeningClaimPlan
+   OpeningEqualityPlan
+   SumcheckClaimPlan
+   SumcheckDriverPlan
+   SumcheckEvalPlan
+   StagePlan
+   RelationPlan
+   ```
+
+3. **Compact field expression encoding**
+
+   Stage 6 and Stage 7 are bloated by per-expression constants and operand
+   arrays. Replace those with compact tables or pooled operand slices.
+
+4. **Typed relation dispatch**
+
+   Replace stringly relation handling with typed plan data where practical:
+
+   ```text
+   RelationKind::RamReadWrite
+   RelationKind::InstructionReadRaf
+   RelationKind::BytecodeReadRaf
+   RelationKind::Booleanity
+   RelationKind::HammingBooleanity
+   RelationKind::RegistersReadWrite
+   ...
+   ```
+
+   Any remaining string dispatch must be explicitly allowlisted and covered by
+   schema tests.
+
+5. **Clean top-level verifier API**
+
+   `verifier.rs` should be readable orchestration: proof shape, verifier
+   inputs, verifier programs, stage ordering, evaluation proof handling, and
+   clear error mapping. Repeated per-stage proof conversion should disappear.
+
+## One-Time Hardening Work
+
+Before large readability refactors, add a durable verifier hardening suite.
+The suite should include positive equivalence and negative tamper oracles.
+
+Verifier tamper cases:
+
+```text
+valid generated proof verifies
+core and Bolt verifier accept/reject agree
+tampered sumcheck coefficient rejects
+tampered sumcheck point rejects
+tampered named eval rejects
+tampered commitment rejects
+missing commitment rejects
+missing stage proof rejects
+reordered stage proof rejects
+stage proof in the wrong slot rejects
+wrong transcript state rejects
+wrong evaluation proof rejects
+missing evaluation setup rejects
+missing evaluation proof rejects
+extra/missing opening claims reject
+opening claims in the wrong order reject
+opening equality mismatch rejects
+PCS proof mismatch rejects
+```
+
+MLIR/compiler hardening cases:
+
+```text
+unknown dialects rejected
+prover-only ops rejected in verifier pipeline
+verifier-only ops rejected in prover pipeline
+unthreaded transcript ops rejected
+hidden or reordered opening batch claims rejected
+unsupported equality modes rejected
+duplicate proof slots rejected
+invalid point arity rejected
+invalid round schedule rejected
+invalid relation kind rejected
+verifier CPU IR contains no kernel dispatch
+generated verifier imports no forbidden crates
+```
+
+## Concrete Gates
+
+Readability and LOC gates:
+
+```text
+total generated jolt-verifier LOC trends down
+verifier.rs <= 500 LOC, stretch <= 350
+stage6 + stage7 generated LOC <= 3k-5k, stretch <= 2k-3k
+no duplicate stage-local generic plan structs
+no duplicate stage-local field-expression interpreter
+no duplicate stage-local opening equality interpreter
+no giant per-expression operand constants after compaction
+stage files are mostly declarative plan data
+```
+
+Security and boundary gates:
+
+```text
+jolt-verifier imports are allowlisted
+no jolt-prover dependency from jolt-verifier
+no jolt-kernels dependency from jolt-verifier
+no jolt-core dependency from jolt-verifier
+no prover role ops in verifier MLIR
+no kernel attrs in verifier CPU IR
+all transcript-producing ops thread transcript state
+all opening batches preserve explicit ordered claims
+all relation dispatch is typed or allowlisted
+```
+
+Semantic gates:
+
+```bash
+cargo fmt --check
+cargo check -p bolt -p jolt-verifier -p jolt-prover -p jolt-equivalence --quiet
+cargo test -p bolt --test verifier_cleanup -- --nocapture
+cargo test -p bolt --test commitment_ir --quiet
+cargo test -p jolt-equivalence --test generated_role_crates --quiet
+cargo test -p jolt-equivalence --test bolt_commitment -- --nocapture
+```
+
+Required semantic outcomes:
+
+```text
+core accepts Bolt proof
+Bolt verifier accepts Bolt proof
+core and Bolt transcript state histories match
+core and Bolt observable proof artifacts match
+core and Bolt reject equivalent tampered proofs
+generated prover/verifier crates stay in sync with artifact rail
+```
+
+Perf remains a regression guard, not the center of this task. The existing
+`sha2-chain` e2e/proving Perfetto traces are useful for confirming cleanup does
+not accidentally move prover cost, but the main objective is verifier
+readability, simplicity, and security.
+
+## Iteration Algorithm
+
+Each cleanup loop should follow the same rule:
+
+```text
+1. Measure current LOC, duplication, imports, and typed-vs-string dispatch.
+2. Pick one duplication class or hygiene issue to eliminate.
+3. Move generic logic into runtime only if semantics remain explicit in MLIR or
+   typed plan data.
+4. Regenerate checked-in verifier artifacts through the compiler rail.
+5. Run hardening, equivalence, import, and schema gates.
+6. Keep the change only if readability improves and no oracle weakens.
+```
+
+Use this scoring function when choosing work:
+
+```text
+score =
+  LOC reduction
++ fewer duplicate structs/functions
++ fewer string dispatch sites
++ fewer generated helper bodies
++ stronger negative oracles
++ clearer verifier.rs
+- semantic opacity introduced into runtime
+```
+
+## Definition Of Done
+
+This long-haul cleanup is complete when:
+
+```text
+generated verifier surface is <= 4k-6k LOC
+verifier.rs is <= 500 LOC
+stage files are mostly declarative plans
+generic verifier mechanics live once
+Jolt relation semantics are typed and auditable
+MLIR verifier pathway has malformed-input rejection tests
+tamper suite covers commitments, transcript, stages, openings, evals, and PCS proof
+core/Bolt accept/reject equivalence is preserved
+generated verifier import boundaries are enforced
+```
+
+The desired end state is not merely fewer lines. The verifier should be easy to
+navigate, easy to audit, and hard for the compiler pipeline to accidentally
+weaken.

@@ -6,24 +6,24 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use bolt::{
+use bolt::protocols::jolt::{
     build_commitment_protocol, build_stage1_outer_protocol, build_stage2_protocol,
     build_stage3_protocol, build_stage4_protocol, build_stage5_protocol, build_stage6_protocol,
     build_stage7_protocol, build_stage8_protocol, commitment_cpu_program,
-    lower_commitment_to_compute, lower_compute_to_cpu, lower_piop_and_fiat_shamir,
-    lower_stage1_to_compute, lower_stage2_to_compute, lower_stage3_to_compute,
-    lower_stage4_to_compute, lower_stage5_to_compute, lower_stage6_to_compute,
-    lower_stage7_to_compute, lower_stage8_to_compute, project_prover_party, project_verifier_party,
-    resolve_compute_kernels, stage1_cpu_program, stage2_cpu_program, stage3_cpu_program,
-    stage4_cpu_program, stage5_cpu_program, stage6_cpu_program, stage7_cpu_program,
-    stage8_cpu_program, CommitmentCpuProgram, JoltProtocolParams, MeliorContext,
-    OptionalSkipPolicy, OracleGeneration, OraclePlan, Role, TranscriptStep,
+    lower_commitment_to_compute, lower_compute_to_cpu, lower_stage1_to_compute,
+    lower_stage2_to_compute, lower_stage3_to_compute, lower_stage4_to_compute,
+    lower_stage5_to_compute, lower_stage6_to_compute, lower_stage7_to_compute,
+    lower_stage8_to_compute, resolve_compute_kernels, stage1_cpu_program, stage2_cpu_program,
+    stage3_cpu_program, stage4_cpu_program, stage5_cpu_program, stage6_cpu_program,
+    stage7_cpu_program, stage8_cpu_program, CommitmentCpuProgram, JoltProtocolParams,
+    OptionalSkipPolicy, OracleGeneration, OraclePlan, Stage1CpuProgram as CompilerStage1CpuProgram,
+    Stage2CpuProgram as CompilerStage2CpuProgram, Stage3CpuProgram as CompilerStage3CpuProgram,
+    Stage4CpuProgram as CompilerStage4CpuProgram, Stage5CpuProgram as CompilerStage5CpuProgram,
+    Stage6CpuProgram as CompilerStage6CpuProgram, Stage7CpuProgram as CompilerStage7CpuProgram,
+    Stage8CpuProgram as CompilerStage8CpuProgram, TranscriptStep,
 };
 use bolt::{
-    Stage1CpuProgram as CompilerStage1CpuProgram, Stage2CpuProgram as CompilerStage2CpuProgram,
-    Stage3CpuProgram as CompilerStage3CpuProgram, Stage4CpuProgram as CompilerStage4CpuProgram,
-    Stage5CpuProgram as CompilerStage5CpuProgram, Stage6CpuProgram as CompilerStage6CpuProgram,
-    Stage7CpuProgram as CompilerStage7CpuProgram, Stage8CpuProgram as CompilerStage8CpuProgram,
+    lower_piop_and_fiat_shamir, project_prover_party, project_verifier_party, MeliorContext, Role,
 };
 use clap::Parser;
 use common::constants::{RAM_START_ADDRESS, XLEN};

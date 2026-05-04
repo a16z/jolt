@@ -1,270 +1,37 @@
 #![allow(dead_code)]
 
+use super::common::{batch_claims, eval_by_name, find_batch, find_plan, identity_polynomial_eval, indexed_evals_by_prefix, indexed_evals_by_prefix_any, lt_polynomial_eval, normalize_instruction_read_raf_point, operand_polynomial_eval, reverse_slice, suffix_point};
 use jolt_field::{Field, Fr};
 use jolt_lookup_tables::LookupTableKind;
 use jolt_poly::EqPolynomial;
-use jolt_sumcheck::{CompressedLabeledRoundPoly, SumcheckClaim, SumcheckError, SumcheckProof, SumcheckVerifier};
-use jolt_transcript::{Blake2bTranscript, Label, LabelWithCount, Transcript};
+use jolt_sumcheck::SumcheckError;
+use jolt_transcript::{Blake2bTranscript, LabelWithCount, Transcript};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage5Params {
-    pub field: &'static str,
-    pub pcs: &'static str,
-    pub transcript: &'static str,
-}
+pub type Stage5NamedEval<F> = super::common::StageNamedEval<F>;
+pub type Stage5SumcheckOutput<F> = super::common::StageSumcheckOutput<F>;
+pub type Stage5ChallengeVector<F> = super::common::StageChallengeVector<F>;
+pub type Stage5ExecutionArtifacts<F> = super::common::StageExecutionArtifacts<F>;
+pub type Stage5Proof<F> = super::common::StageProof<F>;
+pub type Stage5OpeningInputValue<F> = super::common::StageOpeningInputValue<F>;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage5KernelPlan {
-    pub symbol: &'static str,
-    pub relation: &'static str,
-    pub kind: &'static str,
-    pub backend: &'static str,
-    pub abi: &'static str,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage5TranscriptSqueezePlan {
-    pub symbol: &'static str,
-    pub label: &'static str,
-    pub kind: &'static str,
-    pub count: usize,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage5TranscriptAbsorbBytesPlan {
-    pub symbol: &'static str,
-    pub label: &'static str,
-    pub payload: &'static str,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage5ProgramStepPlan {
-    pub kind: &'static str,
-    pub symbol: &'static str,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage5OpeningInputPlan {
-    pub symbol: &'static str,
-    pub source_stage: &'static str,
-    pub source_claim: &'static str,
-    pub oracle: &'static str,
-    pub domain: &'static str,
-    pub point_arity: usize,
-    pub claim_kind: &'static str,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage5FieldConstantPlan {
-    pub symbol: &'static str,
-    pub field: &'static str,
-    pub value: usize,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage5FieldExprPlan {
-    pub symbol: &'static str,
-    pub kind: &'static str,
-    pub formula: &'static str,
-    pub operand_names: &'static [&'static str],
-    pub operands: &'static [&'static str],
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage5SumcheckClaimPlan {
-    pub symbol: &'static str,
-    pub stage: &'static str,
-    pub domain: &'static str,
-    pub num_rounds: usize,
-    pub degree: usize,
-    pub claim: &'static str,
-    pub kernel: Option<&'static str>,
-    pub relation: Option<&'static str>,
-    pub claim_value: &'static str,
-    pub input_openings: &'static [&'static str],
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage5SumcheckBatchPlan {
-    pub symbol: &'static str,
-    pub stage: &'static str,
-    pub proof_slot: &'static str,
-    pub policy: &'static str,
-    pub count: usize,
-    pub ordered_claims: &'static [&'static str],
-    pub claim_operands: &'static [&'static str],
-    pub claim_label: &'static str,
-    pub round_label: &'static str,
-    pub round_schedule: &'static [usize],
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage5SumcheckDriverPlan {
-    pub symbol: &'static str,
-    pub stage: &'static str,
-    pub proof_slot: &'static str,
-    pub kernel: Option<&'static str>,
-    pub relation: Option<&'static str>,
-    pub batch: &'static str,
-    pub policy: &'static str,
-    pub round_schedule: &'static [usize],
-    pub claim_label: &'static str,
-    pub round_label: &'static str,
-    pub num_rounds: usize,
-    pub degree: usize,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage5SumcheckInstanceResultPlan {
-    pub symbol: &'static str,
-    pub source: &'static str,
-    pub claim: &'static str,
-    pub relation: &'static str,
-    pub index: usize,
-    pub point_arity: usize,
-    pub num_rounds: usize,
-    pub round_offset: usize,
-    pub point_order: &'static str,
-    pub degree: usize,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage5SumcheckEvalPlan {
-    pub symbol: &'static str,
-    pub source: &'static str,
-    pub name: &'static str,
-    pub index: usize,
-    pub oracle: &'static str,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage5PointSlicePlan {
-    pub symbol: &'static str,
-    pub source: &'static str,
-    pub offset: usize,
-    pub length: usize,
-    pub input: &'static str,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage5PointConcatPlan {
-    pub symbol: &'static str,
-    pub layout: &'static str,
-    pub arity: usize,
-    pub inputs: &'static [&'static str],
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage5OpeningClaimPlan {
-    pub symbol: &'static str,
-    pub oracle: &'static str,
-    pub domain: &'static str,
-    pub point_arity: usize,
-    pub claim_kind: &'static str,
-    pub point_source: &'static str,
-    pub eval_source: &'static str,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage5OpeningClaimEqualityPlan {
-    pub symbol: &'static str,
-    pub mode: &'static str,
-    pub lhs: &'static str,
-    pub rhs: &'static str,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage5OpeningBatchPlan {
-    pub symbol: &'static str,
-    pub stage: &'static str,
-    pub proof_slot: &'static str,
-    pub policy: &'static str,
-    pub count: usize,
-    pub ordered_claims: &'static [&'static str],
-    pub claim_operands: &'static [&'static str],
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage5CpuProgramPlan {
-    pub role: &'static str,
-    pub params: Stage5Params,
-    pub steps: &'static [Stage5ProgramStepPlan],
-    pub transcript_squeezes: &'static [Stage5TranscriptSqueezePlan],
-    pub transcript_absorb_bytes: &'static [Stage5TranscriptAbsorbBytesPlan],
-    pub opening_inputs: &'static [Stage5OpeningInputPlan],
-    pub field_constants: &'static [Stage5FieldConstantPlan],
-    pub field_exprs: &'static [Stage5FieldExprPlan],
-    pub kernels: &'static [Stage5KernelPlan],
-    pub claims: &'static [Stage5SumcheckClaimPlan],
-    pub batches: &'static [Stage5SumcheckBatchPlan],
-    pub drivers: &'static [Stage5SumcheckDriverPlan],
-    pub instance_results: &'static [Stage5SumcheckInstanceResultPlan],
-    pub evals: &'static [Stage5SumcheckEvalPlan],
-    pub point_slices: &'static [Stage5PointSlicePlan],
-    pub point_concats: &'static [Stage5PointConcatPlan],
-    pub opening_claims: &'static [Stage5OpeningClaimPlan],
-    pub opening_equalities: &'static [Stage5OpeningClaimEqualityPlan],
-    pub opening_batches: &'static [Stage5OpeningBatchPlan],
-}
+pub use super::common::{
+    FieldConstantPlan as Stage5FieldConstantPlan, FieldExprPlan as Stage5FieldExprPlan,
+    KernelPlan as Stage5KernelPlan, OpeningBatchPlan as Stage5OpeningBatchPlan,
+    OpeningClaimEqualityPlan as Stage5OpeningClaimEqualityPlan,
+    OpeningClaimPlan as Stage5OpeningClaimPlan, OpeningInputPlan as Stage5OpeningInputPlan,
+    PointConcatPlan as Stage5PointConcatPlan, PointSlicePlan as Stage5PointSlicePlan,
+    ProgramStepPlan as Stage5ProgramStepPlan, StageParams as Stage5Params,
+    StageProgramPlanNoPointZeros as Stage5CpuProgramPlan,
+    SumcheckBatchPlan as Stage5SumcheckBatchPlan,
+    SumcheckClaimPlan as Stage5SumcheckClaimPlan, SumcheckDriverPlan as Stage5SumcheckDriverPlan,
+    SumcheckEvalPlan as Stage5SumcheckEvalPlan,
+    SumcheckInstanceResultPlan as Stage5SumcheckInstanceResultPlan,
+    TranscriptAbsorbBytesPlan as Stage5TranscriptAbsorbBytesPlan,
+    TranscriptSqueezePlan as Stage5TranscriptSqueezePlan,
+};
 
 pub type DefaultStage5Transcript = Blake2bTranscript<Fr>;
 pub type Stage5VerifierProgramPlan = Stage5CpuProgramPlan;
-
-#[derive(Clone, Debug)]
-pub struct Stage5NamedEval<F: Field> {
-    pub name: &'static str,
-    pub oracle: &'static str,
-    pub value: F,
-}
-
-#[derive(Clone, Debug)]
-pub struct Stage5SumcheckOutput<F: Field> {
-    pub driver: &'static str,
-    pub point: Vec<F>,
-    pub evals: Vec<Stage5NamedEval<F>>,
-    pub proof: SumcheckProof<F>,
-}
-
-#[derive(Clone, Debug)]
-pub struct Stage5ChallengeVector<F: Field> {
-    pub symbol: &'static str,
-    pub values: Vec<F>,
-}
-
-#[derive(Clone, Debug)]
-pub struct Stage5ExecutionArtifacts<F: Field> {
-    pub challenge_vectors: Vec<Stage5ChallengeVector<F>>,
-    pub sumchecks: Vec<Stage5SumcheckOutput<F>>,
-    pub opening_batches: Vec<&'static Stage5OpeningBatchPlan>,
-}
-
-impl<F: Field> Default for Stage5ExecutionArtifacts<F> {
-    fn default() -> Self {
-        Self {
-            challenge_vectors: Vec::new(),
-            sumchecks: Vec::new(),
-            opening_batches: Vec::new(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct Stage5Proof<F: Field> {
-    pub sumchecks: Vec<Stage5SumcheckOutput<F>>,
-}
-
-#[derive(Clone, Debug)]
-pub struct Stage5OpeningInputValue<F: Field> {
-    pub symbol: &'static str,
-    pub point: Vec<F>,
-    pub eval: F,
-}
-
-#[derive(Clone, Debug, Default)]
-struct Stage5ValueStore<F: Field> {
-    scalars: Vec<(&'static str, F)>,
-    points: Vec<(&'static str, Vec<F>)>,
-}
 
 #[derive(Debug)]
 pub enum VerifyStage5Error {
@@ -279,6 +46,8 @@ pub enum VerifyStage5Error {
     UnsupportedRelation { relation: &'static str },
     Sumcheck { driver: &'static str, error: SumcheckError<Fr> },
 }
+
+super::common::impl_runtime_plan_error_conversion!(VerifyStage5Error);
 
 pub const STAGE5_PARAMS: Stage5Params = Stage5Params {
     field: "bn254_fr",
@@ -315,158 +84,34 @@ pub const STAGE5_FIELD_CONSTANTS: &[Stage5FieldConstantPlan] = &[
 
 ];
 
-pub const STAGE5_FIELD_EXPR_0_OPERAND_NAMES: &[&str] = &[
-    "stage5.instruction_read_raf.gamma",
-];
-
-pub const STAGE5_FIELD_EXPR_0_OPERANDS: &[&str] = &[
-    "stage5.instruction_read_raf.gamma",
-];
-
-pub const STAGE5_FIELD_EXPR_1_OPERAND_NAMES: &[&str] = &[
-    "stage5.instruction_read_raf.gamma",
-    "stage5.input.stage2.instruction.LeftLookupOperand",
-];
-
-pub const STAGE5_FIELD_EXPR_1_OPERANDS: &[&str] = &[
-    "stage5.instruction_read_raf.gamma",
-    "stage5.input.stage2.instruction.LeftLookupOperand",
-];
-
-pub const STAGE5_FIELD_EXPR_2_OPERAND_NAMES: &[&str] = &[
-    "stage5.instruction_read_raf.gamma2",
-    "stage5.input.stage2.instruction.RightLookupOperand",
-];
-
-pub const STAGE5_FIELD_EXPR_2_OPERANDS: &[&str] = &[
-    "stage5.instruction_read_raf.gamma2",
-    "stage5.input.stage2.instruction.RightLookupOperand",
-];
-
-pub const STAGE5_FIELD_EXPR_3_OPERAND_NAMES: &[&str] = &[
-    "stage5.input.stage2.instruction.LookupOutput",
-    "stage5.instruction_read_raf.term.LeftLookupOperand",
-];
-
-pub const STAGE5_FIELD_EXPR_3_OPERANDS: &[&str] = &[
-    "stage5.input.stage2.instruction.LookupOutput",
-    "stage5.instruction_read_raf.term.LeftLookupOperand",
-];
-
-pub const STAGE5_FIELD_EXPR_4_OPERAND_NAMES: &[&str] = &[
-    "stage5.instruction_read_raf.partial.LookupOutputLeftOperand",
-    "stage5.instruction_read_raf.term.RightLookupOperand",
-];
-
-pub const STAGE5_FIELD_EXPR_4_OPERANDS: &[&str] = &[
-    "stage5.instruction_read_raf.partial.LookupOutputLeftOperand",
-    "stage5.instruction_read_raf.term.RightLookupOperand",
-];
-
-pub const STAGE5_FIELD_EXPR_5_OPERAND_NAMES: &[&str] = &[
-    "stage5.ram_ra_claim_reduction.gamma",
-];
-
-pub const STAGE5_FIELD_EXPR_5_OPERANDS: &[&str] = &[
-    "stage5.ram_ra_claim_reduction.gamma",
-];
-
-pub const STAGE5_FIELD_EXPR_6_OPERAND_NAMES: &[&str] = &[
-    "stage5.ram_ra_claim_reduction.gamma",
-    "stage5.input.stage2.ram_read_write.RamRa",
-];
-
-pub const STAGE5_FIELD_EXPR_6_OPERANDS: &[&str] = &[
-    "stage5.ram_ra_claim_reduction.gamma",
-    "stage5.input.stage2.ram_read_write.RamRa",
-];
-
-pub const STAGE5_FIELD_EXPR_7_OPERAND_NAMES: &[&str] = &[
-    "stage5.ram_ra_claim_reduction.gamma2",
-    "stage5.input.stage4.ram_val_check.RamRa",
-];
-
-pub const STAGE5_FIELD_EXPR_7_OPERANDS: &[&str] = &[
-    "stage5.ram_ra_claim_reduction.gamma2",
-    "stage5.input.stage4.ram_val_check.RamRa",
-];
-
-pub const STAGE5_FIELD_EXPR_8_OPERAND_NAMES: &[&str] = &[
-    "stage5.input.stage2.ram_raf.RamRa",
-    "stage5.ram_ra_claim_reduction.term.RamRaReadWrite",
-];
-
-pub const STAGE5_FIELD_EXPR_8_OPERANDS: &[&str] = &[
-    "stage5.input.stage2.ram_raf.RamRa",
-    "stage5.ram_ra_claim_reduction.term.RamRaReadWrite",
-];
-
-pub const STAGE5_FIELD_EXPR_9_OPERAND_NAMES: &[&str] = &[
-    "stage5.ram_ra_claim_reduction.partial.RafReadWrite",
-    "stage5.ram_ra_claim_reduction.term.RamRaValCheck",
-];
-
-pub const STAGE5_FIELD_EXPR_9_OPERANDS: &[&str] = &[
-    "stage5.ram_ra_claim_reduction.partial.RafReadWrite",
-    "stage5.ram_ra_claim_reduction.term.RamRaValCheck",
-];
-
 pub const STAGE5_FIELD_EXPRS: &[Stage5FieldExprPlan] = &[
-    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.gamma2", kind: "op", formula: "field.pow:2", operand_names: STAGE5_FIELD_EXPR_0_OPERAND_NAMES, operands: STAGE5_FIELD_EXPR_0_OPERANDS },
-    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.term.LeftLookupOperand", kind: "op", formula: "field.mul", operand_names: STAGE5_FIELD_EXPR_1_OPERAND_NAMES, operands: STAGE5_FIELD_EXPR_1_OPERANDS },
-    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.term.RightLookupOperand", kind: "op", formula: "field.mul", operand_names: STAGE5_FIELD_EXPR_2_OPERAND_NAMES, operands: STAGE5_FIELD_EXPR_2_OPERANDS },
-    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.partial.LookupOutputLeftOperand", kind: "op", formula: "field.add", operand_names: STAGE5_FIELD_EXPR_3_OPERAND_NAMES, operands: STAGE5_FIELD_EXPR_3_OPERANDS },
-    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.claim_expr", kind: "op", formula: "field.add", operand_names: STAGE5_FIELD_EXPR_4_OPERAND_NAMES, operands: STAGE5_FIELD_EXPR_4_OPERANDS },
-    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.gamma2", kind: "op", formula: "field.pow:2", operand_names: STAGE5_FIELD_EXPR_5_OPERAND_NAMES, operands: STAGE5_FIELD_EXPR_5_OPERANDS },
-    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.term.RamRaReadWrite", kind: "op", formula: "field.mul", operand_names: STAGE5_FIELD_EXPR_6_OPERAND_NAMES, operands: STAGE5_FIELD_EXPR_6_OPERANDS },
-    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.term.RamRaValCheck", kind: "op", formula: "field.mul", operand_names: STAGE5_FIELD_EXPR_7_OPERAND_NAMES, operands: STAGE5_FIELD_EXPR_7_OPERANDS },
-    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.partial.RafReadWrite", kind: "op", formula: "field.add", operand_names: STAGE5_FIELD_EXPR_8_OPERAND_NAMES, operands: STAGE5_FIELD_EXPR_8_OPERANDS },
-    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.claim_expr", kind: "op", formula: "field.add", operand_names: STAGE5_FIELD_EXPR_9_OPERAND_NAMES, operands: STAGE5_FIELD_EXPR_9_OPERANDS },
+    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.gamma2", kind: "op", formula: "field.pow:2", operands: "stage5.instruction_read_raf.gamma" },
+    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.term.LeftLookupOperand", kind: "op", formula: "field.mul", operands: "stage5.instruction_read_raf.gamma|stage5.input.stage2.instruction.LeftLookupOperand" },
+    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.term.RightLookupOperand", kind: "op", formula: "field.mul", operands: "stage5.instruction_read_raf.gamma2|stage5.input.stage2.instruction.RightLookupOperand" },
+    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.partial.LookupOutputLeftOperand", kind: "op", formula: "field.add", operands: "stage5.input.stage2.instruction.LookupOutput|stage5.instruction_read_raf.term.LeftLookupOperand" },
+    Stage5FieldExprPlan { symbol: "stage5.instruction_read_raf.claim_expr", kind: "op", formula: "field.add", operands: "stage5.instruction_read_raf.partial.LookupOutputLeftOperand|stage5.instruction_read_raf.term.RightLookupOperand" },
+    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.gamma2", kind: "op", formula: "field.pow:2", operands: "stage5.ram_ra_claim_reduction.gamma" },
+    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.term.RamRaReadWrite", kind: "op", formula: "field.mul", operands: "stage5.ram_ra_claim_reduction.gamma|stage5.input.stage2.ram_read_write.RamRa" },
+    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.term.RamRaValCheck", kind: "op", formula: "field.mul", operands: "stage5.ram_ra_claim_reduction.gamma2|stage5.input.stage4.ram_val_check.RamRa" },
+    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.partial.RafReadWrite", kind: "op", formula: "field.add", operands: "stage5.input.stage2.ram_raf.RamRa|stage5.ram_ra_claim_reduction.term.RamRaReadWrite" },
+    Stage5FieldExprPlan { symbol: "stage5.ram_ra_claim_reduction.claim_expr", kind: "op", formula: "field.add", operands: "stage5.ram_ra_claim_reduction.partial.RafReadWrite|stage5.ram_ra_claim_reduction.term.RamRaValCheck" },
 ];
 pub const STAGE5_KERNELS: &[Stage5KernelPlan] = &[
 
 ];
 
-pub const STAGE5_SUMCHECK_CLAIM_0_INPUT_OPENINGS: &[&str] = &[
-    "stage5.input.stage2.instruction.LookupOutput",
-    "stage5.input.stage2.instruction.LeftLookupOperand",
-    "stage5.input.stage2.instruction.RightLookupOperand",
-];
-
-pub const STAGE5_SUMCHECK_CLAIM_1_INPUT_OPENINGS: &[&str] = &[
-    "stage5.input.stage2.ram_raf.RamRa",
-    "stage5.input.stage2.ram_read_write.RamRa",
-    "stage5.input.stage4.ram_val_check.RamRa",
-];
-
-pub const STAGE5_SUMCHECK_CLAIM_2_INPUT_OPENINGS: &[&str] = &[
-    "stage5.input.stage4.registers.RegistersVal",
-];
-
 pub const STAGE5_SUMCHECK_CLAIMS: &[Stage5SumcheckClaimPlan] = &[
-    Stage5SumcheckClaimPlan { symbol: "stage5.instruction_read_raf.input", stage: "stage5", domain: "jolt.stage5_instruction_read_raf_domain", num_rounds: 144, degree: 10, claim: "stage5.instruction_read_raf.weighted_lookup_values", kernel: None, relation: Some("jolt.stage5.instruction_read_raf"), claim_value: "stage5.instruction_read_raf.claim_expr", input_openings: STAGE5_SUMCHECK_CLAIM_0_INPUT_OPENINGS },
-    Stage5SumcheckClaimPlan { symbol: "stage5.ram_ra_claim_reduction.input", stage: "stage5", domain: "jolt.trace_domain", num_rounds: 16, degree: 2, claim: "stage5.ram_ra_claim_reduction.weighted_ram_ra", kernel: None, relation: Some("jolt.stage5.ram_ra_claim_reduction"), claim_value: "stage5.ram_ra_claim_reduction.claim_expr", input_openings: STAGE5_SUMCHECK_CLAIM_1_INPUT_OPENINGS },
-    Stage5SumcheckClaimPlan { symbol: "stage5.registers_val_evaluation.input", stage: "stage5", domain: "jolt.trace_domain", num_rounds: 16, degree: 3, claim: "stage5.registers_val_evaluation.registers_val", kernel: None, relation: Some("jolt.stage5.registers_val_evaluation"), claim_value: "stage5.input.stage4.registers.RegistersVal", input_openings: STAGE5_SUMCHECK_CLAIM_2_INPUT_OPENINGS },
+    Stage5SumcheckClaimPlan { symbol: "stage5.instruction_read_raf.input", stage: "stage5", domain: "jolt.stage5_instruction_read_raf_domain", num_rounds: 144, degree: 10, claim: "stage5.instruction_read_raf.weighted_lookup_values", kernel: None, relation: Some("jolt.stage5.instruction_read_raf"), claim_value: "stage5.instruction_read_raf.claim_expr", input_openings: "stage5.input.stage2.instruction.LookupOutput|stage5.input.stage2.instruction.LeftLookupOperand|stage5.input.stage2.instruction.RightLookupOperand" },
+    Stage5SumcheckClaimPlan { symbol: "stage5.ram_ra_claim_reduction.input", stage: "stage5", domain: "jolt.trace_domain", num_rounds: 16, degree: 2, claim: "stage5.ram_ra_claim_reduction.weighted_ram_ra", kernel: None, relation: Some("jolt.stage5.ram_ra_claim_reduction"), claim_value: "stage5.ram_ra_claim_reduction.claim_expr", input_openings: "stage5.input.stage2.ram_raf.RamRa|stage5.input.stage2.ram_read_write.RamRa|stage5.input.stage4.ram_val_check.RamRa" },
+    Stage5SumcheckClaimPlan { symbol: "stage5.registers_val_evaluation.input", stage: "stage5", domain: "jolt.trace_domain", num_rounds: 16, degree: 3, claim: "stage5.registers_val_evaluation.registers_val", kernel: None, relation: Some("jolt.stage5.registers_val_evaluation"), claim_value: "stage5.input.stage4.registers.RegistersVal", input_openings: "stage5.input.stage4.registers.RegistersVal" },
 ];
-pub const STAGE5_SUMCHECK_BATCH_0_ORDERED_CLAIMS: &[&str] = &[
-    "stage5.instruction_read_raf.input",
-    "stage5.ram_ra_claim_reduction.input",
-    "stage5.registers_val_evaluation.input",
-];
-
-pub const STAGE5_SUMCHECK_BATCH_0_CLAIM_OPERANDS: &[&str] = &[
-    "stage5.instruction_read_raf.input",
-    "stage5.ram_ra_claim_reduction.input",
-    "stage5.registers_val_evaluation.input",
-];
-
 pub const STAGE5_SUMCHECK_BATCH_0_ROUND_SCHEDULE: &[usize] = &[
     128,
     16,
 ];
 
 pub const STAGE5_SUMCHECK_BATCHES: &[Stage5SumcheckBatchPlan] = &[
-    Stage5SumcheckBatchPlan { symbol: "stage5.batch", stage: "stage5", proof_slot: "stage5.sumcheck", policy: "jolt_core_stage5_aligned", count: 3, ordered_claims: STAGE5_SUMCHECK_BATCH_0_ORDERED_CLAIMS, claim_operands: STAGE5_SUMCHECK_BATCH_0_CLAIM_OPERANDS, claim_label: "sumcheck_claim", round_label: "sumcheck_poly", round_schedule: STAGE5_SUMCHECK_BATCH_0_ROUND_SCHEDULE },
+    Stage5SumcheckBatchPlan { symbol: "stage5.batch", stage: "stage5", proof_slot: "stage5.sumcheck", policy: "jolt_core_stage5_aligned", count: 3, ordered_claims: "stage5.instruction_read_raf.input|stage5.ram_ra_claim_reduction.input|stage5.registers_val_evaluation.input", claim_operands: "stage5.instruction_read_raf.input|stage5.ram_ra_claim_reduction.input|stage5.registers_val_evaluation.input", claim_label: "sumcheck_claim", round_label: "sumcheck_poly", round_schedule: STAGE5_SUMCHECK_BATCH_0_ROUND_SCHEDULE },
 ];
 pub const STAGE5_SUMCHECK_DRIVER_0_ROUND_SCHEDULE: &[usize] = &[
     128,
@@ -551,67 +196,17 @@ pub const STAGE5_POINT_SLICES: &[Stage5PointSlicePlan] = &[
     Stage5PointSlicePlan { symbol: "stage5.registers_val_evaluation.point.RegisterAddress", source: "stage5.input.stage4.registers.RegistersVal", offset: 0, length: 7, input: "stage5.input.stage4.registers.RegistersVal" },
 ];
 
-pub const STAGE5_POINT_CONCAT_0_INPUTS: &[&str] = &[
-    "stage5.instruction_read_raf.point.InstructionRa_0.address",
-    "stage5.instruction_read_raf.point.Cycle",
-];
-
-pub const STAGE5_POINT_CONCAT_1_INPUTS: &[&str] = &[
-    "stage5.instruction_read_raf.point.InstructionRa_1.address",
-    "stage5.instruction_read_raf.point.Cycle",
-];
-
-pub const STAGE5_POINT_CONCAT_2_INPUTS: &[&str] = &[
-    "stage5.instruction_read_raf.point.InstructionRa_2.address",
-    "stage5.instruction_read_raf.point.Cycle",
-];
-
-pub const STAGE5_POINT_CONCAT_3_INPUTS: &[&str] = &[
-    "stage5.instruction_read_raf.point.InstructionRa_3.address",
-    "stage5.instruction_read_raf.point.Cycle",
-];
-
-pub const STAGE5_POINT_CONCAT_4_INPUTS: &[&str] = &[
-    "stage5.instruction_read_raf.point.InstructionRa_4.address",
-    "stage5.instruction_read_raf.point.Cycle",
-];
-
-pub const STAGE5_POINT_CONCAT_5_INPUTS: &[&str] = &[
-    "stage5.instruction_read_raf.point.InstructionRa_5.address",
-    "stage5.instruction_read_raf.point.Cycle",
-];
-
-pub const STAGE5_POINT_CONCAT_6_INPUTS: &[&str] = &[
-    "stage5.instruction_read_raf.point.InstructionRa_6.address",
-    "stage5.instruction_read_raf.point.Cycle",
-];
-
-pub const STAGE5_POINT_CONCAT_7_INPUTS: &[&str] = &[
-    "stage5.instruction_read_raf.point.InstructionRa_7.address",
-    "stage5.instruction_read_raf.point.Cycle",
-];
-
-pub const STAGE5_POINT_CONCAT_8_INPUTS: &[&str] = &[
-    "stage5.ram_ra_claim_reduction.point.RamAddress",
-    "stage5.ram_ra_claim_reduction.instance",
-];
-
-pub const STAGE5_POINT_CONCAT_9_INPUTS: &[&str] = &[
-    "stage5.registers_val_evaluation.point.RegisterAddress",
-    "stage5.registers_val_evaluation.instance",
-];
-
 pub const STAGE5_POINT_CONCATS: &[Stage5PointConcatPlan] = &[
-    Stage5PointConcatPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_0", layout: "address_chunk_then_cycle", arity: 32, inputs: STAGE5_POINT_CONCAT_0_INPUTS },
-    Stage5PointConcatPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_1", layout: "address_chunk_then_cycle", arity: 32, inputs: STAGE5_POINT_CONCAT_1_INPUTS },
-    Stage5PointConcatPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_2", layout: "address_chunk_then_cycle", arity: 32, inputs: STAGE5_POINT_CONCAT_2_INPUTS },
-    Stage5PointConcatPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_3", layout: "address_chunk_then_cycle", arity: 32, inputs: STAGE5_POINT_CONCAT_3_INPUTS },
-    Stage5PointConcatPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_4", layout: "address_chunk_then_cycle", arity: 32, inputs: STAGE5_POINT_CONCAT_4_INPUTS },
-    Stage5PointConcatPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_5", layout: "address_chunk_then_cycle", arity: 32, inputs: STAGE5_POINT_CONCAT_5_INPUTS },
-    Stage5PointConcatPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_6", layout: "address_chunk_then_cycle", arity: 32, inputs: STAGE5_POINT_CONCAT_6_INPUTS },
-    Stage5PointConcatPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_7", layout: "address_chunk_then_cycle", arity: 32, inputs: STAGE5_POINT_CONCAT_7_INPUTS },
-    Stage5PointConcatPlan { symbol: "stage5.ram_ra_claim_reduction.point.RamRa", layout: "address_then_cycle", arity: 32, inputs: STAGE5_POINT_CONCAT_8_INPUTS },
-    Stage5PointConcatPlan { symbol: "stage5.registers_val_evaluation.point.RdWa", layout: "register_address_then_cycle", arity: 23, inputs: STAGE5_POINT_CONCAT_9_INPUTS },
+    Stage5PointConcatPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_0", layout: "address_chunk_then_cycle", arity: 32, inputs: "stage5.instruction_read_raf.point.InstructionRa_0.address|stage5.instruction_read_raf.point.Cycle" },
+    Stage5PointConcatPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_1", layout: "address_chunk_then_cycle", arity: 32, inputs: "stage5.instruction_read_raf.point.InstructionRa_1.address|stage5.instruction_read_raf.point.Cycle" },
+    Stage5PointConcatPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_2", layout: "address_chunk_then_cycle", arity: 32, inputs: "stage5.instruction_read_raf.point.InstructionRa_2.address|stage5.instruction_read_raf.point.Cycle" },
+    Stage5PointConcatPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_3", layout: "address_chunk_then_cycle", arity: 32, inputs: "stage5.instruction_read_raf.point.InstructionRa_3.address|stage5.instruction_read_raf.point.Cycle" },
+    Stage5PointConcatPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_4", layout: "address_chunk_then_cycle", arity: 32, inputs: "stage5.instruction_read_raf.point.InstructionRa_4.address|stage5.instruction_read_raf.point.Cycle" },
+    Stage5PointConcatPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_5", layout: "address_chunk_then_cycle", arity: 32, inputs: "stage5.instruction_read_raf.point.InstructionRa_5.address|stage5.instruction_read_raf.point.Cycle" },
+    Stage5PointConcatPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_6", layout: "address_chunk_then_cycle", arity: 32, inputs: "stage5.instruction_read_raf.point.InstructionRa_6.address|stage5.instruction_read_raf.point.Cycle" },
+    Stage5PointConcatPlan { symbol: "stage5.instruction_read_raf.point.InstructionRa_7", layout: "address_chunk_then_cycle", arity: 32, inputs: "stage5.instruction_read_raf.point.InstructionRa_7.address|stage5.instruction_read_raf.point.Cycle" },
+    Stage5PointConcatPlan { symbol: "stage5.ram_ra_claim_reduction.point.RamRa", layout: "address_then_cycle", arity: 32, inputs: "stage5.ram_ra_claim_reduction.point.RamAddress|stage5.ram_ra_claim_reduction.instance" },
+    Stage5PointConcatPlan { symbol: "stage5.registers_val_evaluation.point.RdWa", layout: "register_address_then_cycle", arity: 23, inputs: "stage5.registers_val_evaluation.point.RegisterAddress|stage5.registers_val_evaluation.instance" },
 ];
 pub const STAGE5_OPENING_CLAIMS: &[Stage5OpeningClaimPlan] = &[
     Stage5OpeningClaimPlan { symbol: "stage5.instruction_read_raf.opening.LookupTableFlag_0", oracle: "LookupTableFlag_0", domain: "jolt.trace_domain", point_arity: 16, claim_kind: "virtual", point_source: "stage5.instruction_read_raf.point.Cycle", eval_source: "stage5.instruction_read_raf.eval.LookupTableFlag_0" },
@@ -672,118 +267,8 @@ pub const STAGE5_OPENING_EQUALITIES: &[Stage5OpeningClaimEqualityPlan] = &[
     Stage5OpeningClaimEqualityPlan { symbol: "stage5.instruction.lookup_output_claim_consistency", mode: "point_and_eval", lhs: "stage5.input.stage2.instruction.LookupOutput", rhs: "stage5.input.stage2.product_virtual.LookupOutput" },
 ];
 
-pub const STAGE5_OPENING_BATCH_0_ORDERED_CLAIMS: &[&str] = &[
-    "stage5.instruction_read_raf.opening.LookupTableFlag_0",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_1",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_2",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_3",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_4",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_5",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_6",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_7",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_8",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_9",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_10",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_11",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_12",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_13",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_14",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_15",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_16",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_17",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_18",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_19",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_20",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_21",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_22",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_23",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_24",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_25",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_26",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_27",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_28",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_29",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_30",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_31",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_32",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_33",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_34",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_35",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_36",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_37",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_38",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_39",
-    "stage5.instruction_read_raf.opening.InstructionRa_0",
-    "stage5.instruction_read_raf.opening.InstructionRa_1",
-    "stage5.instruction_read_raf.opening.InstructionRa_2",
-    "stage5.instruction_read_raf.opening.InstructionRa_3",
-    "stage5.instruction_read_raf.opening.InstructionRa_4",
-    "stage5.instruction_read_raf.opening.InstructionRa_5",
-    "stage5.instruction_read_raf.opening.InstructionRa_6",
-    "stage5.instruction_read_raf.opening.InstructionRa_7",
-    "stage5.instruction_read_raf.opening.InstructionRafFlag",
-    "stage5.ram_ra_claim_reduction.opening.RamRa",
-    "stage5.registers_val_evaluation.opening.RdInc",
-    "stage5.registers_val_evaluation.opening.RdWa",
-];
-
-pub const STAGE5_OPENING_BATCH_0_CLAIM_OPERANDS: &[&str] = &[
-    "stage5.instruction_read_raf.opening.LookupTableFlag_0",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_1",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_2",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_3",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_4",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_5",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_6",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_7",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_8",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_9",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_10",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_11",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_12",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_13",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_14",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_15",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_16",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_17",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_18",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_19",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_20",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_21",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_22",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_23",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_24",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_25",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_26",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_27",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_28",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_29",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_30",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_31",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_32",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_33",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_34",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_35",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_36",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_37",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_38",
-    "stage5.instruction_read_raf.opening.LookupTableFlag_39",
-    "stage5.instruction_read_raf.opening.InstructionRa_0",
-    "stage5.instruction_read_raf.opening.InstructionRa_1",
-    "stage5.instruction_read_raf.opening.InstructionRa_2",
-    "stage5.instruction_read_raf.opening.InstructionRa_3",
-    "stage5.instruction_read_raf.opening.InstructionRa_4",
-    "stage5.instruction_read_raf.opening.InstructionRa_5",
-    "stage5.instruction_read_raf.opening.InstructionRa_6",
-    "stage5.instruction_read_raf.opening.InstructionRa_7",
-    "stage5.instruction_read_raf.opening.InstructionRafFlag",
-    "stage5.ram_ra_claim_reduction.opening.RamRa",
-    "stage5.registers_val_evaluation.opening.RdInc",
-    "stage5.registers_val_evaluation.opening.RdWa",
-];
-
 pub const STAGE5_OPENING_BATCHES: &[Stage5OpeningBatchPlan] = &[
-    Stage5OpeningBatchPlan { symbol: "stage5.openings", stage: "stage5", proof_slot: "stage5.openings", policy: "jolt_stage5_output_order", count: 52, ordered_claims: STAGE5_OPENING_BATCH_0_ORDERED_CLAIMS, claim_operands: STAGE5_OPENING_BATCH_0_CLAIM_OPERANDS },
+    Stage5OpeningBatchPlan { symbol: "stage5.openings", stage: "stage5", proof_slot: "stage5.openings", policy: "jolt_stage5_output_order", count: 52, ordered_claims: "stage5.instruction_read_raf.opening.LookupTableFlag_0|stage5.instruction_read_raf.opening.LookupTableFlag_1|stage5.instruction_read_raf.opening.LookupTableFlag_2|stage5.instruction_read_raf.opening.LookupTableFlag_3|stage5.instruction_read_raf.opening.LookupTableFlag_4|stage5.instruction_read_raf.opening.LookupTableFlag_5|stage5.instruction_read_raf.opening.LookupTableFlag_6|stage5.instruction_read_raf.opening.LookupTableFlag_7|stage5.instruction_read_raf.opening.LookupTableFlag_8|stage5.instruction_read_raf.opening.LookupTableFlag_9|stage5.instruction_read_raf.opening.LookupTableFlag_10|stage5.instruction_read_raf.opening.LookupTableFlag_11|stage5.instruction_read_raf.opening.LookupTableFlag_12|stage5.instruction_read_raf.opening.LookupTableFlag_13|stage5.instruction_read_raf.opening.LookupTableFlag_14|stage5.instruction_read_raf.opening.LookupTableFlag_15|stage5.instruction_read_raf.opening.LookupTableFlag_16|stage5.instruction_read_raf.opening.LookupTableFlag_17|stage5.instruction_read_raf.opening.LookupTableFlag_18|stage5.instruction_read_raf.opening.LookupTableFlag_19|stage5.instruction_read_raf.opening.LookupTableFlag_20|stage5.instruction_read_raf.opening.LookupTableFlag_21|stage5.instruction_read_raf.opening.LookupTableFlag_22|stage5.instruction_read_raf.opening.LookupTableFlag_23|stage5.instruction_read_raf.opening.LookupTableFlag_24|stage5.instruction_read_raf.opening.LookupTableFlag_25|stage5.instruction_read_raf.opening.LookupTableFlag_26|stage5.instruction_read_raf.opening.LookupTableFlag_27|stage5.instruction_read_raf.opening.LookupTableFlag_28|stage5.instruction_read_raf.opening.LookupTableFlag_29|stage5.instruction_read_raf.opening.LookupTableFlag_30|stage5.instruction_read_raf.opening.LookupTableFlag_31|stage5.instruction_read_raf.opening.LookupTableFlag_32|stage5.instruction_read_raf.opening.LookupTableFlag_33|stage5.instruction_read_raf.opening.LookupTableFlag_34|stage5.instruction_read_raf.opening.LookupTableFlag_35|stage5.instruction_read_raf.opening.LookupTableFlag_36|stage5.instruction_read_raf.opening.LookupTableFlag_37|stage5.instruction_read_raf.opening.LookupTableFlag_38|stage5.instruction_read_raf.opening.LookupTableFlag_39|stage5.instruction_read_raf.opening.InstructionRa_0|stage5.instruction_read_raf.opening.InstructionRa_1|stage5.instruction_read_raf.opening.InstructionRa_2|stage5.instruction_read_raf.opening.InstructionRa_3|stage5.instruction_read_raf.opening.InstructionRa_4|stage5.instruction_read_raf.opening.InstructionRa_5|stage5.instruction_read_raf.opening.InstructionRa_6|stage5.instruction_read_raf.opening.InstructionRa_7|stage5.instruction_read_raf.opening.InstructionRafFlag|stage5.ram_ra_claim_reduction.opening.RamRa|stage5.registers_val_evaluation.opening.RdInc|stage5.registers_val_evaluation.opening.RdWa", claim_operands: "stage5.instruction_read_raf.opening.LookupTableFlag_0|stage5.instruction_read_raf.opening.LookupTableFlag_1|stage5.instruction_read_raf.opening.LookupTableFlag_2|stage5.instruction_read_raf.opening.LookupTableFlag_3|stage5.instruction_read_raf.opening.LookupTableFlag_4|stage5.instruction_read_raf.opening.LookupTableFlag_5|stage5.instruction_read_raf.opening.LookupTableFlag_6|stage5.instruction_read_raf.opening.LookupTableFlag_7|stage5.instruction_read_raf.opening.LookupTableFlag_8|stage5.instruction_read_raf.opening.LookupTableFlag_9|stage5.instruction_read_raf.opening.LookupTableFlag_10|stage5.instruction_read_raf.opening.LookupTableFlag_11|stage5.instruction_read_raf.opening.LookupTableFlag_12|stage5.instruction_read_raf.opening.LookupTableFlag_13|stage5.instruction_read_raf.opening.LookupTableFlag_14|stage5.instruction_read_raf.opening.LookupTableFlag_15|stage5.instruction_read_raf.opening.LookupTableFlag_16|stage5.instruction_read_raf.opening.LookupTableFlag_17|stage5.instruction_read_raf.opening.LookupTableFlag_18|stage5.instruction_read_raf.opening.LookupTableFlag_19|stage5.instruction_read_raf.opening.LookupTableFlag_20|stage5.instruction_read_raf.opening.LookupTableFlag_21|stage5.instruction_read_raf.opening.LookupTableFlag_22|stage5.instruction_read_raf.opening.LookupTableFlag_23|stage5.instruction_read_raf.opening.LookupTableFlag_24|stage5.instruction_read_raf.opening.LookupTableFlag_25|stage5.instruction_read_raf.opening.LookupTableFlag_26|stage5.instruction_read_raf.opening.LookupTableFlag_27|stage5.instruction_read_raf.opening.LookupTableFlag_28|stage5.instruction_read_raf.opening.LookupTableFlag_29|stage5.instruction_read_raf.opening.LookupTableFlag_30|stage5.instruction_read_raf.opening.LookupTableFlag_31|stage5.instruction_read_raf.opening.LookupTableFlag_32|stage5.instruction_read_raf.opening.LookupTableFlag_33|stage5.instruction_read_raf.opening.LookupTableFlag_34|stage5.instruction_read_raf.opening.LookupTableFlag_35|stage5.instruction_read_raf.opening.LookupTableFlag_36|stage5.instruction_read_raf.opening.LookupTableFlag_37|stage5.instruction_read_raf.opening.LookupTableFlag_38|stage5.instruction_read_raf.opening.LookupTableFlag_39|stage5.instruction_read_raf.opening.InstructionRa_0|stage5.instruction_read_raf.opening.InstructionRa_1|stage5.instruction_read_raf.opening.InstructionRa_2|stage5.instruction_read_raf.opening.InstructionRa_3|stage5.instruction_read_raf.opening.InstructionRa_4|stage5.instruction_read_raf.opening.InstructionRa_5|stage5.instruction_read_raf.opening.InstructionRa_6|stage5.instruction_read_raf.opening.InstructionRa_7|stage5.instruction_read_raf.opening.InstructionRafFlag|stage5.ram_ra_claim_reduction.opening.RamRa|stage5.registers_val_evaluation.opening.RdInc|stage5.registers_val_evaluation.opening.RdWa" },
 ];
 pub const STAGE5_PROGRAM: Stage5VerifierProgramPlan = Stage5CpuProgramPlan {
     role: "verifier",
@@ -833,20 +318,20 @@ where
             got: proof.sumchecks.len(),
         });
     }
-    let mut store = Stage5ValueStore::with_opening_inputs(opening_inputs);
-    store.seed_constants(program);
+    let mut store = super::common::ValueStore::with_opening_inputs(opening_inputs);
+    store.seed_constants(program.field_constants);
     let mut artifacts = Stage5ExecutionArtifacts::default();
     for step in program.steps {
         match step.kind {
             "transcript_squeeze" => {
                 let squeeze =
-                    find_squeeze(program, step.symbol).ok_or(VerifyStage5Error::MissingValue {
+                    find_plan(program.transcript_squeezes, step.symbol).ok_or(VerifyStage5Error::MissingValue {
                         symbol: step.symbol,
                     })?;
                 verify_stage5_squeeze(program, squeeze, &mut store, transcript, &mut artifacts)?;
             }
             "transcript_absorb_bytes" => {
-                let absorb = find_absorb_bytes(program, step.symbol).ok_or(
+                let absorb = find_plan(program.transcript_absorb_bytes, step.symbol).ok_or(
                     VerifyStage5Error::MissingValue {
                         symbol: step.symbol,
                     },
@@ -855,7 +340,7 @@ where
             }
             "sumcheck_driver" => {
                 let driver =
-                    find_driver(program, step.symbol).ok_or(VerifyStage5Error::MissingProof {
+                    find_plan(program.drivers, step.symbol).ok_or(VerifyStage5Error::MissingProof {
                         driver: step.symbol,
                     })?;
                 verify_stage5_driver(program, driver, proof, &mut store, transcript, &mut artifacts)?;
@@ -881,7 +366,7 @@ pub fn stage5_verifier_program() -> &'static Stage5VerifierProgramPlan {
 fn verify_stage5_squeeze<T>(
     program: &'static Stage5VerifierProgramPlan,
     squeeze: &'static Stage5TranscriptSqueezePlan,
-    store: &mut Stage5ValueStore<Fr>,
+    store: &mut super::common::ValueStore<Fr>,
     transcript: &mut T,
     artifacts: &mut Stage5ExecutionArtifacts<Fr>,
 ) -> Result<(), VerifyStage5Error>
@@ -889,7 +374,16 @@ where
     T: Transcript<Challenge = Fr>,
 {
     let values = transcript.challenge_vector(squeeze.count);
-    store.observe_challenge_vector(program, squeeze, &values)?;
+    store.observe_challenge_vector(squeeze, &values, |input, expected, actual| {
+        VerifyStage5Error::InvalidInputLength {
+            input,
+            expected,
+            actual,
+        }
+    })?;
+    store
+        .evaluate_available_field_exprs(program.field_exprs, super::common::evaluate_field_expr)
+        .map_err(VerifyStage5Error::from)?;
     artifacts.challenge_vectors.push(Stage5ChallengeVector {
         symbol: squeeze.symbol,
         values,
@@ -912,7 +406,7 @@ fn verify_stage5_driver<T>(
     program: &'static Stage5VerifierProgramPlan,
     driver: &'static Stage5SumcheckDriverPlan,
     proof: &Stage5Proof<Fr>,
-    store: &mut Stage5ValueStore<Fr>,
+    store: &mut super::common::ValueStore<Fr>,
     transcript: &mut T,
     artifacts: &mut Stage5ExecutionArtifacts<Fr>,
 ) -> Result<(), VerifyStage5Error>
@@ -925,10 +419,12 @@ where
         .ok_or(VerifyStage5Error::MissingProof {
             driver: driver.symbol,
         })?;
-    let output = match driver.relation {
-        Some("jolt.stage5.batched") => verify_batched_stage5(program, driver, proof, store, transcript)?,
-        Some(relation) => return Err(VerifyStage5Error::UnsupportedRelation { relation }),
-        None => return Err(VerifyStage5Error::UnsupportedRelation { relation: "<missing>" }),
+    let relation = driver.relation.unwrap_or("<missing>");
+    let output = match relation {
+        "jolt.stage5.batched" => {
+            verify_batched_stage5(program, driver, proof, store, transcript)?
+        }
+        _ => return Err(VerifyStage5Error::UnsupportedRelation { relation }),
     };
     artifacts.sumchecks.push(output);
     Ok(())
@@ -938,139 +434,46 @@ fn verify_batched_stage5<T>(
     program: &'static Stage5VerifierProgramPlan,
     driver: &'static Stage5SumcheckDriverPlan,
     proof: &Stage5SumcheckOutput<Fr>,
-    store: &mut Stage5ValueStore<Fr>,
+    store: &mut super::common::ValueStore<Fr>,
     transcript: &mut T,
 ) -> Result<Stage5SumcheckOutput<Fr>, VerifyStage5Error>
 where
     T: Transcript<Challenge = Fr>,
 {
-    if proof.driver != driver.symbol {
-        return Err(VerifyStage5Error::InvalidProof {
-            driver: driver.symbol,
-            reason: "driver symbol mismatch",
-        });
-    }
-    let batch = find_batch(program, driver.batch)?;
-    let claims = batch_claims(program, batch)?;
-    let input_claims = store.batch_claim_values(program, batch)?;
-    for claim in &input_claims {
-        append_labeled_scalar(transcript, batch.claim_label, claim);
-    }
-    let batching_coeffs = transcript.challenge_vector(claims.len());
-    let claimed_sum = input_claims
-        .iter()
-        .zip(claims.iter())
-        .zip(&batching_coeffs)
-        .map(|((claim, plan), coefficient)| {
-            claim.mul_pow_2(driver.num_rounds - plan.num_rounds) * *coefficient
-        })
-        .sum::<Fr>();
-    let claim = SumcheckClaim::new(driver.num_rounds, driver.degree, claimed_sum);
-    let round_proofs = proof
-        .proof
-        .round_polynomials
-        .iter()
-        .map(|poly| CompressedLabeledRoundPoly::new(poly, driver.round_label.as_bytes()))
-        .collect::<Vec<_>>();
-    let output = SumcheckVerifier::verify(&claim, &round_proofs, transcript)
-        .map_err(|error| VerifyStage5Error::Sumcheck {
-            driver: driver.symbol,
-            error,
-        })?;
-    if !proof.point.is_empty() && proof.point != output.point {
-        return Err(VerifyStage5Error::InvalidProof {
-            driver: driver.symbol,
-            reason: "batched point mismatch",
-        });
-    }
-    let expected = expected_batched_output_claim(
-        program,
+    super::common::verify_batched_sumcheck(
         driver,
-        &*store,
-        &proof.evals,
-        &output.point,
-        &batching_coeffs,
-    )?;
-    if output.value != expected {
-        return Err(VerifyStage5Error::InvalidProof {
-            driver: driver.symbol,
-            reason: "batched output claim mismatch",
-        });
-    }
-    let verified = Stage5SumcheckOutput {
-        driver: driver.symbol,
-        point: output.point,
-        evals: proof.evals.clone(),
-        proof: proof.proof.clone(),
-    };
-    store.observe_sumcheck_output(program, &verified)?;
-    append_opening_claims(program, store, transcript, &verified.evals)?;
-    Ok(verified)
+        proof,
+        program.claims,
+        program.batches,
+        program.field_exprs,
+        program.opening_inputs,
+        program.opening_claims,
+        program.opening_batches,
+        store,
+        transcript,
+        |store, evals, point, batching_coeffs| {
+            expected_batched_output_claim(program, driver, store, evals, point, batching_coeffs)
+        },
+        |store, verified| observe_stage5_sumcheck_output(program, store, verified),
+        |driver, error| VerifyStage5Error::Sumcheck { driver, error },
+    )
 }
 
-impl<F: Field> Stage5ValueStore<F> {
-    fn with_opening_inputs(inputs: &[Stage5OpeningInputValue<F>]) -> Self {
-        let mut store = Self::default();
-        for input in inputs {
-            store.insert_scalar(input.symbol, input.eval);
-            store.insert_point(input.symbol, input.point.clone());
-        }
-        store
-    }
-
-    fn seed_constants(&mut self, program: &'static Stage5VerifierProgramPlan) {
-        for constant in program.field_constants {
-            self.insert_scalar(constant.symbol, F::from_u64(constant.value as u64));
-        }
-    }
-
-    fn observe_challenge_vector(
-        &mut self,
-        program: &'static Stage5VerifierProgramPlan,
-        plan: &'static Stage5TranscriptSqueezePlan,
-        values: &[F],
-    ) -> Result<(), VerifyStage5Error> {
-        self.insert_point(plan.symbol, values.to_vec());
-        if matches!(plan.kind, "challenge_scalar" | "scalar") {
-            if values.len() != 1 {
-                return Err(VerifyStage5Error::InvalidInputLength {
-                    input: plan.symbol,
-                    expected: 1,
-                    actual: values.len(),
-                });
-            }
-            self.insert_scalar(plan.symbol, values[0]);
-        }
-        self.evaluate_available_field_exprs(program)?;
-        Ok(())
-    }
-
-    fn observe_sumcheck_output(
-        &mut self,
-        program: &'static Stage5VerifierProgramPlan,
-        output: &Stage5SumcheckOutput<F>,
-    ) -> Result<(), VerifyStage5Error> {
-        self.insert_point(output.driver, output.point.clone());
-        for instance in program
-            .instance_results
-            .iter()
-            .filter(|instance| instance.source == output.driver)
-        {
-            let end = instance.round_offset + instance.point_arity;
-            let mut point = output
-                .point
-                .get(instance.round_offset..end)
-                .ok_or(VerifyStage5Error::InvalidInputLength {
-                    input: instance.symbol,
-                    expected: end,
-                    actual: output.point.len(),
-                })?
-                .to_vec();
+fn observe_stage5_sumcheck_output<F: Field>(
+    program: &'static Stage5VerifierProgramPlan,
+    store: &mut super::common::ValueStore<F>,
+    output: &Stage5SumcheckOutput<F>,
+) -> Result<(), VerifyStage5Error> {
+    store.observe_sumcheck_output(
+        program.instance_results,
+        program.evals,
+        output,
+        |instance, mut point| {
             match instance.point_order {
                 "as_is" => {}
                 "reverse" => point.reverse(),
                 "instruction_read_raf" => {
-                    point = normalize_instruction_read_raf_point(&point)?;
+                    point = normalize_instruction_read_raf_point(&point, "stage5.instruction_read_raf.point")?;
                 }
                 _ => {
                     return Err(VerifyStage5Error::InvalidProof {
@@ -1079,256 +482,44 @@ impl<F: Field> Stage5ValueStore<F> {
                     });
                 }
             }
-            self.insert_point(instance.symbol, point);
-        }
-        for eval in program
-            .evals
-            .iter()
-            .filter(|eval| eval.source == output.driver)
-        {
-            let value = output
-                .evals
-                .iter()
-                .find(|value| value.name == eval.name)
-                .or_else(|| output.evals.get(eval.index))
-                .ok_or(VerifyStage5Error::MissingValue {
-                    symbol: eval.symbol,
-                })?
-                .value;
-            self.insert_scalar(eval.symbol, value);
-            self.insert_scalar(eval.name, value);
-        }
-        self.evaluate_available_points(program)?;
-        self.evaluate_available_field_exprs(program)?;
-        self.verify_opening_equalities(program)?;
-        Ok(())
-    }
-
-    fn claim_value(
-        &mut self,
-        program: &'static Stage5VerifierProgramPlan,
-        claim: &Stage5SumcheckClaimPlan,
-    ) -> Result<F, VerifyStage5Error> {
-        self.evaluate_available_field_exprs(program)?;
-        self.scalar(claim.claim_value)
-    }
-
-    fn batch_claim_values(
-        &mut self,
-        program: &'static Stage5VerifierProgramPlan,
-        batch: &Stage5SumcheckBatchPlan,
-    ) -> Result<Vec<F>, VerifyStage5Error> {
-        batch
-            .claim_operands
-            .iter()
-            .map(|symbol| {
-                let claim = find_claim(program, symbol).ok_or(VerifyStage5Error::MissingClaim {
-                    batch: batch.symbol,
-                    claim: symbol,
-                })?;
-                self.claim_value(program, claim)
-            })
-            .collect()
-    }
-
-    fn evaluate_available_points(
-        &mut self,
-        program: &'static Stage5VerifierProgramPlan,
-    ) -> Result<(), VerifyStage5Error> {
-        loop {
-            let mut progress = 0usize;
-            for slice in program.point_slices {
-                if self.try_point(slice.symbol).is_some() {
-                    continue;
-                }
-                let Some(input) = self.try_point(slice.input) else { continue };
-                let end = slice.offset + slice.length;
-                let point = input
-                    .get(slice.offset..end)
-                    .ok_or(VerifyStage5Error::InvalidInputLength {
-                        input: slice.symbol,
-                        expected: end,
-                        actual: input.len(),
-                    })?
-                    .to_vec();
-                self.insert_point(slice.symbol, point);
-                progress += 1;
-            }
-            for concat in program.point_concats {
-                if self.try_point(concat.symbol).is_some() {
-                    continue;
-                }
-                let Some(point) = self.try_concat_point(concat) else { continue };
-                if point.len() != concat.arity {
-                    return Err(VerifyStage5Error::InvalidInputLength {
-                        input: concat.symbol,
-                        expected: concat.arity,
-                        actual: point.len(),
-                    });
-                }
-                self.insert_point(concat.symbol, point);
-                progress += 1;
-            }
-            if progress == 0 {
-                return Ok(());
-            }
-        }
-    }
-
-    fn evaluate_available_field_exprs(
-        &mut self,
-        program: &'static Stage5VerifierProgramPlan,
-    ) -> Result<(), VerifyStage5Error> {
-        loop {
-            let mut progress = 0usize;
-            for expr in program.field_exprs {
-                if self.try_scalar(expr.symbol).is_some() {
-                    continue;
-                }
-                let Some(operands) = self.try_expr_operands(expr) else { continue };
-                self.insert_scalar(expr.symbol, evaluate_stage5_field_expr(expr, &operands)?);
-                progress += 1;
-            }
-            if progress == 0 {
-                return Ok(());
-            }
-        }
-    }
-
-    fn verify_opening_equalities(
-        &self,
-        program: &'static Stage5VerifierProgramPlan,
-    ) -> Result<(), VerifyStage5Error> {
-        for equality in program.opening_equalities {
-            match equality.mode {
-                "point_and_eval" => {
-                    if self.point(equality.lhs)? != self.point(equality.rhs)?
-                        || self.scalar(equality.lhs)? != self.scalar(equality.rhs)?
-                    {
-                        return Err(VerifyStage5Error::InvalidProof {
-                            driver: equality.symbol,
-                            reason: "opening claim equality failed",
-                        });
-                    }
-                }
-                _ => {
-                    return Err(VerifyStage5Error::InvalidProof {
-                        driver: equality.symbol,
-                        reason: "unsupported opening equality mode",
-                    });
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn insert_scalar(&mut self, symbol: &'static str, value: F) {
-        if let Some((_, existing)) = self.scalars.iter_mut().find(|(name, _)| *name == symbol) {
-            *existing = value;
-        } else {
-            self.scalars.push((symbol, value));
-        }
-    }
-
-    fn insert_point(&mut self, symbol: &'static str, point: Vec<F>) {
-        if let Some((_, existing)) = self.points.iter_mut().find(|(name, _)| *name == symbol) {
-            *existing = point;
-        } else {
-            self.points.push((symbol, point));
-        }
-    }
-
-    fn scalar(&self, symbol: &'static str) -> Result<F, VerifyStage5Error> {
-        self.try_scalar(symbol)
-            .ok_or(VerifyStage5Error::MissingValue { symbol })
-    }
-
-    fn try_scalar(&self, symbol: &str) -> Option<F> {
-        self.scalars
-            .iter()
-            .find(|(name, _)| *name == symbol)
-            .map(|(_, value)| *value)
-    }
-
-    fn point(&self, symbol: &'static str) -> Result<&[F], VerifyStage5Error> {
-        self.try_point(symbol)
-            .ok_or(VerifyStage5Error::MissingValue { symbol })
-    }
-
-    fn try_point(&self, symbol: &str) -> Option<&[F]> {
-        self.points
-            .iter()
-            .find(|(name, _)| *name == symbol)
-            .map(|(_, point)| point.as_slice())
-    }
-
-    fn try_expr_operands(&self, expr: &Stage5FieldExprPlan) -> Option<Vec<F>> {
-        expr.operands
-            .iter()
-            .map(|operand| self.try_scalar(operand))
-            .collect()
-    }
-
-    fn try_concat_point(&self, concat: &Stage5PointConcatPlan) -> Option<Vec<F>> {
-        let mut point = Vec::with_capacity(concat.arity);
-        for input in concat.inputs {
-            point.extend_from_slice(self.try_point(input)?);
-        }
-        Some(point)
-    }
-}
-
-fn evaluate_stage5_field_expr<F: Field>(
-    expr: &Stage5FieldExprPlan,
-    operands: &[F],
-) -> Result<F, VerifyStage5Error> {
-    match expr.formula {
-        "opening_eval" => single_operand(expr.symbol, operands),
-        "field.add" => {
-            require_operand_count(expr.symbol, 2, operands.len())?;
-            Ok(operands[0] + operands[1])
-        }
-        "field.sub" => {
-            require_operand_count(expr.symbol, 2, operands.len())?;
-            Ok(operands[0] - operands[1])
-        }
-        "field.mul" => {
-            require_operand_count(expr.symbol, 2, operands.len())?;
-            Ok(operands[0] * operands[1])
-        }
-        "field.neg" => {
-            require_operand_count(expr.symbol, 1, operands.len())?;
-            Ok(-operands[0])
-        }
-        formula => {
-            if let Some(exponent) = formula.strip_prefix("field.pow:") {
-                require_operand_count(expr.symbol, 1, operands.len())?;
-                let exponent = exponent.parse::<usize>().map_err(|_| {
-                    VerifyStage5Error::UnsupportedFieldExpr {
-                        symbol: expr.symbol,
-                        formula,
-                    }
-                })?;
-                return Ok(pow_field(operands[0], exponent));
-            }
-            Err(VerifyStage5Error::UnsupportedFieldExpr {
-                symbol: expr.symbol,
-                formula,
-            })
-        }
-    }
+            Ok(point)
+        },
+        |input, expected, actual| VerifyStage5Error::InvalidInputLength {
+            input,
+            expected,
+            actual,
+        },
+        |symbol| VerifyStage5Error::MissingValue { symbol },
+    )?;
+    store.evaluate_available_points(
+        program.point_slices,
+        program.point_concats,
+        |input, expected, actual| VerifyStage5Error::InvalidInputLength {
+            input,
+            expected,
+            actual,
+        },
+    )?;
+    store
+        .evaluate_available_field_exprs(program.field_exprs, super::common::evaluate_field_expr)
+        .map_err(VerifyStage5Error::from)?;
+    store.verify_opening_equalities(
+        program.opening_equalities,
+        |driver, reason| VerifyStage5Error::InvalidProof { driver, reason },
+        |symbol| VerifyStage5Error::MissingValue { symbol },
+    )
 }
 
 fn expected_batched_output_claim(
     program: &'static Stage5VerifierProgramPlan,
     driver: &'static Stage5SumcheckDriverPlan,
-    store: &Stage5ValueStore<Fr>,
+    store: &super::common::ValueStore<Fr>,
     evals: &[Stage5NamedEval<Fr>],
     point: &[Fr],
     batching_coeffs: &[Fr],
 ) -> Result<Fr, VerifyStage5Error> {
-    let batch = find_batch(program, driver.batch)?;
-    let claims = batch_claims(program, batch)?;
+    let batch = find_batch(program.batches, driver.symbol, driver.batch)?;
+    let claims = batch_claims(program.claims, batch)?;
     let mut expected = Fr::from_u64(0);
     for (claim, coefficient) in claims.iter().zip(batching_coeffs) {
         let instance = program
@@ -1346,18 +537,18 @@ fn expected_batched_output_claim(
                 expected: instance.round_offset + instance.num_rounds,
                 actual: point.len(),
             })?;
-        let value = match claim.relation {
-            Some("jolt.stage5.instruction_read_raf") => {
+        let relation = claim.relation.unwrap_or("<missing>");
+        let value = match relation {
+            "jolt.stage5.instruction_read_raf" => {
                 expected_instruction_read_raf(store, evals, local_point)?
             }
-            Some("jolt.stage5.ram_ra_claim_reduction") => {
+            "jolt.stage5.ram_ra_claim_reduction" => {
                 expected_ram_ra_claim_reduction(store, evals, local_point)?
             }
-            Some("jolt.stage5.registers_val_evaluation") => {
+            "jolt.stage5.registers_val_evaluation" => {
                 expected_registers_val_evaluation(store, evals, local_point)?
             }
-            Some(relation) => return Err(VerifyStage5Error::UnsupportedRelation { relation }),
-            None => return Err(VerifyStage5Error::UnsupportedRelation { relation: "<missing>" }),
+            _ => return Err(VerifyStage5Error::UnsupportedRelation { relation }),
         };
         expected += *coefficient * value;
     }
@@ -1365,7 +556,7 @@ fn expected_batched_output_claim(
 }
 
 fn expected_instruction_read_raf(
-    store: &Stage5ValueStore<Fr>,
+    store: &super::common::ValueStore<Fr>,
     evals: &[Stage5NamedEval<Fr>],
     local_point: &[Fr],
 ) -> Result<Fr, VerifyStage5Error> {
@@ -1382,7 +573,7 @@ fn expected_instruction_read_raf(
 
     let (r_address_prime, r_cycle) = local_point.split_at(LOG_K);
     let r_cycle_prime = reverse_slice(r_cycle);
-    let r_reduction = store.point("stage5.input.stage2.instruction.LookupOutput")?;
+    let r_reduction = super::common::store_point(store, "stage5.input.stage2.instruction.LookupOutput")?;
     let eq_eval_r_reduction = EqPolynomial::<Fr>::mle(r_reduction, &r_cycle_prime);
 
     let left_operand_eval = operand_polynomial_eval(r_address_prime, true);
@@ -1414,7 +605,7 @@ fn expected_instruction_read_raf(
         evals,
         "stage5.instruction_read_raf.eval.InstructionRafFlag",
     )?;
-    let gamma = store.scalar("stage5.instruction_read_raf.gamma")?;
+    let gamma = super::common::store_scalar(store, "stage5.instruction_read_raf.gamma")?;
 
     let raf_claim = (Fr::from_u64(1) - raf_flag_claim)
         * (left_operand_eval + gamma * right_operand_eval)
@@ -1423,27 +614,27 @@ fn expected_instruction_read_raf(
 }
 
 fn expected_ram_ra_claim_reduction(
-    store: &Stage5ValueStore<Fr>,
+    store: &super::common::ValueStore<Fr>,
     evals: &[Stage5NamedEval<Fr>],
     local_point: &[Fr],
 ) -> Result<Fr, VerifyStage5Error> {
     let r_cycle_reduced = reverse_slice(local_point);
     let r_cycle_raf = suffix_point(
-        store.point("stage5.input.stage2.ram_raf.RamRa")?,
+        super::common::store_point(store, "stage5.input.stage2.ram_raf.RamRa")?,
         r_cycle_reduced.len(),
         "stage5.input.stage2.ram_raf.RamRa",
     )?;
     let r_cycle_rw = suffix_point(
-        store.point("stage5.input.stage2.ram_read_write.RamRa")?,
+        super::common::store_point(store, "stage5.input.stage2.ram_read_write.RamRa")?,
         r_cycle_reduced.len(),
         "stage5.input.stage2.ram_read_write.RamRa",
     )?;
     let r_cycle_val = suffix_point(
-        store.point("stage5.input.stage4.ram_val_check.RamRa")?,
+        super::common::store_point(store, "stage5.input.stage4.ram_val_check.RamRa")?,
         r_cycle_reduced.len(),
         "stage5.input.stage4.ram_val_check.RamRa",
     )?;
-    let gamma = store.scalar("stage5.ram_ra_claim_reduction.gamma")?;
+    let gamma = super::common::store_scalar(store, "stage5.ram_ra_claim_reduction.gamma")?;
     let eq_combined = EqPolynomial::<Fr>::mle(r_cycle_raf, &r_cycle_reduced)
         + gamma * EqPolynomial::<Fr>::mle(r_cycle_rw, &r_cycle_reduced)
         + gamma.square() * EqPolynomial::<Fr>::mle(r_cycle_val, &r_cycle_reduced);
@@ -1452,11 +643,11 @@ fn expected_ram_ra_claim_reduction(
 }
 
 fn expected_registers_val_evaluation(
-    store: &Stage5ValueStore<Fr>,
+    store: &super::common::ValueStore<Fr>,
     evals: &[Stage5NamedEval<Fr>],
     local_point: &[Fr],
 ) -> Result<Fr, VerifyStage5Error> {
-    let registers_val_point = store.point("stage5.input.stage4.registers.RegistersVal")?;
+    let registers_val_point = super::common::store_point(store, "stage5.input.stage4.registers.RegistersVal")?;
     let r_cycle = suffix_point(
         registers_val_point,
         local_point.len(),
@@ -1469,310 +660,3 @@ fn expected_registers_val_evaluation(
     Ok(rd_inc * rd_wa * lt_eval)
 }
 
-fn append_opening_claims<T>(
-    program: &'static Stage5VerifierProgramPlan,
-    store: &mut Stage5ValueStore<Fr>,
-    transcript: &mut T,
-    evals: &[Stage5NamedEval<Fr>],
-) -> Result<(), VerifyStage5Error>
-where
-    T: Transcript<Challenge = Fr>,
-{
-    if program.opening_batches.is_empty() {
-        for eval in evals {
-            append_labeled_scalar(transcript, "opening_claim", &eval.value);
-        }
-        return Ok(());
-    }
-    store.evaluate_available_points(program)?;
-    let mut seen = program
-        .opening_inputs
-        .iter()
-        .filter_map(|input| {
-            store
-                .try_point(input.symbol)
-                .map(|point| (input.claim_kind, input.oracle, point.to_vec()))
-        })
-        .collect::<Vec<_>>();
-    for batch in program.opening_batches {
-        for symbol in batch.claim_operands {
-            let claim = find_opening_claim(program, symbol).ok_or(VerifyStage5Error::MissingClaim {
-                batch: batch.symbol,
-                claim: symbol,
-            })?;
-            let point = store.point(claim.point_source)?.to_vec();
-            if seen.iter().any(|(kind, oracle, seen_point)| {
-                *kind == claim.claim_kind && *oracle == claim.oracle && seen_point == &point
-            }) {
-                continue;
-            }
-            let value = store.scalar(claim.eval_source)?;
-            append_labeled_scalar(transcript, "opening_claim", &value);
-            seen.push((claim.claim_kind, claim.oracle, point));
-        }
-    }
-    Ok(())
-}
-
-fn find_squeeze(
-    program: &'static Stage5VerifierProgramPlan,
-    symbol: &str,
-) -> Option<&'static Stage5TranscriptSqueezePlan> {
-    program
-        .transcript_squeezes
-        .iter()
-        .find(|squeeze| squeeze.symbol == symbol)
-}
-
-fn find_absorb_bytes(
-    program: &'static Stage5VerifierProgramPlan,
-    symbol: &str,
-) -> Option<&'static Stage5TranscriptAbsorbBytesPlan> {
-    program
-        .transcript_absorb_bytes
-        .iter()
-        .find(|absorb| absorb.symbol == symbol)
-}
-
-fn find_driver(
-    program: &'static Stage5VerifierProgramPlan,
-    symbol: &str,
-) -> Option<&'static Stage5SumcheckDriverPlan> {
-    program
-        .drivers
-        .iter()
-        .find(|driver| driver.symbol == symbol)
-}
-
-fn find_batch(
-    program: &'static Stage5VerifierProgramPlan,
-    symbol: &'static str,
-) -> Result<&'static Stage5SumcheckBatchPlan, VerifyStage5Error> {
-    program
-        .batches
-        .iter()
-        .find(|batch| batch.symbol == symbol)
-        .ok_or(VerifyStage5Error::MissingBatch {
-            driver: symbol,
-            batch: symbol,
-        })
-}
-
-fn find_claim(
-    program: &'static Stage5VerifierProgramPlan,
-    symbol: &str,
-) -> Option<&'static Stage5SumcheckClaimPlan> {
-    program
-        .claims
-        .iter()
-        .find(|claim| claim.symbol == symbol)
-}
-
-fn find_opening_claim(
-    program: &'static Stage5VerifierProgramPlan,
-    symbol: &str,
-) -> Option<&'static Stage5OpeningClaimPlan> {
-    program
-        .opening_claims
-        .iter()
-        .find(|claim| claim.symbol == symbol)
-}
-
-fn batch_claims(
-    program: &'static Stage5VerifierProgramPlan,
-    batch: &Stage5SumcheckBatchPlan,
-) -> Result<Vec<&'static Stage5SumcheckClaimPlan>, VerifyStage5Error> {
-    batch
-        .claim_operands
-        .iter()
-        .map(|symbol| {
-            find_claim(program, symbol).ok_or(VerifyStage5Error::MissingClaim {
-                batch: batch.symbol,
-                claim: symbol,
-            })
-        })
-        .collect()
-}
-
-fn eval_by_name(evals: &[Stage5NamedEval<Fr>], name: &'static str) -> Result<Fr, VerifyStage5Error> {
-    evals
-        .iter()
-        .find(|eval| eval.name == name)
-        .map(|eval| eval.value)
-        .ok_or(VerifyStage5Error::MissingValue { symbol: name })
-}
-
-fn indexed_evals_by_prefix(
-    evals: &[Stage5NamedEval<Fr>],
-    prefix: &'static str,
-    count: usize,
-) -> Result<Vec<Fr>, VerifyStage5Error> {
-    let mut values = vec![None; count];
-    for eval in evals {
-        let Some(suffix) = eval.name.strip_prefix(prefix) else {
-            continue;
-        };
-        let index = suffix.parse::<usize>().map_err(|_| {
-            VerifyStage5Error::InvalidProof {
-                driver: prefix,
-                reason: "invalid indexed eval suffix",
-            }
-        })?;
-        if index >= count || values[index].is_some() {
-            return Err(VerifyStage5Error::InvalidProof {
-                driver: prefix,
-                reason: "invalid indexed eval",
-            });
-        }
-        values[index] = Some(eval.value);
-    }
-    values
-        .into_iter()
-        .map(|value| value.ok_or(VerifyStage5Error::MissingValue { symbol: prefix }))
-        .collect()
-}
-
-fn indexed_evals_by_prefix_any(
-    evals: &[Stage5NamedEval<Fr>],
-    prefix: &'static str,
-) -> Result<Vec<Fr>, VerifyStage5Error> {
-    let mut indexed_values = Vec::new();
-    for eval in evals {
-        let Some(suffix) = eval.name.strip_prefix(prefix) else {
-            continue;
-        };
-        let index = suffix.parse::<usize>().map_err(|_| {
-            VerifyStage5Error::InvalidProof {
-                driver: prefix,
-                reason: "invalid indexed eval suffix",
-            }
-        })?;
-        if indexed_values
-            .iter()
-            .any(|(existing_index, _)| *existing_index == index)
-        {
-            return Err(VerifyStage5Error::InvalidProof {
-                driver: prefix,
-                reason: "duplicate indexed eval",
-            });
-        }
-        indexed_values.push((index, eval.value));
-    }
-    if indexed_values.is_empty() {
-        return Err(VerifyStage5Error::MissingValue { symbol: prefix });
-    }
-    indexed_values.sort_by_key(|(index, _)| *index);
-    for (expected, (actual, _)) in indexed_values.iter().enumerate() {
-        if *actual != expected {
-            return Err(VerifyStage5Error::InvalidProof {
-                driver: prefix,
-                reason: "non-contiguous indexed eval",
-            });
-        }
-    }
-    Ok(indexed_values
-        .into_iter()
-        .map(|(_, value)| value)
-        .collect())
-}
-
-fn append_labeled_scalar<T>(transcript: &mut T, label: &'static str, scalar: &Fr)
-where
-    T: Transcript<Challenge = Fr>,
-{
-    transcript.append(&Label(label.as_bytes()));
-    transcript.append(scalar);
-}
-
-fn lt_polynomial_eval(x: &[Fr], y: &[Fr]) -> Fr {
-    let mut lt_eval = Fr::from_u64(0);
-    let mut eq_term = Fr::from_u64(1);
-    for (x_i, y_i) in x.iter().zip(y.iter()) {
-        lt_eval += (Fr::from_u64(1) - *x_i) * *y_i * eq_term;
-        eq_term *= Fr::from_u64(1) - *x_i - *y_i + *x_i * *y_i + *x_i * *y_i;
-    }
-    lt_eval
-}
-
-fn operand_polynomial_eval(point: &[Fr], left: bool) -> Fr {
-    let stride_offset = if left { 0 } else { 1 };
-    let operand_bits = point.len() / 2;
-    (0..operand_bits)
-        .map(|index| point[2 * index + stride_offset].mul_pow_2(operand_bits - 1 - index))
-        .sum()
-}
-
-fn identity_polynomial_eval(point: &[Fr]) -> Fr {
-    point
-        .iter()
-        .enumerate()
-        .map(|(index, value)| value.mul_pow_2(point.len() - 1 - index))
-        .sum()
-}
-
-fn suffix_point<'a>(
-    point: &'a [Fr],
-    length: usize,
-    input: &'static str,
-) -> Result<&'a [Fr], VerifyStage5Error> {
-    point
-        .get(point.len().saturating_sub(length)..)
-        .filter(|suffix| suffix.len() == length)
-        .ok_or(VerifyStage5Error::InvalidInputLength {
-            input,
-            expected: length,
-            actual: point.len(),
-        })
-}
-
-fn pow_field<F: Field>(base: F, mut exponent: usize) -> F {
-    let mut result = F::one();
-    let mut power = base;
-    while exponent != 0 {
-        if exponent & 1 == 1 {
-            result *= power;
-        }
-        power = power.square();
-        exponent >>= 1;
-    }
-    result
-}
-
-fn single_operand<F: Field>(symbol: &'static str, operands: &[F]) -> Result<F, VerifyStage5Error> {
-    require_operand_count(symbol, 1, operands.len())?;
-    Ok(operands[0])
-}
-
-fn require_operand_count(
-    input: &'static str,
-    expected: usize,
-    actual: usize,
-) -> Result<(), VerifyStage5Error> {
-    if expected == actual {
-        Ok(())
-    } else {
-        Err(VerifyStage5Error::InvalidInputLength {
-            input,
-            expected,
-            actual,
-        })
-    }
-}
-
-fn reverse_slice(values: &[Fr]) -> Vec<Fr> {
-    values.iter().rev().copied().collect()
-}
-
-fn normalize_instruction_read_raf_point<F: Field>(point: &[F]) -> Result<Vec<F>, VerifyStage5Error> {
-    const LOG_K: usize = 128;
-    if point.len() < LOG_K {
-        return Err(VerifyStage5Error::InvalidInputLength {
-            input: "stage5.instruction_read_raf.point",
-            expected: LOG_K,
-            actual: point.len(),
-        });
-    }
-    let mut normalized = point.to_vec();
-    normalized[LOG_K..].reverse();
-    Ok(normalized)
-}

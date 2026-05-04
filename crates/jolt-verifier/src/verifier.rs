@@ -4,30 +4,13 @@ use jolt_dory::{DoryCommitment, DoryProof, DoryScheme, DoryVerifierSetup};
 use jolt_field::{Field, Fr};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError};
 use jolt_poly::EqPolynomial;
-use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
 
 use crate::stages::{commitment as commitment_stage, stage1_outer as stage1_outer_stage, stage2 as stage2_stage, stage3 as stage3_stage, stage4 as stage4_stage, stage5 as stage5_stage, stage6 as stage6_stage, stage7 as stage7_stage, stage8 as stage8_stage};
 
-#[derive(Clone, Debug)]
-pub struct JoltNamedEval {
-    pub name: &'static str,
-    pub oracle: &'static str,
-    pub value: Fr,
-}
-
-#[derive(Clone, Debug)]
-pub struct JoltSumcheckOutput {
-    pub driver: &'static str,
-    pub point: Vec<Fr>,
-    pub evals: Vec<JoltNamedEval>,
-    pub proof: SumcheckProof<Fr>,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct JoltStageProof {
-    pub sumchecks: Vec<JoltSumcheckOutput>,
-}
+pub type JoltNamedEval = crate::stages::common::StageNamedEval<Fr>;
+pub type JoltSumcheckOutput = crate::stages::common::StageSumcheckOutput<Fr>;
+pub type JoltStageProof = crate::stages::common::StageProof<Fr>;
 
 #[derive(Clone, Debug)]
 pub struct JoltProof {
@@ -128,53 +111,24 @@ pub enum JoltEvaluationProofError {
     Opening(OpeningsError),
 }
 
-impl From<commitment_stage::CommitmentPhaseError> for JoltVerifyError {
-    fn from(error: commitment_stage::CommitmentPhaseError) -> Self {
-        Self::Commitment(error)
-    }
+macro_rules! define_jolt_verify_error_from {
+    ($module:ident, $error_ty:ident, $variant:ident) => {
+        impl From<$module::$error_ty> for JoltVerifyError {
+            fn from(error: $module::$error_ty) -> Self {
+                Self::$variant(error)
+            }
+        }
+    };
 }
 
-impl From<stage1_outer_stage::VerifyStage1Error> for JoltVerifyError {
-    fn from(error: stage1_outer_stage::VerifyStage1Error) -> Self {
-        Self::Stage1Outer(error)
-    }
-}
-
-impl From<stage2_stage::VerifyStage2Error> for JoltVerifyError {
-    fn from(error: stage2_stage::VerifyStage2Error) -> Self {
-        Self::Stage2(error)
-    }
-}
-
-impl From<stage3_stage::VerifyStage3Error> for JoltVerifyError {
-    fn from(error: stage3_stage::VerifyStage3Error) -> Self {
-        Self::Stage3(error)
-    }
-}
-
-impl From<stage4_stage::VerifyStage4Error> for JoltVerifyError {
-    fn from(error: stage4_stage::VerifyStage4Error) -> Self {
-        Self::Stage4(error)
-    }
-}
-
-impl From<stage5_stage::VerifyStage5Error> for JoltVerifyError {
-    fn from(error: stage5_stage::VerifyStage5Error) -> Self {
-        Self::Stage5(error)
-    }
-}
-
-impl From<stage6_stage::VerifyStage6Error> for JoltVerifyError {
-    fn from(error: stage6_stage::VerifyStage6Error) -> Self {
-        Self::Stage6(error)
-    }
-}
-
-impl From<stage7_stage::VerifyStage7Error> for JoltVerifyError {
-    fn from(error: stage7_stage::VerifyStage7Error) -> Self {
-        Self::Stage7(error)
-    }
-}
+define_jolt_verify_error_from!(commitment_stage, CommitmentPhaseError, Commitment);
+define_jolt_verify_error_from!(stage1_outer_stage, VerifyStage1Error, Stage1Outer);
+define_jolt_verify_error_from!(stage2_stage, VerifyStage2Error, Stage2);
+define_jolt_verify_error_from!(stage3_stage, VerifyStage3Error, Stage3);
+define_jolt_verify_error_from!(stage4_stage, VerifyStage4Error, Stage4);
+define_jolt_verify_error_from!(stage5_stage, VerifyStage5Error, Stage5);
+define_jolt_verify_error_from!(stage6_stage, VerifyStage6Error, Stage6);
+define_jolt_verify_error_from!(stage7_stage, VerifyStage7Error, Stage7);
 
 impl From<JoltEvaluationProofError> for JoltVerifyError {
     fn from(error: JoltEvaluationProofError) -> Self {
@@ -199,6 +153,17 @@ where
     verify_jolt_with_programs(proof, inputs, default_verifier_programs(), transcript)
 }
 
+pub fn verify_jolt_prefix<T>(
+    proof: &JoltProof,
+    inputs: JoltVerifierInputs<'_>,
+    transcript: &mut T,
+) -> Result<JoltVerificationArtifacts, JoltVerifyError>
+where
+    T: Transcript<Challenge = Fr>,
+{
+    verify_jolt_prefix_with_programs(proof, inputs, default_verifier_programs(), transcript)
+}
+
 pub fn verify_jolt_with_programs<T>(
     proof: &JoltProof,
     inputs: JoltVerifierInputs<'_>,
@@ -208,22 +173,39 @@ pub fn verify_jolt_with_programs<T>(
 where
     T: Transcript<Challenge = Fr>,
 {
-    let commitment = commitment_stage::verify_commitment_phase_with_program(programs.commitment, &proof.commitments, transcript)?;
-    let stage1_outer_proof = stage1_outer_proof(&proof.stage1_outer);
-    let stage2_proof = stage2_proof(&proof.stage2);
-    let stage3_proof = stage3_proof(&proof.stage3);
-    let stage4_proof = stage4_proof(&proof.stage4);
-    let stage5_proof = stage5_proof(&proof.stage5);
-    let stage6_proof = stage6_proof(&proof.stage6);
-    let stage7_proof = stage7_proof(&proof.stage7);
+    verify_jolt_with_programs_inner(proof, inputs, programs, transcript, true)
+}
 
-    let stage1_outer = stage1_outer_stage::verify_stage1_outer_with_program(programs.stage1_outer, &stage1_outer_proof, transcript)?;
-    let stage2 = stage2_stage::verify_stage2_with_program(programs.stage2, &stage2_proof, inputs.stage2_openings, inputs.stage2_ram, transcript)?;
-    let stage3 = stage3_stage::verify_stage3_with_program(programs.stage3, &stage3_proof, inputs.stage3_openings, transcript)?;
-    let stage4 = stage4_stage::verify_stage4_with_program(programs.stage4, &stage4_proof, inputs.stage4_openings, transcript)?;
-    let stage5 = stage5_stage::verify_stage5_with_program(programs.stage5, &stage5_proof, inputs.stage5_openings, transcript)?;
-    let stage6 = stage6_stage::verify_stage6_with_program(programs.stage6, &stage6_proof, inputs.stage6_openings, inputs.stage6_data, transcript)?;
-    let stage7 = stage7_stage::verify_stage7_with_program(programs.stage7, &stage7_proof, inputs.stage7_openings, transcript)?;
+pub fn verify_jolt_prefix_with_programs<T>(
+    proof: &JoltProof,
+    inputs: JoltVerifierInputs<'_>,
+    programs: JoltVerifierPrograms,
+    transcript: &mut T,
+) -> Result<JoltVerificationArtifacts, JoltVerifyError>
+where
+    T: Transcript<Challenge = Fr>,
+{
+    verify_jolt_with_programs_inner(proof, inputs, programs, transcript, false)
+}
+
+fn verify_jolt_with_programs_inner<T>(
+    proof: &JoltProof,
+    inputs: JoltVerifierInputs<'_>,
+    programs: JoltVerifierPrograms,
+    transcript: &mut T,
+    require_evaluation: bool,
+) -> Result<JoltVerificationArtifacts, JoltVerifyError>
+where
+    T: Transcript<Challenge = Fr>,
+{
+    let commitment = commitment_stage::verify_commitment_phase_with_program(programs.commitment, &proof.commitments, transcript)?;
+    let stage1_outer = stage1_outer_stage::verify_stage1_outer_with_program(programs.stage1_outer, &proof.stage1_outer, transcript)?;
+    let stage2 = stage2_stage::verify_stage2_with_program(programs.stage2, &proof.stage2, inputs.stage2_openings, inputs.stage2_ram, transcript)?;
+    let stage3 = stage3_stage::verify_stage3_with_program(programs.stage3, &proof.stage3, inputs.stage3_openings, transcript)?;
+    let stage4 = stage4_stage::verify_stage4_with_program(programs.stage4, &proof.stage4, inputs.stage4_openings, transcript)?;
+    let stage5 = stage5_stage::verify_stage5_with_program(programs.stage5, &proof.stage5, inputs.stage5_openings, transcript)?;
+    let stage6 = stage6_stage::verify_stage6_with_program(programs.stage6, &proof.stage6, inputs.stage6_openings, inputs.stage6_data, transcript)?;
+    let stage7 = stage7_stage::verify_stage7_with_program(programs.stage7, &proof.stage7, inputs.stage7_openings, transcript)?;
     match (&proof.evaluation, inputs.evaluation_setup) {
         (Some(evaluation), Some(setup)) => {
             verify_jolt_evaluation_proof(
@@ -239,6 +221,7 @@ where
         }
         (Some(_), None) => return Err(JoltEvaluationProofError::MissingVerifierSetup.into()),
         (None, Some(_)) => return Err(JoltEvaluationProofError::MissingProof.into()),
+        (None, None) if require_evaluation => return Err(JoltEvaluationProofError::MissingProof.into()),
         (None, None) => {}
     }
 
@@ -484,166 +467,5 @@ fn commitment_for_oracle(
         }
     }
     Err(JoltEvaluationProofError::MissingCommitment { oracle })
-}
-
-fn stage1_outer_proof(proof: &JoltStageProof) -> stage1_outer_stage::Stage1Proof<Fr> {
-    stage1_outer_stage::Stage1Proof {
-        sumchecks: proof.sumchecks.iter().map(stage1_outer_sumcheck).collect(),
-    }
-}
-
-fn stage1_outer_sumcheck(output: &JoltSumcheckOutput) -> stage1_outer_stage::Stage1SumcheckOutput<Fr> {
-    stage1_outer_stage::Stage1SumcheckOutput {
-        driver: output.driver,
-        point: output.point.clone(),
-        evals: output.evals.iter().map(stage1_outer_eval).collect(),
-        proof: output.proof.clone(),
-    }
-}
-
-fn stage1_outer_eval(eval: &JoltNamedEval) -> stage1_outer_stage::Stage1NamedEval<Fr> {
-    stage1_outer_stage::Stage1NamedEval {
-        name: eval.name,
-        oracle: eval.oracle,
-        value: eval.value,
-    }
-}
-
-fn stage2_proof(proof: &JoltStageProof) -> stage2_stage::Stage2Proof<Fr> {
-    stage2_stage::Stage2Proof {
-        sumchecks: proof.sumchecks.iter().map(stage2_sumcheck).collect(),
-    }
-}
-
-fn stage2_sumcheck(output: &JoltSumcheckOutput) -> stage2_stage::Stage2SumcheckOutput<Fr> {
-    stage2_stage::Stage2SumcheckOutput {
-        driver: output.driver,
-        point: output.point.clone(),
-        evals: output.evals.iter().map(stage2_eval).collect(),
-        proof: output.proof.clone(),
-    }
-}
-
-fn stage2_eval(eval: &JoltNamedEval) -> stage2_stage::Stage2NamedEval<Fr> {
-    stage2_stage::Stage2NamedEval {
-        name: eval.name,
-        oracle: eval.oracle,
-        value: eval.value,
-    }
-}
-
-fn stage3_proof(proof: &JoltStageProof) -> stage3_stage::Stage3Proof<Fr> {
-    stage3_stage::Stage3Proof {
-        sumchecks: proof.sumchecks.iter().map(stage3_sumcheck).collect(),
-    }
-}
-
-fn stage3_sumcheck(output: &JoltSumcheckOutput) -> stage3_stage::Stage3SumcheckOutput<Fr> {
-    stage3_stage::Stage3SumcheckOutput {
-        driver: output.driver,
-        point: output.point.clone(),
-        evals: output.evals.iter().map(stage3_eval).collect(),
-        proof: output.proof.clone(),
-    }
-}
-
-fn stage3_eval(eval: &JoltNamedEval) -> stage3_stage::Stage3NamedEval<Fr> {
-    stage3_stage::Stage3NamedEval {
-        name: eval.name,
-        oracle: eval.oracle,
-        value: eval.value,
-    }
-}
-
-fn stage4_proof(proof: &JoltStageProof) -> stage4_stage::Stage4Proof<Fr> {
-    stage4_stage::Stage4Proof {
-        sumchecks: proof.sumchecks.iter().map(stage4_sumcheck).collect(),
-    }
-}
-
-fn stage4_sumcheck(output: &JoltSumcheckOutput) -> stage4_stage::Stage4SumcheckOutput<Fr> {
-    stage4_stage::Stage4SumcheckOutput {
-        driver: output.driver,
-        point: output.point.clone(),
-        evals: output.evals.iter().map(stage4_eval).collect(),
-        proof: output.proof.clone(),
-    }
-}
-
-fn stage4_eval(eval: &JoltNamedEval) -> stage4_stage::Stage4NamedEval<Fr> {
-    stage4_stage::Stage4NamedEval {
-        name: eval.name,
-        oracle: eval.oracle,
-        value: eval.value,
-    }
-}
-
-fn stage5_proof(proof: &JoltStageProof) -> stage5_stage::Stage5Proof<Fr> {
-    stage5_stage::Stage5Proof {
-        sumchecks: proof.sumchecks.iter().map(stage5_sumcheck).collect(),
-    }
-}
-
-fn stage5_sumcheck(output: &JoltSumcheckOutput) -> stage5_stage::Stage5SumcheckOutput<Fr> {
-    stage5_stage::Stage5SumcheckOutput {
-        driver: output.driver,
-        point: output.point.clone(),
-        evals: output.evals.iter().map(stage5_eval).collect(),
-        proof: output.proof.clone(),
-    }
-}
-
-fn stage5_eval(eval: &JoltNamedEval) -> stage5_stage::Stage5NamedEval<Fr> {
-    stage5_stage::Stage5NamedEval {
-        name: eval.name,
-        oracle: eval.oracle,
-        value: eval.value,
-    }
-}
-
-fn stage6_proof(proof: &JoltStageProof) -> stage6_stage::Stage6Proof<Fr> {
-    stage6_stage::Stage6Proof {
-        sumchecks: proof.sumchecks.iter().map(stage6_sumcheck).collect(),
-    }
-}
-
-fn stage6_sumcheck(output: &JoltSumcheckOutput) -> stage6_stage::Stage6SumcheckOutput<Fr> {
-    stage6_stage::Stage6SumcheckOutput {
-        driver: output.driver,
-        point: output.point.clone(),
-        evals: output.evals.iter().map(stage6_eval).collect(),
-        proof: output.proof.clone(),
-    }
-}
-
-fn stage6_eval(eval: &JoltNamedEval) -> stage6_stage::Stage6NamedEval<Fr> {
-    stage6_stage::Stage6NamedEval {
-        name: eval.name,
-        oracle: eval.oracle,
-        value: eval.value,
-    }
-}
-
-fn stage7_proof(proof: &JoltStageProof) -> stage7_stage::Stage7Proof<Fr> {
-    stage7_stage::Stage7Proof {
-        sumchecks: proof.sumchecks.iter().map(stage7_sumcheck).collect(),
-    }
-}
-
-fn stage7_sumcheck(output: &JoltSumcheckOutput) -> stage7_stage::Stage7SumcheckOutput<Fr> {
-    stage7_stage::Stage7SumcheckOutput {
-        driver: output.driver,
-        point: output.point.clone(),
-        evals: output.evals.iter().map(stage7_eval).collect(),
-        proof: output.proof.clone(),
-    }
-}
-
-fn stage7_eval(eval: &JoltNamedEval) -> stage7_stage::Stage7NamedEval<Fr> {
-    stage7_stage::Stage7NamedEval {
-        name: eval.name,
-        oracle: eval.oracle,
-        value: eval.value,
-    }
 }
 

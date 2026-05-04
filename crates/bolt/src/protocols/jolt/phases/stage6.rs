@@ -1334,8 +1334,11 @@ fn append_weighted_eval<'c, 'a>(
             context,
             module,
             &format!("{symbol_prefix}.stage_gamma_pow"),
-            spec.stage_gamma
-                .expect("stage gamma exists when power is non-zero"),
+            spec.stage_gamma.ok_or_else(|| MlirError::Schema {
+                message: format!(
+                    "{symbol_prefix} requires stage gamma when stage_gamma_power is non-zero"
+                ),
+            })?,
             spec.stage_gamma_power,
         )?;
         value = append_field_mul(

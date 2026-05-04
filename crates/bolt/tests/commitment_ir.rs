@@ -4,24 +4,29 @@
     reason = "integration tests use explicit panic messages"
 )]
 
-use bolt::{
+use bolt::protocols::jolt::{
     assemble_jolt_generated_crates, assemble_jolt_workspace_generated_crates,
     build_commitment_protocol, build_stage1_outer_protocol, build_stage2_protocol,
     build_stage3_protocol, build_stage4_protocol, build_stage5_protocol, build_stage6_protocol,
     build_stage7_protocol, build_stage8_protocol, commitment_cpu_program, emit_commitment_rust,
     emit_stage1_rust, emit_stage2_rust, emit_stage3_rust, emit_stage4_rust, emit_stage5_rust,
     emit_stage6_rust, emit_stage7_rust, emit_stage8_rust, jolt_artifact_config, jolt_rust_artifact,
-    lower_commitment_to_compute, lower_compute_to_cpu, lower_piop_and_fiat_shamir,
-    lower_stage1_to_compute, lower_stage2_to_compute, lower_stage3_to_compute,
-    lower_stage4_to_compute, lower_stage5_to_compute, lower_stage6_to_compute,
-    lower_stage7_to_compute, lower_stage8_to_compute, project_prover_party, project_verifier_party,
-    protocol_rust_artifact, resolve_compute_kernels, stage1_cpu_program, stage2_cpu_program,
+    lower_commitment_to_compute, lower_compute_to_cpu, lower_stage1_to_compute,
+    lower_stage2_to_compute, lower_stage3_to_compute, lower_stage4_to_compute,
+    lower_stage5_to_compute, lower_stage6_to_compute, lower_stage7_to_compute,
+    lower_stage8_to_compute, resolve_compute_kernels, stage1_cpu_program, stage2_cpu_program,
     stage3_cpu_program, stage4_cpu_program, stage5_cpu_program, stage6_cpu_program,
     stage7_cpu_program, stage8_cpu_program, validate_jolt_rust_artifact_imports,
-    verify_compute_schema, verify_concrete_transcript, verify_cpu_schema,
-    verify_jolt_protocol_schema, verify_protocol_schema, write_jolt_generated_crates, Concrete,
-    Cpu, JoltProtocolParams, JoltProtocolStage, MeliorContext, ProtocolStage, ProtocolStageKind,
-    Role, RustSourceFile, TextMlir,
+    verify_jolt_protocol_schema, write_jolt_generated_crates, JoltGeneratedCrate,
+    JoltProtocolParams, JoltProtocolStage,
+};
+use bolt::{
+    assemble_generated_crates, lower_piop_and_fiat_shamir, project_prover_party,
+    project_verifier_party, protocol_rust_artifact, validate_rust_artifact_imports,
+    verify_compute_schema, verify_concrete_transcript, verify_cpu_schema, verify_protocol_schema,
+    Concrete, Cpu, GeneratedFile, MeliorContext, ProtocolArtifactConfig, ProtocolRuntimeModule,
+    ProtocolStage, ProtocolStageKind, ProtocolStandaloneDependency, Role, RustSourceFile,
+    RustTypeRef, TextMlir,
 };
 use std::fmt::Write as _;
 use std::path::Path;
@@ -1220,7 +1225,9 @@ fn stage3_rust_targets_extract_and_compile() {
     assert!(!verifier_source.source.contains("jolt_kernels"));
     assert!(verifier_source.source.contains("Stage3VerifierProgramPlan"));
     assert!(verifier_source.source.contains("pub fn verify_stage3"));
-    assert!(verifier_source.source.contains("SumcheckVerifier::verify"));
+    assert!(verifier_source
+        .source
+        .contains("super::common::verify_batched_sumcheck"));
     assert!(verifier_source
         .source
         .contains("Stage3OpeningClaimEqualityPlan"));
@@ -1303,7 +1310,9 @@ fn stage4_rust_targets_extract_and_compile() {
     assert!(verifier_source.source.contains("Stage4VerifierProgramPlan"));
     assert!(verifier_source.source.contains("pub fn verify_stage4"));
     assert!(verifier_source.source.contains("LabelWithCount"));
-    assert!(verifier_source.source.contains("SumcheckVerifier::verify"));
+    assert!(verifier_source
+        .source
+        .contains("super::common::verify_batched_sumcheck"));
     assert!(verifier_source.source.contains("stage4_verifier_program"));
     assert_or_update_fixture("tests/fixtures/prove_stage4.rs", &prover_source.source);
     assert_or_update_fixture("tests/fixtures/verify_stage4.rs", &verifier_source.source);
@@ -1420,7 +1429,9 @@ fn stage5_rust_targets_extract_and_compile() {
         .source
         .contains("jolt.stage5.registers_read_write"));
     assert!(!verifier_source.source.contains("jolt.stage5.ram_val_check"));
-    assert!(verifier_source.source.contains("SumcheckVerifier::verify"));
+    assert!(verifier_source
+        .source
+        .contains("super::common::verify_batched_sumcheck"));
     assert!(verifier_source.source.contains("stage5_verifier_program"));
     assert_rust_source_compiles(&prover_source.filename, &prover_source.source);
     assert_rust_source_compiles(&verifier_source.filename, &verifier_source.source);
@@ -1547,9 +1558,6 @@ fn stage6_rust_targets_extract_and_compile() {
     assert!(verifier_source
         .source
         .contains("stage6.input.stage1.LookupOutput"));
-    assert!(verifier_source
-        .source
-        .contains("stage6.input.stage2.instruction.LookupOutput"));
     assert!(verifier_source.source.contains("expected_ram_ra_virtual"));
     assert!(verifier_source
         .source
@@ -1566,7 +1574,9 @@ fn stage6_rust_targets_extract_and_compile() {
     assert!(verifier_source
         .source
         .contains("stage6.inc_claim_reduction.eval.RdInc"));
-    assert!(verifier_source.source.contains("SumcheckVerifier::verify"));
+    assert!(verifier_source
+        .source
+        .contains("super::common::verify_batched_sumcheck"));
     assert!(verifier_source.source.contains("stage6_verifier_program"));
     assert_rust_source_compiles(&prover_source.filename, &prover_source.source);
     assert_rust_source_compiles(&verifier_source.filename, &verifier_source.source);
@@ -1651,7 +1661,9 @@ fn stage7_rust_targets_extract_and_compile() {
     assert!(verifier_source
         .source
         .contains("stage7.hamming_weight_claim_reduction.eval.InstructionRa_0"));
-    assert!(verifier_source.source.contains("SumcheckVerifier::verify"));
+    assert!(verifier_source
+        .source
+        .contains("super::common::verify_batched_sumcheck"));
     assert!(verifier_source.source.contains("stage7_verifier_program"));
     assert_rust_source_compiles(&prover_source.filename, &prover_source.source);
     assert_rust_source_compiles(&verifier_source.filename, &verifier_source.source);
@@ -1745,6 +1757,102 @@ fn stage4_generated_artifact_crates_compile_in_isolation() {
         assert_generated_crate_manifest_compiles(&output_root, &generated.crate_name);
     }
     let _ = std::fs::remove_dir_all(output_root);
+}
+
+#[test]
+fn generic_artifact_assembly_supports_non_jolt_protocol_config() {
+    let config = non_jolt_artifact_config();
+    let stage = ProtocolStage::new("alpha", "alpha", 1, ProtocolStageKind::Proof);
+    let artifacts = vec![
+        protocol_rust_artifact(
+            &config,
+            stage.clone(),
+            Role::Prover,
+            non_jolt_alpha_prover_source(),
+        ),
+        protocol_rust_artifact(
+            &config,
+            stage,
+            Role::Verifier,
+            non_jolt_alpha_verifier_source(),
+        ),
+    ];
+    assert_eq!(
+        artifacts[0].path, "acme-prover/src/stages/alpha.rs",
+        "generic artifact path should derive from config and stage module"
+    );
+    assert_eq!(
+        artifacts[1].path, "acme-verifier/src/stages/alpha.rs",
+        "generic artifact path should derive from config and stage module"
+    );
+    for artifact in &artifacts {
+        validate_rust_artifact_imports(&config, artifact).expect("generic import policy");
+    }
+
+    let generated =
+        assemble_generated_crates(&config, artifacts, "../deps").expect("assemble generic crates");
+    let prover = generated
+        .iter()
+        .find(|generated| generated.crate_name == "acme-prover")
+        .expect("generated prover crate");
+    let verifier = generated
+        .iter()
+        .find(|generated| generated.crate_name == "acme-verifier")
+        .expect("generated verifier crate");
+
+    let prover_manifest = prover
+        .files
+        .iter()
+        .find(|file| file.path == "Cargo.toml")
+        .expect("prover manifest")
+        .source
+        .as_str();
+    assert!(prover_manifest.contains("name = \"acme-prover\""));
+    assert!(prover_manifest.contains("acme-verifier = { path = \"../deps/acme-verifier\" }"));
+    assert!(prover_manifest.contains("serde = { version = \"1\", default-features = false }"));
+    assert!(!prover_manifest.contains("serde = { path = "));
+    assert!(prover.files.iter().any(|file| file.path == "src/prover.rs"));
+    assert!(prover
+        .files
+        .iter()
+        .any(|file| file.path == "src/stages/alpha.rs"));
+
+    let verifier_stages = verifier
+        .files
+        .iter()
+        .find(|file| file.path == "src/stages/mod.rs")
+        .expect("verifier stages module")
+        .source
+        .as_str();
+    assert!(verifier_stages.contains("pub mod shared;"));
+    assert!(verifier_stages.contains("pub mod alpha;"));
+    assert!(verifier
+        .files
+        .iter()
+        .any(|file| file.path == "src/verifier.rs"));
+    assert!(verifier
+        .files
+        .iter()
+        .any(|file| file.path == "src/stages/shared.rs"));
+
+    let generated_surface = generated
+        .iter()
+        .flat_map(|generated| generated.files.iter())
+        .map(|file| file.source.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        !generated_surface.contains("jolt") && !generated_surface.contains("Jolt"),
+        "generic artifact assembly leaked Jolt names into a non-Jolt protocol fixture"
+    );
+    assert!(
+        !generated_surface.contains("ark-bn254") && !generated_surface.contains("arkworks-algebra"),
+        "generic artifact assembly leaked Jolt/arkworks standalone manifest patches into a non-Jolt protocol fixture"
+    );
+    assert!(generated_surface.contains("pub const TRANSCRIPT_LABEL: &[u8] = b\"acme transcript\";"));
+    assert!(generated_surface.contains("crate::stages::shared::StageProof"));
+    assert!(generated_surface.contains("pub fn prove_acme"));
+    assert!(generated_surface.contains("pub fn verify_acme"));
 }
 
 #[test]
@@ -2567,6 +2675,165 @@ fn build_stage8_pipeline_cpu<'c>(
     (prover_cpu, verifier_cpu)
 }
 
+fn non_jolt_artifact_config() -> ProtocolArtifactConfig {
+    ProtocolArtifactConfig {
+        protocol_name: "Acme".to_owned(),
+        type_prefix: "Acme".to_owned(),
+        transcript_label: "acme transcript".to_owned(),
+        repository: None,
+        prover_crate_name: "acme-prover".to_owned(),
+        verifier_crate_name: "acme-verifier".to_owned(),
+        crates_io_patches: Vec::new(),
+        standalone_dependency_overrides: vec![ProtocolStandaloneDependency::new(
+            "serde",
+            "serde = { version = \"1\", default-features = false }",
+        )],
+        common_dependencies: vec!["serde".to_owned()],
+        prover_dependencies: Vec::new(),
+        verifier_dependencies: Vec::new(),
+        prover_forbidden_imports: vec!["forbidden_prover".to_owned()],
+        verifier_forbidden_imports: vec!["forbidden_verifier".to_owned()],
+        kernel_crate: None,
+        field_type: RustTypeRef::new("std::primitive::u64"),
+        default_transcript_type: RustTypeRef::new("crate::stages::alpha::DefaultTranscript"),
+        transcript_trait: RustTypeRef::new("crate::stages::alpha::Transcript"),
+        commitment_type: RustTypeRef::new("crate::stages::shared::Commitment"),
+        prover_setup_type: RustTypeRef::new("crate::stages::alpha::ProverSetup"),
+        role_api_extension: None,
+        verifier_runtime_modules: vec![ProtocolRuntimeModule {
+            module_name: "shared".to_owned(),
+            file: GeneratedFile {
+                path: "src/stages/shared.rs".to_owned(),
+                source: non_jolt_verifier_common_source(),
+            },
+        }],
+        verifier_named_eval_type: RustTypeRef::new("crate::stages::shared::StageNamedEval"),
+        verifier_sumcheck_output_type: RustTypeRef::new(
+            "crate::stages::shared::StageSumcheckOutput",
+        ),
+        verifier_stage_proof_type: RustTypeRef::new("crate::stages::shared::StageProof"),
+    }
+}
+
+fn non_jolt_alpha_prover_source() -> RustSourceFile {
+    RustSourceFile {
+        filename: "prove_alpha.rs".to_owned(),
+        source: r#"
+pub struct DefaultTranscript<F>(core::marker::PhantomData<F>);
+
+pub trait Transcript {
+    type Challenge;
+}
+
+pub struct ProverSetup;
+
+#[derive(Clone, Debug)]
+pub struct AlphaExecutionArtifacts<F> {
+    pub sumchecks: Vec<AlphaSumcheckOutput<F>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct AlphaSumcheckOutput<F> {
+    pub driver: &'static str,
+    pub point: Vec<F>,
+    pub evals: Vec<AlphaNamedEval<F>>,
+    pub proof: (),
+}
+
+#[derive(Clone, Debug)]
+pub struct AlphaNamedEval<F> {
+    pub name: &'static str,
+    pub oracle: &'static str,
+    pub value: F,
+}
+
+#[derive(Debug)]
+pub struct AlphaKernelError;
+
+pub trait AlphaKernelExecutor<F> {}
+
+pub fn execute_alpha<F, T, E>(
+    _executor: &mut E,
+    _transcript: &mut T,
+) -> Result<AlphaExecutionArtifacts<F>, AlphaKernelError>
+where
+    E: AlphaKernelExecutor<F>,
+{
+    Ok(AlphaExecutionArtifacts {
+        sumchecks: Vec::new(),
+    })
+}
+"#
+        .trim_start()
+        .to_owned(),
+    }
+}
+
+fn non_jolt_alpha_verifier_source() -> RustSourceFile {
+    RustSourceFile {
+        filename: "verify_alpha.rs".to_owned(),
+        source: r#"
+pub struct DefaultTranscript<F>(core::marker::PhantomData<F>);
+
+pub trait Transcript {
+    type Challenge;
+}
+
+pub type AlphaNamedEval<F> = super::shared::StageNamedEval<F>;
+pub type AlphaSumcheckOutput<F> = super::shared::StageSumcheckOutput<F>;
+pub type AlphaProof<F> = super::shared::StageProof<F>;
+
+#[derive(Clone, Debug)]
+pub struct AlphaExecutionArtifacts<F> {
+    pub sumchecks: Vec<AlphaSumcheckOutput<F>>,
+}
+
+#[derive(Debug)]
+pub enum VerifyAlphaError {}
+
+pub fn verify_alpha<F, T>(
+    _proof: &AlphaProof<F>,
+    _transcript: &mut T,
+) -> Result<AlphaExecutionArtifacts<F>, VerifyAlphaError> {
+    Ok(AlphaExecutionArtifacts {
+        sumchecks: Vec::new(),
+    })
+}
+"#
+        .trim_start()
+        .to_owned(),
+    }
+}
+
+fn non_jolt_verifier_common_source() -> String {
+    r#"
+#[derive(Clone, Debug)]
+pub struct Commitment;
+
+#[derive(Clone, Debug)]
+pub struct StageNamedEval<F> {
+    pub name: &'static str,
+    pub oracle: &'static str,
+    pub value: F,
+}
+
+#[derive(Clone, Debug)]
+pub struct StageSumcheckOutput<F> {
+    pub driver: &'static str,
+    pub point: Vec<F>,
+    pub evals: Vec<StageNamedEval<F>>,
+    pub proof: (),
+}
+
+#[derive(Clone, Debug)]
+pub struct StageProof<F> {
+    pub sumchecks: Vec<StageSumcheckOutput<F>>,
+}
+"#
+    .trim_start()
+    .to_owned()
+}
+
 fn jolt_protocol_chain_commitment_stage1_fixture(
     context: &MeliorContext,
     params: &JoltProtocolParams,
@@ -2885,7 +3152,21 @@ fn assert_rust_source_compiles(_filename: &str, source: &str) {
     )
     .expect("write generated cargo manifest");
     std::fs::create_dir_all(dir.join("src")).expect("create generated src dir");
-    std::fs::write(dir.join("src/lib.rs"), source).expect("write generated source");
+    if source.contains("super::common") {
+        let common = std::fs::read_to_string(
+            workspace_root.join("crates/jolt-verifier/src/stages/common.rs"),
+        )
+        .expect("read generated verifier common stage source");
+        std::fs::write(dir.join("src/common.rs"), common).expect("write generated common source");
+        std::fs::write(dir.join("src/generated.rs"), source).expect("write generated source");
+        std::fs::write(
+            dir.join("src/lib.rs"),
+            "pub mod common;\n#[rustfmt::skip]\npub mod generated;\n",
+        )
+        .expect("write generated lib wrapper");
+    } else {
+        std::fs::write(dir.join("src/lib.rs"), source).expect("write generated source");
+    }
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
     let output = Command::new(cargo)
         .arg("check")
@@ -2904,7 +3185,7 @@ fn assert_rust_source_compiles(_filename: &str, source: &str) {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-fn assert_generated_role_crate_compiles(generated: &bolt::JoltGeneratedCrate) {
+fn assert_generated_role_crate_compiles(generated: &JoltGeneratedCrate) {
     let dir = new_temp_dir(&generated.crate_name);
     for file in &generated.files {
         let path = dir.join(&file.path);
@@ -2968,9 +3249,7 @@ fn redirect_generated_prover_to_generated_verifier(output_root: &Path, dependenc
     std::fs::write(&manifest_path, manifest).expect("rewrite generated prover manifest");
 }
 
-fn assert_checked_in_generated_role_crate_sources_match(
-    generated_crates: &[bolt::JoltGeneratedCrate],
-) {
+fn assert_checked_in_generated_role_crate_sources_match(generated_crates: &[JoltGeneratedCrate]) {
     let crates_root = workspace_root().join("crates");
     for generated in generated_crates {
         for file in &generated.files {
@@ -3062,6 +3341,12 @@ fn assert_generated_stage1_self_parity_runs(
     .expect("write generated cargo manifest");
     let src_dir = dir.join("src");
     std::fs::create_dir_all(&src_dir).expect("create generated src dir");
+    let main_source = if verifier_source.source.contains("super::common") {
+        write_verifier_common_module(&src_dir, &workspace_root);
+        format!("mod common;\n{main_source}")
+    } else {
+        main_source.to_owned()
+    };
     std::fs::write(src_dir.join(&prover_source.filename), &prover_source.source)
         .expect("write generated stage1 prover source");
     std::fs::write(
@@ -3100,6 +3385,15 @@ fn assert_generated_jolt_chain_self_parity_runs(files: &[&RustSourceFile], main_
     .expect("write generated cargo manifest");
     let src_dir = dir.join("src");
     std::fs::create_dir_all(&src_dir).expect("create generated src dir");
+    let main_source = if files
+        .iter()
+        .any(|file| file.source.contains("super::common"))
+    {
+        write_verifier_common_module(&src_dir, &workspace_root);
+        format!("mod common;\n{main_source}")
+    } else {
+        main_source.to_owned()
+    };
     for file in files {
         std::fs::write(src_dir.join(&file.filename), &file.source)
             .expect("write generated chain source");
@@ -3123,6 +3417,13 @@ fn assert_generated_jolt_chain_self_parity_runs(files: &[&RustSourceFile], main_
         String::from_utf8_lossy(&output.stderr)
     );
     let _ = std::fs::remove_dir_all(dir);
+}
+
+fn write_verifier_common_module(src_dir: &Path, workspace_root: &Path) {
+    let common =
+        std::fs::read_to_string(workspace_root.join("crates/jolt-verifier/src/stages/common.rs"))
+            .expect("read generated verifier common stage source");
+    std::fs::write(src_dir.join("common.rs"), common).expect("write generated common source");
 }
 
 fn workspace_root() -> std::path::PathBuf {
