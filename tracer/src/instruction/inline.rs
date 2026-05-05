@@ -18,6 +18,9 @@ use crate::{
 };
 use jolt_program::expand::{ExpansionAllocator, ExpansionError, InlineExpansionProvider};
 use serde::{Deserialize, Serialize};
+
+const FIRST_INSTRUCTION_TEMP_REGISTER: u8 = common::constants::RISCV_REGISTER_COUNT + 8;
+const LAST_INSTRUCTION_TEMP_REGISTER: u8 = FIRST_INSTRUCTION_TEMP_REGISTER + 8;
 use std::collections::VecDeque;
 
 pub type InlineSequenceFn = fn(InstrAssembler, FormatInline) -> Vec<Instruction>;
@@ -88,6 +91,12 @@ impl InlineExpansionProvider for TracerInlineExpansionProvider {
         if !is_inline_registered(inline.opcode, inline.funct3, inline.funct7) {
             return Err(ExpansionError::UnsupportedInstruction);
         }
+
+        let _remapped_rd_guard = instruction.operands.rd.and_then(|rd| {
+            (FIRST_INSTRUCTION_TEMP_REGISTER..LAST_INSTRUCTION_TEMP_REGISTER)
+                .contains(&rd)
+                .then(|| self.allocator.allocate())
+        });
 
         Ok(inline
             .inline_sequence(&self.allocator, Xlen::Bit64)
@@ -188,11 +197,12 @@ impl RISCVTrace for INLINE {
         }
 
         let reg = find_inline(self.opcode, self.funct3, self.funct7);
+        let advice_allocator = VirtualRegisterAllocator::new();
         let asm = InstrAssembler::new_inline(
             self.address,
             self.is_compressed,
             cpu.xlen,
-            &cpu.vr_allocator,
+            &advice_allocator,
         );
         if let Some(mut advice) = (reg.build_advice)(asm, self.operands, cpu) {
             let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
@@ -208,7 +218,7 @@ impl RISCVTrace for INLINE {
                         ),
                     };
                 }
-                instr.trace(cpu, trace.as_deref_mut());
+                instr.trace_raw(cpu, trace.as_deref_mut());
             }
             assert!(
                 advice.is_empty(),
@@ -222,7 +232,7 @@ impl RISCVTrace for INLINE {
             let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
             let mut trace = trace;
             for instr in inline_sequence {
-                instr.trace(cpu, trace.as_deref_mut());
+                instr.trace_raw(cpu, trace.as_deref_mut());
             }
         }
     }

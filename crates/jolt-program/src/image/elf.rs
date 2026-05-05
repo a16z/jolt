@@ -1,6 +1,7 @@
 use common::constants::RAM_START_ADDRESS;
 use jolt_riscv::{uncompress_rv64_instruction, NormalizedInstruction};
 use object::{Object, ObjectSection, SectionKind};
+use std::collections::BTreeMap;
 
 use crate::ProgramError;
 
@@ -21,9 +22,10 @@ pub fn decode_elf(elf: &[u8]) -> Result<DecodedProgramImage, ProgramError> {
         ));
     }
 
-    let mut instructions = Vec::new();
     let mut memory_init = Vec::new();
+    let mut memory_image = BTreeMap::new();
     let mut program_end = RAM_START_ADDRESS;
+    let mut text_ranges = Vec::new();
 
     for section in obj
         .sections()
@@ -38,7 +40,7 @@ pub fn decode_elf(elf: &[u8]) -> Result<DecodedProgramImage, ProgramError> {
             .map_err(|_| ProgramError::MalformedImage("section data is not readable"))?;
 
         if section.kind() == SectionKind::Text {
-            decode_text_section(start, raw_data, &mut instructions)?;
+            text_ranges.push((start, end));
         }
 
         memory_init.extend(
@@ -47,6 +49,20 @@ pub fn decode_elf(elf: &[u8]) -> Result<DecodedProgramImage, ProgramError> {
                 .enumerate()
                 .map(|(offset, byte)| (start + offset as u64, *byte)),
         );
+        memory_image.extend(
+            raw_data
+                .iter()
+                .enumerate()
+                .map(|(offset, byte)| (start + offset as u64, *byte)),
+        );
+    }
+
+    let mut instructions = Vec::new();
+    for (start, end) in merge_ranges(text_ranges) {
+        let raw_data: Vec<_> = (start..end)
+            .map(|address| memory_image.get(&address).copied().unwrap_or(0))
+            .collect();
+        decode_text_section(start, &raw_data, &mut instructions)?;
     }
 
     Ok(DecodedProgramImage {
@@ -55,6 +71,21 @@ pub fn decode_elf(elf: &[u8]) -> Result<DecodedProgramImage, ProgramError> {
         program_end,
         entry_address: obj.entry(),
     })
+}
+
+fn merge_ranges(mut ranges: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
+    ranges.sort_unstable_by_key(|(start, _)| *start);
+    let mut merged: Vec<(u64, u64)> = Vec::new();
+    for (start, end) in ranges {
+        if let Some((_, previous_end)) = merged.last_mut() {
+            if start <= *previous_end {
+                *previous_end = (*previous_end).max(end);
+                continue;
+            }
+        }
+        merged.push((start, end));
+    }
+    merged
 }
 
 fn decode_text_section(

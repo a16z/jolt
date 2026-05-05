@@ -1887,4 +1887,48 @@ mod tests {
             Err(ExpansionError::InlineProviderRequired)
         ));
     }
+
+    #[test]
+    fn inline_rd_zero_is_remapped_before_provider() -> Result<(), ExpansionError> {
+        #[derive(Default)]
+        struct CapturingProvider {
+            captured: Option<NormalizedInstruction>,
+        }
+
+        impl InlineExpansionProvider for CapturingProvider {
+            fn expand_inline(
+                &mut self,
+                instruction: &NormalizedInstruction,
+                _allocator: &mut ExpansionAllocator,
+            ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
+                self.captured = Some(*instruction);
+                Ok(vec![*instruction])
+            }
+        }
+
+        let input = NormalizedInstruction {
+            instruction_kind: InstructionKind::Inline,
+            address: 0x8000_0000,
+            operands: NormalizedOperands {
+                rd: Some(0),
+                rs1: Some(10),
+                rs2: Some(20),
+                imm: 0x0b,
+            },
+            virtual_sequence_remaining: None,
+            is_first_in_sequence: false,
+            is_compressed: false,
+        };
+        let mut allocator = ExpansionAllocator::new();
+        let mut provider = CapturingProvider::default();
+
+        let expanded = expand_instruction_with_provider(&input, &mut allocator, &mut provider)?;
+
+        let mut expected = input;
+        expected.operands.rd = Some(40);
+
+        assert_eq!(provider.captured, Some(expected));
+        assert_eq!(expanded, vec![expected]);
+        Ok(())
+    }
 }

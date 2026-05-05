@@ -629,7 +629,6 @@ macro_rules! define_rv32im_enums {
             /// Copy this instruction with rd overwritten.  Uses
             /// `InstructionFormat::set_rd` so the correct field is updated
             /// for each format (e.g. FormatInline writes rs3).
-            #[cfg(test)]
             fn with_rd(&self, new_rd: u8) -> Instruction {
                 match self {
                     Instruction::NoOp => Instruction::NoOp,
@@ -676,7 +675,6 @@ macro_rules! define_rv32im_enums {
                 .collect();
             }
 
-            #[cfg(test)]
             pub(crate) fn legacy_inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
                 let normalized = self.normalize();
                 if normalized.operands.rd == Some(0) {
@@ -695,7 +693,7 @@ macro_rules! define_rv32im_enums {
                     // Remap rd to a virtual register for instructions with side effects
                     if self.has_side_effects() {
                         let vr = allocator.allocate();
-                        return self.with_rd(*vr).inline_sequence(allocator, xlen);
+                        return self.with_rd(*vr).dispatch_inline_sequence(allocator, xlen);
                     }
                     // No side effects beyond writing rd: replace with NOP
                     let addi = ADDI::from(NormalizedInstruction {
@@ -724,8 +722,17 @@ macro_rules! define_rv32im_enums {
                         InstructionKind::$instr => Ok(<$instr as From<NormalizedInstruction>>::from(instruction).into()),
                     )*
                     InstructionKind::Inline => {
-                        let word = inline_word_from_normalized(instruction)?;
-                        let mut inline = INLINE::new(word, instruction.address as u64, false, instruction.is_compressed);
+                        let metadata = instruction.operands.imm as u32;
+                        let mut inline = INLINE {
+                            opcode: metadata & 0x7f,
+                            funct3: (metadata >> 7) & 0x7,
+                            funct7: (metadata >> 10) & 0x7f,
+                            address: instruction.address as u64,
+                            operands: instruction.operands.into(),
+                            virtual_sequence_remaining: instruction.virtual_sequence_remaining,
+                            is_first_in_sequence: instruction.is_first_in_sequence,
+                            is_compressed: instruction.is_compressed,
+                        };
                         inline.virtual_sequence_remaining = instruction.virtual_sequence_remaining;
                         inline.is_first_in_sequence = instruction.is_first_in_sequence;
                         Ok(inline.into())
@@ -815,26 +822,6 @@ jolt_riscv::for_each_instruction_kind!(define_rv32im_enums);
 
 fn inline_metadata(opcode: u32, funct3: u32, funct7: u32) -> i128 {
     (opcode | (funct3 << 7) | (funct7 << 10)) as i128
-}
-
-fn inline_word_from_normalized(instruction: NormalizedInstruction) -> Result<u32, &'static str> {
-    let opcode = (instruction.operands.imm as u32) & 0x7f;
-    let funct3 = ((instruction.operands.imm as u32) >> 7) & 0x7;
-    let funct7 = ((instruction.operands.imm as u32) >> 10) & 0x7f;
-    let rd = instruction
-        .operands
-        .rd
-        .ok_or("normalized inline row is missing rd")? as u32;
-    let rs1 = instruction
-        .operands
-        .rs1
-        .ok_or("normalized inline row is missing rs1")? as u32;
-    let rs2 = instruction
-        .operands
-        .rs2
-        .ok_or("normalized inline row is missing rs2")? as u32;
-
-    Ok((funct7 << 25) | (rs2 << 20) | (rs1 << 15) | (funct3 << 12) | (rd << 7) | opcode)
 }
 
 impl CanonicalSerialize for Instruction {

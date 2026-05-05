@@ -333,9 +333,9 @@ pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
     // (`MustStartSequenceFromBeginning`) forces the next row to be
     // non-virtual or the first step of a new sequence, and the
     // bytecode-row commitment ties `NextPC` to a unique row matching both
-    // properties. If any of those are ever removed or weakened, tighten
-    // `IsLastInSequence` back to `JALR`-only (see jolt-core's
-    // `instruction/jalr.rs`) to avoid an unconstrained-`NextPC` exploit.
+    // properties. If any of those are ever removed or weakened, revisit the
+    // terminal-sequence flag semantics to avoid an unconstrained-`NextPC`
+    // exploit.
     a_rows.push(row::<F>(&[
         (V_FLAG_VIRTUAL_INSTRUCTION, 1),
         (V_FLAG_IS_LAST_IN_SEQUENCE, -1),

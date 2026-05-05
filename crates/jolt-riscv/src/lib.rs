@@ -97,9 +97,7 @@ macro_rules! jolt_instruction {
                     $(.set($crate::CircuitFlags::$circuit))*;
                 if let Some(virtual_sequence_remaining) = instruction.virtual_sequence_remaining {
                     flags = flags.set($crate::CircuitFlags::VirtualInstruction);
-                    if virtual_sequence_remaining == 0
-                        && instruction.instruction_kind == $crate::InstructionKind::JALR
-                    {
+                    if virtual_sequence_remaining == 0 {
                         flags = flags.set($crate::CircuitFlags::IsLastInSequence);
                     }
                 }
@@ -138,9 +136,7 @@ macro_rules! jolt_instruction {
                 let mut flags = $crate::CircuitFlagSet::default();
                 if let Some(virtual_sequence_remaining) = instruction.virtual_sequence_remaining {
                     flags = flags.set($crate::CircuitFlags::VirtualInstruction);
-                    if virtual_sequence_remaining == 0
-                        && instruction.instruction_kind == $crate::InstructionKind::JALR
-                    {
+                    if virtual_sequence_remaining == 0 {
                         flags = flags.set($crate::CircuitFlags::IsLastInSequence);
                     }
                 }

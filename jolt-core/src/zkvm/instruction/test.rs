@@ -38,8 +38,9 @@ mod flags {
     use crate::zkvm::instruction::{Flags, InstructionFlags, SupportedInstruction};
 
     use super::CircuitFlags;
+    use jolt_riscv::{InstructionKind, NormalizedInstruction, NormalizedOperands};
     use strum::IntoEnumIterator;
-    use tracer::instruction::Cycle;
+    use tracer::instruction::{Cycle, Instruction};
 
     #[test]
     fn left_operand_exclusive() {
@@ -139,6 +140,28 @@ mod flags {
                 "instruction flags differ for {instr:?}"
             );
         }
+    }
+
+    #[test]
+    fn concrete_terminal_virtual_flags_match_normalized_flags() {
+        let normalized = NormalizedInstruction {
+            instruction_kind: InstructionKind::ADDI,
+            address: 0x8000_0000,
+            operands: NormalizedOperands {
+                rd: Some(1),
+                rs1: Some(2),
+                rs2: None,
+                imm: 3,
+            },
+            virtual_sequence_remaining: Some(0),
+            is_first_in_sequence: false,
+            is_compressed: false,
+        };
+        let concrete = Instruction::try_from_normalized(normalized)
+            .expect("ADDI should convert from normalized form");
+
+        assert_eq!(normalized.circuit_flags(), concrete.circuit_flags());
+        assert!(concrete.circuit_flags()[CircuitFlags::IsLastInSequence]);
     }
 
     #[cfg(feature = "host")]

@@ -540,7 +540,7 @@ mod tests {
     }
 
     #[test]
-    fn only_jalr_marks_last_in_sequence() -> Result<(), InstructionKind> {
+    fn terminal_virtual_instruction_marks_last_in_sequence() -> Result<(), InstructionKind> {
         fn flags_for(row: NormalizedInstruction) -> Result<crate::CircuitFlagSet, InstructionKind> {
             JoltInstructions::try_from(row).map(|instruction| instruction.circuit_flags())
         }
@@ -553,12 +553,17 @@ mod tests {
         row.instruction_kind = InstructionKind::ADDI;
         let addi_flags = flags_for(row)?;
         assert!(addi_flags[CircuitFlags::VirtualInstruction]);
-        assert!(!addi_flags[CircuitFlags::IsLastInSequence]);
+        assert!(addi_flags[CircuitFlags::IsLastInSequence]);
 
         row.instruction_kind = InstructionKind::JALR;
         let jalr_flags = flags_for(row)?;
         assert!(jalr_flags[CircuitFlags::VirtualInstruction]);
         assert!(jalr_flags[CircuitFlags::IsLastInSequence]);
+
+        row.virtual_sequence_remaining = Some(1);
+        let nonterminal_flags = flags_for(row)?;
+        assert!(nonterminal_flags[CircuitFlags::VirtualInstruction]);
+        assert!(!nonterminal_flags[CircuitFlags::IsLastInSequence]);
         Ok(())
     }
 }

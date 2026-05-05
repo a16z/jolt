@@ -69,14 +69,14 @@ impl BytecodePreprocessing {
     serde::Deserialize,
 )]
 pub struct BytecodePCMapper {
-    indices: Vec<Option<(usize, u16)>>,
+    indices: Vec<Vec<(u16, usize)>>,
 }
 
 impl BytecodePCMapper {
     pub fn try_new(bytecode: &[NormalizedInstruction]) -> Result<Self, PreprocessingError> {
-        let mut indices = vec![None; Self::index_count(bytecode)];
+        let mut indices = vec![Vec::new(); Self::index_count(bytecode)];
         let mut last_pc = 0;
-        indices[0] = Some((last_pc, 0));
+        indices[0].push((0, last_pc));
 
         for instruction in bytecode {
             if instruction.address == 0 {
@@ -86,18 +86,18 @@ impl BytecodePCMapper {
             last_pc += 1;
             let bytecode_index = Self::get_index(instruction.address);
             let new_sequence = instruction.virtual_sequence_remaining.unwrap_or(0);
-            if let Some((_, max_sequence)) = indices[bytecode_index] {
-                if new_sequence >= max_sequence {
-                    return Err(PreprocessingError::NonDecreasingInlineSequence {
-                        bytecode_index,
-                        address: instruction.address,
-                        previous_max_sequence: max_sequence,
-                        new_sequence,
-                    });
-                }
-            } else {
-                indices[bytecode_index] = Some((last_pc, new_sequence));
+            if indices[bytecode_index]
+                .iter()
+                .any(|(sequence, _)| *sequence == new_sequence)
+            {
+                return Err(PreprocessingError::NonDecreasingInlineSequence {
+                    bytecode_index,
+                    address: instruction.address,
+                    previous_max_sequence: new_sequence,
+                    new_sequence,
+                });
             }
+            indices[bytecode_index].push((new_sequence, last_pc));
         }
 
         Ok(Self { indices })
@@ -105,8 +105,10 @@ impl BytecodePCMapper {
 
     pub fn get_pc(&self, address: usize, virtual_sequence_remaining: u16) -> Option<usize> {
         let index = Self::get_index(address);
-        let (base_pc, max_inline_seq) = self.indices.get(index).copied().flatten()?;
-        Some(base_pc + (max_inline_seq - virtual_sequence_remaining) as usize)
+        self.indices
+            .get(index)?
+            .iter()
+            .find_map(|(sequence, pc)| (*sequence == virtual_sequence_remaining).then_some(*pc))
     }
 
     pub const fn get_index(address: usize) -> usize {

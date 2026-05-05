@@ -175,8 +175,12 @@ impl InstrAssembler {
                 );
             }
         }
-        self.sequence
-            .extend(inst.inline_sequence(&self.allocator, self.xlen));
+        let instruction: Instruction = inst.into();
+        self.sequence.extend(
+            instruction
+                .legacy_inline_sequence(&self.allocator, self.xlen)
+                .into_iter(),
+        );
     }
 
     /// Emit any R-type instruction (rd, rs1, rs2).

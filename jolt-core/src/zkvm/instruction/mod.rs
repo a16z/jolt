@@ -321,7 +321,7 @@ macro_rules! define_rv32im_trait_impls {
 
         impl Flags for Instruction {
             fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
-                match self {
+                let mut flags = match self {
                     Instruction::NoOp => {
                         let mut flags = [false; NUM_CIRCUIT_FLAGS];
                         flags[CircuitFlags::DoNotUpdateUnexpandedPC] = true;
@@ -332,7 +332,11 @@ macro_rules! define_rv32im_trait_impls {
                     )*
                     Instruction::UNIMPL => [false; NUM_CIRCUIT_FLAGS],
                     _ => panic!("Unexpected instruction: {:?}", self),
+                };
+                if self.normalize().virtual_sequence_remaining == Some(0) {
+                    flags[CircuitFlags::IsLastInSequence] = true;
                 }
+                flags
             }
 
             fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS] {
