@@ -190,6 +190,23 @@ pub fn compute_min_ram_K(
     bytecode_end.max(io_end).next_power_of_two()
 }
 
+/// Computes the largest valid `ram_K` from the verifier-known memory layout.
+///
+/// Any RAM access produced by the emulator must lie either in the JoltDevice
+/// range below `RAM_START_ADDRESS` or in the configured program/stack/heap range.
+/// Rejecting larger proof-supplied `ram_K` values prevents malformed proofs from
+/// forcing dense verifier allocations for unreachable addresses.
+pub fn compute_max_ram_K(memory_layout: &MemoryLayout) -> usize {
+    let lowest_address = memory_layout.get_lowest_address();
+    let highest_exclusive = memory_layout.heap_end.max(memory_layout.io_end);
+    let mapped_words = highest_exclusive
+        .checked_sub(lowest_address)
+        .expect("memory layout highest address is below lowest address")
+        / 8;
+
+    (mapped_words as usize).next_power_of_two()
+}
+
 /// Returns Some(address) if there was read/write
 /// Returns None if there was no read/write
 #[inline(always)]
@@ -938,6 +955,25 @@ mod tests {
     fn check_memory_fits_passes_when_within_bounds() {
         check_memory_fits("Test region", 0, 16, 4);
         check_memory_fits("Test region", 2, 8, 4);
+    }
+
+    #[test]
+    fn compute_max_ram_k_covers_configured_address_space() {
+        let memory_config = MemoryConfig {
+            heap_size: 1024,
+            max_output_size: 512,
+            program_size: Some(4096),
+            ..Default::default()
+        };
+        let memory_layout = MemoryLayout::new(&memory_config);
+
+        let max_ram_K = compute_max_ram_K(&memory_layout);
+        let highest_exclusive = memory_layout.heap_end.max(memory_layout.io_end);
+        let mapped_words = ((highest_exclusive - memory_layout.get_lowest_address()) / 8) as usize;
+
+        assert!(max_ram_K.is_power_of_two());
+        assert!(max_ram_K >= mapped_words);
+        assert!(max_ram_K < mapped_words * 2);
     }
 
     #[test]

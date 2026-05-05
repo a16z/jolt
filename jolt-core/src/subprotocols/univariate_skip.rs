@@ -13,6 +13,7 @@ use crate::poly::lagrange_poly::LagrangePolynomial;
 use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{AbstractVerifierOpeningAccumulator, ProverOpeningAccumulator};
 use crate::poly::unipoly::UniPoly;
+use crate::subprotocols::sumcheck::{deserialize_bounded_vec, MAX_ZK_PROOF_VECTOR_LEN};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::transcripts::Transcript;
@@ -370,7 +371,7 @@ impl<F: JoltField, C: JoltCurve<F = F>, T: Transcript> CanonicalDeserialize
         let commitment = C::G1::deserialize_with_mode(&mut reader, compress, validate)?;
         let poly_degree = usize::deserialize_with_mode(&mut reader, compress, validate)?;
         let output_claims_commitments =
-            Vec::<C::G1>::deserialize_with_mode(reader, compress, validate)?;
+            deserialize_bounded_vec(&mut reader, compress, validate, MAX_ZK_PROOF_VECTOR_LEN)?;
         Ok(Self::new(
             commitment,
             poly_degree,

@@ -7,6 +7,7 @@ use dory::backends::arkworks::{
     ArkDoryProof, ArkG1, ArkGT, ArkworksProverSetup, ArkworksVerifierSetup,
 };
 use jolt_crypto::{Bn254G1, Bn254GT, HomomorphicCommitment};
+use jolt_field::Fr;
 use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -60,9 +61,10 @@ impl<'de> Deserialize<'de> for DoryProof {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let buf: Vec<u8> = Deserialize::deserialize(deserializer)?;
         validate_proof_round_count(&buf).map_err(serde::de::Error::custom)?;
-        ArkDoryProof::deserialize_compressed(&buf[..])
-            .map_err(serde::de::Error::custom)
-            .map(Self)
+        let proof =
+            ArkDoryProof::deserialize_compressed(&buf[..]).map_err(serde::de::Error::custom)?;
+        validate_dory_proof_gt(&proof).map_err(serde::de::Error::custom)?;
+        Ok(Self(proof))
     }
 }
 
@@ -85,7 +87,11 @@ impl<'de> Deserialize<'de> for DoryVerifierSetup {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct DoryHint(pub Vec<Bn254G1>);
+pub struct DoryHint {
+    pub row_commitments: Vec<Bn254G1>,
+    pub commit_blind: Fr,
+    pub is_hiding: bool,
+}
 
 #[derive(Clone)]
 pub struct DoryPartialCommitment {
@@ -131,10 +137,51 @@ fn validate_proof_round_count(buf: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_gt_subgroup(gt: &ArkGT) -> Result<(), String> {
+    let mut buf = Vec::new();
+    gt.serialize_compressed(&mut buf)
+        .map_err(|e| format!("invalid Dory proof GT serialization: {e}"))?;
+    let deserializer =
+        serde::de::value::SeqDeserializer::<_, serde::de::value::Error>::new(buf.into_iter());
+    Bn254GT::deserialize(deserializer)
+        .map(|_| ())
+        .map_err(|e| format!("Dory proof contains invalid GT element: {e}"))
+}
+
+fn validate_dory_proof_gt(proof: &ArkDoryProof) -> Result<(), String> {
+    validate_gt_subgroup(&proof.vmv_message.c)?;
+    validate_gt_subgroup(&proof.vmv_message.d2)?;
+
+    for message in &proof.first_messages {
+        validate_gt_subgroup(&message.d1_left)?;
+        validate_gt_subgroup(&message.d1_right)?;
+        validate_gt_subgroup(&message.d2_left)?;
+        validate_gt_subgroup(&message.d2_right)?;
+    }
+
+    for message in &proof.second_messages {
+        validate_gt_subgroup(&message.c_plus)?;
+        validate_gt_subgroup(&message.c_minus)?;
+    }
+
+    if let Some(proof) = &proof.sigma2_proof {
+        validate_gt_subgroup(&proof.a)?;
+    }
+    if let Some(proof) = &proof.scalar_product_proof {
+        validate_gt_subgroup(&proof.p1)?;
+        validate_gt_subgroup(&proof.p2)?;
+        validate_gt_subgroup(&proof.q)?;
+        validate_gt_subgroup(&proof.r)?;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "tests may panic on assertion failures")]
 mod tests {
     use super::*;
+    use dory::primitives::arithmetic::Group;
     use jolt_field::Field;
     use jolt_openings::CommitmentScheme;
     use jolt_poly::Polynomial;
@@ -216,17 +263,23 @@ mod tests {
             .map(|_| <Fr as Field>::random(&mut rng))
             .collect();
         let eval = poly.evaluate(&point);
+        let (commitment, hint) = crate::DoryScheme::commit(poly.evaluations(), &prover_setup);
 
         let mut transcript = jolt_transcript::Blake2bTranscript::new(b"serde-bp");
-        let proof =
-            crate::DoryScheme::open(&poly, &point, eval, &prover_setup, None, &mut transcript);
+        let proof = crate::DoryScheme::open(
+            &poly,
+            &point,
+            eval,
+            &prover_setup,
+            Some(hint),
+            &mut transcript,
+        );
 
         let serialized = serde_json::to_vec(&proof).expect("serialize proof");
         let deserialized: DoryProof =
             serde_json::from_slice(&serialized).expect("deserialize proof");
 
         let verifier_setup = DoryVerifierSetup(prover_setup.0.to_verifier_setup());
-        let (commitment, _) = crate::DoryScheme::commit(poly.evaluations(), &prover_setup);
 
         let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"serde-bp");
         let result = crate::DoryScheme::verify(
@@ -251,10 +304,17 @@ mod tests {
             .map(|_| <Fr as Field>::random(&mut rng))
             .collect();
         let eval = poly.evaluate(&point);
+        let (_, hint) = crate::DoryScheme::commit(poly.evaluations(), &prover_setup);
 
         let mut transcript = jolt_transcript::Blake2bTranscript::new(b"serde-oversized");
-        let proof =
-            crate::DoryScheme::open(&poly, &point, eval, &prover_setup, None, &mut transcript);
+        let proof = crate::DoryScheme::open(
+            &poly,
+            &point,
+            eval,
+            &prover_setup,
+            Some(hint),
+            &mut transcript,
+        );
 
         let mut bytes = Vec::new();
         proof
@@ -292,5 +352,55 @@ mod tests {
         let encoded = serde_json::to_vec(&bytes).expect("encode proof bytes");
         let result = serde_json::from_slice::<DoryProof>(&encoded);
         assert!(result.is_err(), "oversized round count must be rejected");
+    }
+
+    #[test]
+    fn dory_proof_rejects_non_subgroup_gt() {
+        let num_vars = 2;
+        let mut rng = ChaCha20Rng::seed_from_u64(404);
+
+        let prover_setup = crate::DoryScheme::setup_prover(num_vars);
+        let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
+        let point: Vec<Fr> = (0..num_vars)
+            .map(|_| <Fr as Field>::random(&mut rng))
+            .collect();
+        let eval = poly.evaluate(&point);
+        let (_, hint) = crate::DoryScheme::commit(poly.evaluations(), &prover_setup);
+
+        let mut transcript = jolt_transcript::Blake2bTranscript::new(b"serde-subgroup");
+        let proof = crate::DoryScheme::open(
+            &poly,
+            &point,
+            eval,
+            &prover_setup,
+            Some(hint),
+            &mut transcript,
+        );
+
+        let mut bytes = Vec::new();
+        proof
+            .0
+            .serialize_compressed(&mut bytes)
+            .expect("serialize proof");
+
+        let invalid_gt = loop {
+            let candidate = ArkGT::random();
+            if validate_gt_subgroup(&candidate).is_err() {
+                break candidate;
+            }
+        };
+
+        let mut replacement = Vec::new();
+        invalid_gt
+            .serialize_compressed(&mut replacement)
+            .expect("serialize invalid GT");
+        bytes[..replacement.len()].copy_from_slice(&replacement);
+
+        let encoded = serde_json::to_vec(&bytes).expect("encode proof bytes");
+        let result = serde_json::from_slice::<DoryProof>(&encoded);
+        assert!(
+            result.is_err(),
+            "non-subgroup Dory proof GT element must be rejected"
+        );
     }
 }

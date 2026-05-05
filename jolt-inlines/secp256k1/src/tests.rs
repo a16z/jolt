@@ -2,13 +2,39 @@ mod sequence_tests {
     use crate::sdk::{decode_glv_sign_word, Secp256k1Point, Secp256k1PointExt};
     use crate::{
         Secp256k1Error, Secp256k1Fq, Secp256k1Fr, INLINE_OPCODE, SECP256K1_DIVQ_FUNCT3,
-        SECP256K1_DIVR_FUNCT3, SECP256K1_FUNCT7, SECP256K1_MULQ_FUNCT3, SECP256K1_MULR_FUNCT3,
-        SECP256K1_SQUAREQ_FUNCT3, SECP256K1_SQUARER_FUNCT3,
+        SECP256K1_DIVR_FUNCT3, SECP256K1_FUNCT7, SECP256K1_GLVR_ADV_FUNCT3, SECP256K1_MULQ_FUNCT3,
+        SECP256K1_MULR_FUNCT3, SECP256K1_SQUAREQ_FUNCT3, SECP256K1_SQUARER_FUNCT3,
     };
     use ark_ff::{BigInt, Field, PrimeField};
     use ark_secp256k1::{Fq, Fr};
+    use std::panic::{self, AssertUnwindSafe};
     use tracer::emulator::cpu::Xlen;
+    use tracer::instruction::inline::is_inline_registered;
+    use tracer::instruction::{Instruction, RISCVTrace};
     use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
+
+    fn sub_small(mut limbs: [u64; 4], value: u64) -> [u64; 4] {
+        let (limb, mut borrow) = limbs[0].overflowing_sub(value);
+        limbs[0] = limb;
+        for limb in limbs.iter_mut().skip(1) {
+            if !borrow {
+                break;
+            }
+            let (new_limb, new_borrow) = limb.overflowing_sub(1);
+            *limb = new_limb;
+            borrow = new_borrow;
+        }
+        limbs
+    }
+
+    #[test]
+    fn test_secp256k1_raw_glv_advice_opcode_unregistered() {
+        assert!(!is_inline_registered(
+            INLINE_OPCODE,
+            SECP256K1_GLVR_ADV_FUNCT3,
+            SECP256K1_FUNCT7,
+        ));
+    }
 
     fn assert_divq_trace_equiv(a: &[u64; 4], b: &[u64; 4]) {
         // get expected value
@@ -108,6 +134,43 @@ mod sequence_tests {
         let a = [1u64, 1u64, 1u64, 1u64];
         let b = [1u64, 1u64, 1u64, 1u64];
         assert_mulq_trace_equiv(&a, &b);
+    }
+
+    #[test]
+    fn test_secp256k1_mulq_rejects_noncanonical_forged_output() {
+        let q_minus_1 = sub_small(Fq::MODULUS.0, 1);
+        let forged_quotient = sub_small(Fq::MODULUS.0, 3);
+        let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
+        let mut harness = InlineTestHarness::new(layout, Xlen::Bit64);
+        harness.setup_registers();
+        harness.load_input64(&q_minus_1);
+        harness.load_input2_64(&q_minus_1);
+
+        let instruction = InlineTestHarness::create_default_instruction(
+            INLINE_OPCODE,
+            SECP256K1_MULQ_FUNCT3,
+            SECP256K1_FUNCT7,
+        );
+        let mut sequence = instruction.inline_sequence(&harness.cpu.vr_allocator, harness.xlen());
+        let mut advice = forged_quotient.iter();
+        for instr in &mut sequence {
+            if let Instruction::VirtualAdvice(virtual_advice) = instr {
+                virtual_advice.advice = *advice.next().unwrap();
+            }
+        }
+        assert!(
+            advice.next().is_none(),
+            "all forged quotient limbs must be used"
+        );
+
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            harness.execute_sequence(&sequence);
+        }));
+
+        assert!(
+            result.is_err(),
+            "forged q + 1 output must fail the canonical output check"
+        );
     }
 
     fn assert_squareq_trace_equiv(a: &[u64; 4]) {

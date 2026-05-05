@@ -198,6 +198,23 @@ fn deterministic_commitment() {
 }
 
 #[test]
+fn zk_commitment_uses_fresh_blinding() {
+    let num_vars = 4;
+    let prover_setup = DoryScheme::setup_prover(num_vars);
+
+    let mut rng = ChaCha20Rng::seed_from_u64(701);
+    let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
+
+    let (c1, _) = DoryScheme::commit_zk(poly.evaluations(), &prover_setup);
+    let (c2, _) = DoryScheme::commit_zk(poly.evaluations(), &prover_setup);
+
+    assert_ne!(
+        c1, c2,
+        "ZK commitments to the same polynomial must use fresh blinding"
+    );
+}
+
+#[test]
 fn wrong_commitment_rejected() {
     let num_vars = 3;
     let mut rng = ChaCha20Rng::seed_from_u64(900);
@@ -271,7 +288,7 @@ fn zk_round_trip<T: Transcript<Challenge = Fr>>(num_vars: usize, seed: u64, labe
         .map(|_| <Fr as Field>::random(&mut rng))
         .collect();
     let eval = poly.evaluate(&point);
-    let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
+    let (commitment, hint) = DoryScheme::commit_zk(poly.evaluations(), &prover_setup);
 
     let mut pt = T::new(label);
     let (proof, _eval_com, _blind) =
@@ -309,14 +326,14 @@ fn zk_wrong_commitment_rejected() {
         .map(|_| <Fr as Field>::random(&mut rng))
         .collect();
     let eval = poly.evaluate(&point);
-    let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
+    let (commitment, hint) = DoryScheme::commit_zk(poly.evaluations(), &prover_setup);
 
     let mut pt = Blake2bTranscript::new(b"zk-wrong-commit");
     let (proof, _eval_com, _blind) =
         DoryScheme::open_zk(&poly, &point, eval, &prover_setup, Some(hint), &mut pt);
 
     let wrong_poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-    let (wrong_commitment, _) = DoryScheme::commit(wrong_poly.evaluations(), &prover_setup);
+    let (wrong_commitment, _) = DoryScheme::commit_zk(wrong_poly.evaluations(), &prover_setup);
     assert_ne!(commitment, wrong_commitment);
 
     let mut vt = Blake2bTranscript::new(b"zk-wrong-commit");
@@ -336,7 +353,7 @@ fn wrong_eval_commitment_rejected_zk() {
         .map(|_| <Fr as Field>::random(&mut rng))
         .collect();
     let eval = poly.evaluate(&point);
-    let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
+    let (commitment, hint) = DoryScheme::commit_zk(poly.evaluations(), &prover_setup);
 
     let mut pt = Blake2bTranscript::new(b"zk-tampered-y-com");
     let (mut proof, _eval_com, _blind) =
@@ -364,7 +381,7 @@ fn zk_wrong_transcript_domain_rejected() {
         .map(|_| <Fr as Field>::random(&mut rng))
         .collect();
     let eval = poly.evaluate(&point);
-    let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
+    let (commitment, hint) = DoryScheme::commit_zk(poly.evaluations(), &prover_setup);
 
     let mut pt = Blake2bTranscript::new(b"zk-correct-domain");
     let (proof, _eval_com, _blind) =

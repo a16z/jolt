@@ -224,12 +224,20 @@ fn bench_open_zk(c: &mut Criterion) {
                         let point: Vec<Fr> =
                             (0..nv).map(|_| <Fr as Field>::random(&mut rng)).collect();
                         let eval = poly.evaluate(&point);
-                        (poly, point, eval)
+                        let (_, hint) = DoryScheme::commit_zk(poly.evaluations(), &setup);
+                        (poly, point, eval, hint)
                     },
-                    |(poly, point, eval)| {
+                    |(poly, point, eval, hint)| {
                         let mut transcript =
                             jolt_transcript::Blake2bTranscript::new(b"bench-open-zk");
-                        DoryScheme::open_zk(&poly, &point, eval, &setup, None, &mut transcript)
+                        DoryScheme::open_zk(
+                            &poly,
+                            &point,
+                            eval,
+                            &setup,
+                            Some(hint),
+                            &mut transcript,
+                        )
                     },
                     criterion::BatchSize::SmallInput,
                 );
@@ -255,11 +263,17 @@ fn bench_verify_zk(c: &mut Criterion) {
                         let point: Vec<Fr> =
                             (0..nv).map(|_| <Fr as Field>::random(&mut rng)).collect();
                         let eval = poly.evaluate(&point);
-                        let (commitment, _) = DoryScheme::commit(poly.evaluations(), &setup);
+                        let (commitment, hint) = DoryScheme::commit_zk(poly.evaluations(), &setup);
                         let mut transcript =
                             jolt_transcript::Blake2bTranscript::new(b"bench-verify-zk");
-                        let (proof, _eval_com, _blind) =
-                            DoryScheme::open_zk(&poly, &point, eval, &setup, None, &mut transcript);
+                        let (proof, _eval_com, _blind) = DoryScheme::open_zk(
+                            &poly,
+                            &point,
+                            eval,
+                            &setup,
+                            Some(hint),
+                            &mut transcript,
+                        );
                         (commitment, point, proof)
                     },
                     |(commitment, point, proof)| {

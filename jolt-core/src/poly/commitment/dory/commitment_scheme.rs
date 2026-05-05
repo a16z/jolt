@@ -16,31 +16,181 @@ use crate::{
     transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math, small_scalar::SmallScalar},
 };
-use ark_bn254::{G1Affine, G1Projective};
+use ark_bn254::{Fq12, Fr as Bn254Fr, G1Affine, G1Projective};
 use ark_ec::CurveGroup;
-use ark_ff::Zero;
+use ark_ff::{Field as ArkField, One, PrimeField, Zero};
+use ark_serialize::{
+    CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
+};
 use dory::primitives::{
     arithmetic::{Field as DoryField, Group, PairingCurve},
     poly::Polynomial,
 };
 use rayon::prelude::*;
 use std::borrow::Borrow;
+use std::ops::{Deref, DerefMut};
 use tracing::trace_span;
 
 #[derive(Clone)]
 pub struct DoryCommitmentScheme;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct JoltDoryCommitment(pub ArkGT);
+
 #[derive(Clone, Debug, PartialEq)]
-pub struct DoryOpeningProofHint(Vec<ArkG1>);
+pub struct JoltDoryProof(pub ArkDoryProof);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DoryOpeningProofHint {
+    row_commitments: Vec<ArkG1>,
+    commit_blind: ArkFr,
+}
 
 impl DoryOpeningProofHint {
-    fn new(row_commitments: Vec<ArkG1>) -> Self {
-        Self(row_commitments)
+    fn new(row_commitments: Vec<ArkG1>, commit_blind: ArkFr) -> Self {
+        Self {
+            row_commitments,
+            commit_blind,
+        }
     }
 
-    fn into_rows(self) -> Vec<ArkG1> {
-        self.0
+    fn into_parts(self) -> (Vec<ArkG1>, ArkFr) {
+        (self.row_commitments, self.commit_blind)
     }
+}
+
+impl Deref for JoltDoryProof {
+    type Target = ArkDoryProof;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for JoltDoryProof {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl CanonicalSerialize for JoltDoryCommitment {
+    fn serialize_with_mode<W: std::io::Write>(
+        &self,
+        writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.0.serialize_with_mode(writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.0.serialized_size(compress)
+    }
+}
+
+impl Valid for JoltDoryCommitment {
+    fn check(&self) -> Result<(), SerializationError> {
+        validate_gt_subgroup(&self.0)
+    }
+}
+
+impl CanonicalDeserialize for JoltDoryCommitment {
+    fn deserialize_with_mode<R: std::io::Read>(
+        reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let commitment = ArkGT::deserialize_with_mode(reader, compress, validate)?;
+        if matches!(validate, Validate::Yes) {
+            validate_gt_subgroup(&commitment)?;
+        }
+        Ok(Self(commitment))
+    }
+}
+
+impl CanonicalSerialize for JoltDoryProof {
+    fn serialize_with_mode<W: std::io::Write>(
+        &self,
+        writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.0.serialize_with_mode(writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.0.serialized_size(compress)
+    }
+}
+
+impl Valid for JoltDoryProof {
+    fn check(&self) -> Result<(), SerializationError> {
+        self.0.check()?;
+        validate_dory_proof_gt(&self.0)
+    }
+}
+
+impl CanonicalDeserialize for JoltDoryProof {
+    fn deserialize_with_mode<R: std::io::Read>(
+        reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let proof = ArkDoryProof::deserialize_with_mode(reader, compress, validate)?;
+        if matches!(validate, Validate::Yes) {
+            validate_dory_proof_gt(&proof)?;
+        }
+        Ok(Self(proof))
+    }
+}
+
+fn validate_gt_subgroup(gt: &ArkGT) -> Result<(), SerializationError> {
+    if gt.0.pow(Bn254Fr::MODULUS) == Fq12::one() {
+        Ok(())
+    } else {
+        Err(SerializationError::InvalidData)
+    }
+}
+
+fn validate_dory_proof_gt(proof: &ArkDoryProof) -> Result<(), SerializationError> {
+    validate_gt_subgroup(&proof.vmv_message.c)?;
+    validate_gt_subgroup(&proof.vmv_message.d2)?;
+
+    for message in &proof.first_messages {
+        validate_gt_subgroup(&message.d1_left)?;
+        validate_gt_subgroup(&message.d1_right)?;
+        validate_gt_subgroup(&message.d2_left)?;
+        validate_gt_subgroup(&message.d2_right)?;
+    }
+
+    for message in &proof.second_messages {
+        validate_gt_subgroup(&message.c_plus)?;
+        validate_gt_subgroup(&message.c_minus)?;
+    }
+
+    #[cfg(feature = "zk")]
+    {
+        if let Some(proof) = &proof.sigma2_proof {
+            validate_gt_subgroup(&proof.a)?;
+        }
+        if let Some(proof) = &proof.scalar_product_proof {
+            validate_gt_subgroup(&proof.p1)?;
+            validate_gt_subgroup(&proof.p2)?;
+            validate_gt_subgroup(&proof.q)?;
+            validate_gt_subgroup(&proof.r)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn mask_tier2_commitment(setup: &ArkworksProverSetup, commitment: ArkGT) -> (ArkGT, ArkFr) {
+    #[cfg(feature = "zk")]
+    type DoryCommitMode = dory::ZK;
+    #[cfg(not(feature = "zk"))]
+    type DoryCommitMode = dory::Transparent;
+
+    let commit_blind = <DoryCommitMode as dory::Mode>::sample::<ArkFr>();
+    let commitment = <DoryCommitMode as dory::Mode>::mask(commitment, &setup.ht, &commit_blind);
+    (commitment, commit_blind)
 }
 
 pub fn bind_opening_inputs<F: JoltField, ProofTranscript: Transcript>(
@@ -78,9 +228,9 @@ impl CommitmentScheme for DoryCommitmentScheme {
     type Field = ark_bn254::Fr;
     type ProverSetup = ArkworksProverSetup;
     type VerifierSetup = ArkworksVerifierSetup;
-    type Commitment = ArkGT;
-    type Proof = ArkDoryProof;
-    type BatchedProof = Vec<ArkDoryProof>;
+    type Commitment = JoltDoryCommitment;
+    type Proof = JoltDoryProof;
+    type BatchedProof = Vec<JoltDoryProof>;
     type OpeningProofHint = DoryOpeningProofHint;
 
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
@@ -119,15 +269,23 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let sigma = num_cols.log_2();
         let nu = num_rows.log_2();
 
-        let (tier_2, row_commitments, _commit_blind) =
+        #[cfg(feature = "zk")]
+        type DoryCommitMode = dory::ZK;
+        #[cfg(not(feature = "zk"))]
+        type DoryCommitMode = dory::Transparent;
+
+        let (tier_2, row_commitments, commit_blind) =
             <MultilinearPolynomial<ark_bn254::Fr> as Polynomial<ArkFr>>::commit::<
                 BN254,
-                dory::Transparent,
+                DoryCommitMode,
                 JoltG1Routines,
             >(poly, nu, sigma, setup)
             .expect("commitment should succeed");
 
-        (tier_2, DoryOpeningProofHint::new(row_commitments))
+        (
+            JoltDoryCommitment(tier_2),
+            DoryOpeningProofHint::new(row_commitments, commit_blind),
+        )
     }
 
     fn batch_commit<U>(
@@ -155,10 +313,10 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let _span = trace_span!("DoryCommitmentScheme::prove").entered();
 
         let (row_commitments, commit_blind) = hint
-            .map(|h| (h.into_rows(), DoryField::zero()))
+            .map(DoryOpeningProofHint::into_parts)
             .unwrap_or_else(|| {
-                let (_commitment, row_commitments) = Self::commit(poly, setup);
-                (row_commitments.into_rows(), DoryField::zero())
+                let (_commitment, hint) = Self::commit(poly, setup);
+                hint.into_parts()
             });
 
         let num_cols = DoryGlobals::get_num_columns();
@@ -196,7 +354,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
             )
             .expect("proof generation should succeed");
 
-        (proof, y_blinding.map(|b| ark_to_jolt(&b)))
+        (JoltDoryProof(proof), y_blinding.map(|b| ark_to_jolt(&b)))
     }
 
     fn verify<ProofTranscript: Transcript>(
@@ -225,10 +383,10 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let mut dory_transcript = JoltToDoryTranscript::<ProofTranscript>::new(transcript);
 
         dory::verify::<ArkFr, BN254, JoltG1Routines, JoltG2Routines, _>(
-            *commitment,
+            commitment.0,
             ark_eval,
             &ark_point,
-            proof,
+            &proof.0,
             setup.clone().into_inner(),
             &mut dory_transcript,
         )
@@ -255,13 +413,17 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let num_rows = DoryGlobals::get_max_num_rows();
 
         let mut rlc_hint = vec![ArkG1(G1Projective::zero()); num_rows];
+        let mut rlc_blind = ArkFr::zero();
         for (coeff, mut hint) in coeffs.iter().zip(hints.into_iter()) {
-            hint.0.resize(num_rows, ArkG1(G1Projective::zero()));
+            let ark_coeff = jolt_to_ark(coeff);
+            rlc_blind = rlc_blind + ark_coeff * hint.commit_blind;
+            hint.row_commitments
+                .resize(num_rows, ArkG1(G1Projective::zero()));
 
             let row_commitments: &mut [G1Projective] = unsafe {
                 std::slice::from_raw_parts_mut(
-                    hint.0.as_mut_ptr() as *mut G1Projective,
-                    hint.0.len(),
+                    hint.row_commitments.as_mut_ptr() as *mut G1Projective,
+                    hint.row_commitments.len(),
                 )
             };
 
@@ -278,10 +440,10 @@ impl CommitmentScheme for DoryCommitmentScheme {
                 rlc_row_commitments,
             );
 
-            let _ = std::mem::replace(&mut rlc_hint, hint.0);
+            let _ = std::mem::replace(&mut rlc_hint, hint.row_commitments);
         }
 
-        DoryOpeningProofHint::new(rlc_hint)
+        DoryOpeningProofHint::new(rlc_hint, rlc_blind)
     }
 
     /// Homomorphically combines multiple commitments using a random linear combination.
@@ -294,15 +456,23 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let _span = trace_span!("DoryCommitmentScheme::combine_commitments").entered();
 
         // Combine GT elements using parallel RLC
-        let commitments_vec: Vec<&ArkGT> = commitments.iter().map(|c| c.borrow()).collect();
+        let commitments_vec: Vec<&JoltDoryCommitment> =
+            commitments.iter().map(|c| c.borrow()).collect();
         coeffs
             .par_iter()
             .zip(commitments_vec.par_iter())
             .map(|(coeff, commitment)| {
                 let ark_coeff = jolt_to_ark(coeff);
-                ark_coeff * **commitment
+                ark_coeff * commitment.0
             })
             .reduce(ArkGT::identity, |a, b| a + b)
+            .into()
+    }
+}
+
+impl From<ArkGT> for JoltDoryCommitment {
+    fn from(commitment: ArkGT) -> Self {
+        Self(commitment)
     }
 }
 
@@ -390,16 +560,24 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
 
             let g2_bases = &setup.g2_vec[..num_rows];
             let tier_2 = <BN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases);
+            let (tier_2, commit_blind) = mask_tier2_commitment(setup, tier_2);
 
-            (tier_2, DoryOpeningProofHint::new(row_commitments))
+            (
+                JoltDoryCommitment(tier_2),
+                DoryOpeningProofHint::new(row_commitments, commit_blind),
+            )
         } else {
             let row_commitments: Vec<ArkG1> =
                 chunks.iter().flat_map(|chunk| chunk.clone()).collect();
 
             let g2_bases = &setup.g2_vec[..row_commitments.len()];
             let tier_2 = <BN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases);
+            let (tier_2, commit_blind) = mask_tier2_commitment(setup, tier_2);
 
-            (tier_2, DoryOpeningProofHint::new(row_commitments))
+            (
+                JoltDoryCommitment(tier_2),
+                DoryOpeningProofHint::new(row_commitments, commit_blind),
+            )
         }
     }
 }
@@ -411,7 +589,7 @@ where
     fn eval_commitment(proof: &Self::Proof) -> Option<C::G1> {
         #[cfg(feature = "zk")]
         {
-            proof.y_com.as_ref().copied().map(C::G1::from)
+            proof.0.y_com.as_ref().copied().map(C::G1::from)
         }
         #[cfg(not(feature = "zk"))]
         {

@@ -5,13 +5,53 @@ use ark_ff::{BigInt, Field, PrimeField};
 use ark_secp256r1::{Fq, Fr};
 use jolt_inlines_sdk::host::{
     instruction::{
-        add::ADD, ld::LD, lui::LUI, mul::MUL, mulhu::MULHU, sd::SD, virtual_advice::VirtualAdvice,
-        virtual_assert_eq::VirtualAssertEQ, virtual_assert_lte::VirtualAssertLTE,
+        add::ADD, addi::ADDI, ld::LD, lui::LUI, mul::MUL, mulhu::MULHU, sd::SD, sltu::SLTU,
+        sub::SUB, virtual_advice::VirtualAdvice, virtual_assert_eq::VirtualAssertEQ,
+        virtual_assert_lte::VirtualAssertLTE,
     },
     limbs_to_nbiguint, mulq_advice, Cpu, FormatInline, InlineOp, InstrAssembler, InstrAssemblerExt,
     Instruction, MulAccExt, MulqType, VirtualRegisterGuard,
 };
 use num_bigint::BigInt as NBigInt;
+
+fn assert_output_canonical(asm: &mut InstrAssembler, output_ptr: u8, modulus: [u64; 4]) {
+    let one = asm.allocator.allocate_for_inline();
+    let less = asm.allocator.allocate_for_inline();
+    let prefix_eq = asm.allocator.allocate_for_inline();
+    let limb = asm.allocator.allocate_for_inline();
+    let modulus_limb = asm.allocator.allocate_for_inline();
+    let tmp = asm.allocator.allocate_for_inline();
+    let gt = asm.allocator.allocate_for_inline();
+
+    asm.emit_i::<ADDI>(*one, 0, 1);
+    asm.emit_i::<ADDI>(*less, 0, 0);
+    asm.emit_i::<ADDI>(*prefix_eq, 0, 1);
+
+    for i in (0..4).rev() {
+        asm.emit_ld::<LD>(*limb, output_ptr, i as i64 * 8);
+        asm.emit_u::<LUI>(*modulus_limb, modulus[i]);
+
+        asm.emit_r::<SLTU>(*tmp, *limb, *modulus_limb);
+        asm.emit_r::<MUL>(*modulus_limb, *tmp, *prefix_eq);
+        asm.emit_r::<ADD>(*less, *less, *modulus_limb);
+
+        asm.emit_u::<LUI>(*modulus_limb, modulus[i]);
+        asm.emit_r::<SLTU>(*gt, *modulus_limb, *limb);
+        asm.emit_r::<ADD>(*tmp, *tmp, *gt);
+        asm.emit_r::<SUB>(*tmp, *one, *tmp);
+        asm.emit_r::<MUL>(*prefix_eq, *prefix_eq, *tmp);
+    }
+
+    asm.emit_b::<VirtualAssertEQ>(*less, *one, 0);
+
+    drop(one);
+    drop(less);
+    drop(prefix_eq);
+    drop(limb);
+    drop(modulus_limb);
+    drop(tmp);
+    drop(gt);
+}
 
 // p = 2^256 - q for base field:
 //   p[0] = 0x0000000000000001  (special: equals 1, w[i]*p[0] = w[i], use ADD)
@@ -37,13 +77,9 @@ const P256_NEG_N: [u64; 4] = [
     0x00000000FFFFFFFF,
 ];
 
-// inline for P-256 base and scalar field multiplication/squaring/division
-// does not handle checking that the result is canonical mod q,
-// merely that it is correct and fits in 4 limbs
-// multiplication followed by modulus can be represented as: ab = wq + c
-// for some w and c in [0, q) where w is provided as advice
-// here we do not explicitly check that c is in [0, q), but rather that c fits in 256 bits
-// the fastest possible check uses branching and thus appears after invocations of this inline
+// Inline for P-256 base and scalar field multiplication/squaring/division.
+// Multiplication followed by modulus can be represented as: ab = wq + c
+// for some quotient w provided as advice and canonical output c in [0, q).
 // let p = (2^256 - q), the equation above can be rearranged to: ab + wp = 2^256 w + c
 // Thus, for multiplication, squaring and division, this inline checks the following:
 // For multiplication, this inline checks that ab + wp = 2^256 w + c
@@ -574,6 +610,12 @@ impl P256Mulq {
             drop(self.aux2.unwrap())
         }
         drop(self.r);
+        let modulus = if self.is_scalar_field {
+            Fr::MODULUS.0
+        } else {
+            Fq::MODULUS.0
+        };
+        assert_output_canonical(&mut self.asm, self.operands.rs3, modulus);
         self.asm.finalize_inline()
     }
 }

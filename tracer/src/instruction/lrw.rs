@@ -8,6 +8,7 @@ use crate::{
 };
 
 use super::addi::ADDI;
+use super::amo::reject_jolt_device_atomic;
 use super::format::format_r::FormatR;
 use super::lw::LW;
 use super::virtual_lw::VirtualLW;
@@ -29,6 +30,7 @@ impl LRW {
         }
 
         let address = cpu.x[self.operands.rs1 as usize] as u64;
+        reject_jolt_device_atomic(cpu, address);
 
         // Load the word from memory
         let value = cpu.mmu.load_word(address);
@@ -48,6 +50,7 @@ impl LRW {
 impl RISCVTrace for LRW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
+        reject_jolt_device_atomic(cpu, address);
         cpu.set_reservation(address, ReservationWidth::Word);
 
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);

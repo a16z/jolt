@@ -1,6 +1,5 @@
 use crate::sequence_builder::{
-    Secp256k1DivQ, Secp256k1DivR, Secp256k1GlvrAdv, Secp256k1MulQ, Secp256k1MulR, Secp256k1SquareQ,
-    Secp256k1SquareR,
+    Secp256k1DivQ, Secp256k1DivR, Secp256k1MulQ, Secp256k1MulR, Secp256k1SquareQ, Secp256k1SquareR,
 };
 
 jolt_inlines_sdk::register_inlines! {
@@ -12,6 +11,5 @@ jolt_inlines_sdk::register_inlines! {
         Secp256k1MulR,
         Secp256k1SquareR,
         Secp256k1DivR,
-        Secp256k1GlvrAdv,
     ],
 }

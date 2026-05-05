@@ -8,6 +8,7 @@ use crate::{
 };
 
 use super::addi::ADDI;
+use super::amo::reject_jolt_device_atomic;
 use super::format::format_r::FormatR;
 use super::ld::LD;
 use super::{Cycle, Instruction, RISCVInstruction, RISCVTrace};
@@ -28,6 +29,7 @@ impl LRD {
         }
 
         let address = cpu.x[self.operands.rs1 as usize] as u64;
+        reject_jolt_device_atomic(cpu, address);
 
         // Load the doubleword from memory
         let value = cpu.mmu.load_doubleword(address);
@@ -47,6 +49,7 @@ impl LRD {
 impl RISCVTrace for LRD {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
+        reject_jolt_device_atomic(cpu, address);
         cpu.set_reservation(address, ReservationWidth::Doubleword);
 
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);

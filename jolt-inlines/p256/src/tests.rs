@@ -1,12 +1,15 @@
 mod p256_tests {
     use crate::sdk::P256PointExt;
     use crate::{
-        INLINE_OPCODE, P256_DIVQ_FUNCT3, P256_DIVR_FUNCT3, P256_FUNCT7, P256_MULQ_FUNCT3,
-        P256_MULR_FUNCT3, P256_SQUAREQ_FUNCT3, P256_SQUARER_FUNCT3,
+        INLINE_OPCODE, P256_DIVQ_FUNCT3, P256_DIVR_FUNCT3, P256_FAKE_GLV_ADV_FUNCT3, P256_FUNCT7,
+        P256_MULQ_FUNCT3, P256_MULR_FUNCT3, P256_SQUAREQ_FUNCT3, P256_SQUARER_FUNCT3,
     };
     use crate::{P256_CURVE_B, P256_GENERATOR_X, P256_GENERATOR_Y, P256_MODULUS, P256_ORDER};
     use num_bigint::BigUint;
+    use std::panic::{self, AssertUnwindSafe};
     use tracer::emulator::cpu::Xlen;
+    use tracer::instruction::inline::is_inline_registered;
+    use tracer::instruction::{Instruction, RISCVTrace};
     use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
     // Helper: convert [u64; 4] little-endian limbs to BigUint
@@ -29,6 +32,19 @@ mod p256_tests {
             limbs[i] = u64::from_le_bytes(padded[i * 8..(i + 1) * 8].try_into().unwrap());
         }
         limbs
+    }
+
+    fn sub_small(limbs: &[u64; 4], value: u64) -> [u64; 4] {
+        biguint_to_limbs(&(limbs_to_biguint(limbs) - BigUint::from(value)))
+    }
+
+    #[test]
+    fn test_p256_raw_fake_glv_advice_opcode_unregistered() {
+        assert!(!is_inline_registered(
+            INLINE_OPCODE,
+            P256_FAKE_GLV_ADV_FUNCT3,
+            P256_FUNCT7,
+        ));
     }
 
     // Reference modular arithmetic via BigUint
@@ -217,6 +233,43 @@ mod p256_tests {
         // Identity: a * 1 = a
         let one = [1u64, 0, 0, 0];
         assert_mulq_trace_equiv(&P256_GENERATOR_X, &one);
+    }
+
+    #[test]
+    fn test_p256_mulq_rejects_noncanonical_forged_output() {
+        let p_minus_1 = sub_small(&P256_MODULUS, 1);
+        let forged_quotient = sub_small(&P256_MODULUS, 3);
+        let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
+        let mut harness = InlineTestHarness::new(layout, Xlen::Bit64);
+        harness.setup_registers();
+        harness.load_input64(&p_minus_1);
+        harness.load_input2_64(&p_minus_1);
+
+        let instruction = InlineTestHarness::create_default_instruction(
+            INLINE_OPCODE,
+            P256_MULQ_FUNCT3,
+            P256_FUNCT7,
+        );
+        let mut sequence = instruction.inline_sequence(&harness.cpu.vr_allocator, harness.xlen());
+        let mut advice = forged_quotient.iter();
+        for instr in &mut sequence {
+            if let Instruction::VirtualAdvice(virtual_advice) = instr {
+                virtual_advice.advice = *advice.next().unwrap();
+            }
+        }
+        assert!(
+            advice.next().is_none(),
+            "all forged quotient limbs must be used"
+        );
+
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            harness.execute_sequence(&sequence);
+        }));
+
+        assert!(
+            result.is_err(),
+            "forged p + 1 output must fail the canonical output check"
+        );
     }
 
     // 2. test_p256_squareq -- base field squaring

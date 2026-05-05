@@ -9,6 +9,7 @@ use crate::{
 
 use super::add::ADD;
 use super::addi::ADDI;
+use super::amo::reject_jolt_device_atomic;
 use super::format::format_r::FormatR;
 use super::ld::LD;
 use super::mul::MUL;
@@ -32,6 +33,7 @@ declare_riscv_instr!(
 impl SCD {
     fn exec(&self, cpu: &mut Cpu, ram_access: &mut <SCD as RISCVInstruction>::RAMAccess) {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
+        reject_jolt_device_atomic(cpu, address);
         let value = cpu.x[self.operands.rs2 as usize] as u64;
 
         // Per RISC-V A spec, SC.D needs the reservation set to cover the 8
@@ -57,6 +59,7 @@ impl SCD {
 impl RISCVTrace for SCD {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
+        reject_jolt_device_atomic(cpu, address);
         // See SCD::exec — SC.D needs an 8-byte reservation set.
         let success = cpu.reservation_covers(address, ReservationWidth::Doubleword);
 
@@ -137,6 +140,7 @@ impl RISCVTrace for SCD {
 mod tests {
     use crate::emulator::{cpu::Cpu, default_terminal::DefaultTerminal};
     use crate::instruction::{Instruction, RISCVTrace};
+    use std::panic::{self, AssertUnwindSafe};
 
     const DRAM_BASE: u64 = 0x80000000;
     const TEST_MEM_SIZE: u64 = 1024 * 1024;
@@ -192,6 +196,39 @@ mod tests {
         assert_eq!(
             val, 0xDEADBEEF_CAFEBABE,
             "Memory should be unchanged on SC failure"
+        );
+    }
+
+    #[test]
+    fn test_scd_rejects_jolt_device_range_before_store() {
+        let mut cpu = setup_cpu();
+        let output_start = cpu
+            .mmu
+            .jolt_device
+            .as_ref()
+            .unwrap()
+            .memory_layout
+            .output_start;
+        cpu.x[11] = output_start as i64;
+        cpu.x[12] = 0x1234_5678_9ABC_DEF0u64 as i64;
+
+        let decoded = Instruction::decode(encode_scd(13, 11, 12), 0x1000, false).unwrap();
+        let Instruction::SCD(scd) = decoded else {
+            panic!("Expected SCD");
+        };
+
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            let mut trace = Vec::new();
+            scd.trace(&mut cpu, Some(&mut trace));
+        }));
+
+        assert!(
+            result.is_err(),
+            "SC.D over JoltDevice memory must fail closed"
+        );
+        assert!(
+            cpu.mmu.jolt_device.as_ref().unwrap().outputs.is_empty(),
+            "rejected SC.D must not mutate output bytes"
         );
     }
 

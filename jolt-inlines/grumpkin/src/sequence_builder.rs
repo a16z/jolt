@@ -6,11 +6,12 @@ use jolt_inlines_sdk::host::{
     Cpu, FormatInline, InlineOp, InstrAssembler, InstrAssemblerExt, Instruction,
     VirtualRegisterGuard,
 };
+
 struct GrumpkinDivAdv {
     asm: InstrAssembler,
-    vr: VirtualRegisterGuard, // only one register needed
+    vr: VirtualRegisterGuard,
     operands: FormatInline,
-    is_base_field: bool, // true if base field (Fq), false if scalar field (Fr)
+    is_base_field: bool,
 }
 
 impl GrumpkinDivAdv {
@@ -23,9 +24,8 @@ impl GrumpkinDivAdv {
             is_base_field,
         }
     }
-    // Custom advice function
+
     fn advice(self, cpu: &mut Cpu) -> VecDeque<u64> {
-        // read memory directly to get inputs
         let a_addr = cpu.x[self.operands.rs1 as usize] as u64;
         let a = [
             cpu.mmu.load_doubleword(a_addr).unwrap().0,
@@ -40,7 +40,6 @@ impl GrumpkinDivAdv {
             cpu.mmu.load_doubleword(b_addr + 16).unwrap().0,
             cpu.mmu.load_doubleword(b_addr + 24).unwrap().0,
         ];
-        // compute c = a / b and return limbs as VecDeque
         VecDeque::from(
             if self.is_base_field {
                 let arr_to_fq = |a: &[u64; 4]| Fq::new_unchecked(BigInt(*a));
@@ -61,7 +60,7 @@ impl GrumpkinDivAdv {
             .to_vec(),
         )
     }
-    // inline sequence function
+
     fn inline_sequence(mut self) -> Vec<Instruction> {
         self.asm.emit_advice_stores(*self.vr, self.operands.rs3, 4);
         drop(self.vr);

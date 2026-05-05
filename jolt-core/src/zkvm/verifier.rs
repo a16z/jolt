@@ -56,7 +56,8 @@ use crate::zkvm::{
     proof_serialization::JoltProof,
     r1cs::key::UniformSpartanKey,
     ram::{
-        compute_min_ram_K, hamming_booleanity::HammingBooleanitySumcheckVerifier,
+        compute_max_ram_K, compute_min_ram_K,
+        hamming_booleanity::HammingBooleanitySumcheckVerifier,
         output_check::OutputSumcheckVerifier, ra_virtual::RamRaVirtualSumcheckVerifier,
         raf_evaluation::RafEvaluationSumcheckVerifier as RamRafEvaluationSumcheckVerifier,
         read_write_checking::RamReadWriteCheckingVerifier, val_check::RamValCheckSumcheckVerifier,
@@ -345,6 +346,10 @@ impl<
         );
         if !proof.ram_K.is_power_of_two() || proof.ram_K < min_ram_K {
             return Err(ProofVerifyError::InvalidRamK(proof.ram_K, min_ram_K));
+        }
+        let max_ram_K = compute_max_ram_K(&preprocessing.shared.memory_layout);
+        if proof.ram_K > max_ram_K {
+            return Err(ProofVerifyError::RamKTooLarge(proof.ram_K, max_ram_K));
         }
 
         proof

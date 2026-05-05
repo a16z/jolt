@@ -9,6 +9,7 @@ description = "Dory commitment scheme implementation for the Jolt zkVM"
 workspace = true
 
 [dependencies]
+ark-serialize = { workspace = true }
 jolt-crypto = { workspace = true }
 jolt-field = { workspace = true }
 jolt-openings = { workspace = true }
@@ -18,7 +19,6 @@ dory = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true
-ark-serialize = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

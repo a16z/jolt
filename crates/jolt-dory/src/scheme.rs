@@ -8,7 +8,7 @@
 )]
 
 use dory::backends::arkworks::{ArkworksProverSetup, G1Routines, G2Routines};
-use dory::mode::Transparent;
+use dory::mode::{Mode, Transparent, ZK};
 use dory::primitives::arithmetic::{
     DoryRoutines, Field as DoryField, Group as DoryGroup, PairingCurve,
 };
@@ -92,6 +92,44 @@ impl DoryScheme {
         let prover_setup = Self::setup_prover(max_num_vars);
         DoryVerifierSetup(prover_setup.0.to_verifier_setup())
     }
+
+    #[tracing::instrument(skip_all, name = "DoryScheme::commit_zk")]
+    pub fn commit_zk<P: MultilinearPoly<Fr> + ?Sized>(
+        poly: &P,
+        setup: &DoryProverSetup,
+    ) -> (DoryCommitment, DoryHint) {
+        commit_with_mode::<P, ZK>(poly, setup)
+    }
+}
+
+fn commit_with_mode<P: MultilinearPoly<Fr> + ?Sized, Mo: Mode>(
+    poly: &P,
+    setup: &DoryProverSetup,
+) -> (DoryCommitment, DoryHint) {
+    let num_vars = poly.num_vars();
+    let sigma = num_vars.div_ceil(2);
+    let num_cols = 1usize << sigma;
+    let num_rows = 1usize << (num_vars - sigma);
+
+    let row_commitments = if poly.is_sparse() {
+        commit_rows_sparse(poly, num_rows, num_cols, &setup.0)
+    } else {
+        commit_rows_dense(poly, sigma, &setup.0)
+    };
+
+    let g2_bases = &setup.0.g2_vec[..row_commitments.len()];
+    let tier_2 = <InnerBN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases);
+    let commit_blind = Mo::sample::<ArkFr>();
+    let tier_2 = Mo::mask(tier_2, &setup.0.ht, &commit_blind);
+
+    (
+        DoryCommitment(ark_to_jolt_gt(&tier_2)),
+        DoryHint {
+            row_commitments: ark_to_jolt_g1_vec(row_commitments),
+            commit_blind: ark_to_jolt_fr(&commit_blind),
+            is_hiding: Mo::BLINDING,
+        },
+    )
 }
 
 impl DeriveSetup<DoryProverSetup> for PedersenSetup<Bn254G1> {
@@ -136,24 +174,7 @@ impl CommitmentScheme for DoryScheme {
         poly: &P,
         setup: &Self::ProverSetup,
     ) -> (Self::Output, Self::OpeningHint) {
-        let num_vars = poly.num_vars();
-        let sigma = num_vars.div_ceil(2);
-        let num_cols = 1usize << sigma;
-        let num_rows = 1usize << (num_vars - sigma);
-
-        let row_commitments = if poly.is_sparse() {
-            commit_rows_sparse(poly, num_rows, num_cols, &setup.0)
-        } else {
-            commit_rows_dense(poly, sigma, &setup.0)
-        };
-
-        let g2_bases = &setup.0.g2_vec[..row_commitments.len()];
-        let tier_2 = <InnerBN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases);
-
-        (
-            DoryCommitment(ark_to_jolt_gt(&tier_2)),
-            DoryHint(ark_to_jolt_g1_vec(row_commitments)),
-        )
+        commit_with_mode::<P, Transparent>(poly, setup)
     }
 
     #[tracing::instrument(skip_all, name = "DoryScheme::open")]
@@ -173,7 +194,13 @@ impl CommitmentScheme for DoryScheme {
         let num_rows = 1usize << nu;
 
         let row_commitments = match hint {
-            Some(h) => jolt_g1_vec_to_ark(h.0),
+            Some(h) => {
+                assert!(
+                    !h.is_hiding,
+                    "Dory transparent opening requires a transparent commitment hint; use open_zk with DoryScheme::commit_zk for hiding commitments",
+                );
+                jolt_g1_vec_to_ark(h.row_commitments)
+            }
             None if poly.is_sparse() => commit_rows_sparse(poly, num_rows, num_cols, &setup.0),
             None => commit_rows_dense(poly, sigma, &setup.0),
         };
@@ -255,9 +282,9 @@ impl AdditivelyHomomorphic for DoryScheme {
         assert_eq!(hints.len(), scalars.len());
         assert!(!hints.is_empty(), "combine_hints: empty hint set");
 
-        let num_rows = hints[0].0.len();
+        let num_rows = hints[0].row_commitments.len();
         assert!(
-            hints.iter().all(|h| h.0.len() == num_rows),
+            hints.iter().all(|h| h.row_commitments.len() == num_rows),
             "combine_hints: ragged hint lengths",
         );
 
@@ -266,13 +293,24 @@ impl AdditivelyHomomorphic for DoryScheme {
             .map(|row| {
                 let mut acc = Bn254G1::default();
                 for (hint, &scalar) in hints.iter().zip(scalars.iter()) {
-                    acc += hint.0[row].scalar_mul(&scalar);
+                    acc += hint.row_commitments[row].scalar_mul(&scalar);
                 }
                 acc
             })
             .collect();
 
-        DoryHint(combined)
+        let commit_blind = hints
+            .iter()
+            .zip(scalars.iter())
+            .map(|(hint, &scalar)| hint.commit_blind * scalar)
+            .sum();
+        let is_hiding = hints.iter().any(|hint| hint.is_hiding);
+
+        DoryHint {
+            row_commitments: combined,
+            commit_blind,
+            is_hiding,
+        }
     }
 }
 
@@ -289,18 +327,19 @@ impl ZkOpeningScheme for DoryScheme {
         hint: Option<Self::OpeningHint>,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> (Self::Proof, Self::HidingCommitment, Self::Blind) {
-        let num_vars = point.len();
         let adapter = DorySourceAdapter::new(poly);
+        let num_vars = point.len();
         let sigma = num_vars.div_ceil(2);
         let nu = num_vars - sigma;
-        let num_cols = 1usize << sigma;
-        let num_rows = 1usize << nu;
-
-        let row_commitments = match hint {
-            Some(h) => jolt_g1_vec_to_ark(h.0),
-            None if poly.is_sparse() => commit_rows_sparse(poly, num_rows, num_cols, &setup.0),
-            None => commit_rows_dense(poly, sigma, &setup.0),
-        };
+        let hint = hint.unwrap_or_else(|| {
+            panic!("Dory ZK opening requires the hiding hint returned by DoryScheme::commit_zk")
+        });
+        assert!(
+            hint.is_hiding,
+            "Dory ZK opening requires a hiding commitment hint from DoryScheme::commit_zk",
+        );
+        let commit_blind = jolt_fr_to_ark(&hint.commit_blind);
+        let row_commitments = jolt_g1_vec_to_ark(hint.row_commitments);
 
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
         let mut dory_transcript = JoltToDoryTranscript::new(transcript);
@@ -310,7 +349,7 @@ impl ZkOpeningScheme for DoryScheme {
                 &adapter,
                 &ark_point,
                 row_commitments,
-                <ArkFr as DoryField>::zero(),
+                commit_blind,
                 nu,
                 sigma,
                 &setup.0,
@@ -544,7 +583,7 @@ mod tests {
             .collect();
         let eval = poly.evaluate(&point);
 
-        let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
+        let (commitment, hint) = DoryScheme::commit_zk(poly.evaluations(), &prover_setup);
 
         let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"zk-test");
         let (proof, _eval_com, _blinding) = DoryScheme::open_zk(
@@ -565,6 +604,74 @@ mod tests {
             &mut verify_transcript,
         );
         assert!(result.is_ok(), "ZK verification failed: {result:?}");
+    }
+
+    #[test]
+    fn zk_commitment_is_hiding() {
+        let num_vars = 4;
+        let mut rng = ChaCha20Rng::seed_from_u64(601);
+
+        let prover_setup = DoryScheme::setup_prover(num_vars);
+        let verifier_setup = DoryVerifierSetup(prover_setup.0.to_verifier_setup());
+
+        let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
+        let point: Vec<Fr> = (0..num_vars)
+            .map(|_| <Fr as Field>::random(&mut rng))
+            .collect();
+        let eval = poly.evaluate(&point);
+
+        let (commitment_a, hint_a) = DoryScheme::commit_zk(poly.evaluations(), &prover_setup);
+        let (commitment_b, _) = DoryScheme::commit_zk(poly.evaluations(), &prover_setup);
+
+        assert_ne!(
+            commitment_a, commitment_b,
+            "ZK commitments to the same polynomial must use fresh blinding"
+        );
+
+        let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"zk-hiding");
+        let (proof, _eval_com, _blinding) = DoryScheme::open_zk(
+            &poly,
+            &point,
+            eval,
+            &prover_setup,
+            Some(hint_a),
+            &mut prove_transcript,
+        );
+
+        let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"zk-hiding");
+        let result = DoryScheme::verify_zk(
+            &commitment_a,
+            &point,
+            &proof,
+            &verifier_setup,
+            &mut verify_transcript,
+        );
+        assert!(result.is_ok(), "ZK verification failed: {result:?}");
+    }
+
+    #[test]
+    #[should_panic(expected = "Dory ZK opening requires a hiding commitment hint")]
+    fn zk_open_rejects_transparent_commit_hint() {
+        let num_vars = 4;
+        let mut rng = ChaCha20Rng::seed_from_u64(602);
+
+        let prover_setup = DoryScheme::setup_prover(num_vars);
+        let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
+        let point: Vec<Fr> = (0..num_vars)
+            .map(|_| <Fr as Field>::random(&mut rng))
+            .collect();
+        let eval = poly.evaluate(&point);
+        let (_, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
+
+        let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"zk-transparent-hint");
+        let _ = DoryScheme::open_zk(
+            &poly,
+            &point,
+            eval,
+            &prover_setup,
+            Some(hint),
+            &mut prove_transcript,
+        );
     }
 
     #[test]

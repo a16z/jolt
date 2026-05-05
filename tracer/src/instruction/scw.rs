@@ -9,6 +9,7 @@ use crate::{
 
 use super::add::ADD;
 use super::addi::ADDI;
+use super::amo::reject_jolt_device_atomic;
 use super::format::format_r::FormatR;
 use super::lw::LW;
 use super::mul::MUL;
@@ -34,6 +35,7 @@ declare_riscv_instr!(
 impl SCW {
     fn exec(&self, cpu: &mut Cpu, ram_access: &mut <SCW as RISCVInstruction>::RAMAccess) {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
+        reject_jolt_device_atomic(cpu, address);
         let value = cpu.x[self.operands.rs2 as usize] as u32;
 
         // Per RISC-V A spec, SC.W succeeds if the reservation set covers the 4
@@ -60,6 +62,7 @@ impl SCW {
 impl RISCVTrace for SCW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
+        reject_jolt_device_atomic(cpu, address);
         // See SCW::exec — SC.W succeeds for any reservation (word or
         // doubleword) whose set covers the 4 bytes being written.
         let success = cpu.reservation_covers(address, ReservationWidth::Word);
@@ -202,6 +205,7 @@ impl SCW {
 mod tests {
     use crate::emulator::{cpu::Cpu, default_terminal::DefaultTerminal};
     use crate::instruction::{Instruction, RISCVTrace};
+    use std::panic::{self, AssertUnwindSafe};
 
     const DRAM_BASE: u64 = 0x80000000;
     const TEST_MEM_SIZE: u64 = 1024 * 1024;
@@ -255,6 +259,39 @@ mod tests {
         assert_eq!(cpu.x[13], 1, "SC.W with no reservation should fail (rd=1)");
         let (val, _) = cpu.mmu.load_word(addr).unwrap();
         assert_eq!(val, 0xDEADBEEF, "Memory should be unchanged on SC failure");
+    }
+
+    #[test]
+    fn test_scw_rejects_jolt_device_range_before_store() {
+        let mut cpu = setup_cpu();
+        let output_start = cpu
+            .mmu
+            .jolt_device
+            .as_ref()
+            .unwrap()
+            .memory_layout
+            .output_start;
+        cpu.x[11] = output_start as i64;
+        cpu.x[12] = 0x1234_5678;
+
+        let decoded = Instruction::decode(encode_scw(13, 11, 12), 0x1000, false).unwrap();
+        let Instruction::SCW(scw) = decoded else {
+            panic!("Expected SCW");
+        };
+
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            let mut trace = Vec::new();
+            scw.trace(&mut cpu, Some(&mut trace));
+        }));
+
+        assert!(
+            result.is_err(),
+            "SC.W over JoltDevice memory must fail closed"
+        );
+        assert!(
+            cpu.mmu.jolt_device.as_ref().unwrap().outputs.is_empty(),
+            "rejected SC.W must not mutate output bytes"
+        );
     }
 
     #[test]

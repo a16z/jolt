@@ -8,7 +8,10 @@ mod tests {
     use crate::poly::dense_mlpoly::DensePolynomial;
     use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
     use crate::transcripts::{Blake2bTranscript, Transcript};
+    use ark_bn254::Fq12;
     use ark_ff::biginteger::S128;
+    use ark_ff::FftField;
+    use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
     use ark_std::rand::{thread_rng, Rng};
     use ark_std::{UniformRand, Zero};
     use serial_test::serial;
@@ -73,6 +76,47 @@ mod tests {
         let verifier_setup = DoryCommitmentScheme::setup_verifier(&prover_setup);
 
         (prover_setup, verifier_setup)
+    }
+
+    #[test]
+    fn test_dory_commitment_deserialization_rejects_non_subgroup_gt() {
+        let invalid = super::super::commitment_scheme::JoltDoryCommitment(ArkGT(Fq12::GENERATOR));
+
+        assert!(
+            invalid.check().is_err(),
+            "raw Fq12 elements outside the GT subgroup must be rejected"
+        );
+
+        let mut bytes = Vec::new();
+        invalid.serialize_uncompressed(&mut bytes).unwrap();
+
+        assert!(
+            super::super::commitment_scheme::JoltDoryCommitment::deserialize_uncompressed(
+                bytes.as_slice()
+            )
+            .is_err(),
+            "validated Dory commitment deserialization must enforce subgroup membership"
+        );
+    }
+
+    #[cfg(feature = "zk")]
+    #[test]
+    #[serial]
+    fn test_dory_zk_commitment_blinding_randomizes_repeated_commits() {
+        let num_vars = 6;
+        let num_coeffs = 1 << num_vars;
+        let (prover_setup, _) = setup_dory_for_test(num_vars);
+
+        let coeffs: Vec<Fr> = (0..num_coeffs).map(|i| Fr::from(i as u64)).collect();
+        let poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(coeffs));
+
+        let (commitment_a, _) = DoryCommitmentScheme::commit(&poly, &prover_setup);
+        let (commitment_b, _) = DoryCommitmentScheme::commit(&poly, &prover_setup);
+
+        assert_ne!(
+            commitment_a, commitment_b,
+            "ZK Dory commitments to the same polynomial must include fresh blinding"
+        );
     }
 
     #[test]
@@ -653,10 +697,15 @@ mod tests {
         let (direct_commitment, direct_hint) =
             DoryCommitmentScheme::commit(&combined_poly, &prover_setup);
 
-        // The commitments should match
+        #[cfg(not(feature = "zk"))]
         assert_eq!(
             combined_commitment, direct_commitment,
             "Homomorphically combined commitment should match direct commitment to RLC"
+        );
+        #[cfg(feature = "zk")]
+        assert_ne!(
+            combined_commitment, direct_commitment,
+            "ZK direct commitment should use fresh blinding independent of the combined commitment"
         );
 
         // Step 9: Create evaluation proof using combined hint

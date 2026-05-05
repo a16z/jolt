@@ -30,6 +30,8 @@ pub enum ProofVerifyError {
     InvalidOneHotConfig(String),
     #[error("Invalid ram_K: got {0}, minimum required {1}")]
     InvalidRamK(usize, usize),
+    #[error("Invalid ram_K: got {0}, maximum allowed {1}")]
+    RamKTooLarge(usize, usize),
     #[error("Invalid trace_length: got {0}, max allowed {1}")]
     InvalidTraceLength(usize, usize),
     #[error("Dory proof verification failed: {0}")]
@@ -44,4 +46,6 @@ pub enum ProofVerifyError {
     ZkFeatureRequired,
     #[error("BlindFold verification failed: {0}")]
     BlindFoldError(String),
+    #[error("Transpilable verifier is incomplete: stage-8 PCS verification is not implemented")]
+    TranspilableVerifierIncomplete,
 }

@@ -8,7 +8,22 @@ mod sequence_tests {
     use ark_grumpkin::{Fq, Fr};
     use std::ops::Mul;
     use tracer::emulator::cpu::Xlen;
+    use tracer::instruction::inline::is_inline_registered;
     use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
+
+    #[test]
+    fn test_grumpkin_raw_advice_opcodes_unregistered() {
+        assert!(!is_inline_registered(
+            INLINE_OPCODE,
+            GRUMPKIN_DIVQ_ADV_FUNCT3,
+            GRUMPKIN_FUNCT7,
+        ));
+        assert!(!is_inline_registered(
+            INLINE_OPCODE,
+            GRUMPKIN_DIVR_ADV_FUNCT3,
+            GRUMPKIN_FUNCT7,
+        ));
+    }
 
     fn assert_divq_trace_equiv(a: &[u64; 4], b: &[u64; 4]) {
         // get expected value
@@ -38,6 +53,7 @@ mod sequence_tests {
     }
 
     #[test]
+    #[should_panic(expected = "No inline registered")]
     fn test_grumpkin_divq_direct_execution() {
         let a = [
             0x123456789ABCDEF0,
@@ -86,6 +102,7 @@ mod sequence_tests {
     }
 
     #[test]
+    #[should_panic(expected = "No inline registered")]
     fn test_grumpkin_divr_direct_execution() {
         let a = [
             0x123456789ABCDEF0,

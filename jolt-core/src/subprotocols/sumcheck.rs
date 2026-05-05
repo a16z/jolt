@@ -25,6 +25,30 @@ use std::marker::PhantomData;
 
 pub use crate::subprotocols::univariate_skip::UniSkipFirstRoundProof;
 
+pub(crate) const MAX_ZK_PROOF_VECTOR_LEN: usize = 1 << 20;
+
+pub(crate) fn deserialize_bounded_vec<T, R>(
+    reader: &mut R,
+    compress: Compress,
+    validate: Validate,
+    max_len: usize,
+) -> Result<Vec<T>, SerializationError>
+where
+    T: CanonicalDeserialize,
+    R: std::io::Read,
+{
+    let len = usize::deserialize_with_mode(&mut *reader, compress, validate)?;
+    if len > max_len {
+        return Err(SerializationError::InvalidData);
+    }
+
+    let mut values = Vec::with_capacity(len);
+    for _ in 0..len {
+        values.push(T::deserialize_with_mode(&mut *reader, compress, validate)?);
+    }
+    Ok(values)
+}
+
 /// Implements the standard technique for batching parallel sumchecks to reduce
 /// verifier cost and proof size.
 ///
@@ -668,10 +692,11 @@ impl<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript> CanonicalDe
         validate: ark_serialize::Validate,
     ) -> Result<Self, ark_serialize::SerializationError> {
         let round_commitments =
-            Vec::<C::G1>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let poly_degrees = Vec::<usize>::deserialize_with_mode(&mut reader, compress, validate)?;
+            deserialize_bounded_vec(&mut reader, compress, validate, MAX_ZK_PROOF_VECTOR_LEN)?;
+        let poly_degrees =
+            deserialize_bounded_vec(&mut reader, compress, validate, MAX_ZK_PROOF_VECTOR_LEN)?;
         let output_claims_commitments =
-            Vec::<C::G1>::deserialize_with_mode(reader, compress, validate)?;
+            deserialize_bounded_vec(&mut reader, compress, validate, MAX_ZK_PROOF_VECTOR_LEN)?;
         Ok(Self {
             round_commitments,
             poly_degrees,
@@ -858,5 +883,28 @@ impl<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript>
             Self::Clear(proof) => proof.compressed_polys.len(),
             Self::Zk(proof) => proof.round_commitments.len(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{deserialize_bounded_vec, MAX_ZK_PROOF_VECTOR_LEN};
+    use ark_serialize::{CanonicalSerialize, Compress, SerializationError, Validate};
+
+    #[test]
+    fn deserialize_bounded_vec_rejects_large_len_before_elements() {
+        let mut bytes = Vec::new();
+        (MAX_ZK_PROOF_VECTOR_LEN + 1)
+            .serialize_with_mode(&mut bytes, Compress::No)
+            .unwrap();
+
+        let result = deserialize_bounded_vec::<u64, _>(
+            &mut bytes.as_slice(),
+            Compress::No,
+            Validate::Yes,
+            MAX_ZK_PROOF_VECTOR_LEN,
+        );
+
+        assert!(matches!(result, Err(SerializationError::InvalidData)));
     }
 }
