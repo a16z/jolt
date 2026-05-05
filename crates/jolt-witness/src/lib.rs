@@ -578,6 +578,7 @@ pub struct Stage6WitnessPolynomials<F: Field> {
     pub bytecode_ra_booleanity: Vec<Vec<F>>,
     pub ram_ra_booleanity: Vec<Vec<F>>,
     pub bytecode_ra_read_raf: Vec<Vec<F>>,
+    pub bytecode_ra_read_raf_chunk_lens: Vec<usize>,
     pub instruction_ra_virtual: Vec<Vec<F>>,
     pub ram_ra_virtual: Vec<Vec<F>>,
     pub hamming_weight: Vec<F>,
@@ -590,6 +591,7 @@ pub struct Stage6WitnessSlices<'a, F: Field> {
     pub booleanity_chunks: Vec<&'a [F]>,
     pub booleanity_index_chunks: Vec<&'a [Option<u8>]>,
     pub bytecode_ra_read_raf_chunks: Vec<&'a [F]>,
+    pub bytecode_ra_read_raf_chunk_lens: Vec<usize>,
     pub ram_ra_virtual_chunks: Vec<&'a [F]>,
     pub instruction_ra_virtual_chunks: Vec<&'a [F]>,
     pub instruction_ra_index_chunks: Vec<&'a [Option<u8>]>,
@@ -612,6 +614,7 @@ impl<F: Field> Stage6WitnessPolynomials<F> {
             booleanity_chunks,
             booleanity_index_chunks,
             bytecode_ra_read_raf_chunks: field_slices(&self.bytecode_ra_read_raf),
+            bytecode_ra_read_raf_chunk_lens: self.bytecode_ra_read_raf_chunk_lens.clone(),
             ram_ra_virtual_chunks: field_slices(&self.ram_ra_virtual),
             instruction_ra_virtual_chunks: field_slices(&self.instruction_ra_virtual),
             instruction_ra_index_chunks: index_slices(&self.instruction_ra_indices),
@@ -673,28 +676,8 @@ pub fn stage6_witness_polynomials<F: Field>(
         })
         .collect::<Vec<_>>();
 
-    let instruction_ra_booleanity = instruction_indices
-        .iter()
-        .map(|indices| one_hot_address_major_from_indices(indices, params.log_k_chunk))
-        .collect::<Vec<_>>();
-    let bytecode_ra_booleanity = bytecode_indices
-        .iter()
-        .map(|indices| one_hot_address_major_from_indices(indices, params.log_k_chunk))
-        .collect::<Vec<_>>();
-    let ram_ra_booleanity = ram_indices
-        .iter()
-        .map(|indices| one_hot_address_major_from_indices(indices, params.log_k_chunk))
-        .collect::<Vec<_>>();
-
-    let bytecode_ra_read_raf = bytecode_indices
-        .iter()
-        .zip(msb_chunk_bit_widths(
-            params.log_k_bytecode,
-            params.log_k_chunk,
-            params.bytecode_d,
-        ))
-        .map(|(indices, chunk_len)| one_hot_address_major_from_indices(indices, chunk_len))
-        .collect::<Vec<_>>();
+    let bytecode_ra_read_raf_chunk_lens =
+        msb_chunk_bit_widths(params.log_k_bytecode, params.log_k_chunk, params.bytecode_d);
 
     let ram_address_chunks = stage6_ram_virtual_address_chunks(params, inputs.opening_inputs);
     assert_eq!(
@@ -725,10 +708,11 @@ pub fn stage6_witness_polynomials<F: Field>(
         instruction_ra_indices: instruction_indices,
         bytecode_ra_indices: bytecode_indices,
         ram_ra_indices: ram_indices,
-        instruction_ra_booleanity,
-        bytecode_ra_booleanity,
-        ram_ra_booleanity,
-        bytecode_ra_read_raf,
+        instruction_ra_booleanity: Vec::new(),
+        bytecode_ra_booleanity: Vec::new(),
+        ram_ra_booleanity: Vec::new(),
+        bytecode_ra_read_raf: Vec::new(),
+        bytecode_ra_read_raf_chunk_lens,
         instruction_ra_virtual,
         ram_ra_virtual,
         hamming_weight: hamming_weight_from_cycle_inputs(inputs.cycle_inputs, trace_len),
@@ -992,7 +976,7 @@ mod tests {
 
         assert_eq!(output.len(), 12);
         assert_eq!(output[2 * 3], Fr::from_u64(1));
-        assert_eq!(output[1 * 3 + 2], Fr::from_u64(1));
+        assert_eq!(output[5], Fr::from_u64(1));
         assert_eq!(
             output
                 .iter()
@@ -1041,6 +1025,7 @@ mod tests {
             bytecode_ra_booleanity: vec![vec![fr(20)]],
             ram_ra_booleanity: vec![vec![fr(30)]],
             bytecode_ra_read_raf: vec![vec![fr(40)]],
+            bytecode_ra_read_raf_chunk_lens: vec![1],
             instruction_ra_virtual: vec![vec![fr(50)]],
             ram_ra_virtual: vec![vec![fr(60)]],
             hamming_weight: vec![fr(70)],
@@ -1069,6 +1054,7 @@ mod tests {
             slices.bytecode_ra_read_raf_chunks,
             vec![witness.bytecode_ra_read_raf[0].as_slice()]
         );
+        assert_eq!(slices.bytecode_ra_read_raf_chunk_lens, vec![1]);
         assert_eq!(
             slices.instruction_ra_index_chunks,
             vec![witness.instruction_ra_indices[0].as_slice()]

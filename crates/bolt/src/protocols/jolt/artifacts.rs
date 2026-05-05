@@ -751,19 +751,29 @@ where
     CommitmentInputs: commitment_stage::CommitmentInputProvider,
     T: Transcript<Challenge = {field_type}>,
 {{
+    let _input_span = tracing::info_span!("bolt.prove.inputs").entered();
+    let _stage1_input_span = tracing::info_span!("bolt.prove.inputs.stage1").entered();
     let stage1_outer =
         stage1_outer_prover_inputs(inputs.stage1_trace_num_vars, inputs.stage1_outer_evaluator);
+    drop(_stage1_input_span);
+    let _stage2_input_span = tracing::info_span!("bolt.prove.inputs.stage2").entered();
     let stage2 = stage2_prover_inputs(
         inputs.stage2_openings,
         inputs.product_virtual_cycles,
         inputs.instruction_lookup_cycles,
         inputs.ram,
     )?;
+    drop(_stage2_input_span);
+    let _stage3_input_span = tracing::info_span!("bolt.prove.inputs.stage3").entered();
     let stage3 = stage3_prover_inputs(inputs.stage3_openings, inputs.stage3_cycles);
+    drop(_stage3_input_span);
+    let _stage45_witness_span = tracing::info_span!("bolt.prove.inputs.stage45_witness").entered();
     let stage45_witness = stage4::stage4_5_sparse_trace_witness_from_accesses(
         inputs.register_accesses,
         inputs.ram.accesses,
     );
+    drop(_stage45_witness_span);
+    let _stage4_input_span = tracing::info_span!("bolt.prove.inputs.stage4").entered();
     let stage4 = stage4_prover_inputs(
         inputs.stage4_openings,
         inputs.register_count,
@@ -772,6 +782,8 @@ where
         inputs.register_accesses,
         &stage45_witness,
     );
+    drop(_stage4_input_span);
+    let _stage5_input_span = tracing::info_span!("bolt.prove.inputs.stage5").entered();
     let stage5 = stage5_prover_inputs(
         inputs.stage5_openings,
         inputs.trace_len,
@@ -783,12 +795,16 @@ where
         inputs.ra_virtual_log_k_chunk,
         &stage45_witness,
     );
+    drop(_stage5_input_span);
+    let _stage6_witness_span = tracing::info_span!("bolt.prove.inputs.stage6_witness").entered();
     let stage6_witness = stage6_witness_from_opening_inputs(
         inputs.stage6_witness_params,
         inputs.cycle_inputs,
         inputs.stage6_openings,
     );
     let stage6_witness_slices = stage6_witness.slices();
+    drop(_stage6_witness_span);
+    let _stage6_input_span = tracing::info_span!("bolt.prove.inputs.stage6").entered();
     let stage6 = stage6_prover_inputs(
         inputs.stage6_openings,
         inputs.stage6_bytecode_data,
@@ -796,7 +812,11 @@ where
         &stage6_witness_slices,
         inputs.instruction_ra_virtual_d,
     );
+    drop(_stage6_input_span);
+    let _stage7_input_span = tracing::info_span!("bolt.prove.inputs.stage7").entered();
     let stage7 = stage7_prover_inputs(inputs.stage7_openings, &stage6_witness_slices);
+    drop(_stage7_input_span);
+    drop(_input_span);
     prove_jolt_with_stage_inputs(
         JoltProverStageInputs {{
             commitment_inputs: inputs.commitment_inputs,
