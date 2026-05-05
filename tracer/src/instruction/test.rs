@@ -25,7 +25,6 @@ use super::{RISCVInstruction, RISCVTrace};
 use crate::emulator::terminal::DummyTerminal;
 
 use common::constants::RISCV_REGISTER_COUNT;
-use jolt_program::expand::ExpansionError;
 
 use rand::{rngs::StdRng, SeedableRng};
 
@@ -60,7 +59,8 @@ fn test_rng() -> StdRng {
 }
 
 #[test]
-fn jolt_program_expansion_matches_tracer_bridge() -> Result<(), ExpansionError> {
+fn jolt_program_expansion_matches_tracer_bridge() -> Result<(), jolt_program::expand::ExpansionError>
+{
     use crate::{
         emulator::cpu::Xlen, instruction::Instruction,
         utils::virtual_registers::VirtualRegisterAllocator,
