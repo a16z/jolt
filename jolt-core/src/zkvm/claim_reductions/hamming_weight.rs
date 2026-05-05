@@ -650,6 +650,471 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
 
 #[cfg(test)]
 mod tests {
-    // TODO: Add tests comparing compute_all_G output against naive computation
-    // TODO: Add tests for sumcheck correctness
+    use super::*;
+    use ark_bn254::Fr;
+    use ark_std::{One, Zero};
+    use common::{
+        constants::RAM_START_ADDRESS,
+        jolt_device::{MemoryConfig, MemoryLayout},
+    };
+    use tracer::instruction::{
+        add::ADD,
+        format::{format_r::FormatR, format_s::FormatS},
+        sd::SD,
+        Cycle, Instruction, RAMWrite, RISCVCycle,
+    };
+
+    use crate::{
+        poly::multilinear_polynomial::PolynomialBinding,
+        subprotocols::sumcheck_prover::SumcheckInstanceProver,
+        utils::math::Math,
+        zkvm::{
+            bytecode::BytecodePreprocessing, instruction::LookupQuery, ram::remap_address,
+            witness::CommittedPolynomial,
+        },
+    };
+
+    fn challenge(value: u128) -> <Fr as JoltField>::Challenge {
+        <Fr as JoltField>::Challenge::from(value)
+    }
+
+    fn field(value: u64) -> Fr {
+        <Fr as JoltField>::from_u64(value)
+    }
+
+    fn add_cycle(address: u64, rd: u8, rs1: u8, rs2: u8) -> Cycle {
+        Cycle::ADD(RISCVCycle {
+            instruction: ADD {
+                address,
+                operands: FormatR { rd, rs1, rs2 },
+                ..Default::default()
+            },
+            register_state: Default::default(),
+            ram_access: (),
+        })
+    }
+
+    fn sd_cycle(address: u64, ram_address: u64) -> Cycle {
+        Cycle::SD(RISCVCycle {
+            instruction: SD {
+                address,
+                operands: FormatS {
+                    rs1: 1,
+                    rs2: 2,
+                    imm: 0,
+                },
+                ..Default::default()
+            },
+            register_state: Default::default(),
+            ram_access: RAMWrite {
+                address: ram_address,
+                pre_value: 3,
+                post_value: 5,
+            },
+        })
+    }
+
+    fn test_trace() -> Vec<Cycle> {
+        vec![
+            add_cycle(RAM_START_ADDRESS, 1, 2, 3),
+            sd_cycle(RAM_START_ADDRESS + 4, RAM_START_ADDRESS),
+            add_cycle(RAM_START_ADDRESS + 8, 4, 5, 6),
+            Cycle::NoOp,
+            sd_cycle(RAM_START_ADDRESS + 12, RAM_START_ADDRESS + 8 * 3),
+            add_cycle(RAM_START_ADDRESS + 16, 7, 8, 9),
+            Cycle::NoOp,
+            sd_cycle(RAM_START_ADDRESS + 20, RAM_START_ADDRESS + 8 * 7),
+        ]
+    }
+
+    fn test_instructions(trace: &[Cycle]) -> Vec<Instruction> {
+        trace
+            .iter()
+            .filter_map(|cycle| match cycle {
+                Cycle::NoOp => None,
+                _ => Some(cycle.instruction()),
+            })
+            .collect()
+    }
+
+    fn test_bytecode(trace: &[Cycle]) -> BytecodePreprocessing {
+        BytecodePreprocessing::preprocess(test_instructions(trace), RAM_START_ADDRESS).unwrap()
+    }
+
+    fn test_shared_preprocessing(
+        trace: &[Cycle],
+        memory_layout: MemoryLayout,
+        max_padded_trace_length: usize,
+    ) -> JoltSharedPreprocessing {
+        JoltSharedPreprocessing::new(
+            test_instructions(trace),
+            memory_layout,
+            Vec::new(),
+            max_padded_trace_length,
+            RAM_START_ADDRESS,
+        )
+        .unwrap()
+    }
+
+    fn test_memory_layout() -> MemoryLayout {
+        MemoryLayout::new(&MemoryConfig {
+            program_size: Some(1 << 12),
+            ..Default::default()
+        })
+    }
+
+    fn polynomial_types(one_hot_params: &OneHotParams) -> Vec<CommittedPolynomial> {
+        let mut polynomial_types = Vec::new();
+        for i in 0..one_hot_params.instruction_d {
+            polynomial_types.push(CommittedPolynomial::InstructionRa(i));
+        }
+        for i in 0..one_hot_params.bytecode_d {
+            polynomial_types.push(CommittedPolynomial::BytecodeRa(i));
+        }
+        for i in 0..one_hot_params.ram_d {
+            polynomial_types.push(CommittedPolynomial::RamRa(i));
+        }
+        polynomial_types
+    }
+
+    fn naive_compute_all_G(
+        trace: &[Cycle],
+        bytecode: &BytecodePreprocessing,
+        memory_layout: &MemoryLayout,
+        one_hot_params: &OneHotParams,
+        r_cycle: &[<Fr as JoltField>::Challenge],
+    ) -> Vec<Vec<Fr>> {
+        let eq_evals = EqPolynomial::<Fr>::evals(r_cycle);
+        let N = one_hot_params.instruction_d + one_hot_params.bytecode_d + one_hot_params.ram_d;
+        let mut G = vec![vec![Fr::zero(); one_hot_params.k_chunk]; N];
+
+        for (cycle, weight) in trace.iter().zip(eq_evals) {
+            let lookup_index = LookupQuery::<64>::to_lookup_index(cycle);
+            for i in 0..one_hot_params.instruction_d {
+                let k = one_hot_params.lookup_index_chunk(lookup_index, i) as usize;
+                G[i][k] += weight;
+            }
+
+            let pc = bytecode.get_pc(cycle);
+            for i in 0..one_hot_params.bytecode_d {
+                let k = one_hot_params.bytecode_pc_chunk(pc, i) as usize;
+                G[one_hot_params.instruction_d + i][k] += weight;
+            }
+
+            let address = cycle.ram_access().address() as u64;
+            if let Some(remapped_address) = remap_address(address, memory_layout) {
+                let base = one_hot_params.instruction_d + one_hot_params.bytecode_d;
+                for i in 0..one_hot_params.ram_d {
+                    let k = one_hot_params.ram_address_chunk(remapped_address, i) as usize;
+                    G[base + i][k] += weight;
+                }
+            }
+        }
+
+        G
+    }
+
+    fn weighted_sum(values: &[Fr], weights: &[Fr]) -> Fr {
+        values
+            .iter()
+            .zip(weights)
+            .map(|(value, weight)| *value * weight)
+            .sum()
+    }
+
+    fn gamma_powers(n: usize) -> Vec<Fr> {
+        let gamma = field(7);
+        let mut power = Fr::one();
+        let mut powers = Vec::with_capacity(3 * n);
+        for _ in 0..(3 * n) {
+            powers.push(power);
+            power *= gamma;
+        }
+        powers
+    }
+
+    struct HammingWeightFixture {
+        trace: Vec<Cycle>,
+        bytecode: BytecodePreprocessing,
+        memory_layout: MemoryLayout,
+        one_hot_params: OneHotParams,
+        params: HammingWeightClaimReductionParams<Fr>,
+        all_g: Vec<Vec<Fr>>,
+    }
+
+    fn hamming_weight_fixture() -> HammingWeightFixture {
+        let trace = test_trace();
+        let bytecode = test_bytecode(&trace);
+        let memory_layout = test_memory_layout();
+        let log_T = trace.len().log_2();
+        let one_hot_params = OneHotParams::new(log_T, bytecode.code_size, 1 << 12);
+        let r_cycle = vec![challenge(2), challenge(3), challenge(5)];
+        let G = compute_all_G::<Fr>(&trace, &bytecode, &memory_layout, &one_hot_params, &r_cycle);
+
+        let polynomial_types = polynomial_types(&one_hot_params);
+        let N = polynomial_types.len();
+        let r_addr_bool = vec![challenge(11), challenge(13), challenge(17), challenge(19)];
+        let r_addr_virt = (0..N)
+            .map(|i| {
+                let offset = i as u128;
+                vec![
+                    challenge(23 + offset),
+                    challenge(29 + offset),
+                    challenge(31 + offset),
+                    challenge(37 + offset),
+                ]
+            })
+            .collect::<Vec<_>>();
+
+        let eq_bool = EqPolynomial::<Fr>::evals(&r_addr_bool);
+        let claims_hw = G
+            .iter()
+            .map(|g| g.iter().copied().sum::<Fr>())
+            .collect::<Vec<_>>();
+        let claims_bool = G
+            .iter()
+            .map(|g| weighted_sum(g, &eq_bool))
+            .collect::<Vec<_>>();
+        let claims_virt = G
+            .iter()
+            .zip(&r_addr_virt)
+            .map(|(g, r_addr)| {
+                let eq_virt = EqPolynomial::<Fr>::evals(r_addr);
+                weighted_sum(g, &eq_virt)
+            })
+            .collect::<Vec<_>>();
+
+        let params = HammingWeightClaimReductionParams {
+            gamma_powers: gamma_powers(N),
+            r_cycle,
+            r_addr_bool,
+            r_addr_virt,
+            claims_hw,
+            claims_bool,
+            claims_virt,
+            log_k_chunk: one_hot_params.log_k_chunk,
+            polynomial_types,
+        };
+
+        HammingWeightFixture {
+            trace,
+            bytecode,
+            memory_layout,
+            one_hot_params,
+            params,
+            all_g: G,
+        }
+    }
+
+    fn input_claim(params: &HammingWeightClaimReductionParams<Fr>) -> Fr {
+        let mut claim = Fr::zero();
+        for i in 0..params.polynomial_types.len() {
+            claim += params.gamma_powers[3 * i] * params.claims_hw[i];
+            claim += params.gamma_powers[3 * i + 1] * params.claims_bool[i];
+            claim += params.gamma_powers[3 * i + 2] * params.claims_virt[i];
+        }
+        claim
+    }
+
+    #[test]
+    fn compute_all_G_matches_naive_pushforward() {
+        let trace = test_trace();
+        let bytecode = test_bytecode(&trace);
+        let memory_layout = test_memory_layout();
+        let one_hot_params = OneHotParams::new(trace.len().log_2(), bytecode.code_size, 1 << 12);
+        let r_cycle = vec![challenge(2), challenge(3), challenge(5)];
+
+        let actual =
+            compute_all_G::<Fr>(&trace, &bytecode, &memory_layout, &one_hot_params, &r_cycle);
+        let expected =
+            naive_compute_all_G(&trace, &bytecode, &memory_layout, &one_hot_params, &r_cycle);
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn hamming_weight_claim_reduction_sumcheck_matches_direct_final_claim() {
+        let HammingWeightFixture {
+            trace,
+            bytecode: _bytecode,
+            memory_layout,
+            one_hot_params,
+            params,
+            all_g,
+        } = hamming_weight_fixture();
+        let shared_preprocessing =
+            test_shared_preprocessing(&trace, memory_layout, trace.len().next_power_of_two());
+        let mut prover = HammingWeightClaimReductionProver::initialize(
+            params.clone(),
+            &trace,
+            &shared_preprocessing,
+            &one_hot_params,
+        );
+
+        let sumcheck_challenges = [challenge(41), challenge(43), challenge(47), challenge(53)];
+        let mut claim = input_claim(&params);
+
+        for (round, r_j) in sumcheck_challenges.iter().copied().enumerate() {
+            let round_poly = <HammingWeightClaimReductionProver<Fr> as SumcheckInstanceProver<
+                Fr,
+                crate::transcripts::Blake2bTranscript,
+            >>::compute_message(&mut prover, round, claim);
+            assert_eq!(round_poly.eval_at_zero() + round_poly.eval_at_one(), claim);
+            claim = round_poly.evaluate(&r_j);
+            <HammingWeightClaimReductionProver<Fr> as SumcheckInstanceProver<
+                Fr,
+                crate::transcripts::Blake2bTranscript,
+            >>::ingest_challenge(&mut prover, r_j, round);
+        }
+
+        let rho_rev = sumcheck_challenges
+            .iter()
+            .copied()
+            .rev()
+            .collect::<Vec<_>>();
+        let eq_bool_eval = EqPolynomial::<Fr>::mle(&rho_rev, &params.r_addr_bool);
+        let expected = all_g
+            .iter()
+            .enumerate()
+            .map(|(i, g)| {
+                let mut g_poly = MultilinearPolynomial::from(g.clone());
+                for r_j in sumcheck_challenges.iter().copied() {
+                    g_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
+                }
+                let g_eval = g_poly.final_sumcheck_claim();
+                let eq_virt_eval = EqPolynomial::<Fr>::mle(&rho_rev, &params.r_addr_virt[i]);
+                let gamma_hw = params.gamma_powers[3 * i];
+                let gamma_bool = params.gamma_powers[3 * i + 1];
+                let gamma_virt = params.gamma_powers[3 * i + 2];
+                g_eval * (gamma_hw + gamma_bool * eq_bool_eval + gamma_virt * eq_virt_eval)
+            })
+            .sum::<Fr>();
+
+        assert_eq!(claim, expected);
+    }
+
+    #[cfg(feature = "zk")]
+    mod zk_tests {
+        use super::*;
+        use crate::{
+            poly::opening_proof::{OpeningId, OpeningPoint, PolynomialId, BIG_ENDIAN},
+            subprotocols::blindfold::InputClaimConstraint,
+            zkvm::{claim_reductions::AdviceKind, witness::VirtualPolynomial},
+        };
+
+        struct UnusedAccumulator;
+
+        impl OpeningAccumulator<Fr> for UnusedAccumulator {
+            fn get_virtual_polynomial_opening(
+                &self,
+                _polynomial: VirtualPolynomial,
+                _sumcheck: SumcheckId,
+            ) -> (OpeningPoint<BIG_ENDIAN, Fr>, Fr) {
+                (OpeningPoint::new(Vec::new()), Fr::zero())
+            }
+
+            fn get_committed_polynomial_opening(
+                &self,
+                _polynomial: CommittedPolynomial,
+                _sumcheck: SumcheckId,
+            ) -> (OpeningPoint<BIG_ENDIAN, Fr>, Fr) {
+                (OpeningPoint::new(Vec::new()), Fr::zero())
+            }
+
+            fn get_advice_opening(
+                &self,
+                _kind: AdviceKind,
+                _sumcheck: SumcheckId,
+            ) -> Option<(OpeningPoint<BIG_ENDIAN, Fr>, Fr)> {
+                None
+            }
+        }
+
+        fn polynomial_index(
+            params: &HammingWeightClaimReductionParams<Fr>,
+            polynomial: CommittedPolynomial,
+        ) -> usize {
+            params
+                .polynomial_types
+                .iter()
+                .position(|poly| *poly == polynomial)
+                .unwrap()
+        }
+
+        fn input_opening_value(
+            params: &HammingWeightClaimReductionParams<Fr>,
+            opening: OpeningId,
+        ) -> Fr {
+            match opening {
+                OpeningId::Polynomial(
+                    PolynomialId::Virtual(VirtualPolynomial::RamHammingWeight),
+                    SumcheckId::RamHammingBooleanity,
+                ) => {
+                    let ram_index = params
+                        .polynomial_types
+                        .iter()
+                        .position(|poly| matches!(poly, CommittedPolynomial::RamRa(_)))
+                        .unwrap();
+                    params.claims_hw[ram_index]
+                }
+                OpeningId::Polynomial(PolynomialId::Committed(poly), SumcheckId::Booleanity) => {
+                    params.claims_bool[polynomial_index(params, poly)]
+                }
+                OpeningId::Polynomial(PolynomialId::Committed(poly), sumcheck) => {
+                    let expected_sumcheck = match poly {
+                        CommittedPolynomial::InstructionRa(_) => {
+                            SumcheckId::InstructionRaVirtualization
+                        }
+                        CommittedPolynomial::BytecodeRa(_) => SumcheckId::BytecodeReadRaf,
+                        CommittedPolynomial::RamRa(_) => SumcheckId::RamRaVirtualization,
+                        _ => sumcheck,
+                    };
+                    assert_eq!(sumcheck, expected_sumcheck);
+                    params.claims_virt[polynomial_index(params, poly)]
+                }
+                _ => Fr::zero(),
+            }
+        }
+
+        #[test]
+        fn blindfold_constraints_match_hamming_weight_claim_formulas() {
+            let HammingWeightFixture { params, all_g, .. } = hamming_weight_fixture();
+            let input_constraint: InputClaimConstraint = params.input_claim_constraint();
+            let input_openings = input_constraint
+                .required_openings
+                .iter()
+                .copied()
+                .map(|opening| input_opening_value(&params, opening))
+                .collect::<Vec<_>>();
+            let input_challenges = params.input_constraint_challenge_values(&UnusedAccumulator);
+
+            assert_eq!(
+                input_constraint.evaluate(&input_openings, &input_challenges),
+                input_claim(&params)
+            );
+
+            let sumcheck_challenges = [challenge(41), challenge(43), challenge(47), challenge(53)];
+            let output_constraint = params.output_claim_constraint().unwrap();
+            let mut g_evals = Vec::with_capacity(all_g.len());
+            for g in all_g {
+                let mut g_poly = MultilinearPolynomial::from(g);
+                for r_j in sumcheck_challenges.iter().copied() {
+                    g_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
+                }
+                g_evals.push(g_poly.final_sumcheck_claim());
+            }
+
+            let output_challenges = params.output_constraint_challenge_values(&sumcheck_challenges);
+            let expected_output = output_challenges
+                .iter()
+                .zip(&g_evals)
+                .map(|(challenge, opening)| *challenge * opening)
+                .sum::<Fr>();
+
+            assert_eq!(
+                output_constraint.evaluate(&g_evals, &output_challenges),
+                expected_output
+            );
+        }
+    }
 }
