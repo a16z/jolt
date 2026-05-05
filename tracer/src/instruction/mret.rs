@@ -19,16 +19,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    declare_riscv_instr,
-    emulator::cpu::{Cpu, Xlen},
-    utils::inline_helpers::InstrAssembler,
-    utils::virtual_registers::VirtualRegisterAllocator,
-};
+use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
-use super::{
-    format::format_i::FormatI, jalr::JALR, Cycle, Instruction, RISCVInstruction, RISCVTrace,
-};
+use super::{format::format_i::FormatI, Cycle, Instruction, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = MRET,
@@ -60,35 +53,12 @@ impl RISCVTrace for MRET {
 
         // Generate and execute inline sequence
         // The inline sequence reads mepc from virtual register (source of truth for proofs)
-        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator, cpu.xlen);
 
         let mut trace = trace;
         for instr in inline_sequence {
             instr.trace(cpu, trace.as_deref_mut());
         }
-    }
-
-    /// Generate inline sequence for MRET.
-    ///
-    /// MRET jumps to mepc. The mepc virtual register (vr36) must have been written
-    /// by a prior CSRRW instruction (typically in the trap handler before MRET).
-    ///
-    /// Layout:
-    ///   0: JALR(x0, vr36, 0) - Jump to mepc (read directly from virtual register)
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
-        let mepc_vr = allocator.mepc_register();
-
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
-
-        // Use virtual register for rd to discard write value
-        let jalr_rd = allocator.allocate();
-        asm.emit_i::<JALR>(*jalr_rd, mepc_vr, 0);
-
-        asm.finalize()
     }
 }
 

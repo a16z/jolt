@@ -163,7 +163,21 @@ pub mod format;
 
 pub use crate::utils::instruction_macros;
 
-pub(super) mod amo;
+pub(crate) fn fill_virtual_advice(sequence: &mut [Instruction], values: &[u64]) {
+    let mut filled = 0;
+    for instruction in sequence {
+        if let Instruction::VirtualAdvice(advice) = instruction {
+            let Some(value) = values.get(filled) else {
+                return;
+            };
+            advice.advice = *value;
+            filled += 1;
+        }
+    }
+    if filled != 0 && filled != values.len() {
+        panic!("inline sequence did not contain enough virtual advice instructions");
+    }
+}
 
 pub mod add;
 pub mod addi;
@@ -394,14 +408,6 @@ where
             trace_vec.push(cycle.into());
         }
     }
-    // Default implementation. Instructions with inline sequences will override this.
-    fn inline_sequence(
-        &self,
-        _vr_allocator: &VirtualRegisterAllocator,
-        _xlen: Xlen,
-    ) -> Vec<Instruction> {
-        vec![(*self).into()]
-    }
 }
 
 macro_rules! define_rv32im_enums {
@@ -626,26 +632,6 @@ macro_rules! define_rv32im_enums {
                 self.into()
             }
 
-            /// Copy this instruction with rd overwritten.  Uses
-            /// `InstructionFormat::set_rd` so the correct field is updated
-            /// for each format (e.g. FormatInline writes rs3).
-            fn with_rd(&self, new_rd: u8) -> Instruction {
-                match self {
-                    Instruction::NoOp => Instruction::NoOp,
-                    Instruction::UNIMPL => Instruction::UNIMPL,
-                    $(Instruction::$instr(instr) => {
-                        let mut copy = *instr;
-                        copy.operands.set_rd(new_rd);
-                        copy.into()
-                    },)*
-                    Instruction::INLINE(instr) => {
-                        let mut copy = *instr;
-                        copy.operands.set_rd(new_rd);
-                        copy.into()
-                    }
-                }
-            }
-
             pub fn has_side_effects(&self) -> bool {
                 match self {
                     Instruction::NoOp => false,
@@ -658,11 +644,11 @@ macro_rules! define_rv32im_enums {
             }
 
             pub fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
-                if matches!(self, Instruction::INLINE(_)) {
-                    return self.dispatch_inline_sequence(allocator, xlen);
+                if let Instruction::INLINE(inline) = self {
+                    return inline.inline_sequence(allocator, xlen);
                 }
                 let mut expansion_allocator = jolt_program::expand::ExpansionAllocator::new();
-                return jolt_program::expand::expand_instruction(
+                jolt_program::expand::expand_instruction(
                     &self.normalize(),
                     &mut expansion_allocator,
                 )
@@ -672,46 +658,7 @@ macro_rules! define_rv32im_enums {
                     Instruction::try_from_normalized(instruction)
                         .expect("jolt-program expansion produced an instruction unknown to tracer")
                 })
-                .collect();
-            }
-
-            pub(crate) fn legacy_inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
-                let normalized = self.normalize();
-                if normalized.operands.rd == Some(0) {
-                    // Delegate: these handle rd=0 internally
-                    if matches!(
-                        self,
-                        Instruction::ECALL(_)
-                            | Instruction::MRET(_)
-                            | Instruction::EBREAK(_)
-                            | Instruction::CSRRW(_)
-                            | Instruction::CSRRS(_)
-                    ) {
-                        return self.dispatch_inline_sequence(allocator, xlen);
-                    }
-
-                    // Remap rd to a virtual register for instructions with side effects
-                    if self.has_side_effects() {
-                        let vr = allocator.allocate();
-                        return self.with_rd(*vr).dispatch_inline_sequence(allocator, xlen);
-                    }
-                    // No side effects beyond writing rd: replace with NOP
-                    let addi = ADDI::from(NormalizedInstruction {
-                        instruction_kind: InstructionKind::ADDI,
-                        address: normalized.address,
-                        operands: NormalizedOperands {
-                            rd: Some(0),
-                            rs1: Some(0),
-                            rs2: None,
-                            imm: 0,
-                        },
-                        virtual_sequence_remaining: None,
-                        is_first_in_sequence: false,
-                        is_compressed: normalized.is_compressed,
-                    });
-                    return vec![addi.into()];
-                }
-                self.dispatch_inline_sequence(allocator, xlen)
+                .collect()
             }
 
             pub fn try_from_normalized(instruction: NormalizedInstruction) -> Result<Self, &'static str> {
@@ -737,17 +684,6 @@ macro_rules! define_rv32im_enums {
                         inline.is_first_in_sequence = instruction.is_first_in_sequence;
                         Ok(inline.into())
                     }
-                }
-            }
-
-            fn dispatch_inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
-                match self {
-                    Instruction::NoOp => vec![],
-                    Instruction::UNIMPL => vec![],
-                    $(
-                        Instruction::$instr(instr) => instr.inline_sequence(allocator, xlen),
-                    )*
-                    Instruction::INLINE(instr) => instr.inline_sequence(allocator, xlen),
                 }
             }
 

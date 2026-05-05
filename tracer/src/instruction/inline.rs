@@ -182,6 +182,16 @@ impl INLINE {
     pub fn exec(&self, _cpu: &mut Cpu, _: &mut <INLINE as RISCVInstruction>::RAMAccess) {
         panic!("Inline instructions must use trace(), not exec()");
     }
+
+    pub fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<Instruction> {
+        let reg = find_inline(self.opcode, self.funct3, self.funct7);
+        let asm = InstrAssembler::new_inline(self.address, self.is_compressed, xlen, allocator);
+        (reg.build_sequence)(asm, self.operands)
+    }
 }
 
 impl RISCVTrace for INLINE {
@@ -235,16 +245,6 @@ impl RISCVTrace for INLINE {
                 instr.trace_raw(cpu, trace.as_deref_mut());
             }
         }
-    }
-
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
-        let reg = find_inline(self.opcode, self.funct3, self.funct7);
-        let asm = InstrAssembler::new_inline(self.address, self.is_compressed, xlen, allocator);
-        (reg.build_sequence)(asm, self.operands)
     }
 }
 

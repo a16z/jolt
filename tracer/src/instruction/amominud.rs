@@ -1,18 +1,7 @@
-use crate::utils::virtual_registers::VirtualRegisterAllocator;
-use crate::{instruction::addi::ADDI, utils::inline_helpers::InstrAssembler};
 use serde::{Deserialize, Serialize};
 
-use super::add::ADD;
-use super::ld::LD;
-use super::mul::MUL;
-use super::sd::SD;
-use super::sltu::SLTU;
-use super::sub::SUB;
 use super::Instruction;
-use crate::{
-    declare_riscv_instr,
-    emulator::cpu::{Cpu, Xlen},
-};
+use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::{format::format_amo::FormatAMO, Cycle, RAMWrite, RISCVInstruction, RISCVTrace};
 
@@ -54,48 +43,10 @@ impl AMOMINUD {
 
 impl RISCVTrace for AMOMINUD {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
             instr.trace(cpu, trace.as_deref_mut());
         }
-    }
-
-    /// Generates inline sequence for atomic minimum operation (unsigned 64-bit).
-    ///
-    /// AMOMINU.D atomically loads a 64-bit value from memory, computes the minimum
-    /// of that value and rs2 (treating both as unsigned), stores the minimum back
-    /// to memory, and returns the original value in rd.
-    ///
-    /// Uses the same branchless approach as AMOMIN.D but with unsigned comparison:
-    /// 1. Load the current value from memory into v0
-    /// 2. v1 = (rs2 < v0 ? 1 : 0)
-    /// 3. v0 + (rs2 - v0) * v1
-    ///    - If rs2 < v0, then v1 = 1, and the result is v0 + (rs2 - v0) * 1 = rs2
-    ///    - If rs2 >= v0, then v1 = 0, and the result is v0 + (rs2 - v0) * 0 = v0
-    /// 4. Store the minimum back to memory
-    /// 5. Return the original value in rd
-    ///
-    /// The branchless multiplication technique ensures zkVM compatibility.
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
-        let v0 = allocator.allocate();
-        let v1 = allocator.allocate();
-        let v2 = allocator.allocate();
-
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
-
-        asm.emit_ld::<LD>(*v0, self.operands.rs1, 0);
-        asm.emit_r::<SLTU>(*v1, self.operands.rs2, *v0);
-        asm.emit_r::<SUB>(*v2, self.operands.rs2, *v0);
-        asm.emit_r::<MUL>(*v2, *v2, *v1);
-        asm.emit_r::<ADD>(*v1, *v0, *v2);
-        asm.emit_s::<SD>(self.operands.rs1, *v1, 0);
-        asm.emit_i::<ADDI>(self.operands.rd, *v0, 0);
-
-        asm.finalize()
     }
 }

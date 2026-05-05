@@ -1,15 +1,11 @@
 use serde::{Deserialize, Serialize};
 
-use crate::utils::inline_helpers::InstrAssembler;
-use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use crate::{
     declare_riscv_instr,
-    emulator::cpu::{Cpu, ReservationWidth, Xlen},
+    emulator::cpu::{Cpu, ReservationWidth},
 };
 
-use super::addi::ADDI;
 use super::format::format_r::FormatR;
-use super::ld::LD;
 use super::{Cycle, Instruction, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
@@ -49,39 +45,10 @@ impl RISCVTrace for LRD {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
         cpu.set_reservation(address, ReservationWidth::Doubleword);
 
-        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
             instr.trace(cpu, trace.as_deref_mut());
         }
-    }
-
-    /// LR.D: Load Reserved Doubleword
-    /// Loads a 64-bit doubleword from memory at address rs1, stores it in rd,
-    /// and sets a reservation on the address.
-    ///
-    /// The 8-byte reservation covers both the 4-byte and 8-byte reservation
-    /// sets used by subsequent SC.W and SC.D respectively — per the RISC-V A
-    /// spec, SC succeeds if the reservation set contains the bytes being
-    /// written, so SC.W after LR.D should succeed. We record the address in
-    /// both `v_reservation_w` and `v_reservation_d` so the SC.W-after-LR.D
-    /// constraint check (reservation == rs1) passes.
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
-        // LR.D is only available in RV64A, so we only implement the 64-bit path
-        assert_eq!(xlen, Xlen::Bit64, "LR.D is only available in RV64");
-
-        let v_reservation_d = allocator.reservation_d_register();
-        let v_reservation_w = allocator.reservation_w_register();
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
-
-        asm.emit_i::<ADDI>(v_reservation_d, self.operands.rs1, 0);
-        asm.emit_i::<ADDI>(v_reservation_w, self.operands.rs1, 0);
-        asm.emit_ld::<LD>(self.operands.rd, self.operands.rs1, 0);
-
-        asm.finalize()
     }
 }

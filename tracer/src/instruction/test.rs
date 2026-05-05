@@ -403,7 +403,7 @@ fn jolt_program_rd_zero_expansion_matches_tracer(
 
     for (normalized, tracer_instruction) in cases {
         let tracer_expanded: Vec<NormalizedInstruction> = tracer_instruction
-            .legacy_inline_sequence(&VirtualRegisterAllocator::new(), Xlen::Bit64)
+            .inline_sequence(&VirtualRegisterAllocator::new(), Xlen::Bit64)
             .iter()
             .map(Instruction::normalize)
             .collect();
