@@ -22,6 +22,14 @@ PR #1490 moves bytecode expansion out of `tracer` and into `jolt-program::expand
 
 This spec proposes a second-phase rewrite of `jolt-program::expand` into an extraction-native production implementation. The goal is not to add a proof-only model next to production code. The production expander itself should become a first-order state machine over explicit data transitions, while preserving byte-for-byte output and keeping runtime performance the same or better.
 
+This rewrite should also align with the MLIR-shaped Jolt work in the
+`refactor/crates` branch, which currently treats Bolt as a compiler pipeline
+over explicit dialects, passes, schema validation, typed plans, and generated
+artifacts. Bytecode expansion is smaller than Bolt's prover/verifier pipeline,
+but it has the same compiler shape: a source IR, a target IR, legality
+constraints, lowering rules, resource materialization, validation, and
+emission into production Rust data structures.
+
 The target design:
 
 ```text
@@ -45,6 +53,7 @@ Decoded NormalizedInstruction
 - Preserve virtual-register numbering, allocation reuse, reserved registers, and inline reset behavior.
 - Preserve sequence metadata: source address, `virtual_sequence_remaining`, `is_first_in_sequence`, and compressed-instruction metadata.
 - Make the expansion recipe a typed grammar that can drive production Rust, Lean extraction/model generation, docs, and parity fixtures from one source of truth.
+- Keep the grammar MLIR-ready: represent instructions, temps, metadata, and reset behavior as typed ops/attrs/regions that can later be moved into an MLIR dialect without changing the semantics.
 - Keep `jolt-program::expand` free of tracer, CPU, memory-device, advice-tape, prover, transcript, ELF parser, and PCS dependencies.
 - Make Hax/Aeneas extraction of provider-free RV64 expansion straightforward enough that the first real extraction target is the production core, not a hand-written mirror.
 - Avoid performance regressions by removing recursive per-instruction heap allocation and using bounded stack-resident buffers for per-source expansion.
@@ -229,6 +238,228 @@ crates/jolt-program/src/expand/
 
 The important separation is `grammar + core + lower + allocator + buffer + metadata + operands` versus `inline + public ergonomic wrappers`. The extraction target should be the first group.
 
+## Compiler And MLIR Alignment
+
+The `refactor/crates` branch at `4e6c4a635` contains Markos's Bolt-shaped view
+of Jolt as an explicit compiler pipeline. Bolt's current docs describe the
+generic lowering path as:
+
+```text
+protocol -> concrete -> party -> compute -> cpu -> Rust
+```
+
+The key rule is that semantic facts live in dialect ops, validators, lowering
+passes, or typed plan data before Rust emission. Generated Rust is the final
+artifact, not where protocol meaning should be rediscovered by string matching
+or ad hoc helper logic. The Bolt paper draft in
+`/Users/quang.dao/Documents/SNARKs/bolt` makes the same architectural point:
+dialects are domain vocabularies of typed operations and attributes, passes are
+partial functions between modules, and each lowering pass should state the
+invariants and semantics it preserves.
+
+Bytecode expansion should use the same mental model:
+
+```text
+rv64.source
+  -> expand.canonical
+  -> expand.lowered
+  -> expand.allocated
+  -> jolt.bytecode
+  -> Rust Vec<NormalizedInstruction>
+```
+
+These names are conceptual phase markers, not a request to introduce MLIR now.
+They should guide the Rust design so that a future MLIR dialect can be a
+mechanical lift rather than another rewrite.
+
+### Source And Target
+
+Today source and target are both represented by `NormalizedInstruction`, which
+blurs the compiler boundary. The next design should define them by legality
+predicates instead of only by Rust type:
+
+```rust
+pub(crate) struct SourceModule<'a> {
+    rows: &'a [NormalizedInstruction],
+}
+
+pub(crate) struct BytecodeModule {
+    rows: Vec<NormalizedInstruction>,
+}
+
+pub(crate) fn is_source_row(row: NormalizedInstruction) -> bool;
+pub(crate) fn is_target_bytecode_row(row: NormalizedInstruction) -> bool;
+```
+
+The source IR is a decoded RV64 program row with address, compressed flag, and
+source operands. It may contain instructions that are not legal final Jolt
+bytecode rows, such as `ADDIW`, `MULH`, `LB`, `SCW`, `DIV`, `Inline`, and CSR
+operations.
+
+The target IR is the bytecode stream consumed by preprocessing and the proof
+system: every row is legal for the final bytecode relation, internal virtual
+register use has been materialized, sequence metadata is correct, and
+pass-through or literal rows preserve their baseline metadata policy.
+
+The semantic contract is observational, not byte-for-byte at the machine-state
+level. A source row and its target sequence must have the same architectural
+effect on RV64-visible registers, memory, control flow, advice/trap behavior,
+and PC mapping. The target may use virtual registers and extra assertions
+internally, but those internal resources are not source-level observations.
+For this PR branch, parity against the current Rust output remains the first
+acceptance test; semantic equivalence is the proof-oriented contract that
+explains why that output is the right thing to generate.
+
+### Lowering Pipeline
+
+The proposed grammar should map onto ordinary compiler passes:
+
+```text
+decode/uncompress
+  produces rv64.source rows
+
+canonicalize-source
+  normalizes root-level rd=x0 behavior, pass-through rows, and baseline literals
+
+legalize-expansion
+  repeatedly rewrites illegal source/helper ops with instruction-family recipes
+
+inline-fragments
+  expands recipe fragments such as amo_pre64/amo_post64 with alpha-renamed temps
+
+allocate-temps
+  materializes symbolic temps into concrete virtual registers using deterministic first-fit allocation
+
+reset-inline-temps
+  emits reset rows for touched inline registers after checking no inline temps are live
+
+materialize-metadata
+  stamps synthetic sequence metadata and preserves pass-through/literal metadata
+
+verify-target
+  checks target legality, no live temps, bounded sequence size, and dependency hygiene
+
+emit-rust
+  appends final rows to Vec<NormalizedInstruction>
+```
+
+The current implementation conflates most of these passes inside
+`InstrAssembler::emit`. The extraction-native rewrite should separate them in
+the data model even if the initial Rust implementation fuses several passes for
+performance.
+
+### Compiler Concepts In This Rewrite
+
+The rewrite is using standard compiler ideas under different names:
+
+| Bytecode expansion concept | Compiler concept | Why it matters here |
+|----------------------------|------------------|---------------------|
+| `InstructionKind` families | Dialect operation set | Each instruction is an op with operand shape, side effects, and legality. |
+| Source-only vs final kinds | Legalization target | Expansion is a conversion from illegal source ops to legal target ops. |
+| `LowerStmt::Emit` | Rewrite pattern / conversion pattern | A recipe replaces one op with a sequence of lower-level ops. |
+| Recursive helper expansion | Conversion driver / worklist legalization | Emitted helper ops must themselves be legalized until all target ops are legal. |
+| `ExpansionRank` and fuel | Termination measure | Legalization needs a proof or test that rewrites cannot cycle. |
+| `Seq`, `If`, `WithTemp` | Structured regions/control flow | Recipes need regions instead of arbitrary Rust control flow. |
+| `Fragment` | Symbolic helper / inlining | Shared lowering snippets should be named regions with explicit arguments and alpha-renamed locals. |
+| `RegExpr`, `ImmExpr`, `CondExpr` | Pure SSA/dataflow expressions | Pure computations should be separate from stateful expansion effects. |
+| `TempId` | Virtual register / temporary SSA value | Recipes should name symbolic temps before concrete register allocation. |
+| `ExpansionAllocator` | Register allocation / bufferization | Concrete virtual-register numbers are resource materialization, not semantic lowering. |
+| `Release` | Lifetime end / deallocation | Reuse requires explicit lifetime boundaries and validation. |
+| `SequenceRow::Raw` vs `Literal` | Attribute/materialization policy | Metadata is an emitted attribute policy, not an incidental mutation. |
+| Grammar validator | IR verifier/schema validation | Bad recipes should be rejected structurally before codegen. |
+| `expand_program_slice` | Compiler driver | The public API orchestrates passes and emits the final artifact. |
+
+The most important adjustment to the previous grammar proposal is to treat
+concrete virtual-register assignment as a materialization pass. Recipes should
+prefer symbolic temps:
+
+```rust
+WithTemp {
+    temp: T0,
+    pool: RegisterPool::Instruction,
+    body: Seq(&[
+        Emit(i(ADDI, Temp(T0), SourceRs1, imm(0))),
+        Emit(i(ADDI, SourceRd, Reserved(CsrTarget), imm(0))),
+        Emit(i(ADDI, Reserved(CsrTarget), Temp(T0), imm(0))),
+    ]),
+}
+```
+
+The driver may still allocate the concrete register at `WithTemp` execution
+time for performance and exact parity. Conceptually, however, the grammar has a
+symbolic temporary whose live range is the `WithTemp` body. This is much closer
+to MLIR/SSA form, and it makes the future MLIR lowering natural:
+
+```mlir
+%t0 = expand.alloc_temp {pool = "instruction"} : !expand.vreg
+expand.emit "ADDI"(%t0, %rs1) {imm = 0}
+expand.emit "ADDI"(%rd, %csr_target) {imm = 0}
+expand.emit "ADDI"(%csr_target, %t0) {imm = 0}
+expand.release_temp %t0
+```
+
+That IR can later be lowered to concrete Jolt bytecode by a register-allocation
+pass that uses the same first-fit policy as today's Rust allocator.
+
+### MLIR-Ready Shape
+
+The Rust grammar should avoid choices that would be awkward in MLIR:
+
+- Prefer named ops with typed operands/attrs over free-form closures.
+- Prefer explicit regions (`Seq`, `If`, `WithTemp`) over Rust call-stack
+  effects.
+- Prefer symbolic temps plus a deterministic allocation pass over hard-coded
+  register numbers in recipes.
+- Store operand shapes, side-effect classes, and target legality as typed data
+  or traits that a verifier can inspect.
+- Keep baseline quirks as explicit ops or attrs, such as
+  `expand.literal_default_row`, so future reviewers can decide whether to
+  preserve or remove them.
+- Treat metadata stamping as attribute materialization at a phase boundary.
+- Keep schema/validator tests close to the grammar, the same way Bolt validates
+  transcript threading, party projection, kernel-free verifier IR, and import
+  boundaries.
+
+Possible future dialect split:
+
+```text
+riscv.norm      decoded RV64 source rows and operand formats
+jolt.bytecode   final legal Jolt bytecode ops and sequence attrs
+expand          temporary lowering ops: emit, alloc_temp, release_temp, reset_inline, literal
+```
+
+The near-term Rust implementation does not need to expose these names publicly.
+It should, however, make each concept visible enough that moving to MLIR's
+dialect conversion infrastructure later would mostly replace the driver and
+grammar interpreter, not the specification.
+
+### Literature Pointers
+
+Useful compiler concepts to read alongside this design:
+
+- **SSA form.** The classic reference is Cytron et al.,
+  "Efficiently Computing Static Single Assignment Form and the Control
+  Dependence Graph" (TOPLAS 1991). Bolt's paper draft uses SSA as the default
+  representation style; our symbolic `TempId` discipline is the bytecode
+  expansion analogue.
+- **MLIR dialects and multi-level lowering.** Lattner et al.,
+  "[MLIR: Scaling Compiler Infrastructure for Domain Specific Computation](https://research.google/pubs/mlir-scaling-compiler-infrastructure-for-domain-specific-computation/)"
+  (CGO 2021) is the main reference. The relevant lesson is not "use MLIR now";
+  it is "keep each abstraction level explicit and lower through typed dialects."
+- **Dialect conversion / legalization.** MLIR's
+  [Dialect Conversion](https://mlir.llvm.org/docs/DialectConversion/)
+  documentation describes conversion targets, rewrite patterns, type
+  conversion, and legality. Our `is_target_bytecode_row`, lowering recipes, and
+  worklist driver are the same idea in smaller Rust form.
+- **Pattern rewriting.** MLIR's docs index points to generic DAG rewriting and
+  table-driven declarative rewrite rules. Our recipes should be declarative
+  rewrite patterns where possible, with Rust builders used only to construct
+  inspectable recipe data.
+- **Register allocation, liveness, and bufferization.** Temp materialization and
+  explicit `Release` markers are a small register-allocation problem. The Bolt
+  paper's `bufferize`/`cpu` discussion is the closest local analogy: pure SSA
+  values become explicit mutable resources only near the target boundary.
+
 ## Declarative Expansion Grammar
 
 Ari's [`Lost in Translation`](https://randomwalks.xyz/blog/translations/) reaches the right general conclusion for Jolt verification: arbitrary Rust is the wrong semantic source of truth. A small typed grammar is easier to translate, easier to validate, and harder to accidentally misuse. His article applies that idea to instruction execution semantics by splitting pure expressions from state-changing statements. Bytecode expansion needs the same move, but the grammar here is different: it is not a CPU-state semantics AST. It is an expansion-time transition language for turning one normalized source row into zero or more Jolt bytecode rows while preserving allocation, recursive helper expansion, and metadata behavior.
@@ -239,7 +470,7 @@ The grammar must be expressive enough to model the current implementation, inclu
 - Some source rows are pass-through rows, not synthetic sequences. A source `ADD` currently returns the input `NormalizedInstruction` unchanged; it does not get `virtual_sequence_remaining = Some(0)` or `is_first_in_sequence = true`.
 - Synthetic sequences do get finalized metadata. Current family expanders use `InstrAssembler::finalize`, which rewrites every row's sequence metadata and puts `is_compressed` only on the last row.
 - `rd = x0` has two separate behaviors: side-effect-free rows become a direct ADDI no-op, while side-effecting rows are recursively expanded after rewriting `rd` to a temporary register and releasing that temporary after expansion.
-- Temporary-register allocation order is observable through emitted register numbers. The grammar must allow allocation at precise points, not only a predeclared temp list at the beginning of each lowerer.
+- Temporary-register allocation order is observable through emitted register numbers. The grammar must expose symbolic temp lifetimes at precise points, and the materialization pass must preserve today's deterministic allocation order.
 - Temporary-register release timing matters for reuse inside longer expansions such as `SCD`, `SCW`, CSR updates, and division.
 - Some branches depend on decoded operands or expansion parameters, for example `rd == rs1`, `rs1 == x0`, `csr == 0`, `word`, `signed`, `min`, and `remainder_output`.
 - Shared snippets such as `amo_pre64` and `amo_post64` are real grammar fragments with parameters, not arbitrary Rust helper functions.
@@ -374,7 +605,7 @@ pub(crate) enum LowerStmt {
 
 `Emit(RowSpec)` means "push a `RawRow` back through the expansion driver." It does not mean "append this final instruction to output." This distinction is what preserves current recursive behavior without recursive Rust calls.
 
-`WithTemp` allocates exactly at the statement's position and lowers to an explicit `Release` operation after the body. Nested `WithTemp` blocks are the grammar form for current mid-sequence release/reuse patterns:
+`WithTemp` introduces a symbolic temp whose live range is exactly the statement body. The current Rust interpreter may materialize the concrete virtual register when entering the statement and lower to an explicit `Release` operation after the body. Nested `WithTemp` blocks are the grammar form for current mid-sequence release/reuse patterns:
 
 ```rust
 // Shape of the current CSRRW rd == rs1 branch.
@@ -389,7 +620,7 @@ WithTemp {
 }
 ```
 
-The grammar compiler/interpreter should emit the `Release(T0)` after the third row has recursively expanded and before any following statement. That gives the same observable allocation reuse as the current hand-written Rust.
+The grammar compiler/interpreter should materialize `T0` at this point and emit the `Release(T0)` after the third row has recursively expanded and before any following statement. That gives the same observable allocation reuse as the current hand-written Rust while keeping the recipe itself in symbolic-temp form.
 
 A simple lowerer becomes data:
 
@@ -1066,19 +1297,20 @@ For this phase, the practical rule is:
 
 ## Migration Plan
 
-1. Add the typed expansion grammar, validator, and baseline-quirk fixtures.
+1. Add the typed expansion grammar, validator, compiler-phase vocabulary, and baseline-quirk fixtures.
 2. Add new `core`, `buffer`, and bitset `allocator` internals under `jolt-program::expand`.
-3. Port one small family, such as ADDIW/ADDW/SUBW, to grammar-backed shallow lowering and prove parity against the current output.
-4. Port arithmetic, shifts, memory, division, and control-flow families.
-5. Replace `InstrAssembler<'a>` in production expansion code.
-6. Update tracer inline adapter to produce explicit inline expansion rows or explicit reset rows.
-7. Delete the old recursive assembler once all parity tests pass.
-8. Run Hax/Aeneas again on:
+3. Represent recipe temps symbolically and materialize them through the allocator at `WithTemp` boundaries.
+4. Port one small family, such as ADDIW/ADDW/SUBW, to grammar-backed shallow lowering and prove parity against the current output.
+5. Port arithmetic, shifts, memory, division, and control-flow families.
+6. Replace `InstrAssembler<'a>` in production expansion code.
+7. Update tracer inline adapter to produce explicit inline expansion rows or explicit reset rows.
+8. Delete the old recursive assembler once all parity tests pass.
+9. Run Hax/Aeneas again on:
    - metadata stamping,
    - allocator transitions,
    - ADDIW shallow lowering,
    - provider-free `expand_one_core`.
-9. Run formatting, clippy, host tests, ZK tests, and dependency checks.
+10. Run formatting, clippy, host tests, ZK tests, and dependency checks.
 
 Do not leave both expanders in production. A temporary test-only reference path is acceptable during the rewrite, but the final branch should have one canonical production expander.
 
@@ -1086,6 +1318,8 @@ Do not leave both expanders in production. A temporary test-only reference path 
 
 - [ ] `jolt-program::expand` no longer has a production `InstrAssembler<'a>` that stores a borrowed allocator.
 - [ ] Expansion recipes are represented in a typed grammar that separates pure register/immediate/condition expressions from expansion-time statements.
+- [ ] The spec names source, intermediate, and target phases with MLIR-ready legality predicates, even while Rust remains the implementation substrate.
+- [ ] Recipe temps are symbolic in the grammar and materialized into concrete virtual registers by a deterministic allocation/resource-materialization step.
 - [ ] The grammar validator rejects temp use outside live scopes, invalid operand shapes, unchecked literal rows, and cyclic fragment/lowering dependencies.
 - [ ] Family lowerers are shallow and do not call `expand_instruction`.
 - [ ] Recursive expansion happens in one central depth-first driver.
@@ -1129,6 +1363,26 @@ Decision: start with ordinary Rust data plus a small `RecipeBuilder`; do not sta
 Plain data is the extraction-friendly source of truth. A builder is acceptable only if `finish()` returns an inspectable recipe made of `LowerStmt`, `RowSpec`, expression tables, and fragment references. The builder must not be a new imperative assembler whose methods hide arbitrary emission logic.
 
 A proc-macro DSL can be a later ergonomics layer, but only if it emits the same checked grammar definitions. That keeps Ari's article's lesson without inheriting the main proc-macro drawback: `syn` sees syntax, not Rust types. Type-dependent behavior should stay in the grammar or in small typed adapters outside the extraction-critical core.
+
+### MLIR Boundary
+
+Decision: keep the immediate rewrite Rust-first, but make the Rust data model
+MLIR-ready.
+
+The implementation PR should not add a Melior/MLIR dependency to
+`jolt-program::expand`. That would make an already large rewrite harder to
+review and would move the extraction experiment into compiler-infrastructure
+integration before the expansion semantics are clean. The right near-term target
+is a small typed Rust IR with explicit source/intermediate/target legality
+checks, declarative rewrite recipes, symbolic temps, resource materialization,
+and validators.
+
+Those concepts should be named and shaped as if they may later become MLIR
+dialects or ops. In particular, avoid recipe APIs that depend on Rust closures,
+trait-object callbacks, hidden mutation, or call-stack effects. A future MLIR
+version should be able to represent the same phases as `riscv.norm`,
+`expand`, and `jolt.bytecode` dialects without changing the semantic contract
+or the parity fixtures.
 
 ### Expansion Rank
 
