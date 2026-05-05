@@ -1,17 +1,15 @@
 use std::{collections::HashMap, fs::File, io, path::PathBuf};
 
+use jolt_riscv::NormalizedInstruction;
 use serde::{Deserialize, Serialize};
-use tracer::{
-    instruction::{Cycle, Instruction},
-    JoltDevice,
-};
+use tracer::{instruction::Cycle, JoltDevice};
 
 use crate::field::JoltField;
 
 #[derive(Serialize, Deserialize)]
 pub struct ProgramSummary {
     pub trace: Vec<Cycle>,
-    pub bytecode: Vec<Instruction>,
+    pub bytecode: Vec<NormalizedInstruction>,
     pub memory_init: Vec<(u64, u8)>,
     pub io_device: JoltDevice,
 }

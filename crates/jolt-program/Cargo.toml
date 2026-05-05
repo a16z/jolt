@@ -17,6 +17,7 @@ std = ["common/std"]
 image = ["dep:object"]
 
 [dependencies]
+ark-serialize.workspace = true
 common = { workspace = true, default-features = false }
 jolt-riscv = { workspace = true }
 object = { workspace = true, optional = true }

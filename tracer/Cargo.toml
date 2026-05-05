@@ -32,10 +32,10 @@ std = [
   "postcard/use-std",
   "serde_json/std",
 ]
-test-utils = ["dep:rand"]
+test-utils = ["dep:rand", "jolt-trace/test-utils"]
 
 [dependencies]
-jolt-program.workspace = true
+jolt-program = { workspace = true, features = ["image"] }
 jolt-trace.workspace = true
 jolt-riscv.workspace = true
 jolt-platform.workspace = true

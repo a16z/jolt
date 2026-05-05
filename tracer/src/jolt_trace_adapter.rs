@@ -1,10 +1,10 @@
 use jolt_riscv::JoltInstruction;
 use jolt_trace::JoltCycle;
 
-#[cfg(any(feature = "test-utils", test))]
+#[cfg(feature = "test-utils")]
 use crate::instruction::format::InstructionFormat;
 
-#[cfg(any(feature = "test-utils", test))]
+#[cfg(feature = "test-utils")]
 use crate::instruction::NormalizedInstruction;
 
 use crate::instruction::{
@@ -57,7 +57,7 @@ impl<T: RISCVInstruction + JoltInstruction> JoltCycle for RISCVCycle<T> {
         }
     }
 
-    #[cfg(any(feature = "test-utils", test))]
+    #[cfg(feature = "test-utils")]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
         let instruction = T::random(rng);
         let normalized: NormalizedInstruction = instruction.into();

@@ -8,13 +8,14 @@ use common::constants::{
     RAM_START_ADDRESS,
 };
 use common::jolt_device::{JoltDevice, MemoryConfig};
+use jolt_riscv::NormalizedInstruction;
 use std::fs::File;
 use std::io;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::Command;
 use tracer::emulator::memory::Memory;
-use tracer::instruction::{Cycle, Instruction};
+use tracer::instruction::Cycle;
 use tracer::LazyTraceIterator;
 use tracing::info;
 
@@ -260,7 +261,7 @@ impl Program {
         }
     }
 
-    pub fn decode(&mut self) -> (Vec<Instruction>, Vec<(u64, u8)>, u64, u64) {
+    pub fn decode(&mut self) -> (Vec<NormalizedInstruction>, Vec<(u64, u8)>, u64, u64) {
         self.build(DEFAULT_TARGET_DIR);
         let elf = self.elf.as_ref().unwrap();
         let mut elf_file =
@@ -284,8 +285,9 @@ impl Program {
             File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
         let mut elf_contents = Vec::new();
         elf_file.read_to_end(&mut elf_contents).unwrap();
-        let (_, _, program_end, _, _) = tracer::decode(&elf_contents);
-        let program_size = program_end - RAM_START_ADDRESS;
+        let image =
+            jolt_program::image::decode_elf(&elf_contents).expect("program ELF decoding failed");
+        let program_size = image.program_end - RAM_START_ADDRESS;
 
         let memory_config = MemoryConfig {
             heap_size: self.heap_size,
@@ -323,8 +325,9 @@ impl Program {
             File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
         let mut elf_contents = Vec::new();
         elf_file.read_to_end(&mut elf_contents).unwrap();
-        let (_, _, program_end, _, _) = tracer::decode(&elf_contents);
-        let program_size = program_end - RAM_START_ADDRESS;
+        let image =
+            jolt_program::image::decode_elf(&elf_contents).expect("program ELF decoding failed");
+        let program_size = image.program_end - RAM_START_ADDRESS;
         let memory_config = MemoryConfig {
             heap_size: self.heap_size,
             stack_size: self.stack_size,

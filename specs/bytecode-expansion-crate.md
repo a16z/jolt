@@ -61,6 +61,9 @@ Add concrete `jolt-eval` invariants for bytecode expansion fixture consistency a
 - This spec does not require integrating bytecode-commitment PR [#1344](https://github.com/a16z/jolt/pull/1344). That work is a future integration constraint, not part of this implementation scope.
 - This spec does not require supporting RV32 in `jolt-program`; RV32/ELF32 should be rejected by the new program pipeline.
 - This spec does not require deleting historical RV32 branches from `tracer`; that cleanup can happen separately.
+- TODO(tracer RV32 cleanup): when RV32 support is fully removed from `tracer`, update stale comments and docs that still describe `Xlen`, RV32, ELF32, or dual-width expansion behavior as live supported paths.
+- TODO(ISA profiles): keep `InstructionKind` as the canonical flat row/discriminant for bytecode, serialization, and proof indexing, but move the source declaration behind it to a hierarchical instruction-family/capability table. That table should generate the flat enum plus metadata such as `instruction_family`, `required_capability`, and `is_supported_by(profile)`, so future profiles like RV64IM, RV64IMA, RV64IMAC, and later floating-point extensions can be selected cleanly without destabilizing committed bytecode rows.
+- Pivot from the original Claude-approved spec: this PR should add an `InlineExpansionProvider` hook now, even though the earlier plan left registered custom inline handling in tracer as future work. The hook is worthwhile long-term because it lets `jolt-program::expand` remain the canonical expansion entry point for source programs that contain Jolt custom inline opcodes, while keeping the inline registry, advice computation, and tracer CPU state outside `jolt-program`.
 - This spec does not require exposing a stable public API for third-party consumers outside the Jolt workspace.
 - This spec does not require moving CPU execution, lazy trace iteration, advice tapes, or memory-device emulation into verifier-facing crates. Only the backend-neutral execution contract and output row types belong in `jolt-program`; concrete execution remains in `tracer`.
 
@@ -81,6 +84,7 @@ Add concrete `jolt-eval` invariants for bytecode expansion fixture consistency a
 - [ ] SDK host-facing prove/analyze/trace entry points invoke execution through a generic `B: ExecutionBackend` path, with any default tracer backend selected in `jolt-sdk` rather than in `jolt-trace`, `jolt-program`, or proof crates.
 - [ ] Tracer-internal implementation changes do not require changes to `jolt-riscv`, `jolt-program`, `jolt-core`, or SDK macros unless the stable execution contract or normalized program row semantics intentionally change.
 - [ ] `NormalizedInstruction` includes an `instruction_kind: InstructionKind` field plus normalized operands, address, virtual sequence metadata, and compressed-instruction metadata.
+- [ ] `jolt-riscv` documents that `InstructionKind` is the canonical flat row identity, while ISA/profile hierarchy is expressed as generated metadata rather than nested row variants.
 - [ ] `jolt-program::preprocess` owns materialized bytecode/RAM/program preprocessing artifacts consumed by both prover and verifier setup.
 - [ ] `JoltInstruction` is a marker/conversion trait equivalent to `Into<NormalizedInstruction> + TryFrom<NormalizedInstruction>`, not a second accessor abstraction over the same fields.
 - [ ] Any `JoltInstruction` impls for tracer's concrete instruction structs live in `tracer` as adapter impls, generated from the shared instruction-kind list where practical.
@@ -94,6 +98,9 @@ Add concrete `jolt-eval` invariants for bytecode expansion fixture consistency a
 - [ ] `InstrAssembler`, `VirtualRegisterAllocator`, or their minimal expansion-facing equivalents live behind the `jolt-program::expand` module boundary.
 - [ ] `InstrAssembler` borrows `&mut ExpansionAllocator` during emission and does not own, clone, or hide allocator state behind shared ownership.
 - [ ] Expansion APIs return explicit errors for allocation or malformed-expansion failures instead of introducing new panics in the core expansion path.
+- [ ] `jolt-program::expand` exposes an `InlineExpansionProvider` trait and provider-taking expansion entry points for registered Jolt inline source opcodes, without depending on `tracer`, `inventory`, `Cpu`, advice tape internals, or concrete inline crates.
+- [ ] The default/provider-free expansion path returns an explicit unsupported-inline error for `InstructionKind::Inline` rows instead of silently treating them as already-expanded bytecode.
+- [ ] `tracer` implements the provider by adapting its existing inline registry and sequence builders to normalized `jolt-program` rows; inline advice generation remains trace-time execution behavior for this PR.
 - [ ] A program-preprocessing path is implemented as `ELF bytes -> DecodedProgramImage -> expanded bytecode -> JoltProgramPreprocessing`, and prover/verifier setup wraps that program preprocessing without re-decoding or re-expanding the program.
 - [ ] The verifier-facing path does not depend on CPU execution, lazy tracing, memory-device emulation, advice I/O, or prover-only witness generation.
 - [ ] `cargo tree -p tracer` shows `tracer` depending on `jolt-riscv` and `jolt-program`, but neither lower-level crate depending back on `tracer`.
@@ -400,6 +407,53 @@ The file list is intentionally concrete. Implementers may split individual instr
 
 The shared instruction list and macro input should move into `jolt-riscv`. Today `tracer/src/instruction/mod.rs` generates `Instruction` and `Cycle` from the same instruction list. After the split, `jolt-riscv` should own the canonical list and use it to generate `InstructionKind` plus pure metadata dispatch. `tracer` should reuse that same list by invoking an exported `macro_rules!` token tree from `jolt-riscv`, for example `jolt_riscv::for_each_instruction_kind!`, to define its concrete `Instruction`, `Cycle`, `RISCVCycle<T>`, and execution/trace dispatch. The implementation must not duplicate the long instruction list across crates.
 
+The canonical instruction list should not stay permanently flat at the declaration level. The row/discriminant type should remain flat because it is used in serialization, bytecode commitments, lookup indexing, and proof code, but the source list should be grouped by capability/family, for example `rv64i`, `rv64m`, `rv64a`, `zicsr`, `system`, `jolt_virtual`, and `jolt_inline`. That grouped declaration should generate the flat `InstructionKind` enum, family/capability metadata, profile checks, and tracer dispatch lists from one source of truth. Compressed instructions should be represented as an input decoding capability rather than as separate bytecode instruction kinds: `C.ADDI` decodes to `ADDI` with `is_compressed = true`, so disabling RV64C should reject 16-bit encodings at `jolt-program::image` rather than remove an `InstructionKind` variant.
+
+The profile API can be a follow-up, but the intended shape is:
+
+```rust
+pub enum InstructionFamily {
+    Rv64I,
+    Rv64M,
+    Rv64A,
+    Zicsr,
+    System,
+    JoltVirtual,
+    JoltInline,
+}
+
+pub enum IsaProfile {
+    Rv64IM,
+    Rv64IMA,
+    Rv64IMAC,
+}
+
+impl InstructionKind {
+    pub const fn family(self) -> InstructionFamily { /* generated */ }
+}
+
+impl IsaProfile {
+    pub const fn supports_compressed(self) -> bool { /* generated */ }
+    pub const fn supports_kind(self, kind: InstructionKind) -> bool { /* generated */ }
+}
+```
+
+Jolt additions should be modeled separately from traditional RISC-V extensions. `JoltVirtual` rows are verifier/proof bytecode helpers produced by expansion, while `JoltInline` rows are source-program extension opcodes whose concrete identity is `(opcode, funct3, funct7)` plus operands. Treating both as ordinary RV64 ISA families would make future profile selection confusing: an RV64IM guest may still require Jolt virtual helper rows after expansion, and a guest may choose to enable or disable Jolt inline source opcodes independently from the base RISC-V ISA.
+
+Registered custom inline expansion should be pluggable rather than tracer-owned or `jolt-program`-owned. `jolt-program::expand` should define the trait:
+
+```rust
+pub trait InlineExpansionProvider {
+    fn expand_inline(
+        &mut self,
+        instruction: &NormalizedInstruction,
+        allocator: &mut ExpansionAllocator,
+    ) -> Result<Vec<NormalizedInstruction>, ExpansionError>;
+}
+```
+
+and expose provider-taking entry points such as `expand_instruction_with_provider` and `expand_program_with_provider`. The provider-free `expand_instruction`/`expand_program` functions should still exist for ordinary RV64/Jolt-virtual expansion, but must reject source `InstructionKind::Inline` rows explicitly. `tracer` can then implement the provider by calling the existing inventory-backed `(opcode, funct3, funct7)` inline registry and normalizing the returned sequence. This is a deliberate pivot from leaving inlines entirely in tracer: it keeps the program construction pipeline unified while avoiding a larger refactor of `jolt-inlines-sdk::InlineOp`, old typed `InstrAssembler`, and `build_advice` in this PR.
+
 `crates/jolt-program` owns program image decoding, bytecode expansion, materialized program preprocessing, and the backend-neutral execution contract. The first three are one package because they are one program-construction pipeline; the execution module is adjacent because it defines how a built program is handed to an execution backend. The internal modules should remain separate enough that dependency and formalization boundaries are still visible.
 
 `jolt-program::image` owns deterministic ELF parsing:
@@ -673,6 +727,16 @@ jolt-core or future committed-program crate
   -> gives prover full data plus hints
   -> gives verifier metadata plus trusted commitments
 ```
+
+### Implementation Findings
+
+During the initial cutover, moving bytecode preprocessing to `NormalizedInstruction` exposed one proof-semantics subtlety that was previously hidden by `jolt-core`'s per-instruction concrete `Flags` impls. `virtual_sequence_remaining == Some(0)` does not by itself mean the R1CS `IsLastInSequence` flag should be set. In current proof semantics, `IsLastInSequence` is only used to skip `NextPCEqPCPlusOneIfInline` for `JALR` at the end of trap-related inline sequences, where the next PC may jump to a trap handler instead of advancing to the next virtual bytecode row. Other final helper instructions, such as an `ADDI` with `virtual_sequence_remaining == Some(0)`, must remain `VirtualInstruction` rows but must not set `IsLastInSequence`; otherwise the `NextPCEqPCPlusOneIfInline` constraint is incorrectly suppressed.
+
+The canonical flag behavior should therefore live in `jolt-riscv`: `VirtualInstruction` is derived from `virtual_sequence_remaining.is_some()`, `DoNotUpdateUnexpandedPC` is derived from `virtual_sequence_remaining.unwrap_or(0) != 0`, and `IsLastInSequence` is derived from `instruction_kind == InstructionKind::JALR && virtual_sequence_remaining == Some(0)`. The implementation should keep an expanded-bytecode parity test that compares normalized flags against the existing concrete instruction flags so future changes to this behavior are intentional.
+
+The allocator cutover also exposed several non-obvious expansion invariants that should stay covered by fixture consistency tests. First, helper instructions emitted by an expansion must themselves be canonicalized through `jolt-program::expand`; for example an emitted `SLLI` row may become `VirtualMULI`, and skipping recursive canonicalization changes the bytecode. Second, some signed DIV/REM expansions must delay temporary-register allocation until after nested multiplication helpers return; otherwise the existing eight-register virtual pool is exhausted. Third, `REMUW` intentionally reuses its advice register as scratch while `DIVUW` needs a separate quotient/temp split. Fourth, RV64 `SCW` spills through the reservation register before expanding the nested store because `SW` consumes almost the whole temporary pool. These are behavioral compatibility constraints, not merely implementation details.
+
+RV64 ELF decode has one additional boundary to keep explicit. Registered custom inline opcodes carry dispatch metadata in `opcode`, `funct3`, and `funct7`; a generic `InstructionKind::Inline` row alone is not enough to reconstruct the concrete tracer instruction. The normalized inline row should therefore preserve this dispatch metadata, while the registered-inline sequence/advice registry can remain a separate execution-boundary question until it is intentionally moved out of tracer.
 
 ## Documentation
 

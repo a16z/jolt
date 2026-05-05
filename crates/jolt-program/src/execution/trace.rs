@@ -1,7 +1,7 @@
 use common::jolt_device::{JoltDevice, MemoryConfig};
 use jolt_riscv::NormalizedInstruction;
 
-use super::TraceSource;
+use super::{ExecutionBackend, TraceError, TraceSource};
 
 #[derive(Debug, Clone, Default)]
 pub struct ExecutableProgram {
@@ -41,6 +41,14 @@ impl ExecutableProgram {
 
     pub fn elf_bytes(&self) -> &[u8] {
         &self.elf_bytes
+    }
+
+    pub fn trace_with<B: ExecutionBackend>(
+        &self,
+        backend: &mut B,
+        inputs: TraceInputs,
+    ) -> Result<TraceOutput<B::Trace>, TraceError> {
+        backend.trace(self, inputs)
     }
 }
 

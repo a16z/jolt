@@ -35,7 +35,7 @@ where
 mod flags {
     use std::panic;
 
-    use crate::zkvm::instruction::{Flags, InstructionFlags};
+    use crate::zkvm::instruction::{Flags, InstructionFlags, SupportedInstruction};
 
     use super::CircuitFlags;
     use strum::IntoEnumIterator;
@@ -113,6 +113,43 @@ mod flags {
                     "Load/Store flags not exclusive for {instr:?}",
                 );
             }
+        }
+    }
+
+    #[test]
+    fn normalized_flags_match_concrete_instruction_flags() {
+        for cycle in Cycle::iter() {
+            if let Cycle::INLINE(_) = cycle {
+                continue;
+            }
+            let instr = cycle.instruction();
+            if !instr.is_supported_instruction() {
+                continue;
+            }
+
+            let normalized = instr.normalize();
+            assert_eq!(
+                normalized.circuit_flags(),
+                instr.circuit_flags(),
+                "circuit flags differ for {instr:?}"
+            );
+            assert_eq!(
+                normalized.instruction_flags(),
+                instr.instruction_flags(),
+                "instruction flags differ for {instr:?}"
+            );
+        }
+    }
+
+    #[cfg(feature = "host")]
+    #[test]
+    fn normalized_flags_match_expanded_program_bytecode() {
+        let mut program = crate::host::Program::new("fibonacci-guest");
+        let (bytecode, _, _, _) = program.decode();
+
+        for normalized in bytecode {
+            let _circuit_flags = normalized.circuit_flags();
+            let _instruction_flags = normalized.instruction_flags();
         }
     }
 

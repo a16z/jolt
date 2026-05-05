@@ -16,7 +16,6 @@ use emulator::{
     cpu::{self, Xlen},
     default_terminal::DefaultTerminal,
 };
-
 use instruction::{Cycle, Instruction};
 use object::{Object, ObjectSection, SectionKind};
 
@@ -29,7 +28,9 @@ pub mod utils;
 pub use common::jolt_device::JoltDevice;
 pub use cpu::{advice_tape_read, advice_tape_remaining, advice_tape_write, AdviceTape};
 pub use execution_backend::TracerBackend;
-pub use instruction::inline::{list_registered_inlines, InlineRegistration};
+pub use instruction::inline::{
+    list_registered_inlines, InlineRegistration, TracerInlineExpansionProvider,
+};
 
 use crate::{
     emulator::{
@@ -656,6 +657,31 @@ impl LazyTracer for CheckpointingTracer {
 
 #[tracing::instrument(skip_all)]
 pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64, u64, Xlen) {
+    let obj = object::File::parse(elf).unwrap();
+    if !matches!(&obj, object::File::Elf32(_)) {
+        let image =
+            jolt_program::image::decode_elf(elf).expect("jolt-program ELF64 decoding failed");
+        let instructions = image
+            .instructions
+            .into_iter()
+            .map(|instruction| {
+                Instruction::try_from_normalized(instruction)
+                    .expect("jolt-program image decoder produced an unknown tracer row")
+            })
+            .collect();
+        return (
+            instructions,
+            image.memory_init,
+            image.program_end,
+            image.entry_address,
+            Xlen::Bit64,
+        );
+    }
+
+    decode_legacy(elf)
+}
+
+fn decode_legacy(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64, u64, Xlen) {
     let obj = object::File::parse(elf).unwrap();
     let e_entry = obj.entry();
     let mut xlen = Xlen::Bit64;

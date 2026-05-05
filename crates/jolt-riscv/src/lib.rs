@@ -12,6 +12,7 @@ mod jolt_instruction;
 mod kind;
 mod normalized;
 mod operands;
+mod uncompress;
 
 #[macro_export]
 macro_rules! for_each_instruction_kind {
@@ -57,6 +58,7 @@ pub use jolt_instruction::JoltInstruction;
 pub use kind::InstructionKind;
 pub use normalized::NormalizedInstruction;
 pub use operands::NormalizedOperands;
+pub use uncompress::uncompress_rv64_instruction;
 
 /// Declares a Jolt RISC-V instruction kind and (optionally) its `Flags` impl.
 ///
@@ -95,7 +97,9 @@ macro_rules! jolt_instruction {
                     $(.set($crate::CircuitFlags::$circuit))*;
                 if let Some(virtual_sequence_remaining) = instruction.virtual_sequence_remaining {
                     flags = flags.set($crate::CircuitFlags::VirtualInstruction);
-                    if virtual_sequence_remaining == 0 {
+                    if virtual_sequence_remaining == 0
+                        && instruction.instruction_kind == $crate::InstructionKind::JALR
+                    {
                         flags = flags.set($crate::CircuitFlags::IsLastInSequence);
                     }
                 }
@@ -134,7 +138,9 @@ macro_rules! jolt_instruction {
                 let mut flags = $crate::CircuitFlagSet::default();
                 if let Some(virtual_sequence_remaining) = instruction.virtual_sequence_remaining {
                     flags = flags.set($crate::CircuitFlags::VirtualInstruction);
-                    if virtual_sequence_remaining == 0 {
+                    if virtual_sequence_remaining == 0
+                        && instruction.instruction_kind == $crate::InstructionKind::JALR
+                    {
                         flags = flags.set($crate::CircuitFlags::IsLastInSequence);
                     }
                 }
