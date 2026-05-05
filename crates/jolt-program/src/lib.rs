@@ -12,4 +12,4 @@ pub mod image;
 pub mod preprocess;
 
 pub use error::ProgramError;
-pub use execution::{build_executable, ExecutableProgram};
+pub use execution::{build_executable, build_executable_with_inline_provider, ExecutableProgram};

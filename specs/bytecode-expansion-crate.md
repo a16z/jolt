@@ -738,6 +738,8 @@ The allocator cutover also exposed several non-obvious expansion invariants that
 
 RV64 ELF decode has one additional boundary to keep explicit. Registered custom inline opcodes carry dispatch metadata in `opcode`, `funct3`, and `funct7`; a generic `InstructionKind::Inline` row alone is not enough to reconstruct the concrete tracer instruction. The normalized inline row should therefore preserve this dispatch metadata, while the registered-inline sequence/advice registry can remain a separate execution-boundary question until it is intentionally moved out of tracer.
 
+The execution-backend cutover should proceed incrementally. The implementation now provides the stable lower hook: `jolt-core::host::Program` can build a `jolt_program::ExecutableProgram` and run it through any `jolt_program::execution::ExecutionBackend`, while existing tracer-returning host convenience APIs remain available for compatibility. A follow-up SDK pass should move generated default host tracing/proving conveniences onto that hook, constructing `tracer::TracerBackend` in SDK wiring rather than asking lower program/preprocessing layers to name tracer internals.
+
 ## Documentation
 
 Update the Jolt book only if the crate is exposed to users or changes contributor-facing architecture. At minimum, add developer documentation describing:

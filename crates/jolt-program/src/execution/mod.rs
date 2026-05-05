@@ -56,3 +56,14 @@ pub fn build_executable(elf_bytes: &[u8]) -> Result<ExecutableProgram, ProgramEr
         "building an executable from ELF bytes requires the jolt-program image feature",
     ))
 }
+
+#[cfg(not(feature = "image"))]
+pub fn build_executable_with_inline_provider<P: crate::expand::InlineExpansionProvider + ?Sized>(
+    elf_bytes: &[u8],
+    inline_provider: &mut P,
+) -> Result<ExecutableProgram, ProgramError> {
+    let _ = (elf_bytes, inline_provider);
+    Err(ProgramError::MalformedImage(
+        "building an executable from ELF bytes requires the jolt-program image feature",
+    ))
+}
