@@ -2810,8 +2810,6 @@ dependencies = [
  "jolt-field",
  "jolt-inlines-secp256k1",
  "jolt-inlines-sha2",
- "jolt-program",
- "jolt-riscv",
  "postcard",
  "rand 0.8.5",
  "rust-code-analysis",

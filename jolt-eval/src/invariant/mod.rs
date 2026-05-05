@@ -1,4 +1,3 @@
-pub mod bytecode_expansion;
 pub mod field_mul_scalar;
 #[cfg(test)]
 mod macro_tests;
@@ -133,7 +132,6 @@ pub trait InvariantTargets {
 
 /// Enum collecting all Jolt invariants. Methods dispatch via match.
 pub enum JoltInvariants {
-    BytecodeExpansion(bytecode_expansion::BytecodeExpansionInvariant),
     SplitEqBindLowHigh(split_eq_bind::SplitEqBindLowHighInvariant),
     SplitEqBindHighLow(split_eq_bind::SplitEqBindHighLowInvariant),
     FieldMulScalar(field_mul_scalar::FieldMulScalarInvariant),
@@ -143,7 +141,6 @@ pub enum JoltInvariants {
 macro_rules! dispatch {
     ($self:expr, |$inv:ident| $body:expr) => {
         match $self {
-            JoltInvariants::BytecodeExpansion($inv) => $body,
             JoltInvariants::SplitEqBindLowHigh($inv) => $body,
             JoltInvariants::SplitEqBindHighLow($inv) => $body,
             JoltInvariants::FieldMulScalar($inv) => $body,
@@ -155,7 +152,6 @@ macro_rules! dispatch {
 impl JoltInvariants {
     pub fn all() -> Vec<Self> {
         vec![
-            Self::BytecodeExpansion(bytecode_expansion::BytecodeExpansionInvariant),
             Self::SplitEqBindLowHigh(split_eq_bind::SplitEqBindLowHighInvariant),
             Self::SplitEqBindHighLow(split_eq_bind::SplitEqBindHighLowInvariant),
             Self::FieldMulScalar(field_mul_scalar::FieldMulScalarInvariant),

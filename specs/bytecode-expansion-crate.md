@@ -49,7 +49,7 @@ ELF bytes
 - Prover and verifier behavior must not change: any committed bytecode table, trace row, PC lookup, or instruction lookup derived from a program must remain identical modulo intentionally documented serialization changes.
 - Program preprocessing built from an ELF must be deterministic and must match preprocessing derived through the existing prover path.
 
-Add concrete `jolt-eval` invariants for bytecode expansion fixture consistency and program preprocessing determinism. These invariants should live under `jolt-eval/src/invariant/` and be wired into `JoltInvariants::all()`.
+Keep the implementation PR's new checks focused on targeted `jolt-program`, `tracer`, and end-to-end parity tests. `jolt-eval` invariants for expansion fixture consistency and program preprocessing determinism are useful follow-up work, but are intentionally deferred so this refactor does not add extra evaluation scaffolding beyond the crate split itself.
 
 ### Non-Goals
 
@@ -136,19 +136,13 @@ The parity process should be:
 
 Do not leave the old expansion implementation as a compatibility shim. A small test-only reference module may be used during implementation if it makes the transition safer, but the final merged production code should have one canonical expansion implementation.
 
-Add `jolt-eval` invariants:
-
-- `bytecode_expansion_fixture_consistency`: for generated or fixture decoded instructions, compare expanded output to fixture expectations, including instruction variants, normalized operands, flags, addresses, compressed metadata, `is_first_in_sequence`, and `virtual_sequence_remaining`. During the transition only, the fixture generator may compare the old expansion path to the new crate output before the old path is deleted.
-- `program_preprocessing_determinism`: for small fixture ELFs or generated guest programs, build program preprocessing through the modular path repeatedly and compare the serialized preprocessing digest. During the transition only, also compare the old macro/host path to the new modular path before the old path is deleted.
-- `bytecode_pc_mapping_consistency`: for expanded bytecode with inline sequences, assert that `BytecodePCMapper::get_pc(address, virtual_sequence_remaining)` matches fixture expectations and the dense instruction order produced by preprocessing.
-
 After the full cutover, keep fixture consistency tests in the new crate so future changes to expansion semantics are intentional and reviewable.
 
 ### Performance
 
 The refactor should have no measurable runtime regression in guest decoding, tracing, or bytecode preprocessing. The implementation should benchmark at least one representative guest decode/trace path before and after the change. Any additional allocation introduced by the crate boundary should be removed or justified before merge.
 
-Add a Criterion benchmark under `jolt-eval` for decode-plus-expansion throughput over at least one small guest and one instruction-heavy fixture. This can become a performance objective after the benchmark is stable; it does not need to block the architectural split.
+Do not add a new `jolt-eval` benchmark in this PR unless a reviewer asks for one. Decode-plus-expansion benchmarking can become a measured objective after the architectural split is stable.
 
 ## Design
 
@@ -364,20 +358,15 @@ crates/
       expand/
         mod.rs
         allocator.rs
+        arithmetic.rs
         assembler.rs
+        control_flow.rs
+        division.rs
         error.rs
+        memory.rs
         metadata.rs
-        sequences/
-          mod.rs
-          arithmetic.rs
-          bitwise.rs
-          branch.rs
-          csr.rs
-          div_rem.rs
-          load_store.rs
-          shift.rs
-          trap.rs
-          virtuals.rs
+        operands.rs
+        shifts.rs
       preprocess/
         mod.rs
         bytecode.rs
@@ -471,7 +460,6 @@ The `object` dependency should be feature-gated and used only by `jolt-program::
 - `expand/assembler.rs`: move `InstrAssembler`, `Value`, and inline emission helpers from `tracer/src/utils/inline_helpers.rs`.
 - `expand/mod.rs`: provide `expand_instruction`, `expand_program`, and recursive expansion dispatch.
 - `expand/metadata.rs`: assign `is_first_in_sequence`, `virtual_sequence_remaining`, source address, and compressed metadata consistently.
-- `expand/sequences/*.rs`: move per-instruction inline expansion logic out of `tracer/src/instruction/*.rs`, grouped by instruction family.
 - `expand/error.rs`: define `ExpansionError` for virtual register exhaustion, invalid inline write targets, malformed sequence metadata, and unsupported instructions.
 
 `ExpansionAllocator` should be single-owner mutable state passed as `&mut ExpansionAllocator` through expansion. The current `VirtualRegisterAllocator` uses `Arc<Mutex<_>>` because the old API exposes only `&VirtualRegisterAllocator`, clones that allocator into `InstrAssembler` and `VirtualRegisterGuard`, and relies on guards deallocating through shared state on `Drop`. The new crate should make that state flow explicit instead: recursive expansion and inline finalization should borrow one allocator mutably, and any current per-CPU or per-thread allocator sharing should become per-expansion ownership unless an implementation can name a real cross-thread requirement. `InstrAssembler` should therefore borrow `&mut ExpansionAllocator` for the duration of emission rather than owning or cloning allocator state. Its field shape should make the borrow visible, for example an `InstrAssembler<'a>` containing an `&'a mut ExpansionAllocator` plus only the emission buffers and metadata needed for the active inline sequence.
@@ -772,7 +760,6 @@ Update the Jolt book only if the crate is exposed to users or changes contributo
 - `crates/jolt-program/src/expand/assembler.rs`
 - `crates/jolt-program/src/expand/error.rs`
 - `crates/jolt-program/src/expand/metadata.rs`
-- `crates/jolt-program/src/expand/sequences/*.rs`
 - `crates/jolt-program/src/preprocess/mod.rs`
 - `crates/jolt-program/src/preprocess/bytecode.rs`
 - `crates/jolt-program/src/preprocess/ram.rs`
@@ -782,8 +769,6 @@ Update the Jolt book only if the crate is exposed to users or changes contributo
 - `crates/jolt-program/src/execution/backend.rs`
 - `crates/jolt-program/src/execution/trace.rs`
 - `crates/jolt-program/src/execution/error.rs`
-- `jolt-eval/src/invariant/bytecode_expansion.rs`
-- `jolt-eval/benches/decode_expand.rs`
 
 ### Files To Modify
 
@@ -810,8 +795,6 @@ Update the Jolt book only if the crate is exposed to users or changes contributo
 - `jolt-core/src/zkvm/prover.rs`: update imports for program preprocessing, bytecode preprocessing, RAM preprocessing, and program instruction types.
 - `jolt-core/src/poly/**`, `jolt-core/src/subprotocols/**`, `jolt-core/src/zkvm/**`: update imports from `tracer::instruction` to `jolt-riscv` where the code needs `NormalizedInstruction`, `InstructionKind`, `JoltInstruction`, or static instruction data.
 - `jolt-sdk/macros/src/lib.rs`: generated preprocessing functions should call the modular decode/expand/program-preprocess path; generated prove/analyze/trace entry points should accept an execution backend through `jolt_program::execution::ExecutionBackend` or construct the default `tracer::TracerBackend` in SDK host wiring, without naming tracer internals in lower-level generated types.
-- `jolt-eval/src/invariant/mod.rs`: register bytecode expansion invariants.
-- `jolt-eval/src/objective/mod.rs`: add `decode_expand` objective only if the benchmark is promoted to a measured objective in this PR.
 - `book/**` or developer docs: add an architecture page or section if maintainers want crate-boundary docs in the book.
 
 ### Files To Remove Or Empty
@@ -850,8 +833,8 @@ Do not delete tracer's concrete instruction structs, instruction-format structs,
 22. [x] Update SDK macro-generated preprocessing to use the modular path.
 23. [x] Update SDK host-facing trace/analyze entry points to use `B: ExecutionBackend` or construct a default `tracer::TracerBackend`, keeping tracer concrete types out of lower generated APIs. Prove remains on the concrete prover witness API in this PR, as documented above.
 24. [x] Add expansion parity tests before removing old expansion entry points.
-25. [x] Add `jolt-eval` invariants for expansion fixture consistency, PC mapping consistency, and program preprocessing determinism.
-26. [x] Add the decode-plus-expansion Criterion benchmark under `jolt-eval`.
+25. [ ] Follow-up: add `jolt-eval` invariants for expansion fixture consistency, PC mapping consistency, and program preprocessing determinism if maintainers want evaluation-level coverage beyond the targeted parity tests.
+26. [ ] Follow-up: add a decode-plus-expansion benchmark under `jolt-eval` if this becomes a measured objective.
 27. [x] Remove old canonical expansion ownership from `tracer`.
 28. Run formatting, clippy, host tests, ZK tests, and targeted crate dependency checks.
 
@@ -868,8 +851,6 @@ cargo nextest run -p jolt-core muldiv --cargo-quiet --features host
 cargo nextest run -p jolt-core muldiv --cargo-quiet --features host,zk
 cargo nextest run -p jolt-riscv --cargo-quiet
 cargo nextest run -p jolt-program --cargo-quiet
-cargo run -p jolt-eval --bin measure-objectives -- --no-bench
-cargo bench -p jolt-eval --bench decode_expand -- --quick
 cargo tree -p tracer
 cargo tree -p jolt-riscv
 cargo tree -p jolt-program
@@ -891,6 +872,5 @@ The dependency checks should confirm that `jolt-riscv`, `jolt-program`, and `jol
 - `tracer/src/utils/inline_helpers.rs`: `InstrAssembler` recursively expands helper-emitted instructions through `add_to_sequence`.
 - `tracer/src/utils/virtual_registers.rs`: virtual register layout, allocator state, and inline clearing behavior.
 - `tracer/src/lib.rs`: current ELF decode extracts instructions, memory bytes, program end, entry address, and `Xlen`.
-- `jolt-eval/README.md`: describes invariant and objective hooks to add for this refactor.
 - PR [#1369](https://github.com/a16z/jolt/pull/1369): added `jolt-trace`, which is useful host-facing trace structure but does not by itself isolate bytecode expansion.
 - PR [#1260](https://github.com/a16z/jolt/pull/1260): broader crate refactor discussion relevant to dependency direction and crate boundaries.

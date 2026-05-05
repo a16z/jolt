@@ -25,6 +25,7 @@ use super::{RISCVInstruction, RISCVTrace};
 use crate::emulator::terminal::DummyTerminal;
 
 use common::constants::RISCV_REGISTER_COUNT;
+use jolt_program::expand::ExpansionError;
 
 use rand::{rngs::StdRng, SeedableRng};
 
@@ -59,8 +60,7 @@ fn test_rng() -> StdRng {
 }
 
 #[test]
-fn jolt_program_rd_zero_expansion_matches_tracer(
-) -> Result<(), jolt_program::expand::ExpansionError> {
+fn jolt_program_expansion_matches_tracer_bridge() -> Result<(), ExpansionError> {
     use crate::{
         emulator::cpu::Xlen, instruction::Instruction,
         utils::virtual_registers::VirtualRegisterAllocator,
@@ -126,291 +126,89 @@ fn jolt_program_rd_zero_expansion_matches_tracer(
         imm: 0x300,
     };
 
-    let cases: [(NormalizedInstruction, Instruction); 68] = [
-        (
-            row(InstructionKind::ADD, add_operands),
-            ADD::from(row(InstructionKind::ADD, add_operands)).into(),
-        ),
-        (
-            row(InstructionKind::JAL, jal_operands),
-            JAL::from(row(InstructionKind::JAL, jal_operands)).into(),
-        ),
-        (
-            row(InstructionKind::ADDIW, format_i),
-            ADDIW::from(row(InstructionKind::ADDIW, format_i)).into(),
-        ),
-        (
-            row(InstructionKind::ADDW, format_r),
-            ADDW::from(row(InstructionKind::ADDW, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::SUBW, format_r),
-            SUBW::from(row(InstructionKind::SUBW, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::MULH, format_r),
-            MULH::from(row(InstructionKind::MULH, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::MULHSU, format_r),
-            MULHSU::from(row(InstructionKind::MULHSU, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::MULW, format_r),
-            MULW::from(row(InstructionKind::MULW, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::AMOADDD, format_r),
-            AMOADDD::from(row(InstructionKind::AMOADDD, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::AMOADDW, format_r),
-            AMOADDW::from(row(InstructionKind::AMOADDW, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::AMOANDD, format_r),
-            AMOANDD::from(row(InstructionKind::AMOANDD, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::AMOANDW, format_r),
-            AMOANDW::from(row(InstructionKind::AMOANDW, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::AMOMAXD, format_r),
-            AMOMAXD::from(row(InstructionKind::AMOMAXD, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::AMOMAXUD, format_r),
-            AMOMAXUD::from(row(InstructionKind::AMOMAXUD, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::AMOMAXUW, format_r),
-            AMOMAXUW::from(row(InstructionKind::AMOMAXUW, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::AMOMAXW, format_r),
-            AMOMAXW::from(row(InstructionKind::AMOMAXW, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::AMOMIND, format_r),
-            AMOMIND::from(row(InstructionKind::AMOMIND, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::AMOMINUD, format_r),
-            AMOMINUD::from(row(InstructionKind::AMOMINUD, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::AMOMINUW, format_r),
-            AMOMINUW::from(row(InstructionKind::AMOMINUW, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::AMOMINW, format_r),
-            AMOMINW::from(row(InstructionKind::AMOMINW, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::AMOORD, format_r),
-            AMOORD::from(row(InstructionKind::AMOORD, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::AMOORW, format_r),
-            AMOORW::from(row(InstructionKind::AMOORW, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::AMOSWAPD, format_r),
-            AMOSWAPD::from(row(InstructionKind::AMOSWAPD, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::AMOSWAPW, format_r),
-            AMOSWAPW::from(row(InstructionKind::AMOSWAPW, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::AMOXORD, format_r),
-            AMOXORD::from(row(InstructionKind::AMOXORD, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::AMOXORW, format_r),
-            AMOXORW::from(row(InstructionKind::AMOXORW, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::LB, format_i),
-            LB::from(row(InstructionKind::LB, format_i)).into(),
-        ),
-        (
-            row(InstructionKind::LBU, format_i),
-            LBU::from(row(InstructionKind::LBU, format_i)).into(),
-        ),
-        (
-            row(InstructionKind::LH, format_i),
-            LH::from(row(InstructionKind::LH, format_i)).into(),
-        ),
-        (
-            row(InstructionKind::LHU, format_i),
-            LHU::from(row(InstructionKind::LHU, format_i)).into(),
-        ),
-        (
-            row(InstructionKind::LW, format_i),
-            LW::from(row(InstructionKind::LW, format_i)).into(),
-        ),
-        (
-            row(InstructionKind::LWU, format_i),
-            LWU::from(row(InstructionKind::LWU, format_i)).into(),
-        ),
-        (
-            row(InstructionKind::AdviceLB, advice_operands),
-            AdviceLB::from(row(InstructionKind::AdviceLB, advice_operands)).into(),
-        ),
-        (
-            row(InstructionKind::AdviceLH, advice_operands),
-            AdviceLH::from(row(InstructionKind::AdviceLH, advice_operands)).into(),
-        ),
-        (
-            row(InstructionKind::AdviceLW, advice_operands),
-            AdviceLW::from(row(InstructionKind::AdviceLW, advice_operands)).into(),
-        ),
-        (
-            row(InstructionKind::AdviceLD, advice_operands),
-            AdviceLD::from(row(InstructionKind::AdviceLD, advice_operands)).into(),
-        ),
-        (
-            row(InstructionKind::LRD, format_r),
-            LRD::from(row(InstructionKind::LRD, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::LRW, format_r),
-            LRW::from(row(InstructionKind::LRW, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::DIV, format_r),
-            DIV::from(row(InstructionKind::DIV, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::DIVU, format_r),
-            DIVU::from(row(InstructionKind::DIVU, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::DIVW, format_r),
-            DIVW::from(row(InstructionKind::DIVW, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::DIVUW, format_r),
-            DIVUW::from(row(InstructionKind::DIVUW, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::REM, format_r),
-            REM::from(row(InstructionKind::REM, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::REMU, format_r),
-            REMU::from(row(InstructionKind::REMU, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::REMW, format_r),
-            REMW::from(row(InstructionKind::REMW, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::REMUW, format_r),
-            REMUW::from(row(InstructionKind::REMUW, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::SB, format_s),
-            SB::from(row(InstructionKind::SB, format_s)).into(),
-        ),
-        (
-            row(InstructionKind::SCD, format_r),
-            SCD::from(row(InstructionKind::SCD, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::SCW, format_r),
-            SCW::from(row(InstructionKind::SCW, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::CSRRW, csr_operands),
-            CSRRW::from(row(InstructionKind::CSRRW, csr_operands)).into(),
-        ),
-        (
-            row(InstructionKind::CSRRS, csr_operands),
-            CSRRS::from(row(InstructionKind::CSRRS, csr_operands)).into(),
-        ),
-        (
-            row(InstructionKind::EBREAK, format_i),
-            EBREAK::from(row(InstructionKind::EBREAK, format_i)).into(),
-        ),
-        (
-            row(InstructionKind::ECALL, format_i),
-            ECALL::from(row(InstructionKind::ECALL, format_i)).into(),
-        ),
-        (
-            row(InstructionKind::MRET, format_i),
-            MRET::from(row(InstructionKind::MRET, format_i)).into(),
-        ),
-        (
-            row(InstructionKind::SH, format_s),
-            SH::from(row(InstructionKind::SH, format_s)).into(),
-        ),
-        (
-            row(InstructionKind::SW, format_s),
-            SW::from(row(InstructionKind::SW, format_s)).into(),
-        ),
-        (
-            row(InstructionKind::SLL, format_r),
-            SLL::from(row(InstructionKind::SLL, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::SLLI, format_i),
-            SLLI::from(row(InstructionKind::SLLI, format_i)).into(),
-        ),
-        (
-            row(InstructionKind::SLLW, format_r),
-            SLLW::from(row(InstructionKind::SLLW, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::SLLIW, format_i),
-            SLLIW::from(row(InstructionKind::SLLIW, format_i)).into(),
-        ),
-        (
-            row(InstructionKind::SRL, format_r),
-            SRL::from(row(InstructionKind::SRL, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::SRLI, format_i),
-            SRLI::from(row(InstructionKind::SRLI, format_i)).into(),
-        ),
-        (
-            row(InstructionKind::SRA, format_r),
-            SRA::from(row(InstructionKind::SRA, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::SRAI, format_i),
-            SRAI::from(row(InstructionKind::SRAI, format_i)).into(),
-        ),
-        (
-            row(InstructionKind::SRLIW, format_i),
-            SRLIW::from(row(InstructionKind::SRLIW, format_i)).into(),
-        ),
-        (
-            row(InstructionKind::SRAIW, format_i),
-            SRAIW::from(row(InstructionKind::SRAIW, format_i)).into(),
-        ),
-        (
-            row(InstructionKind::SRLW, format_r),
-            SRLW::from(row(InstructionKind::SRLW, format_r)).into(),
-        ),
-        (
-            row(InstructionKind::SRAW, format_r),
-            SRAW::from(row(InstructionKind::SRAW, format_r)).into(),
-        ),
-    ];
+    macro_rules! assert_expands_like_tracer {
+        ($ty:ty, $kind:ident, $operands:expr) => {{
+            let normalized = row(InstructionKind::$kind, $operands);
+            let tracer_instruction: Instruction = <$ty>::from(normalized).into();
+            let tracer_expanded: Vec<NormalizedInstruction> = tracer_instruction
+                .inline_sequence(&VirtualRegisterAllocator::new(), Xlen::Bit64)
+                .iter()
+                .map(Instruction::normalize)
+                .collect();
+            let program_expanded = expand_instruction(&normalized, &mut ExpansionAllocator::new())?;
 
-    for (normalized, tracer_instruction) in cases {
-        let tracer_expanded: Vec<NormalizedInstruction> = tracer_instruction
-            .inline_sequence(&VirtualRegisterAllocator::new(), Xlen::Bit64)
-            .iter()
-            .map(Instruction::normalize)
-            .collect();
-        let program_expanded = expand_instruction(&normalized, &mut ExpansionAllocator::new())?;
-
-        assert_eq!(program_expanded, tracer_expanded);
+            assert_eq!(program_expanded, tracer_expanded, "{}", stringify!($kind));
+        }};
     }
+
+    assert_expands_like_tracer!(ADD, ADD, add_operands);
+    assert_expands_like_tracer!(JAL, JAL, jal_operands);
+    assert_expands_like_tracer!(ADDIW, ADDIW, format_i);
+    assert_expands_like_tracer!(ADDW, ADDW, format_r);
+    assert_expands_like_tracer!(SUBW, SUBW, format_r);
+    assert_expands_like_tracer!(MULH, MULH, format_r);
+    assert_expands_like_tracer!(MULHSU, MULHSU, format_r);
+    assert_expands_like_tracer!(MULW, MULW, format_r);
+    assert_expands_like_tracer!(AMOADDD, AMOADDD, format_r);
+    assert_expands_like_tracer!(AMOADDW, AMOADDW, format_r);
+    assert_expands_like_tracer!(AMOANDD, AMOANDD, format_r);
+    assert_expands_like_tracer!(AMOANDW, AMOANDW, format_r);
+    assert_expands_like_tracer!(AMOMAXD, AMOMAXD, format_r);
+    assert_expands_like_tracer!(AMOMAXUD, AMOMAXUD, format_r);
+    assert_expands_like_tracer!(AMOMAXUW, AMOMAXUW, format_r);
+    assert_expands_like_tracer!(AMOMAXW, AMOMAXW, format_r);
+    assert_expands_like_tracer!(AMOMIND, AMOMIND, format_r);
+    assert_expands_like_tracer!(AMOMINUD, AMOMINUD, format_r);
+    assert_expands_like_tracer!(AMOMINUW, AMOMINUW, format_r);
+    assert_expands_like_tracer!(AMOMINW, AMOMINW, format_r);
+    assert_expands_like_tracer!(AMOORD, AMOORD, format_r);
+    assert_expands_like_tracer!(AMOORW, AMOORW, format_r);
+    assert_expands_like_tracer!(AMOSWAPD, AMOSWAPD, format_r);
+    assert_expands_like_tracer!(AMOSWAPW, AMOSWAPW, format_r);
+    assert_expands_like_tracer!(AMOXORD, AMOXORD, format_r);
+    assert_expands_like_tracer!(AMOXORW, AMOXORW, format_r);
+    assert_expands_like_tracer!(LB, LB, format_i);
+    assert_expands_like_tracer!(LBU, LBU, format_i);
+    assert_expands_like_tracer!(LH, LH, format_i);
+    assert_expands_like_tracer!(LHU, LHU, format_i);
+    assert_expands_like_tracer!(LW, LW, format_i);
+    assert_expands_like_tracer!(LWU, LWU, format_i);
+    assert_expands_like_tracer!(AdviceLB, AdviceLB, advice_operands);
+    assert_expands_like_tracer!(AdviceLH, AdviceLH, advice_operands);
+    assert_expands_like_tracer!(AdviceLW, AdviceLW, advice_operands);
+    assert_expands_like_tracer!(AdviceLD, AdviceLD, advice_operands);
+    assert_expands_like_tracer!(LRD, LRD, format_r);
+    assert_expands_like_tracer!(LRW, LRW, format_r);
+    assert_expands_like_tracer!(DIV, DIV, format_r);
+    assert_expands_like_tracer!(DIVU, DIVU, format_r);
+    assert_expands_like_tracer!(DIVW, DIVW, format_r);
+    assert_expands_like_tracer!(DIVUW, DIVUW, format_r);
+    assert_expands_like_tracer!(REM, REM, format_r);
+    assert_expands_like_tracer!(REMU, REMU, format_r);
+    assert_expands_like_tracer!(REMW, REMW, format_r);
+    assert_expands_like_tracer!(REMUW, REMUW, format_r);
+    assert_expands_like_tracer!(SB, SB, format_s);
+    assert_expands_like_tracer!(SCD, SCD, format_r);
+    assert_expands_like_tracer!(SCW, SCW, format_r);
+    assert_expands_like_tracer!(CSRRW, CSRRW, csr_operands);
+    assert_expands_like_tracer!(CSRRS, CSRRS, csr_operands);
+    assert_expands_like_tracer!(EBREAK, EBREAK, format_i);
+    assert_expands_like_tracer!(ECALL, ECALL, format_i);
+    assert_expands_like_tracer!(MRET, MRET, format_i);
+    assert_expands_like_tracer!(SH, SH, format_s);
+    assert_expands_like_tracer!(SW, SW, format_s);
+    assert_expands_like_tracer!(SLL, SLL, format_r);
+    assert_expands_like_tracer!(SLLI, SLLI, format_i);
+    assert_expands_like_tracer!(SLLW, SLLW, format_r);
+    assert_expands_like_tracer!(SLLIW, SLLIW, format_i);
+    assert_expands_like_tracer!(SRL, SRL, format_r);
+    assert_expands_like_tracer!(SRLI, SRLI, format_i);
+    assert_expands_like_tracer!(SRA, SRA, format_r);
+    assert_expands_like_tracer!(SRAI, SRAI, format_i);
+    assert_expands_like_tracer!(SRLIW, SRLIW, format_i);
+    assert_expands_like_tracer!(SRAIW, SRAIW, format_i);
+    assert_expands_like_tracer!(SRLW, SRLW, format_r);
+    assert_expands_like_tracer!(SRAW, SRAW, format_r);
 
     Ok(())
 }

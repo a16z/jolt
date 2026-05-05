@@ -13,7 +13,6 @@ pub mod error;
 mod memory;
 pub mod metadata;
 mod operands;
-pub mod sequences;
 mod shifts;
 #[cfg(test)]
 mod tests;
