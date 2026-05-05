@@ -76,6 +76,20 @@ fn inline_requires_provider() {
 }
 
 #[test]
+fn csr_zero_is_rejected() {
+    for instruction_kind in [InstructionKind::CSRRW, InstructionKind::CSRRS] {
+        let mut allocator = ExpansionAllocator::new();
+        let mut input = instruction(instruction_kind, Some(3), false);
+        input.operands.imm = 0;
+
+        assert!(matches!(
+            expand_instruction(&input, &mut allocator),
+            Err(ExpansionError::UnsupportedCsr(0))
+        ));
+    }
+}
+
+#[test]
 fn inline_rd_zero_is_remapped_before_provider() -> Result<(), ExpansionError> {
     #[derive(Default)]
     struct CapturingProvider {

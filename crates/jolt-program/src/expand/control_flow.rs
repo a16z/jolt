@@ -5,9 +5,6 @@ pub(super) fn expand_csrrw(
     allocator: &mut ExpansionAllocator,
 ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
     let csr = csr_address(instruction);
-    if csr == 0 {
-        return Ok(vec![NormalizedInstruction::default()]);
-    }
     let virtual_reg = allocator
         .csr_to_virtual_register(csr)
         .ok_or(ExpansionError::UnsupportedCsr(csr))?;
@@ -33,9 +30,6 @@ pub(super) fn expand_csrrs(
     allocator: &mut ExpansionAllocator,
 ) -> Result<Vec<NormalizedInstruction>, ExpansionError> {
     let csr = csr_address(instruction);
-    if csr == 0 {
-        return Ok(vec![NormalizedInstruction::default()]);
-    }
     let virtual_reg = allocator
         .csr_to_virtual_register(csr)
         .ok_or(ExpansionError::UnsupportedCsr(csr))?;

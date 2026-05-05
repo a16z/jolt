@@ -308,8 +308,9 @@ effect on RV64-visible registers, memory, control flow, advice/trap behavior,
 and PC mapping. The target may use virtual registers and extra assertions
 internally, but those internal resources are not source-level observations.
 For this PR branch, parity against the current Rust output remains the first
-acceptance test; semantic equivalence is the proof-oriented contract that
-explains why that output is the right thing to generate.
+acceptance test except where this PR intentionally fixes a documented baseline
+bug. Semantic equivalence is the proof-oriented contract that explains why that
+output is the right thing to generate.
 
 ### Lowering Pipeline
 
@@ -320,7 +321,10 @@ decode/uncompress
   produces rv64.source rows
 
 canonicalize-source
-  normalizes root-level rd=x0 behavior, pass-through rows, and baseline literals
+  normalizes root-level rd=x0 behavior, pass-through rows, literal metadata policies, and documented baseline fixes
+
+validate-source
+  rejects malformed or unsupported source rows such as CSRRW/CSRRS with CSR address 0
 
 legalize-expansion
   repeatedly rewrites illegal source/helper ops with instruction-family recipes
@@ -413,9 +417,11 @@ The Rust grammar should avoid choices that would be awkward in MLIR:
   register numbers in recipes.
 - Store operand shapes, side-effect classes, and target legality as typed data
   or traits that a verifier can inspect.
-- Keep baseline quirks as explicit ops or attrs, such as
-  `expand.literal_default_row`, so future reviewers can decide whether to
-  preserve or remove them.
+- Keep baseline quirks and intentional fixes as explicit ops, attrs, or verifier
+  rules. A true literal row can still be represented as
+  `expand.literal_default_row`, but the CSR-zero fix should be represented as a
+  validation failure such as `expand.fail unsupported_csr`, not hidden inside a
+  Rust branch.
 - Treat metadata stamping as attribute materialization at a phase boundary.
 - Keep schema/validator tests close to the grammar, the same way Bolt validates
   transcript threading, party projection, kernel-free verifier IR, and import
@@ -476,7 +482,7 @@ The grammar must be expressive enough to model the current implementation, inclu
 - Some branches depend on decoded operands or expansion parameters, for example `rd == rs1`, `rs1 == x0`, `csr == 0`, `word`, `signed`, `min`, and `remainder_output`.
 - Shared snippets such as `amo_pre64` and `amo_post64` are real grammar fragments with parameters, not arbitrary Rust helper functions.
 - Errors are semantic outcomes. Missing operands, unsupported CSRs, virtual-register exhaustion, and inline-provider requirements should be explicit grammar/driver results.
-- Baseline quirks must be made visible. For example, current `CSRRW`/`CSRRS` with `csr == 0` returns `NormalizedInstruction::default()` directly, bypassing assembler finalization. The rewrite can preserve that exactly or intentionally fix it, but the spec and parity fixtures must name the choice.
+- Baseline quirks and deliberate baseline fixes must both be made visible. The historical `CSRRW`/`CSRRS` behavior for `csr == 0` returned `NormalizedInstruction::default()` directly, bypassing assembler finalization and producing an address-zero row that could be skipped by bytecode PC mapping. This PR intentionally rejects that source row as `UnsupportedCsr(0)`, so the compiler-native rewrite should model the case as a source validation failure or grammar `Fail`, not as a literal default row to preserve.
 
 The key design rule is the same as in Ari's article: do not put every construct into one enum. Separate pure operand computations from expansion-time statements so invalid trees are unrepresentable or caught by one small grammar validator.
 
@@ -660,7 +666,7 @@ Complex branches should be direct grammar, not hidden in helper code. For exampl
 ```rust
 pub(crate) const CSRRW_RECIPE: LowerStmt = If {
     cond: CsrEq(0),
-    then_body: &ReturnLiteral(LiteralRow::DefaultNormalizedInstruction),
+    then_body: &Fail(ExpansionErrorKind::UnsupportedCsr),
     else_body: &MatchCsr {
         unsupported: ExpansionErrorKind::UnsupportedCsr,
         body: &If {
@@ -679,7 +685,7 @@ pub(crate) const CSRRW_RECIPE: LowerStmt = If {
 };
 ```
 
-`LiteralRow::DefaultNormalizedInstruction` should make reviewers uncomfortable in exactly the right way: it names a current baseline behavior that can bypass normal source metadata. At the root source level, it returns a literal `NormalizedInstruction` without stamping. Inside an already-synthetic parent sequence, it becomes `SequenceRow::Literal` and the finalizer mutates only sequence metadata, matching current `InstrAssembler::finalize`. During implementation, maintainers can either keep that literal and test both contexts, or change the behavior with an explicit parity-breaking note.
+The `csr == 0` branch is intentionally a failure now. The earlier branch that returned `LiteralRow::DefaultNormalizedInstruction` was a useful warning sign because it bypassed normal source metadata; the current PR resolves that warning by rejecting the decoded row instead of preserving the literal. A grammar interpreter should attach the source CSR value to the `UnsupportedCsr` error so this case produces `UnsupportedCsr(0)` in the public API.
 
 Shared fragments should be grammar fragments with typed arguments:
 
@@ -761,7 +767,7 @@ pub(crate) enum SequenceRow {
 }
 ```
 
-Most synthetic output should be `SequenceRow::Raw`, which constructs final metadata from the source row. `SequenceRow::Literal` exists only for baseline quirks where the current implementation places a full `NormalizedInstruction` into a sequence before finalization. The finalizer should mutate only the sequence metadata fields and last-row compressed flag on literals, matching current `InstrAssembler::finalize`.
+Most synthetic output should be `SequenceRow::Raw`, which constructs final metadata from the source row. `SequenceRow::Literal` exists only for baseline quirks where the current implementation places a full `NormalizedInstruction` into a sequence before finalization and the rewrite intentionally preserves that behavior. The former CSR-zero default row is not such a literal anymore; it is an `UnsupportedCsr(0)` error. The finalizer should mutate only the sequence metadata fields and last-row compressed flag on any remaining literals, matching current `InstrAssembler::finalize`.
 
 Family lowerers produce operations, not normalized rows:
 
@@ -789,7 +795,7 @@ pub(crate) enum SourcePlan {
 }
 ```
 
-`PassThrough` is for source rows that are already final Jolt bytecode. `Literal` is for deliberate baseline literals such as the current `rd = x0` no-op and the current `csr == 0` default row behavior. `Synthetic` is for rows produced by a lowering recipe and later stamped as one virtual sequence.
+`PassThrough` is for source rows that are already final Jolt bytecode. `Literal` is for deliberate baseline literals such as the current `rd = x0` no-op. `Synthetic` is for rows produced by a lowering recipe and later stamped as one virtual sequence. Historical CSR-zero default-row behavior is excluded from this policy because the PR now rejects it before row materialization.
 
 The driver owns all mutable state:
 
@@ -1348,8 +1354,9 @@ Pass 1 should include the following production changes:
 - Replace heap-backed per-source sequence construction in the core with bounded
   buffers and explicit overflow errors.
 - Preserve current metadata behavior exactly, including pass-through rows,
-  synthetic sequence stamping, `is_compressed` placement, literal rows, and
-  known baseline quirks such as `csr == 0`.
+  synthetic sequence stamping, `is_compressed` placement, and any remaining
+  literal rows. Also preserve the PR's documented baseline fixes, including
+  rejection of `CSRRW`/`CSRRS` with CSR address `0`.
 - Keep public expansion APIs available to current call sites, but route them
   through the new core. Ergonomic iterator wrappers may stay outside the
   extraction-critical module graph.
@@ -1363,7 +1370,9 @@ Pass 1 should also include the following tests and checks:
 - A test-only parity harness that compares the new provider-free expander
   against the current PR output while porting families. The final production
   code should have one expander; the old assembler may remain only as a
-  temporary test reference during the rewrite.
+  temporary test reference during the rewrite. Once tracer delegates to
+  `jolt-program::expand`, tracer bridge tests are circular and should not be
+  treated as semantic oracles.
 - Fixture coverage for every provider-free source-only instruction kind with
   representative operand aliases, `rd = x0`, compressed metadata, CSR edge
   cases, branch/control-flow immediates, load/store offsets, AMO/LR/SC cases,
@@ -1394,8 +1403,8 @@ rewrite of `jolt-program::expand`, with the following milestones:
      in flight. It should not survive as a compatibility layer or second
      production expander.
    - Capture row-for-row parity for metadata, virtual register allocation,
-     helper-row recursion order, `rd = x0`, compressed source rows, and known
-     quirks such as `csr == 0`.
+     helper-row recursion order, `rd = x0`, compressed source rows, remaining
+     quirks, and documented fixes such as CSR address `0` rejection.
 
 2. **Introduce the compiler data model.**
    - Add `SourceRow`, `TargetRow`, `RowSpec`, `LowerStmt`, expression ids,
@@ -1677,8 +1686,8 @@ Both are modeled by placing `Release` exactly after the last emitted row that ma
 
 ### `csr == 0`
 
-Decision for no-behavior-change parity: preserve the current `csr == 0` behavior exactly in the rewrite and test it as a baseline quirk.
+Decision for this PR: reject `CSRRW`/`CSRRS` with CSR address `0` as `ExpansionError::UnsupportedCsr(0)`.
 
-At `a3448e6da44f`, `expand_csrrw` and `expand_csrrs` return `NormalizedInstruction::default()` when `csr == 0`, bypassing the normal assembler finalizer at the source level. Whether that is desirable is a separate semantic cleanup question. It should not be silently changed in the compiler-native rewrite.
+At `a3448e6da44f`, `expand_csrrw` and `expand_csrrs` returned `NormalizedInstruction::default()` when `csr == 0`, bypassing the normal assembler finalizer at the source level. The bug hunt found that this is not a harmless no-op once expansion is owned by `jolt-program`: the default row's address is `0`, and `BytecodePCMapper` skips address-zero rows, so a decoded CSR-zero source row can fail to receive an entry-bytecode index.
 
-Sharpened follow-up question: after the compiler-native rewrite lands, should `csr == 0` be normalized to an explicit source-addressed no-op or rejected earlier as malformed/unsupported? That should be its own reviewable behavior change with bytecode/preprocess tests.
+The compiler-native rewrite should therefore make this a first-class source validation rule, not a legacy literal. The recipe may express it as an explicit `If { cond: CsrEq(0), then_body: Fail(UnsupportedCsr), ... }`, or the validator may reject it before recipe interpretation. Either way, tests should assert the public error is `UnsupportedCsr(0)` and should not include CSR-zero in parity fixtures that preserve historical output.

@@ -37,7 +37,7 @@ ELF bytes
 
 ### Invariants
 
-- Expansion of a decoded RV64 instruction must produce exactly the same bytecode sequence as the current RV64 `Instruction::inline_sequence(&VirtualRegisterAllocator, Xlen::Bit64)` behavior.
+- Expansion of a decoded RV64 instruction must produce exactly the same bytecode sequence as the current RV64 `Instruction::inline_sequence(&VirtualRegisterAllocator, Xlen::Bit64)` behavior, except for intentionally documented bug fixes that are locked down with direct expansion/preprocessing tests.
 - Recursive expansion must be preserved: helper-emitted instructions must themselves be expanded until the output contains the final bytecode rows consumed by tracing and bytecode preprocessing.
 - `rd = x0` behavior must be preserved:
   - side-effect-free instructions become a no-op instruction,
@@ -48,12 +48,13 @@ ELF bytes
 - Bytecode preprocessing must continue to map `(address, virtual_sequence_remaining)` to the same dense bytecode table indices as before.
 - Prover and verifier behavior must not change: any committed bytecode table, trace row, PC lookup, or instruction lookup derived from a program must remain identical modulo intentionally documented serialization changes.
 - Program preprocessing built from an ELF must be deterministic and must match preprocessing derived through the existing prover path.
+- The implementation intentionally rejects `CSRRW`/`CSRRS` rows whose CSR address is `0` with `ExpansionError::UnsupportedCsr(0)`, instead of preserving the historical tracer behavior of returning `NormalizedInstruction::default()`. That historical default row had address `0` and could disappear from `BytecodePCMapper`, so this PR treats the decoded row as malformed/unsupported rather than as a no-op expansion.
 
 Keep the implementation PR's new checks focused on targeted `jolt-program`, `tracer`, and end-to-end parity tests. `jolt-eval` invariants for expansion fixture consistency and program preprocessing determinism are useful follow-up work, but are intentionally deferred so this refactor does not add extra evaluation scaffolding beyond the crate split itself.
 
 ### Non-Goals
 
-- This spec does not propose changing Jolt's instruction semantics.
+- This spec does not propose broad changes to Jolt's instruction semantics. The only semantic correction intentionally included in this PR is rejecting CSR address `0` for `CSRRW`/`CSRRS` expansion, because preserving the historical default-row behavior can break bytecode PC mapping.
 - This spec does not propose changing guest compilation, memory initialization semantics, or trace execution beyond redirecting program call sites to the new program crate and putting execution behind a stable backend trait.
 - This spec does not require completing Lean, Hax, or Aeneas extraction in the same implementation PR.
 - This spec does not require redesigning bytecode commitments, lookup tables, or prover constraints.
@@ -106,7 +107,7 @@ Keep the implementation PR's new checks focused on targeted `jolt-program`, `tra
 - [x] `cargo tree -p tracer` shows `tracer` depending on `jolt-riscv` and `jolt-program`, but neither lower-level crate depending back on `tracer`.
 - [x] `cargo tree -p jolt-program` shows no dependency on `tracer` while still compiling the execution trait module.
 - [x] `cargo tree -p jolt-core --features host` does not require `tracer` solely to name program preprocessing or bytecode rows.
-- [x] Fixture consistency tests prove byte-for-byte or structure-for-structure parity with the current RV64 expansion output for supported RV64 instruction families.
+- [x] Fixture consistency tests prove byte-for-byte or structure-for-structure parity with the current RV64 expansion output for supported RV64 instruction families, with explicit tests for documented behavior corrections such as CSR address `0` rejection.
 - [x] Tests cover recursive expansion, `rd = x0`, virtual-register clearing, compressed source instructions, and bytecode PC mapping.
 - [x] The crate dependency surface is suitable for future formal verification and extraction work: no CPU, memory-device, prover, transcript, or ELF parser dependency in `jolt-program::expand`.
 - [x] Program-preprocessing and verifier-facing modules document any deliberate choices that make Hax/Aeneas/Lean extraction harder, so those choices can be revisited in a follow-up rather than discovered after the split.
@@ -135,6 +136,8 @@ The parity process should be:
 6. Keep the fixture consistency tests and property/invariant tests after deletion so CI continues to guard the new implementation without requiring the old implementation to remain in production.
 
 Do not leave the old expansion implementation as a compatibility shim. A small test-only reference module may be used during implementation if it makes the transition safer, but the final merged production code should have one canonical expansion implementation.
+
+After the full cutover, do not keep tracer-vs-`jolt-program` expansion bridge tests as a primary oracle: once tracer calls `jolt-program::expand`, such tests are circular. The remaining non-circular coverage should be direct `jolt-program::expand` tests, decoded-program normalization tests that compare tracer decoding adapters with `jolt-program::image`, bytecode PC-mapping tests, and checked-in fixture expectations from the pre-cutover baseline or from intentionally reviewed semantic decisions. The CSR address `0` rejection belongs in that latter category: it is a deliberate correction, not a parity target.
 
 After the full cutover, keep fixture consistency tests in the new crate so future changes to expansion semantics are intentional and reviewable.
 
@@ -727,6 +730,8 @@ During the initial cutover, moving bytecode preprocessing to `NormalizedInstruct
 The canonical flag behavior should therefore live in `jolt-riscv`: `VirtualInstruction` is derived from `virtual_sequence_remaining.is_some()`, `DoNotUpdateUnexpandedPC` is derived from `virtual_sequence_remaining.unwrap_or(0) != 0`, and `IsLastInSequence` is derived from `instruction_kind == InstructionKind::JALR && virtual_sequence_remaining == Some(0)`. The implementation should keep an expanded-bytecode parity test that compares normalized flags against the existing concrete instruction flags so future changes to this behavior are intentional.
 
 The allocator cutover also exposed several non-obvious expansion invariants that should stay covered by fixture consistency tests. First, helper instructions emitted by an expansion must themselves be canonicalized through `jolt-program::expand`; for example an emitted `SLLI` row may become `VirtualMULI`, and skipping recursive canonicalization changes the bytecode. Second, some signed DIV/REM expansions must delay temporary-register allocation until after nested multiplication helpers return; otherwise the existing eight-register virtual pool is exhausted. Third, `REMUW` intentionally reuses its advice register as scratch while `DIVUW` needs a separate quotient/temp split. Fourth, RV64 `SCW` spills through the reservation register before expanding the nested store because `SW` consumes almost the whole temporary pool. These are behavioral compatibility constraints, not merely implementation details.
+
+The CSR cutover exposed one intentional behavior correction rather than a compatibility constraint. The historical tracer expansion path returned `NormalizedInstruction::default()` for `CSRRW`/`CSRRS` when the decoded CSR address was `0`. In the normalized `jolt-program` path, that default row has address `0`; `BytecodePCMapper` skips address-zero bytecode rows, so a decoded CSR-zero instruction can fail to receive a bytecode PC entry. The implementation now rejects these rows as `ExpansionError::UnsupportedCsr(0)`. This is the narrow exception to byte-for-byte parity with the pre-cutover tracer behavior, and it should remain covered by direct expansion tests plus preprocessing/PC-mapping tests if future code paths admit arbitrary decoded rows.
 
 RV64 ELF decode has one additional boundary to keep explicit. Registered custom inline opcodes carry dispatch metadata in `opcode`, `funct3`, and `funct7`; a generic `InstructionKind::Inline` row alone is not enough to reconstruct the concrete tracer instruction. The normalized inline row should therefore preserve this dispatch metadata, while the registered-inline sequence/advice registry can remain a separate execution-boundary question until it is intentionally moved out of tracer.
 
