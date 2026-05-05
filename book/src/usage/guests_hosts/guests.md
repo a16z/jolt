@@ -129,6 +129,24 @@ Advice inputs described above (`UntrustedAdvice<T>`, `PrivateInput<T>`, `Trusted
 
 Both mechanisms signal that the data is untrusted and must be verified by the guest, but they differ in where the data originates and how it is serialized (advice inputs use `serde`; runtime advice uses `AdviceTapeIO`).
 
+## Security model
+
+Beyond the usual Rust rules around `unsafe` and undefined behavior, Jolt guest programs are subject to a few zkVM-specific rules:
+
+- **Self-modifying programs are undefined behavior.** Jolt commits to the program's bytecode at preprocessing time. A guest that writes to its own code region can still produce a valid proof, but the semantics of that proof are undefined — the proof attests to execution against the committed bytecode, not the modified version.
+
+- **Direct invocation of Jolt's custom RISC-V instructions is unsafe.** Jolt extends the RISC-V ISA with custom instructions used internally (e.g. for inline cryptographic primitives and runtime advice). Invoking these instructions directly from guest code, such as via inline assembly, bypasses the safety checks performed by the SDK and may produce incorrect proofs or cause proving to fail.
+
+- **Prover-supplied advice must be validated by the guest.** `UntrustedAdvice<T>` and `PrivateInput<T>` are supplied by the prover and are not constrained by the proof system itself. The guest is responsible for verifying that any advice it consumes satisfies the properties the program relies on (e.g. that a claimed factor actually divides the input, or that a claimed Merkle path matches a known root). `TrustedAdvice<T>` carries an external commitment, but the data itself may still require validation.
+
+- **No source of randomness or wall clock.** The guest has no entropy source and no clock. The platform exposes `sys_rand` (see `jolt-platform/src/random.rs`), but it is a **deterministic PRNG seeded with a fixed constant** — its output is fully predictable, including by the verifier — and is not suitable for cryptographic use. Any value that must be unpredictable (nonces, keys, sampling weights) has to be supplied as a public input. Supplying it via advice does *not* solve the problem: advice is chosen by the prover, so a "key" derived from advice is a key the prover picked.
+
+- **Bytecode is public.** The compiled guest ELF is committed at preprocessing time and is known to the verifier. The `zk` feature protects *inputs*, not the program. Do not embed secrets in guest code — API keys, hardcoded credentials, or proprietary algorithms you do not want disclosed.
+
+- **Outputs and the panic flag are public.** The return value and `io_device.panic` are revealed to the verifier and are what the proof attests to. Returning a value derived from a private input leaks that value; panicking conditionally on a private input leaks one bit per panic site. Guests handling secret data should be written so that the output and panic behavior depend only on public information.
+
+- **No side-channel resistance.** The `zk` feature, via the [BlindFold](../../how/blindfold.md) protocol, makes proofs zero-knowledge with respect to the verifier. However, Jolt's prover implementation is **not constant-time** and makes no claims of resistance to side-channel attacks. A party that observes prover execution (timing, memory access patterns, power consumption, etc.) may learn information about private inputs. Do not run the prover on secret data in adversarial environments without additional mitigations.
+
 ## Standard Library
 Jolt supports the Rust standard library. To enable support, simply add the `guest-std` feature to the Jolt import in the guest's `Cargo.toml` file and remove the `#![cfg_attr(feature = "guest", no_std)]` directive from the guest code.
 
