@@ -1,7 +1,7 @@
-//! Deferred-reduction accumulator for fused multiply-add.
+//! Deferred-reduction accumulators.
 //!
 //! In sumcheck inner loops, many products are summed before the final result
-//! is needed. [`FieldAccumulator`] lets implementations defer modular reduction
+//! is needed. [`RingAccumulator`] lets implementations defer modular reduction
 //! by accumulating in wider integer types, reducing once at the end. This
 //! amortizes the expensive reduction across hundreds of multiply-add steps.
 //!
@@ -9,8 +9,23 @@
 //! - `WideAccumulator` (BN254, in `arkworks/`) — 9-limb wide integer accumulator
 //!   that defers Montgomery reduction.
 
-use crate::Field;
+use crate::{AdditiveGroup, FromPrimitiveInt, RingCore};
 use num_traits::One;
+
+/// Accumulates additive values with potentially deferred reduction.
+pub trait AdditiveAccumulator: Default + Copy + Send + Sync {
+    /// The element type this accumulator reduces to.
+    type Element: AdditiveGroup;
+
+    /// Adds one element into the accumulator.
+    fn add(&mut self, value: Self::Element);
+
+    /// Merge another accumulator's partial sum into this one.
+    fn merge(&mut self, other: Self);
+
+    /// Finalize: reduce the accumulated value to an element.
+    fn reduce(self) -> Self::Element;
+}
 
 /// Accumulates products with potentially deferred modular reduction.
 ///
@@ -18,7 +33,7 @@ use num_traits::One;
 /// slot dominates the CPU prover. Standard field arithmetic reduces mod p
 /// after every multiply and every add. Implementations for specific fields
 /// (e.g., BN254 Fr) can instead accumulate unreduced wide products and
-/// reduce once at the end via [`reduce`](Self::reduce).
+/// reduce once at the end via [`AdditiveAccumulator::reduce`].
 ///
 /// # Invariants
 ///
@@ -27,72 +42,63 @@ use num_traits::One;
 ///   partial result (used for parallel reduction).
 /// - [`reduce`](Self::reduce) must return the field element equal to the
 ///   accumulated sum of products.
-pub trait FieldAccumulator: Default + Copy + Send + Sync {
-    /// The field type this accumulator operates over.
-    type Field: crate::Field;
-
+pub trait RingAccumulator: AdditiveAccumulator
+where
+    Self::Element: RingCore + FromPrimitiveInt,
+{
     /// Fused multiply-add: `self += a * b` without intermediate reduction.
-    fn fmadd(&mut self, a: Self::Field, b: Self::Field);
+    fn fmadd(&mut self, a: Self::Element, b: Self::Element);
 
     /// Fused multiply-add with a `u8` scalar: `self += a * F::from(b)`.
     ///
     /// Implementations may override for optimized small-scalar multiplication
     /// (e.g., 4×1 limb schoolbook instead of 4×4).
     #[inline]
-    fn fmadd_u8(&mut self, a: Self::Field, b: u8) {
-        self.fmadd(a, Self::Field::from_u8(b));
+    fn fmadd_u8(&mut self, a: Self::Element, b: u8) {
+        self.fmadd(a, Self::Element::from_u8(b));
     }
 
     /// Fused multiply-add with a `u64` scalar: `self += a * F::from(b)`.
     #[inline]
-    fn fmadd_u64(&mut self, a: Self::Field, b: u64) {
-        self.fmadd(a, Self::Field::from_u64(b));
+    fn fmadd_u64(&mut self, a: Self::Element, b: u64) {
+        self.fmadd(a, Self::Element::from_u64(b));
     }
 
     /// Fused multiply-add with an `i64` scalar: `self += a * F::from(b)`.
     #[inline]
-    fn fmadd_i64(&mut self, a: Self::Field, b: i64) {
-        self.fmadd(a, Self::Field::from_i64(b));
+    fn fmadd_i64(&mut self, a: Self::Element, b: i64) {
+        self.fmadd(a, Self::Element::from_i64(b));
     }
 
     /// Fused multiply-add with a `bool` scalar: `self += a` when `b` is true.
     #[inline]
-    fn fmadd_bool(&mut self, a: Self::Field, b: bool) {
+    fn fmadd_bool(&mut self, a: Self::Element, b: bool) {
         if b {
-            self.fmadd(a, <Self::Field as One>::one());
+            self.fmadd(a, <Self::Element as One>::one());
         }
     }
-
-    /// Merge another accumulator's partial sum into this one.
-    ///
-    /// Used in parallel reduction (e.g., Rayon fold+reduce) where each thread
-    /// accumulates independently, then results are combined.
-    fn merge(&mut self, other: Self);
-
-    /// Finalize: reduce the accumulated value to a field element.
-    fn reduce(self) -> Self::Field;
 }
 
 /// Naive accumulator using standard field arithmetic.
 ///
-/// Every [`fmadd`](FieldAccumulator::fmadd) performs a full modular multiply
+/// Every [`fmadd`](RingAccumulator::fmadd) performs a full modular multiply
 /// and add. Used as a fallback for fields without wide-integer optimization.
 #[derive(Clone, Copy)]
-pub struct NaiveAccumulator<F: Field>(F);
+pub struct NaiveAccumulator<R: RingCore + FromPrimitiveInt>(R);
 
-impl<F: Field> Default for NaiveAccumulator<F> {
+impl<R: RingCore + FromPrimitiveInt> Default for NaiveAccumulator<R> {
     #[inline]
     fn default() -> Self {
-        Self(F::zero())
+        Self(R::zero())
     }
 }
 
-impl<F: Field> FieldAccumulator for NaiveAccumulator<F> {
-    type Field = F;
+impl<R: RingCore + FromPrimitiveInt> AdditiveAccumulator for NaiveAccumulator<R> {
+    type Element = R;
 
     #[inline]
-    fn fmadd(&mut self, a: F, b: F) {
-        self.0 += a * b;
+    fn add(&mut self, value: R) {
+        self.0 += value;
     }
 
     #[inline]
@@ -101,7 +107,14 @@ impl<F: Field> FieldAccumulator for NaiveAccumulator<F> {
     }
 
     #[inline]
-    fn reduce(self) -> F {
+    fn reduce(self) -> R {
         self.0
+    }
+}
+
+impl<R: RingCore + FromPrimitiveInt> RingAccumulator for NaiveAccumulator<R> {
+    #[inline]
+    fn fmadd(&mut self, a: R, b: R) {
+        self.0 += a * b;
     }
 }

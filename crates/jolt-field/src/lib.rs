@@ -1,12 +1,21 @@
-//! Field abstractions for the Jolt zkVM.
+//! Field and ring abstractions for the Jolt zkVM.
 //!
-//! Backend-agnostic interface over prime-order scalar fields, currently
-//! implemented for BN254 Fr. Leaf crate with no internal Jolt dependencies.
+//! This crate exposes a slim algebraic hierarchy under Jolt's compatibility
+//! [`Field`] bundle:
+//!
+//! ```text
+//! AdditiveGroup -> RingCore -> FieldCore
+//!                         \-> Invertible
+//! ```
+//!
+//! Serialization, sampling, transcript challenges, primitive-integer embedding,
+//! and accumulator support are separate capabilities so non-BN254 fields can
+//! opt into only the surface they actually provide.
 //!
 //! # Core traits
 //!
-//! - [`Field`] — prime field element (`Copy`, thread-safe, serializable)
-//! - [`FieldAccumulator`] — deferred-reduction fused multiply-add
+//! - [`Field`] — Jolt compatibility umbrella
+//! - [`RingAccumulator`] — deferred-reduction fused multiply-add
 //! - [`OptimizedMul`] — fast-path short-circuits for zero/one
 //! - [`MontgomeryConstants`] — Montgomery form constants for GPU backends
 //!
@@ -20,12 +29,45 @@
 //! - [`Limbs<N>`] — fixed-width limb array for unreduced arithmetic
 //! - [`signed`] module — `S64`, `S128`, `S192`, `S256` and half-limb variants
 
-mod field;
-pub use field::{Field, MaybeAllocative, OptimizedMul};
 mod accumulator;
-pub use accumulator::{FieldAccumulator, NaiveAccumulator};
+mod additive_group;
+mod canonical_bit_length;
+mod canonical_bytes;
+mod canonical_u64;
+mod field;
+mod field_core;
+mod fixed_byte_size;
+mod fixed_bytes;
+mod from_primitive_int;
+mod invertible;
 mod montgomery_constants;
+mod mul_pow_2;
+mod mul_primitive_int;
+mod random_sampling;
+mod reducing_bytes;
+mod ring_core;
+mod transcript_challenge;
+mod with_accumulator;
+
+pub use accumulator::{AdditiveAccumulator, NaiveAccumulator, RingAccumulator};
+pub use additive_group::AdditiveGroup;
+pub use canonical_bit_length::CanonicalBitLength;
+pub use canonical_bytes::CanonicalBytes;
+pub use canonical_u64::CanonicalU64;
+pub use field::{Field, MaybeAllocative, OptimizedMul};
+pub use field_core::FieldCore;
+pub use fixed_byte_size::FixedByteSize;
+pub use fixed_bytes::FixedBytes;
+pub use from_primitive_int::FromPrimitiveInt;
+pub use invertible::Invertible;
 pub use montgomery_constants::MontgomeryConstants;
+pub use mul_pow_2::MulPow2;
+pub use mul_primitive_int::MulPrimitiveInt;
+pub use random_sampling::RandomSampling;
+pub use reducing_bytes::ReducingBytes;
+pub use ring_core::RingCore;
+pub use transcript_challenge::TranscriptChallenge;
+pub use with_accumulator::WithAccumulator;
 
 pub mod limbs;
 pub use limbs::Limbs;

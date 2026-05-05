@@ -252,6 +252,7 @@ impl<F: Field> UnivariatePoly<F> {
     /// - `hint = s(0) + s(1)`
     ///
     /// Used by the split-eq evaluator to construct round polynomials.
+    #[expect(clippy::expect_used)]
     pub fn from_linear_times_quadratic_with_hint(
         linear_coeffs: [F; 2],
         quadratic_coeff_0: F,
@@ -269,8 +270,11 @@ impl<F: Field> UnivariatePoly<F> {
             !linear_eval_one.is_zero(),
             "linear polynomial vanishes at x=1"
         );
+        let linear_eval_one_inv = linear_eval_one
+            .inverse()
+            .expect("nonzero linear_eval_one has an inverse");
         let quadratic_coeff_1 =
-            (hint - cubic_coeff_0) / linear_eval_one - quadratic_coeff_0 - quadratic_coeff_2;
+            (hint - cubic_coeff_0) * linear_eval_one_inv - quadratic_coeff_0 - quadratic_coeff_2;
 
         // s(X) = (a + bX)(c + dX + eX^2) = ac + (ad+bc)X + (ae+bd)X^2 + beX^3
         let coefficients = vec![
@@ -495,7 +499,10 @@ fn gaussian_elimination_augmented<F: Field>(matrix: &mut [Vec<F>]) -> Vec<F> {
         }
 
         for j in (i + 1)..size {
-            let factor = matrix[j][i] / matrix[i][i];
+            let pivot_inv = matrix[i][i]
+                .inverse()
+                .expect("nonzero pivot has an inverse");
+            let factor = matrix[j][i] * pivot_inv;
             #[expect(clippy::needless_range_loop)]
             for k in i..=size {
                 let tmp = matrix[i][k];
@@ -511,7 +518,10 @@ fn gaussian_elimination_augmented<F: Field>(matrix: &mut [Vec<F>]) -> Vec<F> {
             "singular matrix in gaussian_elimination_augmented"
         );
         for j in (0..i).rev() {
-            let factor = matrix[j][i] / matrix[i][i];
+            let pivot_inv = matrix[i][i]
+                .inverse()
+                .expect("nonzero pivot has an inverse");
+            let factor = matrix[j][i] * pivot_inv;
             for k in (0..=size).rev() {
                 let tmp = matrix[i][k];
                 matrix[j][k] -= factor * tmp;
@@ -521,7 +531,10 @@ fn gaussian_elimination_augmented<F: Field>(matrix: &mut [Vec<F>]) -> Vec<F> {
 
     let mut result = vec![F::zero(); size];
     for i in 0..size {
-        result[i] = matrix[i][size] / matrix[i][i];
+        let pivot_inv = matrix[i][i]
+            .inverse()
+            .expect("nonzero pivot has an inverse");
+        result[i] = matrix[i][size] * pivot_inv;
     }
     result
 }
@@ -530,8 +543,8 @@ fn gaussian_elimination_augmented<F: Field>(matrix: &mut [Vec<F>]) -> Vec<F> {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use jolt_field::Field;
     use jolt_field::Fr;
+    use jolt_field::FromPrimitiveInt;
     use num_traits::{One, Zero};
 
     #[test]

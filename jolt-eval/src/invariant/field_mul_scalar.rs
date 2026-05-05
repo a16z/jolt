@@ -1,6 +1,6 @@
 use arbitrary::{Arbitrary, Unstructured};
 use jolt_field::arkworks::bn254::Fr;
-use jolt_field::Field;
+use jolt_field::{FromPrimitiveInt, MulPrimitiveInt};
 
 use crate::invariant::{CheckError, Invariant, InvariantViolation};
 

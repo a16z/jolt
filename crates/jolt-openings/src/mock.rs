@@ -31,9 +31,11 @@ pub struct MockProof<F: Field> {
 
 impl<F: Field> AppendToTranscript for MockCommitment<F> {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        let mut buf = Vec::with_capacity(self.evaluations.len() * 32);
+        let mut buf = Vec::with_capacity(self.evaluations.len() * F::NUM_BYTES);
         for e in &self.evaluations {
-            buf.extend_from_slice(&e.to_bytes());
+            let start = buf.len();
+            buf.resize(start + F::NUM_BYTES, 0);
+            e.to_bytes_le(&mut buf[start..]);
         }
         buf.reverse();
         transcript.append_bytes(&buf);
@@ -201,8 +203,7 @@ impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
 mod tests {
     use super::*;
     use crate::{reduce_prover, reduce_verifier, ProverClaim, VerifierClaim};
-    use jolt_field::Field;
-    use jolt_field::Fr;
+    use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
     use jolt_poly::Polynomial;
     use jolt_transcript::Blake2bTranscript;
     use rand_chacha::rand_core::SeedableRng;

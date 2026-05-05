@@ -157,7 +157,7 @@ pub fn interpolate_to_coeffs<F: Field>(domain_start: i64, values: &[F]) -> Vec<F
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::Fr;
+    use jolt_field::{Fr, FromPrimitiveInt};
     use num_traits::{One, Zero};
 
     #[test]
